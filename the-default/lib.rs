@@ -5,9 +5,9 @@
 
 mod command;
 mod command_palette;
-mod completion_menu;
 mod command_registry;
 mod command_types;
+mod completion_menu;
 mod file_picker;
 mod input;
 mod keymap;
@@ -42,16 +42,6 @@ pub use command_palette::{
   command_palette_filtered_indices,
   command_palette_selected_filtered_index,
 };
-pub use completion_menu::{
-  CompletionMenuItem,
-  CompletionMenuState,
-  build_completion_menu_ui,
-  close_completion_menu,
-  completion_accept,
-  completion_next,
-  completion_prev,
-  show_completion_menu,
-};
 pub use command_registry::{
   CommandCompleter,
   CommandError,
@@ -69,6 +59,16 @@ pub use command_types::{
   Direction,
   Motion,
   WordMotion,
+};
+pub use completion_menu::{
+  CompletionMenuItem,
+  CompletionMenuState,
+  build_completion_menu_ui,
+  close_completion_menu,
+  completion_accept,
+  completion_next,
+  completion_prev,
+  show_completion_menu,
 };
 pub use file_picker::{
   FilePickerConfig,

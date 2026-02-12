@@ -122,13 +122,10 @@ fn statusline_info_supports_nested_file_paths() {
   create_base_commit(temp_jj.path());
 
   let info = jj::get_statusline_info(&file).expect("statusline info");
-  assert_eq!(
-    info,
-    VcsStatuslineInfo::Jj {
-      description: "work".to_string(),
-      bookmark:    None,
-    }
-  );
+  assert_eq!(info, VcsStatuslineInfo::Jj {
+    description: "work".to_string(),
+    bookmark:    None,
+  });
 }
 
 #[test]
@@ -181,13 +178,10 @@ fn statusline_info_includes_description_without_bookmark() {
   create_base_commit(temp_jj.path());
 
   let info = jj::get_statusline_info(&file).expect("statusline info");
-  assert_eq!(
-    info,
-    VcsStatuslineInfo::Jj {
-      description: "work".to_string(),
-      bookmark:    None,
-    }
-  );
+  assert_eq!(info, VcsStatuslineInfo::Jj {
+    description: "work".to_string(),
+    bookmark:    None,
+  });
 }
 
 #[test]
@@ -203,13 +197,10 @@ fn statusline_info_includes_description_and_bookmark() {
   exec_jj_cmd(&["bookmark", "create", "main", "-r", "@"], temp_jj.path());
 
   let info = jj::get_statusline_info(&file).expect("statusline info");
-  assert_eq!(
-    info,
-    VcsStatuslineInfo::Jj {
-      description: "vcs: add statusline".to_string(),
-      bookmark:    Some("main".to_string()),
-    }
-  );
+  assert_eq!(info, VcsStatuslineInfo::Jj {
+    description: "vcs: add statusline".to_string(),
+    bookmark:    Some("main".to_string()),
+  });
 }
 
 #[test]

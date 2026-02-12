@@ -101,8 +101,8 @@ impl<T> Default for ParseLifecycle<T> {
   fn default() -> Self {
     Self {
       next_request_id: 0,
-      in_flight: None,
-      queued: None,
+      in_flight:       None,
+      queued:          None,
     }
   }
 }
@@ -136,14 +136,14 @@ impl<T> ParseLifecycle<T> {
   ) -> ParseResultDecision<T> {
     let Some(in_flight) = self.in_flight else {
       return ParseResultDecision {
-        apply: false,
+        apply:      false,
         start_next: None,
       };
     };
 
     if in_flight.request_id != request_id {
       return ParseResultDecision {
-        apply: false,
+        apply:      false,
         start_next: None,
       };
     }
@@ -155,10 +155,7 @@ impl<T> ParseLifecycle<T> {
       request
     });
 
-    ParseResultDecision {
-      apply,
-      start_next,
-    }
+    ParseResultDecision { apply, start_next }
   }
 
   pub fn cancel_pending(&mut self) {
@@ -319,7 +316,7 @@ mod tests {
       selected,
       Some(ParseResult {
         request_id:  7,
-        doc_version: 12
+        doc_version: 12,
       })
     );
   }

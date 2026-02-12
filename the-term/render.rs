@@ -29,8 +29,8 @@ use the_lib::{
   render::{
     LayoutIntent,
     NoHighlights,
-    RenderDiffGutterStyles,
     RenderDiagnosticGutterStyles,
+    RenderDiffGutterStyles,
     RenderPlan,
     RenderStyles,
     SyntaxHighlightAdapter,
@@ -49,15 +49,15 @@ use the_lib::{
     UiText,
     UiTooltip,
     UiTree,
-    apply_diff_gutter_markers,
     apply_diagnostic_gutter_markers,
+    apply_diff_gutter_markers,
     build_plan,
-    gutter_width_for_document,
     graphics::{
       Modifier as LibModifier,
       Style as LibStyle,
       UnderlineStyle as LibUnderlineStyle,
     },
+    gutter_width_for_document,
     text_annotations::TextAnnotations,
   },
   selection::Range,
@@ -2131,13 +2131,7 @@ pub fn render(f: &mut Frame, ctx: &mut Ctx) {
           } else {
             span.text.as_str()
           };
-          buf.set_stringn(
-            x,
-            y,
-            text,
-            max_width,
-            lib_style_to_ratatui(span.style),
-          );
+          buf.set_stringn(x, y, text, max_width, lib_style_to_ratatui(span.style));
         }
       }
     }

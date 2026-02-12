@@ -623,7 +623,10 @@ fn cmd_write_force<Ctx: DefaultContext>(
   ctx.save_current_buffer(true).map_err(CommandError::new)
 }
 
-fn reload_force_from_args<Ctx: DefaultContext>(ctx: &Ctx, args: &Args) -> Result<bool, CommandError> {
+fn reload_force_from_args<Ctx: DefaultContext>(
+  ctx: &Ctx,
+  args: &Args,
+) -> Result<bool, CommandError> {
   let force = match args.first() {
     None => ctx.watch_conflict_active(),
     Some("force") | Some("!") => true,

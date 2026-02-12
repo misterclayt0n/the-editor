@@ -23,8 +23,16 @@
 //! let text = Rope::from("let x = 1;");
 //! let mut cache = HighlightCache::default();
 //! let line_range = 0..1;
-//! let mut adapter =
-//!   SyntaxHighlightAdapter::new(text.slice(..), syntax, loader, &mut cache, line_range, 1, 1, true);
+//! let mut adapter = SyntaxHighlightAdapter::new(
+//!   text.slice(..),
+//!   syntax,
+//!   loader,
+//!   &mut cache,
+//!   line_range,
+//!   1,
+//!   1,
+//!   true,
+//! );
 //! let _ = adapter.highlight_at(0);
 //! # }
 //! ```

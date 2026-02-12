@@ -69,15 +69,15 @@ use crate::{
       DocumentFormatter,
       prev_checkpoint,
     },
-    gutter::{
-      GutterConfig,
-      GutterType,
-      LineNumberMode,
-    },
     graphics::{
       CursorKind,
       Rect,
       Style,
+    },
+    gutter::{
+      GutterConfig,
+      GutterType,
+      LineNumberMode,
     },
     overlay::OverlayNode,
     text_annotations::TextAnnotations,
@@ -490,8 +490,14 @@ pub fn build_plan<'a, 't, H: HighlightProvider>(
       plan.lines.push(current_line);
     }
     plan.visible_rows = visible_rows.into_iter().flatten().collect();
-    plan.gutter_lines =
-      build_gutter_lines(&plan.visible_rows, doc, view, gutter, &plan.gutter_columns, styles);
+    plan.gutter_lines = build_gutter_lines(
+      &plan.visible_rows,
+      doc,
+      view,
+      gutter,
+      &plan.gutter_columns,
+      styles,
+    );
   }
 
   add_selections_and_cursor(&mut plan, doc, text_fmt, annotations, view, styles);
@@ -504,13 +510,13 @@ fn line_number_column_width(doc: &Document, gutter: &GutterConfig) -> usize {
     return 0;
   }
   let lines = doc.text().len_lines().max(1);
-  gutter
-    .line_numbers
-    .min_width
-    .max(lines.to_string().len())
+  gutter.line_numbers.min_width.max(lines.to_string().len())
 }
 
-fn build_gutter_columns(gutter: &GutterConfig, line_number_width: usize) -> Vec<RenderGutterColumn> {
+fn build_gutter_columns(
+  gutter: &GutterConfig,
+  line_number_width: usize,
+) -> Vec<RenderGutterColumn> {
   let mut out = Vec::with_capacity(gutter.layout.len());
   let mut col = 0u16;
   for kind in &gutter.layout {
@@ -539,7 +545,11 @@ fn gutter_columns_width(columns: &[RenderGutterColumn]) -> u16 {
     .unwrap_or(0)
 }
 
-pub fn gutter_width_for_document(doc: &Document, viewport_width: u16, gutter: &GutterConfig) -> u16 {
+pub fn gutter_width_for_document(
+  doc: &Document,
+  viewport_width: u16,
+  gutter: &GutterConfig,
+) -> u16 {
   let columns = build_gutter_columns(gutter, line_number_column_width(doc, gutter));
   if viewport_width == 0 {
     return 0;
@@ -610,10 +620,12 @@ fn line_number_text(
   let absolute = doc_line.saturating_add(1);
   let value = match mode {
     LineNumberMode::Absolute => absolute,
-    LineNumberMode::Relative => match active_line {
-      Some(active) if active == doc_line => absolute,
-      Some(active) => active.abs_diff(doc_line),
-      None => absolute,
+    LineNumberMode::Relative => {
+      match active_line {
+        Some(active) if active == doc_line => absolute,
+        Some(active) => active.abs_diff(doc_line),
+        None => absolute,
+      }
     },
   };
   Some(format!("{value:>width$}"))
@@ -990,8 +1002,10 @@ mod tests {
       Document,
       DocumentId,
     },
-    render::SyntaxHighlightAdapter,
-    render::GutterConfig,
+    render::{
+      GutterConfig,
+      SyntaxHighlightAdapter,
+    },
     selection::{
       Range,
       Selection,

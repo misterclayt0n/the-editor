@@ -23,8 +23,8 @@ pub struct CompletionMenuItem {
 impl CompletionMenuItem {
   pub fn new(label: impl Into<String>) -> Self {
     Self {
-      label: label.into(),
-      detail: None,
+      label:         label.into(),
+      detail:        None,
       documentation: None,
     }
   }
@@ -66,7 +66,10 @@ impl CompletionMenuState {
     if selected < self.scroll {
       self.scroll = selected;
     } else {
-      let visible_end = self.scroll.saturating_add(MAX_VISIBLE_ITEMS).saturating_sub(1);
+      let visible_end = self
+        .scroll
+        .saturating_add(MAX_VISIBLE_ITEMS)
+        .saturating_sub(1);
       if selected > visible_end {
         self.scroll = selected + 1 - MAX_VISIBLE_ITEMS;
       }
@@ -150,7 +153,10 @@ pub fn completion_accept<Ctx: DefaultContext>(ctx: &mut Ctx) {
     if !state.active || state.items.is_empty() {
       return;
     }
-    state.selected.unwrap_or(0).min(state.items.len().saturating_sub(1))
+    state
+      .selected
+      .unwrap_or(0)
+      .min(state.items.len().saturating_sub(1))
   };
 
   let applied = ctx.completion_accept_selected(index);
@@ -172,17 +178,17 @@ pub fn build_completion_menu_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNod
     .iter()
     .map(|item| {
       UiListItem {
-        title: item.label.clone(),
-        subtitle: item.detail.clone(),
-        description: None,
-        shortcut: None,
-        badge: None,
-        leading_icon: None,
+        title:         item.label.clone(),
+        subtitle:      item.detail.clone(),
+        description:   None,
+        shortcut:      None,
+        badge:         None,
+        leading_icon:  None,
         leading_color: None,
-        symbols: None,
+        symbols:       None,
         match_indices: None,
-        emphasis: false,
-        action: None,
+        emphasis:      false,
+        action:        None,
       }
     })
     .collect();

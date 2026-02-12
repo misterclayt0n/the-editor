@@ -5208,13 +5208,15 @@ pkgs.mkShell {
       ffi::Position { row: 0, col: 0 },
     );
     assert!(app.activate(id).is_some());
-    assert!(app.set_file_path(
-      id,
-      fixture
-        .as_path()
-        .to_str()
-        .expect("temp test path should be utf-8")
-    ));
+    assert!(
+      app.set_file_path(
+        id,
+        fixture
+          .as_path()
+          .to_str()
+          .expect("temp test path should be utf-8")
+      )
+    );
 
     let cursor = {
       let text = app.active_editor_ref().document().text().slice(..);
@@ -5264,13 +5266,15 @@ pkgs.mkShell {
       ffi::Position { row: 0, col: 0 },
     );
     assert!(app.activate(id).is_some());
-    assert!(app.set_file_path(
-      id,
-      fixture
-        .as_path()
-        .to_str()
-        .expect("temp test path should be utf-8")
-    ));
+    assert!(
+      app.set_file_path(
+        id,
+        fixture
+          .as_path()
+          .to_str()
+          .expect("temp test path should be utf-8")
+      )
+    );
 
     let local_edit = Transaction::change(
       app.active_editor_ref().document().text(),
@@ -5326,13 +5330,15 @@ pkgs.mkShell {
       ffi::Position { row: 0, col: 0 },
     );
     assert!(app.activate(id).is_some());
-    assert!(app.set_file_path(
-      id,
-      fixture
-        .as_path()
-        .to_str()
-        .expect("temp test path should be utf-8")
-    ));
+    assert!(
+      app.set_file_path(
+        id,
+        fixture
+          .as_path()
+          .to_str()
+          .expect("temp test path should be utf-8")
+      )
+    );
 
     let local_edit = Transaction::change(
       app.active_editor_ref().document().text(),
@@ -5378,13 +5384,15 @@ pkgs.mkShell {
       ffi::Position { row: 0, col: 0 },
     );
     assert!(app.activate(id).is_some());
-    assert!(app.set_file_path(
-      id,
-      fixture
-        .as_path()
-        .to_str()
-        .expect("temp test path should be utf-8")
-    ));
+    assert!(
+      app.set_file_path(
+        id,
+        fixture
+          .as_path()
+          .to_str()
+          .expect("temp test path should be utf-8")
+      )
+    );
 
     let local_edit = Transaction::change(
       app.active_editor_ref().document().text(),
@@ -5415,7 +5423,10 @@ pkgs.mkShell {
       std::iter::once((0, 0, Some("local-".into()))),
     )
     .expect("local edit");
-    assert!(DefaultContext::apply_transaction(&mut app, &local_edit_again));
+    assert!(DefaultContext::apply_transaction(
+      &mut app,
+      &local_edit_again
+    ));
     fs::write(fixture.as_path(), "disk-gamma\ndisk-delta\n").expect("update fixture");
     watch_tx
       .send(vec![PathEvent {

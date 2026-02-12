@@ -322,6 +322,7 @@ enum PendingLspRequestKind {
     uri:            String,
     generation:     u64,
     cursor:         usize,
+    replace_start:  usize,
     announce_empty: bool,
   },
   CompletionResolve {
@@ -423,6 +424,7 @@ pub struct Ctx {
   lsp_completion_items:             Vec<LspCompletionItem>,
   lsp_completion_raw_items:         Vec<Value>,
   lsp_completion_resolved_indices:  HashSet<usize>,
+  lsp_completion_fallback_start:    Option<usize>,
   lsp_completion_generation:        u64,
   lsp_pending_auto_completion:      Option<PendingAutoCompletion>,
   pub diagnostics:                  DiagnosticsState,
@@ -769,6 +771,7 @@ impl Ctx {
       lsp_completion_items: Vec::new(),
       lsp_completion_raw_items: Vec::new(),
       lsp_completion_resolved_indices: HashSet::new(),
+      lsp_completion_fallback_start: None,
       lsp_completion_generation: 0,
       lsp_pending_auto_completion: None,
       diagnostics: DiagnosticsState::default(),
@@ -1645,6 +1648,7 @@ impl Ctx {
       PendingLspRequestKind::Completion {
         generation,
         cursor,
+        replace_start,
         announce_empty,
         ..
       } => {
@@ -1652,6 +1656,7 @@ impl Ctx {
           response.result.as_ref(),
           generation,
           cursor,
+          replace_start,
           announce_empty,
         )
       },
@@ -1729,6 +1734,7 @@ impl Ctx {
     result: Option<&Value>,
     generation: u64,
     request_cursor: usize,
+    replace_start: usize,
     announce_empty: bool,
   ) -> bool {
     if generation != self.lsp_completion_generation {
@@ -1760,6 +1766,7 @@ impl Ctx {
       self.lsp_completion_items.clear();
       self.lsp_completion_raw_items.clear();
       self.lsp_completion_resolved_indices.clear();
+      self.lsp_completion_fallback_start = None;
       self.completion_menu.clear();
       if announce_empty {
         self.messages.publish(
@@ -1774,6 +1781,7 @@ impl Ctx {
     self.lsp_completion_items = completion.items;
     self.lsp_completion_raw_items = completion.raw_items;
     self.lsp_completion_resolved_indices.clear();
+    self.lsp_completion_fallback_start = Some(replace_start.min(request_cursor));
     let menu_items = self
       .lsp_completion_items
       .iter()
@@ -1813,7 +1821,11 @@ impl Ctx {
     true
   }
 
-  fn apply_completion_item(&mut self, item: LspCompletionItem, fallback_char: usize) -> bool {
+  fn apply_completion_item(
+    &mut self,
+    item: LspCompletionItem,
+    fallback_range: std::ops::Range<usize>,
+  ) -> bool {
     let item = normalize_completion_item_for_apply(item);
     let has_text_edits = item.primary_edit.is_some() || !item.additional_edits.is_empty();
     if has_text_edits {
@@ -1838,7 +1850,11 @@ impl Ctx {
           edits,
         }],
       };
-      return self.apply_workspace_edit(&workspace_edit, "completion");
+      let applied = self.apply_workspace_edit(&workspace_edit, "completion");
+      if applied {
+        let _ = self.editor.document_mut().commit();
+      }
+      return applied;
     }
 
     let insert_text = item.insert_text.unwrap_or(item.label);
@@ -1846,10 +1862,12 @@ impl Ctx {
       return true;
     }
 
-    let cursor = fallback_char.min(self.editor.document().text().len_chars());
+    let text_len = self.editor.document().text().len_chars();
+    let from = fallback_range.start.min(text_len);
+    let to = fallback_range.end.min(text_len).max(from);
     let tx = match Transaction::change(self.editor.document().text(), vec![(
-      cursor,
-      cursor,
+      from,
+      to,
       Some(insert_text.into()),
     )]) {
       Ok(tx) => tx,
@@ -1864,6 +1882,7 @@ impl Ctx {
     };
 
     if <Self as the_default::DefaultContext>::apply_transaction(self, &tx) {
+      let _ = self.editor.document_mut().commit();
       <Self as the_default::DefaultContext>::request_render(self);
       self
         .messages
@@ -2251,6 +2270,19 @@ impl Ctx {
       .is_some_and(is_symbol_word_char)
   }
 
+  fn completion_replace_start_at_cursor(&self, cursor: usize) -> usize {
+    let text = self.editor.document().text();
+    let mut start = cursor.min(text.len_chars());
+    while start > 0
+      && text
+        .get_char(start - 1)
+        .is_some_and(is_completion_replace_char)
+    {
+      start -= 1;
+    }
+    start
+  }
+
   fn lsp_completion_supports_trigger_char(&self, ch: char) -> bool {
     let Some(server) = self.lsp_runtime.config().server() else {
       return false;
@@ -2277,6 +2309,7 @@ impl Ctx {
     self.lsp_completion_items.clear();
     self.lsp_completion_raw_items.clear();
     self.lsp_completion_resolved_indices.clear();
+    self.lsp_completion_fallback_start = None;
     self.completion_menu.clear();
   }
 
@@ -2309,6 +2342,7 @@ impl Ctx {
     let Some(cursor) = self.primary_cursor_char_idx() else {
       return false;
     };
+    let replace_start = self.completion_replace_start_at_cursor(cursor);
 
     self.lsp_completion_generation = self.lsp_completion_generation.wrapping_add(1);
     let generation = self.lsp_completion_generation;
@@ -2320,6 +2354,7 @@ impl Ctx {
         uri,
         generation,
         cursor,
+        replace_start,
         announce_empty,
       },
     );
@@ -2799,6 +2834,10 @@ impl Ctx {
 
 fn is_symbol_word_char(ch: char) -> bool {
   ch == '_' || ch.is_alphanumeric()
+}
+
+fn is_completion_replace_char(ch: char) -> bool {
+  is_symbol_word_char(ch)
 }
 
 fn lsp_file_watch_latency() -> Duration {
@@ -3618,7 +3657,7 @@ impl the_default::DefaultContext for Ctx {
       return false;
     };
 
-    let fallback_char = self
+    let fallback_end = self
       .editor
       .document()
       .selection()
@@ -3626,7 +3665,11 @@ impl the_default::DefaultContext for Ctx {
       .first()
       .map(|range| range.cursor(self.editor.document().text().slice(..)))
       .unwrap_or(0);
-    let applied = self.apply_completion_item(item, fallback_char);
+    let fallback_start = self
+      .lsp_completion_fallback_start
+      .unwrap_or(fallback_end)
+      .min(fallback_end);
+    let applied = self.apply_completion_item(item, fallback_start..fallback_end);
     if applied {
       self.clear_completion_state();
       self.cancel_auto_completion();
@@ -4267,6 +4310,92 @@ mod tests {
     assert_eq!(current.documentation.as_deref(), Some("docs"));
     assert_eq!(current.commit_characters, vec![";".to_string()]);
     assert_eq!(current.insert_text.as_deref(), Some("insert"));
+  }
+
+  #[test]
+  fn completion_accept_selected_replaces_request_prefix_range() {
+    let mut ctx = Ctx::new(None).expect("ctx");
+    let tx = Transaction::change(
+      ctx.editor.document().text(),
+      std::iter::once((0, 0, Some("say he".into()))),
+    )
+    .expect("seed transaction");
+    assert!(DefaultContext::apply_transaction(&mut ctx, &tx));
+
+    let cursor = ctx.editor.document().text().len_chars();
+    let _ = ctx
+      .editor
+      .document_mut()
+      .set_selection(Selection::point(cursor));
+
+    let mut item = empty_completion_item();
+    item.insert_text = Some("hello".to_string());
+    ctx.lsp_completion_items = vec![item];
+    ctx.lsp_completion_fallback_start = Some("say ".chars().count());
+
+    assert!(<Ctx as DefaultContext>::completion_accept_selected(
+      &mut ctx, 0
+    ));
+    assert_eq!(ctx.editor.document().text().to_string(), "say hello");
+  }
+
+  #[test]
+  fn completion_accept_undo_redo_keeps_syntax_and_render_stable() {
+    let fixture =
+      TempTestFile::with_extension("completion-undo-redo", "rs", "fn main() {\n  le\n}\n");
+    let dispatch = build_dispatch::<Ctx>();
+    let mut ctx = Ctx::new(Some(
+      fixture
+        .as_path()
+        .to_str()
+        .expect("temp test path should be utf-8"),
+    ))
+    .expect("ctx");
+    ctx.set_dispatch(&dispatch);
+    assert!(ctx.editor.document().syntax().is_some());
+
+    let (cursor, replace_start) = {
+      let text = ctx.editor.document().text().slice(..);
+      (
+        char_idx_at_coords(text, Position::new(1, 4)),
+        char_idx_at_coords(text, Position::new(1, 2)),
+      )
+    };
+    let _ = ctx
+      .editor
+      .document_mut()
+      .set_selection(Selection::point(cursor));
+    let before_text = ctx.editor.document().text().to_string();
+    let syntax_version_before = ctx.editor.document().syntax_version();
+
+    let mut item = empty_completion_item();
+    item.insert_text = Some("let".to_string());
+    ctx.lsp_completion_items = vec![item];
+    ctx.lsp_completion_fallback_start = Some(replace_start);
+
+    assert!(<Ctx as DefaultContext>::completion_accept_selected(
+      &mut ctx, 0
+    ));
+    let after_accept_text = ctx.editor.document().text().to_string();
+    assert_eq!(after_accept_text, "fn main() {\n  let\n}\n");
+    assert!(ctx.editor.document().syntax().is_some());
+    assert!(ctx.editor.document().syntax_version() > syntax_version_before);
+    let accept_plan = build_render_plan(&mut ctx);
+    assert!(!accept_plan.lines.is_empty());
+
+    let dispatch_ref = ctx.dispatch();
+    dispatch_ref.undo(&mut ctx, 1);
+    assert_eq!(ctx.editor.document().text().to_string(), before_text);
+    assert!(ctx.editor.document().syntax().is_some());
+    let undo_plan = build_render_plan(&mut ctx);
+    assert!(!undo_plan.lines.is_empty());
+
+    let dispatch_ref = ctx.dispatch();
+    dispatch_ref.redo(&mut ctx, 1);
+    assert_eq!(ctx.editor.document().text().to_string(), after_accept_text);
+    assert!(ctx.editor.document().syntax().is_some());
+    let redo_plan = build_render_plan(&mut ctx);
+    assert!(!redo_plan.lines.is_empty());
   }
 
   impl TempTestFile {

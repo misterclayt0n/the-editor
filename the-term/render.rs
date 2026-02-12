@@ -2455,3 +2455,37 @@ pub fn ensure_cursor_visible(ctx: &mut Ctx) {
     ctx.editor.view_mut().scroll = new_scroll;
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use ratatui::layout::Rect;
+
+  use super::completion_panel_rect;
+
+  #[test]
+  fn completion_panel_rect_places_below_cursor_when_space_exists() {
+    let area = Rect::new(0, 0, 100, 30);
+    let rect = completion_panel_rect(area, 32, 8, Some((40, 10)));
+    assert_eq!(rect.y, 11);
+    assert_eq!(rect.width, 32);
+    assert_eq!(rect.height, 8);
+  }
+
+  #[test]
+  fn completion_panel_rect_flips_above_when_below_is_tight() {
+    let area = Rect::new(0, 0, 80, 12);
+    let rect = completion_panel_rect(area, 30, 8, Some((20, 10)));
+    assert!(rect.y < 10);
+    assert_eq!(rect.height, 8);
+  }
+
+  #[test]
+  fn completion_panel_rect_clamps_to_viewport_bounds() {
+    let area = Rect::new(5, 3, 20, 10);
+    let rect = completion_panel_rect(area, 18, 9, Some((500, 500)));
+    assert!(rect.x >= area.x);
+    assert!(rect.y >= area.y);
+    assert!(rect.x + rect.width <= area.x + area.width);
+    assert!(rect.y + rect.height <= area.y + area.height);
+  }
+}

@@ -548,6 +548,30 @@ fn lsp_server_from_language_config(loader: &Loader, path: &Path) -> Option<LspSe
   )
 }
 
+fn resolve_lsp_server(loader: Option<&Loader>, path: Option<&Path>) -> Option<LspServerConfig> {
+  let server_from_language =
+    path.and_then(|path| loader.and_then(|loader| lsp_server_from_language_config(loader, path)));
+  server_from_language.or_else(lsp_server_from_env)
+}
+
+fn lsp_server_configs_equal(
+  lhs: Option<&LspServerConfig>,
+  rhs: Option<&LspServerConfig>,
+) -> bool {
+  match (lhs, rhs) {
+    (None, None) => true,
+    (Some(lhs), Some(rhs)) => {
+      lhs.name() == rhs.name()
+        && lhs.command() == rhs.command()
+        && lhs.args() == rhs.args()
+        && lhs.env() == rhs.env()
+        && lhs.initialize_options() == rhs.initialize_options()
+        && lhs.initialize_timeout() == rhs.initialize_timeout()
+    },
+    _ => false,
+  }
+}
+
 fn lsp_language_id_for_path(loader: Option<&Loader>, path: &Path) -> Option<String> {
   let loader = loader?;
   let language = loader.language_for_filename(path)?;
@@ -647,12 +671,7 @@ impl Ctx {
       .with_restart_policy(true, Duration::from_millis(250))
       .with_restart_limits(6, Duration::from_secs(30))
       .with_request_policy(Duration::from_secs(8), 1);
-    let server_from_language = file_path.map(Path::new).and_then(|path| {
-      loader
-        .as_deref()
-        .and_then(|loader| lsp_server_from_language_config(loader, path))
-    });
-    if let Some(server) = server_from_language.or_else(lsp_server_from_env) {
+    if let Some(server) = resolve_lsp_server(loader.as_deref(), file_path.map(Path::new)) {
       lsp_runtime_config = lsp_runtime_config.with_server(server);
     }
     let lsp_server_configured = lsp_runtime_config.server().is_some();
@@ -2450,9 +2469,47 @@ impl Ctx {
     });
   }
 
+  fn lsp_reconfigure_runtime_for_path(&mut self, path: Option<&Path>) {
+    let next_server = resolve_lsp_server(self.loader.as_deref(), path);
+    if lsp_server_configs_equal(self.lsp_runtime.config().server(), next_server.as_ref()) {
+      return;
+    }
+
+    let was_running = self.lsp_runtime.is_running();
+    self.lsp_close_current_document();
+    self.lsp_ready = false;
+    self.lsp_active_progress_tokens.clear();
+    self.lsp_pending_requests.clear();
+    self.lsp_watched_file = None;
+    self.lsp_completion_items.clear();
+    self.lsp_completion_raw_items.clear();
+    self.lsp_completion_resolved_indices.clear();
+    self.completion_menu.clear();
+
+    if was_running && let Err(err) = self.lsp_runtime.shutdown() {
+      eprintln!("Warning: failed to stop LSP runtime while reconfiguring: {err}");
+    }
+
+    let mut runtime_config = self.lsp_runtime.config().clone();
+    runtime_config = match next_server {
+      Some(server) => runtime_config.with_server(server),
+      None => runtime_config.clear_server(),
+    };
+    self.lsp_runtime = LspRuntime::new(runtime_config);
+
+    if was_running {
+      self.start_background_services();
+    } else if self.lsp_runtime.config().server().is_some() {
+      self.set_lsp_status(LspStatusPhase::Starting, Some("starting".into()));
+    } else {
+      self.set_lsp_status(LspStatusPhase::Off, Some("unavailable".into()));
+    }
+  }
+
   fn lsp_refresh_document_state(&mut self, path: Option<&Path>) {
     self.lsp_document =
       path.and_then(|path| build_lsp_document_state(path, self.loader.as_deref()));
+    self.lsp_reconfigure_runtime_for_path(path);
     self.lsp_sync_watched_file_state();
   }
 
@@ -3965,13 +4022,18 @@ mod tests {
 
   impl TempTestFile {
     fn new(prefix: &str, content: &str) -> Self {
+      Self::with_extension(prefix, "txt", content)
+    }
+
+    fn with_extension(prefix: &str, extension: &str, content: &str) -> Self {
       let nonce = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
+      let extension = extension.trim_start_matches('.');
       let path = std::env::temp_dir().join(format!(
-        "the-editor-{prefix}-{}-{nonce}.txt",
-        std::process::id()
+        "the-editor-{prefix}-{}-{nonce}.{extension}",
+        std::process::id(),
       ));
       fs::write(&path, content).expect("write temp test file");
       Self { path }
@@ -4269,6 +4331,47 @@ pkgs.mkShell {
     ctx.editor.view_mut().scroll.col = 40;
     ensure_cursor_visible(&mut ctx);
     assert_eq!(ctx.editor.view().scroll.col, 0);
+  }
+
+  #[test]
+  fn set_file_path_reconfigures_lsp_server_for_rust_files() {
+    let txt_fixture = TempTestFile::with_extension("lsp-config", "txt", "plain text\n");
+    let rust_fixture = TempTestFile::with_extension("lsp-config", "rs", "fn main() {}\n");
+    let mut ctx = Ctx::new(Some(
+      txt_fixture
+        .as_path()
+        .to_str()
+        .expect("temp test path should be utf-8"),
+    ))
+    .expect("ctx");
+
+    <Ctx as DefaultContext>::set_file_path(&mut ctx, Some(rust_fixture.as_path().to_path_buf()));
+
+    let server_name = ctx
+      .lsp_runtime
+      .config()
+      .server()
+      .map(|server| server.name().to_string());
+    assert_eq!(server_name.as_deref(), Some("rust-analyzer"));
+  }
+
+  #[test]
+  fn set_file_path_reconfigures_running_lsp_runtime() {
+    let rust_fixture = TempTestFile::with_extension("lsp-running-reconfig", "rs", "fn main() {}\n");
+    let mut ctx = Ctx::new(None).expect("ctx");
+    ctx.start_background_services();
+    assert!(ctx.lsp_runtime.is_running());
+
+    <Ctx as DefaultContext>::set_file_path(&mut ctx, Some(rust_fixture.as_path().to_path_buf()));
+
+    let server_name = ctx
+      .lsp_runtime
+      .config()
+      .server()
+      .map(|server| server.name().to_string());
+    assert_eq!(server_name.as_deref(), Some("rust-analyzer"));
+    assert!(ctx.lsp_runtime.is_running());
+    ctx.shutdown_background_services();
   }
 
   #[test]

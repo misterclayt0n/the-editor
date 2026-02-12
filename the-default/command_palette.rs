@@ -175,8 +175,11 @@ pub fn build_command_palette_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNod
     CommandPaletteLayout::Custom => UiPanel::new("command_palette", intent.clone(), container),
   };
   panel.style = panel.style.with_role("command_palette");
+  panel.style.border = None;
   if matches!(layout, CommandPaletteLayout::Floating) {
     panel.constraints = UiConstraints::floating_default();
+    panel.constraints.padding.top = 0;
+    panel.constraints.padding.bottom = 0;
     panel.constraints.min_height = Some(12);
   }
   overlays.push(UiNode::Panel(panel));

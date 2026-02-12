@@ -846,6 +846,7 @@ pub fn build_file_picker_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNode> {
   let mut panel = UiPanel::floating("file_picker", container);
   panel.title = Some(format!("File Picker · {}", picker.root.display()));
   panel.style = panel.style.with_role("file_picker");
+  panel.style.border = None;
   panel.constraints = UiConstraints::floating_default();
   panel.constraints.min_width = Some(72);
   panel.constraints.min_height = Some(18);

@@ -243,8 +243,9 @@ fn resolve_style(
     states,
     UiStyleProp::Bg,
   );
-  let skip_border =
-    matches!(component, UiComponent::Panel) && role == Some("statusline") && style.border.is_none();
+  // Panel borders should be opt-in from the component builder. If a panel sets
+  // `border = None`, keep it borderless even when role scopes have fg/bg.
+  let skip_border = matches!(component, UiComponent::Panel) && style.border.is_none();
   if !skip_border {
     resolve_color_slot(
       &mut style.border,
@@ -254,6 +255,8 @@ fn resolve_style(
       states,
       UiStyleProp::Border,
     );
+  } else {
+    style.border = None;
   }
   resolve_color_slot(
     &mut style.accent,
@@ -433,4 +436,51 @@ fn legacy_scopes_for_component(
   }
 
   scopes
+}
+
+#[cfg(test)]
+mod tests {
+  use super::resolve_node;
+  use crate::render::{
+    UiNode,
+    UiPanel,
+    UiStyle,
+    theme::default_theme,
+    ui::{
+      UiColor,
+      UiColorToken,
+    },
+  };
+
+  #[test]
+  fn panel_border_none_stays_borderless_after_theme_resolution() {
+    let theme = default_theme();
+    let mut panel = UiPanel::floating("completion", UiNode::text("label", "value"));
+    panel.style = UiStyle::panel().with_role("completion");
+    panel.style.border = None;
+    let mut node = UiNode::Panel(panel);
+
+    resolve_node(&mut node, theme, None, None);
+
+    let UiNode::Panel(panel) = node else {
+      panic!("expected panel node");
+    };
+    assert!(panel.style.border.is_none());
+  }
+
+  #[test]
+  fn panel_border_token_resolves_when_border_is_enabled() {
+    let theme = default_theme();
+    let mut panel = UiPanel::floating("completion", UiNode::text("label", "value"));
+    panel.style = UiStyle::panel().with_role("completion");
+    panel.style.border = Some(UiColor::Token(UiColorToken::PanelBorder));
+    let mut node = UiNode::Panel(panel);
+
+    resolve_node(&mut node, theme, None, None);
+
+    let UiNode::Panel(panel) = node else {
+      panic!("expected panel node");
+    };
+    assert!(matches!(panel.style.border, Some(UiColor::Value(_))));
+  }
 }

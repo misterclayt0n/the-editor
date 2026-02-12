@@ -2464,7 +2464,16 @@ fn draw_ui_panel(
     )
   {
     let rect = completion_panel_rect(area, panel_width, panel_height, editor_cursor);
-    draw_box_with_title(buf, rect, ctx, panel, focus, cursor_out);
+    draw_panel_in_rect(
+      buf,
+      rect,
+      ctx,
+      panel,
+      BorderEdge::Top,
+      false,
+      focus,
+      cursor_out,
+    );
     return;
   }
 
@@ -2488,27 +2497,16 @@ fn draw_ui_panel(
         height = height.min(area.height).max(2);
       }
       let rect = Rect::new(area.x, area.y + area.height - height, area.width, height);
-      if boxed {
-        draw_box_with_title(buf, rect, ctx, panel, focus, cursor_out);
-      } else {
-        let content = draw_flat_panel(
-          buf,
-          rect,
-          ctx,
-          panel,
-          BorderEdge::Top,
-          !panel_is_statusline(panel),
-        );
-        draw_ui_node(
-          buf,
-          content,
-          ctx,
-          &panel.child,
-          focus,
-          editor_cursor,
-          cursor_out,
-        );
-      }
+      draw_panel_in_rect(
+        buf,
+        rect,
+        ctx,
+        panel,
+        BorderEdge::Top,
+        !panel_is_statusline(panel),
+        focus,
+        cursor_out,
+      );
     },
     LayoutIntent::Top => {
       let mut height = if boxed {
@@ -2529,32 +2527,30 @@ fn draw_ui_panel(
         height = height.min(area.height).max(2);
       }
       let rect = Rect::new(area.x, area.y, area.width, height);
-      if boxed {
-        draw_box_with_title(buf, rect, ctx, panel, focus, cursor_out);
-      } else {
-        let content = draw_flat_panel(
-          buf,
-          rect,
-          ctx,
-          panel,
-          BorderEdge::Bottom,
-          !panel_is_statusline(panel),
-        );
-        draw_ui_node(
-          buf,
-          content,
-          ctx,
-          &panel.child,
-          focus,
-          editor_cursor,
-          cursor_out,
-        );
-      }
+      draw_panel_in_rect(
+        buf,
+        rect,
+        ctx,
+        panel,
+        BorderEdge::Bottom,
+        !panel_is_statusline(panel),
+        focus,
+        cursor_out,
+      );
     },
     LayoutIntent::SidebarLeft => {
       panel_width = (area.width / 3).max(panel_width.min(area.width));
       let rect = Rect::new(area.x, area.y, panel_width, area.height);
-      draw_box_with_title(buf, rect, ctx, panel, focus, cursor_out);
+      draw_panel_in_rect(
+        buf,
+        rect,
+        ctx,
+        panel,
+        BorderEdge::Top,
+        false,
+        focus,
+        cursor_out,
+      );
     },
     LayoutIntent::SidebarRight => {
       panel_width = (area.width / 3).max(panel_width.min(area.width));
@@ -2564,17 +2560,44 @@ fn draw_ui_panel(
         panel_width,
         area.height,
       );
-      draw_box_with_title(buf, rect, ctx, panel, focus, cursor_out);
+      draw_panel_in_rect(
+        buf,
+        rect,
+        ctx,
+        panel,
+        BorderEdge::Top,
+        false,
+        focus,
+        cursor_out,
+      );
     },
     LayoutIntent::Fullscreen => {
       let rect = area;
-      draw_box_with_title(buf, rect, ctx, panel, focus, cursor_out);
+      draw_panel_in_rect(
+        buf,
+        rect,
+        ctx,
+        panel,
+        BorderEdge::Top,
+        false,
+        focus,
+        cursor_out,
+      );
     },
     LayoutIntent::Custom(_) | LayoutIntent::Floating => {
       let (x, width) = align_horizontal(area, panel_width, panel.constraints.align.horizontal);
       let (y, height) = align_vertical(area, panel_height, panel.constraints.align.vertical);
       let rect = Rect::new(x, y, width, height);
-      draw_box_with_title(buf, rect, ctx, panel, focus, cursor_out);
+      draw_panel_in_rect(
+        buf,
+        rect,
+        ctx,
+        panel,
+        BorderEdge::Top,
+        false,
+        focus,
+        cursor_out,
+      );
     },
   }
 }
@@ -2618,7 +2641,13 @@ fn panel_is_statusline(panel: &UiPanel) -> bool {
 }
 
 fn flat_panel_divider(panel: &UiPanel) -> u16 {
-  if panel_is_statusline(panel) { 0 } else { 1 }
+  if panel_is_statusline(panel) {
+    return 0;
+  }
+  match panel.intent {
+    LayoutIntent::Top | LayoutIntent::Bottom => 1,
+    _ => 0,
+  }
 }
 
 fn draw_flat_panel(
@@ -2877,6 +2906,7 @@ fn draw_panel_in_rect(
   ctx: &Ctx,
   panel: &UiPanel,
   edge: BorderEdge,
+  draw_divider: bool,
   focus: Option<&the_lib::render::UiFocus>,
   cursor_out: &mut Option<(u16, u16)>,
 ) {
@@ -2886,7 +2916,7 @@ fn draw_panel_in_rect(
   if panel.style.border.is_some() {
     draw_box_with_title(buf, rect, ctx, panel, focus, cursor_out);
   } else {
-    let content = draw_flat_panel(buf, rect, ctx, panel, edge, !panel_is_statusline(panel));
+    let content = draw_flat_panel(buf, rect, ctx, panel, edge, draw_divider);
     draw_ui_node(buf, content, ctx, &panel.child, focus, None, cursor_out);
   }
 }
@@ -2943,7 +2973,16 @@ fn draw_ui_overlays(
                 completion_height,
                 editor_cursor,
               );
-              draw_box_with_title(buf, completion_rect, ctx, panel, focus, cursor_out);
+              draw_panel_in_rect(
+                buf,
+                completion_rect,
+                ctx,
+                panel,
+                BorderEdge::Top,
+                false,
+                focus,
+                cursor_out,
+              );
 
               if let Some(docs_panel) = completion_docs_pair {
                 let (docs_width, docs_height) = panel_box_size(docs_panel, overlay_area);
@@ -2954,7 +2993,16 @@ fn draw_ui_overlays(
                   completion_rect,
                 );
                 if let Some(docs_rect) = docs_rect {
-                  draw_box_with_title(buf, docs_rect, ctx, docs_panel, focus, cursor_out);
+                  draw_panel_in_rect(
+                    buf,
+                    docs_rect,
+                    ctx,
+                    docs_panel,
+                    BorderEdge::Top,
+                    false,
+                    focus,
+                    cursor_out,
+                  );
                   ctx.completion_docs_layout =
                     completion_docs_layout_for_panel(ctx, docs_panel, docs_rect);
                 }
@@ -2985,7 +3033,16 @@ fn draw_ui_overlays(
                 panel_height,
               );
               bottom_offset = bottom_offset.saturating_add(panel_height);
-              draw_panel_in_rect(buf, rect, ctx, panel, BorderEdge::Top, focus, cursor_out);
+              draw_panel_in_rect(
+                buf,
+                rect,
+                ctx,
+                panel,
+                BorderEdge::Top,
+                !panel_is_statusline(panel),
+                focus,
+                cursor_out,
+              );
             },
             LayoutIntent::Top => {
               if matches!(layer, the_lib::render::UiLayer::Tooltip) {
@@ -3002,7 +3059,16 @@ fn draw_ui_overlays(
               let panel_height = panel_height_for_area(panel, rect_area);
               let rect = Rect::new(area.x, area.y + top_offset, area.width, panel_height);
               top_offset = top_offset.saturating_add(panel_height);
-              draw_panel_in_rect(buf, rect, ctx, panel, BorderEdge::Bottom, focus, cursor_out);
+              draw_panel_in_rect(
+                buf,
+                rect,
+                ctx,
+                panel,
+                BorderEdge::Bottom,
+                !panel_is_statusline(panel),
+                focus,
+                cursor_out,
+              );
             },
             _ => {
               let available_height = area.height.saturating_sub(top_offset + bottom_offset);
@@ -3030,6 +3096,63 @@ fn draw_ui_overlays(
   }
   if ctx.completion_docs_layout.is_none() {
     ctx.completion_docs_drag = None;
+  }
+}
+
+fn is_search_prompt_overlay(node: &UiNode) -> bool {
+  matches!(node, UiNode::Panel(panel) if panel.id.starts_with("search_prompt"))
+}
+
+fn status_bar_from_overlay_mut(node: &mut UiNode) -> Option<&mut UiStatusBar> {
+  match node {
+    UiNode::Panel(panel) if panel.id == "statusline" => {
+      if let UiNode::StatusBar(status) = panel.child.as_mut() {
+        Some(status)
+      } else {
+        None
+      }
+    },
+    UiNode::StatusBar(status) if status.id.as_deref() == Some("statusline") => Some(status),
+    _ => None,
+  }
+}
+
+fn search_statusline_text(query: &str, cursor: usize) -> String {
+  let mut cursor = cursor.min(query.len());
+  while cursor > 0 && !query.is_char_boundary(cursor) {
+    cursor -= 1;
+  }
+  if !query.is_char_boundary(cursor) {
+    cursor = 0;
+  }
+  let (before, after) = query.split_at(cursor);
+  format!("FIND {before}█{after}")
+}
+
+fn adapt_ui_tree_for_term(ctx: &Ctx, ui: &mut UiTree) {
+  if !ctx.search_prompt.active {
+    return;
+  }
+
+  ui.overlays.retain(|node| !is_search_prompt_overlay(node));
+  if ui
+    .focus
+    .as_ref()
+    .is_some_and(|focus| focus.id.starts_with("search_prompt"))
+  {
+    ui.focus = None;
+  }
+
+  if let Some(status) = ui
+    .overlays
+    .iter_mut()
+    .find_map(status_bar_from_overlay_mut)
+  {
+    status.left = search_statusline_text(
+      ctx.search_prompt.query.as_str(),
+      ctx.search_prompt.cursor,
+    );
+    status.left_icon = None;
   }
 }
 
@@ -3118,7 +3241,8 @@ pub fn render(f: &mut Frame, ctx: &mut Ctx) {
   let area = f.size();
   sync_file_picker_viewport(ctx, area);
 
-  let ui = ui_tree(ctx);
+  let mut ui = ui_tree(ctx);
+  adapt_ui_tree_for_term(ctx, &mut ui);
   apply_ui_viewport(ctx, &ui, f.size());
   ensure_cursor_visible(ctx);
   let plan = render_plan(ctx);

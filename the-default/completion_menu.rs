@@ -4,6 +4,7 @@ use the_lib::render::{
   UiColorToken,
   UiConstraints,
   UiContainer,
+  UiInsets,
   UiList,
   UiListItem,
   UiNode,
@@ -270,7 +271,14 @@ pub fn build_completion_menu_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNod
     UiNode::Container(container),
   );
   panel.style = panel.style.with_role("completion");
+  panel.style.border = None;
   panel.constraints = UiConstraints::panel();
+  panel.constraints.padding = UiInsets {
+    left:   1,
+    right:  1,
+    top:    0,
+    bottom: 0,
+  };
   panel.constraints.min_width = Some(28);
   panel.constraints.max_width = Some(64);
   panel.constraints.max_height = Some((MAX_VISIBLE_ITEMS as u16).saturating_add(4));
@@ -294,7 +302,14 @@ pub fn build_completion_menu_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNod
       UiNode::Container(docs_container),
     );
     docs_panel.style = docs_panel.style.with_role("completion_docs");
+    docs_panel.style.border = None;
     docs_panel.constraints = UiConstraints::panel();
+    docs_panel.constraints.padding = UiInsets {
+      left:   1,
+      right:  1,
+      top:    1,
+      bottom: 1,
+    };
     docs_panel.constraints.min_width = Some(28);
     docs_panel.constraints.max_width = Some(84);
     docs_panel.constraints.max_height = Some(18);

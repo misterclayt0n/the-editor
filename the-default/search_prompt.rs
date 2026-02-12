@@ -455,6 +455,7 @@ pub fn build_search_prompt_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNode>
 
   let mut panel = UiPanel::floating("search_prompt", container);
   panel.style = panel.style.with_role("search_prompt");
+  panel.style.border = None;
   panel.constraints = UiConstraints {
     min_width:  Some(50),
     max_width:  Some(65),

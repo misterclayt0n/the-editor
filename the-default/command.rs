@@ -817,6 +817,10 @@ fn on_keypress<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent) {
     }
   }
 
+  if handle_insert_mode_completion_key(ctx, key) {
+    return;
+  }
+
   if ctx.mode() == Mode::Command {
     if handle_command_prompt_key(ctx, key) {
       return;
@@ -836,6 +840,40 @@ fn on_keypress<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent) {
       ctx.dispatch().render_request(ctx, ());
     },
     KeyOutcome::Continue => {},
+  }
+}
+
+fn handle_insert_mode_completion_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent) -> bool {
+  if ctx.mode() != Mode::Insert || !ctx.completion_menu().active {
+    return false;
+  }
+
+  match key.key {
+    Key::Up => {
+      crate::completion_menu::completion_prev(ctx);
+      true
+    },
+    Key::Down => {
+      crate::completion_menu::completion_next(ctx);
+      true
+    },
+    Key::Tab if key.modifiers.shift() => {
+      crate::completion_menu::completion_prev(ctx);
+      true
+    },
+    Key::Tab => {
+      crate::completion_menu::completion_next(ctx);
+      true
+    },
+    Key::Enter | Key::NumpadEnter => {
+      crate::completion_menu::completion_accept(ctx);
+      true
+    },
+    Key::Escape => {
+      crate::completion_menu::close_completion_menu(ctx);
+      true
+    },
+    _ => false,
   }
 }
 

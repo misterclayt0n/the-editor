@@ -24,7 +24,6 @@ use ropey::Rope;
 use the_default::{
   FilePickerPreview,
   command_palette_filtered_indices,
-  command_palette_selected_filtered_index,
   file_picker_icon_glyph,
   render_plan,
   set_picker_visible_rows,
@@ -3130,6 +3129,15 @@ fn status_bar_from_overlay_mut(node: &mut UiNode) -> Option<&mut UiStatusBar> {
   }
 }
 
+fn command_palette_prompt_query_and_cursor(ctx: &Ctx) -> (&str, usize) {
+  let raw = ctx.command_prompt.input.as_str();
+  if let Some(stripped) = raw.strip_prefix(':') {
+    (stripped, ctx.command_prompt.cursor.saturating_sub(1))
+  } else {
+    (raw, ctx.command_prompt.cursor)
+  }
+}
+
 fn command_palette_statusline_text(query: &str, cursor: usize) -> String {
   let mut cursor = cursor.min(query.len());
   while cursor > 0 && !query.is_char_boundary(cursor) {
@@ -3160,14 +3168,19 @@ fn build_term_command_palette_list_overlay(ctx: &Ctx) -> Option<UiNode> {
     return None;
   }
 
-  let filtered = command_palette_filtered_indices(state);
+  let (query, _) = command_palette_prompt_query_and_cursor(ctx);
+  let mut filtered_state = state.clone();
+  filtered_state.query = query.to_string();
+  let filtered = command_palette_filtered_indices(&filtered_state);
   if filtered.is_empty() {
     return None;
   }
 
   const MAX_VISIBLE_ITEMS: usize = 8;
   let visible_count = filtered.len().min(MAX_VISIBLE_ITEMS).max(1);
-  let selected = command_palette_selected_filtered_index(state);
+  let selected = state
+    .selected
+    .and_then(|selected| filtered.iter().position(|&idx| idx == selected));
   let selected_index = selected.unwrap_or(0);
   let max_window_start = filtered.len().saturating_sub(visible_count);
   let window_start = selected_index
@@ -3186,10 +3199,8 @@ fn build_term_command_palette_list_overlay(ctx: &Ctx) -> Option<UiNode> {
 
   let mut list = UiList::new("command_palette_list", items);
   list.fill_width = false;
-  list.selected = selected;
-  list.scroll = window_start;
-  list.virtual_total = Some(filtered.len());
-  list.virtual_start = window_start;
+  list.selected = selected.map(|idx| idx.saturating_sub(window_start));
+  list.scroll = 0;
   list.max_visible = Some(visible_count);
   list.style = list.style.with_role("command_palette");
   list.style.accent = Some(UiColor::Token(UiColorToken::SelectedBg));
@@ -3227,15 +3238,13 @@ fn build_term_command_palette_list_overlay(ctx: &Ctx) -> Option<UiNode> {
 fn adapt_ui_tree_for_term(ctx: &Ctx, ui: &mut UiTree) {
   if ctx.command_palette.is_open {
     ui.overlays.retain(|node| !is_command_palette_overlay(node));
+    let (query, cursor) = command_palette_prompt_query_and_cursor(ctx);
     if let Some(status) = ui
       .overlays
       .iter_mut()
       .find_map(status_bar_from_overlay_mut)
     {
-      status.left = command_palette_statusline_text(
-        ctx.command_palette.query.as_str(),
-        ctx.command_palette.query.len(),
-      );
+      status.left = command_palette_statusline_text(query, cursor);
       status.left_icon = None;
     }
     if let Some(list_overlay) = build_term_command_palette_list_overlay(ctx) {
@@ -3354,6 +3363,7 @@ pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> Ren
 pub fn render(f: &mut Frame, ctx: &mut Ctx) {
   let area = f.size();
   sync_file_picker_viewport(ctx, area);
+  let suppress_editor_cursor = ctx.command_palette.is_open || ctx.search_prompt.active;
 
   let mut ui = ui_tree(ctx);
   adapt_ui_tree_for_term(ctx, &mut ui);
@@ -3466,7 +3476,7 @@ pub fn render(f: &mut Frame, ctx: &mut Ctx) {
 
   if let Some((x, y)) = ui_cursor {
     f.set_cursor(x, y);
-  } else {
+  } else if !suppress_editor_cursor {
     if let Some(cursor) = plan.cursors.first() {
       let x = area.x + plan.content_offset_x + cursor.pos.col as u16;
       let y = area.y + cursor.pos.row as u16;

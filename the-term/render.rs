@@ -819,7 +819,6 @@ fn draw_ui_input(
 fn draw_ui_list(
   buf: &mut Buffer,
   rect: Rect,
-  _ctx: &Ctx,
   list: &UiList,
   _cursor_out: &mut Option<(u16, u16)>,
 ) {
@@ -1028,6 +1027,13 @@ fn draw_ui_list(
   if total_items > visible_items {
     let track_x = rect.x + rect.width - 1;
     let track_height = rect.height;
+    let selected_visible_row = selected.and_then(|idx| {
+      if idx >= scroll_offset && idx < scroll_offset.saturating_add(visible_items) {
+        Some((idx - scroll_offset) as u16)
+      } else {
+        None
+      }
+    });
     let thumb_height = ((visible_items as f32 / total_items as f32) * track_height as f32)
       .ceil()
       .max(1.0) as u16;
@@ -1039,6 +1045,10 @@ fn draw_ui_list(
         as u16
     };
     for i in 0..track_height {
+      // Keep selected row highlight visually continuous; don't paint scrollbar glyphs over it.
+      if selected_visible_row == Some(i) {
+        continue;
+      }
       let y = rect.y + i;
       let is_thumb = i >= thumb_offset && i < thumb_offset + thumb_height;
       let symbol = if is_thumb { "█" } else { "│" };
@@ -1066,7 +1076,7 @@ fn draw_ui_node(
   match node {
     UiNode::Text(text) => draw_ui_text(buf, rect, ctx, text),
     UiNode::Input(input) => draw_ui_input(buf, rect, ctx, input, focus, cursor_out),
-    UiNode::List(list) => draw_ui_list(buf, rect, ctx, list, cursor_out),
+    UiNode::List(list) => draw_ui_list(buf, rect, list, cursor_out),
     UiNode::Divider(_) => {
       let line = "─".repeat(rect.width as usize);
       let style = Style::default().add_modifier(Modifier::DIM);
@@ -2600,9 +2610,16 @@ pub fn ensure_cursor_visible(ctx: &mut Ctx) {
 
 #[cfg(test)]
 mod tests {
-  use ratatui::layout::Rect;
+  use ratatui::{
+    buffer::Buffer,
+    layout::Rect,
+  };
+  use the_lib::render::{
+    UiList,
+    UiListItem,
+  };
 
-  use super::{completion_docs_panel_rect, completion_panel_rect};
+  use super::{completion_docs_panel_rect, completion_panel_rect, draw_ui_list};
 
   #[test]
   fn completion_panel_rect_places_below_cursor_when_space_exists() {
@@ -2665,5 +2682,29 @@ mod tests {
     let completion_rect = Rect::new(2, 6, 76, 10);
     let docs_rect = completion_docs_panel_rect(area, 36, 9, completion_rect);
     assert!(docs_rect.is_none());
+  }
+
+  #[test]
+  fn completion_list_scrollbar_does_not_override_selected_row() {
+    let items = (0..10)
+      .map(|idx| UiListItem::new(format!("item-{idx}")))
+      .collect();
+    let mut list = UiList::new("completion_list", items);
+    list.style = list.style.with_role("completion");
+    list.selected = Some(0);
+    list.scroll = 0;
+    list.max_visible = Some(3);
+
+    let rect = Rect::new(0, 0, 24, 3);
+    let mut buf = Buffer::empty(rect);
+    let mut cursor = None;
+    draw_ui_list(&mut buf, rect, &list, &mut cursor);
+
+    let track_x = rect.x + rect.width - 1;
+    let selected_row_cell = buf.get(track_x, rect.y);
+    assert_eq!(selected_row_cell.symbol(), " ");
+
+    let next_row_cell = buf.get(track_x, rect.y + 1);
+    assert_eq!(next_row_cell.symbol(), "│");
   }
 }

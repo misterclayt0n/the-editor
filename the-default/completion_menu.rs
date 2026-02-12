@@ -1,6 +1,7 @@
 use the_lib::render::{
   LayoutIntent,
   UiColor,
+  UiColorToken,
   UiConstraints,
   UiContainer,
   UiList,
@@ -211,6 +212,8 @@ pub fn build_completion_menu_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNod
   list.scroll = state.scroll;
   list.max_visible = Some(MAX_VISIBLE_ITEMS);
   list.style = list.style.with_role("completion");
+  list.style.accent = Some(UiColor::Token(UiColorToken::SelectedBg));
+  list.style.border = Some(UiColor::Token(UiColorToken::SelectedText));
 
   let mut container = UiContainer::column("completion_container", 0, vec![UiNode::List(list)]);
   container.style = container.style.with_role("completion");

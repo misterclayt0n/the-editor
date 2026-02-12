@@ -1644,30 +1644,75 @@ fn completion_docs_panel_rect(
   panel_width: u16,
   panel_height: u16,
   completion_rect: Rect,
-) -> Rect {
-  let width = panel_width.min(area.width).max(1);
-  let height = panel_height.min(area.height).max(1);
+) -> Option<Rect> {
+  if area.width == 0 || area.height == 0 {
+    return None;
+  }
+  let desired_width = panel_width.min(area.width).max(1);
+  let desired_height = panel_height.min(area.height).max(1);
   let gap = 1u16;
+  let min_side_width = 24u16;
+  let min_vertical_height = 4u16;
 
-  let max_x = area.x + area.width.saturating_sub(width);
-  let max_y = area.y + area.height.saturating_sub(height);
+  let area_right = area.x.saturating_add(area.width);
+  let area_bottom = area.y.saturating_add(area.height);
   let right_x = completion_rect
     .x
     .saturating_add(completion_rect.width)
     .saturating_add(gap);
-  let left_x = completion_rect
-    .x
-    .saturating_sub(gap)
-    .saturating_sub(width);
-  let right_fits = right_x <= max_x;
-  let x = if right_fits {
-    right_x
-  } else {
-    left_x.clamp(area.x, max_x)
-  };
-  let y = completion_rect.y.clamp(area.y, max_y);
+  let right_available_width = area_right.saturating_sub(right_x);
+  let left_end = completion_rect.x.saturating_sub(gap);
+  let left_available_width = left_end.saturating_sub(area.x);
 
-  Rect::new(x, y, width, height)
+  if right_available_width >= min_side_width || left_available_width >= min_side_width {
+    let place_right = right_available_width >= min_side_width
+      && (right_available_width >= left_available_width || left_available_width < min_side_width);
+    let available_width = if place_right {
+      right_available_width
+    } else {
+      left_available_width
+    };
+    let width = desired_width.min(available_width).max(1);
+    let height = desired_height.min(area.height).max(1);
+    let max_y = area_bottom.saturating_sub(height);
+    let y = completion_rect.y.clamp(area.y, max_y);
+    let x = if place_right {
+      right_x
+    } else {
+      left_end.saturating_sub(width)
+    };
+    return Some(Rect::new(x, y, width, height));
+  }
+
+  let below_y = completion_rect
+    .y
+    .saturating_add(completion_rect.height)
+    .saturating_add(gap);
+  let below_available_height = area_bottom.saturating_sub(below_y);
+  let above_available_height = completion_rect.y.saturating_sub(area.y.saturating_add(gap));
+  if below_available_height >= min_vertical_height || above_available_height >= min_vertical_height {
+    let place_below = below_available_height >= above_available_height;
+    let available_height = if place_below {
+      below_available_height
+    } else {
+      above_available_height
+    };
+    let height = desired_height.min(available_height).max(1);
+    let width = desired_width.min(area.width).max(1);
+    let max_x = area_right.saturating_sub(width);
+    let x = completion_rect.x.clamp(area.x, max_x);
+    let y = if place_below {
+      below_y
+    } else {
+      completion_rect
+        .y
+        .saturating_sub(gap)
+        .saturating_sub(height)
+    };
+    return Some(Rect::new(x, y, width, height));
+  }
+
+  None
 }
 
 fn panel_box_size(panel: &UiPanel, area: Rect) -> (u16, u16) {
@@ -2215,7 +2260,9 @@ fn draw_ui_overlays(
                   docs_height,
                   completion_rect,
                 );
-                draw_box_with_title(buf, docs_rect, ctx, docs_panel, focus, cursor_out);
+                if let Some(docs_rect) = docs_rect {
+                  draw_box_with_title(buf, docs_rect, ctx, docs_panel, focus, cursor_out);
+                }
               }
             }
             index += 2;
@@ -2617,7 +2664,8 @@ mod tests {
   fn completion_docs_panel_rect_prefers_right_side() {
     let area = Rect::new(0, 0, 100, 30);
     let completion_rect = Rect::new(20, 9, 30, 8);
-    let docs_rect = completion_docs_panel_rect(area, 24, 10, completion_rect);
+    let docs_rect =
+      completion_docs_panel_rect(area, 24, 10, completion_rect).expect("docs rect");
     assert_eq!(docs_rect.x, 51);
     assert_eq!(docs_rect.y, completion_rect.y);
   }
@@ -2626,8 +2674,22 @@ mod tests {
   fn completion_docs_panel_rect_flips_left_when_right_is_tight() {
     let area = Rect::new(0, 0, 70, 20);
     let completion_rect = Rect::new(45, 4, 24, 8);
-    let docs_rect = completion_docs_panel_rect(area, 20, 8, completion_rect);
+    let docs_rect =
+      completion_docs_panel_rect(area, 20, 8, completion_rect).expect("docs rect");
     assert_eq!(docs_rect.x, 24);
     assert_eq!(docs_rect.y, completion_rect.y);
+  }
+
+  #[test]
+  fn completion_docs_panel_rect_avoids_overlap_when_viewport_is_narrow() {
+    let area = Rect::new(0, 0, 72, 22);
+    let completion_rect = Rect::new(4, 5, 46, 10);
+    let docs_rect =
+      completion_docs_panel_rect(area, 40, 9, completion_rect).expect("docs rect");
+    let overlaps_x = docs_rect.x < completion_rect.x + completion_rect.width
+      && completion_rect.x < docs_rect.x + docs_rect.width;
+    let overlaps_y = docs_rect.y < completion_rect.y + completion_rect.height
+      && completion_rect.y < docs_rect.y + docs_rect.height;
+    assert!(!(overlaps_x && overlaps_y));
   }
 }

@@ -61,6 +61,20 @@ pub struct SyntaxHighlightAdapter<'a> {
 }
 
 impl<'a> SyntaxHighlightAdapter<'a> {
+  fn from_highlights(
+    text: RopeSlice<'a>,
+    mut highlights: Vec<(Highlight, Range<usize>)>,
+  ) -> Self {
+    highlights.sort_by_key(|(_, range)| (range.start, std::cmp::Reverse(range.end)));
+    highlights.dedup_by(|a, b| a.0 == b.0 && a.1 == b.1);
+    Self {
+      text,
+      highlights,
+      idx: 0,
+      active: Vec::new(),
+    }
+  }
+
   pub fn new(
     text: RopeSlice<'a>,
     syntax: &'a Syntax,
@@ -72,11 +86,18 @@ impl<'a> SyntaxHighlightAdapter<'a> {
     allow_cache_refresh: bool,
   ) -> Self {
     let byte_range = line_range_to_bytes(text, line_range.clone());
+    let cache_is_current = cache.doc_version() == doc_version
+      && cache.syntax_version() == syntax_version
+      && cache.is_range_cached(byte_range.clone());
+
+    if !allow_cache_refresh && !byte_range.is_empty() && !cache_is_current {
+      let highlights = syntax.collect_highlights(text, loader, byte_range);
+      return Self::from_highlights(text, highlights);
+    }
+
     if allow_cache_refresh
       && !byte_range.is_empty()
-      && (cache.doc_version() != doc_version
-        || cache.syntax_version() != syntax_version
-        || !cache.is_range_cached(byte_range.clone()))
+      && !cache_is_current
     {
       let _ = syntax.requery_and_cache(
         cache,
@@ -99,12 +120,7 @@ impl<'a> SyntaxHighlightAdapter<'a> {
       Vec::new()
     };
 
-    Self {
-      text,
-      highlights,
-      idx: 0,
-      active: Vec::new(),
-    }
+    Self::from_highlights(text, highlights)
   }
 }
 

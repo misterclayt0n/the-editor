@@ -4779,6 +4779,7 @@ mod tests {
       coords_at_pos,
     },
     selection::Selection,
+    syntax::Highlight,
     transaction::Transaction,
   };
   use the_runtime::file_watch::{
@@ -5055,6 +5056,65 @@ mod tests {
       root_end,
       doc.text().len_bytes(),
       "syntax tree byte range should stay aligned after timeout fallback"
+    );
+  }
+
+  #[test]
+  fn interpolated_inflight_parse_ignores_stale_highlight_cache_spans() {
+    let _guard = ffi_test_guard();
+    let mut app = App::new();
+    if app.loader.is_none() {
+      return;
+    }
+
+    let viewport = ffi::Rect {
+      x:      0,
+      y:      0,
+      width:  80,
+      height: 24,
+    };
+    let scroll = ffi::Position { row: 0, col: 0 };
+    let id = app.create_editor("let value = 1;\n", viewport, scroll);
+    assert!(app.activate(id).is_some());
+    assert!(app.set_file_path(id, "main.rs"));
+
+    let lib_id = id.to_lib().expect("editor id");
+    let doc = app
+      .inner
+      .editor(lib_id)
+      .expect("editor")
+      .document()
+      .text()
+      .clone();
+    let stale_highlight = Highlight::new(424_242);
+
+    let current_doc_version = app
+      .inner
+      .editor(lib_id)
+      .expect("editor")
+      .document()
+      .version();
+
+    {
+      let state = app.states.get_mut(&lib_id).expect("editor state");
+      state.highlight_cache.update_range(
+        0..doc.len_bytes(),
+        vec![(stale_highlight, 0..3)],
+        doc.slice(..),
+        0,
+        0,
+      );
+      state.syntax_parse_highlight_state.mark_interpolated();
+      let _ = state
+        .syntax_parse_lifecycle
+        .queue(current_doc_version, Box::new(|| None));
+    }
+
+    let plan = app.render_plan(id);
+    assert_ne!(
+      first_highlight_id(&plan),
+      Some(stale_highlight.get()),
+      "stale highlight cache spans should not be rendered while interpolation is active"
     );
   }
 

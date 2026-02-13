@@ -145,13 +145,11 @@ use the_lib::{
     HighlightCache,
     Loader,
     Syntax,
-    generate_edits,
   },
   syntax_async::{
     ParseHighlightState,
     ParseLifecycle,
     ParseRequest,
-    QueueParseDecision,
   },
   transaction::Transaction,
   view::ViewState,
@@ -1321,9 +1319,6 @@ pub struct App {
   diagnostics:                DiagnosticsState,
   ui_theme:                   Theme,
   loader:                     Option<Arc<Loader>>,
-  syntax_short_parse_timeout: Duration,
-  #[cfg(test)]
-  force_short_parse_timeout_path: bool,
 }
 
 impl App {
@@ -1373,9 +1368,6 @@ impl App {
       diagnostics: DiagnosticsState::default(),
       ui_theme,
       loader,
-      syntax_short_parse_timeout: Duration::from_millis(3),
-      #[cfg(test)]
-      force_short_parse_timeout_path: false,
     }
   }
 
@@ -3368,27 +3360,6 @@ impl App {
     changed
   }
 
-  fn queue_editor_syntax_parse_job(
-    &mut self,
-    id: LibEditorId,
-    doc_version: u64,
-    parse_job: SyntaxParseJob,
-  ) {
-    let start_request = {
-      let Some(state) = self.states.get_mut(&id) else {
-        return;
-      };
-      match state.syntax_parse_lifecycle.queue(doc_version, parse_job) {
-        QueueParseDecision::Start(request) => Some((state.syntax_parse_tx.clone(), request)),
-        QueueParseDecision::Queued(_) => None,
-      }
-    };
-
-    if let Some((tx, request)) = start_request {
-      spawn_syntax_parse_request(tx, request);
-    }
-  }
-
   fn poll_active_syntax_parse_results(&mut self) -> bool {
     let Some(id) = self.active_editor else {
       return false;
@@ -3563,11 +3534,6 @@ impl DefaultContext for App {
   }
 
   fn apply_transaction(&mut self, transaction: &Transaction) -> bool {
-    enum SyntaxParseHighlightUpdate {
-      Parsed,
-      Interpolated,
-    }
-
     let Some(editor_id) = self.active_editor else {
       return false;
     };
@@ -3576,114 +3542,32 @@ impl DefaultContext for App {
 
     let old_text_for_lsp = self.active_editor_ref().document().text().clone();
     let loader = self.loader.clone();
-    let mut async_parse_job: Option<SyntaxParseJob> = None;
-    let mut async_parse_doc_version = None;
-    let mut syntax_highlight_update: Option<SyntaxParseHighlightUpdate> = None;
-
-    {
+    let (changed, has_syntax) = {
       let Some(editor) = self.inner.editor_mut(editor_id) else {
         return false;
       };
       let doc = editor.document_mut();
-      let old_text = doc.text().clone();
-
       if doc
-        .apply_transaction_with_syntax(transaction, None)
+        .apply_transaction_with_syntax(transaction, loader.as_deref())
         .is_err()
       {
         return false;
       }
+      (!transaction.changes().is_empty(), doc.syntax().is_some())
+    };
 
-      if transaction.changes().is_empty() {
-        return true;
-      }
-
-      if let Some(loader) = loader.as_ref() {
-        let new_text = doc.text().clone();
-        let edits = generate_edits(old_text.slice(..), transaction.changes());
-        let mut bump_syntax_version = false;
-
-        if let Some(syntax) = doc.syntax_mut() {
-          #[cfg(test)]
-          let short_update = if self.force_short_parse_timeout_path {
-            // Mirror tree-house timeout semantics: edits are applied to existing
-            // trees even when parse does not complete in time.
-            syntax.interpolate_with_edits(&edits);
-            Ok(false)
-          } else {
-            syntax.try_update_with_short_timeout(
-              new_text.slice(..),
-              &edits,
-              loader.as_ref(),
-              self.syntax_short_parse_timeout,
-            )
-          };
-
-          #[cfg(not(test))]
-          let short_update = syntax.try_update_with_short_timeout(
-            new_text.slice(..),
-            &edits,
-            loader.as_ref(),
-            self.syntax_short_parse_timeout,
-          );
-
-          match short_update {
-            Ok(true) => {
-              bump_syntax_version = true;
-              syntax_highlight_update = Some(SyntaxParseHighlightUpdate::Parsed);
-            },
-            Ok(false) => {
-              bump_syntax_version = true;
-              syntax_highlight_update = Some(SyntaxParseHighlightUpdate::Interpolated);
-              let mut parse_syntax = syntax.clone();
-              let parse_source = new_text.clone();
-              let parse_loader = loader.clone();
-              let parse_edits = edits.clone();
-              async_parse_doc_version = Some(doc.version());
-              async_parse_job = Some(Box::new(move || {
-                parse_syntax
-                  .update_with_edits(parse_source.slice(..), &parse_edits, parse_loader.as_ref())
-                  .ok()
-                  .map(|()| parse_syntax)
-              }));
-            },
-            Err(_) => {
-              bump_syntax_version = true;
-              syntax_highlight_update = Some(SyntaxParseHighlightUpdate::Interpolated);
-              let mut parse_syntax = syntax.clone();
-              let parse_source = new_text.clone();
-              let parse_loader = loader.clone();
-              let parse_edits = edits.clone();
-              async_parse_doc_version = Some(doc.version());
-              async_parse_job = Some(Box::new(move || {
-                parse_syntax
-                  .update_with_edits(parse_source.slice(..), &parse_edits, parse_loader.as_ref())
-                  .ok()
-                  .map(|()| parse_syntax)
-              }));
-            },
-          }
-        }
-
-        if bump_syntax_version {
-          doc.bump_syntax_version();
-        }
-      }
+    if !changed {
+      return true;
     }
 
-    if let Some(update) = syntax_highlight_update
-      && let Some(state) = self.states.get_mut(&editor_id)
-    {
-      match update {
-        SyntaxParseHighlightUpdate::Parsed => state.syntax_parse_highlight_state.mark_parsed(),
-        SyntaxParseHighlightUpdate::Interpolated => {
-          state.syntax_parse_highlight_state.mark_interpolated();
-        },
+    if let Some(state) = self.states.get_mut(&editor_id) {
+      state.syntax_parse_lifecycle.cancel_pending();
+      state.highlight_cache.clear();
+      if has_syntax {
+        state.syntax_parse_highlight_state.mark_parsed();
+      } else {
+        state.syntax_parse_highlight_state.mark_cleared();
       }
-    }
-
-    if let (Some(parse_job), Some(doc_version)) = (async_parse_job, async_parse_doc_version) {
-      self.queue_editor_syntax_parse_job(editor_id, doc_version, parse_job);
     }
 
     self.lsp_send_did_change(&old_text_for_lsp, transaction.changes());
@@ -5013,13 +4897,12 @@ mod tests {
   }
 
   #[test]
-  fn syntax_timeout_path_keeps_tree_offsets_aligned_with_document() {
+  fn syntax_edits_use_synchronous_parse_and_keep_tree_aligned() {
     let _guard = ffi_test_guard();
     let mut app = App::new();
     if app.loader.is_none() {
       return;
     }
-    app.force_short_parse_timeout_path = true;
 
     let viewport = ffi::Rect {
       x:      0,
@@ -5040,13 +4923,18 @@ mod tests {
     .expect("insert transaction");
     assert!(DefaultContext::apply_transaction(&mut app, &tx));
 
+    let state = app.active_state_ref();
     assert!(
-      app
-        .active_state_ref()
-        .syntax_parse_lifecycle
-        .in_flight()
-        .is_some(),
-      "expected async parse job after forced short-timeout path"
+      state.syntax_parse_lifecycle.in_flight().is_none(),
+      "editing should not leave a syntax parse job in-flight"
+    );
+    assert!(
+      state.syntax_parse_lifecycle.queued().is_none(),
+      "editing should not queue deferred syntax parse jobs"
+    );
+    assert!(
+      !state.syntax_parse_highlight_state.is_interpolated(),
+      "highlight state should remain parsed after synchronous syntax update"
     );
 
     let doc = app.active_editor_ref().document();
@@ -5055,7 +4943,7 @@ mod tests {
     assert_eq!(
       root_end,
       doc.text().len_bytes(),
-      "syntax tree byte range should stay aligned after timeout fallback"
+      "syntax tree byte range should stay aligned after synchronous parse"
     );
   }
 

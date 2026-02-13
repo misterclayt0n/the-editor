@@ -1369,16 +1369,15 @@ fn draw_completion_docs_text(buf: &mut Buffer, rect: Rect, ctx: &Ctx, text: &UiT
       .or(base_style.fg);
 
     for row in 0..track_height {
-      let symbol = if row >= thumb_offset && row < thumb_offset + thumb_height {
-        "█"
-      } else {
-        "│"
-      };
+      let is_thumb = row >= thumb_offset && row < thumb_offset + thumb_height;
+      if !is_thumb {
+        continue;
+      }
       let mut style = Style::default();
       if let Some(color) = scroll_color {
         style = style.fg(color);
       }
-      buf.set_string(track_x, rect.y + row, symbol, style);
+      buf.set_string(track_x, rect.y + row, "█", style);
     }
   }
 }
@@ -1574,8 +1573,9 @@ fn draw_ui_list(buf: &mut Buffer, rect: Rect, list: &UiList, _cursor_out: &mut O
 
     let mut title = item.title.clone();
     let shortcut = item.shortcut.clone().unwrap_or_default();
-    let base_content_x = rect.x + 1;
-    let available_width = rect.width.saturating_sub(1 + row_right_padding) as usize;
+    let leading_pad = if is_completion_list { 0 } else { 1 };
+    let base_content_x = rect.x + leading_pad;
+    let available_width = rect.width.saturating_sub(leading_pad + row_right_padding) as usize;
     if !shortcut.is_empty() && shortcut.len() + 2 < available_width {
       let shortcut_width = shortcut.len() + 1;
       truncate_in_place(&mut title, available_width.saturating_sub(shortcut_width));
@@ -1606,7 +1606,7 @@ fn draw_ui_list(buf: &mut Buffer, rect: Rect, list: &UiList, _cursor_out: &mut O
       let label_x = base_content_x + icon_col_width;
       let label_available = rect
         .width
-        .saturating_sub(1 + icon_col_width + row_right_padding)
+        .saturating_sub(leading_pad + icon_col_width + row_right_padding)
         as usize;
 
       let detail = item
@@ -1689,13 +1689,6 @@ fn draw_ui_list(buf: &mut Buffer, rect: Rect, list: &UiList, _cursor_out: &mut O
   if total_items > visible_items {
     let track_x = rect.x + rect.width - 1;
     let track_height = rect.height;
-    let selected_visible_row = selected.and_then(|idx| {
-      if idx >= scroll_offset && idx < scroll_offset.saturating_add(visible_items) {
-        Some((idx - scroll_offset) as u16)
-      } else {
-        None
-      }
-    });
     let thumb_height = ((visible_items as f32 / total_items as f32) * track_height as f32)
       .ceil()
       .max(1.0) as u16;
@@ -1707,19 +1700,16 @@ fn draw_ui_list(buf: &mut Buffer, rect: Rect, list: &UiList, _cursor_out: &mut O
         as u16
     };
     for i in 0..track_height {
-      // Keep selected row highlight visually continuous; don't paint scrollbar glyphs
-      // over it.
-      if selected_visible_row == Some(i) {
-        continue;
-      }
       let y = rect.y + i;
       let is_thumb = i >= thumb_offset && i < thumb_offset + thumb_height;
-      let symbol = if is_thumb { "█" } else { "│" };
+      if !is_thumb {
+        continue;
+      }
       let mut style = Style::default();
       if let Some(color) = scroll_color {
         style = style.fg(color);
       }
-      buf.set_string(track_x, y, symbol, style);
+      buf.set_string(track_x, y, "█", style);
     }
   }
 }
@@ -2031,8 +2021,10 @@ fn draw_file_picker_list_pane(
       let y = track.y + idx;
       let is_thumb = idx >= metrics.thumb_offset
         && idx < metrics.thumb_offset.saturating_add(metrics.thumb_height);
-      let symbol = if is_thumb { "█" } else { "│" };
-      buf.set_string(track.x, y, symbol, scrollbar_style);
+      if !is_thumb {
+        continue;
+      }
+      buf.set_string(track.x, y, "█", scrollbar_style);
     }
   }
 }
@@ -2085,8 +2077,10 @@ fn draw_file_picker_preview_pane(
       let y = track.y + idx;
       let is_thumb = idx >= metrics.thumb_offset
         && idx < metrics.thumb_offset.saturating_add(metrics.thumb_height);
-      let symbol = if is_thumb { "█" } else { "│" };
-      buf.set_string(track.x, y, symbol, scrollbar_style);
+      if !is_thumb {
+        continue;
+      }
+      buf.set_string(track.x, y, "█", scrollbar_style);
     }
   }
 }
@@ -3863,7 +3857,7 @@ mod tests {
   }
 
   #[test]
-  fn completion_list_scrollbar_does_not_override_selected_row() {
+  fn completion_list_scrollbar_renders_thumb_without_track_line() {
     let items = (0..10)
       .map(|idx| UiListItem::new(format!("item-{idx}")))
       .collect();
@@ -3880,10 +3874,10 @@ mod tests {
 
     let track_x = rect.x + rect.width - 1;
     let selected_row_cell = buf.get(track_x, rect.y);
-    assert_eq!(selected_row_cell.symbol(), " ");
+    assert_eq!(selected_row_cell.symbol(), "█");
 
     let next_row_cell = buf.get(track_x, rect.y + 1);
-    assert_eq!(next_row_cell.symbol(), "│");
+    assert_eq!(next_row_cell.symbol(), " ");
   }
 
   #[test]

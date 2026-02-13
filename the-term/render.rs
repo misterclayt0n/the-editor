@@ -1503,6 +1503,13 @@ fn draw_ui_list(buf: &mut Buffer, rect: Rect, list: &UiList, _cursor_out: &mut O
   let is_completion_list = list.style.role.as_deref() == Some("completion");
   let has_icons = is_completion_list && list.items.iter().any(|item| item.leading_icon.is_some());
   let icon_col_width: u16 = if has_icons { 2 } else { 0 };
+  // Keep completion labels legible even when detail/signature text is very long.
+  // This mirrors column-based completion UIs (e.g. blink.cmp): label gets priority,
+  // detail only uses remaining space.
+  const COMPLETION_MIN_LABEL_WIDTH: usize = 18;
+  const COMPLETION_LABEL_TARGET_NUM: usize = 3; // 60%
+  const COMPLETION_LABEL_TARGET_DEN: usize = 5;
+  const COMPLETION_MIN_DETAIL_WIDTH: usize = 12;
   let has_detail = list.items.iter().any(|item| {
     item.subtitle.as_ref().map_or(false, |s| !s.is_empty())
       || item.description.as_ref().map_or(false, |s| !s.is_empty())
@@ -1621,23 +1628,33 @@ fn draw_ui_list(buf: &mut Buffer, rect: Rect, list: &UiList, _cursor_out: &mut O
         });
       if let Some(detail) = detail {
         let content_right = rect.x + rect.width.saturating_sub(row_right_padding);
-        let mut detail_text = detail.to_string();
-        truncate_in_place(&mut detail_text, label_available.saturating_sub(4));
-        let detail_width = detail_text.chars().count() as u16;
-        let detail_x = content_right.saturating_sub(detail_width);
-        let mut title_width = detail_x.saturating_sub(label_x).saturating_sub(1) as usize;
-        if title_width == 0 {
-          title_width = 1;
-        }
-        truncate_in_place(&mut title, title_width);
-        buf.set_string(label_x, y, title, row_style);
-        let detail_style = if is_selected {
-          row_style
+        let reserved_label = ((label_available * COMPLETION_LABEL_TARGET_NUM)
+          / COMPLETION_LABEL_TARGET_DEN)
+          .max(COMPLETION_MIN_LABEL_WIDTH.min(label_available));
+        let max_detail_width = label_available.saturating_sub(reserved_label.saturating_add(1));
+
+        if max_detail_width >= COMPLETION_MIN_DETAIL_WIDTH {
+          let mut detail_text = detail.to_string();
+          truncate_in_place(&mut detail_text, max_detail_width);
+          let detail_width = detail_text.chars().count() as u16;
+          let detail_x = content_right.saturating_sub(detail_width);
+          let mut title_width = detail_x.saturating_sub(label_x).saturating_sub(1) as usize;
+          if title_width == 0 {
+            title_width = 1;
+          }
+          truncate_in_place(&mut title, title_width);
+          buf.set_string(label_x, y, title, row_style);
+          let detail_style = if is_selected {
+            row_style
+          } else {
+            row_style.add_modifier(Modifier::DIM)
+          };
+          if detail_x > label_x {
+            buf.set_string(detail_x, y, detail_text, detail_style);
+          }
         } else {
-          row_style.add_modifier(Modifier::DIM)
-        };
-        if detail_x > label_x {
-          buf.set_string(detail_x, y, detail_text, detail_style);
+          truncate_in_place(&mut title, label_available);
+          buf.set_string(label_x, y, title, row_style);
         }
       } else {
         truncate_in_place(&mut title, label_available);
@@ -3849,6 +3866,12 @@ mod tests {
       .collect()
   }
 
+  fn buffer_row_text(buf: &Buffer, rect: Rect, row: u16) -> String {
+    (rect.x..rect.x + rect.width)
+      .map(|x| buf.get(x, row).symbol())
+      .collect::<String>()
+  }
+
   #[test]
   fn completion_panel_rect_places_below_cursor_when_space_exists() {
     let area = Rect::new(0, 0, 100, 30);
@@ -3951,6 +3974,28 @@ mod tests {
 
     let next_row_cell = buf.get(track_x, rect.y + 1);
     assert_eq!(next_row_cell.symbol(), "█");
+  }
+
+  #[test]
+  fn completion_list_keeps_function_label_visible_with_long_signature_detail() {
+    let mut item = UiListItem::new("install_test_watch_state");
+    item.leading_icon = Some("f".to_string());
+    item.subtitle =
+      Some("fn(&mut App, EditorId, &Path) -> Sender<Vec<PathEvent, Global>>".to_string());
+    let mut list = UiList::new("completion_list", vec![item]);
+    list.style = list.style.with_role("completion");
+    list.selected = Some(0);
+
+    let rect = Rect::new(0, 0, 64, 1);
+    let mut buf = Buffer::empty(rect);
+    let mut cursor = None;
+    draw_ui_list(&mut buf, rect, &list, &mut cursor);
+
+    let row = buffer_row_text(&buf, rect, rect.y);
+    assert!(
+      row.contains("install_test_watch_state"),
+      "completion row should preserve the label text, got: {row:?}"
+    );
   }
 
   #[test]

@@ -1686,6 +1686,16 @@ fn draw_ui_list(buf: &mut Buffer, rect: Rect, list: &UiList, _cursor_out: &mut O
     }
   }
 
+  let selected_track_row = selected.and_then(|sel| {
+    if sel < scroll_offset || sel >= scroll_offset + visible_items {
+      return None;
+    }
+    let visible_row = sel - scroll_offset;
+    let row_start = (visible_row * row_height) as u16;
+    let row_end = row_start.saturating_add(base_height as u16);
+    Some((row_start, row_end))
+  });
+
   if total_items > visible_items {
     let track_x = rect.x + rect.width - 1;
     let track_height = rect.height;
@@ -1693,12 +1703,37 @@ fn draw_ui_list(buf: &mut Buffer, rect: Rect, list: &UiList, _cursor_out: &mut O
       .ceil()
       .max(1.0) as u16;
     let max_scroll = total_items.saturating_sub(visible_items);
-    let thumb_offset = if max_scroll == 0 {
+    let mut thumb_offset = if max_scroll == 0 {
       0
     } else {
       ((scroll_offset as f32 / max_scroll as f32) * (track_height - thumb_height) as f32).round()
         as u16
     };
+    if let Some((selected_start, selected_end)) = selected_track_row {
+      let max_thumb_offset = track_height.saturating_sub(thumb_height);
+      let overlaps_selected = |offset: u16| {
+        let thumb_end = offset.saturating_add(thumb_height);
+        offset < selected_end && thumb_end > selected_start
+      };
+      if overlaps_selected(thumb_offset) && thumb_height < track_height {
+        let mut moved = false;
+        for candidate in (thumb_offset + 1)..=max_thumb_offset {
+          if !overlaps_selected(candidate) {
+            thumb_offset = candidate;
+            moved = true;
+            break;
+          }
+        }
+        if !moved && thumb_offset > 0 {
+          for candidate in (0..thumb_offset).rev() {
+            if !overlaps_selected(candidate) {
+              thumb_offset = candidate;
+              break;
+            }
+          }
+        }
+      }
+    }
     for i in 0..track_height {
       let y = rect.y + i;
       let is_thumb = i >= thumb_offset && i < thumb_offset + thumb_height;
@@ -3871,7 +3906,7 @@ mod tests {
   }
 
   #[test]
-  fn completion_list_scrollbar_renders_thumb_without_track_line() {
+  fn completion_list_scrollbar_preserves_selected_row_fill() {
     let items = (0..10)
       .map(|idx| UiListItem::new(format!("item-{idx}")))
       .collect();
@@ -3888,10 +3923,10 @@ mod tests {
 
     let track_x = rect.x + rect.width - 1;
     let selected_row_cell = buf.get(track_x, rect.y);
-    assert_eq!(selected_row_cell.symbol(), "█");
+    assert_eq!(selected_row_cell.symbol(), " ");
 
     let next_row_cell = buf.get(track_x, rect.y + 1);
-    assert_eq!(next_row_cell.symbol(), " ");
+    assert_eq!(next_row_cell.symbol(), "█");
   }
 
   #[test]

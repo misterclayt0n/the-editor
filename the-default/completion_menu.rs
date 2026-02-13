@@ -274,8 +274,8 @@ pub fn build_completion_menu_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNod
   panel.style.border = None;
   panel.constraints = UiConstraints::panel();
   panel.constraints.padding = UiInsets {
-    left:   1,
-    right:  1,
+    left:   0,
+    right:  0,
     top:    0,
     bottom: 0,
   };

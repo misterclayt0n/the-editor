@@ -12,6 +12,8 @@ use ratatui::{
 };
 use the_default::FilePickerState;
 
+use crate::docs_panel::DocsPanelSource;
+
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ScrollbarMetrics {
   pub track:            Rect,
@@ -49,6 +51,7 @@ pub struct CompletionDocsLayout {
   pub scrollbar_track: Option<Rect>,
   pub visible_rows:    usize,
   pub total_rows:      usize,
+  pub source:          DocsPanelSource,
 }
 
 impl FilePickerLayout {
@@ -160,9 +163,8 @@ pub fn compute_file_picker_layout(
 
   let preview_pane = show_preview.then_some(panes[1]);
   let preview_inner = preview_pane.map(|pane| Block::default().borders(Borders::ALL).inner(pane));
-  let preview_title = preview_inner.map(|inner| {
-    Rect::new(inner.x, inner.y, inner.width, 1.min(inner.height))
-  });
+  let preview_title =
+    preview_inner.map(|inner| Rect::new(inner.x, inner.y, inner.width, 1.min(inner.height)));
   let preview_total_lines = picker.preview_line_count();
   // Reserve 1 row for the file-path title at the top of the preview pane.
   let preview_visible_rows = preview_inner

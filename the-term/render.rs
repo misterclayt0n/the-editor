@@ -81,11 +81,14 @@ use the_lib::{
 };
 
 use crate::{
+  Ctx,
   docs_panel::{
     DocsPanelConfig,
+    DocsPanelSource,
     build_docs_panel,
+    docs_panel_source_from_panel_id,
+    docs_panel_source_from_text_id,
   },
-  Ctx,
   picker_layout::{
     CompletionDocsLayout,
     FilePickerLayout,
@@ -1006,12 +1009,23 @@ fn highlighted_code_block_lines(
       })
       .collect();
   };
-  let Some(language) = language.and_then(|marker| {
+  let resolved_language = language.and_then(|marker| {
     loader
       .language_for_name(marker)
       .or_else(|| loader.language_for_scope(marker))
       .or_else(|| loader.language_for_filename(Path::new(&format!("tmp.{marker}"))))
-  }) else {
+  });
+  let current_buffer_language = ctx
+    .file_path
+    .as_deref()
+    .and_then(|path| loader.language_for_filename(path))
+    .or_else(|| {
+      ctx
+        .lsp_document
+        .as_ref()
+        .and_then(|state| loader.language_for_name(state.language_id.as_str()))
+    });
+  let Some(language) = resolved_language.or(current_buffer_language) else {
     return code_lines
       .iter()
       .map(|line| {
@@ -1332,20 +1346,15 @@ fn draw_completion_docs_text(buf: &mut Buffer, rect: Rect, ctx: &Ctx, text: &UiT
   let total_rows = metrics.total_rows;
   let visible_rows = metrics.visible_rows;
   let max_scroll = total_rows.saturating_sub(visible_rows);
-  let docs_scroll = if text
+  let docs_scroll = match text
     .id
     .as_deref()
-    .is_some_and(|id| id.starts_with("term_command_palette_docs"))
+    .and_then(docs_panel_source_from_text_id)
+    .unwrap_or(DocsPanelSource::Completion)
   {
-    0
-  } else if text
-    .id
-    .as_deref()
-    .is_some_and(|id| id.starts_with("lsp_hover"))
-  {
-    ctx.hover_docs_scroll
-  } else {
-    ctx.completion_menu.docs_scroll
+    DocsPanelSource::Completion => ctx.completion_menu.docs_scroll,
+    DocsPanelSource::Hover => ctx.hover_docs_scroll,
+    DocsPanelSource::CommandPalette => 0,
   };
   let scroll = docs_scroll.min(max_scroll);
 
@@ -1514,8 +1523,8 @@ fn draw_ui_list(buf: &mut Buffer, rect: Rect, list: &UiList, _cursor_out: &mut O
   let has_icons = is_completion_list && list.items.iter().any(|item| item.leading_icon.is_some());
   let icon_col_width: u16 = if has_icons { 2 } else { 0 };
   // Keep completion labels legible even when detail/signature text is very long.
-  // This mirrors column-based completion UIs (e.g. blink.cmp): label gets priority,
-  // detail only uses remaining space.
+  // This mirrors column-based completion UIs (e.g. blink.cmp): label gets
+  // priority, detail only uses remaining space.
   const COMPLETION_MIN_LABEL_WIDTH: usize = 18;
   const COMPLETION_LABEL_TARGET_NUM: usize = 3; // 60%
   const COMPLETION_LABEL_TARGET_DEN: usize = 5;
@@ -2536,8 +2545,9 @@ fn completion_docs_layout_for_panel(
   ctx: &Ctx,
   panel: &UiPanel,
   panel_rect: Rect,
+  docs: &str,
+  source: DocsPanelSource,
 ) -> Option<CompletionDocsLayout> {
-  let docs = selected_completion_docs_text(ctx)?;
   let content = panel_content_rect(panel_rect, panel);
   if content.width == 0 || content.height == 0 {
     return None;
@@ -2570,6 +2580,7 @@ fn completion_docs_layout_for_panel(
     scrollbar_track,
     visible_rows: metrics.visible_rows,
     total_rows: metrics.total_rows,
+    source,
   })
 }
 
@@ -3194,8 +3205,13 @@ fn draw_ui_overlays(
                     focus,
                     cursor_out,
                   );
-                  ctx.completion_docs_layout =
-                    completion_docs_layout_for_panel(ctx, docs_panel, docs_rect);
+                  if let (Some(docs), Some(source)) = (
+                    selected_completion_docs_text(ctx),
+                    docs_panel_source_from_panel_id(docs_panel.id.as_str()),
+                  ) {
+                    ctx.completion_docs_layout =
+                      completion_docs_layout_for_panel(ctx, docs_panel, docs_rect, docs, source);
+                  }
                 }
               }
             }
@@ -3210,7 +3226,8 @@ fn draw_ui_overlays(
           {
             let available_height = area.height.saturating_sub(top_offset + bottom_offset);
             if available_height > 0 {
-              let overlay_area = Rect::new(area.x, area.y + top_offset, area.width, available_height);
+              let overlay_area =
+                Rect::new(area.x, area.y + top_offset, area.width, available_height);
               let (hover_width, hover_height) = panel_box_size(panel, overlay_area);
               let hover_rect =
                 completion_panel_rect(overlay_area, hover_width, hover_height, editor_cursor);
@@ -3224,6 +3241,17 @@ fn draw_ui_overlays(
                 focus,
                 cursor_out,
               );
+              if let (Some(docs), Some(source)) = (
+                ctx
+                  .hover_docs
+                  .as_deref()
+                  .map(str::trim)
+                  .filter(|text| !text.is_empty()),
+                docs_panel_source_from_panel_id(panel.id.as_str()),
+              ) {
+                ctx.completion_docs_layout =
+                  completion_docs_layout_for_panel(ctx, panel, hover_rect, docs, source);
+              }
             }
             index += 1;
             continue;
@@ -3495,7 +3523,7 @@ fn build_term_command_palette_docs_overlay(ctx: &Ctx) -> Option<UiNode> {
   }
 
   Some(build_docs_panel(
-    DocsPanelConfig::completion_docs(
+    DocsPanelConfig::command_palette_docs(
       "term_command_palette_docs",
       "term_command_palette_docs_text",
       LayoutIntent::Custom("term_command_palette_docs".to_string()),
@@ -3505,16 +3533,16 @@ fn build_term_command_palette_docs_overlay(ctx: &Ctx) -> Option<UiNode> {
 }
 
 fn build_lsp_hover_overlay(ctx: &Ctx) -> Option<UiNode> {
-  let docs = ctx.hover_docs.as_deref().map(str::trim).filter(|text| !text.is_empty())?;
-  let mut config = DocsPanelConfig::completion_docs(
+  let docs = ctx
+    .hover_docs
+    .as_deref()
+    .map(str::trim)
+    .filter(|text| !text.is_empty())?;
+  let config = DocsPanelConfig::hover_docs(
     "lsp_hover",
     "lsp_hover_text",
     LayoutIntent::Custom("lsp_hover".to_string()),
   );
-  config.layer = UiLayer::Tooltip;
-  config.min_width = Some(30);
-  config.max_width = Some(100);
-  config.max_height = Some(22);
   Some(build_docs_panel(config, docs.to_string()))
 }
 
@@ -3537,6 +3565,9 @@ fn adapt_ui_tree_for_term(ctx: &Ctx, ui: &mut UiTree) {
   }
 
   if !ctx.search_prompt.active {
+    if ctx.completion_menu.active {
+      return;
+    }
     if let Some(hover_overlay) = build_lsp_hover_overlay(ctx) {
       ui.overlays.push(hover_overlay);
     }
@@ -3879,7 +3910,6 @@ mod tests {
     UiNode,
     UiPanel,
   };
-  use crate::Ctx;
 
   use super::{
     CompletionDocsStyles,
@@ -3893,6 +3923,7 @@ mod tests {
     panel_box_size,
     term_command_palette_filtered_selection,
   };
+  use crate::Ctx;
 
   fn flatten_rows(rows: &[Vec<StyledTextRun>]) -> Vec<String> {
     rows

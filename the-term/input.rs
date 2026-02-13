@@ -41,6 +41,7 @@ use crate::{
     KeyEvent,
     Modifiers,
   },
+  docs_panel::DocsPanelSource,
   picker_layout::{
     compute_file_picker_layout,
     compute_scrollbar_metrics,
@@ -60,6 +61,22 @@ pub fn handle_key(ctx: &mut Ctx, event: CrosstermKeyEvent) {
     ctx.hover_docs = None;
     ctx.hover_docs_scroll = 0;
     ctx.request_render();
+  }
+
+  if ctx.hover_docs.is_some() && !ctx.completion_menu.active {
+    match event.code {
+      KeyCode::PageUp => {
+        ctx.hover_docs_scroll = ctx.hover_docs_scroll.saturating_sub(6);
+        ctx.request_render();
+        return;
+      },
+      KeyCode::PageDown => {
+        ctx.hover_docs_scroll = ctx.hover_docs_scroll.saturating_add(6);
+        ctx.request_render();
+        return;
+      },
+      _ => {},
+    }
   }
 
   if ctx.mode() == Mode::Command {
@@ -338,13 +355,60 @@ fn completion_docs_metrics(
   ctx: &Ctx,
   layout: crate::picker_layout::CompletionDocsLayout,
 ) -> Option<crate::picker_layout::ScrollbarMetrics> {
+  let scroll = docs_scroll_for_source(ctx, layout.source);
   let track = layout.scrollbar_track?;
-  compute_scrollbar_metrics(
-    track,
-    layout.total_rows,
-    layout.visible_rows.max(1),
-    ctx.completion_menu.docs_scroll,
-  )
+  compute_scrollbar_metrics(track, layout.total_rows, layout.visible_rows.max(1), scroll)
+}
+
+fn docs_scroll_for_source(ctx: &Ctx, source: DocsPanelSource) -> usize {
+  match source {
+    DocsPanelSource::Completion => ctx.completion_menu.docs_scroll,
+    DocsPanelSource::Hover => ctx.hover_docs_scroll,
+    DocsPanelSource::CommandPalette => 0,
+  }
+}
+
+fn set_docs_scroll_for_source(
+  ctx: &mut Ctx,
+  layout: crate::picker_layout::CompletionDocsLayout,
+  scroll: usize,
+) {
+  let max_scroll = layout.total_rows.saturating_sub(layout.visible_rows);
+  let scroll = scroll.min(max_scroll);
+  match layout.source {
+    DocsPanelSource::Completion => set_completion_docs_scroll(ctx, scroll),
+    DocsPanelSource::Hover => {
+      if ctx.hover_docs_scroll != scroll {
+        ctx.hover_docs_scroll = scroll;
+        ctx.request_render();
+      }
+    },
+    DocsPanelSource::CommandPalette => {},
+  }
+}
+
+fn scroll_docs_for_source(
+  ctx: &mut Ctx,
+  layout: crate::picker_layout::CompletionDocsLayout,
+  delta: isize,
+) {
+  match layout.source {
+    DocsPanelSource::Completion => completion_docs_scroll(ctx, delta),
+    DocsPanelSource::Hover => {
+      let max_scroll = layout.total_rows.saturating_sub(layout.visible_rows);
+      let next = if delta.is_negative() {
+        ctx.hover_docs_scroll.saturating_sub(delta.unsigned_abs())
+      } else {
+        ctx.hover_docs_scroll.saturating_add(delta as usize)
+      };
+      let next = next.min(max_scroll);
+      if ctx.hover_docs_scroll != next {
+        ctx.hover_docs_scroll = next;
+        ctx.request_render();
+      }
+    },
+    DocsPanelSource::CommandPalette => {},
+  }
 }
 
 fn handle_completion_docs_left_down(
@@ -378,7 +442,7 @@ fn handle_completion_docs_left_down(
     .saturating_sub(grab_offset)
     .min(metrics.max_thumb_offset);
   let scroll = scroll_offset_from_thumb(metrics, clamped_y);
-  set_completion_docs_scroll(ctx, scroll);
+  set_docs_scroll_for_source(ctx, layout, scroll);
   ctx.completion_docs_drag = Some(CompletionDocsDragState::Scrollbar { grab_offset });
 }
 
@@ -402,7 +466,7 @@ fn handle_completion_docs_drag(
     .saturating_sub(grab_offset)
     .min(metrics.max_thumb_offset);
   let scroll = scroll_offset_from_thumb(metrics, thumb_offset);
-  set_completion_docs_scroll(ctx, scroll);
+  set_docs_scroll_for_source(ctx, layout, scroll);
 }
 
 fn handle_completion_docs_wheel(
@@ -417,7 +481,7 @@ fn handle_completion_docs_wheel(
     .scrollbar_track
     .is_some_and(|track| point_in_rect(x, y, track));
   if in_content || in_scrollbar {
-    completion_docs_scroll(ctx, delta);
+    scroll_docs_for_source(ctx, layout, delta);
   }
 }
 
@@ -545,6 +609,7 @@ mod tests {
       scrollbar_track: Some(Rect::new(19, 1, 1, 6)),
       visible_rows:    6,
       total_rows:      24,
+      source:          DocsPanelSource::Completion,
     });
 
     handle_mouse(&mut ctx, mouse_event(MouseEventKind::ScrollDown, 2, 2));
@@ -561,6 +626,7 @@ mod tests {
       scrollbar_track: Some(Rect::new(19, 1, 1, 6)),
       visible_rows:    6,
       total_rows:      30,
+      source:          DocsPanelSource::Completion,
     });
 
     handle_mouse(
@@ -576,6 +642,26 @@ mod tests {
       mouse_event(MouseEventKind::Drag(MouseButton::Left), 19, 6),
     );
     assert!(ctx.completion_menu.docs_scroll >= after_down);
+  }
+
+  #[test]
+  fn hover_docs_wheel_scrolls_hover_state() {
+    let mut ctx = Ctx::new(None).expect("ctx");
+    ctx.hover_docs = Some("hover docs".to_string());
+    ctx.hover_docs_scroll = 0;
+    ctx.completion_docs_layout = Some(crate::picker_layout::CompletionDocsLayout {
+      panel:           Rect::new(0, 0, 20, 8),
+      content:         Rect::new(1, 1, 18, 6),
+      scrollbar_track: Some(Rect::new(19, 1, 1, 6)),
+      visible_rows:    6,
+      total_rows:      24,
+      source:          DocsPanelSource::Hover,
+    });
+
+    handle_mouse(&mut ctx, mouse_event(MouseEventKind::ScrollDown, 2, 2));
+
+    assert_eq!(ctx.hover_docs_scroll, 3);
+    assert_eq!(ctx.completion_menu.docs_scroll, 0);
   }
 
   #[test]

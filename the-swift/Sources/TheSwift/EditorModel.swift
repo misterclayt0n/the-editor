@@ -274,7 +274,7 @@ final class EditorModel: ObservableObject {
     }
 
     func refreshFilePicker() {
-        let json = app.file_picker_snapshot_json(editorId, 300).toString()
+        let json = app.file_picker_snapshot_json(editorId, 10_000).toString()
         guard let data = json.data(using: .utf8) else {
             stopFilePickerTimerIfNeeded()
             filePickerSnapshot = nil

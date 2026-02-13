@@ -2392,17 +2392,23 @@ fn panel_box_size(panel: &UiPanel, area: Rect) -> (u16, u16) {
   let padding_v = padding.vertical();
   let title_height = panel.title.is_some() as u16;
 
+  let (min_panel_width, min_panel_height) = if panel_is_completion(panel) {
+    (1, 1)
+  } else {
+    (10, 3)
+  };
+
   let max_content_width =
     max_content_width_for_intent(panel.intent.clone(), area, border, padding_h);
   let (child_w, child_h) = measure_node(&panel.child, max_content_width);
   let panel_width = child_w
     .saturating_add(border * 2 + padding_h)
     .min(area.width)
-    .max(10);
+    .max(min_panel_width);
   let panel_height = child_h
     .saturating_add(border * 2 + padding_v + title_height)
     .min(area.height)
-    .max(3);
+    .max(min_panel_height);
 
   apply_constraints(
     panel_width,
@@ -3749,8 +3755,14 @@ mod tests {
     CommandPaletteState,
   };
   use the_lib::render::{
+    LayoutIntent,
+    UiConstraints,
+    UiContainer,
+    UiInsets,
     UiList,
     UiListItem,
+    UiNode,
+    UiPanel,
   };
 
   use super::{
@@ -3760,6 +3772,7 @@ mod tests {
     completion_docs_rows,
     completion_panel_rect,
     draw_ui_list,
+    panel_box_size,
     term_command_palette_filtered_selection,
   };
 
@@ -3878,6 +3891,38 @@ mod tests {
 
     let next_row_cell = buf.get(track_x, rect.y + 1);
     assert_eq!(next_row_cell.symbol(), " ");
+  }
+
+  #[test]
+  fn completion_panel_size_allows_single_row_without_minimum_height() {
+    let mut list = UiList::new("completion_list", vec![UiListItem::new("std")]);
+    list.fill_width = false;
+    list.style = list.style.with_role("completion");
+
+    let mut container = UiContainer::column("completion_container", 0, vec![UiNode::List(list)]);
+    container.style = container.style.with_role("completion");
+
+    let mut panel = UiPanel::new(
+      "completion",
+      LayoutIntent::Custom("completion".to_string()),
+      UiNode::Container(container),
+    );
+    panel.style = panel.style.with_role("completion");
+    panel.style.border = None;
+    panel.constraints = UiConstraints::panel();
+    panel.constraints.padding = UiInsets {
+      left:   0,
+      right:  0,
+      top:    0,
+      bottom: 0,
+    };
+    panel.constraints.min_width = None;
+
+    let area = Rect::new(0, 0, 80, 20);
+    let (width, height) = panel_box_size(&panel, area);
+
+    assert_eq!(width, 3);
+    assert_eq!(height, 1);
   }
 
   #[test]

@@ -255,6 +255,7 @@ pub fn build_completion_menu_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNod
     .collect();
 
   let mut list = UiList::new("completion_list", list_items);
+  list.fill_width = false;
   list.selected = state.selected;
   list.scroll = state.scroll;
   list.max_visible = Some(MAX_VISIBLE_ITEMS);
@@ -279,7 +280,7 @@ pub fn build_completion_menu_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNod
     top:    0,
     bottom: 0,
   };
-  panel.constraints.min_width = Some(28);
+  panel.constraints.min_width = None;
   panel.constraints.max_width = Some(64);
   panel.constraints.max_height = Some((MAX_VISIBLE_ITEMS as u16).saturating_add(4));
 

@@ -757,7 +757,6 @@ pub fn build_file_picker_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNode> {
   }
 
   let mut input = UiInput::new("file_picker_input", picker.query.clone());
-  input.placeholder = Some("Find file".to_string());
   input.cursor = picker.query[..picker.cursor.min(picker.query.len())]
     .chars()
     .count();

@@ -1892,40 +1892,36 @@ fn draw_file_picker_list_pane(
     return;
   }
 
-  let prompt_area = layout.list_prompt;
-  let prompt = if picker.query.is_empty() {
-    "find file".to_string()
-  } else {
-    picker.query.clone()
-  };
-  let prompt_style = if picker.query.is_empty() {
-    text_style.add_modifier(Modifier::DIM)
-  } else {
-    text_style
-  };
-  Paragraph::new(prompt)
-    .style(prompt_style)
-    .render(prompt_area, buf);
+  // Title row: "Find File" label on the left, match count on the right.
+  let title_area = layout.list_title;
+  let title_style = text_style.add_modifier(Modifier::BOLD);
+  buf.set_stringn(
+    title_area.x,
+    title_area.y,
+    "Find File",
+    title_area.width as usize,
+    title_style,
+  );
 
   let count = format!("{}/{}", picker.matched_count(), picker.total_count());
   let count_style = text_style.add_modifier(Modifier::DIM);
   buf.set_stringn(
-    prompt_area.x.saturating_add(
-      prompt_area
+    title_area.x.saturating_add(
+      title_area
         .width
         .saturating_sub(count.chars().count() as u16),
     ),
-    prompt_area.y,
+    title_area.y,
     &count,
-    prompt_area.width as usize,
+    title_area.width as usize,
     count_style,
   );
 
   if let Some(error) = picker.error.as_ref().filter(|err| !err.is_empty()) {
     let error_area = Rect::new(
-      prompt_area.x,
-      prompt_area.y,
-      prompt_area
+      title_area.x,
+      title_area.y,
+      title_area
         .width
         .saturating_sub(count.chars().count() as u16 + 1),
       1,
@@ -1933,6 +1929,14 @@ fn draw_file_picker_list_pane(
     let mut error_text = format!("! {error}");
     truncate_in_place(&mut error_text, error_area.width as usize);
     buf.set_string(error_area.x, error_area.y, error_text, count_style);
+  }
+
+  // Input row: render the search query (no placeholder ghost text).
+  let prompt_area = layout.list_prompt;
+  if !picker.query.is_empty() {
+    Paragraph::new(picker.query.clone())
+      .style(text_style)
+      .render(prompt_area, buf);
   }
 
   let is_focused = focus
@@ -1960,7 +1964,7 @@ fn draw_file_picker_list_pane(
     );
   }
 
-  if inner.height < 3 {
+  if inner.height < 4 {
     return;
   }
 
@@ -2082,6 +2086,26 @@ fn draw_file_picker_preview_pane(
     .border_style(border_style)
     .style(fill_style);
   block.render(rect, buf);
+
+  // File-path title at the top of the preview pane.
+  if let Some(title_rect) = layout.preview_title {
+    if let Some(preview_path) = &picker.preview_path {
+      let path_display = preview_path
+        .strip_prefix(&picker.root)
+        .unwrap_or(preview_path)
+        .display()
+        .to_string();
+      let path_style = text_style.add_modifier(Modifier::DIM);
+      buf.set_stringn(
+        title_rect.x,
+        title_rect.y,
+        &path_display,
+        title_rect.width as usize,
+        path_style,
+      );
+    }
+  }
+
   let Some(content) = layout.preview_content else {
     return;
   };

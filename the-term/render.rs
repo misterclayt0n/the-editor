@@ -3772,6 +3772,7 @@ mod tests {
     completion_docs_rows,
     completion_panel_rect,
     draw_ui_list,
+    max_content_width_for_intent,
     panel_box_size,
     term_command_palette_filtered_selection,
   };
@@ -3894,9 +3895,8 @@ mod tests {
   }
 
   #[test]
-  fn completion_panel_size_allows_single_row_without_minimum_height() {
+  fn completion_panel_size_uses_fixed_viewport_width_and_single_row_height() {
     let mut list = UiList::new("completion_list", vec![UiListItem::new("std")]);
-    list.fill_width = false;
     list.style = list.style.with_role("completion");
 
     let mut container = UiContainer::column("completion_container", 0, vec![UiNode::List(list)]);
@@ -3920,8 +3920,10 @@ mod tests {
 
     let area = Rect::new(0, 0, 80, 20);
     let (width, height) = panel_box_size(&panel, area);
+    let expected_width = max_content_width_for_intent(panel.intent.clone(), area, 0, 0)
+      .min(panel.constraints.max_width.unwrap_or(u16::MAX));
 
-    assert_eq!(width, 3);
+    assert_eq!(width, expected_width);
     assert_eq!(height, 1);
   }
 

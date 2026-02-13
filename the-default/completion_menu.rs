@@ -255,7 +255,6 @@ pub fn build_completion_menu_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNod
     .collect();
 
   let mut list = UiList::new("completion_list", list_items);
-  list.fill_width = false;
   list.selected = state.selected;
   list.scroll = state.scroll;
   list.max_visible = Some(MAX_VISIBLE_ITEMS);

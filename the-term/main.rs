@@ -8,6 +8,7 @@
 
 mod config_cli;
 mod ctx;
+mod docs_panel;
 mod dispatch;
 mod input;
 mod picker_layout;

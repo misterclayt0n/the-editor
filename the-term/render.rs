@@ -81,6 +81,10 @@ use the_lib::{
 };
 
 use crate::{
+  docs_panel::{
+    DocsPanelConfig,
+    build_docs_panel,
+  },
   Ctx,
   picker_layout::{
     CompletionDocsLayout,
@@ -1334,6 +1338,12 @@ fn draw_completion_docs_text(buf: &mut Buffer, rect: Rect, ctx: &Ctx, text: &UiT
     .is_some_and(|id| id.starts_with("term_command_palette_docs"))
   {
     0
+  } else if text
+    .id
+    .as_deref()
+    .is_some_and(|id| id.starts_with("lsp_hover"))
+  {
+    ctx.hover_docs_scroll
   } else {
     ctx.completion_menu.docs_scroll
   };
@@ -2352,7 +2362,11 @@ fn panel_is_completion(panel: &UiPanel) -> bool {
 }
 
 fn panel_is_completion_docs(panel: &UiPanel) -> bool {
-  panel.id == "completion_docs" || panel.style.role.as_deref() == Some("completion_docs")
+  panel.id == "completion_docs"
+}
+
+fn panel_is_hover(panel: &UiPanel) -> bool {
+  panel.id == "lsp_hover"
 }
 
 fn panel_is_term_command_palette_list(panel: &UiPanel) -> bool {
@@ -3188,6 +3202,32 @@ fn draw_ui_overlays(
             index += 2;
             continue;
           }
+          if panel_is_hover(panel)
+            && matches!(
+              panel.intent,
+              LayoutIntent::Custom(_) | LayoutIntent::Floating
+            )
+          {
+            let available_height = area.height.saturating_sub(top_offset + bottom_offset);
+            if available_height > 0 {
+              let overlay_area = Rect::new(area.x, area.y + top_offset, area.width, available_height);
+              let (hover_width, hover_height) = panel_box_size(panel, overlay_area);
+              let hover_rect =
+                completion_panel_rect(overlay_area, hover_width, hover_height, editor_cursor);
+              draw_panel_in_rect(
+                buf,
+                hover_rect,
+                ctx,
+                panel,
+                BorderEdge::Top,
+                false,
+                focus,
+                cursor_out,
+              );
+            }
+            index += 1;
+            continue;
+          }
 
           match panel.intent.clone() {
             LayoutIntent::Bottom => {
@@ -3282,6 +3322,10 @@ fn is_search_prompt_overlay(node: &UiNode) -> bool {
 
 fn is_command_palette_overlay(node: &UiNode) -> bool {
   matches!(node, UiNode::Panel(panel) if panel.id.starts_with("command_palette"))
+}
+
+fn is_hover_overlay(node: &UiNode) -> bool {
+  matches!(node, UiNode::Panel(panel) if panel.id == "lsp_hover")
 }
 
 fn status_bar_from_overlay_mut(node: &mut UiNode) -> Option<&mut UiStatusBar> {
@@ -3450,44 +3494,32 @@ fn build_term_command_palette_docs_overlay(ctx: &Ctx) -> Option<UiNode> {
     return None;
   }
 
-  let mut docs_text = UiText::new("term_command_palette_docs_text", docs);
-  docs_text.style = docs_text.style.with_role("completion_docs");
-  docs_text.clip = false;
+  Some(build_docs_panel(
+    DocsPanelConfig::completion_docs(
+      "term_command_palette_docs",
+      "term_command_palette_docs_text",
+      LayoutIntent::Custom("term_command_palette_docs".to_string()),
+    ),
+    docs,
+  ))
+}
 
-  let mut docs_container = UiContainer::column("term_command_palette_docs_container", 0, vec![
-    UiNode::Text(docs_text),
-  ]);
-  docs_container.style = docs_container.style.with_role("completion_docs");
-
-  let mut docs_panel = UiPanel::new(
-    "term_command_palette_docs",
-    LayoutIntent::Custom("term_command_palette_docs".to_string()),
-    UiNode::Container(docs_container),
+fn build_lsp_hover_overlay(ctx: &Ctx) -> Option<UiNode> {
+  let docs = ctx.hover_docs.as_deref().map(str::trim).filter(|text| !text.is_empty())?;
+  let mut config = DocsPanelConfig::completion_docs(
+    "lsp_hover",
+    "lsp_hover_text",
+    LayoutIntent::Custom("lsp_hover".to_string()),
   );
-  docs_panel.style = docs_panel.style.with_role("completion_docs");
-  docs_panel.style.border = None;
-  docs_panel.layer = UiLayer::Overlay;
-  docs_panel.constraints = UiConstraints {
-    min_width:  Some(28),
-    max_width:  Some(84),
-    min_height: None,
-    max_height: Some(18),
-    padding:    UiInsets {
-      left:   1,
-      right:  1,
-      top:    1,
-      bottom: 1,
-    },
-    align:      UiAlignPair {
-      horizontal: UiAlign::Start,
-      vertical:   UiAlign::End,
-    },
-  };
-
-  Some(UiNode::Panel(docs_panel))
+  config.layer = UiLayer::Tooltip;
+  config.min_width = Some(30);
+  config.max_width = Some(100);
+  config.max_height = Some(22);
+  Some(build_docs_panel(config, docs.to_string()))
 }
 
 fn adapt_ui_tree_for_term(ctx: &Ctx, ui: &mut UiTree) {
+  ui.overlays.retain(|node| !is_hover_overlay(node));
   if ctx.command_palette.is_open {
     ui.overlays.retain(|node| !is_command_palette_overlay(node));
     let (query, cursor) = command_palette_prompt_query_and_cursor(ctx);
@@ -3505,6 +3537,9 @@ fn adapt_ui_tree_for_term(ctx: &Ctx, ui: &mut UiTree) {
   }
 
   if !ctx.search_prompt.active {
+    if let Some(hover_overlay) = build_lsp_hover_overlay(ctx) {
+      ui.overlays.push(hover_overlay);
+    }
     return;
   }
 
@@ -3521,6 +3556,10 @@ fn adapt_ui_tree_for_term(ctx: &Ctx, ui: &mut UiTree) {
     status.left =
       search_statusline_text(ctx.search_prompt.query.as_str(), ctx.search_prompt.cursor);
     status.left_icon = None;
+  }
+
+  if let Some(hover_overlay) = build_lsp_hover_overlay(ctx) {
+    ui.overlays.push(hover_overlay);
   }
 }
 
@@ -3840,10 +3879,12 @@ mod tests {
     UiNode,
     UiPanel,
   };
+  use crate::Ctx;
 
   use super::{
     CompletionDocsStyles,
     StyledTextRun,
+    build_lsp_hover_overlay,
     completion_docs_panel_rect,
     completion_docs_rows,
     completion_panel_rect,
@@ -3931,6 +3972,26 @@ mod tests {
     let completion_rect = Rect::new(2, 6, 76, 10);
     let docs_rect = completion_docs_panel_rect(area, 36, 9, completion_rect);
     assert!(docs_rect.is_none());
+  }
+
+  #[test]
+  fn lsp_hover_overlay_builds_completion_docs_panel() {
+    let mut ctx = Ctx::new(None).expect("ctx");
+    ctx.hover_docs = Some("```rust\nfn hover() {}\n```\n\nhover docs".to_string());
+
+    let Some(UiNode::Panel(panel)) = build_lsp_hover_overlay(&ctx) else {
+      panic!("expected hover panel overlay");
+    };
+    assert_eq!(panel.id, "lsp_hover");
+    assert_eq!(panel.style.role.as_deref(), Some("completion_docs"));
+    assert_eq!(panel.layer, the_lib::render::UiLayer::Tooltip);
+  }
+
+  #[test]
+  fn lsp_hover_overlay_omits_empty_docs() {
+    let mut ctx = Ctx::new(None).expect("ctx");
+    ctx.hover_docs = Some("   ".to_string());
+    assert!(build_lsp_hover_overlay(&ctx).is_none());
   }
 
   #[test]

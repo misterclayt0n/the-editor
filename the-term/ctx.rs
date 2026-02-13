@@ -418,6 +418,8 @@ pub struct Ctx {
   pub command_palette:              CommandPaletteState,
   pub command_palette_style:        CommandPaletteStyle,
   pub completion_menu:              the_default::CompletionMenuState,
+  pub hover_docs:                   Option<String>,
+  pub hover_docs_scroll:            usize,
   pub file_picker:                  FilePickerState,
   pub lsp_runtime:                  LspRuntime,
   pub lsp_ready:                    bool,
@@ -761,6 +763,8 @@ impl Ctx {
       command_palette: CommandPaletteState::default(),
       command_palette_style: CommandPaletteStyle::helix_bottom(),
       completion_menu: the_default::CompletionMenuState::default(),
+      hover_docs: None,
+      hover_docs_scroll: 0,
       file_picker,
       lsp_runtime,
       lsp_ready: false,
@@ -1593,11 +1597,21 @@ impl Ctx {
         };
         match hover {
           Some(text) => {
-            self
-              .messages
-              .publish(MessageLevel::Info, Some("lsp".into()), text);
+            let trimmed = text.trim();
+            if trimmed.is_empty() {
+              self.clear_hover_state();
+              self.messages.publish(
+                MessageLevel::Info,
+                Some("lsp".into()),
+                "no hover information",
+              );
+            } else {
+              self.hover_docs = Some(trimmed.to_string());
+              self.hover_docs_scroll = 0;
+            }
           },
           None => {
+            self.clear_hover_state();
             self.messages.publish(
               MessageLevel::Info,
               Some("lsp".into()),
@@ -2387,6 +2401,11 @@ impl Ctx {
     self.lsp_completion_visible_indices.clear();
     self.lsp_completion_fallback_start = None;
     self.completion_menu.clear();
+  }
+
+  fn clear_hover_state(&mut self) {
+    self.hover_docs = None;
+    self.hover_docs_scroll = 0;
   }
 
   fn dispatch_completion_request(
@@ -3634,6 +3653,7 @@ impl the_default::DefaultContext for Ctx {
       return true;
     }
 
+    self.clear_hover_state();
     self.syntax_parse_lifecycle.cancel_pending();
     self.highlight_cache.clear();
     if has_syntax {
@@ -3899,6 +3919,7 @@ impl the_default::DefaultContext for Ctx {
   }
 
   fn set_file_path(&mut self, path: Option<PathBuf>) {
+    self.clear_hover_state();
     self.lsp_refresh_document_state(path.as_deref());
     self.file_path = path;
     self.refresh_vcs_diff_base();
@@ -3962,6 +3983,7 @@ impl the_default::DefaultContext for Ctx {
       return;
     };
 
+    self.clear_hover_state();
     self.dispatch_lsp_request(
       "textDocument/hover",
       hover_params(&uri, position),
@@ -4183,6 +4205,7 @@ impl the_default::DefaultContext for Ctx {
 
   fn open_file(&mut self, path: &Path) -> std::io::Result<()> {
     self.lsp_close_current_document();
+    self.clear_hover_state();
     let content = std::fs::read_to_string(path)?;
 
     {

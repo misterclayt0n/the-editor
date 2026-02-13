@@ -86,8 +86,8 @@ use crate::{
     DocsPanelConfig,
     DocsPanelSource,
     build_docs_panel,
-    docs_panel_source_from_panel_id,
-    docs_panel_source_from_text_id,
+    docs_panel_source_from_panel,
+    docs_panel_source_from_text,
   },
   picker_layout::{
     CompletionDocsLayout,
@@ -973,8 +973,37 @@ fn parse_markdown_fence_language(trimmed_line: &str) -> Option<String> {
     .split(|ch: char| ch.is_whitespace() || matches!(ch, ',' | '{' | '}'))
     .next()
     .unwrap_or_default()
-    .trim_matches('.');
-  (!token.is_empty()).then(|| token.to_string())
+    .trim_matches('.')
+    .to_ascii_lowercase();
+  (!token.is_empty()).then_some(token)
+}
+
+fn language_filename_hints(marker: &str) -> Vec<String> {
+  let marker = marker.trim().trim_matches('.').to_ascii_lowercase();
+  let mut out = Vec::new();
+  let mut push_unique = |value: &str| {
+    if value.is_empty() || out.iter().any(|existing| existing == value) {
+      return;
+    }
+    out.push(value.to_string());
+  };
+
+  push_unique(marker.as_str());
+  match marker.as_str() {
+    "rust" => push_unique("rs"),
+    "javascript" | "js" => push_unique("js"),
+    "typescript" | "ts" => push_unique("ts"),
+    "python" | "py" => push_unique("py"),
+    "shell" | "bash" | "sh" | "zsh" => push_unique("sh"),
+    "c++" | "cpp" | "cc" | "cxx" => push_unique("cpp"),
+    "c#" | "csharp" => push_unique("cs"),
+    "objective-c" | "objc" => push_unique("m"),
+    "objective-cpp" | "objcpp" => push_unique("mm"),
+    "markdown" => push_unique("md"),
+    "yaml" => push_unique("yml"),
+    _ => {},
+  }
+  out
 }
 
 fn highlighted_code_block_lines(
@@ -1010,10 +1039,18 @@ fn highlighted_code_block_lines(
       .collect();
   };
   let resolved_language = language.and_then(|marker| {
+    let marker = marker.trim();
+    let marker_lower = marker.to_ascii_lowercase();
     loader
       .language_for_name(marker)
+      .or_else(|| loader.language_for_name(marker_lower.as_str()))
       .or_else(|| loader.language_for_scope(marker))
-      .or_else(|| loader.language_for_filename(Path::new(&format!("tmp.{marker}"))))
+      .or_else(|| loader.language_for_scope(marker_lower.as_str()))
+      .or_else(|| {
+        language_filename_hints(marker)
+          .into_iter()
+          .find_map(|hint| loader.language_for_filename(Path::new(format!("tmp.{hint}").as_str())))
+      })
   });
   let current_buffer_language = ctx
     .file_path
@@ -1346,12 +1383,7 @@ fn draw_completion_docs_text(buf: &mut Buffer, rect: Rect, ctx: &Ctx, text: &UiT
   let total_rows = metrics.total_rows;
   let visible_rows = metrics.visible_rows;
   let max_scroll = total_rows.saturating_sub(visible_rows);
-  let docs_scroll = match text
-    .id
-    .as_deref()
-    .and_then(docs_panel_source_from_text_id)
-    .unwrap_or(DocsPanelSource::Completion)
-  {
+  let docs_scroll = match docs_panel_source_from_text(text).unwrap_or(DocsPanelSource::Completion) {
     DocsPanelSource::Completion => ctx.completion_menu.docs_scroll,
     DocsPanelSource::Hover => ctx.hover_docs_scroll,
     DocsPanelSource::CommandPalette => 0,
@@ -1405,7 +1437,9 @@ fn draw_ui_text(buf: &mut Buffer, rect: Rect, ctx: &Ctx, text: &UiText) {
   if rect.width == 0 || rect.height == 0 {
     return;
   }
-  if text.style.role.as_deref() == Some("completion_docs") {
+  if docs_panel_source_from_text(text).is_some()
+    || text.style.role.as_deref() == Some("completion_docs")
+  {
     draw_completion_docs_text(buf, rect, ctx, text);
     return;
   }
@@ -2371,11 +2405,17 @@ fn panel_is_completion(panel: &UiPanel) -> bool {
 }
 
 fn panel_is_completion_docs(panel: &UiPanel) -> bool {
-  panel.id == "completion_docs"
+  matches!(
+    docs_panel_source_from_panel(panel),
+    Some(DocsPanelSource::Completion)
+  )
 }
 
 fn panel_is_hover(panel: &UiPanel) -> bool {
-  panel.id == "lsp_hover"
+  matches!(
+    docs_panel_source_from_panel(panel),
+    Some(DocsPanelSource::Hover)
+  )
 }
 
 fn panel_is_term_command_palette_list(panel: &UiPanel) -> bool {
@@ -3207,7 +3247,7 @@ fn draw_ui_overlays(
                   );
                   if let (Some(docs), Some(source)) = (
                     selected_completion_docs_text(ctx),
-                    docs_panel_source_from_panel_id(docs_panel.id.as_str()),
+                    docs_panel_source_from_panel(docs_panel),
                   ) {
                     ctx.completion_docs_layout =
                       completion_docs_layout_for_panel(ctx, docs_panel, docs_rect, docs, source);
@@ -3247,7 +3287,7 @@ fn draw_ui_overlays(
                   .as_deref()
                   .map(str::trim)
                   .filter(|text| !text.is_empty()),
-                docs_panel_source_from_panel_id(panel.id.as_str()),
+                docs_panel_source_from_panel(panel),
               ) {
                 ctx.completion_docs_layout =
                   completion_docs_layout_for_panel(ctx, panel, hover_rect, docs, source);
@@ -3353,7 +3393,10 @@ fn is_command_palette_overlay(node: &UiNode) -> bool {
 }
 
 fn is_hover_overlay(node: &UiNode) -> bool {
-  matches!(node, UiNode::Panel(panel) if panel.id == "lsp_hover")
+  matches!(
+    node,
+    UiNode::Panel(panel) if matches!(docs_panel_source_from_panel(panel), Some(DocsPanelSource::Hover))
+  )
 }
 
 fn status_bar_from_overlay_mut(node: &mut UiNode) -> Option<&mut UiStatusBar> {
@@ -3909,6 +3952,7 @@ mod tests {
     UiListItem,
     UiNode,
     UiPanel,
+    UiText,
   };
 
   use super::{
@@ -3919,8 +3963,11 @@ mod tests {
     completion_docs_rows,
     completion_panel_rect,
     draw_ui_list,
+    draw_ui_text,
+    language_filename_hints,
     max_content_width_for_intent,
     panel_box_size,
+    parse_markdown_fence_language,
     term_command_palette_filtered_selection,
   };
   use crate::Ctx;
@@ -4015,7 +4062,25 @@ mod tests {
     };
     assert_eq!(panel.id, "lsp_hover");
     assert_eq!(panel.style.role.as_deref(), Some("completion_docs"));
+    assert_eq!(panel.source.as_deref(), Some("hover"));
     assert_eq!(panel.layer, the_lib::render::UiLayer::Tooltip);
+  }
+
+  #[test]
+  fn hover_docs_text_uses_hover_scroll_source_without_canonical_text_id() {
+    let mut ctx = Ctx::new(None).expect("ctx");
+    ctx.hover_docs_scroll = 1;
+    ctx.completion_menu.docs_scroll = 0;
+
+    let mut text = UiText::new("shared_docs_text", "a0\nb1\nc2");
+    text.source = Some("hover".to_string());
+    text.style = text.style.with_role("completion_docs");
+    text.clip = false;
+
+    let rect = Rect::new(0, 0, 8, 1);
+    let mut buf = Buffer::empty(rect);
+    draw_ui_text(&mut buf, rect, &ctx, &text);
+    assert_eq!(buf.get(0, 0).symbol(), "b");
   }
 
   #[test]
@@ -4151,5 +4216,19 @@ mod tests {
       "abc".to_string(),
       "def".to_string()
     ]);
+  }
+
+  #[test]
+  fn markdown_fence_language_normalizes_case() {
+    assert_eq!(
+      parse_markdown_fence_language("```Rust"),
+      Some("rust".to_string())
+    );
+  }
+
+  #[test]
+  fn language_hints_include_rust_extension_alias() {
+    let hints = language_filename_hints("rust");
+    assert!(hints.iter().any(|hint| hint == "rs"));
   }
 }

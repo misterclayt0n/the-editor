@@ -239,6 +239,8 @@ pub struct UiPanel {
   pub id:          String,
   pub title:       Option<String>,
   pub intent:      LayoutIntent,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub source:      Option<String>,
   pub style:       UiStyle,
   pub constraints: UiConstraints,
   pub layer:       UiLayer,
@@ -251,6 +253,7 @@ impl UiPanel {
       id: id.into(),
       title: None,
       intent,
+      source: None,
       style: UiStyle::panel(),
       constraints: UiConstraints::panel(),
       layer: UiLayer::Overlay,
@@ -263,6 +266,7 @@ impl UiPanel {
       id:          id.into(),
       title:       None,
       intent:      LayoutIntent::Floating,
+      source:      None,
       style:       UiStyle::panel(),
       constraints: UiConstraints::floating_default(),
       layer:       UiLayer::Overlay,
@@ -275,6 +279,7 @@ impl UiPanel {
       id:          id.into(),
       title:       None,
       intent:      LayoutIntent::Bottom,
+      source:      None,
       style:       UiStyle::panel(),
       constraints: UiConstraints::panel(),
       layer:       UiLayer::Overlay,
@@ -287,6 +292,7 @@ impl UiPanel {
       id:          id.into(),
       title:       None,
       intent:      LayoutIntent::Top,
+      source:      None,
       style:       UiStyle::panel(),
       constraints: UiConstraints::panel(),
       layer:       UiLayer::Overlay,
@@ -299,6 +305,8 @@ impl UiPanel {
 pub struct UiText {
   pub id:        Option<String>,
   pub content:   String,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub source:    Option<String>,
   pub style:     UiStyle,
   #[serde(default)]
   pub max_lines: Option<u16>,
@@ -311,6 +319,7 @@ impl UiText {
     Self {
       id:        Some(id.into()),
       content:   content.into(),
+      source:    None,
       style:     UiStyle::default(),
       max_lines: None,
       clip:      true,

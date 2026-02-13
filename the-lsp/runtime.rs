@@ -868,6 +868,14 @@ fn default_client_capabilities() -> Value {
       }
     },
     "textDocument": {
+      "hover": {
+        "contentFormat": ["markdown", "plaintext"]
+      },
+      "completion": {
+        "completionItem": {
+          "documentationFormat": ["markdown", "plaintext"]
+        }
+      },
       "synchronization": {
         "dynamicRegistration": true,
         "didSave": true,

@@ -287,6 +287,7 @@ pub fn build_completion_menu_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNod
 
   if let Some(docs) = docs {
     let mut docs_text = UiText::new("completion_docs_text", docs);
+    docs_text.source = Some("completion".to_string());
     docs_text.style = docs_text.style.with_role("completion_docs");
     docs_text.clip = false;
 
@@ -301,6 +302,7 @@ pub fn build_completion_menu_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNod
       LayoutIntent::Custom("completion_docs".to_string()),
       UiNode::Container(docs_container),
     );
+    docs_panel.source = Some("completion".to_string());
     docs_panel.style = docs_panel.style.with_role("completion_docs");
     docs_panel.style.border = None;
     docs_panel.constraints = UiConstraints::panel();

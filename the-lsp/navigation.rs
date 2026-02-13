@@ -225,7 +225,100 @@ fn hover_contents_to_text(value: &Value) -> Option<String> {
     }
     return Some(format!("```{language}\n{value}\n```"));
   }
+  if let Some(kind) = object.get("kind").and_then(Value::as_str) {
+    if kind.eq_ignore_ascii_case("markdown") || kind.eq_ignore_ascii_case("md") {
+      return Some(value.to_string());
+    }
+    if kind.eq_ignore_ascii_case("plaintext") || kind.eq_ignore_ascii_case("text") {
+      return Some(plaintext_hover_to_markdown(value));
+    }
+  }
   Some(value.to_string())
+}
+
+fn plaintext_hover_to_markdown(value: &str) -> String {
+  let trimmed = value.trim();
+  if trimmed.is_empty() || trimmed.contains("```") {
+    return trimmed.to_string();
+  }
+
+  let paragraphs = split_plaintext_hover_paragraphs(trimmed);
+  if paragraphs.is_empty() {
+    return String::new();
+  }
+
+  let mut code_prefix_count = 0usize;
+  for paragraph in &paragraphs {
+    if hover_paragraph_looks_like_code(paragraph) {
+      code_prefix_count = code_prefix_count.saturating_add(1);
+    } else {
+      break;
+    }
+  }
+  if code_prefix_count == 0 {
+    return trimmed.to_string();
+  }
+
+  let code_block = paragraphs[..code_prefix_count].join("\n\n");
+  let body = if code_prefix_count < paragraphs.len() {
+    paragraphs[code_prefix_count..].join("\n\n")
+  } else {
+    String::new()
+  };
+
+  if body.is_empty() {
+    format!("```\n{code_block}\n```")
+  } else {
+    format!("```\n{code_block}\n```\n\n{body}")
+  }
+}
+
+fn split_plaintext_hover_paragraphs(text: &str) -> Vec<String> {
+  let mut paragraphs = Vec::new();
+  let mut current = Vec::new();
+  for raw_line in text.lines() {
+    let line = raw_line.trim_end();
+    if line.trim().is_empty() {
+      if !current.is_empty() {
+        let paragraph = current.join("\n").trim().to_string();
+        if !paragraph.is_empty() {
+          paragraphs.push(paragraph);
+        }
+        current.clear();
+      }
+      continue;
+    }
+    current.push(line.to_string());
+  }
+  if !current.is_empty() {
+    let paragraph = current.join("\n").trim().to_string();
+    if !paragraph.is_empty() {
+      paragraphs.push(paragraph);
+    }
+  }
+  paragraphs
+}
+
+fn hover_paragraph_looks_like_code(value: &str) -> bool {
+  let lower = value.to_ascii_lowercase();
+  let first_line = value.lines().next().unwrap_or_default().trim();
+  value.contains("::")
+    || value.contains("->")
+    || value.contains("=>")
+    || value
+      .chars()
+      .any(|ch| matches!(ch, '{' | '}' | '(' | ')' | '[' | ']' | ';' | '<' | '>'))
+    || lower.contains("fn ")
+    || lower.contains("pub ")
+    || lower.contains("struct ")
+    || lower.contains("enum ")
+    || lower.contains("trait ")
+    || lower.contains("impl ")
+    || first_line.starts_with("use ")
+    || first_line.starts_with("let ")
+    || first_line.starts_with("const ")
+    || first_line.starts_with("type ")
+    || first_line.starts_with("mod ")
 }
 
 fn normalize_hover_text(value: &str) -> Option<String> {
@@ -445,5 +538,50 @@ mod tests {
       hover,
       Some("```rust\ncore::time::Duration\n```\n\nA duration type.".to_string())
     );
+  }
+
+  #[test]
+  fn parses_hover_plaintext_signature_into_fenced_markdown() {
+    let value = json!({
+      "contents": {
+        "kind": "plaintext",
+        "value": "pub struct Duration {\nsecs: u64,\n}\n\nA duration type."
+      }
+    });
+    let hover = parse_hover_response(Some(&value)).expect("hover parse");
+    assert_eq!(
+      hover,
+      Some("```\npub struct Duration {\nsecs: u64,\n}\n```\n\nA duration type.".to_string())
+    );
+  }
+
+  #[test]
+  fn parses_hover_plaintext_namespace_and_signature_into_single_fence() {
+    let value = json!({
+      "contents": {
+        "kind": "plaintext",
+        "value": "core::time\n\npub struct Duration {\nsecs: u64,\nnanos: Nanoseconds,\n}\n\nA duration type."
+      }
+    });
+    let hover = parse_hover_response(Some(&value)).expect("hover parse");
+    assert_eq!(
+      hover,
+      Some(
+        "```\ncore::time\n\npub struct Duration {\nsecs: u64,\nnanos: Nanoseconds,\n}\n```\n\nA duration type."
+          .to_string()
+      )
+    );
+  }
+
+  #[test]
+  fn leaves_plaintext_hover_unchanged_when_prose_comes_first() {
+    let value = json!({
+      "contents": {
+        "kind": "plaintext",
+        "value": "A duration type.\n\npub struct Duration {}"
+      }
+    });
+    let hover = parse_hover_response(Some(&value)).expect("hover parse");
+    assert_eq!(hover, Some("A duration type.\n\npub struct Duration {}".to_string()));
   }
 }

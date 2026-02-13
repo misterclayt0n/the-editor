@@ -56,6 +56,12 @@ pub fn handle_key(ctx: &mut Ctx, event: CrosstermKeyEvent) {
     return;
   }
 
+  if matches!(event.code, KeyCode::Esc) && ctx.hover_docs.is_some() {
+    ctx.hover_docs = None;
+    ctx.hover_docs_scroll = 0;
+    ctx.request_render();
+  }
+
   if ctx.mode() == Mode::Command {
     if let Some(mut key) = to_ui_key(event.code) {
       if matches!(event.code, KeyCode::Tab | KeyCode::BackTab) {
@@ -503,6 +509,8 @@ fn to_ui_modifiers(modifiers: KeyModifiers) -> UiModifiers {
 #[cfg(test)]
 mod tests {
   use crossterm::event::{
+    KeyCode,
+    KeyEvent,
     KeyModifiers,
     MouseEvent,
   };
@@ -512,6 +520,7 @@ mod tests {
   };
 
   use super::*;
+  use crate::dispatch::build_dispatch;
 
   fn mouse_event(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
     MouseEvent {
@@ -520,6 +529,10 @@ mod tests {
       row,
       modifiers: KeyModifiers::empty(),
     }
+  }
+
+  fn key_event(code: KeyCode) -> KeyEvent {
+    KeyEvent::new(code, KeyModifiers::empty())
   }
 
   #[test]
@@ -563,5 +576,22 @@ mod tests {
       mouse_event(MouseEventKind::Drag(MouseButton::Left), 19, 6),
     );
     assert!(ctx.completion_menu.docs_scroll >= after_down);
+  }
+
+  #[test]
+  fn escape_clears_hover_docs_overlay() {
+    let dispatch = build_dispatch::<Ctx>();
+    let mut ctx = Ctx::new(None).expect("ctx");
+    ctx.set_dispatch(&dispatch);
+    ctx.mode = Mode::Command;
+    ctx.hover_docs = Some("hover docs".to_string());
+    ctx.hover_docs_scroll = 5;
+    ctx.needs_render = false;
+
+    handle_key(&mut ctx, key_event(KeyCode::Esc));
+
+    assert!(ctx.hover_docs.is_none());
+    assert_eq!(ctx.hover_docs_scroll, 0);
+    assert!(ctx.needs_render);
   }
 }

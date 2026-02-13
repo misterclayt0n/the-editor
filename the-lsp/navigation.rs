@@ -208,7 +208,7 @@ fn hover_contents_to_text(value: &Value) -> Option<String> {
       .iter()
       .filter_map(hover_contents_to_text)
       .collect::<Vec<_>>()
-      .join("\n");
+      .join("\n\n");
     if joined.is_empty() {
       return None;
     }
@@ -216,30 +216,24 @@ fn hover_contents_to_text(value: &Value) -> Option<String> {
   }
 
   let object = value.as_object()?;
-  if let Some(markup) = object.get("value").and_then(Value::as_str) {
-    return Some(markup.to_string());
+  let value = object.get("value").and_then(Value::as_str)?;
+  if let Some(language) = object.get("language").and_then(Value::as_str) {
+    // MarkedString with explicit language: preserve language context via fenced block
+    // unless content is already markdown.
+    if language.eq_ignore_ascii_case("markdown") || language.eq_ignore_ascii_case("md") {
+      return Some(value.to_string());
+    }
+    return Some(format!("```{language}\n{value}\n```"));
   }
-  object
-    .get("language")
-    .zip(object.get("value"))
-    .and_then(|(_, value)| value.as_str().map(ToOwned::to_owned))
+  Some(value.to_string())
 }
 
 fn normalize_hover_text(value: &str) -> Option<String> {
-  let first_non_empty = value
-    .lines()
-    .map(str::trim)
-    .find(|line| !line.is_empty())
-    .unwrap_or_default();
-  if first_non_empty.is_empty() {
+  let trimmed = value.trim();
+  if trimmed.is_empty() {
     return None;
   }
-  let mut out = first_non_empty.to_string();
-  if out.len() > 240 {
-    out.truncate(240);
-    out.push('…');
-  }
-  Some(out)
+  Some(trimmed.to_string())
 }
 
 fn flatten_document_symbol(
@@ -435,6 +429,21 @@ mod tests {
       }
     });
     let hover = parse_hover_response(Some(&value)).expect("hover parse");
-    assert_eq!(hover, Some("```rust".to_string()));
+    assert_eq!(hover, Some("```rust\nfn test()\n```".to_string()));
+  }
+
+  #[test]
+  fn parses_hover_marked_string_array() {
+    let value = json!({
+      "contents": [
+        { "language": "rust", "value": "core::time::Duration" },
+        "A duration type."
+      ]
+    });
+    let hover = parse_hover_response(Some(&value)).expect("hover parse");
+    assert_eq!(
+      hover,
+      Some("```rust\ncore::time::Duration\n```\n\nA duration type.".to_string())
+    );
   }
 }

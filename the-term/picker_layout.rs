@@ -72,22 +72,23 @@ pub fn compute_file_picker_layout(
 
   let width = area
     .width
-    .saturating_mul(9)
-    .saturating_div(10)
+    .saturating_mul(23)
+    .saturating_div(25)
     .max(72)
     .min(area.width);
   let height = area
     .height
-    .saturating_mul(8)
-    .saturating_div(10)
+    .saturating_mul(17)
+    .saturating_div(20)
     .max(18)
     .min(area.height);
   let x = area.x + area.width.saturating_sub(width) / 2;
   let y = area.y + area.height.saturating_sub(height) / 2;
   let panel = Rect::new(x, y, width, height);
 
-  let outer = Block::default().borders(Borders::ALL);
-  let panel_inner = outer.inner(panel);
+  // The terminal renderer draws the list/preview frames directly.
+  // Keep the outer panel frame transparent so the picker stays visually light.
+  let panel_inner = panel;
   if panel_inner.width < 3 || panel_inner.height < 3 {
     return Some(FilePickerLayout {
       panel,
@@ -112,6 +113,8 @@ pub fn compute_file_picker_layout(
   let list_pane = panes[0];
   let list_inner = Block::default().borders(Borders::ALL).inner(list_pane);
   let list_prompt = Rect::new(list_inner.x, list_inner.y, list_inner.width, 1);
+  // Keep one empty row between the prompt and list items for a cleaner, less
+  // cramped look.
   let list_area = if list_inner.height >= 3 {
     Rect::new(
       list_inner.x,

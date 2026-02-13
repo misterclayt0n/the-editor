@@ -1813,17 +1813,7 @@ fn draw_file_picker_panel(
     }
   }
 
-  let title = panel
-    .title
-    .clone()
-    .unwrap_or_else(|| "File Picker".to_string());
   fill_rect(buf, layout.panel, fill_style);
-  let outer = Block::default()
-    .borders(Borders::ALL)
-    .title(title)
-    .border_style(border_style)
-    .style(fill_style);
-  outer.render(layout.panel, buf);
 
   if layout.panel_inner.width < 3 || layout.panel_inner.height < 3 {
     return;
@@ -1879,7 +1869,7 @@ fn draw_file_picker_list_pane(
 
   let prompt_area = layout.list_prompt;
   let prompt = if picker.query.is_empty() {
-    "Find file".to_string()
+    "find file".to_string()
   } else {
     picker.query.clone()
   };
@@ -1938,10 +1928,6 @@ fn draw_file_picker_list_pane(
     return;
   }
 
-  let divider_y = prompt_area.y.saturating_add(1);
-  let divider = "─".repeat(inner.width as usize);
-  buf.set_string(inner.x, divider_y, divider, border_style);
-
   let list_area = layout.list_content;
   if list_area.width == 0 || list_area.height == 0 {
     return;
@@ -1963,6 +1949,17 @@ fn draw_file_picker_list_pane(
   let end = scroll_offset
     .saturating_add(visible_rows)
     .min(total_matches);
+  let selected_scope = theme
+    .try_get("ui.file_picker.list.selected")
+    .or_else(|| theme.try_get("ui.menu.selected"));
+  let selected_bg = selected_scope
+    .and_then(|style| style.bg)
+    .map(lib_color_to_ratatui);
+  let selected_fg = selected_scope
+    .and_then(|style| style.fg)
+    .map(lib_color_to_ratatui)
+    .or(text_style.fg);
+  let scrollbar_style = border_style.add_modifier(Modifier::DIM);
   let fuzzy_highlight_style =
     lib_style_to_ratatui(theme.try_get("special").unwrap_or_default()).add_modifier(Modifier::BOLD);
   let mut match_indices = Vec::new();
@@ -1974,6 +1971,16 @@ fn draw_file_picker_list_pane(
     let is_selected = picker.selected == Some(row_idx);
     let is_hovered = picker.hovered == Some(row_idx);
     let mut style = text_style;
+    if is_selected && let Some(bg) = selected_bg {
+      fill_rect(
+        buf,
+        Rect::new(list_area.x, y, list_area.width, 1),
+        Style::default().bg(bg),
+      );
+    }
+    if is_selected && let Some(fg) = selected_fg {
+      style = style.fg(fg);
+    }
     if item.is_dir {
       style = style.add_modifier(Modifier::BOLD);
     }
@@ -1981,18 +1988,15 @@ fn draw_file_picker_list_pane(
       style = style.add_modifier(Modifier::UNDERLINED);
     }
 
-    let marker = if is_selected { " > " } else { "   " };
-    buf.set_string(list_area.x, y, marker, style);
-
     let icon = file_picker_icon_glyph(item.icon.as_str(), item.is_dir);
-    let icon_x = list_area.x.saturating_add(3);
+    let icon_x = list_area.x.saturating_add(1);
     buf.set_string(icon_x, y, icon, style);
 
     let icon_width = icon.chars().count() as u16;
     let text_x = icon_x.saturating_add(icon_width.saturating_add(1));
     let content_width = list_area
       .width
-      .saturating_sub(3 + icon_width.saturating_add(1)) as usize;
+      .saturating_sub(1 + icon_width.saturating_add(1)) as usize;
     if content_width == 0 {
       continue;
     }
@@ -2017,7 +2021,7 @@ fn draw_file_picker_list_pane(
       let is_thumb = idx >= metrics.thumb_offset
         && idx < metrics.thumb_offset.saturating_add(metrics.thumb_height);
       let symbol = if is_thumb { "█" } else { "│" };
-      buf.set_string(track.x, y, symbol, border_style);
+      buf.set_string(track.x, y, symbol, scrollbar_style);
     }
   }
 }
@@ -2038,8 +2042,7 @@ fn draw_file_picker_preview_pane(
   let block = Block::default()
     .borders(Borders::ALL)
     .border_style(border_style)
-    .style(fill_style)
-    .title("Preview");
+    .style(fill_style);
   block.render(rect, buf);
   let Some(content) = layout.preview_content else {
     return;
@@ -2066,12 +2069,13 @@ fn draw_file_picker_preview_pane(
     && let Some(metrics) =
       compute_scrollbar_metrics(track, total_lines, visible_rows, scroll_offset)
   {
+    let scrollbar_style = border_style.add_modifier(Modifier::DIM);
     for idx in 0..track.height {
       let y = track.y + idx;
       let is_thumb = idx >= metrics.thumb_offset
         && idx < metrics.thumb_offset.saturating_add(metrics.thumb_height);
       let symbol = if is_thumb { "█" } else { "│" };
-      buf.set_string(track.x, y, symbol, border_style);
+      buf.set_string(track.x, y, symbol, scrollbar_style);
     }
   }
 }

@@ -1321,6 +1321,9 @@ pub struct App {
   diagnostics:                DiagnosticsState,
   ui_theme:                   Theme,
   loader:                     Option<Arc<Loader>>,
+  syntax_short_parse_timeout: Duration,
+  #[cfg(test)]
+  force_short_parse_timeout_path: bool,
 }
 
 impl App {
@@ -1370,6 +1373,9 @@ impl App {
       diagnostics: DiagnosticsState::default(),
       ui_theme,
       loader,
+      syntax_short_parse_timeout: Duration::from_millis(3),
+      #[cfg(test)]
+      force_short_parse_timeout_path: false,
     }
   }
 
@@ -3598,18 +3604,35 @@ impl DefaultContext for App {
         let mut bump_syntax_version = false;
 
         if let Some(syntax) = doc.syntax_mut() {
-          match syntax.try_update_with_short_timeout(
+          #[cfg(test)]
+          let short_update = if self.force_short_parse_timeout_path {
+            // Mirror tree-house timeout semantics: edits are applied to existing
+            // trees even when parse does not complete in time.
+            syntax.interpolate_with_edits(&edits);
+            Ok(false)
+          } else {
+            syntax.try_update_with_short_timeout(
+              new_text.slice(..),
+              &edits,
+              loader.as_ref(),
+              self.syntax_short_parse_timeout,
+            )
+          };
+
+          #[cfg(not(test))]
+          let short_update = syntax.try_update_with_short_timeout(
             new_text.slice(..),
             &edits,
             loader.as_ref(),
-            Duration::from_millis(3),
-          ) {
+            self.syntax_short_parse_timeout,
+          );
+
+          match short_update {
             Ok(true) => {
               bump_syntax_version = true;
               syntax_highlight_update = Some(SyntaxParseHighlightUpdate::Parsed);
             },
             Ok(false) => {
-              syntax.interpolate_with_edits(&edits);
               bump_syntax_version = true;
               syntax_highlight_update = Some(SyntaxParseHighlightUpdate::Interpolated);
               let mut parse_syntax = syntax.clone();
@@ -3625,7 +3648,6 @@ impl DefaultContext for App {
               }));
             },
             Err(_) => {
-              syntax.interpolate_with_edits(&edits);
               bump_syntax_version = true;
               syntax_highlight_update = Some(SyntaxParseHighlightUpdate::Interpolated);
               let mut parse_syntax = syntax.clone();
@@ -4987,6 +5009,53 @@ mod tests {
       return;
     };
     assert_ne!(updated_highlight, initial_highlight);
+  }
+
+  #[test]
+  fn syntax_timeout_path_keeps_tree_offsets_aligned_with_document() {
+    let _guard = ffi_test_guard();
+    let mut app = App::new();
+    if app.loader.is_none() {
+      return;
+    }
+    app.force_short_parse_timeout_path = true;
+
+    let viewport = ffi::Rect {
+      x:      0,
+      y:      0,
+      width:  80,
+      height: 24,
+    };
+    let scroll = ffi::Position { row: 0, col: 0 };
+    let id = app.create_editor(&"let value = 1;\n".repeat(64), viewport, scroll);
+    assert!(app.activate(id).is_some());
+    assert!(app.set_file_path(id, "main.rs"));
+
+    let before = app.active_editor_ref().document().text().clone();
+    let tx = Transaction::change(
+      &before,
+      std::iter::once((0, 0, Some("let inserted = 0;\n".into()))),
+    )
+    .expect("insert transaction");
+    assert!(DefaultContext::apply_transaction(&mut app, &tx));
+
+    assert!(
+      app
+        .active_state_ref()
+        .syntax_parse_lifecycle
+        .in_flight()
+        .is_some(),
+      "expected async parse job after forced short-timeout path"
+    );
+
+    let doc = app.active_editor_ref().document();
+    let syntax = doc.syntax().expect("syntax should remain available");
+    let root_end = syntax.tree().root_node().end_byte() as usize;
+    assert_eq!(
+      root_end,
+      doc.text().len_bytes(),
+      "syntax tree byte range should stay aligned after timeout fallback"
+    );
   }
 
   #[derive(Debug, Clone, Copy)]

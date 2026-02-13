@@ -104,13 +104,11 @@ use the_lib::{
     HighlightCache,
     Loader,
     Syntax,
-    generate_edits,
   },
   syntax_async::{
     ParseHighlightState,
     ParseLifecycle,
     ParseRequest,
-    QueueParseDecision,
   },
   transaction::{
     ChangeSet,
@@ -866,15 +864,6 @@ impl Ctx {
   /// Handle terminal resize.
   pub fn resize(&mut self, width: u16, height: u16) {
     self.editor.view_mut().viewport = Rect::new(0, 0, width, height);
-  }
-
-  fn queue_syntax_parse_job(&mut self, doc_version: u64, parse_job: SyntaxParseJob) {
-    match self.syntax_parse_lifecycle.queue(doc_version, parse_job) {
-      QueueParseDecision::Start(request) => {
-        spawn_syntax_parse_request(self.syntax_parse_tx.clone(), request);
-      },
-      QueueParseDecision::Queued(_) => {},
-    }
   }
 
   pub fn syntax_highlight_refresh_allowed(&self) -> bool {
@@ -3628,98 +3617,29 @@ impl the_default::DefaultContext for Ctx {
   }
 
   fn apply_transaction(&mut self, transaction: &Transaction) -> bool {
-    enum SyntaxParseHighlightUpdate {
-      Parsed,
-      Interpolated,
-    }
-
     let old_text_for_lsp = self.editor.document().text().clone();
     let loader = self.loader.clone();
-    let mut async_parse_job: Option<SyntaxParseJob> = None;
-    let mut async_parse_doc_version = None;
-    let mut syntax_highlight_update: Option<SyntaxParseHighlightUpdate> = None;
-    {
+    let (changed, has_syntax) = {
       let doc = self.editor.document_mut();
-      let old_text = doc.text().clone();
       if doc
-        .apply_transaction_with_syntax(transaction, None)
+        .apply_transaction_with_syntax(transaction, loader.as_deref())
         .is_err()
       {
         return false;
       }
+      (!transaction.changes().is_empty(), doc.syntax().is_some())
+    };
 
-      if transaction.changes().is_empty() {
-        return true;
-      }
-
-      if let Some(loader) = loader.as_ref() {
-        let new_text = doc.text().clone();
-        let edits = generate_edits(old_text.slice(..), transaction.changes());
-        let mut bump_syntax_version = false;
-
-        if let Some(syntax) = doc.syntax_mut() {
-          match syntax.try_update_with_short_timeout(
-            new_text.slice(..),
-            &edits,
-            loader.as_ref(),
-            Duration::from_millis(3),
-          ) {
-            Ok(true) => {
-              bump_syntax_version = true;
-              syntax_highlight_update = Some(SyntaxParseHighlightUpdate::Parsed);
-            },
-            Ok(false) => {
-              syntax.interpolate_with_edits(&edits);
-              bump_syntax_version = true;
-              syntax_highlight_update = Some(SyntaxParseHighlightUpdate::Interpolated);
-              let mut parse_syntax = syntax.clone();
-              let parse_source = new_text.clone();
-              let parse_loader = loader.clone();
-              let parse_edits = edits.clone();
-              async_parse_doc_version = Some(doc.version());
-              async_parse_job = Some(Box::new(move || {
-                parse_syntax
-                  .update_with_edits(parse_source.slice(..), &parse_edits, parse_loader.as_ref())
-                  .ok()
-                  .map(|()| parse_syntax)
-              }));
-            },
-            Err(_) => {
-              syntax.interpolate_with_edits(&edits);
-              bump_syntax_version = true;
-              syntax_highlight_update = Some(SyntaxParseHighlightUpdate::Interpolated);
-              let mut parse_syntax = syntax.clone();
-              let parse_source = new_text.clone();
-              let parse_loader = loader.clone();
-              let parse_edits = edits.clone();
-              async_parse_doc_version = Some(doc.version());
-              async_parse_job = Some(Box::new(move || {
-                parse_syntax
-                  .update_with_edits(parse_source.slice(..), &parse_edits, parse_loader.as_ref())
-                  .ok()
-                  .map(|()| parse_syntax)
-              }));
-            },
-          }
-        }
-
-        if bump_syntax_version {
-          doc.bump_syntax_version();
-        }
-      }
+    if !changed {
+      return true;
     }
 
-    if let (Some(parse_job), Some(doc_version)) = (async_parse_job, async_parse_doc_version) {
-      self.queue_syntax_parse_job(doc_version, parse_job);
-    }
-
-    if let Some(update) = syntax_highlight_update {
-      match update {
-        SyntaxParseHighlightUpdate::Parsed => self.syntax_parse_highlight_state.mark_parsed(),
-        SyntaxParseHighlightUpdate::Interpolated => {
-          self.syntax_parse_highlight_state.mark_interpolated();
-        },
-      }
+    self.syntax_parse_lifecycle.cancel_pending();
+    self.highlight_cache.clear();
+    if has_syntax {
+      self.syntax_parse_highlight_state.mark_parsed();
+    } else {
+      self.syntax_parse_highlight_state.mark_cleared();
     }
 
     self.lsp_send_did_change(&old_text_for_lsp, transaction.changes());
@@ -4843,6 +4763,57 @@ pkgs.mkShell {
         thread::sleep(Duration::from_millis(1));
       }
     }
+  }
+
+  #[test]
+  fn syntax_edits_use_synchronous_parse_and_keep_tree_aligned() {
+    let mut ctx = Ctx::new(None).expect("ctx");
+    if ctx.loader.is_none() {
+      return;
+    }
+
+    let tx = Transaction::change(
+      ctx.editor.document().text(),
+      std::iter::once((0, 0, Some("let value = 1;\n".repeat(64).into()))),
+    )
+    .expect("seed transaction");
+    assert!(DefaultContext::apply_transaction(&mut ctx, &tx));
+
+    let fixture = TempTestFile::with_extension("syntax-sync-edit", "rs", "");
+    if let Some(loader) = ctx.loader.clone() {
+      let _ = super::setup_syntax(ctx.editor.document_mut(), fixture.as_path(), &loader);
+    }
+    assert!(ctx.editor.document().syntax().is_some());
+
+    let before = ctx.editor.document().text().clone();
+    let edit_tx = Transaction::change(
+      &before,
+      std::iter::once((0, 0, Some("let inserted = 0;\n".into()))),
+    )
+    .expect("edit transaction");
+    assert!(DefaultContext::apply_transaction(&mut ctx, &edit_tx));
+
+    assert!(
+      ctx.syntax_parse_lifecycle.in_flight().is_none(),
+      "editing should not leave a syntax parse job in-flight"
+    );
+    assert!(
+      ctx.syntax_parse_lifecycle.queued().is_none(),
+      "editing should not queue deferred syntax parse jobs"
+    );
+    assert!(
+      !ctx.syntax_parse_highlight_state.is_interpolated(),
+      "highlight state should remain parsed after synchronous syntax update"
+    );
+
+    let doc = ctx.editor.document();
+    let syntax = doc.syntax().expect("syntax should remain available");
+    let root_end = syntax.tree().root_node().end_byte() as usize;
+    assert_eq!(
+      root_end,
+      doc.text().len_bytes(),
+      "syntax tree byte range should stay aligned after synchronous parse"
+    );
   }
 
   #[test]

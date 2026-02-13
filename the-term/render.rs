@@ -1924,6 +1924,17 @@ fn draw_file_picker_list_pane(
     *cursor_out = Some((x, prompt_area.y));
   }
 
+  let separator_y = prompt_area.y.saturating_add(1);
+  if separator_y < inner.y.saturating_add(inner.height) {
+    let separator = "─".repeat(inner.width as usize);
+    buf.set_string(
+      inner.x,
+      separator_y,
+      separator,
+      border_style.add_modifier(Modifier::DIM),
+    );
+  }
+
   if inner.height < 3 {
     return;
   }

@@ -23,7 +23,10 @@ use ratatui::{
 use ropey::Rope;
 use the_default::{
   FilePickerPreview,
+  OverlayRect as DefaultOverlayRect,
   command_palette_filtered_indices,
+  completion_docs_panel_rect as default_completion_docs_panel_rect,
+  completion_panel_rect as default_completion_panel_rect,
   file_picker_icon_glyph,
   render_plan,
   set_picker_visible_rows,
@@ -2440,40 +2443,13 @@ fn completion_panel_rect(
   panel_height: u16,
   editor_cursor: Option<(u16, u16)>,
 ) -> Rect {
-  let width = panel_width.min(area.width).max(1);
-  let height = panel_height.min(area.height).max(1);
-  let center_x = area.x + (area.width.saturating_sub(width)) / 2;
-  let center_y = area.y + (area.height.saturating_sub(height)) / 2;
-  let Some((cursor_x, cursor_y)) = editor_cursor else {
-    return Rect::new(center_x, center_y, width, height);
-  };
-  if area.width == 0 || area.height == 0 {
-    return Rect::new(center_x, center_y, width, height);
-  }
-
-  let max_x = area.x + area.width.saturating_sub(width);
-  let max_y = area.y + area.height.saturating_sub(height);
-  let cursor_x = cursor_x.clamp(area.x, area.x + area.width.saturating_sub(1));
-  let cursor_y = cursor_y.clamp(area.y, area.y + area.height.saturating_sub(1));
-
-  let mut x = cursor_x.saturating_sub(1);
-  x = x.clamp(area.x, max_x);
-
-  let below_start = cursor_y.saturating_add(1).max(area.y);
-  let below_space = area
-    .y
-    .saturating_add(area.height)
-    .saturating_sub(below_start);
-  let above_space = cursor_y.saturating_sub(area.y);
-  let place_below = below_space >= height || below_space >= above_space;
-
-  let y = if place_below {
-    below_start.min(max_y)
-  } else {
-    cursor_y.saturating_sub(height).max(area.y)
-  };
-
-  Rect::new(x, y, width, height)
+  let rect = default_completion_panel_rect(
+    DefaultOverlayRect::new(area.x, area.y, area.width, area.height),
+    panel_width,
+    panel_height,
+    editor_cursor,
+  );
+  Rect::new(rect.x, rect.y, rect.width, rect.height)
 }
 
 fn completion_docs_panel_rect(
@@ -2482,45 +2458,18 @@ fn completion_docs_panel_rect(
   panel_height: u16,
   completion_rect: Rect,
 ) -> Option<Rect> {
-  if area.width == 0 || area.height == 0 {
-    return None;
-  }
-  let desired_width = panel_width.min(area.width).max(1);
-  let desired_height = panel_height.min(area.height).max(1);
-  let gap = 1u16;
-  let min_side_width = 24u16;
-
-  let area_right = area.x.saturating_add(area.width);
-  let area_bottom = area.y.saturating_add(area.height);
-  let right_x = completion_rect
-    .x
-    .saturating_add(completion_rect.width)
-    .saturating_add(gap);
-  let right_available_width = area_right.saturating_sub(right_x);
-  let left_end = completion_rect.x.saturating_sub(gap);
-  let left_available_width = left_end.saturating_sub(area.x);
-
-  if right_available_width >= min_side_width || left_available_width >= min_side_width {
-    let place_right = right_available_width >= min_side_width
-      && (right_available_width >= left_available_width || left_available_width < min_side_width);
-    let available_width = if place_right {
-      right_available_width
-    } else {
-      left_available_width
-    };
-    let width = desired_width.min(available_width).max(1);
-    let height = desired_height.min(area.height).max(1);
-    let max_y = area_bottom.saturating_sub(height);
-    let y = completion_rect.y.clamp(area.y, max_y);
-    let x = if place_right {
-      right_x
-    } else {
-      left_end.saturating_sub(width)
-    };
-    return Some(Rect::new(x, y, width, height));
-  }
-
-  None
+  let rect = default_completion_docs_panel_rect(
+    DefaultOverlayRect::new(area.x, area.y, area.width, area.height),
+    panel_width,
+    panel_height,
+    DefaultOverlayRect::new(
+      completion_rect.x,
+      completion_rect.y,
+      completion_rect.width,
+      completion_rect.height,
+    ),
+  )?;
+  Some(Rect::new(rect.x, rect.y, rect.width, rect.height))
 }
 
 fn panel_box_size(panel: &UiPanel, area: Rect) -> (u16, u16) {

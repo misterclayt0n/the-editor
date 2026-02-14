@@ -40,6 +40,10 @@ struct UiOverlayHost: View {
                         EmptyView()
                     } else if case .panel(let panel) = node, panel.id == "message_toast" {
                         EmptyView()
+                    } else if case .panel(let panel) = node, panel.id == "completion" {
+                        EmptyView()
+                    } else if case .panel(let panel) = node, panel.id == "completion_docs" {
+                        EmptyView()
                     } else {
                         UiNodeView(node: node, cellSize: cellSize, containerSize: proxy.size)
                     }
@@ -915,6 +919,47 @@ extension UiTreeSnapshot {
         )
     }
 
+    func completionSnapshot() -> CompletionSnapshot? {
+        var completionPanel: UiPanelSnapshot? = nil
+        var docsPanel: UiPanelSnapshot? = nil
+
+        for node in overlays {
+            if case .panel(let panel) = node {
+                if panel.id == "completion" { completionPanel = panel }
+                if panel.id == "completion_docs" { docsPanel = panel }
+            }
+        }
+
+        guard let completionPanel else { return nil }
+
+        guard let list = findList(in: completionPanel.child, id: "completion_list") else {
+            return nil
+        }
+
+        let items = list.items.enumerated().map { index, item in
+            CompletionItemSnapshot(
+                id: index,
+                label: item.title,
+                detail: item.subtitle,
+                kindIcon: item.leadingIcon,
+                kindColor: uiColorToColor(item.leadingColor)
+            )
+        }
+
+        guard !items.isEmpty else { return nil }
+
+        let docsText: String? = docsPanel.flatMap { panel in
+            findText(in: panel.child, id: "completion_docs_text")?.content
+        }?.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        return CompletionSnapshot(
+            items: items,
+            selectedIndex: list.selected,
+            scroll: list.scroll,
+            docsText: docsText?.isEmpty == true ? nil : docsText
+        )
+    }
+
     var hasSearchPromptPanel: Bool {
         return searchPromptPanel() != nil
     }
@@ -1038,6 +1083,21 @@ extension UiTreeSnapshot {
         }
     }
 
+}
+
+struct CompletionSnapshot {
+    let items: [CompletionItemSnapshot]
+    let selectedIndex: Int?
+    let scroll: Int
+    let docsText: String?
+}
+
+struct CompletionItemSnapshot: Identifiable {
+    let id: Int
+    let label: String
+    let detail: String?
+    let kindIcon: String?
+    let kindColor: Color?
 }
 
 extension CommandPaletteLayout {

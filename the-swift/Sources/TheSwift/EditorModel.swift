@@ -12,6 +12,7 @@ final class EditorModel: ObservableObject {
     private var effectiveViewport: Rect
     let cellSize: CGSize
     let font: Font
+    private let initialFilePath: String?
     private(set) var mode: EditorMode = .normal
     @Published var pendingKeys: [String] = []
     @Published var pendingKeyHints: PendingKeyHintsSnapshot? = nil
@@ -21,9 +22,11 @@ final class EditorModel: ObservableObject {
     private var scrollRemainderX: CGFloat = 0
     private var scrollRemainderY: CGFloat = 0
     private var syntaxHighlightStyleCache: [UInt32: Style] = [:]
+    private var lastUiTreeJson: String? = nil
 
     init(filePath: String? = nil) {
         self.app = TheEditorFFIBridge.App()
+        self.initialFilePath = filePath
         let fontInfo = FontLoader.loadIosevka(size: 14)
         self.cellSize = fontInfo.cellSize
         self.font = fontInfo.font
@@ -73,15 +76,22 @@ final class EditorModel: ObservableObject {
         refresh()
     }
 
-    func refresh() {
+    func refresh(trigger: String = "manual") {
+        _ = trigger
         _ = app.poll_background(editorId)
-        uiTree = fetchUiTree()
+        let uiFetch = fetchUiTree()
+        if uiFetch.changed {
+            uiTree = uiFetch.tree
+        }
         updateEffectiveViewport()
+
         plan = app.render_plan(editorId)
+
         mode = EditorMode(rawValue: app.mode(editorId)) ?? .normal
         pendingKeys = fetchPendingKeys()
         pendingKeyHints = fetchPendingKeyHints()
         refreshFilePicker()
+
         if app.take_should_quit() {
             NSApp.terminate(nil)
         }
@@ -119,13 +129,13 @@ final class EditorModel: ObservableObject {
     func handleKeyEvent(_ keyEvent: KeyEvent) {
         if mode == .command {
             if sendUiKeyEvent(keyEvent) {
-                refresh()
+                refresh(trigger: "key_ui")
                 return
             }
         }
 
         _ = app.handle_key(editorId, keyEvent)
-        refresh()
+        refresh(trigger: "key")
     }
 
     func handleText(_ text: String, modifiers: NSEvent.ModifierFlags) {
@@ -139,7 +149,7 @@ final class EditorModel: ObservableObject {
             }
             _ = app.handle_key(editorId, event)
         }
-        refresh()
+        refresh(trigger: "text")
     }
 
     private func sendUiKeyEvent(_ keyEvent: KeyEvent) -> Bool {
@@ -163,7 +173,7 @@ final class EditorModel: ObservableObject {
         let newCol = max(0, Int(current.col) + colDelta)
         let scroll = Position(row: UInt64(newRow), col: UInt64(newCol))
         _ = app.set_scroll(editorId, scroll)
-        refresh()
+        refresh(trigger: "scroll")
     }
 
     private func scrollDelta(deltaX: CGFloat, deltaY: CGFloat, precise: Bool) -> (Int, Int) {
@@ -250,7 +260,10 @@ final class EditorModel: ObservableObject {
 
     func setCommandPaletteQuery(_ query: String) {
         _ = app.command_palette_set_query(editorId, query)
-        uiTree = fetchUiTree()
+        let uiFetch = fetchUiTree()
+        if uiFetch.changed {
+            uiTree = uiFetch.tree
+        }
     }
 
     // MARK: - File picker
@@ -262,7 +275,7 @@ final class EditorModel: ObservableObject {
 
     func submitFilePicker(index: Int) {
         _ = app.file_picker_submit(editorId, UInt(index))
-        refresh()
+        refresh(trigger: "file_picker_submit")
     }
 
     func closeFilePicker() {
@@ -270,7 +283,7 @@ final class EditorModel: ObservableObject {
         filePickerTimer = nil
         _ = app.file_picker_close(editorId)
         filePickerSnapshot = nil
-        refresh()
+        refresh(trigger: "file_picker_close")
     }
 
     func refreshFilePicker() {
@@ -331,30 +344,41 @@ final class EditorModel: ObservableObject {
         backgroundTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
             guard let self else { return }
             if self.app.poll_background(self.editorId) {
-                self.refresh()
+                self.refresh(trigger: "background")
             }
         }
     }
 
-    private func fetchUiTree() -> UiTreeSnapshot {
+    private struct UiTreeFetchResult {
+        let tree: UiTreeSnapshot
+        let changed: Bool
+    }
+
+    private func fetchUiTree() -> UiTreeFetchResult {
         let json = app.ui_tree_json(editorId).toString()
+        if let lastUiTreeJson, lastUiTreeJson == json {
+            return UiTreeFetchResult(tree: uiTree, changed: false)
+        }
         guard let data = json.data(using: .utf8) else {
             debugUiLog("ui_tree_json is not valid utf8")
-            return .empty
+            lastUiTreeJson = nil
+            return UiTreeFetchResult(tree: uiTree, changed: false)
         }
 
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
         do {
             let tree = try decoder.decode(UiTreeSnapshot.self, from: data)
+            lastUiTreeJson = json
             debugUiLog("ui_tree decoded overlays=\(tree.overlays.count)")
-            return tree
+            return UiTreeFetchResult(tree: tree, changed: true)
         } catch {
+            lastUiTreeJson = nil
             let hasPalette = json.contains("command_palette")
             debugUiLog("ui_tree decode failed: \(error)")
             debugUiLog("ui_tree json prefix: \(String(json.prefix(400)))")
             debugUiLog("ui_tree json contains command_palette=\(hasPalette)")
-            return .empty
+            return UiTreeFetchResult(tree: uiTree, changed: false)
         }
     }
 
@@ -385,6 +409,17 @@ final class EditorModel: ObservableObject {
             return nil
         }
         return ColorMapper.color(from: style.fg)
+    }
+
+    func completionDocsLanguageHint() -> String {
+        guard let path = initialFilePath, !path.isEmpty else {
+            return ""
+        }
+        let fileUrl = URL(fileURLWithPath: path)
+        if !fileUrl.pathExtension.isEmpty {
+            return fileUrl.pathExtension
+        }
+        return fileUrl.lastPathComponent
     }
 
     private func cachedSyntaxHighlightStyle(for highlight: UInt32) -> Style {

@@ -1,4 +1,5 @@
 module TheEditorFFI {
-  header "TheEditorFFI.h"
+  umbrella header "TheEditorFFI.h"
   export *
+  module * { export * }
 }

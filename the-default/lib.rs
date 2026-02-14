@@ -12,6 +12,7 @@ mod file_picker;
 mod input;
 mod keymap;
 mod message_bar;
+mod overlay_layout;
 mod pending;
 mod search_prompt;
 mod statusline;
@@ -119,6 +120,11 @@ pub use keymap::{
 pub use message_bar::{
   MessagePresentation,
   build_message_bar_ui,
+};
+pub use overlay_layout::{
+  OverlayRect,
+  completion_docs_panel_rect,
+  completion_panel_rect,
 };
 pub use pending::PendingInput;
 pub use search_prompt::{

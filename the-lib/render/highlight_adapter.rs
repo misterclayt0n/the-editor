@@ -61,10 +61,7 @@ pub struct SyntaxHighlightAdapter<'a> {
 }
 
 impl<'a> SyntaxHighlightAdapter<'a> {
-  fn from_highlights(
-    text: RopeSlice<'a>,
-    mut highlights: Vec<(Highlight, Range<usize>)>,
-  ) -> Self {
+  fn from_highlights(text: RopeSlice<'a>, mut highlights: Vec<(Highlight, Range<usize>)>) -> Self {
     highlights.sort_by_key(|(_, range)| (range.start, std::cmp::Reverse(range.end)));
     highlights.dedup_by(|a, b| a.0 == b.0 && a.1 == b.1);
     Self {
@@ -95,10 +92,7 @@ impl<'a> SyntaxHighlightAdapter<'a> {
       return Self::from_highlights(text, highlights);
     }
 
-    if allow_cache_refresh
-      && !byte_range.is_empty()
-      && !cache_is_current
-    {
+    if allow_cache_refresh && !byte_range.is_empty() && !cache_is_current {
       let _ = syntax.requery_and_cache(
         cache,
         text,

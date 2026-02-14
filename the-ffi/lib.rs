@@ -22,6 +22,7 @@ use std::{
   },
   sync::{
     Arc,
+    OnceLock,
     atomic::{
       AtomicUsize,
       Ordering,
@@ -41,6 +42,8 @@ use std::{
 };
 
 use ropey::Rope;
+use serde::Serialize;
+use serde_json::Value;
 use the_config::{
   build_dispatch as config_build_dispatch,
   build_keymaps as config_build_keymaps,
@@ -65,11 +68,14 @@ use the_default::{
   MessagePresentation,
   Mode,
   Motion,
+  OverlayRect as DefaultOverlayRect,
   SearchPromptState,
   close_file_picker,
   command_palette_default_selected,
   command_palette_filtered_indices,
   command_palette_selected_filtered_index,
+  completion_docs_panel_rect as default_completion_docs_panel_rect,
+  completion_panel_rect as default_completion_panel_rect,
   finalize_search,
   handle_query_change as file_picker_handle_query_change,
   poll_scan_results as file_picker_poll_scan_results,
@@ -111,13 +117,17 @@ use the_lib::{
     RenderGutterDiffKind,
     RenderStyles,
     SyntaxHighlightAdapter,
+    UiList,
+    UiNode,
     UiState,
+    UiTree,
     apply_diagnostic_gutter_markers,
     apply_diff_gutter_markers,
     build_plan,
     graphics::{
       Color as LibColor,
       CursorKind as LibCursorKind,
+      Modifier as LibModifier,
       Rect as LibRect,
       Style as LibStyle,
       UnderlineStyle as LibUnderlineStyle,
@@ -157,6 +167,9 @@ use the_lib::{
 use the_loader::config::user_lang_config;
 use the_lsp::{
   LspCapability,
+  LspCompletionContext,
+  LspCompletionItem,
+  LspCompletionItemKind,
   LspEvent,
   LspLocation,
   LspPosition,
@@ -164,8 +177,11 @@ use the_lsp::{
   LspRuntime,
   LspRuntimeConfig,
   LspServerConfig,
+  completion_params,
   goto_definition_params,
   jsonrpc,
+  parse_completion_item_response,
+  parse_completion_response_with_raw,
   parse_locations_response,
   text_sync::{
     FileChangeType,
@@ -927,20 +943,69 @@ impl LspStatuslineState {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+enum CompletionTriggerSource {
+  Manual,
+  Invoked,
+  TriggerCharacter(char),
+  Incomplete,
+}
+
+impl CompletionTriggerSource {
+  fn to_lsp_context(self) -> LspCompletionContext {
+    match self {
+      Self::Manual | Self::Invoked => LspCompletionContext::invoked(),
+      Self::TriggerCharacter(ch) => LspCompletionContext::trigger_character(ch),
+      Self::Incomplete => LspCompletionContext::trigger_for_incomplete(),
+    }
+  }
+}
+
+#[derive(Debug, Clone)]
+struct PendingAutoCompletion {
+  due_at:  Instant,
+  trigger: CompletionTriggerSource,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum PendingLspRequestKind {
-  GotoDefinition { uri: String },
+  GotoDefinition {
+    uri: String,
+  },
+  Completion {
+    uri:            String,
+    generation:     u64,
+    cursor:         usize,
+    replace_start:  usize,
+    announce_empty: bool,
+  },
+  CompletionResolve {
+    uri:   String,
+    index: usize,
+  },
 }
 
 impl PendingLspRequestKind {
   fn label(&self) -> &'static str {
     match self {
       Self::GotoDefinition { .. } => "goto-definition",
+      Self::Completion { .. } => "completion",
+      Self::CompletionResolve { .. } => "completion-resolve",
     }
   }
 
   fn uri(&self) -> &str {
     match self {
       Self::GotoDefinition { uri } => uri.as_str(),
+      Self::Completion { uri, .. } => uri.as_str(),
+      Self::CompletionResolve { uri, .. } => uri.as_str(),
+    }
+  }
+
+  fn cancellation_key(&self) -> (&'static str, &str) {
+    match self {
+      Self::GotoDefinition { uri } => ("goto-definition", uri),
+      Self::Completion { uri, .. } => ("completion", uri),
+      Self::CompletionResolve { uri, .. } => ("completion-resolve", uri),
     }
   }
 }
@@ -1273,6 +1338,1020 @@ fn lsp_file_watch_latency() -> Duration {
   Duration::from_millis(120)
 }
 
+fn is_symbol_word_char(ch: char) -> bool {
+  ch == '_' || ch.is_alphanumeric()
+}
+
+fn is_completion_replace_char(ch: char) -> bool {
+  is_symbol_word_char(ch)
+}
+
+fn lsp_completion_auto_trigger_latency() -> Duration {
+  Duration::from_millis(80)
+}
+
+fn lsp_completion_trigger_char_latency() -> Duration {
+  Duration::from_millis(20)
+}
+
+fn completion_menu_item_for_lsp_item(item: &LspCompletionItem) -> the_default::CompletionMenuItem {
+  let mut menu_item = the_default::CompletionMenuItem::new(item.label.clone());
+  menu_item.detail = completion_menu_detail_text(item);
+  menu_item.documentation = completion_menu_documentation_text(item);
+  if let Some(kind) = item.kind {
+    menu_item.kind_icon = Some(completion_kind_icon(kind).to_string());
+    menu_item.kind_color = Some(completion_kind_color(kind));
+  }
+  menu_item
+}
+
+fn completion_kind_icon(kind: LspCompletionItemKind) -> &'static str {
+  use LspCompletionItemKind::*;
+  match kind {
+    Text => "w",
+    Method => "f",
+    Function => "f",
+    Constructor => "f",
+    Field => "m",
+    Variable => "v",
+    Class => "c",
+    Interface => "i",
+    Module => "M",
+    Property => "m",
+    Unit => "u",
+    Value => "v",
+    Enum => "e",
+    Keyword => "k",
+    Snippet => "S",
+    Color => "v",
+    File => "F",
+    Reference => "r",
+    Folder => "D",
+    EnumMember => "e",
+    Constant => "C",
+    Struct => "s",
+    Event => "E",
+    Operator => "o",
+    TypeParameter => "t",
+  }
+}
+
+fn completion_kind_color(kind: LspCompletionItemKind) -> LibColor {
+  use LspCompletionItemKind::*;
+  match kind {
+    Method | Function | Constructor | Operator => LibColor::Rgb(0xDB, 0xBF, 0xEF),
+    Field | Variable | Property | Value | Reference => LibColor::Rgb(0xA4, 0xA0, 0xE8),
+    Class | Interface | Enum | Struct | TypeParameter => LibColor::Rgb(0xEF, 0xBA, 0x5D),
+    Module | Folder | EnumMember | Constant => LibColor::Rgb(0xE8, 0xDC, 0xA0),
+    Keyword => LibColor::Rgb(0xEC, 0xCD, 0xBA),
+    Snippet => LibColor::Rgb(0x9F, 0xF2, 0x8F),
+    Event => LibColor::Rgb(0xF4, 0x78, 0x68),
+    Text | Unit | Color | File => LibColor::Rgb(0xCC, 0xCC, 0xCC),
+  }
+}
+
+fn completion_menu_detail_text(item: &LspCompletionItem) -> Option<String> {
+  item
+    .detail
+    .as_ref()
+    .map(|value| value.trim())
+    .filter(|value| !value.is_empty())
+    .map(ToOwned::to_owned)
+}
+
+fn completion_menu_documentation_text(item: &LspCompletionItem) -> Option<String> {
+  item
+    .documentation
+    .as_deref()
+    .and_then(normalize_completion_documentation)
+}
+
+fn normalize_completion_documentation(value: &str) -> Option<String> {
+  let normalized = value.replace("\r\n", "\n").replace('\r', "\n");
+  let trimmed = normalized.trim();
+  if trimmed.is_empty() {
+    None
+  } else {
+    Some(trimmed.to_string())
+  }
+}
+
+fn merge_resolved_completion_item(current: &mut LspCompletionItem, resolved: LspCompletionItem) {
+  if current.filter_text.is_none() {
+    current.filter_text = resolved.filter_text;
+  }
+  if current.sort_text.is_none() {
+    current.sort_text = resolved.sort_text;
+  }
+  if !current.preselect {
+    current.preselect = resolved.preselect;
+  }
+  if current.detail.is_none() {
+    current.detail = resolved.detail;
+  }
+  if current.documentation.is_none() {
+    current.documentation = resolved.documentation;
+  }
+  if current.kind.is_none() {
+    current.kind = resolved.kind;
+  }
+  if current.primary_edit.is_none() {
+    current.primary_edit = resolved.primary_edit;
+  }
+  if current.additional_edits.is_empty() {
+    current.additional_edits = resolved.additional_edits;
+  }
+  if current.insert_text.is_none() {
+    current.insert_text = resolved.insert_text;
+  }
+  if current.insert_text_format.is_none() {
+    current.insert_text_format = resolved.insert_text_format;
+  }
+  if current.commit_characters.is_empty() {
+    current.commit_characters = resolved.commit_characters;
+  }
+}
+
+fn completion_item_accepts_commit_char(item: &LspCompletionItem, ch: char) -> bool {
+  item.commit_characters.iter().any(|candidate| {
+    let mut chars = candidate.chars();
+    matches!(chars.next(), Some(first) if first == ch && chars.next().is_none())
+  })
+}
+
+fn completion_item_filter_text(item: &LspCompletionItem) -> &str {
+  item.filter_text.as_deref().unwrap_or(&item.label)
+}
+
+fn completion_item_sort_key(item: &LspCompletionItem) -> String {
+  item
+    .sort_text
+    .as_deref()
+    .unwrap_or(completion_item_filter_text(item))
+    .to_ascii_lowercase()
+}
+
+#[derive(Clone)]
+struct DocsStyledTextRun {
+  text:  String,
+  style: LibStyle,
+}
+
+#[derive(Clone, Copy)]
+struct DocsRenderStyles {
+  base:    LibStyle,
+  heading: [LibStyle; 6],
+  bullet:  LibStyle,
+  quote:   LibStyle,
+  code:    LibStyle,
+  link:    LibStyle,
+  rule:    LibStyle,
+}
+
+impl DocsRenderStyles {
+  fn default(base: LibStyle) -> Self {
+    let heading = [
+      base.add_modifier(LibModifier::BOLD),
+      base.add_modifier(LibModifier::BOLD),
+      base.add_modifier(LibModifier::BOLD),
+      base.add_modifier(LibModifier::BOLD),
+      base.add_modifier(LibModifier::BOLD),
+      base.add_modifier(LibModifier::BOLD),
+    ];
+    Self {
+      base,
+      heading,
+      bullet: base.add_modifier(LibModifier::BOLD),
+      quote: base.add_modifier(LibModifier::DIM),
+      code: base.add_modifier(LibModifier::DIM),
+      link: base.underline_style(LibUnderlineStyle::Line),
+      rule: base.add_modifier(LibModifier::DIM),
+    }
+  }
+}
+
+#[derive(Debug, Serialize)]
+struct DocsRenderSnapshot {
+  lines: Vec<Vec<DocsRunSnapshot>>,
+}
+
+#[derive(Debug, Serialize)]
+struct DocsRunSnapshot {
+  text:  String,
+  style: DocsStyleSnapshot,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+struct DocsStyleSnapshot {
+  has_fg:              bool,
+  fg:                  DocsColorSnapshot,
+  has_bg:              bool,
+  bg:                  DocsColorSnapshot,
+  has_underline_color: bool,
+  underline_color:     DocsColorSnapshot,
+  underline_style:     u8,
+  add_modifier:        u16,
+  sub_modifier:        u16,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+struct DocsColorSnapshot {
+  kind:  u8,
+  value: u32,
+}
+
+impl From<ffi::Color> for DocsColorSnapshot {
+  fn from(color: ffi::Color) -> Self {
+    Self {
+      kind:  color.kind,
+      value: color.value,
+    }
+  }
+}
+
+fn docs_theme_style_or(theme: &Theme, scope: &str, fallback: LibStyle) -> LibStyle {
+  theme
+    .try_get(scope)
+    .map(|style| fallback.patch(style))
+    .unwrap_or(fallback)
+}
+
+fn docs_render_styles(theme: &Theme, base: LibStyle) -> DocsRenderStyles {
+  let mut styles = DocsRenderStyles::default(base);
+  styles.heading = [
+    docs_theme_style_or(theme, "markup.heading.1", styles.heading[0]),
+    docs_theme_style_or(theme, "markup.heading.2", styles.heading[1]),
+    docs_theme_style_or(theme, "markup.heading.3", styles.heading[2]),
+    docs_theme_style_or(theme, "markup.heading.4", styles.heading[3]),
+    docs_theme_style_or(theme, "markup.heading.5", styles.heading[4]),
+    docs_theme_style_or(theme, "markup.heading.6", styles.heading[5]),
+  ];
+  styles.bullet = docs_theme_style_or(theme, "markup.list.unnumbered", styles.bullet);
+  styles.quote = docs_theme_style_or(theme, "markup.quote", styles.quote);
+  styles.code = docs_theme_style_or(theme, "markup.raw.inline", styles.code);
+  styles.link = docs_theme_style_or(theme, "markup.link.text", styles.link);
+  styles.rule = docs_theme_style_or(theme, "punctuation.special", styles.rule);
+  styles
+}
+
+fn docs_push_styled_run(runs: &mut Vec<DocsStyledTextRun>, text: String, style: LibStyle) {
+  if text.is_empty() {
+    return;
+  }
+  if let Some(last) = runs.last_mut()
+    && last.style == style
+  {
+    last.text.push_str(&text);
+    return;
+  }
+  runs.push(DocsStyledTextRun { text, style });
+}
+
+fn docs_parse_markdown_link(chars: &[char], start: usize) -> Option<(usize, String)> {
+  if chars.get(start).copied() != Some('[') {
+    return None;
+  }
+  let mut close_bracket = start + 1;
+  while close_bracket < chars.len() && chars[close_bracket] != ']' {
+    close_bracket += 1;
+  }
+  if close_bracket >= chars.len() || chars.get(close_bracket + 1).copied() != Some('(') {
+    return None;
+  }
+  let mut close_paren = close_bracket + 2;
+  while close_paren < chars.len() && chars[close_paren] != ')' {
+    close_paren += 1;
+  }
+  if close_paren >= chars.len() {
+    return None;
+  }
+  let label: String = chars[start + 1..close_bracket].iter().collect();
+  Some((close_paren + 1, label))
+}
+
+fn docs_parse_inline_markdown_runs(
+  text: &str,
+  styles: &DocsRenderStyles,
+  base: LibStyle,
+) -> Vec<DocsStyledTextRun> {
+  let chars: Vec<char> = text.chars().collect();
+  let mut runs = Vec::new();
+  let mut buf = String::new();
+  let mut idx = 0usize;
+  let mut bold = false;
+  let mut italic = false;
+
+  let flush = |runs: &mut Vec<DocsStyledTextRun>, buf: &mut String, bold: bool, italic: bool| {
+    if buf.is_empty() {
+      return;
+    }
+    let mut style = base;
+    if bold {
+      style = style.add_modifier(LibModifier::BOLD);
+    }
+    if italic {
+      style = style.add_modifier(LibModifier::ITALIC);
+    }
+    docs_push_styled_run(runs, std::mem::take(buf), style);
+  };
+
+  while idx < chars.len() {
+    if chars[idx] == '`' {
+      flush(&mut runs, &mut buf, bold, italic);
+      let mut end = idx + 1;
+      while end < chars.len() && chars[end] != '`' {
+        end += 1;
+      }
+      if end < chars.len() {
+        let literal: String = chars[idx + 1..end].iter().collect();
+        docs_push_styled_run(&mut runs, literal, styles.code);
+        idx = end + 1;
+        continue;
+      }
+      buf.push(chars[idx]);
+      idx += 1;
+      continue;
+    }
+
+    if let Some((next, label)) = docs_parse_markdown_link(&chars, idx) {
+      flush(&mut runs, &mut buf, bold, italic);
+      let mut style = base;
+      if bold {
+        style = style.add_modifier(LibModifier::BOLD);
+      }
+      if italic {
+        style = style.add_modifier(LibModifier::ITALIC);
+      }
+      docs_push_styled_run(&mut runs, label, style.patch(styles.link));
+      idx = next;
+      continue;
+    }
+
+    if idx + 1 < chars.len() && chars[idx] == '*' && chars[idx + 1] == '*' {
+      flush(&mut runs, &mut buf, bold, italic);
+      bold = !bold;
+      idx += 2;
+      continue;
+    }
+
+    if chars[idx] == '*' {
+      flush(&mut runs, &mut buf, bold, italic);
+      italic = !italic;
+      idx += 1;
+      continue;
+    }
+
+    buf.push(chars[idx]);
+    idx += 1;
+  }
+
+  flush(&mut runs, &mut buf, bold, italic);
+  runs
+}
+
+fn docs_parse_numbered_list_prefix(line: &str) -> Option<(String, &str)> {
+  let bytes = line.as_bytes();
+  let mut idx = 0usize;
+  while idx < bytes.len() && bytes[idx].is_ascii_digit() {
+    idx += 1;
+  }
+  if idx == 0 || idx + 1 >= bytes.len() || bytes[idx] != b'.' || bytes[idx + 1] != b' ' {
+    return None;
+  }
+  let marker = line[..=idx].to_string();
+  let rest = &line[idx + 2..];
+  Some((marker, rest))
+}
+
+fn docs_parse_heading(line: &str) -> Option<(usize, &str)> {
+  let mut level = 0usize;
+  for ch in line.chars() {
+    if ch == '#' {
+      level += 1;
+    } else {
+      break;
+    }
+  }
+  if level == 0 || level > 6 {
+    return None;
+  }
+  line
+    .strip_prefix(&"#".repeat(level))
+    .and_then(|rest| rest.strip_prefix(' '))
+    .map(|rest| (level, rest))
+}
+
+fn docs_is_markdown_rule(line: &str) -> bool {
+  let chars: Vec<char> = line.chars().filter(|ch| !ch.is_whitespace()).collect();
+  if chars.len() < 3 {
+    return false;
+  }
+  chars.iter().all(|ch| matches!(ch, '-' | '_' | '*'))
+}
+
+fn docs_parse_markdown_fence_language(trimmed_line: &str) -> Option<String> {
+  let fence = trimmed_line.strip_prefix("```")?;
+  let token = fence
+    .trim()
+    .split(|ch: char| ch.is_whitespace() || matches!(ch, ',' | '{' | '}'))
+    .next()
+    .unwrap_or_default()
+    .trim_matches('.')
+    .to_ascii_lowercase();
+  (!token.is_empty()).then_some(token)
+}
+
+fn docs_language_filename_hints(marker: &str) -> Vec<String> {
+  let marker = marker.trim().trim_matches('.').to_ascii_lowercase();
+  let mut out = Vec::new();
+  let mut push_unique = |value: &str| {
+    if value.is_empty() || out.iter().any(|existing| existing == value) {
+      return;
+    }
+    out.push(value.to_string());
+  };
+
+  push_unique(marker.as_str());
+  match marker.as_str() {
+    "rust" => push_unique("rs"),
+    "javascript" | "js" => push_unique("js"),
+    "typescript" | "ts" => push_unique("ts"),
+    "python" | "py" => push_unique("py"),
+    "shell" | "bash" | "sh" | "zsh" => push_unique("sh"),
+    "c++" | "cpp" | "cc" | "cxx" => push_unique("cpp"),
+    "c#" | "csharp" => push_unique("cs"),
+    "objective-c" | "objc" => push_unique("m"),
+    "objective-cpp" | "objcpp" => push_unique("mm"),
+    "markdown" => push_unique("md"),
+    "yaml" => push_unique("yml"),
+    _ => {},
+  }
+  out
+}
+
+fn docs_preview_highlight_at(
+  highlights: &[(Highlight, std::ops::Range<usize>)],
+  byte_idx: usize,
+) -> Option<Highlight> {
+  let mut active = None;
+  for (highlight, range) in highlights {
+    if byte_idx < range.start {
+      break;
+    }
+    if byte_idx < range.end {
+      active = Some(*highlight);
+    }
+  }
+  active
+}
+
+fn docs_highlighted_code_block_lines(
+  code_lines: &[String],
+  styles: &DocsRenderStyles,
+  theme: &Theme,
+  loader: Option<&Loader>,
+  language: Option<&str>,
+  language_hint: Option<&str>,
+) -> Vec<Vec<DocsStyledTextRun>> {
+  if code_lines.is_empty() {
+    return vec![Vec::new()];
+  }
+
+  let Some(loader) = loader else {
+    return code_lines
+      .iter()
+      .map(|line| {
+        vec![DocsStyledTextRun {
+          text:  line.clone(),
+          style: styles.code,
+        }]
+      })
+      .collect();
+  };
+
+  let resolve_language = |marker: &str| {
+    let marker = marker.trim();
+    let marker_lower = marker.to_ascii_lowercase();
+    loader
+      .language_for_name(marker)
+      .or_else(|| loader.language_for_name(marker_lower.as_str()))
+      .or_else(|| loader.language_for_scope(marker))
+      .or_else(|| loader.language_for_scope(marker_lower.as_str()))
+      .or_else(|| loader.language_for_filename(Path::new(marker)))
+      .or_else(|| {
+        docs_language_filename_hints(marker)
+          .into_iter()
+          .find_map(|hint| loader.language_for_filename(Path::new(format!("tmp.{hint}").as_str())))
+      })
+  };
+
+  let resolved_language = language.and_then(resolve_language);
+  let hinted_language = language_hint.and_then(resolve_language);
+  let Some(language) = resolved_language.or(hinted_language) else {
+    return code_lines
+      .iter()
+      .map(|line| {
+        vec![DocsStyledTextRun {
+          text:  line.clone(),
+          style: styles.code,
+        }]
+      })
+      .collect();
+  };
+
+  let joined = code_lines.join("\n");
+  let rope = Rope::from_str(&joined);
+  let Ok(syntax) = Syntax::new(rope.slice(..), language, loader) else {
+    return code_lines
+      .iter()
+      .map(|line| {
+        vec![DocsStyledTextRun {
+          text:  line.clone(),
+          style: styles.code,
+        }]
+      })
+      .collect();
+  };
+
+  let mut highlights = syntax.collect_highlights(rope.slice(..), loader, 0..rope.len_bytes());
+  highlights.sort_by_key(|(_highlight, range)| (range.start, std::cmp::Reverse(range.end)));
+
+  let mut rendered = Vec::with_capacity(code_lines.len());
+  let mut line_start_byte = 0usize;
+
+  for (idx, line) in code_lines.iter().enumerate() {
+    let mut runs = Vec::new();
+    let mut piece = String::new();
+    let mut active_style = styles.code;
+    let mut byte_idx = line_start_byte;
+
+    for ch in line.chars() {
+      let style = docs_preview_highlight_at(&highlights, byte_idx)
+        .map(|highlight| styles.code.patch(theme.highlight(highlight)))
+        .unwrap_or(styles.code);
+      if style != active_style && !piece.is_empty() {
+        docs_push_styled_run(&mut runs, std::mem::take(&mut piece), active_style);
+      }
+      active_style = style;
+      piece.push(ch);
+      byte_idx = byte_idx.saturating_add(ch.len_utf8());
+    }
+    docs_push_styled_run(&mut runs, piece, active_style);
+    if runs.is_empty() {
+      runs.push(DocsStyledTextRun {
+        text:  String::new(),
+        style: styles.code,
+      });
+    }
+    rendered.push(runs);
+
+    line_start_byte = line_start_byte.saturating_add(line.len());
+    if idx + 1 < code_lines.len() {
+      line_start_byte = line_start_byte.saturating_add(1);
+    }
+  }
+
+  rendered
+}
+
+fn docs_markdown_lines(
+  markdown: &str,
+  styles: &DocsRenderStyles,
+  theme: &Theme,
+  loader: Option<&Loader>,
+  language_hint: Option<&str>,
+) -> Vec<Vec<DocsStyledTextRun>> {
+  let mut lines = Vec::new();
+  let mut in_code_block = false;
+  let mut code_block_language: Option<String> = None;
+  let mut code_block_lines: Vec<String> = Vec::new();
+
+  for raw_line in markdown.lines() {
+    let normalized = raw_line.replace('\t', "  ");
+    let trimmed = normalized.trim_start();
+
+    if trimmed.starts_with("```") {
+      if in_code_block {
+        lines.extend(docs_highlighted_code_block_lines(
+          &code_block_lines,
+          styles,
+          theme,
+          loader,
+          code_block_language.as_deref(),
+          language_hint,
+        ));
+        code_block_lines.clear();
+        code_block_language = None;
+        in_code_block = false;
+      } else {
+        code_block_language = docs_parse_markdown_fence_language(trimmed);
+        in_code_block = true;
+      }
+      continue;
+    }
+
+    if in_code_block {
+      code_block_lines.push(normalized);
+      continue;
+    }
+
+    if trimmed.is_empty() {
+      lines.push(Vec::new());
+      continue;
+    }
+
+    if docs_is_markdown_rule(trimmed) {
+      lines.push(vec![DocsStyledTextRun {
+        text:  "───".to_string(),
+        style: styles.rule,
+      }]);
+      continue;
+    }
+
+    if let Some((level, heading)) = docs_parse_heading(trimmed) {
+      let style = styles.heading[level.saturating_sub(1)];
+      lines.push(docs_parse_inline_markdown_runs(heading, styles, style));
+      continue;
+    }
+
+    if let Some(stripped) = trimmed
+      .strip_prefix("- ")
+      .or_else(|| trimmed.strip_prefix("* "))
+      .or_else(|| trimmed.strip_prefix("+ "))
+    {
+      let mut runs = Vec::new();
+      docs_push_styled_run(&mut runs, "• ".to_string(), styles.bullet);
+      runs.extend(docs_parse_inline_markdown_runs(
+        stripped,
+        styles,
+        styles.base,
+      ));
+      lines.push(runs);
+      continue;
+    }
+
+    if let Some((marker, rest)) = docs_parse_numbered_list_prefix(trimmed) {
+      let mut runs = Vec::new();
+      docs_push_styled_run(&mut runs, format!("{marker} "), styles.bullet);
+      runs.extend(docs_parse_inline_markdown_runs(rest, styles, styles.base));
+      lines.push(runs);
+      continue;
+    }
+
+    if let Some(quoted) = trimmed.strip_prefix('>') {
+      let mut runs = Vec::new();
+      docs_push_styled_run(&mut runs, "│ ".to_string(), styles.quote);
+      runs.extend(docs_parse_inline_markdown_runs(
+        quoted.trim_start(),
+        styles,
+        styles.quote,
+      ));
+      lines.push(runs);
+      continue;
+    }
+
+    lines.push(docs_parse_inline_markdown_runs(
+      trimmed,
+      styles,
+      styles.base,
+    ));
+  }
+
+  if in_code_block {
+    lines.extend(docs_highlighted_code_block_lines(
+      &code_block_lines,
+      styles,
+      theme,
+      loader,
+      code_block_language.as_deref(),
+      language_hint,
+    ));
+  }
+
+  if lines.is_empty() {
+    lines.push(Vec::new());
+  }
+  lines
+}
+
+fn docs_wrap_styled_runs(runs: &[DocsStyledTextRun], width: usize) -> Vec<Vec<DocsStyledTextRun>> {
+  if width == 0 {
+    return Vec::new();
+  }
+  if runs.is_empty() {
+    return vec![Vec::new()];
+  }
+
+  let mut wrapped = Vec::new();
+  let mut current = Vec::new();
+  let mut col = 0usize;
+
+  for run in runs {
+    let mut piece = String::new();
+    for ch in run.text.chars() {
+      if col >= width {
+        if !piece.is_empty() {
+          docs_push_styled_run(&mut current, std::mem::take(&mut piece), run.style);
+        }
+        wrapped.push(current);
+        current = Vec::new();
+        col = 0;
+      }
+      piece.push(ch);
+      col += 1;
+    }
+    if !piece.is_empty() {
+      docs_push_styled_run(&mut current, piece, run.style);
+    }
+  }
+
+  if current.is_empty() {
+    wrapped.push(Vec::new());
+  } else {
+    wrapped.push(current);
+  }
+  wrapped
+}
+
+fn docs_rows_with_context(
+  markdown: &str,
+  styles: &DocsRenderStyles,
+  width: usize,
+  theme: &Theme,
+  loader: Option<&Loader>,
+  language_hint: Option<&str>,
+) -> Vec<Vec<DocsStyledTextRun>> {
+  let mut rows = Vec::new();
+  for line in docs_markdown_lines(markdown, styles, theme, loader, language_hint) {
+    rows.extend(docs_wrap_styled_runs(&line, width));
+  }
+  if rows.is_empty() {
+    rows.push(Vec::new());
+  }
+  rows
+}
+
+fn docs_style_snapshot(style: LibStyle) -> DocsStyleSnapshot {
+  let ffi_style = ffi::Style::from(style);
+  DocsStyleSnapshot {
+    has_fg:              ffi_style.has_fg,
+    fg:                  DocsColorSnapshot::from(ffi_style.fg),
+    has_bg:              ffi_style.has_bg,
+    bg:                  DocsColorSnapshot::from(ffi_style.bg),
+    has_underline_color: ffi_style.has_underline_color,
+    underline_color:     DocsColorSnapshot::from(ffi_style.underline_color),
+    underline_style:     ffi_style.underline_style,
+    add_modifier:        ffi_style.add_modifier,
+    sub_modifier:        ffi_style.sub_modifier,
+  }
+}
+
+struct DocsRenderRuntime {
+  theme:  Theme,
+  loader: Option<Arc<Loader>>,
+}
+
+fn docs_render_runtime() -> &'static DocsRenderRuntime {
+  static RUNTIME: OnceLock<DocsRenderRuntime> = OnceLock::new();
+  RUNTIME.get_or_init(|| {
+    let theme = select_ui_theme();
+    let loader = init_loader(&theme).ok().map(Arc::new);
+    DocsRenderRuntime { theme, loader }
+  })
+}
+
+fn completion_docs_render_json_impl(
+  markdown: &str,
+  content_width: usize,
+  language_hint: &str,
+) -> String {
+  let runtime = docs_render_runtime();
+  let base = runtime
+    .theme
+    .try_get("ui.text")
+    .or_else(|| runtime.theme.try_get("ui.text.focus"))
+    .unwrap_or_default();
+  let styles = docs_render_styles(&runtime.theme, base);
+  let width = content_width.max(1);
+  let language_hint = (!language_hint.trim().is_empty()).then_some(language_hint.trim());
+  let rows = docs_rows_with_context(
+    markdown,
+    &styles,
+    width,
+    &runtime.theme,
+    runtime.loader.as_deref(),
+    language_hint,
+  );
+
+  let lines = rows
+    .into_iter()
+    .map(|line| {
+      line
+        .into_iter()
+        .map(|run| {
+          DocsRunSnapshot {
+            text:  run.text,
+            style: docs_style_snapshot(run.style),
+          }
+        })
+        .collect::<Vec<_>>()
+    })
+    .collect::<Vec<_>>();
+  let snapshot = DocsRenderSnapshot { lines };
+  serde_json::to_string(&snapshot).unwrap_or_else(|_| "{\"lines\":[]}".to_string())
+}
+
+#[derive(Serialize)]
+struct CompletionPopupRectSnapshot {
+  x:      u16,
+  y:      u16,
+  width:  u16,
+  height: u16,
+}
+
+impl From<DefaultOverlayRect> for CompletionPopupRectSnapshot {
+  fn from(value: DefaultOverlayRect) -> Self {
+    Self {
+      x:      value.x,
+      y:      value.y,
+      width:  value.width,
+      height: value.height,
+    }
+  }
+}
+
+#[derive(Serialize)]
+struct CompletionPopupLayoutSnapshot {
+  list: CompletionPopupRectSnapshot,
+  docs: Option<CompletionPopupRectSnapshot>,
+}
+
+fn completion_popup_layout_json_impl(
+  area_width: usize,
+  area_height: usize,
+  cursor_x: i64,
+  cursor_y: i64,
+  list_width: usize,
+  list_height: usize,
+  docs_width: usize,
+  docs_height: usize,
+) -> String {
+  let area = DefaultOverlayRect::new(
+    0,
+    0,
+    area_width.min(u16::MAX as usize) as u16,
+    area_height.min(u16::MAX as usize) as u16,
+  );
+  let list_width = list_width.min(u16::MAX as usize) as u16;
+  let list_height = list_height.min(u16::MAX as usize) as u16;
+  let docs_width = docs_width.min(u16::MAX as usize) as u16;
+  let docs_height = docs_height.min(u16::MAX as usize) as u16;
+
+  let cursor = if cursor_x >= 0 && cursor_y >= 0 {
+    Some((
+      cursor_x.min(u16::MAX as i64) as u16,
+      cursor_y.min(u16::MAX as i64) as u16,
+    ))
+  } else {
+    None
+  };
+
+  let list = default_completion_panel_rect(area, list_width, list_height, cursor);
+  let docs = if docs_width > 0 && docs_height > 0 {
+    default_completion_docs_panel_rect(area, docs_width, docs_height, list)
+  } else {
+    None
+  };
+
+  let snapshot = CompletionPopupLayoutSnapshot {
+    list: CompletionPopupRectSnapshot::from(list),
+    docs: docs.map(CompletionPopupRectSnapshot::from),
+  };
+  serde_json::to_string(&snapshot).unwrap_or_else(|_| {
+    "{\"list\":{\"x\":0,\"y\":0,\"width\":1,\"height\":1},\"docs\":null}".to_string()
+  })
+}
+
+fn completion_match_score(filter: &str, candidate: &str) -> Option<u32> {
+  if filter.is_empty() {
+    return Some(0);
+  }
+
+  let filter = filter.to_ascii_lowercase();
+  let candidate = candidate.to_ascii_lowercase();
+  if candidate.is_empty() {
+    return None;
+  }
+
+  if candidate.starts_with(&filter) {
+    let extra = candidate.len().saturating_sub(filter.len()) as u32;
+    return Some(10_000u32.saturating_sub(extra.min(2_000)));
+  }
+
+  if let Some(pos) = candidate.find(&filter) {
+    return Some(6_000u32.saturating_sub((pos as u32).saturating_mul(16)));
+  }
+
+  let mut candidate_chars = candidate.chars().enumerate();
+  let mut last = 0usize;
+  let mut gaps = 0usize;
+  let mut matched = false;
+  for needle in filter.chars() {
+    let mut found = None;
+    for (idx, hay) in candidate_chars.by_ref() {
+      if hay == needle {
+        found = Some(idx);
+        break;
+      }
+    }
+    let idx = found?;
+    if matched {
+      gaps += idx.saturating_sub(last + 1);
+    }
+    last = idx;
+    matched = true;
+  }
+
+  Some(2_000u32.saturating_sub((gaps as u32).saturating_mul(8)))
+}
+
+fn ffi_ui_profile_enabled() -> bool {
+  static ENABLED: OnceLock<bool> = OnceLock::new();
+  *ENABLED.get_or_init(|| {
+    env::var("THE_FFI_PROFILE_UI")
+      .ok()
+      .as_deref()
+      .is_some_and(|value| value == "1")
+  })
+}
+
+fn ffi_ui_profile_min_duration() -> Duration {
+  static MIN_MS: OnceLock<u64> = OnceLock::new();
+  let min_ms = *MIN_MS.get_or_init(|| {
+    env::var("THE_FFI_PROFILE_UI_MIN_MS")
+      .ok()
+      .and_then(|value| value.parse::<u64>().ok())
+      .unwrap_or(8)
+  });
+  Duration::from_millis(min_ms)
+}
+
+fn ffi_ui_profile_should_log(elapsed: Duration) -> bool {
+  ffi_ui_profile_enabled() && elapsed >= ffi_ui_profile_min_duration()
+}
+
+fn ffi_ui_profile_log(message: impl AsRef<str>) {
+  if ffi_ui_profile_enabled() {
+    eprintln!("[the-ffi profile] {}", message.as_ref());
+  }
+}
+
+fn compact_ui_tree_for_swift(tree: &mut UiTree) {
+  for overlay in &mut tree.overlays {
+    compact_ui_node_for_swift(overlay);
+  }
+}
+
+fn compact_ui_node_for_swift(node: &mut UiNode) {
+  match node {
+    UiNode::Container(container) => {
+      for child in &mut container.children {
+        compact_ui_node_for_swift(child);
+      }
+    },
+    UiNode::Panel(panel) => {
+      compact_ui_node_for_swift(panel.child.as_mut());
+    },
+    UiNode::List(list) => {
+      if list.id == "completion_list" {
+        compact_completion_list_for_swift(list);
+      }
+    },
+    _ => {},
+  }
+}
+
+fn compact_completion_list_for_swift(list: &mut UiList) {
+  let total = list.items.len();
+  let max_visible = list.max_visible.unwrap_or(10).max(1);
+  let max_scroll = total.saturating_sub(max_visible);
+  let start = list.scroll.min(max_scroll);
+  let end = start.saturating_add(max_visible).min(total);
+
+  if start == 0 && end >= total {
+    return;
+  }
+
+  list.virtual_total = Some(total);
+  list.virtual_start = start;
+  list.items = list.items[start..end].to_vec();
+  list.scroll = 0;
+  list.selected = list
+    .selected
+    .and_then(|selected| selected.checked_sub(start))
+    .filter(|selected| *selected < list.items.len());
+}
+
 fn lsp_self_save_suppress_window() -> Duration {
   Duration::from_millis(500)
 }
@@ -1295,30 +2374,37 @@ fn file_change_type_for_path_event(kind: PathEventKind) -> FileChangeType {
 
 /// FFI-safe app wrapper with editor management.
 pub struct App {
-  inner:                      LibApp,
-  dispatch:                   DefaultDispatchStatic<App>,
-  keymaps:                    Keymaps,
-  command_registry:           CommandRegistry<App>,
-  states:                     HashMap<LibEditorId, EditorState>,
-  file_paths:                 HashMap<LibEditorId, PathBuf>,
-  vcs_provider:               DiffProviderRegistry,
-  vcs_diff_handles:           HashMap<LibEditorId, DiffHandle>,
-  active_editor:              Option<LibEditorId>,
-  should_quit:                bool,
-  registers:                  Registers,
-  last_motion:                Option<Motion>,
-  lsp_runtime:                LspRuntime,
-  lsp_ready:                  bool,
-  lsp_document:               Option<LspDocumentSyncState>,
-  lsp_statusline:             LspStatuslineState,
-  lsp_spinner_index:          usize,
-  lsp_spinner_last_tick:      Instant,
-  lsp_active_progress_tokens: HashSet<String>,
-  lsp_watched_file:           Option<LspWatchedFileState>,
-  lsp_pending_requests:       HashMap<u64, PendingLspRequestKind>,
-  diagnostics:                DiagnosticsState,
-  ui_theme:                   Theme,
-  loader:                     Option<Arc<Loader>>,
+  inner:                       LibApp,
+  dispatch:                    DefaultDispatchStatic<App>,
+  keymaps:                     Keymaps,
+  command_registry:            CommandRegistry<App>,
+  states:                      HashMap<LibEditorId, EditorState>,
+  file_paths:                  HashMap<LibEditorId, PathBuf>,
+  vcs_provider:                DiffProviderRegistry,
+  vcs_diff_handles:            HashMap<LibEditorId, DiffHandle>,
+  active_editor:               Option<LibEditorId>,
+  should_quit:                 bool,
+  registers:                   Registers,
+  last_motion:                 Option<Motion>,
+  lsp_runtime:                 LspRuntime,
+  lsp_ready:                   bool,
+  lsp_document:                Option<LspDocumentSyncState>,
+  lsp_statusline:              LspStatuslineState,
+  lsp_spinner_index:           usize,
+  lsp_spinner_last_tick:       Instant,
+  lsp_active_progress_tokens:  HashSet<String>,
+  lsp_watched_file:            Option<LspWatchedFileState>,
+  lsp_pending_requests:        HashMap<u64, PendingLspRequestKind>,
+  lsp_completion_items:        Vec<LspCompletionItem>,
+  lsp_completion_raw_items:    Vec<Value>,
+  lsp_completion_resolved:     HashSet<usize>,
+  lsp_completion_visible:      Vec<usize>,
+  lsp_completion_start:        Option<usize>,
+  lsp_completion_generation:   u64,
+  lsp_pending_auto_completion: Option<PendingAutoCompletion>,
+  diagnostics:                 DiagnosticsState,
+  ui_theme:                    Theme,
+  loader:                      Option<Arc<Loader>>,
 }
 
 impl App {
@@ -1365,10 +2451,47 @@ impl App {
       lsp_active_progress_tokens: HashSet::new(),
       lsp_watched_file: None,
       lsp_pending_requests: HashMap::new(),
+      lsp_completion_items: Vec::new(),
+      lsp_completion_raw_items: Vec::new(),
+      lsp_completion_resolved: HashSet::new(),
+      lsp_completion_visible: Vec::new(),
+      lsp_completion_start: None,
+      lsp_completion_generation: 0,
+      lsp_pending_auto_completion: None,
       diagnostics: DiagnosticsState::default(),
       ui_theme,
       loader,
     }
+  }
+
+  pub fn completion_docs_render_json(
+    markdown: &str,
+    content_width: usize,
+    language_hint: &str,
+  ) -> String {
+    completion_docs_render_json_impl(markdown, content_width, language_hint)
+  }
+
+  pub fn completion_popup_layout_json(
+    area_width: usize,
+    area_height: usize,
+    cursor_x: i64,
+    cursor_y: i64,
+    list_width: usize,
+    list_height: usize,
+    docs_width: usize,
+    docs_height: usize,
+  ) -> String {
+    completion_popup_layout_json_impl(
+      area_width,
+      area_height,
+      cursor_x,
+      cursor_y,
+      list_width,
+      list_height,
+      docs_width,
+      docs_height,
+    )
   }
 
   pub fn create_editor(
@@ -1484,12 +2607,17 @@ impl App {
   }
 
   pub fn render_plan(&mut self, id: ffi::EditorId) -> RenderPlan {
+    let started = Instant::now();
     if self.activate(id).is_none() {
       return RenderPlan::empty();
     }
     let _ = self.poll_background_active();
 
     let plan = the_default::render_plan(self);
+    let elapsed = started.elapsed();
+    if ffi_ui_profile_should_log(elapsed) {
+      ffi_ui_profile_log(format!("render_plan elapsed={}ms", elapsed.as_millis()));
+    }
     plan.into()
   }
 
@@ -1508,13 +2636,24 @@ impl App {
   }
 
   pub fn ui_tree_json(&mut self, id: ffi::EditorId) -> String {
+    let started = Instant::now();
     if self.activate(id).is_none() {
       return "{}".to_string();
     }
     let _ = self.poll_background_active();
 
-    let tree = the_default::ui_tree(self);
-    serde_json::to_string(&tree).unwrap_or_else(|_| "{}".to_string())
+    let mut tree = the_default::ui_tree(self);
+    compact_ui_tree_for_swift(&mut tree);
+    let json = serde_json::to_string(&tree).unwrap_or_else(|_| "{}".to_string());
+    let elapsed = started.elapsed();
+    if ffi_ui_profile_should_log(elapsed) {
+      ffi_ui_profile_log(format!(
+        "ui_tree_json elapsed={}ms bytes={}",
+        elapsed.as_millis(),
+        json.len()
+      ));
+    }
+    json
   }
 
   pub fn pending_keys_json(&self, _id: ffi::EditorId) -> String {
@@ -2123,14 +3262,27 @@ impl App {
   }
 
   pub fn poll_background(&mut self, id: ffi::EditorId) -> bool {
+    let started = Instant::now();
     if self.activate(id).is_none() {
       return false;
     }
-    self.poll_background_active()
+    let changed = self.poll_background_active();
+    let elapsed = started.elapsed();
+    if ffi_ui_profile_should_log(elapsed) {
+      ffi_ui_profile_log(format!(
+        "poll_background changed={} elapsed={}ms",
+        changed,
+        elapsed.as_millis()
+      ));
+    }
+    changed
   }
 
   fn poll_background_active(&mut self) -> bool {
     let mut changed = false;
+    if self.poll_lsp_completion_auto_trigger() {
+      changed = true;
+    }
     if self.poll_active_syntax_parse_results() {
       changed = true;
     }
@@ -2187,6 +3339,8 @@ impl App {
     self.diagnostics.clear();
     self.lsp_active_progress_tokens.clear();
     self.lsp_pending_requests.clear();
+    self.clear_completion_state();
+    self.cancel_auto_completion();
     let _ = self.lsp_runtime.shutdown();
 
     let active_path = self.file_path().map(Path::to_path_buf);
@@ -2315,6 +3469,23 @@ impl App {
       .publish(level, Some("lsp".into()), text.into());
   }
 
+  fn poll_lsp_completion_auto_trigger(&mut self) -> bool {
+    let Some(pending) = self.lsp_pending_auto_completion.clone() else {
+      return false;
+    };
+    if self.active_state_ref().mode != Mode::Insert {
+      self.lsp_pending_auto_completion = None;
+      return false;
+    }
+    if Instant::now() < pending.due_at {
+      return false;
+    }
+
+    self.lsp_pending_auto_completion = None;
+    let _ = self.dispatch_completion_request(pending.trigger, false);
+    false
+  }
+
   fn poll_lsp_events(&mut self) -> bool {
     let mut changed = false;
     while let Some(event) = self.lsp_runtime.try_recv_event() {
@@ -2345,6 +3516,8 @@ impl App {
           self.lsp_ready = false;
           self.lsp_active_progress_tokens.clear();
           self.lsp_pending_requests.clear();
+          self.clear_completion_state();
+          self.cancel_auto_completion();
           if let Some(state) = self.lsp_document.as_mut() {
             state.opened = false;
           }
@@ -2361,6 +3534,8 @@ impl App {
           self.lsp_ready = false;
           self.lsp_active_progress_tokens.clear();
           self.lsp_pending_requests.clear();
+          self.clear_completion_state();
+          self.cancel_auto_completion();
           if let Some(state) = self.lsp_document.as_mut() {
             state.opened = false;
           }
@@ -2528,7 +3703,170 @@ impl App {
         };
         self.apply_locations_result("definition", locations)
       },
+      PendingLspRequestKind::Completion {
+        generation,
+        cursor,
+        replace_start,
+        announce_empty,
+        ..
+      } => {
+        self.handle_completion_response(
+          response.result.as_ref(),
+          generation,
+          cursor,
+          replace_start,
+          announce_empty,
+        )
+      },
+      PendingLspRequestKind::CompletionResolve { index, .. } => {
+        self.handle_completion_resolve_response(index, response.result.as_ref())
+      },
     }
+  }
+
+  fn handle_completion_response(
+    &mut self,
+    result: Option<&Value>,
+    generation: u64,
+    request_cursor: usize,
+    replace_start: usize,
+    announce_empty: bool,
+  ) -> bool {
+    let started = Instant::now();
+    if generation != self.lsp_completion_generation {
+      return false;
+    }
+    if self.active_state_ref().mode != Mode::Insert {
+      return false;
+    }
+    let Some(current_cursor) = self.primary_cursor_char_idx() else {
+      return false;
+    };
+    if current_cursor != request_cursor {
+      return false;
+    }
+
+    let completion = match parse_completion_response_with_raw(result) {
+      Ok(completion) => completion,
+      Err(err) => {
+        self.publish_lsp_message(
+          the_lib::messages::MessageLevel::Error,
+          format!("failed to parse completion response: {err}"),
+        );
+        return true;
+      },
+    };
+
+    if completion.items.is_empty() {
+      self.clear_completion_state();
+      if announce_empty {
+        self.publish_lsp_message(
+          the_lib::messages::MessageLevel::Info,
+          "no completion candidates",
+        );
+      }
+      return true;
+    }
+
+    self.lsp_completion_items = completion.items;
+    self.lsp_completion_raw_items = completion.raw_items;
+    self.lsp_completion_resolved.clear();
+    self.lsp_completion_start = Some(replace_start.min(request_cursor));
+    self.rebuild_completion_menu();
+    let elapsed = started.elapsed();
+    if ffi_ui_profile_should_log(elapsed) {
+      ffi_ui_profile_log(format!(
+        "handle_completion_response elapsed={}ms total_items={}",
+        elapsed.as_millis(),
+        self.lsp_completion_items.len()
+      ));
+    }
+    true
+  }
+
+  fn handle_completion_resolve_response(&mut self, index: usize, result: Option<&Value>) -> bool {
+    let resolved = match parse_completion_item_response(result) {
+      Ok(item) => item,
+      Err(err) => {
+        self.publish_lsp_message(
+          the_lib::messages::MessageLevel::Warning,
+          format!("failed to parse completion resolve response: {err}"),
+        );
+        return true;
+      },
+    };
+
+    self.lsp_completion_resolved.insert(index);
+
+    let Some(resolved) = resolved else {
+      return true;
+    };
+    let updated_ui_item = {
+      let Some(item) = self.lsp_completion_items.get_mut(index) else {
+        return true;
+      };
+      merge_resolved_completion_item(item, resolved);
+      completion_menu_item_for_lsp_item(item)
+    };
+
+    if let Some(visible_index) = self
+      .lsp_completion_visible
+      .iter()
+      .position(|candidate| *candidate == index)
+      && let Some(ui_item) = self.completion_menu_mut().items.get_mut(visible_index)
+    {
+      *ui_item = updated_ui_item;
+      self.request_render();
+    }
+    true
+  }
+
+  fn apply_completion_item(
+    &mut self,
+    item: LspCompletionItem,
+    fallback_range: std::ops::Range<usize>,
+  ) -> bool {
+    let LspCompletionItem {
+      label,
+      insert_text,
+      primary_edit,
+      ..
+    } = item;
+    let insert_text = insert_text
+      .or_else(|| primary_edit.map(|edit| edit.new_text))
+      .unwrap_or(label);
+    if insert_text.is_empty() {
+      return true;
+    }
+
+    let tx = {
+      let doc = self.active_editor_ref().document();
+      let text = doc.text();
+      let text_len = text.len_chars();
+      let from = fallback_range.start.min(text_len);
+      let to = fallback_range.end.min(text_len).max(from);
+      match Transaction::change(text, vec![(from, to, Some(insert_text.into()))]) {
+        Ok(tx) => tx,
+        Err(err) => {
+          self.publish_lsp_message(
+            the_lib::messages::MessageLevel::Error,
+            format!("failed to build completion transaction: {err}"),
+          );
+          return true;
+        },
+      }
+    };
+
+    if <Self as DefaultContext>::apply_transaction(self, &tx) {
+      let _ = self.active_editor_mut().document_mut().commit();
+      self.request_render();
+    } else {
+      self.publish_lsp_message(
+        the_lib::messages::MessageLevel::Error,
+        "failed to apply completion",
+      );
+    }
+    true
   }
 
   fn apply_locations_result(&mut self, label: &str, locations: Vec<LspLocation>) -> bool {
@@ -2595,6 +3933,333 @@ impl App {
     true
   }
 
+  fn primary_cursor_char_idx(&self) -> Option<usize> {
+    let doc = self.active_editor_ref().document();
+    let range = doc.selection().ranges().first().copied()?;
+    Some(range.cursor(doc.text().slice(..)))
+  }
+
+  fn cursor_prev_char_is_word(&self) -> bool {
+    let Some(cursor) = self.primary_cursor_char_idx() else {
+      return false;
+    };
+    if cursor == 0 {
+      return false;
+    }
+    self
+      .active_editor_ref()
+      .document()
+      .text()
+      .get_char(cursor.saturating_sub(1))
+      .is_some_and(is_symbol_word_char)
+  }
+
+  fn completion_replace_start_at_cursor(&self, cursor: usize) -> usize {
+    let text = self.active_editor_ref().document().text();
+    let mut start = cursor.min(text.len_chars());
+    while start > 0
+      && text
+        .get_char(start - 1)
+        .is_some_and(is_completion_replace_char)
+    {
+      start -= 1;
+    }
+    start
+  }
+
+  fn lsp_completion_supports_trigger_char(&self, ch: char) -> bool {
+    let Some(server) = self.lsp_runtime.config().server() else {
+      return false;
+    };
+    let Some(capabilities) = self.lsp_runtime.server_capabilities(server.name()) else {
+      return false;
+    };
+    let Some(values) = capabilities
+      .raw()
+      .get("completionProvider")
+      .and_then(|provider| provider.get("triggerCharacters"))
+      .and_then(Value::as_array)
+    else {
+      return false;
+    };
+
+    values.iter().filter_map(Value::as_str).any(|value| {
+      let mut chars = value.chars();
+      matches!(chars.next(), Some(first) if first == ch && chars.next().is_none())
+    })
+  }
+
+  fn completion_source_index_for_visible_index(&self, index: usize) -> Option<usize> {
+    self.lsp_completion_visible.get(index).copied()
+  }
+
+  fn completion_filter_fragment(&self) -> Option<String> {
+    let cursor = self.primary_cursor_char_idx()?;
+    let start = self.lsp_completion_start.unwrap_or(cursor).min(cursor);
+    let text = self.active_editor_ref().document().text();
+    Some(text.slice(start..cursor).to_string())
+  }
+
+  fn rebuild_completion_menu(&mut self) {
+    let started = Instant::now();
+    if self.lsp_completion_items.is_empty() {
+      self.lsp_completion_visible.clear();
+      self.completion_menu_mut().clear();
+      return;
+    }
+
+    let fragment = self.completion_filter_fragment().unwrap_or_default();
+    let mut visible: Vec<(usize, u32)> = self
+      .lsp_completion_items
+      .iter()
+      .enumerate()
+      .filter_map(|(index, item)| {
+        let candidate = completion_item_filter_text(item);
+        completion_match_score(&fragment, candidate).map(|score| (index, score))
+      })
+      .collect();
+
+    visible.sort_by(|(left_index, left_score), (right_index, right_score)| {
+      right_score
+        .cmp(left_score)
+        .then_with(|| {
+          self.lsp_completion_items[*right_index]
+            .preselect
+            .cmp(&self.lsp_completion_items[*left_index].preselect)
+        })
+        .then_with(|| {
+          let left_key = completion_item_sort_key(&self.lsp_completion_items[*left_index]);
+          let right_key = completion_item_sort_key(&self.lsp_completion_items[*right_index]);
+          left_key.cmp(&right_key)
+        })
+        .then_with(|| {
+          self.lsp_completion_items[*left_index]
+            .label
+            .cmp(&self.lsp_completion_items[*right_index].label)
+        })
+        .then_with(|| left_index.cmp(right_index))
+    });
+
+    self.lsp_completion_visible = visible.into_iter().map(|(index, _)| index).collect();
+    if self.lsp_completion_visible.is_empty() {
+      self.completion_menu_mut().clear();
+      return;
+    }
+
+    let menu_items = self
+      .lsp_completion_visible
+      .iter()
+      .filter_map(|index| self.lsp_completion_items.get(*index))
+      .map(completion_menu_item_for_lsp_item)
+      .collect();
+    the_default::show_completion_menu(self, menu_items);
+    let elapsed = started.elapsed();
+    if ffi_ui_profile_should_log(elapsed) {
+      ffi_ui_profile_log(format!(
+        "rebuild_completion_menu elapsed={}ms total_items={} visible_items={}",
+        elapsed.as_millis(),
+        self.lsp_completion_items.len(),
+        self.lsp_completion_visible.len()
+      ));
+    }
+  }
+
+  fn clear_completion_state(&mut self) {
+    self.lsp_completion_items.clear();
+    self.lsp_completion_raw_items.clear();
+    self.lsp_completion_resolved.clear();
+    self.lsp_completion_visible.clear();
+    self.lsp_completion_start = None;
+    if self.active_editor.is_some() {
+      self.completion_menu_mut().clear();
+    }
+  }
+
+  fn dispatch_completion_request(
+    &mut self,
+    trigger: CompletionTriggerSource,
+    announce_empty: bool,
+  ) -> bool {
+    if !self.lsp_supports(LspCapability::Completion) {
+      if matches!(trigger, CompletionTriggerSource::Manual) {
+        self.publish_lsp_message(
+          the_lib::messages::MessageLevel::Warning,
+          "completion is not supported by the active server",
+        );
+      }
+      return false;
+    }
+
+    let Some((uri, position)) = self.current_lsp_position() else {
+      if matches!(trigger, CompletionTriggerSource::Manual) {
+        self.publish_lsp_message(
+          the_lib::messages::MessageLevel::Warning,
+          "completion unavailable: no active LSP document",
+        );
+      }
+      return false;
+    };
+    let Some(cursor) = self.primary_cursor_char_idx() else {
+      return false;
+    };
+    let replace_start = self.completion_replace_start_at_cursor(cursor);
+
+    self.lsp_completion_generation = self.lsp_completion_generation.wrapping_add(1);
+    let generation = self.lsp_completion_generation;
+    let context = trigger.to_lsp_context();
+    self.dispatch_lsp_request(
+      "textDocument/completion",
+      completion_params(&uri, position, &context),
+      PendingLspRequestKind::Completion {
+        uri,
+        generation,
+        cursor,
+        replace_start,
+        announce_empty,
+      },
+    );
+    true
+  }
+
+  fn schedule_auto_completion(
+    &mut self,
+    trigger: CompletionTriggerSource,
+    delay: Duration,
+  ) -> bool {
+    if self.active_state_ref().mode != Mode::Insert || !self.lsp_supports(LspCapability::Completion)
+    {
+      self.lsp_pending_auto_completion = None;
+      return false;
+    }
+
+    self.lsp_pending_auto_completion = Some(PendingAutoCompletion {
+      due_at: Instant::now() + delay,
+      trigger,
+    });
+    true
+  }
+
+  fn cancel_auto_completion(&mut self) {
+    self.lsp_pending_auto_completion = None;
+  }
+
+  fn handle_completion_action(&mut self, command: Command) -> bool {
+    if self.active_state_ref().mode != Mode::Insert {
+      self.cancel_auto_completion();
+      return false;
+    }
+
+    match command {
+      Command::InsertChar(ch) => {
+        if self.completion_menu().active {
+          self.rebuild_completion_menu();
+        }
+        if self.lsp_completion_supports_trigger_char(ch) {
+          return self.schedule_auto_completion(
+            CompletionTriggerSource::TriggerCharacter(ch),
+            lsp_completion_trigger_char_latency(),
+          );
+        }
+        if is_symbol_word_char(ch) {
+          return self.schedule_auto_completion(
+            CompletionTriggerSource::Invoked,
+            lsp_completion_auto_trigger_latency(),
+          );
+        }
+        self.cancel_auto_completion();
+        false
+      },
+      Command::DeleteChar
+      | Command::DeleteCharForward { .. }
+      | Command::DeleteWordBackward { .. }
+      | Command::DeleteWordForward { .. }
+      | Command::KillToLineStart
+      | Command::KillToLineEnd => {
+        if self.completion_menu().active {
+          self.rebuild_completion_menu();
+        }
+        if self.completion_menu().active || self.cursor_prev_char_is_word() {
+          return self.schedule_auto_completion(
+            CompletionTriggerSource::Incomplete,
+            lsp_completion_auto_trigger_latency(),
+          );
+        }
+        self.cancel_auto_completion();
+        false
+      },
+      Command::LspCompletion
+      | Command::CompletionNext
+      | Command::CompletionPrev
+      | Command::CompletionAccept
+      | Command::CompletionCancel
+      | Command::CompletionDocsScrollUp
+      | Command::CompletionDocsScrollDown => true,
+      _ => {
+        self.cancel_auto_completion();
+        false
+      },
+    }
+  }
+
+  fn current_lsp_uri(&self) -> Option<String> {
+    if !self.lsp_ready {
+      return None;
+    }
+    self
+      .lsp_document
+      .as_ref()
+      .filter(|state| state.opened)
+      .map(|state| state.uri.clone())
+  }
+
+  fn resolve_completion_item_if_needed(&mut self, index: usize) {
+    if !self.completion_menu().active {
+      return;
+    }
+    if self.lsp_completion_resolved.contains(&index) {
+      return;
+    }
+    if index >= self.lsp_completion_items.len() || index >= self.lsp_completion_raw_items.len() {
+      return;
+    }
+    let pending = self.lsp_pending_requests.values().any(|request| {
+      matches!(
+        request,
+        PendingLspRequestKind::CompletionResolve {
+          index: pending_index,
+          ..
+        } if *pending_index == index
+      )
+    });
+    if pending {
+      return;
+    }
+
+    let Some(uri) = self.current_lsp_uri() else {
+      return;
+    };
+    let params = self.lsp_completion_raw_items[index].clone();
+    match self
+      .lsp_runtime
+      .send_request("completionItem/resolve", Some(params))
+    {
+      Ok(request_id) => {
+        self
+          .lsp_pending_requests
+          .insert(request_id, PendingLspRequestKind::CompletionResolve {
+            uri,
+            index,
+          });
+      },
+      Err(err) => {
+        self.publish_lsp_message(
+          the_lib::messages::MessageLevel::Warning,
+          format!("failed to dispatch completionItem/resolve: {err}"),
+        );
+      },
+    }
+  }
+
   fn lsp_supports(&self, capability: LspCapability) -> bool {
     let Some(server) = self.lsp_runtime.config().server() else {
       return false;
@@ -2622,12 +4287,38 @@ impl App {
     Some((state.uri, LspPosition { line, character }))
   }
 
+  fn cancel_pending_lsp_requests_for(&mut self, next: &PendingLspRequestKind) {
+    let target = next.cancellation_key();
+    let ids_to_cancel = self
+      .lsp_pending_requests
+      .iter()
+      .filter_map(|(id, pending)| {
+        if pending.cancellation_key() == target {
+          Some(*id)
+        } else {
+          None
+        }
+      })
+      .collect::<Vec<_>>();
+
+    for id in ids_to_cancel {
+      let _ = self.lsp_pending_requests.remove(&id);
+      if let Err(err) = self.lsp_runtime.cancel_request(id) {
+        self.publish_lsp_message(
+          the_lib::messages::MessageLevel::Warning,
+          format!("failed to cancel stale request {id}: {err}"),
+        );
+      }
+    }
+  }
+
   fn dispatch_lsp_request(
     &mut self,
     method: &'static str,
     params: serde_json::Value,
     pending: PendingLspRequestKind,
   ) {
+    self.cancel_pending_lsp_requests_for(&pending);
     match self.lsp_runtime.send_request(method, Some(params)) {
       Ok(request_id) => {
         self.lsp_pending_requests.insert(request_id, pending);
@@ -3019,14 +4710,26 @@ impl App {
   }
 
   pub fn handle_key(&mut self, id: ffi::EditorId, event: ffi::KeyEvent) -> bool {
+    let started = Instant::now();
     if self.activate(id).is_none() {
       return false;
     }
 
+    let event_kind = event.kind;
+    let event_codepoint = event.codepoint;
     let key_event = key_event_from_ffi(event);
     let dispatch = self.dispatch();
     dispatch.pre_on_keypress(self, key_event);
     self.ensure_cursor_visible(id);
+    let elapsed = started.elapsed();
+    if ffi_ui_profile_should_log(elapsed) {
+      ffi_ui_profile_log(format!(
+        "handle_key kind={} codepoint={} elapsed={}ms",
+        event_kind,
+        event_codepoint,
+        elapsed.as_millis()
+      ));
+    }
     true
   }
 
@@ -3594,6 +5297,9 @@ impl DefaultContext for App {
 
   fn set_mode(&mut self, mode: Mode) {
     self.active_state_mut().mode = mode;
+    if mode != Mode::Insert {
+      self.cancel_auto_completion();
+    }
   }
 
   fn keymaps(&mut self) -> &mut Keymaps {
@@ -3638,6 +5344,56 @@ impl DefaultContext for App {
 
   fn completion_menu_mut(&mut self) -> &mut the_default::CompletionMenuState {
     &mut self.active_state_mut().completion_menu
+  }
+
+  fn completion_selection_changed(&mut self, index: usize) {
+    let source_index = self
+      .completion_source_index_for_visible_index(index)
+      .unwrap_or(index);
+    self.resolve_completion_item_if_needed(source_index);
+  }
+
+  fn completion_accept_on_commit_char(&mut self, ch: char) -> bool {
+    let Some(selected) = self.completion_menu().selected else {
+      return false;
+    };
+    let source_index = self
+      .completion_source_index_for_visible_index(selected)
+      .unwrap_or(selected);
+    let should_accept = self
+      .lsp_completion_items
+      .get(source_index)
+      .is_some_and(|item| completion_item_accepts_commit_char(item, ch));
+    if should_accept {
+      the_default::completion_accept(self);
+      return true;
+    }
+    false
+  }
+
+  fn completion_on_action(&mut self, command: Command) -> bool {
+    self.handle_completion_action(command)
+  }
+
+  fn completion_accept_selected(&mut self, index: usize) -> bool {
+    let source_index = self
+      .completion_source_index_for_visible_index(index)
+      .unwrap_or(index);
+    let Some(item) = self.lsp_completion_items.get(source_index).cloned() else {
+      return false;
+    };
+
+    let fallback_end = self.primary_cursor_char_idx().unwrap_or(0);
+    let fallback_start = self
+      .lsp_completion_start
+      .unwrap_or(fallback_end)
+      .min(fallback_end);
+    let applied = self.apply_completion_item(item, fallback_start..fallback_end);
+    if applied {
+      self.clear_completion_state();
+      self.cancel_auto_completion();
+    }
+    applied
   }
 
   fn file_picker(&self) -> &FilePickerState {
@@ -3846,6 +5602,11 @@ impl DefaultContext for App {
     );
   }
 
+  fn lsp_completion(&mut self) {
+    self.cancel_auto_completion();
+    let _ = self.dispatch_completion_request(CompletionTriggerSource::Manual, true);
+  }
+
   fn on_file_saved(&mut self, _path: &Path, text: &str) {
     if let Some(watch) = self.lsp_watched_file.as_mut() {
       watch.stream.suppress_until = Some(Instant::now() + lsp_self_save_suppress_window());
@@ -3862,6 +5623,8 @@ impl DefaultContext for App {
     self.lsp_watched_file = None;
     self.lsp_active_progress_tokens.clear();
     self.lsp_pending_requests.clear();
+    self.clear_completion_state();
+    self.cancel_auto_completion();
     self.set_lsp_status(LspStatusPhase::Off, Some("stopped".into()));
   }
 
@@ -4111,6 +5874,23 @@ mod ffi {
     fn pending_key_hints_json(self: &App, id: EditorId) -> String;
     fn mode(self: &App, id: EditorId) -> u8;
     fn theme_highlight_style(self: &App, highlight: u32) -> Style;
+    #[swift_bridge(associated_to = App)]
+    fn completion_docs_render_json(
+      markdown: &str,
+      content_width: usize,
+      language_hint: &str,
+    ) -> String;
+    #[swift_bridge(associated_to = App)]
+    fn completion_popup_layout_json(
+      area_width: usize,
+      area_height: usize,
+      cursor_x: i64,
+      cursor_y: i64,
+      list_width: usize,
+      list_height: usize,
+      docs_width: usize,
+      docs_height: usize,
+    ) -> String;
     fn command_palette_is_open(self: &mut App, id: EditorId) -> bool;
     fn command_palette_query(self: &mut App, id: EditorId) -> String;
     fn command_palette_layout(self: &mut App, id: EditorId) -> u8;

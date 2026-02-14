@@ -20,6 +20,19 @@ extension App {
         self.init(ptr: __swift_bridge__$App$new())
     }
 }
+extension App {
+    class public func completion_docs_render_json<GenericToRustStr: ToRustStr>(_ markdown: GenericToRustStr, _ content_width: UInt, _ language_hint: GenericToRustStr) -> RustString {
+        return language_hint.toRustStr({ language_hintAsRustStr in
+            return markdown.toRustStr({ markdownAsRustStr in
+            RustString(ptr: __swift_bridge__$App$completion_docs_render_json(markdownAsRustStr, content_width, language_hintAsRustStr))
+        })
+        })
+    }
+
+    class public func completion_popup_layout_json(_ area_width: UInt, _ area_height: UInt, _ cursor_x: Int64, _ cursor_y: Int64, _ list_width: UInt, _ list_height: UInt, _ docs_width: UInt, _ docs_height: UInt) -> RustString {
+        RustString(ptr: __swift_bridge__$App$completion_popup_layout_json(area_width, area_height, cursor_x, cursor_y, list_width, list_height, docs_width, docs_height))
+    }
+}
 public class AppRefMut: AppRef {
     public override init(ptr: UnsafeMutableRawPointer) {
         super.init(ptr: ptr)

@@ -16,6 +16,7 @@ struct EditorView: View {
         let isSearchOpen = model.uiTree.hasSearchPromptPanel
         let isFilePickerOpen = model.filePickerSnapshot?.active ?? false
         let isOverlayOpen = isPaletteOpen || isSearchOpen || isFilePickerOpen
+        let completionSnapshot = model.uiTree.completionSnapshot()
         GeometryReader { proxy in
             ZStack {
                 Canvas { context, size in
@@ -65,6 +66,17 @@ struct EditorView: View {
                         model.closeFilePicker()
                     }
                 )
+
+                if let completion = completionSnapshot {
+                    CompletionPopupView(
+                        snapshot: completion,
+                        cursorOrigin: cursorPixelPosition(plan: model.plan, cellSize: cellSize),
+                        cellSize: cellSize,
+                        containerSize: proxy.size,
+                        languageHint: model.completionDocsLanguageHint()
+                    )
+                    .allowsHitTesting(true)
+                }
             }
             .background(
                 Group {
@@ -110,6 +122,19 @@ struct EditorView: View {
                 model.updateViewport(pixelSize: newSize, cellSize: cellSize)
             }
         }
+    }
+
+    private func cursorPixelPosition(plan: RenderPlan, cellSize: CGSize) -> CGPoint {
+        let contentOffsetX = CGFloat(plan.content_offset_x()) * cellSize.width
+        let count = Int(plan.cursor_count())
+        guard count > 0 else {
+            return CGPoint(x: contentOffsetX, y: 0)
+        }
+        let pos = plan.cursor_at(0).pos()
+        return CGPoint(
+            x: contentOffsetX + CGFloat(pos.col) * cellSize.width,
+            y: CGFloat(pos.row) * cellSize.height
+        )
     }
 
     private func drawPlan(in context: GraphicsContext, size: CGSize, plan: RenderPlan, cellSize: CGSize, font: Font) {

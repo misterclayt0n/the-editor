@@ -25,6 +25,8 @@ void* __swift_bridge__$Vec_Document$get_mut(void* vec_ptr, uintptr_t index);
 uintptr_t __swift_bridge__$Vec_Document$len(void* vec_ptr);
 void* __swift_bridge__$Vec_Document$as_ptr(void* vec_ptr);
 
+typedef struct __swift_bridge__$KeyEvent { uint8_t kind; uint32_t codepoint; uint8_t modifiers; } __swift_bridge__$KeyEvent;
+typedef struct __swift_bridge__$Option$KeyEvent { bool is_some; __swift_bridge__$KeyEvent val; } __swift_bridge__$Option$KeyEvent;
 typedef struct __swift_bridge__$EditorId { uint64_t value; } __swift_bridge__$EditorId;
 typedef struct __swift_bridge__$Option$EditorId { bool is_some; __swift_bridge__$EditorId val; } __swift_bridge__$Option$EditorId;
 typedef struct __swift_bridge__$Rect { uint16_t x; uint16_t y; uint16_t width; uint16_t height; } __swift_bridge__$Rect;
@@ -35,7 +37,7 @@ typedef struct __swift_bridge__$Color { uint8_t kind; uint32_t value; } __swift_
 typedef struct __swift_bridge__$Option$Color { bool is_some; __swift_bridge__$Color val; } __swift_bridge__$Option$Color;
 typedef struct __swift_bridge__$Style { bool has_fg; struct __swift_bridge__$Color fg; bool has_bg; struct __swift_bridge__$Color bg; bool has_underline_color; struct __swift_bridge__$Color underline_color; uint8_t underline_style; uint16_t add_modifier; uint16_t sub_modifier; } __swift_bridge__$Style;
 typedef struct __swift_bridge__$Option$Style { bool is_some; __swift_bridge__$Style val; } __swift_bridge__$Option$Style;
-typedef struct __swift_bridge__$RenderStyles { struct __swift_bridge__$Style selection; struct __swift_bridge__$Style cursor; struct __swift_bridge__$Style active_cursor; } __swift_bridge__$RenderStyles;
+typedef struct __swift_bridge__$RenderStyles { struct __swift_bridge__$Style selection; struct __swift_bridge__$Style cursor; struct __swift_bridge__$Style active_cursor; struct __swift_bridge__$Style gutter; struct __swift_bridge__$Style gutter_active; } __swift_bridge__$RenderStyles;
 typedef struct __swift_bridge__$Option$RenderStyles { bool is_some; __swift_bridge__$RenderStyles val; } __swift_bridge__$Option$RenderStyles;
 typedef struct RenderSpan RenderSpan;
 void __swift_bridge__$RenderSpan$_free(void* self);
@@ -61,6 +63,30 @@ void* __swift_bridge__$Vec_RenderLine$get_mut(void* vec_ptr, uintptr_t index);
 uintptr_t __swift_bridge__$Vec_RenderLine$len(void* vec_ptr);
 void* __swift_bridge__$Vec_RenderLine$as_ptr(void* vec_ptr);
 
+typedef struct RenderGutterSpan RenderGutterSpan;
+void __swift_bridge__$RenderGutterSpan$_free(void* self);
+
+void* __swift_bridge__$Vec_RenderGutterSpan$new(void);
+void __swift_bridge__$Vec_RenderGutterSpan$drop(void* vec_ptr);
+void __swift_bridge__$Vec_RenderGutterSpan$push(void* vec_ptr, void* item_ptr);
+void* __swift_bridge__$Vec_RenderGutterSpan$pop(void* vec_ptr);
+void* __swift_bridge__$Vec_RenderGutterSpan$get(void* vec_ptr, uintptr_t index);
+void* __swift_bridge__$Vec_RenderGutterSpan$get_mut(void* vec_ptr, uintptr_t index);
+uintptr_t __swift_bridge__$Vec_RenderGutterSpan$len(void* vec_ptr);
+void* __swift_bridge__$Vec_RenderGutterSpan$as_ptr(void* vec_ptr);
+
+typedef struct RenderGutterLine RenderGutterLine;
+void __swift_bridge__$RenderGutterLine$_free(void* self);
+
+void* __swift_bridge__$Vec_RenderGutterLine$new(void);
+void __swift_bridge__$Vec_RenderGutterLine$drop(void* vec_ptr);
+void __swift_bridge__$Vec_RenderGutterLine$push(void* vec_ptr, void* item_ptr);
+void* __swift_bridge__$Vec_RenderGutterLine$pop(void* vec_ptr);
+void* __swift_bridge__$Vec_RenderGutterLine$get(void* vec_ptr, uintptr_t index);
+void* __swift_bridge__$Vec_RenderGutterLine$get_mut(void* vec_ptr, uintptr_t index);
+uintptr_t __swift_bridge__$Vec_RenderGutterLine$len(void* vec_ptr);
+void* __swift_bridge__$Vec_RenderGutterLine$as_ptr(void* vec_ptr);
+
 typedef struct RenderCursor RenderCursor;
 void __swift_bridge__$RenderCursor$_free(void* self);
 
@@ -85,6 +111,18 @@ void* __swift_bridge__$Vec_RenderSelection$get_mut(void* vec_ptr, uintptr_t inde
 uintptr_t __swift_bridge__$Vec_RenderSelection$len(void* vec_ptr);
 void* __swift_bridge__$Vec_RenderSelection$as_ptr(void* vec_ptr);
 
+typedef struct RenderOverlayNode RenderOverlayNode;
+void __swift_bridge__$RenderOverlayNode$_free(void* self);
+
+void* __swift_bridge__$Vec_RenderOverlayNode$new(void);
+void __swift_bridge__$Vec_RenderOverlayNode$drop(void* vec_ptr);
+void __swift_bridge__$Vec_RenderOverlayNode$push(void* vec_ptr, void* item_ptr);
+void* __swift_bridge__$Vec_RenderOverlayNode$pop(void* vec_ptr);
+void* __swift_bridge__$Vec_RenderOverlayNode$get(void* vec_ptr, uintptr_t index);
+void* __swift_bridge__$Vec_RenderOverlayNode$get_mut(void* vec_ptr, uintptr_t index);
+uintptr_t __swift_bridge__$Vec_RenderOverlayNode$len(void* vec_ptr);
+void* __swift_bridge__$Vec_RenderOverlayNode$as_ptr(void* vec_ptr);
+
 typedef struct RenderPlan RenderPlan;
 void __swift_bridge__$RenderPlan$_free(void* self);
 
@@ -102,12 +140,52 @@ struct __swift_bridge__$EditorId __swift_bridge__$App$create_editor(void* self, 
 bool __swift_bridge__$App$remove_editor(void* self, struct __swift_bridge__$EditorId id);
 bool __swift_bridge__$App$set_viewport(void* self, struct __swift_bridge__$EditorId id, struct __swift_bridge__$Rect viewport);
 bool __swift_bridge__$App$set_scroll(void* self, struct __swift_bridge__$EditorId id, struct __swift_bridge__$Position scroll);
+bool __swift_bridge__$App$set_file_path(void* self, struct __swift_bridge__$EditorId id, struct RustStr path);
 bool __swift_bridge__$App$set_active_cursor(void* self, struct __swift_bridge__$EditorId id, uint64_t cursor_id);
 bool __swift_bridge__$App$clear_active_cursor(void* self, struct __swift_bridge__$EditorId id);
 void* __swift_bridge__$App$cursor_ids(void* self, struct __swift_bridge__$EditorId id);
 void* __swift_bridge__$App$render_plan(void* self, struct __swift_bridge__$EditorId id);
 void* __swift_bridge__$App$render_plan_with_styles(void* self, struct __swift_bridge__$EditorId id, struct __swift_bridge__$RenderStyles styles);
+void* __swift_bridge__$App$ui_tree_json(void* self, struct __swift_bridge__$EditorId id);
+void* __swift_bridge__$App$message_snapshot_json(void* self, struct __swift_bridge__$EditorId id);
+void* __swift_bridge__$App$message_events_since_json(void* self, struct __swift_bridge__$EditorId id, uint64_t seq);
+bool __swift_bridge__$App$ui_event_json(void* self, struct __swift_bridge__$EditorId id, struct RustStr event_json);
 void* __swift_bridge__$App$text(void* self, struct __swift_bridge__$EditorId id);
+void* __swift_bridge__$App$pending_keys_json(void* self, struct __swift_bridge__$EditorId id);
+void* __swift_bridge__$App$pending_key_hints_json(void* self, struct __swift_bridge__$EditorId id);
+uint8_t __swift_bridge__$App$mode(void* self, struct __swift_bridge__$EditorId id);
+struct __swift_bridge__$Style __swift_bridge__$App$theme_highlight_style(void* self, uint32_t highlight);
+void* __swift_bridge__$App$completion_docs_render_json(struct RustStr markdown, uintptr_t content_width, struct RustStr language_hint);
+void* __swift_bridge__$App$completion_popup_layout_json(uintptr_t area_width, uintptr_t area_height, int64_t cursor_x, int64_t cursor_y, uintptr_t list_width, uintptr_t list_height, uintptr_t docs_width, uintptr_t docs_height);
+bool __swift_bridge__$App$command_palette_is_open(void* self, struct __swift_bridge__$EditorId id);
+void* __swift_bridge__$App$command_palette_query(void* self, struct __swift_bridge__$EditorId id);
+uint8_t __swift_bridge__$App$command_palette_layout(void* self, struct __swift_bridge__$EditorId id);
+uintptr_t __swift_bridge__$App$command_palette_filtered_count(void* self, struct __swift_bridge__$EditorId id);
+int64_t __swift_bridge__$App$command_palette_filtered_selected_index(void* self, struct __swift_bridge__$EditorId id);
+void* __swift_bridge__$App$command_palette_filtered_title(void* self, struct __swift_bridge__$EditorId id, uintptr_t index);
+void* __swift_bridge__$App$command_palette_filtered_subtitle(void* self, struct __swift_bridge__$EditorId id, uintptr_t index);
+void* __swift_bridge__$App$command_palette_filtered_description(void* self, struct __swift_bridge__$EditorId id, uintptr_t index);
+void* __swift_bridge__$App$command_palette_filtered_shortcut(void* self, struct __swift_bridge__$EditorId id, uintptr_t index);
+void* __swift_bridge__$App$command_palette_filtered_badge(void* self, struct __swift_bridge__$EditorId id, uintptr_t index);
+void* __swift_bridge__$App$command_palette_filtered_leading_icon(void* self, struct __swift_bridge__$EditorId id, uintptr_t index);
+struct __swift_bridge__$Color __swift_bridge__$App$command_palette_filtered_leading_color(void* self, struct __swift_bridge__$EditorId id, uintptr_t index);
+uintptr_t __swift_bridge__$App$command_palette_filtered_symbol_count(void* self, struct __swift_bridge__$EditorId id, uintptr_t index);
+void* __swift_bridge__$App$command_palette_filtered_symbol(void* self, struct __swift_bridge__$EditorId id, uintptr_t index, uintptr_t symbol_index);
+bool __swift_bridge__$App$command_palette_select_filtered(void* self, struct __swift_bridge__$EditorId id, uintptr_t index);
+bool __swift_bridge__$App$command_palette_submit_filtered(void* self, struct __swift_bridge__$EditorId id, uintptr_t index);
+bool __swift_bridge__$App$command_palette_close(void* self, struct __swift_bridge__$EditorId id);
+bool __swift_bridge__$App$command_palette_set_query(void* self, struct __swift_bridge__$EditorId id, struct RustStr query);
+bool __swift_bridge__$App$search_prompt_set_query(void* self, struct __swift_bridge__$EditorId id, struct RustStr query);
+bool __swift_bridge__$App$search_prompt_close(void* self, struct __swift_bridge__$EditorId id);
+bool __swift_bridge__$App$search_prompt_submit(void* self, struct __swift_bridge__$EditorId id);
+bool __swift_bridge__$App$file_picker_set_query(void* self, struct __swift_bridge__$EditorId id, struct RustStr query);
+bool __swift_bridge__$App$file_picker_submit(void* self, struct __swift_bridge__$EditorId id, uintptr_t index);
+bool __swift_bridge__$App$file_picker_close(void* self, struct __swift_bridge__$EditorId id);
+void* __swift_bridge__$App$file_picker_snapshot_json(void* self, struct __swift_bridge__$EditorId id, uintptr_t max_items);
+bool __swift_bridge__$App$poll_background(void* self, struct __swift_bridge__$EditorId id);
+bool __swift_bridge__$App$take_should_quit(void* self);
+bool __swift_bridge__$App$handle_key(void* self, struct __swift_bridge__$EditorId id, struct __swift_bridge__$KeyEvent event);
+bool __swift_bridge__$App$ensure_cursor_visible(void* self, struct __swift_bridge__$EditorId id);
 bool __swift_bridge__$App$insert(void* self, struct __swift_bridge__$EditorId id, struct RustStr text);
 bool __swift_bridge__$App$delete_backward(void* self, struct __swift_bridge__$EditorId id);
 bool __swift_bridge__$App$delete_forward(void* self, struct __swift_bridge__$EditorId id);
@@ -154,19 +232,36 @@ bool __swift_bridge__$RenderSpan$is_virtual(void* self);
 uint16_t __swift_bridge__$RenderLine$row(void* self);
 uintptr_t __swift_bridge__$RenderLine$span_count(void* self);
 void* __swift_bridge__$RenderLine$span_at(void* self, uintptr_t index);
+uint16_t __swift_bridge__$RenderGutterSpan$col(void* self);
+void* __swift_bridge__$RenderGutterSpan$text(void* self);
+struct __swift_bridge__$Style __swift_bridge__$RenderGutterSpan$style(void* self);
+uint16_t __swift_bridge__$RenderGutterLine$row(void* self);
+uintptr_t __swift_bridge__$RenderGutterLine$span_count(void* self);
+void* __swift_bridge__$RenderGutterLine$span_at(void* self, uintptr_t index);
 uint64_t __swift_bridge__$RenderCursor$id(void* self);
 struct __swift_bridge__$Position __swift_bridge__$RenderCursor$pos(void* self);
 uint8_t __swift_bridge__$RenderCursor$kind(void* self);
 struct __swift_bridge__$Style __swift_bridge__$RenderCursor$style(void* self);
 struct __swift_bridge__$Rect __swift_bridge__$RenderSelection$rect(void* self);
 struct __swift_bridge__$Style __swift_bridge__$RenderSelection$style(void* self);
+uint8_t __swift_bridge__$RenderOverlayNode$kind(void* self);
+uint8_t __swift_bridge__$RenderOverlayNode$rect_kind(void* self);
+struct __swift_bridge__$Rect __swift_bridge__$RenderOverlayNode$rect(void* self);
+uint16_t __swift_bridge__$RenderOverlayNode$radius(void* self);
+struct __swift_bridge__$Position __swift_bridge__$RenderOverlayNode$pos(void* self);
+void* __swift_bridge__$RenderOverlayNode$text(void* self);
+struct __swift_bridge__$Style __swift_bridge__$RenderOverlayNode$style(void* self);
 struct __swift_bridge__$Rect __swift_bridge__$RenderPlan$viewport(void* self);
 struct __swift_bridge__$Position __swift_bridge__$RenderPlan$scroll(void* self);
+uint16_t __swift_bridge__$RenderPlan$content_offset_x(void* self);
+uintptr_t __swift_bridge__$RenderPlan$gutter_line_count(void* self);
+void* __swift_bridge__$RenderPlan$gutter_line_at(void* self, uintptr_t index);
 uintptr_t __swift_bridge__$RenderPlan$line_count(void* self);
 void* __swift_bridge__$RenderPlan$line_at(void* self, uintptr_t index);
 uintptr_t __swift_bridge__$RenderPlan$cursor_count(void* self);
 void* __swift_bridge__$RenderPlan$cursor_at(void* self, uintptr_t index);
 uintptr_t __swift_bridge__$RenderPlan$selection_count(void* self);
 void* __swift_bridge__$RenderPlan$selection_at(void* self, uintptr_t index);
-
+uintptr_t __swift_bridge__$RenderPlan$overlay_count(void* self);
+void* __swift_bridge__$RenderPlan$overlay_at(void* self, uintptr_t index);
 

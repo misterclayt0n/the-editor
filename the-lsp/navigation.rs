@@ -218,8 +218,8 @@ fn hover_contents_to_text(value: &Value) -> Option<String> {
   let object = value.as_object()?;
   let value = object.get("value").and_then(Value::as_str)?;
   if let Some(language) = object.get("language").and_then(Value::as_str) {
-    // MarkedString with explicit language: preserve language context via fenced block
-    // unless content is already markdown.
+    // MarkedString with explicit language: preserve language context via fenced
+    // block unless content is already markdown.
     if language.eq_ignore_ascii_case("markdown") || language.eq_ignore_ascii_case("md") {
       return Some(value.to_string());
     }
@@ -567,7 +567,8 @@ mod tests {
     assert_eq!(
       hover,
       Some(
-        "```\ncore::time\n\npub struct Duration {\nsecs: u64,\nnanos: Nanoseconds,\n}\n```\n\nA duration type."
+        "```\ncore::time\n\npub struct Duration {\nsecs: u64,\nnanos: Nanoseconds,\n}\n```\n\nA \
+         duration type."
           .to_string()
       )
     );
@@ -582,6 +583,9 @@ mod tests {
       }
     });
     let hover = parse_hover_response(Some(&value)).expect("hover parse");
-    assert_eq!(hover, Some("A duration type.\n\npub struct Duration {}".to_string()));
+    assert_eq!(
+      hover,
+      Some("A duration type.\n\npub struct Duration {}".to_string())
+    );
   }
 }

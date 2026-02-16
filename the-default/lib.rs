@@ -139,6 +139,7 @@ pub use signature_help::{
   SignatureHelpState,
   build_signature_help_ui,
   close_signature_help,
+  signature_help_markdown,
   show_signature_help,
   signature_help_docs_scroll,
   signature_help_next,

@@ -30,6 +30,7 @@ use the_default::{
   file_picker_icon_glyph,
   render_plan,
   set_picker_visible_rows,
+  signature_help_markdown,
   signature_help_panel_rect as default_signature_help_panel_rect,
   ui_tree,
 };
@@ -2555,31 +2556,7 @@ fn selected_completion_docs_text(ctx: &Ctx) -> Option<&str> {
 }
 
 fn signature_help_panel_text(ctx: &Ctx) -> Option<String> {
-  let state = &ctx.signature_help;
-  if !state.active || state.signatures.is_empty() {
-    return None;
-  }
-
-  let selected = state.selected()?;
-  let mut content = String::new();
-  if state.signatures.len() > 1 {
-    content.push_str(&format!(
-      "({}/{})\n\n",
-      state.active_signature + 1,
-      state.signatures.len()
-    ));
-  }
-  content.push_str(selected.label.trim());
-  if let Some(docs) = selected
-    .documentation
-    .as_deref()
-    .map(str::trim)
-    .filter(|docs| !docs.is_empty())
-  {
-    content.push_str("\n\n");
-    content.push_str(docs);
-  }
-  Some(content)
+  signature_help_markdown(&ctx.signature_help)
 }
 
 fn completion_docs_layout_for_panel(

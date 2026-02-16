@@ -69,27 +69,8 @@ impl SignatureHelpState {
   }
 }
 
-fn render_signature_label_markdown(
-  label: &str,
-  active_range: Option<&std::ops::Range<usize>>,
-) -> String {
-  let Some(range) = active_range else {
-    return label.to_string();
-  };
-  if range.start >= range.end || range.end > label.len() {
-    return label.to_string();
-  }
-  if !label.is_char_boundary(range.start) || !label.is_char_boundary(range.end) {
-    return label.to_string();
-  }
-
-  let mut rendered = String::with_capacity(label.len() + 4);
-  rendered.push_str(&label[..range.start]);
-  rendered.push_str("**");
-  rendered.push_str(&label[range.clone()]);
-  rendered.push_str("**");
-  rendered.push_str(&label[range.end..]);
-  rendered
+fn signature_label_markdown(label: &str) -> String {
+  format!("```\n{label}\n```")
 }
 
 fn build_signature_help_content(
@@ -105,10 +86,7 @@ fn build_signature_help_content(
     ));
   }
 
-  let signature_label = render_signature_label_markdown(
-    selected.label.trim(),
-    selected.active_parameter_range.as_ref(),
-  );
+  let signature_label = signature_label_markdown(selected.label.trim());
   content.push_str(signature_label.as_str());
 
   if let Some(docs) = selected
@@ -122,6 +100,14 @@ fn build_signature_help_content(
   }
 
   content
+}
+
+pub fn signature_help_markdown(state: &SignatureHelpState) -> Option<String> {
+  if !state.active || state.signatures.is_empty() {
+    return None;
+  }
+  let selected = state.selected()?;
+  Some(build_signature_help_content(state, selected))
 }
 
 pub fn close_signature_help<Ctx: DefaultContext>(ctx: &mut Ctx) {
@@ -238,16 +224,14 @@ pub fn build_signature_help_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNode
     return Vec::new();
   }
 
-  let Some(selected) = state.selected() else {
+  let Some(content) = signature_help_markdown(state) else {
     return Vec::new();
   };
-
-  let content = build_signature_help_content(state, selected);
 
   let mut text = UiText::new("signature_help_text", content);
   text.source = Some("signature".to_string());
   text.style = text.style.with_role("completion_docs");
-  text.clip = false;
+  text.clip = true;
 
   let mut container = UiContainer::column(
     "signature_help_container",
@@ -271,9 +255,9 @@ pub fn build_signature_help_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNode
     top:    1,
     bottom: 1,
   };
-  panel.constraints.min_width = Some(24);
-  panel.constraints.max_width = Some(84);
-  panel.constraints.max_height = Some(18);
+  panel.constraints.min_width = Some(12);
+  panel.constraints.max_width = Some(72);
+  panel.constraints.max_height = Some(16);
 
   vec![UiNode::Panel(panel)]
 }
@@ -284,16 +268,14 @@ mod tests {
     SignatureHelpItem,
     SignatureHelpState,
     build_signature_help_content,
-    render_signature_label_markdown,
+    signature_help_markdown,
+    signature_label_markdown,
   };
 
   #[test]
-  fn render_signature_label_markdown_emphasizes_active_parameter() {
-    let label = "render(f: &mut Frame<'_>, ctx: &mut Ctx)";
-    let start = label.find("ctx: &mut Ctx").expect("active parameter");
-    let end = start + "ctx: &mut Ctx".len();
-    let rendered = render_signature_label_markdown(label, Some(&(start..end)));
-    assert_eq!(rendered, "render(f: &mut Frame<'_>, **ctx: &mut Ctx**)");
+  fn signature_label_markdown_wraps_signature_in_code_fence() {
+    let rendered = signature_label_markdown("add(int x, int y) -> int");
+    assert_eq!(rendered, "```\nadd(int x, int y) -> int\n```");
   }
 
   #[test]
@@ -308,7 +290,13 @@ mod tests {
     let content = build_signature_help_content(&state, state.selected().expect("selected"));
     assert_eq!(
       content,
-      "(1/2)\n\nfoo(**a: i32**, b: i32)\n\n---\n\nFunction docs."
+      "(1/2)\n\n```\nfoo(a: i32, b: i32)\n```\n\n---\n\nFunction docs."
     );
+  }
+
+  #[test]
+  fn signature_help_markdown_returns_none_when_inactive() {
+    let state = SignatureHelpState::default();
+    assert!(signature_help_markdown(&state).is_none());
   }
 }

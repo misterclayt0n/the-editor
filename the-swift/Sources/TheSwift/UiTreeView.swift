@@ -17,6 +17,9 @@ struct UiOverlayHost: View {
     let onFilePickerQueryChange: (String) -> Void
     let onFilePickerSubmit: (Int) -> Void
     let onFilePickerClose: () -> Void
+    let onInputPromptQueryChange: (String) -> Void
+    let onInputPromptClose: () -> Void
+    let onInputPromptSubmit: () -> Void
     @State private var searchLayout = SearchPromptLayout()
 
     var body: some View {
@@ -71,6 +74,15 @@ struct UiOverlayHost: View {
                         onSearchNext: onSearchNext,
                         onClose: onSearchClose,
                         onSubmit: onSearchSubmit
+                    )
+                }
+
+                if let inputSnapshot = tree.inputPromptSnapshot() {
+                    InputPromptView(
+                        snapshot: inputSnapshot,
+                        onQueryChange: onInputPromptQueryChange,
+                        onClose: onInputPromptClose,
+                        onSubmit: onInputPromptSubmit
                     )
                 }
 
@@ -909,6 +921,12 @@ extension UiTreeSnapshot {
         guard let panel = searchPromptPanel() else { return nil }
 
         let input = findInput(in: panel.child, id: "search_prompt_input")
+
+        // Only produce a SearchPromptSnapshot for search-kind prompts.
+        if let placeholder = input?.placeholder, placeholder != "search" {
+            return nil
+        }
+
         let errorText = findText(in: panel.child, id: "search_prompt_error")
 
         var query = input?.value ?? ""
@@ -918,6 +936,27 @@ extension UiTreeSnapshot {
 
         return SearchPromptSnapshot(
             isOpen: true,
+            query: query,
+            error: errorText?.content
+        )
+    }
+
+    func inputPromptSnapshot() -> InputPromptSnapshot? {
+        guard let panel = searchPromptPanel() else { return nil }
+
+        let input = findInput(in: panel.child, id: "search_prompt_input")
+
+        // Only produce an InputPromptSnapshot for non-search prompts.
+        guard let placeholder = input?.placeholder, placeholder != "search" else {
+            return nil
+        }
+
+        let errorText = findText(in: panel.child, id: "search_prompt_error")
+        let query = input?.value ?? ""
+
+        return InputPromptSnapshot(
+            isOpen: true,
+            label: placeholder.uppercased(),
             query: query,
             error: errorText?.content
         )
@@ -1003,7 +1042,11 @@ extension UiTreeSnapshot {
     }
 
     var hasSearchPromptPanel: Bool {
-        return searchPromptPanel() != nil
+        return searchPromptSnapshot() != nil
+    }
+
+    var hasInputPromptPanel: Bool {
+        return inputPromptSnapshot() != nil
     }
 
     var hasCommandPalettePanel: Bool {

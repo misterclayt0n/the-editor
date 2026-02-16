@@ -79,7 +79,9 @@ use the_default::{
   completion_docs_panel_rect as default_completion_docs_panel_rect,
   completion_panel_rect as default_completion_panel_rect,
   signature_help_panel_rect as default_signature_help_panel_rect,
+  SearchPromptKind,
   finalize_search,
+  finalize_select_regex,
   handle_query_change as file_picker_handle_query_change,
   poll_scan_results as file_picker_poll_scan_results,
   refresh_matcher_state as file_picker_refresh_matcher_state,
@@ -3529,7 +3531,11 @@ impl App {
     if self.activate(id).is_none() {
       return false;
     }
-    if finalize_search(self) {
+    let should_close = match self.search_prompt_ref().kind {
+      SearchPromptKind::Search => finalize_search(self),
+      SearchPromptKind::SelectRegex => finalize_select_regex(self),
+    };
+    if should_close {
       self.search_prompt_mut().clear();
     }
     self.request_render();

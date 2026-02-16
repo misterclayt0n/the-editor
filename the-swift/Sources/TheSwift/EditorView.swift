@@ -15,7 +15,8 @@ struct EditorView: View {
         let isPaletteOpen = model.uiTree.hasCommandPalettePanel
         let isSearchOpen = model.uiTree.hasSearchPromptPanel
         let isFilePickerOpen = model.filePickerSnapshot?.active ?? false
-        let isOverlayOpen = isPaletteOpen || isSearchOpen || isFilePickerOpen
+        let isInputPromptOpen = model.uiTree.hasInputPromptPanel
+        let isOverlayOpen = isPaletteOpen || isSearchOpen || isFilePickerOpen || isInputPromptOpen
         let completionSnapshot = model.uiTree.completionSnapshot()
         let hoverSnapshot = model.uiTree.hoverSnapshot()
         let signatureSnapshot = model.uiTree.signatureHelpSnapshot()
@@ -69,6 +70,15 @@ struct EditorView: View {
                     },
                     onFilePickerClose: {
                         model.closeFilePicker()
+                    },
+                    onInputPromptQueryChange: { query in
+                        model.setSearchQuery(query)
+                    },
+                    onInputPromptClose: {
+                        model.closeSearch()
+                    },
+                    onInputPromptSubmit: {
+                        model.submitSearch()
                     }
                 )
 

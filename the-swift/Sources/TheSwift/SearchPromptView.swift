@@ -16,6 +16,13 @@ struct SearchPromptSnapshot {
     )
 }
 
+struct InputPromptSnapshot {
+    let isOpen: Bool
+    let label: String
+    let query: String
+    let error: String?
+}
+
 struct SearchPromptView: View {
     let snapshot: SearchPromptSnapshot
     @Binding var layout: SearchPromptLayout

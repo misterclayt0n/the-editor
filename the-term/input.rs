@@ -67,7 +67,6 @@ pub fn handle_key(ctx: &mut Ctx, event: CrosstermKeyEvent) {
 
   if matches!(event.code, KeyCode::Esc) && ctx.signature_help.active {
     close_signature_help(ctx);
-    return;
   }
 
   if ctx.hover_docs.is_some() && !ctx.completion_menu.active {

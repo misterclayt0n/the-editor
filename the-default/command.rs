@@ -1364,7 +1364,11 @@ fn on_ui_event<Ctx: DefaultContext>(ctx: &mut Ctx, event: UiEvent) -> UiEventOut
         if let Some(key_event) = ui_key_event_to_key_event(key_event.clone()) {
           match key_event.key {
             Key::Escape => {
-              crate::signature_help::close_signature_help(ctx);
+              // Route through keymaps so escape mirrors keyboard behavior.
+              let outcome = keymap_handle_key(ctx, key_event);
+              if !handle_key_outcome(ctx, outcome) {
+                crate::signature_help::close_signature_help(ctx);
+              }
               return UiEventOutcome::handled();
             },
             Key::PageUp => {

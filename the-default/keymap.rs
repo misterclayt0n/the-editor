@@ -880,7 +880,7 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     "C" => copy_selection_on_next_line,
     "A-C" => copy_selection_on_prev_line,
 
-    // "s" => select_regex,
+    "s" => select_regex,
     // "A-s" => split_selection_on_newline,
     // "A-minus" => merge_selections,
     // "A-_" => merge_consecutive_selections,

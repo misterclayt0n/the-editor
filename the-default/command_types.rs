@@ -543,6 +543,7 @@ pub enum Command {
   },
   Search,
   RSearch,
+  SelectRegex,
   FilePicker,
   LspGotoDefinition,
   LspHover,
@@ -1210,6 +1211,11 @@ impl Command {
   #[must_use]
   pub const fn rsearch() -> Self {
     Self::RSearch
+  }
+
+  #[must_use]
+  pub const fn select_regex() -> Self {
+    Self::SelectRegex
   }
 
   #[must_use]

@@ -189,6 +189,7 @@ define! {
     find_char: (Direction, bool, bool),
     search: (),
     rsearch: (),
+    select_regex: (),
     search_next_or_prev: (Direction, bool, usize),
     parent_node_end: bool,
     parent_node_start: bool,
@@ -273,6 +274,7 @@ pub type DefaultDispatchStatic<Ctx> = DefaultDispatch<
   fn(&mut Ctx, ()),
   fn(&mut Ctx, ()),
   fn(&mut Ctx, (Direction, bool, bool)),
+  fn(&mut Ctx, ()),
   fn(&mut Ctx, ()),
   fn(&mut Ctx, ()),
   fn(&mut Ctx, (Direction, bool, usize)),
@@ -616,6 +618,7 @@ where
     .with_find_char(find_char::<Ctx> as fn(&mut Ctx, (Direction, bool, bool)))
     .with_search(search::<Ctx> as fn(&mut Ctx, ()))
     .with_rsearch(rsearch::<Ctx> as fn(&mut Ctx, ()))
+    .with_select_regex(select_regex::<Ctx> as fn(&mut Ctx, ()))
     .with_search_next_or_prev(search_next_or_prev::<Ctx> as fn(&mut Ctx, (Direction, bool, usize)))
     .with_parent_node_end(parent_node_end::<Ctx> as fn(&mut Ctx, bool))
     .with_parent_node_start(parent_node_start::<Ctx> as fn(&mut Ctx, bool))
@@ -987,6 +990,7 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::SelectTextobjectInner => ctx.dispatch().select_textobject_inner(ctx, ()),
     Command::Search => ctx.dispatch().search(ctx, ()),
     Command::RSearch => ctx.dispatch().rsearch(ctx, ()),
+    Command::SelectRegex => ctx.dispatch().select_regex(ctx, ()),
     Command::FilePicker => crate::file_picker::open_file_picker(ctx),
     Command::LspGotoDefinition => ctx.lsp_goto_definition(),
     Command::LspHover => ctx.lsp_hover(),
@@ -2021,6 +2025,10 @@ fn search<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
 
 fn rsearch<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
   crate::search_prompt::open_search_prompt(ctx, Direction::Backward);
+}
+
+fn select_regex<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
+  crate::search_prompt::open_select_regex_prompt(ctx);
 }
 
 fn search_next_or_prev<Ctx: DefaultContext>(ctx: &mut Ctx, params: (Direction, bool, usize)) {
@@ -3870,6 +3878,7 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "goto_last_line" => Some(Command::goto_last_line()),
     "search" => Some(Command::search()),
     "rsearch" => Some(Command::rsearch()),
+    "select_regex" => Some(Command::select_regex()),
     "file_picker" => Some(Command::file_picker()),
     "lsp_goto_definition" => Some(Command::lsp_goto_definition()),
     "goto_definition" => Some(Command::lsp_goto_definition()),

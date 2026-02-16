@@ -29,7 +29,10 @@ use the_lib::{
     build_regex,
     search_regex,
   },
-  selection::CursorPick,
+  selection::{
+    CursorPick,
+    select_on_matches,
+  },
 };
 
 use crate::{
@@ -43,6 +46,7 @@ use crate::{
 #[derive(Debug, Clone)]
 pub struct SearchPromptState {
   pub active:             bool,
+  pub kind:               SearchPromptKind,
   pub direction:          Direction,
   pub query:              String,
   pub cursor:             usize,
@@ -54,10 +58,17 @@ pub struct SearchPromptState {
   pub selected:           Option<usize>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SearchPromptKind {
+  Search,
+  SelectRegex,
+}
+
 impl SearchPromptState {
   pub fn new() -> Self {
     Self {
       active:             false,
+      kind:               SearchPromptKind::Search,
       direction:          Direction::Forward,
       query:              String::new(),
       cursor:             0,
@@ -72,6 +83,7 @@ impl SearchPromptState {
 
   pub fn clear(&mut self) {
     self.active = false;
+    self.kind = SearchPromptKind::Search;
     self.query.clear();
     self.cursor = 0;
     self.completions.clear();
@@ -106,6 +118,7 @@ pub fn open_search_prompt<Ctx: DefaultContext>(ctx: &mut Ctx, direction: Directi
   let original_selection = ctx.editor_ref().document().selection().clone();
   let prompt = ctx.search_prompt_mut();
   prompt.active = true;
+  prompt.kind = SearchPromptKind::Search;
   prompt.direction = direction;
   prompt.query.clear();
   prompt.cursor = 0;
@@ -113,6 +126,24 @@ pub fn open_search_prompt<Ctx: DefaultContext>(ctx: &mut Ctx, direction: Directi
   prompt.error = None;
   prompt.register = register;
   prompt.extend = extend;
+  prompt.original_selection = Some(original_selection);
+  prompt.selected = None;
+
+  ctx.request_render();
+}
+
+pub fn open_select_regex_prompt<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  let original_selection = ctx.editor_ref().document().selection().clone();
+  let prompt = ctx.search_prompt_mut();
+  prompt.active = true;
+  prompt.kind = SearchPromptKind::SelectRegex;
+  prompt.direction = Direction::Forward;
+  prompt.query.clear();
+  prompt.cursor = 0;
+  prompt.completions.clear();
+  prompt.error = None;
+  prompt.register = '/';
+  prompt.extend = false;
   prompt.original_selection = Some(original_selection);
   prompt.selected = None;
 
@@ -136,7 +167,11 @@ pub fn handle_search_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEven
       return true;
     },
     Key::Enter | Key::NumpadEnter => {
-      if finalize_search(ctx) {
+      let should_close = match ctx.search_prompt_ref().kind {
+        SearchPromptKind::Search => finalize_search(ctx),
+        SearchPromptKind::SelectRegex => finalize_select_regex(ctx),
+      };
+      if should_close {
         ctx.search_prompt_mut().clear();
       }
       ctx.request_render();
@@ -181,6 +216,9 @@ pub fn handle_search_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEven
       should_update = true;
     },
     Key::Up => {
+      if ctx.search_prompt_ref().kind != SearchPromptKind::Search {
+        return true;
+      }
       let filtered: Vec<String> = filtered_completions(ctx.search_prompt_ref())
         .into_iter()
         .cloned()
@@ -200,6 +238,9 @@ pub fn handle_search_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEven
       should_update = true;
     },
     Key::Down => {
+      if ctx.search_prompt_ref().kind != SearchPromptKind::Search {
+        return true;
+      }
       let filtered: Vec<String> = filtered_completions(ctx.search_prompt_ref())
         .into_iter()
         .cloned()
@@ -219,6 +260,9 @@ pub fn handle_search_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEven
       should_update = true;
     },
     Key::Tab => {
+      if ctx.search_prompt_ref().kind != SearchPromptKind::Search {
+        return true;
+      }
       let filtered: Vec<String> = filtered_completions(ctx.search_prompt_ref())
         .into_iter()
         .cloned()
@@ -231,11 +275,17 @@ pub fn handle_search_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEven
       }
     },
     Key::Char('n') if key.modifiers.ctrl() && !key.modifiers.alt() => {
+      if ctx.search_prompt_ref().kind != SearchPromptKind::Search {
+        return true;
+      }
       step_search_prompt(ctx, Direction::Forward);
       ctx.request_render();
       return true;
     },
     Key::Char('p') if key.modifiers.ctrl() && !key.modifiers.alt() => {
+      if ctx.search_prompt_ref().kind != SearchPromptKind::Search {
+        return true;
+      }
       step_search_prompt(ctx, Direction::Backward);
       ctx.request_render();
       return true;
@@ -254,7 +304,7 @@ pub fn handle_search_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEven
   }
 
   if should_update {
-    update_search_preview(ctx);
+    update_search_prompt_preview(ctx);
     ctx.request_render();
   }
 
@@ -305,6 +355,13 @@ pub fn step_search_prompt<Ctx: DefaultContext>(ctx: &mut Ctx, direction: Directi
   }
 }
 
+pub fn update_search_prompt_preview<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  match ctx.search_prompt_ref().kind {
+    SearchPromptKind::Search => update_search_preview(ctx),
+    SearchPromptKind::SelectRegex => update_select_regex_preview(ctx),
+  }
+}
+
 pub fn update_search_preview<Ctx: DefaultContext>(ctx: &mut Ctx) {
   let (query, direction, extend) = {
     let prompt = ctx.search_prompt_ref();
@@ -347,6 +404,39 @@ pub fn update_search_preview<Ctx: DefaultContext>(ctx: &mut Ctx) {
   }
 }
 
+pub fn update_select_regex_preview<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  let query = ctx.search_prompt_ref().query.clone();
+
+  if query.is_empty() {
+    if let Some(selection) = ctx.search_prompt_ref().original_selection.clone() {
+      let _ = ctx.editor().document_mut().set_selection(selection);
+    }
+    ctx.search_prompt_mut().error = None;
+    return;
+  }
+
+  match build_regex(&query, true) {
+    Ok(regex) => {
+      ctx.search_prompt_mut().error = None;
+      let doc = ctx.editor_ref().document();
+      let text = doc.text().slice(..);
+      let selection = doc.selection().clone();
+      match select_on_matches(text, &selection, &regex) {
+        Ok(Some(next)) => {
+          let _ = ctx.editor().document_mut().set_selection(next);
+        },
+        Ok(None) => {},
+        Err(err) => {
+          ctx.search_prompt_mut().error = Some(err.to_string());
+        },
+      }
+    },
+    Err(err) => {
+      ctx.search_prompt_mut().error = Some(err);
+    },
+  }
+}
+
 pub fn finalize_search<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool {
   let (query, register) = {
     let prompt = ctx.search_prompt_ref();
@@ -377,6 +467,45 @@ pub fn finalize_search<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool {
 
   ctx.registers_mut().last_search_register = register;
   true
+}
+
+pub fn finalize_select_regex<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool {
+  let query = ctx.search_prompt_ref().query.clone();
+  if query.is_empty() {
+    return true;
+  }
+
+  let regex = match build_regex(&query, true) {
+    Ok(regex) => regex,
+    Err(err) => {
+      ctx.search_prompt_mut().error = Some(err.clone());
+      ctx.push_error("select_regex", err);
+      return false;
+    },
+  };
+
+  let doc = ctx.editor_ref().document();
+  let text = doc.text().slice(..);
+  let selection = doc.selection().clone();
+  match select_on_matches(text, &selection, &regex) {
+    Ok(Some(next)) => {
+      ctx.search_prompt_mut().error = None;
+      let _ = ctx.editor().document_mut().set_selection(next);
+      true
+    },
+    Ok(None) => {
+      let message = "nothing selected".to_string();
+      ctx.search_prompt_mut().error = Some(message.clone());
+      ctx.push_error("select_regex", message);
+      false
+    },
+    Err(err) => {
+      let message = err.to_string();
+      ctx.search_prompt_mut().error = Some(message.clone());
+      ctx.push_error("select_regex", message);
+      false
+    },
+  }
 }
 
 fn to_lib_direction(direction: Direction) -> Option<LibDirection> {
@@ -411,7 +540,11 @@ pub fn build_search_prompt_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNode>
   }
 
   let mut input = UiInput::new("search_prompt_input", prompt.query.clone());
-  input.placeholder = Some("search".to_string());
+  input.placeholder = Some(match prompt.kind {
+    SearchPromptKind::Search => "search",
+    SearchPromptKind::SelectRegex => "select",
+  }
+  .to_string());
   input.cursor = byte_to_char_idx(&prompt.query, prompt.cursor);
   input.style = input.style.with_role("search_prompt");
   input.style.accent = Some(UiColor::Token(UiColorToken::Placeholder));

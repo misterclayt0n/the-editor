@@ -130,9 +130,13 @@ pub use overlay_layout::{
 };
 pub use pending::PendingInput;
 pub use search_prompt::{
+  SearchPromptKind,
   SearchPromptState,
+  finalize_select_regex,
   finalize_search,
+  update_search_prompt_preview,
   update_search_preview,
+  update_select_regex_preview,
 };
 pub use signature_help::{
   SIGNATURE_HELP_ACTIVE_PARAM_END_MARKER,

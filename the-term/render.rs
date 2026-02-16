@@ -3587,7 +3587,11 @@ fn term_command_palette_filtered_selection(
   Some((filtered, selected))
 }
 
-fn search_statusline_text(query: &str, cursor: usize) -> String {
+fn search_statusline_text(
+  kind: the_default::SearchPromptKind,
+  query: &str,
+  cursor: usize,
+) -> String {
   let mut cursor = cursor.min(query.len());
   while cursor > 0 && !query.is_char_boundary(cursor) {
     cursor -= 1;
@@ -3596,7 +3600,11 @@ fn search_statusline_text(query: &str, cursor: usize) -> String {
     cursor = 0;
   }
   let (before, after) = query.split_at(cursor);
-  format!("FIND {before}█{after}")
+  let prefix = match kind {
+    the_default::SearchPromptKind::Search => "FIND",
+    the_default::SearchPromptKind::SelectRegex => "SELECT",
+  };
+  format!("{prefix} {before}█{after}")
 }
 
 fn build_term_command_palette_list_overlay(ctx: &Ctx) -> Option<UiNode> {
@@ -3768,7 +3776,11 @@ fn adapt_ui_tree_for_term(ctx: &Ctx, ui: &mut UiTree) {
 
   if let Some(status) = ui.overlays.iter_mut().find_map(status_bar_from_overlay_mut) {
     status.left =
-      search_statusline_text(ctx.search_prompt.query.as_str(), ctx.search_prompt.cursor);
+      search_statusline_text(
+        ctx.search_prompt.kind,
+        ctx.search_prompt.query.as_str(),
+        ctx.search_prompt.cursor,
+      );
     status.left_icon = None;
   }
 

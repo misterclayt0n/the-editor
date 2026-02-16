@@ -82,6 +82,7 @@ use the_lib::{
   registers::Registers,
   render::{
     GutterConfig,
+    InlineDiagnosticRenderLine,
     RenderGutterDiffKind,
     RenderPlan,
     RenderStyles,
@@ -527,6 +528,8 @@ pub struct Ctx {
   pub inline_annotations:           Vec<InlineAnnotation>,
   /// Overlay annotations (virtual text) for rendering.
   pub overlay_annotations:          Vec<Overlay>,
+  /// Inline diagnostic ghost lines collected during render-plan construction.
+  pub inline_diagnostic_lines:      Vec<InlineDiagnosticRenderLine>,
   /// Lines to keep above/below cursor when scrolling.
   pub scrolloff:                    usize,
 }
@@ -861,6 +864,7 @@ impl Ctx {
       vcs_diff: None,
       inline_annotations: Vec::new(),
       overlay_annotations: Vec::new(),
+      inline_diagnostic_lines: Vec::new(),
       scrolloff: 5,
     };
     ctx.refresh_vcs_diff_base();

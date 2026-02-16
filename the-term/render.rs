@@ -1,8 +1,10 @@
 //! Rendering - converts RenderPlan to ratatui draw calls.
 
 use std::{
+  cell::RefCell,
   collections::BTreeMap,
   path::Path,
+  rc::Rc,
 };
 
 use ratatui::{
@@ -39,6 +41,10 @@ use the_default::{
 use the_lib::{
   diagnostics::DiagnosticSeverity,
   render::{
+    InlineDiagnostic,
+    InlineDiagnosticsConfig,
+    InlineDiagnosticsLineAnnotation,
+    SharedInlineDiagnosticsRenderData,
     LayoutIntent,
     NoHighlights,
     RenderDiagnosticGutterStyles,
@@ -86,6 +92,7 @@ use the_lib::{
     Syntax,
   },
 };
+use the_lsp::text_sync::utf16_position_to_char_idx;
 
 use crate::{
   Ctx,
@@ -261,6 +268,43 @@ fn active_diagnostics_by_line(ctx: &Ctx) -> BTreeMap<usize, DiagnosticSeverity> 
     }
   }
   out
+}
+
+fn active_inline_diagnostics(ctx: &Ctx) -> Vec<InlineDiagnostic> {
+  let Some(state) = ctx.lsp_document.as_ref().filter(|state| state.opened) else {
+    return Vec::new();
+  };
+  let Some(document_diagnostics) = ctx.diagnostics.document(&state.uri) else {
+    return Vec::new();
+  };
+
+  let text = ctx.editor.document().text();
+  let mut out = Vec::with_capacity(document_diagnostics.diagnostics.len());
+  for diagnostic in &document_diagnostics.diagnostics {
+    let message = diagnostic.message.trim();
+    if message.is_empty() {
+      continue;
+    }
+    let start_char_idx = utf16_position_to_char_idx(
+      text,
+      diagnostic.range.start.line,
+      diagnostic.range.start.character,
+    );
+    let severity = diagnostic.severity.unwrap_or(DiagnosticSeverity::Warning);
+    out.push(InlineDiagnostic::new(
+      start_char_idx,
+      severity,
+      message.to_string(),
+    ));
+  }
+  out.sort_by_key(|diagnostic| diagnostic.start_char_idx);
+  out
+}
+
+fn primary_cursor_char_idx(ctx: &Ctx) -> Option<usize> {
+  let doc = ctx.editor.document();
+  let range = doc.selection().ranges().first().copied()?;
+  Some(range.cursor(doc.text().slice(..)))
 }
 
 fn diagnostic_severity_rank(severity: DiagnosticSeverity) -> u8 {
@@ -3835,6 +3879,25 @@ pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> Ren
   if !ctx.overlay_annotations.is_empty() {
     let _ = annotations.add_overlay(&ctx.overlay_annotations, None);
   }
+  ctx.inline_diagnostic_lines.clear();
+  let inline_diagnostic_render_data: SharedInlineDiagnosticsRenderData =
+    Rc::new(RefCell::new(Default::default()));
+  let inline_diagnostics = active_inline_diagnostics(ctx);
+  if !inline_diagnostics.is_empty() {
+    let inline_config =
+      InlineDiagnosticsConfig::default().prepare(text_fmt.viewport_width.max(1), true);
+    if !inline_config.disabled() {
+      let cursor_char_idx = primary_cursor_char_idx(ctx).unwrap_or(0);
+      let _ = annotations.add_line_annotation(Box::new(InlineDiagnosticsLineAnnotation::new(
+        inline_diagnostics,
+        cursor_char_idx,
+        text_fmt.viewport_width.max(1),
+        view.scroll.col,
+        inline_config,
+        inline_diagnostic_render_data.clone(),
+      )));
+    }
+  }
 
   let allow_cache_refresh = ctx.syntax_highlight_refresh_allowed();
   let (doc, render_cache) = ctx.editor.document_and_cache();
@@ -3880,6 +3943,8 @@ pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> Ren
       styles,
     )
   };
+
+  ctx.inline_diagnostic_lines = inline_diagnostic_render_data.borrow().lines.clone();
 
   apply_diagnostic_gutter_markers(&mut plan, &diagnostics_by_line, diagnostic_styles);
   apply_diff_gutter_markers(&mut plan, &diff_signs, diff_styles);

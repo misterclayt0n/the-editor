@@ -42,7 +42,10 @@ use the_default::{
   ui_tree,
 };
 use the_lib::{
-  diagnostics::DiagnosticSeverity,
+  diagnostics::{
+    Diagnostic,
+    DiagnosticSeverity,
+  },
   render::{
     InlineDiagnostic,
     InlineDiagnosticsConfig,
@@ -281,9 +284,12 @@ fn active_inline_diagnostics(ctx: &Ctx) -> Vec<InlineDiagnostic> {
     return Vec::new();
   };
 
-  let text = ctx.editor.document().text();
-  let mut out = Vec::with_capacity(document_diagnostics.diagnostics.len());
-  for diagnostic in &document_diagnostics.diagnostics {
+  inline_diagnostics_from_document(ctx.editor.document().text(), &document_diagnostics.diagnostics)
+}
+
+fn inline_diagnostics_from_document(text: &Rope, diagnostics: &[Diagnostic]) -> Vec<InlineDiagnostic> {
+  let mut out = Vec::with_capacity(diagnostics.len());
+  for diagnostic in diagnostics {
     let message = diagnostic.message.trim();
     if message.is_empty() {
       continue;
@@ -4288,6 +4294,7 @@ pub fn ensure_cursor_visible(ctx: &mut Ctx) {
 
 #[cfg(test)]
 mod tests {
+  use ropey::Rope;
   use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -4308,6 +4315,12 @@ mod tests {
     UiPanel,
     UiText,
   };
+  use the_lib::diagnostics::{
+    Diagnostic,
+    DiagnosticPosition,
+    DiagnosticRange,
+    DiagnosticSeverity,
+  };
 
   use super::{
     CompletionDocsStyles,
@@ -4318,8 +4331,10 @@ mod tests {
     completion_panel_rect,
     draw_ui_list,
     draw_ui_text,
+    inline_diagnostics_from_document,
     language_filename_hints,
     max_content_width_for_intent,
+    parse_inline_diagnostic_filter,
     panel_box_size,
     parse_markdown_fence_language,
     term_command_palette_filtered_selection,
@@ -4370,6 +4385,46 @@ mod tests {
     assert!(rect.y >= area.y);
     assert!(rect.x + rect.width <= area.x + area.width);
     assert!(rect.y + rect.height <= area.y + area.height);
+  }
+
+  #[test]
+  fn parse_inline_diagnostic_filter_parses_expected_values() {
+    assert_eq!(
+      parse_inline_diagnostic_filter("warning"),
+      Some(the_lib::render::InlineDiagnosticFilter::Enable(
+        DiagnosticSeverity::Warning
+      ))
+    );
+    assert_eq!(
+      parse_inline_diagnostic_filter("disable"),
+      Some(the_lib::render::InlineDiagnosticFilter::Disable)
+    );
+    assert_eq!(parse_inline_diagnostic_filter("unknown"), None);
+  }
+
+  #[test]
+  fn inline_diagnostics_from_document_maps_utf16_positions() {
+    let text = Rope::from("a🧪b\\n");
+    let diagnostics = vec![Diagnostic {
+      range: DiagnosticRange {
+        start: DiagnosticPosition {
+          line: 0,
+          character: 3,
+        },
+        end: DiagnosticPosition {
+          line: 0,
+          character: 4,
+        },
+      },
+      severity: Some(DiagnosticSeverity::Warning),
+      code: None,
+      source: None,
+      message: "mapped".to_string(),
+    }];
+
+    let mapped = inline_diagnostics_from_document(&text, &diagnostics);
+    assert_eq!(mapped.len(), 1);
+    assert_eq!(mapped[0].start_char_idx, 2);
   }
 
   #[test]

@@ -357,6 +357,13 @@ fn soft_wrap_message_lines(message: &str, text_fmt: &TextFormat) -> Vec<Tendril>
 
 #[cfg(test)]
 mod tests {
+  use std::{
+    cell::RefCell,
+    rc::Rc,
+  };
+
+  use ropey::Rope;
+
   use super::*;
 
   #[test]
@@ -391,5 +398,48 @@ mod tests {
     assert!(filter.allows(DiagnosticSeverity::Error));
     assert!(filter.allows(DiagnosticSeverity::Warning));
     assert!(!filter.allows(DiagnosticSeverity::Information));
+  }
+
+  #[test]
+  fn inline_diagnostics_annotation_collects_render_lines() {
+    let diagnostics = vec![InlineDiagnostic::new(
+      0,
+      DiagnosticSeverity::Warning,
+      "this diagnostic should wrap into multiple lines for rendering",
+    )];
+    let config = InlineDiagnosticsConfig {
+      cursor_line: InlineDiagnosticFilter::Disable,
+      other_lines: InlineDiagnosticFilter::Enable(DiagnosticSeverity::Hint),
+      min_diagnostic_width: 12,
+      prefix_len: 1,
+      max_wrap: 8,
+      max_diagnostics: 5,
+    };
+    let render_data: SharedInlineDiagnosticsRenderData = Rc::new(RefCell::new(Default::default()));
+    let annotation = InlineDiagnosticsLineAnnotation::new(
+      diagnostics,
+      usize::MAX,
+      20,
+      0,
+      config,
+      render_data.clone(),
+    );
+
+    let text = Rope::from("abc\\n");
+    let mut text_fmt = TextFormat::default();
+    text_fmt.soft_wrap = false;
+    text_fmt.viewport_width = 20;
+
+    let mut annotations = TextAnnotations::default();
+    let _ = annotations.add_line_annotation(Box::new(annotation));
+    {
+      let mut formatter =
+        DocumentFormatter::new_at_prev_checkpoint(text.slice(..), &text_fmt, &mut annotations, 0);
+      while formatter.next().is_some() {}
+    }
+
+    let lines = render_data.borrow().lines.clone();
+    assert!(!lines.is_empty());
+    assert!(lines.windows(2).all(|pair| pair[0].row <= pair[1].row));
   }
 }

@@ -44,6 +44,11 @@ struct CompletionPopupView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .onDisappear {
+            DispatchQueue.main.async {
+                KeyCaptureFocusBridge.shared.reclaimActive()
+            }
+        }
     }
 
     // MARK: - Placement
@@ -414,6 +419,39 @@ private struct CompletionDocsAppKitTextView: NSViewRepresentable {
     final class Coordinator {
         var lastRenderKey: String?
         var lastLoadingState = false
+        private var keyMonitor: Any?
+
+        deinit {
+            if let keyMonitor {
+                NSEvent.removeMonitor(keyMonitor)
+            }
+        }
+
+        func installKeyForwardingMonitor() {
+            guard keyMonitor == nil else {
+                return
+            }
+
+            keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { event in
+                // Preserve standard command shortcuts like copy/select-all while docs text is focused.
+                if event.modifierFlags.contains(.command) {
+                    return event
+                }
+
+                guard let window = event.window,
+                      let keyResponder = KeyCaptureFocusBridge.shared.keyResponder(in: window) else {
+                    return event
+                }
+
+                // Let the normal responder chain handle keys if key capture already owns focus.
+                if window.firstResponder === keyResponder {
+                    return event
+                }
+
+                keyResponder.keyDown(with: event)
+                return nil
+            }
+        }
     }
 
     func makeCoordinator() -> Coordinator {
@@ -421,6 +459,8 @@ private struct CompletionDocsAppKitTextView: NSViewRepresentable {
     }
 
     func makeNSView(context: Context) -> NSScrollView {
+        context.coordinator.installKeyForwardingMonitor()
+
         let scrollView = CompletionDocsScrollView()
         scrollView.borderType = .noBorder
         scrollView.drawsBackground = false
@@ -454,6 +494,8 @@ private struct CompletionDocsAppKitTextView: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: NSScrollView, context: Context) {
+        context.coordinator.installKeyForwardingMonitor()
+
         guard let textView = nsView.documentView as? NSTextView else {
             return
         }

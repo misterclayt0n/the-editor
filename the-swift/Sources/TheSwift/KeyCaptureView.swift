@@ -29,6 +29,14 @@ final class KeyCaptureFocusBridge {
         }
         window?.makeFirstResponder(view)
     }
+
+    func reclaimActive() {
+        guard let view = keyCaptureView,
+              let window = view.window else {
+            return
+        }
+        window.makeFirstResponder(view)
+    }
 }
 
 struct KeyCaptureView: NSViewRepresentable {

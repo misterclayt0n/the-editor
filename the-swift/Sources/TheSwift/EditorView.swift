@@ -128,6 +128,14 @@ struct EditorView: View {
             .onChange(of: proxy.size) { newSize in
                 model.updateViewport(pixelSize: newSize, cellSize: cellSize)
             }
+            .onChange(of: isCompletionOpen) { isOpen in
+                guard !isOpen else {
+                    return
+                }
+                DispatchQueue.main.async {
+                    KeyCaptureFocusBridge.shared.reclaimActive()
+                }
+            }
         }
     }
 

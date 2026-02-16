@@ -1918,16 +1918,28 @@ fn docs_markdown_lines(
   loader: Option<&Loader>,
   language_hint: Option<&str>,
 ) -> Vec<Vec<DocsStyledTextRun>> {
+  fn flush_paragraph(
+    lines: &mut Vec<Vec<DocsStyledTextRun>>,
+    paragraph_runs: &mut Vec<DocsStyledTextRun>,
+  ) {
+    if paragraph_runs.is_empty() {
+      return;
+    }
+    lines.push(std::mem::take(paragraph_runs));
+  }
+
   let mut lines = Vec::new();
   let mut in_code_block = false;
   let mut code_block_language: Option<String> = None;
   let mut code_block_lines: Vec<String> = Vec::new();
+  let mut paragraph_runs: Vec<DocsStyledTextRun> = Vec::new();
 
   for raw_line in markdown.lines() {
     let normalized = raw_line.replace('\t', "  ");
     let trimmed = normalized.trim_start();
 
     if trimmed.starts_with("```") {
+      flush_paragraph(&mut lines, &mut paragraph_runs);
       if in_code_block {
         lines.extend(docs_highlighted_code_block_lines(
           &code_block_lines,
@@ -1953,11 +1965,13 @@ fn docs_markdown_lines(
     }
 
     if trimmed.is_empty() {
+      flush_paragraph(&mut lines, &mut paragraph_runs);
       lines.push(Vec::new());
       continue;
     }
 
     if docs_is_markdown_rule(trimmed) {
+      flush_paragraph(&mut lines, &mut paragraph_runs);
       lines.push(vec![DocsStyledTextRun {
         text:  "───".to_string(),
         style: styles.rule,
@@ -1966,6 +1980,7 @@ fn docs_markdown_lines(
     }
 
     if let Some((level, heading)) = docs_parse_heading(trimmed) {
+      flush_paragraph(&mut lines, &mut paragraph_runs);
       let style = styles.heading[level.saturating_sub(1)];
       lines.push(docs_parse_inline_markdown_runs(heading, styles, style));
       continue;
@@ -1976,6 +1991,7 @@ fn docs_markdown_lines(
       .or_else(|| trimmed.strip_prefix("* "))
       .or_else(|| trimmed.strip_prefix("+ "))
     {
+      flush_paragraph(&mut lines, &mut paragraph_runs);
       let mut runs = Vec::new();
       docs_push_styled_run(&mut runs, "• ".to_string(), styles.bullet);
       runs.extend(docs_parse_inline_markdown_runs(
@@ -1988,6 +2004,7 @@ fn docs_markdown_lines(
     }
 
     if let Some((marker, rest)) = docs_parse_numbered_list_prefix(trimmed) {
+      flush_paragraph(&mut lines, &mut paragraph_runs);
       let mut runs = Vec::new();
       docs_push_styled_run(&mut runs, format!("{marker} "), styles.bullet);
       runs.extend(docs_parse_inline_markdown_runs(rest, styles, styles.base));
@@ -1996,6 +2013,7 @@ fn docs_markdown_lines(
     }
 
     if let Some(quoted) = trimmed.strip_prefix('>') {
+      flush_paragraph(&mut lines, &mut paragraph_runs);
       let mut runs = Vec::new();
       docs_push_styled_run(&mut runs, "│ ".to_string(), styles.quote);
       runs.extend(docs_parse_inline_markdown_runs(
@@ -2007,12 +2025,17 @@ fn docs_markdown_lines(
       continue;
     }
 
-    lines.push(docs_parse_inline_markdown_runs(
+    if !paragraph_runs.is_empty() {
+      docs_push_styled_run(&mut paragraph_runs, " ".to_string(), styles.base);
+    }
+    paragraph_runs.extend(docs_parse_inline_markdown_runs(
       trimmed,
       styles,
       styles.base,
     ));
   }
+
+  flush_paragraph(&mut lines, &mut paragraph_runs);
 
   if in_code_block {
     lines.extend(docs_highlighted_code_block_lines(

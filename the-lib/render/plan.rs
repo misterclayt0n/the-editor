@@ -371,7 +371,8 @@ pub fn build_plan<'a, 't, H: HighlightProvider>(
   let row_end = row_start + view.viewport.height as usize;
   let col_start = view.scroll.col;
 
-  let use_fast_start = !text_fmt.soft_wrap && !annotations.has_line_annotations();
+  let has_line_annotations = annotations.has_line_annotations();
+  let use_fast_start = !text_fmt.soft_wrap && !has_line_annotations;
   let (block_char_idx, origin) = if use_fast_start {
     let start_char =
       visual_position::char_at_visual_pos(text, text_fmt, annotations, view.scroll).unwrap_or(0);
@@ -383,6 +384,8 @@ pub fn build_plan<'a, 't, H: HighlightProvider>(
         .unwrap_or_else(|| Position::new(0, 0))
     };
     (block_char_idx, origin)
+  } else if has_line_annotations {
+    (0, Position::new(0, 0))
   } else if let Some((char_idx, pos)) = cache.nearest_origin(view.scroll) {
     (char_idx, pos)
   } else {

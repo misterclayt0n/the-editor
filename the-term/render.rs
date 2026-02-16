@@ -3,6 +3,7 @@
 use std::{
   cell::RefCell,
   collections::BTreeMap,
+  env,
   path::Path,
   rc::Rc,
 };
@@ -25,6 +26,8 @@ use ratatui::{
 use ropey::Rope;
 use the_default::{
   FilePickerPreview,
+  DefaultContext,
+  Mode,
   OverlayRect as DefaultOverlayRect,
   SIGNATURE_HELP_ACTIVE_PARAM_END_MARKER,
   SIGNATURE_HELP_ACTIVE_PARAM_START_MARKER,
@@ -299,6 +302,68 @@ fn active_inline_diagnostics(ctx: &Ctx) -> Vec<InlineDiagnostic> {
   }
   out.sort_by_key(|diagnostic| diagnostic.start_char_idx);
   out
+}
+
+fn parse_inline_diagnostic_filter(value: &str) -> Option<the_lib::render::InlineDiagnosticFilter> {
+  let normalized = value.trim().to_ascii_lowercase();
+  match normalized.as_str() {
+    "disable" | "off" | "none" => Some(the_lib::render::InlineDiagnosticFilter::Disable),
+    "hint" => Some(the_lib::render::InlineDiagnosticFilter::Enable(
+      DiagnosticSeverity::Hint,
+    )),
+    "info" | "information" => Some(the_lib::render::InlineDiagnosticFilter::Enable(
+      DiagnosticSeverity::Information,
+    )),
+    "warning" | "warn" => Some(the_lib::render::InlineDiagnosticFilter::Enable(
+      DiagnosticSeverity::Warning,
+    )),
+    "error" => Some(the_lib::render::InlineDiagnosticFilter::Enable(
+      DiagnosticSeverity::Error,
+    )),
+    _ => None,
+  }
+}
+
+fn inline_diagnostics_config() -> InlineDiagnosticsConfig {
+  let mut config = InlineDiagnosticsConfig::default();
+
+  if let Ok(value) = env::var("THE_TERM_INLINE_DIAGNOSTICS_CURSOR_LINE")
+    && let Some(filter) = parse_inline_diagnostic_filter(&value)
+  {
+    config.cursor_line = filter;
+  }
+
+  if let Ok(value) = env::var("THE_TERM_INLINE_DIAGNOSTICS_OTHER_LINES")
+    && let Some(filter) = parse_inline_diagnostic_filter(&value)
+  {
+    config.other_lines = filter;
+  }
+
+  if let Ok(value) = env::var("THE_TERM_INLINE_DIAGNOSTICS_MIN_WIDTH")
+    && let Ok(parsed) = value.trim().parse::<u16>()
+  {
+    config.min_diagnostic_width = parsed.max(1);
+  }
+
+  if let Ok(value) = env::var("THE_TERM_INLINE_DIAGNOSTICS_PREFIX_LEN")
+    && let Ok(parsed) = value.trim().parse::<u16>()
+  {
+    config.prefix_len = parsed;
+  }
+
+  if let Ok(value) = env::var("THE_TERM_INLINE_DIAGNOSTICS_MAX_WRAP")
+    && let Ok(parsed) = value.trim().parse::<u16>()
+  {
+    config.max_wrap = parsed.max(1);
+  }
+
+  if let Ok(value) = env::var("THE_TERM_INLINE_DIAGNOSTICS_MAX_PER_LINE")
+    && let Ok(parsed) = value.trim().parse::<usize>()
+  {
+    config.max_diagnostics = parsed;
+  }
+
+  config
 }
 
 fn primary_cursor_char_idx(ctx: &Ctx) -> Option<usize> {
@@ -3949,8 +4014,9 @@ pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> Ren
     Rc::new(RefCell::new(Default::default()));
   let inline_diagnostics = active_inline_diagnostics(ctx);
   if !inline_diagnostics.is_empty() {
+    let enable_cursor_line = ctx.mode() != Mode::Insert;
     let inline_config =
-      InlineDiagnosticsConfig::default().prepare(text_fmt.viewport_width.max(1), true);
+      inline_diagnostics_config().prepare(text_fmt.viewport_width.max(1), enable_cursor_line);
     if !inline_config.disabled() {
       let cursor_char_idx = primary_cursor_char_idx(ctx).unwrap_or(0);
       let _ = annotations.add_line_annotation(Box::new(InlineDiagnosticsLineAnnotation::new(

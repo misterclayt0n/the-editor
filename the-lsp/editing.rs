@@ -138,8 +138,16 @@ pub struct LspCompletionResponse {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LspSignatureHelp {
-  pub label:            String,
-  pub active_parameter: Option<u32>,
+  pub signatures:       Vec<LspSignatureInformation>,
+  pub active_signature: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LspSignatureInformation {
+  pub label:                  String,
+  pub documentation:          Option<String>,
+  pub active_parameter:       Option<u32>,
+  pub active_parameter_range: Option<std::ops::Range<usize>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -624,19 +632,24 @@ pub fn parse_signature_help_response(
   }
 
   let payload: SignatureHelpPayload = serde_json::from_value(result.clone())?;
-  let mut signatures = payload.signatures;
-  if signatures.is_empty() {
+  if payload.signatures.is_empty() {
     return Ok(None);
   }
+
   let active_signature = payload
     .active_signature
     .unwrap_or(0)
-    .min(signatures.len().saturating_sub(1) as u32) as usize;
-  let selected = signatures.swap_remove(active_signature);
+    .min(payload.signatures.len().saturating_sub(1) as u32) as usize;
+
+  let signatures = payload
+    .signatures
+    .into_iter()
+    .map(|signature| signature.into_signature_information(payload.active_parameter))
+    .collect();
 
   Ok(Some(LspSignatureHelp {
-    label:            selected.label,
-    active_parameter: payload.active_parameter,
+    signatures,
+    active_signature,
   }))
 }
 
@@ -903,7 +916,82 @@ struct SignatureHelpPayload {
 
 #[derive(Debug, Deserialize)]
 struct SignatureInformationPayload {
-  label: String,
+  label:            String,
+  documentation:    Option<DocumentationPayload>,
+  parameters:       Option<Vec<SignatureParameterPayload>>,
+  active_parameter: Option<u32>,
+}
+
+impl SignatureInformationPayload {
+  fn into_signature_information(
+    self,
+    response_active_parameter: Option<u32>,
+  ) -> LspSignatureInformation {
+    let active_parameter = self.active_parameter.or(response_active_parameter);
+    let active_parameter_range = active_parameter.and_then(|param_idx| {
+      let param_idx = param_idx as usize;
+      let parameters = self.parameters.as_ref()?;
+      let parameter = parameters.get(param_idx)?;
+      parameter.label.as_label_range(&self.label)
+    });
+
+    LspSignatureInformation {
+      label: self.label,
+      documentation: self.documentation.map(DocumentationPayload::into_text),
+      active_parameter,
+      active_parameter_range,
+    }
+  }
+}
+
+#[derive(Debug, Deserialize)]
+struct SignatureParameterPayload {
+  label: SignatureParameterLabelPayload,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum SignatureParameterLabelPayload {
+  Simple(String),
+  Offsets([u32; 2]),
+}
+
+impl SignatureParameterLabelPayload {
+  fn as_label_range(&self, signature_label: &str) -> Option<std::ops::Range<usize>> {
+    match self {
+      SignatureParameterLabelPayload::Simple(text) => {
+        let start = signature_label.find(text.as_str())?;
+        Some(start..start + text.len())
+      },
+      SignatureParameterLabelPayload::Offsets([start, end]) => {
+        let start = utf16_code_units_to_byte_idx(signature_label, *start as usize)?;
+        let end = utf16_code_units_to_byte_idx(signature_label, *end as usize)?;
+        if start >= end {
+          None
+        } else {
+          Some(start..end)
+        }
+      },
+    }
+  }
+}
+
+fn utf16_code_units_to_byte_idx(text: &str, utf16_idx: usize) -> Option<usize> {
+  let mut consumed = 0usize;
+  for (byte_idx, ch) in text.char_indices() {
+    if consumed == utf16_idx {
+      return Some(byte_idx);
+    }
+    consumed = consumed.saturating_add(ch.len_utf16());
+    if consumed > utf16_idx {
+      return None;
+    }
+  }
+  if consumed == utf16_idx {
+    Some(text.len())
+  } else {
+    None
+  }
 }
 
 #[derive(Debug, Deserialize)]
@@ -1243,6 +1331,43 @@ mod tests {
     );
     assert_eq!(params["context"]["triggerKind"], json!(2));
     assert_eq!(params["context"]["triggerCharacter"], json!(":"));
+  }
+
+  #[test]
+  fn parse_signature_help_response_retains_docs_and_active_parameter_range() {
+    let value = json!({
+      "signatures": [
+        {
+          "label": "foo(first: i32, second: u32)",
+          "documentation": {
+            "kind": "markdown",
+            "value": "docs for foo"
+          },
+          "parameters": [
+            { "label": "first: i32" },
+            { "label": [16, 27] }
+          ]
+        }
+      ],
+      "activeSignature": 0,
+      "activeParameter": 1
+    });
+
+    let parsed = parse_signature_help_response(Some(&value))
+      .expect("parse ok")
+      .expect("signature help");
+    assert_eq!(parsed.active_signature, 0);
+    assert_eq!(parsed.signatures.len(), 1);
+    let signature = &parsed.signatures[0];
+    assert_eq!(
+      signature.documentation.as_deref(),
+      Some("docs for foo")
+    );
+    assert_eq!(signature.active_parameter, Some(1));
+    assert_eq!(
+      signature.active_parameter_range,
+      Some(16..27)
+    );
   }
 
   #[test]

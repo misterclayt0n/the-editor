@@ -1978,12 +1978,21 @@ impl Ctx {
       return true;
     };
 
-    let mut text = signature.label;
+    let Some(active) = signature.signatures.get(signature.active_signature) else {
+      self.messages.publish(
+        MessageLevel::Info,
+        Some("lsp".into()),
+        "no signature help available",
+      );
+      return true;
+    };
+
+    let mut text = active.label.clone();
     if text.len() > 240 {
       text.truncate(240);
       text.push('…');
     }
-    if let Some(active_parameter) = signature.active_parameter {
+    if let Some(active_parameter) = active.active_parameter {
       text.push_str(&format!("  (param {})", active_parameter + 1));
     }
     self

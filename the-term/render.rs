@@ -316,6 +316,71 @@ fn diagnostic_severity_rank(severity: DiagnosticSeverity) -> u8 {
   }
 }
 
+fn inline_diagnostic_text_style(
+  theme: &the_lib::render::theme::Theme,
+  severity: DiagnosticSeverity,
+) -> Style {
+  let base = lib_style_to_ratatui(theme.try_get("ui.virtual").unwrap_or_default());
+  let severity_style = match severity {
+    DiagnosticSeverity::Error => theme
+      .try_get("error")
+      .or_else(|| theme.try_get("diagnostic.error"))
+      .unwrap_or_default(),
+    DiagnosticSeverity::Warning => theme
+      .try_get("warning")
+      .or_else(|| theme.try_get("diagnostic.warning"))
+      .unwrap_or_default(),
+    DiagnosticSeverity::Information => theme
+      .try_get("info")
+      .or_else(|| theme.try_get("diagnostic.info"))
+      .unwrap_or_default(),
+    DiagnosticSeverity::Hint => theme
+      .try_get("hint")
+      .or_else(|| theme.try_get("diagnostic.hint"))
+      .unwrap_or_default(),
+  };
+  base.patch(lib_style_to_ratatui(severity_style))
+}
+
+fn draw_inline_diagnostic_lines(
+  buf: &mut Buffer,
+  area: Rect,
+  content_x: u16,
+  plan: &RenderPlan,
+  ctx: &Ctx,
+) {
+  let row_start = plan.scroll.row;
+  let row_end = row_start.saturating_add(plan.viewport.height as usize);
+  let content_width = plan.content_width();
+  if content_width == 0 {
+    return;
+  }
+
+  for line in &ctx.inline_diagnostic_lines {
+    if line.row < row_start || line.row >= row_end {
+      continue;
+    }
+    if line.col < plan.scroll.col {
+      continue;
+    }
+
+    let visible_col = line.col.saturating_sub(plan.scroll.col);
+    if visible_col >= content_width {
+      continue;
+    }
+
+    let y = area.y + (line.row - row_start) as u16;
+    let x = content_x + visible_col as u16;
+    if x >= area.x + area.width || y >= area.y + area.height {
+      continue;
+    }
+
+    let style = inline_diagnostic_text_style(&ctx.ui_theme, line.severity);
+    let max_width = content_width.saturating_sub(visible_col);
+    buf.set_stringn(x, y, line.text.as_str(), max_width, style);
+  }
+}
+
 fn fill_rect(buf: &mut Buffer, rect: Rect, style: Style) {
   if rect.width == 0 || rect.height == 0 {
     return;
@@ -4038,6 +4103,8 @@ pub fn render(f: &mut Frame, ctx: &mut Ctx) {
         buf.set_string(x, y, span.text.as_str(), style);
       }
     }
+
+    draw_inline_diagnostic_lines(buf, area, content_x, &plan, ctx);
 
     // Draw cursors
     for cursor in &plan.cursors {

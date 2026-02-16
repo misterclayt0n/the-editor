@@ -582,6 +582,9 @@ fn apply_mode<Ctx: DefaultContext>(ctx: &mut Ctx, mode: Mode) {
 
   if mode != Mode::Insert {
     ctx.completion_menu_mut().clear();
+    if let Some(state) = ctx.signature_help_mut() {
+      state.clear();
+    }
   }
 
   if mode == Mode::Select {
@@ -639,6 +642,9 @@ fn apply_mode<Ctx: DefaultContext>(ctx: &mut Ctx, mode: Mode) {
   }
 
   ctx.set_mode(mode);
+  if mode == Mode::Insert {
+    ctx.lsp_signature_help();
+  }
   ctx.request_render();
 }
 

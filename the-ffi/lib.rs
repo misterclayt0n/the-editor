@@ -4716,6 +4716,22 @@ impl App {
         };
         self.schedule_auto_signature_help(trigger, lsp_signature_help_retrigger_latency())
       },
+      Command::Motion(_)
+      | Command::Move(_)
+      | Command::GotoLineStart { .. }
+      | Command::GotoLineEnd { .. }
+      | Command::PageUp { .. }
+      | Command::PageDown { .. }
+      | Command::FindChar { .. }
+      | Command::ParentNodeStart { .. }
+      | Command::ParentNodeEnd { .. } => {
+        let trigger = if self.active_state_ref().signature_help.active {
+          SignatureHelpTriggerSource::ContentChangeRetrigger
+        } else {
+          SignatureHelpTriggerSource::Manual
+        };
+        self.schedule_auto_signature_help(trigger, lsp_signature_help_retrigger_latency())
+      },
       Command::LspSignatureHelp
       | Command::CompletionNext
       | Command::CompletionPrev

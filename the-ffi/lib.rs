@@ -180,6 +180,7 @@ use the_lsp::{
   LspRuntime,
   LspRuntimeConfig,
   LspServerConfig,
+  LspSignatureHelpContext,
   completion_params,
   goto_definition_params,
   hover_params,
@@ -188,7 +189,9 @@ use the_lsp::{
   parse_completion_response_with_raw,
   parse_hover_response,
   parse_locations_response,
+  parse_signature_help_response,
   render_lsp_snippet,
+  signature_help_params,
   text_sync::{
     FileChangeType,
     char_idx_to_utf16_position,
@@ -966,10 +969,45 @@ impl CompletionTriggerSource {
   }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SignatureHelpTriggerSource {
+  Manual,
+  TriggerCharacter {
+    ch:           char,
+    is_retrigger: bool,
+  },
+  ContentChangeRetrigger,
+}
+
+impl SignatureHelpTriggerSource {
+  fn to_lsp_context(self) -> LspSignatureHelpContext {
+    match self {
+      Self::Manual => LspSignatureHelpContext::invoked(),
+      Self::TriggerCharacter {
+        ch,
+        is_retrigger,
+      } => {
+        if is_retrigger {
+          LspSignatureHelpContext::trigger_character_retrigger(ch)
+        } else {
+          LspSignatureHelpContext::trigger_character(ch)
+        }
+      },
+      Self::ContentChangeRetrigger => LspSignatureHelpContext::content_change_retrigger(),
+    }
+  }
+}
+
 #[derive(Debug, Clone)]
 struct PendingAutoCompletion {
   due_at:  Instant,
   trigger: CompletionTriggerSource,
+}
+
+#[derive(Debug, Clone)]
+struct PendingAutoSignatureHelp {
+  due_at:  Instant,
+  trigger: SignatureHelpTriggerSource,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -991,6 +1029,9 @@ enum PendingLspRequestKind {
     uri:   String,
     index: usize,
   },
+  SignatureHelp {
+    uri: String,
+  },
 }
 
 impl PendingLspRequestKind {
@@ -1000,6 +1041,7 @@ impl PendingLspRequestKind {
       Self::Hover { .. } => "hover",
       Self::Completion { .. } => "completion",
       Self::CompletionResolve { .. } => "completion-resolve",
+      Self::SignatureHelp { .. } => "signature-help",
     }
   }
 
@@ -1009,6 +1051,7 @@ impl PendingLspRequestKind {
       Self::Hover { uri } => uri.as_str(),
       Self::Completion { uri, .. } => uri.as_str(),
       Self::CompletionResolve { uri, .. } => uri.as_str(),
+      Self::SignatureHelp { uri } => uri.as_str(),
     }
   }
 
@@ -1018,6 +1061,7 @@ impl PendingLspRequestKind {
       Self::Hover { uri } => ("hover", uri),
       Self::Completion { uri, .. } => ("completion", uri),
       Self::CompletionResolve { uri, .. } => ("completion-resolve", uri),
+      Self::SignatureHelp { uri } => ("signature-help", uri),
     }
   }
 }
@@ -1028,6 +1072,7 @@ struct EditorState {
   command_palette:              CommandPaletteState,
   command_palette_style:        CommandPaletteStyle,
   completion_menu:              the_default::CompletionMenuState,
+  signature_help:              the_default::SignatureHelpState,
   file_picker:                  FilePickerState,
   search_prompt:                SearchPromptState,
   ui_state:                     UiState,
@@ -1068,6 +1113,7 @@ impl EditorState {
       command_palette: CommandPaletteState::default(),
       command_palette_style,
       completion_menu: the_default::CompletionMenuState::default(),
+      signature_help: the_default::SignatureHelpState::default(),
       file_picker,
       search_prompt: SearchPromptState::new(),
       ui_state: UiState::default(),
@@ -1368,6 +1414,34 @@ fn lsp_completion_auto_trigger_latency() -> Duration {
 
 fn lsp_completion_trigger_char_latency() -> Duration {
   Duration::from_millis(20)
+}
+
+fn lsp_signature_help_retrigger_latency() -> Duration {
+  Duration::from_millis(80)
+}
+
+fn lsp_signature_help_trigger_char_latency() -> Duration {
+  Duration::from_millis(20)
+}
+
+fn capabilities_support_single_char(
+  raw_capabilities: &Value,
+  provider_key: &str,
+  characters_key: &str,
+  ch: char,
+) -> bool {
+  let Some(values) = raw_capabilities
+    .get(provider_key)
+    .and_then(|provider| provider.get(characters_key))
+    .and_then(Value::as_array)
+  else {
+    return false;
+  };
+
+  values.iter().filter_map(Value::as_str).any(|value| {
+    let mut chars = value.chars();
+    matches!(chars.next(), Some(first) if first == ch && chars.next().is_none())
+  })
 }
 
 fn completion_menu_item_for_lsp_item(item: &LspCompletionItem) -> the_default::CompletionMenuItem {
@@ -2510,6 +2584,7 @@ pub struct App {
   lsp_completion_start:        Option<usize>,
   lsp_completion_generation:   u64,
   lsp_pending_auto_completion: Option<PendingAutoCompletion>,
+  lsp_pending_auto_signature_help: Option<PendingAutoSignatureHelp>,
   diagnostics:                 DiagnosticsState,
   ui_theme:                    Theme,
   loader:                      Option<Arc<Loader>>,
@@ -2566,6 +2641,7 @@ impl App {
       lsp_completion_start: None,
       lsp_completion_generation: 0,
       lsp_pending_auto_completion: None,
+      lsp_pending_auto_signature_help: None,
       diagnostics: DiagnosticsState::default(),
       ui_theme,
       loader,
@@ -3391,6 +3467,9 @@ impl App {
     if self.poll_lsp_completion_auto_trigger() {
       changed = true;
     }
+    if self.poll_lsp_signature_help_auto_trigger() {
+      changed = true;
+    }
     if self.poll_active_syntax_parse_results() {
       changed = true;
     }
@@ -3450,6 +3529,8 @@ impl App {
     self.clear_hover_state();
     self.clear_completion_state();
     self.cancel_auto_completion();
+    self.clear_signature_help_state();
+    self.cancel_auto_signature_help();
     let _ = self.lsp_runtime.shutdown();
 
     let active_path = self.file_path().map(Path::to_path_buf);
@@ -3595,6 +3676,23 @@ impl App {
     false
   }
 
+  fn poll_lsp_signature_help_auto_trigger(&mut self) -> bool {
+    let Some(pending) = self.lsp_pending_auto_signature_help.clone() else {
+      return false;
+    };
+    if self.active_state_ref().mode != Mode::Insert {
+      self.lsp_pending_auto_signature_help = None;
+      return false;
+    }
+    if Instant::now() < pending.due_at {
+      return false;
+    }
+
+    self.lsp_pending_auto_signature_help = None;
+    let _ = self.dispatch_signature_help_request(pending.trigger, false);
+    false
+  }
+
   fn poll_lsp_events(&mut self) -> bool {
     let mut changed = false;
     while let Some(event) = self.lsp_runtime.try_recv_event() {
@@ -3628,6 +3726,8 @@ impl App {
           self.clear_hover_state();
           self.clear_completion_state();
           self.cancel_auto_completion();
+          self.clear_signature_help_state();
+          self.cancel_auto_signature_help();
           if let Some(state) = self.lsp_document.as_mut() {
             state.opened = false;
           }
@@ -3647,6 +3747,8 @@ impl App {
           self.clear_hover_state();
           self.clear_completion_state();
           self.cancel_auto_completion();
+          self.clear_signature_help_state();
+          self.cancel_auto_signature_help();
           if let Some(state) = self.lsp_document.as_mut() {
             state.opened = false;
           }
@@ -3868,6 +3970,9 @@ impl App {
       PendingLspRequestKind::CompletionResolve { index, .. } => {
         self.handle_completion_resolve_response(index, response.result.as_ref())
       },
+      PendingLspRequestKind::SignatureHelp { .. } => {
+        self.handle_signature_help_response(response.result.as_ref())
+      },
     }
   }
 
@@ -3965,6 +4070,45 @@ impl App {
       *ui_item = updated_ui_item;
       self.request_render();
     }
+    true
+  }
+
+  fn handle_signature_help_response(&mut self, result: Option<&Value>) -> bool {
+    let signature = match parse_signature_help_response(result) {
+      Ok(signature) => signature,
+      Err(err) => {
+        self.publish_lsp_message(
+          the_lib::messages::MessageLevel::Error,
+          format!("failed to parse signature help response: {err}"),
+        );
+        return true;
+      },
+    };
+
+    let Some(signature) = signature else {
+      the_default::close_signature_help(self);
+      return true;
+    };
+
+    if signature.signatures.is_empty() {
+      the_default::close_signature_help(self);
+      return true;
+    }
+
+    let active_signature = signature.active_signature;
+    let signatures = signature
+      .signatures
+      .into_iter()
+      .map(|item| {
+        the_default::SignatureHelpItem {
+          label:                  item.label,
+          documentation:          item.documentation,
+          active_parameter:       item.active_parameter,
+          active_parameter_range: item.active_parameter_range,
+        }
+      })
+      .collect::<Vec<_>>();
+    the_default::show_signature_help(self, signatures, active_signature);
     true
   }
 
@@ -4173,26 +4317,31 @@ impl App {
     start
   }
 
-  fn lsp_completion_supports_trigger_char(&self, ch: char) -> bool {
+  fn lsp_provider_supports_single_char(
+    &self,
+    provider_key: &str,
+    characters_key: &str,
+    ch: char,
+  ) -> bool {
     let Some(server) = self.lsp_runtime.config().server() else {
       return false;
     };
     let Some(capabilities) = self.lsp_runtime.server_capabilities(server.name()) else {
       return false;
     };
-    let Some(values) = capabilities
-      .raw()
-      .get("completionProvider")
-      .and_then(|provider| provider.get("triggerCharacters"))
-      .and_then(Value::as_array)
-    else {
-      return false;
-    };
+    capabilities_support_single_char(capabilities.raw(), provider_key, characters_key, ch)
+  }
 
-    values.iter().filter_map(Value::as_str).any(|value| {
-      let mut chars = value.chars();
-      matches!(chars.next(), Some(first) if first == ch && chars.next().is_none())
-    })
+  fn lsp_completion_supports_trigger_char(&self, ch: char) -> bool {
+    self.lsp_provider_supports_single_char("completionProvider", "triggerCharacters", ch)
+  }
+
+  fn lsp_signature_help_supports_trigger_char(&self, ch: char) -> bool {
+    self.lsp_provider_supports_single_char("signatureHelpProvider", "triggerCharacters", ch)
+  }
+
+  fn lsp_signature_help_supports_retrigger_char(&self, ch: char) -> bool {
+    self.lsp_provider_supports_single_char("signatureHelpProvider", "retriggerCharacters", ch)
   }
 
   fn completion_source_index_for_visible_index(&self, index: usize) -> Option<usize> {
@@ -4281,6 +4430,12 @@ impl App {
     }
   }
 
+  fn clear_signature_help_state(&mut self) {
+    if self.active_editor.is_some() {
+      self.active_state_mut().signature_help.clear();
+    }
+  }
+
   fn clear_hover_state(&mut self) {
     let Some(id) = self.active_editor else {
       return;
@@ -4315,6 +4470,40 @@ impl App {
     if let Some(node) = self.build_lsp_hover_overlay() {
       tree.overlays.push(node);
     }
+  }
+
+  fn dispatch_signature_help_request(
+    &mut self,
+    trigger: SignatureHelpTriggerSource,
+    announce_failures: bool,
+  ) -> bool {
+    if !self.lsp_supports(LspCapability::SignatureHelp) {
+      if announce_failures {
+        self.publish_lsp_message(
+          the_lib::messages::MessageLevel::Warning,
+          "signature help is not supported by the active server",
+        );
+      }
+      return false;
+    }
+
+    let Some((uri, position)) = self.current_lsp_position() else {
+      if announce_failures {
+        self.publish_lsp_message(
+          the_lib::messages::MessageLevel::Warning,
+          "signature help unavailable: no active LSP document",
+        );
+      }
+      return false;
+    };
+
+    let context = trigger.to_lsp_context();
+    self.dispatch_lsp_request(
+      "textDocument/signatureHelp",
+      signature_help_params(&uri, position, &context),
+      PendingLspRequestKind::SignatureHelp { uri },
+    );
+    true
   }
 
   fn dispatch_completion_request(
@@ -4383,6 +4572,103 @@ impl App {
 
   fn cancel_auto_completion(&mut self) {
     self.lsp_pending_auto_completion = None;
+  }
+
+  fn schedule_auto_signature_help(
+    &mut self,
+    trigger: SignatureHelpTriggerSource,
+    delay: Duration,
+  ) -> bool {
+    if self.active_state_ref().mode != Mode::Insert
+      || !self.lsp_supports(LspCapability::SignatureHelp)
+    {
+      self.lsp_pending_auto_signature_help = None;
+      return false;
+    }
+
+    self.lsp_pending_auto_signature_help = Some(PendingAutoSignatureHelp {
+      due_at: Instant::now() + delay,
+      trigger,
+    });
+    true
+  }
+
+  fn cancel_auto_signature_help(&mut self) {
+    self.lsp_pending_auto_signature_help = None;
+  }
+
+  fn handle_signature_help_action(&mut self, command: Command) -> bool {
+    if self.active_state_ref().mode != Mode::Insert {
+      self.cancel_auto_signature_help();
+      self.clear_signature_help_state();
+      return false;
+    }
+
+    match command {
+      Command::InsertChar(ch) => {
+        if self.lsp_signature_help_supports_trigger_char(ch) {
+          return self.schedule_auto_signature_help(
+            SignatureHelpTriggerSource::TriggerCharacter {
+              ch,
+              is_retrigger: self
+                .active_state_ref()
+                .signature_help
+                .active,
+            },
+            lsp_signature_help_trigger_char_latency(),
+          );
+        }
+        if self.active_state_ref().signature_help.active {
+          let trigger = if self.lsp_signature_help_supports_retrigger_char(ch) {
+            SignatureHelpTriggerSource::TriggerCharacter {
+              ch,
+              is_retrigger: true,
+            }
+          } else {
+            SignatureHelpTriggerSource::ContentChangeRetrigger
+          };
+          return self.schedule_auto_signature_help(
+            trigger,
+            lsp_signature_help_retrigger_latency(),
+          );
+        }
+        self.cancel_auto_signature_help();
+        false
+      },
+      Command::DeleteChar
+      | Command::DeleteCharForward { .. }
+      | Command::DeleteWordBackward { .. }
+      | Command::DeleteWordForward { .. }
+      | Command::KillToLineStart
+      | Command::KillToLineEnd => {
+        if self.active_state_ref().signature_help.active {
+          return self.schedule_auto_signature_help(
+            SignatureHelpTriggerSource::ContentChangeRetrigger,
+            lsp_signature_help_retrigger_latency(),
+          );
+        }
+        self.cancel_auto_signature_help();
+        false
+      },
+      Command::CompletionAccept => {
+        let trigger = if self.active_state_ref().signature_help.active {
+          SignatureHelpTriggerSource::ContentChangeRetrigger
+        } else {
+          SignatureHelpTriggerSource::Manual
+        };
+        self.schedule_auto_signature_help(trigger, lsp_signature_help_retrigger_latency())
+      },
+      Command::LspSignatureHelp
+      | Command::CompletionNext
+      | Command::CompletionPrev
+      | Command::CompletionDocsScrollUp
+      | Command::CompletionDocsScrollDown => true,
+      _ => {
+        self.cancel_auto_signature_help();
+        self.clear_signature_help_state();
+        false
+      },
+    }
   }
 
   fn handle_completion_action(&mut self, command: Command) -> bool {
@@ -4962,6 +5248,14 @@ impl App {
     if event_kind == 3 && self.hover_docs_text().is_some() && !self.completion_menu().active {
       self.clear_hover_state();
       self.request_render();
+      return true;
+    }
+    if event_kind == 3
+      && self.active_state_ref().signature_help.active
+      && !self.completion_menu().active
+    {
+      the_default::close_signature_help(self);
+      self.cancel_auto_signature_help();
       return true;
     }
     let key_event = key_event_from_ffi(event);
@@ -5595,6 +5889,14 @@ impl DefaultContext for App {
     &mut self.active_state_mut().completion_menu
   }
 
+  fn signature_help(&self) -> Option<&the_default::SignatureHelpState> {
+    Some(&self.active_state_ref().signature_help)
+  }
+
+  fn signature_help_mut(&mut self) -> Option<&mut the_default::SignatureHelpState> {
+    Some(&mut self.active_state_mut().signature_help)
+  }
+
   fn completion_selection_changed(&mut self, index: usize) {
     let source_index = self
       .completion_source_index_for_visible_index(index)
@@ -5621,7 +5923,9 @@ impl DefaultContext for App {
   }
 
   fn completion_on_action(&mut self, command: Command) -> bool {
-    self.handle_completion_action(command)
+    let preserve_completion = self.handle_completion_action(command);
+    let _ = self.handle_signature_help_action(command);
+    preserve_completion
   }
 
   fn completion_accept_selected(&mut self, index: usize) -> bool {
@@ -5777,6 +6081,7 @@ impl DefaultContext for App {
   fn set_file_path(&mut self, path: Option<PathBuf>) {
     if let Some(id) = self.active_editor {
       self.clear_hover_state();
+      self.clear_signature_help_state();
       match path {
         Some(path) => {
           self.file_paths.insert(id, path);
@@ -5804,6 +6109,7 @@ impl DefaultContext for App {
 
   fn open_file(&mut self, path: &Path) -> std::io::Result<()> {
     self.clear_hover_state();
+    self.clear_signature_help_state();
     let content = std::fs::read_to_string(path)?;
     {
       let editor = self.active_editor_mut();
@@ -5858,6 +6164,11 @@ impl DefaultContext for App {
     let _ = self.dispatch_completion_request(CompletionTriggerSource::Manual, true);
   }
 
+  fn lsp_signature_help(&mut self) {
+    self.cancel_auto_signature_help();
+    let _ = self.dispatch_signature_help_request(SignatureHelpTriggerSource::Manual, true);
+  }
+
   fn lsp_hover(&mut self) {
     if !self.lsp_supports(LspCapability::Hover) {
       self.publish_lsp_message(
@@ -5902,6 +6213,8 @@ impl DefaultContext for App {
     self.clear_hover_state();
     self.clear_completion_state();
     self.cancel_auto_completion();
+    self.clear_signature_help_state();
+    self.cancel_auto_signature_help();
     self.set_lsp_status(LspStatusPhase::Off, Some("stopped".into()));
   }
 
@@ -6707,10 +7020,13 @@ mod tests {
     },
   };
 
+  use serde_json::json;
   use the_default::{
+    Command,
     CommandEvent,
     CommandRegistry,
     DefaultContext,
+    Mode,
   };
   use the_lib::{
     messages::MessageEventKind,
@@ -6731,6 +7047,9 @@ mod tests {
   use super::{
     App,
     LibStyle,
+    PendingAutoSignatureHelp,
+    SignatureHelpTriggerSource,
+    capabilities_support_single_char,
     ffi,
   };
 
@@ -7673,5 +7992,68 @@ pkgs.mkShell {
     assert_eq!(app.text(id), "created\n");
     let _ = fs::remove_file(&missing_path);
     let _ = fs::remove_dir_all(&root);
+  }
+
+  #[test]
+  fn capabilities_single_char_matches_trigger_and_retrigger_lists() {
+    let raw = json!({
+      "signatureHelpProvider": {
+        "triggerCharacters": ["(", ","],
+        "retriggerCharacters": [",", ")"],
+      }
+    });
+
+    assert!(capabilities_support_single_char(
+      &raw,
+      "signatureHelpProvider",
+      "triggerCharacters",
+      '('
+    ));
+    assert!(capabilities_support_single_char(
+      &raw,
+      "signatureHelpProvider",
+      "retriggerCharacters",
+      ')'
+    ));
+    assert!(!capabilities_support_single_char(
+      &raw,
+      "signatureHelpProvider",
+      "triggerCharacters",
+      ';'
+    ));
+  }
+
+  #[test]
+  fn poll_signature_help_auto_trigger_clears_pending_outside_insert_mode() {
+    let _guard = ffi_test_guard();
+    let mut app = App::new();
+    let id = app.create_editor("", default_viewport(), ffi::Position { row: 0, col: 0 });
+    assert!(app.activate(id).is_some());
+    app.active_state_mut().mode = Mode::Normal;
+    app.lsp_pending_auto_signature_help = Some(PendingAutoSignatureHelp {
+      due_at:  Instant::now() - Duration::from_millis(1),
+      trigger: SignatureHelpTriggerSource::Manual,
+    });
+
+    assert!(!app.poll_lsp_signature_help_auto_trigger());
+    assert!(app.lsp_pending_auto_signature_help.is_none());
+  }
+
+  #[test]
+  fn signature_help_action_closes_state_on_non_edit_commands() {
+    let _guard = ffi_test_guard();
+    let mut app = App::new();
+    let id = app.create_editor("", default_viewport(), ffi::Position { row: 0, col: 0 });
+    assert!(app.activate(id).is_some());
+    app.active_state_mut().mode = Mode::Insert;
+    app.active_state_mut().signature_help.active = true;
+    app.lsp_pending_auto_signature_help = Some(PendingAutoSignatureHelp {
+      due_at:  Instant::now() + Duration::from_millis(50),
+      trigger: SignatureHelpTriggerSource::ContentChangeRetrigger,
+    });
+
+    assert!(!app.handle_signature_help_action(Command::Search));
+    assert!(!app.active_state_ref().signature_help.active);
+    assert!(app.lsp_pending_auto_signature_help.is_none());
   }
 }

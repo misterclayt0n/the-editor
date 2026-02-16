@@ -879,6 +879,16 @@ fn default_client_capabilities() -> Value {
           "labelDetailsSupport": true
         }
       },
+      "signatureHelp": {
+        "contextSupport": true,
+        "signatureInformation": {
+          "documentationFormat": ["markdown", "plaintext"],
+          "parameterInformation": {
+            "labelOffsetSupport": true
+          },
+          "activeParameterSupport": true
+        }
+      },
       "synchronization": {
         "dynamicRegistration": true,
         "didSave": true,

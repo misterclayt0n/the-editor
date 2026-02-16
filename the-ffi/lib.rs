@@ -88,7 +88,7 @@ use the_default::{
   select_file_picker_index,
   set_file_picker_syntax_loader,
   submit_file_picker,
-  update_search_preview,
+  update_search_prompt_preview,
 };
 use the_lib::{
   Tendril,
@@ -3510,7 +3510,7 @@ impl App {
     prompt.cursor = query.len();
     prompt.selected = None;
     prompt.error = None;
-    update_search_preview(self);
+    update_search_prompt_preview(self);
     self.request_render();
     true
   }

@@ -10,6 +10,9 @@ use the_lib::render::{
 
 use crate::DefaultContext;
 
+pub const SIGNATURE_HELP_ACTIVE_PARAM_START_MARKER: &str = "<<the-editor-active-param>>";
+pub const SIGNATURE_HELP_ACTIVE_PARAM_END_MARKER: &str = "<</the-editor-active-param>>";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SignatureHelpItem {
   pub label:                  String,
@@ -69,8 +72,29 @@ impl SignatureHelpState {
   }
 }
 
-fn signature_label_markdown(label: &str) -> String {
-  format!("```\n{label}\n```")
+fn signature_label_markdown(label: &str, active_range: Option<&std::ops::Range<usize>>) -> String {
+  let rendered = if let Some(range) = active_range
+    && range.start < range.end
+    && range.end <= label.len()
+    && label.is_char_boundary(range.start)
+    && label.is_char_boundary(range.end)
+  {
+    let mut text = String::with_capacity(
+      label.len()
+        + SIGNATURE_HELP_ACTIVE_PARAM_START_MARKER.len()
+        + SIGNATURE_HELP_ACTIVE_PARAM_END_MARKER.len(),
+    );
+    text.push_str(&label[..range.start]);
+    text.push_str(SIGNATURE_HELP_ACTIVE_PARAM_START_MARKER);
+    text.push_str(&label[range.clone()]);
+    text.push_str(SIGNATURE_HELP_ACTIVE_PARAM_END_MARKER);
+    text.push_str(&label[range.end..]);
+    text
+  } else {
+    label.to_string()
+  };
+
+  format!("```\n{rendered}\n```")
 }
 
 fn build_signature_help_content(
@@ -86,7 +110,8 @@ fn build_signature_help_content(
     ));
   }
 
-  let signature_label = signature_label_markdown(selected.label.trim());
+  let signature_label =
+    signature_label_markdown(selected.label.trim(), selected.active_parameter_range.as_ref());
   content.push_str(signature_label.as_str());
 
   if let Some(docs) = selected
@@ -265,6 +290,8 @@ pub fn build_signature_help_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNode
 #[cfg(test)]
 mod tests {
   use super::{
+    SIGNATURE_HELP_ACTIVE_PARAM_END_MARKER,
+    SIGNATURE_HELP_ACTIVE_PARAM_START_MARKER,
     SignatureHelpItem,
     SignatureHelpState,
     build_signature_help_content,
@@ -274,8 +301,22 @@ mod tests {
 
   #[test]
   fn signature_label_markdown_wraps_signature_in_code_fence() {
-    let rendered = signature_label_markdown("add(int x, int y) -> int");
+    let rendered = signature_label_markdown("add(int x, int y) -> int", None);
     assert_eq!(rendered, "```\nadd(int x, int y) -> int\n```");
+  }
+
+  #[test]
+  fn signature_label_markdown_marks_active_parameter_range() {
+    let label = "add(int x, int y) -> int";
+    let start = label.find("int y").expect("active range start");
+    let end = start + "int y".len();
+    let rendered = signature_label_markdown(label, Some(&(start..end)));
+    assert_eq!(
+      rendered,
+      format!(
+        "```\nadd(int x, {SIGNATURE_HELP_ACTIVE_PARAM_START_MARKER}int y{SIGNATURE_HELP_ACTIVE_PARAM_END_MARKER}) -> int\n```"
+      )
+    );
   }
 
   #[test]
@@ -290,7 +331,9 @@ mod tests {
     let content = build_signature_help_content(&state, state.selected().expect("selected"));
     assert_eq!(
       content,
-      "(1/2)\n\n```\nfoo(a: i32, b: i32)\n```\n\n---\n\nFunction docs."
+      format!(
+        "(1/2)\n\n```\nfoo({SIGNATURE_HELP_ACTIVE_PARAM_START_MARKER}a: i32{SIGNATURE_HELP_ACTIVE_PARAM_END_MARKER}, b: i32)\n```\n\n---\n\nFunction docs."
+      )
     );
   }
 

@@ -24,6 +24,8 @@ use ropey::Rope;
 use the_default::{
   FilePickerPreview,
   OverlayRect as DefaultOverlayRect,
+  SIGNATURE_HELP_ACTIVE_PARAM_END_MARKER,
+  SIGNATURE_HELP_ACTIVE_PARAM_START_MARKER,
   command_palette_filtered_indices,
   completion_docs_panel_rect as default_completion_docs_panel_rect,
   completion_panel_rect as default_completion_panel_rect,
@@ -763,6 +765,7 @@ struct CompletionDocsStyles {
   bullet:  Style,
   quote:   Style,
   code:    Style,
+  active_parameter: Style,
   link:    Style,
   rule:    Style,
 }
@@ -783,6 +786,9 @@ impl CompletionDocsStyles {
       bullet: base.add_modifier(Modifier::BOLD),
       quote: base.add_modifier(Modifier::DIM),
       code: base.add_modifier(Modifier::DIM),
+      active_parameter: base
+        .add_modifier(Modifier::BOLD)
+        .add_modifier(Modifier::UNDERLINED),
       link: base.add_modifier(Modifier::UNDERLINED),
       rule: base.add_modifier(Modifier::DIM),
     }
@@ -811,6 +817,11 @@ fn completion_docs_styles(ctx: &Ctx, base: Style) -> CompletionDocsStyles {
   styles.bullet = theme_style_or(ctx, "markup.list.unnumbered", styles.bullet);
   styles.quote = theme_style_or(ctx, "markup.quote", styles.quote);
   styles.code = theme_style_or(ctx, "markup.raw.inline", styles.code);
+  styles.active_parameter = theme_style_or(
+    ctx,
+    "ui.selection.primary",
+    theme_style_or(ctx, "ui.selection", styles.active_parameter),
+  );
   styles.link = theme_style_or(ctx, "markup.link.text", styles.link);
   styles.rule = theme_style_or(ctx, "punctuation.special", styles.rule);
   styles
@@ -1011,6 +1022,123 @@ fn language_filename_hints(marker: &str) -> Vec<String> {
   out
 }
 
+fn strip_signature_active_markers_from_line(line: &str) -> (String, Option<std::ops::Range<usize>>) {
+  let mut cleaned = String::with_capacity(line.len());
+  let mut idx = 0usize;
+  let mut start = None;
+  let mut end = None;
+
+  while idx < line.len() {
+    if line[idx..].starts_with(SIGNATURE_HELP_ACTIVE_PARAM_START_MARKER) {
+      if start.is_none() {
+        start = Some(cleaned.len());
+      }
+      idx += SIGNATURE_HELP_ACTIVE_PARAM_START_MARKER.len();
+      continue;
+    }
+    if line[idx..].starts_with(SIGNATURE_HELP_ACTIVE_PARAM_END_MARKER) {
+      if start.is_some() && end.is_none() {
+        end = Some(cleaned.len());
+      }
+      idx += SIGNATURE_HELP_ACTIVE_PARAM_END_MARKER.len();
+      continue;
+    }
+
+    let mut chars = line[idx..].chars();
+    let Some(ch) = chars.next() else {
+      break;
+    };
+    cleaned.push(ch);
+    idx += ch.len_utf8();
+  }
+
+  let range = match (start, end) {
+    (Some(start), Some(end)) if start < end => Some(start..end),
+    (Some(start), None) if start < cleaned.len() => Some(start..cleaned.len()),
+    _ => None,
+  };
+  (cleaned, range)
+}
+
+fn strip_signature_active_markers_from_lines(
+  code_lines: &[String],
+) -> (Vec<String>, Option<std::ops::Range<usize>>) {
+  let mut cleaned_lines = Vec::with_capacity(code_lines.len());
+  let mut active_range = None;
+  let mut line_start = 0usize;
+
+  for (idx, line) in code_lines.iter().enumerate() {
+    let (cleaned, line_range) = strip_signature_active_markers_from_line(line);
+    if active_range.is_none()
+      && let Some(range) = line_range
+    {
+      active_range = Some((line_start + range.start)..(line_start + range.end));
+    }
+    line_start += cleaned.len();
+    if idx + 1 < code_lines.len() {
+      line_start += 1;
+    }
+    cleaned_lines.push(cleaned);
+  }
+
+  (cleaned_lines, active_range)
+}
+
+fn byte_range_overlaps_active(
+  byte_start: usize,
+  byte_end: usize,
+  active_range: Option<&std::ops::Range<usize>>,
+) -> bool {
+  active_range.is_some_and(|active| byte_start < active.end && byte_end > active.start)
+}
+
+fn render_code_lines_with_active_style(
+  code_lines: &[String],
+  base_style: Style,
+  active_parameter_style: Style,
+  active_range: Option<&std::ops::Range<usize>>,
+) -> Vec<Vec<StyledTextRun>> {
+  let mut rendered = Vec::with_capacity(code_lines.len());
+  let mut line_start_byte = 0usize;
+
+  for (idx, line) in code_lines.iter().enumerate() {
+    let mut runs = Vec::new();
+    let mut piece = String::new();
+    let mut run_style = base_style;
+    let mut byte_idx = line_start_byte;
+
+    for ch in line.chars() {
+      let byte_end = byte_idx.saturating_add(ch.len_utf8());
+      let mut style = base_style;
+      if byte_range_overlaps_active(byte_idx, byte_end, active_range) {
+        style = style.patch(active_parameter_style);
+      }
+      if style != run_style && !piece.is_empty() {
+        push_styled_run(&mut runs, std::mem::take(&mut piece), run_style);
+      }
+      run_style = style;
+      piece.push(ch);
+      byte_idx = byte_end;
+    }
+
+    push_styled_run(&mut runs, piece, run_style);
+    if runs.is_empty() {
+      runs.push(StyledTextRun {
+        text:  String::new(),
+        style: base_style,
+      });
+    }
+    rendered.push(runs);
+
+    line_start_byte += line.len();
+    if idx + 1 < code_lines.len() {
+      line_start_byte += 1;
+    }
+  }
+
+  rendered
+}
+
 fn highlighted_code_block_lines(
   code_lines: &[String],
   styles: &CompletionDocsStyles,
@@ -1020,28 +1148,26 @@ fn highlighted_code_block_lines(
   if code_lines.is_empty() {
     return vec![Vec::new()];
   }
+  let (code_lines, active_range) = strip_signature_active_markers_from_lines(code_lines);
+  if code_lines.is_empty() {
+    return vec![Vec::new()];
+  }
 
   let Some(ctx) = ctx else {
-    return code_lines
-      .iter()
-      .map(|line| {
-        vec![StyledTextRun {
-          text:  line.clone(),
-          style: styles.code,
-        }]
-      })
-      .collect();
+    return render_code_lines_with_active_style(
+      &code_lines,
+      styles.code,
+      styles.active_parameter,
+      active_range.as_ref(),
+    );
   };
   let Some(loader) = ctx.loader.as_deref() else {
-    return code_lines
-      .iter()
-      .map(|line| {
-        vec![StyledTextRun {
-          text:  line.clone(),
-          style: styles.code,
-        }]
-      })
-      .collect();
+    return render_code_lines_with_active_style(
+      &code_lines,
+      styles.code,
+      styles.active_parameter,
+      active_range.as_ref(),
+    );
   };
   let resolved_language = language.and_then(|marker| {
     let marker = marker.trim();
@@ -1068,29 +1194,23 @@ fn highlighted_code_block_lines(
         .and_then(|state| loader.language_for_name(state.language_id.as_str()))
     });
   let Some(language) = resolved_language.or(current_buffer_language) else {
-    return code_lines
-      .iter()
-      .map(|line| {
-        vec![StyledTextRun {
-          text:  line.clone(),
-          style: styles.code,
-        }]
-      })
-      .collect();
+    return render_code_lines_with_active_style(
+      &code_lines,
+      styles.code,
+      styles.active_parameter,
+      active_range.as_ref(),
+    );
   };
 
   let joined = code_lines.join("\n");
   let rope = Rope::from_str(&joined);
   let Ok(syntax) = Syntax::new(rope.slice(..), language, loader) else {
-    return code_lines
-      .iter()
-      .map(|line| {
-        vec![StyledTextRun {
-          text:  line.clone(),
-          style: styles.code,
-        }]
-      })
-      .collect();
+    return render_code_lines_with_active_style(
+      &code_lines,
+      styles.code,
+      styles.active_parameter,
+      active_range.as_ref(),
+    );
   };
 
   let mut highlights = syntax.collect_highlights(rope.slice(..), loader, 0..rope.len_bytes());
@@ -1106,19 +1226,23 @@ fn highlighted_code_block_lines(
     let mut byte_idx = line_start_byte;
 
     for ch in line.chars() {
-      let style = preview_highlight_at(&highlights, byte_idx)
+      let byte_end = byte_idx.saturating_add(ch.len_utf8());
+      let mut style = preview_highlight_at(&highlights, byte_idx)
         .map(|highlight| {
           styles
             .code
             .patch(lib_style_to_ratatui(ctx.ui_theme.highlight(highlight)))
         })
         .unwrap_or(styles.code);
+      if byte_range_overlaps_active(byte_idx, byte_end, active_range.as_ref()) {
+        style = style.patch(styles.active_parameter);
+      }
       if style != active_style && !piece.is_empty() {
         push_styled_run(&mut runs, std::mem::take(&mut piece), active_style);
       }
       active_style = style;
       piece.push(ch);
-      byte_idx = byte_idx.saturating_add(ch.len_utf8());
+      byte_idx = byte_end;
     }
     push_styled_run(&mut runs, piece, active_style);
     if runs.is_empty() {
@@ -4222,6 +4346,22 @@ mod tests {
       "Result".to_string(),
       "fn test() {}".to_string(),
     ]);
+  }
+
+  #[test]
+  fn completion_docs_rows_strip_signature_active_parameter_markers() {
+    let styles = CompletionDocsStyles::default(Style::default());
+    let markdown = format!(
+      "```c\nadd(int x, {}int y{}) -> int\n```",
+      the_default::SIGNATURE_HELP_ACTIVE_PARAM_START_MARKER,
+      the_default::SIGNATURE_HELP_ACTIVE_PARAM_END_MARKER
+    );
+    let rows = completion_docs_rows(&markdown, &styles, 120);
+    let non_empty: Vec<_> = flatten_rows(&rows)
+      .into_iter()
+      .filter(|line| !line.trim().is_empty())
+      .collect();
+    assert_eq!(non_empty, vec!["add(int x, int y) -> int".to_string()]);
   }
 
   #[test]

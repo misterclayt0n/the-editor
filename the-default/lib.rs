@@ -135,6 +135,8 @@ pub use search_prompt::{
   update_search_preview,
 };
 pub use signature_help::{
+  SIGNATURE_HELP_ACTIVE_PARAM_END_MARKER,
+  SIGNATURE_HELP_ACTIVE_PARAM_START_MARKER,
   SignatureHelpItem,
   SignatureHelpState,
   build_signature_help_ui,

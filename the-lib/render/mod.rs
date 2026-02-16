@@ -10,6 +10,7 @@ pub mod grapheme;
 pub mod graphics;
 pub mod gutter;
 pub mod highlight_adapter;
+pub mod inline_diagnostics;
 pub mod overlay;
 pub mod plan;
 pub mod text_annotations;
@@ -30,6 +31,15 @@ pub use gutter::{
   LineNumberMode,
 };
 pub use highlight_adapter::SyntaxHighlightAdapter;
+pub use inline_diagnostics::{
+  InlineDiagnostic,
+  InlineDiagnosticFilter,
+  InlineDiagnosticsLineAnnotation,
+  InlineDiagnosticRenderLine,
+  InlineDiagnosticsConfig,
+  InlineDiagnosticsRenderData,
+  SharedInlineDiagnosticsRenderData,
+};
 pub use overlay::{
   OverlayNode,
   OverlayRect,

@@ -44,6 +44,8 @@ struct UiOverlayHost: View {
                         EmptyView()
                     } else if case .panel(let panel) = node, panel.id == "completion_docs" {
                         EmptyView()
+                    } else if case .panel(let panel) = node, panel.id == "signature_help" {
+                        EmptyView()
                     } else if case .panel(let panel) = node, panel.id == "lsp_hover" {
                         EmptyView()
                     } else {
@@ -981,6 +983,25 @@ extension UiTreeSnapshot {
         return HoverSnapshot(docsText: trimmed)
     }
 
+    func signatureHelpSnapshot() -> SignatureHelpSnapshot? {
+        let signaturePanel = overlays.compactMap { node in
+            if case .panel(let panel) = node, panel.id == "signature_help" {
+                return panel
+            }
+            return nil
+        }.first
+
+        guard let signaturePanel else { return nil }
+
+        let docsText = findText(in: signaturePanel.child, id: "signature_help_text")?.content
+            ?? firstTextContent(in: signaturePanel.child)
+        guard let docsText else { return nil }
+
+        let trimmed = docsText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return SignatureHelpSnapshot(docsText: trimmed)
+    }
+
     var hasSearchPromptPanel: Bool {
         return searchPromptPanel() != nil
     }
@@ -1140,6 +1161,10 @@ struct CompletionItemSnapshot: Identifiable {
 }
 
 struct HoverSnapshot {
+    let docsText: String
+}
+
+struct SignatureHelpSnapshot {
     let docsText: String
 }
 

@@ -1,7 +1,6 @@
 import Foundation
 import TheEditorFFI
 
-
 public class App: AppRefMut {
     var isOwned: Bool = true
 
@@ -31,6 +30,10 @@ extension App {
 
     class public func completion_popup_layout_json(_ area_width: UInt, _ area_height: UInt, _ cursor_x: Int64, _ cursor_y: Int64, _ list_width: UInt, _ list_height: UInt, _ docs_width: UInt, _ docs_height: UInt) -> RustString {
         RustString(ptr: __swift_bridge__$App$completion_popup_layout_json(area_width, area_height, cursor_x, cursor_y, list_width, list_height, docs_width, docs_height))
+    }
+
+    class public func signature_help_popup_layout_json(_ area_width: UInt, _ area_height: UInt, _ cursor_x: Int64, _ cursor_y: Int64, _ panel_width: UInt, _ panel_height: UInt) -> RustString {
+        RustString(ptr: __swift_bridge__$App$signature_help_popup_layout_json(area_width, area_height, cursor_x, cursor_y, panel_width, panel_height))
     }
 }
 public class AppRefMut: AppRef {
@@ -1601,6 +1604,5 @@ extension RenderPlan: Vectorizable {
         __swift_bridge__$Vec_RenderPlan$len(vecPtr)
     }
 }
-
 
 

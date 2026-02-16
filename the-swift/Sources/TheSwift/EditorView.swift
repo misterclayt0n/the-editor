@@ -18,8 +18,10 @@ struct EditorView: View {
         let isOverlayOpen = isPaletteOpen || isSearchOpen || isFilePickerOpen
         let completionSnapshot = model.uiTree.completionSnapshot()
         let hoverSnapshot = model.uiTree.hoverSnapshot()
+        let signatureSnapshot = model.uiTree.signatureHelpSnapshot()
         let isCompletionOpen = completionSnapshot != nil
         let isHoverOpen = hoverSnapshot != nil && !isCompletionOpen
+        let isSignatureOpen = signatureSnapshot != nil && !isCompletionOpen && !isHoverOpen
         GeometryReader { proxy in
             ZStack {
                 Canvas { context, size in
@@ -94,6 +96,15 @@ struct EditorView: View {
                         languageHint: model.completionDocsLanguageHint()
                     )
                     .allowsHitTesting(true)
+                } else if let signature = signatureSnapshot {
+                    SignatureHelpPopupView(
+                        snapshot: signature,
+                        cursorOrigin: cursorPixelPosition(plan: model.plan, cellSize: cellSize),
+                        cellSize: cellSize,
+                        containerSize: proxy.size,
+                        languageHint: model.completionDocsLanguageHint()
+                    )
+                    .allowsHitTesting(true)
                 }
             }
             .background(
@@ -117,7 +128,7 @@ struct EditorView: View {
             )
             .overlay(
                 Group {
-                    if !isOverlayOpen && !isCompletionOpen && !isHoverOpen {
+                    if !isOverlayOpen && !isCompletionOpen && !isHoverOpen && !isSignatureOpen {
                         ScrollCaptureView(
                             onScroll: { deltaX, deltaY, precise in
                                 model.handleScroll(deltaX: deltaX, deltaY: deltaY, precise: precise)

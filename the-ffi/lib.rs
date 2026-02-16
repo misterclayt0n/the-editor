@@ -76,6 +76,7 @@ use the_default::{
   command_palette_selected_filtered_index,
   completion_docs_panel_rect as default_completion_docs_panel_rect,
   completion_panel_rect as default_completion_panel_rect,
+  signature_help_panel_rect as default_signature_help_panel_rect,
   finalize_search,
   handle_query_change as file_picker_handle_query_change,
   poll_scan_results as file_picker_poll_scan_results,
@@ -2446,6 +2447,45 @@ fn completion_popup_layout_json_impl(
   })
 }
 
+#[derive(Serialize)]
+struct SignatureHelpPopupLayoutSnapshot {
+  panel: CompletionPopupRectSnapshot,
+}
+
+fn signature_help_popup_layout_json_impl(
+  area_width: usize,
+  area_height: usize,
+  cursor_x: i64,
+  cursor_y: i64,
+  panel_width: usize,
+  panel_height: usize,
+) -> String {
+  let area = DefaultOverlayRect::new(
+    0,
+    0,
+    area_width.min(u16::MAX as usize) as u16,
+    area_height.min(u16::MAX as usize) as u16,
+  );
+  let panel_width = panel_width.min(u16::MAX as usize) as u16;
+  let panel_height = panel_height.min(u16::MAX as usize) as u16;
+
+  let cursor = if cursor_x >= 0 && cursor_y >= 0 {
+    Some((
+      cursor_x.min(u16::MAX as i64) as u16,
+      cursor_y.min(u16::MAX as i64) as u16,
+    ))
+  } else {
+    None
+  };
+
+  let panel = default_signature_help_panel_rect(area, panel_width, panel_height, cursor);
+  let snapshot = SignatureHelpPopupLayoutSnapshot {
+    panel: CompletionPopupRectSnapshot::from(panel),
+  };
+  serde_json::to_string(&snapshot)
+    .unwrap_or_else(|_| "{\"panel\":{\"x\":0,\"y\":0,\"width\":1,\"height\":1}}".to_string())
+}
+
 fn completion_match_score(filter: &str, candidate: &str) -> Option<u32> {
   if filter.is_empty() {
     return Some(0);
@@ -2675,6 +2715,24 @@ impl App {
       list_height,
       docs_width,
       docs_height,
+    )
+  }
+
+  pub fn signature_help_popup_layout_json(
+    area_width: usize,
+    area_height: usize,
+    cursor_x: i64,
+    cursor_y: i64,
+    panel_width: usize,
+    panel_height: usize,
+  ) -> String {
+    signature_help_popup_layout_json_impl(
+      area_width,
+      area_height,
+      cursor_x,
+      cursor_y,
+      panel_width,
+      panel_height,
     )
   }
 
@@ -6480,6 +6538,15 @@ mod ffi {
       list_height: usize,
       docs_width: usize,
       docs_height: usize,
+    ) -> String;
+    #[swift_bridge(associated_to = App)]
+    fn signature_help_popup_layout_json(
+      area_width: usize,
+      area_height: usize,
+      cursor_x: i64,
+      cursor_y: i64,
+      panel_width: usize,
+      panel_height: usize,
     ) -> String;
     fn command_palette_is_open(self: &mut App, id: EditorId) -> bool;
     fn command_palette_query(self: &mut App, id: EditorId) -> String;

@@ -157,6 +157,7 @@ uint8_t __swift_bridge__$App$mode(void* self, struct __swift_bridge__$EditorId i
 struct __swift_bridge__$Style __swift_bridge__$App$theme_highlight_style(void* self, uint32_t highlight);
 void* __swift_bridge__$App$completion_docs_render_json(struct RustStr markdown, uintptr_t content_width, struct RustStr language_hint);
 void* __swift_bridge__$App$completion_popup_layout_json(uintptr_t area_width, uintptr_t area_height, int64_t cursor_x, int64_t cursor_y, uintptr_t list_width, uintptr_t list_height, uintptr_t docs_width, uintptr_t docs_height);
+void* __swift_bridge__$App$signature_help_popup_layout_json(uintptr_t area_width, uintptr_t area_height, int64_t cursor_x, int64_t cursor_y, uintptr_t panel_width, uintptr_t panel_height);
 bool __swift_bridge__$App$command_palette_is_open(void* self, struct __swift_bridge__$EditorId id);
 void* __swift_bridge__$App$command_palette_query(void* self, struct __swift_bridge__$EditorId id);
 uint8_t __swift_bridge__$App$command_palette_layout(void* self, struct __swift_bridge__$EditorId id);
@@ -264,4 +265,5 @@ uintptr_t __swift_bridge__$RenderPlan$selection_count(void* self);
 void* __swift_bridge__$RenderPlan$selection_at(void* self, uintptr_t index);
 uintptr_t __swift_bridge__$RenderPlan$overlay_count(void* self);
 void* __swift_bridge__$RenderPlan$overlay_at(void* self, uintptr_t index);
+
 

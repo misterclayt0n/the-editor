@@ -30,6 +30,7 @@ use the_default::{
   file_picker_icon_glyph,
   render_plan,
   set_picker_visible_rows,
+  signature_help_panel_rect as default_signature_help_panel_rect,
   ui_tree,
 };
 use the_lib::{
@@ -1389,6 +1390,7 @@ fn draw_completion_docs_text(buf: &mut Buffer, rect: Rect, ctx: &Ctx, text: &UiT
   let docs_scroll = match docs_panel_source_from_text(text).unwrap_or(DocsPanelSource::Completion) {
     DocsPanelSource::Completion => ctx.completion_menu.docs_scroll,
     DocsPanelSource::Hover => ctx.hover_docs_scroll,
+    DocsPanelSource::Signature => ctx.signature_help.docs_scroll,
     DocsPanelSource::CommandPalette => 0,
   };
   let scroll = docs_scroll.min(max_scroll);
@@ -2421,6 +2423,13 @@ fn panel_is_hover(panel: &UiPanel) -> bool {
   )
 }
 
+fn panel_is_signature_help(panel: &UiPanel) -> bool {
+  matches!(
+    docs_panel_source_from_panel(panel),
+    Some(DocsPanelSource::Signature)
+  ) || panel.id == "signature_help"
+}
+
 fn panel_is_term_command_palette_list(panel: &UiPanel) -> bool {
   panel.id == "term_command_palette_list"
 }
@@ -2444,6 +2453,21 @@ fn completion_panel_rect(
   editor_cursor: Option<(u16, u16)>,
 ) -> Rect {
   let rect = default_completion_panel_rect(
+    DefaultOverlayRect::new(area.x, area.y, area.width, area.height),
+    panel_width,
+    panel_height,
+    editor_cursor,
+  );
+  Rect::new(rect.x, rect.y, rect.width, rect.height)
+}
+
+fn signature_help_panel_rect(
+  area: Rect,
+  panel_width: u16,
+  panel_height: u16,
+  editor_cursor: Option<(u16, u16)>,
+) -> Rect {
+  let rect = default_signature_help_panel_rect(
     DefaultOverlayRect::new(area.x, area.y, area.width, area.height),
     panel_width,
     panel_height,
@@ -2528,6 +2552,34 @@ fn selected_completion_docs_text(ctx: &Ctx) -> Option<&str> {
     .and_then(|item| item.documentation.as_deref())
     .map(str::trim)
     .filter(|docs| !docs.is_empty())
+}
+
+fn signature_help_panel_text(ctx: &Ctx) -> Option<String> {
+  let state = &ctx.signature_help;
+  if !state.active || state.signatures.is_empty() {
+    return None;
+  }
+
+  let selected = state.selected()?;
+  let mut content = String::new();
+  if state.signatures.len() > 1 {
+    content.push_str(&format!(
+      "({}/{})\n\n",
+      state.active_signature + 1,
+      state.signatures.len()
+    ));
+  }
+  content.push_str(selected.label.trim());
+  if let Some(docs) = selected
+    .documentation
+    .as_deref()
+    .map(str::trim)
+    .filter(|docs| !docs.is_empty())
+  {
+    content.push_str("\n\n");
+    content.push_str(docs);
+  }
+  Some(content)
 }
 
 fn completion_docs_layout_for_panel(
@@ -3240,6 +3292,44 @@ fn draw_ui_overlays(
               ) {
                 ctx.completion_docs_layout =
                   completion_docs_layout_for_panel(ctx, panel, hover_rect, docs, source);
+              }
+            }
+            index += 1;
+            continue;
+          }
+          if panel_is_signature_help(panel)
+            && matches!(
+              panel.intent,
+              LayoutIntent::Custom(_) | LayoutIntent::Floating
+            )
+          {
+            let available_height = area.height.saturating_sub(top_offset + bottom_offset);
+            if available_height > 0 {
+              let overlay_area =
+                Rect::new(area.x, area.y + top_offset, area.width, available_height);
+              let (popup_width, popup_height) = panel_box_size(panel, overlay_area);
+              let popup_rect = signature_help_panel_rect(
+                overlay_area,
+                popup_width,
+                popup_height,
+                editor_cursor,
+              );
+              draw_panel_in_rect(
+                buf,
+                popup_rect,
+                ctx,
+                panel,
+                BorderEdge::Top,
+                false,
+                focus,
+                cursor_out,
+              );
+              if let (Some(text), Some(source)) = (
+                signature_help_panel_text(ctx),
+                docs_panel_source_from_panel(panel),
+              ) {
+                ctx.completion_docs_layout =
+                  completion_docs_layout_for_panel(ctx, panel, popup_rect, &text, source);
               }
             }
             index += 1;

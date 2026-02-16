@@ -421,6 +421,7 @@ pub struct Ctx {
   pub command_palette:              CommandPaletteState,
   pub command_palette_style:        CommandPaletteStyle,
   pub completion_menu:              the_default::CompletionMenuState,
+  pub signature_help:               the_default::SignatureHelpState,
   pub hover_docs:                   Option<String>,
   pub hover_docs_scroll:            usize,
   pub file_picker:                  FilePickerState,
@@ -766,6 +767,7 @@ impl Ctx {
       command_palette: CommandPaletteState::default(),
       command_palette_style: CommandPaletteStyle::helix_bottom(),
       completion_menu: the_default::CompletionMenuState::default(),
+      signature_help: the_default::SignatureHelpState::default(),
       hover_docs: None,
       hover_docs_scroll: 0,
       file_picker,
@@ -1971,34 +1973,29 @@ impl Ctx {
     };
 
     let Some(signature) = signature else {
-      self.messages.publish(
-        MessageLevel::Info,
-        Some("lsp".into()),
-        "no signature help available",
-      );
+      the_default::close_signature_help(self);
       return true;
     };
 
-    let Some(active) = signature.signatures.get(signature.active_signature) else {
-      self.messages.publish(
-        MessageLevel::Info,
-        Some("lsp".into()),
-        "no signature help available",
-      );
+    if signature.signatures.is_empty() {
+      the_default::close_signature_help(self);
       return true;
-    };
+    }
 
-    let mut text = active.label.clone();
-    if text.len() > 240 {
-      text.truncate(240);
-      text.push('…');
-    }
-    if let Some(active_parameter) = active.active_parameter {
-      text.push_str(&format!("  (param {})", active_parameter + 1));
-    }
-    self
-      .messages
-      .publish(MessageLevel::Info, Some("lsp".into()), text);
+    let active_signature = signature.active_signature;
+    let signatures = signature
+      .signatures
+      .into_iter()
+      .map(|item| {
+        the_default::SignatureHelpItem {
+          label:                  item.label,
+          documentation:          item.documentation,
+          active_parameter:       item.active_parameter,
+          active_parameter_range: item.active_parameter_range,
+        }
+      })
+      .collect::<Vec<_>>();
+    the_default::show_signature_help(self, signatures, active_signature);
     true
   }
 
@@ -2456,6 +2453,10 @@ impl Ctx {
   fn clear_hover_state(&mut self) {
     self.hover_docs = None;
     self.hover_docs_scroll = 0;
+  }
+
+  fn clear_signature_help_state(&mut self) {
+    self.signature_help.clear();
   }
 
   fn dispatch_completion_request(
@@ -3723,6 +3724,14 @@ impl the_default::DefaultContext for Ctx {
 
   fn completion_menu_mut(&mut self) -> &mut the_default::CompletionMenuState {
     &mut self.completion_menu
+  }
+
+  fn signature_help(&self) -> Option<&the_default::SignatureHelpState> {
+    Some(&self.signature_help)
+  }
+
+  fn signature_help_mut(&mut self) -> Option<&mut the_default::SignatureHelpState> {
+    Some(&mut self.signature_help)
   }
 
   fn completion_selection_changed(&mut self, index: usize) {

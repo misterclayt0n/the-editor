@@ -13,6 +13,7 @@ use ratatui::layout::Rect;
 use the_default::{
   DefaultContext,
   Mode,
+  close_signature_help,
   completion_docs_scroll,
   open_file_picker_index,
   scroll_file_picker_list,
@@ -20,6 +21,7 @@ use the_default::{
   set_completion_docs_scroll,
   set_file_picker_list_offset,
   set_file_picker_preview_offset,
+  signature_help_docs_scroll,
   ui_event as dispatch_ui_event,
 };
 use the_lib::render::{
@@ -63,6 +65,11 @@ pub fn handle_key(ctx: &mut Ctx, event: CrosstermKeyEvent) {
     ctx.request_render();
   }
 
+  if matches!(event.code, KeyCode::Esc) && ctx.signature_help.active {
+    close_signature_help(ctx);
+    return;
+  }
+
   if ctx.hover_docs.is_some() && !ctx.completion_menu.active {
     match event.code {
       KeyCode::PageUp => {
@@ -73,6 +80,20 @@ pub fn handle_key(ctx: &mut Ctx, event: CrosstermKeyEvent) {
       KeyCode::PageDown => {
         ctx.hover_docs_scroll = ctx.hover_docs_scroll.saturating_add(6);
         ctx.request_render();
+        return;
+      },
+      _ => {},
+    }
+  }
+
+  if ctx.signature_help.active && !ctx.completion_menu.active {
+    match event.code {
+      KeyCode::PageUp => {
+        signature_help_docs_scroll(ctx, -6);
+        return;
+      },
+      KeyCode::PageDown => {
+        signature_help_docs_scroll(ctx, 6);
         return;
       },
       _ => {},
@@ -376,6 +397,7 @@ fn docs_scroll_for_source(ctx: &Ctx, source: DocsPanelSource) -> usize {
   match source {
     DocsPanelSource::Completion => ctx.completion_menu.docs_scroll,
     DocsPanelSource::Hover => ctx.hover_docs_scroll,
+    DocsPanelSource::Signature => ctx.signature_help.docs_scroll,
     DocsPanelSource::CommandPalette => 0,
   }
 }
@@ -392,6 +414,12 @@ fn set_docs_scroll_for_source(
     DocsPanelSource::Hover => {
       if ctx.hover_docs_scroll != scroll {
         ctx.hover_docs_scroll = scroll;
+        ctx.request_render();
+      }
+    },
+    DocsPanelSource::Signature => {
+      if ctx.signature_help.docs_scroll != scroll {
+        ctx.signature_help.docs_scroll = scroll;
         ctx.request_render();
       }
     },
@@ -418,6 +446,9 @@ fn scroll_docs_for_source(
         ctx.hover_docs_scroll = next;
         ctx.request_render();
       }
+    },
+    DocsPanelSource::Signature => {
+      signature_help_docs_scroll(ctx, delta);
     },
     DocsPanelSource::CommandPalette => {},
   }

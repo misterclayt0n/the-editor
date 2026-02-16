@@ -16,6 +16,7 @@ pub enum DocsPanelSource {
   #[default]
   Completion,
   Hover,
+  Signature,
   CommandPalette,
 }
 
@@ -24,6 +25,7 @@ impl DocsPanelSource {
     match self {
       Self::Completion => "completion",
       Self::Hover => "hover",
+      Self::Signature => "signature",
       Self::CommandPalette => "command_palette",
     }
   }
@@ -32,6 +34,7 @@ impl DocsPanelSource {
     match value.trim().to_ascii_lowercase().as_str() {
       "completion" => Some(Self::Completion),
       "hover" => Some(Self::Hover),
+      "signature" | "signature_help" | "signature-help" => Some(Self::Signature),
       "command_palette" | "commandpalette" | "command-palette" | "palette" => {
         Some(Self::CommandPalette)
       },
@@ -49,6 +52,9 @@ fn source_from_hint(hint: &str) -> Option<DocsPanelSource> {
   if hint.contains("hover") || hint.contains("tooltip") {
     return Some(DocsPanelSource::Hover);
   }
+  if hint.contains("signature") {
+    return Some(DocsPanelSource::Signature);
+  }
   if has_docs && hint.contains("command") && hint.contains("palette") {
     return Some(DocsPanelSource::CommandPalette);
   }
@@ -63,6 +69,7 @@ fn source_from_role(role: Option<&str>) -> Option<DocsPanelSource> {
   match role {
     "completion_docs" => Some(DocsPanelSource::Completion),
     "hover_docs" | "lsp_hover" => Some(DocsPanelSource::Hover),
+    "signature_help" | "signature_docs" => Some(DocsPanelSource::Signature),
     "command_palette_docs" | "term_command_palette_docs" => Some(DocsPanelSource::CommandPalette),
     _ => {
       if role.contains("docs") || role.contains("doc") {
@@ -78,6 +85,7 @@ pub fn docs_panel_source_from_panel_id(id: &str) -> Option<DocsPanelSource> {
   match id {
     "completion_docs" => Some(DocsPanelSource::Completion),
     "lsp_hover" => Some(DocsPanelSource::Hover),
+    "signature_help" => Some(DocsPanelSource::Signature),
     "term_command_palette_docs" => Some(DocsPanelSource::CommandPalette),
     _ => source_from_hint(id),
   }
@@ -87,6 +95,7 @@ pub fn docs_panel_source_from_text_id(id: &str) -> Option<DocsPanelSource> {
   match id {
     "completion_docs_text" => Some(DocsPanelSource::Completion),
     "lsp_hover_text" => Some(DocsPanelSource::Hover),
+    "signature_help_text" => Some(DocsPanelSource::Signature),
     "term_command_palette_docs_text" => Some(DocsPanelSource::CommandPalette),
     _ => source_from_hint(id),
   }
@@ -175,6 +184,12 @@ impl<'a> DocsPanelConfig<'a> {
   pub fn command_palette_docs(panel_id: &'a str, text_id: &'a str, intent: LayoutIntent) -> Self {
     let mut config = Self::completion_docs(panel_id, text_id, intent);
     config.source = DocsPanelSource::CommandPalette;
+    config
+  }
+
+  pub fn signature_help_docs(panel_id: &'a str, text_id: &'a str, intent: LayoutIntent) -> Self {
+    let mut config = Self::completion_docs(panel_id, text_id, intent);
+    config.source = DocsPanelSource::Signature;
     config
   }
 }

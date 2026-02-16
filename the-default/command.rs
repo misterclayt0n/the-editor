@@ -170,6 +170,7 @@ define! {
     kill_to_line_end: (),
     insert_tab: (),
     goto_line_start: bool,
+    goto_first_nonwhitespace: bool,
     goto_line_end: bool,
     page_up: bool,
     page_down: bool,
@@ -254,6 +255,7 @@ pub type DefaultDispatchStatic<Ctx> = DefaultDispatch<
   fn(&mut Ctx, ()),
   fn(&mut Ctx, ()),
   fn(&mut Ctx, ()),
+  fn(&mut Ctx, bool),
   fn(&mut Ctx, bool),
   fn(&mut Ctx, bool),
   fn(&mut Ctx, bool),
@@ -595,6 +597,7 @@ where
     .with_kill_to_line_end(kill_to_line_end::<Ctx> as fn(&mut Ctx, ()))
     .with_insert_tab(insert_tab::<Ctx> as fn(&mut Ctx, ()))
     .with_goto_line_start(goto_line_start::<Ctx> as fn(&mut Ctx, bool))
+    .with_goto_first_nonwhitespace(goto_first_nonwhitespace::<Ctx> as fn(&mut Ctx, bool))
     .with_goto_line_end(goto_line_end::<Ctx> as fn(&mut Ctx, bool))
     .with_page_up(page_up::<Ctx> as fn(&mut Ctx, bool))
     .with_page_down(page_down::<Ctx> as fn(&mut Ctx, bool))
@@ -920,6 +923,11 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::KillToLineEnd => ctx.dispatch().kill_to_line_end(ctx, ()),
     Command::InsertTab => ctx.dispatch().insert_tab(ctx, ()),
     Command::GotoLineStart { extend } => ctx.dispatch().goto_line_start(ctx, extend),
+    Command::GotoFirstNonWhitespace { extend } => {
+      ctx
+        .dispatch()
+        .goto_first_nonwhitespace(ctx, extend);
+    },
     Command::GotoLineEnd { extend } => ctx.dispatch().goto_line_end(ctx, extend),
     Command::PageUp { extend } => ctx.dispatch().page_up(ctx, extend),
     Command::PageDown { extend } => ctx.dispatch().page_down(ctx, extend),
@@ -1830,6 +1838,26 @@ fn goto_line_start<Ctx: DefaultContext>(ctx: &mut Ctx, extend: bool) {
     let line = range.cursor_line(slice);
     let pos = slice.line_to_char(line);
     range.put_cursor(slice, pos, extend)
+  });
+
+  let _ = doc.set_selection(new_selection);
+}
+
+fn goto_first_nonwhitespace<Ctx: DefaultContext>(ctx: &mut Ctx, extend: bool) {
+  let extend = extend || ctx.mode() == Mode::Select;
+  let doc = ctx.editor().document_mut();
+  let selection = doc.selection().clone();
+  let slice = doc.text().slice(..);
+
+  let new_selection = selection.transform(|range| {
+    let line = range.cursor_line(slice);
+    let line_slice = slice.line(line);
+    if let Some(first_non_whitespace) = line_slice.first_non_whitespace_char() {
+      let pos = slice.line_to_char(line) + first_non_whitespace;
+      range.put_cursor(slice, pos, extend)
+    } else {
+      range
+    }
   });
 
   let _ = doc.set_selection(new_selection);
@@ -3817,6 +3845,8 @@ pub fn command_from_name(name: &str) -> Option<Command> {
 
     "goto_line_start" => Some(Command::goto_line_start()),
     "extend_to_line_start" => Some(Command::extend_to_line_start()),
+    "goto_first_nonwhitespace" => Some(Command::goto_first_nonwhitespace()),
+    "extend_to_first_nonwhitespace" => Some(Command::extend_to_first_nonwhitespace()),
     "goto_line_end" => Some(Command::goto_line_end()),
     "extend_to_line_end" => Some(Command::extend_to_line_end()),
 

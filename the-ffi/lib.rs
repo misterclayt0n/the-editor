@@ -5459,7 +5459,7 @@ impl App {
     {
       the_default::close_signature_help(self);
       self.cancel_auto_signature_help();
-      return true;
+      // Fall through so escape also transitions to normal mode.
     }
     let key_event = key_event_from_ffi(event);
     let dispatch = self.dispatch();

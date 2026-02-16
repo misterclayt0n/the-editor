@@ -1,6 +1,7 @@
 import Foundation
 import TheEditorFFI
 
+
 public class App: AppRefMut {
     var isOwned: Bool = true
 
@@ -1604,5 +1605,6 @@ extension RenderPlan: Vectorizable {
         __swift_bridge__$Vec_RenderPlan$len(vecPtr)
     }
 }
+
 
 

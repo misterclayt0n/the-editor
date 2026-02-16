@@ -845,7 +845,7 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
       // "f" => goto_file, // REIMAGINE THIS
       "h" => goto_line_start,
       "l" => goto_line_end,
-      // "s" => goto_first_nonwhitespace,
+      "s" => goto_first_nonwhitespace,
       "d" => lsp_goto_definition,
       // "D" => goto_declaration,
       // "y" => goto_type_definition,

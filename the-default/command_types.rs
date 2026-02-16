@@ -447,6 +447,9 @@ pub enum Command {
   GotoLineStart {
     extend: bool,
   },
+  GotoFirstNonWhitespace {
+    extend: bool,
+  },
   GotoLineEnd {
     extend: bool,
   },
@@ -829,6 +832,16 @@ impl Command {
   #[must_use]
   pub const fn extend_to_line_start() -> Self {
     Self::GotoLineStart { extend: true }
+  }
+
+  #[must_use]
+  pub const fn goto_first_nonwhitespace() -> Self {
+    Self::GotoFirstNonWhitespace { extend: false }
+  }
+
+  #[must_use]
+  pub const fn extend_to_first_nonwhitespace() -> Self {
+    Self::GotoFirstNonWhitespace { extend: true }
   }
 
   #[must_use]

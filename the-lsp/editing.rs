@@ -236,6 +236,14 @@ impl LspSignatureHelpContext {
     }
   }
 
+  pub fn trigger_character_retrigger(ch: char) -> Self {
+    Self {
+      trigger_kind:      LspSignatureHelpTriggerKind::TriggerCharacter,
+      trigger_character: Some(ch.to_string()),
+      is_retrigger:      true,
+    }
+  }
+
   pub fn content_change_retrigger() -> Self {
     Self {
       trigger_kind:      LspSignatureHelpTriggerKind::ContentChange,
@@ -1426,6 +1434,21 @@ mod tests {
     assert_eq!(params["context"]["triggerKind"], json!(2));
     assert_eq!(params["context"]["isRetrigger"], json!(false));
     assert_eq!(params["context"]["triggerCharacter"], json!("("));
+  }
+
+  #[test]
+  fn signature_help_params_sets_retrigger_character_context() {
+    let params = signature_help_params(
+      "file:///tmp/main.rs",
+      LspPosition {
+        line:      3,
+        character: 5,
+      },
+      &LspSignatureHelpContext::trigger_character_retrigger(','),
+    );
+    assert_eq!(params["context"]["triggerKind"], json!(2));
+    assert_eq!(params["context"]["isRetrigger"], json!(true));
+    assert_eq!(params["context"]["triggerCharacter"], json!(","));
   }
 
   #[test]

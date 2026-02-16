@@ -132,6 +132,7 @@ use the_lsp::{
   LspRuntime,
   LspRuntimeConfig,
   LspServerConfig,
+  LspSignatureHelpContext,
   LspSymbol,
   LspTextEdit,
   LspWorkspaceEdit,
@@ -4084,7 +4085,7 @@ impl the_default::DefaultContext for Ctx {
 
     self.dispatch_lsp_request(
       "textDocument/signatureHelp",
-      signature_help_params(&uri, position),
+      signature_help_params(&uri, position, &LspSignatureHelpContext::invoked()),
       PendingLspRequestKind::SignatureHelp { uri },
     );
   }

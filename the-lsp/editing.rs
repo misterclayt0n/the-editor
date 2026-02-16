@@ -195,6 +195,56 @@ pub struct LspCompletionContext {
   pub trigger_character: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LspSignatureHelpTriggerKind {
+  Invoked,
+  TriggerCharacter,
+  ContentChange,
+}
+
+impl LspSignatureHelpTriggerKind {
+  fn as_lsp_code(self) -> u8 {
+    match self {
+      Self::Invoked => 1,
+      Self::TriggerCharacter => 2,
+      Self::ContentChange => 3,
+    }
+  }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LspSignatureHelpContext {
+  pub trigger_kind:      LspSignatureHelpTriggerKind,
+  pub trigger_character: Option<String>,
+  pub is_retrigger:      bool,
+}
+
+impl LspSignatureHelpContext {
+  pub fn invoked() -> Self {
+    Self {
+      trigger_kind:      LspSignatureHelpTriggerKind::Invoked,
+      trigger_character: None,
+      is_retrigger:      false,
+    }
+  }
+
+  pub fn trigger_character(ch: char) -> Self {
+    Self {
+      trigger_kind:      LspSignatureHelpTriggerKind::TriggerCharacter,
+      trigger_character: Some(ch.to_string()),
+      is_retrigger:      false,
+    }
+  }
+
+  pub fn content_change_retrigger() -> Self {
+    Self {
+      trigger_kind:      LspSignatureHelpTriggerKind::ContentChange,
+      trigger_character: None,
+      is_retrigger:      true,
+    }
+  }
+}
+
 pub fn render_lsp_snippet(source: &str) -> LspRenderedSnippet {
   let chars: Vec<char> = source.chars().collect();
   let mut parser = LspSnippetParser::new(&chars);
@@ -480,13 +530,28 @@ pub fn completion_params(
   })
 }
 
-pub fn signature_help_params(uri: &str, position: LspPosition) -> Value {
+pub fn signature_help_params(
+  uri: &str,
+  position: LspPosition,
+  context: &LspSignatureHelpContext,
+) -> Value {
+  let mut context_json = json!({
+    "triggerKind": context.trigger_kind.as_lsp_code(),
+    "isRetrigger": context.is_retrigger,
+  });
+  if let Some(ch) = context.trigger_character.as_deref()
+    && let Some(object) = context_json.as_object_mut()
+  {
+    object.insert("triggerCharacter".to_string(), json!(ch));
+  }
+
   json!({
     "textDocument": { "uri": uri },
     "position": {
       "line": position.line,
       "character": position.character,
     },
+    "context": context_json,
   })
 }
 
@@ -1331,6 +1396,36 @@ mod tests {
     );
     assert_eq!(params["context"]["triggerKind"], json!(2));
     assert_eq!(params["context"]["triggerCharacter"], json!(":"));
+  }
+
+  #[test]
+  fn signature_help_params_sets_invoked_context() {
+    let params = signature_help_params(
+      "file:///tmp/main.rs",
+      LspPosition {
+        line:      3,
+        character: 5,
+      },
+      &LspSignatureHelpContext::invoked(),
+    );
+    assert_eq!(params["context"]["triggerKind"], json!(1));
+    assert_eq!(params["context"]["isRetrigger"], json!(false));
+    assert!(params["context"].get("triggerCharacter").is_none());
+  }
+
+  #[test]
+  fn signature_help_params_sets_trigger_character_context() {
+    let params = signature_help_params(
+      "file:///tmp/main.rs",
+      LspPosition {
+        line:      3,
+        character: 5,
+      },
+      &LspSignatureHelpContext::trigger_character('('),
+    );
+    assert_eq!(params["context"]["triggerKind"], json!(2));
+    assert_eq!(params["context"]["isRetrigger"], json!(false));
+    assert_eq!(params["context"]["triggerCharacter"], json!("("));
   }
 
   #[test]

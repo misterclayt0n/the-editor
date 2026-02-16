@@ -436,6 +436,19 @@ fn ui_style_colors(style: &UiStyle) -> (Style, Style, Style) {
   (text_style, fill_style, border_style)
 }
 
+fn software_cursor_style(theme: &the_lib::render::theme::Theme) -> Style {
+  theme
+    .try_get("ui.cursor.primary")
+    .or_else(|| theme.try_get("ui.cursor"))
+    .map(lib_style_to_ratatui)
+    .unwrap_or_else(|| Style::default().add_modifier(Modifier::REVERSED))
+}
+
+fn draw_software_cursor_cell(buf: &mut Buffer, x: u16, y: u16, cursor_style: Style) {
+  let cell = buf.get_mut(x, y);
+  cell.set_style(cell.style().patch(cursor_style));
+}
+
 fn apply_ui_emphasis(style: Style, emphasis: UiEmphasis) -> Style {
   match emphasis {
     UiEmphasis::Muted => style.add_modifier(Modifier::DIM),
@@ -1624,7 +1637,7 @@ fn draw_ui_text(buf: &mut Buffer, rect: Rect, ctx: &Ctx, text: &UiText) {
 fn draw_ui_input(
   buf: &mut Buffer,
   rect: Rect,
-  _ctx: &Ctx,
+  ctx: &Ctx,
   input: &UiInput,
   focus: Option<&the_lib::render::UiFocus>,
   cursor_out: &mut Option<(u16, u16)>,
@@ -1660,6 +1673,8 @@ fn draw_ui_input(
       .x
       .saturating_add(cursor_pos as u16)
       .min(rect.x + rect.width - 1);
+    let cursor_style = software_cursor_style(&ctx.ui_theme);
+    draw_software_cursor_cell(buf, cursor_x, rect.y, cursor_style);
     *cursor_out = Some((cursor_x, rect.y));
   }
 }
@@ -2150,6 +2165,8 @@ fn draw_file_picker_list_pane(
       .x
       .saturating_add(cursor_col)
       .min(prompt_area.x + prompt_area.width.saturating_sub(1));
+    let cursor_style = software_cursor_style(theme);
+    draw_software_cursor_cell(buf, x, prompt_area.y, cursor_style);
     *cursor_out = Some((x, prompt_area.y));
   }
 
@@ -3873,8 +3890,6 @@ pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> Ren
 pub fn render(f: &mut Frame, ctx: &mut Ctx) {
   let area = f.size();
   sync_file_picker_viewport(ctx, area);
-  let suppress_editor_cursor = ctx.command_palette.is_open || ctx.search_prompt.active;
-
   let mut ui = ui_tree(ctx);
   adapt_ui_tree_for_term(ctx, &mut ui);
   resolve_ui_tree(&mut ui, &ctx.ui_theme);
@@ -3884,7 +3899,7 @@ pub fn render(f: &mut Frame, ctx: &mut Ctx) {
 
   f.render_widget(Clear, area);
 
-  let ui_cursor = {
+  let _ui_cursor = {
     let buf = f.buffer_mut();
     let mut cursor_out = None;
     let content_x = area.x.saturating_add(plan.content_offset_x);
@@ -3985,17 +4000,6 @@ pub fn render(f: &mut Frame, ctx: &mut Ctx) {
     cursor_out
   };
 
-  if let Some((x, y)) = ui_cursor {
-    f.set_cursor(x, y);
-  } else if !suppress_editor_cursor {
-    if let Some(cursor) = plan.cursors.first() {
-      let x = area.x + plan.content_offset_x + cursor.pos.col as u16;
-      let y = area.y + cursor.pos.row as u16;
-      if x < area.x + area.width && y < area.y + area.height {
-        f.set_cursor(x, y);
-      }
-    }
-  }
 }
 
 fn is_diff_gutter_marker(text: &str) -> bool {

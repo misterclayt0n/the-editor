@@ -6,6 +6,10 @@ use std::io::{
 };
 
 use crossterm::{
+  cursor::{
+    Hide,
+    Show,
+  },
   event::{
     DisableMouseCapture,
     EnableMouseCapture,
@@ -42,7 +46,8 @@ impl Terminal {
     execute!(
       self.terminal.backend_mut(),
       EnterAlternateScreen,
-      EnableMouseCapture
+      EnableMouseCapture,
+      Hide
     )?;
     Ok(())
   }
@@ -51,7 +56,8 @@ impl Terminal {
     execute!(
       self.terminal.backend_mut(),
       DisableMouseCapture,
-      LeaveAlternateScreen
+      LeaveAlternateScreen,
+      Show
     )?;
     disable_raw_mode()?;
     Ok(())

@@ -873,7 +873,10 @@ fn default_client_capabilities() -> Value {
       },
       "completion": {
         "completionItem": {
-          "documentationFormat": ["markdown", "plaintext"]
+          "documentationFormat": ["markdown", "plaintext"],
+          "snippetSupport": true,
+          "insertReplaceSupport": true,
+          "labelDetailsSupport": true
         }
       },
       "synchronization": {

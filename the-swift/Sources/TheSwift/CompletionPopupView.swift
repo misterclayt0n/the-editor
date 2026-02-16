@@ -333,18 +333,16 @@ struct CompletionPopupView: View {
 
     @ViewBuilder
     private func docsPanel(text: String, width: CGFloat, height: CGFloat) -> some View {
-        CompletionDocsTextView(
+        OverlayDocsPanelView(
             docs: text,
             width: width,
             height: height,
             languageHint: languageHint
         )
-        .frame(width: width, height: height)
-        .glassBackground(cornerRadius: 8)
     }
 }
 
-private struct CompletionDocsTextView: View {
+struct CompletionDocsTextView: View {
     let docs: String
     let width: CGFloat
     let height: CGFloat
@@ -1426,7 +1424,7 @@ private enum CompletionPopupRenderConfig {
 }
 
 extension View {
-    fileprivate func glassBackground(cornerRadius: CGFloat) -> some View {
+    func glassBackground(cornerRadius: CGFloat) -> some View {
         modifier(GlassBackgroundModifier(cornerRadius: cornerRadius))
     }
 }

@@ -124,6 +124,12 @@ pub struct LspCompletionItem {
   pub commit_characters:  Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LspRenderedSnippet {
+  pub text:              String,
+  pub cursor_char_range: Option<std::ops::Range<usize>>,
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct LspCompletionResponse {
   pub items:     Vec<LspCompletionItem>,
@@ -179,6 +185,244 @@ impl LspCompletionTriggerKind {
 pub struct LspCompletionContext {
   pub trigger_kind:      LspCompletionTriggerKind,
   pub trigger_character: Option<String>,
+}
+
+pub fn render_lsp_snippet(source: &str) -> LspRenderedSnippet {
+  let chars: Vec<char> = source.chars().collect();
+  let mut parser = LspSnippetParser::new(&chars);
+  let _ = parser.render_fragment(0, None);
+  let cursor_char_range = parser.cursor_char_range();
+  let text = parser.output;
+  LspRenderedSnippet {
+    text,
+    cursor_char_range,
+  }
+}
+
+struct LspSnippetParser<'a> {
+  chars:         &'a [char],
+  output:        String,
+  output_chars:  usize,
+  first_tabstop: Option<(u32, std::ops::Range<usize>)>,
+  final_tabstop: Option<std::ops::Range<usize>>,
+}
+
+impl<'a> LspSnippetParser<'a> {
+  fn new(chars: &'a [char]) -> Self {
+    Self {
+      chars,
+      output: String::new(),
+      output_chars: 0,
+      first_tabstop: None,
+      final_tabstop: None,
+    }
+  }
+
+  fn cursor_char_range(&self) -> Option<std::ops::Range<usize>> {
+    self
+      .first_tabstop
+      .as_ref()
+      .map(|(_, range)| range.clone())
+      .or_else(|| self.final_tabstop.clone())
+  }
+
+  fn push_char(&mut self, ch: char) {
+    self.output.push(ch);
+    self.output_chars = self.output_chars.saturating_add(1);
+  }
+
+  fn push_str(&mut self, text: &str) {
+    self.output.push_str(text);
+    self.output_chars = self.output_chars.saturating_add(text.chars().count());
+  }
+
+  fn render_fragment(&mut self, mut index: usize, terminator: Option<char>) -> usize {
+    while index < self.chars.len() {
+      let ch = self.chars[index];
+      if terminator == Some(ch) {
+        return index + 1;
+      }
+      if ch == '\\' {
+        if let Some(next) = self.chars.get(index + 1).copied() {
+          self.push_char(next);
+          index += 2;
+        } else {
+          index += 1;
+        }
+        continue;
+      }
+      if ch == '$'
+        && let Some(next_index) = self.parse_dollar(index)
+      {
+        index = next_index;
+        continue;
+      }
+      self.push_char(ch);
+      index += 1;
+    }
+    index
+  }
+
+  fn parse_dollar(&mut self, index: usize) -> Option<usize> {
+    let next = *self.chars.get(index + 1)?;
+    if next.is_ascii_digit() {
+      let (tabstop, next_index) = parse_tabstop_digits(self.chars, index + 1);
+      let start = self.output_chars;
+      self.record_tabstop(tabstop, start, start);
+      return Some(next_index);
+    }
+    if next == '{' {
+      return Some(self.parse_braced(index + 2));
+    }
+    if is_snippet_identifier_char(next) {
+      let mut cursor = index + 1;
+      while self
+        .chars
+        .get(cursor)
+        .copied()
+        .is_some_and(is_snippet_identifier_char)
+      {
+        cursor += 1;
+      }
+      return Some(cursor);
+    }
+    None
+  }
+
+  fn parse_braced(&mut self, mut index: usize) -> usize {
+    let start = index;
+    while self
+      .chars
+      .get(index)
+      .copied()
+      .is_some_and(is_snippet_identifier_char)
+    {
+      index += 1;
+    }
+    if index == start {
+      return index;
+    }
+    let token: String = self.chars[start..index].iter().collect();
+    let tabstop = token
+      .chars()
+      .all(|ch| ch.is_ascii_digit())
+      .then(|| token.parse::<u32>().ok())
+      .flatten();
+
+    match self.chars.get(index).copied() {
+      Some('}') => {
+        if let Some(tabstop) = tabstop {
+          let start = self.output_chars;
+          self.record_tabstop(tabstop, start, start);
+        }
+        index + 1
+      },
+      Some(':') => {
+        let start = self.output_chars;
+        let next = self.render_fragment(index + 1, Some('}'));
+        let end = self.output_chars;
+        if let Some(tabstop) = tabstop {
+          self.record_tabstop(tabstop, start, end);
+        }
+        next
+      },
+      Some('|') => {
+        let start = self.output_chars;
+        let (choice, next) = parse_snippet_choice(self.chars, index + 1);
+        self.push_str(&choice);
+        let end = self.output_chars;
+        if let Some(tabstop) = tabstop {
+          self.record_tabstop(tabstop, start, end);
+        }
+        next
+      },
+      Some(_) => {
+        let mut cursor = index;
+        while cursor < self.chars.len() && self.chars[cursor] != '}' {
+          cursor += 1;
+        }
+        if cursor < self.chars.len() {
+          cursor + 1
+        } else {
+          cursor
+        }
+      },
+      None => index,
+    }
+  }
+
+  fn record_tabstop(&mut self, tabstop: u32, start: usize, end: usize) {
+    let range = start..end;
+    if tabstop == 0 {
+      if self.final_tabstop.is_none() {
+        self.final_tabstop = Some(range);
+      }
+      return;
+    }
+
+    let should_replace = self
+      .first_tabstop
+      .as_ref()
+      .is_none_or(|(current, _)| tabstop < *current);
+    if should_replace {
+      self.first_tabstop = Some((tabstop, range));
+    }
+  }
+}
+
+fn parse_tabstop_digits(chars: &[char], mut index: usize) -> (u32, usize) {
+  let mut value: u32 = 0;
+  while chars
+    .get(index)
+    .copied()
+    .is_some_and(|ch| ch.is_ascii_digit())
+  {
+    let digit = chars[index].to_digit(10).unwrap_or(0);
+    value = value.saturating_mul(10).saturating_add(digit);
+    index += 1;
+  }
+  (value, index)
+}
+
+fn parse_snippet_choice(chars: &[char], mut index: usize) -> (String, usize) {
+  let mut first_choice: Option<String> = None;
+  let mut current = String::new();
+  let mut escaped = false;
+  while index < chars.len() {
+    let ch = chars[index];
+    if escaped {
+      current.push(ch);
+      escaped = false;
+      index += 1;
+      continue;
+    }
+    if ch == '\\' {
+      escaped = true;
+      index += 1;
+      continue;
+    }
+    if ch == ',' {
+      if first_choice.is_none() {
+        first_choice = Some(current.clone());
+      }
+      current.clear();
+      index += 1;
+      continue;
+    }
+    if ch == '|' && chars.get(index + 1).copied() == Some('}') {
+      if first_choice.is_none() {
+        first_choice = Some(current);
+      }
+      return (first_choice.unwrap_or_default(), index + 2);
+    }
+    current.push(ch);
+    index += 1;
+  }
+  (first_choice.unwrap_or(current), index)
+}
+
+fn is_snippet_identifier_char(ch: char) -> bool {
+  ch.is_ascii_alphanumeric() || ch == '_'
 }
 
 impl LspCompletionContext {
@@ -999,5 +1243,29 @@ mod tests {
     );
     assert_eq!(params["context"]["triggerKind"], json!(2));
     assert_eq!(params["context"]["triggerCharacter"], json!(":"));
+  }
+
+  #[test]
+  fn render_lsp_snippet_renders_fallback_text_and_cursor_range() {
+    let rendered = render_lsp_snippet("foo($1, ${2:bar}, ${3|x,y|})$0");
+    assert_eq!(rendered.text, "foo(, bar, x)");
+    assert_eq!(rendered.cursor_char_range, Some(4..4));
+  }
+
+  #[test]
+  fn render_lsp_snippet_prefers_lowest_nonzero_tabstop() {
+    let rendered = render_lsp_snippet("${2:bar}${1:foo}$0");
+    assert_eq!(rendered.text, "barfoo");
+    assert_eq!(rendered.cursor_char_range, Some(3..6));
+  }
+
+  #[test]
+  fn render_lsp_snippet_renders_variable_defaults_and_escapes() {
+    let rendered = render_lsp_snippet("${TM_FILENAME:main}.rs");
+    assert_eq!(rendered.text, "main.rs");
+    assert_eq!(rendered.cursor_char_range, None);
+
+    let escaped = render_lsp_snippet("a\\$b\\}");
+    assert_eq!(escaped.text, "a$b}");
   }
 }

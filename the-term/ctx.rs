@@ -111,6 +111,7 @@ use the_lib::{
     ParseRequest,
   },
   transaction::{
+    Assoc,
     ChangeSet,
     Transaction,
   },
@@ -153,6 +154,7 @@ use the_lsp::{
   parse_signature_help_response,
   parse_workspace_edit_response,
   parse_workspace_symbols_response,
+  render_lsp_snippet,
   references_params,
   rename_params,
   signature_help_params,
@@ -1845,16 +1847,30 @@ impl Ctx {
     item: LspCompletionItem,
     fallback_range: std::ops::Range<usize>,
   ) -> bool {
-    let item = normalize_completion_item_for_apply(item);
+    let prepared = normalize_completion_item_for_apply(item);
+    let item = prepared.item;
     let has_text_edits = item.primary_edit.is_some() || !item.additional_edits.is_empty();
     if has_text_edits {
-      let Some(uri) = self.current_lsp_uri() else {
+      let Some(_uri) = self.current_lsp_uri() else {
         self.messages.publish(
           MessageLevel::Warning,
           Some("lsp".into()),
           "completion unavailable: no active LSP document",
         );
-        return true;
+        return false;
+      };
+
+      let snippet_base = if prepared.cursor_origin == Some(CompletionSnippetCursorOrigin::PrimaryEdit)
+      {
+        item.primary_edit.as_ref().map(|edit| {
+          utf16_position_to_char_idx(
+            self.editor.document().text(),
+            edit.range.start.line,
+            edit.range.start.character,
+          )
+        })
+      } else {
+        None
       };
 
       let mut edits = Vec::with_capacity(1 + item.additional_edits.len());
@@ -1862,23 +1878,40 @@ impl Ctx {
         edits.push(primary);
       }
       edits.extend(item.additional_edits);
-      let workspace_edit = LspWorkspaceEdit {
-        documents: vec![the_lsp::LspDocumentEdit {
-          uri,
-          version: None,
-          edits,
-        }],
+      let tx = match build_transaction_from_lsp_text_edits(self.editor.document().text(), &edits) {
+        Ok(tx) => tx,
+        Err(err) => {
+          self.messages.publish(
+            MessageLevel::Error,
+            Some("lsp".into()),
+            format!("failed to build completion transaction: {err}"),
+          );
+          return false;
+        },
       };
-      let applied = self.apply_workspace_edit(&workspace_edit, "completion");
-      if applied {
+
+      if <Self as the_default::DefaultContext>::apply_transaction(self, &tx) {
+        if let (Some(base), Some(range)) = (snippet_base, prepared.cursor_range.as_ref())
+          && let Ok(mapped_base) = tx.changes().map_pos(base, Assoc::Before)
+        {
+          set_completion_snippet_selection(self.editor.document_mut(), mapped_base, range);
+        }
         let _ = self.editor.document_mut().commit();
+        <Self as the_default::DefaultContext>::request_render(self);
+        return true;
       }
-      return applied;
+
+      self.messages.publish(
+        MessageLevel::Error,
+        Some("lsp".into()),
+        "failed to apply completion",
+      );
+      return false;
     }
 
     let insert_text = item.insert_text.unwrap_or(item.label);
     if insert_text.is_empty() {
-      return true;
+      return false;
     }
 
     let text_len = self.editor.document().text().len_chars();
@@ -1896,16 +1929,23 @@ impl Ctx {
           Some("lsp".into()),
           format!("failed to build completion transaction: {err}"),
         );
-        return true;
+        return false;
       },
     };
 
     if <Self as the_default::DefaultContext>::apply_transaction(self, &tx) {
+      if prepared.cursor_origin == Some(CompletionSnippetCursorOrigin::InsertText)
+        && let Some(range) = prepared.cursor_range.as_ref()
+        && let Ok(mapped_base) = tx.changes().map_pos(from, Assoc::Before)
+      {
+        set_completion_snippet_selection(self.editor.document_mut(), mapped_base, range);
+      }
       let _ = self.editor.document_mut().commit();
       <Self as the_default::DefaultContext>::request_render(self);
       self
         .messages
         .publish(MessageLevel::Info, Some("lsp".into()), "completion applied");
+      return true;
     } else {
       self.messages.publish(
         MessageLevel::Error,
@@ -1913,7 +1953,7 @@ impl Ctx {
         "failed to apply completion",
       );
     }
-    true
+    false
   }
 
   fn handle_signature_help_response(&mut self, result: Option<&Value>) -> bool {
@@ -3278,22 +3318,94 @@ fn merge_resolved_completion_item(current: &mut LspCompletionItem, resolved: Lsp
   }
 }
 
-fn normalize_completion_item_for_apply(mut item: LspCompletionItem) -> LspCompletionItem {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CompletionSnippetCursorOrigin {
+  InsertText,
+  PrimaryEdit,
+}
+
+#[derive(Clone, Debug)]
+struct CompletionApplyItem {
+  item:          LspCompletionItem,
+  cursor_origin: Option<CompletionSnippetCursorOrigin>,
+  cursor_range:  Option<std::ops::Range<usize>>,
+}
+
+fn normalize_completion_item_for_apply(mut item: LspCompletionItem) -> CompletionApplyItem {
+  let mut cursor_origin = None;
+  let mut cursor_range = None;
   if item.insert_text_format == Some(LspInsertTextFormat::Snippet) {
     if let Some(insert_text) = item.insert_text.as_mut() {
-      let rendered = render_lsp_snippet_fallback(insert_text);
-      *insert_text = rendered;
+      let rendered = render_lsp_snippet(insert_text);
+      if item.primary_edit.is_none() {
+        cursor_origin = Some(CompletionSnippetCursorOrigin::InsertText);
+        cursor_range = rendered.cursor_char_range.clone();
+      }
+      *insert_text = rendered.text;
     }
     if let Some(primary_edit) = item.primary_edit.as_mut() {
-      let rendered = render_lsp_snippet_fallback(&primary_edit.new_text);
-      primary_edit.new_text = rendered;
+      let rendered = render_lsp_snippet(&primary_edit.new_text);
+      cursor_origin = Some(CompletionSnippetCursorOrigin::PrimaryEdit);
+      cursor_range = rendered.cursor_char_range.clone();
+      primary_edit.new_text = rendered.text;
     }
     for additional in &mut item.additional_edits {
-      let rendered = render_lsp_snippet_fallback(&additional.new_text);
-      additional.new_text = rendered;
+      additional.new_text = render_lsp_snippet(&additional.new_text).text;
     }
   }
-  item
+  if cursor_origin.is_none()
+    && let Some((origin, range)) = promote_callable_completion_fallback(&mut item)
+  {
+    cursor_origin = Some(origin);
+    cursor_range = Some(range);
+  }
+  CompletionApplyItem {
+    item,
+    cursor_origin,
+    cursor_range,
+  }
+}
+
+fn promote_callable_completion_fallback(
+  item: &mut LspCompletionItem,
+) -> Option<(CompletionSnippetCursorOrigin, std::ops::Range<usize>)> {
+  if !matches!(
+    item.kind,
+    Some(
+      LspCompletionItemKind::Function
+        | LspCompletionItemKind::Method
+        | LspCompletionItemKind::Constructor
+    )
+  ) {
+    return None;
+  }
+
+  let (text, origin) = if let Some(primary) = item.primary_edit.as_mut() {
+    (&mut primary.new_text, CompletionSnippetCursorOrigin::PrimaryEdit)
+  } else {
+    if item.insert_text.is_none() {
+      item.insert_text = Some(item.label.clone());
+    }
+    (
+      item.insert_text.as_mut()?,
+      CompletionSnippetCursorOrigin::InsertText,
+    )
+  };
+
+  let trimmed = text.trim();
+  if trimmed.is_empty() || trimmed.contains('(') || trimmed.ends_with('!') {
+    return None;
+  }
+  if !trimmed
+    .chars()
+    .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | ':' | '.'))
+  {
+    return None;
+  }
+
+  let cursor = text.chars().count().saturating_add(1);
+  text.push_str("()");
+  Some((origin, cursor..cursor))
 }
 
 fn completion_item_accepts_commit_char(item: &LspCompletionItem, ch: char) -> bool {
@@ -3358,144 +3470,15 @@ fn completion_match_score(filter: &str, candidate: &str) -> Option<u32> {
   Some(2_000u32.saturating_sub((gaps as u32).saturating_mul(8)))
 }
 
-fn render_lsp_snippet_fallback(source: &str) -> String {
-  let chars: Vec<char> = source.chars().collect();
-  let (rendered, _) = render_snippet_fragment(&chars, 0, None);
-  rendered
-}
-
-fn render_snippet_fragment(
-  chars: &[char],
-  mut index: usize,
-  terminator: Option<char>,
-) -> (String, usize) {
-  let mut out = String::new();
-  while index < chars.len() {
-    let ch = chars[index];
-    if terminator == Some(ch) {
-      return (out, index + 1);
-    }
-    if ch == '\\' {
-      if let Some(next) = chars.get(index + 1).copied() {
-        out.push(next);
-        index += 2;
-      } else {
-        index += 1;
-      }
-      continue;
-    }
-    if ch == '$'
-      && let Some((rendered, next_index)) = parse_snippet_dollar(chars, index)
-    {
-      out.push_str(&rendered);
-      index = next_index;
-      continue;
-    }
-    out.push(ch);
-    index += 1;
-  }
-  (out, index)
-}
-
-fn parse_snippet_dollar(chars: &[char], index: usize) -> Option<(String, usize)> {
-  let next = *chars.get(index + 1)?;
-  if next.is_ascii_digit() {
-    let mut cursor = index + 1;
-    while chars
-      .get(cursor)
-      .copied()
-      .is_some_and(|value| value.is_ascii_digit())
-    {
-      cursor += 1;
-    }
-    return Some((String::new(), cursor));
-  }
-  if next == '{' {
-    return Some(parse_snippet_braced(chars, index + 2));
-  }
-  if is_snippet_identifier_char(next) {
-    let mut cursor = index + 1;
-    while chars
-      .get(cursor)
-      .copied()
-      .is_some_and(is_snippet_identifier_char)
-    {
-      cursor += 1;
-    }
-    return Some((String::new(), cursor));
-  }
-  None
-}
-
-fn parse_snippet_braced(chars: &[char], mut index: usize) -> (String, usize) {
-  let start = index;
-  while chars
-    .get(index)
-    .copied()
-    .is_some_and(is_snippet_identifier_char)
-  {
-    index += 1;
-  }
-  if index == start {
-    return (String::new(), index);
-  }
-  match chars.get(index).copied() {
-    Some('}') => (String::new(), index + 1),
-    Some(':') => render_snippet_fragment(chars, index + 1, Some('}')),
-    Some('|') => parse_snippet_choice(chars, index + 1),
-    Some(_) => {
-      let mut cursor = index;
-      while chars.get(cursor).copied() != Some('}') {
-        if cursor >= chars.len() {
-          return (String::new(), cursor);
-        }
-        cursor += 1;
-      }
-      (String::new(), cursor + 1)
-    },
-    None => (String::new(), index),
-  }
-}
-
-fn parse_snippet_choice(chars: &[char], mut index: usize) -> (String, usize) {
-  let mut first_choice: Option<String> = None;
-  let mut current = String::new();
-  let mut escaped = false;
-  while index < chars.len() {
-    let ch = chars[index];
-    if escaped {
-      current.push(ch);
-      escaped = false;
-      index += 1;
-      continue;
-    }
-    if ch == '\\' {
-      escaped = true;
-      index += 1;
-      continue;
-    }
-    if ch == ',' {
-      if first_choice.is_none() {
-        first_choice = Some(current.clone());
-      }
-      current.clear();
-      index += 1;
-      continue;
-    }
-    if ch == '|' && chars.get(index + 1).copied() == Some('}') {
-      if first_choice.is_none() {
-        first_choice = Some(current);
-      }
-      return (first_choice.unwrap_or_default(), index + 2);
-    }
-    current.push(ch);
-    index += 1;
-  }
-  (first_choice.unwrap_or(current), index)
-}
-
-fn is_snippet_identifier_char(ch: char) -> bool {
-  ch.is_ascii_alphanumeric() || ch == '_'
+fn set_completion_snippet_selection(
+  doc: &mut Document,
+  mapped_base: usize,
+  cursor_range: &std::ops::Range<usize>,
+) {
+  let max = doc.text().len_chars();
+  let anchor = mapped_base.saturating_add(cursor_range.start).min(max);
+  let head = mapped_base.saturating_add(cursor_range.end).min(max);
+  let _ = doc.set_selection(Selection::single(anchor, head));
 }
 
 fn format_lsp_progress_text(title: Option<&str>, message: Option<&str>) -> String {
@@ -4336,7 +4319,9 @@ mod tests {
   };
   use the_lsp::{
     LspCompletionItem,
+    LspCompletionItemKind,
     LspInsertTextFormat,
+    render_lsp_snippet,
   };
   use the_runtime::file_watch::{
     PathEvent,
@@ -4350,8 +4335,9 @@ mod tests {
     completion_match_score,
     completion_menu_detail_text,
     completion_menu_documentation_text,
+    normalize_completion_item_for_apply,
     merge_resolved_completion_item,
-    render_lsp_snippet_fallback,
+    CompletionSnippetCursorOrigin,
   };
   use crate::{
     dispatch::build_dispatch,
@@ -4385,14 +4371,30 @@ mod tests {
   #[test]
   fn snippet_fallback_renders_placeholders_and_choices() {
     assert_eq!(
-      render_lsp_snippet_fallback("foo($1, ${2:bar}, ${3|x,y|})$0"),
+      render_lsp_snippet("foo($1, ${2:bar}, ${3|x,y|})$0").text,
       "foo(, bar, x)"
     );
     assert_eq!(
-      render_lsp_snippet_fallback("${TM_FILENAME:main}.rs"),
+      render_lsp_snippet("${TM_FILENAME:main}.rs").text,
       "main.rs"
     );
-    assert_eq!(render_lsp_snippet_fallback("a\\$b\\}"), "a$b}");
+    assert_eq!(render_lsp_snippet("a\\$b\\}").text, "a$b}");
+  }
+
+  #[test]
+  fn callable_completion_fallback_adds_parens_and_cursor() {
+    let mut item = empty_completion_item();
+    item.kind = Some(LspCompletionItemKind::Function);
+    item.insert_text = Some("add".to_string());
+    item.insert_text_format = Some(LspInsertTextFormat::PlainText);
+
+    let prepared = normalize_completion_item_for_apply(item);
+    assert_eq!(prepared.item.insert_text.as_deref(), Some("add()"));
+    assert_eq!(
+      prepared.cursor_origin,
+      Some(CompletionSnippetCursorOrigin::InsertText)
+    );
+    assert_eq!(prepared.cursor_range, Some(4..4));
   }
 
   #[test]

@@ -44,6 +44,8 @@ struct UiOverlayHost: View {
                         EmptyView()
                     } else if case .panel(let panel) = node, panel.id == "completion_docs" {
                         EmptyView()
+                    } else if case .panel(let panel) = node, panel.id == "lsp_hover" {
+                        EmptyView()
                     } else {
                         UiNodeView(node: node, cellSize: cellSize, containerSize: proxy.size)
                     }
@@ -960,6 +962,25 @@ extension UiTreeSnapshot {
         )
     }
 
+    func hoverSnapshot() -> HoverSnapshot? {
+        let hoverPanel = overlays.compactMap { node in
+            if case .panel(let panel) = node, panel.id == "lsp_hover" {
+                return panel
+            }
+            return nil
+        }.first
+
+        guard let hoverPanel else { return nil }
+
+        let docsText = findText(in: hoverPanel.child, id: "lsp_hover_text")?.content
+            ?? firstTextContent(in: hoverPanel.child)
+
+        guard let docsText else { return nil }
+        let trimmed = docsText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return HoverSnapshot(docsText: trimmed)
+    }
+
     var hasSearchPromptPanel: Bool {
         return searchPromptPanel() != nil
     }
@@ -1046,6 +1067,24 @@ extension UiTreeSnapshot {
         }
     }
 
+    private func firstTextContent(in node: UiNodeSnapshot) -> String? {
+        switch node {
+        case .text(let text):
+            return text.content
+        case .container(let container):
+            for child in container.children {
+                if let content = firstTextContent(in: child) {
+                    return content
+                }
+            }
+            return nil
+        case .panel(let panel):
+            return firstTextContent(in: panel.child)
+        default:
+            return nil
+        }
+    }
+
     private func findPanel(in node: UiNodeSnapshot, id: String) -> UiPanelSnapshot? {
         switch node {
         case .panel(let panel):
@@ -1098,6 +1137,10 @@ struct CompletionItemSnapshot: Identifiable {
     let detail: String?
     let kindIcon: String?
     let kindColor: Color?
+}
+
+struct HoverSnapshot {
+    let docsText: String
 }
 
 extension CommandPaletteLayout {

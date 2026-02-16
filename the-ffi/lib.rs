@@ -108,6 +108,7 @@ use the_lib::{
   registers::Registers,
   render::{
     GutterConfig,
+    LayoutIntent,
     NoHighlights,
     OverlayNode,
     OverlayRectKind,
@@ -117,6 +118,7 @@ use the_lib::{
     RenderGutterDiffKind,
     RenderStyles,
     SyntaxHighlightAdapter,
+    UiNode,
     UiState,
     apply_diagnostic_gutter_markers,
     apply_diff_gutter_markers,
@@ -158,7 +160,10 @@ use the_lib::{
     ParseLifecycle,
     ParseRequest,
   },
-  transaction::Transaction,
+  transaction::{
+    Assoc,
+    Transaction,
+  },
   view::ViewState,
 };
 use the_loader::config::user_lang_config;
@@ -167,6 +172,7 @@ use the_lsp::{
   LspCompletionContext,
   LspCompletionItem,
   LspCompletionItemKind,
+  LspInsertTextFormat,
   LspEvent,
   LspLocation,
   LspPosition,
@@ -176,10 +182,13 @@ use the_lsp::{
   LspServerConfig,
   completion_params,
   goto_definition_params,
+  hover_params,
   jsonrpc,
   parse_completion_item_response,
   parse_completion_response_with_raw,
+  parse_hover_response,
   parse_locations_response,
+  render_lsp_snippet,
   text_sync::{
     FileChangeType,
     char_idx_to_utf16_position,
@@ -968,6 +977,9 @@ enum PendingLspRequestKind {
   GotoDefinition {
     uri: String,
   },
+  Hover {
+    uri: String,
+  },
   Completion {
     uri:            String,
     generation:     u64,
@@ -985,6 +997,7 @@ impl PendingLspRequestKind {
   fn label(&self) -> &'static str {
     match self {
       Self::GotoDefinition { .. } => "goto-definition",
+      Self::Hover { .. } => "hover",
       Self::Completion { .. } => "completion",
       Self::CompletionResolve { .. } => "completion-resolve",
     }
@@ -993,6 +1006,7 @@ impl PendingLspRequestKind {
   fn uri(&self) -> &str {
     match self {
       Self::GotoDefinition { uri } => uri.as_str(),
+      Self::Hover { uri } => uri.as_str(),
       Self::Completion { uri, .. } => uri.as_str(),
       Self::CompletionResolve { uri, .. } => uri.as_str(),
     }
@@ -1001,6 +1015,7 @@ impl PendingLspRequestKind {
   fn cancellation_key(&self) -> (&'static str, &str) {
     match self {
       Self::GotoDefinition { uri } => ("goto-definition", uri),
+      Self::Hover { uri } => ("hover", uri),
       Self::Completion { uri, .. } => ("completion", uri),
       Self::CompletionResolve { uri, .. } => ("completion-resolve", uri),
     }
@@ -1034,6 +1049,8 @@ struct EditorState {
   syntax_parse_rx:              Receiver<SyntaxParseResult>,
   syntax_parse_lifecycle:       ParseLifecycle<SyntaxParseJob>,
   syntax_parse_highlight_state: ParseHighlightState,
+  hover_docs:                   Option<String>,
+  hover_docs_scroll:            usize,
   scrolloff:                    usize,
 }
 
@@ -1072,6 +1089,8 @@ impl EditorState {
       syntax_parse_rx,
       syntax_parse_lifecycle: ParseLifecycle::default(),
       syntax_parse_highlight_state: ParseHighlightState::default(),
+      hover_docs: None,
+      hover_docs_scroll: 0,
       scrolloff: 5,
     }
   }
@@ -1467,6 +1486,107 @@ fn merge_resolved_completion_item(current: &mut LspCompletionItem, resolved: Lsp
   if current.commit_characters.is_empty() {
     current.commit_characters = resolved.commit_characters;
   }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CompletionSnippetCursorOrigin {
+  InsertText,
+  PrimaryEdit,
+}
+
+#[derive(Clone, Debug)]
+struct CompletionApplyItem {
+  item:          LspCompletionItem,
+  cursor_origin: Option<CompletionSnippetCursorOrigin>,
+  cursor_range:  Option<std::ops::Range<usize>>,
+}
+
+fn normalize_completion_item_for_apply(mut item: LspCompletionItem) -> CompletionApplyItem {
+  let mut cursor_origin = None;
+  let mut cursor_range = None;
+  if item.insert_text_format == Some(LspInsertTextFormat::Snippet) {
+    if let Some(insert_text) = item.insert_text.as_mut() {
+      let rendered = render_lsp_snippet(insert_text);
+      if item.primary_edit.is_none() {
+        cursor_origin = Some(CompletionSnippetCursorOrigin::InsertText);
+        cursor_range = rendered.cursor_char_range.clone();
+      }
+      *insert_text = rendered.text;
+    }
+    if let Some(primary_edit) = item.primary_edit.as_mut() {
+      let rendered = render_lsp_snippet(&primary_edit.new_text);
+      cursor_origin = Some(CompletionSnippetCursorOrigin::PrimaryEdit);
+      cursor_range = rendered.cursor_char_range.clone();
+      primary_edit.new_text = rendered.text;
+    }
+    for additional in &mut item.additional_edits {
+      additional.new_text = render_lsp_snippet(&additional.new_text).text;
+    }
+  }
+  if cursor_origin.is_none()
+    && let Some((origin, range)) = promote_callable_completion_fallback(&mut item)
+  {
+    cursor_origin = Some(origin);
+    cursor_range = Some(range);
+  }
+  CompletionApplyItem {
+    item,
+    cursor_origin,
+    cursor_range,
+  }
+}
+
+fn promote_callable_completion_fallback(
+  item: &mut LspCompletionItem,
+) -> Option<(CompletionSnippetCursorOrigin, std::ops::Range<usize>)> {
+  if !matches!(
+    item.kind,
+    Some(
+      LspCompletionItemKind::Function
+        | LspCompletionItemKind::Method
+        | LspCompletionItemKind::Constructor
+    )
+  ) {
+    return None;
+  }
+
+  let (text, origin) = if let Some(primary) = item.primary_edit.as_mut() {
+    (&mut primary.new_text, CompletionSnippetCursorOrigin::PrimaryEdit)
+  } else {
+    if item.insert_text.is_none() {
+      item.insert_text = Some(item.label.clone());
+    }
+    (
+      item.insert_text.as_mut()?,
+      CompletionSnippetCursorOrigin::InsertText,
+    )
+  };
+
+  let trimmed = text.trim();
+  if trimmed.is_empty() || trimmed.contains('(') || trimmed.ends_with('!') {
+    return None;
+  }
+  if !trimmed
+    .chars()
+    .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | ':' | '.'))
+  {
+    return None;
+  }
+
+  let cursor = text.chars().count().saturating_add(1);
+  text.push_str("()");
+  Some((origin, cursor..cursor))
+}
+
+fn set_completion_snippet_selection(
+  doc: &mut LibDocument,
+  mapped_base: usize,
+  cursor_range: &std::ops::Range<usize>,
+) {
+  let max = doc.text().len_chars();
+  let anchor = mapped_base.saturating_add(cursor_range.start).min(max);
+  let head = mapped_base.saturating_add(cursor_range.end).min(max);
+  let _ = doc.set_selection(Selection::single(anchor, head));
 }
 
 fn completion_item_accepts_commit_char(item: &LspCompletionItem, ch: char) -> bool {
@@ -2295,6 +2415,20 @@ fn completion_match_score(filter: &str, candidate: &str) -> Option<u32> {
   Some(2_000u32.saturating_sub((gaps as u32).saturating_mul(8)))
 }
 
+fn build_transaction_from_lsp_text_edits(
+  text: &Rope,
+  edits: &[the_lsp::LspTextEdit],
+) -> std::result::Result<Transaction, String> {
+  let mut changes = Vec::with_capacity(edits.len());
+  for edit in edits {
+    let from = utf16_position_to_char_idx(text, edit.range.start.line, edit.range.start.character);
+    let to = utf16_position_to_char_idx(text, edit.range.end.line, edit.range.end.character);
+    changes.push((from, to, Some(edit.new_text.clone().into())));
+  }
+  changes.sort_by_key(|(from, to, _)| (*from, *to));
+  Transaction::change(text, changes).map_err(|err| err.to_string())
+}
+
 fn ffi_ui_profile_enabled() -> bool {
   static ENABLED: OnceLock<bool> = OnceLock::new();
   *ENABLED.get_or_init(|| {
@@ -2616,7 +2750,8 @@ impl App {
     }
     let _ = self.poll_background_active();
 
-    let tree = the_default::ui_tree(self);
+    let mut tree = the_default::ui_tree(self);
+    self.append_lsp_hover_overlay(&mut tree);
     let json = serde_json::to_string(&tree).unwrap_or_else(|_| "{}".to_string());
     let elapsed = started.elapsed();
     if ffi_ui_profile_should_log(elapsed) {
@@ -3312,6 +3447,7 @@ impl App {
     self.diagnostics.clear();
     self.lsp_active_progress_tokens.clear();
     self.lsp_pending_requests.clear();
+    self.clear_hover_state();
     self.clear_completion_state();
     self.cancel_auto_completion();
     let _ = self.lsp_runtime.shutdown();
@@ -3489,6 +3625,7 @@ impl App {
           self.lsp_ready = false;
           self.lsp_active_progress_tokens.clear();
           self.lsp_pending_requests.clear();
+          self.clear_hover_state();
           self.clear_completion_state();
           self.cancel_auto_completion();
           if let Some(state) = self.lsp_document.as_mut() {
@@ -3507,6 +3644,7 @@ impl App {
           self.lsp_ready = false;
           self.lsp_active_progress_tokens.clear();
           self.lsp_pending_requests.clear();
+          self.clear_hover_state();
           self.clear_completion_state();
           self.cancel_auto_completion();
           if let Some(state) = self.lsp_document.as_mut() {
@@ -3676,6 +3814,42 @@ impl App {
         };
         self.apply_locations_result("definition", locations)
       },
+      PendingLspRequestKind::Hover { .. } => {
+        let hover = match parse_hover_response(response.result.as_ref()) {
+          Ok(hover) => hover,
+          Err(err) => {
+            self.publish_lsp_message(
+              the_lib::messages::MessageLevel::Error,
+              format!("failed to parse hover response: {err}"),
+            );
+            return true;
+          },
+        };
+        match hover {
+          Some(text) => {
+            let trimmed = text.trim();
+            if trimmed.is_empty() {
+              self.clear_hover_state();
+              self.publish_lsp_message(
+                the_lib::messages::MessageLevel::Info,
+                "no hover information",
+              );
+            } else {
+              let state = self.active_state_mut();
+              state.hover_docs = Some(trimmed.to_string());
+              state.hover_docs_scroll = 0;
+            }
+          },
+          None => {
+            self.clear_hover_state();
+            self.publish_lsp_message(
+              the_lib::messages::MessageLevel::Info,
+              "no hover information",
+            );
+          },
+        }
+        true
+      },
       PendingLspRequestKind::Completion {
         generation,
         cursor,
@@ -3799,47 +3973,106 @@ impl App {
     item: LspCompletionItem,
     fallback_range: std::ops::Range<usize>,
   ) -> bool {
-    let LspCompletionItem {
-      label,
-      insert_text,
-      primary_edit,
-      ..
-    } = item;
-    let insert_text = insert_text
-      .or_else(|| primary_edit.map(|edit| edit.new_text))
-      .unwrap_or(label);
-    if insert_text.is_empty() {
-      return true;
+    let prepared = normalize_completion_item_for_apply(item);
+    let item = prepared.item;
+    let has_text_edits = item.primary_edit.is_some() || !item.additional_edits.is_empty();
+
+    if has_text_edits {
+      let snippet_base = if prepared.cursor_origin == Some(CompletionSnippetCursorOrigin::PrimaryEdit)
+      {
+        item.primary_edit.as_ref().map(|edit| {
+          let doc = self.active_editor_ref().document();
+          utf16_position_to_char_idx(
+            doc.text(),
+            edit.range.start.line,
+            edit.range.start.character,
+          )
+        })
+      } else {
+        None
+      };
+
+      let mut edits = Vec::with_capacity(1 + item.additional_edits.len());
+      if let Some(primary) = item.primary_edit {
+        edits.push(primary);
+      }
+      edits.extend(item.additional_edits);
+
+      let tx = {
+        let doc = self.active_editor_ref().document();
+        match build_transaction_from_lsp_text_edits(doc.text(), &edits) {
+          Ok(tx) => tx,
+          Err(err) => {
+            self.publish_lsp_message(
+              the_lib::messages::MessageLevel::Error,
+              format!("failed to build completion transaction: {err}"),
+            );
+            return false;
+          },
+        }
+      };
+
+      if <Self as DefaultContext>::apply_transaction(self, &tx) {
+        if let (Some(base), Some(range)) = (snippet_base, prepared.cursor_range.as_ref())
+          && let Ok(mapped_base) = tx.changes().map_pos(base, Assoc::Before)
+        {
+          let doc = self.active_editor_mut().document_mut();
+          set_completion_snippet_selection(doc, mapped_base, range);
+        }
+        let _ = self.active_editor_mut().document_mut().commit();
+        self.request_render();
+        return true;
+      }
+
+      self.publish_lsp_message(
+        the_lib::messages::MessageLevel::Error,
+        "failed to apply completion",
+      );
+      return false;
     }
 
-    let tx = {
+    let insert_text = item.insert_text.unwrap_or(item.label);
+    if insert_text.is_empty() {
+      return false;
+    }
+
+    let (from, tx) = {
       let doc = self.active_editor_ref().document();
       let text = doc.text();
       let text_len = text.len_chars();
       let from = fallback_range.start.min(text_len);
       let to = fallback_range.end.min(text_len).max(from);
-      match Transaction::change(text, vec![(from, to, Some(insert_text.into()))]) {
+      let tx = match Transaction::change(text, vec![(from, to, Some(insert_text.into()))]) {
         Ok(tx) => tx,
         Err(err) => {
           self.publish_lsp_message(
             the_lib::messages::MessageLevel::Error,
             format!("failed to build completion transaction: {err}"),
           );
-          return true;
+          return false;
         },
-      }
+      };
+      (from, tx)
     };
 
     if <Self as DefaultContext>::apply_transaction(self, &tx) {
+      if prepared.cursor_origin == Some(CompletionSnippetCursorOrigin::InsertText)
+        && let Some(range) = prepared.cursor_range.as_ref()
+        && let Ok(mapped_base) = tx.changes().map_pos(from, Assoc::Before)
+      {
+        let doc = self.active_editor_mut().document_mut();
+        set_completion_snippet_selection(doc, mapped_base, range);
+      }
       let _ = self.active_editor_mut().document_mut().commit();
       self.request_render();
-    } else {
-      self.publish_lsp_message(
-        the_lib::messages::MessageLevel::Error,
-        "failed to apply completion",
-      );
+      return true;
     }
-    true
+
+    self.publish_lsp_message(
+      the_lib::messages::MessageLevel::Error,
+      "failed to apply completion",
+    );
+    false
   }
 
   fn apply_locations_result(&mut self, label: &str, locations: Vec<LspLocation>) -> bool {
@@ -4045,6 +4278,42 @@ impl App {
     self.lsp_completion_start = None;
     if self.active_editor.is_some() {
       self.completion_menu_mut().clear();
+    }
+  }
+
+  fn clear_hover_state(&mut self) {
+    let Some(id) = self.active_editor else {
+      return;
+    };
+    let Some(state) = self.states.get_mut(&id) else {
+      return;
+    };
+    state.hover_docs = None;
+    state.hover_docs_scroll = 0;
+  }
+
+  fn hover_docs_text(&self) -> Option<&str> {
+    let id = self.active_editor?;
+    self
+      .states
+      .get(&id)
+      .and_then(|state| state.hover_docs.as_deref())
+      .map(str::trim)
+      .filter(|text| !text.is_empty())
+  }
+
+  fn build_lsp_hover_overlay(&self) -> Option<UiNode> {
+    let docs = self.hover_docs_text()?;
+    Some(UiNode::panel(
+      "lsp_hover",
+      LayoutIntent::Custom("lsp_hover".to_string()),
+      UiNode::text("lsp_hover_text", docs),
+    ))
+  }
+
+  fn append_lsp_hover_overlay(&self, tree: &mut the_lib::render::UiTree) {
+    if let Some(node) = self.build_lsp_hover_overlay() {
+      tree.overlays.push(node);
     }
   }
 
@@ -4690,6 +4959,11 @@ impl App {
 
     let event_kind = event.kind;
     let event_codepoint = event.codepoint;
+    if event_kind == 3 && self.hover_docs_text().is_some() && !self.completion_menu().active {
+      self.clear_hover_state();
+      self.request_render();
+      return true;
+    }
     let key_event = key_event_from_ffi(event);
     let dispatch = self.dispatch();
     dispatch.pre_on_keypress(self, key_event);
@@ -5236,6 +5510,8 @@ impl DefaultContext for App {
       return true;
     }
 
+    self.clear_hover_state();
+
     if let Some(state) = self.states.get_mut(&editor_id) {
       state.syntax_parse_lifecycle.cancel_pending();
       state.highlight_cache.clear();
@@ -5500,6 +5776,7 @@ impl DefaultContext for App {
 
   fn set_file_path(&mut self, path: Option<PathBuf>) {
     if let Some(id) = self.active_editor {
+      self.clear_hover_state();
       match path {
         Some(path) => {
           self.file_paths.insert(id, path);
@@ -5526,6 +5803,7 @@ impl DefaultContext for App {
   }
 
   fn open_file(&mut self, path: &Path) -> std::io::Result<()> {
+    self.clear_hover_state();
     let content = std::fs::read_to_string(path)?;
     {
       let editor = self.active_editor_mut();
@@ -5580,6 +5858,31 @@ impl DefaultContext for App {
     let _ = self.dispatch_completion_request(CompletionTriggerSource::Manual, true);
   }
 
+  fn lsp_hover(&mut self) {
+    if !self.lsp_supports(LspCapability::Hover) {
+      self.publish_lsp_message(
+        the_lib::messages::MessageLevel::Warning,
+        "hover is not supported by the active server",
+      );
+      return;
+    }
+
+    let Some((uri, position)) = self.current_lsp_position() else {
+      self.publish_lsp_message(
+        the_lib::messages::MessageLevel::Warning,
+        "hover unavailable: no active LSP document",
+      );
+      return;
+    };
+
+    self.clear_hover_state();
+    self.dispatch_lsp_request(
+      "textDocument/hover",
+      hover_params(&uri, position),
+      PendingLspRequestKind::Hover { uri },
+    );
+  }
+
   fn on_file_saved(&mut self, _path: &Path, text: &str) {
     if let Some(watch) = self.lsp_watched_file.as_mut() {
       watch.stream.suppress_until = Some(Instant::now() + lsp_self_save_suppress_window());
@@ -5596,6 +5899,7 @@ impl DefaultContext for App {
     self.lsp_watched_file = None;
     self.lsp_active_progress_tokens.clear();
     self.lsp_pending_requests.clear();
+    self.clear_hover_state();
     self.clear_completion_state();
     self.cancel_auto_completion();
     self.set_lsp_status(LspStatusPhase::Off, Some("stopped".into()));

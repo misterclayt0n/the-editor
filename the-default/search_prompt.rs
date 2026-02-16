@@ -405,7 +405,16 @@ pub fn update_search_preview<Ctx: DefaultContext>(ctx: &mut Ctx) {
 }
 
 pub fn update_select_regex_preview<Ctx: DefaultContext>(ctx: &mut Ctx) {
-  let query = ctx.search_prompt_ref().query.clone();
+  let (query, base_selection) = {
+    let prompt = ctx.search_prompt_ref();
+    (
+      prompt.query.clone(),
+      prompt
+        .original_selection
+        .clone()
+        .unwrap_or_else(|| ctx.editor_ref().document().selection().clone()),
+    )
+  };
 
   if query.is_empty() {
     if let Some(selection) = ctx.search_prompt_ref().original_selection.clone() {
@@ -420,8 +429,7 @@ pub fn update_select_regex_preview<Ctx: DefaultContext>(ctx: &mut Ctx) {
       ctx.search_prompt_mut().error = None;
       let doc = ctx.editor_ref().document();
       let text = doc.text().slice(..);
-      let selection = doc.selection().clone();
-      match select_on_matches(text, &selection, &regex) {
+      match select_on_matches(text, &base_selection, &regex) {
         Ok(Some(next)) => {
           let _ = ctx.editor().document_mut().set_selection(next);
         },
@@ -470,7 +478,16 @@ pub fn finalize_search<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool {
 }
 
 pub fn finalize_select_regex<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool {
-  let query = ctx.search_prompt_ref().query.clone();
+  let (query, base_selection) = {
+    let prompt = ctx.search_prompt_ref();
+    (
+      prompt.query.clone(),
+      prompt
+        .original_selection
+        .clone()
+        .unwrap_or_else(|| ctx.editor_ref().document().selection().clone()),
+    )
+  };
   if query.is_empty() {
     return true;
   }
@@ -484,10 +501,8 @@ pub fn finalize_select_regex<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool {
     },
   };
 
-  let doc = ctx.editor_ref().document();
-  let text = doc.text().slice(..);
-  let selection = doc.selection().clone();
-  match select_on_matches(text, &selection, &regex) {
+  let text = ctx.editor_ref().document().text().slice(..);
+  match select_on_matches(text, &base_selection, &regex) {
     Ok(Some(next)) => {
       ctx.search_prompt_mut().error = None;
       let _ = ctx.editor().document_mut().set_selection(next);

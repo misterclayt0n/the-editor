@@ -9,6 +9,10 @@ struct CompletionPopupView: View {
     let cellSize: CGSize
     let containerSize: CGSize
     let languageHint: String
+    let onSelect: (Int) -> Void
+    let onSubmit: (Int) -> Void
+
+    @State private var hoveredItemId: Int? = nil
 
     private let maxVisibleItems = 8
     private let rowHeight: CGFloat = 24
@@ -226,16 +230,36 @@ struct CompletionPopupView: View {
 
     private func completionList(width: CGFloat, height: CGFloat) -> some View {
         ScrollViewReader { proxy in
-            ScrollView(.vertical, showsIndicators: false) {
+            ScrollView(.vertical, showsIndicators: true) {
                 VStack(alignment: .leading, spacing: 0) {
                     ForEach(snapshot.items) { item in
-                        completionRow(item: item, isSelected: snapshot.selectedIndex == item.id)
+                        completionRow(
+                            item: item,
+                            isSelected: snapshot.selectedIndex == item.id,
+                            isHovered: hoveredItemId == item.id
+                        )
+                        .contentShape(Rectangle())
+                        .onHover { hovering in
+                            if hovering {
+                                hoveredItemId = item.id
+                            } else if hoveredItemId == item.id {
+                                hoveredItemId = nil
+                            }
+                        }
+                        .onTapGesture {
+                            if snapshot.selectedIndex == item.id {
+                                onSubmit(item.id)
+                            } else {
+                                onSelect(item.id)
+                            }
+                        }
                             .id(item.id)
                     }
                 }
                 .padding(.vertical, 4)
             }
             .frame(width: width, height: height)
+            .scrollIndicators(.visible)
             .glassBackground(cornerRadius: 8)
             .onChange(of: snapshot.selectedIndex) { newIndex in
                 guard let index = newIndex else { return }
@@ -251,7 +275,7 @@ struct CompletionPopupView: View {
         }
     }
 
-    private func completionRow(item: CompletionItemSnapshot, isSelected: Bool) -> some View {
+    private func completionRow(item: CompletionItemSnapshot, isSelected: Bool, isHovered: Bool) -> some View {
         HStack(spacing: 6) {
             // Kind icon badge.
             if let icon = item.kindIcon, !icon.isEmpty {
@@ -291,7 +315,11 @@ struct CompletionPopupView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 5)
-                .fill(isSelected ? Color.accentColor.opacity(0.2) : Color.clear)
+                .fill(
+                    isSelected
+                        ? Color.accentColor.opacity(0.22)
+                        : (isHovered ? Color.white.opacity(0.08) : Color.clear)
+                )
                 .padding(.horizontal, 4)
         )
     }
@@ -357,6 +385,32 @@ private struct CompletionDocsAppKitTextView: NSViewRepresentable {
     let isLoading: Bool
     let renderKey: String
 
+    final class CompletionDocsScrollView: NSScrollView {
+        override func mouseUp(with event: NSEvent) {
+            super.mouseUp(with: event)
+            KeyCaptureFocusBridge.shared.reclaim(in: window)
+        }
+    }
+
+    final class CompletionDocsNativeTextView: NSTextView {
+        override func keyDown(with event: NSEvent) {
+            if event.modifierFlags.contains(.command) {
+                super.keyDown(with: event)
+                return
+            }
+            if let responder = KeyCaptureFocusBridge.shared.keyResponder(in: window) {
+                responder.keyDown(with: event)
+                return
+            }
+            super.keyDown(with: event)
+        }
+
+        override func mouseUp(with event: NSEvent) {
+            super.mouseUp(with: event)
+            KeyCaptureFocusBridge.shared.reclaim(in: window)
+        }
+    }
+
     final class Coordinator {
         var lastRenderKey: String?
         var lastLoadingState = false
@@ -367,15 +421,15 @@ private struct CompletionDocsAppKitTextView: NSViewRepresentable {
     }
 
     func makeNSView(context: Context) -> NSScrollView {
-        let scrollView = NSScrollView()
+        let scrollView = CompletionDocsScrollView()
         scrollView.borderType = .noBorder
         scrollView.drawsBackground = false
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = false
-        scrollView.autohidesScrollers = false
-        scrollView.scrollerStyle = .legacy
+        scrollView.autohidesScrollers = true
+        scrollView.scrollerStyle = .overlay
 
-        let textView = NSTextView(frame: .zero)
+        let textView = CompletionDocsNativeTextView(frame: .zero)
         textView.isEditable = false
         textView.isSelectable = true
         textView.drawsBackground = false
@@ -394,6 +448,7 @@ private struct CompletionDocsAppKitTextView: NSViewRepresentable {
         ]
 
         scrollView.documentView = textView
+        scrollView.verticalScroller?.controlSize = .small
         applyContent(to: textView, coordinator: context.coordinator)
         return scrollView
     }

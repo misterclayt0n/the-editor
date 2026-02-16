@@ -3,6 +3,34 @@ import Foundation
 import SwiftUI
 import TheEditorFFIBridge
 
+final class KeyCaptureFocusBridge {
+    static let shared = KeyCaptureFocusBridge()
+
+    weak var keyCaptureView: NSView?
+
+    private init() {}
+
+    func register(_ view: NSView) {
+        keyCaptureView = view
+    }
+
+    func keyResponder(in window: NSWindow?) -> NSResponder? {
+        guard let view = keyCaptureView,
+              view.window === window else {
+            return nil
+        }
+        return view
+    }
+
+    func reclaim(in window: NSWindow?) {
+        guard let view = keyCaptureView,
+              view.window === window else {
+            return
+        }
+        window?.makeFirstResponder(view)
+    }
+}
+
 struct KeyCaptureView: NSViewRepresentable {
     final class KeyCaptureNSView: NSView, NSTextInputClient {
         var onKey: ((KeyEvent) -> Void)?
@@ -169,6 +197,7 @@ struct KeyCaptureView: NSViewRepresentable {
         view.onText = onText
         view.onScroll = onScroll
         view.modeProvider = modeProvider
+        KeyCaptureFocusBridge.shared.register(view)
         DispatchQueue.main.async {
             view.window?.makeFirstResponder(view)
         }
@@ -180,6 +209,7 @@ struct KeyCaptureView: NSViewRepresentable {
         nsView.onText = onText
         nsView.onScroll = onScroll
         nsView.modeProvider = modeProvider
+        KeyCaptureFocusBridge.shared.register(nsView)
     }
 }
 

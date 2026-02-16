@@ -117,10 +117,7 @@ use the_lib::{
     RenderGutterDiffKind,
     RenderStyles,
     SyntaxHighlightAdapter,
-    UiList,
-    UiNode,
     UiState,
-    UiTree,
     apply_diagnostic_gutter_markers,
     apply_diff_gutter_markers,
     build_plan,
@@ -2306,52 +2303,6 @@ fn ffi_ui_profile_log(message: impl AsRef<str>) {
   }
 }
 
-fn compact_ui_tree_for_swift(tree: &mut UiTree) {
-  for overlay in &mut tree.overlays {
-    compact_ui_node_for_swift(overlay);
-  }
-}
-
-fn compact_ui_node_for_swift(node: &mut UiNode) {
-  match node {
-    UiNode::Container(container) => {
-      for child in &mut container.children {
-        compact_ui_node_for_swift(child);
-      }
-    },
-    UiNode::Panel(panel) => {
-      compact_ui_node_for_swift(panel.child.as_mut());
-    },
-    UiNode::List(list) => {
-      if list.id == "completion_list" {
-        compact_completion_list_for_swift(list);
-      }
-    },
-    _ => {},
-  }
-}
-
-fn compact_completion_list_for_swift(list: &mut UiList) {
-  let total = list.items.len();
-  let max_visible = list.max_visible.unwrap_or(10).max(1);
-  let max_scroll = total.saturating_sub(max_visible);
-  let start = list.scroll.min(max_scroll);
-  let end = start.saturating_add(max_visible).min(total);
-
-  if start == 0 && end >= total {
-    return;
-  }
-
-  list.virtual_total = Some(total);
-  list.virtual_start = start;
-  list.items = list.items[start..end].to_vec();
-  list.scroll = 0;
-  list.selected = list
-    .selected
-    .and_then(|selected| selected.checked_sub(start))
-    .filter(|selected| *selected < list.items.len());
-}
-
 fn lsp_self_save_suppress_window() -> Duration {
   Duration::from_millis(500)
 }
@@ -2642,8 +2593,7 @@ impl App {
     }
     let _ = self.poll_background_active();
 
-    let mut tree = the_default::ui_tree(self);
-    compact_ui_tree_for_swift(&mut tree);
+    let tree = the_default::ui_tree(self);
     let json = serde_json::to_string(&tree).unwrap_or_else(|_| "{}".to_string());
     let elapsed = started.elapsed();
     if ffi_ui_profile_should_log(elapsed) {

@@ -422,6 +422,52 @@ final class EditorModel: ObservableObject {
         return fileUrl.lastPathComponent
     }
 
+    func selectCompletion(index: Int) {
+        guard moveCompletionSelection(to: index) else {
+            return
+        }
+        refresh(trigger: "completion_select")
+    }
+
+    func submitCompletion(index: Int) {
+        _ = moveCompletionSelection(to: index)
+        let enter = KeyEvent(kind: KeyKind.enter.rawValue, codepoint: 0, modifiers: 0)
+        _ = app.handle_key(editorId, enter)
+        refresh(trigger: "completion_submit")
+    }
+
+    @discardableResult
+    private func moveCompletionSelection(to index: Int) -> Bool {
+        guard let snapshot = uiTree.completionSnapshot(), !snapshot.items.isEmpty else {
+            return false
+        }
+
+        let count = snapshot.items.count
+        let target = max(0, min(index, count - 1))
+        let current = max(0, min(snapshot.selectedIndex ?? 0, count - 1))
+        if target == current {
+            return false
+        }
+
+        let downSteps = (target - current + count) % count
+        let upSteps = (current - target + count) % count
+        let useDown = downSteps <= upSteps
+        let steps = useDown ? downSteps : upSteps
+        guard steps > 0 else {
+            return false
+        }
+
+        let navEvent = KeyEvent(
+            kind: (useDown ? KeyKind.down : KeyKind.up).rawValue,
+            codepoint: 0,
+            modifiers: 0
+        )
+        for _ in 0..<steps {
+            _ = app.handle_key(editorId, navEvent)
+        }
+        return true
+    }
+
     private func cachedSyntaxHighlightStyle(for highlight: UInt32) -> Style {
         if let style = syntaxHighlightStyleCache[highlight] {
             return style

@@ -17,6 +17,7 @@ struct EditorView: View {
         let isFilePickerOpen = model.filePickerSnapshot?.active ?? false
         let isOverlayOpen = isPaletteOpen || isSearchOpen || isFilePickerOpen
         let completionSnapshot = model.uiTree.completionSnapshot()
+        let isCompletionOpen = completionSnapshot != nil
         GeometryReader { proxy in
             ZStack {
                 Canvas { context, size in
@@ -73,7 +74,13 @@ struct EditorView: View {
                         cursorOrigin: cursorPixelPosition(plan: model.plan, cellSize: cellSize),
                         cellSize: cellSize,
                         containerSize: proxy.size,
-                        languageHint: model.completionDocsLanguageHint()
+                        languageHint: model.completionDocsLanguageHint(),
+                        onSelect: { index in
+                            model.selectCompletion(index: index)
+                        },
+                        onSubmit: { index in
+                            model.submitCompletion(index: index)
+                        }
                     )
                     .allowsHitTesting(true)
                 }
@@ -99,7 +106,7 @@ struct EditorView: View {
             )
             .overlay(
                 Group {
-                    if !isOverlayOpen {
+                    if !isOverlayOpen && !isCompletionOpen {
                         ScrollCaptureView(
                             onScroll: { deltaX, deltaY, precise in
                                 model.handleScroll(deltaX: deltaX, deltaY: deltaY, precise: precise)

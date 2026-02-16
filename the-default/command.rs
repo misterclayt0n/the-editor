@@ -129,6 +129,7 @@ use crate::{
     handle_command_prompt_key,
   },
   completion_menu::CompletionMenuState,
+  signature_help::SignatureHelpState,
   keymap::{
     Keymaps,
     Mode,
@@ -422,6 +423,12 @@ pub trait DefaultContext: Sized + 'static {
   }
   fn completion_on_action(&mut self, _command: Command) -> bool {
     false
+  }
+  fn signature_help(&self) -> Option<&SignatureHelpState> {
+    None
+  }
+  fn signature_help_mut(&mut self) -> Option<&mut SignatureHelpState> {
+    None
   }
   fn file_picker(&self) -> &crate::file_picker::FilePickerState;
   fn file_picker_mut(&mut self) -> &mut crate::file_picker::FilePickerState;
@@ -1106,6 +1113,8 @@ fn on_ui<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) -> UiTree {
   tree.overlays.extend(overlays);
   let overlays = crate::completion_menu::build_completion_menu_ui(ctx);
   tree.overlays.extend(overlays);
+  let overlays = crate::signature_help::build_signature_help_ui(ctx);
+  tree.overlays.extend(overlays);
   let overlays = crate::search_prompt::build_search_prompt_ui(ctx);
   tree.overlays.extend(overlays);
   let overlays = crate::file_picker::build_file_picker_ui(ctx);
@@ -1185,6 +1194,10 @@ fn on_ui_event<Ctx: DefaultContext>(ctx: &mut Ctx, event: UiEvent) -> UiEventOut
 
   let is_file_picker = target_id
     .map(|id| id.starts_with("file_picker"))
+    .unwrap_or(false);
+
+  let is_signature_help = target_id
+    .map(|id| id.starts_with("signature_help"))
     .unwrap_or(false);
 
   if is_file_picker {
@@ -1342,6 +1355,35 @@ fn on_ui_event<Ctx: DefaultContext>(ctx: &mut Ctx, event: UiEvent) -> UiEventOut
         return UiEventOutcome::handled();
       },
       UiEventKind::Command(_) => {},
+    }
+  }
+
+  if is_signature_help {
+    match &event.kind {
+      UiEventKind::Key(key_event) => {
+        if let Some(key_event) = ui_key_event_to_key_event(key_event.clone()) {
+          match key_event.key {
+            Key::Escape => {
+              crate::signature_help::close_signature_help(ctx);
+              return UiEventOutcome::handled();
+            },
+            Key::PageUp => {
+              crate::signature_help::signature_help_docs_scroll(ctx, -6);
+              return UiEventOutcome::handled();
+            },
+            Key::PageDown => {
+              crate::signature_help::signature_help_docs_scroll(ctx, 6);
+              return UiEventOutcome::handled();
+            },
+            _ => {},
+          }
+        }
+      },
+      UiEventKind::Dismiss => {
+        crate::signature_help::close_signature_help(ctx);
+        return UiEventOutcome::handled();
+      },
+      _ => {},
     }
   }
 

@@ -15,6 +15,7 @@ mod message_bar;
 mod overlay_layout;
 mod pending;
 mod search_prompt;
+mod signature_help;
 mod statusline;
 
 pub use command::{
@@ -131,6 +132,16 @@ pub use search_prompt::{
   SearchPromptState,
   finalize_search,
   update_search_preview,
+};
+pub use signature_help::{
+  SignatureHelpItem,
+  SignatureHelpState,
+  build_signature_help_ui,
+  close_signature_help,
+  show_signature_help,
+  signature_help_docs_scroll,
+  signature_help_next,
+  signature_help_prev,
 };
 pub use the_lib::messages::{
   Message,

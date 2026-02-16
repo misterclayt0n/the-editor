@@ -23,6 +23,27 @@ pub fn completion_panel_rect(
   panel_height: u16,
   editor_cursor: Option<(u16, u16)>,
 ) -> OverlayRect {
+  cursor_anchored_panel_rect(area, panel_width, panel_height, editor_cursor, true)
+}
+
+pub fn signature_help_panel_rect(
+  area: OverlayRect,
+  panel_width: u16,
+  panel_height: u16,
+  editor_cursor: Option<(u16, u16)>,
+) -> OverlayRect {
+  // Signature help prefers opening above the cursor when possible so it does
+  // not occlude text being typed.
+  cursor_anchored_panel_rect(area, panel_width, panel_height, editor_cursor, false)
+}
+
+fn cursor_anchored_panel_rect(
+  area: OverlayRect,
+  panel_width: u16,
+  panel_height: u16,
+  editor_cursor: Option<(u16, u16)>,
+  prefer_below: bool,
+) -> OverlayRect {
   let width = panel_width.min(area.width).max(1);
   let desired_height = panel_height.min(area.height).max(1);
   let center_x = area.x + (area.width.saturating_sub(width)) / 2;
@@ -47,10 +68,18 @@ pub fn completion_panel_rect(
     .saturating_add(area.height)
     .saturating_sub(below_start);
   let above_space = cursor_y.saturating_sub(area.y);
-  let place_below = if below_space >= desired_height {
-    true
+  let place_below = if prefer_below {
+    if below_space >= desired_height {
+      true
+    } else if above_space >= desired_height {
+      false
+    } else {
+      below_space >= above_space
+    }
   } else if above_space >= desired_height {
     false
+  } else if below_space >= desired_height {
+    true
   } else {
     below_space >= above_space
   };
@@ -129,6 +158,7 @@ mod tests {
     OverlayRect,
     completion_docs_panel_rect,
     completion_panel_rect,
+    signature_help_panel_rect,
   };
 
   #[test]
@@ -209,5 +239,22 @@ mod tests {
     let completion_rect = OverlayRect::new(2, 6, 76, 10);
     let docs_rect = completion_docs_panel_rect(area, 36, 9, completion_rect);
     assert!(docs_rect.is_none());
+  }
+
+  #[test]
+  fn signature_help_panel_rect_prefers_above_when_space_exists() {
+    let area = OverlayRect::new(0, 0, 100, 30);
+    let rect = signature_help_panel_rect(area, 32, 8, Some((40, 10)));
+    assert_eq!(rect.y, 2);
+    assert_eq!(rect.width, 32);
+    assert_eq!(rect.height, 8);
+  }
+
+  #[test]
+  fn signature_help_panel_rect_flips_below_when_above_is_tight() {
+    let area = OverlayRect::new(0, 0, 80, 12);
+    let rect = signature_help_panel_rect(area, 30, 8, Some((20, 1)));
+    assert!(rect.y > 1);
+    assert_eq!(rect.height, 8);
   }
 }

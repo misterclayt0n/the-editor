@@ -126,6 +126,7 @@ pub use overlay_layout::{
   OverlayRect,
   completion_docs_panel_rect,
   completion_panel_rect,
+  signature_help_panel_rect,
 };
 pub use pending::PendingInput;
 pub use search_prompt::{

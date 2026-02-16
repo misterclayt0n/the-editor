@@ -21,7 +21,7 @@ struct InputPromptView: View {
     private var promptBar: some View {
         HStack(spacing: 8) {
             Text(snapshot.label)
-                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                .font(FontLoader.editorFont(size: 11).weight(.semibold))
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
@@ -31,7 +31,7 @@ struct InputPromptView: View {
 
             TextField("", text: $query)
                 .textFieldStyle(.plain)
-                .font(.system(size: 14, weight: .regular, design: .monospaced))
+                .font(FontLoader.editorFont(size: 14))
                 .frame(minWidth: 180)
                 .focused($isFieldFocused)
                 .onExitCommand { onClose() }

@@ -286,7 +286,7 @@ struct CompletionPopupView: View {
             if let icon = item.kindIcon, !icon.isEmpty {
                 let color = item.kindColor ?? Color(nsColor: .tertiaryLabelColor)
                 Text(icon)
-                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .font(FontLoader.editorFont(size: 10).weight(.bold))
                     .foregroundColor(color)
                     .frame(width: 18, height: 18)
                     .background(
@@ -299,7 +299,7 @@ struct CompletionPopupView: View {
 
             // Label.
             Text(item.label)
-                .font(.system(size: 13, weight: .medium))
+                .font(FontLoader.editorFont(size: 13).weight(.medium))
                 .foregroundStyle(.primary)
                 .lineLimit(1)
 
@@ -308,7 +308,7 @@ struct CompletionPopupView: View {
             // Detail (type signature).
             if let detail = item.detail, !detail.isEmpty {
                 Text(detail)
-                    .font(.system(size: 12))
+                    .font(FontLoader.editorFont(size: 12))
                     .foregroundStyle(.tertiary)
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -660,7 +660,7 @@ private struct CompletionDocsTheme: Hashable {
     }
 
     var codeFont: NSFont {
-        NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+        FontLoader.editorNSFont(size: 12)
     }
 
     var bodyColor: NSColor {
@@ -753,7 +753,7 @@ private struct CompletionDocsTheme: Hashable {
         let size = max(10, font.pointSize)
         let bold = font.fontDescriptor.symbolicTraits.contains(.bold)
         let italic = font.fontDescriptor.symbolicTraits.contains(.italic)
-        var converted = NSFont.monospacedSystemFont(ofSize: size, weight: bold ? .semibold : .regular)
+        var converted = FontLoader.editorNSFont(size: size, weight: bold ? .semibold : .regular)
         if italic {
             converted = NSFontManager.shared.convert(converted, toHaveTrait: .italicFontMask)
         }
@@ -922,7 +922,7 @@ private enum CompletionDocsRenderer {
         let weight: NSFont.Weight = (style.add_modifier & modifierBold) != 0 ? .semibold : .regular
 
         var font = codeLike
-            ? NSFont.monospacedSystemFont(ofSize: targetSize, weight: weight)
+            ? FontLoader.editorNSFont(size: targetSize, weight: weight)
             : NSFont.systemFont(ofSize: targetSize, weight: weight)
         if (style.add_modifier & modifierItalic) != 0 {
             font = NSFontManager.shared.convert(font, toHaveTrait: .italicFontMask)

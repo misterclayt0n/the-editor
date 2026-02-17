@@ -140,7 +140,20 @@ pub struct InlineDiagnosticRenderLine {
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct InlineDiagnosticsRenderData {
-  pub lines: Vec<InlineDiagnosticRenderLine>,
+  pub lines:       Vec<InlineDiagnosticRenderLine>,
+  pub last_trace:  Option<InlineDiagnosticsRenderTrace>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InlineDiagnosticsRenderTrace {
+  pub doc_line:               usize,
+  pub cursor_doc_line:        Option<usize>,
+  pub cursor_anchor_hit:      bool,
+  pub stack_len:              usize,
+  pub filtered_len:           usize,
+  pub emitted_line_count:     usize,
+  pub row_delta:              usize,
+  pub used_cursor_line_filter: bool,
 }
 
 pub type SharedInlineDiagnosticsRenderData = Rc<RefCell<InlineDiagnosticsRenderData>>;
@@ -264,24 +277,38 @@ impl LineAnnotation for InlineDiagnosticsLineAnnotation {
     line_end_visual_pos: Position,
     doc_line: usize,
   ) -> Position {
-    let filter = if self.cursor_line || self.cursor_doc_line == Some(doc_line) {
+    let cursor_anchor_hit = self.cursor_line;
+    let use_cursor_line_filter = self.cursor_line || self.cursor_doc_line == Some(doc_line);
+    let filter = if use_cursor_line_filter {
       self.config.cursor_line
     } else {
       self.config.other_lines
     };
     self.cursor_line = false;
+    let stack_len = self.line_stack.len();
 
     let mut diagnostics: Vec<(InlineDiagnostic, u16)> = self
       .line_stack
       .drain(..)
       .filter(|(diag, _)| filter.allows(diag.severity))
       .collect();
+    let filtered_len = diagnostics.len();
 
     if diagnostics.len() > self.config.max_diagnostics {
       diagnostics.truncate(self.config.max_diagnostics);
     }
 
     if diagnostics.is_empty() {
+      self.render_data.borrow_mut().last_trace = Some(InlineDiagnosticsRenderTrace {
+        doc_line,
+        cursor_doc_line: self.cursor_doc_line,
+        cursor_anchor_hit,
+        stack_len,
+        filtered_len,
+        emitted_line_count: 0,
+        row_delta: 0,
+        used_cursor_line_filter: use_cursor_line_filter,
+      });
       return Position::new(0, 0);
     }
 
@@ -332,7 +359,20 @@ impl LineAnnotation for InlineDiagnosticsLineAnnotation {
       }
     }
 
-    Position::new(row.saturating_sub(row_start), 0)
+    let row_delta = row.saturating_sub(row_start);
+    let emitted_line_count = render_data.lines.len().saturating_sub(base_line_count);
+    render_data.last_trace = Some(InlineDiagnosticsRenderTrace {
+      doc_line,
+      cursor_doc_line: self.cursor_doc_line,
+      cursor_anchor_hit,
+      stack_len,
+      filtered_len,
+      emitted_line_count,
+      row_delta,
+      used_cursor_line_filter: use_cursor_line_filter,
+    });
+
+    Position::new(row_delta, 0)
   }
 }
 

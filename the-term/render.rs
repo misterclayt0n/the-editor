@@ -4150,6 +4150,7 @@ pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> Ren
     }
   };
 
+  let inline_render_trace = inline_diagnostic_render_data.borrow().last_trace.clone();
   ctx.inline_diagnostic_lines = inline_diagnostic_render_data.borrow().lines.clone();
   drop(annotations);
 
@@ -4193,6 +4194,16 @@ pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> Ren
         "cursor_char_idx": cursor_char_idx,
         "cursor_line": cursor_line_idx,
         "first_diag_line": first_diag_line_idx,
+        "annotation_trace": inline_render_trace.as_ref().map(|trace| json!({
+          "doc_line": trace.doc_line,
+          "cursor_doc_line": trace.cursor_doc_line,
+          "cursor_anchor_hit": trace.cursor_anchor_hit,
+          "used_cursor_line_filter": trace.used_cursor_line_filter,
+          "stack_len": trace.stack_len,
+          "filtered_len": trace.filtered_len,
+          "emitted_line_count": trace.emitted_line_count,
+          "row_delta": trace.row_delta,
+        })),
         "config": config_json,
         "first_inline_diag": first_inline_diag,
         "first_render_line": first_render_line,

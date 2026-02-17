@@ -149,6 +149,7 @@ pub struct InlineDiagnosticsLineAnnotation {
   diagnostics:       Vec<InlineDiagnostic>,
   config:            InlineDiagnosticsConfig,
   cursor_char_idx:   usize,
+  cursor_doc_line:   Option<usize>,
   viewport_width:    u16,
   horizontal_offset: usize,
   idx:               usize,
@@ -169,6 +170,7 @@ impl InlineDiagnosticsLineAnnotation {
   pub fn new(
     mut diagnostics: Vec<InlineDiagnostic>,
     cursor_char_idx: usize,
+    cursor_doc_line: Option<usize>,
     viewport_width: u16,
     horizontal_offset: usize,
     config: InlineDiagnosticsConfig,
@@ -179,6 +181,7 @@ impl InlineDiagnosticsLineAnnotation {
       diagnostics,
       config,
       cursor_char_idx,
+      cursor_doc_line,
       viewport_width,
       horizontal_offset,
       idx: 0,
@@ -259,9 +262,9 @@ impl LineAnnotation for InlineDiagnosticsLineAnnotation {
     &mut self,
     _line_end_char_idx: usize,
     line_end_visual_pos: Position,
-    _doc_line: usize,
+    doc_line: usize,
   ) -> Position {
-    let filter = if self.cursor_line {
+    let filter = if self.cursor_line || self.cursor_doc_line == Some(doc_line) {
       self.config.cursor_line
     } else {
       self.config.other_lines
@@ -640,6 +643,7 @@ mod tests {
     let annotation = InlineDiagnosticsLineAnnotation::new(
       diagnostics,
       usize::MAX,
+      None,
       20,
       0,
       config,
@@ -685,6 +689,7 @@ mod tests {
     let annotation = InlineDiagnosticsLineAnnotation::new(
       diagnostics,
       text.line_to_char(1).saturating_add(12),
+      Some(1),
       80,
       0,
       config,

@@ -414,6 +414,12 @@ fn primary_cursor_char_idx(ctx: &Ctx) -> Option<usize> {
   Some(range.cursor(doc.text().slice(..)))
 }
 
+fn primary_cursor_line_idx(ctx: &Ctx) -> Option<usize> {
+  let doc = ctx.editor.document();
+  let range = doc.selection().ranges().first().copied()?;
+  Some(range.cursor_line(doc.text().slice(..)))
+}
+
 fn diagnostic_severity_rank(severity: DiagnosticSeverity) -> u8 {
   match severity {
     DiagnosticSeverity::Error => 4,
@@ -4061,6 +4067,7 @@ pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> Ren
     Rc::new(RefCell::new(Default::default()));
   let inline_diagnostics = active_inline_diagnostics(ctx);
   let inline_diag_count = inline_diagnostics.len();
+  let first_inline_diag_start_idx = inline_diagnostics.first().map(|diag| diag.start_char_idx);
   let first_inline_diag = inline_diagnostics.first().map(|diag| {
     json!({
       "start_char_idx": diag.start_char_idx,
@@ -4083,9 +4090,11 @@ pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> Ren
     inline_config_snapshot = Some(inline_config.clone());
     if !inline_config.disabled() {
       let cursor_char_idx = primary_cursor_char_idx(ctx).unwrap_or(0);
+      let cursor_line_idx = primary_cursor_line_idx(ctx);
       let _ = annotations.add_line_annotation(Box::new(InlineDiagnosticsLineAnnotation::new(
         inline_diagnostics,
         cursor_char_idx,
+        cursor_line_idx,
         text_fmt.viewport_width.max(1),
         view.scroll.col,
         inline_config,
@@ -4148,6 +4157,11 @@ pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> Ren
     || (lsp_diag_count > 0 && inline_diag_count > 0 && ctx.inline_diagnostic_lines.is_empty());
   if should_trace_inline_diagnostics {
     let cursor_char_idx = primary_cursor_char_idx(ctx);
+    let cursor_line_idx = primary_cursor_line_idx(ctx);
+    let first_diag_line_idx = first_inline_diag_start_idx.map(|start| {
+      let text = ctx.editor.document().text();
+      text.char_to_line(start.min(text.len_chars()))
+    });
     let config_json = inline_config_snapshot.as_ref().map(|config| {
       json!({
         "cursor_line": inline_diagnostic_filter_label(config.cursor_line),
@@ -4177,6 +4191,8 @@ pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> Ren
         "inline_diag_count": inline_diag_count,
         "render_line_count": ctx.inline_diagnostic_lines.len(),
         "cursor_char_idx": cursor_char_idx,
+        "cursor_line": cursor_line_idx,
+        "first_diag_line": first_diag_line_idx,
         "config": config_json,
         "first_inline_diag": first_inline_diag,
         "first_render_line": first_render_line,

@@ -482,17 +482,10 @@ fn draw_diagnostics(
 ) {
   let mut reversed = diagnostics.drain(..).rev().peekable();
   let mut last_anchor = viewport_width;
-  let mut last_severity: Option<DiagnosticSeverity> = None;
-  let mut trailing_anchors: Vec<(u16, DiagnosticSeverity)> = Vec::new();
   while let Some((diagnostic, anchor)) = reversed.next() {
     if anchor != last_anchor {
       for draw_row in row_start..*row {
         push_connector(render_lines, draw_row, anchor, VER_BAR, diagnostic.severity);
-      }
-      if last_anchor != viewport_width
-        && let Some(severity) = last_severity
-      {
-        trailing_anchors.push((last_anchor, severity));
       }
     }
 
@@ -509,14 +502,6 @@ fn draw_diagnostics(
       viewport_width,
     );
     last_anchor = anchor;
-    last_severity = Some(diagnostic.severity);
-  }
-
-  if !trailing_anchors.is_empty() {
-    for (anchor, severity) in trailing_anchors {
-      push_connector(render_lines, *row, anchor, VER_BAR, severity);
-    }
-    *row = row.saturating_add(1);
   }
 }
 
@@ -793,39 +778,6 @@ mod tests {
 
     let lines = render_data.borrow().lines.clone();
     assert!(!lines.is_empty());
-  }
-
-  #[test]
-  fn inline_diagnostics_draws_bottom_trailing_connectors_for_multiple_anchors() {
-    let config = InlineDiagnosticsConfig::default();
-    let mut row = 0usize;
-    let mut render_lines = Vec::new();
-    let mut diagnostics = vec![
-      (
-        InlineDiagnostic::new(0, DiagnosticSeverity::Warning, "left"),
-        2,
-      ),
-      (
-        InlineDiagnostic::new(4, DiagnosticSeverity::Error, "right"),
-        6,
-      ),
-    ];
-
-    draw_diagnostics(
-      &mut render_lines,
-      &mut diagnostics,
-      0,
-      &config,
-      80,
-      &mut row,
-    );
-
-    assert!(
-      render_lines
-        .iter()
-        .any(|line| line.row == 2 && line.col == 6 && line.text.as_str() == VER_BAR)
-    );
-    assert_eq!(row, 3);
   }
 
   #[test]

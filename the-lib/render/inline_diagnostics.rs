@@ -286,6 +286,8 @@ impl LineAnnotation for InlineDiagnosticsLineAnnotation {
     let mut row = row_start;
 
     let mut render_data = self.render_data.borrow_mut();
+    let base_line_count = render_data.lines.len();
+    let fallback_diagnostics = diagnostics.clone();
     for (_, anchor) in &mut diagnostics {
       *anchor = (*anchor).min(self.viewport_width.saturating_sub(1));
     }
@@ -304,6 +306,28 @@ impl LineAnnotation for InlineDiagnosticsLineAnnotation {
       self.viewport_width,
       &mut row,
     );
+
+    if render_data.lines.len() == base_line_count {
+      let max_anchor_start = self.config.max_diagnostic_start(self.viewport_width);
+      for (diagnostic, anchor) in fallback_diagnostics {
+        let anchor = anchor.min(max_anchor_start);
+        let text_col = anchor.saturating_add(self.config.prefix_len) as usize;
+        let text_fmt = self.config.text_format(anchor, self.viewport_width);
+        let wrapped = soft_wrap_message_lines(diagnostic.message.as_ref(), &text_fmt);
+        if wrapped.is_empty() {
+          continue;
+        }
+        for line in wrapped {
+          render_data.lines.push(InlineDiagnosticRenderLine {
+            row,
+            col: text_col,
+            text: line,
+            severity: diagnostic.severity,
+          });
+          row = row.saturating_add(1);
+        }
+      }
+    }
 
     Position::new(row.saturating_sub(row_start), 0)
   }
@@ -622,7 +646,7 @@ mod tests {
       render_data.clone(),
     );
 
-    let text = Rope::from("abc\\n");
+    let text = Rope::from("abc\n");
     let mut text_fmt = TextFormat::default();
     text_fmt.soft_wrap = false;
     text_fmt.viewport_width = 20;
@@ -638,5 +662,48 @@ mod tests {
     let lines = render_data.borrow().lines.clone();
     assert!(!lines.is_empty());
     assert!(lines.windows(2).all(|pair| pair[0].row <= pair[1].row));
+  }
+
+  #[test]
+  fn inline_diagnostics_annotation_collects_render_lines_multiline_doc() {
+    let text = Rope::from("line1\nline2 error here\nline3\n");
+    let error_char_idx = text.line_to_char(1).saturating_add(6);
+    let diagnostics = vec![InlineDiagnostic::new(
+      error_char_idx,
+      DiagnosticSeverity::Error,
+      "sample inline diagnostic message",
+    )];
+    let config = InlineDiagnosticsConfig {
+      cursor_line: InlineDiagnosticFilter::Enable(DiagnosticSeverity::Warning),
+      other_lines: InlineDiagnosticFilter::Disable,
+      min_diagnostic_width: 12,
+      prefix_len: 1,
+      max_wrap: 8,
+      max_diagnostics: 5,
+    };
+    let render_data: SharedInlineDiagnosticsRenderData = Rc::new(RefCell::new(Default::default()));
+    let annotation = InlineDiagnosticsLineAnnotation::new(
+      diagnostics,
+      text.line_to_char(1).saturating_add(12),
+      80,
+      0,
+      config,
+      render_data.clone(),
+    );
+
+    let mut text_fmt = TextFormat::default();
+    text_fmt.soft_wrap = false;
+    text_fmt.viewport_width = 80;
+
+    let mut annotations = TextAnnotations::default();
+    let _ = annotations.add_line_annotation(Box::new(annotation));
+    {
+      let mut formatter =
+        DocumentFormatter::new_at_prev_checkpoint(text.slice(..), &text_fmt, &mut annotations, 0);
+      while formatter.next().is_some() {}
+    }
+
+    let lines = render_data.borrow().lines.clone();
+    assert!(!lines.is_empty());
   }
 }

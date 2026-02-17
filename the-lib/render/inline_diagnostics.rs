@@ -779,4 +779,61 @@ mod tests {
     let lines = render_data.borrow().lines.clone();
     assert!(!lines.is_empty());
   }
+
+  #[test]
+  fn inline_diagnostics_render_lines_survive_visual_position_queries() {
+    let text = Rope::from("line1\nline2 error here\nline3\n");
+    let error_char_idx = text.line_to_char(1).saturating_add(6);
+    let diagnostics = vec![InlineDiagnostic::new(
+      error_char_idx,
+      DiagnosticSeverity::Error,
+      "sample inline diagnostic message",
+    )];
+    let config = InlineDiagnosticsConfig {
+      cursor_line: InlineDiagnosticFilter::Enable(DiagnosticSeverity::Warning),
+      other_lines: InlineDiagnosticFilter::Disable,
+      min_diagnostic_width: 12,
+      prefix_len: 1,
+      max_wrap: 8,
+      max_diagnostics: 5,
+    };
+    let render_data: SharedInlineDiagnosticsRenderData = Rc::new(RefCell::new(Default::default()));
+    let annotation = InlineDiagnosticsLineAnnotation::new(
+      diagnostics,
+      text.line_to_char(1).saturating_add(12),
+      Some(1),
+      80,
+      0,
+      config,
+      render_data.clone(),
+    );
+
+    let mut text_fmt = TextFormat::default();
+    text_fmt.soft_wrap = false;
+    text_fmt.viewport_width = 80;
+
+    let mut annotations = TextAnnotations::default();
+    let _ = annotations.add_line_annotation(Box::new(annotation));
+    {
+      let mut formatter =
+        DocumentFormatter::new_at_prev_checkpoint(text.slice(..), &text_fmt, &mut annotations, 0);
+      while formatter.next().is_some() {}
+    }
+
+    let before_query = render_data.borrow().lines.len();
+    assert!(before_query > 0);
+
+    let _ = crate::render::visual_position::visual_pos_at_char(
+      text.slice(..),
+      &text_fmt,
+      &mut annotations,
+      text.len_chars(),
+    );
+
+    let after_query = render_data.borrow().lines.len();
+    assert!(
+      after_query >= before_query,
+      "render lines were unexpectedly dropped after visual position query"
+    );
+  }
 }

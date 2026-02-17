@@ -1105,6 +1105,19 @@ impl Ctx {
     }
   }
 
+  pub(crate) fn log_render_trace_value(&mut self, stage: &'static str, data: Value) {
+    let timestamp_ms = SystemTime::now()
+      .duration_since(SystemTime::UNIX_EPOCH)
+      .map(|duration| duration.as_millis() as u64)
+      .unwrap_or(0);
+    self.log_lsp_trace_value(json!({
+      "ts_ms": timestamp_ms,
+      "kind": "render",
+      "stage": stage,
+      "data": data,
+    }));
+  }
+
   fn log_lsp_trace_event(&mut self, event: &LspEvent) {
     let timestamp_ms = SystemTime::now()
       .duration_since(SystemTime::UNIX_EPOCH)

@@ -24,9 +24,10 @@ use ratatui::{
   },
 };
 use ropey::Rope;
+use serde_json::json;
 use the_default::{
-  FilePickerPreview,
   DefaultContext,
+  FilePickerPreview,
   Mode,
   OverlayRect as DefaultOverlayRect,
   SIGNATURE_HELP_ACTIVE_PARAM_END_MARKER,
@@ -47,16 +48,17 @@ use the_lib::{
     DiagnosticSeverity,
   },
   render::{
+    InlineDiagnosticFilter,
     InlineDiagnostic,
     InlineDiagnosticsConfig,
     InlineDiagnosticsLineAnnotation,
-    SharedInlineDiagnosticsRenderData,
     LayoutIntent,
     NoHighlights,
     RenderDiagnosticGutterStyles,
     RenderDiffGutterStyles,
     RenderPlan,
     RenderStyles,
+    SharedInlineDiagnosticsRenderData,
     SyntaxHighlightAdapter,
     UiAlign,
     UiAlignPair,
@@ -284,10 +286,16 @@ fn active_inline_diagnostics(ctx: &Ctx) -> Vec<InlineDiagnostic> {
     return Vec::new();
   };
 
-  inline_diagnostics_from_document(ctx.editor.document().text(), &document_diagnostics.diagnostics)
+  inline_diagnostics_from_document(
+    ctx.editor.document().text(),
+    &document_diagnostics.diagnostics,
+  )
 }
 
-fn inline_diagnostics_from_document(text: &Rope, diagnostics: &[Diagnostic]) -> Vec<InlineDiagnostic> {
+fn inline_diagnostics_from_document(
+  text: &Rope,
+  diagnostics: &[Diagnostic],
+) -> Vec<InlineDiagnostic> {
   let mut out = Vec::with_capacity(diagnostics.len());
   for diagnostic in diagnostics {
     let message = diagnostic.message.trim();
@@ -314,19 +322,47 @@ fn parse_inline_diagnostic_filter(value: &str) -> Option<the_lib::render::Inline
   let normalized = value.trim().to_ascii_lowercase();
   match normalized.as_str() {
     "disable" | "off" | "none" => Some(the_lib::render::InlineDiagnosticFilter::Disable),
-    "hint" => Some(the_lib::render::InlineDiagnosticFilter::Enable(
-      DiagnosticSeverity::Hint,
-    )),
-    "info" | "information" => Some(the_lib::render::InlineDiagnosticFilter::Enable(
-      DiagnosticSeverity::Information,
-    )),
-    "warning" | "warn" => Some(the_lib::render::InlineDiagnosticFilter::Enable(
-      DiagnosticSeverity::Warning,
-    )),
-    "error" => Some(the_lib::render::InlineDiagnosticFilter::Enable(
-      DiagnosticSeverity::Error,
-    )),
+    "hint" => {
+      Some(the_lib::render::InlineDiagnosticFilter::Enable(
+        DiagnosticSeverity::Hint,
+      ))
+    },
+    "info" | "information" => {
+      Some(the_lib::render::InlineDiagnosticFilter::Enable(
+        DiagnosticSeverity::Information,
+      ))
+    },
+    "warning" | "warn" => {
+      Some(the_lib::render::InlineDiagnosticFilter::Enable(
+        DiagnosticSeverity::Warning,
+      ))
+    },
+    "error" => {
+      Some(the_lib::render::InlineDiagnosticFilter::Enable(
+        DiagnosticSeverity::Error,
+      ))
+    },
     _ => None,
+  }
+}
+
+fn inline_diagnostic_filter_label(filter: InlineDiagnosticFilter) -> &'static str {
+  match filter {
+    InlineDiagnosticFilter::Disable => "disable",
+    InlineDiagnosticFilter::Enable(DiagnosticSeverity::Error) => "error",
+    InlineDiagnosticFilter::Enable(DiagnosticSeverity::Warning) => "warning",
+    InlineDiagnosticFilter::Enable(DiagnosticSeverity::Information) => "info",
+    InlineDiagnosticFilter::Enable(DiagnosticSeverity::Hint) => "hint",
+  }
+}
+
+fn inline_diagnostics_trace_enabled() -> bool {
+  match env::var("THE_TERM_INLINE_DIAGNOSTICS_TRACE") {
+    Ok(value) => matches!(
+      value.trim().to_ascii_lowercase().as_str(),
+      "1" | "true" | "yes" | "on"
+    ),
+    Err(_) => false,
   }
 }
 
@@ -393,22 +429,30 @@ fn inline_diagnostic_text_style(
 ) -> Style {
   let base = lib_style_to_ratatui(theme.try_get("ui.virtual").unwrap_or_default());
   let severity_style = match severity {
-    DiagnosticSeverity::Error => theme
-      .try_get("error")
-      .or_else(|| theme.try_get("diagnostic.error"))
-      .unwrap_or_default(),
-    DiagnosticSeverity::Warning => theme
-      .try_get("warning")
-      .or_else(|| theme.try_get("diagnostic.warning"))
-      .unwrap_or_default(),
-    DiagnosticSeverity::Information => theme
-      .try_get("info")
-      .or_else(|| theme.try_get("diagnostic.info"))
-      .unwrap_or_default(),
-    DiagnosticSeverity::Hint => theme
-      .try_get("hint")
-      .or_else(|| theme.try_get("diagnostic.hint"))
-      .unwrap_or_default(),
+    DiagnosticSeverity::Error => {
+      theme
+        .try_get("error")
+        .or_else(|| theme.try_get("diagnostic.error"))
+        .unwrap_or_default()
+    },
+    DiagnosticSeverity::Warning => {
+      theme
+        .try_get("warning")
+        .or_else(|| theme.try_get("diagnostic.warning"))
+        .unwrap_or_default()
+    },
+    DiagnosticSeverity::Information => {
+      theme
+        .try_get("info")
+        .or_else(|| theme.try_get("diagnostic.info"))
+        .unwrap_or_default()
+    },
+    DiagnosticSeverity::Hint => {
+      theme
+        .try_get("hint")
+        .or_else(|| theme.try_get("diagnostic.hint"))
+        .unwrap_or_default()
+    },
   };
   base.patch(lib_style_to_ratatui(severity_style))
 }
@@ -953,14 +997,14 @@ struct StyledTextRun {
 
 #[derive(Clone, Copy)]
 struct CompletionDocsStyles {
-  base:    Style,
-  heading: [Style; 6],
-  bullet:  Style,
-  quote:   Style,
-  code:    Style,
+  base:             Style,
+  heading:          [Style; 6],
+  bullet:           Style,
+  quote:            Style,
+  code:             Style,
   active_parameter: Style,
-  link:    Style,
-  rule:    Style,
+  link:             Style,
+  rule:             Style,
 }
 
 impl CompletionDocsStyles {
@@ -1215,7 +1259,9 @@ fn language_filename_hints(marker: &str) -> Vec<String> {
   out
 }
 
-fn strip_signature_active_markers_from_line(line: &str) -> (String, Option<std::ops::Range<usize>>) {
+fn strip_signature_active_markers_from_line(
+  line: &str,
+) -> (String, Option<std::ops::Range<usize>>) {
   let mut cleaned = String::with_capacity(line.len());
   let mut idx = 0usize;
   let mut start = None;
@@ -3606,12 +3652,8 @@ fn draw_ui_overlays(
               let overlay_area =
                 Rect::new(area.x, area.y + top_offset, area.width, available_height);
               let (popup_width, popup_height) = panel_box_size(panel, overlay_area);
-              let popup_rect = signature_help_panel_rect(
-                overlay_area,
-                popup_width,
-                popup_height,
-                editor_cursor,
-              );
+              let popup_rect =
+                signature_help_panel_rect(overlay_area, popup_width, popup_height, editor_cursor);
               draw_panel_in_rect(
                 buf,
                 popup_rect,
@@ -3972,12 +4014,11 @@ fn adapt_ui_tree_for_term(ctx: &Ctx, ui: &mut UiTree) {
   }
 
   if let Some(status) = ui.overlays.iter_mut().find_map(status_bar_from_overlay_mut) {
-    status.left =
-      search_statusline_text(
-        ctx.search_prompt.kind,
-        ctx.search_prompt.query.as_str(),
-        ctx.search_prompt.cursor,
-      );
+    status.left = search_statusline_text(
+      ctx.search_prompt.kind,
+      ctx.search_prompt.query.as_str(),
+      ctx.search_prompt.cursor,
+    );
     status.left_icon = None;
   }
 
@@ -4019,10 +4060,27 @@ pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> Ren
   let inline_diagnostic_render_data: SharedInlineDiagnosticsRenderData =
     Rc::new(RefCell::new(Default::default()));
   let inline_diagnostics = active_inline_diagnostics(ctx);
+  let inline_diag_count = inline_diagnostics.len();
+  let first_inline_diag = inline_diagnostics.first().map(|diag| {
+    json!({
+      "start_char_idx": diag.start_char_idx,
+      "severity": format!("{:?}", diag.severity),
+      "message_preview": diag.message.as_str().chars().take(120).collect::<String>(),
+    })
+  });
+  let lsp_diag_count = ctx
+    .lsp_document
+    .as_ref()
+    .filter(|state| state.opened)
+    .and_then(|state| ctx.diagnostics.document(&state.uri))
+    .map_or(0usize, |doc| doc.diagnostics.len());
+  let mut inline_enable_cursor_line = false;
+  let mut inline_config_snapshot: Option<InlineDiagnosticsConfig> = None;
   if !inline_diagnostics.is_empty() {
-    let enable_cursor_line = ctx.mode() != Mode::Insert;
+    inline_enable_cursor_line = ctx.mode() != Mode::Insert;
     let inline_config =
-      inline_diagnostics_config().prepare(text_fmt.viewport_width.max(1), enable_cursor_line);
+      inline_diagnostics_config().prepare(text_fmt.viewport_width.max(1), inline_enable_cursor_line);
+    inline_config_snapshot = Some(inline_config.clone());
     if !inline_config.disabled() {
       let cursor_char_idx = primary_cursor_char_idx(ctx).unwrap_or(0);
       let _ = annotations.add_line_annotation(Box::new(InlineDiagnosticsLineAnnotation::new(
@@ -4037,51 +4095,94 @@ pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> Ren
   }
 
   let allow_cache_refresh = ctx.syntax_highlight_refresh_allowed();
-  let (doc, render_cache) = ctx.editor.document_and_cache();
 
-  // Build the render plan (with or without syntax highlighting)
-  let mut plan = if let (Some(loader), Some(syntax)) = (&ctx.loader, doc.syntax()) {
-    // Calculate line range for highlighting
-    let line_range = view.scroll.row..(view.scroll.row + view.viewport.height as usize);
+  // Build the render plan (with or without syntax highlighting).
+  let mut plan = {
+    let (doc, render_cache) = ctx.editor.document_and_cache();
+    if let (Some(loader), Some(syntax)) = (&ctx.loader, doc.syntax()) {
+      // Calculate line range for highlighting
+      let line_range = view.scroll.row..(view.scroll.row + view.viewport.height as usize);
 
-    // Create syntax highlight adapter
-    let mut adapter = SyntaxHighlightAdapter::new(
-      doc.text().slice(..),
-      syntax,
-      loader.as_ref(),
-      &mut ctx.highlight_cache,
-      line_range,
-      doc.version(),
-      doc.syntax_version(),
-      allow_cache_refresh,
-    );
+      // Create syntax highlight adapter
+      let mut adapter = SyntaxHighlightAdapter::new(
+        doc.text().slice(..),
+        syntax,
+        loader.as_ref(),
+        &mut ctx.highlight_cache,
+        line_range,
+        doc.version(),
+        doc.syntax_version(),
+        allow_cache_refresh,
+      );
 
-    build_plan(
-      doc,
-      view,
-      text_fmt,
-      &ctx.gutter_config,
-      &mut annotations,
-      &mut adapter,
-      render_cache,
-      styles,
-    )
-  } else {
-    // No syntax highlighting available
-    let mut highlights = NoHighlights;
-    build_plan(
-      doc,
-      view,
-      text_fmt,
-      &ctx.gutter_config,
-      &mut annotations,
-      &mut highlights,
-      render_cache,
-      styles,
-    )
+      build_plan(
+        doc,
+        view,
+        text_fmt,
+        &ctx.gutter_config,
+        &mut annotations,
+        &mut adapter,
+        render_cache,
+        styles,
+      )
+    } else {
+      // No syntax highlighting available
+      let mut highlights = NoHighlights;
+      build_plan(
+        doc,
+        view,
+        text_fmt,
+        &ctx.gutter_config,
+        &mut annotations,
+        &mut highlights,
+        render_cache,
+        styles,
+      )
+    }
   };
 
   ctx.inline_diagnostic_lines = inline_diagnostic_render_data.borrow().lines.clone();
+  drop(annotations);
+
+  let should_trace_inline_diagnostics = inline_diagnostics_trace_enabled()
+    || (lsp_diag_count > 0 && inline_diag_count > 0 && ctx.inline_diagnostic_lines.is_empty());
+  if should_trace_inline_diagnostics {
+    let cursor_char_idx = primary_cursor_char_idx(ctx);
+    let config_json = inline_config_snapshot.as_ref().map(|config| {
+      json!({
+        "cursor_line": inline_diagnostic_filter_label(config.cursor_line),
+        "other_lines": inline_diagnostic_filter_label(config.other_lines),
+        "min_diagnostic_width": config.min_diagnostic_width,
+        "prefix_len": config.prefix_len,
+        "max_wrap": config.max_wrap,
+        "max_diagnostics": config.max_diagnostics,
+      })
+    });
+    let first_render_line = ctx.inline_diagnostic_lines.first().map(|line| {
+      json!({
+        "row": line.row,
+        "col": line.col,
+        "severity": format!("{:?}", line.severity),
+        "text_preview": line.text.as_str().chars().take(80).collect::<String>(),
+      })
+    });
+    ctx.log_render_trace_value(
+      "inline_diagnostics_render",
+      json!({
+        "mode": format!("{:?}", ctx.mode()),
+        "enable_cursor_line": inline_enable_cursor_line,
+        "viewport_width": text_fmt.viewport_width,
+        "scroll_col": view.scroll.col,
+        "lsp_diag_count": lsp_diag_count,
+        "inline_diag_count": inline_diag_count,
+        "render_line_count": ctx.inline_diagnostic_lines.len(),
+        "cursor_char_idx": cursor_char_idx,
+        "config": config_json,
+        "first_inline_diag": first_inline_diag,
+        "first_render_line": first_render_line,
+      }),
+    );
+  }
 
   apply_diagnostic_gutter_markers(&mut plan, &diagnostics_by_line, diagnostic_styles);
   apply_diff_gutter_markers(&mut plan, &diff_signs, diff_styles);
@@ -4203,7 +4304,6 @@ pub fn render(f: &mut Frame, ctx: &mut Ctx) {
     draw_ui_overlays(buf, area, ctx, &ui, editor_cursor, &mut cursor_out);
     cursor_out
   };
-
 }
 
 fn is_diff_gutter_marker(text: &str) -> bool {
@@ -4294,32 +4394,34 @@ pub fn ensure_cursor_visible(ctx: &mut Ctx) {
 
 #[cfg(test)]
 mod tests {
-  use ropey::Rope;
   use ratatui::{
     buffer::Buffer,
     layout::Rect,
     style::Style,
   };
+  use ropey::Rope;
   use the_default::{
     CommandPaletteItem,
     CommandPaletteState,
   };
-  use the_lib::render::{
-    LayoutIntent,
-    UiConstraints,
-    UiContainer,
-    UiInsets,
-    UiList,
-    UiListItem,
-    UiNode,
-    UiPanel,
-    UiText,
-  };
-  use the_lib::diagnostics::{
-    Diagnostic,
-    DiagnosticPosition,
-    DiagnosticRange,
-    DiagnosticSeverity,
+  use the_lib::{
+    diagnostics::{
+      Diagnostic,
+      DiagnosticPosition,
+      DiagnosticRange,
+      DiagnosticSeverity,
+    },
+    render::{
+      LayoutIntent,
+      UiConstraints,
+      UiContainer,
+      UiInsets,
+      UiList,
+      UiListItem,
+      UiNode,
+      UiPanel,
+      UiText,
+    },
   };
 
   use super::{
@@ -4334,8 +4436,8 @@ mod tests {
     inline_diagnostics_from_document,
     language_filename_hints,
     max_content_width_for_intent,
-    parse_inline_diagnostic_filter,
     panel_box_size,
+    parse_inline_diagnostic_filter,
     parse_markdown_fence_language,
     term_command_palette_filtered_selection,
   };
@@ -4406,20 +4508,20 @@ mod tests {
   fn inline_diagnostics_from_document_maps_utf16_positions() {
     let text = Rope::from("a🧪b\\n");
     let diagnostics = vec![Diagnostic {
-      range: DiagnosticRange {
+      range:    DiagnosticRange {
         start: DiagnosticPosition {
-          line: 0,
+          line:      0,
           character: 3,
         },
-        end: DiagnosticPosition {
-          line: 0,
+        end:   DiagnosticPosition {
+          line:      0,
           character: 4,
         },
       },
       severity: Some(DiagnosticSeverity::Warning),
-      code: None,
-      source: None,
-      message: "mapped".to_string(),
+      code:     None,
+      source:   None,
+      message:  "mapped".to_string(),
     }];
 
     let mapped = inline_diagnostics_from_document(&text, &diagnostics);

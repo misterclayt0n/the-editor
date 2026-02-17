@@ -24,7 +24,10 @@ use ratatui::{
   },
 };
 use ropey::Rope;
-use serde_json::json;
+use serde_json::{
+  Value,
+  json,
+};
 use the_default::{
   DefaultContext,
   FilePickerPreview,
@@ -545,7 +548,7 @@ fn draw_end_of_line_diagnostics(
   area: Rect,
   content_x: u16,
   plan: &RenderPlan,
-  ctx: &Ctx,
+  ctx: &mut Ctx,
 ) {
   let content_width = plan.content_width();
   if content_width == 0 {
@@ -570,6 +573,14 @@ fn draw_end_of_line_diagnostics(
   let inline_config =
     inline_diagnostics_config().prepare(content_width.max(1) as u16, ctx.mode() != Mode::Insert);
   let cursor_doc_line = primary_cursor_line_idx(ctx);
+  let trace_enabled = inline_diagnostics_trace_enabled();
+  let mut considered_rows = 0usize;
+  let mut rows_with_diagnostics = 0usize;
+  let mut selected_count = 0usize;
+  let mut rendered_count = 0usize;
+  let mut clipped_by_width = 0usize;
+  let mut clipped_by_viewport = 0usize;
+  let mut first_selected: Option<Value> = None;
 
   let mut line_end_cols: BTreeMap<u16, usize> = BTreeMap::new();
   for line in &plan.lines {
@@ -589,6 +600,16 @@ fn draw_end_of_line_diagnostics(
     if !visible_row.first_visual_line {
       continue;
     }
+    considered_rows = considered_rows.saturating_add(1);
+
+    let diagnostics_on_row = document_diagnostics
+      .diagnostics
+      .iter()
+      .filter(|diagnostic| diagnostic.range.start.line as usize == visible_row.doc_line)
+      .count();
+    if diagnostics_on_row > 0 {
+      rows_with_diagnostics = rows_with_diagnostics.saturating_add(1);
+    }
 
     let inline_filter = if cursor_doc_line == Some(visible_row.doc_line) {
       inline_config.cursor_line
@@ -605,6 +626,7 @@ fn draw_end_of_line_diagnostics(
     ) else {
       continue;
     };
+    selected_count = selected_count.saturating_add(1);
 
     let message = diagnostic
       .message
@@ -623,23 +645,59 @@ fn draw_end_of_line_diagnostics(
       .unwrap_or(0)
       .saturating_add(1);
     if start_col >= content_width {
+      clipped_by_width = clipped_by_width.saturating_add(1);
       continue;
     }
 
     let x = content_x + start_col as u16;
     let y = area.y + visible_row.row;
     if x >= area.x + area.width || y >= area.y + area.height {
+      clipped_by_viewport = clipped_by_viewport.saturating_add(1);
       continue;
     }
 
     let max_width = content_width.saturating_sub(start_col);
     if max_width == 0 {
+      clipped_by_width = clipped_by_width.saturating_add(1);
       continue;
     }
 
     let severity = diagnostic.severity.unwrap_or(DiagnosticSeverity::Warning);
     let style = inline_diagnostic_text_style(&ctx.ui_theme, severity);
-    buf.set_stringn(x, y, message, max_width, style);
+    buf.set_stringn(x, y, &message, max_width, style);
+    rendered_count = rendered_count.saturating_add(1);
+    if first_selected.is_none() {
+      first_selected = Some(json!({
+        "doc_line": visible_row.doc_line,
+        "render_row": visible_row.row,
+        "severity": format!("{:?}", severity),
+        "start_col": start_col,
+        "message_preview": message.chars().take(120).collect::<String>(),
+        "inline_filter": inline_diagnostic_filter_label(inline_filter),
+      }));
+    }
+  }
+
+  if trace_enabled || (rows_with_diagnostics > 0 && rendered_count == 0) {
+    ctx.log_render_trace_value(
+      "eol_diagnostics_render",
+      json!({
+        "mode": format!("{:?}", ctx.mode()),
+        "content_width": content_width,
+        "eol_filter": inline_diagnostic_filter_label(eol_filter),
+        "inline_cursor_filter": inline_diagnostic_filter_label(inline_config.cursor_line),
+        "inline_other_filter": inline_diagnostic_filter_label(inline_config.other_lines),
+        "cursor_doc_line": cursor_doc_line,
+        "doc_diagnostic_count": document_diagnostics.diagnostics.len(),
+        "considered_rows": considered_rows,
+        "rows_with_diagnostics": rows_with_diagnostics,
+        "selected_count": selected_count,
+        "rendered_count": rendered_count,
+        "clipped_by_width": clipped_by_width,
+        "clipped_by_viewport": clipped_by_viewport,
+        "first_selected": first_selected,
+      }),
+    );
   }
 }
 

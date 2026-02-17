@@ -163,6 +163,7 @@ pub struct InlineDiagnosticsLineAnnotation {
   config:            InlineDiagnosticsConfig,
   cursor_char_idx:   usize,
   cursor_doc_line:   Option<usize>,
+  line_start_char:   usize,
   viewport_width:    u16,
   horizontal_offset: usize,
   idx:               usize,
@@ -195,6 +196,7 @@ impl InlineDiagnosticsLineAnnotation {
       config,
       cursor_char_idx,
       cursor_doc_line,
+      line_start_char: 0,
       viewport_width,
       horizontal_offset,
       idx: 0,
@@ -208,6 +210,7 @@ impl InlineDiagnosticsLineAnnotation {
     self.idx = 0;
     self.cursor_line = false;
     self.line_stack.clear();
+    self.line_start_char = 0;
     self.render_data.borrow_mut().lines.clear();
   }
 
@@ -251,6 +254,7 @@ impl InlineDiagnosticsLineAnnotation {
 impl LineAnnotation for InlineDiagnosticsLineAnnotation {
   fn reset_pos(&mut self, char_idx: usize) -> usize {
     self.reset_state();
+    self.line_start_char = char_idx;
     self.idx = self
       .diagnostics
       .partition_point(|diag| diag.start_char_idx < char_idx);
@@ -273,7 +277,7 @@ impl LineAnnotation for InlineDiagnosticsLineAnnotation {
 
   fn insert_virtual_lines(
     &mut self,
-    _line_end_char_idx: usize,
+    line_end_char_idx: usize,
     line_end_visual_pos: Position,
     doc_line: usize,
   ) -> Position {
@@ -292,6 +296,24 @@ impl LineAnnotation for InlineDiagnosticsLineAnnotation {
       .drain(..)
       .filter(|(diag, _)| filter.allows(diag.severity))
       .collect();
+
+    if diagnostics.is_empty() && line_end_char_idx > self.line_start_char {
+      diagnostics = self
+        .diagnostics
+        .iter()
+        .filter(|diag| {
+          diag.start_char_idx >= self.line_start_char && diag.start_char_idx < line_end_char_idx
+        })
+        .filter(|diag| filter.allows(diag.severity))
+        .map(|diag| {
+          let anchor = diag
+            .start_char_idx
+            .saturating_sub(self.line_start_char)
+            .min(self.viewport_width.saturating_sub(1) as usize) as u16;
+          (diag.clone(), anchor)
+        })
+        .collect();
+    }
     let filtered_len = diagnostics.len();
 
     if diagnostics.len() > self.config.max_diagnostics {
@@ -309,6 +331,7 @@ impl LineAnnotation for InlineDiagnosticsLineAnnotation {
         row_delta: 0,
         used_cursor_line_filter: use_cursor_line_filter,
       });
+      self.line_start_char = line_end_char_idx;
       return Position::new(0, 0);
     }
 
@@ -371,6 +394,7 @@ impl LineAnnotation for InlineDiagnosticsLineAnnotation {
       row_delta,
       used_cursor_line_filter: use_cursor_line_filter,
     });
+    self.line_start_char = line_end_char_idx;
 
     Position::new(row_delta, 0)
   }

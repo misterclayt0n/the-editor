@@ -1,5 +1,6 @@
 use std::{
   cell::RefCell,
+  cmp::Ordering,
   rc::Rc,
 };
 
@@ -156,6 +157,14 @@ pub struct InlineDiagnosticsLineAnnotation {
   render_data:       SharedInlineDiagnosticsRenderData,
 }
 
+const BL_CORNER: &str = "┘";
+const TR_CORNER: &str = "┌";
+const BR_CORNER: &str = "└";
+const STACK: &str = "├";
+const MULTI: &str = "┴";
+const HOR_BAR: &str = "─";
+const VER_BAR: &str = "│";
+
 impl InlineDiagnosticsLineAnnotation {
   pub fn new(
     mut diagnostics: Vec<InlineDiagnostic>,
@@ -273,33 +282,221 @@ impl LineAnnotation for InlineDiagnosticsLineAnnotation {
       return Position::new(0, 0);
     }
 
-    let max_anchor_start = self.config.max_diagnostic_start(self.viewport_width);
-    let mut row = line_end_visual_pos.row.saturating_add(1);
-    let row_start = row;
+    let row_start = line_end_visual_pos.row.saturating_add(1);
+    let mut row = row_start;
 
     let mut render_data = self.render_data.borrow_mut();
-    for (diagnostic, anchor) in diagnostics {
-      let anchor = anchor.min(max_anchor_start);
-      let text_col = anchor.saturating_add(self.config.prefix_len) as usize;
-      let text_fmt = self.config.text_format(anchor, self.viewport_width);
-      let wrapped = soft_wrap_message_lines(diagnostic.message.as_ref(), &text_fmt);
-      if wrapped.is_empty() {
-        continue;
-      }
-
-      for line in wrapped {
-        render_data.lines.push(InlineDiagnosticRenderLine {
-          row,
-          col: text_col,
-          text: line,
-          severity: diagnostic.severity,
-        });
-        row = row.saturating_add(1);
-      }
+    for (_, anchor) in &mut diagnostics {
+      *anchor = (*anchor).min(self.viewport_width.saturating_sub(1));
     }
+    draw_multi_diagnostics(
+      &mut render_data.lines,
+      &mut diagnostics,
+      &self.config,
+      self.viewport_width,
+      &mut row,
+    );
+    draw_diagnostics(
+      &mut render_data.lines,
+      &mut diagnostics,
+      row_start,
+      &self.config,
+      self.viewport_width,
+      &mut row,
+    );
 
     Position::new(row.saturating_sub(row_start), 0)
   }
+}
+
+fn draw_multi_diagnostics(
+  render_lines: &mut Vec<InlineDiagnosticRenderLine>,
+  diagnostics: &mut Vec<(InlineDiagnostic, u16)>,
+  config: &InlineDiagnosticsConfig,
+  viewport_width: u16,
+  row: &mut usize,
+) {
+  let Some((last_diagnostic, last_anchor)) = diagnostics.last().cloned() else {
+    return;
+  };
+
+  let start = config.max_diagnostic_start(viewport_width);
+  if last_anchor <= start {
+    return;
+  }
+
+  let mut severity = last_diagnostic.severity;
+  let mut last_anchor = last_anchor;
+  push_connector(render_lines, *row, last_anchor, BL_CORNER, severity);
+
+  let mut stacked_count = 1usize;
+  for (diagnostic, anchor) in diagnostics.iter().rev().skip(1) {
+    let symbol = match anchor.cmp(&start) {
+      Ordering::Less => break,
+      Ordering::Equal => STACK,
+      Ordering::Greater => MULTI,
+    };
+
+    stacked_count = stacked_count.saturating_add(1);
+    let previous_severity = severity;
+    severity = max_diagnostic_severity(severity, diagnostic.severity);
+    if *anchor == last_anchor && severity == previous_severity {
+      continue;
+    }
+
+    for col in anchor.saturating_add(1)..last_anchor {
+      push_connector(render_lines, *row, col, HOR_BAR, previous_severity);
+    }
+    push_connector(render_lines, *row, *anchor, symbol, severity);
+    last_anchor = *anchor;
+  }
+
+  if last_anchor != start {
+    for col in start.saturating_add(1)..last_anchor {
+      push_connector(render_lines, *row, col, HOR_BAR, severity);
+    }
+    push_connector(render_lines, *row, start, TR_CORNER, severity);
+  }
+
+  *row = row.saturating_add(1);
+
+  let split_at = diagnostics.len().saturating_sub(stacked_count);
+  let stacked = diagnostics.split_off(split_at);
+  for index in (0..stacked.len()).rev() {
+    let (diagnostic, _) = &stacked[index];
+    let next_severity = max_diagnostic_severity_slice(&stacked[..index]);
+    draw_diagnostic_entry(
+      render_lines,
+      row,
+      start,
+      diagnostic,
+      next_severity,
+      config,
+      viewport_width,
+    );
+  }
+}
+
+fn draw_diagnostics(
+  render_lines: &mut Vec<InlineDiagnosticRenderLine>,
+  diagnostics: &mut Vec<(InlineDiagnostic, u16)>,
+  row_start: usize,
+  config: &InlineDiagnosticsConfig,
+  viewport_width: u16,
+  row: &mut usize,
+) {
+  let mut reversed = diagnostics.drain(..).rev().peekable();
+  let mut last_anchor = viewport_width;
+  while let Some((diagnostic, anchor)) = reversed.next() {
+    if anchor != last_anchor {
+      for draw_row in row_start..*row {
+        push_connector(render_lines, draw_row, anchor, VER_BAR, diagnostic.severity);
+      }
+    }
+
+    let next_severity = reversed.peek().and_then(|(next_diagnostic, next_anchor)| {
+      (*next_anchor == anchor).then_some(next_diagnostic.severity)
+    });
+    draw_diagnostic_entry(
+      render_lines,
+      row,
+      anchor,
+      &diagnostic,
+      next_severity,
+      config,
+      viewport_width,
+    );
+    last_anchor = anchor;
+  }
+}
+
+fn draw_diagnostic_entry(
+  render_lines: &mut Vec<InlineDiagnosticRenderLine>,
+  row: &mut usize,
+  anchor_col: u16,
+  diagnostic: &InlineDiagnostic,
+  next_severity: Option<DiagnosticSeverity>,
+  config: &InlineDiagnosticsConfig,
+  viewport_width: u16,
+) {
+  let severity = diagnostic.severity;
+  let (corner, corner_severity) = if let Some(next) = next_severity {
+    (STACK, max_diagnostic_severity(next, severity))
+  } else {
+    (BR_CORNER, severity)
+  };
+  push_connector(render_lines, *row, anchor_col, corner, corner_severity);
+  for offset in 0..config.prefix_len {
+    push_connector(
+      render_lines,
+      *row,
+      anchor_col.saturating_add(offset).saturating_add(1),
+      HOR_BAR,
+      severity,
+    );
+  }
+
+  let text_col = anchor_col.saturating_add(config.prefix_len).saturating_add(1);
+  let text_fmt = config.text_format(text_col, viewport_width);
+  let wrapped = soft_wrap_message_lines(diagnostic.message.as_ref(), &text_fmt);
+  if wrapped.is_empty() {
+    return;
+  }
+  let wrapped_len = wrapped.len();
+  for (idx, line) in wrapped.into_iter().enumerate() {
+    render_lines.push(InlineDiagnosticRenderLine {
+      row: row.saturating_add(idx),
+      col: text_col as usize,
+      text: line,
+      severity,
+    });
+  }
+
+  let extra_rows = wrapped_len.saturating_sub(1);
+  *row = row.saturating_add(1);
+  if let Some(next) = next_severity {
+    for _ in 0..extra_rows {
+      push_connector(render_lines, *row, anchor_col, VER_BAR, next);
+      *row = row.saturating_add(1);
+    }
+  } else {
+    *row = row.saturating_add(extra_rows);
+  }
+}
+
+fn push_connector(
+  render_lines: &mut Vec<InlineDiagnosticRenderLine>,
+  row: usize,
+  col: u16,
+  glyph: &'static str,
+  severity: DiagnosticSeverity,
+) {
+  render_lines.push(InlineDiagnosticRenderLine {
+    row,
+    col: col as usize,
+    text: glyph.into(),
+    severity,
+  });
+}
+
+fn max_diagnostic_severity(
+  left: DiagnosticSeverity,
+  right: DiagnosticSeverity,
+) -> DiagnosticSeverity {
+  if diagnostic_severity_rank(left) >= diagnostic_severity_rank(right) {
+    left
+  } else {
+    right
+  }
+}
+
+fn max_diagnostic_severity_slice(
+  diagnostics: &[(InlineDiagnostic, u16)],
+) -> Option<DiagnosticSeverity> {
+  diagnostics
+    .iter()
+    .map(|(diagnostic, _)| diagnostic.severity)
+    .max_by_key(|severity| diagnostic_severity_rank(*severity))
 }
 
 fn diagnostic_severity_rank(severity: DiagnosticSeverity) -> u8 {

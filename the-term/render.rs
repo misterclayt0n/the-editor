@@ -408,6 +408,15 @@ fn inline_diagnostics_config() -> InlineDiagnosticsConfig {
   config
 }
 
+fn end_of_line_diagnostics_filter() -> InlineDiagnosticFilter {
+  if let Ok(value) = env::var("THE_TERM_END_OF_LINE_DIAGNOSTICS")
+    && let Some(filter) = parse_inline_diagnostic_filter(&value)
+  {
+    return filter;
+  }
+  InlineDiagnosticFilter::Enable(DiagnosticSeverity::Hint)
+}
+
 fn primary_cursor_char_idx(ctx: &Ctx) -> Option<usize> {
   let doc = ctx.editor.document();
   let range = doc.selection().ranges().first().copied()?;
@@ -499,6 +508,138 @@ fn draw_inline_diagnostic_lines(
     let style = inline_diagnostic_text_style(&ctx.ui_theme, line.severity);
     let max_width = content_width.saturating_sub(visible_col);
     buf.set_stringn(x, y, line.text.as_str(), max_width, style);
+  }
+}
+
+fn select_end_of_line_diagnostic<'a>(
+  diagnostics: impl Iterator<Item = &'a Diagnostic>,
+  inline_filter: InlineDiagnosticFilter,
+  eol_filter: InlineDiagnosticFilter,
+) -> Option<&'a Diagnostic> {
+  let InlineDiagnosticFilter::Enable(eol_min) = eol_filter else {
+    return None;
+  };
+  let eol_min_rank = diagnostic_severity_rank(eol_min);
+
+  diagnostics
+    .filter(|diagnostic| {
+      let severity = diagnostic.severity.unwrap_or(DiagnosticSeverity::Warning);
+      let severity_rank = diagnostic_severity_rank(severity);
+      if severity_rank < eol_min_rank {
+        return false;
+      }
+      match inline_filter {
+        InlineDiagnosticFilter::Disable => true,
+        InlineDiagnosticFilter::Enable(inline_min) => {
+          severity_rank < diagnostic_severity_rank(inline_min)
+        },
+      }
+    })
+    .max_by_key(|diagnostic| {
+      diagnostic_severity_rank(diagnostic.severity.unwrap_or(DiagnosticSeverity::Warning))
+    })
+}
+
+fn draw_end_of_line_diagnostics(
+  buf: &mut Buffer,
+  area: Rect,
+  content_x: u16,
+  plan: &RenderPlan,
+  ctx: &Ctx,
+) {
+  let content_width = plan.content_width();
+  if content_width == 0 {
+    return;
+  }
+
+  let Some(lsp_state) = ctx.lsp_document.as_ref().filter(|state| state.opened) else {
+    return;
+  };
+  let Some(document_diagnostics) = ctx.diagnostics.document(&lsp_state.uri) else {
+    return;
+  };
+  if document_diagnostics.diagnostics.is_empty() {
+    return;
+  }
+
+  let eol_filter = end_of_line_diagnostics_filter();
+  if matches!(eol_filter, InlineDiagnosticFilter::Disable) {
+    return;
+  }
+
+  let inline_config =
+    inline_diagnostics_config().prepare(content_width.max(1) as u16, ctx.mode() != Mode::Insert);
+  let cursor_doc_line = primary_cursor_line_idx(ctx);
+
+  let mut line_end_cols: BTreeMap<u16, usize> = BTreeMap::new();
+  for line in &plan.lines {
+    let end_col = line
+      .spans
+      .iter()
+      .map(|span| span.col as usize + span.cols as usize)
+      .max()
+      .unwrap_or(0);
+    line_end_cols
+      .entry(line.row)
+      .and_modify(|current| *current = (*current).max(end_col))
+      .or_insert(end_col);
+  }
+
+  for visible_row in &plan.visible_rows {
+    if !visible_row.first_visual_line {
+      continue;
+    }
+
+    let inline_filter = if cursor_doc_line == Some(visible_row.doc_line) {
+      inline_config.cursor_line
+    } else {
+      inline_config.other_lines
+    };
+    let Some(diagnostic) = select_end_of_line_diagnostic(
+      document_diagnostics
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.range.start.line as usize == visible_row.doc_line),
+      inline_filter,
+      eol_filter,
+    ) else {
+      continue;
+    };
+
+    let message = diagnostic
+      .message
+      .lines()
+      .map(str::trim)
+      .filter(|line| !line.is_empty())
+      .collect::<Vec<_>>()
+      .join("  ");
+    if message.is_empty() {
+      continue;
+    }
+
+    let start_col = line_end_cols
+      .get(&visible_row.row)
+      .copied()
+      .unwrap_or(0)
+      .saturating_add(1);
+    if start_col >= content_width {
+      continue;
+    }
+
+    let x = content_x + start_col as u16;
+    let y = area.y + visible_row.row;
+    if x >= area.x + area.width || y >= area.y + area.height {
+      continue;
+    }
+
+    let max_width = content_width.saturating_sub(start_col);
+    if max_width == 0 {
+      continue;
+    }
+
+    let severity = diagnostic.severity.unwrap_or(DiagnosticSeverity::Warning);
+    let style = inline_diagnostic_text_style(&ctx.ui_theme, severity);
+    buf.set_stringn(x, y, message, max_width, style);
   }
 }
 
@@ -4304,6 +4445,7 @@ pub fn render(f: &mut Frame, ctx: &mut Ctx) {
       }
     }
 
+    draw_end_of_line_diagnostics(buf, area, content_x, &plan, ctx);
     draw_inline_diagnostic_lines(buf, area, content_x, &plan, ctx);
 
     // Draw cursors
@@ -4463,12 +4605,14 @@ mod tests {
     inline_diagnostics_from_document,
     language_filename_hints,
     max_content_width_for_intent,
+    select_end_of_line_diagnostic,
     panel_box_size,
     parse_inline_diagnostic_filter,
     parse_markdown_fence_language,
     term_command_palette_filtered_selection,
   };
   use crate::Ctx;
+  use the_lib::render::InlineDiagnosticFilter;
 
   fn flatten_rows(rows: &[Vec<StyledTextRun>]) -> Vec<String> {
     rows
@@ -4554,6 +4698,60 @@ mod tests {
     let mapped = inline_diagnostics_from_document(&text, &diagnostics);
     assert_eq!(mapped.len(), 1);
     assert_eq!(mapped[0].start_char_idx, 2);
+  }
+
+  fn diagnostic_with_severity(severity: DiagnosticSeverity) -> Diagnostic {
+    Diagnostic {
+      range: DiagnosticRange {
+        start: DiagnosticPosition {
+          line:      0,
+          character: 0,
+        },
+        end:   DiagnosticPosition {
+          line:      0,
+          character: 1,
+        },
+      },
+      severity: Some(severity),
+      code: None,
+      source: None,
+      message: format!("{severity:?}"),
+    }
+  }
+
+  #[test]
+  fn end_of_line_diagnostic_selects_hidden_diagnostic_when_inline_filters_it_out() {
+    let diagnostics = vec![
+      diagnostic_with_severity(DiagnosticSeverity::Error),
+      diagnostic_with_severity(DiagnosticSeverity::Hint),
+    ];
+
+    let selected = select_end_of_line_diagnostic(
+      diagnostics.iter(),
+      InlineDiagnosticFilter::Enable(DiagnosticSeverity::Warning),
+      InlineDiagnosticFilter::Enable(DiagnosticSeverity::Hint),
+    )
+    .expect("expected hidden diagnostic");
+
+    assert_eq!(selected.severity, Some(DiagnosticSeverity::Hint));
+  }
+
+  #[test]
+  fn end_of_line_diagnostic_uses_highest_severity_when_inline_disabled() {
+    let diagnostics = vec![
+      diagnostic_with_severity(DiagnosticSeverity::Information),
+      diagnostic_with_severity(DiagnosticSeverity::Error),
+      diagnostic_with_severity(DiagnosticSeverity::Warning),
+    ];
+
+    let selected = select_end_of_line_diagnostic(
+      diagnostics.iter(),
+      InlineDiagnosticFilter::Disable,
+      InlineDiagnosticFilter::Enable(DiagnosticSeverity::Hint),
+    )
+    .expect("expected diagnostic");
+
+    assert_eq!(selected.severity, Some(DiagnosticSeverity::Error));
   }
 
   #[test]

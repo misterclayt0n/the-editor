@@ -190,6 +190,11 @@ impl InlineDiagnosticsLineAnnotation {
     config: InlineDiagnosticsConfig,
     render_data: SharedInlineDiagnosticsRenderData,
   ) -> Self {
+    {
+      let mut render_data = render_data.borrow_mut();
+      render_data.lines.clear();
+      render_data.last_trace = None;
+    }
     diagnostics.sort_by_key(|diag| diag.start_char_idx);
     Self {
       diagnostics,
@@ -211,7 +216,6 @@ impl InlineDiagnosticsLineAnnotation {
     self.cursor_line = false;
     self.line_stack.clear();
     self.line_start_char = 0;
-    self.render_data.borrow_mut().lines.clear();
   }
 
   fn next_anchor(&self, current_char_idx: usize) -> usize {

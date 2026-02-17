@@ -156,9 +156,9 @@ use the_lsp::{
   parse_signature_help_response,
   parse_workspace_edit_response,
   parse_workspace_symbols_response,
-  render_lsp_snippet,
   references_params,
   rename_params,
+  render_lsp_snippet,
   signature_help_params,
   text_sync::{
     char_idx_to_utf16_position,
@@ -217,6 +217,14 @@ pub enum FilePickerDragState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CompletionDocsDragState {
   Scrollbar { grab_offset: u16 },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DiagnosticUnderlineRenderSpan {
+  pub row:       u16,
+  pub start_col: u16,
+  pub end_col:   u16,
+  pub severity:  DiagnosticSeverity,
 }
 
 #[derive(Debug)]
@@ -320,10 +328,7 @@ impl SignatureHelpTriggerSource {
   fn to_lsp_context(self) -> LspSignatureHelpContext {
     match self {
       Self::Manual => LspSignatureHelpContext::invoked(),
-      Self::TriggerCharacter {
-        ch,
-        is_retrigger,
-      } => {
+      Self::TriggerCharacter { ch, is_retrigger } => {
         if is_retrigger {
           LspSignatureHelpContext::trigger_character_retrigger(ch)
         } else {
@@ -530,6 +535,8 @@ pub struct Ctx {
   pub overlay_annotations:          Vec<Overlay>,
   /// Inline diagnostic ghost lines collected during render-plan construction.
   pub inline_diagnostic_lines:      Vec<InlineDiagnosticRenderLine>,
+  /// Underline spans for diagnostic ranges in the current viewport.
+  pub diagnostic_underlines:        Vec<DiagnosticUnderlineRenderSpan>,
   /// Lines to keep above/below cursor when scrolling.
   pub scrolloff:                    usize,
 }
@@ -865,6 +872,7 @@ impl Ctx {
       inline_annotations: Vec::new(),
       overlay_annotations: Vec::new(),
       inline_diagnostic_lines: Vec::new(),
+      diagnostic_underlines: Vec::new(),
       scrolloff: 5,
     };
     ctx.refresh_vcs_diff_base();
@@ -1942,18 +1950,18 @@ impl Ctx {
         return false;
       };
 
-      let snippet_base = if prepared.cursor_origin == Some(CompletionSnippetCursorOrigin::PrimaryEdit)
-      {
-        item.primary_edit.as_ref().map(|edit| {
-          utf16_position_to_char_idx(
-            self.editor.document().text(),
-            edit.range.start.line,
-            edit.range.start.character,
-          )
-        })
-      } else {
-        None
-      };
+      let snippet_base =
+        if prepared.cursor_origin == Some(CompletionSnippetCursorOrigin::PrimaryEdit) {
+          item.primary_edit.as_ref().map(|edit| {
+            utf16_position_to_char_idx(
+              self.editor.document().text(),
+              edit.range.start.line,
+              edit.range.start.character,
+            )
+          })
+        } else {
+          None
+        };
 
       let mut edits = Vec::with_capacity(1 + item.additional_edits.len());
       if let Some(primary) = item.primary_edit {
@@ -2696,10 +2704,8 @@ impl Ctx {
           } else {
             SignatureHelpTriggerSource::ContentChangeRetrigger
           };
-          return self.schedule_auto_signature_help(
-            trigger,
-            lsp_signature_help_retrigger_latency(),
-          );
+          return self
+            .schedule_auto_signature_help(trigger, lsp_signature_help_retrigger_latency());
         }
         self.cancel_auto_signature_help();
         false
@@ -3650,7 +3656,10 @@ fn promote_callable_completion_fallback(
   }
 
   let (text, origin) = if let Some(primary) = item.primary_edit.as_mut() {
-    (&mut primary.new_text, CompletionSnippetCursorOrigin::PrimaryEdit)
+    (
+      &mut primary.new_text,
+      CompletionSnippetCursorOrigin::PrimaryEdit,
+    )
   } else {
     if item.insert_text.is_none() {
       item.insert_text = Some(item.label.clone());
@@ -4590,18 +4599,18 @@ mod tests {
   };
 
   use super::{
+    CompletionSnippetCursorOrigin,
     Ctx,
+    PendingAutoSignatureHelp,
+    SignatureHelpTriggerSource,
     WatchedFileEventsState,
+    capabilities_support_single_char,
     completion_item_accepts_commit_char,
     completion_match_score,
     completion_menu_detail_text,
     completion_menu_documentation_text,
-    capabilities_support_single_char,
-    normalize_completion_item_for_apply,
     merge_resolved_completion_item,
-    CompletionSnippetCursorOrigin,
-    PendingAutoSignatureHelp,
-    SignatureHelpTriggerSource,
+    normalize_completion_item_for_apply,
   };
   use crate::{
     dispatch::build_dispatch,
@@ -4638,10 +4647,7 @@ mod tests {
       render_lsp_snippet("foo($1, ${2:bar}, ${3|x,y|})$0").text,
       "foo(, bar, x)"
     );
-    assert_eq!(
-      render_lsp_snippet("${TM_FILENAME:main}.rs").text,
-      "main.rs"
-    );
+    assert_eq!(render_lsp_snippet("${TM_FILENAME:main}.rs").text, "main.rs");
     assert_eq!(render_lsp_snippet("a\\$b\\}").text, "a$b}");
   }
 

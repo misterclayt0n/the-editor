@@ -15,6 +15,7 @@ mod picker_layout;
 mod render;
 mod terminal;
 mod theme;
+mod undercurl_backend;
 
 use std::{
   sync::mpsc::TryRecvError,

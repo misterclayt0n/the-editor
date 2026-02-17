@@ -555,11 +555,13 @@ pub fn build_search_prompt_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNode>
   }
 
   let mut input = UiInput::new("search_prompt_input", prompt.query.clone());
-  input.placeholder = Some(match prompt.kind {
-    SearchPromptKind::Search => "search",
-    SearchPromptKind::SelectRegex => "select",
-  }
-  .to_string());
+  input.placeholder = Some(
+    match prompt.kind {
+      SearchPromptKind::Search => "search",
+      SearchPromptKind::SelectRegex => "select",
+    }
+    .to_string(),
+  );
   input.cursor = byte_to_char_idx(&prompt.query, prompt.cursor);
   input.style = input.style.with_role("search_prompt");
   input.style.accent = Some(UiColor::Token(UiColorToken::Placeholder));

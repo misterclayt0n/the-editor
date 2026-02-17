@@ -680,20 +680,24 @@ fn handle_server_request_message(
     "window/workDoneProgress/create" => {
       jsonrpc::Message::response_ok(request.id.clone(), Some(Value::Null))
     },
-    "workspace/configuration" => jsonrpc::Message::response_ok(
-      request.id.clone(),
-      Some(workspace_configuration_result(request.params.as_ref())),
-    ),
+    "workspace/configuration" => {
+      jsonrpc::Message::response_ok(
+        request.id.clone(),
+        Some(workspace_configuration_result(request.params.as_ref())),
+      )
+    },
     // Many servers use dynamic capability registration.
     "client/registerCapability" | "client/unregisterCapability" => {
       jsonrpc::Message::response_ok(request.id.clone(), Some(Value::Null))
     },
-    _ => jsonrpc::Message::response_err(
-      request.id.clone(),
-      -32601,
-      format!("unsupported server request: {}", request.method),
-      None,
-    ),
+    _ => {
+      jsonrpc::Message::response_err(
+        request.id.clone(),
+        -32601,
+        format!("unsupported server request: {}", request.method),
+        None,
+      )
+    },
   };
 
   if let Err(err) = transport.send(response) {

@@ -132,10 +132,10 @@ pub use pending::PendingInput;
 pub use search_prompt::{
   SearchPromptKind,
   SearchPromptState,
-  finalize_select_regex,
   finalize_search,
-  update_search_prompt_preview,
+  finalize_select_regex,
   update_search_preview,
+  update_search_prompt_preview,
   update_select_regex_preview,
 };
 pub use signature_help::{
@@ -145,9 +145,9 @@ pub use signature_help::{
   SignatureHelpState,
   build_signature_help_ui,
   close_signature_help,
-  signature_help_markdown,
   show_signature_help,
   signature_help_docs_scroll,
+  signature_help_markdown,
   signature_help_next,
   signature_help_prev,
 };

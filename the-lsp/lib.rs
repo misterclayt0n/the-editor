@@ -51,8 +51,8 @@ pub use editing::{
   parse_formatting_response,
   parse_signature_help_response,
   parse_workspace_edit_response,
-  render_lsp_snippet,
   rename_params,
+  render_lsp_snippet,
   signature_help_params,
 };
 pub use event::{

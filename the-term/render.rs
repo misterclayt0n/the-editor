@@ -51,8 +51,8 @@ use the_lib::{
     DiagnosticSeverity,
   },
   render::{
-    InlineDiagnosticFilter,
     InlineDiagnostic,
+    InlineDiagnosticFilter,
     InlineDiagnosticsConfig,
     InlineDiagnosticsLineAnnotation,
     LayoutIntent,
@@ -96,6 +96,7 @@ use the_lib::{
     gutter_width_for_document,
     text_annotations::TextAnnotations,
     ui_theme::resolve_ui_tree,
+    visual_pos_at_char,
   },
   selection::Range,
   syntax::{
@@ -107,6 +108,7 @@ use the_lsp::text_sync::utf16_position_to_char_idx;
 
 use crate::{
   Ctx,
+  ctx::DiagnosticUnderlineRenderSpan,
   docs_panel::{
     DocsPanelConfig,
     DocsPanelSource,
@@ -183,6 +185,9 @@ fn lib_style_to_ratatui(style: LibStyle) -> Style {
   }
   if let Some(bg) = style.bg {
     out = out.bg(lib_color_to_ratatui(bg));
+  }
+  if let Some(color) = style.underline_color {
+    out = out.underline_color(lib_color_to_ratatui(color));
   }
   if let Some(underline) = style.underline_style {
     if !matches!(underline, LibUnderlineStyle::Reset) {
@@ -281,6 +286,210 @@ fn active_diagnostics_by_line(ctx: &Ctx) -> BTreeMap<usize, DiagnosticSeverity> 
   out
 }
 
+fn diagnostic_theme_style(
+  theme: &the_lib::render::theme::Theme,
+  severity: DiagnosticSeverity,
+) -> LibStyle {
+  match severity {
+    DiagnosticSeverity::Error => {
+      theme
+        .try_get("error")
+        .or_else(|| theme.try_get("diagnostic.error"))
+        .unwrap_or_default()
+    },
+    DiagnosticSeverity::Warning => {
+      theme
+        .try_get("warning")
+        .or_else(|| theme.try_get("diagnostic.warning"))
+        .unwrap_or_default()
+    },
+    DiagnosticSeverity::Information => {
+      theme
+        .try_get("info")
+        .or_else(|| theme.try_get("diagnostic.info"))
+        .unwrap_or_default()
+    },
+    DiagnosticSeverity::Hint => {
+      theme
+        .try_get("hint")
+        .or_else(|| theme.try_get("diagnostic.hint"))
+        .unwrap_or_default()
+    },
+  }
+}
+
+fn diagnostic_underline_theme_style(
+  theme: &the_lib::render::theme::Theme,
+  severity: DiagnosticSeverity,
+) -> LibStyle {
+  let mut style = match severity {
+    DiagnosticSeverity::Error => {
+      theme
+        .try_get("diagnostic.error")
+        .or_else(|| theme.try_get("error"))
+        .unwrap_or_default()
+    },
+    DiagnosticSeverity::Warning => {
+      theme
+        .try_get("diagnostic.warning")
+        .or_else(|| theme.try_get("warning"))
+        .unwrap_or_default()
+    },
+    DiagnosticSeverity::Information => {
+      theme
+        .try_get("diagnostic.info")
+        .or_else(|| theme.try_get("info"))
+        .unwrap_or_default()
+    },
+    DiagnosticSeverity::Hint => {
+      theme
+        .try_get("diagnostic.hint")
+        .or_else(|| theme.try_get("hint"))
+        .unwrap_or_default()
+    },
+  };
+
+  if style.underline_color.is_none()
+    && let Some(fg) = style.fg
+  {
+    style = style.underline_color(fg);
+  }
+  if style.underline_style.is_none()
+    || matches!(style.underline_style, Some(LibUnderlineStyle::Reset))
+  {
+    style = style.underline_style(LibUnderlineStyle::Line);
+  }
+
+  style
+}
+
+fn diagnostic_visible_row_end_cols(plan: &RenderPlan) -> Vec<usize> {
+  let mut row_end_cols = vec![plan.scroll.col; plan.viewport.height as usize];
+  for line in &plan.lines {
+    let row = line.row as usize;
+    if row >= row_end_cols.len() {
+      continue;
+    }
+    let end_col = line
+      .spans
+      .iter()
+      .map(|span| plan.scroll.col + span.col.saturating_add(span.cols) as usize)
+      .max()
+      .unwrap_or(plan.scroll.col);
+    row_end_cols[row] = row_end_cols[row].max(end_col);
+  }
+  row_end_cols
+}
+
+fn diagnostic_row_visible_end_col(
+  plan: &RenderPlan,
+  row: usize,
+  row_visible_end_cols: &[usize],
+) -> usize {
+  let relative = row.saturating_sub(plan.scroll.row);
+  row_visible_end_cols
+    .get(relative)
+    .copied()
+    .unwrap_or(plan.scroll.col)
+}
+
+fn diagnostic_underlines_for_document<'a>(
+  text: &'a Rope,
+  diagnostics: &[Diagnostic],
+  plan: &RenderPlan,
+  text_fmt: &'a the_lib::render::text_format::TextFormat,
+  annotations: &mut TextAnnotations<'a>,
+) -> Vec<DiagnosticUnderlineRenderSpan> {
+  if diagnostics.is_empty() {
+    return Vec::new();
+  }
+
+  let row_start = plan.scroll.row;
+  let row_end = row_start.saturating_add(plan.viewport.height as usize);
+  let col_start = plan.scroll.col;
+  let col_end = col_start.saturating_add(plan.content_width());
+  if row_start >= row_end || col_start >= col_end {
+    return Vec::new();
+  }
+
+  let row_visible_end_cols = diagnostic_visible_row_end_cols(plan);
+  let text_slice = text.slice(..);
+  let text_len = text.len_chars();
+  let mut out = Vec::with_capacity(diagnostics.len());
+
+  for diagnostic in diagnostics {
+    let severity = diagnostic.severity.unwrap_or(DiagnosticSeverity::Warning);
+
+    let mut start_char_idx = utf16_position_to_char_idx(
+      text,
+      diagnostic.range.start.line,
+      diagnostic.range.start.character,
+    )
+    .min(text_len);
+    let mut end_char_idx = utf16_position_to_char_idx(
+      text,
+      diagnostic.range.end.line,
+      diagnostic.range.end.character,
+    )
+    .min(text_len);
+
+    if end_char_idx < start_char_idx {
+      std::mem::swap(&mut start_char_idx, &mut end_char_idx);
+    }
+    if end_char_idx == start_char_idx {
+      if start_char_idx >= text_len {
+        continue;
+      }
+      end_char_idx = start_char_idx.saturating_add(1).min(text_len);
+    }
+
+    let Some(mut start_pos) = visual_pos_at_char(text_slice, text_fmt, annotations, start_char_idx)
+    else {
+      continue;
+    };
+    let Some(mut end_pos) = visual_pos_at_char(text_slice, text_fmt, annotations, end_char_idx)
+    else {
+      continue;
+    };
+
+    if (end_pos.row, end_pos.col) < (start_pos.row, start_pos.col) {
+      std::mem::swap(&mut start_pos, &mut end_pos);
+    }
+
+    for row in start_pos.row..=end_pos.row {
+      if row < row_start || row >= row_end {
+        continue;
+      }
+
+      let row_end_col = diagnostic_row_visible_end_col(plan, row, &row_visible_end_cols);
+      let (mut from, mut to) = if row == start_pos.row && row == end_pos.row {
+        (start_pos.col, end_pos.col)
+      } else if row == start_pos.row {
+        (start_pos.col, row_end_col)
+      } else if row == end_pos.row {
+        (col_start, end_pos.col)
+      } else {
+        (col_start, row_end_col)
+      };
+
+      from = from.max(col_start);
+      to = to.min(row_end_col).min(col_end);
+      if to <= from {
+        continue;
+      }
+
+      out.push(DiagnosticUnderlineRenderSpan {
+        row: (row - row_start) as u16,
+        start_col: (from - col_start) as u16,
+        end_col: (to - col_start) as u16,
+        severity,
+      });
+    }
+  }
+
+  out
+}
+
 fn active_inline_diagnostics(ctx: &Ctx) -> Vec<InlineDiagnostic> {
   let Some(state) = ctx.lsp_document.as_ref().filter(|state| state.opened) else {
     return Vec::new();
@@ -361,10 +570,12 @@ fn inline_diagnostic_filter_label(filter: InlineDiagnosticFilter) -> &'static st
 
 fn inline_diagnostics_trace_enabled() -> bool {
   match env::var("THE_TERM_INLINE_DIAGNOSTICS_TRACE") {
-    Ok(value) => matches!(
-      value.trim().to_ascii_lowercase().as_str(),
-      "1" | "true" | "yes" | "on"
-    ),
+    Ok(value) => {
+      matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "1" | "true" | "yes" | "on"
+      )
+    },
     Err(_) => false,
   }
 }
@@ -446,32 +657,7 @@ fn inline_diagnostic_text_style(
   severity: DiagnosticSeverity,
 ) -> Style {
   let base = lib_style_to_ratatui(theme.try_get("ui.virtual").unwrap_or_default());
-  let severity_style = match severity {
-    DiagnosticSeverity::Error => {
-      theme
-        .try_get("error")
-        .or_else(|| theme.try_get("diagnostic.error"))
-        .unwrap_or_default()
-    },
-    DiagnosticSeverity::Warning => {
-      theme
-        .try_get("warning")
-        .or_else(|| theme.try_get("diagnostic.warning"))
-        .unwrap_or_default()
-    },
-    DiagnosticSeverity::Information => {
-      theme
-        .try_get("info")
-        .or_else(|| theme.try_get("diagnostic.info"))
-        .unwrap_or_default()
-    },
-    DiagnosticSeverity::Hint => {
-      theme
-        .try_get("hint")
-        .or_else(|| theme.try_get("diagnostic.hint"))
-        .unwrap_or_default()
-    },
-  };
+  let severity_style = diagnostic_theme_style(theme, severity);
   base.patch(lib_style_to_ratatui(severity_style))
 }
 
@@ -511,6 +697,31 @@ fn draw_inline_diagnostic_lines(
     let style = inline_diagnostic_text_style(&ctx.ui_theme, line.severity);
     let max_width = content_width.saturating_sub(visible_col);
     buf.set_stringn(x, y, line.text.as_str(), max_width, style);
+  }
+}
+
+fn draw_diagnostic_underlines(buf: &mut Buffer, area: Rect, content_x: u16, ctx: &Ctx) {
+  for underline in &ctx.diagnostic_underlines {
+    let y = area.y.saturating_add(underline.row);
+    if y >= area.y + area.height {
+      continue;
+    }
+
+    let x_start = content_x.saturating_add(underline.start_col);
+    let x_end = content_x.saturating_add(underline.end_col);
+    if x_start >= area.x + area.width || x_start >= x_end {
+      continue;
+    }
+
+    let style = lib_style_to_ratatui(diagnostic_underline_theme_style(
+      &ctx.ui_theme,
+      underline.severity,
+    ));
+    let x_limit = x_end.min(area.x + area.width);
+    for x in x_start..x_limit {
+      let cell = buf.get_mut(x, y);
+      cell.set_style(cell.style().patch(style));
+    }
   }
 }
 
@@ -4274,18 +4485,20 @@ pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> Ren
       "message_preview": diag.message.as_str().chars().take(120).collect::<String>(),
     })
   });
-  let lsp_diag_count = ctx
+  let diagnostics_for_underlines = ctx
     .lsp_document
     .as_ref()
     .filter(|state| state.opened)
     .and_then(|state| ctx.diagnostics.document(&state.uri))
-    .map_or(0usize, |doc| doc.diagnostics.len());
+    .map(|doc| doc.diagnostics.clone())
+    .unwrap_or_default();
+  let lsp_diag_count = diagnostics_for_underlines.len();
   let mut inline_enable_cursor_line = false;
   let mut inline_config_snapshot: Option<InlineDiagnosticsConfig> = None;
   if !inline_diagnostics.is_empty() {
     inline_enable_cursor_line = ctx.mode() != Mode::Insert;
-    let inline_config =
-      inline_diagnostics_config().prepare(text_fmt.viewport_width.max(1), inline_enable_cursor_line);
+    let inline_config = inline_diagnostics_config()
+      .prepare(text_fmt.viewport_width.max(1), inline_enable_cursor_line);
     inline_config_snapshot = Some(inline_config.clone());
     if !inline_config.disabled() {
       let cursor_char_idx = primary_cursor_char_idx(ctx).unwrap_or(0);
@@ -4305,9 +4518,9 @@ pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> Ren
   let allow_cache_refresh = ctx.syntax_highlight_refresh_allowed();
 
   // Build the render plan (with or without syntax highlighting).
-  let mut plan = {
+  let (mut plan, diagnostic_underlines) = {
     let (doc, render_cache) = ctx.editor.document_and_cache();
-    if let (Some(loader), Some(syntax)) = (&ctx.loader, doc.syntax()) {
+    let plan = if let (Some(loader), Some(syntax)) = (&ctx.loader, doc.syntax()) {
       // Calculate line range for highlighting
       let line_range = view.scroll.row..(view.scroll.row + view.viewport.height as usize);
 
@@ -4346,9 +4559,18 @@ pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> Ren
         render_cache,
         styles,
       )
-    }
+    };
+    let diagnostic_underlines = diagnostic_underlines_for_document(
+      doc.text(),
+      &diagnostics_for_underlines,
+      &plan,
+      text_fmt,
+      &mut annotations,
+    );
+    (plan, diagnostic_underlines)
   };
 
+  ctx.diagnostic_underlines = diagnostic_underlines;
   let inline_render_trace = inline_diagnostic_render_data.borrow().last_trace.clone();
   ctx.inline_diagnostic_lines = inline_diagnostic_render_data.borrow().lines.clone();
   drop(annotations);
@@ -4503,6 +4725,7 @@ pub fn render(f: &mut Frame, ctx: &mut Ctx) {
       }
     }
 
+    draw_diagnostic_underlines(buf, area, content_x, ctx);
     draw_end_of_line_diagnostics(buf, area, content_x, &plan, ctx);
     draw_inline_diagnostic_lines(buf, area, content_x, &plan, ctx);
 
@@ -4639,6 +4862,7 @@ mod tests {
       DiagnosticSeverity,
     },
     render::{
+      InlineDiagnosticFilter,
       LayoutIntent,
       UiConstraints,
       UiContainer,
@@ -4663,14 +4887,13 @@ mod tests {
     inline_diagnostics_from_document,
     language_filename_hints,
     max_content_width_for_intent,
-    select_end_of_line_diagnostic,
     panel_box_size,
     parse_inline_diagnostic_filter,
     parse_markdown_fence_language,
+    select_end_of_line_diagnostic,
     term_command_palette_filtered_selection,
   };
   use crate::Ctx;
-  use the_lib::render::InlineDiagnosticFilter;
 
   fn flatten_rows(rows: &[Vec<StyledTextRun>]) -> Vec<String> {
     rows
@@ -4760,7 +4983,7 @@ mod tests {
 
   fn diagnostic_with_severity(severity: DiagnosticSeverity) -> Diagnostic {
     Diagnostic {
-      range: DiagnosticRange {
+      range:    DiagnosticRange {
         start: DiagnosticPosition {
           line:      0,
           character: 0,
@@ -4771,9 +4994,9 @@ mod tests {
         },
       },
       severity: Some(severity),
-      code: None,
-      source: None,
-      message: format!("{severity:?}"),
+      code:     None,
+      source:   None,
+      message:  format!("{severity:?}"),
     }
   }
 

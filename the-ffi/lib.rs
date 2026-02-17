@@ -71,6 +71,7 @@ use the_default::{
   OverlayRect as DefaultOverlayRect,
   SIGNATURE_HELP_ACTIVE_PARAM_END_MARKER,
   SIGNATURE_HELP_ACTIVE_PARAM_START_MARKER,
+  SearchPromptKind,
   SearchPromptState,
   close_file_picker,
   command_palette_default_selected,
@@ -78,8 +79,6 @@ use the_default::{
   command_palette_selected_filtered_index,
   completion_docs_panel_rect as default_completion_docs_panel_rect,
   completion_panel_rect as default_completion_panel_rect,
-  signature_help_panel_rect as default_signature_help_panel_rect,
-  SearchPromptKind,
   finalize_search,
   finalize_select_regex,
   handle_query_change as file_picker_handle_query_change,
@@ -87,6 +86,7 @@ use the_default::{
   refresh_matcher_state as file_picker_refresh_matcher_state,
   select_file_picker_index,
   set_file_picker_syntax_loader,
+  signature_help_panel_rect as default_signature_help_panel_rect,
   submit_file_picker,
   update_search_prompt_preview,
 };
@@ -177,8 +177,8 @@ use the_lsp::{
   LspCompletionContext,
   LspCompletionItem,
   LspCompletionItemKind,
-  LspInsertTextFormat,
   LspEvent,
+  LspInsertTextFormat,
   LspLocation,
   LspPosition,
   LspProgressKind,
@@ -988,10 +988,7 @@ impl SignatureHelpTriggerSource {
   fn to_lsp_context(self) -> LspSignatureHelpContext {
     match self {
       Self::Manual => LspSignatureHelpContext::invoked(),
-      Self::TriggerCharacter {
-        ch,
-        is_retrigger,
-      } => {
+      Self::TriggerCharacter { ch, is_retrigger } => {
         if is_retrigger {
           LspSignatureHelpContext::trigger_character_retrigger(ch)
         } else {
@@ -1077,7 +1074,7 @@ struct EditorState {
   command_palette:              CommandPaletteState,
   command_palette_style:        CommandPaletteStyle,
   completion_menu:              the_default::CompletionMenuState,
-  signature_help:              the_default::SignatureHelpState,
+  signature_help:               the_default::SignatureHelpState,
   file_picker:                  FilePickerState,
   search_prompt:                SearchPromptState,
   ui_state:                     UiState,
@@ -1630,7 +1627,10 @@ fn promote_callable_completion_fallback(
   }
 
   let (text, origin) = if let Some(primary) = item.primary_edit.as_mut() {
-    (&mut primary.new_text, CompletionSnippetCursorOrigin::PrimaryEdit)
+    (
+      &mut primary.new_text,
+      CompletionSnippetCursorOrigin::PrimaryEdit,
+    )
   } else {
     if item.insert_text.is_none() {
       item.insert_text = Some(item.label.clone());
@@ -1695,14 +1695,14 @@ struct DocsStyledTextRun {
 
 #[derive(Clone, Copy)]
 struct DocsRenderStyles {
-  base:    LibStyle,
-  heading: [LibStyle; 6],
-  bullet:  LibStyle,
-  quote:   LibStyle,
-  code:    LibStyle,
+  base:             LibStyle,
+  heading:          [LibStyle; 6],
+  bullet:           LibStyle,
+  quote:            LibStyle,
+  code:             LibStyle,
   active_parameter: LibStyle,
-  link:    LibStyle,
-  rule:    LibStyle,
+  link:             LibStyle,
+  rule:             LibStyle,
 }
 
 impl DocsRenderStyles {
@@ -2727,38 +2727,38 @@ fn file_change_type_for_path_event(kind: PathEventKind) -> FileChangeType {
 
 /// FFI-safe app wrapper with editor management.
 pub struct App {
-  inner:                       LibApp,
-  dispatch:                    DefaultDispatchStatic<App>,
-  keymaps:                     Keymaps,
-  command_registry:            CommandRegistry<App>,
-  states:                      HashMap<LibEditorId, EditorState>,
-  file_paths:                  HashMap<LibEditorId, PathBuf>,
-  vcs_provider:                DiffProviderRegistry,
-  vcs_diff_handles:            HashMap<LibEditorId, DiffHandle>,
-  active_editor:               Option<LibEditorId>,
-  should_quit:                 bool,
-  registers:                   Registers,
-  last_motion:                 Option<Motion>,
-  lsp_runtime:                 LspRuntime,
-  lsp_ready:                   bool,
-  lsp_document:                Option<LspDocumentSyncState>,
-  lsp_statusline:              LspStatuslineState,
-  lsp_spinner_index:           usize,
-  lsp_spinner_last_tick:       Instant,
-  lsp_active_progress_tokens:  HashSet<String>,
-  lsp_watched_file:            Option<LspWatchedFileState>,
-  lsp_pending_requests:        HashMap<u64, PendingLspRequestKind>,
-  lsp_completion_items:        Vec<LspCompletionItem>,
-  lsp_completion_raw_items:    Vec<Value>,
-  lsp_completion_resolved:     HashSet<usize>,
-  lsp_completion_visible:      Vec<usize>,
-  lsp_completion_start:        Option<usize>,
-  lsp_completion_generation:   u64,
-  lsp_pending_auto_completion: Option<PendingAutoCompletion>,
+  inner:                           LibApp,
+  dispatch:                        DefaultDispatchStatic<App>,
+  keymaps:                         Keymaps,
+  command_registry:                CommandRegistry<App>,
+  states:                          HashMap<LibEditorId, EditorState>,
+  file_paths:                      HashMap<LibEditorId, PathBuf>,
+  vcs_provider:                    DiffProviderRegistry,
+  vcs_diff_handles:                HashMap<LibEditorId, DiffHandle>,
+  active_editor:                   Option<LibEditorId>,
+  should_quit:                     bool,
+  registers:                       Registers,
+  last_motion:                     Option<Motion>,
+  lsp_runtime:                     LspRuntime,
+  lsp_ready:                       bool,
+  lsp_document:                    Option<LspDocumentSyncState>,
+  lsp_statusline:                  LspStatuslineState,
+  lsp_spinner_index:               usize,
+  lsp_spinner_last_tick:           Instant,
+  lsp_active_progress_tokens:      HashSet<String>,
+  lsp_watched_file:                Option<LspWatchedFileState>,
+  lsp_pending_requests:            HashMap<u64, PendingLspRequestKind>,
+  lsp_completion_items:            Vec<LspCompletionItem>,
+  lsp_completion_raw_items:        Vec<Value>,
+  lsp_completion_resolved:         HashSet<usize>,
+  lsp_completion_visible:          Vec<usize>,
+  lsp_completion_start:            Option<usize>,
+  lsp_completion_generation:       u64,
+  lsp_pending_auto_completion:     Option<PendingAutoCompletion>,
   lsp_pending_auto_signature_help: Option<PendingAutoSignatureHelp>,
-  diagnostics:                 DiagnosticsState,
-  ui_theme:                    Theme,
-  loader:                      Option<Arc<Loader>>,
+  diagnostics:                     DiagnosticsState,
+  ui_theme:                        Theme,
+  loader:                          Option<Arc<Loader>>,
 }
 
 impl App {
@@ -4315,19 +4315,19 @@ impl App {
     let has_text_edits = item.primary_edit.is_some() || !item.additional_edits.is_empty();
 
     if has_text_edits {
-      let snippet_base = if prepared.cursor_origin == Some(CompletionSnippetCursorOrigin::PrimaryEdit)
-      {
-        item.primary_edit.as_ref().map(|edit| {
-          let doc = self.active_editor_ref().document();
-          utf16_position_to_char_idx(
-            doc.text(),
-            edit.range.start.line,
-            edit.range.start.character,
-          )
-        })
-      } else {
-        None
-      };
+      let snippet_base =
+        if prepared.cursor_origin == Some(CompletionSnippetCursorOrigin::PrimaryEdit) {
+          item.primary_edit.as_ref().map(|edit| {
+            let doc = self.active_editor_ref().document();
+            utf16_position_to_char_idx(
+              doc.text(),
+              edit.range.start.line,
+              edit.range.start.character,
+            )
+          })
+        } else {
+          None
+        };
 
       let mut edits = Vec::with_capacity(1 + item.additional_edits.len());
       if let Some(primary) = item.primary_edit {
@@ -4803,10 +4803,7 @@ impl App {
           return self.schedule_auto_signature_help(
             SignatureHelpTriggerSource::TriggerCharacter {
               ch,
-              is_retrigger: self
-                .active_state_ref()
-                .signature_help
-                .active,
+              is_retrigger: self.active_state_ref().signature_help.active,
             },
             lsp_signature_help_trigger_char_latency(),
           );
@@ -4820,10 +4817,8 @@ impl App {
           } else {
             SignatureHelpTriggerSource::ContentChangeRetrigger
           };
-          return self.schedule_auto_signature_help(
-            trigger,
-            lsp_signature_help_retrigger_latency(),
-          );
+          return self
+            .schedule_auto_signature_help(trigger, lsp_signature_help_retrigger_latency());
         }
         self.cancel_auto_signature_help();
         false

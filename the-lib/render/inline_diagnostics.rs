@@ -61,14 +61,11 @@ impl Default for InlineDiagnosticsConfig {
 
 impl InlineDiagnosticsConfig {
   pub fn disabled(&self) -> bool {
-    matches!(
-      self,
-      Self {
-        cursor_line: InlineDiagnosticFilter::Disable,
-        other_lines: InlineDiagnosticFilter::Disable,
-        ..
-      }
-    )
+    matches!(self, Self {
+      cursor_line: InlineDiagnosticFilter::Disable,
+      other_lines: InlineDiagnosticFilter::Disable,
+      ..
+    })
   }
 
   pub fn prepare(&self, width: u16, enable_cursor_line: bool) -> Self {
@@ -121,7 +118,11 @@ pub struct InlineDiagnostic {
 }
 
 impl InlineDiagnostic {
-  pub fn new(start_char_idx: usize, severity: DiagnosticSeverity, message: impl Into<Tendril>) -> Self {
+  pub fn new(
+    start_char_idx: usize,
+    severity: DiagnosticSeverity,
+    message: impl Into<Tendril>,
+  ) -> Self {
     Self {
       start_char_idx,
       severity,
@@ -140,19 +141,19 @@ pub struct InlineDiagnosticRenderLine {
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct InlineDiagnosticsRenderData {
-  pub lines:       Vec<InlineDiagnosticRenderLine>,
-  pub last_trace:  Option<InlineDiagnosticsRenderTrace>,
+  pub lines:      Vec<InlineDiagnosticRenderLine>,
+  pub last_trace: Option<InlineDiagnosticsRenderTrace>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InlineDiagnosticsRenderTrace {
-  pub doc_line:               usize,
-  pub cursor_doc_line:        Option<usize>,
-  pub cursor_anchor_hit:      bool,
-  pub stack_len:              usize,
-  pub filtered_len:           usize,
-  pub emitted_line_count:     usize,
-  pub row_delta:              usize,
+  pub doc_line:                usize,
+  pub cursor_doc_line:         Option<usize>,
+  pub cursor_anchor_hit:       bool,
+  pub stack_len:               usize,
+  pub filtered_len:            usize,
+  pub emitted_line_count:      usize,
+  pub row_delta:               usize,
   pub used_cursor_line_filter: bool,
 }
 
@@ -531,7 +532,9 @@ fn draw_diagnostic_entry(
     );
   }
 
-  let text_col = anchor_col.saturating_add(config.prefix_len).saturating_add(1);
+  let text_col = anchor_col
+    .saturating_add(config.prefix_len)
+    .saturating_add(1);
   let text_fmt = config.text_format(text_col, viewport_width);
   let wrapped = soft_wrap_message_lines(diagnostic.message.as_ref(), &text_fmt);
   if wrapped.is_empty() {
@@ -641,10 +644,7 @@ fn soft_wrap_message_lines(message: &str, text_fmt: &TextFormat) -> Vec<Tendril>
     return vec![message.to_string().into()];
   }
 
-  rows
-    .into_iter()
-    .map(|row| row.into())
-    .collect()
+  rows.into_iter().map(|row| row.into()).collect()
 }
 
 #[cfg(test)]
@@ -700,12 +700,12 @@ mod tests {
       "this diagnostic should wrap into multiple lines for rendering",
     )];
     let config = InlineDiagnosticsConfig {
-      cursor_line: InlineDiagnosticFilter::Disable,
-      other_lines: InlineDiagnosticFilter::Enable(DiagnosticSeverity::Hint),
+      cursor_line:          InlineDiagnosticFilter::Disable,
+      other_lines:          InlineDiagnosticFilter::Enable(DiagnosticSeverity::Hint),
       min_diagnostic_width: 12,
-      prefix_len: 1,
-      max_wrap: 8,
-      max_diagnostics: 5,
+      prefix_len:           1,
+      max_wrap:             8,
+      max_diagnostics:      5,
     };
     let render_data: SharedInlineDiagnosticsRenderData = Rc::new(RefCell::new(Default::default()));
     let annotation = InlineDiagnosticsLineAnnotation::new(
@@ -746,12 +746,12 @@ mod tests {
       "sample inline diagnostic message",
     )];
     let config = InlineDiagnosticsConfig {
-      cursor_line: InlineDiagnosticFilter::Enable(DiagnosticSeverity::Warning),
-      other_lines: InlineDiagnosticFilter::Disable,
+      cursor_line:          InlineDiagnosticFilter::Enable(DiagnosticSeverity::Warning),
+      other_lines:          InlineDiagnosticFilter::Disable,
       min_diagnostic_width: 12,
-      prefix_len: 1,
-      max_wrap: 8,
-      max_diagnostics: 5,
+      prefix_len:           1,
+      max_wrap:             8,
+      max_diagnostics:      5,
     };
     let render_data: SharedInlineDiagnosticsRenderData = Rc::new(RefCell::new(Default::default()));
     let annotation = InlineDiagnosticsLineAnnotation::new(
@@ -790,12 +790,12 @@ mod tests {
       "sample inline diagnostic message",
     )];
     let config = InlineDiagnosticsConfig {
-      cursor_line: InlineDiagnosticFilter::Enable(DiagnosticSeverity::Warning),
-      other_lines: InlineDiagnosticFilter::Disable,
+      cursor_line:          InlineDiagnosticFilter::Enable(DiagnosticSeverity::Warning),
+      other_lines:          InlineDiagnosticFilter::Disable,
       min_diagnostic_width: 12,
-      prefix_len: 1,
-      max_wrap: 8,
-      max_diagnostics: 5,
+      prefix_len:           1,
+      max_wrap:             8,
+      max_diagnostics:      5,
     };
     let render_data: SharedInlineDiagnosticsRenderData = Rc::new(RefCell::new(Default::default()));
     let annotation = InlineDiagnosticsLineAnnotation::new(

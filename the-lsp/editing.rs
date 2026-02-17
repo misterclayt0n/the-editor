@@ -1039,11 +1039,7 @@ impl SignatureParameterLabelPayload {
       SignatureParameterLabelPayload::Offsets([start, end]) => {
         let start = utf16_code_units_to_byte_idx(signature_label, *start as usize)?;
         let end = utf16_code_units_to_byte_idx(signature_label, *end as usize)?;
-        if start >= end {
-          None
-        } else {
-          Some(start..end)
-        }
+        if start >= end { None } else { Some(start..end) }
       },
     }
   }
@@ -1477,15 +1473,9 @@ mod tests {
     assert_eq!(parsed.active_signature, 0);
     assert_eq!(parsed.signatures.len(), 1);
     let signature = &parsed.signatures[0];
-    assert_eq!(
-      signature.documentation.as_deref(),
-      Some("docs for foo")
-    );
+    assert_eq!(signature.documentation.as_deref(), Some("docs for foo"));
     assert_eq!(signature.active_parameter, Some(1));
-    assert_eq!(
-      signature.active_parameter_range,
-      Some(16..27)
-    );
+    assert_eq!(signature.active_parameter_range, Some(16..27));
   }
 
   #[test]

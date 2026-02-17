@@ -34,9 +34,9 @@ pub use highlight_adapter::SyntaxHighlightAdapter;
 pub use inline_diagnostics::{
   InlineDiagnostic,
   InlineDiagnosticFilter,
-  InlineDiagnosticsLineAnnotation,
   InlineDiagnosticRenderLine,
   InlineDiagnosticsConfig,
+  InlineDiagnosticsLineAnnotation,
   InlineDiagnosticsRenderData,
   SharedInlineDiagnosticsRenderData,
 };

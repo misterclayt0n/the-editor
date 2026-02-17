@@ -129,7 +129,6 @@ use crate::{
     handle_command_prompt_key,
   },
   completion_menu::CompletionMenuState,
-  signature_help::SignatureHelpState,
   keymap::{
     Keymaps,
     Mode,
@@ -137,6 +136,7 @@ use crate::{
     handle_key as keymap_handle_key,
   },
   message_bar::MessagePresentation,
+  signature_help::SignatureHelpState,
 };
 
 define! {
@@ -927,9 +927,7 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::InsertTab => ctx.dispatch().insert_tab(ctx, ()),
     Command::GotoLineStart { extend } => ctx.dispatch().goto_line_start(ctx, extend),
     Command::GotoFirstNonWhitespace { extend } => {
-      ctx
-        .dispatch()
-        .goto_first_nonwhitespace(ctx, extend);
+      ctx.dispatch().goto_first_nonwhitespace(ctx, extend);
     },
     Command::GotoLineEnd { extend } => ctx.dispatch().goto_line_end(ctx, extend),
     Command::PageUp { extend } => ctx.dispatch().page_up(ctx, extend),

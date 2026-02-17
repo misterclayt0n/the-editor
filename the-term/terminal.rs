@@ -25,18 +25,19 @@ use crossterm::{
 use eyre::Result;
 use ratatui::{
   Terminal as RatatuiTerminal,
-  backend::CrosstermBackend,
   prelude::Rect,
 };
 
+use crate::undercurl_backend::UndercurlCrosstermBackend;
+
 pub struct Terminal {
-  terminal: RatatuiTerminal<CrosstermBackend<Stdout>>,
+  terminal: RatatuiTerminal<UndercurlCrosstermBackend<Stdout>>,
 }
 
 impl Terminal {
   pub fn new() -> Result<Self> {
     let stdout = io::stdout();
-    let backend = CrosstermBackend::new(stdout);
+    let backend = UndercurlCrosstermBackend::new(stdout);
     let terminal = RatatuiTerminal::new(backend)?;
     Ok(Self { terminal })
   }

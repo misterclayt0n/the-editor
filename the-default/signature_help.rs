@@ -24,9 +24,9 @@ pub struct SignatureHelpItem {
 impl SignatureHelpItem {
   pub fn new(label: impl Into<String>) -> Self {
     Self {
-      label: label.into(),
-      documentation: None,
-      active_parameter: None,
+      label:                  label.into(),
+      documentation:          None,
+      active_parameter:       None,
       active_parameter_range: None,
     }
   }
@@ -110,8 +110,10 @@ fn build_signature_help_content(
     ));
   }
 
-  let signature_label =
-    signature_label_markdown(selected.label.trim(), selected.active_parameter_range.as_ref());
+  let signature_label = signature_label_markdown(
+    selected.label.trim(),
+    selected.active_parameter_range.as_ref(),
+  );
   content.push_str(signature_label.as_str());
 
   if let Some(docs) = selected
@@ -258,11 +260,7 @@ pub fn build_signature_help_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNode
   text.style = text.style.with_role("completion_docs");
   text.clip = true;
 
-  let mut container = UiContainer::column(
-    "signature_help_container",
-    0,
-    vec![UiNode::Text(text)],
-  );
+  let mut container = UiContainer::column("signature_help_container", 0, vec![UiNode::Text(text)]);
   container.style = container.style.with_role("completion_docs");
 
   let mut panel = UiPanel::new(
@@ -314,7 +312,8 @@ mod tests {
     assert_eq!(
       rendered,
       format!(
-        "```\nadd(int x, {SIGNATURE_HELP_ACTIVE_PARAM_START_MARKER}int y{SIGNATURE_HELP_ACTIVE_PARAM_END_MARKER}) -> int\n```"
+        "```\nadd(int x, {SIGNATURE_HELP_ACTIVE_PARAM_START_MARKER}int \
+         y{SIGNATURE_HELP_ACTIVE_PARAM_END_MARKER}) -> int\n```"
       )
     );
   }
@@ -332,7 +331,8 @@ mod tests {
     assert_eq!(
       content,
       format!(
-        "(1/2)\n\n```\nfoo({SIGNATURE_HELP_ACTIVE_PARAM_START_MARKER}a: i32{SIGNATURE_HELP_ACTIVE_PARAM_END_MARKER}, b: i32)\n```\n\n---\n\nFunction docs."
+        "(1/2)\n\n```\nfoo({SIGNATURE_HELP_ACTIVE_PARAM_START_MARKER}a: \
+         i32{SIGNATURE_HELP_ACTIVE_PARAM_END_MARKER}, b: i32)\n```\n\n---\n\nFunction docs."
       )
     );
   }

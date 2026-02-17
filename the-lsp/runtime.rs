@@ -676,18 +676,31 @@ fn handle_server_request_message(
     return;
   };
 
-  match request.method.as_str() {
+  let response = match request.method.as_str() {
     "window/workDoneProgress/create" => {
-      if let Err(err) = transport.send(jsonrpc::Message::response_ok(
-        request.id.clone(),
-        Some(Value::Null),
-      )) {
-        let _ = event_tx.send(LspEvent::Error(format!(
-          "failed to reply to workDoneProgress/create: {err}"
-        )));
-      }
+      jsonrpc::Message::response_ok(request.id.clone(), Some(Value::Null))
     },
-    _ => {},
+    "workspace/configuration" => jsonrpc::Message::response_ok(
+      request.id.clone(),
+      Some(workspace_configuration_result(request.params.as_ref())),
+    ),
+    // Many servers use dynamic capability registration.
+    "client/registerCapability" | "client/unregisterCapability" => {
+      jsonrpc::Message::response_ok(request.id.clone(), Some(Value::Null))
+    },
+    _ => jsonrpc::Message::response_err(
+      request.id.clone(),
+      -32601,
+      format!("unsupported server request: {}", request.method),
+      None,
+    ),
+  };
+
+  if let Err(err) = transport.send(response) {
+    let _ = event_tx.send(LspEvent::Error(format!(
+      "failed to reply to server request {}: {err}",
+      request.method
+    )));
   }
 }
 
@@ -721,6 +734,14 @@ fn handle_notification_message(message: &jsonrpc::Message, event_tx: &Sender<Lsp
     },
     _ => {},
   }
+}
+
+fn workspace_configuration_result(params: Option<&Value>) -> Value {
+  let item_count = params
+    .and_then(|value| value.get("items"))
+    .and_then(Value::as_array)
+    .map_or(0, |items| items.len());
+  Value::Array(vec![Value::Null; item_count])
 }
 
 fn check_request_timeouts(

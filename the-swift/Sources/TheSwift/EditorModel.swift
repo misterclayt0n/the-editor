@@ -12,6 +12,7 @@ final class EditorModel: ObservableObject {
     private var effectiveViewport: Rect
     let cellSize: CGSize
     let font: Font
+    let nsFont: NSFont
     private let initialFilePath: String?
     private(set) var mode: EditorMode = .normal
     @Published var pendingKeys: [String] = []
@@ -30,6 +31,7 @@ final class EditorModel: ObservableObject {
         let fontInfo = FontLoader.loadIosevka(size: 14)
         self.cellSize = fontInfo.cellSize
         self.font = fontInfo.font
+        self.nsFont = fontInfo.nsFont
         self.viewport = Rect(x: 0, y: 0, width: 80, height: 24)
         self.effectiveViewport = self.viewport
         let scroll = Position(row: 0, col: 0)
@@ -40,6 +42,11 @@ final class EditorModel: ObservableObject {
         }
         self.plan = app.render_plan(editorId)
         self.mode = EditorMode(rawValue: app.mode(editorId)) ?? .normal
+        if DiagnosticsDebugLog.enabled {
+            DiagnosticsDebugLog.log(
+                "font init: nsFont=\(fontInfo.nsFont.fontName) pointSize=\(fontInfo.nsFont.pointSize) cell=\(Int(cellSize.width))x\(Int(cellSize.height))"
+            )
+        }
         startBackgroundTimerIfNeeded()
     }
 
@@ -86,6 +93,7 @@ final class EditorModel: ObservableObject {
         updateEffectiveViewport()
 
         plan = app.render_plan(editorId)
+        debugDiagnosticsSnapshot(trigger: trigger, plan: plan)
 
         mode = EditorMode(rawValue: app.mode(editorId)) ?? .normal
         pendingKeys = fetchPendingKeys()
@@ -485,5 +493,94 @@ final class EditorModel: ObservableObject {
         if let data = line.data(using: .utf8) {
             FileHandle.standardError.write(data)
         }
+    }
+
+    private func debugDiagnosticsSnapshot(trigger: String, plan: RenderPlan) {
+        guard DiagnosticsDebugLog.enabled else { return }
+
+        let cursorSummary: String
+        let cursorCount = Int(plan.cursor_count())
+        if cursorCount > 0 {
+            let pos = plan.cursor_at(0).pos()
+            cursorSummary = "\(pos.row):\(pos.col)"
+        } else {
+            cursorSummary = "none"
+        }
+
+        let lineCount = Int(plan.line_count())
+        var totalSpanCount = 0
+        var virtualSpanCount = 0
+        var virtualRows: [Int] = []
+        for lineIndex in 0..<lineCount {
+            let line = plan.line_at(UInt(lineIndex))
+            let row = Int(line.row())
+            let spanCount = Int(line.span_count())
+            totalSpanCount += spanCount
+            for spanIndex in 0..<spanCount {
+                let span = line.span_at(UInt(spanIndex))
+                if span.is_virtual() {
+                    virtualSpanCount += 1
+                    if virtualRows.last != row {
+                        virtualRows.append(row)
+                    }
+                }
+            }
+        }
+
+        let inlineCount = Int(plan.inline_diagnostic_line_count())
+        var inlineItems: [String] = []
+        inlineItems.reserveCapacity(inlineCount)
+        for i in 0..<inlineCount {
+            let line = plan.inline_diagnostic_line_at(UInt(i))
+            inlineItems.append(
+                "\(line.row()):\(line.col()):\(line.severity()):\(debugTruncate(line.text().toString(), limit: 90))"
+            )
+        }
+
+        let eolCount = Int(plan.eol_diagnostic_count())
+        var eolItems: [String] = []
+        eolItems.reserveCapacity(eolCount)
+        var cursorDeltaToEol: Int? = nil
+        for i in 0..<eolCount {
+            let eol = plan.eol_diagnostic_at(UInt(i))
+            eolItems.append(
+                "\(eol.row()):\(eol.col()):\(eol.severity()):\(debugTruncate(eol.message().toString(), limit: 90))"
+            )
+            if cursorCount > 0 {
+                let pos = plan.cursor_at(0).pos()
+                if pos.row == eol.row() {
+                    cursorDeltaToEol = Int(eol.col()) - Int(pos.col)
+                }
+            }
+        }
+
+        let underlineCount = Int(plan.diagnostic_underline_count())
+        let summary = [
+            "trigger=\(trigger)",
+            "cursor=\(cursorSummary)",
+            "cursor_to_eol=\(cursorDeltaToEol.map(String.init) ?? "na")",
+            "lines=\(lineCount)",
+            "spans=\(totalSpanCount)",
+            "virtual_spans=\(virtualSpanCount)",
+            "virtual_rows=\(virtualRows.prefix(8).map(String.init).joined(separator: ","))",
+            "inline_count=\(inlineCount)",
+            "eol_count=\(eolCount)",
+            "underline_count=\(underlineCount)",
+            "inline=[\(inlineItems.joined(separator: " || "))]",
+            "eol=[\(eolItems.joined(separator: " || "))]"
+        ].joined(separator: " ")
+
+        DiagnosticsDebugLog.logChanged(key: "model.snapshot", value: summary)
+    }
+
+    private func debugTruncate(_ text: String, limit: Int) -> String {
+        let normalized = text
+            .replacingOccurrences(of: "\n", with: "\\n")
+            .replacingOccurrences(of: "\t", with: "\\t")
+        if normalized.count <= limit {
+            return normalized
+        }
+        let idx = normalized.index(normalized.startIndex, offsetBy: limit)
+        return "\(normalized[..<idx])..."
     }
 }

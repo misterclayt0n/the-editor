@@ -1427,6 +1427,22 @@ fn diagnostic_severity_rank(severity: DiagnosticSeverity) -> u8 {
   }
 }
 
+fn dedupe_inline_diagnostic_lines(lines: &mut Vec<InlineDiagnosticRenderLine>) {
+  if lines.len() < 2 {
+    return;
+  }
+
+  let mut seen: HashSet<(usize, usize, u8, Tendril)> = HashSet::with_capacity(lines.len());
+  lines.retain(|line| {
+    seen.insert((
+      line.row,
+      line.col,
+      diagnostic_severity_rank(line.severity),
+      line.text.clone(),
+    ))
+  });
+}
+
 fn compute_eol_diagnostics(
   diagnostics: &[Diagnostic],
   plan: &the_lib::render::RenderPlan,
@@ -3583,7 +3599,7 @@ impl App {
     let inline_diagnostic_render_data: SharedInlineDiagnosticsRenderData =
       Rc::new(RefCell::new(InlineDiagnosticsRenderData::default()));
 
-    let (mut plan, underlines) = {
+    let (mut plan, underlines, inline_lines) = {
       let editor = self.active_editor_mut();
       let view = editor.view();
 
@@ -3670,7 +3686,13 @@ impl App {
         )
       };
 
-      // Compute diagnostic underlines after build_plan while annotations are still alive
+      // Snapshot inline diagnostic render output now. Subsequent visual position
+      // queries (e.g. underline mapping) can traverse annotations again and
+      // should not duplicate overlay lines.
+      let mut inline_lines = inline_diagnostic_render_data.borrow().lines.clone();
+      dedupe_inline_diagnostic_lines(&mut inline_lines);
+
+      // Compute diagnostic underlines after build_plan while annotations are still alive.
       let underlines = compute_diagnostic_underlines(
         doc.text(),
         &raw_diagnostics,
@@ -3679,12 +3701,12 @@ impl App {
         &mut annotations,
       );
 
-      (plan, underlines)
+      (plan, underlines, inline_lines)
     };
     apply_diagnostic_gutter_markers(&mut plan, &diagnostics_by_line, diagnostic_styles);
     apply_diff_gutter_markers(&mut plan, &diff_signs, diff_styles);
 
-    self.inline_diagnostic_lines = inline_diagnostic_render_data.borrow().lines.clone();
+    self.inline_diagnostic_lines = inline_lines;
     self.eol_diagnostics = compute_eol_diagnostics(
       &raw_diagnostics,
       &plan,
@@ -7813,10 +7835,13 @@ mod tests {
 
   use super::{
     App,
+    DiagnosticSeverity,
+    InlineDiagnosticRenderLine,
     LibStyle,
     PendingAutoSignatureHelp,
     SignatureHelpTriggerSource,
     capabilities_support_single_char,
+    dedupe_inline_diagnostic_lines,
     ffi,
   };
 
@@ -7838,6 +7863,57 @@ mod tests {
     let line = plan.line_at(0);
     assert_eq!(line.span_count(), 1);
     assert_eq!(line.span_at(0).text(), "hello");
+  }
+
+  #[test]
+  fn dedupe_inline_diagnostics_removes_exact_duplicates() {
+    let mut lines = vec![
+      InlineDiagnosticRenderLine {
+        row:      6,
+        col:      9,
+        text:     "└".into(),
+        severity: DiagnosticSeverity::Error,
+      },
+      InlineDiagnosticRenderLine {
+        row:      6,
+        col:      10,
+        text:     "─".into(),
+        severity: DiagnosticSeverity::Error,
+      },
+      InlineDiagnosticRenderLine {
+        row:      6,
+        col:      11,
+        text:     "declared and not used: err".into(),
+        severity: DiagnosticSeverity::Error,
+      },
+      InlineDiagnosticRenderLine {
+        row:      6,
+        col:      9,
+        text:     "└".into(),
+        severity: DiagnosticSeverity::Error,
+      },
+      InlineDiagnosticRenderLine {
+        row:      6,
+        col:      10,
+        text:     "─".into(),
+        severity: DiagnosticSeverity::Error,
+      },
+      InlineDiagnosticRenderLine {
+        row:      6,
+        col:      11,
+        text:     "declared and not used: err".into(),
+        severity: DiagnosticSeverity::Error,
+      },
+    ];
+
+    dedupe_inline_diagnostic_lines(&mut lines);
+
+    assert_eq!(lines.len(), 3);
+    assert_eq!(lines[0].row, 6);
+    assert_eq!(lines[0].col, 9);
+    assert_eq!(lines[1].col, 10);
+    assert_eq!(lines[2].col, 11);
+    assert_eq!(lines[2].text.as_str(), "declared and not used: err");
   }
 
   #[test]

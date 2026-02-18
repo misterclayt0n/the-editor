@@ -12,6 +12,7 @@ struct EditorView: View {
         let model = model
         let cellSize = model.cellSize
         let font = model.font
+        let nsFont = model.nsFont
         let isPaletteOpen = model.uiTree.hasCommandPalettePanel
         let isSearchOpen = model.uiTree.hasSearchPromptPanel
         let isFilePickerOpen = model.filePickerSnapshot?.active ?? false
@@ -26,7 +27,7 @@ struct EditorView: View {
         GeometryReader { proxy in
             ZStack {
                 Canvas { context, size in
-                    drawPlan(in: context, size: size, plan: model.plan, cellSize: cellSize, font: font)
+                    drawPlan(in: context, size: size, plan: model.plan, cellSize: cellSize, font: font, nsFont: nsFont)
                 }
                 .background(SwiftUI.Color.black)
 
@@ -184,15 +185,40 @@ struct EditorView: View {
         )
     }
 
-    private func drawPlan(in context: GraphicsContext, size: CGSize, plan: RenderPlan, cellSize: CGSize, font: Font) {
+    private func drawPlan(
+        in context: GraphicsContext,
+        size: CGSize,
+        plan: RenderPlan,
+        cellSize: CGSize,
+        font: Font,
+        nsFont: NSFont
+    ) {
         let contentOffsetX = CGFloat(plan.content_offset_x()) * cellSize.width
         drawGutter(in: context, size: size, plan: plan, cellSize: cellSize, font: font, contentOffsetX: contentOffsetX)
         drawSelections(in: context, plan: plan, cellSize: cellSize, contentOffsetX: contentOffsetX)
         drawDiagnosticUnderlines(in: context, plan: plan, cellSize: cellSize, contentOffsetX: contentOffsetX)
-        drawText(in: context, plan: plan, cellSize: cellSize, font: font, contentOffsetX: contentOffsetX)
-        drawInlineDiagnostics(in: context, plan: plan, cellSize: cellSize, font: font, contentOffsetX: contentOffsetX)
-        drawEolDiagnostics(in: context, plan: plan, cellSize: cellSize, font: font, contentOffsetX: contentOffsetX)
+        let textStats = drawText(in: context, plan: plan, cellSize: cellSize, font: font, contentOffsetX: contentOffsetX)
+        let inlineSummary = drawInlineDiagnostics(
+            in: context,
+            plan: plan,
+            cellSize: cellSize,
+            nsFont: nsFont,
+            contentOffsetX: contentOffsetX
+        )
+        let eolSummary = drawEolDiagnostics(
+            in: context,
+            plan: plan,
+            cellSize: cellSize,
+            nsFont: nsFont,
+            contentOffsetX: contentOffsetX
+        )
         drawCursors(in: context, plan: plan, cellSize: cellSize, contentOffsetX: contentOffsetX)
+        debugDrawSnapshot(
+            plan: plan,
+            textStats: textStats,
+            inlineSummary: inlineSummary,
+            eolSummary: eolSummary
+        )
     }
 
     // MARK: - Gutter
@@ -363,15 +389,25 @@ struct EditorView: View {
         }
     }
 
+    private struct DrawTextStats {
+        let drawnSpans: Int
+        let skippedVirtualSpans: Int
+    }
+
     private func drawText(
         in context: GraphicsContext,
         plan: RenderPlan,
         cellSize: CGSize,
         font: Font,
         contentOffsetX: CGFloat
-    ) {
+    ) -> DrawTextStats {
         let lineCount = Int(plan.line_count())
-        guard lineCount > 0 else { return }
+        guard lineCount > 0 else {
+            return DrawTextStats(drawnSpans: 0, skippedVirtualSpans: 0)
+        }
+
+        var drawnSpans = 0
+        var skippedVirtualSpans = 0
 
         for lineIndex in 0..<lineCount {
             let line = plan.line_at(UInt(lineIndex))
@@ -380,12 +416,21 @@ struct EditorView: View {
 
             for spanIndex in 0..<spanCount {
                 let span = line.span_at(UInt(spanIndex))
+                // Inline diagnostics are rendered explicitly in dedicated passes
+                // below; skipping virtual spans avoids double-drawing artifacts.
+                if span.is_virtual() {
+                    skippedVirtualSpans += 1
+                    continue
+                }
+                drawnSpans += 1
                 let x = contentOffsetX + CGFloat(span.col()) * cellSize.width
                 let color = colorForSpan(span)
                 let text = Text(span.text().toString()).font(font).foregroundColor(color)
                 context.draw(text, at: CGPoint(x: x, y: y), anchor: .topLeading)
             }
         }
+
+        return DrawTextStats(drawnSpans: drawnSpans, skippedVirtualSpans: skippedVirtualSpans)
     }
 
     private func drawCursors(
@@ -429,20 +474,30 @@ struct EditorView: View {
         in context: GraphicsContext,
         plan: RenderPlan,
         cellSize: CGSize,
-        font: Font,
+        nsFont: NSFont,
         contentOffsetX: CGFloat
-    ) {
+    ) -> String {
         let count = Int(plan.inline_diagnostic_line_count())
-        guard count > 0 else { return }
+        guard count > 0 else { return "count=0" }
+        var entries: [String] = []
 
         for i in 0..<count {
             let line = plan.inline_diagnostic_line_at(UInt(i))
             let y = CGFloat(line.row()) * cellSize.height
             let baseX = contentOffsetX + CGFloat(line.col()) * cellSize.width
-            let color = diagnosticColor(severity: line.severity()).opacity(0.6)
-            let text = Text(line.text().toString()).font(font).foregroundColor(color)
-            context.draw(text, at: CGPoint(x: baseX, y: y), anchor: .topLeading)
+            let color = diagnosticNSColor(severity: line.severity()).withAlphaComponent(0.6)
+            entries.append(
+                "\(line.row()):\(line.col()):\(line.severity()):\(debugTruncate(line.text().toString(), limit: 70))"
+            )
+            drawDiagnosticText(
+                in: context,
+                text: line.text().toString(),
+                at: CGPoint(x: baseX, y: y),
+                nsFont: nsFont,
+                color: color
+            )
         }
+        return "count=\(count) [\(entries.joined(separator: " || "))]"
     }
 
     private func diagnosticColor(severity: UInt8) -> SwiftUI.Color {
@@ -455,26 +510,67 @@ struct EditorView: View {
         }
     }
 
+    private func diagnosticNSColor(severity: UInt8) -> NSColor {
+        switch severity {
+        case 1: return .systemRed
+        case 2: return .systemYellow
+        case 3: return .systemBlue
+        case 4: return .systemGreen
+        default: return .white
+        }
+    }
+
+    private func drawDiagnosticText(
+        in context: GraphicsContext,
+        text: String,
+        at point: CGPoint,
+        nsFont: NSFont,
+        color: NSColor
+    ) {
+        guard !text.isEmpty else { return }
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: nsFont,
+            .foregroundColor: color
+        ]
+        let attributed = NSAttributedString(string: text, attributes: attrs)
+        context.withCGContext { cg in
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = NSGraphicsContext(cgContext: cg, flipped: true)
+            attributed.draw(at: point)
+            NSGraphicsContext.restoreGraphicsState()
+        }
+    }
+
     // MARK: - End-of-Line Diagnostics
 
     private func drawEolDiagnostics(
         in context: GraphicsContext,
         plan: RenderPlan,
         cellSize: CGSize,
-        font: Font,
+        nsFont: NSFont,
         contentOffsetX: CGFloat
-    ) {
+    ) -> String {
         let count = Int(plan.eol_diagnostic_count())
-        guard count > 0 else { return }
+        guard count > 0 else { return "count=0" }
+        var entries: [String] = []
 
         for i in 0..<count {
             let eol = plan.eol_diagnostic_at(UInt(i))
             let y = CGFloat(eol.row()) * cellSize.height
             let baseX = contentOffsetX + CGFloat(eol.col()) * cellSize.width
-            let color = diagnosticColor(severity: eol.severity()).opacity(0.6)
-            let text = Text(eol.message().toString()).font(font).foregroundColor(color)
-            context.draw(text, at: CGPoint(x: baseX, y: y), anchor: .topLeading)
+            let color = diagnosticNSColor(severity: eol.severity()).withAlphaComponent(0.6)
+            entries.append(
+                "\(eol.row()):\(eol.col()):\(eol.severity()):\(debugTruncate(eol.message().toString(), limit: 70))"
+            )
+            drawDiagnosticText(
+                in: context,
+                text: eol.message().toString(),
+                at: CGPoint(x: baseX, y: y),
+                nsFont: nsFont,
+                color: color
+            )
         }
+        return "count=\(count) [\(entries.joined(separator: " || "))]"
     }
 
     // MARK: - Diagnostic Underlines
@@ -535,5 +631,37 @@ struct EditorView: View {
             return SwiftUI.Color.white.opacity(0.4)
         }
         return SwiftUI.Color.white
+    }
+
+    private func debugDrawSnapshot(
+        plan: RenderPlan,
+        textStats: DrawTextStats,
+        inlineSummary: String,
+        eolSummary: String
+    ) {
+        guard DiagnosticsDebugLog.enabled else { return }
+        let cursorCount = Int(plan.cursor_count())
+        let cursorSummary: String
+        if cursorCount > 0 {
+            let pos = plan.cursor_at(0).pos()
+            cursorSummary = "\(pos.row):\(pos.col)"
+        } else {
+            cursorSummary = "none"
+        }
+        DiagnosticsDebugLog.logChanged(
+            key: "view.draw",
+            value: "cursor=\(cursorSummary) drawn_spans=\(textStats.drawnSpans) skipped_virtual=\(textStats.skippedVirtualSpans) inline=\(inlineSummary) eol=\(eolSummary)"
+        )
+    }
+
+    private func debugTruncate(_ text: String, limit: Int) -> String {
+        let normalized = text
+            .replacingOccurrences(of: "\n", with: "\\n")
+            .replacingOccurrences(of: "\t", with: "\\t")
+        if normalized.count <= limit {
+            return normalized
+        }
+        let idx = normalized.index(normalized.startIndex, offsetBy: limit)
+        return "\(normalized[..<idx])..."
     }
 }

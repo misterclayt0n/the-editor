@@ -188,8 +188,10 @@ struct EditorView: View {
         let contentOffsetX = CGFloat(plan.content_offset_x()) * cellSize.width
         drawGutter(in: context, size: size, plan: plan, cellSize: cellSize, font: font, contentOffsetX: contentOffsetX)
         drawSelections(in: context, plan: plan, cellSize: cellSize, contentOffsetX: contentOffsetX)
+        drawDiagnosticUnderlines(in: context, plan: plan, cellSize: cellSize, contentOffsetX: contentOffsetX)
         drawText(in: context, plan: plan, cellSize: cellSize, font: font, contentOffsetX: contentOffsetX)
         drawInlineDiagnostics(in: context, plan: plan, cellSize: cellSize, font: font, contentOffsetX: contentOffsetX)
+        drawEolDiagnostics(in: context, plan: plan, cellSize: cellSize, font: font, contentOffsetX: contentOffsetX)
         drawCursors(in: context, plan: plan, cellSize: cellSize, contentOffsetX: contentOffsetX)
     }
 
@@ -436,20 +438,93 @@ struct EditorView: View {
         for i in 0..<count {
             let line = plan.inline_diagnostic_line_at(UInt(i))
             let y = CGFloat(line.row()) * cellSize.height
-            let x = contentOffsetX + CGFloat(line.col()) * cellSize.width
-            let color = inlineDiagnosticColor(severity: line.severity())
-            let text = Text(line.text().toString()).font(font).foregroundColor(color)
-            context.draw(text, at: CGPoint(x: x, y: y), anchor: .topLeading)
+            let baseX = contentOffsetX + CGFloat(line.col()) * cellSize.width
+            let color = diagnosticColor(severity: line.severity()).opacity(0.6)
+            // Draw character-by-character to keep monospace grid alignment and
+            // avoid SwiftUI Canvas font fallback on long Text views.
+            for (ci, ch) in line.text().toString().enumerated() {
+                let cx = baseX + CGFloat(ci) * cellSize.width
+                let text = Text(String(ch)).font(font).foregroundColor(color)
+                context.draw(text, at: CGPoint(x: cx, y: y), anchor: .topLeading)
+            }
         }
     }
 
-    private func inlineDiagnosticColor(severity: UInt8) -> SwiftUI.Color {
+    private func diagnosticColor(severity: UInt8) -> SwiftUI.Color {
         switch severity {
-        case 1: return SwiftUI.Color(nsColor: .systemRed).opacity(0.85)
-        case 2: return SwiftUI.Color(nsColor: .systemYellow).opacity(0.85)
-        case 3: return SwiftUI.Color(nsColor: .systemBlue).opacity(0.85)
-        case 4: return SwiftUI.Color(nsColor: .systemGreen).opacity(0.85)
-        default: return SwiftUI.Color.white.opacity(0.5)
+        case 1: return SwiftUI.Color(nsColor: .systemRed)
+        case 2: return SwiftUI.Color(nsColor: .systemYellow)
+        case 3: return SwiftUI.Color(nsColor: .systemBlue)
+        case 4: return SwiftUI.Color(nsColor: .systemGreen)
+        default: return SwiftUI.Color.white
+        }
+    }
+
+    // MARK: - End-of-Line Diagnostics
+
+    private func drawEolDiagnostics(
+        in context: GraphicsContext,
+        plan: RenderPlan,
+        cellSize: CGSize,
+        font: Font,
+        contentOffsetX: CGFloat
+    ) {
+        let count = Int(plan.eol_diagnostic_count())
+        guard count > 0 else { return }
+
+        for i in 0..<count {
+            let eol = plan.eol_diagnostic_at(UInt(i))
+            let y = CGFloat(eol.row()) * cellSize.height
+            let baseX = contentOffsetX + CGFloat(eol.col()) * cellSize.width
+            let color = diagnosticColor(severity: eol.severity()).opacity(0.6)
+            // Draw character-by-character to keep monospace grid alignment and
+            // avoid SwiftUI Canvas font fallback on long Text views.
+            for (ci, ch) in eol.message().toString().enumerated() {
+                let cx = baseX + CGFloat(ci) * cellSize.width
+                let text = Text(String(ch)).font(font).foregroundColor(color)
+                context.draw(text, at: CGPoint(x: cx, y: y), anchor: .topLeading)
+            }
+        }
+    }
+
+    // MARK: - Diagnostic Underlines
+
+    private func drawDiagnosticUnderlines(
+        in context: GraphicsContext,
+        plan: RenderPlan,
+        cellSize: CGSize,
+        contentOffsetX: CGFloat
+    ) {
+        let count = Int(plan.diagnostic_underline_count())
+        guard count > 0 else { return }
+
+        for i in 0..<count {
+            let underline = plan.diagnostic_underline_at(UInt(i))
+            let y = CGFloat(underline.row()) * cellSize.height + cellSize.height - 1
+            let xStart = contentOffsetX + CGFloat(underline.start_col()) * cellSize.width
+            let xEnd = contentOffsetX + CGFloat(underline.end_col()) * cellSize.width
+            let color = diagnosticColor(severity: underline.severity()).opacity(0.7)
+
+            // Draw wavy underline
+            let width = xEnd - xStart
+            guard width > 0 else { continue }
+            let waveHeight: CGFloat = 2.0
+            let wavelength: CGFloat = 4.0
+            var path = Path()
+            var x = xStart
+            path.move(to: CGPoint(x: x, y: y))
+            var up = true
+            while x < xEnd {
+                let nextX = min(x + wavelength, xEnd)
+                let controlY = up ? y - waveHeight : y + waveHeight
+                path.addQuadCurve(
+                    to: CGPoint(x: nextX, y: y),
+                    control: CGPoint(x: (x + nextX) / 2, y: controlY)
+                )
+                x = nextX
+                up.toggle()
+            }
+            context.stroke(path, with: .color(color), lineWidth: 1.0)
         }
     }
 

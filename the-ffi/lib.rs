@@ -96,6 +96,7 @@ use the_lib::{
   Tendril,
   app::App as LibApp,
   diagnostics::{
+    Diagnostic,
     DiagnosticCounts,
     DiagnosticSeverity,
     DiagnosticsState,
@@ -116,6 +117,7 @@ use the_lib::{
   render::{
     GutterConfig,
     InlineDiagnostic,
+    InlineDiagnosticFilter,
     InlineDiagnosticRenderLine,
     InlineDiagnosticsConfig,
     InlineDiagnosticsLineAnnotation,
@@ -145,6 +147,7 @@ use the_lib::{
       UnderlineStyle as LibUnderlineStyle,
     },
     gutter_width_for_document,
+    visual_pos_at_char,
     text_annotations::{
       InlineAnnotation,
       Overlay,
@@ -790,18 +793,22 @@ impl From<OverlayNode> for RenderOverlayNode {
 
 #[derive(Debug, Clone)]
 pub struct RenderPlan {
-  inner:                   the_lib::render::RenderPlan,
-  inline_diagnostic_lines: Vec<InlineDiagnosticRenderLine>,
+  inner:                    the_lib::render::RenderPlan,
+  inline_diagnostic_lines:  Vec<InlineDiagnosticRenderLine>,
+  eol_diagnostics:          Vec<EolDiagnosticEntry>,
+  diagnostic_underlines:    Vec<DiagnosticUnderlineEntry>,
 }
 
 impl RenderPlan {
   fn empty() -> Self {
     Self {
-      inner:                   the_lib::render::RenderPlan::empty(
+      inner:                    the_lib::render::RenderPlan::empty(
         LibRect::new(0, 0, 0, 0),
         LibPosition::new(0, 0),
       ),
-      inline_diagnostic_lines: Vec::new(),
+      inline_diagnostic_lines:  Vec::new(),
+      eol_diagnostics:          Vec::new(),
+      diagnostic_underlines:    Vec::new(),
     }
   }
 
@@ -900,13 +907,49 @@ impl RenderPlan {
       .map(|line| RenderInlineDiagnosticLine::new(line, scroll_row))
       .unwrap_or_else(RenderInlineDiagnosticLine::empty)
   }
+
+  fn eol_diagnostic_count(&self) -> usize {
+    self.eol_diagnostics.len()
+  }
+
+  fn eol_diagnostic_at(&self, index: usize) -> RenderEolDiagnostic {
+    self
+      .eol_diagnostics
+      .get(index)
+      .map(|entry| RenderEolDiagnostic {
+        row:      entry.row,
+        col:      entry.col,
+        message:  entry.message.clone(),
+        severity: entry.severity,
+      })
+      .unwrap_or_else(RenderEolDiagnostic::empty)
+  }
+
+  fn diagnostic_underline_count(&self) -> usize {
+    self.diagnostic_underlines.len()
+  }
+
+  fn diagnostic_underline_at(&self, index: usize) -> RenderDiagnosticUnderline {
+    self
+      .diagnostic_underlines
+      .get(index)
+      .map(|entry| RenderDiagnosticUnderline {
+        row:       entry.row,
+        start_col: entry.start_col,
+        end_col:   entry.end_col,
+        severity:  entry.severity,
+      })
+      .unwrap_or_else(RenderDiagnosticUnderline::empty)
+  }
 }
 
 impl From<the_lib::render::RenderPlan> for RenderPlan {
   fn from(plan: the_lib::render::RenderPlan) -> Self {
     Self {
-      inner:                   plan,
-      inline_diagnostic_lines: Vec::new(),
+      inner:                    plan,
+      inline_diagnostic_lines:  Vec::new(),
+      eol_diagnostics:          Vec::new(),
+      diagnostic_underlines:    Vec::new(),
     }
   }
 }
@@ -946,12 +989,100 @@ impl RenderInlineDiagnosticLine {
   }
 
   fn severity(&self) -> u8 {
-    match self.inner.severity {
-      DiagnosticSeverity::Error => 1,
-      DiagnosticSeverity::Warning => 2,
-      DiagnosticSeverity::Information => 3,
-      DiagnosticSeverity::Hint => 4,
+    severity_to_u8(self.inner.severity)
+  }
+}
+
+#[derive(Debug, Clone)]
+struct EolDiagnosticEntry {
+  row:      u16,
+  col:      u16,
+  message:  String,
+  severity: DiagnosticSeverity,
+}
+
+pub struct RenderEolDiagnostic {
+  row:      u16,
+  col:      u16,
+  message:  String,
+  severity: DiagnosticSeverity,
+}
+
+impl RenderEolDiagnostic {
+  fn empty() -> Self {
+    Self {
+      row:      0,
+      col:      0,
+      message:  String::new(),
+      severity: DiagnosticSeverity::Warning,
     }
+  }
+
+  fn row(&self) -> u16 {
+    self.row
+  }
+
+  fn col(&self) -> u16 {
+    self.col
+  }
+
+  fn message(&self) -> String {
+    self.message.clone()
+  }
+
+  fn severity(&self) -> u8 {
+    severity_to_u8(self.severity)
+  }
+}
+
+#[derive(Debug, Clone)]
+struct DiagnosticUnderlineEntry {
+  row:       u16,
+  start_col: u16,
+  end_col:   u16,
+  severity:  DiagnosticSeverity,
+}
+
+pub struct RenderDiagnosticUnderline {
+  row:       u16,
+  start_col: u16,
+  end_col:   u16,
+  severity:  DiagnosticSeverity,
+}
+
+impl RenderDiagnosticUnderline {
+  fn empty() -> Self {
+    Self {
+      row:       0,
+      start_col: 0,
+      end_col:   0,
+      severity:  DiagnosticSeverity::Warning,
+    }
+  }
+
+  fn row(&self) -> u16 {
+    self.row
+  }
+
+  fn start_col(&self) -> u16 {
+    self.start_col
+  }
+
+  fn end_col(&self) -> u16 {
+    self.end_col
+  }
+
+  fn severity(&self) -> u8 {
+    severity_to_u8(self.severity)
+  }
+}
+
+fn severity_to_u8(severity: DiagnosticSeverity) -> u8 {
+  match severity {
+    DiagnosticSeverity::Error => 1,
+    DiagnosticSeverity::Warning => 2,
+    DiagnosticSeverity::Information => 3,
+    DiagnosticSeverity::Hint => 4,
   }
 }
 
@@ -1294,6 +1425,209 @@ fn diagnostic_severity_rank(severity: DiagnosticSeverity) -> u8 {
     DiagnosticSeverity::Information => 2,
     DiagnosticSeverity::Hint => 1,
   }
+}
+
+fn compute_eol_diagnostics(
+  diagnostics: &[Diagnostic],
+  plan: &the_lib::render::RenderPlan,
+) -> Vec<EolDiagnosticEntry> {
+  if diagnostics.is_empty() {
+    return Vec::new();
+  }
+
+  let content_width = plan.content_width();
+  if content_width == 0 {
+    return Vec::new();
+  }
+
+  // Build line end columns from the plan's lines
+  let mut line_end_cols: BTreeMap<u16, usize> = BTreeMap::new();
+  for line in &plan.lines {
+    let end_col = line
+      .spans
+      .iter()
+      .map(|span| span.col as usize + span.cols as usize)
+      .max()
+      .unwrap_or(0);
+    line_end_cols
+      .entry(line.row)
+      .and_modify(|current| *current = (*current).max(end_col))
+      .or_insert(end_col);
+  }
+
+  let eol_filter = InlineDiagnosticFilter::Enable(DiagnosticSeverity::Hint);
+  let mut out = Vec::new();
+
+  for visible_row in &plan.visible_rows {
+    if !visible_row.first_visual_line {
+      continue;
+    }
+
+    // Select the most severe diagnostic on this doc line
+    let selected = diagnostics
+      .iter()
+      .filter(|d| d.range.start.line as usize == visible_row.doc_line)
+      .filter(|d| {
+        let severity = d.severity.unwrap_or(DiagnosticSeverity::Warning);
+        let rank = diagnostic_severity_rank(severity);
+        let InlineDiagnosticFilter::Enable(eol_min) = eol_filter else {
+          return false;
+        };
+        rank >= diagnostic_severity_rank(eol_min)
+      })
+      .max_by_key(|d| {
+        diagnostic_severity_rank(d.severity.unwrap_or(DiagnosticSeverity::Warning))
+      });
+
+    let Some(diagnostic) = selected else {
+      continue;
+    };
+
+    let message = diagnostic
+      .message
+      .lines()
+      .map(str::trim)
+      .filter(|line| !line.is_empty())
+      .collect::<Vec<_>>()
+      .join("  ");
+    if message.is_empty() {
+      continue;
+    }
+
+    let start_col = line_end_cols
+      .get(&visible_row.row)
+      .copied()
+      .unwrap_or(0)
+      .saturating_add(1);
+    if start_col >= content_width {
+      continue;
+    }
+
+    let severity = diagnostic.severity.unwrap_or(DiagnosticSeverity::Warning);
+    out.push(EolDiagnosticEntry {
+      row:     visible_row.row,
+      col:     start_col as u16,
+      message,
+      severity,
+    });
+  }
+
+  out
+}
+
+fn compute_diagnostic_underlines<'a>(
+  text: &'a Rope,
+  diagnostics: &[Diagnostic],
+  plan: &the_lib::render::RenderPlan,
+  text_fmt: &'a TextFormat,
+  annotations: &mut TextAnnotations<'a>,
+) -> Vec<DiagnosticUnderlineEntry> {
+  if diagnostics.is_empty() {
+    return Vec::new();
+  }
+
+  let row_start = plan.scroll.row;
+  let row_end = row_start.saturating_add(plan.viewport.height as usize);
+  let col_start = plan.scroll.col;
+  let content_width = plan.content_width();
+  let col_end = col_start.saturating_add(content_width);
+  if row_start >= row_end || col_start >= col_end {
+    return Vec::new();
+  }
+
+  // Build row end columns for clipping
+  let viewport_height = plan.viewport.height as usize;
+  let mut row_end_cols = vec![col_start; viewport_height];
+  for line in &plan.lines {
+    let row = line.row as usize;
+    if row >= row_end_cols.len() {
+      continue;
+    }
+    let end_col = line
+      .spans
+      .iter()
+      .map(|span| col_start + span.col.saturating_add(span.cols) as usize)
+      .max()
+      .unwrap_or(col_start);
+    row_end_cols[row] = row_end_cols[row].max(end_col);
+  }
+
+  let text_slice = text.slice(..);
+  let text_len = text.len_chars();
+  let mut out = Vec::with_capacity(diagnostics.len());
+
+  for diagnostic in diagnostics {
+    let severity = diagnostic.severity.unwrap_or(DiagnosticSeverity::Warning);
+
+    let mut start_char = utf16_position_to_char_idx(
+      text,
+      diagnostic.range.start.line,
+      diagnostic.range.start.character,
+    )
+    .min(text_len);
+    let mut end_char = utf16_position_to_char_idx(
+      text,
+      diagnostic.range.end.line,
+      diagnostic.range.end.character,
+    )
+    .min(text_len);
+
+    if end_char < start_char {
+      std::mem::swap(&mut start_char, &mut end_char);
+    }
+    if end_char == start_char {
+      if start_char >= text_len {
+        continue;
+      }
+      end_char = start_char.saturating_add(1).min(text_len);
+    }
+
+    let Some(start_pos) = visual_pos_at_char(text_slice, text_fmt, annotations, start_char) else {
+      continue;
+    };
+    let Some(end_pos) = visual_pos_at_char(text_slice, text_fmt, annotations, end_char) else {
+      continue;
+    };
+
+    let (start_pos, end_pos) = if (end_pos.row, end_pos.col) < (start_pos.row, start_pos.col) {
+      (end_pos, start_pos)
+    } else {
+      (start_pos, end_pos)
+    };
+
+    for row in start_pos.row..=end_pos.row {
+      if row < row_start || row >= row_end {
+        continue;
+      }
+      let relative_row = row.saturating_sub(row_start);
+      let row_end_col = row_end_cols.get(relative_row).copied().unwrap_or(col_start);
+
+      let (mut from, mut to) = if row == start_pos.row && row == end_pos.row {
+        (start_pos.col, end_pos.col)
+      } else if row == start_pos.row {
+        (start_pos.col, row_end_col)
+      } else if row == end_pos.row {
+        (col_start, end_pos.col)
+      } else {
+        (col_start, row_end_col)
+      };
+
+      from = from.max(col_start);
+      to = to.min(row_end_col).min(col_end);
+      if to <= from {
+        continue;
+      }
+
+      out.push(DiagnosticUnderlineEntry {
+        row:       (row - row_start) as u16,
+        start_col: (from - col_start) as u16,
+        end_col:   (to - col_start) as u16,
+        severity,
+      });
+    }
+  }
+
+  out
 }
 
 fn init_loader(theme: &Theme) -> Result<Loader, String> {
@@ -2832,6 +3166,8 @@ pub struct App {
   lsp_pending_auto_signature_help: Option<PendingAutoSignatureHelp>,
   diagnostics:                     DiagnosticsState,
   inline_diagnostic_lines:         Vec<InlineDiagnosticRenderLine>,
+  eol_diagnostics:                 Vec<EolDiagnosticEntry>,
+  diagnostic_underlines:           Vec<DiagnosticUnderlineEntry>,
   ui_theme:                        Theme,
   loader:                          Option<Arc<Loader>>,
 }
@@ -2890,6 +3226,8 @@ impl App {
       lsp_pending_auto_signature_help: None,
       diagnostics: DiagnosticsState::default(),
       inline_diagnostic_lines: Vec::new(),
+      eol_diagnostics: Vec::new(),
+      diagnostic_underlines: Vec::new(),
       ui_theme,
       loader,
     }
@@ -3064,6 +3402,8 @@ impl App {
 
     let plan = the_default::render_plan(self);
     let inline_diagnostic_lines = std::mem::take(&mut self.inline_diagnostic_lines);
+    let eol_diagnostics = std::mem::take(&mut self.eol_diagnostics);
+    let diagnostic_underlines = std::mem::take(&mut self.diagnostic_underlines);
     let elapsed = started.elapsed();
     if ffi_ui_profile_should_log(elapsed) {
       ffi_ui_profile_log(format!("render_plan elapsed={}ms", elapsed.as_millis()));
@@ -3071,6 +3411,8 @@ impl App {
     RenderPlan {
       inner: plan,
       inline_diagnostic_lines,
+      eol_diagnostics,
+      diagnostic_underlines,
     }
   }
 
@@ -3086,9 +3428,13 @@ impl App {
 
     let plan = the_default::render_plan_with_styles(self, styles.to_lib());
     let inline_diagnostic_lines = std::mem::take(&mut self.inline_diagnostic_lines);
+    let eol_diagnostics = std::mem::take(&mut self.eol_diagnostics);
+    let diagnostic_underlines = std::mem::take(&mut self.diagnostic_underlines);
     RenderPlan {
       inner: plan,
       inline_diagnostic_lines,
+      eol_diagnostics,
+      diagnostic_underlines,
     }
   }
 
@@ -3226,10 +3572,18 @@ impl App {
     let inline_diagnostics = self.active_inline_diagnostics();
     let enable_cursor_line = self.active_state_ref().mode != Mode::Insert;
 
+    let raw_diagnostics = self
+      .lsp_document
+      .as_ref()
+      .filter(|state| state.opened)
+      .and_then(|state| self.diagnostics.document(&state.uri))
+      .map(|doc| doc.diagnostics.clone())
+      .unwrap_or_default();
+
     let inline_diagnostic_render_data: SharedInlineDiagnosticsRenderData =
       Rc::new(RefCell::new(InlineDiagnosticsRenderData::default()));
 
-    let mut plan = {
+    let (mut plan, underlines) = {
       let editor = self.active_editor_mut();
       let view = editor.view();
 
@@ -3245,36 +3599,42 @@ impl App {
       let gutter_width = gutter_width_for_document(doc, view.viewport.width, &gutter_config);
       text_fmt.viewport_width = view.viewport.width.saturating_sub(gutter_width).max(1);
 
-      if !inline_diagnostics.is_empty() {
-        let inline_config = InlineDiagnosticsConfig::default()
-          .prepare(text_fmt.viewport_width.max(1), enable_cursor_line);
-        if !inline_config.disabled() {
-          let cursor_char_idx = doc
-            .selection()
-            .ranges()
-            .first()
-            .map(|r| r.cursor(doc.text().slice(..)))
-            .unwrap_or(0);
-          let cursor_line_idx = doc
-            .selection()
-            .ranges()
-            .first()
-            .map(|r| r.cursor_line(doc.text().slice(..)));
-          let _ = annotations.add_line_annotation(Box::new(
-            InlineDiagnosticsLineAnnotation::new(
-              inline_diagnostics,
-              cursor_char_idx,
-              cursor_line_idx,
-              text_fmt.viewport_width.max(1),
-              view.scroll.col,
-              inline_config,
-              inline_diagnostic_render_data.clone(),
-            ),
-          ));
+      let inline_config = if !inline_diagnostics.is_empty() {
+        InlineDiagnosticsConfig::default()
+          .prepare(text_fmt.viewport_width.max(1), enable_cursor_line)
+      } else {
+        InlineDiagnosticsConfig {
+          cursor_line: InlineDiagnosticFilter::Disable,
+          other_lines: InlineDiagnosticFilter::Disable,
+          ..InlineDiagnosticsConfig::default()
         }
+      };
+      if !inline_diagnostics.is_empty() && !inline_config.disabled() {
+        let cursor_char_idx = doc
+          .selection()
+          .ranges()
+          .first()
+          .map(|r| r.cursor(doc.text().slice(..)))
+          .unwrap_or(0);
+        let cursor_line_idx = doc
+          .selection()
+          .ranges()
+          .first()
+          .map(|r| r.cursor_line(doc.text().slice(..)));
+        let _ = annotations.add_line_annotation(Box::new(
+          InlineDiagnosticsLineAnnotation::new(
+            inline_diagnostics,
+            cursor_char_idx,
+            cursor_line_idx,
+            text_fmt.viewport_width.max(1),
+            view.scroll.col,
+            inline_config,
+            inline_diagnostic_render_data.clone(),
+          ),
+        ));
       }
 
-      if let (Some(loader), Some(syntax)) = (loader.as_deref(), doc.syntax()) {
+      let plan = if let (Some(loader), Some(syntax)) = (loader.as_deref(), doc.syntax()) {
         let line_range = view.scroll.row..(view.scroll.row + view.viewport.height as usize);
         let mut adapter = SyntaxHighlightAdapter::new(
           doc.text().slice(..),
@@ -3308,12 +3668,28 @@ impl App {
           cache,
           styles,
         )
-      }
+      };
+
+      // Compute diagnostic underlines after build_plan while annotations are still alive
+      let underlines = compute_diagnostic_underlines(
+        doc.text(),
+        &raw_diagnostics,
+        &plan,
+        &text_fmt,
+        &mut annotations,
+      );
+
+      (plan, underlines)
     };
     apply_diagnostic_gutter_markers(&mut plan, &diagnostics_by_line, diagnostic_styles);
     apply_diff_gutter_markers(&mut plan, &diff_signs, diff_styles);
 
     self.inline_diagnostic_lines = inline_diagnostic_render_data.borrow().lines.clone();
+    self.eol_diagnostics = compute_eol_diagnostics(
+      &raw_diagnostics,
+      &plan,
+    );
+    self.diagnostic_underlines = underlines;
     self.active_state_mut().highlight_cache = highlight_cache;
     plan
   }
@@ -7070,6 +7446,27 @@ mod ffi {
     fn col(self: &RenderInlineDiagnosticLine) -> u16;
     fn text(self: &RenderInlineDiagnosticLine) -> String;
     fn severity(self: &RenderInlineDiagnosticLine) -> u8;
+
+    fn eol_diagnostic_count(self: &RenderPlan) -> usize;
+    fn eol_diagnostic_at(self: &RenderPlan, index: usize) -> RenderEolDiagnostic;
+
+    type RenderEolDiagnostic;
+    fn row(self: &RenderEolDiagnostic) -> u16;
+    fn col(self: &RenderEolDiagnostic) -> u16;
+    fn message(self: &RenderEolDiagnostic) -> String;
+    fn severity(self: &RenderEolDiagnostic) -> u8;
+
+    fn diagnostic_underline_count(self: &RenderPlan) -> usize;
+    fn diagnostic_underline_at(
+      self: &RenderPlan,
+      index: usize,
+    ) -> RenderDiagnosticUnderline;
+
+    type RenderDiagnosticUnderline;
+    fn row(self: &RenderDiagnosticUnderline) -> u16;
+    fn start_col(self: &RenderDiagnosticUnderline) -> u16;
+    fn end_col(self: &RenderDiagnosticUnderline) -> u16;
+    fn severity(self: &RenderDiagnosticUnderline) -> u8;
   }
 }
 

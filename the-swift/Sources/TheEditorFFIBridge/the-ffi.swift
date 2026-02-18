@@ -1479,6 +1479,190 @@ extension RenderOverlayNode: Vectorizable {
 }
 
 
+public class RenderDiagnosticUnderline: RenderDiagnosticUnderlineRefMut {
+    var isOwned: Bool = true
+
+    public override init(ptr: UnsafeMutableRawPointer) {
+        super.init(ptr: ptr)
+    }
+
+    deinit {
+        if isOwned {
+            __swift_bridge__$RenderDiagnosticUnderline$_free(ptr)
+        }
+    }
+}
+public class RenderDiagnosticUnderlineRefMut: RenderDiagnosticUnderlineRef {
+    public override init(ptr: UnsafeMutableRawPointer) {
+        super.init(ptr: ptr)
+    }
+}
+public class RenderDiagnosticUnderlineRef {
+    var ptr: UnsafeMutableRawPointer
+
+    public init(ptr: UnsafeMutableRawPointer) {
+        self.ptr = ptr
+    }
+}
+extension RenderDiagnosticUnderlineRef {
+    public func row() -> UInt16 {
+        __swift_bridge__$RenderDiagnosticUnderline$row(ptr)
+    }
+
+    public func start_col() -> UInt16 {
+        __swift_bridge__$RenderDiagnosticUnderline$start_col(ptr)
+    }
+
+    public func end_col() -> UInt16 {
+        __swift_bridge__$RenderDiagnosticUnderline$end_col(ptr)
+    }
+
+    public func severity() -> UInt8 {
+        __swift_bridge__$RenderDiagnosticUnderline$severity(ptr)
+    }
+}
+extension RenderDiagnosticUnderline: Vectorizable {
+    public static func vecOfSelfNew() -> UnsafeMutableRawPointer {
+        __swift_bridge__$Vec_RenderDiagnosticUnderline$new()
+    }
+
+    public static func vecOfSelfFree(vecPtr: UnsafeMutableRawPointer) {
+        __swift_bridge__$Vec_RenderDiagnosticUnderline$drop(vecPtr)
+    }
+
+    public static func vecOfSelfPush(vecPtr: UnsafeMutableRawPointer, value: RenderDiagnosticUnderline) {
+        __swift_bridge__$Vec_RenderDiagnosticUnderline$push(vecPtr, {value.isOwned = false; return value.ptr;}())
+    }
+
+    public static func vecOfSelfPop(vecPtr: UnsafeMutableRawPointer) -> Optional<Self> {
+        let pointer = __swift_bridge__$Vec_RenderDiagnosticUnderline$pop(vecPtr)
+        if pointer == nil {
+            return nil
+        } else {
+            return (RenderDiagnosticUnderline(ptr: pointer!) as! Self)
+        }
+    }
+
+    public static func vecOfSelfGet(vecPtr: UnsafeMutableRawPointer, index: UInt) -> Optional<RenderDiagnosticUnderlineRef> {
+        let pointer = __swift_bridge__$Vec_RenderDiagnosticUnderline$get(vecPtr, index)
+        if pointer == nil {
+            return nil
+        } else {
+            return RenderDiagnosticUnderlineRef(ptr: pointer!)
+        }
+    }
+
+    public static func vecOfSelfGetMut(vecPtr: UnsafeMutableRawPointer, index: UInt) -> Optional<RenderDiagnosticUnderlineRefMut> {
+        let pointer = __swift_bridge__$Vec_RenderDiagnosticUnderline$get_mut(vecPtr, index)
+        if pointer == nil {
+            return nil
+        } else {
+            return RenderDiagnosticUnderlineRefMut(ptr: pointer!)
+        }
+    }
+
+    public static func vecOfSelfAsPtr(vecPtr: UnsafeMutableRawPointer) -> UnsafePointer<RenderDiagnosticUnderlineRef> {
+        UnsafePointer<RenderDiagnosticUnderlineRef>(OpaquePointer(__swift_bridge__$Vec_RenderDiagnosticUnderline$as_ptr(vecPtr)))
+    }
+
+    public static func vecOfSelfLen(vecPtr: UnsafeMutableRawPointer) -> UInt {
+        __swift_bridge__$Vec_RenderDiagnosticUnderline$len(vecPtr)
+    }
+}
+
+
+public class RenderEolDiagnostic: RenderEolDiagnosticRefMut {
+    var isOwned: Bool = true
+
+    public override init(ptr: UnsafeMutableRawPointer) {
+        super.init(ptr: ptr)
+    }
+
+    deinit {
+        if isOwned {
+            __swift_bridge__$RenderEolDiagnostic$_free(ptr)
+        }
+    }
+}
+public class RenderEolDiagnosticRefMut: RenderEolDiagnosticRef {
+    public override init(ptr: UnsafeMutableRawPointer) {
+        super.init(ptr: ptr)
+    }
+}
+public class RenderEolDiagnosticRef {
+    var ptr: UnsafeMutableRawPointer
+
+    public init(ptr: UnsafeMutableRawPointer) {
+        self.ptr = ptr
+    }
+}
+extension RenderEolDiagnosticRef {
+    public func row() -> UInt16 {
+        __swift_bridge__$RenderEolDiagnostic$row(ptr)
+    }
+
+    public func col() -> UInt16 {
+        __swift_bridge__$RenderEolDiagnostic$col(ptr)
+    }
+
+    public func message() -> RustString {
+        RustString(ptr: __swift_bridge__$RenderEolDiagnostic$message(ptr))
+    }
+
+    public func severity() -> UInt8 {
+        __swift_bridge__$RenderEolDiagnostic$severity(ptr)
+    }
+}
+extension RenderEolDiagnostic: Vectorizable {
+    public static func vecOfSelfNew() -> UnsafeMutableRawPointer {
+        __swift_bridge__$Vec_RenderEolDiagnostic$new()
+    }
+
+    public static func vecOfSelfFree(vecPtr: UnsafeMutableRawPointer) {
+        __swift_bridge__$Vec_RenderEolDiagnostic$drop(vecPtr)
+    }
+
+    public static func vecOfSelfPush(vecPtr: UnsafeMutableRawPointer, value: RenderEolDiagnostic) {
+        __swift_bridge__$Vec_RenderEolDiagnostic$push(vecPtr, {value.isOwned = false; return value.ptr;}())
+    }
+
+    public static func vecOfSelfPop(vecPtr: UnsafeMutableRawPointer) -> Optional<Self> {
+        let pointer = __swift_bridge__$Vec_RenderEolDiagnostic$pop(vecPtr)
+        if pointer == nil {
+            return nil
+        } else {
+            return (RenderEolDiagnostic(ptr: pointer!) as! Self)
+        }
+    }
+
+    public static func vecOfSelfGet(vecPtr: UnsafeMutableRawPointer, index: UInt) -> Optional<RenderEolDiagnosticRef> {
+        let pointer = __swift_bridge__$Vec_RenderEolDiagnostic$get(vecPtr, index)
+        if pointer == nil {
+            return nil
+        } else {
+            return RenderEolDiagnosticRef(ptr: pointer!)
+        }
+    }
+
+    public static func vecOfSelfGetMut(vecPtr: UnsafeMutableRawPointer, index: UInt) -> Optional<RenderEolDiagnosticRefMut> {
+        let pointer = __swift_bridge__$Vec_RenderEolDiagnostic$get_mut(vecPtr, index)
+        if pointer == nil {
+            return nil
+        } else {
+            return RenderEolDiagnosticRefMut(ptr: pointer!)
+        }
+    }
+
+    public static func vecOfSelfAsPtr(vecPtr: UnsafeMutableRawPointer) -> UnsafePointer<RenderEolDiagnosticRef> {
+        UnsafePointer<RenderEolDiagnosticRef>(OpaquePointer(__swift_bridge__$Vec_RenderEolDiagnostic$as_ptr(vecPtr)))
+    }
+
+    public static func vecOfSelfLen(vecPtr: UnsafeMutableRawPointer) -> UInt {
+        __swift_bridge__$Vec_RenderEolDiagnostic$len(vecPtr)
+    }
+}
+
+
 public class RenderInlineDiagnosticLine: RenderInlineDiagnosticLineRefMut {
     var isOwned: Bool = true
 
@@ -1655,6 +1839,22 @@ extension RenderPlanRef {
 
     public func inline_diagnostic_line_at(_ index: UInt) -> RenderInlineDiagnosticLine {
         RenderInlineDiagnosticLine(ptr: __swift_bridge__$RenderPlan$inline_diagnostic_line_at(ptr, index))
+    }
+
+    public func eol_diagnostic_count() -> UInt {
+        __swift_bridge__$RenderPlan$eol_diagnostic_count(ptr)
+    }
+
+    public func eol_diagnostic_at(_ index: UInt) -> RenderEolDiagnostic {
+        RenderEolDiagnostic(ptr: __swift_bridge__$RenderPlan$eol_diagnostic_at(ptr, index))
+    }
+
+    public func diagnostic_underline_count() -> UInt {
+        __swift_bridge__$RenderPlan$diagnostic_underline_count(ptr)
+    }
+
+    public func diagnostic_underline_at(_ index: UInt) -> RenderDiagnosticUnderline {
+        RenderDiagnosticUnderline(ptr: __swift_bridge__$RenderPlan$diagnostic_underline_at(ptr, index))
     }
 }
 extension RenderPlan: Vectorizable {

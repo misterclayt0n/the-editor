@@ -1,4 +1,5 @@
 import AppKit
+import CoreText
 import SwiftUI
 
 enum FontLoader {
@@ -13,12 +14,14 @@ enum FontLoader {
                let nsFont = NSFont(name: postScript, size: size) {
                 editorFontName = postScript
                 let cellSize = measureCellSize(font: nsFont)
-                return (Font.custom(postScript, size: size), nsFont, cellSize)
+                // Use a concrete CTFont to avoid runtime name lookup fallback in
+                // Canvas text rendering paths.
+                return (Font(nsFont as CTFont), nsFont, cellSize)
             }
         }
 
         let fallback = NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
-        return (Font.system(size: size, weight: .regular, design: .monospaced), fallback, measureCellSize(font: fallback))
+        return (Font(fallback as CTFont), fallback, measureCellSize(font: fallback))
     }
 
     /// Returns the editor font at the given size/weight, falling back to the
@@ -35,10 +38,7 @@ enum FontLoader {
 
     /// SwiftUI `Font` version of the editor font.
     static func editorFont(size: CGFloat) -> Font {
-        if let name = editorFontName {
-            return Font.custom(name, size: size)
-        }
-        return Font.system(size: size, weight: .regular, design: .monospaced)
+        Font(editorNSFont(size: size) as CTFont)
     }
 
     private static func firstPostScriptName(from url: URL) -> String? {

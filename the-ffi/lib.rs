@@ -5,6 +5,7 @@
 //! SwiftUI client to interact with the Rust editor core.
 
 use std::{
+  cell::RefCell,
   collections::{
     BTreeMap,
     HashMap,
@@ -20,6 +21,7 @@ use std::{
     Path,
     PathBuf,
   },
+  rc::Rc,
   sync::{
     Arc,
     OnceLock,
@@ -113,6 +115,12 @@ use the_lib::{
   registers::Registers,
   render::{
     GutterConfig,
+    InlineDiagnostic,
+    InlineDiagnosticRenderLine,
+    InlineDiagnosticsConfig,
+    InlineDiagnosticsLineAnnotation,
+    InlineDiagnosticsRenderData,
+    SharedInlineDiagnosticsRenderData,
     LayoutIntent,
     NoHighlights,
     OverlayNode,
@@ -782,13 +790,18 @@ impl From<OverlayNode> for RenderOverlayNode {
 
 #[derive(Debug, Clone)]
 pub struct RenderPlan {
-  inner: the_lib::render::RenderPlan,
+  inner:                   the_lib::render::RenderPlan,
+  inline_diagnostic_lines: Vec<InlineDiagnosticRenderLine>,
 }
 
 impl RenderPlan {
   fn empty() -> Self {
     Self {
-      inner: the_lib::render::RenderPlan::empty(LibRect::new(0, 0, 0, 0), LibPosition::new(0, 0)),
+      inner:                   the_lib::render::RenderPlan::empty(
+        LibRect::new(0, 0, 0, 0),
+        LibPosition::new(0, 0),
+      ),
+      inline_diagnostic_lines: Vec::new(),
     }
   }
 
@@ -873,11 +886,72 @@ impl RenderPlan {
       .map(RenderOverlayNode::from)
       .unwrap_or_else(RenderOverlayNode::empty)
   }
+
+  fn inline_diagnostic_line_count(&self) -> usize {
+    self.inline_diagnostic_lines.len()
+  }
+
+  fn inline_diagnostic_line_at(&self, index: usize) -> RenderInlineDiagnosticLine {
+    let scroll_row = self.inner.scroll.row;
+    self
+      .inline_diagnostic_lines
+      .get(index)
+      .cloned()
+      .map(|line| RenderInlineDiagnosticLine::new(line, scroll_row))
+      .unwrap_or_else(RenderInlineDiagnosticLine::empty)
+  }
 }
 
 impl From<the_lib::render::RenderPlan> for RenderPlan {
   fn from(plan: the_lib::render::RenderPlan) -> Self {
-    Self { inner: plan }
+    Self {
+      inner:                   plan,
+      inline_diagnostic_lines: Vec::new(),
+    }
+  }
+}
+
+pub struct RenderInlineDiagnosticLine {
+  inner:      InlineDiagnosticRenderLine,
+  scroll_row: usize,
+}
+
+impl RenderInlineDiagnosticLine {
+  fn empty() -> Self {
+    Self {
+      inner:      InlineDiagnosticRenderLine {
+        row:      0,
+        col:      0,
+        text:     Tendril::new(),
+        severity: DiagnosticSeverity::Warning,
+      },
+      scroll_row: 0,
+    }
+  }
+
+  fn new(inner: InlineDiagnosticRenderLine, scroll_row: usize) -> Self {
+    Self { inner, scroll_row }
+  }
+
+  fn row(&self) -> u16 {
+    self.inner.row.saturating_sub(self.scroll_row) as u16
+  }
+
+  fn col(&self) -> u16 {
+    self.inner.col as u16
+  }
+
+  fn text(&self) -> String {
+    self.inner.text.to_string()
+  }
+
+  fn severity(&self) -> u8 {
+    match self.inner.severity {
+      DiagnosticSeverity::Error => 1,
+      DiagnosticSeverity::Warning => 2,
+      DiagnosticSeverity::Information => 3,
+      DiagnosticSeverity::Hint => 4,
+    }
   }
 }
 
@@ -2757,6 +2831,7 @@ pub struct App {
   lsp_pending_auto_completion:     Option<PendingAutoCompletion>,
   lsp_pending_auto_signature_help: Option<PendingAutoSignatureHelp>,
   diagnostics:                     DiagnosticsState,
+  inline_diagnostic_lines:         Vec<InlineDiagnosticRenderLine>,
   ui_theme:                        Theme,
   loader:                          Option<Arc<Loader>>,
 }
@@ -2814,6 +2889,7 @@ impl App {
       lsp_pending_auto_completion: None,
       lsp_pending_auto_signature_help: None,
       diagnostics: DiagnosticsState::default(),
+      inline_diagnostic_lines: Vec::new(),
       ui_theme,
       loader,
     }
@@ -2987,11 +3063,15 @@ impl App {
     let _ = self.poll_background_active();
 
     let plan = the_default::render_plan(self);
+    let inline_diagnostic_lines = std::mem::take(&mut self.inline_diagnostic_lines);
     let elapsed = started.elapsed();
     if ffi_ui_profile_should_log(elapsed) {
       ffi_ui_profile_log(format!("render_plan elapsed={}ms", elapsed.as_millis()));
     }
-    plan.into()
+    RenderPlan {
+      inner: plan,
+      inline_diagnostic_lines,
+    }
   }
 
   pub fn render_plan_with_styles(
@@ -3005,7 +3085,11 @@ impl App {
     let _ = self.poll_background_active();
 
     let plan = the_default::render_plan_with_styles(self, styles.to_lib());
-    plan.into()
+    let inline_diagnostic_lines = std::mem::take(&mut self.inline_diagnostic_lines);
+    RenderPlan {
+      inner: plan,
+      inline_diagnostic_lines,
+    }
   }
 
   pub fn ui_tree_json(&mut self, id: ffi::EditorId) -> String {
@@ -3139,6 +3223,11 @@ impl App {
     let diagnostics_by_line = self.active_diagnostics_by_line();
     let diagnostic_styles = render_diagnostic_styles_from_theme(&self.ui_theme);
     let diff_styles = render_diff_styles_from_theme(&self.ui_theme);
+    let inline_diagnostics = self.active_inline_diagnostics();
+    let enable_cursor_line = self.active_state_ref().mode != Mode::Insert;
+
+    let inline_diagnostic_render_data: SharedInlineDiagnosticsRenderData =
+      Rc::new(RefCell::new(InlineDiagnosticsRenderData::default()));
 
     let mut plan = {
       let editor = self.active_editor_mut();
@@ -3155,6 +3244,36 @@ impl App {
       let (doc, cache) = editor.document_and_cache();
       let gutter_width = gutter_width_for_document(doc, view.viewport.width, &gutter_config);
       text_fmt.viewport_width = view.viewport.width.saturating_sub(gutter_width).max(1);
+
+      if !inline_diagnostics.is_empty() {
+        let inline_config = InlineDiagnosticsConfig::default()
+          .prepare(text_fmt.viewport_width.max(1), enable_cursor_line);
+        if !inline_config.disabled() {
+          let cursor_char_idx = doc
+            .selection()
+            .ranges()
+            .first()
+            .map(|r| r.cursor(doc.text().slice(..)))
+            .unwrap_or(0);
+          let cursor_line_idx = doc
+            .selection()
+            .ranges()
+            .first()
+            .map(|r| r.cursor_line(doc.text().slice(..)));
+          let _ = annotations.add_line_annotation(Box::new(
+            InlineDiagnosticsLineAnnotation::new(
+              inline_diagnostics,
+              cursor_char_idx,
+              cursor_line_idx,
+              text_fmt.viewport_width.max(1),
+              view.scroll.col,
+              inline_config,
+              inline_diagnostic_render_data.clone(),
+            ),
+          ));
+        }
+      }
+
       if let (Some(loader), Some(syntax)) = (loader.as_deref(), doc.syntax()) {
         let line_range = view.scroll.row..(view.scroll.row + view.viewport.height as usize);
         let mut adapter = SyntaxHighlightAdapter::new(
@@ -3194,6 +3313,7 @@ impl App {
     apply_diagnostic_gutter_markers(&mut plan, &diagnostics_by_line, diagnostic_styles);
     apply_diff_gutter_markers(&mut plan, &diff_signs, diff_styles);
 
+    self.inline_diagnostic_lines = inline_diagnostic_render_data.borrow().lines.clone();
     self.active_state_mut().highlight_cache = highlight_cache;
     plan
   }
@@ -4060,6 +4180,32 @@ impl App {
         },
       }
     }
+    out
+  }
+
+  fn active_inline_diagnostics(&self) -> Vec<InlineDiagnostic> {
+    let Some(state) = self.lsp_document.as_ref().filter(|state| state.opened) else {
+      return Vec::new();
+    };
+    let Some(document) = self.diagnostics.document(&state.uri) else {
+      return Vec::new();
+    };
+    let text = self.active_editor_ref().document().text();
+    let mut out = Vec::with_capacity(document.diagnostics.len());
+    for diagnostic in &document.diagnostics {
+      let message = diagnostic.message.trim();
+      if message.is_empty() {
+        continue;
+      }
+      let start_char_idx = utf16_position_to_char_idx(
+        text,
+        diagnostic.range.start.line,
+        diagnostic.range.start.character,
+      );
+      let severity = diagnostic.severity.unwrap_or(DiagnosticSeverity::Warning);
+      out.push(InlineDiagnostic::new(start_char_idx, severity, message.to_string()));
+    }
+    out.sort_by_key(|d| d.start_char_idx);
     out
   }
 
@@ -6913,6 +7059,17 @@ mod ffi {
     fn selection_at(self: &RenderPlan, index: usize) -> RenderSelection;
     fn overlay_count(self: &RenderPlan) -> usize;
     fn overlay_at(self: &RenderPlan, index: usize) -> RenderOverlayNode;
+    fn inline_diagnostic_line_count(self: &RenderPlan) -> usize;
+    fn inline_diagnostic_line_at(
+      self: &RenderPlan,
+      index: usize,
+    ) -> RenderInlineDiagnosticLine;
+
+    type RenderInlineDiagnosticLine;
+    fn row(self: &RenderInlineDiagnosticLine) -> u16;
+    fn col(self: &RenderInlineDiagnosticLine) -> u16;
+    fn text(self: &RenderInlineDiagnosticLine) -> String;
+    fn severity(self: &RenderInlineDiagnosticLine) -> u8;
   }
 }
 

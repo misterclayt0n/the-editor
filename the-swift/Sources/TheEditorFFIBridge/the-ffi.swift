@@ -1479,6 +1479,98 @@ extension RenderOverlayNode: Vectorizable {
 }
 
 
+public class RenderInlineDiagnosticLine: RenderInlineDiagnosticLineRefMut {
+    var isOwned: Bool = true
+
+    public override init(ptr: UnsafeMutableRawPointer) {
+        super.init(ptr: ptr)
+    }
+
+    deinit {
+        if isOwned {
+            __swift_bridge__$RenderInlineDiagnosticLine$_free(ptr)
+        }
+    }
+}
+public class RenderInlineDiagnosticLineRefMut: RenderInlineDiagnosticLineRef {
+    public override init(ptr: UnsafeMutableRawPointer) {
+        super.init(ptr: ptr)
+    }
+}
+public class RenderInlineDiagnosticLineRef {
+    var ptr: UnsafeMutableRawPointer
+
+    public init(ptr: UnsafeMutableRawPointer) {
+        self.ptr = ptr
+    }
+}
+extension RenderInlineDiagnosticLineRef {
+    public func row() -> UInt16 {
+        __swift_bridge__$RenderInlineDiagnosticLine$row(ptr)
+    }
+
+    public func col() -> UInt16 {
+        __swift_bridge__$RenderInlineDiagnosticLine$col(ptr)
+    }
+
+    public func text() -> RustString {
+        RustString(ptr: __swift_bridge__$RenderInlineDiagnosticLine$text(ptr))
+    }
+
+    public func severity() -> UInt8 {
+        __swift_bridge__$RenderInlineDiagnosticLine$severity(ptr)
+    }
+}
+extension RenderInlineDiagnosticLine: Vectorizable {
+    public static func vecOfSelfNew() -> UnsafeMutableRawPointer {
+        __swift_bridge__$Vec_RenderInlineDiagnosticLine$new()
+    }
+
+    public static func vecOfSelfFree(vecPtr: UnsafeMutableRawPointer) {
+        __swift_bridge__$Vec_RenderInlineDiagnosticLine$drop(vecPtr)
+    }
+
+    public static func vecOfSelfPush(vecPtr: UnsafeMutableRawPointer, value: RenderInlineDiagnosticLine) {
+        __swift_bridge__$Vec_RenderInlineDiagnosticLine$push(vecPtr, {value.isOwned = false; return value.ptr;}())
+    }
+
+    public static func vecOfSelfPop(vecPtr: UnsafeMutableRawPointer) -> Optional<Self> {
+        let pointer = __swift_bridge__$Vec_RenderInlineDiagnosticLine$pop(vecPtr)
+        if pointer == nil {
+            return nil
+        } else {
+            return (RenderInlineDiagnosticLine(ptr: pointer!) as! Self)
+        }
+    }
+
+    public static func vecOfSelfGet(vecPtr: UnsafeMutableRawPointer, index: UInt) -> Optional<RenderInlineDiagnosticLineRef> {
+        let pointer = __swift_bridge__$Vec_RenderInlineDiagnosticLine$get(vecPtr, index)
+        if pointer == nil {
+            return nil
+        } else {
+            return RenderInlineDiagnosticLineRef(ptr: pointer!)
+        }
+    }
+
+    public static func vecOfSelfGetMut(vecPtr: UnsafeMutableRawPointer, index: UInt) -> Optional<RenderInlineDiagnosticLineRefMut> {
+        let pointer = __swift_bridge__$Vec_RenderInlineDiagnosticLine$get_mut(vecPtr, index)
+        if pointer == nil {
+            return nil
+        } else {
+            return RenderInlineDiagnosticLineRefMut(ptr: pointer!)
+        }
+    }
+
+    public static func vecOfSelfAsPtr(vecPtr: UnsafeMutableRawPointer) -> UnsafePointer<RenderInlineDiagnosticLineRef> {
+        UnsafePointer<RenderInlineDiagnosticLineRef>(OpaquePointer(__swift_bridge__$Vec_RenderInlineDiagnosticLine$as_ptr(vecPtr)))
+    }
+
+    public static func vecOfSelfLen(vecPtr: UnsafeMutableRawPointer) -> UInt {
+        __swift_bridge__$Vec_RenderInlineDiagnosticLine$len(vecPtr)
+    }
+}
+
+
 public class RenderPlan: RenderPlanRefMut {
     var isOwned: Bool = true
 
@@ -1555,6 +1647,14 @@ extension RenderPlanRef {
 
     public func overlay_at(_ index: UInt) -> RenderOverlayNode {
         RenderOverlayNode(ptr: __swift_bridge__$RenderPlan$overlay_at(ptr, index))
+    }
+
+    public func inline_diagnostic_line_count() -> UInt {
+        __swift_bridge__$RenderPlan$inline_diagnostic_line_count(ptr)
+    }
+
+    public func inline_diagnostic_line_at(_ index: UInt) -> RenderInlineDiagnosticLine {
+        RenderInlineDiagnosticLine(ptr: __swift_bridge__$RenderPlan$inline_diagnostic_line_at(ptr, index))
     }
 }
 extension RenderPlan: Vectorizable {

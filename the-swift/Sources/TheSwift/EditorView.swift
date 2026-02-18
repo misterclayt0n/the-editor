@@ -189,6 +189,7 @@ struct EditorView: View {
         drawGutter(in: context, size: size, plan: plan, cellSize: cellSize, font: font, contentOffsetX: contentOffsetX)
         drawSelections(in: context, plan: plan, cellSize: cellSize, contentOffsetX: contentOffsetX)
         drawText(in: context, plan: plan, cellSize: cellSize, font: font, contentOffsetX: contentOffsetX)
+        drawInlineDiagnostics(in: context, plan: plan, cellSize: cellSize, font: font, contentOffsetX: contentOffsetX)
         drawCursors(in: context, plan: plan, cellSize: cellSize, contentOffsetX: contentOffsetX)
     }
 
@@ -417,6 +418,38 @@ struct EditorView: View {
                 let rect = CGRect(x: x, y: y, width: cellSize.width, height: cellSize.height)
                 context.fill(Path(rect), with: .color(cursorColor.opacity(0.5)))
             }
+        }
+    }
+
+    // MARK: - Inline Diagnostics
+
+    private func drawInlineDiagnostics(
+        in context: GraphicsContext,
+        plan: RenderPlan,
+        cellSize: CGSize,
+        font: Font,
+        contentOffsetX: CGFloat
+    ) {
+        let count = Int(plan.inline_diagnostic_line_count())
+        guard count > 0 else { return }
+
+        for i in 0..<count {
+            let line = plan.inline_diagnostic_line_at(UInt(i))
+            let y = CGFloat(line.row()) * cellSize.height
+            let x = contentOffsetX + CGFloat(line.col()) * cellSize.width
+            let color = inlineDiagnosticColor(severity: line.severity())
+            let text = Text(line.text().toString()).font(font).foregroundColor(color)
+            context.draw(text, at: CGPoint(x: x, y: y), anchor: .topLeading)
+        }
+    }
+
+    private func inlineDiagnosticColor(severity: UInt8) -> SwiftUI.Color {
+        switch severity {
+        case 1: return SwiftUI.Color(nsColor: .systemRed).opacity(0.85)
+        case 2: return SwiftUI.Color(nsColor: .systemYellow).opacity(0.85)
+        case 3: return SwiftUI.Color(nsColor: .systemBlue).opacity(0.85)
+        case 4: return SwiftUI.Color(nsColor: .systemGreen).opacity(0.85)
+        default: return SwiftUI.Color.white.opacity(0.5)
         }
     }
 

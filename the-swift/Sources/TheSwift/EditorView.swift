@@ -440,13 +440,8 @@ struct EditorView: View {
             let y = CGFloat(line.row()) * cellSize.height
             let baseX = contentOffsetX + CGFloat(line.col()) * cellSize.width
             let color = diagnosticColor(severity: line.severity()).opacity(0.6)
-            // Draw character-by-character to keep monospace grid alignment and
-            // avoid SwiftUI Canvas font fallback on long Text views.
-            for (ci, ch) in line.text().toString().enumerated() {
-                let cx = baseX + CGFloat(ci) * cellSize.width
-                let text = Text(String(ch)).font(font).foregroundColor(color)
-                context.draw(text, at: CGPoint(x: cx, y: y), anchor: .topLeading)
-            }
+            let text = Text(line.text().toString()).font(font).foregroundColor(color)
+            context.draw(text, at: CGPoint(x: baseX, y: y), anchor: .topLeading)
         }
     }
 
@@ -477,13 +472,8 @@ struct EditorView: View {
             let y = CGFloat(eol.row()) * cellSize.height
             let baseX = contentOffsetX + CGFloat(eol.col()) * cellSize.width
             let color = diagnosticColor(severity: eol.severity()).opacity(0.6)
-            // Draw character-by-character to keep monospace grid alignment and
-            // avoid SwiftUI Canvas font fallback on long Text views.
-            for (ci, ch) in eol.message().toString().enumerated() {
-                let cx = baseX + CGFloat(ci) * cellSize.width
-                let text = Text(String(ch)).font(font).foregroundColor(color)
-                context.draw(text, at: CGPoint(x: cx, y: y), anchor: .topLeading)
-            }
+            let text = Text(eol.message().toString()).font(font).foregroundColor(color)
+            context.draw(text, at: CGPoint(x: baseX, y: y), anchor: .topLeading)
         }
     }
 

@@ -312,13 +312,17 @@ struct PickerPanel<
             selectedIndex = nil
             return
         }
+        let prev = selectedIndex
         if !autoSelectFirstItem {
             selectedIndex = clampedIndex(externalSelectedIndex)
-            return
+        } else {
+            selectedIndex = clampedIndex(selectedIndex)
+                ?? clampedIndex(externalSelectedIndex)
+                ?? (autoSelectFirstItem ? 0 : nil)
         }
-        selectedIndex = clampedIndex(selectedIndex)
-            ?? clampedIndex(externalSelectedIndex)
-            ?? (autoSelectFirstItem ? 0 : nil)
+        if selectedIndex != prev, let sel = selectedIndex {
+            onSelectionChange?(sel)
+        }
     }
 
     private func clampedIndex(_ index: Int?) -> Int? {

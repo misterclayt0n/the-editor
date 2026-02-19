@@ -412,6 +412,36 @@ private struct CompletionDocsAppKitTextView: NSViewRepresentable {
             super.mouseUp(with: event)
             KeyCaptureFocusBridge.shared.reclaim(in: window)
         }
+
+        override func resetCursorRects() {
+            super.resetCursorRects()
+            guard let textStorage,
+                  let layoutManager,
+                  let textContainer else {
+                return
+            }
+
+            let fullRange = NSRange(location: 0, length: textStorage.length)
+            textStorage.enumerateAttribute(.link, in: fullRange) { value, charRange, _ in
+                guard value != nil else {
+                    return
+                }
+                let glyphRange = layoutManager.glyphRange(
+                    forCharacterRange: charRange,
+                    actualCharacterRange: nil
+                )
+                layoutManager.enumerateEnclosingRects(
+                    forGlyphRange: glyphRange,
+                    withinSelectedGlyphRange: NSRange(location: NSNotFound, length: 0),
+                    in: textContainer
+                ) { rect, _ in
+                    var cursorRect = rect
+                    cursorRect.origin.x += self.textContainerOrigin.x
+                    cursorRect.origin.y += self.textContainerOrigin.y
+                    self.addCursorRect(cursorRect, cursor: .pointingHand)
+                }
+            }
+        }
     }
 
     final class Coordinator: NSObject, NSTextViewDelegate {
@@ -537,9 +567,11 @@ private struct CompletionDocsAppKitTextView: NSViewRepresentable {
 
         if isLoading && attributedText.length == 0 {
             textView.textStorage?.setAttributedString(CompletionDocsRenderer.loadingPlaceholder)
+            textView.window?.invalidateCursorRects(for: textView)
             return
         }
         textView.textStorage?.setAttributedString(attributedText)
+        textView.window?.invalidateCursorRects(for: textView)
     }
 }
 
@@ -927,27 +959,27 @@ private enum CompletionDocsRenderer {
             return nil
         }
 
-        let estimatedColumns = max(8, Int((contentWidth - 20) / max(5, theme.estimatedColumnWidth)))
-        let ruleText = String(repeating: "─", count: min(estimatedColumns, 96))
-
         let rendered = NSMutableAttributedString()
         for (lineIndex, line) in payload.lines.enumerated() {
             if line.isEmpty {
                 // Preserve blank lines from Rust markdown wrapping.
             } else {
                 for run in line {
-                    let renderedText = run.kind == .rule ? ruleText : run.text
-                    rendered.append(
-                        NSAttributedString(
-                            string: renderedText,
-                            attributes: attributes(
-                                for: run.style,
-                                kind: run.kind,
-                                href: run.href,
-                                theme: theme
+                    if run.kind == .rule {
+                        rendered.append(ruleAttachment(width: contentWidth, style: run.style, theme: theme))
+                    } else {
+                        rendered.append(
+                            NSAttributedString(
+                                string: run.text,
+                                attributes: attributes(
+                                    for: run.style,
+                                    kind: run.kind,
+                                    href: run.href,
+                                    theme: theme
+                                )
                             )
                         )
-                    )
+                    }
                 }
             }
 
@@ -1033,6 +1065,43 @@ private enum CompletionDocsRenderer {
             return direct
         }
         return URL(string: "https://\(trimmed)")
+    }
+
+    private static func ruleAttachment(
+        width: CGFloat,
+        style: RustDocsStyle,
+        theme: CompletionDocsTheme
+    ) -> NSAttributedString {
+        let contentWidth = max(12, width - 20)
+        let strokeColor = (
+            style.has_fg
+                ? (nsColor(from: style.fg) ?? theme.bodyColor)
+                : theme.bodyColor
+        ).withAlphaComponent(0.45)
+
+        let imageHeight: CGFloat = 8
+        let image = NSImage(size: NSSize(width: contentWidth, height: imageHeight), flipped: false) { rect in
+            let path = NSBezierPath()
+            let y = floor(rect.midY) + 0.5
+            path.move(to: NSPoint(x: 0, y: y))
+            path.line(to: NSPoint(x: rect.width, y: y))
+            strokeColor.setStroke()
+            path.lineWidth = 1
+            path.stroke()
+            return true
+        }
+
+        let attachment = NSTextAttachment()
+        attachment.image = image
+        attachment.bounds = NSRect(x: 0, y: -1, width: contentWidth, height: imageHeight)
+
+        let out = NSMutableAttributedString(attachment: attachment)
+        out.addAttribute(
+            .paragraphStyle,
+            value: theme.paragraphStyle(code: false),
+            range: NSRange(location: 0, length: out.length)
+        )
+        return out
     }
 
     private static func nsColor(from color: RustDocsColor) -> NSColor? {

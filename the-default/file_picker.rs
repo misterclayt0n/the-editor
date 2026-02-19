@@ -1455,9 +1455,8 @@ fn start_preview_worker(state: &mut FilePickerState) {
             source_preview.end_byte,
             loader,
           );
-          if request.request_id != latest_request.load(Ordering::Relaxed) {
-            continue;
-          }
+          // Always send the highlighted result even if stale — poll_preview_results
+          // will cache it by path, so navigating back shows highlighted content.
 
           let mut preview = source_preview.source;
           if !highlights.is_empty() {

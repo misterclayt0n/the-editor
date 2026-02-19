@@ -17,10 +17,12 @@ use ratatui::{
   },
   widgets::{
     Block,
+    BorderType,
     Borders,
     Clear,
     Paragraph,
     Widget,
+    block::Title,
   },
 };
 use ropey::Rope;
@@ -2563,6 +2565,9 @@ fn draw_file_picker_panel(
       fill_style = fill_style.bg(bg);
     }
   }
+  if fill_style.bg.is_none() {
+    fill_style = fill_style.bg(Color::Reset);
+  }
 
   fill_rect(buf, layout.panel, fill_style);
 
@@ -2607,8 +2612,20 @@ fn draw_file_picker_list_pane(
   cursor_out: &mut Option<(u16, u16)>,
 ) {
   let rect = layout.list_pane;
+  let title_style = text_style.add_modifier(Modifier::BOLD);
+  let count = format!("{}/{}", picker.matched_count(), picker.total_count());
+  let count_style = text_style.add_modifier(Modifier::DIM);
+
+  let borders = if layout.show_preview {
+    Borders::TOP | Borders::LEFT | Borders::BOTTOM
+  } else {
+    Borders::ALL
+  };
+
   let block = Block::default()
-    .borders(Borders::ALL)
+    .title(Span::styled(" Find File ", title_style))
+    .borders(borders)
+    .border_type(BorderType::Rounded)
     .border_style(border_style)
     .style(fill_style);
   block.render(rect, buf);
@@ -2618,51 +2635,18 @@ fn draw_file_picker_list_pane(
     return;
   }
 
-  // Title row: "Find File" label on the left, match count on the right.
-  let title_area = layout.list_title;
-  let title_style = text_style.add_modifier(Modifier::BOLD);
-  buf.set_stringn(
-    title_area.x,
-    title_area.y,
-    "Find File",
-    title_area.width as usize,
-    title_style,
-  );
-
-  let count = format!("{}/{}", picker.matched_count(), picker.total_count());
-  let count_style = text_style.add_modifier(Modifier::DIM);
-  buf.set_stringn(
-    title_area.x.saturating_add(
-      title_area
-        .width
-        .saturating_sub(count.chars().count() as u16),
-    ),
-    title_area.y,
-    &count,
-    title_area.width as usize,
-    count_style,
-  );
-
-  if let Some(error) = picker.error.as_ref().filter(|err| !err.is_empty()) {
-    let error_area = Rect::new(
-      title_area.x,
-      title_area.y,
-      title_area
-        .width
-        .saturating_sub(count.chars().count() as u16 + 1),
-      1,
-    );
-    let mut error_text = format!("! {error}");
-    truncate_in_place(&mut error_text, error_area.width as usize);
-    buf.set_string(error_area.x, error_area.y, error_text, count_style);
-  }
-
-  // Input row: render the search query (no placeholder ghost text).
+  // Input row: render the search query and right-aligned count.
   let prompt_area = layout.list_prompt;
   if !picker.query.is_empty() {
     Paragraph::new(picker.query.clone())
       .style(text_style)
       .render(prompt_area, buf);
+  }
+  // Right-aligned match count on the prompt line.
+  let count_len = count.chars().count() as u16;
+  if count_len < prompt_area.width {
+    let count_x = prompt_area.x + prompt_area.width.saturating_sub(count_len);
+    buf.set_string(count_x, prompt_area.y, &count, count_style);
   }
 
   let is_focused = focus
@@ -2681,18 +2665,26 @@ fn draw_file_picker_list_pane(
     *cursor_out = Some((x, prompt_area.y));
   }
 
+  // Separator sits just below the prompt.
   let separator_y = prompt_area.y.saturating_add(1);
   if separator_y < inner.y.saturating_add(inner.height) {
+    let sep_style = border_style;
     let separator = "─".repeat(inner.width as usize);
-    buf.set_string(
-      inner.x,
-      separator_y,
-      separator,
-      border_style.add_modifier(Modifier::DIM),
-    );
+    buf.set_string(inner.x, separator_y, separator, sep_style);
+    // Connect separator to borders with T-junction characters.
+    buf.get_mut(rect.x, separator_y).set_symbol("├").set_style(sep_style);
+    if layout.show_preview {
+      if let Some(preview_pane) = layout.preview_pane {
+        buf.get_mut(preview_pane.x, separator_y).set_symbol("┤").set_style(sep_style);
+      }
+    } else {
+      buf.get_mut(rect.x + rect.width.saturating_sub(1), separator_y)
+        .set_symbol("┤")
+        .set_style(sep_style);
+    }
   }
 
-  if inner.height < 4 {
+  if inner.height < 3 {
     return;
   }
 
@@ -2768,16 +2760,54 @@ fn draw_file_picker_list_pane(
     if content_width == 0 {
       continue;
     }
+
+    // Split display path into filename + parent directory (like fff.nvim).
+    let display = item.display.as_str();
+    let (dir_part, file_part) = match display.rfind('/') {
+      Some(pos) => (&display[..pos], &display[pos + 1..]),
+      None => ("", display),
+    };
+    let file_char_start: usize = display.chars().count() - file_part.chars().count();
+
+    // Draw filename with fuzzy highlighting (remap indices from full path).
+    let file_len = file_part.chars().count();
+    let file_match_indices: Vec<usize> = match_indices
+      .iter()
+      .filter(|&&idx| idx >= file_char_start)
+      .map(|&idx| idx - file_char_start)
+      .collect();
     draw_fuzzy_match_line(
       buf,
       text_x,
       y,
-      item.display.as_str(),
+      file_part,
       content_width,
       style,
       fuzzy_highlight_style,
-      &match_indices,
+      &file_match_indices,
     );
+
+    // Draw directory dimmed after the filename.
+    if !dir_part.is_empty() && file_len + 1 < content_width {
+      let dir_x = text_x.saturating_add(file_len as u16 + 1);
+      let dir_width = content_width.saturating_sub(file_len + 1);
+      let dir_style = style.add_modifier(Modifier::DIM);
+      let dir_match_indices: Vec<usize> = match_indices
+        .iter()
+        .filter(|&&idx| idx < file_char_start.saturating_sub(1))
+        .copied()
+        .collect();
+      draw_fuzzy_match_line(
+        buf,
+        dir_x,
+        y,
+        dir_part,
+        dir_width,
+        dir_style,
+        fuzzy_highlight_style,
+        &dir_match_indices,
+      );
+    }
   }
 
   if let Some(track) = layout.list_scrollbar_track
@@ -2809,29 +2839,33 @@ fn draw_file_picker_preview_pane(
     return;
   };
 
-  let block = Block::default()
+  let mut block = Block::default()
     .borders(Borders::ALL)
+    .border_type(BorderType::Rounded)
     .border_style(border_style)
     .style(fill_style);
+  if let Some(preview_path) = &picker.preview_path {
+    let path_display = preview_path
+      .strip_prefix(&picker.root)
+      .unwrap_or(preview_path)
+      .display()
+      .to_string();
+    block = block.title(
+      Title::from(Span::styled(
+        format!(" {} ", path_display),
+        text_style.add_modifier(Modifier::DIM),
+      )),
+    );
+  }
   block.render(rect, buf);
 
-  // File-path title at the top of the preview pane.
-  if let Some(title_rect) = layout.preview_title {
-    if let Some(preview_path) = &picker.preview_path {
-      let path_display = preview_path
-        .strip_prefix(&picker.root)
-        .unwrap_or(preview_path)
-        .display()
-        .to_string();
-      let path_style = text_style.add_modifier(Modifier::DIM);
-      buf.set_stringn(
-        title_rect.x,
-        title_rect.y,
-        &path_display,
-        title_rect.width as usize,
-        path_style,
-      );
-    }
+  // Fix junction characters where preview's left border meets the top/bottom borders.
+  if rect.height > 0 {
+    buf.get_mut(rect.x, rect.y).set_symbol("┬").set_style(border_style);
+    buf
+      .get_mut(rect.x, rect.y + rect.height.saturating_sub(1))
+      .set_symbol("┴")
+      .set_style(border_style);
   }
 
   let Some(content) = layout.preview_content else {

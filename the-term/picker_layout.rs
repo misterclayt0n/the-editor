@@ -30,7 +30,6 @@ pub struct FilePickerLayout {
   pub show_preview:          bool,
   pub list_pane:             Rect,
   pub list_inner:            Rect,
-  pub list_title:            Rect,
   pub list_prompt:           Rect,
   pub list_area:             Rect,
   pub list_content:          Rect,
@@ -38,7 +37,6 @@ pub struct FilePickerLayout {
   pub list_scrollbar_track:  Option<Rect>,
   pub preview_pane:          Option<Rect>,
   pub preview_inner:         Option<Rect>,
-  pub preview_title:         Option<Rect>,
   pub preview_content:       Option<Rect>,
   pub preview_scroll_offset: usize,
   pub preview_scrollbar:     Option<Rect>,
@@ -116,21 +114,20 @@ pub fn compute_file_picker_layout(
   };
 
   let list_pane = panes[0];
-  let list_inner = Block::default().borders(Borders::ALL).inner(list_pane);
-  let list_title = Rect::new(list_inner.x, list_inner.y, list_inner.width, 1);
-  let list_prompt = Rect::new(
-    list_inner.x,
-    list_inner.y.saturating_add(1),
-    list_inner.width,
-    1,
-  );
-  // Title + prompt + separator = 3 rows before the list content.
-  let list_area = if list_inner.height >= 4 {
+  let list_borders = if show_preview {
+    Borders::TOP | Borders::LEFT | Borders::BOTTOM
+  } else {
+    Borders::ALL
+  };
+  let list_inner = Block::default().borders(list_borders).inner(list_pane);
+  let list_prompt = Rect::new(list_inner.x, list_inner.y, list_inner.width, 1);
+  // Prompt + separator = 2 rows before the list content (title is in the border).
+  let list_area = if list_inner.height >= 3 {
     Rect::new(
       list_inner.x,
-      list_inner.y.saturating_add(3),
+      list_inner.y.saturating_add(2),
       list_inner.width,
-      list_inner.height.saturating_sub(3),
+      list_inner.height.saturating_sub(2),
     )
   } else {
     Rect::default()
@@ -163,40 +160,31 @@ pub fn compute_file_picker_layout(
 
   let preview_pane = show_preview.then_some(panes[1]);
   let preview_inner = preview_pane.map(|pane| Block::default().borders(Borders::ALL).inner(pane));
-  let preview_title =
-    preview_inner.map(|inner| Rect::new(inner.x, inner.y, inner.width, 1.min(inner.height)));
   let preview_total_lines = picker.preview_line_count();
-  // Reserve 1 row for the file-path title at the top of the preview pane.
+  // Title is now in the border, so the full inner area is available for content.
   let preview_visible_rows = preview_inner
-    .map(|rect| rect.height.saturating_sub(1).max(1) as usize)
+    .map(|rect| rect.height.max(1) as usize)
     .unwrap_or(1);
   let preview_scroll_offset = picker
     .preview_scroll
     .min(preview_total_lines.saturating_sub(preview_visible_rows));
   let preview_scrollbar = preview_inner.and_then(|inner| {
-    let content_y = inner.y.saturating_add(1);
-    let content_h = inner.height.saturating_sub(1);
-    (preview_total_lines > preview_visible_rows && inner.width > 1 && content_h > 0).then(|| {
+    (preview_total_lines > preview_visible_rows && inner.width > 1 && inner.height > 0).then(|| {
       Rect::new(
         inner.x + inner.width.saturating_sub(1),
-        content_y,
+        inner.y,
         1,
-        content_h,
+        inner.height,
       )
     })
   });
-  let preview_content = preview_inner.and_then(|inner| {
-    if inner.height <= 1 {
-      return None;
-    }
-    let content_y = inner.y.saturating_add(1);
-    let content_h = inner.height.saturating_sub(1);
+  let preview_content = preview_inner.map(|inner| {
     let w = if preview_scrollbar.is_some() {
       inner.width.saturating_sub(1)
     } else {
       inner.width
     };
-    Some(Rect::new(inner.x, content_y, w, content_h))
+    Rect::new(inner.x, inner.y, w, inner.height)
   });
 
   Some(FilePickerLayout {
@@ -205,7 +193,6 @@ pub fn compute_file_picker_layout(
     show_preview,
     list_pane,
     list_inner,
-    list_title,
     list_prompt,
     list_area,
     list_content,
@@ -213,7 +200,6 @@ pub fn compute_file_picker_layout(
     list_scrollbar_track,
     preview_pane,
     preview_inner,
-    preview_title,
     preview_content,
     preview_scroll_offset,
     preview_scrollbar,

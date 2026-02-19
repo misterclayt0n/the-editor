@@ -63,6 +63,7 @@ use the_default::{
   DefaultDispatchStatic,
   Direction as CommandDirection,
   DispatchRef,
+  FilePickerPreview,
   FilePickerState,
   KeyBinding,
   KeyEvent,
@@ -3964,6 +3965,17 @@ impl App {
     true
   }
 
+  pub fn file_picker_select_index(&mut self, id: ffi::EditorId, index: usize) -> bool {
+    if self.activate(id).is_none() {
+      return false;
+    }
+    if !self.file_picker().active {
+      return false;
+    }
+    select_file_picker_index(self, index);
+    true
+  }
+
   pub fn file_picker_snapshot_json(&mut self, id: ffi::EditorId, max_items: usize) -> String {
     if self.activate(id).is_none() {
       return "{}".to_string();
@@ -4000,6 +4012,71 @@ impl App {
       }
     }
 
+    let preview_json = match &picker.preview {
+      FilePickerPreview::Empty => serde_json::json!({ "kind": "empty" }),
+      FilePickerPreview::Message(msg) => serde_json::json!({
+        "kind": "message",
+        "text": msg,
+      }),
+      FilePickerPreview::Text(text) => serde_json::json!({
+        "kind": "text",
+        "text": text,
+      }),
+      FilePickerPreview::Source(source) => {
+        let lines: Vec<serde_json::Value> = source
+          .lines
+          .iter()
+          .enumerate()
+          .map(|(line_idx, line_text)| {
+            let line_start = source.line_starts.get(line_idx).copied().unwrap_or(0);
+            let line_end = source
+              .line_starts
+              .get(line_idx + 1)
+              .copied()
+              .unwrap_or(line_start + line_text.len());
+
+            let spans: Vec<serde_json::Value> = source
+              .highlights
+              .iter()
+              .filter(|(_hl, range)| range.start < line_end && range.end > line_start)
+              .map(|(hl, range)| {
+                let span_start_byte =
+                  range.start.saturating_sub(line_start).min(line_text.len());
+                let span_end_byte = range.end.saturating_sub(line_start).min(line_text.len());
+                let char_start = line_text[..span_start_byte].chars().count();
+                let char_end = line_text[..span_end_byte].chars().count();
+                serde_json::json!([char_start, char_end, hl.get()])
+              })
+              .collect();
+
+            serde_json::json!({
+              "text": line_text,
+              "spans": spans,
+            })
+          })
+          .collect();
+
+        let preview_path = picker
+          .preview_path
+          .as_ref()
+          .map(|p| {
+            p.strip_prefix(&picker.root)
+              .unwrap_or(p)
+              .display()
+              .to_string()
+          });
+
+        serde_json::json!({
+          "kind": "source",
+          "path": preview_path,
+          "truncated": source.truncated,
+          "total_lines": source.lines.len(),
+          "loading": picker.preview_loading(),
+          "lines": lines,
+        })
+      },
+    };
+
     let snapshot = serde_json::json!({
       "active": true,
       "query": picker.query,
@@ -4008,6 +4085,8 @@ impl App {
       "scanning": scanning,
       "root": root_display,
       "items": items,
+      "preview": preview_json,
+      "show_preview": picker.show_preview,
     });
 
     snapshot.to_string()
@@ -4055,6 +4134,12 @@ impl App {
     }
     if self.tick_lsp_statusline() {
       changed = true;
+    }
+    if self.file_picker().active {
+      let picker = self.file_picker_mut();
+      if file_picker_poll_scan_results(picker) {
+        changed = true;
+      }
     }
     if changed {
       self.request_render();
@@ -7130,6 +7215,7 @@ mod ffi {
     fn file_picker_set_query(self: &mut App, id: EditorId, query: &str) -> bool;
     fn file_picker_submit(self: &mut App, id: EditorId, index: usize) -> bool;
     fn file_picker_close(self: &mut App, id: EditorId) -> bool;
+    fn file_picker_select_index(self: &mut App, id: EditorId, index: usize) -> bool;
     fn file_picker_snapshot_json(self: &mut App, id: EditorId, max_items: usize) -> String;
     fn poll_background(self: &mut App, id: EditorId) -> bool;
     fn take_should_quit(self: &mut App) -> bool;

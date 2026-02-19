@@ -79,6 +79,12 @@ struct EditorView: View {
                     onFilePickerClose: {
                         model.closeFilePicker()
                     },
+                    onFilePickerSelectionChange: { index in
+                        model.filePickerSelectIndex(index)
+                    },
+                    colorForHighlight: { highlightId in
+                        model.colorForHighlight(highlightId)
+                    },
                     onInputPromptQueryChange: { query in
                         model.setSearchQuery(query)
                     },

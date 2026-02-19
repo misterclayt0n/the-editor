@@ -123,6 +123,42 @@ void* __swift_bridge__$Vec_RenderOverlayNode$get_mut(void* vec_ptr, uintptr_t in
 uintptr_t __swift_bridge__$Vec_RenderOverlayNode$len(void* vec_ptr);
 void* __swift_bridge__$Vec_RenderOverlayNode$as_ptr(void* vec_ptr);
 
+typedef struct RenderDiagnosticUnderline RenderDiagnosticUnderline;
+void __swift_bridge__$RenderDiagnosticUnderline$_free(void* self);
+
+void* __swift_bridge__$Vec_RenderDiagnosticUnderline$new(void);
+void __swift_bridge__$Vec_RenderDiagnosticUnderline$drop(void* vec_ptr);
+void __swift_bridge__$Vec_RenderDiagnosticUnderline$push(void* vec_ptr, void* item_ptr);
+void* __swift_bridge__$Vec_RenderDiagnosticUnderline$pop(void* vec_ptr);
+void* __swift_bridge__$Vec_RenderDiagnosticUnderline$get(void* vec_ptr, uintptr_t index);
+void* __swift_bridge__$Vec_RenderDiagnosticUnderline$get_mut(void* vec_ptr, uintptr_t index);
+uintptr_t __swift_bridge__$Vec_RenderDiagnosticUnderline$len(void* vec_ptr);
+void* __swift_bridge__$Vec_RenderDiagnosticUnderline$as_ptr(void* vec_ptr);
+
+typedef struct RenderEolDiagnostic RenderEolDiagnostic;
+void __swift_bridge__$RenderEolDiagnostic$_free(void* self);
+
+void* __swift_bridge__$Vec_RenderEolDiagnostic$new(void);
+void __swift_bridge__$Vec_RenderEolDiagnostic$drop(void* vec_ptr);
+void __swift_bridge__$Vec_RenderEolDiagnostic$push(void* vec_ptr, void* item_ptr);
+void* __swift_bridge__$Vec_RenderEolDiagnostic$pop(void* vec_ptr);
+void* __swift_bridge__$Vec_RenderEolDiagnostic$get(void* vec_ptr, uintptr_t index);
+void* __swift_bridge__$Vec_RenderEolDiagnostic$get_mut(void* vec_ptr, uintptr_t index);
+uintptr_t __swift_bridge__$Vec_RenderEolDiagnostic$len(void* vec_ptr);
+void* __swift_bridge__$Vec_RenderEolDiagnostic$as_ptr(void* vec_ptr);
+
+typedef struct RenderInlineDiagnosticLine RenderInlineDiagnosticLine;
+void __swift_bridge__$RenderInlineDiagnosticLine$_free(void* self);
+
+void* __swift_bridge__$Vec_RenderInlineDiagnosticLine$new(void);
+void __swift_bridge__$Vec_RenderInlineDiagnosticLine$drop(void* vec_ptr);
+void __swift_bridge__$Vec_RenderInlineDiagnosticLine$push(void* vec_ptr, void* item_ptr);
+void* __swift_bridge__$Vec_RenderInlineDiagnosticLine$pop(void* vec_ptr);
+void* __swift_bridge__$Vec_RenderInlineDiagnosticLine$get(void* vec_ptr, uintptr_t index);
+void* __swift_bridge__$Vec_RenderInlineDiagnosticLine$get_mut(void* vec_ptr, uintptr_t index);
+uintptr_t __swift_bridge__$Vec_RenderInlineDiagnosticLine$len(void* vec_ptr);
+void* __swift_bridge__$Vec_RenderInlineDiagnosticLine$as_ptr(void* vec_ptr);
+
 typedef struct RenderPlan RenderPlan;
 void __swift_bridge__$RenderPlan$_free(void* self);
 
@@ -182,6 +218,7 @@ bool __swift_bridge__$App$search_prompt_submit(void* self, struct __swift_bridge
 bool __swift_bridge__$App$file_picker_set_query(void* self, struct __swift_bridge__$EditorId id, struct RustStr query);
 bool __swift_bridge__$App$file_picker_submit(void* self, struct __swift_bridge__$EditorId id, uintptr_t index);
 bool __swift_bridge__$App$file_picker_close(void* self, struct __swift_bridge__$EditorId id);
+bool __swift_bridge__$App$file_picker_select_index(void* self, struct __swift_bridge__$EditorId id, uintptr_t index);
 void* __swift_bridge__$App$file_picker_snapshot_json(void* self, struct __swift_bridge__$EditorId id, uintptr_t max_items);
 bool __swift_bridge__$App$poll_background(void* self, struct __swift_bridge__$EditorId id);
 bool __swift_bridge__$App$take_should_quit(void* self);
@@ -265,5 +302,23 @@ uintptr_t __swift_bridge__$RenderPlan$selection_count(void* self);
 void* __swift_bridge__$RenderPlan$selection_at(void* self, uintptr_t index);
 uintptr_t __swift_bridge__$RenderPlan$overlay_count(void* self);
 void* __swift_bridge__$RenderPlan$overlay_at(void* self, uintptr_t index);
+uintptr_t __swift_bridge__$RenderPlan$inline_diagnostic_line_count(void* self);
+void* __swift_bridge__$RenderPlan$inline_diagnostic_line_at(void* self, uintptr_t index);
+uint16_t __swift_bridge__$RenderInlineDiagnosticLine$row(void* self);
+uint16_t __swift_bridge__$RenderInlineDiagnosticLine$col(void* self);
+void* __swift_bridge__$RenderInlineDiagnosticLine$text(void* self);
+uint8_t __swift_bridge__$RenderInlineDiagnosticLine$severity(void* self);
+uintptr_t __swift_bridge__$RenderPlan$eol_diagnostic_count(void* self);
+void* __swift_bridge__$RenderPlan$eol_diagnostic_at(void* self, uintptr_t index);
+uint16_t __swift_bridge__$RenderEolDiagnostic$row(void* self);
+uint16_t __swift_bridge__$RenderEolDiagnostic$col(void* self);
+void* __swift_bridge__$RenderEolDiagnostic$message(void* self);
+uint8_t __swift_bridge__$RenderEolDiagnostic$severity(void* self);
+uintptr_t __swift_bridge__$RenderPlan$diagnostic_underline_count(void* self);
+void* __swift_bridge__$RenderPlan$diagnostic_underline_at(void* self, uintptr_t index);
+uint16_t __swift_bridge__$RenderDiagnosticUnderline$row(void* self);
+uint16_t __swift_bridge__$RenderDiagnosticUnderline$start_col(void* self);
+uint16_t __swift_bridge__$RenderDiagnosticUnderline$end_col(void* self);
+uint8_t __swift_bridge__$RenderDiagnosticUnderline$severity(void* self);
 
 

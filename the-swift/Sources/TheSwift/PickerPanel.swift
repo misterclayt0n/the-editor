@@ -21,6 +21,7 @@ struct PickerPanel<
     let showPageNavigation: Bool
     let showCtrlCClose: Bool
     let autoSelectFirstItem: Bool
+    var showBackground: Bool = true
 
     // Data
     let itemCount: Int
@@ -55,6 +56,9 @@ struct PickerPanel<
                 DispatchQueue.main.async {
                     isTextFieldFocused = true
                 }
+                if let sel = selectedIndex {
+                    onSelectionChange?(sel)
+                }
             }
             .onChange(of: externalQuery) { newValue in
                 if newValue != query {
@@ -74,27 +78,33 @@ struct PickerPanel<
 
     private var panelContainer: some View {
         Group {
-            switch layout {
-            case .bottom:
-                VStack {
-                    Spacer()
-                    panelCard
-                }
-                .padding(.horizontal, 24)
-                .padding(.bottom, 24)
-            case .top:
-                VStack {
-                    panelCard
-                    Spacer()
-                }
-                .padding(.horizontal, 24)
-                .padding(.top, 24)
-            case .center:
+            if !showBackground {
                 panelCard
-                    .padding()
+            } else {
+                Group {
+                    switch layout {
+                    case .bottom:
+                        VStack {
+                            Spacer()
+                            panelCard
+                        }
+                        .padding(.horizontal, 24)
+                        .padding(.bottom, 24)
+                    case .top:
+                        VStack {
+                            panelCard
+                            Spacer()
+                        }
+                        .padding(.horizontal, 24)
+                        .padding(.top, 24)
+                    case .center:
+                        panelCard
+                            .padding()
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: layoutAlignment)
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: layoutAlignment)
     }
 
     private var layoutAlignment: Alignment {
@@ -108,28 +118,36 @@ struct PickerPanel<
     // MARK: - Glass card
 
     private var panelCard: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        let content = VStack(alignment: .leading, spacing: 0) {
             panelHeader
             Divider()
             panelList
         }
         .frame(maxWidth: width)
-        .background(
-            ZStack {
-                Rectangle()
-                    .fill(.ultraThinMaterial)
-                Rectangle()
-                    .fill(backgroundColor)
-                    .blendMode(.color)
+
+        return Group {
+            if showBackground {
+                content
+                    .background(
+                        ZStack {
+                            Rectangle()
+                                .fill(.ultraThinMaterial)
+                            Rectangle()
+                                .fill(backgroundColor)
+                                .blendMode(.color)
+                        }
+                        .compositingGroup()
+                    )
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(Color(nsColor: .tertiaryLabelColor).opacity(0.75))
+                    )
+                    .shadow(radius: 28, x: 0, y: 12)
+            } else {
+                content
             }
-            .compositingGroup()
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(Color(nsColor: .tertiaryLabelColor).opacity(0.75))
-        )
-        .shadow(radius: 28, x: 0, y: 12)
+        }
     }
 
     // MARK: - Header

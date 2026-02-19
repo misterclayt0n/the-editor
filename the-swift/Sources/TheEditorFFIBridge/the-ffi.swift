@@ -203,6 +203,10 @@ extension AppRefMut {
         __swift_bridge__$App$file_picker_close(ptr, id.intoFfiRepr())
     }
 
+    public func file_picker_select_index(_ id: EditorId, _ index: UInt) -> Bool {
+        __swift_bridge__$App$file_picker_select_index(ptr, id.intoFfiRepr(), index)
+    }
+
     public func file_picker_snapshot_json(_ id: EditorId, _ max_items: UInt) -> RustString {
         RustString(ptr: __swift_bridge__$App$file_picker_snapshot_json(ptr, id.intoFfiRepr(), max_items))
     }

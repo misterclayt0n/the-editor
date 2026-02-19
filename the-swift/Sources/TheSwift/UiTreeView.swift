@@ -17,6 +17,8 @@ struct UiOverlayHost: View {
     let onFilePickerQueryChange: (String) -> Void
     let onFilePickerSubmit: (Int) -> Void
     let onFilePickerClose: () -> Void
+    let onFilePickerSelectionChange: ((Int) -> Void)?
+    let colorForHighlight: ((UInt32) -> SwiftUI.Color?)?
     let onInputPromptQueryChange: (String) -> Void
     let onInputPromptClose: () -> Void
     let onInputPromptSubmit: () -> Void
@@ -92,7 +94,9 @@ struct UiOverlayHost: View {
                         snapshot: filePickerSnapshot,
                         onQueryChange: onFilePickerQueryChange,
                         onSubmit: onFilePickerSubmit,
-                        onClose: onFilePickerClose
+                        onClose: onFilePickerClose,
+                        onSelectionChange: onFilePickerSelectionChange,
+                        colorForHighlight: colorForHighlight
                     )
                 }
 

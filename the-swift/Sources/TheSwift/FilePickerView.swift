@@ -10,15 +10,84 @@ struct FilePickerSnapshot: Decodable {
     let scanning: Bool?
     let root: String?
     let items: [FilePickerItemSnapshot]?
+    let preview: FilePickerPreviewSnapshot?
+    let showPreview: Bool?
 
     private enum CodingKeys: String, CodingKey {
-        case active
-        case query
+        case active, query, scanning, root, items, preview
         case matchedCount = "matched_count"
         case totalCount = "total_count"
-        case scanning
-        case root
-        case items
+        case showPreview = "show_preview"
+    }
+
+    init(active: Bool, query: String?, matchedCount: Int?, totalCount: Int?,
+         scanning: Bool?, root: String?, items: [FilePickerItemSnapshot]?,
+         preview: FilePickerPreviewSnapshot?, showPreview: Bool?) {
+        self.active = active
+        self.query = query
+        self.matchedCount = matchedCount
+        self.totalCount = totalCount
+        self.scanning = scanning
+        self.root = root
+        self.items = items
+        self.preview = preview
+        self.showPreview = showPreview
+    }
+}
+
+// MARK: - Preview data model
+
+enum FilePickerPreviewKind: String, Decodable {
+    case empty, source, text, message
+}
+
+struct FilePickerPreviewLineSpan: Decodable {
+    let charStart: Int
+    let charEnd: Int
+    let highlightId: UInt32
+
+    init(from decoder: Decoder) throws {
+        var container = try decoder.unkeyedContainer()
+        charStart = try container.decode(Int.self)
+        charEnd = try container.decode(Int.self)
+        highlightId = try container.decode(UInt32.self)
+    }
+}
+
+struct FilePickerPreviewLine: Decodable {
+    let text: String
+    let spans: [FilePickerPreviewLineSpan]
+}
+
+struct FilePickerPreviewSnapshot: Decodable {
+    let kind: FilePickerPreviewKind
+    let path: String?
+    let text: String?
+    let truncated: Bool?
+    let totalLines: Int?
+    let loading: Bool?
+    let lines: [FilePickerPreviewLine]?
+
+    private enum CodingKeys: String, CodingKey {
+        case kind, path, text, truncated, loading, lines
+        case totalLines = "total_lines"
+    }
+
+    static let empty = FilePickerPreviewSnapshot(
+        kind: .empty, path: nil, text: nil, truncated: nil,
+        totalLines: nil, loading: nil, lines: nil
+    )
+
+    init(kind: FilePickerPreviewKind, path: String?, text: String?,
+         truncated: Bool?, totalLines: Int?, loading: Bool?,
+         lines: [FilePickerPreviewLine]?) {
+        self.kind = kind
+        self.path = path
+        self.text = text
+        self.truncated = truncated
+        self.totalLines = totalLines
+        self.loading = loading
+        self.lines = lines
     }
 }
 
@@ -205,6 +274,8 @@ struct FilePickerView: View {
     let onQueryChange: (String) -> Void
     let onSubmit: (Int) -> Void
     let onClose: () -> Void
+    let onSelectionChange: ((Int) -> Void)?
+    let colorForHighlight: ((UInt32) -> SwiftUI.Color?)?
 
     private var items: [FilePickerItemSnapshot] {
         snapshot.items ?? []
@@ -222,53 +293,91 @@ struct FilePickerView: View {
         snapshot.scanning ?? false
     }
 
+    private var hasPreview: Bool {
+        snapshot.showPreview ?? true
+    }
+
+    private static let backgroundColor = Color(nsColor: .windowBackgroundColor)
+
     var body: some View {
-        PickerPanel(
-            width: 600,
-            maxListHeight: 380,
-            placeholder: "Open file…",
-            fontSize: 16,
-            layout: .center,
-            pageSize: 12,
-            showTabNavigation: true,
-            showPageNavigation: true,
-            showCtrlCClose: true,
-            autoSelectFirstItem: true,
-            itemCount: items.count,
-            externalQuery: snapshot.query ?? "",
-            externalSelectedIndex: nil,
-            onQueryChange: onQueryChange,
-            onSubmit: { index in
-                if let index {
-                    onSubmit(index)
-                }
-            },
-            onClose: onClose,
-            onSelectionChange: nil,
-            leadingHeader: {
-                Image(systemName: "magnifyingglass")
-                    .font(FontLoader.uiFont(size: 14).weight(.medium))
-                    .foregroundStyle(.secondary)
-            },
-            trailingHeader: {
-                statusText
-            },
-            itemContent: { index, isSelected, isHovered in
-                fileRowContent(for: items[index], isSelected: isSelected)
-            },
-            emptyContent: {
-                VStack(spacing: 8) {
-                    Image(systemName: "doc.questionmark")
-                        .font(FontLoader.uiFont(size: 24))
-                        .foregroundStyle(.tertiary)
-                    Text("No matching files")
-                        .font(FontLoader.uiFont(size: 14))
+        let pickerWidth: CGFloat = hasPreview ? 400 : 600
+        let totalWidth: CGFloat = hasPreview ? 920 : 600
+
+        HStack(spacing: 0) {
+            PickerPanel(
+                width: pickerWidth,
+                maxListHeight: hasPreview ? 440 : 380,
+                placeholder: "Open file…",
+                fontSize: 16,
+                layout: .center,
+                pageSize: 12,
+                showTabNavigation: true,
+                showPageNavigation: true,
+                showCtrlCClose: true,
+                autoSelectFirstItem: true,
+                showBackground: !hasPreview,
+                itemCount: items.count,
+                externalQuery: snapshot.query ?? "",
+                externalSelectedIndex: nil,
+                onQueryChange: onQueryChange,
+                onSubmit: { index in
+                    if let index {
+                        onSubmit(index)
+                    }
+                },
+                onClose: onClose,
+                onSelectionChange: onSelectionChange,
+                leadingHeader: {
+                    Image(systemName: "magnifyingglass")
+                        .font(FontLoader.uiFont(size: 14).weight(.medium))
                         .foregroundStyle(.secondary)
+                },
+                trailingHeader: {
+                    statusText
+                },
+                itemContent: { index, isSelected, isHovered in
+                    fileRowContent(for: items[index], isSelected: isSelected)
+                },
+                emptyContent: {
+                    VStack(spacing: 8) {
+                        Image(systemName: "doc.questionmark")
+                            .font(FontLoader.uiFont(size: 24))
+                            .foregroundStyle(.tertiary)
+                        Text("No matching files")
+                            .font(FontLoader.uiFont(size: 14))
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 80)
+                    .padding()
                 }
-                .frame(maxWidth: .infinity, minHeight: 80)
-                .padding()
+            )
+
+            if hasPreview {
+                Divider()
+                FilePreviewPanel(
+                    preview: snapshot.preview ?? .empty,
+                    colorForHighlight: colorForHighlight
+                )
+                .frame(maxWidth: .infinity)
             }
+        }
+        .frame(maxWidth: totalWidth, maxHeight: hasPreview ? 500 : nil)
+        .background(
+            ZStack {
+                Rectangle()
+                    .fill(.ultraThinMaterial)
+                Rectangle()
+                    .fill(Self.backgroundColor)
+                    .blendMode(.color)
+            }
+            .compositingGroup()
         )
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color(nsColor: .tertiaryLabelColor).opacity(0.75))
+        )
+        .shadow(radius: 28, x: 0, y: 12)
     }
 
     // MARK: - Status text
@@ -404,5 +513,204 @@ fileprivate struct ScanningText: View {
                     opacity = 0.4
                 }
             }
+    }
+}
+
+// MARK: - File preview panel
+
+struct FilePreviewPanel: View {
+    let preview: FilePickerPreviewSnapshot
+    let colorForHighlight: ((UInt32) -> SwiftUI.Color?)?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            previewHeader
+            Divider()
+            previewContent
+        }
+    }
+
+    // MARK: - Header
+
+    @ViewBuilder
+    private var previewHeader: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "doc.text")
+                .font(FontLoader.uiFont(size: 12).weight(.medium))
+                .foregroundStyle(.tertiary)
+
+            if let path = preview.path, !path.isEmpty {
+                Text(path)
+                    .font(FontLoader.uiFont(size: 12).weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            } else {
+                Text("Preview")
+                    .font(FontLoader.uiFont(size: 12).weight(.medium))
+                    .foregroundStyle(.tertiary)
+            }
+
+            Spacer()
+
+            if preview.truncated == true {
+                Text("truncated")
+                    .font(FontLoader.uiFont(size: 10))
+                    .foregroundStyle(.tertiary)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1)
+                    .background(
+                        RoundedRectangle(cornerRadius: 3)
+                            .fill(Color.secondary.opacity(0.1))
+                    )
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+    }
+
+    // MARK: - Content
+
+    @ViewBuilder
+    private var previewContent: some View {
+        switch preview.kind {
+        case .empty:
+            emptyPreview
+        case .message:
+            messagePreview(preview.text ?? "")
+        case .text:
+            textPreview(preview.text ?? "")
+        case .source:
+            sourcePreview
+        }
+    }
+
+    private var emptyPreview: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "doc")
+                .font(FontLoader.uiFont(size: 24))
+                .foregroundStyle(.quaternary)
+            Text("No preview")
+                .font(FontLoader.uiFont(size: 13))
+                .foregroundStyle(.tertiary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func messagePreview(_ message: String) -> some View {
+        VStack(spacing: 8) {
+            Image(systemName: "info.circle")
+                .font(FontLoader.uiFont(size: 20))
+                .foregroundStyle(.tertiary)
+            Text(message)
+                .font(FontLoader.uiFont(size: 13))
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func textPreview(_ text: String) -> some View {
+        ScrollView {
+            Text(text)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(12)
+        }
+    }
+
+    // MARK: - Source preview
+
+    @ViewBuilder
+    private var sourcePreview: some View {
+        if let lines = preview.lines, !lines.isEmpty {
+            let gutterWidth = max(2, String(lines.count).count)
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    ForEach(0..<lines.count, id: \.self) { index in
+                        sourceLineView(
+                            line: lines[index],
+                            lineNumber: index + 1,
+                            gutterWidth: gutterWidth
+                        )
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+        } else {
+            emptyPreview
+        }
+    }
+
+    private func sourceLineView(
+        line: FilePickerPreviewLine,
+        lineNumber: Int,
+        gutterWidth: Int
+    ) -> some View {
+        HStack(alignment: .top, spacing: 0) {
+            Text(String(format: "%\(gutterWidth)d", lineNumber))
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(.tertiary)
+                .frame(minWidth: CGFloat(gutterWidth) * 7 + 8, alignment: .trailing)
+                .padding(.trailing, 6)
+
+            highlightedSourceLine(line)
+                .font(.system(size: 11, design: .monospaced))
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(height: 16)
+    }
+
+    private func highlightedSourceLine(_ line: FilePickerPreviewLine) -> Text {
+        let text = line.text
+        guard !text.isEmpty else {
+            return Text(" ")
+        }
+
+        let chars = Array(text)
+        let spans = line.spans
+
+        if spans.isEmpty {
+            return Text(text)
+                .foregroundColor(.primary.opacity(0.75))
+        }
+
+        // Build a highlight-ID array for each character
+        var charHighlights: [UInt32?] = Array(repeating: nil, count: chars.count)
+        for span in spans {
+            let start = max(0, min(span.charStart, chars.count))
+            let end = max(0, min(span.charEnd, chars.count))
+            guard start < end else { continue }
+            for i in start..<end {
+                charHighlights[i] = span.highlightId
+            }
+        }
+
+        // Group consecutive characters with the same highlight ID
+        var result = Text("")
+        var segmentStart = 0
+
+        while segmentStart < chars.count {
+            let currentHL = charHighlights[segmentStart]
+            var segmentEnd = segmentStart + 1
+            while segmentEnd < chars.count && charHighlights[segmentEnd] == currentHL {
+                segmentEnd += 1
+            }
+
+            let segment = String(chars[segmentStart..<segmentEnd])
+            let color: SwiftUI.Color
+            if let hlId = currentHL, let resolve = colorForHighlight?(hlId) {
+                color = resolve
+            } else {
+                color = .primary.opacity(0.75)
+            }
+            result = result + Text(segment).foregroundColor(color)
+            segmentStart = segmentEnd
+        }
+
+        return result
     }
 }

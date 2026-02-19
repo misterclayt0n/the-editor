@@ -286,6 +286,11 @@ final class EditorModel: ObservableObject {
         refresh(trigger: "file_picker_submit")
     }
 
+    func filePickerSelectIndex(_ index: Int) {
+        _ = app.file_picker_select_index(editorId, UInt(index))
+        refreshFilePicker()
+    }
+
     func closeFilePicker() {
         filePickerTimer?.invalidate()
         filePickerTimer = nil
@@ -321,7 +326,9 @@ final class EditorModel: ObservableObject {
                             icon: item.icon,
                             matchIndices: item.matchIndices
                         )
-                    }
+                    },
+                    preview: snapshot.preview,
+                    showPreview: snapshot.showPreview
                 )
                 startFilePickerTimerIfNeeded(scanning: snapshot.scanning ?? false)
             } else {

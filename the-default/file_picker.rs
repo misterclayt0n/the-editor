@@ -356,6 +356,10 @@ impl FilePickerState {
     self.matcher.snapshot().item_count() as usize
   }
 
+  pub fn preview_loading(&self) -> bool {
+    self.preview_pending_id.is_some()
+  }
+
   pub fn preview_line_count(&self) -> usize {
     match &self.preview {
       FilePickerPreview::Empty => 0,

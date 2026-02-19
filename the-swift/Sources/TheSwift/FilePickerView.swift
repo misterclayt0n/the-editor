@@ -617,6 +617,7 @@ struct FilePreviewPanel: View {
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(12)
+                .textSelection(.enabled)
         }
     }
 
@@ -637,6 +638,7 @@ struct FilePreviewPanel: View {
                     }
                 }
                 .padding(.vertical, 4)
+                .textSelection(.enabled)
             }
         } else {
             emptyPreview

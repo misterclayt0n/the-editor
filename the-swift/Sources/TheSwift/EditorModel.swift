@@ -25,6 +25,10 @@ final class EditorModel: ObservableObject {
     private var scrollRemainderY: CGFloat = 0
     private var syntaxHighlightStyleCache: [UInt32: Style] = [:]
     private var lastUiTreeJson: String? = nil
+    private var lastPickerQuery: String? = nil
+    private var lastPickerMatchedCount: Int = -1
+    private var lastPickerTotalCount: Int = -1
+    private var lastPickerScanning: Bool = false
 
     init(filePath: String? = nil) {
         self.app = TheEditorFFIBridge.App()
@@ -298,51 +302,84 @@ final class EditorModel: ObservableObject {
         filePickerTimer?.invalidate()
         filePickerTimer = nil
         _ = app.file_picker_close(editorId)
+        lastPickerQuery = nil
+        lastPickerMatchedCount = -1
+        lastPickerTotalCount = -1
+        lastPickerScanning = false
         filePickerSnapshot = nil
         filePickerPreviewModel.preview = nil
         refresh(trigger: "file_picker_close")
     }
 
     func refreshFilePicker() {
-        let json = app.file_picker_snapshot_json(editorId, 10_000).toString()
-        guard let data = json.data(using: .utf8) else {
+        let t0 = CFAbsoluteTimeGetCurrent()
+        let data = app.file_picker_snapshot(editorId, 10_000)
+
+        guard data.active() else {
             stopFilePickerTimerIfNeeded()
+            lastPickerQuery = nil
+            lastPickerMatchedCount = -1
             filePickerSnapshot = nil
             return
         }
 
-        let decoder = JSONDecoder()
-        do {
-            let snapshot = try decoder.decode(FilePickerSnapshot.self, from: data)
-            if snapshot.active {
-                filePickerSnapshot = FilePickerSnapshot(
-                    active: snapshot.active,
-                    query: snapshot.query,
-                    matchedCount: snapshot.matchedCount,
-                    totalCount: snapshot.totalCount,
-                    scanning: snapshot.scanning,
-                    root: snapshot.root,
-                    items: snapshot.items?.enumerated().map { index, item in
-                        FilePickerItemSnapshot(
-                            id: index,
-                            display: item.display,
-                            isDir: item.isDir,
-                            icon: item.icon,
-                            matchIndices: item.matchIndices
-                        )
-                    }
-                )
-                filePickerPreviewModel.preview = app.file_picker_preview(editorId)
-                startFilePickerTimerIfNeeded(scanning: snapshot.scanning ?? false)
-            } else {
-                stopFilePickerTimerIfNeeded()
-                filePickerSnapshot = nil
-            }
-        } catch {
-            debugUiLog("file_picker decode failed: \(error)")
-            stopFilePickerTimerIfNeeded()
-            filePickerSnapshot = nil
+        let query = data.query().toString()
+        let matchedCount = Int(data.matched_count())
+        let totalCount = Int(data.total_count())
+        let scanning = data.scanning()
+
+        // Skip full item rebuild if metadata hasn't changed.
+        if query == lastPickerQuery
+            && matchedCount == lastPickerMatchedCount
+            && totalCount == lastPickerTotalCount
+            && scanning == lastPickerScanning {
+            // Items unchanged — just update preview.
+            filePickerPreviewModel.preview = app.file_picker_preview(editorId)
+            let t1 = CFAbsoluteTimeGetCurrent()
+            debugUiLog(String(format: "refreshFilePicker SKIP items=%d elapsed=%.2fms", matchedCount, (t1 - t0) * 1000))
+            return
         }
+
+        lastPickerQuery = query
+        lastPickerMatchedCount = matchedCount
+        lastPickerTotalCount = totalCount
+        lastPickerScanning = scanning
+
+        let itemCount = Int(data.item_count())
+        var items = [FilePickerItemSnapshot]()
+        items.reserveCapacity(itemCount)
+        for i in 0..<itemCount {
+            let item = data.item_at(UInt(i))
+            let miCount = Int(item.match_index_count())
+            var matchIndices = [Int]()
+            matchIndices.reserveCapacity(miCount)
+            for j in 0..<miCount {
+                matchIndices.append(Int(item.match_index_at(UInt(j))))
+            }
+            let iconStr = item.icon().toString()
+            items.append(FilePickerItemSnapshot(
+                id: i,
+                display: item.display().toString(),
+                isDir: item.is_dir(),
+                icon: iconStr.isEmpty ? nil : iconStr,
+                matchIndices: matchIndices
+            ))
+        }
+
+        filePickerSnapshot = FilePickerSnapshot(
+            active: true,
+            query: query,
+            matchedCount: matchedCount,
+            totalCount: totalCount,
+            scanning: scanning,
+            root: data.root().toString(),
+            items: items
+        )
+        filePickerPreviewModel.preview = app.file_picker_preview(editorId)
+        startFilePickerTimerIfNeeded(scanning: scanning)
+
+        let t1 = CFAbsoluteTimeGetCurrent()
+        debugUiLog(String(format: "refreshFilePicker items=%d elapsed=%.2fms", itemCount, (t1 - t0) * 1000))
     }
 
     /// Lightweight refresh — direct FFI, no JSON. Called on selection change.

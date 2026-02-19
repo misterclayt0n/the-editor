@@ -3264,6 +3264,115 @@ fn build_preview_data(picker: &FilePickerState) -> PreviewData {
   }
 }
 
+// ── File picker snapshot (direct FFI, no JSON) ─────────────────────────
+
+pub struct FilePickerSnapshotData {
+  active:        bool,
+  query:         String,
+  matched_count: usize,
+  total_count:   usize,
+  scanning:      bool,
+  root:          String,
+  items:         Vec<FilePickerItemFFI>,
+}
+
+impl Default for FilePickerSnapshotData {
+  fn default() -> Self {
+    Self {
+      active:        false,
+      query:         String::new(),
+      matched_count: 0,
+      total_count:   0,
+      scanning:      false,
+      root:          String::new(),
+      items:         Vec::new(),
+    }
+  }
+}
+
+impl FilePickerSnapshotData {
+  fn active(&self) -> bool { self.active }
+  fn query(&self) -> String { self.query.clone() }
+  fn matched_count(&self) -> usize { self.matched_count }
+  fn total_count(&self) -> usize { self.total_count }
+  fn scanning(&self) -> bool { self.scanning }
+  fn root(&self) -> String { self.root.clone() }
+
+  fn item_count(&self) -> usize { self.items.len() }
+
+  fn item_at(&self, index: usize) -> FilePickerItemFFI {
+    self.items.get(index).cloned().unwrap_or_default()
+  }
+}
+
+#[derive(Clone)]
+pub struct FilePickerItemFFI {
+  display:       String,
+  is_dir:        bool,
+  icon:          String,
+  match_indices: Vec<u32>,
+}
+
+impl Default for FilePickerItemFFI {
+  fn default() -> Self {
+    Self {
+      display:       String::new(),
+      is_dir:        false,
+      icon:          String::new(),
+      match_indices: Vec::new(),
+    }
+  }
+}
+
+impl FilePickerItemFFI {
+  fn display(&self) -> String { self.display.clone() }
+  fn is_dir(&self) -> bool { self.is_dir }
+  fn icon(&self) -> String { self.icon.clone() }
+  fn match_index_count(&self) -> usize { self.match_indices.len() }
+  fn match_index_at(&self, index: usize) -> u32 {
+    self.match_indices.get(index).copied().unwrap_or(0)
+  }
+}
+
+fn build_file_picker_snapshot(picker: &FilePickerState, max_items: usize) -> FilePickerSnapshotData {
+  if !picker.active {
+    return FilePickerSnapshotData::default();
+  }
+
+  let matched_count = picker.matched_count();
+  let total_count = picker.total_count();
+  let scanning = picker.scanning || picker.matcher_running;
+  let root_display = picker
+    .root
+    .file_name()
+    .map(|n| n.to_string_lossy().into_owned())
+    .unwrap_or_default();
+
+  let limit = max_items.min(matched_count);
+  let mut items = Vec::with_capacity(limit);
+  let mut match_buf = Vec::new();
+  for i in 0..limit {
+    if let Some(item) = picker.matched_item_with_match_indices(i, &mut match_buf) {
+      items.push(FilePickerItemFFI {
+        display:       item.display.to_string(),
+        is_dir:        item.is_dir,
+        icon:          item.icon.to_string(),
+        match_indices: match_buf.iter().map(|&idx| idx as u32).collect(),
+      });
+    }
+  }
+
+  FilePickerSnapshotData {
+    active: true,
+    query: picker.query.clone(),
+    matched_count,
+    total_count,
+    scanning,
+    root: root_display,
+    items,
+  }
+}
+
 impl App {
   pub fn new() -> Self {
     let dispatch = config_build_dispatch::<App>();
@@ -4188,53 +4297,24 @@ impl App {
     true
   }
 
-  pub fn file_picker_snapshot_json(&mut self, id: ffi::EditorId, max_items: usize) -> String {
+  pub fn file_picker_snapshot(&mut self, id: ffi::EditorId, max_items: usize) -> FilePickerSnapshotData {
+    let started = Instant::now();
     if self.activate(id).is_none() {
-      return "{}".to_string();
+      return FilePickerSnapshotData::default();
     }
     let picker = self.file_picker_mut();
     file_picker_poll_scan_results(picker);
     file_picker_refresh_matcher_state(picker);
 
     let picker = self.file_picker();
-    if !picker.active {
-      return r#"{"active":false}"#.to_string();
-    }
-
-    let matched_count = picker.matched_count();
-    let total_count = picker.total_count();
-    let scanning = picker.scanning || picker.matcher_running;
-    let root_display = picker
-      .root
-      .file_name()
-      .map(|n| n.to_string_lossy().into_owned())
-      .unwrap_or_default();
-
-    let limit = max_items.min(matched_count);
-    let mut items = Vec::with_capacity(limit);
-    let mut match_indices = Vec::new();
-    for i in 0..limit {
-      if let Some(item) = picker.matched_item_with_match_indices(i, &mut match_indices) {
-        items.push(serde_json::json!({
-          "display": item.display,
-          "is_dir": item.is_dir,
-          "icon": item.icon,
-          "match_indices": &match_indices,
-        }));
-      }
-    }
-
-    let snapshot = serde_json::json!({
-      "active": true,
-      "query": picker.query,
-      "matched_count": matched_count,
-      "total_count": total_count,
-      "scanning": scanning,
-      "root": root_display,
-      "items": items,
-    });
-
-    snapshot.to_string()
+    let data = build_file_picker_snapshot(picker, max_items);
+    let elapsed = started.elapsed();
+    ffi_ui_profile_log(format!(
+      "file_picker_snapshot items={} elapsed={:.2}ms",
+      data.items.len(),
+      elapsed.as_secs_f64() * 1000.0
+    ));
+    data
   }
 
   /// Direct FFI preview data — no JSON serialization.
@@ -7373,7 +7453,7 @@ mod ffi {
     fn file_picker_submit(self: &mut App, id: EditorId, index: usize) -> bool;
     fn file_picker_close(self: &mut App, id: EditorId) -> bool;
     fn file_picker_select_index(self: &mut App, id: EditorId, index: usize) -> bool;
-    fn file_picker_snapshot_json(self: &mut App, id: EditorId, max_items: usize) -> String;
+    fn file_picker_snapshot(self: &mut App, id: EditorId, max_items: usize) -> FilePickerSnapshotData;
     fn file_picker_preview(self: &mut App, id: EditorId) -> PreviewData;
     fn poll_background(self: &mut App, id: EditorId) -> bool;
     fn take_should_quit(self: &mut App) -> bool;
@@ -7596,6 +7676,28 @@ mod ffi {
     fn start_col(self: &RenderDiagnosticUnderline) -> u16;
     fn end_col(self: &RenderDiagnosticUnderline) -> u16;
     fn severity(self: &RenderDiagnosticUnderline) -> u8;
+  }
+
+  // File picker snapshot (direct FFI, no JSON)
+  extern "Rust" {
+    type FilePickerSnapshotData;
+    fn active(self: &FilePickerSnapshotData) -> bool;
+    fn query(self: &FilePickerSnapshotData) -> String;
+    fn matched_count(self: &FilePickerSnapshotData) -> usize;
+    fn total_count(self: &FilePickerSnapshotData) -> usize;
+    fn scanning(self: &FilePickerSnapshotData) -> bool;
+    fn root(self: &FilePickerSnapshotData) -> String;
+    fn item_count(self: &FilePickerSnapshotData) -> usize;
+    fn item_at(self: &FilePickerSnapshotData, index: usize) -> FilePickerItemFFI;
+  }
+
+  extern "Rust" {
+    type FilePickerItemFFI;
+    fn display(self: &FilePickerItemFFI) -> String;
+    fn is_dir(self: &FilePickerItemFFI) -> bool;
+    fn icon(self: &FilePickerItemFFI) -> String;
+    fn match_index_count(self: &FilePickerItemFFI) -> usize;
+    fn match_index_at(self: &FilePickerItemFFI, index: usize) -> u32;
   }
 
   // File picker preview (direct FFI, no JSON)

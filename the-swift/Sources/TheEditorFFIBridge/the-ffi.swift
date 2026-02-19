@@ -207,8 +207,8 @@ extension AppRefMut {
         __swift_bridge__$App$file_picker_select_index(ptr, id.intoFfiRepr(), index)
     }
 
-    public func file_picker_snapshot_json(_ id: EditorId, _ max_items: UInt) -> RustString {
-        RustString(ptr: __swift_bridge__$App$file_picker_snapshot_json(ptr, id.intoFfiRepr(), max_items))
+    public func file_picker_snapshot(_ id: EditorId, _ max_items: UInt) -> FilePickerSnapshotData {
+        FilePickerSnapshotData(ptr: __swift_bridge__$App$file_picker_snapshot(ptr, id.intoFfiRepr(), max_items))
     }
 
     public func file_picker_preview(_ id: EditorId) -> PreviewData {
@@ -1911,6 +1911,210 @@ extension RenderPlan: Vectorizable {
 
     public static func vecOfSelfLen(vecPtr: UnsafeMutableRawPointer) -> UInt {
         __swift_bridge__$Vec_RenderPlan$len(vecPtr)
+    }
+}
+
+
+public class FilePickerSnapshotData: FilePickerSnapshotDataRefMut {
+    var isOwned: Bool = true
+
+    public override init(ptr: UnsafeMutableRawPointer) {
+        super.init(ptr: ptr)
+    }
+
+    deinit {
+        if isOwned {
+            __swift_bridge__$FilePickerSnapshotData$_free(ptr)
+        }
+    }
+}
+public class FilePickerSnapshotDataRefMut: FilePickerSnapshotDataRef {
+    public override init(ptr: UnsafeMutableRawPointer) {
+        super.init(ptr: ptr)
+    }
+}
+public class FilePickerSnapshotDataRef {
+    var ptr: UnsafeMutableRawPointer
+
+    public init(ptr: UnsafeMutableRawPointer) {
+        self.ptr = ptr
+    }
+}
+extension FilePickerSnapshotDataRef {
+    public func active() -> Bool {
+        __swift_bridge__$FilePickerSnapshotData$active(ptr)
+    }
+
+    public func query() -> RustString {
+        RustString(ptr: __swift_bridge__$FilePickerSnapshotData$query(ptr))
+    }
+
+    public func matched_count() -> UInt {
+        __swift_bridge__$FilePickerSnapshotData$matched_count(ptr)
+    }
+
+    public func total_count() -> UInt {
+        __swift_bridge__$FilePickerSnapshotData$total_count(ptr)
+    }
+
+    public func scanning() -> Bool {
+        __swift_bridge__$FilePickerSnapshotData$scanning(ptr)
+    }
+
+    public func root() -> RustString {
+        RustString(ptr: __swift_bridge__$FilePickerSnapshotData$root(ptr))
+    }
+
+    public func item_count() -> UInt {
+        __swift_bridge__$FilePickerSnapshotData$item_count(ptr)
+    }
+
+    public func item_at(_ index: UInt) -> FilePickerItemFFI {
+        FilePickerItemFFI(ptr: __swift_bridge__$FilePickerSnapshotData$item_at(ptr, index))
+    }
+}
+extension FilePickerSnapshotData: Vectorizable {
+    public static func vecOfSelfNew() -> UnsafeMutableRawPointer {
+        __swift_bridge__$Vec_FilePickerSnapshotData$new()
+    }
+
+    public static func vecOfSelfFree(vecPtr: UnsafeMutableRawPointer) {
+        __swift_bridge__$Vec_FilePickerSnapshotData$drop(vecPtr)
+    }
+
+    public static func vecOfSelfPush(vecPtr: UnsafeMutableRawPointer, value: FilePickerSnapshotData) {
+        __swift_bridge__$Vec_FilePickerSnapshotData$push(vecPtr, {value.isOwned = false; return value.ptr;}())
+    }
+
+    public static func vecOfSelfPop(vecPtr: UnsafeMutableRawPointer) -> Optional<Self> {
+        let pointer = __swift_bridge__$Vec_FilePickerSnapshotData$pop(vecPtr)
+        if pointer == nil {
+            return nil
+        } else {
+            return (FilePickerSnapshotData(ptr: pointer!) as! Self)
+        }
+    }
+
+    public static func vecOfSelfGet(vecPtr: UnsafeMutableRawPointer, index: UInt) -> Optional<FilePickerSnapshotDataRef> {
+        let pointer = __swift_bridge__$Vec_FilePickerSnapshotData$get(vecPtr, index)
+        if pointer == nil {
+            return nil
+        } else {
+            return FilePickerSnapshotDataRef(ptr: pointer!)
+        }
+    }
+
+    public static func vecOfSelfGetMut(vecPtr: UnsafeMutableRawPointer, index: UInt) -> Optional<FilePickerSnapshotDataRefMut> {
+        let pointer = __swift_bridge__$Vec_FilePickerSnapshotData$get_mut(vecPtr, index)
+        if pointer == nil {
+            return nil
+        } else {
+            return FilePickerSnapshotDataRefMut(ptr: pointer!)
+        }
+    }
+
+    public static func vecOfSelfAsPtr(vecPtr: UnsafeMutableRawPointer) -> UnsafePointer<FilePickerSnapshotDataRef> {
+        UnsafePointer<FilePickerSnapshotDataRef>(OpaquePointer(__swift_bridge__$Vec_FilePickerSnapshotData$as_ptr(vecPtr)))
+    }
+
+    public static func vecOfSelfLen(vecPtr: UnsafeMutableRawPointer) -> UInt {
+        __swift_bridge__$Vec_FilePickerSnapshotData$len(vecPtr)
+    }
+}
+
+
+public class FilePickerItemFFI: FilePickerItemFFIRefMut {
+    var isOwned: Bool = true
+
+    public override init(ptr: UnsafeMutableRawPointer) {
+        super.init(ptr: ptr)
+    }
+
+    deinit {
+        if isOwned {
+            __swift_bridge__$FilePickerItemFFI$_free(ptr)
+        }
+    }
+}
+public class FilePickerItemFFIRefMut: FilePickerItemFFIRef {
+    public override init(ptr: UnsafeMutableRawPointer) {
+        super.init(ptr: ptr)
+    }
+}
+public class FilePickerItemFFIRef {
+    var ptr: UnsafeMutableRawPointer
+
+    public init(ptr: UnsafeMutableRawPointer) {
+        self.ptr = ptr
+    }
+}
+extension FilePickerItemFFIRef {
+    public func display() -> RustString {
+        RustString(ptr: __swift_bridge__$FilePickerItemFFI$display(ptr))
+    }
+
+    public func is_dir() -> Bool {
+        __swift_bridge__$FilePickerItemFFI$is_dir(ptr)
+    }
+
+    public func icon() -> RustString {
+        RustString(ptr: __swift_bridge__$FilePickerItemFFI$icon(ptr))
+    }
+
+    public func match_index_count() -> UInt {
+        __swift_bridge__$FilePickerItemFFI$match_index_count(ptr)
+    }
+
+    public func match_index_at(_ index: UInt) -> UInt32 {
+        __swift_bridge__$FilePickerItemFFI$match_index_at(ptr, index)
+    }
+}
+extension FilePickerItemFFI: Vectorizable {
+    public static func vecOfSelfNew() -> UnsafeMutableRawPointer {
+        __swift_bridge__$Vec_FilePickerItemFFI$new()
+    }
+
+    public static func vecOfSelfFree(vecPtr: UnsafeMutableRawPointer) {
+        __swift_bridge__$Vec_FilePickerItemFFI$drop(vecPtr)
+    }
+
+    public static func vecOfSelfPush(vecPtr: UnsafeMutableRawPointer, value: FilePickerItemFFI) {
+        __swift_bridge__$Vec_FilePickerItemFFI$push(vecPtr, {value.isOwned = false; return value.ptr;}())
+    }
+
+    public static func vecOfSelfPop(vecPtr: UnsafeMutableRawPointer) -> Optional<Self> {
+        let pointer = __swift_bridge__$Vec_FilePickerItemFFI$pop(vecPtr)
+        if pointer == nil {
+            return nil
+        } else {
+            return (FilePickerItemFFI(ptr: pointer!) as! Self)
+        }
+    }
+
+    public static func vecOfSelfGet(vecPtr: UnsafeMutableRawPointer, index: UInt) -> Optional<FilePickerItemFFIRef> {
+        let pointer = __swift_bridge__$Vec_FilePickerItemFFI$get(vecPtr, index)
+        if pointer == nil {
+            return nil
+        } else {
+            return FilePickerItemFFIRef(ptr: pointer!)
+        }
+    }
+
+    public static func vecOfSelfGetMut(vecPtr: UnsafeMutableRawPointer, index: UInt) -> Optional<FilePickerItemFFIRefMut> {
+        let pointer = __swift_bridge__$Vec_FilePickerItemFFI$get_mut(vecPtr, index)
+        if pointer == nil {
+            return nil
+        } else {
+            return FilePickerItemFFIRefMut(ptr: pointer!)
+        }
+    }
+
+    public static func vecOfSelfAsPtr(vecPtr: UnsafeMutableRawPointer) -> UnsafePointer<FilePickerItemFFIRef> {
+        UnsafePointer<FilePickerItemFFIRef>(OpaquePointer(__swift_bridge__$Vec_FilePickerItemFFI$as_ptr(vecPtr)))
+    }
+
+    public static func vecOfSelfLen(vecPtr: UnsafeMutableRawPointer) -> UInt {
+        __swift_bridge__$Vec_FilePickerItemFFI$len(vecPtr)
     }
 }
 

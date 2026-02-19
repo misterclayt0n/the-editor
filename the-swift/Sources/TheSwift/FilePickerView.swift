@@ -1,34 +1,19 @@
 import SwiftUI
 import class TheEditorFFIBridge.PreviewData
 import class TheEditorFFIBridge.PreviewLine
+import class TheEditorFFIBridge.FilePickerSnapshotData
+import class TheEditorFFIBridge.FilePickerItemFFI
 
 // MARK: - Data model
 
-struct FilePickerSnapshot: Decodable {
+struct FilePickerSnapshot {
     let active: Bool
-    let query: String?
-    let matchedCount: Int?
-    let totalCount: Int?
-    let scanning: Bool?
-    let root: String?
-    let items: [FilePickerItemSnapshot]?
-
-    private enum CodingKeys: String, CodingKey {
-        case active, query, scanning, root, items
-        case matchedCount = "matched_count"
-        case totalCount = "total_count"
-    }
-
-    init(active: Bool, query: String?, matchedCount: Int?, totalCount: Int?,
-         scanning: Bool?, root: String?, items: [FilePickerItemSnapshot]?) {
-        self.active = active
-        self.query = query
-        self.matchedCount = matchedCount
-        self.totalCount = totalCount
-        self.scanning = scanning
-        self.root = root
-        self.items = items
-    }
+    let query: String
+    let matchedCount: Int
+    let totalCount: Int
+    let scanning: Bool
+    let root: String
+    let items: [FilePickerItemSnapshot]
 }
 
 // MARK: - Preview model (isolated from main EditorModel to avoid re-rendering the file list)
@@ -37,37 +22,12 @@ class FilePickerPreviewModel: ObservableObject {
     @Published var preview: PreviewData? = nil
 }
 
-struct FilePickerItemSnapshot: Decodable, Identifiable {
+struct FilePickerItemSnapshot: Identifiable {
     let id: Int
     let display: String
     let isDir: Bool
     let icon: String?
     let matchIndices: [Int]
-
-    private enum CodingKeys: String, CodingKey {
-        case display
-        case isDir = "is_dir"
-        case icon
-        case matchIndices = "match_indices"
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        display = try container.decode(String.self, forKey: .display)
-        isDir = (try? container.decode(Bool.self, forKey: .isDir)) ?? false
-        icon = try? container.decode(String.self, forKey: .icon)
-        matchIndices = (try? container.decode([Int].self, forKey: .matchIndices)) ?? []
-        // id will be set by the parent during array mapping
-        id = 0
-    }
-
-    init(id: Int, display: String, isDir: Bool, icon: String?, matchIndices: [Int]) {
-        self.id = id
-        self.display = display
-        self.isDir = isDir
-        self.icon = icon
-        self.matchIndices = matchIndices
-    }
 
     var filename: String {
         (display as NSString).lastPathComponent
@@ -225,19 +185,19 @@ struct FilePickerView: View {
     let colorForHighlight: ((UInt32) -> SwiftUI.Color?)?
 
     private var items: [FilePickerItemSnapshot] {
-        snapshot.items ?? []
+        snapshot.items
     }
 
     private var matchedCount: Int {
-        snapshot.matchedCount ?? 0
+        snapshot.matchedCount
     }
 
     private var totalCount: Int {
-        snapshot.totalCount ?? 0
+        snapshot.totalCount
     }
 
     private var isScanning: Bool {
-        snapshot.scanning ?? false
+        snapshot.scanning
     }
 
     // Always show preview layout — the preview panel handles its own empty state.
@@ -264,7 +224,7 @@ struct FilePickerView: View {
                 autoSelectFirstItem: true,
                 showBackground: !hasPreview,
                 itemCount: items.count,
-                externalQuery: snapshot.query ?? "",
+                externalQuery: snapshot.query,
                 externalSelectedIndex: nil,
                 onQueryChange: onQueryChange,
                 onSubmit: { index in

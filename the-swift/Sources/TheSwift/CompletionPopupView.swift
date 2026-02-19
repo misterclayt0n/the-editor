@@ -772,7 +772,26 @@ private enum CompletionDocsRenderer {
 
     private struct RustDocsRun: Decodable {
         let text: String
+        let kind: RustDocsKind
         let style: RustDocsStyle
+    }
+
+    private enum RustDocsKind: String, Decodable {
+        case body
+        case heading1
+        case heading2
+        case heading3
+        case heading4
+        case heading5
+        case heading6
+        case list_marker
+        case quote_marker
+        case quote_text
+        case link
+        case inline_code
+        case code
+        case active_parameter
+        case rule
     }
 
     private struct RustDocsStyle: Decodable {
@@ -899,7 +918,7 @@ private enum CompletionDocsRenderer {
                     rendered.append(
                         NSAttributedString(
                             string: run.text,
-                            attributes: attributes(for: run.style, theme: theme)
+                            attributes: attributes(for: run.style, kind: run.kind, theme: theme)
                         )
                     )
                 }
@@ -913,10 +932,14 @@ private enum CompletionDocsRenderer {
         return rendered.length > 0 ? rendered : nil
     }
 
-    private static func attributes(for style: RustDocsStyle, theme: CompletionDocsTheme) -> [NSAttributedString.Key: Any] {
+    private static func attributes(
+        for style: RustDocsStyle,
+        kind: RustDocsKind,
+        theme: CompletionDocsTheme
+    ) -> [NSAttributedString.Key: Any] {
         _ = style.sub_modifier
-        let codeLike = isCodeStyle(style)
-        let headingLike = !codeLike && (style.add_modifier & modifierBold) != 0
+        let codeLike = isCodeLike(kind)
+        let headingLike = isHeadingKind(kind)
         let baseSize = codeLike ? theme.codeFont.pointSize : theme.baseFont.pointSize
         let targetSize = headingLike ? baseSize + 1 : baseSize
         let weight: NSFont.Weight = (style.add_modifier & modifierBold) != 0 ? .semibold : .regular
@@ -952,14 +975,22 @@ private enum CompletionDocsRenderer {
         return attrs
     }
 
-    private static func isCodeStyle(_ style: RustDocsStyle) -> Bool {
-        if style.has_bg {
+    private static func isCodeLike(_ kind: RustDocsKind) -> Bool {
+        switch kind {
+        case .inline_code, .code, .active_parameter:
             return true
+        default:
+            return false
         }
-        if (style.add_modifier & modifierDim) != 0 && (style.add_modifier & modifierBold) == 0 {
+    }
+
+    private static func isHeadingKind(_ kind: RustDocsKind) -> Bool {
+        switch kind {
+        case .heading1, .heading2, .heading3, .heading4, .heading5, .heading6:
             return true
+        default:
+            return false
         }
-        return false
     }
 
     private static func nsColor(from color: RustDocsColor) -> NSColor? {

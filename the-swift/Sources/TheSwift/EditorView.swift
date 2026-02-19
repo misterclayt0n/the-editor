@@ -97,39 +97,41 @@ struct EditorView: View {
                     }
                 )
 
-                if let completion = completionSnapshot {
-                    CompletionPopupView(
-                        snapshot: completion,
-                        cursorOrigin: cursorPixelPosition(plan: model.plan, cellSize: cellSize),
-                        cellSize: cellSize,
-                        containerSize: proxy.size,
-                        languageHint: model.completionDocsLanguageHint(),
-                        onSelect: { index in
-                            model.selectCompletion(index: index)
-                        },
-                        onSubmit: { index in
-                            model.submitCompletion(index: index)
-                        }
-                    )
-                    .allowsHitTesting(true)
-                } else if let hover = hoverSnapshot {
-                    HoverPopupView(
-                        snapshot: hover,
-                        cursorOrigin: cursorPixelPosition(plan: model.plan, cellSize: cellSize),
-                        cellSize: cellSize,
-                        containerSize: proxy.size,
-                        languageHint: model.completionDocsLanguageHint()
-                    )
-                    .allowsHitTesting(true)
-                } else if let signature = signatureSnapshot {
-                    SignatureHelpPopupView(
-                        snapshot: signature,
-                        cursorOrigin: cursorPixelPosition(plan: model.plan, cellSize: cellSize),
-                        cellSize: cellSize,
-                        containerSize: proxy.size,
-                        languageHint: model.completionDocsLanguageHint()
-                    )
-                    .allowsHitTesting(true)
+                if !isOverlayOpen {
+                    if let completion = completionSnapshot {
+                        CompletionPopupView(
+                            snapshot: completion,
+                            cursorOrigin: cursorPixelPosition(plan: model.plan, cellSize: cellSize),
+                            cellSize: cellSize,
+                            containerSize: proxy.size,
+                            languageHint: model.completionDocsLanguageHint(),
+                            onSelect: { index in
+                                model.selectCompletion(index: index)
+                            },
+                            onSubmit: { index in
+                                model.submitCompletion(index: index)
+                            }
+                        )
+                        .allowsHitTesting(true)
+                    } else if let hover = hoverSnapshot {
+                        HoverPopupView(
+                            snapshot: hover,
+                            cursorOrigin: cursorPixelPosition(plan: model.plan, cellSize: cellSize),
+                            cellSize: cellSize,
+                            containerSize: proxy.size,
+                            languageHint: model.completionDocsLanguageHint()
+                        )
+                        .allowsHitTesting(true)
+                    } else if let signature = signatureSnapshot {
+                        SignatureHelpPopupView(
+                            snapshot: signature,
+                            cursorOrigin: cursorPixelPosition(plan: model.plan, cellSize: cellSize),
+                            cellSize: cellSize,
+                            containerSize: proxy.size,
+                            languageHint: model.completionDocsLanguageHint()
+                        )
+                        .allowsHitTesting(true)
+                    }
                 }
             }
             .background(

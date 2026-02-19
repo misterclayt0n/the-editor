@@ -5586,6 +5586,41 @@ pkgs.mkShell {
   }
 
   #[test]
+  fn goto_last_modification_keymap_sequence_moves_cursor_to_last_edit() {
+    let dispatch = build_dispatch::<Ctx>();
+    let mut ctx = Ctx::new(None).expect("ctx");
+    ctx.set_dispatch(&dispatch);
+    ctx.resize(80, 24);
+
+    let tx = Transaction::change(
+      ctx.editor.document().text(),
+      std::iter::once((0, 0, Some("edited ".into()))),
+    )
+    .expect("edit transaction");
+    assert!(DefaultContext::apply_transaction(&mut ctx, &tx));
+    let _ = ctx.editor.document_mut().commit();
+
+    let end = ctx.editor.document().text().len_chars();
+    let _ = ctx.editor.document_mut().set_selection(Selection::point(end));
+    let expected = ctx
+      .editor
+      .last_modification_position()
+      .expect("last modification position");
+
+    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+      key:       Key::Char('g'),
+      modifiers: Modifiers::empty(),
+    });
+    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+      key:       Key::Char('.'),
+      modifiers: Modifiers::empty(),
+    });
+
+    let actual = ctx.editor.document().selection().ranges()[0].head;
+    assert_eq!(actual, expected);
+  }
+
+  #[test]
   fn goto_buffer_restores_syntax_for_target_buffer() {
     let mut ctx = Ctx::new(None).expect("ctx");
     if ctx.loader.is_none() {

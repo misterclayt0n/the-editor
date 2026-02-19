@@ -9134,6 +9134,36 @@ pkgs.mkShell {
   }
 
   #[test]
+  fn goto_last_modification_keymap_moves_cursor_to_last_edit() {
+    let _guard = ffi_test_guard();
+    let mut app = App::new();
+    let id = app.create_editor("first file\n", default_viewport(), ffi::Position {
+      row: 0,
+      col: 0,
+    });
+    assert!(app.activate(id).is_some());
+
+    assert!(app.insert(id, "edited "));
+    let _ = app.active_editor_mut().document_mut().commit();
+
+    let end = app.active_editor_ref().document().text().len_chars();
+    let _ = app
+      .active_editor_mut()
+      .document_mut()
+      .set_selection(Selection::point(end));
+    let expected = app
+      .active_editor_ref()
+      .last_modification_position()
+      .expect("last modification position");
+
+    assert!(app.handle_key(id, key_char('g')));
+    assert!(app.handle_key(id, key_char('.')));
+
+    let actual = app.active_editor_ref().document().selection().ranges()[0].head;
+    assert_eq!(actual, expected);
+  }
+
+  #[test]
   fn ensure_cursor_visible_keeps_horizontal_scroll_zero_with_soft_wrap() {
     let _guard = ffi_test_guard();
     let mut app = App::new();

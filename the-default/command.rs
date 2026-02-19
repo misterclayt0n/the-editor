@@ -994,6 +994,7 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
         ctx.push_warning("buffer", "no last modified buffer");
       }
     },
+    Command::GotoLastModification => goto_last_modification(ctx),
     Command::DeleteSelection { yank } => ctx.dispatch().delete_selection(ctx, yank),
     Command::ChangeSelection { yank } => ctx.dispatch().change_selection(ctx, yank),
     Command::Replace => ctx.dispatch().replace(ctx, ()),
@@ -1925,6 +1926,18 @@ fn goto_window<Ctx: DefaultContext>(ctx: &mut Ctx, align: WindowAlign, count: us
   let target = char_idx_at_coords(slice, Position::new(target_line, 0));
   let selection = doc.selection().clone();
   let new_selection = selection.transform(|range| range.put_cursor(slice, target, extend));
+  let _ = doc.set_selection(new_selection);
+}
+
+fn goto_last_modification<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  let Some(pos) = ctx.editor_ref().last_modification_position() else {
+    return;
+  };
+  let extend = ctx.mode() == Mode::Select;
+  let doc = ctx.editor().document_mut();
+  let slice = doc.text().slice(..);
+  let selection = doc.selection().clone();
+  let new_selection = selection.transform(|range| range.put_cursor(slice, pos, extend));
   let _ = doc.set_selection(new_selection);
 }
 
@@ -3964,6 +3977,7 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "goto_window_bottom" => Some(Command::goto_window_bottom(1)),
     "goto_last_accessed_file" => Some(Command::goto_last_accessed_file()),
     "goto_last_modified_file" => Some(Command::goto_last_modified_file()),
+    "goto_last_modification" => Some(Command::goto_last_modification()),
     "search" => Some(Command::search()),
     "rsearch" => Some(Command::rsearch()),
     "select_regex" => Some(Command::select_regex()),

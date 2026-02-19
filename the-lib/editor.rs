@@ -226,6 +226,10 @@ impl Editor {
     };
     self.set_active_buffer(index)
   }
+
+  pub fn last_modification_position(&self) -> Option<usize> {
+    self.document().history().last_edit_pos()
+  }
 }
 
 #[cfg(test)]
@@ -242,6 +246,7 @@ mod tests {
     document::DocumentId,
     position::Position,
     render::graphics::Rect,
+    transaction::Transaction,
   };
 
   #[test]
@@ -347,5 +352,29 @@ mod tests {
     assert_eq!(editor.active_buffer_index(), 0);
     assert!(editor.goto_last_modified_buffer());
     assert_eq!(editor.active_buffer_index(), 2);
+  }
+
+  #[test]
+  fn editor_last_modification_position_reflects_committed_changes() {
+    let doc_id = DocumentId::new(NonZeroUsize::new(1).unwrap());
+    let doc = Document::new(doc_id, Rope::from("one"));
+    let view = ViewState::new(Rect::new(0, 0, 80, 24), Position::new(0, 0));
+    let editor_id = EditorId::new(NonZeroUsize::new(1).unwrap());
+    let mut editor = Editor::new(editor_id, doc, view);
+
+    assert_eq!(editor.last_modification_position(), None);
+
+    let tx = Transaction::change(
+      editor.document().text(),
+      std::iter::once((0, 0, Some("edit ".into()))),
+    )
+    .expect("insert transaction");
+    editor
+      .document_mut()
+      .apply_transaction(&tx)
+      .expect("apply insert");
+    editor.document_mut().commit().expect("commit insert");
+
+    assert_eq!(editor.last_modification_position(), Some(5));
   }
 }

@@ -488,6 +488,7 @@ pub enum Command {
   },
   GotoLastAccessedFile,
   GotoLastModifiedFile,
+  GotoLastModification,
   DeleteSelection {
     yank: bool,
   },
@@ -818,6 +819,11 @@ impl Command {
   #[must_use]
   pub const fn goto_last_modified_file() -> Self {
     Self::GotoLastModifiedFile
+  }
+
+  #[must_use]
+  pub const fn goto_last_modification() -> Self {
+    Self::GotoLastModification
   }
 
   #[must_use]

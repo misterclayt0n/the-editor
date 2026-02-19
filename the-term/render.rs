@@ -1933,7 +1933,13 @@ fn completion_docs_rows_with_context(
   ctx: Option<&Ctx>,
 ) -> Vec<Vec<StyledTextRun>> {
   let mut rows = Vec::new();
-  for line in completion_docs_markdown_lines(markdown, styles, ctx) {
+  for mut line in completion_docs_markdown_lines(markdown, styles, ctx) {
+    if line.len() == 1
+      && width > 0
+      && matches!(line[0].kind, DocsSemanticKind::Rule)
+    {
+      line[0].text = "─".repeat(width);
+    }
     rows.extend(wrap_styled_runs(&line, width));
   }
   if rows.is_empty() {

@@ -2125,6 +2125,7 @@ struct DocsStyledTextRun {
   text:  String,
   style: LibStyle,
   kind:  DocsSemanticKind,
+  href:  Option<String>,
 }
 
 #[derive(Clone, Copy)]
@@ -2173,6 +2174,8 @@ struct DocsRenderSnapshot {
 struct DocsRunSnapshot {
   text:  String,
   kind:  DocsSemanticKind,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  href:  Option<String>,
   style: DocsStyleSnapshot,
 }
 
@@ -2239,6 +2242,7 @@ fn docs_push_styled_run(
   text: String,
   style: LibStyle,
   kind: DocsSemanticKind,
+  href: Option<String>,
 ) {
   if text.is_empty() {
     return;
@@ -2246,11 +2250,17 @@ fn docs_push_styled_run(
   if let Some(last) = runs.last_mut()
     && last.style == style
     && last.kind == kind
+    && last.href == href
   {
     last.text.push_str(&text);
     return;
   }
-  runs.push(DocsStyledTextRun { text, style, kind });
+  runs.push(DocsStyledTextRun {
+    text,
+    style,
+    kind,
+    href,
+  });
 }
 
 fn docs_runs_from_inline(
@@ -2272,7 +2282,13 @@ fn docs_runs_from_inline(
     if inline.emphasis {
       style = style.add_modifier(LibModifier::ITALIC);
     }
-    docs_push_styled_run(&mut runs, inline.text.clone(), style, kind);
+    docs_push_styled_run(
+      &mut runs,
+      inline.text.clone(),
+      style,
+      kind,
+      inline.link_destination.clone(),
+    );
   }
   runs
 }
@@ -2395,6 +2411,7 @@ fn docs_render_code_lines_with_active_style(
           std::mem::take(&mut piece),
           run_style,
           run_kind,
+          None,
         );
       }
       run_style = style;
@@ -2403,12 +2420,13 @@ fn docs_render_code_lines_with_active_style(
       byte_idx = byte_end;
     }
 
-    docs_push_styled_run(&mut runs, piece, run_style, run_kind);
+    docs_push_styled_run(&mut runs, piece, run_style, run_kind, None);
     if runs.is_empty() {
       runs.push(DocsStyledTextRun {
         text:  String::new(),
         style: base_style,
         kind:  DocsSemanticKind::Code,
+        href:  None,
       });
     }
     rendered.push(runs);
@@ -2514,6 +2532,7 @@ fn docs_highlighted_code_block_lines(
           std::mem::take(&mut piece),
           active_style,
           active_kind,
+          None,
         );
       }
       active_style = style;
@@ -2521,12 +2540,13 @@ fn docs_highlighted_code_block_lines(
       piece.push(ch);
       byte_idx = byte_end;
     }
-    docs_push_styled_run(&mut runs, piece, active_style, active_kind);
+    docs_push_styled_run(&mut runs, piece, active_style, active_kind, None);
     if runs.is_empty() {
       runs.push(DocsStyledTextRun {
         text:  String::new(),
         style: styles.code,
         kind:  DocsSemanticKind::Code,
+        href:  None,
       });
     }
     rendered.push(runs);
@@ -2581,6 +2601,7 @@ fn docs_markdown_lines(
           marker_text,
           styles.bullet,
           DocsSemanticKind::ListMarker,
+          None,
         );
         runs.extend(docs_runs_from_inline(
           &inline_runs,
@@ -2597,6 +2618,7 @@ fn docs_markdown_lines(
           "│ ".to_string(),
           styles.quote,
           DocsSemanticKind::QuoteMarker,
+          None,
         );
         runs.extend(docs_runs_from_inline(
           &inline_runs,
@@ -2624,6 +2646,7 @@ fn docs_markdown_lines(
           text:  "───".to_string(),
           style: styles.rule,
           kind:  DocsSemanticKind::Rule,
+          href:  None,
         }]);
       },
       DocsBlock::BlankLine => lines.push(Vec::new()),
@@ -2658,6 +2681,7 @@ fn docs_wrap_styled_runs(runs: &[DocsStyledTextRun], width: usize) -> Vec<Vec<Do
             std::mem::take(&mut piece),
             run.style,
             run.kind,
+            run.href.clone(),
           );
         }
         wrapped.push(current);
@@ -2668,7 +2692,7 @@ fn docs_wrap_styled_runs(runs: &[DocsStyledTextRun], width: usize) -> Vec<Vec<Do
       col += 1;
     }
     if !piece.is_empty() {
-      docs_push_styled_run(&mut current, piece, run.style, run.kind);
+      docs_push_styled_run(&mut current, piece, run.style, run.kind, run.href.clone());
     }
   }
 
@@ -2759,6 +2783,7 @@ fn completion_docs_render_json_impl(
           DocsRunSnapshot {
             text:  run.text,
             kind:  run.kind,
+            href:  run.href,
             style: docs_style_snapshot(run.style),
           }
         })

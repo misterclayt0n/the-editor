@@ -56,10 +56,11 @@ pub enum DocsInlineKind {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DocsInlineRun {
-  pub text:         String,
-  pub kind:         DocsInlineKind,
-  pub strong:       bool,
-  pub emphasis:     bool,
+  pub text:             String,
+  pub kind:             DocsInlineKind,
+  pub link_destination: Option<String>,
+  pub strong:           bool,
+  pub emphasis:         bool,
   pub strikethrough: bool,
 }
 
@@ -125,7 +126,6 @@ struct InlineState {
   strong_depth:       u8,
   emphasis_depth:     u8,
   strikethrough_depth: u8,
-  link_depth:         u8,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -190,6 +190,7 @@ fn docs_push_inline_run(
   text: String,
   kind: DocsInlineKind,
   inline_state: InlineState,
+  link_destination: Option<&str>,
 ) {
   if text.is_empty() {
     return;
@@ -197,12 +198,14 @@ fn docs_push_inline_run(
   let run = DocsInlineRun {
     text,
     kind,
+    link_destination: link_destination.map(str::to_string),
     strong: inline_state.strong_depth > 0,
     emphasis: inline_state.emphasis_depth > 0,
     strikethrough: inline_state.strikethrough_depth > 0,
   };
   if let Some(last) = runs.last_mut()
     && last.kind == run.kind
+    && last.link_destination == run.link_destination
     && last.strong == run.strong
     && last.emphasis == run.emphasis
     && last.strikethrough == run.strikethrough
@@ -300,6 +303,7 @@ pub fn parse_markdown_blocks(markdown: &str) -> Vec<DocsBlock> {
   let mut active_block: Option<ActiveBlock> = None;
   let mut active_code_block: Option<ActiveCodeBlock> = None;
   let mut inline_state = InlineState::default();
+  let mut link_targets: Vec<String> = Vec::new();
   let mut list_stack: Vec<ListState> = Vec::new();
   let mut pending_item_marker: Option<DocsListMarker> = None;
   let mut heading_level: Option<u8> = None;
@@ -364,8 +368,8 @@ pub fn parse_markdown_blocks(markdown: &str) -> Vec<DocsBlock> {
         Tag::Strikethrough => {
           inline_state.strikethrough_depth = inline_state.strikethrough_depth.saturating_add(1);
         },
-        Tag::Link { .. } => {
-          inline_state.link_depth = inline_state.link_depth.saturating_add(1);
+        Tag::Link { dest_url, .. } => {
+          link_targets.push(dest_url.to_string());
         },
         _ => {},
       },
@@ -401,7 +405,7 @@ pub fn parse_markdown_blocks(markdown: &str) -> Vec<DocsBlock> {
           inline_state.strikethrough_depth = inline_state.strikethrough_depth.saturating_sub(1);
         },
         TagEnd::Link => {
-          inline_state.link_depth = inline_state.link_depth.saturating_sub(1);
+          link_targets.pop();
         },
         _ => {},
       },
@@ -424,12 +428,19 @@ pub fn parse_markdown_blocks(markdown: &str) -> Vec<DocsBlock> {
           docs_begin_active_block(&mut active_block, kind, marker, range.start);
         }
         if let Some(block) = active_block.as_mut() {
-          let kind = if inline_state.link_depth > 0 {
+          let link_destination = link_targets.last().map(String::as_str);
+          let kind = if link_destination.is_some() {
             DocsInlineKind::Link
           } else {
             DocsInlineKind::Text
           };
-          docs_push_inline_run(&mut block.runs, text.into_string(), kind, inline_state);
+          docs_push_inline_run(
+            &mut block.runs,
+            text.into_string(),
+            kind,
+            inline_state,
+            link_destination,
+          );
           block.end = range.end;
         }
       },
@@ -452,6 +463,7 @@ pub fn parse_markdown_blocks(markdown: &str) -> Vec<DocsBlock> {
             text.into_string(),
             DocsInlineKind::InlineCode,
             inline_state,
+            None,
           );
           block.end = range.end;
         }
@@ -466,6 +478,7 @@ pub fn parse_markdown_blocks(markdown: &str) -> Vec<DocsBlock> {
             " ".to_string(),
             DocsInlineKind::Text,
             inline_state,
+            None,
           );
           block.end = range.end;
         }
@@ -487,6 +500,7 @@ pub fn parse_markdown_blocks(markdown: &str) -> Vec<DocsBlock> {
             text.into_string(),
             DocsInlineKind::Text,
             inline_state,
+            None,
           );
           block.end = range.end;
         }
@@ -501,6 +515,7 @@ pub fn parse_markdown_blocks(markdown: &str) -> Vec<DocsBlock> {
             text.into_string(),
             DocsInlineKind::Text,
             inline_state,
+            None,
           );
           block.end = range.end;
         }
@@ -522,6 +537,7 @@ pub fn parse_markdown_blocks(markdown: &str) -> Vec<DocsBlock> {
             marker.to_string(),
             DocsInlineKind::Text,
             inline_state,
+            None,
           );
           block.end = range.end;
         }
@@ -636,6 +652,21 @@ mod tests {
     assert_eq!(runs.len(), 1);
     assert_eq!(runs[0].kind, DocsInlineKind::Text);
     assert_eq!(runs[0].text, "[x] *literal*");
+  }
+
+  #[test]
+  fn markdown_blocks_capture_link_destination() {
+    let blocks = parse_markdown_blocks("[fmt docs](https://pkg.go.dev/fmt)");
+    let Some(DocsBlock::Paragraph(runs)) = blocks.first() else {
+      panic!("expected paragraph block");
+    };
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].kind, DocsInlineKind::Link);
+    assert_eq!(runs[0].text, "fmt docs");
+    assert_eq!(
+      runs[0].link_destination.as_deref(),
+      Some("https://pkg.go.dev/fmt")
+    );
   }
 
   #[test]

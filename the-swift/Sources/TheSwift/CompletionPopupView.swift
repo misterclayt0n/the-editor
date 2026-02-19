@@ -414,7 +414,7 @@ private struct CompletionDocsAppKitTextView: NSViewRepresentable {
         }
     }
 
-    final class Coordinator {
+    final class Coordinator: NSObject, NSTextViewDelegate {
         var lastRenderKey: String?
         var lastLoadingState = false
         private var keyMonitor: Any?
@@ -450,6 +450,24 @@ private struct CompletionDocsAppKitTextView: NSViewRepresentable {
                 return nil
             }
         }
+
+        func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
+            _ = charIndex
+            let url: URL?
+            if let directURL = link as? URL {
+                url = directURL
+            } else if let href = link as? String {
+                url = CompletionDocsRenderer.urlFromHref(href)
+            } else {
+                url = nil
+            }
+
+            guard let url else {
+                return false
+            }
+            NSWorkspace.shared.open(url)
+            return true
+        }
     }
 
     func makeCoordinator() -> Coordinator {
@@ -473,6 +491,7 @@ private struct CompletionDocsAppKitTextView: NSViewRepresentable {
         textView.drawsBackground = false
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
+        textView.delegate = context.coordinator
         textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         textView.minSize = .zero
         textView.textContainerInset = NSSize(width: 10, height: 10)
@@ -773,6 +792,7 @@ private enum CompletionDocsRenderer {
     private struct RustDocsRun: Decodable {
         let text: String
         let kind: RustDocsKind
+        let href: String?
         let style: RustDocsStyle
     }
 
@@ -898,8 +918,6 @@ private enum CompletionDocsRenderer {
         theme: CompletionDocsTheme,
         languageHint: String
     ) -> NSAttributedString? {
-        _ = contentWidth
-        _ = theme
         // Keep markdown/code highlighting in Rust, but let AppKit own soft wrapping
         // so GUI wrapping follows exact view width instead of pre-wrapped rows.
         let wrapColumns = 2048
@@ -909,16 +927,25 @@ private enum CompletionDocsRenderer {
             return nil
         }
 
+        let estimatedColumns = max(8, Int((contentWidth - 20) / max(5, theme.estimatedColumnWidth)))
+        let ruleText = String(repeating: "─", count: min(estimatedColumns, 96))
+
         let rendered = NSMutableAttributedString()
         for (lineIndex, line) in payload.lines.enumerated() {
             if line.isEmpty {
                 // Preserve blank lines from Rust markdown wrapping.
             } else {
                 for run in line {
+                    let renderedText = run.kind == .rule ? ruleText : run.text
                     rendered.append(
                         NSAttributedString(
-                            string: run.text,
-                            attributes: attributes(for: run.style, kind: run.kind, theme: theme)
+                            string: renderedText,
+                            attributes: attributes(
+                                for: run.style,
+                                kind: run.kind,
+                                href: run.href,
+                                theme: theme
+                            )
                         )
                     )
                 }
@@ -935,6 +962,7 @@ private enum CompletionDocsRenderer {
     private static func attributes(
         for style: RustDocsStyle,
         kind: RustDocsKind,
+        href: String?,
         theme: CompletionDocsTheme
     ) -> [NSAttributedString.Key: Any] {
         _ = style.sub_modifier
@@ -972,6 +1000,9 @@ private enum CompletionDocsRenderer {
                 attrs[.underlineColor] = underline
             }
         }
+        if kind == .link, let href, let url = urlFromHref(href) {
+            attrs[.link] = url
+        }
         return attrs
     }
 
@@ -991,6 +1022,17 @@ private enum CompletionDocsRenderer {
         default:
             return false
         }
+    }
+
+    fileprivate static func urlFromHref(_ href: String) -> URL? {
+        let trimmed = href.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return nil
+        }
+        if let direct = URL(string: trimmed), direct.scheme != nil {
+            return direct
+        }
+        return URL(string: "https://\(trimmed)")
     }
 
     private static func nsColor(from color: RustDocsColor) -> NSColor? {

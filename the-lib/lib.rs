@@ -10,6 +10,7 @@ pub mod clipboard;
 pub mod command_line;
 pub mod comment;
 pub mod diagnostics;
+pub mod docs_markdown;
 pub mod diff;
 pub mod document;
 pub mod editor;

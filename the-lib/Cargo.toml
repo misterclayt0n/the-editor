@@ -16,6 +16,7 @@ globset.workspace              = true
 imara-diff.workspace           = true
 nucleo.workspace               = true
 parking_lot.workspace          = true
+pulldown-cmark.workspace       = true
 ropey.workspace                = true
 serde.workspace                = true
 serde_json.workspace           = true

@@ -18,6 +18,7 @@ final class EditorModel: ObservableObject {
     @Published var pendingKeys: [String] = []
     @Published var pendingKeyHints: PendingKeyHintsSnapshot? = nil
     @Published var filePickerSnapshot: FilePickerSnapshot? = nil
+    let filePickerPreviewModel = FilePickerPreviewModel()
     private var filePickerTimer: Timer? = nil
     private var backgroundTimer: Timer? = nil
     private var scrollRemainderX: CGFloat = 0
@@ -288,7 +289,9 @@ final class EditorModel: ObservableObject {
 
     func filePickerSelectIndex(_ index: Int) {
         _ = app.file_picker_select_index(editorId, UInt(index))
-        refreshFilePicker()
+        // Only refresh the preview — don't re-serialize the full item list
+        // (up to 10k items) on every arrow key press.
+        refreshFilePickerPreview()
     }
 
     func closeFilePicker() {
@@ -296,6 +299,7 @@ final class EditorModel: ObservableObject {
         filePickerTimer = nil
         _ = app.file_picker_close(editorId)
         filePickerSnapshot = nil
+        filePickerPreviewModel.preview = nil
         refresh(trigger: "file_picker_close")
     }
 
@@ -326,10 +330,9 @@ final class EditorModel: ObservableObject {
                             icon: item.icon,
                             matchIndices: item.matchIndices
                         )
-                    },
-                    preview: snapshot.preview,
-                    showPreview: snapshot.showPreview
+                    }
                 )
+                filePickerPreviewModel.preview = app.file_picker_preview(editorId)
                 startFilePickerTimerIfNeeded(scanning: snapshot.scanning ?? false)
             } else {
                 stopFilePickerTimerIfNeeded()
@@ -340,6 +343,11 @@ final class EditorModel: ObservableObject {
             stopFilePickerTimerIfNeeded()
             filePickerSnapshot = nil
         }
+    }
+
+    /// Lightweight refresh — direct FFI, no JSON. Called on selection change.
+    func refreshFilePickerPreview() {
+        filePickerPreviewModel.preview = app.file_picker_preview(editorId)
     }
 
     private func startFilePickerTimerIfNeeded(scanning: Bool) {

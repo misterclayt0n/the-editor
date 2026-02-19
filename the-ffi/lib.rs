@@ -3052,6 +3052,218 @@ pub struct App {
   loader:                          Option<Arc<Loader>>,
 }
 
+// MARK: - File picker preview FFI types
+
+/// A single highlight span within a preview line, using char offsets.
+pub struct PreviewLineSpan {
+  char_start:   u32,
+  char_end:     u32,
+  highlight_id: u32,
+}
+
+/// A single line in a source preview, with pre-computed char-offset spans.
+pub struct PreviewLine {
+  text:  String,
+  spans: Vec<PreviewLineSpan>,
+}
+
+impl Default for PreviewLine {
+  fn default() -> Self {
+    Self {
+      text:  String::new(),
+      spans: Vec::new(),
+    }
+  }
+}
+
+impl PreviewLine {
+  fn text(&self) -> String {
+    self.text.clone()
+  }
+
+  fn span_count(&self) -> usize {
+    self.spans.len()
+  }
+
+  fn span_char_start(&self, index: usize) -> u32 {
+    self.spans.get(index).map(|s| s.char_start).unwrap_or(0)
+  }
+
+  fn span_char_end(&self, index: usize) -> u32 {
+    self.spans.get(index).map(|s| s.char_end).unwrap_or(0)
+  }
+
+  fn span_highlight(&self, index: usize) -> u32 {
+    self.spans.get(index).map(|s| s.highlight_id).unwrap_or(0)
+  }
+}
+
+/// Snapshot of the file picker preview, ready for Swift consumption.
+/// Built once per selection change — Swift reads fields via accessors.
+pub struct PreviewData {
+  kind:        u8, // 0=empty, 1=source, 2=text, 3=message
+  path:        String,
+  text:        String,
+  loading:     bool,
+  truncated:   bool,
+  total_lines: usize,
+  show:        bool,
+  lines:       Vec<PreviewLine>,
+}
+
+impl Default for PreviewData {
+  fn default() -> Self {
+    Self {
+      kind:        0,
+      path:        String::new(),
+      text:        String::new(),
+      loading:     false,
+      truncated:   false,
+      total_lines: 0,
+      show:        true,
+      lines:       Vec::new(),
+    }
+  }
+}
+
+impl PreviewData {
+  fn kind(&self) -> u8 {
+    self.kind
+  }
+
+  fn path(&self) -> String {
+    self.path.clone()
+  }
+
+  fn text(&self) -> String {
+    self.text.clone()
+  }
+
+  fn loading(&self) -> bool {
+    self.loading
+  }
+
+  fn truncated(&self) -> bool {
+    self.truncated
+  }
+
+  fn total_lines(&self) -> usize {
+    self.total_lines
+  }
+
+  fn show(&self) -> bool {
+    self.show
+  }
+
+  fn line_count(&self) -> usize {
+    self.lines.len()
+  }
+
+  fn line_at(&self, index: usize) -> PreviewLine {
+    self
+      .lines
+      .get(index)
+      .map(|l| PreviewLine {
+        text:  l.text.clone(),
+        spans: l
+          .spans
+          .iter()
+          .map(|s| PreviewLineSpan {
+            char_start:   s.char_start,
+            char_end:     s.char_end,
+            highlight_id: s.highlight_id,
+          })
+          .collect(),
+      })
+      .unwrap_or_default()
+  }
+}
+
+fn build_preview_data(picker: &FilePickerState) -> PreviewData {
+  let preview_path = picker
+    .preview_path
+    .as_ref()
+    .map(|p| {
+      p.strip_prefix(&picker.root)
+        .unwrap_or(p)
+        .display()
+        .to_string()
+    })
+    .unwrap_or_default();
+
+  match &picker.preview {
+    FilePickerPreview::Empty => PreviewData {
+      kind: 0,
+      path: preview_path,
+      show: picker.show_preview,
+      ..Default::default()
+    },
+    FilePickerPreview::Source(source) => {
+      let lines: Vec<PreviewLine> = source
+        .lines
+        .iter()
+        .enumerate()
+        .map(|(line_idx, line_text)| {
+          let line_start = source.line_starts.get(line_idx).copied().unwrap_or(0);
+          let line_end = source
+            .line_starts
+            .get(line_idx + 1)
+            .copied()
+            .unwrap_or(line_start + line_text.len());
+
+          let spans: Vec<PreviewLineSpan> = source
+            .highlights
+            .iter()
+            .filter(|(_hl, range)| range.start < line_end && range.end > line_start)
+            .map(|(hl, range)| {
+              let span_start_byte =
+                range.start.saturating_sub(line_start).min(line_text.len());
+              let span_end_byte = range.end.saturating_sub(line_start).min(line_text.len());
+              let char_start = line_text[..span_start_byte].chars().count() as u32;
+              let char_end = line_text[..span_end_byte].chars().count() as u32;
+              PreviewLineSpan {
+                char_start,
+                char_end,
+                highlight_id: hl.get(),
+              }
+            })
+            .collect();
+
+          PreviewLine {
+            text: line_text.clone(),
+            spans,
+          }
+        })
+        .collect();
+
+      PreviewData {
+        kind: 1,
+        path: preview_path,
+        loading: picker.preview_loading(),
+        truncated: source.truncated,
+        total_lines: source.lines.len(),
+        show: picker.show_preview,
+        lines,
+        ..Default::default()
+      }
+    },
+    FilePickerPreview::Text(t) => PreviewData {
+      kind: 2,
+      path: preview_path,
+      text: t.clone(),
+      show: picker.show_preview,
+      ..Default::default()
+    },
+    FilePickerPreview::Message(msg) => PreviewData {
+      kind: 3,
+      path: preview_path,
+      text: msg.clone(),
+      show: picker.show_preview,
+      ..Default::default()
+    },
+  }
+}
+
 impl App {
   pub fn new() -> Self {
     let dispatch = config_build_dispatch::<App>();
@@ -4012,71 +4224,6 @@ impl App {
       }
     }
 
-    let preview_json = match &picker.preview {
-      FilePickerPreview::Empty => serde_json::json!({ "kind": "empty" }),
-      FilePickerPreview::Message(msg) => serde_json::json!({
-        "kind": "message",
-        "text": msg,
-      }),
-      FilePickerPreview::Text(text) => serde_json::json!({
-        "kind": "text",
-        "text": text,
-      }),
-      FilePickerPreview::Source(source) => {
-        let lines: Vec<serde_json::Value> = source
-          .lines
-          .iter()
-          .enumerate()
-          .map(|(line_idx, line_text)| {
-            let line_start = source.line_starts.get(line_idx).copied().unwrap_or(0);
-            let line_end = source
-              .line_starts
-              .get(line_idx + 1)
-              .copied()
-              .unwrap_or(line_start + line_text.len());
-
-            let spans: Vec<serde_json::Value> = source
-              .highlights
-              .iter()
-              .filter(|(_hl, range)| range.start < line_end && range.end > line_start)
-              .map(|(hl, range)| {
-                let span_start_byte =
-                  range.start.saturating_sub(line_start).min(line_text.len());
-                let span_end_byte = range.end.saturating_sub(line_start).min(line_text.len());
-                let char_start = line_text[..span_start_byte].chars().count();
-                let char_end = line_text[..span_end_byte].chars().count();
-                serde_json::json!([char_start, char_end, hl.get()])
-              })
-              .collect();
-
-            serde_json::json!({
-              "text": line_text,
-              "spans": spans,
-            })
-          })
-          .collect();
-
-        let preview_path = picker
-          .preview_path
-          .as_ref()
-          .map(|p| {
-            p.strip_prefix(&picker.root)
-              .unwrap_or(p)
-              .display()
-              .to_string()
-          });
-
-        serde_json::json!({
-          "kind": "source",
-          "path": preview_path,
-          "truncated": source.truncated,
-          "total_lines": source.lines.len(),
-          "loading": picker.preview_loading(),
-          "lines": lines,
-        })
-      },
-    };
-
     let snapshot = serde_json::json!({
       "active": true,
       "query": picker.query,
@@ -4085,11 +4232,21 @@ impl App {
       "scanning": scanning,
       "root": root_display,
       "items": items,
-      "preview": preview_json,
-      "show_preview": picker.show_preview,
     });
 
     snapshot.to_string()
+  }
+
+  /// Direct FFI preview data — no JSON serialization.
+  pub fn file_picker_preview(&mut self, id: ffi::EditorId) -> PreviewData {
+    if self.activate(id).is_none() {
+      return PreviewData::default();
+    }
+    let picker = self.file_picker();
+    if !picker.active {
+      return PreviewData::default();
+    }
+    build_preview_data(picker)
   }
 
   pub fn take_should_quit(&mut self) -> bool {
@@ -7217,6 +7374,7 @@ mod ffi {
     fn file_picker_close(self: &mut App, id: EditorId) -> bool;
     fn file_picker_select_index(self: &mut App, id: EditorId, index: usize) -> bool;
     fn file_picker_snapshot_json(self: &mut App, id: EditorId, max_items: usize) -> String;
+    fn file_picker_preview(self: &mut App, id: EditorId) -> PreviewData;
     fn poll_background(self: &mut App, id: EditorId) -> bool;
     fn take_should_quit(self: &mut App) -> bool;
     fn handle_key(self: &mut App, id: EditorId, event: KeyEvent) -> bool;
@@ -7438,6 +7596,29 @@ mod ffi {
     fn start_col(self: &RenderDiagnosticUnderline) -> u16;
     fn end_col(self: &RenderDiagnosticUnderline) -> u16;
     fn severity(self: &RenderDiagnosticUnderline) -> u8;
+  }
+
+  // File picker preview (direct FFI, no JSON)
+  extern "Rust" {
+    type PreviewData;
+    fn kind(self: &PreviewData) -> u8;
+    fn path(self: &PreviewData) -> String;
+    fn text(self: &PreviewData) -> String;
+    fn loading(self: &PreviewData) -> bool;
+    fn truncated(self: &PreviewData) -> bool;
+    fn total_lines(self: &PreviewData) -> usize;
+    fn show(self: &PreviewData) -> bool;
+    fn line_count(self: &PreviewData) -> usize;
+    fn line_at(self: &PreviewData, index: usize) -> PreviewLine;
+  }
+
+  extern "Rust" {
+    type PreviewLine;
+    fn text(self: &PreviewLine) -> String;
+    fn span_count(self: &PreviewLine) -> usize;
+    fn span_char_start(self: &PreviewLine, index: usize) -> u32;
+    fn span_char_end(self: &PreviewLine, index: usize) -> u32;
+    fn span_highlight(self: &PreviewLine, index: usize) -> u32;
   }
 }
 

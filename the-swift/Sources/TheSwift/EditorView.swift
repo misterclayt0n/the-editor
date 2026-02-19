@@ -42,6 +42,7 @@ struct EditorView: View {
                     tree: model.uiTree,
                     cellSize: cellSize,
                     filePickerSnapshot: model.filePickerSnapshot,
+                    filePickerPreviewModel: model.filePickerPreviewModel,
                     pendingKeys: model.pendingKeys,
                     onSelectCommand: { index in
                         model.selectCommandPalette(index: index)

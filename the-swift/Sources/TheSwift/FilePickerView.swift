@@ -1,4 +1,6 @@
 import SwiftUI
+import class TheEditorFFIBridge.PreviewData
+import class TheEditorFFIBridge.PreviewLine
 
 // MARK: - Data model
 
@@ -10,19 +12,15 @@ struct FilePickerSnapshot: Decodable {
     let scanning: Bool?
     let root: String?
     let items: [FilePickerItemSnapshot]?
-    let preview: FilePickerPreviewSnapshot?
-    let showPreview: Bool?
 
     private enum CodingKeys: String, CodingKey {
-        case active, query, scanning, root, items, preview
+        case active, query, scanning, root, items
         case matchedCount = "matched_count"
         case totalCount = "total_count"
-        case showPreview = "show_preview"
     }
 
     init(active: Bool, query: String?, matchedCount: Int?, totalCount: Int?,
-         scanning: Bool?, root: String?, items: [FilePickerItemSnapshot]?,
-         preview: FilePickerPreviewSnapshot?, showPreview: Bool?) {
+         scanning: Bool?, root: String?, items: [FilePickerItemSnapshot]?) {
         self.active = active
         self.query = query
         self.matchedCount = matchedCount
@@ -30,65 +28,13 @@ struct FilePickerSnapshot: Decodable {
         self.scanning = scanning
         self.root = root
         self.items = items
-        self.preview = preview
-        self.showPreview = showPreview
     }
 }
 
-// MARK: - Preview data model
+// MARK: - Preview model (isolated from main EditorModel to avoid re-rendering the file list)
 
-enum FilePickerPreviewKind: String, Decodable {
-    case empty, source, text, message
-}
-
-struct FilePickerPreviewLineSpan: Decodable {
-    let charStart: Int
-    let charEnd: Int
-    let highlightId: UInt32
-
-    init(from decoder: Decoder) throws {
-        var container = try decoder.unkeyedContainer()
-        charStart = try container.decode(Int.self)
-        charEnd = try container.decode(Int.self)
-        highlightId = try container.decode(UInt32.self)
-    }
-}
-
-struct FilePickerPreviewLine: Decodable {
-    let text: String
-    let spans: [FilePickerPreviewLineSpan]
-}
-
-struct FilePickerPreviewSnapshot: Decodable {
-    let kind: FilePickerPreviewKind
-    let path: String?
-    let text: String?
-    let truncated: Bool?
-    let totalLines: Int?
-    let loading: Bool?
-    let lines: [FilePickerPreviewLine]?
-
-    private enum CodingKeys: String, CodingKey {
-        case kind, path, text, truncated, loading, lines
-        case totalLines = "total_lines"
-    }
-
-    static let empty = FilePickerPreviewSnapshot(
-        kind: .empty, path: nil, text: nil, truncated: nil,
-        totalLines: nil, loading: nil, lines: nil
-    )
-
-    init(kind: FilePickerPreviewKind, path: String?, text: String?,
-         truncated: Bool?, totalLines: Int?, loading: Bool?,
-         lines: [FilePickerPreviewLine]?) {
-        self.kind = kind
-        self.path = path
-        self.text = text
-        self.truncated = truncated
-        self.totalLines = totalLines
-        self.loading = loading
-        self.lines = lines
-    }
+class FilePickerPreviewModel: ObservableObject {
+    @Published var preview: PreviewData? = nil
 }
 
 struct FilePickerItemSnapshot: Decodable, Identifiable {
@@ -271,6 +217,7 @@ struct FilePickerBackdrop: View {
 
 struct FilePickerView: View {
     let snapshot: FilePickerSnapshot
+    let previewModel: FilePickerPreviewModel
     let onQueryChange: (String) -> Void
     let onSubmit: (Int) -> Void
     let onClose: () -> Void
@@ -293,9 +240,9 @@ struct FilePickerView: View {
         snapshot.scanning ?? false
     }
 
-    private var hasPreview: Bool {
-        snapshot.showPreview ?? true
-    }
+    // Always show preview layout — the preview panel handles its own empty state.
+    // This avoids re-evaluating the body when preview data arrives.
+    private let hasPreview = true
 
     private static let backgroundColor = Color(nsColor: .windowBackgroundColor)
 
@@ -355,7 +302,7 @@ struct FilePickerView: View {
             if hasPreview {
                 Divider()
                 FilePreviewPanel(
-                    preview: snapshot.preview ?? .empty,
+                    previewModel: previewModel,
                     colorForHighlight: colorForHighlight
                 )
                 .frame(maxWidth: .infinity)
@@ -378,6 +325,7 @@ struct FilePickerView: View {
                 .stroke(Color(nsColor: .tertiaryLabelColor).opacity(0.75))
         )
         .shadow(radius: 28, x: 0, y: 12)
+        .background(EscapeInterceptor(onEscape: onClose).frame(width: 0, height: 0))
     }
 
     // MARK: - Status text
@@ -498,6 +446,46 @@ struct FilePickerView: View {
     }
 }
 
+// MARK: - Escape interceptor
+
+/// Installs a local NSEvent monitor that catches Escape key presses *before*
+/// SwiftUI's `.textSelection(.enabled)` can consume them to deselect text.
+private struct EscapeInterceptor: NSViewRepresentable {
+    let onEscape: () -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        let coordinator = context.coordinator
+        coordinator.monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            if event.keyCode == 53 { // Escape
+                coordinator.onEscape()
+                return nil // swallow
+            }
+            return event
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        context.coordinator.onEscape = onEscape
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(onEscape: onEscape) }
+
+    class Coordinator {
+        var onEscape: () -> Void
+        var monitor: Any?
+
+        init(onEscape: @escaping () -> Void) {
+            self.onEscape = onEscape
+        }
+
+        deinit {
+            if let monitor { NSEvent.removeMonitor(monitor) }
+        }
+    }
+}
+
 // MARK: - Scanning indicator
 
 fileprivate struct ScanningText: View {
@@ -519,8 +507,10 @@ fileprivate struct ScanningText: View {
 // MARK: - File preview panel
 
 struct FilePreviewPanel: View {
-    let preview: FilePickerPreviewSnapshot
+    @ObservedObject var previewModel: FilePickerPreviewModel
     let colorForHighlight: ((UInt32) -> SwiftUI.Color?)?
+
+    private var preview: PreviewData? { previewModel.preview }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -534,12 +524,13 @@ struct FilePreviewPanel: View {
 
     @ViewBuilder
     private var previewHeader: some View {
+        let path = preview?.path().toString() ?? ""
         HStack(spacing: 6) {
             Image(systemName: "doc.text")
                 .font(FontLoader.uiFont(size: 12).weight(.medium))
                 .foregroundStyle(.tertiary)
 
-            if let path = preview.path, !path.isEmpty {
+            if !path.isEmpty {
                 Text(path)
                     .font(FontLoader.uiFont(size: 12).weight(.medium))
                     .foregroundStyle(.secondary)
@@ -553,7 +544,7 @@ struct FilePreviewPanel: View {
 
             Spacer()
 
-            if preview.truncated == true {
+            if preview?.truncated() == true {
                 Text("truncated")
                     .font(FontLoader.uiFont(size: 10))
                     .foregroundStyle(.tertiary)
@@ -573,15 +564,12 @@ struct FilePreviewPanel: View {
 
     @ViewBuilder
     private var previewContent: some View {
-        switch preview.kind {
-        case .empty:
-            emptyPreview
-        case .message:
-            messagePreview(preview.text ?? "")
-        case .text:
-            textPreview(preview.text ?? "")
-        case .source:
-            sourcePreview
+        let kind = preview?.kind() ?? 0
+        switch kind {
+        case 1: sourcePreview
+        case 2: textPreview(preview?.text().toString() ?? "")
+        case 3: messagePreview(preview?.text().toString() ?? "")
+        default: emptyPreview
         }
     }
 
@@ -613,7 +601,7 @@ struct FilePreviewPanel: View {
     private func textPreview(_ text: String) -> some View {
         ScrollView {
             Text(text)
-                .font(.system(size: 11, design: .monospaced))
+                .font(FontLoader.bufferFont(size: 11))
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(12)
@@ -625,13 +613,15 @@ struct FilePreviewPanel: View {
 
     @ViewBuilder
     private var sourcePreview: some View {
-        if let lines = preview.lines, !lines.isEmpty {
-            let gutterWidth = max(2, String(lines.count).count)
+        let lineCount = Int(preview?.line_count() ?? 0)
+        if lineCount > 0 {
+            let gutterWidth = max(2, String(lineCount).count)
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
-                    ForEach(0..<lines.count, id: \.self) { index in
+                    ForEach(0..<lineCount, id: \.self) { index in
+                        let line = preview!.line_at(UInt(index))
                         sourceLineView(
-                            line: lines[index],
+                            line: line,
                             lineNumber: index + 1,
                             gutterWidth: gutterWidth
                         )
@@ -646,19 +636,19 @@ struct FilePreviewPanel: View {
     }
 
     private func sourceLineView(
-        line: FilePickerPreviewLine,
+        line: PreviewLine,
         lineNumber: Int,
         gutterWidth: Int
     ) -> some View {
         HStack(alignment: .top, spacing: 0) {
             Text(String(format: "%\(gutterWidth)d", lineNumber))
-                .font(.system(size: 11, design: .monospaced))
+                .font(FontLoader.bufferFont(size: 11))
                 .foregroundStyle(.tertiary)
                 .frame(minWidth: CGFloat(gutterWidth) * 7 + 8, alignment: .trailing)
                 .padding(.trailing, 6)
 
             highlightedSourceLine(line)
-                .font(.system(size: 11, design: .monospaced))
+                .font(FontLoader.bufferFont(size: 11))
                 .lineLimit(1)
         }
         .padding(.horizontal, 8)
@@ -666,28 +656,29 @@ struct FilePreviewPanel: View {
         .frame(height: 16)
     }
 
-    private func highlightedSourceLine(_ line: FilePickerPreviewLine) -> Text {
-        let text = line.text
+    private func highlightedSourceLine(_ line: PreviewLine) -> Text {
+        let text = line.text().toString()
         guard !text.isEmpty else {
             return Text(" ")
         }
 
         let chars = Array(text)
-        let spans = line.spans
+        let spanCount = Int(line.span_count())
 
-        if spans.isEmpty {
+        if spanCount == 0 {
             return Text(text)
                 .foregroundColor(.primary.opacity(0.75))
         }
 
         // Build a highlight-ID array for each character
         var charHighlights: [UInt32?] = Array(repeating: nil, count: chars.count)
-        for span in spans {
-            let start = max(0, min(span.charStart, chars.count))
-            let end = max(0, min(span.charEnd, chars.count))
+        for i in 0..<spanCount {
+            let start = max(0, min(Int(line.span_char_start(UInt(i))), chars.count))
+            let end = max(0, min(Int(line.span_char_end(UInt(i))), chars.count))
             guard start < end else { continue }
-            for i in start..<end {
-                charHighlights[i] = span.highlightId
+            let hlId = line.span_highlight(UInt(i))
+            for j in start..<end {
+                charHighlights[j] = hlId
             }
         }
 

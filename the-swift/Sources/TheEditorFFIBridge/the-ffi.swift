@@ -211,6 +211,10 @@ extension AppRefMut {
         RustString(ptr: __swift_bridge__$App$file_picker_snapshot_json(ptr, id.intoFfiRepr(), max_items))
     }
 
+    public func file_picker_preview(_ id: EditorId) -> PreviewData {
+        PreviewData(ptr: __swift_bridge__$App$file_picker_preview(ptr, id.intoFfiRepr()))
+    }
+
     public func poll_background(_ id: EditorId) -> Bool {
         __swift_bridge__$App$poll_background(ptr, id.intoFfiRepr())
     }
@@ -1907,6 +1911,214 @@ extension RenderPlan: Vectorizable {
 
     public static func vecOfSelfLen(vecPtr: UnsafeMutableRawPointer) -> UInt {
         __swift_bridge__$Vec_RenderPlan$len(vecPtr)
+    }
+}
+
+
+public class PreviewData: PreviewDataRefMut {
+    var isOwned: Bool = true
+
+    public override init(ptr: UnsafeMutableRawPointer) {
+        super.init(ptr: ptr)
+    }
+
+    deinit {
+        if isOwned {
+            __swift_bridge__$PreviewData$_free(ptr)
+        }
+    }
+}
+public class PreviewDataRefMut: PreviewDataRef {
+    public override init(ptr: UnsafeMutableRawPointer) {
+        super.init(ptr: ptr)
+    }
+}
+public class PreviewDataRef {
+    var ptr: UnsafeMutableRawPointer
+
+    public init(ptr: UnsafeMutableRawPointer) {
+        self.ptr = ptr
+    }
+}
+extension PreviewDataRef {
+    public func kind() -> UInt8 {
+        __swift_bridge__$PreviewData$kind(ptr)
+    }
+
+    public func path() -> RustString {
+        RustString(ptr: __swift_bridge__$PreviewData$path(ptr))
+    }
+
+    public func text() -> RustString {
+        RustString(ptr: __swift_bridge__$PreviewData$text(ptr))
+    }
+
+    public func loading() -> Bool {
+        __swift_bridge__$PreviewData$loading(ptr)
+    }
+
+    public func truncated() -> Bool {
+        __swift_bridge__$PreviewData$truncated(ptr)
+    }
+
+    public func total_lines() -> UInt {
+        __swift_bridge__$PreviewData$total_lines(ptr)
+    }
+
+    public func show() -> Bool {
+        __swift_bridge__$PreviewData$show(ptr)
+    }
+
+    public func line_count() -> UInt {
+        __swift_bridge__$PreviewData$line_count(ptr)
+    }
+
+    public func line_at(_ index: UInt) -> PreviewLine {
+        PreviewLine(ptr: __swift_bridge__$PreviewData$line_at(ptr, index))
+    }
+}
+extension PreviewData: Vectorizable {
+    public static func vecOfSelfNew() -> UnsafeMutableRawPointer {
+        __swift_bridge__$Vec_PreviewData$new()
+    }
+
+    public static func vecOfSelfFree(vecPtr: UnsafeMutableRawPointer) {
+        __swift_bridge__$Vec_PreviewData$drop(vecPtr)
+    }
+
+    public static func vecOfSelfPush(vecPtr: UnsafeMutableRawPointer, value: PreviewData) {
+        __swift_bridge__$Vec_PreviewData$push(vecPtr, {value.isOwned = false; return value.ptr;}())
+    }
+
+    public static func vecOfSelfPop(vecPtr: UnsafeMutableRawPointer) -> Optional<Self> {
+        let pointer = __swift_bridge__$Vec_PreviewData$pop(vecPtr)
+        if pointer == nil {
+            return nil
+        } else {
+            return (PreviewData(ptr: pointer!) as! Self)
+        }
+    }
+
+    public static func vecOfSelfGet(vecPtr: UnsafeMutableRawPointer, index: UInt) -> Optional<PreviewDataRef> {
+        let pointer = __swift_bridge__$Vec_PreviewData$get(vecPtr, index)
+        if pointer == nil {
+            return nil
+        } else {
+            return PreviewDataRef(ptr: pointer!)
+        }
+    }
+
+    public static func vecOfSelfGetMut(vecPtr: UnsafeMutableRawPointer, index: UInt) -> Optional<PreviewDataRefMut> {
+        let pointer = __swift_bridge__$Vec_PreviewData$get_mut(vecPtr, index)
+        if pointer == nil {
+            return nil
+        } else {
+            return PreviewDataRefMut(ptr: pointer!)
+        }
+    }
+
+    public static func vecOfSelfAsPtr(vecPtr: UnsafeMutableRawPointer) -> UnsafePointer<PreviewDataRef> {
+        UnsafePointer<PreviewDataRef>(OpaquePointer(__swift_bridge__$Vec_PreviewData$as_ptr(vecPtr)))
+    }
+
+    public static func vecOfSelfLen(vecPtr: UnsafeMutableRawPointer) -> UInt {
+        __swift_bridge__$Vec_PreviewData$len(vecPtr)
+    }
+}
+
+
+public class PreviewLine: PreviewLineRefMut {
+    var isOwned: Bool = true
+
+    public override init(ptr: UnsafeMutableRawPointer) {
+        super.init(ptr: ptr)
+    }
+
+    deinit {
+        if isOwned {
+            __swift_bridge__$PreviewLine$_free(ptr)
+        }
+    }
+}
+public class PreviewLineRefMut: PreviewLineRef {
+    public override init(ptr: UnsafeMutableRawPointer) {
+        super.init(ptr: ptr)
+    }
+}
+public class PreviewLineRef {
+    var ptr: UnsafeMutableRawPointer
+
+    public init(ptr: UnsafeMutableRawPointer) {
+        self.ptr = ptr
+    }
+}
+extension PreviewLineRef {
+    public func text() -> RustString {
+        RustString(ptr: __swift_bridge__$PreviewLine$text(ptr))
+    }
+
+    public func span_count() -> UInt {
+        __swift_bridge__$PreviewLine$span_count(ptr)
+    }
+
+    public func span_char_start(_ index: UInt) -> UInt32 {
+        __swift_bridge__$PreviewLine$span_char_start(ptr, index)
+    }
+
+    public func span_char_end(_ index: UInt) -> UInt32 {
+        __swift_bridge__$PreviewLine$span_char_end(ptr, index)
+    }
+
+    public func span_highlight(_ index: UInt) -> UInt32 {
+        __swift_bridge__$PreviewLine$span_highlight(ptr, index)
+    }
+}
+extension PreviewLine: Vectorizable {
+    public static func vecOfSelfNew() -> UnsafeMutableRawPointer {
+        __swift_bridge__$Vec_PreviewLine$new()
+    }
+
+    public static func vecOfSelfFree(vecPtr: UnsafeMutableRawPointer) {
+        __swift_bridge__$Vec_PreviewLine$drop(vecPtr)
+    }
+
+    public static func vecOfSelfPush(vecPtr: UnsafeMutableRawPointer, value: PreviewLine) {
+        __swift_bridge__$Vec_PreviewLine$push(vecPtr, {value.isOwned = false; return value.ptr;}())
+    }
+
+    public static func vecOfSelfPop(vecPtr: UnsafeMutableRawPointer) -> Optional<Self> {
+        let pointer = __swift_bridge__$Vec_PreviewLine$pop(vecPtr)
+        if pointer == nil {
+            return nil
+        } else {
+            return (PreviewLine(ptr: pointer!) as! Self)
+        }
+    }
+
+    public static func vecOfSelfGet(vecPtr: UnsafeMutableRawPointer, index: UInt) -> Optional<PreviewLineRef> {
+        let pointer = __swift_bridge__$Vec_PreviewLine$get(vecPtr, index)
+        if pointer == nil {
+            return nil
+        } else {
+            return PreviewLineRef(ptr: pointer!)
+        }
+    }
+
+    public static func vecOfSelfGetMut(vecPtr: UnsafeMutableRawPointer, index: UInt) -> Optional<PreviewLineRefMut> {
+        let pointer = __swift_bridge__$Vec_PreviewLine$get_mut(vecPtr, index)
+        if pointer == nil {
+            return nil
+        } else {
+            return PreviewLineRefMut(ptr: pointer!)
+        }
+    }
+
+    public static func vecOfSelfAsPtr(vecPtr: UnsafeMutableRawPointer) -> UnsafePointer<PreviewLineRef> {
+        UnsafePointer<PreviewLineRef>(OpaquePointer(__swift_bridge__$Vec_PreviewLine$as_ptr(vecPtr)))
+    }
+
+    public static func vecOfSelfLen(vecPtr: UnsafeMutableRawPointer) -> UInt {
+        __swift_bridge__$Vec_PreviewLine$len(vecPtr)
     }
 }
 

@@ -4,6 +4,7 @@ struct UiOverlayHost: View {
     let tree: UiTreeSnapshot
     let cellSize: CGSize
     let filePickerSnapshot: FilePickerSnapshot?
+    let filePickerPreviewModel: FilePickerPreviewModel
     let pendingKeys: [String]
     let onSelectCommand: (Int) -> Void
     let onSubmitCommand: (Int?) -> Void
@@ -92,6 +93,7 @@ struct UiOverlayHost: View {
                     FilePickerBackdrop()
                     FilePickerView(
                         snapshot: filePickerSnapshot,
+                        previewModel: filePickerPreviewModel,
                         onQueryChange: onFilePickerQueryChange,
                         onSubmit: onFilePickerSubmit,
                         onClose: onFilePickerClose,

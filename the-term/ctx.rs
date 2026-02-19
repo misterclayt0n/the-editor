@@ -3917,6 +3917,7 @@ impl the_default::DefaultContext for Ctx {
       return true;
     }
 
+    self.editor.mark_active_buffer_modified();
     self.clear_hover_state();
     self.syntax_parse_lifecycle.cancel_pending();
     self.highlight_cache.clear();
@@ -4219,7 +4220,64 @@ impl the_default::DefaultContext for Ctx {
       self.syntax_parse_highlight_state.mark_cleared();
     }
 
-    let active_path = self.editor.active_file_path().map(|path| path.to_path_buf());
+    let active_path = self
+      .editor
+      .active_file_path()
+      .map(|path| path.to_path_buf());
+    self.file_path = active_path.clone();
+    self.lsp_refresh_document_state(active_path.as_deref());
+    self.lsp_open_current_document();
+    self.clear_hover_state();
+    self.refresh_vcs_diff_base();
+    self.needs_render = true;
+    true
+  }
+
+  fn goto_last_accessed_buffer(&mut self) -> bool {
+    self.lsp_close_current_document();
+    if !self.editor.goto_last_accessed_buffer() {
+      return false;
+    }
+
+    self.syntax_parse_lifecycle.cancel_pending();
+    self.highlight_cache.clear();
+    if self.editor.document().syntax().is_some() {
+      self.syntax_parse_highlight_state.mark_parsed();
+    } else {
+      self.syntax_parse_highlight_state.mark_cleared();
+    }
+
+    let active_path = self
+      .editor
+      .active_file_path()
+      .map(|path| path.to_path_buf());
+    self.file_path = active_path.clone();
+    self.lsp_refresh_document_state(active_path.as_deref());
+    self.lsp_open_current_document();
+    self.clear_hover_state();
+    self.refresh_vcs_diff_base();
+    self.needs_render = true;
+    true
+  }
+
+  fn goto_last_modified_buffer(&mut self) -> bool {
+    self.lsp_close_current_document();
+    if !self.editor.goto_last_modified_buffer() {
+      return false;
+    }
+
+    self.syntax_parse_lifecycle.cancel_pending();
+    self.highlight_cache.clear();
+    if self.editor.document().syntax().is_some() {
+      self.syntax_parse_highlight_state.mark_parsed();
+    } else {
+      self.syntax_parse_highlight_state.mark_cleared();
+    }
+
+    let active_path = self
+      .editor
+      .active_file_path()
+      .map(|path| path.to_path_buf());
     self.file_path = active_path.clone();
     self.lsp_refresh_document_state(active_path.as_deref());
     self.lsp_open_current_document();
@@ -5329,39 +5387,202 @@ pkgs.mkShell {
     let dispatch = build_dispatch::<Ctx>();
     ctx.set_dispatch(&dispatch);
 
-    dispatch.pre_on_keypress(
-      &mut ctx,
-      KeyEvent {
-        key:       Key::Char('g'),
-        modifiers: Modifiers::empty(),
-      },
-    );
-    dispatch.pre_on_keypress(
-      &mut ctx,
-      KeyEvent {
-        key:       Key::Char('n'),
-        modifiers: Modifiers::empty(),
-      },
-    );
+    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+      key:       Key::Char('g'),
+      modifiers: Modifiers::empty(),
+    });
+    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+      key:       Key::Char('n'),
+      modifiers: Modifiers::empty(),
+    });
     assert_eq!(ctx.file_path.as_deref(), Some(first.as_path()));
     assert_eq!(ctx.editor.document().text().to_string(), "one\n");
 
-    dispatch.pre_on_keypress(
-      &mut ctx,
-      KeyEvent {
-        key:       Key::Char('g'),
-        modifiers: Modifiers::empty(),
-      },
-    );
-    dispatch.pre_on_keypress(
-      &mut ctx,
-      KeyEvent {
-        key:       Key::Char('p'),
-        modifiers: Modifiers::empty(),
-      },
-    );
+    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+      key:       Key::Char('g'),
+      modifiers: Modifiers::empty(),
+    });
+    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+      key:       Key::Char('p'),
+      modifiers: Modifiers::empty(),
+    });
     assert_eq!(ctx.file_path.as_deref(), Some(second.as_path()));
     assert_eq!(ctx.editor.document().text().to_string(), "two\n");
+  }
+
+  #[test]
+  fn goto_last_accessed_file_keymap_sequence_toggles_between_buffers() {
+    let first = TempTestFile::new("buffer-key-access-one", "one\n");
+    let second = TempTestFile::new("buffer-key-access-two", "two\n");
+    let mut ctx = Ctx::new(Some(
+      first
+        .as_path()
+        .to_str()
+        .expect("temp test path should be utf-8"),
+    ))
+    .expect("ctx");
+    <Ctx as DefaultContext>::open_file(&mut ctx, second.as_path()).expect("open second buffer");
+
+    let dispatch = build_dispatch::<Ctx>();
+    ctx.set_dispatch(&dispatch);
+
+    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+      key:       Key::Char('g'),
+      modifiers: Modifiers::empty(),
+    });
+    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+      key:       Key::Char('a'),
+      modifiers: Modifiers::empty(),
+    });
+    assert_eq!(ctx.file_path.as_deref(), Some(first.as_path()));
+    assert_eq!(ctx.editor.document().text().to_string(), "one\n");
+
+    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+      key:       Key::Char('g'),
+      modifiers: Modifiers::empty(),
+    });
+    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+      key:       Key::Char('a'),
+      modifiers: Modifiers::empty(),
+    });
+    assert_eq!(ctx.file_path.as_deref(), Some(second.as_path()));
+    assert_eq!(ctx.editor.document().text().to_string(), "two\n");
+  }
+
+  #[test]
+  fn goto_last_modified_file_keymap_sequence_uses_recent_edit_order() {
+    let first = TempTestFile::new("buffer-key-modified-one", "one\n");
+    let second = TempTestFile::new("buffer-key-modified-two", "two\n");
+    let mut ctx = Ctx::new(Some(
+      first
+        .as_path()
+        .to_str()
+        .expect("temp test path should be utf-8"),
+    ))
+    .expect("ctx");
+
+    let first_edit = Transaction::change(
+      ctx.editor.document().text(),
+      std::iter::once((0, 0, Some("first-edit ".into()))),
+    )
+    .expect("first edit transaction");
+    assert!(DefaultContext::apply_transaction(&mut ctx, &first_edit));
+
+    <Ctx as DefaultContext>::open_file(&mut ctx, second.as_path()).expect("open second buffer");
+    let second_edit = Transaction::change(
+      ctx.editor.document().text(),
+      std::iter::once((0, 0, Some("second-edit ".into()))),
+    )
+    .expect("second edit transaction");
+    assert!(DefaultContext::apply_transaction(&mut ctx, &second_edit));
+
+    let dispatch = build_dispatch::<Ctx>();
+    ctx.set_dispatch(&dispatch);
+
+    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+      key:       Key::Char('g'),
+      modifiers: Modifiers::empty(),
+    });
+    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+      key:       Key::Char('m'),
+      modifiers: Modifiers::empty(),
+    });
+    assert_eq!(ctx.file_path.as_deref(), Some(first.as_path()));
+    assert!(
+      ctx
+        .editor
+        .document()
+        .text()
+        .to_string()
+        .starts_with("first-edit ")
+    );
+
+    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+      key:       Key::Char('g'),
+      modifiers: Modifiers::empty(),
+    });
+    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+      key:       Key::Char('m'),
+      modifiers: Modifiers::empty(),
+    });
+    assert_eq!(ctx.file_path.as_deref(), Some(second.as_path()));
+    assert!(
+      ctx
+        .editor
+        .document()
+        .text()
+        .to_string()
+        .starts_with("second-edit ")
+    );
+  }
+
+  #[test]
+  fn goto_window_keymap_sequence_moves_cursor_to_window_alignments() {
+    let dispatch = build_dispatch::<Ctx>();
+    let mut ctx = Ctx::new(None).expect("ctx");
+    ctx.set_dispatch(&dispatch);
+    ctx.resize(80, 24);
+
+    let mut content = String::new();
+    for line in 0..96usize {
+      content.push_str(&format!("line-{line}\n"));
+    }
+    let tx = Transaction::change(
+      ctx.editor.document().text(),
+      std::iter::once((
+        0,
+        ctx.editor.document().text().len_chars(),
+        Some(content.as_str().into()),
+      )),
+    )
+    .expect("seed transaction");
+    assert!(DefaultContext::apply_transaction(&mut ctx, &tx));
+    ctx.editor.view_mut().scroll = Position::new(10, 0);
+
+    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+      key:       Key::Char('g'),
+      modifiers: Modifiers::empty(),
+    });
+    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+      key:       Key::Char('t'),
+      modifiers: Modifiers::empty(),
+    });
+    let top_row = {
+      let text = ctx.editor.document().text().slice(..);
+      let head = ctx.editor.document().selection().ranges()[0].head;
+      coords_at_pos(text, head).row
+    };
+    assert_eq!(top_row, 15);
+
+    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+      key:       Key::Char('g'),
+      modifiers: Modifiers::empty(),
+    });
+    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+      key:       Key::Char('c'),
+      modifiers: Modifiers::empty(),
+    });
+    let center_row = {
+      let text = ctx.editor.document().text().slice(..);
+      let head = ctx.editor.document().selection().ranges()[0].head;
+      coords_at_pos(text, head).row
+    };
+    assert_eq!(center_row, 21);
+
+    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+      key:       Key::Char('g'),
+      modifiers: Modifiers::empty(),
+    });
+    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+      key:       Key::Char('b'),
+      modifiers: Modifiers::empty(),
+    });
+    let bottom_row = {
+      let text = ctx.editor.document().text().slice(..);
+      let head = ctx.editor.document().selection().ranges()[0].head;
+      coords_at_pos(text, head).row
+    };
+    assert_eq!(bottom_row, 28);
   }
 
   #[test]

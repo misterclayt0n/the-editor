@@ -48,6 +48,8 @@ pub struct Editor {
   buffers:          Vec<BufferState>,
   active_buffer:    usize,
   next_document_id: NonZeroUsize,
+  access_history:   Vec<usize>,
+  modified_history: Vec<usize>,
 }
 
 #[derive(Debug)]
@@ -79,7 +81,31 @@ impl Editor {
       buffers: vec![BufferState::new(document, view, None)],
       active_buffer: 0,
       next_document_id,
+      access_history: Vec::new(),
+      modified_history: Vec::new(),
     }
+  }
+
+  fn activate_buffer(&mut self, index: usize) -> bool {
+    if index >= self.buffers.len() {
+      return false;
+    }
+    if index != self.active_buffer {
+      self.access_history.push(self.active_buffer);
+      self.active_buffer = index;
+    }
+    true
+  }
+
+  fn touch_modified_history(&mut self, index: usize) {
+    if let Some(pos) = self
+      .modified_history
+      .iter()
+      .position(|entry| *entry == index)
+    {
+      self.modified_history.remove(pos);
+    }
+    self.modified_history.push(index);
   }
 
   pub fn id(&self) -> EditorId {
@@ -124,11 +150,7 @@ impl Editor {
   }
 
   pub fn set_active_buffer(&mut self, index: usize) -> bool {
-    if index >= self.buffers.len() {
-      return false;
-    }
-    self.active_buffer = index;
-    true
+    self.activate_buffer(index)
   }
 
   pub fn switch_buffer_forward(&mut self, count: usize) -> bool {
@@ -137,8 +159,7 @@ impl Editor {
       return false;
     }
     let step = count.max(1) % len;
-    self.active_buffer = (self.active_buffer + step) % len;
-    true
+    self.set_active_buffer((self.active_buffer + step) % len)
   }
 
   pub fn switch_buffer_backward(&mut self, count: usize) -> bool {
@@ -147,8 +168,7 @@ impl Editor {
       return false;
     }
     let step = count.max(1) % len;
-    self.active_buffer = (self.active_buffer + len - step) % len;
-    true
+    self.set_active_buffer((self.active_buffer + len - step) % len)
   }
 
   pub fn active_file_path(&self) -> Option<&Path> {
@@ -172,9 +192,39 @@ impl Editor {
     self.next_document_id = NonZeroUsize::new(next_doc).unwrap_or(self.next_document_id);
     let document = Document::new(document_id, text);
 
-    self.buffers.push(BufferState::new(document, view, file_path));
-    self.active_buffer = self.buffers.len() - 1;
-    self.active_buffer
+    self
+      .buffers
+      .push(BufferState::new(document, view, file_path));
+    let next_index = self.buffers.len() - 1;
+    let _ = self.activate_buffer(next_index);
+    next_index
+  }
+
+  pub fn goto_last_accessed_buffer(&mut self) -> bool {
+    while let Some(index) = self.access_history.pop() {
+      if index < self.buffers.len() && index != self.active_buffer {
+        return self.set_active_buffer(index);
+      }
+    }
+    false
+  }
+
+  pub fn mark_active_buffer_modified(&mut self) {
+    self.touch_modified_history(self.active_buffer);
+  }
+
+  pub fn goto_last_modified_buffer(&mut self) -> bool {
+    let current = self.active_buffer;
+    let Some(index) = self
+      .modified_history
+      .iter()
+      .rev()
+      .copied()
+      .find(|idx| *idx < self.buffers.len() && *idx != current)
+    else {
+      return false;
+    };
+    self.set_active_buffer(index)
   }
 }
 
@@ -217,8 +267,16 @@ mod tests {
 
     let view2 = ViewState::new(Rect::new(0, 0, 80, 24), Position::new(1, 0));
     let view3 = ViewState::new(Rect::new(0, 0, 80, 24), Position::new(2, 0));
-    editor.open_buffer(Rope::from("two"), view2, Some(PathBuf::from("/tmp/two.txt")));
-    editor.open_buffer(Rope::from("three"), view3, Some(PathBuf::from("/tmp/three.txt")));
+    editor.open_buffer(
+      Rope::from("two"),
+      view2,
+      Some(PathBuf::from("/tmp/two.txt")),
+    );
+    editor.open_buffer(
+      Rope::from("three"),
+      view3,
+      Some(PathBuf::from("/tmp/three.txt")),
+    );
 
     assert_eq!(editor.buffer_count(), 3);
     assert_eq!(editor.active_buffer_index(), 2);
@@ -227,6 +285,67 @@ mod tests {
     assert_eq!(editor.active_buffer_index(), 0);
 
     assert!(editor.switch_buffer_backward(1));
+    assert_eq!(editor.active_buffer_index(), 2);
+  }
+
+  #[test]
+  fn editor_goto_last_accessed_buffer_toggles_between_recent_buffers() {
+    let doc_id = DocumentId::new(NonZeroUsize::new(1).unwrap());
+    let doc = Document::new(doc_id, Rope::from("one"));
+    let view = ViewState::new(Rect::new(0, 0, 80, 24), Position::new(0, 0));
+    let editor_id = EditorId::new(NonZeroUsize::new(1).unwrap());
+    let mut editor = Editor::new(editor_id, doc, view);
+
+    let view2 = ViewState::new(Rect::new(0, 0, 80, 24), Position::new(1, 0));
+    let view3 = ViewState::new(Rect::new(0, 0, 80, 24), Position::new(2, 0));
+    editor.open_buffer(
+      Rope::from("two"),
+      view2,
+      Some(PathBuf::from("/tmp/two.txt")),
+    );
+    editor.open_buffer(
+      Rope::from("three"),
+      view3,
+      Some(PathBuf::from("/tmp/three.txt")),
+    );
+
+    assert_eq!(editor.active_buffer_index(), 2);
+    assert!(editor.goto_last_accessed_buffer());
+    assert_eq!(editor.active_buffer_index(), 1);
+    assert!(editor.goto_last_accessed_buffer());
+    assert_eq!(editor.active_buffer_index(), 2);
+  }
+
+  #[test]
+  fn editor_goto_last_modified_buffer_uses_recent_edit_order() {
+    let doc_id = DocumentId::new(NonZeroUsize::new(1).unwrap());
+    let doc = Document::new(doc_id, Rope::from("one"));
+    let view = ViewState::new(Rect::new(0, 0, 80, 24), Position::new(0, 0));
+    let editor_id = EditorId::new(NonZeroUsize::new(1).unwrap());
+    let mut editor = Editor::new(editor_id, doc, view);
+
+    let view2 = ViewState::new(Rect::new(0, 0, 80, 24), Position::new(1, 0));
+    let view3 = ViewState::new(Rect::new(0, 0, 80, 24), Position::new(2, 0));
+    editor.open_buffer(
+      Rope::from("two"),
+      view2,
+      Some(PathBuf::from("/tmp/two.txt")),
+    );
+    editor.open_buffer(
+      Rope::from("three"),
+      view3,
+      Some(PathBuf::from("/tmp/three.txt")),
+    );
+
+    assert!(!editor.goto_last_modified_buffer());
+    editor.mark_active_buffer_modified();
+    let _ = editor.set_active_buffer(0);
+    editor.mark_active_buffer_modified();
+    let _ = editor.set_active_buffer(1);
+
+    assert!(editor.goto_last_modified_buffer());
+    assert_eq!(editor.active_buffer_index(), 0);
+    assert!(editor.goto_last_modified_buffer());
     assert_eq!(editor.active_buffer_index(), 2);
   }
 }

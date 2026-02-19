@@ -479,6 +479,15 @@ pub enum Command {
   GotoPreviousBuffer {
     count: usize,
   },
+  GotoWindowTop {
+    count: usize,
+  },
+  GotoWindowCenter,
+  GotoWindowBottom {
+    count: usize,
+  },
+  GotoLastAccessedFile,
+  GotoLastModifiedFile,
   DeleteSelection {
     yank: bool,
   },
@@ -784,6 +793,31 @@ impl Command {
   #[must_use]
   pub const fn goto_previous_buffer(count: usize) -> Self {
     Self::GotoPreviousBuffer { count }
+  }
+
+  #[must_use]
+  pub const fn goto_window_top(count: usize) -> Self {
+    Self::GotoWindowTop { count }
+  }
+
+  #[must_use]
+  pub const fn goto_window_center() -> Self {
+    Self::GotoWindowCenter
+  }
+
+  #[must_use]
+  pub const fn goto_window_bottom(count: usize) -> Self {
+    Self::GotoWindowBottom { count }
+  }
+
+  #[must_use]
+  pub const fn goto_last_accessed_file() -> Self {
+    Self::GotoLastAccessedFile
+  }
+
+  #[must_use]
+  pub const fn goto_last_modified_file() -> Self {
+    Self::GotoLastModifiedFile
   }
 
   #[must_use]

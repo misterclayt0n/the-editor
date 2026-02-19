@@ -392,12 +392,19 @@ pub trait DefaultContext: Sized + 'static {
     "active-document"
   }
   fn apply_transaction(&mut self, transaction: &Transaction) -> bool {
+    let changed = !transaction.changes().is_empty();
     let loader_ptr = self.syntax_loader().map(|loader| loader as *const Loader);
-    let doc = self.editor().document_mut();
-    let loader = loader_ptr.map(|ptr| unsafe { &*ptr });
-    doc
-      .apply_transaction_with_syntax(transaction, loader)
-      .is_ok()
+    let applied = {
+      let doc = self.editor().document_mut();
+      let loader = loader_ptr.map(|ptr| unsafe { &*ptr });
+      doc
+        .apply_transaction_with_syntax(transaction, loader)
+        .is_ok()
+    };
+    if applied && changed {
+      self.editor().mark_active_buffer_modified();
+    }
+    applied
   }
   fn build_render_plan(&mut self) -> RenderPlan;
   fn build_render_plan_with_styles(&mut self, styles: RenderStyles) -> RenderPlan {
@@ -466,6 +473,12 @@ pub trait DefaultContext: Sized + 'static {
   fn set_file_path(&mut self, path: Option<PathBuf>);
   fn open_file(&mut self, path: &Path) -> std::io::Result<()>;
   fn goto_buffer(&mut self, _direction: Direction, _count: usize) -> bool {
+    false
+  }
+  fn goto_last_accessed_buffer(&mut self) -> bool {
+    false
+  }
+  fn goto_last_modified_buffer(&mut self) -> bool {
     false
   }
   fn save_current_buffer(&mut self, force: bool) -> Result<(), String> {
@@ -966,6 +979,19 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
           "buffer",
           "no previous buffer available (this client currently has a single active buffer)",
         );
+      }
+    },
+    Command::GotoWindowTop { count } => goto_window(ctx, WindowAlign::Top, count.max(1)),
+    Command::GotoWindowCenter => goto_window(ctx, WindowAlign::Center, 1),
+    Command::GotoWindowBottom { count } => goto_window(ctx, WindowAlign::Bottom, count.max(1)),
+    Command::GotoLastAccessedFile => {
+      if !ctx.goto_last_accessed_buffer() {
+        ctx.push_warning("buffer", "no last accessed buffer");
+      }
+    },
+    Command::GotoLastModifiedFile => {
+      if !ctx.goto_last_modified_buffer() {
+        ctx.push_warning("buffer", "no last modified buffer");
       }
     },
     Command::DeleteSelection { yank } => ctx.dispatch().delete_selection(ctx, yank),
@@ -1862,6 +1888,43 @@ fn goto_line_start<Ctx: DefaultContext>(ctx: &mut Ctx, extend: bool) {
     range.put_cursor(slice, pos, extend)
   });
 
+  let _ = doc.set_selection(new_selection);
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WindowAlign {
+  Top,
+  Center,
+  Bottom,
+}
+
+fn goto_window<Ctx: DefaultContext>(ctx: &mut Ctx, align: WindowAlign, count: usize) {
+  let view = ctx.editor_ref().view();
+  let height = view.viewport.height as usize;
+  if height == 0 {
+    return;
+  }
+
+  let count = count.max(1).saturating_sub(1);
+  let scrolloff = ctx.scrolloff().min(height.saturating_sub(1) / 2);
+  let last_row = height.saturating_sub(1);
+  let min_row = scrolloff;
+  let max_row = last_row.saturating_sub(scrolloff);
+
+  let row_in_window = match align {
+    WindowAlign::Top => scrolloff.saturating_add(count),
+    WindowAlign::Center => last_row / 2,
+    WindowAlign::Bottom => last_row.saturating_sub(scrolloff.saturating_add(count)),
+  };
+  let row_in_window = row_in_window.clamp(min_row, max_row);
+  let target_line = view.scroll.row.saturating_add(row_in_window);
+  let extend = ctx.mode() == Mode::Select;
+
+  let doc = ctx.editor().document_mut();
+  let slice = doc.text().slice(..);
+  let target = char_idx_at_coords(slice, Position::new(target_line, 0));
+  let selection = doc.selection().clone();
+  let new_selection = selection.transform(|range| range.put_cursor(slice, target, extend));
   let _ = doc.set_selection(new_selection);
 }
 
@@ -3896,6 +3959,11 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "goto_last_line" => Some(Command::goto_last_line()),
     "goto_next_buffer" => Some(Command::goto_next_buffer(1)),
     "goto_previous_buffer" => Some(Command::goto_previous_buffer(1)),
+    "goto_window_top" => Some(Command::goto_window_top(1)),
+    "goto_window_center" => Some(Command::goto_window_center()),
+    "goto_window_bottom" => Some(Command::goto_window_bottom(1)),
+    "goto_last_accessed_file" => Some(Command::goto_last_accessed_file()),
+    "goto_last_modified_file" => Some(Command::goto_last_modified_file()),
     "search" => Some(Command::search()),
     "rsearch" => Some(Command::rsearch()),
     "select_regex" => Some(Command::select_regex()),

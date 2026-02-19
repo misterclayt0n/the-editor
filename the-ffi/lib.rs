@@ -6531,7 +6531,11 @@ impl App {
       return true;
     }
 
-    let editor_ids = self.inner.editors().map(|editor| editor.id()).collect::<Vec<_>>();
+    let editor_ids = self
+      .inner
+      .editors()
+      .map(|editor| editor.id())
+      .collect::<Vec<_>>();
     if editor_ids.len() <= 1 {
       return false;
     }
@@ -6811,7 +6815,10 @@ impl DefaultContext for App {
 
   fn file_path(&self) -> Option<&Path> {
     let id = self.active_editor?;
-    self.inner.editor(id).and_then(|editor| editor.active_file_path())
+    self
+      .inner
+      .editor(id)
+      .and_then(|editor| editor.active_file_path())
   }
 
   fn request_render(&mut self) {
@@ -6889,6 +6896,9 @@ impl DefaultContext for App {
       return true;
     }
 
+    if let Some(editor) = self.inner.editor_mut(editor_id) {
+      editor.mark_active_buffer_modified();
+    }
     self.clear_hover_state();
 
     if let Some(state) = self.states.get_mut(&editor_id) {
@@ -7180,6 +7190,56 @@ impl DefaultContext for App {
 
   fn goto_buffer(&mut self, direction: CommandDirection, count: usize) -> bool {
     self.goto_buffer_impl(direction, count)
+  }
+
+  fn goto_last_accessed_buffer(&mut self) -> bool {
+    let Some(current) = self.active_editor else {
+      return false;
+    };
+
+    self.lsp_close_current_document();
+    let switched = {
+      let Some(editor) = self.inner.editor_mut(current) else {
+        return false;
+      };
+      editor.goto_last_accessed_buffer()
+    };
+    if !switched {
+      return false;
+    }
+
+    let active_path = self
+      .inner
+      .editor(current)
+      .and_then(|editor| editor.active_file_path().map(Path::to_path_buf));
+    <Self as DefaultContext>::set_file_path(self, active_path);
+    self.request_render();
+    true
+  }
+
+  fn goto_last_modified_buffer(&mut self) -> bool {
+    let Some(current) = self.active_editor else {
+      return false;
+    };
+
+    self.lsp_close_current_document();
+    let switched = {
+      let Some(editor) = self.inner.editor_mut(current) else {
+        return false;
+      };
+      editor.goto_last_modified_buffer()
+    };
+    if !switched {
+      return false;
+    }
+
+    let active_path = self
+      .inner
+      .editor(current)
+      .and_then(|editor| editor.active_file_path().map(Path::to_path_buf));
+    <Self as DefaultContext>::set_file_path(self, active_path);
+    self.request_render();
+    true
   }
 
   fn log_target_names(&self) -> &'static [&'static str] {
@@ -8901,15 +8961,20 @@ pkgs.mkShell {
     let first = TempTestFile::new("goto-buffer-first", "first file\n");
     let second = TempTestFile::new("goto-buffer-second", "second file\n");
     let mut app = App::new();
-    let id = app.create_editor("first file\n", default_viewport(), ffi::Position { row: 0, col: 0 });
+    let id = app.create_editor("first file\n", default_viewport(), ffi::Position {
+      row: 0,
+      col: 0,
+    });
     assert!(app.activate(id).is_some());
-    assert!(app.set_file_path(
-      id,
-      first
-        .as_path()
-        .to_str()
-        .expect("temp test path should be utf-8")
-    ));
+    assert!(
+      app.set_file_path(
+        id,
+        first
+          .as_path()
+          .to_str()
+          .expect("temp test path should be utf-8")
+      )
+    );
 
     <App as DefaultContext>::open_file(&mut app, second.as_path()).expect("open second file");
 
@@ -8922,7 +8987,10 @@ pkgs.mkShell {
     assert!(app.handle_key(id, key_char('g')));
     assert!(app.handle_key(id, key_char('n')));
     assert_eq!(app.text(id), "first file\n");
-    assert_eq!(<App as DefaultContext>::file_path(&app), Some(first.as_path()));
+    assert_eq!(
+      <App as DefaultContext>::file_path(&app),
+      Some(first.as_path())
+    );
 
     assert!(app.handle_key(id, key_char('g')));
     assert!(app.handle_key(id, key_char('p')));
@@ -8931,6 +8999,138 @@ pkgs.mkShell {
       <App as DefaultContext>::file_path(&app),
       Some(second.as_path())
     );
+  }
+
+  #[test]
+  fn goto_last_accessed_file_keymap_toggles_between_buffers() {
+    let _guard = ffi_test_guard();
+    let first = TempTestFile::new("goto-access-first", "first file\n");
+    let second = TempTestFile::new("goto-access-second", "second file\n");
+    let mut app = App::new();
+    let id = app.create_editor("first file\n", default_viewport(), ffi::Position {
+      row: 0,
+      col: 0,
+    });
+    assert!(app.activate(id).is_some());
+    assert!(
+      app.set_file_path(
+        id,
+        first
+          .as_path()
+          .to_str()
+          .expect("temp test path should be utf-8")
+      )
+    );
+    <App as DefaultContext>::open_file(&mut app, second.as_path()).expect("open second file");
+
+    assert!(app.handle_key(id, key_char('g')));
+    assert!(app.handle_key(id, key_char('a')));
+    assert_eq!(app.text(id), "first file\n");
+    assert_eq!(
+      <App as DefaultContext>::file_path(&app),
+      Some(first.as_path())
+    );
+
+    assert!(app.handle_key(id, key_char('g')));
+    assert!(app.handle_key(id, key_char('a')));
+    assert_eq!(app.text(id), "second file\n");
+    assert_eq!(
+      <App as DefaultContext>::file_path(&app),
+      Some(second.as_path())
+    );
+  }
+
+  #[test]
+  fn goto_last_modified_file_keymap_uses_recent_edit_order() {
+    let _guard = ffi_test_guard();
+    let first = TempTestFile::new("goto-modified-first", "first file\n");
+    let second = TempTestFile::new("goto-modified-second", "second file\n");
+    let mut app = App::new();
+    let id = app.create_editor("first file\n", default_viewport(), ffi::Position {
+      row: 0,
+      col: 0,
+    });
+    assert!(app.activate(id).is_some());
+    assert!(
+      app.set_file_path(
+        id,
+        first
+          .as_path()
+          .to_str()
+          .expect("temp test path should be utf-8")
+      )
+    );
+
+    assert!(app.insert(id, "first-edit "));
+    <App as DefaultContext>::open_file(&mut app, second.as_path()).expect("open second file");
+    assert!(app.insert(id, "second-edit "));
+
+    assert!(app.handle_key(id, key_char('g')));
+    assert!(app.handle_key(id, key_char('m')));
+    assert!(app.text(id).starts_with("first-edit "));
+    assert_eq!(
+      <App as DefaultContext>::file_path(&app),
+      Some(first.as_path())
+    );
+
+    assert!(app.handle_key(id, key_char('g')));
+    assert!(app.handle_key(id, key_char('m')));
+    assert!(app.text(id).starts_with("second-edit "));
+    assert_eq!(
+      <App as DefaultContext>::file_path(&app),
+      Some(second.as_path())
+    );
+  }
+
+  #[test]
+  fn goto_window_keymap_moves_cursor_to_window_alignments() {
+    let _guard = ffi_test_guard();
+    let mut content = String::new();
+    for line in 0..96usize {
+      content.push_str(&format!("line-{line}\n"));
+    }
+
+    let mut app = App::new();
+    let id = app.create_editor(&content, default_viewport(), ffi::Position {
+      row: 10,
+      col: 0,
+    });
+    assert!(app.activate(id).is_some());
+    let initial_cursor = {
+      let text = app.active_editor_ref().document().text().slice(..);
+      char_idx_at_coords(text, LibPosition::new(20, 0))
+    };
+    let _ = app
+      .active_editor_mut()
+      .document_mut()
+      .set_selection(Selection::point(initial_cursor));
+
+    assert!(app.handle_key(id, key_char('g')));
+    assert!(app.handle_key(id, key_char('t')));
+    let top_row = {
+      let text = app.active_editor_ref().document().text().slice(..);
+      let head = app.active_editor_ref().document().selection().ranges()[0].head;
+      coords_at_pos(text, head).row
+    };
+    assert_eq!(top_row, 15);
+
+    assert!(app.handle_key(id, key_char('g')));
+    assert!(app.handle_key(id, key_char('c')));
+    let center_row = {
+      let text = app.active_editor_ref().document().text().slice(..);
+      let head = app.active_editor_ref().document().selection().ranges()[0].head;
+      coords_at_pos(text, head).row
+    };
+    assert_eq!(center_row, 21);
+
+    assert!(app.handle_key(id, key_char('g')));
+    assert!(app.handle_key(id, key_char('b')));
+    let bottom_row = {
+      let text = app.active_editor_ref().document().text().slice(..);
+      let head = app.active_editor_ref().document().selection().ranges()[0].head;
+      coords_at_pos(text, head).row
+    };
+    assert_eq!(bottom_row, 28);
   }
 
   #[test]

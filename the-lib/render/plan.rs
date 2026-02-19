@@ -438,6 +438,35 @@ pub fn build_plan<'a, 't, H: HighlightProvider>(
       }
 
       if grapheme.raw == Grapheme::Newline {
+        // Render the newline as a space character, matching Helix behavior
+        // where newlines are selectable/visible graphemes occupying 1 cell.
+        if abs_row >= row_start && abs_row < row_end && abs_col >= col_start {
+          let col = abs_col - col_start;
+          if col < content_width {
+            let row = abs_row - row_start;
+            if current_row != Some(abs_row) {
+              if let Some(prev_row) = current_row {
+                if prev_row >= row_start && prev_row < row_end {
+                  plan.lines.push(current_line);
+                }
+              }
+              current_row = Some(abs_row);
+              current_line = RenderLine::new(row as u16);
+            }
+            let highlight = match grapheme.source {
+              GraphemeSource::VirtualText { highlight } => highlight,
+              _ => highlights.highlight_at(grapheme.char_idx),
+            };
+            current_line.push_span(RenderSpan {
+              col: col as u16,
+              cols: 1,
+              text: " ".into(),
+              highlight,
+              is_virtual: false,
+            });
+          }
+        }
+
         if let Some(row) = current_row {
           if row >= row_start && row < row_end {
             plan.lines.push(current_line);
@@ -1074,7 +1103,7 @@ mod tests {
     );
 
     assert_eq!(plan.lines.len(), 1);
-    assert_eq!(plan.lines[0].text(), "b");
+    assert_eq!(plan.lines[0].text(), "b ");
   }
 
   #[test]

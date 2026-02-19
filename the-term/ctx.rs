@@ -533,6 +533,10 @@ pub struct Ctx {
   pub inline_annotations:           Vec<InlineAnnotation>,
   /// Overlay annotations (virtual text) for rendering.
   pub overlay_annotations:          Vec<Overlay>,
+  /// Transient inline jump labels for word-jump navigation.
+  pub word_jump_inline_annotations: Vec<InlineAnnotation>,
+  /// Transient overlay jump labels for word-jump navigation.
+  pub word_jump_overlay_annotations: Vec<Overlay>,
   /// Inline diagnostic ghost lines collected during render-plan construction.
   pub inline_diagnostic_lines:      Vec<InlineDiagnosticRenderLine>,
   /// Underline spans for diagnostic ranges in the current viewport.
@@ -874,6 +878,8 @@ impl Ctx {
       vcs_diff: None,
       inline_annotations: Vec::new(),
       overlay_annotations: Vec::new(),
+      word_jump_inline_annotations: Vec::new(),
+      word_jump_overlay_annotations: Vec::new(),
       inline_diagnostic_lines: Vec::new(),
       diagnostic_underlines: Vec::new(),
       scrolloff: 5,
@@ -4103,6 +4109,20 @@ impl the_default::DefaultContext for Ctx {
     self.pending_input = pending;
   }
 
+  fn set_word_jump_annotations(
+    &mut self,
+    inline: Vec<InlineAnnotation>,
+    overlay: Vec<Overlay>,
+  ) {
+    self.word_jump_inline_annotations = inline;
+    self.word_jump_overlay_annotations = overlay;
+  }
+
+  fn clear_word_jump_annotations(&mut self) {
+    self.word_jump_inline_annotations.clear();
+    self.word_jump_overlay_annotations.clear();
+  }
+
   fn registers(&self) -> &Registers {
     &self.registers
   }
@@ -4181,6 +4201,12 @@ impl the_default::DefaultContext for Ctx {
     }
     if !self.overlay_annotations.is_empty() {
       let _ = annotations.add_overlay(&self.overlay_annotations, None);
+    }
+    if !self.word_jump_inline_annotations.is_empty() {
+      let _ = annotations.add_inline_annotations(&self.word_jump_inline_annotations, None);
+    }
+    if !self.word_jump_overlay_annotations.is_empty() {
+      let _ = annotations.add_overlay(&self.word_jump_overlay_annotations, None);
     }
     annotations
   }
@@ -4657,6 +4683,7 @@ mod tests {
     KeyEvent,
     Mode,
     Modifiers,
+    PendingInput,
     handle_key,
     show_completion_menu,
     ui_event,
@@ -5618,6 +5645,112 @@ pkgs.mkShell {
 
     let actual = ctx.editor.document().selection().ranges()[0].head;
     assert_eq!(actual, expected);
+  }
+
+  #[test]
+  fn goto_word_keymap_sequence_moves_cursor_using_jump_labels() {
+    let dispatch = build_dispatch::<Ctx>();
+    let mut ctx = Ctx::new(None).expect("ctx");
+    ctx.set_dispatch(&dispatch);
+    ctx.resize(80, 24);
+
+    let tx = Transaction::change(
+      ctx.editor.document().text(),
+      std::iter::once((
+        0,
+        ctx.editor.document().text().len_chars(),
+        Some("alpha bravo charlie delta\n".into()),
+      )),
+    )
+    .expect("seed transaction");
+    assert!(DefaultContext::apply_transaction(&mut ctx, &tx));
+    let _ = ctx.editor.document_mut().set_selection(Selection::point(0));
+
+    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+      key:       Key::Char('g'),
+      modifiers: Modifiers::empty(),
+    });
+    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+      key:       Key::Char('w'),
+      modifiers: Modifiers::empty(),
+    });
+    assert!(matches!(
+      ctx.pending_input(),
+      Some(PendingInput::WordJump {
+        first: None,
+        targets,
+        ..
+      }) if targets.len() >= 2
+    ));
+    assert!(!ctx.word_jump_inline_annotations.is_empty());
+    assert!(!ctx.word_jump_overlay_annotations.is_empty());
+
+    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+      key:       Key::Char('a'),
+      modifiers: Modifiers::empty(),
+    });
+    assert!(matches!(
+      ctx.pending_input(),
+      Some(PendingInput::WordJump {
+        first: Some('a'),
+        targets,
+        ..
+      }) if targets.len() >= 2
+    ));
+    assert!(ctx.word_jump_inline_annotations.is_empty());
+    assert!(!ctx.word_jump_overlay_annotations.is_empty());
+
+    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+      key:       Key::Char('b'),
+      modifiers: Modifiers::empty(),
+    });
+
+    assert!(ctx.pending_input().is_none());
+    assert!(ctx.word_jump_inline_annotations.is_empty());
+    assert!(ctx.word_jump_overlay_annotations.is_empty());
+    assert_eq!(ctx.editor.document().selection().ranges()[0].head, 6);
+  }
+
+  #[test]
+  fn extend_to_word_keymap_sequence_extends_selection_using_jump_labels() {
+    let dispatch = build_dispatch::<Ctx>();
+    let mut ctx = Ctx::new(None).expect("ctx");
+    ctx.set_dispatch(&dispatch);
+    ctx.resize(80, 24);
+
+    let tx = Transaction::change(
+      ctx.editor.document().text(),
+      std::iter::once((
+        0,
+        ctx.editor.document().text().len_chars(),
+        Some("alpha bravo charlie delta\n".into()),
+      )),
+    )
+    .expect("seed transaction");
+    assert!(DefaultContext::apply_transaction(&mut ctx, &tx));
+    let _ = ctx.editor.document_mut().set_selection(Selection::point(0));
+    ctx.set_mode(Mode::Select);
+
+    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+      key:       Key::Char('g'),
+      modifiers: Modifiers::empty(),
+    });
+    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+      key:       Key::Char('w'),
+      modifiers: Modifiers::empty(),
+    });
+    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+      key:       Key::Char('a'),
+      modifiers: Modifiers::empty(),
+    });
+    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+      key:       Key::Char('b'),
+      modifiers: Modifiers::empty(),
+    });
+
+    let range = ctx.editor.document().selection().ranges()[0];
+    assert_eq!(range.anchor, 0);
+    assert_eq!(range.head, 7);
   }
 
   #[test]

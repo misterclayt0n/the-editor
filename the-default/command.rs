@@ -15,8 +15,12 @@ use std::{
 
 use smallvec::SmallVec;
 use the_core::{
-  chars::byte_to_char_idx,
+  chars::{
+    byte_to_char_idx,
+    char_is_word,
+  },
   grapheme::{
+    next_grapheme_boundary,
     nth_next_grapheme_boundary,
     nth_prev_grapheme_boundary,
     prev_grapheme_boundary,
@@ -77,7 +81,11 @@ use the_lib::{
     UiState,
     UiTree,
     char_at_visual_pos,
-    text_annotations::TextAnnotations,
+    text_annotations::{
+      InlineAnnotation,
+      Overlay,
+      TextAnnotations,
+    },
     text_format::TextFormat,
     theme::Theme,
     ui_theme::resolve_ui_tree,
@@ -118,6 +126,7 @@ use crate::{
   Motion,
   PendingInput,
   WordMotion,
+  pending::WordJumpTarget,
   command_palette::{
     CommandPaletteState,
     CommandPaletteStyle,
@@ -450,6 +459,13 @@ pub trait DefaultContext: Sized + 'static {
   fn dispatch(&self) -> DispatchRef<Self>;
   fn pending_input(&self) -> Option<&PendingInput>;
   fn set_pending_input(&mut self, pending: Option<PendingInput>);
+  fn set_word_jump_annotations(
+    &mut self,
+    _inline: Vec<InlineAnnotation>,
+    _overlay: Vec<Overlay>,
+  ) {
+  }
+  fn clear_word_jump_annotations(&mut self) {}
   fn registers(&self) -> &Registers;
   fn registers_mut(&mut self) -> &mut Registers;
   fn register(&self) -> Option<char>;
@@ -826,6 +842,53 @@ fn handle_pending_input<Ctx: DefaultContext>(
       }
       true
     },
+    PendingInput::WordJump {
+      extend,
+      first,
+      targets,
+    } => {
+      let Key::Char(ch) = key.key else {
+        ctx.clear_word_jump_annotations();
+        return true;
+      };
+      let typed = ch.to_ascii_lowercase();
+
+      if let Some(first_label) = first {
+        if let Some(target) = targets
+          .iter()
+          .find(|target| target.label == [first_label, typed])
+        {
+          apply_word_jump_target(ctx, target.char_idx, extend);
+        }
+        ctx.clear_word_jump_annotations();
+        return true;
+      }
+
+      let filtered: Vec<WordJumpTarget> = targets
+        .into_iter()
+        .filter(|target| target.label[0] == typed)
+        .collect();
+
+      match filtered.as_slice() {
+        [] => {
+          ctx.clear_word_jump_annotations();
+        },
+        [target] => {
+          apply_word_jump_target(ctx, target.char_idx, extend);
+          ctx.clear_word_jump_annotations();
+        },
+        _ => {
+          set_word_jump_annotations(ctx, &filtered, Some(typed));
+          ctx.set_pending_input(Some(PendingInput::WordJump {
+            extend,
+            first: Some(typed),
+            targets: filtered,
+          }));
+        },
+      }
+
+      true
+    },
   }
 }
 
@@ -995,6 +1058,8 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
       }
     },
     Command::GotoLastModification => goto_last_modification(ctx),
+    Command::GotoWord => goto_word(ctx, false),
+    Command::ExtendToWord => goto_word(ctx, true),
     Command::DeleteSelection { yank } => ctx.dispatch().delete_selection(ctx, yank),
     Command::ChangeSelection { yank } => ctx.dispatch().change_selection(ctx, yank),
     Command::Replace => ctx.dispatch().replace(ctx, ()),
@@ -1938,6 +2003,146 @@ fn goto_last_modification<Ctx: DefaultContext>(ctx: &mut Ctx) {
   let slice = doc.text().slice(..);
   let selection = doc.selection().clone();
   let new_selection = selection.transform(|range| range.put_cursor(slice, pos, extend));
+  let _ = doc.set_selection(new_selection);
+}
+
+const WORD_JUMP_LABEL_ALPHABET: &str = "abcdefghijklmnopqrstuvwxyz";
+
+fn goto_word<Ctx: DefaultContext>(ctx: &mut Ctx, extend: bool) {
+  let targets = collect_word_jump_targets(ctx);
+  if targets.is_empty() {
+    ctx.clear_word_jump_annotations();
+    return;
+  }
+
+  set_word_jump_annotations(ctx, &targets, None);
+  ctx.set_pending_input(Some(PendingInput::WordJump {
+    extend,
+    first: None,
+    targets,
+  }));
+}
+
+fn collect_word_jump_targets<Ctx: DefaultContext>(ctx: &Ctx) -> Vec<WordJumpTarget> {
+  let view = ctx.editor_ref().view();
+  let doc = ctx.editor_ref().document();
+  let text = doc.text().slice(..);
+  let alphabet: Vec<char> = WORD_JUMP_LABEL_ALPHABET.chars().collect();
+  let alphabet_len = alphabet.len();
+  if alphabet_len == 0 || view.viewport.height == 0 {
+    return Vec::new();
+  }
+
+  let line_count = text.len_lines();
+  if line_count == 0 {
+    return Vec::new();
+  }
+
+  let start_line = view.scroll.row.min(line_count.saturating_sub(1));
+  let end_line_exclusive = view
+    .scroll
+    .row
+    .saturating_add(view.viewport.height as usize)
+    .min(line_count)
+    .max(start_line.saturating_add(1));
+
+  let start = text.line_to_char(start_line);
+  let end = text.line_to_char(end_line_exclusive);
+  let cursor = doc
+    .selection()
+    .ranges()
+    .first()
+    .map(|range| range.cursor(text))
+    .unwrap_or(start);
+
+  let mut words = Vec::new();
+  let mut char_idx = start;
+
+  while char_idx < end {
+    let Some(ch) = text.get_char(char_idx) else {
+      break;
+    };
+
+    if char_is_word(ch) {
+      let word_start = char_idx;
+      let mut grapheme_count = 0usize;
+
+      while char_idx < end {
+        let Some(word_ch) = text.get_char(char_idx) else {
+          break;
+        };
+        if !char_is_word(word_ch) {
+          break;
+        }
+        let next = next_grapheme_boundary(text, char_idx);
+        if next == char_idx {
+          break;
+        }
+        grapheme_count += 1;
+        char_idx = next;
+      }
+
+      if grapheme_count >= 2 {
+        words.push(word_start);
+      }
+      continue;
+    }
+
+    let next = next_grapheme_boundary(text, char_idx);
+    if next == char_idx {
+      break;
+    }
+    char_idx = next;
+  }
+
+  words.sort_by_key(|word_start| (word_start.abs_diff(cursor), *word_start));
+  let jump_label_limit = alphabet_len * alphabet_len;
+
+  words
+    .into_iter()
+    .take(jump_label_limit)
+    .enumerate()
+    .map(|(idx, char_idx)| WordJumpTarget {
+      label: [alphabet[idx / alphabet_len], alphabet[idx % alphabet_len]],
+      char_idx,
+    })
+    .collect()
+}
+
+fn set_word_jump_annotations<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  targets: &[WordJumpTarget],
+  first: Option<char>,
+) {
+  let filtered = targets.iter().filter(|target| {
+    first
+      .map(|label| target.label[0] == label)
+      .unwrap_or(true)
+  });
+
+  let mut inline = Vec::new();
+  let mut overlay = Vec::new();
+
+  for target in filtered {
+    if first.is_none() {
+      inline.push(InlineAnnotation::new(
+        target.char_idx,
+        target.label[0].to_string(),
+      ));
+    }
+    overlay.push(Overlay::new(target.char_idx, target.label[1].to_string()));
+  }
+
+  inline.sort_by_key(|annotation| annotation.char_idx);
+  overlay.sort_by_key(|annotation| annotation.char_idx);
+  ctx.set_word_jump_annotations(inline, overlay);
+}
+
+fn apply_word_jump_target<Ctx: DefaultContext>(ctx: &mut Ctx, char_idx: usize, extend: bool) {
+  let doc = ctx.editor().document_mut();
+  let slice = doc.text().slice(..);
+  let selection = doc.selection().clone();
+  let new_selection = selection.transform(|range| range.put_cursor(slice, char_idx, extend));
   let _ = doc.set_selection(new_selection);
 }
 
@@ -3978,6 +4183,8 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "goto_last_accessed_file" => Some(Command::goto_last_accessed_file()),
     "goto_last_modified_file" => Some(Command::goto_last_modified_file()),
     "goto_last_modification" => Some(Command::goto_last_modification()),
+    "goto_word" => Some(Command::goto_word()),
+    "extend_to_word" => Some(Command::extend_to_word()),
     "search" => Some(Command::search()),
     "rsearch" => Some(Command::rsearch()),
     "select_regex" => Some(Command::select_regex()),

@@ -489,6 +489,8 @@ pub enum Command {
   GotoLastAccessedFile,
   GotoLastModifiedFile,
   GotoLastModification,
+  GotoWord,
+  ExtendToWord,
   DeleteSelection {
     yank: bool,
   },
@@ -824,6 +826,16 @@ impl Command {
   #[must_use]
   pub const fn goto_last_modification() -> Self {
     Self::GotoLastModification
+  }
+
+  #[must_use]
+  pub const fn goto_word() -> Self {
+    Self::GotoWord
+  }
+
+  #[must_use]
+  pub const fn extend_to_word() -> Self {
+    Self::ExtendToWord
   }
 
   #[must_use]

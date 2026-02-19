@@ -5,6 +5,12 @@ use the_lib::text_object::TextObject;
 use crate::Direction;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WordJumpTarget {
+  pub label:    [char; 2],
+  pub char_idx: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PendingInput {
   /// Placeholder variant for future expansions.
   Placeholder,
@@ -32,4 +38,10 @@ pub enum PendingInput {
   },
   /// Await a text-object key (w, W, p, etc.).
   SelectTextObject { kind: TextObject },
+  /// Await one or two label keys for an on-screen word jump.
+  WordJump {
+    extend:  bool,
+    first:   Option<char>,
+    targets: Vec<WordJumpTarget>,
+  },
 }

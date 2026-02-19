@@ -861,7 +861,7 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
       // "k" => move_line_up,
       // "j" => move_line_down,
       "." => goto_last_modification,
-      // "w" => goto_word,
+      "w" => goto_word,
     },
     ":" => command_mode,
 
@@ -1169,7 +1169,7 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
       "e" => extend_to_last_line,
       "k" => extend_line_up,
       "j" => extend_line_down,
-      // "w" => extend_to_word,
+      "w" => extend_to_word,
     },
   }));
   let insert = crate::keymap!({ "Insert mode"

@@ -4361,6 +4361,12 @@ pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> Ren
   if !ctx.overlay_annotations.is_empty() {
     let _ = annotations.add_overlay(&ctx.overlay_annotations, None);
   }
+  if !ctx.word_jump_inline_annotations.is_empty() {
+    let _ = annotations.add_inline_annotations(&ctx.word_jump_inline_annotations, None);
+  }
+  if !ctx.word_jump_overlay_annotations.is_empty() {
+    let _ = annotations.add_overlay(&ctx.word_jump_overlay_annotations, None);
+  }
   ctx.inline_diagnostic_lines.clear();
   let inline_diagnostic_render_data: SharedInlineDiagnosticsRenderData =
     Rc::new(RefCell::new(Default::default()));

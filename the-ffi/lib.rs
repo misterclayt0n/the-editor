@@ -1311,6 +1311,8 @@ struct EditorState {
   vcs_statusline:               Option<String>,
   inline_annotations:           Vec<InlineAnnotation>,
   overlay_annotations:          Vec<Overlay>,
+  word_jump_inline_annotations: Vec<InlineAnnotation>,
+  word_jump_overlay_annotations: Vec<Overlay>,
   highlight_cache:              HighlightCache,
   syntax_parse_tx:              Sender<SyntaxParseResult>,
   syntax_parse_rx:              Receiver<SyntaxParseResult>,
@@ -1352,6 +1354,8 @@ impl EditorState {
       vcs_statusline: None,
       inline_annotations: Vec::new(),
       overlay_annotations: Vec::new(),
+      word_jump_inline_annotations: Vec::new(),
+      word_jump_overlay_annotations: Vec::new(),
       highlight_cache: HighlightCache::default(),
       syntax_parse_tx,
       syntax_parse_rx,
@@ -3782,6 +3786,8 @@ impl App {
       diff_signs,
       inline_annotations,
       overlay_annotations,
+      word_jump_inline_annotations,
+      word_jump_overlay_annotations,
       allow_cache_refresh,
     ) = {
       let state = self.active_state_ref();
@@ -3791,6 +3797,8 @@ impl App {
         state.gutter_diff_signs.clone(),
         state.inline_annotations.clone(),
         state.overlay_annotations.clone(),
+        state.word_jump_inline_annotations.clone(),
+        state.word_jump_overlay_annotations.clone(),
         state
           .syntax_parse_highlight_state
           .allow_cache_refresh(&state.syntax_parse_lifecycle),
@@ -3828,6 +3836,12 @@ impl App {
       }
       if !overlay_annotations.is_empty() {
         let _ = annotations.add_overlay(&overlay_annotations, None);
+      }
+      if !word_jump_inline_annotations.is_empty() {
+        let _ = annotations.add_inline_annotations(&word_jump_inline_annotations, None);
+      }
+      if !word_jump_overlay_annotations.is_empty() {
+        let _ = annotations.add_overlay(&word_jump_overlay_annotations, None);
       }
 
       let (doc, cache) = editor.document_and_cache();
@@ -7080,6 +7094,22 @@ impl DefaultContext for App {
     self.active_state_mut().pending_input = pending;
   }
 
+  fn set_word_jump_annotations(
+    &mut self,
+    inline: Vec<InlineAnnotation>,
+    overlay: Vec<Overlay>,
+  ) {
+    let state = self.active_state_mut();
+    state.word_jump_inline_annotations = inline;
+    state.word_jump_overlay_annotations = overlay;
+  }
+
+  fn clear_word_jump_annotations(&mut self) {
+    let state = self.active_state_mut();
+    state.word_jump_inline_annotations.clear();
+    state.word_jump_overlay_annotations.clear();
+  }
+
   fn registers(&self) -> &Registers {
     &self.registers
   }
@@ -7161,6 +7191,12 @@ impl DefaultContext for App {
     }
     if !state.overlay_annotations.is_empty() {
       let _ = annotations.add_overlay(&state.overlay_annotations, None);
+    }
+    if !state.word_jump_inline_annotations.is_empty() {
+      let _ = annotations.add_inline_annotations(&state.word_jump_inline_annotations, None);
+    }
+    if !state.word_jump_overlay_annotations.is_empty() {
+      let _ = annotations.add_overlay(&state.word_jump_overlay_annotations, None);
     }
     annotations
   }
@@ -8268,6 +8304,7 @@ mod tests {
     DefaultContext,
     Direction as CommandDirection,
     Mode,
+    PendingInput,
   };
   use the_lib::{
     messages::MessageEventKind,
@@ -9161,6 +9198,77 @@ pkgs.mkShell {
 
     let actual = app.active_editor_ref().document().selection().ranges()[0].head;
     assert_eq!(actual, expected);
+  }
+
+  #[test]
+  fn goto_word_keymap_moves_cursor_using_jump_labels() {
+    let _guard = ffi_test_guard();
+    let mut app = App::new();
+    let id = app.create_editor("alpha bravo charlie delta\n", default_viewport(), ffi::Position {
+      row: 0,
+      col: 0,
+    });
+    assert!(app.activate(id).is_some());
+    let _ = app
+      .active_editor_mut()
+      .document_mut()
+      .set_selection(Selection::point(0));
+
+    assert!(app.handle_key(id, key_char('g')));
+    assert!(app.handle_key(id, key_char('w')));
+    assert!(matches!(
+      app.active_state_ref().pending_input.as_ref(),
+      Some(PendingInput::WordJump {
+        first: None,
+        targets,
+        ..
+      }) if targets.len() >= 2
+    ));
+    assert!(!app.active_state_ref().word_jump_inline_annotations.is_empty());
+    assert!(!app.active_state_ref().word_jump_overlay_annotations.is_empty());
+
+    assert!(app.handle_key(id, key_char('a')));
+    assert!(matches!(
+      app.active_state_ref().pending_input.as_ref(),
+      Some(PendingInput::WordJump {
+        first: Some('a'),
+        targets,
+        ..
+      }) if targets.len() >= 2
+    ));
+    assert!(app.active_state_ref().word_jump_inline_annotations.is_empty());
+    assert!(!app.active_state_ref().word_jump_overlay_annotations.is_empty());
+
+    assert!(app.handle_key(id, key_char('b')));
+    assert!(app.active_state_ref().pending_input.is_none());
+    assert!(app.active_state_ref().word_jump_inline_annotations.is_empty());
+    assert!(app.active_state_ref().word_jump_overlay_annotations.is_empty());
+    assert_eq!(app.active_editor_ref().document().selection().ranges()[0].head, 6);
+  }
+
+  #[test]
+  fn extend_to_word_keymap_extends_selection_using_jump_labels() {
+    let _guard = ffi_test_guard();
+    let mut app = App::new();
+    let id = app.create_editor("alpha bravo charlie delta\n", default_viewport(), ffi::Position {
+      row: 0,
+      col: 0,
+    });
+    assert!(app.activate(id).is_some());
+    let _ = app
+      .active_editor_mut()
+      .document_mut()
+      .set_selection(Selection::point(0));
+    app.active_state_mut().mode = Mode::Select;
+
+    assert!(app.handle_key(id, key_char('g')));
+    assert!(app.handle_key(id, key_char('w')));
+    assert!(app.handle_key(id, key_char('a')));
+    assert!(app.handle_key(id, key_char('b')));
+
+    let range = app.active_editor_ref().document().selection().ranges()[0];
+    assert_eq!(range.anchor, 0);
+    assert_eq!(range.head, 7);
   }
 
   #[test]

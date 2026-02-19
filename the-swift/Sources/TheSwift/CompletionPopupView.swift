@@ -720,8 +720,8 @@ private struct CompletionDocsTheme: Hashable {
     func paragraphStyle(code: Bool) -> NSParagraphStyle {
         let style = NSMutableParagraphStyle()
         style.lineBreakMode = code ? .byCharWrapping : .byWordWrapping
-        style.lineSpacing = code ? 1 : 3
-        style.paragraphSpacing = code ? 4 : 8
+        style.lineSpacing = code ? 0 : 1
+        style.paragraphSpacing = 0
         return style
     }
 

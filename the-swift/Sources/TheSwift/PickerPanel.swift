@@ -240,6 +240,7 @@ struct PickerPanel<
     private var panelList: some View {
         if itemCount == 0 {
             emptyContent()
+                .frame(maxHeight: maxListHeight)
         } else {
             ScrollViewReader { proxy in
                 ScrollView {

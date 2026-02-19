@@ -416,7 +416,9 @@ private struct EscapeInterceptor: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView {
         let view = NSView()
         let coordinator = context.coordinator
+        coordinator.isActive = true
         coordinator.monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard coordinator.isActive else { return event }
             if event.keyCode == 53 { // Escape
                 coordinator.onEscape()
                 return nil // swallow
@@ -430,11 +432,20 @@ private struct EscapeInterceptor: NSViewRepresentable {
         context.coordinator.onEscape = onEscape
     }
 
+    static func dismantleNSView(_ nsView: NSView, coordinator: Coordinator) {
+        coordinator.isActive = false
+        if let monitor = coordinator.monitor {
+            NSEvent.removeMonitor(monitor)
+            coordinator.monitor = nil
+        }
+    }
+
     func makeCoordinator() -> Coordinator { Coordinator(onEscape: onEscape) }
 
     class Coordinator {
         var onEscape: () -> Void
         var monitor: Any?
+        var isActive: Bool = false
 
         init(onEscape: @escaping () -> Void) {
             self.onEscape = onEscape

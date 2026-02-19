@@ -610,7 +610,11 @@ fn workspace_root_for_ctx<Ctx: DefaultContext>(ctx: &Ctx) -> PathBuf {
   let start = ctx
     .file_path()
     .map(|p| {
-      let full = if p.is_relative() { cwd.join(p) } else { p.to_path_buf() };
+      let full = if p.is_relative() {
+        cwd.join(p)
+      } else {
+        p.to_path_buf()
+      };
       if full.is_dir() {
         full
       } else {
@@ -633,11 +637,7 @@ fn cmd_quit<Ctx: DefaultContext>(ctx: &mut Ctx, _args: Args, event: CommandEvent
   Ok(())
 }
 
-fn cmd_open<Ctx: DefaultContext>(
-  ctx: &mut Ctx,
-  args: Args,
-  event: CommandEvent,
-) -> CommandResult {
+fn cmd_open<Ctx: DefaultContext>(ctx: &mut Ctx, args: Args, event: CommandEvent) -> CommandResult {
   if event != CommandEvent::Validate {
     return Ok(());
   }
@@ -1176,75 +1176,46 @@ pub fn handle_command_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEve
         }
         // Fall through to should_update below instead of executing.
       } else {
-
-      // When in argument-completion mode, apply the selected completion
-      // to the input so the command receives the selected path, not the
-      // directory prefix currently shown in the prompt.
-      if ctx.command_palette().prefiltered {
-        if let Some(sel) = ctx.command_palette().selected {
-          let completion = ctx.command_prompt_ref().completions.get(sel).cloned();
-          if let Some(completion) = completion {
-            let prompt = ctx.command_prompt_mut();
-            let start = completion.range.start.min(prompt.input.len());
-            prompt.input.replace_range(start.., &completion.text);
-            prompt.cursor = prompt.input.len();
-          }
-        }
-      }
-
-      let mut line = {
-        let prompt = ctx.command_prompt_ref();
-        prompt.input.trim().trim_start_matches(':').to_string()
-      };
-
-      if line.is_empty() || !line.chars().any(char::is_whitespace) {
-        let selected = {
-          let palette = ctx.command_palette_mut();
-          if let Some(sel) = palette.selected {
-            let filtered = command_palette_filtered_indices(palette);
-            if !filtered.contains(&sel) {
-              palette.selected = None;
+        // When in argument-completion mode, apply the selected completion
+        // to the input so the command receives the selected path, not the
+        // directory prefix currently shown in the prompt.
+        if ctx.command_palette().prefiltered {
+          if let Some(sel) = ctx.command_palette().selected {
+            let completion = ctx.command_prompt_ref().completions.get(sel).cloned();
+            if let Some(completion) = completion {
+              let prompt = ctx.command_prompt_mut();
+              let start = completion.range.start.min(prompt.input.len());
+              prompt.input.replace_range(start.., &completion.text);
+              prompt.cursor = prompt.input.len();
             }
           }
-          palette.selected
+        }
+
+        let mut line = {
+          let prompt = ctx.command_prompt_ref();
+          prompt.input.trim().trim_start_matches(':').to_string()
         };
 
-        if let Some(sel) = selected {
-          if let Some(item) = ctx.command_palette().items.get(sel) {
-            line = item.title.clone();
+        if line.is_empty() || !line.chars().any(char::is_whitespace) {
+          let selected = {
+            let palette = ctx.command_palette_mut();
+            if let Some(sel) = palette.selected {
+              let filtered = command_palette_filtered_indices(palette);
+              if !filtered.contains(&sel) {
+                palette.selected = None;
+              }
+            }
+            palette.selected
+          };
+
+          if let Some(sel) = selected {
+            if let Some(item) = ctx.command_palette().items.get(sel) {
+              line = item.title.clone();
+            }
           }
         }
-      }
 
-      if line.is_empty() {
-        ctx.set_mode(Mode::Normal);
-        ctx.command_prompt_mut().clear();
-        {
-          let palette = ctx.command_palette_mut();
-          palette.is_open = false;
-          palette.query.clear();
-          palette.selected = None;
-          palette.scroll_offset = 0;
-          palette.prompt_text = None;
-        }
-        ctx.request_render();
-        return true;
-      }
-
-      let (command, args, _) = split(&line);
-      if command.is_empty() {
-        let message = "empty command".to_string();
-        ctx.command_prompt_mut().error = Some(message.clone());
-        ctx.push_error("command", message);
-        ctx.request_render();
-        return true;
-      }
-
-      let registry = ctx.command_registry_ref() as *const CommandRegistry<Ctx>;
-      let result = unsafe { (&*registry).execute(ctx, command, args, CommandEvent::Validate) };
-
-      match result {
-        Ok(()) => {
+        if line.is_empty() {
           ctx.set_mode(Mode::Normal);
           ctx.command_prompt_mut().clear();
           {
@@ -1255,16 +1226,44 @@ pub fn handle_command_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEve
             palette.scroll_offset = 0;
             palette.prompt_text = None;
           }
-        },
-        Err(err) => {
-          let message = err.to_string();
+          ctx.request_render();
+          return true;
+        }
+
+        let (command, args, _) = split(&line);
+        if command.is_empty() {
+          let message = "empty command".to_string();
           ctx.command_prompt_mut().error = Some(message.clone());
           ctx.push_error("command", message);
-        },
-      }
+          ctx.request_render();
+          return true;
+        }
 
-      ctx.request_render();
-      return true;
+        let registry = ctx.command_registry_ref() as *const CommandRegistry<Ctx>;
+        let result = unsafe { (&*registry).execute(ctx, command, args, CommandEvent::Validate) };
+
+        match result {
+          Ok(()) => {
+            ctx.set_mode(Mode::Normal);
+            ctx.command_prompt_mut().clear();
+            {
+              let palette = ctx.command_palette_mut();
+              palette.is_open = false;
+              palette.query.clear();
+              palette.selected = None;
+              palette.scroll_offset = 0;
+              palette.prompt_text = None;
+            }
+          },
+          Err(err) => {
+            let message = err.to_string();
+            ctx.command_prompt_mut().error = Some(message.clone());
+            ctx.push_error("command", message);
+          },
+        }
+
+        ctx.request_render();
+        return true;
       } // end else (not expand_dir)
     },
     Key::Backspace => {
@@ -1404,9 +1403,7 @@ pub fn handle_command_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEve
 /// palette items between command names and argument completions, and
 /// updates `prefiltered` / `scroll_offset` accordingly.
 pub fn update_command_palette_for_input<Ctx: DefaultContext>(ctx: &mut Ctx, input: &str) {
-  let completions = ctx
-    .command_registry_ref()
-    .complete_command_line(ctx, input);
+  let completions = ctx.command_registry_ref().complete_command_line(ctx, input);
 
   let stripped = input.trim_start_matches(':');
   let (_, _, complete_command_name) = split(stripped);
@@ -1682,9 +1679,7 @@ pub mod completers {
     completions.sort_by(|a, b| {
       let a_dir = a.text.ends_with('/');
       let b_dir = b.text.ends_with('/');
-      b_dir
-        .cmp(&a_dir)
-        .then_with(|| a.text.cmp(&b.text))
+      b_dir.cmp(&a_dir).then_with(|| a.text.cmp(&b.text))
     });
 
     completions

@@ -79,7 +79,6 @@ use the_default::{
   close_file_picker,
   command_palette_filtered_indices,
   command_palette_selected_filtered_index,
-  update_command_palette_for_input,
   completion_docs_panel_rect as default_completion_docs_panel_rect,
   completion_panel_rect as default_completion_panel_rect,
   finalize_search,
@@ -91,12 +90,19 @@ use the_default::{
   set_file_picker_syntax_loader,
   signature_help_panel_rect as default_signature_help_panel_rect,
   submit_file_picker,
+  update_command_palette_for_input,
   update_search_prompt_preview,
 };
 use the_lib::{
   Tendril,
   app::App as LibApp,
   command_line::split as command_line_split,
+  diagnostics::{
+    Diagnostic,
+    DiagnosticCounts,
+    DiagnosticSeverity,
+    DiagnosticsState,
+  },
   docs_markdown::{
     DocsBlock,
     DocsInlineKind,
@@ -105,12 +111,6 @@ use the_lib::{
     DocsSemanticKind,
     language_filename_hints,
     parse_markdown_blocks,
-  },
-  diagnostics::{
-    Diagnostic,
-    DiagnosticCounts,
-    DiagnosticSeverity,
-    DiagnosticsState,
   },
   document::{
     Document as LibDocument,
@@ -133,7 +133,6 @@ use the_lib::{
     InlineDiagnosticsConfig,
     InlineDiagnosticsLineAnnotation,
     InlineDiagnosticsRenderData,
-    SharedInlineDiagnosticsRenderData,
     LayoutIntent,
     NoHighlights,
     OverlayNode,
@@ -143,6 +142,7 @@ use the_lib::{
     RenderDiffGutterStyles,
     RenderGutterDiffKind,
     RenderStyles,
+    SharedInlineDiagnosticsRenderData,
     SyntaxHighlightAdapter,
     UiNode,
     UiState,
@@ -158,7 +158,6 @@ use the_lib::{
       UnderlineStyle as LibUnderlineStyle,
     },
     gutter_width_for_document,
-    visual_pos_at_char,
     text_annotations::{
       InlineAnnotation,
       Overlay,
@@ -170,6 +169,7 @@ use the_lib::{
       base16_default_theme,
       default_theme,
     },
+    visual_pos_at_char,
   },
   selection::{
     CursorId,
@@ -804,22 +804,22 @@ impl From<OverlayNode> for RenderOverlayNode {
 
 #[derive(Debug, Clone)]
 pub struct RenderPlan {
-  inner:                    the_lib::render::RenderPlan,
-  inline_diagnostic_lines:  Vec<InlineDiagnosticRenderLine>,
-  eol_diagnostics:          Vec<EolDiagnosticEntry>,
-  diagnostic_underlines:    Vec<DiagnosticUnderlineEntry>,
+  inner:                   the_lib::render::RenderPlan,
+  inline_diagnostic_lines: Vec<InlineDiagnosticRenderLine>,
+  eol_diagnostics:         Vec<EolDiagnosticEntry>,
+  diagnostic_underlines:   Vec<DiagnosticUnderlineEntry>,
 }
 
 impl RenderPlan {
   fn empty() -> Self {
     Self {
-      inner:                    the_lib::render::RenderPlan::empty(
+      inner:                   the_lib::render::RenderPlan::empty(
         LibRect::new(0, 0, 0, 0),
         LibPosition::new(0, 0),
       ),
-      inline_diagnostic_lines:  Vec::new(),
-      eol_diagnostics:          Vec::new(),
-      diagnostic_underlines:    Vec::new(),
+      inline_diagnostic_lines: Vec::new(),
+      eol_diagnostics:         Vec::new(),
+      diagnostic_underlines:   Vec::new(),
     }
   }
 
@@ -927,11 +927,13 @@ impl RenderPlan {
     self
       .eol_diagnostics
       .get(index)
-      .map(|entry| RenderEolDiagnostic {
-        row:      entry.row,
-        col:      entry.col,
-        message:  entry.message.clone(),
-        severity: entry.severity,
+      .map(|entry| {
+        RenderEolDiagnostic {
+          row:      entry.row,
+          col:      entry.col,
+          message:  entry.message.clone(),
+          severity: entry.severity,
+        }
       })
       .unwrap_or_else(RenderEolDiagnostic::empty)
   }
@@ -944,11 +946,13 @@ impl RenderPlan {
     self
       .diagnostic_underlines
       .get(index)
-      .map(|entry| RenderDiagnosticUnderline {
-        row:       entry.row,
-        start_col: entry.start_col,
-        end_col:   entry.end_col,
-        severity:  entry.severity,
+      .map(|entry| {
+        RenderDiagnosticUnderline {
+          row:       entry.row,
+          start_col: entry.start_col,
+          end_col:   entry.end_col,
+          severity:  entry.severity,
+        }
       })
       .unwrap_or_else(RenderDiagnosticUnderline::empty)
   }
@@ -957,10 +961,10 @@ impl RenderPlan {
 impl From<the_lib::render::RenderPlan> for RenderPlan {
   fn from(plan: the_lib::render::RenderPlan) -> Self {
     Self {
-      inner:                    plan,
-      inline_diagnostic_lines:  Vec::new(),
-      eol_diagnostics:          Vec::new(),
-      diagnostic_underlines:    Vec::new(),
+      inner:                   plan,
+      inline_diagnostic_lines: Vec::new(),
+      eol_diagnostics:         Vec::new(),
+      diagnostic_underlines:   Vec::new(),
     }
   }
 }
@@ -1502,9 +1506,7 @@ fn compute_eol_diagnostics(
         };
         rank >= diagnostic_severity_rank(eol_min)
       })
-      .max_by_key(|d| {
-        diagnostic_severity_rank(d.severity.unwrap_or(DiagnosticSeverity::Warning))
-      });
+      .max_by_key(|d| diagnostic_severity_rank(d.severity.unwrap_or(DiagnosticSeverity::Warning)));
 
     let Some(diagnostic) = selected else {
       continue;
@@ -1532,8 +1534,8 @@ fn compute_eol_diagnostics(
 
     let severity = diagnostic.severity.unwrap_or(DiagnosticSeverity::Warning);
     out.push(EolDiagnosticEntry {
-      row:     visible_row.row,
-      col:     start_col as u16,
+      row: visible_row.row,
+      col: start_col as u16,
       message,
       severity,
     });
@@ -1646,9 +1648,9 @@ fn compute_diagnostic_underlines<'a>(
       }
 
       out.push(DiagnosticUnderlineEntry {
-        row:       (row - row_start) as u16,
+        row: (row - row_start) as u16,
         start_col: (from - col_start) as u16,
-        end_col:   (to - col_start) as u16,
+        end_col: (to - col_start) as u16,
         severity,
       });
     }
@@ -3021,7 +3023,6 @@ pub struct App {
   keymaps:                         Keymaps,
   command_registry:                CommandRegistry<App>,
   states:                          HashMap<LibEditorId, EditorState>,
-  file_paths:                      HashMap<LibEditorId, PathBuf>,
   vcs_provider:                    DiffProviderRegistry,
   vcs_diff_handles:                HashMap<LibEditorId, DiffHandle>,
   active_editor:                   Option<LibEditorId>,
@@ -3164,17 +3165,21 @@ impl PreviewData {
     self
       .lines
       .get(index)
-      .map(|l| PreviewLine {
-        text:  l.text.clone(),
-        spans: l
-          .spans
-          .iter()
-          .map(|s| PreviewLineSpan {
-            char_start:   s.char_start,
-            char_end:     s.char_end,
-            highlight_id: s.highlight_id,
-          })
-          .collect(),
+      .map(|l| {
+        PreviewLine {
+          text:  l.text.clone(),
+          spans: l
+            .spans
+            .iter()
+            .map(|s| {
+              PreviewLineSpan {
+                char_start:   s.char_start,
+                char_end:     s.char_end,
+                highlight_id: s.highlight_id,
+              }
+            })
+            .collect(),
+        }
       })
       .unwrap_or_default()
   }
@@ -3193,11 +3198,13 @@ fn build_preview_data(picker: &FilePickerState) -> PreviewData {
     .unwrap_or_default();
 
   match &picker.preview {
-    FilePickerPreview::Empty => PreviewData {
-      kind: 0,
-      path: preview_path,
-      show: picker.show_preview,
-      ..Default::default()
+    FilePickerPreview::Empty => {
+      PreviewData {
+        kind: 0,
+        path: preview_path,
+        show: picker.show_preview,
+        ..Default::default()
+      }
     },
     FilePickerPreview::Source(source) => {
       let lines: Vec<PreviewLine> = source
@@ -3217,8 +3224,7 @@ fn build_preview_data(picker: &FilePickerState) -> PreviewData {
             .iter()
             .filter(|(_hl, range)| range.start < line_end && range.end > line_start)
             .map(|(hl, range)| {
-              let span_start_byte =
-                range.start.saturating_sub(line_start).min(line_text.len());
+              let span_start_byte = range.start.saturating_sub(line_start).min(line_text.len());
               let span_end_byte = range.end.saturating_sub(line_start).min(line_text.len());
               let char_start = line_text[..span_start_byte].chars().count() as u32;
               let char_end = line_text[..span_end_byte].chars().count() as u32;
@@ -3248,19 +3254,23 @@ fn build_preview_data(picker: &FilePickerState) -> PreviewData {
         ..Default::default()
       }
     },
-    FilePickerPreview::Text(t) => PreviewData {
-      kind: 2,
-      path: preview_path,
-      text: t.clone(),
-      show: picker.show_preview,
-      ..Default::default()
+    FilePickerPreview::Text(t) => {
+      PreviewData {
+        kind: 2,
+        path: preview_path,
+        text: t.clone(),
+        show: picker.show_preview,
+        ..Default::default()
+      }
     },
-    FilePickerPreview::Message(msg) => PreviewData {
-      kind: 3,
-      path: preview_path,
-      text: msg.clone(),
-      show: picker.show_preview,
-      ..Default::default()
+    FilePickerPreview::Message(msg) => {
+      PreviewData {
+        kind: 3,
+        path: preview_path,
+        text: msg.clone(),
+        show: picker.show_preview,
+        ..Default::default()
+      }
     },
   }
 }
@@ -3292,14 +3302,28 @@ impl Default for FilePickerSnapshotData {
 }
 
 impl FilePickerSnapshotData {
-  fn active(&self) -> bool { self.active }
-  fn query(&self) -> String { self.query.clone() }
-  fn matched_count(&self) -> usize { self.matched_count }
-  fn total_count(&self) -> usize { self.total_count }
-  fn scanning(&self) -> bool { self.scanning }
-  fn root(&self) -> String { self.root.clone() }
+  fn active(&self) -> bool {
+    self.active
+  }
+  fn query(&self) -> String {
+    self.query.clone()
+  }
+  fn matched_count(&self) -> usize {
+    self.matched_count
+  }
+  fn total_count(&self) -> usize {
+    self.total_count
+  }
+  fn scanning(&self) -> bool {
+    self.scanning
+  }
+  fn root(&self) -> String {
+    self.root.clone()
+  }
 
-  fn item_count(&self) -> usize { self.items.len() }
+  fn item_count(&self) -> usize {
+    self.items.len()
+  }
 
   fn item_at(&self, index: usize) -> FilePickerItemFFI {
     self.items.get(index).cloned().unwrap_or_default()
@@ -3326,16 +3350,27 @@ impl Default for FilePickerItemFFI {
 }
 
 impl FilePickerItemFFI {
-  fn display(&self) -> String { self.display.clone() }
-  fn is_dir(&self) -> bool { self.is_dir }
-  fn icon(&self) -> String { self.icon.clone() }
-  fn match_index_count(&self) -> usize { self.match_indices.len() }
+  fn display(&self) -> String {
+    self.display.clone()
+  }
+  fn is_dir(&self) -> bool {
+    self.is_dir
+  }
+  fn icon(&self) -> String {
+    self.icon.clone()
+  }
+  fn match_index_count(&self) -> usize {
+    self.match_indices.len()
+  }
   fn match_index_at(&self, index: usize) -> u32 {
     self.match_indices.get(index).copied().unwrap_or(0)
   }
 }
 
-fn build_file_picker_snapshot(picker: &FilePickerState, max_items: usize) -> FilePickerSnapshotData {
+fn build_file_picker_snapshot(
+  picker: &FilePickerState,
+  max_items: usize,
+) -> FilePickerSnapshotData {
   if !picker.active {
     return FilePickerSnapshotData::default();
   }
@@ -3402,7 +3437,6 @@ impl App {
       keymaps: config_build_keymaps(),
       command_registry: CommandRegistry::new(),
       states: HashMap::new(),
-      file_paths: HashMap::new(),
       vcs_provider: DiffProviderRegistry::default(),
       vcs_diff_handles: HashMap::new(),
       active_editor: None,
@@ -3505,7 +3539,6 @@ impl App {
     let removed = self.inner.remove_editor(id).is_some();
     if removed {
       self.states.remove(&id);
-      self.file_paths.remove(&id);
       self.vcs_diff_handles.remove(&id);
       if self.active_editor == Some(id) {
         self.active_editor = None;
@@ -3823,17 +3856,15 @@ impl App {
           .ranges()
           .first()
           .map(|r| r.cursor_line(doc.text().slice(..)));
-        let _ = annotations.add_line_annotation(Box::new(
-          InlineDiagnosticsLineAnnotation::new(
-            inline_diagnostics,
-            cursor_char_idx,
-            cursor_line_idx,
-            text_fmt.viewport_width.max(1),
-            view.scroll.col,
-            inline_config,
-            inline_diagnostic_render_data.clone(),
-          ),
-        ));
+        let _ = annotations.add_line_annotation(Box::new(InlineDiagnosticsLineAnnotation::new(
+          inline_diagnostics,
+          cursor_char_idx,
+          cursor_line_idx,
+          text_fmt.viewport_width.max(1),
+          view.scroll.col,
+          inline_config,
+          inline_diagnostic_render_data.clone(),
+        )));
       }
 
       let plan = if let (Some(loader), Some(syntax)) = (loader.as_deref(), doc.syntax()) {
@@ -3878,7 +3909,8 @@ impl App {
       let mut inline_lines = inline_diagnostic_render_data.borrow().lines.clone();
       dedupe_inline_diagnostic_lines(&mut inline_lines);
 
-      // Compute diagnostic underlines after build_plan while annotations are still alive.
+      // Compute diagnostic underlines after build_plan while annotations are still
+      // alive.
       let underlines = compute_diagnostic_underlines(
         doc.text(),
         &raw_diagnostics,
@@ -3893,10 +3925,7 @@ impl App {
     apply_diff_gutter_markers(&mut plan, &diff_signs, diff_styles);
 
     self.inline_diagnostic_lines = inline_lines;
-    self.eol_diagnostics = compute_eol_diagnostics(
-      &raw_diagnostics,
-      &plan,
-    );
+    self.eol_diagnostics = compute_eol_diagnostics(&raw_diagnostics, &plan);
     self.diagnostic_underlines = underlines;
     self.active_state_mut().highlight_cache = highlight_cache;
     plan
@@ -4176,8 +4205,7 @@ impl App {
       }
 
       let registry = self.command_registry_ref() as *const CommandRegistry<App>;
-      let result =
-        unsafe { (&*registry).execute(self, command, args, CommandEvent::Validate) };
+      let result = unsafe { (&*registry).execute(self, command, args, CommandEvent::Validate) };
 
       match result {
         Ok(()) => {
@@ -4213,8 +4241,7 @@ impl App {
       }
 
       let registry = self.command_registry_ref() as *const CommandRegistry<App>;
-      let result =
-        unsafe { (&*registry).execute(self, &command_name, "", CommandEvent::Validate) };
+      let result = unsafe { (&*registry).execute(self, &command_name, "", CommandEvent::Validate) };
 
       match result {
         Ok(()) => {
@@ -4353,7 +4380,11 @@ impl App {
     true
   }
 
-  pub fn file_picker_snapshot(&mut self, id: ffi::EditorId, max_items: usize) -> FilePickerSnapshotData {
+  pub fn file_picker_snapshot(
+    &mut self,
+    id: ffi::EditorId,
+    max_items: usize,
+  ) -> FilePickerSnapshotData {
     let started = Instant::now();
     if self.activate(id).is_none() {
       return FilePickerSnapshotData::default();
@@ -4842,7 +4873,11 @@ impl App {
         diagnostic.range.start.character,
       );
       let severity = diagnostic.severity.unwrap_or(DiagnosticSeverity::Warning);
-      out.push(InlineDiagnostic::new(start_char_idx, severity, message.to_string()));
+      out.push(InlineDiagnostic::new(
+        start_char_idx,
+        severity,
+        message.to_string(),
+      ));
     }
     out.sort_by_key(|d| d.start_char_idx);
     out
@@ -6468,6 +6503,61 @@ impl App {
     }
   }
 
+  fn goto_buffer_impl(&mut self, direction: CommandDirection, count: usize) -> bool {
+    let Some(current) = self.active_editor else {
+      return false;
+    };
+
+    self.lsp_close_current_document();
+
+    let switched_in_editor = {
+      let Some(editor) = self.inner.editor_mut(current) else {
+        return false;
+      };
+      match direction {
+        CommandDirection::Forward => editor.switch_buffer_forward(count),
+        CommandDirection::Backward => editor.switch_buffer_backward(count),
+        _ => false,
+      }
+    };
+
+    if switched_in_editor {
+      let active_path = self
+        .inner
+        .editor(current)
+        .and_then(|editor| editor.active_file_path().map(|path| path.to_path_buf()));
+      <Self as DefaultContext>::set_file_path(self, active_path);
+      self.request_render();
+      return true;
+    }
+
+    let editor_ids = self.inner.editors().map(|editor| editor.id()).collect::<Vec<_>>();
+    if editor_ids.len() <= 1 {
+      return false;
+    }
+
+    let Some(current_index) = editor_ids.iter().position(|id| *id == current) else {
+      return false;
+    };
+
+    let len = editor_ids.len();
+    let step = count.max(1) % len;
+    let target_index = match direction {
+      CommandDirection::Forward => (current_index + step) % len,
+      CommandDirection::Backward => (current_index + len - step) % len,
+      _ => return false,
+    };
+    let target = editor_ids[target_index];
+
+    if !self.set_active_editor(target) {
+      return false;
+    }
+
+    let _ = self.poll_editor_syntax_parse_results(target);
+    self.active_state_mut().needs_render = true;
+    true
+  }
+
   fn active_state_mut(&mut self) -> &mut EditorState {
     let id = self.active_editor.expect("active editor not set");
     self
@@ -6601,7 +6691,10 @@ impl App {
   }
 
   fn refresh_editor_syntax(&mut self, id: LibEditorId) {
-    let path = self.file_paths.get(&id).cloned();
+    let path = self
+      .inner
+      .editor(id)
+      .and_then(|editor| editor.active_file_path().map(Path::to_path_buf));
     let loader = self.loader.clone();
     let mut parsed = false;
     let Some(editor) = self.inner.editor_mut(id) else {
@@ -6643,7 +6736,10 @@ impl App {
   }
 
   fn refresh_vcs_diff_base_for_editor(&mut self, id: LibEditorId) {
-    let path = self.file_paths.get(&id).cloned();
+    let path = self
+      .inner
+      .editor(id)
+      .and_then(|editor| editor.active_file_path().map(Path::to_path_buf));
     let statusline = path
       .as_deref()
       .and_then(|path| self.vcs_provider.get_statusline_info(path))
@@ -6715,7 +6811,7 @@ impl DefaultContext for App {
 
   fn file_path(&self) -> Option<&Path> {
     let id = self.active_editor?;
-    self.file_paths.get(&id).map(|path| path.as_path())
+    self.inner.editor(id).and_then(|editor| editor.active_file_path())
   }
 
   fn request_render(&mut self) {
@@ -7071,18 +7167,19 @@ impl DefaultContext for App {
     if let Some(id) = self.active_editor {
       self.clear_hover_state();
       self.clear_signature_help_state();
-      match path {
-        Some(path) => {
-          self.file_paths.insert(id, path);
-        },
-        None => {
-          self.file_paths.remove(&id);
-        },
+      if let Some(editor) = self.inner.editor_mut(id) {
+        editor.set_active_file_path(path);
+      } else {
+        return;
       }
       self.refresh_editor_syntax(id);
       self.refresh_lsp_runtime_for_active_file();
       self.refresh_vcs_diff_base_for_editor(id);
     }
+  }
+
+  fn goto_buffer(&mut self, direction: CommandDirection, count: usize) -> bool {
+    self.goto_buffer_impl(direction, count)
   }
 
   fn log_target_names(&self) -> &'static [&'static str] {
@@ -7097,27 +7194,35 @@ impl DefaultContext for App {
   }
 
   fn open_file(&mut self, path: &Path) -> std::io::Result<()> {
+    self.lsp_close_current_document();
     self.clear_hover_state();
     self.clear_signature_help_state();
-    let content = std::fs::read_to_string(path)?;
-    {
+    let reused = {
       let editor = self.active_editor_mut();
-      let doc = editor.document_mut();
-      let len = doc.text().len_chars();
-      let tx = Transaction::change(doc.text(), vec![(0, len, Some(content.as_str().into()))])
-        .map_err(|err| std::io::Error::other(err.to_string()))?;
-      doc
-        .apply_transaction(&tx)
-        .map_err(|err| std::io::Error::other(err.to_string()))?;
-      let _ = doc.set_selection(Selection::point(0));
-      doc.set_display_name(
-        path
-          .file_name()
-          .map(|name| name.to_string_lossy().to_string())
-          .unwrap_or_else(|| path.display().to_string()),
-      );
-      let _ = doc.mark_saved();
-      editor.view_mut().scroll = LibPosition::new(0, 0);
+      if let Some(index) = editor.find_buffer_by_path(path) {
+        let _ = editor.set_active_buffer(index);
+        true
+      } else {
+        false
+      }
+    };
+
+    if !reused {
+      let content = std::fs::read_to_string(path)?;
+      let viewport = self.active_editor_ref().view().viewport;
+      {
+        let editor = self.active_editor_mut();
+        let view = ViewState::new(viewport, LibPosition::new(0, 0));
+        let _ = editor.open_buffer(Rope::from_str(&content), view, Some(path.to_path_buf()));
+        let doc = editor.document_mut();
+        doc.set_display_name(
+          path
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_else(|| path.display().to_string()),
+        );
+        let _ = doc.mark_saved();
+      }
     }
     DefaultContext::set_file_path(self, Some(path.to_path_buf()));
     self.request_render();
@@ -7509,7 +7614,11 @@ mod ffi {
     fn file_picker_submit(self: &mut App, id: EditorId, index: usize) -> bool;
     fn file_picker_close(self: &mut App, id: EditorId) -> bool;
     fn file_picker_select_index(self: &mut App, id: EditorId, index: usize) -> bool;
-    fn file_picker_snapshot(self: &mut App, id: EditorId, max_items: usize) -> FilePickerSnapshotData;
+    fn file_picker_snapshot(
+      self: &mut App,
+      id: EditorId,
+      max_items: usize,
+    ) -> FilePickerSnapshotData;
     fn file_picker_preview(self: &mut App, id: EditorId) -> PreviewData;
     fn poll_background(self: &mut App, id: EditorId) -> bool;
     fn take_should_quit(self: &mut App) -> bool;
@@ -7701,10 +7810,7 @@ mod ffi {
     fn overlay_count(self: &RenderPlan) -> usize;
     fn overlay_at(self: &RenderPlan, index: usize) -> RenderOverlayNode;
     fn inline_diagnostic_line_count(self: &RenderPlan) -> usize;
-    fn inline_diagnostic_line_at(
-      self: &RenderPlan,
-      index: usize,
-    ) -> RenderInlineDiagnosticLine;
+    fn inline_diagnostic_line_at(self: &RenderPlan, index: usize) -> RenderInlineDiagnosticLine;
 
     type RenderInlineDiagnosticLine;
     fn row(self: &RenderInlineDiagnosticLine) -> u16;
@@ -7722,10 +7828,7 @@ mod ffi {
     fn severity(self: &RenderEolDiagnostic) -> u8;
 
     fn diagnostic_underline_count(self: &RenderPlan) -> usize;
-    fn diagnostic_underline_at(
-      self: &RenderPlan,
-      index: usize,
-    ) -> RenderDiagnosticUnderline;
+    fn diagnostic_underline_at(self: &RenderPlan, index: usize) -> RenderDiagnosticUnderline;
 
     type RenderDiagnosticUnderline;
     fn row(self: &RenderDiagnosticUnderline) -> u16;
@@ -8103,6 +8206,7 @@ mod tests {
     CommandEvent,
     CommandRegistry,
     DefaultContext,
+    Direction as CommandDirection,
     Mode,
   };
   use the_lib::{
@@ -8325,6 +8429,14 @@ mod tests {
       y:      0,
       width:  80,
       height: 24,
+    }
+  }
+
+  fn key_char(ch: char) -> ffi::KeyEvent {
+    ffi::KeyEvent {
+      kind:      0,
+      codepoint: ch as u32,
+      modifiers: 0,
     }
   }
 
@@ -8639,7 +8751,11 @@ pkgs.mkShell {
       let scroll = ffi::Position { row: 0, col: 0 };
       let id = app.create_editor(&fixture_text, viewport, scroll);
       let lib_id = id.to_lib().expect("editor id");
-      app.file_paths.insert(lib_id, PathBuf::from(fixture_name));
+      app
+        .inner
+        .editor_mut(lib_id)
+        .expect("editor")
+        .set_active_file_path(Some(PathBuf::from(fixture_name)));
       app.refresh_editor_syntax(lib_id);
       app.active_editor = Some(lib_id);
 
@@ -8721,6 +8837,100 @@ pkgs.mkShell {
 
     let toggled = app.render_plan(id);
     assert_eq!(toggled.line_count(), no_wrap.line_count());
+  }
+
+  #[test]
+  fn goto_buffer_cycles_active_editor_in_both_directions() {
+    let _guard = ffi_test_guard();
+    let mut app = App::new();
+    let id1 = app.create_editor("one", default_viewport(), ffi::Position { row: 0, col: 0 });
+    let id2 = app.create_editor("two", default_viewport(), ffi::Position { row: 0, col: 0 });
+    let id3 = app.create_editor("three", default_viewport(), ffi::Position {
+      row: 0,
+      col: 0,
+    });
+
+    assert_eq!(app.active_editor, id1.to_lib());
+
+    assert!(<App as DefaultContext>::goto_buffer(
+      &mut app,
+      CommandDirection::Forward,
+      1,
+    ));
+    assert_eq!(app.active_editor, id2.to_lib());
+
+    assert!(<App as DefaultContext>::goto_buffer(
+      &mut app,
+      CommandDirection::Forward,
+      1,
+    ));
+    assert_eq!(app.active_editor, id3.to_lib());
+
+    assert!(<App as DefaultContext>::goto_buffer(
+      &mut app,
+      CommandDirection::Forward,
+      1,
+    ));
+    assert_eq!(app.active_editor, id1.to_lib());
+
+    assert!(<App as DefaultContext>::goto_buffer(
+      &mut app,
+      CommandDirection::Backward,
+      1,
+    ));
+    assert_eq!(app.active_editor, id3.to_lib());
+
+    assert!(<App as DefaultContext>::goto_buffer(
+      &mut app,
+      CommandDirection::Forward,
+      2,
+    ));
+    assert_eq!(app.active_editor, id2.to_lib());
+
+    assert!(<App as DefaultContext>::goto_buffer(
+      &mut app,
+      CommandDirection::Backward,
+      2,
+    ));
+    assert_eq!(app.active_editor, id3.to_lib());
+  }
+
+  #[test]
+  fn goto_buffer_keymap_cycles_buffers_for_single_editor() {
+    let _guard = ffi_test_guard();
+    let first = TempTestFile::new("goto-buffer-first", "first file\n");
+    let second = TempTestFile::new("goto-buffer-second", "second file\n");
+    let mut app = App::new();
+    let id = app.create_editor("first file\n", default_viewport(), ffi::Position { row: 0, col: 0 });
+    assert!(app.activate(id).is_some());
+    assert!(app.set_file_path(
+      id,
+      first
+        .as_path()
+        .to_str()
+        .expect("temp test path should be utf-8")
+    ));
+
+    <App as DefaultContext>::open_file(&mut app, second.as_path()).expect("open second file");
+
+    assert_eq!(app.text(id), "second file\n");
+    assert_eq!(
+      <App as DefaultContext>::file_path(&app),
+      Some(second.as_path())
+    );
+
+    assert!(app.handle_key(id, key_char('g')));
+    assert!(app.handle_key(id, key_char('n')));
+    assert_eq!(app.text(id), "first file\n");
+    assert_eq!(<App as DefaultContext>::file_path(&app), Some(first.as_path()));
+
+    assert!(app.handle_key(id, key_char('g')));
+    assert!(app.handle_key(id, key_char('p')));
+    assert_eq!(app.text(id), "second file\n");
+    assert_eq!(
+      <App as DefaultContext>::file_path(&app),
+      Some(second.as_path())
+    );
   }
 
   #[test]

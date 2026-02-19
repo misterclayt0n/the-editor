@@ -48,6 +48,10 @@ use the_default::{
   ui_tree,
 };
 use the_lib::{
+  diagnostics::{
+    Diagnostic,
+    DiagnosticSeverity,
+  },
   docs_markdown::{
     DocsBlock,
     DocsInlineKind,
@@ -56,10 +60,6 @@ use the_lib::{
     DocsSemanticKind,
     language_filename_hints,
     parse_markdown_blocks,
-  },
-  diagnostics::{
-    Diagnostic,
-    DiagnosticSeverity,
   },
   render::{
     InlineDiagnostic,
@@ -1936,10 +1936,7 @@ fn completion_docs_rows_with_context(
 ) -> Vec<Vec<StyledTextRun>> {
   let mut rows = Vec::new();
   for mut line in completion_docs_markdown_lines(markdown, styles, ctx) {
-    if line.len() == 1
-      && width > 0
-      && matches!(line[0].kind, DocsSemanticKind::Rule)
-    {
+    if line.len() == 1 && width > 0 && matches!(line[0].kind, DocsSemanticKind::Rule) {
       line[0].text = "─".repeat(width);
     }
     rows.extend(wrap_styled_runs(&line, width));
@@ -2192,7 +2189,13 @@ fn draw_ui_input(
   }
 }
 
-fn draw_ui_list(buf: &mut Buffer, rect: Rect, list: &UiList, badge_color: Option<Color>, _cursor_out: &mut Option<(u16, u16)>) {
+fn draw_ui_list(
+  buf: &mut Buffer,
+  rect: Rect,
+  list: &UiList,
+  badge_color: Option<Color>,
+  _cursor_out: &mut Option<(u16, u16)>,
+) {
   if rect.width == 0 || rect.height == 0 {
     return;
   }
@@ -2349,7 +2352,11 @@ fn draw_ui_list(buf: &mut Buffer, rect: Rect, list: &UiList, badge_color: Option
         if max_detail_width >= COMPLETION_MIN_DETAIL_WIDTH {
           // Compute badge portion first so we can reserve space for it.
           let badge_chars = badge_text.map(|b| b.chars().count()).unwrap_or(0);
-          let badge_gap = if badge_chars > 0 && detail.is_some() { 1 } else { 0 };
+          let badge_gap = if badge_chars > 0 && detail.is_some() {
+            1
+          } else {
+            0
+          };
           let badge_total = badge_chars + badge_gap;
           let detail_max = max_detail_width.saturating_sub(badge_total);
 
@@ -2711,13 +2718,20 @@ fn draw_file_picker_list_pane(
     let separator = "─".repeat(inner.width as usize);
     buf.set_string(inner.x, separator_y, separator, sep_style);
     // Connect separator to borders with T-junction characters.
-    buf.get_mut(rect.x, separator_y).set_symbol("├").set_style(sep_style);
+    buf
+      .get_mut(rect.x, separator_y)
+      .set_symbol("├")
+      .set_style(sep_style);
     if layout.show_preview {
       if let Some(preview_pane) = layout.preview_pane {
-        buf.get_mut(preview_pane.x, separator_y).set_symbol("┤").set_style(sep_style);
+        buf
+          .get_mut(preview_pane.x, separator_y)
+          .set_symbol("┤")
+          .set_style(sep_style);
       }
     } else {
-      buf.get_mut(rect.x + rect.width.saturating_sub(1), separator_y)
+      buf
+        .get_mut(rect.x + rect.width.saturating_sub(1), separator_y)
         .set_symbol("┤")
         .set_style(sep_style);
     }
@@ -2889,18 +2903,20 @@ fn draw_file_picker_preview_pane(
       .unwrap_or(preview_path)
       .display()
       .to_string();
-    block = block.title(
-      Title::from(Span::styled(
-        format!(" {} ", path_display),
-        text_style.add_modifier(Modifier::DIM),
-      )),
-    );
+    block = block.title(Title::from(Span::styled(
+      format!(" {} ", path_display),
+      text_style.add_modifier(Modifier::DIM),
+    )));
   }
   block.render(rect, buf);
 
-  // Fix junction characters where preview's left border meets the top/bottom borders.
+  // Fix junction characters where preview's left border meets the top/bottom
+  // borders.
   if rect.height > 0 {
-    buf.get_mut(rect.x, rect.y).set_symbol("┬").set_style(border_style);
+    buf
+      .get_mut(rect.x, rect.y)
+      .set_symbol("┬")
+      .set_style(border_style);
     buf
       .get_mut(rect.x, rect.y + rect.height.saturating_sub(1))
       .set_symbol("┴")
@@ -3159,7 +3175,6 @@ fn panel_is_signature_help(panel: &UiPanel) -> bool {
 fn panel_is_term_command_palette_list(panel: &UiPanel) -> bool {
   panel.id == "term_command_palette_list"
 }
-
 
 fn term_command_palette_panel_rect(area: Rect, panel_width: u16, panel_height: u16) -> Rect {
   let width = panel_width.min(area.width).max(1);
@@ -4254,7 +4269,6 @@ fn build_term_command_palette_list_overlay(ctx: &Ctx) -> Option<UiNode> {
 
   Some(UiNode::Panel(panel))
 }
-
 
 fn build_lsp_hover_overlay(ctx: &Ctx) -> Option<UiNode> {
   let docs = ctx

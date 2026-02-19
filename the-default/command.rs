@@ -465,6 +465,9 @@ pub trait DefaultContext: Sized + 'static {
   fn ui_theme(&self) -> &Theme;
   fn set_file_path(&mut self, path: Option<PathBuf>);
   fn open_file(&mut self, path: &Path) -> std::io::Result<()>;
+  fn goto_buffer(&mut self, _direction: Direction, _count: usize) -> bool {
+    false
+  }
   fn save_current_buffer(&mut self, force: bool) -> Result<(), String> {
     let Some(path) = self.file_path().map(|path| path.to_path_buf()) else {
       return Err(
@@ -948,6 +951,22 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::Motion(motion) => {
       ctx.set_last_motion(Some(motion));
       ctx.dispatch().motion(ctx, motion);
+    },
+    Command::GotoNextBuffer { count } => {
+      if !ctx.goto_buffer(Direction::Forward, count.max(1)) {
+        ctx.push_warning(
+          "buffer",
+          "no next buffer available (this client currently has a single active buffer)",
+        );
+      }
+    },
+    Command::GotoPreviousBuffer { count } => {
+      if !ctx.goto_buffer(Direction::Backward, count.max(1)) {
+        ctx.push_warning(
+          "buffer",
+          "no previous buffer available (this client currently has a single active buffer)",
+        );
+      }
     },
     Command::DeleteSelection { yank } => ctx.dispatch().delete_selection(ctx, yank),
     Command::ChangeSelection { yank } => ctx.dispatch().change_selection(ctx, yank),
@@ -3875,6 +3894,8 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "extend_parent_node_start" => Some(Command::extend_parent_node_start()),
     "goto_file_start" => Some(Command::goto_file_start()),
     "goto_last_line" => Some(Command::goto_last_line()),
+    "goto_next_buffer" => Some(Command::goto_next_buffer(1)),
+    "goto_previous_buffer" => Some(Command::goto_previous_buffer(1)),
     "search" => Some(Command::search()),
     "rsearch" => Some(Command::rsearch()),
     "select_regex" => Some(Command::select_regex()),

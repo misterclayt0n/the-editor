@@ -732,6 +732,9 @@ impl Ctx {
 
     let editor_id = EditorId::new(NonZeroUsize::new(1).unwrap());
     let mut editor = Editor::new(editor_id, doc, view);
+    if let Some(path) = file_path {
+      editor.set_active_file_path(Some(PathBuf::from(path)));
+    }
 
     // Initialize syntax loader
     let ui_theme = select_ui_theme();
@@ -4192,8 +4195,38 @@ impl the_default::DefaultContext for Ctx {
   fn set_file_path(&mut self, path: Option<PathBuf>) {
     self.clear_hover_state();
     self.lsp_refresh_document_state(path.as_deref());
-    self.file_path = path;
+    self.file_path = path.clone();
+    self.editor.set_active_file_path(path);
     self.refresh_vcs_diff_base();
+  }
+
+  fn goto_buffer(&mut self, direction: the_default::Direction, count: usize) -> bool {
+    self.lsp_close_current_document();
+    let switched = match direction {
+      the_default::Direction::Forward => self.editor.switch_buffer_forward(count),
+      the_default::Direction::Backward => self.editor.switch_buffer_backward(count),
+      _ => false,
+    };
+    if !switched {
+      return false;
+    }
+
+    self.syntax_parse_lifecycle.cancel_pending();
+    self.highlight_cache.clear();
+    if self.editor.document().syntax().is_some() {
+      self.syntax_parse_highlight_state.mark_parsed();
+    } else {
+      self.syntax_parse_highlight_state.mark_cleared();
+    }
+
+    let active_path = self.editor.active_file_path().map(|path| path.to_path_buf());
+    self.file_path = active_path.clone();
+    self.lsp_refresh_document_state(active_path.as_deref());
+    self.lsp_open_current_document();
+    self.clear_hover_state();
+    self.refresh_vcs_diff_base();
+    self.needs_render = true;
+    true
   }
 
   fn log_target_names(&self) -> &'static [&'static str] {
@@ -4456,28 +4489,29 @@ impl the_default::DefaultContext for Ctx {
   fn open_file(&mut self, path: &Path) -> std::io::Result<()> {
     self.lsp_close_current_document();
     self.clear_hover_state();
-    let content = std::fs::read_to_string(path)?;
+    if let Some(index) = self.editor.find_buffer_by_path(path) {
+      let _ = self.editor.set_active_buffer(index);
+    } else {
+      let content = std::fs::read_to_string(path)?;
+      let viewport = self.editor.view().viewport;
+      let view = ViewState::new(viewport, Position::new(0, 0));
+      let _ = self
+        .editor
+        .open_buffer(Rope::from_str(&content), view, Some(path.to_path_buf()));
 
-    {
-      let doc = self.editor.document_mut();
-      let len = doc.text().len_chars();
-      let tx = Transaction::change(doc.text(), vec![(0, len, Some(content.as_str().into()))])
-        .map_err(|err| std::io::Error::other(err.to_string()))?;
-      doc
-        .apply_transaction(&tx)
-        .map_err(|err| std::io::Error::other(err.to_string()))?;
-      let _ = doc.set_selection(Selection::point(0));
-      doc.clear_syntax();
-      if let Some(loader) = &self.loader {
-        let _ = setup_syntax(doc, path, loader);
+      {
+        let doc = self.editor.document_mut();
+        if let Some(loader) = &self.loader {
+          let _ = setup_syntax(doc, path, loader);
+        }
+        doc.set_display_name(
+          path
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_else(|| path.display().to_string()),
+        );
+        let _ = doc.mark_saved();
       }
-      doc.set_display_name(
-        path
-          .file_name()
-          .map(|name| name.to_string_lossy().to_string())
-          .unwrap_or_else(|| path.display().to_string()),
-      );
-      let _ = doc.mark_saved();
     }
 
     self.syntax_parse_lifecycle.cancel_pending();
@@ -4490,7 +4524,6 @@ impl the_default::DefaultContext for Ctx {
 
     <Self as the_default::DefaultContext>::set_file_path(self, Some(path.to_path_buf()));
     self.lsp_open_current_document();
-    self.editor.view_mut().scroll = Position::new(0, 0);
     self.needs_render = true;
     Ok(())
   }
@@ -5245,6 +5278,118 @@ pkgs.mkShell {
     assert_eq!(server_name.as_deref(), Some("rust-analyzer"));
     assert!(ctx.lsp_runtime.is_running());
     ctx.shutdown_background_services();
+  }
+
+  #[test]
+  fn goto_buffer_cycles_open_files() {
+    let first = TempTestFile::new("buffer-cycle-one", "one\n");
+    let second = TempTestFile::new("buffer-cycle-two", "two\n");
+    let mut ctx = Ctx::new(Some(
+      first
+        .as_path()
+        .to_str()
+        .expect("temp test path should be utf-8"),
+    ))
+    .expect("ctx");
+
+    <Ctx as DefaultContext>::open_file(&mut ctx, second.as_path()).expect("open second buffer");
+    assert_eq!(ctx.file_path.as_deref(), Some(second.as_path()));
+    assert_eq!(ctx.editor.document().text().to_string(), "two\n");
+
+    assert!(<Ctx as DefaultContext>::goto_buffer(
+      &mut ctx,
+      the_default::Direction::Backward,
+      1,
+    ));
+    assert_eq!(ctx.file_path.as_deref(), Some(first.as_path()));
+    assert_eq!(ctx.editor.document().text().to_string(), "one\n");
+
+    assert!(<Ctx as DefaultContext>::goto_buffer(
+      &mut ctx,
+      the_default::Direction::Forward,
+      1,
+    ));
+    assert_eq!(ctx.file_path.as_deref(), Some(second.as_path()));
+    assert_eq!(ctx.editor.document().text().to_string(), "two\n");
+  }
+
+  #[test]
+  fn goto_buffer_keymap_sequence_cycles_open_files() {
+    let first = TempTestFile::new("buffer-key-cycle-one", "one\n");
+    let second = TempTestFile::new("buffer-key-cycle-two", "two\n");
+    let mut ctx = Ctx::new(Some(
+      first
+        .as_path()
+        .to_str()
+        .expect("temp test path should be utf-8"),
+    ))
+    .expect("ctx");
+    <Ctx as DefaultContext>::open_file(&mut ctx, second.as_path()).expect("open second buffer");
+
+    let dispatch = build_dispatch::<Ctx>();
+    ctx.set_dispatch(&dispatch);
+
+    dispatch.pre_on_keypress(
+      &mut ctx,
+      KeyEvent {
+        key:       Key::Char('g'),
+        modifiers: Modifiers::empty(),
+      },
+    );
+    dispatch.pre_on_keypress(
+      &mut ctx,
+      KeyEvent {
+        key:       Key::Char('n'),
+        modifiers: Modifiers::empty(),
+      },
+    );
+    assert_eq!(ctx.file_path.as_deref(), Some(first.as_path()));
+    assert_eq!(ctx.editor.document().text().to_string(), "one\n");
+
+    dispatch.pre_on_keypress(
+      &mut ctx,
+      KeyEvent {
+        key:       Key::Char('g'),
+        modifiers: Modifiers::empty(),
+      },
+    );
+    dispatch.pre_on_keypress(
+      &mut ctx,
+      KeyEvent {
+        key:       Key::Char('p'),
+        modifiers: Modifiers::empty(),
+      },
+    );
+    assert_eq!(ctx.file_path.as_deref(), Some(second.as_path()));
+    assert_eq!(ctx.editor.document().text().to_string(), "two\n");
+  }
+
+  #[test]
+  fn goto_buffer_restores_syntax_for_target_buffer() {
+    let mut ctx = Ctx::new(None).expect("ctx");
+    if ctx.loader.is_none() {
+      return;
+    }
+
+    let rust = TempTestFile::with_extension("buffer-syntax", "rs", "fn main() {}\n");
+    let txt = TempTestFile::with_extension("buffer-syntax", "txt", "plain text\n");
+
+    <Ctx as DefaultContext>::open_file(&mut ctx, rust.as_path()).expect("open rust");
+    let rust_has_syntax = ctx.editor.document().syntax().is_some();
+    if !rust_has_syntax {
+      return;
+    }
+
+    <Ctx as DefaultContext>::open_file(&mut ctx, txt.as_path()).expect("open txt");
+    assert_eq!(ctx.file_path.as_deref(), Some(txt.as_path()));
+
+    assert!(<Ctx as DefaultContext>::goto_buffer(
+      &mut ctx,
+      the_default::Direction::Backward,
+      1,
+    ));
+    assert_eq!(ctx.file_path.as_deref(), Some(rust.as_path()));
+    assert!(ctx.editor.document().syntax().is_some());
   }
 
   #[test]

@@ -473,6 +473,12 @@ pub enum Command {
   Move(Direction),
   AddCursor(Direction),
   Motion(Motion),
+  GotoNextBuffer {
+    count: usize,
+  },
+  GotoPreviousBuffer {
+    count: usize,
+  },
   DeleteSelection {
     yank: bool,
   },
@@ -768,6 +774,16 @@ impl Command {
   #[must_use]
   pub const fn goto_last_line() -> Self {
     Self::Motion(Motion::LastLine { extend: false })
+  }
+
+  #[must_use]
+  pub const fn goto_next_buffer(count: usize) -> Self {
+    Self::GotoNextBuffer { count }
+  }
+
+  #[must_use]
+  pub const fn goto_previous_buffer(count: usize) -> Self {
+    Self::GotoPreviousBuffer { count }
   }
 
   #[must_use]

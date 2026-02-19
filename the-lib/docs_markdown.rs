@@ -61,7 +61,7 @@ pub struct DocsInlineRun {
   pub link_destination: Option<String>,
   pub strong:           bool,
   pub emphasis:         bool,
-  pub strikethrough: bool,
+  pub strikethrough:    bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -123,8 +123,8 @@ struct SpannedDocsBlock {
 
 #[derive(Clone, Copy, Debug, Default)]
 struct InlineState {
-  strong_depth:       u8,
-  emphasis_depth:     u8,
+  strong_depth:        u8,
+  emphasis_depth:      u8,
   strikethrough_depth: u8,
 }
 
@@ -261,13 +261,17 @@ fn docs_finish_active_block(
   let span = block.start..block.end;
   let docs_block = match block.kind {
     ActiveBlockKind::Paragraph if !block.runs.is_empty() => DocsBlock::Paragraph(block.runs),
-    ActiveBlockKind::Heading(level) => DocsBlock::Heading {
-      level,
-      runs: block.runs,
+    ActiveBlockKind::Heading(level) => {
+      DocsBlock::Heading {
+        level,
+        runs: block.runs,
+      }
     },
-    ActiveBlockKind::ListItem => DocsBlock::ListItem {
-      marker: block.marker.unwrap_or(DocsListMarker::Bullet),
-      runs:   block.runs,
+    ActiveBlockKind::ListItem => {
+      DocsBlock::ListItem {
+        marker: block.marker.unwrap_or(DocsListMarker::Bullet),
+        runs:   block.runs,
+      }
     },
     ActiveBlockKind::Quote => DocsBlock::Quote(block.runs),
     _ => return,
@@ -312,102 +316,106 @@ pub fn parse_markdown_blocks(markdown: &str) -> Vec<DocsBlock> {
   let parser = Parser::new_ext(markdown, Options::all()).into_offset_iter();
   for (event, range) in parser {
     match event {
-      Event::Start(tag) => match tag {
-        Tag::Paragraph => {
-          let (kind, marker) = if let Some(marker) = pending_item_marker.take() {
-            (ActiveBlockKind::ListItem, Some(marker))
-          } else if let Some(level) = heading_level {
-            (ActiveBlockKind::Heading(level), None)
-          } else if block_quote_depth > 0 {
-            (ActiveBlockKind::Quote, None)
-          } else {
-            (ActiveBlockKind::Paragraph, None)
-          };
-          docs_begin_active_block(&mut active_block, kind, marker, range.start);
-        },
-        Tag::Heading { level, .. } => {
-          docs_finish_active_block(&mut blocks, &mut active_block, range.start);
-          heading_level = Some(heading_level_number(level));
-          docs_begin_active_block(
-            &mut active_block,
-            ActiveBlockKind::Heading(heading_level.unwrap_or(1)),
-            None,
-            range.start,
-          );
-        },
-        Tag::BlockQuote(_) => {
-          block_quote_depth = block_quote_depth.saturating_add(1);
-        },
-        Tag::List(start) => {
-          list_stack.push(ListState {
-            next_ordinal: start,
-          });
-        },
-        Tag::Item => {
-          pending_item_marker = Some(docs_next_list_marker(&mut list_stack));
-        },
-        Tag::CodeBlock(kind) => {
-          docs_finish_active_block(&mut blocks, &mut active_block, range.start);
-          let language = match kind {
-            CodeBlockKind::Fenced(info) => docs_parse_markdown_fence_language(info.as_ref()),
-            CodeBlockKind::Indented => None,
-          };
-          active_code_block = Some(ActiveCodeBlock {
-            language,
-            text: String::new(),
-            start: range.start,
-            end: range.start,
-          });
-        },
-        Tag::Emphasis => {
-          inline_state.emphasis_depth = inline_state.emphasis_depth.saturating_add(1);
-        },
-        Tag::Strong => {
-          inline_state.strong_depth = inline_state.strong_depth.saturating_add(1);
-        },
-        Tag::Strikethrough => {
-          inline_state.strikethrough_depth = inline_state.strikethrough_depth.saturating_add(1);
-        },
-        Tag::Link { dest_url, .. } => {
-          link_targets.push(dest_url.to_string());
-        },
-        _ => {},
+      Event::Start(tag) => {
+        match tag {
+          Tag::Paragraph => {
+            let (kind, marker) = if let Some(marker) = pending_item_marker.take() {
+              (ActiveBlockKind::ListItem, Some(marker))
+            } else if let Some(level) = heading_level {
+              (ActiveBlockKind::Heading(level), None)
+            } else if block_quote_depth > 0 {
+              (ActiveBlockKind::Quote, None)
+            } else {
+              (ActiveBlockKind::Paragraph, None)
+            };
+            docs_begin_active_block(&mut active_block, kind, marker, range.start);
+          },
+          Tag::Heading { level, .. } => {
+            docs_finish_active_block(&mut blocks, &mut active_block, range.start);
+            heading_level = Some(heading_level_number(level));
+            docs_begin_active_block(
+              &mut active_block,
+              ActiveBlockKind::Heading(heading_level.unwrap_or(1)),
+              None,
+              range.start,
+            );
+          },
+          Tag::BlockQuote(_) => {
+            block_quote_depth = block_quote_depth.saturating_add(1);
+          },
+          Tag::List(start) => {
+            list_stack.push(ListState {
+              next_ordinal: start,
+            });
+          },
+          Tag::Item => {
+            pending_item_marker = Some(docs_next_list_marker(&mut list_stack));
+          },
+          Tag::CodeBlock(kind) => {
+            docs_finish_active_block(&mut blocks, &mut active_block, range.start);
+            let language = match kind {
+              CodeBlockKind::Fenced(info) => docs_parse_markdown_fence_language(info.as_ref()),
+              CodeBlockKind::Indented => None,
+            };
+            active_code_block = Some(ActiveCodeBlock {
+              language,
+              text: String::new(),
+              start: range.start,
+              end: range.start,
+            });
+          },
+          Tag::Emphasis => {
+            inline_state.emphasis_depth = inline_state.emphasis_depth.saturating_add(1);
+          },
+          Tag::Strong => {
+            inline_state.strong_depth = inline_state.strong_depth.saturating_add(1);
+          },
+          Tag::Strikethrough => {
+            inline_state.strikethrough_depth = inline_state.strikethrough_depth.saturating_add(1);
+          },
+          Tag::Link { dest_url, .. } => {
+            link_targets.push(dest_url.to_string());
+          },
+          _ => {},
+        }
       },
-      Event::End(tag) => match tag {
-        TagEnd::Paragraph => {
-          docs_finish_active_block(&mut blocks, &mut active_block, range.end);
-        },
-        TagEnd::Heading(_) => {
-          docs_finish_active_block(&mut blocks, &mut active_block, range.end);
-          heading_level = None;
-        },
-        TagEnd::BlockQuote(_) => {
-          docs_finish_active_block(&mut blocks, &mut active_block, range.end);
-          block_quote_depth = block_quote_depth.saturating_sub(1);
-        },
-        TagEnd::List(_) => {
-          list_stack.pop();
-        },
-        TagEnd::Item => {
-          docs_finish_active_block(&mut blocks, &mut active_block, range.end);
-          pending_item_marker = None;
-        },
-        TagEnd::CodeBlock => {
-          docs_finish_active_code_block(&mut blocks, &mut active_code_block, range.end);
-        },
-        TagEnd::Emphasis => {
-          inline_state.emphasis_depth = inline_state.emphasis_depth.saturating_sub(1);
-        },
-        TagEnd::Strong => {
-          inline_state.strong_depth = inline_state.strong_depth.saturating_sub(1);
-        },
-        TagEnd::Strikethrough => {
-          inline_state.strikethrough_depth = inline_state.strikethrough_depth.saturating_sub(1);
-        },
-        TagEnd::Link => {
-          link_targets.pop();
-        },
-        _ => {},
+      Event::End(tag) => {
+        match tag {
+          TagEnd::Paragraph => {
+            docs_finish_active_block(&mut blocks, &mut active_block, range.end);
+          },
+          TagEnd::Heading(_) => {
+            docs_finish_active_block(&mut blocks, &mut active_block, range.end);
+            heading_level = None;
+          },
+          TagEnd::BlockQuote(_) => {
+            docs_finish_active_block(&mut blocks, &mut active_block, range.end);
+            block_quote_depth = block_quote_depth.saturating_sub(1);
+          },
+          TagEnd::List(_) => {
+            list_stack.pop();
+          },
+          TagEnd::Item => {
+            docs_finish_active_block(&mut blocks, &mut active_block, range.end);
+            pending_item_marker = None;
+          },
+          TagEnd::CodeBlock => {
+            docs_finish_active_code_block(&mut blocks, &mut active_code_block, range.end);
+          },
+          TagEnd::Emphasis => {
+            inline_state.emphasis_depth = inline_state.emphasis_depth.saturating_sub(1);
+          },
+          TagEnd::Strong => {
+            inline_state.strong_depth = inline_state.strong_depth.saturating_sub(1);
+          },
+          TagEnd::Strikethrough => {
+            inline_state.strikethrough_depth = inline_state.strikethrough_depth.saturating_sub(1);
+          },
+          TagEnd::Link => {
+            link_targets.pop();
+          },
+          _ => {},
+        }
       },
       Event::Text(text) => {
         if let Some(code_block) = active_code_block.as_mut() {
@@ -492,7 +500,12 @@ pub fn parse_markdown_blocks(markdown: &str) -> Vec<DocsBlock> {
       },
       Event::Html(text) | Event::InlineHtml(text) => {
         if active_block.is_none() {
-          docs_begin_active_block(&mut active_block, ActiveBlockKind::Paragraph, None, range.start);
+          docs_begin_active_block(
+            &mut active_block,
+            ActiveBlockKind::Paragraph,
+            None,
+            range.start,
+          );
         }
         if let Some(block) = active_block.as_mut() {
           docs_push_inline_run(
@@ -507,7 +520,12 @@ pub fn parse_markdown_blocks(markdown: &str) -> Vec<DocsBlock> {
       },
       Event::FootnoteReference(text) => {
         if active_block.is_none() {
-          docs_begin_active_block(&mut active_block, ActiveBlockKind::Paragraph, None, range.start);
+          docs_begin_active_block(
+            &mut active_block,
+            ActiveBlockKind::Paragraph,
+            None,
+            range.start,
+          );
         }
         if let Some(block) = active_block.as_mut() {
           docs_push_inline_run(
@@ -628,10 +646,17 @@ mod tests {
       blocks.first(),
       Some(DocsBlock::Heading { level: 1, .. })
     ));
-    assert!(blocks
-      .iter()
-      .any(|block| matches!(block, DocsBlock::ListItem { marker: DocsListMarker::Bullet, .. })));
-    assert!(blocks.iter().any(|block| matches!(block, DocsBlock::CodeFence { .. })));
+    assert!(blocks.iter().any(|block| {
+      matches!(block, DocsBlock::ListItem {
+        marker: DocsListMarker::Bullet,
+        ..
+      })
+    }));
+    assert!(
+      blocks
+        .iter()
+        .any(|block| matches!(block, DocsBlock::CodeFence { .. }))
+    );
     let joined = blocks
       .iter()
       .map(flatten_text)

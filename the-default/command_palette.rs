@@ -65,6 +65,9 @@ pub struct CommandPaletteState {
   /// Renderers should use `query` as-is instead of overriding from the prompt.
   pub prefiltered:   bool,
   pub scroll_offset: usize,
+  /// Display text for the prompt in prefiltered mode (e.g. ":open src/").
+  /// When set, `build_command_palette_ui` uses this as the input value.
+  pub prompt_text:   Option<String>,
 }
 
 impl From<CommandPaletteLayout> for LayoutIntent {
@@ -133,21 +136,25 @@ pub fn build_command_palette_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNod
     });
   }
 
-  let mut input = UiInput::new(
-    "command_palette_input",
+  let display_value = state.prompt_text.clone().unwrap_or_else(|| {
     if state.query.is_empty() {
       String::new()
     } else {
       format!(":{}", state.query)
-    },
-  );
+    }
+  });
+  let mut input = UiInput::new("command_palette_input", display_value.clone());
   input.style = input.style.with_role("command_palette");
   input.style.accent = Some(UiColor::Value(placeholder_color));
-  input.placeholder = Some(":Execute a command…".to_string());
-  input.cursor = if state.query.is_empty() {
+  input.placeholder = if state.prefiltered {
+    Some("Open file…".to_string())
+  } else {
+    Some(":Execute a command…".to_string())
+  };
+  input.cursor = if display_value.is_empty() {
     1
   } else {
-    byte_to_char_idx(&state.query, state.query.len()) + 1
+    byte_to_char_idx(&display_value, display_value.len()) + 1
   };
   let input = UiNode::Input(input);
 
@@ -200,6 +207,7 @@ impl Default for CommandPaletteState {
       max_results:   usize::MAX,
       prefiltered:   false,
       scroll_offset: 0,
+      prompt_text:   None,
     }
   }
 }
@@ -325,6 +333,7 @@ mod tests {
       max_results:   10,
       prefiltered:   false,
       scroll_offset: 0,
+      prompt_text:   None,
     };
 
     let filtered = command_palette_filtered_indices(&state);
@@ -341,6 +350,7 @@ mod tests {
       max_results:   10,
       prefiltered:   false,
       scroll_offset: 0,
+      prompt_text:   None,
     };
 
     assert_eq!(command_palette_default_selected(&state), None);

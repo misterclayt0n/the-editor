@@ -870,12 +870,18 @@ extension UiTreeSnapshot {
             )
         }
 
+        let rawPlaceholder = input?.placeholder ?? ":Execute a command…"
+        let placeholder = rawPlaceholder.hasPrefix(":") ? String(rawPlaceholder.dropFirst()) : rawPlaceholder
+        let isFileMode = rawPlaceholder == "Open file…"
+
         return CommandPaletteSnapshot(
             isOpen: true,
             query: query,
             selectedIndex: list?.selected,
             items: paletteItems,
-            layout: CommandPaletteLayout.from(intent: panel.intent)
+            layout: CommandPaletteLayout.from(intent: panel.intent),
+            placeholder: placeholder,
+            isFileMode: isFileMode
         )
     }
 

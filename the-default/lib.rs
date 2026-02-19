@@ -55,6 +55,7 @@ pub use command_registry::{
   TypableCommand,
   completers,
   handle_command_prompt_key,
+  update_command_palette_for_input,
 };
 pub use command_types::{
   Command,

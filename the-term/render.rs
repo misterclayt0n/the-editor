@@ -4996,6 +4996,7 @@ mod tests {
       max_results:   10,
       prefiltered:   false,
       scroll_offset: 0,
+      prompt_text:   None,
     };
 
     let (filtered, selected) =

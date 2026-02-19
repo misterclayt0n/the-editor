@@ -1496,6 +1496,7 @@ fn close_command_palette<Ctx: DefaultContext>(ctx: &mut Ctx) {
   palette.is_open = false;
   palette.query.clear();
   palette.selected = None;
+  palette.prompt_text = None;
   ctx.request_render();
 }
 

@@ -1141,6 +1141,7 @@ pub fn handle_command_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEve
         palette.query.clear();
         palette.selected = None;
         palette.scroll_offset = 0;
+        palette.prompt_text = None;
       }
       ctx.request_render();
       return true;
@@ -1224,6 +1225,7 @@ pub fn handle_command_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEve
           palette.query.clear();
           palette.selected = None;
           palette.scroll_offset = 0;
+          palette.prompt_text = None;
         }
         ctx.request_render();
         return true;
@@ -1251,6 +1253,7 @@ pub fn handle_command_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEve
             palette.query.clear();
             palette.selected = None;
             palette.scroll_offset = 0;
+            palette.prompt_text = None;
           }
         },
         Err(err) => {
@@ -1382,95 +1385,107 @@ pub fn handle_command_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEve
   }
 
   if should_update {
-    let input = {
+    let (input, cursor) = {
       let prompt = ctx.command_prompt_ref();
-      prompt.input.clone()
+      (prompt.input.clone(), prompt.cursor)
     };
-    let completions = ctx
-      .command_registry_ref()
-      .complete_command_line(ctx, &input);
-
-    let stripped = input.trim_start_matches(':');
-    let (_, _, complete_command_name) = split(stripped);
-
-    // Build palette items from completions when completing arguments.
-    let palette_items: Option<Vec<crate::CommandPaletteItem>> =
-      if !complete_command_name && !completions.is_empty() {
-        Some(
-          completions
-            .iter()
-            .map(|c| {
-              let mut item = crate::CommandPaletteItem::new(&c.text);
-              item.description = c.doc.clone();
-              item
-            })
-            .collect(),
-        )
-      } else {
-        None
-      };
-
-    // Pre-collect command items in case we need to restore them.
-    let command_items: Option<Vec<crate::CommandPaletteItem>> =
-      if complete_command_name && palette_items.is_none() {
-        Some(
-          ctx
-            .command_registry_ref()
-            .all_commands()
-            .into_iter()
-            .map(|cmd| {
-              let mut item = crate::CommandPaletteItem::new(cmd.name);
-              item.description = Some(cmd.doc.to_string());
-              if !cmd.aliases.is_empty() {
-                item.aliases = cmd.aliases.iter().map(|a| a.to_string()).collect();
-              }
-              item
-            })
-            .collect(),
-        )
-      } else {
-        None
-      };
-
-    let prompt = ctx.command_prompt_mut();
-    prompt.completions = completions;
-    prompt.error = None;
-
-    {
-      let palette = ctx.command_palette_mut();
-      if let Some(items) = palette_items {
-        // Argument completion mode: show completions as palette items.
-        palette.max_results = items.len().max(50);
-        palette.items = items;
-        palette.query = String::new();
-        palette.prefiltered = true;
-        palette.scroll_offset = 0;
-        palette.selected = if palette.items.is_empty() {
-          None
-        } else {
-          Some(0)
-        };
-      } else {
-        // Command name completion mode.
-        if let Some(items) = command_items {
-          palette.items = items;
-        }
-        palette.prefiltered = false;
-        palette.scroll_offset = 0;
-        palette.max_results = usize::MAX;
-        palette.query = input;
-        if let Some(sel) = palette.selected {
-          let filtered = command_palette_filtered_indices(palette);
-          if !filtered.contains(&sel) {
-            palette.selected = None;
-          }
-        }
-      }
-    }
-    ctx.request_render();
+    update_command_palette_for_input(ctx, &input);
+    // Restore cursor — key handlers already positioned it correctly.
+    ctx.command_prompt_mut().cursor = cursor;
   }
 
   true
+}
+
+/// Shared logic for updating the command palette after a query change.
+///
+/// Called by both `handle_command_prompt_key` (terminal) and the FFI
+/// `command_palette_set_query` (Swift).  Computes completions, swaps
+/// palette items between command names and argument completions, and
+/// updates `prefiltered` / `scroll_offset` accordingly.
+pub fn update_command_palette_for_input<Ctx: DefaultContext>(ctx: &mut Ctx, input: &str) {
+  let completions = ctx
+    .command_registry_ref()
+    .complete_command_line(ctx, input);
+
+  let stripped = input.trim_start_matches(':');
+  let (_, _, complete_command_name) = split(stripped);
+
+  let palette_items: Option<Vec<crate::CommandPaletteItem>> =
+    if !complete_command_name && !completions.is_empty() {
+      Some(
+        completions
+          .iter()
+          .map(|c| {
+            let mut item = crate::CommandPaletteItem::new(&c.text);
+            item.description = c.doc.clone();
+            item
+          })
+          .collect(),
+      )
+    } else {
+      None
+    };
+
+  let command_items: Option<Vec<crate::CommandPaletteItem>> =
+    if complete_command_name && palette_items.is_none() {
+      Some(
+        ctx
+          .command_registry_ref()
+          .all_commands()
+          .into_iter()
+          .map(|cmd| {
+            let mut item = crate::CommandPaletteItem::new(cmd.name);
+            item.description = Some(cmd.doc.to_string());
+            if !cmd.aliases.is_empty() {
+              item.aliases = cmd.aliases.iter().map(|a| a.to_string()).collect();
+            }
+            item
+          })
+          .collect(),
+      )
+    } else {
+      None
+    };
+
+  let prompt = ctx.command_prompt_mut();
+  prompt.input = input.to_string();
+  prompt.cursor = prompt.input.len();
+  prompt.completions = completions;
+  prompt.error = None;
+
+  {
+    let palette = ctx.command_palette_mut();
+    if let Some(items) = palette_items {
+      palette.max_results = items.len().max(50);
+      palette.items = items;
+      palette.query = String::new();
+      palette.prefiltered = true;
+      palette.scroll_offset = 0;
+      palette.prompt_text = Some(format!(":{}", input.trim_start_matches(':')));
+      palette.selected = if palette.items.is_empty() {
+        None
+      } else {
+        Some(0)
+      };
+    } else {
+      if let Some(items) = command_items {
+        palette.items = items;
+      }
+      palette.prefiltered = false;
+      palette.scroll_offset = 0;
+      palette.max_results = usize::MAX;
+      palette.query = input.to_string();
+      palette.prompt_text = None;
+      if let Some(sel) = palette.selected {
+        let filtered = command_palette_filtered_indices(palette);
+        if !filtered.contains(&sel) {
+          palette.selected = None;
+        }
+      }
+    }
+  }
+  ctx.request_render();
 }
 
 pub mod completers {

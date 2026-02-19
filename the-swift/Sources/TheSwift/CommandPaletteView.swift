@@ -38,13 +38,17 @@ struct CommandPaletteSnapshot {
     let selectedIndex: Int?
     let items: [CommandPaletteItemSnapshot]
     let layout: CommandPaletteLayout
+    let placeholder: String
+    let isFileMode: Bool
 
     static let closed = CommandPaletteSnapshot(
         isOpen: false,
         query: "",
         selectedIndex: nil,
         items: [],
-        layout: .floating
+        layout: .floating,
+        placeholder: "Execute a command…",
+        isFileMode: false
     )
 }
 
@@ -63,7 +67,7 @@ struct CommandPaletteView: View {
             PickerPanel(
                 width: 520,
                 maxListHeight: 220,
-                placeholder: "Execute a command…",
+                placeholder: snapshot.placeholder,
                 fontSize: 18,
                 layout: layout.pickerLayout,
                 pageSize: 12,
@@ -79,10 +83,16 @@ struct CommandPaletteView: View {
                 onClose: onClose,
                 onSelectionChange: onSelect,
                 leadingHeader: {
-                    Rectangle()
-                        .fill(Color.accentColor)
-                        .frame(width: 2, height: 18)
-                        .cornerRadius(1)
+                    if snapshot.isFileMode {
+                        Image(systemName: "folder")
+                            .foregroundStyle(.secondary)
+                            .font(.system(size: 16))
+                    } else {
+                        Rectangle()
+                            .fill(Color.accentColor)
+                            .frame(width: 2, height: 18)
+                            .cornerRadius(1)
+                    }
                 },
                 trailingHeader: { EmptyView() },
                 itemContent: { index, isSelected, isHovered in
@@ -91,6 +101,7 @@ struct CommandPaletteView: View {
                 emptyContent: {
                     Text("No matches")
                         .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity)
                         .padding()
                 }
             )

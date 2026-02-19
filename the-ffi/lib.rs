@@ -77,9 +77,9 @@ use the_default::{
   SearchPromptKind,
   SearchPromptState,
   close_file_picker,
-  command_palette_default_selected,
   command_palette_filtered_indices,
   command_palette_selected_filtered_index,
+  update_command_palette_for_input,
   completion_docs_panel_rect as default_completion_docs_panel_rect,
   completion_panel_rect as default_completion_panel_rect,
   finalize_search,
@@ -96,6 +96,7 @@ use the_default::{
 use the_lib::{
   Tendril,
   app::App as LibApp,
+  command_line::split as command_line_split,
   docs_markdown::{
     DocsBlock,
     DocsInlineKind,
@@ -4133,38 +4134,106 @@ impl App {
     let Some(item_idx) = filtered.get(index).copied() else {
       return false;
     };
-    let command_name = {
-      let palette = &self.active_state_ref().command_palette;
-      palette
+
+    let is_prefiltered = self.active_state_ref().command_palette.prefiltered;
+
+    if is_prefiltered {
+      // Check if the selected item is a directory (ends with '/').
+      let is_dir = self
+        .active_state_ref()
+        .command_palette
         .items
         .get(item_idx)
-        .map(|item| item.title.clone())
-        .unwrap_or_default()
-    };
+        .is_some_and(|item| item.title.ends_with('/'));
 
-    if command_name.is_empty() {
-      return false;
-    }
+      // Apply the completion to the prompt input.
+      let completion = self.command_prompt_ref().completions.get(item_idx).cloned();
+      if let Some(completion) = completion {
+        let prompt = self.command_prompt_mut();
+        let start = completion.range.start.min(prompt.input.len());
+        prompt.input.replace_range(start.., &completion.text);
+        prompt.cursor = prompt.input.len();
+      }
 
-    let registry = self.command_registry_ref() as *const CommandRegistry<App>;
-    let result = unsafe { (&*registry).execute(self, &command_name, "", CommandEvent::Validate) };
+      if is_dir {
+        // Directory — expand instead of executing.
+        let input = self.command_prompt_ref().input.clone();
+        update_command_palette_for_input(self, &input);
+        return true;
+      }
 
-    match result {
-      Ok(()) => {
-        self.set_mode(Mode::Normal);
-        self.command_prompt_mut().clear();
-        let palette = self.command_palette_mut();
-        palette.is_open = false;
-        palette.query.clear();
-        palette.selected = None;
-        self.request_render();
-        true
-      },
-      Err(err) => {
-        self.command_prompt_mut().error = Some(err.to_string());
-        self.request_render();
-        false
-      },
+      // File — execute the full command line.
+      let line = self
+        .command_prompt_ref()
+        .input
+        .trim()
+        .trim_start_matches(':')
+        .to_string();
+      let (command, args, _) = command_line_split(&line);
+
+      if command.is_empty() {
+        return false;
+      }
+
+      let registry = self.command_registry_ref() as *const CommandRegistry<App>;
+      let result =
+        unsafe { (&*registry).execute(self, command, args, CommandEvent::Validate) };
+
+      match result {
+        Ok(()) => {
+          self.set_mode(Mode::Normal);
+          self.command_prompt_mut().clear();
+          let palette = self.command_palette_mut();
+          palette.is_open = false;
+          palette.query.clear();
+          palette.selected = None;
+          palette.prompt_text = None;
+          self.request_render();
+          true
+        },
+        Err(err) => {
+          self.command_prompt_mut().error = Some(err.to_string());
+          self.request_render();
+          false
+        },
+      }
+    } else {
+      // Normal mode — item title is the command name.
+      let command_name = {
+        let palette = &self.active_state_ref().command_palette;
+        palette
+          .items
+          .get(item_idx)
+          .map(|item| item.title.clone())
+          .unwrap_or_default()
+      };
+
+      if command_name.is_empty() {
+        return false;
+      }
+
+      let registry = self.command_registry_ref() as *const CommandRegistry<App>;
+      let result =
+        unsafe { (&*registry).execute(self, &command_name, "", CommandEvent::Validate) };
+
+      match result {
+        Ok(()) => {
+          self.set_mode(Mode::Normal);
+          self.command_prompt_mut().clear();
+          let palette = self.command_palette_mut();
+          palette.is_open = false;
+          palette.query.clear();
+          palette.selected = None;
+          palette.prompt_text = None;
+          self.request_render();
+          true
+        },
+        Err(err) => {
+          self.command_prompt_mut().error = Some(err.to_string());
+          self.request_render();
+          false
+        },
+      }
     }
   }
 
@@ -4178,6 +4247,7 @@ impl App {
     palette.is_open = false;
     palette.query.clear();
     palette.selected = None;
+    palette.prompt_text = None;
     self.request_render();
     true
   }
@@ -4186,21 +4256,7 @@ impl App {
     if self.activate(id).is_none() {
       return false;
     }
-    let input = query.to_string();
-    let completions = self
-      .command_registry_ref()
-      .complete_command_line(self, &input);
-
-    let prompt = self.command_prompt_mut();
-    prompt.input = input.clone();
-    prompt.cursor = prompt.input.len();
-    prompt.completions = completions;
-    prompt.error = None;
-
-    let palette = self.command_palette_mut();
-    palette.query = input;
-    palette.selected = command_palette_default_selected(palette);
-    self.request_render();
+    update_command_palette_for_input(self, query);
     true
   }
 

@@ -100,6 +100,7 @@ pub use file_picker::{
   set_file_picker_wake_sender,
   set_picker_visible_rows,
   submit_file_picker,
+  workspace_root,
 };
 pub use input::{
   Key,

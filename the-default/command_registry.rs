@@ -6,6 +6,10 @@ use std::{
   fmt,
   fs::OpenOptions,
   ops::RangeFrom,
+  path::{
+    Path,
+    PathBuf,
+  },
   sync::Arc,
 };
 
@@ -577,6 +581,18 @@ impl<Ctx: DefaultContext + 'static> CommandRegistry<Ctx> {
         ..Signature::DEFAULT
       },
     ));
+
+    self.register(TypableCommand::new(
+      "open",
+      &["o", "e", "edit"],
+      "Open a file",
+      cmd_open::<Ctx>,
+      CommandCompleter::all(completers::filename),
+      Signature {
+        positionals: (1, Some(1)),
+        ..Signature::DEFAULT
+      },
+    ));
   }
 }
 
@@ -589,6 +605,25 @@ where
   }
 }
 
+fn workspace_root_for_ctx<Ctx: DefaultContext>(ctx: &Ctx) -> PathBuf {
+  let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+  let start = ctx
+    .file_path()
+    .map(|p| {
+      let full = if p.is_relative() { cwd.join(p) } else { p.to_path_buf() };
+      if full.is_dir() {
+        full
+      } else {
+        full
+          .parent()
+          .map(Path::to_path_buf)
+          .unwrap_or_else(|| cwd.clone())
+      }
+    })
+    .unwrap_or_else(|| cwd);
+  crate::file_picker::workspace_root(&start)
+}
+
 fn cmd_quit<Ctx: DefaultContext>(ctx: &mut Ctx, _args: Args, event: CommandEvent) -> CommandResult {
   if event != CommandEvent::Validate {
     return Ok(());
@@ -596,6 +631,31 @@ fn cmd_quit<Ctx: DefaultContext>(ctx: &mut Ctx, _args: Args, event: CommandEvent
 
   ctx.dispatch().pre_on_action(ctx, Command::Quit);
   Ok(())
+}
+
+fn cmd_open<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  args: Args,
+  event: CommandEvent,
+) -> CommandResult {
+  if event != CommandEvent::Validate {
+    return Ok(());
+  }
+
+  let path_str = args
+    .first()
+    .ok_or_else(|| CommandError::new("usage: :open <path>"))?;
+  let path = Path::new(path_str);
+
+  let resolved = if path.is_absolute() {
+    path.to_path_buf()
+  } else {
+    workspace_root_for_ctx(ctx).join(path)
+  };
+
+  ctx
+    .open_file(&resolved)
+    .map_err(|err| CommandError::new(format!("failed to open '{}': {err}", resolved.display())))
 }
 
 fn cmd_write<Ctx: DefaultContext>(
@@ -1080,11 +1140,57 @@ pub fn handle_command_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEve
         palette.is_open = false;
         palette.query.clear();
         palette.selected = None;
+        palette.scroll_offset = 0;
       }
       ctx.request_render();
       return true;
     },
     Key::Enter | Key::NumpadEnter => {
+      // If a directory is selected in argument-completion mode, expand it
+      // into the input instead of executing the command.
+      let expand_dir = {
+        let palette = ctx.command_palette();
+        if palette.prefiltered {
+          palette
+            .selected
+            .and_then(|sel| palette.items.get(sel))
+            .is_some_and(|item| item.title.ends_with('/'))
+        } else {
+          false
+        }
+      };
+
+      if expand_dir {
+        let completion = {
+          let prompt = ctx.command_prompt_ref();
+          let sel = ctx.command_palette().selected.unwrap_or(0);
+          prompt.completions.get(sel).cloned()
+        };
+        if let Some(completion) = completion {
+          let prompt = ctx.command_prompt_mut();
+          let start = completion.range.start.min(prompt.input.len());
+          prompt.input.replace_range(start.., &completion.text);
+          prompt.cursor = prompt.input.len();
+          should_update = true;
+        }
+        // Fall through to should_update below instead of executing.
+      } else {
+
+      // When in argument-completion mode, apply the selected completion
+      // to the input so the command receives the selected path, not the
+      // directory prefix currently shown in the prompt.
+      if ctx.command_palette().prefiltered {
+        if let Some(sel) = ctx.command_palette().selected {
+          let completion = ctx.command_prompt_ref().completions.get(sel).cloned();
+          if let Some(completion) = completion {
+            let prompt = ctx.command_prompt_mut();
+            let start = completion.range.start.min(prompt.input.len());
+            prompt.input.replace_range(start.., &completion.text);
+            prompt.cursor = prompt.input.len();
+          }
+        }
+      }
+
       let mut line = {
         let prompt = ctx.command_prompt_ref();
         prompt.input.trim().trim_start_matches(':').to_string()
@@ -1117,6 +1223,7 @@ pub fn handle_command_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEve
           palette.is_open = false;
           palette.query.clear();
           palette.selected = None;
+          palette.scroll_offset = 0;
         }
         ctx.request_render();
         return true;
@@ -1143,6 +1250,7 @@ pub fn handle_command_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEve
             palette.is_open = false;
             palette.query.clear();
             palette.selected = None;
+            palette.scroll_offset = 0;
           }
         },
         Err(err) => {
@@ -1154,6 +1262,7 @@ pub fn handle_command_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEve
 
       ctx.request_render();
       return true;
+      } // end else (not expand_dir)
     },
     Key::Backspace => {
       let prompt = ctx.command_prompt_mut();
@@ -1172,30 +1281,35 @@ pub fn handle_command_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEve
           .selected
           .and_then(|sel| filtered.iter().position(|&idx| idx == sel))
           .unwrap_or(0);
-        let next = if current == 0 {
-          filtered.len() - 1
-        } else {
-          current - 1
-        };
+        let next = current.saturating_sub(1);
         palette.selected = Some(filtered[next]);
+        // Keep scroll offset stable: only scroll if selection is above viewport.
+        if next < palette.scroll_offset {
+          palette.scroll_offset = next;
+        }
         ctx.request_render();
       }
       return true;
     },
     Key::Down => {
+      const VISIBLE_ITEMS: usize = 10;
       let filtered = command_palette_filtered_indices(ctx.command_palette());
       if !filtered.is_empty() {
         let palette = ctx.command_palette_mut();
         let current = palette
           .selected
           .and_then(|sel| filtered.iter().position(|&idx| idx == sel))
-          .unwrap_or(usize::MAX);
+          .unwrap_or(0);
         let next = if current >= filtered.len() - 1 {
-          0
+          filtered.len() - 1
         } else {
           current + 1
         };
         palette.selected = Some(filtered[next]);
+        // Keep scroll offset stable: only scroll if selection is below viewport.
+        if next >= palette.scroll_offset + VISIBLE_ITEMS {
+          palette.scroll_offset = next + 1 - VISIBLE_ITEMS;
+        }
         ctx.request_render();
       }
       return true;
@@ -1230,7 +1344,12 @@ pub fn handle_command_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEve
     Key::Tab => {
       let apply = {
         let prompt = ctx.command_prompt_ref();
-        prompt.completions.first().cloned()
+        let palette = ctx.command_palette();
+        if let Some(sel) = palette.selected {
+          prompt.completions.get(sel).cloned()
+        } else {
+          prompt.completions.first().cloned()
+        }
       };
 
       if let Some(completion) = apply {
@@ -1261,20 +1380,81 @@ pub fn handle_command_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEve
     let completions = ctx
       .command_registry_ref()
       .complete_command_line(ctx, &input);
-    let input = {
-      let prompt = ctx.command_prompt_ref();
-      prompt.input.clone()
-    };
+
+    let stripped = input.trim_start_matches(':');
+    let (_, _, complete_command_name) = split(stripped);
+
+    // Build palette items from completions when completing arguments.
+    let palette_items: Option<Vec<crate::CommandPaletteItem>> =
+      if !complete_command_name && !completions.is_empty() {
+        Some(
+          completions
+            .iter()
+            .map(|c| {
+              let mut item = crate::CommandPaletteItem::new(&c.text);
+              item.description = c.doc.clone();
+              item
+            })
+            .collect(),
+        )
+      } else {
+        None
+      };
+
+    // Pre-collect command items in case we need to restore them.
+    let command_items: Option<Vec<crate::CommandPaletteItem>> =
+      if complete_command_name && palette_items.is_none() {
+        Some(
+          ctx
+            .command_registry_ref()
+            .all_commands()
+            .into_iter()
+            .map(|cmd| {
+              let mut item = crate::CommandPaletteItem::new(cmd.name);
+              item.description = Some(cmd.doc.to_string());
+              if !cmd.aliases.is_empty() {
+                item.aliases = cmd.aliases.iter().map(|a| a.to_string()).collect();
+              }
+              item
+            })
+            .collect(),
+        )
+      } else {
+        None
+      };
+
     let prompt = ctx.command_prompt_mut();
     prompt.completions = completions;
     prompt.error = None;
+
     {
       let palette = ctx.command_palette_mut();
-      palette.query = input;
-      if let Some(sel) = palette.selected {
-        let filtered = command_palette_filtered_indices(palette);
-        if !filtered.contains(&sel) {
-          palette.selected = None;
+      if let Some(items) = palette_items {
+        // Argument completion mode: show completions as palette items.
+        palette.max_results = items.len().max(50);
+        palette.items = items;
+        palette.query = String::new();
+        palette.prefiltered = true;
+        palette.scroll_offset = 0;
+        palette.selected = if palette.items.is_empty() {
+          None
+        } else {
+          Some(0)
+        };
+      } else {
+        // Command name completion mode.
+        if let Some(items) = command_items {
+          palette.items = items;
+        }
+        palette.prefiltered = false;
+        palette.scroll_offset = 0;
+        palette.max_results = 10;
+        palette.query = input;
+        if let Some(sel) = palette.selected {
+          let filtered = command_palette_filtered_indices(palette);
+          if !filtered.contains(&sel) {
+            palette.selected = None;
+          }
         }
       }
     }
@@ -1402,5 +1582,87 @@ pub mod completers {
         }
       })
       .collect()
+  }
+
+  pub fn filename<Ctx: DefaultContext>(ctx: &Ctx, input: &str) -> Vec<Completion> {
+    use std::path::Path;
+
+    let base = super::workspace_root_for_ctx(ctx);
+
+    let (search_dir, file_prefix) = if input.is_empty() {
+      (base.clone(), "")
+    } else {
+      let input_path = Path::new(input);
+      if input.ends_with('/') {
+        (base.join(input_path), "")
+      } else {
+        let parent = input_path.parent().unwrap_or(Path::new(""));
+        let file_name = input_path
+          .file_name()
+          .and_then(|n| n.to_str())
+          .unwrap_or("");
+        (base.join(parent), file_name)
+      }
+    };
+
+    let Ok(read_dir) = std::fs::read_dir(&search_dir) else {
+      return Vec::new();
+    };
+
+    let prefix_lower = file_prefix.to_lowercase();
+    let mut completions = Vec::new();
+
+    for entry in read_dir.flatten() {
+      let name = entry.file_name();
+      let Some(name_str) = name.to_str() else {
+        continue;
+      };
+
+      if name_str.starts_with('.') && !file_prefix.starts_with('.') {
+        continue;
+      }
+
+      if !prefix_lower.is_empty() && !name_str.to_lowercase().contains(&prefix_lower) {
+        continue;
+      }
+
+      let is_dir = entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
+      let display = if is_dir {
+        format!("{}/", name_str)
+      } else {
+        name_str.to_string()
+      };
+
+      let dir_prefix = if input.is_empty() {
+        String::new()
+      } else if input.ends_with('/') {
+        input.to_string()
+      } else {
+        input
+          .rfind('/')
+          .map(|pos| input[..=pos].to_string())
+          .unwrap_or_default()
+      };
+
+      completions.push(Completion {
+        range: 0..,
+        text:  format!("{}{}", dir_prefix, display),
+        doc:   if is_dir {
+          Some("directory".to_string())
+        } else {
+          None
+        },
+      });
+    }
+
+    completions.sort_by(|a, b| {
+      let a_dir = a.text.ends_with('/');
+      let b_dir = b.text.ends_with('/');
+      b_dir
+        .cmp(&a_dir)
+        .then_with(|| a.text.cmp(&b.text))
+    });
+
+    completions
   }
 }

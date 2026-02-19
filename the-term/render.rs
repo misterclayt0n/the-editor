@@ -4171,9 +4171,11 @@ fn build_term_command_palette_list_overlay(ctx: &Ctx) -> Option<UiNode> {
     return None;
   }
 
-  let (query, _) = command_palette_prompt_query_and_cursor(ctx);
   let mut filtered_state = state.clone();
-  filtered_state.query = query.to_string();
+  if !state.prefiltered {
+    let (query, _) = command_palette_prompt_query_and_cursor(ctx);
+    filtered_state.query = query.to_string();
+  }
   let (filtered, selected) = term_command_palette_filtered_selection(&filtered_state)?;
   const MAX_VISIBLE_ITEMS: usize = 10;
   let items: Vec<UiListItem> = filtered
@@ -4202,7 +4204,7 @@ fn build_term_command_palette_list_overlay(ctx: &Ctx) -> Option<UiNode> {
   let mut list = UiList::new("command_palette_list", items);
   list.fill_width = false;
   list.selected = selected;
-  list.scroll = 0;
+  list.scroll = state.scroll_offset;
   list.max_visible = Some(MAX_VISIBLE_ITEMS);
   list.style = list.style.with_role("completion");
   list.style.accent = Some(UiColor::Token(UiColorToken::SelectedBg));
@@ -4244,11 +4246,11 @@ fn build_term_command_palette_list_overlay(ctx: &Ctx) -> Option<UiNode> {
 
 fn build_term_command_palette_docs_overlay(ctx: &Ctx) -> Option<UiNode> {
   let state = &ctx.command_palette;
-  if !state.is_open {
+  if !state.is_open || state.prefiltered {
     return None;
   }
-  let (query, _) = command_palette_prompt_query_and_cursor(ctx);
   let mut filtered_state = state.clone();
+  let (query, _) = command_palette_prompt_query_and_cursor(ctx);
   filtered_state.query = query.to_string();
   let (filtered, selected_filtered) = term_command_palette_filtered_selection(&filtered_state)?;
   let selected_index = *filtered.get(selected_filtered.unwrap_or(0))?;
@@ -5014,14 +5016,16 @@ mod tests {
   #[test]
   fn term_command_palette_selection_stays_empty_without_explicit_selection() {
     let state = CommandPaletteState {
-      is_open:     true,
-      query:       String::new(),
-      selected:    None,
-      items:       vec![
+      is_open:       true,
+      query:         String::new(),
+      selected:      None,
+      items:         vec![
         CommandPaletteItem::new("help"),
         CommandPaletteItem::new("quit"),
       ],
-      max_results: 10,
+      max_results:   10,
+      prefiltered:   false,
+      scroll_offset: 0,
     };
 
     let (filtered, selected) =

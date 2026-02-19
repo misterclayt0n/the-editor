@@ -885,7 +885,7 @@ fn picker_root<Ctx: DefaultContext>(ctx: &Ctx) -> PathBuf {
   workspace_root(&start)
 }
 
-fn workspace_root(start: &Path) -> PathBuf {
+pub fn workspace_root(start: &Path) -> PathBuf {
   let mut current = start.to_path_buf();
   loop {
     if has_workspace_marker(&current) {
@@ -901,7 +901,7 @@ fn workspace_root(start: &Path) -> PathBuf {
   }
 }
 
-fn has_workspace_marker(path: &Path) -> bool {
+pub fn has_workspace_marker(path: &Path) -> bool {
   [".git", ".jj", ".hg", ".pijul", ".svn"]
     .iter()
     .any(|marker| path.join(marker).exists())

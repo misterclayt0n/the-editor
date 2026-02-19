@@ -95,6 +95,15 @@ use the_default::{
 use the_lib::{
   Tendril,
   app::App as LibApp,
+  docs_markdown::{
+    DocsBlock,
+    DocsInlineKind,
+    DocsInlineRun,
+    DocsListMarker,
+    DocsSemanticKind,
+    language_filename_hints,
+    parse_markdown_blocks,
+  },
   diagnostics::{
     Diagnostic,
     DiagnosticCounts,
@@ -2115,6 +2124,7 @@ fn completion_item_sort_key(item: &LspCompletionItem) -> String {
 struct DocsStyledTextRun {
   text:  String,
   style: LibStyle,
+  kind:  DocsSemanticKind,
 }
 
 #[derive(Clone, Copy)]
@@ -2162,6 +2172,7 @@ struct DocsRenderSnapshot {
 #[derive(Debug, Serialize)]
 struct DocsRunSnapshot {
   text:  String,
+  kind:  DocsSemanticKind,
   style: DocsStyleSnapshot,
 }
 
@@ -2223,199 +2234,47 @@ fn docs_render_styles(theme: &Theme, base: LibStyle) -> DocsRenderStyles {
   styles
 }
 
-fn docs_push_styled_run(runs: &mut Vec<DocsStyledTextRun>, text: String, style: LibStyle) {
+fn docs_push_styled_run(
+  runs: &mut Vec<DocsStyledTextRun>,
+  text: String,
+  style: LibStyle,
+  kind: DocsSemanticKind,
+) {
   if text.is_empty() {
     return;
   }
   if let Some(last) = runs.last_mut()
     && last.style == style
+    && last.kind == kind
   {
     last.text.push_str(&text);
     return;
   }
-  runs.push(DocsStyledTextRun { text, style });
+  runs.push(DocsStyledTextRun { text, style, kind });
 }
 
-fn docs_parse_markdown_link(chars: &[char], start: usize) -> Option<(usize, String)> {
-  if chars.get(start).copied() != Some('[') {
-    return None;
-  }
-  let mut close_bracket = start + 1;
-  while close_bracket < chars.len() && chars[close_bracket] != ']' {
-    close_bracket += 1;
-  }
-  if close_bracket >= chars.len() || chars.get(close_bracket + 1).copied() != Some('(') {
-    return None;
-  }
-  let mut close_paren = close_bracket + 2;
-  while close_paren < chars.len() && chars[close_paren] != ')' {
-    close_paren += 1;
-  }
-  if close_paren >= chars.len() {
-    return None;
-  }
-  let label: String = chars[start + 1..close_bracket].iter().collect();
-  Some((close_paren + 1, label))
-}
-
-fn docs_parse_inline_markdown_runs(
-  text: &str,
+fn docs_runs_from_inline(
+  inline_runs: &[DocsInlineRun],
   styles: &DocsRenderStyles,
-  base: LibStyle,
+  base_style: LibStyle,
+  default_kind: DocsSemanticKind,
 ) -> Vec<DocsStyledTextRun> {
-  let chars: Vec<char> = text.chars().collect();
   let mut runs = Vec::new();
-  let mut buf = String::new();
-  let mut idx = 0usize;
-  let mut bold = false;
-  let mut italic = false;
-
-  let flush = |runs: &mut Vec<DocsStyledTextRun>, buf: &mut String, bold: bool, italic: bool| {
-    if buf.is_empty() {
-      return;
-    }
-    let mut style = base;
-    if bold {
+  for inline in inline_runs {
+    let (kind, mut style) = match inline.kind {
+      DocsInlineKind::Text => (default_kind, base_style),
+      DocsInlineKind::Link => (DocsSemanticKind::Link, base_style.patch(styles.link)),
+      DocsInlineKind::InlineCode => (DocsSemanticKind::InlineCode, base_style.patch(styles.code)),
+    };
+    if inline.strong {
       style = style.add_modifier(LibModifier::BOLD);
     }
-    if italic {
+    if inline.emphasis {
       style = style.add_modifier(LibModifier::ITALIC);
     }
-    docs_push_styled_run(runs, std::mem::take(buf), style);
-  };
-
-  while idx < chars.len() {
-    if chars[idx] == '`' {
-      flush(&mut runs, &mut buf, bold, italic);
-      let mut end = idx + 1;
-      while end < chars.len() && chars[end] != '`' {
-        end += 1;
-      }
-      if end < chars.len() {
-        let literal: String = chars[idx + 1..end].iter().collect();
-        docs_push_styled_run(&mut runs, literal, styles.code);
-        idx = end + 1;
-        continue;
-      }
-      buf.push(chars[idx]);
-      idx += 1;
-      continue;
-    }
-
-    if let Some((next, label)) = docs_parse_markdown_link(&chars, idx) {
-      flush(&mut runs, &mut buf, bold, italic);
-      let mut style = base;
-      if bold {
-        style = style.add_modifier(LibModifier::BOLD);
-      }
-      if italic {
-        style = style.add_modifier(LibModifier::ITALIC);
-      }
-      docs_push_styled_run(&mut runs, label, style.patch(styles.link));
-      idx = next;
-      continue;
-    }
-
-    if idx + 1 < chars.len() && chars[idx] == '*' && chars[idx + 1] == '*' {
-      flush(&mut runs, &mut buf, bold, italic);
-      bold = !bold;
-      idx += 2;
-      continue;
-    }
-
-    if chars[idx] == '*' {
-      flush(&mut runs, &mut buf, bold, italic);
-      italic = !italic;
-      idx += 1;
-      continue;
-    }
-
-    buf.push(chars[idx]);
-    idx += 1;
+    docs_push_styled_run(&mut runs, inline.text.clone(), style, kind);
   }
-
-  flush(&mut runs, &mut buf, bold, italic);
   runs
-}
-
-fn docs_parse_numbered_list_prefix(line: &str) -> Option<(String, &str)> {
-  let bytes = line.as_bytes();
-  let mut idx = 0usize;
-  while idx < bytes.len() && bytes[idx].is_ascii_digit() {
-    idx += 1;
-  }
-  if idx == 0 || idx + 1 >= bytes.len() || bytes[idx] != b'.' || bytes[idx + 1] != b' ' {
-    return None;
-  }
-  let marker = line[..=idx].to_string();
-  let rest = &line[idx + 2..];
-  Some((marker, rest))
-}
-
-fn docs_parse_heading(line: &str) -> Option<(usize, &str)> {
-  let mut level = 0usize;
-  for ch in line.chars() {
-    if ch == '#' {
-      level += 1;
-    } else {
-      break;
-    }
-  }
-  if level == 0 || level > 6 {
-    return None;
-  }
-  line
-    .strip_prefix(&"#".repeat(level))
-    .and_then(|rest| rest.strip_prefix(' '))
-    .map(|rest| (level, rest))
-}
-
-fn docs_is_markdown_rule(line: &str) -> bool {
-  let chars: Vec<char> = line.chars().filter(|ch| !ch.is_whitespace()).collect();
-  if chars.len() < 3 {
-    return false;
-  }
-  chars.iter().all(|ch| matches!(ch, '-' | '_' | '*'))
-}
-
-fn docs_parse_markdown_fence_language(trimmed_line: &str) -> Option<String> {
-  let fence = trimmed_line.strip_prefix("```")?;
-  let token = fence
-    .trim()
-    .split(|ch: char| ch.is_whitespace() || matches!(ch, ',' | '{' | '}'))
-    .next()
-    .unwrap_or_default()
-    .trim_matches('.')
-    .to_ascii_lowercase();
-  (!token.is_empty()).then_some(token)
-}
-
-fn docs_language_filename_hints(marker: &str) -> Vec<String> {
-  let marker = marker.trim().trim_matches('.').to_ascii_lowercase();
-  let mut out = Vec::new();
-  let mut push_unique = |value: &str| {
-    if value.is_empty() || out.iter().any(|existing| existing == value) {
-      return;
-    }
-    out.push(value.to_string());
-  };
-
-  push_unique(marker.as_str());
-  match marker.as_str() {
-    "rust" => push_unique("rs"),
-    "javascript" | "js" => push_unique("js"),
-    "typescript" | "ts" => push_unique("ts"),
-    "python" | "py" => push_unique("py"),
-    "shell" | "bash" | "sh" | "zsh" => push_unique("sh"),
-    "c++" | "cpp" | "cc" | "cxx" => push_unique("cpp"),
-    "c#" | "csharp" => push_unique("cs"),
-    "objective-c" | "objc" => push_unique("m"),
-    "objective-cpp" | "objcpp" => push_unique("mm"),
-    "markdown" => push_unique("md"),
-    "yaml" => push_unique("yml"),
-    _ => {},
-  }
-  out
 }
 
 fn docs_preview_highlight_at(
@@ -2519,27 +2378,37 @@ fn docs_render_code_lines_with_active_style(
     let mut runs = Vec::new();
     let mut piece = String::new();
     let mut run_style = base_style;
+    let mut run_kind = DocsSemanticKind::Code;
     let mut byte_idx = line_start_byte;
 
     for ch in line.chars() {
       let byte_end = byte_idx.saturating_add(ch.len_utf8());
       let mut style = base_style;
+      let mut kind = DocsSemanticKind::Code;
       if docs_byte_range_overlaps_active(byte_idx, byte_end, active_range) {
         style = style.patch(active_parameter_style);
+        kind = DocsSemanticKind::ActiveParameter;
       }
-      if style != run_style && !piece.is_empty() {
-        docs_push_styled_run(&mut runs, std::mem::take(&mut piece), run_style);
+      if (style != run_style || kind != run_kind) && !piece.is_empty() {
+        docs_push_styled_run(
+          &mut runs,
+          std::mem::take(&mut piece),
+          run_style,
+          run_kind,
+        );
       }
       run_style = style;
+      run_kind = kind;
       piece.push(ch);
       byte_idx = byte_end;
     }
 
-    docs_push_styled_run(&mut runs, piece, run_style);
+    docs_push_styled_run(&mut runs, piece, run_style, run_kind);
     if runs.is_empty() {
       runs.push(DocsStyledTextRun {
         text:  String::new(),
         style: base_style,
+        kind:  DocsSemanticKind::Code,
       });
     }
     rendered.push(runs);
@@ -2588,7 +2457,7 @@ fn docs_highlighted_code_block_lines(
       .or_else(|| loader.language_for_scope(marker_lower.as_str()))
       .or_else(|| loader.language_for_filename(Path::new(marker)))
       .or_else(|| {
-        docs_language_filename_hints(marker)
+        language_filename_hints(marker)
           .into_iter()
           .find_map(|hint| loader.language_for_filename(Path::new(format!("tmp.{hint}").as_str())))
       })
@@ -2626,6 +2495,7 @@ fn docs_highlighted_code_block_lines(
     let mut runs = Vec::new();
     let mut piece = String::new();
     let mut active_style = styles.code;
+    let mut active_kind = DocsSemanticKind::Code;
     let mut byte_idx = line_start_byte;
 
     for ch in line.chars() {
@@ -2633,21 +2503,30 @@ fn docs_highlighted_code_block_lines(
       let mut style = docs_preview_highlight_at(&highlights, byte_idx)
         .map(|highlight| styles.code.patch(theme.highlight(highlight)))
         .unwrap_or(styles.code);
+      let mut kind = DocsSemanticKind::Code;
       if docs_byte_range_overlaps_active(byte_idx, byte_end, active_range.as_ref()) {
         style = style.patch(styles.active_parameter);
+        kind = DocsSemanticKind::ActiveParameter;
       }
-      if style != active_style && !piece.is_empty() {
-        docs_push_styled_run(&mut runs, std::mem::take(&mut piece), active_style);
+      if (style != active_style || kind != active_kind) && !piece.is_empty() {
+        docs_push_styled_run(
+          &mut runs,
+          std::mem::take(&mut piece),
+          active_style,
+          active_kind,
+        );
       }
       active_style = style;
+      active_kind = kind;
       piece.push(ch);
       byte_idx = byte_end;
     }
-    docs_push_styled_run(&mut runs, piece, active_style);
+    docs_push_styled_run(&mut runs, piece, active_style, active_kind);
     if runs.is_empty() {
       runs.push(DocsStyledTextRun {
         text:  String::new(),
         style: styles.code,
+        kind:  DocsSemanticKind::Code,
       });
     }
     rendered.push(runs);
@@ -2668,134 +2547,87 @@ fn docs_markdown_lines(
   loader: Option<&Loader>,
   language_hint: Option<&str>,
 ) -> Vec<Vec<DocsStyledTextRun>> {
-  fn flush_paragraph(
-    lines: &mut Vec<Vec<DocsStyledTextRun>>,
-    paragraph_runs: &mut Vec<DocsStyledTextRun>,
-  ) {
-    if paragraph_runs.is_empty() {
-      return;
-    }
-    lines.push(std::mem::take(paragraph_runs));
-  }
-
   let mut lines = Vec::new();
-  let mut in_code_block = false;
-  let mut code_block_language: Option<String> = None;
-  let mut code_block_lines: Vec<String> = Vec::new();
-  let mut paragraph_runs: Vec<DocsStyledTextRun> = Vec::new();
-
-  for raw_line in markdown.lines() {
-    let normalized = raw_line.replace('\t', "  ");
-    let trimmed = normalized.trim_start();
-
-    if trimmed.starts_with("```") {
-      flush_paragraph(&mut lines, &mut paragraph_runs);
-      if in_code_block {
+  for block in parse_markdown_blocks(markdown) {
+    match block {
+      DocsBlock::Paragraph(inline_runs) => {
+        lines.push(docs_runs_from_inline(
+          &inline_runs,
+          styles,
+          styles.base,
+          DocsSemanticKind::Body,
+        ));
+      },
+      DocsBlock::Heading { level, runs } => {
+        let level_idx = level.saturating_sub(1).min(5) as usize;
+        lines.push(docs_runs_from_inline(
+          &runs,
+          styles,
+          styles.heading[level_idx],
+          DocsSemanticKind::from_heading_level(level),
+        ));
+      },
+      DocsBlock::ListItem {
+        marker,
+        runs: inline_runs,
+      } => {
+        let marker_text = match marker {
+          DocsListMarker::Bullet => "• ".to_string(),
+          DocsListMarker::Ordered(marker) => format!("{marker} "),
+        };
+        let mut runs = Vec::new();
+        docs_push_styled_run(
+          &mut runs,
+          marker_text,
+          styles.bullet,
+          DocsSemanticKind::ListMarker,
+        );
+        runs.extend(docs_runs_from_inline(
+          &inline_runs,
+          styles,
+          styles.base,
+          DocsSemanticKind::Body,
+        ));
+        lines.push(runs);
+      },
+      DocsBlock::Quote(inline_runs) => {
+        let mut runs = Vec::new();
+        docs_push_styled_run(
+          &mut runs,
+          "│ ".to_string(),
+          styles.quote,
+          DocsSemanticKind::QuoteMarker,
+        );
+        runs.extend(docs_runs_from_inline(
+          &inline_runs,
+          styles,
+          styles.quote,
+          DocsSemanticKind::QuoteText,
+        ));
+        lines.push(runs);
+      },
+      DocsBlock::CodeFence {
+        language,
+        lines: code_lines,
+      } => {
         lines.extend(docs_highlighted_code_block_lines(
-          &code_block_lines,
+          &code_lines,
           styles,
           theme,
           loader,
-          code_block_language.as_deref(),
+          language.as_deref(),
           language_hint,
         ));
-        code_block_lines.clear();
-        code_block_language = None;
-        in_code_block = false;
-      } else {
-        code_block_language = docs_parse_markdown_fence_language(trimmed);
-        in_code_block = true;
-      }
-      continue;
+      },
+      DocsBlock::Rule => {
+        lines.push(vec![DocsStyledTextRun {
+          text:  "───".to_string(),
+          style: styles.rule,
+          kind:  DocsSemanticKind::Rule,
+        }]);
+      },
+      DocsBlock::BlankLine => lines.push(Vec::new()),
     }
-
-    if in_code_block {
-      code_block_lines.push(normalized);
-      continue;
-    }
-
-    if trimmed.is_empty() {
-      flush_paragraph(&mut lines, &mut paragraph_runs);
-      lines.push(Vec::new());
-      continue;
-    }
-
-    if docs_is_markdown_rule(trimmed) {
-      flush_paragraph(&mut lines, &mut paragraph_runs);
-      lines.push(vec![DocsStyledTextRun {
-        text:  "───".to_string(),
-        style: styles.rule,
-      }]);
-      continue;
-    }
-
-    if let Some((level, heading)) = docs_parse_heading(trimmed) {
-      flush_paragraph(&mut lines, &mut paragraph_runs);
-      let style = styles.heading[level.saturating_sub(1)];
-      lines.push(docs_parse_inline_markdown_runs(heading, styles, style));
-      continue;
-    }
-
-    if let Some(stripped) = trimmed
-      .strip_prefix("- ")
-      .or_else(|| trimmed.strip_prefix("* "))
-      .or_else(|| trimmed.strip_prefix("+ "))
-    {
-      flush_paragraph(&mut lines, &mut paragraph_runs);
-      let mut runs = Vec::new();
-      docs_push_styled_run(&mut runs, "• ".to_string(), styles.bullet);
-      runs.extend(docs_parse_inline_markdown_runs(
-        stripped,
-        styles,
-        styles.base,
-      ));
-      lines.push(runs);
-      continue;
-    }
-
-    if let Some((marker, rest)) = docs_parse_numbered_list_prefix(trimmed) {
-      flush_paragraph(&mut lines, &mut paragraph_runs);
-      let mut runs = Vec::new();
-      docs_push_styled_run(&mut runs, format!("{marker} "), styles.bullet);
-      runs.extend(docs_parse_inline_markdown_runs(rest, styles, styles.base));
-      lines.push(runs);
-      continue;
-    }
-
-    if let Some(quoted) = trimmed.strip_prefix('>') {
-      flush_paragraph(&mut lines, &mut paragraph_runs);
-      let mut runs = Vec::new();
-      docs_push_styled_run(&mut runs, "│ ".to_string(), styles.quote);
-      runs.extend(docs_parse_inline_markdown_runs(
-        quoted.trim_start(),
-        styles,
-        styles.quote,
-      ));
-      lines.push(runs);
-      continue;
-    }
-
-    if !paragraph_runs.is_empty() {
-      docs_push_styled_run(&mut paragraph_runs, " ".to_string(), styles.base);
-    }
-    paragraph_runs.extend(docs_parse_inline_markdown_runs(
-      trimmed,
-      styles,
-      styles.base,
-    ));
-  }
-
-  flush_paragraph(&mut lines, &mut paragraph_runs);
-
-  if in_code_block {
-    lines.extend(docs_highlighted_code_block_lines(
-      &code_block_lines,
-      styles,
-      theme,
-      loader,
-      code_block_language.as_deref(),
-      language_hint,
-    ));
   }
 
   if lines.is_empty() {
@@ -2821,7 +2653,12 @@ fn docs_wrap_styled_runs(runs: &[DocsStyledTextRun], width: usize) -> Vec<Vec<Do
     for ch in run.text.chars() {
       if col >= width {
         if !piece.is_empty() {
-          docs_push_styled_run(&mut current, std::mem::take(&mut piece), run.style);
+          docs_push_styled_run(
+            &mut current,
+            std::mem::take(&mut piece),
+            run.style,
+            run.kind,
+          );
         }
         wrapped.push(current);
         current = Vec::new();
@@ -2831,7 +2668,7 @@ fn docs_wrap_styled_runs(runs: &[DocsStyledTextRun], width: usize) -> Vec<Vec<Do
       col += 1;
     }
     if !piece.is_empty() {
-      docs_push_styled_run(&mut current, piece, run.style);
+      docs_push_styled_run(&mut current, piece, run.style, run.kind);
     }
   }
 
@@ -2921,6 +2758,7 @@ fn completion_docs_render_json_impl(
         .map(|run| {
           DocsRunSnapshot {
             text:  run.text,
+            kind:  run.kind,
             style: docs_style_snapshot(run.style),
           }
         })

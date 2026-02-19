@@ -50,6 +50,16 @@ struct PickerPanel<
 
     var body: some View {
         panelContainer
+            .background(
+                PickerKeyInterceptor(
+                    onMoveSelection: { delta in moveSelection(delta) },
+                    onClose: showCtrlCClose ? { onClose() } : nil,
+                    pageSize: pageSize,
+                    showTabNavigation: showTabNavigation,
+                    showPageNavigation: showPageNavigation
+                )
+                .frame(width: 0, height: 0)
+            )
             .onAppear {
                 query = externalQuery
                 selectedIndex = initialSelection()
@@ -153,85 +163,31 @@ struct PickerPanel<
     // MARK: - Header
 
     private var panelHeader: some View {
-        ZStack(alignment: .leading) {
-            keyboardShortcuts
-            HStack(spacing: 8) {
-                leadingHeader()
+        HStack(spacing: 8) {
+            leadingHeader()
 
-                TextField(placeholder, text: $query)
-                    .font(FontLoader.uiFont(size: fontSize).weight(.light))
-                    .textFieldStyle(.plain)
-                    .focused($isTextFieldFocused)
-                    .onSubmit {
-                        onSubmit(clampedIndex(selectedIndex))
+            TextField(placeholder, text: $query)
+                .font(FontLoader.uiFont(size: fontSize).weight(.light))
+                .textFieldStyle(.plain)
+                .focused($isTextFieldFocused)
+                .onSubmit {
+                    onSubmit(clampedIndex(selectedIndex))
+                }
+                .onExitCommand {
+                    onClose()
+                }
+                .onChange(of: query) { newValue in
+                    if newValue != externalQuery {
+                        onQueryChange(newValue)
                     }
-                    .onExitCommand {
-                        onClose()
-                    }
-                    .onChange(of: query) { newValue in
-                        if newValue != externalQuery {
-                            onQueryChange(newValue)
-                        }
-                    }
+                }
 
-                Spacer()
+            Spacer()
 
-                trailingHeader()
-            }
+            trailingHeader()
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
-    }
-
-    // MARK: - Keyboard shortcuts
-
-    private var keyboardShortcuts: some View {
-        Group {
-            // Arrow keys (always)
-            Button { moveSelection(-1) } label: { Color.clear }
-                .buttonStyle(.plain)
-                .keyboardShortcut(.upArrow, modifiers: [])
-            Button { moveSelection(1) } label: { Color.clear }
-                .buttonStyle(.plain)
-                .keyboardShortcut(.downArrow, modifiers: [])
-
-            // Ctrl+P / Ctrl+N (always)
-            Button { moveSelection(-1) } label: { Color.clear }
-                .buttonStyle(.plain)
-                .keyboardShortcut(.init("p"), modifiers: [.control])
-            Button { moveSelection(1) } label: { Color.clear }
-                .buttonStyle(.plain)
-                .keyboardShortcut(.init("n"), modifiers: [.control])
-
-            // Tab / Shift+Tab (opt-in)
-            if showTabNavigation {
-                Button { moveSelection(1) } label: { Color.clear }
-                    .buttonStyle(.plain)
-                    .keyboardShortcut(.tab, modifiers: [])
-                Button { moveSelection(-1) } label: { Color.clear }
-                    .buttonStyle(.plain)
-                    .keyboardShortcut(.tab, modifiers: [.shift])
-            }
-
-            // Page navigation: Ctrl+U / Ctrl+D (opt-in)
-            if showPageNavigation {
-                Button { moveSelection(-pageSize) } label: { Color.clear }
-                    .buttonStyle(.plain)
-                    .keyboardShortcut(.init("u"), modifiers: [.control])
-                Button { moveSelection(pageSize) } label: { Color.clear }
-                    .buttonStyle(.plain)
-                    .keyboardShortcut(.init("d"), modifiers: [.control])
-            }
-
-            // Ctrl+C to close (opt-in)
-            if showCtrlCClose {
-                Button { onClose() } label: { Color.clear }
-                    .buttonStyle(.plain)
-                    .keyboardShortcut(.init("c"), modifiers: [.control])
-            }
-        }
-        .frame(width: 0, height: 0)
-        .accessibilityHidden(true)
     }
 
     // MARK: - List
@@ -356,6 +312,130 @@ struct PickerPanel<
         withTransaction(transaction) {
             // nil anchor keeps native "only scroll when needed" behavior.
             proxy.scrollTo(index, anchor: nil)
+        }
+    }
+}
+
+// MARK: - NSEvent-based key interceptor
+
+/// Intercepts navigation keys (arrows, Ctrl+P/N, Tab, Ctrl+U/D, Ctrl+C) at the
+/// NSEvent level, bypassing SwiftUI's keyboard shortcut system which can miss
+/// events when a TextField has focus.
+private struct PickerKeyInterceptor: NSViewRepresentable {
+    let onMoveSelection: (Int) -> Void
+    let onClose: (() -> Void)?
+    let pageSize: Int
+    let showTabNavigation: Bool
+    let showPageNavigation: Bool
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        let coordinator = context.coordinator
+        coordinator.isActive = true
+        coordinator.monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard coordinator.isActive else { return event }
+            return coordinator.handleKey(event)
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        let c = context.coordinator
+        c.onMoveSelection = onMoveSelection
+        c.onClose = onClose
+        c.pageSize = pageSize
+        c.showTabNavigation = showTabNavigation
+        c.showPageNavigation = showPageNavigation
+    }
+
+    static func dismantleNSView(_ nsView: NSView, coordinator: Coordinator) {
+        coordinator.isActive = false
+        if let monitor = coordinator.monitor {
+            NSEvent.removeMonitor(monitor)
+            coordinator.monitor = nil
+        }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(
+            onMoveSelection: onMoveSelection,
+            onClose: onClose,
+            pageSize: pageSize,
+            showTabNavigation: showTabNavigation,
+            showPageNavigation: showPageNavigation
+        )
+    }
+
+    class Coordinator {
+        var onMoveSelection: (Int) -> Void
+        var onClose: (() -> Void)?
+        var pageSize: Int
+        var showTabNavigation: Bool
+        var showPageNavigation: Bool
+        var monitor: Any?
+        var isActive: Bool = false
+
+        init(
+            onMoveSelection: @escaping (Int) -> Void,
+            onClose: (() -> Void)?,
+            pageSize: Int,
+            showTabNavigation: Bool,
+            showPageNavigation: Bool
+        ) {
+            self.onMoveSelection = onMoveSelection
+            self.onClose = onClose
+            self.pageSize = pageSize
+            self.showTabNavigation = showTabNavigation
+            self.showPageNavigation = showPageNavigation
+        }
+
+        deinit {
+            if let monitor { NSEvent.removeMonitor(monitor) }
+        }
+
+        func handleKey(_ event: NSEvent) -> NSEvent? {
+            let keyCode = event.keyCode
+            let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            let importantMods = mods.intersection([.command, .option, .control, .shift])
+            let chars = event.charactersIgnoringModifiers ?? ""
+
+            // Up arrow (no modifiers)
+            if keyCode == 126 && importantMods.isEmpty {
+                onMoveSelection(-1)
+                return nil
+            }
+
+            // Down arrow (no modifiers)
+            if keyCode == 125 && importantMods.isEmpty {
+                onMoveSelection(1)
+                return nil
+            }
+
+            // Ctrl+P / Ctrl+N
+            if importantMods == [.control] {
+                if chars == "p" { onMoveSelection(-1); return nil }
+                if chars == "n" { onMoveSelection(1); return nil }
+            }
+
+            // Tab / Shift+Tab
+            if showTabNavigation && keyCode == 48 {
+                if importantMods.isEmpty { onMoveSelection(1); return nil }
+                if importantMods == [.shift] { onMoveSelection(-1); return nil }
+            }
+
+            // Ctrl+U / Ctrl+D (page navigation)
+            if showPageNavigation && importantMods == [.control] {
+                if chars == "u" { onMoveSelection(-pageSize); return nil }
+                if chars == "d" { onMoveSelection(pageSize); return nil }
+            }
+
+            // Ctrl+C (close)
+            if let onClose, importantMods == [.control] && chars == "c" {
+                onClose()
+                return nil
+            }
+
+            return event
         }
     }
 }

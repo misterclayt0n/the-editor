@@ -292,7 +292,7 @@ struct FilePickerView: View {
 
     @ViewBuilder
     private var statusText: some View {
-        if items.isEmpty && !(snapshot.query ?? "").isEmpty && !isScanning {
+        if items.isEmpty && !snapshot.query.isEmpty && !isScanning {
             Text("No matches")
                 .font(FontLoader.uiFont(size: 12))
                 .foregroundStyle(.tertiary)

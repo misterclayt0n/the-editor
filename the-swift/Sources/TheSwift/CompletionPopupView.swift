@@ -396,6 +396,8 @@ private struct CompletionDocsAppKitTextView: NSViewRepresentable {
     }
 
     final class CompletionDocsNativeTextView: NSTextView {
+        private var cursorTrackingArea: NSTrackingArea?
+
         override func keyDown(with event: NSEvent) {
             if event.modifierFlags.contains(.command) {
                 super.keyDown(with: event)
@@ -413,54 +415,73 @@ private struct CompletionDocsAppKitTextView: NSViewRepresentable {
             KeyCaptureFocusBridge.shared.reclaim(in: window)
         }
 
-        override func resetCursorRects() {
-            addCursorRect(bounds, cursor: .arrow)
+        override func updateTrackingAreas() {
+            if let cursorTrackingArea {
+                removeTrackingArea(cursorTrackingArea)
+            }
+            let area = NSTrackingArea(
+                rect: bounds,
+                options: [.activeAlways, .inVisibleRect, .cursorUpdate, .mouseMoved],
+                owner: self,
+                userInfo: nil
+            )
+            addTrackingArea(area)
+            cursorTrackingArea = area
+            super.updateTrackingAreas()
+        }
+
+        override func cursorUpdate(with event: NSEvent) {
+            cursorForPoint(convert(event.locationInWindow, from: nil)).set()
+        }
+
+        override func mouseMoved(with event: NSEvent) {
+            cursorForPoint(convert(event.locationInWindow, from: nil)).set()
+            super.mouseMoved(with: event)
+        }
+
+        private func cursorForPoint(_ point: NSPoint) -> NSCursor {
             guard let textStorage,
                   let layoutManager,
                   let textContainer else {
-                return
+                return .arrow
+            }
+            guard bounds.contains(point) else {
+                return .arrow
             }
 
-            let fullRange = NSRange(location: 0, length: textStorage.length)
-            guard fullRange.length > 0 else {
-                return
+            let origin = textContainerOrigin
+            let containerPoint = NSPoint(x: point.x - origin.x, y: point.y - origin.y)
+            let usedRect = layoutManager.usedRect(for: textContainer)
+            guard usedRect.insetBy(dx: -1, dy: -1).contains(containerPoint) else {
+                return .arrow
             }
 
-            textStorage.enumerateAttributes(in: fullRange) { attrs, charRange, _ in
-                let isLink = attrs[.link] != nil
-                let isAttachment = attrs[.attachment] != nil
-
-                let cursor: NSCursor
-                if isLink {
-                    cursor = .pointingHand
-                } else if isAttachment {
-                    return
-                } else {
-                    cursor = .iBeam
-                }
-
-                let glyphRange = layoutManager.glyphRange(
-                    forCharacterRange: charRange,
-                    actualCharacterRange: nil
-                )
-                guard glyphRange.length > 0 else {
-                    return
-                }
-
-                layoutManager.enumerateEnclosingRects(
-                    forGlyphRange: glyphRange,
-                    withinSelectedGlyphRange: NSRange(location: NSNotFound, length: 0),
-                    in: textContainer
-                ) { rect, _ in
-                    guard rect.width > 0, rect.height > 0 else {
-                        return
-                    }
-                    var cursorRect = rect
-                    cursorRect.origin.x += self.textContainerOrigin.x
-                    cursorRect.origin.y += self.textContainerOrigin.y
-                    self.addCursorRect(cursorRect, cursor: cursor)
-                }
+            let glyphIndex = layoutManager.glyphIndex(
+                for: containerPoint,
+                in: textContainer,
+                fractionOfDistanceThroughGlyph: nil
+            )
+            guard glyphIndex < layoutManager.numberOfGlyphs else {
+                return .arrow
             }
+
+            let charIndex = layoutManager.characterIndexForGlyph(at: glyphIndex)
+            guard charIndex < textStorage.length else {
+                return .arrow
+            }
+
+            let attrs = textStorage.attributes(at: charIndex, effectiveRange: nil)
+            if attrs[.link] != nil {
+                return .pointingHand
+            }
+            if attrs[.attachment] != nil {
+                return .arrow
+            }
+            return .iBeam
+        }
+
+        override func resetCursorRects() {
+            addCursorRect(bounds, cursor: .arrow)
         }
     }
 

@@ -586,7 +586,8 @@ struct FilePreviewPanel: View {
     private var sourcePreview: some View {
         let lineCount = Int(preview?.line_count() ?? 0)
         if lineCount > 0 {
-            let gutterWidth = max(2, String(lineCount).count)
+            // Fixed gutter width so the code column stays aligned across all files.
+            let gutterWidth = 4
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     ForEach(0..<lineCount, id: \.self) { index in

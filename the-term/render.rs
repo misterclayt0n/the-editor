@@ -2192,7 +2192,7 @@ fn draw_ui_input(
   }
 }
 
-fn draw_ui_list(buf: &mut Buffer, rect: Rect, list: &UiList, _cursor_out: &mut Option<(u16, u16)>) {
+fn draw_ui_list(buf: &mut Buffer, rect: Rect, list: &UiList, badge_color: Option<Color>, _cursor_out: &mut Option<(u16, u16)>) {
   if rect.width == 0 || rect.height == 0 {
     return;
   }
@@ -2337,7 +2337,9 @@ fn draw_ui_list(buf: &mut Buffer, rect: Rect, list: &UiList, _cursor_out: &mut O
             .as_deref()
             .filter(|detail| !detail.is_empty())
         });
-      if let Some(detail) = detail {
+      let badge_text = item.badge.as_deref().filter(|b| !b.is_empty());
+      let has_right_content = detail.is_some() || badge_text.is_some();
+      if has_right_content {
         let content_right = rect.x + rect.width.saturating_sub(row_right_padding);
         let reserved_label = ((label_available * COMPLETION_LABEL_TARGET_NUM)
           / COMPLETION_LABEL_TARGET_DEN)
@@ -2345,23 +2347,53 @@ fn draw_ui_list(buf: &mut Buffer, rect: Rect, list: &UiList, _cursor_out: &mut O
         let max_detail_width = label_available.saturating_sub(reserved_label.saturating_add(1));
 
         if max_detail_width >= COMPLETION_MIN_DETAIL_WIDTH {
-          let mut detail_text = detail.to_string();
-          truncate_in_place(&mut detail_text, max_detail_width);
-          let detail_width = detail_text.chars().count() as u16;
-          let detail_x = content_right.saturating_sub(detail_width);
-          let mut title_width = detail_x.saturating_sub(label_x).saturating_sub(1) as usize;
+          // Compute badge portion first so we can reserve space for it.
+          let badge_chars = badge_text.map(|b| b.chars().count()).unwrap_or(0);
+          let badge_gap = if badge_chars > 0 && detail.is_some() { 1 } else { 0 };
+          let badge_total = badge_chars + badge_gap;
+          let detail_max = max_detail_width.saturating_sub(badge_total);
+
+          // Build detail text.
+          let (detail_str, detail_char_count) = if let Some(d) = detail {
+            let mut dt = d.to_string();
+            truncate_in_place(&mut dt, detail_max);
+            let count = dt.chars().count();
+            (Some(dt), count)
+          } else {
+            (None, 0)
+          };
+
+          let right_total = detail_char_count + badge_total;
+          let right_x = content_right.saturating_sub(right_total as u16);
+          let mut title_width = right_x.saturating_sub(label_x).saturating_sub(1) as usize;
           if title_width == 0 {
             title_width = 1;
           }
           truncate_in_place(&mut title, title_width);
           buf.set_string(label_x, y, title, row_style);
+
           let detail_style = if is_selected {
             row_style
           } else {
             row_style.add_modifier(Modifier::DIM)
           };
-          if detail_x > label_x {
-            buf.set_string(detail_x, y, detail_text, detail_style);
+
+          let mut cursor_x = right_x;
+          if let Some(dt) = detail_str {
+            if cursor_x > label_x {
+              buf.set_string(cursor_x, y, &dt, detail_style);
+              cursor_x = cursor_x.saturating_add(dt.chars().count() as u16 + badge_gap as u16);
+            }
+          }
+          if let Some(bt) = badge_text {
+            let badge_style = if let Some(bc) = badge_color {
+              Style::default().fg(bc)
+            } else {
+              detail_style
+            };
+            if cursor_x > label_x {
+              buf.set_string(cursor_x, y, bt, badge_style);
+            }
           }
         } else {
           truncate_in_place(&mut title, label_available);
@@ -2492,7 +2524,14 @@ fn draw_ui_node(
   match node {
     UiNode::Text(text) => draw_ui_text(buf, rect, ctx, text),
     UiNode::Input(input) => draw_ui_input(buf, rect, ctx, input, focus, cursor_out),
-    UiNode::List(list) => draw_ui_list(buf, rect, list, cursor_out),
+    UiNode::List(list) => {
+      let badge_color = ctx
+        .ui_theme
+        .try_get("special")
+        .and_then(|s| s.fg)
+        .map(lib_color_to_ratatui);
+      draw_ui_list(buf, rect, list, badge_color, cursor_out);
+    },
     UiNode::Divider(_) => {
       let line = "─".repeat(rect.width as usize);
       let style = Style::default().add_modifier(Modifier::DIM);
@@ -3121,9 +3160,6 @@ fn panel_is_term_command_palette_list(panel: &UiPanel) -> bool {
   panel.id == "term_command_palette_list"
 }
 
-fn panel_is_term_command_palette_docs(panel: &UiPanel) -> bool {
-  panel.id == "term_command_palette_docs"
-}
 
 fn term_command_palette_panel_rect(area: Rect, panel_width: u16, panel_height: u16) -> Rect {
   let width = panel_width.min(area.width).max(1);
@@ -3803,14 +3839,6 @@ fn draw_ui_overlays(
       let node = layer_nodes[index];
       match node {
         UiNode::Panel(panel) => {
-          let term_command_docs_pair = layer_nodes.get(index + 1).and_then(|next| {
-            match *next {
-              UiNode::Panel(next_panel) if panel_is_term_command_palette_docs(next_panel) => {
-                Some(next_panel)
-              },
-              _ => None,
-            }
-          });
           let completion_docs_pair = layer_nodes.get(index + 1).and_then(|next| {
             match *next {
               UiNode::Panel(next_panel) if panel_is_completion_docs(next_panel) => Some(next_panel),
@@ -3822,9 +3850,9 @@ fn draw_ui_overlays(
             if available_height > 0 {
               let overlay_area =
                 Rect::new(area.x, area.y + top_offset, area.width, available_height);
-              let (list_width, list_height) = panel_box_size(panel, overlay_area);
+              let (_, list_height) = panel_box_size(panel, overlay_area);
               let list_rect =
-                term_command_palette_panel_rect(overlay_area, list_width, list_height);
+                term_command_palette_panel_rect(overlay_area, overlay_area.width, list_height);
               draw_panel_in_rect(
                 buf,
                 list_rect,
@@ -3835,30 +3863,8 @@ fn draw_ui_overlays(
                 focus,
                 cursor_out,
               );
-
-              if let Some(docs_panel) = term_command_docs_pair {
-                let (docs_width, docs_height) = panel_box_size(docs_panel, overlay_area);
-                let docs_rect =
-                  completion_docs_panel_rect(overlay_area, docs_width, docs_height, list_rect);
-                if let Some(docs_rect) = docs_rect {
-                  draw_panel_in_rect(
-                    buf,
-                    docs_rect,
-                    ctx,
-                    docs_panel,
-                    BorderEdge::Top,
-                    false,
-                    focus,
-                    cursor_out,
-                  );
-                }
-              }
             }
-            index += if term_command_docs_pair.is_some() {
-              2
-            } else {
-              1
-            };
+            index += 1;
             continue;
           }
           if panel_is_completion(panel)
@@ -4182,12 +4188,17 @@ fn build_term_command_palette_list_overlay(ctx: &Ctx) -> Option<UiNode> {
     .iter()
     .filter_map(|index| state.items.get(*index))
     .map(|item| {
+      let aliases_text = if !item.aliases.is_empty() {
+        Some(format!("(aliases: {})", item.aliases.join(", ")))
+      } else {
+        None
+      };
       UiListItem {
         title:         item.title.clone(),
         subtitle:      item.subtitle.clone().or_else(|| item.shortcut.clone()),
-        description:   None,
+        description:   item.description.clone(),
         shortcut:      None,
-        badge:         item.badge.clone(),
+        badge:         aliases_text,
         leading_icon:  item.leading_icon.clone(),
         leading_color: item.leading_color.map(UiColor::Value),
         symbols:       item.symbols.clone(),
@@ -4202,7 +4213,7 @@ fn build_term_command_palette_list_overlay(ctx: &Ctx) -> Option<UiNode> {
   }
 
   let mut list = UiList::new("command_palette_list", items);
-  list.fill_width = false;
+  list.fill_width = true;
   list.selected = selected;
   list.scroll = state.scroll_offset;
   list.max_visible = Some(MAX_VISIBLE_ITEMS);
@@ -4225,12 +4236,12 @@ fn build_term_command_palette_list_overlay(ctx: &Ctx) -> Option<UiNode> {
   panel.layer = UiLayer::Overlay;
   panel.constraints = UiConstraints {
     min_width: None,
-    max_width: Some(64),
+    max_width: None,
     min_height: Some(1),
     max_height: Some((MAX_VISIBLE_ITEMS as u16).saturating_add(4)),
     padding: UiInsets {
-      left:   1,
-      right:  1,
+      left:   0,
+      right:  0,
       top:    0,
       bottom: 0,
     },
@@ -4244,44 +4255,6 @@ fn build_term_command_palette_list_overlay(ctx: &Ctx) -> Option<UiNode> {
   Some(UiNode::Panel(panel))
 }
 
-fn build_term_command_palette_docs_overlay(ctx: &Ctx) -> Option<UiNode> {
-  let state = &ctx.command_palette;
-  if !state.is_open || state.prefiltered {
-    return None;
-  }
-  let mut filtered_state = state.clone();
-  let (query, _) = command_palette_prompt_query_and_cursor(ctx);
-  filtered_state.query = query.to_string();
-  let (filtered, selected_filtered) = term_command_palette_filtered_selection(&filtered_state)?;
-  let selected_index = *filtered.get(selected_filtered.unwrap_or(0))?;
-  let item = state.items.get(selected_index)?;
-
-  let mut docs = String::new();
-  if let Some(description) = item.description.as_deref().map(str::trim)
-    && !description.is_empty()
-  {
-    docs.push_str(description);
-  }
-  if !item.aliases.is_empty() {
-    if !docs.is_empty() {
-      docs.push_str("\n\n");
-    }
-    docs.push_str("aliases: ");
-    docs.push_str(item.aliases.join(", ").as_str());
-  }
-  if docs.is_empty() {
-    return None;
-  }
-
-  Some(build_docs_panel(
-    DocsPanelConfig::command_palette_docs(
-      "term_command_palette_docs",
-      "term_command_palette_docs_text",
-      LayoutIntent::Custom("term_command_palette_docs".to_string()),
-    ),
-    docs,
-  ))
-}
 
 fn build_lsp_hover_overlay(ctx: &Ctx) -> Option<UiNode> {
   let docs = ctx
@@ -4308,9 +4281,6 @@ fn adapt_ui_tree_for_term(ctx: &Ctx, ui: &mut UiTree) {
     }
     if let Some(list_overlay) = build_term_command_palette_list_overlay(ctx) {
       ui.overlays.push(list_overlay);
-      if let Some(docs_overlay) = build_term_command_palette_docs_overlay(ctx) {
-        ui.overlays.push(docs_overlay);
-      }
     }
     return;
   }
@@ -5048,7 +5018,7 @@ mod tests {
     let rect = Rect::new(0, 0, 24, 3);
     let mut buf = Buffer::empty(rect);
     let mut cursor = None;
-    draw_ui_list(&mut buf, rect, &list, &mut cursor);
+    draw_ui_list(&mut buf, rect, &list, None, &mut cursor);
 
     let track_x = rect.x + rect.width - 1;
     let selected_row_cell = buf.get(track_x, rect.y);
@@ -5071,7 +5041,7 @@ mod tests {
     let rect = Rect::new(0, 0, 64, 1);
     let mut buf = Buffer::empty(rect);
     let mut cursor = None;
-    draw_ui_list(&mut buf, rect, &list, &mut cursor);
+    draw_ui_list(&mut buf, rect, &list, None, &mut cursor);
 
     let row = buffer_row_text(&buf, rect, rect.y);
     assert!(

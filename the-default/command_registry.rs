@@ -1274,6 +1274,7 @@ pub fn handle_command_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEve
       }
     },
     Key::Up => {
+      const VISIBLE_ITEMS: usize = 10;
       let filtered = command_palette_filtered_indices(ctx.command_palette());
       if !filtered.is_empty() {
         let palette = ctx.command_palette_mut();
@@ -1281,11 +1282,17 @@ pub fn handle_command_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEve
           .selected
           .and_then(|sel| filtered.iter().position(|&idx| idx == sel))
           .unwrap_or(0);
-        let next = current.saturating_sub(1);
+        let next = if current == 0 {
+          filtered.len() - 1
+        } else {
+          current - 1
+        };
         palette.selected = Some(filtered[next]);
-        // Keep scroll offset stable: only scroll if selection is above viewport.
         if next < palette.scroll_offset {
           palette.scroll_offset = next;
+        } else if next >= palette.scroll_offset + VISIBLE_ITEMS {
+          // Wrapped to bottom.
+          palette.scroll_offset = next.saturating_sub(VISIBLE_ITEMS - 1);
         }
         ctx.request_render();
       }
@@ -1301,14 +1308,16 @@ pub fn handle_command_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEve
           .and_then(|sel| filtered.iter().position(|&idx| idx == sel))
           .unwrap_or(0);
         let next = if current >= filtered.len() - 1 {
-          filtered.len() - 1
+          0
         } else {
           current + 1
         };
         palette.selected = Some(filtered[next]);
-        // Keep scroll offset stable: only scroll if selection is below viewport.
         if next >= palette.scroll_offset + VISIBLE_ITEMS {
           palette.scroll_offset = next + 1 - VISIBLE_ITEMS;
+        } else if next < palette.scroll_offset {
+          // Wrapped to top.
+          palette.scroll_offset = 0;
         }
         ctx.request_render();
       }
@@ -1448,7 +1457,7 @@ pub fn handle_command_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEve
         }
         palette.prefiltered = false;
         palette.scroll_offset = 0;
-        palette.max_results = 10;
+        palette.max_results = usize::MAX;
         palette.query = input;
         if let Some(sel) = palette.selected {
           let filtered = command_palette_filtered_indices(palette);

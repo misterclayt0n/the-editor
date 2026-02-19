@@ -197,7 +197,7 @@ impl Default for CommandPaletteState {
       query:         String::new(),
       selected:      None,
       items:         Vec::new(),
-      max_results:   10,
+      max_results:   usize::MAX,
       prefiltered:   false,
       scroll_offset: 0,
     }

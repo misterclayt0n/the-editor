@@ -623,7 +623,7 @@ struct FilePreviewPanel: View {
                 .font(FontLoader.bufferFont(size: 11))
                 .lineLimit(1)
         }
-        .padding(.horizontal, 8)
+        .padding(.trailing, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .frame(height: 16)
     }

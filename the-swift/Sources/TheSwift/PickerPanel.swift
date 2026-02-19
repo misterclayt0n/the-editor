@@ -54,6 +54,15 @@ struct PickerPanel<
                 PickerKeyInterceptor(
                     onMoveSelection: { delta in moveSelection(delta) },
                     onClose: showCtrlCClose ? { onClose() } : nil,
+                    onTextInput: { chars in
+                        query.append(chars)
+                        isTextFieldFocused = true
+                    },
+                    onBackspace: {
+                        if !query.isEmpty { query.removeLast() }
+                        isTextFieldFocused = true
+                    },
+                    isTextFieldFocused: isTextFieldFocused,
                     pageSize: pageSize,
                     showTabNavigation: showTabNavigation,
                     showPageNavigation: showPageNavigation
@@ -321,9 +330,16 @@ struct PickerPanel<
 /// Intercepts navigation keys (arrows, Ctrl+P/N, Tab, Ctrl+U/D, Ctrl+C) at the
 /// NSEvent level, bypassing SwiftUI's keyboard shortcut system which can miss
 /// events when a TextField has focus.
+///
+/// Also intercepts printable characters and backspace so that typing always
+/// goes to the search field, even if another view (e.g. preview panel) has
+/// stolen keyboard focus.
 private struct PickerKeyInterceptor: NSViewRepresentable {
     let onMoveSelection: (Int) -> Void
     let onClose: (() -> Void)?
+    let onTextInput: ((String) -> Void)?
+    let onBackspace: (() -> Void)?
+    let isTextFieldFocused: Bool
     let pageSize: Int
     let showTabNavigation: Bool
     let showPageNavigation: Bool
@@ -343,6 +359,9 @@ private struct PickerKeyInterceptor: NSViewRepresentable {
         let c = context.coordinator
         c.onMoveSelection = onMoveSelection
         c.onClose = onClose
+        c.onTextInput = onTextInput
+        c.onBackspace = onBackspace
+        c.isTextFieldFocused = isTextFieldFocused
         c.pageSize = pageSize
         c.showTabNavigation = showTabNavigation
         c.showPageNavigation = showPageNavigation
@@ -360,6 +379,9 @@ private struct PickerKeyInterceptor: NSViewRepresentable {
         Coordinator(
             onMoveSelection: onMoveSelection,
             onClose: onClose,
+            onTextInput: onTextInput,
+            onBackspace: onBackspace,
+            isTextFieldFocused: isTextFieldFocused,
             pageSize: pageSize,
             showTabNavigation: showTabNavigation,
             showPageNavigation: showPageNavigation
@@ -369,6 +391,9 @@ private struct PickerKeyInterceptor: NSViewRepresentable {
     class Coordinator {
         var onMoveSelection: (Int) -> Void
         var onClose: (() -> Void)?
+        var onTextInput: ((String) -> Void)?
+        var onBackspace: (() -> Void)?
+        var isTextFieldFocused: Bool
         var pageSize: Int
         var showTabNavigation: Bool
         var showPageNavigation: Bool
@@ -378,12 +403,18 @@ private struct PickerKeyInterceptor: NSViewRepresentable {
         init(
             onMoveSelection: @escaping (Int) -> Void,
             onClose: (() -> Void)?,
+            onTextInput: ((String) -> Void)?,
+            onBackspace: (() -> Void)?,
+            isTextFieldFocused: Bool,
             pageSize: Int,
             showTabNavigation: Bool,
             showPageNavigation: Bool
         ) {
             self.onMoveSelection = onMoveSelection
             self.onClose = onClose
+            self.onTextInput = onTextInput
+            self.onBackspace = onBackspace
+            self.isTextFieldFocused = isTextFieldFocused
             self.pageSize = pageSize
             self.showTabNavigation = showTabNavigation
             self.showPageNavigation = showPageNavigation
@@ -433,6 +464,38 @@ private struct PickerKeyInterceptor: NSViewRepresentable {
             if let onClose, importantMods == [.control] && chars == "c" {
                 onClose()
                 return nil
+            }
+
+            // When the TextField has focus, let it handle text input natively
+            // (including selection-aware backspace, Cmd+A, etc.)
+            if isTextFieldFocused {
+                return event
+            }
+
+            // Below: TextField does NOT have focus (e.g. preview panel stole it).
+            // Intercept text input and forward to the query.
+
+            // Let Cmd-key combos pass through (Cmd+C for copy, Cmd+V for paste, etc.)
+            if importantMods.contains(.command) {
+                return event
+            }
+
+            // Backspace — forward to query
+            if keyCode == 51 && importantMods.isEmpty {
+                onBackspace?()
+                return nil
+            }
+
+            // Printable characters (no control/option modifiers) — forward to query.
+            if !importantMods.contains(.control) && !importantMods.contains(.option) {
+                if let typed = event.characters, !typed.isEmpty {
+                    let scalar = typed.unicodeScalars.first!
+                    // Only forward actual printable characters (not function keys, etc.)
+                    if scalar.value >= 0x20 && scalar.value < 0xF700 {
+                        onTextInput?(typed)
+                        return nil
+                    }
+                }
             }
 
             return event

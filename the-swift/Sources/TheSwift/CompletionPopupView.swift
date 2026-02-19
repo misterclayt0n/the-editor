@@ -414,7 +414,7 @@ private struct CompletionDocsAppKitTextView: NSViewRepresentable {
         }
 
         override func resetCursorRects() {
-            super.resetCursorRects()
+            addCursorRect(bounds, cursor: .arrow)
             guard let textStorage,
                   let layoutManager,
                   let textContainer else {
@@ -422,23 +422,43 @@ private struct CompletionDocsAppKitTextView: NSViewRepresentable {
             }
 
             let fullRange = NSRange(location: 0, length: textStorage.length)
-            textStorage.enumerateAttribute(.link, in: fullRange) { value, charRange, _ in
-                guard value != nil else {
+            guard fullRange.length > 0 else {
+                return
+            }
+
+            textStorage.enumerateAttributes(in: fullRange) { attrs, charRange, _ in
+                let isLink = attrs[.link] != nil
+                let isAttachment = attrs[.attachment] != nil
+
+                let cursor: NSCursor
+                if isLink {
+                    cursor = .pointingHand
+                } else if isAttachment {
                     return
+                } else {
+                    cursor = .iBeam
                 }
+
                 let glyphRange = layoutManager.glyphRange(
                     forCharacterRange: charRange,
                     actualCharacterRange: nil
                 )
+                guard glyphRange.length > 0 else {
+                    return
+                }
+
                 layoutManager.enumerateEnclosingRects(
                     forGlyphRange: glyphRange,
                     withinSelectedGlyphRange: NSRange(location: NSNotFound, length: 0),
                     in: textContainer
                 ) { rect, _ in
+                    guard rect.width > 0, rect.height > 0 else {
+                        return
+                    }
                     var cursorRect = rect
                     cursorRect.origin.x += self.textContainerOrigin.x
                     cursorRect.origin.y += self.textContainerOrigin.y
-                    self.addCursorRect(cursorRect, cursor: .pointingHand)
+                    self.addCursorRect(cursorRect, cursor: cursor)
                 }
             }
         }

@@ -16,6 +16,7 @@ struct TheSwiftApp: App {
         let filePath = Self.firstFileArgument()
         WindowGroup {
             EditorView(filePath: filePath)
+                .environment(\.font, FontLoader.uiFont(size: 13))
                 .frame(minWidth: 640, minHeight: 360)
         }
     }

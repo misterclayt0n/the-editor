@@ -11,8 +11,8 @@ struct EditorView: View {
     var body: some View {
         let model = model
         let cellSize = model.cellSize
-        let font = model.font
-        let nsFont = model.nsFont
+        let bufferFont = model.bufferFont
+        let bufferNSFont = model.bufferNSFont
         let isPaletteOpen = model.uiTree.hasCommandPalettePanel
         let isSearchOpen = model.uiTree.hasSearchPromptPanel
         let isFilePickerOpen = model.filePickerSnapshot?.active ?? false
@@ -27,7 +27,14 @@ struct EditorView: View {
         GeometryReader { proxy in
             ZStack {
                 Canvas { context, size in
-                    drawPlan(in: context, size: size, plan: model.plan, cellSize: cellSize, font: font, nsFont: nsFont)
+                    drawPlan(
+                        in: context,
+                        size: size,
+                        plan: model.plan,
+                        cellSize: cellSize,
+                        bufferFont: bufferFont,
+                        bufferNSFont: bufferNSFont
+                    )
                 }
                 .background(SwiftUI.Color.black)
 
@@ -190,26 +197,39 @@ struct EditorView: View {
         size: CGSize,
         plan: RenderPlan,
         cellSize: CGSize,
-        font: Font,
-        nsFont: NSFont
+        bufferFont: Font,
+        bufferNSFont: NSFont
     ) {
         let contentOffsetX = CGFloat(plan.content_offset_x()) * cellSize.width
-        drawGutter(in: context, size: size, plan: plan, cellSize: cellSize, font: font, contentOffsetX: contentOffsetX)
+        drawGutter(
+            in: context,
+            size: size,
+            plan: plan,
+            cellSize: cellSize,
+            font: bufferFont,
+            contentOffsetX: contentOffsetX
+        )
         drawSelections(in: context, plan: plan, cellSize: cellSize, contentOffsetX: contentOffsetX)
         drawDiagnosticUnderlines(in: context, plan: plan, cellSize: cellSize, contentOffsetX: contentOffsetX)
-        let textStats = drawText(in: context, plan: plan, cellSize: cellSize, font: font, contentOffsetX: contentOffsetX)
+        let textStats = drawText(
+            in: context,
+            plan: plan,
+            cellSize: cellSize,
+            font: bufferFont,
+            contentOffsetX: contentOffsetX
+        )
         let inlineSummary = drawInlineDiagnostics(
             in: context,
             plan: plan,
             cellSize: cellSize,
-            nsFont: nsFont,
+            nsFont: bufferNSFont,
             contentOffsetX: contentOffsetX
         )
         let eolSummary = drawEolDiagnostics(
             in: context,
             plan: plan,
             cellSize: cellSize,
-            nsFont: nsFont,
+            nsFont: bufferNSFont,
             contentOffsetX: contentOffsetX
         )
         drawCursors(in: context, plan: plan, cellSize: cellSize, contentOffsetX: contentOffsetX)

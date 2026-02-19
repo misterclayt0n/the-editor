@@ -72,7 +72,7 @@ struct KeySequenceIndicator: View {
     private var indicatorContent: some View {
         HStack(alignment: .center, spacing: 8) {
             Image(systemName: "keyboard.badge.ellipsis")
-                .font(.system(size: 13))
+                .font(FontLoader.uiFont(size: 13))
                 .foregroundStyle(.secondary)
 
             HStack(alignment: .center, spacing: 4) {
@@ -111,10 +111,10 @@ struct KeySequenceIndicator: View {
         VStack(alignment: .leading, spacing: 8) {
             if let scope = hints?.scope, !scope.isEmpty {
                 Label(scope, systemImage: "keyboard.badge.ellipsis")
-                    .font(.headline)
+                    .font(FontLoader.uiFont(size: 17).weight(.semibold))
             } else {
                 Label("Available keys", systemImage: "keyboard.badge.ellipsis")
-                    .font(.headline)
+                    .font(FontLoader.uiFont(size: 17).weight(.semibold))
             }
 
             if !options.isEmpty {
@@ -125,13 +125,13 @@ struct KeySequenceIndicator: View {
                                 KeyCapView(option.key)
 
                                 Text(option.label)
-                                    .font(.system(size: 13))
+                                    .font(FontLoader.uiFont(size: 13))
                                     .foregroundStyle(.primary)
                                     .lineLimit(1)
 
                                 if option.isPrefix {
                                     Text("prefix")
-                                        .font(.system(size: 11, weight: .medium))
+                                        .font(FontLoader.uiFont(size: 11).weight(.medium))
                                         .foregroundStyle(.secondary)
                                         .padding(.horizontal, 6)
                                         .padding(.vertical, 2)
@@ -201,7 +201,7 @@ struct KeyCapView: View {
 
     var body: some View {
         Text(verbatim: text)
-            .font(.system(size: 12, weight: .medium, design: .rounded))
+            .font(FontLoader.uiFont(size: 12).weight(.medium))
             .padding(.horizontal, 5)
             .padding(.vertical, 2)
             .background(

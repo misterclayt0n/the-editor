@@ -247,7 +247,7 @@ struct FilePickerView: View {
             onSelectionChange: nil,
             leadingHeader: {
                 Image(systemName: "magnifyingglass")
-                    .font(.system(size: 14, weight: .medium))
+                    .font(FontLoader.uiFont(size: 14).weight(.medium))
                     .foregroundStyle(.secondary)
             },
             trailingHeader: {
@@ -259,10 +259,10 @@ struct FilePickerView: View {
             emptyContent: {
                 VStack(spacing: 8) {
                     Image(systemName: "doc.questionmark")
-                        .font(.system(size: 24))
+                        .font(FontLoader.uiFont(size: 24))
                         .foregroundStyle(.tertiary)
                     Text("No matching files")
-                        .font(.system(size: 14))
+                        .font(FontLoader.uiFont(size: 14))
                         .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, minHeight: 80)
@@ -277,7 +277,7 @@ struct FilePickerView: View {
     private var statusText: some View {
         if items.isEmpty && !(snapshot.query ?? "").isEmpty && !isScanning {
             Text("No matches")
-                .font(.system(size: 12))
+                .font(FontLoader.uiFont(size: 12))
                 .foregroundStyle(.tertiary)
         } else if isScanning && matchedCount == 0 {
             ScanningText()
@@ -285,11 +285,11 @@ struct FilePickerView: View {
             HStack(spacing: 6) {
                 if matchedCount > 0 && matchedCount < totalCount {
                     Text("\(matchedCount) of \(totalCount)")
-                        .font(.system(size: 12))
+                        .font(FontLoader.uiFont(size: 12))
                         .foregroundStyle(.tertiary)
                 } else if totalCount > 0 {
                     Text("\(totalCount) files")
-                        .font(.system(size: 12))
+                        .font(FontLoader.uiFont(size: 12))
                         .foregroundStyle(.tertiary)
                 }
                 if isScanning {
@@ -315,7 +315,7 @@ struct FilePickerView: View {
                 }
             }
             .foregroundStyle(.secondary)
-            .font(.system(size: 14, weight: .medium))
+            .font(FontLoader.uiFont(size: 14).weight(.medium))
             .frame(width: 18, alignment: .center)
 
             VStack(alignment: .leading, spacing: 2) {
@@ -360,7 +360,7 @@ struct FilePickerView: View {
 
         func segmentText(_ segment: String, matched: Bool) -> Text {
             Text(segment)
-                .font(.system(size: fontSize, weight: matched ? .bold : baseWeight))
+                .font(FontLoader.uiFont(size: fontSize).weight(matched ? .bold : baseWeight))
                 .foregroundColor(matched ? highlightColor : baseColor)
         }
 
@@ -396,7 +396,7 @@ fileprivate struct ScanningText: View {
 
     var body: some View {
         Text("Scanning…")
-            .font(.system(size: 12))
+            .font(FontLoader.uiFont(size: 12))
             .foregroundStyle(.tertiary)
             .opacity(opacity)
             .onAppear {

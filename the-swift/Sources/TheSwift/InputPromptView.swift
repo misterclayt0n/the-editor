@@ -21,7 +21,7 @@ struct InputPromptView: View {
     private var promptBar: some View {
         HStack(spacing: 8) {
             Text(snapshot.label)
-                .font(FontLoader.editorFont(size: 11).weight(.semibold))
+                .font(FontLoader.uiFont(size: 11).weight(.semibold))
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
@@ -31,7 +31,7 @@ struct InputPromptView: View {
 
             TextField("", text: $query)
                 .textFieldStyle(.plain)
-                .font(FontLoader.editorFont(size: 14))
+                .font(FontLoader.uiFont(size: 14))
                 .frame(minWidth: 180)
                 .focused($isFieldFocused)
                 .onExitCommand { onClose() }
@@ -44,7 +44,7 @@ struct InputPromptView: View {
 
             if let error = snapshot.error, !error.isEmpty {
                 Image(systemName: "exclamationmark.triangle")
-                    .font(.system(size: 12))
+                    .font(FontLoader.uiFont(size: 12))
                     .foregroundColor(.red.opacity(0.8))
                     .help(error)
             }

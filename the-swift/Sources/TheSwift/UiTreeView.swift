@@ -246,7 +246,7 @@ struct UiNodeView: View {
         let placeholderText = resolveColor(input.style.accent, fallback: nativeSecondary)
         Text(display)
             .foregroundColor(input.value.isEmpty ? placeholderText : baseText)
-            .font(.system(size: 14, weight: .regular, design: .rounded))
+            .font(FontLoader.uiFont(size: 14))
             .padding(.vertical, 6)
             .padding(.horizontal, 8)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -307,7 +307,7 @@ struct UiNodeView: View {
                 .lineLimit(1)
                 .truncationMode(.tail)
         }
-        .font(.system(size: 12, weight: .medium, design: .rounded))
+        .font(FontLoader.uiFont(size: 12).weight(.medium))
         .tracking(-0.2)
         .foregroundColor(resolveColor(status.style.fg, fallback: nativePrimary))
         .frame(maxWidth: .infinity, minHeight: cellSize.height, maxHeight: cellSize.height)
@@ -365,11 +365,11 @@ struct UiNodeView: View {
     private func font(for style: UiStyleSnapshot) -> Font {
         switch style.emphasis {
         case .strong:
-            return .system(size: 14, weight: .bold, design: .rounded)
+            return FontLoader.uiFont(size: 14).weight(.bold)
         case .muted:
-            return .system(size: 13, weight: .regular, design: .rounded)
+            return FontLoader.uiFont(size: 13)
         case .normal:
-            return .system(size: 14, weight: .regular, design: .rounded)
+            return FontLoader.uiFont(size: 14)
         }
     }
 
@@ -444,7 +444,7 @@ struct UiNodeView: View {
             if let icon = item.leadingIcon, !icon.isEmpty {
                 Image(systemName: icon)
                     .foregroundStyle(item.emphasis ? Color.accentColor : detailColor)
-                    .font(.system(size: 14, weight: .medium))
+                    .font(FontLoader.uiFont(size: 14).weight(.medium))
             }
 
             VStack(alignment: .leading, spacing: 2) {
@@ -459,11 +459,11 @@ struct UiNodeView: View {
                 if let subtitle = item.subtitle, !subtitle.isEmpty {
                     Text(subtitle)
                         .foregroundColor(detailColor)
-                        .font(.system(size: 12, design: .rounded))
+                        .font(FontLoader.uiFont(size: 12))
                 } else if let description = item.description, !description.isEmpty {
                     Text(description)
                         .foregroundColor(detailColor)
-                        .font(.system(size: 12, design: .rounded))
+                        .font(FontLoader.uiFont(size: 12))
                 }
             }
 
@@ -471,7 +471,7 @@ struct UiNodeView: View {
 
             if let badge = item.badge, !badge.isEmpty {
                 Text(badge)
-                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .font(FontLoader.uiFont(size: 11).weight(.semibold))
                     .padding(.horizontal, 7)
                     .padding(.vertical, 3)
                     .background(
@@ -509,14 +509,14 @@ struct UiNodeView: View {
         guard !matchIndices.isEmpty else {
             return Text(text)
                 .foregroundColor(baseColor)
-                .font(.system(size: fontSize, weight: baseWeight, design: .rounded))
+                .font(FontLoader.uiFont(size: fontSize).weight(baseWeight))
         }
 
         let indexSet = Set(matchIndices)
         func segment(_ value: String, matched: Bool) -> Text {
             Text(value)
                 .foregroundColor(matched ? highlightColor : baseColor)
-                .font(.system(size: fontSize, weight: matched ? .bold : baseWeight, design: .rounded))
+                .font(FontLoader.uiFont(size: fontSize).weight(matched ? .bold : baseWeight))
         }
 
         var result = Text("")
@@ -554,7 +554,7 @@ fileprivate struct UiShortcutSymbolsView: View {
                     .frame(minWidth: 13)
             }
         }
-        .font(.system(size: 11, weight: .medium, design: .rounded))
+        .font(FontLoader.uiFont(size: 11).weight(.medium))
     }
 }
 
@@ -599,7 +599,7 @@ struct MessageToastView: View {
                 .frame(width: 6, height: 6)
 
             Text(snapshot.text)
-                .font(.system(size: 12, weight: .medium, design: .rounded))
+                .font(FontLoader.uiFont(size: 12).weight(.medium))
                 .foregroundStyle(.primary)
                 .lineLimit(1)
                 .truncationMode(.tail)
@@ -727,7 +727,7 @@ struct StatuslineView: View {
 
             HStack(spacing: 0) {
                 Text(modeName)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(FontLoader.uiFont(size: 11).weight(.medium))
                     .foregroundColor(modeColor)
                     .frame(minWidth: 48, alignment: .leading)
 
@@ -742,14 +742,14 @@ struct StatuslineView: View {
                         }
                     }
                     .foregroundStyle(.secondary)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(FontLoader.uiFont(size: 12).weight(.medium))
                     .frame(width: 14, alignment: .center)
                     .padding(.trailing, 4)
                 }
 
                 if !filename.isEmpty {
                     Text(filename)
-                        .font(.system(size: 12))
+                        .font(FontLoader.uiFont(size: 12))
                         .foregroundStyle(.primary)
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -766,7 +766,7 @@ struct StatuslineView: View {
 
                 if !snapshot.center.isEmpty {
                     Text(snapshot.center)
-                        .font(.system(size: 11))
+                        .font(FontLoader.uiFont(size: 11))
                         .foregroundStyle(.tertiary)
                         .lineLimit(1)
 
@@ -791,7 +791,7 @@ struct StatuslineView: View {
                 ForEach(Array(segs.enumerated()), id: \.offset) { index, seg in
                     if index > 0 {
                         Text("  ")
-                            .font(.system(size: 11))
+                            .font(FontLoader.uiFont(size: 11))
                             .foregroundStyle(.quaternary)
                     }
 
@@ -799,12 +799,12 @@ struct StatuslineView: View {
                         vcsSegmentView(seg.text)
                     } else if seg.isMuted {
                         Text(seg.text)
-                            .font(.system(size: 11))
+                            .font(FontLoader.uiFont(size: 11))
                             .foregroundStyle(.tertiary)
                             .lineLimit(1)
                     } else {
                         Text(seg.text)
-                            .font(.system(size: 11).monospacedDigit())
+                            .font(FontLoader.uiFont(size: 11))
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                     }
@@ -817,10 +817,10 @@ struct StatuslineView: View {
     private func vcsSegmentView(_ branchName: String) -> some View {
         HStack(spacing: 4) {
             Image(systemName: "arrow.triangle.branch")
-                .font(.system(size: 9, weight: .semibold))
+                .font(FontLoader.uiFont(size: 9).weight(.semibold))
 
             Text(branchName)
-                .font(.system(size: 11))
+                .font(FontLoader.uiFont(size: 11))
                 .lineLimit(1)
         }
         .foregroundStyle(.tertiary)

@@ -11,8 +11,8 @@ final class EditorModel: ObservableObject {
     private var viewport: Rect
     private var effectiveViewport: Rect
     let cellSize: CGSize
-    let font: Font
-    let nsFont: NSFont
+    let bufferFont: Font
+    let bufferNSFont: NSFont
     private let initialFilePath: String?
     private(set) var mode: EditorMode = .normal
     @Published var pendingKeys: [String] = []
@@ -28,10 +28,10 @@ final class EditorModel: ObservableObject {
     init(filePath: String? = nil) {
         self.app = TheEditorFFIBridge.App()
         self.initialFilePath = filePath
-        let fontInfo = FontLoader.loadIosevka(size: 14)
+        let fontInfo = FontLoader.loadBufferFont(size: 14)
         self.cellSize = fontInfo.cellSize
-        self.font = fontInfo.font
-        self.nsFont = fontInfo.nsFont
+        self.bufferFont = fontInfo.font
+        self.bufferNSFont = fontInfo.nsFont
         self.viewport = Rect(x: 0, y: 0, width: 80, height: 24)
         self.effectiveViewport = self.viewport
         let scroll = Position(row: 0, col: 0)

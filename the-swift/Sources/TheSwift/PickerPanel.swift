@@ -141,7 +141,7 @@ struct PickerPanel<
                 leadingHeader()
 
                 TextField(placeholder, text: $query)
-                    .font(.system(size: fontSize, weight: .light))
+                    .font(FontLoader.uiFont(size: fontSize).weight(.light))
                     .textFieldStyle(.plain)
                     .focused($isTextFieldFocused)
                     .onSubmit {

@@ -286,7 +286,7 @@ struct CompletionPopupView: View {
             if let icon = item.kindIcon, !icon.isEmpty {
                 let color = item.kindColor ?? Color(nsColor: .tertiaryLabelColor)
                 Text(icon)
-                    .font(FontLoader.editorFont(size: 10).weight(.bold))
+                    .font(FontLoader.uiFont(size: 10).weight(.bold))
                     .foregroundColor(color)
                     .frame(width: 18, height: 18)
                     .background(
@@ -299,7 +299,7 @@ struct CompletionPopupView: View {
 
             // Label.
             Text(item.label)
-                .font(FontLoader.editorFont(size: 13).weight(.medium))
+                .font(FontLoader.uiFont(size: 13).weight(.medium))
                 .foregroundStyle(.primary)
                 .lineLimit(1)
 
@@ -308,7 +308,7 @@ struct CompletionPopupView: View {
             // Detail (type signature).
             if let detail = item.detail, !detail.isEmpty {
                 Text(detail)
-                    .font(FontLoader.editorFont(size: 12))
+                    .font(FontLoader.uiFont(size: 12))
                     .foregroundStyle(.tertiary)
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -656,11 +656,11 @@ private struct CompletionDocsTheme: Hashable {
     }
 
     var baseFont: NSFont {
-        NSFont.systemFont(ofSize: 13, weight: .regular)
+        FontLoader.uiNSFont(size: 13)
     }
 
     var codeFont: NSFont {
-        FontLoader.editorNSFont(size: 12)
+        FontLoader.bufferNSFont(size: 12)
     }
 
     var bodyColor: NSColor {
@@ -739,7 +739,7 @@ private struct CompletionDocsTheme: Hashable {
         let size = max(11, font.pointSize)
         let bold = font.fontDescriptor.symbolicTraits.contains(.bold)
         let italic = font.fontDescriptor.symbolicTraits.contains(.italic)
-        var converted = NSFont.systemFont(ofSize: size, weight: bold ? .semibold : .regular)
+        var converted = FontLoader.uiNSFont(size: size, weight: bold ? .semibold : .regular)
         if italic {
             converted = NSFontManager.shared.convert(converted, toHaveTrait: .italicFontMask)
         }
@@ -753,7 +753,7 @@ private struct CompletionDocsTheme: Hashable {
         let size = max(10, font.pointSize)
         let bold = font.fontDescriptor.symbolicTraits.contains(.bold)
         let italic = font.fontDescriptor.symbolicTraits.contains(.italic)
-        var converted = FontLoader.editorNSFont(size: size, weight: bold ? .semibold : .regular)
+        var converted = FontLoader.bufferNSFont(size: size, weight: bold ? .semibold : .regular)
         if italic {
             converted = NSFontManager.shared.convert(converted, toHaveTrait: .italicFontMask)
         }
@@ -815,7 +815,7 @@ private enum CompletionDocsRenderer {
     static let loadingPlaceholder = NSAttributedString(
         string: "Loading docs...",
         attributes: [
-            .font: NSFont.systemFont(ofSize: 13, weight: .regular),
+            .font: FontLoader.uiNSFont(size: 13),
             .foregroundColor: NSColor.secondaryLabelColor,
         ]
     )
@@ -922,8 +922,8 @@ private enum CompletionDocsRenderer {
         let weight: NSFont.Weight = (style.add_modifier & modifierBold) != 0 ? .semibold : .regular
 
         var font = codeLike
-            ? FontLoader.editorNSFont(size: targetSize, weight: weight)
-            : NSFont.systemFont(ofSize: targetSize, weight: weight)
+            ? FontLoader.bufferNSFont(size: targetSize, weight: weight)
+            : FontLoader.uiNSFont(size: targetSize, weight: weight)
         if (style.add_modifier & modifierItalic) != 0 {
             font = NSFontManager.shared.convert(font, toHaveTrait: .italicFontMask)
         }

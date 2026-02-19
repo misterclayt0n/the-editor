@@ -108,21 +108,21 @@ struct CommandPaletteView: View {
             if let icon = item.leadingIcon, !icon.isEmpty {
                 Image(systemName: icon)
                     .foregroundStyle(item.emphasis ? Color.accentColor : .secondary)
-                    .font(.system(size: 14, weight: .medium))
+                    .font(FontLoader.uiFont(size: 14).weight(.medium))
             }
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.title)
-                    .font(.system(size: 14, weight: item.emphasis ? .semibold : .medium))
+                    .font(FontLoader.uiFont(size: 14).weight(item.emphasis ? .semibold : .medium))
                     .foregroundColor(.primary)
 
                 if let subtitle = item.subtitle, !subtitle.isEmpty {
                     Text(subtitle)
-                        .font(.system(size: 12))
+                        .font(FontLoader.uiFont(size: 12))
                         .foregroundStyle(.secondary)
                 } else if let description = item.description, !description.isEmpty {
                     Text(description)
-                        .font(.system(size: 12))
+                        .font(FontLoader.uiFont(size: 12))
                         .foregroundStyle(.secondary)
                 }
             }
@@ -131,7 +131,7 @@ struct CommandPaletteView: View {
 
             if let badge = item.badge, !badge.isEmpty {
                 Text(badge)
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(FontLoader.uiFont(size: 11).weight(.semibold))
                     .padding(.horizontal, 7)
                     .padding(.vertical, 3)
                     .background(

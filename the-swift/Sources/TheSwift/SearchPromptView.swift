@@ -87,7 +87,7 @@ struct SearchPromptView: View {
                 .overlay(alignment: .trailing) {
                     if let error = snapshot.error, !error.isEmpty {
                         Image(systemName: "exclamationmark.triangle")
-                            .font(.caption)
+                            .font(FontLoader.uiFont(size: 12))
                             .foregroundColor(.red.opacity(0.8))
                             .padding(.trailing, 8)
                     }

@@ -175,6 +175,7 @@ use the_lib::{
   selection::{
     CursorId,
     CursorPick,
+    Range,
     Selection,
   },
   syntax::{
@@ -7183,6 +7184,33 @@ impl DefaultContext for App {
     let state = self.active_state_mut();
     state.word_jump_inline_annotations.clear();
     state.word_jump_overlay_annotations.clear();
+  }
+
+  fn active_diagnostic_ranges(&self) -> Vec<Range> {
+    let Some(state) = self.lsp_document.as_ref().filter(|state| state.opened) else {
+      return Vec::new();
+    };
+    let Some(document) = self.diagnostics.document(&state.uri) else {
+      return Vec::new();
+    };
+
+    let text = self.active_editor_ref().document().text();
+    let mut ranges = Vec::with_capacity(document.diagnostics.len());
+    for diagnostic in &document.diagnostics {
+      let start = utf16_position_to_char_idx(
+        text,
+        diagnostic.range.start.line,
+        diagnostic.range.start.character,
+      );
+      let end = utf16_position_to_char_idx(
+        text,
+        diagnostic.range.end.line,
+        diagnostic.range.end.character,
+      );
+      ranges.push(Range::new(start, end));
+    }
+    ranges.sort_by_key(|range| (range.from(), range.to()));
+    ranges
   }
 
   fn registers(&self) -> &Registers {

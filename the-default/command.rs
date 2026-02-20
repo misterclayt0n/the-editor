@@ -464,6 +464,9 @@ pub trait DefaultContext: Sized + 'static {
   fn set_pending_input(&mut self, pending: Option<PendingInput>);
   fn set_word_jump_annotations(&mut self, _inline: Vec<InlineAnnotation>, _overlay: Vec<Overlay>) {}
   fn clear_word_jump_annotations(&mut self) {}
+  fn active_diagnostic_ranges(&self) -> Vec<Range> {
+    Vec::new()
+  }
   fn registers(&self) -> &Registers;
   fn registers_mut(&mut self) -> &mut Registers;
   fn register(&self) -> Option<char>;
@@ -1104,6 +1107,10 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::SurroundReplace { count } => ctx.dispatch().surround_replace(ctx, count),
     Command::SelectTextobjectAround => ctx.dispatch().select_textobject_around(ctx, ()),
     Command::SelectTextobjectInner => ctx.dispatch().select_textobject_inner(ctx, ()),
+    Command::GotoPrevDiag => goto_prev_diag(ctx),
+    Command::GotoFirstDiag => goto_first_diag(ctx),
+    Command::GotoNextDiag => goto_next_diag(ctx),
+    Command::GotoLastDiag => goto_last_diag(ctx),
     Command::Search => ctx.dispatch().search(ctx, ()),
     Command::RSearch => ctx.dispatch().rsearch(ctx, ()),
     Command::SelectRegex => ctx.dispatch().select_regex(ctx, ()),
@@ -2187,6 +2194,75 @@ fn apply_word_jump_target<Ctx: DefaultContext>(ctx: &mut Ctx, mut range: Range, 
   }
 
   let _ = ctx.editor().document_mut().set_selection(range.into());
+}
+
+fn goto_prev_diag<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  let diagnostics = ctx.active_diagnostic_ranges();
+  let Some(next) = ({
+    let doc = ctx.editor_ref().document();
+    let text = doc.text().slice(..);
+    let cursor = doc
+      .selection()
+      .ranges()
+      .first()
+      .copied()
+      .unwrap_or_else(|| Range::point(0))
+      .cursor(text);
+    diagnostics
+      .iter()
+      .rev()
+      .find(|range| range.from() < cursor)
+      .copied()
+      .map(|range| Selection::single(range.to(), range.from()))
+  }) else {
+    return;
+  };
+  let _ = ctx.editor().document_mut().set_selection(next);
+}
+
+fn goto_first_diag<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  let diagnostics = ctx.active_diagnostic_ranges();
+  let Some(range) = diagnostics.first().copied() else {
+    return;
+  };
+  let _ = ctx
+    .editor()
+    .document_mut()
+    .set_selection(Selection::single(range.from(), range.to()));
+}
+
+fn goto_next_diag<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  let diagnostics = ctx.active_diagnostic_ranges();
+  let Some(next) = ({
+    let doc = ctx.editor_ref().document();
+    let text = doc.text().slice(..);
+    let cursor = doc
+      .selection()
+      .ranges()
+      .first()
+      .copied()
+      .unwrap_or_else(|| Range::point(0))
+      .cursor(text);
+    diagnostics
+      .iter()
+      .find(|range| range.from() > cursor)
+      .copied()
+      .map(|range| Selection::single(range.from(), range.to()))
+  }) else {
+    return;
+  };
+  let _ = ctx.editor().document_mut().set_selection(next);
+}
+
+fn goto_last_diag<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  let diagnostics = ctx.active_diagnostic_ranges();
+  let Some(range) = diagnostics.last().copied() else {
+    return;
+  };
+  let _ = ctx
+    .editor()
+    .document_mut()
+    .set_selection(Selection::single(range.from(), range.to()));
 }
 
 fn split_selection_on_newline<Ctx: DefaultContext>(ctx: &mut Ctx) {
@@ -4461,6 +4537,10 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "surround_replace" => Some(Command::surround_replace(1)),
     "select_textobject_around" => Some(Command::select_textobject_around()),
     "select_textobject_inner" => Some(Command::select_textobject_inner()),
+    "goto_prev_diag" => Some(Command::goto_prev_diag()),
+    "goto_first_diag" => Some(Command::goto_first_diag()),
+    "goto_next_diag" => Some(Command::goto_next_diag()),
+    "goto_last_diag" => Some(Command::goto_last_diag()),
 
     _ => None,
   }

@@ -566,6 +566,10 @@ pub enum Command {
   },
   SelectTextobjectAround,
   SelectTextobjectInner,
+  GotoPrevDiag,
+  GotoFirstDiag,
+  GotoNextDiag,
+  GotoLastDiag,
   SearchNextOrPrev {
     direction: Direction,
     extend:    bool,
@@ -1308,6 +1312,26 @@ impl Command {
   #[must_use]
   pub const fn select_textobject_inner() -> Self {
     Self::SelectTextobjectInner
+  }
+
+  #[must_use]
+  pub const fn goto_prev_diag() -> Self {
+    Self::GotoPrevDiag
+  }
+
+  #[must_use]
+  pub const fn goto_first_diag() -> Self {
+    Self::GotoFirstDiag
+  }
+
+  #[must_use]
+  pub const fn goto_next_diag() -> Self {
+    Self::GotoNextDiag
+  }
+
+  #[must_use]
+  pub const fn goto_last_diag() -> Self {
+    Self::GotoLastDiag
   }
 
   #[must_use]

@@ -100,7 +100,10 @@ use the_lib::{
       default_theme,
     },
   },
-  selection::Selection,
+  selection::{
+    Range,
+    Selection,
+  },
   syntax::{
     HighlightCache,
     Loader,
@@ -4209,6 +4212,33 @@ impl the_default::DefaultContext for Ctx {
   fn clear_word_jump_annotations(&mut self) {
     self.word_jump_inline_annotations.clear();
     self.word_jump_overlay_annotations.clear();
+  }
+
+  fn active_diagnostic_ranges(&self) -> Vec<Range> {
+    let Some(state) = self.lsp_document.as_ref().filter(|state| state.opened) else {
+      return Vec::new();
+    };
+    let Some(document) = self.diagnostics.document(&state.uri) else {
+      return Vec::new();
+    };
+
+    let text = self.editor.document().text();
+    let mut ranges = Vec::with_capacity(document.diagnostics.len());
+    for diagnostic in &document.diagnostics {
+      let start = utf16_position_to_char_idx(
+        text,
+        diagnostic.range.start.line,
+        diagnostic.range.start.character,
+      );
+      let end = utf16_position_to_char_idx(
+        text,
+        diagnostic.range.end.line,
+        diagnostic.range.end.character,
+      );
+      ranges.push(Range::new(start, end));
+    }
+    ranges.sort_by_key(|range| (range.from(), range.to()));
+    ranges
   }
 
   fn registers(&self) -> &Registers {

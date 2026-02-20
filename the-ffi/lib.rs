@@ -3814,6 +3814,7 @@ impl App {
     let diff_styles = render_diff_styles_from_theme(&self.ui_theme);
     let inline_diagnostics = self.active_inline_diagnostics();
     let enable_cursor_line = self.active_state_ref().mode != Mode::Insert;
+    let jump_label_style = self.ui_theme.find_highlight("ui.virtual.jump-label");
 
     let raw_diagnostics = self
       .lsp_document
@@ -3841,7 +3842,7 @@ impl App {
         let _ = annotations.add_inline_annotations(&word_jump_inline_annotations, None);
       }
       if !word_jump_overlay_annotations.is_empty() {
-        let _ = annotations.add_overlay(&word_jump_overlay_annotations, None);
+        let _ = annotations.add_overlay(&word_jump_overlay_annotations, jump_label_style);
       }
 
       let (doc, cache) = editor.document_and_cache();
@@ -7196,7 +7197,8 @@ impl DefaultContext for App {
       let _ = annotations.add_inline_annotations(&state.word_jump_inline_annotations, None);
     }
     if !state.word_jump_overlay_annotations.is_empty() {
-      let _ = annotations.add_overlay(&state.word_jump_overlay_annotations, None);
+      let jump_label_style = self.ui_theme.find_highlight("ui.virtual.jump-label");
+      let _ = annotations.add_overlay(&state.word_jump_overlay_annotations, jump_label_style);
     }
     annotations
   }

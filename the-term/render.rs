@@ -4365,7 +4365,8 @@ pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> Ren
     let _ = annotations.add_inline_annotations(&ctx.word_jump_inline_annotations, None);
   }
   if !ctx.word_jump_overlay_annotations.is_empty() {
-    let _ = annotations.add_overlay(&ctx.word_jump_overlay_annotations, None);
+    let jump_label_style = ctx.ui_theme.find_highlight("ui.virtual.jump-label");
+    let _ = annotations.add_overlay(&ctx.word_jump_overlay_annotations, jump_label_style);
   }
   ctx.inline_diagnostic_lines.clear();
   let inline_diagnostic_render_data: SharedInlineDiagnosticsRenderData =

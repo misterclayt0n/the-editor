@@ -4206,7 +4206,8 @@ impl the_default::DefaultContext for Ctx {
       let _ = annotations.add_inline_annotations(&self.word_jump_inline_annotations, None);
     }
     if !self.word_jump_overlay_annotations.is_empty() {
-      let _ = annotations.add_overlay(&self.word_jump_overlay_annotations, None);
+      let jump_label_style = self.ui_theme.find_highlight("ui.virtual.jump-label");
+      let _ = annotations.add_overlay(&self.word_jump_overlay_annotations, jump_label_style);
     }
     annotations
   }

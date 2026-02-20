@@ -5927,7 +5927,10 @@ pkgs.mkShell {
     assert!(DefaultContext::apply_transaction(&mut ctx, &tx));
 
     let line_start = ctx.editor.document().text().line_to_char(1);
-    let _ = ctx.editor.document_mut().set_selection(Selection::point(line_start));
+    let _ = ctx
+      .editor
+      .document_mut()
+      .set_selection(Selection::point(line_start));
 
     dispatch.pre_on_keypress(&mut ctx, KeyEvent {
       key:       Key::Char('C'),
@@ -6144,7 +6147,10 @@ pkgs.mkShell {
       modifiers: Modifiers::empty(),
     });
 
-    assert_eq!(ctx.editor.document().text().to_string(), "alpha beta gamma\n");
+    assert_eq!(
+      ctx.editor.document().text().to_string(),
+      "alpha beta gamma\n"
+    );
   }
 
   #[test]
@@ -6179,10 +6185,9 @@ pkgs.mkShell {
     });
 
     assert_eq!(ctx.editor.document().text().to_string(), "alpha beta\n");
-    assert_eq!(
-      ctx.editor.document().selection().ranges(),
-      &[Range::point("alpha".chars().count())]
-    );
+    assert_eq!(ctx.editor.document().selection().ranges(), &[Range::point(
+      "alpha".chars().count()
+    )]);
   }
 
   #[test]
@@ -6383,8 +6388,67 @@ pkgs.mkShell {
 
     assert!(ctx.pending_input().is_none());
     assert_eq!(ctx.editor.document().selection().ranges().len(), 1);
-    assert_eq!(ctx.editor.document().selection().cursor_ids()[0], candidates[1]);
+    assert_eq!(
+      ctx.editor.document().selection().cursor_ids()[0],
+      candidates[1]
+    );
     assert_eq!(ctx.editor.view().active_cursor, Some(candidates[1]));
+  }
+
+  #[test]
+  fn cursor_pick_mode_uses_match_cursor_style_for_selected_cursor() {
+    let dispatch = build_dispatch::<Ctx>();
+    let mut ctx = Ctx::new(None).expect("ctx");
+    ctx.set_dispatch(&dispatch);
+
+    let content = "a\nb\nc\n";
+    let tx = Transaction::change(
+      ctx.editor.document().text(),
+      std::iter::once((
+        0,
+        ctx.editor.document().text().len_chars(),
+        Some(content.into()),
+      )),
+    )
+    .expect("seed transaction");
+    assert!(DefaultContext::apply_transaction(&mut ctx, &tx));
+
+    let text = ctx.editor.document().text().clone();
+    let selection = Selection::point(text.line_to_char(0))
+      .push(Range::point(text.line_to_char(1)))
+      .push(Range::point(text.line_to_char(2)));
+    let _ = ctx.editor.document_mut().set_selection(selection);
+
+    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+      key:       Key::Char(','),
+      modifiers: Modifiers::empty(),
+    });
+    let active_cursor = ctx
+      .editor
+      .view()
+      .active_cursor
+      .expect("active cursor in cursor-pick mode");
+
+    let plan = build_render_plan(&mut ctx);
+    let selected = plan
+      .cursors
+      .iter()
+      .find(|cursor| cursor.id == active_cursor)
+      .expect("selected cursor should be rendered");
+    let expected = ctx
+      .ui_theme
+      .try_get("ui.cursor.match")
+      .or_else(|| ctx.ui_theme.try_get("ui.cursor.active"))
+      .or_else(|| ctx.ui_theme.try_get("ui.cursor"))
+      .unwrap_or_default();
+    assert_eq!(selected.style, expected);
+    assert!(
+      plan
+        .cursors
+        .iter()
+        .any(|cursor| cursor.id != active_cursor && cursor.style != selected.style),
+      "selected cursor style should stand out from non-selected cursors"
+    );
   }
 
   #[test]
@@ -6443,7 +6507,14 @@ pkgs.mkShell {
 
     assert!(ctx.pending_input().is_none());
     assert_eq!(ctx.editor.document().selection().ranges().len(), 2);
-    assert!(!ctx.editor.document().selection().cursor_ids().contains(&candidates[1]));
+    assert!(
+      !ctx
+        .editor
+        .document()
+        .selection()
+        .cursor_ids()
+        .contains(&candidates[1])
+    );
   }
 
   #[test]

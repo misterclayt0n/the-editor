@@ -35,6 +35,7 @@ use the_default::{
   FilePickerPreview,
   Mode,
   OverlayRect as DefaultOverlayRect,
+  PendingInput,
   SIGNATURE_HELP_ACTIVE_PARAM_END_MARKER,
   SIGNATURE_HELP_ACTIVE_PARAM_START_MARKER,
   command_palette_filtered_indices,
@@ -212,13 +213,25 @@ fn lib_style_to_ratatui(style: LibStyle) -> Style {
   out
 }
 
-fn render_styles_from_theme(theme: &the_lib::render::theme::Theme) -> RenderStyles {
+fn render_styles_from_theme(ctx: &Ctx) -> RenderStyles {
+  let theme = &ctx.ui_theme;
   let selection = theme.try_get("ui.selection").unwrap_or_default();
   let cursor = theme.try_get("ui.cursor").unwrap_or_default();
-  let active_cursor = theme
-    .try_get("ui.cursor.active")
-    .or_else(|| theme.try_get("ui.cursor"))
-    .unwrap_or_default();
+  let active_cursor = if matches!(
+    ctx.pending_input.as_ref(),
+    Some(PendingInput::CursorPick { .. })
+  ) {
+    theme
+      .try_get("ui.cursor.match")
+      .or_else(|| theme.try_get("ui.cursor.active"))
+      .or_else(|| theme.try_get("ui.cursor"))
+      .unwrap_or_default()
+  } else {
+    theme
+      .try_get("ui.cursor.active")
+      .or_else(|| theme.try_get("ui.cursor"))
+      .unwrap_or_default()
+  };
   RenderStyles {
     selection,
     cursor,
@@ -4346,7 +4359,7 @@ fn adapt_ui_tree_for_term(ctx: &Ctx, ui: &mut UiTree) {
 }
 
 pub fn build_render_plan(ctx: &mut Ctx) -> RenderPlan {
-  let styles = render_styles_from_theme(&ctx.ui_theme);
+  let styles = render_styles_from_theme(ctx);
   build_render_plan_with_styles(ctx, styles)
 }
 

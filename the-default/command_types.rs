@@ -592,6 +592,8 @@ pub enum Command {
   GotoNextParagraph,
   AddNewlineAbove,
   AddNewlineBelow,
+  SearchSelectionDetectWordBoundaries,
+  SearchSelection,
   SearchNextOrPrev {
     direction: Direction,
     extend:    bool,
@@ -1464,6 +1466,16 @@ impl Command {
   #[must_use]
   pub const fn add_newline_below() -> Self {
     Self::AddNewlineBelow
+  }
+
+  #[must_use]
+  pub const fn search_selection_detect_word_boundaries() -> Self {
+    Self::SearchSelectionDetectWordBoundaries
+  }
+
+  #[must_use]
+  pub const fn search_selection() -> Self {
+    Self::SearchSelection
   }
 
   #[must_use]

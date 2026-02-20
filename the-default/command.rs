@@ -3,6 +3,7 @@
 use std::{
   borrow::Cow,
   collections::{
+    BTreeSet,
     HashMap,
     VecDeque,
   },
@@ -1136,6 +1137,8 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::GotoNextParagraph => goto_paragraph(ctx, Direction::Forward),
     Command::AddNewlineAbove => add_newline(ctx, OpenDirection::Above),
     Command::AddNewlineBelow => add_newline(ctx, OpenDirection::Below),
+    Command::SearchSelectionDetectWordBoundaries => search_selection(ctx, true),
+    Command::SearchSelection => search_selection(ctx, false),
     Command::Search => ctx.dispatch().search(ctx, ()),
     Command::RSearch => ctx.dispatch().rsearch(ctx, ()),
     Command::SelectRegex => ctx.dispatch().select_regex(ctx, ()),
@@ -2764,6 +2767,61 @@ fn search<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
 
 fn rsearch<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
   crate::search_prompt::open_search_prompt(ctx, Direction::Backward);
+}
+
+fn search_selection<Ctx: DefaultContext>(ctx: &mut Ctx, detect_word_boundaries: bool) {
+  fn is_at_word_start(text: RopeSlice<'_>, index: usize) -> bool {
+    if index == text.len_chars() {
+      return false;
+    }
+    let ch = text.char(index);
+    if index == 0 {
+      return char_is_word(ch);
+    }
+    let prev_ch = text.char(index - 1);
+    !char_is_word(prev_ch) && char_is_word(ch)
+  }
+
+  fn is_at_word_end(text: RopeSlice<'_>, index: usize) -> bool {
+    if index == 0 || index == text.len_chars() {
+      return false;
+    }
+    let ch = text.char(index);
+    let prev_ch = text.char(index - 1);
+    char_is_word(prev_ch) && !char_is_word(ch)
+  }
+
+  let register = ctx.register().unwrap_or('/');
+  let doc = ctx.editor_ref().document();
+  let text = doc.text().slice(..);
+
+  let regex = doc
+    .selection()
+    .iter()
+    .map(|selection| {
+      let add_boundary_prefix = detect_word_boundaries && is_at_word_start(text, selection.from());
+      let add_boundary_suffix = detect_word_boundaries && is_at_word_end(text, selection.to());
+
+      let prefix = if add_boundary_prefix { "\\b" } else { "" };
+      let suffix = if add_boundary_suffix { "\\b" } else { "" };
+      let word = regex::escape(&selection.fragment(text));
+      format!("{prefix}{word}{suffix}")
+    })
+    .collect::<BTreeSet<_>>()
+    .into_iter()
+    .collect::<Vec<_>>()
+    .join("|");
+
+  let msg = format!("register '{register}' set to '{regex}'");
+  match ctx.registers_mut().push(register, regex) {
+    Ok(()) => {
+      ctx.registers_mut().last_search_register = register;
+      ctx.push_info("search", msg);
+    },
+    Err(err) => {
+      ctx.push_error("search", err.to_string());
+    },
+  }
 }
 
 fn select_regex<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
@@ -4672,6 +4730,10 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "select_next_sibling" => Some(Command::select_next_sibling()),
     "search" => Some(Command::search()),
     "rsearch" => Some(Command::rsearch()),
+    "search_selection_detect_word_boundaries" => {
+      Some(Command::search_selection_detect_word_boundaries())
+    },
+    "search_selection" => Some(Command::search_selection()),
     "select_regex" => Some(Command::select_regex()),
     "file_picker" => Some(Command::file_picker()),
     "lsp_goto_declaration" => Some(Command::lsp_goto_declaration()),

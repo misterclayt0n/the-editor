@@ -16,6 +16,7 @@ use the_lib::render::{
 use crate::{
   DefaultContext,
   Mode,
+  PendingInput,
   file_picker_icon_glyph,
   file_picker_icon_name_for_path,
   message_bar::inline_statusline_message,
@@ -35,6 +36,11 @@ pub fn statusline_present(tree: &the_lib::render::UiTree) -> bool {
 
 pub fn build_statusline_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> UiNode {
   let viewport_width = ctx.editor_ref().view().viewport.width as usize;
+  let cursor_pick = cursor_pick_status(ctx);
+  let cursor_pick_part = cursor_pick.map(|status| {
+    let action = if status.remove { "remove" } else { "collapse" };
+    format!("{action} {}/{}", status.current, status.total)
+  });
   let pending_keys = pending_keys_text(ctx);
   let watch_part = ctx.watch_statusline_text().filter(|text| !text.is_empty());
   let lsp_part = ctx.lsp_statusline_text().filter(|text| !text.is_empty());
@@ -79,7 +85,7 @@ pub fn build_statusline_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> UiNode {
     })
     .map(str::to_string);
 
-  let mut left = format!("{}  {}", mode_label(ctx.mode()), file_name);
+  let mut left = format!("{}  {}", mode_label(ctx.mode(), cursor_pick), file_name);
   let flags = doc.flags();
   if flags.modified {
     left.push_str(" [+]");
@@ -101,6 +107,9 @@ pub fn build_statusline_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> UiNode {
       if let Some(pending) = pending_part.as_ref() {
         budget = budget.saturating_sub(pending.chars().count() + 2);
       }
+      if let Some(cursor_pick) = cursor_pick_part.as_ref() {
+        budget = budget.saturating_sub(cursor_pick.chars().count() + 2);
+      }
       if let Some(lsp) = lsp_part.as_ref() {
         budget = budget.saturating_sub(lsp.chars().count() + 2);
       }
@@ -120,6 +129,15 @@ pub fn build_statusline_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> UiNode {
 
   let mut right_parts = Vec::new();
   let mut right_segments = Vec::new();
+  if let Some(cursor_pick) = cursor_pick_part {
+    let mut pick_style = UiStyle::default();
+    pick_style.emphasis = UiEmphasis::Strong;
+    right_segments.push(UiStyledSpan {
+      text:  cursor_pick.clone(),
+      style: Some(pick_style),
+    });
+    right_parts.push(cursor_pick);
+  }
   if let Some(pending) = pending_part {
     right_segments.push(UiStyledSpan {
       text:  pending.clone(),
@@ -201,7 +219,38 @@ pub fn build_statusline_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> UiNode {
   UiNode::Panel(panel)
 }
 
-fn mode_label(mode: Mode) -> &'static str {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CursorPickStatus {
+  remove:  bool,
+  current: usize,
+  total:   usize,
+}
+
+fn cursor_pick_status<Ctx: DefaultContext>(ctx: &Ctx) -> Option<CursorPickStatus> {
+  match ctx.pending_input() {
+    Some(PendingInput::CursorPick {
+      remove,
+      candidates,
+      index,
+      ..
+    }) if !candidates.is_empty() => {
+      Some(CursorPickStatus {
+        remove:  *remove,
+        current: (*index)
+          .min(candidates.len().saturating_sub(1))
+          .saturating_add(1),
+        total:   candidates.len(),
+      })
+    },
+    _ => None,
+  }
+}
+
+fn mode_label(mode: Mode, cursor_pick: Option<CursorPickStatus>) -> &'static str {
+  if let Some(status) = cursor_pick {
+    return if status.remove { "REM" } else { "COL" };
+  }
+
   match mode {
     Mode::Normal => "NOR",
     Mode::Insert => "INS",

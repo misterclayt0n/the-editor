@@ -645,7 +645,7 @@ struct StatuslineView: View {
         let segments = snapshot.rightSegments
         guard !segments.isEmpty else {
             // Fallback: render the plain right string as a single segment
-            return [StatuslineSegment(text: snapshot.right, isMuted: false, isVcs: false)]
+            return [StatuslineSegment(text: snapshot.right, isMuted: false, isVcs: false, cursorPick: nil)]
         }
 
         // Filter out pending keys (rendered separately by KeySequenceIndicator)
@@ -655,7 +655,8 @@ struct StatuslineView: View {
             let isMuted = span.style?.emphasis == .muted
             let isVcs = isMuted && isVcsSegment(span.text)
             let text = isVcs ? stripNerdFontPrefix(span.text) : span.text
-            return StatuslineSegment(text: text, isMuted: isMuted, isVcs: isVcs)
+            let cursorPick = cursorPickSegment(from: text)
+            return StatuslineSegment(text: text, isMuted: isMuted, isVcs: isVcs, cursorPick: cursorPick)
         }.filter { !$0.text.isEmpty }
     }
 
@@ -714,6 +715,10 @@ struct StatuslineView: View {
             return Color(nsColor: .labelColor)
         case "COMMAND", "C", ":":
             return Color(nsColor: .secondaryLabelColor)
+        case "COL":
+            return Color(nsColor: .systemOrange)
+        case "REM":
+            return Color(nsColor: .systemRed)
         default:
             return Color(nsColor: .tertiaryLabelColor)
         }
@@ -803,6 +808,8 @@ struct StatuslineView: View {
 
                     if seg.isVcs {
                         vcsSegmentView(seg.text)
+                    } else if let cursorPick = seg.cursorPick {
+                        cursorPickSegmentView(cursorPick)
                     } else if seg.isMuted {
                         Text(seg.text)
                             .font(FontLoader.uiFont(size: 11))
@@ -817,6 +824,47 @@ struct StatuslineView: View {
                 }
             }
         }
+    }
+
+    @ViewBuilder
+    private func cursorPickSegmentView(_ pick: CursorPickSegment) -> some View {
+        let tint = pick.remove ? Color(nsColor: .systemRed) : Color(nsColor: .systemOrange)
+        Text(pick.text)
+            .font(FontLoader.uiFont(size: 11).weight(.semibold))
+            .foregroundStyle(Color.white.opacity(0.92))
+            .padding(.horizontal, 6)
+            .padding(.vertical, 1)
+            .background(
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .fill(tint.opacity(0.35))
+            )
+    }
+
+    private func cursorPickSegment(from text: String) -> CursorPickSegment? {
+        let lower = text.lowercased()
+        let remove: Bool
+        let remainder: Substring
+        if lower.hasPrefix("collapse ") {
+            remove = false
+            remainder = lower.dropFirst("collapse ".count)
+        } else if lower.hasPrefix("remove ") {
+            remove = true
+            remainder = lower.dropFirst("remove ".count)
+        } else {
+            return nil
+        }
+
+        let parts = remainder.split(separator: "/", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
+        guard
+            parts.count == 2,
+            let current = Int(parts[0]),
+            let total = Int(parts[1]),
+            current >= 1,
+            total >= 1
+        else {
+            return nil
+        }
+        return CursorPickSegment(text: text, remove: remove, current: current, total: total)
     }
 
     @ViewBuilder
@@ -837,6 +885,14 @@ fileprivate struct StatuslineSegment {
     let text: String
     let isMuted: Bool
     let isVcs: Bool
+    let cursorPick: CursorPickSegment?
+}
+
+fileprivate struct CursorPickSegment {
+    let text: String
+    let remove: Bool
+    let current: Int
+    let total: Int
 }
 
 

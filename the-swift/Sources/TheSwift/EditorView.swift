@@ -476,23 +476,27 @@ struct EditorView: View {
             let pos = cursor.pos()
             let x = contentOffsetX + CGFloat(pos.col) * cellSize.width
             let y = CGFloat(pos.row) * cellSize.height
-            let cursorColor = SwiftUI.Color.accentColor.opacity(0.8)
+            let style = cursor.style()
+            let fgColor = style.has_fg ? ColorMapper.color(from: style.fg) : nil
+            let bgColor = style.has_bg ? ColorMapper.color(from: style.bg) : nil
+            let strokeColor = fgColor ?? bgColor ?? SwiftUI.Color.accentColor.opacity(0.9)
+            let fillColor = bgColor ?? strokeColor
 
             switch cursor.kind() {
             case 1: // bar
-                let rect = CGRect(x: x, y: y, width: 2, height: cellSize.height)
-                context.fill(Path(rect), with: .color(cursorColor))
+                let rect = CGRect(x: x, y: y, width: 2.5, height: cellSize.height)
+                context.fill(Path(rect), with: .color(strokeColor))
             case 2: // underline
                 let rect = CGRect(x: x, y: y + cellSize.height - 2, width: cellSize.width, height: 2)
-                context.fill(Path(rect), with: .color(cursorColor))
+                context.fill(Path(rect), with: .color(strokeColor))
             case 3: // hollow
                 let rect = CGRect(x: x, y: y, width: cellSize.width, height: cellSize.height)
-                context.stroke(Path(rect), with: .color(cursorColor), lineWidth: 1)
+                context.stroke(Path(rect), with: .color(strokeColor), lineWidth: 1.2)
             case 4: // hidden
                 continue
             default: // block
                 let rect = CGRect(x: x, y: y, width: cellSize.width, height: cellSize.height)
-                context.fill(Path(rect), with: .color(cursorColor.opacity(0.5)))
+                context.fill(Path(rect), with: .color(fillColor.opacity(0.5)))
             }
         }
     }

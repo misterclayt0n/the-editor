@@ -8494,7 +8494,10 @@ mod tests {
     },
   };
 
-  use serde_json::json;
+  use serde_json::{
+    Value,
+    json,
+  };
   use the_default::{
     Command,
     CommandEvent,
@@ -8795,6 +8798,45 @@ mod tests {
       codepoint: ch as u32,
       modifiers: KeyModifiers::ALT,
     }
+  }
+
+  fn statusline_left_and_segments(
+    app: &mut App,
+    id: ffi::EditorId,
+  ) -> Option<(String, Vec<String>)> {
+    let tree: Value = serde_json::from_str(app.ui_tree_json(id).as_str()).ok()?;
+    let overlays = tree.get("overlays")?.as_array()?;
+    for overlay in overlays {
+      let Some("panel") = overlay.get("type").and_then(Value::as_str) else {
+        continue;
+      };
+      let Some(panel) = overlay.get("data") else {
+        continue;
+      };
+      if panel.get("id").and_then(Value::as_str) != Some("statusline") {
+        continue;
+      }
+
+      let child = panel.get("child")?;
+      if child.get("type").and_then(Value::as_str) != Some("status_bar") {
+        continue;
+      }
+      let status = child.get("data")?;
+      let left = status.get("left")?.as_str()?.to_string();
+      let right_segments = status
+        .get("right_segments")
+        .and_then(Value::as_array)
+        .map(|segments| {
+          segments
+            .iter()
+            .filter_map(|segment| segment.get("text").and_then(Value::as_str))
+            .map(str::to_string)
+            .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+      return Some((left, right_segments));
+    }
+    None
   }
 
   fn install_test_watch_state(
@@ -9498,10 +9540,11 @@ pkgs.mkShell {
   fn copy_selection_on_next_line_keeps_single_line_height_at_line_start() {
     let _guard = ffi_test_guard();
     let mut app = App::new();
-    let id = app.create_editor("zero\none\ntwo\nthree\n", default_viewport(), ffi::Position {
-      row: 0,
-      col: 0,
-    });
+    let id = app.create_editor(
+      "zero\none\ntwo\nthree\n",
+      default_viewport(),
+      ffi::Position { row: 0, col: 0 },
+    );
     assert!(app.activate(id).is_some());
 
     let line_start = app.active_editor_ref().document().text().line_to_char(1);
@@ -9719,7 +9762,10 @@ pkgs.mkShell {
       .set_selection(Selection::single(0, join_end));
 
     assert!(app.handle_key(id, key_char('J')));
-    assert_eq!(app.active_editor_ref().document().text().to_string(), "alpha beta gamma\n");
+    assert_eq!(
+      app.active_editor_ref().document().text().to_string(),
+      "alpha beta gamma\n"
+    );
   }
 
   #[test]
@@ -9738,11 +9784,13 @@ pkgs.mkShell {
       .set_selection(Selection::single(0, join_end));
 
     assert!(app.handle_key(id, key_char_alt('J')));
-    assert_eq!(app.active_editor_ref().document().text().to_string(), "alpha beta\n");
     assert_eq!(
-      app.active_editor_ref().document().selection().ranges(),
-      &[Range::point("alpha".chars().count())]
+      app.active_editor_ref().document().text().to_string(),
+      "alpha beta\n"
     );
+    assert_eq!(app.active_editor_ref().document().selection().ranges(), &[
+      Range::point("alpha".chars().count())
+    ]);
   }
 
   #[test]
@@ -9766,7 +9814,15 @@ pkgs.mkShell {
       codepoint: 0,
       modifiers: 0,
     }));
-    assert_eq!(app.active_editor_ref().document().selection().ranges().len(), 3);
+    assert_eq!(
+      app
+        .active_editor_ref()
+        .document()
+        .selection()
+        .ranges()
+        .len(),
+      3
+    );
 
     assert!(app.handle_key(id, key_char('K')));
     assert!(app.active_state_ref().search_prompt.active);
@@ -9792,7 +9848,15 @@ pkgs.mkShell {
       modifiers: 0,
     }));
     assert!(!app.active_state_ref().search_prompt.active);
-    assert_eq!(app.active_editor_ref().document().selection().ranges().len(), 2);
+    assert_eq!(
+      app
+        .active_editor_ref()
+        .document()
+        .selection()
+        .ranges()
+        .len(),
+      2
+    );
   }
 
   #[test]
@@ -9816,7 +9880,15 @@ pkgs.mkShell {
       codepoint: 0,
       modifiers: 0,
     }));
-    assert_eq!(app.active_editor_ref().document().selection().ranges().len(), 3);
+    assert_eq!(
+      app
+        .active_editor_ref()
+        .document()
+        .selection()
+        .ranges()
+        .len(),
+      3
+    );
 
     assert!(app.handle_key(id, key_char_alt('K')));
     assert!(app.active_state_ref().search_prompt.active);
@@ -9842,7 +9914,15 @@ pkgs.mkShell {
       modifiers: 0,
     }));
     assert!(!app.active_state_ref().search_prompt.active);
-    assert_eq!(app.active_editor_ref().document().selection().ranges().len(), 1);
+    assert_eq!(
+      app
+        .active_editor_ref()
+        .document()
+        .selection()
+        .ranges()
+        .len(),
+      1
+    );
   }
 
   #[test]
@@ -9859,9 +9939,24 @@ pkgs.mkShell {
     let selection = Selection::point(text.line_to_char(0))
       .push(Range::point(text.line_to_char(1)))
       .push(Range::point(text.line_to_char(2)));
-    let _ = app.active_editor_mut().document_mut().set_selection(selection);
+    let _ = app
+      .active_editor_mut()
+      .document_mut()
+      .set_selection(selection);
 
     assert!(app.handle_key(id, key_char(',')));
+    let (left, right_segments) =
+      statusline_left_and_segments(&mut app, id).expect("statusline should be present");
+    assert!(
+      left.starts_with("COL "),
+      "unexpected statusline left while picking cursor: {left}"
+    );
+    assert!(
+      right_segments
+        .iter()
+        .any(|segment| segment == "collapse 1/3"),
+      "missing collapse segment in statusline: {right_segments:?}"
+    );
     let candidates = match app.active_state_ref().pending_input.clone() {
       Some(PendingInput::CursorPick {
         remove,
@@ -9889,7 +9984,18 @@ pkgs.mkShell {
         ..
       })
     ));
-    assert_eq!(app.active_editor_ref().view().active_cursor, Some(candidates[1]));
+    assert_eq!(
+      app.active_editor_ref().view().active_cursor,
+      Some(candidates[1])
+    );
+    let (_left, right_segments) =
+      statusline_left_and_segments(&mut app, id).expect("statusline should remain visible");
+    assert!(
+      right_segments
+        .iter()
+        .any(|segment| segment == "collapse 2/3"),
+      "missing updated collapse segment in statusline: {right_segments:?}"
+    );
 
     assert!(app.handle_key(id, ffi::KeyEvent {
       kind:      1,
@@ -9897,12 +10003,23 @@ pkgs.mkShell {
       modifiers: 0,
     }));
     assert!(app.active_state_ref().pending_input.is_none());
-    assert_eq!(app.active_editor_ref().document().selection().ranges().len(), 1);
+    assert_eq!(
+      app
+        .active_editor_ref()
+        .document()
+        .selection()
+        .ranges()
+        .len(),
+      1
+    );
     assert_eq!(
       app.active_editor_ref().document().selection().cursor_ids()[0],
       candidates[1]
     );
-    assert_eq!(app.active_editor_ref().view().active_cursor, Some(candidates[1]));
+    assert_eq!(
+      app.active_editor_ref().view().active_cursor,
+      Some(candidates[1])
+    );
   }
 
   #[test]
@@ -9919,9 +10036,22 @@ pkgs.mkShell {
     let selection = Selection::point(text.line_to_char(0))
       .push(Range::point(text.line_to_char(1)))
       .push(Range::point(text.line_to_char(2)));
-    let _ = app.active_editor_mut().document_mut().set_selection(selection);
+    let _ = app
+      .active_editor_mut()
+      .document_mut()
+      .set_selection(selection);
 
     assert!(app.handle_key(id, key_char_alt(',')));
+    let (left, right_segments) =
+      statusline_left_and_segments(&mut app, id).expect("statusline should be present");
+    assert!(
+      left.starts_with("REM "),
+      "unexpected statusline left while removing cursor: {left}"
+    );
+    assert!(
+      right_segments.iter().any(|segment| segment == "remove 1/3"),
+      "missing remove segment in statusline: {right_segments:?}"
+    );
     let candidates = match app.active_state_ref().pending_input.clone() {
       Some(PendingInput::CursorPick {
         remove,
@@ -9948,13 +10078,23 @@ pkgs.mkShell {
     }));
 
     assert!(app.active_state_ref().pending_input.is_none());
-    assert_eq!(app.active_editor_ref().document().selection().ranges().len(), 2);
-    assert!(!app
-      .active_editor_ref()
-      .document()
-      .selection()
-      .cursor_ids()
-      .contains(&candidates[1]));
+    assert_eq!(
+      app
+        .active_editor_ref()
+        .document()
+        .selection()
+        .ranges()
+        .len(),
+      2
+    );
+    assert!(
+      !app
+        .active_editor_ref()
+        .document()
+        .selection()
+        .cursor_ids()
+        .contains(&candidates[1])
+    );
   }
 
   #[test]

@@ -615,6 +615,27 @@ mod tests {
   }
 
   #[test]
+  fn editor_split_and_new_scratch_flow_keeps_original_buffer_in_other_pane() {
+    let doc_id = DocumentId::new(NonZeroUsize::new(1).unwrap());
+    let doc = Document::new(doc_id, Rope::from("one"));
+    let view = ViewState::new(Rect::new(0, 0, 80, 24), Position::new(0, 0));
+    let editor_id = EditorId::new(NonZeroUsize::new(1).unwrap());
+    let mut editor = Editor::new(editor_id, doc, view);
+
+    assert!(editor.split_active_pane(SplitAxis::Horizontal));
+    let scratch_idx = editor.open_buffer(
+      Rope::new(),
+      ViewState::new(Rect::new(0, 0, 80, 24), Position::new(0, 0)),
+      None,
+    );
+    assert_eq!(editor.active_buffer_index(), scratch_idx);
+    assert_eq!(editor.buffer_count(), 2);
+
+    assert!(editor.jump_active_pane(PaneDirection::Up));
+    assert_eq!(editor.active_buffer_index(), 0);
+  }
+
+  #[test]
   fn editor_transpose_active_pane_requires_a_split_branch() {
     let doc_id = DocumentId::new(NonZeroUsize::new(1).unwrap());
     let doc = Document::new(doc_id, Rope::from("one"));

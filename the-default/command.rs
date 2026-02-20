@@ -14,7 +14,10 @@ use std::{
   sync::OnceLock,
 };
 
-use ropey::RopeSlice;
+use ropey::{
+  Rope,
+  RopeSlice,
+};
 use smallvec::SmallVec;
 use the_core::{
   chars::{
@@ -121,6 +124,7 @@ use the_lib::{
   },
   text_object,
   transaction::Transaction,
+  view::ViewState,
 };
 use the_stdx::rope::RopeSliceExt;
 
@@ -1164,6 +1168,10 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::SwapViewDown => swap_view(ctx, PaneDirection::Down),
     Command::SwapViewUp => swap_view(ctx, PaneDirection::Up),
     Command::SwapViewRight => swap_view(ctx, PaneDirection::Right),
+    Command::GotoFileHSplit => goto_file_split(ctx, SplitAxis::Horizontal),
+    Command::GotoFileVSplit => goto_file_split(ctx, SplitAxis::Vertical),
+    Command::HSplitNew => split_new_scratch(ctx, SplitAxis::Horizontal),
+    Command::VSplitNew => split_new_scratch(ctx, SplitAxis::Vertical),
     Command::GotoLastAccessedFile => {
       if !ctx.goto_last_accessed_buffer() {
         ctx.push_warning("buffer", "no last accessed buffer");
@@ -2226,6 +2234,23 @@ fn swap_view<Ctx: DefaultContext>(ctx: &mut Ctx, direction: PaneDirection) {
     ctx.push_warning("window", "no view to swap in that direction");
     return;
   }
+  ctx.request_render();
+}
+
+fn goto_file_split<Ctx: DefaultContext>(ctx: &mut Ctx, axis: SplitAxis) {
+  crate::file_picker::open_file_picker_with_split(ctx, Some(axis));
+}
+
+fn split_new_scratch<Ctx: DefaultContext>(ctx: &mut Ctx, axis: SplitAxis) {
+  if !ctx.editor().split_active_pane(axis) {
+    ctx.push_warning("window", "failed to split view");
+    return;
+  }
+
+  let viewport = ctx.editor_ref().view().viewport;
+  let view = ViewState::new(viewport, Position::new(0, 0));
+  let _ = ctx.editor().open_buffer(Rope::new(), view, None);
+  ctx.set_file_path(None);
   ctx.request_render();
 }
 
@@ -5310,6 +5335,10 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "swap_view_down" => Some(Command::swap_view_down()),
     "swap_view_up" => Some(Command::swap_view_up()),
     "swap_view_right" => Some(Command::swap_view_right()),
+    "goto_file_hsplit" => Some(Command::goto_file_hsplit()),
+    "goto_file_vsplit" => Some(Command::goto_file_vsplit()),
+    "hsplit_new" => Some(Command::hsplit_new()),
+    "vsplit_new" => Some(Command::vsplit_new()),
     "goto_last_accessed_file" => Some(Command::goto_last_accessed_file()),
     "goto_last_modified_file" => Some(Command::goto_last_modified_file()),
     "goto_last_modification" => Some(Command::goto_last_modification()),

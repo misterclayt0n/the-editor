@@ -996,8 +996,8 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
       "C-s" | "s" => hsplit,
       "C-v" | "v" => vsplit,
       "C-t" | "t" => transpose_view,
-      // "f" => goto_file_hsplit,
-      // "F" => goto_file_vsplit,
+      "f" => goto_file_hsplit,
+      "F" => goto_file_vsplit,
       "C-q" | "q" => wclose,
       "C-o" | "o" => wonly,
       "C-h" | "h" | "left" => jump_view_left,
@@ -1008,10 +1008,10 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
       "K" => swap_view_up,
       "H" => swap_view_left,
       "J" => swap_view_down,
-      // "n" => { "New split scratch buffer"
-      //   "C-s" | "s" => hsplit_new,
-      //   "C-v" | "v" => vsplit_new,
-      // },
+      "n" => { "New split scratch buffer"
+        "C-s" | "s" => hsplit_new,
+        "C-v" | "v" => vsplit_new,
+      },
     },
 
     // "C-c" => toggle_comments,

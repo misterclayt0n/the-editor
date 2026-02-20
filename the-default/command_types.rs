@@ -502,6 +502,10 @@ pub enum Command {
   SwapViewDown,
   SwapViewUp,
   SwapViewRight,
+  GotoFileHSplit,
+  GotoFileVSplit,
+  HSplitNew,
+  VSplitNew,
   GotoLastAccessedFile,
   GotoLastModifiedFile,
   GotoLastModification,
@@ -948,6 +952,26 @@ impl Command {
   #[must_use]
   pub const fn swap_view_right() -> Self {
     Self::SwapViewRight
+  }
+
+  #[must_use]
+  pub const fn goto_file_hsplit() -> Self {
+    Self::GotoFileHSplit
+  }
+
+  #[must_use]
+  pub const fn goto_file_vsplit() -> Self {
+    Self::GotoFileVSplit
+  }
+
+  #[must_use]
+  pub const fn hsplit_new() -> Self {
+    Self::HSplitNew
+  }
+
+  #[must_use]
+  pub const fn vsplit_new() -> Self {
+    Self::VSplitNew
   }
 
   #[must_use]

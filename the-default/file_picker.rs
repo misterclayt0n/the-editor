@@ -62,6 +62,7 @@ use the_lib::{
     UiPanel,
     UiStyle,
   },
+  split_tree::SplitAxis,
   syntax::{
     Highlight,
     Loader,
@@ -229,6 +230,7 @@ pub struct FilePickerState {
   pub list_visible:       usize,
   pub preview_scroll:     usize,
   pub show_preview:       bool,
+  pub open_split:         Option<SplitAxis>,
   pub preview_path:       Option<PathBuf>,
   pub preview:            FilePickerPreview,
   pub error:              Option<String>,
@@ -268,6 +270,7 @@ impl Default for FilePickerState {
       list_visible: DEFAULT_LIST_VISIBLE_ROWS,
       preview_scroll: 0,
       show_preview: true,
+      open_split: None,
       preview_path: None,
       preview: FilePickerPreview::Empty,
       error: None,
@@ -382,6 +385,13 @@ impl FilePickerState {
 }
 
 pub fn open_file_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  open_file_picker_with_split(ctx, None);
+}
+
+pub fn open_file_picker_with_split<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  open_split: Option<SplitAxis>,
+) {
   let root = picker_root(ctx);
   let show_preview = ctx.file_picker().show_preview;
   let config = ctx.file_picker().config.clone();
@@ -394,6 +404,7 @@ pub fn open_file_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
   let mut state = FilePickerState::default();
   state.active = true;
   state.show_preview = show_preview;
+  state.open_split = open_split;
   state.config = config;
   state.wake_tx = wake_tx.clone();
   state.syntax_loader = syntax_loader;
@@ -416,6 +427,7 @@ pub fn close_file_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
   picker.error = None;
   picker.hovered = None;
   picker.preview_scroll = 0;
+  picker.open_split = None;
   picker.preview_path = None;
   picker.preview = FilePickerPreview::Empty;
   picker.scanning = false;
@@ -622,6 +634,14 @@ pub fn submit_file_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
   let Some(item) = selected else {
     return;
   };
+
+  if let Some(axis) = ctx.file_picker().open_split
+    && !ctx.editor().split_active_pane(axis)
+  {
+    ctx.push_error("file_picker", "Failed to open split");
+    ctx.request_render();
+    return;
+  }
 
   if let Err(err) = ctx.open_file(&item.absolute) {
     let message = err.to_string();

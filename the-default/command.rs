@@ -467,6 +467,9 @@ pub trait DefaultContext: Sized + 'static {
   fn active_diagnostic_ranges(&self) -> Vec<Range> {
     Vec::new()
   }
+  fn change_hunk_ranges(&self) -> Option<Vec<Range>> {
+    None
+  }
   fn registers(&self) -> &Registers;
   fn registers_mut(&mut self) -> &mut Registers;
   fn register(&self) -> Option<char>;
@@ -1111,6 +1114,10 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::GotoFirstDiag => goto_first_diag(ctx),
     Command::GotoNextDiag => goto_next_diag(ctx),
     Command::GotoLastDiag => goto_last_diag(ctx),
+    Command::GotoPrevChange => goto_change(ctx, Direction::Backward),
+    Command::GotoFirstChange => goto_first_change(ctx),
+    Command::GotoNextChange => goto_change(ctx, Direction::Forward),
+    Command::GotoLastChange => goto_last_change(ctx),
     Command::Search => ctx.dispatch().search(ctx, ()),
     Command::RSearch => ctx.dispatch().rsearch(ctx, ()),
     Command::SelectRegex => ctx.dispatch().select_regex(ctx, ()),
@@ -2257,6 +2264,89 @@ fn goto_next_diag<Ctx: DefaultContext>(ctx: &mut Ctx) {
 fn goto_last_diag<Ctx: DefaultContext>(ctx: &mut Ctx) {
   let diagnostics = ctx.active_diagnostic_ranges();
   let Some(range) = diagnostics.last().copied() else {
+    return;
+  };
+  let _ = ctx
+    .editor()
+    .document_mut()
+    .set_selection(Selection::single(range.from(), range.to()));
+}
+
+fn goto_change<Ctx: DefaultContext>(ctx: &mut Ctx, direction: Direction) {
+  let Some(change_ranges) = ctx.change_hunk_ranges() else {
+    ctx.push_warning("goto", "Diff is not available in current buffer");
+    return;
+  };
+  if change_ranges.is_empty() {
+    return;
+  }
+
+  let select_mode = ctx.mode() == Mode::Select;
+  let next = {
+    let doc = ctx.editor_ref().document();
+    let text = doc.text().slice(..);
+    let selection = doc.selection().clone();
+    selection.transform(|range| {
+      let cursor_line = range.cursor_line(text);
+      let target = match direction {
+        Direction::Forward => {
+          change_ranges
+            .iter()
+            .find(|candidate| text.char_to_line(candidate.from()) > cursor_line)
+        },
+        Direction::Backward => {
+          change_ranges
+            .iter()
+            .rev()
+            .find(|candidate| text.char_to_line(candidate.from()) < cursor_line)
+        },
+        _ => None,
+      };
+      let Some(target) = target.copied() else {
+        return range;
+      };
+
+      if select_mode {
+        let head = if target.head < range.anchor {
+          target.anchor
+        } else {
+          target.head
+        };
+        Range::new(range.anchor, head)
+      } else {
+        let movement_direction = match direction {
+          Direction::Forward => MoveDir::Forward,
+          Direction::Backward => MoveDir::Backward,
+          _ => MoveDir::Forward,
+        };
+        target.with_direction(movement_direction)
+      }
+    })
+  };
+
+  let _ = ctx.editor().document_mut().set_selection(next);
+}
+
+fn goto_first_change<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  let Some(change_ranges) = ctx.change_hunk_ranges() else {
+    ctx.push_warning("goto", "Diff is not available in current buffer");
+    return;
+  };
+  let Some(range) = change_ranges.first().copied() else {
+    return;
+  };
+  let _ = ctx
+    .editor()
+    .document_mut()
+    .set_selection(Selection::single(range.from(), range.to()));
+}
+
+fn goto_last_change<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  let Some(change_ranges) = ctx.change_hunk_ranges() else {
+    ctx.push_warning("goto", "Diff is not available in current buffer");
+    return;
+  };
+  let Some(range) = change_ranges.last().copied() else {
     return;
   };
   let _ = ctx
@@ -4541,6 +4631,10 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "goto_first_diag" => Some(Command::goto_first_diag()),
     "goto_next_diag" => Some(Command::goto_next_diag()),
     "goto_last_diag" => Some(Command::goto_last_diag()),
+    "goto_prev_change" => Some(Command::goto_prev_change()),
+    "goto_first_change" => Some(Command::goto_first_change()),
+    "goto_next_change" => Some(Command::goto_next_change()),
+    "goto_last_change" => Some(Command::goto_last_change()),
 
     _ => None,
   }

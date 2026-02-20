@@ -7213,6 +7213,31 @@ impl DefaultContext for App {
     ranges
   }
 
+  fn change_hunk_ranges(&self) -> Option<Vec<Range>> {
+    let id = self.active_editor?;
+    let handle = self.vcs_diff_handles.get(&id)?;
+    let diff = handle.load();
+    let text = self.active_editor_ref().document().text();
+    let len_lines = text.len_lines();
+    if len_lines == 0 {
+      return Some(Vec::new());
+    }
+
+    let mut ranges = Vec::with_capacity(diff.len() as usize);
+    for idx in 0..diff.len() {
+      let hunk = diff.nth_hunk(idx);
+      let start_line = (hunk.after.start as usize).min(len_lines.saturating_sub(1));
+      let start = text.line_to_char(start_line);
+      let end = if hunk.after.is_empty() {
+        text.line_to_char((start_line + 1).min(len_lines))
+      } else {
+        text.line_to_char((hunk.after.end as usize).min(len_lines))
+      };
+      ranges.push(Range::new(start, end));
+    }
+    Some(ranges)
+  }
+
   fn registers(&self) -> &Registers {
     &self.registers
   }

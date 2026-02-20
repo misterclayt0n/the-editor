@@ -570,6 +570,10 @@ pub enum Command {
   GotoFirstDiag,
   GotoNextDiag,
   GotoLastDiag,
+  GotoPrevChange,
+  GotoFirstChange,
+  GotoNextChange,
+  GotoLastChange,
   SearchNextOrPrev {
     direction: Direction,
     extend:    bool,
@@ -1332,6 +1336,26 @@ impl Command {
   #[must_use]
   pub const fn goto_last_diag() -> Self {
     Self::GotoLastDiag
+  }
+
+  #[must_use]
+  pub const fn goto_prev_change() -> Self {
+    Self::GotoPrevChange
+  }
+
+  #[must_use]
+  pub const fn goto_first_change() -> Self {
+    Self::GotoFirstChange
+  }
+
+  #[must_use]
+  pub const fn goto_next_change() -> Self {
+    Self::GotoNextChange
+  }
+
+  #[must_use]
+  pub const fn goto_last_change() -> Self {
+    Self::GotoLastChange
   }
 
   #[must_use]

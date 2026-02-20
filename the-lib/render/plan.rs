@@ -49,7 +49,10 @@
 //! assert_eq!(plan.lines.len(), 1);
 //! ```
 
-use std::collections::BTreeMap;
+use std::{
+  collections::BTreeMap,
+  num::NonZeroUsize,
+};
 
 use the_core::grapheme::{
   Grapheme,
@@ -84,6 +87,7 @@ use crate::{
     text_format::TextFormat,
     visual_position,
   },
+  split_tree::PaneId,
   syntax::Highlight,
   view::ViewState,
 };
@@ -270,6 +274,75 @@ impl Default for RenderPlan {
   fn default() -> Self {
     Self::empty(Rect::default(), Position::default())
   }
+}
+
+#[derive(Debug, Clone)]
+pub struct PaneRenderPlan {
+  pub pane_id: PaneId,
+  pub rect:    Rect,
+  pub plan:    RenderPlan,
+}
+
+#[derive(Debug, Clone)]
+pub struct FrameRenderPlan {
+  pub active_pane: PaneId,
+  pub panes:       Vec<PaneRenderPlan>,
+}
+
+impl FrameRenderPlan {
+  pub fn empty() -> Self {
+    Self {
+      active_pane: default_pane_id(),
+      panes:       Vec::new(),
+    }
+  }
+
+  pub fn from_active_plan(plan: RenderPlan) -> Self {
+    let pane_id = default_pane_id();
+    let rect = plan.viewport;
+    Self {
+      active_pane: pane_id,
+      panes:       vec![PaneRenderPlan {
+        pane_id,
+        rect,
+        plan,
+      }],
+    }
+  }
+
+  pub fn active_plan(&self) -> Option<&RenderPlan> {
+    self
+      .panes
+      .iter()
+      .find(|pane| pane.pane_id == self.active_pane)
+      .map(|pane| &pane.plan)
+  }
+
+  pub fn active_plan_mut(&mut self) -> Option<&mut RenderPlan> {
+    self
+      .panes
+      .iter_mut()
+      .find(|pane| pane.pane_id == self.active_pane)
+      .map(|pane| &mut pane.plan)
+  }
+
+  pub fn into_active_plan(self) -> Option<RenderPlan> {
+    self
+      .panes
+      .into_iter()
+      .find(|pane| pane.pane_id == self.active_pane)
+      .map(|pane| pane.plan)
+  }
+}
+
+impl Default for FrameRenderPlan {
+  fn default() -> Self {
+    Self::empty()
+  }
+}
+
+fn default_pane_id() -> PaneId {
+  PaneId::new(NonZeroUsize::new(1).expect("nonzero"))
 }
 
 #[derive(Debug, Default)]
@@ -1376,5 +1449,35 @@ mod tests {
       .find(|line| line.row == 0)
       .expect("row 0 exists");
     assert!(row0.spans.iter().any(|span| span.text == "~"));
+  }
+
+  #[test]
+  fn frame_render_plan_wraps_single_active_plan() {
+    let mut plan = RenderPlan::empty(Rect::new(1, 2, 10, 5), Position::new(3, 4));
+    plan.content_offset_x = 2;
+
+    let frame = FrameRenderPlan::from_active_plan(plan.clone());
+    assert_eq!(frame.panes.len(), 1);
+    assert_eq!(
+      frame
+        .active_plan()
+        .expect("active pane exists")
+        .content_offset_x,
+      2
+    );
+    assert_eq!(
+      frame
+        .into_active_plan()
+        .expect("active pane exists")
+        .viewport,
+      plan.viewport
+    );
+  }
+
+  #[test]
+  fn empty_frame_render_plan_has_no_active_plan() {
+    let frame = FrameRenderPlan::empty();
+    assert!(frame.active_plan().is_none());
+    assert!(frame.into_active_plan().is_none());
   }
 }

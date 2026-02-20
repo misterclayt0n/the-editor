@@ -47,8 +47,10 @@ pub use overlay::{
   OverlayText,
 };
 pub use plan::{
+  FrameRenderPlan,
   HighlightProvider,
   NoHighlights,
+  PaneRenderPlan,
   RenderCache,
   RenderCursor,
   RenderDiagnosticGutterStyles,

@@ -68,6 +68,7 @@ use the_lib::{
   },
   registers::Registers,
   render::{
+    FrameRenderPlan,
     GutterConfig,
     GutterType,
     LineNumberMode,
@@ -424,6 +425,12 @@ pub trait DefaultContext: Sized + 'static {
     let _ = styles;
     self.build_render_plan()
   }
+  fn build_frame_render_plan(&mut self) -> FrameRenderPlan {
+    FrameRenderPlan::from_active_plan(self.build_render_plan())
+  }
+  fn build_frame_render_plan_with_styles(&mut self, styles: RenderStyles) -> FrameRenderPlan {
+    FrameRenderPlan::from_active_plan(self.build_render_plan_with_styles(styles))
+  }
   fn request_quit(&mut self);
   fn mode(&self) -> Mode;
   fn set_mode(&mut self, mode: Mode);
@@ -712,19 +719,44 @@ where
 }
 
 pub fn render_plan<Ctx: DefaultContext>(ctx: &mut Ctx) -> RenderPlan {
-  ctx.dispatch().pre_render(ctx, ());
-  let plan = ctx.dispatch().on_render(ctx, ());
-  ctx.dispatch().post_render(ctx, plan)
+  frame_render_plan(ctx)
+    .into_active_plan()
+    .unwrap_or_default()
 }
 
 pub fn render_plan_with_styles<Ctx: DefaultContext>(
   ctx: &mut Ctx,
   styles: RenderStyles,
 ) -> RenderPlan {
+  frame_render_plan_with_styles(ctx, styles)
+    .into_active_plan()
+    .unwrap_or_default()
+}
+
+pub fn frame_render_plan<Ctx: DefaultContext>(ctx: &mut Ctx) -> FrameRenderPlan {
+  ctx.dispatch().pre_render(ctx, ());
+  let mut frame = ctx.build_frame_render_plan();
+  for pane in &mut frame.panes {
+    pane.plan = ctx
+      .dispatch()
+      .post_render(ctx, std::mem::take(&mut pane.plan));
+  }
+  frame
+}
+
+pub fn frame_render_plan_with_styles<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  styles: RenderStyles,
+) -> FrameRenderPlan {
   ctx.dispatch().pre_render(ctx, ());
   let styles = ctx.dispatch().pre_render_with_styles(ctx, styles);
-  let plan = ctx.dispatch().on_render_with_styles(ctx, styles);
-  ctx.dispatch().post_render(ctx, plan)
+  let mut frame = ctx.build_frame_render_plan_with_styles(styles);
+  for pane in &mut frame.panes {
+    pane.plan = ctx
+      .dispatch()
+      .post_render(ctx, std::mem::take(&mut pane.plan));
+  }
+  frame
 }
 
 pub fn ui_tree<Ctx: DefaultContext>(ctx: &mut Ctx) -> UiTree {
@@ -2608,8 +2640,7 @@ fn align_selections<Ctx: DefaultContext>(ctx: &mut Ctx) {
       let Some(coords) = visual_pos_at_char(text, &text_fmt, &mut annotations, range.head) else {
         return Ok(None);
       };
-      let Some(anchor_coords) =
-        visual_pos_at_char(text, &text_fmt, &mut annotations, range.anchor)
+      let Some(anchor_coords) = visual_pos_at_char(text, &text_fmt, &mut annotations, range.anchor)
       else {
         return Ok(None);
       };
@@ -2665,7 +2696,7 @@ fn align_selections<Ctx: DefaultContext>(ctx: &mut Ctx) {
     if changes.is_empty() {
       Ok(None)
     } else {
-      changes.sort_unstable_by_key(|(from, _, _)| *from);
+      changes.sort_unstable_by_key(|(from, ..)| *from);
       Transaction::change(doc.text(), changes.into_iter())
         .map(Some)
         .map_err(|err| format!("failed to build align transaction: {err}"))
@@ -2865,7 +2896,8 @@ fn join_selections_impl<Ctx: DefaultContext>(ctx: &mut Ctx, select_space: bool) 
       },
       _ => Vec::new(),
     };
-    // Sort by length so longer comment markers (e.g. ///) match before shorter ones (//).
+    // Sort by length so longer comment markers (e.g. ///) match before shorter ones
+    // (//).
     comment_tokens.sort_unstable_by_key(|token| std::cmp::Reverse(token.len()));
 
     let mut changes = Vec::new();
@@ -3149,7 +3181,15 @@ fn page_cursor_by_rows<Ctx: DefaultContext>(
     };
 
     selection.transform(|range| {
-      move_vertically(slice, range, direction, count, behavior, &text_fmt, &mut annotations)
+      move_vertically(
+        slice,
+        range,
+        direction,
+        count,
+        behavior,
+        &text_fmt,
+        &mut annotations,
+      )
     })
   };
 

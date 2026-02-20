@@ -4,6 +4,11 @@ import TheEditorFFIBridge
 struct EditorView: View {
     @StateObject private var model: EditorModel
 
+    private struct CursorPickState {
+        let remove: Bool
+        let currentIndex: Int
+    }
+
     init(filePath: String? = nil) {
         _model = StateObject(wrappedValue: EditorModel(filePath: filePath))
     }
@@ -24,6 +29,7 @@ struct EditorView: View {
         let isCompletionOpen = completionSnapshot != nil
         let isHoverOpen = hoverSnapshot != nil && !isCompletionOpen
         let isSignatureOpen = signatureSnapshot != nil && !isCompletionOpen && !isHoverOpen
+        let cursorPickState = cursorPickState(from: model.uiTree.statuslineSnapshot())
         GeometryReader { proxy in
             ZStack {
                 Canvas { context, size in
@@ -33,7 +39,8 @@ struct EditorView: View {
                         plan: model.plan,
                         cellSize: cellSize,
                         bufferFont: bufferFont,
-                        bufferNSFont: bufferNSFont
+                        bufferNSFont: bufferNSFont,
+                        cursorPickState: cursorPickState
                     )
                 }
                 .background(SwiftUI.Color.black)
@@ -201,13 +208,57 @@ struct EditorView: View {
         )
     }
 
+    private func cursorPickState(from snapshot: StatuslineSnapshot?) -> CursorPickState? {
+        guard let snapshot else { return nil }
+
+        let modeToken = snapshot
+            .left
+            .split(whereSeparator: { $0.isWhitespace })
+            .first?
+            .uppercased()
+        let remove: Bool
+        switch modeToken {
+        case "COL":
+            remove = false
+        case "REM":
+            remove = true
+        default:
+            return nil
+        }
+
+        let prefix = remove ? "remove " : "collapse "
+        let rightSegments = snapshot.rightSegments.map(\.text)
+        let pickIndex = rightSegments.compactMap { segment in
+            parseCursorPickIndex(segment: segment, prefix: prefix)
+        }.first
+        guard let pickIndex else { return nil }
+
+        return CursorPickState(remove: remove, currentIndex: pickIndex)
+    }
+
+    private func parseCursorPickIndex(segment: String, prefix: String) -> Int? {
+        let lower = segment.lowercased()
+        guard lower.hasPrefix(prefix) else { return nil }
+        let remainder = lower.dropFirst(prefix.count)
+        let parts = remainder.split(separator: "/", maxSplits: 1)
+        guard
+            parts.count == 2,
+            let current = Int(parts[0]),
+            current >= 1
+        else {
+            return nil
+        }
+        return current - 1
+    }
+
     private func drawPlan(
         in context: GraphicsContext,
         size: CGSize,
         plan: RenderPlan,
         cellSize: CGSize,
         bufferFont: Font,
-        bufferNSFont: NSFont
+        bufferNSFont: NSFont,
+        cursorPickState: CursorPickState?
     ) {
         let contentOffsetX = CGFloat(plan.content_offset_x()) * cellSize.width
         drawGutter(
@@ -241,7 +292,13 @@ struct EditorView: View {
             nsFont: bufferNSFont,
             contentOffsetX: contentOffsetX
         )
-        drawCursors(in: context, plan: plan, cellSize: cellSize, contentOffsetX: contentOffsetX)
+        drawCursors(
+            in: context,
+            plan: plan,
+            cellSize: cellSize,
+            contentOffsetX: contentOffsetX,
+            cursorPickState: cursorPickState
+        )
         debugDrawSnapshot(
             plan: plan,
             textStats: textStats,
@@ -466,21 +523,32 @@ struct EditorView: View {
         in context: GraphicsContext,
         plan: RenderPlan,
         cellSize: CGSize,
-        contentOffsetX: CGFloat
+        contentOffsetX: CGFloat,
+        cursorPickState: CursorPickState?
     ) {
         let count = Int(plan.cursor_count())
         guard count > 0 else { return }
+
+        let pickedCursorId: UInt64? = {
+            guard let cursorPickState else { return nil }
+            guard cursorPickState.currentIndex >= 0 && cursorPickState.currentIndex < count else { return nil }
+            return plan.cursor_at(UInt(cursorPickState.currentIndex)).id()
+        }()
+        let defaultCursorColor = SwiftUI.Color.accentColor.opacity(0.9)
+        let pickedCursorColor: SwiftUI.Color = {
+            guard let cursorPickState else { return defaultCursorColor }
+            return cursorPickState.remove
+                ? SwiftUI.Color(nsColor: .systemRed)
+                : SwiftUI.Color(nsColor: .systemOrange)
+        }()
 
         for index in 0..<count {
             let cursor = plan.cursor_at(UInt(index))
             let pos = cursor.pos()
             let x = contentOffsetX + CGFloat(pos.col) * cellSize.width
             let y = CGFloat(pos.row) * cellSize.height
-            let style = cursor.style()
-            let fgColor = style.has_fg ? ColorMapper.color(from: style.fg) : nil
-            let bgColor = style.has_bg ? ColorMapper.color(from: style.bg) : nil
-            let strokeColor = fgColor ?? bgColor ?? SwiftUI.Color.accentColor.opacity(0.9)
-            let fillColor = bgColor ?? strokeColor
+            let isPickedCursor = pickedCursorId == cursor.id()
+            let strokeColor = isPickedCursor ? pickedCursorColor : defaultCursorColor
 
             switch cursor.kind() {
             case 1: // bar
@@ -496,7 +564,7 @@ struct EditorView: View {
                 continue
             default: // block
                 let rect = CGRect(x: x, y: y, width: cellSize.width, height: cellSize.height)
-                context.fill(Path(rect), with: .color(fillColor.opacity(0.5)))
+                context.fill(Path(rect), with: .color(strokeColor.opacity(isPickedCursor ? 0.65 : 0.5)))
             }
         }
     }

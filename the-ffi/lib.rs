@@ -8517,6 +8517,7 @@ mod tests {
       char_idx_at_coords,
       coords_at_pos,
     },
+    render::RenderStyles,
     selection::{
       Range,
       Selection,
@@ -10019,6 +10020,54 @@ pkgs.mkShell {
     assert_eq!(
       app.active_editor_ref().view().active_cursor,
       Some(candidates[1])
+    );
+  }
+
+  #[test]
+  fn cursor_pick_mode_uses_match_cursor_style_for_selected_cursor() {
+    let _guard = ffi_test_guard();
+    let mut app = App::new();
+    let id = app.create_editor("a\nb\nc\n", default_viewport(), ffi::Position {
+      row: 0,
+      col: 0,
+    });
+    assert!(app.activate(id).is_some());
+
+    let text = app.active_editor_ref().document().text().clone();
+    let selection = Selection::point(text.line_to_char(0))
+      .push(Range::point(text.line_to_char(1)))
+      .push(Range::point(text.line_to_char(2)));
+    let _ = app
+      .active_editor_mut()
+      .document_mut()
+      .set_selection(selection);
+
+    assert!(app.handle_key(id, key_char(',')));
+    let active_cursor = app
+      .active_editor_ref()
+      .view()
+      .active_cursor
+      .expect("active cursor in cursor-pick mode");
+
+    let plan = the_default::render_plan_with_styles(&mut app, RenderStyles::default());
+    let selected = plan
+      .cursors
+      .iter()
+      .find(|cursor| cursor.id == active_cursor)
+      .expect("selected cursor should be rendered");
+    let expected = app
+      .ui_theme
+      .try_get("ui.cursor.match")
+      .or_else(|| app.ui_theme.try_get("ui.cursor.active"))
+      .or_else(|| app.ui_theme.try_get("ui.cursor"))
+      .unwrap_or_default();
+    assert_eq!(selected.style, expected);
+    assert!(
+      plan
+        .cursors
+        .iter()
+        .any(|cursor| cursor.id != active_cursor && cursor.style != selected.style),
+      "selected cursor style should stand out from non-selected cursors"
     );
   }
 

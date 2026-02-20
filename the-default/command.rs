@@ -1334,9 +1334,20 @@ fn post_render<Ctx: DefaultContext>(ctx: &mut Ctx, plan: RenderPlan) -> RenderPl
 }
 
 fn pre_render_with_styles<Ctx: DefaultContext>(
-  _ctx: &mut Ctx,
-  styles: RenderStyles,
+  ctx: &mut Ctx,
+  mut styles: RenderStyles,
 ) -> RenderStyles {
+  // When picking a cursor to keep/remove, make the focused cursor use the
+  // match cursor style so it stands out from the rest.
+  if matches!(ctx.pending_input(), Some(PendingInput::CursorPick { .. })) {
+    styles.active_cursor = ctx
+      .ui_theme()
+      .try_get("ui.cursor.match")
+      .or_else(|| ctx.ui_theme().try_get("ui.cursor.active"))
+      .or_else(|| ctx.ui_theme().try_get("ui.cursor"))
+      .unwrap_or(styles.active_cursor);
+  }
+
   styles
 }
 
@@ -2665,14 +2676,16 @@ fn apply_cursor_pick<Ctx: DefaultContext>(
       .cursor_ids()
       .get(index.min(next_selection.cursor_ids().len().saturating_sub(1)))
       .copied();
-    doc.set_selection(next_selection)
+    doc
+      .set_selection(next_selection)
       .map_err(|err| err.to_string())?;
     editor.view_mut().active_cursor = next_active;
   } else {
     let next_selection = selection
       .collapse(CursorPick::Id(target))
       .map_err(|err| err.to_string())?;
-    doc.set_selection(next_selection)
+    doc
+      .set_selection(next_selection)
       .map_err(|err| err.to_string())?;
     editor.view_mut().active_cursor = Some(target);
   }

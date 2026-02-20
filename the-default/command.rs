@@ -1136,6 +1136,7 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::AlignSelections => align_selections(ctx),
     Command::KeepActiveSelection => keep_active_selection(ctx),
     Command::RemoveActiveSelection => remove_active_selection(ctx),
+    Command::TrimSelections => trim_selections(ctx),
     Command::CollapseSelection => collapse_selection(ctx),
     Command::FlipSelections => flip_selections(ctx),
     Command::ExpandSelection => expand_selection(ctx),
@@ -2686,6 +2687,52 @@ fn align_selections<Ctx: DefaultContext>(ctx: &mut Ctx) {
 
   if ctx.mode() == Mode::Select {
     ctx.set_mode(Mode::Normal);
+  }
+}
+
+fn trim_selections<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  let trimmed = {
+    let doc = ctx.editor_ref().document();
+    let text = doc.text().slice(..);
+    let mut ranges = SmallVec::<[Range; 1]>::new();
+    let mut cursor_ids = SmallVec::<[CursorId; 1]>::new();
+
+    for (cursor_id, range) in doc.selection().iter_with_ids() {
+      if range.is_empty() || range.slice(text).chars().all(|ch| ch.is_whitespace()) {
+        continue;
+      }
+
+      let mut start = range.from();
+      let mut end = range.to();
+      start = movement::skip_while(text, start, |ch| ch.is_whitespace()).unwrap_or(start);
+      end = movement::backwards_skip_while(text, end, |ch| ch.is_whitespace()).unwrap_or(end);
+
+      ranges.push(Range::new(start, end).with_direction(range.direction()));
+      cursor_ids.push(cursor_id);
+    }
+
+    Selection::new_with_ids(ranges, cursor_ids).ok()
+  };
+
+  if let Some(selection) = trimmed {
+    let _ = ctx.editor().document_mut().set_selection(selection);
+    return;
+  }
+
+  let collapsed = {
+    let editor = ctx.editor_ref();
+    let pick = active_or_fallback_pick(editor, CursorPick::First);
+    let doc = editor.document();
+    let text = doc.text().slice(..);
+    let collapsed = doc
+      .selection()
+      .clone()
+      .transform(|range| Range::point(range.cursor(text)));
+    collapsed.collapse(pick).ok()
+  };
+
+  if let Some(selection) = collapsed {
+    let _ = ctx.editor().document_mut().set_selection(selection);
   }
 }
 
@@ -5162,6 +5209,7 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "align_selections" => Some(Command::align_selections()),
     "keep_active_selection" => Some(Command::keep_active_selection()),
     "remove_active_selection" => Some(Command::remove_active_selection()),
+    "trim_selections" => Some(Command::trim_selections()),
     "collapse_selection" => Some(Command::collapse_selection()),
     "flip_selections" => Some(Command::flip_selections()),
     "expand_selection" => Some(Command::expand_selection()),

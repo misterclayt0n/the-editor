@@ -502,6 +502,7 @@ pub enum Command {
   AlignSelections,
   KeepActiveSelection,
   RemoveActiveSelection,
+  TrimSelections,
   CollapseSelection,
   FlipSelections,
   ExpandSelection,
@@ -941,6 +942,11 @@ impl Command {
   #[must_use]
   pub const fn remove_active_selection() -> Self {
     Self::RemoveActiveSelection
+  }
+
+  #[must_use]
+  pub const fn trim_selections() -> Self {
+    Self::TrimSelections
   }
 
   #[must_use]

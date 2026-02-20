@@ -10212,6 +10212,74 @@ pkgs.mkShell {
   }
 
   #[test]
+  fn trim_selections_keymap_trims_ranges_and_drops_whitespace_only() {
+    let _guard = ffi_test_guard();
+    let mut app = App::new();
+    let id = app.create_editor("  alpha  \n   \n  beta  \n", default_viewport(), ffi::Position {
+      row: 0,
+      col: 0,
+    });
+    assert!(app.activate(id).is_some());
+
+    let text = app.active_editor_ref().document().text().clone();
+    let line0 = text.line_to_char(0);
+    let line1 = text.line_to_char(1);
+    let line2 = text.line_to_char(2);
+    let selection = Selection::single(line0, line0 + "  alpha  ".chars().count())
+      .push(Range::new(line1, line1 + 3))
+      .push(Range::new(line2, line2 + "  beta  ".chars().count()));
+    let _ = app
+      .active_editor_mut()
+      .document_mut()
+      .set_selection(selection);
+
+    assert!(app.handle_key(id, key_char('_')));
+
+    let text = app.active_editor_ref().document().text().slice(..);
+    let selection = app.active_editor_ref().document().selection();
+    let fragments: Vec<_> = selection
+      .fragments(text)
+      .map(|fragment| fragment.into_owned())
+      .collect();
+    assert_eq!(fragments, vec!["alpha".to_string(), "beta".to_string()]);
+    assert_eq!(selection.ranges().len(), 2);
+  }
+
+  #[test]
+  fn trim_selections_keymap_collapses_to_active_cursor_when_all_whitespace() {
+    let _guard = ffi_test_guard();
+    let mut app = App::new();
+    let id = app.create_editor("   \n  \n", default_viewport(), ffi::Position {
+      row: 0,
+      col: 0,
+    });
+    assert!(app.activate(id).is_some());
+
+    let text = app.active_editor_ref().document().text().clone();
+    let line0 = text.line_to_char(0);
+    let line1 = text.line_to_char(1);
+    let selection = Selection::single(line0, line0 + 3).push(Range::new(line1, line1 + 2));
+    let _ = app
+      .active_editor_mut()
+      .document_mut()
+      .set_selection(selection);
+
+    let active_cursor_id = app.active_editor_ref().document().selection().cursor_ids()[1];
+    let active_cursor_point = {
+      let text = app.active_editor_ref().document().text().slice(..);
+      app.active_editor_ref().document().selection().ranges()[1].cursor(text)
+    };
+    app.active_editor_mut().view_mut().active_cursor = Some(active_cursor_id);
+
+    assert!(app.handle_key(id, key_char('_')));
+
+    let selection = app.active_editor_ref().document().selection();
+    assert_eq!(selection.ranges().len(), 1);
+    assert_eq!(selection.cursor_ids()[0], active_cursor_id);
+    assert_eq!(selection.ranges()[0], Range::point(active_cursor_point));
+  }
+
+  #[test]
   fn ensure_cursor_visible_keeps_horizontal_scroll_zero_with_soft_wrap() {
     let _guard = ffi_test_guard();
     let mut app = App::new();

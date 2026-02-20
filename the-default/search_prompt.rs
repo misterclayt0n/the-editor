@@ -355,13 +355,24 @@ pub fn step_search_prompt<Ctx: DefaultContext>(ctx: &mut Ctx, direction: Directi
       } else {
         Movement::Move
       };
-      let pick = if extend {
+      let fallback_pick = if extend {
         match direction {
           LibDirection::Forward => CursorPick::Last,
           LibDirection::Backward => CursorPick::First,
         }
       } else {
         CursorPick::First
+      };
+      let pick = {
+        let editor = ctx.editor_ref();
+        let selection = editor.document().selection();
+        if let Some(active_cursor) = editor.view().active_cursor
+          && selection.range_by_id(active_cursor).is_some()
+        {
+          CursorPick::Id(active_cursor)
+        } else {
+          fallback_pick
+        }
       };
       let doc = ctx.editor_ref().document();
       let text = doc.text().slice(..);
@@ -415,7 +426,13 @@ pub fn update_search_preview<Ctx: DefaultContext>(ctx: &mut Ctx) {
         .original_selection
         .clone()
         .unwrap_or_else(|| doc.selection().clone());
-      let pick = CursorPick::First; // no active cursor concept yet
+      let pick = if let Some(active_cursor) = ctx.editor_ref().view().active_cursor
+        && selection.range_by_id(active_cursor).is_some()
+      {
+        CursorPick::Id(active_cursor)
+      } else {
+        CursorPick::First
+      };
       if let Some(next) = search_regex(text, &selection, pick, &regex, movement, direction, true) {
         let _ = ctx.editor().document_mut().set_selection(next);
       }

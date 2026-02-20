@@ -64,15 +64,15 @@ tabstop = { bg = "bossanova", modifiers = [ "italic" ] }
 "ui.virtual.indent-guide" = { fg = "comet" }
 
 "ui.selection"         = { bg = "#540099" }
-"ui.selection.primary" = { bg = "#540099" }
+"ui.selection.active"  = { bg = "#540099" }
 # TODO: namespace ui.cursor as ui.selection.cursor?
 "ui.cursor"                = { modifiers = [ "reversed" ] }
 "ui.cursor.insert"         = { bg = "white" }
 "ui.cursor.match"          = { bg = "#6C6999", fg = "#212121" }
-"ui.cursor.primary.insert" = { bg = "white" }
-"ui.cursor.primary.select" = { bg = "delta" }
+"ui.cursor.active.insert"  = { bg = "white" }
+"ui.cursor.active.select"  = { bg = "delta" }
 "ui.cursor.select"         = { bg = "delta" }
-"ui.cursorline.primary"    = { bg = "bossanova" }
+"ui.cursorline.active"     = { bg = "bossanova" }
 "ui.debug"                 = { fg = "#634450" }
 "ui.debug.breakpoint"      = { fg = "apricot" }
 "ui.highlight"             = { bg = "bossanova" }

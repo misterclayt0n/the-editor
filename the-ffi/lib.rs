@@ -338,8 +338,8 @@ impl Document {
 
   // --- Selection queries ---
 
-  /// Get the primary cursor position (character index).
-  pub fn primary_cursor(&self) -> usize {
+  /// Get the first cursor position (character index).
+  pub fn first_cursor(&self) -> usize {
     let slice = self.inner.text().slice(..);
     self.inner.selection().ranges()[0].cursor(slice)
   }
@@ -424,12 +424,12 @@ impl Document {
 
   // --- Multi-cursor ---
 
-  /// Add a cursor on the line above the primary cursor.
+  /// Add a cursor on the line above the first cursor.
   pub fn add_cursor_above(&mut self) -> bool {
     self.add_cursor_vertical(Direction::Backward)
   }
 
-  /// Add a cursor on the line below the primary cursor.
+  /// Add a cursor on the line below the first cursor.
   pub fn add_cursor_below(&mut self) -> bool {
     self.add_cursor_vertical(Direction::Forward)
   }
@@ -439,8 +439,8 @@ impl Document {
     add_cursor_vertical(&mut self.inner, dir, CursorPick::First, &text_fmt)
   }
 
-  /// Remove all cursors except the primary.
-  pub fn collapse_to_primary(&mut self) {
+  /// Remove all cursors except the first.
+  pub fn collapse_to_first(&mut self) {
     let _ = collapse_selection(&mut self.inner, CursorPick::First);
   }
 
@@ -2260,7 +2260,7 @@ fn docs_render_styles(theme: &Theme, base: LibStyle) -> DocsRenderStyles {
   styles.code = docs_theme_style_or(theme, "markup.raw.inline", styles.code);
   styles.active_parameter = docs_theme_style_or(
     theme,
-    "ui.selection.primary",
+    "ui.selection.active",
     docs_theme_style_or(theme, "ui.selection", styles.active_parameter),
   );
   styles.link = docs_theme_style_or(theme, "markup.link.text", styles.link);
@@ -5098,7 +5098,7 @@ impl App {
     if self.active_state_ref().mode != Mode::Insert {
       return false;
     }
-    let Some(current_cursor) = self.primary_cursor_char_idx() else {
+    let Some(current_cursor) = self.active_cursor_char_idx() else {
       return false;
     };
     if current_cursor != request_cursor {
@@ -5390,14 +5390,26 @@ impl App {
     true
   }
 
-  fn primary_cursor_char_idx(&self) -> Option<usize> {
+  fn active_or_first_selection_range(&self) -> Option<Range> {
+    let editor = self.active_editor_ref();
+    let doc = editor.document();
+    let selection = doc.selection();
+    if let Some(active_cursor) = editor.view().active_cursor
+      && let Some(range) = selection.range_by_id(active_cursor)
+    {
+      return Some(*range);
+    }
+    selection.ranges().first().copied()
+  }
+
+  fn active_cursor_char_idx(&self) -> Option<usize> {
     let doc = self.active_editor_ref().document();
-    let range = doc.selection().ranges().first().copied()?;
+    let range = self.active_or_first_selection_range()?;
     Some(range.cursor(doc.text().slice(..)))
   }
 
   fn cursor_prev_char_is_word(&self) -> bool {
-    let Some(cursor) = self.primary_cursor_char_idx() else {
+    let Some(cursor) = self.active_cursor_char_idx() else {
       return false;
     };
     if cursor == 0 {
@@ -5456,7 +5468,7 @@ impl App {
   }
 
   fn completion_filter_fragment(&self) -> Option<String> {
-    let cursor = self.primary_cursor_char_idx()?;
+    let cursor = self.active_cursor_char_idx()?;
     let start = self.lsp_completion_start.unwrap_or(cursor).min(cursor);
     let text = self.active_editor_ref().document().text();
     Some(text.slice(start..cursor).to_string())
@@ -5637,7 +5649,7 @@ impl App {
       }
       return false;
     };
-    let Some(cursor) = self.primary_cursor_char_idx() else {
+    let Some(cursor) = self.active_cursor_char_idx() else {
       return false;
     };
     let replace_start = self.completion_replace_start_at_cursor(cursor);
@@ -5926,7 +5938,7 @@ impl App {
     }
 
     let doc = self.active_editor_ref().document();
-    let range = doc.selection().ranges().first().copied()?;
+    let range = self.active_or_first_selection_range()?;
     let cursor = range.cursor(doc.text().slice(..));
     let (line, character) = char_idx_to_utf16_position(doc.text(), cursor);
 
@@ -6407,7 +6419,12 @@ impl App {
     let doc = editor.document();
     let text = doc.text();
     let selection = doc.selection();
-    let Some(range) = selection.ranges().first() else {
+    let range = if let Some(active_cursor) = editor.view().active_cursor {
+      selection.range_by_id(active_cursor).copied()
+    } else {
+      selection.ranges().first().copied()
+    };
+    let Some(range) = range else {
       return false;
     };
 
@@ -7125,7 +7142,7 @@ impl DefaultContext for App {
       return false;
     };
 
-    let fallback_end = self.primary_cursor_char_idx().unwrap_or(0);
+    let fallback_end = self.active_cursor_char_idx().unwrap_or(0);
     let fallback_start = self
       .lsp_completion_start
       .unwrap_or(fallback_end)
@@ -7927,7 +7944,7 @@ mod ffi {
     fn is_modified(self: &Document) -> bool;
 
     // Selection queries
-    fn primary_cursor(self: &Document) -> usize;
+    fn first_cursor(self: &Document) -> usize;
     fn cursor_count(self: &Document) -> usize;
     fn all_cursors(self: &Document) -> Vec<usize>;
 
@@ -7945,7 +7962,7 @@ mod ffi {
     // Multi-cursor
     fn add_cursor_above(self: &mut Document) -> bool;
     fn add_cursor_below(self: &mut Document) -> bool;
-    fn collapse_to_primary(self: &mut Document);
+    fn collapse_to_first(self: &mut Document);
 
     // History
     fn commit(self: &mut Document) -> bool;

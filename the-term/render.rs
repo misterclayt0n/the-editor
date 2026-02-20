@@ -216,7 +216,7 @@ fn render_styles_from_theme(theme: &the_lib::render::theme::Theme) -> RenderStyl
   let selection = theme.try_get("ui.selection").unwrap_or_default();
   let cursor = theme.try_get("ui.cursor").unwrap_or_default();
   let active_cursor = theme
-    .try_get("ui.cursor.primary")
+    .try_get("ui.cursor.active")
     .or_else(|| theme.try_get("ui.cursor"))
     .unwrap_or_default();
   RenderStyles {
@@ -642,15 +642,25 @@ fn end_of_line_diagnostics_filter() -> InlineDiagnosticFilter {
   InlineDiagnosticFilter::Enable(DiagnosticSeverity::Hint)
 }
 
-fn primary_cursor_char_idx(ctx: &Ctx) -> Option<usize> {
+fn active_cursor_char_idx(ctx: &Ctx) -> Option<usize> {
   let doc = ctx.editor.document();
-  let range = doc.selection().ranges().first().copied()?;
+  let selection = doc.selection();
+  let range = if let Some(active_cursor) = ctx.editor.view().active_cursor {
+    selection.range_by_id(active_cursor).copied()
+  } else {
+    selection.ranges().first().copied()
+  }?;
   Some(range.cursor(doc.text().slice(..)))
 }
 
-fn primary_cursor_line_idx(ctx: &Ctx) -> Option<usize> {
+fn active_cursor_line_idx(ctx: &Ctx) -> Option<usize> {
   let doc = ctx.editor.document();
-  let range = doc.selection().ranges().first().copied()?;
+  let selection = doc.selection();
+  let range = if let Some(active_cursor) = ctx.editor.view().active_cursor {
+    selection.range_by_id(active_cursor).copied()
+  } else {
+    selection.ranges().first().copied()
+  }?;
   Some(range.cursor_line(doc.text().slice(..)))
 }
 
@@ -794,7 +804,7 @@ fn draw_end_of_line_diagnostics(
 
   let inline_config =
     inline_diagnostics_config().prepare(content_width.max(1) as u16, ctx.mode() != Mode::Insert);
-  let cursor_doc_line = primary_cursor_line_idx(ctx);
+  let cursor_doc_line = active_cursor_line_idx(ctx);
   let trace_enabled = inline_diagnostics_trace_enabled();
   let mut considered_rows = 0usize;
   let mut rows_with_diagnostics = 0usize;
@@ -1089,7 +1099,7 @@ fn ui_style_colors(style: &UiStyle) -> (Style, Style, Style) {
 
 fn software_cursor_style(theme: &the_lib::render::theme::Theme) -> Style {
   theme
-    .try_get("ui.cursor.primary")
+    .try_get("ui.cursor.active")
     .or_else(|| theme.try_get("ui.cursor"))
     .map(lib_style_to_ratatui)
     .unwrap_or_else(|| Style::default().add_modifier(Modifier::REVERSED))
@@ -1484,7 +1494,7 @@ fn completion_docs_styles(ctx: &Ctx, base: Style) -> CompletionDocsStyles {
   styles.code = theme_style_or(ctx, "markup.raw.inline", styles.code);
   styles.active_parameter = theme_style_or(
     ctx,
-    "ui.selection.primary",
+    "ui.selection.active",
     theme_style_or(ctx, "ui.selection", styles.active_parameter),
   );
   styles.link = theme_style_or(ctx, "markup.link.text", styles.link);
@@ -4398,8 +4408,8 @@ pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> Ren
       .prepare(text_fmt.viewport_width.max(1), inline_enable_cursor_line);
     inline_config_snapshot = Some(inline_config.clone());
     if !inline_config.disabled() {
-      let cursor_char_idx = primary_cursor_char_idx(ctx).unwrap_or(0);
-      let cursor_line_idx = primary_cursor_line_idx(ctx);
+      let cursor_char_idx = active_cursor_char_idx(ctx).unwrap_or(0);
+      let cursor_line_idx = active_cursor_line_idx(ctx);
       let _ = annotations.add_line_annotation(Box::new(InlineDiagnosticsLineAnnotation::new(
         inline_diagnostics,
         cursor_char_idx,
@@ -4475,8 +4485,8 @@ pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> Ren
   let should_trace_inline_diagnostics = inline_diagnostics_trace_enabled()
     || (lsp_diag_count > 0 && inline_diag_count > 0 && ctx.inline_diagnostic_lines.is_empty());
   if should_trace_inline_diagnostics {
-    let cursor_char_idx = primary_cursor_char_idx(ctx);
-    let cursor_line_idx = primary_cursor_line_idx(ctx);
+    let cursor_char_idx = active_cursor_char_idx(ctx);
+    let cursor_line_idx = active_cursor_line_idx(ctx);
     let first_diag_line_idx = first_inline_diag_start_idx.map(|start| {
       let text = ctx.editor.document().text();
       text.char_to_line(start.min(text.len_chars()))
@@ -4688,8 +4698,14 @@ pub fn ensure_cursor_visible(ctx: &mut Ctx) {
   let text = doc.text();
   let max = text.len_chars();
 
-  // Get primary cursor position
-  let Some(range) = doc.selection().ranges().get(0).copied() else {
+  // Get the selected cursor position (active cursor if available).
+  let selection = doc.selection();
+  let range = if let Some(active_cursor) = ctx.editor.view().active_cursor {
+    selection.range_by_id(active_cursor).copied()
+  } else {
+    selection.ranges().first().copied()
+  };
+  let Some(range) = range else {
     return;
   };
   let clamped = Range::new(range.anchor.min(max), range.head.min(max));

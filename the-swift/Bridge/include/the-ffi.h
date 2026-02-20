@@ -171,6 +171,54 @@ void* __swift_bridge__$Vec_RenderPlan$get_mut(void* vec_ptr, uintptr_t index);
 uintptr_t __swift_bridge__$Vec_RenderPlan$len(void* vec_ptr);
 void* __swift_bridge__$Vec_RenderPlan$as_ptr(void* vec_ptr);
 
+typedef struct FilePickerSnapshotData FilePickerSnapshotData;
+void __swift_bridge__$FilePickerSnapshotData$_free(void* self);
+
+void* __swift_bridge__$Vec_FilePickerSnapshotData$new(void);
+void __swift_bridge__$Vec_FilePickerSnapshotData$drop(void* vec_ptr);
+void __swift_bridge__$Vec_FilePickerSnapshotData$push(void* vec_ptr, void* item_ptr);
+void* __swift_bridge__$Vec_FilePickerSnapshotData$pop(void* vec_ptr);
+void* __swift_bridge__$Vec_FilePickerSnapshotData$get(void* vec_ptr, uintptr_t index);
+void* __swift_bridge__$Vec_FilePickerSnapshotData$get_mut(void* vec_ptr, uintptr_t index);
+uintptr_t __swift_bridge__$Vec_FilePickerSnapshotData$len(void* vec_ptr);
+void* __swift_bridge__$Vec_FilePickerSnapshotData$as_ptr(void* vec_ptr);
+
+typedef struct FilePickerItemFFI FilePickerItemFFI;
+void __swift_bridge__$FilePickerItemFFI$_free(void* self);
+
+void* __swift_bridge__$Vec_FilePickerItemFFI$new(void);
+void __swift_bridge__$Vec_FilePickerItemFFI$drop(void* vec_ptr);
+void __swift_bridge__$Vec_FilePickerItemFFI$push(void* vec_ptr, void* item_ptr);
+void* __swift_bridge__$Vec_FilePickerItemFFI$pop(void* vec_ptr);
+void* __swift_bridge__$Vec_FilePickerItemFFI$get(void* vec_ptr, uintptr_t index);
+void* __swift_bridge__$Vec_FilePickerItemFFI$get_mut(void* vec_ptr, uintptr_t index);
+uintptr_t __swift_bridge__$Vec_FilePickerItemFFI$len(void* vec_ptr);
+void* __swift_bridge__$Vec_FilePickerItemFFI$as_ptr(void* vec_ptr);
+
+typedef struct PreviewData PreviewData;
+void __swift_bridge__$PreviewData$_free(void* self);
+
+void* __swift_bridge__$Vec_PreviewData$new(void);
+void __swift_bridge__$Vec_PreviewData$drop(void* vec_ptr);
+void __swift_bridge__$Vec_PreviewData$push(void* vec_ptr, void* item_ptr);
+void* __swift_bridge__$Vec_PreviewData$pop(void* vec_ptr);
+void* __swift_bridge__$Vec_PreviewData$get(void* vec_ptr, uintptr_t index);
+void* __swift_bridge__$Vec_PreviewData$get_mut(void* vec_ptr, uintptr_t index);
+uintptr_t __swift_bridge__$Vec_PreviewData$len(void* vec_ptr);
+void* __swift_bridge__$Vec_PreviewData$as_ptr(void* vec_ptr);
+
+typedef struct PreviewLine PreviewLine;
+void __swift_bridge__$PreviewLine$_free(void* self);
+
+void* __swift_bridge__$Vec_PreviewLine$new(void);
+void __swift_bridge__$Vec_PreviewLine$drop(void* vec_ptr);
+void __swift_bridge__$Vec_PreviewLine$push(void* vec_ptr, void* item_ptr);
+void* __swift_bridge__$Vec_PreviewLine$pop(void* vec_ptr);
+void* __swift_bridge__$Vec_PreviewLine$get(void* vec_ptr, uintptr_t index);
+void* __swift_bridge__$Vec_PreviewLine$get_mut(void* vec_ptr, uintptr_t index);
+uintptr_t __swift_bridge__$Vec_PreviewLine$len(void* vec_ptr);
+void* __swift_bridge__$Vec_PreviewLine$as_ptr(void* vec_ptr);
+
 void* __swift_bridge__$App$new(void);
 struct __swift_bridge__$EditorId __swift_bridge__$App$create_editor(void* self, struct RustStr text, struct __swift_bridge__$Rect viewport, struct __swift_bridge__$Position scroll);
 bool __swift_bridge__$App$remove_editor(void* self, struct __swift_bridge__$EditorId id);
@@ -219,7 +267,8 @@ bool __swift_bridge__$App$file_picker_set_query(void* self, struct __swift_bridg
 bool __swift_bridge__$App$file_picker_submit(void* self, struct __swift_bridge__$EditorId id, uintptr_t index);
 bool __swift_bridge__$App$file_picker_close(void* self, struct __swift_bridge__$EditorId id);
 bool __swift_bridge__$App$file_picker_select_index(void* self, struct __swift_bridge__$EditorId id, uintptr_t index);
-void* __swift_bridge__$App$file_picker_snapshot_json(void* self, struct __swift_bridge__$EditorId id, uintptr_t max_items);
+void* __swift_bridge__$App$file_picker_snapshot(void* self, struct __swift_bridge__$EditorId id, uintptr_t max_items);
+void* __swift_bridge__$App$file_picker_preview(void* self, struct __swift_bridge__$EditorId id);
 bool __swift_bridge__$App$poll_background(void* self, struct __swift_bridge__$EditorId id);
 bool __swift_bridge__$App$take_should_quit(void* self);
 bool __swift_bridge__$App$handle_key(void* self, struct __swift_bridge__$EditorId id, struct __swift_bridge__$KeyEvent event);
@@ -243,7 +292,7 @@ uintptr_t __swift_bridge__$Document$len_lines(void* self);
 bool __swift_bridge__$Document$is_empty(void* self);
 uint64_t __swift_bridge__$Document$version(void* self);
 bool __swift_bridge__$Document$is_modified(void* self);
-uintptr_t __swift_bridge__$Document$primary_cursor(void* self);
+uintptr_t __swift_bridge__$Document$first_cursor(void* self);
 uintptr_t __swift_bridge__$Document$cursor_count(void* self);
 void* __swift_bridge__$Document$all_cursors(void* self);
 bool __swift_bridge__$Document$insert(void* self, struct RustStr text);
@@ -255,7 +304,7 @@ void __swift_bridge__$Document$move_up(void* self);
 void __swift_bridge__$Document$move_down(void* self);
 bool __swift_bridge__$Document$add_cursor_above(void* self);
 bool __swift_bridge__$Document$add_cursor_below(void* self);
-void __swift_bridge__$Document$collapse_to_primary(void* self);
+void __swift_bridge__$Document$collapse_to_first(void* self);
 bool __swift_bridge__$Document$commit(void* self);
 bool __swift_bridge__$Document$undo(void* self);
 bool __swift_bridge__$Document$redo(void* self);
@@ -320,5 +369,32 @@ uint16_t __swift_bridge__$RenderDiagnosticUnderline$row(void* self);
 uint16_t __swift_bridge__$RenderDiagnosticUnderline$start_col(void* self);
 uint16_t __swift_bridge__$RenderDiagnosticUnderline$end_col(void* self);
 uint8_t __swift_bridge__$RenderDiagnosticUnderline$severity(void* self);
+bool __swift_bridge__$FilePickerSnapshotData$active(void* self);
+void* __swift_bridge__$FilePickerSnapshotData$query(void* self);
+uintptr_t __swift_bridge__$FilePickerSnapshotData$matched_count(void* self);
+uintptr_t __swift_bridge__$FilePickerSnapshotData$total_count(void* self);
+bool __swift_bridge__$FilePickerSnapshotData$scanning(void* self);
+void* __swift_bridge__$FilePickerSnapshotData$root(void* self);
+uintptr_t __swift_bridge__$FilePickerSnapshotData$item_count(void* self);
+void* __swift_bridge__$FilePickerSnapshotData$item_at(void* self, uintptr_t index);
+void* __swift_bridge__$FilePickerItemFFI$display(void* self);
+bool __swift_bridge__$FilePickerItemFFI$is_dir(void* self);
+void* __swift_bridge__$FilePickerItemFFI$icon(void* self);
+uintptr_t __swift_bridge__$FilePickerItemFFI$match_index_count(void* self);
+uint32_t __swift_bridge__$FilePickerItemFFI$match_index_at(void* self, uintptr_t index);
+uint8_t __swift_bridge__$PreviewData$kind(void* self);
+void* __swift_bridge__$PreviewData$path(void* self);
+void* __swift_bridge__$PreviewData$text(void* self);
+bool __swift_bridge__$PreviewData$loading(void* self);
+bool __swift_bridge__$PreviewData$truncated(void* self);
+uintptr_t __swift_bridge__$PreviewData$total_lines(void* self);
+bool __swift_bridge__$PreviewData$show(void* self);
+uintptr_t __swift_bridge__$PreviewData$line_count(void* self);
+void* __swift_bridge__$PreviewData$line_at(void* self, uintptr_t index);
+void* __swift_bridge__$PreviewLine$text(void* self);
+uintptr_t __swift_bridge__$PreviewLine$span_count(void* self);
+uint32_t __swift_bridge__$PreviewLine$span_char_start(void* self, uintptr_t index);
+uint32_t __swift_bridge__$PreviewLine$span_char_end(void* self, uintptr_t index);
+uint32_t __swift_bridge__$PreviewLine$span_highlight(void* self, uintptr_t index);
 
 

@@ -102,7 +102,7 @@ Below are the **major categories** from old `core/commands.rs` that still need t
 ### 1) Selection / cursor ops
 - `collapse_selection`, `flip_selections`, `merge_selections`, `split_selection`, `split_selection_on_newline`, etc.
 - `add_cursor_above/below` (already partially implemented as `add_cursor`)
-- `keep_primary_selection`, `remove_primary_selection` → must be rethought because new selection model removed “primary cursor”. (We now use cursor IDs + active cursor in view state.)
+- Legacy "keep one selection" / "remove one selection" commands must be rethought because the new selection model has no distinguished cursor. (We now use cursor IDs + `active_cursor` in view state.)
 
 ### 2) Text object / selection expansion
 - `select_textobject_{inner,around}`

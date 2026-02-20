@@ -2053,6 +2053,27 @@ fn goto_last_modification<Ctx: DefaultContext>(ctx: &mut Ctx) {
 
 const WORD_JUMP_LABEL_ALPHABET: &str = "abcdefghijklmnopqrstuvwxyz";
 
+fn active_or_first_range(editor: &Editor) -> Option<Range> {
+  let doc = editor.document();
+  let selection = doc.selection();
+  if let Some(active_cursor) = editor.view().active_cursor
+    && let Some(range) = selection.range_by_id(active_cursor)
+  {
+    return Some(*range);
+  }
+  selection.ranges().first().copied()
+}
+
+fn active_or_fallback_pick(editor: &Editor, fallback: CursorPick) -> CursorPick {
+  let selection = editor.document().selection();
+  if let Some(active_cursor) = editor.view().active_cursor
+    && selection.range_by_id(active_cursor).is_some()
+  {
+    return CursorPick::Id(active_cursor);
+  }
+  fallback
+}
+
 fn goto_word<Ctx: DefaultContext>(ctx: &mut Ctx, extend: bool) {
   let targets = collect_word_jump_targets(ctx);
   if targets.is_empty() {
@@ -2087,13 +2108,8 @@ fn collect_word_jump_targets<Ctx: DefaultContext>(ctx: &Ctx) -> Vec<WordJumpTarg
   let end_line_exclusive = (start_line + view.viewport.height as usize).min(text.len_lines());
   let start = text.line_to_char(start_line);
   let end = text.line_to_char(end_line_exclusive);
-  let primary_selection = doc
-    .selection()
-    .ranges()
-    .first()
-    .copied()
-    .unwrap_or_else(|| Range::point(start));
-  let cursor = primary_selection.cursor(text);
+  let active_range = active_or_first_range(ctx.editor_ref()).unwrap_or_else(|| Range::point(start));
+  let cursor = active_range.cursor(text);
 
   let mut words = Vec::with_capacity(jump_label_limit);
   let mut cursor_fwd = Range::point(cursor);
@@ -2196,16 +2212,10 @@ fn set_word_jump_annotations<Ctx: DefaultContext>(ctx: &mut Ctx, targets: &[Word
 
 fn apply_word_jump_target<Ctx: DefaultContext>(ctx: &mut Ctx, mut range: Range, extend: bool) {
   if extend {
-    let primary_selection = ctx
-      .editor_ref()
-      .document()
-      .selection()
-      .ranges()
-      .first()
-      .copied()
-      .unwrap_or_else(|| Range::point(range.anchor));
+    let active_range =
+      active_or_first_range(ctx.editor_ref()).unwrap_or_else(|| Range::point(range.anchor));
     range = if range.anchor < range.head {
-      let from = primary_selection.from();
+      let from = active_range.from();
       let anchor = if range.anchor < from {
         range.anchor
       } else {
@@ -2213,7 +2223,7 @@ fn apply_word_jump_target<Ctx: DefaultContext>(ctx: &mut Ctx, mut range: Range, 
       };
       Range::new(anchor, range.head)
     } else {
-      let to = primary_selection.to();
+      let to = active_range.to();
       let anchor = if range.anchor > to { range.anchor } else { to };
       Range::new(anchor, range.head)
     };
@@ -2229,11 +2239,7 @@ fn goto_prev_diag<Ctx: DefaultContext>(ctx: &mut Ctx) {
   let Some(next) = ({
     let doc = ctx.editor_ref().document();
     let text = doc.text().slice(..);
-    let cursor = doc
-      .selection()
-      .ranges()
-      .first()
-      .copied()
+    let cursor = active_or_first_range(ctx.editor_ref())
       .unwrap_or_else(|| Range::point(0))
       .cursor(text);
     diagnostics
@@ -2264,11 +2270,7 @@ fn goto_next_diag<Ctx: DefaultContext>(ctx: &mut Ctx) {
   let Some(next) = ({
     let doc = ctx.editor_ref().document();
     let text = doc.text().slice(..);
-    let cursor = doc
-      .selection()
-      .ranges()
-      .first()
-      .copied()
+    let cursor = active_or_first_range(ctx.editor_ref())
       .unwrap_or_else(|| Range::point(0))
       .cursor(text);
     diagnostics
@@ -2843,6 +2845,7 @@ fn search_next_or_prev<Ctx: DefaultContext>(ctx: &mut Ctx, params: (Direction, b
   } else {
     CursorPick::First
   };
+  let pick = active_or_fallback_pick(ctx.editor_ref(), pick);
 
   let register = ctx
     .register()

@@ -1957,7 +1957,7 @@ impl Ctx {
     if self.mode != Mode::Insert {
       return false;
     }
-    let Some(current_cursor) = self.primary_cursor_char_idx() else {
+    let Some(current_cursor) = self.active_cursor_char_idx() else {
       return false;
     };
     if current_cursor != request_cursor {
@@ -2506,14 +2506,25 @@ impl Ctx {
       .is_some_and(|capabilities| capabilities.supports(capability))
   }
 
-  fn primary_cursor_char_idx(&self) -> Option<usize> {
+  fn active_or_first_selection_range(&self) -> Option<Range> {
     let doc = self.editor.document();
-    let range = doc.selection().ranges().first().copied()?;
+    let selection = doc.selection();
+    if let Some(active_cursor) = self.editor.view().active_cursor
+      && let Some(range) = selection.range_by_id(active_cursor)
+    {
+      return Some(*range);
+    }
+    selection.ranges().first().copied()
+  }
+
+  fn active_cursor_char_idx(&self) -> Option<usize> {
+    let doc = self.editor.document();
+    let range = self.active_or_first_selection_range()?;
     Some(range.cursor(doc.text().slice(..)))
   }
 
   fn cursor_prev_char_is_word(&self) -> bool {
-    let Some(cursor) = self.primary_cursor_char_idx() else {
+    let Some(cursor) = self.active_cursor_char_idx() else {
       return false;
     };
     if cursor == 0 {
@@ -2572,7 +2583,7 @@ impl Ctx {
   }
 
   fn completion_filter_fragment(&self) -> Option<String> {
-    let cursor = self.primary_cursor_char_idx()?;
+    let cursor = self.active_cursor_char_idx()?;
     let start = self
       .lsp_completion_fallback_start
       .unwrap_or(cursor)
@@ -2717,7 +2728,7 @@ impl Ctx {
       }
       return false;
     };
-    let Some(cursor) = self.primary_cursor_char_idx() else {
+    let Some(cursor) = self.active_cursor_char_idx() else {
       return false;
     };
     let replace_start = self.completion_replace_start_at_cursor(cursor);
@@ -2934,7 +2945,7 @@ impl Ctx {
     }
 
     let doc = self.editor.document();
-    let range = doc.selection().ranges().first().copied()?;
+    let range = self.active_or_first_selection_range()?;
     let cursor = range.cursor(doc.text().slice(..));
     let (line, character) = char_idx_to_utf16_position(doc.text(), cursor);
 
@@ -2951,7 +2962,7 @@ impl Ctx {
     }
 
     let doc = self.editor.document();
-    let range = doc.selection().ranges().first().copied()?;
+    let range = self.active_or_first_selection_range()?;
     let start = range.anchor.min(range.head);
     let end = range.anchor.max(range.head);
     let (start_line, start_character) = char_idx_to_utf16_position(doc.text(), start);
@@ -3093,7 +3104,7 @@ impl Ctx {
   fn workspace_symbol_query_from_cursor(&self) -> String {
     let doc = self.editor.document();
     let text = doc.text();
-    let Some(range) = doc.selection().ranges().first().copied() else {
+    let Some(range) = self.active_or_first_selection_range() else {
       return String::new();
     };
     let cursor = range.cursor(text.slice(..));

@@ -428,8 +428,8 @@ extension DocumentRefMut {
         __swift_bridge__$Document$add_cursor_below(ptr)
     }
 
-    public func collapse_to_primary() {
-        __swift_bridge__$Document$collapse_to_primary(ptr)
+    public func collapse_to_first() {
+        __swift_bridge__$Document$collapse_to_first(ptr)
     }
 
     public func commit() -> Bool {
@@ -476,8 +476,8 @@ extension DocumentRef {
         __swift_bridge__$Document$is_modified(ptr)
     }
 
-    public func primary_cursor() -> UInt {
-        __swift_bridge__$Document$primary_cursor(ptr)
+    public func first_cursor() -> UInt {
+        __swift_bridge__$Document$first_cursor(ptr)
     }
 
     public func cursor_count() -> UInt {

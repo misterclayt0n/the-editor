@@ -6,7 +6,7 @@ finish the remaining core correctness tasks.
 ## 1) Selection / view model (decision + plan)
 
 ### Decision
-Drop the idea of a “primary cursor drives viewport.” Keep **all cursors equal** in core.
+Drop the idea of a “single distinguished cursor drives viewport.” Keep **all cursors equal** in core.
 The *view* (client) decides which cursor to follow, if any. This matches your preference
 and keeps the-lib purely stateful.
 

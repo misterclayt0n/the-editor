@@ -45,7 +45,11 @@ pub fn build_statusline_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> UiNode {
   let doc = ctx.editor_ref().document();
   let slice = doc.text().slice(..);
   let selection = doc.selection();
-  let range = selection.ranges().first().copied();
+  let range = if let Some(active_cursor) = ctx.editor_ref().view().active_cursor {
+    selection.range_by_id(active_cursor).copied()
+  } else {
+    selection.ranges().first().copied()
+  };
 
   let (line, col) = if let Some(range) = range {
     let line = range.cursor_line(slice);

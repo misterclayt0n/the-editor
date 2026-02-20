@@ -572,7 +572,10 @@ pub trait DefaultContext: Sized + 'static {
   fn log_path_for_target(&self, _target: &str) -> Option<PathBuf> {
     None
   }
+  fn lsp_goto_declaration(&mut self) {}
   fn lsp_goto_definition(&mut self) {}
+  fn lsp_goto_type_definition(&mut self) {}
+  fn lsp_goto_implementation(&mut self) {}
   fn lsp_hover(&mut self) {}
   fn lsp_references(&mut self) {}
   fn lsp_document_symbols(&mut self) {}
@@ -1090,7 +1093,10 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::RSearch => ctx.dispatch().rsearch(ctx, ()),
     Command::SelectRegex => ctx.dispatch().select_regex(ctx, ()),
     Command::FilePicker => crate::file_picker::open_file_picker(ctx),
+    Command::LspGotoDeclaration => ctx.lsp_goto_declaration(),
     Command::LspGotoDefinition => ctx.lsp_goto_definition(),
+    Command::LspGotoTypeDefinition => ctx.lsp_goto_type_definition(),
+    Command::LspGotoImplementation => ctx.lsp_goto_implementation(),
     Command::LspHover => ctx.lsp_hover(),
     Command::LspReferences => ctx.lsp_references(),
     Command::LspDocumentSymbols => ctx.lsp_document_symbols(),
@@ -4211,8 +4217,14 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "rsearch" => Some(Command::rsearch()),
     "select_regex" => Some(Command::select_regex()),
     "file_picker" => Some(Command::file_picker()),
+    "lsp_goto_declaration" => Some(Command::lsp_goto_declaration()),
+    "goto_declaration" => Some(Command::lsp_goto_declaration()),
     "lsp_goto_definition" => Some(Command::lsp_goto_definition()),
     "goto_definition" => Some(Command::lsp_goto_definition()),
+    "lsp_goto_type_definition" => Some(Command::lsp_goto_type_definition()),
+    "goto_type_definition" => Some(Command::lsp_goto_type_definition()),
+    "lsp_goto_implementation" => Some(Command::lsp_goto_implementation()),
+    "goto_implementation" => Some(Command::lsp_goto_implementation()),
     "lsp_hover" => Some(Command::lsp_hover()),
     "hover" => Some(Command::lsp_hover()),
     "lsp_references" => Some(Command::lsp_references()),

@@ -209,7 +209,10 @@ use the_lsp::{
   LspServerConfig,
   LspSignatureHelpContext,
   completion_params,
+  goto_declaration_params,
   goto_definition_params,
+  goto_implementation_params,
+  goto_type_definition_params,
   hover_params,
   jsonrpc,
   parse_completion_item_response,
@@ -1234,7 +1237,16 @@ struct PendingAutoSignatureHelp {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum PendingLspRequestKind {
+  GotoDeclaration {
+    uri: String,
+  },
   GotoDefinition {
+    uri: String,
+  },
+  GotoTypeDefinition {
+    uri: String,
+  },
+  GotoImplementation {
     uri: String,
   },
   Hover {
@@ -1259,7 +1271,10 @@ enum PendingLspRequestKind {
 impl PendingLspRequestKind {
   fn label(&self) -> &'static str {
     match self {
+      Self::GotoDeclaration { .. } => "goto-declaration",
       Self::GotoDefinition { .. } => "goto-definition",
+      Self::GotoTypeDefinition { .. } => "goto-type-definition",
+      Self::GotoImplementation { .. } => "goto-implementation",
       Self::Hover { .. } => "hover",
       Self::Completion { .. } => "completion",
       Self::CompletionResolve { .. } => "completion-resolve",
@@ -1269,7 +1284,10 @@ impl PendingLspRequestKind {
 
   fn uri(&self) -> &str {
     match self {
+      Self::GotoDeclaration { uri } => uri.as_str(),
       Self::GotoDefinition { uri } => uri.as_str(),
+      Self::GotoTypeDefinition { uri } => uri.as_str(),
+      Self::GotoImplementation { uri } => uri.as_str(),
       Self::Hover { uri } => uri.as_str(),
       Self::Completion { uri, .. } => uri.as_str(),
       Self::CompletionResolve { uri, .. } => uri.as_str(),
@@ -1279,7 +1297,10 @@ impl PendingLspRequestKind {
 
   fn cancellation_key(&self) -> (&'static str, &str) {
     match self {
+      Self::GotoDeclaration { uri } => ("goto-declaration", uri),
       Self::GotoDefinition { uri } => ("goto-definition", uri),
+      Self::GotoTypeDefinition { uri } => ("goto-type-definition", uri),
+      Self::GotoImplementation { uri } => ("goto-implementation", uri),
       Self::Hover { uri } => ("hover", uri),
       Self::Completion { uri, .. } => ("completion", uri),
       Self::CompletionResolve { uri, .. } => ("completion-resolve", uri),
@@ -4931,6 +4952,19 @@ impl App {
     }
 
     match kind {
+      PendingLspRequestKind::GotoDeclaration { .. } => {
+        let locations = match parse_locations_response(response.result.as_ref()) {
+          Ok(locations) => locations,
+          Err(err) => {
+            self.publish_lsp_message(
+              the_lib::messages::MessageLevel::Error,
+              format!("failed to parse goto-declaration response: {err}"),
+            );
+            return true;
+          },
+        };
+        self.apply_locations_result("declaration", locations)
+      },
       PendingLspRequestKind::GotoDefinition { .. } => {
         let locations = match parse_locations_response(response.result.as_ref()) {
           Ok(locations) => locations,
@@ -4943,6 +4977,32 @@ impl App {
           },
         };
         self.apply_locations_result("definition", locations)
+      },
+      PendingLspRequestKind::GotoTypeDefinition { .. } => {
+        let locations = match parse_locations_response(response.result.as_ref()) {
+          Ok(locations) => locations,
+          Err(err) => {
+            self.publish_lsp_message(
+              the_lib::messages::MessageLevel::Error,
+              format!("failed to parse goto-type-definition response: {err}"),
+            );
+            return true;
+          },
+        };
+        self.apply_locations_result("type definition", locations)
+      },
+      PendingLspRequestKind::GotoImplementation { .. } => {
+        let locations = match parse_locations_response(response.result.as_ref()) {
+          Ok(locations) => locations,
+          Err(err) => {
+            self.publish_lsp_message(
+              the_lib::messages::MessageLevel::Error,
+              format!("failed to parse goto-implementation response: {err}"),
+            );
+            return true;
+          },
+        };
+        self.apply_locations_result("implementation", locations)
       },
       PendingLspRequestKind::Hover { .. } => {
         let hover = match parse_hover_response(response.result.as_ref()) {
@@ -7347,6 +7407,78 @@ impl DefaultContext for App {
     );
   }
 
+  fn lsp_goto_declaration(&mut self) {
+    if !self.lsp_supports(LspCapability::GotoDeclaration) {
+      self.publish_lsp_message(
+        the_lib::messages::MessageLevel::Warning,
+        "goto-declaration is not supported by the active server",
+      );
+      return;
+    }
+
+    let Some((uri, position)) = self.current_lsp_position() else {
+      self.publish_lsp_message(
+        the_lib::messages::MessageLevel::Warning,
+        "goto-declaration unavailable: no active LSP document",
+      );
+      return;
+    };
+
+    self.dispatch_lsp_request(
+      "textDocument/declaration",
+      goto_declaration_params(&uri, position),
+      PendingLspRequestKind::GotoDeclaration { uri },
+    );
+  }
+
+  fn lsp_goto_type_definition(&mut self) {
+    if !self.lsp_supports(LspCapability::GotoTypeDefinition) {
+      self.publish_lsp_message(
+        the_lib::messages::MessageLevel::Warning,
+        "goto-type-definition is not supported by the active server",
+      );
+      return;
+    }
+
+    let Some((uri, position)) = self.current_lsp_position() else {
+      self.publish_lsp_message(
+        the_lib::messages::MessageLevel::Warning,
+        "goto-type-definition unavailable: no active LSP document",
+      );
+      return;
+    };
+
+    self.dispatch_lsp_request(
+      "textDocument/typeDefinition",
+      goto_type_definition_params(&uri, position),
+      PendingLspRequestKind::GotoTypeDefinition { uri },
+    );
+  }
+
+  fn lsp_goto_implementation(&mut self) {
+    if !self.lsp_supports(LspCapability::GotoImplementation) {
+      self.publish_lsp_message(
+        the_lib::messages::MessageLevel::Warning,
+        "goto-implementation is not supported by the active server",
+      );
+      return;
+    }
+
+    let Some((uri, position)) = self.current_lsp_position() else {
+      self.publish_lsp_message(
+        the_lib::messages::MessageLevel::Warning,
+        "goto-implementation unavailable: no active LSP document",
+      );
+      return;
+    };
+
+    self.dispatch_lsp_request(
+      "textDocument/implementation",
+      goto_implementation_params(&uri, position),
+      PendingLspRequestKind::GotoImplementation { uri },
+    );
+  }
+
   fn lsp_completion(&mut self) {
     self.cancel_auto_completion();
     let _ = self.dispatch_completion_request(CompletionTriggerSource::Manual, true);
@@ -9086,6 +9218,40 @@ pkgs.mkShell {
       <App as DefaultContext>::file_path(&app),
       Some(second.as_path())
     );
+  }
+
+  #[test]
+  fn lsp_goto_variant_keymaps_emit_capability_warnings_when_unavailable() {
+    let _guard = ffi_test_guard();
+    let mut app = App::new();
+    let id = app.create_editor("", default_viewport(), ffi::Position { row: 0, col: 0 });
+    assert!(app.activate(id).is_some());
+
+    for (suffix, expected) in [
+      ('D', "goto-declaration is not supported"),
+      ('y', "goto-type-definition is not supported"),
+      ('i', "goto-implementation is not supported"),
+    ] {
+      let before_seq = app.active_state_ref().messages.latest_seq();
+      assert!(app.handle_key(id, key_char('g')));
+      assert!(app.handle_key(id, key_char(suffix)));
+
+      let events = app.active_state_ref().messages.events_since(before_seq);
+      let warning = events
+        .iter()
+        .find_map(|event| {
+          match &event.kind {
+            the_lib::messages::MessageEventKind::Published { message } => {
+              (message.level == the_lib::messages::MessageLevel::Warning
+                && message.source.as_deref() == Some("lsp"))
+              .then_some(message.text.as_str())
+            },
+            _ => None,
+          }
+        })
+        .expect("lsp warning message");
+      assert!(warning.contains(expected), "unexpected warning: {warning}");
+    }
   }
 
   #[test]

@@ -53,6 +53,18 @@ pub fn goto_definition_params(uri: &str, position: LspPosition) -> Value {
   text_document_position_params(uri, position)
 }
 
+pub fn goto_declaration_params(uri: &str, position: LspPosition) -> Value {
+  text_document_position_params(uri, position)
+}
+
+pub fn goto_type_definition_params(uri: &str, position: LspPosition) -> Value {
+  text_document_position_params(uri, position)
+}
+
+pub fn goto_implementation_params(uri: &str, position: LspPosition) -> Value {
+  text_document_position_params(uri, position)
+}
+
 pub fn hover_params(uri: &str, position: LspPosition) -> Value {
   text_document_position_params(uri, position)
 }

@@ -563,7 +563,10 @@ pub enum Command {
   RSearch,
   SelectRegex,
   FilePicker,
+  LspGotoDeclaration,
   LspGotoDefinition,
+  LspGotoTypeDefinition,
+  LspGotoImplementation,
   LspHover,
   LspReferences,
   LspDocumentSymbols,
@@ -1294,6 +1297,21 @@ impl Command {
   #[must_use]
   pub const fn lsp_goto_definition() -> Self {
     Self::LspGotoDefinition
+  }
+
+  #[must_use]
+  pub const fn lsp_goto_declaration() -> Self {
+    Self::LspGotoDeclaration
+  }
+
+  #[must_use]
+  pub const fn lsp_goto_type_definition() -> Self {
+    Self::LspGotoTypeDefinition
+  }
+
+  #[must_use]
+  pub const fn lsp_goto_implementation() -> Self {
+    Self::LspGotoImplementation
   }
 
   #[must_use]

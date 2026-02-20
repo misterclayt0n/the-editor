@@ -13,6 +13,9 @@ use crossterm::{
   event::{
     DisableMouseCapture,
     EnableMouseCapture,
+    KeyboardEnhancementFlags,
+    PopKeyboardEnhancementFlags,
+    PushKeyboardEnhancementFlags,
   },
   execute,
   terminal::{
@@ -31,7 +34,8 @@ use ratatui::{
 use crate::undercurl_backend::UndercurlCrosstermBackend;
 
 pub struct Terminal {
-  terminal: RatatuiTerminal<UndercurlCrosstermBackend<Stdout>>,
+  terminal:                      RatatuiTerminal<UndercurlCrosstermBackend<Stdout>>,
+  keyboard_enhancements_enabled: bool,
 }
 
 impl Terminal {
@@ -39,7 +43,10 @@ impl Terminal {
     let stdout = io::stdout();
     let backend = UndercurlCrosstermBackend::new(stdout);
     let terminal = RatatuiTerminal::new(backend)?;
-    Ok(Self { terminal })
+    Ok(Self {
+      terminal,
+      keyboard_enhancements_enabled: false,
+    })
   }
 
   pub fn enter_raw_mode(&mut self) -> Result<()> {
@@ -50,10 +57,24 @@ impl Terminal {
       EnableMouseCapture,
       Hide
     )?;
+    let enhancement_flags = KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+      | KeyboardEnhancementFlags::REPORT_EVENT_TYPES;
+    if execute!(
+      self.terminal.backend_mut(),
+      PushKeyboardEnhancementFlags(enhancement_flags)
+    )
+    .is_ok()
+    {
+      self.keyboard_enhancements_enabled = true;
+    }
     Ok(())
   }
 
   pub fn leave_raw_mode(&mut self) -> Result<()> {
+    if self.keyboard_enhancements_enabled {
+      let _ = execute!(self.terminal.backend_mut(), PopKeyboardEnhancementFlags);
+      self.keyboard_enhancements_enabled = false;
+    }
     execute!(
       self.terminal.backend_mut(),
       DisableMouseCapture,

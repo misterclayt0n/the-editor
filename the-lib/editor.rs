@@ -5,6 +5,7 @@
 //! of the-lib.
 
 use std::{
+  collections::BTreeMap,
   num::NonZeroUsize,
   path::{
     Path,
@@ -21,6 +22,11 @@ use crate::{
   },
   render::plan::RenderCache,
   selection::Selection,
+  split_tree::{
+    PaneId,
+    SplitAxis,
+    SplitTree,
+  },
   view::ViewState,
 };
 
@@ -48,6 +54,8 @@ pub struct Editor {
   id:               EditorId,
   buffers:          Vec<BufferState>,
   active_buffer:    usize,
+  split_tree:       SplitTree,
+  pane_buffers:     BTreeMap<PaneId, usize>,
   next_document_id: NonZeroUsize,
   access_history:   Vec<usize>,
   modified_history: Vec<usize>,
@@ -78,11 +86,16 @@ impl Editor {
   pub fn new(id: EditorId, document: Document, view: ViewState) -> Self {
     let next_doc = document.id().get().get().saturating_add(1);
     let next_document_id = NonZeroUsize::new(next_doc).unwrap_or(document.id().get());
+    let split_tree = SplitTree::new();
+    let mut pane_buffers = BTreeMap::new();
+    pane_buffers.insert(split_tree.active_pane(), 0);
 
     Self {
       id,
       buffers: vec![BufferState::new(document, view, None)],
       active_buffer: 0,
+      split_tree,
+      pane_buffers,
       next_document_id,
       access_history: Vec::new(),
       modified_history: Vec::new(),
@@ -97,6 +110,8 @@ impl Editor {
       self.access_history.push(self.active_buffer);
       self.active_buffer = index;
     }
+    let active_pane = self.split_tree.active_pane();
+    self.pane_buffers.insert(active_pane, index);
     true
   }
 
@@ -150,6 +165,63 @@ impl Editor {
 
   pub fn active_buffer_index(&self) -> usize {
     self.active_buffer
+  }
+
+  pub fn pane_count(&self) -> usize {
+    self.split_tree.pane_count()
+  }
+
+  pub fn split_active_pane(&mut self, axis: SplitAxis) -> bool {
+    let current_buffer = self.active_buffer;
+    let pane = self.split_tree.split_active(axis);
+    self.pane_buffers.insert(pane, current_buffer);
+    self.active_buffer = current_buffer;
+    true
+  }
+
+  pub fn close_active_pane(&mut self) -> bool {
+    let closing = self.split_tree.active_pane();
+    let Ok(next_active) = self.split_tree.close_active() else {
+      return false;
+    };
+
+    self.pane_buffers.remove(&closing);
+    let Some(&next_buffer) = self.pane_buffers.get(&next_active) else {
+      return false;
+    };
+    self.active_buffer = next_buffer;
+    true
+  }
+
+  pub fn only_active_pane(&mut self) -> bool {
+    if self.split_tree.pane_count() <= 1 {
+      return false;
+    }
+    let active = self.split_tree.active_pane();
+    let Some(&active_buffer) = self.pane_buffers.get(&active) else {
+      return false;
+    };
+
+    self.split_tree.only_active();
+    self.pane_buffers.retain(|pane, _| *pane == active);
+    self.active_buffer = active_buffer;
+    true
+  }
+
+  pub fn rotate_active_pane(&mut self, next: bool) -> bool {
+    if !self.split_tree.rotate_focus(next) {
+      return false;
+    }
+    let active = self.split_tree.active_pane();
+    let Some(&buffer) = self.pane_buffers.get(&active) else {
+      return false;
+    };
+    self.active_buffer = buffer;
+    true
+  }
+
+  pub fn transpose_active_pane_branch(&mut self) -> bool {
+    self.split_tree.transpose_active_branch()
   }
 
   pub fn set_active_buffer(&mut self, index: usize) -> bool {
@@ -268,6 +340,7 @@ mod tests {
     position::Position,
     render::graphics::Rect,
     selection::Selection,
+    split_tree::SplitAxis,
     transaction::Transaction,
   };
 
@@ -425,5 +498,61 @@ mod tests {
 
     assert!(editor.switch_buffer_backward(1));
     assert_eq!(editor.pop_object_selection(), Some(first));
+  }
+
+  #[test]
+  fn editor_split_close_and_only_active_pane() {
+    let doc_id = DocumentId::new(NonZeroUsize::new(1).unwrap());
+    let doc = Document::new(doc_id, Rope::from("one"));
+    let view = ViewState::new(Rect::new(0, 0, 80, 24), Position::new(0, 0));
+    let editor_id = EditorId::new(NonZeroUsize::new(1).unwrap());
+    let mut editor = Editor::new(editor_id, doc, view);
+
+    assert_eq!(editor.pane_count(), 1);
+    assert!(editor.split_active_pane(SplitAxis::Vertical));
+    assert_eq!(editor.pane_count(), 2);
+    assert!(editor.split_active_pane(SplitAxis::Horizontal));
+    assert_eq!(editor.pane_count(), 3);
+
+    assert!(editor.close_active_pane());
+    assert_eq!(editor.pane_count(), 2);
+    assert!(editor.only_active_pane());
+    assert_eq!(editor.pane_count(), 1);
+    assert!(!editor.only_active_pane());
+  }
+
+  #[test]
+  fn editor_rotate_active_pane_switches_bound_buffer() {
+    let doc_id = DocumentId::new(NonZeroUsize::new(1).unwrap());
+    let doc = Document::new(doc_id, Rope::from("one"));
+    let view = ViewState::new(Rect::new(0, 0, 80, 24), Position::new(0, 0));
+    let editor_id = EditorId::new(NonZeroUsize::new(1).unwrap());
+    let mut editor = Editor::new(editor_id, doc, view);
+
+    assert!(editor.split_active_pane(SplitAxis::Vertical));
+    let second_idx = editor.open_buffer(
+      Rope::from("two"),
+      ViewState::new(Rect::new(0, 0, 80, 24), Position::new(0, 0)),
+      Some(PathBuf::from("/tmp/two.txt")),
+    );
+    assert_eq!(editor.active_buffer_index(), second_idx);
+
+    assert!(editor.rotate_active_pane(true));
+    assert_eq!(editor.active_buffer_index(), 0);
+    assert!(editor.rotate_active_pane(false));
+    assert_eq!(editor.active_buffer_index(), second_idx);
+  }
+
+  #[test]
+  fn editor_transpose_active_pane_requires_a_split_branch() {
+    let doc_id = DocumentId::new(NonZeroUsize::new(1).unwrap());
+    let doc = Document::new(doc_id, Rope::from("one"));
+    let view = ViewState::new(Rect::new(0, 0, 80, 24), Position::new(0, 0));
+    let editor_id = EditorId::new(NonZeroUsize::new(1).unwrap());
+    let mut editor = Editor::new(editor_id, doc, view);
+
+    assert!(!editor.transpose_active_pane_branch());
+    assert!(editor.split_active_pane(SplitAxis::Vertical));
+    assert!(editor.transpose_active_pane_branch());
   }
 }

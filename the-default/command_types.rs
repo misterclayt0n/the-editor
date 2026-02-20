@@ -488,6 +488,12 @@ pub enum Command {
   GotoWindowBottom {
     count: usize,
   },
+  RotateView,
+  HSplit,
+  VSplit,
+  TransposeView,
+  WClose,
+  WOnly,
   GotoLastAccessedFile,
   GotoLastModifiedFile,
   GotoLastModification,
@@ -864,6 +870,36 @@ impl Command {
   #[must_use]
   pub const fn goto_window_bottom(count: usize) -> Self {
     Self::GotoWindowBottom { count }
+  }
+
+  #[must_use]
+  pub const fn rotate_view() -> Self {
+    Self::RotateView
+  }
+
+  #[must_use]
+  pub const fn hsplit() -> Self {
+    Self::HSplit
+  }
+
+  #[must_use]
+  pub const fn vsplit() -> Self {
+    Self::VSplit
+  }
+
+  #[must_use]
+  pub const fn transpose_view() -> Self {
+    Self::TransposeView
+  }
+
+  #[must_use]
+  pub const fn wclose() -> Self {
+    Self::WClose
+  }
+
+  #[must_use]
+  pub const fn wonly() -> Self {
+    Self::WOnly
   }
 
   #[must_use]

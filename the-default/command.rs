@@ -106,6 +106,7 @@ use the_lib::{
     Selection,
     split_on_newline,
   },
+  split_tree::SplitAxis,
   surround,
   syntax::{
     Loader,
@@ -1146,6 +1147,12 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::GotoWindowTop { count } => goto_window(ctx, WindowAlign::Top, count.max(1)),
     Command::GotoWindowCenter => goto_window(ctx, WindowAlign::Center, 1),
     Command::GotoWindowBottom { count } => goto_window(ctx, WindowAlign::Bottom, count.max(1)),
+    Command::RotateView => rotate_view(ctx),
+    Command::HSplit => split_view(ctx, SplitAxis::Horizontal),
+    Command::VSplit => split_view(ctx, SplitAxis::Vertical),
+    Command::TransposeView => transpose_view(ctx),
+    Command::WClose => close_view(ctx),
+    Command::WOnly => only_view(ctx),
     Command::GotoLastAccessedFile => {
       if !ctx.goto_last_accessed_buffer() {
         ctx.push_warning("buffer", "no last accessed buffer");
@@ -2153,6 +2160,46 @@ fn goto_window<Ctx: DefaultContext>(ctx: &mut Ctx, align: WindowAlign, count: us
   let selection = doc.selection().clone();
   let new_selection = selection.transform(|range| range.put_cursor(slice, target, extend));
   let _ = doc.set_selection(new_selection);
+}
+
+fn rotate_view<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  if !ctx.editor().rotate_active_pane(true) {
+    ctx.push_warning("window", "no other view to rotate");
+    return;
+  }
+  ctx.request_render();
+}
+
+fn split_view<Ctx: DefaultContext>(ctx: &mut Ctx, axis: SplitAxis) {
+  if !ctx.editor().split_active_pane(axis) {
+    ctx.push_warning("window", "failed to split view");
+    return;
+  }
+  ctx.request_render();
+}
+
+fn transpose_view<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  if !ctx.editor().transpose_active_pane_branch() {
+    ctx.push_warning("window", "no split branch to transpose");
+    return;
+  }
+  ctx.request_render();
+}
+
+fn close_view<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  if !ctx.editor().close_active_pane() {
+    ctx.push_warning("window", "cannot close the last view");
+    return;
+  }
+  ctx.request_render();
+}
+
+fn only_view<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  if !ctx.editor().only_active_pane() {
+    ctx.push_warning("window", "already in a single view");
+    return;
+  }
+  ctx.request_render();
 }
 
 fn goto_last_modification<Ctx: DefaultContext>(ctx: &mut Ctx) {
@@ -5222,6 +5269,12 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "goto_window_top" => Some(Command::goto_window_top(1)),
     "goto_window_center" => Some(Command::goto_window_center()),
     "goto_window_bottom" => Some(Command::goto_window_bottom(1)),
+    "rotate_view" => Some(Command::rotate_view()),
+    "hsplit" => Some(Command::hsplit()),
+    "vsplit" => Some(Command::vsplit()),
+    "transpose_view" => Some(Command::transpose_view()),
+    "wclose" => Some(Command::wclose()),
+    "wonly" => Some(Command::wonly()),
     "goto_last_accessed_file" => Some(Command::goto_last_accessed_file()),
     "goto_last_modified_file" => Some(Command::goto_last_modified_file()),
     "goto_last_modification" => Some(Command::goto_last_modification()),

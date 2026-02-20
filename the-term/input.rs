@@ -54,8 +54,9 @@ use crate::{
 
 /// Orchestration function - maps keyboard input to dispatch calls.
 pub fn handle_key(ctx: &mut Ctx, event: CrosstermKeyEvent) {
-  // Only handle key press events, not release or repeat
-  if event.kind != KeyEventKind::Press {
+  // Ignore key releases, but accept both press + repeat so held keys keep
+  // driving navigation/scroll in overlays.
+  if event.kind == KeyEventKind::Release {
     return;
   }
 
@@ -621,7 +622,12 @@ mod tests {
   };
   use the_default::{
     CompletionMenuItem,
+    DefaultContext,
     show_completion_menu,
+  };
+  use the_lib::{
+    selection::Selection,
+    transaction::Transaction,
   };
 
   use super::*;
@@ -638,6 +644,12 @@ mod tests {
 
   fn key_event(code: KeyCode) -> KeyEvent {
     KeyEvent::new(code, KeyModifiers::empty())
+  }
+
+  fn key_event_with_kind(code: KeyCode, kind: KeyEventKind) -> KeyEvent {
+    let mut event = key_event(code);
+    event.kind = kind;
+    event
   }
 
   #[test]
@@ -792,5 +804,52 @@ mod tests {
     assert!(ctx.hover_docs.is_none());
     assert_eq!(ctx.hover_docs_scroll, 0);
     assert!(ctx.needs_render);
+  }
+
+  #[test]
+  fn hover_docs_page_down_repeat_continues_scrolling() {
+    let mut ctx = Ctx::new(None).expect("ctx");
+    ctx.hover_docs = Some("hover docs".to_string());
+    ctx.hover_docs_scroll = 0;
+
+    handle_key(&mut ctx, key_event(KeyCode::PageDown));
+    assert_eq!(ctx.hover_docs_scroll, 6);
+
+    handle_key(
+      &mut ctx,
+      key_event_with_kind(KeyCode::PageDown, KeyEventKind::Repeat),
+    );
+    assert_eq!(ctx.hover_docs_scroll, 12);
+  }
+
+  #[test]
+  fn repeat_down_event_repeats_normal_mode_movement() {
+    let dispatch = build_dispatch::<Ctx>();
+    let mut ctx = Ctx::new(None).expect("ctx");
+    ctx.set_dispatch(&dispatch);
+
+    let tx = Transaction::change(
+      ctx.editor.document().text(),
+      std::iter::once((0, 0, Some("one\ntwo\nthree\n".into()))),
+    )
+    .expect("seed transaction");
+    assert!(DefaultContext::apply_transaction(&mut ctx, &tx));
+    let _ = ctx.editor.document_mut().set_selection(Selection::point(0));
+
+    let cursor_line = |ctx: &Ctx| {
+      let doc = ctx.editor.document();
+      let text = doc.text().slice(..);
+      text.char_to_line(doc.selection().ranges()[0].cursor(text))
+    };
+    assert_eq!(cursor_line(&ctx), 0);
+
+    handle_key(&mut ctx, key_event_with_kind(KeyCode::Down, KeyEventKind::Press));
+    assert_eq!(cursor_line(&ctx), 1);
+
+    handle_key(
+      &mut ctx,
+      key_event_with_kind(KeyCode::Down, KeyEventKind::Repeat),
+    );
+    assert_eq!(cursor_line(&ctx), 2);
   }
 }

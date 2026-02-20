@@ -1,5 +1,6 @@
 //! Pending input state for commands that wait on the next keypress.
 
+use the_lib::selection::Range;
 use the_lib::text_object::TextObject;
 
 use crate::Direction;
@@ -7,7 +8,7 @@ use crate::Direction;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WordJumpTarget {
   pub label:    [char; 2],
-  pub char_idx: usize,
+  pub range:    Range,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,7 +42,7 @@ pub enum PendingInput {
   /// Await one or two label keys for an on-screen word jump.
   WordJump {
     extend:  bool,
-    first:   Option<char>,
+    first:   Option<usize>,
     targets: Vec<WordJumpTarget>,
   },
 }

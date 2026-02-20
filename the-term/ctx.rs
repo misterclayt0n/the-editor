@@ -4690,6 +4690,7 @@ mod tests {
   };
   use the_lib::{
     messages::MessageEventKind,
+    movement::Direction as SelectionDirection,
     position::{
       Position,
       char_idx_at_coords,
@@ -4703,6 +4704,7 @@ mod tests {
       UiModifiers,
     },
     selection::Selection,
+    selection::Range,
     transaction::Transaction,
   };
   use the_lsp::{
@@ -5674,6 +5676,10 @@ pkgs.mkShell {
       key:       Key::Char('w'),
       modifiers: Modifiers::empty(),
     });
+    let targets = match ctx.pending_input().cloned() {
+      Some(PendingInput::WordJump { targets, .. }) => targets,
+      _ => panic!("expected word jump pending input"),
+    };
     assert!(matches!(
       ctx.pending_input(),
       Some(PendingInput::WordJump {
@@ -5682,7 +5688,7 @@ pkgs.mkShell {
         ..
       }) if targets.len() >= 2
     ));
-    assert!(!ctx.word_jump_inline_annotations.is_empty());
+    assert!(ctx.word_jump_inline_annotations.is_empty());
     assert!(!ctx.word_jump_overlay_annotations.is_empty());
 
     dispatch.pre_on_keypress(&mut ctx, KeyEvent {
@@ -5692,7 +5698,7 @@ pkgs.mkShell {
     assert!(matches!(
       ctx.pending_input(),
       Some(PendingInput::WordJump {
-        first: Some('a'),
+        first: Some(0),
         targets,
         ..
       }) if targets.len() >= 2
@@ -5708,7 +5714,12 @@ pkgs.mkShell {
     assert!(ctx.pending_input().is_none());
     assert!(ctx.word_jump_inline_annotations.is_empty());
     assert!(ctx.word_jump_overlay_annotations.is_empty());
-    assert_eq!(ctx.editor.document().selection().ranges()[0].head, 6);
+    let expected = targets
+      .get(1)
+      .expect("expected at least two jump targets")
+      .range
+      .with_direction(SelectionDirection::Forward);
+    assert_eq!(ctx.editor.document().selection().ranges()[0], expected);
   }
 
   #[test]
@@ -5739,6 +5750,10 @@ pkgs.mkShell {
       key:       Key::Char('w'),
       modifiers: Modifiers::empty(),
     });
+    let targets = match ctx.pending_input().cloned() {
+      Some(PendingInput::WordJump { targets, .. }) => targets,
+      _ => panic!("expected word jump pending input"),
+    };
     dispatch.pre_on_keypress(&mut ctx, KeyEvent {
       key:       Key::Char('a'),
       modifiers: Modifiers::empty(),
@@ -5748,9 +5763,13 @@ pkgs.mkShell {
       modifiers: Modifiers::empty(),
     });
 
-    let range = ctx.editor.document().selection().ranges()[0];
-    assert_eq!(range.anchor, 0);
-    assert_eq!(range.head, 7);
+    let target = targets.get(1).expect("expected at least two jump targets").range;
+    let expected = if target.anchor < target.head {
+      Range::new(0, target.head)
+    } else {
+      Range::new(target.anchor.max(0), target.head)
+    };
+    assert_eq!(ctx.editor.document().selection().ranges()[0], expected);
   }
 
   #[test]

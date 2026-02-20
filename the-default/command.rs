@@ -851,42 +851,36 @@ fn handle_pending_input<Ctx: DefaultContext>(
         ctx.clear_word_jump_annotations();
         return true;
       };
+      if !key.modifiers.is_empty() {
+        ctx.clear_word_jump_annotations();
+        return true;
+      }
       let typed = ch.to_ascii_lowercase();
+      let alphabet: Vec<char> = WORD_JUMP_LABEL_ALPHABET.chars().collect();
+      let Some(index) = alphabet.iter().position(|it| *it == typed) else {
+        ctx.clear_word_jump_annotations();
+        return true;
+      };
 
-      if let Some(first_label) = first {
-        if let Some(target) = targets
-          .iter()
-          .find(|target| target.label == [first_label, typed])
-        {
-          apply_word_jump_target(ctx, target.char_idx, extend);
+      if let Some(outer) = first {
+        let target_index = outer.saturating_add(index);
+        if let Some(target) = targets.get(target_index) {
+          apply_word_jump_target(ctx, target.range, extend);
         }
         ctx.clear_word_jump_annotations();
         return true;
       }
 
-      let filtered: Vec<WordJumpTarget> = targets
-        .into_iter()
-        .filter(|target| target.label[0] == typed)
-        .collect();
-
-      match filtered.as_slice() {
-        [] => {
-          ctx.clear_word_jump_annotations();
-        },
-        [target] => {
-          apply_word_jump_target(ctx, target.char_idx, extend);
-          ctx.clear_word_jump_annotations();
-        },
-        _ => {
-          set_word_jump_annotations(ctx, &filtered, Some(typed));
-          ctx.set_pending_input(Some(PendingInput::WordJump {
-            extend,
-            first: Some(typed),
-            targets: filtered,
-          }));
-        },
+      let outer = index.saturating_mul(alphabet.len());
+      if outer >= targets.len() {
+        ctx.clear_word_jump_annotations();
+        return true;
       }
-
+      ctx.set_pending_input(Some(PendingInput::WordJump {
+        extend,
+        first: Some(outer),
+        targets,
+      }));
       true
     },
   }
@@ -2015,7 +2009,7 @@ fn goto_word<Ctx: DefaultContext>(ctx: &mut Ctx, extend: bool) {
     return;
   }
 
-  set_word_jump_annotations(ctx, &targets, None);
+  set_word_jump_annotations(ctx, &targets);
   ctx.set_pending_input(Some(PendingInput::WordJump {
     extend,
     first: None,
@@ -2028,122 +2022,153 @@ fn collect_word_jump_targets<Ctx: DefaultContext>(ctx: &Ctx) -> Vec<WordJumpTarg
   let doc = ctx.editor_ref().document();
   let text = doc.text().slice(..);
   let alphabet: Vec<char> = WORD_JUMP_LABEL_ALPHABET.chars().collect();
+  if alphabet.is_empty() || view.viewport.height == 0 {
+    return Vec::new();
+  }
   let alphabet_len = alphabet.len();
-  if alphabet_len == 0 || view.viewport.height == 0 {
+  let jump_label_limit = alphabet_len * alphabet_len;
+
+  if text.len_lines() == 0 {
     return Vec::new();
   }
 
-  let line_count = text.len_lines();
-  if line_count == 0 {
-    return Vec::new();
-  }
-
-  let start_line = view.scroll.row.min(line_count.saturating_sub(1));
-  let end_line_exclusive = view
-    .scroll
-    .row
-    .saturating_add(view.viewport.height as usize)
-    .min(line_count)
-    .max(start_line.saturating_add(1));
-
+  let start_line = view.scroll.row.min(text.len_lines().saturating_sub(1));
+  let end_line_exclusive = (start_line + view.viewport.height as usize).min(text.len_lines());
   let start = text.line_to_char(start_line);
   let end = text.line_to_char(end_line_exclusive);
-  let cursor = doc
+  let primary_selection = doc
     .selection()
     .ranges()
     .first()
-    .map(|range| range.cursor(text))
-    .unwrap_or(start);
+    .copied()
+    .unwrap_or_else(|| Range::point(start));
+  let cursor = primary_selection.cursor(text);
 
-  let mut words = Vec::new();
-  let mut char_idx = start;
-
-  while char_idx < end {
-    let Some(ch) = text.get_char(char_idx) else {
-      break;
-    };
-
-    if char_is_word(ch) {
-      let word_start = char_idx;
-      let mut grapheme_count = 0usize;
-
-      while char_idx < end {
-        let Some(word_ch) = text.get_char(char_idx) else {
-          break;
-        };
-        if !char_is_word(word_ch) {
-          break;
-        }
-        let next = next_grapheme_boundary(text, char_idx);
-        if next == char_idx {
-          break;
-        }
-        grapheme_count += 1;
-        char_idx = next;
-      }
-
-      if grapheme_count >= 2 {
-        words.push(word_start);
-      }
-      continue;
+  let mut words = Vec::with_capacity(jump_label_limit);
+  let mut cursor_fwd = Range::point(cursor);
+  let mut cursor_rev = Range::point(cursor);
+  if text.get_char(cursor).is_some_and(|c| !c.is_whitespace()) {
+    let cursor_word_end = movement::move_next_word_end(text, cursor_fwd, 1);
+    if cursor_word_end.anchor == cursor {
+      cursor_fwd = cursor_word_end;
     }
-
-    let next = next_grapheme_boundary(text, char_idx);
-    if next == char_idx {
-      break;
+    let cursor_word_start = movement::move_prev_word_start(text, cursor_rev, 1);
+    if cursor_word_start.anchor == next_grapheme_boundary(text, cursor) {
+      cursor_rev = cursor_word_start;
     }
-    char_idx = next;
   }
 
-  words.sort_by_key(|word_start| (word_start.abs_diff(cursor), *word_start));
-  let jump_label_limit = alphabet_len * alphabet_len;
+  'outer: loop {
+    let mut changed = false;
+    while cursor_fwd.head < end {
+      cursor_fwd = movement::move_next_word_end(text, cursor_fwd, 1);
+      let add_label = text
+        .slice(..cursor_fwd.head)
+        .graphemes_rev()
+        .take(2)
+        .take_while(|g| g.chars().all(char_is_word))
+        .count()
+        == 2;
+      if !add_label {
+        continue;
+      }
+      changed = true;
+      cursor_fwd.anchor += text
+        .chars_at(cursor_fwd.anchor)
+        .take_while(|&c| !char_is_word(c))
+        .count();
+      words.push(cursor_fwd);
+      if words.len() == jump_label_limit {
+        break 'outer;
+      }
+      break;
+    }
+
+    while cursor_rev.head > start {
+      cursor_rev = movement::move_prev_word_start(text, cursor_rev, 1);
+      let add_label = text
+        .slice(cursor_rev.head..)
+        .graphemes()
+        .take(2)
+        .take_while(|g| g.chars().all(char_is_word))
+        .count()
+        == 2;
+      if !add_label {
+        continue;
+      }
+      changed = true;
+      cursor_rev.anchor -= text
+        .chars_at(cursor_rev.anchor)
+        .reversed()
+        .take_while(|&c| !char_is_word(c))
+        .count();
+      words.push(cursor_rev);
+      if words.len() == jump_label_limit {
+        break 'outer;
+      }
+      break;
+    }
+
+    if !changed {
+      break;
+    }
+  }
 
   words
     .into_iter()
-    .take(jump_label_limit)
     .enumerate()
-    .map(|(idx, char_idx)| WordJumpTarget {
+    .map(|(idx, range)| WordJumpTarget {
       label: [alphabet[idx / alphabet_len], alphabet[idx % alphabet_len]],
-      char_idx,
+      range,
     })
     .collect()
 }
 
-fn set_word_jump_annotations<Ctx: DefaultContext>(
-  ctx: &mut Ctx,
-  targets: &[WordJumpTarget],
-  first: Option<char>,
-) {
-  let filtered = targets.iter().filter(|target| {
-    first
-      .map(|label| target.label[0] == label)
-      .unwrap_or(true)
-  });
-
-  let mut inline = Vec::new();
+fn set_word_jump_annotations<Ctx: DefaultContext>(ctx: &mut Ctx, targets: &[WordJumpTarget]) {
+  let text = ctx.editor_ref().document().text().slice(..);
   let mut overlay = Vec::new();
 
-  for target in filtered {
-    if first.is_none() {
-      inline.push(InlineAnnotation::new(
-        target.char_idx,
-        target.label[0].to_string(),
-      ));
-    }
-    overlay.push(Overlay::new(target.char_idx, target.label[1].to_string()));
+  for target in targets {
+    let from = target.range.from();
+    overlay.push(Overlay::new(from, target.label[0].to_string()));
+    overlay.push(Overlay::new(
+      next_grapheme_boundary(text, from),
+      target.label[1].to_string(),
+    ));
   }
 
-  inline.sort_by_key(|annotation| annotation.char_idx);
   overlay.sort_by_key(|annotation| annotation.char_idx);
-  ctx.set_word_jump_annotations(inline, overlay);
+  ctx.set_word_jump_annotations(Vec::new(), overlay);
 }
 
-fn apply_word_jump_target<Ctx: DefaultContext>(ctx: &mut Ctx, char_idx: usize, extend: bool) {
-  let doc = ctx.editor().document_mut();
-  let slice = doc.text().slice(..);
-  let selection = doc.selection().clone();
-  let new_selection = selection.transform(|range| range.put_cursor(slice, char_idx, extend));
-  let _ = doc.set_selection(new_selection);
+fn apply_word_jump_target<Ctx: DefaultContext>(ctx: &mut Ctx, mut range: Range, extend: bool) {
+  if extend {
+    let primary_selection = ctx
+      .editor_ref()
+      .document()
+      .selection()
+      .ranges()
+      .first()
+      .copied()
+      .unwrap_or_else(|| Range::point(range.anchor));
+    range = if range.anchor < range.head {
+      let from = primary_selection.from();
+      let anchor = if range.anchor < from {
+        range.anchor
+      } else {
+        from
+      };
+      Range::new(anchor, range.head)
+    } else {
+      let to = primary_selection.to();
+      let anchor = if range.anchor > to { range.anchor } else { to };
+      Range::new(anchor, range.head)
+    };
+  } else {
+    range = range.with_direction(MoveDir::Forward);
+  }
+
+  let _ = ctx.editor().document_mut().set_selection(range.into());
 }
 
 fn goto_first_nonwhitespace<Ctx: DefaultContext>(ctx: &mut Ctx, extend: bool) {

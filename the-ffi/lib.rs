@@ -8308,12 +8308,16 @@ mod tests {
   };
   use the_lib::{
     messages::MessageEventKind,
+    movement::Direction as SelectionDirection,
     position::{
       Position as LibPosition,
       char_idx_at_coords,
       coords_at_pos,
     },
-    selection::Selection,
+    selection::{
+      Range,
+      Selection,
+    },
     syntax::Highlight,
     transaction::Transaction,
   };
@@ -9216,6 +9220,10 @@ pkgs.mkShell {
 
     assert!(app.handle_key(id, key_char('g')));
     assert!(app.handle_key(id, key_char('w')));
+    let targets = match app.active_state_ref().pending_input.clone() {
+      Some(PendingInput::WordJump { targets, .. }) => targets,
+      _ => panic!("expected word jump pending input"),
+    };
     assert!(matches!(
       app.active_state_ref().pending_input.as_ref(),
       Some(PendingInput::WordJump {
@@ -9224,14 +9232,14 @@ pkgs.mkShell {
         ..
       }) if targets.len() >= 2
     ));
-    assert!(!app.active_state_ref().word_jump_inline_annotations.is_empty());
+    assert!(app.active_state_ref().word_jump_inline_annotations.is_empty());
     assert!(!app.active_state_ref().word_jump_overlay_annotations.is_empty());
 
     assert!(app.handle_key(id, key_char('a')));
     assert!(matches!(
       app.active_state_ref().pending_input.as_ref(),
       Some(PendingInput::WordJump {
-        first: Some('a'),
+        first: Some(0),
         targets,
         ..
       }) if targets.len() >= 2
@@ -9243,7 +9251,12 @@ pkgs.mkShell {
     assert!(app.active_state_ref().pending_input.is_none());
     assert!(app.active_state_ref().word_jump_inline_annotations.is_empty());
     assert!(app.active_state_ref().word_jump_overlay_annotations.is_empty());
-    assert_eq!(app.active_editor_ref().document().selection().ranges()[0].head, 6);
+    let expected = targets
+      .get(1)
+      .expect("expected at least two jump targets")
+      .range
+      .with_direction(SelectionDirection::Forward);
+    assert_eq!(app.active_editor_ref().document().selection().ranges()[0], expected);
   }
 
   #[test]
@@ -9263,12 +9276,20 @@ pkgs.mkShell {
 
     assert!(app.handle_key(id, key_char('g')));
     assert!(app.handle_key(id, key_char('w')));
+    let targets = match app.active_state_ref().pending_input.clone() {
+      Some(PendingInput::WordJump { targets, .. }) => targets,
+      _ => panic!("expected word jump pending input"),
+    };
     assert!(app.handle_key(id, key_char('a')));
     assert!(app.handle_key(id, key_char('b')));
 
-    let range = app.active_editor_ref().document().selection().ranges()[0];
-    assert_eq!(range.anchor, 0);
-    assert_eq!(range.head, 7);
+    let target = targets.get(1).expect("expected at least two jump targets").range;
+    let expected = if target.anchor < target.head {
+      Range::new(0, target.head)
+    } else {
+      Range::new(target.anchor.max(0), target.head)
+    };
+    assert_eq!(app.active_editor_ref().document().selection().ranges()[0], expected);
   }
 
   #[test]

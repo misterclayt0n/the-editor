@@ -4964,10 +4964,7 @@ impl App {
           },
         };
         if locations.is_empty() {
-          self.publish_lsp_message(
-            the_lib::messages::MessageLevel::Error,
-            "No declaration found.",
-          );
+          let _ = <Self as DefaultContext>::push_error(self, "goto", "No declaration found.");
           return true;
         }
         self.apply_locations_result("declaration", locations)
@@ -4984,10 +4981,7 @@ impl App {
           },
         };
         if locations.is_empty() {
-          self.publish_lsp_message(
-            the_lib::messages::MessageLevel::Error,
-            "No definition found.",
-          );
+          let _ = <Self as DefaultContext>::push_error(self, "goto", "No definition found.");
           return true;
         }
         self.apply_locations_result("definition", locations)
@@ -5004,10 +4998,7 @@ impl App {
           },
         };
         if locations.is_empty() {
-          self.publish_lsp_message(
-            the_lib::messages::MessageLevel::Error,
-            "No type definition found.",
-          );
+          let _ = <Self as DefaultContext>::push_error(self, "goto", "No type definition found.");
           return true;
         }
         self.apply_locations_result("type definition", locations)
@@ -5024,10 +5015,7 @@ impl App {
           },
         };
         if locations.is_empty() {
-          self.publish_lsp_message(
-            the_lib::messages::MessageLevel::Error,
-            "No implementation found.",
-          );
+          let _ = <Self as DefaultContext>::push_error(self, "goto", "No implementation found.");
           return true;
         }
         self.apply_locations_result("implementation", locations)
@@ -7413,18 +7401,12 @@ impl DefaultContext for App {
 
   fn lsp_goto_definition(&mut self) {
     if !self.lsp_supports(LspCapability::GotoDefinition) {
-      self.publish_lsp_message(
-        the_lib::messages::MessageLevel::Warning,
-        "goto-definition is not supported by the active server",
-      );
+      let _ = <Self as DefaultContext>::push_error(self, "goto", "No definition found.");
       return;
     }
 
     let Some((uri, position)) = self.current_lsp_position() else {
-      self.publish_lsp_message(
-        the_lib::messages::MessageLevel::Warning,
-        "goto-definition unavailable: no active LSP document",
-      );
+      let _ = <Self as DefaultContext>::push_error(self, "goto", "No definition found.");
       return;
     };
 
@@ -7437,18 +7419,12 @@ impl DefaultContext for App {
 
   fn lsp_goto_declaration(&mut self) {
     if !self.lsp_supports(LspCapability::GotoDeclaration) {
-      self.publish_lsp_message(
-        the_lib::messages::MessageLevel::Warning,
-        "goto-declaration is not supported by the active server",
-      );
+      let _ = <Self as DefaultContext>::push_error(self, "goto", "No declaration found.");
       return;
     }
 
     let Some((uri, position)) = self.current_lsp_position() else {
-      self.publish_lsp_message(
-        the_lib::messages::MessageLevel::Warning,
-        "goto-declaration unavailable: no active LSP document",
-      );
+      let _ = <Self as DefaultContext>::push_error(self, "goto", "No declaration found.");
       return;
     };
 
@@ -7461,18 +7437,12 @@ impl DefaultContext for App {
 
   fn lsp_goto_type_definition(&mut self) {
     if !self.lsp_supports(LspCapability::GotoTypeDefinition) {
-      self.publish_lsp_message(
-        the_lib::messages::MessageLevel::Warning,
-        "goto-type-definition is not supported by the active server",
-      );
+      let _ = <Self as DefaultContext>::push_error(self, "goto", "No type definition found.");
       return;
     }
 
     let Some((uri, position)) = self.current_lsp_position() else {
-      self.publish_lsp_message(
-        the_lib::messages::MessageLevel::Warning,
-        "goto-type-definition unavailable: no active LSP document",
-      );
+      let _ = <Self as DefaultContext>::push_error(self, "goto", "No type definition found.");
       return;
     };
 
@@ -7485,18 +7455,12 @@ impl DefaultContext for App {
 
   fn lsp_goto_implementation(&mut self) {
     if !self.lsp_supports(LspCapability::GotoImplementation) {
-      self.publish_lsp_message(
-        the_lib::messages::MessageLevel::Warning,
-        "goto-implementation is not supported by the active server",
-      );
+      let _ = <Self as DefaultContext>::push_error(self, "goto", "No implementation found.");
       return;
     }
 
     let Some((uri, position)) = self.current_lsp_position() else {
-      self.publish_lsp_message(
-        the_lib::messages::MessageLevel::Warning,
-        "goto-implementation unavailable: no active LSP document",
-      );
+      let _ = <Self as DefaultContext>::push_error(self, "goto", "No implementation found.");
       return;
     };
 
@@ -9249,36 +9213,36 @@ pkgs.mkShell {
   }
 
   #[test]
-  fn lsp_goto_variant_keymaps_emit_capability_warnings_when_unavailable() {
+  fn lsp_goto_variant_keymaps_emit_errors_when_unavailable() {
     let _guard = ffi_test_guard();
     let mut app = App::new();
     let id = app.create_editor("", default_viewport(), ffi::Position { row: 0, col: 0 });
     assert!(app.activate(id).is_some());
 
     for (suffix, expected) in [
-      ('D', "goto-declaration is not supported"),
-      ('y', "goto-type-definition is not supported"),
-      ('i', "goto-implementation is not supported"),
+      ('D', "No declaration found."),
+      ('y', "No type definition found."),
+      ('i', "No implementation found."),
     ] {
       let before_seq = app.active_state_ref().messages.latest_seq();
       assert!(app.handle_key(id, key_char('g')));
       assert!(app.handle_key(id, key_char(suffix)));
 
       let events = app.active_state_ref().messages.events_since(before_seq);
-      let warning = events
+      let error = events
         .iter()
         .find_map(|event| {
           match &event.kind {
             the_lib::messages::MessageEventKind::Published { message } => {
-              (message.level == the_lib::messages::MessageLevel::Warning
-                && message.source.as_deref() == Some("lsp"))
+              (message.level == the_lib::messages::MessageLevel::Error
+                && message.source.as_deref() == Some("goto"))
               .then_some(message.text.as_str())
             },
             _ => None,
           }
         })
-        .expect("lsp warning message");
-      assert!(warning.contains(expected), "unexpected warning: {warning}");
+        .expect("goto error message");
+      assert_eq!(error, expected, "unexpected error: {error}");
     }
   }
 

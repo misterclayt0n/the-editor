@@ -590,6 +590,8 @@ pub enum Command {
   GotoNextXmlElement,
   GotoPrevParagraph,
   GotoNextParagraph,
+  AddNewlineAbove,
+  AddNewlineBelow,
   SearchNextOrPrev {
     direction: Direction,
     extend:    bool,
@@ -1452,6 +1454,16 @@ impl Command {
   #[must_use]
   pub const fn goto_next_paragraph() -> Self {
     Self::GotoNextParagraph
+  }
+
+  #[must_use]
+  pub const fn add_newline_above() -> Self {
+    Self::AddNewlineAbove
+  }
+
+  #[must_use]
+  pub const fn add_newline_below() -> Self {
+    Self::AddNewlineBelow
   }
 
   #[must_use]

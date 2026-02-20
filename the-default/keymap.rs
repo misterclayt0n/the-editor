@@ -925,7 +925,7 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
       "T" => goto_prev_test,
       "p" => goto_prev_paragraph,
       "x" => goto_prev_xml_element,
-      // "space" => add_newline_above,
+      "space" => add_newline_above,
     },
     "]" => { "Right bracket"
       "d" => goto_next_diag,
@@ -940,7 +940,7 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
       "T" => goto_next_test,
       "p" => goto_next_paragraph,
       "x" => goto_next_xml_element,
-      // "space" => add_newline_below,
+      "space" => add_newline_below,
     },
 
     "/" => search,

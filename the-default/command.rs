@@ -1134,6 +1134,8 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::GotoNextXmlElement => goto_ts_object(ctx, "xml-element", Direction::Forward),
     Command::GotoPrevParagraph => goto_paragraph(ctx, Direction::Backward),
     Command::GotoNextParagraph => goto_paragraph(ctx, Direction::Forward),
+    Command::AddNewlineAbove => add_newline(ctx, OpenDirection::Above),
+    Command::AddNewlineBelow => add_newline(ctx, OpenDirection::Below),
     Command::Search => ctx.dispatch().search(ctx, ()),
     Command::RSearch => ctx.dispatch().rsearch(ctx, ()),
     Command::SelectRegex => ctx.dispatch().select_regex(ctx, ()),
@@ -3764,6 +3766,39 @@ fn open_above<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
   open(ctx, OpenDirection::Above, CommentContinuation::Enabled);
 }
 
+fn add_newline<Ctx: DefaultContext>(ctx: &mut Ctx, direction: OpenDirection) {
+  let line_ending = ctx
+    .editor_ref()
+    .document()
+    .line_ending()
+    .as_str()
+    .to_string();
+  let tx = {
+    let doc = ctx.editor_ref().document();
+    let text = doc.text();
+    let selection = doc.selection().clone();
+    let slice = text.slice(..);
+    let changes = selection.ranges().iter().map(|range| {
+      let (start, end) = range.line_range(slice);
+      let line = match direction {
+        OpenDirection::Above => start,
+        OpenDirection::Below => end.saturating_add(1),
+      }
+      .min(text.len_lines());
+      let pos = text.line_to_char(line);
+      (pos, pos, Some(line_ending.clone().into()))
+    });
+    Transaction::change(text, changes)
+  };
+  let Ok(tx) = tx else {
+    ctx.push_error("edit", "failed to build add-newline transaction");
+    return;
+  };
+  if !ctx.apply_transaction(&tx) {
+    ctx.push_error("edit", "failed to apply add-newline transaction");
+  }
+}
+
 fn commit_undo_checkpoint<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
   let _ = ctx.editor().document_mut().commit();
 }
@@ -4738,6 +4773,8 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "goto_next_xml_element" => Some(Command::goto_next_xml_element()),
     "goto_prev_paragraph" => Some(Command::goto_prev_paragraph()),
     "goto_next_paragraph" => Some(Command::goto_next_paragraph()),
+    "add_newline_above" => Some(Command::add_newline_above()),
+    "add_newline_below" => Some(Command::add_newline_below()),
 
     _ => None,
   }

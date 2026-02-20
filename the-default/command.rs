@@ -1076,6 +1076,8 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::GotoLineEnd { extend } => ctx.dispatch().goto_line_end(ctx, extend),
     Command::PageUp { extend } => ctx.dispatch().page_up(ctx, extend),
     Command::PageDown { extend } => ctx.dispatch().page_down(ctx, extend),
+    Command::PageCursorHalfUp => page_cursor_half_up(ctx),
+    Command::PageCursorHalfDown => page_cursor_half_down(ctx),
     Command::FindChar {
       direction,
       inclusive,
@@ -3106,40 +3108,33 @@ fn goto_line_end<Ctx: DefaultContext>(ctx: &mut Ctx, extend: bool) {
 fn page_up<Ctx: DefaultContext>(ctx: &mut Ctx, extend: bool) {
   let height = ctx.editor().view().viewport.height as usize;
   let count = height.saturating_sub(2).max(1); // Leave some overlap
-
-  let new_selection = {
-    let doc = ctx.editor().document_mut();
-    let selection = doc.selection().clone();
-    let slice = doc.text().slice(..);
-
-    let text_fmt = TextFormat::default();
-    let mut annotations = TextAnnotations::default();
-    let behavior = if extend {
-      Movement::Extend
-    } else {
-      Movement::Move
-    };
-
-    selection.transform(|range| {
-      move_vertically(
-        slice,
-        range,
-        MoveDir::Backward,
-        count,
-        behavior,
-        &text_fmt,
-        &mut annotations,
-      )
-    })
-  };
-
-  let _ = ctx.editor().document_mut().set_selection(new_selection);
+  page_cursor_by_rows(ctx, count, MoveDir::Backward, extend);
 }
 
 fn page_down<Ctx: DefaultContext>(ctx: &mut Ctx, extend: bool) {
   let height = ctx.editor().view().viewport.height as usize;
   let count = height.saturating_sub(2).max(1); // Leave some overlap
+  page_cursor_by_rows(ctx, count, MoveDir::Forward, extend);
+}
 
+fn page_cursor_half_up<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  let height = ctx.editor().view().viewport.height as usize;
+  let count = (height / 2).max(1);
+  page_cursor_by_rows(ctx, count, MoveDir::Backward, false);
+}
+
+fn page_cursor_half_down<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  let height = ctx.editor().view().viewport.height as usize;
+  let count = (height / 2).max(1);
+  page_cursor_by_rows(ctx, count, MoveDir::Forward, false);
+}
+
+fn page_cursor_by_rows<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  count: usize,
+  direction: MoveDir,
+  extend: bool,
+) {
   let new_selection = {
     let doc = ctx.editor().document_mut();
     let selection = doc.selection().clone();
@@ -3154,15 +3149,7 @@ fn page_down<Ctx: DefaultContext>(ctx: &mut Ctx, extend: bool) {
     };
 
     selection.transform(|range| {
-      move_vertically(
-        slice,
-        range,
-        MoveDir::Forward,
-        count,
-        behavior,
-        &text_fmt,
-        &mut annotations,
-      )
+      move_vertically(slice, range, direction, count, behavior, &text_fmt, &mut annotations)
     })
   };
 
@@ -5172,6 +5159,8 @@ pub fn command_from_name(name: &str) -> Option<Command> {
 
     "page_up" => Some(Command::page_up()),
     "page_down" => Some(Command::page_down()),
+    "page_cursor_half_up" => Some(Command::page_cursor_half_up()),
+    "page_cursor_half_down" => Some(Command::page_cursor_half_down()),
 
     "find_next_char" => Some(Command::find_next_char()),
     "find_till_char" => Some(Command::find_till_char()),

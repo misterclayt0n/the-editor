@@ -2854,6 +2854,8 @@ impl Ctx {
       | Command::GotoLineEnd { .. }
       | Command::PageUp { .. }
       | Command::PageDown { .. }
+      | Command::PageCursorHalfUp
+      | Command::PageCursorHalfDown
       | Command::FindChar { .. }
       | Command::ParentNodeStart { .. }
       | Command::ParentNodeEnd { .. } => {

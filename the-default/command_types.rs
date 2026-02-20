@@ -459,6 +459,8 @@ pub enum Command {
   PageDown {
     extend: bool,
   },
+  PageCursorHalfUp,
+  PageCursorHalfDown,
   FindChar {
     direction: Direction,
     inclusive: bool,
@@ -1092,6 +1094,16 @@ impl Command {
   #[must_use]
   pub const fn extend_page_down() -> Self {
     Self::PageDown { extend: true }
+  }
+
+  #[must_use]
+  pub const fn page_cursor_half_up() -> Self {
+    Self::PageCursorHalfUp
+  }
+
+  #[must_use]
+  pub const fn page_cursor_half_down() -> Self {
+    Self::PageCursorHalfDown
   }
 
   #[must_use]

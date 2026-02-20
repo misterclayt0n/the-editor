@@ -5782,6 +5782,8 @@ impl App {
       | Command::GotoLineEnd { .. }
       | Command::PageUp { .. }
       | Command::PageDown { .. }
+      | Command::PageCursorHalfUp
+      | Command::PageCursorHalfDown
       | Command::FindChar { .. }
       | Command::ParentNodeStart { .. }
       | Command::ParentNodeEnd { .. } => {
@@ -8801,6 +8803,14 @@ mod tests {
     }
   }
 
+  fn key_char_ctrl(ch: char) -> ffi::KeyEvent {
+    ffi::KeyEvent {
+      kind:      0,
+      codepoint: ch as u32,
+      modifiers: KeyModifiers::CTRL,
+    }
+  }
+
   fn statusline_left_and_segments(
     app: &mut App,
     id: ffi::EditorId,
@@ -9535,6 +9545,68 @@ pkgs.mkShell {
 
     let actual = app.active_editor_ref().document().selection().ranges()[0].head;
     assert_eq!(actual, expected);
+  }
+
+  #[test]
+  fn page_cursor_half_down_keymap_moves_by_half_viewport_height() {
+    let _guard = ffi_test_guard();
+    let mut content = String::new();
+    for line in 0..64usize {
+      content.push_str(&format!("line-{line}\n"));
+    }
+
+    let mut app = App::new();
+    let id = app.create_editor(&content, default_viewport(), ffi::Position { row: 0, col: 0 });
+    assert!(app.activate(id).is_some());
+
+    let start = {
+      let text = app.active_editor_ref().document().text().slice(..);
+      char_idx_at_coords(text, LibPosition::new(5, 0))
+    };
+    let _ = app
+      .active_editor_mut()
+      .document_mut()
+      .set_selection(Selection::point(start));
+
+    assert!(app.handle_key(id, key_char_ctrl('d')));
+
+    let row = {
+      let text = app.active_editor_ref().document().text().slice(..);
+      let head = app.active_editor_ref().document().selection().ranges()[0].head;
+      coords_at_pos(text, head).row
+    };
+    assert_eq!(row, 17);
+  }
+
+  #[test]
+  fn page_cursor_half_up_keymap_moves_by_half_viewport_height() {
+    let _guard = ffi_test_guard();
+    let mut content = String::new();
+    for line in 0..64usize {
+      content.push_str(&format!("line-{line}\n"));
+    }
+
+    let mut app = App::new();
+    let id = app.create_editor(&content, default_viewport(), ffi::Position { row: 0, col: 0 });
+    assert!(app.activate(id).is_some());
+
+    let start = {
+      let text = app.active_editor_ref().document().text().slice(..);
+      char_idx_at_coords(text, LibPosition::new(20, 0))
+    };
+    let _ = app
+      .active_editor_mut()
+      .document_mut()
+      .set_selection(Selection::point(start));
+
+    assert!(app.handle_key(id, key_char_ctrl('u')));
+
+    let row = {
+      let text = app.active_editor_ref().document().text().slice(..);
+      let head = app.active_editor_ref().document().selection().ranges()[0].head;
+      coords_at_pos(text, head).row
+    };
+    assert_eq!(row, 8);
   }
 
   #[test]

@@ -1118,6 +1118,20 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::GotoFirstChange => goto_first_change(ctx),
     Command::GotoNextChange => goto_change(ctx, Direction::Forward),
     Command::GotoLastChange => goto_last_change(ctx),
+    Command::GotoPrevFunction => goto_ts_object(ctx, "function", Direction::Backward),
+    Command::GotoNextFunction => goto_ts_object(ctx, "function", Direction::Forward),
+    Command::GotoPrevClass => goto_ts_object(ctx, "class", Direction::Backward),
+    Command::GotoNextClass => goto_ts_object(ctx, "class", Direction::Forward),
+    Command::GotoPrevParameter => goto_ts_object(ctx, "parameter", Direction::Backward),
+    Command::GotoNextParameter => goto_ts_object(ctx, "parameter", Direction::Forward),
+    Command::GotoPrevComment => goto_ts_object(ctx, "comment", Direction::Backward),
+    Command::GotoNextComment => goto_ts_object(ctx, "comment", Direction::Forward),
+    Command::GotoPrevEntry => goto_ts_object(ctx, "entry", Direction::Backward),
+    Command::GotoNextEntry => goto_ts_object(ctx, "entry", Direction::Forward),
+    Command::GotoPrevTest => goto_ts_object(ctx, "test", Direction::Backward),
+    Command::GotoNextTest => goto_ts_object(ctx, "test", Direction::Forward),
+    Command::GotoPrevXmlElement => goto_ts_object(ctx, "xml-element", Direction::Backward),
+    Command::GotoNextXmlElement => goto_ts_object(ctx, "xml-element", Direction::Forward),
     Command::Search => ctx.dispatch().search(ctx, ()),
     Command::RSearch => ctx.dispatch().rsearch(ctx, ()),
     Command::SelectRegex => ctx.dispatch().select_regex(ctx, ()),
@@ -2353,6 +2367,56 @@ fn goto_last_change<Ctx: DefaultContext>(ctx: &mut Ctx) {
     .editor()
     .document_mut()
     .set_selection(Selection::single(range.from(), range.to()));
+}
+
+fn goto_ts_object<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  object_name: &'static str,
+  direction: Direction,
+) {
+  let move_direction = match direction {
+    Direction::Forward => MoveDir::Forward,
+    Direction::Backward => MoveDir::Backward,
+    _ => return,
+  };
+  let Some(selection) = ({
+    let doc = ctx.editor_ref().document();
+    doc
+      .syntax()
+      .zip(ctx.syntax_loader())
+      .map(|(syntax, loader)| {
+        let select_mode = ctx.mode() == Mode::Select;
+        let text = doc.text().slice(..);
+        let root = syntax.tree().root_node();
+        doc.selection().clone().transform(|range| {
+          let new_range = movement::goto_treesitter_object(
+            text,
+            range,
+            object_name,
+            move_direction,
+            &root,
+            syntax,
+            loader,
+            1,
+          );
+          if select_mode {
+            let head = if new_range.head < range.anchor {
+              new_range.anchor
+            } else {
+              new_range.head
+            };
+            Range::new(range.anchor, head)
+          } else {
+            new_range.with_direction(move_direction)
+          }
+        })
+      })
+  }) else {
+    ctx.push_warning("goto", "Syntax-tree is not available in current buffer");
+    return;
+  };
+
+  let _ = ctx.editor().document_mut().set_selection(selection);
 }
 
 fn split_selection_on_newline<Ctx: DefaultContext>(ctx: &mut Ctx) {
@@ -4635,6 +4699,20 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "goto_first_change" => Some(Command::goto_first_change()),
     "goto_next_change" => Some(Command::goto_next_change()),
     "goto_last_change" => Some(Command::goto_last_change()),
+    "goto_prev_function" => Some(Command::goto_prev_function()),
+    "goto_next_function" => Some(Command::goto_next_function()),
+    "goto_prev_class" => Some(Command::goto_prev_class()),
+    "goto_next_class" => Some(Command::goto_next_class()),
+    "goto_prev_parameter" => Some(Command::goto_prev_parameter()),
+    "goto_next_parameter" => Some(Command::goto_next_parameter()),
+    "goto_prev_comment" => Some(Command::goto_prev_comment()),
+    "goto_next_comment" => Some(Command::goto_next_comment()),
+    "goto_prev_entry" => Some(Command::goto_prev_entry()),
+    "goto_next_entry" => Some(Command::goto_next_entry()),
+    "goto_prev_test" => Some(Command::goto_prev_test()),
+    "goto_next_test" => Some(Command::goto_next_test()),
+    "goto_prev_xml_element" => Some(Command::goto_prev_xml_element()),
+    "goto_next_xml_element" => Some(Command::goto_next_xml_element()),
 
     _ => None,
   }

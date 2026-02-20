@@ -574,6 +574,20 @@ pub enum Command {
   GotoFirstChange,
   GotoNextChange,
   GotoLastChange,
+  GotoPrevFunction,
+  GotoNextFunction,
+  GotoPrevClass,
+  GotoNextClass,
+  GotoPrevParameter,
+  GotoNextParameter,
+  GotoPrevComment,
+  GotoNextComment,
+  GotoPrevEntry,
+  GotoNextEntry,
+  GotoPrevTest,
+  GotoNextTest,
+  GotoPrevXmlElement,
+  GotoNextXmlElement,
   SearchNextOrPrev {
     direction: Direction,
     extend:    bool,
@@ -1356,6 +1370,76 @@ impl Command {
   #[must_use]
   pub const fn goto_last_change() -> Self {
     Self::GotoLastChange
+  }
+
+  #[must_use]
+  pub const fn goto_prev_function() -> Self {
+    Self::GotoPrevFunction
+  }
+
+  #[must_use]
+  pub const fn goto_next_function() -> Self {
+    Self::GotoNextFunction
+  }
+
+  #[must_use]
+  pub const fn goto_prev_class() -> Self {
+    Self::GotoPrevClass
+  }
+
+  #[must_use]
+  pub const fn goto_next_class() -> Self {
+    Self::GotoNextClass
+  }
+
+  #[must_use]
+  pub const fn goto_prev_parameter() -> Self {
+    Self::GotoPrevParameter
+  }
+
+  #[must_use]
+  pub const fn goto_next_parameter() -> Self {
+    Self::GotoNextParameter
+  }
+
+  #[must_use]
+  pub const fn goto_prev_comment() -> Self {
+    Self::GotoPrevComment
+  }
+
+  #[must_use]
+  pub const fn goto_next_comment() -> Self {
+    Self::GotoNextComment
+  }
+
+  #[must_use]
+  pub const fn goto_prev_entry() -> Self {
+    Self::GotoPrevEntry
+  }
+
+  #[must_use]
+  pub const fn goto_next_entry() -> Self {
+    Self::GotoNextEntry
+  }
+
+  #[must_use]
+  pub const fn goto_prev_test() -> Self {
+    Self::GotoPrevTest
+  }
+
+  #[must_use]
+  pub const fn goto_next_test() -> Self {
+    Self::GotoNextTest
+  }
+
+  #[must_use]
+  pub const fn goto_prev_xml_element() -> Self {
+    Self::GotoPrevXmlElement
+  }
+
+  #[must_use]
+  pub const fn goto_next_xml_element() -> Self {
+    Self::GotoNextXmlElement
   }
 
   #[must_use]

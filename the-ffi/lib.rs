@@ -4963,6 +4963,13 @@ impl App {
             return true;
           },
         };
+        if locations.is_empty() {
+          self.publish_lsp_message(
+            the_lib::messages::MessageLevel::Error,
+            "No declaration found.",
+          );
+          return true;
+        }
         self.apply_locations_result("declaration", locations)
       },
       PendingLspRequestKind::GotoDefinition { .. } => {
@@ -4976,6 +4983,13 @@ impl App {
             return true;
           },
         };
+        if locations.is_empty() {
+          self.publish_lsp_message(
+            the_lib::messages::MessageLevel::Error,
+            "No definition found.",
+          );
+          return true;
+        }
         self.apply_locations_result("definition", locations)
       },
       PendingLspRequestKind::GotoTypeDefinition { .. } => {
@@ -4989,6 +5003,13 @@ impl App {
             return true;
           },
         };
+        if locations.is_empty() {
+          self.publish_lsp_message(
+            the_lib::messages::MessageLevel::Error,
+            "No type definition found.",
+          );
+          return true;
+        }
         self.apply_locations_result("type definition", locations)
       },
       PendingLspRequestKind::GotoImplementation { .. } => {
@@ -5002,6 +5023,13 @@ impl App {
             return true;
           },
         };
+        if locations.is_empty() {
+          self.publish_lsp_message(
+            the_lib::messages::MessageLevel::Error,
+            "No implementation found.",
+          );
+          return true;
+        }
         self.apply_locations_result("implementation", locations)
       },
       PendingLspRequestKind::Hover { .. } => {

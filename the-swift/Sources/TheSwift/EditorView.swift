@@ -266,6 +266,12 @@ struct EditorView: View {
             )
         }
 
+        drawInactivePaneDimming(
+            in: context,
+            framePlan: framePlan,
+            cellSize: cellSize
+        )
+
         drawPaneSeparators(
             in: context,
             framePlan: framePlan,
@@ -274,10 +280,34 @@ struct EditorView: View {
         )
     }
 
+    private func drawInactivePaneDimming(
+        in context: GraphicsContext,
+        framePlan: RenderFramePlan,
+        cellSize: CGSize
+    ) {
+        let paneCount = Int(framePlan.pane_count())
+        guard paneCount > 1 else { return }
+
+        let dimColor = SwiftUI.Color.black.opacity(0.16)
+        for index in 0..<paneCount {
+            let pane = framePlan.pane_at(UInt(index))
+            if pane.is_active() {
+                continue
+            }
+            let rect = pane.rect()
+            let dimRect = CGRect(
+                x: CGFloat(rect.x) * cellSize.width,
+                y: CGFloat(rect.y) * cellSize.height,
+                width: CGFloat(rect.width) * cellSize.width,
+                height: CGFloat(rect.height) * cellSize.height
+            )
+            context.fill(Path(dimRect), with: .color(dimColor))
+        }
+    }
+
     private struct SplitEdge {
         let from: CGPoint
         let to: CGPoint
-        let active: Bool
     }
 
     private func drawPaneSeparators(
@@ -309,40 +339,28 @@ struct EditorView: View {
             let y0 = CGFloat(rect.y) * cellSize.height
             let x1 = CGFloat(Int(rect.x) + Int(rect.width)) * cellSize.width
             let y1 = CGFloat(Int(rect.y) + Int(rect.height)) * cellSize.height
-            let active = pane.is_active()
 
             if Int(rect.width) > 0 && Int(rect.x) + Int(rect.width) < maxCol {
                 edges.append(SplitEdge(
                     from: CGPoint(x: x1, y: y0),
-                    to: CGPoint(x: x1, y: min(y1, canvasSize.height)),
-                    active: active
+                    to: CGPoint(x: x1, y: min(y1, canvasSize.height))
                 ))
             }
             if Int(rect.height) > 0 && Int(rect.y) + Int(rect.height) < maxRow {
                 edges.append(SplitEdge(
                     from: CGPoint(x: x0, y: y1),
-                    to: CGPoint(x: min(x1, canvasSize.width), y: y1),
-                    active: active
+                    to: CGPoint(x: min(x1, canvasSize.width), y: y1)
                 ))
             }
         }
 
-        let inactiveColor = SwiftUI.Color(nsColor: .separatorColor).opacity(0.30)
-        let activeColor = SwiftUI.Color(nsColor: .controlAccentColor).opacity(0.75)
-
-        for edge in edges where !edge.active {
+        let separatorColor = SwiftUI.Color(nsColor: .separatorColor).opacity(0.30)
+        for edge in edges {
             let path = Path { path in
                 path.move(to: edge.from)
                 path.addLine(to: edge.to)
             }
-            context.stroke(path, with: .color(inactiveColor), lineWidth: 1.0)
-        }
-        for edge in edges where edge.active {
-            let path = Path { path in
-                path.move(to: edge.from)
-                path.addLine(to: edge.to)
-            }
-            context.stroke(path, with: .color(activeColor), lineWidth: 1.0)
+            context.stroke(path, with: .color(separatorColor), lineWidth: 1.0)
         }
     }
 

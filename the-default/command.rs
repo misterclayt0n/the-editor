@@ -1064,6 +1064,7 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::ExpandSelection => expand_selection(ctx),
     Command::ShrinkSelection => shrink_selection(ctx),
     Command::SelectAllChildren => select_all_children(ctx),
+    Command::SelectAllSiblings => select_all_siblings(ctx),
     Command::SelectPrevSibling => select_prev_sibling(ctx),
     Command::SelectNextSibling => select_next_sibling(ctx),
     Command::DeleteSelection { yank } => ctx.dispatch().delete_selection(ctx, yank),
@@ -2316,6 +2317,10 @@ where
 
 fn select_all_children<Ctx: DefaultContext>(ctx: &mut Ctx) {
   apply_object_selection_transform(ctx, object::select_all_children);
+}
+
+fn select_all_siblings<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  apply_object_selection_transform(ctx, object::select_all_siblings);
 }
 
 fn select_prev_sibling<Ctx: DefaultContext>(ctx: &mut Ctx) {
@@ -4374,6 +4379,7 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "expand_selection" => Some(Command::expand_selection()),
     "shrink_selection" => Some(Command::shrink_selection()),
     "select_all_children" => Some(Command::select_all_children()),
+    "select_all_siblings" => Some(Command::select_all_siblings()),
     "select_prev_sibling" => Some(Command::select_prev_sibling()),
     "select_next_sibling" => Some(Command::select_next_sibling()),
     "search" => Some(Command::search()),

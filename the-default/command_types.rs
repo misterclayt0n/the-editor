@@ -500,6 +500,7 @@ pub enum Command {
   ExpandSelection,
   ShrinkSelection,
   SelectAllChildren,
+  SelectAllSiblings,
   SelectPrevSibling,
   SelectNextSibling,
   DeleteSelection {
@@ -895,6 +896,11 @@ impl Command {
   #[must_use]
   pub const fn select_all_children() -> Self {
     Self::SelectAllChildren
+  }
+
+  #[must_use]
+  pub const fn select_all_siblings() -> Self {
+    Self::SelectAllSiblings
   }
 
   #[must_use]

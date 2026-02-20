@@ -8451,6 +8451,20 @@ mod tests {
   }
 
   #[test]
+  fn command_palette_keeps_argument_mode_when_open_has_no_matches() {
+    let _guard = ffi_test_guard();
+    let mut app = App::new();
+    let id = app.create_editor("", default_viewport(), ffi::Position { row: 0, col: 0 });
+
+    assert!(app.handle_key(id, key_char(':')));
+    assert!(app.command_palette_set_query(id, "e definitely_missing_file_name_12345.c"));
+
+    assert_eq!(app.command_palette_query(id), "");
+    assert_eq!(app.command_palette_filtered_count(id), 0);
+    assert_eq!(app.command_palette_filtered_selected_index(id), -1);
+  }
+
+  #[test]
   fn command_open_creates_missing_file() {
     let _guard = ffi_test_guard();
     let mut app = App::new();

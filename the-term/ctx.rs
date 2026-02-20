@@ -6252,6 +6252,32 @@ pkgs.mkShell {
   }
 
   #[test]
+  fn command_palette_keeps_argument_mode_when_open_has_no_matches() {
+    let dispatch = build_dispatch::<Ctx>();
+    let mut ctx = Ctx::new(None).expect("ctx");
+    ctx.set_dispatch(&dispatch);
+
+    handle_key(&dispatch, &mut ctx, KeyEvent {
+      key:       Key::Char(':'),
+      modifiers: Modifiers::empty(),
+    });
+    for ch in "e definitely_missing_file_name_12345.c".chars() {
+      handle_key(&dispatch, &mut ctx, KeyEvent {
+        key:       Key::Char(ch),
+        modifiers: Modifiers::empty(),
+      });
+    }
+
+    assert!(ctx.command_palette.prefiltered);
+    assert!(ctx.command_palette.items.is_empty());
+    assert_eq!(ctx.command_palette.query, "");
+    assert_eq!(
+      ctx.command_palette.prompt_text.as_deref(),
+      Some(":e definitely_missing_file_name_12345.c")
+    );
+  }
+
+  #[test]
   fn command_palette_explicit_navigation_sets_selection() {
     let dispatch = build_dispatch::<Ctx>();
     let mut ctx = Ctx::new(None).expect("ctx");

@@ -1443,10 +1443,12 @@ pub fn update_command_palette_for_input<Ctx: DefaultContext>(ctx: &mut Ctx, inpu
   let completions = ctx.command_registry_ref().complete_command_line(ctx, input);
 
   let stripped = input.trim_start_matches(':');
-  let (_, _, complete_command_name) = split(stripped);
+  let (command_name, _, complete_command_name) = split(stripped);
+  let has_command =
+    !command_name.is_empty() && ctx.command_registry_ref().get(command_name).is_some();
 
   let palette_items: Option<Vec<crate::CommandPaletteItem>> =
-    if !complete_command_name && !completions.is_empty() {
+    if !complete_command_name && (has_command || !completions.is_empty()) {
       Some(
         completions
           .iter()

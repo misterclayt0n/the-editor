@@ -231,6 +231,8 @@ struct ScrollCaptureView: NSViewRepresentable {
     }
 
     final class ScrollCaptureNSView: NSView {
+        override var isFlipped: Bool { true }
+
         var onScroll: ((CGFloat, CGFloat, Bool) -> Void)?
         var onSplitResize: ((UInt64, CGPoint) -> Void)?
         var separators: [SeparatorHandle] = [] {

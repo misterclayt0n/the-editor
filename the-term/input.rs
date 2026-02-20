@@ -31,12 +31,17 @@ use the_lib::render::{
   UiKeyEvent,
   UiModifiers,
 };
+use the_lib::split_tree::{
+  SplitAxis,
+  SplitNodeId,
+};
 
 use crate::{
   Ctx,
   ctx::{
     CompletionDocsDragState,
     FilePickerDragState,
+    PaneResizeDragState,
   },
   dispatch::{
     Key,
@@ -134,6 +139,7 @@ pub fn handle_key(ctx: &mut Ctx, event: CrosstermKeyEvent) {
 
 pub fn handle_mouse(ctx: &mut Ctx, event: CrosstermMouseEvent) {
   if ctx.file_picker.active {
+    ctx.pane_resize_drag = None;
     let viewport = ctx.editor.view().viewport;
     let viewport = Rect::new(viewport.x, viewport.y, viewport.width, viewport.height);
     let layout = ctx
@@ -173,6 +179,10 @@ pub fn handle_mouse(ctx: &mut Ctx, event: CrosstermMouseEvent) {
 
   let x = event.column;
   let y = event.row;
+  if handle_pane_resize_mouse(ctx, event.kind, x, y) {
+    return;
+  }
+
   let Some(layout) = ctx.completion_docs_layout else {
     ctx.completion_docs_drag = None;
     return;
@@ -201,6 +211,72 @@ pub fn handle_mouse(ctx: &mut Ctx, event: CrosstermMouseEvent) {
     },
     _ => {},
   }
+}
+
+fn handle_pane_resize_mouse(ctx: &mut Ctx, kind: MouseEventKind, x: u16, y: u16) -> bool {
+  match kind {
+    MouseEventKind::Down(MouseButton::Left) => {
+      let Some(split_id) = hit_split_separator(ctx, x, y) else {
+        return false;
+      };
+      ctx.pane_resize_drag = Some(PaneResizeDragState::Split { split_id });
+      if ctx.editor.resize_split(split_id, x, y) {
+        ctx.request_render();
+      }
+      true
+    },
+    MouseEventKind::Drag(MouseButton::Left) => {
+      let Some(PaneResizeDragState::Split { split_id }) = ctx.pane_resize_drag else {
+        return false;
+      };
+      if ctx.editor.resize_split(split_id, x, y) {
+        ctx.request_render();
+      }
+      true
+    },
+    MouseEventKind::Moved => {
+      let Some(PaneResizeDragState::Split { split_id }) = ctx.pane_resize_drag else {
+        return false;
+      };
+      if ctx.editor.resize_split(split_id, x, y) {
+        ctx.request_render();
+      }
+      true
+    },
+    MouseEventKind::Up(MouseButton::Left) => ctx.pane_resize_drag.take().is_some(),
+    _ => false,
+  }
+}
+
+fn hit_split_separator(ctx: &Ctx, x: u16, y: u16) -> Option<SplitNodeId> {
+  const HIT_TOLERANCE: u16 = 1;
+  let viewport = ctx.editor.layout_viewport();
+  let mut closest: Option<(SplitNodeId, u16)> = None;
+
+  for separator in ctx.editor.pane_separators(viewport) {
+    let (distance, in_span) = match separator.axis {
+      SplitAxis::Vertical => (
+        separator.line.abs_diff(x),
+        y >= separator.span_start && y < separator.span_end,
+      ),
+      SplitAxis::Horizontal => (
+        separator.line.abs_diff(y),
+        x >= separator.span_start && x < separator.span_end,
+      ),
+    };
+    if !in_span || distance > HIT_TOLERANCE {
+      continue;
+    }
+    if let Some((_, current_distance)) = closest {
+      if distance < current_distance {
+        closest = Some((separator.split_id, distance));
+      }
+    } else {
+      closest = Some((separator.split_id, distance));
+    }
+  }
+
+  closest.map(|(id, _)| id)
 }
 
 fn handle_left_down(ctx: &mut Ctx, layout: crate::picker_layout::FilePickerLayout, x: u16, y: u16) {
@@ -627,6 +703,7 @@ mod tests {
   };
   use the_lib::{
     selection::Selection,
+    split_tree::SplitAxis,
     transaction::Transaction,
   };
 
@@ -843,7 +920,10 @@ mod tests {
     };
     assert_eq!(cursor_line(&ctx), 0);
 
-    handle_key(&mut ctx, key_event_with_kind(KeyCode::Down, KeyEventKind::Press));
+    handle_key(
+      &mut ctx,
+      key_event_with_kind(KeyCode::Down, KeyEventKind::Press),
+    );
     assert_eq!(cursor_line(&ctx), 1);
 
     handle_key(
@@ -851,5 +931,83 @@ mod tests {
       key_event_with_kind(KeyCode::Down, KeyEventKind::Repeat),
     );
     assert_eq!(cursor_line(&ctx), 2);
+  }
+
+  #[test]
+  fn pane_separator_drag_resizes_horizontal_split() {
+    let mut ctx = Ctx::new(None).expect("ctx");
+    ctx.resize(120, 40);
+    assert!(ctx.editor.split_active_pane(SplitAxis::Horizontal));
+
+    let viewport = ctx.editor.layout_viewport();
+    let separator = ctx
+      .editor
+      .pane_separators(viewport)
+      .into_iter()
+      .find(|separator| separator.axis == SplitAxis::Horizontal)
+      .expect("horizontal separator");
+    let drag_x = separator.span_start + (separator.span_end - separator.span_start) / 2;
+
+    handle_mouse(
+      &mut ctx,
+      mouse_event(MouseEventKind::Down(MouseButton::Left), drag_x, separator.line),
+    );
+    assert!(ctx.pane_resize_drag.is_some());
+
+    let target_y = separator.line.saturating_add(4);
+    handle_mouse(
+      &mut ctx,
+      mouse_event(MouseEventKind::Drag(MouseButton::Left), drag_x, target_y),
+    );
+
+    let moved = ctx
+      .editor
+      .pane_separators(viewport)
+      .into_iter()
+      .find(|next| next.split_id == separator.split_id)
+      .expect("updated separator");
+    assert!(moved.line > separator.line);
+
+    handle_mouse(
+      &mut ctx,
+      mouse_event(MouseEventKind::Up(MouseButton::Left), drag_x, target_y),
+    );
+    assert!(ctx.pane_resize_drag.is_none());
+  }
+
+  #[test]
+  fn pane_separator_drag_resizes_vertical_split() {
+    let mut ctx = Ctx::new(None).expect("ctx");
+    ctx.resize(120, 40);
+    assert!(ctx.editor.split_active_pane(SplitAxis::Vertical));
+
+    let viewport = ctx.editor.layout_viewport();
+    let separator = ctx
+      .editor
+      .pane_separators(viewport)
+      .into_iter()
+      .find(|separator| separator.axis == SplitAxis::Vertical)
+      .expect("vertical separator");
+    let drag_y = separator.span_start + (separator.span_end - separator.span_start) / 2;
+
+    handle_mouse(
+      &mut ctx,
+      mouse_event(MouseEventKind::Down(MouseButton::Left), separator.line, drag_y),
+    );
+    assert!(ctx.pane_resize_drag.is_some());
+
+    let target_x = separator.line.saturating_add(6);
+    handle_mouse(
+      &mut ctx,
+      mouse_event(MouseEventKind::Drag(MouseButton::Left), target_x, drag_y),
+    );
+
+    let moved = ctx
+      .editor
+      .pane_separators(viewport)
+      .into_iter()
+      .find(|next| next.split_id == separator.split_id)
+      .expect("updated separator");
+    assert!(moved.line > separator.line);
   }
 }

@@ -121,6 +121,7 @@ use the_lib::{
     Transaction,
   },
   view::ViewState,
+  split_tree::SplitNodeId,
 };
 use the_lsp::{
   FileChangeType,
@@ -224,6 +225,11 @@ pub enum FilePickerDragState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CompletionDocsDragState {
   Scrollbar { grab_offset: u16 },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PaneResizeDragState {
+  Split { split_id: SplitNodeId },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -513,6 +519,7 @@ pub struct Ctx {
   pub file_picker_drag:              Option<FilePickerDragState>,
   pub completion_docs_layout:        Option<CompletionDocsLayout>,
   pub completion_docs_drag:          Option<CompletionDocsDragState>,
+  pub pane_resize_drag:              Option<PaneResizeDragState>,
   pub search_prompt:                 the_default::SearchPromptState,
   pub ui_theme:                      Theme,
   pub ui_state:                      UiState,
@@ -878,6 +885,7 @@ impl Ctx {
       file_picker_drag: None,
       completion_docs_layout: None,
       completion_docs_drag: None,
+      pane_resize_drag: None,
       search_prompt: the_default::SearchPromptState::new(),
       ui_theme,
       ui_state: UiState::default(),

@@ -26,6 +26,7 @@ pub mod registers;
 pub mod render;
 pub mod search;
 pub mod selection;
+pub mod split_tree;
 pub mod surround;
 pub mod syntax;
 pub mod syntax_async;

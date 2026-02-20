@@ -222,23 +222,167 @@ struct KeyCaptureView: NSViewRepresentable {
 }
 
 struct ScrollCaptureView: NSViewRepresentable {
+    struct SeparatorHandle: Equatable {
+        let splitId: UInt64
+        let axis: UInt8
+        let linePx: CGFloat
+        let spanStartPx: CGFloat
+        let spanEndPx: CGFloat
+    }
+
     final class ScrollCaptureNSView: NSView {
         var onScroll: ((CGFloat, CGFloat, Bool) -> Void)?
+        var onSplitResize: ((UInt64, CGPoint) -> Void)?
+        var separators: [SeparatorHandle] = [] {
+            didSet {
+                needsDisplay = true
+                window?.invalidateCursorRects(for: self)
+            }
+        }
+        private var trackingArea: NSTrackingArea?
+        private var activeSeparator: SeparatorHandle?
+        private let hitTolerance: CGFloat = 4.0
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            window?.acceptsMouseMovedEvents = true
+        }
+
+        override func updateTrackingAreas() {
+            super.updateTrackingAreas()
+            if let trackingArea {
+                removeTrackingArea(trackingArea)
+            }
+            let options: NSTrackingArea.Options = [.activeInKeyWindow, .inVisibleRect, .mouseMoved, .cursorUpdate]
+            let area = NSTrackingArea(rect: .zero, options: options, owner: self, userInfo: nil)
+            addTrackingArea(area)
+            trackingArea = area
+        }
+
+        override func resetCursorRects() {
+            super.resetCursorRects()
+            for separator in separators {
+                let rect = cursorRect(for: separator).intersection(bounds)
+                guard !rect.isEmpty else { continue }
+                addCursorRect(rect, cursor: cursor(for: separator))
+            }
+            addCursorRect(bounds, cursor: .arrow)
+        }
+
+        override func cursorUpdate(with event: NSEvent) {
+            let point = convert(event.locationInWindow, from: nil)
+            updateCursor(at: point)
+        }
+
+        override func mouseMoved(with event: NSEvent) {
+            let point = convert(event.locationInWindow, from: nil)
+            updateCursor(at: point)
+            super.mouseMoved(with: event)
+        }
+
+        override func mouseDown(with event: NSEvent) {
+            let point = convert(event.locationInWindow, from: nil)
+            guard let separator = hitSeparator(at: point) else {
+                super.mouseDown(with: event)
+                return
+            }
+            activeSeparator = separator
+            cursor(for: separator).set()
+            onSplitResize?(separator.splitId, CGPoint(x: point.x, y: point.y))
+        }
+
+        override func mouseDragged(with event: NSEvent) {
+            guard let separator = activeSeparator else {
+                super.mouseDragged(with: event)
+                return
+            }
+            let point = convert(event.locationInWindow, from: nil)
+            cursor(for: separator).set()
+            onSplitResize?(separator.splitId, CGPoint(x: point.x, y: point.y))
+        }
+
+        override func mouseUp(with event: NSEvent) {
+            activeSeparator = nil
+            let point = convert(event.locationInWindow, from: nil)
+            updateCursor(at: point)
+            super.mouseUp(with: event)
+        }
 
         override func scrollWheel(with event: NSEvent) {
             onScroll?(event.scrollingDeltaX, event.scrollingDeltaY, event.hasPreciseScrollingDeltas)
         }
+
+        private func updateCursor(at point: NSPoint) {
+            if let separator = hitSeparator(at: point) {
+                cursor(for: separator).set()
+            } else {
+                NSCursor.arrow.set()
+            }
+        }
+
+        private func hitSeparator(at point: NSPoint) -> SeparatorHandle? {
+            var best: (SeparatorHandle, CGFloat)?
+            for separator in separators {
+                let distance: CGFloat
+                let inSpan: Bool
+                if separator.axis == 0 {
+                    inSpan = point.y >= separator.spanStartPx - hitTolerance
+                        && point.y <= separator.spanEndPx + hitTolerance
+                    distance = abs(point.x - separator.linePx)
+                } else {
+                    inSpan = point.x >= separator.spanStartPx - hitTolerance
+                        && point.x <= separator.spanEndPx + hitTolerance
+                    distance = abs(point.y - separator.linePx)
+                }
+                guard inSpan, distance <= hitTolerance else { continue }
+                if let current = best {
+                    if distance < current.1 {
+                        best = (separator, distance)
+                    }
+                } else {
+                    best = (separator, distance)
+                }
+            }
+            return best?.0
+        }
+
+        private func cursorRect(for separator: SeparatorHandle) -> CGRect {
+            if separator.axis == 0 {
+                return CGRect(
+                    x: separator.linePx - hitTolerance,
+                    y: separator.spanStartPx,
+                    width: hitTolerance * 2,
+                    height: max(0, separator.spanEndPx - separator.spanStartPx)
+                )
+            }
+            return CGRect(
+                x: separator.spanStartPx,
+                y: separator.linePx - hitTolerance,
+                width: max(0, separator.spanEndPx - separator.spanStartPx),
+                height: hitTolerance * 2
+            )
+        }
+
+        private func cursor(for separator: SeparatorHandle) -> NSCursor {
+            separator.axis == 0 ? .resizeLeftRight : .resizeUpDown
+        }
     }
 
     let onScroll: (CGFloat, CGFloat, Bool) -> Void
+    let separators: [SeparatorHandle]
+    let onSplitResize: (UInt64, CGPoint) -> Void
 
     func makeNSView(context: Context) -> ScrollCaptureNSView {
         let view = ScrollCaptureNSView(frame: .zero)
         view.onScroll = onScroll
+        view.separators = separators
+        view.onSplitResize = onSplitResize
         return view
     }
 
     func updateNSView(_ nsView: ScrollCaptureNSView, context: Context) {
         nsView.onScroll = onScroll
+        nsView.separators = separators
+        nsView.onSplitResize = onSplitResize
     }
 }

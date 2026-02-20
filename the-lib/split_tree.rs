@@ -74,6 +74,15 @@ pub enum PaneDirection {
   Right,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SplitSeparator {
+  pub split_id:   SplitNodeId,
+  pub axis:       SplitAxis,
+  pub line:       u16,
+  pub span_start: u16,
+  pub span_end:   u16,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum SplitNode {
   Leaf {
@@ -437,6 +446,98 @@ impl SplitTree {
     panes
   }
 
+  pub fn separators(&self, area: Rect) -> Vec<SplitSeparator> {
+    let mut separators = Vec::new();
+    let mut stack = vec![(self.root, area)];
+    while let Some((node_id, rect)) = stack.pop() {
+      let Some(node) = self.node(node_id) else {
+        continue;
+      };
+      match node {
+        SplitNode::Leaf { .. } => {},
+        SplitNode::Branch {
+          axis,
+          ratio,
+          first,
+          second,
+        } => {
+          let (first_rect, second_rect) = split_rect(rect, axis, ratio);
+          match axis {
+            SplitAxis::Vertical if rect.width > 1 => {
+              separators.push(SplitSeparator {
+                split_id: node_id,
+                axis,
+                line: second_rect.x,
+                span_start: rect.y,
+                span_end: rect.y.saturating_add(rect.height),
+              });
+            },
+            SplitAxis::Horizontal if rect.height > 1 => {
+              separators.push(SplitSeparator {
+                split_id: node_id,
+                axis,
+                line: second_rect.y,
+                span_start: rect.x,
+                span_end: rect.x.saturating_add(rect.width),
+              });
+            },
+            _ => {},
+          }
+          stack.push((second, second_rect));
+          stack.push((first, first_rect));
+        },
+      }
+    }
+    separators
+  }
+
+  pub fn resize_split(&mut self, split_id: SplitNodeId, area: Rect, x: u16, y: u16) -> bool {
+    let Some(SplitNode::Branch { axis, .. }) = self.node(split_id) else {
+      return false;
+    };
+    let Some(rect) = self.node_rect(split_id, area) else {
+      return false;
+    };
+
+    let (total, first_len) = match axis {
+      SplitAxis::Vertical => {
+        let total = rect.width;
+        if total <= 1 {
+          return false;
+        }
+        let min = rect.x.saturating_add(1);
+        let max = rect.x.saturating_add(total).saturating_sub(1);
+        let clamped = x.clamp(min, max);
+        (total, clamped.saturating_sub(rect.x))
+      },
+      SplitAxis::Horizontal => {
+        let total = rect.height;
+        if total <= 1 {
+          return false;
+        }
+        let min = rect.y.saturating_add(1);
+        let max = rect.y.saturating_add(total).saturating_sub(1);
+        let clamped = y.clamp(min, max);
+        (total, clamped.saturating_sub(rect.y))
+      },
+    };
+
+    let ratio = (first_len as f32) / (total as f32);
+    let Some(state) = self.nodes.get_mut(&split_id) else {
+      return false;
+    };
+    let SplitNode::Branch {
+      ratio: ref mut branch_ratio,
+      ..
+    } = state.node
+    else {
+      return false;
+    };
+    *branch_ratio = ratio.clamp(0.0, 1.0);
+    debug_assert!(self.validate().is_ok());
+    true
+  }
+
   pub fn validate(&self) -> Result<(), InvariantError> {
     if self.nodes.is_empty() {
       return Err(InvariantError::EmptyTree);
@@ -548,6 +649,31 @@ impl SplitTree {
 
   fn node_parent(&self, id: SplitNodeId) -> Option<SplitNodeId> {
     self.nodes.get(&id).and_then(|state| state.parent)
+  }
+
+  fn node_rect(&self, target: SplitNodeId, area: Rect) -> Option<Rect> {
+    let mut stack = vec![(self.root, area)];
+    while let Some((node_id, rect)) = stack.pop() {
+      if node_id == target {
+        return Some(rect);
+      }
+      let Some(node) = self.node(node_id) else {
+        continue;
+      };
+      let SplitNode::Branch {
+        axis,
+        ratio,
+        first,
+        second,
+      } = node
+      else {
+        continue;
+      };
+      let (first_rect, second_rect) = split_rect(rect, axis, ratio);
+      stack.push((second, second_rect));
+      stack.push((first, first_rect));
+    }
+    None
   }
 
   fn set_parent(
@@ -935,5 +1061,47 @@ mod tests {
         );
       }
     }
+  }
+
+  #[test]
+  fn separators_report_branch_boundaries() {
+    let mut tree = SplitTree::new();
+    let _ = tree.split_active(SplitAxis::Vertical);
+    let _ = tree.split_active(SplitAxis::Horizontal);
+
+    let area = Rect::new(0, 0, 120, 40);
+    let separators = tree.separators(area);
+    assert_eq!(separators.len(), 2);
+    assert!(separators.iter().any(|separator| {
+      separator.axis == SplitAxis::Vertical
+        && separator.line == 60
+        && separator.span_start == 0
+        && separator.span_end == 40
+    }));
+    assert!(separators.iter().any(|separator| {
+      separator.axis == SplitAxis::Horizontal
+        && separator.span_start >= 60
+        && separator.span_end == 120
+    }));
+  }
+
+  #[test]
+  fn resize_split_updates_layout_ratio() {
+    let mut tree = SplitTree::new();
+    let _ = tree.split_active(SplitAxis::Vertical);
+    let area = Rect::new(0, 0, 100, 40);
+    let separator = tree
+      .separators(area)
+      .into_iter()
+      .find(|separator| separator.axis == SplitAxis::Vertical)
+      .expect("vertical separator");
+
+    let panes_before = tree.layout(area);
+    assert_eq!(panes_before[0].1.width, 50);
+
+    assert!(tree.resize_split(separator.split_id, area, 20, 0));
+    let panes_after = tree.layout(area);
+    assert_eq!(panes_after[0].1.width, 20);
+    assert_eq!(panes_after[1].1.width, 80);
   }
 }

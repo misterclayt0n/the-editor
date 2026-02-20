@@ -3,11 +3,22 @@ import Foundation
 import SwiftUI
 import TheEditorFFIBridge
 
+struct SplitSeparatorSnapshot: Identifiable {
+    let splitId: UInt64
+    let axis: UInt8
+    let line: UInt16
+    let spanStart: UInt16
+    let spanEnd: UInt16
+
+    var id: UInt64 { splitId }
+}
+
 final class EditorModel: ObservableObject {
     private let app: TheEditorFFIBridge.App
     let editorId: EditorId
     @Published var plan: RenderPlan
     @Published var framePlan: RenderFramePlan
+    @Published var splitSeparators: [SplitSeparatorSnapshot] = []
     @Published var uiTree: UiTreeSnapshot = .empty
     private var viewport: Rect
     private var effectiveViewport: Rect
@@ -49,6 +60,7 @@ final class EditorModel: ObservableObject {
         let initialFramePlan = app.frame_render_plan(editorId)
         self.framePlan = initialFramePlan
         self.plan = initialFramePlan.active_plan()
+        self.splitSeparators = []
         self.mode = EditorMode(rawValue: app.mode(editorId)) ?? .normal
         if DiagnosticsDebugLog.enabled {
             DiagnosticsDebugLog.log(
@@ -102,6 +114,7 @@ final class EditorModel: ObservableObject {
 
         framePlan = app.frame_render_plan(editorId)
         plan = framePlan.active_plan()
+        splitSeparators = fetchSplitSeparators()
         debugDiagnosticsSnapshot(trigger: trigger, plan: plan)
 
         mode = EditorMode(rawValue: app.mode(editorId)) ?? .normal
@@ -205,6 +218,17 @@ final class EditorModel: ObservableObject {
         return nil
     }
 
+    func resizeSplit(splitId: UInt64, pixelPoint: CGPoint) {
+        let col = max(0, Int((pixelPoint.x / max(1, cellSize.width)).rounded()))
+        let row = max(0, Int((pixelPoint.y / max(1, cellSize.height)).rounded()))
+        let x = UInt16(clamping: col)
+        let y = UInt16(clamping: row)
+        guard app.resize_split(editorId, splitId, x, y) else {
+            return
+        }
+        refresh(trigger: "split_resize_drag")
+    }
+
     private func scrollDelta(deltaX: CGFloat, deltaY: CGFloat, precise: Bool) -> (Int, Int) {
         let lineDeltaY: CGFloat
         let lineDeltaX: CGFloat
@@ -225,6 +249,26 @@ final class EditorModel: ObservableObject {
 
         // Positive deltaY means scroll up; reduce row index.
         return (-rows, -cols)
+    }
+
+    private func fetchSplitSeparators() -> [SplitSeparatorSnapshot] {
+        let count = Int(app.split_separator_count(editorId))
+        guard count > 0 else { return [] }
+        var separators: [SplitSeparatorSnapshot] = []
+        separators.reserveCapacity(count)
+        for index in 0..<count {
+            let separator = app.split_separator_at(editorId, UInt(index))
+            separators.append(
+                SplitSeparatorSnapshot(
+                    splitId: separator.split_id(),
+                    axis: separator.axis(),
+                    line: separator.line(),
+                    spanStart: separator.span_start(),
+                    spanEnd: separator.span_end()
+                )
+            )
+        }
+        return separators
     }
 
     func selectCommandPalette(index: Int) {

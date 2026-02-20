@@ -180,6 +180,7 @@ use the_lib::{
     Range,
     Selection,
   },
+  split_tree::SplitNodeId,
   syntax::{
     Highlight,
     HighlightCache,
@@ -1081,6 +1082,54 @@ impl RenderFramePlan {
       .find(|pane| pane.is_active)
       .map(|pane| pane.plan.clone())
       .unwrap_or_else(RenderPlan::empty)
+  }
+}
+
+#[derive(Debug, Clone)]
+pub struct SplitSeparator {
+  split_id:   u64,
+  axis:       u8,
+  line:       u16,
+  span_start: u16,
+  span_end:   u16,
+}
+
+impl SplitSeparator {
+  fn empty() -> Self {
+    Self {
+      split_id: 0,
+      axis: 0,
+      line: 0,
+      span_start: 0,
+      span_end: 0,
+    }
+  }
+
+  fn split_id(&self) -> u64 {
+    self.split_id
+  }
+
+  fn axis(&self) -> u8 {
+    self.axis
+  }
+
+  fn line(&self) -> u16 {
+    self.line
+  }
+
+  fn span_start(&self) -> u16 {
+    self.span_start
+  }
+
+  fn span_end(&self) -> u16 {
+    self.span_end
+  }
+}
+
+fn split_axis_to_u8(axis: the_lib::split_tree::SplitAxis) -> u8 {
+  match axis {
+    the_lib::split_tree::SplitAxis::Vertical => 0,
+    the_lib::split_tree::SplitAxis::Horizontal => 1,
   }
 }
 
@@ -3765,6 +3814,59 @@ impl App {
       .iter()
       .map(|id| id.get())
       .collect()
+  }
+
+  pub fn split_separator_count(&mut self, id: ffi::EditorId) -> usize {
+    if self.activate(id).is_none() {
+      return 0;
+    }
+    let editor = self.active_editor_ref();
+    editor.pane_separators(editor.layout_viewport()).len()
+  }
+
+  pub fn split_separator_at(&mut self, id: ffi::EditorId, index: usize) -> SplitSeparator {
+    if self.activate(id).is_none() {
+      return SplitSeparator::empty();
+    }
+    let editor = self.active_editor_ref();
+    editor
+      .pane_separators(editor.layout_viewport())
+      .get(index)
+      .map(|separator| SplitSeparator {
+        split_id: separator.split_id.get().get() as u64,
+        axis: split_axis_to_u8(separator.axis),
+        line: separator.line,
+        span_start: separator.span_start,
+        span_end: separator.span_end,
+      })
+      .unwrap_or_else(SplitSeparator::empty)
+  }
+
+  pub fn resize_split(
+    &mut self,
+    id: ffi::EditorId,
+    split_id: u64,
+    x: u16,
+    y: u16,
+  ) -> bool {
+    if self.activate(id).is_none() {
+      return false;
+    }
+    let split_raw = usize::try_from(split_id).ok().and_then(NonZeroUsize::new);
+    let Some(split_raw) = split_raw else {
+      return false;
+    };
+    let Some(editor_id) = self.active_editor else {
+      return false;
+    };
+    let resized = {
+      let editor = self.active_editor_mut();
+      editor.resize_split(SplitNodeId::new(split_raw), x, y)
+    };
+    if resized && let Some(state) = self.states.get_mut(&editor_id) {
+      state.needs_render = true;
+    }
+    resized
   }
 
   pub fn render_plan(&mut self, id: ffi::EditorId) -> RenderPlan {
@@ -8100,6 +8202,9 @@ mod ffi {
     fn set_active_cursor(self: &mut App, id: EditorId, cursor_id: u64) -> bool;
     fn clear_active_cursor(self: &mut App, id: EditorId) -> bool;
     fn cursor_ids(self: &App, id: EditorId) -> Vec<u64>;
+    fn split_separator_count(self: &mut App, id: EditorId) -> usize;
+    fn split_separator_at(self: &mut App, id: EditorId, index: usize) -> SplitSeparator;
+    fn resize_split(self: &mut App, id: EditorId, split_id: u64, x: u16, y: u16) -> bool;
     fn render_plan(self: &mut App, id: EditorId) -> RenderPlan;
     fn frame_render_plan(self: &mut App, id: EditorId) -> RenderFramePlan;
     fn render_plan_with_styles(self: &mut App, id: EditorId, styles: RenderStyles) -> RenderPlan;
@@ -8405,6 +8510,15 @@ mod ffi {
     fn pane_count(self: &RenderFramePlan) -> usize;
     fn pane_at(self: &RenderFramePlan, index: usize) -> RenderFramePane;
     fn active_plan(self: &RenderFramePlan) -> RenderPlan;
+  }
+
+  extern "Rust" {
+    type SplitSeparator;
+    fn split_id(self: &SplitSeparator) -> u64;
+    fn axis(self: &SplitSeparator) -> u8;
+    fn line(self: &SplitSeparator) -> u16;
+    fn span_start(self: &SplitSeparator) -> u16;
+    fn span_end(self: &SplitSeparator) -> u16;
   }
 
   // File picker snapshot (direct FFI, no JSON)

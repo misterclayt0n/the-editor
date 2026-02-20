@@ -31,6 +31,7 @@ struct EditorView: View {
         let isSignatureOpen = signatureSnapshot != nil && !isCompletionOpen && !isHoverOpen
         let cursorPickState = cursorPickState(from: model.uiTree.statuslineSnapshot())
         let activePaneOrigin = panePixelOrigin(model.activePaneRect(), cellSize: cellSize)
+        let splitResizeHandles = splitResizeHandles(from: model.splitSeparators, cellSize: cellSize)
         GeometryReader { proxy in
             ZStack {
                 Canvas { context, size in
@@ -180,6 +181,10 @@ struct EditorView: View {
                         ScrollCaptureView(
                             onScroll: { deltaX, deltaY, precise in
                                 model.handleScroll(deltaX: deltaX, deltaY: deltaY, precise: precise)
+                            },
+                            separators: splitResizeHandles,
+                            onSplitResize: { splitId, point in
+                                model.resizeSplit(splitId: splitId, pixelPoint: point)
                             }
                         )
                         .allowsHitTesting(true)
@@ -206,6 +211,33 @@ struct EditorView: View {
                     KeyCaptureFocusBridge.shared.reclaimActive()
                 }
             }
+        }
+    }
+
+    private func splitResizeHandles(
+        from separators: [SplitSeparatorSnapshot],
+        cellSize: CGSize
+    ) -> [ScrollCaptureView.SeparatorHandle] {
+        separators.map { separator in
+            let linePx: CGFloat
+            let spanStartPx: CGFloat
+            let spanEndPx: CGFloat
+            if separator.axis == 0 {
+                linePx = CGFloat(separator.line) * cellSize.width
+                spanStartPx = CGFloat(separator.spanStart) * cellSize.height
+                spanEndPx = CGFloat(separator.spanEnd) * cellSize.height
+            } else {
+                linePx = CGFloat(separator.line) * cellSize.height
+                spanStartPx = CGFloat(separator.spanStart) * cellSize.width
+                spanEndPx = CGFloat(separator.spanEnd) * cellSize.width
+            }
+            return ScrollCaptureView.SeparatorHandle(
+                splitId: separator.splitId,
+                axis: separator.axis,
+                linePx: linePx,
+                spanStartPx: spanStartPx,
+                spanEndPx: spanEndPx
+            )
         }
     }
 

@@ -195,6 +195,18 @@ void* __swift_bridge__$Vec_RenderFramePlan$get_mut(void* vec_ptr, uintptr_t inde
 uintptr_t __swift_bridge__$Vec_RenderFramePlan$len(void* vec_ptr);
 void* __swift_bridge__$Vec_RenderFramePlan$as_ptr(void* vec_ptr);
 
+typedef struct SplitSeparator SplitSeparator;
+void __swift_bridge__$SplitSeparator$_free(void* self);
+
+void* __swift_bridge__$Vec_SplitSeparator$new(void);
+void __swift_bridge__$Vec_SplitSeparator$drop(void* vec_ptr);
+void __swift_bridge__$Vec_SplitSeparator$push(void* vec_ptr, void* item_ptr);
+void* __swift_bridge__$Vec_SplitSeparator$pop(void* vec_ptr);
+void* __swift_bridge__$Vec_SplitSeparator$get(void* vec_ptr, uintptr_t index);
+void* __swift_bridge__$Vec_SplitSeparator$get_mut(void* vec_ptr, uintptr_t index);
+uintptr_t __swift_bridge__$Vec_SplitSeparator$len(void* vec_ptr);
+void* __swift_bridge__$Vec_SplitSeparator$as_ptr(void* vec_ptr);
+
 typedef struct FilePickerSnapshotData FilePickerSnapshotData;
 void __swift_bridge__$FilePickerSnapshotData$_free(void* self);
 
@@ -252,6 +264,9 @@ bool __swift_bridge__$App$set_file_path(void* self, struct __swift_bridge__$Edit
 bool __swift_bridge__$App$set_active_cursor(void* self, struct __swift_bridge__$EditorId id, uint64_t cursor_id);
 bool __swift_bridge__$App$clear_active_cursor(void* self, struct __swift_bridge__$EditorId id);
 void* __swift_bridge__$App$cursor_ids(void* self, struct __swift_bridge__$EditorId id);
+uintptr_t __swift_bridge__$App$split_separator_count(void* self, struct __swift_bridge__$EditorId id);
+void* __swift_bridge__$App$split_separator_at(void* self, struct __swift_bridge__$EditorId id, uintptr_t index);
+bool __swift_bridge__$App$resize_split(void* self, struct __swift_bridge__$EditorId id, uint64_t split_id, uint16_t x, uint16_t y);
 void* __swift_bridge__$App$render_plan(void* self, struct __swift_bridge__$EditorId id);
 void* __swift_bridge__$App$frame_render_plan(void* self, struct __swift_bridge__$EditorId id);
 void* __swift_bridge__$App$render_plan_with_styles(void* self, struct __swift_bridge__$EditorId id, struct __swift_bridge__$RenderStyles styles);
@@ -402,6 +417,11 @@ uint64_t __swift_bridge__$RenderFramePlan$active_pane_id(void* self);
 uintptr_t __swift_bridge__$RenderFramePlan$pane_count(void* self);
 void* __swift_bridge__$RenderFramePlan$pane_at(void* self, uintptr_t index);
 void* __swift_bridge__$RenderFramePlan$active_plan(void* self);
+uint64_t __swift_bridge__$SplitSeparator$split_id(void* self);
+uint8_t __swift_bridge__$SplitSeparator$axis(void* self);
+uint16_t __swift_bridge__$SplitSeparator$line(void* self);
+uint16_t __swift_bridge__$SplitSeparator$span_start(void* self);
+uint16_t __swift_bridge__$SplitSeparator$span_end(void* self);
 bool __swift_bridge__$FilePickerSnapshotData$active(void* self);
 void* __swift_bridge__$FilePickerSnapshotData$query(void* self);
 uintptr_t __swift_bridge__$FilePickerSnapshotData$matched_count(void* self);

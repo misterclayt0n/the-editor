@@ -28,6 +28,8 @@ use crate::{
   split_tree::{
     PaneDirection,
     PaneId,
+    SplitNodeId,
+    SplitSeparator,
     SplitAxis,
     SplitTree,
   },
@@ -212,6 +214,16 @@ impl Editor {
         })
       })
       .collect()
+  }
+
+  pub fn pane_separators(&self, area: Rect) -> Vec<SplitSeparator> {
+    self.split_tree.separators(area)
+  }
+
+  pub fn resize_split(&mut self, split_id: SplitNodeId, x: u16, y: u16) -> bool {
+    self
+      .split_tree
+      .resize_split(split_id, self.layout_viewport, x, y)
   }
 
   pub fn pane_buffer_index(&self, pane: PaneId) -> Option<usize> {
@@ -625,6 +637,32 @@ mod tests {
       .map(|pane| pane.rect.width as usize * pane.rect.height as usize)
       .sum();
     assert_eq!(total_area, 120 * 40);
+  }
+
+  #[test]
+  fn editor_resize_split_updates_pane_geometry() {
+    let doc_id = DocumentId::new(NonZeroUsize::new(1).unwrap());
+    let doc = Document::new(doc_id, Rope::from("one"));
+    let view = ViewState::new(Rect::new(0, 0, 100, 30), Position::new(0, 0));
+    let editor_id = EditorId::new(NonZeroUsize::new(1).unwrap());
+    let mut editor = Editor::new(editor_id, doc, view);
+
+    assert!(editor.split_active_pane(SplitAxis::Vertical));
+    let separator = editor
+      .pane_separators(editor.layout_viewport())
+      .into_iter()
+      .find(|separator| separator.axis == SplitAxis::Vertical)
+      .expect("vertical separator");
+
+    assert!(editor.resize_split(separator.split_id, 25, 0));
+    let panes = editor.pane_snapshots(editor.layout_viewport());
+    assert_eq!(panes.len(), 2);
+    let min_x = panes.iter().map(|pane| pane.rect.x).min().unwrap_or(0);
+    let left = panes
+      .iter()
+      .find(|pane| pane.rect.x == min_x)
+      .expect("left pane");
+    assert_eq!(left.rect.width, 25);
   }
 
   #[test]

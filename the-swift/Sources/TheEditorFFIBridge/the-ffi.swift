@@ -1,7 +1,5 @@
 import Foundation
 import TheEditorFFI
-
-
 public class App: AppRefMut {
     var isOwned: Bool = true
 
@@ -73,6 +71,18 @@ extension AppRefMut {
 
     public func clear_active_cursor(_ id: EditorId) -> Bool {
         __swift_bridge__$App$clear_active_cursor(ptr, id.intoFfiRepr())
+    }
+
+    public func split_separator_count(_ id: EditorId) -> UInt {
+        __swift_bridge__$App$split_separator_count(ptr, id.intoFfiRepr())
+    }
+
+    public func split_separator_at(_ id: EditorId, _ index: UInt) -> SplitSeparator {
+        SplitSeparator(ptr: __swift_bridge__$App$split_separator_at(ptr, id.intoFfiRepr(), index))
+    }
+
+    public func resize_split(_ id: EditorId, _ split_id: UInt64, _ x: UInt16, _ y: UInt16) -> Bool {
+        __swift_bridge__$App$resize_split(ptr, id.intoFfiRepr(), split_id, x, y)
     }
 
     public func render_plan(_ id: EditorId) -> RenderPlan {
@@ -2099,6 +2109,102 @@ extension RenderFramePlan: Vectorizable {
 
     public static func vecOfSelfLen(vecPtr: UnsafeMutableRawPointer) -> UInt {
         __swift_bridge__$Vec_RenderFramePlan$len(vecPtr)
+    }
+}
+
+
+public class SplitSeparator: SplitSeparatorRefMut {
+    var isOwned: Bool = true
+
+    public override init(ptr: UnsafeMutableRawPointer) {
+        super.init(ptr: ptr)
+    }
+
+    deinit {
+        if isOwned {
+            __swift_bridge__$SplitSeparator$_free(ptr)
+        }
+    }
+}
+public class SplitSeparatorRefMut: SplitSeparatorRef {
+    public override init(ptr: UnsafeMutableRawPointer) {
+        super.init(ptr: ptr)
+    }
+}
+public class SplitSeparatorRef {
+    var ptr: UnsafeMutableRawPointer
+
+    public init(ptr: UnsafeMutableRawPointer) {
+        self.ptr = ptr
+    }
+}
+extension SplitSeparatorRef {
+    public func split_id() -> UInt64 {
+        __swift_bridge__$SplitSeparator$split_id(ptr)
+    }
+
+    public func axis() -> UInt8 {
+        __swift_bridge__$SplitSeparator$axis(ptr)
+    }
+
+    public func line() -> UInt16 {
+        __swift_bridge__$SplitSeparator$line(ptr)
+    }
+
+    public func span_start() -> UInt16 {
+        __swift_bridge__$SplitSeparator$span_start(ptr)
+    }
+
+    public func span_end() -> UInt16 {
+        __swift_bridge__$SplitSeparator$span_end(ptr)
+    }
+}
+extension SplitSeparator: Vectorizable {
+    public static func vecOfSelfNew() -> UnsafeMutableRawPointer {
+        __swift_bridge__$Vec_SplitSeparator$new()
+    }
+
+    public static func vecOfSelfFree(vecPtr: UnsafeMutableRawPointer) {
+        __swift_bridge__$Vec_SplitSeparator$drop(vecPtr)
+    }
+
+    public static func vecOfSelfPush(vecPtr: UnsafeMutableRawPointer, value: SplitSeparator) {
+        __swift_bridge__$Vec_SplitSeparator$push(vecPtr, {value.isOwned = false; return value.ptr;}())
+    }
+
+    public static func vecOfSelfPop(vecPtr: UnsafeMutableRawPointer) -> Optional<Self> {
+        let pointer = __swift_bridge__$Vec_SplitSeparator$pop(vecPtr)
+        if pointer == nil {
+            return nil
+        } else {
+            return (SplitSeparator(ptr: pointer!) as! Self)
+        }
+    }
+
+    public static func vecOfSelfGet(vecPtr: UnsafeMutableRawPointer, index: UInt) -> Optional<SplitSeparatorRef> {
+        let pointer = __swift_bridge__$Vec_SplitSeparator$get(vecPtr, index)
+        if pointer == nil {
+            return nil
+        } else {
+            return SplitSeparatorRef(ptr: pointer!)
+        }
+    }
+
+    public static func vecOfSelfGetMut(vecPtr: UnsafeMutableRawPointer, index: UInt) -> Optional<SplitSeparatorRefMut> {
+        let pointer = __swift_bridge__$Vec_SplitSeparator$get_mut(vecPtr, index)
+        if pointer == nil {
+            return nil
+        } else {
+            return SplitSeparatorRefMut(ptr: pointer!)
+        }
+    }
+
+    public static func vecOfSelfAsPtr(vecPtr: UnsafeMutableRawPointer) -> UnsafePointer<SplitSeparatorRef> {
+        UnsafePointer<SplitSeparatorRef>(OpaquePointer(__swift_bridge__$Vec_SplitSeparator$as_ptr(vecPtr)))
+    }
+
+    public static func vecOfSelfLen(vecPtr: UnsafeMutableRawPointer) -> UInt {
+        __swift_bridge__$Vec_SplitSeparator$len(vecPtr)
     }
 }
 

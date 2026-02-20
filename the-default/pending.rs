@@ -2,6 +2,7 @@
 
 use the_lib::{
   selection::Range,
+  selection::CursorId,
   text_object::TextObject,
 };
 
@@ -46,5 +47,12 @@ pub enum PendingInput {
     extend:  bool,
     first:   Option<usize>,
     targets: Vec<WordJumpTarget>,
+  },
+  /// Await cursor-pick navigation keys to collapse/remove a specific cursor.
+  CursorPick {
+    remove:          bool,
+    original_active: Option<CursorId>,
+    candidates:      Vec<CursorId>,
+    index:           usize,
   },
 }

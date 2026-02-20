@@ -972,8 +972,8 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     "K" => keep_selections,
     "A-K" => remove_selections,
 
-    // "," => keep_active_selection,
-    // "A-," => remove_active_selection,
+    "," => keep_active_selection,
+    "A-," => remove_active_selection,
 
     // "&" => align_selections,
     // "_" => trim_selections,

@@ -6283,6 +6283,132 @@ pkgs.mkShell {
   }
 
   #[test]
+  fn keep_active_selection_keymap_sequence_collapses_to_picked_cursor() {
+    let dispatch = build_dispatch::<Ctx>();
+    let mut ctx = Ctx::new(None).expect("ctx");
+    ctx.set_dispatch(&dispatch);
+
+    let content = "a\nb\nc\n";
+    let tx = Transaction::change(
+      ctx.editor.document().text(),
+      std::iter::once((
+        0,
+        ctx.editor.document().text().len_chars(),
+        Some(content.into()),
+      )),
+    )
+    .expect("seed transaction");
+    assert!(DefaultContext::apply_transaction(&mut ctx, &tx));
+
+    let text = ctx.editor.document().text().clone();
+    let selection = Selection::point(text.line_to_char(0))
+      .push(Range::point(text.line_to_char(1)))
+      .push(Range::point(text.line_to_char(2)));
+    let _ = ctx.editor.document_mut().set_selection(selection);
+
+    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+      key:       Key::Char(','),
+      modifiers: Modifiers::empty(),
+    });
+    let candidates = match ctx.pending_input().cloned() {
+      Some(PendingInput::CursorPick {
+        remove,
+        candidates,
+        index,
+        ..
+      }) => {
+        assert!(!remove);
+        assert_eq!(index, 0);
+        candidates
+      },
+      _ => panic!("expected cursor-pick pending input"),
+    };
+
+    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+      key:       Key::Down,
+      modifiers: Modifiers::empty(),
+    });
+    assert!(matches!(
+      ctx.pending_input(),
+      Some(PendingInput::CursorPick {
+        remove: false,
+        index: 1,
+        ..
+      })
+    ));
+    assert_eq!(ctx.editor.view().active_cursor, Some(candidates[1]));
+
+    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+      key:       Key::Enter,
+      modifiers: Modifiers::empty(),
+    });
+
+    assert!(ctx.pending_input().is_none());
+    assert_eq!(ctx.editor.document().selection().ranges().len(), 1);
+    assert_eq!(ctx.editor.document().selection().cursor_ids()[0], candidates[1]);
+    assert_eq!(ctx.editor.view().active_cursor, Some(candidates[1]));
+  }
+
+  #[test]
+  fn remove_active_selection_keymap_sequence_removes_picked_cursor() {
+    let dispatch = build_dispatch::<Ctx>();
+    let mut ctx = Ctx::new(None).expect("ctx");
+    ctx.set_dispatch(&dispatch);
+
+    let content = "a\nb\nc\n";
+    let tx = Transaction::change(
+      ctx.editor.document().text(),
+      std::iter::once((
+        0,
+        ctx.editor.document().text().len_chars(),
+        Some(content.into()),
+      )),
+    )
+    .expect("seed transaction");
+    assert!(DefaultContext::apply_transaction(&mut ctx, &tx));
+
+    let text = ctx.editor.document().text().clone();
+    let selection = Selection::point(text.line_to_char(0))
+      .push(Range::point(text.line_to_char(1)))
+      .push(Range::point(text.line_to_char(2)));
+    let _ = ctx.editor.document_mut().set_selection(selection);
+
+    let mut alt = Modifiers::empty();
+    alt.insert(Modifiers::ALT);
+
+    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+      key:       Key::Char(','),
+      modifiers: alt,
+    });
+    let candidates = match ctx.pending_input().cloned() {
+      Some(PendingInput::CursorPick {
+        remove,
+        candidates,
+        index,
+        ..
+      }) => {
+        assert!(remove);
+        assert_eq!(index, 0);
+        candidates
+      },
+      _ => panic!("expected cursor-pick pending input"),
+    };
+
+    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+      key:       Key::Down,
+      modifiers: Modifiers::empty(),
+    });
+    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+      key:       Key::Enter,
+      modifiers: Modifiers::empty(),
+    });
+
+    assert!(ctx.pending_input().is_none());
+    assert_eq!(ctx.editor.document().selection().ranges().len(), 2);
+    assert!(!ctx.editor.document().selection().cursor_ids().contains(&candidates[1]));
+  }
+
+  #[test]
   fn goto_buffer_restores_syntax_for_target_buffer() {
     let mut ctx = Ctx::new(None).expect("ctx");
     if ctx.loader.is_none() {

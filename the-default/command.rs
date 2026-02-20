@@ -891,6 +891,69 @@ fn handle_pending_input<Ctx: DefaultContext>(
       }));
       true
     },
+    PendingInput::CursorPick {
+      remove,
+      original_active,
+      mut candidates,
+      mut index,
+    } => {
+      let selection = ctx.editor_ref().document().selection();
+      candidates.retain(|id| selection.range_by_id(*id).is_some());
+      if candidates.is_empty() {
+        ctx.editor().view_mut().active_cursor = original_active;
+        return true;
+      }
+
+      index = index.min(candidates.len().saturating_sub(1));
+
+      match key.key {
+        Key::Escape => {
+          ctx.editor().view_mut().active_cursor =
+            original_active.filter(|id| selection.range_by_id(*id).is_some());
+        },
+        Key::Left | Key::Up => {
+          index = if index == 0 {
+            candidates.len() - 1
+          } else {
+            index - 1
+          };
+          ctx.editor().view_mut().active_cursor = Some(candidates[index]);
+          ctx.set_pending_input(Some(PendingInput::CursorPick {
+            remove,
+            original_active,
+            candidates,
+            index,
+          }));
+        },
+        Key::Right | Key::Down => {
+          index = (index + 1) % candidates.len();
+          ctx.editor().view_mut().active_cursor = Some(candidates[index]);
+          ctx.set_pending_input(Some(PendingInput::CursorPick {
+            remove,
+            original_active,
+            candidates,
+            index,
+          }));
+        },
+        Key::Enter | Key::NumpadEnter => {
+          let target = candidates[index];
+          if let Err(err) = apply_cursor_pick(ctx, target, remove) {
+            ctx.push_warning("selection", err);
+            ctx.editor().view_mut().active_cursor = original_active;
+          }
+        },
+        _ => {
+          ctx.set_pending_input(Some(PendingInput::CursorPick {
+            remove,
+            original_active,
+            candidates,
+            index,
+          }));
+        },
+      }
+
+      true
+    },
   }
 }
 
@@ -1070,6 +1133,8 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::JoinSelectionsSpace => join_selections_space(ctx),
     Command::KeepSelections => keep_selections(ctx),
     Command::RemoveSelections => remove_selections(ctx),
+    Command::KeepActiveSelection => keep_active_selection(ctx),
+    Command::RemoveActiveSelection => remove_active_selection(ctx),
     Command::CollapseSelection => collapse_selection(ctx),
     Command::FlipSelections => flip_selections(ctx),
     Command::ExpandSelection => expand_selection(ctx),
@@ -2510,6 +2575,109 @@ fn keep_selections<Ctx: DefaultContext>(ctx: &mut Ctx) {
 
 fn remove_selections<Ctx: DefaultContext>(ctx: &mut Ctx) {
   crate::search_prompt::open_remove_selections_prompt(ctx);
+}
+
+fn keep_active_selection<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  enter_cursor_pick_mode(ctx, false);
+}
+
+fn remove_active_selection<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  enter_cursor_pick_mode(ctx, true);
+}
+
+fn enter_cursor_pick_mode<Ctx: DefaultContext>(ctx: &mut Ctx, remove: bool) {
+  let Some((original_active, candidates, index)) = cursor_pick_candidates(ctx.editor_ref()) else {
+    ctx.push_warning("selection", "no cursor available");
+    return;
+  };
+
+  ctx.editor().view_mut().active_cursor = Some(candidates[index]);
+  ctx.set_pending_input(Some(PendingInput::CursorPick {
+    remove,
+    original_active,
+    candidates,
+    index,
+  }));
+  ctx.push_info(
+    "selection",
+    if remove {
+      "remove cursor: use arrows to choose, enter to confirm, esc to cancel"
+    } else {
+      "collapse cursor: use arrows to choose, enter to confirm, esc to cancel"
+    },
+  );
+}
+
+fn cursor_pick_candidates(editor: &Editor) -> Option<(Option<CursorId>, Vec<CursorId>, usize)> {
+  let doc = editor.document();
+  let view = editor.view();
+  let selection = doc.selection();
+  if selection.cursor_ids().is_empty() {
+    return None;
+  }
+
+  let text = doc.text().slice(..);
+  let row_start = view.scroll.row;
+  let row_end = row_start.saturating_add(view.viewport.height as usize);
+
+  let mut visible = Vec::new();
+  if row_end > row_start {
+    for (cursor_id, range) in selection.iter_with_ids() {
+      let line = text.char_to_line(range.cursor(text));
+      if line >= row_start && line < row_end {
+        visible.push(cursor_id);
+      }
+    }
+  }
+
+  let candidates = if visible.is_empty() {
+    selection.cursor_ids().to_vec()
+  } else {
+    visible
+  };
+  let original_active = view.active_cursor;
+  let index = original_active
+    .and_then(|id| candidates.iter().position(|candidate| *candidate == id))
+    .unwrap_or(0);
+
+  Some((original_active, candidates, index))
+}
+
+fn apply_cursor_pick<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  target: CursorId,
+  remove: bool,
+) -> Result<(), String> {
+  let editor = ctx.editor();
+  let doc = editor.document_mut();
+  let selection = doc.selection().clone();
+
+  if remove {
+    let Some(index) = selection.index_of(target) else {
+      return Err("selected cursor is no longer available".to_string());
+    };
+    if selection.ranges().len() <= 1 {
+      return Err("cannot remove the last cursor".to_string());
+    }
+
+    let next_selection = selection.remove(index).map_err(|err| err.to_string())?;
+    let next_active = next_selection
+      .cursor_ids()
+      .get(index.min(next_selection.cursor_ids().len().saturating_sub(1)))
+      .copied();
+    doc.set_selection(next_selection)
+      .map_err(|err| err.to_string())?;
+    editor.view_mut().active_cursor = next_active;
+  } else {
+    let next_selection = selection
+      .collapse(CursorPick::Id(target))
+      .map_err(|err| err.to_string())?;
+    doc.set_selection(next_selection)
+      .map_err(|err| err.to_string())?;
+    editor.view_mut().active_cursor = Some(target);
+  }
+
+  Ok(())
 }
 
 fn join_selections_impl<Ctx: DefaultContext>(ctx: &mut Ctx, select_space: bool) {
@@ -4875,6 +5043,8 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "join_selections_space" => Some(Command::join_selections_space()),
     "keep_selections" => Some(Command::keep_selections()),
     "remove_selections" => Some(Command::remove_selections()),
+    "keep_active_selection" => Some(Command::keep_active_selection()),
+    "remove_active_selection" => Some(Command::remove_active_selection()),
     "collapse_selection" => Some(Command::collapse_selection()),
     "flip_selections" => Some(Command::flip_selections()),
     "expand_selection" => Some(Command::expand_selection()),

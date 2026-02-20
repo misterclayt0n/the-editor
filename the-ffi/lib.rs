@@ -9816,6 +9816,118 @@ pkgs.mkShell {
   }
 
   #[test]
+  fn keep_active_selection_keymap_collapses_to_picked_cursor() {
+    let _guard = ffi_test_guard();
+    let mut app = App::new();
+    let id = app.create_editor("a\nb\nc\n", default_viewport(), ffi::Position {
+      row: 0,
+      col: 0,
+    });
+    assert!(app.activate(id).is_some());
+
+    let text = app.active_editor_ref().document().text().clone();
+    let selection = Selection::point(text.line_to_char(0))
+      .push(Range::point(text.line_to_char(1)))
+      .push(Range::point(text.line_to_char(2)));
+    let _ = app.active_editor_mut().document_mut().set_selection(selection);
+
+    assert!(app.handle_key(id, key_char(',')));
+    let candidates = match app.active_state_ref().pending_input.clone() {
+      Some(PendingInput::CursorPick {
+        remove,
+        candidates,
+        index,
+        ..
+      }) => {
+        assert!(!remove);
+        assert_eq!(index, 0);
+        candidates
+      },
+      _ => panic!("expected cursor-pick pending input"),
+    };
+
+    assert!(app.handle_key(id, ffi::KeyEvent {
+      kind:      15,
+      codepoint: 0,
+      modifiers: 0,
+    }));
+    assert!(matches!(
+      app.active_state_ref().pending_input.as_ref(),
+      Some(PendingInput::CursorPick {
+        remove: false,
+        index: 1,
+        ..
+      })
+    ));
+    assert_eq!(app.active_editor_ref().view().active_cursor, Some(candidates[1]));
+
+    assert!(app.handle_key(id, ffi::KeyEvent {
+      kind:      1,
+      codepoint: 0,
+      modifiers: 0,
+    }));
+    assert!(app.active_state_ref().pending_input.is_none());
+    assert_eq!(app.active_editor_ref().document().selection().ranges().len(), 1);
+    assert_eq!(
+      app.active_editor_ref().document().selection().cursor_ids()[0],
+      candidates[1]
+    );
+    assert_eq!(app.active_editor_ref().view().active_cursor, Some(candidates[1]));
+  }
+
+  #[test]
+  fn remove_active_selection_keymap_removes_picked_cursor() {
+    let _guard = ffi_test_guard();
+    let mut app = App::new();
+    let id = app.create_editor("a\nb\nc\n", default_viewport(), ffi::Position {
+      row: 0,
+      col: 0,
+    });
+    assert!(app.activate(id).is_some());
+
+    let text = app.active_editor_ref().document().text().clone();
+    let selection = Selection::point(text.line_to_char(0))
+      .push(Range::point(text.line_to_char(1)))
+      .push(Range::point(text.line_to_char(2)));
+    let _ = app.active_editor_mut().document_mut().set_selection(selection);
+
+    assert!(app.handle_key(id, key_char_alt(',')));
+    let candidates = match app.active_state_ref().pending_input.clone() {
+      Some(PendingInput::CursorPick {
+        remove,
+        candidates,
+        index,
+        ..
+      }) => {
+        assert!(remove);
+        assert_eq!(index, 0);
+        candidates
+      },
+      _ => panic!("expected cursor-pick pending input"),
+    };
+
+    assert!(app.handle_key(id, ffi::KeyEvent {
+      kind:      15,
+      codepoint: 0,
+      modifiers: 0,
+    }));
+    assert!(app.handle_key(id, ffi::KeyEvent {
+      kind:      1,
+      codepoint: 0,
+      modifiers: 0,
+    }));
+
+    assert!(app.active_state_ref().pending_input.is_none());
+    assert_eq!(app.active_editor_ref().document().selection().ranges().len(), 2);
+    assert!(!app
+      .active_editor_ref()
+      .document()
+      .selection()
+      .cursor_ids()
+      .contains(&candidates[1]));
+  }
+
+  #[test]
   fn ensure_cursor_visible_keeps_horizontal_scroll_zero_with_soft_wrap() {
     let _guard = ffi_test_guard();
     let mut app = App::new();

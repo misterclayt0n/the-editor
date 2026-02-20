@@ -499,6 +499,8 @@ pub enum Command {
   JoinSelectionsSpace,
   KeepSelections,
   RemoveSelections,
+  KeepActiveSelection,
+  RemoveActiveSelection,
   CollapseSelection,
   FlipSelections,
   ExpandSelection,
@@ -923,6 +925,16 @@ impl Command {
   #[must_use]
   pub const fn remove_selections() -> Self {
     Self::RemoveSelections
+  }
+
+  #[must_use]
+  pub const fn keep_active_selection() -> Self {
+    Self::KeepActiveSelection
+  }
+
+  #[must_use]
+  pub const fn remove_active_selection() -> Self {
+    Self::RemoveActiveSelection
   }
 
   #[must_use]

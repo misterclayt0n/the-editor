@@ -1133,6 +1133,7 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::JoinSelectionsSpace => join_selections_space(ctx),
     Command::KeepSelections => keep_selections(ctx),
     Command::RemoveSelections => remove_selections(ctx),
+    Command::AlignSelections => align_selections(ctx),
     Command::KeepActiveSelection => keep_active_selection(ctx),
     Command::RemoveActiveSelection => remove_active_selection(ctx),
     Command::CollapseSelection => collapse_selection(ctx),
@@ -2586,6 +2587,106 @@ fn keep_selections<Ctx: DefaultContext>(ctx: &mut Ctx) {
 
 fn remove_selections<Ctx: DefaultContext>(ctx: &mut Ctx) {
   crate::search_prompt::open_remove_selections_prompt(ctx);
+}
+
+fn align_selections<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  let tx = (|| -> Result<Option<Transaction>, String> {
+    let doc = ctx.editor_ref().document();
+    let text = doc.text().slice(..);
+    let selection = doc.selection();
+    let text_fmt = ctx.text_format();
+    let mut annotations = ctx.text_annotations();
+
+    let mut column_widths: Vec<Vec<(usize, usize)>> = Vec::new();
+    let mut last_line = text.len_lines().saturating_add(1);
+    let mut col_idx = 0usize;
+
+    for range in selection.iter() {
+      let Some(coords) = visual_pos_at_char(text, &text_fmt, &mut annotations, range.head) else {
+        return Ok(None);
+      };
+      let Some(anchor_coords) =
+        visual_pos_at_char(text, &text_fmt, &mut annotations, range.anchor)
+      else {
+        return Ok(None);
+      };
+
+      if coords.row != anchor_coords.row {
+        return Err("align cannot work with multi line selections".to_string());
+      }
+
+      col_idx = if coords.row == last_line {
+        col_idx + 1
+      } else {
+        0
+      };
+
+      if col_idx >= column_widths.len() {
+        column_widths.push(Vec::new());
+      }
+      column_widths[col_idx].push((range.from(), coords.col));
+      last_line = coords.row;
+    }
+
+    let mut changes: Vec<(usize, usize, Option<Tendril>)> =
+      Vec::with_capacity(selection.ranges().len());
+    let mut offsets = vec![0usize; column_widths.first().map(Vec::len).unwrap_or(0)];
+
+    for column in column_widths {
+      let max_col = column
+        .iter()
+        .enumerate()
+        .map(|(row, (_, cursor_col))| *cursor_col + offsets.get(row).copied().unwrap_or(0))
+        .max()
+        .unwrap_or(0);
+
+      for (row, (insert_pos, last_col)) in column.into_iter().enumerate() {
+        if row >= offsets.len() {
+          offsets.resize(row + 1, 0);
+        }
+
+        let insert_count = max_col.saturating_sub(last_col + offsets[row]);
+        if insert_count == 0 {
+          continue;
+        }
+
+        offsets[row] += insert_count;
+        changes.push((
+          insert_pos,
+          insert_pos,
+          Some(" ".repeat(insert_count).into()),
+        ));
+      }
+    }
+
+    if changes.is_empty() {
+      Ok(None)
+    } else {
+      changes.sort_unstable_by_key(|(from, _, _)| *from);
+      Transaction::change(doc.text(), changes.into_iter())
+        .map(Some)
+        .map_err(|err| format!("failed to build align transaction: {err}"))
+    }
+  })();
+
+  let tx = match tx {
+    Ok(tx) => tx,
+    Err(err) => {
+      ctx.push_error("align", err);
+      return;
+    },
+  };
+
+  if let Some(tx) = tx
+    && !ctx.apply_transaction(&tx)
+  {
+    ctx.push_error("align", "failed to apply align transaction");
+    return;
+  }
+
+  if ctx.mode() == Mode::Select {
+    ctx.set_mode(Mode::Normal);
+  }
 }
 
 fn keep_active_selection<Ctx: DefaultContext>(ctx: &mut Ctx) {
@@ -5058,6 +5159,7 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "join_selections_space" => Some(Command::join_selections_space()),
     "keep_selections" => Some(Command::keep_selections()),
     "remove_selections" => Some(Command::remove_selections()),
+    "align_selections" => Some(Command::align_selections()),
     "keep_active_selection" => Some(Command::keep_active_selection()),
     "remove_active_selection" => Some(Command::remove_active_selection()),
     "collapse_selection" => Some(Command::collapse_selection()),

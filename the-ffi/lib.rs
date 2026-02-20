@@ -10147,6 +10147,71 @@ pkgs.mkShell {
   }
 
   #[test]
+  fn align_selections_keymap_aligns_columns_and_exits_select_mode() {
+    let _guard = ffi_test_guard();
+    let mut app = App::new();
+    let id = app.create_editor(
+      "a = 1;\nlong_name = 2;\nmid = 3;\n",
+      default_viewport(),
+      ffi::Position { row: 0, col: 0 },
+    );
+    assert!(app.activate(id).is_some());
+
+    let selection = {
+      let text = app.active_editor_ref().document().text().slice(..);
+      let first = char_idx_at_coords(text, LibPosition::new(0, 4));
+      let second = char_idx_at_coords(text, LibPosition::new(1, 12));
+      let third = char_idx_at_coords(text, LibPosition::new(2, 6));
+      Selection::point(first)
+        .push(Range::point(second))
+        .push(Range::point(third))
+    };
+    let _ = app.active_editor_mut().document_mut().set_selection(selection);
+    app.active_state_mut().mode = Mode::Select;
+
+    assert!(app.handle_key(id, key_char('&')));
+
+    assert_eq!(
+      app.text(id),
+      "a =         1;\nlong_name = 2;\nmid =       3;\n"
+    );
+    assert_eq!(app.active_state_ref().mode, Mode::Normal);
+  }
+
+  #[test]
+  fn align_selections_keymap_errors_on_multiline_selection() {
+    let _guard = ffi_test_guard();
+    let mut app = App::new();
+    let id = app.create_editor("alpha\nbeta\n", default_viewport(), ffi::Position {
+      row: 0,
+      col: 0,
+    });
+    assert!(app.activate(id).is_some());
+    let _ = app
+      .active_editor_mut()
+      .document_mut()
+      .set_selection(Selection::single(0, 6));
+
+    let before_seq = app.active_state_ref().messages.latest_seq();
+    assert!(app.handle_key(id, key_char('&')));
+
+    let events = app.active_state_ref().messages.events_since(before_seq);
+    let error = events
+      .iter()
+      .find_map(|event| match &event.kind {
+        the_lib::messages::MessageEventKind::Published { message } => {
+          (message.level == the_lib::messages::MessageLevel::Error
+            && message.source.as_deref() == Some("align"))
+          .then_some(message.text.as_str())
+        },
+        _ => None,
+      })
+      .expect("align error message");
+    assert_eq!(error, "align cannot work with multi line selections");
+    assert_eq!(app.text(id), "alpha\nbeta\n");
+  }
+
+  #[test]
   fn ensure_cursor_visible_keeps_horizontal_scroll_zero_with_soft_wrap() {
     let _guard = ffi_test_guard();
     let mut app = App::new();

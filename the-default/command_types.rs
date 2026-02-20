@@ -494,6 +494,14 @@ pub enum Command {
   TransposeView,
   WClose,
   WOnly,
+  JumpViewLeft,
+  JumpViewDown,
+  JumpViewUp,
+  JumpViewRight,
+  SwapViewLeft,
+  SwapViewDown,
+  SwapViewUp,
+  SwapViewRight,
   GotoLastAccessedFile,
   GotoLastModifiedFile,
   GotoLastModification,
@@ -900,6 +908,46 @@ impl Command {
   #[must_use]
   pub const fn wonly() -> Self {
     Self::WOnly
+  }
+
+  #[must_use]
+  pub const fn jump_view_left() -> Self {
+    Self::JumpViewLeft
+  }
+
+  #[must_use]
+  pub const fn jump_view_down() -> Self {
+    Self::JumpViewDown
+  }
+
+  #[must_use]
+  pub const fn jump_view_up() -> Self {
+    Self::JumpViewUp
+  }
+
+  #[must_use]
+  pub const fn jump_view_right() -> Self {
+    Self::JumpViewRight
+  }
+
+  #[must_use]
+  pub const fn swap_view_left() -> Self {
+    Self::SwapViewLeft
+  }
+
+  #[must_use]
+  pub const fn swap_view_down() -> Self {
+    Self::SwapViewDown
+  }
+
+  #[must_use]
+  pub const fn swap_view_up() -> Self {
+    Self::SwapViewUp
+  }
+
+  #[must_use]
+  pub const fn swap_view_right() -> Self {
+    Self::SwapViewRight
   }
 
   #[must_use]

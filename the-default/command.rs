@@ -106,7 +106,10 @@ use the_lib::{
     Selection,
     split_on_newline,
   },
-  split_tree::SplitAxis,
+  split_tree::{
+    PaneDirection,
+    SplitAxis,
+  },
   surround,
   syntax::{
     Loader,
@@ -1153,6 +1156,14 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::TransposeView => transpose_view(ctx),
     Command::WClose => close_view(ctx),
     Command::WOnly => only_view(ctx),
+    Command::JumpViewLeft => jump_view(ctx, PaneDirection::Left),
+    Command::JumpViewDown => jump_view(ctx, PaneDirection::Down),
+    Command::JumpViewUp => jump_view(ctx, PaneDirection::Up),
+    Command::JumpViewRight => jump_view(ctx, PaneDirection::Right),
+    Command::SwapViewLeft => swap_view(ctx, PaneDirection::Left),
+    Command::SwapViewDown => swap_view(ctx, PaneDirection::Down),
+    Command::SwapViewUp => swap_view(ctx, PaneDirection::Up),
+    Command::SwapViewRight => swap_view(ctx, PaneDirection::Right),
     Command::GotoLastAccessedFile => {
       if !ctx.goto_last_accessed_buffer() {
         ctx.push_warning("buffer", "no last accessed buffer");
@@ -2197,6 +2208,22 @@ fn close_view<Ctx: DefaultContext>(ctx: &mut Ctx) {
 fn only_view<Ctx: DefaultContext>(ctx: &mut Ctx) {
   if !ctx.editor().only_active_pane() {
     ctx.push_warning("window", "already in a single view");
+    return;
+  }
+  ctx.request_render();
+}
+
+fn jump_view<Ctx: DefaultContext>(ctx: &mut Ctx, direction: PaneDirection) {
+  if !ctx.editor().jump_active_pane(direction) {
+    ctx.push_warning("window", "no view in that direction");
+    return;
+  }
+  ctx.request_render();
+}
+
+fn swap_view<Ctx: DefaultContext>(ctx: &mut Ctx, direction: PaneDirection) {
+  if !ctx.editor().swap_active_pane(direction) {
+    ctx.push_warning("window", "no view to swap in that direction");
     return;
   }
   ctx.request_render();
@@ -5275,6 +5302,14 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "transpose_view" => Some(Command::transpose_view()),
     "wclose" => Some(Command::wclose()),
     "wonly" => Some(Command::wonly()),
+    "jump_view_left" => Some(Command::jump_view_left()),
+    "jump_view_down" => Some(Command::jump_view_down()),
+    "jump_view_up" => Some(Command::jump_view_up()),
+    "jump_view_right" => Some(Command::jump_view_right()),
+    "swap_view_left" => Some(Command::swap_view_left()),
+    "swap_view_down" => Some(Command::swap_view_down()),
+    "swap_view_up" => Some(Command::swap_view_up()),
+    "swap_view_right" => Some(Command::swap_view_right()),
     "goto_last_accessed_file" => Some(Command::goto_last_accessed_file()),
     "goto_last_modified_file" => Some(Command::goto_last_modified_file()),
     "goto_last_modification" => Some(Command::goto_last_modification()),

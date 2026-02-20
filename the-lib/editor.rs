@@ -23,6 +23,7 @@ use crate::{
   render::plan::RenderCache,
   selection::Selection,
   split_tree::{
+    PaneDirection,
     PaneId,
     SplitAxis,
     SplitTree,
@@ -220,6 +221,22 @@ impl Editor {
     true
   }
 
+  pub fn jump_active_pane(&mut self, direction: PaneDirection) -> bool {
+    if !self.split_tree.jump_active(direction) {
+      return false;
+    }
+    let active = self.split_tree.active_pane();
+    let Some(&buffer) = self.pane_buffers.get(&active) else {
+      return false;
+    };
+    self.active_buffer = buffer;
+    true
+  }
+
+  pub fn swap_active_pane(&mut self, direction: PaneDirection) -> bool {
+    self.split_tree.swap_active(direction)
+  }
+
   pub fn transpose_active_pane_branch(&mut self) -> bool {
     self.split_tree.transpose_active_branch()
   }
@@ -340,7 +357,10 @@ mod tests {
     position::Position,
     render::graphics::Rect,
     selection::Selection,
-    split_tree::SplitAxis,
+    split_tree::{
+      PaneDirection,
+      SplitAxis,
+    },
     transaction::Transaction,
   };
 
@@ -541,6 +561,57 @@ mod tests {
     assert_eq!(editor.active_buffer_index(), 0);
     assert!(editor.rotate_active_pane(false));
     assert_eq!(editor.active_buffer_index(), second_idx);
+  }
+
+  #[test]
+  fn editor_jump_active_pane_switches_to_neighbor_buffer() {
+    let doc_id = DocumentId::new(NonZeroUsize::new(1).unwrap());
+    let doc = Document::new(doc_id, Rope::from("one"));
+    let view = ViewState::new(Rect::new(0, 0, 80, 24), Position::new(0, 0));
+    let editor_id = EditorId::new(NonZeroUsize::new(1).unwrap());
+    let mut editor = Editor::new(editor_id, doc, view);
+
+    assert!(editor.split_active_pane(SplitAxis::Vertical));
+    let right_idx = editor.open_buffer(
+      Rope::from("right"),
+      ViewState::new(Rect::new(0, 0, 80, 24), Position::new(0, 0)),
+      Some(PathBuf::from("/tmp/right.txt")),
+    );
+    assert_eq!(editor.active_buffer_index(), right_idx);
+
+    assert!(editor.jump_active_pane(PaneDirection::Left));
+    assert_eq!(editor.active_buffer_index(), 0);
+    assert!(!editor.jump_active_pane(PaneDirection::Up));
+  }
+
+  #[test]
+  fn editor_swap_active_pane_preserves_active_buffer_binding() {
+    let doc_id = DocumentId::new(NonZeroUsize::new(1).unwrap());
+    let doc = Document::new(doc_id, Rope::from("one"));
+    let view = ViewState::new(Rect::new(0, 0, 80, 24), Position::new(0, 0));
+    let editor_id = EditorId::new(NonZeroUsize::new(1).unwrap());
+    let mut editor = Editor::new(editor_id, doc, view);
+
+    assert!(editor.split_active_pane(SplitAxis::Vertical));
+    let right_top_idx = editor.open_buffer(
+      Rope::from("right-top"),
+      ViewState::new(Rect::new(0, 0, 80, 24), Position::new(0, 0)),
+      Some(PathBuf::from("/tmp/right-top.txt")),
+    );
+    assert_eq!(editor.active_buffer_index(), right_top_idx);
+
+    assert!(editor.split_active_pane(SplitAxis::Horizontal));
+    let right_bottom_idx = editor.open_buffer(
+      Rope::from("right-bottom"),
+      ViewState::new(Rect::new(0, 0, 80, 24), Position::new(0, 0)),
+      Some(PathBuf::from("/tmp/right-bottom.txt")),
+    );
+    assert_eq!(editor.active_buffer_index(), right_bottom_idx);
+
+    assert!(editor.swap_active_pane(PaneDirection::Up));
+    assert_eq!(editor.active_buffer_index(), right_bottom_idx);
+    assert!(editor.jump_active_pane(PaneDirection::Down));
+    assert_eq!(editor.active_buffer_index(), right_top_idx);
   }
 
   #[test]

@@ -64,6 +64,14 @@ impl SplitAxis {
   }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PaneDirection {
+  Up,
+  Down,
+  Left,
+  Right,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum SplitNode {
   Leaf {
@@ -320,6 +328,57 @@ impl SplitTree {
     true
   }
 
+  pub fn jump_active(&mut self, direction: PaneDirection) -> bool {
+    let Some(target) = self.find_pane_in_direction(self.active, direction) else {
+      return false;
+    };
+    if target == self.active {
+      return false;
+    }
+    self.active = target;
+    true
+  }
+
+  pub fn swap_active(&mut self, direction: PaneDirection) -> bool {
+    let active = self.active;
+    let Some(target) = self.find_pane_in_direction(active, direction) else {
+      return false;
+    };
+    if target == active {
+      return false;
+    }
+
+    let Some(active_leaf) = self.pane_nodes.get(&active).copied() else {
+      return false;
+    };
+    let Some(target_leaf) = self.pane_nodes.get(&target).copied() else {
+      return false;
+    };
+
+    let Some(active_pane) = self.leaf_pane(active_leaf) else {
+      return false;
+    };
+    let Some(target_pane) = self.leaf_pane(target_leaf) else {
+      return false;
+    };
+
+    if let Some(state) = self.nodes.get_mut(&active_leaf) {
+      state.node = SplitNode::Leaf { pane: target_pane };
+    } else {
+      return false;
+    }
+    if let Some(state) = self.nodes.get_mut(&target_leaf) {
+      state.node = SplitNode::Leaf { pane: active_pane };
+    } else {
+      return false;
+    }
+
+    self.pane_nodes.insert(active_pane, target_leaf);
+    self.pane_nodes.insert(target_pane, active_leaf);
+    debug_assert!(self.validate().is_ok());
+    true
+  }
+
   pub fn transpose_active_branch(&mut self) -> bool {
     let Some(leaf_id) = self.pane_nodes.get(&self.active).copied() else {
       return false;
@@ -473,6 +532,148 @@ impl SplitTree {
     state.parent = parent;
     Ok(())
   }
+
+  fn find_pane_in_direction(&self, pane: PaneId, direction: PaneDirection) -> Option<PaneId> {
+    let start_leaf = self.pane_nodes.get(&pane).copied()?;
+    let origins = self.node_origins();
+    let (current_x, current_y) = origins.get(&start_leaf).copied()?;
+    let target_leaf = self.find_leaf_in_direction(start_leaf, direction, current_x, current_y, &origins)?;
+    self.leaf_pane(target_leaf)
+  }
+
+  fn find_leaf_in_direction(
+    &self,
+    id: SplitNodeId,
+    direction: PaneDirection,
+    current_x: f32,
+    current_y: f32,
+    origins: &BTreeMap<SplitNodeId, (f32, f32)>,
+  ) -> Option<SplitNodeId> {
+    let parent = self.node_parent(id)?;
+    let parent_axis = match self.node(parent)? {
+      SplitNode::Branch { axis, .. } => axis,
+      SplitNode::Leaf { .. } => return None,
+    };
+
+    if !Self::direction_possible_in_axis(direction, parent_axis) {
+      return self.find_leaf_in_direction(parent, direction, current_x, current_y, origins);
+    }
+
+    let child = self.find_adjacent_child(parent, id, direction);
+    let Some(child) = child else {
+      return self.find_leaf_in_direction(parent, direction, current_x, current_y, origins);
+    };
+
+    self.descend_nearest_leaf(child, current_x, current_y, origins)
+  }
+
+  fn direction_possible_in_axis(direction: PaneDirection, axis: SplitAxis) -> bool {
+    match axis {
+      SplitAxis::Horizontal => matches!(direction, PaneDirection::Up | PaneDirection::Down),
+      SplitAxis::Vertical => matches!(direction, PaneDirection::Left | PaneDirection::Right),
+    }
+  }
+
+  fn find_adjacent_child(
+    &self,
+    parent: SplitNodeId,
+    child: SplitNodeId,
+    direction: PaneDirection,
+  ) -> Option<SplitNodeId> {
+    let (first, second) = match self.node(parent)? {
+      SplitNode::Branch { first, second, .. } => (first, second),
+      SplitNode::Leaf { .. } => return None,
+    };
+
+    match direction {
+      PaneDirection::Up | PaneDirection::Left => {
+        if second == child {
+          Some(first)
+        } else {
+          None
+        }
+      },
+      PaneDirection::Down | PaneDirection::Right => {
+        if first == child {
+          Some(second)
+        } else {
+          None
+        }
+      },
+    }
+  }
+
+  fn descend_nearest_leaf(
+    &self,
+    start: SplitNodeId,
+    current_x: f32,
+    current_y: f32,
+    origins: &BTreeMap<SplitNodeId, (f32, f32)>,
+  ) -> Option<SplitNodeId> {
+    let mut node = start;
+    loop {
+      match self.node(node)? {
+        SplitNode::Leaf { .. } => return Some(node),
+        SplitNode::Branch {
+          axis,
+          first,
+          second,
+          ..
+        } => {
+          let (first_x, first_y) = origins.get(&first).copied()?;
+          let (second_x, second_y) = origins.get(&second).copied()?;
+          let first_delta = match axis {
+            SplitAxis::Vertical => (current_x - first_x).abs(),
+            SplitAxis::Horizontal => (current_y - first_y).abs(),
+          };
+          let second_delta = match axis {
+            SplitAxis::Vertical => (current_x - second_x).abs(),
+            SplitAxis::Horizontal => (current_y - second_y).abs(),
+          };
+          node = if first_delta <= second_delta {
+            first
+          } else {
+            second
+          };
+        },
+      }
+    }
+  }
+
+  fn node_origins(&self) -> BTreeMap<SplitNodeId, (f32, f32)> {
+    let mut origins = BTreeMap::new();
+    let mut stack = vec![(self.root, 0.0f32, 0.0f32, 1.0f32, 1.0f32)];
+    while let Some((id, x, y, width, height)) = stack.pop() {
+      origins.insert(id, (x, y));
+      let Some(node) = self.node(id) else {
+        continue;
+      };
+      let SplitNode::Branch {
+        axis,
+        ratio,
+        first,
+        second,
+      } = node
+      else {
+        continue;
+      };
+
+      let ratio = ratio.clamp(0.0, 1.0);
+      match axis {
+        SplitAxis::Vertical => {
+          let first_width = width * ratio;
+          stack.push((second, x + first_width, y, width - first_width, height));
+          stack.push((first, x, y, first_width, height));
+        },
+        SplitAxis::Horizontal => {
+          let first_height = height * ratio;
+          stack.push((second, x, y + first_height, width, height - first_height));
+          stack.push((first, x, y, width, first_height));
+        },
+      }
+    }
+    origins
+  }
 }
 
 #[cfg(test)]
@@ -578,6 +779,47 @@ mod tests {
     let mut tree = SplitTree::new();
     let unknown = PaneId::new(NonZeroUsize::new(999).expect("nonzero"));
     assert!(!tree.set_active_pane(unknown));
+    assert_eq!(tree.validate(), Ok(()));
+  }
+
+  #[test]
+  fn jump_active_moves_to_pane_in_direction() {
+    let mut tree = SplitTree::new();
+    let left = tree.active_pane();
+    let right_top = tree.split_active(SplitAxis::Vertical);
+    let right_bottom = tree.split_active(SplitAxis::Horizontal);
+
+    assert_eq!(tree.active_pane(), right_bottom);
+    assert!(tree.jump_active(PaneDirection::Up));
+    assert_eq!(tree.active_pane(), right_top);
+
+    assert!(tree.jump_active(PaneDirection::Left));
+    assert_eq!(tree.active_pane(), left);
+
+    assert!(tree.jump_active(PaneDirection::Right));
+    assert_eq!(tree.active_pane(), right_top);
+
+    assert!(!tree.jump_active(PaneDirection::Up));
+    assert_eq!(tree.active_pane(), right_top);
+    assert_eq!(tree.validate(), Ok(()));
+  }
+
+  #[test]
+  fn swap_active_swaps_pane_positions() {
+    let mut tree = SplitTree::new();
+    let left = tree.active_pane();
+    let right_top = tree.split_active(SplitAxis::Vertical);
+    let right_bottom = tree.split_active(SplitAxis::Horizontal);
+
+    assert_eq!(tree.pane_order(), vec![left, right_top, right_bottom]);
+    assert_eq!(tree.active_pane(), right_bottom);
+
+    assert!(tree.swap_active(PaneDirection::Up));
+    assert_eq!(tree.active_pane(), right_bottom);
+    assert_eq!(tree.pane_order(), vec![left, right_bottom, right_top]);
+
+    assert!(tree.jump_active(PaneDirection::Down));
+    assert_eq!(tree.active_pane(), right_top);
     assert_eq!(tree.validate(), Ok(()));
   }
 

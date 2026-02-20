@@ -30,13 +30,15 @@ struct EditorView: View {
         let isHoverOpen = hoverSnapshot != nil && !isCompletionOpen
         let isSignatureOpen = signatureSnapshot != nil && !isCompletionOpen && !isHoverOpen
         let cursorPickState = cursorPickState(from: model.uiTree.statuslineSnapshot())
+        let activePaneOrigin = panePixelOrigin(model.activePaneRect(), cellSize: cellSize)
         GeometryReader { proxy in
             ZStack {
                 Canvas { context, size in
-                    drawPlan(
+                    drawFrame(
                         in: context,
                         size: size,
-                        plan: model.plan,
+                        framePlan: model.framePlan,
+                        fallbackPlan: model.plan,
                         cellSize: cellSize,
                         bufferFont: bufferFont,
                         bufferNSFont: bufferNSFont,
@@ -108,7 +110,11 @@ struct EditorView: View {
                     if let completion = completionSnapshot {
                         CompletionPopupView(
                             snapshot: completion,
-                            cursorOrigin: cursorPixelPosition(plan: model.plan, cellSize: cellSize),
+                            cursorOrigin: cursorPixelPosition(
+                                plan: model.plan,
+                                paneOrigin: activePaneOrigin,
+                                cellSize: cellSize
+                            ),
                             cellSize: cellSize,
                             containerSize: proxy.size,
                             languageHint: model.completionDocsLanguageHint(),
@@ -123,7 +129,11 @@ struct EditorView: View {
                     } else if let hover = hoverSnapshot {
                         HoverPopupView(
                             snapshot: hover,
-                            cursorOrigin: cursorPixelPosition(plan: model.plan, cellSize: cellSize),
+                            cursorOrigin: cursorPixelPosition(
+                                plan: model.plan,
+                                paneOrigin: activePaneOrigin,
+                                cellSize: cellSize
+                            ),
                             cellSize: cellSize,
                             containerSize: proxy.size,
                             languageHint: model.completionDocsLanguageHint()
@@ -132,7 +142,11 @@ struct EditorView: View {
                     } else if let signature = signatureSnapshot {
                         SignatureHelpPopupView(
                             snapshot: signature,
-                            cursorOrigin: cursorPixelPosition(plan: model.plan, cellSize: cellSize),
+                            cursorOrigin: cursorPixelPosition(
+                                plan: model.plan,
+                                paneOrigin: activePaneOrigin,
+                                cellSize: cellSize
+                            ),
                             cellSize: cellSize,
                             containerSize: proxy.size,
                             languageHint: model.completionDocsLanguageHint()
@@ -195,16 +209,153 @@ struct EditorView: View {
         }
     }
 
-    private func cursorPixelPosition(plan: RenderPlan, cellSize: CGSize) -> CGPoint {
+    private func panePixelOrigin(_ rect: Rect?, cellSize: CGSize) -> CGPoint {
+        guard let rect else {
+            return .zero
+        }
+        return CGPoint(
+            x: CGFloat(rect.x) * cellSize.width,
+            y: CGFloat(rect.y) * cellSize.height
+        )
+    }
+
+    private func drawFrame(
+        in context: GraphicsContext,
+        size: CGSize,
+        framePlan: RenderFramePlan,
+        fallbackPlan: RenderPlan,
+        cellSize: CGSize,
+        bufferFont: Font,
+        bufferNSFont: NSFont,
+        cursorPickState: CursorPickState?
+    ) {
+        let paneCount = Int(framePlan.pane_count())
+        guard paneCount > 0 else {
+            drawPlan(
+                in: context,
+                size: size,
+                plan: fallbackPlan,
+                cellSize: cellSize,
+                bufferFont: bufferFont,
+                bufferNSFont: bufferNSFont,
+                cursorPickState: cursorPickState
+            )
+            return
+        }
+
+        for index in 0..<paneCount {
+            let pane = framePlan.pane_at(UInt(index))
+            let paneRect = pane.rect()
+            let paneSize = CGSize(
+                width: CGFloat(paneRect.width) * cellSize.width,
+                height: CGFloat(paneRect.height) * cellSize.height
+            )
+            var paneContext = context
+            paneContext.translateBy(
+                x: CGFloat(paneRect.x) * cellSize.width,
+                y: CGFloat(paneRect.y) * cellSize.height
+            )
+            drawPlan(
+                in: paneContext,
+                size: paneSize,
+                plan: pane.plan(),
+                cellSize: cellSize,
+                bufferFont: bufferFont,
+                bufferNSFont: bufferNSFont,
+                cursorPickState: pane.is_active() ? cursorPickState : nil
+            )
+        }
+
+        drawPaneSeparators(
+            in: context,
+            framePlan: framePlan,
+            canvasSize: size,
+            cellSize: cellSize
+        )
+    }
+
+    private struct SplitEdge {
+        let from: CGPoint
+        let to: CGPoint
+        let active: Bool
+    }
+
+    private func drawPaneSeparators(
+        in context: GraphicsContext,
+        framePlan: RenderFramePlan,
+        canvasSize: CGSize,
+        cellSize: CGSize
+    ) {
+        let paneCount = Int(framePlan.pane_count())
+        guard paneCount > 1 else { return }
+
+        var maxCol = 0
+        var maxRow = 0
+        var panes: [RenderFramePane] = []
+        panes.reserveCapacity(paneCount)
+        for index in 0..<paneCount {
+            let pane = framePlan.pane_at(UInt(index))
+            panes.append(pane)
+            let rect = pane.rect()
+            maxCol = max(maxCol, Int(rect.x) + Int(rect.width))
+            maxRow = max(maxRow, Int(rect.y) + Int(rect.height))
+        }
+
+        var edges: [SplitEdge] = []
+        edges.reserveCapacity(paneCount * 2)
+        for pane in panes {
+            let rect = pane.rect()
+            let x0 = CGFloat(rect.x) * cellSize.width
+            let y0 = CGFloat(rect.y) * cellSize.height
+            let x1 = CGFloat(Int(rect.x) + Int(rect.width)) * cellSize.width
+            let y1 = CGFloat(Int(rect.y) + Int(rect.height)) * cellSize.height
+            let active = pane.is_active()
+
+            if Int(rect.width) > 0 && Int(rect.x) + Int(rect.width) < maxCol {
+                edges.append(SplitEdge(
+                    from: CGPoint(x: x1, y: y0),
+                    to: CGPoint(x: x1, y: min(y1, canvasSize.height)),
+                    active: active
+                ))
+            }
+            if Int(rect.height) > 0 && Int(rect.y) + Int(rect.height) < maxRow {
+                edges.append(SplitEdge(
+                    from: CGPoint(x: x0, y: y1),
+                    to: CGPoint(x: min(x1, canvasSize.width), y: y1),
+                    active: active
+                ))
+            }
+        }
+
+        let inactiveColor = SwiftUI.Color(nsColor: .separatorColor).opacity(0.30)
+        let activeColor = SwiftUI.Color(nsColor: .controlAccentColor).opacity(0.75)
+
+        for edge in edges where !edge.active {
+            let path = Path { path in
+                path.move(to: edge.from)
+                path.addLine(to: edge.to)
+            }
+            context.stroke(path, with: .color(inactiveColor), lineWidth: 1.0)
+        }
+        for edge in edges where edge.active {
+            let path = Path { path in
+                path.move(to: edge.from)
+                path.addLine(to: edge.to)
+            }
+            context.stroke(path, with: .color(activeColor), lineWidth: 1.0)
+        }
+    }
+
+    private func cursorPixelPosition(plan: RenderPlan, paneOrigin: CGPoint, cellSize: CGSize) -> CGPoint {
         let contentOffsetX = CGFloat(plan.content_offset_x()) * cellSize.width
         let count = Int(plan.cursor_count())
         guard count > 0 else {
-            return CGPoint(x: contentOffsetX, y: 0)
+            return CGPoint(x: paneOrigin.x + contentOffsetX, y: paneOrigin.y)
         }
         let pos = plan.cursor_at(0).pos()
         return CGPoint(
-            x: contentOffsetX + CGFloat(pos.col) * cellSize.width,
-            y: CGFloat(pos.row) * cellSize.height
+            x: paneOrigin.x + contentOffsetX + CGFloat(pos.col) * cellSize.width,
+            y: paneOrigin.y + CGFloat(pos.row) * cellSize.height
         )
     }
 

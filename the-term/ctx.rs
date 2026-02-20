@@ -81,6 +81,7 @@ use the_lib::{
   position::Position,
   registers::Registers,
   render::{
+    FrameRenderPlan,
     GutterConfig,
     InlineDiagnosticRenderLine,
     RenderGutterDiffKind,
@@ -4053,6 +4054,14 @@ impl the_default::DefaultContext for Ctx {
 
   fn build_render_plan_with_styles(&mut self, styles: RenderStyles) -> RenderPlan {
     crate::render::build_render_plan_with_styles(self, styles)
+  }
+
+  fn build_frame_render_plan(&mut self) -> FrameRenderPlan {
+    crate::render::build_frame_render_plan(self)
+  }
+
+  fn build_frame_render_plan_with_styles(&mut self, styles: RenderStyles) -> FrameRenderPlan {
+    crate::render::build_frame_render_plan_with_styles(self, styles)
   }
 
   fn request_quit(&mut self) {

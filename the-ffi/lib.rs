@@ -976,6 +976,114 @@ impl From<the_lib::render::RenderPlan> for RenderPlan {
   }
 }
 
+#[derive(Debug, Clone)]
+pub struct RenderFramePane {
+  pane_id:   u64,
+  rect:      LibRect,
+  is_active: bool,
+  plan:      RenderPlan,
+}
+
+impl RenderFramePane {
+  fn empty() -> Self {
+    Self {
+      pane_id:   0,
+      rect:      LibRect::new(0, 0, 0, 0),
+      is_active: false,
+      plan:      RenderPlan::empty(),
+    }
+  }
+
+  fn pane_id(&self) -> u64 {
+    self.pane_id
+  }
+
+  fn rect(&self) -> ffi::Rect {
+    self.rect.into()
+  }
+
+  fn is_active(&self) -> bool {
+    self.is_active
+  }
+
+  fn plan(&self) -> RenderPlan {
+    self.plan.clone()
+  }
+}
+
+#[derive(Debug, Clone)]
+pub struct RenderFramePlan {
+  active_pane_id: u64,
+  panes:          Vec<RenderFramePane>,
+}
+
+impl RenderFramePlan {
+  fn empty() -> Self {
+    Self {
+      active_pane_id: 0,
+      panes:          Vec::new(),
+    }
+  }
+
+  fn from_lib(
+    frame: the_lib::render::FrameRenderPlan,
+    inline_diagnostic_lines: Vec<InlineDiagnosticRenderLine>,
+    eol_diagnostics: Vec<EolDiagnosticEntry>,
+    diagnostic_underlines: Vec<DiagnosticUnderlineEntry>,
+  ) -> Self {
+    let active = frame.active_pane;
+    let active_pane_id = active.get().get() as u64;
+    let panes = frame
+      .panes
+      .into_iter()
+      .map(|pane| {
+        let is_active = pane.pane_id == active;
+        let mut wrapped_plan: RenderPlan = pane.plan.into();
+        if is_active {
+          wrapped_plan.inline_diagnostic_lines = inline_diagnostic_lines.clone();
+          wrapped_plan.eol_diagnostics = eol_diagnostics.clone();
+          wrapped_plan.diagnostic_underlines = diagnostic_underlines.clone();
+        }
+        RenderFramePane {
+          pane_id: pane.pane_id.get().get() as u64,
+          rect: pane.rect,
+          is_active,
+          plan: wrapped_plan,
+        }
+      })
+      .collect();
+    Self {
+      active_pane_id,
+      panes,
+    }
+  }
+
+  fn active_pane_id(&self) -> u64 {
+    self.active_pane_id
+  }
+
+  fn pane_count(&self) -> usize {
+    self.panes.len()
+  }
+
+  fn pane_at(&self, index: usize) -> RenderFramePane {
+    self
+      .panes
+      .get(index)
+      .cloned()
+      .unwrap_or_else(RenderFramePane::empty)
+  }
+
+  fn active_plan(&self) -> RenderPlan {
+    self
+      .panes
+      .iter()
+      .find(|pane| pane.is_active)
+      .map(|pane| pane.plan.clone())
+      .unwrap_or_else(RenderPlan::empty)
+  }
+}
+
 pub struct RenderInlineDiagnosticLine {
   inner:      InlineDiagnosticRenderLine,
   scroll_row: usize,
@@ -3680,6 +3788,29 @@ impl App {
     }
   }
 
+  pub fn frame_render_plan(&mut self, id: ffi::EditorId) -> RenderFramePlan {
+    let started = Instant::now();
+    if self.activate(id).is_none() {
+      return RenderFramePlan::empty();
+    }
+    let _ = self.poll_background_active();
+
+    let frame = the_default::frame_render_plan(self);
+    let inline_diagnostic_lines = std::mem::take(&mut self.inline_diagnostic_lines);
+    let eol_diagnostics = std::mem::take(&mut self.eol_diagnostics);
+    let diagnostic_underlines = std::mem::take(&mut self.diagnostic_underlines);
+    let elapsed = started.elapsed();
+    if ffi_ui_profile_should_log(elapsed) {
+      ffi_ui_profile_log(format!("frame_render_plan elapsed={}ms", elapsed.as_millis()));
+    }
+    RenderFramePlan::from_lib(
+      frame,
+      inline_diagnostic_lines,
+      eol_diagnostics,
+      diagnostic_underlines,
+    )
+  }
+
   pub fn render_plan_with_styles(
     &mut self,
     id: ffi::EditorId,
@@ -3969,6 +4100,119 @@ impl App {
     self.diagnostic_underlines = underlines;
     self.active_state_mut().highlight_cache = highlight_cache;
     plan
+  }
+
+  fn build_inactive_pane_render_plan_with_styles_impl(
+    &mut self,
+    buffer_index: usize,
+    styles: RenderStyles,
+  ) -> the_lib::render::RenderPlan {
+    let (
+      mut text_fmt,
+      gutter_config,
+      allow_cache_refresh,
+    ) = {
+      let state = self.active_state_ref();
+      (
+        state.text_format.clone(),
+        state.gutter_config.clone(),
+        state
+          .syntax_parse_highlight_state
+          .allow_cache_refresh(&state.syntax_parse_lifecycle),
+      )
+    };
+    let mut annotations = TextAnnotations::default();
+    let mut local_highlight_cache = HighlightCache::default();
+    let loader = self.loader.clone();
+
+    let editor = self.active_editor_mut();
+    let Some(view) = editor.buffer_view(buffer_index) else {
+      return the_lib::render::RenderPlan::default();
+    };
+    let Some((doc, cache)) = editor.document_and_cache_at_mut(buffer_index) else {
+      return the_lib::render::RenderPlan::default();
+    };
+    let gutter_width = gutter_width_for_document(doc, view.viewport.width, &gutter_config);
+    text_fmt.viewport_width = view.viewport.width.saturating_sub(gutter_width).max(1);
+
+    if let (Some(loader), Some(syntax)) = (loader.as_deref(), doc.syntax()) {
+      let line_range = view.scroll.row..(view.scroll.row + view.viewport.height as usize);
+      let mut adapter = SyntaxHighlightAdapter::new(
+        doc.text().slice(..),
+        syntax,
+        loader,
+        &mut local_highlight_cache,
+        line_range,
+        doc.version(),
+        doc.syntax_version(),
+        allow_cache_refresh,
+      );
+      build_plan(
+        doc,
+        view,
+        &text_fmt,
+        &gutter_config,
+        &mut annotations,
+        &mut adapter,
+        cache,
+        styles,
+      )
+    } else {
+      let mut highlights = NoHighlights;
+      build_plan(
+        doc,
+        view,
+        &text_fmt,
+        &gutter_config,
+        &mut annotations,
+        &mut highlights,
+        cache,
+        styles,
+      )
+    }
+  }
+
+  fn build_frame_render_plan_with_styles_impl(
+    &mut self,
+    styles: RenderStyles,
+  ) -> the_lib::render::FrameRenderPlan {
+    let (active_pane, panes) = {
+      let editor = self.active_editor_ref();
+      let viewport = editor.view().viewport;
+      (editor.active_pane_id(), editor.pane_snapshots(viewport))
+    };
+    if panes.is_empty() {
+      self.inline_diagnostic_lines.clear();
+      self.eol_diagnostics.clear();
+      self.diagnostic_underlines.clear();
+      return the_lib::render::FrameRenderPlan::empty();
+    }
+
+    {
+      let editor = self.active_editor_mut();
+      for pane in &panes {
+        let _ = editor.set_buffer_viewport(pane.buffer_index, pane.rect);
+      }
+    }
+
+    let mut pane_plans = Vec::with_capacity(panes.len());
+    for pane in panes {
+      let plan = if pane.is_active_pane {
+        self.build_render_plan_with_styles_impl(styles)
+      } else {
+        self.build_inactive_pane_render_plan_with_styles_impl(pane.buffer_index, styles)
+      };
+      pane_plans.push(the_lib::render::PaneRenderPlan {
+        pane_id: pane.pane_id,
+        rect: pane.rect,
+        plan,
+      });
+    }
+
+    the_lib::render::FrameRenderPlan {
+      active_pane,
+      panes: pane_plans,
+    }
   }
 
   pub fn text(&self, id: ffi::EditorId) -> String {
@@ -7042,6 +7286,17 @@ impl DefaultContext for App {
     self.build_render_plan_with_styles_impl(styles)
   }
 
+  fn build_frame_render_plan(&mut self) -> the_lib::render::FrameRenderPlan {
+    self.build_frame_render_plan_with_styles_impl(RenderStyles::default())
+  }
+
+  fn build_frame_render_plan_with_styles(
+    &mut self,
+    styles: RenderStyles,
+  ) -> the_lib::render::FrameRenderPlan {
+    self.build_frame_render_plan_with_styles_impl(styles)
+  }
+
   fn request_quit(&mut self) {
     self.should_quit = true;
   }
@@ -7844,6 +8099,7 @@ mod ffi {
     fn clear_active_cursor(self: &mut App, id: EditorId) -> bool;
     fn cursor_ids(self: &App, id: EditorId) -> Vec<u64>;
     fn render_plan(self: &mut App, id: EditorId) -> RenderPlan;
+    fn frame_render_plan(self: &mut App, id: EditorId) -> RenderFramePlan;
     fn render_plan_with_styles(self: &mut App, id: EditorId, styles: RenderStyles) -> RenderPlan;
     fn ui_tree_json(self: &mut App, id: EditorId) -> String;
     fn message_snapshot_json(self: &mut App, id: EditorId) -> String;
@@ -8131,6 +8387,22 @@ mod ffi {
     fn start_col(self: &RenderDiagnosticUnderline) -> u16;
     fn end_col(self: &RenderDiagnosticUnderline) -> u16;
     fn severity(self: &RenderDiagnosticUnderline) -> u8;
+  }
+
+  extern "Rust" {
+    type RenderFramePane;
+    fn pane_id(self: &RenderFramePane) -> u64;
+    fn rect(self: &RenderFramePane) -> Rect;
+    fn is_active(self: &RenderFramePane) -> bool;
+    fn plan(self: &RenderFramePane) -> RenderPlan;
+  }
+
+  extern "Rust" {
+    type RenderFramePlan;
+    fn active_pane_id(self: &RenderFramePlan) -> u64;
+    fn pane_count(self: &RenderFramePlan) -> usize;
+    fn pane_at(self: &RenderFramePlan, index: usize) -> RenderFramePane;
+    fn active_plan(self: &RenderFramePlan) -> RenderPlan;
   }
 
   // File picker snapshot (direct FFI, no JSON)
@@ -9556,7 +9828,10 @@ pkgs.mkShell {
     }
 
     let mut app = App::new();
-    let id = app.create_editor(&content, default_viewport(), ffi::Position { row: 0, col: 0 });
+    let id = app.create_editor(&content, default_viewport(), ffi::Position {
+      row: 0,
+      col: 0,
+    });
     assert!(app.activate(id).is_some());
 
     let start = {
@@ -9587,7 +9862,10 @@ pkgs.mkShell {
     }
 
     let mut app = App::new();
-    let id = app.create_editor(&content, default_viewport(), ffi::Position { row: 0, col: 0 });
+    let id = app.create_editor(&content, default_viewport(), ffi::Position {
+      row: 0,
+      col: 0,
+    });
     assert!(app.activate(id).is_some());
 
     let start = {
@@ -10238,7 +10516,10 @@ pkgs.mkShell {
         .push(Range::point(second))
         .push(Range::point(third))
     };
-    let _ = app.active_editor_mut().document_mut().set_selection(selection);
+    let _ = app
+      .active_editor_mut()
+      .document_mut()
+      .set_selection(selection);
     app.active_state_mut().mode = Mode::Select;
 
     assert!(app.handle_key(id, key_char('&')));
@@ -10270,13 +10551,15 @@ pkgs.mkShell {
     let events = app.active_state_ref().messages.events_since(before_seq);
     let error = events
       .iter()
-      .find_map(|event| match &event.kind {
-        the_lib::messages::MessageEventKind::Published { message } => {
-          (message.level == the_lib::messages::MessageLevel::Error
-            && message.source.as_deref() == Some("align"))
-          .then_some(message.text.as_str())
-        },
-        _ => None,
+      .find_map(|event| {
+        match &event.kind {
+          the_lib::messages::MessageEventKind::Published { message } => {
+            (message.level == the_lib::messages::MessageLevel::Error
+              && message.source.as_deref() == Some("align"))
+            .then_some(message.text.as_str())
+          },
+          _ => None,
+        }
       })
       .expect("align error message");
     assert_eq!(error, "align cannot work with multi line selections");
@@ -10287,10 +10570,11 @@ pkgs.mkShell {
   fn trim_selections_keymap_trims_ranges_and_drops_whitespace_only() {
     let _guard = ffi_test_guard();
     let mut app = App::new();
-    let id = app.create_editor("  alpha  \n   \n  beta  \n", default_viewport(), ffi::Position {
-      row: 0,
-      col: 0,
-    });
+    let id = app.create_editor(
+      "  alpha  \n   \n  beta  \n",
+      default_viewport(),
+      ffi::Position { row: 0, col: 0 },
+    );
     assert!(app.activate(id).is_some());
 
     let text = app.active_editor_ref().document().text().clone();

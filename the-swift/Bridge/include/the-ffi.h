@@ -171,6 +171,30 @@ void* __swift_bridge__$Vec_RenderPlan$get_mut(void* vec_ptr, uintptr_t index);
 uintptr_t __swift_bridge__$Vec_RenderPlan$len(void* vec_ptr);
 void* __swift_bridge__$Vec_RenderPlan$as_ptr(void* vec_ptr);
 
+typedef struct RenderFramePane RenderFramePane;
+void __swift_bridge__$RenderFramePane$_free(void* self);
+
+void* __swift_bridge__$Vec_RenderFramePane$new(void);
+void __swift_bridge__$Vec_RenderFramePane$drop(void* vec_ptr);
+void __swift_bridge__$Vec_RenderFramePane$push(void* vec_ptr, void* item_ptr);
+void* __swift_bridge__$Vec_RenderFramePane$pop(void* vec_ptr);
+void* __swift_bridge__$Vec_RenderFramePane$get(void* vec_ptr, uintptr_t index);
+void* __swift_bridge__$Vec_RenderFramePane$get_mut(void* vec_ptr, uintptr_t index);
+uintptr_t __swift_bridge__$Vec_RenderFramePane$len(void* vec_ptr);
+void* __swift_bridge__$Vec_RenderFramePane$as_ptr(void* vec_ptr);
+
+typedef struct RenderFramePlan RenderFramePlan;
+void __swift_bridge__$RenderFramePlan$_free(void* self);
+
+void* __swift_bridge__$Vec_RenderFramePlan$new(void);
+void __swift_bridge__$Vec_RenderFramePlan$drop(void* vec_ptr);
+void __swift_bridge__$Vec_RenderFramePlan$push(void* vec_ptr, void* item_ptr);
+void* __swift_bridge__$Vec_RenderFramePlan$pop(void* vec_ptr);
+void* __swift_bridge__$Vec_RenderFramePlan$get(void* vec_ptr, uintptr_t index);
+void* __swift_bridge__$Vec_RenderFramePlan$get_mut(void* vec_ptr, uintptr_t index);
+uintptr_t __swift_bridge__$Vec_RenderFramePlan$len(void* vec_ptr);
+void* __swift_bridge__$Vec_RenderFramePlan$as_ptr(void* vec_ptr);
+
 typedef struct FilePickerSnapshotData FilePickerSnapshotData;
 void __swift_bridge__$FilePickerSnapshotData$_free(void* self);
 
@@ -229,6 +253,7 @@ bool __swift_bridge__$App$set_active_cursor(void* self, struct __swift_bridge__$
 bool __swift_bridge__$App$clear_active_cursor(void* self, struct __swift_bridge__$EditorId id);
 void* __swift_bridge__$App$cursor_ids(void* self, struct __swift_bridge__$EditorId id);
 void* __swift_bridge__$App$render_plan(void* self, struct __swift_bridge__$EditorId id);
+void* __swift_bridge__$App$frame_render_plan(void* self, struct __swift_bridge__$EditorId id);
 void* __swift_bridge__$App$render_plan_with_styles(void* self, struct __swift_bridge__$EditorId id, struct __swift_bridge__$RenderStyles styles);
 void* __swift_bridge__$App$ui_tree_json(void* self, struct __swift_bridge__$EditorId id);
 void* __swift_bridge__$App$message_snapshot_json(void* self, struct __swift_bridge__$EditorId id);
@@ -369,6 +394,14 @@ uint16_t __swift_bridge__$RenderDiagnosticUnderline$row(void* self);
 uint16_t __swift_bridge__$RenderDiagnosticUnderline$start_col(void* self);
 uint16_t __swift_bridge__$RenderDiagnosticUnderline$end_col(void* self);
 uint8_t __swift_bridge__$RenderDiagnosticUnderline$severity(void* self);
+uint64_t __swift_bridge__$RenderFramePane$pane_id(void* self);
+struct __swift_bridge__$Rect __swift_bridge__$RenderFramePane$rect(void* self);
+bool __swift_bridge__$RenderFramePane$is_active(void* self);
+void* __swift_bridge__$RenderFramePane$plan(void* self);
+uint64_t __swift_bridge__$RenderFramePlan$active_pane_id(void* self);
+uintptr_t __swift_bridge__$RenderFramePlan$pane_count(void* self);
+void* __swift_bridge__$RenderFramePlan$pane_at(void* self, uintptr_t index);
+void* __swift_bridge__$RenderFramePlan$active_plan(void* self);
 bool __swift_bridge__$FilePickerSnapshotData$active(void* self);
 void* __swift_bridge__$FilePickerSnapshotData$query(void* self);
 uintptr_t __swift_bridge__$FilePickerSnapshotData$matched_count(void* self);

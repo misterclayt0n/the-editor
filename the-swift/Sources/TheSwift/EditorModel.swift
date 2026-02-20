@@ -7,6 +7,7 @@ final class EditorModel: ObservableObject {
     private let app: TheEditorFFIBridge.App
     let editorId: EditorId
     @Published var plan: RenderPlan
+    @Published var framePlan: RenderFramePlan
     @Published var uiTree: UiTreeSnapshot = .empty
     private var viewport: Rect
     private var effectiveViewport: Rect
@@ -45,7 +46,9 @@ final class EditorModel: ObservableObject {
         if let filePath {
             _ = app.set_file_path(editorId, filePath)
         }
-        self.plan = app.render_plan(editorId)
+        let initialFramePlan = app.frame_render_plan(editorId)
+        self.framePlan = initialFramePlan
+        self.plan = initialFramePlan.active_plan()
         self.mode = EditorMode(rawValue: app.mode(editorId)) ?? .normal
         if DiagnosticsDebugLog.enabled {
             DiagnosticsDebugLog.log(
@@ -97,7 +100,8 @@ final class EditorModel: ObservableObject {
         }
         updateEffectiveViewport()
 
-        plan = app.render_plan(editorId)
+        framePlan = app.frame_render_plan(editorId)
+        plan = framePlan.active_plan()
         debugDiagnosticsSnapshot(trigger: trigger, plan: plan)
 
         mode = EditorMode(rawValue: app.mode(editorId)) ?? .normal
@@ -187,6 +191,18 @@ final class EditorModel: ObservableObject {
         let scroll = Position(row: UInt64(newRow), col: UInt64(newCol))
         _ = app.set_scroll(editorId, scroll)
         refresh(trigger: "scroll")
+    }
+
+    func activePaneRect() -> Rect? {
+        let paneCount = Int(framePlan.pane_count())
+        guard paneCount > 0 else { return nil }
+        for index in 0..<paneCount {
+            let pane = framePlan.pane_at(UInt(index))
+            if pane.is_active() {
+                return pane.rect()
+            }
+        }
+        return nil
     }
 
     private func scrollDelta(deltaX: CGFloat, deltaY: CGFloat, precise: Bool) -> (Int, Int) {

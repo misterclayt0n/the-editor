@@ -41,8 +41,8 @@ use the_default::{
   command_palette_filtered_indices,
   completion_docs_panel_rect as default_completion_docs_panel_rect,
   completion_panel_rect as default_completion_panel_rect,
+  frame_render_plan,
   file_picker_icon_glyph,
-  render_plan,
   set_picker_visible_rows,
   signature_help_markdown,
   signature_help_panel_rect as default_signature_help_panel_rect,
@@ -68,7 +68,9 @@ use the_lib::{
     InlineDiagnosticsConfig,
     InlineDiagnosticsLineAnnotation,
     LayoutIntent,
+    FrameRenderPlan,
     NoHighlights,
+    PaneRenderPlan,
     RenderDiagnosticGutterStyles,
     RenderDiffGutterStyles,
     RenderPlan,
@@ -4559,6 +4561,280 @@ pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> Ren
   plan
 }
 
+fn build_inactive_pane_plan_with_styles(
+  ctx: &mut Ctx,
+  buffer_index: usize,
+  styles: RenderStyles,
+) -> RenderPlan {
+  let Some(view) = ctx.editor.buffer_view(buffer_index) else {
+    return RenderPlan::default();
+  };
+  let allow_cache_refresh = ctx.syntax_highlight_refresh_allowed();
+  let mut text_fmt = ctx.text_format.clone();
+  let mut annotations = TextAnnotations::default();
+
+  let Some((doc, render_cache)) = ctx.editor.document_and_cache_at_mut(buffer_index) else {
+    return RenderPlan::default();
+  };
+  let gutter_width = gutter_width_for_document(doc, view.viewport.width, &ctx.gutter_config);
+  text_fmt.viewport_width = view.viewport.width.saturating_sub(gutter_width).max(1);
+
+  if let (Some(loader), Some(syntax)) = (&ctx.loader, doc.syntax()) {
+    let line_range = view.scroll.row..(view.scroll.row + view.viewport.height as usize);
+    let mut adapter = SyntaxHighlightAdapter::new(
+      doc.text().slice(..),
+      syntax,
+      loader.as_ref(),
+      &mut ctx.highlight_cache,
+      line_range,
+      doc.version(),
+      doc.syntax_version(),
+      allow_cache_refresh,
+    );
+    build_plan(
+      doc,
+      view,
+      &text_fmt,
+      &ctx.gutter_config,
+      &mut annotations,
+      &mut adapter,
+      render_cache,
+      styles,
+    )
+  } else {
+    let mut highlights = NoHighlights;
+    build_plan(
+      doc,
+      view,
+      &text_fmt,
+      &ctx.gutter_config,
+      &mut annotations,
+      &mut highlights,
+      render_cache,
+      styles,
+    )
+  }
+}
+
+pub fn build_frame_render_plan(ctx: &mut Ctx) -> FrameRenderPlan {
+  let styles = render_styles_from_theme(ctx);
+  build_frame_render_plan_with_styles(ctx, styles)
+}
+
+pub fn build_frame_render_plan_with_styles(
+  ctx: &mut Ctx,
+  styles: RenderStyles,
+) -> FrameRenderPlan {
+  let viewport = ctx.editor.view().viewport;
+  let pane_snapshots = ctx.editor.pane_snapshots(viewport);
+  if pane_snapshots.is_empty() {
+    ctx.inline_diagnostic_lines.clear();
+    ctx.diagnostic_underlines.clear();
+    return FrameRenderPlan::empty();
+  }
+
+  for pane in &pane_snapshots {
+    let _ = ctx.editor.set_buffer_viewport(pane.buffer_index, pane.rect);
+  }
+
+  let active_pane = ctx.editor.active_pane_id();
+  let panes = pane_snapshots
+    .into_iter()
+    .map(|pane| {
+      let plan = if pane.is_active_pane {
+        build_render_plan_with_styles(ctx, styles)
+      } else {
+        build_inactive_pane_plan_with_styles(ctx, pane.buffer_index, styles)
+      };
+      PaneRenderPlan {
+        pane_id: pane.pane_id,
+        rect: pane.rect,
+        plan,
+      }
+    })
+    .collect();
+
+  FrameRenderPlan { active_pane, panes }
+}
+
+fn pane_screen_rect(area: Rect, pane: the_lib::render::graphics::Rect) -> Rect {
+  Rect::new(
+    area.x.saturating_add(pane.x),
+    area.y.saturating_add(pane.y),
+    pane.width,
+    pane.height,
+  )
+}
+
+fn draw_pane_content(
+  buf: &mut Buffer,
+  ctx: &mut Ctx,
+  pane_area: Rect,
+  plan: &RenderPlan,
+  base_text_style: Style,
+  draw_active_annotations: bool,
+) -> Option<(u16, u16)> {
+  let content_x = pane_area.x.saturating_add(plan.content_offset_x);
+  let editor_cursor = plan.cursors.first().map(|cursor| {
+    (
+      content_x + cursor.pos.col as u16,
+      pane_area.y + cursor.pos.row as u16,
+    )
+  });
+
+  if plan.content_offset_x > 0 {
+    for line in &plan.gutter_lines {
+      let y = pane_area.y + line.row;
+      if y >= pane_area.y + pane_area.height {
+        continue;
+      }
+      for span in &line.spans {
+        let x = pane_area.x + span.col;
+        if x >= content_x {
+          continue;
+        }
+        let max_width = content_x.saturating_sub(x) as usize;
+        if max_width == 0 {
+          continue;
+        }
+        let text = if is_diff_gutter_marker(span.text.as_str()) {
+          "▏"
+        } else {
+          span.text.as_str()
+        };
+        buf.set_stringn(x, y, text, max_width, lib_style_to_ratatui(span.style));
+      }
+    }
+  }
+
+  for selection in &plan.selections {
+    let rect = Rect::new(
+      content_x + selection.rect.x,
+      pane_area.y + selection.rect.y,
+      selection.rect.width,
+      selection.rect.height,
+    );
+    fill_rect(buf, rect, lib_style_to_ratatui(selection.style));
+  }
+
+  for line in &plan.lines {
+    let y = pane_area.y + line.row;
+    if y >= pane_area.y + pane_area.height {
+      continue;
+    }
+    for span in &line.spans {
+      let x = content_x + span.col;
+      if x >= pane_area.x + pane_area.width {
+        continue;
+      }
+      let style = span
+        .highlight
+        .map(|highlight| {
+          base_text_style.patch(lib_style_to_ratatui(ctx.ui_theme.highlight(highlight)))
+        })
+        .unwrap_or(base_text_style);
+      let max_width = pane_area
+        .x
+        .saturating_add(pane_area.width)
+        .saturating_sub(x) as usize;
+      if max_width == 0 {
+        continue;
+      }
+      buf.set_stringn(x, y, span.text.as_str(), max_width, style);
+    }
+  }
+
+  if draw_active_annotations {
+    draw_diagnostic_underlines(buf, pane_area, content_x, ctx);
+    draw_end_of_line_diagnostics(buf, pane_area, content_x, plan, ctx);
+    draw_inline_diagnostic_lines(buf, pane_area, content_x, plan, ctx);
+  }
+
+  for cursor in &plan.cursors {
+    let x = content_x + cursor.pos.col as u16;
+    let y = pane_area.y + cursor.pos.row as u16;
+    if x < pane_area.x + pane_area.width && y < pane_area.y + pane_area.height {
+      let style = lib_style_to_ratatui(cursor.style);
+      let cell = buf.get_mut(x, y);
+      let merged = cell.style().patch(style);
+      cell.set_style(merged);
+    }
+  }
+
+  editor_cursor
+}
+
+fn draw_pane_separators(buf: &mut Buffer, area: Rect, frame: &FrameRenderPlan, ctx: &Ctx) {
+  if frame.panes.len() <= 1 {
+    return;
+  }
+
+  let window_style =
+    lib_style_to_ratatui(ctx.ui_theme.try_get("ui.window").unwrap_or_default());
+  let active_style = lib_style_to_ratatui(
+    ctx
+      .ui_theme
+      .try_get("ui.window.active")
+      .or_else(|| ctx.ui_theme.try_get("ui.cursor.match"))
+      .or_else(|| ctx.ui_theme.try_get("ui.window"))
+      .unwrap_or_default(),
+  );
+
+  let x_max = area.x.saturating_add(area.width);
+  let y_max = area.y.saturating_add(area.height);
+  let mut vertical_cells: BTreeMap<(u16, u16), bool> = BTreeMap::new();
+  let mut horizontal_cells: BTreeMap<(u16, u16), bool> = BTreeMap::new();
+
+  for pane in &frame.panes {
+    let rect = pane_screen_rect(area, pane.rect);
+    let is_active = pane.pane_id == frame.active_pane;
+    let right = rect.x.saturating_add(rect.width);
+    if rect.width > 0 && right < x_max {
+      let x = right.saturating_sub(1);
+      for y in rect.y..rect.y.saturating_add(rect.height) {
+        vertical_cells
+          .entry((x, y))
+          .and_modify(|active| *active |= is_active)
+          .or_insert(is_active);
+      }
+    }
+
+    let bottom = rect.y.saturating_add(rect.height);
+    if rect.height > 0 && bottom < y_max {
+      let y = bottom.saturating_sub(1);
+      for x in rect.x..rect.x.saturating_add(rect.width) {
+        horizontal_cells
+          .entry((x, y))
+          .and_modify(|active| *active |= is_active)
+          .or_insert(is_active);
+      }
+    }
+  }
+
+  for (&pos, &active_h) in &horizontal_cells {
+    let active_v = vertical_cells.get(&pos).copied().unwrap_or(false);
+    let style = if active_h || active_v {
+      active_style
+    } else {
+      window_style
+    };
+    let symbol = if active_v { "┼" } else { "─" };
+    let cell = buf.get_mut(pos.0, pos.1);
+    cell.set_symbol(symbol);
+    cell.set_style(cell.style().patch(style));
+  }
+
+  for (&pos, &active) in &vertical_cells {
+    if horizontal_cells.contains_key(&pos) {
+      continue;
+    }
+    let style = if active { active_style } else { window_style };
+    let cell = buf.get_mut(pos.0, pos.1);
+    cell.set_symbol("│");
+    cell.set_style(cell.style().patch(style));
+  }
+}
+
 /// Render the current document state to the terminal.
 pub fn render(f: &mut Frame, ctx: &mut Ctx) {
   let area = f.size();
@@ -4568,20 +4844,14 @@ pub fn render(f: &mut Frame, ctx: &mut Ctx) {
   resolve_ui_tree(&mut ui, &ctx.ui_theme);
   apply_ui_viewport(ctx, &ui, f.size());
   ensure_cursor_visible(ctx);
-  let plan = render_plan(ctx);
+  let frame_plan = frame_render_plan(ctx);
 
   f.render_widget(Clear, area);
 
   let _ui_cursor = {
     let buf = f.buffer_mut();
     let mut cursor_out = None;
-    let content_x = area.x.saturating_add(plan.content_offset_x);
-    let editor_cursor = plan.cursors.first().map(|cursor| {
-      (
-        content_x + cursor.pos.col as u16,
-        area.y + cursor.pos.row as u16,
-      )
-    });
+    let mut editor_cursor = None;
     let base_text_style = lib_style_to_ratatui(ctx.ui_theme.try_get("ui.text").unwrap_or_default());
     if let Some(bg) = ctx
       .ui_theme
@@ -4591,79 +4861,24 @@ pub fn render(f: &mut Frame, ctx: &mut Ctx) {
       fill_rect(buf, area, Style::default().bg(lib_color_to_ratatui(bg)));
     }
 
-    if plan.content_offset_x > 0 {
-      for line in &plan.gutter_lines {
-        let y = area.y + line.row;
-        if y >= area.y + area.height {
-          continue;
-        }
-        for span in &line.spans {
-          let x = area.x + span.col;
-          if x >= content_x {
-            continue;
-          }
-          let max_width = content_x.saturating_sub(x) as usize;
-          if max_width == 0 {
-            continue;
-          }
-          let text = if is_diff_gutter_marker(span.text.as_str()) {
-            "▏"
-          } else {
-            span.text.as_str()
-          };
-          buf.set_stringn(x, y, text, max_width, lib_style_to_ratatui(span.style));
-        }
-      }
-    }
-
-    for selection in &plan.selections {
-      let rect = Rect::new(
-        content_x + selection.rect.x,
-        area.y + selection.rect.y,
-        selection.rect.width,
-        selection.rect.height,
+    for pane in &frame_plan.panes {
+      let pane_area = pane_screen_rect(area, pane.rect);
+      let is_active = pane.pane_id == frame_plan.active_pane;
+      let pane_cursor = draw_pane_content(
+        buf,
+        ctx,
+        pane_area,
+        &pane.plan,
+        base_text_style,
+        is_active,
       );
-      fill_rect(buf, rect, lib_style_to_ratatui(selection.style));
-    }
-
-    // Draw text lines with syntax colors
-    for line in &plan.lines {
-      let y = area.y + line.row;
-      if y >= area.y + area.height {
-        continue;
-      }
-      for span in &line.spans {
-        let x = content_x + span.col;
-        if x >= area.x + area.width {
-          continue;
-        }
-        let style = span
-          .highlight
-          .map(|highlight| {
-            base_text_style.patch(lib_style_to_ratatui(ctx.ui_theme.highlight(highlight)))
-          })
-          .unwrap_or(base_text_style);
-        buf.set_string(x, y, span.text.as_str(), style);
+      if is_active {
+        editor_cursor = pane_cursor;
       }
     }
 
-    draw_diagnostic_underlines(buf, area, content_x, ctx);
-    draw_end_of_line_diagnostics(buf, area, content_x, &plan, ctx);
-    draw_inline_diagnostic_lines(buf, area, content_x, &plan, ctx);
+    draw_pane_separators(buf, area, &frame_plan, ctx);
 
-    // Draw cursors
-    for cursor in &plan.cursors {
-      let x = content_x + cursor.pos.col as u16;
-      let y = area.y + cursor.pos.row as u16;
-      if x < area.x + area.width && y < area.y + area.height {
-        let style = lib_style_to_ratatui(cursor.style);
-        let cell = buf.get_mut(x, y);
-        let merged = cell.style().patch(style);
-        cell.set_style(merged);
-      }
-    }
-
-    // Draw UI root and overlays.
     draw_ui_node(
       buf,
       area,

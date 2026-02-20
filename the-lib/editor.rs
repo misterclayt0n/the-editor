@@ -20,7 +20,10 @@ use crate::{
     Document,
     DocumentId,
   },
-  render::plan::RenderCache,
+  render::{
+    graphics::Rect,
+    plan::RenderCache,
+  },
   selection::Selection,
   split_tree::{
     PaneDirection,
@@ -69,6 +72,14 @@ struct BufferState {
   render_cache:             RenderCache,
   file_path:                Option<PathBuf>,
   object_selection_history: Vec<Selection>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PaneSnapshot {
+  pub pane_id:       PaneId,
+  pub buffer_index:  usize,
+  pub rect:          Rect,
+  pub is_active_pane: bool,
 }
 
 impl BufferState {
@@ -170,6 +181,51 @@ impl Editor {
 
   pub fn pane_count(&self) -> usize {
     self.split_tree.pane_count()
+  }
+
+  pub fn active_pane_id(&self) -> PaneId {
+    self.split_tree.active_pane()
+  }
+
+  pub fn pane_snapshots(&self, area: Rect) -> Vec<PaneSnapshot> {
+    let active = self.split_tree.active_pane();
+    self
+      .split_tree
+      .layout(area)
+      .into_iter()
+      .filter_map(|(pane_id, rect)| {
+        self.pane_buffers.get(&pane_id).copied().map(|buffer_index| PaneSnapshot {
+          pane_id,
+          buffer_index,
+          rect,
+          is_active_pane: pane_id == active,
+        })
+      })
+      .collect()
+  }
+
+  pub fn pane_buffer_index(&self, pane: PaneId) -> Option<usize> {
+    self.pane_buffers.get(&pane).copied()
+  }
+
+  pub fn buffer_view(&self, index: usize) -> Option<ViewState> {
+    self.buffers.get(index).map(|buffer| buffer.view)
+  }
+
+  pub fn set_buffer_viewport(&mut self, index: usize, viewport: Rect) -> bool {
+    let Some(buffer) = self.buffers.get_mut(index) else {
+      return false;
+    };
+    buffer.view.viewport = viewport;
+    true
+  }
+
+  pub fn document_and_cache_at_mut(
+    &mut self,
+    index: usize,
+  ) -> Option<(&Document, &mut RenderCache)> {
+    let buffer = self.buffers.get_mut(index)?;
+    Some((&buffer.document, &mut buffer.render_cache))
   }
 
   pub fn split_active_pane(&mut self, axis: SplitAxis) -> bool {
@@ -539,6 +595,26 @@ mod tests {
     assert!(editor.only_active_pane());
     assert_eq!(editor.pane_count(), 1);
     assert!(!editor.only_active_pane());
+  }
+
+  #[test]
+  fn editor_pane_snapshots_include_layout_and_active_marker() {
+    let doc_id = DocumentId::new(NonZeroUsize::new(1).unwrap());
+    let doc = Document::new(doc_id, Rope::from("one"));
+    let view = ViewState::new(Rect::new(0, 0, 120, 40), Position::new(0, 0));
+    let editor_id = EditorId::new(NonZeroUsize::new(1).unwrap());
+    let mut editor = Editor::new(editor_id, doc, view);
+
+    assert!(editor.split_active_pane(SplitAxis::Vertical));
+    assert!(editor.split_active_pane(SplitAxis::Horizontal));
+    let panes = editor.pane_snapshots(Rect::new(0, 0, 120, 40));
+    assert_eq!(panes.len(), 3);
+    assert_eq!(panes.iter().filter(|pane| pane.is_active_pane).count(), 1);
+    let total_area: usize = panes
+      .iter()
+      .map(|pane| pane.rect.width as usize * pane.rect.height as usize)
+      .sum();
+    assert_eq!(total_area, 120 * 40);
   }
 
   #[test]

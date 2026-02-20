@@ -11,6 +11,8 @@ use std::{
   num::NonZeroUsize,
 };
 
+use crate::render::graphics::Rect;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct PaneId(NonZeroUsize);
 
@@ -410,6 +412,31 @@ impl SplitTree {
     }
   }
 
+  pub fn layout(&self, area: Rect) -> Vec<(PaneId, Rect)> {
+    let mut panes = Vec::with_capacity(self.pane_count());
+    let mut stack = vec![(self.root, area)];
+    while let Some((node_id, rect)) = stack.pop() {
+      let Some(node) = self.node(node_id) else {
+        continue;
+      };
+      match node {
+        SplitNode::Leaf { pane } => panes.push((pane, rect)),
+        SplitNode::Branch {
+          axis,
+          ratio,
+          first,
+          second,
+        } => {
+          let (first_rect, second_rect) = split_rect(rect, axis, ratio);
+          // Preserve leaf order by traversing first before second.
+          stack.push((second, second_rect));
+          stack.push((first, first_rect));
+        },
+      }
+    }
+    panes
+  }
+
   pub fn validate(&self) -> Result<(), InvariantError> {
     if self.nodes.is_empty() {
       return Err(InvariantError::EmptyTree);
@@ -676,9 +703,44 @@ impl SplitTree {
   }
 }
 
+fn split_rect(rect: Rect, axis: SplitAxis, ratio: f32) -> (Rect, Rect) {
+  let ratio = ratio.clamp(0.0, 1.0);
+  match axis {
+    SplitAxis::Vertical => {
+      let total = rect.width;
+      if total <= 1 {
+        let first = Rect::new(rect.x, rect.y, total, rect.height);
+        let second = Rect::new(rect.right(), rect.y, 0, rect.height);
+        return (first, second);
+      }
+      let mut first_width = ((total as f32) * ratio).round() as u16;
+      first_width = first_width.clamp(1, total - 1);
+      let second_width = total - first_width;
+      let first = Rect::new(rect.x, rect.y, first_width, rect.height);
+      let second = Rect::new(rect.x + first_width, rect.y, second_width, rect.height);
+      (first, second)
+    },
+    SplitAxis::Horizontal => {
+      let total = rect.height;
+      if total <= 1 {
+        let first = Rect::new(rect.x, rect.y, rect.width, total);
+        let second = Rect::new(rect.x, rect.bottom(), rect.width, 0);
+        return (first, second);
+      }
+      let mut first_height = ((total as f32) * ratio).round() as u16;
+      first_height = first_height.clamp(1, total - 1);
+      let second_height = total - first_height;
+      let first = Rect::new(rect.x, rect.y, rect.width, first_height);
+      let second = Rect::new(rect.x, rect.y + first_height, rect.width, second_height);
+      (first, second)
+    },
+  }
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
+  use crate::render::graphics::Rect;
 
   #[test]
   fn new_tree_has_single_leaf_and_valid_invariants() {
@@ -836,5 +898,42 @@ mod tests {
     tree.only_active();
 
     assert_eq!(tree.validate(), Ok(()));
+  }
+
+  #[test]
+  fn layout_covers_root_area_without_overlap() {
+    let mut tree = SplitTree::new();
+    let first = tree.active_pane();
+    let second = tree.split_active(SplitAxis::Vertical);
+    let third = tree.split_active(SplitAxis::Horizontal);
+
+    let area = Rect::new(0, 0, 120, 40);
+    let panes = tree.layout(area);
+    assert_eq!(panes.len(), 3);
+    assert_eq!(
+      panes.iter().map(|(pane, _)| *pane).collect::<Vec<_>>(),
+      vec![first, second, third]
+    );
+
+    let total_area: usize = panes
+      .iter()
+      .map(|(_, rect)| rect.width as usize * rect.height as usize)
+      .sum();
+    assert_eq!(total_area, area.width as usize * area.height as usize);
+
+    for i in 0..panes.len() {
+      for j in (i + 1)..panes.len() {
+        let a = panes[i].1;
+        let b = panes[j].1;
+        let overlap_x = a.x < b.right() && b.x < a.right();
+        let overlap_y = a.y < b.bottom() && b.y < a.bottom();
+        assert!(
+          !(overlap_x && overlap_y),
+          "pane rects overlap: {:?} and {:?}",
+          a,
+          b
+        );
+      }
+    }
   }
 }

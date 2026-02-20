@@ -79,6 +79,10 @@ extension AppRefMut {
         RenderPlan(ptr: __swift_bridge__$App$render_plan(ptr, id.intoFfiRepr()))
     }
 
+    public func frame_render_plan(_ id: EditorId) -> RenderFramePlan {
+        RenderFramePlan(ptr: __swift_bridge__$App$frame_render_plan(ptr, id.intoFfiRepr()))
+    }
+
     public func render_plan_with_styles(_ id: EditorId, _ styles: RenderStyles) -> RenderPlan {
         RenderPlan(ptr: __swift_bridge__$App$render_plan_with_styles(ptr, id.intoFfiRepr(), styles.intoFfiRepr()))
     }
@@ -1911,6 +1915,190 @@ extension RenderPlan: Vectorizable {
 
     public static func vecOfSelfLen(vecPtr: UnsafeMutableRawPointer) -> UInt {
         __swift_bridge__$Vec_RenderPlan$len(vecPtr)
+    }
+}
+
+
+public class RenderFramePane: RenderFramePaneRefMut {
+    var isOwned: Bool = true
+
+    public override init(ptr: UnsafeMutableRawPointer) {
+        super.init(ptr: ptr)
+    }
+
+    deinit {
+        if isOwned {
+            __swift_bridge__$RenderFramePane$_free(ptr)
+        }
+    }
+}
+public class RenderFramePaneRefMut: RenderFramePaneRef {
+    public override init(ptr: UnsafeMutableRawPointer) {
+        super.init(ptr: ptr)
+    }
+}
+public class RenderFramePaneRef {
+    var ptr: UnsafeMutableRawPointer
+
+    public init(ptr: UnsafeMutableRawPointer) {
+        self.ptr = ptr
+    }
+}
+extension RenderFramePaneRef {
+    public func pane_id() -> UInt64 {
+        __swift_bridge__$RenderFramePane$pane_id(ptr)
+    }
+
+    public func rect() -> Rect {
+        __swift_bridge__$RenderFramePane$rect(ptr).intoSwiftRepr()
+    }
+
+    public func is_active() -> Bool {
+        __swift_bridge__$RenderFramePane$is_active(ptr)
+    }
+
+    public func plan() -> RenderPlan {
+        RenderPlan(ptr: __swift_bridge__$RenderFramePane$plan(ptr))
+    }
+}
+extension RenderFramePane: Vectorizable {
+    public static func vecOfSelfNew() -> UnsafeMutableRawPointer {
+        __swift_bridge__$Vec_RenderFramePane$new()
+    }
+
+    public static func vecOfSelfFree(vecPtr: UnsafeMutableRawPointer) {
+        __swift_bridge__$Vec_RenderFramePane$drop(vecPtr)
+    }
+
+    public static func vecOfSelfPush(vecPtr: UnsafeMutableRawPointer, value: RenderFramePane) {
+        __swift_bridge__$Vec_RenderFramePane$push(vecPtr, {value.isOwned = false; return value.ptr;}())
+    }
+
+    public static func vecOfSelfPop(vecPtr: UnsafeMutableRawPointer) -> Optional<Self> {
+        let pointer = __swift_bridge__$Vec_RenderFramePane$pop(vecPtr)
+        if pointer == nil {
+            return nil
+        } else {
+            return (RenderFramePane(ptr: pointer!) as! Self)
+        }
+    }
+
+    public static func vecOfSelfGet(vecPtr: UnsafeMutableRawPointer, index: UInt) -> Optional<RenderFramePaneRef> {
+        let pointer = __swift_bridge__$Vec_RenderFramePane$get(vecPtr, index)
+        if pointer == nil {
+            return nil
+        } else {
+            return RenderFramePaneRef(ptr: pointer!)
+        }
+    }
+
+    public static func vecOfSelfGetMut(vecPtr: UnsafeMutableRawPointer, index: UInt) -> Optional<RenderFramePaneRefMut> {
+        let pointer = __swift_bridge__$Vec_RenderFramePane$get_mut(vecPtr, index)
+        if pointer == nil {
+            return nil
+        } else {
+            return RenderFramePaneRefMut(ptr: pointer!)
+        }
+    }
+
+    public static func vecOfSelfAsPtr(vecPtr: UnsafeMutableRawPointer) -> UnsafePointer<RenderFramePaneRef> {
+        UnsafePointer<RenderFramePaneRef>(OpaquePointer(__swift_bridge__$Vec_RenderFramePane$as_ptr(vecPtr)))
+    }
+
+    public static func vecOfSelfLen(vecPtr: UnsafeMutableRawPointer) -> UInt {
+        __swift_bridge__$Vec_RenderFramePane$len(vecPtr)
+    }
+}
+
+
+public class RenderFramePlan: RenderFramePlanRefMut {
+    var isOwned: Bool = true
+
+    public override init(ptr: UnsafeMutableRawPointer) {
+        super.init(ptr: ptr)
+    }
+
+    deinit {
+        if isOwned {
+            __swift_bridge__$RenderFramePlan$_free(ptr)
+        }
+    }
+}
+public class RenderFramePlanRefMut: RenderFramePlanRef {
+    public override init(ptr: UnsafeMutableRawPointer) {
+        super.init(ptr: ptr)
+    }
+}
+public class RenderFramePlanRef {
+    var ptr: UnsafeMutableRawPointer
+
+    public init(ptr: UnsafeMutableRawPointer) {
+        self.ptr = ptr
+    }
+}
+extension RenderFramePlanRef {
+    public func active_pane_id() -> UInt64 {
+        __swift_bridge__$RenderFramePlan$active_pane_id(ptr)
+    }
+
+    public func pane_count() -> UInt {
+        __swift_bridge__$RenderFramePlan$pane_count(ptr)
+    }
+
+    public func pane_at(_ index: UInt) -> RenderFramePane {
+        RenderFramePane(ptr: __swift_bridge__$RenderFramePlan$pane_at(ptr, index))
+    }
+
+    public func active_plan() -> RenderPlan {
+        RenderPlan(ptr: __swift_bridge__$RenderFramePlan$active_plan(ptr))
+    }
+}
+extension RenderFramePlan: Vectorizable {
+    public static func vecOfSelfNew() -> UnsafeMutableRawPointer {
+        __swift_bridge__$Vec_RenderFramePlan$new()
+    }
+
+    public static func vecOfSelfFree(vecPtr: UnsafeMutableRawPointer) {
+        __swift_bridge__$Vec_RenderFramePlan$drop(vecPtr)
+    }
+
+    public static func vecOfSelfPush(vecPtr: UnsafeMutableRawPointer, value: RenderFramePlan) {
+        __swift_bridge__$Vec_RenderFramePlan$push(vecPtr, {value.isOwned = false; return value.ptr;}())
+    }
+
+    public static func vecOfSelfPop(vecPtr: UnsafeMutableRawPointer) -> Optional<Self> {
+        let pointer = __swift_bridge__$Vec_RenderFramePlan$pop(vecPtr)
+        if pointer == nil {
+            return nil
+        } else {
+            return (RenderFramePlan(ptr: pointer!) as! Self)
+        }
+    }
+
+    public static func vecOfSelfGet(vecPtr: UnsafeMutableRawPointer, index: UInt) -> Optional<RenderFramePlanRef> {
+        let pointer = __swift_bridge__$Vec_RenderFramePlan$get(vecPtr, index)
+        if pointer == nil {
+            return nil
+        } else {
+            return RenderFramePlanRef(ptr: pointer!)
+        }
+    }
+
+    public static func vecOfSelfGetMut(vecPtr: UnsafeMutableRawPointer, index: UInt) -> Optional<RenderFramePlanRefMut> {
+        let pointer = __swift_bridge__$Vec_RenderFramePlan$get_mut(vecPtr, index)
+        if pointer == nil {
+            return nil
+        } else {
+            return RenderFramePlanRefMut(ptr: pointer!)
+        }
+    }
+
+    public static func vecOfSelfAsPtr(vecPtr: UnsafeMutableRawPointer) -> UnsafePointer<RenderFramePlanRef> {
+        UnsafePointer<RenderFramePlanRef>(OpaquePointer(__swift_bridge__$Vec_RenderFramePlan$as_ptr(vecPtr)))
+    }
+
+    public static func vecOfSelfLen(vecPtr: UnsafeMutableRawPointer) -> UInt {
+        __swift_bridge__$Vec_RenderFramePlan$len(vecPtr)
     }
 }
 

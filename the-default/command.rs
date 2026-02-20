@@ -1066,6 +1066,10 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::MergeSelections => merge_selections(ctx),
     Command::MergeConsecutiveSelections => merge_consecutive_selections(ctx),
     Command::SplitSelection => split_selection(ctx),
+    Command::JoinSelections => join_selections(ctx),
+    Command::JoinSelectionsSpace => join_selections_space(ctx),
+    Command::KeepSelections => keep_selections(ctx),
+    Command::RemoveSelections => remove_selections(ctx),
     Command::CollapseSelection => collapse_selection(ctx),
     Command::FlipSelections => flip_selections(ctx),
     Command::ExpandSelection => expand_selection(ctx),
@@ -2490,6 +2494,150 @@ fn merge_consecutive_selections<Ctx: DefaultContext>(ctx: &mut Ctx) {
 
 fn split_selection<Ctx: DefaultContext>(ctx: &mut Ctx) {
   crate::search_prompt::open_split_selection_prompt(ctx);
+}
+
+fn join_selections<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  join_selections_impl(ctx, false);
+}
+
+fn join_selections_space<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  join_selections_impl(ctx, true);
+}
+
+fn keep_selections<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  crate::search_prompt::open_keep_selections_prompt(ctx);
+}
+
+fn remove_selections<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  crate::search_prompt::open_remove_selections_prompt(ctx);
+}
+
+fn join_selections_impl<Ctx: DefaultContext>(ctx: &mut Ctx, select_space: bool) {
+  use movement::skip_while;
+
+  let tx = {
+    let doc = ctx.editor_ref().document();
+    let text = doc.text();
+    let slice = text.slice(..);
+    let mut comment_tokens: Vec<&str> = match (ctx.syntax_loader(), doc.syntax()) {
+      (Some(loader), Some(syntax)) if syntax.root_language().idx() < loader.languages().len() => {
+        loader
+          .language(syntax.root_language())
+          .config()
+          .syntax
+          .comment_tokens
+          .as_deref()
+          .unwrap_or(&[])
+          .iter()
+          .map(String::as_str)
+          .collect()
+      },
+      _ => Vec::new(),
+    };
+    // Sort by length so longer comment markers (e.g. ///) match before shorter ones (//).
+    comment_tokens.sort_unstable_by_key(|token| std::cmp::Reverse(token.len()));
+
+    let mut changes = Vec::new();
+    for selection in doc.selection().iter() {
+      let (start, mut end) = selection.line_range(slice);
+      if start == end {
+        end = (end + 1).min(text.len_lines().saturating_sub(1));
+      }
+
+      let lines = start..end;
+      changes.reserve(lines.len());
+
+      let first_line_idx = slice.line_to_char(start);
+      let first_line_idx =
+        skip_while(slice, first_line_idx, |ch| matches!(ch, ' ' | '\t')).unwrap_or(first_line_idx);
+      let first_line = slice.slice(first_line_idx..);
+      let mut current_comment_token = comment_tokens
+        .iter()
+        .find(|token| first_line.starts_with(token))
+        .copied();
+
+      for line in lines {
+        let from = line_end_char_index(&slice, line);
+        let mut to = text.line_to_char(line + 1);
+        to = skip_while(slice, to, |ch| matches!(ch, ' ' | '\t')).unwrap_or(to);
+
+        let slice_from_end = slice.slice(to..);
+        if let Some(token) = comment_tokens
+          .iter()
+          .find(|token| slice_from_end.starts_with(token))
+          .copied()
+        {
+          if Some(token) == current_comment_token {
+            to += token.chars().count();
+            to = skip_while(slice, to, |ch| matches!(ch, ' ' | '\t')).unwrap_or(to);
+          } else {
+            current_comment_token = Some(token);
+          }
+        }
+
+        let separator = if to == line_end_char_index(&slice, line + 1) {
+          None
+        } else {
+          Some(Tendril::from(" "))
+        };
+        changes.push((from, to, separator));
+      }
+    }
+
+    if changes.is_empty() {
+      return;
+    }
+
+    changes.sort_unstable_by_key(|(from, _to, _text)| *from);
+    changes.dedup();
+
+    if select_space {
+      let mut offset = 0usize;
+      let ranges: SmallVec<[Range; 1]> = changes
+        .iter()
+        .filter_map(|change| {
+          if change.2.is_some() {
+            let range = Range::point(change.0.saturating_sub(offset));
+            offset += change.1.saturating_sub(change.0).saturating_sub(1);
+            Some(range)
+          } else {
+            offset += change.1.saturating_sub(change.0);
+            None
+          }
+        })
+        .collect();
+
+      match Transaction::change(text, changes.into_iter()) {
+        Ok(tx) => {
+          if ranges.is_empty() {
+            Ok(tx)
+          } else {
+            Selection::new(ranges)
+              .map(|selection| tx.with_selection(selection))
+              .map_err(|err| err.to_string())
+          }
+        },
+        Err(err) => Err(err.to_string()),
+      }
+    } else {
+      Transaction::change(text, changes.into_iter()).map_err(|err| err.to_string())
+    }
+  };
+
+  let tx = match tx {
+    Ok(tx) => tx,
+    Err(err) => {
+      ctx.push_error(
+        "join",
+        format!("failed to build join-selections transaction: {err}"),
+      );
+      return;
+    },
+  };
+
+  if !ctx.apply_transaction(&tx) {
+    ctx.push_error("join", "failed to apply join-selections transaction");
+  }
 }
 
 fn collapse_selection<Ctx: DefaultContext>(ctx: &mut Ctx) {
@@ -4723,6 +4871,10 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "merge_selections" => Some(Command::merge_selections()),
     "merge_consecutive_selections" => Some(Command::merge_consecutive_selections()),
     "split_selection" => Some(Command::split_selection()),
+    "join_selections" => Some(Command::join_selections()),
+    "join_selections_space" => Some(Command::join_selections_space()),
+    "keep_selections" => Some(Command::keep_selections()),
+    "remove_selections" => Some(Command::remove_selections()),
     "collapse_selection" => Some(Command::collapse_selection()),
     "flip_selections" => Some(Command::flip_selections()),
     "expand_selection" => Some(Command::expand_selection()),

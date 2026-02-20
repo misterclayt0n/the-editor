@@ -4193,6 +4193,8 @@ fn search_statusline_text(
     the_default::SearchPromptKind::Search => "FIND",
     the_default::SearchPromptKind::SelectRegex => "SELECT",
     the_default::SearchPromptKind::SplitSelection => "SPLIT",
+    the_default::SearchPromptKind::KeepSelections => "KEEP",
+    the_default::SearchPromptKind::RemoveSelections => "REMOVE",
   };
   format!("{prefix} {before}█{after}")
 }

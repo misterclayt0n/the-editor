@@ -81,6 +81,8 @@ use the_default::{
   command_palette_selected_filtered_index,
   completion_docs_panel_rect as default_completion_docs_panel_rect,
   completion_panel_rect as default_completion_panel_rect,
+  finalize_keep_selections,
+  finalize_remove_selections,
   finalize_search,
   finalize_select_regex,
   finalize_split_selection,
@@ -4359,6 +4361,8 @@ impl App {
       SearchPromptKind::Search => finalize_search(self),
       SearchPromptKind::SelectRegex => finalize_select_regex(self),
       SearchPromptKind::SplitSelection => finalize_split_selection(self),
+      SearchPromptKind::KeepSelections => finalize_keep_selections(self),
+      SearchPromptKind::RemoveSelections => finalize_remove_selections(self),
     };
     if should_close {
       self.search_prompt_mut().clear();
@@ -8498,6 +8502,7 @@ mod tests {
     DefaultContext,
     Direction as CommandDirection,
     Mode,
+    Modifiers as KeyModifiers,
     PendingInput,
     SearchPromptKind,
   };
@@ -8781,6 +8786,14 @@ mod tests {
       kind:      0,
       codepoint: ch as u32,
       modifiers: 0,
+    }
+  }
+
+  fn key_char_alt(ch: char) -> ffi::KeyEvent {
+    ffi::KeyEvent {
+      kind:      0,
+      codepoint: ch as u32,
+      modifiers: KeyModifiers::ALT,
     }
   }
 
@@ -9658,6 +9671,148 @@ pkgs.mkShell {
         .len(),
       3
     );
+  }
+
+  #[test]
+  fn join_selections_keymap_joins_lines() {
+    let _guard = ffi_test_guard();
+    let mut app = App::new();
+    let id = app.create_editor("alpha\nbeta\ngamma\n", default_viewport(), ffi::Position {
+      row: 0,
+      col: 0,
+    });
+    assert!(app.activate(id).is_some());
+    let join_end = "alpha\nbeta\ngamma".chars().count();
+    let _ = app
+      .active_editor_mut()
+      .document_mut()
+      .set_selection(Selection::single(0, join_end));
+
+    assert!(app.handle_key(id, key_char('J')));
+    assert_eq!(app.active_editor_ref().document().text().to_string(), "alpha beta gamma\n");
+  }
+
+  #[test]
+  fn join_selections_space_keymap_selects_inserted_space() {
+    let _guard = ffi_test_guard();
+    let mut app = App::new();
+    let id = app.create_editor("alpha\nbeta\n", default_viewport(), ffi::Position {
+      row: 0,
+      col: 0,
+    });
+    assert!(app.activate(id).is_some());
+    let join_end = "alpha\nbeta".chars().count();
+    let _ = app
+      .active_editor_mut()
+      .document_mut()
+      .set_selection(Selection::single(0, join_end));
+
+    assert!(app.handle_key(id, key_char_alt('J')));
+    assert_eq!(app.active_editor_ref().document().text().to_string(), "alpha beta\n");
+    assert_eq!(
+      app.active_editor_ref().document().selection().ranges(),
+      &[Range::point("alpha".chars().count())]
+    );
+  }
+
+  #[test]
+  fn keep_selections_keymap_uses_prompt_to_filter_selection() {
+    let _guard = ffi_test_guard();
+    let mut app = App::new();
+    let id = app.create_editor("one two three\n", default_viewport(), ffi::Position {
+      row: 0,
+      col: 0,
+    });
+    assert!(app.activate(id).is_some());
+    let select_end = "one two three".chars().count();
+    let _ = app
+      .active_editor_mut()
+      .document_mut()
+      .set_selection(Selection::single(0, select_end));
+    assert!(app.handle_key(id, key_char('S')));
+    assert!(app.handle_key(id, key_char(' ')));
+    assert!(app.handle_key(id, ffi::KeyEvent {
+      kind:      1,
+      codepoint: 0,
+      modifiers: 0,
+    }));
+    assert_eq!(app.active_editor_ref().document().selection().ranges().len(), 3);
+
+    assert!(app.handle_key(id, key_char('K')));
+    assert!(app.active_state_ref().search_prompt.active);
+    assert_eq!(
+      app.active_state_ref().search_prompt.kind,
+      SearchPromptKind::KeepSelections
+    );
+
+    assert!(app.handle_key(id, key_char('o')));
+    let text = app.active_editor_ref().document().text().slice(..);
+    let fragments: Vec<_> = app
+      .active_editor_ref()
+      .document()
+      .selection()
+      .fragments(text)
+      .map(|fragment| fragment.into_owned())
+      .collect();
+    assert_eq!(fragments, vec!["one".to_string(), "two".to_string()]);
+
+    assert!(app.handle_key(id, ffi::KeyEvent {
+      kind:      1,
+      codepoint: 0,
+      modifiers: 0,
+    }));
+    assert!(!app.active_state_ref().search_prompt.active);
+    assert_eq!(app.active_editor_ref().document().selection().ranges().len(), 2);
+  }
+
+  #[test]
+  fn remove_selections_keymap_uses_prompt_to_filter_selection() {
+    let _guard = ffi_test_guard();
+    let mut app = App::new();
+    let id = app.create_editor("one two three\n", default_viewport(), ffi::Position {
+      row: 0,
+      col: 0,
+    });
+    assert!(app.activate(id).is_some());
+    let select_end = "one two three".chars().count();
+    let _ = app
+      .active_editor_mut()
+      .document_mut()
+      .set_selection(Selection::single(0, select_end));
+    assert!(app.handle_key(id, key_char('S')));
+    assert!(app.handle_key(id, key_char(' ')));
+    assert!(app.handle_key(id, ffi::KeyEvent {
+      kind:      1,
+      codepoint: 0,
+      modifiers: 0,
+    }));
+    assert_eq!(app.active_editor_ref().document().selection().ranges().len(), 3);
+
+    assert!(app.handle_key(id, key_char_alt('K')));
+    assert!(app.active_state_ref().search_prompt.active);
+    assert_eq!(
+      app.active_state_ref().search_prompt.kind,
+      SearchPromptKind::RemoveSelections
+    );
+
+    assert!(app.handle_key(id, key_char('o')));
+    let text = app.active_editor_ref().document().text().slice(..);
+    let fragments: Vec<_> = app
+      .active_editor_ref()
+      .document()
+      .selection()
+      .fragments(text)
+      .map(|fragment| fragment.into_owned())
+      .collect();
+    assert_eq!(fragments, vec!["three".to_string()]);
+
+    assert!(app.handle_key(id, ffi::KeyEvent {
+      kind:      1,
+      codepoint: 0,
+      modifiers: 0,
+    }));
+    assert!(!app.active_state_ref().search_prompt.active);
+    assert_eq!(app.active_editor_ref().document().selection().ranges().len(), 1);
   }
 
   #[test]

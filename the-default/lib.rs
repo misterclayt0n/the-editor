@@ -134,9 +134,13 @@ pub use pending::PendingInput;
 pub use search_prompt::{
   SearchPromptKind,
   SearchPromptState,
+  finalize_keep_selections,
+  finalize_remove_selections,
   finalize_search,
   finalize_select_regex,
   finalize_split_selection,
+  update_keep_selections_preview,
+  update_remove_selections_preview,
   update_search_preview,
   update_search_prompt_preview,
   update_select_regex_preview,

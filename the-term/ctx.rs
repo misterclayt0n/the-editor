@@ -6079,6 +6079,210 @@ pkgs.mkShell {
   }
 
   #[test]
+  fn join_selections_keymap_sequence_joins_lines() {
+    let dispatch = build_dispatch::<Ctx>();
+    let mut ctx = Ctx::new(None).expect("ctx");
+    ctx.set_dispatch(&dispatch);
+
+    let content = "alpha\nbeta\ngamma\n";
+    let tx = Transaction::change(
+      ctx.editor.document().text(),
+      std::iter::once((
+        0,
+        ctx.editor.document().text().len_chars(),
+        Some(content.into()),
+      )),
+    )
+    .expect("seed transaction");
+    assert!(DefaultContext::apply_transaction(&mut ctx, &tx));
+    let join_end = content.trim_end_matches('\n').chars().count();
+    let _ = ctx
+      .editor
+      .document_mut()
+      .set_selection(Selection::single(0, join_end));
+
+    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+      key:       Key::Char('J'),
+      modifiers: Modifiers::empty(),
+    });
+
+    assert_eq!(ctx.editor.document().text().to_string(), "alpha beta gamma\n");
+  }
+
+  #[test]
+  fn join_selections_space_keymap_sequence_selects_inserted_space() {
+    let dispatch = build_dispatch::<Ctx>();
+    let mut ctx = Ctx::new(None).expect("ctx");
+    ctx.set_dispatch(&dispatch);
+
+    let content = "alpha\nbeta\n";
+    let tx = Transaction::change(
+      ctx.editor.document().text(),
+      std::iter::once((
+        0,
+        ctx.editor.document().text().len_chars(),
+        Some(content.into()),
+      )),
+    )
+    .expect("seed transaction");
+    assert!(DefaultContext::apply_transaction(&mut ctx, &tx));
+    let join_end = content.trim_end_matches('\n').chars().count();
+    let _ = ctx
+      .editor
+      .document_mut()
+      .set_selection(Selection::single(0, join_end));
+
+    let mut alt = Modifiers::empty();
+    alt.insert(Modifiers::ALT);
+
+    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+      key:       Key::Char('J'),
+      modifiers: alt,
+    });
+
+    assert_eq!(ctx.editor.document().text().to_string(), "alpha beta\n");
+    assert_eq!(
+      ctx.editor.document().selection().ranges(),
+      &[Range::point("alpha".chars().count())]
+    );
+  }
+
+  #[test]
+  fn keep_selections_keymap_sequence_filters_selection_with_prompt() {
+    let dispatch = build_dispatch::<Ctx>();
+    let mut ctx = Ctx::new(None).expect("ctx");
+    ctx.set_dispatch(&dispatch);
+
+    let content = "one two three\n";
+    let tx = Transaction::change(
+      ctx.editor.document().text(),
+      std::iter::once((
+        0,
+        ctx.editor.document().text().len_chars(),
+        Some(content.into()),
+      )),
+    )
+    .expect("seed transaction");
+    assert!(DefaultContext::apply_transaction(&mut ctx, &tx));
+    let select_end = content.trim_end_matches('\n').chars().count();
+    let _ = ctx
+      .editor
+      .document_mut()
+      .set_selection(Selection::single(0, select_end));
+    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+      key:       Key::Char('S'),
+      modifiers: Modifiers::empty(),
+    });
+    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+      key:       Key::Char(' '),
+      modifiers: Modifiers::empty(),
+    });
+    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+      key:       Key::Enter,
+      modifiers: Modifiers::empty(),
+    });
+    assert_eq!(ctx.editor.document().selection().ranges().len(), 3);
+
+    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+      key:       Key::Char('K'),
+      modifiers: Modifiers::empty(),
+    });
+    assert!(ctx.search_prompt.active);
+    assert_eq!(ctx.search_prompt.kind, SearchPromptKind::KeepSelections);
+
+    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+      key:       Key::Char('o'),
+      modifiers: Modifiers::empty(),
+    });
+
+    let text = ctx.editor.document().text().slice(..);
+    let fragments: Vec<_> = ctx
+      .editor
+      .document()
+      .selection()
+      .fragments(text)
+      .map(|fragment| fragment.into_owned())
+      .collect();
+    assert_eq!(fragments, vec!["one".to_string(), "two".to_string()]);
+
+    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+      key:       Key::Enter,
+      modifiers: Modifiers::empty(),
+    });
+    assert!(!ctx.search_prompt.active);
+    assert_eq!(ctx.editor.document().selection().ranges().len(), 2);
+  }
+
+  #[test]
+  fn remove_selections_keymap_sequence_filters_selection_with_prompt() {
+    let dispatch = build_dispatch::<Ctx>();
+    let mut ctx = Ctx::new(None).expect("ctx");
+    ctx.set_dispatch(&dispatch);
+
+    let content = "one two three\n";
+    let tx = Transaction::change(
+      ctx.editor.document().text(),
+      std::iter::once((
+        0,
+        ctx.editor.document().text().len_chars(),
+        Some(content.into()),
+      )),
+    )
+    .expect("seed transaction");
+    assert!(DefaultContext::apply_transaction(&mut ctx, &tx));
+    let select_end = content.trim_end_matches('\n').chars().count();
+    let _ = ctx
+      .editor
+      .document_mut()
+      .set_selection(Selection::single(0, select_end));
+    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+      key:       Key::Char('S'),
+      modifiers: Modifiers::empty(),
+    });
+    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+      key:       Key::Char(' '),
+      modifiers: Modifiers::empty(),
+    });
+    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+      key:       Key::Enter,
+      modifiers: Modifiers::empty(),
+    });
+    assert_eq!(ctx.editor.document().selection().ranges().len(), 3);
+
+    let mut alt = Modifiers::empty();
+    alt.insert(Modifiers::ALT);
+
+    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+      key:       Key::Char('K'),
+      modifiers: alt,
+    });
+    assert!(ctx.search_prompt.active);
+    assert_eq!(ctx.search_prompt.kind, SearchPromptKind::RemoveSelections);
+
+    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+      key:       Key::Char('o'),
+      modifiers: Modifiers::empty(),
+    });
+
+    let text = ctx.editor.document().text().slice(..);
+    let fragments: Vec<_> = ctx
+      .editor
+      .document()
+      .selection()
+      .fragments(text)
+      .map(|fragment| fragment.into_owned())
+      .collect();
+    assert_eq!(fragments, vec!["three".to_string()]);
+
+    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+      key:       Key::Enter,
+      modifiers: Modifiers::empty(),
+    });
+    assert!(!ctx.search_prompt.active);
+    assert_eq!(ctx.editor.document().selection().ranges().len(), 1);
+  }
+
+  #[test]
   fn goto_buffer_restores_syntax_for_target_buffer() {
     let mut ctx = Ctx::new(None).expect("ctx");
     if ctx.loader.is_none() {

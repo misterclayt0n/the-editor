@@ -31,6 +31,7 @@ use the_lib::{
   },
   selection::{
     CursorPick,
+    keep_or_remove_matches,
     select_on_matches,
     split_on_matches,
   },
@@ -64,6 +65,8 @@ pub enum SearchPromptKind {
   Search,
   SelectRegex,
   SplitSelection,
+  KeepSelections,
+  RemoveSelections,
 }
 
 impl SearchPromptState {
@@ -135,28 +138,26 @@ pub fn open_search_prompt<Ctx: DefaultContext>(ctx: &mut Ctx, direction: Directi
 }
 
 pub fn open_select_regex_prompt<Ctx: DefaultContext>(ctx: &mut Ctx) {
-  let original_selection = ctx.editor_ref().document().selection().clone();
-  let prompt = ctx.search_prompt_mut();
-  prompt.active = true;
-  prompt.kind = SearchPromptKind::SelectRegex;
-  prompt.direction = Direction::Forward;
-  prompt.query.clear();
-  prompt.cursor = 0;
-  prompt.completions.clear();
-  prompt.error = None;
-  prompt.register = '/';
-  prompt.extend = false;
-  prompt.original_selection = Some(original_selection);
-  prompt.selected = None;
-
-  ctx.request_render();
+  open_selection_prompt(ctx, SearchPromptKind::SelectRegex);
 }
 
 pub fn open_split_selection_prompt<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  open_selection_prompt(ctx, SearchPromptKind::SplitSelection);
+}
+
+pub fn open_keep_selections_prompt<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  open_selection_prompt(ctx, SearchPromptKind::KeepSelections);
+}
+
+pub fn open_remove_selections_prompt<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  open_selection_prompt(ctx, SearchPromptKind::RemoveSelections);
+}
+
+fn open_selection_prompt<Ctx: DefaultContext>(ctx: &mut Ctx, kind: SearchPromptKind) {
   let original_selection = ctx.editor_ref().document().selection().clone();
   let prompt = ctx.search_prompt_mut();
   prompt.active = true;
-  prompt.kind = SearchPromptKind::SplitSelection;
+  prompt.kind = kind;
   prompt.direction = Direction::Forward;
   prompt.query.clear();
   prompt.cursor = 0;
@@ -191,6 +192,8 @@ pub fn handle_search_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEven
         SearchPromptKind::Search => finalize_search(ctx),
         SearchPromptKind::SelectRegex => finalize_select_regex(ctx),
         SearchPromptKind::SplitSelection => finalize_split_selection(ctx),
+        SearchPromptKind::KeepSelections => finalize_keep_selections(ctx),
+        SearchPromptKind::RemoveSelections => finalize_remove_selections(ctx),
       };
       if should_close {
         ctx.search_prompt_mut().clear();
@@ -392,6 +395,8 @@ pub fn update_search_prompt_preview<Ctx: DefaultContext>(ctx: &mut Ctx) {
     SearchPromptKind::Search => update_search_preview(ctx),
     SearchPromptKind::SelectRegex => update_select_regex_preview(ctx),
     SearchPromptKind::SplitSelection => update_split_selection_preview(ctx),
+    SearchPromptKind::KeepSelections => update_keep_selections_preview(ctx),
+    SearchPromptKind::RemoveSelections => update_remove_selections_preview(ctx),
   }
 }
 
@@ -524,6 +529,55 @@ pub fn update_split_selection_preview<Ctx: DefaultContext>(ctx: &mut Ctx) {
   }
 }
 
+pub fn update_keep_selections_preview<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  update_keep_or_remove_preview(ctx, false);
+}
+
+pub fn update_remove_selections_preview<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  update_keep_or_remove_preview(ctx, true);
+}
+
+fn update_keep_or_remove_preview<Ctx: DefaultContext>(ctx: &mut Ctx, remove: bool) {
+  let (query, base_selection) = {
+    let prompt = ctx.search_prompt_ref();
+    (
+      prompt.query.clone(),
+      prompt
+        .original_selection
+        .clone()
+        .unwrap_or_else(|| ctx.editor_ref().document().selection().clone()),
+    )
+  };
+
+  if query.is_empty() {
+    if let Some(selection) = ctx.search_prompt_ref().original_selection.clone() {
+      let _ = ctx.editor().document_mut().set_selection(selection);
+    }
+    ctx.search_prompt_mut().error = None;
+    return;
+  }
+
+  match build_regex(&query, true) {
+    Ok(regex) => {
+      ctx.search_prompt_mut().error = None;
+      let doc = ctx.editor_ref().document();
+      let text = doc.text().slice(..);
+      match keep_or_remove_matches(text, &base_selection, &regex, remove) {
+        Ok(Some(next)) => {
+          let _ = ctx.editor().document_mut().set_selection(next);
+        },
+        Ok(None) => {},
+        Err(err) => {
+          ctx.search_prompt_mut().error = Some(err.to_string());
+        },
+      }
+    },
+    Err(err) => {
+      ctx.search_prompt_mut().error = Some(err);
+    },
+  }
+}
+
 pub fn finalize_search<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool {
   let (query, register) = {
     let prompt = ctx.search_prompt_ref();
@@ -642,6 +696,81 @@ pub fn finalize_split_selection<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool {
   }
 }
 
+pub fn finalize_keep_selections<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool {
+  finalize_keep_or_remove(ctx, false)
+}
+
+pub fn finalize_remove_selections<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool {
+  finalize_keep_or_remove(ctx, true)
+}
+
+fn finalize_keep_or_remove<Ctx: DefaultContext>(ctx: &mut Ctx, remove: bool) -> bool {
+  let (query, base_selection) = {
+    let prompt = ctx.search_prompt_ref();
+    (
+      prompt.query.clone(),
+      prompt
+        .original_selection
+        .clone()
+        .unwrap_or_else(|| ctx.editor_ref().document().selection().clone()),
+    )
+  };
+  if query.is_empty() {
+    return true;
+  }
+
+  let regex = match build_regex(&query, true) {
+    Ok(regex) => regex,
+    Err(err) => {
+      ctx.search_prompt_mut().error = Some(err.clone());
+      ctx.push_error(
+        if remove {
+          "remove_selections"
+        } else {
+          "keep_selections"
+        },
+        err,
+      );
+      return false;
+    },
+  };
+
+  let text = ctx.editor_ref().document().text().slice(..);
+  match keep_or_remove_matches(text, &base_selection, &regex, remove) {
+    Ok(Some(next)) => {
+      ctx.search_prompt_mut().error = None;
+      let _ = ctx.editor().document_mut().set_selection(next);
+      true
+    },
+    Ok(None) => {
+      let message = "no selections remaining".to_string();
+      ctx.search_prompt_mut().error = Some(message.clone());
+      ctx.push_error(
+        if remove {
+          "remove_selections"
+        } else {
+          "keep_selections"
+        },
+        message,
+      );
+      false
+    },
+    Err(err) => {
+      let message = err.to_string();
+      ctx.search_prompt_mut().error = Some(message.clone());
+      ctx.push_error(
+        if remove {
+          "remove_selections"
+        } else {
+          "keep_selections"
+        },
+        message,
+      );
+      false
+    },
+  }
+}
+
 fn to_lib_direction(direction: Direction) -> Option<LibDirection> {
   match direction {
     Direction::Forward => Some(LibDirection::Forward),
@@ -679,6 +808,8 @@ pub fn build_search_prompt_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNode>
       SearchPromptKind::Search => "search",
       SearchPromptKind::SelectRegex => "select",
       SearchPromptKind::SplitSelection => "split",
+      SearchPromptKind::KeepSelections => "keep",
+      SearchPromptKind::RemoveSelections => "remove",
     }
     .to_string(),
   );

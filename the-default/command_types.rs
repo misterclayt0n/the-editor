@@ -495,6 +495,10 @@ pub enum Command {
   MergeSelections,
   MergeConsecutiveSelections,
   SplitSelection,
+  JoinSelections,
+  JoinSelectionsSpace,
+  KeepSelections,
+  RemoveSelections,
   CollapseSelection,
   FlipSelections,
   ExpandSelection,
@@ -899,6 +903,26 @@ impl Command {
   #[must_use]
   pub const fn split_selection() -> Self {
     Self::SplitSelection
+  }
+
+  #[must_use]
+  pub const fn join_selections() -> Self {
+    Self::JoinSelections
+  }
+
+  #[must_use]
+  pub const fn join_selections_space() -> Self {
+    Self::JoinSelectionsSpace
+  }
+
+  #[must_use]
+  pub const fn keep_selections() -> Self {
+    Self::KeepSelections
+  }
+
+  #[must_use]
+  pub const fn remove_selections() -> Self {
+    Self::RemoveSelections
   }
 
   #[must_use]

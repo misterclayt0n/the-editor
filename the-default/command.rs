@@ -1132,6 +1132,8 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::GotoNextTest => goto_ts_object(ctx, "test", Direction::Forward),
     Command::GotoPrevXmlElement => goto_ts_object(ctx, "xml-element", Direction::Backward),
     Command::GotoNextXmlElement => goto_ts_object(ctx, "xml-element", Direction::Forward),
+    Command::GotoPrevParagraph => goto_paragraph(ctx, Direction::Backward),
+    Command::GotoNextParagraph => goto_paragraph(ctx, Direction::Forward),
     Command::Search => ctx.dispatch().search(ctx, ()),
     Command::RSearch => ctx.dispatch().rsearch(ctx, ()),
     Command::SelectRegex => ctx.dispatch().select_regex(ctx, ()),
@@ -2417,6 +2419,27 @@ fn goto_ts_object<Ctx: DefaultContext>(
   };
 
   let _ = ctx.editor().document_mut().set_selection(selection);
+}
+
+fn goto_paragraph<Ctx: DefaultContext>(ctx: &mut Ctx, direction: Direction) {
+  let movement = if ctx.mode() == Mode::Select {
+    Movement::Extend
+  } else {
+    Movement::Move
+  };
+  let next = {
+    let doc = ctx.editor_ref().document();
+    let text = doc.text().slice(..);
+    let selection = doc.selection().clone();
+    selection.transform(|range| {
+      match direction {
+        Direction::Forward => movement::move_next_paragraph(text, range, 1, movement),
+        Direction::Backward => movement::move_prev_paragraph(text, range, 1, movement),
+        _ => range,
+      }
+    })
+  };
+  let _ = ctx.editor().document_mut().set_selection(next);
 }
 
 fn split_selection_on_newline<Ctx: DefaultContext>(ctx: &mut Ctx) {
@@ -4713,6 +4736,8 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "goto_next_test" => Some(Command::goto_next_test()),
     "goto_prev_xml_element" => Some(Command::goto_prev_xml_element()),
     "goto_next_xml_element" => Some(Command::goto_next_xml_element()),
+    "goto_prev_paragraph" => Some(Command::goto_prev_paragraph()),
+    "goto_next_paragraph" => Some(Command::goto_next_paragraph()),
 
     _ => None,
   }

@@ -588,6 +588,8 @@ pub enum Command {
   GotoNextTest,
   GotoPrevXmlElement,
   GotoNextXmlElement,
+  GotoPrevParagraph,
+  GotoNextParagraph,
   SearchNextOrPrev {
     direction: Direction,
     extend:    bool,
@@ -1440,6 +1442,16 @@ impl Command {
   #[must_use]
   pub const fn goto_next_xml_element() -> Self {
     Self::GotoNextXmlElement
+  }
+
+  #[must_use]
+  pub const fn goto_prev_paragraph() -> Self {
+    Self::GotoPrevParagraph
+  }
+
+  #[must_use]
+  pub const fn goto_next_paragraph() -> Self {
+    Self::GotoNextParagraph
   }
 
   #[must_use]

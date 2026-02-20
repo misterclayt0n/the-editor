@@ -3697,7 +3697,9 @@ impl App {
     let Some(editor) = self.editor_mut(id) else {
       return false;
     };
-    editor.view_mut().viewport = viewport.to_lib();
+    let viewport = viewport.to_lib();
+    editor.set_layout_viewport(viewport);
+    editor.view_mut().viewport = viewport;
     true
   }
 
@@ -4178,7 +4180,7 @@ impl App {
   ) -> the_lib::render::FrameRenderPlan {
     let (active_pane, panes) = {
       let editor = self.active_editor_ref();
-      let viewport = editor.view().viewport;
+      let viewport = editor.layout_viewport();
       (editor.active_pane_id(), editor.pane_snapshots(viewport))
     };
     if panes.is_empty() {

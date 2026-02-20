@@ -955,7 +955,9 @@ impl Ctx {
 
   /// Handle terminal resize.
   pub fn resize(&mut self, width: u16, height: u16) {
-    self.editor.view_mut().viewport = Rect::new(0, 0, width, height);
+    let viewport = Rect::new(0, 0, width, height);
+    self.editor.set_layout_viewport(viewport);
+    self.editor.view_mut().viewport = viewport;
   }
 
   pub fn syntax_highlight_refresh_allowed(&self) -> bool {

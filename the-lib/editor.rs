@@ -58,6 +58,7 @@ pub struct Editor {
   id:               EditorId,
   buffers:          Vec<BufferState>,
   active_buffer:    usize,
+  layout_viewport:  Rect,
   split_tree:       SplitTree,
   pane_buffers:     BTreeMap<PaneId, usize>,
   next_document_id: NonZeroUsize,
@@ -106,6 +107,7 @@ impl Editor {
       id,
       buffers: vec![BufferState::new(document, view, None)],
       active_buffer: 0,
+      layout_viewport: view.viewport,
       split_tree,
       pane_buffers,
       next_document_id,
@@ -181,6 +183,14 @@ impl Editor {
 
   pub fn pane_count(&self) -> usize {
     self.split_tree.pane_count()
+  }
+
+  pub fn layout_viewport(&self) -> Rect {
+    self.layout_viewport
+  }
+
+  pub fn set_layout_viewport(&mut self, viewport: Rect) {
+    self.layout_viewport = viewport;
   }
 
   pub fn active_pane_id(&self) -> PaneId {

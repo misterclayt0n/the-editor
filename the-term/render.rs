@@ -4625,7 +4625,7 @@ pub fn build_frame_render_plan_with_styles(
   ctx: &mut Ctx,
   styles: RenderStyles,
 ) -> FrameRenderPlan {
-  let viewport = ctx.editor.view().viewport;
+  let viewport = ctx.editor.layout_viewport();
   let pane_snapshots = ctx.editor.pane_snapshots(viewport);
   if pane_snapshots.is_empty() {
     ctx.inline_diagnostic_lines.clear();

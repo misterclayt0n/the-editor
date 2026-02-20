@@ -4182,6 +4182,7 @@ fn search_statusline_text(
   let prefix = match kind {
     the_default::SearchPromptKind::Search => "FIND",
     the_default::SearchPromptKind::SelectRegex => "SELECT",
+    the_default::SearchPromptKind::SplitSelection => "SPLIT",
   };
   format!("{prefix} {before}█{after}")
 }

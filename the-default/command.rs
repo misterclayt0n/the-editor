@@ -13,6 +13,7 @@ use std::{
   sync::OnceLock,
 };
 
+use ropey::RopeSlice;
 use smallvec::SmallVec;
 use the_core::{
   chars::{
@@ -58,6 +59,7 @@ use the_lib::{
     move_vertically,
     move_vertically_visual,
   },
+  object,
   position::{
     Position,
     char_idx_at_coords,
@@ -100,6 +102,7 @@ use the_lib::{
     CursorPick,
     Range,
     Selection,
+    split_on_newline,
   },
   surround,
   syntax::{
@@ -1052,6 +1055,17 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::GotoLastModification => goto_last_modification(ctx),
     Command::GotoWord => goto_word(ctx, false),
     Command::ExtendToWord => goto_word(ctx, true),
+    Command::SplitSelectionOnNewline => split_selection_on_newline(ctx),
+    Command::MergeSelections => merge_selections(ctx),
+    Command::MergeConsecutiveSelections => merge_consecutive_selections(ctx),
+    Command::SplitSelection => split_selection(ctx),
+    Command::CollapseSelection => collapse_selection(ctx),
+    Command::FlipSelections => flip_selections(ctx),
+    Command::ExpandSelection => expand_selection(ctx),
+    Command::ShrinkSelection => shrink_selection(ctx),
+    Command::SelectAllChildren => select_all_children(ctx),
+    Command::SelectPrevSibling => select_prev_sibling(ctx),
+    Command::SelectNextSibling => select_next_sibling(ctx),
     Command::DeleteSelection { yank } => ctx.dispatch().delete_selection(ctx, yank),
     Command::ChangeSelection { yank } => ctx.dispatch().change_selection(ctx, yank),
     Command::Replace => ctx.dispatch().replace(ctx, ()),
@@ -2172,6 +2186,144 @@ fn apply_word_jump_target<Ctx: DefaultContext>(ctx: &mut Ctx, mut range: Range, 
   }
 
   let _ = ctx.editor().document_mut().set_selection(range.into());
+}
+
+fn split_selection_on_newline<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  let next = {
+    let doc = ctx.editor_ref().document();
+    let text = doc.text().slice(..);
+    split_on_newline(text, doc.selection())
+  };
+  match next {
+    Ok(selection) => {
+      let _ = ctx.editor().document_mut().set_selection(selection);
+    },
+    Err(err) => {
+      ctx.push_error(
+        "selection",
+        format!("failed to split selection on newline: {err}"),
+      );
+    },
+  }
+}
+
+fn merge_selections<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  let selection = ctx
+    .editor_ref()
+    .document()
+    .selection()
+    .clone()
+    .merge_ranges();
+  let _ = ctx.editor().document_mut().set_selection(selection);
+}
+
+fn merge_consecutive_selections<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  let selection = ctx
+    .editor_ref()
+    .document()
+    .selection()
+    .clone()
+    .merge_consecutive_ranges();
+  let _ = ctx.editor().document_mut().set_selection(selection);
+}
+
+fn split_selection<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  crate::search_prompt::open_split_selection_prompt(ctx);
+}
+
+fn collapse_selection<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  let selection = {
+    let doc = ctx.editor_ref().document();
+    let text = doc.text().slice(..);
+    doc
+      .selection()
+      .clone()
+      .transform(|range| Range::point(range.cursor(text)))
+  };
+  let _ = ctx.editor().document_mut().set_selection(selection);
+}
+
+fn flip_selections<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  let selection = ctx
+    .editor_ref()
+    .document()
+    .selection()
+    .clone()
+    .transform(|range| range.flip());
+  let _ = ctx.editor().document_mut().set_selection(selection);
+}
+
+fn expand_selection<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  let Some((current, expanded)) = ({
+    let doc = ctx.editor_ref().document();
+    doc.syntax().and_then(|syntax| {
+      let text = doc.text().slice(..);
+      let current = doc.selection().clone();
+      let expanded = object::expand_selection(syntax, text, current.clone());
+      (expanded != current).then_some((current, expanded))
+    })
+  }) else {
+    return;
+  };
+
+  let editor = ctx.editor();
+  editor.push_object_selection(current);
+  let _ = editor.document_mut().set_selection(expanded);
+}
+
+fn shrink_selection<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  let current = ctx.editor_ref().document().selection().clone();
+  let editor = ctx.editor();
+  if let Some(previous) = editor.pop_object_selection() {
+    if current.contains(&previous) {
+      let _ = editor.document_mut().set_selection(previous);
+      return;
+    }
+    editor.clear_object_selections();
+  }
+
+  let Some(shrunk) = ({
+    let doc = editor.document();
+    doc.syntax().map(|syntax| {
+      let text = doc.text().slice(..);
+      object::shrink_selection(syntax, text, current)
+    })
+  }) else {
+    return;
+  };
+
+  let _ = editor.document_mut().set_selection(shrunk);
+}
+
+fn apply_object_selection_transform<Ctx, F>(ctx: &mut Ctx, transform: F)
+where
+  Ctx: DefaultContext,
+  F: for<'a> Fn(&the_lib::syntax::Syntax, RopeSlice<'a>, Selection) -> Selection,
+{
+  let Some(next) = ({
+    let doc = ctx.editor_ref().document();
+    doc.syntax().map(|syntax| {
+      let text = doc.text().slice(..);
+      let current = doc.selection().clone();
+      transform(syntax, text, current)
+    })
+  }) else {
+    return;
+  };
+
+  let _ = ctx.editor().document_mut().set_selection(next);
+}
+
+fn select_all_children<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  apply_object_selection_transform(ctx, object::select_all_children);
+}
+
+fn select_prev_sibling<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  apply_object_selection_transform(ctx, object::select_prev_sibling);
+}
+
+fn select_next_sibling<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  apply_object_selection_transform(ctx, object::select_next_sibling);
 }
 
 fn goto_first_nonwhitespace<Ctx: DefaultContext>(ctx: &mut Ctx, extend: bool) {
@@ -4213,6 +4365,17 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "goto_last_modification" => Some(Command::goto_last_modification()),
     "goto_word" => Some(Command::goto_word()),
     "extend_to_word" => Some(Command::extend_to_word()),
+    "split_selection_on_newline" => Some(Command::split_selection_on_newline()),
+    "merge_selections" => Some(Command::merge_selections()),
+    "merge_consecutive_selections" => Some(Command::merge_consecutive_selections()),
+    "split_selection" => Some(Command::split_selection()),
+    "collapse_selection" => Some(Command::collapse_selection()),
+    "flip_selections" => Some(Command::flip_selections()),
+    "expand_selection" => Some(Command::expand_selection()),
+    "shrink_selection" => Some(Command::shrink_selection()),
+    "select_all_children" => Some(Command::select_all_children()),
+    "select_prev_sibling" => Some(Command::select_prev_sibling()),
+    "select_next_sibling" => Some(Command::select_next_sibling()),
     "search" => Some(Command::search()),
     "rsearch" => Some(Command::rsearch()),
     "select_regex" => Some(Command::select_regex()),

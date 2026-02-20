@@ -136,9 +136,11 @@ pub use search_prompt::{
   SearchPromptState,
   finalize_search,
   finalize_select_regex,
+  finalize_split_selection,
   update_search_preview,
   update_search_prompt_preview,
   update_select_regex_preview,
+  update_split_selection_preview,
 };
 pub use signature_help::{
   SIGNATURE_HELP_ACTIVE_PARAM_END_MARKER,

@@ -32,6 +32,7 @@ use the_lib::{
   selection::{
     CursorPick,
     select_on_matches,
+    split_on_matches,
   },
 };
 
@@ -62,6 +63,7 @@ pub struct SearchPromptState {
 pub enum SearchPromptKind {
   Search,
   SelectRegex,
+  SplitSelection,
 }
 
 impl SearchPromptState {
@@ -150,6 +152,24 @@ pub fn open_select_regex_prompt<Ctx: DefaultContext>(ctx: &mut Ctx) {
   ctx.request_render();
 }
 
+pub fn open_split_selection_prompt<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  let original_selection = ctx.editor_ref().document().selection().clone();
+  let prompt = ctx.search_prompt_mut();
+  prompt.active = true;
+  prompt.kind = SearchPromptKind::SplitSelection;
+  prompt.direction = Direction::Forward;
+  prompt.query.clear();
+  prompt.cursor = 0;
+  prompt.completions.clear();
+  prompt.error = None;
+  prompt.register = '/';
+  prompt.extend = false;
+  prompt.original_selection = Some(original_selection);
+  prompt.selected = None;
+
+  ctx.request_render();
+}
+
 pub fn handle_search_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent) -> bool {
   if !ctx.search_prompt_ref().active {
     return false;
@@ -170,6 +190,7 @@ pub fn handle_search_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEven
       let should_close = match ctx.search_prompt_ref().kind {
         SearchPromptKind::Search => finalize_search(ctx),
         SearchPromptKind::SelectRegex => finalize_select_regex(ctx),
+        SearchPromptKind::SplitSelection => finalize_split_selection(ctx),
       };
       if should_close {
         ctx.search_prompt_mut().clear();
@@ -359,6 +380,7 @@ pub fn update_search_prompt_preview<Ctx: DefaultContext>(ctx: &mut Ctx) {
   match ctx.search_prompt_ref().kind {
     SearchPromptKind::Search => update_search_preview(ctx),
     SearchPromptKind::SelectRegex => update_select_regex_preview(ctx),
+    SearchPromptKind::SplitSelection => update_split_selection_preview(ctx),
   }
 }
 
@@ -434,6 +456,46 @@ pub fn update_select_regex_preview<Ctx: DefaultContext>(ctx: &mut Ctx) {
           let _ = ctx.editor().document_mut().set_selection(next);
         },
         Ok(None) => {},
+        Err(err) => {
+          ctx.search_prompt_mut().error = Some(err.to_string());
+        },
+      }
+    },
+    Err(err) => {
+      ctx.search_prompt_mut().error = Some(err);
+    },
+  }
+}
+
+pub fn update_split_selection_preview<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  let (query, base_selection) = {
+    let prompt = ctx.search_prompt_ref();
+    (
+      prompt.query.clone(),
+      prompt
+        .original_selection
+        .clone()
+        .unwrap_or_else(|| ctx.editor_ref().document().selection().clone()),
+    )
+  };
+
+  if query.is_empty() {
+    if let Some(selection) = ctx.search_prompt_ref().original_selection.clone() {
+      let _ = ctx.editor().document_mut().set_selection(selection);
+    }
+    ctx.search_prompt_mut().error = None;
+    return;
+  }
+
+  match build_regex(&query, true) {
+    Ok(regex) => {
+      ctx.search_prompt_mut().error = None;
+      let doc = ctx.editor_ref().document();
+      let text = doc.text().slice(..);
+      match split_on_matches(text, &base_selection, &regex) {
+        Ok(next) => {
+          let _ = ctx.editor().document_mut().set_selection(next);
+        },
         Err(err) => {
           ctx.search_prompt_mut().error = Some(err.to_string());
         },
@@ -523,6 +585,46 @@ pub fn finalize_select_regex<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool {
   }
 }
 
+pub fn finalize_split_selection<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool {
+  let (query, base_selection) = {
+    let prompt = ctx.search_prompt_ref();
+    (
+      prompt.query.clone(),
+      prompt
+        .original_selection
+        .clone()
+        .unwrap_or_else(|| ctx.editor_ref().document().selection().clone()),
+    )
+  };
+  if query.is_empty() {
+    return true;
+  }
+
+  let regex = match build_regex(&query, true) {
+    Ok(regex) => regex,
+    Err(err) => {
+      ctx.search_prompt_mut().error = Some(err.clone());
+      ctx.push_error("split_selection", err);
+      return false;
+    },
+  };
+
+  let text = ctx.editor_ref().document().text().slice(..);
+  match split_on_matches(text, &base_selection, &regex) {
+    Ok(next) => {
+      ctx.search_prompt_mut().error = None;
+      let _ = ctx.editor().document_mut().set_selection(next);
+      true
+    },
+    Err(err) => {
+      let message = err.to_string();
+      ctx.search_prompt_mut().error = Some(message.clone());
+      ctx.push_error("split_selection", message);
+      false
+    },
+  }
+}
+
 fn to_lib_direction(direction: Direction) -> Option<LibDirection> {
   match direction {
     Direction::Forward => Some(LibDirection::Forward),
@@ -559,6 +661,7 @@ pub fn build_search_prompt_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNode>
     match prompt.kind {
       SearchPromptKind::Search => "search",
       SearchPromptKind::SelectRegex => "select",
+      SearchPromptKind::SplitSelection => "split",
     }
     .to_string(),
   );

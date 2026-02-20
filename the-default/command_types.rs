@@ -491,6 +491,17 @@ pub enum Command {
   GotoLastModification,
   GotoWord,
   ExtendToWord,
+  SplitSelectionOnNewline,
+  MergeSelections,
+  MergeConsecutiveSelections,
+  SplitSelection,
+  CollapseSelection,
+  FlipSelections,
+  ExpandSelection,
+  ShrinkSelection,
+  SelectAllChildren,
+  SelectPrevSibling,
+  SelectNextSibling,
   DeleteSelection {
     yank: bool,
   },
@@ -839,6 +850,61 @@ impl Command {
   #[must_use]
   pub const fn extend_to_word() -> Self {
     Self::ExtendToWord
+  }
+
+  #[must_use]
+  pub const fn split_selection_on_newline() -> Self {
+    Self::SplitSelectionOnNewline
+  }
+
+  #[must_use]
+  pub const fn merge_selections() -> Self {
+    Self::MergeSelections
+  }
+
+  #[must_use]
+  pub const fn merge_consecutive_selections() -> Self {
+    Self::MergeConsecutiveSelections
+  }
+
+  #[must_use]
+  pub const fn split_selection() -> Self {
+    Self::SplitSelection
+  }
+
+  #[must_use]
+  pub const fn collapse_selection() -> Self {
+    Self::CollapseSelection
+  }
+
+  #[must_use]
+  pub const fn flip_selections() -> Self {
+    Self::FlipSelections
+  }
+
+  #[must_use]
+  pub const fn expand_selection() -> Self {
+    Self::ExpandSelection
+  }
+
+  #[must_use]
+  pub const fn shrink_selection() -> Self {
+    Self::ShrinkSelection
+  }
+
+  #[must_use]
+  pub const fn select_all_children() -> Self {
+    Self::SelectAllChildren
+  }
+
+  #[must_use]
+  pub const fn select_prev_sibling() -> Self {
+    Self::SelectPrevSibling
+  }
+
+  #[must_use]
+  pub const fn select_next_sibling() -> Self {
+    Self::SelectNextSibling
   }
 
   #[must_use]

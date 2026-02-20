@@ -83,6 +83,7 @@ use the_default::{
   completion_panel_rect as default_completion_panel_rect,
   finalize_search,
   finalize_select_regex,
+  finalize_split_selection,
   handle_query_change as file_picker_handle_query_change,
   poll_scan_results as file_picker_poll_scan_results,
   refresh_matcher_state as file_picker_refresh_matcher_state,
@@ -4356,6 +4357,7 @@ impl App {
     let should_close = match self.search_prompt_ref().kind {
       SearchPromptKind::Search => finalize_search(self),
       SearchPromptKind::SelectRegex => finalize_select_regex(self),
+      SearchPromptKind::SplitSelection => finalize_split_selection(self),
     };
     if should_close {
       self.search_prompt_mut().clear();
@@ -8427,6 +8429,7 @@ mod tests {
     Direction as CommandDirection,
     Mode,
     PendingInput,
+    SearchPromptKind,
   };
   use the_lib::{
     messages::MessageEventKind,
@@ -9534,6 +9537,56 @@ pkgs.mkShell {
     assert_eq!(
       app.active_editor_ref().document().selection().ranges()[0],
       expected
+    );
+  }
+
+  #[test]
+  fn split_selection_keymap_uses_split_prompt_and_partitions_selection() {
+    let _guard = ffi_test_guard();
+    let mut app = App::new();
+    let id = app.create_editor("alpha,beta,gamma\n", default_viewport(), ffi::Position {
+      row: 0,
+      col: 0,
+    });
+    assert!(app.activate(id).is_some());
+    let split_end = "alpha,beta,gamma".chars().count();
+    let _ = app
+      .active_editor_mut()
+      .document_mut()
+      .set_selection(Selection::single(0, split_end));
+
+    assert!(app.handle_key(id, key_char('S')));
+    assert!(app.active_state_ref().search_prompt.active);
+    assert_eq!(
+      app.active_state_ref().search_prompt.kind,
+      SearchPromptKind::SplitSelection
+    );
+
+    assert!(app.handle_key(id, key_char(',')));
+    assert_eq!(
+      app
+        .active_editor_ref()
+        .document()
+        .selection()
+        .ranges()
+        .len(),
+      3
+    );
+
+    assert!(app.handle_key(id, ffi::KeyEvent {
+      kind:      1,
+      codepoint: 0,
+      modifiers: 0,
+    }));
+    assert!(!app.active_state_ref().search_prompt.active);
+    assert_eq!(
+      app
+        .active_editor_ref()
+        .document()
+        .selection()
+        .ranges()
+        .len(),
+      3
     );
   }
 

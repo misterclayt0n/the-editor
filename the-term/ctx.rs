@@ -4833,6 +4833,7 @@ mod tests {
     Mode,
     Modifiers,
     PendingInput,
+    SearchPromptKind,
     handle_key,
     show_completion_menu,
     ui_event,
@@ -5966,6 +5967,50 @@ pkgs.mkShell {
       Range::new(target.anchor.max(0), target.head)
     };
     assert_eq!(ctx.editor.document().selection().ranges()[0], expected);
+  }
+
+  #[test]
+  fn split_selection_keymap_sequence_uses_split_prompt_and_partitions_selection() {
+    let dispatch = build_dispatch::<Ctx>();
+    let mut ctx = Ctx::new(None).expect("ctx");
+    ctx.set_dispatch(&dispatch);
+
+    let content = "alpha,beta,gamma\n";
+    let tx = Transaction::change(
+      ctx.editor.document().text(),
+      std::iter::once((
+        0,
+        ctx.editor.document().text().len_chars(),
+        Some(content.into()),
+      )),
+    )
+    .expect("seed transaction");
+    assert!(DefaultContext::apply_transaction(&mut ctx, &tx));
+    let split_end = content.trim_end_matches('\n').chars().count();
+    let _ = ctx
+      .editor
+      .document_mut()
+      .set_selection(Selection::single(0, split_end));
+
+    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+      key:       Key::Char('S'),
+      modifiers: Modifiers::empty(),
+    });
+    assert!(ctx.search_prompt.active);
+    assert_eq!(ctx.search_prompt.kind, SearchPromptKind::SplitSelection);
+
+    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+      key:       Key::Char(','),
+      modifiers: Modifiers::empty(),
+    });
+    assert_eq!(ctx.editor.document().selection().ranges().len(), 3);
+
+    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+      key:       Key::Enter,
+      modifiers: Modifiers::empty(),
+    });
+    assert!(!ctx.search_prompt.active);
+    assert_eq!(ctx.editor.document().selection().ranges().len(), 3);
   }
 
   #[test]

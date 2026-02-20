@@ -20,6 +20,7 @@ use crate::{
     DocumentId,
   },
   render::plan::RenderCache,
+  selection::Selection,
   view::ViewState,
 };
 
@@ -54,10 +55,11 @@ pub struct Editor {
 
 #[derive(Debug)]
 struct BufferState {
-  document:     Document,
-  view:         ViewState,
-  render_cache: RenderCache,
-  file_path:    Option<PathBuf>,
+  document:                 Document,
+  view:                     ViewState,
+  render_cache:             RenderCache,
+  file_path:                Option<PathBuf>,
+  object_selection_history: Vec<Selection>,
 }
 
 impl BufferState {
@@ -67,6 +69,7 @@ impl BufferState {
       view,
       render_cache: RenderCache::default(),
       file_path,
+      object_selection_history: Vec::new(),
     }
   }
 }
@@ -213,6 +216,24 @@ impl Editor {
     self.touch_modified_history(self.active_buffer);
   }
 
+  pub fn push_object_selection(&mut self, selection: Selection) {
+    self.buffers[self.active_buffer]
+      .object_selection_history
+      .push(selection);
+  }
+
+  pub fn pop_object_selection(&mut self) -> Option<Selection> {
+    self.buffers[self.active_buffer]
+      .object_selection_history
+      .pop()
+  }
+
+  pub fn clear_object_selections(&mut self) {
+    self.buffers[self.active_buffer]
+      .object_selection_history
+      .clear();
+  }
+
   pub fn goto_last_modified_buffer(&mut self) -> bool {
     let current = self.active_buffer;
     let Some(index) = self
@@ -246,6 +267,7 @@ mod tests {
     document::DocumentId,
     position::Position,
     render::graphics::Rect,
+    selection::Selection,
     transaction::Transaction,
   };
 
@@ -376,5 +398,32 @@ mod tests {
     editor.document_mut().commit().expect("commit insert");
 
     assert_eq!(editor.last_modification_position(), Some(5));
+  }
+
+  #[test]
+  fn editor_object_selection_history_is_scoped_per_buffer() {
+    let doc_id = DocumentId::new(NonZeroUsize::new(1).unwrap());
+    let doc = Document::new(doc_id, Rope::from("one"));
+    let view = ViewState::new(Rect::new(0, 0, 80, 24), Position::new(0, 0));
+    let editor_id = EditorId::new(NonZeroUsize::new(1).unwrap());
+    let mut editor = Editor::new(editor_id, doc, view);
+
+    let first = Selection::point(0);
+    editor.push_object_selection(first.clone());
+
+    let view2 = ViewState::new(Rect::new(0, 0, 80, 24), Position::new(0, 0));
+    editor.open_buffer(
+      Rope::from("two"),
+      view2,
+      Some(PathBuf::from("/tmp/two.txt")),
+    );
+    assert!(editor.pop_object_selection().is_none());
+
+    let second = Selection::point(1);
+    editor.push_object_selection(second.clone());
+    assert_eq!(editor.pop_object_selection(), Some(second));
+
+    assert!(editor.switch_buffer_backward(1));
+    assert_eq!(editor.pop_object_selection(), Some(first));
   }
 }

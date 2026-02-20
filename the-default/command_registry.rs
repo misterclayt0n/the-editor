@@ -653,9 +653,46 @@ fn cmd_open<Ctx: DefaultContext>(ctx: &mut Ctx, args: Args, event: CommandEvent)
     workspace_root_for_ctx(ctx).join(path)
   };
 
-  ctx
-    .open_file(&resolved)
-    .map_err(|err| CommandError::new(format!("failed to open '{}': {err}", resolved.display())))
+  match ctx.open_file(&resolved) {
+    Ok(()) => Ok(()),
+    Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+      if let Some(parent) = resolved.parent()
+        && !parent.as_os_str().is_empty()
+      {
+        std::fs::create_dir_all(parent).map_err(|create_err| {
+          CommandError::new(format!(
+            "failed to create directory '{}': {create_err}",
+            parent.display()
+          ))
+        })?;
+      }
+
+      OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .open(&resolved)
+        .map_err(|create_err| {
+          CommandError::new(format!(
+            "failed to create '{}': {create_err}",
+            resolved.display()
+          ))
+        })?;
+
+      ctx.open_file(&resolved).map_err(|open_err| {
+        CommandError::new(format!(
+          "failed to open '{}': {open_err}",
+          resolved.display()
+        ))
+      })
+    },
+    Err(err) => {
+      Err(CommandError::new(format!(
+        "failed to open '{}': {err}",
+        resolved.display()
+      )))
+    },
+  }
 }
 
 fn cmd_write<Ctx: DefaultContext>(

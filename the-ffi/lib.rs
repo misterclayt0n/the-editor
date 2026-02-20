@@ -8451,6 +8451,40 @@ mod tests {
   }
 
   #[test]
+  fn command_open_creates_missing_file() {
+    let _guard = ffi_test_guard();
+    let mut app = App::new();
+    let id = app.create_editor("", default_viewport(), ffi::Position { row: 0, col: 0 });
+
+    let nonce = SystemTime::now()
+      .duration_since(SystemTime::UNIX_EPOCH)
+      .map(|d| d.as_nanos())
+      .unwrap_or(0);
+    let path = std::env::temp_dir().join(format!(
+      "the-editor-ffi-command-open-create-{}-{nonce}.txt",
+      std::process::id()
+    ));
+    let _ = fs::remove_file(&path);
+    assert!(!path.exists());
+
+    assert!(app.handle_key(id, key_char(':')));
+    for ch in format!("open {}", path.display()).chars() {
+      assert!(app.handle_key(id, key_char(ch)));
+    }
+    assert!(app.handle_key(id, ffi::KeyEvent {
+      kind:      1,
+      codepoint: 0,
+      modifiers: 0,
+    }));
+
+    assert!(path.exists());
+    assert_eq!(app.active_editor_ref().document().text().to_string(), "");
+    assert_eq!(DefaultContext::file_path(&app), Some(path.as_path()));
+
+    let _ = fs::remove_file(&path);
+  }
+
+  #[test]
   fn theme_highlight_style_out_of_bounds_returns_default() {
     let _guard = ffi_test_guard();
     let app = App::new();

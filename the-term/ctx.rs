@@ -6310,6 +6310,46 @@ pkgs.mkShell {
   }
 
   #[test]
+  fn command_open_creates_missing_file() {
+    let dispatch = build_dispatch::<Ctx>();
+    let mut ctx = Ctx::new(None).expect("ctx");
+    ctx.set_dispatch(&dispatch);
+
+    let nonce = SystemTime::now()
+      .duration_since(SystemTime::UNIX_EPOCH)
+      .map(|d| d.as_nanos())
+      .unwrap_or(0);
+    let path = std::env::temp_dir().join(format!(
+      "the-editor-command-open-create-{}-{nonce}.txt",
+      std::process::id()
+    ));
+    let _ = fs::remove_file(&path);
+    assert!(!path.exists());
+
+    handle_key(&dispatch, &mut ctx, KeyEvent {
+      key:       Key::Char(':'),
+      modifiers: Modifiers::empty(),
+    });
+    for ch in format!("open {}", path.display()).chars() {
+      handle_key(&dispatch, &mut ctx, KeyEvent {
+        key:       Key::Char(ch),
+        modifiers: Modifiers::empty(),
+      });
+    }
+    handle_key(&dispatch, &mut ctx, KeyEvent {
+      key:       Key::Enter,
+      modifiers: Modifiers::empty(),
+    });
+
+    assert_eq!(ctx.mode(), Mode::Normal);
+    assert!(path.exists());
+    assert_eq!(ctx.editor.document().text().to_string(), "");
+    assert_eq!(ctx.file_path(), Some(path.as_path()));
+
+    let _ = fs::remove_file(&path);
+  }
+
+  #[test]
   fn escape_with_completion_active_returns_to_normal_mode() {
     let dispatch = build_dispatch::<Ctx>();
     let mut ctx = Ctx::new(None).expect("ctx");

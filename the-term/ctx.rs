@@ -446,103 +446,103 @@ impl PendingLspRequestKind {
 
 /// Application state passed to all handlers.
 pub struct Ctx {
-  pub editor:                       Editor,
-  pub file_path:                    Option<PathBuf>,
-  pub should_quit:                  bool,
-  pub needs_render:                 bool,
-  pub messages:                     MessageCenter,
-  message_log:                      Option<BufWriter<std::fs::File>>,
-  message_log_seq:                  u64,
-  lsp_trace_log:                    Option<BufWriter<std::fs::File>>,
-  pub file_picker_wake_rx:          Receiver<()>,
-  pub mode:                         Mode,
-  pub keymaps:                      Keymaps,
-  pub command_prompt:               CommandPromptState,
-  pub command_registry:             CommandRegistry<Ctx>,
-  pub command_palette:              CommandPaletteState,
-  pub command_palette_style:        CommandPaletteStyle,
-  pub completion_menu:              the_default::CompletionMenuState,
-  pub signature_help:               the_default::SignatureHelpState,
-  pub hover_docs:                   Option<String>,
-  pub hover_docs_scroll:            usize,
-  pub file_picker:                  FilePickerState,
-  pub lsp_runtime:                  LspRuntime,
-  pub lsp_ready:                    bool,
-  pub lsp_document:                 Option<LspDocumentSyncState>,
-  lsp_statusline:                   LspStatuslineState,
-  lsp_spinner_index:                usize,
-  lsp_spinner_last_tick:            Instant,
-  lsp_active_progress_tokens:       HashSet<String>,
-  lsp_watched_file:                 Option<LspWatchedFileState>,
-  lsp_pending_requests:             HashMap<u64, PendingLspRequestKind>,
-  lsp_completion_items:             Vec<LspCompletionItem>,
-  lsp_completion_raw_items:         Vec<Value>,
-  lsp_completion_resolved_indices:  HashSet<usize>,
-  lsp_completion_visible_indices:   Vec<usize>,
-  lsp_completion_fallback_start:    Option<usize>,
-  lsp_completion_generation:        u64,
-  lsp_pending_auto_completion:      Option<PendingAutoCompletion>,
-  lsp_pending_auto_signature_help:  Option<PendingAutoSignatureHelp>,
-  pub diagnostics:                  DiagnosticsState,
-  pub file_picker_layout:           Option<FilePickerLayout>,
-  pub file_picker_drag:             Option<FilePickerDragState>,
-  pub completion_docs_layout:       Option<CompletionDocsLayout>,
-  pub completion_docs_drag:         Option<CompletionDocsDragState>,
-  pub search_prompt:                the_default::SearchPromptState,
-  pub ui_theme:                     Theme,
-  pub ui_state:                     UiState,
-  pub pending_input:                Option<the_default::PendingInput>,
-  pub dispatch:                     Option<NonNull<DefaultDispatchStatic<Ctx>>>,
+  pub editor:                        Editor,
+  pub file_path:                     Option<PathBuf>,
+  pub should_quit:                   bool,
+  pub needs_render:                  bool,
+  pub messages:                      MessageCenter,
+  message_log:                       Option<BufWriter<std::fs::File>>,
+  message_log_seq:                   u64,
+  lsp_trace_log:                     Option<BufWriter<std::fs::File>>,
+  pub file_picker_wake_rx:           Receiver<()>,
+  pub mode:                          Mode,
+  pub keymaps:                       Keymaps,
+  pub command_prompt:                CommandPromptState,
+  pub command_registry:              CommandRegistry<Ctx>,
+  pub command_palette:               CommandPaletteState,
+  pub command_palette_style:         CommandPaletteStyle,
+  pub completion_menu:               the_default::CompletionMenuState,
+  pub signature_help:                the_default::SignatureHelpState,
+  pub hover_docs:                    Option<String>,
+  pub hover_docs_scroll:             usize,
+  pub file_picker:                   FilePickerState,
+  pub lsp_runtime:                   LspRuntime,
+  pub lsp_ready:                     bool,
+  pub lsp_document:                  Option<LspDocumentSyncState>,
+  lsp_statusline:                    LspStatuslineState,
+  lsp_spinner_index:                 usize,
+  lsp_spinner_last_tick:             Instant,
+  lsp_active_progress_tokens:        HashSet<String>,
+  lsp_watched_file:                  Option<LspWatchedFileState>,
+  lsp_pending_requests:              HashMap<u64, PendingLspRequestKind>,
+  lsp_completion_items:              Vec<LspCompletionItem>,
+  lsp_completion_raw_items:          Vec<Value>,
+  lsp_completion_resolved_indices:   HashSet<usize>,
+  lsp_completion_visible_indices:    Vec<usize>,
+  lsp_completion_fallback_start:     Option<usize>,
+  lsp_completion_generation:         u64,
+  lsp_pending_auto_completion:       Option<PendingAutoCompletion>,
+  lsp_pending_auto_signature_help:   Option<PendingAutoSignatureHelp>,
+  pub diagnostics:                   DiagnosticsState,
+  pub file_picker_layout:            Option<FilePickerLayout>,
+  pub file_picker_drag:              Option<FilePickerDragState>,
+  pub completion_docs_layout:        Option<CompletionDocsLayout>,
+  pub completion_docs_drag:          Option<CompletionDocsDragState>,
+  pub search_prompt:                 the_default::SearchPromptState,
+  pub ui_theme:                      Theme,
+  pub ui_state:                      UiState,
+  pub pending_input:                 Option<the_default::PendingInput>,
+  pub dispatch:                      Option<NonNull<DefaultDispatchStatic<Ctx>>>,
   /// Syntax loader for language detection and highlighting.
-  pub loader:                       Option<Arc<Loader>>,
+  pub loader:                        Option<Arc<Loader>>,
   /// Cache for syntax highlights (reused across renders).
-  pub highlight_cache:              HighlightCache,
+  pub highlight_cache:               HighlightCache,
   /// Background parse result channel (async syntax fallback).
-  pub syntax_parse_tx:              Sender<SyntaxParseResult>,
+  pub syntax_parse_tx:               Sender<SyntaxParseResult>,
   /// Background parse result receiver (async syntax fallback).
-  pub syntax_parse_rx:              Receiver<SyntaxParseResult>,
+  pub syntax_parse_rx:               Receiver<SyntaxParseResult>,
   /// Async parse lifecycle (single in-flight + one queued replacement).
-  pub syntax_parse_lifecycle:       ParseLifecycle<SyntaxParseJob>,
+  pub syntax_parse_lifecycle:        ParseLifecycle<SyntaxParseJob>,
   /// Syntax parse/highlight gate state (parsed vs interpolated).
-  pub syntax_parse_highlight_state: ParseHighlightState,
+  pub syntax_parse_highlight_state:  ParseHighlightState,
   /// Registers for yanking/pasting.
-  pub registers:                    Registers,
+  pub registers:                     Registers,
   /// Active register target (for macros/register operations).
-  pub register:                     Option<char>,
+  pub register:                      Option<char>,
   /// Macro recording state.
-  pub macro_recording:              Option<(char, Vec<KeyBinding>)>,
+  pub macro_recording:               Option<(char, Vec<KeyBinding>)>,
   /// Macro replay stack for recursion guard.
-  pub macro_replaying:              Vec<char>,
+  pub macro_replaying:               Vec<char>,
   /// Pending macro key events to replay.
-  pub macro_queue:                  VecDeque<KeyEvent>,
+  pub macro_queue:                   VecDeque<KeyEvent>,
   /// Last executed motion for repeat.
-  pub last_motion:                  Option<Motion>,
+  pub last_motion:                   Option<Motion>,
   /// Render formatting used for visual position mapping.
-  pub text_format:                  TextFormat,
+  pub text_format:                   TextFormat,
   /// Gutter layout and line-number rendering config.
-  pub gutter_config:                GutterConfig,
+  pub gutter_config:                 GutterConfig,
   /// VCS-like gutter signs keyed by document line.
-  pub gutter_diff_signs:            BTreeMap<usize, RenderGutterDiffKind>,
+  pub gutter_diff_signs:             BTreeMap<usize, RenderGutterDiffKind>,
   /// Active VCS provider registry for diff base resolution.
-  pub vcs_provider:                 DiffProviderRegistry,
+  pub vcs_provider:                  DiffProviderRegistry,
   /// Cached VCS statusline text for the active file.
-  pub vcs_statusline:               Option<String>,
+  pub vcs_statusline:                Option<String>,
   /// Incremental VCS diff state for the active file.
-  pub vcs_diff:                     Option<DiffHandle>,
+  pub vcs_diff:                      Option<DiffHandle>,
   /// Inline annotations (virtual text) for rendering.
-  pub inline_annotations:           Vec<InlineAnnotation>,
+  pub inline_annotations:            Vec<InlineAnnotation>,
   /// Overlay annotations (virtual text) for rendering.
-  pub overlay_annotations:          Vec<Overlay>,
+  pub overlay_annotations:           Vec<Overlay>,
   /// Transient inline jump labels for word-jump navigation.
-  pub word_jump_inline_annotations: Vec<InlineAnnotation>,
+  pub word_jump_inline_annotations:  Vec<InlineAnnotation>,
   /// Transient overlay jump labels for word-jump navigation.
   pub word_jump_overlay_annotations: Vec<Overlay>,
   /// Inline diagnostic ghost lines collected during render-plan construction.
-  pub inline_diagnostic_lines:      Vec<InlineDiagnosticRenderLine>,
+  pub inline_diagnostic_lines:       Vec<InlineDiagnosticRenderLine>,
   /// Underline spans for diagnostic ranges in the current viewport.
-  pub diagnostic_underlines:        Vec<DiagnosticUnderlineRenderSpan>,
+  pub diagnostic_underlines:         Vec<DiagnosticUnderlineRenderSpan>,
   /// Lines to keep above/below cursor when scrolling.
-  pub scrolloff:                    usize,
+  pub scrolloff:                     usize,
 }
 
 fn select_ui_theme() -> Theme {
@@ -4109,11 +4109,7 @@ impl the_default::DefaultContext for Ctx {
     self.pending_input = pending;
   }
 
-  fn set_word_jump_annotations(
-    &mut self,
-    inline: Vec<InlineAnnotation>,
-    overlay: Vec<Overlay>,
-  ) {
+  fn set_word_jump_annotations(&mut self, inline: Vec<InlineAnnotation>, overlay: Vec<Overlay>) {
     self.word_jump_inline_annotations = inline;
     self.word_jump_overlay_annotations = overlay;
   }
@@ -4704,8 +4700,10 @@ mod tests {
       UiKeyEvent,
       UiModifiers,
     },
-    selection::Selection,
-    selection::Range,
+    selection::{
+      Range,
+      Selection,
+    },
     transaction::Transaction,
   };
   use the_lsp::{
@@ -5631,7 +5629,10 @@ pkgs.mkShell {
     let _ = ctx.editor.document_mut().commit();
 
     let end = ctx.editor.document().text().len_chars();
-    let _ = ctx.editor.document_mut().set_selection(Selection::point(end));
+    let _ = ctx
+      .editor
+      .document_mut()
+      .set_selection(Selection::point(end));
     let expected = ctx
       .editor
       .last_modification_position()
@@ -5764,7 +5765,10 @@ pkgs.mkShell {
       modifiers: Modifiers::empty(),
     });
 
-    let target = targets.get(1).expect("expected at least two jump targets").range;
+    let target = targets
+      .get(1)
+      .expect("expected at least two jump targets")
+      .range;
     let expected = if target.anchor < target.head {
       Range::new(0, target.head)
     } else {

@@ -1,14 +1,16 @@
 //! Pending input state for commands that wait on the next keypress.
 
-use the_lib::selection::Range;
-use the_lib::text_object::TextObject;
+use the_lib::{
+  selection::Range,
+  text_object::TextObject,
+};
 
 use crate::Direction;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WordJumpTarget {
-  pub label:    [char; 2],
-  pub range:    Range,
+  pub label: [char; 2],
+  pub range: Range,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

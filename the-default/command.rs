@@ -126,7 +126,6 @@ use crate::{
   Motion,
   PendingInput,
   WordMotion,
-  pending::WordJumpTarget,
   command_palette::{
     CommandPaletteState,
     CommandPaletteStyle,
@@ -145,6 +144,7 @@ use crate::{
     handle_key as keymap_handle_key,
   },
   message_bar::MessagePresentation,
+  pending::WordJumpTarget,
   signature_help::SignatureHelpState,
 };
 
@@ -459,12 +459,7 @@ pub trait DefaultContext: Sized + 'static {
   fn dispatch(&self) -> DispatchRef<Self>;
   fn pending_input(&self) -> Option<&PendingInput>;
   fn set_pending_input(&mut self, pending: Option<PendingInput>);
-  fn set_word_jump_annotations(
-    &mut self,
-    _inline: Vec<InlineAnnotation>,
-    _overlay: Vec<Overlay>,
-  ) {
-  }
+  fn set_word_jump_annotations(&mut self, _inline: Vec<InlineAnnotation>, _overlay: Vec<Overlay>) {}
   fn clear_word_jump_annotations(&mut self) {}
   fn registers(&self) -> &Registers;
   fn registers_mut(&mut self) -> &mut Registers;
@@ -2117,9 +2112,11 @@ fn collect_word_jump_targets<Ctx: DefaultContext>(ctx: &Ctx) -> Vec<WordJumpTarg
   words
     .into_iter()
     .enumerate()
-    .map(|(idx, range)| WordJumpTarget {
-      label: [alphabet[idx / alphabet_len], alphabet[idx % alphabet_len]],
-      range,
+    .map(|(idx, range)| {
+      WordJumpTarget {
+        label: [alphabet[idx / alphabet_len], alphabet[idx % alphabet_len]],
+        range,
+      }
     })
     .collect()
 }

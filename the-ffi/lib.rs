@@ -1289,38 +1289,38 @@ impl PendingLspRequestKind {
 }
 
 struct EditorState {
-  mode:                         Mode,
-  command_prompt:               CommandPromptState,
-  command_palette:              CommandPaletteState,
-  command_palette_style:        CommandPaletteStyle,
-  completion_menu:              the_default::CompletionMenuState,
-  signature_help:               the_default::SignatureHelpState,
-  file_picker:                  FilePickerState,
-  search_prompt:                SearchPromptState,
-  ui_state:                     UiState,
-  needs_render:                 bool,
-  messages:                     MessageCenter,
-  pending_input:                Option<the_default::PendingInput>,
-  register:                     Option<char>,
-  macro_recording:              Option<(char, Vec<KeyBinding>)>,
-  macro_replaying:              Vec<char>,
-  macro_queue:                  VecDeque<KeyEvent>,
-  text_format:                  TextFormat,
-  gutter_config:                GutterConfig,
-  gutter_diff_signs:            BTreeMap<usize, RenderGutterDiffKind>,
-  vcs_statusline:               Option<String>,
-  inline_annotations:           Vec<InlineAnnotation>,
-  overlay_annotations:          Vec<Overlay>,
-  word_jump_inline_annotations: Vec<InlineAnnotation>,
+  mode:                          Mode,
+  command_prompt:                CommandPromptState,
+  command_palette:               CommandPaletteState,
+  command_palette_style:         CommandPaletteStyle,
+  completion_menu:               the_default::CompletionMenuState,
+  signature_help:                the_default::SignatureHelpState,
+  file_picker:                   FilePickerState,
+  search_prompt:                 SearchPromptState,
+  ui_state:                      UiState,
+  needs_render:                  bool,
+  messages:                      MessageCenter,
+  pending_input:                 Option<the_default::PendingInput>,
+  register:                      Option<char>,
+  macro_recording:               Option<(char, Vec<KeyBinding>)>,
+  macro_replaying:               Vec<char>,
+  macro_queue:                   VecDeque<KeyEvent>,
+  text_format:                   TextFormat,
+  gutter_config:                 GutterConfig,
+  gutter_diff_signs:             BTreeMap<usize, RenderGutterDiffKind>,
+  vcs_statusline:                Option<String>,
+  inline_annotations:            Vec<InlineAnnotation>,
+  overlay_annotations:           Vec<Overlay>,
+  word_jump_inline_annotations:  Vec<InlineAnnotation>,
   word_jump_overlay_annotations: Vec<Overlay>,
-  highlight_cache:              HighlightCache,
-  syntax_parse_tx:              Sender<SyntaxParseResult>,
-  syntax_parse_rx:              Receiver<SyntaxParseResult>,
-  syntax_parse_lifecycle:       ParseLifecycle<SyntaxParseJob>,
-  syntax_parse_highlight_state: ParseHighlightState,
-  hover_docs:                   Option<String>,
-  hover_docs_scroll:            usize,
-  scrolloff:                    usize,
+  highlight_cache:               HighlightCache,
+  syntax_parse_tx:               Sender<SyntaxParseResult>,
+  syntax_parse_rx:               Receiver<SyntaxParseResult>,
+  syntax_parse_lifecycle:        ParseLifecycle<SyntaxParseJob>,
+  syntax_parse_highlight_state:  ParseHighlightState,
+  hover_docs:                    Option<String>,
+  hover_docs_scroll:             usize,
+  scrolloff:                     usize,
 }
 
 impl EditorState {
@@ -7095,11 +7095,7 @@ impl DefaultContext for App {
     self.active_state_mut().pending_input = pending;
   }
 
-  fn set_word_jump_annotations(
-    &mut self,
-    inline: Vec<InlineAnnotation>,
-    overlay: Vec<Overlay>,
-  ) {
+  fn set_word_jump_annotations(&mut self, inline: Vec<InlineAnnotation>, overlay: Vec<Overlay>) {
     let state = self.active_state_mut();
     state.word_jump_inline_annotations = inline;
     state.word_jump_overlay_annotations = overlay;
@@ -9210,10 +9206,11 @@ pkgs.mkShell {
   fn goto_word_keymap_moves_cursor_using_jump_labels() {
     let _guard = ffi_test_guard();
     let mut app = App::new();
-    let id = app.create_editor("alpha bravo charlie delta\n", default_viewport(), ffi::Position {
-      row: 0,
-      col: 0,
-    });
+    let id = app.create_editor(
+      "alpha bravo charlie delta\n",
+      default_viewport(),
+      ffi::Position { row: 0, col: 0 },
+    );
     assert!(app.activate(id).is_some());
     let _ = app
       .active_editor_mut()
@@ -9234,8 +9231,18 @@ pkgs.mkShell {
         ..
       }) if targets.len() >= 2
     ));
-    assert!(app.active_state_ref().word_jump_inline_annotations.is_empty());
-    assert!(!app.active_state_ref().word_jump_overlay_annotations.is_empty());
+    assert!(
+      app
+        .active_state_ref()
+        .word_jump_inline_annotations
+        .is_empty()
+    );
+    assert!(
+      !app
+        .active_state_ref()
+        .word_jump_overlay_annotations
+        .is_empty()
+    );
 
     assert!(app.handle_key(id, key_char('a')));
     assert!(matches!(
@@ -9246,29 +9253,53 @@ pkgs.mkShell {
         ..
       }) if targets.len() >= 2
     ));
-    assert!(app.active_state_ref().word_jump_inline_annotations.is_empty());
-    assert!(!app.active_state_ref().word_jump_overlay_annotations.is_empty());
+    assert!(
+      app
+        .active_state_ref()
+        .word_jump_inline_annotations
+        .is_empty()
+    );
+    assert!(
+      !app
+        .active_state_ref()
+        .word_jump_overlay_annotations
+        .is_empty()
+    );
 
     assert!(app.handle_key(id, key_char('b')));
     assert!(app.active_state_ref().pending_input.is_none());
-    assert!(app.active_state_ref().word_jump_inline_annotations.is_empty());
-    assert!(app.active_state_ref().word_jump_overlay_annotations.is_empty());
+    assert!(
+      app
+        .active_state_ref()
+        .word_jump_inline_annotations
+        .is_empty()
+    );
+    assert!(
+      app
+        .active_state_ref()
+        .word_jump_overlay_annotations
+        .is_empty()
+    );
     let expected = targets
       .get(1)
       .expect("expected at least two jump targets")
       .range
       .with_direction(SelectionDirection::Forward);
-    assert_eq!(app.active_editor_ref().document().selection().ranges()[0], expected);
+    assert_eq!(
+      app.active_editor_ref().document().selection().ranges()[0],
+      expected
+    );
   }
 
   #[test]
   fn extend_to_word_keymap_extends_selection_using_jump_labels() {
     let _guard = ffi_test_guard();
     let mut app = App::new();
-    let id = app.create_editor("alpha bravo charlie delta\n", default_viewport(), ffi::Position {
-      row: 0,
-      col: 0,
-    });
+    let id = app.create_editor(
+      "alpha bravo charlie delta\n",
+      default_viewport(),
+      ffi::Position { row: 0, col: 0 },
+    );
     assert!(app.activate(id).is_some());
     let _ = app
       .active_editor_mut()
@@ -9285,13 +9316,19 @@ pkgs.mkShell {
     assert!(app.handle_key(id, key_char('a')));
     assert!(app.handle_key(id, key_char('b')));
 
-    let target = targets.get(1).expect("expected at least two jump targets").range;
+    let target = targets
+      .get(1)
+      .expect("expected at least two jump targets")
+      .range;
     let expected = if target.anchor < target.head {
       Range::new(0, target.head)
     } else {
       Range::new(target.anchor.max(0), target.head)
     };
-    assert_eq!(app.active_editor_ref().document().selection().ranges()[0], expected);
+    assert_eq!(
+      app.active_editor_ref().document().selection().ranges()[0],
+      expected
+    );
   }
 
   #[test]

@@ -97,7 +97,10 @@ impl<'a> GraphemeWithSource<'a> {
   fn placeholder() -> Self {
     GraphemeWithSource {
       grapheme: Grapheme::Other { g: " ".into() },
-      source:   GraphemeSource::Document { codepoints: 0 },
+      source:   GraphemeSource::Document {
+        codepoints: 0,
+        highlight:  None,
+      },
     }
   }
 
@@ -232,8 +235,12 @@ impl<'a, 't> DocumentFormatter<'a, 't> {
           Some((overlay, _)) => GraphemeStr::from(overlay.grapheme.as_str()),
           None => Cow::from(grapheme).into(),
         };
+        let overlay_highlight = overlay.and_then(|(_, highlight)| highlight);
 
-        (grapheme, GraphemeSource::Document { codepoints })
+        (grapheme, GraphemeSource::Document {
+          codepoints,
+          highlight: overlay_highlight,
+        })
       } else {
         if self.exhausted {
           return None;
@@ -243,7 +250,10 @@ impl<'a, 't> DocumentFormatter<'a, 't> {
         // and correct position computations.
         return Some(GraphemeWithSource {
           grapheme: Grapheme::Other { g: " ".into() },
-          source:   GraphemeSource::Document { codepoints: 0 },
+          source:   GraphemeSource::Document {
+            codepoints: 0,
+            highlight:  None,
+          },
         });
       };
 
@@ -446,7 +456,10 @@ mod doc_formatter_tests {
 
   #[test]
   fn grapheme_source_is_virtual() {
-    let doc_source = GraphemeSource::Document { codepoints: 5 };
+    let doc_source = GraphemeSource::Document {
+      codepoints: 5,
+      highlight:  None,
+    };
     let virtual_source = GraphemeSource::VirtualText { highlight: None };
 
     assert!(!doc_source.is_virtual());
@@ -455,8 +468,14 @@ mod doc_formatter_tests {
 
   #[test]
   fn grapheme_source_is_eof() {
-    let eof_source = GraphemeSource::Document { codepoints: 0 };
-    let non_eof_source = GraphemeSource::Document { codepoints: 1 };
+    let eof_source = GraphemeSource::Document {
+      codepoints: 0,
+      highlight:  None,
+    };
+    let non_eof_source = GraphemeSource::Document {
+      codepoints: 1,
+      highlight:  None,
+    };
     let virtual_source = GraphemeSource::VirtualText { highlight: None };
 
     assert!(eof_source.is_eof());
@@ -466,7 +485,10 @@ mod doc_formatter_tests {
 
   #[test]
   fn grapheme_source_doc_chars() {
-    let doc_source = GraphemeSource::Document { codepoints: 42 };
+    let doc_source = GraphemeSource::Document {
+      codepoints: 42,
+      highlight:  None,
+    };
     let virtual_source = GraphemeSource::VirtualText { highlight: None };
 
     assert_eq!(doc_source.doc_chars(), 42);
@@ -475,8 +497,10 @@ mod doc_formatter_tests {
 
   #[test]
   fn grapheme_with_source_new() {
-    let grapheme =
-      GraphemeWithSource::new("a".into(), 0, 4, GraphemeSource::Document { codepoints: 1 });
+    let grapheme = GraphemeWithSource::new("a".into(), 0, 4, GraphemeSource::Document {
+      codepoints: 1,
+      highlight:  None,
+    });
 
     assert_eq!(grapheme.doc_chars(), 1);
     assert_eq!(grapheme.width(), 1);
@@ -496,10 +520,13 @@ mod doc_formatter_tests {
 
   #[test]
   fn grapheme_with_source_whitespace() {
-    let space =
-      GraphemeWithSource::new(" ".into(), 0, 4, GraphemeSource::Document { codepoints: 1 });
+    let space = GraphemeWithSource::new(" ".into(), 0, 4, GraphemeSource::Document {
+      codepoints: 1,
+      highlight:  None,
+    });
     let tab = GraphemeWithSource::new("\t".into(), 0, 4, GraphemeSource::Document {
       codepoints: 1,
+      highlight:  None,
     });
 
     assert!(space.is_whitespace());
@@ -510,6 +537,7 @@ mod doc_formatter_tests {
   fn grapheme_with_source_newline() {
     let newline = GraphemeWithSource::new("\n".into(), 0, 4, GraphemeSource::Document {
       codepoints: 1,
+      highlight:  None,
     });
 
     assert!(newline.is_newline());
@@ -520,7 +548,10 @@ mod doc_formatter_tests {
   fn formatted_grapheme_methods() {
     let formatted = FormattedGrapheme {
       raw:        Grapheme::Other { g: "test".into() },
-      source:     GraphemeSource::Document { codepoints: 4 },
+      source:     GraphemeSource::Document {
+        codepoints: 4,
+        highlight:  None,
+      },
       visual_pos: Position { row: 1, col: 5 },
       line_idx:   0,
       char_idx:   0,

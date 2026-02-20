@@ -455,7 +455,13 @@ pub fn build_plan<'a, 't, H: HighlightProvider>(
             }
             let highlight = match grapheme.source {
               GraphemeSource::VirtualText { highlight } => highlight,
-              _ => highlights.highlight_at(grapheme.char_idx),
+              GraphemeSource::Document {
+                highlight: Some(highlight),
+                ..
+              } => Some(highlight),
+              GraphemeSource::Document {
+                highlight: None, ..
+              } => highlights.highlight_at(grapheme.char_idx),
             };
             current_line.push_span(RenderSpan {
               col: col as u16,
@@ -505,7 +511,13 @@ pub fn build_plan<'a, 't, H: HighlightProvider>(
       if let Some((text, cols)) = grapheme_text(&grapheme) {
         let highlight = match grapheme.source {
           GraphemeSource::VirtualText { highlight } => highlight,
-          _ => highlights.highlight_at(grapheme.char_idx),
+          GraphemeSource::Document {
+            highlight: Some(highlight),
+            ..
+          } => Some(highlight),
+          GraphemeSource::Document {
+            highlight: None, ..
+          } => highlights.highlight_at(grapheme.char_idx),
         };
 
         current_line.push_span(RenderSpan {
@@ -1037,6 +1049,7 @@ mod tests {
     render::{
       GutterConfig,
       SyntaxHighlightAdapter,
+      text_annotations::Overlay,
     },
     selection::{
       Range,
@@ -1182,6 +1195,38 @@ mod tests {
       .filter_map(|span| span.highlight)
       .collect();
     assert!(span_highlights.contains(&crate::syntax::Highlight::new(1)));
+  }
+
+  #[test]
+  fn build_plan_applies_overlay_annotation_highlight() {
+    let id = DocumentId::new(std::num::NonZeroUsize::new(1).unwrap());
+    let doc = Document::new(id, Rope::from("abc"));
+    let view = ViewState::new(Rect::new(0, 0, 10, 1), Position::new(0, 0));
+    let text_fmt = TextFormat::default();
+    let overlay = vec![Overlay::new(1, "X")];
+    let mut annotations = TextAnnotations::default();
+    let _ = annotations.add_overlay(&overlay, Some(crate::syntax::Highlight::new(7)));
+
+    let mut highlights = NoHighlights;
+    let mut cache = RenderCache::default();
+    let styles = RenderStyles::default();
+    let gutter = no_gutter();
+
+    let plan = build_plan(
+      &doc,
+      view,
+      &text_fmt,
+      &gutter,
+      &mut annotations,
+      &mut highlights,
+      &mut cache,
+      styles,
+    );
+
+    let has_overlay_highlight = plan.lines[0].spans.iter().any(|span| {
+      span.highlight == Some(crate::syntax::Highlight::new(7)) && span.text.as_str().contains('X')
+    });
+    assert!(has_overlay_highlight);
   }
 
   #[test]

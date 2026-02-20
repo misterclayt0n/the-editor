@@ -10,13 +10,12 @@ use crate::{
 pub enum GraphemeSource {
   Document {
     codepoints: u32,
+    highlight:  Option<Highlight>,
   },
   /// Inline virtual text cannot be highlighted with a `Highlight` iterator
   /// because it's not part of the document. Instead the `Highlight` is emitted
   /// directly by the document formatter.
-  VirtualText {
-    highlight: Option<Highlight>,
-  },
+  VirtualText { highlight: Option<Highlight> },
 }
 
 impl GraphemeSource {
@@ -27,12 +26,12 @@ impl GraphemeSource {
 
   pub fn is_eof(self) -> bool {
     // All doc chars except the EOF char have non-zero codepoints.
-    matches!(self, GraphemeSource::Document { codepoints: 0 })
+    matches!(self, GraphemeSource::Document { codepoints: 0, .. })
   }
 
   pub fn doc_chars(self) -> usize {
     match self {
-      GraphemeSource::Document { codepoints } => codepoints as usize,
+      GraphemeSource::Document { codepoints, .. } => codepoints as usize,
       GraphemeSource::VirtualText { .. } => 0,
     }
   }

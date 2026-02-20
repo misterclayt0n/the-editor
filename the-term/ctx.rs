@@ -5909,6 +5909,44 @@ pkgs.mkShell {
   }
 
   #[test]
+  fn copy_selection_on_next_line_keeps_single_line_height_at_line_start() {
+    let dispatch = build_dispatch::<Ctx>();
+    let mut ctx = Ctx::new(None).expect("ctx");
+    ctx.set_dispatch(&dispatch);
+
+    let content = "zero\none\ntwo\nthree\n";
+    let tx = Transaction::change(
+      ctx.editor.document().text(),
+      std::iter::once((
+        0,
+        ctx.editor.document().text().len_chars(),
+        Some(content.into()),
+      )),
+    )
+    .expect("seed transaction");
+    assert!(DefaultContext::apply_transaction(&mut ctx, &tx));
+
+    let line_start = ctx.editor.document().text().line_to_char(1);
+    let _ = ctx.editor.document_mut().set_selection(Selection::point(line_start));
+
+    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+      key:       Key::Char('C'),
+      modifiers: Modifiers::empty(),
+    });
+
+    let text = ctx.editor.document().text().slice(..);
+    let rows: Vec<_> = ctx
+      .editor
+      .document()
+      .selection()
+      .ranges()
+      .iter()
+      .map(|range| coords_at_pos(text, range.cursor(text)).row)
+      .collect();
+    assert_eq!(rows, vec![1, 2]);
+  }
+
+  #[test]
   fn goto_word_keymap_sequence_moves_cursor_using_jump_labels() {
     let dispatch = build_dispatch::<Ctx>();
     let mut ctx = Ctx::new(None).expect("ctx");

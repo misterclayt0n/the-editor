@@ -9495,6 +9495,36 @@ pkgs.mkShell {
   }
 
   #[test]
+  fn copy_selection_on_next_line_keeps_single_line_height_at_line_start() {
+    let _guard = ffi_test_guard();
+    let mut app = App::new();
+    let id = app.create_editor("zero\none\ntwo\nthree\n", default_viewport(), ffi::Position {
+      row: 0,
+      col: 0,
+    });
+    assert!(app.activate(id).is_some());
+
+    let line_start = app.active_editor_ref().document().text().line_to_char(1);
+    let _ = app
+      .active_editor_mut()
+      .document_mut()
+      .set_selection(Selection::point(line_start));
+
+    assert!(app.handle_key(id, key_char('C')));
+
+    let text = app.active_editor_ref().document().text().slice(..);
+    let rows: Vec<_> = app
+      .active_editor_ref()
+      .document()
+      .selection()
+      .ranges()
+      .iter()
+      .map(|range| coords_at_pos(text, range.cursor(text)).row)
+      .collect();
+    assert_eq!(rows, vec![1, 2]);
+  }
+
+  #[test]
   fn goto_word_keymap_moves_cursor_using_jump_labels() {
     let _guard = ffi_test_guard();
     let mut app = App::new();

@@ -4696,7 +4696,9 @@ fn copy_selection_on_line<Ctx: DefaultContext>(ctx: &mut Ctx, direction: Directi
     let mut annotations = ctx.text_annotations();
 
     for (_cursor_id, range) in selection.iter_with_ids() {
-      let (head, anchor) = if range.anchor < range.head {
+      let (head, anchor) = if range.is_empty() {
+        (range.head, range.anchor)
+      } else if range.anchor < range.head {
         (range.head.saturating_sub(1), range.anchor)
       } else {
         (range.head, range.anchor.saturating_sub(1))

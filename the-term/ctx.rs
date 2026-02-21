@@ -105,6 +105,7 @@ use the_lib::{
     Range,
     Selection,
   },
+  split_tree::SplitNodeId,
   syntax::{
     HighlightCache,
     Loader,
@@ -121,7 +122,6 @@ use the_lib::{
     Transaction,
   },
   view::ViewState,
-  split_tree::SplitNodeId,
 };
 use the_lsp::{
   FileChangeType,
@@ -2472,6 +2472,9 @@ impl Ctx {
       return true;
     };
 
+    // Match Helix behavior: record the origin before any goto jump so C-o can return.
+    let _ = <Self as the_default::DefaultContext>::save_selection_to_jumplist(self);
+
     if self
       .file_path
       .as_ref()
@@ -4488,6 +4491,68 @@ impl the_default::DefaultContext for Ctx {
     true
   }
 
+  fn jump_forward_in_jumplist(&mut self, count: usize) -> bool {
+    let previous_buffer = self.editor.active_buffer_index();
+    if !self.editor.jump_forward(count.max(1)) {
+      return false;
+    }
+
+    if self.editor.active_buffer_index() != previous_buffer {
+      self.lsp_close_current_document();
+      self.syntax_parse_lifecycle.cancel_pending();
+      self.highlight_cache.clear();
+      if self.editor.document().syntax().is_some() {
+        self.syntax_parse_highlight_state.mark_parsed();
+      } else {
+        self.syntax_parse_highlight_state.mark_cleared();
+      }
+
+      let active_path = self
+        .editor
+        .active_file_path()
+        .map(|path| path.to_path_buf());
+      self.file_path = active_path.clone();
+      self.lsp_refresh_document_state(active_path.as_deref());
+      self.lsp_open_current_document();
+      self.clear_hover_state();
+      self.refresh_vcs_diff_base();
+    }
+
+    self.needs_render = true;
+    true
+  }
+
+  fn jump_backward_in_jumplist(&mut self, count: usize) -> bool {
+    let previous_buffer = self.editor.active_buffer_index();
+    if !self.editor.jump_backward(count.max(1)) {
+      return false;
+    }
+
+    if self.editor.active_buffer_index() != previous_buffer {
+      self.lsp_close_current_document();
+      self.syntax_parse_lifecycle.cancel_pending();
+      self.highlight_cache.clear();
+      if self.editor.document().syntax().is_some() {
+        self.syntax_parse_highlight_state.mark_parsed();
+      } else {
+        self.syntax_parse_highlight_state.mark_cleared();
+      }
+
+      let active_path = self
+        .editor
+        .active_file_path()
+        .map(|path| path.to_path_buf());
+      self.file_path = active_path.clone();
+      self.lsp_refresh_document_state(active_path.as_deref());
+      self.lsp_open_current_document();
+      self.clear_hover_state();
+      self.refresh_vcs_diff_base();
+    }
+
+    self.needs_render = true;
+    true
+  }
+
   fn log_target_names(&self) -> &'static [&'static str] {
     &["messages", "lsp", "watch"]
   }
@@ -4949,6 +5014,9 @@ mod tests {
     LspCompletionItem,
     LspCompletionItemKind,
     LspInsertTextFormat,
+    LspLocation,
+    LspPosition,
+    LspRange,
     render_lsp_snippet,
   };
   use the_runtime::file_watch::{
@@ -4997,6 +5065,12 @@ mod tests {
       insert_text_format: Some(LspInsertTextFormat::PlainText),
       commit_characters:  Vec::new(),
     }
+  }
+
+  fn ctrl_modifiers() -> Modifiers {
+    let mut modifiers = Modifiers::empty();
+    modifiers.insert(Modifiers::CTRL);
+    modifiers
   }
 
   #[test]
@@ -5820,6 +5894,199 @@ pkgs.mkShell {
         .to_string()
         .starts_with("second-edit ")
     );
+  }
+
+  #[test]
+  fn jumplist_keymap_sequence_saves_and_navigates_selections() {
+    let dispatch = build_dispatch::<Ctx>();
+    let mut ctx = Ctx::new(None).expect("ctx");
+    ctx.set_dispatch(&dispatch);
+
+    let _ = ctx.editor.document_mut().set_selection(Selection::point(0));
+    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+      key:       Key::Char('s'),
+      modifiers: ctrl_modifiers(),
+    });
+
+    let _ = ctx.editor.document_mut().set_selection(Selection::point(3));
+    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+      key:       Key::Char('s'),
+      modifiers: ctrl_modifiers(),
+    });
+
+    let _ = ctx.editor.document_mut().set_selection(Selection::point(6));
+    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+      key:       Key::Char('o'),
+      modifiers: ctrl_modifiers(),
+    });
+    assert_eq!(
+      ctx.editor.document().selection().ranges()[0],
+      Range::point(3)
+    );
+
+    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+      key:       Key::Char('o'),
+      modifiers: ctrl_modifiers(),
+    });
+    assert_eq!(
+      ctx.editor.document().selection().ranges()[0],
+      Range::point(0)
+    );
+
+    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+      key:       Key::Char('i'),
+      modifiers: ctrl_modifiers(),
+    });
+    assert_eq!(
+      ctx.editor.document().selection().ranges()[0],
+      Range::point(3)
+    );
+
+    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+      key:       Key::Char('i'),
+      modifiers: ctrl_modifiers(),
+    });
+    assert_eq!(
+      ctx.editor.document().selection().ranges()[0],
+      Range::point(6)
+    );
+  }
+
+  #[test]
+  fn goto_motion_keymaps_save_jumps_for_file_edges_and_column() {
+    let dispatch = build_dispatch::<Ctx>();
+    let mut ctx = Ctx::new(None).expect("ctx");
+    ctx.set_dispatch(&dispatch);
+
+    let tx = Transaction::change(
+      ctx.editor.document().text(),
+      std::iter::once((0, 0, Some("alpha\nbeta\ngamma\n".into()))),
+    )
+    .expect("seed transaction");
+    assert!(DefaultContext::apply_transaction(&mut ctx, &tx));
+
+    let set_cursor_at = |ctx: &mut Ctx, row: usize, col: usize| {
+      let pos = {
+        let text = ctx.editor.document().text().slice(..);
+        char_idx_at_coords(text, Position::new(row, col))
+      };
+      let _ = ctx.editor.document_mut().set_selection(Selection::point(pos));
+      pos
+    };
+
+    let go_back = |ctx: &mut Ctx| {
+      dispatch.pre_on_keypress(
+        ctx,
+        KeyEvent {
+          key:       Key::Char('o'),
+          modifiers: ctrl_modifiers(),
+        },
+      );
+    };
+
+    let press = |ctx: &mut Ctx, ch: char| {
+      dispatch.pre_on_keypress(
+        ctx,
+        KeyEvent {
+          key:       Key::Char(ch),
+          modifiers: Modifiers::empty(),
+        },
+      );
+    };
+
+    let ge_origin = set_cursor_at(&mut ctx, 1, 1);
+    press(&mut ctx, 'g');
+    press(&mut ctx, 'e');
+    go_back(&mut ctx);
+    assert_eq!(
+      ctx.editor.document().selection().ranges()[0],
+      Range::point(ge_origin)
+    );
+
+    let gg_origin = set_cursor_at(&mut ctx, 2, 2);
+    press(&mut ctx, 'g');
+    press(&mut ctx, 'g');
+    go_back(&mut ctx);
+    assert_eq!(
+      ctx.editor.document().selection().ranges()[0],
+      Range::point(gg_origin)
+    );
+
+    let gbar_origin = set_cursor_at(&mut ctx, 1, 3);
+    press(&mut ctx, 'g');
+    press(&mut ctx, '|');
+    go_back(&mut ctx);
+    assert_eq!(
+      ctx.editor.document().selection().ranges()[0],
+      Range::point(gbar_origin)
+    );
+  }
+
+  #[test]
+  fn lsp_jump_saves_origin_for_jumplist_back_navigation() {
+    let first = TempTestFile::new("lsp-jump-origin", "first file\n");
+    let second = TempTestFile::new("lsp-jump-target", "second file\n");
+    let mut ctx = Ctx::new(Some(
+      first
+        .as_path()
+        .to_str()
+        .expect("temp test path should be utf-8"),
+    ))
+    .expect("ctx");
+
+    let origin = 3;
+    let _ = ctx.editor.document_mut().set_selection(Selection::point(origin));
+
+    let uri = the_lsp::text_sync::file_uri_for_path(second.as_path()).expect("file uri");
+    assert!(ctx.jump_to_location(&LspLocation {
+      uri,
+      range: LspRange {
+        start: LspPosition {
+          line:      0,
+          character: 0,
+        },
+        end:   LspPosition {
+          line:      0,
+          character: 0,
+        },
+      },
+    }));
+    assert_eq!(ctx.file_path.as_deref(), Some(second.as_path()));
+
+    assert!(ctx.jump_backward_in_jumplist(1));
+    assert_eq!(ctx.file_path.as_deref(), Some(first.as_path()));
+    assert_eq!(ctx.editor.document().selection().ranges()[0], Range::point(origin));
+  }
+
+  #[test]
+  fn toggle_comments_keymap_sequence_comments_current_line() {
+    let fixture = TempTestFile::with_extension("toggle-comments", "rs", "fn main() {}\n");
+    let mut ctx = Ctx::new(Some(
+      fixture
+        .as_path()
+        .to_str()
+        .expect("temp test path should be utf-8"),
+    ))
+    .expect("ctx");
+
+    let dispatch = build_dispatch::<Ctx>();
+    ctx.set_dispatch(&dispatch);
+
+    let _ = ctx.editor.document_mut().set_selection(Selection::point(0));
+    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+      key:       Key::Char('c'),
+      modifiers: ctrl_modifiers(),
+    });
+    assert_eq!(
+      ctx.editor.document().text().to_string(),
+      "// fn main() {}\n"
+    );
+
+    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+      key:       Key::Char('c'),
+      modifiers: ctrl_modifiers(),
+    });
+    assert_eq!(ctx.editor.document().text().to_string(), "fn main() {}\n");
   }
 
   #[test]

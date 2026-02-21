@@ -28,9 +28,9 @@ use crate::{
   split_tree::{
     PaneDirection,
     PaneId,
+    SplitAxis,
     SplitNodeId,
     SplitSeparator,
-    SplitAxis,
     SplitTree,
   },
   view::ViewState,
@@ -57,15 +57,17 @@ impl From<NonZeroUsize> for EditorId {
 
 #[derive(Debug)]
 pub struct Editor {
-  id:               EditorId,
-  buffers:          Vec<BufferState>,
-  active_buffer:    usize,
-  layout_viewport:  Rect,
-  split_tree:       SplitTree,
-  pane_buffers:     BTreeMap<PaneId, usize>,
-  next_document_id: NonZeroUsize,
-  access_history:   Vec<usize>,
-  modified_history: Vec<usize>,
+  id:                EditorId,
+  buffers:           Vec<BufferState>,
+  active_buffer:     usize,
+  layout_viewport:   Rect,
+  split_tree:        SplitTree,
+  pane_buffers:      BTreeMap<PaneId, usize>,
+  next_document_id:  NonZeroUsize,
+  access_history:    Vec<usize>,
+  modified_history:  Vec<usize>,
+  jumplist_backward: Vec<JumpEntry>,
+  jumplist_forward:  Vec<JumpEntry>,
 }
 
 #[derive(Debug)]
@@ -77,11 +79,18 @@ struct BufferState {
   object_selection_history: Vec<Selection>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct JumpEntry {
+  buffer_index:  usize,
+  selection:     Selection,
+  active_cursor: Option<crate::selection::CursorId>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PaneSnapshot {
-  pub pane_id:       PaneId,
-  pub buffer_index:  usize,
-  pub rect:          Rect,
+  pub pane_id:        PaneId,
+  pub buffer_index:   usize,
+  pub rect:           Rect,
   pub is_active_pane: bool,
 }
 
@@ -115,6 +124,8 @@ impl Editor {
       next_document_id,
       access_history: Vec::new(),
       modified_history: Vec::new(),
+      jumplist_backward: Vec::new(),
+      jumplist_forward: Vec::new(),
     }
   }
 
@@ -206,12 +217,18 @@ impl Editor {
       .layout(area)
       .into_iter()
       .filter_map(|(pane_id, rect)| {
-        self.pane_buffers.get(&pane_id).copied().map(|buffer_index| PaneSnapshot {
-          pane_id,
-          buffer_index,
-          rect,
-          is_active_pane: pane_id == active,
-        })
+        self
+          .pane_buffers
+          .get(&pane_id)
+          .copied()
+          .map(|buffer_index| {
+            PaneSnapshot {
+              pane_id,
+              buffer_index,
+              rect,
+              is_active_pane: pane_id == active,
+            }
+          })
       })
       .collect()
   }
@@ -418,6 +435,103 @@ impl Editor {
   pub fn last_modification_position(&self) -> Option<usize> {
     self.document().history().last_edit_pos()
   }
+
+  fn current_jump_entry(&self) -> JumpEntry {
+    JumpEntry {
+      buffer_index:  self.active_buffer,
+      selection:     self.document().selection().clone(),
+      active_cursor: self.view().active_cursor,
+    }
+  }
+
+  fn apply_jump_entry(&mut self, entry: JumpEntry) -> bool {
+    if entry.buffer_index >= self.buffers.len() {
+      return false;
+    }
+
+    if !self.activate_buffer(entry.buffer_index) {
+      return false;
+    }
+
+    if self
+      .document_mut()
+      .set_selection(entry.selection.clone())
+      .is_err()
+    {
+      return false;
+    }
+
+    self.view_mut().active_cursor = entry.active_cursor;
+    true
+  }
+
+  pub fn save_jump(&mut self) -> bool {
+    let current = self.current_jump_entry();
+    if self
+      .jumplist_backward
+      .last()
+      .is_some_and(|entry| *entry == current)
+    {
+      return false;
+    }
+    self.jumplist_backward.push(current);
+    self.jumplist_forward.clear();
+    true
+  }
+
+  pub fn jump_backward(&mut self, count: usize) -> bool {
+    let mut moved = false;
+    let mut current = self.current_jump_entry();
+    let mut remaining = count.max(1);
+
+    while remaining > 0 {
+      let Some(target) = self.jumplist_backward.pop() else {
+        break;
+      };
+
+      if target == current {
+        continue;
+      }
+
+      self.jumplist_forward.push(current.clone());
+      if self.apply_jump_entry(target.clone()) {
+        moved = true;
+        current = target;
+        remaining = remaining.saturating_sub(1);
+      } else {
+        break;
+      }
+    }
+
+    moved
+  }
+
+  pub fn jump_forward(&mut self, count: usize) -> bool {
+    let mut moved = false;
+    let mut current = self.current_jump_entry();
+    let mut remaining = count.max(1);
+
+    while remaining > 0 {
+      let Some(target) = self.jumplist_forward.pop() else {
+        break;
+      };
+
+      if target == current {
+        continue;
+      }
+
+      self.jumplist_backward.push(current.clone());
+      if self.apply_jump_entry(target.clone()) {
+        moved = true;
+        current = target;
+        remaining = remaining.saturating_sub(1);
+      } else {
+        break;
+      }
+    }
+
+    moved
+  }
 }
 
 #[cfg(test)]
@@ -434,7 +548,10 @@ mod tests {
     document::DocumentId,
     position::Position,
     render::graphics::Rect,
-    selection::Selection,
+    selection::{
+      Range,
+      Selection,
+    },
     split_tree::{
       PaneDirection,
       SplitAxis,
@@ -770,5 +887,62 @@ mod tests {
     assert!(!editor.transpose_active_pane_branch());
     assert!(editor.split_active_pane(SplitAxis::Vertical));
     assert!(editor.transpose_active_pane_branch());
+  }
+
+  #[test]
+  fn editor_jumplist_moves_between_saved_selections() {
+    let doc_id = DocumentId::new(NonZeroUsize::new(1).unwrap());
+    let doc = Document::new(doc_id, Rope::from("alpha beta gamma"));
+    let view = ViewState::new(Rect::new(0, 0, 80, 24), Position::new(0, 0));
+    let editor_id = EditorId::new(NonZeroUsize::new(1).unwrap());
+    let mut editor = Editor::new(editor_id, doc, view);
+
+    let _ = editor.document_mut().set_selection(Selection::point(0));
+    assert!(editor.save_jump());
+    let _ = editor.document_mut().set_selection(Selection::point(6));
+    assert!(editor.save_jump());
+    let _ = editor.document_mut().set_selection(Selection::point(11));
+
+    assert!(editor.jump_backward(1));
+    assert_eq!(editor.document().selection().ranges()[0], Range::point(6));
+    assert!(editor.jump_backward(1));
+    assert_eq!(editor.document().selection().ranges()[0], Range::point(0));
+    assert!(!editor.jump_backward(1));
+
+    assert!(editor.jump_forward(1));
+    assert_eq!(editor.document().selection().ranges()[0], Range::point(6));
+    assert!(editor.jump_forward(1));
+    assert_eq!(editor.document().selection().ranges()[0], Range::point(11));
+    assert!(!editor.jump_forward(1));
+  }
+
+  #[test]
+  fn editor_jumplist_can_switch_buffers() {
+    let doc_id = DocumentId::new(NonZeroUsize::new(1).unwrap());
+    let doc = Document::new(doc_id, Rope::from("one"));
+    let view = ViewState::new(Rect::new(0, 0, 80, 24), Position::new(0, 0));
+    let editor_id = EditorId::new(NonZeroUsize::new(1).unwrap());
+    let mut editor = Editor::new(editor_id, doc, view);
+
+    let _ = editor.document_mut().set_selection(Selection::point(1));
+    assert!(editor.save_jump());
+
+    let second_idx = editor.open_buffer(
+      Rope::from("two two"),
+      ViewState::new(Rect::new(0, 0, 80, 24), Position::new(0, 0)),
+      Some(PathBuf::from("/tmp/two.txt")),
+    );
+    assert_eq!(editor.active_buffer_index(), second_idx);
+    let _ = editor.document_mut().set_selection(Selection::point(4));
+    assert!(editor.save_jump());
+    let _ = editor.document_mut().set_selection(Selection::point(7));
+
+    assert!(editor.jump_backward(1));
+    assert_eq!(editor.active_buffer_index(), second_idx);
+    assert_eq!(editor.document().selection().ranges()[0], Range::point(4));
+
+    assert!(editor.jump_backward(1));
+    assert_eq!(editor.active_buffer_index(), 0);
+    assert_eq!(editor.document().selection().ranges()[0], Range::point(1));
   }
 }

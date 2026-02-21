@@ -506,6 +506,14 @@ pub enum Command {
   GotoFileVSplit,
   HSplitNew,
   VSplitNew,
+  ToggleComments,
+  JumpForward {
+    count: usize,
+  },
+  JumpBackward {
+    count: usize,
+  },
+  SaveSelection,
   GotoLastAccessedFile,
   GotoLastModifiedFile,
   GotoLastModification,
@@ -972,6 +980,26 @@ impl Command {
   #[must_use]
   pub const fn vsplit_new() -> Self {
     Self::VSplitNew
+  }
+
+  #[must_use]
+  pub const fn toggle_comments() -> Self {
+    Self::ToggleComments
+  }
+
+  #[must_use]
+  pub const fn jump_forward(count: usize) -> Self {
+    Self::JumpForward { count }
+  }
+
+  #[must_use]
+  pub const fn jump_backward(count: usize) -> Self {
+    Self::JumpBackward { count }
+  }
+
+  #[must_use]
+  pub const fn save_selection() -> Self {
+    Self::SaveSelection
   }
 
   #[must_use]

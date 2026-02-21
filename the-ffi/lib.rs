@@ -1097,11 +1097,11 @@ pub struct SplitSeparator {
 impl SplitSeparator {
   fn empty() -> Self {
     Self {
-      split_id: 0,
-      axis: 0,
-      line: 0,
+      split_id:   0,
+      axis:       0,
+      line:       0,
       span_start: 0,
-      span_end: 0,
+      span_end:   0,
     }
   }
 
@@ -3832,23 +3832,19 @@ impl App {
     editor
       .pane_separators(editor.layout_viewport())
       .get(index)
-      .map(|separator| SplitSeparator {
-        split_id: separator.split_id.get().get() as u64,
-        axis: split_axis_to_u8(separator.axis),
-        line: separator.line,
-        span_start: separator.span_start,
-        span_end: separator.span_end,
+      .map(|separator| {
+        SplitSeparator {
+          split_id:   separator.split_id.get().get() as u64,
+          axis:       split_axis_to_u8(separator.axis),
+          line:       separator.line,
+          span_start: separator.span_start,
+          span_end:   separator.span_end,
+        }
       })
       .unwrap_or_else(SplitSeparator::empty)
   }
 
-  pub fn resize_split(
-    &mut self,
-    id: ffi::EditorId,
-    split_id: u64,
-    x: u16,
-    y: u16,
-  ) -> bool {
+  pub fn resize_split(&mut self, id: ffi::EditorId, split_id: u64, x: u16, y: u16) -> bool {
     if self.activate(id).is_none() {
       return false;
     }
@@ -3905,7 +3901,10 @@ impl App {
     let diagnostic_underlines = std::mem::take(&mut self.diagnostic_underlines);
     let elapsed = started.elapsed();
     if ffi_ui_profile_should_log(elapsed) {
-      ffi_ui_profile_log(format!("frame_render_plan elapsed={}ms", elapsed.as_millis()));
+      ffi_ui_profile_log(format!(
+        "frame_render_plan elapsed={}ms",
+        elapsed.as_millis()
+      ));
     }
     RenderFramePlan::from_lib(
       frame,
@@ -4211,11 +4210,7 @@ impl App {
     buffer_index: usize,
     styles: RenderStyles,
   ) -> the_lib::render::RenderPlan {
-    let (
-      mut text_fmt,
-      gutter_config,
-      allow_cache_refresh,
-    ) = {
+    let (mut text_fmt, gutter_config, allow_cache_refresh) = {
       let state = self.active_state_ref();
       (
         state.text_format.clone(),
@@ -5708,6 +5703,9 @@ impl App {
       );
       return true;
     };
+
+    // Match Helix behavior: record the origin before any goto jump so C-o can return.
+    let _ = <Self as DefaultContext>::save_selection_to_jumplist(self);
 
     if self
       .file_path()
@@ -7789,6 +7787,64 @@ impl DefaultContext for App {
     true
   }
 
+  fn jump_forward_in_jumplist(&mut self, count: usize) -> bool {
+    let Some(current) = self.active_editor else {
+      return false;
+    };
+
+    let previous_buffer = self.active_editor_ref().active_buffer_index();
+    let switched = {
+      let Some(editor) = self.inner.editor_mut(current) else {
+        return false;
+      };
+      editor.jump_forward(count.max(1))
+    };
+    if !switched {
+      return false;
+    }
+
+    if self.active_editor_ref().active_buffer_index() != previous_buffer {
+      self.lsp_close_current_document();
+      let active_path = self
+        .inner
+        .editor(current)
+        .and_then(|editor| editor.active_file_path().map(Path::to_path_buf));
+      <Self as DefaultContext>::set_file_path(self, active_path);
+    }
+
+    self.request_render();
+    true
+  }
+
+  fn jump_backward_in_jumplist(&mut self, count: usize) -> bool {
+    let Some(current) = self.active_editor else {
+      return false;
+    };
+
+    let previous_buffer = self.active_editor_ref().active_buffer_index();
+    let switched = {
+      let Some(editor) = self.inner.editor_mut(current) else {
+        return false;
+      };
+      editor.jump_backward(count.max(1))
+    };
+    if !switched {
+      return false;
+    }
+
+    if self.active_editor_ref().active_buffer_index() != previous_buffer {
+      self.lsp_close_current_document();
+      let active_path = self
+        .inner
+        .editor(current)
+        .and_then(|editor| editor.active_file_path().map(Path::to_path_buf));
+      <Self as DefaultContext>::set_file_path(self, active_path);
+    }
+
+    self.request_render();
+    true
+  }
+
   fn log_target_names(&self) -> &'static [&'static str] {
     &["watch"]
   }
@@ -8919,6 +8975,11 @@ mod tests {
     PathEvent,
     PathEventKind,
   };
+  use the_lsp::{
+    LspLocation,
+    LspPosition,
+    LspRange,
+  };
 
   use super::{
     App,
@@ -9774,6 +9835,61 @@ pkgs.mkShell {
   }
 
   #[test]
+  fn lsp_jump_saves_origin_for_jumplist_back_navigation() {
+    let _guard = ffi_test_guard();
+    let first = TempTestFile::new("lsp-jump-origin", "first file\n");
+    let second = TempTestFile::new("lsp-jump-target", "second file\n");
+
+    let mut app = App::new();
+    let id = app.create_editor("first file\n", default_viewport(), ffi::Position {
+      row: 0,
+      col: 0,
+    });
+    assert!(app.activate(id).is_some());
+    assert!(
+      app.set_file_path(
+        id,
+        first
+          .as_path()
+          .to_str()
+          .expect("temp test path should be utf-8")
+      )
+    );
+
+    let origin = 3;
+    let _ = app
+      .active_editor_mut()
+      .document_mut()
+      .set_selection(Selection::point(origin));
+
+    let uri = the_lsp::text_sync::file_uri_for_path(second.as_path()).expect("file uri");
+    assert!(app.jump_to_location(&LspLocation {
+      uri,
+      range: LspRange {
+        start: LspPosition {
+          line:      0,
+          character: 0,
+        },
+        end:   LspPosition {
+          line:      0,
+          character: 0,
+        },
+      },
+    }));
+    assert_eq!(
+      <App as DefaultContext>::file_path(&app),
+      Some(second.as_path())
+    );
+
+    assert!(app.handle_key(id, key_char_ctrl('o')));
+    assert_eq!(<App as DefaultContext>::file_path(&app), Some(first.as_path()));
+    assert_eq!(
+      app.active_editor_ref().document().selection().ranges()[0],
+      Range::point(origin)
+    );
+  }
+
+  #[test]
   fn goto_last_accessed_file_keymap_toggles_between_buffers() {
     let _guard = ffi_test_guard();
     let first = TempTestFile::new("goto-access-first", "first file\n");
@@ -9903,6 +10019,57 @@ pkgs.mkShell {
       coords_at_pos(text, head).row
     };
     assert_eq!(bottom_row, 28);
+  }
+
+  #[test]
+  fn goto_motion_keymaps_save_jumps_for_file_edges_and_column() {
+    let _guard = ffi_test_guard();
+    let mut app = App::new();
+    let id = app.create_editor(
+      "alpha\nbeta\ngamma\n",
+      default_viewport(),
+      ffi::Position { row: 0, col: 0 },
+    );
+    assert!(app.activate(id).is_some());
+
+    let set_cursor_at = |app: &mut App, row: usize, col: usize| {
+      let pos = {
+        let text = app.active_editor_ref().document().text().slice(..);
+        char_idx_at_coords(text, LibPosition::new(row, col))
+      };
+      let _ = app
+        .active_editor_mut()
+        .document_mut()
+        .set_selection(Selection::point(pos));
+      pos
+    };
+
+    let ge_origin = set_cursor_at(&mut app, 1, 1);
+    assert!(app.handle_key(id, key_char('g')));
+    assert!(app.handle_key(id, key_char('e')));
+    assert!(app.handle_key(id, key_char_ctrl('o')));
+    assert_eq!(
+      app.active_editor_ref().document().selection().ranges()[0],
+      Range::point(ge_origin)
+    );
+
+    let gg_origin = set_cursor_at(&mut app, 2, 2);
+    assert!(app.handle_key(id, key_char('g')));
+    assert!(app.handle_key(id, key_char('g')));
+    assert!(app.handle_key(id, key_char_ctrl('o')));
+    assert_eq!(
+      app.active_editor_ref().document().selection().ranges()[0],
+      Range::point(gg_origin)
+    );
+
+    let gbar_origin = set_cursor_at(&mut app, 1, 3);
+    assert!(app.handle_key(id, key_char('g')));
+    assert!(app.handle_key(id, key_char('|')));
+    assert!(app.handle_key(id, key_char_ctrl('o')));
+    assert_eq!(
+      app.active_editor_ref().document().selection().ranges()[0],
+      Range::point(gbar_origin)
+    );
   }
 
   #[test]

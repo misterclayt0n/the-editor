@@ -42,6 +42,7 @@ use the_lib::{
     self,
     AutoPairs,
   },
+  comment,
   diff::compare_ropes,
   editor::Editor,
   history::{
@@ -117,6 +118,7 @@ use the_lib::{
   syntax::{
     Loader,
     config::{
+      BlockCommentToken,
       Configuration,
       IndentationHeuristic,
     },
@@ -516,6 +518,15 @@ pub trait DefaultContext: Sized + 'static {
   }
   fn goto_last_modified_buffer(&mut self) -> bool {
     false
+  }
+  fn save_selection_to_jumplist(&mut self) -> bool {
+    self.editor().save_jump()
+  }
+  fn jump_forward_in_jumplist(&mut self, count: usize) -> bool {
+    self.editor().jump_forward(count.max(1))
+  }
+  fn jump_backward_in_jumplist(&mut self, count: usize) -> bool {
+    self.editor().jump_backward(count.max(1))
   }
   fn save_current_buffer(&mut self, force: bool) -> Result<(), String> {
     let Some(path) = self.file_path().map(|path| path.to_path_buf()) else {
@@ -1172,6 +1183,18 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::GotoFileVSplit => goto_file_split(ctx, SplitAxis::Vertical),
     Command::HSplitNew => split_new_scratch(ctx, SplitAxis::Horizontal),
     Command::VSplitNew => split_new_scratch(ctx, SplitAxis::Vertical),
+    Command::ToggleComments => toggle_comments(ctx),
+    Command::JumpForward { count } => {
+      if !ctx.jump_forward_in_jumplist(count.max(1)) {
+        ctx.push_warning("jump", "no newer selection in jumplist");
+      }
+    },
+    Command::JumpBackward { count } => {
+      if !ctx.jump_backward_in_jumplist(count.max(1)) {
+        ctx.push_warning("jump", "no older selection in jumplist");
+      }
+    },
+    Command::SaveSelection => save_selection(ctx),
     Command::GotoLastAccessedFile => {
       if !ctx.goto_last_accessed_buffer() {
         ctx.push_warning("buffer", "no last accessed buffer");
@@ -2259,11 +2282,13 @@ fn goto_last_modification<Ctx: DefaultContext>(ctx: &mut Ctx) {
     return;
   };
   let extend = ctx.mode() == Mode::Select;
-  let doc = ctx.editor().document_mut();
-  let slice = doc.text().slice(..);
-  let selection = doc.selection().clone();
+  let (slice, selection) = {
+    let doc = ctx.editor_ref().document();
+    (doc.text().slice(..), doc.selection().clone())
+  };
   let new_selection = selection.transform(|range| range.put_cursor(slice, pos, extend));
-  let _ = doc.set_selection(new_selection);
+  let _ = ctx.save_selection_to_jumplist();
+  let _ = ctx.editor().document_mut().set_selection(new_selection);
 }
 
 const WORD_JUMP_LABEL_ALPHABET: &str = "abcdefghijklmnopqrstuvwxyz";
@@ -2466,6 +2491,7 @@ fn goto_prev_diag<Ctx: DefaultContext>(ctx: &mut Ctx) {
   }) else {
     return;
   };
+  let _ = ctx.save_selection_to_jumplist();
   let _ = ctx.editor().document_mut().set_selection(next);
 }
 
@@ -2474,6 +2500,7 @@ fn goto_first_diag<Ctx: DefaultContext>(ctx: &mut Ctx) {
   let Some(range) = diagnostics.first().copied() else {
     return;
   };
+  let _ = ctx.save_selection_to_jumplist();
   let _ = ctx
     .editor()
     .document_mut()
@@ -2496,6 +2523,7 @@ fn goto_next_diag<Ctx: DefaultContext>(ctx: &mut Ctx) {
   }) else {
     return;
   };
+  let _ = ctx.save_selection_to_jumplist();
   let _ = ctx.editor().document_mut().set_selection(next);
 }
 
@@ -2504,6 +2532,7 @@ fn goto_last_diag<Ctx: DefaultContext>(ctx: &mut Ctx) {
   let Some(range) = diagnostics.last().copied() else {
     return;
   };
+  let _ = ctx.save_selection_to_jumplist();
   let _ = ctx
     .editor()
     .document_mut()
@@ -2562,6 +2591,7 @@ fn goto_change<Ctx: DefaultContext>(ctx: &mut Ctx, direction: Direction) {
     })
   };
 
+  let _ = ctx.save_selection_to_jumplist();
   let _ = ctx.editor().document_mut().set_selection(next);
 }
 
@@ -2573,6 +2603,7 @@ fn goto_first_change<Ctx: DefaultContext>(ctx: &mut Ctx) {
   let Some(range) = change_ranges.first().copied() else {
     return;
   };
+  let _ = ctx.save_selection_to_jumplist();
   let _ = ctx
     .editor()
     .document_mut()
@@ -2587,6 +2618,7 @@ fn goto_last_change<Ctx: DefaultContext>(ctx: &mut Ctx) {
   let Some(range) = change_ranges.last().copied() else {
     return;
   };
+  let _ = ctx.save_selection_to_jumplist();
   let _ = ctx
     .editor()
     .document_mut()
@@ -2640,6 +2672,7 @@ fn goto_ts_object<Ctx: DefaultContext>(
     return;
   };
 
+  let _ = ctx.save_selection_to_jumplist();
   let _ = ctx.editor().document_mut().set_selection(selection);
 }
 
@@ -2662,6 +2695,115 @@ fn goto_paragraph<Ctx: DefaultContext>(ctx: &mut Ctx, direction: Direction) {
     })
   };
   let _ = ctx.editor().document_mut().set_selection(next);
+}
+
+fn toggle_comments<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  let transaction = {
+    let doc = ctx.editor_ref().document();
+    let selection = doc.selection().clone();
+    let text = doc.text().slice(..);
+    let (line_token, block_tokens) = comment_tokens_for_document(ctx, doc);
+    let line_token_ref = line_token.as_deref();
+    let block_tokens_ref = block_tokens.as_deref();
+
+    if line_token_ref.is_some() && block_tokens_ref.is_none() {
+      comment::toggle_line_comments(doc.text(), &selection, line_token_ref)
+        .map_err(|err| format!("failed to toggle comments: {err}"))
+    } else {
+      let split_lines = comment::split_lines_of_selection(text, &selection);
+      let default_block_tokens = [BlockCommentToken::default()];
+      let block_comment_tokens = block_tokens_ref.unwrap_or(&default_block_tokens);
+
+      let (line_commented, line_comment_changes) =
+        comment::find_block_comments(block_comment_tokens, text, &split_lines);
+
+      if line_commented {
+        comment::create_block_comment_transaction(
+          doc.text(),
+          &split_lines,
+          line_commented,
+          line_comment_changes,
+        )
+        .map(|(tx, _)| tx)
+        .map_err(|err| format!("failed to toggle comments: {err}"))
+      } else {
+        let (block_commented, comment_changes) =
+          comment::find_block_comments(block_comment_tokens, text, &selection);
+
+        if block_commented {
+          comment::create_block_comment_transaction(
+            doc.text(),
+            &selection,
+            block_commented,
+            comment_changes,
+          )
+          .map(|(tx, _)| tx)
+          .map_err(|err| format!("failed to toggle comments: {err}"))
+        } else if line_token_ref.is_none() && block_tokens_ref.is_some() {
+          comment::create_block_comment_transaction(
+            doc.text(),
+            &split_lines,
+            line_commented,
+            line_comment_changes,
+          )
+          .map(|(tx, _)| tx)
+          .map_err(|err| format!("failed to toggle comments: {err}"))
+        } else {
+          comment::toggle_line_comments(doc.text(), &selection, line_token_ref)
+            .map_err(|err| format!("failed to toggle comments: {err}"))
+        }
+      }
+    }
+  };
+
+  let tx = match transaction {
+    Ok(tx) => tx,
+    Err(err) => {
+      ctx.push_error("comment", err);
+      return;
+    },
+  };
+
+  if !ctx.apply_transaction(&tx) {
+    ctx.push_error("comment", "failed to apply comment transaction");
+    return;
+  }
+
+  if ctx.mode() == Mode::Select {
+    ctx.set_mode(Mode::Normal);
+  }
+}
+
+fn comment_tokens_for_document<Ctx: DefaultContext>(
+  ctx: &Ctx,
+  doc: &the_lib::document::Document,
+) -> (Option<String>, Option<Vec<BlockCommentToken>>) {
+  let Some(loader) = ctx.syntax_loader() else {
+    return (None, None);
+  };
+  let Some(syntax) = doc.syntax() else {
+    return (None, None);
+  };
+  if syntax.root_language().idx() >= loader.languages().len() {
+    return (None, None);
+  }
+
+  let syntax_config = &loader.language(syntax.root_language()).config().syntax;
+  let line_token = syntax_config
+    .comment_tokens
+    .as_ref()
+    .and_then(|tokens| tokens.first())
+    .cloned();
+  let block_tokens = syntax_config.block_comment_tokens.clone();
+  (line_token, block_tokens)
+}
+
+fn save_selection<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  if ctx.save_selection_to_jumplist() {
+    ctx.push_info("jump", "selection saved to jumplist");
+  } else {
+    ctx.push_warning("jump", "selection is already the latest jumplist entry");
+  }
 }
 
 fn split_selection_on_newline<Ctx: DefaultContext>(ctx: &mut Ctx) {
@@ -3638,6 +3780,10 @@ fn add_cursor<Ctx: DefaultContext>(ctx: &mut Ctx, direction: Direction) {
 }
 
 fn motion<Ctx: DefaultContext>(ctx: &mut Ctx, motion: Motion) {
+  let save_jump = matches!(
+    motion,
+    Motion::FileStart { .. } | Motion::FileEnd { .. } | Motion::LastLine { .. } | Motion::Column { .. }
+  );
   let viewport_width = ctx.editor().view().viewport.width;
   let is_select = ctx.mode() == Mode::Select;
   let next = {
@@ -3815,6 +3961,10 @@ fn motion<Ctx: DefaultContext>(ctx: &mut Ctx, motion: Motion) {
       },
     }
   };
+
+  if save_jump {
+    let _ = ctx.save_selection_to_jumplist();
+  }
 
   {
     let doc = ctx.editor().document_mut();
@@ -5339,6 +5489,10 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "goto_file_vsplit" => Some(Command::goto_file_vsplit()),
     "hsplit_new" => Some(Command::hsplit_new()),
     "vsplit_new" => Some(Command::vsplit_new()),
+    "toggle_comments" => Some(Command::toggle_comments()),
+    "jump_forward" => Some(Command::jump_forward(1)),
+    "jump_backward" => Some(Command::jump_backward(1)),
+    "save_selection" => Some(Command::save_selection()),
     "goto_last_accessed_file" => Some(Command::goto_last_accessed_file()),
     "goto_last_modified_file" => Some(Command::goto_last_modified_file()),
     "goto_last_modification" => Some(Command::goto_last_modification()),

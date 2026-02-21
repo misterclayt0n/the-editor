@@ -1014,11 +1014,11 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
       },
     },
 
-    // "C-c" => toggle_comments,
+    "C-c" => toggle_comments,
 
-    // "C-i" | "tab" => jump_forward,
-    // "C-o" => jump_backward,
-    // "C-s" => save_selection,
+    "C-i" | "tab" => jump_forward,
+    "C-o" => jump_backward,
+    "C-s" => save_selection,
 
     "space" => { "Space"
       "f" => file_picker,

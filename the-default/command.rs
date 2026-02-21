@@ -1232,8 +1232,13 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::ChangeSelection { yank } => ctx.dispatch().change_selection(ctx, yank),
     Command::Replace => ctx.dispatch().replace(ctx, ()),
     Command::ReplaceWithYanked => ctx.dispatch().replace_with_yanked(ctx, ()),
+    Command::ReplaceSelectionsWithClipboard => replace_selections_with_clipboard(ctx),
     Command::Yank => ctx.dispatch().yank(ctx, ()),
+    Command::YankToClipboard => yank_to_clipboard(ctx),
+    Command::YankMainSelectionToClipboard => yank_main_selection_to_clipboard(ctx),
     Command::Paste { after } => ctx.dispatch().paste(ctx, after),
+    Command::PasteClipboardAfter => paste_clipboard(ctx, true),
+    Command::PasteClipboardBefore => paste_clipboard(ctx, false),
     Command::RecordMacro => ctx.dispatch().record_macro(ctx, ()),
     Command::ReplayMacro => ctx.dispatch().replay_macro(ctx, ()),
     Command::RepeatLastMotion => ctx.dispatch().repeat_last_motion(ctx, ()),
@@ -4183,13 +4188,13 @@ fn replace_selection_with_str<Ctx: DefaultContext>(ctx: &mut Ctx, replacement: &
   ctx.request_render();
 }
 
-fn replace_with_yanked<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
+fn replace_with_register<Ctx: DefaultContext>(ctx: &mut Ctx, register: char) {
   // Read the register values using shared references
   let replacement: Option<String> = {
     let doc = ctx.editor_ref().document();
     ctx
       .registers()
-      .read('"', doc)
+      .read(register, doc)
       .and_then(|mut values| values.next().map(|v| v.into_owned()))
   };
 
@@ -4225,25 +4230,53 @@ fn replace_with_yanked<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
   ctx.request_render();
 }
 
-fn yank<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
-  let doc = ctx.editor().document_mut();
-  let selection = doc.selection().clone();
-  let slice = doc.text().slice(..);
+fn replace_with_yanked<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
+  replace_with_register(ctx, '"');
+}
 
-  let fragments: Vec<String> = selection.fragments(slice).map(Cow::into_owned).collect();
+fn replace_selections_with_clipboard<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  replace_with_register(ctx, '+');
+}
 
-  let _ = ctx.registers_mut().write('"', fragments);
+fn yank_with_register<Ctx: DefaultContext>(ctx: &mut Ctx, register: char, main_selection_only: bool) {
+  let fragments: Vec<String> = {
+    let editor = ctx.editor_ref();
+    let doc = editor.document();
+    let slice = doc.text().slice(..);
+
+    if main_selection_only {
+      active_or_first_range(editor)
+        .map(|range| vec![range.fragment(slice).into_owned()])
+        .unwrap_or_default()
+    } else {
+      doc.selection().fragments(slice).map(Cow::into_owned).collect()
+    }
+  };
+
+  let _ = ctx.registers_mut().write(register, fragments);
 
   ctx.set_mode(Mode::Normal);
   ctx.request_render();
 }
 
-fn paste<Ctx: DefaultContext>(ctx: &mut Ctx, after: bool) {
+fn yank<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
+  yank_with_register(ctx, '"', false);
+}
+
+fn yank_to_clipboard<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  yank_with_register(ctx, '+', false);
+}
+
+fn yank_main_selection_to_clipboard<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  yank_with_register(ctx, '+', true);
+}
+
+fn paste_with_register<Ctx: DefaultContext>(ctx: &mut Ctx, register: char, after: bool) {
   let values: Option<Vec<String>> = {
     let doc = ctx.editor_ref().document();
     ctx
       .registers()
-      .read('"', doc)
+      .read(register, doc)
       .map(|iter| iter.map(|v| v.into_owned()).collect())
   };
 
@@ -4340,6 +4373,14 @@ fn paste<Ctx: DefaultContext>(ctx: &mut Ctx, after: bool) {
 
   ctx.set_mode(Mode::Normal);
   ctx.request_render();
+}
+
+fn paste<Ctx: DefaultContext>(ctx: &mut Ctx, after: bool) {
+  paste_with_register(ctx, '"', after);
+}
+
+fn paste_clipboard<Ctx: DefaultContext>(ctx: &mut Ctx, after: bool) {
+  paste_with_register(ctx, '+', after);
 }
 
 fn record_macro<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
@@ -5567,6 +5608,7 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "change_selection_noyank" => Some(Command::change_selection_noyank()),
     "replace" => Some(Command::replace()),
     "replace_with_yanked" => Some(Command::replace_with_yanked()),
+    "replace_selections_with_clipboard" => Some(Command::replace_selections_with_clipboard()),
     "repeat_last_motion" => Some(Command::repeat_last_motion()),
     "switch_case" => Some(Command::switch_case()),
     "switch_to_uppercase" => Some(Command::switch_to_uppercase()),
@@ -5578,8 +5620,12 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "open_above" => Some(Command::open_above()),
     "commit_undo_checkpoint" => Some(Command::commit_undo_checkpoint()),
     "yank" => Some(Command::yank()),
+    "yank_to_clipboard" => Some(Command::yank_to_clipboard()),
+    "yank_main_selection_to_clipboard" => Some(Command::yank_main_selection_to_clipboard()),
     "paste_after" => Some(Command::paste_after()),
     "paste_before" => Some(Command::paste_before()),
+    "paste_clipboard_after" => Some(Command::paste_clipboard_after()),
+    "paste_clipboard_before" => Some(Command::paste_clipboard_before()),
     "record_macro" => Some(Command::record_macro()),
     "replay_macro" => Some(Command::replay_macro()),
     "copy_selection_on_next_line" => Some(Command::copy_selection_on_next_line()),

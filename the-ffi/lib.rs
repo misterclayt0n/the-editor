@@ -8956,6 +8956,7 @@ mod tests {
     SearchPromptKind,
   };
   use the_lib::{
+    clipboard::NoClipboard,
     messages::MessageEventKind,
     movement::Direction as SelectionDirection,
     position::{
@@ -10557,6 +10558,108 @@ pkgs.mkShell {
         .len(),
       1
     );
+  }
+
+  #[test]
+  fn clipboard_yank_keymaps_write_to_system_register() {
+    let _guard = ffi_test_guard();
+    let mut app = App::new();
+    app
+      .registers
+      .set_clipboard_provider(std::sync::Arc::new(NoClipboard));
+    let id = app.create_editor("alpha beta\n", default_viewport(), ffi::Position {
+      row: 0,
+      col: 0,
+    });
+    assert!(app.activate(id).is_some());
+
+    let selection = Selection::single(0, 5).push(Range::new(6, 10));
+    let _ = app
+      .active_editor_mut()
+      .document_mut()
+      .set_selection(selection);
+
+    assert!(app.handle_key(id, key_char(' ')));
+    assert!(app.handle_key(id, key_char('y')));
+
+    let values: Vec<_> = app
+      .registers
+      .read('+', app.active_editor_ref().document())
+      .expect("clipboard register")
+      .map(|value| value.into_owned())
+      .collect();
+    assert_eq!(values, vec!["alpha".to_string(), "beta".to_string()]);
+
+    let selection = Selection::single(0, 5).push(Range::new(6, 10));
+    let _ = app
+      .active_editor_mut()
+      .document_mut()
+      .set_selection(selection);
+    let second = app.active_editor_ref().document().selection().cursor_ids()[1];
+    app.active_editor_mut().view_mut().active_cursor = Some(second);
+
+    assert!(app.handle_key(id, key_char(' ')));
+    assert!(app.handle_key(id, key_char('Y')));
+
+    let values: Vec<_> = app
+      .registers
+      .read('+', app.active_editor_ref().document())
+      .expect("clipboard register")
+      .map(|value| value.into_owned())
+      .collect();
+    assert_eq!(values, vec!["beta".to_string()]);
+  }
+
+  #[test]
+  fn clipboard_paste_and_replace_keymaps_use_system_register() {
+    let _guard = ffi_test_guard();
+    let mut app = App::new();
+    app
+      .registers
+      .set_clipboard_provider(std::sync::Arc::new(NoClipboard));
+    let id = app.create_editor("", default_viewport(), ffi::Position { row: 0, col: 0 });
+    assert!(app.activate(id).is_some());
+    let _ = app.registers.write('+', vec!["Z".to_string()]);
+
+    let reset_text = |app: &mut App| {
+      let tx = Transaction::change(
+        app.active_editor_ref().document().text(),
+        std::iter::once((
+          0,
+          app.active_editor_ref().document().text().len_chars(),
+          Some("abc\n".into()),
+        )),
+      )
+      .expect("seed transaction");
+      assert!(<App as DefaultContext>::apply_transaction(app, &tx));
+    };
+
+    reset_text(&mut app);
+    let _ = app
+      .active_editor_mut()
+      .document_mut()
+      .set_selection(Selection::single(0, 1));
+    assert!(app.handle_key(id, key_char(' ')));
+    assert!(app.handle_key(id, key_char('p')));
+    assert_eq!(app.active_editor_ref().document().text().to_string(), "aZbc\n");
+
+    reset_text(&mut app);
+    let _ = app
+      .active_editor_mut()
+      .document_mut()
+      .set_selection(Selection::single(0, 1));
+    assert!(app.handle_key(id, key_char(' ')));
+    assert!(app.handle_key(id, key_char('P')));
+    assert_eq!(app.active_editor_ref().document().text().to_string(), "Zabc\n");
+
+    reset_text(&mut app);
+    let _ = app
+      .active_editor_mut()
+      .document_mut()
+      .set_selection(Selection::single(1, 2));
+    assert!(app.handle_key(id, key_char(' ')));
+    assert!(app.handle_key(id, key_char('R')));
+    assert_eq!(app.active_editor_ref().document().text().to_string(), "aZc\n");
   }
 
   #[test]

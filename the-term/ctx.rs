@@ -5008,6 +5008,7 @@ mod tests {
       Range,
       Selection,
     },
+    clipboard::NoClipboard,
     transaction::Transaction,
   };
   use the_lsp::{
@@ -6611,6 +6612,116 @@ pkgs.mkShell {
     });
     assert!(!ctx.search_prompt.active);
     assert_eq!(ctx.editor.document().selection().ranges().len(), 1);
+  }
+
+  #[test]
+  fn clipboard_yank_keymaps_write_to_system_register() {
+    let dispatch = build_dispatch::<Ctx>();
+    let mut ctx = Ctx::new(None).expect("ctx");
+    ctx.set_dispatch(&dispatch);
+    ctx
+      .registers
+      .set_clipboard_provider(std::sync::Arc::new(NoClipboard));
+
+    let tx = Transaction::change(
+      ctx.editor.document().text(),
+      std::iter::once((0, ctx.editor.document().text().len_chars(), Some("alpha beta\n".into()))),
+    )
+    .expect("seed transaction");
+    assert!(DefaultContext::apply_transaction(&mut ctx, &tx));
+
+    let selection = Selection::single(0, 5).push(Range::new(6, 10));
+    let _ = ctx.editor.document_mut().set_selection(selection);
+
+    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+      key:       Key::Char(' '),
+      modifiers: Modifiers::empty(),
+    });
+    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+      key:       Key::Char('y'),
+      modifiers: Modifiers::empty(),
+    });
+
+    let values: Vec<_> = ctx
+      .registers
+      .read('+', ctx.editor.document())
+      .expect("clipboard register")
+      .map(|value| value.into_owned())
+      .collect();
+    assert_eq!(values, vec!["alpha".to_string(), "beta".to_string()]);
+
+    let selection = Selection::single(0, 5).push(Range::new(6, 10));
+    let _ = ctx.editor.document_mut().set_selection(selection);
+    let second = ctx.editor.document().selection().cursor_ids()[1];
+    ctx.editor.view_mut().active_cursor = Some(second);
+
+    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+      key:       Key::Char(' '),
+      modifiers: Modifiers::empty(),
+    });
+    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+      key:       Key::Char('Y'),
+      modifiers: Modifiers::empty(),
+    });
+
+    let values: Vec<_> = ctx
+      .registers
+      .read('+', ctx.editor.document())
+      .expect("clipboard register")
+      .map(|value| value.into_owned())
+      .collect();
+    assert_eq!(values, vec!["beta".to_string()]);
+  }
+
+  #[test]
+  fn clipboard_paste_and_replace_keymaps_use_system_register() {
+    let dispatch = build_dispatch::<Ctx>();
+    let mut ctx = Ctx::new(None).expect("ctx");
+    ctx.set_dispatch(&dispatch);
+    ctx
+      .registers
+      .set_clipboard_provider(std::sync::Arc::new(NoClipboard));
+    let _ = ctx.registers.write('+', vec!["Z".to_string()]);
+
+    let reset_text = |ctx: &mut Ctx| {
+      let tx = Transaction::change(
+        ctx.editor.document().text(),
+        std::iter::once((0, ctx.editor.document().text().len_chars(), Some("abc\n".into()))),
+      )
+      .expect("seed transaction");
+      assert!(DefaultContext::apply_transaction(ctx, &tx));
+    };
+    let press = |ctx: &mut Ctx, ch: char| {
+      dispatch.pre_on_keypress(
+        ctx,
+        KeyEvent {
+          key:       Key::Char(' '),
+          modifiers: Modifiers::empty(),
+        },
+      );
+      dispatch.pre_on_keypress(
+        ctx,
+        KeyEvent {
+          key:       Key::Char(ch),
+          modifiers: Modifiers::empty(),
+        },
+      );
+    };
+
+    reset_text(&mut ctx);
+    let _ = ctx.editor.document_mut().set_selection(Selection::single(0, 1));
+    press(&mut ctx, 'p');
+    assert_eq!(ctx.editor.document().text().to_string(), "aZbc\n");
+
+    reset_text(&mut ctx);
+    let _ = ctx.editor.document_mut().set_selection(Selection::single(0, 1));
+    press(&mut ctx, 'P');
+    assert_eq!(ctx.editor.document().text().to_string(), "Zabc\n");
+
+    reset_text(&mut ctx);
+    let _ = ctx.editor.document_mut().set_selection(Selection::single(1, 2));
+    press(&mut ctx, 'R');
+    assert_eq!(ctx.editor.document().text().to_string(), "aZc\n");
   }
 
   #[test]

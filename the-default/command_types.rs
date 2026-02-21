@@ -548,9 +548,14 @@ pub enum Command {
   Replace,
   ReplaceWithYanked,
   Yank,
+  YankToClipboard,
+  YankMainSelectionToClipboard,
   Paste {
     after: bool,
   },
+  PasteClipboardAfter,
+  PasteClipboardBefore,
+  ReplaceSelectionsWithClipboard,
   RecordMacro,
   ReplayMacro,
   RepeatLastMotion,
@@ -1370,6 +1375,16 @@ impl Command {
   }
 
   #[must_use]
+  pub const fn yank_to_clipboard() -> Self {
+    Self::YankToClipboard
+  }
+
+  #[must_use]
+  pub const fn yank_main_selection_to_clipboard() -> Self {
+    Self::YankMainSelectionToClipboard
+  }
+
+  #[must_use]
   pub const fn paste_after() -> Self {
     Self::Paste { after: true }
   }
@@ -1377,6 +1392,21 @@ impl Command {
   #[must_use]
   pub const fn paste_before() -> Self {
     Self::Paste { after: false }
+  }
+
+  #[must_use]
+  pub const fn paste_clipboard_after() -> Self {
+    Self::PasteClipboardAfter
+  }
+
+  #[must_use]
+  pub const fn paste_clipboard_before() -> Self {
+    Self::PasteClipboardBefore
+  }
+
+  #[must_use]
+  pub const fn replace_selections_with_clipboard() -> Self {
+    Self::ReplaceSelectionsWithClipboard
   }
 
   #[must_use]

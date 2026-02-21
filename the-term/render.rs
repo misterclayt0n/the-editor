@@ -1120,6 +1120,14 @@ fn software_cursor_style(theme: &the_lib::render::theme::Theme) -> Style {
     .unwrap_or_else(|| Style::default().add_modifier(Modifier::REVERSED))
 }
 
+fn unfocused_pane_cursor_style(theme: &the_lib::render::theme::Theme) -> Style {
+  theme
+    .try_get("ui.cursor.match")
+    .or_else(|| theme.try_get("ui.cursor"))
+    .map(lib_style_to_ratatui)
+    .unwrap_or_else(|| Style::default().add_modifier(Modifier::REVERSED))
+}
+
 fn draw_software_cursor_cell(buf: &mut Buffer, x: u16, y: u16, cursor_style: Style) {
   let cell = buf.get_mut(x, y);
   cell.set_style(cell.style().patch(cursor_style));
@@ -4756,8 +4764,15 @@ fn draw_pane_content(
     if x < pane_area.x + pane_area.width && y < pane_area.y + pane_area.height {
       let style = lib_style_to_ratatui(cursor.style);
       let cell = buf.get_mut(x, y);
-      let merged = cell.style().patch(style);
-      cell.set_style(merged);
+      if draw_active_annotations {
+        let merged = cell.style().patch(style);
+        cell.set_style(merged);
+      } else {
+        let merged = cell
+          .style()
+          .patch(unfocused_pane_cursor_style(&ctx.ui_theme));
+        cell.set_style(merged);
+      }
     }
   }
 

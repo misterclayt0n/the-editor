@@ -879,30 +879,9 @@ pub fn build_file_picker_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNode> {
   vec![UiNode::Panel(panel)]
 }
 
-fn picker_root<Ctx: DefaultContext>(ctx: &Ctx) -> PathBuf {
+fn picker_root<Ctx: DefaultContext>(_ctx: &Ctx) -> PathBuf {
   let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-  let mut base = ctx
-    .file_path()
-    .map(Path::to_path_buf)
-    .unwrap_or_else(|| cwd.clone());
-  if base.as_os_str().is_empty() {
-    base = cwd.clone();
-  }
-  if base.is_relative() {
-    base = cwd.join(base);
-  }
-
-  let start = if base.is_dir() {
-    base
-  } else {
-    base
-      .parent()
-      .filter(|path| !path.as_os_str().is_empty())
-      .map(Path::to_path_buf)
-      .unwrap_or(cwd)
-  };
-
-  workspace_root(&start)
+  workspace_root(&cwd)
 }
 
 pub fn workspace_root(start: &Path) -> PathBuf {

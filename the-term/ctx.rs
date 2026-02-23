@@ -4342,6 +4342,7 @@ impl the_default::DefaultContext for Ctx {
           character,
           cursor_char,
           severity: diagnostic.severity,
+          code: diagnostic.code.clone(),
           source: diagnostic.source.clone(),
           message: diagnostic.message.clone(),
         });

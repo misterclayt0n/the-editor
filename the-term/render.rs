@@ -2692,6 +2692,7 @@ fn draw_file_picker_list_pane(
 ) {
   let rect = layout.list_pane;
   let title_style = text_style.add_modifier(Modifier::BOLD);
+  let title = picker.title.as_str();
   let count = format!("{}/{}", picker.matched_count(), picker.total_count());
   let count_style = text_style.add_modifier(Modifier::DIM);
 
@@ -2702,7 +2703,7 @@ fn draw_file_picker_list_pane(
   };
 
   let block = Block::default()
-    .title(Span::styled(" Find File ", title_style))
+    .title(Span::styled(format!(" {} ", title), title_style))
     .borders(borders)
     .border_type(BorderType::Rounded)
     .border_style(border_style)
@@ -2847,16 +2848,30 @@ fn draw_file_picker_list_pane(
       continue;
     }
 
-    // Split display path into filename + parent directory (like fff.nvim).
     let display = item.display.as_str();
+    if !item.display_path {
+      draw_fuzzy_match_line(
+        buf,
+        text_x,
+        y,
+        display,
+        content_width,
+        style,
+        fuzzy_highlight_style,
+        &match_indices,
+      );
+      continue;
+    }
+
+    // Split display path into filename + parent directory (like fff.nvim).
     let (dir_part, file_part) = match display.rfind('/') {
       Some(pos) => (&display[..pos], &display[pos + 1..]),
       None => ("", display),
     };
     let file_char_start: usize = display.chars().count() - file_part.chars().count();
+    let file_len = file_part.chars().count();
 
     // Draw filename with fuzzy highlighting (remap indices from full path).
-    let file_len = file_part.chars().count();
     let file_match_indices: Vec<usize> = match_indices
       .iter()
       .filter(|&&idx| idx >= file_char_start)

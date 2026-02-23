@@ -105,6 +105,7 @@ pub struct FilePickerItem {
   pub display:      String,
   pub icon:         String,
   pub is_dir:       bool,
+  pub display_path: bool,
   pub action:       FilePickerItemAction,
   pub preview_path: Option<PathBuf>,
   pub preview_line: Option<usize>,
@@ -135,6 +136,7 @@ pub struct FilePickerDiagnosticItem {
   pub character:   usize,
   pub cursor_char: usize,
   pub severity:    Option<DiagnosticSeverity>,
+  pub code:        Option<String>,
   pub source:      Option<String>,
   pub message:     String,
 }
@@ -543,6 +545,7 @@ pub fn open_buffer_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
         display,
         icon,
         is_dir: false,
+        display_path: true,
         action: FilePickerItemAction::SwitchBuffer {
           buffer_index: snapshot.buffer_index,
         },
@@ -605,6 +608,7 @@ pub fn open_jumplist_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
         display,
         icon,
         is_dir: false,
+        display_path: false,
         action: FilePickerItemAction::RestoreJump {
           buffer_index:  jump.buffer_index,
           selection:     jump.selection.clone(),
@@ -642,16 +646,41 @@ pub fn open_diagnostics_picker<Ctx: DefaultContext>(ctx: &mut Ctx, workspace: bo
     .into_iter()
     .map(|diagnostic| {
       let severity_icon = diagnostic_icon_name(diagnostic.severity);
-      let severity_label = diagnostic_label(diagnostic.severity);
+      let severity_label = diagnostic_severity_label(diagnostic.severity);
+      let source_label = truncate_for_column(
+        diagnostic
+          .source
+          .as_deref()
+          .filter(|source| !source.is_empty())
+          .unwrap_or("-"),
+        14,
+      );
+      let code_label = truncate_for_column(
+        diagnostic
+          .code
+          .as_deref()
+          .filter(|code| !code.is_empty())
+          .unwrap_or("-"),
+        16,
+      );
       let path_display = display_relative_path(&diagnostic.path, &cwd);
       let summary = truncate_for_picker(
         diagnostic.message.lines().next().unwrap_or_default().trim(),
-        120,
+        110,
+      );
+      let location = format!(
+        "{}:{}:{}",
+        path_display,
+        diagnostic.line.saturating_add(1),
+        diagnostic.character.saturating_add(1)
       );
       let display = format!(
-        "{severity_label} {path_display}:{}:{} {}",
-        diagnostic.line.saturating_add(1),
-        diagnostic.character.saturating_add(1),
+        "{severity_label:<7} {source_label:<14} {code_label:<16} {}{}",
+        if workspace {
+          format!("{location}  ")
+        } else {
+          String::new()
+        },
         summary
       );
       let absolute = diagnostic.path.clone();
@@ -661,6 +690,7 @@ pub fn open_diagnostics_picker<Ctx: DefaultContext>(ctx: &mut Ctx, workspace: bo
         display,
         icon: severity_icon.to_string(),
         is_dir: false,
+        display_path: false,
         action: FilePickerItemAction::OpenLocation {
           path:        diagnostic.path.clone(),
           cursor_char: diagnostic.cursor_char,
@@ -675,9 +705,9 @@ pub fn open_diagnostics_picker<Ctx: DefaultContext>(ctx: &mut Ctx, workspace: bo
   open_static_picker(
     ctx,
     if workspace {
-      "Workspace Diagnostics"
+      "Workspace Diagnostics · severity source code path:line message"
     } else {
-      "Diagnostics"
+      "Diagnostics · severity source code message"
     },
     root,
     None,
@@ -736,6 +766,7 @@ pub fn open_changed_file_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
         display,
         icon: icon.to_string(),
         is_dir: false,
+        display_path: false,
         action: FilePickerItemAction::OpenFile(entry.path.clone()),
         preview_path: Some(entry.path),
         preview_line: None,
@@ -1394,6 +1425,24 @@ fn truncate_for_picker(text: &str, max_chars: usize) -> String {
   out
 }
 
+fn truncate_for_column(text: &str, max_chars: usize) -> String {
+  if max_chars == 0 {
+    return String::new();
+  }
+  let mut out = String::new();
+  for (idx, ch) in text.chars().enumerate() {
+    if idx >= max_chars {
+      if max_chars > 1 {
+        let _ = out.pop();
+        out.push('…');
+      }
+      return out;
+    }
+    out.push(ch);
+  }
+  out
+}
+
 fn diagnostic_icon_name(severity: Option<DiagnosticSeverity>) -> &'static str {
   match severity {
     Some(DiagnosticSeverity::Error) => "diagnostic_error",
@@ -1404,13 +1453,13 @@ fn diagnostic_icon_name(severity: Option<DiagnosticSeverity>) -> &'static str {
   }
 }
 
-fn diagnostic_label(severity: Option<DiagnosticSeverity>) -> &'static str {
+fn diagnostic_severity_label(severity: Option<DiagnosticSeverity>) -> &'static str {
   match severity {
-    Some(DiagnosticSeverity::Error) => "error",
-    Some(DiagnosticSeverity::Warning) => "warn ",
-    Some(DiagnosticSeverity::Information) => "info ",
-    Some(DiagnosticSeverity::Hint) => "hint ",
-    None => "diag ",
+    Some(DiagnosticSeverity::Error) => "ERROR",
+    Some(DiagnosticSeverity::Warning) => "WARN",
+    Some(DiagnosticSeverity::Information) => "INFO",
+    Some(DiagnosticSeverity::Hint) => "HINT",
+    None => "DIAG",
   }
 }
 
@@ -1564,6 +1613,7 @@ fn entry_to_picker_item(entry: DirEntry, root: &Path) -> Option<FilePickerItem> 
     display,
     icon,
     is_dir: false,
+    display_path: true,
     preview_path: None,
     preview_line: None,
   })
@@ -2486,6 +2536,7 @@ mod tests {
       display:      display.to_string(),
       icon:         "file_generic".to_string(),
       is_dir:       false,
+      display_path: true,
       action:       FilePickerItemAction::OpenFile(absolute),
       preview_path: None,
       preview_line: None,
@@ -2558,6 +2609,7 @@ mod tests {
       display:      "low".to_string(),
       icon:         "file_generic".to_string(),
       is_dir:       false,
+      display_path: false,
       action:       FilePickerItemAction::OpenLocation {
         path:        path.clone(),
         cursor_char: 0,
@@ -2571,6 +2623,7 @@ mod tests {
       display:      "high".to_string(),
       icon:         "file_generic".to_string(),
       is_dir:       false,
+      display_path: false,
       action:       FilePickerItemAction::OpenLocation {
         path:        path.clone(),
         cursor_char: 0,

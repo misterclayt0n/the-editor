@@ -7660,6 +7660,7 @@ impl DefaultContext for App {
           character,
           cursor_char,
           severity: diagnostic.severity,
+          code: diagnostic.code.clone(),
           source: diagnostic.source.clone(),
           message: diagnostic.message.clone(),
         });

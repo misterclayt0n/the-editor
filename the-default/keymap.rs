@@ -1040,6 +1040,7 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
       "g" => changed_file_picker,
       "a" => lsp_code_actions,
       // "'" => last_picker,
+      // NOT FOR NOW 
       // "G" => { "Debug (experimental)" sticky=true
       //   "l" => dap_launch,
       //   "r" => dap_restart,

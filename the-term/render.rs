@@ -1112,6 +1112,60 @@ fn ui_style_colors(style: &UiStyle) -> (Style, Style, Style) {
   (text_style, fill_style, border_style)
 }
 
+fn file_picker_panel_styles(ctx: &Ctx, panel: &UiPanel) -> (Style, Style, Style) {
+  let (mut text_style, mut fill_style, mut border_style) = ui_style_colors(&panel.style);
+
+  let picker_scope = ctx.ui_theme.try_get("ui.file_picker");
+  let text_scope = ctx.ui_theme.try_get("ui.text");
+  let background_scope = ctx.ui_theme.try_get("ui.background");
+  let window_scope = ctx.ui_theme.try_get("ui.window");
+
+  if text_style.fg.is_none() {
+    if let Some(fg) = picker_scope
+      .and_then(|style| style.fg)
+      .or_else(|| text_scope.and_then(|style| style.fg))
+      .map(lib_color_to_ratatui)
+    {
+      text_style = text_style.fg(fg);
+    }
+  }
+
+  if fill_style.bg.is_none() {
+    let bg = picker_scope
+      .and_then(|style| style.bg)
+      .or_else(|| background_scope.and_then(|style| style.bg))
+      .map(lib_color_to_ratatui)
+      .unwrap_or(Color::Black);
+    fill_style = fill_style.bg(bg);
+  }
+
+  // Explicitly pin foreground too so style patching cannot inherit stale cell
+  // colors from previously rendered editor content.
+  if fill_style.fg.is_none() {
+    let fg = text_style
+      .fg
+      .or_else(|| text_scope.and_then(|style| style.fg).map(lib_color_to_ratatui))
+      .unwrap_or(Color::Reset);
+    fill_style = fill_style.fg(fg);
+  }
+
+  if border_style.fg.is_none() {
+    if let Some(border_fg) = text_style
+      .fg
+      .or_else(|| picker_scope.and_then(|style| style.fg).map(lib_color_to_ratatui))
+      .or_else(|| window_scope.and_then(|style| style.fg).map(lib_color_to_ratatui))
+    {
+      border_style = border_style.fg(border_fg);
+    }
+  }
+
+  if border_style.bg.is_none() && let Some(bg) = fill_style.bg {
+    border_style = border_style.bg(bg);
+  }
+
+  (text_style, fill_style, border_style)
+}
+
 fn software_cursor_style(theme: &the_lib::render::theme::Theme) -> Style {
   theme
     .try_get("ui.cursor.active")
@@ -2627,26 +2681,7 @@ fn draw_file_picker_panel(
     return;
   }
 
-  let (text_style, mut fill_style, border_style) = ui_style_colors(&panel.style);
-  if fill_style.bg.is_none() {
-    let fallback_bg = ctx
-      .ui_theme
-      .try_get("ui.file_picker")
-      .and_then(|style| style.bg)
-      .or_else(|| {
-        ctx
-          .ui_theme
-          .try_get("ui.background")
-          .and_then(|style| style.bg)
-      })
-      .map(lib_color_to_ratatui);
-    if let Some(bg) = fallback_bg {
-      fill_style = fill_style.bg(bg);
-    }
-  }
-  if fill_style.bg.is_none() {
-    fill_style = fill_style.bg(Color::Reset);
-  }
+  let (text_style, fill_style, border_style) = file_picker_panel_styles(ctx, panel);
 
   fill_rect(buf, layout.panel, fill_style);
 
@@ -4350,6 +4385,12 @@ fn adapt_ui_tree_for_term(ctx: &Ctx, ui: &mut UiTree) {
     return;
   }
 
+  // The file picker is modal; keep hover/tooltip overlays out so they cannot
+  // bleed into picker content.
+  if ctx.file_picker.active {
+    return;
+  }
+
   if !ctx.search_prompt.active {
     if ctx.completion_menu.active {
       return;
@@ -4773,6 +4814,10 @@ fn draw_pane_content(
     draw_inline_diagnostic_lines(buf, pane_area, content_x, plan, ctx);
   }
 
+  if ctx.file_picker.active {
+    return editor_cursor;
+  }
+
   for cursor in &plan.cursors {
     let x = content_x + cursor.pos.col as u16;
     let y = pane_area.y + cursor.pos.row as u16;
@@ -5045,6 +5090,7 @@ mod tests {
       UiNode,
       UiPanel,
       UiText,
+      UiTree,
     },
   };
 
@@ -5052,12 +5098,14 @@ mod tests {
     CompletionDocsStyles,
     DocsBlock,
     StyledTextRun,
+    adapt_ui_tree_for_term,
     build_lsp_hover_overlay,
     completion_docs_panel_rect,
     completion_docs_rows,
     completion_panel_rect,
     draw_ui_list,
     draw_ui_text,
+    file_picker_panel_styles,
     inline_diagnostics_from_document,
     language_filename_hints,
     max_content_width_for_intent,
@@ -5282,6 +5330,29 @@ mod tests {
   }
 
   #[test]
+  fn adapt_ui_tree_omits_hover_overlay_when_file_picker_is_active() {
+    let mut ctx = Ctx::new(None).expect("ctx");
+    ctx.file_picker.active = true;
+    ctx.hover_docs = Some("hover docs".to_string());
+
+    let mut ui = UiTree::new();
+    ui.overlays.push(UiNode::Panel(UiPanel::floating(
+      "file_picker",
+      UiNode::Container(UiContainer::default()),
+    )));
+    if let Some(hover_overlay) = build_lsp_hover_overlay(&ctx) {
+      ui.overlays.push(hover_overlay);
+    }
+
+    adapt_ui_tree_for_term(&ctx, &mut ui);
+
+    assert!(ui
+      .overlays
+      .iter()
+      .all(|node| !super::is_hover_overlay(node)));
+  }
+
+  #[test]
   fn term_command_palette_selection_stays_empty_without_explicit_selection() {
     let state = CommandPaletteState {
       is_open:       true,
@@ -5347,6 +5418,23 @@ mod tests {
       row.contains("install_test_watch_state"),
       "completion row should preserve the label text, got: {row:?}"
     );
+  }
+
+  #[test]
+  fn file_picker_panel_styles_resolve_explicit_fill_and_border_colors() {
+    let ctx = Ctx::new(None).expect("ctx");
+    let mut panel = UiPanel::floating(
+      "file_picker",
+      UiNode::Container(UiContainer::default()),
+    );
+    panel.style = panel.style.with_role("file_picker");
+    panel.style.border = None;
+
+    let (_text_style, fill_style, border_style) = file_picker_panel_styles(&ctx, &panel);
+    assert!(fill_style.bg.is_some());
+    assert!(fill_style.fg.is_some());
+    assert!(border_style.fg.is_some());
+    assert_eq!(border_style.bg, fill_style.bg);
   }
 
   #[test]

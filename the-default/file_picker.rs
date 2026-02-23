@@ -92,6 +92,7 @@ const PAGE_SIZE: usize = 12;
 const MATCHER_TICK_TIMEOUT_MS: u64 = 10;
 const DEFAULT_LIST_VISIBLE_ROWS: usize = 32;
 const WARMUP_SCAN_BUDGET_MS: u64 = 30;
+const PREVIEW_FOCUS_CONTEXT_LINES: usize = 3;
 
 thread_local! {
   static MATCH_INDEX_SCRATCH: RefCell<(NucleoMatcher, Vec<u32>)> =
@@ -106,6 +107,7 @@ pub struct FilePickerItem {
   pub is_dir:       bool,
   pub action:       FilePickerItemAction,
   pub preview_path: Option<PathBuf>,
+  pub preview_line: Option<usize>,
 }
 
 #[derive(Debug, Clone)]
@@ -287,6 +289,7 @@ pub struct FilePickerState {
   pub show_preview:       bool,
   pub open_split:         Option<SplitAxis>,
   pub preview_path:       Option<PathBuf>,
+  pub preview_focus_line: Option<usize>,
   pub preview:            FilePickerPreview,
   pub error:              Option<String>,
   pub scanning:           bool,
@@ -328,6 +331,7 @@ impl Default for FilePickerState {
       show_preview: true,
       open_split: None,
       preview_path: None,
+      preview_focus_line: None,
       preview: FilePickerPreview::Empty,
       error: None,
       scanning: false,
@@ -487,7 +491,8 @@ pub fn open_file_picker_in_current_directory<Ctx: DefaultContext>(ctx: &mut Ctx)
 pub fn open_buffer_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
   let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
   let root = picker_root(ctx);
-  let snapshots = ctx.editor_ref().buffer_snapshots_mru();
+  let editor = ctx.editor_ref();
+  let snapshots = editor.buffer_snapshots_mru();
   if snapshots.is_empty() {
     ctx.push_warning("buffer_picker", "no buffers available");
     return;
@@ -521,6 +526,17 @@ pub fn open_buffer_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
         .file_path
         .clone()
         .unwrap_or_else(|| PathBuf::from(format!("<buffer:{}>", snapshot.buffer_index)));
+      let preview_line = editor
+        .buffer_document(snapshot.buffer_index)
+        .map(|doc| {
+          selection_focus_line(
+            doc.selection(),
+            editor
+              .buffer_view(snapshot.buffer_index)
+              .and_then(|view| view.active_cursor),
+            doc.text().slice(..),
+          )
+        });
 
       FilePickerItem {
         absolute,
@@ -531,6 +547,7 @@ pub fn open_buffer_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
           buffer_index: snapshot.buffer_index,
         },
         preview_path: snapshot.file_path,
+        preview_line,
       }
     })
     .collect();
@@ -563,6 +580,8 @@ pub fn open_jumplist_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
         .join(" ");
       let excerpt = excerpt.split_whitespace().collect::<Vec<_>>().join(" ");
       let excerpt = truncate_for_picker(&excerpt, 80);
+      let preview_line =
+        selection_focus_line(&jump.selection, jump.active_cursor, text);
       let path_display = snapshot.file_path.as_ref().map_or_else(
         || snapshot.display_name.clone(),
         |path| display_relative_path(path, &cwd),
@@ -592,6 +611,7 @@ pub fn open_jumplist_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
           active_cursor: jump.active_cursor,
         },
         preview_path: snapshot.file_path,
+        preview_line: Some(preview_line),
       })
     })
     .collect::<Vec<_>>();
@@ -647,6 +667,7 @@ pub fn open_diagnostics_picker<Ctx: DefaultContext>(ctx: &mut Ctx, workspace: bo
           line:        diagnostic.line,
         },
         preview_path: Some(diagnostic.path),
+        preview_line: Some(diagnostic.line),
       }
     })
     .collect();
@@ -717,6 +738,7 @@ pub fn open_changed_file_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
         is_dir: false,
         action: FilePickerItemAction::OpenFile(entry.path.clone()),
         preview_path: Some(entry.path),
+        preview_line: None,
       }
     })
     .collect();
@@ -811,6 +833,7 @@ pub fn close_file_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
   picker.preview_scroll = 0;
   picker.open_split = None;
   picker.preview_path = None;
+  picker.preview_focus_line = None;
   picker.preview = FilePickerPreview::Empty;
   picker.scanning = false;
   picker.matcher_running = false;
@@ -1341,6 +1364,24 @@ fn display_relative_path(path: &Path, cwd: &Path) -> String {
   path.strip_prefix(cwd).unwrap_or(path).display().to_string()
 }
 
+fn selection_focus_line(
+  selection: &Selection,
+  active_cursor: Option<CursorId>,
+  text: ropey::RopeSlice<'_>,
+) -> usize {
+  if let Some(cursor_id) = active_cursor
+    && let Some(range) = selection.range_by_id(cursor_id)
+  {
+    return range.cursor_line(text);
+  }
+
+  selection
+    .ranges()
+    .first()
+    .map(|range| range.cursor_line(text))
+    .unwrap_or(0)
+}
+
 fn truncate_for_picker(text: &str, max_chars: usize) -> String {
   let mut out = String::new();
   for (idx, ch) in text.chars().enumerate() {
@@ -1524,6 +1565,7 @@ fn entry_to_picker_item(entry: DirEntry, root: &Path) -> Option<FilePickerItem> 
     icon,
     is_dir: false,
     preview_path: None,
+    preview_line: None,
   })
 }
 
@@ -2138,7 +2180,7 @@ fn new_matcher(wake_tx: Option<Sender<()>>) -> Nucleo<Arc<FilePickerItem>> {
 fn refresh_preview(state: &mut FilePickerState) {
   let item = state.current_item();
   let Some(item) = item else {
-    state.preview_scroll = 0;
+    set_preview_focus_line(state, None);
     state.preview_path = None;
     state.preview_pending_id = None;
     state.preview_latest_request.store(0, Ordering::Relaxed);
@@ -2151,18 +2193,22 @@ fn refresh_preview(state: &mut FilePickerState) {
   };
 
   let preview_target = item.preview_path.as_ref().unwrap_or(&item.absolute);
+  let preview_focus_line = item.preview_line;
   if state
     .preview_path
     .as_ref()
     .is_some_and(|path| path == preview_target)
   {
+    if state.preview_focus_line != preview_focus_line {
+      set_preview_focus_line(state, preview_focus_line);
+    }
     return;
   }
 
   state.preview_path = Some(preview_target.clone());
-  state.preview_scroll = 0;
   if let Some(preview) = state.preview_cache.get(preview_target) {
     state.preview = preview;
+    set_preview_focus_line(state, preview_focus_line);
     state.preview_pending_id = None;
     state.preview_latest_request.store(0, Ordering::Relaxed);
     return;
@@ -2174,6 +2220,7 @@ fn refresh_preview(state: &mut FilePickerState) {
         .preview_cache
         .insert(preview_target.clone(), preview.clone());
       state.preview = preview;
+      set_preview_focus_line(state, preview_focus_line);
       state.preview_pending_id = None;
       state.preview_latest_request.store(0, Ordering::Relaxed);
     },
@@ -2183,6 +2230,7 @@ fn refresh_preview(state: &mut FilePickerState) {
         .preview_cache
         .insert(preview_target.clone(), base_preview.clone());
       state.preview = base_preview;
+      set_preview_focus_line(state, preview_focus_line);
 
       if state.syntax_loader.is_none() {
         state.preview_pending_id = None;
@@ -2232,10 +2280,19 @@ fn refresh_preview(state: &mut FilePickerState) {
         .preview_cache
         .insert(preview_target.clone(), preview.clone());
       state.preview = preview;
+      set_preview_focus_line(state, preview_focus_line);
       state.preview_pending_id = None;
       state.preview_latest_request.store(0, Ordering::Relaxed);
     },
   }
+}
+
+fn set_preview_focus_line(state: &mut FilePickerState, line: Option<usize>) {
+  state.preview_focus_line = line;
+  let next_scroll = line
+    .map(|line| line.saturating_sub(PREVIEW_FOCUS_CONTEXT_LINES))
+    .unwrap_or(0);
+  state.preview_scroll = next_scroll.min(state.preview_line_count().saturating_sub(1));
 }
 
 fn preview_for_path_base(path: &Path, is_dir: bool) -> PreviewBuild {
@@ -2412,7 +2469,13 @@ fn source_preview_text(source: &FilePickerSourcePreview) -> String {
 
 #[cfg(test)]
 mod tests {
-  use std::path::PathBuf;
+  use std::{
+    path::PathBuf,
+    time::{
+      SystemTime,
+      UNIX_EPOCH,
+    },
+  };
 
   use super::*;
 
@@ -2425,6 +2488,7 @@ mod tests {
       is_dir:       false,
       action:       FilePickerItemAction::OpenFile(absolute),
       preview_path: None,
+      preview_line: None,
     }
   }
 
@@ -2470,5 +2534,89 @@ mod tests {
 
     assert_eq!(item.display, "docs/commands.md");
     assert!(indices.is_empty());
+  }
+
+  #[test]
+  fn refresh_preview_updates_scroll_for_new_focus_line_in_same_file() {
+    let mut path = std::env::temp_dir();
+    let stamp = SystemTime::now()
+      .duration_since(UNIX_EPOCH)
+      .expect("clock should be after epoch")
+      .as_nanos();
+    path.push(format!("the-editor-file-picker-preview-{stamp}.txt"));
+
+    let mut text = String::new();
+    for idx in 1..=80 {
+      text.push_str(&format!("line {idx}\n"));
+    }
+    std::fs::write(&path, text).expect("should create preview file");
+
+    let mut state = FilePickerState::default();
+    let injector = state.matcher.injector();
+    inject_item(&injector, FilePickerItem {
+      absolute:     path.clone(),
+      display:      "low".to_string(),
+      icon:         "file_generic".to_string(),
+      is_dir:       false,
+      action:       FilePickerItemAction::OpenLocation {
+        path:        path.clone(),
+        cursor_char: 0,
+        line:        2,
+      },
+      preview_path: Some(path.clone()),
+      preview_line: Some(2),
+    });
+    inject_item(&injector, FilePickerItem {
+      absolute:     path.clone(),
+      display:      "high".to_string(),
+      icon:         "file_generic".to_string(),
+      is_dir:       false,
+      action:       FilePickerItemAction::OpenLocation {
+        path:        path.clone(),
+        cursor_char: 0,
+        line:        40,
+      },
+      preview_path: Some(path.clone()),
+      preview_line: Some(40),
+    });
+    drop(injector);
+
+    state
+      .matcher
+      .pattern
+      .reparse(0, "", CaseMatching::Smart, Normalization::Smart, false);
+    let _ = refresh_matcher_state(&mut state);
+
+    let low_index = (0..state.matched_count())
+      .find(|&idx| {
+        state
+          .matched_item(idx)
+          .and_then(|item| item.preview_line)
+          .is_some_and(|line| line == 2)
+      })
+      .expect("low line item should be present");
+    let high_index = (0..state.matched_count())
+      .find(|&idx| {
+        state
+          .matched_item(idx)
+          .and_then(|item| item.preview_line)
+          .is_some_and(|line| line == 40)
+      })
+      .expect("high line item should be present");
+
+    state.selected = Some(low_index);
+    normalize_selection_and_scroll(&mut state);
+    refresh_preview(&mut state);
+    assert_eq!(state.preview_scroll, 0);
+
+    state.selected = Some(high_index);
+    normalize_selection_and_scroll(&mut state);
+    refresh_preview(&mut state);
+    assert_eq!(
+      state.preview_scroll,
+      40usize.saturating_sub(PREVIEW_FOCUS_CONTEXT_LINES)
+    );
+
+    let _ = std::fs::remove_file(path);
   }
 }

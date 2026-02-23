@@ -488,6 +488,17 @@ pub trait DefaultContext: Sized + 'static {
   fn change_hunk_ranges(&self) -> Option<Vec<Range>> {
     None
   }
+  fn file_picker_diagnostics(
+    &self,
+    _workspace: bool,
+  ) -> Vec<crate::file_picker::FilePickerDiagnosticItem> {
+    Vec::new()
+  }
+  fn file_picker_changed_files(
+    &self,
+  ) -> Result<Vec<crate::file_picker::FilePickerChangedFileItem>, String> {
+    Ok(Vec::new())
+  }
   fn registers(&self) -> &Registers;
   fn registers_mut(&mut self) -> &mut Registers;
   fn register(&self) -> Option<char>;
@@ -1302,6 +1313,14 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::RSearch => ctx.dispatch().rsearch(ctx, ()),
     Command::SelectRegex => ctx.dispatch().select_regex(ctx, ()),
     Command::FilePicker => crate::file_picker::open_file_picker(ctx),
+    Command::FilePickerInCurrentDirectory => {
+      crate::file_picker::open_file_picker_in_current_directory(ctx);
+    },
+    Command::BufferPicker => crate::file_picker::open_buffer_picker(ctx),
+    Command::JumplistPicker => crate::file_picker::open_jumplist_picker(ctx),
+    Command::DiagnosticsPicker => crate::file_picker::open_diagnostics_picker(ctx, false),
+    Command::WorkspaceDiagnosticsPicker => crate::file_picker::open_diagnostics_picker(ctx, true),
+    Command::ChangedFilePicker => crate::file_picker::open_changed_file_picker(ctx),
     Command::LspGotoDeclaration => ctx.lsp_goto_declaration(),
     Command::LspGotoDefinition => ctx.lsp_goto_definition(),
     Command::LspGotoTypeDefinition => ctx.lsp_goto_type_definition(),
@@ -3787,7 +3806,10 @@ fn add_cursor<Ctx: DefaultContext>(ctx: &mut Ctx, direction: Direction) {
 fn motion<Ctx: DefaultContext>(ctx: &mut Ctx, motion: Motion) {
   let save_jump = matches!(
     motion,
-    Motion::FileStart { .. } | Motion::FileEnd { .. } | Motion::LastLine { .. } | Motion::Column { .. }
+    Motion::FileStart { .. }
+      | Motion::FileEnd { .. }
+      | Motion::LastLine { .. }
+      | Motion::Column { .. }
   );
   let viewport_width = ctx.editor().view().viewport.width;
   let is_select = ctx.mode() == Mode::Select;
@@ -4238,7 +4260,11 @@ fn replace_selections_with_clipboard<Ctx: DefaultContext>(ctx: &mut Ctx) {
   replace_with_register(ctx, '+');
 }
 
-fn yank_with_register<Ctx: DefaultContext>(ctx: &mut Ctx, register: char, main_selection_only: bool) {
+fn yank_with_register<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  register: char,
+  main_selection_only: bool,
+) {
   let fragments: Vec<String> = {
     let editor = ctx.editor_ref();
     let doc = editor.document();
@@ -4249,7 +4275,11 @@ fn yank_with_register<Ctx: DefaultContext>(ctx: &mut Ctx, register: char, main_s
         .map(|range| vec![range.fragment(slice).into_owned()])
         .unwrap_or_default()
     } else {
-      doc.selection().fragments(slice).map(Cow::into_owned).collect()
+      doc
+        .selection()
+        .fragments(slice)
+        .map(Cow::into_owned)
+        .collect()
     }
   };
 
@@ -5567,6 +5597,12 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "search_selection" => Some(Command::search_selection()),
     "select_regex" => Some(Command::select_regex()),
     "file_picker" => Some(Command::file_picker()),
+    "file_picker_in_current_directory" => Some(Command::file_picker_in_current_directory()),
+    "buffer_picker" => Some(Command::buffer_picker()),
+    "jumplist_picker" => Some(Command::jumplist_picker()),
+    "diagnostics_picker" => Some(Command::diagnostics_picker()),
+    "workspace_diagnostics_picker" => Some(Command::workspace_diagnostics_picker()),
+    "changed_file_picker" => Some(Command::changed_file_picker()),
     "lsp_goto_declaration" => Some(Command::lsp_goto_declaration()),
     "goto_declaration" => Some(Command::lsp_goto_declaration()),
     "lsp_goto_definition" => Some(Command::lsp_goto_definition()),

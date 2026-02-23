@@ -50,6 +50,9 @@ use the_default::{
   CommandRegistry,
   DefaultDispatchStatic,
   DispatchRef,
+  FilePickerChangedFileItem,
+  FilePickerChangedKind,
+  FilePickerDiagnosticItem,
   FilePickerState,
   KeyBinding,
   KeyEvent,
@@ -2472,7 +2475,8 @@ impl Ctx {
       return true;
     };
 
-    // Match Helix behavior: record the origin before any goto jump so C-o can return.
+    // Match Helix behavior: record the origin before any goto jump so C-o can
+    // return.
     let _ = <Self as the_default::DefaultContext>::save_selection_to_jumplist(self);
 
     if self
@@ -4300,6 +4304,128 @@ impl the_default::DefaultContext for Ctx {
     Some(ranges)
   }
 
+  fn file_picker_diagnostics(&self, workspace: bool) -> Vec<FilePickerDiagnosticItem> {
+    let mut items = Vec::new();
+    let mut rope_cache: HashMap<PathBuf, Rope> = HashMap::new();
+    let active_uri = self.lsp_document.as_ref().map(|state| state.uri.as_str());
+
+    let mut collect_document = |uri: &str, diagnostics: &[Diagnostic]| {
+      let Some(path) = path_for_file_uri(uri) else {
+        return;
+      };
+
+      for diagnostic in diagnostics {
+        let line = diagnostic.range.start.line as usize;
+        let character = diagnostic.range.start.character as usize;
+        let cursor_char = if active_uri == Some(uri) {
+          utf16_position_to_char_idx(
+            self.editor.document().text(),
+            diagnostic.range.start.line,
+            diagnostic.range.start.character,
+          )
+        } else {
+          let rope = rope_cache.entry(path.clone()).or_insert_with(|| {
+            std::fs::read_to_string(&path)
+              .map(|text| Rope::from_str(&text))
+              .unwrap_or_else(|_| Rope::new())
+          });
+          utf16_position_to_char_idx(
+            rope,
+            diagnostic.range.start.line,
+            diagnostic.range.start.character,
+          )
+        };
+
+        items.push(FilePickerDiagnosticItem {
+          path: path.clone(),
+          line,
+          character,
+          cursor_char,
+          severity: diagnostic.severity,
+          source: diagnostic.source.clone(),
+          message: diagnostic.message.clone(),
+        });
+      }
+    };
+
+    if workspace {
+      for document in self.diagnostics.documents() {
+        collect_document(&document.uri, &document.diagnostics);
+      }
+    } else if let Some(state) = self.lsp_document.as_ref().filter(|state| state.opened)
+      && let Some(document) = self.diagnostics.document(&state.uri)
+    {
+      collect_document(&document.uri, &document.diagnostics);
+    }
+
+    items.sort_by(|left, right| {
+      left
+        .path
+        .cmp(&right.path)
+        .then_with(|| left.line.cmp(&right.line))
+        .then_with(|| left.character.cmp(&right.character))
+    });
+    items
+  }
+
+  fn file_picker_changed_files(
+    &self,
+  ) -> std::result::Result<Vec<FilePickerChangedFileItem>, String> {
+    let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    if !cwd.exists() {
+      return Err("current working directory does not exist".to_string());
+    }
+
+    let changes = self
+      .vcs_provider
+      .collect_changed_files(&cwd)
+      .map_err(|err| err.to_string())?;
+
+    let mut items = Vec::with_capacity(changes.len());
+    for change in changes {
+      match change {
+        the_vcs::FileChange::Untracked { path } => {
+          items.push(FilePickerChangedFileItem {
+            kind: FilePickerChangedKind::Untracked,
+            path,
+            from_path: None,
+          });
+        },
+        the_vcs::FileChange::Modified { path } => {
+          items.push(FilePickerChangedFileItem {
+            kind: FilePickerChangedKind::Modified,
+            path,
+            from_path: None,
+          });
+        },
+        the_vcs::FileChange::Conflict { path } => {
+          items.push(FilePickerChangedFileItem {
+            kind: FilePickerChangedKind::Conflict,
+            path,
+            from_path: None,
+          });
+        },
+        the_vcs::FileChange::Deleted { path } => {
+          items.push(FilePickerChangedFileItem {
+            kind: FilePickerChangedKind::Deleted,
+            path,
+            from_path: None,
+          });
+        },
+        the_vcs::FileChange::Renamed { from_path, to_path } => {
+          items.push(FilePickerChangedFileItem {
+            kind:      FilePickerChangedKind::Renamed,
+            path:      to_path,
+            from_path: Some(from_path),
+          });
+        },
+      }
+    }
+
+    items.sort_by(|left, right| left.path.cmp(&right.path));
+    Ok(items)
+  }
+
   fn registers(&self) -> &Registers {
     &self.registers
   }
@@ -4990,6 +5116,7 @@ mod tests {
     ui_event,
   };
   use the_lib::{
+    clipboard::NoClipboard,
     messages::MessageEventKind,
     movement::Direction as SelectionDirection,
     position::{
@@ -5008,7 +5135,6 @@ mod tests {
       Range,
       Selection,
     },
-    clipboard::NoClipboard,
     transaction::Transaction,
   };
   use the_lsp::{
@@ -5971,28 +6097,25 @@ pkgs.mkShell {
         let text = ctx.editor.document().text().slice(..);
         char_idx_at_coords(text, Position::new(row, col))
       };
-      let _ = ctx.editor.document_mut().set_selection(Selection::point(pos));
+      let _ = ctx
+        .editor
+        .document_mut()
+        .set_selection(Selection::point(pos));
       pos
     };
 
     let go_back = |ctx: &mut Ctx| {
-      dispatch.pre_on_keypress(
-        ctx,
-        KeyEvent {
-          key:       Key::Char('o'),
-          modifiers: ctrl_modifiers(),
-        },
-      );
+      dispatch.pre_on_keypress(ctx, KeyEvent {
+        key:       Key::Char('o'),
+        modifiers: ctrl_modifiers(),
+      });
     };
 
     let press = |ctx: &mut Ctx, ch: char| {
-      dispatch.pre_on_keypress(
-        ctx,
-        KeyEvent {
-          key:       Key::Char(ch),
-          modifiers: Modifiers::empty(),
-        },
-      );
+      dispatch.pre_on_keypress(ctx, KeyEvent {
+        key:       Key::Char(ch),
+        modifiers: Modifiers::empty(),
+      });
     };
 
     let ge_origin = set_cursor_at(&mut ctx, 1, 1);
@@ -6036,7 +6159,10 @@ pkgs.mkShell {
     .expect("ctx");
 
     let origin = 3;
-    let _ = ctx.editor.document_mut().set_selection(Selection::point(origin));
+    let _ = ctx
+      .editor
+      .document_mut()
+      .set_selection(Selection::point(origin));
 
     let uri = the_lsp::text_sync::file_uri_for_path(second.as_path()).expect("file uri");
     assert!(ctx.jump_to_location(&LspLocation {
@@ -6056,7 +6182,10 @@ pkgs.mkShell {
 
     assert!(ctx.jump_backward_in_jumplist(1));
     assert_eq!(ctx.file_path.as_deref(), Some(first.as_path()));
-    assert_eq!(ctx.editor.document().selection().ranges()[0], Range::point(origin));
+    assert_eq!(
+      ctx.editor.document().selection().ranges()[0],
+      Range::point(origin)
+    );
   }
 
   #[test]
@@ -6625,7 +6754,11 @@ pkgs.mkShell {
 
     let tx = Transaction::change(
       ctx.editor.document().text(),
-      std::iter::once((0, ctx.editor.document().text().len_chars(), Some("alpha beta\n".into()))),
+      std::iter::once((
+        0,
+        ctx.editor.document().text().len_chars(),
+        Some("alpha beta\n".into()),
+      )),
     )
     .expect("seed transaction");
     assert!(DefaultContext::apply_transaction(&mut ctx, &tx));
@@ -6686,40 +6819,47 @@ pkgs.mkShell {
     let reset_text = |ctx: &mut Ctx| {
       let tx = Transaction::change(
         ctx.editor.document().text(),
-        std::iter::once((0, ctx.editor.document().text().len_chars(), Some("abc\n".into()))),
+        std::iter::once((
+          0,
+          ctx.editor.document().text().len_chars(),
+          Some("abc\n".into()),
+        )),
       )
       .expect("seed transaction");
       assert!(DefaultContext::apply_transaction(ctx, &tx));
     };
     let press = |ctx: &mut Ctx, ch: char| {
-      dispatch.pre_on_keypress(
-        ctx,
-        KeyEvent {
-          key:       Key::Char(' '),
-          modifiers: Modifiers::empty(),
-        },
-      );
-      dispatch.pre_on_keypress(
-        ctx,
-        KeyEvent {
-          key:       Key::Char(ch),
-          modifiers: Modifiers::empty(),
-        },
-      );
+      dispatch.pre_on_keypress(ctx, KeyEvent {
+        key:       Key::Char(' '),
+        modifiers: Modifiers::empty(),
+      });
+      dispatch.pre_on_keypress(ctx, KeyEvent {
+        key:       Key::Char(ch),
+        modifiers: Modifiers::empty(),
+      });
     };
 
     reset_text(&mut ctx);
-    let _ = ctx.editor.document_mut().set_selection(Selection::single(0, 1));
+    let _ = ctx
+      .editor
+      .document_mut()
+      .set_selection(Selection::single(0, 1));
     press(&mut ctx, 'p');
     assert_eq!(ctx.editor.document().text().to_string(), "aZbc\n");
 
     reset_text(&mut ctx);
-    let _ = ctx.editor.document_mut().set_selection(Selection::single(0, 1));
+    let _ = ctx
+      .editor
+      .document_mut()
+      .set_selection(Selection::single(0, 1));
     press(&mut ctx, 'P');
     assert_eq!(ctx.editor.document().text().to_string(), "Zabc\n");
 
     reset_text(&mut ctx);
-    let _ = ctx.editor.document_mut().set_selection(Selection::single(1, 2));
+    let _ = ctx
+      .editor
+      .document_mut()
+      .set_selection(Selection::single(1, 2));
     press(&mut ctx, 'R');
     assert_eq!(ctx.editor.document().text().to_string(), "aZc\n");
   }

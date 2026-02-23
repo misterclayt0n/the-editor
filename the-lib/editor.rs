@@ -24,7 +24,10 @@ use crate::{
     graphics::Rect,
     plan::RenderCache,
   },
-  selection::Selection,
+  selection::{
+    CursorId,
+    Selection,
+  },
   split_tree::{
     PaneDirection,
     PaneId,
@@ -94,6 +97,22 @@ pub struct PaneSnapshot {
   pub is_active_pane: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BufferSnapshot {
+  pub buffer_index: usize,
+  pub file_path:    Option<PathBuf>,
+  pub display_name: String,
+  pub modified:     bool,
+  pub is_active:    bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JumpSnapshot {
+  pub buffer_index:  usize,
+  pub selection:     Selection,
+  pub active_cursor: Option<CursorId>,
+}
+
 impl BufferState {
   fn new(document: Document, view: ViewState, file_path: Option<PathBuf>) -> Self {
     Self {
@@ -107,6 +126,17 @@ impl BufferState {
 }
 
 impl Editor {
+  fn buffer_snapshot_for_index(&self, index: usize) -> Option<BufferSnapshot> {
+    let buffer = self.buffers.get(index)?;
+    Some(BufferSnapshot {
+      buffer_index: index,
+      file_path:    buffer.file_path.clone(),
+      display_name: buffer.document.display_name().into_owned(),
+      modified:     buffer.document.flags().modified,
+      is_active:    index == self.active_buffer,
+    })
+  }
+
   pub fn new(id: EditorId, document: Document, view: ViewState) -> Self {
     let next_doc = document.id().get().get().saturating_add(1);
     let next_document_id = NonZeroUsize::new(next_doc).unwrap_or(document.id().get());
@@ -194,6 +224,43 @@ impl Editor {
     self.active_buffer
   }
 
+  pub fn buffer_snapshot(&self, index: usize) -> Option<BufferSnapshot> {
+    self.buffer_snapshot_for_index(index)
+  }
+
+  pub fn buffer_snapshots_mru(&self) -> Vec<BufferSnapshot> {
+    let len = self.buffers.len();
+    if len == 0 {
+      return Vec::new();
+    }
+
+    let mut order = Vec::with_capacity(len);
+    let mut seen = vec![false; len];
+
+    if self.active_buffer < len {
+      order.push(self.active_buffer);
+      seen[self.active_buffer] = true;
+    }
+
+    for index in self.access_history.iter().rev().copied() {
+      if index < len && !seen[index] {
+        seen[index] = true;
+        order.push(index);
+      }
+    }
+
+    for index in 0..len {
+      if !seen[index] {
+        order.push(index);
+      }
+    }
+
+    order
+      .into_iter()
+      .filter_map(|index| self.buffer_snapshot_for_index(index))
+      .collect()
+  }
+
   pub fn pane_count(&self) -> usize {
     self.split_tree.pane_count()
   }
@@ -249,6 +316,10 @@ impl Editor {
 
   pub fn buffer_view(&self, index: usize) -> Option<ViewState> {
     self.buffers.get(index).map(|buffer| buffer.view)
+  }
+
+  pub fn buffer_document(&self, index: usize) -> Option<&Document> {
+    self.buffers.get(index).map(|buffer| &buffer.document)
   }
 
   pub fn set_buffer_viewport(&mut self, index: usize, viewport: Rect) -> bool {
@@ -436,6 +507,29 @@ impl Editor {
     self.document().history().last_edit_pos()
   }
 
+  pub fn jumplist_backward_snapshots(&self) -> Vec<JumpSnapshot> {
+    self
+      .jumplist_backward
+      .iter()
+      .rev()
+      .map(|entry| {
+        JumpSnapshot {
+          buffer_index:  entry.buffer_index,
+          selection:     entry.selection.clone(),
+          active_cursor: entry.active_cursor,
+        }
+      })
+      .collect()
+  }
+
+  pub fn activate_jump_snapshot(&mut self, jump: &JumpSnapshot) -> bool {
+    self.apply_jump_entry(JumpEntry {
+      buffer_index:  jump.buffer_index,
+      selection:     jump.selection.clone(),
+      active_cursor: jump.active_cursor,
+    })
+  }
+
   fn current_jump_entry(&self) -> JumpEntry {
     JumpEntry {
       buffer_index:  self.active_buffer,
@@ -538,7 +632,10 @@ impl Editor {
 mod tests {
   use std::{
     num::NonZeroUsize,
-    path::PathBuf,
+    path::{
+      Path,
+      PathBuf,
+    },
   };
 
   use ropey::Rope;
@@ -944,5 +1041,59 @@ mod tests {
     assert!(editor.jump_backward(1));
     assert_eq!(editor.active_buffer_index(), 0);
     assert_eq!(editor.document().selection().ranges()[0], Range::point(1));
+  }
+
+  #[test]
+  fn editor_buffer_snapshots_mru_orders_active_then_recent() {
+    let doc_id = DocumentId::new(NonZeroUsize::new(1).unwrap());
+    let doc = Document::new(doc_id, Rope::from("one"));
+    let view = ViewState::new(Rect::new(0, 0, 80, 24), Position::new(0, 0));
+    let editor_id = EditorId::new(NonZeroUsize::new(1).unwrap());
+    let mut editor = Editor::new(editor_id, doc, view);
+
+    editor.open_buffer(
+      Rope::from("two"),
+      ViewState::new(Rect::new(0, 0, 80, 24), Position::new(0, 0)),
+      Some(PathBuf::from("/tmp/two.txt")),
+    );
+    editor.open_buffer(
+      Rope::from("three"),
+      ViewState::new(Rect::new(0, 0, 80, 24), Position::new(0, 0)),
+      Some(PathBuf::from("/tmp/three.txt")),
+    );
+    assert!(editor.set_active_buffer(1));
+
+    let snapshots = editor.buffer_snapshots_mru();
+    assert_eq!(snapshots.len(), 3);
+    assert_eq!(snapshots[0].buffer_index, 1);
+    assert_eq!(snapshots[1].buffer_index, 2);
+    assert_eq!(snapshots[2].buffer_index, 0);
+    assert!(snapshots[0].is_active);
+    assert_eq!(
+      snapshots[0].file_path.as_deref(),
+      Some(Path::new("/tmp/two.txt"))
+    );
+  }
+
+  #[test]
+  fn editor_activate_jump_snapshot_restores_saved_selection() {
+    let doc_id = DocumentId::new(NonZeroUsize::new(1).unwrap());
+    let doc = Document::new(doc_id, Rope::from("alpha beta gamma"));
+    let view = ViewState::new(Rect::new(0, 0, 80, 24), Position::new(0, 0));
+    let editor_id = EditorId::new(NonZeroUsize::new(1).unwrap());
+    let mut editor = Editor::new(editor_id, doc, view);
+
+    let _ = editor.document_mut().set_selection(Selection::point(0));
+    assert!(editor.save_jump());
+    let _ = editor.document_mut().set_selection(Selection::point(6));
+    assert!(editor.save_jump());
+
+    let snapshots = editor.jumplist_backward_snapshots();
+    assert_eq!(snapshots.len(), 2);
+    assert_eq!(snapshots[0].selection.ranges()[0], Range::point(6));
+    assert_eq!(snapshots[1].selection.ranges()[0], Range::point(0));
+
+    assert!(editor.activate_jump_snapshot(&snapshots[1]));
+    assert_eq!(editor.document().selection().ranges()[0], Range::point(0));
   }
 }

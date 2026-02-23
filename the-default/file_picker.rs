@@ -1,4 +1,5 @@
 use std::{
+  borrow::Cow,
   cell::RefCell,
   cmp::Reverse,
   collections::{
@@ -48,6 +49,8 @@ use the_core::chars::{
   prev_char_boundary,
 };
 use the_lib::{
+  diagnostics::DiagnosticSeverity,
+  position::Position,
   render::{
     UiColor,
     UiColorToken,
@@ -61,6 +64,10 @@ use the_lib::{
     UiNode,
     UiPanel,
     UiStyle,
+  },
+  selection::{
+    CursorId,
+    Selection,
   },
   split_tree::SplitAxis,
   syntax::{
@@ -93,10 +100,57 @@ thread_local! {
 
 #[derive(Debug, Clone)]
 pub struct FilePickerItem {
-  pub absolute: PathBuf,
-  pub display:  String,
-  pub icon:     String,
-  pub is_dir:   bool,
+  pub absolute:     PathBuf,
+  pub display:      String,
+  pub icon:         String,
+  pub is_dir:       bool,
+  pub action:       FilePickerItemAction,
+  pub preview_path: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone)]
+pub enum FilePickerItemAction {
+  OpenFile(PathBuf),
+  SwitchBuffer {
+    buffer_index: usize,
+  },
+  RestoreJump {
+    buffer_index:  usize,
+    selection:     Selection,
+    active_cursor: Option<CursorId>,
+  },
+  OpenLocation {
+    path:        PathBuf,
+    cursor_char: usize,
+    line:        usize,
+  },
+}
+
+#[derive(Debug, Clone)]
+pub struct FilePickerDiagnosticItem {
+  pub path:        PathBuf,
+  pub line:        usize,
+  pub character:   usize,
+  pub cursor_char: usize,
+  pub severity:    Option<DiagnosticSeverity>,
+  pub source:      Option<String>,
+  pub message:     String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FilePickerChangedKind {
+  Untracked,
+  Modified,
+  Conflict,
+  Deleted,
+  Renamed,
+}
+
+#[derive(Debug, Clone)]
+pub struct FilePickerChangedFileItem {
+  pub kind:      FilePickerChangedKind,
+  pub path:      PathBuf,
+  pub from_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -221,6 +275,7 @@ impl PreviewCache {
 pub struct FilePickerState {
   pub active:             bool,
   pub root:               PathBuf,
+  pub title:              String,
   pub config:             FilePickerConfig,
   pub query:              String,
   pub cursor:             usize,
@@ -261,6 +316,7 @@ impl Default for FilePickerState {
     Self {
       active: false,
       root: PathBuf::new(),
+      title: "File Picker".to_string(),
       config: FilePickerConfig::default(),
       query: String::new(),
       cursor: 0,
@@ -392,7 +448,338 @@ pub fn open_file_picker_with_split<Ctx: DefaultContext>(
   ctx: &mut Ctx,
   open_split: Option<SplitAxis>,
 ) {
+  open_file_picker_with_root_and_split(ctx, picker_root(ctx), open_split);
+}
+
+pub fn open_file_picker_with_root_and_split<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  root: PathBuf,
+  open_split: Option<SplitAxis>,
+) {
+  open_scanned_picker(ctx, "File Picker", root, open_split);
+}
+
+pub fn open_file_picker_in_current_directory<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  let doc_dir = ctx
+    .file_path()
+    .and_then(|path| path.parent().map(Path::to_path_buf));
+  let root = match doc_dir {
+    Some(path) => path,
+    None => {
+      let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+      if !cwd.exists() {
+        ctx.push_error(
+          "file_picker",
+          "current buffer has no parent and current working directory does not exist",
+        );
+        return;
+      }
+      ctx.push_warning(
+        "file_picker",
+        "current buffer has no parent, opening file picker in current working directory",
+      );
+      cwd
+    },
+  };
+  open_file_picker_with_root_and_split(ctx, root, None);
+}
+
+pub fn open_buffer_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
   let root = picker_root(ctx);
+  let snapshots = ctx.editor_ref().buffer_snapshots_mru();
+  if snapshots.is_empty() {
+    ctx.push_warning("buffer_picker", "no buffers available");
+    return;
+  }
+
+  let initial_cursor = if snapshots.len() > 1 { 1 } else { 0 };
+  let items = snapshots
+    .into_iter()
+    .map(|snapshot| {
+      let mut flags = String::new();
+      if snapshot.modified {
+        flags.push('+');
+      }
+      if snapshot.is_active {
+        flags.push('*');
+      }
+      let path_display = snapshot.file_path.as_ref().map_or_else(
+        || snapshot.display_name.clone(),
+        |path| display_relative_path(path, &cwd),
+      );
+      let display = if flags.is_empty() {
+        path_display
+      } else {
+        format!("[{flags}] {path_display}")
+      };
+      let icon = snapshot.file_path.as_ref().map_or_else(
+        || "file_generic".to_string(),
+        |path| file_picker_icon_name_for_path(path).to_string(),
+      );
+      let absolute = snapshot
+        .file_path
+        .clone()
+        .unwrap_or_else(|| PathBuf::from(format!("<buffer:{}>", snapshot.buffer_index)));
+
+      FilePickerItem {
+        absolute,
+        display,
+        icon,
+        is_dir: false,
+        action: FilePickerItemAction::SwitchBuffer {
+          buffer_index: snapshot.buffer_index,
+        },
+        preview_path: snapshot.file_path,
+      }
+    })
+    .collect();
+
+  open_static_picker(ctx, "Buffer Picker", root, None, items, initial_cursor);
+}
+
+pub fn open_jumplist_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+  let root = picker_root(ctx);
+  let editor = ctx.editor_ref();
+  let jumps = editor.jumplist_backward_snapshots();
+  if jumps.is_empty() {
+    ctx.push_warning("jumplist_picker", "jumplist is empty");
+    return;
+  }
+
+  let items = jumps
+    .into_iter()
+    .enumerate()
+    .filter_map(|(index, jump)| {
+      let snapshot = editor.buffer_snapshot(jump.buffer_index)?;
+      let doc = editor.buffer_document(jump.buffer_index)?;
+      let text = doc.text().slice(..);
+      let excerpt = jump
+        .selection
+        .fragments(text)
+        .map(Cow::into_owned)
+        .collect::<Vec<_>>()
+        .join(" ");
+      let excerpt = excerpt.split_whitespace().collect::<Vec<_>>().join(" ");
+      let excerpt = truncate_for_picker(&excerpt, 80);
+      let path_display = snapshot.file_path.as_ref().map_or_else(
+        || snapshot.display_name.clone(),
+        |path| display_relative_path(path, &cwd),
+      );
+      let display = if excerpt.is_empty() {
+        format!("{path_display} · jump {}", index + 1)
+      } else {
+        format!("{path_display} · {excerpt}")
+      };
+      let icon = snapshot.file_path.as_ref().map_or_else(
+        || "file_generic".to_string(),
+        |path| file_picker_icon_name_for_path(path).to_string(),
+      );
+      let absolute = snapshot
+        .file_path
+        .clone()
+        .unwrap_or_else(|| PathBuf::from(format!("<jump:{}>", index)));
+
+      Some(FilePickerItem {
+        absolute,
+        display,
+        icon,
+        is_dir: false,
+        action: FilePickerItemAction::RestoreJump {
+          buffer_index:  jump.buffer_index,
+          selection:     jump.selection.clone(),
+          active_cursor: jump.active_cursor,
+        },
+        preview_path: snapshot.file_path,
+      })
+    })
+    .collect::<Vec<_>>();
+
+  if items.is_empty() {
+    ctx.push_warning("jumplist_picker", "jumplist has no valid entries");
+    return;
+  }
+
+  open_static_picker(ctx, "Jumplist Picker", root, None, items, 0);
+}
+
+pub fn open_diagnostics_picker<Ctx: DefaultContext>(ctx: &mut Ctx, workspace: bool) {
+  let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+  let root = picker_root(ctx);
+  let diagnostics = ctx.file_picker_diagnostics(workspace);
+  if diagnostics.is_empty() {
+    let source = if workspace {
+      "workspace_diagnostics_picker"
+    } else {
+      "diagnostics_picker"
+    };
+    ctx.push_warning(source, "no diagnostics available");
+    return;
+  }
+
+  let items = diagnostics
+    .into_iter()
+    .map(|diagnostic| {
+      let severity_icon = diagnostic_icon_name(diagnostic.severity);
+      let severity_label = diagnostic_label(diagnostic.severity);
+      let path_display = display_relative_path(&diagnostic.path, &cwd);
+      let summary = truncate_for_picker(
+        diagnostic.message.lines().next().unwrap_or_default().trim(),
+        120,
+      );
+      let display = format!(
+        "{severity_label} {path_display}:{}:{} {}",
+        diagnostic.line.saturating_add(1),
+        diagnostic.character.saturating_add(1),
+        summary
+      );
+      let absolute = diagnostic.path.clone();
+
+      FilePickerItem {
+        absolute,
+        display,
+        icon: severity_icon.to_string(),
+        is_dir: false,
+        action: FilePickerItemAction::OpenLocation {
+          path:        diagnostic.path.clone(),
+          cursor_char: diagnostic.cursor_char,
+          line:        diagnostic.line,
+        },
+        preview_path: Some(diagnostic.path),
+      }
+    })
+    .collect();
+
+  open_static_picker(
+    ctx,
+    if workspace {
+      "Workspace Diagnostics"
+    } else {
+      "Diagnostics"
+    },
+    root,
+    None,
+    items,
+    0,
+  );
+}
+
+pub fn open_changed_file_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+  if !cwd.exists() {
+    ctx.push_error(
+      "changed_file_picker",
+      "current working directory does not exist",
+    );
+    return;
+  }
+
+  let changed = match ctx.file_picker_changed_files() {
+    Ok(changed) => changed,
+    Err(err) => {
+      ctx.push_warning("changed_file_picker", err);
+      return;
+    },
+  };
+  if changed.is_empty() {
+    ctx.push_warning("changed_file_picker", "no changed files");
+    return;
+  }
+
+  let root = workspace_root(&cwd);
+  let items = changed
+    .into_iter()
+    .map(|entry| {
+      let (prefix, icon) = match entry.kind {
+        FilePickerChangedKind::Untracked => ("+ untracked", "git_untracked"),
+        FilePickerChangedKind::Modified => ("~ modified", "git_modified"),
+        FilePickerChangedKind::Conflict => ("x conflict", "git_conflict"),
+        FilePickerChangedKind::Deleted => ("- deleted", "git_deleted"),
+        FilePickerChangedKind::Renamed => ("> renamed", "git_renamed"),
+      };
+      let display_path = display_relative_path(&entry.path, &cwd);
+      let display = if entry.kind == FilePickerChangedKind::Renamed {
+        let from_display = entry
+          .from_path
+          .as_ref()
+          .map(|path| display_relative_path(path, &cwd))
+          .unwrap_or_else(|| "<unknown>".to_string());
+        format!("{prefix} {from_display} -> {display_path}")
+      } else {
+        format!("{prefix} {display_path}")
+      };
+
+      FilePickerItem {
+        absolute: entry.path.clone(),
+        display,
+        icon: icon.to_string(),
+        is_dir: false,
+        action: FilePickerItemAction::OpenFile(entry.path.clone()),
+        preview_path: Some(entry.path),
+      }
+    })
+    .collect();
+
+  open_static_picker(ctx, "Changed Files", root, None, items, 0);
+}
+
+fn open_scanned_picker<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  title: &str,
+  root: PathBuf,
+  open_split: Option<SplitAxis>,
+) {
+  let mut state = base_picker_state(ctx, title, open_split);
+  state.preview = FilePickerPreview::Message("Scanning files…".to_string());
+  start_preview_worker(&mut state);
+  start_scan(&mut state, root);
+  poll_scan_results(&mut state);
+
+  *ctx.file_picker_mut() = state;
+  ctx.request_render();
+}
+
+fn open_static_picker<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  title: &str,
+  root: PathBuf,
+  open_split: Option<SplitAxis>,
+  items: Vec<FilePickerItem>,
+  initial_cursor: usize,
+) {
+  let mut state = base_picker_state(ctx, title, open_split);
+  state.root = root;
+  state.preview = FilePickerPreview::Message("No matches".to_string());
+  start_preview_worker(&mut state);
+  state.matcher.restart(true);
+  state
+    .matcher
+    .pattern
+    .reparse(0, "", CaseMatching::Smart, Normalization::Smart, false);
+  let injector = state.matcher.injector();
+  for item in items {
+    inject_item(&injector, item);
+  }
+  drop(injector);
+  let _ = refresh_matcher_state(&mut state);
+  if state.matched_count() == 0 {
+    state.selected = None;
+  } else {
+    state.selected = Some(initial_cursor.min(state.matched_count() - 1));
+    normalize_selection_and_scroll(&mut state);
+    refresh_preview(&mut state);
+  }
+
+  *ctx.file_picker_mut() = state;
+  ctx.request_render();
+}
+
+fn base_picker_state<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  title: &str,
+  open_split: Option<SplitAxis>,
+) -> FilePickerState {
   let show_preview = ctx.file_picker().show_preview;
   let config = ctx.file_picker().config.clone();
   let wake_tx = ctx.file_picker().wake_tx.clone();
@@ -403,19 +790,14 @@ pub fn open_file_picker_with_split<Ctx: DefaultContext>(
 
   let mut state = FilePickerState::default();
   state.active = true;
+  state.title = title.to_string();
   state.show_preview = show_preview;
   state.open_split = open_split;
   state.config = config;
   state.wake_tx = wake_tx.clone();
   state.syntax_loader = syntax_loader;
   state.matcher = new_matcher(wake_tx);
-  state.preview = FilePickerPreview::Message("Scanning files…".to_string());
-  start_preview_worker(&mut state);
-  start_scan(&mut state, root);
-  poll_scan_results(&mut state);
-
-  *ctx.file_picker_mut() = state;
-  ctx.request_render();
+  state
 }
 
 pub fn close_file_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
@@ -635,27 +1017,103 @@ pub fn submit_file_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
     return;
   };
 
+  match &item.action {
+    FilePickerItemAction::OpenFile(path) => {
+      if !prepare_split_for_submit(ctx) {
+        return;
+      }
+      if let Err(err) = ctx.open_file(path) {
+        let message = err.to_string();
+        {
+          let picker = ctx.file_picker_mut();
+          picker.error = Some(message.clone());
+          picker.preview = FilePickerPreview::Message(format!("Failed to open file: {message}"));
+        }
+        ctx.push_error("file_picker", format!("Failed to open file: {message}"));
+        ctx.request_render();
+        return;
+      }
+      close_file_picker(ctx);
+    },
+    FilePickerItemAction::SwitchBuffer { buffer_index } => {
+      if !ctx.editor().set_active_buffer(*buffer_index) {
+        ctx.push_warning("buffer_picker", "selected buffer is no longer available");
+        return;
+      }
+      close_file_picker(ctx);
+    },
+    FilePickerItemAction::RestoreJump {
+      buffer_index,
+      selection,
+      active_cursor,
+    } => {
+      if !ctx.editor().set_active_buffer(*buffer_index) {
+        ctx.push_warning(
+          "jumplist_picker",
+          "selected jump target is no longer available",
+        );
+        return;
+      }
+      if ctx
+        .editor()
+        .document_mut()
+        .set_selection(selection.clone())
+        .is_err()
+      {
+        ctx.push_warning("jumplist_picker", "failed to restore jump selection");
+        return;
+      }
+      ctx.editor().view_mut().active_cursor = *active_cursor;
+      close_file_picker(ctx);
+    },
+    FilePickerItemAction::OpenLocation {
+      path,
+      cursor_char,
+      line,
+    } => {
+      if !prepare_split_for_submit(ctx) {
+        return;
+      }
+      if ctx
+        .file_path()
+        .is_none_or(|current| current != path.as_path())
+        && let Err(err) = ctx.open_file(path)
+      {
+        let message = err.to_string();
+        {
+          let picker = ctx.file_picker_mut();
+          picker.error = Some(message.clone());
+          picker.preview = FilePickerPreview::Message(format!("Failed to open file: {message}"));
+        }
+        ctx.push_error(
+          "diagnostics_picker",
+          format!("Failed to open file: {message}"),
+        );
+        ctx.request_render();
+        return;
+      }
+
+      let text = ctx.editor_ref().document().text();
+      let cursor = (*cursor_char).min(text.len_chars());
+      let _ = ctx
+        .editor()
+        .document_mut()
+        .set_selection(Selection::point(cursor));
+      ctx.editor().view_mut().scroll = Position::new(line.saturating_sub(ctx.scrolloff()), 0);
+      close_file_picker(ctx);
+    },
+  }
+}
+
+fn prepare_split_for_submit<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool {
   if let Some(axis) = ctx.file_picker().open_split
     && !ctx.editor().split_active_pane(axis)
   {
     ctx.push_error("file_picker", "Failed to open split");
     ctx.request_render();
-    return;
+    return false;
   }
-
-  if let Err(err) = ctx.open_file(&item.absolute) {
-    let message = err.to_string();
-    {
-      let picker = ctx.file_picker_mut();
-      picker.error = Some(message.clone());
-      picker.preview = FilePickerPreview::Message(format!("Failed to open file: {message}"));
-    }
-    ctx.push_error("file_picker", format!("Failed to open file: {message}"));
-    ctx.request_render();
-    return;
-  }
-
-  close_file_picker(ctx);
+  true
 }
 
 pub fn select_file_picker_index<Ctx: DefaultContext>(ctx: &mut Ctx, index: usize) {
@@ -867,7 +1325,7 @@ pub fn build_file_picker_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNode> {
   let container = UiNode::Container(container);
 
   let mut panel = UiPanel::floating("file_picker", container);
-  panel.title = Some(format!("File Picker · {}", picker.root.display()));
+  panel.title = Some(format!("{} · {}", picker.title, picker.root.display()));
   panel.style = panel.style.with_role("file_picker");
   panel.style.border = None;
   panel.constraints = UiConstraints::floating_default();
@@ -877,6 +1335,42 @@ pub fn build_file_picker_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNode> {
   panel.constraints.max_height = None;
 
   vec![UiNode::Panel(panel)]
+}
+
+fn display_relative_path(path: &Path, cwd: &Path) -> String {
+  path.strip_prefix(cwd).unwrap_or(path).display().to_string()
+}
+
+fn truncate_for_picker(text: &str, max_chars: usize) -> String {
+  let mut out = String::new();
+  for (idx, ch) in text.chars().enumerate() {
+    if idx >= max_chars {
+      out.push('…');
+      return out;
+    }
+    out.push(ch);
+  }
+  out
+}
+
+fn diagnostic_icon_name(severity: Option<DiagnosticSeverity>) -> &'static str {
+  match severity {
+    Some(DiagnosticSeverity::Error) => "diagnostic_error",
+    Some(DiagnosticSeverity::Warning) => "diagnostic_warning",
+    Some(DiagnosticSeverity::Information) => "diagnostic_info",
+    Some(DiagnosticSeverity::Hint) => "diagnostic_hint",
+    None => "diagnostic_info",
+  }
+}
+
+fn diagnostic_label(severity: Option<DiagnosticSeverity>) -> &'static str {
+  match severity {
+    Some(DiagnosticSeverity::Error) => "error",
+    Some(DiagnosticSeverity::Warning) => "warn ",
+    Some(DiagnosticSeverity::Information) => "info ",
+    Some(DiagnosticSeverity::Hint) => "hint ",
+    None => "diag ",
+  }
 }
 
 fn picker_root<Ctx: DefaultContext>(_ctx: &Ctx) -> PathBuf {
@@ -1024,10 +1518,12 @@ fn entry_to_picker_item(entry: DirEntry, root: &Path) -> Option<FilePickerItem> 
   let icon = file_picker_icon_name_for_path(rel).to_string();
 
   Some(FilePickerItem {
+    action: FilePickerItemAction::OpenFile(path.clone()),
     absolute: path,
     display,
     icon,
     is_dir: false,
+    preview_path: None,
   })
 }
 
@@ -1190,6 +1686,15 @@ pub fn file_picker_icon_glyph(icon: &str, is_dir: bool) -> &'static str {
     "cpp" => "",
     "css" => "",
     "database" => "",
+    "diagnostic_error" => "",
+    "diagnostic_warning" => "",
+    "diagnostic_info" => "",
+    "diagnostic_hint" => "󰌵",
+    "git_untracked" => "",
+    "git_modified" => "",
+    "git_conflict" => "",
+    "git_deleted" => "",
+    "git_renamed" => "",
     "docker" => "",
     "file_doc" => "󰈦",
     "file_git" => "",
@@ -1645,28 +2150,29 @@ fn refresh_preview(state: &mut FilePickerState) {
     return;
   };
 
+  let preview_target = item.preview_path.as_ref().unwrap_or(&item.absolute);
   if state
     .preview_path
     .as_ref()
-    .is_some_and(|path| path == &item.absolute)
+    .is_some_and(|path| path == preview_target)
   {
     return;
   }
 
-  state.preview_path = Some(item.absolute.clone());
+  state.preview_path = Some(preview_target.clone());
   state.preview_scroll = 0;
-  if let Some(preview) = state.preview_cache.get(&item.absolute) {
+  if let Some(preview) = state.preview_cache.get(preview_target) {
     state.preview = preview;
     state.preview_pending_id = None;
     state.preview_latest_request.store(0, Ordering::Relaxed);
     return;
   }
 
-  match preview_for_path_base(&item.absolute, item.is_dir) {
+  match preview_for_path_base(preview_target, item.is_dir) {
     PreviewBuild::Final(preview) => {
       state
         .preview_cache
-        .insert(item.absolute.clone(), preview.clone());
+        .insert(preview_target.clone(), preview.clone());
       state.preview = preview;
       state.preview_pending_id = None;
       state.preview_latest_request.store(0, Ordering::Relaxed);
@@ -1675,7 +2181,7 @@ fn refresh_preview(state: &mut FilePickerState) {
       let base_preview = FilePickerPreview::Source(source_preview.source.clone());
       state
         .preview_cache
-        .insert(item.absolute.clone(), base_preview.clone());
+        .insert(preview_target.clone(), base_preview.clone());
       state.preview = base_preview;
 
       if state.syntax_loader.is_none() {
@@ -1693,7 +2199,7 @@ fn refresh_preview(state: &mut FilePickerState) {
 
       let request = PreviewRequest {
         request_id,
-        path: item.absolute.clone(),
+        path: preview_target.clone(),
         is_dir: item.is_dir,
       };
 
@@ -1712,7 +2218,7 @@ fn refresh_preview(state: &mut FilePickerState) {
       };
 
       let highlights = collect_source_highlights(
-        &item.absolute,
+        preview_target,
         &source_preview.text,
         source_preview.end_byte,
         loader,
@@ -1724,7 +2230,7 @@ fn refresh_preview(state: &mut FilePickerState) {
       let preview = FilePickerPreview::Source(source_preview.source);
       state
         .preview_cache
-        .insert(item.absolute.clone(), preview.clone());
+        .insert(preview_target.clone(), preview.clone());
       state.preview = preview;
       state.preview_pending_id = None;
       state.preview_latest_request.store(0, Ordering::Relaxed);
@@ -1911,11 +2417,14 @@ mod tests {
   use super::*;
 
   fn sample_item(display: &str) -> FilePickerItem {
+    let absolute = PathBuf::from(display);
     FilePickerItem {
-      absolute: PathBuf::from(display),
-      display:  display.to_string(),
-      icon:     "file_generic".to_string(),
-      is_dir:   false,
+      absolute:     absolute.clone(),
+      display:      display.to_string(),
+      icon:         "file_generic".to_string(),
+      is_dir:       false,
+      action:       FilePickerItemAction::OpenFile(absolute),
+      preview_path: None,
     }
   }
 

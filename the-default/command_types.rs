@@ -644,6 +644,12 @@ pub enum Command {
   RSearch,
   SelectRegex,
   FilePicker,
+  FilePickerInCurrentDirectory,
+  BufferPicker,
+  JumplistPicker,
+  DiagnosticsPicker,
+  WorkspaceDiagnosticsPicker,
+  ChangedFilePicker,
   LspGotoDeclaration,
   LspGotoDefinition,
   LspGotoTypeDefinition,
@@ -1758,6 +1764,36 @@ impl Command {
   #[must_use]
   pub const fn file_picker() -> Self {
     Self::FilePicker
+  }
+
+  #[must_use]
+  pub const fn file_picker_in_current_directory() -> Self {
+    Self::FilePickerInCurrentDirectory
+  }
+
+  #[must_use]
+  pub const fn buffer_picker() -> Self {
+    Self::BufferPicker
+  }
+
+  #[must_use]
+  pub const fn jumplist_picker() -> Self {
+    Self::JumplistPicker
+  }
+
+  #[must_use]
+  pub const fn diagnostics_picker() -> Self {
+    Self::DiagnosticsPicker
+  }
+
+  #[must_use]
+  pub const fn workspace_diagnostics_picker() -> Self {
+    Self::WorkspaceDiagnosticsPicker
+  }
+
+  #[must_use]
+  pub const fn changed_file_picker() -> Self {
+    Self::ChangedFilePicker
   }
 
   #[must_use]

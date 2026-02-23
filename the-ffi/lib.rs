@@ -63,6 +63,9 @@ use the_default::{
   DefaultDispatchStatic,
   Direction as CommandDirection,
   DispatchRef,
+  FilePickerChangedFileItem,
+  FilePickerChangedKind,
+  FilePickerDiagnosticItem,
   FilePickerPreview,
   FilePickerState,
   KeyBinding,
@@ -5704,7 +5707,8 @@ impl App {
       return true;
     };
 
-    // Match Helix behavior: record the origin before any goto jump so C-o can return.
+    // Match Helix behavior: record the origin before any goto jump so C-o can
+    // return.
     let _ = <Self as DefaultContext>::save_selection_to_jumplist(self);
 
     if self
@@ -7618,6 +7622,128 @@ impl DefaultContext for App {
     Some(ranges)
   }
 
+  fn file_picker_diagnostics(&self, workspace: bool) -> Vec<FilePickerDiagnosticItem> {
+    let mut items = Vec::new();
+    let mut rope_cache: HashMap<PathBuf, Rope> = HashMap::new();
+    let active_uri = self.lsp_document.as_ref().map(|state| state.uri.as_str());
+
+    let mut collect_document = |uri: &str, diagnostics: &[Diagnostic]| {
+      let Some(path) = path_for_file_uri(uri) else {
+        return;
+      };
+
+      for diagnostic in diagnostics {
+        let line = diagnostic.range.start.line as usize;
+        let character = diagnostic.range.start.character as usize;
+        let cursor_char = if active_uri == Some(uri) {
+          utf16_position_to_char_idx(
+            self.active_editor_ref().document().text(),
+            diagnostic.range.start.line,
+            diagnostic.range.start.character,
+          )
+        } else {
+          let rope = rope_cache.entry(path.clone()).or_insert_with(|| {
+            std::fs::read_to_string(&path)
+              .map(|text| Rope::from_str(&text))
+              .unwrap_or_else(|_| Rope::new())
+          });
+          utf16_position_to_char_idx(
+            rope,
+            diagnostic.range.start.line,
+            diagnostic.range.start.character,
+          )
+        };
+
+        items.push(FilePickerDiagnosticItem {
+          path: path.clone(),
+          line,
+          character,
+          cursor_char,
+          severity: diagnostic.severity,
+          source: diagnostic.source.clone(),
+          message: diagnostic.message.clone(),
+        });
+      }
+    };
+
+    if workspace {
+      for document in self.diagnostics.documents() {
+        collect_document(&document.uri, &document.diagnostics);
+      }
+    } else if let Some(state) = self.lsp_document.as_ref().filter(|state| state.opened)
+      && let Some(document) = self.diagnostics.document(&state.uri)
+    {
+      collect_document(&document.uri, &document.diagnostics);
+    }
+
+    items.sort_by(|left, right| {
+      left
+        .path
+        .cmp(&right.path)
+        .then_with(|| left.line.cmp(&right.line))
+        .then_with(|| left.character.cmp(&right.character))
+    });
+    items
+  }
+
+  fn file_picker_changed_files(
+    &self,
+  ) -> std::result::Result<Vec<FilePickerChangedFileItem>, String> {
+    let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    if !cwd.exists() {
+      return Err("current working directory does not exist".to_string());
+    }
+
+    let changes = self
+      .vcs_provider
+      .collect_changed_files(&cwd)
+      .map_err(|err| err.to_string())?;
+
+    let mut items = Vec::with_capacity(changes.len());
+    for change in changes {
+      match change {
+        the_vcs::FileChange::Untracked { path } => {
+          items.push(FilePickerChangedFileItem {
+            kind: FilePickerChangedKind::Untracked,
+            path,
+            from_path: None,
+          });
+        },
+        the_vcs::FileChange::Modified { path } => {
+          items.push(FilePickerChangedFileItem {
+            kind: FilePickerChangedKind::Modified,
+            path,
+            from_path: None,
+          });
+        },
+        the_vcs::FileChange::Conflict { path } => {
+          items.push(FilePickerChangedFileItem {
+            kind: FilePickerChangedKind::Conflict,
+            path,
+            from_path: None,
+          });
+        },
+        the_vcs::FileChange::Deleted { path } => {
+          items.push(FilePickerChangedFileItem {
+            kind: FilePickerChangedKind::Deleted,
+            path,
+            from_path: None,
+          });
+        },
+        the_vcs::FileChange::Renamed { from_path, to_path } => {
+          items.push(FilePickerChangedFileItem {
+            kind:      FilePickerChangedKind::Renamed,
+            path:      to_path,
+            from_path: Some(from_path),
+          });
+        },
+      }
+    }
+
+    items.sort_by(|left, right| left.path.cmp(&right.path));
+    Ok(items)
+  }
+
   fn registers(&self) -> &Registers {
     &self.registers
   }
@@ -8972,14 +9098,14 @@ mod tests {
     syntax::Highlight,
     transaction::Transaction,
   };
-  use the_runtime::file_watch::{
-    PathEvent,
-    PathEventKind,
-  };
   use the_lsp::{
     LspLocation,
     LspPosition,
     LspRange,
+  };
+  use the_runtime::file_watch::{
+    PathEvent,
+    PathEventKind,
   };
 
   use super::{
@@ -9883,7 +10009,10 @@ pkgs.mkShell {
     );
 
     assert!(app.handle_key(id, key_char_ctrl('o')));
-    assert_eq!(<App as DefaultContext>::file_path(&app), Some(first.as_path()));
+    assert_eq!(
+      <App as DefaultContext>::file_path(&app),
+      Some(first.as_path())
+    );
     assert_eq!(
       app.active_editor_ref().document().selection().ranges()[0],
       Range::point(origin)
@@ -10026,11 +10155,10 @@ pkgs.mkShell {
   fn goto_motion_keymaps_save_jumps_for_file_edges_and_column() {
     let _guard = ffi_test_guard();
     let mut app = App::new();
-    let id = app.create_editor(
-      "alpha\nbeta\ngamma\n",
-      default_viewport(),
-      ffi::Position { row: 0, col: 0 },
-    );
+    let id = app.create_editor("alpha\nbeta\ngamma\n", default_viewport(), ffi::Position {
+      row: 0,
+      col: 0,
+    });
     assert!(app.activate(id).is_some());
 
     let set_cursor_at = |app: &mut App, row: usize, col: usize| {
@@ -10641,7 +10769,10 @@ pkgs.mkShell {
       .set_selection(Selection::single(0, 1));
     assert!(app.handle_key(id, key_char(' ')));
     assert!(app.handle_key(id, key_char('p')));
-    assert_eq!(app.active_editor_ref().document().text().to_string(), "aZbc\n");
+    assert_eq!(
+      app.active_editor_ref().document().text().to_string(),
+      "aZbc\n"
+    );
 
     reset_text(&mut app);
     let _ = app
@@ -10650,7 +10781,10 @@ pkgs.mkShell {
       .set_selection(Selection::single(0, 1));
     assert!(app.handle_key(id, key_char(' ')));
     assert!(app.handle_key(id, key_char('P')));
-    assert_eq!(app.active_editor_ref().document().text().to_string(), "Zabc\n");
+    assert_eq!(
+      app.active_editor_ref().document().text().to_string(),
+      "Zabc\n"
+    );
 
     reset_text(&mut app);
     let _ = app
@@ -10659,7 +10793,10 @@ pkgs.mkShell {
       .set_selection(Selection::single(1, 2));
     assert!(app.handle_key(id, key_char(' ')));
     assert!(app.handle_key(id, key_char('R')));
-    assert_eq!(app.active_editor_ref().document().text().to_string(), "aZc\n");
+    assert_eq!(
+      app.active_editor_ref().document().text().to_string(),
+      "aZc\n"
+    );
   }
 
   #[test]

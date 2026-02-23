@@ -2,6 +2,7 @@
 //! System (VCS). Currently `git` and `jj` providers are supported for diffs.
 
 use std::{
+  cell::RefCell,
   path::{
     Path,
     PathBuf,
@@ -135,6 +136,34 @@ impl DiffProviderRegistry {
         f(Err(eyre!("no diff provider returns success")));
       }
     });
+  }
+
+  /// Collect changed files synchronously from the first provider that succeeds.
+  pub fn collect_changed_files(&self, cwd: &Path) -> Result<Vec<FileChange>> {
+    for provider in &self.providers {
+      let changes = RefCell::new(Vec::new());
+      let provider_result = provider.for_each_changed_file(cwd, |entry| {
+        match entry {
+          Ok(change) => {
+            changes.borrow_mut().push(change);
+            true
+          },
+          Err(err) => {
+            log::debug!("{err:#?}");
+            false
+          },
+        }
+      });
+
+      match provider_result {
+        Ok(()) => return Ok(changes.into_inner()),
+        Err(err) => {
+          log::debug!("{err:#?}");
+        },
+      }
+    }
+
+    bail!("no diff provider returns success")
   }
 }
 

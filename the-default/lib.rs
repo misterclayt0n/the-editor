@@ -1,3 +1,5 @@
+#![recursion_limit = "512"]
+
 //! Default dispatch behaviors and keymaps for the editor.
 //!
 //! This crate provides a reusable, policy-level layer that sits on top of

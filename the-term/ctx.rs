@@ -53,6 +53,8 @@ use the_default::{
   FilePickerChangedFileItem,
   FilePickerChangedKind,
   FilePickerDiagnosticItem,
+  FilePickerItem,
+  FilePickerItemAction,
   FilePickerState,
   KeyBinding,
   KeyEvent,
@@ -1937,23 +1939,109 @@ impl Ctx {
       return true;
     }
 
-    if let Some(location) = symbols.iter().find_map(|symbol| symbol.location.as_ref()) {
-      let jumped = self.jump_to_location(location);
-      if jumped {
-        self.messages.publish(
-          MessageLevel::Info,
-          Some("lsp".into()),
-          format!("{label}: {} results (jumped to first)", symbols.len()),
-        );
+    let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let root = the_default::workspace_root(&cwd);
+    let active_uri = self.current_lsp_uri();
+    let mut external_rope_cache: HashMap<PathBuf, Rope> = HashMap::new();
+    let mut items = Vec::with_capacity(symbols.len());
+    let mut symbol_stack: Vec<String> = Vec::new();
+    let mut previous_path: Option<PathBuf> = None;
+
+    for symbol in symbols {
+      let Some(location) = symbol.location.as_ref() else {
+        continue;
+      };
+      let Some(path) = path_for_file_uri(&location.uri) else {
+        continue;
+      };
+
+      let line = location.range.start.line as usize;
+      let character = location.range.start.character as usize;
+      let cursor_char = if active_uri.as_deref() == Some(location.uri.as_str()) {
+        utf16_position_to_char_idx(
+          self.editor.document().text(),
+          location.range.start.line,
+          location.range.start.character,
+        )
+      } else {
+        let rope = external_rope_cache.entry(path.clone()).or_insert_with(|| {
+          std::fs::read_to_string(&path)
+            .map(|content| Rope::from(content.as_str()))
+            .unwrap_or_else(|_| Rope::from(""))
+        });
+        utf16_position_to_char_idx(
+          rope,
+          location.range.start.line,
+          location.range.start.character,
+        )
+      };
+
+      let path_display = path
+        .strip_prefix(&cwd)
+        .unwrap_or(&path)
+        .display()
+        .to_string();
+      if previous_path.as_ref().is_none_or(|prev| prev != &path) {
+        symbol_stack.clear();
+        previous_path = Some(path.clone());
       }
-      return jumped;
+      let kind_label = lsp_symbol_kind_label(symbol.kind);
+      let name = sanitize_picker_field(symbol.name.trim());
+      let name = if name.is_empty() {
+        "<unnamed>".to_string()
+      } else {
+        name
+      };
+      let container = sanitize_picker_field(symbol.container_name.as_deref().unwrap_or_default());
+      let detail = sanitize_picker_field(symbol.detail.as_deref().unwrap_or_default());
+      let path_field = sanitize_picker_field(path_display.as_str());
+      let depth = lsp_symbol_tree_depth(container.as_str(), &mut symbol_stack);
+      symbol_stack.truncate(depth);
+      symbol_stack.push(name.clone());
+      let display = format!(
+        "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+        name,
+        container,
+        detail,
+        kind_label,
+        path_field,
+        line.saturating_add(1),
+        character.saturating_add(1),
+        depth
+      );
+      let icon = lsp_symbol_icon_name(symbol.kind).to_string();
+
+      items.push(FilePickerItem {
+        absolute: path.clone(),
+        display,
+        icon,
+        is_dir: false,
+        display_path: false,
+        action: FilePickerItemAction::OpenLocation {
+          path: path.clone(),
+          cursor_char,
+          line,
+        },
+        preview_path: Some(path),
+        preview_line: Some(line),
+      });
     }
 
-    self.messages.publish(
-      MessageLevel::Info,
-      Some("lsp".into()),
-      format!("{label}: {} results", symbols.len()),
-    );
+    if items.is_empty() {
+      self.messages.publish(
+        MessageLevel::Warning,
+        Some("lsp".into()),
+        format!("{label}: results had no navigable locations"),
+      );
+      return true;
+    }
+
+    let title = if label.contains("workspace") {
+      "Workspace Symbols"
+    } else {
+      "Lsp Symbols"
+    };
+    the_default::open_custom_picker(self, title, root, None, items, 0);
     true
   }
 
@@ -3582,6 +3670,73 @@ fn detail_if_empty(detail: String, fallback: &str) -> String {
   }
 }
 
+fn sanitize_picker_field(value: &str) -> String {
+  value
+    .replace('\t', " ")
+    .replace(['\r', '\n'], " ")
+    .split_whitespace()
+    .collect::<Vec<_>>()
+    .join(" ")
+}
+
+fn lsp_symbol_tree_depth(container: &str, stack: &mut Vec<String>) -> usize {
+  if container.is_empty() {
+    return 0;
+  }
+
+  while let Some(last) = stack.last() {
+    if last == container {
+      return stack.len();
+    }
+    stack.pop();
+  }
+
+  0
+}
+
+fn lsp_symbol_kind_label(kind: u32) -> &'static str {
+  match kind {
+    1 => "FILE",
+    2 => "MODULE",
+    3 => "NAMESPACE",
+    4 => "PACKAGE",
+    5 => "CLASS",
+    6 => "METHOD",
+    7 => "PROPERTY",
+    8 => "FIELD",
+    9 => "CONSTRUCTOR",
+    10 => "ENUM",
+    11 => "INTERFACE",
+    12 => "FUNCTION",
+    13 => "VARIABLE",
+    14 => "CONSTANT",
+    15 => "STRING",
+    16 => "NUMBER",
+    17 => "BOOLEAN",
+    18 => "ARRAY",
+    19 => "OBJECT",
+    20 => "KEY",
+    21 => "NULL",
+    22 => "ENUM_MEMBER",
+    23 => "STRUCT",
+    24 => "EVENT",
+    25 => "OPERATOR",
+    26 => "TYPE_PARAM",
+    _ => "SYMBOL",
+  }
+}
+
+fn lsp_symbol_icon_name(kind: u32) -> &'static str {
+  match kind {
+    2 | 3 | 4 | 5 | 10 | 11 | 19 | 23 => "folder",
+    6 | 9 | 12 | 25 => "file_code",
+    7 | 8 | 13 | 14 | 18 | 20 | 22 | 24 | 26 => "file_generic",
+    15 | 16 | 17 | 21 => "file_doc",
+    1 => "file_doc",
+    _ => "file_generic",
+  }
+}
+
 fn clamp_status_text(text: &str, max_chars: usize) -> String {
   if max_chars == 0 {
     return String::new();
@@ -5145,6 +5300,7 @@ mod tests {
     LspLocation,
     LspPosition,
     LspRange,
+    LspSymbol,
     render_lsp_snippet,
   };
   use the_runtime::file_watch::{
@@ -6186,6 +6342,55 @@ pkgs.mkShell {
     assert_eq!(
       ctx.editor.document().selection().ranges()[0],
       Range::point(origin)
+    );
+  }
+
+  #[test]
+  fn lsp_symbols_result_opens_picker_instead_of_jumping() {
+    let fixture =
+      TempTestFile::with_extension("lsp-symbol-picker", "rs", "fn alpha() {}\nfn beta() {}\n");
+    let mut ctx = Ctx::new(Some(
+      fixture
+        .as_path()
+        .to_str()
+        .expect("temp test path should be utf-8"),
+    ))
+    .expect("ctx");
+
+    let _ = ctx.editor.document_mut().set_selection(Selection::point(0));
+    let before_path = ctx.file_path.clone();
+    let before_selection = ctx.editor.document().selection().ranges()[0];
+    let uri = the_lsp::text_sync::file_uri_for_path(fixture.as_path()).expect("file uri");
+
+    let symbols = vec![LspSymbol {
+      name:           "beta".to_string(),
+      detail:         None,
+      kind:           12,
+      container_name: Some("crate".to_string()),
+      location:       Some(LspLocation {
+        uri,
+        range: LspRange {
+          start: LspPosition {
+            line:      1,
+            character: 3,
+          },
+          end:   LspPosition {
+            line:      1,
+            character: 7,
+          },
+        },
+      }),
+    }];
+
+    assert!(ctx.apply_symbols_result("document symbols", symbols));
+    assert!(ctx.file_picker.active);
+    assert_eq!(ctx.file_picker.selected, Some(0));
+    assert_eq!(ctx.file_picker.matched_count(), 1);
+    assert!(ctx.file_picker.title.starts_with("Lsp Symbols"));
+    assert_eq!(ctx.file_path, before_path);
+    assert_eq!(
+      ctx.editor.document().selection().ranges()[0],
+      before_selection
     );
   }
 

@@ -1,8 +1,10 @@
 //! Pending input state for commands that wait on the next keypress.
 
 use the_lib::{
-  selection::Range,
-  selection::CursorId,
+  selection::{
+    CursorId,
+    Range,
+  },
   text_object::TextObject,
 };
 

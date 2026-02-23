@@ -95,6 +95,7 @@ pub use file_picker::{
   handle_query_change,
   open_buffer_picker,
   open_changed_file_picker,
+  open_custom_picker,
   open_diagnostics_picker,
   open_file_picker,
   open_file_picker_in_current_directory,

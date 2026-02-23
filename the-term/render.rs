@@ -41,8 +41,8 @@ use the_default::{
   command_palette_filtered_indices,
   completion_docs_panel_rect as default_completion_docs_panel_rect,
   completion_panel_rect as default_completion_panel_rect,
-  frame_render_plan,
   file_picker_icon_glyph,
+  frame_render_plan,
   set_picker_visible_rows,
   signature_help_markdown,
   signature_help_panel_rect as default_signature_help_panel_rect,
@@ -63,12 +63,12 @@ use the_lib::{
     parse_markdown_blocks,
   },
   render::{
+    FrameRenderPlan,
     InlineDiagnostic,
     InlineDiagnosticFilter,
     InlineDiagnosticsConfig,
     InlineDiagnosticsLineAnnotation,
     LayoutIntent,
-    FrameRenderPlan,
     NoHighlights,
     PaneRenderPlan,
     RenderDiagnosticGutterStyles,
@@ -1144,7 +1144,11 @@ fn file_picker_panel_styles(ctx: &Ctx, panel: &UiPanel) -> (Style, Style, Style)
   if fill_style.fg.is_none() {
     let fg = text_style
       .fg
-      .or_else(|| text_scope.and_then(|style| style.fg).map(lib_color_to_ratatui))
+      .or_else(|| {
+        text_scope
+          .and_then(|style| style.fg)
+          .map(lib_color_to_ratatui)
+      })
       .unwrap_or(Color::Reset);
     fill_style = fill_style.fg(fg);
   }
@@ -1152,18 +1156,565 @@ fn file_picker_panel_styles(ctx: &Ctx, panel: &UiPanel) -> (Style, Style, Style)
   if border_style.fg.is_none() {
     if let Some(border_fg) = text_style
       .fg
-      .or_else(|| picker_scope.and_then(|style| style.fg).map(lib_color_to_ratatui))
-      .or_else(|| window_scope.and_then(|style| style.fg).map(lib_color_to_ratatui))
+      .or_else(|| {
+        picker_scope
+          .and_then(|style| style.fg)
+          .map(lib_color_to_ratatui)
+      })
+      .or_else(|| {
+        window_scope
+          .and_then(|style| style.fg)
+          .map(lib_color_to_ratatui)
+      })
     {
       border_style = border_style.fg(border_fg);
     }
   }
 
-  if border_style.bg.is_none() && let Some(bg) = fill_style.bg {
+  if border_style.bg.is_none()
+    && let Some(bg) = fill_style.bg
+  {
     border_style = border_style.bg(bg);
   }
 
   (text_style, fill_style, border_style)
+}
+
+fn file_picker_is_diagnostics(picker: &the_default::FilePickerState) -> bool {
+  picker.title.starts_with("Diagnostics ·") || picker.title.starts_with("Workspace Diagnostics ·")
+}
+
+fn file_picker_is_symbols(picker: &the_default::FilePickerState) -> bool {
+  picker.title.starts_with("Lsp Symbols")
+    || picker.title.starts_with("Document Symbols")
+    || picker.title.starts_with("Workspace Symbols")
+}
+
+fn split_prefix_chars(text: &str, max_chars: usize) -> (&str, &str) {
+  if max_chars == 0 {
+    return ("", text);
+  }
+  let mut seen = 0usize;
+  for (idx, _) in text.char_indices() {
+    if seen == max_chars {
+      return (&text[..idx], &text[idx..]);
+    }
+    seen = seen.saturating_add(1);
+  }
+  (text, "")
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct SymbolsPickerDisplayRow {
+  name:      String,
+  container: String,
+  detail:    String,
+  kind:      String,
+  path:      String,
+  line:      usize,
+  column:    usize,
+  depth:     usize,
+}
+
+fn parse_symbols_picker_display(display: &str) -> SymbolsPickerDisplayRow {
+  let mut fields = display.split('\t');
+  let mut name = fields.next().unwrap_or_default().trim().to_string();
+  let container = fields.next().unwrap_or_default().trim().to_string();
+  let detail = fields.next().unwrap_or_default().trim().to_string();
+  let kind = fields.next().unwrap_or_default().trim().to_string();
+  let path = fields.next().unwrap_or_default().trim().to_string();
+  let line = fields
+    .next()
+    .and_then(|value| value.trim().parse::<usize>().ok())
+    .unwrap_or(1);
+  let column = fields
+    .next()
+    .and_then(|value| value.trim().parse::<usize>().ok())
+    .unwrap_or(1);
+  let depth = fields
+    .next()
+    .and_then(|value| value.trim().parse::<usize>().ok())
+    .unwrap_or(0);
+
+  if name.is_empty() {
+    name = display.trim().to_string();
+  }
+  if name.is_empty() {
+    name = "<unnamed>".to_string();
+  }
+
+  SymbolsPickerDisplayRow {
+    name,
+    container,
+    detail,
+    kind,
+    path,
+    line,
+    column,
+    depth,
+  }
+}
+
+fn symbol_picker_icon_glyph(kind: &str, fallback_icon: &str) -> &'static str {
+  match kind {
+    "FILE" => "󰈙",
+    "MODULE" | "NAMESPACE" | "PACKAGE" => "󰆍",
+    "CLASS" | "STRUCT" => "",
+    "INTERFACE" => "",
+    "METHOD" | "FUNCTION" | "CONSTRUCTOR" => "󰊕",
+    "PROPERTY" => "󰜢",
+    "FIELD" => "󰆨",
+    "ENUM" => "",
+    "ENUM_MEMBER" => "",
+    "VARIABLE" => "󰀫",
+    "CONSTANT" => "󰏿",
+    "TYPE_PARAM" => "󰊄",
+    "EVENT" => "",
+    "OPERATOR" => "󰆕",
+    "KEY" => "󰌆",
+    _ => file_picker_icon_glyph(fallback_icon, false),
+  }
+}
+
+fn symbol_picker_kind_color(kind: &str) -> Color {
+  match kind {
+    "METHOD" | "FUNCTION" | "CONSTRUCTOR" | "OPERATOR" => Color::Rgb(0xDB, 0xBF, 0xEF),
+    "FIELD" | "VARIABLE" | "PROPERTY" | "VALUE" | "REFERENCE" => Color::Rgb(0xA4, 0xA0, 0xE8),
+    "CLASS" | "INTERFACE" | "ENUM" | "STRUCT" | "TYPE_PARAM" => Color::Rgb(0xEF, 0xBA, 0x5D),
+    "MODULE" | "NAMESPACE" | "PACKAGE" | "FILE" | "ENUM_MEMBER" | "CONSTANT" => {
+      Color::Rgb(0xE8, 0xDC, 0xA0)
+    },
+    "EVENT" => Color::Rgb(0xF4, 0x78, 0x68),
+    _ => Color::Rgb(0xCC, 0xCC, 0xCC),
+  }
+}
+
+fn symbol_picker_tree_prefix(depth: usize, next_depth: usize) -> String {
+  if depth == 0 {
+    return String::new();
+  }
+
+  let mut prefix = String::new();
+  for _ in 0..depth.saturating_sub(1) {
+    prefix.push_str("│ ");
+  }
+  if next_depth > depth {
+    prefix.push_str("├ ");
+  } else {
+    prefix.push_str("└ ");
+  }
+  prefix
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct DiagnosticsPickerDisplayRow {
+  severity: String,
+  source:   String,
+  code:     String,
+  location: Option<String>,
+  message:  String,
+}
+
+fn parse_diagnostics_picker_display(display: &str) -> DiagnosticsPickerDisplayRow {
+  let (severity, rest) = split_prefix_chars(display, 7);
+  let rest = rest.strip_prefix(' ').unwrap_or(rest);
+  let (source, rest) = split_prefix_chars(rest, 14);
+  let rest = rest.strip_prefix(' ').unwrap_or(rest);
+  let (code, rest) = split_prefix_chars(rest, 16);
+  let rest = rest.strip_prefix(' ').unwrap_or(rest).trim_start();
+
+  let (location, message) = if let Some((location, message)) = rest.split_once("  ") {
+    let location = location.trim();
+    let message = message.trim();
+    let location = if location.is_empty() {
+      None
+    } else {
+      Some(location.to_string())
+    };
+    (location, message.to_string())
+  } else {
+    (None, rest.to_string())
+  };
+
+  DiagnosticsPickerDisplayRow {
+    severity: severity.trim().to_string(),
+    source: source.trim().to_string(),
+    code: code.trim().to_string(),
+    location,
+    message,
+  }
+}
+
+fn diagnostic_severity_from_icon(icon: &str) -> Option<DiagnosticSeverity> {
+  match icon {
+    "diagnostic_error" => Some(DiagnosticSeverity::Error),
+    "diagnostic_warning" => Some(DiagnosticSeverity::Warning),
+    "diagnostic_info" => Some(DiagnosticSeverity::Information),
+    "diagnostic_hint" => Some(DiagnosticSeverity::Hint),
+    _ => None,
+  }
+}
+
+fn diagnostic_severity_color(
+  theme: &the_lib::render::theme::Theme,
+  severity: DiagnosticSeverity,
+) -> Color {
+  diagnostic_theme_style(theme, severity)
+    .fg
+    .map(lib_color_to_ratatui)
+    .unwrap_or_else(|| {
+      match severity {
+        DiagnosticSeverity::Error => Color::LightRed,
+        DiagnosticSeverity::Warning => Color::LightYellow,
+        DiagnosticSeverity::Information => Color::LightBlue,
+        DiagnosticSeverity::Hint => Color::LightCyan,
+      }
+    })
+}
+
+fn file_picker_preview_focus_styles(
+  theme: &the_lib::render::theme::Theme,
+  text_style: Style,
+  accent_color: Option<Color>,
+) -> (Style, Style) {
+  let mut row_style = Style::default();
+  if let Some(bg) = theme
+    .try_get("ui.cursorline.active")
+    .and_then(|style| style.bg)
+    .map(lib_color_to_ratatui)
+  {
+    row_style = row_style.bg(bg);
+  } else if let Some(bg) = theme
+    .try_get("ui.file_picker.list.selected")
+    .and_then(|style| style.bg)
+    .map(lib_color_to_ratatui)
+  {
+    row_style = row_style.bg(bg);
+  }
+  if let Some(fg) = text_style.fg {
+    row_style = row_style.fg(fg);
+  }
+
+  let marker_color = accent_color;
+  let mut marker_style = Style::default().add_modifier(Modifier::BOLD);
+  if let Some(color) = marker_color.or(text_style.fg) {
+    marker_style = marker_style.fg(color);
+  }
+
+  (row_style, marker_style)
+}
+
+fn draw_diagnostics_picker_row(
+  buf: &mut Buffer,
+  row_rect: Rect,
+  y: u16,
+  item: &the_default::FilePickerItem,
+  text_style: Style,
+  theme: &the_lib::render::theme::Theme,
+  selected_fg: Option<Color>,
+  is_selected: bool,
+  is_hovered: bool,
+) {
+  if row_rect.width == 0 {
+    return;
+  }
+
+  let parsed = parse_diagnostics_picker_display(item.display.as_str());
+  let severity = diagnostic_severity_from_icon(item.icon.as_str());
+  let severity_label = if parsed.severity.is_empty() {
+    match severity {
+      Some(DiagnosticSeverity::Error) => "ERROR".to_string(),
+      Some(DiagnosticSeverity::Warning) => "WARN".to_string(),
+      Some(DiagnosticSeverity::Information) => "INFO".to_string(),
+      Some(DiagnosticSeverity::Hint) => "HINT".to_string(),
+      None => "INFO".to_string(),
+    }
+  } else {
+    parsed.severity.clone()
+  };
+
+  let mut base_style = text_style;
+  if is_selected && let Some(fg) = selected_fg {
+    base_style = base_style.fg(fg);
+  }
+  if is_hovered {
+    base_style = base_style.add_modifier(Modifier::UNDERLINED);
+  }
+
+  let severity_color = severity.map(|severity| diagnostic_severity_color(theme, severity));
+  let mut severity_style = base_style.add_modifier(Modifier::BOLD);
+  if let Some(color) = severity_color {
+    severity_style = severity_style.fg(color);
+  }
+  let meta_style = base_style.add_modifier(Modifier::DIM);
+  let code_style = theme
+    .try_get("special")
+    .and_then(|style| style.fg)
+    .map(lib_color_to_ratatui)
+    .map(|color| base_style.fg(color).add_modifier(Modifier::BOLD))
+    .unwrap_or_else(|| meta_style.add_modifier(Modifier::BOLD));
+
+  let row_end_x = row_rect.x.saturating_add(row_rect.width);
+  let marker_symbol = if is_selected { "▌" } else { "▏" };
+  let marker_style = if let Some(color) = severity_color {
+    Style::default().fg(color)
+  } else {
+    meta_style
+  };
+  buf.set_stringn(row_rect.x, y, marker_symbol, 1, marker_style);
+
+  let icon_x = row_rect.x.saturating_add(1);
+  if icon_x < row_end_x {
+    let icon = file_picker_icon_glyph(item.icon.as_str(), item.is_dir);
+    let icon_style = if severity_color.is_some() {
+      severity_style
+    } else {
+      base_style
+    };
+    buf.set_stringn(
+      icon_x,
+      y,
+      icon,
+      row_end_x.saturating_sub(icon_x) as usize,
+      icon_style,
+    );
+  }
+
+  let mut cursor_x = icon_x.saturating_add(2);
+  if cursor_x >= row_end_x {
+    return;
+  }
+
+  let mut severity_text = severity_label;
+  truncate_in_place(&mut severity_text, 7);
+  if !severity_text.is_empty() {
+    let max = row_end_x.saturating_sub(cursor_x) as usize;
+    buf.set_stringn(cursor_x, y, severity_text.as_str(), max, severity_style);
+    cursor_x = cursor_x.saturating_add(severity_text.chars().count() as u16 + 1);
+  }
+
+  let mut draw_meta = |value: &str, style: Style, cursor_x: &mut u16| {
+    if value.is_empty() || *cursor_x >= row_end_x {
+      return;
+    }
+    let mut value = value.to_string();
+    truncate_in_place(&mut value, row_end_x.saturating_sub(*cursor_x) as usize);
+    if value.is_empty() {
+      return;
+    }
+    buf.set_stringn(
+      *cursor_x,
+      y,
+      value.as_str(),
+      row_end_x.saturating_sub(*cursor_x) as usize,
+      style,
+    );
+    *cursor_x = (*cursor_x).saturating_add(value.chars().count() as u16 + 1);
+  };
+
+  if parsed.source != "-" && !parsed.source.is_empty() {
+    draw_meta(parsed.source.as_str(), meta_style, &mut cursor_x);
+  }
+  if parsed.code != "-" && !parsed.code.is_empty() {
+    draw_meta(parsed.code.as_str(), code_style, &mut cursor_x);
+  }
+
+  let mut right_limit = row_end_x;
+  if let Some(location) = parsed.location.as_deref().filter(|value| !value.is_empty()) {
+    let mut location = location.to_string();
+    let max_loc_chars = (row_rect.width as usize / 3).max(12);
+    truncate_in_place(&mut location, max_loc_chars);
+    let location_width = location.chars().count() as u16;
+    if location_width > 0 && location_width.saturating_add(2) < row_end_x.saturating_sub(cursor_x) {
+      let location_x = row_end_x.saturating_sub(location_width);
+      buf.set_stringn(
+        location_x,
+        y,
+        location.as_str(),
+        location_width as usize,
+        meta_style,
+      );
+      right_limit = location_x.saturating_sub(1);
+    }
+  }
+
+  let mut message = if parsed.message.is_empty() {
+    item.display.clone()
+  } else {
+    parsed.message
+  };
+  let max_message_width = right_limit.saturating_sub(cursor_x) as usize;
+  if max_message_width == 0 {
+    return;
+  }
+  truncate_in_place(&mut message, max_message_width);
+  if !message.is_empty() {
+    buf.set_stringn(cursor_x, y, message.as_str(), max_message_width, base_style);
+  }
+}
+
+fn draw_symbols_picker_row(
+  buf: &mut Buffer,
+  row_rect: Rect,
+  y: u16,
+  item: &the_default::FilePickerItem,
+  next_item: Option<&the_default::FilePickerItem>,
+  text_style: Style,
+  selected_fg: Option<Color>,
+  fuzzy_highlight_style: Style,
+  is_selected: bool,
+  is_hovered: bool,
+  match_indices: &[usize],
+) {
+  if row_rect.width == 0 {
+    return;
+  }
+
+  let parsed = parse_symbols_picker_display(item.display.as_str());
+  let next_depth = next_item
+    .map(|item| parse_symbols_picker_display(item.display.as_str()).depth)
+    .unwrap_or(0);
+  let tree_prefix = symbol_picker_tree_prefix(parsed.depth, next_depth);
+  let kind_color = symbol_picker_kind_color(parsed.kind.as_str());
+  let icon = symbol_picker_icon_glyph(parsed.kind.as_str(), item.icon.as_str());
+  let location = if parsed.path.is_empty() {
+    format!("{}:{}", parsed.line, parsed.column)
+  } else {
+    format!("{}:{}:{}", parsed.path, parsed.line, parsed.column)
+  };
+
+  let mut base_style = text_style;
+  if is_selected && let Some(fg) = selected_fg {
+    base_style = base_style.fg(fg);
+  }
+  if is_hovered {
+    base_style = base_style.add_modifier(Modifier::UNDERLINED);
+  }
+  let tree_style = base_style.add_modifier(Modifier::DIM);
+  let icon_style = base_style.fg(kind_color).add_modifier(Modifier::BOLD);
+  let kind_style = icon_style.add_modifier(Modifier::DIM);
+  let detail_style = base_style.add_modifier(Modifier::DIM);
+
+  let row_end_x = row_rect.x.saturating_add(row_rect.width);
+  let marker_symbol = if is_selected { "▌" } else { "▏" };
+  let marker_style = if is_selected {
+    Style::default().fg(kind_color)
+  } else {
+    tree_style
+  };
+  buf.set_stringn(row_rect.x, y, marker_symbol, 1, marker_style);
+
+  let mut cursor_x = row_rect.x.saturating_add(1);
+  if cursor_x >= row_end_x {
+    return;
+  }
+
+  if !tree_prefix.is_empty() {
+    let max = row_end_x.saturating_sub(cursor_x) as usize;
+    buf.set_stringn(cursor_x, y, tree_prefix.as_str(), max, tree_style);
+    cursor_x = cursor_x.saturating_add(tree_prefix.chars().count() as u16);
+  }
+  if cursor_x >= row_end_x {
+    return;
+  }
+
+  let icon_width = icon.chars().count() as u16;
+  buf.set_stringn(
+    cursor_x,
+    y,
+    icon,
+    row_end_x.saturating_sub(cursor_x) as usize,
+    icon_style,
+  );
+  cursor_x = cursor_x.saturating_add(icon_width.saturating_add(1));
+  if cursor_x >= row_end_x {
+    return;
+  }
+
+  let mut right_limit = row_end_x;
+  let mut location_label = location;
+  let max_loc_chars = (row_rect.width as usize / 3).max(14);
+  truncate_in_place(&mut location_label, max_loc_chars);
+  let location_width = location_label.chars().count() as u16;
+  if location_width > 0 && location_width.saturating_add(2) < row_end_x.saturating_sub(cursor_x) {
+    let location_x = row_end_x.saturating_sub(location_width);
+    buf.set_stringn(
+      location_x,
+      y,
+      location_label.as_str(),
+      location_width as usize,
+      detail_style,
+    );
+    right_limit = location_x.saturating_sub(1);
+  }
+
+  let mut kind_label = parsed.kind.clone();
+  truncate_in_place(&mut kind_label, 13);
+  let kind_width = kind_label.chars().count() as u16;
+  if kind_width > 0 && kind_width.saturating_add(2) < right_limit.saturating_sub(cursor_x) {
+    let kind_x = right_limit.saturating_sub(kind_width);
+    buf.set_stringn(
+      kind_x,
+      y,
+      kind_label.as_str(),
+      kind_width as usize,
+      kind_style,
+    );
+    right_limit = kind_x.saturating_sub(1);
+  }
+
+  let content_width = right_limit.saturating_sub(cursor_x) as usize;
+  if content_width == 0 {
+    return;
+  }
+
+  let name_len = parsed.name.chars().count();
+  let name_match_indices: Vec<usize> = match_indices
+    .iter()
+    .copied()
+    .filter(|index| *index < name_len)
+    .collect();
+  draw_fuzzy_match_line(
+    buf,
+    cursor_x,
+    y,
+    parsed.name.as_str(),
+    content_width,
+    base_style.add_modifier(Modifier::BOLD),
+    fuzzy_highlight_style,
+    &name_match_indices,
+  );
+
+  let mut suffix = String::new();
+  if !parsed.detail.is_empty() {
+    suffix.push_str("  ");
+    suffix.push_str(parsed.detail.as_str());
+  }
+  if !parsed.container.is_empty() {
+    if suffix.is_empty() {
+      suffix.push_str("  ");
+    } else {
+      suffix.push_str("  · ");
+    }
+    suffix.push_str(parsed.container.as_str());
+  }
+  if suffix.is_empty() {
+    return;
+  }
+
+  let name_width = name_len as u16;
+  let suffix_x = cursor_x.saturating_add(name_width);
+  if suffix_x >= right_limit {
+    return;
+  }
+  let max_suffix = right_limit.saturating_sub(suffix_x) as usize;
+  if max_suffix == 0 {
+    return;
+  }
+  truncate_in_place(&mut suffix, max_suffix);
+  if !suffix.is_empty() {
+    buf.set_stringn(suffix_x, y, suffix.as_str(), max_suffix, detail_style);
+  }
 }
 
 fn software_cursor_style(theme: &the_lib::render::theme::Theme) -> Style {
@@ -2681,6 +3232,8 @@ fn draw_file_picker_panel(
     return;
   }
 
+  let diagnostics_picker = file_picker_is_diagnostics(picker);
+  let symbols_picker = file_picker_is_symbols(picker);
   let (text_style, fill_style, border_style) = file_picker_panel_styles(ctx, panel);
 
   fill_rect(buf, layout.panel, fill_style);
@@ -2699,6 +3252,8 @@ fn draw_file_picker_panel(
     &ctx.ui_theme,
     focus,
     cursor_out,
+    diagnostics_picker,
+    symbols_picker,
   );
 
   if layout.show_preview {
@@ -2710,6 +3265,8 @@ fn draw_file_picker_panel(
       fill_style,
       border_style,
       &ctx.ui_theme,
+      diagnostics_picker,
+      symbols_picker,
     );
   }
 }
@@ -2724,6 +3281,8 @@ fn draw_file_picker_list_pane(
   theme: &the_lib::render::theme::Theme,
   focus: Option<&the_lib::render::UiFocus>,
   cursor_out: &mut Option<(u16, u16)>,
+  diagnostics_picker: bool,
+  symbols_picker: bool,
 ) {
   let rect = layout.list_pane;
   let title_style = text_style.add_modifier(Modifier::BOLD);
@@ -2870,6 +3429,42 @@ fn draw_file_picker_list_pane(
       style = style.add_modifier(Modifier::UNDERLINED);
     }
 
+    if diagnostics_picker {
+      draw_diagnostics_picker_row(
+        buf,
+        Rect::new(list_area.x, y, list_area.width, 1),
+        y,
+        item.as_ref(),
+        style,
+        theme,
+        selected_fg,
+        is_selected,
+        is_hovered,
+      );
+      continue;
+    }
+    if symbols_picker {
+      let next_item = if row_idx + 1 < total_matches {
+        picker.matched_item(row_idx + 1)
+      } else {
+        None
+      };
+      draw_symbols_picker_row(
+        buf,
+        Rect::new(list_area.x, y, list_area.width, 1),
+        y,
+        item.as_ref(),
+        next_item.as_deref(),
+        style,
+        selected_fg,
+        fuzzy_highlight_style,
+        is_selected,
+        is_hovered,
+        &match_indices,
+      );
+      continue;
+    }
+
     let icon = file_picker_icon_glyph(item.icon.as_str(), item.is_dir);
     let icon_x = list_area.x.saturating_add(1);
     buf.set_string(icon_x, y, icon, style);
@@ -2970,15 +3565,38 @@ fn draw_file_picker_preview_pane(
   fill_style: Style,
   border_style: Style,
   theme: &the_lib::render::theme::Theme,
+  diagnostics_picker: bool,
+  symbols_picker: bool,
 ) {
   let Some(rect) = layout.preview_pane else {
     return;
   };
 
+  let focus_line = picker.preview_focus_line;
+  let current_item = picker.current_item();
+  let focus_severity = current_item
+    .as_ref()
+    .and_then(|item| diagnostic_severity_from_icon(item.icon.as_str()));
+  let focus_kind_color = current_item.as_ref().and_then(|item| {
+    symbols_picker.then(|| {
+      let row = parse_symbols_picker_display(item.display.as_str());
+      symbol_picker_kind_color(row.kind.as_str())
+    })
+  });
+  let focus_accent = focus_severity
+    .map(|severity| diagnostic_severity_color(theme, severity))
+    .or(focus_kind_color);
+  let mut preview_border_style = border_style;
+  if (diagnostics_picker || symbols_picker)
+    && let Some(accent) = focus_accent
+  {
+    preview_border_style = preview_border_style.fg(accent);
+  }
+
   let mut block = Block::default()
     .borders(Borders::ALL)
     .border_type(BorderType::Rounded)
-    .border_style(border_style)
+    .border_style(preview_border_style)
     .style(fill_style);
   if let Some(preview_path) = &picker.preview_path {
     let path_display = preview_path
@@ -2986,8 +3604,13 @@ fn draw_file_picker_preview_pane(
       .unwrap_or(preview_path)
       .display()
       .to_string();
+    let title = if let Some(focus_line) = focus_line {
+      format!(" {}  Ln {} ", path_display, focus_line.saturating_add(1))
+    } else {
+      format!(" {} ", path_display)
+    };
     block = block.title(Title::from(Span::styled(
-      format!(" {} ", path_display),
+      title,
       text_style.add_modifier(Modifier::DIM),
     )));
   }
@@ -2999,11 +3622,11 @@ fn draw_file_picker_preview_pane(
     buf
       .get_mut(rect.x, rect.y)
       .set_symbol("┬")
-      .set_style(border_style);
+      .set_style(preview_border_style);
     buf
       .get_mut(rect.x, rect.y + rect.height.saturating_sub(1))
       .set_symbol("┴")
-      .set_style(border_style);
+      .set_style(preview_border_style);
   }
 
   let Some(content) = layout.preview_content else {
@@ -3020,10 +3643,28 @@ fn draw_file_picker_preview_pane(
   match &picker.preview {
     FilePickerPreview::Empty => {},
     FilePickerPreview::Source(source) => {
-      draw_file_picker_source_preview(buf, content, source, text_style, theme, scroll_offset);
+      draw_file_picker_source_preview(
+        buf,
+        content,
+        source,
+        text_style,
+        theme,
+        scroll_offset,
+        focus_line,
+        focus_accent,
+      );
     },
     FilePickerPreview::Text(text) | FilePickerPreview::Message(text) => {
-      draw_file_picker_plain_preview(buf, content, text, text_style, scroll_offset);
+      draw_file_picker_plain_preview(
+        buf,
+        content,
+        text,
+        text_style,
+        scroll_offset,
+        theme,
+        focus_line,
+        focus_accent,
+      );
     },
   }
 
@@ -3051,6 +3692,8 @@ fn draw_file_picker_source_preview(
   text_style: Style,
   theme: &the_lib::render::theme::Theme,
   scroll_offset: usize,
+  focus_line: Option<usize>,
+  focus_accent: Option<Color>,
 ) {
   if area.width == 0 || area.height == 0 {
     return;
@@ -3058,6 +3701,8 @@ fn draw_file_picker_source_preview(
 
   let lines_len = source.lines.len().max(1);
   let line_number_width = lines_len.to_string().len();
+  let (focus_fill_style, focus_marker_style) =
+    file_picker_preview_focus_styles(theme, text_style, focus_accent);
   let gutter_style = text_style.add_modifier(Modifier::DIM);
 
   for row in 0..area.height as usize {
@@ -3070,10 +3715,21 @@ fn draw_file_picker_source_preview(
       continue;
     }
 
+    let focused = focus_line.is_some_and(|focus_line| focus_line == line_idx);
+    if focused {
+      fill_rect(buf, Rect::new(area.x, y, area.width, 1), focus_fill_style);
+    }
+
     let line_number = line_idx + 1;
-    let gutter = format!("{line_number:>line_number_width$} ");
+    let marker = if focused { "▶" } else { " " };
+    let gutter = format!("{marker}{line_number:>line_number_width$} ");
     let gutter_width = gutter.chars().count() as u16;
-    buf.set_stringn(area.x, y, &gutter, area.width as usize, gutter_style);
+    let active_gutter_style = if focused {
+      focus_marker_style
+    } else {
+      gutter_style
+    };
+    buf.set_stringn(area.x, y, &gutter, area.width as usize, active_gutter_style);
 
     if gutter_width >= area.width {
       continue;
@@ -3085,7 +3741,13 @@ fn draw_file_picker_source_preview(
     }
 
     let line_start = source.line_starts[line_idx];
-    let line_spans = preview_line_spans(line, line_start, &source.highlights, text_style, theme);
+    let base_line_style = if focused {
+      text_style.add_modifier(Modifier::BOLD)
+    } else {
+      text_style
+    };
+    let line_spans =
+      preview_line_spans(line, line_start, &source.highlights, base_line_style, theme);
 
     Paragraph::new(Line::from(line_spans)).render(
       Rect::new(
@@ -3105,23 +3767,54 @@ fn draw_file_picker_plain_preview(
   text: &str,
   text_style: Style,
   scroll_offset: usize,
+  theme: &the_lib::render::theme::Theme,
+  focus_line: Option<usize>,
+  focus_accent: Option<Color>,
 ) {
   if area.width == 0 || area.height == 0 {
     return;
   }
 
+  let (focus_fill_style, focus_marker_style) =
+    file_picker_preview_focus_styles(theme, text_style, focus_accent);
   for (row, line) in text
     .lines()
     .skip(scroll_offset)
     .take(area.height as usize)
     .enumerate()
   {
+    let line_idx = scroll_offset.saturating_add(row);
+    let focused = focus_line.is_some_and(|focus_line| focus_line == line_idx);
+    if focused {
+      fill_rect(
+        buf,
+        Rect::new(area.x, area.y + row as u16, area.width, 1),
+        focus_fill_style,
+      );
+      if area.width > 0 {
+        buf.set_stringn(area.x, area.y + row as u16, "▶", 1, focus_marker_style);
+      }
+    }
+    let text_x = if focused {
+      area.x.saturating_add(1)
+    } else {
+      area.x
+    };
+    let text_width = if focused {
+      area.width.saturating_sub(1)
+    } else {
+      area.width
+    };
     buf.set_stringn(
-      area.x,
+      text_x,
       area.y + row as u16,
       line,
-      area.width as usize,
-      text_style,
+      text_width as usize,
+      if focused {
+        text_style.add_modifier(Modifier::BOLD)
+      } else {
+        text_style
+      },
     );
   }
 }
@@ -4685,10 +5378,7 @@ pub fn build_frame_render_plan(ctx: &mut Ctx) -> FrameRenderPlan {
   build_frame_render_plan_with_styles(ctx, styles)
 }
 
-pub fn build_frame_render_plan_with_styles(
-  ctx: &mut Ctx,
-  styles: RenderStyles,
-) -> FrameRenderPlan {
+pub fn build_frame_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> FrameRenderPlan {
   let viewport = ctx.editor.layout_viewport();
   let pane_snapshots = ctx.editor.pane_snapshots(viewport);
   if pane_snapshots.is_empty() {
@@ -4844,8 +5534,7 @@ fn draw_pane_separators(buf: &mut Buffer, area: Rect, frame: &FrameRenderPlan, c
     return;
   }
 
-  let window_style =
-    lib_style_to_ratatui(ctx.ui_theme.try_get("ui.window").unwrap_or_default());
+  let window_style = lib_style_to_ratatui(ctx.ui_theme.try_get("ui.window").unwrap_or_default());
   let active_style = lib_style_to_ratatui(
     ctx
       .ui_theme
@@ -4939,14 +5628,8 @@ pub fn render(f: &mut Frame, ctx: &mut Ctx) {
     for pane in &frame_plan.panes {
       let pane_area = pane_screen_rect(area, pane.rect);
       let is_active = pane.pane_id == frame_plan.active_pane;
-      let pane_cursor = draw_pane_content(
-        buf,
-        ctx,
-        pane_area,
-        &pane.plan,
-        base_text_style,
-        is_active,
-      );
+      let pane_cursor =
+        draw_pane_content(buf, ctx, pane_area, &pane.plan, base_text_style, is_active);
       if is_active {
         editor_cursor = pane_cursor;
       }
@@ -5112,7 +5795,9 @@ mod tests {
     panel_box_size,
     parse_inline_diagnostic_filter,
     parse_markdown_blocks,
+    parse_symbols_picker_display,
     select_end_of_line_diagnostic,
+    symbol_picker_tree_prefix,
     term_command_palette_filtered_selection,
   };
   use crate::Ctx;
@@ -5346,10 +6031,11 @@ mod tests {
 
     adapt_ui_tree_for_term(&ctx, &mut ui);
 
-    assert!(ui
-      .overlays
-      .iter()
-      .all(|node| !super::is_hover_overlay(node)));
+    assert!(
+      ui.overlays
+        .iter()
+        .all(|node| !super::is_hover_overlay(node))
+    );
   }
 
   #[test]
@@ -5423,10 +6109,7 @@ mod tests {
   #[test]
   fn file_picker_panel_styles_resolve_explicit_fill_and_border_colors() {
     let ctx = Ctx::new(None).expect("ctx");
-    let mut panel = UiPanel::floating(
-      "file_picker",
-      UiNode::Container(UiContainer::default()),
-    );
+    let mut panel = UiPanel::floating("file_picker", UiNode::Container(UiContainer::default()));
     panel.style = panel.style.with_role("file_picker");
     panel.style.border = None;
 
@@ -5435,6 +6118,29 @@ mod tests {
     assert!(fill_style.fg.is_some());
     assert!(border_style.fg.is_some());
     assert_eq!(border_style.bg, fill_style.bg);
+  }
+
+  #[test]
+  fn parse_symbols_picker_display_reads_tab_fields() {
+    let row = parse_symbols_picker_display(
+      "render\tCtx\tfn render()\tFUNCTION\tthe-term/render.rs\t120\t8\t2",
+    );
+    assert_eq!(row.name, "render");
+    assert_eq!(row.container, "Ctx");
+    assert_eq!(row.detail, "fn render()");
+    assert_eq!(row.kind, "FUNCTION");
+    assert_eq!(row.path, "the-term/render.rs");
+    assert_eq!(row.line, 120);
+    assert_eq!(row.column, 8);
+    assert_eq!(row.depth, 2);
+  }
+
+  #[test]
+  fn symbol_picker_tree_prefix_marks_expandable_nodes() {
+    assert_eq!(symbol_picker_tree_prefix(0, 0), "");
+    assert_eq!(symbol_picker_tree_prefix(1, 2), "├ ");
+    assert_eq!(symbol_picker_tree_prefix(1, 1), "└ ");
+    assert_eq!(symbol_picker_tree_prefix(2, 2), "│ └ ");
   }
 
   #[test]

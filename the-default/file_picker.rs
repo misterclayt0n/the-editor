@@ -528,17 +528,15 @@ pub fn open_buffer_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
         .file_path
         .clone()
         .unwrap_or_else(|| PathBuf::from(format!("<buffer:{}>", snapshot.buffer_index)));
-      let preview_line = editor
-        .buffer_document(snapshot.buffer_index)
-        .map(|doc| {
-          selection_focus_line(
-            doc.selection(),
-            editor
-              .buffer_view(snapshot.buffer_index)
-              .and_then(|view| view.active_cursor),
-            doc.text().slice(..),
-          )
-        });
+      let preview_line = editor.buffer_document(snapshot.buffer_index).map(|doc| {
+        selection_focus_line(
+          doc.selection(),
+          editor
+            .buffer_view(snapshot.buffer_index)
+            .and_then(|view| view.active_cursor),
+          doc.text().slice(..),
+        )
+      });
 
       FilePickerItem {
         absolute,
@@ -583,8 +581,7 @@ pub fn open_jumplist_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
         .join(" ");
       let excerpt = excerpt.split_whitespace().collect::<Vec<_>>().join(" ");
       let excerpt = truncate_for_picker(&excerpt, 80);
-      let preview_line =
-        selection_focus_line(&jump.selection, jump.active_cursor, text);
+      let preview_line = selection_focus_line(&jump.selection, jump.active_cursor, text);
       let path_display = snapshot.file_path.as_ref().map_or_else(
         || snapshot.display_name.clone(),
         |path| display_relative_path(path, &cwd),
@@ -826,6 +823,17 @@ fn open_static_picker<Ctx: DefaultContext>(
 
   *ctx.file_picker_mut() = state;
   ctx.request_render();
+}
+
+pub fn open_custom_picker<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  title: &str,
+  root: PathBuf,
+  open_split: Option<SplitAxis>,
+  items: Vec<FilePickerItem>,
+  initial_cursor: usize,
+) {
+  open_static_picker(ctx, title, root, open_split, items, initial_cursor);
 }
 
 fn base_picker_state<Ctx: DefaultContext>(

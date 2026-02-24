@@ -711,9 +711,9 @@ struct FilePreviewPanel: View {
 
     private var preview: PreviewData? { previewModel.preview }
     private let rowHeight: CGFloat = 16
+    private let defaultVisibleRows: Int = 24
     private let overscanRows: Int = 24
 
-    @State private var viewportHeight: CGFloat = 0
     @State private var contentMinY: CGFloat = 0
     @State private var lastRequestedOffset: Int = Int.min
     @State private var lastRequestedVisibleRows: Int = 0
@@ -842,17 +842,8 @@ struct FilePreviewPanel: View {
             .padding(.horizontal, 8)
         }
         .coordinateSpace(name: "file-picker-preview-scroll")
-        .background(
-            GeometryReader { proxy in
-                Color.clear.preference(key: PreviewViewportHeightKey.self, value: proxy.size.height)
-            }
-        )
         .onPreferenceChange(PreviewContentOffsetKey.self) { value in
             contentMinY = value
-            requestWindow()
-        }
-        .onPreferenceChange(PreviewViewportHeightKey.self) { value in
-            viewportHeight = value
             requestWindow()
         }
     }
@@ -925,10 +916,7 @@ struct FilePreviewPanel: View {
 
     private func requestWindow() {
         guard let onWindowRequest else { return }
-        let measuredVisibleRows = Int(ceil(viewportHeight / rowHeight))
-        let hasMeasuredViewport = measuredVisibleRows > 1
-        let fallbackVisibleRows = 24
-        let visibleRows = hasMeasuredViewport ? measuredVisibleRows : fallbackVisibleRows
+        let visibleRows = defaultVisibleRows
 
         let rawOffset = max(0, Int(floor(-contentMinY / rowHeight)))
         let nextOffset = pendingFocusReset ? -1 : rawOffset
@@ -942,14 +930,10 @@ struct FilePreviewPanel: View {
         lastRequestedOffset = nextOffset
         lastRequestedVisibleRows = visibleRows
         lastRequestedOverscan = overscan
-        // Keep focus reset armed until viewport is measured, so early
-        // pre-layout requests don't replace focus with offset=0.
-        if hasMeasuredViewport || !pendingFocusReset {
-            pendingFocusReset = false
-        }
+        pendingFocusReset = false
         if DiagnosticsDebugLog.enabled {
             DiagnosticsDebugLog.log(
-                "picker.window_calc viewport=\(String(format: "%.1f", viewportHeight)) contentMinY=\(String(format: "%.1f", contentMinY)) measured_visible=\(measuredVisibleRows) has_measured=\(hasMeasuredViewport ? 1 : 0) fallback_visible=\(fallbackVisibleRows) send_offset=\(nextOffset) send_visible=\(visibleRows) send_overscan=\(overscan)"
+                "picker.window_calc contentMinY=\(String(format: "%.1f", contentMinY)) send_offset=\(nextOffset) send_visible=\(visibleRows) send_overscan=\(overscan)"
             )
         }
         onWindowRequest(nextOffset, visibleRows, overscan)
@@ -957,14 +941,6 @@ struct FilePreviewPanel: View {
 }
 
 fileprivate struct PreviewContentOffsetKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
-
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
-    }
-}
-
-fileprivate struct PreviewViewportHeightKey: PreferenceKey {
     static var defaultValue: CGFloat = 0
 
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {

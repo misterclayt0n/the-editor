@@ -168,8 +168,6 @@ fn main() -> Result<()> {
     }
   }
 
-  adlksajdlkj
-
   ctx.shutdown_background_services();
   terminal.leave_raw_mode()?;
   Ok(())

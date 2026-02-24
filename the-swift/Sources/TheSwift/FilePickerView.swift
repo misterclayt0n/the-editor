@@ -308,11 +308,12 @@ struct FilePickerView: View {
                 },
                 itemContent: { index, isSelected, isHovered in
                     let item = items[index]
+                    let nextItem: FilePickerItemSnapshot? = (index + 1) < items.count ? items[index + 1] : nil
                     switch item.rowKind {
                     case 1:
                         return AnyView(diagnosticsRowContent(for: item, isSelected: isSelected))
                     case 2:
-                        return AnyView(symbolsRowContent(for: item, isSelected: isSelected))
+                        return AnyView(symbolsRowContent(for: item, nextItem: nextItem, isSelected: isSelected))
                     case 3, 4:
                         return AnyView(liveGrepRowContent(for: item, isSelected: isSelected))
                     default:
@@ -496,43 +497,86 @@ struct FilePickerView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func symbolsRowContent(for item: FilePickerItemSnapshot, isSelected: Bool) -> some View {
+    private func symbolsRowContent(
+        for item: FilePickerItemSnapshot,
+        nextItem: FilePickerItemSnapshot?,
+        isSelected: Bool
+    ) -> some View {
         let depth = max(0, item.depth)
+        let nextDepth = max(0, nextItem?.depth ?? 0)
         let kind = item.quaternary.uppercased()
         let symbol = symbolIcon(forKind: kind)
+        let kindColor = symbolKindColor(forKind: kind)
+        let treePrefix = symbolTreePrefix(depth: depth, nextDepth: nextDepth)
+        let marker = isSelected ? "▌" : "▏"
+        let location = item.line > 0 ? "L\(item.line):\(max(1, item.column))" : ""
+        let name = item.primary.isEmpty ? "<unnamed>" : item.primary
+        let suffix = symbolSuffix(detail: item.tertiary, container: item.secondary)
+        let nameMatchIndices = symbolNameMatchIndices(for: item, name: name)
 
-        return HStack(spacing: 8) {
-            Text(String(repeating: "  ", count: depth))
-                .font(FontLoader.uiFont(size: 12))
-                .foregroundStyle(.secondary)
+        return HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text(marker)
+                .font(FontLoader.bufferFont(size: 12).weight(.semibold))
+                .foregroundStyle(isSelected ? kindColor : Color.secondary)
+                .frame(width: 8, alignment: .leading)
 
-            Image(systemName: symbol)
-                .font(FontLoader.uiFont(size: 12).weight(.semibold))
-                .foregroundStyle(isSelected ? Color.primary : Color.accentColor)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(item.primary)
-                    .font(FontLoader.uiFont(size: 13).weight(.semibold))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-
-                HStack(spacing: 6) {
-                    if !item.secondary.isEmpty {
-                        Text(item.secondary)
-                            .font(FontLoader.uiFont(size: 11))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-                    if item.line > 0 {
-                        Text("L\(item.line):\(max(1, item.column))")
-                            .font(FontLoader.uiFont(size: 11).weight(.medium))
-                            .foregroundStyle(.secondary)
-                    }
-                }
+            if !treePrefix.isEmpty {
+                Text(treePrefix)
+                    .font(FontLoader.bufferFont(size: 12))
+                    .foregroundStyle(.tertiary)
+                    .fixedSize()
             }
 
-            Spacer(minLength: 0)
+            Image(systemName: symbol)
+                .font(FontLoader.uiFont(size: 11).weight(.semibold))
+                .foregroundStyle(kindColor)
+                .frame(width: 14, alignment: .center)
+
+            HStack(alignment: .firstTextBaseline, spacing: 0) {
+                highlightedText(
+                    name,
+                    matchIndices: nameMatchIndices,
+                    baseColor: .primary,
+                    highlightColor: isSelected ? .primary : .accentColor,
+                    fontSize: 13,
+                    baseWeight: .semibold
+                )
+                .lineLimit(1)
+
+                if !suffix.isEmpty {
+                    Text(suffix)
+                        .font(FontLoader.uiFont(size: 12))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            HStack(spacing: 6) {
+                if !kind.isEmpty {
+                    Text(symbolKindLabel(for: kind))
+                        .font(FontLoader.uiFont(size: 10).weight(.semibold))
+                        .foregroundStyle(isSelected ? Color.primary.opacity(0.9) : kindColor.opacity(0.95))
+                        .lineLimit(1)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(
+                            Capsule()
+                                .fill(kindColor.opacity(isSelected ? 0.22 : 0.14))
+                        )
+                }
+
+                if !location.isEmpty {
+                    Text(location)
+                        .font(FontLoader.bufferFont(size: 11))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+            .fixedSize()
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func liveGrepRowContent(for item: FilePickerItemSnapshot, isSelected: Bool) -> some View {
@@ -589,6 +633,64 @@ struct FilePickerView: View {
         case "VARIABLE", "CONSTANT": return "number"
         default: return "circle.fill"
         }
+    }
+
+    private func symbolKindColor(forKind kind: String) -> Color {
+        switch kind {
+        case "METHOD", "FUNCTION", "CONSTRUCTOR", "OPERATOR":
+            return Color(red: 0xDB / 255.0, green: 0xBF / 255.0, blue: 0xEF / 255.0)
+        case "FIELD", "VARIABLE", "PROPERTY", "VALUE", "REFERENCE":
+            return Color(red: 0xA4 / 255.0, green: 0xA0 / 255.0, blue: 0xE8 / 255.0)
+        case "CLASS", "INTERFACE", "ENUM", "STRUCT", "TYPE_PARAM":
+            return Color(red: 0xEF / 255.0, green: 0xBA / 255.0, blue: 0x5D / 255.0)
+        case "MODULE", "NAMESPACE", "PACKAGE", "FILE", "ENUM_MEMBER", "CONSTANT":
+            return Color(red: 0xE8 / 255.0, green: 0xDC / 255.0, blue: 0xA0 / 255.0)
+        case "EVENT":
+            return Color(red: 0xF4 / 255.0, green: 0x78 / 255.0, blue: 0x68 / 255.0)
+        default:
+            return .secondary
+        }
+    }
+
+    private func symbolTreePrefix(depth: Int, nextDepth: Int) -> String {
+        if depth == 0 {
+            return ""
+        }
+        var prefix = ""
+        for _ in 0..<max(0, depth - 1) {
+            prefix += "│ "
+        }
+        prefix += nextDepth > depth ? "├ " : "└ "
+        return prefix
+    }
+
+    private func symbolSuffix(detail: String, container: String) -> String {
+        var suffix = ""
+        if !detail.isEmpty {
+            suffix += "  " + detail
+        }
+        if !container.isEmpty {
+            if suffix.isEmpty {
+                suffix += "  " + container
+            } else {
+                suffix += "  · " + container
+            }
+        }
+        return suffix
+    }
+
+    private func symbolKindLabel(for kind: String) -> String {
+        let upper = kind.uppercased()
+        if upper.isEmpty {
+            return "SYMBOL"
+        }
+        return upper.replacingOccurrences(of: "_", with: " ")
+    }
+
+    private func symbolNameMatchIndices(for item: FilePickerItemSnapshot, name: String) -> [Int] {
+        let nameLength = name.count
+        guard nameLength > 0 else { return [] }
+        return item.matchIndices.filter { (0..<nameLength).contains($0) }
     }
 
     private func highlightedText(

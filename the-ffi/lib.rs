@@ -260,6 +260,7 @@ use the_lsp::{
   },
 };
 use the_runtime::{
+  clipboard::ClipboardProvider as RuntimeClipboardProvider,
   file_watch::{
     PathEventKind,
     WatchHandle,
@@ -3807,6 +3808,7 @@ impl App {
         .with_restart_limits(6, Duration::from_secs(30))
         .with_request_policy(Duration::from_secs(8), 1),
     );
+    let clipboard = Arc::new(RuntimeClipboardProvider::detect());
 
     Self {
       inner: LibApp::default(),
@@ -3818,7 +3820,7 @@ impl App {
       vcs_diff_handles: HashMap::new(),
       active_editor: None,
       should_quit: false,
-      registers: Registers::new(),
+      registers: Registers::with_clipboard(clipboard),
       last_motion: None,
       lsp_runtime,
       lsp_ready: false,

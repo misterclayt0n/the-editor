@@ -231,6 +231,10 @@ extension AppRefMut {
         PreviewData(ptr: __swift_bridge__$App$file_picker_preview(ptr, id.intoFfiRepr()))
     }
 
+    public func file_picker_preview_window(_ id: EditorId, _ offset: UInt, _ visible_rows: UInt, _ overscan: UInt) -> PreviewData {
+        PreviewData(ptr: __swift_bridge__$App$file_picker_preview_window(ptr, id.intoFfiRepr(), offset, visible_rows, overscan))
+    }
+
     public func poll_background(_ id: EditorId) -> Bool {
         __swift_bridge__$App$poll_background(ptr, id.intoFfiRepr())
     }
@@ -2241,6 +2245,14 @@ extension FilePickerSnapshotDataRef {
         __swift_bridge__$FilePickerSnapshotData$active(ptr)
     }
 
+    public func title() -> RustString {
+        RustString(ptr: __swift_bridge__$FilePickerSnapshotData$title(ptr))
+    }
+
+    public func picker_kind() -> UInt8 {
+        __swift_bridge__$FilePickerSnapshotData$picker_kind(ptr)
+    }
+
     public func query() -> RustString {
         RustString(ptr: __swift_bridge__$FilePickerSnapshotData$query(ptr))
     }
@@ -2364,6 +2376,42 @@ extension FilePickerItemFFIRef {
     public func match_index_at(_ index: UInt) -> UInt32 {
         __swift_bridge__$FilePickerItemFFI$match_index_at(ptr, index)
     }
+
+    public func row_kind() -> UInt8 {
+        __swift_bridge__$FilePickerItemFFI$row_kind(ptr)
+    }
+
+    public func severity() -> UInt8 {
+        __swift_bridge__$FilePickerItemFFI$severity(ptr)
+    }
+
+    public func primary() -> RustString {
+        RustString(ptr: __swift_bridge__$FilePickerItemFFI$primary(ptr))
+    }
+
+    public func secondary() -> RustString {
+        RustString(ptr: __swift_bridge__$FilePickerItemFFI$secondary(ptr))
+    }
+
+    public func tertiary() -> RustString {
+        RustString(ptr: __swift_bridge__$FilePickerItemFFI$tertiary(ptr))
+    }
+
+    public func quaternary() -> RustString {
+        RustString(ptr: __swift_bridge__$FilePickerItemFFI$quaternary(ptr))
+    }
+
+    public func line() -> UInt {
+        __swift_bridge__$FilePickerItemFFI$line(ptr)
+    }
+
+    public func column() -> UInt {
+        __swift_bridge__$FilePickerItemFFI$column(ptr)
+    }
+
+    public func depth() -> UInt {
+        __swift_bridge__$FilePickerItemFFI$depth(ptr)
+    }
 }
 extension FilePickerItemFFI: Vectorizable {
     public static func vecOfSelfNew() -> UnsafeMutableRawPointer {
@@ -2449,10 +2497,6 @@ extension PreviewDataRef {
         RustString(ptr: __swift_bridge__$PreviewData$path(ptr))
     }
 
-    public func text() -> RustString {
-        RustString(ptr: __swift_bridge__$PreviewData$text(ptr))
-    }
-
     public func loading() -> Bool {
         __swift_bridge__$PreviewData$loading(ptr)
     }
@@ -2467,6 +2511,14 @@ extension PreviewDataRef {
 
     public func show() -> Bool {
         __swift_bridge__$PreviewData$show(ptr)
+    }
+
+    public func offset() -> UInt {
+        __swift_bridge__$PreviewData$offset(ptr)
+    }
+
+    public func window_start() -> UInt {
+        __swift_bridge__$PreviewData$window_start(ptr)
     }
 
     public func line_count() -> UInt {
@@ -2553,24 +2605,32 @@ public class PreviewLineRef {
     }
 }
 extension PreviewLineRef {
-    public func text() -> RustString {
-        RustString(ptr: __swift_bridge__$PreviewLine$text(ptr))
+    public func kind() -> UInt8 {
+        __swift_bridge__$PreviewLine$kind(ptr)
     }
 
-    public func span_count() -> UInt {
-        __swift_bridge__$PreviewLine$span_count(ptr)
+    public func virtual_row() -> UInt {
+        __swift_bridge__$PreviewLine$virtual_row(ptr)
     }
 
-    public func span_char_start(_ index: UInt) -> UInt32 {
-        __swift_bridge__$PreviewLine$span_char_start(ptr, index)
+    public func line_number() -> UInt {
+        __swift_bridge__$PreviewLine$line_number(ptr)
     }
 
-    public func span_char_end(_ index: UInt) -> UInt32 {
-        __swift_bridge__$PreviewLine$span_char_end(ptr, index)
+    public func focused() -> Bool {
+        __swift_bridge__$PreviewLine$focused(ptr)
     }
 
-    public func span_highlight(_ index: UInt) -> UInt32 {
-        __swift_bridge__$PreviewLine$span_highlight(ptr, index)
+    public func marker() -> RustString {
+        RustString(ptr: __swift_bridge__$PreviewLine$marker(ptr))
+    }
+
+    public func segment_count() -> UInt {
+        __swift_bridge__$PreviewLine$segment_count(ptr)
+    }
+
+    public func segment_at(_ index: UInt) -> PreviewLineSegment {
+        PreviewLineSegment(ptr: __swift_bridge__$PreviewLine$segment_at(ptr, index))
     }
 }
 extension PreviewLine: Vectorizable {
@@ -2619,6 +2679,94 @@ extension PreviewLine: Vectorizable {
 
     public static func vecOfSelfLen(vecPtr: UnsafeMutableRawPointer) -> UInt {
         __swift_bridge__$Vec_PreviewLine$len(vecPtr)
+    }
+}
+
+
+public class PreviewLineSegment: PreviewLineSegmentRefMut {
+    var isOwned: Bool = true
+
+    public override init(ptr: UnsafeMutableRawPointer) {
+        super.init(ptr: ptr)
+    }
+
+    deinit {
+        if isOwned {
+            __swift_bridge__$PreviewLineSegment$_free(ptr)
+        }
+    }
+}
+public class PreviewLineSegmentRefMut: PreviewLineSegmentRef {
+    public override init(ptr: UnsafeMutableRawPointer) {
+        super.init(ptr: ptr)
+    }
+}
+public class PreviewLineSegmentRef {
+    var ptr: UnsafeMutableRawPointer
+
+    public init(ptr: UnsafeMutableRawPointer) {
+        self.ptr = ptr
+    }
+}
+extension PreviewLineSegmentRef {
+    public func text() -> RustString {
+        RustString(ptr: __swift_bridge__$PreviewLineSegment$text(ptr))
+    }
+
+    public func highlight_id() -> UInt32 {
+        __swift_bridge__$PreviewLineSegment$highlight_id(ptr)
+    }
+
+    public func is_match() -> Bool {
+        __swift_bridge__$PreviewLineSegment$is_match(ptr)
+    }
+}
+extension PreviewLineSegment: Vectorizable {
+    public static func vecOfSelfNew() -> UnsafeMutableRawPointer {
+        __swift_bridge__$Vec_PreviewLineSegment$new()
+    }
+
+    public static func vecOfSelfFree(vecPtr: UnsafeMutableRawPointer) {
+        __swift_bridge__$Vec_PreviewLineSegment$drop(vecPtr)
+    }
+
+    public static func vecOfSelfPush(vecPtr: UnsafeMutableRawPointer, value: PreviewLineSegment) {
+        __swift_bridge__$Vec_PreviewLineSegment$push(vecPtr, {value.isOwned = false; return value.ptr;}())
+    }
+
+    public static func vecOfSelfPop(vecPtr: UnsafeMutableRawPointer) -> Optional<Self> {
+        let pointer = __swift_bridge__$Vec_PreviewLineSegment$pop(vecPtr)
+        if pointer == nil {
+            return nil
+        } else {
+            return (PreviewLineSegment(ptr: pointer!) as! Self)
+        }
+    }
+
+    public static func vecOfSelfGet(vecPtr: UnsafeMutableRawPointer, index: UInt) -> Optional<PreviewLineSegmentRef> {
+        let pointer = __swift_bridge__$Vec_PreviewLineSegment$get(vecPtr, index)
+        if pointer == nil {
+            return nil
+        } else {
+            return PreviewLineSegmentRef(ptr: pointer!)
+        }
+    }
+
+    public static func vecOfSelfGetMut(vecPtr: UnsafeMutableRawPointer, index: UInt) -> Optional<PreviewLineSegmentRefMut> {
+        let pointer = __swift_bridge__$Vec_PreviewLineSegment$get_mut(vecPtr, index)
+        if pointer == nil {
+            return nil
+        } else {
+            return PreviewLineSegmentRefMut(ptr: pointer!)
+        }
+    }
+
+    public static func vecOfSelfAsPtr(vecPtr: UnsafeMutableRawPointer) -> UnsafePointer<PreviewLineSegmentRef> {
+        UnsafePointer<PreviewLineSegmentRef>(OpaquePointer(__swift_bridge__$Vec_PreviewLineSegment$as_ptr(vecPtr)))
+    }
+
+    public static func vecOfSelfLen(vecPtr: UnsafeMutableRawPointer) -> UInt {
+        __swift_bridge__$Vec_PreviewLineSegment$len(vecPtr)
     }
 }
 

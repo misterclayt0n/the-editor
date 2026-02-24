@@ -160,6 +160,87 @@ impl FilePickerItem {
   }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FilePickerKind {
+  Generic,
+  Diagnostics,
+  Symbols,
+  LiveGrep,
+}
+
+impl Default for FilePickerKind {
+  fn default() -> Self {
+    Self::Generic
+  }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FilePickerRowKind {
+  Generic,
+  Diagnostics,
+  Symbols,
+  LiveGrepHeader,
+  LiveGrepMatch,
+}
+
+impl Default for FilePickerRowKind {
+  fn default() -> Self {
+    Self::Generic
+  }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FilePickerRowData {
+  pub kind:       FilePickerRowKind,
+  pub severity:   Option<DiagnosticSeverity>,
+  pub primary:    String,
+  pub secondary:  String,
+  pub tertiary:   String,
+  pub quaternary: String,
+  pub line:       usize,
+  pub column:     usize,
+  pub depth:      usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FilePickerPreviewLineKind {
+  Content,
+  TruncatedAbove,
+  TruncatedBelow,
+}
+
+impl Default for FilePickerPreviewLineKind {
+  fn default() -> Self {
+    Self::Content
+  }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FilePickerPreviewSegment {
+  pub text:         String,
+  pub highlight_id: Option<u32>,
+  pub is_match:     bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FilePickerPreviewWindowLine {
+  pub virtual_row: usize,
+  pub kind:        FilePickerPreviewLineKind,
+  pub line_number: Option<usize>,
+  pub focused:     bool,
+  pub marker:      String,
+  pub segments:    Vec<FilePickerPreviewSegment>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FilePickerPreviewWindow {
+  pub kind:               u8, // 0=empty, 1=source, 2=text, 3=message
+  pub total_virtual_rows: usize,
+  pub offset:             usize,
+  pub window_start:       usize,
+  pub lines:              Vec<FilePickerPreviewWindowLine>,
+}
+
 #[derive(Debug, Clone)]
 pub struct FilePickerDiagnosticItem {
   pub path:        PathBuf,
@@ -1668,6 +1749,194 @@ fn diagnostic_severity_label(severity: Option<DiagnosticSeverity>) -> &'static s
   }
 }
 
+fn diagnostic_severity_from_icon(icon: &str) -> Option<DiagnosticSeverity> {
+  match icon {
+    "diagnostic_error" => Some(DiagnosticSeverity::Error),
+    "diagnostic_warning" => Some(DiagnosticSeverity::Warning),
+    "diagnostic_info" => Some(DiagnosticSeverity::Information),
+    "diagnostic_hint" => Some(DiagnosticSeverity::Hint),
+    _ => None,
+  }
+}
+
+pub fn file_picker_kind_from_title(title: &str) -> FilePickerKind {
+  if title.starts_with("Diagnostics ·") || title.starts_with("Workspace Diagnostics ·") {
+    return FilePickerKind::Diagnostics;
+  }
+  if title.starts_with("Lsp Symbols")
+    || title.starts_with("Document Symbols")
+    || title.starts_with("Workspace Symbols")
+  {
+    return FilePickerKind::Symbols;
+  }
+  if title.starts_with("Live Grep") || title.starts_with("Global Search") {
+    return FilePickerKind::LiveGrep;
+  }
+  FilePickerKind::Generic
+}
+
+fn split_prefix_chars(text: &str, max_chars: usize) -> (&str, &str) {
+  if max_chars == 0 || text.is_empty() {
+    return ("", text);
+  }
+  let mut seen = 0usize;
+  for (idx, _) in text.char_indices() {
+    if seen == max_chars {
+      return (&text[..idx], &text[idx..]);
+    }
+    seen = seen.saturating_add(1);
+  }
+  (text, "")
+}
+
+fn parse_diagnostics_row(display: &str, icon: &str) -> FilePickerRowData {
+  let (severity_text, rest) = split_prefix_chars(display, 7);
+  let rest = rest.strip_prefix(' ').unwrap_or(rest);
+  let (source, rest) = split_prefix_chars(rest, 14);
+  let rest = rest.strip_prefix(' ').unwrap_or(rest);
+  let (code, rest) = split_prefix_chars(rest, 16);
+  let rest = rest.strip_prefix(' ').unwrap_or(rest).trim_start();
+  let severity = diagnostic_severity_from_icon(icon);
+
+  let (location, message) = if let Some((location, message)) = rest.split_once("  ") {
+    (location.trim().to_string(), message.trim().to_string())
+  } else {
+    (String::new(), rest.to_string())
+  };
+
+  let severity_label = if severity.is_some() {
+    severity
+      .map(|severity| diagnostic_severity_label(Some(severity)))
+      .unwrap_or("DIAG")
+      .to_string()
+  } else {
+    severity_text.trim().to_string()
+  };
+
+  FilePickerRowData {
+    kind: FilePickerRowKind::Diagnostics,
+    severity,
+    primary: if message.is_empty() {
+      severity_label
+    } else {
+      message
+    },
+    secondary: source.trim().to_string(),
+    tertiary: code.trim().to_string(),
+    quaternary: if location == "-" {
+      String::new()
+    } else {
+      location
+    },
+    line: 0,
+    column: 0,
+    depth: 0,
+  }
+}
+
+fn parse_symbols_row(display: &str) -> FilePickerRowData {
+  let mut fields = display.split('\t');
+  let mut name = fields.next().unwrap_or_default().trim().to_string();
+  let container = fields.next().unwrap_or_default().trim().to_string();
+  let detail = fields.next().unwrap_or_default().trim().to_string();
+  let kind = fields.next().unwrap_or_default().trim().to_string();
+  let _path = fields.next().unwrap_or_default().trim();
+  let line = fields
+    .next()
+    .and_then(|value| value.trim().parse::<usize>().ok())
+    .unwrap_or(1);
+  let column = fields
+    .next()
+    .and_then(|value| value.trim().parse::<usize>().ok())
+    .unwrap_or(1);
+  let depth = fields
+    .next()
+    .and_then(|value| value.trim().parse::<usize>().ok())
+    .unwrap_or(0);
+
+  if name.is_empty() {
+    name = "<unnamed>".to_string();
+  }
+
+  FilePickerRowData {
+    kind: FilePickerRowKind::Symbols,
+    severity: None,
+    primary: name,
+    secondary: container,
+    tertiary: detail,
+    quaternary: kind,
+    line,
+    column,
+    depth,
+  }
+}
+
+fn parse_live_grep_row(item: &FilePickerItem) -> FilePickerRowData {
+  if matches!(&item.action, FilePickerItemAction::GroupHeader { .. }) {
+    return FilePickerRowData {
+      kind:       FilePickerRowKind::LiveGrepHeader,
+      severity:   None,
+      primary:    item.display.trim().to_string(),
+      secondary:  String::new(),
+      tertiary:   String::new(),
+      quaternary: String::new(),
+      line:       0,
+      column:     0,
+      depth:      0,
+    };
+  }
+
+  let mut fields = item.display.splitn(4, '\t');
+  let path = fields.next().unwrap_or_default().trim().to_string();
+  let line = fields
+    .next()
+    .and_then(|value| value.trim().parse::<usize>().ok())
+    .unwrap_or(1);
+  let column = fields
+    .next()
+    .and_then(|value| value.trim().parse::<usize>().ok())
+    .unwrap_or(1);
+  let snippet = fields.next().unwrap_or_default().to_string();
+  let snippet = if snippet.is_empty() {
+    item.display.trim().to_string()
+  } else {
+    snippet
+  };
+
+  FilePickerRowData {
+    kind: FilePickerRowKind::LiveGrepMatch,
+    severity: None,
+    primary: snippet,
+    secondary: path,
+    tertiary: String::new(),
+    quaternary: String::new(),
+    line,
+    column,
+    depth: 0,
+  }
+}
+
+pub fn file_picker_row_data(title: &str, item: &FilePickerItem) -> FilePickerRowData {
+  match file_picker_kind_from_title(title) {
+    FilePickerKind::Diagnostics => parse_diagnostics_row(item.display.as_str(), item.icon.as_str()),
+    FilePickerKind::Symbols => parse_symbols_row(item.display.as_str()),
+    FilePickerKind::LiveGrep => parse_live_grep_row(item),
+    FilePickerKind::Generic => {
+      FilePickerRowData {
+        kind:       FilePickerRowKind::Generic,
+        severity:   None,
+        primary:    item.display.clone(),
+        secondary:  String::new(),
+        tertiary:   String::new(),
+        quaternary: String::new(),
+        line:       0,
+        column:     0,
+        depth:      0,
+      }
+    },
+  }
+}
+
 fn picker_root<Ctx: DefaultContext>(_ctx: &Ctx) -> PathBuf {
   let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
   workspace_root(&cwd)
@@ -2600,6 +2869,355 @@ fn preview_contains_focus_line(preview: &FilePickerPreview, focus_line: Option<u
       (start..end).contains(&focus_line)
     },
     _ => true,
+  }
+}
+
+fn preview_highlight_at(highlights: &[(Highlight, Range<usize>)], byte_idx: usize) -> Option<u32> {
+  let mut active = None;
+  for (highlight, range) in highlights {
+    if byte_idx < range.start {
+      break;
+    }
+    if byte_idx < range.end {
+      active = Some(highlight.get());
+    }
+  }
+  active
+}
+
+fn clamp_preview_char_boundary(text: &str, idx: usize, round_up: bool) -> usize {
+  let mut idx = idx.min(text.len());
+  if text.is_char_boundary(idx) {
+    return idx;
+  }
+  if round_up {
+    while idx < text.len() && !text.is_char_boundary(idx) {
+      idx += 1;
+    }
+    return idx.min(text.len());
+  }
+  while idx > 0 && !text.is_char_boundary(idx) {
+    idx -= 1;
+  }
+  idx
+}
+
+fn preview_char_to_byte_idx(text: &str, char_idx: usize) -> usize {
+  if char_idx == 0 {
+    return 0;
+  }
+  text
+    .char_indices()
+    .nth(char_idx)
+    .map(|(idx, _)| idx)
+    .unwrap_or(text.len())
+}
+
+fn preview_line_segments(
+  line: &str,
+  line_start: usize,
+  highlights: &[(Highlight, Range<usize>)],
+) -> Vec<FilePickerPreviewSegment> {
+  if line.is_empty() {
+    return vec![FilePickerPreviewSegment {
+      text:         String::new(),
+      highlight_id: None,
+      is_match:     false,
+    }];
+  }
+
+  if highlights.is_empty() {
+    return vec![FilePickerPreviewSegment {
+      text:         line.to_string(),
+      highlight_id: None,
+      is_match:     false,
+    }];
+  }
+
+  let line_end = line_start.saturating_add(line.len());
+  let mut boundaries = vec![line_start, line_end];
+  for (_highlight, range) in highlights {
+    if range.end <= line_start || range.start >= line_end {
+      continue;
+    }
+    boundaries.push(range.start.max(line_start));
+    boundaries.push(range.end.min(line_end));
+  }
+  boundaries.sort_unstable();
+  boundaries.dedup();
+
+  let mut segments = Vec::new();
+  for pair in boundaries.windows(2) {
+    let absolute_start = pair[0];
+    let absolute_end = pair[1];
+    if absolute_end <= absolute_start {
+      continue;
+    }
+    let local_start =
+      clamp_preview_char_boundary(line, absolute_start.saturating_sub(line_start), false);
+    let local_end =
+      clamp_preview_char_boundary(line, absolute_end.saturating_sub(line_start), true);
+    if local_end <= local_start {
+      continue;
+    }
+    let sample_byte = absolute_start + (absolute_end.saturating_sub(absolute_start) / 2);
+    let highlight_id = preview_highlight_at(highlights, sample_byte);
+    segments.push(FilePickerPreviewSegment {
+      text: line[local_start..local_end].to_string(),
+      highlight_id,
+      is_match: false,
+    });
+  }
+
+  if segments.is_empty() {
+    segments.push(FilePickerPreviewSegment {
+      text:         line.to_string(),
+      highlight_id: None,
+      is_match:     false,
+    });
+  }
+
+  segments
+}
+
+fn apply_match_to_preview_segments(
+  segments: Vec<FilePickerPreviewSegment>,
+  match_col: Option<(usize, usize)>,
+) -> Vec<FilePickerPreviewSegment> {
+  let Some((match_start, match_end)) = match_col else {
+    return segments;
+  };
+  if match_end <= match_start {
+    return segments;
+  }
+
+  let mut out = Vec::new();
+  let mut segment_start_char = 0usize;
+  for segment in segments {
+    let segment_char_len = segment.text.chars().count();
+    if segment_char_len == 0 {
+      out.push(segment);
+      continue;
+    }
+    let segment_end_char = segment_start_char.saturating_add(segment_char_len);
+    let overlap_start = match_start.max(segment_start_char);
+    let overlap_end = match_end.min(segment_end_char);
+    if overlap_start >= overlap_end {
+      out.push(segment);
+      segment_start_char = segment_end_char;
+      continue;
+    }
+
+    let local_overlap_start = overlap_start.saturating_sub(segment_start_char);
+    let local_overlap_end = overlap_end.saturating_sub(segment_start_char);
+
+    if local_overlap_start > 0 {
+      let prefix_end = preview_char_to_byte_idx(&segment.text, local_overlap_start);
+      out.push(FilePickerPreviewSegment {
+        text:         segment.text[..prefix_end].to_string(),
+        highlight_id: segment.highlight_id,
+        is_match:     false,
+      });
+    }
+
+    let overlap_start_byte = preview_char_to_byte_idx(&segment.text, local_overlap_start);
+    let overlap_end_byte = preview_char_to_byte_idx(&segment.text, local_overlap_end);
+    out.push(FilePickerPreviewSegment {
+      text:         segment.text[overlap_start_byte..overlap_end_byte].to_string(),
+      highlight_id: segment.highlight_id,
+      is_match:     true,
+    });
+
+    if local_overlap_end < segment_char_len {
+      out.push(FilePickerPreviewSegment {
+        text:         segment.text[overlap_end_byte..].to_string(),
+        highlight_id: segment.highlight_id,
+        is_match:     false,
+      });
+    }
+
+    segment_start_char = segment_end_char;
+  }
+
+  out
+}
+
+pub fn file_picker_preview_window(
+  state: &FilePickerState,
+  offset: usize,
+  visible_rows: usize,
+  overscan: usize,
+) -> FilePickerPreviewWindow {
+  let visible_rows = visible_rows.max(1);
+  let overscan = overscan.max(1);
+  let focus_line = state.preview_focus_line;
+  let focus_col = state.current_item().and_then(|item| item.preview_col);
+
+  match &state.preview {
+    FilePickerPreview::Empty => {
+      FilePickerPreviewWindow {
+        kind:               0,
+        total_virtual_rows: 0,
+        offset:             0,
+        window_start:       0,
+        lines:              Vec::new(),
+      }
+    },
+    FilePickerPreview::Source(source) => {
+      let has_top_marker = source.truncated_above_lines > 0;
+      let has_bottom_marker = source.truncated_below_lines > 0;
+      let total_virtual_rows = source
+        .lines
+        .len()
+        .saturating_add(has_top_marker as usize)
+        .saturating_add(has_bottom_marker as usize);
+      let max_offset = total_virtual_rows.saturating_sub(visible_rows);
+      let offset = offset.min(max_offset);
+      let window_start = offset.saturating_sub(overscan);
+      let window_end = offset
+        .saturating_add(visible_rows)
+        .saturating_add(overscan)
+        .min(total_virtual_rows);
+
+      let mut lines = Vec::with_capacity(window_end.saturating_sub(window_start));
+      for virtual_row in window_start..window_end {
+        if has_top_marker && virtual_row == 0 {
+          lines.push(FilePickerPreviewWindowLine {
+            virtual_row,
+            kind: FilePickerPreviewLineKind::TruncatedAbove,
+            line_number: None,
+            focused: false,
+            marker: format!("… {} lines above", source.truncated_above_lines),
+            segments: Vec::new(),
+          });
+          continue;
+        }
+
+        let local_idx = virtual_row.saturating_sub(has_top_marker as usize);
+        if local_idx >= source.lines.len() {
+          if has_bottom_marker && local_idx == source.lines.len() {
+            lines.push(FilePickerPreviewWindowLine {
+              virtual_row,
+              kind: FilePickerPreviewLineKind::TruncatedBelow,
+              line_number: None,
+              focused: false,
+              marker: format!("… {} lines below", source.truncated_below_lines),
+              segments: Vec::new(),
+            });
+          }
+          continue;
+        }
+
+        let absolute_line_idx = source.base_line.saturating_add(local_idx);
+        let focused = focus_line.is_some_and(|focus| focus == absolute_line_idx);
+        let line = source.lines[local_idx].as_str();
+        let line_start = source.line_starts.get(local_idx).copied().unwrap_or(0);
+        let mut segments = preview_line_segments(line, line_start, &source.highlights);
+        if focused {
+          segments = apply_match_to_preview_segments(segments, focus_col);
+        }
+        lines.push(FilePickerPreviewWindowLine {
+          virtual_row,
+          kind: FilePickerPreviewLineKind::Content,
+          line_number: Some(absolute_line_idx.saturating_add(1)),
+          focused,
+          marker: String::new(),
+          segments,
+        });
+      }
+
+      FilePickerPreviewWindow {
+        kind: 1,
+        total_virtual_rows,
+        offset,
+        window_start,
+        lines,
+      }
+    },
+    FilePickerPreview::Text(text) => {
+      let mut plain_lines: Vec<&str> = text.lines().collect();
+      if plain_lines.is_empty() {
+        plain_lines.push("");
+      }
+      let total_virtual_rows = plain_lines.len();
+      let max_offset = total_virtual_rows.saturating_sub(visible_rows);
+      let offset = offset.min(max_offset);
+      let window_start = offset.saturating_sub(overscan);
+      let window_end = offset
+        .saturating_add(visible_rows)
+        .saturating_add(overscan)
+        .min(total_virtual_rows);
+      let mut lines = Vec::with_capacity(window_end.saturating_sub(window_start));
+      for virtual_row in window_start..window_end {
+        let focused = focus_line.is_some_and(|focus| focus == virtual_row);
+        let mut segments = vec![FilePickerPreviewSegment {
+          text:         plain_lines[virtual_row].to_string(),
+          highlight_id: None,
+          is_match:     false,
+        }];
+        if focused {
+          segments = apply_match_to_preview_segments(segments, focus_col);
+        }
+        lines.push(FilePickerPreviewWindowLine {
+          virtual_row,
+          kind: FilePickerPreviewLineKind::Content,
+          line_number: None,
+          focused,
+          marker: String::new(),
+          segments,
+        });
+      }
+
+      FilePickerPreviewWindow {
+        kind: 2,
+        total_virtual_rows,
+        offset,
+        window_start,
+        lines,
+      }
+    },
+    FilePickerPreview::Message(text) => {
+      let mut plain_lines: Vec<&str> = text.lines().collect();
+      if plain_lines.is_empty() {
+        plain_lines.push("");
+      }
+      let total_virtual_rows = plain_lines.len();
+      let max_offset = total_virtual_rows.saturating_sub(visible_rows);
+      let offset = offset.min(max_offset);
+      let window_start = offset.saturating_sub(overscan);
+      let window_end = offset
+        .saturating_add(visible_rows)
+        .saturating_add(overscan)
+        .min(total_virtual_rows);
+      let mut lines = Vec::with_capacity(window_end.saturating_sub(window_start));
+      for virtual_row in window_start..window_end {
+        let focused = focus_line.is_some_and(|focus| focus == virtual_row);
+        let mut segments = vec![FilePickerPreviewSegment {
+          text:         plain_lines[virtual_row].to_string(),
+          highlight_id: None,
+          is_match:     false,
+        }];
+        if focused {
+          segments = apply_match_to_preview_segments(segments, focus_col);
+        }
+        lines.push(FilePickerPreviewWindowLine {
+          virtual_row,
+          kind: FilePickerPreviewLineKind::Content,
+          line_number: None,
+          focused,
+          marker: String::new(),
+          segments,
+        });
+      }
+
+      FilePickerPreviewWindow {
+        kind: 3,
+        total_virtual_rows,
+        offset,
+        window_start,
+        lines,
+      }
+    },
   }
 }
 

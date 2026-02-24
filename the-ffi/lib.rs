@@ -75,6 +75,7 @@ use the_default::{
   FilePickerRowData,
   FilePickerRowKind,
   FilePickerState,
+  GlobalSearchState,
   KeyBinding,
   KeyEvent,
   Keymaps,
@@ -103,7 +104,9 @@ use the_default::{
   poll_scan_results as file_picker_poll_scan_results,
   refresh_file_picker_preview,
   refresh_matcher_state as file_picker_refresh_matcher_state,
+  replace_file_picker_items,
   select_file_picker_index,
+  set_file_picker_query_external,
   set_file_picker_syntax_loader,
   signature_help_panel_rect as default_signature_help_panel_rect,
   submit_file_picker,
@@ -3332,6 +3335,7 @@ pub struct App {
   lsp_pending_auto_completion:     Option<PendingAutoCompletion>,
   lsp_pending_auto_signature_help: Option<PendingAutoSignatureHelp>,
   diagnostics:                     DiagnosticsState,
+  global_search:                   GlobalSearchState,
   inline_diagnostic_lines:         Vec<InlineDiagnosticRenderLine>,
   eol_diagnostics:                 Vec<EolDiagnosticEntry>,
   diagnostic_underlines:           Vec<DiagnosticUnderlineEntry>,
@@ -3840,6 +3844,7 @@ impl App {
       lsp_pending_auto_completion: None,
       lsp_pending_auto_signature_help: None,
       diagnostics: DiagnosticsState::default(),
+      global_search: GlobalSearchState::default(),
       inline_diagnostic_lines: Vec::new(),
       eol_diagnostics: Vec::new(),
       diagnostic_underlines: Vec::new(),
@@ -3929,6 +3934,7 @@ impl App {
         self.lsp_active_progress_tokens.clear();
         self.lsp_pending_requests.clear();
         self.set_lsp_status(LspStatusPhase::Off, Some("stopped".into()));
+        self.global_search.deactivate();
       }
     }
     removed
@@ -4913,15 +4919,18 @@ impl App {
     if self.activate(id).is_none() {
       return false;
     }
-    let picker = self.file_picker_mut();
-    if !picker.active {
-      return false;
+    {
+      let picker = self.file_picker_mut();
+      if !picker.active {
+        return false;
+      }
+      let old_query = picker.query.clone();
+      picker.query = query.to_string();
+      picker.cursor = query.len();
+      file_picker_handle_query_change(picker, &old_query);
+      refresh_file_picker_preview(picker);
     }
-    let old_query = picker.query.clone();
-    picker.query = query.to_string();
-    picker.cursor = query.len();
-    file_picker_handle_query_change(picker, &old_query);
-    refresh_file_picker_preview(picker);
+    <Self as DefaultContext>::file_picker_query_changed(self, query);
     self.request_render();
     true
   }
@@ -5044,6 +5053,9 @@ impl App {
       changed = true;
     }
     if self.poll_active_syntax_parse_results() {
+      changed = true;
+    }
+    if self.poll_global_search() {
       changed = true;
     }
     if self.poll_lsp_events() {
@@ -6681,6 +6693,94 @@ impl App {
     line[start..end].iter().collect()
   }
 
+  fn start_global_search(&mut self) {
+    let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let root = the_default::workspace_root(&cwd);
+    if !root.exists() {
+      let _ = <Self as DefaultContext>::push_error(
+        self,
+        "global_search",
+        "Current working directory does not exist",
+      );
+      return;
+    }
+
+    if let Err(err) = self.global_search.activate(root.as_path()) {
+      let _ = <Self as DefaultContext>::push_error(
+        self,
+        "global_search",
+        format!("Failed to initialize global search index: {err}"),
+      );
+      return;
+    }
+
+    let initial_query = self.workspace_symbol_query_from_cursor();
+    the_default::open_custom_picker(self, "Live Grep", root, None, Vec::new(), 0);
+    {
+      let picker = self.file_picker_mut();
+      set_file_picker_query_external(picker, true);
+      picker.query = initial_query.clone();
+      picker.cursor = initial_query.len();
+      picker.error = None;
+      picker.preview = FilePickerPreview::Message(if initial_query.is_empty() {
+        "Type to search".to_string()
+      } else {
+        "Searching…".to_string()
+      });
+    }
+
+    if !initial_query.trim().is_empty() {
+      self.schedule_global_search(initial_query);
+    } else {
+      self.request_render();
+    }
+  }
+
+  fn schedule_global_search(&mut self, query: String) {
+    if !self.global_search.is_active() {
+      return;
+    }
+    self.global_search.schedule(query);
+  }
+
+  fn poll_global_search(&mut self) -> bool {
+    if !self.global_search.is_active() {
+      return false;
+    }
+    if !self.file_picker().active {
+      self.global_search.deactivate();
+      return false;
+    }
+
+    let Some(response) = self.global_search.poll_latest() else {
+      return false;
+    };
+
+    let has_items = !response.items.is_empty();
+    replace_file_picker_items(self, response.items, 0);
+    {
+      let picker = self.file_picker_mut();
+      set_file_picker_query_external(picker, true);
+      picker.query = response.query.clone();
+      picker.cursor = response.query.len();
+      if let Some(error) = response.error {
+        picker.error = Some(error.clone());
+        picker.preview = FilePickerPreview::Message(error);
+      } else if response.indexing && !has_items {
+        picker.error = None;
+        picker.preview = FilePickerPreview::Message("Indexing files…".to_string());
+      } else {
+        picker.error = None;
+        if picker.query.trim().is_empty() {
+          picker.preview = FilePickerPreview::Message("Type to search".to_string());
+        }
+      }
+    }
+
+    self.request_render();
+    true
+  }
+
   fn cancel_pending_lsp_requests_for(&mut self, next: &PendingLspRequestKind) {
     let target = next.cancellation_key();
     let ids_to_cancel = self
@@ -7908,6 +8008,20 @@ impl DefaultContext for App {
 
   fn file_picker_mut(&mut self) -> &mut FilePickerState {
     &mut self.active_state_mut().file_picker
+  }
+
+  fn global_search(&mut self) {
+    self.start_global_search();
+  }
+
+  fn file_picker_query_changed(&mut self, query: &str) {
+    if self.global_search.is_active() {
+      self.schedule_global_search(query.to_string());
+    }
+  }
+
+  fn file_picker_closed(&mut self) {
+    self.global_search.deactivate();
   }
 
   fn search_prompt_ref(&self) -> &SearchPromptState {

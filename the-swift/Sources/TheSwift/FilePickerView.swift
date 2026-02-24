@@ -738,12 +738,6 @@ struct FilePreviewPanel: View {
             pendingFocusReset = true
             requestWindow()
         }
-        .onChange(of: preview?.line_count() ?? 0) { _ in
-            requestWindow()
-        }
-        .onChange(of: preview?.total_lines() ?? 0) { _ in
-            requestWindow()
-        }
     }
 
     // MARK: - Header
@@ -932,12 +926,13 @@ struct FilePreviewPanel: View {
     private func requestWindow() {
         guard let onWindowRequest else { return }
         let measuredVisibleRows = Int(ceil(viewportHeight / rowHeight))
-        let fallbackVisibleRows = max(24, Int(preview?.line_count() ?? 0))
-        let visibleRows = measuredVisibleRows > 1 ? measuredVisibleRows : fallbackVisibleRows
+        let hasMeasuredViewport = measuredVisibleRows > 1
+        let fallbackVisibleRows = 24
+        let visibleRows = hasMeasuredViewport ? measuredVisibleRows : fallbackVisibleRows
 
         let rawOffset = max(0, Int(floor(-contentMinY / rowHeight)))
         let nextOffset = pendingFocusReset ? -1 : rawOffset
-        let overscan = max(overscanRows, visibleRows * 2)
+        let overscan = overscanRows
         if nextOffset == lastRequestedOffset
             && visibleRows == lastRequestedVisibleRows
             && overscan == lastRequestedOverscan {
@@ -947,10 +942,14 @@ struct FilePreviewPanel: View {
         lastRequestedOffset = nextOffset
         lastRequestedVisibleRows = visibleRows
         lastRequestedOverscan = overscan
-        pendingFocusReset = false
+        // Keep focus reset armed until viewport is measured, so early
+        // pre-layout requests don't replace focus with offset=0.
+        if hasMeasuredViewport || !pendingFocusReset {
+            pendingFocusReset = false
+        }
         if DiagnosticsDebugLog.enabled {
             DiagnosticsDebugLog.log(
-                "picker.window_calc viewport=\(String(format: "%.1f", viewportHeight)) contentMinY=\(String(format: "%.1f", contentMinY)) measured_visible=\(measuredVisibleRows) fallback_visible=\(fallbackVisibleRows) send_offset=\(nextOffset) send_visible=\(visibleRows) send_overscan=\(overscan)"
+                "picker.window_calc viewport=\(String(format: "%.1f", viewportHeight)) contentMinY=\(String(format: "%.1f", contentMinY)) measured_visible=\(measuredVisibleRows) has_measured=\(hasMeasuredViewport ? 1 : 0) fallback_visible=\(fallbackVisibleRows) send_offset=\(nextOffset) send_visible=\(visibleRows) send_overscan=\(overscan)"
             )
         }
         onWindowRequest(nextOffset, visibleRows, overscan)

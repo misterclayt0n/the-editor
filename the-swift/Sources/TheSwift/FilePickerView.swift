@@ -813,38 +813,53 @@ struct FilePreviewPanel: View {
         let topRows = max(0, windowStart)
         let bottomRows = max(0, totalRows - windowStart - lineCount)
 
-        return ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
-                if topRows > 0 {
-                    Color.clear
-                        .frame(height: CGFloat(topRows) * rowHeight)
-                }
+        return ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    if topRows > 0 {
+                        Color.clear
+                            .frame(height: CGFloat(topRows) * rowHeight)
+                    }
 
-                ForEach(0..<lineCount, id: \.self) { index in
-                    let line = preview!.line_at(UInt(index))
-                    previewLineView(line: line, showLineNumbers: showLineNumbers, totalRows: totalRows)
-                }
+                    ForEach(0..<lineCount, id: \.self) { index in
+                        let line = preview!.line_at(UInt(index))
+                        previewLineView(line: line, showLineNumbers: showLineNumbers, totalRows: totalRows)
+                            .id(previewRowId(Int(line.virtual_row())))
+                    }
 
-                if bottomRows > 0 {
-                    Color.clear
-                        .frame(height: CGFloat(bottomRows) * rowHeight)
+                    if bottomRows > 0 {
+                        Color.clear
+                            .frame(height: CGFloat(bottomRows) * rowHeight)
+                    }
                 }
+                .background(
+                    GeometryReader { proxy in
+                        Color.clear.preference(
+                            key: PreviewContentOffsetKey.self,
+                            value: proxy.frame(in: .named("file-picker-preview-scroll")).minY
+                        )
+                    }
+                )
             }
-            .background(
-                GeometryReader { proxy in
-                    Color.clear.preference(
-                        key: PreviewContentOffsetKey.self,
-                        value: proxy.frame(in: .named("file-picker-preview-scroll")).minY
-                    )
-                }
-            )
+            .coordinateSpace(name: "file-picker-preview-scroll")
+            .onPreferenceChange(PreviewContentOffsetKey.self) { value in
+                contentMinY = value
+                requestWindow()
+            }
+            .onAppear {
+                syncScrollPosition(proxy)
+            }
+            .onChange(of: preview?.offset() ?? 0) { _ in
+                syncScrollPosition(proxy)
+            }
+            .onChange(of: preview?.window_start() ?? 0) { _ in
+                syncScrollPosition(proxy)
+            }
+            .onChange(of: preview?.line_count() ?? 0) { _ in
+                syncScrollPosition(proxy)
+            }
             .padding(.vertical, 4)
             .padding(.horizontal, 8)
-        }
-        .coordinateSpace(name: "file-picker-preview-scroll")
-        .onPreferenceChange(PreviewContentOffsetKey.self) { value in
-            contentMinY = value
-            requestWindow()
         }
     }
 
@@ -937,6 +952,28 @@ struct FilePreviewPanel: View {
             )
         }
         onWindowRequest(nextOffset, visibleRows, overscan)
+    }
+
+    private func previewRowId(_ virtualRow: Int) -> String {
+        "picker-preview-row-\(virtualRow)"
+    }
+
+    private func syncScrollPosition(_ proxy: ScrollViewProxy) {
+        guard let preview else { return }
+        let lineCount = Int(preview.line_count())
+        if lineCount == 0 {
+            return
+        }
+        let targetOffset = Int(preview.offset())
+        let windowStart = Int(preview.window_start())
+        let windowEnd = windowStart + lineCount
+        guard (windowStart..<windowEnd).contains(targetOffset) else {
+            return
+        }
+        let targetId = previewRowId(targetOffset)
+        DispatchQueue.main.async {
+            proxy.scrollTo(targetId, anchor: .top)
+        }
     }
 }
 

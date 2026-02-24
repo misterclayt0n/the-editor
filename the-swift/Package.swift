@@ -16,7 +16,11 @@ let package = Package(
     .target(
       name: "TheEditorFFIBridge",
       dependencies: ["TheEditorFFI"],
-      path: "Sources/TheEditorFFIBridge"
+      path: "Sources/TheEditorFFIBridge",
+      linkerSettings: [
+        .linkedLibrary("z"),
+        .linkedLibrary("iconv"),
+      ]
     ),
     .executableTarget(
       name: "TheSwift",

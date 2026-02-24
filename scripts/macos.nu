@@ -16,6 +16,7 @@ if ($xcode_dir | path exists) {
 
 let module_cache = ($env.SWIFT_MODULE_CACHE_PATH? | default "/tmp/swift-module-cache")
 let clang_cache = ($env.CLANG_MODULE_CACHE_PATH? | default "/tmp/clang-module-cache")
+$env.MACOSX_DEPLOYMENT_TARGET = ($env.MACOSX_DEPLOYMENT_TARGET? | default "13.0")
 $env.SWIFT_MODULE_CACHE_PATH = $module_cache
 $env.CLANG_MODULE_CACHE_PATH = $clang_cache
 

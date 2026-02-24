@@ -66,6 +66,8 @@ use the_default::{
   FilePickerChangedFileItem,
   FilePickerChangedKind,
   FilePickerDiagnosticItem,
+  FilePickerItem,
+  FilePickerItemAction,
   FilePickerKind,
   FilePickerPreview,
   FilePickerPreviewLineKind,
@@ -232,13 +234,18 @@ use the_lsp::{
   goto_type_definition_params,
   hover_params,
   jsonrpc,
+  parse_document_symbols_response,
   parse_completion_item_response,
   parse_completion_response_with_raw,
   parse_hover_response,
   parse_locations_response,
+  parse_workspace_symbols_response,
   parse_signature_help_response,
+  document_symbols_params,
   render_lsp_snippet,
   signature_help_params,
+  workspace_symbols_params,
+  LspSymbol,
   text_sync::{
     FileChangeType,
     char_idx_to_utf16_position,
@@ -1425,6 +1432,12 @@ enum PendingLspRequestKind {
   Hover {
     uri: String,
   },
+  DocumentSymbols {
+    uri: String,
+  },
+  WorkspaceSymbols {
+    query: String,
+  },
   Completion {
     uri:            String,
     generation:     u64,
@@ -1449,35 +1462,41 @@ impl PendingLspRequestKind {
       Self::GotoTypeDefinition { .. } => "goto-type-definition",
       Self::GotoImplementation { .. } => "goto-implementation",
       Self::Hover { .. } => "hover",
+      Self::DocumentSymbols { .. } => "document-symbols",
+      Self::WorkspaceSymbols { .. } => "workspace-symbols",
       Self::Completion { .. } => "completion",
       Self::CompletionResolve { .. } => "completion-resolve",
       Self::SignatureHelp { .. } => "signature-help",
     }
   }
 
-  fn uri(&self) -> &str {
+  fn uri(&self) -> Option<&str> {
     match self {
-      Self::GotoDeclaration { uri } => uri.as_str(),
-      Self::GotoDefinition { uri } => uri.as_str(),
-      Self::GotoTypeDefinition { uri } => uri.as_str(),
-      Self::GotoImplementation { uri } => uri.as_str(),
-      Self::Hover { uri } => uri.as_str(),
-      Self::Completion { uri, .. } => uri.as_str(),
-      Self::CompletionResolve { uri, .. } => uri.as_str(),
-      Self::SignatureHelp { uri } => uri.as_str(),
+      Self::GotoDeclaration { uri } => Some(uri.as_str()),
+      Self::GotoDefinition { uri } => Some(uri.as_str()),
+      Self::GotoTypeDefinition { uri } => Some(uri.as_str()),
+      Self::GotoImplementation { uri } => Some(uri.as_str()),
+      Self::Hover { uri } => Some(uri.as_str()),
+      Self::DocumentSymbols { uri } => Some(uri.as_str()),
+      Self::WorkspaceSymbols { .. } => None,
+      Self::Completion { uri, .. } => Some(uri.as_str()),
+      Self::CompletionResolve { uri, .. } => Some(uri.as_str()),
+      Self::SignatureHelp { uri } => Some(uri.as_str()),
     }
   }
 
-  fn cancellation_key(&self) -> (&'static str, &str) {
+  fn cancellation_key(&self) -> (&'static str, Option<&str>) {
     match self {
-      Self::GotoDeclaration { uri } => ("goto-declaration", uri),
-      Self::GotoDefinition { uri } => ("goto-definition", uri),
-      Self::GotoTypeDefinition { uri } => ("goto-type-definition", uri),
-      Self::GotoImplementation { uri } => ("goto-implementation", uri),
-      Self::Hover { uri } => ("hover", uri),
-      Self::Completion { uri, .. } => ("completion", uri),
-      Self::CompletionResolve { uri, .. } => ("completion-resolve", uri),
-      Self::SignatureHelp { uri } => ("signature-help", uri),
+      Self::GotoDeclaration { uri } => ("goto-declaration", Some(uri)),
+      Self::GotoDefinition { uri } => ("goto-definition", Some(uri)),
+      Self::GotoTypeDefinition { uri } => ("goto-type-definition", Some(uri)),
+      Self::GotoImplementation { uri } => ("goto-implementation", Some(uri)),
+      Self::Hover { uri } => ("hover", Some(uri)),
+      Self::DocumentSymbols { uri } => ("document-symbols", Some(uri)),
+      Self::WorkspaceSymbols { .. } => ("workspace-symbols", None),
+      Self::Completion { uri, .. } => ("completion", Some(uri)),
+      Self::CompletionResolve { uri, .. } => ("completion-resolve", Some(uri)),
+      Self::SignatureHelp { uri } => ("signature-help", Some(uri)),
     }
   }
 }
@@ -2039,6 +2058,73 @@ fn lsp_file_watch_latency() -> Duration {
 
 fn is_symbol_word_char(ch: char) -> bool {
   ch == '_' || ch.is_alphanumeric()
+}
+
+fn sanitize_picker_field(value: &str) -> String {
+  value
+    .replace('\t', " ")
+    .replace(['\r', '\n'], " ")
+    .split_whitespace()
+    .collect::<Vec<_>>()
+    .join(" ")
+}
+
+fn lsp_symbol_tree_depth(container: &str, stack: &mut Vec<String>) -> usize {
+  if container.is_empty() {
+    return 0;
+  }
+
+  while let Some(last) = stack.last() {
+    if last == container {
+      return stack.len();
+    }
+    stack.pop();
+  }
+
+  0
+}
+
+fn lsp_symbol_kind_label(kind: u32) -> &'static str {
+  match kind {
+    1 => "FILE",
+    2 => "MODULE",
+    3 => "NAMESPACE",
+    4 => "PACKAGE",
+    5 => "CLASS",
+    6 => "METHOD",
+    7 => "PROPERTY",
+    8 => "FIELD",
+    9 => "CONSTRUCTOR",
+    10 => "ENUM",
+    11 => "INTERFACE",
+    12 => "FUNCTION",
+    13 => "VARIABLE",
+    14 => "CONSTANT",
+    15 => "STRING",
+    16 => "NUMBER",
+    17 => "BOOLEAN",
+    18 => "ARRAY",
+    19 => "OBJECT",
+    20 => "KEY",
+    21 => "NULL",
+    22 => "ENUM_MEMBER",
+    23 => "STRUCT",
+    24 => "EVENT",
+    25 => "OPERATOR",
+    26 => "TYPE_PARAM",
+    _ => "SYMBOL",
+  }
+}
+
+fn lsp_symbol_icon_name(kind: u32) -> &'static str {
+  match kind {
+    2 | 3 | 4 | 5 | 10 | 11 | 19 | 23 => "folder",
+    6 | 9 | 12 | 25 => "file_code",
+    7 | 8 | 13 | 14 | 18 | 20 | 22 | 24 | 26 => "file_generic",
+    15 | 16 | 17 | 21 => "file_doc",
+    1 => "file_doc",
+    _ => "file_generic",
+  }
 }
 
 fn is_completion_replace_char(ch: char) -> bool {
@@ -5406,11 +5492,12 @@ impl App {
       return false;
     };
 
-    if self
-      .lsp_document
-      .as_ref()
-      .map(|state| state.uri.as_str())
-      .is_some_and(|uri| uri != kind.uri())
+    if let Some(request_uri) = kind.uri()
+      && self
+        .lsp_document
+        .as_ref()
+        .map(|state| state.uri.as_str())
+        .is_some_and(|uri| uri != request_uri)
     {
       return false;
     }
@@ -5527,6 +5614,32 @@ impl App {
           },
         }
         true
+      },
+      PendingLspRequestKind::DocumentSymbols { uri } => {
+        let symbols = match parse_document_symbols_response(&uri, response.result.as_ref()) {
+          Ok(symbols) => symbols,
+          Err(err) => {
+            self.publish_lsp_message(
+              the_lib::messages::MessageLevel::Error,
+              format!("failed to parse document-symbols response: {err}"),
+            );
+            return true;
+          },
+        };
+        self.apply_symbols_result("document symbols", symbols)
+      },
+      PendingLspRequestKind::WorkspaceSymbols { query: _query } => {
+        let symbols = match parse_workspace_symbols_response(response.result.as_ref()) {
+          Ok(symbols) => symbols,
+          Err(err) => {
+            self.publish_lsp_message(
+              the_lib::messages::MessageLevel::Error,
+              format!("failed to parse workspace-symbols response: {err}"),
+            );
+            return true;
+          },
+        };
+        self.apply_symbols_result("workspace symbols", symbols)
       },
       PendingLspRequestKind::Completion {
         generation,
@@ -5815,6 +5928,123 @@ impl App {
       self.publish_lsp_message(the_lib::messages::MessageLevel::Info, text);
     }
     jumped
+  }
+
+  fn apply_symbols_result(&mut self, label: &str, symbols: Vec<LspSymbol>) -> bool {
+    if symbols.is_empty() {
+      self.publish_lsp_message(
+        the_lib::messages::MessageLevel::Info,
+        format!("no {label} found"),
+      );
+      return true;
+    }
+
+    let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let root = the_default::workspace_root(&cwd);
+    let active_uri = self.current_lsp_uri();
+    let mut external_rope_cache: HashMap<PathBuf, Rope> = HashMap::new();
+    let mut items = Vec::with_capacity(symbols.len());
+    let mut symbol_stack: Vec<String> = Vec::new();
+    let mut previous_path: Option<PathBuf> = None;
+
+    for symbol in symbols {
+      let Some(location) = symbol.location.as_ref() else {
+        continue;
+      };
+      let Some(path) = path_for_file_uri(&location.uri) else {
+        continue;
+      };
+
+      let line = location.range.start.line as usize;
+      let character = location.range.start.character as usize;
+      let cursor_char = if active_uri.as_deref() == Some(location.uri.as_str()) {
+        utf16_position_to_char_idx(
+          self.active_editor_ref().document().text(),
+          location.range.start.line,
+          location.range.start.character,
+        )
+      } else {
+        let rope = external_rope_cache.entry(path.clone()).or_insert_with(|| {
+          std::fs::read_to_string(&path)
+            .map(|content| Rope::from(content.as_str()))
+            .unwrap_or_else(|_| Rope::from(""))
+        });
+        utf16_position_to_char_idx(
+          rope,
+          location.range.start.line,
+          location.range.start.character,
+        )
+      };
+
+      let path_display = path
+        .strip_prefix(&cwd)
+        .unwrap_or(&path)
+        .display()
+        .to_string();
+      if previous_path.as_ref().is_none_or(|prev| prev != &path) {
+        symbol_stack.clear();
+        previous_path = Some(path.clone());
+      }
+
+      let kind_label = lsp_symbol_kind_label(symbol.kind);
+      let name = sanitize_picker_field(symbol.name.trim());
+      let name = if name.is_empty() {
+        "<unnamed>".to_string()
+      } else {
+        name
+      };
+      let container = sanitize_picker_field(symbol.container_name.as_deref().unwrap_or_default());
+      let detail = sanitize_picker_field(symbol.detail.as_deref().unwrap_or_default());
+      let path_field = sanitize_picker_field(path_display.as_str());
+      let depth = lsp_symbol_tree_depth(container.as_str(), &mut symbol_stack);
+      symbol_stack.truncate(depth);
+      symbol_stack.push(name.clone());
+      let display = format!(
+        "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+        name,
+        container,
+        detail,
+        kind_label,
+        path_field,
+        line.saturating_add(1),
+        character.saturating_add(1),
+        depth
+      );
+      let icon = lsp_symbol_icon_name(symbol.kind).to_string();
+
+      items.push(FilePickerItem {
+        absolute: path.clone(),
+        display,
+        icon,
+        is_dir: false,
+        display_path: false,
+        action: FilePickerItemAction::OpenLocation {
+          path: path.clone(),
+          cursor_char,
+          line,
+          column: None,
+        },
+        preview_path: Some(path),
+        preview_line: Some(line),
+        preview_col: None,
+      });
+    }
+
+    if items.is_empty() {
+      self.publish_lsp_message(
+        the_lib::messages::MessageLevel::Warning,
+        format!("{label}: results had no navigable locations"),
+      );
+      return true;
+    }
+
+    let title = if label.contains("workspace") {
+      "Workspace Symbols"
+    } else {
+      "Lsp Symbols"
+    };
+    the_default::open_custom_picker(self, title, root, None, items, 0);
+    true
   }
 
   fn jump_to_location(&mut self, location: &LspLocation) -> bool {
@@ -6418,6 +6648,35 @@ impl App {
     let (line, character) = char_idx_to_utf16_position(doc.text(), cursor);
 
     Some((state.uri, LspPosition { line, character }))
+  }
+
+  fn workspace_symbol_query_from_cursor(&self) -> String {
+    let doc = self.active_editor_ref().document();
+    let text = doc.text();
+    let Some(range) = self.active_or_first_selection_range() else {
+      return String::new();
+    };
+    let cursor = range.cursor(text.slice(..));
+    let line_idx = text.char_to_line(cursor);
+    let line_start = text.line_to_char(line_idx);
+    let line_end = if line_idx + 1 < text.len_lines() {
+      text.line_to_char(line_idx + 1)
+    } else {
+      text.len_chars()
+    };
+
+    let line: Vec<char> = text.slice(line_start..line_end).chars().collect();
+    let local_cursor = cursor.saturating_sub(line_start);
+    let mut start = local_cursor.min(line.len());
+    while start > 0 && is_symbol_word_char(line[start - 1]) {
+      start -= 1;
+    }
+    let mut end = local_cursor.min(line.len());
+    while end < line.len() && is_symbol_word_char(line[end]) {
+      end += 1;
+    }
+
+    line[start..end].iter().collect()
   }
 
   fn cancel_pending_lsp_requests_for(&mut self, next: &PendingLspRequestKind) {
@@ -8207,6 +8466,52 @@ impl DefaultContext for App {
       "textDocument/implementation",
       goto_implementation_params(&uri, position),
       PendingLspRequestKind::GotoImplementation { uri },
+    );
+  }
+
+  fn lsp_document_symbols(&mut self) {
+    if !self.lsp_supports(LspCapability::DocumentSymbols) {
+      self.publish_lsp_message(
+        the_lib::messages::MessageLevel::Warning,
+        "document symbols are not supported by the active server",
+      );
+      return;
+    }
+
+    let Some(uri) = self
+      .lsp_document
+      .as_ref()
+      .filter(|state| state.opened && self.lsp_ready)
+      .map(|state| state.uri.clone())
+    else {
+      self.publish_lsp_message(
+        the_lib::messages::MessageLevel::Warning,
+        "document symbols unavailable: no active LSP document",
+      );
+      return;
+    };
+
+    self.dispatch_lsp_request(
+      "textDocument/documentSymbol",
+      document_symbols_params(&uri),
+      PendingLspRequestKind::DocumentSymbols { uri },
+    );
+  }
+
+  fn lsp_workspace_symbols(&mut self) {
+    if !self.lsp_supports(LspCapability::WorkspaceSymbols) {
+      self.publish_lsp_message(
+        the_lib::messages::MessageLevel::Warning,
+        "workspace symbols are not supported by the active server",
+      );
+      return;
+    }
+
+    let query = self.workspace_symbol_query_from_cursor();
+    self.dispatch_lsp_request(
+      "workspace/symbol",
+      workspace_symbols_params(&query),
+      PendingLspRequestKind::WorkspaceSymbols { query },
     );
   }
 

@@ -118,6 +118,7 @@ pub use file_picker::{
   poll_scan_results,
   refresh_matcher_state,
   replace_file_picker_items,
+  refresh_file_picker_preview,
   scroll_file_picker_list,
   scroll_file_picker_preview,
   select_file_picker_index,

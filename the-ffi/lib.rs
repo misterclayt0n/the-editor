@@ -99,6 +99,7 @@ use the_default::{
   finalize_split_selection,
   handle_query_change as file_picker_handle_query_change,
   poll_scan_results as file_picker_poll_scan_results,
+  refresh_file_picker_preview,
   refresh_matcher_state as file_picker_refresh_matcher_state,
   select_file_picker_index,
   set_file_picker_syntax_loader,
@@ -4832,6 +4833,7 @@ impl App {
     picker.query = query.to_string();
     picker.cursor = query.len();
     file_picker_handle_query_change(picker, &old_query);
+    refresh_file_picker_preview(picker);
     self.request_render();
     true
   }

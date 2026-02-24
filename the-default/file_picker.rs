@@ -2634,6 +2634,10 @@ pub fn handle_query_change(state: &mut FilePickerState, old_query: &str) {
   let _ = refresh_matcher_state(state);
 }
 
+pub fn refresh_file_picker_preview(state: &mut FilePickerState) {
+  refresh_preview(state);
+}
+
 pub fn set_picker_visible_rows(state: &mut FilePickerState, visible_rows: usize) {
   state.list_visible = visible_rows.max(1);
   let _ = clamp_selection_and_offsets(state);

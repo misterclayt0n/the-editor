@@ -264,6 +264,10 @@ struct FilePickerView: View {
         snapshot.pickerKind == 1
     }
 
+    private var isLiveGrepPicker: Bool {
+        snapshot.pickerKind == 3
+    }
+
     // Always show preview layout — the preview panel handles its own empty state.
     // This avoids re-evaluating the body when preview data arrives.
     private let hasPreview = true
@@ -278,7 +282,9 @@ struct FilePickerView: View {
             PickerPanel(
                 width: pickerWidth,
                 maxListHeight: hasPreview ? 440 : 380,
-                placeholder: isDiagnosticsPicker ? "Filter diagnostics…" : "Open file…",
+                placeholder: isDiagnosticsPicker
+                    ? "Filter diagnostics…"
+                    : (isLiveGrepPicker ? "Search workspace…" : "Open file…"),
                 fontSize: 16,
                 layout: .center,
                 pageSize: 12,
@@ -308,6 +314,7 @@ struct FilePickerView: View {
                 },
                 itemContent: { index, isSelected, isHovered in
                     let item = items[index]
+                    let previousItem: FilePickerItemSnapshot? = index > 0 ? items[index - 1] : nil
                     let nextItem: FilePickerItemSnapshot? = (index + 1) < items.count ? items[index + 1] : nil
                     switch item.rowKind {
                     case 1:
@@ -315,7 +322,7 @@ struct FilePickerView: View {
                     case 2:
                         return AnyView(symbolsRowContent(for: item, nextItem: nextItem, isSelected: isSelected))
                     case 3, 4:
-                        return AnyView(liveGrepRowContent(for: item, isSelected: isSelected))
+                        return AnyView(liveGrepRowContent(for: item, previousItem: previousItem, isSelected: isSelected))
                     default:
                         return AnyView(fileRowContent(for: item, isSelected: isSelected))
                     }
@@ -325,7 +332,11 @@ struct FilePickerView: View {
                         Image(systemName: "doc.questionmark")
                             .font(FontLoader.uiFont(size: 24))
                             .foregroundStyle(.tertiary)
-                        Text(isDiagnosticsPicker ? "No matching diagnostics" : "No matching files")
+                        Text(
+                            isDiagnosticsPicker
+                                ? "No matching diagnostics"
+                                : (isLiveGrepPicker ? "No matching results" : "No matching files")
+                        )
                             .font(FontLoader.uiFont(size: 14))
                             .foregroundStyle(.secondary)
                     }
@@ -377,11 +388,17 @@ struct FilePickerView: View {
         } else {
             HStack(spacing: 6) {
                 if matchedCount > 0 && matchedCount < totalCount {
-                    Text(isDiagnosticsPicker ? "\(matchedCount) of \(totalCount) diagnostics" : "\(matchedCount) of \(totalCount)")
+                    let label = isDiagnosticsPicker
+                        ? "\(matchedCount) of \(totalCount) diagnostics"
+                        : (isLiveGrepPicker ? "\(matchedCount) of \(totalCount) results" : "\(matchedCount) of \(totalCount)")
+                    Text(label)
                         .font(FontLoader.uiFont(size: 12))
                         .foregroundStyle(.tertiary)
                 } else if totalCount > 0 {
-                    Text(isDiagnosticsPicker ? "\(totalCount) diagnostics" : "\(totalCount) files")
+                    let label = isDiagnosticsPicker
+                        ? "\(totalCount) diagnostics"
+                        : (isLiveGrepPicker ? "\(totalCount) results" : "\(totalCount) files")
+                    Text(label)
                         .font(FontLoader.uiFont(size: 12))
                         .foregroundStyle(.tertiary)
                 }
@@ -579,46 +596,153 @@ struct FilePickerView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func liveGrepRowContent(for item: FilePickerItemSnapshot, isSelected: Bool) -> some View {
-        if item.rowKind == 3 {
-            return AnyView(
-                HStack(spacing: 8) {
-                    Image(systemName: "doc.text.fill")
-                        .font(FontLoader.uiFont(size: 12).weight(.semibold))
-                        .foregroundStyle(.secondary)
-                    Text(item.primary)
-                        .font(FontLoader.uiFont(size: 12).weight(.semibold))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    Spacer(minLength: 0)
-                }
-            )
+    @ViewBuilder
+    private func liveGrepRowContent(
+        for item: FilePickerItemSnapshot,
+        previousItem: FilePickerItemSnapshot?,
+        isSelected: Bool
+    ) -> some View {
+        let isHeader = item.rowKind == 3
+        let path = liveGrepDisplayPath(for: item)
+        let previousPath = previousItem.map(liveGrepDisplayPath(for:)) ?? ""
+        let isNewGroup = !isHeader && !path.isEmpty && path != previousPath
+        let marker = isHeader ? " " : (isSelected ? "▌" : "▏")
+        let guide = (isHeader || isNewGroup) ? " " : "│"
+        let icon = fileIcon(for: item)
+
+        let parts = liveGrepPathParts(path)
+        let pathMatchIndices = liveGrepPathMatchIndices(for: item, path: path)
+        let fileMatchIndices = pathMatchIndices.compactMap { idx -> Int? in
+            let local = idx - parts.fileStart
+            return (0..<parts.fileName.count).contains(local) ? local : nil
+        }
+        let dirMatchIndices = pathMatchIndices.compactMap { idx -> Int? in
+            (0..<parts.directory.count).contains(idx) ? idx : nil
         }
 
-        return AnyView(
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(":\(max(1, item.line)):\(max(1, item.column))")
-                    .font(FontLoader.uiFont(size: 11))
+        if isHeader {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(marker)
+                    .font(FontLoader.bufferFont(size: 12).weight(.semibold))
                     .foregroundStyle(.secondary)
-                    .frame(width: 64, alignment: .leading)
+                    .frame(width: 8, alignment: .leading)
 
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(item.primary)
-                        .font(FontLoader.uiFont(size: 13).weight(.medium))
-                        .foregroundStyle(.primary)
-                        .lineLimit(1)
-                    if !item.secondary.isEmpty {
-                        Text(item.secondary)
-                            .font(FontLoader.uiFont(size: 11))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
+                Text(guide)
+                    .font(FontLoader.bufferFont(size: 12))
+                    .foregroundStyle(.tertiary)
+                    .frame(width: 8, alignment: .leading)
+
+                Group {
+                    if let svg = icon.svg {
+                        svg.renderingMode(.template)
+                    } else {
+                        Image(systemName: icon.symbol)
+                            .symbolRenderingMode(.monochrome)
                     }
                 }
+                .font(FontLoader.uiFont(size: 11).weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 14, alignment: .center)
+
+                highlightedText(
+                    parts.fileName,
+                    matchIndices: fileMatchIndices,
+                    baseColor: .primary,
+                    highlightColor: .accentColor,
+                    fontSize: 12,
+                    baseWeight: .semibold
+                )
+                .lineLimit(1)
+
+                if !parts.directory.isEmpty {
+                    highlightedText(
+                        parts.directory,
+                        matchIndices: dirMatchIndices,
+                        baseColor: .secondary,
+                        highlightColor: .accentColor,
+                        fontSize: 11,
+                        baseWeight: .regular
+                    )
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                }
+
                 Spacer(minLength: 0)
             }
-        )
+        } else {
+            let location = ":\(max(1, item.line)):\(max(1, item.column))"
+            let snippet = item.primary.trimmingCharacters(in: .whitespacesAndNewlines)
+            let snippetMatchIndices = liveGrepSnippetMatchIndices(for: item, snippet: snippet)
+
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(marker)
+                    .font(FontLoader.bufferFont(size: 12).weight(.semibold))
+                    .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
+                    .frame(width: 8, alignment: .leading)
+
+                Text(guide)
+                    .font(FontLoader.bufferFont(size: 12))
+                    .foregroundStyle(.tertiary)
+                    .frame(width: 8, alignment: .leading)
+
+                if isNewGroup {
+                    Group {
+                        if let svg = icon.svg {
+                            svg.renderingMode(.template)
+                        } else {
+                            Image(systemName: icon.symbol)
+                                .symbolRenderingMode(.monochrome)
+                        }
+                    }
+                    .font(FontLoader.uiFont(size: 11).weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 14, alignment: .center)
+
+                    highlightedText(
+                        parts.fileName,
+                        matchIndices: fileMatchIndices,
+                        baseColor: .primary,
+                        highlightColor: isSelected ? .primary : .accentColor,
+                        fontSize: 12,
+                        baseWeight: .semibold
+                    )
+                    .lineLimit(1)
+
+                    if !parts.directory.isEmpty {
+                        highlightedText(
+                            parts.directory,
+                            matchIndices: dirMatchIndices,
+                            baseColor: .secondary,
+                            highlightColor: isSelected ? .primary : .accentColor,
+                            fontSize: 11,
+                            baseWeight: .regular
+                        )
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    }
+                }
+
+                Text(location)
+                    .font(FontLoader.bufferFont(size: 11))
+                    .foregroundStyle(.secondary)
+                    .fixedSize()
+
+                if !snippet.isEmpty {
+                    highlightedText(
+                        snippet,
+                        matchIndices: snippetMatchIndices,
+                        baseColor: .primary,
+                        highlightColor: isSelected ? .primary : .accentColor,
+                        fontSize: 12,
+                        baseWeight: .regular
+                    )
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                }
+
+                Spacer(minLength: 0)
+            }
+        }
     }
 
     private func symbolIcon(forKind kind: String) -> String {
@@ -691,6 +815,45 @@ struct FilePickerView: View {
         let nameLength = name.count
         guard nameLength > 0 else { return [] }
         return item.matchIndices.filter { (0..<nameLength).contains($0) }
+    }
+
+    private func liveGrepDisplayPath(for item: FilePickerItemSnapshot) -> String {
+        if item.rowKind == 3 {
+            return item.primary.isEmpty ? item.display.trimmingCharacters(in: .whitespacesAndNewlines) : item.primary
+        }
+        if !item.secondary.isEmpty {
+            return item.secondary
+        }
+        if let path = item.display.split(separator: "\t", maxSplits: 1).first {
+            return String(path)
+        }
+        return item.display
+    }
+
+    private func liveGrepPathMatchIndices(for item: FilePickerItemSnapshot, path: String) -> [Int] {
+        let pathLength = path.count
+        guard pathLength > 0 else { return [] }
+        return item.matchIndices.filter { (0..<pathLength).contains($0) }
+    }
+
+    private func liveGrepSnippetMatchIndices(for item: FilePickerItemSnapshot, snippet: String) -> [Int] {
+        let snippetLength = snippet.count
+        guard snippetLength > 0 else { return [] }
+        let snippetOffset = max(0, item.display.count - snippetLength)
+        return item.matchIndices.compactMap { index in
+            let local = index - snippetOffset
+            return (0..<snippetLength).contains(local) ? local : nil
+        }
+    }
+
+    private func liveGrepPathParts(_ path: String) -> (directory: String, fileName: String, fileStart: Int) {
+        if let split = path.lastIndex(of: "/") {
+            let directory = String(path[..<split])
+            let fileStart = path.distance(from: path.startIndex, to: path.index(after: split))
+            let fileName = String(path[path.index(after: split)...])
+            return (directory, fileName.isEmpty ? path : fileName, fileStart)
+        }
+        return ("", path, 0)
     }
 
     private func highlightedText(

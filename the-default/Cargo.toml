@@ -8,6 +8,7 @@ license = "MIT"
 path = "lib.rs"
 
 [dependencies]
+fff-core     = { path = "../../fff.nvim/crates/fff-core" }
 ignore       = { workspace = true }
 nucleo       = { workspace = true }
 regex        = { workspace = true }

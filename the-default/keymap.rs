@@ -1088,7 +1088,7 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
       "p" => paste_clipboard_after,
       "P" => paste_clipboard_before,
       "R" => replace_selections_with_clipboard,
-      // "/" => global_search,
+      "/" => global_search,
       "k" => lsp_hover,
       // "r" => rename_symbol,
       // "h" => select_references_to_symbol_under_cursor,

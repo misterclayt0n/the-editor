@@ -24,16 +24,18 @@ use the_default::{
   signature_help_docs_scroll,
   ui_event as dispatch_ui_event,
 };
-use the_lib::render::{
-  UiEvent,
-  UiEventKind,
-  UiKey,
-  UiKeyEvent,
-  UiModifiers,
-};
-use the_lib::split_tree::{
-  SplitAxis,
-  SplitNodeId,
+use the_lib::{
+  render::{
+    UiEvent,
+    UiEventKind,
+    UiKey,
+    UiKeyEvent,
+    UiModifiers,
+  },
+  split_tree::{
+    SplitAxis,
+    SplitNodeId,
+  },
 };
 
 use crate::{
@@ -255,14 +257,18 @@ fn hit_split_separator(ctx: &Ctx, x: u16, y: u16) -> Option<SplitNodeId> {
 
   for separator in ctx.editor.pane_separators(viewport) {
     let (distance, in_span) = match separator.axis {
-      SplitAxis::Vertical => (
-        separator.line.abs_diff(x),
-        y >= separator.span_start && y < separator.span_end,
-      ),
-      SplitAxis::Horizontal => (
-        separator.line.abs_diff(y),
-        x >= separator.span_start && x < separator.span_end,
-      ),
+      SplitAxis::Vertical => {
+        (
+          separator.line.abs_diff(x),
+          y >= separator.span_start && y < separator.span_end,
+        )
+      },
+      SplitAxis::Horizontal => {
+        (
+          separator.line.abs_diff(y),
+          x >= separator.span_start && x < separator.span_end,
+        )
+      },
     };
     if !in_span || distance > HIT_TOLERANCE {
       continue;
@@ -314,7 +320,17 @@ fn handle_left_down(ctx: &mut Ctx, layout: crate::picker_layout::FilePickerLayou
   if point_in_rect(x, y, layout.list_content) {
     let row = y.saturating_sub(layout.list_content.y) as usize;
     let index = layout.list_scroll_offset.saturating_add(row);
-    if index < picker.matched_count() {
+    let selectable = ctx
+      .file_picker
+      .matched_item(index)
+      .as_deref()
+      .is_some_and(|item| {
+        !matches!(
+          &item.action,
+          the_default::FilePickerItemAction::GroupHeader { .. }
+        )
+      });
+    if index < picker.matched_count() && selectable {
       open_file_picker_index(ctx, index);
       ctx.file_picker_drag = None;
       return;
@@ -950,7 +966,11 @@ mod tests {
 
     handle_mouse(
       &mut ctx,
-      mouse_event(MouseEventKind::Down(MouseButton::Left), drag_x, separator.line),
+      mouse_event(
+        MouseEventKind::Down(MouseButton::Left),
+        drag_x,
+        separator.line,
+      ),
     );
     assert!(ctx.pane_resize_drag.is_some());
 
@@ -992,7 +1012,11 @@ mod tests {
 
     handle_mouse(
       &mut ctx,
-      mouse_event(MouseEventKind::Down(MouseButton::Left), separator.line, drag_y),
+      mouse_event(
+        MouseEventKind::Down(MouseButton::Left),
+        separator.line,
+        drag_y,
+      ),
     );
     assert!(ctx.pane_resize_drag.is_some());
 

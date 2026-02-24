@@ -632,6 +632,9 @@ pub trait DefaultContext: Sized + 'static {
   fn lsp_code_actions(&mut self) {}
   fn lsp_rename(&mut self, _new_name: &str) {}
   fn lsp_format(&mut self) {}
+  fn global_search(&mut self) {}
+  fn file_picker_query_changed(&mut self, _query: &str) {}
+  fn file_picker_closed(&mut self) {}
   fn on_file_saved(&mut self, _path: &Path, _text: &str) {}
   fn on_before_quit(&mut self) {}
   fn scrolloff(&self) -> usize {
@@ -1312,6 +1315,7 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::Search => ctx.dispatch().search(ctx, ()),
     Command::RSearch => ctx.dispatch().rsearch(ctx, ()),
     Command::SelectRegex => ctx.dispatch().select_regex(ctx, ()),
+    Command::GlobalSearch => ctx.global_search(),
     Command::FilePicker => crate::file_picker::open_file_picker(ctx),
     Command::FilePickerInCurrentDirectory => {
       crate::file_picker::open_file_picker_in_current_directory(ctx);
@@ -5596,6 +5600,7 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     },
     "search_selection" => Some(Command::search_selection()),
     "select_regex" => Some(Command::select_regex()),
+    "global_search" => Some(Command::global_search()),
     "file_picker" => Some(Command::file_picker()),
     "file_picker_in_current_directory" => Some(Command::file_picker_in_current_directory()),
     "buffer_picker" => Some(Command::buffer_picker()),

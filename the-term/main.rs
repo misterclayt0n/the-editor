@@ -137,6 +137,10 @@ fn main() -> Result<()> {
       ctx.needs_render = true;
     }
 
+    if ctx.poll_global_search() {
+      ctx.needs_render = true;
+    }
+
     if ctx.poll_lsp_completion_auto_trigger() {
       ctx.needs_render = true;
     }

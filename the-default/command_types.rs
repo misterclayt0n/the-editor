@@ -643,6 +643,7 @@ pub enum Command {
   Search,
   RSearch,
   SelectRegex,
+  GlobalSearch,
   FilePicker,
   FilePickerInCurrentDirectory,
   BufferPicker,
@@ -1759,6 +1760,11 @@ impl Command {
   #[must_use]
   pub const fn select_regex() -> Self {
     Self::SelectRegex
+  }
+
+  #[must_use]
+  pub const fn global_search() -> Self {
+    Self::GlobalSearch
   }
 
   #[must_use]

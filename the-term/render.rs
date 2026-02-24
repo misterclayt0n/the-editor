@@ -1190,6 +1190,10 @@ fn file_picker_is_symbols(picker: &the_default::FilePickerState) -> bool {
     || picker.title.starts_with("Workspace Symbols")
 }
 
+fn file_picker_is_live_grep(picker: &the_default::FilePickerState) -> bool {
+  picker.title.starts_with("Live Grep") || picker.title.starts_with("Global Search")
+}
+
 fn split_prefix_chars(text: &str, max_chars: usize) -> (&str, &str) {
   if max_chars == 0 {
     return ("", text);
@@ -1252,6 +1256,69 @@ fn parse_symbols_picker_display(display: &str) -> SymbolsPickerDisplayRow {
     line,
     column,
     depth,
+  }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct LiveGrepDisplayRow {
+  path:    String,
+  line:    usize,
+  column:  usize,
+  snippet: String,
+}
+
+fn live_grep_display_path(display: &str) -> &str {
+  display
+    .split_once('\t')
+    .map(|(path, _)| path.trim())
+    .unwrap_or_default()
+}
+
+fn live_grep_item_is_header(item: &the_default::FilePickerItem) -> bool {
+  matches!(
+    &item.action,
+    the_default::FilePickerItemAction::GroupHeader { .. }
+  )
+}
+
+fn live_grep_item_path<'a>(item: &'a the_default::FilePickerItem) -> &'a str {
+  if live_grep_item_is_header(item) {
+    item.display.trim()
+  } else {
+    live_grep_display_path(item.display.as_str())
+  }
+}
+
+fn parse_live_grep_picker_display(display: &str) -> LiveGrepDisplayRow {
+  if !display.contains('\t') {
+    return LiveGrepDisplayRow {
+      path:    String::new(),
+      line:    1,
+      column:  1,
+      snippet: display.trim().to_string(),
+    };
+  }
+
+  let mut fields = display.splitn(4, '\t');
+  let path = fields.next().unwrap_or_default().trim().to_string();
+  let line = fields
+    .next()
+    .and_then(|value| value.trim().parse::<usize>().ok())
+    .unwrap_or(1);
+  let column = fields
+    .next()
+    .and_then(|value| value.trim().parse::<usize>().ok())
+    .unwrap_or(1);
+  let mut snippet = fields.next().unwrap_or_default().to_string();
+  if snippet.is_empty() && path.is_empty() {
+    snippet = display.trim().to_string();
+  }
+
+  LiveGrepDisplayRow {
+    path,
+    line,
+    column,
+    snippet,
   }
 }
 
@@ -1402,6 +1469,55 @@ fn file_picker_preview_focus_styles(
   }
 
   (row_style, marker_style)
+}
+
+fn file_picker_match_highlight_style(
+  theme: &the_lib::render::theme::Theme,
+  text_style: Style,
+  accent_color: Option<Color>,
+) -> Style {
+  let mut style = theme
+    .try_get("search.match")
+    .map(lib_style_to_ratatui)
+    .unwrap_or_default()
+    .add_modifier(Modifier::BOLD);
+
+  if style.fg.is_none()
+    && let Some(color) = accent_color.or(text_style.fg)
+  {
+    style = style.fg(color);
+  }
+  if style.bg.is_none()
+    && let Some(bg) = theme
+      .try_get("ui.selection")
+      .and_then(|scope| scope.bg)
+      .map(lib_color_to_ratatui)
+  {
+    style = style.bg(bg);
+  }
+  style
+}
+
+fn highlight_char_range(
+  buf: &mut Buffer,
+  x: u16,
+  y: u16,
+  max_width: u16,
+  start: usize,
+  end: usize,
+  style: Style,
+) {
+  if max_width == 0 || end <= start {
+    return;
+  }
+  let limit = max_width as usize;
+  for idx in start..end {
+    if idx >= limit {
+      break;
+    }
+    let cell = buf.get_mut(x.saturating_add(idx as u16), y);
+    cell.set_style(cell.style().patch(style));
+  }
 }
 
 fn draw_diagnostics_picker_row(
@@ -1714,6 +1830,262 @@ fn draw_symbols_picker_row(
   truncate_in_place(&mut suffix, max_suffix);
   if !suffix.is_empty() {
     buf.set_stringn(suffix_x, y, suffix.as_str(), max_suffix, detail_style);
+  }
+}
+
+fn draw_live_grep_picker_row(
+  buf: &mut Buffer,
+  row_rect: Rect,
+  y: u16,
+  item: &the_default::FilePickerItem,
+  previous_item: Option<&the_default::FilePickerItem>,
+  text_style: Style,
+  theme: &the_lib::render::theme::Theme,
+  selected_fg: Option<Color>,
+  is_selected: bool,
+  is_hovered: bool,
+  match_indices: &[usize],
+) {
+  if row_rect.width == 0 {
+    return;
+  }
+
+  let is_header = live_grep_item_is_header(item);
+  let parsed = parse_live_grep_picker_display(item.display.as_str());
+  let previous_path = previous_item.map(live_grep_item_path).unwrap_or_default();
+  let is_new_group = !is_header && !parsed.path.is_empty() && parsed.path != previous_path;
+
+  let mut base_style = text_style;
+  if is_selected && let Some(fg) = selected_fg {
+    base_style = base_style.fg(fg);
+  }
+  if is_hovered {
+    base_style = base_style.add_modifier(Modifier::UNDERLINED);
+  }
+
+  let accent = theme
+    .try_get("search.match")
+    .and_then(|scope| scope.fg)
+    .or_else(|| theme.try_get("special").and_then(|scope| scope.fg))
+    .map(lib_color_to_ratatui);
+  let marker_style = if is_selected {
+    Style::default()
+      .fg(accent.unwrap_or(Color::LightBlue))
+      .add_modifier(Modifier::BOLD)
+  } else {
+    base_style.add_modifier(Modifier::DIM)
+  };
+  let location_style = base_style.add_modifier(Modifier::DIM);
+  let mut match_style = file_picker_match_highlight_style(theme, base_style, accent);
+  // Live grep rows already have strong structural cues; keep match emphasis
+  // foreground-only to avoid heavy selection-like background blocks.
+  match_style.bg = base_style.bg;
+
+  let row_end_x = row_rect.x.saturating_add(row_rect.width);
+  let marker_symbol = if is_header {
+    " "
+  } else if is_selected {
+    "▌"
+  } else {
+    "▏"
+  };
+  buf.set_stringn(row_rect.x, y, marker_symbol, 1, marker_style);
+
+  let guide_x = row_rect.x.saturating_add(1);
+  if guide_x < row_end_x {
+    let guide_symbol = if is_header || is_new_group {
+      " "
+    } else {
+      "│"
+    };
+    buf.set_stringn(
+      guide_x,
+      y,
+      guide_symbol,
+      1,
+      base_style.add_modifier(Modifier::DIM),
+    );
+  }
+
+  let icon_x = row_rect.x.saturating_add(2);
+  if icon_x < row_end_x && (is_new_group || is_header) {
+    let icon = file_picker_icon_glyph(item.icon.as_str(), item.is_dir);
+    buf.set_stringn(
+      icon_x,
+      y,
+      icon,
+      row_end_x.saturating_sub(icon_x) as usize,
+      base_style,
+    );
+  }
+
+  let cursor_x = if is_new_group || is_header {
+    icon_x.saturating_add(2)
+  } else {
+    icon_x.saturating_add(1)
+  };
+  if cursor_x >= row_end_x {
+    return;
+  }
+
+  if is_header {
+    let header_path = item.display.trim();
+    let (dir_part, file_part) = match header_path.rsplit_once('/') {
+      Some((dir, file)) => (dir, file),
+      None => ("", header_path),
+    };
+    let file_name = if file_part.is_empty() {
+      header_path
+    } else {
+      file_part
+    };
+    let mut cursor_x = cursor_x;
+    let mut content_width = row_end_x.saturating_sub(cursor_x) as usize;
+    if content_width == 0 {
+      return;
+    }
+
+    if !file_name.is_empty() {
+      let mut file_label = file_name.to_string();
+      truncate_in_place(&mut file_label, content_width);
+      let file_len = file_label.chars().count();
+      if file_len > 0 {
+        buf.set_stringn(
+          cursor_x,
+          y,
+          file_label.as_str(),
+          file_len,
+          base_style.add_modifier(Modifier::BOLD),
+        );
+        cursor_x = cursor_x.saturating_add(file_len as u16);
+        content_width = content_width.saturating_sub(file_len);
+      }
+    }
+
+    if !dir_part.is_empty() && content_width > 3 {
+      buf.set_stringn(cursor_x, y, "  ", 2, location_style);
+      cursor_x = cursor_x.saturating_add(2);
+      content_width = content_width.saturating_sub(2);
+
+      let mut dir_label = dir_part.to_string();
+      truncate_in_place(&mut dir_label, content_width);
+      let dir_len = dir_label.chars().count();
+      if dir_len > 0 {
+        buf.set_stringn(cursor_x, y, dir_label.as_str(), dir_len, location_style);
+      }
+    }
+    return;
+  }
+
+  let snippet = parsed.snippet.trim_end();
+  let snippet_offset = item
+    .display
+    .chars()
+    .count()
+    .saturating_sub(snippet.chars().count());
+  let snippet_match_indices: Vec<usize> = match_indices
+    .iter()
+    .copied()
+    .filter(|index| *index >= snippet_offset)
+    .map(|index| index - snippet_offset)
+    .collect();
+
+  let mut cursor_x = cursor_x;
+  let mut content_width = row_end_x.saturating_sub(cursor_x) as usize;
+  if content_width == 0 {
+    return;
+  }
+
+  if is_new_group {
+    let (dir_part, file_part) = match parsed.path.rsplit_once('/') {
+      Some((dir, file)) => (dir, file),
+      None => ("", parsed.path.as_str()),
+    };
+    let file_name = if file_part.is_empty() {
+      parsed.path.as_str()
+    } else {
+      file_part
+    };
+    if !file_name.is_empty() {
+      let mut file_label = file_name.to_string();
+      truncate_in_place(&mut file_label, content_width);
+      let file_len = file_label.chars().count();
+      if file_len > 0 {
+        buf.set_stringn(
+          cursor_x,
+          y,
+          file_label.as_str(),
+          file_len,
+          base_style.add_modifier(Modifier::BOLD),
+        );
+        cursor_x = cursor_x.saturating_add(file_len as u16);
+        content_width = content_width.saturating_sub(file_len);
+      }
+    }
+
+    if !dir_part.is_empty() && content_width > 3 {
+      buf.set_stringn(cursor_x, y, "  ", 2, location_style);
+      cursor_x = cursor_x.saturating_add(2);
+      content_width = content_width.saturating_sub(2);
+
+      let mut dir_label = dir_part.to_string();
+      truncate_in_place(&mut dir_label, content_width);
+      let dir_len = dir_label.chars().count();
+      if dir_len > 0 {
+        buf.set_stringn(cursor_x, y, dir_label.as_str(), dir_len, location_style);
+        cursor_x = cursor_x.saturating_add(dir_len as u16);
+        content_width = content_width.saturating_sub(dir_len);
+      }
+    }
+
+    if content_width > 3 {
+      buf.set_stringn(cursor_x, y, "  ", 2, location_style);
+      cursor_x = cursor_x.saturating_add(2);
+      content_width = content_width.saturating_sub(2);
+    }
+  }
+
+  let location_label = format!(":{}:{}", parsed.line, parsed.column);
+  if content_width > 0 {
+    let mut location = location_label;
+    truncate_in_place(&mut location, content_width);
+    let location_len = location.chars().count();
+    if location_len > 0 {
+      buf.set_stringn(cursor_x, y, location.as_str(), location_len, location_style);
+      cursor_x = cursor_x.saturating_add(location_len as u16);
+      content_width = content_width.saturating_sub(location_len);
+    }
+  }
+
+  if content_width > 2 {
+    buf.set_stringn(cursor_x, y, "  ", 2, location_style);
+    cursor_x = cursor_x.saturating_add(2);
+    content_width = content_width.saturating_sub(2);
+  }
+
+  if content_width > 0 {
+    draw_fuzzy_match_line(
+      buf,
+      cursor_x,
+      y,
+      snippet,
+      content_width,
+      base_style,
+      match_style,
+      &snippet_match_indices,
+    );
+
+    if let Some((start, end)) = item.preview_col {
+      highlight_char_range(
+        buf,
+        cursor_x,
+        y,
+        content_width as u16,
+        start,
+        end,
+        match_style,
+      );
+    }
   }
 }
 
@@ -3234,6 +3606,7 @@ fn draw_file_picker_panel(
 
   let diagnostics_picker = file_picker_is_diagnostics(picker);
   let symbols_picker = file_picker_is_symbols(picker);
+  let live_grep_picker = file_picker_is_live_grep(picker);
   let (text_style, fill_style, border_style) = file_picker_panel_styles(ctx, panel);
 
   fill_rect(buf, layout.panel, fill_style);
@@ -3254,6 +3627,7 @@ fn draw_file_picker_panel(
     cursor_out,
     diagnostics_picker,
     symbols_picker,
+    live_grep_picker,
   );
 
   if layout.show_preview {
@@ -3267,6 +3641,7 @@ fn draw_file_picker_panel(
       &ctx.ui_theme,
       diagnostics_picker,
       symbols_picker,
+      live_grep_picker,
     );
   }
 }
@@ -3283,6 +3658,7 @@ fn draw_file_picker_list_pane(
   cursor_out: &mut Option<(u16, u16)>,
   diagnostics_picker: bool,
   symbols_picker: bool,
+  live_grep_picker: bool,
 ) {
   let rect = layout.list_pane;
   let title_style = text_style.add_modifier(Modifier::BOLD);
@@ -3464,6 +3840,27 @@ fn draw_file_picker_list_pane(
       );
       continue;
     }
+    if live_grep_picker {
+      let previous_item = if row_idx > 0 {
+        picker.matched_item(row_idx - 1)
+      } else {
+        None
+      };
+      draw_live_grep_picker_row(
+        buf,
+        Rect::new(list_area.x, y, list_area.width, 1),
+        y,
+        item.as_ref(),
+        previous_item.as_deref(),
+        style,
+        theme,
+        selected_fg,
+        is_selected,
+        is_hovered,
+        &match_indices,
+      );
+      continue;
+    }
 
     let icon = file_picker_icon_glyph(item.icon.as_str(), item.is_dir);
     let icon_x = list_area.x.saturating_add(1);
@@ -3567,6 +3964,7 @@ fn draw_file_picker_preview_pane(
   theme: &the_lib::render::theme::Theme,
   diagnostics_picker: bool,
   symbols_picker: bool,
+  live_grep_picker: bool,
 ) {
   let Some(rect) = layout.preview_pane else {
     return;
@@ -3583,9 +3981,19 @@ fn draw_file_picker_preview_pane(
       symbol_picker_kind_color(row.kind.as_str())
     })
   });
+  let focus_search_color = live_grep_picker.then(|| {
+    theme
+      .try_get("search.match")
+      .and_then(|scope| scope.fg)
+      .or_else(|| theme.try_get("special").and_then(|scope| scope.fg))
+      .map(lib_color_to_ratatui)
+      .unwrap_or(Color::LightBlue)
+  });
   let focus_accent = focus_severity
     .map(|severity| diagnostic_severity_color(theme, severity))
-    .or(focus_kind_color);
+    .or(focus_kind_color)
+    .or(focus_search_color);
+  let focus_col = current_item.as_ref().and_then(|item| item.preview_col);
   let mut preview_border_style = border_style;
   if (diagnostics_picker || symbols_picker)
     && let Some(accent) = focus_accent
@@ -3652,6 +4060,7 @@ fn draw_file_picker_preview_pane(
         scroll_offset,
         focus_line,
         focus_accent,
+        focus_col,
       );
     },
     FilePickerPreview::Text(text) | FilePickerPreview::Message(text) => {
@@ -3664,6 +4073,7 @@ fn draw_file_picker_preview_pane(
         theme,
         focus_line,
         focus_accent,
+        focus_col,
       );
     },
   }
@@ -3694,33 +4104,59 @@ fn draw_file_picker_source_preview(
   scroll_offset: usize,
   focus_line: Option<usize>,
   focus_accent: Option<Color>,
+  focus_col: Option<(usize, usize)>,
 ) {
   if area.width == 0 || area.height == 0 {
     return;
   }
 
-  let lines_len = source.lines.len().max(1);
-  let line_number_width = lines_len.to_string().len();
+  let has_top_marker = source.truncated_above_lines > 0;
+  let has_bottom_marker = source.truncated_below_lines > 0;
+  let total_virtual_rows = source
+    .lines
+    .len()
+    .saturating_add(has_top_marker as usize)
+    .saturating_add(has_bottom_marker as usize);
+  let max_line_number = source
+    .base_line
+    .saturating_add(source.lines.len())
+    .saturating_add(source.truncated_below_lines)
+    .max(1);
+  let line_number_width = max_line_number.to_string().len();
   let (focus_fill_style, focus_marker_style) =
     file_picker_preview_focus_styles(theme, text_style, focus_accent);
   let gutter_style = text_style.add_modifier(Modifier::DIM);
+  let match_style = file_picker_match_highlight_style(theme, text_style, focus_accent);
 
   for row in 0..area.height as usize {
     let y = area.y + row as u16;
-    let line_idx = scroll_offset.saturating_add(row);
-    if line_idx >= source.lines.len() {
-      if source.truncated && line_idx == source.lines.len() {
-        buf.set_stringn(area.x, y, "…", area.width as usize, gutter_style);
+    let virtual_row = scroll_offset.saturating_add(row);
+    if virtual_row >= total_virtual_rows {
+      continue;
+    }
+
+    if has_top_marker && virtual_row == 0 {
+      let marker = format!("… {} lines above", source.truncated_above_lines);
+      buf.set_stringn(area.x, y, marker, area.width as usize, gutter_style);
+      continue;
+    }
+
+    let local_line_idx = virtual_row.saturating_sub(has_top_marker as usize);
+    if local_line_idx >= source.lines.len() {
+      if has_bottom_marker && local_line_idx == source.lines.len() {
+        let marker = format!("… {} lines below", source.truncated_below_lines);
+        buf.set_stringn(area.x, y, marker, area.width as usize, gutter_style);
       }
       continue;
     }
 
-    let focused = focus_line.is_some_and(|focus_line| focus_line == line_idx);
+    let absolute_line_idx = source.base_line.saturating_add(local_line_idx);
+    let focused = focus_line.is_some_and(|focus_line| focus_line == absolute_line_idx);
     if focused {
       fill_rect(buf, Rect::new(area.x, y, area.width, 1), focus_fill_style);
     }
 
-    let line_number = line_idx + 1;
+    let line_number = absolute_line_idx + 1;
     let marker = if focused { "▶" } else { " " };
     let gutter = format!("{marker}{line_number:>line_number_width$} ");
     let gutter_width = gutter.chars().count() as u16;
@@ -3735,12 +4171,12 @@ fn draw_file_picker_source_preview(
       continue;
     }
 
-    let line = &source.lines[line_idx];
+    let line = &source.lines[local_line_idx];
     if line.is_empty() {
       continue;
     }
 
-    let line_start = source.line_starts[line_idx];
+    let line_start = source.line_starts[local_line_idx];
     let base_line_style = if focused {
       text_style.add_modifier(Modifier::BOLD)
     } else {
@@ -3758,6 +4194,18 @@ fn draw_file_picker_source_preview(
       ),
       buf,
     );
+
+    if focused && let Some((start, end)) = focus_col {
+      highlight_char_range(
+        buf,
+        area.x.saturating_add(gutter_width),
+        y,
+        area.width.saturating_sub(gutter_width),
+        start,
+        end,
+        match_style,
+      );
+    }
   }
 }
 
@@ -3770,6 +4218,7 @@ fn draw_file_picker_plain_preview(
   theme: &the_lib::render::theme::Theme,
   focus_line: Option<usize>,
   focus_accent: Option<Color>,
+  focus_col: Option<(usize, usize)>,
 ) {
   if area.width == 0 || area.height == 0 {
     return;
@@ -3777,6 +4226,7 @@ fn draw_file_picker_plain_preview(
 
   let (focus_fill_style, focus_marker_style) =
     file_picker_preview_focus_styles(theme, text_style, focus_accent);
+  let match_style = file_picker_match_highlight_style(theme, text_style, focus_accent);
   for (row, line) in text
     .lines()
     .skip(scroll_offset)
@@ -3816,6 +4266,18 @@ fn draw_file_picker_plain_preview(
         text_style
       },
     );
+
+    if focused && let Some((start, end)) = focus_col {
+      highlight_char_range(
+        buf,
+        text_x,
+        area.y + row as u16,
+        text_width,
+        start,
+        end,
+        match_style,
+      );
+    }
   }
 }
 
@@ -5791,9 +6253,11 @@ mod tests {
     file_picker_panel_styles,
     inline_diagnostics_from_document,
     language_filename_hints,
+    live_grep_display_path,
     max_content_width_for_intent,
     panel_box_size,
     parse_inline_diagnostic_filter,
+    parse_live_grep_picker_display,
     parse_markdown_blocks,
     parse_symbols_picker_display,
     select_end_of_line_diagnostic,
@@ -6133,6 +6597,37 @@ mod tests {
     assert_eq!(row.line, 120);
     assert_eq!(row.column, 8);
     assert_eq!(row.depth, 2);
+  }
+
+  #[test]
+  fn parse_live_grep_picker_display_reads_tab_fields() {
+    let row = parse_live_grep_picker_display("src/main.rs\t42\t7\tfn global_search(cx: &mut Ctx)");
+    assert_eq!(row.path, "src/main.rs");
+    assert_eq!(row.line, 42);
+    assert_eq!(row.column, 7);
+    assert_eq!(row.snippet, "fn global_search(cx: &mut Ctx)");
+  }
+
+  #[test]
+  fn parse_live_grep_picker_display_falls_back_to_raw_text() {
+    let row = parse_live_grep_picker_display("raw display line");
+    assert!(row.path.is_empty());
+    assert_eq!(row.line, 1);
+    assert_eq!(row.column, 1);
+    assert_eq!(row.snippet, "raw display line");
+  }
+
+  #[test]
+  fn live_grep_display_path_reads_first_tab_field() {
+    assert_eq!(
+      live_grep_display_path("src/main.rs\t42\t7\tfn main()"),
+      "src/main.rs"
+    );
+  }
+
+  #[test]
+  fn live_grep_display_path_returns_empty_for_non_tab_rows() {
+    assert_eq!(live_grep_display_path("raw display line"), "");
   }
 
   #[test]

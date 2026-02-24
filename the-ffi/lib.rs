@@ -3436,8 +3436,11 @@ fn build_preview_data(picker: &FilePickerState) -> PreviewData {
         kind: 1,
         path: preview_path,
         loading: picker.preview_loading(),
-        truncated: source.truncated,
-        total_lines: source.lines.len(),
+        truncated: source.truncated_above_lines > 0 || source.truncated_below_lines > 0,
+        total_lines: source
+          .base_line
+          .saturating_add(source.lines.len())
+          .saturating_add(source.truncated_below_lines),
         show: picker.show_preview,
         lines,
         ..Default::default()

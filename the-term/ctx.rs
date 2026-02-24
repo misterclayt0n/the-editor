@@ -56,12 +56,15 @@ use the_default::{
   FilePickerItem,
   FilePickerItemAction,
   FilePickerState,
+  GlobalSearchState,
   KeyBinding,
   KeyEvent,
   Keymaps,
   MessagePresentation,
   Mode,
   Motion,
+  replace_file_picker_items,
+  set_file_picker_query_external,
 };
 use the_lib::{
   diagnostics::{
@@ -526,6 +529,7 @@ pub struct Ctx {
   pub completion_docs_drag:          Option<CompletionDocsDragState>,
   pub pane_resize_drag:              Option<PaneResizeDragState>,
   pub search_prompt:                 the_default::SearchPromptState,
+  global_search:                     GlobalSearchState,
   pub ui_theme:                      Theme,
   pub ui_state:                      UiState,
   pub pending_input:                 Option<the_default::PendingInput>,
@@ -892,6 +896,7 @@ impl Ctx {
       completion_docs_drag: None,
       pane_resize_drag: None,
       search_prompt: the_default::SearchPromptState::new(),
+      global_search: GlobalSearchState::default(),
       ui_theme,
       ui_state: UiState::default(),
       pending_input: None,
@@ -1027,6 +1032,93 @@ impl Ctx {
     }
 
     changed
+  }
+
+  fn start_global_search(&mut self) {
+    let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let root = the_default::workspace_root(&cwd);
+    if !root.exists() {
+      let _ = <Self as the_default::DefaultContext>::push_error(
+        self,
+        "global_search",
+        "Current working directory does not exist",
+      );
+      return;
+    }
+
+    if let Err(err) = self.global_search.activate(root.as_path()) {
+      let _ = <Self as the_default::DefaultContext>::push_error(
+        self,
+        "global_search",
+        format!("Failed to initialize global search index: {err}"),
+      );
+      return;
+    }
+
+    let initial_query = self.workspace_symbol_query_from_cursor();
+    the_default::open_custom_picker(self, "Live Grep", root, None, Vec::new(), 0);
+    {
+      let picker = &mut self.file_picker;
+      set_file_picker_query_external(picker, true);
+      picker.query = initial_query.clone();
+      picker.cursor = initial_query.len();
+      picker.error = None;
+      picker.preview = the_default::FilePickerPreview::Message(if initial_query.is_empty() {
+        "Type to search".to_string()
+      } else {
+        "Searching…".to_string()
+      });
+    }
+
+    if !initial_query.trim().is_empty() {
+      self.schedule_global_search(initial_query);
+    } else {
+      self.needs_render = true;
+    }
+  }
+
+  fn schedule_global_search(&mut self, query: String) {
+    if !self.global_search.is_active() {
+      return;
+    }
+    self.global_search.schedule(query);
+  }
+
+  pub fn poll_global_search(&mut self) -> bool {
+    if !self.global_search.is_active() {
+      return false;
+    }
+    if !self.file_picker.active {
+      self.global_search.deactivate();
+      return false;
+    }
+
+    let Some(response) = self.global_search.poll_latest() else {
+      return false;
+    };
+
+    let has_items = !response.items.is_empty();
+    replace_file_picker_items(self, response.items, 0);
+    {
+      let picker = &mut self.file_picker;
+      set_file_picker_query_external(picker, true);
+      picker.query = response.query.clone();
+      picker.cursor = response.query.len();
+      if let Some(error) = response.error {
+        picker.error = Some(error.clone());
+        picker.preview = the_default::FilePickerPreview::Message(error);
+      } else if response.indexing && !has_items {
+        picker.error = None;
+        picker.preview = the_default::FilePickerPreview::Message("Indexing files…".to_string());
+      } else {
+        picker.error = None;
+        if picker.query.trim().is_empty() {
+          picker.preview = the_default::FilePickerPreview::Message("Type to search".to_string());
+        }
+      }
+    }
+    self.needs_render = true;
+    true
   }
 
   pub fn start_background_services(&mut self) {
@@ -2021,9 +2113,11 @@ impl Ctx {
           path: path.clone(),
           cursor_char,
           line,
+          column: None,
         },
         preview_path: Some(path),
         preview_line: Some(line),
+        preview_col: None,
       });
     }
 
@@ -4365,6 +4459,20 @@ impl the_default::DefaultContext for Ctx {
 
   fn file_picker_mut(&mut self) -> &mut FilePickerState {
     &mut self.file_picker
+  }
+
+  fn global_search(&mut self) {
+    self.start_global_search();
+  }
+
+  fn file_picker_query_changed(&mut self, query: &str) {
+    if self.global_search.is_active() {
+      self.schedule_global_search(query.to_string());
+    }
+  }
+
+  fn file_picker_closed(&mut self) {
+    self.global_search.deactivate();
   }
 
   fn search_prompt_ref(&self) -> &the_default::SearchPromptState {

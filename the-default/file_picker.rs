@@ -15,6 +15,8 @@ use std::{
   },
   sync::{
     Arc,
+    Mutex,
+    OnceLock,
     atomic::{
       AtomicBool,
       AtomicU64,
@@ -85,14 +87,26 @@ use crate::{
 
 const MAX_SCAN_ITEMS: usize = 100_000;
 const MAX_FILE_SIZE_FOR_PREVIEW: u64 = 10 * 1024 * 1024;
-const MAX_PREVIEW_BYTES: usize = 256 * 1024;
-const MAX_PREVIEW_LINES: usize = 512;
+const MAX_PREVIEW_BYTES: usize = MAX_FILE_SIZE_FOR_PREVIEW as usize;
+const MAX_PREVIEW_SOURCE_LINES: usize = 16_384;
+const MAX_PREVIEW_DIRECTORY_ENTRIES: usize = 1024;
+const PREVIEW_FOCUS_WINDOW_LINES: usize = 240;
 const PREVIEW_CACHE_CAPACITY: usize = 128;
 const PAGE_SIZE: usize = 12;
 const MATCHER_TICK_TIMEOUT_MS: u64 = 10;
 const DEFAULT_LIST_VISIBLE_ROWS: usize = 32;
 const WARMUP_SCAN_BUDGET_MS: u64 = 30;
 const PREVIEW_FOCUS_CONTEXT_LINES: usize = 3;
+
+#[derive(Debug, Clone)]
+struct CachedLineIndex {
+  file_len:      u64,
+  modified_secs: u64,
+  line_starts:   Arc<[usize]>,
+}
+
+static PREVIEW_LINE_INDEX_CACHE: OnceLock<Mutex<HashMap<PathBuf, CachedLineIndex>>> =
+  OnceLock::new();
 
 thread_local! {
   static MATCH_INDEX_SCRATCH: RefCell<(NucleoMatcher, Vec<u32>)> =
@@ -109,11 +123,15 @@ pub struct FilePickerItem {
   pub action:       FilePickerItemAction,
   pub preview_path: Option<PathBuf>,
   pub preview_line: Option<usize>,
+  pub preview_col:  Option<(usize, usize)>,
 }
 
 #[derive(Debug, Clone)]
 pub enum FilePickerItemAction {
   OpenFile(PathBuf),
+  GroupHeader {
+    path: PathBuf,
+  },
   SwitchBuffer {
     buffer_index: usize,
   },
@@ -126,7 +144,20 @@ pub enum FilePickerItemAction {
     path:        PathBuf,
     cursor_char: usize,
     line:        usize,
+    column:      Option<usize>,
   },
+}
+
+impl FilePickerItemAction {
+  fn is_selectable(&self) -> bool {
+    !matches!(self, Self::GroupHeader { .. })
+  }
+}
+
+impl FilePickerItem {
+  fn is_selectable(&self) -> bool {
+    self.action.is_selectable()
+  }
 }
 
 #[derive(Debug, Clone)]
@@ -196,16 +227,19 @@ pub enum FilePickerPreview {
 
 #[derive(Debug, Clone)]
 pub struct FilePickerSourcePreview {
-  pub lines:       Arc<[String]>,
-  pub line_starts: Arc<[usize]>,
-  pub highlights:  Arc<[(Highlight, Range<usize>)]>,
-  pub truncated:   bool,
+  pub lines:                 Arc<[String]>,
+  pub line_starts:           Arc<[usize]>,
+  pub highlights:            Arc<[(Highlight, Range<usize>)]>,
+  pub base_line:             usize,
+  pub truncated_above_lines: usize,
+  pub truncated_below_lines: usize,
 }
 
 struct PreviewRequest {
   request_id: u64,
   path:       PathBuf,
   is_dir:     bool,
+  focus_line: Option<usize>,
 }
 
 struct PreviewResult {
@@ -296,6 +330,7 @@ pub struct FilePickerState {
   pub error:              Option<String>,
   pub scanning:           bool,
   pub matcher_running:    bool,
+  pub query_external:     bool,
   preview_cache:          PreviewCache,
   preview_req_tx:         Option<Sender<PreviewRequest>>,
   preview_res_rx:         Option<Receiver<PreviewResult>>,
@@ -338,6 +373,7 @@ impl Default for FilePickerState {
       error: None,
       scanning: false,
       matcher_running: false,
+      query_external: false,
       preview_cache: PreviewCache::with_capacity(PREVIEW_CACHE_CAPACITY),
       preview_req_tx: None,
       preview_res_rx: None,
@@ -429,7 +465,11 @@ impl FilePickerState {
     match &self.preview {
       FilePickerPreview::Empty => 0,
       FilePickerPreview::Source(source) => {
-        source.lines.len().saturating_add(source.truncated as usize)
+        source
+          .lines
+          .len()
+          .saturating_add((source.truncated_above_lines > 0) as usize)
+          .saturating_add((source.truncated_below_lines > 0) as usize)
       },
       FilePickerPreview::Text(text) => text.lines().count().max(1),
       FilePickerPreview::Message(message) => message.lines().count().max(1),
@@ -549,6 +589,7 @@ pub fn open_buffer_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
         },
         preview_path: snapshot.file_path,
         preview_line,
+        preview_col: None,
       }
     })
     .collect();
@@ -613,6 +654,7 @@ pub fn open_jumplist_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
         },
         preview_path: snapshot.file_path,
         preview_line: Some(preview_line),
+        preview_col: None,
       })
     })
     .collect::<Vec<_>>();
@@ -692,9 +734,11 @@ pub fn open_diagnostics_picker<Ctx: DefaultContext>(ctx: &mut Ctx, workspace: bo
           path:        diagnostic.path.clone(),
           cursor_char: diagnostic.cursor_char,
           line:        diagnostic.line,
+          column:      None,
         },
         preview_path: Some(diagnostic.path),
         preview_line: Some(diagnostic.line),
+        preview_col: None,
       }
     })
     .collect();
@@ -767,6 +811,7 @@ pub fn open_changed_file_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
         action: FilePickerItemAction::OpenFile(entry.path.clone()),
         preview_path: Some(entry.path),
         preview_line: None,
+        preview_col: None,
       }
     })
     .collect();
@@ -800,26 +845,7 @@ fn open_static_picker<Ctx: DefaultContext>(
 ) {
   let mut state = base_picker_state(ctx, title, open_split);
   state.root = root;
-  state.preview = FilePickerPreview::Message("No matches".to_string());
-  start_preview_worker(&mut state);
-  state.matcher.restart(true);
-  state
-    .matcher
-    .pattern
-    .reparse(0, "", CaseMatching::Smart, Normalization::Smart, false);
-  let injector = state.matcher.injector();
-  for item in items {
-    inject_item(&injector, item);
-  }
-  drop(injector);
-  let _ = refresh_matcher_state(&mut state);
-  if state.matched_count() == 0 {
-    state.selected = None;
-  } else {
-    state.selected = Some(initial_cursor.min(state.matched_count() - 1));
-    normalize_selection_and_scroll(&mut state);
-    refresh_preview(&mut state);
-  }
+  replace_picker_items(&mut state, items, initial_cursor);
 
   *ctx.file_picker_mut() = state;
   ctx.request_render();
@@ -834,6 +860,51 @@ pub fn open_custom_picker<Ctx: DefaultContext>(
   initial_cursor: usize,
 ) {
   open_static_picker(ctx, title, root, open_split, items, initial_cursor);
+}
+
+pub fn set_file_picker_query_external(state: &mut FilePickerState, external: bool) {
+  state.query_external = external;
+}
+
+pub fn replace_file_picker_items<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  items: Vec<FilePickerItem>,
+  initial_cursor: usize,
+) {
+  let picker = ctx.file_picker_mut();
+  replace_picker_items(picker, items, initial_cursor);
+  ctx.request_render();
+}
+
+fn replace_picker_items(
+  state: &mut FilePickerState,
+  items: Vec<FilePickerItem>,
+  initial_cursor: usize,
+) {
+  state.preview = FilePickerPreview::Message("No matches".to_string());
+  if state.preview_req_tx.is_none() || state.preview_res_rx.is_none() {
+    start_preview_worker(state);
+  }
+  state.matcher.restart(true);
+  state
+    .matcher
+    .pattern
+    .reparse(0, "", CaseMatching::Smart, Normalization::Smart, false);
+  let injector = state.matcher.injector();
+  for item in items {
+    inject_item(&injector, item);
+  }
+  drop(injector);
+  let _ = refresh_matcher_state(state);
+  if state.matched_count() == 0 {
+    state.selected = None;
+    set_preview_focus_line(state, None);
+    state.preview_path = None;
+  } else {
+    state.selected = Some(initial_cursor.min(state.matched_count() - 1));
+    normalize_selection_and_scroll(state);
+    refresh_preview(state);
+  }
 }
 
 fn base_picker_state<Ctx: DefaultContext>(
@@ -876,16 +947,58 @@ pub fn close_file_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
   picker.preview = FilePickerPreview::Empty;
   picker.scanning = false;
   picker.matcher_running = false;
+  picker.query_external = false;
   picker.preview_req_tx = None;
   picker.preview_res_rx = None;
   picker.preview_pending_id = None;
   picker.preview_latest_request.store(0, Ordering::Relaxed);
   picker.scan_rx = None;
   picker.scan_cancel = None;
+  ctx.file_picker_closed();
   ctx.request_render();
 }
 
+fn matched_item_is_selectable(state: &FilePickerState, index: usize) -> bool {
+  state
+    .matched_item(index)
+    .as_deref()
+    .is_some_and(FilePickerItem::is_selectable)
+}
+
+fn find_selectable_index(state: &FilePickerState, start: usize, direction: isize) -> Option<usize> {
+  let matched_count = state.matched_count();
+  if matched_count == 0 {
+    return None;
+  }
+
+  let step = if direction < 0 { -1 } else { 1 };
+  let mut probe = start.min(matched_count - 1) as isize;
+  for _ in 0..matched_count {
+    let index = probe.rem_euclid(matched_count as isize) as usize;
+    if matched_item_is_selectable(state, index) {
+      return Some(index);
+    }
+    probe += step;
+  }
+
+  None
+}
+
+fn snap_selection_to_selectable(state: &mut FilePickerState, direction: isize) {
+  let matched_count = state.matched_count();
+  if matched_count == 0 {
+    state.selected = None;
+    return;
+  }
+
+  let start = state.selected.unwrap_or(0).min(matched_count - 1);
+  state.selected = find_selectable_index(state, start, direction);
+}
+
 pub fn move_selection<Ctx: DefaultContext>(ctx: &mut Ctx, amount: isize) {
+  if amount == 0 {
+    return;
+  }
   let picker = ctx.file_picker_mut();
   let matched_count = picker.matched_count();
   if matched_count == 0 {
@@ -894,10 +1007,25 @@ pub fn move_selection<Ctx: DefaultContext>(ctx: &mut Ctx, amount: isize) {
     return;
   }
 
-  let len = matched_count as isize;
-  let selected = picker.selected.unwrap_or(0) as isize;
-  let next = (selected + amount).rem_euclid(len) as usize;
-  picker.selected = Some(next);
+  let direction = if amount < 0 { -1 } else { 1 };
+  let steps = amount.unsigned_abs();
+  let fallback = if direction < 0 { matched_count - 1 } else { 0 };
+  let start = picker.selected.unwrap_or(fallback).min(matched_count - 1);
+  let Some(mut selected) = find_selectable_index(picker, start, direction) else {
+    picker.selected = None;
+    picker.list_offset = 0;
+    return;
+  };
+
+  for _ in 0..steps {
+    let next_start = (selected as isize + direction).rem_euclid(matched_count as isize) as usize;
+    let Some(next) = find_selectable_index(picker, next_start, direction) else {
+      break;
+    };
+    selected = next;
+  }
+
+  picker.selected = Some(selected);
   normalize_selection_and_scroll(picker);
   refresh_preview(picker);
 }
@@ -959,6 +1087,7 @@ pub fn handle_file_picker_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent)
       } else {
         Some(0)
       };
+      snap_selection_to_selectable(picker, 1);
       normalize_selection_and_scroll(picker);
       refresh_preview(picker);
       ctx.request_render();
@@ -967,6 +1096,7 @@ pub fn handle_file_picker_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent)
     Key::End => {
       let picker = ctx.file_picker_mut();
       picker.selected = picker.matched_count().checked_sub(1);
+      snap_selection_to_selectable(picker, -1);
       normalize_selection_and_scroll(picker);
       refresh_preview(picker);
       ctx.request_render();
@@ -982,26 +1112,62 @@ pub fn handle_file_picker_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent)
       true
     },
     Key::Backspace => {
-      let picker = ctx.file_picker_mut();
-      if picker.cursor > 0 && picker.cursor <= picker.query.len() {
-        let old_query = picker.query.clone();
-        let prev = prev_char_boundary(&picker.query, picker.cursor);
-        picker.query.replace_range(prev..picker.cursor, "");
-        picker.cursor = prev;
-        handle_query_change(picker, &old_query);
-        refresh_preview(picker);
+      let mut changed_query = None;
+      {
+        let picker = ctx.file_picker_mut();
+        if picker.cursor > 0 && picker.cursor <= picker.query.len() {
+          let old_query = picker.query.clone();
+          let prev = prev_char_boundary(&picker.query, picker.cursor);
+          picker.query.replace_range(prev..picker.cursor, "");
+          picker.cursor = prev;
+          if picker.query_external {
+            picker.selected = Some(0);
+            picker.list_offset = 0;
+            picker.error = None;
+            picker.preview = FilePickerPreview::Message("Searching…".to_string());
+            set_preview_focus_line(picker, None);
+            picker.preview_path = None;
+            picker.preview_pending_id = None;
+            picker.preview_latest_request.store(0, Ordering::Relaxed);
+            changed_query = Some(picker.query.clone());
+          } else {
+            handle_query_change(picker, &old_query);
+            refresh_preview(picker);
+          }
+        }
+      }
+      if let Some(query) = changed_query {
+        ctx.file_picker_query_changed(&query);
       }
       ctx.request_render();
       true
     },
     Key::Delete => {
-      let picker = ctx.file_picker_mut();
-      if picker.cursor < picker.query.len() {
-        let old_query = picker.query.clone();
-        let next = next_char_boundary(&picker.query, picker.cursor);
-        picker.query.replace_range(picker.cursor..next, "");
-        handle_query_change(picker, &old_query);
-        refresh_preview(picker);
+      let mut changed_query = None;
+      {
+        let picker = ctx.file_picker_mut();
+        if picker.cursor < picker.query.len() {
+          let old_query = picker.query.clone();
+          let next = next_char_boundary(&picker.query, picker.cursor);
+          picker.query.replace_range(picker.cursor..next, "");
+          if picker.query_external {
+            picker.selected = Some(0);
+            picker.list_offset = 0;
+            picker.error = None;
+            picker.preview = FilePickerPreview::Message("Searching…".to_string());
+            set_preview_focus_line(picker, None);
+            picker.preview_path = None;
+            picker.preview_pending_id = None;
+            picker.preview_latest_request.store(0, Ordering::Relaxed);
+            changed_query = Some(picker.query.clone());
+          } else {
+            handle_query_change(picker, &old_query);
+            refresh_preview(picker);
+          }
+        }
+      }
+      if let Some(query) = changed_query {
+        ctx.file_picker_query_changed(&query);
       }
       ctx.request_render();
       true
@@ -1060,12 +1226,30 @@ pub fn handle_file_picker_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent)
       if key.modifiers.ctrl() || key.modifiers.alt() {
         return true;
       }
-      let picker = ctx.file_picker_mut();
-      let old_query = picker.query.clone();
-      picker.query.insert(picker.cursor, ch);
-      picker.cursor += ch.len_utf8();
-      handle_query_change(picker, &old_query);
-      refresh_preview(picker);
+      let mut changed_query = None;
+      {
+        let picker = ctx.file_picker_mut();
+        let old_query = picker.query.clone();
+        picker.query.insert(picker.cursor, ch);
+        picker.cursor += ch.len_utf8();
+        if picker.query_external {
+          picker.selected = Some(0);
+          picker.list_offset = 0;
+          picker.error = None;
+          picker.preview = FilePickerPreview::Message("Searching…".to_string());
+          set_preview_focus_line(picker, None);
+          picker.preview_path = None;
+          picker.preview_pending_id = None;
+          picker.preview_latest_request.store(0, Ordering::Relaxed);
+          changed_query = Some(picker.query.clone());
+        } else {
+          handle_query_change(picker, &old_query);
+          refresh_preview(picker);
+        }
+      }
+      if let Some(query) = changed_query {
+        ctx.file_picker_query_changed(&query);
+      }
       ctx.request_render();
       true
     },
@@ -1097,6 +1281,7 @@ pub fn submit_file_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
       }
       close_file_picker(ctx);
     },
+    FilePickerItemAction::GroupHeader { .. } => {},
     FilePickerItemAction::SwitchBuffer { buffer_index } => {
       if !ctx.editor().set_active_buffer(*buffer_index) {
         ctx.push_warning("buffer_picker", "selected buffer is no longer available");
@@ -1132,6 +1317,7 @@ pub fn submit_file_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
       path,
       cursor_char,
       line,
+      column,
     } => {
       if !prepare_split_for_submit(ctx) {
         return;
@@ -1156,7 +1342,17 @@ pub fn submit_file_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
       }
 
       let text = ctx.editor_ref().document().text();
-      let cursor = (*cursor_char).min(text.len_chars());
+      let mut cursor = (*cursor_char).min(text.len_chars());
+      if let Some(column) = *column {
+        if *line < text.len_lines() {
+          let line_start = text.line_to_char(*line);
+          let line_end = text.line_to_char((*line + 1).min(text.len_lines()));
+          let line_len = line_end.saturating_sub(line_start);
+          cursor = line_start.saturating_add(column.min(line_len));
+        }
+      } else if *cursor_char == 0 && *line > 0 && *line < text.len_lines() {
+        cursor = text.line_to_char(*line);
+      }
       let _ = ctx
         .editor()
         .document_mut()
@@ -1192,6 +1388,7 @@ pub fn select_file_picker_index<Ctx: DefaultContext>(ctx: &mut Ctx, index: usize
   }
 
   picker.selected = Some(index.min(matched_count - 1));
+  snap_selection_to_selectable(picker, 1);
   normalize_selection_and_scroll(picker);
   refresh_preview(picker);
   ctx.request_render();
@@ -1624,6 +1821,7 @@ fn entry_to_picker_item(entry: DirEntry, root: &Path) -> Option<FilePickerItem> 
     display_path: true,
     preview_path: None,
     preview_line: None,
+    preview_col: None,
   })
 }
 
@@ -2020,7 +2218,7 @@ fn start_preview_worker(state: &mut FilePickerState) {
         continue;
       }
 
-      match preview_for_path_base(&request.path, request.is_dir) {
+      match preview_for_path_base(&request.path, request.is_dir, request.focus_line) {
         PreviewBuild::Final(preview) => {
           if request.request_id != latest_request.load(Ordering::Relaxed) {
             continue;
@@ -2168,8 +2366,12 @@ fn normalize_selection_and_scroll(state: &mut FilePickerState) {
   }
 
   let visible = state.list_visible.max(1);
-  let selected = state.selected.unwrap_or(0).min(matched_count - 1);
-  state.selected = Some(selected);
+  state.selected = Some(state.selected.unwrap_or(0).min(matched_count - 1));
+  snap_selection_to_selectable(state, 1);
+  let Some(selected) = state.selected else {
+    state.list_offset = 0;
+    return;
+  };
 
   if selected < state.list_offset {
     state.list_offset = selected;
@@ -2203,13 +2405,17 @@ fn clamp_selection_and_offsets(state: &mut FilePickerState) -> bool {
   }
 
   let last = matched_count - 1;
-  let next_selected = Some(state.selected.unwrap_or(0).min(last));
+  let selection_start = state.selected.unwrap_or(0).min(last);
+  let next_selected = find_selectable_index(state, selection_start, 1);
   if state.selected != next_selected {
     state.selected = next_selected;
     changed = true;
   }
 
-  let next_hovered = state.hovered.map(|hovered| hovered.min(last));
+  let next_hovered = state
+    .hovered
+    .map(|hovered| hovered.min(last))
+    .and_then(|hovered| matched_item_is_selectable(state, hovered).then_some(hovered));
   if state.hovered != next_hovered {
     state.hovered = next_hovered;
     changed = true;
@@ -2257,22 +2463,30 @@ fn refresh_preview(state: &mut FilePickerState) {
     .as_ref()
     .is_some_and(|path| path == preview_target)
   {
-    if state.preview_focus_line != preview_focus_line {
-      set_preview_focus_line(state, preview_focus_line);
+    if state.preview_focus_line == preview_focus_line {
+      return;
     }
-    return;
+    if preview_contains_focus_line(&state.preview, preview_focus_line) {
+      set_preview_focus_line(state, preview_focus_line);
+      return;
+    }
   }
 
   state.preview_path = Some(preview_target.clone());
   if let Some(preview) = state.preview_cache.get(preview_target) {
-    state.preview = preview;
-    set_preview_focus_line(state, preview_focus_line);
-    state.preview_pending_id = None;
-    state.preview_latest_request.store(0, Ordering::Relaxed);
-    return;
+    if !preview_contains_focus_line(&preview, preview_focus_line) {
+      // Cache entry for this path is not focused near the selected line.
+      // Rebuild so preview recenters around the current hit.
+    } else {
+      state.preview = preview;
+      set_preview_focus_line(state, preview_focus_line);
+      state.preview_pending_id = None;
+      state.preview_latest_request.store(0, Ordering::Relaxed);
+      return;
+    }
   }
 
-  match preview_for_path_base(preview_target, item.is_dir) {
+  match preview_for_path_base(preview_target, item.is_dir, preview_focus_line) {
     PreviewBuild::Final(preview) => {
       state
         .preview_cache
@@ -2307,6 +2521,7 @@ fn refresh_preview(state: &mut FilePickerState) {
         request_id,
         path: preview_target.clone(),
         is_dir: item.is_dir,
+        focus_line: preview_focus_line,
       };
 
       let sent = state
@@ -2347,13 +2562,48 @@ fn refresh_preview(state: &mut FilePickerState) {
 
 fn set_preview_focus_line(state: &mut FilePickerState, line: Option<usize>) {
   state.preview_focus_line = line;
-  let next_scroll = line
-    .map(|line| line.saturating_sub(PREVIEW_FOCUS_CONTEXT_LINES))
-    .unwrap_or(0);
+  let next_scroll = preview_focus_row(&state.preview, line)
+    .map(|row| row.saturating_sub(PREVIEW_FOCUS_CONTEXT_LINES))
+    .unwrap_or_else(|| {
+      line
+        .map(|line| line.saturating_sub(PREVIEW_FOCUS_CONTEXT_LINES))
+        .unwrap_or(0)
+    });
   state.preview_scroll = next_scroll.min(state.preview_line_count().saturating_sub(1));
 }
 
-fn preview_for_path_base(path: &Path, is_dir: bool) -> PreviewBuild {
+fn preview_focus_row(preview: &FilePickerPreview, focus_line: Option<usize>) -> Option<usize> {
+  let focus_line = focus_line?;
+  match preview {
+    FilePickerPreview::Source(source) => {
+      let start = source.base_line;
+      let end = source.base_line.saturating_add(source.lines.len());
+      if !(start..end).contains(&focus_line) {
+        return None;
+      }
+      let top_marker = (source.truncated_above_lines > 0) as usize;
+      Some(top_marker.saturating_add(focus_line.saturating_sub(start)))
+    },
+    FilePickerPreview::Text(_) | FilePickerPreview::Message(_) => Some(focus_line),
+    FilePickerPreview::Empty => None,
+  }
+}
+
+fn preview_contains_focus_line(preview: &FilePickerPreview, focus_line: Option<usize>) -> bool {
+  let Some(focus_line) = focus_line else {
+    return true;
+  };
+  match preview {
+    FilePickerPreview::Source(source) => {
+      let start = source.base_line;
+      let end = source.base_line.saturating_add(source.lines.len());
+      (start..end).contains(&focus_line)
+    },
+    _ => true,
+  }
+}
+
+fn preview_for_path_base(path: &Path, is_dir: bool, focus_line: Option<usize>) -> PreviewBuild {
   if is_dir {
     return PreviewBuild::Final(directory_preview(path));
   }
@@ -2400,13 +2650,15 @@ fn preview_for_path_base(path: &Path, is_dir: bool) -> PreviewBuild {
   }
 
   let text = String::from_utf8_lossy(&bytes).into_owned();
-  let Some((source, end_byte)) = source_preview(&text, truncated) else {
+  let Some((source, end_byte, preview_text)) =
+    source_preview(path, &metadata, &text, truncated, focus_line)
+  else {
     return PreviewBuild::Final(FilePickerPreview::Message("<Empty file>".to_string()));
   };
 
   PreviewBuild::Source(SourcePreviewData {
     source,
-    text,
+    text: preview_text,
     end_byte,
   })
 }
@@ -2420,7 +2672,7 @@ fn directory_preview(path: &Path) -> FilePickerPreview {
   };
 
   let mut names = Vec::new();
-  for entry in read_dir.take(MAX_PREVIEW_LINES) {
+  for entry in read_dir.take(MAX_PREVIEW_DIRECTORY_ENTRIES) {
     let Ok(entry) = entry else {
       continue;
     };
@@ -2441,19 +2693,94 @@ fn directory_preview(path: &Path) -> FilePickerPreview {
   FilePickerPreview::Text(names.join("\n"))
 }
 
+fn preview_line_index_cache() -> &'static Mutex<HashMap<PathBuf, CachedLineIndex>> {
+  PREVIEW_LINE_INDEX_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn metadata_modified_secs(metadata: &fs::Metadata) -> u64 {
+  metadata
+    .modified()
+    .ok()
+    .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+    .map(|duration| duration.as_secs())
+    .unwrap_or(0)
+}
+
+fn build_line_start_index(text: &str) -> Arc<[usize]> {
+  let mut line_starts = Vec::new();
+  line_starts.push(0);
+  for (idx, byte) in text.bytes().enumerate() {
+    if byte == b'\n' && idx + 1 < text.len() {
+      line_starts.push(idx + 1);
+    }
+  }
+  line_starts.into()
+}
+
+fn line_start_index_for_path(path: &Path, metadata: &fs::Metadata, text: &str) -> Arc<[usize]> {
+  let file_len = metadata.len();
+  let modified_secs = metadata_modified_secs(metadata);
+
+  if let Ok(cache) = preview_line_index_cache().lock()
+    && let Some(cached) = cache.get(path)
+    && cached.file_len == file_len
+    && cached.modified_secs == modified_secs
+  {
+    return Arc::clone(&cached.line_starts);
+  }
+
+  let line_starts = build_line_start_index(text);
+  if let Ok(mut cache) = preview_line_index_cache().lock() {
+    cache.insert(path.to_path_buf(), CachedLineIndex {
+      file_len,
+      modified_secs,
+      line_starts: Arc::clone(&line_starts),
+    });
+  }
+  line_starts
+}
+
 fn source_preview(
+  path: &Path,
+  metadata: &fs::Metadata,
   text: &str,
   truncated_by_bytes: bool,
-) -> Option<(FilePickerSourcePreview, usize)> {
+  focus_line: Option<usize>,
+) -> Option<(FilePickerSourcePreview, usize, String)> {
+  if text.is_empty() {
+    return None;
+  }
+
+  let all_line_starts = line_start_index_for_path(path, metadata, text);
+  let total_lines = all_line_starts.len();
+  if total_lines == 0 {
+    return None;
+  }
+
+  let window_size = PREVIEW_FOCUS_WINDOW_LINES
+    .max(1)
+    .min(MAX_PREVIEW_SOURCE_LINES.max(1));
+  let focus_line = focus_line
+    .map(|line| line.min(total_lines.saturating_sub(1)))
+    .unwrap_or(0);
+  let mut window_start = focus_line.saturating_sub(window_size / 2);
+  if window_start.saturating_add(window_size) > total_lines {
+    window_start = total_lines.saturating_sub(window_size);
+  }
+  let window_end = window_start.saturating_add(window_size).min(total_lines);
+
+  let start_byte = all_line_starts[window_start];
+  let end_byte = if window_end < total_lines {
+    all_line_starts[window_end]
+  } else {
+    text.len()
+  };
+  let window_text = &text[start_byte..end_byte];
+
   let mut lines = Vec::new();
   let mut line_starts = Vec::new();
   let mut consumed_bytes = 0usize;
-
-  let mut segments = text.split_inclusive('\n').peekable();
-  while lines.len() < MAX_PREVIEW_LINES {
-    let Some(segment) = segments.next() else {
-      break;
-    };
+  for segment in window_text.split_inclusive('\n') {
     let line = segment
       .strip_suffix('\n')
       .map(|line| line.strip_suffix('\r').unwrap_or(line))
@@ -2462,20 +2789,35 @@ fn source_preview(
     lines.push(line.to_string());
     consumed_bytes = consumed_bytes.saturating_add(segment.len());
   }
-
+  if !window_text.is_empty() && !window_text.ends_with('\n') && lines.is_empty() {
+    line_starts.push(0);
+    lines.push(window_text.to_string());
+    consumed_bytes = window_text.len();
+  }
   if lines.is_empty() {
     return None;
   }
 
-  let truncated = truncated_by_bytes || segments.peek().is_some();
+  let mut truncated_above_lines = window_start;
+  let mut truncated_below_lines = total_lines.saturating_sub(window_end);
+  if truncated_by_bytes {
+    truncated_below_lines = truncated_below_lines.saturating_add(1);
+  }
+  if truncated_by_bytes && window_start > 0 {
+    truncated_above_lines = truncated_above_lines.saturating_add(1);
+  }
+
   Some((
     FilePickerSourcePreview {
       lines: lines.into(),
       line_starts: line_starts.into(),
       highlights: Vec::<(Highlight, Range<usize>)>::new().into(),
-      truncated,
+      base_line: window_start,
+      truncated_above_lines,
+      truncated_below_lines,
     },
     consumed_bytes,
+    window_text.to_string(),
   ))
 }
 
@@ -2511,16 +2853,31 @@ fn collect_source_highlights(
 }
 
 fn source_preview_text(source: &FilePickerSourcePreview) -> String {
-  let width = source.lines.len().max(1).to_string().len();
+  let total_lines = source
+    .base_line
+    .saturating_add(source.lines.len())
+    .saturating_add(source.truncated_below_lines)
+    .max(1);
+  let width = total_lines.to_string().len();
   let mut output = String::new();
-  for (line_idx, line) in source.lines.iter().enumerate() {
+  if source.truncated_above_lines > 0 {
     let _ = std::fmt::Write::write_fmt(
       &mut output,
-      format_args!("{:>width$} {}\n", line_idx + 1, line, width = width),
+      format_args!("… {} lines above\n", source.truncated_above_lines),
     );
   }
-  if source.truncated {
-    output.push('…');
+  for (line_idx, line) in source.lines.iter().enumerate() {
+    let absolute_line = source.base_line.saturating_add(line_idx).saturating_add(1);
+    let _ = std::fmt::Write::write_fmt(
+      &mut output,
+      format_args!("{:>width$} {}\n", absolute_line, line, width = width),
+    );
+  }
+  if source.truncated_below_lines > 0 {
+    let _ = std::fmt::Write::write_fmt(
+      &mut output,
+      format_args!("… {} lines below", source.truncated_below_lines),
+    );
   }
   output
 }
@@ -2548,6 +2905,22 @@ mod tests {
       action:       FilePickerItemAction::OpenFile(absolute),
       preview_path: None,
       preview_line: None,
+      preview_col:  None,
+    }
+  }
+
+  fn sample_group_header(display: &str) -> FilePickerItem {
+    let absolute = PathBuf::from(display);
+    FilePickerItem {
+      absolute:     absolute.clone(),
+      display:      display.to_string(),
+      icon:         "file_generic".to_string(),
+      is_dir:       false,
+      display_path: false,
+      action:       FilePickerItemAction::GroupHeader { path: absolute },
+      preview_path: None,
+      preview_line: None,
+      preview_col:  None,
     }
   }
 
@@ -2596,6 +2969,52 @@ mod tests {
   }
 
   #[test]
+  fn normalize_selection_skips_non_selectable_group_headers() {
+    let mut state = FilePickerState::default();
+    let injector = state.matcher.injector();
+    inject_item(&injector, sample_group_header("src/main.rs"));
+    inject_item(&injector, sample_item("src/main.rs\t10\t1\tfn main()"));
+    inject_item(&injector, sample_group_header("src/lib.rs"));
+    inject_item(&injector, sample_item("src/lib.rs\t4\t1\tpub fn lib()"));
+    drop(injector);
+
+    state
+      .matcher
+      .pattern
+      .reparse(0, "", CaseMatching::Smart, Normalization::Smart, false);
+    let _ = refresh_matcher_state(&mut state);
+
+    state.selected = Some(0);
+    normalize_selection_and_scroll(&mut state);
+    assert_eq!(state.selected, Some(1));
+
+    state.selected = Some(2);
+    normalize_selection_and_scroll(&mut state);
+    assert_eq!(state.selected, Some(3));
+  }
+
+  #[test]
+  fn clamp_selection_is_stable_when_only_group_headers_exist() {
+    let mut state = FilePickerState::default();
+    let injector = state.matcher.injector();
+    inject_item(&injector, sample_group_header("src/main.rs"));
+    drop(injector);
+
+    state
+      .matcher
+      .pattern
+      .reparse(0, "", CaseMatching::Smart, Normalization::Smart, false);
+    let _ = refresh_matcher_state(&mut state);
+
+    state.selected = Some(0);
+    let first_changed = clamp_selection_and_offsets(&mut state);
+    let second_changed = clamp_selection_and_offsets(&mut state);
+    assert!(first_changed);
+    assert!(!second_changed);
+    assert_eq!(state.selected, None);
+  }
+
+  #[test]
   fn refresh_preview_updates_scroll_for_new_focus_line_in_same_file() {
     let mut path = std::env::temp_dir();
     let stamp = SystemTime::now()
@@ -2622,9 +3041,11 @@ mod tests {
         path:        path.clone(),
         cursor_char: 0,
         line:        2,
+        column:      Some(0),
       },
       preview_path: Some(path.clone()),
       preview_line: Some(2),
+      preview_col:  Some((0, 4)),
     });
     inject_item(&injector, FilePickerItem {
       absolute:     path.clone(),
@@ -2636,9 +3057,11 @@ mod tests {
         path:        path.clone(),
         cursor_char: 0,
         line:        40,
+        column:      Some(0),
       },
       preview_path: Some(path.clone()),
       preview_line: Some(40),
+      preview_col:  Some((0, 4)),
     });
     drop(injector);
 

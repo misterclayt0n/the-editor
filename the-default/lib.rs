@@ -11,6 +11,7 @@ mod command_registry;
 mod command_types;
 mod completion_menu;
 mod file_picker;
+mod global_search;
 mod input;
 mod keymap;
 mod message_bar;
@@ -106,17 +107,23 @@ pub use file_picker::{
   open_jumplist_picker,
   poll_scan_results,
   refresh_matcher_state,
+  replace_file_picker_items,
   scroll_file_picker_list,
   scroll_file_picker_preview,
   select_file_picker_index,
   set_file_picker_config,
   set_file_picker_list_offset,
   set_file_picker_preview_offset,
+  set_file_picker_query_external,
   set_file_picker_syntax_loader,
   set_file_picker_wake_sender,
   set_picker_visible_rows,
   submit_file_picker,
   workspace_root,
+};
+pub use global_search::{
+  GlobalSearchResponse,
+  GlobalSearchState,
 };
 pub use input::{
   Key,

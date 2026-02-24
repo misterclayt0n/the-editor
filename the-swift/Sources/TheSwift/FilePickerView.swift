@@ -717,6 +717,7 @@ struct FilePreviewPanel: View {
     @State private var contentMinY: CGFloat = 0
     @State private var lastRequestedOffset: Int = Int.min
     @State private var lastRequestedVisibleRows: Int = 0
+    @State private var lastRequestedOverscan: Int = 0
     @State private var pendingFocusReset: Bool = true
 
     var body: some View {
@@ -735,6 +736,12 @@ struct FilePreviewPanel: View {
         }
         .onChange(of: preview?.kind() ?? 0) { _ in
             pendingFocusReset = true
+            requestWindow()
+        }
+        .onChange(of: preview?.line_count() ?? 0) { _ in
+            requestWindow()
+        }
+        .onChange(of: preview?.total_lines() ?? 0) { _ in
             requestWindow()
         }
     }
@@ -924,21 +931,24 @@ struct FilePreviewPanel: View {
 
     private func requestWindow() {
         guard let onWindowRequest else { return }
-        let visibleRows = max(1, Int(ceil(viewportHeight / rowHeight)))
-        if visibleRows <= 0 {
-            return
-        }
+        let measuredVisibleRows = Int(ceil(viewportHeight / rowHeight))
+        let fallbackVisibleRows = max(24, Int(preview?.line_count() ?? 0))
+        let visibleRows = measuredVisibleRows > 1 ? measuredVisibleRows : fallbackVisibleRows
 
         let rawOffset = max(0, Int(floor(-contentMinY / rowHeight)))
         let nextOffset = pendingFocusReset ? -1 : rawOffset
-        if nextOffset == lastRequestedOffset && visibleRows == lastRequestedVisibleRows {
+        let overscan = max(overscanRows, visibleRows * 2)
+        if nextOffset == lastRequestedOffset
+            && visibleRows == lastRequestedVisibleRows
+            && overscan == lastRequestedOverscan {
             return
         }
 
         lastRequestedOffset = nextOffset
         lastRequestedVisibleRows = visibleRows
+        lastRequestedOverscan = overscan
         pendingFocusReset = false
-        onWindowRequest(nextOffset, visibleRows, overscanRows)
+        onWindowRequest(nextOffset, visibleRows, overscan)
     }
 }
 

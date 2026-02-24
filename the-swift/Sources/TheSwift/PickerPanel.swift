@@ -4,6 +4,22 @@ enum PickerPanelLayout {
     case center, top, bottom
 }
 
+private struct PickerRowFramePreferenceKey: PreferenceKey {
+    static var defaultValue: [Int: CGRect] = [:]
+
+    static func reduce(value: inout [Int: CGRect], nextValue: () -> [Int: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
+    }
+}
+
+private struct PickerViewportFramePreferenceKey: PreferenceKey {
+    static var defaultValue: CGRect = .zero
+
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
+        value = nextValue()
+    }
+}
+
 struct PickerPanel<
     LeadingHeader: View,
     TrailingHeader: View,
@@ -44,6 +60,10 @@ struct PickerPanel<
     @State private var query: String = ""
     @State private var selectedIndex: Int? = nil
     @State private var hoveredIndex: Int? = nil
+    @State private var rowFrames: [Int: CGRect] = [:]
+    @State private var viewportFrame: CGRect = .zero
+    @State private var visibleIndexRange: ClosedRange<Int>? = nil
+    @State private var lastProgrammaticScrollIndex: Int? = nil
     @FocusState private var isTextFieldFocused: Bool
 
     private let backgroundColor: Color = Color(nsColor: .windowBackgroundColor)
@@ -72,6 +92,7 @@ struct PickerPanel<
             .onAppear {
                 query = externalQuery
                 selectedIndex = initialSelection()
+                lastProgrammaticScrollIndex = nil
                 DispatchQueue.main.async {
                     isTextFieldFocused = true
                 }
@@ -83,9 +104,11 @@ struct PickerPanel<
                 if newValue != query {
                     query = newValue
                 }
+                lastProgrammaticScrollIndex = nil
                 syncSelection()
             }
             .onChange(of: itemCount) { _ in
+                lastProgrammaticScrollIndex = nil
                 syncSelection()
             }
             .onChange(of: selectedIndex) { newValue in
@@ -218,6 +241,22 @@ struct PickerPanel<
                     .padding(10)
                 }
                 .frame(maxHeight: maxListHeight)
+                .background(
+                    GeometryReader { proxy in
+                        Color.clear.preference(
+                            key: PickerViewportFramePreferenceKey.self,
+                            value: proxy.frame(in: .global)
+                        )
+                    }
+                )
+                .onPreferenceChange(PickerRowFramePreferenceKey.self) { frames in
+                    rowFrames = frames
+                    recomputeVisibleIndexRange()
+                }
+                .onPreferenceChange(PickerViewportFramePreferenceKey.self) { frame in
+                    viewportFrame = frame
+                    recomputeVisibleIndexRange()
+                }
                 .onChange(of: selectedIndex) { newIndex in
                     guard let index = newIndex else { return }
                     scrollSelectionIntoView(index: index, proxy: proxy)
@@ -252,6 +291,14 @@ struct PickerPanel<
         .onHover { hovering in
             hoveredIndex = hovering ? index : nil
         }
+        .background(
+            GeometryReader { proxy in
+                Color.clear.preference(
+                    key: PickerRowFramePreferenceKey.self,
+                    value: [index: proxy.frame(in: .global)]
+                )
+            }
+        )
     }
 
     // MARK: - Selection logic
@@ -316,12 +363,55 @@ struct PickerPanel<
     }
 
     private func scrollSelectionIntoView(index: Int, proxy: ScrollViewProxy) {
+        guard shouldScrollSelectionIntoView(index: index) else { return }
+
         var transaction = Transaction()
         transaction.animation = nil
         withTransaction(transaction) {
             // nil anchor keeps native "only scroll when needed" behavior.
             proxy.scrollTo(index, anchor: nil)
         }
+        lastProgrammaticScrollIndex = index
+    }
+
+    private func shouldScrollSelectionIntoView(index: Int) -> Bool {
+        if lastProgrammaticScrollIndex == index {
+            return false
+        }
+
+        guard let visible = visibleIndexRange else {
+            return true
+        }
+
+        let span = max(0, visible.upperBound - visible.lowerBound)
+        let margin = min(2, span / 4)
+        let safeLower = visible.lowerBound + margin
+        let safeUpper = visible.upperBound - margin
+
+        if safeLower <= safeUpper, index >= safeLower, index <= safeUpper {
+            return false
+        }
+        return true
+    }
+
+    private func recomputeVisibleIndexRange() {
+        guard viewportFrame != .zero, !rowFrames.isEmpty else {
+            visibleIndexRange = nil
+            return
+        }
+
+        let visibleIndices = rowFrames
+            .compactMap { index, frame -> Int? in
+                let intersects = frame.maxY > viewportFrame.minY && frame.minY < viewportFrame.maxY
+                return intersects ? index : nil
+            }
+            .sorted()
+
+        guard let first = visibleIndices.first, let last = visibleIndices.last else {
+            visibleIndexRange = nil
+            return
+        }
+        visibleIndexRange = first...last
     }
 }
 

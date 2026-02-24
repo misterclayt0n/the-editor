@@ -369,6 +369,11 @@ final class EditorModel: ObservableObject {
         filePickerPreviewOffsetHint = offset
         filePickerPreviewVisibleRows = max(1, visibleRows)
         filePickerPreviewOverscan = max(1, overscan)
+        if DiagnosticsDebugLog.enabled {
+            DiagnosticsDebugLog.log(
+                "picker.window_request offset=\(offset) visible=\(visibleRows) overscan=\(overscan)"
+            )
+        }
         refreshFilePickerPreview()
     }
 
@@ -411,6 +416,11 @@ final class EditorModel: ObservableObject {
             || pickerKind != lastPickerKind
         if pickerIdentityChanged || filePickerSnapshot == nil {
             filePickerPreviewOffsetHint = -1
+            if DiagnosticsDebugLog.enabled {
+                DiagnosticsDebugLog.log(
+                    "picker.identity_changed title=\(title) kind=\(pickerKind) root=\(root) reset_offset_hint=1"
+                )
+            }
         }
         lastPickerTitle = title
         lastPickerRoot = root
@@ -494,12 +504,14 @@ final class EditorModel: ObservableObject {
         } else {
             offset = UInt(max(0, filePickerPreviewOffsetHint))
         }
-        filePickerPreviewModel.preview = app.file_picker_preview_window(
+        let preview = app.file_picker_preview_window(
             editorId,
             offset,
             UInt(max(1, filePickerPreviewVisibleRows)),
             UInt(max(1, filePickerPreviewOverscan))
         )
+        filePickerPreviewModel.preview = preview
+        debugLogFilePickerPreview(preview: preview, requestedOffset: offset)
     }
 
     private func startFilePickerTimerIfNeeded(scanning: Bool) {
@@ -749,5 +761,35 @@ final class EditorModel: ObservableObject {
         }
         let idx = normalized.index(normalized.startIndex, offsetBy: limit)
         return "\(normalized[..<idx])..."
+    }
+
+    private func debugLogFilePickerPreview(preview: PreviewData, requestedOffset: UInt) {
+        guard DiagnosticsDebugLog.enabled else { return }
+        guard let snapshot = filePickerSnapshot, snapshot.pickerKind == 1 else { return }
+
+        let lineCount = Int(preview.line_count())
+        var focusedSummary = "none"
+        var firstLineSummary = "none"
+        var lastLineSummary = "none"
+
+        if lineCount > 0 {
+            let firstLine = preview.line_at(0)
+            let lastLine = preview.line_at(UInt(lineCount - 1))
+            firstLineSummary = "\(firstLine.virtual_row()):\(firstLine.line_number())"
+            lastLineSummary = "\(lastLine.virtual_row()):\(lastLine.line_number())"
+
+            for index in 0..<lineCount {
+                let line = preview.line_at(UInt(index))
+                if line.focused() {
+                    focusedSummary = "\(line.virtual_row()):\(line.line_number())"
+                    break
+                }
+            }
+        }
+
+        let requested = requestedOffset == UInt.max ? "focus" : String(requestedOffset)
+        DiagnosticsDebugLog.log(
+            "picker.preview diagnostics requested=\(requested) hint=\(filePickerPreviewOffsetHint) visible=\(filePickerPreviewVisibleRows) overscan=\(filePickerPreviewOverscan) returned_offset=\(preview.offset()) window_start=\(preview.window_start()) total=\(preview.total_lines()) count=\(lineCount) focused=\(focusedSummary) first=\(firstLineSummary) last=\(lastLineSummary) path=\(preview.path().toString())"
+        )
     }
 }

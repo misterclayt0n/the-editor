@@ -948,6 +948,11 @@ struct FilePreviewPanel: View {
         lastRequestedVisibleRows = visibleRows
         lastRequestedOverscan = overscan
         pendingFocusReset = false
+        if DiagnosticsDebugLog.enabled {
+            DiagnosticsDebugLog.log(
+                "picker.window_calc viewport=\(String(format: "%.1f", viewportHeight)) contentMinY=\(String(format: "%.1f", contentMinY)) measured_visible=\(measuredVisibleRows) fallback_visible=\(fallbackVisibleRows) send_offset=\(nextOffset) send_visible=\(visibleRows) send_overscan=\(overscan)"
+            )
+        }
         onWindowRequest(nextOffset, visibleRows, overscan)
     }
 }

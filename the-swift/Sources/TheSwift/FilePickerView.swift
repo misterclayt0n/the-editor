@@ -59,6 +59,106 @@ struct FilePickerItemSnapshot: Identifiable {
     }
 }
 
+fileprivate struct DiagnosticsPickerDisplayRow {
+    let severity: String
+    let source: String
+    let code: String
+    let location: String?
+    let message: String
+}
+
+fileprivate enum DiagnosticsSeverity {
+    case error
+    case warning
+    case info
+    case hint
+    case unknown
+
+    var defaultLabel: String {
+        switch self {
+        case .error: return "ERROR"
+        case .warning: return "WARN"
+        case .info: return "INFO"
+        case .hint: return "HINT"
+        case .unknown: return "INFO"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .error: return "xmark.octagon.fill"
+        case .warning: return "exclamationmark.triangle.fill"
+        case .info: return "info.circle.fill"
+        case .hint: return "lightbulb.fill"
+        case .unknown: return "circle.fill"
+        }
+    }
+
+    var accent: Color {
+        switch self {
+        case .error: return Color(nsColor: .systemRed)
+        case .warning: return Color(nsColor: .systemOrange)
+        case .info: return Color(nsColor: .systemBlue)
+        case .hint: return Color(nsColor: .systemTeal)
+        case .unknown: return .secondary
+        }
+    }
+}
+
+fileprivate func splitPrefixChars(_ text: String, count: Int) -> (String, String) {
+    guard count > 0, !text.isEmpty else { return ("", text) }
+    let idx = text.index(text.startIndex, offsetBy: min(count, text.count), limitedBy: text.endIndex) ?? text.endIndex
+    return (String(text[..<idx]), String(text[idx...]))
+}
+
+fileprivate func parseDiagnosticsPickerDisplay(_ display: String) -> DiagnosticsPickerDisplayRow {
+    let (severityPart, afterSeverity) = splitPrefixChars(display, count: 7)
+    let restAfterSeverity = afterSeverity.first == " " ? String(afterSeverity.dropFirst()) : afterSeverity
+    let (sourcePart, afterSource) = splitPrefixChars(restAfterSeverity, count: 14)
+    let restAfterSource = afterSource.first == " " ? String(afterSource.dropFirst()) : afterSource
+    let (codePart, afterCode) = splitPrefixChars(restAfterSource, count: 16)
+    let body = (afterCode.first == " " ? String(afterCode.dropFirst()) : afterCode).trimmingCharacters(in: .whitespaces)
+
+    if let locationSplit = body.range(of: "  ") {
+        let location = body[..<locationSplit.lowerBound].trimmingCharacters(in: .whitespaces)
+        let message = body[locationSplit.upperBound...].trimmingCharacters(in: .whitespaces)
+        return DiagnosticsPickerDisplayRow(
+            severity: severityPart.trimmingCharacters(in: .whitespaces),
+            source: sourcePart.trimmingCharacters(in: .whitespaces),
+            code: codePart.trimmingCharacters(in: .whitespaces),
+            location: location.isEmpty ? nil : location,
+            message: message
+        )
+    }
+
+    return DiagnosticsPickerDisplayRow(
+        severity: severityPart.trimmingCharacters(in: .whitespaces),
+        source: sourcePart.trimmingCharacters(in: .whitespaces),
+        code: codePart.trimmingCharacters(in: .whitespaces),
+        location: nil,
+        message: body
+    )
+}
+
+fileprivate func diagnosticsSeverity(from icon: String?) -> DiagnosticsSeverity {
+    switch icon ?? "" {
+    case "diagnostic_error": return .error
+    case "diagnostic_warning": return .warning
+    case "diagnostic_info": return .info
+    case "diagnostic_hint": return .hint
+    default: return .unknown
+    }
+}
+
+fileprivate func isDiagnosticsIcon(_ icon: String?) -> Bool {
+    switch icon ?? "" {
+    case "diagnostic_error", "diagnostic_warning", "diagnostic_info", "diagnostic_hint":
+        return true
+    default:
+        return false
+    }
+}
+
 // MARK: - File type icons
 
 fileprivate func iconToken(for item: FilePickerItemSnapshot) -> String {
@@ -200,6 +300,10 @@ struct FilePickerView: View {
         snapshot.scanning
     }
 
+    private var isDiagnosticsPicker: Bool {
+        items.contains { isDiagnosticsIcon($0.icon) }
+    }
+
     // Always show preview layout — the preview panel handles its own empty state.
     // This avoids re-evaluating the body when preview data arrives.
     private let hasPreview = true
@@ -214,7 +318,7 @@ struct FilePickerView: View {
             PickerPanel(
                 width: pickerWidth,
                 maxListHeight: hasPreview ? 440 : 380,
-                placeholder: "Open file…",
+                placeholder: isDiagnosticsPicker ? "Filter diagnostics…" : "Open file…",
                 fontSize: 16,
                 layout: .center,
                 pageSize: 12,
@@ -243,14 +347,18 @@ struct FilePickerView: View {
                     statusText
                 },
                 itemContent: { index, isSelected, isHovered in
-                    fileRowContent(for: items[index], isSelected: isSelected)
+                    if isDiagnosticsPicker {
+                        return AnyView(diagnosticsRowContent(for: items[index], isSelected: isSelected))
+                    } else {
+                        return AnyView(fileRowContent(for: items[index], isSelected: isSelected))
+                    }
                 },
                 emptyContent: {
                     VStack(spacing: 8) {
                         Image(systemName: "doc.questionmark")
                             .font(FontLoader.uiFont(size: 24))
                             .foregroundStyle(.tertiary)
-                        Text("No matching files")
+                        Text(isDiagnosticsPicker ? "No matching diagnostics" : "No matching files")
                             .font(FontLoader.uiFont(size: 14))
                             .foregroundStyle(.secondary)
                     }
@@ -301,11 +409,11 @@ struct FilePickerView: View {
         } else {
             HStack(spacing: 6) {
                 if matchedCount > 0 && matchedCount < totalCount {
-                    Text("\(matchedCount) of \(totalCount)")
+                    Text(isDiagnosticsPicker ? "\(matchedCount) of \(totalCount) diagnostics" : "\(matchedCount) of \(totalCount)")
                         .font(FontLoader.uiFont(size: 12))
                         .foregroundStyle(.tertiary)
                 } else if totalCount > 0 {
-                    Text("\(totalCount) files")
+                    Text(isDiagnosticsPicker ? "\(totalCount) diagnostics" : "\(totalCount) files")
                         .font(FontLoader.uiFont(size: 12))
                         .foregroundStyle(.tertiary)
                 }
@@ -362,6 +470,63 @@ struct FilePickerView: View {
 
             Spacer()
         }
+    }
+
+    private func diagnosticsRowContent(for item: FilePickerItemSnapshot, isSelected: Bool) -> some View {
+        let parsed = parseDiagnosticsPickerDisplay(item.display)
+        let severity = diagnosticsSeverity(from: item.icon)
+        let severityLabel = parsed.severity.isEmpty ? severity.defaultLabel : parsed.severity
+        let message = parsed.message.isEmpty ? item.display : parsed.message
+        let source = parsed.source == "-" ? "" : parsed.source
+        let code = parsed.code == "-" ? "" : parsed.code
+
+        return VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                Image(systemName: severity.symbol)
+                    .font(FontLoader.uiFont(size: 11).weight(.semibold))
+                    .foregroundStyle(severity.accent)
+
+                Text(severityLabel)
+                    .font(FontLoader.uiFont(size: 11).weight(.bold))
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 2)
+                    .background(
+                        Capsule()
+                            .fill(severity.accent.opacity(isSelected ? 0.22 : 0.14))
+                    )
+                    .foregroundStyle(isSelected ? .primary : severity.accent)
+
+                if !source.isEmpty {
+                    Text(source)
+                        .font(FontLoader.uiFont(size: 11).weight(.medium))
+                        .foregroundStyle(.secondary)
+                }
+
+                if !code.isEmpty {
+                    Text(code)
+                        .font(FontLoader.uiFont(size: 11).weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+
+                if let location = parsed.location, !location.isEmpty {
+                    Text(location)
+                        .font(FontLoader.uiFont(size: 11))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+
+                Spacer(minLength: 0)
+            }
+
+            Text(message)
+                .font(FontLoader.uiFont(size: 13).weight(.medium))
+                .foregroundStyle(.primary)
+                .lineLimit(2)
+                .multilineTextAlignment(.leading)
+                .truncationMode(.tail)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func highlightedText(

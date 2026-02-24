@@ -41,6 +41,9 @@ final class EditorModel: ObservableObject {
     private var lastPickerMatchedCount: Int = -1
     private var lastPickerTotalCount: Int = -1
     private var lastPickerScanning: Bool = false
+    private var lastPickerTitle: String? = nil
+    private var lastPickerRoot: String? = nil
+    private var lastPickerKind: UInt8 = 0
     private var filePickerPreviewOffsetHint: Int = -1
     private var filePickerPreviewVisibleRows: Int = 24
     private var filePickerPreviewOverscan: Int = 24
@@ -393,9 +396,25 @@ final class EditorModel: ObservableObject {
             stopFilePickerTimerIfNeeded()
             lastPickerQuery = nil
             lastPickerMatchedCount = -1
+            lastPickerTitle = nil
+            lastPickerRoot = nil
+            lastPickerKind = 0
             filePickerSnapshot = nil
             return
         }
+
+        let title = data.title().toString()
+        let root = data.root().toString()
+        let pickerKind = data.picker_kind()
+        let pickerIdentityChanged = title != lastPickerTitle
+            || root != lastPickerRoot
+            || pickerKind != lastPickerKind
+        if pickerIdentityChanged || filePickerSnapshot == nil {
+            filePickerPreviewOffsetHint = -1
+        }
+        lastPickerTitle = title
+        lastPickerRoot = root
+        lastPickerKind = pickerKind
 
         let query = data.query().toString()
         let matchedCount = Int(data.matched_count())
@@ -451,13 +470,13 @@ final class EditorModel: ObservableObject {
 
         filePickerSnapshot = FilePickerSnapshot(
             active: true,
-            title: data.title().toString(),
-            pickerKind: data.picker_kind(),
+            title: title,
+            pickerKind: pickerKind,
             query: query,
             matchedCount: matchedCount,
             totalCount: totalCount,
             scanning: scanning,
-            root: data.root().toString(),
+            root: root,
             items: items
         )
         refreshFilePickerPreview()

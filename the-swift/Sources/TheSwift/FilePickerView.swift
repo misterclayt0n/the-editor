@@ -8,6 +8,8 @@ import class TheEditorFFIBridge.FilePickerItemFFI
 
 struct FilePickerSnapshot {
     let active: Bool
+    let title: String
+    let pickerKind: UInt8
     let query: String
     let matchedCount: Int
     let totalCount: Int
@@ -28,6 +30,15 @@ struct FilePickerItemSnapshot: Identifiable {
     let isDir: Bool
     let icon: String?
     let matchIndices: [Int]
+    let rowKind: UInt8
+    let severity: UInt8
+    let primary: String
+    let secondary: String
+    let tertiary: String
+    let quaternary: String
+    let line: Int
+    let column: Int
+    let depth: Int
 
     var filename: String {
         (display as NSString).lastPathComponent
@@ -59,103 +70,51 @@ struct FilePickerItemSnapshot: Identifiable {
     }
 }
 
-fileprivate struct DiagnosticsPickerDisplayRow {
-    let severity: String
-    let source: String
-    let code: String
-    let location: String?
-    let message: String
-}
-
 fileprivate enum DiagnosticsSeverity {
+    case none
     case error
     case warning
     case info
     case hint
-    case unknown
 
     var defaultLabel: String {
         switch self {
+        case .none: return "DIAG"
         case .error: return "ERROR"
         case .warning: return "WARN"
         case .info: return "INFO"
         case .hint: return "HINT"
-        case .unknown: return "INFO"
         }
     }
 
     var symbol: String {
         switch self {
+        case .none: return "circle.fill"
         case .error: return "xmark.octagon.fill"
         case .warning: return "exclamationmark.triangle.fill"
         case .info: return "info.circle.fill"
         case .hint: return "lightbulb.fill"
-        case .unknown: return "circle.fill"
         }
     }
 
     var accent: Color {
         switch self {
+        case .none: return .secondary
         case .error: return Color(nsColor: .systemRed)
         case .warning: return Color(nsColor: .systemOrange)
         case .info: return Color(nsColor: .systemBlue)
         case .hint: return Color(nsColor: .systemTeal)
-        case .unknown: return .secondary
         }
     }
 }
 
-fileprivate func splitPrefixChars(_ text: String, count: Int) -> (String, String) {
-    guard count > 0, !text.isEmpty else { return ("", text) }
-    let idx = text.index(text.startIndex, offsetBy: min(count, text.count), limitedBy: text.endIndex) ?? text.endIndex
-    return (String(text[..<idx]), String(text[idx...]))
-}
-
-fileprivate func parseDiagnosticsPickerDisplay(_ display: String) -> DiagnosticsPickerDisplayRow {
-    let (severityPart, afterSeverity) = splitPrefixChars(display, count: 7)
-    let restAfterSeverity = afterSeverity.first == " " ? String(afterSeverity.dropFirst()) : afterSeverity
-    let (sourcePart, afterSource) = splitPrefixChars(restAfterSeverity, count: 14)
-    let restAfterSource = afterSource.first == " " ? String(afterSource.dropFirst()) : afterSource
-    let (codePart, afterCode) = splitPrefixChars(restAfterSource, count: 16)
-    let body = (afterCode.first == " " ? String(afterCode.dropFirst()) : afterCode).trimmingCharacters(in: .whitespaces)
-
-    if let locationSplit = body.range(of: "  ") {
-        let location = body[..<locationSplit.lowerBound].trimmingCharacters(in: .whitespaces)
-        let message = body[locationSplit.upperBound...].trimmingCharacters(in: .whitespaces)
-        return DiagnosticsPickerDisplayRow(
-            severity: severityPart.trimmingCharacters(in: .whitespaces),
-            source: sourcePart.trimmingCharacters(in: .whitespaces),
-            code: codePart.trimmingCharacters(in: .whitespaces),
-            location: location.isEmpty ? nil : location,
-            message: message
-        )
-    }
-
-    return DiagnosticsPickerDisplayRow(
-        severity: severityPart.trimmingCharacters(in: .whitespaces),
-        source: sourcePart.trimmingCharacters(in: .whitespaces),
-        code: codePart.trimmingCharacters(in: .whitespaces),
-        location: nil,
-        message: body
-    )
-}
-
-fileprivate func diagnosticsSeverity(from icon: String?) -> DiagnosticsSeverity {
-    switch icon ?? "" {
-    case "diagnostic_error": return .error
-    case "diagnostic_warning": return .warning
-    case "diagnostic_info": return .info
-    case "diagnostic_hint": return .hint
-    default: return .unknown
-    }
-}
-
-fileprivate func isDiagnosticsIcon(_ icon: String?) -> Bool {
-    switch icon ?? "" {
-    case "diagnostic_error", "diagnostic_warning", "diagnostic_info", "diagnostic_hint":
-        return true
-    default:
-        return false
+fileprivate func diagnosticsSeverity(from value: UInt8) -> DiagnosticsSeverity {
+    switch value {
+    case 1: return .error
+    case 2: return .warning
+    case 3: return .info
+    case 4: return .hint
+    default: return .none
     }
 }
 
@@ -282,6 +241,7 @@ struct FilePickerView: View {
     let onSubmit: (Int) -> Void
     let onClose: () -> Void
     let onSelectionChange: ((Int) -> Void)?
+    let onPreviewWindowRequest: ((Int, Int, Int) -> Void)?
     let colorForHighlight: ((UInt32) -> SwiftUI.Color?)?
 
     private var items: [FilePickerItemSnapshot] {
@@ -301,7 +261,7 @@ struct FilePickerView: View {
     }
 
     private var isDiagnosticsPicker: Bool {
-        items.contains { isDiagnosticsIcon($0.icon) }
+        snapshot.pickerKind == 1
     }
 
     // Always show preview layout — the preview panel handles its own empty state.
@@ -347,10 +307,16 @@ struct FilePickerView: View {
                     statusText
                 },
                 itemContent: { index, isSelected, isHovered in
-                    if isDiagnosticsPicker {
-                        return AnyView(diagnosticsRowContent(for: items[index], isSelected: isSelected))
-                    } else {
-                        return AnyView(fileRowContent(for: items[index], isSelected: isSelected))
+                    let item = items[index]
+                    switch item.rowKind {
+                    case 1:
+                        return AnyView(diagnosticsRowContent(for: item, isSelected: isSelected))
+                    case 2:
+                        return AnyView(symbolsRowContent(for: item, isSelected: isSelected))
+                    case 3, 4:
+                        return AnyView(liveGrepRowContent(for: item, isSelected: isSelected))
+                    default:
+                        return AnyView(fileRowContent(for: item, isSelected: isSelected))
                     }
                 },
                 emptyContent: {
@@ -371,6 +337,7 @@ struct FilePickerView: View {
                 Divider()
                 FilePreviewPanel(
                     previewModel: previewModel,
+                    onWindowRequest: onPreviewWindowRequest,
                     colorForHighlight: colorForHighlight
                 )
                 .frame(maxWidth: .infinity)
@@ -473,12 +440,12 @@ struct FilePickerView: View {
     }
 
     private func diagnosticsRowContent(for item: FilePickerItemSnapshot, isSelected: Bool) -> some View {
-        let parsed = parseDiagnosticsPickerDisplay(item.display)
-        let severity = diagnosticsSeverity(from: item.icon)
-        let severityLabel = parsed.severity.isEmpty ? severity.defaultLabel : parsed.severity
-        let message = parsed.message.isEmpty ? item.display : parsed.message
-        let source = parsed.source == "-" ? "" : parsed.source
-        let code = parsed.code == "-" ? "" : parsed.code
+        let severity = diagnosticsSeverity(from: item.severity)
+        let severityLabel = severity.defaultLabel
+        let message = item.primary.isEmpty ? item.display : item.primary
+        let source = item.secondary == "-" ? "" : item.secondary
+        let code = item.tertiary == "-" ? "" : item.tertiary
+        let location = item.quaternary
 
         return VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
@@ -508,7 +475,7 @@ struct FilePickerView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                if let location = parsed.location, !location.isEmpty {
+                if !location.isEmpty {
                     Text(location)
                         .font(FontLoader.uiFont(size: 11))
                         .foregroundStyle(.secondary)
@@ -527,6 +494,101 @@ struct FilePickerView: View {
                 .truncationMode(.tail)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func symbolsRowContent(for item: FilePickerItemSnapshot, isSelected: Bool) -> some View {
+        let depth = max(0, item.depth)
+        let kind = item.quaternary.uppercased()
+        let symbol = symbolIcon(forKind: kind)
+
+        return HStack(spacing: 8) {
+            Text(String(repeating: "  ", count: depth))
+                .font(FontLoader.uiFont(size: 12))
+                .foregroundStyle(.secondary)
+
+            Image(systemName: symbol)
+                .font(FontLoader.uiFont(size: 12).weight(.semibold))
+                .foregroundStyle(isSelected ? Color.primary : Color.accentColor)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.primary)
+                    .font(FontLoader.uiFont(size: 13).weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+
+                HStack(spacing: 6) {
+                    if !item.secondary.isEmpty {
+                        Text(item.secondary)
+                            .font(FontLoader.uiFont(size: 11))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    if item.line > 0 {
+                        Text("L\(item.line):\(max(1, item.column))")
+                            .font(FontLoader.uiFont(size: 11).weight(.medium))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func liveGrepRowContent(for item: FilePickerItemSnapshot, isSelected: Bool) -> some View {
+        if item.rowKind == 3 {
+            return AnyView(
+                HStack(spacing: 8) {
+                    Image(systemName: "doc.text.fill")
+                        .font(FontLoader.uiFont(size: 12).weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Text(item.primary)
+                        .font(FontLoader.uiFont(size: 12).weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Spacer(minLength: 0)
+                }
+            )
+        }
+
+        return AnyView(
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(":\(max(1, item.line)):\(max(1, item.column))")
+                    .font(FontLoader.uiFont(size: 11))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 64, alignment: .leading)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(item.primary)
+                        .font(FontLoader.uiFont(size: 13).weight(.medium))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                    if !item.secondary.isEmpty {
+                        Text(item.secondary)
+                            .font(FontLoader.uiFont(size: 11))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+        )
+    }
+
+    private func symbolIcon(forKind kind: String) -> String {
+        switch kind {
+        case "FILE": return "doc.fill"
+        case "MODULE", "NAMESPACE", "PACKAGE": return "shippingbox.fill"
+        case "CLASS", "STRUCT": return "square.grid.2x2.fill"
+        case "INTERFACE": return "rectangle.3.group.fill"
+        case "METHOD", "FUNCTION", "CONSTRUCTOR": return "function"
+        case "PROPERTY", "FIELD": return "text.alignleft"
+        case "ENUM", "ENUM_MEMBER": return "list.bullet.rectangle"
+        case "VARIABLE", "CONSTANT": return "number"
+        default: return "circle.fill"
+        }
     }
 
     private func highlightedText(
@@ -644,15 +706,36 @@ fileprivate struct ScanningText: View {
 
 struct FilePreviewPanel: View {
     @ObservedObject var previewModel: FilePickerPreviewModel
+    let onWindowRequest: ((Int, Int, Int) -> Void)?
     let colorForHighlight: ((UInt32) -> SwiftUI.Color?)?
 
     private var preview: PreviewData? { previewModel.preview }
+    private let rowHeight: CGFloat = 16
+    private let overscanRows: Int = 24
+
+    @State private var viewportHeight: CGFloat = 0
+    @State private var contentMinY: CGFloat = 0
+    @State private var lastRequestedOffset: Int = Int.min
+    @State private var lastRequestedVisibleRows: Int = 0
+    @State private var pendingFocusReset: Bool = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             previewHeader
             Divider()
             previewContent
+        }
+        .onAppear {
+            pendingFocusReset = true
+            requestWindow()
+        }
+        .onChange(of: preview?.path().toString() ?? "") { _ in
+            pendingFocusReset = true
+            requestWindow()
+        }
+        .onChange(of: preview?.kind() ?? 0) { _ in
+            pendingFocusReset = true
+            requestWindow()
         }
     }
 
@@ -702,9 +785,10 @@ struct FilePreviewPanel: View {
     private var previewContent: some View {
         let kind = preview?.kind() ?? 0
         switch kind {
-        case 1: sourcePreview
-        case 2: textPreview(preview?.text().toString() ?? "")
-        case 3: messagePreview(preview?.text().toString() ?? "")
+        case 1:
+            windowedPreview(showLineNumbers: true)
+        case 2, 3:
+            windowedPreview(showLineNumbers: false)
         default: emptyPreview
         }
     }
@@ -721,124 +805,155 @@ struct FilePreviewPanel: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private func messagePreview(_ message: String) -> some View {
-        VStack(spacing: 8) {
-            Image(systemName: "info.circle")
-                .font(FontLoader.uiFont(size: 20))
-                .foregroundStyle(.tertiary)
-            Text(message)
-                .font(FontLoader.uiFont(size: 13))
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    private func textPreview(_ text: String) -> some View {
-        ScrollView {
-            Text(text)
-                .font(FontLoader.bufferFont(size: 11))
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(12)
-        }
-    }
-
-    // MARK: - Source preview
-
-    @ViewBuilder
-    private var sourcePreview: some View {
+    private func windowedPreview(showLineNumbers: Bool) -> some View {
         let lineCount = Int(preview?.line_count() ?? 0)
-        if lineCount > 0 {
-            // Fixed gutter width so the code column stays aligned across all files.
-            let gutterWidth = 4
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    ForEach(0..<lineCount, id: \.self) { index in
-                        let line = preview!.line_at(UInt(index))
-                        sourceLineView(
-                            line: line,
-                            lineNumber: index + 1,
-                            gutterWidth: gutterWidth
-                        )
-                    }
+        let totalRows = Int(preview?.total_lines() ?? 0)
+        let windowStart = Int(preview?.window_start() ?? 0)
+        let topRows = max(0, windowStart)
+        let bottomRows = max(0, totalRows - windowStart - lineCount)
+
+        return ScrollView {
+            LazyVStack(alignment: .leading, spacing: 0) {
+                if topRows > 0 {
+                    Color.clear
+                        .frame(height: CGFloat(topRows) * rowHeight)
                 }
-                .padding(.vertical, 4)
+
+                ForEach(0..<lineCount, id: \.self) { index in
+                    let line = preview!.line_at(UInt(index))
+                    previewLineView(line: line, showLineNumbers: showLineNumbers, totalRows: totalRows)
+                }
+
+                if bottomRows > 0 {
+                    Color.clear
+                        .frame(height: CGFloat(bottomRows) * rowHeight)
+                }
             }
-        } else {
-            emptyPreview
+            .background(
+                GeometryReader { proxy in
+                    Color.clear.preference(
+                        key: PreviewContentOffsetKey.self,
+                        value: proxy.frame(in: .named("file-picker-preview-scroll")).minY
+                    )
+                }
+            )
+            .padding(.vertical, 4)
+            .padding(.horizontal, 8)
+        }
+        .coordinateSpace(name: "file-picker-preview-scroll")
+        .background(
+            GeometryReader { proxy in
+                Color.clear.preference(key: PreviewViewportHeightKey.self, value: proxy.size.height)
+            }
+        )
+        .onPreferenceChange(PreviewContentOffsetKey.self) { value in
+            contentMinY = value
+            requestWindow()
+        }
+        .onPreferenceChange(PreviewViewportHeightKey.self) { value in
+            viewportHeight = value
+            requestWindow()
         }
     }
 
-    private func sourceLineView(
-        line: PreviewLine,
-        lineNumber: Int,
-        gutterWidth: Int
-    ) -> some View {
-        HStack(alignment: .top, spacing: 0) {
-            Text(String(format: "%\(gutterWidth)d", lineNumber))
-                .font(FontLoader.bufferFont(size: 11))
-                .foregroundStyle(.tertiary)
-                .frame(minWidth: CGFloat(gutterWidth) * 7 + 8, alignment: .trailing)
-                .padding(.trailing, 6)
-
-            highlightedSourceLine(line)
-                .font(FontLoader.bufferFont(size: 11))
-                .lineLimit(1)
+    private func previewLineView(line: PreviewLine, showLineNumbers: Bool, totalRows: Int) -> some View {
+        let lineKind = Int(line.kind())
+        if lineKind == 1 || lineKind == 2 {
+            return AnyView(
+                Text(line.marker().toString())
+                    .font(FontLoader.bufferFont(size: 11))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(height: rowHeight)
+            )
         }
-        .padding(.trailing, 8)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .frame(height: 16)
+
+        let focused = line.focused()
+        let lineNumber = Int(line.line_number())
+        let lineNumberWidth = max(3, String(max(1, totalRows)).count)
+        return AnyView(
+            HStack(alignment: .top, spacing: 0) {
+                if showLineNumbers {
+                    let marker = focused ? "▶" : " "
+                    Text("\(marker)\(String(format: "%\(lineNumberWidth)d", lineNumber)) ")
+                        .font(FontLoader.bufferFont(size: 11))
+                        .foregroundStyle(focused ? .primary : .tertiary)
+                        .frame(minWidth: CGFloat(lineNumberWidth) * 7 + 14, alignment: .trailing)
+                        .padding(.trailing, 6)
+                }
+
+                previewSegmentsText(line)
+                    .font(FontLoader.bufferFont(size: 11))
+                    .lineLimit(1)
+
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(height: rowHeight)
+            .background(focused ? Color.accentColor.opacity(0.12) : Color.clear)
+        )
     }
 
-    private func highlightedSourceLine(_ line: PreviewLine) -> Text {
-        let text = line.text().toString()
-        guard !text.isEmpty else {
+    private func previewSegmentsText(_ line: PreviewLine) -> Text {
+        let segmentCount = Int(line.segment_count())
+        guard segmentCount > 0 else {
             return Text(" ")
         }
 
-        let chars = Array(text)
-        let spanCount = Int(line.span_count())
+        var output = Text("")
+        for index in 0..<segmentCount {
+            let segment = line.segment_at(UInt(index))
+            let text = segment.text().toString()
+            let highlightId = segment.highlight_id()
+            let isMatch = segment.is_match()
 
-        if spanCount == 0 {
-            return Text(text)
-                .foregroundColor(.primary.opacity(0.75))
-        }
-
-        // Build a highlight-ID array for each character
-        var charHighlights: [UInt32?] = Array(repeating: nil, count: chars.count)
-        for i in 0..<spanCount {
-            let start = max(0, min(Int(line.span_char_start(UInt(i))), chars.count))
-            let end = max(0, min(Int(line.span_char_end(UInt(i))), chars.count))
-            guard start < end else { continue }
-            let hlId = line.span_highlight(UInt(i))
-            for j in start..<end {
-                charHighlights[j] = hlId
-            }
-        }
-
-        // Group consecutive characters with the same highlight ID
-        var result = Text("")
-        var segmentStart = 0
-
-        while segmentStart < chars.count {
-            let currentHL = charHighlights[segmentStart]
-            var segmentEnd = segmentStart + 1
-            while segmentEnd < chars.count && charHighlights[segmentEnd] == currentHL {
-                segmentEnd += 1
-            }
-
-            let segment = String(chars[segmentStart..<segmentEnd])
-            let color: SwiftUI.Color
-            if let hlId = currentHL, let resolve = colorForHighlight?(hlId) {
-                color = resolve
+            let baseColor: Color
+            if highlightId > 0, let mapped = colorForHighlight?(highlightId) {
+                baseColor = mapped
             } else {
-                color = .primary.opacity(0.75)
+                baseColor = .primary.opacity(0.75)
             }
-            result = result + Text(segment).foregroundColor(color)
-            segmentStart = segmentEnd
+
+            let color = isMatch ? Color.accentColor : baseColor
+            output = output + Text(text)
+                .foregroundColor(color)
+                .font(FontLoader.bufferFont(size: 11).weight(isMatch ? .bold : .regular))
+        }
+        return output
+    }
+
+    private func requestWindow() {
+        guard let onWindowRequest else { return }
+        let visibleRows = max(1, Int(ceil(viewportHeight / rowHeight)))
+        if visibleRows <= 0 {
+            return
         }
 
-        return result
+        let rawOffset = max(0, Int(floor(-contentMinY / rowHeight)))
+        let nextOffset = pendingFocusReset ? -1 : rawOffset
+        if nextOffset == lastRequestedOffset && visibleRows == lastRequestedVisibleRows {
+            return
+        }
+
+        lastRequestedOffset = nextOffset
+        lastRequestedVisibleRows = visibleRows
+        pendingFocusReset = false
+        onWindowRequest(nextOffset, visibleRows, overscanRows)
+    }
+}
+
+fileprivate struct PreviewContentOffsetKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}
+
+fileprivate struct PreviewViewportHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
     }
 }

@@ -41,6 +41,9 @@ final class EditorModel: ObservableObject {
     private var lastPickerMatchedCount: Int = -1
     private var lastPickerTotalCount: Int = -1
     private var lastPickerScanning: Bool = false
+    private var filePickerPreviewOffsetHint: Int = -1
+    private var filePickerPreviewVisibleRows: Int = 24
+    private var filePickerPreviewOverscan: Int = 24
 
     init(filePath: String? = nil) {
         self.app = TheEditorFFIBridge.App()
@@ -353,8 +356,16 @@ final class EditorModel: ObservableObject {
 
     func filePickerSelectIndex(_ index: Int) {
         _ = app.file_picker_select_index(editorId, UInt(index))
+        filePickerPreviewOffsetHint = -1
         // Only refresh the preview — don't re-serialize the full item list
         // (up to 10k items) on every arrow key press.
+        refreshFilePickerPreview()
+    }
+
+    func filePickerPreviewWindowRequest(offset: Int, visibleRows: Int, overscan: Int) {
+        filePickerPreviewOffsetHint = offset
+        filePickerPreviewVisibleRows = max(1, visibleRows)
+        filePickerPreviewOverscan = max(1, overscan)
         refreshFilePickerPreview()
     }
 
@@ -366,6 +377,9 @@ final class EditorModel: ObservableObject {
         lastPickerMatchedCount = -1
         lastPickerTotalCount = -1
         lastPickerScanning = false
+        filePickerPreviewOffsetHint = -1
+        filePickerPreviewVisibleRows = 24
+        filePickerPreviewOverscan = 24
         filePickerSnapshot = nil
         filePickerPreviewModel.preview = nil
         refresh(trigger: "file_picker_close")
@@ -394,7 +408,7 @@ final class EditorModel: ObservableObject {
             && totalCount == lastPickerTotalCount
             && scanning == lastPickerScanning {
             // Items unchanged — just update preview.
-            filePickerPreviewModel.preview = app.file_picker_preview(editorId)
+            refreshFilePickerPreview()
             let t1 = CFAbsoluteTimeGetCurrent()
             debugUiLog(String(format: "refreshFilePicker SKIP items=%d elapsed=%.2fms", matchedCount, (t1 - t0) * 1000))
             return
@@ -422,12 +436,23 @@ final class EditorModel: ObservableObject {
                 display: item.display().toString(),
                 isDir: item.is_dir(),
                 icon: iconStr.isEmpty ? nil : iconStr,
-                matchIndices: matchIndices
+                matchIndices: matchIndices,
+                rowKind: item.row_kind(),
+                severity: item.severity(),
+                primary: item.primary().toString(),
+                secondary: item.secondary().toString(),
+                tertiary: item.tertiary().toString(),
+                quaternary: item.quaternary().toString(),
+                line: Int(item.line()),
+                column: Int(item.column()),
+                depth: Int(item.depth())
             ))
         }
 
         filePickerSnapshot = FilePickerSnapshot(
             active: true,
+            title: data.title().toString(),
+            pickerKind: data.picker_kind(),
             query: query,
             matchedCount: matchedCount,
             totalCount: totalCount,
@@ -435,7 +460,7 @@ final class EditorModel: ObservableObject {
             root: data.root().toString(),
             items: items
         )
-        filePickerPreviewModel.preview = app.file_picker_preview(editorId)
+        refreshFilePickerPreview()
         startFilePickerTimerIfNeeded(scanning: scanning)
 
         let t1 = CFAbsoluteTimeGetCurrent()
@@ -444,7 +469,18 @@ final class EditorModel: ObservableObject {
 
     /// Lightweight refresh — direct FFI, no JSON. Called on selection change.
     func refreshFilePickerPreview() {
-        filePickerPreviewModel.preview = app.file_picker_preview(editorId)
+        let offset: UInt
+        if filePickerPreviewOffsetHint < 0 {
+            offset = UInt.max
+        } else {
+            offset = UInt(max(0, filePickerPreviewOffsetHint))
+        }
+        filePickerPreviewModel.preview = app.file_picker_preview_window(
+            editorId,
+            offset,
+            UInt(max(1, filePickerPreviewVisibleRows)),
+            UInt(max(1, filePickerPreviewOverscan))
+        )
     }
 
     private func startFilePickerTimerIfNeeded(scanning: Bool) {

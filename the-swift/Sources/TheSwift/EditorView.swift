@@ -93,6 +93,9 @@ struct EditorView: View {
                     onFilePickerSelectionChange: { index in
                         model.filePickerSelectIndex(index)
                     },
+                    onFilePickerPreviewWindowRequest: { offset, visibleRows, overscan in
+                        model.filePickerPreviewWindowRequest(offset: offset, visibleRows: visibleRows, overscan: overscan)
+                    },
                     colorForHighlight: { highlightId in
                         model.colorForHighlight(highlightId)
                     },

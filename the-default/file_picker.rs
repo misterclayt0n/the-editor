@@ -52,7 +52,6 @@ use the_core::chars::{
 };
 use the_lib::{
   diagnostics::DiagnosticSeverity,
-  position::Position,
   render::{
     UiColor,
     UiColorToken,
@@ -1422,23 +1421,37 @@ pub fn submit_file_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
         return;
       }
 
-      let text = ctx.editor_ref().document().text();
-      let mut cursor = (*cursor_char).min(text.len_chars());
-      if let Some(column) = *column {
-        if *line < text.len_lines() {
-          let line_start = text.line_to_char(*line);
-          let line_end = text.line_to_char((*line + 1).min(text.len_lines()));
-          let line_len = line_end.saturating_sub(line_start);
-          cursor = line_start.saturating_add(column.min(line_len));
+      let (cursor, cursor_line) = {
+        let text = ctx.editor_ref().document().text();
+        let mut cursor = (*cursor_char).min(text.len_chars());
+        if let Some(column) = *column {
+          if *line < text.len_lines() {
+            let line_start = text.line_to_char(*line);
+            let line_end = text.line_to_char((*line + 1).min(text.len_lines()));
+            let line_len = line_end.saturating_sub(line_start);
+            cursor = line_start.saturating_add(column.min(line_len));
+          }
+        } else if *cursor_char == 0 && *line > 0 && *line < text.len_lines() {
+          cursor = text.line_to_char(*line);
         }
-      } else if *cursor_char == 0 && *line > 0 && *line < text.len_lines() {
-        cursor = text.line_to_char(*line);
-      }
+        let cursor_line = text.char_to_line(cursor.min(text.len_chars()));
+        (cursor, cursor_line)
+      };
       let _ = ctx
         .editor()
         .document_mut()
         .set_selection(Selection::point(cursor));
-      ctx.editor().view_mut().scroll = Position::new(line.saturating_sub(ctx.scrolloff()), 0);
+      let view = ctx.editor_ref().view();
+      if let Some(new_row) = the_lib::view::scroll_row_to_keep_visible(
+        cursor_line,
+        view.scroll.row,
+        view.viewport.height.max(1) as usize,
+        ctx.scrolloff(),
+      ) {
+        let mut next = view.scroll;
+        next.row = new_row;
+        ctx.editor().view_mut().scroll = next;
+      }
       close_file_picker(ctx);
     },
   }

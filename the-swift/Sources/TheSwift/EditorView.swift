@@ -798,13 +798,12 @@ struct EditorView: View {
 
             switch cursor.kind() {
             case 1: // bar
-                let barWidth = cellSize.width >= 10 ? (2.0 / backingScale) : (1.0 / backingScale)
-                let verticalInset = 1.0 / backingScale
+                let barWidth: CGFloat = min(2.0, max(1.0, cellSize.width * 0.2))
                 let rect = CGRect(
                     x: snapToPixel(x),
-                    y: snapToPixel(y + verticalInset),
+                    y: snapToPixel(y),
                     width: max(1.0 / backingScale, barWidth),
-                    height: max(1.0 / backingScale, snapToPixel(cellSize.height - 2 * verticalInset))
+                    height: max(1.0 / backingScale, snapToPixel(cellSize.height))
                 )
                 context.fill(Path(rect), with: .color(strokeColor))
             case 2: // underline

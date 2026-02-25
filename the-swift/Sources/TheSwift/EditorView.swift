@@ -773,6 +773,7 @@ struct EditorView: View {
     ) {
         let count = Int(plan.cursor_count())
         guard count > 0 else { return }
+        let reversedModifierBit: UInt16 = 0b0000_0100_0000
 
         let pickedCursorId: UInt64? = {
             guard let cursorPickState else { return nil }
@@ -803,6 +804,14 @@ struct EditorView: View {
                 continue
             default: // block
                 let rect = CGRect(x: x, y: y, width: cellSize.width, height: cellSize.height)
+                let style = cursor.style()
+                if (style.add_modifier & reversedModifierBit) != 0, !style.has_bg, !style.has_fg {
+                    context.drawLayer { layer in
+                        layer.blendMode = .difference
+                        layer.fill(Path(rect), with: .color(.white))
+                    }
+                    continue
+                }
                 context.fill(Path(rect), with: .color(strokeColor.opacity(isPickedCursor ? 0.65 : 0.5)))
             }
         }

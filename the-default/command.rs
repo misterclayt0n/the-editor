@@ -89,6 +89,7 @@ use the_lib::{
     UiState,
     UiTree,
     char_at_visual_pos,
+    graphics::CursorKind,
     text_annotations::{
       InlineAnnotation,
       Overlay,
@@ -1513,6 +1514,14 @@ fn pre_render_with_styles<Ctx: DefaultContext>(
   ctx: &mut Ctx,
   mut styles: RenderStyles,
 ) -> RenderStyles {
+  let (cursor_kind, active_cursor_kind) = match ctx.mode() {
+    Mode::Insert => (CursorKind::Bar, CursorKind::Bar),
+    Mode::Select => (CursorKind::Underline, CursorKind::Underline),
+    Mode::Normal | Mode::Command => (CursorKind::Block, CursorKind::Block),
+  };
+  styles.cursor_kind = cursor_kind;
+  styles.active_cursor_kind = active_cursor_kind;
+
   // When picking a cursor to keep/remove, make the focused cursor use the
   // match cursor style so it stands out from the rest.
   if matches!(ctx.pending_input(), Some(PendingInput::CursorPick { .. })) {

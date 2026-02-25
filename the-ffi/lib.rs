@@ -3998,6 +3998,8 @@ impl App {
         .try_get("ui.cursor.active")
         .or_else(|| theme.try_get("ui.cursor"))
         .unwrap_or_default(),
+      cursor_kind: LibCursorKind::Block,
+      active_cursor_kind: LibCursorKind::Block,
       gutter: theme.try_get("ui.linenr").unwrap_or_default(),
       gutter_active: theme
         .try_get("ui.linenr.selected")
@@ -10381,6 +10383,8 @@ impl ffi::RenderStyles {
       selection:     self.selection.to_lib(),
       cursor:        self.cursor.to_lib(),
       active_cursor: self.active_cursor.to_lib(),
+      cursor_kind:   LibCursorKind::Block,
+      active_cursor_kind: LibCursorKind::Block,
       gutter:        self.gutter.to_lib(),
       gutter_active: self.gutter_active.to_lib(),
     }

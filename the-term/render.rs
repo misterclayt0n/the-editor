@@ -106,6 +106,7 @@ use the_lib::{
     build_plan,
     graphics::{
       Color as LibColor,
+      CursorKind as LibCursorKind,
       Modifier as LibModifier,
       Style as LibStyle,
       UnderlineStyle as LibUnderlineStyle,
@@ -241,6 +242,8 @@ fn render_styles_from_theme(ctx: &Ctx) -> RenderStyles {
     selection,
     cursor,
     active_cursor,
+    cursor_kind: LibCursorKind::Block,
+    active_cursor_kind: LibCursorKind::Block,
     gutter: theme.try_get("ui.linenr").unwrap_or_default(),
     gutter_active: theme
       .try_get("ui.linenr.selected")
@@ -2111,6 +2114,49 @@ fn unfocused_pane_cursor_style(theme: &the_lib::render::theme::Theme) -> Style {
 fn draw_software_cursor_cell(buf: &mut Buffer, x: u16, y: u16, cursor_style: Style) {
   let cell = buf.get_mut(x, y);
   cell.set_style(cell.style().patch(cursor_style));
+}
+
+fn cursor_shape_color(cursor_style: Style, base_style: Style) -> Color {
+  cursor_style
+    .bg
+    .or(cursor_style.fg)
+    .or(base_style.fg)
+    .unwrap_or(Color::White)
+}
+
+fn draw_buffer_cursor_cell(
+  buf: &mut Buffer,
+  x: u16,
+  y: u16,
+  kind: LibCursorKind,
+  cursor_style: Style,
+) {
+  let cell = buf.get_mut(x, y);
+  let base_style = cell.style();
+
+  match kind {
+    LibCursorKind::Hidden => {},
+    LibCursorKind::Block => {
+      cell.set_style(base_style.patch(cursor_style));
+    },
+    LibCursorKind::Underline => {
+      let color = cursor_shape_color(cursor_style, base_style);
+      let overlay = Style::default()
+        .underline_color(color)
+        .add_modifier(Modifier::UNDERLINED);
+      cell.set_style(base_style.patch(overlay));
+    },
+    LibCursorKind::Bar => {
+      let color = cursor_shape_color(cursor_style, base_style);
+      cell.set_symbol("▏");
+      cell.set_style(base_style.patch(Style::default().fg(color)));
+    },
+    LibCursorKind::Hollow => {
+      let color = cursor_shape_color(cursor_style, base_style);
+      cell.set_symbol("□");
+      cell.set_style(base_style.patch(Style::default().fg(color)));
+    },
+  }
 }
 
 fn apply_ui_emphasis(style: Style, emphasis: UiEmphasis) -> Style {
@@ -5995,17 +6041,12 @@ fn draw_pane_content(
     let x = content_x + cursor.pos.col as u16;
     let y = pane_area.y + cursor.pos.row as u16;
     if x < pane_area.x + pane_area.width && y < pane_area.y + pane_area.height {
-      let style = lib_style_to_ratatui(cursor.style);
-      let cell = buf.get_mut(x, y);
-      if draw_active_annotations {
-        let merged = cell.style().patch(style);
-        cell.set_style(merged);
+      let style = if draw_active_annotations {
+        lib_style_to_ratatui(cursor.style)
       } else {
-        let merged = cell
-          .style()
-          .patch(unfocused_pane_cursor_style(&ctx.ui_theme));
-        cell.set_style(merged);
-      }
+        unfocused_pane_cursor_style(&ctx.ui_theme)
+      };
+      draw_buffer_cursor_cell(buf, x, y, cursor.kind, style);
     }
   }
 

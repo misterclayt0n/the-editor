@@ -212,6 +212,8 @@ pub struct RenderStyles {
   pub selection:     Style,
   pub cursor:        Style,
   pub active_cursor: Style,
+  pub cursor_kind:   CursorKind,
+  pub active_cursor_kind: CursorKind,
   pub gutter:        Style,
   pub gutter_active: Style,
 }
@@ -239,6 +241,8 @@ impl Default for RenderStyles {
       selection:     Style::default(),
       cursor:        Style::default(),
       active_cursor: Style::default(),
+      cursor_kind:   CursorKind::Block,
+      active_cursor_kind: CursorKind::Block,
       gutter:        Style::default(),
       gutter_active: Style::default(),
     }
@@ -921,8 +925,6 @@ fn add_selections_and_cursor<'a>(
 ) {
   let row_visible_end_cols = visible_line_end_cols(plan, doc, text_fmt, annotations);
   let selection = doc.selection();
-  let cursor_kind = CursorKind::Block;
-
   for (cursor_id, range) in selection.iter_with_ids() {
     let from = range.from();
     let to = range.to();
@@ -949,6 +951,11 @@ fn add_selections_and_cursor<'a>(
           styles.active_cursor
         } else {
           styles.cursor
+        };
+        let cursor_kind = if view.active_cursor == Some(cursor_id) {
+          styles.active_cursor_kind
+        } else {
+          styles.cursor_kind
         };
         plan.cursors.push(RenderCursor {
           id: cursor_id,

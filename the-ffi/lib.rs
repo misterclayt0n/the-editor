@@ -4097,11 +4097,22 @@ impl App {
 
     let text = doc.text();
     let mut annotations = self.text_annotations();
-    let eof_pos = visual_pos_at_char(text.slice(..), &text_fmt, &mut annotations, text.len_chars())
-      .unwrap_or_else(|| LibPosition::new(0, 0));
-    let viewport_rows = usize::from(view.viewport.height);
-    let max_row = eof_pos.row.saturating_sub(viewport_rows.saturating_sub(1));
-    clamped.row = clamped.row.min(max_row);
+    let text_slice = text.slice(..);
+    let has_line_annotations = annotations.has_line_annotations();
+    let eof_pos = if !text_fmt.soft_wrap && !has_line_annotations {
+      LibPosition::new(text.len_lines().saturating_sub(1), 0)
+    } else {
+      visual_pos_at_char(text_slice, &text_fmt, &mut annotations, text.len_chars())
+        .unwrap_or_else(|| LibPosition::new(0, 0))
+    };
+    // Zed-like page padding: allow the last visual row/column to reach the top/left
+    // edge of the viewport (up to one viewport of empty space after content).
+    clamped.row = clamped.row.min(eof_pos.row);
+
+    if !text_fmt.soft_wrap && clamped.col != view.scroll.col {
+      let max_col = Self::max_visual_col_for_text(text, &text_fmt, &mut annotations);
+      clamped.col = clamped.col.min(max_col);
+    }
     clamped
   }
 
@@ -4113,6 +4124,34 @@ impl App {
     }
     view.scroll = clamped;
     true
+  }
+
+  fn max_visual_col_for_text<'a>(
+    text: &'a Rope,
+    text_fmt: &'a TextFormat,
+    annotations: &mut TextAnnotations<'a>,
+  ) -> usize {
+    let text_slice = text.slice(..);
+    let mut max_col = 0usize;
+    for line_idx in 0..text.len_lines() {
+      let line = text.line(line_idx);
+      let mut line_end = line.len_chars();
+      while line_end > 0 {
+        let Some(ch) = line.get_char(line_end - 1) else {
+          break;
+        };
+        if ch == '\n' || ch == '\r' {
+          line_end -= 1;
+        } else {
+          break;
+        }
+      }
+      let char_idx = text.line_to_char(line_idx).saturating_add(line_end);
+      if let Some(pos) = visual_pos_at_char(text_slice, text_fmt, annotations, char_idx) {
+        max_col = max_col.max(pos.col);
+      }
+    }
+    max_col
   }
 
   pub fn set_file_path(&mut self, id: ffi::EditorId, path: &str) -> bool {

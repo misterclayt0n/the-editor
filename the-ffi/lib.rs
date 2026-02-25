@@ -4139,13 +4139,16 @@ impl App {
       visual_pos_at_char(text_slice, &text_fmt, &mut annotations, text.len_chars())
         .unwrap_or_else(|| LibPosition::new(0, 0))
     };
-    // Zed-like page padding: allow the last visual row/column to reach the top/left
-    // edge of the viewport (up to one viewport of empty space after content).
+    // Zed-like page padding vertically: allow the last visual row to reach the
+    // top edge of the viewport (up to one viewport of empty space after content).
+    // Horizontally we clamp to the actual scrollable width (no page padding).
     clamped.row = clamped.row.min(eof_pos.row);
 
     if !text_fmt.soft_wrap && clamped.col != view.scroll.col {
       let max_col = Self::max_visual_col_for_text(text, &text_fmt, &mut annotations);
-      clamped.col = clamped.col.min(max_col);
+      let viewport_cols = usize::from(text_fmt.viewport_width.max(1));
+      let max_scroll_col = max_col.saturating_sub(viewport_cols.saturating_sub(1));
+      clamped.col = clamped.col.min(max_scroll_col);
     }
     clamped
   }

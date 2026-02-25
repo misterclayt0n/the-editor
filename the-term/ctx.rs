@@ -3047,7 +3047,9 @@ impl Ctx {
 
     if !text_format.soft_wrap && clamped.col != view.scroll.col {
       let max_col = self.max_visual_col_for_text(text, &text_format, &mut annotations);
-      clamped.col = clamped.col.min(max_col);
+      let viewport_cols = usize::from(text_format.viewport_width.max(1));
+      let max_scroll_col = max_col.saturating_sub(viewport_cols.saturating_sub(1));
+      clamped.col = clamped.col.min(max_scroll_col);
     }
 
     clamped

@@ -57,6 +57,7 @@ use std::{
 use the_core::grapheme::{
   Grapheme,
   GraphemeStr,
+  next_grapheme_boundary,
 };
 use the_stdx::rope::RopeSliceExt;
 
@@ -213,6 +214,23 @@ pub struct RenderStyles {
   pub active_cursor: Style,
   pub gutter:        Style,
   pub gutter_active: Style,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SelectionMatchHighlightOptions {
+  pub enable_point_cursor_match: bool,
+  pub max_needle_chars:          usize,
+  pub max_matches:               usize,
+}
+
+impl Default for SelectionMatchHighlightOptions {
+  fn default() -> Self {
+    Self {
+      enable_point_cursor_match: false,
+      max_needle_chars: 128,
+      max_matches: 1000,
+    }
+  }
 }
 
 impl Default for RenderStyles {
@@ -939,6 +957,129 @@ fn add_selections_and_cursor<'a>(
           style: cursor_style,
         });
       }
+    }
+  }
+}
+
+pub fn add_selection_match_highlights<'a>(
+  plan: &mut RenderPlan,
+  doc: &'a Document,
+  text_fmt: &'a TextFormat,
+  annotations: &mut TextAnnotations<'a>,
+  view: ViewState,
+  style: Style,
+  options: SelectionMatchHighlightOptions,
+) {
+  if plan.visible_rows.is_empty() || options.max_matches == 0 {
+    return;
+  }
+
+  let text = doc.text();
+  let text_slice = text.slice(..);
+  let selection = doc.selection();
+  let active_range = if let Some(active_cursor) = view.active_cursor {
+    selection.range_by_id(active_cursor).copied()
+  } else {
+    selection.ranges().first().copied()
+  };
+  let Some(active_range) = active_range else {
+    return;
+  };
+
+  let text_len = text.len_chars();
+  let (needle_from, needle_to) = if active_range.is_empty() {
+    if !options.enable_point_cursor_match {
+      return;
+    }
+    let cursor = active_range.cursor(text_slice).min(text_len);
+    if cursor >= text_len {
+      return;
+    }
+    let next = next_grapheme_boundary(text_slice, cursor);
+    if next <= cursor {
+      return;
+    }
+    (cursor, next.min(text_len))
+  } else {
+    let (line_from, line_to) = active_range.line_range(text_slice);
+    if line_from != line_to {
+      return;
+    }
+    (active_range.from().min(text_len), active_range.to().min(text_len))
+  };
+
+  if needle_to <= needle_from {
+    return;
+  }
+
+  let needle_chars = needle_to - needle_from;
+  if needle_chars > options.max_needle_chars {
+    return;
+  }
+
+  let needle = text.slice(needle_from..needle_to).to_string();
+  if needle.is_empty() {
+    return;
+  }
+  if needle.chars().all(char::is_whitespace) {
+    return;
+  }
+  if needle.contains('\n') || needle.contains('\r') {
+    return;
+  }
+
+  let row_visible_end_cols = visible_line_end_cols(plan, doc, text_fmt, annotations);
+  let mut visible_lines = BTreeMap::<usize, usize>::new();
+  for row in &plan.visible_rows {
+    visible_lines.entry(row.doc_line).or_insert_with(|| text.line_to_char(row.doc_line));
+  }
+
+  let needle_len_bytes = needle.len();
+  let mut emitted = 0usize;
+  for (line_idx, line_start) in visible_lines {
+    if emitted >= options.max_matches {
+      break;
+    }
+    if line_idx >= text.len_lines() {
+      break;
+    }
+
+    let mut line = text.line(line_idx).to_string();
+    while line.ends_with(['\n', '\r']) {
+      line.pop();
+    }
+    if line.is_empty() {
+      continue;
+    }
+
+    let mut search_from = 0usize;
+    while search_from <= line.len() {
+      let Some(rel) = line[search_from..].find(&needle) else {
+        break;
+      };
+      let byte_start = search_from + rel;
+      let byte_end = byte_start + needle_len_bytes;
+      let local_start = line[..byte_start].chars().count();
+      let local_end = local_start + needle_chars;
+      let abs_start = line_start + local_start;
+      let abs_end = line_start + local_end;
+
+      if abs_start == needle_from && abs_end == needle_to {
+        search_from = byte_end;
+        continue;
+      }
+
+      let start = visual_position::visual_pos_at_char(text_slice, text_fmt, annotations, abs_start);
+      let end = visual_position::visual_pos_at_char(text_slice, text_fmt, annotations, abs_end);
+      if let (Some(start), Some(end)) = (start, end) {
+        push_selection_rects(plan, start, end, style, &row_visible_end_cols);
+        emitted = emitted.saturating_add(1);
+        if emitted >= options.max_matches {
+          break;
+        }
+      }
+
+      search_from = byte_end;
     }
   }
 }

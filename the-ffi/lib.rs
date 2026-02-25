@@ -162,10 +162,12 @@ use the_lib::{
     RenderDiffGutterStyles,
     RenderGutterDiffKind,
     RenderStyles,
+    SelectionMatchHighlightOptions,
     SharedInlineDiagnosticsRenderData,
     SyntaxHighlightAdapter,
     UiNode,
     UiState,
+    add_selection_match_highlights,
     apply_diagnostic_gutter_markers,
     apply_diff_gutter_markers,
     build_plan,
@@ -4482,6 +4484,12 @@ impl App {
     let inline_diagnostics = self.active_inline_diagnostics();
     let enable_cursor_line = self.active_state_ref().mode != Mode::Insert;
     let jump_label_style = self.ui_theme.find_highlight("ui.virtual.jump-label");
+    let selection_match_style = self
+      .ui_theme
+      .try_get("ui.selection.match")
+      .or_else(|| self.ui_theme.try_get("ui.selection"))
+      .unwrap_or_default();
+    let enable_point_selection_match = self.active_state_ref().mode == Mode::Select;
 
     let raw_diagnostics = self
       .lsp_document
@@ -4549,7 +4557,7 @@ impl App {
         )));
       }
 
-      let plan = if let (Some(loader), Some(syntax)) = (loader.as_deref(), doc.syntax()) {
+      let mut plan = if let (Some(loader), Some(syntax)) = (loader.as_deref(), doc.syntax()) {
         let line_range = view.scroll.row..(view.scroll.row + view.viewport.height as usize);
         let mut adapter = SyntaxHighlightAdapter::new(
           doc.text().slice(..),
@@ -4584,6 +4592,19 @@ impl App {
           styles,
         )
       };
+
+      add_selection_match_highlights(
+        &mut plan,
+        doc,
+        &text_fmt,
+        &mut annotations,
+        view,
+        selection_match_style,
+        SelectionMatchHighlightOptions {
+          enable_point_cursor_match: enable_point_selection_match,
+          ..SelectionMatchHighlightOptions::default()
+        },
+      );
 
       // Snapshot inline diagnostic render output now. Subsequent visual position
       // queries (e.g. underline mapping) can traverse annotations again and

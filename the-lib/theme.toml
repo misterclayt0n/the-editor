@@ -65,6 +65,7 @@ tabstop = { bg = "bossanova", modifiers = [ "italic" ] }
 
 "ui.selection"         = { bg = "#540099" }
 "ui.selection.active"  = { bg = "#540099" }
+"ui.selection.match"   = { bg = "#2f3f74" }
 # TODO: namespace ui.cursor as ui.selection.cursor?
 "ui.cursor"                = { modifiers = [ "reversed" ] }
 "ui.cursor.insert"         = { bg = "white" }

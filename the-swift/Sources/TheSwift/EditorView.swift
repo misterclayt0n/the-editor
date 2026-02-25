@@ -705,12 +705,18 @@ struct EditorView: View {
         for index in 0..<count {
             let selection = plan.selection_at(UInt(index))
             let rect = selection.rect()
+            let style = selection.style()
             let x = contentOffsetX + CGFloat(rect.x) * cellSize.width
             let y = CGFloat(rect.y) * cellSize.height
             let width = CGFloat(rect.width) * cellSize.width
             let height = CGFloat(rect.height) * cellSize.height
             let path = Path(CGRect(x: x, y: y, width: width, height: height))
-            context.fill(path, with: .color(SwiftUI.Color.accentColor.opacity(0.25)))
+            let color = if style.has_bg, let bg = ColorMapper.color(from: style.bg) {
+                bg.opacity(0.28)
+            } else {
+                SwiftUI.Color.accentColor.opacity(0.25)
+            }
+            context.fill(path, with: .color(color))
         }
     }
 

@@ -99,6 +99,8 @@ use the_lib::{
     UiText,
     UiTooltip,
     UiTree,
+    SelectionMatchHighlightOptions,
+    add_selection_match_highlights,
     apply_diagnostic_gutter_markers,
     apply_diff_gutter_markers,
     build_plan,
@@ -5635,6 +5637,12 @@ pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> Ren
     .and_then(|state| ctx.diagnostics.document(&state.uri))
     .map(|doc| doc.diagnostics.clone())
     .unwrap_or_default();
+  let selection_match_style = ctx
+    .ui_theme
+    .try_get("ui.selection.match")
+    .or_else(|| ctx.ui_theme.try_get("ui.selection"))
+    .unwrap_or_default();
+  let enable_point_selection_match = ctx.mode() == Mode::Select;
   let lsp_diag_count = diagnostics_for_underlines.len();
   let mut inline_enable_cursor_line = false;
   let mut inline_config_snapshot: Option<InlineDiagnosticsConfig> = None;
@@ -5663,7 +5671,7 @@ pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> Ren
   // Build the render plan (with or without syntax highlighting).
   let (mut plan, diagnostic_underlines) = {
     let (doc, render_cache) = ctx.editor.document_and_cache();
-    let plan = if let (Some(loader), Some(syntax)) = (&ctx.loader, doc.syntax()) {
+    let mut plan = if let (Some(loader), Some(syntax)) = (&ctx.loader, doc.syntax()) {
       // Calculate line range for highlighting
       let line_range = view.scroll.row..(view.scroll.row + view.viewport.height as usize);
 
@@ -5703,6 +5711,19 @@ pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> Ren
         styles,
       )
     };
+    add_selection_match_highlights(
+      &mut plan,
+      doc,
+      text_fmt,
+      &mut annotations,
+      view,
+      selection_match_style,
+      SelectionMatchHighlightOptions {
+        enable_point_cursor_match: enable_point_selection_match,
+        ..SelectionMatchHighlightOptions::default()
+      },
+    );
+
     let diagnostic_underlines = diagnostic_underlines_for_document(
       doc.text(),
       &diagnostics_for_underlines,

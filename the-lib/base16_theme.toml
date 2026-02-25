@@ -1,6 +1,7 @@
 # Minimal base16 theme (placeholder)
 "ui.background" = { bg = "black" }
 "ui.text"       = { fg = "white" }
+"ui.selection.match" = { bg = "#303050" }
 
 [palette]
 black = "#000000"

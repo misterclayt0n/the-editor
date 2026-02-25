@@ -276,7 +276,7 @@ struct ScrollCaptureView: NSViewRepresentable {
         private var dragRawPoint: NSPoint?
         private var dragAutoScrollTimer: Timer?
         private let hitTolerance: CGFloat = 4.0
-        private let dragAutoScrollInterval: TimeInterval = 1.0 / 30.0
+        private let dragAutoScrollInterval: TimeInterval = 1.0 / 60.0
 
         deinit {
             stopDragAutoScroll(clearPoint: true)
@@ -403,7 +403,7 @@ struct ScrollCaptureView: NSViewRepresentable {
         }
 
         private func updateDragAutoScrollState(for point: NSPoint, pane: PaneHandle) {
-            guard verticalDragAutoScrollDelta(for: point, pane: pane) != 0 else {
+            guard abs(verticalDragAutoScrollDeltaPx(for: point, pane: pane)) > 0.01 else {
                 stopDragAutoScroll(clearPoint: false)
                 return
             }
@@ -434,13 +434,13 @@ struct ScrollCaptureView: NSViewRepresentable {
                 return
             }
 
-            let verticalDelta = verticalDragAutoScrollDelta(for: rawPoint, pane: pane)
-            guard verticalDelta != 0 else {
+            let verticalDeltaPx = verticalDragAutoScrollDeltaPx(for: rawPoint, pane: pane)
+            guard abs(verticalDeltaPx) > 0.01 else {
                 stopDragAutoScroll(clearPoint: false)
                 return
             }
 
-            onScroll?(0, CGFloat(verticalDelta), false)
+            onScroll?(0, verticalDeltaPx, true)
 
             let clamped = clampToPane(rawPoint, pane: pane)
             guard let pointer = makePointerEvent(
@@ -454,6 +454,12 @@ struct ScrollCaptureView: NSViewRepresentable {
                 return
             }
             let signature = (pointer.surfaceId, pointer.logicalRow, pointer.logicalCol)
+            if let lastDragSignature,
+               lastDragSignature.0 == signature.0,
+               lastDragSignature.1 == signature.1,
+               lastDragSignature.2 == signature.2 {
+                return
+            }
             lastDragSignature = signature
             onPointer?(pointer)
         }
@@ -463,26 +469,31 @@ struct ScrollCaptureView: NSViewRepresentable {
             return panes.first(where: { $0.paneId == activeEditorPane.paneId }) ?? activeEditorPane
         }
 
-        private func verticalDragAutoScrollDelta(for point: NSPoint, pane: PaneHandle) -> Int {
+        private func verticalDragAutoScrollDeltaPx(for point: NSPoint, pane: PaneHandle) -> CGFloat {
             let rect = pane.rect
             guard !rect.isEmpty else { return 0 }
 
-            let edgeThreshold = max(12, cellSize.height * 1.5)
-            let maxRowsPerTick = 4
-            let rowHeight = max(1, cellSize.height)
+            let lineHeight = max(1, cellSize.height)
+            let edgeBand = max(18, lineHeight * 3.0)
+            let minSpeed = lineHeight * 0.10
+            let maxSpeed = lineHeight * 1.00
 
-            let topBand = rect.minY + edgeThreshold
+            let topBand = rect.minY + edgeBand
             if point.y < topBand {
                 let distance = topBand - point.y
-                let rows = min(maxRowsPerTick, max(1, Int(ceil(distance / rowHeight))))
-                return rows
+                let t = min(2.0, max(0, distance / edgeBand))
+                let eased = t * t
+                let speed = min(maxSpeed, minSpeed + ((maxSpeed - minSpeed) * eased))
+                return speed
             }
 
-            let bottomBand = rect.maxY - edgeThreshold
+            let bottomBand = rect.maxY - edgeBand
             if point.y > bottomBand {
                 let distance = point.y - bottomBand
-                let rows = min(maxRowsPerTick, max(1, Int(ceil(distance / rowHeight))))
-                return -rows
+                let t = min(2.0, max(0, distance / edgeBand))
+                let eased = t * t
+                let speed = min(maxSpeed, minSpeed + ((maxSpeed - minSpeed) * eased))
+                return -speed
             }
 
             return 0

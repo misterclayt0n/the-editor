@@ -1555,7 +1555,22 @@ struct EditorState {
   hover_docs:                    Option<String>,
   hover_docs_scroll:             usize,
   scrolloff:                     usize,
-  pointer_drag_anchor:           Option<usize>,
+  pointer_drag_selection:        Option<PointerSelectionDragState>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PointerSelectionDragMode {
+  Char,
+  Word,
+  Line,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PointerSelectionDragState {
+  mode:         PointerSelectionDragMode,
+  anchor:       usize,
+  initial_from: usize,
+  initial_to:   usize,
 }
 
 impl EditorState {
@@ -1599,7 +1614,7 @@ impl EditorState {
       hover_docs: None,
       hover_docs_scroll: 0,
       scrolloff: 5,
-      pointer_drag_anchor: None,
+      pointer_drag_selection: None,
     }
   }
 }
@@ -7810,22 +7825,18 @@ impl App {
         return PointerEventOutcome::Handled;
       },
       PointerKind::Down(PointerButton::Left) => {
+        self.active_state_mut().pointer_drag_selection = None;
         let Some(target) = self.pointer_char_idx_for_event(event) else {
           if pane_changed {
             self.request_render();
           }
           return PointerEventOutcome::Handled;
         };
-        let anchor = if event.modifiers.shift() {
-          self
-            .active_or_first_selection_range()
-            .map(|range| range.anchor)
-            .unwrap_or(target)
-        } else {
-          target
-        };
-        self.active_state_mut().pointer_drag_anchor = Some(anchor);
-        let changed = self.pointer_set_primary_selection(anchor, target);
+        let click_mode = Self::pointer_drag_mode_for_click_count(event.click_count.max(1));
+        let drag_state =
+          self.pointer_selection_drag_state_for_target(click_mode, target, event.modifiers.shift());
+        self.active_state_mut().pointer_drag_selection = Some(drag_state);
+        let changed = self.pointer_apply_drag_selection(drag_state, target);
         self.clear_hover_state();
         if changed || pane_changed {
           self.request_render();
@@ -7836,15 +7847,13 @@ impl App {
         let Some(target) = self.pointer_char_idx_for_event(event) else {
           return PointerEventOutcome::Handled;
         };
-        let anchor = self
-          .active_state_ref()
-          .pointer_drag_anchor
-          .or_else(|| self.active_or_first_selection_range().map(|range| range.anchor))
-          .unwrap_or(target);
-        if self.active_state_ref().pointer_drag_anchor.is_none() {
-          self.active_state_mut().pointer_drag_anchor = Some(anchor);
+        let drag_state = self.active_state_ref().pointer_drag_selection.unwrap_or_else(|| {
+          self.pointer_selection_drag_state_for_target(PointerSelectionDragMode::Char, target, false)
+        });
+        if self.active_state_ref().pointer_drag_selection.is_none() {
+          self.active_state_mut().pointer_drag_selection = Some(drag_state);
         }
-        let changed = self.pointer_set_primary_selection(anchor, target);
+        let changed = self.pointer_apply_drag_selection(drag_state, target);
         if changed {
           self.clear_hover_state();
           self.request_render();
@@ -7852,7 +7861,7 @@ impl App {
         return PointerEventOutcome::Handled;
       },
       PointerKind::Up(PointerButton::Left) => {
-        self.active_state_mut().pointer_drag_anchor = None;
+        self.active_state_mut().pointer_drag_selection = None;
         if pane_changed {
           self.request_render();
         }
@@ -7901,6 +7910,162 @@ impl App {
       .document_mut()
       .set_selection(Selection::single(anchor, head))
       .is_ok()
+  }
+
+  fn pointer_drag_mode_for_click_count(click_count: u8) -> PointerSelectionDragMode {
+    if click_count >= 3 {
+      PointerSelectionDragMode::Line
+    } else if click_count == 2 {
+      PointerSelectionDragMode::Word
+    } else {
+      PointerSelectionDragMode::Char
+    }
+  }
+
+  fn pointer_selection_drag_state_for_target(
+    &self,
+    mode: PointerSelectionDragMode,
+    target: usize,
+    shift: bool,
+  ) -> PointerSelectionDragState {
+    match mode {
+      PointerSelectionDragMode::Char => {
+        let anchor = if shift {
+          self
+            .active_or_first_selection_range()
+            .map(|range| range.anchor)
+            .unwrap_or(target)
+        } else {
+          target
+        };
+        PointerSelectionDragState {
+          mode,
+          anchor,
+          initial_from: target,
+          initial_to: target,
+        }
+      },
+      PointerSelectionDragMode::Word => {
+        let (from, to) = self.pointer_word_range_at_char(target);
+        PointerSelectionDragState {
+          mode,
+          anchor: from,
+          initial_from: from,
+          initial_to: to,
+        }
+      },
+      PointerSelectionDragMode::Line => {
+        let (from, to) = self.pointer_line_range_at_char(target);
+        PointerSelectionDragState {
+          mode,
+          anchor: from,
+          initial_from: from,
+          initial_to: to,
+        }
+      },
+    }
+  }
+
+  fn pointer_apply_drag_selection(
+    &mut self,
+    state: PointerSelectionDragState,
+    target: usize,
+  ) -> bool {
+    match state.mode {
+      PointerSelectionDragMode::Char => self.pointer_set_primary_selection(state.anchor, target),
+      PointerSelectionDragMode::Word => {
+        let (target_from, target_to) = self.pointer_word_range_at_char(target);
+        if target_from < state.initial_from {
+          self.pointer_set_primary_selection(state.initial_to, target_from)
+        } else {
+          self.pointer_set_primary_selection(state.initial_from, target_to)
+        }
+      },
+      PointerSelectionDragMode::Line => {
+        let (target_from, target_to) = self.pointer_line_range_at_char(target);
+        if target_from < state.initial_from {
+          self.pointer_set_primary_selection(state.initial_to, target_from)
+        } else {
+          self.pointer_set_primary_selection(state.initial_from, target_to)
+        }
+      },
+    }
+  }
+
+  fn pointer_word_range_at_char(&self, target: usize) -> (usize, usize) {
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum WordClass {
+      Symbol,
+      Whitespace,
+      Other,
+    }
+
+    fn classify(ch: char) -> WordClass {
+      if is_symbol_word_char(ch) {
+        WordClass::Symbol
+      } else if ch.is_whitespace() && ch != '\n' && ch != '\r' {
+        WordClass::Whitespace
+      } else {
+        WordClass::Other
+      }
+    }
+
+    let text = self.active_editor_ref().document().text();
+    let len = text.len_chars();
+    if len == 0 {
+      return (0, 0);
+    }
+
+    let clamped = target.min(len);
+    let probe_char = if clamped == len {
+      clamped.saturating_sub(1)
+    } else {
+      clamped
+    };
+    let line_idx = text.char_to_line(probe_char);
+    let line_start = text.line_to_char(line_idx);
+    let next_line_start = if line_idx + 1 < text.len_lines() {
+      text.line_to_char(line_idx + 1)
+    } else {
+      len
+    };
+
+    let mut line: Vec<char> = text.slice(line_start..next_line_start).chars().collect();
+    while matches!(line.last(), Some('\n' | '\r')) {
+      line.pop();
+    }
+    if line.is_empty() {
+      return (line_start, line_start);
+    }
+
+    let local = clamped.saturating_sub(line_start).min(line.len().saturating_sub(1));
+    let class = classify(line[local]);
+    let mut start = local;
+    while start > 0 && classify(line[start - 1]) == class {
+      start -= 1;
+    }
+    let mut end = local + 1;
+    while end < line.len() && classify(line[end]) == class {
+      end += 1;
+    }
+    (line_start + start, line_start + end)
+  }
+
+  fn pointer_line_range_at_char(&self, target: usize) -> (usize, usize) {
+    let text = self.active_editor_ref().document().text();
+    let len = text.len_chars();
+    if len == 0 {
+      return (0, 0);
+    }
+    let probe_char = target.min(len).saturating_sub(1).min(len.saturating_sub(1));
+    let line_idx = text.char_to_line(probe_char);
+    let line_start = text.line_to_char(line_idx);
+    let line_end = if line_idx + 1 < text.len_lines() {
+      text.line_to_char(line_idx + 1)
+    } else {
+      len
+    };
+    (line_start, line_end)
   }
 
   pub fn ensure_cursor_visible(&mut self, id: ffi::EditorId) -> bool {

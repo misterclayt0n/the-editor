@@ -271,7 +271,16 @@ struct ScrollCaptureView: NSViewRepresentable {
         private var activeSeparator: SeparatorHandle?
         private var activeEditorPane: PaneHandle?
         private var lastDragSignature: (paneId: UInt64, row: UInt16, col: UInt16)?
+        private var dragPointerModifiers: UInt8 = 0
+        private var dragPointerClickCount: UInt8 = 1
+        private var dragRawPoint: NSPoint?
+        private var dragAutoScrollTimer: Timer?
         private let hitTolerance: CGFloat = 4.0
+        private let dragAutoScrollInterval: TimeInterval = 1.0 / 30.0
+
+        deinit {
+            stopDragAutoScroll(clearPoint: true)
+        }
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
@@ -317,6 +326,9 @@ struct ScrollCaptureView: NSViewRepresentable {
                 activeSeparator = separator
                 activeEditorPane = nil
                 lastDragSignature = nil
+                dragPointerModifiers = 0
+                dragPointerClickCount = 1
+                stopDragAutoScroll(clearPoint: true)
                 cursor(for: separator).set()
                 onSplitResize?(separator.splitId, CGPoint(x: point.x, y: point.y))
                 return
@@ -325,6 +337,10 @@ struct ScrollCaptureView: NSViewRepresentable {
             let pane = hitPane(at: point)
             activeEditorPane = pane
             lastDragSignature = nil
+            dragPointerModifiers = pointerModifierBits(from: event.modifierFlags)
+            dragPointerClickCount = UInt8(clamping: event.clickCount)
+            dragRawPoint = point
+            stopDragAutoScroll(clearPoint: false)
             if let pointer = makePointerEvent(kind: 0, button: 1, point: point, event: event, pane: pane) {
                 onPointer?(pointer)
                 return
@@ -335,16 +351,23 @@ struct ScrollCaptureView: NSViewRepresentable {
         override func mouseDragged(with event: NSEvent) {
             if let separator = activeSeparator {
                 let point = convert(event.locationInWindow, from: nil)
+                stopDragAutoScroll(clearPoint: true)
                 cursor(for: separator).set()
                 onSplitResize?(separator.splitId, CGPoint(x: point.x, y: point.y))
                 return
             }
 
             guard let pane = activeEditorPane else {
+                stopDragAutoScroll(clearPoint: true)
                 super.mouseDragged(with: event)
                 return
             }
-            let point = clampToPane(convert(event.locationInWindow, from: nil), pane: pane)
+            let rawPoint = convert(event.locationInWindow, from: nil)
+            dragPointerModifiers = pointerModifierBits(from: event.modifierFlags)
+            dragPointerClickCount = UInt8(clamping: event.clickCount)
+            dragRawPoint = rawPoint
+            updateDragAutoScrollState(for: rawPoint, pane: pane)
+            let point = clampToPane(rawPoint, pane: pane)
             guard let pointer = makePointerEvent(kind: 1, button: 1, point: point, event: event, pane: pane) else {
                 return
             }
@@ -361,6 +384,7 @@ struct ScrollCaptureView: NSViewRepresentable {
 
         override func mouseUp(with event: NSEvent) {
             let point = convert(event.locationInWindow, from: nil)
+            stopDragAutoScroll(clearPoint: true)
             if let pane = activeEditorPane {
                 let clamped = clampToPane(point, pane: pane)
                 if let pointer = makePointerEvent(kind: 2, button: 1, point: clamped, event: event, pane: pane) {
@@ -376,6 +400,92 @@ struct ScrollCaptureView: NSViewRepresentable {
 
         override func scrollWheel(with event: NSEvent) {
             onScroll?(event.scrollingDeltaX, event.scrollingDeltaY, event.hasPreciseScrollingDeltas)
+        }
+
+        private func updateDragAutoScrollState(for point: NSPoint, pane: PaneHandle) {
+            guard verticalDragAutoScrollDelta(for: point, pane: pane) != 0 else {
+                stopDragAutoScroll(clearPoint: false)
+                return
+            }
+            ensureDragAutoScrollTimer()
+        }
+
+        private func ensureDragAutoScrollTimer() {
+            guard dragAutoScrollTimer == nil else { return }
+            let timer = Timer(timeInterval: dragAutoScrollInterval, repeats: true) { [weak self] _ in
+                self?.handleDragAutoScrollTick()
+            }
+            RunLoop.main.add(timer, forMode: .common)
+            dragAutoScrollTimer = timer
+        }
+
+        private func stopDragAutoScroll(clearPoint: Bool) {
+            dragAutoScrollTimer?.invalidate()
+            dragAutoScrollTimer = nil
+            if clearPoint {
+                dragRawPoint = nil
+            }
+        }
+
+        private func handleDragAutoScrollTick() {
+            guard let pane = currentActiveDragPane(),
+                  let rawPoint = dragRawPoint else {
+                stopDragAutoScroll(clearPoint: true)
+                return
+            }
+
+            let verticalDelta = verticalDragAutoScrollDelta(for: rawPoint, pane: pane)
+            guard verticalDelta != 0 else {
+                stopDragAutoScroll(clearPoint: false)
+                return
+            }
+
+            onScroll?(0, CGFloat(verticalDelta), false)
+
+            let clamped = clampToPane(rawPoint, pane: pane)
+            guard let pointer = makePointerEvent(
+                kind: 1,
+                button: 1,
+                point: clamped,
+                modifiers: dragPointerModifiers,
+                clickCount: dragPointerClickCount,
+                pane: pane
+            ) else {
+                return
+            }
+            let signature = (pointer.surfaceId, pointer.logicalRow, pointer.logicalCol)
+            lastDragSignature = signature
+            onPointer?(pointer)
+        }
+
+        private func currentActiveDragPane() -> PaneHandle? {
+            guard let activeEditorPane else { return nil }
+            return panes.first(where: { $0.paneId == activeEditorPane.paneId }) ?? activeEditorPane
+        }
+
+        private func verticalDragAutoScrollDelta(for point: NSPoint, pane: PaneHandle) -> Int {
+            let rect = pane.rect
+            guard !rect.isEmpty else { return 0 }
+
+            let edgeThreshold = max(12, cellSize.height * 1.5)
+            let maxRowsPerTick = 4
+            let rowHeight = max(1, cellSize.height)
+
+            let topBand = rect.minY + edgeThreshold
+            if point.y < topBand {
+                let distance = topBand - point.y
+                let rows = min(maxRowsPerTick, max(1, Int(ceil(distance / rowHeight))))
+                return rows
+            }
+
+            let bottomBand = rect.maxY - edgeThreshold
+            if point.y > bottomBand {
+                let distance = point.y - bottomBand
+                let rows = min(maxRowsPerTick, max(1, Int(ceil(distance / rowHeight))))
+                return -rows
+            }
+
+            return 0
         }
 
         private func updateCursor(at point: NSPoint) {
@@ -434,8 +544,24 @@ struct ScrollCaptureView: NSViewRepresentable {
             event: NSEvent,
             pane: PaneHandle?
         ) -> MouseBridgeEvent? {
-            let modifiers = pointerModifierBits(from: event.modifierFlags)
+            makePointerEvent(
+                kind: kind,
+                button: button,
+                point: point,
+                modifiers: pointerModifierBits(from: event.modifierFlags),
+                clickCount: UInt8(clamping: event.clickCount),
+                pane: pane
+            )
+        }
 
+        private func makePointerEvent(
+            kind: UInt8,
+            button: UInt8,
+            point: NSPoint,
+            modifiers: UInt8,
+            clickCount: UInt8,
+            pane: PaneHandle?
+        ) -> MouseBridgeEvent? {
             if let pane {
                 let localX = point.x - pane.rect.minX
                 let localY = point.y - pane.rect.minY
@@ -448,7 +574,7 @@ struct ScrollCaptureView: NSViewRepresentable {
                     logicalCol: UInt16(clamping: col),
                     logicalRow: UInt16(clamping: row),
                     modifiers: modifiers,
-                    clickCount: UInt8(clamping: event.clickCount),
+                    clickCount: clickCount,
                     surfaceId: pane.paneId
                 )
             }
@@ -459,7 +585,7 @@ struct ScrollCaptureView: NSViewRepresentable {
                 logicalCol: UInt16.max,
                 logicalRow: UInt16.max,
                 modifiers: modifiers,
-                clickCount: UInt8(clamping: event.clickCount),
+                clickCount: clickCount,
                 surfaceId: 0
             )
         }

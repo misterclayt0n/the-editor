@@ -1215,16 +1215,7 @@ pub fn handle_command_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEve
 
   match key.key {
     Key::Escape => {
-      ctx.set_mode(Mode::Normal);
-      ctx.command_prompt_mut().clear();
-      {
-        let palette = ctx.command_palette_mut();
-        palette.is_open = false;
-        palette.query.clear();
-        palette.selected = None;
-        palette.scroll_offset = 0;
-        palette.prompt_text = None;
-      }
+      close_command_prompt_and_palette(ctx);
       ctx.request_render();
       return true;
     },
@@ -1298,16 +1289,7 @@ pub fn handle_command_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEve
         }
 
         if line.is_empty() {
-          ctx.set_mode(Mode::Normal);
-          ctx.command_prompt_mut().clear();
-          {
-            let palette = ctx.command_palette_mut();
-            palette.is_open = false;
-            palette.query.clear();
-            palette.selected = None;
-            palette.scroll_offset = 0;
-            palette.prompt_text = None;
-          }
+          close_command_prompt_and_palette(ctx);
           ctx.request_render();
           return true;
         }
@@ -1326,21 +1308,13 @@ pub fn handle_command_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEve
 
         match result {
           Ok(()) => {
-            ctx.set_mode(Mode::Normal);
-            ctx.command_prompt_mut().clear();
-            {
-              let palette = ctx.command_palette_mut();
-              palette.is_open = false;
-              palette.query.clear();
-              palette.selected = None;
-              palette.scroll_offset = 0;
-              palette.prompt_text = None;
-            }
+            close_command_prompt_and_palette(ctx);
           },
           Err(err) => {
             let message = err.to_string();
             ctx.command_prompt_mut().error = Some(message.clone());
             ctx.push_error("command", message);
+            close_command_prompt_and_palette(ctx);
           },
         }
 
@@ -1476,6 +1450,19 @@ pub fn handle_command_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEve
   }
 
   true
+}
+
+fn close_command_prompt_and_palette<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  ctx.set_mode(Mode::Normal);
+  ctx.command_prompt_mut().clear();
+  {
+    let palette = ctx.command_palette_mut();
+    palette.is_open = false;
+    palette.query.clear();
+    palette.selected = None;
+    palette.scroll_offset = 0;
+    palette.prompt_text = None;
+  }
 }
 
 /// Shared logic for updating the command palette after a query change.

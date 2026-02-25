@@ -1706,7 +1706,7 @@ fn on_ui_event<Ctx: DefaultContext>(ctx: &mut Ctx, event: UiEvent) -> UiEventOut
             ctx.command_prompt_mut().error = Some(message.clone());
             ctx.push_error("command", message);
           }
-          ctx.request_render();
+          close_command_palette(ctx);
         }
         return UiEventOutcome::handled();
       },
@@ -1895,7 +1895,7 @@ fn submit_command_palette_selected<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool {
       let message = err.to_string();
       ctx.command_prompt_mut().error = Some(message.clone());
       ctx.push_error("command_palette", message);
-      ctx.request_render();
+      close_command_palette(ctx);
       true
     },
   }

@@ -4071,11 +4071,47 @@ impl App {
   }
 
   pub fn set_scroll(&mut self, id: ffi::EditorId, scroll: ffi::Position) -> bool {
-    let _ = self.activate(id);
+    if self.activate(id).is_none() {
+      return false;
+    }
+    let clamped = self.clamped_scroll_for_active_editor(scroll.to_lib());
     let Some(editor) = self.editor_mut(id) else {
       return false;
     };
-    editor.view_mut().scroll = scroll.to_lib();
+    editor.view_mut().scroll = clamped;
+    true
+  }
+
+  fn clamped_scroll_for_active_editor(&self, scroll: LibPosition) -> LibPosition {
+    let editor = self.active_editor_ref();
+    let view = editor.view();
+    let doc = editor.document();
+    let mut clamped = scroll;
+
+    let mut text_fmt = self.text_format();
+    let gutter_width = gutter_width_for_document(doc, view.viewport.width, self.gutter_config());
+    text_fmt.viewport_width = view.viewport.width.saturating_sub(gutter_width).max(1);
+    if text_fmt.soft_wrap {
+      clamped.col = 0;
+    }
+
+    let text = doc.text();
+    let mut annotations = self.text_annotations();
+    let eof_pos = visual_pos_at_char(text.slice(..), &text_fmt, &mut annotations, text.len_chars())
+      .unwrap_or_else(|| LibPosition::new(0, 0));
+    let viewport_rows = usize::from(view.viewport.height);
+    let max_row = eof_pos.row.saturating_sub(viewport_rows.saturating_sub(1));
+    clamped.row = clamped.row.min(max_row);
+    clamped
+  }
+
+  fn set_active_editor_scroll_clamped(&mut self, scroll: LibPosition) -> bool {
+    let clamped = self.clamped_scroll_for_active_editor(scroll);
+    let view = self.active_editor_mut().view_mut();
+    if view.scroll == clamped {
+      return false;
+    }
+    view.scroll = clamped;
     true
   }
 
@@ -7714,27 +7750,20 @@ impl App {
         }
 
         let soft_wrap = self.active_state_ref().text_format.soft_wrap;
-        let changed = {
-          let view = self.active_editor_mut().view_mut();
-          let new_row = if row_delta >= 0 {
-            view.scroll.row.saturating_add(row_delta as usize)
-          } else {
-            view.scroll.row.saturating_sub((-row_delta) as usize)
-          };
-          let new_col = if soft_wrap {
-            0
-          } else if col_delta >= 0 {
-            view.scroll.col.saturating_add(col_delta as usize)
-          } else {
-            view.scroll.col.saturating_sub((-col_delta) as usize)
-          };
-          if view.scroll.row == new_row && view.scroll.col == new_col {
-            false
-          } else {
-            view.scroll = LibPosition::new(new_row, new_col);
-            true
-          }
+        let current = self.active_editor_ref().view().scroll;
+        let new_row = if row_delta >= 0 {
+          current.row.saturating_add(row_delta as usize)
+        } else {
+          current.row.saturating_sub((-row_delta) as usize)
         };
+        let new_col = if soft_wrap {
+          0
+        } else if col_delta >= 0 {
+          current.col.saturating_add(col_delta as usize)
+        } else {
+          current.col.saturating_sub((-col_delta) as usize)
+        };
+        let changed = self.set_active_editor_scroll_clamped(LibPosition::new(new_row, new_col));
 
         if changed || pane_changed {
           self.request_render();

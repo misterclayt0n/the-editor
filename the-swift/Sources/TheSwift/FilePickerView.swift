@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import class TheEditorFFIBridge.PreviewData
 import class TheEditorFFIBridge.PreviewLine
@@ -20,8 +21,232 @@ struct FilePickerSnapshot {
 
 // MARK: - Preview model (isolated from main EditorModel to avoid re-rendering the file list)
 
+struct FilePickerPreviewSegmentSnapshot {
+    let text: String
+    let highlightId: UInt32
+    let isMatch: Bool
+}
+
+struct FilePickerPreviewLineSnapshot: Identifiable {
+    let virtualRow: Int
+    let kind: UInt8
+    let marker: String
+    let focused: Bool
+    let lineNumber: Int
+    let segments: [FilePickerPreviewSegmentSnapshot]
+
+    var id: Int { virtualRow }
+}
+
+struct FilePickerPreviewSnapshot {
+    let kind: UInt8
+    let path: String
+    let truncated: Bool
+    let offset: Int
+    let windowStart: Int
+    let totalLines: Int
+    let lines: [FilePickerPreviewLineSnapshot]
+
+    init(preview: PreviewData) {
+        self.kind = preview.kind()
+        self.path = preview.path().toString()
+        self.truncated = preview.truncated()
+        self.offset = Int(preview.offset())
+        self.windowStart = Int(preview.window_start())
+        self.totalLines = Int(preview.total_lines())
+
+        let lineCount = Int(preview.line_count())
+        var decodedLines: [FilePickerPreviewLineSnapshot] = []
+        decodedLines.reserveCapacity(lineCount)
+
+        for index in 0..<lineCount {
+            let line = preview.line_at(UInt(index))
+            let segmentCount = Int(line.segment_count())
+            var decodedSegments: [FilePickerPreviewSegmentSnapshot] = []
+            decodedSegments.reserveCapacity(segmentCount)
+            for segmentIndex in 0..<segmentCount {
+                let segment = line.segment_at(UInt(segmentIndex))
+                decodedSegments.append(
+                    FilePickerPreviewSegmentSnapshot(
+                        text: segment.text().toString(),
+                        highlightId: segment.highlight_id(),
+                        isMatch: segment.is_match()
+                    )
+                )
+            }
+
+            decodedLines.append(
+                FilePickerPreviewLineSnapshot(
+                    virtualRow: Int(line.virtual_row()),
+                    kind: line.kind(),
+                    marker: line.marker().toString(),
+                    focused: line.focused(),
+                    lineNumber: Int(line.line_number()),
+                    segments: decodedSegments
+                )
+            )
+        }
+
+        self.lines = decodedLines
+    }
+}
+
 class FilePickerPreviewModel: ObservableObject {
-    @Published var preview: PreviewData? = nil
+    @Published var preview: FilePickerPreviewSnapshot? = nil
+}
+
+fileprivate enum PickerPreviewPerfTrace {
+    private static let flushIntervalNanos: UInt64 = 750_000_000
+    private static let lock = NSLock()
+    private static var lastFlushNanos: UInt64 = DispatchTime.now().uptimeNanoseconds
+
+    private static var metricsCallbacks: Int = 0
+    private static var bodyBuilds: Int = 0
+    private static var windowCalls: Int = 0
+    private static var windowCoveredSkips: Int = 0
+    private static var windowDuplicateSkips: Int = 0
+    private static var windowSends: Int = 0
+    private static var applyAttempts: Int = 0
+    private static var applyApplied: Int = 0
+    private static var applyNoops: Int = 0
+    private static var applyLiveBlocked: Int = 0
+
+    private static var lastScrollTop: CGFloat = 0
+    private static var lastViewportHeight: CGFloat = 0
+    private static var lastRenderedLineCount: Int = 0
+    private static var lastRenderedTotalRows: Int = 0
+    private static var lastRenderedWindowStart: Int = 0
+    private static var lastRequestedOffset: Int = -1
+    private static var lastRequestedVisibleRows: Int = 0
+    private static var lastRequestedOverscan: Int = 0
+    private static var lastRequestDecision: String = "none"
+
+    static func noteMetrics(top: CGFloat, viewportHeight: CGFloat) {
+        guard DiagnosticsDebugLog.pickerPerfEnabled else { return }
+        lock.lock()
+        metricsCallbacks += 1
+        lastScrollTop = top
+        lastViewportHeight = viewportHeight
+        let summary = takeSummaryIfNeededLocked()
+        lock.unlock()
+        if let summary {
+            DiagnosticsDebugLog.pickerPerfLog(summary)
+        }
+    }
+
+    static func noteBodyBuild(lineCount: Int, totalRows: Int, windowStart: Int) {
+        guard DiagnosticsDebugLog.pickerPerfEnabled else { return }
+        lock.lock()
+        bodyBuilds += 1
+        lastRenderedLineCount = lineCount
+        lastRenderedTotalRows = totalRows
+        lastRenderedWindowStart = windowStart
+        let summary = takeSummaryIfNeededLocked()
+        lock.unlock()
+        if let summary {
+            DiagnosticsDebugLog.pickerPerfLog(summary)
+        }
+    }
+
+    static func noteWindowCall() {
+        guard DiagnosticsDebugLog.pickerPerfEnabled else { return }
+        lock.lock()
+        windowCalls += 1
+        let summary = takeSummaryIfNeededLocked()
+        lock.unlock()
+        if let summary {
+            DiagnosticsDebugLog.pickerPerfLog(summary)
+        }
+    }
+
+    static func noteWindowDecision(_ decision: String, offset: Int, visibleRows: Int, overscan: Int) {
+        guard DiagnosticsDebugLog.pickerPerfEnabled else { return }
+        lock.lock()
+        switch decision {
+        case "skip_covered":
+            windowCoveredSkips += 1
+        case "skip_duplicate":
+            windowDuplicateSkips += 1
+        case "send":
+            windowSends += 1
+        default:
+            break
+        }
+        lastRequestDecision = decision
+        lastRequestedOffset = offset
+        lastRequestedVisibleRows = visibleRows
+        lastRequestedOverscan = overscan
+        let summary = takeSummaryIfNeededLocked()
+        lock.unlock()
+        if let summary {
+            DiagnosticsDebugLog.pickerPerfLog(summary)
+        }
+    }
+
+    static func noteApplyRequestedScroll(result: String) {
+        guard DiagnosticsDebugLog.pickerPerfEnabled else { return }
+        lock.lock()
+        applyAttempts += 1
+        switch result {
+        case "applied":
+            applyApplied += 1
+        case "noop":
+            applyNoops += 1
+        case "live_blocked":
+            applyLiveBlocked += 1
+        default:
+            break
+        }
+        let summary = takeSummaryIfNeededLocked()
+        lock.unlock()
+        if let summary {
+            DiagnosticsDebugLog.pickerPerfLog(summary)
+        }
+    }
+
+    private static func takeSummaryIfNeededLocked() -> String? {
+        let now = DispatchTime.now().uptimeNanoseconds
+        guard now >= lastFlushNanos else { return nil }
+        guard now - lastFlushNanos >= flushIntervalNanos else { return nil }
+
+        let elapsedMs = Double(now - lastFlushNanos) / 1_000_000.0
+        let summary = String(
+            format: "preview_ui %.0fms metrics=%d body=%d window_calls=%d sends=%d skip_cov=%d skip_dup=%d apply_attempts=%d applied=%d noop=%d live_blocked=%d last_scroll=%.1f/%.1f last_render=%d@%d/%d last_req=%d v=%d o=%d decision=%@",
+            elapsedMs,
+            metricsCallbacks,
+            bodyBuilds,
+            windowCalls,
+            windowSends,
+            windowCoveredSkips,
+            windowDuplicateSkips,
+            applyAttempts,
+            applyApplied,
+            applyNoops,
+            applyLiveBlocked,
+            lastScrollTop,
+            lastViewportHeight,
+            lastRenderedLineCount,
+            lastRenderedWindowStart,
+            lastRenderedTotalRows,
+            lastRequestedOffset,
+            lastRequestedVisibleRows,
+            lastRequestedOverscan,
+            lastRequestDecision
+        )
+
+        metricsCallbacks = 0
+        bodyBuilds = 0
+        windowCalls = 0
+        windowCoveredSkips = 0
+        windowDuplicateSkips = 0
+        windowSends = 0
+        applyAttempts = 0
+        applyApplied = 0
+        applyNoops = 0
+        applyLiveBlocked = 0
+        lastFlushNanos = now
+        return summary
+    }
 }
 
 struct FilePickerItemSnapshot: Identifiable {
@@ -293,6 +518,13 @@ struct FilePickerView: View {
                 showCtrlCClose: true,
                 autoSelectFirstItem: true,
                 showBackground: !hasPreview,
+                virtualList: isLiveGrepPicker ? PickerPanelVirtualListConfig(
+                    rowHeight: 32,
+                    rowSpacing: 4,
+                    verticalPadding: 10,
+                    horizontalPadding: 10,
+                    overscanRows: 24
+                ) : nil,
                 itemCount: items.count,
                 externalQuery: snapshot.query,
                 externalSelectedIndex: nil,
@@ -967,6 +1199,194 @@ fileprivate struct ScanningText: View {
     }
 }
 
+// MARK: - Native preview scroll container
+
+fileprivate final class PreviewNativeScrollDocumentView: NSView {
+    override var isFlipped: Bool { true }
+}
+
+fileprivate final class PreviewNativeScrollContainerView: NSView {
+    let scrollView: NSScrollView = NSScrollView()
+    private let documentView = PreviewNativeScrollDocumentView()
+    private let hostingView = NSHostingView(rootView: AnyView(EmptyView()))
+    private var currentContentHeight: CGFloat = 0
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        setup()
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) not implemented")
+    }
+
+    override var isFlipped: Bool { true }
+
+    private func setup() {
+        scrollView.borderType = .noBorder
+        scrollView.drawsBackground = false
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
+        scrollView.autohidesScrollers = true
+        scrollView.usesPredominantAxisScrolling = true
+        scrollView.scrollerStyle = .overlay
+        scrollView.contentView.postsBoundsChangedNotifications = true
+        scrollView.documentView = documentView
+
+        documentView.addSubview(hostingView)
+        addSubview(scrollView)
+    }
+
+    override func layout() {
+        super.layout()
+        scrollView.frame = bounds
+        layoutDocument()
+    }
+
+    func setRootView(_ rootView: AnyView, contentHeight: CGFloat) {
+        hostingView.rootView = rootView
+        currentContentHeight = max(0, contentHeight)
+        layoutDocument()
+    }
+
+    private func layoutDocument() {
+        let width = max(0, scrollView.contentSize.width)
+        let height = max(0, currentContentHeight)
+        documentView.frame = NSRect(x: 0, y: 0, width: width, height: height)
+        hostingView.frame = documentView.bounds
+    }
+}
+
+fileprivate struct NativePreviewScrollView<Content: View>: NSViewRepresentable {
+    let contentHeight: CGFloat
+    let requestedScrollTop: CGFloat?
+    let onScrollMetrics: (CGFloat, CGFloat) -> Void
+    let content: Content
+
+    init(
+        contentHeight: CGFloat,
+        requestedScrollTop: CGFloat?,
+        onScrollMetrics: @escaping (CGFloat, CGFloat) -> Void,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.contentHeight = contentHeight
+        self.requestedScrollTop = requestedScrollTop
+        self.onScrollMetrics = onScrollMetrics
+        self.content = content()
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onScrollMetrics: onScrollMetrics)
+    }
+
+    func makeNSView(context: Context) -> PreviewNativeScrollContainerView {
+        let view = PreviewNativeScrollContainerView(frame: .zero)
+        context.coordinator.bind(to: view.scrollView)
+        return view
+    }
+
+    func updateNSView(_ nsView: PreviewNativeScrollContainerView, context: Context) {
+        let coordinator = context.coordinator
+        coordinator.onScrollMetrics = onScrollMetrics
+        coordinator.bind(to: nsView.scrollView)
+        nsView.setRootView(AnyView(content), contentHeight: contentHeight)
+        coordinator.applyRequestedScroll(top: requestedScrollTop, contentHeight: contentHeight)
+        DispatchQueue.main.async {
+            coordinator.reportMetrics()
+            coordinator.applyRequestedScroll(top: requestedScrollTop, contentHeight: contentHeight)
+        }
+    }
+
+    static func dismantleNSView(_ nsView: PreviewNativeScrollContainerView, coordinator: Coordinator) {
+        _ = nsView
+        coordinator.unbind()
+    }
+
+    final class Coordinator {
+        var onScrollMetrics: (CGFloat, CGFloat) -> Void
+
+        private weak var scrollView: NSScrollView?
+        private var observers: [NSObjectProtocol] = []
+        private var isLiveScrolling = false
+
+        init(onScrollMetrics: @escaping (CGFloat, CGFloat) -> Void) {
+            self.onScrollMetrics = onScrollMetrics
+        }
+
+        deinit {
+            unbind()
+        }
+
+        func bind(to scrollView: NSScrollView) {
+            if self.scrollView === scrollView { return }
+            unbind()
+            self.scrollView = scrollView
+
+            observers.append(NotificationCenter.default.addObserver(
+                forName: NSView.boundsDidChangeNotification,
+                object: scrollView.contentView,
+                queue: .main
+            ) { [weak self] _ in
+                self?.reportMetrics()
+            })
+
+            observers.append(NotificationCenter.default.addObserver(
+                forName: NSScrollView.willStartLiveScrollNotification,
+                object: scrollView,
+                queue: .main
+            ) { [weak self] _ in
+                self?.isLiveScrolling = true
+            })
+
+            observers.append(NotificationCenter.default.addObserver(
+                forName: NSScrollView.didEndLiveScrollNotification,
+                object: scrollView,
+                queue: .main
+            ) { [weak self] _ in
+                self?.isLiveScrolling = false
+                self?.reportMetrics()
+            })
+        }
+
+        func unbind() {
+            observers.forEach { NotificationCenter.default.removeObserver($0) }
+            observers.removeAll()
+            scrollView = nil
+            isLiveScrolling = false
+        }
+
+        func reportMetrics() {
+            guard let scrollView else { return }
+            let bounds = scrollView.contentView.bounds
+            let top = max(0, bounds.minY)
+            let viewportHeight = max(0, bounds.height)
+            PickerPreviewPerfTrace.noteMetrics(top: top, viewportHeight: viewportHeight)
+            onScrollMetrics(top, viewportHeight)
+        }
+
+        func applyRequestedScroll(top: CGFloat?, contentHeight: CGFloat) {
+            guard let scrollView, let top else { return }
+            guard !isLiveScrolling else {
+                PickerPreviewPerfTrace.noteApplyRequestedScroll(result: "live_blocked")
+                return
+            }
+
+            let viewportHeight = max(0, scrollView.contentView.bounds.height)
+            let maxTop = max(0, contentHeight - viewportHeight)
+            let clampedTop = max(0, min(top, maxTop))
+            let currentTop = scrollView.contentView.bounds.minY
+            if abs(currentTop - clampedTop) < 0.5 {
+                PickerPreviewPerfTrace.noteApplyRequestedScroll(result: "noop")
+                return
+            }
+
+            scrollView.contentView.scroll(to: CGPoint(x: 0, y: clampedTop))
+            scrollView.reflectScrolledClipView(scrollView.contentView)
+            PickerPreviewPerfTrace.noteApplyRequestedScroll(result: "applied")
+        }
+    }
+}
+
 // MARK: - File preview panel
 
 struct FilePreviewPanel: View {
@@ -974,12 +1394,15 @@ struct FilePreviewPanel: View {
     let onWindowRequest: ((Int, Int, Int) -> Void)?
     let colorForHighlight: ((UInt32) -> SwiftUI.Color?)?
 
-    private var preview: PreviewData? { previewModel.preview }
+    private var preview: FilePickerPreviewSnapshot? { previewModel.preview }
     private let rowHeight: CGFloat = 16
     private let defaultVisibleRows: Int = 24
     private let overscanRows: Int = 24
+    private let verticalPadding: CGFloat = 4
+    private let horizontalPadding: CGFloat = 8
 
-    @State private var contentMinY: CGFloat = 0
+    @State private var scrollTop: CGFloat = 0
+    @State private var viewportHeight: CGFloat = 0
     @State private var lastRequestedOffset: Int = Int.min
     @State private var lastRequestedVisibleRows: Int = 0
     @State private var lastRequestedOverscan: Int = 0
@@ -995,11 +1418,11 @@ struct FilePreviewPanel: View {
             pendingFocusReset = true
             requestWindow()
         }
-        .onChange(of: preview?.path().toString() ?? "") { _ in
+        .onChange(of: preview?.path ?? "") { _ in
             pendingFocusReset = true
             requestWindow()
         }
-        .onChange(of: preview?.kind() ?? 0) { _ in
+        .onChange(of: preview?.kind ?? 0) { _ in
             pendingFocusReset = true
             requestWindow()
         }
@@ -1009,7 +1432,7 @@ struct FilePreviewPanel: View {
 
     @ViewBuilder
     private var previewHeader: some View {
-        let path = preview?.path().toString() ?? ""
+        let path = preview?.path ?? ""
         HStack(spacing: 6) {
             Image(systemName: "doc.text")
                 .font(FontLoader.uiFont(size: 12).weight(.medium))
@@ -1029,7 +1452,7 @@ struct FilePreviewPanel: View {
 
             Spacer()
 
-            if preview?.truncated() == true {
+            if preview?.truncated == true {
                 Text("truncated")
                     .font(FontLoader.uiFont(size: 10))
                     .foregroundStyle(.tertiary)
@@ -1049,7 +1472,7 @@ struct FilePreviewPanel: View {
 
     @ViewBuilder
     private var previewContent: some View {
-        let kind = preview?.kind() ?? 0
+        let kind = preview?.kind ?? 0
         switch kind {
         case 1:
             windowedPreview(showLineNumbers: true)
@@ -1072,67 +1495,50 @@ struct FilePreviewPanel: View {
     }
 
     private func windowedPreview(showLineNumbers: Bool) -> some View {
-        let lineCount = Int(preview?.line_count() ?? 0)
-        let totalRows = Int(preview?.total_lines() ?? 0)
-        let windowStart = Int(preview?.window_start() ?? 0)
+        let previewLines = preview?.lines ?? []
+        let lineCount = previewLines.count
+        let totalRows = preview?.totalLines ?? 0
+        let windowStart = preview?.windowStart ?? 0
         let topRows = max(0, windowStart)
         let bottomRows = max(0, totalRows - windowStart - lineCount)
+        let contentHeight = previewContentHeight(totalRows: totalRows)
+        PickerPreviewPerfTrace.noteBodyBuild(lineCount: lineCount, totalRows: totalRows, windowStart: windowStart)
 
-        return ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    if topRows > 0 {
-                        Color.clear
-                            .frame(height: CGFloat(topRows) * rowHeight)
-                    }
-
-                    ForEach(0..<lineCount, id: \.self) { index in
-                        let line = preview!.line_at(UInt(index))
-                        previewLineView(line: line, showLineNumbers: showLineNumbers, totalRows: totalRows)
-                            .id(previewRowId(Int(line.virtual_row())))
-                    }
-
-                    if bottomRows > 0 {
-                        Color.clear
-                            .frame(height: CGFloat(bottomRows) * rowHeight)
-                    }
+        return NativePreviewScrollView(
+            contentHeight: contentHeight,
+            requestedScrollTop: previewRequestedScrollTop()
+        ) { top, viewportHeight in
+            scrollTop = top
+            self.viewportHeight = viewportHeight
+            requestWindow()
+        } content: {
+            VStack(alignment: .leading, spacing: 0) {
+                if topRows > 0 {
+                    Color.clear
+                        .frame(height: CGFloat(topRows) * rowHeight)
                 }
-                .background(
-                    GeometryReader { proxy in
-                        Color.clear.preference(
-                            key: PreviewContentOffsetKey.self,
-                            value: proxy.frame(in: .named("file-picker-preview-scroll")).minY
-                        )
-                    }
-                )
+
+                ForEach(previewLines) { line in
+                    previewLineView(line: line, showLineNumbers: showLineNumbers, totalRows: totalRows)
+                }
+
+                if bottomRows > 0 {
+                    Color.clear
+                        .frame(height: CGFloat(bottomRows) * rowHeight)
+                }
             }
-            .coordinateSpace(name: "file-picker-preview-scroll")
-            .onPreferenceChange(PreviewContentOffsetKey.self) { value in
-                contentMinY = value
-                requestWindow()
-            }
-            .onAppear {
-                syncScrollPosition(proxy)
-            }
-            .onChange(of: preview?.offset() ?? 0) { _ in
-                syncScrollPosition(proxy)
-            }
-            .onChange(of: preview?.window_start() ?? 0) { _ in
-                syncScrollPosition(proxy)
-            }
-            .onChange(of: preview?.line_count() ?? 0) { _ in
-                syncScrollPosition(proxy)
-            }
-            .padding(.vertical, 4)
-            .padding(.horizontal, 8)
+            .padding(.vertical, verticalPadding)
+            .padding(.horizontal, horizontalPadding)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private func previewLineView(line: PreviewLine, showLineNumbers: Bool, totalRows: Int) -> some View {
-        let lineKind = Int(line.kind())
+    private func previewLineView(line: FilePickerPreviewLineSnapshot, showLineNumbers: Bool, totalRows: Int) -> some View {
+        let lineKind = Int(line.kind)
         if lineKind == 1 || lineKind == 2 {
             return AnyView(
-                Text(line.marker().toString())
+                Text(line.marker)
                     .font(FontLoader.bufferFont(size: 11))
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -1140,8 +1546,8 @@ struct FilePreviewPanel: View {
             )
         }
 
-        let focused = line.focused()
-        let lineNumber = Int(line.line_number())
+        let focused = line.focused
+        let lineNumber = line.lineNumber
         let lineNumberWidth = max(3, String(max(1, totalRows)).count)
         return AnyView(
             HStack(alignment: .top, spacing: 0) {
@@ -1166,18 +1572,17 @@ struct FilePreviewPanel: View {
         )
     }
 
-    private func previewSegmentsText(_ line: PreviewLine) -> Text {
-        let segmentCount = Int(line.segment_count())
+    private func previewSegmentsText(_ line: FilePickerPreviewLineSnapshot) -> Text {
+        let segmentCount = line.segments.count
         guard segmentCount > 0 else {
             return Text(" ")
         }
 
         var output = Text("")
-        for index in 0..<segmentCount {
-            let segment = line.segment_at(UInt(index))
-            let text = segment.text().toString()
-            let highlightId = segment.highlight_id()
-            let isMatch = segment.is_match()
+        for segment in line.segments {
+            let text = segment.text
+            let highlightId = segment.highlightId
+            let isMatch = segment.isMatch
 
             let baseColor: Color
             if highlightId > 0, let mapped = colorForHighlight?(highlightId) {
@@ -1196,14 +1601,27 @@ struct FilePreviewPanel: View {
 
     private func requestWindow() {
         guard let onWindowRequest else { return }
-        let visibleRows = defaultVisibleRows
-
-        let rawOffset = max(0, Int(floor(-contentMinY / rowHeight)))
+        PickerPreviewPerfTrace.noteWindowCall()
+        let visibleRows = computedVisibleRows()
+        let rawOffset = max(0, Int(floor(max(0, scrollTop - verticalPadding) / rowHeight)))
         let nextOffset = pendingFocusReset ? -1 : rawOffset
         let overscan = overscanRows
+
+        if !pendingFocusReset,
+           previewWindowCovers(offset: rawOffset, visibleRows: visibleRows, overscan: overscan) {
+            PickerPreviewPerfTrace.noteWindowDecision("skip_covered", offset: rawOffset, visibleRows: visibleRows, overscan: overscan)
+            if DiagnosticsDebugLog.enabled {
+                DiagnosticsDebugLog.log(
+                    "picker.window_skip offset=\(rawOffset) visible=\(visibleRows) overscan=\(overscan) reason=covered"
+                )
+            }
+            return
+        }
+
         if nextOffset == lastRequestedOffset
             && visibleRows == lastRequestedVisibleRows
             && overscan == lastRequestedOverscan {
+            PickerPreviewPerfTrace.noteWindowDecision("skip_duplicate", offset: nextOffset, visibleRows: visibleRows, overscan: overscan)
             return
         }
 
@@ -1213,39 +1631,42 @@ struct FilePreviewPanel: View {
         pendingFocusReset = false
         if DiagnosticsDebugLog.enabled {
             DiagnosticsDebugLog.log(
-                "picker.window_calc contentMinY=\(String(format: "%.1f", contentMinY)) send_offset=\(nextOffset) send_visible=\(visibleRows) send_overscan=\(overscan)"
+                "picker.window_calc scrollTop=\(String(format: "%.1f", scrollTop)) viewportH=\(String(format: "%.1f", viewportHeight)) send_offset=\(nextOffset) send_visible=\(visibleRows) send_overscan=\(overscan)"
             )
         }
+        PickerPreviewPerfTrace.noteWindowDecision("send", offset: nextOffset, visibleRows: visibleRows, overscan: overscan)
         onWindowRequest(nextOffset, visibleRows, overscan)
     }
 
-    private func previewRowId(_ virtualRow: Int) -> String {
-        "picker-preview-row-\(virtualRow)"
+    private func previewWindowCovers(offset: Int, visibleRows: Int, overscan: Int) -> Bool {
+        guard let preview else { return false }
+
+        let windowStart = max(0, preview.windowStart)
+        let windowEnd = max(windowStart, preview.windowStart + preview.lines.count)
+        guard windowEnd > windowStart else { return false }
+
+        let totalLines = max(0, preview.totalLines)
+        let neededStart = max(0, offset - overscan)
+        let neededEnd = min(totalLines, offset + visibleRows + overscan)
+        return neededStart >= windowStart && neededEnd <= windowEnd
     }
 
-    private func syncScrollPosition(_ proxy: ScrollViewProxy) {
-        guard let preview else { return }
-        let lineCount = Int(preview.line_count())
-        if lineCount == 0 {
-            return
+    private func computedVisibleRows() -> Int {
+        let contentViewportHeight = max(0, viewportHeight - (verticalPadding * 2))
+        if contentViewportHeight <= 0 {
+            return defaultVisibleRows
         }
-        let targetOffset = Int(preview.offset())
-        let windowStart = Int(preview.window_start())
-        let windowEnd = windowStart + lineCount
-        guard (windowStart..<windowEnd).contains(targetOffset) else {
-            return
-        }
-        let targetId = previewRowId(targetOffset)
-        DispatchQueue.main.async {
-            proxy.scrollTo(targetId, anchor: .top)
-        }
+        return max(1, Int(ceil(contentViewportHeight / rowHeight)))
     }
-}
 
-fileprivate struct PreviewContentOffsetKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
+    private func previewRequestedScrollTop() -> CGFloat? {
+        guard let preview else { return nil }
+        let targetOffset = max(0, preview.offset)
+        return verticalPadding + (CGFloat(targetOffset) * rowHeight)
+    }
 
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
+    private func previewContentHeight(totalRows: Int) -> CGFloat {
+        let rowsHeight = CGFloat(max(0, totalRows)) * rowHeight
+        return rowsHeight + (verticalPadding * 2)
     }
 }

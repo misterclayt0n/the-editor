@@ -2,12 +2,17 @@ import Foundation
 
 enum DiagnosticsDebugLog {
     private static let enabledFlag = ProcessInfo.processInfo.environment["THE_SWIFT_DEBUG_DIAGNOSTICS"] == "1"
+    private static let pickerPerfEnabledFlag = ProcessInfo.processInfo.environment["THE_SWIFT_DEBUG_PICKER_PERF"] == "1"
     private static let lock = NSLock()
     private static let startNanos = DispatchTime.now().uptimeNanoseconds
     private static var lastValues: [String: String] = [:]
 
     static var enabled: Bool {
         enabledFlag
+    }
+
+    static var pickerPerfEnabled: Bool {
+        pickerPerfEnabledFlag
     }
 
     static func log(_ message: @autoclosure () -> String) {
@@ -27,6 +32,11 @@ enum DiagnosticsDebugLog {
         lock.unlock()
         guard shouldWrite else { return }
         write("[\(key)] \(next)")
+    }
+
+    static func pickerPerfLog(_ message: @autoclosure () -> String) {
+        guard pickerPerfEnabledFlag else { return }
+        write("[pickerperf] \(message())")
     }
 
     private static func write(_ message: String) {

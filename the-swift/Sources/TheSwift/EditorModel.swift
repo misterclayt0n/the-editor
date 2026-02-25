@@ -395,7 +395,9 @@ final class EditorModel: ObservableObject {
 
     func refreshFilePicker() {
         let t0 = CFAbsoluteTimeGetCurrent()
+        let perfT0 = DispatchTime.now().uptimeNanoseconds
         let data = app.file_picker_snapshot(editorId, 10_000)
+        let perfAfterFfi = DispatchTime.now().uptimeNanoseconds
 
         guard data.active() else {
             stopFilePickerTimerIfNeeded()
@@ -405,9 +407,16 @@ final class EditorModel: ObservableObject {
             lastPickerRoot = nil
             lastPickerKind = 0
             filePickerSnapshot = nil
+            if DiagnosticsDebugLog.pickerPerfEnabled {
+                let ffiMs = Double(perfAfterFfi - perfT0) / 1_000_000.0
+                DiagnosticsDebugLog.pickerPerfLog(
+                    String(format: "list_refresh inactive ffi=%.2fms", ffiMs)
+                )
+            }
             return
         }
 
+        let perfDecodeStart = DispatchTime.now().uptimeNanoseconds
         let title = data.title().toString()
         let root = data.root().toString()
         let pickerKind = data.picker_kind()
@@ -431,13 +440,41 @@ final class EditorModel: ObservableObject {
         let totalCount = Int(data.total_count())
         let scanning = data.scanning()
 
+        if scanning {
+            startFilePickerTimerIfNeeded(scanning: true)
+        } else {
+            stopFilePickerTimerIfNeeded()
+        }
+
         // Skip full item rebuild if metadata hasn't changed.
         if query == lastPickerQuery
             && matchedCount == lastPickerMatchedCount
             && totalCount == lastPickerTotalCount
             && scanning == lastPickerScanning {
-            // Items unchanged — just update preview.
-            refreshFilePickerPreview()
+            // Only poll the preview while matches are still streaming in.
+            let perfDecodeEnd = DispatchTime.now().uptimeNanoseconds
+            let refreshedPreview = scanning
+            if refreshedPreview {
+                refreshFilePickerPreview()
+            }
+            if DiagnosticsDebugLog.pickerPerfEnabled {
+                let ffiMs = Double(perfAfterFfi - perfT0) / 1_000_000.0
+                let decodeMs = Double(perfDecodeEnd - perfDecodeStart) / 1_000_000.0
+                let totalMs = Double(DispatchTime.now().uptimeNanoseconds - perfT0) / 1_000_000.0
+                DiagnosticsDebugLog.pickerPerfLog(
+                    String(
+                        format: "list_refresh skip kind=%d matched=%d total=%d scanning=%d preview_refreshed=%d ffi=%.2fms decode=%.2fms total=%.2fms",
+                        Int(pickerKind),
+                        matchedCount,
+                        totalCount,
+                        scanning ? 1 : 0,
+                        refreshedPreview ? 1 : 0,
+                        ffiMs,
+                        decodeMs,
+                        totalMs
+                    )
+                )
+            }
             let t1 = CFAbsoluteTimeGetCurrent()
             debugUiLog(String(format: "refreshFilePicker SKIP items=%d elapsed=%.2fms", matchedCount, (t1 - t0) * 1000))
             return
@@ -489,8 +526,27 @@ final class EditorModel: ObservableObject {
             root: root,
             items: items
         )
+        let perfDecodeEnd = DispatchTime.now().uptimeNanoseconds
         refreshFilePickerPreview()
-        startFilePickerTimerIfNeeded(scanning: scanning)
+
+        if DiagnosticsDebugLog.pickerPerfEnabled {
+            let ffiMs = Double(perfAfterFfi - perfT0) / 1_000_000.0
+            let decodeMs = Double(perfDecodeEnd - perfDecodeStart) / 1_000_000.0
+            let totalMs = Double(DispatchTime.now().uptimeNanoseconds - perfT0) / 1_000_000.0
+            DiagnosticsDebugLog.pickerPerfLog(
+                String(
+                    format: "list_refresh full kind=%d items=%d matched=%d total=%d scanning=%d ffi=%.2fms decode=%.2fms total=%.2fms",
+                    Int(pickerKind),
+                    itemCount,
+                    matchedCount,
+                    totalCount,
+                    scanning ? 1 : 0,
+                    ffiMs,
+                    decodeMs,
+                    totalMs
+                )
+            )
+        }
 
         let t1 = CFAbsoluteTimeGetCurrent()
         debugUiLog(String(format: "refreshFilePicker items=%d elapsed=%.2fms", itemCount, (t1 - t0) * 1000))
@@ -504,14 +560,44 @@ final class EditorModel: ObservableObject {
         } else {
             offset = UInt(max(0, filePickerPreviewOffsetHint))
         }
+        let perfT0 = DispatchTime.now().uptimeNanoseconds
         let preview = app.file_picker_preview_window(
             editorId,
             offset,
             UInt(max(1, filePickerPreviewVisibleRows)),
             UInt(max(1, filePickerPreviewOverscan))
         )
-        filePickerPreviewModel.preview = preview
+        let perfAfterFfi = DispatchTime.now().uptimeNanoseconds
         debugLogFilePickerPreview(preview: preview, requestedOffset: offset)
+        let snapshot = FilePickerPreviewSnapshot(preview: preview)
+        let perfAfterDecode = DispatchTime.now().uptimeNanoseconds
+        filePickerPreviewModel.preview = snapshot
+        let perfAfterPublish = DispatchTime.now().uptimeNanoseconds
+
+        if DiagnosticsDebugLog.pickerPerfEnabled {
+            let ffiMs = Double(perfAfterFfi - perfT0) / 1_000_000.0
+            let decodeMs = Double(perfAfterDecode - perfAfterFfi) / 1_000_000.0
+            let publishMs = Double(perfAfterPublish - perfAfterDecode) / 1_000_000.0
+            let totalMs = Double(perfAfterPublish - perfT0) / 1_000_000.0
+            let requested = offset == UInt.max ? "focus" : String(offset)
+            DiagnosticsDebugLog.pickerPerfLog(
+                String(
+                    format: "preview_refresh req=%@ kind=%d visible=%d overscan=%d returned_offset=%d window_start=%d lines=%d total=%d ffi=%.2fms decode=%.2fms publish=%.2fms total=%.2fms",
+                    requested,
+                    Int(snapshot.kind),
+                    max(1, filePickerPreviewVisibleRows),
+                    max(1, filePickerPreviewOverscan),
+                    snapshot.offset,
+                    snapshot.windowStart,
+                    snapshot.lines.count,
+                    snapshot.totalLines,
+                    ffiMs,
+                    decodeMs,
+                    publishMs,
+                    totalMs
+                )
+            )
+        }
     }
 
     private func startFilePickerTimerIfNeeded(scanning: Bool) {

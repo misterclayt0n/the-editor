@@ -1,7 +1,16 @@
+import AppKit
 import SwiftUI
 
 enum PickerPanelLayout {
     case center, top, bottom
+}
+
+struct PickerPanelVirtualListConfig {
+    let rowHeight: CGFloat
+    let rowSpacing: CGFloat
+    let verticalPadding: CGFloat
+    let horizontalPadding: CGFloat
+    let overscanRows: Int
 }
 
 private struct PickerRowFramePreferenceKey: PreferenceKey {
@@ -17,6 +26,194 @@ private struct PickerViewportFramePreferenceKey: PreferenceKey {
 
     static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
         value = nextValue()
+    }
+}
+
+private struct PickerNativeScrollRequest: Equatable {
+    let id: Int
+    let rowTop: CGFloat
+    let rowHeight: CGFloat
+}
+
+private final class PickerNativeScrollDocumentView: NSView {
+    override var isFlipped: Bool { true }
+}
+
+private final class PickerNativeScrollContainerView: NSView {
+    let scrollView: NSScrollView = NSScrollView()
+    private let documentView = PickerNativeScrollDocumentView()
+    private let hostingView = NSHostingView(rootView: AnyView(EmptyView()))
+    private var currentContentHeight: CGFloat = 0
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        setup()
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) not implemented")
+    }
+
+    override var isFlipped: Bool { true }
+
+    private func setup() {
+        scrollView.borderType = .noBorder
+        scrollView.drawsBackground = false
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
+        scrollView.autohidesScrollers = true
+        scrollView.usesPredominantAxisScrolling = true
+        scrollView.scrollerStyle = .overlay
+        scrollView.contentView.postsBoundsChangedNotifications = true
+        scrollView.documentView = documentView
+
+        documentView.addSubview(hostingView)
+        addSubview(scrollView)
+    }
+
+    override func layout() {
+        super.layout()
+        scrollView.frame = bounds
+        layoutDocument()
+    }
+
+    func setRootView(_ rootView: AnyView, contentHeight: CGFloat) {
+        hostingView.rootView = rootView
+        currentContentHeight = max(0, contentHeight)
+        layoutDocument()
+    }
+
+    private func layoutDocument() {
+        let width = max(0, scrollView.contentSize.width)
+        let height = max(0, currentContentHeight)
+        documentView.frame = NSRect(x: 0, y: 0, width: width, height: height)
+        hostingView.frame = documentView.bounds
+    }
+}
+
+private struct NativePickerScrollView<Content: View>: NSViewRepresentable {
+    let contentHeight: CGFloat
+    let scrollRequest: PickerNativeScrollRequest?
+    let onScrollMetrics: (CGFloat, CGFloat) -> Void
+    let content: Content
+
+    init(
+        contentHeight: CGFloat,
+        scrollRequest: PickerNativeScrollRequest?,
+        onScrollMetrics: @escaping (CGFloat, CGFloat) -> Void,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.contentHeight = contentHeight
+        self.scrollRequest = scrollRequest
+        self.onScrollMetrics = onScrollMetrics
+        self.content = content()
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onScrollMetrics: onScrollMetrics)
+    }
+
+    func makeNSView(context: Context) -> PickerNativeScrollContainerView {
+        let view = PickerNativeScrollContainerView(frame: .zero)
+        context.coordinator.bind(to: view.scrollView)
+        return view
+    }
+
+    func updateNSView(_ nsView: PickerNativeScrollContainerView, context: Context) {
+        let coordinator = context.coordinator
+        coordinator.onScrollMetrics = onScrollMetrics
+        coordinator.bind(to: nsView.scrollView)
+        nsView.setRootView(AnyView(content), contentHeight: contentHeight)
+        coordinator.applyScrollRequest(scrollRequest, contentHeight: contentHeight)
+        DispatchQueue.main.async {
+            coordinator.reportMetrics()
+            coordinator.applyScrollRequest(scrollRequest, contentHeight: contentHeight)
+        }
+    }
+
+    static func dismantleNSView(_ nsView: PickerNativeScrollContainerView, coordinator: Coordinator) {
+        _ = nsView
+        coordinator.unbind()
+    }
+
+    final class Coordinator {
+        var onScrollMetrics: (CGFloat, CGFloat) -> Void
+
+        private weak var scrollView: NSScrollView?
+        private var observers: [NSObjectProtocol] = []
+        private var isLiveScrolling = false
+        private var lastHandledRequestId: Int = -1
+
+        init(onScrollMetrics: @escaping (CGFloat, CGFloat) -> Void) {
+            self.onScrollMetrics = onScrollMetrics
+        }
+
+        deinit {
+            unbind()
+        }
+
+        func bind(to scrollView: NSScrollView) {
+            if self.scrollView === scrollView { return }
+            unbind()
+            self.scrollView = scrollView
+
+            observers.append(NotificationCenter.default.addObserver(
+                forName: NSView.boundsDidChangeNotification,
+                object: scrollView.contentView,
+                queue: .main
+            ) { [weak self] _ in
+                self?.reportMetrics()
+            })
+
+            observers.append(NotificationCenter.default.addObserver(
+                forName: NSScrollView.willStartLiveScrollNotification,
+                object: scrollView,
+                queue: .main
+            ) { [weak self] _ in
+                self?.isLiveScrolling = true
+            })
+
+            observers.append(NotificationCenter.default.addObserver(
+                forName: NSScrollView.didEndLiveScrollNotification,
+                object: scrollView,
+                queue: .main
+            ) { [weak self] _ in
+                self?.isLiveScrolling = false
+                self?.reportMetrics()
+            })
+        }
+
+        func unbind() {
+            observers.forEach { NotificationCenter.default.removeObserver($0) }
+            observers.removeAll()
+            scrollView = nil
+            isLiveScrolling = false
+            lastHandledRequestId = -1
+        }
+
+        func reportMetrics() {
+            guard let scrollView else { return }
+            let bounds = scrollView.contentView.bounds
+            onScrollMetrics(max(0, bounds.minY), max(0, bounds.height))
+        }
+
+        func applyScrollRequest(_ request: PickerNativeScrollRequest?, contentHeight: CGFloat) {
+            guard let request else { return }
+            guard request.id != lastHandledRequestId else { return }
+            guard let scrollView else { return }
+
+            let rowHeight = max(1, request.rowHeight)
+            let maxRowTop = max(0, contentHeight - rowHeight)
+            let rowTop = max(0, min(request.rowTop, maxRowTop))
+            let width = max(1, scrollView.contentSize.width)
+            let rect = NSRect(x: 0, y: rowTop, width: width, height: rowHeight)
+
+            // Native minimal scroll behavior (only scroll when needed).
+            scrollView.documentView?.scrollToVisible(rect)
+            scrollView.reflectScrolledClipView(scrollView.contentView)
+            lastHandledRequestId = request.id
+            reportMetrics()
+        }
     }
 }
 
@@ -38,6 +235,7 @@ struct PickerPanel<
     let showCtrlCClose: Bool
     let autoSelectFirstItem: Bool
     var showBackground: Bool = true
+    var virtualList: PickerPanelVirtualListConfig? = nil
 
     // Data
     let itemCount: Int
@@ -64,6 +262,10 @@ struct PickerPanel<
     @State private var viewportFrame: CGRect = .zero
     @State private var visibleIndexRange: ClosedRange<Int>? = nil
     @State private var lastProgrammaticScrollIndex: Int? = nil
+    @State private var nativeScrollTop: CGFloat = 0
+    @State private var nativeViewportHeight: CGFloat = 0
+    @State private var nativeScrollRequest: PickerNativeScrollRequest? = nil
+    @State private var nativeScrollRequestCounter: Int = 0
     @FocusState private var isTextFieldFocused: Bool
 
     private let backgroundColor: Color = Color(nsColor: .windowBackgroundColor)
@@ -229,47 +431,120 @@ struct PickerPanel<
         if itemCount == 0 {
             emptyContent()
                 .frame(maxHeight: maxListHeight)
+        } else if let virtualList {
+            nativeVirtualizedPanelList(config: virtualList)
         } else {
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 4) {
-                        ForEach(0..<itemCount, id: \.self) { index in
-                            rowContainer(index: index)
-                                .id(index)
-                        }
+            legacyPanelList
+        }
+    }
+
+    private var legacyPanelList: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 4) {
+                    ForEach(0..<itemCount, id: \.self) { index in
+                        rowContainer(index: index, fixedRowHeight: nil, trackFrame: true)
+                            .id(index)
                     }
-                    .padding(10)
                 }
-                .frame(maxHeight: maxListHeight)
-                .background(
-                    GeometryReader { proxy in
-                        Color.clear.preference(
-                            key: PickerViewportFramePreferenceKey.self,
-                            value: proxy.frame(in: .global)
-                        )
-                    }
-                )
-                .onPreferenceChange(PickerRowFramePreferenceKey.self) { frames in
-                    rowFrames = frames
-                    recomputeVisibleIndexRange()
+                .padding(10)
+            }
+            .frame(maxHeight: maxListHeight)
+            .background(
+                GeometryReader { proxy in
+                    Color.clear.preference(
+                        key: PickerViewportFramePreferenceKey.self,
+                        value: proxy.frame(in: .global)
+                    )
                 }
-                .onPreferenceChange(PickerViewportFramePreferenceKey.self) { frame in
-                    viewportFrame = frame
-                    recomputeVisibleIndexRange()
-                }
-                .onChange(of: selectedIndex) { newIndex in
-                    guard let index = newIndex else { return }
-                    scrollSelectionIntoView(index: index, proxy: proxy)
-                }
-                .onAppear {
-                    guard let index = selectedIndex else { return }
-                    scrollSelectionIntoView(index: index, proxy: proxy)
-                }
+            )
+            .onPreferenceChange(PickerRowFramePreferenceKey.self) { frames in
+                rowFrames = frames
+                recomputeVisibleIndexRange()
+            }
+            .onPreferenceChange(PickerViewportFramePreferenceKey.self) { frame in
+                viewportFrame = frame
+                recomputeVisibleIndexRange()
+            }
+            .onChange(of: selectedIndex) { newIndex in
+                guard let index = newIndex else { return }
+                scrollSelectionIntoView(index: index, proxy: proxy)
+            }
+            .onAppear {
+                guard let index = selectedIndex else { return }
+                scrollSelectionIntoView(index: index, proxy: proxy)
             }
         }
     }
 
-    private func rowContainer(index: Int) -> some View {
+    private func nativeVirtualizedPanelList(config: PickerPanelVirtualListConfig) -> some View {
+        let renderRange = virtualizedRenderRange(config: config)
+        let renderIndices = Array(renderRange)
+        let topSpacer = virtualTopSpacerHeight(before: renderRange.lowerBound, config: config)
+        let bottomSpacer = virtualBottomSpacerHeight(after: renderRange.upperBound, config: config)
+        let contentHeight = virtualContentHeight(config: config)
+
+        return NativePickerScrollView(
+            contentHeight: contentHeight,
+            scrollRequest: nativeScrollRequest
+        ) { top, viewportHeight in
+            nativeScrollTop = top
+            nativeViewportHeight = viewportHeight
+            recomputeVisibleIndexRangeNative(config: config)
+        } content: {
+            VStack(alignment: .leading, spacing: 0) {
+                if topSpacer > 0 {
+                    Color.clear.frame(height: topSpacer)
+                }
+
+                if !renderIndices.isEmpty {
+                    VStack(alignment: .leading, spacing: config.rowSpacing) {
+                        ForEach(renderIndices, id: \.self) { index in
+                            rowContainer(index: index, fixedRowHeight: config.rowHeight, trackFrame: false)
+                        }
+                    }
+                }
+
+                if bottomSpacer > 0 {
+                    Color.clear.frame(height: bottomSpacer)
+                }
+            }
+            .padding(.horizontal, config.horizontalPadding)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(maxHeight: maxListHeight)
+        .onChange(of: selectedIndex) { newIndex in
+            guard let index = newIndex else { return }
+            scrollSelectionIntoViewNative(index: index, config: config)
+        }
+        .onAppear {
+            recomputeVisibleIndexRangeNative(config: config)
+            guard let index = selectedIndex else { return }
+            scrollSelectionIntoViewNative(index: index, config: config)
+        }
+        .onChange(of: itemCount) { _ in
+            recomputeVisibleIndexRangeNative(config: config)
+        }
+    }
+
+    @ViewBuilder
+    private func rowContainer(index: Int, fixedRowHeight: CGFloat?, trackFrame: Bool) -> some View {
+        let row = rowButton(index: index, fixedRowHeight: fixedRowHeight)
+        if trackFrame {
+            row.background(
+                GeometryReader { proxy in
+                    Color.clear.preference(
+                        key: PickerRowFramePreferenceKey.self,
+                        value: [index: proxy.frame(in: .global)]
+                    )
+                }
+            )
+        } else {
+            row
+        }
+    }
+
+    private func rowButton(index: Int, fixedRowHeight: CGFloat?) -> some View {
         let isSelected = selectedIndex == index
         let isHovered = hoveredIndex == index
 
@@ -281,6 +556,7 @@ struct PickerPanel<
             itemContent(index, isSelected, isHovered)
                 .padding(8)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(height: fixedRowHeight, alignment: .topLeading)
                 .background(
                     RoundedRectangle(cornerRadius: 6)
                         .fill(isSelected ? Color.accentColor.opacity(0.2) : (isHovered ? Color.secondary.opacity(0.15) : Color.clear))
@@ -291,14 +567,84 @@ struct PickerPanel<
         .onHover { hovering in
             hoveredIndex = hovering ? index : nil
         }
-        .background(
-            GeometryReader { proxy in
-                Color.clear.preference(
-                    key: PickerRowFramePreferenceKey.self,
-                    value: [index: proxy.frame(in: .global)]
-                )
-            }
+    }
+
+    private func virtualizedRenderRange(config: PickerPanelVirtualListConfig) -> ClosedRange<Int> {
+        guard itemCount > 0 else { return 0...0 }
+
+        let visible = visibleIndexRange ?? estimatedVisibleIndexRange(config: config)
+        let overscan = max(0, config.overscanRows)
+        let start = max(0, visible.lowerBound - overscan)
+        let end = min(itemCount - 1, visible.upperBound + overscan)
+        return start...max(start, end)
+    }
+
+    private func estimatedVisibleIndexRange(config: PickerPanelVirtualListConfig) -> ClosedRange<Int> {
+        guard itemCount > 0 else { return 0...0 }
+
+        let step = virtualRowStep(config: config)
+        let fallbackViewport = max(1, maxListHeight)
+        let estimatedVisible = max(1, Int(ceil(fallbackViewport / max(1, step))))
+        let anchor = clampedIndex(selectedIndex) ?? 0
+        let end = min(itemCount - 1, anchor + estimatedVisible - 1)
+        return anchor...max(anchor, end)
+    }
+
+    private func recomputeVisibleIndexRangeNative(config: PickerPanelVirtualListConfig) {
+        guard itemCount > 0 else {
+            visibleIndexRange = nil
+            return
+        }
+        guard nativeViewportHeight > 0 else {
+            visibleIndexRange = nil
+            return
+        }
+
+        let step = virtualRowStep(config: config)
+        let startY = max(0, nativeScrollTop - config.verticalPadding)
+        let endY = max(0, nativeScrollTop + nativeViewportHeight - config.verticalPadding)
+
+        let first = max(0, min(itemCount - 1, Int(floor(startY / max(1, step)))))
+        let last = max(0, min(itemCount - 1, Int(floor(max(0, endY - 1) / max(1, step)))))
+        visibleIndexRange = first...max(first, last)
+    }
+
+    private func virtualRowStep(config: PickerPanelVirtualListConfig) -> CGFloat {
+        max(1, config.rowHeight + config.rowSpacing)
+    }
+
+    private func virtualRowTop(_ index: Int, config: PickerPanelVirtualListConfig) -> CGFloat {
+        config.verticalPadding + (CGFloat(max(0, index)) * virtualRowStep(config: config))
+    }
+
+    private func virtualContentHeight(config: PickerPanelVirtualListConfig) -> CGFloat {
+        guard itemCount > 0 else {
+            return config.verticalPadding * 2
+        }
+        let rowsHeight = CGFloat(itemCount) * config.rowHeight
+        let spacingHeight = CGFloat(max(0, itemCount - 1)) * max(0, config.rowSpacing)
+        return (config.verticalPadding * 2) + rowsHeight + spacingHeight
+    }
+
+    private func virtualTopSpacerHeight(before startIndex: Int, config: PickerPanelVirtualListConfig) -> CGFloat {
+        guard itemCount > 0 else { return config.verticalPadding }
+        return virtualRowTop(startIndex, config: config)
+    }
+
+    private func virtualBottomSpacerHeight(after endIndex: Int, config: PickerPanelVirtualListConfig) -> CGFloat {
+        guard itemCount > 0 else { return config.verticalPadding }
+        let remainingRows = max(0, itemCount - endIndex - 1)
+        return config.verticalPadding + (CGFloat(remainingRows) * virtualRowStep(config: config))
+    }
+
+    private func scrollSelectionIntoViewNative(index: Int, config: PickerPanelVirtualListConfig) {
+        nativeScrollRequestCounter += 1
+        nativeScrollRequest = PickerNativeScrollRequest(
+            id: nativeScrollRequestCounter,
+            rowTop: virtualRowTop(index, config: config),
+            rowHeight: max(1, config.rowHeight)
         )
+        lastProgrammaticScrollIndex = index
     }
 
     // MARK: - Selection logic

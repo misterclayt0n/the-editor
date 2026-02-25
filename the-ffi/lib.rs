@@ -7653,6 +7653,19 @@ impl App {
     true
   }
 
+  pub fn handle_pointer(&mut self, id: ffi::EditorId, event: ffi::PointerEvent) -> bool {
+    if self.activate(id).is_none() {
+      return false;
+    }
+
+    let Some(pointer_event) = pointer_event_from_ffi(event) else {
+      return false;
+    };
+
+    let dispatch = self.dispatch();
+    the_default::handle_pointer_event(&*dispatch, self, pointer_event).handled()
+  }
+
   pub fn ensure_cursor_visible(&mut self, id: ffi::EditorId) -> bool {
     if self.activate(id).is_none() {
       return false;
@@ -9182,7 +9195,6 @@ fn key_event_from_ffi(event: ffi::KeyEvent) -> the_default::KeyEvent {
   use the_default::{
     Key as LibKey,
     KeyEvent as LibKeyEvent,
-    Modifiers as LibModifiers,
   };
 
   let key = match event.kind {
@@ -9221,18 +9233,62 @@ fn key_event_from_ffi(event: ffi::KeyEvent) -> the_default::KeyEvent {
     _ => LibKey::Other,
   };
 
-  let mut modifiers = LibModifiers::empty();
-  if (event.modifiers & LibModifiers::CTRL) != 0 {
-    modifiers.insert(LibModifiers::CTRL);
-  }
-  if (event.modifiers & LibModifiers::ALT) != 0 {
-    modifiers.insert(LibModifiers::ALT);
-  }
-  if (event.modifiers & LibModifiers::SHIFT) != 0 {
-    modifiers.insert(LibModifiers::SHIFT);
-  }
+  let modifiers = modifiers_from_ffi_bits(event.modifiers);
 
   LibKeyEvent { key, modifiers }
+}
+
+fn pointer_event_from_ffi(event: ffi::PointerEvent) -> Option<the_default::PointerEvent> {
+  use the_default::{
+    PointerEvent as LibPointerEvent,
+    PointerKind as LibPointerKind,
+  };
+
+  let kind = match event.kind {
+    0 => LibPointerKind::Down(pointer_button_from_ffi(event.button)?),
+    1 => LibPointerKind::Drag(pointer_button_from_ffi(event.button)?),
+    2 => LibPointerKind::Up(pointer_button_from_ffi(event.button)?),
+    3 => LibPointerKind::Move,
+    4 => LibPointerKind::Scroll,
+    _ => return None,
+  };
+
+  let mut pointer_event = LibPointerEvent::new(kind, event.x, event.y)
+    .with_modifiers(modifiers_from_ffi_bits(event.modifiers))
+    .with_click_count(event.click_count)
+    .with_scroll_delta(event.scroll_x, event.scroll_y);
+
+  if event.has_logical_pos {
+    pointer_event = pointer_event.with_logical_pos(event.logical_col, event.logical_row);
+  }
+  if event.has_surface_id {
+    pointer_event = pointer_event.with_surface_id(event.surface_id);
+  }
+
+  Some(pointer_event)
+}
+
+fn pointer_button_from_ffi(button: u8) -> Option<the_default::PointerButton> {
+  match button {
+    1 => Some(the_default::PointerButton::Left),
+    2 => Some(the_default::PointerButton::Middle),
+    3 => Some(the_default::PointerButton::Right),
+    _ => None,
+  }
+}
+
+fn modifiers_from_ffi_bits(bits: u8) -> the_default::Modifiers {
+  let mut modifiers = the_default::Modifiers::empty();
+  if (bits & the_default::Modifiers::CTRL) != 0 {
+    modifiers.insert(the_default::Modifiers::CTRL);
+  }
+  if (bits & the_default::Modifiers::ALT) != 0 {
+    modifiers.insert(the_default::Modifiers::ALT);
+  }
+  if (bits & the_default::Modifiers::SHIFT) != 0 {
+    modifiers.insert(the_default::Modifiers::SHIFT);
+  }
+  modifiers
 }
 
 fn insert_text(doc: &mut LibDocument, text: &str) -> bool {
@@ -9495,6 +9551,7 @@ mod ffi {
     fn poll_background(self: &mut App, id: EditorId) -> bool;
     fn take_should_quit(self: &mut App) -> bool;
     fn handle_key(self: &mut App, id: EditorId, event: KeyEvent) -> bool;
+    fn handle_pointer(self: &mut App, id: EditorId, event: PointerEvent) -> bool;
     fn ensure_cursor_visible(self: &mut App, id: EditorId) -> bool;
 
     // Editor editing
@@ -9561,6 +9618,26 @@ mod ffi {
     kind:      u8,
     codepoint: u32,
     modifiers: u8,
+  }
+
+  // kind: 0=down, 1=drag, 2=up, 3=move, 4=scroll
+  // button: 0=none, 1=left, 2=middle, 3=right
+  // modifiers uses the same bit flags as KeyEvent.modifiers
+  #[swift_bridge(swift_repr = "struct")]
+  struct PointerEvent {
+    kind:            u8,
+    button:          u8,
+    x:               i32,
+    y:               i32,
+    has_logical_pos: bool,
+    logical_col:     u16,
+    logical_row:     u16,
+    modifiers:       u8,
+    click_count:     u8,
+    scroll_x:        f32,
+    scroll_y:        f32,
+    has_surface_id:  bool,
+    surface_id:      u64,
   }
 
   #[swift_bridge(swift_repr = "struct")]

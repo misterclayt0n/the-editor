@@ -712,9 +712,9 @@ struct EditorView: View {
             let height = CGFloat(rect.height) * cellSize.height
             let path = Path(CGRect(x: x, y: y, width: width, height: height))
             let color = if style.has_bg, let bg = ColorMapper.color(from: style.bg) {
-                bg.opacity(0.28)
+                bg.opacity(0.42)
             } else {
-                SwiftUI.Color.accentColor.opacity(0.25)
+                SwiftUI.Color(red: 0.28, green: 0.52, blue: 1.0).opacity(0.36)
             }
             context.fill(path, with: .color(color))
         }

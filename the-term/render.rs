@@ -105,6 +105,7 @@ use the_lib::{
     apply_diff_gutter_markers,
     build_plan,
     graphics::{
+      Color as LibColor,
       Modifier as LibModifier,
       Style as LibStyle,
       UnderlineStyle as LibUnderlineStyle,
@@ -5640,8 +5641,7 @@ pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> Ren
   let selection_match_style = ctx
     .ui_theme
     .try_get("ui.selection.match")
-    .or_else(|| ctx.ui_theme.try_get("ui.selection"))
-    .unwrap_or_default();
+    .unwrap_or_else(|| LibStyle::default().bg(LibColor::Rgb(47, 63, 116)));
   let enable_point_selection_match = ctx.mode() == Mode::Select;
   let lsp_diag_count = diagnostics_for_underlines.len();
   let mut inline_enable_cursor_line = false;

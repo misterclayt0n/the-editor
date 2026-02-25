@@ -4487,8 +4487,7 @@ impl App {
     let selection_match_style = self
       .ui_theme
       .try_get("ui.selection.match")
-      .or_else(|| self.ui_theme.try_get("ui.selection"))
-      .unwrap_or_default();
+      .unwrap_or_else(|| LibStyle::default().bg(LibColor::Rgb(47, 63, 116)));
     let enable_point_selection_match = self.active_state_ref().mode == Mode::Select;
 
     let raw_diagnostics = self

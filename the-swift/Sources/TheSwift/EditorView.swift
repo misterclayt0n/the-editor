@@ -779,13 +779,7 @@ struct EditorView: View {
             guard cursorPickState.currentIndex >= 0 && cursorPickState.currentIndex < count else { return nil }
             return plan.cursor_at(UInt(cursorPickState.currentIndex)).id()
         }()
-        let defaultCursorColor = SwiftUI.Color.accentColor.opacity(0.9)
-        let pickedCursorColor: SwiftUI.Color = {
-            guard let cursorPickState else { return defaultCursorColor }
-            return cursorPickState.remove
-                ? SwiftUI.Color(nsColor: .systemRed)
-                : SwiftUI.Color(nsColor: .systemOrange)
-        }()
+        let fallbackCursorColor = SwiftUI.Color.accentColor.opacity(0.9)
 
         for index in 0..<count {
             let cursor = plan.cursor_at(UInt(index))
@@ -793,7 +787,7 @@ struct EditorView: View {
             let x = contentOffsetX + CGFloat(pos.col) * cellSize.width
             let y = CGFloat(pos.row) * cellSize.height
             let isPickedCursor = pickedCursorId == cursor.id()
-            let strokeColor = isPickedCursor ? pickedCursorColor : defaultCursorColor
+            let strokeColor = cursorColor(for: cursor.style(), fallback: fallbackCursorColor)
 
             switch cursor.kind() {
             case 1: // bar
@@ -965,6 +959,16 @@ struct EditorView: View {
             return fallback
         }
         return color
+    }
+
+    private func cursorColor(for style: Style, fallback: SwiftUI.Color) -> SwiftUI.Color {
+        if style.has_bg, let bg = ColorMapper.color(from: style.bg) {
+            return bg
+        }
+        if style.has_fg, let fg = ColorMapper.color(from: style.fg) {
+            return fg
+        }
+        return fallback
     }
 
     private func colorForSpan(_ span: RenderSpan) -> SwiftUI.Color {

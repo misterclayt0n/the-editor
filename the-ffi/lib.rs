@@ -3989,6 +3989,23 @@ impl App {
     }
   }
 
+  fn editor_render_styles_from_theme(&self) -> RenderStyles {
+    let theme = &self.ui_theme;
+    RenderStyles {
+      selection: theme.try_get("ui.selection").unwrap_or_default(),
+      cursor: theme.try_get("ui.cursor").unwrap_or_default(),
+      active_cursor: theme
+        .try_get("ui.cursor.active")
+        .or_else(|| theme.try_get("ui.cursor"))
+        .unwrap_or_default(),
+      gutter: theme.try_get("ui.linenr").unwrap_or_default(),
+      gutter_active: theme
+        .try_get("ui.linenr.selected")
+        .or_else(|| theme.try_get("ui.linenr"))
+        .unwrap_or_default(),
+    }
+  }
+
   pub fn completion_docs_render_json(
     markdown: &str,
     content_width: usize,
@@ -4282,7 +4299,8 @@ impl App {
     }
     let _ = self.poll_background_active();
 
-    let plan = the_default::render_plan(self);
+    let styles = self.editor_render_styles_from_theme();
+    let plan = the_default::render_plan_with_styles(self, styles);
     let inline_diagnostic_lines = std::mem::take(&mut self.inline_diagnostic_lines);
     let eol_diagnostics = std::mem::take(&mut self.eol_diagnostics);
     let diagnostic_underlines = std::mem::take(&mut self.diagnostic_underlines);
@@ -4305,7 +4323,8 @@ impl App {
     }
     let _ = self.poll_background_active();
 
-    let frame = the_default::frame_render_plan(self);
+    let styles = self.editor_render_styles_from_theme();
+    let frame = the_default::frame_render_plan_with_styles(self, styles);
     let inline_diagnostic_lines = std::mem::take(&mut self.inline_diagnostic_lines);
     let eol_diagnostics = std::mem::take(&mut self.eol_diagnostics);
     let diagnostic_underlines = std::mem::take(&mut self.diagnostic_underlines);

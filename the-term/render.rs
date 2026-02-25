@@ -126,7 +126,10 @@ use the_lsp::text_sync::utf16_position_to_char_idx;
 
 use crate::{
   Ctx,
-  ctx::DiagnosticUnderlineRenderSpan,
+  ctx::{
+    DiagnosticUnderlineRenderSpan,
+    TermHardwareCursor,
+  },
   docs_panel::{
     DocsPanelConfig,
     DocsPanelSource,
@@ -6042,10 +6045,16 @@ fn draw_pane_content(
     return editor_cursor;
   }
 
-  for cursor in &plan.cursors {
+  for (index, cursor) in plan.cursors.iter().enumerate() {
     let x = content_x + cursor.pos.col as u16;
     let y = pane_area.y + cursor.pos.row as u16;
     if x < pane_area.x + pane_area.width && y < pane_area.y + pane_area.height {
+      let use_terminal_hardware_cursor = draw_active_annotations
+        && index == 0
+        && matches!(cursor.kind, LibCursorKind::Bar | LibCursorKind::Underline);
+      if use_terminal_hardware_cursor {
+        continue;
+      }
       let style = if draw_active_annotations {
         lib_style_to_ratatui(cursor.style)
       } else {
@@ -6143,10 +6152,11 @@ pub fn render(f: &mut Frame, ctx: &mut Ctx) {
 
   f.render_widget(Clear, area);
 
-  let _ui_cursor = {
+  let (ui_cursor, active_editor_cursor, active_editor_cursor_kind) = {
     let buf = f.buffer_mut();
     let mut cursor_out = None;
     let mut editor_cursor = None;
+    let mut editor_cursor_kind = None;
     let base_text_style = lib_style_to_ratatui(ctx.ui_theme.try_get("ui.text").unwrap_or_default());
     if let Some(bg) = ctx
       .ui_theme
@@ -6163,6 +6173,7 @@ pub fn render(f: &mut Frame, ctx: &mut Ctx) {
         draw_pane_content(buf, ctx, pane_area, &pane.plan, base_text_style, is_active);
       if is_active {
         editor_cursor = pane_cursor;
+        editor_cursor_kind = pane.plan.cursors.first().map(|cursor| cursor.kind);
       }
     }
 
@@ -6178,7 +6189,16 @@ pub fn render(f: &mut Frame, ctx: &mut Ctx) {
       &mut cursor_out,
     );
     draw_ui_overlays(buf, area, ctx, &ui, editor_cursor, &mut cursor_out);
-    cursor_out
+    (cursor_out, editor_cursor, editor_cursor_kind)
+  };
+
+  ctx.term_hardware_cursor = if ui_cursor.is_none()
+    && let (Some((x, y)), Some(kind)) = (active_editor_cursor, active_editor_cursor_kind)
+    && matches!(kind, LibCursorKind::Bar | LibCursorKind::Underline)
+  {
+    Some(TermHardwareCursor { x, y, kind })
+  } else {
+    None
   };
 }
 

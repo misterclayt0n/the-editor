@@ -780,6 +780,13 @@ struct EditorView: View {
             return plan.cursor_at(UInt(cursorPickState.currentIndex)).id()
         }()
         let fallbackCursorColor = SwiftUI.Color.accentColor
+        let backingScale = NSApp.keyWindow?.backingScaleFactor
+            ?? NSScreen.main?.backingScaleFactor
+            ?? 2.0
+
+        func snapToPixel(_ value: CGFloat) -> CGFloat {
+            (value * backingScale).rounded(.down) / backingScale
+        }
 
         for index in 0..<count {
             let cursor = plan.cursor_at(UInt(index))
@@ -791,7 +798,14 @@ struct EditorView: View {
 
             switch cursor.kind() {
             case 1: // bar
-                let rect = CGRect(x: x + 0.5, y: y, width: 1.75, height: cellSize.height)
+                let barWidth = cellSize.width >= 10 ? (2.0 / backingScale) : (1.0 / backingScale)
+                let verticalInset = 1.0 / backingScale
+                let rect = CGRect(
+                    x: snapToPixel(x),
+                    y: snapToPixel(y + verticalInset),
+                    width: max(1.0 / backingScale, barWidth),
+                    height: max(1.0 / backingScale, snapToPixel(cellSize.height - 2 * verticalInset))
+                )
                 context.fill(Path(rect), with: .color(strokeColor))
             case 2: // underline
                 let rect = CGRect(x: x, y: y + cellSize.height - 2, width: cellSize.width, height: 2)

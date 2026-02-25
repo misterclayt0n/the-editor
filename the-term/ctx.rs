@@ -623,6 +623,14 @@ pub struct Ctx {
   pub diagnostic_underlines:         Vec<DiagnosticUnderlineRenderSpan>,
   /// Lines to keep above/below cursor when scrolling.
   pub scrolloff:                     usize,
+  pub term_hardware_cursor:          Option<TermHardwareCursor>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct TermHardwareCursor {
+  pub x:    u16,
+  pub y:    u16,
+  pub kind: the_lib::render::graphics::CursorKind,
 }
 
 fn select_ui_theme() -> Theme {
@@ -971,6 +979,7 @@ impl Ctx {
       inline_diagnostic_lines: Vec::new(),
       diagnostic_underlines: Vec::new(),
       scrolloff: 5,
+      term_hardware_cursor: None,
     };
     ctx.refresh_vcs_diff_base();
     Ok(ctx)

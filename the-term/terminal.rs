@@ -8,6 +8,8 @@ use std::io::{
 use crossterm::{
   cursor::{
     Hide,
+    MoveTo,
+    SetCursorStyle,
     Show,
   },
   event::{
@@ -32,6 +34,7 @@ use ratatui::{
 };
 
 use crate::undercurl_backend::UndercurlCrosstermBackend;
+use the_lib::render::graphics::CursorKind as LibCursorKind;
 
 pub struct Terminal {
   terminal:                      RatatuiTerminal<UndercurlCrosstermBackend<Stdout>>,
@@ -77,6 +80,7 @@ impl Terminal {
     }
     execute!(
       self.terminal.backend_mut(),
+      SetCursorStyle::DefaultUserShape,
       DisableMouseCapture,
       LeaveAlternateScreen,
       Show
@@ -90,6 +94,27 @@ impl Terminal {
     F: for<'a> FnOnce(&mut ratatui::Frame<'a>),
   {
     self.terminal.draw(f)?;
+    Ok(())
+  }
+
+  pub fn apply_editor_cursor(
+    &mut self,
+    cursor: Option<(u16, u16, LibCursorKind)>,
+  ) -> Result<()> {
+    match cursor {
+      Some((x, y, kind)) => {
+        let shape = match kind {
+          LibCursorKind::Bar => SetCursorStyle::SteadyBar,
+          LibCursorKind::Underline => SetCursorStyle::SteadyUnderScore,
+          LibCursorKind::Block => SetCursorStyle::SteadyBlock,
+          LibCursorKind::Hollow | LibCursorKind::Hidden => SetCursorStyle::DefaultUserShape,
+        };
+        execute!(self.terminal.backend_mut(), shape, MoveTo(x, y), Show)?;
+      },
+      None => {
+        execute!(self.terminal.backend_mut(), Hide)?;
+      },
+    }
     Ok(())
   }
 

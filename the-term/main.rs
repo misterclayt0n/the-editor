@@ -99,6 +99,10 @@ fn main() -> Result<()> {
   // Initial render
   ctx.needs_render = false;
   terminal.draw(|f| render::render(f, &mut ctx))?;
+  terminal.apply_editor_cursor(
+    ctx.term_hardware_cursor
+      .map(|cursor| (cursor.x, cursor.y, cursor.kind)),
+  )?;
 
   // Event loop
   loop {
@@ -165,6 +169,10 @@ fn main() -> Result<()> {
     if ctx.needs_render {
       ctx.needs_render = false;
       terminal.draw(|f| render::render(f, &mut ctx))?;
+      terminal.apply_editor_cursor(
+        ctx.term_hardware_cursor
+          .map(|cursor| (cursor.x, cursor.y, cursor.kind)),
+      )?;
     }
   }
 

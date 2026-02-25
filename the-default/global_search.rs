@@ -314,8 +314,7 @@ fn run_global_search_request(
   query: String,
   shared_picker: FffSharedPicker,
 ) -> GlobalSearchResponse {
-  let query = query.trim().to_string();
-  if query.is_empty() {
+  if query.trim().is_empty() {
     return GlobalSearchResponse {
       generation,
       query,

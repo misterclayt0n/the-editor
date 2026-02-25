@@ -178,6 +178,7 @@ use the_lib::{
       UnderlineStyle as LibUnderlineStyle,
     },
     gutter_width_for_document,
+    char_at_visual_pos,
     text_annotations::{
       InlineAnnotation,
       Overlay,
@@ -197,7 +198,10 @@ use the_lib::{
     Range,
     Selection,
   },
-  split_tree::SplitNodeId,
+  split_tree::{
+    PaneId,
+    SplitNodeId,
+  },
   syntax::{
     Highlight,
     HighlightCache,
@@ -1551,6 +1555,7 @@ struct EditorState {
   hover_docs:                    Option<String>,
   hover_docs_scroll:             usize,
   scrolloff:                     usize,
+  pointer_drag_anchor:           Option<usize>,
 }
 
 impl EditorState {
@@ -1594,6 +1599,7 @@ impl EditorState {
       hover_docs: None,
       hover_docs_scroll: 0,
       scrolloff: 5,
+      pointer_drag_anchor: None,
     }
   }
 }
@@ -7653,17 +7659,180 @@ impl App {
     true
   }
 
-  pub fn handle_pointer(&mut self, id: ffi::EditorId, event: ffi::PointerEvent) -> bool {
+  pub fn handle_mouse(
+    &mut self,
+    id: ffi::EditorId,
+    packed: u64,
+    logical_col: u16,
+    logical_row: u16,
+    surface_id: u64,
+  ) -> bool {
     if self.activate(id).is_none() {
       return false;
     }
 
-    let Some(pointer_event) = pointer_event_from_ffi(event) else {
+    let Some(pointer_event) = pointer_event_from_ffi_parts(
+      (packed & 0xFF) as u8,
+      ((packed >> 8) & 0xFF) as u8,
+      logical_col,
+      logical_row,
+      ((packed >> 16) & 0xFF) as u8,
+      ((packed >> 24) & 0xFF) as u8,
+      surface_id,
+    ) else {
       return false;
     };
 
     let dispatch = self.dispatch();
     the_default::handle_pointer_event(&*dispatch, self, pointer_event).handled()
+  }
+
+  fn handle_editor_pointer_event(
+    &mut self,
+    event: the_default::PointerEvent,
+  ) -> the_default::PointerEventOutcome {
+    use the_default::{
+      PointerButton,
+      PointerEventOutcome,
+      PointerKind,
+    };
+
+    let mut pane_changed = false;
+    if let Some(surface_id) = event.surface_id {
+      pane_changed = self.set_active_pane_from_pointer_surface(surface_id);
+    }
+
+    match event.kind {
+      PointerKind::Scroll => {
+        let row_delta = event.scroll_y.trunc() as i32;
+        let col_delta = event.scroll_x.trunc() as i32;
+        if row_delta == 0 && col_delta == 0 {
+          if pane_changed {
+            self.request_render();
+          }
+          return PointerEventOutcome::Handled;
+        }
+
+        let soft_wrap = self.active_state_ref().text_format.soft_wrap;
+        let changed = {
+          let view = self.active_editor_mut().view_mut();
+          let new_row = if row_delta >= 0 {
+            view.scroll.row.saturating_add(row_delta as usize)
+          } else {
+            view.scroll.row.saturating_sub((-row_delta) as usize)
+          };
+          let new_col = if soft_wrap {
+            0
+          } else if col_delta >= 0 {
+            view.scroll.col.saturating_add(col_delta as usize)
+          } else {
+            view.scroll.col.saturating_sub((-col_delta) as usize)
+          };
+          if view.scroll.row == new_row && view.scroll.col == new_col {
+            false
+          } else {
+            view.scroll = LibPosition::new(new_row, new_col);
+            true
+          }
+        };
+
+        if changed || pane_changed {
+          self.request_render();
+        }
+        return PointerEventOutcome::Handled;
+      },
+      PointerKind::Down(PointerButton::Left) => {
+        let Some(target) = self.pointer_char_idx_for_event(event) else {
+          if pane_changed {
+            self.request_render();
+          }
+          return PointerEventOutcome::Handled;
+        };
+        let anchor = if event.modifiers.shift() {
+          self
+            .active_or_first_selection_range()
+            .map(|range| range.anchor)
+            .unwrap_or(target)
+        } else {
+          target
+        };
+        self.active_state_mut().pointer_drag_anchor = Some(anchor);
+        let changed = self.pointer_set_primary_selection(anchor, target);
+        self.clear_hover_state();
+        if changed || pane_changed {
+          self.request_render();
+        }
+        return PointerEventOutcome::Handled;
+      },
+      PointerKind::Drag(PointerButton::Left) => {
+        let Some(target) = self.pointer_char_idx_for_event(event) else {
+          return PointerEventOutcome::Handled;
+        };
+        let anchor = self
+          .active_state_ref()
+          .pointer_drag_anchor
+          .or_else(|| self.active_or_first_selection_range().map(|range| range.anchor))
+          .unwrap_or(target);
+        if self.active_state_ref().pointer_drag_anchor.is_none() {
+          self.active_state_mut().pointer_drag_anchor = Some(anchor);
+        }
+        let changed = self.pointer_set_primary_selection(anchor, target);
+        if changed {
+          self.clear_hover_state();
+          self.request_render();
+        }
+        return PointerEventOutcome::Handled;
+      },
+      PointerKind::Up(PointerButton::Left) => {
+        self.active_state_mut().pointer_drag_anchor = None;
+        if pane_changed {
+          self.request_render();
+        }
+        return PointerEventOutcome::Handled;
+      },
+      _ => {},
+    }
+
+    PointerEventOutcome::Continue
+  }
+
+  fn set_active_pane_from_pointer_surface(&mut self, surface_id: u64) -> bool {
+    let Ok(raw) = usize::try_from(surface_id) else {
+      return false;
+    };
+    let Some(raw) = NonZeroUsize::new(raw) else {
+      return false;
+    };
+    let pane = PaneId::from(raw);
+    if self.active_editor_ref().active_pane_id() == pane {
+      return false;
+    }
+    self.active_editor_mut().set_active_pane(pane)
+  }
+
+  fn pointer_char_idx_for_event(&self, event: the_default::PointerEvent) -> Option<usize> {
+    let logical_row = usize::from(event.logical_row?);
+    let logical_col = usize::from(event.logical_col?);
+
+    let editor = self.active_editor_ref();
+    let view = editor.view();
+    let target = LibPosition::new(
+      view.scroll.row.saturating_add(logical_row),
+      view.scroll.col.saturating_add(logical_col),
+    );
+
+    let text = editor.document().text();
+    let text_fmt = self.text_format();
+    let mut annotations = self.text_annotations();
+    char_at_visual_pos(text.slice(..), &text_fmt, &mut annotations, target)
+  }
+
+  fn pointer_set_primary_selection(&mut self, anchor: usize, head: usize) -> bool {
+    self
+      .active_editor_mut()
+      .document_mut()
+      .set_selection(Selection::single(anchor, head))
+      .is_ok()
   }
 
   pub fn ensure_cursor_visible(&mut self, id: ffi::EditorId) -> bool {
@@ -8510,6 +8679,10 @@ impl DefaultContext for App {
     &mut self.active_state_mut().ui_state
   }
 
+  fn pointer_event(&mut self, event: the_default::PointerEvent) -> the_default::PointerEventOutcome {
+    self.handle_editor_pointer_event(event)
+  }
+
   fn dispatch(&self) -> DispatchRef<Self> {
     DispatchRef::from_ptr(&self.dispatch as *const _)
   }
@@ -9238,31 +9411,38 @@ fn key_event_from_ffi(event: ffi::KeyEvent) -> the_default::KeyEvent {
   LibKeyEvent { key, modifiers }
 }
 
-fn pointer_event_from_ffi(event: ffi::PointerEvent) -> Option<the_default::PointerEvent> {
+fn pointer_event_from_ffi_parts(
+  kind: u8,
+  button: u8,
+  logical_col: u16,
+  logical_row: u16,
+  modifiers: u8,
+  click_count: u8,
+  surface_id: u64,
+) -> Option<the_default::PointerEvent> {
   use the_default::{
     PointerEvent as LibPointerEvent,
     PointerKind as LibPointerKind,
   };
 
-  let kind = match event.kind {
-    0 => LibPointerKind::Down(pointer_button_from_ffi(event.button)?),
-    1 => LibPointerKind::Drag(pointer_button_from_ffi(event.button)?),
-    2 => LibPointerKind::Up(pointer_button_from_ffi(event.button)?),
+  let kind = match kind {
+    0 => LibPointerKind::Down(pointer_button_from_ffi(button)?),
+    1 => LibPointerKind::Drag(pointer_button_from_ffi(button)?),
+    2 => LibPointerKind::Up(pointer_button_from_ffi(button)?),
     3 => LibPointerKind::Move,
     4 => LibPointerKind::Scroll,
     _ => return None,
   };
 
-  let mut pointer_event = LibPointerEvent::new(kind, event.x, event.y)
-    .with_modifiers(modifiers_from_ffi_bits(event.modifiers))
-    .with_click_count(event.click_count)
-    .with_scroll_delta(event.scroll_x, event.scroll_y);
+  let mut pointer_event = LibPointerEvent::new(kind, 0, 0)
+    .with_modifiers(modifiers_from_ffi_bits(modifiers))
+    .with_click_count(click_count);
 
-  if event.has_logical_pos {
-    pointer_event = pointer_event.with_logical_pos(event.logical_col, event.logical_row);
+  if logical_row != u16::MAX && logical_col != u16::MAX {
+    pointer_event = pointer_event.with_logical_pos(logical_col, logical_row);
   }
-  if event.has_surface_id {
-    pointer_event = pointer_event.with_surface_id(event.surface_id);
+  if surface_id != 0 {
+    pointer_event = pointer_event.with_surface_id(surface_id);
   }
 
   Some(pointer_event)
@@ -9551,7 +9731,14 @@ mod ffi {
     fn poll_background(self: &mut App, id: EditorId) -> bool;
     fn take_should_quit(self: &mut App) -> bool;
     fn handle_key(self: &mut App, id: EditorId, event: KeyEvent) -> bool;
-    fn handle_pointer(self: &mut App, id: EditorId, event: PointerEvent) -> bool;
+    fn handle_mouse(
+      self: &mut App,
+      id: EditorId,
+      packed: u64,
+      logical_col: u16,
+      logical_row: u16,
+      surface_id: u64,
+    ) -> bool;
     fn ensure_cursor_visible(self: &mut App, id: EditorId) -> bool;
 
     // Editor editing
@@ -9618,26 +9805,6 @@ mod ffi {
     kind:      u8,
     codepoint: u32,
     modifiers: u8,
-  }
-
-  // kind: 0=down, 1=drag, 2=up, 3=move, 4=scroll
-  // button: 0=none, 1=left, 2=middle, 3=right
-  // modifiers uses the same bit flags as KeyEvent.modifiers
-  #[swift_bridge(swift_repr = "struct")]
-  struct PointerEvent {
-    kind:            u8,
-    button:          u8,
-    x:               i32,
-    y:               i32,
-    has_logical_pos: bool,
-    logical_col:     u16,
-    logical_row:     u16,
-    modifiers:       u8,
-    click_count:     u8,
-    scroll_x:        f32,
-    scroll_y:        f32,
-    has_surface_id:  bool,
-    surface_id:      u64,
   }
 
   #[swift_bridge(swift_repr = "struct")]

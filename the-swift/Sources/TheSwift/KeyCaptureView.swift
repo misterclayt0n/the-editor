@@ -221,6 +221,23 @@ struct KeyCaptureView: NSViewRepresentable {
     }
 }
 
+struct MouseBridgeEvent {
+    let kind: UInt8
+    let button: UInt8
+    let logicalCol: UInt16
+    let logicalRow: UInt16
+    let modifiers: UInt8
+    let clickCount: UInt8
+    let surfaceId: UInt64
+
+    var packed: UInt64 {
+        UInt64(kind)
+            | (UInt64(button) << 8)
+            | (UInt64(modifiers) << 16)
+            | (UInt64(clickCount) << 24)
+    }
+}
+
 struct ScrollCaptureView: NSViewRepresentable {
     struct SeparatorHandle: Equatable {
         let splitId: UInt64
@@ -230,10 +247,17 @@ struct ScrollCaptureView: NSViewRepresentable {
         let spanEndPx: CGFloat
     }
 
+    struct PaneHandle: Equatable {
+        let paneId: UInt64
+        let rect: CGRect
+        let contentOffsetXPx: CGFloat
+    }
+
     final class ScrollCaptureNSView: NSView {
         override var isFlipped: Bool { true }
 
         var onScroll: ((CGFloat, CGFloat, Bool) -> Void)?
+        var onPointer: ((MouseBridgeEvent) -> Void)?
         var onSplitResize: ((UInt64, CGPoint) -> Void)?
         var separators: [SeparatorHandle] = [] {
             didSet {
@@ -241,8 +265,12 @@ struct ScrollCaptureView: NSViewRepresentable {
                 window?.invalidateCursorRects(for: self)
             }
         }
+        var panes: [PaneHandle] = []
+        var cellSize: CGSize = .init(width: 1, height: 1)
         private var trackingArea: NSTrackingArea?
         private var activeSeparator: SeparatorHandle?
+        private var activeEditorPane: PaneHandle?
+        private var lastDragSignature: (paneId: UInt64, row: UInt16, col: UInt16)?
         private let hitTolerance: CGFloat = 4.0
 
         override func viewDidMoveToWindow() {
@@ -284,28 +312,64 @@ struct ScrollCaptureView: NSViewRepresentable {
 
         override func mouseDown(with event: NSEvent) {
             let point = convert(event.locationInWindow, from: nil)
-            guard let separator = hitSeparator(at: point) else {
-                super.mouseDown(with: event)
+            KeyCaptureFocusBridge.shared.reclaim(in: window)
+            if let separator = hitSeparator(at: point) {
+                activeSeparator = separator
+                activeEditorPane = nil
+                lastDragSignature = nil
+                cursor(for: separator).set()
+                onSplitResize?(separator.splitId, CGPoint(x: point.x, y: point.y))
                 return
             }
-            activeSeparator = separator
-            cursor(for: separator).set()
-            onSplitResize?(separator.splitId, CGPoint(x: point.x, y: point.y))
+
+            let pane = hitPane(at: point)
+            activeEditorPane = pane
+            lastDragSignature = nil
+            if let pointer = makePointerEvent(kind: 0, button: 1, point: point, event: event, pane: pane) {
+                onPointer?(pointer)
+                return
+            }
+            super.mouseDown(with: event)
         }
 
         override func mouseDragged(with event: NSEvent) {
-            guard let separator = activeSeparator else {
+            if let separator = activeSeparator {
+                let point = convert(event.locationInWindow, from: nil)
+                cursor(for: separator).set()
+                onSplitResize?(separator.splitId, CGPoint(x: point.x, y: point.y))
+                return
+            }
+
+            guard let pane = activeEditorPane else {
                 super.mouseDragged(with: event)
                 return
             }
-            let point = convert(event.locationInWindow, from: nil)
-            cursor(for: separator).set()
-            onSplitResize?(separator.splitId, CGPoint(x: point.x, y: point.y))
+            let point = clampToPane(convert(event.locationInWindow, from: nil), pane: pane)
+            guard let pointer = makePointerEvent(kind: 1, button: 1, point: point, event: event, pane: pane) else {
+                return
+            }
+            let signature = (pointer.surfaceId, pointer.logicalRow, pointer.logicalCol)
+            if let lastDragSignature,
+               lastDragSignature.0 == signature.0,
+               lastDragSignature.1 == signature.1,
+               lastDragSignature.2 == signature.2 {
+                return
+            }
+            lastDragSignature = signature
+            onPointer?(pointer)
         }
 
         override func mouseUp(with event: NSEvent) {
-            activeSeparator = nil
             let point = convert(event.locationInWindow, from: nil)
+            if let pane = activeEditorPane {
+                let clamped = clampToPane(point, pane: pane)
+                if let pointer = makePointerEvent(kind: 2, button: 1, point: clamped, event: event, pane: pane) {
+                    onPointer?(pointer)
+                }
+            }
+            activeSeparator = nil
+            activeEditorPane = nil
+            lastDragSignature = nil
             updateCursor(at: point)
             super.mouseUp(with: event)
         }
@@ -348,6 +412,72 @@ struct ScrollCaptureView: NSViewRepresentable {
             return best?.0
         }
 
+        private func hitPane(at point: NSPoint) -> PaneHandle? {
+            panes.first(where: { $0.rect.contains(point) })
+        }
+
+        private func clampToPane(_ point: NSPoint, pane: PaneHandle) -> NSPoint {
+            let rect = pane.rect
+            guard !rect.isEmpty else { return point }
+            let maxX = max(rect.minX, rect.maxX - 1)
+            let maxY = max(rect.minY, rect.maxY - 1)
+            return NSPoint(
+                x: min(max(point.x, rect.minX), maxX),
+                y: min(max(point.y, rect.minY), maxY)
+            )
+        }
+
+        private func makePointerEvent(
+            kind: UInt8,
+            button: UInt8,
+            point: NSPoint,
+            event: NSEvent,
+            pane: PaneHandle?
+        ) -> MouseBridgeEvent? {
+            let modifiers = pointerModifierBits(from: event.modifierFlags)
+
+            if let pane {
+                let localX = point.x - pane.rect.minX
+                let localY = point.y - pane.rect.minY
+                let row = max(0, Int(floor(localY / max(1, cellSize.height))))
+                let textX = localX - pane.contentOffsetXPx
+                let col = max(0, Int(floor(textX / max(1, cellSize.width))))
+                return MouseBridgeEvent(
+                    kind: kind,
+                    button: button,
+                    logicalCol: UInt16(clamping: col),
+                    logicalRow: UInt16(clamping: row),
+                    modifiers: modifiers,
+                    clickCount: UInt8(clamping: event.clickCount),
+                    surfaceId: pane.paneId
+                )
+            }
+
+            return MouseBridgeEvent(
+                kind: kind,
+                button: button,
+                logicalCol: UInt16.max,
+                logicalRow: UInt16.max,
+                modifiers: modifiers,
+                clickCount: UInt8(clamping: event.clickCount),
+                surfaceId: 0
+            )
+        }
+
+        private func pointerModifierBits(from flags: NSEvent.ModifierFlags) -> UInt8 {
+            var bits: UInt8 = 0
+            if flags.contains(.control) {
+                bits |= 0b0000_0001
+            }
+            if flags.contains(.option) {
+                bits |= 0b0000_0010
+            }
+            if flags.contains(.shift) {
+                bits |= 0b0000_0100
+            }
+            return bits
+        }
+
         private func cursorRect(for separator: SeparatorHandle) -> CGRect {
             if separator.axis == 0 {
                 return CGRect(
@@ -371,20 +501,29 @@ struct ScrollCaptureView: NSViewRepresentable {
     }
 
     let onScroll: (CGFloat, CGFloat, Bool) -> Void
+    let onPointer: (MouseBridgeEvent) -> Void
     let separators: [SeparatorHandle]
+    let panes: [PaneHandle]
+    let cellSize: CGSize
     let onSplitResize: (UInt64, CGPoint) -> Void
 
     func makeNSView(context: Context) -> ScrollCaptureNSView {
         let view = ScrollCaptureNSView(frame: .zero)
         view.onScroll = onScroll
+        view.onPointer = onPointer
         view.separators = separators
+        view.panes = panes
+        view.cellSize = cellSize
         view.onSplitResize = onSplitResize
         return view
     }
 
     func updateNSView(_ nsView: ScrollCaptureNSView, context: Context) {
         nsView.onScroll = onScroll
+        nsView.onPointer = onPointer
         nsView.separators = separators
+        nsView.panes = panes
+        nsView.cellSize = cellSize
         nsView.onSplitResize = onSplitResize
     }
 }

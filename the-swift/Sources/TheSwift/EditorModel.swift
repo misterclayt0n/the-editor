@@ -212,6 +212,23 @@ final class EditorModel: ObservableObject {
         refresh(trigger: "scroll")
     }
 
+    func handlePointerEvent(_ event: MouseBridgeEvent) {
+        guard app.handle_mouse(
+            editorId,
+            event.packed,
+            event.logicalCol,
+            event.logicalRow,
+            event.surfaceId
+        ) else {
+            return
+        }
+        refresh(trigger: "pointer")
+    }
+
+    func handlePointerScroll(deltaX: CGFloat, deltaY: CGFloat, precise: Bool) {
+        handleScroll(deltaX: deltaX, deltaY: deltaY, precise: precise)
+    }
+
     func activePaneRect() -> Rect? {
         let paneCount = Int(framePlan.pane_count())
         guard paneCount > 0 else { return nil }

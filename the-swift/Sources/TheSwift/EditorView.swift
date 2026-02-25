@@ -32,6 +32,7 @@ struct EditorView: View {
         let cursorPickState = cursorPickState(from: model.uiTree.statuslineSnapshot())
         let activePaneOrigin = panePixelOrigin(model.activePaneRect(), cellSize: cellSize)
         let splitResizeHandles = splitResizeHandles(from: model.splitSeparators, cellSize: cellSize)
+        let pointerPanes = pointerPanes(from: model.framePlan, cellSize: cellSize)
         GeometryReader { proxy in
             ZStack {
                 Canvas { context, size in
@@ -183,9 +184,14 @@ struct EditorView: View {
                     if !isOverlayOpen && !isCompletionOpen && !isHoverOpen && !isSignatureOpen {
                         ScrollCaptureView(
                             onScroll: { deltaX, deltaY, precise in
-                                model.handleScroll(deltaX: deltaX, deltaY: deltaY, precise: precise)
+                                model.handlePointerScroll(deltaX: deltaX, deltaY: deltaY, precise: precise)
+                            },
+                            onPointer: { event in
+                                model.handlePointerEvent(event)
                             },
                             separators: splitResizeHandles,
+                            panes: pointerPanes,
+                            cellSize: cellSize,
                             onSplitResize: { splitId, point in
                                 model.resizeSplit(splitId: splitId, pixelPoint: point)
                             }
@@ -242,6 +248,35 @@ struct EditorView: View {
                 spanEndPx: spanEndPx
             )
         }
+    }
+
+    private func pointerPanes(
+        from framePlan: RenderFramePlan,
+        cellSize: CGSize
+    ) -> [ScrollCaptureView.PaneHandle] {
+        let count = Int(framePlan.pane_count())
+        guard count > 0 else { return [] }
+        var handles: [ScrollCaptureView.PaneHandle] = []
+        handles.reserveCapacity(count)
+        for index in 0..<count {
+            let pane = framePlan.pane_at(UInt(index))
+            let rect = pane.rect()
+            let paneRect = CGRect(
+                x: CGFloat(rect.x) * cellSize.width,
+                y: CGFloat(rect.y) * cellSize.height,
+                width: CGFloat(rect.width) * cellSize.width,
+                height: CGFloat(rect.height) * cellSize.height
+            )
+            let contentOffsetXPx = CGFloat(pane.plan().content_offset_x()) * cellSize.width
+            handles.append(
+                ScrollCaptureView.PaneHandle(
+                    paneId: pane.pane_id(),
+                    rect: paneRect,
+                    contentOffsetXPx: contentOffsetXPx
+                )
+            )
+        }
+        return handles
     }
 
     private func panePixelOrigin(_ rect: Rect?, cellSize: CGSize) -> CGPoint {

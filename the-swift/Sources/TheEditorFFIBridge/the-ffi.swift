@@ -1,6 +1,3 @@
-import Foundation
-import TheEditorFFI
-
 
 public class App: AppRefMut {
     var isOwned: Bool = true
@@ -245,6 +242,10 @@ extension AppRefMut {
 
     public func handle_key(_ id: EditorId, _ event: KeyEvent) -> Bool {
         __swift_bridge__$App$handle_key(ptr, id.intoFfiRepr(), event.intoFfiRepr())
+    }
+
+    public func handle_mouse(_ id: EditorId, _ packed: UInt64, _ logical_col: UInt16, _ logical_row: UInt16, _ surface_id: UInt64) -> Bool {
+        __swift_bridge__$App$handle_mouse(ptr, id.intoFfiRepr(), packed, logical_col, logical_row, surface_id)
     }
 
     public func ensure_cursor_visible(_ id: EditorId) -> Bool {

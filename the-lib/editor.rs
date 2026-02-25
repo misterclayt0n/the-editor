@@ -277,6 +277,17 @@ impl Editor {
     self.split_tree.active_pane()
   }
 
+  pub fn set_active_pane(&mut self, pane: PaneId) -> bool {
+    if !self.split_tree.set_active_pane(pane) {
+      return false;
+    }
+    let Some(&buffer) = self.pane_buffers.get(&pane) else {
+      return false;
+    };
+    self.active_buffer = buffer;
+    true
+  }
+
   pub fn pane_snapshots(&self, area: Rect) -> Vec<PaneSnapshot> {
     let active = self.split_tree.active_pane();
     self

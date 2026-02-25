@@ -48,6 +48,7 @@ use the_default::{
   CommandPaletteStyle,
   CommandPromptState,
   CommandRegistry,
+  DefaultContext,
   DefaultDispatchStatic,
   DispatchRef,
   FilePickerChangedFileItem,
@@ -63,6 +64,10 @@ use the_default::{
   MessagePresentation,
   Mode,
   Motion,
+  PointerButton,
+  PointerEvent,
+  PointerEventOutcome,
+  PointerKind,
   replace_file_picker_items,
   set_file_picker_query_external,
 };
@@ -80,6 +85,7 @@ use the_lib::{
   editor::{
     Editor,
     EditorId,
+    PaneSnapshot,
   },
   indent::IndentStyle,
   messages::{
@@ -89,6 +95,8 @@ use the_lib::{
   position::Position,
   registers::Registers,
   render::{
+    char_at_visual_pos,
+    gutter_width_for_document,
     FrameRenderPlan,
     GutterConfig,
     InlineDiagnosticRenderLine,
@@ -2710,6 +2718,247 @@ impl Ctx {
     selection.ranges().first().copied()
   }
 
+  fn pointer_event_screen_coords(&self, event: PointerEvent) -> Option<(u16, u16)> {
+    let x = event.logical_col.or_else(|| {
+      if event.x < 0 {
+        None
+      } else {
+        Some(event.x.min(i32::from(u16::MAX)) as u16)
+      }
+    })?;
+    let y = event.logical_row.or_else(|| {
+      if event.y < 0 {
+        None
+      } else {
+        Some(event.y.min(i32::from(u16::MAX)) as u16)
+      }
+    })?;
+    Some((x, y))
+  }
+
+  fn pointer_hit_pane_at(&self, x: u16, y: u16) -> Option<PaneSnapshot> {
+    let viewport = self.editor.layout_viewport();
+    self
+      .editor
+      .pane_snapshots(viewport)
+      .into_iter()
+      .find(|pane| {
+        x >= pane.rect.x
+          && x < pane.rect.x.saturating_add(pane.rect.width)
+          && y >= pane.rect.y
+          && y < pane.rect.y.saturating_add(pane.rect.height)
+      })
+  }
+
+  fn pointer_active_pane_snapshot(&self) -> Option<PaneSnapshot> {
+    let viewport = self.editor.layout_viewport();
+    self
+      .editor
+      .pane_snapshots(viewport)
+      .into_iter()
+      .find(|pane| pane.is_active_pane)
+  }
+
+  fn pointer_char_idx_for_pane_point(&self, pane: PaneSnapshot, x: u16, y: u16) -> Option<usize> {
+    let max_x = pane.rect.x.saturating_add(pane.rect.width.saturating_sub(1));
+    let max_y = pane.rect.y.saturating_add(pane.rect.height.saturating_sub(1));
+    let x = x.clamp(pane.rect.x, max_x);
+    let y = y.clamp(pane.rect.y, max_y);
+
+    let doc = self.editor.buffer_document(pane.buffer_index)?;
+    let view = self.editor.buffer_view(pane.buffer_index)?;
+    let gutter_width = gutter_width_for_document(doc, view.viewport.width, &self.gutter_config);
+
+    let local_row = usize::from(y.saturating_sub(pane.rect.y));
+    let local_col = usize::from(x.saturating_sub(pane.rect.x).saturating_sub(gutter_width));
+
+    let target = Position::new(
+      view.scroll.row.saturating_add(local_row),
+      view.scroll.col.saturating_add(local_col),
+    );
+
+    let mut text_format = <Self as DefaultContext>::text_format(self);
+    text_format.viewport_width = view.viewport.width.saturating_sub(gutter_width).max(1);
+    let mut annotations = <Self as DefaultContext>::text_annotations(self);
+    char_at_visual_pos(doc.text().slice(..), &text_format, &mut annotations, target)
+  }
+
+  fn pointer_set_primary_selection(&mut self, anchor: usize, head: usize) -> bool {
+    self
+      .editor
+      .document_mut()
+      .set_selection(Selection::single(anchor, head))
+      .is_ok()
+  }
+
+  fn pointer_scroll_active_view_by(&mut self, row_delta: i32, col_delta: i32) -> bool {
+    if row_delta == 0 && col_delta == 0 {
+      return false;
+    }
+    let soft_wrap = self.text_format.soft_wrap;
+    let view = self.editor.view_mut();
+    let new_row = if row_delta >= 0 {
+      view.scroll.row.saturating_add(row_delta as usize)
+    } else {
+      view.scroll.row.saturating_sub((-row_delta) as usize)
+    };
+    let new_col = if soft_wrap {
+      0
+    } else if col_delta >= 0 {
+      view.scroll.col.saturating_add(col_delta as usize)
+    } else {
+      view.scroll.col.saturating_sub((-col_delta) as usize)
+    };
+    if view.scroll.row == new_row && view.scroll.col == new_col {
+      return false;
+    }
+    view.scroll = Position::new(new_row, new_col);
+    true
+  }
+
+  fn pointer_drag_autoscroll_rows(&self, y: u16, pane: PaneSnapshot) -> i32 {
+    let top = pane.rect.y;
+    let bottom = pane.rect.y.saturating_add(pane.rect.height.saturating_sub(1));
+
+    if y < top {
+      return -i32::from((top - y).min(4));
+    }
+    if y > bottom {
+      return i32::from((y - bottom).min(4));
+    }
+    if y == top {
+      return -1;
+    }
+    if y == bottom {
+      return 1;
+    }
+    0
+  }
+
+  fn handle_editor_pointer_event(&mut self, event: PointerEvent) -> PointerEventOutcome {
+    let Some((x, y)) = self.pointer_event_screen_coords(event) else {
+      return PointerEventOutcome::Continue;
+    };
+
+    let hit_pane = self.pointer_hit_pane_at(x, y);
+    let mut pane_changed = false;
+    if let Some(pane) = hit_pane {
+      pane_changed = self.editor.set_active_pane(pane.pane_id);
+    }
+
+    match event.kind {
+      PointerKind::Scroll => {
+        let row_delta = if event.scroll_y > 0.0 {
+          event.scroll_y.round() as i32
+        } else if event.scroll_y < 0.0 {
+          event.scroll_y.round() as i32
+        } else {
+          0
+        };
+        let col_delta = if event.scroll_x > 0.0 {
+          event.scroll_x.round() as i32
+        } else if event.scroll_x < 0.0 {
+          event.scroll_x.round() as i32
+        } else {
+          0
+        };
+        let over_editor = hit_pane.is_some();
+        if !over_editor {
+          if pane_changed {
+            self.request_render();
+            return PointerEventOutcome::Handled;
+          }
+          return PointerEventOutcome::Continue;
+        }
+        let changed = self.pointer_scroll_active_view_by(row_delta, col_delta);
+        if changed || pane_changed {
+          self.request_render();
+        }
+        PointerEventOutcome::Handled
+      },
+      PointerKind::Down(PointerButton::Left) => {
+        let Some(pane) = hit_pane else {
+          if pane_changed {
+            self.request_render();
+            return PointerEventOutcome::Handled;
+          }
+          return PointerEventOutcome::Continue;
+        };
+        let Some(target) = self.pointer_char_idx_for_pane_point(pane, x, y) else {
+          if pane_changed {
+            self.request_render();
+          }
+          return PointerEventOutcome::Handled;
+        };
+        let anchor = if event.modifiers.shift() {
+          self
+            .active_or_first_selection_range()
+            .map(|range| range.anchor)
+            .unwrap_or(target)
+        } else {
+          target
+        };
+        let changed = self.pointer_set_primary_selection(anchor, target);
+        self.clear_hover_state();
+        if changed || pane_changed {
+          self.request_render();
+        }
+        PointerEventOutcome::Handled
+      },
+      PointerKind::Drag(PointerButton::Left) => {
+        let pane = hit_pane.or_else(|| self.pointer_active_pane_snapshot());
+        let Some(pane) = pane else {
+          if pane_changed {
+            self.request_render();
+            return PointerEventOutcome::Handled;
+          }
+          return PointerEventOutcome::Continue;
+        };
+
+        let scrolled = self.pointer_scroll_active_view_by(self.pointer_drag_autoscroll_rows(y, pane), 0);
+        let Some(target) = self.pointer_char_idx_for_pane_point(pane, x, y) else {
+          if scrolled || pane_changed {
+            self.request_render();
+          }
+          return PointerEventOutcome::Handled;
+        };
+        let anchor = self
+          .active_or_first_selection_range()
+          .map(|range| range.anchor)
+          .unwrap_or(target);
+        let changed = self.pointer_set_primary_selection(anchor, target);
+        if changed {
+          self.clear_hover_state();
+        }
+        if changed || scrolled || pane_changed {
+          self.request_render();
+        }
+        PointerEventOutcome::Handled
+      },
+      PointerKind::Up(PointerButton::Left) => {
+        if pane_changed {
+          self.request_render();
+          return PointerEventOutcome::Handled;
+        }
+        if hit_pane.is_some() {
+          return PointerEventOutcome::Handled;
+        }
+        PointerEventOutcome::Continue
+      },
+      PointerKind::Move => {
+        if pane_changed {
+          self.request_render();
+          return PointerEventOutcome::Handled;
+        }
+        if hit_pane.is_some() {
+          return PointerEventOutcome::Handled;
+        }
+        PointerEventOutcome::Continue
+      },
+      _ => PointerEventOutcome::Continue,
+    }
+  }
+
   fn active_cursor_char_idx(&self) -> Option<usize> {
     let doc = self.editor.document();
     let range = self.active_or_first_selection_range()?;
@@ -4700,7 +4949,12 @@ impl the_default::DefaultContext for Ctx {
     &mut self,
     event: the_default::PointerEvent,
   ) -> the_default::PointerEventOutcome {
-    crate::input::handle_pointer_event(self, event)
+    let outcome = crate::input::handle_pointer_event(self, event);
+    if outcome.handled() {
+      outcome
+    } else {
+      self.handle_editor_pointer_event(event)
+    }
   }
 
   fn dispatch(&self) -> DispatchRef<Self> {

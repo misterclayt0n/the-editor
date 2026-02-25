@@ -200,7 +200,13 @@ pub(crate) fn handle_pointer_event(ctx: &mut Ctx, event: PointerEvent) -> Pointe
 
   let Some(layout) = ctx.completion_docs_layout else {
     ctx.completion_docs_drag = None;
-    return PointerEventOutcome::Handled;
+    let overlay_active =
+      ctx.completion_menu.active || ctx.hover_docs.is_some() || ctx.signature_help.active;
+    return if overlay_active {
+      PointerEventOutcome::Handled
+    } else {
+      PointerEventOutcome::Continue
+    };
   };
 
   match event.kind {

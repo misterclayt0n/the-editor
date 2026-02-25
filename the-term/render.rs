@@ -6069,7 +6069,7 @@ pub fn render(f: &mut Frame, ctx: &mut Ctx) {
   adapt_ui_tree_for_term(ctx, &mut ui);
   resolve_ui_tree(&mut ui, &ctx.ui_theme);
   apply_ui_viewport(ctx, &ui, f.size());
-  if !ctx.mouse_selection_drag_active {
+  if !ctx.mouse_selection_drag_active && !ctx.mouse_viewport_detached {
     ensure_cursor_visible(ctx);
   }
   let frame_plan = frame_render_plan(ctx);

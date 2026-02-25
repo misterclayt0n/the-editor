@@ -72,6 +72,10 @@ pub fn handle_key(ctx: &mut Ctx, event: CrosstermKeyEvent) {
     return;
   }
 
+  // Pointer-driven scrolling should detach viewport follow until the next
+  // keyboard action.
+  ctx.mouse_viewport_detached = false;
+
   if matches!(event.code, KeyCode::Esc) && ctx.hover_docs.is_some() {
     ctx.hover_docs = None;
     ctx.hover_docs_scroll = 0;

@@ -540,6 +540,7 @@ pub struct Ctx {
   pub completion_docs_drag:          Option<CompletionDocsDragState>,
   pub pane_resize_drag:              Option<PaneResizeDragState>,
   pub mouse_selection_drag_active:   bool,
+  pub mouse_viewport_detached:       bool,
   pub search_prompt:                 the_default::SearchPromptState,
   global_search:                     GlobalSearchState,
   pub ui_theme:                      Theme,
@@ -910,6 +911,7 @@ impl Ctx {
       completion_docs_drag: None,
       pane_resize_drag: None,
       mouse_selection_drag_active: false,
+      mouse_viewport_detached: false,
       search_prompt: the_default::SearchPromptState::new(),
       global_search: GlobalSearchState::default(),
       ui_theme,
@@ -2873,6 +2875,9 @@ impl Ctx {
           return PointerEventOutcome::Continue;
         }
         let changed = self.pointer_scroll_active_view_by(row_delta, col_delta);
+        if changed {
+          self.mouse_viewport_detached = true;
+        }
         if changed || pane_changed {
           self.request_render();
         }
@@ -2880,6 +2885,7 @@ impl Ctx {
       },
       PointerKind::Down(PointerButton::Left) => {
         self.mouse_selection_drag_active = false;
+        self.mouse_viewport_detached = false;
         let Some(pane) = hit_pane else {
           if pane_changed {
             self.request_render();
@@ -2920,6 +2926,9 @@ impl Ctx {
         };
 
         let scrolled = self.pointer_scroll_active_view_by(self.pointer_drag_autoscroll_rows(y, pane), 0);
+        if scrolled {
+          self.mouse_viewport_detached = true;
+        }
         let Some(target) = self.pointer_char_idx_for_pane_point(pane, x, y) else {
           if scrolled || pane_changed {
             self.request_render();

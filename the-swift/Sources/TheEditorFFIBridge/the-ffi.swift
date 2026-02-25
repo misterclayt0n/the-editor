@@ -1,3 +1,6 @@
+import Foundation
+import TheEditorFFI
+
 
 public class App: AppRefMut {
     var isOwned: Bool = true

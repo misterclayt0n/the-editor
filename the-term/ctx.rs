@@ -97,6 +97,7 @@ use the_lib::{
   render::{
     char_at_visual_pos,
     gutter_width_for_document,
+    visual_pos_at_char,
     FrameRenderPlan,
     GutterConfig,
     InlineDiagnosticRenderLine,
@@ -2800,24 +2801,91 @@ impl Ctx {
       return false;
     }
     let soft_wrap = self.text_format.soft_wrap;
-    let view = self.editor.view_mut();
+    let current = self.editor.view().scroll;
     let new_row = if row_delta >= 0 {
-      view.scroll.row.saturating_add(row_delta as usize)
+      current.row.saturating_add(row_delta as usize)
     } else {
-      view.scroll.row.saturating_sub((-row_delta) as usize)
+      current.row.saturating_sub((-row_delta) as usize)
     };
     let new_col = if soft_wrap {
       0
     } else if col_delta >= 0 {
-      view.scroll.col.saturating_add(col_delta as usize)
+      current.col.saturating_add(col_delta as usize)
     } else {
-      view.scroll.col.saturating_sub((-col_delta) as usize)
+      current.col.saturating_sub((-col_delta) as usize)
     };
-    if view.scroll.row == new_row && view.scroll.col == new_col {
+    self.set_active_view_scroll_clamped(Position::new(new_row, new_col))
+  }
+
+  fn clamped_active_view_scroll(&self, scroll: Position) -> Position {
+    let doc = self.editor.document();
+    let view = self.editor.view();
+    let mut clamped = scroll;
+
+    let mut text_format = <Self as DefaultContext>::text_format(self);
+    let gutter_width = gutter_width_for_document(doc, view.viewport.width, &self.gutter_config);
+    text_format.viewport_width = view.viewport.width.saturating_sub(gutter_width).max(1);
+    if text_format.soft_wrap {
+      clamped.col = 0;
+    }
+
+    let text = doc.text();
+    let mut annotations = <Self as DefaultContext>::text_annotations(self);
+    let text_slice = text.slice(..);
+    let has_line_annotations = annotations.has_line_annotations();
+    let eof_pos = if !text_format.soft_wrap && !has_line_annotations {
+      Position::new(text.len_lines().saturating_sub(1), 0)
+    } else {
+      visual_pos_at_char(text_slice, &text_format, &mut annotations, text.len_chars())
+        .unwrap_or_else(|| Position::new(0, 0))
+    };
+    clamped.row = clamped.row.min(eof_pos.row);
+
+    if !text_format.soft_wrap && clamped.col != view.scroll.col {
+      let max_col = self.max_visual_col_for_text(text, &text_format, &mut annotations);
+      clamped.col = clamped.col.min(max_col);
+    }
+
+    clamped
+  }
+
+  fn set_active_view_scroll_clamped(&mut self, scroll: Position) -> bool {
+    let clamped = self.clamped_active_view_scroll(scroll);
+    let view = self.editor.view_mut();
+    if view.scroll == clamped {
       return false;
     }
-    view.scroll = Position::new(new_row, new_col);
+    view.scroll = clamped;
     true
+  }
+
+  fn max_visual_col_for_text<'a>(
+    &self,
+    text: &'a Rope,
+    text_format: &'a TextFormat,
+    annotations: &mut TextAnnotations<'a>,
+  ) -> usize {
+    let text_slice = text.slice(..);
+    let mut max_col = 0usize;
+    for line_idx in 0..text.len_lines() {
+      let line = text.line(line_idx);
+      let mut line_end = line.len_chars();
+      while line_end > 0 {
+        let Some(ch) = line.get_char(line_end - 1) else {
+          break;
+        };
+        if ch == '\n' || ch == '\r' {
+          line_end -= 1;
+        } else {
+          break;
+        }
+      }
+      let char_idx = text.line_to_char(line_idx).saturating_add(line_end);
+      if let Some(pos) = visual_pos_at_char(text_slice, text_format, annotations, char_idx) {
+        max_col = max_col.max(pos.col);
+      }
+    }
+    max_col
   }
 
   fn pointer_drag_autoscroll_rows(&self, y: u16, pane: PaneSnapshot) -> i32 {

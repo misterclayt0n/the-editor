@@ -6069,7 +6069,9 @@ pub fn render(f: &mut Frame, ctx: &mut Ctx) {
   adapt_ui_tree_for_term(ctx, &mut ui);
   resolve_ui_tree(&mut ui, &ctx.ui_theme);
   apply_ui_viewport(ctx, &ui, f.size());
-  ensure_cursor_visible(ctx);
+  if !ctx.mouse_selection_drag_active {
+    ensure_cursor_visible(ctx);
+  }
   let frame_plan = frame_render_plan(ctx);
 
   f.render_widget(Clear, area);

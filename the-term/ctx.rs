@@ -539,6 +539,7 @@ pub struct Ctx {
   pub completion_docs_layout:        Option<CompletionDocsLayout>,
   pub completion_docs_drag:          Option<CompletionDocsDragState>,
   pub pane_resize_drag:              Option<PaneResizeDragState>,
+  pub mouse_selection_drag_active:   bool,
   pub search_prompt:                 the_default::SearchPromptState,
   global_search:                     GlobalSearchState,
   pub ui_theme:                      Theme,
@@ -908,6 +909,7 @@ impl Ctx {
       completion_docs_layout: None,
       completion_docs_drag: None,
       pane_resize_drag: None,
+      mouse_selection_drag_active: false,
       search_prompt: the_default::SearchPromptState::new(),
       global_search: GlobalSearchState::default(),
       ui_theme,
@@ -2877,6 +2879,7 @@ impl Ctx {
         PointerEventOutcome::Handled
       },
       PointerKind::Down(PointerButton::Left) => {
+        self.mouse_selection_drag_active = false;
         let Some(pane) = hit_pane else {
           if pane_changed {
             self.request_render();
@@ -2899,6 +2902,7 @@ impl Ctx {
           target
         };
         let changed = self.pointer_set_primary_selection(anchor, target);
+        self.mouse_selection_drag_active = true;
         self.clear_hover_state();
         if changed || pane_changed {
           self.request_render();
@@ -2930,17 +2934,24 @@ impl Ctx {
         if changed {
           self.clear_hover_state();
         }
+        self.mouse_selection_drag_active = true;
         if changed || scrolled || pane_changed {
           self.request_render();
         }
         PointerEventOutcome::Handled
       },
       PointerKind::Up(PointerButton::Left) => {
+        let was_drag_active = self.mouse_selection_drag_active;
+        self.mouse_selection_drag_active = false;
         if pane_changed {
           self.request_render();
           return PointerEventOutcome::Handled;
         }
         if hit_pane.is_some() {
+          return PointerEventOutcome::Handled;
+        }
+        if was_drag_active {
+          self.request_render();
           return PointerEventOutcome::Handled;
         }
         PointerEventOutcome::Continue

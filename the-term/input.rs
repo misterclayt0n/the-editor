@@ -149,9 +149,16 @@ pub fn handle_key(ctx: &mut Ctx, event: CrosstermKeyEvent) {
 }
 
 pub fn handle_mouse(ctx: &mut Ctx, event: CrosstermMouseEvent) {
-  let Some(pointer_event) = crossterm_mouse_to_pointer_event(event) else {
+  let click_count = match event.kind {
+    MouseEventKind::Down(MouseButton::Left) => ctx.pointer_click_count_for_left_down(event.column, event.row),
+    _ => 0,
+  };
+  let Some(mut pointer_event) = crossterm_mouse_to_pointer_event(event) else {
     return;
   };
+  if click_count != 0 {
+    pointer_event = pointer_event.with_click_count(click_count);
+  }
   let dispatch = ctx.dispatch();
   let _ = dispatch_pointer_event(&*dispatch, ctx, pointer_event);
 }

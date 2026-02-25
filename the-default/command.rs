@@ -4350,10 +4350,63 @@ fn yank_with_register<Ctx: DefaultContext>(
     }
   };
 
+  let yank_message = yank_notification_message(register, &fragments);
   let _ = ctx.registers_mut().write(register, fragments);
+  if let Some(message) = yank_message {
+    ctx.push_info("yank", message);
+  }
 
   ctx.set_mode(Mode::Normal);
   ctx.request_render();
+}
+
+fn yank_notification_message(register: char, fragments: &[String]) -> Option<String> {
+  let non_empty = fragments
+    .iter()
+    .filter(|fragment| !fragment.is_empty())
+    .collect::<Vec<_>>();
+  if non_empty.is_empty() {
+    return None;
+  }
+
+  let action = if register == '+' {
+    "copied"
+  } else {
+    "yanked"
+  };
+  let destination = if register == '+' {
+    " to clipboard"
+  } else {
+    ""
+  };
+
+  if non_empty.len() == 1 {
+    let preview = yank_notification_preview(non_empty[0], 48);
+    return Some(format!("{action} '{preview}'{destination}"));
+  }
+
+  Some(format!(
+    "{action} {} selections{destination}",
+    non_empty.len()
+  ))
+}
+
+fn yank_notification_preview(text: &str, max_chars: usize) -> String {
+  let mut out = String::new();
+  for ch in text.chars() {
+    let mapped = match ch {
+      '\n' => '⏎',
+      '\r' => '␍',
+      '\t' => '⇥',
+      _ => ch,
+    };
+    if out.chars().count() >= max_chars {
+      out.push('…');
+      break;
+    }
+    out.push(mapped);
+  }
+  out
 }
 
 fn yank<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {

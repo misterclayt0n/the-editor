@@ -773,14 +773,13 @@ struct EditorView: View {
     ) {
         let count = Int(plan.cursor_count())
         guard count > 0 else { return }
-        let reversedModifierBit: UInt16 = 0b0000_0100_0000
 
         let pickedCursorId: UInt64? = {
             guard let cursorPickState else { return nil }
             guard cursorPickState.currentIndex >= 0 && cursorPickState.currentIndex < count else { return nil }
             return plan.cursor_at(UInt(cursorPickState.currentIndex)).id()
         }()
-        let fallbackCursorColor = SwiftUI.Color.accentColor.opacity(0.9)
+        let fallbackCursorColor = SwiftUI.Color.accentColor
 
         for index in 0..<count {
             let cursor = plan.cursor_at(UInt(index))
@@ -792,7 +791,7 @@ struct EditorView: View {
 
             switch cursor.kind() {
             case 1: // bar
-                let rect = CGRect(x: x, y: y, width: 2.5, height: cellSize.height)
+                let rect = CGRect(x: x + 0.5, y: y, width: 1.75, height: cellSize.height)
                 context.fill(Path(rect), with: .color(strokeColor))
             case 2: // underline
                 let rect = CGRect(x: x, y: y + cellSize.height - 2, width: cellSize.width, height: 2)
@@ -804,14 +803,6 @@ struct EditorView: View {
                 continue
             default: // block
                 let rect = CGRect(x: x, y: y, width: cellSize.width, height: cellSize.height)
-                let style = cursor.style()
-                if (style.add_modifier & reversedModifierBit) != 0, !style.has_bg, !style.has_fg {
-                    context.drawLayer { layer in
-                        layer.blendMode = .difference
-                        layer.fill(Path(rect), with: .color(.white))
-                    }
-                    continue
-                }
                 context.fill(Path(rect), with: .color(strokeColor.opacity(isPickedCursor ? 0.65 : 0.5)))
             }
         }

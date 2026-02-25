@@ -221,6 +221,11 @@ fn lib_style_to_ratatui(style: LibStyle) -> Style {
 
 fn render_styles_from_theme(ctx: &Ctx) -> RenderStyles {
   let theme = &ctx.ui_theme;
+  let (cursor_kind, active_cursor_kind) = match ctx.mode {
+    Mode::Insert => (LibCursorKind::Bar, LibCursorKind::Bar),
+    Mode::Select => (LibCursorKind::Underline, LibCursorKind::Underline),
+    Mode::Normal | Mode::Command => (LibCursorKind::Block, LibCursorKind::Block),
+  };
   let selection = theme.try_get("ui.selection").unwrap_or_default();
   let cursor = theme.try_get("ui.cursor").unwrap_or_default();
   let active_cursor = if matches!(
@@ -242,8 +247,8 @@ fn render_styles_from_theme(ctx: &Ctx) -> RenderStyles {
     selection,
     cursor,
     active_cursor,
-    cursor_kind: LibCursorKind::Block,
-    active_cursor_kind: LibCursorKind::Block,
+    cursor_kind,
+    active_cursor_kind,
     gutter: theme.try_get("ui.linenr").unwrap_or_default(),
     gutter_active: theme
       .try_get("ui.linenr.selected")

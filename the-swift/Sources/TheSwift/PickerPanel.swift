@@ -236,6 +236,7 @@ struct PickerPanel<
     let autoSelectFirstItem: Bool
     var showBackground: Bool = true
     var virtualList: PickerPanelVirtualListConfig? = nil
+    var isRowSelectable: ((Int) -> Bool)? = nil
 
     // Data
     let itemCount: Int
@@ -544,28 +545,42 @@ struct PickerPanel<
         }
     }
 
+    @ViewBuilder
     private func rowButton(index: Int, fixedRowHeight: CGFloat?) -> some View {
-        let isSelected = selectedIndex == index
-        let isHovered = hoveredIndex == index
+        let selectable = canSelectRow(index)
+        let isSelected = selectable && (selectedIndex == index)
+        let isHovered = selectable && (hoveredIndex == index)
 
-        return Button {
-            selectedIndex = index
-            onSelectionChange?(index)
-            onSubmit(index)
-        } label: {
-            itemContent(index, isSelected, isHovered)
-                .padding(8)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .frame(height: fixedRowHeight, alignment: .topLeading)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(isSelected ? Color.accentColor.opacity(0.2) : (isHovered ? Color.secondary.opacity(0.15) : Color.clear))
-                )
-        }
-        .buttonStyle(.plain)
-        .contentShape(Rectangle())
-        .onHover { hovering in
-            hoveredIndex = hovering ? index : nil
+        let rowVisual = itemContent(index, isSelected, isHovered)
+            .padding(8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(height: fixedRowHeight, alignment: .topLeading)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(isSelected ? Color.accentColor.opacity(0.2) : (isHovered ? Color.secondary.opacity(0.15) : Color.clear))
+            )
+
+        if selectable {
+            Button {
+                selectedIndex = index
+                onSelectionChange?(index)
+                onSubmit(index)
+            } label: {
+                rowVisual
+            }
+            .buttonStyle(.plain)
+            .contentShape(Rectangle())
+            .onHover { hovering in
+                hoveredIndex = hovering ? index : nil
+            }
+        } else {
+            rowVisual
+                .contentShape(Rectangle())
+                .onHover { hovering in
+                    if hovering && hoveredIndex == index {
+                        hoveredIndex = nil
+                    }
+                }
         }
     }
 
@@ -651,14 +666,20 @@ struct PickerPanel<
 
     private func moveSelection(_ delta: Int) {
         guard itemCount > 0 else { return }
+        guard selectableRowCount() > 0 else { return }
 
         let len = itemCount
+        let direction = delta >= 0 ? 1 : -1
         let next: Int
         if let current = clampedIndex(selectedIndex) {
             let raw = current + delta
-            next = ((raw % len) + len) % len
+            let wrapped = ((raw % len) + len) % len
+            guard let selectable = nearestSelectableIndex(startingAt: wrapped, direction: direction) else { return }
+            next = selectable
         } else {
-            next = delta >= 0 ? 0 : (len - 1)
+            let start = direction >= 0 ? 0 : (len - 1)
+            guard let selectable = nearestSelectableIndex(startingAt: start, direction: direction) else { return }
+            next = selectable
         }
 
         selectedIndex = next
@@ -672,11 +693,11 @@ struct PickerPanel<
         }
         let prev = selectedIndex
         if !autoSelectFirstItem {
-            selectedIndex = clampedIndex(externalSelectedIndex)
+            selectedIndex = normalizedSelectableIndex(externalSelectedIndex, preferredDirection: 1)
         } else {
-            selectedIndex = clampedIndex(selectedIndex)
-                ?? clampedIndex(externalSelectedIndex)
-                ?? (autoSelectFirstItem ? 0 : nil)
+            selectedIndex = normalizedSelectableIndex(selectedIndex, preferredDirection: 1)
+                ?? normalizedSelectableIndex(externalSelectedIndex, preferredDirection: 1)
+                ?? (autoSelectFirstItem ? firstSelectableIndex() : nil)
         }
         if selectedIndex != prev, let sel = selectedIndex {
             onSelectionChange?(sel)
@@ -691,7 +712,8 @@ struct PickerPanel<
 
     private func initialSelection() -> Int? {
         guard itemCount > 0 else { return nil }
-        return clampedIndex(externalSelectedIndex) ?? (autoSelectFirstItem ? 0 : nil)
+        return normalizedSelectableIndex(externalSelectedIndex, preferredDirection: 1)
+            ?? (autoSelectFirstItem ? firstSelectableIndex() : nil)
     }
 
     private func normalizeSelection(_ newValue: Int?) {
@@ -702,10 +724,63 @@ struct PickerPanel<
             return
         }
 
-        let normalized = clampedIndex(newValue) ?? (autoSelectFirstItem ? 0 : nil)
+        let normalized = normalizedSelectableIndex(newValue, preferredDirection: 1)
+            ?? (autoSelectFirstItem ? firstSelectableIndex() : nil)
         if selectedIndex != normalized {
             selectedIndex = normalized
         }
+    }
+
+    private func canSelectRow(_ index: Int) -> Bool {
+        guard (0..<itemCount).contains(index) else { return false }
+        return isRowSelectable?(index) ?? true
+    }
+
+    private func selectableRowCount() -> Int {
+        guard itemCount > 0 else { return 0 }
+        if isRowSelectable == nil { return itemCount }
+        var count = 0
+        for index in 0..<itemCount {
+            if canSelectRow(index) {
+                count += 1
+            }
+        }
+        return count
+    }
+
+    private func firstSelectableIndex() -> Int? {
+        guard itemCount > 0 else { return nil }
+        for index in 0..<itemCount {
+            if canSelectRow(index) {
+                return index
+            }
+        }
+        return nil
+    }
+
+    private func nearestSelectableIndex(startingAt index: Int, direction: Int) -> Int? {
+        guard itemCount > 0 else { return nil }
+        let step = direction >= 0 ? 1 : -1
+        var current = ((index % itemCount) + itemCount) % itemCount
+        for _ in 0..<itemCount {
+            if canSelectRow(current) {
+                return current
+            }
+            current = (current + step + itemCount) % itemCount
+        }
+        return nil
+    }
+
+    private func normalizedSelectableIndex(_ index: Int?, preferredDirection: Int) -> Int? {
+        guard itemCount > 0 else { return nil }
+        guard let clamped = clampedIndex(index) else { return nil }
+        if canSelectRow(clamped) {
+            return clamped
+        }
+        if let next = nearestSelectableIndex(startingAt: clamped, direction: preferredDirection) {
+            return next
+        }
+        return nearestSelectableIndex(startingAt: clamped, direction: -preferredDirection)
     }
 
     private func scrollSelectionIntoView(index: Int, proxy: ScrollViewProxy) {

@@ -525,6 +525,10 @@ struct FilePickerView: View {
                     horizontalPadding: 10,
                     overscanRows: 24
                 ) : nil,
+                isRowSelectable: isLiveGrepPicker ? { index in
+                    guard items.indices.contains(index) else { return false }
+                    return items[index].rowKind != 3
+                } : nil,
                 itemCount: items.count,
                 externalQuery: snapshot.query,
                 externalSelectedIndex: nil,
@@ -838,8 +842,7 @@ struct FilePickerView: View {
         let path = liveGrepDisplayPath(for: item)
         let previousPath = previousItem.map(liveGrepDisplayPath(for:)) ?? ""
         let isNewGroup = !isHeader && !path.isEmpty && path != previousPath
-        let marker = isHeader ? " " : (isSelected ? "▌" : "▏")
-        let guide = (isHeader || isNewGroup) ? " " : "│"
+        let marker = isSelected ? "▌" : "│"
         let icon = fileIcon(for: item)
 
         let parts = liveGrepPathParts(path)
@@ -854,16 +857,6 @@ struct FilePickerView: View {
 
         if isHeader {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text(marker)
-                    .font(FontLoader.bufferFont(size: 12).weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 8, alignment: .leading)
-
-                Text(guide)
-                    .font(FontLoader.bufferFont(size: 12))
-                    .foregroundStyle(.tertiary)
-                    .frame(width: 8, alignment: .leading)
-
                 Group {
                     if let svg = icon.svg {
                         svg.renderingMode(.template)
@@ -910,11 +903,6 @@ struct FilePickerView: View {
                 Text(marker)
                     .font(FontLoader.bufferFont(size: 12).weight(.semibold))
                     .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
-                    .frame(width: 8, alignment: .leading)
-
-                Text(guide)
-                    .font(FontLoader.bufferFont(size: 12))
-                    .foregroundStyle(.tertiary)
                     .frame(width: 8, alignment: .leading)
 
                 if isNewGroup {

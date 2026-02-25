@@ -45,6 +45,7 @@ use crate::{
     CapabilityRegistry,
     ServerCapabilitiesSnapshot,
   },
+  editing::parse_workspace_apply_edit_request,
   diagnostics::parse_publish_diagnostics,
   jsonrpc,
   parse_progress_notification,
@@ -686,6 +687,28 @@ fn handle_server_request_message(
         Some(workspace_configuration_result(request.params.as_ref())),
       )
     },
+    "workspace/applyEdit" => {
+      match parse_workspace_apply_edit_request(request.params.as_ref()) {
+        Ok((label, edit)) => {
+          let _ = event_tx.send(LspEvent::WorkspaceApplyEdit { label, edit });
+          jsonrpc::Message::response_ok(
+            request.id.clone(),
+            Some(json!({ "applied": true })),
+          )
+        },
+        Err(err) => {
+          let failure = format!("failed to parse workspace/applyEdit: {err}");
+          let _ = event_tx.send(LspEvent::Error(failure.clone()));
+          jsonrpc::Message::response_ok(
+            request.id.clone(),
+            Some(json!({
+              "applied": false,
+              "failureReason": failure,
+            })),
+          )
+        },
+      }
+    },
     // Many servers use dynamic capability registration.
     "client/registerCapability" | "client/unregisterCapability" => {
       jsonrpc::Message::response_ok(request.id.clone(), Some(Value::Null))
@@ -913,6 +936,31 @@ fn default_client_capabilities() -> Value {
           },
           "activeParameterSupport": true
         }
+      },
+      "codeAction": {
+        "dynamicRegistration": false,
+        "codeActionLiteralSupport": {
+          "codeActionKind": {
+            "valueSet": [
+              "",
+              "quickfix",
+              "refactor",
+              "refactor.extract",
+              "refactor.inline",
+              "refactor.rewrite",
+              "source",
+              "source.organizeImports",
+              "source.fixAll"
+            ]
+          }
+        },
+        "isPreferredSupport": true,
+        "disabledSupport": true,
+        "dataSupport": true,
+        "resolveSupport": {
+          "properties": ["edit", "command"]
+        },
+        "honorsChangeAnnotations": false
       },
       "synchronization": {
         "dynamicRegistration": true,

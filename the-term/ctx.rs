@@ -134,6 +134,7 @@ use the_lib::{
 use the_lsp::{
   FileChangeType,
   LspCapability,
+  LspCodeAction,
   LspCompletionContext,
   LspCompletionItem,
   LspCompletionItemKind,
@@ -519,6 +520,8 @@ pub struct Ctx {
   lsp_completion_resolved_indices:   HashSet<usize>,
   lsp_completion_visible_indices:    Vec<usize>,
   lsp_completion_fallback_start:     Option<usize>,
+  lsp_code_action_items:             Vec<LspCodeAction>,
+  lsp_code_action_menu_active:       bool,
   lsp_completion_generation:         u64,
   lsp_pending_auto_completion:       Option<PendingAutoCompletion>,
   lsp_pending_auto_signature_help:   Option<PendingAutoSignatureHelp>,
@@ -886,6 +889,8 @@ impl Ctx {
       lsp_completion_resolved_indices: HashSet::new(),
       lsp_completion_visible_indices: Vec::new(),
       lsp_completion_fallback_start: None,
+      lsp_code_action_items: Vec::new(),
+      lsp_code_action_menu_active: false,
       lsp_completion_generation: 0,
       lsp_pending_auto_completion: None,
       lsp_pending_auto_signature_help: None,
@@ -1506,6 +1511,11 @@ impl Ctx {
             self.publish_lsp_diagnostic_message(next_counts);
             needs_render = true;
           }
+        },
+        LspEvent::WorkspaceApplyEdit { label, edit } => {
+          let source = label.as_deref().unwrap_or("code action");
+          let _ = self.apply_workspace_edit(&edit, source);
+          needs_render = true;
         },
         _ => {},
       }
@@ -2387,9 +2397,11 @@ impl Ctx {
   }
 
   fn handle_code_actions_response(&mut self, result: Option<&Value>) -> bool {
-    let mut actions = match parse_code_actions_response(result) {
+    let actions = match parse_code_actions_response(result) {
       Ok(actions) => actions,
       Err(err) => {
+        self.clear_code_action_menu_state();
+        self.completion_menu.clear();
         self.messages.publish(
           MessageLevel::Error,
           Some("lsp".into()),
@@ -2400,36 +2412,17 @@ impl Ctx {
     };
 
     if actions.is_empty() {
-      self.messages.publish(
-        MessageLevel::Info,
-        Some("lsp".into()),
-        "no code actions available",
+      self.clear_code_action_menu_state();
+      self.completion_menu.clear();
+      let _ = <Self as the_default::DefaultContext>::push_error(
+        self,
+        "code actions",
+        "No code actions available",
       );
       return true;
     }
 
-    actions.sort_by_key(|action| !action.is_preferred);
-    let action = actions.remove(0);
-
-    if let Some(edit) = action.edit.as_ref() {
-      let _ = self.apply_workspace_edit(edit, "code action");
-      self.messages.publish(
-        MessageLevel::Info,
-        Some("lsp".into()),
-        format!("code action: {}", action.title),
-      );
-      return true;
-    }
-
-    if let Some(command) = action.command {
-      return self.execute_lsp_command_action(command, action.title);
-    }
-
-    self.messages.publish(
-      MessageLevel::Info,
-      Some("lsp".into()),
-      format!("code action '{}' had no edits", action.title),
-    );
+    self.show_code_action_menu(actions);
     true
   }
 
@@ -2795,6 +2788,7 @@ impl Ctx {
   }
 
   fn rebuild_completion_menu(&mut self) {
+    self.clear_code_action_menu_state();
     if self.lsp_completion_items.is_empty() {
       self.lsp_completion_visible_indices.clear();
       self.completion_menu.clear();
@@ -2854,7 +2848,54 @@ impl Ctx {
     self.lsp_completion_resolved_indices.clear();
     self.lsp_completion_visible_indices.clear();
     self.lsp_completion_fallback_start = None;
+    self.clear_code_action_menu_state();
     self.completion_menu.clear();
+  }
+
+  fn code_action_menu_is_active(&self) -> bool {
+    self.lsp_code_action_menu_active && self.completion_menu.active
+  }
+
+  fn clear_code_action_menu_state(&mut self) {
+    self.lsp_code_action_menu_active = false;
+    self.lsp_code_action_items.clear();
+  }
+
+  fn show_code_action_menu(&mut self, mut actions: Vec<LspCodeAction>) {
+    actions.sort_by_key(|action| !action.is_preferred);
+    self.clear_completion_state();
+    self.lsp_code_action_items = actions;
+    self.lsp_code_action_menu_active = !self.lsp_code_action_items.is_empty();
+    let menu_items = self
+      .lsp_code_action_items
+      .iter()
+      .map(completion_menu_item_for_code_action)
+      .collect();
+    the_default::show_completion_menu(self, menu_items);
+  }
+
+  fn apply_code_action(&mut self, action: LspCodeAction) -> bool {
+    let title = action.title.clone();
+    let mut handled = false;
+
+    if let Some(edit) = action.edit.as_ref() {
+      let _ = self.apply_workspace_edit(edit, "code action");
+      handled = true;
+    }
+
+    if let Some(command) = action.command {
+      let _ = self.execute_lsp_command_action(command, title.clone());
+      handled = true;
+    }
+
+    if !handled {
+      self.messages.publish(
+        MessageLevel::Info,
+        Some("lsp".into()),
+        format!("code action '{}' had no edits", title),
+      );
+    }
+    true
   }
 
   fn clear_hover_state(&mut self) {
@@ -3182,6 +3223,47 @@ impl Ctx {
     }))
   }
 
+  fn current_lsp_code_action_range(&self) -> Option<(String, the_lsp::LspRange)> {
+    if !self.lsp_ready {
+      return None;
+    }
+    let state = self.lsp_document.as_ref()?.clone();
+    if !state.opened {
+      return None;
+    }
+
+    let doc = self.editor.document();
+    let range = self.active_or_first_selection_range()?;
+    let mut start = range.anchor.min(range.head);
+    let mut end = range.anchor.max(range.head);
+
+    // Helix normal mode effectively requests code actions on a non-empty
+    // selection under the cursor. Our normal mode cursor is a point selection,
+    // so expand to one char to make clangd refactors (e.g. extract) appear.
+    if start == end {
+      let len = doc.text().len_chars();
+      if end < len {
+        end = end.saturating_add(1);
+      } else if start > 0 {
+        start = start.saturating_sub(1);
+      }
+    }
+
+    let (start_line, start_character) = char_idx_to_utf16_position(doc.text(), start);
+    let (end_line, end_character) = char_idx_to_utf16_position(doc.text(), end);
+
+    Some((state.uri, the_lsp::LspRange {
+      start: LspPosition {
+        line:      start_line,
+        character: start_character,
+      },
+      end:   LspPosition {
+        line:      end_line,
+        character: end_character,
+      },
+    }))
+  }
+
   fn current_lsp_uri(&self) -> Option<String> {
     if !self.lsp_ready {
       return None;
@@ -3193,7 +3275,11 @@ impl Ctx {
       .map(|state| state.uri.clone())
   }
 
-  fn current_lsp_diagnostics_payload(&self, uri: &str) -> Value {
+  fn current_lsp_diagnostics_payload(
+    &self,
+    uri: &str,
+    selection_range: &the_lsp::LspRange,
+  ) -> Value {
     let Some(document_diagnostics) = self.diagnostics.document(uri) else {
       return json!([]);
     };
@@ -3202,6 +3288,19 @@ impl Ctx {
       document_diagnostics
         .diagnostics
         .iter()
+        .filter(|diagnostic| {
+          let diagnostic_range = the_lsp::LspRange {
+            start: LspPosition {
+              line:      diagnostic.range.start.line,
+              character: diagnostic.range.start.character,
+            },
+            end:   LspPosition {
+              line:      diagnostic.range.end.line,
+              character: diagnostic.range.end.character,
+            },
+          };
+          lsp_ranges_overlap(&diagnostic_range, selection_range)
+        })
         .map(diagnostic_to_lsp_json)
         .collect(),
     )
@@ -3682,6 +3781,14 @@ fn summarize_lsp_event(event: &LspEvent) -> Value {
         "count": diagnostics.diagnostics.len(),
       })
     },
+    LspEvent::WorkspaceApplyEdit { label, edit } => {
+      json!({
+        "name": "workspace_apply_edit",
+        "label": label,
+        "documents": edit.documents.len(),
+        "edits": edit.documents.iter().map(|doc| doc.edits.len()).sum::<usize>(),
+      })
+    },
     LspEvent::Progress { progress } => {
       json!({
         "name": "progress",
@@ -3865,6 +3972,26 @@ fn completion_menu_item_for_lsp_item(item: &LspCompletionItem) -> the_default::C
   if let Some(kind) = item.kind {
     menu_item.kind_icon = Some(completion_kind_icon(kind).to_string());
     menu_item.kind_color = Some(completion_kind_color(kind));
+  }
+  menu_item
+}
+
+fn completion_menu_item_for_code_action(
+  action: &LspCodeAction,
+) -> the_default::CompletionMenuItem {
+  let mut menu_item = the_default::CompletionMenuItem::new(action.title.clone());
+  let mut tags: Vec<&str> = Vec::new();
+  if action.is_preferred {
+    tags.push("preferred");
+  }
+  if action.edit.is_some() {
+    tags.push("edit");
+  }
+  if action.command.is_some() {
+    tags.push("command");
+  }
+  if !tags.is_empty() {
+    menu_item.detail = Some(tags.join(" | "));
   }
   menu_item
 }
@@ -4167,6 +4294,40 @@ fn summarize_lsp_error(message: &str) -> String {
   clamp_status_text(message, 24)
 }
 
+fn lsp_position_lt(left: &LspPosition, right: &LspPosition) -> bool {
+  (left.line, left.character) < (right.line, right.character)
+}
+
+fn lsp_position_le(left: &LspPosition, right: &LspPosition) -> bool {
+  (left.line, left.character) <= (right.line, right.character)
+}
+
+fn lsp_range_is_empty(range: &the_lsp::LspRange) -> bool {
+  range.start.line == range.end.line && range.start.character == range.end.character
+}
+
+fn lsp_range_contains_point(range: &the_lsp::LspRange, point: &LspPosition) -> bool {
+  // LSP ranges are half-open: [start, end)
+  lsp_position_le(&range.start, point) && lsp_position_lt(point, &range.end)
+}
+
+fn lsp_ranges_overlap(left: &the_lsp::LspRange, right: &the_lsp::LspRange) -> bool {
+  let left_empty = lsp_range_is_empty(left);
+  let right_empty = lsp_range_is_empty(right);
+
+  if left_empty && right_empty {
+    return left.start.line == right.start.line && left.start.character == right.start.character;
+  }
+  if left_empty {
+    return lsp_range_contains_point(right, &left.start);
+  }
+  if right_empty {
+    return lsp_range_contains_point(left, &right.start);
+  }
+
+  lsp_position_lt(&left.start, &right.end) && lsp_position_lt(&right.start, &left.end)
+}
+
 fn diagnostic_severity_to_lsp_code(severity: DiagnosticSeverity) -> u8 {
   match severity {
     DiagnosticSeverity::Error => 1,
@@ -4395,6 +4556,9 @@ impl the_default::DefaultContext for Ctx {
   }
 
   fn completion_selection_changed(&mut self, index: usize) {
+    if self.code_action_menu_is_active() {
+      return;
+    }
     let source_index = self
       .completion_source_index_for_visible_index(index)
       .unwrap_or(index);
@@ -4402,6 +4566,9 @@ impl the_default::DefaultContext for Ctx {
   }
 
   fn completion_accept_on_commit_char(&mut self, ch: char) -> bool {
+    if self.code_action_menu_is_active() {
+      return false;
+    }
     let Some(selected) = self.completion_menu.selected else {
       return false;
     };
@@ -4420,12 +4587,46 @@ impl the_default::DefaultContext for Ctx {
   }
 
   fn completion_on_action(&mut self, command: Command) -> bool {
+    if self.lsp_code_action_menu_active {
+      return match command {
+        Command::LspCodeActions
+        | Command::CompletionNext
+        | Command::CompletionPrev
+        | Command::CompletionAccept
+        | Command::CompletionDocsScrollUp
+        | Command::CompletionDocsScrollDown => true,
+        Command::CompletionCancel => {
+          self.clear_code_action_menu_state();
+          true
+        },
+        _ => {
+          self.clear_code_action_menu_state();
+          false
+        },
+      };
+    }
+
     let preserve_completion = self.handle_completion_action(command);
     let _ = self.handle_signature_help_action(command);
     preserve_completion
   }
 
   fn completion_accept_selected(&mut self, index: usize) -> bool {
+    if self.code_action_menu_is_active() {
+      if self.lsp_code_action_items.is_empty() {
+        self.clear_code_action_menu_state();
+        return false;
+      }
+      let Some(action) = self.lsp_code_action_items.get(index).cloned() else {
+        return false;
+      };
+      let applied = self.apply_code_action(action);
+      if applied {
+        self.clear_code_action_menu_state();
+      }
+      return applied;
+    }
+
     let source_index = self
       .completion_source_index_for_visible_index(index)
       .unwrap_or(index);
@@ -4451,6 +4652,10 @@ impl the_default::DefaultContext for Ctx {
       self.cancel_auto_completion();
     }
     applied
+  }
+
+  fn completion_menu_closed(&mut self) {
+    self.clear_code_action_menu_state();
   }
 
   fn file_picker(&self) -> &FilePickerState {
@@ -5164,7 +5369,7 @@ impl the_default::DefaultContext for Ctx {
       return;
     }
 
-    let Some((uri, range)) = self.current_lsp_range() else {
+    let Some((uri, range)) = self.current_lsp_code_action_range() else {
       self.messages.publish(
         MessageLevel::Warning,
         Some("lsp".into()),
@@ -5173,7 +5378,8 @@ impl the_default::DefaultContext for Ctx {
       return;
     };
 
-    let diagnostics = self.current_lsp_diagnostics_payload(&uri);
+    let diagnostics = self.current_lsp_diagnostics_payload(&uri, &range);
+    self.clear_completion_state();
     self.dispatch_lsp_request(
       "textDocument/codeAction",
       code_action_params(&uri, range, diagnostics, None),

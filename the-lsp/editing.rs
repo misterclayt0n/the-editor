@@ -577,6 +577,8 @@ pub fn code_action_params(
     },
     "context": {
       "diagnostics": diagnostics,
+      // lsp::CodeActionTriggerKind::Invoked
+      "triggerKind": 1,
     },
   });
   if let Some(only) = only
@@ -736,11 +738,11 @@ pub fn parse_code_actions_response(
     return Ok(Vec::new());
   }
 
-  let payload: Vec<CodeActionPayload> = serde_json::from_value(result.clone())?;
+  let payload: Vec<CodeActionOrCommandPayload> = serde_json::from_value(result.clone())?;
   Ok(
     payload
       .into_iter()
-      .map(CodeActionPayload::into_code_action)
+      .map(CodeActionOrCommandPayload::into_code_action)
       .collect(),
   )
 }
@@ -755,6 +757,16 @@ pub fn parse_workspace_edit_response(
     return Ok(None);
   }
   Ok(Some(parse_workspace_edit_payload(result.clone())?))
+}
+
+pub(crate) fn parse_workspace_apply_edit_request(
+  params: Option<&Value>,
+) -> Result<(Option<String>, LspWorkspaceEdit), EditingParseError> {
+  let Some(params) = params else {
+    return Err(EditingParseError::InvalidShape);
+  };
+  let payload: WorkspaceApplyEditRequestPayload = serde_json::from_value(params.clone())?;
+  Ok((payload.label, workspace_edit_from_payload(payload.edit)))
 }
 
 pub fn parse_formatting_response(
@@ -1087,6 +1099,44 @@ impl CodeActionPayload {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum CodeActionOrCommandPayload {
+  CodeAction(CodeActionPayload),
+  Command(CodeActionCommandPayload),
+}
+
+impl CodeActionOrCommandPayload {
+  fn into_code_action(self) -> LspCodeAction {
+    match self {
+      Self::CodeAction(action) => action.into_code_action(),
+      Self::Command(command) => command.into_code_action(),
+    }
+  }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CodeActionCommandPayload {
+  title:     String,
+  command:   String,
+  arguments: Option<Vec<Value>>,
+}
+
+impl CodeActionCommandPayload {
+  fn into_code_action(self) -> LspCodeAction {
+    LspCodeAction {
+      title:        self.title,
+      edit:         None,
+      command:      Some(LspExecuteCommand {
+        command:   self.command,
+        arguments: self.arguments,
+      }),
+      is_preferred: false,
+    }
+  }
+}
+
+#[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CommandPayload {
   command:   String,
@@ -1108,6 +1158,13 @@ struct WorkspaceEditPayload {
   changes:          BTreeMap<String, Vec<TextEditPayload>>,
   #[serde(default, rename = "documentChanges")]
   document_changes: Vec<DocumentChangePayload>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkspaceApplyEditRequestPayload {
+  label: Option<String>,
+  edit:  WorkspaceEditPayload,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1372,6 +1429,66 @@ mod tests {
     assert_eq!(parsed.label, "abc");
     assert_eq!(parsed.detail.as_deref(), Some("detail"));
     assert_eq!(parsed.documentation.as_deref(), Some("docs"));
+  }
+
+  #[test]
+  fn parse_code_actions_response_supports_command_variant_items() {
+    let value = json!([
+      {
+        "title": "Apply command-only action",
+        "command": "example.command",
+        "arguments": [{ "x": 1 }]
+      }
+    ]);
+
+    let parsed = parse_code_actions_response(Some(&value)).expect("parse ok");
+    assert_eq!(parsed.len(), 1);
+    assert_eq!(parsed[0].title, "Apply command-only action");
+    assert!(parsed[0].edit.is_none());
+    assert_eq!(
+      parsed[0].command.as_ref().map(|cmd| cmd.command.as_str()),
+      Some("example.command")
+    );
+  }
+
+  #[test]
+  fn parse_code_actions_response_supports_mixed_code_action_and_command_items() {
+    let value = json!([
+      {
+        "title": "Refactor thing",
+        "kind": "refactor.extract",
+        "isPreferred": true,
+        "edit": {
+          "changes": {
+            "file:///tmp/main.c": [
+              {
+                "range": {
+                  "start": { "line": 0, "character": 0 },
+                  "end": { "line": 0, "character": 0 }
+                },
+                "newText": "int x;"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "Run command",
+        "command": "clangd.applyFix",
+        "arguments": []
+      }
+    ]);
+
+    let parsed = parse_code_actions_response(Some(&value)).expect("parse ok");
+    assert_eq!(parsed.len(), 2);
+    assert_eq!(parsed[0].title, "Refactor thing");
+    assert!(parsed[0].is_preferred);
+    assert!(parsed[0].edit.is_some());
+    assert_eq!(parsed[1].title, "Run command");
+    assert_eq!(
+      parsed[1].command.as_ref().map(|cmd| cmd.command.as_str()),
+      Some("clangd.applyFix")
+    );
   }
 
   #[test]

@@ -31,6 +31,21 @@ struct CompletionPopupView: View {
         return snapshot.docsText
     }
 
+    private var showsIconColumn: Bool {
+        snapshot.items.contains { item in
+            if let icon = item.kindIcon {
+                return !icon.isEmpty
+            }
+            return false
+        }
+    }
+
+    private var adaptiveMaxListWidth: CGFloat {
+        let containerLimit = max(minListWidth, containerSize.width - 24)
+        let baseLimit = docsText == nil ? 560 : maxListWidth
+        return min(containerLimit, baseLimit)
+    }
+
     var body: some View {
         let placement = computePlacement()
 
@@ -69,15 +84,18 @@ struct CompletionPopupView: View {
     }
 
     private var resolvedListWidth: CGFloat {
-        let longestLabel = snapshot.items
+        let reserveIconColumn = showsIconColumn
+        let estimated = snapshot.items
             .prefix(24)
             .map { item in
-                let detailBonus = min(18, item.detail?.count ?? 0)
-                return item.label.count + detailBonus
+                let labelWidth = CGFloat(min(80, max(10, item.label.count))) * 7.4
+                let hasDetail = !(item.detail?.isEmpty ?? true)
+                let detailWidth = hasDetail ? CGFloat(min(20, item.detail?.count ?? 0)) * 6.4 + 10 : 0
+                let iconWidth: CGFloat = reserveIconColumn ? 24 : 0
+                return labelWidth + detailWidth + iconWidth + 22
             }
-            .max() ?? 20
-        let estimated = CGFloat(min(48, max(20, longestLabel))) * 6.8 + 24
-        return min(max(minListWidth, estimated), maxListWidth)
+            .max() ?? minListWidth
+        return min(max(minListWidth, estimated), adaptiveMaxListWidth)
     }
 
     private func estimatedDocsWidth(for docs: String) -> CGFloat {
@@ -234,14 +252,16 @@ struct CompletionPopupView: View {
     // MARK: - List
 
     private func completionList(width: CGFloat, height: CGFloat) -> some View {
-        ScrollViewReader { proxy in
+        let reserveIconColumn = showsIconColumn
+        return ScrollViewReader { proxy in
             ScrollView(.vertical, showsIndicators: true) {
                 VStack(alignment: .leading, spacing: 0) {
                     ForEach(snapshot.items) { item in
                         completionRow(
                             item: item,
                             isSelected: snapshot.selectedIndex == item.id,
-                            isHovered: hoveredItemId == item.id
+                            isHovered: hoveredItemId == item.id,
+                            reserveIconColumn: reserveIconColumn
                         )
                         .contentShape(Rectangle())
                         .onHover { hovering in
@@ -280,21 +300,28 @@ struct CompletionPopupView: View {
         }
     }
 
-    private func completionRow(item: CompletionItemSnapshot, isSelected: Bool, isHovered: Bool) -> some View {
+    private func completionRow(
+        item: CompletionItemSnapshot,
+        isSelected: Bool,
+        isHovered: Bool,
+        reserveIconColumn: Bool
+    ) -> some View {
         HStack(spacing: 6) {
             // Kind icon badge.
-            if let icon = item.kindIcon, !icon.isEmpty {
-                let color = item.kindColor ?? Color(nsColor: .tertiaryLabelColor)
-                Text(icon)
-                    .font(FontLoader.uiFont(size: 10).weight(.bold))
-                    .foregroundColor(color)
-                    .frame(width: 18, height: 18)
-                    .background(
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(color.opacity(0.15))
-                    )
-            } else {
-                Color.clear.frame(width: 18, height: 18)
+            if reserveIconColumn {
+                if let icon = item.kindIcon, !icon.isEmpty {
+                    let color = item.kindColor ?? Color(nsColor: .tertiaryLabelColor)
+                    Text(icon)
+                        .font(FontLoader.uiFont(size: 10).weight(.bold))
+                        .foregroundColor(color)
+                        .frame(width: 18, height: 18)
+                        .background(
+                            RoundedRectangle(cornerRadius: 4)
+                                .fill(color.opacity(0.15))
+                        )
+                } else {
+                    Color.clear.frame(width: 18, height: 18)
+                }
             }
 
             // Label.
@@ -302,6 +329,8 @@ struct CompletionPopupView: View {
                 .font(FontLoader.uiFont(size: 13).weight(.medium))
                 .foregroundStyle(.primary)
                 .lineLimit(1)
+                .truncationMode(.tail)
+                .layoutPriority(1)
 
             Spacer(minLength: 4)
 
@@ -312,10 +341,12 @@ struct CompletionPopupView: View {
                     .foregroundStyle(.tertiary)
                     .lineLimit(1)
                     .truncationMode(.tail)
-                    .frame(maxWidth: 120, alignment: .trailing)
+                    .layoutPriority(0)
+                    .frame(maxWidth: reserveIconColumn ? 120 : 84, alignment: .trailing)
             }
         }
-        .padding(.horizontal, 8)
+        .padding(.leading, reserveIconColumn ? 8 : 6)
+        .padding(.trailing, 8)
         .frame(height: rowHeight)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(

@@ -465,6 +465,7 @@ pub trait DefaultContext: Sized + 'static {
   fn completion_on_action(&mut self, _command: Command) -> bool {
     false
   }
+  fn completion_menu_closed(&mut self) {}
   fn signature_help(&self) -> Option<&SignatureHelpState> {
     None
   }
@@ -1079,9 +1080,10 @@ fn handle_key_outcome<Ctx: DefaultContext>(ctx: &mut Ctx, outcome: KeyOutcome) -
 }
 
 fn handle_insert_mode_completion_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent) -> bool {
-  if ctx.mode() != Mode::Insert || !ctx.completion_menu().active {
+  if !ctx.completion_menu().active {
     return false;
   }
+  let is_insert_mode = ctx.mode() == Mode::Insert;
 
   match key.key {
     Key::Up => {
@@ -1104,8 +1106,14 @@ fn handle_insert_mode_completion_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: Ke
       crate::completion_menu::completion_accept(ctx);
       true
     },
-    // Let keymaps decide escape behavior (normal mode by default).
-    Key::Escape => false,
+    // Preserve insert-mode escape semantics. Outside insert mode, close the
+    // popup directly so completion-style popups (e.g. code actions) can be
+    // navigated and dismissed in normal mode.
+    Key::Escape if is_insert_mode => false,
+    Key::Escape => {
+      crate::completion_menu::close_completion_menu(ctx);
+      true
+    },
     _ => false,
   }
 }

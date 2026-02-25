@@ -218,9 +218,12 @@ use the_lib::{
 use the_loader::config::user_lang_config;
 use the_lsp::{
   LspCapability,
+  LspCodeAction,
   LspCompletionContext,
   LspCompletionItem,
   LspCompletionItemKind,
+  LspExecuteCommand,
+  LspTextEdit,
   LspEvent,
   LspInsertTextFormat,
   LspLocation,
@@ -230,7 +233,10 @@ use the_lsp::{
   LspRuntimeConfig,
   LspServerConfig,
   LspSignatureHelpContext,
+  LspWorkspaceEdit,
+  code_action_params,
   completion_params,
+  execute_command_params,
   goto_declaration_params,
   goto_definition_params,
   goto_implementation_params,
@@ -238,6 +244,7 @@ use the_lsp::{
   hover_params,
   jsonrpc,
   parse_document_symbols_response,
+  parse_code_actions_response,
   parse_completion_item_response,
   parse_completion_response_with_raw,
   parse_hover_response,
@@ -1456,6 +1463,9 @@ enum PendingLspRequestKind {
   SignatureHelp {
     uri: String,
   },
+  CodeActions {
+    uri: String,
+  },
 }
 
 impl PendingLspRequestKind {
@@ -1471,6 +1481,7 @@ impl PendingLspRequestKind {
       Self::Completion { .. } => "completion",
       Self::CompletionResolve { .. } => "completion-resolve",
       Self::SignatureHelp { .. } => "signature-help",
+      Self::CodeActions { .. } => "code-actions",
     }
   }
 
@@ -1486,6 +1497,7 @@ impl PendingLspRequestKind {
       Self::Completion { uri, .. } => Some(uri.as_str()),
       Self::CompletionResolve { uri, .. } => Some(uri.as_str()),
       Self::SignatureHelp { uri } => Some(uri.as_str()),
+      Self::CodeActions { uri } => Some(uri.as_str()),
     }
   }
 
@@ -1501,6 +1513,7 @@ impl PendingLspRequestKind {
       Self::Completion { uri, .. } => ("completion", Some(uri)),
       Self::CompletionResolve { uri, .. } => ("completion-resolve", Some(uri)),
       Self::SignatureHelp { uri } => ("signature-help", Some(uri)),
+      Self::CodeActions { uri } => ("code-actions", Some(uri)),
     }
   }
 }
@@ -2178,6 +2191,26 @@ fn completion_menu_item_for_lsp_item(item: &LspCompletionItem) -> the_default::C
   if let Some(kind) = item.kind {
     menu_item.kind_icon = Some(completion_kind_icon(kind).to_string());
     menu_item.kind_color = Some(completion_kind_color(kind));
+  }
+  menu_item
+}
+
+fn completion_menu_item_for_code_action(
+  action: &LspCodeAction,
+) -> the_default::CompletionMenuItem {
+  let mut menu_item = the_default::CompletionMenuItem::new(action.title.clone());
+  let mut tags: Vec<&str> = Vec::new();
+  if action.is_preferred {
+    tags.push("preferred");
+  }
+  if action.edit.is_some() {
+    tags.push("edit");
+  }
+  if action.command.is_some() {
+    tags.push("command");
+  }
+  if !tags.is_empty() {
+    menu_item.detail = Some(tags.join(" | "));
   }
   menu_item
 }
@@ -3253,6 +3286,82 @@ fn build_transaction_from_lsp_text_edits(
   Transaction::change(text, changes).map_err(|err| err.to_string())
 }
 
+fn lsp_position_lt(left: &LspPosition, right: &LspPosition) -> bool {
+  (left.line, left.character) < (right.line, right.character)
+}
+
+fn lsp_position_le(left: &LspPosition, right: &LspPosition) -> bool {
+  (left.line, left.character) <= (right.line, right.character)
+}
+
+fn lsp_range_is_empty(range: &the_lsp::LspRange) -> bool {
+  range.start.line == range.end.line && range.start.character == range.end.character
+}
+
+fn lsp_range_contains_point(range: &the_lsp::LspRange, point: &LspPosition) -> bool {
+  // LSP ranges are half-open: [start, end)
+  lsp_position_le(&range.start, point) && lsp_position_lt(point, &range.end)
+}
+
+fn lsp_ranges_overlap(left: &the_lsp::LspRange, right: &the_lsp::LspRange) -> bool {
+  let left_empty = lsp_range_is_empty(left);
+  let right_empty = lsp_range_is_empty(right);
+
+  if left_empty && right_empty {
+    return left.start.line == right.start.line && left.start.character == right.start.character;
+  }
+  if left_empty {
+    return lsp_range_contains_point(right, &left.start);
+  }
+  if right_empty {
+    return lsp_range_contains_point(left, &right.start);
+  }
+
+  lsp_position_lt(&left.start, &right.end) && lsp_position_lt(&right.start, &left.end)
+}
+
+fn diagnostic_severity_to_lsp_code(severity: DiagnosticSeverity) -> u8 {
+  match severity {
+    DiagnosticSeverity::Error => 1,
+    DiagnosticSeverity::Warning => 2,
+    DiagnosticSeverity::Information => 3,
+    DiagnosticSeverity::Hint => 4,
+  }
+}
+
+fn diagnostic_to_lsp_json(diagnostic: &Diagnostic) -> Value {
+  let mut value = serde_json::json!({
+    "range": {
+      "start": {
+        "line": diagnostic.range.start.line,
+        "character": diagnostic.range.start.character,
+      },
+      "end": {
+        "line": diagnostic.range.end.line,
+        "character": diagnostic.range.end.character,
+      },
+    },
+    "message": diagnostic.message,
+  });
+
+  if let Some(object) = value.as_object_mut() {
+    if let Some(severity) = diagnostic.severity {
+      object.insert(
+        "severity".into(),
+        serde_json::json!(diagnostic_severity_to_lsp_code(severity)),
+      );
+    }
+    if let Some(code) = &diagnostic.code {
+      object.insert("code".into(), serde_json::json!(code));
+    }
+    if let Some(source) = &diagnostic.source {
+      object.insert("source".into(), serde_json::json!(source));
+    }
+  }
+
+  value
+}
+
 fn ffi_ui_profile_enabled() -> bool {
   static ENABLED: OnceLock<bool> = OnceLock::new();
   *ENABLED.get_or_init(|| {
@@ -3332,6 +3441,8 @@ pub struct App {
   lsp_completion_visible:          Vec<usize>,
   lsp_completion_start:            Option<usize>,
   lsp_completion_generation:       u64,
+  lsp_code_action_items:           Vec<LspCodeAction>,
+  lsp_code_action_menu_active:     bool,
   lsp_pending_auto_completion:     Option<PendingAutoCompletion>,
   lsp_pending_auto_signature_help: Option<PendingAutoSignatureHelp>,
   diagnostics:                     DiagnosticsState,
@@ -3841,6 +3952,8 @@ impl App {
       lsp_completion_visible: Vec::new(),
       lsp_completion_start: None,
       lsp_completion_generation: 0,
+      lsp_code_action_items: Vec::new(),
+      lsp_code_action_menu_active: false,
       lsp_pending_auto_completion: None,
       lsp_pending_auto_signature_help: None,
       diagnostics: DiagnosticsState::default(),
@@ -5413,6 +5526,11 @@ impl App {
             changed = true;
           }
         },
+        LspEvent::WorkspaceApplyEdit { label, edit } => {
+          let source = label.as_deref().unwrap_or("code action");
+          let _ = self.apply_workspace_edit(&edit, source);
+          changed = true;
+        },
         _ => {},
       }
     }
@@ -5676,6 +5794,9 @@ impl App {
       PendingLspRequestKind::SignatureHelp { .. } => {
         self.handle_signature_help_response(response.result.as_ref())
       },
+      PendingLspRequestKind::CodeActions { .. } => {
+        self.handle_code_actions_response(response.result.as_ref())
+      },
     }
   }
 
@@ -5812,6 +5933,180 @@ impl App {
       })
       .collect::<Vec<_>>();
     the_default::show_signature_help(self, signatures, active_signature);
+    true
+  }
+
+  fn handle_code_actions_response(&mut self, result: Option<&Value>) -> bool {
+    let actions = match parse_code_actions_response(result) {
+      Ok(actions) => actions,
+      Err(err) => {
+        self.clear_code_action_menu_state();
+        if self.active_editor.is_some() {
+          self.completion_menu_mut().clear();
+        }
+        self.publish_lsp_message(
+          the_lib::messages::MessageLevel::Error,
+          format!("failed to parse code actions response: {err}"),
+        );
+        return true;
+      },
+    };
+
+    if actions.is_empty() {
+      self.clear_code_action_menu_state();
+      if self.active_editor.is_some() {
+        self.completion_menu_mut().clear();
+      }
+      let _ = <Self as DefaultContext>::push_error(
+        self,
+        "code actions",
+        "No code actions available",
+      );
+      return true;
+    }
+
+    self.show_code_action_menu(actions);
+    true
+  }
+
+  fn execute_lsp_command_action(&mut self, command: LspExecuteCommand, title: String) -> bool {
+    let params = execute_command_params(&command.command, command.arguments);
+    match self
+      .lsp_runtime
+      .send_request("workspace/executeCommand", Some(params))
+    {
+      Ok(_) => {
+        self.publish_lsp_message(
+          the_lib::messages::MessageLevel::Info,
+          format!("executed code action: {title}"),
+        );
+      },
+      Err(err) => {
+        self.publish_lsp_message(
+          the_lib::messages::MessageLevel::Error,
+          format!("failed to execute code action '{title}': {err}"),
+        );
+      },
+    }
+    true
+  }
+
+  fn apply_workspace_edit(&mut self, workspace_edit: &LspWorkspaceEdit, source: &str) -> bool {
+    if workspace_edit.documents.is_empty() {
+      self.publish_lsp_message(
+        the_lib::messages::MessageLevel::Info,
+        format!("{source}: no edits"),
+      );
+      return true;
+    }
+
+    let current_uri = self.current_lsp_uri();
+    let mut applied_documents = 0usize;
+    let mut applied_edits = 0usize;
+
+    for document in &workspace_edit.documents {
+      if document.edits.is_empty() {
+        continue;
+      }
+      let applied = if current_uri.as_ref() == Some(&document.uri) {
+        self.apply_text_edits_to_current_document(&document.edits)
+      } else {
+        self.apply_text_edits_to_file_uri(&document.uri, &document.edits)
+      };
+      if applied {
+        applied_documents = applied_documents.saturating_add(1);
+        applied_edits = applied_edits.saturating_add(document.edits.len());
+      }
+    }
+
+    if applied_documents > 0 {
+      self.publish_lsp_message(
+        the_lib::messages::MessageLevel::Info,
+        format!("{source}: applied {applied_edits} edit(s) across {applied_documents} file(s)"),
+      );
+    } else {
+      self.publish_lsp_message(
+        the_lib::messages::MessageLevel::Warning,
+        format!("{source}: no edits were applied"),
+      );
+    }
+    true
+  }
+
+  fn apply_text_edits_to_current_document(&mut self, edits: &[LspTextEdit]) -> bool {
+    let tx = {
+      let doc = self.active_editor_ref().document();
+      match build_transaction_from_lsp_text_edits(doc.text(), edits) {
+        Ok(tx) => tx,
+        Err(err) => {
+          self.publish_lsp_message(
+            the_lib::messages::MessageLevel::Error,
+            format!("failed to build edit transaction: {err}"),
+          );
+          return false;
+        },
+      }
+    };
+
+    if <Self as DefaultContext>::apply_transaction(self, &tx) {
+      <Self as DefaultContext>::request_render(self);
+      true
+    } else {
+      self.publish_lsp_message(
+        the_lib::messages::MessageLevel::Error,
+        "failed to apply edit transaction",
+      );
+      false
+    }
+  }
+
+  fn apply_text_edits_to_file_uri(&mut self, uri: &str, edits: &[LspTextEdit]) -> bool {
+    let Some(path) = path_for_file_uri(uri) else {
+      self.publish_lsp_message(
+        the_lib::messages::MessageLevel::Warning,
+        format!("unsupported file URI in workspace edit: {uri}"),
+      );
+      return false;
+    };
+
+    let content = match std::fs::read_to_string(&path) {
+      Ok(content) => content,
+      Err(err) => {
+        self.publish_lsp_message(
+          the_lib::messages::MessageLevel::Error,
+          format!("failed to read '{}': {err}", path.display()),
+        );
+        return false;
+      },
+    };
+    let mut rope = Rope::from(content.as_str());
+
+    let tx = match build_transaction_from_lsp_text_edits(&rope, edits) {
+      Ok(tx) => tx,
+      Err(err) => {
+        self.publish_lsp_message(
+          the_lib::messages::MessageLevel::Error,
+          format!("failed to build workspace edit transaction: {err}"),
+        );
+        return false;
+      },
+    };
+
+    if let Err(err) = tx.apply(&mut rope) {
+      self.publish_lsp_message(
+        the_lib::messages::MessageLevel::Error,
+        format!("failed to apply edits to '{}': {err}", path.display()),
+      );
+      return false;
+    }
+
+    if let Err(err) = std::fs::write(&path, rope.to_string()) {
+      self.publish_lsp_message(
+        the_lib::messages::MessageLevel::Error,
+        format!("failed to write '{}': {err}", path.display()),
+      );
+      return false;
+    }
     true
   }
 
@@ -6193,6 +6488,7 @@ impl App {
 
   fn rebuild_completion_menu(&mut self) {
     let started = Instant::now();
+    self.clear_code_action_menu_state();
     if self.lsp_completion_items.is_empty() {
       self.lsp_completion_visible.clear();
       self.completion_menu_mut().clear();
@@ -6261,9 +6557,55 @@ impl App {
     self.lsp_completion_resolved.clear();
     self.lsp_completion_visible.clear();
     self.lsp_completion_start = None;
+    self.clear_code_action_menu_state();
     if self.active_editor.is_some() {
       self.completion_menu_mut().clear();
     }
+  }
+
+  fn code_action_menu_is_active(&self) -> bool {
+    self.lsp_code_action_menu_active && self.completion_menu().active
+  }
+
+  fn clear_code_action_menu_state(&mut self) {
+    self.lsp_code_action_menu_active = false;
+    self.lsp_code_action_items.clear();
+  }
+
+  fn show_code_action_menu(&mut self, mut actions: Vec<LspCodeAction>) {
+    actions.sort_by_key(|action| !action.is_preferred);
+    self.clear_completion_state();
+    self.lsp_code_action_items = actions;
+    self.lsp_code_action_menu_active = !self.lsp_code_action_items.is_empty();
+    let menu_items = self
+      .lsp_code_action_items
+      .iter()
+      .map(completion_menu_item_for_code_action)
+      .collect();
+    the_default::show_completion_menu(self, menu_items);
+  }
+
+  fn apply_code_action(&mut self, action: LspCodeAction) -> bool {
+    let title = action.title.clone();
+    let mut handled = false;
+
+    if let Some(edit) = action.edit.as_ref() {
+      let _ = self.apply_workspace_edit(edit, "code action");
+      handled = true;
+    }
+
+    if let Some(command) = action.command {
+      let _ = self.execute_lsp_command_action(command, title.clone());
+      handled = true;
+    }
+
+    if !handled {
+      self.publish_lsp_message(
+        the_lib::messages::MessageLevel::Info,
+        format!("code action '{title}' had no edits"),
+      );
+    }
+    true
   }
 
   fn clear_signature_help_state(&mut self) {
@@ -6662,6 +7004,77 @@ impl App {
     let (line, character) = char_idx_to_utf16_position(doc.text(), cursor);
 
     Some((state.uri, LspPosition { line, character }))
+  }
+
+  fn current_lsp_code_action_range(&self) -> Option<(String, the_lsp::LspRange)> {
+    if !self.lsp_ready {
+      return None;
+    }
+    let state = self.lsp_document.as_ref()?.clone();
+    if !state.opened {
+      return None;
+    }
+
+    let doc = self.active_editor_ref().document();
+    let range = self.active_or_first_selection_range()?;
+    let mut start = range.anchor.min(range.head);
+    let mut end = range.anchor.max(range.head);
+
+    // Helix requests code actions on a non-empty range in normal mode.
+    // Expand point selections so refactors appear consistently.
+    if start == end {
+      let len = doc.text().len_chars();
+      if end < len {
+        end = end.saturating_add(1);
+      } else if start > 0 {
+        start = start.saturating_sub(1);
+      }
+    }
+
+    let (start_line, start_character) = char_idx_to_utf16_position(doc.text(), start);
+    let (end_line, end_character) = char_idx_to_utf16_position(doc.text(), end);
+
+    Some((state.uri, the_lsp::LspRange {
+      start: LspPosition {
+        line:      start_line,
+        character: start_character,
+      },
+      end:   LspPosition {
+        line:      end_line,
+        character: end_character,
+      },
+    }))
+  }
+
+  fn current_lsp_diagnostics_payload(
+    &self,
+    uri: &str,
+    selection_range: &the_lsp::LspRange,
+  ) -> Value {
+    let Some(document_diagnostics) = self.diagnostics.document(uri) else {
+      return serde_json::json!([]);
+    };
+
+    Value::Array(
+      document_diagnostics
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| {
+          let diagnostic_range = the_lsp::LspRange {
+            start: LspPosition {
+              line:      diagnostic.range.start.line,
+              character: diagnostic.range.start.character,
+            },
+            end:   LspPosition {
+              line:      diagnostic.range.end.line,
+              character: diagnostic.range.end.character,
+            },
+          };
+          lsp_ranges_overlap(&diagnostic_range, selection_range)
+        })
+        .map(diagnostic_to_lsp_json)
+        .collect(),
+    )
   }
 
   fn workspace_symbol_query_from_cursor(&self) -> String {
@@ -7951,6 +8364,9 @@ impl DefaultContext for App {
   }
 
   fn completion_selection_changed(&mut self, index: usize) {
+    if self.code_action_menu_is_active() {
+      return;
+    }
     let source_index = self
       .completion_source_index_for_visible_index(index)
       .unwrap_or(index);
@@ -7958,6 +8374,9 @@ impl DefaultContext for App {
   }
 
   fn completion_accept_on_commit_char(&mut self, ch: char) -> bool {
+    if self.code_action_menu_is_active() {
+      return false;
+    }
     let Some(selected) = self.completion_menu().selected else {
       return false;
     };
@@ -7976,12 +8395,46 @@ impl DefaultContext for App {
   }
 
   fn completion_on_action(&mut self, command: Command) -> bool {
+    if self.lsp_code_action_menu_active {
+      return match command {
+        Command::LspCodeActions
+        | Command::CompletionNext
+        | Command::CompletionPrev
+        | Command::CompletionAccept
+        | Command::CompletionDocsScrollUp
+        | Command::CompletionDocsScrollDown => true,
+        Command::CompletionCancel => {
+          self.clear_code_action_menu_state();
+          true
+        },
+        _ => {
+          self.clear_code_action_menu_state();
+          false
+        },
+      };
+    }
+
     let preserve_completion = self.handle_completion_action(command);
     let _ = self.handle_signature_help_action(command);
     preserve_completion
   }
 
   fn completion_accept_selected(&mut self, index: usize) -> bool {
+    if self.code_action_menu_is_active() {
+      if self.lsp_code_action_items.is_empty() {
+        self.clear_code_action_menu_state();
+        return false;
+      }
+      let Some(action) = self.lsp_code_action_items.get(index).cloned() else {
+        return false;
+      };
+      let applied = self.apply_code_action(action);
+      if applied {
+        self.clear_code_action_menu_state();
+      }
+      return applied;
+    }
+
     let source_index = self
       .completion_source_index_for_visible_index(index)
       .unwrap_or(index);
@@ -8000,6 +8453,10 @@ impl DefaultContext for App {
       self.cancel_auto_completion();
     }
     applied
+  }
+
+  fn completion_menu_closed(&mut self) {
+    self.clear_code_action_menu_state();
   }
 
   fn file_picker(&self) -> &FilePickerState {
@@ -8639,6 +9096,32 @@ impl DefaultContext for App {
   fn lsp_signature_help(&mut self) {
     self.cancel_auto_signature_help();
     let _ = self.dispatch_signature_help_request(SignatureHelpTriggerSource::Manual, true);
+  }
+
+  fn lsp_code_actions(&mut self) {
+    if !self.lsp_supports(LspCapability::CodeAction) {
+      self.publish_lsp_message(
+        the_lib::messages::MessageLevel::Warning,
+        "code actions are not supported by the active server",
+      );
+      return;
+    }
+
+    let Some((uri, range)) = self.current_lsp_code_action_range() else {
+      self.publish_lsp_message(
+        the_lib::messages::MessageLevel::Warning,
+        "code actions unavailable: no active LSP document",
+      );
+      return;
+    };
+
+    let diagnostics = self.current_lsp_diagnostics_payload(&uri, &range);
+    self.clear_completion_state();
+    self.dispatch_lsp_request(
+      "textDocument/codeAction",
+      code_action_params(&uri, range, diagnostics, None),
+      PendingLspRequestKind::CodeActions { uri },
+    );
   }
 
   fn lsp_hover(&mut self) {

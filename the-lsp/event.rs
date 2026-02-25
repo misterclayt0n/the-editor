@@ -2,7 +2,10 @@ use std::path::PathBuf;
 
 use the_lib::diagnostics::DocumentDiagnostics;
 
-use crate::jsonrpc;
+use crate::{
+  editing::LspWorkspaceEdit,
+  jsonrpc,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LspProgress {
@@ -49,6 +52,10 @@ pub enum LspEvent {
   },
   DiagnosticsPublished {
     diagnostics: DocumentDiagnostics,
+  },
+  WorkspaceApplyEdit {
+    label: Option<String>,
+    edit:  LspWorkspaceEdit,
   },
   Progress {
     progress: LspProgress,

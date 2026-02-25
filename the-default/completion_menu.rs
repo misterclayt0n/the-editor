@@ -96,6 +96,7 @@ pub fn close_completion_menu<Ctx: DefaultContext>(ctx: &mut Ctx) {
     return;
   }
   ctx.completion_menu_mut().clear();
+  ctx.completion_menu_closed();
   ctx.request_render();
 }
 
@@ -175,6 +176,7 @@ pub fn completion_accept<Ctx: DefaultContext>(ctx: &mut Ctx) {
   let applied = ctx.completion_accept_selected(index);
   if applied {
     ctx.completion_menu_mut().clear();
+    ctx.completion_menu_closed();
   }
   ctx.request_render();
 }

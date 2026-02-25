@@ -34,6 +34,7 @@ pub use command::{
   frame_render_plan_with_styles,
   handle_command,
   handle_key,
+  handle_pointer_event,
   render_plan,
   render_plan_with_styles,
   ui_event,
@@ -141,6 +142,10 @@ pub use input::{
   KeyEvent,
   KeyOutcome,
   Modifiers,
+  PointerButton,
+  PointerEvent,
+  PointerEventOutcome,
+  PointerKind,
 };
 pub use keymap::{
   KeyAction,

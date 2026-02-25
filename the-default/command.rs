@@ -140,6 +140,8 @@ use crate::{
   Modifiers,
   Motion,
   PendingInput,
+  PointerEvent,
+  PointerEventOutcome,
   WordMotion,
   command_palette::{
     CommandPaletteState,
@@ -171,6 +173,9 @@ define! {
     pre_on_action: Command => (),
     on_action: Command => (),
     post_on_action: () => (),
+    pre_on_pointer_event: PointerEvent => PointerEventOutcome,
+    on_pointer_event: PointerEvent => PointerEventOutcome,
+    post_on_pointer_event: PointerEventOutcome => PointerEventOutcome,
     render_request: () => (),
     pre_render: () => (),
     on_render: () => RenderPlan,
@@ -259,6 +264,9 @@ pub type DefaultDispatchStatic<Ctx> = DefaultDispatch<
   fn(&mut Ctx, Command),
   fn(&mut Ctx, Command),
   fn(&mut Ctx, ()),
+  fn(&mut Ctx, PointerEvent) -> PointerEventOutcome,
+  fn(&mut Ctx, PointerEvent) -> PointerEventOutcome,
+  fn(&mut Ctx, PointerEventOutcome) -> PointerEventOutcome,
   fn(&mut Ctx, ()),
   fn(&mut Ctx, ()),
   fn(&mut Ctx, ()) -> RenderPlan,
@@ -478,6 +486,9 @@ pub trait DefaultContext: Sized + 'static {
   fn search_prompt_mut(&mut self) -> &mut crate::SearchPromptState;
   fn ui_state(&self) -> &UiState;
   fn ui_state_mut(&mut self) -> &mut UiState;
+  fn pointer_event(&mut self, _event: PointerEvent) -> PointerEventOutcome {
+    PointerEventOutcome::Continue
+  }
   fn dispatch(&self) -> DispatchRef<Self>;
   fn pending_input(&self) -> Option<&PendingInput>;
   fn set_pending_input(&mut self, pending: Option<PendingInput>);
@@ -654,6 +665,16 @@ where
     .with_pre_on_action(pre_on_action::<Ctx> as fn(&mut Ctx, Command))
     .with_on_action(on_action::<Ctx> as fn(&mut Ctx, Command))
     .with_post_on_action(post_on_action::<Ctx> as fn(&mut Ctx, ()))
+    .with_pre_on_pointer_event(
+      pre_on_pointer_event::<Ctx> as fn(&mut Ctx, PointerEvent) -> PointerEventOutcome,
+    )
+    .with_on_pointer_event(
+      on_pointer_event::<Ctx> as fn(&mut Ctx, PointerEvent) -> PointerEventOutcome,
+    )
+    .with_post_on_pointer_event(
+      post_on_pointer_event::<Ctx>
+        as fn(&mut Ctx, PointerEventOutcome) -> PointerEventOutcome,
+    )
     .with_render_request(render_request::<Ctx> as fn(&mut Ctx, ()))
     .with_pre_render(pre_render::<Ctx> as fn(&mut Ctx, ()))
     .with_on_render(on_render::<Ctx> as fn(&mut Ctx, ()) -> RenderPlan)
@@ -750,6 +771,18 @@ where
   D: DefaultApi<Ctx>,
 {
   dispatch.pre_on_keypress(ctx, key);
+}
+
+pub fn handle_pointer_event<Ctx, D>(
+  dispatch: &D,
+  ctx: &mut Ctx,
+  event: PointerEvent,
+) -> PointerEventOutcome
+where
+  Ctx: DefaultContext,
+  D: DefaultApi<Ctx>,
+{
+  dispatch.pre_on_pointer_event(ctx, event)
 }
 
 pub fn render_plan<Ctx: DefaultContext>(ctx: &mut Ctx) -> RenderPlan {
@@ -1124,6 +1157,28 @@ fn post_on_keypress<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
 
 fn pre_on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
   ctx.dispatch().on_action(ctx, command);
+}
+
+fn pre_on_pointer_event<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  event: PointerEvent,
+) -> PointerEventOutcome {
+  ctx.dispatch().on_pointer_event(ctx, event)
+}
+
+fn on_pointer_event<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  event: PointerEvent,
+) -> PointerEventOutcome {
+  let outcome = ctx.pointer_event(event);
+  ctx.dispatch().post_on_pointer_event(ctx, outcome)
+}
+
+fn post_on_pointer_event<Ctx: DefaultContext>(
+  _ctx: &mut Ctx,
+  outcome: PointerEventOutcome,
+) -> PointerEventOutcome {
+  outcome
 }
 
 fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {

@@ -83,6 +83,105 @@ pub struct KeyEvent {
   pub modifiers: Modifiers,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PointerButton {
+  Left,
+  Middle,
+  Right,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum PointerKind {
+  Down(PointerButton),
+  Drag(PointerButton),
+  Up(PointerButton),
+  Move,
+  Scroll,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PointerEvent {
+  pub kind:        PointerKind,
+  pub x:           i32,
+  pub y:           i32,
+  pub logical_col: Option<u16>,
+  pub logical_row: Option<u16>,
+  pub modifiers:   Modifiers,
+  pub click_count: u8,
+  pub scroll_x:    f32,
+  pub scroll_y:    f32,
+  pub surface_id:  Option<u64>,
+}
+
+impl PointerEvent {
+  #[must_use]
+  pub const fn new(kind: PointerKind, x: i32, y: i32) -> Self {
+    Self {
+      kind,
+      x,
+      y,
+      logical_col: None,
+      logical_row: None,
+      modifiers: Modifiers::empty(),
+      click_count: 0,
+      scroll_x: 0.0,
+      scroll_y: 0.0,
+      surface_id: None,
+    }
+  }
+
+  #[must_use]
+  pub const fn with_logical_pos(mut self, col: u16, row: u16) -> Self {
+    self.logical_col = Some(col);
+    self.logical_row = Some(row);
+    self
+  }
+
+  #[must_use]
+  pub const fn with_modifiers(mut self, modifiers: Modifiers) -> Self {
+    self.modifiers = modifiers;
+    self
+  }
+
+  #[must_use]
+  pub const fn with_click_count(mut self, click_count: u8) -> Self {
+    self.click_count = click_count;
+    self
+  }
+
+  #[must_use]
+  pub const fn with_surface_id(mut self, surface_id: u64) -> Self {
+    self.surface_id = Some(surface_id);
+    self
+  }
+
+  #[must_use]
+  pub const fn with_scroll_delta(mut self, scroll_x: f32, scroll_y: f32) -> Self {
+    self.scroll_x = scroll_x;
+    self.scroll_y = scroll_y;
+    self
+  }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PointerEventOutcome {
+  #[default]
+  Continue,
+  Handled,
+}
+
+impl PointerEventOutcome {
+  #[must_use]
+  pub const fn handled(self) -> bool {
+    matches!(self, Self::Handled)
+  }
+
+  #[must_use]
+  pub const fn from_handled(handled: bool) -> Self {
+    if handled { Self::Handled } else { Self::Continue }
+  }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum KeyOutcome {
   Continue,

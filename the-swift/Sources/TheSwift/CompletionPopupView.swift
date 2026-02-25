@@ -267,6 +267,9 @@ struct CompletionPopupView: View {
                         .onHover { hovering in
                             if hovering {
                                 hoveredItemId = item.id
+                                if snapshot.selectedIndex != item.id {
+                                    onSelect(item.id)
+                                }
                             } else if hoveredItemId == item.id {
                                 hoveredItemId = nil
                             }

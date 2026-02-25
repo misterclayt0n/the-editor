@@ -13,8 +13,13 @@ use ratatui::layout::Rect;
 use the_default::{
   DefaultContext,
   Mode,
+  PointerButton as SharedPointerButton,
+  PointerEvent,
+  PointerEventOutcome,
+  PointerKind,
   close_signature_help,
   completion_docs_scroll,
+  handle_pointer_event as dispatch_pointer_event,
   open_file_picker_index,
   scroll_file_picker_list,
   scroll_file_picker_preview,
@@ -140,6 +145,18 @@ pub fn handle_key(ctx: &mut Ctx, event: CrosstermKeyEvent) {
 }
 
 pub fn handle_mouse(ctx: &mut Ctx, event: CrosstermMouseEvent) {
+  let Some(pointer_event) = crossterm_mouse_to_pointer_event(event) else {
+    return;
+  };
+  let dispatch = ctx.dispatch();
+  let _ = dispatch_pointer_event(&*dispatch, ctx, pointer_event);
+}
+
+pub(crate) fn handle_pointer_event(ctx: &mut Ctx, event: PointerEvent) -> PointerEventOutcome {
+  let Some((x, y)) = pointer_event_coords(event) else {
+    return PointerEventOutcome::Continue;
+  };
+
   if ctx.file_picker.active {
     ctx.pane_resize_drag = None;
     let viewport = ctx.editor.view().viewport;
@@ -148,71 +165,68 @@ pub fn handle_mouse(ctx: &mut Ctx, event: CrosstermMouseEvent) {
       .file_picker_layout
       .or_else(|| compute_file_picker_layout(viewport, &ctx.file_picker));
     let Some(layout) = layout else {
-      return;
+      return PointerEventOutcome::Handled;
     };
     ctx.file_picker_layout = Some(layout);
 
-    let x = event.column;
-    let y = event.row;
     match event.kind {
-      MouseEventKind::Down(MouseButton::Left) => {
+      PointerKind::Down(SharedPointerButton::Left) => {
         set_list_hover_from_position(ctx, layout, x, y);
         handle_left_down(ctx, layout, x, y);
       },
-      MouseEventKind::Drag(MouseButton::Left) => {
+      PointerKind::Drag(SharedPointerButton::Left) => {
         handle_left_drag(ctx, layout, y);
       },
-      MouseEventKind::Up(MouseButton::Left) => {
+      PointerKind::Up(SharedPointerButton::Left) => {
         ctx.file_picker_drag = None;
       },
-      MouseEventKind::ScrollUp => {
-        handle_wheel(ctx, layout, x, y, -3);
+      PointerKind::Scroll => {
+        let delta = pointer_scroll_delta_lines(event);
+        if delta != 0 {
+          handle_wheel(ctx, layout, x, y, delta);
+        }
       },
-      MouseEventKind::ScrollDown => {
-        handle_wheel(ctx, layout, x, y, 3);
-      },
-      MouseEventKind::Moved => {
+      PointerKind::Move => {
         set_list_hover_from_position(ctx, layout, x, y);
       },
       _ => {},
     }
-    return;
+    return PointerEventOutcome::Handled;
   }
 
-  let x = event.column;
-  let y = event.row;
-  if handle_pane_resize_mouse(ctx, event.kind, x, y) {
-    return;
+  if handle_pane_resize_pointer(ctx, event.kind, x, y) {
+    return PointerEventOutcome::Handled;
   }
 
   let Some(layout) = ctx.completion_docs_layout else {
     ctx.completion_docs_drag = None;
-    return;
+    return PointerEventOutcome::Handled;
   };
 
   match event.kind {
-    MouseEventKind::Down(MouseButton::Left) => {
+    PointerKind::Down(SharedPointerButton::Left) => {
       handle_completion_docs_left_down(ctx, layout, x, y);
     },
-    MouseEventKind::Drag(MouseButton::Left) => {
+    PointerKind::Drag(SharedPointerButton::Left) => {
       handle_completion_docs_drag(ctx, layout, y);
     },
-    MouseEventKind::Moved => {
+    PointerKind::Move => {
       if ctx.completion_docs_drag.is_some() {
         handle_completion_docs_drag(ctx, layout, y);
       }
     },
-    MouseEventKind::Up(MouseButton::Left) => {
+    PointerKind::Up(SharedPointerButton::Left) => {
       ctx.completion_docs_drag = None;
     },
-    MouseEventKind::ScrollUp => {
-      handle_completion_docs_wheel(ctx, layout, x, y, -3);
-    },
-    MouseEventKind::ScrollDown => {
-      handle_completion_docs_wheel(ctx, layout, x, y, 3);
+    PointerKind::Scroll => {
+      let delta = pointer_scroll_delta_lines(event);
+      if delta != 0 {
+        handle_completion_docs_wheel(ctx, layout, x, y, delta);
+      }
     },
     _ => {},
   }
+  PointerEventOutcome::Handled
 }
 
 fn handle_pane_resize_mouse(ctx: &mut Ctx, kind: MouseEventKind, x: u16, y: u16) -> bool {
@@ -246,6 +260,41 @@ fn handle_pane_resize_mouse(ctx: &mut Ctx, kind: MouseEventKind, x: u16, y: u16)
       true
     },
     MouseEventKind::Up(MouseButton::Left) => ctx.pane_resize_drag.take().is_some(),
+    _ => false,
+  }
+}
+
+fn handle_pane_resize_pointer(ctx: &mut Ctx, kind: PointerKind, x: u16, y: u16) -> bool {
+  match kind {
+    PointerKind::Down(SharedPointerButton::Left) => {
+      let Some(split_id) = hit_split_separator(ctx, x, y) else {
+        return false;
+      };
+      ctx.pane_resize_drag = Some(PaneResizeDragState::Split { split_id });
+      if ctx.editor.resize_split(split_id, x, y) {
+        ctx.request_render();
+      }
+      true
+    },
+    PointerKind::Drag(SharedPointerButton::Left) => {
+      let Some(PaneResizeDragState::Split { split_id }) = ctx.pane_resize_drag else {
+        return false;
+      };
+      if ctx.editor.resize_split(split_id, x, y) {
+        ctx.request_render();
+      }
+      true
+    },
+    PointerKind::Move => {
+      let Some(PaneResizeDragState::Split { split_id }) = ctx.pane_resize_drag else {
+        return false;
+      };
+      if ctx.editor.resize_split(split_id, x, y) {
+        ctx.request_render();
+      }
+      true
+    },
+    PointerKind::Up(SharedPointerButton::Left) => ctx.pane_resize_drag.take().is_some(),
     _ => false,
   }
 }
@@ -701,6 +750,81 @@ fn to_ui_modifiers(modifiers: KeyModifiers) -> UiModifiers {
     alt:   modifiers.contains(KeyModifiers::ALT),
     shift: modifiers.contains(KeyModifiers::SHIFT),
     meta:  modifiers.contains(KeyModifiers::SUPER),
+  }
+}
+
+fn to_pointer_modifiers(modifiers: KeyModifiers) -> Modifiers {
+  let mut out = Modifiers::empty();
+  if modifiers.contains(KeyModifiers::CONTROL) {
+    out.insert(Modifiers::CTRL);
+  }
+  if modifiers.contains(KeyModifiers::ALT) {
+    out.insert(Modifiers::ALT);
+  }
+  if modifiers.contains(KeyModifiers::SHIFT) {
+    out.insert(Modifiers::SHIFT);
+  }
+  out
+}
+
+fn crossterm_mouse_to_pointer_event(event: CrosstermMouseEvent) -> Option<PointerEvent> {
+  let kind = match event.kind {
+    MouseEventKind::Down(MouseButton::Left) => PointerKind::Down(SharedPointerButton::Left),
+    MouseEventKind::Down(MouseButton::Middle) => PointerKind::Down(SharedPointerButton::Middle),
+    MouseEventKind::Down(MouseButton::Right) => PointerKind::Down(SharedPointerButton::Right),
+    MouseEventKind::Drag(MouseButton::Left) => PointerKind::Drag(SharedPointerButton::Left),
+    MouseEventKind::Drag(MouseButton::Middle) => PointerKind::Drag(SharedPointerButton::Middle),
+    MouseEventKind::Drag(MouseButton::Right) => PointerKind::Drag(SharedPointerButton::Right),
+    MouseEventKind::Up(MouseButton::Left) => PointerKind::Up(SharedPointerButton::Left),
+    MouseEventKind::Up(MouseButton::Middle) => PointerKind::Up(SharedPointerButton::Middle),
+    MouseEventKind::Up(MouseButton::Right) => PointerKind::Up(SharedPointerButton::Right),
+    MouseEventKind::Moved => PointerKind::Move,
+    MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => PointerKind::Scroll,
+    _ => return None,
+  };
+
+  let mut pointer = PointerEvent::new(kind, i32::from(event.column), i32::from(event.row))
+    .with_logical_pos(event.column, event.row)
+    .with_modifiers(to_pointer_modifiers(event.modifiers));
+
+  pointer = match event.kind {
+    MouseEventKind::ScrollUp => pointer.with_scroll_delta(0.0, -3.0),
+    MouseEventKind::ScrollDown => pointer.with_scroll_delta(0.0, 3.0),
+    _ => pointer,
+  };
+
+  Some(pointer)
+}
+
+fn pointer_event_coords(event: PointerEvent) -> Option<(u16, u16)> {
+  let x = event
+    .logical_col
+    .or_else(|| {
+      if event.x < 0 {
+        None
+      } else {
+        Some((event.x.min(i32::from(u16::MAX))) as u16)
+      }
+    })?;
+  let y = event
+    .logical_row
+    .or_else(|| {
+      if event.y < 0 {
+        None
+      } else {
+        Some((event.y.min(i32::from(u16::MAX))) as u16)
+      }
+    })?;
+  Some((x, y))
+}
+
+fn pointer_scroll_delta_lines(event: PointerEvent) -> isize {
+  if event.scroll_y > 0.0 {
+    event.scroll_y.round() as isize
+  } else if event.scroll_y < 0.0 {
+    event.scroll_y.round() as isize
+  } else {
+    0
   }
 }
 

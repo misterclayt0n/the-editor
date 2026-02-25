@@ -4696,6 +4696,13 @@ impl the_default::DefaultContext for Ctx {
     &mut self.ui_state
   }
 
+  fn pointer_event(
+    &mut self,
+    event: the_default::PointerEvent,
+  ) -> the_default::PointerEventOutcome {
+    crate::input::handle_pointer_event(self, event)
+  }
+
   fn dispatch(&self) -> DispatchRef<Self> {
     let Some(ptr) = self.dispatch else {
       panic!("dispatch is not set");

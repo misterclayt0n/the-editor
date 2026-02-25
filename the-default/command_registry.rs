@@ -427,6 +427,18 @@ impl<Ctx: DefaultContext + 'static> CommandRegistry<Ctx> {
     ));
 
     self.register(TypableCommand::new(
+      "quit!",
+      &["q!"],
+      "Close the editor and discard unsaved changes",
+      cmd_quit_force::<Ctx>,
+      CommandCompleter::none(),
+      Signature {
+        positionals: (0, Some(0)),
+        ..Signature::DEFAULT
+      },
+    ));
+
+    self.register(TypableCommand::new(
       "write",
       &["w"],
       "Write buffer to file",
@@ -629,6 +641,39 @@ fn workspace_root_for_ctx<Ctx: DefaultContext>(ctx: &Ctx) -> PathBuf {
 }
 
 fn cmd_quit<Ctx: DefaultContext>(ctx: &mut Ctx, _args: Args, event: CommandEvent) -> CommandResult {
+  if event != CommandEvent::Validate {
+    return Ok(());
+  }
+
+  let modified_buffers = ctx
+    .editor_ref()
+    .buffer_snapshots_mru()
+    .into_iter()
+    .filter(|buffer| buffer.modified)
+    .collect::<Vec<_>>();
+  if !modified_buffers.is_empty() {
+    let preview = modified_buffers
+      .iter()
+      .take(3)
+      .map(|buffer| buffer.display_name.as_str())
+      .collect::<Vec<_>>()
+      .join(", ");
+    let suffix = if modified_buffers.len() > 3 { ", ..." } else { "" };
+    let noun = if modified_buffers.len() == 1 { "buffer" } else { "buffers" };
+    return Err(CommandError::new(format!(
+      "unsaved changes in modified {noun}: {preview}{suffix}; use :wq to save and quit, or :q! to discard changes"
+    )));
+  }
+
+  ctx.dispatch().pre_on_action(ctx, Command::Quit);
+  Ok(())
+}
+
+fn cmd_quit_force<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  _args: Args,
+  event: CommandEvent,
+) -> CommandResult {
   if event != CommandEvent::Validate {
     return Ok(());
   }

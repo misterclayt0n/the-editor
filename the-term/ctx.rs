@@ -2796,6 +2796,8 @@ impl Ctx {
       return (snapshot, Vec::new());
     }
 
+    const MIN_TAB_WIDTH: u16 = 12;
+    const MAX_TAB_WIDTH: u16 = 34;
     let mut slots = Vec::new();
     let mut x = 0u16;
     for (tab_index, tab) in snapshot.tabs.iter().enumerate() {
@@ -2803,17 +2805,23 @@ impl Ctx {
         break;
       }
       let title_len = tab.title.chars().count() as u16;
-      let modified_extra = if tab.modified { 2 } else { 0 };
+      let modified_extra = if tab.modified { 2 } else { 0 }; // "● "
+      let close_extra = 2; // space + "×"
+      let padding = 2; // left + trailing room
       let desired = title_len
         .saturating_add(modified_extra)
-        .saturating_add(2)
-        .clamp(8, 28);
+        .saturating_add(close_extra)
+        .saturating_add(padding)
+        .clamp(MIN_TAB_WIDTH, MAX_TAB_WIDTH);
       let remaining = width.saturating_sub(x);
+      if remaining < MIN_TAB_WIDTH && !slots.is_empty() {
+        break;
+      }
       let tab_width = desired.min(remaining);
       if tab_width == 0 {
         break;
       }
-      let close_x = if tab_width >= 4 {
+      let close_x = if tab_width >= MIN_TAB_WIDTH {
         Some(x.saturating_add(tab_width.saturating_sub(1)))
       } else {
         None

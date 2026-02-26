@@ -991,6 +991,25 @@ fn truncate_in_place(text: &mut String, max_chars: usize) {
   }
 }
 
+fn truncate_with_ellipsis_in_place(text: &mut String, max_chars: usize) {
+  if max_chars == 0 {
+    text.clear();
+    return;
+  }
+  let original_len = text.chars().count();
+  truncate_in_place(text, max_chars);
+  if original_len <= max_chars || max_chars == 0 {
+    return;
+  }
+  if max_chars == 1 {
+    text.clear();
+    text.push('…');
+    return;
+  }
+  truncate_in_place(text, max_chars.saturating_sub(1));
+  text.push('…');
+}
+
 fn draw_fuzzy_match_line(
   buf: &mut Buffer,
   x: u16,
@@ -6215,10 +6234,10 @@ fn draw_buffer_tabs_row(buf: &mut Buffer, area: Rect, ctx: &Ctx) {
       .saturating_sub(close_pad_width)
       .saturating_sub(close_width);
     if title_width == 0 {
-      truncate_in_place(&mut title, text_width as usize);
+      truncate_with_ellipsis_in_place(&mut title, text_width as usize);
       buf.set_string(text_x, slot_rect.y, title, tab_style);
     } else {
-      truncate_in_place(&mut title, title_width as usize);
+      truncate_with_ellipsis_in_place(&mut title, title_width as usize);
       if tab.modified && marker_width <= text_width {
         buf.set_string(text_x, slot_rect.y, marker_text, tab_style.patch(modified_style));
       }

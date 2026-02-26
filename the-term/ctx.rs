@@ -278,6 +278,8 @@ struct PointerClickTracker {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct BufferTabPointerDragState {
   pub buffer_index: usize,
+  pub pointer_x:    u16,
+  pub grab_offset:  u16,
   pub moved:        bool,
 }
 
@@ -2934,9 +2936,12 @@ impl Ctx {
     true
   }
 
-  pub(crate) fn begin_buffer_tab_drag(&mut self, buffer_index: usize) {
+  pub(crate) fn begin_buffer_tab_drag(&mut self, slot: BufferTabLayoutSlot, pointer_x: u16) {
+    let max_offset = slot.width.saturating_sub(1);
     self.buffer_tab_drag = Some(BufferTabPointerDragState {
-      buffer_index,
+      buffer_index: slot.buffer_index,
+      pointer_x,
+      grab_offset: pointer_x.saturating_sub(slot.x).min(max_offset),
       moved: false,
     });
   }
@@ -2945,15 +2950,20 @@ impl Ctx {
     let Some(mut drag) = self.buffer_tab_drag else {
       return;
     };
+    drag.pointer_x = x;
     let Some(target_slot) = self.buffer_tab_slot_at(x, y, width) else {
+      self.buffer_tab_drag = Some(drag);
       return;
     };
     if target_slot.buffer_index == drag.buffer_index {
+      self.buffer_tab_drag = Some(drag);
       return;
     }
     if self.move_buffer_tab(drag.buffer_index, target_slot.buffer_index) {
       drag.buffer_index = target_slot.buffer_index;
       drag.moved = true;
+      self.buffer_tab_drag = Some(drag);
+    } else {
       self.buffer_tab_drag = Some(drag);
     }
   }

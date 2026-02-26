@@ -6251,6 +6251,64 @@ fn draw_buffer_tabs_row(buf: &mut Buffer, area: Rect, ctx: &Ctx) {
       }
     }
   }
+
+  if let Some(drag) = ctx.buffer_tab_drag
+    && let Some(slot) = slots.iter().find(|slot| slot.buffer_index == drag.buffer_index)
+    && let Some(tab) = snapshot.tabs.get(slot.tab_index)
+  {
+    let ghost_width = slot.width.min(area.width).max(1);
+    let ghost_left = drag
+      .pointer_x
+      .saturating_sub(drag.grab_offset)
+      .min(area.width.saturating_sub(ghost_width));
+    let ghost_rect = Rect::new(
+      area.x.saturating_add(ghost_left),
+      row_rect.y,
+      ghost_width,
+      row_rect.height,
+    );
+    let ghost_style = active.add_modifier(Modifier::BOLD);
+    let ghost_border = ghost_style.add_modifier(Modifier::REVERSED);
+    fill_rect(buf, ghost_rect, ghost_border);
+
+    let left_pad = if ghost_rect.width > 2 { 1 } else { 0 };
+    let text_x = ghost_rect.x.saturating_add(left_pad);
+    let text_width = ghost_rect.width.saturating_sub(left_pad);
+    if text_width > 0 {
+      let mut title = tab.title.clone();
+      let marker_text = if tab.modified { "● " } else { "" };
+      let marker_width = marker_text.chars().count() as u16;
+      let close_text = if slot.close_x.is_some() && ghost_rect.width >= 12 {
+        "×"
+      } else {
+        ""
+      };
+      let close_width = close_text.chars().count() as u16;
+      let close_pad_width = if close_width > 0 && text_width > close_width { 1 } else { 0 };
+      let title_width = text_width
+        .saturating_sub(marker_width)
+        .saturating_sub(close_pad_width)
+        .saturating_sub(close_width);
+
+      if title_width == 0 {
+        truncate_with_ellipsis_in_place(&mut title, text_width as usize);
+        buf.set_string(text_x, ghost_rect.y, title, ghost_style);
+      } else {
+        truncate_with_ellipsis_in_place(&mut title, title_width as usize);
+        if tab.modified && marker_width <= text_width {
+          buf.set_string(text_x, ghost_rect.y, marker_text, ghost_style.patch(modified_style));
+        }
+        let title_x = text_x.saturating_add(marker_width.min(text_width));
+        buf.set_string(title_x, ghost_rect.y, title, ghost_style);
+        if close_width > 0 {
+          let close_x = ghost_rect
+            .x
+            .saturating_add(ghost_rect.width.saturating_sub(close_width));
+          buf.set_string(close_x, ghost_rect.y, close_text, ghost_style.patch(close_style));
+        }
+      }
+    }
+  }
 }
 
 /// Render the current document state to the terminal.

@@ -232,7 +232,7 @@ pub(crate) fn handle_pointer_event(ctx: &mut Ctx, event: PointerEvent) -> Pointe
         return PointerEventOutcome::Handled;
       }
       if let Some(slot) = ctx.buffer_tab_slot_at(x, y, width) {
-        ctx.begin_buffer_tab_drag(slot.buffer_index);
+        ctx.begin_buffer_tab_drag(slot, x);
       }
     }
     return PointerEventOutcome::Handled;

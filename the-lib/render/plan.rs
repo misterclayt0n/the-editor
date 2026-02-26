@@ -942,7 +942,15 @@ fn add_selections_and_cursor<'a>(
       push_selection_rects(plan, start, end, styles.selection, &row_visible_end_cols);
     }
 
-    let cursor_pos = range.cursor(doc.text().slice(..));
+    let cursor_kind = if view.active_cursor == Some(cursor_id) {
+      styles.active_cursor_kind
+    } else {
+      styles.cursor_kind
+    };
+    let cursor_pos = match cursor_kind {
+      CursorKind::Block | CursorKind::Hollow => range.cursor(doc.text().slice(..)),
+      CursorKind::Bar | CursorKind::Underline | CursorKind::Hidden => range.head,
+    };
     if let Some(pos) =
       visual_position::visual_pos_at_char(doc.text().slice(..), text_fmt, annotations, cursor_pos)
     {
@@ -951,11 +959,6 @@ fn add_selections_and_cursor<'a>(
           styles.active_cursor
         } else {
           styles.cursor
-        };
-        let cursor_kind = if view.active_cursor == Some(cursor_id) {
-          styles.active_cursor_kind
-        } else {
-          styles.cursor_kind
         };
         plan.cursors.push(RenderCursor {
           id: cursor_id,

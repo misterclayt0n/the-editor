@@ -6,6 +6,7 @@
 //! `the-lib` without hard-coding UI event types into `the-dispatch`.
 
 mod command;
+mod buffer_tabs;
 mod command_palette;
 mod command_registry;
 mod command_types;
@@ -39,6 +40,16 @@ pub use command::{
   render_plan_with_styles,
   ui_event,
   ui_tree,
+};
+pub use buffer_tabs::{
+  BufferTabItemSnapshot,
+  BufferTabsOrder,
+  BufferTabsSnapshot,
+  BufferTabsSnapshotOptions,
+  buffer_tabs_snapshot,
+  buffer_tabs_snapshot_for_editor,
+  buffer_tabs_snapshot_for_editor_with_options,
+  buffer_tabs_snapshot_with_options,
 };
 pub use command_palette::{
   CommandPaletteItem,

@@ -47,6 +47,7 @@ final class EditorModel: ObservableObject {
     private var filePickerPreviewOffsetHint: Int = -1
     private var filePickerPreviewVisibleRows: Int = 24
     private var filePickerPreviewOverscan: Int = 24
+    private var topChromeReservedRows: Int = 0
 
     init(filePath: String? = nil) {
         self.app = TheEditorFFIBridge.App()
@@ -134,13 +135,26 @@ final class EditorModel: ObservableObject {
     }
 
     private func updateEffectiveViewport() {
-        let reserved = statuslineReservedRows(in: uiTree)
+        let reserved = statuslineReservedRows(in: uiTree) + max(0, topChromeReservedRows)
         let height = max(1, Int(viewport.height) - reserved)
         let next = Rect(x: 0, y: 0, width: viewport.width, height: UInt16(height))
         if !rectsEqual(next, effectiveViewport) {
             effectiveViewport = next
             _ = app.set_viewport(editorId, next)
         }
+    }
+
+    func setTopChromeReservedRows(_ rows: Int) {
+        let next = max(0, rows)
+        guard next != topChromeReservedRows else {
+            return
+        }
+        topChromeReservedRows = next
+        updateEffectiveViewport()
+    }
+
+    func currentTopChromeReservedRows() -> Int {
+        topChromeReservedRows
     }
 
     private func rectsEqual(_ lhs: Rect, _ rhs: Rect) -> Bool {

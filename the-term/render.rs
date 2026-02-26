@@ -4893,7 +4893,12 @@ fn node_layer(node: &UiNode) -> UiLayer {
   }
 }
 
+fn editor_top_chrome_rows(_ctx: &Ctx, _area: Rect) -> u16 {
+  0
+}
+
 fn apply_ui_viewport(ctx: &mut Ctx, ui: &UiTree, area: Rect) {
+  let reserved_top = editor_top_chrome_rows(ctx, area).min(area.height.saturating_sub(1));
   let mut reserved_bottom: u16 = 0;
   for node in &ui.overlays {
     let UiNode::Panel(panel) = node else {
@@ -4902,17 +4907,28 @@ fn apply_ui_viewport(ctx: &mut Ctx, ui: &UiTree, area: Rect) {
     if panel.intent != LayoutIntent::Bottom || panel.layer == UiLayer::Tooltip {
       continue;
     }
-    let available = area.height.saturating_sub(reserved_bottom);
+    let available = area
+      .height
+      .saturating_sub(reserved_top)
+      .saturating_sub(reserved_bottom);
     if available == 0 {
       break;
     }
-    let rect_area = Rect::new(area.x, area.y, area.width, available);
+    let rect_area = Rect::new(area.x, area.y.saturating_add(reserved_top), area.width, available);
     let height = panel_height_for_area(panel, rect_area);
     reserved_bottom = reserved_bottom.saturating_add(height);
   }
 
-  let height = area.height.saturating_sub(reserved_bottom).max(1);
+  let height = area
+    .height
+    .saturating_sub(reserved_top)
+    .saturating_sub(reserved_bottom)
+    .max(1);
   let width = area.width.max(1);
+  let layout_viewport = the_lib::render::graphics::Rect::new(0, reserved_top, width, height);
+  if ctx.editor.layout_viewport() != layout_viewport {
+    ctx.editor.set_layout_viewport(layout_viewport);
+  }
   let view = ctx.editor.view_mut();
   if view.viewport.width != width || view.viewport.height != height {
     view.viewport = the_lib::render::graphics::Rect::new(0, 0, width, height);

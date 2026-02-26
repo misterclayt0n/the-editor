@@ -43,6 +43,7 @@ use serde_json::{
   json,
 };
 use the_default::{
+  BufferTabsSnapshot,
   Command,
   CommandPaletteState,
   CommandPaletteStyle,
@@ -68,6 +69,7 @@ use the_default::{
   PointerEvent,
   PointerEventOutcome,
   PointerKind,
+  buffer_tabs_snapshot,
   replace_file_picker_items,
   set_file_picker_query_external,
 };
@@ -271,6 +273,14 @@ struct PointerClickTracker {
   x:     u16,
   y:     u16,
   count: u8,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct BufferTabLayoutSlot {
+  pub tab_index:     usize,
+  pub buffer_index:  usize,
+  pub x:             u16,
+  pub width:         u16,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2757,6 +2767,92 @@ impl Ctx {
       return Some(*range);
     }
     selection.ranges().first().copied()
+  }
+
+  pub(crate) fn buffer_tabs_snapshot_for_ui(&self) -> BufferTabsSnapshot {
+    buffer_tabs_snapshot(self)
+  }
+
+  pub(crate) fn buffer_tabs_top_chrome_rows(&self) -> u16 {
+    if self.buffer_tabs_snapshot_for_ui().visible {
+      1
+    } else {
+      0
+    }
+  }
+
+  pub(crate) fn buffer_tab_layout_slots(&self, width: u16) -> (BufferTabsSnapshot, Vec<BufferTabLayoutSlot>) {
+    let snapshot = self.buffer_tabs_snapshot_for_ui();
+    if !snapshot.visible || width == 0 || snapshot.tabs.is_empty() {
+      return (snapshot, Vec::new());
+    }
+
+    let mut slots = Vec::new();
+    let mut x = 0u16;
+    for (tab_index, tab) in snapshot.tabs.iter().enumerate() {
+      if x >= width {
+        break;
+      }
+      let title_len = tab.title.chars().count() as u16;
+      let modified_extra = if tab.modified { 2 } else { 0 };
+      let desired = title_len
+        .saturating_add(modified_extra)
+        .saturating_add(2)
+        .clamp(8, 28);
+      let remaining = width.saturating_sub(x);
+      let tab_width = desired.min(remaining);
+      if tab_width == 0 {
+        break;
+      }
+      slots.push(BufferTabLayoutSlot {
+        tab_index,
+        buffer_index: tab.buffer_index,
+        x,
+        width: tab_width,
+      });
+      x = x.saturating_add(tab_width);
+    }
+    (snapshot, slots)
+  }
+
+  pub(crate) fn buffer_tab_buffer_index_at(&self, x: u16, y: u16, width: u16) -> Option<usize> {
+    if y >= self.buffer_tabs_top_chrome_rows() {
+      return None;
+    }
+    let (_, slots) = self.buffer_tab_layout_slots(width);
+    slots
+      .into_iter()
+      .find(|slot| x >= slot.x && x < slot.x.saturating_add(slot.width))
+      .map(|slot| slot.buffer_index)
+  }
+
+  pub(crate) fn activate_buffer_tab(&mut self, index: usize) -> bool {
+    if self.editor.active_buffer_index() == index {
+      self.request_render();
+      return true;
+    }
+
+    self.lsp_close_current_document();
+    if !self.editor.set_active_buffer(index) {
+      return false;
+    }
+
+    self.syntax_parse_lifecycle.cancel_pending();
+    self.highlight_cache.clear();
+    if self.editor.document().syntax().is_some() {
+      self.syntax_parse_highlight_state.mark_parsed();
+    } else {
+      self.syntax_parse_highlight_state.mark_cleared();
+    }
+
+    let active_path = self.editor.active_file_path().map(Path::to_path_buf);
+    self.file_path = active_path.clone();
+    self.lsp_refresh_document_state(active_path.as_deref());
+    self.lsp_open_current_document();
+    self.clear_hover_state();
+    self.refresh_vcs_diff_base();
+    self.needs_render = true;
+    true
   }
 
   fn pointer_event_screen_coords(&self, event: PointerEvent) -> Option<(u16, u16)> {

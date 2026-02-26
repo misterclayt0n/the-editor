@@ -4894,7 +4894,7 @@ fn node_layer(node: &UiNode) -> UiLayer {
 }
 
 fn editor_top_chrome_rows(_ctx: &Ctx, _area: Rect) -> u16 {
-  0
+  _ctx.buffer_tabs_top_chrome_rows().min(_area.height.saturating_sub(1))
 }
 
 fn apply_ui_viewport(ctx: &mut Ctx, ui: &UiTree, area: Rect) {
@@ -6153,6 +6153,74 @@ fn draw_pane_separators(buf: &mut Buffer, area: Rect, frame: &FrameRenderPlan, c
   }
 }
 
+fn draw_buffer_tabs_row(buf: &mut Buffer, area: Rect, ctx: &Ctx) {
+  let top_rows = ctx.buffer_tabs_top_chrome_rows();
+  if top_rows == 0 || area.width == 0 || area.height == 0 {
+    return;
+  }
+
+  let row_rect = Rect::new(area.x, area.y, area.width, 1);
+  let base = theme_style_or(
+    ctx,
+    "ui.buffer_tabs",
+    theme_style_or(
+      ctx,
+      "ui.window",
+      lib_style_to_ratatui(ctx.ui_theme.try_get("ui.background").unwrap_or_default()),
+    ),
+  );
+  let inactive = theme_style_or(ctx, "ui.buffer_tabs.tab.inactive", base);
+  let active = theme_style_or(
+    ctx,
+    "ui.buffer_tabs.tab.active",
+    theme_style_or(ctx, "ui.window.active", inactive.add_modifier(Modifier::BOLD)),
+  );
+  let modified_style = theme_style_or(
+    ctx,
+    "ui.buffer_tabs.tab.modified",
+    inactive.fg(Color::Yellow).add_modifier(Modifier::BOLD),
+  );
+  fill_rect(buf, row_rect, base);
+
+  let (snapshot, slots) = ctx.buffer_tab_layout_slots(area.width);
+  for slot in &slots {
+    let Some(tab) = snapshot.tabs.get(slot.tab_index) else {
+      continue;
+    };
+    let slot_rect = Rect::new(
+      area.x.saturating_add(slot.x),
+      row_rect.y,
+      slot.width,
+      row_rect.height,
+    );
+    let tab_style = if tab.is_active { active } else { inactive };
+    fill_rect(buf, slot_rect, tab_style);
+
+    let left_pad = if slot.width > 2 { 1 } else { 0 };
+    let text_x = slot_rect.x.saturating_add(left_pad);
+    let text_width = slot.width.saturating_sub(left_pad);
+    if text_width == 0 {
+      continue;
+    }
+
+    let mut title = tab.title.clone();
+    let marker_text = if tab.modified { "● " } else { "" };
+    let marker_width = marker_text.chars().count() as u16;
+    let title_width = text_width.saturating_sub(marker_width);
+    if title_width == 0 {
+      truncate_in_place(&mut title, text_width as usize);
+      buf.set_string(text_x, slot_rect.y, title, tab_style);
+    } else {
+      truncate_in_place(&mut title, title_width as usize);
+      if tab.modified && marker_width <= text_width {
+        buf.set_string(text_x, slot_rect.y, marker_text, tab_style.patch(modified_style));
+      }
+      let title_x = text_x.saturating_add(marker_width.min(text_width));
+      buf.set_string(title_x, slot_rect.y, title, tab_style);
+    }
+  }
+}
+
 /// Render the current document state to the terminal.
 pub fn render(f: &mut Frame, ctx: &mut Ctx) {
   let area = f.size();
@@ -6181,6 +6249,8 @@ pub fn render(f: &mut Frame, ctx: &mut Ctx) {
     {
       fill_rect(buf, area, Style::default().bg(lib_color_to_ratatui(bg)));
     }
+
+    draw_buffer_tabs_row(buf, area, ctx);
 
     for pane in &frame_plan.panes {
       let pane_area = pane_screen_rect(area, pane.rect);

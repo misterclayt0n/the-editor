@@ -1,6 +1,3 @@
-import Foundation
-import TheEditorFFI
-
 
 public class App: AppRefMut {
     var isOwned: Bool = true
@@ -101,6 +98,14 @@ extension AppRefMut {
 
     public func ui_tree_json(_ id: EditorId) -> RustString {
         RustString(ptr: __swift_bridge__$App$ui_tree_json(ptr, id.intoFfiRepr()))
+    }
+
+    public func buffer_tabs_snapshot_json(_ id: EditorId) -> RustString {
+        RustString(ptr: __swift_bridge__$App$buffer_tabs_snapshot_json(ptr, id.intoFfiRepr()))
+    }
+
+    public func activate_buffer_tab(_ id: EditorId, _ buffer_index: UInt) -> Bool {
+        __swift_bridge__$App$activate_buffer_tab(ptr, id.intoFfiRepr(), buffer_index)
     }
 
     public func message_snapshot_json(_ id: EditorId) -> RustString {

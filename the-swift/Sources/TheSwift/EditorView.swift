@@ -33,13 +33,18 @@ struct EditorView: View {
         let activePaneOrigin = panePixelOrigin(model.activePaneRect(), cellSize: cellSize)
         let splitResizeHandles = splitResizeHandles(from: model.splitSeparators, cellSize: cellSize)
         let pointerPanes = pointerPanes(from: model.framePlan, cellSize: cellSize)
+        let bufferTabsSnapshot = model.bufferTabsSnapshot
         let topChromeRows = model.currentTopChromeReservedRows()
         let topChromeHeight = CGFloat(topChromeRows) * cellSize.height
         GeometryReader { _ in
             VStack(spacing: 0) {
-                if topChromeHeight > 0 {
-                    SwiftUI.Color.clear
-                        .frame(height: topChromeHeight)
+                if let tabs = bufferTabsSnapshot, tabs.visible {
+                    BufferTabBarView(snapshot: tabs) { bufferIndex in
+                        model.selectBufferTab(bufferIndex: bufferIndex)
+                    }
+                    .frame(height: max(topChromeHeight, cellSize.height))
+                } else if topChromeHeight > 0 {
+                    SwiftUI.Color.clear.frame(height: topChromeHeight)
                 }
 
                 GeometryReader { contentProxy in

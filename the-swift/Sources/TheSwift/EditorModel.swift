@@ -20,6 +20,7 @@ final class EditorModel: ObservableObject {
     @Published var framePlan: RenderFramePlan
     @Published var splitSeparators: [SplitSeparatorSnapshot] = []
     @Published var uiTree: UiTreeSnapshot = .empty
+    @Published var bufferTabsSnapshot: BufferTabsSnapshot? = nil
     private var viewport: Rect
     private var effectiveViewport: Rect
     let cellSize: CGSize
@@ -37,6 +38,7 @@ final class EditorModel: ObservableObject {
     private var scrollRemainderY: CGFloat = 0
     private var syntaxHighlightStyleCache: [UInt32: Style] = [:]
     private var lastUiTreeJson: String? = nil
+    private var lastBufferTabsJson: String? = nil
     private var lastPickerQuery: String? = nil
     private var lastPickerMatchedCount: Int = -1
     private var lastPickerTotalCount: Int = -1
@@ -117,6 +119,11 @@ final class EditorModel: ObservableObject {
         if uiFetch.changed {
             uiTree = uiFetch.tree
         }
+        let tabsFetch = fetchBufferTabsSnapshot()
+        if tabsFetch.changed {
+            bufferTabsSnapshot = tabsFetch.snapshot
+        }
+        setTopChromeReservedRows((tabsFetch.snapshot?.visible ?? false) ? 1 : 0)
         updateEffectiveViewport()
 
         framePlan = app.frame_render_plan(editorId)
@@ -311,6 +318,14 @@ final class EditorModel: ObservableObject {
     func selectCommandPalette(index: Int) {
         _ = app.command_palette_select_filtered(editorId, UInt(index))
         refresh()
+    }
+
+    func selectBufferTab(bufferIndex: Int) {
+        guard bufferIndex >= 0 else { return }
+        guard app.activate_buffer_tab(editorId, UInt(bufferIndex)) else {
+            return
+        }
+        refresh(trigger: "buffer_tab")
     }
 
     func submitCommandPalette(index: Int?) {
@@ -658,6 +673,11 @@ final class EditorModel: ObservableObject {
         let changed: Bool
     }
 
+    private struct BufferTabsFetchResult {
+        let snapshot: BufferTabsSnapshot?
+        let changed: Bool
+    }
+
     private func fetchUiTree() -> UiTreeFetchResult {
         let json = app.ui_tree_json(editorId).toString()
         if let lastUiTreeJson, lastUiTreeJson == json {
@@ -683,6 +703,30 @@ final class EditorModel: ObservableObject {
             debugUiLog("ui_tree json prefix: \(String(json.prefix(400)))")
             debugUiLog("ui_tree json contains command_palette=\(hasPalette)")
             return UiTreeFetchResult(tree: uiTree, changed: false)
+        }
+    }
+
+    private func fetchBufferTabsSnapshot() -> BufferTabsFetchResult {
+        let json = app.buffer_tabs_snapshot_json(editorId).toString()
+        if let lastBufferTabsJson, lastBufferTabsJson == json {
+            return BufferTabsFetchResult(snapshot: bufferTabsSnapshot, changed: false)
+        }
+        guard json != "null", let data = json.data(using: .utf8) else {
+            let changed = bufferTabsSnapshot != nil || lastBufferTabsJson != json
+            lastBufferTabsJson = json
+            return BufferTabsFetchResult(snapshot: nil, changed: changed)
+        }
+
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        do {
+            let snapshot = try decoder.decode(BufferTabsSnapshot.self, from: data)
+            lastBufferTabsJson = json
+            return BufferTabsFetchResult(snapshot: snapshot, changed: true)
+        } catch {
+            lastBufferTabsJson = nil
+            debugUiLog("buffer_tabs decode failed: \(error)")
+            return BufferTabsFetchResult(snapshot: bufferTabsSnapshot, changed: false)
         }
     }
 

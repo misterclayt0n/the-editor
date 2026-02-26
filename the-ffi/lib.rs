@@ -51,6 +51,8 @@ use the_config::{
   build_keymaps as config_build_keymaps,
 };
 use the_default::{
+  BufferTabItemSnapshot as DefaultBufferTabItemSnapshot,
+  BufferTabsSnapshot as DefaultBufferTabsSnapshot,
   Command,
   CommandEvent,
   CommandPaletteLayout,
@@ -112,6 +114,7 @@ use the_default::{
   submit_file_picker,
   update_command_palette_for_input,
   update_search_prompt_preview,
+  buffer_tabs_snapshot,
 };
 use the_lib::{
   Tendril,
@@ -3705,6 +3708,48 @@ fn build_preview_data(
 
 // ── File picker snapshot (direct FFI, no JSON) ─────────────────────────
 
+#[derive(Serialize)]
+struct BufferTabItemSnapshotJson {
+  buffer_index:   usize,
+  title:          String,
+  modified:       bool,
+  is_active:      bool,
+  file_path:      Option<String>,
+  directory_hint: Option<String>,
+}
+
+impl From<DefaultBufferTabItemSnapshot> for BufferTabItemSnapshotJson {
+  fn from(value: DefaultBufferTabItemSnapshot) -> Self {
+    Self {
+      buffer_index: value.buffer_index,
+      title: value.title,
+      modified: value.modified,
+      is_active: value.is_active,
+      file_path: value.file_path.map(|path| path.display().to_string()),
+      directory_hint: value.directory_hint,
+    }
+  }
+}
+
+#[derive(Serialize)]
+struct BufferTabsSnapshotJson {
+  visible:             bool,
+  active_tab:          Option<usize>,
+  active_buffer_index: Option<usize>,
+  tabs:                Vec<BufferTabItemSnapshotJson>,
+}
+
+impl From<DefaultBufferTabsSnapshot> for BufferTabsSnapshotJson {
+  fn from(value: DefaultBufferTabsSnapshot) -> Self {
+    Self {
+      visible: value.visible,
+      active_tab: value.active_tab,
+      active_buffer_index: value.active_buffer_index,
+      tabs: value.tabs.into_iter().map(BufferTabItemSnapshotJson::from).collect(),
+    }
+  }
+}
+
 pub struct FilePickerSnapshotData {
   active:        bool,
   title:         String,
@@ -4389,6 +4434,42 @@ impl App {
       ));
     }
     json
+  }
+
+  pub fn buffer_tabs_snapshot_json(&mut self, id: ffi::EditorId) -> String {
+    if self.activate(id).is_none() {
+      return "null".to_string();
+    }
+    let snapshot = BufferTabsSnapshotJson::from(buffer_tabs_snapshot(self));
+    serde_json::to_string(&snapshot).unwrap_or_else(|_| "null".to_string())
+  }
+
+  pub fn activate_buffer_tab(&mut self, id: ffi::EditorId, buffer_index: usize) -> bool {
+    if self.activate(id).is_none() {
+      return false;
+    }
+    let Some(current) = self.active_editor else {
+      return false;
+    };
+
+    self.lsp_close_current_document();
+    let switched = {
+      let Some(editor) = self.inner.editor_mut(current) else {
+        return false;
+      };
+      editor.set_active_buffer(buffer_index)
+    };
+    if !switched {
+      return false;
+    }
+
+    let active_path = self
+      .inner
+      .editor(current)
+      .and_then(|editor| editor.active_file_path().map(Path::to_path_buf));
+    <Self as DefaultContext>::set_file_path(self, active_path);
+    self.request_render();
+    true
   }
 
   pub fn pending_keys_json(&self, _id: ffi::EditorId) -> String {
@@ -9928,6 +10009,8 @@ mod ffi {
     fn frame_render_plan(self: &mut App, id: EditorId) -> RenderFramePlan;
     fn render_plan_with_styles(self: &mut App, id: EditorId, styles: RenderStyles) -> RenderPlan;
     fn ui_tree_json(self: &mut App, id: EditorId) -> String;
+    fn buffer_tabs_snapshot_json(self: &mut App, id: EditorId) -> String;
+    fn activate_buffer_tab(self: &mut App, id: EditorId, buffer_index: usize) -> bool;
     fn message_snapshot_json(self: &mut App, id: EditorId) -> String;
     fn message_events_since_json(self: &mut App, id: EditorId, seq: u64) -> String;
     fn ui_event_json(self: &mut App, id: EditorId, event_json: &str) -> bool;

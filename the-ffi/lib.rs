@@ -9509,8 +9509,13 @@ impl DefaultContext for App {
       let viewport = self.active_editor_ref().view().viewport;
       {
         let editor = self.active_editor_mut();
-        let view = ViewState::new(viewport, LibPosition::new(0, 0));
-        let _ = editor.open_buffer(Rope::from_str(&content), view, Some(path.to_path_buf()));
+        let reused_untitled = editor.can_reuse_active_untitled_buffer_for_open();
+        if reused_untitled {
+          let _ = editor.replace_active_buffer(Rope::from_str(&content), Some(path.to_path_buf()));
+        } else {
+          let view = ViewState::new(viewport, LibPosition::new(0, 0));
+          let _ = editor.open_buffer(Rope::from_str(&content), view, Some(path.to_path_buf()));
+        }
         let doc = editor.document_mut();
         doc.set_display_name(
           path

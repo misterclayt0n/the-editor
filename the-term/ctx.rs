@@ -6138,10 +6138,17 @@ impl the_default::DefaultContext for Ctx {
     } else {
       let content = std::fs::read_to_string(path)?;
       let viewport = self.editor.view().viewport;
-      let view = ViewState::new(viewport, Position::new(0, 0));
-      let _ = self
-        .editor
-        .open_buffer(Rope::from_str(&content), view, Some(path.to_path_buf()));
+      let reused_untitled = self.editor.can_reuse_active_untitled_buffer_for_open();
+      if reused_untitled {
+        let _ = self
+          .editor
+          .replace_active_buffer(Rope::from_str(&content), Some(path.to_path_buf()));
+      } else {
+        let view = ViewState::new(viewport, Position::new(0, 0));
+        let _ = self
+          .editor
+          .open_buffer(Rope::from_str(&content), view, Some(path.to_path_buf()));
+      }
 
       {
         let doc = self.editor.document_mut();

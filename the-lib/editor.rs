@@ -444,6 +444,34 @@ impl Editor {
     self.buffers[self.active_buffer].file_path.as_deref()
   }
 
+  pub fn can_reuse_active_untitled_buffer_for_open(&self) -> bool {
+    let Some(active) = self.buffers.get(self.active_buffer) else {
+      return false;
+    };
+    if active.file_path.is_some() || active.document.flags().modified {
+      return false;
+    }
+    let active_index = self.active_buffer;
+    let pane_refs = self
+      .pane_buffers
+      .values()
+      .filter(|&&index| index == active_index)
+      .count();
+    pane_refs <= 1
+  }
+
+  pub fn replace_active_buffer(&mut self, text: Rope, file_path: Option<PathBuf>) -> bool {
+    let Some(current_view) = self.buffers.get(self.active_buffer).map(|buffer| buffer.view) else {
+      return false;
+    };
+    let document_id = DocumentId::new(self.next_document_id);
+    let next_doc = self.next_document_id.get().saturating_add(1);
+    self.next_document_id = NonZeroUsize::new(next_doc).unwrap_or(self.next_document_id);
+    let document = Document::new(document_id, text);
+    self.buffers[self.active_buffer] = BufferState::new(document, current_view, file_path);
+    true
+  }
+
   pub fn set_active_file_path(&mut self, path: Option<PathBuf>) {
     self.buffers[self.active_buffer].file_path = path;
   }
@@ -982,6 +1010,54 @@ mod tests {
 
     assert!(editor.jump_active_pane(PaneDirection::Up));
     assert_eq!(editor.active_buffer_index(), 0);
+  }
+
+  #[test]
+  fn editor_can_reuse_unmodified_unshared_untitled_buffer_for_open() {
+    let doc_id = DocumentId::new(NonZeroUsize::new(1).unwrap());
+    let doc = Document::new(doc_id, Rope::new());
+    let view = ViewState::new(Rect::new(0, 0, 80, 24), Position::new(0, 0));
+    let editor_id = EditorId::new(NonZeroUsize::new(1).unwrap());
+    let mut editor = Editor::new(editor_id, doc, view);
+
+    assert!(editor.can_reuse_active_untitled_buffer_for_open());
+
+    let _ = editor.document_mut().replace_range(Range::point(0), "x");
+    assert!(!editor.can_reuse_active_untitled_buffer_for_open());
+  }
+
+  #[test]
+  fn editor_does_not_reuse_untitled_buffer_when_shared_across_panes() {
+    let doc_id = DocumentId::new(NonZeroUsize::new(1).unwrap());
+    let doc = Document::new(doc_id, Rope::new());
+    let view = ViewState::new(Rect::new(0, 0, 80, 24), Position::new(0, 0));
+    let editor_id = EditorId::new(NonZeroUsize::new(1).unwrap());
+    let mut editor = Editor::new(editor_id, doc, view);
+
+    assert!(editor.split_active_pane(SplitAxis::Horizontal));
+    assert!(!editor.can_reuse_active_untitled_buffer_for_open());
+  }
+
+  #[test]
+  fn editor_replace_active_buffer_reuses_slot_index() {
+    let doc_id = DocumentId::new(NonZeroUsize::new(1).unwrap());
+    let doc = Document::new(doc_id, Rope::from_str("one"));
+    let view = ViewState::new(Rect::new(0, 0, 80, 24), Position::new(0, 0));
+    let editor_id = EditorId::new(NonZeroUsize::new(1).unwrap());
+    let mut editor = Editor::new(editor_id, doc, view);
+
+    assert!(editor.replace_active_buffer(
+      Rope::from_str("two"),
+      Some(PathBuf::from("/tmp/two.txt")),
+    ));
+
+    assert_eq!(editor.buffer_count(), 1);
+    assert_eq!(editor.active_buffer_index(), 0);
+    assert_eq!(editor.document().text().to_string(), "two");
+    assert_eq!(
+      editor.active_file_path().map(|path| path.to_string_lossy().to_string()),
+      Some("/tmp/two.txt".to_string())
+    );
   }
 
   #[test]

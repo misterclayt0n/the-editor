@@ -42,6 +42,7 @@ use the_default::{
   completion_docs_panel_rect as default_completion_docs_panel_rect,
   completion_panel_rect as default_completion_panel_rect,
   file_picker_icon_glyph,
+  file_picker_icon_name_for_path,
   frame_render_plan,
   set_picker_visible_rows,
   signature_help_markdown,
@@ -6200,6 +6201,7 @@ fn draw_buffer_tabs_row(buf: &mut Buffer, area: Rect, ctx: &Ctx) {
     inactive.fg(Color::Yellow).add_modifier(Modifier::BOLD),
   );
   let close_style = Style::default().add_modifier(Modifier::DIM);
+  let icon_style = Style::default().add_modifier(Modifier::DIM);
   fill_rect(buf, row_rect, base);
 
   let (snapshot, slots) = ctx.buffer_tab_layout_slots(area.width);
@@ -6224,12 +6226,24 @@ fn draw_buffer_tabs_row(buf: &mut Buffer, area: Rect, ctx: &Ctx) {
     }
 
     let mut title = tab.title.clone();
+    let icon = tab
+      .file_path
+      .as_deref()
+      .map(|path| file_picker_icon_glyph(file_picker_icon_name_for_path(path), false))
+      .unwrap_or_else(|| file_picker_icon_glyph("file_generic", false));
+    let icon_width = icon.chars().count() as u16;
+    let icon_extra = if text_width > icon_width {
+      icon_width.saturating_add(1)
+    } else {
+      0
+    };
     let marker_text = if tab.modified { "● " } else { "" };
     let marker_width = marker_text.chars().count() as u16;
     let close_text = if slot.close_x.is_some() { "×" } else { "" };
     let close_width = close_text.chars().count() as u16;
     let close_pad_width = if close_width > 0 && text_width > close_width { 1 } else { 0 };
     let title_width = text_width
+      .saturating_sub(icon_extra)
       .saturating_sub(marker_width)
       .saturating_sub(close_pad_width)
       .saturating_sub(close_width);
@@ -6237,12 +6251,19 @@ fn draw_buffer_tabs_row(buf: &mut Buffer, area: Rect, ctx: &Ctx) {
       truncate_with_ellipsis_in_place(&mut title, text_width as usize);
       buf.set_string(text_x, slot_rect.y, title, tab_style);
     } else {
-      truncate_with_ellipsis_in_place(&mut title, title_width as usize);
-      if tab.modified && marker_width <= text_width {
-        buf.set_string(text_x, slot_rect.y, marker_text, tab_style.patch(modified_style));
+      let mut cursor_x = text_x;
+      let mut remaining_text_width = text_width;
+      if icon_extra > 0 && icon_width <= remaining_text_width {
+        buf.set_string(cursor_x, slot_rect.y, icon, tab_style.patch(icon_style));
+        cursor_x = cursor_x.saturating_add(icon_width.saturating_add(1));
+        remaining_text_width = remaining_text_width.saturating_sub(icon_extra);
       }
-      let title_x = text_x.saturating_add(marker_width.min(text_width));
-      buf.set_string(title_x, slot_rect.y, title, tab_style);
+      if tab.modified && marker_width <= remaining_text_width {
+        buf.set_string(cursor_x, slot_rect.y, marker_text, tab_style.patch(modified_style));
+        cursor_x = cursor_x.saturating_add(marker_width.min(remaining_text_width));
+      }
+      truncate_with_ellipsis_in_place(&mut title, title_width as usize);
+      buf.set_string(cursor_x, slot_rect.y, title, tab_style);
       if close_width > 0 {
         let close_x = slot_rect
           .x
@@ -6276,6 +6297,17 @@ fn draw_buffer_tabs_row(buf: &mut Buffer, area: Rect, ctx: &Ctx) {
     let text_width = ghost_rect.width.saturating_sub(left_pad);
     if text_width > 0 {
       let mut title = tab.title.clone();
+      let icon = tab
+        .file_path
+        .as_deref()
+        .map(|path| file_picker_icon_glyph(file_picker_icon_name_for_path(path), false))
+        .unwrap_or_else(|| file_picker_icon_glyph("file_generic", false));
+      let icon_width = icon.chars().count() as u16;
+      let icon_extra = if text_width > icon_width {
+        icon_width.saturating_add(1)
+      } else {
+        0
+      };
       let marker_text = if tab.modified { "● " } else { "" };
       let marker_width = marker_text.chars().count() as u16;
       let close_text = if slot.close_x.is_some() && ghost_rect.width >= 12 {
@@ -6286,6 +6318,7 @@ fn draw_buffer_tabs_row(buf: &mut Buffer, area: Rect, ctx: &Ctx) {
       let close_width = close_text.chars().count() as u16;
       let close_pad_width = if close_width > 0 && text_width > close_width { 1 } else { 0 };
       let title_width = text_width
+        .saturating_sub(icon_extra)
         .saturating_sub(marker_width)
         .saturating_sub(close_pad_width)
         .saturating_sub(close_width);
@@ -6294,12 +6327,19 @@ fn draw_buffer_tabs_row(buf: &mut Buffer, area: Rect, ctx: &Ctx) {
         truncate_with_ellipsis_in_place(&mut title, text_width as usize);
         buf.set_string(text_x, ghost_rect.y, title, ghost_style);
       } else {
-        truncate_with_ellipsis_in_place(&mut title, title_width as usize);
-        if tab.modified && marker_width <= text_width {
-          buf.set_string(text_x, ghost_rect.y, marker_text, ghost_style.patch(modified_style));
+        let mut cursor_x = text_x;
+        let mut remaining_text_width = text_width;
+        if icon_extra > 0 && icon_width <= remaining_text_width {
+          buf.set_string(cursor_x, ghost_rect.y, icon, ghost_style.patch(icon_style));
+          cursor_x = cursor_x.saturating_add(icon_width.saturating_add(1));
+          remaining_text_width = remaining_text_width.saturating_sub(icon_extra);
         }
-        let title_x = text_x.saturating_add(marker_width.min(text_width));
-        buf.set_string(title_x, ghost_rect.y, title, ghost_style);
+        if tab.modified && marker_width <= remaining_text_width {
+          buf.set_string(cursor_x, ghost_rect.y, marker_text, ghost_style.patch(modified_style));
+          cursor_x = cursor_x.saturating_add(marker_width.min(remaining_text_width));
+        }
+        truncate_with_ellipsis_in_place(&mut title, title_width as usize);
+        buf.set_string(cursor_x, ghost_rect.y, title, ghost_style);
         if close_width > 0 {
           let close_x = ghost_rect
             .x

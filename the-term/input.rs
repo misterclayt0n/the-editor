@@ -206,15 +206,33 @@ pub(crate) fn handle_pointer_event(ctx: &mut Ctx, event: PointerEvent) -> Pointe
   }
 
   let tab_rows = ctx.buffer_tabs_top_chrome_rows();
+  if ctx.buffer_tab_drag.is_some() {
+    let width = ctx.editor.layout_viewport().width.max(1);
+    match event.kind {
+      PointerKind::Drag(SharedPointerButton::Left) => {
+        ctx.update_buffer_tab_drag(x, y, width);
+        return PointerEventOutcome::Handled;
+      },
+      PointerKind::Up(SharedPointerButton::Left) => {
+        if let Some((buffer_index, moved)) = ctx.finish_buffer_tab_drag(x, y, width)
+          && !moved
+        {
+          let _ = ctx.activate_buffer_tab(buffer_index);
+        }
+        return PointerEventOutcome::Handled;
+      },
+      _ => {},
+    }
+  }
   if tab_rows > 0 && y < tab_rows {
+    let width = ctx.editor.layout_viewport().width.max(1);
     if let PointerKind::Down(SharedPointerButton::Left) = event.kind {
-      let width = ctx.editor.layout_viewport().width.max(1);
       if let Some(buffer_index) = ctx.buffer_tab_close_buffer_index_at(x, y, width) {
         let _ = ctx.close_buffer_tab(buffer_index);
         return PointerEventOutcome::Handled;
       }
-      if let Some(buffer_index) = ctx.buffer_tab_buffer_index_at(x, y, width) {
-        let _ = ctx.activate_buffer_tab(buffer_index);
+      if let Some(slot) = ctx.buffer_tab_slot_at(x, y, width) {
+        ctx.begin_buffer_tab_drag(slot.buffer_index);
       }
     }
     return PointerEventOutcome::Handled;

@@ -276,6 +276,12 @@ struct PointerClickTracker {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct BufferTabPointerDragState {
+  pub buffer_index: usize,
+  pub moved:        bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct BufferTabLayoutSlot {
   pub tab_index:     usize,
   pub buffer_index:  usize,
@@ -574,6 +580,7 @@ pub struct Ctx {
   pub completion_docs_layout:        Option<CompletionDocsLayout>,
   pub completion_docs_drag:          Option<CompletionDocsDragState>,
   pub pane_resize_drag:              Option<PaneResizeDragState>,
+  pub buffer_tab_drag:               Option<BufferTabPointerDragState>,
   pub mouse_selection_drag_active:   bool,
   pub mouse_viewport_detached:       bool,
   pointer_drag_selection:            Option<PointerSelectionDragState>,
@@ -955,6 +962,7 @@ impl Ctx {
       completion_docs_layout: None,
       completion_docs_drag: None,
       pane_resize_drag: None,
+      buffer_tab_drag: None,
       mouse_selection_drag_active: false,
       mouse_viewport_detached: false,
       pointer_drag_selection: None,
@@ -2844,8 +2852,26 @@ impl Ctx {
       .map(|slot| slot.buffer_index)
   }
 
+  pub(crate) fn buffer_tab_slot_at(&self, x: u16, y: u16, width: u16) -> Option<BufferTabLayoutSlot> {
+    if y >= self.buffer_tabs_top_chrome_rows() {
+      return None;
+    }
+    let (_, slots) = self.buffer_tab_layout_slots(width);
+    slots
+      .into_iter()
+      .find(|slot| x >= slot.x && x < slot.x.saturating_add(slot.width))
+  }
+
   pub(crate) fn activate_buffer_tab(&mut self, index: usize) -> bool {
     the_default::activate_buffer_tab(self, index)
+  }
+
+  pub(crate) fn move_buffer_tab(&mut self, from: usize, to: usize) -> bool {
+    if !self.editor.move_buffer(from, to) {
+      return false;
+    }
+    self.request_render();
+    true
   }
 
   pub(crate) fn close_buffer_tab(&mut self, index: usize) -> bool {
@@ -2898,6 +2924,41 @@ impl Ctx {
 
     self.request_render();
     true
+  }
+
+  pub(crate) fn begin_buffer_tab_drag(&mut self, buffer_index: usize) {
+    self.buffer_tab_drag = Some(BufferTabPointerDragState {
+      buffer_index,
+      moved: false,
+    });
+  }
+
+  pub(crate) fn update_buffer_tab_drag(&mut self, x: u16, y: u16, width: u16) {
+    let Some(mut drag) = self.buffer_tab_drag else {
+      return;
+    };
+    let Some(target_slot) = self.buffer_tab_slot_at(x, y, width) else {
+      return;
+    };
+    if target_slot.buffer_index == drag.buffer_index {
+      return;
+    }
+    if self.move_buffer_tab(drag.buffer_index, target_slot.buffer_index) {
+      drag.buffer_index = target_slot.buffer_index;
+      drag.moved = true;
+      self.buffer_tab_drag = Some(drag);
+    }
+  }
+
+  pub(crate) fn finish_buffer_tab_drag(
+    &mut self,
+    x: u16,
+    y: u16,
+    width: u16,
+  ) -> Option<(usize, bool)> {
+    let drag = self.buffer_tab_drag.take()?;
+    let slot = self.buffer_tab_slot_at(x, y, width)?;
+    Some((slot.buffer_index, drag.moved))
   }
 
   fn pointer_event_screen_coords(&self, event: PointerEvent) -> Option<(u16, u16)> {

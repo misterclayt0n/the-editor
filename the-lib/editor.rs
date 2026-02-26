@@ -136,6 +136,26 @@ impl Editor {
     }
   }
 
+  fn remap_index_after_move(index: usize, from: usize, to: usize) -> usize {
+    if from == to {
+      return index;
+    }
+    if index == from {
+      return to;
+    }
+    if from < to {
+      if (from + 1..=to).contains(&index) {
+        index - 1
+      } else {
+        index
+      }
+    } else if (to..from).contains(&index) {
+      index + 1
+    } else {
+      index
+    }
+  }
+
   fn buffer_snapshot_for_index(&self, index: usize) -> Option<BufferSnapshot> {
     let buffer = self.buffers.get(index)?;
     Some(BufferSnapshot {
@@ -575,6 +595,35 @@ impl Editor {
       entry.buffer_index = remapped;
       true
     });
+
+    true
+  }
+
+  pub fn move_buffer(&mut self, from: usize, to: usize) -> bool {
+    let len = self.buffers.len();
+    if len <= 1 || from >= len || to >= len || from == to {
+      return false;
+    }
+
+    let buffer = self.buffers.remove(from);
+    self.buffers.insert(to, buffer);
+
+    self.active_buffer = Self::remap_index_after_move(self.active_buffer, from, to);
+    for buffer_index in self.pane_buffers.values_mut() {
+      *buffer_index = Self::remap_index_after_move(*buffer_index, from, to);
+    }
+    for entry in &mut self.access_history {
+      *entry = Self::remap_index_after_move(*entry, from, to);
+    }
+    for entry in &mut self.modified_history {
+      *entry = Self::remap_index_after_move(*entry, from, to);
+    }
+    for entry in &mut self.jumplist_backward {
+      entry.buffer_index = Self::remap_index_after_move(entry.buffer_index, from, to);
+    }
+    for entry in &mut self.jumplist_forward {
+      entry.buffer_index = Self::remap_index_after_move(entry.buffer_index, from, to);
+    }
 
     true
   }
@@ -1184,6 +1233,43 @@ mod tests {
 
     assert!(!editor.close_buffer(0));
     assert_eq!(editor.buffer_count(), 1);
+  }
+
+  #[test]
+  fn editor_move_buffer_reorders_and_preserves_active_buffer_identity() {
+    let doc_id = DocumentId::new(NonZeroUsize::new(1).unwrap());
+    let doc = Document::new(doc_id, Rope::from_str("one"));
+    let view = ViewState::new(Rect::new(0, 0, 80, 24), Position::new(0, 0));
+    let editor_id = EditorId::new(NonZeroUsize::new(1).unwrap());
+    let mut editor = Editor::new(editor_id, doc, view);
+
+    let b = editor.open_buffer(
+      Rope::from_str("two"),
+      ViewState::new(Rect::new(0, 0, 80, 24), Position::new(0, 0)),
+      Some(PathBuf::from("/tmp/two.txt")),
+    );
+    let c = editor.open_buffer(
+      Rope::from_str("three"),
+      ViewState::new(Rect::new(0, 0, 80, 24), Position::new(0, 0)),
+      Some(PathBuf::from("/tmp/three.txt")),
+    );
+    assert_eq!(editor.active_buffer_index(), c);
+
+    assert!(editor.move_buffer(c, 0));
+    assert_eq!(editor.active_buffer_index(), 0);
+    assert_eq!(
+      editor
+        .buffer_snapshot(0)
+        .and_then(|s| s.file_path.map(|p| p.to_string_lossy().to_string())),
+      Some("/tmp/three.txt".into())
+    );
+    assert_eq!(
+      editor
+        .buffer_snapshot(2)
+        .and_then(|s| s.file_path.map(|p| p.to_string_lossy().to_string())),
+      Some("/tmp/two.txt".into())
+    );
+    assert_eq!(b, 1);
   }
 
   #[test]

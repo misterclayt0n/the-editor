@@ -2809,7 +2809,7 @@ impl Ctx {
       let title_len = tab.title.chars().count() as u16;
       let modified_extra = if tab.modified { 2 } else { 0 }; // "● "
       let icon_extra = 2; // icon + gap
-      let close_extra = 2; // space + "×"
+      let close_extra = 3; // space + "×" + trailing pad
       let padding = 2; // left + trailing room
       let desired = title_len
         .saturating_add(modified_extra)
@@ -2826,7 +2826,7 @@ impl Ctx {
         break;
       }
       let close_x = if tab_width >= MIN_TAB_WIDTH {
-        Some(x.saturating_add(tab_width.saturating_sub(1)))
+        Some(x.saturating_add(tab_width.saturating_sub(2)))
       } else {
         None
       };

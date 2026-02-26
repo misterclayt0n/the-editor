@@ -6242,10 +6242,12 @@ fn draw_buffer_tabs_row(buf: &mut Buffer, area: Rect, ctx: &Ctx) {
     let close_text = if slot.close_x.is_some() { "×" } else { "" };
     let close_width = close_text.chars().count() as u16;
     let close_pad_width = if close_width > 0 && text_width > close_width { 1 } else { 0 };
+    let close_trailing_pad_width = if close_width > 0 { 1 } else { 0 };
     let title_width = text_width
       .saturating_sub(icon_extra)
       .saturating_sub(marker_width)
       .saturating_sub(close_pad_width)
+      .saturating_sub(close_trailing_pad_width)
       .saturating_sub(close_width);
     if title_width == 0 {
       truncate_with_ellipsis_in_place(&mut title, text_width as usize);
@@ -6264,11 +6266,15 @@ fn draw_buffer_tabs_row(buf: &mut Buffer, area: Rect, ctx: &Ctx) {
       }
       truncate_with_ellipsis_in_place(&mut title, title_width as usize);
       buf.set_string(cursor_x, slot_rect.y, title, tab_style);
-      if close_width > 0 {
-        let close_x = slot_rect
-          .x
-          .saturating_add(slot_rect.width.saturating_sub(close_width));
-        buf.set_string(close_x, slot_rect.y, close_text, tab_style.patch(close_style));
+      if close_width > 0
+        && let Some(close_x) = slot.close_x
+      {
+        buf.set_string(
+          area.x.saturating_add(close_x),
+          slot_rect.y,
+          close_text,
+          tab_style.patch(close_style),
+        );
       }
     }
   }
@@ -6317,10 +6323,12 @@ fn draw_buffer_tabs_row(buf: &mut Buffer, area: Rect, ctx: &Ctx) {
       };
       let close_width = close_text.chars().count() as u16;
       let close_pad_width = if close_width > 0 && text_width > close_width { 1 } else { 0 };
+      let close_trailing_pad_width = if close_width > 0 { 1 } else { 0 };
       let title_width = text_width
         .saturating_sub(icon_extra)
         .saturating_sub(marker_width)
         .saturating_sub(close_pad_width)
+        .saturating_sub(close_trailing_pad_width)
         .saturating_sub(close_width);
 
       if title_width == 0 {
@@ -6343,7 +6351,7 @@ fn draw_buffer_tabs_row(buf: &mut Buffer, area: Rect, ctx: &Ctx) {
         if close_width > 0 {
           let close_x = ghost_rect
             .x
-            .saturating_add(ghost_rect.width.saturating_sub(close_width));
+            .saturating_add(ghost_rect.width.saturating_sub(close_width.saturating_add(1)));
           buf.set_string(close_x, ghost_rect.y, close_text, ghost_style.patch(close_style));
         }
       }

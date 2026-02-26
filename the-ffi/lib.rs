@@ -4448,28 +4448,7 @@ impl App {
     if self.activate(id).is_none() {
       return false;
     }
-    let Some(current) = self.active_editor else {
-      return false;
-    };
-
-    self.lsp_close_current_document();
-    let switched = {
-      let Some(editor) = self.inner.editor_mut(current) else {
-        return false;
-      };
-      editor.set_active_buffer(buffer_index)
-    };
-    if !switched {
-      return false;
-    }
-
-    let active_path = self
-      .inner
-      .editor(current)
-      .and_then(|editor| editor.active_file_path().map(Path::to_path_buf));
-    <Self as DefaultContext>::set_file_path(self, active_path);
-    self.request_render();
-    true
+    the_default::activate_buffer_tab(self, buffer_index)
   }
 
   pub fn pending_keys_json(&self, _id: ffi::EditorId) -> String {
@@ -9357,6 +9336,31 @@ impl DefaultContext for App {
 
   fn goto_buffer(&mut self, direction: CommandDirection, count: usize) -> bool {
     self.goto_buffer_impl(direction, count)
+  }
+
+  fn activate_buffer_by_index(&mut self, index: usize) -> bool {
+    let Some(current) = self.active_editor else {
+      return false;
+    };
+
+    self.lsp_close_current_document();
+    let switched = {
+      let Some(editor) = self.inner.editor_mut(current) else {
+        return false;
+      };
+      editor.set_active_buffer(index)
+    };
+    if !switched {
+      return false;
+    }
+
+    let active_path = self
+      .inner
+      .editor(current)
+      .and_then(|editor| editor.active_file_path().map(Path::to_path_buf));
+    <Self as DefaultContext>::set_file_path(self, active_path);
+    self.request_render();
+    true
   }
 
   fn goto_last_accessed_buffer(&mut self) -> bool {

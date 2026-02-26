@@ -2827,32 +2827,7 @@ impl Ctx {
   }
 
   pub(crate) fn activate_buffer_tab(&mut self, index: usize) -> bool {
-    if self.editor.active_buffer_index() == index {
-      self.request_render();
-      return true;
-    }
-
-    self.lsp_close_current_document();
-    if !self.editor.set_active_buffer(index) {
-      return false;
-    }
-
-    self.syntax_parse_lifecycle.cancel_pending();
-    self.highlight_cache.clear();
-    if self.editor.document().syntax().is_some() {
-      self.syntax_parse_highlight_state.mark_parsed();
-    } else {
-      self.syntax_parse_highlight_state.mark_cleared();
-    }
-
-    let active_path = self.editor.active_file_path().map(Path::to_path_buf);
-    self.file_path = active_path.clone();
-    self.lsp_refresh_document_state(active_path.as_deref());
-    self.lsp_open_current_document();
-    self.clear_hover_state();
-    self.refresh_vcs_diff_base();
-    self.needs_render = true;
-    true
+    the_default::activate_buffer_tab(self, index)
   }
 
   fn pointer_event_screen_coords(&self, event: PointerEvent) -> Option<(u16, u16)> {
@@ -5683,6 +5658,35 @@ impl the_default::DefaultContext for Ctx {
       .editor
       .active_file_path()
       .map(|path| path.to_path_buf());
+    self.file_path = active_path.clone();
+    self.lsp_refresh_document_state(active_path.as_deref());
+    self.lsp_open_current_document();
+    self.clear_hover_state();
+    self.refresh_vcs_diff_base();
+    self.needs_render = true;
+    true
+  }
+
+  fn activate_buffer_by_index(&mut self, index: usize) -> bool {
+    if self.editor.active_buffer_index() == index {
+      self.request_render();
+      return true;
+    }
+
+    self.lsp_close_current_document();
+    if !self.editor.set_active_buffer(index) {
+      return false;
+    }
+
+    self.syntax_parse_lifecycle.cancel_pending();
+    self.highlight_cache.clear();
+    if self.editor.document().syntax().is_some() {
+      self.syntax_parse_highlight_state.mark_parsed();
+    } else {
+      self.syntax_parse_highlight_state.mark_cleared();
+    }
+
+    let active_path = self.editor.active_file_path().map(Path::to_path_buf);
     self.file_path = active_path.clone();
     self.lsp_refresh_document_state(active_path.as_deref());
     self.lsp_open_current_document();

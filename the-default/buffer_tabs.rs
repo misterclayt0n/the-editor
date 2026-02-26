@@ -57,6 +57,10 @@ pub fn buffer_tabs_snapshot<Ctx: DefaultContext>(ctx: &Ctx) -> BufferTabsSnapsho
   buffer_tabs_snapshot_with_options(ctx, BufferTabsSnapshotOptions::default())
 }
 
+pub fn activate_buffer_tab<Ctx: DefaultContext>(ctx: &mut Ctx, buffer_index: usize) -> bool {
+  ctx.activate_buffer_by_index(buffer_index)
+}
+
 pub fn buffer_tabs_snapshot_with_options<Ctx: DefaultContext>(
   ctx: &Ctx,
   options: BufferTabsSnapshotOptions,
@@ -256,4 +260,3 @@ mod tests {
     assert!(snapshot.tabs.iter().all(|tab| tab.directory_hint.is_none()));
   }
 }
-

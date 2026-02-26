@@ -537,6 +537,9 @@ pub trait DefaultContext: Sized + 'static {
   fn goto_buffer(&mut self, _direction: Direction, _count: usize) -> bool {
     false
   }
+  fn activate_buffer_by_index(&mut self, _index: usize) -> bool {
+    false
+  }
   fn goto_last_accessed_buffer(&mut self) -> bool {
     false
   }

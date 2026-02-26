@@ -126,6 +126,16 @@ impl BufferState {
 }
 
 impl Editor {
+  fn remap_index_after_close(index: usize, closed: usize) -> Option<usize> {
+    if index == closed {
+      None
+    } else if index > closed {
+      Some(index - 1)
+    } else {
+      Some(index)
+    }
+  }
+
   fn buffer_snapshot_for_index(&self, index: usize) -> Option<BufferSnapshot> {
     let buffer = self.buffers.get(index)?;
     Some(BufferSnapshot {
@@ -495,6 +505,78 @@ impl Editor {
     let next_index = self.buffers.len() - 1;
     let _ = self.activate_buffer(next_index);
     next_index
+  }
+
+  pub fn close_buffer(&mut self, index: usize) -> bool {
+    let len = self.buffers.len();
+    if len <= 1 || index >= len {
+      return false;
+    }
+
+    let replacement_before = if index > 0 { index - 1 } else { 1 };
+
+    for buffer_index in self.pane_buffers.values_mut() {
+      if *buffer_index == index {
+        *buffer_index = replacement_before;
+      }
+    }
+
+    self.buffers.remove(index);
+
+    for buffer_index in self.pane_buffers.values_mut() {
+      if *buffer_index > index {
+        *buffer_index -= 1;
+      }
+    }
+
+    if self.active_buffer == index {
+      self.active_buffer = replacement_before;
+    } else if self.active_buffer > index {
+      self.active_buffer -= 1;
+    }
+
+    if let Some(&pane_buffer) = self.pane_buffers.get(&self.split_tree.active_pane()) {
+      self.active_buffer = pane_buffer.min(self.buffers.len().saturating_sub(1));
+    } else {
+      self.active_buffer = self.active_buffer.min(self.buffers.len().saturating_sub(1));
+    }
+
+    self
+      .access_history
+      .retain_mut(|entry| match Self::remap_index_after_close(*entry, index) {
+        Some(remapped) => {
+          *entry = remapped;
+          true
+        },
+        None => false,
+      });
+
+    self
+      .modified_history
+      .retain_mut(|entry| match Self::remap_index_after_close(*entry, index) {
+        Some(remapped) => {
+          *entry = remapped;
+          true
+        },
+        None => false,
+      });
+
+    self.jumplist_backward.retain_mut(|entry| {
+      let Some(remapped) = Self::remap_index_after_close(entry.buffer_index, index) else {
+        return false;
+      };
+      entry.buffer_index = remapped;
+      true
+    });
+    self.jumplist_forward.retain_mut(|entry| {
+      let Some(remapped) = Self::remap_index_after_close(entry.buffer_index, index) else {
+        return false;
+      };
+      entry.buffer_index = remapped;
+      true
+    });
+
+    true
   }
 
   pub fn goto_last_accessed_buffer(&mut self) -> bool {
@@ -1058,6 +1140,50 @@ mod tests {
       editor.active_file_path().map(|path| path.to_string_lossy().to_string()),
       Some("/tmp/two.txt".to_string())
     );
+  }
+
+  #[test]
+  fn editor_close_buffer_remaps_active_index() {
+    let doc_id = DocumentId::new(NonZeroUsize::new(1).unwrap());
+    let doc = Document::new(doc_id, Rope::from_str("one"));
+    let view = ViewState::new(Rect::new(0, 0, 80, 24), Position::new(0, 0));
+    let editor_id = EditorId::new(NonZeroUsize::new(1).unwrap());
+    let mut editor = Editor::new(editor_id, doc, view);
+
+    let b = editor.open_buffer(
+      Rope::from_str("two"),
+      ViewState::new(Rect::new(0, 0, 80, 24), Position::new(0, 0)),
+      Some(PathBuf::from("/tmp/two.txt")),
+    );
+    let c = editor.open_buffer(
+      Rope::from_str("three"),
+      ViewState::new(Rect::new(0, 0, 80, 24), Position::new(0, 0)),
+      Some(PathBuf::from("/tmp/three.txt")),
+    );
+
+    assert_eq!(b, 1);
+    assert_eq!(c, 2);
+    assert!(editor.close_buffer(1));
+    assert_eq!(editor.buffer_count(), 2);
+    assert_eq!(editor.active_buffer_index(), 1);
+    assert_eq!(
+      editor
+        .buffer_snapshot(1)
+        .and_then(|s| s.file_path.map(|p| p.to_string_lossy().to_string())),
+      Some("/tmp/three.txt".into())
+    );
+  }
+
+  #[test]
+  fn editor_cannot_close_last_buffer() {
+    let doc_id = DocumentId::new(NonZeroUsize::new(1).unwrap());
+    let doc = Document::new(doc_id, Rope::from_str("one"));
+    let view = ViewState::new(Rect::new(0, 0, 80, 24), Position::new(0, 0));
+    let editor_id = EditorId::new(NonZeroUsize::new(1).unwrap());
+    let mut editor = Editor::new(editor_id, doc, view);
+
+    assert!(!editor.close_buffer(0));
+    assert_eq!(editor.buffer_count(), 1);
   }
 
   #[test]

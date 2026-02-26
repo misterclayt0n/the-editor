@@ -209,6 +209,10 @@ pub(crate) fn handle_pointer_event(ctx: &mut Ctx, event: PointerEvent) -> Pointe
   if tab_rows > 0 && y < tab_rows {
     if let PointerKind::Down(SharedPointerButton::Left) = event.kind {
       let width = ctx.editor.layout_viewport().width.max(1);
+      if let Some(buffer_index) = ctx.buffer_tab_close_buffer_index_at(x, y, width) {
+        let _ = ctx.close_buffer_tab(buffer_index);
+        return PointerEventOutcome::Handled;
+      }
       if let Some(buffer_index) = ctx.buffer_tab_buffer_index_at(x, y, width) {
         let _ = ctx.activate_buffer_tab(buffer_index);
       }

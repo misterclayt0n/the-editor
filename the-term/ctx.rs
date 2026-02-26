@@ -281,6 +281,7 @@ pub(crate) struct BufferTabLayoutSlot {
   pub buffer_index:  usize,
   pub x:             u16,
   pub width:         u16,
+  pub close_x:       Option<u16>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2804,15 +2805,32 @@ impl Ctx {
       if tab_width == 0 {
         break;
       }
+      let close_x = if tab_width >= 4 {
+        Some(x.saturating_add(tab_width.saturating_sub(1)))
+      } else {
+        None
+      };
       slots.push(BufferTabLayoutSlot {
         tab_index,
         buffer_index: tab.buffer_index,
         x,
         width: tab_width,
+        close_x,
       });
       x = x.saturating_add(tab_width);
     }
     (snapshot, slots)
+  }
+
+  pub(crate) fn buffer_tab_close_buffer_index_at(&self, x: u16, y: u16, width: u16) -> Option<usize> {
+    if y >= self.buffer_tabs_top_chrome_rows() {
+      return None;
+    }
+    let (_, slots) = self.buffer_tab_layout_slots(width);
+    slots
+      .into_iter()
+      .find(|slot| slot.close_x == Some(x))
+      .map(|slot| slot.buffer_index)
   }
 
   pub(crate) fn buffer_tab_buffer_index_at(&self, x: u16, y: u16, width: u16) -> Option<usize> {
@@ -2828,6 +2846,58 @@ impl Ctx {
 
   pub(crate) fn activate_buffer_tab(&mut self, index: usize) -> bool {
     the_default::activate_buffer_tab(self, index)
+  }
+
+  pub(crate) fn close_buffer_tab(&mut self, index: usize) -> bool {
+    let Some(snapshot) = self.editor.buffer_snapshot(index) else {
+      return false;
+    };
+    if snapshot.modified {
+      self.messages.publish(
+        MessageLevel::Warning,
+        Some("buffer".into()),
+        format!("buffer '{}' has unsaved changes", snapshot.display_name),
+      );
+      self.request_render();
+      return false;
+    }
+    if self.editor.buffer_count() <= 1 {
+      self.messages.publish(
+        MessageLevel::Warning,
+        Some("buffer".into()),
+        "cannot close the last buffer",
+      );
+      self.request_render();
+      return false;
+    }
+
+    let closing_active = self.editor.active_buffer_index() == index;
+    if closing_active {
+      self.lsp_close_current_document();
+    }
+    if !self.editor.close_buffer(index) {
+      return false;
+    }
+
+    if closing_active {
+      self.syntax_parse_lifecycle.cancel_pending();
+      self.highlight_cache.clear();
+      if self.editor.document().syntax().is_some() {
+        self.syntax_parse_highlight_state.mark_parsed();
+      } else {
+        self.syntax_parse_highlight_state.mark_cleared();
+      }
+
+      let active_path = self.editor.active_file_path().map(Path::to_path_buf);
+      self.file_path = active_path.clone();
+      self.lsp_refresh_document_state(active_path.as_deref());
+      self.lsp_open_current_document();
+      self.clear_hover_state();
+      self.refresh_vcs_diff_base();
+    }
+
+    self.request_render();
+    true
   }
 
   fn pointer_event_screen_coords(&self, event: PointerEvent) -> Option<(u16, u16)> {

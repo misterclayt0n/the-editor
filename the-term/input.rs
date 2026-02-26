@@ -210,6 +210,7 @@ pub(crate) fn handle_pointer_event(ctx: &mut Ctx, event: PointerEvent) -> Pointe
     let width = ctx.editor.layout_viewport().width.max(1);
     match event.kind {
       PointerKind::Drag(SharedPointerButton::Left) => {
+        ctx.update_buffer_tab_hover(x, y, width);
         ctx.update_buffer_tab_drag(x, y, width);
         return PointerEventOutcome::Handled;
       },
@@ -226,16 +227,26 @@ pub(crate) fn handle_pointer_event(ctx: &mut Ctx, event: PointerEvent) -> Pointe
   }
   if tab_rows > 0 && y < tab_rows {
     let width = ctx.editor.layout_viewport().width.max(1);
-    if let PointerKind::Down(SharedPointerButton::Left) = event.kind {
-      if let Some(buffer_index) = ctx.buffer_tab_close_buffer_index_at(x, y, width) {
-        let _ = ctx.close_buffer_tab(buffer_index);
-        return PointerEventOutcome::Handled;
-      }
-      if let Some(slot) = ctx.buffer_tab_slot_at(x, y, width) {
-        ctx.begin_buffer_tab_drag(slot, x);
-      }
+    match event.kind {
+      PointerKind::Move => {
+        ctx.update_buffer_tab_hover(x, y, width);
+      },
+      PointerKind::Down(SharedPointerButton::Left) => {
+        ctx.update_buffer_tab_hover(x, y, width);
+        if let Some(buffer_index) = ctx.buffer_tab_close_buffer_index_at(x, y, width) {
+          let _ = ctx.close_buffer_tab(buffer_index);
+          return PointerEventOutcome::Handled;
+        }
+        if let Some(slot) = ctx.buffer_tab_slot_at(x, y, width) {
+          ctx.begin_buffer_tab_drag(slot, x);
+        }
+      },
+      _ => {},
     }
     return PointerEventOutcome::Handled;
+  }
+  if tab_rows > 0 && matches!(event.kind, PointerKind::Move) {
+    ctx.clear_buffer_tab_hover();
   }
 
   if handle_pane_resize_pointer(ctx, event.kind, x, y) {

@@ -285,6 +285,12 @@ pub(crate) struct BufferTabPointerDragState {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct BufferTabHoverState {
+  pub buffer_index: usize,
+  pub over_close:   bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct BufferTabLayoutSlot {
   pub tab_index:     usize,
   pub buffer_index:  usize,
@@ -584,6 +590,7 @@ pub struct Ctx {
   pub completion_docs_drag:          Option<CompletionDocsDragState>,
   pub pane_resize_drag:              Option<PaneResizeDragState>,
   pub buffer_tab_drag:               Option<BufferTabPointerDragState>,
+  pub buffer_tab_hover:              Option<BufferTabHoverState>,
   pub mouse_selection_drag_active:   bool,
   pub mouse_viewport_detached:       bool,
   pointer_drag_selection:            Option<PointerSelectionDragState>,
@@ -966,6 +973,7 @@ impl Ctx {
       completion_docs_drag: None,
       pane_resize_drag: None,
       buffer_tab_drag: None,
+      buffer_tab_hover: None,
       mouse_selection_drag_active: false,
       mouse_viewport_detached: false,
       pointer_drag_selection: None,
@@ -2852,6 +2860,36 @@ impl Ctx {
       .into_iter()
       .find(|slot| slot.close_x == Some(x))
       .map(|slot| slot.buffer_index)
+  }
+
+  pub(crate) fn update_buffer_tab_hover(&mut self, x: u16, y: u16, width: u16) {
+    let next = if y < self.buffer_tabs_top_chrome_rows() {
+      if let Some(buffer_index) = self.buffer_tab_close_buffer_index_at(x, y, width) {
+        Some(BufferTabHoverState {
+          buffer_index,
+          over_close: true,
+        })
+      } else {
+        self
+          .buffer_tab_slot_at(x, y, width)
+          .map(|slot| BufferTabHoverState {
+            buffer_index: slot.buffer_index,
+            over_close: false,
+          })
+      }
+    } else {
+      None
+    };
+    if self.buffer_tab_hover != next {
+      self.buffer_tab_hover = next;
+      self.request_render();
+    }
+  }
+
+  pub(crate) fn clear_buffer_tab_hover(&mut self) {
+    if self.buffer_tab_hover.take().is_some() {
+      self.request_render();
+    }
   }
 
   pub(crate) fn buffer_tab_buffer_index_at(&self, x: u16, y: u16, width: u16) -> Option<usize> {

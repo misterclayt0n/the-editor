@@ -6201,6 +6201,7 @@ fn draw_buffer_tabs_row(buf: &mut Buffer, area: Rect, ctx: &Ctx) {
     inactive.fg(Color::Yellow).add_modifier(Modifier::BOLD),
   );
   let close_style = Style::default().add_modifier(Modifier::DIM);
+  let close_hover_style = modified_style.add_modifier(Modifier::BOLD);
   let icon_style = Style::default().add_modifier(Modifier::DIM);
   fill_rect(buf, row_rect, base);
 
@@ -6269,11 +6270,14 @@ fn draw_buffer_tabs_row(buf: &mut Buffer, area: Rect, ctx: &Ctx) {
       if close_width > 0
         && let Some(close_x) = slot.close_x
       {
+        let close_is_hovered = ctx
+          .buffer_tab_hover
+          .is_some_and(|hover| hover.buffer_index == tab.buffer_index && hover.over_close);
         buf.set_string(
           area.x.saturating_add(close_x),
           slot_rect.y,
           close_text,
-          tab_style.patch(close_style),
+          tab_style.patch(if close_is_hovered { close_hover_style } else { close_style }),
         );
       }
     }
@@ -6352,7 +6356,13 @@ fn draw_buffer_tabs_row(buf: &mut Buffer, area: Rect, ctx: &Ctx) {
           let close_x = ghost_rect
             .x
             .saturating_add(ghost_rect.width.saturating_sub(close_width.saturating_add(1)));
+          let close_is_hovered = ctx
+            .buffer_tab_hover
+            .is_some_and(|hover| hover.buffer_index == tab.buffer_index && hover.over_close);
           buf.set_string(close_x, ghost_rect.y, close_text, ghost_style.patch(close_style));
+          if close_is_hovered {
+            buf.set_string(close_x, ghost_rect.y, close_text, ghost_style.patch(close_hover_style));
+          }
         }
       }
     }

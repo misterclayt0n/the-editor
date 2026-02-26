@@ -60,6 +60,11 @@ tabstop = { bg = "bossanova", modifiers = [ "italic" ] }
 "ui.virtual.jump-label"   = { fg = "apricot", modifiers = [ "bold" ] }
 "ui.virtual.ruler"        = { bg = "bossanova" }
 "ui.window"               = { fg = "bossanova" }
+"ui.buffer_tabs"          = { bg = "revolver", fg = "comet" }
+"ui.buffer_tabs.tab.inactive" = { fg = "lavender" }
+"ui.buffer_tabs.tab.active"   = { bg = "bossanova", fg = "white" }
+"ui.buffer_tabs.tab.hovered"  = { bg = "#342043" }
+"ui.buffer_tabs.tab.modified" = { fg = "honey" }
 
 "ui.virtual.indent-guide" = { fg = "comet" }
 

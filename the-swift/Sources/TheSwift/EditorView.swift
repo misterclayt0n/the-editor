@@ -39,7 +39,7 @@ struct EditorView: View {
         GeometryReader { _ in
             VStack(spacing: 0) {
                 if let tabs = bufferTabsSnapshot, tabs.visible {
-                    BufferTabBarView(snapshot: tabs) { bufferIndex in
+                    BufferTabBarView(snapshot: tabs, theme: model.bufferTabBarTheme()) { bufferIndex in
                         model.selectBufferTab(bufferIndex: bufferIndex)
                     }
                     .frame(height: max(topChromeHeight, cellSize.height))

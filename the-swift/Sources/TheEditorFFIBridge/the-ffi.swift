@@ -337,6 +337,12 @@ extension AppRef {
     public func theme_highlight_style(_ highlight: UInt32) -> Style {
         __swift_bridge__$App$theme_highlight_style(ptr, highlight).intoSwiftRepr()
     }
+
+    public func theme_ui_style<GenericToRustStr: ToRustStr>(_ scope: GenericToRustStr) -> Style {
+        return scope.toRustStr({ scopeAsRustStr in
+            __swift_bridge__$App$theme_ui_style(ptr, scopeAsRustStr).intoSwiftRepr()
+        })
+    }
 }
 extension App: Vectorizable {
     public static func vecOfSelfNew() -> UnsafeMutableRawPointer {

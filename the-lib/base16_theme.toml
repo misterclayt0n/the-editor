@@ -1,6 +1,11 @@
 # Minimal base16 theme (placeholder)
 "ui.background" = { bg = "black" }
 "ui.text"       = { fg = "white" }
+"ui.buffer_tabs" = { bg = "black", fg = "white" }
+"ui.buffer_tabs.tab.inactive" = { fg = "white" }
+"ui.buffer_tabs.tab.active" = { bg = "#202020", fg = "white" }
+"ui.buffer_tabs.tab.hovered" = { bg = "#151515" }
+"ui.buffer_tabs.tab.modified" = { fg = "white" }
 "ui.selection.match" = { bg = "#303050" }
 
 [palette]

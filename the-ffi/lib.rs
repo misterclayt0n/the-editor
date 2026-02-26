@@ -4852,6 +4852,14 @@ impl App {
     ffi::Style::from(self.ui_theme.highlight(Highlight::new(highlight)))
   }
 
+  pub fn theme_ui_style(&self, scope: &str) -> ffi::Style {
+    self
+      .ui_theme
+      .try_get(scope)
+      .map(ffi::Style::from)
+      .unwrap_or_default()
+  }
+
   pub fn command_palette_is_open(&mut self, id: ffi::EditorId) -> bool {
     if self.activate(id).is_none() {
       return false;
@@ -10023,6 +10031,7 @@ mod ffi {
     fn pending_key_hints_json(self: &App, id: EditorId) -> String;
     fn mode(self: &App, id: EditorId) -> u8;
     fn theme_highlight_style(self: &App, highlight: u32) -> Style;
+    fn theme_ui_style(self: &App, scope: &str) -> Style;
     #[swift_bridge(associated_to = App)]
     fn completion_docs_render_json(
       markdown: &str,

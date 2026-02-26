@@ -759,6 +759,62 @@ final class EditorModel: ObservableObject {
         return ColorMapper.color(from: style.fg)
     }
 
+    func uiThemeStyle(_ scope: String) -> Style {
+        app.theme_ui_style(scope)
+    }
+
+    func bufferTabBarTheme() -> BufferTabBarTheme {
+        func bg(_ scope: String) -> SwiftUI.Color? {
+            let style = uiThemeStyle(scope)
+            guard style.has_bg else { return nil }
+            return ColorMapper.color(from: style.bg)
+        }
+        func fg(_ scope: String) -> SwiftUI.Color? {
+            let style = uiThemeStyle(scope)
+            guard style.has_fg else { return nil }
+            return ColorMapper.color(from: style.fg)
+        }
+
+        let fallback = BufferTabBarTheme.fallback
+        let barBackground = bg("ui.buffer_tabs")
+            ?? bg("ui.window")
+            ?? bg("ui.background")
+            ?? fallback.barBackground
+        let barBorder = fg("ui.buffer_tabs")
+            ?? fg("ui.window")
+            ?? fallback.barBorder
+        let activeBg = bg("ui.buffer_tabs.tab.active")
+            ?? bg("ui.window.active")
+            ?? fallback.tabActiveBackground
+        let activeFg = fg("ui.buffer_tabs.tab.active")
+            ?? fg("ui.text.focus")
+            ?? fallback.tabActiveForeground
+        let inactiveBg = bg("ui.buffer_tabs.tab.inactive")
+            ?? fallback.tabInactiveBackground
+        let inactiveFg = fg("ui.buffer_tabs.tab.inactive")
+            ?? fg("ui.text")
+            ?? fallback.tabInactiveForeground
+        let hoverBg = bg("ui.buffer_tabs.tab.hovered")
+            ?? fallback.tabHoverBackground
+        let modified = fg("ui.buffer_tabs.tab.modified")
+            ?? fg("warning")
+            ?? fallback.modifiedIndicator
+
+        return BufferTabBarTheme(
+            barBackground: barBackground,
+            barBorder: barBorder.opacity(0.3),
+            tabActiveBackground: activeBg,
+            tabActiveForeground: activeFg,
+            tabInactiveBackground: inactiveBg,
+            tabInactiveForeground: inactiveFg,
+            tabHoverBackground: hoverBg,
+            tabStroke: inactiveFg.opacity(0.10),
+            tabStrokeActive: activeFg.opacity(0.18),
+            modifiedIndicator: modified,
+            directoryText: inactiveFg.opacity(0.55)
+        )
+    }
+
     func completionDocsLanguageHint() -> String {
         guard let path = initialFilePath, !path.isEmpty else {
             return ""

@@ -18,24 +18,46 @@ struct BufferTabsSnapshot: Decodable, Equatable {
     let tabs: [BufferTabItemSnapshot]
 }
 
+struct BufferTabBarTheme {
+    let barBackground: SwiftUI.Color
+    let barBorder: SwiftUI.Color
+    let tabActiveBackground: SwiftUI.Color
+    let tabActiveForeground: SwiftUI.Color
+    let tabInactiveBackground: SwiftUI.Color
+    let tabInactiveForeground: SwiftUI.Color
+    let tabHoverBackground: SwiftUI.Color
+    let tabStroke: SwiftUI.Color
+    let tabStrokeActive: SwiftUI.Color
+    let modifiedIndicator: SwiftUI.Color
+    let directoryText: SwiftUI.Color
+
+    static let fallback = BufferTabBarTheme(
+        barBackground: SwiftUI.Color(red: 0.09, green: 0.10, blue: 0.13),
+        barBorder: SwiftUI.Color.white.opacity(0.08),
+        tabActiveBackground: SwiftUI.Color(red: 0.14, green: 0.24, blue: 0.43),
+        tabActiveForeground: .white,
+        tabInactiveBackground: .clear,
+        tabInactiveForeground: SwiftUI.Color.white.opacity(0.78),
+        tabHoverBackground: SwiftUI.Color.white.opacity(0.08),
+        tabStroke: SwiftUI.Color.white.opacity(0.06),
+        tabStrokeActive: SwiftUI.Color.white.opacity(0.14),
+        modifiedIndicator: SwiftUI.Color(red: 0.99, green: 0.72, blue: 0.25),
+        directoryText: SwiftUI.Color.white.opacity(0.48)
+    )
+}
+
 struct BufferTabBarView: View {
     let snapshot: BufferTabsSnapshot
+    let theme: BufferTabBarTheme
     let onSelect: (Int) -> Void
 
     @State private var hoveredTab: Int? = nil
 
     var body: some View {
         ZStack(alignment: .bottom) {
-            LinearGradient(
-                colors: [
-                    SwiftUI.Color(red: 0.09, green: 0.10, blue: 0.13),
-                    SwiftUI.Color(red: 0.07, green: 0.08, blue: 0.10)
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
+            theme.barBackground
             Rectangle()
-                .fill(SwiftUI.Color.white.opacity(0.08))
+                .fill(theme.barBorder)
                 .frame(height: 1)
         }
         .overlay {
@@ -54,10 +76,10 @@ struct BufferTabBarView: View {
     @ViewBuilder
     private func tabButton(_ tab: BufferTabItemSnapshot) -> some View {
         let isHovered = hoveredTab == tab.bufferIndex
-        let baseText = tab.isActive ? SwiftUI.Color.white : SwiftUI.Color.white.opacity(0.78)
+        let baseText = tab.isActive ? theme.tabActiveForeground : theme.tabInactiveForeground
         let bg = tab.isActive
-            ? SwiftUI.Color(red: 0.14, green: 0.24, blue: 0.43)
-            : (isHovered ? SwiftUI.Color.white.opacity(0.08) : SwiftUI.Color.clear)
+            ? theme.tabActiveBackground
+            : (isHovered ? theme.tabHoverBackground : theme.tabInactiveBackground)
 
         Button {
             onSelect(tab.bufferIndex)
@@ -65,7 +87,7 @@ struct BufferTabBarView: View {
             HStack(spacing: 6) {
                 if tab.modified {
                     Circle()
-                        .fill(SwiftUI.Color(red: 0.99, green: 0.72, blue: 0.25))
+                        .fill(theme.modifiedIndicator)
                         .frame(width: 6, height: 6)
                 }
 
@@ -76,7 +98,7 @@ struct BufferTabBarView: View {
                 if let directoryHint = tab.directoryHint, !directoryHint.isEmpty {
                     Text(directoryHint)
                         .lineLimit(1)
-                        .foregroundStyle(baseText.opacity(0.58))
+                        .foregroundStyle(theme.directoryText)
                 }
             }
             .font(.system(size: 12, weight: tab.isActive ? .semibold : .medium, design: .rounded))
@@ -89,7 +111,7 @@ struct BufferTabBarView: View {
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .stroke(SwiftUI.Color.white.opacity(tab.isActive ? 0.14 : 0.06), lineWidth: 1)
+                    .stroke(tab.isActive ? theme.tabStrokeActive : theme.tabStroke, lineWidth: 1)
             )
             .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
         }

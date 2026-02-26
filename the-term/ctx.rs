@@ -279,6 +279,7 @@ struct PointerClickTracker {
 pub(crate) struct BufferTabPointerDragState {
   pub buffer_index: usize,
   pub pointer_x:    u16,
+  pub press_x:      u16,
   pub grab_offset:  u16,
   pub moved:        bool,
 }
@@ -2943,17 +2944,29 @@ impl Ctx {
     self.buffer_tab_drag = Some(BufferTabPointerDragState {
       buffer_index: slot.buffer_index,
       pointer_x,
+      press_x: pointer_x,
       grab_offset: pointer_x.saturating_sub(slot.x).min(max_offset),
       moved: false,
     });
   }
 
   pub(crate) fn update_buffer_tab_drag(&mut self, x: u16, y: u16, width: u16) {
+    const DRAG_REORDER_THRESHOLD_CELLS: u16 = 2;
     let Some(mut drag) = self.buffer_tab_drag else {
       return;
     };
     drag.pointer_x = x;
-    let Some(target_slot) = self.buffer_tab_slot_at(x, y, width) else {
+    if drag.press_x.abs_diff(x) < DRAG_REORDER_THRESHOLD_CELLS {
+      self.buffer_tab_drag = Some(drag);
+      return;
+    }
+
+    let (_snapshot, slots) = self.buffer_tab_layout_slots(width);
+    let Some(target_slot) = slots
+      .iter()
+      .find(|slot| x >= slot.x && x < slot.x.saturating_add(slot.width) && y < self.buffer_tabs_top_chrome_rows())
+      .copied()
+    else {
       self.buffer_tab_drag = Some(drag);
       return;
     };
@@ -2961,6 +2974,28 @@ impl Ctx {
       self.buffer_tab_drag = Some(drag);
       return;
     }
+    let Some(current_slot) = slots
+      .iter()
+      .find(|slot| slot.buffer_index == drag.buffer_index)
+      .copied()
+    else {
+      self.buffer_tab_drag = Some(drag);
+      return;
+    };
+
+    let target_mid = target_slot
+      .x
+      .saturating_add(target_slot.width.saturating_sub(1) / 2);
+    if target_slot.x > current_slot.x {
+      if x < target_mid {
+        self.buffer_tab_drag = Some(drag);
+        return;
+      }
+    } else if x >= target_mid {
+      self.buffer_tab_drag = Some(drag);
+      return;
+    }
+
     if self.move_buffer_tab(drag.buffer_index, target_slot.buffer_index) {
       drag.buffer_index = target_slot.buffer_index;
       drag.moved = true;

@@ -3,6 +3,7 @@ import AppKit
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
+        NSWindow.allowsAutomaticWindowTabbing = true
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
     }
@@ -11,14 +12,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 @main
 struct TheSwiftApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+    static let editorWindowSceneId = "editor-window"
 
     var body: some Scene {
-        let filePath = Self.firstFileArgument()
-        WindowGroup {
-            EditorView(filePath: filePath)
+        WindowGroup(id: Self.editorWindowSceneId, for: EditorWindowRoute.self) { route in
+            EditorWindowSceneRoot(route: route)
                 .environment(\.font, FontLoader.uiFont(size: 13))
                 .frame(minWidth: 640, minHeight: 360)
         }
+    }
+
+    private static var initialFileArgumentConsumed = false
+
+    fileprivate static func consumeFirstFileArgumentIfNeeded() -> String? {
+        if initialFileArgumentConsumed {
+            return nil
+        }
+        initialFileArgumentConsumed = true
+        return firstFileArgument()
     }
 
     private static func firstFileArgument() -> String? {
@@ -34,5 +45,61 @@ struct TheSwiftApp: App {
             return arg
         }
         return nil
+    }
+}
+
+private struct EditorWindowSceneRoot: View {
+    @Binding var route: EditorWindowRoute?
+    @State private var fallbackResolved = false
+    @State private var fallbackFilePath: String? = nil
+    @State private var fallbackResolutionScheduled = false
+
+    init(route: Binding<EditorWindowRoute?>) {
+        self._route = route
+    }
+
+    var body: some View {
+        Group {
+            if let route {
+                EditorView(filePath: route.filePath, windowRoute: route)
+                    .id("route-\(route.requestId.uuidString)")
+            } else if fallbackResolved {
+                EditorView(filePath: fallbackFilePath, windowRoute: nil)
+                    .id("fallback-\(fallbackFilePath ?? "<nil>")")
+            } else {
+                Color.clear
+                    .onAppear {
+                        scheduleFallbackResolutionIfNeeded()
+                    }
+                    .onChange(of: route?.requestId) { _ in
+                        scheduleFallbackResolutionIfNeeded()
+                    }
+            }
+        }
+    }
+
+    private func scheduleFallbackResolutionIfNeeded() {
+        guard route == nil else {
+            fallbackResolved = true
+            return
+        }
+        guard !fallbackResolved, !fallbackResolutionScheduled else {
+            return
+        }
+
+        fallbackResolutionScheduled = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.01) {
+            fallbackResolutionScheduled = false
+            if route != nil {
+                fallbackResolved = true
+                return
+            }
+            if SwiftWindowTabsCoordinator.shared.hasPendingTabOpenRequests {
+                scheduleFallbackResolutionIfNeeded()
+                return
+            }
+            fallbackFilePath = TheSwiftApp.consumeFirstFileArgumentIfNeeded()
+            fallbackResolved = true
+        }
     }
 }

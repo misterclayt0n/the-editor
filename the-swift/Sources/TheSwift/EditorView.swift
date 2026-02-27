@@ -2,15 +2,23 @@ import SwiftUI
 import TheEditorFFIBridge
 
 struct EditorView: View {
+    @Environment(\.openWindow) private var openWindow
     @StateObject private var model: EditorModel
+    private let windowRoute: EditorWindowRoute?
 
     private struct CursorPickState {
         let remove: Bool
         let currentIndex: Int
     }
 
-    init(filePath: String? = nil) {
-        _model = StateObject(wrappedValue: EditorModel(filePath: filePath))
+    init(filePath: String? = nil, windowRoute: EditorWindowRoute? = nil) {
+        self.windowRoute = windowRoute
+        _model = StateObject(
+            wrappedValue: EditorModel(
+                filePath: filePath,
+                bufferId: windowRoute?.bufferId
+            )
+        )
     }
 
     var body: some View {
@@ -33,20 +41,8 @@ struct EditorView: View {
         let activePaneOrigin = panePixelOrigin(model.activePaneRect(), cellSize: cellSize)
         let splitResizeHandles = splitResizeHandles(from: model.splitSeparators, cellSize: cellSize)
         let pointerPanes = pointerPanes(from: model.framePlan, cellSize: cellSize)
-        let bufferTabsSnapshot = model.bufferTabsSnapshot
-        let topChromeRows = model.currentTopChromeReservedRows()
-        let topChromeHeight = CGFloat(topChromeRows) * cellSize.height
         GeometryReader { _ in
             VStack(spacing: 0) {
-                if let tabs = bufferTabsSnapshot, tabs.visible {
-                    BufferTabBarView(snapshot: tabs, theme: model.bufferTabBarTheme()) { bufferIndex in
-                        model.selectBufferTab(bufferIndex: bufferIndex)
-                    }
-                    .frame(height: max(topChromeHeight, cellSize.height))
-                } else if topChromeHeight > 0 {
-                    SwiftUI.Color.clear.frame(height: topChromeHeight)
-                }
-
                 GeometryReader { contentProxy in
                     ZStack {
                         Canvas { context, size in
@@ -184,6 +180,12 @@ struct EditorView: View {
                                     onText: { text, modifiers in
                                         model.handleText(text, modifiers: modifiers)
                                     },
+                                    onCommandDigit: { digit in
+                                        _ = model.selectNativeWindowTab(indexOneBased: digit)
+                                    },
+                                    onCommandNewTab: {
+                                        _ = model.openNativeUntitledTab()
+                                    },
                                     onScroll: { _, _, _ in },
                                     modeProvider: {
                                         model.mode
@@ -234,6 +236,24 @@ struct EditorView: View {
                             KeyCaptureFocusBridge.shared.reclaimActive()
                         }
                     }
+                }
+            }
+            .background(
+                WindowTabbingBridge(
+                    route: windowRoute,
+                    onWindowShouldClose: { window in
+                        model.handleWindowShouldClose(window)
+                    },
+                    onWindowChanged: { window in
+                        model.setHostWindow(window)
+                    }
+                )
+                .frame(width: 0, height: 0)
+                .allowsHitTesting(false)
+            )
+            .onAppear {
+                model.setOpenWindowTabHandler { route in
+                    openWindow(id: TheSwiftApp.editorWindowSceneId, value: route)
                 }
             }
         }

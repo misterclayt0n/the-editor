@@ -36,6 +36,7 @@ impl Default for BufferTabsSnapshotOptions {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BufferTabItemSnapshot {
+  pub buffer_id:       u64,
   pub buffer_index:    usize,
   pub title:           String,
   pub modified:        bool,
@@ -59,6 +60,15 @@ pub fn buffer_tabs_snapshot<Ctx: DefaultContext>(ctx: &Ctx) -> BufferTabsSnapsho
 
 pub fn activate_buffer_tab<Ctx: DefaultContext>(ctx: &mut Ctx, buffer_index: usize) -> bool {
   ctx.activate_buffer_by_index(buffer_index)
+}
+
+pub fn close_buffer_tab<Ctx: DefaultContext>(ctx: &mut Ctx, buffer_index: usize) -> bool {
+  let result = ctx.editor().close_buffer(buffer_index);
+  if result {
+    let active_path = ctx.editor_ref().active_file_path().map(Path::to_path_buf);
+    ctx.set_file_path(active_path);
+  }
+  result
 }
 
 pub fn buffer_tabs_snapshot_with_options<Ctx: DefaultContext>(
@@ -115,6 +125,7 @@ fn map_buffer_snapshot(
   };
 
   BufferTabItemSnapshot {
+    buffer_id: snapshot.buffer_id,
     buffer_index: snapshot.buffer_index,
     title: snapshot.display_name.clone(),
     modified: snapshot.modified,

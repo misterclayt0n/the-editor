@@ -99,6 +99,7 @@ pub struct PaneSnapshot {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BufferSnapshot {
+  pub buffer_id:    u64,
   pub buffer_index: usize,
   pub file_path:    Option<PathBuf>,
   pub display_name: String,
@@ -159,6 +160,7 @@ impl Editor {
   fn buffer_snapshot_for_index(&self, index: usize) -> Option<BufferSnapshot> {
     let buffer = self.buffers.get(index)?;
     Some(BufferSnapshot {
+      buffer_id:    buffer.document.id().get().get() as u64,
       buffer_index: index,
       file_path:    buffer.file_path.clone(),
       display_name: buffer.document.display_name().into_owned(),
@@ -363,6 +365,20 @@ impl Editor {
     self.buffers.get(index).map(|buffer| &buffer.document)
   }
 
+  pub fn buffer_document_mut(&mut self, index: usize) -> Option<&mut Document> {
+    self
+      .buffers
+      .get_mut(index)
+      .map(|buffer| &mut buffer.document)
+  }
+
+  pub fn find_buffer_by_id(&self, buffer_id: u64) -> Option<usize> {
+    self
+      .buffers
+      .iter()
+      .position(|buffer| buffer.document.id().get().get() as u64 == buffer_id)
+  }
+
   pub fn set_buffer_viewport(&mut self, index: usize, viewport: Rect) -> bool {
     let Some(buffer) = self.buffers.get_mut(index) else {
       return false;
@@ -525,6 +541,22 @@ impl Editor {
     let next_index = self.buffers.len() - 1;
     let _ = self.activate_buffer(next_index);
     next_index
+  }
+
+  pub fn open_buffer_without_activation(
+    &mut self,
+    text: Rope,
+    view: ViewState,
+    file_path: Option<PathBuf>,
+  ) -> usize {
+    let document_id = DocumentId::new(self.next_document_id);
+    let next_doc = self.next_document_id.get().saturating_add(1);
+    self.next_document_id = NonZeroUsize::new(next_doc).unwrap_or(self.next_document_id);
+    let document = Document::new(document_id, text);
+    self
+      .buffers
+      .push(BufferState::new(document, view, file_path));
+    self.buffers.len() - 1
   }
 
   pub fn close_buffer(&mut self, index: usize) -> bool {

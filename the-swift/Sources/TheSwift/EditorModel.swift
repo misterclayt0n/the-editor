@@ -13,7 +13,26 @@ struct SplitSeparatorSnapshot: Identifiable {
     var id: UInt64 { splitId }
 }
 
+private struct NativeTabOpenRequest: Decodable, Hashable {
+    enum Kind: String, Decodable {
+        case focusExisting = "focus_existing"
+        case openNew = "open_new"
+    }
+
+    let kind: Kind
+    let bufferId: UInt64
+    let filePath: String?
+}
+
 final class EditorModel: ObservableObject {
+    private struct NativeWindowPresentation: Equatable {
+        let title: String
+        let subtitle: String
+        let representedFilePath: String?
+        let isDocumentEdited: Bool
+    }
+
+    private let runtime: SharedEditorRuntime
     private let app: TheEditorFFIBridge.App
     let editorId: EditorId
     @Published var plan: RenderPlan
@@ -27,6 +46,9 @@ final class EditorModel: ObservableObject {
     let bufferFont: Font
     let bufferNSFont: NSFont
     private let initialFilePath: String?
+    private var boundBufferId: UInt64? = nil
+    private var pendingInitialBoundBufferId: UInt64? = nil
+    private var pendingInitialBoundFilePath: String? = nil
     private(set) var mode: EditorMode = .normal
     @Published var pendingKeys: [String] = []
     @Published var pendingKeyHints: PendingKeyHintsSnapshot? = nil
@@ -50,21 +72,32 @@ final class EditorModel: ObservableObject {
     private var filePickerPreviewVisibleRows: Int = 24
     private var filePickerPreviewOverscan: Int = 24
     private var topChromeReservedRows: Int = 0
+    private weak var hostWindow: NSWindow? = nil
+    private var hostWindowNotificationTokens: [NSObjectProtocol] = []
+    private var openWindowTabHandler: ((EditorWindowRoute) -> Void)? = nil
+    private var nativeTabGatewayRegistered: Bool = false
+    private var suppressFocusedWindowBindingUpdate: Bool = false
+    private var closeConfirmationAlert: NSAlert? = nil
+    private var allowProgrammaticWindowClose: Bool = false
+    private var lastNativeWindowPresentation: NativeWindowPresentation? = nil
+    private var seededUntitledForUnroutedWindow: Bool = false
 
-    init(filePath: String? = nil) {
-        self.app = TheEditorFFIBridge.App()
+    init(filePath: String? = nil, bufferId: UInt64? = nil) {
+        self.runtime = SharedEditorRuntime()
+        self.app = runtime.app
         self.initialFilePath = filePath
+        self.boundBufferId = bufferId
+        self.pendingInitialBoundBufferId = bufferId
+        self.pendingInitialBoundFilePath = EditorModel.normalizedFilePath(filePath)
         let fontInfo = FontLoader.loadBufferFont(size: 14)
         self.cellSize = fontInfo.cellSize
         self.bufferFont = fontInfo.font
         self.bufferNSFont = fontInfo.nsFont
         self.viewport = Rect(x: 0, y: 0, width: 80, height: 24)
         self.effectiveViewport = self.viewport
-        let scroll = Position(row: 0, col: 0)
-        let initialText = EditorModel.loadText(filePath: filePath)
-        self.editorId = app.create_editor(initialText, viewport, scroll)
-        if let filePath {
-            _ = app.set_file_path(editorId, filePath)
+        self.editorId = runtime.editorId
+        if let filePath, bufferId == nil {
+            _ = app.open_file_path(editorId, filePath)
         }
         let initialFramePlan = app.frame_render_plan(editorId)
         self.framePlan = initialFramePlan
@@ -82,6 +115,7 @@ final class EditorModel: ObservableObject {
     deinit {
         filePickerTimer?.invalidate()
         backgroundTimer?.invalidate()
+        unregisterHostWindowNotifications()
     }
 
     private static func loadText(filePath: String?) -> String {
@@ -114,7 +148,10 @@ final class EditorModel: ObservableObject {
 
     func refresh(trigger: String = "manual") {
         _ = trigger
-        _ = app.poll_background(editorId)
+        let shouldDriveRuntime = shouldDriveSharedRuntime()
+        if shouldDriveRuntime {
+            _ = app.poll_background(editorId)
+        }
         let uiFetch = fetchUiTree()
         if uiFetch.changed {
             uiTree = uiFetch.tree
@@ -123,7 +160,12 @@ final class EditorModel: ObservableObject {
         if tabsFetch.changed {
             bufferTabsSnapshot = tabsFetch.snapshot
         }
-        setTopChromeReservedRows((tabsFetch.snapshot?.visible ?? false) ? 1 : 0)
+        updateBoundBufferIdFromActiveBufferIfNeeded()
+        if shouldSyncNativeWindowPresentation() {
+            syncNativeWindowPresentation()
+        }
+        // Buffer tabs in the Swift app are native window tabs, not in-content chrome.
+        setTopChromeReservedRows(0)
         updateEffectiveViewport()
 
         framePlan = app.frame_render_plan(editorId)
@@ -326,6 +368,74 @@ final class EditorModel: ObservableObject {
             return
         }
         refresh(trigger: "buffer_tab")
+    }
+
+    func setHostWindow(_ window: NSWindow?) {
+        if hostWindow !== window {
+            closeConfirmationAlert = nil
+            lastNativeWindowPresentation = nil
+            unregisterHostWindowNotifications()
+            hostWindow = window
+            registerHostWindowNotifications(for: window)
+            seedUntitledBufferForUnroutedWindowIfNeeded()
+            refresh(trigger: "window_attach")
+        } else {
+            hostWindow = window
+        }
+        if shouldSyncNativeWindowPresentation() {
+            syncNativeWindowPresentation()
+        }
+    }
+
+    func setOpenWindowTabHandler(_ handler: @escaping (EditorWindowRoute) -> Void) {
+        openWindowTabHandler = handler
+    }
+
+    func selectNativeWindowTab(indexOneBased: Int) -> Bool {
+        let handled = SwiftWindowTabsCoordinator.shared.selectNativeTab(indexOneBased: indexOneBased, around: hostWindow)
+        if handled {
+            DispatchQueue.main.async { [weak self] in
+                self?.refresh(trigger: "native_tab_shortcut")
+            }
+        }
+        return handled
+    }
+
+    @discardableResult
+    func openNativeUntitledTab() -> Bool {
+        guard let openWindowTabHandler else {
+            let fallbackBuffer = app.open_untitled_buffer(editorId)
+            guard fallbackBuffer != 0 else { return false }
+            refresh(trigger: "native_new_tab_fallback")
+            return true
+        }
+
+        SwiftWindowTabsCoordinator.shared.requestOpenUntitledTab(from: hostWindow, openWindow: openWindowTabHandler)
+        refresh(trigger: "native_new_tab")
+        return true
+    }
+
+    func handleWindowShouldClose(_ window: NSWindow) -> Bool {
+        if allowProgrammaticWindowClose {
+            allowProgrammaticWindowClose = false
+            return true
+        }
+
+        guard closeConfirmationAlert == nil else {
+            return false
+        }
+
+        refresh(trigger: "window_should_close")
+        guard let context = currentBufferCloseContext() else {
+            return false
+        }
+
+        guard context.modified else {
+            return closeBufferForWindowClose(context)
+        }
+
+        presentCloseConfirmation(for: context, in: window)
+        return false
     }
 
     func submitCommandPalette(index: Int?) {
@@ -662,6 +772,7 @@ final class EditorModel: ObservableObject {
         guard backgroundTimer == nil else { return }
         backgroundTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
             guard let self else { return }
+            guard self.shouldDriveSharedRuntime() else { return }
             if self.app.poll_background(self.editorId) {
                 self.refresh(trigger: "background")
             }
@@ -751,6 +862,276 @@ final class EditorModel: ObservableObject {
         return try? decoder.decode(PendingKeyHintsSnapshot.self, from: data)
     }
 
+    private func shouldDriveSharedRuntime() -> Bool {
+        guard let hostWindow else {
+            return true
+        }
+        if let tabGroup = hostWindow.tabGroup {
+            return tabGroup.selectedWindow === hostWindow
+        }
+        return hostWindow.isKeyWindow || hostWindow.isMainWindow
+    }
+
+    private func shouldSyncNativeWindowPresentation() -> Bool {
+        shouldDriveSharedRuntime()
+    }
+
+    private func seedUntitledBufferForUnroutedWindowIfNeeded() {
+        guard !seededUntitledForUnroutedWindow else { return }
+        seededUntitledForUnroutedWindow = true
+    }
+
+    private func updateBoundBufferIdFromActiveBufferIfNeeded() {
+        guard let activeTab = activeBufferTabSnapshot() else {
+            return
+        }
+        if boundBufferId != activeTab.bufferId
+            || pendingInitialBoundBufferId != nil
+            || pendingInitialBoundFilePath != nil {
+            boundBufferId = activeTab.bufferId
+            pendingInitialBoundBufferId = nil
+            pendingInitialBoundFilePath = nil
+        }
+    }
+
+    private func activateBoundBufferForFocusedWindow(trigger: String) {
+        refresh(trigger: trigger)
+    }
+
+    private func publishBoundBufferIdToWindowCoordinator() {
+        _ = boundBufferId
+    }
+
+    private func registerHostWindowNotifications(for window: NSWindow?) {
+        guard let window else { return }
+        let center = NotificationCenter.default
+        let names: [Notification.Name] = [
+            NSWindow.didBecomeKeyNotification,
+            NSWindow.didBecomeMainNotification
+        ]
+        hostWindowNotificationTokens = names.map { name in
+            center.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
+                self?.activateBoundBufferForFocusedWindow(trigger: "window_focus")
+            }
+        }
+    }
+
+    private func unregisterHostWindowNotifications() {
+        let center = NotificationCenter.default
+        for token in hostWindowNotificationTokens {
+            center.removeObserver(token)
+        }
+        hostWindowNotificationTokens.removeAll()
+    }
+
+    private func updateNativeTabOpenGatewayState() {
+        if nativeTabGatewayRegistered {
+            runtime.releaseNativeTabGateway()
+            nativeTabGatewayRegistered = false
+        }
+    }
+
+    private func processNativeTabOpenRequests() {
+        return
+    }
+
+    private func syncNativeWindowPresentation() {
+        guard let hostWindow else { return }
+        let activeTab = activeBufferTabSnapshot()
+        let activeFilePathString = app.active_file_path(editorId).toString()
+        let activeFileURL: URL? = {
+            guard !activeFilePathString.isEmpty else { return nil }
+            return URL(fileURLWithPath: activeFilePathString)
+        }()
+        let presentation: NativeWindowPresentation
+
+        if let activeTab {
+            let titleFromPath = activeFileURL?.lastPathComponent
+            let title = (titleFromPath?.isEmpty == false) ? titleFromPath! : activeTab.title
+            let subtitle: String
+            if let activeFileURL {
+                subtitle = activeFileURL.deletingLastPathComponent().lastPathComponent
+            } else {
+                subtitle = activeTab.directoryHint ?? ""
+            }
+            let representedPath: String?
+            if let activeFileURL {
+                representedPath = activeFileURL.path
+            } else if let filePath = activeTab.filePath, !filePath.isEmpty {
+                representedPath = filePath
+            } else {
+                representedPath = nil
+            }
+            presentation = NativeWindowPresentation(
+                title: title,
+                subtitle: subtitle,
+                representedFilePath: representedPath,
+                isDocumentEdited: activeTab.modified
+            )
+        } else if let activeFileURL {
+            presentation = NativeWindowPresentation(
+                title: activeFileURL.lastPathComponent,
+                subtitle: activeFileURL.deletingLastPathComponent().lastPathComponent,
+                representedFilePath: activeFileURL.path,
+                isDocumentEdited: false
+            )
+        } else if let initialFilePath {
+            let url = URL(fileURLWithPath: initialFilePath)
+            presentation = NativeWindowPresentation(
+                title: url.lastPathComponent,
+                subtitle: url.deletingLastPathComponent().lastPathComponent,
+                representedFilePath: url.path,
+                isDocumentEdited: false
+            )
+        } else {
+            presentation = NativeWindowPresentation(
+                title: "untitled",
+                subtitle: "",
+                representedFilePath: nil,
+                isDocumentEdited: false
+            )
+        }
+
+        if lastNativeWindowPresentation == presentation {
+            return
+        }
+        lastNativeWindowPresentation = presentation
+
+        hostWindow.title = presentation.title
+        hostWindow.subtitle = presentation.subtitle
+        hostWindow.isDocumentEdited = presentation.isDocumentEdited
+        if let representedPath = presentation.representedFilePath {
+            hostWindow.representedURL = URL(fileURLWithPath: representedPath)
+        } else {
+            hostWindow.representedURL = nil
+        }
+
+        SwiftWindowTabsCoordinator.shared.windowPresentationDidChange(hostWindow)
+    }
+
+    private func activeBufferTabSnapshot() -> BufferTabItemSnapshot? {
+        guard let snapshot = bufferTabsSnapshot else { return nil }
+        if let activeIndex = snapshot.activeBufferIndex {
+            return snapshot.tabs.first(where: { $0.bufferIndex == activeIndex })
+        }
+        if let activeTab = snapshot.activeTab, snapshot.tabs.indices.contains(activeTab) {
+            return snapshot.tabs[activeTab]
+        }
+        return snapshot.tabs.first(where: { $0.isActive }) ?? snapshot.tabs.first
+    }
+
+    private func bufferIndexForBufferId(_ bufferId: UInt64) -> Int? {
+        if let snapshot = bufferTabsSnapshot,
+           let match = snapshot.tabs.first(where: { $0.bufferId == bufferId }) {
+            return match.bufferIndex
+        }
+
+        let json = app.buffer_tabs_snapshot_json(editorId).toString()
+        guard json != "null",
+              let data = json.data(using: .utf8) else {
+            return nil
+        }
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        guard let snapshot = try? decoder.decode(BufferTabsSnapshot.self, from: data) else {
+            return nil
+        }
+        bufferTabsSnapshot = snapshot
+        lastBufferTabsJson = json
+        return snapshot.tabs.first(where: { $0.bufferId == bufferId })?.bufferIndex
+    }
+
+    private func activateBufferIdIfNeeded(_ bufferId: UInt64) -> Bool {
+        if let active = activeBufferTabSnapshot(), active.bufferId == bufferId {
+            return true
+        }
+        guard let bufferIndex = bufferIndexForBufferId(bufferId) else {
+            return false
+        }
+        return app.activate_buffer_tab(editorId, UInt(bufferIndex))
+    }
+
+    private struct BufferCloseContext {
+        let bufferId: UInt64
+        let title: String
+        let modified: Bool
+    }
+
+    private func currentBufferCloseContext() -> BufferCloseContext? {
+        let targetBufferId = pendingInitialBoundBufferId ?? boundBufferId
+        guard let targetBufferId,
+              let tab = targetBufferTab(forBufferId: targetBufferId) else {
+            return nil
+        }
+        return BufferCloseContext(
+            bufferId: targetBufferId,
+            title: displayTitle(fromPath: tab.filePath) ?? normalizeFallbackTitle(tab.title),
+            modified: tab.modified
+        )
+    }
+
+    private func targetBufferTab(forBufferId bufferId: UInt64) -> BufferTabItemSnapshot? {
+        guard let snapshot = bufferTabsSnapshot else {
+            return nil
+        }
+        return snapshot.tabs.first(where: { $0.bufferId == bufferId })
+    }
+
+    private static func normalizedFilePath(_ path: String?) -> String? {
+        guard let path, !path.isEmpty else { return nil }
+        let url = URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath()
+        return url.path
+    }
+
+    private func displayTitle(fromPath path: String?) -> String? {
+        guard let path, !path.isEmpty else { return nil }
+        let value = URL(fileURLWithPath: path).lastPathComponent
+        return value.isEmpty ? nil : value
+    }
+
+    private func normalizeFallbackTitle(_ title: String) -> String {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty || trimmed == "<untitled>" {
+            return "untitled"
+        }
+        return trimmed
+    }
+
+    private func presentCloseConfirmation(for context: BufferCloseContext, in window: NSWindow) {
+        let alert = NSAlert()
+        alert.messageText = "Close Buffer Without Saving?"
+        alert.informativeText = "\"\(context.title)\" has unsaved changes. If you close the buffer the changes will be lost."
+        alert.addButton(withTitle: "Close")
+        alert.addButton(withTitle: "Cancel")
+        alert.alertStyle = .warning
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard let self else { return }
+            let alertWindow = alert.window
+            self.closeConfirmationAlert = nil
+            guard response == .alertFirstButtonReturn else { return }
+            alertWindow.orderOut(nil)
+            guard self.closeBufferForWindowClose(context) else { return }
+            self.allowProgrammaticWindowClose = true
+            window.performClose(nil)
+        }
+        closeConfirmationAlert = alert
+    }
+
+    private func closeBufferForWindowClose(_ context: BufferCloseContext) -> Bool {
+        guard app.close_buffer_by_id(editorId, context.bufferId) else {
+            refresh(trigger: "buffer_close_retry")
+            return false
+        }
+        if boundBufferId == context.bufferId {
+            boundBufferId = nil
+        }
+        if pendingInitialBoundBufferId == context.bufferId {
+            pendingInitialBoundBufferId = nil
+        }
+        refresh(trigger: "buffer_closed")
+        return true
+    }
+
     func colorForHighlight(_ highlight: UInt32) -> SwiftUI.Color? {
         let style = cachedSyntaxHighlightStyle(for: highlight)
         guard style.has_fg else {
@@ -816,7 +1197,10 @@ final class EditorModel: ObservableObject {
     }
 
     func completionDocsLanguageHint() -> String {
-        guard let path = initialFilePath, !path.isEmpty else {
+        let active = app.active_file_path(editorId).toString()
+        let fallbackPath = activeBufferTabSnapshot()?.filePath ?? initialFilePath
+        let path = (!active.isEmpty ? active : (fallbackPath ?? ""))
+        guard !path.isEmpty else {
             return ""
         }
         let fileUrl = URL(fileURLWithPath: path)

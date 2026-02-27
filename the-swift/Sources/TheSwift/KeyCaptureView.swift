@@ -43,6 +43,8 @@ struct KeyCaptureView: NSViewRepresentable {
     final class KeyCaptureNSView: NSView, NSTextInputClient {
         var onKey: ((KeyEvent) -> Void)?
         var onText: ((String, NSEvent.ModifierFlags) -> Void)?
+        var onCommandDigit: ((Int) -> Void)?
+        var onCommandNewTab: (() -> Void)?
         var modeProvider: (() -> EditorMode)?
         var onScroll: ((CGFloat, CGFloat, Bool) -> Void)?
 
@@ -63,6 +65,18 @@ struct KeyCaptureView: NSViewRepresentable {
 
         override func keyDown(with event: NSEvent) {
             lastModifiers = event.modifierFlags
+
+            if event.modifierFlags.contains(.command),
+               Self.isCommandNewTab(from: event) {
+                onCommandNewTab?()
+                return
+            }
+
+            if event.modifierFlags.contains(.command),
+               let digit = Self.commandDigitIndex(from: event) {
+                onCommandDigit?(digit)
+                return
+            }
 
             if let keyEvent = KeyEventMapper.mapSpecial(event: event) {
                 onKey?(keyEvent)
@@ -192,10 +206,41 @@ struct KeyCaptureView: NSViewRepresentable {
         override func scrollWheel(with event: NSEvent) {
             onScroll?(event.scrollingDeltaX, event.scrollingDeltaY, event.hasPreciseScrollingDeltas)
         }
+
+        private static func commandDigitIndex(from event: NSEvent) -> Int? {
+            guard let chars = event.charactersIgnoringModifiers, chars.count == 1 else {
+                return nil
+            }
+            guard let scalar = chars.unicodeScalars.first else {
+                return nil
+            }
+            switch scalar.value {
+            case 49: return 1
+            case 50: return 2
+            case 51: return 3
+            case 52: return 4
+            case 53: return 5
+            case 54: return 6
+            case 55: return 7
+            case 56: return 8
+            case 57: return 9
+            default: return nil
+            }
+        }
+
+        private static func isCommandNewTab(from event: NSEvent) -> Bool {
+            guard let chars = event.charactersIgnoringModifiers,
+                  chars.count == 1 else {
+                return false
+            }
+            return chars.lowercased() == "t"
+        }
     }
 
     let onKey: (KeyEvent) -> Void
     let onText: (String, NSEvent.ModifierFlags) -> Void
+    let onCommandDigit: (Int) -> Void
+    let onCommandNewTab: () -> Void
     let onScroll: (CGFloat, CGFloat, Bool) -> Void
     let modeProvider: () -> EditorMode
 
@@ -203,6 +248,8 @@ struct KeyCaptureView: NSViewRepresentable {
         let view = KeyCaptureNSView(frame: .zero)
         view.onKey = onKey
         view.onText = onText
+        view.onCommandDigit = onCommandDigit
+        view.onCommandNewTab = onCommandNewTab
         view.onScroll = onScroll
         view.modeProvider = modeProvider
         KeyCaptureFocusBridge.shared.register(view)
@@ -215,6 +262,8 @@ struct KeyCaptureView: NSViewRepresentable {
     func updateNSView(_ nsView: KeyCaptureNSView, context: Context) {
         nsView.onKey = onKey
         nsView.onText = onText
+        nsView.onCommandDigit = onCommandDigit
+        nsView.onCommandNewTab = onCommandNewTab
         nsView.onScroll = onScroll
         nsView.modeProvider = modeProvider
         KeyCaptureFocusBridge.shared.register(nsView)

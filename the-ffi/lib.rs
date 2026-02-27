@@ -3439,6 +3439,18 @@ fn file_change_type_for_path_event(kind: PathEventKind) -> FileChangeType {
   }
 }
 
+fn normalize_path_for_open(path: &Path) -> PathBuf {
+  let absolute = if path.is_absolute() {
+    path.to_path_buf()
+  } else {
+    env::current_dir()
+      .ok()
+      .map(|cwd| cwd.join(path))
+      .unwrap_or_else(|| path.to_path_buf())
+  };
+  std::fs::canonicalize(&absolute).unwrap_or(absolute)
+}
+
 /// FFI-safe app wrapper with editor management.
 pub struct App {
   inner:                           LibApp,
@@ -3478,6 +3490,8 @@ pub struct App {
   diagnostic_underlines:           Vec<DiagnosticUnderlineEntry>,
   ui_theme:                        Theme,
   loader:                          Option<Arc<Loader>>,
+  native_tab_open_gateway_enabled: bool,
+  native_tab_open_requests:        VecDeque<NativeTabOpenRequest>,
 }
 
 // MARK: - File picker preview FFI types
@@ -3710,6 +3724,7 @@ fn build_preview_data(
 
 #[derive(Serialize)]
 struct BufferTabItemSnapshotJson {
+  buffer_id:      u64,
   buffer_index:   usize,
   title:          String,
   modified:       bool,
@@ -3721,12 +3736,65 @@ struct BufferTabItemSnapshotJson {
 impl From<DefaultBufferTabItemSnapshot> for BufferTabItemSnapshotJson {
   fn from(value: DefaultBufferTabItemSnapshot) -> Self {
     Self {
+      buffer_id: value.buffer_id,
       buffer_index: value.buffer_index,
       title: value.title,
       modified: value.modified,
       is_active: value.is_active,
       file_path: value.file_path.map(|path| path.display().to_string()),
       directory_hint: value.directory_hint,
+    }
+  }
+}
+
+#[derive(Clone, Copy)]
+enum NativeTabOpenRequestKind {
+  FocusExisting,
+  OpenNew,
+}
+
+#[derive(Clone)]
+struct NativeTabOpenRequest {
+  kind:      NativeTabOpenRequestKind,
+  buffer_id: u64,
+  file_path: Option<PathBuf>,
+}
+
+impl NativeTabOpenRequest {
+  fn focus_existing(buffer_id: u64, file_path: Option<PathBuf>) -> Self {
+    Self {
+      kind: NativeTabOpenRequestKind::FocusExisting,
+      buffer_id,
+      file_path,
+    }
+  }
+
+  fn open_new(buffer_id: u64, file_path: Option<PathBuf>) -> Self {
+    Self {
+      kind: NativeTabOpenRequestKind::OpenNew,
+      buffer_id,
+      file_path,
+    }
+  }
+}
+
+#[derive(Serialize)]
+struct NativeTabOpenRequestJson {
+  kind:      &'static str,
+  buffer_id: u64,
+  file_path: Option<String>,
+}
+
+impl From<NativeTabOpenRequest> for NativeTabOpenRequestJson {
+  fn from(value: NativeTabOpenRequest) -> Self {
+    let kind = match value.kind {
+      NativeTabOpenRequestKind::FocusExisting => "focus_existing",
+      NativeTabOpenRequestKind::OpenNew => "open_new",
+    };
+    Self {
+      kind,
+      buffer_id: value.buffer_id,
+      file_path: value.file_path.map(|path| path.to_string_lossy().into_owned()),
     }
   }
 }
@@ -4031,6 +4099,8 @@ impl App {
       diagnostic_underlines: Vec::new(),
       ui_theme,
       loader,
+      native_tab_open_gateway_enabled: false,
+      native_tab_open_requests: VecDeque::new(),
     }
   }
 
@@ -4238,6 +4308,37 @@ impl App {
     max_col
   }
 
+  fn open_file_in_new_buffer_for_native_tab(&mut self, path: &Path) -> std::io::Result<u64> {
+    let content = std::fs::read_to_string(path)?;
+    let viewport = self.active_editor_ref().view().viewport;
+    let opened_index = {
+      let editor = self.active_editor_mut();
+      let view = ViewState::new(viewport, LibPosition::new(0, 0));
+      editor.open_buffer_without_activation(Rope::from_str(&content), view, Some(path.to_path_buf()))
+    };
+
+    {
+      let editor = self.active_editor_mut();
+      if let Some(doc) = editor.buffer_document_mut(opened_index) {
+        doc.set_display_name(
+          path
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_else(|| path.display().to_string()),
+        );
+        let _ = doc.mark_saved();
+      }
+    }
+
+    Ok(
+      self
+        .active_editor_ref()
+        .buffer_snapshot(opened_index)
+        .map(|snapshot| snapshot.buffer_id)
+        .unwrap_or(0),
+    )
+  }
+
   pub fn set_file_path(&mut self, id: ffi::EditorId, path: &str) -> bool {
     if self.activate(id).is_none() {
       return false;
@@ -4248,6 +4349,137 @@ impl App {
       DefaultContext::set_file_path(self, Some(PathBuf::from(path)));
     }
     true
+  }
+
+  pub fn open_file_path(&mut self, id: ffi::EditorId, path: &str) -> bool {
+    if path.is_empty() {
+      return false;
+    }
+    if self.activate(id).is_none() {
+      return false;
+    }
+    <Self as DefaultContext>::open_file(self, Path::new(path)).is_ok()
+  }
+
+  pub fn open_file_path_in_new_tab(&mut self, id: ffi::EditorId, path: &str) -> bool {
+    if path.is_empty() {
+      return false;
+    }
+    if self.activate(id).is_none() {
+      return false;
+    }
+    let normalized_path = normalize_path_for_open(Path::new(path));
+    if let Some(existing_index) = self.active_editor_ref().find_buffer_by_path(&normalized_path) {
+      if let Some(buffer_id) = self
+        .active_editor_ref()
+        .buffer_snapshot(existing_index)
+        .map(|snapshot| snapshot.buffer_id)
+      {
+        if self.native_tab_open_gateway_enabled {
+          self
+            .native_tab_open_requests
+            .push_back(NativeTabOpenRequest::focus_existing(
+              buffer_id,
+              Some(normalized_path),
+            ));
+          self.request_render();
+          return true;
+        }
+        return self.active_editor_mut().set_active_buffer(existing_index);
+      }
+    }
+    let buffer_id = self.open_file_in_new_buffer_for_native_tab(&normalized_path).unwrap_or(0);
+    if buffer_id == 0 {
+      return false;
+    }
+    if self.native_tab_open_gateway_enabled {
+      self
+        .native_tab_open_requests
+        .push_back(NativeTabOpenRequest::open_new(buffer_id, Some(normalized_path)));
+    }
+    self.request_render();
+    true
+  }
+
+  pub fn open_untitled_buffer(&mut self, id: ffi::EditorId) -> u64 {
+    if self.activate(id).is_none() {
+      return 0;
+    }
+
+    self.lsp_close_current_document();
+    self.clear_hover_state();
+    self.clear_signature_help_state();
+
+    let viewport = self.active_editor_ref().view().viewport;
+    let opened_index = {
+      let editor = self.active_editor_mut();
+      let view = ViewState::new(viewport, LibPosition::new(0, 0));
+      editor.open_buffer(Rope::new(), view, None)
+    };
+    let active_path = self
+      .active_editor_ref()
+      .active_file_path()
+      .map(Path::to_path_buf);
+    DefaultContext::set_file_path(self, active_path);
+    self.request_render();
+
+    self
+      .active_editor_ref()
+      .buffer_snapshot(opened_index)
+      .map(|snapshot| snapshot.buffer_id)
+      .unwrap_or(0)
+  }
+
+  pub fn open_untitled_buffer_in_new_tab(&mut self, id: ffi::EditorId) -> u64 {
+    if self.activate(id).is_none() {
+      return 0;
+    }
+
+    let viewport = self.active_editor_ref().view().viewport;
+    let opened_index = {
+      let editor = self.active_editor_mut();
+      let view = ViewState::new(viewport, LibPosition::new(0, 0));
+      editor.open_buffer_without_activation(Rope::new(), view, None)
+    };
+    let buffer_id = self
+      .active_editor_ref()
+      .buffer_snapshot(opened_index)
+      .map(|snapshot| snapshot.buffer_id)
+      .unwrap_or(0);
+    if buffer_id == 0 {
+      return 0;
+    }
+
+    if self.native_tab_open_gateway_enabled {
+      self
+        .native_tab_open_requests
+        .push_back(NativeTabOpenRequest::open_new(buffer_id, None));
+    }
+    self.request_render();
+    buffer_id
+  }
+
+  pub fn active_file_path(&self, id: ffi::EditorId) -> String {
+    self
+      .editor(id)
+      .and_then(|editor| editor.active_file_path())
+      .map(|path| path.to_string_lossy().into_owned())
+      .unwrap_or_default()
+  }
+
+  pub fn set_native_tab_open_gateway(&mut self, enabled: bool) {
+    self.native_tab_open_gateway_enabled = enabled;
+    if !enabled {
+      self.native_tab_open_requests.clear();
+    }
+  }
+
+  pub fn take_native_tab_open_request_path(&mut self) -> String {
+    self
+      .native_tab_open_requests
+      .pop_front()
+      .and_then(|request| serde_json::to_string(&NativeTabOpenRequestJson::from(request)).ok())
+      .unwrap_or_default()
   }
 
   pub fn set_active_cursor(&mut self, id: ffi::EditorId, cursor_id: u64) -> bool {
@@ -4449,6 +4681,23 @@ impl App {
       return false;
     }
     the_default::activate_buffer_tab(self, buffer_index)
+  }
+
+  pub fn close_buffer_tab(&mut self, id: ffi::EditorId, buffer_index: usize) -> bool {
+    if self.activate(id).is_none() {
+      return false;
+    }
+    the_default::close_buffer_tab(self, buffer_index)
+  }
+
+  pub fn close_buffer_by_id(&mut self, id: ffi::EditorId, buffer_id: u64) -> bool {
+    if self.activate(id).is_none() {
+      return false;
+    }
+    let Some(buffer_index) = self.active_editor_ref().find_buffer_by_id(buffer_id) else {
+      return false;
+    };
+    the_default::close_buffer_tab(self, buffer_index)
   }
 
   pub fn pending_keys_json(&self, _id: ffi::EditorId) -> String {
@@ -9491,12 +9740,37 @@ impl DefaultContext for App {
   }
 
   fn open_file(&mut self, path: &Path) -> std::io::Result<()> {
+    let normalized_path = normalize_path_for_open(path);
+
+    if self.native_tab_open_gateway_enabled {
+      let route_context = {
+        let editor = self.active_editor_ref();
+        (editor.active_buffer_index(), editor.find_buffer_by_path(&normalized_path))
+      };
+      if let Some(existing_index) = route_context.1
+        && existing_index != route_context.0
+        && let Some(buffer_id) = self
+          .active_editor_ref()
+          .buffer_snapshot(existing_index)
+          .map(|snapshot| snapshot.buffer_id)
+      {
+        self
+          .native_tab_open_requests
+          .push_back(NativeTabOpenRequest::focus_existing(
+            buffer_id,
+            Some(normalized_path),
+          ));
+        self.request_render();
+        return Ok(());
+      }
+    }
+
     self.lsp_close_current_document();
     self.clear_hover_state();
     self.clear_signature_help_state();
     let reused = {
       let editor = self.active_editor_mut();
-      if let Some(index) = editor.find_buffer_by_path(path) {
+      if let Some(index) = editor.find_buffer_by_path(&normalized_path) {
         let _ = editor.set_active_buffer(index);
         true
       } else {
@@ -9505,28 +9779,36 @@ impl DefaultContext for App {
     };
 
     if !reused {
-      let content = std::fs::read_to_string(path)?;
+      let content = std::fs::read_to_string(&normalized_path)?;
       let viewport = self.active_editor_ref().view().viewport;
+      let native_tab_gateway_enabled = self.native_tab_open_gateway_enabled;
       {
         let editor = self.active_editor_mut();
-        let reused_untitled = editor.can_reuse_active_untitled_buffer_for_open();
-        if reused_untitled {
-          let _ = editor.replace_active_buffer(Rope::from_str(&content), Some(path.to_path_buf()));
+        let replace_active = if native_tab_gateway_enabled {
+          !editor.document().flags().modified
+        } else {
+          editor.can_reuse_active_untitled_buffer_for_open()
+        };
+        if replace_active {
+          let _ = editor.replace_active_buffer(
+            Rope::from_str(&content),
+            Some(normalized_path.clone()),
+          );
         } else {
           let view = ViewState::new(viewport, LibPosition::new(0, 0));
-          let _ = editor.open_buffer(Rope::from_str(&content), view, Some(path.to_path_buf()));
+          let _ = editor.open_buffer(Rope::from_str(&content), view, Some(normalized_path.clone()));
         }
         let doc = editor.document_mut();
         doc.set_display_name(
-          path
+          normalized_path
             .file_name()
             .map(|name| name.to_string_lossy().to_string())
-            .unwrap_or_else(|| path.display().to_string()),
+            .unwrap_or_else(|| normalized_path.display().to_string()),
         );
         let _ = doc.mark_saved();
       }
     }
-    DefaultContext::set_file_path(self, Some(path.to_path_buf()));
+    DefaultContext::set_file_path(self, Some(normalized_path));
     self.request_render();
     Ok(())
   }
@@ -10016,6 +10298,13 @@ mod ffi {
     fn set_viewport(self: &mut App, id: EditorId, viewport: Rect) -> bool;
     fn set_scroll(self: &mut App, id: EditorId, scroll: Position) -> bool;
     fn set_file_path(self: &mut App, id: EditorId, path: &str) -> bool;
+    fn open_file_path(self: &mut App, id: EditorId, path: &str) -> bool;
+    fn open_file_path_in_new_tab(self: &mut App, id: EditorId, path: &str) -> bool;
+    fn open_untitled_buffer(self: &mut App, id: EditorId) -> u64;
+    fn open_untitled_buffer_in_new_tab(self: &mut App, id: EditorId) -> u64;
+    fn active_file_path(self: &App, id: EditorId) -> String;
+    fn set_native_tab_open_gateway(self: &mut App, enabled: bool);
+    fn take_native_tab_open_request_path(self: &mut App) -> String;
     fn set_active_cursor(self: &mut App, id: EditorId, cursor_id: u64) -> bool;
     fn clear_active_cursor(self: &mut App, id: EditorId) -> bool;
     fn cursor_ids(self: &App, id: EditorId) -> Vec<u64>;
@@ -10028,6 +10317,8 @@ mod ffi {
     fn ui_tree_json(self: &mut App, id: EditorId) -> String;
     fn buffer_tabs_snapshot_json(self: &mut App, id: EditorId) -> String;
     fn activate_buffer_tab(self: &mut App, id: EditorId, buffer_index: usize) -> bool;
+    fn close_buffer_tab(self: &mut App, id: EditorId, buffer_index: usize) -> bool;
+    fn close_buffer_by_id(self: &mut App, id: EditorId, buffer_id: u64) -> bool;
     fn message_snapshot_json(self: &mut App, id: EditorId) -> String;
     fn message_events_since_json(self: &mut App, id: EditorId, seq: u64) -> String;
     fn ui_event_json(self: &mut App, id: EditorId, event_json: &str) -> bool;

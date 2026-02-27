@@ -1,3 +1,6 @@
+import Foundation
+import TheEditorFFI
+
 
 public class App: AppRefMut {
     var isOwned: Bool = true
@@ -64,6 +67,34 @@ extension AppRefMut {
         })
     }
 
+    public func open_file_path<GenericToRustStr: ToRustStr>(_ id: EditorId, _ path: GenericToRustStr) -> Bool {
+        return path.toRustStr({ pathAsRustStr in
+            __swift_bridge__$App$open_file_path(ptr, id.intoFfiRepr(), pathAsRustStr)
+        })
+    }
+
+    public func open_file_path_in_new_tab<GenericToRustStr: ToRustStr>(_ id: EditorId, _ path: GenericToRustStr) -> Bool {
+        return path.toRustStr({ pathAsRustStr in
+            __swift_bridge__$App$open_file_path_in_new_tab(ptr, id.intoFfiRepr(), pathAsRustStr)
+        })
+    }
+
+    public func open_untitled_buffer(_ id: EditorId) -> UInt64 {
+        __swift_bridge__$App$open_untitled_buffer(ptr, id.intoFfiRepr())
+    }
+
+    public func open_untitled_buffer_in_new_tab(_ id: EditorId) -> UInt64 {
+        __swift_bridge__$App$open_untitled_buffer_in_new_tab(ptr, id.intoFfiRepr())
+    }
+
+    public func set_native_tab_open_gateway(_ enabled: Bool) {
+        __swift_bridge__$App$set_native_tab_open_gateway(ptr, enabled)
+    }
+
+    public func take_native_tab_open_request_path() -> RustString {
+        RustString(ptr: __swift_bridge__$App$take_native_tab_open_request_path(ptr))
+    }
+
     public func set_active_cursor(_ id: EditorId, _ cursor_id: UInt64) -> Bool {
         __swift_bridge__$App$set_active_cursor(ptr, id.intoFfiRepr(), cursor_id)
     }
@@ -106,6 +137,14 @@ extension AppRefMut {
 
     public func activate_buffer_tab(_ id: EditorId, _ buffer_index: UInt) -> Bool {
         __swift_bridge__$App$activate_buffer_tab(ptr, id.intoFfiRepr(), buffer_index)
+    }
+
+    public func close_buffer_tab(_ id: EditorId, _ buffer_index: UInt) -> Bool {
+        __swift_bridge__$App$close_buffer_tab(ptr, id.intoFfiRepr(), buffer_index)
+    }
+
+    public func close_buffer_by_id(_ id: EditorId, _ buffer_id: UInt64) -> Bool {
+        __swift_bridge__$App$close_buffer_by_id(ptr, id.intoFfiRepr(), buffer_id)
     }
 
     public func message_snapshot_json(_ id: EditorId) -> RustString {
@@ -314,6 +353,10 @@ public class AppRef {
     }
 }
 extension AppRef {
+    public func active_file_path(_ id: EditorId) -> RustString {
+        RustString(ptr: __swift_bridge__$App$active_file_path(ptr, id.intoFfiRepr()))
+    }
+
     public func cursor_ids(_ id: EditorId) -> RustVec<UInt64> {
         RustVec(ptr: __swift_bridge__$App$cursor_ids(ptr, id.intoFfiRepr()))
     }

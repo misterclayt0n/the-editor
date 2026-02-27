@@ -47,6 +47,7 @@ pub use buffer_tabs::{
   BufferTabsSnapshot,
   BufferTabsSnapshotOptions,
   activate_buffer_tab,
+  close_buffer_tab,
   buffer_tabs_snapshot,
   buffer_tabs_snapshot_for_editor,
   buffer_tabs_snapshot_for_editor_with_options,

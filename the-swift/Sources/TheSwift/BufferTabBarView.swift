@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct BufferTabItemSnapshot: Identifiable, Decodable, Equatable {
+    let bufferId: UInt64
     let bufferIndex: Int
     let title: String
     let modified: Bool
@@ -8,7 +9,7 @@ struct BufferTabItemSnapshot: Identifiable, Decodable, Equatable {
     let filePath: String?
     let directoryHint: String?
 
-    var id: Int { bufferIndex }
+    var id: UInt64 { bufferId }
 }
 
 struct BufferTabsSnapshot: Decodable, Equatable {

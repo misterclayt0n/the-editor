@@ -9477,6 +9477,10 @@ impl DefaultContext for App {
     &mut self.active_state_mut().file_picker
   }
 
+  fn supports_native_file_explorer(&self) -> bool {
+    true
+  }
+
   fn global_search(&mut self) {
     self.start_global_search();
   }

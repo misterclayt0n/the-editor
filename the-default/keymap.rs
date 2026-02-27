@@ -733,6 +733,8 @@ fn command_hint_label(command: Command) -> String {
   match command {
     Command::FilePicker => "find file".to_string(),
     Command::FilePickerInCurrentDirectory => "find file in buffer dir".to_string(),
+    Command::FileExplorer => "file explorer".to_string(),
+    Command::FileExplorerInCurrentBufferDirectory => "file explorer in buffer dir".to_string(),
     Command::BufferPicker => "find buffer".to_string(),
     Command::JumplistPicker => "find jump".to_string(),
     Command::DiagnosticsPicker => "find diagnostic".to_string(),
@@ -1029,8 +1031,8 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     "space" => { "Space"
       "f" => file_picker,
       "F" => file_picker_in_current_directory,
-      // "e" => file_explorer,
-      // "E" => file_explorer_in_current_buffer_directory,
+      "e" => file_explorer,
+      "E" => file_explorer_in_current_buffer_directory,
       "b" => buffer_picker,
       "j" => jumplist_picker,
       "s" => lsp_document_symbols,

@@ -512,6 +512,12 @@ pub trait DefaultContext: Sized + 'static {
   ) -> Result<Vec<crate::file_picker::FilePickerChangedFileItem>, String> {
     Ok(Vec::new())
   }
+  fn supports_native_file_explorer(&self) -> bool {
+    false
+  }
+  fn open_native_file_explorer(&mut self, _current_buffer_directory: bool) -> bool {
+    false
+  }
   fn registers(&self) -> &Registers;
   fn registers_mut(&mut self) -> &mut Registers;
   fn register(&self) -> Option<char>;
@@ -1386,6 +1392,16 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::FilePicker => crate::file_picker::open_file_picker(ctx),
     Command::FilePickerInCurrentDirectory => {
       crate::file_picker::open_file_picker_in_current_directory(ctx);
+    },
+    Command::FileExplorer => {
+      if ctx.supports_native_file_explorer() && !ctx.open_native_file_explorer(false) {
+        crate::file_picker::open_file_picker(ctx);
+      }
+    },
+    Command::FileExplorerInCurrentBufferDirectory => {
+      if ctx.supports_native_file_explorer() && !ctx.open_native_file_explorer(true) {
+        crate::file_picker::open_file_picker_in_current_directory(ctx);
+      }
     },
     Command::BufferPicker => crate::file_picker::open_buffer_picker(ctx),
     Command::JumplistPicker => crate::file_picker::open_jumplist_picker(ctx),
@@ -5696,6 +5712,10 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "global_search" => Some(Command::global_search()),
     "file_picker" => Some(Command::file_picker()),
     "file_picker_in_current_directory" => Some(Command::file_picker_in_current_directory()),
+    "file_explorer" => Some(Command::file_explorer()),
+    "file_explorer_in_current_buffer_directory" => {
+      Some(Command::file_explorer_in_current_buffer_directory())
+    },
     "buffer_picker" => Some(Command::buffer_picker()),
     "jumplist_picker" => Some(Command::jumplist_picker()),
     "diagnostics_picker" => Some(Command::diagnostics_picker()),

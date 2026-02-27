@@ -42,201 +42,207 @@ struct EditorView: View {
         let splitResizeHandles = splitResizeHandles(from: model.splitSeparators, cellSize: cellSize)
         let pointerPanes = pointerPanes(from: model.framePlan, cellSize: cellSize)
         GeometryReader { _ in
-            VStack(spacing: 0) {
-                GeometryReader { contentProxy in
-                    ZStack {
-                        Canvas { context, size in
-                            drawFrame(
-                                in: context,
-                                size: size,
-                                framePlan: model.framePlan,
-                                fallbackPlan: model.plan,
-                                cellSize: cellSize,
-                                bufferFont: bufferFont,
-                                bufferNSFont: bufferNSFont,
-                                cursorPickState: cursorPickState
-                            )
-                        }
-                        .background(SwiftUI.Color.black)
+            HSplitView {
+                FileTreeSidebarView()
+                    .frame(minWidth: 180, idealWidth: 240, maxWidth: 360)
 
-                        UiOverlayHost(
-                            tree: model.uiTree,
-                            cellSize: cellSize,
-                            filePickerSnapshot: model.filePickerSnapshot,
-                            filePickerPreviewModel: model.filePickerPreviewModel,
-                            pendingKeys: model.pendingKeys,
-                            onSelectCommand: { index in
-                                model.selectCommandPalette(index: index)
-                            },
-                            onSubmitCommand: { index in
-                                model.submitCommandPalette(index: index)
-                            },
-                            onCloseCommandPalette: {
-                                model.closeCommandPalette()
-                            },
-                            onQueryChange: { query in
-                                model.setCommandPaletteQuery(query)
-                            },
-                            onSearchQueryChange: { query in
-                                model.setSearchQuery(query)
-                            },
-                            onSearchPrev: {
-                                model.searchPrev()
-                            },
-                            onSearchNext: {
-                                model.searchNext()
-                            },
-                            onSearchClose: {
-                                model.closeSearch()
-                            },
-                            onSearchSubmit: {
-                                model.submitSearch()
-                            },
-                            onFilePickerQueryChange: { query in
-                                model.setFilePickerQuery(query)
-                            },
-                            onFilePickerSubmit: { index in
-                                model.submitFilePicker(index: index)
-                            },
-                            onFilePickerClose: {
-                                model.closeFilePicker()
-                            },
-                            onFilePickerSelectionChange: { index in
-                                model.filePickerSelectIndex(index)
-                            },
-                            onFilePickerPreviewWindowRequest: { offset, visibleRows, overscan in
-                                model.filePickerPreviewWindowRequest(offset: offset, visibleRows: visibleRows, overscan: overscan)
-                            },
-                            colorForHighlight: { highlightId in
-                                model.colorForHighlight(highlightId)
-                            },
-                            onInputPromptQueryChange: { query in
-                                model.setSearchQuery(query)
-                            },
-                            onInputPromptClose: {
-                                model.closeSearch()
-                            },
-                            onInputPromptSubmit: {
-                                model.submitSearch()
+                VStack(spacing: 0) {
+                    GeometryReader { contentProxy in
+                        ZStack {
+                            Canvas { context, size in
+                                drawFrame(
+                                    in: context,
+                                    size: size,
+                                    framePlan: model.framePlan,
+                                    fallbackPlan: model.plan,
+                                    cellSize: cellSize,
+                                    bufferFont: bufferFont,
+                                    bufferNSFont: bufferNSFont,
+                                    cursorPickState: cursorPickState
+                                )
+                            }
+                            .background(SwiftUI.Color.black)
+
+                            UiOverlayHost(
+                                tree: model.uiTree,
+                                cellSize: cellSize,
+                                filePickerSnapshot: model.filePickerSnapshot,
+                                filePickerPreviewModel: model.filePickerPreviewModel,
+                                pendingKeys: model.pendingKeys,
+                                onSelectCommand: { index in
+                                    model.selectCommandPalette(index: index)
+                                },
+                                onSubmitCommand: { index in
+                                    model.submitCommandPalette(index: index)
+                                },
+                                onCloseCommandPalette: {
+                                    model.closeCommandPalette()
+                                },
+                                onQueryChange: { query in
+                                    model.setCommandPaletteQuery(query)
+                                },
+                                onSearchQueryChange: { query in
+                                    model.setSearchQuery(query)
+                                },
+                                onSearchPrev: {
+                                    model.searchPrev()
+                                },
+                                onSearchNext: {
+                                    model.searchNext()
+                                },
+                                onSearchClose: {
+                                    model.closeSearch()
+                                },
+                                onSearchSubmit: {
+                                    model.submitSearch()
+                                },
+                                onFilePickerQueryChange: { query in
+                                    model.setFilePickerQuery(query)
+                                },
+                                onFilePickerSubmit: { index in
+                                    model.submitFilePicker(index: index)
+                                },
+                                onFilePickerClose: {
+                                    model.closeFilePicker()
+                                },
+                                onFilePickerSelectionChange: { index in
+                                    model.filePickerSelectIndex(index)
+                                },
+                                onFilePickerPreviewWindowRequest: { offset, visibleRows, overscan in
+                                    model.filePickerPreviewWindowRequest(offset: offset, visibleRows: visibleRows, overscan: overscan)
+                                },
+                                colorForHighlight: { highlightId in
+                                    model.colorForHighlight(highlightId)
+                                },
+                                onInputPromptQueryChange: { query in
+                                    model.setSearchQuery(query)
+                                },
+                                onInputPromptClose: {
+                                    model.closeSearch()
+                                },
+                                onInputPromptSubmit: {
+                                    model.submitSearch()
+                                }
+                            )
+
+                            if !isOverlayOpen {
+                                if let completion = completionSnapshot {
+                                    CompletionPopupView(
+                                        snapshot: completion,
+                                        cursorOrigin: cursorPixelPosition(
+                                            plan: model.plan,
+                                            paneOrigin: activePaneOrigin,
+                                            cellSize: cellSize
+                                        ),
+                                        cellSize: cellSize,
+                                        containerSize: contentProxy.size,
+                                        languageHint: model.completionDocsLanguageHint(),
+                                        onSelect: { index in
+                                            model.selectCompletion(index: index)
+                                        },
+                                        onSubmit: { index in
+                                            model.submitCompletion(index: index)
+                                        }
+                                    )
+                                    .allowsHitTesting(true)
+                                } else if let hover = hoverSnapshot {
+                                    HoverPopupView(
+                                        snapshot: hover,
+                                        cursorOrigin: cursorPixelPosition(
+                                            plan: model.plan,
+                                            paneOrigin: activePaneOrigin,
+                                            cellSize: cellSize
+                                        ),
+                                        cellSize: cellSize,
+                                        containerSize: contentProxy.size,
+                                        languageHint: model.completionDocsLanguageHint()
+                                    )
+                                    .allowsHitTesting(true)
+                                } else if let signature = signatureSnapshot {
+                                    SignatureHelpPopupView(
+                                        snapshot: signature,
+                                        cursorOrigin: cursorPixelPosition(
+                                            plan: model.plan,
+                                            paneOrigin: activePaneOrigin,
+                                            cellSize: cellSize
+                                        ),
+                                        cellSize: cellSize,
+                                        containerSize: contentProxy.size,
+                                        languageHint: model.completionDocsLanguageHint()
+                                    )
+                                    .allowsHitTesting(true)
+                                }
+                            }
+                        }
+                        .background(
+                            Group {
+                                if !isOverlayOpen {
+                                    KeyCaptureView(
+                                        onKey: { event in
+                                            model.handleKeyEvent(event)
+                                        },
+                                        onText: { text, modifiers in
+                                            model.handleText(text, modifiers: modifiers)
+                                        },
+                                        onCommandDigit: { digit in
+                                            _ = model.selectNativeWindowTab(indexOneBased: digit)
+                                        },
+                                        onCommandNewTab: {
+                                            _ = model.openNativeUntitledTab()
+                                        },
+                                        onScroll: { _, _, _ in },
+                                        modeProvider: {
+                                            model.mode
+                                        }
+                                    )
+                                    .allowsHitTesting(false)
+                                }
                             }
                         )
-
-                        if !isOverlayOpen {
-                            if let completion = completionSnapshot {
-                                CompletionPopupView(
-                                    snapshot: completion,
-                                    cursorOrigin: cursorPixelPosition(
-                                        plan: model.plan,
-                                        paneOrigin: activePaneOrigin,
-                                        cellSize: cellSize
-                                    ),
-                                    cellSize: cellSize,
-                                    containerSize: contentProxy.size,
-                                    languageHint: model.completionDocsLanguageHint(),
-                                    onSelect: { index in
-                                        model.selectCompletion(index: index)
-                                    },
-                                    onSubmit: { index in
-                                        model.submitCompletion(index: index)
-                                    }
-                                )
-                                .allowsHitTesting(true)
-                            } else if let hover = hoverSnapshot {
-                                HoverPopupView(
-                                    snapshot: hover,
-                                    cursorOrigin: cursorPixelPosition(
-                                        plan: model.plan,
-                                        paneOrigin: activePaneOrigin,
-                                        cellSize: cellSize
-                                    ),
-                                    cellSize: cellSize,
-                                    containerSize: contentProxy.size,
-                                    languageHint: model.completionDocsLanguageHint()
-                                )
-                                .allowsHitTesting(true)
-                            } else if let signature = signatureSnapshot {
-                                SignatureHelpPopupView(
-                                    snapshot: signature,
-                                    cursorOrigin: cursorPixelPosition(
-                                        plan: model.plan,
-                                        paneOrigin: activePaneOrigin,
-                                        cellSize: cellSize
-                                    ),
-                                    cellSize: cellSize,
-                                    containerSize: contentProxy.size,
-                                    languageHint: model.completionDocsLanguageHint()
-                                )
-                                .allowsHitTesting(true)
+                        .overlay(
+                            Group {
+                                if !isOverlayOpen && !isCompletionOpen && !isHoverOpen && !isSignatureOpen {
+                                    ScrollCaptureView(
+                                        onScroll: { deltaX, deltaY, precise in
+                                            model.handlePointerScroll(deltaX: deltaX, deltaY: deltaY, precise: precise)
+                                        },
+                                        onPointer: { event in
+                                            model.handlePointerEvent(event)
+                                        },
+                                        separators: splitResizeHandles,
+                                        panes: pointerPanes,
+                                        cellSize: cellSize,
+                                        onSplitResize: { splitId, point in
+                                            model.resizeSplit(splitId: splitId, pixelPoint: point)
+                                        }
+                                    )
+                                    .allowsHitTesting(true)
+                                }
                             }
+                        )
+                        .overlay(
+                            KeySequenceIndicator(keys: model.pendingKeys, hints: model.pendingKeyHints)
+                                .padding(.bottom, 28)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom),
+                            alignment: .bottom
+                        )
+                        .onAppear {
+                            model.updateViewport(pixelSize: contentProxy.size, cellSize: cellSize)
                         }
-                    }
-                    .background(
-                        Group {
-                            if !isOverlayOpen {
-                                KeyCaptureView(
-                                    onKey: { event in
-                                        model.handleKeyEvent(event)
-                                    },
-                                    onText: { text, modifiers in
-                                        model.handleText(text, modifiers: modifiers)
-                                    },
-                                    onCommandDigit: { digit in
-                                        _ = model.selectNativeWindowTab(indexOneBased: digit)
-                                    },
-                                    onCommandNewTab: {
-                                        _ = model.openNativeUntitledTab()
-                                    },
-                                    onScroll: { _, _, _ in },
-                                    modeProvider: {
-                                        model.mode
-                                    }
-                                )
-                                .allowsHitTesting(false)
+                        .onChange(of: contentProxy.size) { newSize in
+                            model.updateViewport(pixelSize: newSize, cellSize: cellSize)
+                        }
+                        .onChange(of: isCompletionOpen) { isOpen in
+                            guard !isOpen else {
+                                return
                             }
-                        }
-                    )
-                    .overlay(
-                        Group {
-                            if !isOverlayOpen && !isCompletionOpen && !isHoverOpen && !isSignatureOpen {
-                                ScrollCaptureView(
-                                    onScroll: { deltaX, deltaY, precise in
-                                        model.handlePointerScroll(deltaX: deltaX, deltaY: deltaY, precise: precise)
-                                    },
-                                    onPointer: { event in
-                                        model.handlePointerEvent(event)
-                                    },
-                                    separators: splitResizeHandles,
-                                    panes: pointerPanes,
-                                    cellSize: cellSize,
-                                    onSplitResize: { splitId, point in
-                                        model.resizeSplit(splitId: splitId, pixelPoint: point)
-                                    }
-                                )
-                                .allowsHitTesting(true)
+                            DispatchQueue.main.async {
+                                KeyCaptureFocusBridge.shared.reclaimActive()
                             }
-                        }
-                    )
-                    .overlay(
-                        KeySequenceIndicator(keys: model.pendingKeys, hints: model.pendingKeyHints)
-                            .padding(.bottom, 28)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom),
-                        alignment: .bottom
-                    )
-                    .onAppear {
-                        model.updateViewport(pixelSize: contentProxy.size, cellSize: cellSize)
-                    }
-                    .onChange(of: contentProxy.size) { newSize in
-                        model.updateViewport(pixelSize: newSize, cellSize: cellSize)
-                    }
-                    .onChange(of: isCompletionOpen) { isOpen in
-                        guard !isOpen else {
-                            return
-                        }
-                        DispatchQueue.main.async {
-                            KeyCaptureFocusBridge.shared.reclaimActive()
                         }
                     }
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             .background(
                 WindowTabbingBridge(

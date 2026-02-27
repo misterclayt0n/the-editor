@@ -25,7 +25,7 @@
 ### Swift Native File Tree (`docs/SWIFT_FILE_TREE_PLAN.md`)
 - [x] Phase 0: Command + capability wiring (`space e` / `space E`)
 - [ ] Phase 1: Rust file tree state + snapshot API
-- [ ] Phase 2: Swift native sidebar skeleton
+- [x] Phase 2: Swift native sidebar skeleton
 - [ ] Phase 3: End-to-end interaction
 - [ ] Phase 4: Xcode-like polish
 - [ ] Phase 5: Performance + correctness hardening

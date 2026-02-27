@@ -3463,6 +3463,13 @@ fn log_shared_lsp_counters(context: &str) {
   );
 }
 
+fn log_shared_lsp_debug(context: &str, message: impl AsRef<str>) {
+  if !shared_lsp_trace_enabled() {
+    return;
+  }
+  eprintln!("[the-ffi lsp-broker] {context} {}", message.as_ref());
+}
+
 fn watch_statusline_text_for_state(state: FileWatchReloadState) -> Option<String> {
   match state {
     FileWatchReloadState::Conflict => Some("watch: conflict".to_string()),
@@ -5715,6 +5722,10 @@ impl App {
     let Some(key) = self.lsp_session_key.take() else {
       return;
     };
+    log_shared_lsp_debug(
+      "detach",
+      format!("client_id={} session_key={:?}", self.lsp_client_id, key),
+    );
     lsp_broker::unregister_client(self.lsp_client_id, &key);
     log_shared_lsp_counters("detached");
   }
@@ -5761,6 +5772,21 @@ impl App {
         .clone()
         .ok_or_else(|| "missing broker session".to_string())?;
       let request_id = self.next_lsp_client_request_id();
+      log_shared_lsp_debug(
+        "send_request_shared",
+        format!(
+          "method={} request_id={} ready={} doc_opened={} uri={}",
+          method,
+          request_id,
+          self.lsp_ready,
+          self.lsp_document.as_ref().is_some_and(|doc| doc.opened),
+          self
+            .lsp_document
+            .as_ref()
+            .map(|doc| doc.uri.clone())
+            .unwrap_or_else(|| "<none>".to_string())
+        ),
+      );
       lsp_broker::send_request(
         self.lsp_client_id,
         &key,
@@ -5843,8 +5869,54 @@ impl App {
   }
 
   fn refresh_lsp_runtime_for_active_file(&mut self) {
+    log_shared_lsp_debug(
+      "refresh_begin",
+      format!(
+        "shared={} file_path={} prev_ready={} prev_doc_opened={} prev_session_key={:?}",
+        self.lsp_shared_enabled,
+        self
+          .file_path()
+          .map(|path| path.display().to_string())
+          .unwrap_or_else(|| "<none>".to_string()),
+        self.lsp_ready,
+        self.lsp_document.as_ref().is_some_and(|doc| doc.opened),
+        self.lsp_session_key
+      ),
+    );
+
+    let (config, configured) = self.lsp_runtime_config_for_active_file();
+    self.lsp_server_name = config.server().map(|server| server.name().to_string());
+    let target_session_key = if self.lsp_shared_enabled && configured {
+      lsp_broker::SessionKey::from_runtime_config(&config)
+    } else {
+      None
+    };
+    let reuse_shared_session = self.lsp_shared_enabled
+      && self
+        .lsp_session_key
+        .as_ref()
+        .zip(target_session_key.as_ref())
+        .is_some_and(|(current, next)| current == next);
+    log_shared_lsp_debug(
+      "refresh_session_plan",
+      format!(
+        "configured={} server={} workspace={} current_key={:?} target_key={:?} reuse={}",
+        configured,
+        self
+          .lsp_server_name
+          .clone()
+          .unwrap_or_else(|| "<none>".to_string()),
+        config.workspace_root().display(),
+        self.lsp_session_key,
+        target_session_key,
+        reuse_shared_session
+      ),
+    );
+
     self.lsp_close_current_document();
-    self.lsp_ready = false;
+    if !reuse_shared_session {
+      self.lsp_ready = false;
+    }
     self.lsp_spinner_index = 0;
     self.diagnostics.clear();
     self.lsp_active_progress_tokens.clear();
@@ -5855,7 +5927,9 @@ impl App {
     self.clear_signature_help_state();
     self.cancel_auto_signature_help();
     if self.lsp_shared_enabled {
-      self.lsp_detach_shared_session();
+      if !reuse_shared_session {
+        self.lsp_detach_shared_session();
+      }
     } else {
       let _ = self.lsp_runtime.shutdown();
     }
@@ -5865,26 +5939,81 @@ impl App {
       active_path.and_then(|path| build_lsp_document_state(&path, self.loader.as_deref()));
     self.lsp_sync_watched_file_state();
 
-    let (config, configured) = self.lsp_runtime_config_for_active_file();
-    self.lsp_server_name = config.server().map(|server| server.name().to_string());
-
     if configured {
       self.set_lsp_status(LspStatusPhase::Starting, Some("starting".into()));
       if self.lsp_shared_enabled {
-        if let Some(session_key) = lsp_broker::SessionKey::from_runtime_config(&config) {
-          if let Err(err) =
-            lsp_broker::register_client(self.lsp_client_id, session_key.clone(), config)
-          {
-            self.set_lsp_status_error(err.as_str());
-            self.publish_lsp_message(
-              the_lib::messages::MessageLevel::Error,
-              format!("failed to attach shared lsp session: {err}"),
-            );
+        if let Some(session_key) = target_session_key {
+          if !reuse_shared_session {
+            if let Err(err) =
+              lsp_broker::register_client(self.lsp_client_id, session_key.clone(), config)
+            {
+              self.set_lsp_status_error(err.as_str());
+              self.publish_lsp_message(
+                the_lib::messages::MessageLevel::Error,
+                format!("failed to attach shared lsp session: {err}"),
+              );
+            } else {
+              self.lsp_session_key = Some(session_key.clone());
+              log_shared_lsp_counters("attached");
+              log_shared_lsp_debug(
+                "refresh_attach_ok",
+                format!(
+                  "client_id={} session_key={:?}",
+                  self.lsp_client_id, self.lsp_session_key
+                ),
+              );
+            }
           } else {
-            self.lsp_session_key = Some(session_key);
-            log_shared_lsp_counters("attached");
+            self.lsp_session_key = Some(session_key.clone());
+            log_shared_lsp_debug(
+              "refresh_reuse_existing_session",
+              format!(
+                "client_id={} session_key={:?}",
+                self.lsp_client_id, self.lsp_session_key
+              ),
+            );
+          }
+
+          if self.lsp_session_key.is_some() {
+            if let Some(server_name) = self.lsp_server_name.clone()
+              && self.lsp_server_capabilities_snapshot().is_some()
+            {
+              // Re-attaching to an already initialized broker session does not
+              // necessarily replay CapabilitiesRegistered, so hydrate readiness
+              // from the shared capability registry.
+              self.lsp_ready = true;
+              self.lsp_open_current_document();
+              self.set_lsp_status(LspStatusPhase::Ready, Some(server_name));
+              log_shared_lsp_debug(
+                "refresh_attach_hydrate_ready",
+                format!(
+                  "ready={} doc_opened={} active_uri={}",
+                  self.lsp_ready,
+                  self.lsp_document.as_ref().is_some_and(|doc| doc.opened),
+                  self
+                    .lsp_document
+                    .as_ref()
+                    .map(|doc| doc.uri.clone())
+                    .unwrap_or_else(|| "<none>".to_string())
+                ),
+              );
+            } else {
+              self.lsp_ready = false;
+              log_shared_lsp_debug(
+                "refresh_attach_wait_capabilities",
+                format!(
+                  "server={} caps_available={}",
+                  self
+                    .lsp_server_name
+                    .clone()
+                    .unwrap_or_else(|| "<none>".to_string()),
+                  self.lsp_server_capabilities_snapshot().is_some()
+                ),
+              );
+            }
           }
         } else {
+          self.lsp_ready = false;
           self.set_lsp_status(LspStatusPhase::Off, Some("unavailable".into()));
         }
       } else {
@@ -5898,6 +6027,7 @@ impl App {
         }
       }
     } else {
+      self.lsp_ready = false;
       self.set_lsp_status(LspStatusPhase::Off, Some("unavailable".into()));
     }
   }
@@ -6057,6 +6187,18 @@ impl App {
             .lsp_server_name
             .as_deref()
             .is_some_and(|name| name == server_name);
+          log_shared_lsp_debug(
+            "event_capabilities_registered",
+            format!(
+              "server={} matches_configured={} configured_server={}",
+              server_name,
+              matches_configured_server,
+              self
+                .lsp_server_name
+                .clone()
+                .unwrap_or_else(|| "<none>".to_string())
+            ),
+          );
           if matches_configured_server {
             self.lsp_ready = true;
             self.lsp_active_progress_tokens.clear();
@@ -6156,6 +6298,18 @@ impl App {
         },
         LspEvent::DiagnosticsPublished { diagnostics } => {
           let diagnostic_uri = diagnostics.uri.clone();
+          log_shared_lsp_debug(
+            "event_diagnostics",
+            format!(
+              "uri={} active_uri={}",
+              diagnostic_uri,
+              self
+                .lsp_document
+                .as_ref()
+                .map(|state| state.uri.clone())
+                .unwrap_or_else(|| "<none>".to_string())
+            ),
+          );
           let active_uri = self.lsp_document.as_ref().map(|state| state.uri.as_str());
           let previous = self
             .diagnostics
@@ -7294,7 +7448,23 @@ impl App {
     trigger: SignatureHelpTriggerSource,
     announce_failures: bool,
   ) -> bool {
+    log_shared_lsp_debug(
+      "signature_help_begin",
+      format!(
+        "trigger={:?} announce_failures={} ready={} doc_opened={} uri={}",
+        trigger,
+        announce_failures,
+        self.lsp_ready,
+        self.lsp_document.as_ref().is_some_and(|doc| doc.opened),
+        self
+          .lsp_document
+          .as_ref()
+          .map(|doc| doc.uri.clone())
+          .unwrap_or_else(|| "<none>".to_string())
+      ),
+    );
     if !self.lsp_supports(LspCapability::SignatureHelp) {
+      log_shared_lsp_debug("signature_help_skip", "reason=unsupported");
       if announce_failures {
         self.publish_lsp_message(
           the_lib::messages::MessageLevel::Warning,
@@ -7305,6 +7475,7 @@ impl App {
     }
 
     let Some((uri, position)) = self.current_lsp_position() else {
+      log_shared_lsp_debug("signature_help_skip", "reason=no_position");
       if announce_failures {
         self.publish_lsp_message(
           the_lib::messages::MessageLevel::Warning,
@@ -7315,6 +7486,10 @@ impl App {
     };
 
     let context = trigger.to_lsp_context();
+    log_shared_lsp_debug(
+      "signature_help_dispatch",
+      format!("uri={} line={} char={}", uri, position.line, position.character),
+    );
     self.dispatch_lsp_request(
       "textDocument/signatureHelp",
       signature_help_params(&uri, position, &context),
@@ -7328,7 +7503,23 @@ impl App {
     trigger: CompletionTriggerSource,
     announce_empty: bool,
   ) -> bool {
+    log_shared_lsp_debug(
+      "completion_begin",
+      format!(
+        "trigger={:?} announce_empty={} ready={} doc_opened={} uri={}",
+        trigger,
+        announce_empty,
+        self.lsp_ready,
+        self.lsp_document.as_ref().is_some_and(|doc| doc.opened),
+        self
+          .lsp_document
+          .as_ref()
+          .map(|doc| doc.uri.clone())
+          .unwrap_or_else(|| "<none>".to_string())
+      ),
+    );
     if !self.lsp_supports(LspCapability::Completion) {
+      log_shared_lsp_debug("completion_skip", "reason=unsupported");
       if matches!(trigger, CompletionTriggerSource::Manual) {
         self.publish_lsp_message(
           the_lib::messages::MessageLevel::Warning,
@@ -7339,6 +7530,7 @@ impl App {
     }
 
     let Some((uri, position)) = self.current_lsp_position() else {
+      log_shared_lsp_debug("completion_skip", "reason=no_position");
       if matches!(trigger, CompletionTriggerSource::Manual) {
         self.publish_lsp_message(
           the_lib::messages::MessageLevel::Warning,
@@ -7348,6 +7540,7 @@ impl App {
       return false;
     };
     let Some(cursor) = self.active_cursor_char_idx() else {
+      log_shared_lsp_debug("completion_skip", "reason=no_cursor");
       return false;
     };
     let replace_start = self.completion_replace_start_at_cursor(cursor);
@@ -7355,6 +7548,13 @@ impl App {
     self.lsp_completion_generation = self.lsp_completion_generation.wrapping_add(1);
     let generation = self.lsp_completion_generation;
     let context = trigger.to_lsp_context();
+    log_shared_lsp_debug(
+      "completion_dispatch",
+      format!(
+        "uri={} line={} char={} cursor={} replace_start={} generation={}",
+        uri, position.line, position.character, cursor, replace_start, generation
+      ),
+    );
     self.dispatch_lsp_request(
       "textDocument/completion",
       completion_params(&uri, position, &context),
@@ -7616,17 +7816,39 @@ impl App {
   }
 
   fn lsp_supports(&self, capability: LspCapability) -> bool {
-    self
+    let supported = self
       .lsp_server_capabilities_snapshot()
-      .is_some_and(|capabilities| capabilities.supports(capability))
+      .is_some_and(|capabilities| capabilities.supports(capability));
+    if !supported && shared_lsp_trace_enabled() {
+      log_shared_lsp_debug(
+        "supports_false",
+        format!(
+          "capability={:?} ready={} server={} has_caps={} session_key_present={}",
+          capability,
+          self.lsp_ready,
+          self
+            .lsp_server_name
+            .clone()
+            .unwrap_or_else(|| "<none>".to_string()),
+          self.lsp_server_capabilities_snapshot().is_some(),
+          self.lsp_session_key.is_some()
+        ),
+      );
+    }
+    supported
   }
 
   fn current_lsp_position(&self) -> Option<(String, LspPosition)> {
     if !self.lsp_ready {
+      log_shared_lsp_debug("current_pos_none", "reason=not_ready");
       return None;
     }
     let state = self.lsp_document.as_ref()?.clone();
     if !state.opened {
+      log_shared_lsp_debug(
+        "current_pos_none",
+        format!("reason=doc_not_opened uri={}", state.uri),
+      );
       return None;
     }
 
@@ -7857,6 +8079,21 @@ impl App {
     params: serde_json::Value,
     pending: PendingLspRequestKind,
   ) {
+    log_shared_lsp_debug(
+      "dispatch_request",
+      format!(
+        "method={} pending_kind={} ready={} doc_opened={} uri={}",
+        method,
+        pending.label(),
+        self.lsp_ready,
+        self.lsp_document.as_ref().is_some_and(|doc| doc.opened),
+        self
+          .lsp_document
+          .as_ref()
+          .map(|doc| doc.uri.clone())
+          .unwrap_or_else(|| "<none>".to_string())
+      ),
+    );
     if self.lsp_shared_enabled {
       self.lsp_open_current_document();
     }
@@ -7885,21 +8122,36 @@ impl App {
 
   fn lsp_open_current_document(&mut self) {
     if !self.lsp_ready {
+      log_shared_lsp_debug("open_doc_skip", "reason=not_ready");
       return;
     }
 
     let Some(state) = self.lsp_document.as_ref() else {
+      log_shared_lsp_debug("open_doc_skip", "reason=no_document");
       return;
     };
     let uri = state.uri.clone();
     if self.lsp_shared_enabled {
       if state.opened
         && let Some(key) = self.lsp_session_key.as_ref()
-        && lsp_broker::document_owned_by(self.lsp_client_id, key, uri.as_str())
       {
-        return;
+        let owned = lsp_broker::document_owned_by(self.lsp_client_id, key, uri.as_str());
+        log_shared_lsp_debug(
+          "open_doc_check_owner",
+          format!(
+            "uri={} state_opened={} owned_by_client={} client_id={}",
+            uri, state.opened, owned, self.lsp_client_id
+          ),
+        );
+        if owned {
+          return;
+        }
       }
     } else if state.opened {
+      log_shared_lsp_debug(
+        "open_doc_skip",
+        format!("reason=already_open_legacy uri={}", uri),
+      );
       return;
     }
 
@@ -7909,6 +8161,16 @@ impl App {
     let opened = if self.lsp_shared_enabled {
       if let Some(key) = self.lsp_session_key.as_ref() {
         let text_string = text.to_string();
+        log_shared_lsp_debug(
+          "open_doc_shared",
+          format!(
+            "uri={} lang={} version={} text_chars={}",
+            uri,
+            language_id,
+            version,
+            text_string.chars().count()
+          ),
+        );
         match lsp_broker::focus_document(
           self.lsp_client_id,
           key,
@@ -7927,6 +8189,10 @@ impl App {
           },
         }
       } else {
+        log_shared_lsp_debug(
+          "open_doc_skip",
+          format!("reason=missing_session_key uri={}", uri),
+        );
         false
       }
     } else {
@@ -7936,6 +8202,12 @@ impl App {
 
     if opened && let Some(state) = self.lsp_document.as_mut() {
       state.opened = true;
+      log_shared_lsp_debug(
+        "open_doc_done",
+        format!("uri={} state_opened={}", state.uri, state.opened),
+      );
+    } else {
+      log_shared_lsp_debug("open_doc_done", format!("uri={} opened=false", uri));
     }
   }
 
@@ -7948,6 +8220,13 @@ impl App {
     else {
       return;
     };
+    log_shared_lsp_debug(
+      "close_doc_begin",
+      format!(
+        "uri={} shared={} client_id={}",
+        uri, self.lsp_shared_enabled, self.lsp_client_id
+      ),
+    );
 
     if self.lsp_shared_enabled {
       if let Some(key) = self.lsp_session_key.as_ref() {
@@ -7959,6 +8238,7 @@ impl App {
     }
     if let Some(state) = self.lsp_document.as_mut() {
       state.opened = false;
+      log_shared_lsp_debug("close_doc_done", format!("uri={} state_opened=false", uri));
     }
   }
 
@@ -10052,16 +10332,23 @@ impl DefaultContext for App {
   }
 
   fn lsp_goto_definition(&mut self) {
+    log_shared_lsp_debug("goto_definition_begin", "entered");
     if !self.lsp_supports(LspCapability::GotoDefinition) {
+      log_shared_lsp_debug("goto_definition_skip", "reason=unsupported");
       let _ = <Self as DefaultContext>::push_error(self, "goto", "No definition found.");
       return;
     }
 
     let Some((uri, position)) = self.current_lsp_position() else {
+      log_shared_lsp_debug("goto_definition_skip", "reason=no_position");
       let _ = <Self as DefaultContext>::push_error(self, "goto", "No definition found.");
       return;
     };
 
+    log_shared_lsp_debug(
+      "goto_definition_dispatch",
+      format!("uri={} line={} char={}", uri, position.line, position.character),
+    );
     self.dispatch_lsp_request(
       "textDocument/definition",
       goto_definition_params(&uri, position),
@@ -10070,16 +10357,23 @@ impl DefaultContext for App {
   }
 
   fn lsp_goto_declaration(&mut self) {
+    log_shared_lsp_debug("goto_declaration_begin", "entered");
     if !self.lsp_supports(LspCapability::GotoDeclaration) {
+      log_shared_lsp_debug("goto_declaration_skip", "reason=unsupported");
       let _ = <Self as DefaultContext>::push_error(self, "goto", "No declaration found.");
       return;
     }
 
     let Some((uri, position)) = self.current_lsp_position() else {
+      log_shared_lsp_debug("goto_declaration_skip", "reason=no_position");
       let _ = <Self as DefaultContext>::push_error(self, "goto", "No declaration found.");
       return;
     };
 
+    log_shared_lsp_debug(
+      "goto_declaration_dispatch",
+      format!("uri={} line={} char={}", uri, position.line, position.character),
+    );
     self.dispatch_lsp_request(
       "textDocument/declaration",
       goto_declaration_params(&uri, position),
@@ -10088,16 +10382,23 @@ impl DefaultContext for App {
   }
 
   fn lsp_goto_type_definition(&mut self) {
+    log_shared_lsp_debug("goto_type_definition_begin", "entered");
     if !self.lsp_supports(LspCapability::GotoTypeDefinition) {
+      log_shared_lsp_debug("goto_type_definition_skip", "reason=unsupported");
       let _ = <Self as DefaultContext>::push_error(self, "goto", "No type definition found.");
       return;
     }
 
     let Some((uri, position)) = self.current_lsp_position() else {
+      log_shared_lsp_debug("goto_type_definition_skip", "reason=no_position");
       let _ = <Self as DefaultContext>::push_error(self, "goto", "No type definition found.");
       return;
     };
 
+    log_shared_lsp_debug(
+      "goto_type_definition_dispatch",
+      format!("uri={} line={} char={}", uri, position.line, position.character),
+    );
     self.dispatch_lsp_request(
       "textDocument/typeDefinition",
       goto_type_definition_params(&uri, position),
@@ -10106,16 +10407,23 @@ impl DefaultContext for App {
   }
 
   fn lsp_goto_implementation(&mut self) {
+    log_shared_lsp_debug("goto_implementation_begin", "entered");
     if !self.lsp_supports(LspCapability::GotoImplementation) {
+      log_shared_lsp_debug("goto_implementation_skip", "reason=unsupported");
       let _ = <Self as DefaultContext>::push_error(self, "goto", "No implementation found.");
       return;
     }
 
     let Some((uri, position)) = self.current_lsp_position() else {
+      log_shared_lsp_debug("goto_implementation_skip", "reason=no_position");
       let _ = <Self as DefaultContext>::push_error(self, "goto", "No implementation found.");
       return;
     };
 
+    log_shared_lsp_debug(
+      "goto_implementation_dispatch",
+      format!("uri={} line={} char={}", uri, position.line, position.character),
+    );
     self.dispatch_lsp_request(
       "textDocument/implementation",
       goto_implementation_params(&uri, position),
@@ -10206,7 +10514,9 @@ impl DefaultContext for App {
   }
 
   fn lsp_hover(&mut self) {
+    log_shared_lsp_debug("hover_begin", "entered");
     if !self.lsp_supports(LspCapability::Hover) {
+      log_shared_lsp_debug("hover_skip", "reason=unsupported");
       self.publish_lsp_message(
         the_lib::messages::MessageLevel::Warning,
         "hover is not supported by the active server",
@@ -10215,6 +10525,7 @@ impl DefaultContext for App {
     }
 
     let Some((uri, position)) = self.current_lsp_position() else {
+      log_shared_lsp_debug("hover_skip", "reason=no_position");
       self.publish_lsp_message(
         the_lib::messages::MessageLevel::Warning,
         "hover unavailable: no active LSP document",
@@ -10223,6 +10534,10 @@ impl DefaultContext for App {
     };
 
     self.clear_hover_state();
+    log_shared_lsp_debug(
+      "hover_dispatch",
+      format!("uri={} line={} char={}", uri, position.line, position.character),
+    );
     self.dispatch_lsp_request(
       "textDocument/hover",
       hover_params(&uri, position),

@@ -4,6 +4,7 @@ use std::{
     HashSet,
     VecDeque,
   },
+  env,
   fs,
   path::{
     Path,
@@ -150,6 +151,7 @@ impl LspBrokerSession {
   }
 
   fn register_client(&mut self, client_id: u64) {
+    trace_log("register_client", format!("client_id={client_id}"));
     self.clients.entry(client_id).or_default();
   }
 
@@ -357,6 +359,13 @@ impl LspBrokerSession {
       .runtime
       .send_request(method.to_string(), params)
       .map_err(|err| format!("failed to dispatch {method}: {err}"))?;
+    trace_log(
+      "send_request",
+      format!(
+        "client_id={} client_req_id={} runtime_req_id={} method={}",
+        client_id, client_request_id, runtime_request_id, method
+      ),
+    );
     self.runtime_to_client_request
       .insert(runtime_request_id, (client_id, client_request_id));
     self
@@ -405,6 +414,13 @@ impl LspBrokerSession {
       let was_owned_by_other = binding.owner.is_some() && !already_owned_by_client;
       (already_owned_by_client, was_owned_by_other)
     };
+    trace_log(
+      "focus_document",
+      format!(
+        "client_id={} uri={} already_owned_by_client={} was_owned_by_other={}",
+        client_id, uri, already_owned_by_client, was_owned_by_other
+      ),
+    );
 
     if let Some(client) = self.clients.get_mut(&client_id) {
       client.subscribed_uris.insert(uri.to_string());
@@ -421,6 +437,15 @@ impl LspBrokerSession {
     self.send_notification("textDocument/didOpen", Some(open_payload))?;
     if let Some(binding) = self.uri_bindings.get_mut(uri) {
       binding.owner = Some(client_id);
+      trace_log(
+        "focus_document_owner_set",
+        format!(
+          "uri={} owner={} subscriber_count={}",
+          uri,
+          client_id,
+          binding.subscribers.len()
+        ),
+      );
     }
     Ok(())
   }
@@ -470,6 +495,13 @@ impl LspBrokerSession {
       .uri_bindings
       .get(uri)
       .is_some_and(|binding| binding.owner == Some(client_id));
+    trace_log(
+      "sync_notification_check",
+      format!(
+        "client_id={} uri={} method={} is_owner={}",
+        client_id, uri, method, is_owner
+      ),
+    );
     if !is_owner {
       return Ok(false);
     }
@@ -485,15 +517,40 @@ impl LspBrokerSession {
 
   fn document_owned_by(&mut self, client_id: u64, uri: &str) -> bool {
     self.poll_runtime_events();
-    self
+    let owned = self
       .uri_bindings
       .get(uri)
-      .is_some_and(|binding| binding.owner == Some(client_id))
+      .is_some_and(|binding| binding.owner == Some(client_id));
+    trace_log(
+      "document_owned_by",
+      format!("client_id={} uri={} owned={}", client_id, uri, owned),
+    );
+    owned
   }
 }
 
 fn normalize_workspace_root(root: &Path) -> PathBuf {
   fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf())
+}
+
+fn trace_enabled() -> bool {
+  static ENABLED: OnceLock<bool> = OnceLock::new();
+  *ENABLED.get_or_init(|| {
+    env::var("THE_EDITOR_SWIFT_SHARED_LSP_TRACE")
+      .ok()
+      .map(|value| {
+        let normalized = value.trim().to_ascii_lowercase();
+        normalized == "1" || normalized == "true" || normalized == "yes" || normalized == "on"
+      })
+      .unwrap_or(false)
+  })
+}
+
+fn trace_log(context: &str, message: impl AsRef<str>) {
+  if !trace_enabled() {
+    return;
+  }
+  eprintln!("[the-ffi lsp-broker/core] {context} {}", message.as_ref());
 }
 
 fn registry() -> &'static Mutex<LspBrokerRegistry> {
@@ -568,7 +625,16 @@ pub fn send_request(
   with_session(key, |session| {
     session.send_request(client_id, client_request_id, method, params)
   })
-  .unwrap_or_else(|| Err("missing broker session".to_string()))
+  .unwrap_or_else(|| {
+    trace_log(
+      "send_request_missing_session",
+      format!(
+        "client_id={} client_req_id={} method={} key={:?}",
+        client_id, client_request_id, method, key
+      ),
+    );
+    Err("missing broker session".to_string())
+  })
 }
 
 pub fn cancel_request(
@@ -577,7 +643,16 @@ pub fn cancel_request(
   client_request_id: u64,
 ) -> Result<(), String> {
   with_session(key, |session| session.cancel_request(client_id, client_request_id))
-    .unwrap_or_else(|| Err("missing broker session".to_string()))
+    .unwrap_or_else(|| {
+      trace_log(
+        "cancel_request_missing_session",
+        format!(
+          "client_id={} client_req_id={} key={:?}",
+          client_id, client_request_id, key
+        ),
+      );
+      Err("missing broker session".to_string())
+    })
 }
 
 pub fn send_notification(
@@ -586,7 +661,13 @@ pub fn send_notification(
   params: Option<Value>,
 ) -> Result<(), String> {
   with_session(key, |session| session.send_notification(method, params))
-    .unwrap_or_else(|| Err("missing broker session".to_string()))
+    .unwrap_or_else(|| {
+      trace_log(
+        "send_notification_missing_session",
+        format!("method={} key={:?}", method, key),
+      );
+      Err("missing broker session".to_string())
+    })
 }
 
 pub fn focus_document(
@@ -601,12 +682,24 @@ pub fn focus_document(
   with_session(key, |session| {
     session.focus_document(client_id, uri, open_payload)
   })
-  .unwrap_or_else(|| Err("missing broker session".to_string()))
+  .unwrap_or_else(|| {
+    trace_log(
+      "focus_document_missing_session",
+      format!("client_id={} uri={} key={:?}", client_id, uri, key),
+    );
+    Err("missing broker session".to_string())
+  })
 }
 
 pub fn close_document(client_id: u64, key: &SessionKey, uri: &str) -> Result<(), String> {
   with_session(key, |session| session.close_document(client_id, uri))
-    .unwrap_or_else(|| Err("missing broker session".to_string()))
+    .unwrap_or_else(|| {
+      trace_log(
+        "close_document_missing_session",
+        format!("client_id={} uri={} key={:?}", client_id, uri, key),
+      );
+      Err("missing broker session".to_string())
+    })
 }
 
 pub fn send_document_change(
@@ -618,7 +711,13 @@ pub fn send_document_change(
   with_session(key, |session| {
     session.send_document_sync_notification(client_id, uri, "textDocument/didChange", params)
   })
-  .unwrap_or_else(|| Err("missing broker session".to_string()))
+  .unwrap_or_else(|| {
+    trace_log(
+      "did_change_missing_session",
+      format!("client_id={} uri={} key={:?}", client_id, uri, key),
+    );
+    Err("missing broker session".to_string())
+  })
 }
 
 pub fn send_document_save(
@@ -630,18 +729,38 @@ pub fn send_document_save(
   with_session(key, |session| {
     session.send_document_sync_notification(client_id, uri, "textDocument/didSave", params)
   })
-  .unwrap_or_else(|| Err("missing broker session".to_string()))
+  .unwrap_or_else(|| {
+    trace_log(
+      "did_save_missing_session",
+      format!("client_id={} uri={} key={:?}", client_id, uri, key),
+    );
+    Err("missing broker session".to_string())
+  })
 }
 
 pub fn server_capabilities(
   key: &SessionKey,
   server_name: &str,
 ) -> Option<ServerCapabilitiesSnapshot> {
-  with_session(key, |session| session.server_capabilities(server_name)).flatten()
+  with_session(key, |session| session.server_capabilities(server_name))
+    .or_else(|| {
+      trace_log(
+        "server_capabilities_missing_session",
+        format!("server_name={} key={:?}", server_name, key),
+      );
+      None
+    })
+    .flatten()
 }
 
 pub fn document_owned_by(client_id: u64, key: &SessionKey, uri: &str) -> bool {
-  with_session(key, |session| session.document_owned_by(client_id, uri)).unwrap_or(false)
+  with_session(key, |session| session.document_owned_by(client_id, uri)).unwrap_or_else(|| {
+    trace_log(
+      "document_owned_by_missing_session",
+      format!("client_id={} uri={} key={:?}", client_id, uri, key),
+    );
+    false
+  })
 }
 
 #[cfg(test)]

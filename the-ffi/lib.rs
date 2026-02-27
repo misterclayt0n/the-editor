@@ -4,6 +4,8 @@
 //! This crate provides a C-compatible interface to the-lib, allowing the
 //! SwiftUI client to interact with the Rust editor core.
 
+mod lsp_broker;
+
 use std::{
   cell::RefCell,
   collections::{
@@ -241,6 +243,7 @@ use the_lsp::{
   LspRuntime,
   LspRuntimeConfig,
   LspServerConfig,
+  ServerCapabilitiesSnapshot,
   LspSignatureHelpContext,
   LspWorkspaceEdit,
   code_action_params,
@@ -3423,6 +3426,43 @@ fn lsp_self_save_suppress_window() -> Duration {
   Duration::from_millis(500)
 }
 
+fn shared_lsp_feature_enabled_by_env() -> bool {
+  static ENABLED: OnceLock<bool> = OnceLock::new();
+  *ENABLED.get_or_init(|| {
+    env::var("THE_EDITOR_SWIFT_SHARED_LSP")
+      .ok()
+      .map(|value| {
+        let normalized = value.trim().to_ascii_lowercase();
+        normalized == "1" || normalized == "true" || normalized == "yes" || normalized == "on"
+      })
+      .unwrap_or(false)
+  })
+}
+
+fn shared_lsp_trace_enabled() -> bool {
+  static ENABLED: OnceLock<bool> = OnceLock::new();
+  *ENABLED.get_or_init(|| {
+    env::var("THE_EDITOR_SWIFT_SHARED_LSP_TRACE")
+      .ok()
+      .map(|value| {
+        let normalized = value.trim().to_ascii_lowercase();
+        normalized == "1" || normalized == "true" || normalized == "yes" || normalized == "on"
+      })
+      .unwrap_or(false)
+  })
+}
+
+fn log_shared_lsp_counters(context: &str) {
+  if !shared_lsp_trace_enabled() {
+    return;
+  }
+  let counters = lsp_broker::counters();
+  eprintln!(
+    "[the-ffi lsp-broker] {context} sessions_created={} runtime_starts={}",
+    counters.sessions_created, counters.runtime_starts
+  );
+}
+
 fn watch_statusline_text_for_state(state: FileWatchReloadState) -> Option<String> {
   match state {
     FileWatchReloadState::Conflict => Some("watch: conflict".to_string()),
@@ -3464,6 +3504,11 @@ pub struct App {
   should_quit:                     bool,
   registers:                       Registers,
   last_motion:                     Option<Motion>,
+  lsp_shared_enabled:              bool,
+  lsp_client_id:                   u64,
+  lsp_client_request_counter:      u64,
+  lsp_session_key:                 Option<lsp_broker::SessionKey>,
+  lsp_server_name:                 Option<String>,
   lsp_runtime:                     LspRuntime,
   lsp_ready:                       bool,
   lsp_document:                    Option<LspDocumentSyncState>,
@@ -4059,6 +4104,8 @@ impl App {
         .with_restart_limits(6, Duration::from_secs(30))
         .with_request_policy(Duration::from_secs(8), 1),
     );
+    let lsp_shared_enabled = shared_lsp_feature_enabled_by_env();
+    let lsp_client_id = lsp_broker::allocate_client_id();
     let clipboard = Arc::new(RuntimeClipboardProvider::detect());
 
     Self {
@@ -4073,6 +4120,11 @@ impl App {
       should_quit: false,
       registers: Registers::with_clipboard(clipboard),
       last_motion: None,
+      lsp_shared_enabled,
+      lsp_client_id,
+      lsp_client_request_counter: 10_000,
+      lsp_session_key: None,
+      lsp_server_name: None,
       lsp_runtime,
       lsp_ready: false,
       lsp_document: None,
@@ -4197,7 +4249,11 @@ impl App {
       if self.active_editor == Some(id) {
         self.active_editor = None;
         self.lsp_close_current_document();
-        let _ = self.lsp_runtime.shutdown();
+        if self.lsp_shared_enabled {
+          self.lsp_detach_shared_session();
+        } else {
+          let _ = self.lsp_runtime.shutdown();
+        }
         self.lsp_ready = false;
         self.lsp_document = None;
         self.lsp_watched_file = None;
@@ -5649,6 +5705,112 @@ impl App {
     changed
   }
 
+  fn next_lsp_client_request_id(&mut self) -> u64 {
+    let next = self.lsp_client_request_counter;
+    self.lsp_client_request_counter = self.lsp_client_request_counter.saturating_add(1).max(10_000);
+    next
+  }
+
+  fn lsp_detach_shared_session(&mut self) {
+    let Some(key) = self.lsp_session_key.take() else {
+      return;
+    };
+    lsp_broker::unregister_client(self.lsp_client_id, &key);
+    log_shared_lsp_counters("detached");
+  }
+
+  fn lsp_poll_events_for_active_transport(&mut self) -> Vec<LspEvent> {
+    if self.lsp_shared_enabled {
+      let Some(key) = self.lsp_session_key.as_ref() else {
+        return Vec::new();
+      };
+      return lsp_broker::poll_client_events(self.lsp_client_id, key);
+    }
+
+    let mut events = Vec::new();
+    while let Some(event) = self.lsp_runtime.try_recv_event() {
+      events.push(event);
+    }
+    events
+  }
+
+  fn lsp_server_capabilities_snapshot(&self) -> Option<ServerCapabilitiesSnapshot> {
+    let server_name = self.lsp_server_name.as_deref()?;
+    if self.lsp_shared_enabled {
+      let key = self.lsp_session_key.as_ref()?;
+      return lsp_broker::server_capabilities(key, server_name);
+    }
+    self.lsp_runtime.server_capabilities(server_name)
+  }
+
+  fn lsp_has_configured_server(&self) -> bool {
+    if self.lsp_shared_enabled {
+      return self.lsp_server_name.is_some();
+    }
+    self.lsp_runtime.config().server().is_some()
+  }
+
+  fn lsp_send_request_raw(
+    &mut self,
+    method: &'static str,
+    params: serde_json::Value,
+  ) -> Result<u64, String> {
+    if self.lsp_shared_enabled {
+      let key = self
+        .lsp_session_key
+        .clone()
+        .ok_or_else(|| "missing broker session".to_string())?;
+      let request_id = self.next_lsp_client_request_id();
+      lsp_broker::send_request(
+        self.lsp_client_id,
+        &key,
+        request_id,
+        method,
+        Some(params),
+      )?;
+      return Ok(request_id);
+    }
+
+    self
+      .lsp_runtime
+      .send_request(method, Some(params))
+      .map_err(|err| format!("failed to dispatch {method}: {err}"))
+  }
+
+  fn lsp_cancel_request_raw(&mut self, request_id: u64) -> Result<(), String> {
+    if self.lsp_shared_enabled {
+      let key = self
+        .lsp_session_key
+        .as_ref()
+        .ok_or_else(|| "missing broker session".to_string())?;
+      return lsp_broker::cancel_request(self.lsp_client_id, key, request_id);
+    }
+
+    self
+      .lsp_runtime
+      .cancel_request(request_id)
+      .map_err(|err| format!("failed to cancel stale request {request_id}: {err}"))
+  }
+
+  fn lsp_send_notification_raw(
+    &mut self,
+    method: &'static str,
+    params: serde_json::Value,
+  ) -> Result<(), String> {
+    if self.lsp_shared_enabled {
+      let key = self
+        .lsp_session_key
+        .as_ref()
+        .ok_or_else(|| "missing broker session".to_string())?;
+      return lsp_broker::send_notification(key, method, Some(params));
+    }
+
+    self
+      .lsp_runtime
+      .send_notification(method, Some(params))
+      .map_err(|err| format!("failed to send {method}: {err}"))
+  }
+
   fn lsp_runtime_config_for_active_file(&self) -> (LspRuntimeConfig, bool) {
     let active_path = self.file_path();
     let workspace_root = active_path
@@ -5692,7 +5854,11 @@ impl App {
     self.cancel_auto_completion();
     self.clear_signature_help_state();
     self.cancel_auto_signature_help();
-    let _ = self.lsp_runtime.shutdown();
+    if self.lsp_shared_enabled {
+      self.lsp_detach_shared_session();
+    } else {
+      let _ = self.lsp_runtime.shutdown();
+    }
 
     let active_path = self.file_path().map(Path::to_path_buf);
     self.lsp_document =
@@ -5700,16 +5866,36 @@ impl App {
     self.lsp_sync_watched_file_state();
 
     let (config, configured) = self.lsp_runtime_config_for_active_file();
-    self.lsp_runtime = LspRuntime::new(config);
+    self.lsp_server_name = config.server().map(|server| server.name().to_string());
 
     if configured {
       self.set_lsp_status(LspStatusPhase::Starting, Some("starting".into()));
-      if let Err(err) = self.lsp_runtime.start() {
-        self.set_lsp_status_error(&err.to_string());
-        self.publish_lsp_message(
-          the_lib::messages::MessageLevel::Error,
-          format!("failed to start lsp server: {err}"),
-        );
+      if self.lsp_shared_enabled {
+        if let Some(session_key) = lsp_broker::SessionKey::from_runtime_config(&config) {
+          if let Err(err) =
+            lsp_broker::register_client(self.lsp_client_id, session_key.clone(), config)
+          {
+            self.set_lsp_status_error(err.as_str());
+            self.publish_lsp_message(
+              the_lib::messages::MessageLevel::Error,
+              format!("failed to attach shared lsp session: {err}"),
+            );
+          } else {
+            self.lsp_session_key = Some(session_key);
+            log_shared_lsp_counters("attached");
+          }
+        } else {
+          self.set_lsp_status(LspStatusPhase::Off, Some("unavailable".into()));
+        }
+      } else {
+        self.lsp_runtime = LspRuntime::new(config);
+        if let Err(err) = self.lsp_runtime.start() {
+          self.set_lsp_status_error(&err.to_string());
+          self.publish_lsp_message(
+            the_lib::messages::MessageLevel::Error,
+            format!("failed to start lsp server: {err}"),
+          );
+        }
       }
     } else {
       self.set_lsp_status(LspStatusPhase::Off, Some("unavailable".into()));
@@ -5752,7 +5938,7 @@ impl App {
   }
 
   fn lsp_statusline_text_value(&self) -> Option<String> {
-    let has_server = self.lsp_runtime.config().server().is_some();
+    let has_server = self.lsp_has_configured_server();
     if !has_server && matches!(self.lsp_statusline.phase, LspStatusPhase::Off) {
       return Some("lsp: unavailable".to_string());
     }
@@ -5856,10 +6042,10 @@ impl App {
 
   fn poll_lsp_events(&mut self) -> bool {
     let mut changed = false;
-    while let Some(event) = self.lsp_runtime.try_recv_event() {
+    for event in self.lsp_poll_events_for_active_transport() {
       match event {
         LspEvent::Started { .. } => {
-          if self.lsp_runtime.config().server().is_none() {
+          if !self.lsp_has_configured_server() {
             self.set_lsp_status(LspStatusPhase::Off, Some("unavailable".into()));
           } else {
             self.set_lsp_status(LspStatusPhase::Starting, Some("starting".into()));
@@ -5868,10 +6054,9 @@ impl App {
         },
         LspEvent::CapabilitiesRegistered { server_name } => {
           let matches_configured_server = self
-            .lsp_runtime
-            .config()
-            .server()
-            .is_some_and(|server| server.name() == server_name);
+            .lsp_server_name
+            .as_deref()
+            .is_some_and(|name| name == server_name);
           if matches_configured_server {
             self.lsp_ready = true;
             self.lsp_active_progress_tokens.clear();
@@ -5913,7 +6098,7 @@ impl App {
           if let Some(state) = self.lsp_document.as_mut() {
             state.opened = false;
           }
-          if self.lsp_runtime.config().server().is_some() {
+          if self.lsp_has_configured_server() {
             self.set_lsp_status(LspStatusPhase::Starting, Some("restarting".into()));
           } else {
             self.set_lsp_status(LspStatusPhase::Off, Some("stopped".into()));
@@ -6427,11 +6612,11 @@ impl App {
   }
 
   fn execute_lsp_command_action(&mut self, command: LspExecuteCommand, title: String) -> bool {
+    if self.lsp_shared_enabled {
+      self.lsp_open_current_document();
+    }
     let params = execute_command_params(&command.command, command.arguments);
-    match self
-      .lsp_runtime
-      .send_request("workspace/executeCommand", Some(params))
-    {
+    match self.lsp_send_request_raw("workspace/executeCommand", params) {
       Ok(_) => {
         self.publish_lsp_message(
           the_lib::messages::MessageLevel::Info,
@@ -6911,10 +7096,7 @@ impl App {
     characters_key: &str,
     ch: char,
   ) -> bool {
-    let Some(server) = self.lsp_runtime.config().server() else {
-      return false;
-    };
-    let Some(capabilities) = self.lsp_runtime.server_capabilities(server.name()) else {
+    let Some(capabilities) = self.lsp_server_capabilities_snapshot() else {
       return false;
     };
     capabilities_support_single_char(capabilities.raw(), provider_key, characters_key, ch)
@@ -7415,10 +7597,7 @@ impl App {
       return;
     };
     let params = self.lsp_completion_raw_items[index].clone();
-    match self
-      .lsp_runtime
-      .send_request("completionItem/resolve", Some(params))
-    {
+    match self.lsp_send_request_raw("completionItem/resolve", params) {
       Ok(request_id) => {
         self
           .lsp_pending_requests
@@ -7437,12 +7616,8 @@ impl App {
   }
 
   fn lsp_supports(&self, capability: LspCapability) -> bool {
-    let Some(server) = self.lsp_runtime.config().server() else {
-      return false;
-    };
     self
-      .lsp_runtime
-      .server_capabilities(server.name())
+      .lsp_server_capabilities_snapshot()
       .is_some_and(|capabilities| capabilities.supports(capability))
   }
 
@@ -7667,10 +7842,10 @@ impl App {
 
     for id in ids_to_cancel {
       let _ = self.lsp_pending_requests.remove(&id);
-      if let Err(err) = self.lsp_runtime.cancel_request(id) {
+      if let Err(err) = self.lsp_cancel_request_raw(id) {
         self.publish_lsp_message(
           the_lib::messages::MessageLevel::Warning,
-          format!("failed to cancel stale request {id}: {err}"),
+          err,
         );
       }
     }
@@ -7682,35 +7857,29 @@ impl App {
     params: serde_json::Value,
     pending: PendingLspRequestKind,
   ) {
+    if self.lsp_shared_enabled {
+      self.lsp_open_current_document();
+    }
     self.cancel_pending_lsp_requests_for(&pending);
-    match self.lsp_runtime.send_request(method, Some(params)) {
+    match self.lsp_send_request_raw(method, params) {
       Ok(request_id) => {
         self.lsp_pending_requests.insert(request_id, pending);
       },
       Err(err) => {
-        self.publish_lsp_message(
-          the_lib::messages::MessageLevel::Error,
-          format!("failed to dispatch {method}: {err}"),
-        );
+        self.publish_lsp_message(the_lib::messages::MessageLevel::Error, err);
       },
     }
   }
 
   fn lsp_sync_kind(&self) -> Option<the_lsp::TextDocumentSyncKind> {
-    let server = self.lsp_runtime.config().server()?;
     self
-      .lsp_runtime
-      .server_capabilities(server.name())
+      .lsp_server_capabilities_snapshot()
       .map(|capabilities| capabilities.text_document_sync().kind)
   }
 
   fn lsp_save_include_text(&self) -> bool {
-    let Some(server) = self.lsp_runtime.config().server() else {
-      return false;
-    };
     self
-      .lsp_runtime
-      .server_capabilities(server.name())
+      .lsp_server_capabilities_snapshot()
       .is_some_and(|capabilities| capabilities.text_document_sync().save_include_text)
   }
 
@@ -7722,21 +7891,50 @@ impl App {
     let Some(state) = self.lsp_document.as_ref() else {
       return;
     };
-    if state.opened {
+    let uri = state.uri.clone();
+    if self.lsp_shared_enabled {
+      if state.opened
+        && let Some(key) = self.lsp_session_key.as_ref()
+        && lsp_broker::document_owned_by(self.lsp_client_id, key, uri.as_str())
+      {
+        return;
+      }
+    } else if state.opened {
       return;
     }
 
-    let uri = state.uri.clone();
     let language_id = state.language_id.clone();
     let version = state.version;
     let text = self.active_editor_ref().document().text().clone();
-    let params = did_open_params(&uri, &language_id, version, &text);
-    if self
-      .lsp_runtime
-      .send_notification("textDocument/didOpen", Some(params))
-      .is_ok()
-      && let Some(state) = self.lsp_document.as_mut()
-    {
+    let opened = if self.lsp_shared_enabled {
+      if let Some(key) = self.lsp_session_key.as_ref() {
+        let text_string = text.to_string();
+        match lsp_broker::focus_document(
+          self.lsp_client_id,
+          key,
+          uri.as_str(),
+          language_id.as_str(),
+          version,
+          text_string.as_str(),
+        ) {
+          Ok(()) => true,
+          Err(err) => {
+            self.publish_lsp_message(
+              the_lib::messages::MessageLevel::Warning,
+              format!("failed to focus lsp document: {err}"),
+            );
+            false
+          },
+        }
+      } else {
+        false
+      }
+    } else {
+      let params = did_open_params(&uri, &language_id, version, &text);
+      self.lsp_send_notification_raw("textDocument/didOpen", params).is_ok()
+    };
+
+    if opened && let Some(state) = self.lsp_document.as_mut() {
       state.opened = true;
     }
   }
@@ -7751,10 +7949,14 @@ impl App {
       return;
     };
 
-    let params = did_close_params(&uri);
-    let _ = self
-      .lsp_runtime
-      .send_notification("textDocument/didClose", Some(params));
+    if self.lsp_shared_enabled {
+      if let Some(key) = self.lsp_session_key.as_ref() {
+        let _ = lsp_broker::close_document(self.lsp_client_id, key, uri.as_str());
+      }
+    } else {
+      let params = did_close_params(&uri);
+      let _ = self.lsp_send_notification_raw("textDocument/didClose", params);
+    }
     if let Some(state) = self.lsp_document.as_mut() {
       state.opened = false;
     }
@@ -7785,12 +7987,37 @@ impl App {
       return;
     };
 
-    if self
-      .lsp_runtime
-      .send_notification("textDocument/didChange", Some(params))
-      .is_ok()
-      && let Some(state) = self.lsp_document.as_mut()
-    {
+    let changed = if self.lsp_shared_enabled {
+      if let Some(key) = self.lsp_session_key.clone() {
+        match lsp_broker::send_document_change(
+          self.lsp_client_id,
+          &key,
+          uri.as_str(),
+          params.clone(),
+        ) {
+          Ok(true) => true,
+          Ok(false) => {
+            self.lsp_open_current_document();
+            match lsp_broker::send_document_change(
+              self.lsp_client_id,
+              &key,
+              uri.as_str(),
+              params,
+            ) {
+              Ok(applied) => applied,
+              Err(_) => false,
+            }
+          },
+          Err(_) => false,
+        }
+      } else {
+        false
+      }
+    } else {
+      self.lsp_send_notification_raw("textDocument/didChange", params).is_ok()
+    };
+
+    if changed && let Some(state) = self.lsp_document.as_mut() {
       state.version = next_version;
     }
   }
@@ -7815,9 +8042,13 @@ impl App {
       None
     };
     let params = did_save_params(&uri, payload_text);
-    let _ = self
-      .lsp_runtime
-      .send_notification("textDocument/didSave", Some(params));
+    if self.lsp_shared_enabled {
+      if let Some(key) = self.lsp_session_key.as_ref() {
+        let _ = lsp_broker::send_document_save(self.lsp_client_id, key, uri.as_str(), params);
+      }
+    } else {
+      let _ = self.lsp_send_notification_raw("textDocument/didSave", params);
+    }
   }
 
   fn lsp_sync_watched_file_state(&mut self) {
@@ -7878,9 +8109,7 @@ impl App {
           .copied()
           .map(|change_type| (watched_uri.clone(), change_type)),
       );
-      let _ = self
-        .lsp_runtime
-        .send_notification("workspace/didChangeWatchedFiles", Some(params));
+      let _ = self.lsp_send_notification_raw("workspace/didChangeWatchedFiles", params);
       trace_file_watch_event(
         "consumer_lsp_notify_sent",
         format!(
@@ -8936,7 +9165,12 @@ impl Default for App {
 impl Drop for App {
   fn drop(&mut self) {
     self.lsp_close_current_document();
-    let _ = self.lsp_runtime.shutdown();
+    if self.lsp_shared_enabled {
+      self.lsp_detach_shared_session();
+      lsp_broker::unregister_client_everywhere(self.lsp_client_id);
+    } else {
+      let _ = self.lsp_runtime.shutdown();
+    }
   }
 }
 
@@ -10002,7 +10236,11 @@ impl DefaultContext for App {
 
   fn on_before_quit(&mut self) {
     self.lsp_close_current_document();
-    let _ = self.lsp_runtime.shutdown();
+    if self.lsp_shared_enabled {
+      self.lsp_detach_shared_session();
+    } else {
+      let _ = self.lsp_runtime.shutdown();
+    }
     self.lsp_ready = false;
     self.lsp_document = None;
     self.lsp_watched_file = None;

@@ -43,7 +43,6 @@ private final class FileTreeNode: NSObject {
     let id: String
     let path: String
     let name: String
-    let depth: Int
     let isDirectory: Bool
     let hasUnloadedChildren: Bool
     var children: [FileTreeNode]
@@ -52,7 +51,6 @@ private final class FileTreeNode: NSObject {
         self.id = snapshot.id
         self.path = snapshot.path
         self.name = snapshot.name
-        self.depth = snapshot.depth
         self.isDirectory = snapshot.isDirectory
         self.hasUnloadedChildren = snapshot.hasUnloadedChildren
         self.children = []
@@ -222,8 +220,6 @@ private struct NativeOutlineFileTreeView: NSViewRepresentable {
         private weak var outlineView: FileTreeOutlineView?
         private var suppressSelectionEvents = false
         private var suppressExpansionEvents = false
-
-        private static var iconCache: [String: NSImage] = [:]
 
         init(_ parent: NativeOutlineFileTreeView) {
             self.parent = parent
@@ -404,9 +400,7 @@ private struct NativeOutlineFileTreeView: NSViewRepresentable {
                 ?? makeCellView(identifier: identifier)
 
             cell.textField?.stringValue = node.name
-            cell.textField?.font = NSFont.systemFont(ofSize: 12, weight: .regular)
             cell.imageView?.image = Self.icon(for: node)
-            cell.imageView?.contentTintColor = nil
             return cell
         }
 
@@ -443,10 +437,6 @@ private struct NativeOutlineFileTreeView: NSViewRepresentable {
         }
 
         private static func icon(for node: FileTreeNode) -> NSImage? {
-            if let cached = iconCache[node.path] {
-                return cached
-            }
-
             let image: NSImage?
             if node.isDirectory {
                 image = NSImage(named: NSImage.folderName) ?? NSWorkspace.shared.icon(forFile: node.path)
@@ -456,13 +446,7 @@ private struct NativeOutlineFileTreeView: NSViewRepresentable {
             guard let image else {
                 return nil
             }
-
-            let sized = image.copy() as? NSImage
-            sized?.size = NSSize(width: 16, height: 16)
-            if let sized {
-                iconCache[node.path] = sized
-                return sized
-            }
+            image.size = NSSize(width: 16, height: 16)
             return image
         }
     }

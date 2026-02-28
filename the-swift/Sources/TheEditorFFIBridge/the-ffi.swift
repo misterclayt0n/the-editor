@@ -267,6 +267,42 @@ extension AppRefMut {
         __swift_bridge__$App$file_picker_select_index(ptr, id.intoFfiRepr(), index)
     }
 
+    public func file_tree_set_visible(_ id: EditorId, _ visible: Bool) -> Bool {
+        __swift_bridge__$App$file_tree_set_visible(ptr, id.intoFfiRepr(), visible)
+    }
+
+    public func file_tree_toggle(_ id: EditorId) -> Bool {
+        __swift_bridge__$App$file_tree_toggle(ptr, id.intoFfiRepr())
+    }
+
+    public func file_tree_open_workspace_root(_ id: EditorId) -> Bool {
+        __swift_bridge__$App$file_tree_open_workspace_root(ptr, id.intoFfiRepr())
+    }
+
+    public func file_tree_open_current_buffer_directory(_ id: EditorId) -> Bool {
+        __swift_bridge__$App$file_tree_open_current_buffer_directory(ptr, id.intoFfiRepr())
+    }
+
+    public func file_tree_set_expanded<GenericToRustStr: ToRustStr>(_ id: EditorId, _ path: GenericToRustStr, _ expanded: Bool) -> Bool {
+        return path.toRustStr({ pathAsRustStr in
+            __swift_bridge__$App$file_tree_set_expanded(ptr, id.intoFfiRepr(), pathAsRustStr, expanded)
+        })
+    }
+
+    public func file_tree_select_path<GenericToRustStr: ToRustStr>(_ id: EditorId, _ path: GenericToRustStr) -> Bool {
+        return path.toRustStr({ pathAsRustStr in
+            __swift_bridge__$App$file_tree_select_path(ptr, id.intoFfiRepr(), pathAsRustStr)
+        })
+    }
+
+    public func file_tree_open_selected(_ id: EditorId) -> Bool {
+        __swift_bridge__$App$file_tree_open_selected(ptr, id.intoFfiRepr())
+    }
+
+    public func file_tree_snapshot(_ id: EditorId, _ max_nodes: UInt) -> FileTreeSnapshotData {
+        FileTreeSnapshotData(ptr: __swift_bridge__$App$file_tree_snapshot(ptr, id.intoFfiRepr(), max_nodes))
+    }
+
     public func file_picker_snapshot(_ id: EditorId, _ max_items: UInt) -> FilePickerSnapshotData {
         FilePickerSnapshotData(ptr: __swift_bridge__$App$file_picker_snapshot(ptr, id.intoFfiRepr(), max_items))
     }
@@ -2269,6 +2305,218 @@ extension SplitSeparator: Vectorizable {
 
     public static func vecOfSelfLen(vecPtr: UnsafeMutableRawPointer) -> UInt {
         __swift_bridge__$Vec_SplitSeparator$len(vecPtr)
+    }
+}
+
+
+public class FileTreeSnapshotData: FileTreeSnapshotDataRefMut {
+    var isOwned: Bool = true
+
+    public override init(ptr: UnsafeMutableRawPointer) {
+        super.init(ptr: ptr)
+    }
+
+    deinit {
+        if isOwned {
+            __swift_bridge__$FileTreeSnapshotData$_free(ptr)
+        }
+    }
+}
+public class FileTreeSnapshotDataRefMut: FileTreeSnapshotDataRef {
+    public override init(ptr: UnsafeMutableRawPointer) {
+        super.init(ptr: ptr)
+    }
+}
+public class FileTreeSnapshotDataRef {
+    var ptr: UnsafeMutableRawPointer
+
+    public init(ptr: UnsafeMutableRawPointer) {
+        self.ptr = ptr
+    }
+}
+extension FileTreeSnapshotDataRef {
+    public func visible() -> Bool {
+        __swift_bridge__$FileTreeSnapshotData$visible(ptr)
+    }
+
+    public func mode() -> UInt8 {
+        __swift_bridge__$FileTreeSnapshotData$mode(ptr)
+    }
+
+    public func root() -> RustString {
+        RustString(ptr: __swift_bridge__$FileTreeSnapshotData$root(ptr))
+    }
+
+    public func selected_path() -> RustString {
+        RustString(ptr: __swift_bridge__$FileTreeSnapshotData$selected_path(ptr))
+    }
+
+    public func refresh_generation() -> UInt64 {
+        __swift_bridge__$FileTreeSnapshotData$refresh_generation(ptr)
+    }
+
+    public func node_count() -> UInt {
+        __swift_bridge__$FileTreeSnapshotData$node_count(ptr)
+    }
+
+    public func node_at(_ index: UInt) -> FileTreeNodeFFI {
+        FileTreeNodeFFI(ptr: __swift_bridge__$FileTreeSnapshotData$node_at(ptr, index))
+    }
+}
+extension FileTreeSnapshotData: Vectorizable {
+    public static func vecOfSelfNew() -> UnsafeMutableRawPointer {
+        __swift_bridge__$Vec_FileTreeSnapshotData$new()
+    }
+
+    public static func vecOfSelfFree(vecPtr: UnsafeMutableRawPointer) {
+        __swift_bridge__$Vec_FileTreeSnapshotData$drop(vecPtr)
+    }
+
+    public static func vecOfSelfPush(vecPtr: UnsafeMutableRawPointer, value: FileTreeSnapshotData) {
+        __swift_bridge__$Vec_FileTreeSnapshotData$push(vecPtr, {value.isOwned = false; return value.ptr;}())
+    }
+
+    public static func vecOfSelfPop(vecPtr: UnsafeMutableRawPointer) -> Optional<Self> {
+        let pointer = __swift_bridge__$Vec_FileTreeSnapshotData$pop(vecPtr)
+        if pointer == nil {
+            return nil
+        } else {
+            return (FileTreeSnapshotData(ptr: pointer!) as! Self)
+        }
+    }
+
+    public static func vecOfSelfGet(vecPtr: UnsafeMutableRawPointer, index: UInt) -> Optional<FileTreeSnapshotDataRef> {
+        let pointer = __swift_bridge__$Vec_FileTreeSnapshotData$get(vecPtr, index)
+        if pointer == nil {
+            return nil
+        } else {
+            return FileTreeSnapshotDataRef(ptr: pointer!)
+        }
+    }
+
+    public static func vecOfSelfGetMut(vecPtr: UnsafeMutableRawPointer, index: UInt) -> Optional<FileTreeSnapshotDataRefMut> {
+        let pointer = __swift_bridge__$Vec_FileTreeSnapshotData$get_mut(vecPtr, index)
+        if pointer == nil {
+            return nil
+        } else {
+            return FileTreeSnapshotDataRefMut(ptr: pointer!)
+        }
+    }
+
+    public static func vecOfSelfAsPtr(vecPtr: UnsafeMutableRawPointer) -> UnsafePointer<FileTreeSnapshotDataRef> {
+        UnsafePointer<FileTreeSnapshotDataRef>(OpaquePointer(__swift_bridge__$Vec_FileTreeSnapshotData$as_ptr(vecPtr)))
+    }
+
+    public static func vecOfSelfLen(vecPtr: UnsafeMutableRawPointer) -> UInt {
+        __swift_bridge__$Vec_FileTreeSnapshotData$len(vecPtr)
+    }
+}
+
+
+public class FileTreeNodeFFI: FileTreeNodeFFIRefMut {
+    var isOwned: Bool = true
+
+    public override init(ptr: UnsafeMutableRawPointer) {
+        super.init(ptr: ptr)
+    }
+
+    deinit {
+        if isOwned {
+            __swift_bridge__$FileTreeNodeFFI$_free(ptr)
+        }
+    }
+}
+public class FileTreeNodeFFIRefMut: FileTreeNodeFFIRef {
+    public override init(ptr: UnsafeMutableRawPointer) {
+        super.init(ptr: ptr)
+    }
+}
+public class FileTreeNodeFFIRef {
+    var ptr: UnsafeMutableRawPointer
+
+    public init(ptr: UnsafeMutableRawPointer) {
+        self.ptr = ptr
+    }
+}
+extension FileTreeNodeFFIRef {
+    public func id() -> RustString {
+        RustString(ptr: __swift_bridge__$FileTreeNodeFFI$id(ptr))
+    }
+
+    public func path() -> RustString {
+        RustString(ptr: __swift_bridge__$FileTreeNodeFFI$path(ptr))
+    }
+
+    public func name() -> RustString {
+        RustString(ptr: __swift_bridge__$FileTreeNodeFFI$name(ptr))
+    }
+
+    public func depth() -> UInt {
+        __swift_bridge__$FileTreeNodeFFI$depth(ptr)
+    }
+
+    public func kind() -> UInt8 {
+        __swift_bridge__$FileTreeNodeFFI$kind(ptr)
+    }
+
+    public func expanded() -> Bool {
+        __swift_bridge__$FileTreeNodeFFI$expanded(ptr)
+    }
+
+    public func selected() -> Bool {
+        __swift_bridge__$FileTreeNodeFFI$selected(ptr)
+    }
+
+    public func has_unloaded_children() -> Bool {
+        __swift_bridge__$FileTreeNodeFFI$has_unloaded_children(ptr)
+    }
+}
+extension FileTreeNodeFFI: Vectorizable {
+    public static func vecOfSelfNew() -> UnsafeMutableRawPointer {
+        __swift_bridge__$Vec_FileTreeNodeFFI$new()
+    }
+
+    public static func vecOfSelfFree(vecPtr: UnsafeMutableRawPointer) {
+        __swift_bridge__$Vec_FileTreeNodeFFI$drop(vecPtr)
+    }
+
+    public static func vecOfSelfPush(vecPtr: UnsafeMutableRawPointer, value: FileTreeNodeFFI) {
+        __swift_bridge__$Vec_FileTreeNodeFFI$push(vecPtr, {value.isOwned = false; return value.ptr;}())
+    }
+
+    public static func vecOfSelfPop(vecPtr: UnsafeMutableRawPointer) -> Optional<Self> {
+        let pointer = __swift_bridge__$Vec_FileTreeNodeFFI$pop(vecPtr)
+        if pointer == nil {
+            return nil
+        } else {
+            return (FileTreeNodeFFI(ptr: pointer!) as! Self)
+        }
+    }
+
+    public static func vecOfSelfGet(vecPtr: UnsafeMutableRawPointer, index: UInt) -> Optional<FileTreeNodeFFIRef> {
+        let pointer = __swift_bridge__$Vec_FileTreeNodeFFI$get(vecPtr, index)
+        if pointer == nil {
+            return nil
+        } else {
+            return FileTreeNodeFFIRef(ptr: pointer!)
+        }
+    }
+
+    public static func vecOfSelfGetMut(vecPtr: UnsafeMutableRawPointer, index: UInt) -> Optional<FileTreeNodeFFIRefMut> {
+        let pointer = __swift_bridge__$Vec_FileTreeNodeFFI$get_mut(vecPtr, index)
+        if pointer == nil {
+            return nil
+        } else {
+            return FileTreeNodeFFIRefMut(ptr: pointer!)
+        }
+    }
+
+    public static func vecOfSelfAsPtr(vecPtr: UnsafeMutableRawPointer) -> UnsafePointer<FileTreeNodeFFIRef> {
+        UnsafePointer<FileTreeNodeFFIRef>(OpaquePointer(__swift_bridge__$Vec_FileTreeNodeFFI$as_ptr(vecPtr)))
+    }
+
+    public static func vecOfSelfLen(vecPtr: UnsafeMutableRawPointer) -> UInt {
+        __swift_bridge__$Vec_FileTreeNodeFFI$len(vecPtr)
     }
 }
 

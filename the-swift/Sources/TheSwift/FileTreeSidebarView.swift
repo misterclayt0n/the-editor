@@ -1,158 +1,94 @@
 import AppKit
+import Foundation
 import SwiftUI
 
-final class FileTreeNode: NSObject {
-    enum Kind {
-        case file
-        case directory
-    }
-
+struct FileTreeNodeSnapshot: Identifiable, Equatable {
     let id: String
+    let path: String
     let name: String
-    let kind: Kind
-    let children: [FileTreeNode]
+    let depth: Int
+    let isDirectory: Bool
+    let expanded: Bool
+    let selected: Bool
+    let hasUnloadedChildren: Bool
+}
 
-    var isDirectory: Bool {
-        kind == .directory
+struct FileTreeSnapshot: Equatable {
+    let visible: Bool
+    let mode: UInt8
+    let root: String
+    let selectedPath: String?
+    let refreshGeneration: UInt64
+    let nodes: [FileTreeNodeSnapshot]
+
+    static let hidden = FileTreeSnapshot(
+        visible: false,
+        mode: 0,
+        root: "",
+        selectedPath: nil,
+        refreshGeneration: 0,
+        nodes: []
+    )
+
+    var selectedNodeID: String? {
+        nodes.first(where: { $0.selected })?.id
     }
 
-    init(
-        id: String,
-        name: String,
-        kind: Kind,
-        children: [FileTreeNode] = []
-    ) {
-        self.id = id
-        self.name = name
-        self.kind = kind
-        self.children = children
+    var expandedNodeIDs: Set<String> {
+        Set(nodes.filter { $0.isDirectory && $0.expanded }.map(\.id))
+    }
+
+    var rootDisplayName: String {
+        guard !root.isEmpty else {
+            return "workspace"
+        }
+        let value = URL(fileURLWithPath: root).lastPathComponent
+        return value.isEmpty ? root : value
     }
 }
 
-final class FileTreeViewModel: ObservableObject {
-    @Published var rootNodes: [FileTreeNode]
-    @Published var selectedNodeID: String?
+private final class FileTreeNode: NSObject {
+    let id: String
+    let path: String
+    let name: String
+    let isDirectory: Bool
+    let hasUnloadedChildren: Bool
+    var children: [FileTreeNode]
 
-    init(rootNodes: [FileTreeNode], selectedNodeID: String? = nil) {
-        self.rootNodes = rootNodes
-        self.selectedNodeID = selectedNodeID
-    }
-
-    static func sample() -> FileTreeViewModel {
-        let docs = FileTreeNode(
-            id: "workspace/docs",
-            name: "docs",
-            kind: .directory,
-            children: [
-                FileTreeNode(
-                    id: "workspace/docs/SWIFT_FILE_TREE_PLAN.md",
-                    name: "SWIFT_FILE_TREE_PLAN.md",
-                    kind: .file
-                ),
-                FileTreeNode(
-                    id: "workspace/docs/TODO.md",
-                    name: "TODO.md",
-                    kind: .file
-                ),
-                FileTreeNode(
-                    id: "workspace/docs/REWRITE.md",
-                    name: "REWRITE.md",
-                    kind: .file
-                )
-            ]
-        )
-
-        let swift = FileTreeNode(
-            id: "workspace/the-swift",
-            name: "the-swift",
-            kind: .directory,
-            children: [
-                FileTreeNode(
-                    id: "workspace/the-swift/Sources",
-                    name: "Sources",
-                    kind: .directory,
-                    children: [
-                        FileTreeNode(
-                            id: "workspace/the-swift/Sources/TheSwift",
-                            name: "TheSwift",
-                            kind: .directory,
-                            children: [
-                                FileTreeNode(
-                                    id: "workspace/the-swift/Sources/TheSwift/EditorView.swift",
-                                    name: "EditorView.swift",
-                                    kind: .file
-                                ),
-                                FileTreeNode(
-                                    id: "workspace/the-swift/Sources/TheSwift/EditorModel.swift",
-                                    name: "EditorModel.swift",
-                                    kind: .file
-                                ),
-                                FileTreeNode(
-                                    id: "workspace/the-swift/Sources/TheSwift/FileTreeSidebarView.swift",
-                                    name: "FileTreeSidebarView.swift",
-                                    kind: .file
-                                )
-                            ]
-                        )
-                    ]
-                )
-            ]
-        )
-
-        let root = FileTreeNode(
-            id: "workspace",
-            name: "the-editor",
-            kind: .directory,
-            children: [
-                docs,
-                swift,
-                FileTreeNode(
-                    id: "workspace/the-default",
-                    name: "the-default",
-                    kind: .directory,
-                    children: [
-                        FileTreeNode(
-                            id: "workspace/the-default/command.rs",
-                            name: "command.rs",
-                            kind: .file
-                        ),
-                        FileTreeNode(
-                            id: "workspace/the-default/keymap.rs",
-                            name: "keymap.rs",
-                            kind: .file
-                        )
-                    ]
-                ),
-                FileTreeNode(
-                    id: "workspace/Cargo.toml",
-                    name: "Cargo.toml",
-                    kind: .file
-                ),
-                FileTreeNode(
-                    id: "workspace/README.md",
-                    name: "README.md",
-                    kind: .file
-                )
-            ]
-        )
-
-        return FileTreeViewModel(
-            rootNodes: [root],
-            selectedNodeID: "workspace/docs/SWIFT_FILE_TREE_PLAN.md"
-        )
+    init(snapshot: FileTreeNodeSnapshot) {
+        self.id = snapshot.id
+        self.path = snapshot.path
+        self.name = snapshot.name
+        self.isDirectory = snapshot.isDirectory
+        self.hasUnloadedChildren = snapshot.hasUnloadedChildren
+        self.children = []
     }
 }
 
 struct FileTreeSidebarView: View {
-    @StateObject private var viewModel: FileTreeViewModel = .sample()
+    let snapshot: FileTreeSnapshot
+    let onSetVisible: (Bool) -> Void
+    let onSetExpanded: (String, Bool) -> Void
+    let onSelectPath: (String) -> Void
+    let onOpenSelected: () -> Void
 
     var body: some View {
+        let rootNodes = buildOutlineNodes(from: snapshot.nodes)
+
         VStack(spacing: 0) {
-            HStack {
-                Text("Explorer")
+            HStack(spacing: 8) {
+                Text(snapshot.mode == 1 ? "Explorer (Current Folder)" : "Explorer")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(.secondary)
                 Spacer()
+                Button {
+                    onSetVisible(false)
+                } label: {
+                    Image(systemName: "sidebar.left")
+                        .font(.system(size: 11, weight: .semibold))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
@@ -161,17 +97,58 @@ struct FileTreeSidebarView: View {
             Divider()
 
             NativeOutlineFileTreeView(
-                rootNodes: viewModel.rootNodes,
-                selectedNodeID: $viewModel.selectedNodeID
+                rootNodes: rootNodes,
+                selectedNodeID: snapshot.selectedNodeID,
+                expandedNodeIDs: snapshot.expandedNodeIDs,
+                onSetExpanded: onSetExpanded,
+                onSelectPath: onSelectPath,
+                onOpenSelected: onOpenSelected
             )
         }
         .background(Color(nsColor: .controlBackgroundColor))
+    }
+
+    private func buildOutlineNodes(from snapshots: [FileTreeNodeSnapshot]) -> [FileTreeNode] {
+        var roots: [FileTreeNode] = []
+        var stack: [(depth: Int, node: FileTreeNode)] = []
+
+        for snapshot in snapshots {
+            let node = FileTreeNode(snapshot: snapshot)
+            while let last = stack.last, last.depth >= snapshot.depth {
+                _ = stack.popLast()
+            }
+
+            if let parent = stack.last?.node {
+                parent.children.append(node)
+            } else {
+                roots.append(node)
+            }
+            stack.append((snapshot.depth, node))
+        }
+
+        return roots
+    }
+}
+
+private final class FileTreeOutlineView: NSOutlineView {
+    var onConfirmSelection: (() -> Void)?
+
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == 36 || event.keyCode == 76 {
+            onConfirmSelection?()
+            return
+        }
+        super.keyDown(with: event)
     }
 }
 
 private struct NativeOutlineFileTreeView: NSViewRepresentable {
     let rootNodes: [FileTreeNode]
-    @Binding var selectedNodeID: String?
+    let selectedNodeID: String?
+    let expandedNodeIDs: Set<String>
+    let onSetExpanded: (String, Bool) -> Void
+    let onSelectPath: (String) -> Void
+    let onOpenSelected: () -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -185,7 +162,7 @@ private struct NativeOutlineFileTreeView: NSViewRepresentable {
         scrollView.autohidesScrollers = true
         scrollView.borderType = .noBorder
 
-        let outlineView = NSOutlineView()
+        let outlineView = FileTreeOutlineView()
         outlineView.headerView = nil
         outlineView.delegate = context.coordinator
         outlineView.dataSource = context.coordinator
@@ -194,6 +171,11 @@ private struct NativeOutlineFileTreeView: NSViewRepresentable {
         outlineView.selectionHighlightStyle = .regular
         outlineView.focusRingType = .none
         outlineView.usesAlternatingRowBackgroundColors = false
+        outlineView.target = context.coordinator
+        outlineView.doubleAction = #selector(Coordinator.handleDoubleAction(_:))
+        outlineView.onConfirmSelection = { [weak coordinator = context.coordinator] in
+            coordinator?.openSelectedIfPossible()
+        }
         if #available(macOS 11.0, *) {
             outlineView.style = .sourceList
         }
@@ -209,60 +191,55 @@ private struct NativeOutlineFileTreeView: NSViewRepresentable {
         context.coordinator.parent = self
         context.coordinator.bind(outlineView: outlineView)
         context.coordinator.rootNodes = rootNodes
-        context.coordinator.seedInitialExpansionIfNeeded()
 
         outlineView.reloadData()
-        context.coordinator.restoreExpansionState()
+        context.coordinator.restoreExpansionState(expandedNodeIDs: expandedNodeIDs)
         context.coordinator.restoreSelection(selectedNodeID: selectedNodeID)
 
         return scrollView
     }
 
     func updateNSView(_ nsView: NSScrollView, context: Context) {
-        guard let outlineView = nsView.documentView as? NSOutlineView else {
+        guard let outlineView = nsView.documentView as? FileTreeOutlineView else {
             return
         }
 
         context.coordinator.parent = self
         context.coordinator.rootNodes = rootNodes
-        context.coordinator.seedInitialExpansionIfNeeded()
 
         outlineView.reloadData()
-        context.coordinator.restoreExpansionState()
+        context.coordinator.restoreExpansionState(expandedNodeIDs: expandedNodeIDs)
         context.coordinator.restoreSelection(selectedNodeID: selectedNodeID)
     }
 
     final class Coordinator: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate {
         var parent: NativeOutlineFileTreeView
         var rootNodes: [FileTreeNode] = []
-        private weak var outlineView: NSOutlineView?
-        private var expandedNodeIDs: Set<String> = []
-        private var seededInitialExpansion = false
+        private weak var outlineView: FileTreeOutlineView?
         private var suppressSelectionEvents = false
+        private var suppressExpansionEvents = false
 
         init(_ parent: NativeOutlineFileTreeView) {
             self.parent = parent
         }
 
-        func bind(outlineView: NSOutlineView) {
+        func bind(outlineView: FileTreeOutlineView) {
             self.outlineView = outlineView
         }
 
-        func seedInitialExpansionIfNeeded() {
-            guard !seededInitialExpansion else {
-                return
-            }
-            seededInitialExpansion = true
-            for node in rootNodes where node.isDirectory {
-                expandedNodeIDs.insert(node.id)
-            }
-        }
-
-        func restoreExpansionState() {
+        func restoreExpansionState(expandedNodeIDs: Set<String>) {
             guard let outlineView else {
                 return
             }
-            applyExpansion(to: rootNodes, parentExpanded: true, outlineView: outlineView)
+
+            suppressExpansionEvents = true
+            applyExpansion(
+                to: rootNodes,
+                expandedNodeIDs: expandedNodeIDs,
+                parentExpanded: true,
+                outlineView: outlineView
+            )
+            suppressExpansionEvents = false
         }
 
         func restoreSelection(selectedNodeID: String?) {
@@ -283,10 +260,11 @@ private struct NativeOutlineFileTreeView: NSViewRepresentable {
                 return
             }
 
+            suppressExpansionEvents = true
             for ancestor in nodePath.dropLast() where ancestor.isDirectory {
-                expandedNodeIDs.insert(ancestor.id)
                 outlineView.expandItem(ancestor)
             }
+            suppressExpansionEvents = false
 
             let row = outlineView.row(forItem: target)
             guard row >= 0, row != outlineView.selectedRow else {
@@ -300,6 +278,7 @@ private struct NativeOutlineFileTreeView: NSViewRepresentable {
 
         private func applyExpansion(
             to nodes: [FileTreeNode],
+            expandedNodeIDs: Set<String>,
             parentExpanded: Bool,
             outlineView: NSOutlineView
         ) {
@@ -311,9 +290,12 @@ private struct NativeOutlineFileTreeView: NSViewRepresentable {
                 let shouldExpand = expandedNodeIDs.contains(node.id)
                 if shouldExpand {
                     outlineView.expandItem(node)
+                } else {
+                    outlineView.collapseItem(node, collapseChildren: true)
                 }
                 applyExpansion(
                     to: node.children,
+                    expandedNodeIDs: expandedNodeIDs,
                     parentExpanded: shouldExpand,
                     outlineView: outlineView
                 )
@@ -332,6 +314,19 @@ private struct NativeOutlineFileTreeView: NSViewRepresentable {
             return nil
         }
 
+        @objc
+        func handleDoubleAction(_ sender: Any?) {
+            _ = sender
+            openSelectedIfPossible()
+        }
+
+        func openSelectedIfPossible() {
+            guard let outlineView, outlineView.selectedRow >= 0 else {
+                return
+            }
+            parent.onOpenSelected()
+        }
+
         func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
             let nodes = (item as? FileTreeNode)?.children ?? rootNodes
             return nodes.count
@@ -346,15 +341,18 @@ private struct NativeOutlineFileTreeView: NSViewRepresentable {
             guard let node = item as? FileTreeNode else {
                 return false
             }
-            return node.isDirectory && !node.children.isEmpty
+            return node.isDirectory
         }
 
         func outlineView(
             _ outlineView: NSOutlineView,
             shouldExpandItem item: Any
         ) -> Bool {
-            if let node = item as? FileTreeNode {
-                expandedNodeIDs.insert(node.id)
+            guard let node = item as? FileTreeNode else {
+                return true
+            }
+            if !suppressExpansionEvents {
+                parent.onSetExpanded(node.path, true)
             }
             return true
         }
@@ -363,23 +361,26 @@ private struct NativeOutlineFileTreeView: NSViewRepresentable {
             _ outlineView: NSOutlineView,
             shouldCollapseItem item: Any
         ) -> Bool {
-            if let node = item as? FileTreeNode {
-                expandedNodeIDs.remove(node.id)
+            guard let node = item as? FileTreeNode else {
+                return true
+            }
+            if !suppressExpansionEvents {
+                parent.onSetExpanded(node.path, false)
             }
             return true
         }
 
         func outlineViewSelectionDidChange(_ notification: Notification) {
+            _ = notification
             guard
                 !suppressSelectionEvents,
                 let outlineView,
                 outlineView.selectedRow >= 0,
                 let node = outlineView.item(atRow: outlineView.selectedRow) as? FileTreeNode
             else {
-                parent.selectedNodeID = nil
                 return
             }
-            parent.selectedNodeID = node.id
+            parent.onSelectPath(node.path)
         }
 
         func outlineView(
@@ -387,6 +388,7 @@ private struct NativeOutlineFileTreeView: NSViewRepresentable {
             viewFor tableColumn: NSTableColumn?,
             item: Any
         ) -> NSView? {
+            _ = tableColumn
             guard let node = item as? FileTreeNode else {
                 return nil
             }

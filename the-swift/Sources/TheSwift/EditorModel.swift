@@ -53,6 +53,7 @@ final class EditorModel: ObservableObject {
     @Published var pendingKeys: [String] = []
     @Published var pendingKeyHints: PendingKeyHintsSnapshot? = nil
     @Published var filePickerSnapshot: FilePickerSnapshot? = nil
+    @Published var fileTreeSnapshot: FileTreeSnapshot = .hidden
     let filePickerPreviewModel = FilePickerPreviewModel()
     private var filePickerTimer: Timer? = nil
     private var backgroundTimer: Timer? = nil
@@ -68,6 +69,11 @@ final class EditorModel: ObservableObject {
     private var lastPickerTitle: String? = nil
     private var lastPickerRoot: String? = nil
     private var lastPickerKind: UInt8 = 0
+    private var lastFileTreeRefreshGeneration: UInt64 = 0
+    private var lastFileTreeVisible: Bool = false
+    private var lastFileTreeRoot: String = ""
+    private var lastFileTreeMode: UInt8 = 0
+    private var lastFileTreeNodeCount: Int = -1
     private var filePickerPreviewOffsetHint: Int = -1
     private var filePickerPreviewVisibleRows: Int = 24
     private var filePickerPreviewOverscan: Int = 24
@@ -104,6 +110,7 @@ final class EditorModel: ObservableObject {
         self.plan = initialFramePlan.active_plan()
         self.splitSeparators = []
         self.mode = EditorMode(rawValue: app.mode(editorId)) ?? .normal
+        refreshFileTree(force: true)
         if DiagnosticsDebugLog.enabled {
             DiagnosticsDebugLog.log(
                 "font init: nsFont=\(fontInfo.nsFont.fontName) pointSize=\(fontInfo.nsFont.pointSize) cell=\(Int(cellSize.width))x\(Int(cellSize.height))"
@@ -177,6 +184,7 @@ final class EditorModel: ObservableObject {
         pendingKeys = fetchPendingKeys()
         pendingKeyHints = fetchPendingKeyHints()
         refreshFilePicker()
+        refreshFileTree()
 
         if app.take_should_quit() {
             NSApp.terminate(nil)
@@ -754,6 +762,94 @@ final class EditorModel: ObservableObject {
                 )
             )
         }
+    }
+
+    // MARK: - File tree
+
+    func setFileTreeVisible(_ visible: Bool) {
+        guard app.file_tree_set_visible(editorId, visible) else {
+            return
+        }
+        refresh(trigger: "file_tree_visibility")
+    }
+
+    func fileTreeSetExpanded(path: String, expanded: Bool) {
+        guard !path.isEmpty else {
+            return
+        }
+        guard app.file_tree_set_expanded(editorId, path, expanded) else {
+            return
+        }
+        refreshFileTree(force: true)
+    }
+
+    func fileTreeSelectPath(path: String) {
+        guard !path.isEmpty else {
+            return
+        }
+        guard app.file_tree_select_path(editorId, path) else {
+            return
+        }
+        refreshFileTree(force: true)
+    }
+
+    func fileTreeOpenSelected() {
+        guard app.file_tree_open_selected(editorId) else {
+            return
+        }
+        refresh(trigger: "file_tree_open_selected")
+    }
+
+    func refreshFileTree(force: Bool = false) {
+        let data = app.file_tree_snapshot(editorId, 10_000)
+        let visible = data.visible()
+        let mode = data.mode()
+        let root = data.root().toString()
+        let generation = data.refresh_generation()
+        let nodeCount = Int(data.node_count())
+
+        if !force
+            && generation == lastFileTreeRefreshGeneration
+            && visible == lastFileTreeVisible
+            && mode == lastFileTreeMode
+            && root == lastFileTreeRoot
+            && nodeCount == lastFileTreeNodeCount {
+            return
+        }
+
+        let selectedPathRaw = data.selected_path().toString()
+        let selectedPath = selectedPathRaw.isEmpty ? nil : selectedPathRaw
+        var nodes: [FileTreeNodeSnapshot] = []
+        nodes.reserveCapacity(nodeCount)
+        for index in 0..<nodeCount {
+            let node = data.node_at(UInt(index))
+            nodes.append(
+                FileTreeNodeSnapshot(
+                    id: node.id().toString(),
+                    path: node.path().toString(),
+                    name: node.name().toString(),
+                    depth: Int(node.depth()),
+                    isDirectory: node.kind() == 1,
+                    expanded: node.expanded(),
+                    selected: node.selected(),
+                    hasUnloadedChildren: node.has_unloaded_children()
+                )
+            )
+        }
+
+        fileTreeSnapshot = FileTreeSnapshot(
+            visible: visible,
+            mode: mode,
+            root: root,
+            selectedPath: selectedPath,
+            refreshGeneration: generation,
+            nodes: nodes
+        )
+        lastFileTreeRefreshGeneration = generation
+        lastFileTreeVisible = visible
+        lastFileTreeMode = mode
+        lastFileTreeRoot = root
+        lastFileTreeNodeCount = nodeCount
     }
 
     private func startFilePickerTimerIfNeeded(scanning: Bool) {

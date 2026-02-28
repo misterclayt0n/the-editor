@@ -41,10 +41,27 @@ struct EditorView: View {
         let activePaneOrigin = panePixelOrigin(model.activePaneRect(), cellSize: cellSize)
         let splitResizeHandles = splitResizeHandles(from: model.splitSeparators, cellSize: cellSize)
         let pointerPanes = pointerPanes(from: model.framePlan, cellSize: cellSize)
+        let fileTreeSnapshot = model.fileTreeSnapshot
         GeometryReader { _ in
             HSplitView {
-                FileTreeSidebarView()
+                if fileTreeSnapshot.visible {
+                    FileTreeSidebarView(
+                        snapshot: fileTreeSnapshot,
+                        onSetVisible: { visible in
+                            model.setFileTreeVisible(visible)
+                        },
+                        onSetExpanded: { path, expanded in
+                            model.fileTreeSetExpanded(path: path, expanded: expanded)
+                        },
+                        onSelectPath: { path in
+                            model.fileTreeSelectPath(path: path)
+                        },
+                        onOpenSelected: {
+                            model.fileTreeOpenSelected()
+                        }
+                    )
                     .frame(minWidth: 180, idealWidth: 240, maxWidth: 360)
+                }
 
                 VStack(spacing: 0) {
                     GeometryReader { contentProxy in

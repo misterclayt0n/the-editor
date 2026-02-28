@@ -73,17 +73,6 @@ private final class FileTreeNode: NSObject {
             children: []
         )
     }
-
-    func clone(with children: [FileTreeNode]) -> FileTreeNode {
-        FileTreeNode(
-            id: id,
-            path: path,
-            name: name,
-            isDirectory: isDirectory,
-            hasUnloadedChildren: hasUnloadedChildren,
-            children: children
-        )
-    }
 }
 
 struct FileTreeSidebarView: View {
@@ -115,17 +104,13 @@ private final class FileTreeOutlineView: NSOutlineView {
 }
 
 private final class NavigatorSidebarContainerView: NSView {
-    let topBar = NSVisualEffectView()
-    let segmentedControl: NSSegmentedControl
+    let panel = NSVisualEffectView()
+    let topSpacer = NSView()
     let scrollView = NSScrollView()
     let outlineView = FileTreeOutlineView()
     let nameColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("name"))
-    let bottomBar = NSVisualEffectView()
-    let searchField = NSSearchField()
-    let optionsButton = NSPopUpButton(frame: .zero, pullsDown: true)
 
     override init(frame frameRect: NSRect) {
-        self.segmentedControl = NSSegmentedControl(images: Self.navigatorImages(), trackingMode: .selectOne, target: nil, action: nil)
         super.init(frame: frameRect)
         wantsLayer = true
         configureViews()
@@ -137,15 +122,17 @@ private final class NavigatorSidebarContainerView: NSView {
     }
 
     private func configureViews() {
-        topBar.translatesAutoresizingMaskIntoConstraints = false
-        topBar.material = .sidebar
-        topBar.blendingMode = .withinWindow
-        topBar.state = .active
+        panel.translatesAutoresizingMaskIntoConstraints = false
+        panel.material = .sidebar
+        panel.blendingMode = .withinWindow
+        panel.state = .active
+        panel.wantsLayer = true
+        panel.layer?.cornerRadius = 10
+        panel.layer?.masksToBounds = true
+        panel.layer?.borderWidth = 1
+        panel.layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.30).cgColor
 
-        segmentedControl.translatesAutoresizingMaskIntoConstraints = false
-        segmentedControl.selectedSegment = 0
-        segmentedControl.segmentStyle = .texturedRounded
-        segmentedControl.controlSize = .small
+        topSpacer.translatesAutoresizingMaskIntoConstraints = false
 
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.drawsBackground = false
@@ -153,6 +140,7 @@ private final class NavigatorSidebarContainerView: NSView {
         scrollView.hasHorizontalScroller = false
         scrollView.autohidesScrollers = true
         scrollView.borderType = .noBorder
+        scrollView.scrollerStyle = .overlay
 
         outlineView.translatesAutoresizingMaskIntoConstraints = false
         outlineView.headerView = nil
@@ -168,99 +156,29 @@ private final class NavigatorSidebarContainerView: NSView {
         }
 
         scrollView.documentView = outlineView
-
-        bottomBar.translatesAutoresizingMaskIntoConstraints = false
-        bottomBar.material = .sidebar
-        bottomBar.blendingMode = .withinWindow
-        bottomBar.state = .active
-
-        searchField.translatesAutoresizingMaskIntoConstraints = false
-        searchField.placeholderString = "Filter"
-        searchField.controlSize = .small
-        searchField.sendsSearchStringImmediately = true
-
-        optionsButton.translatesAutoresizingMaskIntoConstraints = false
-        optionsButton.bezelStyle = .texturedRounded
-        optionsButton.controlSize = .small
-        optionsButton.imagePosition = .imageOnly
-        configureOptionsMenu()
-    }
-
-    private func configureOptionsMenu() {
-        let menu = NSMenu(title: "Navigator")
-        menu.addItem(withTitle: "Navigator Options", action: nil, keyEquivalent: "")
-        menu.addItem(.separator())
-        menu.addItem(withTitle: "Collapse Folders", action: nil, keyEquivalent: "")
-        menu.addItem(withTitle: "Sort by Name", action: nil, keyEquivalent: "")
-        menu.addItem(withTitle: "Sort by Type", action: nil, keyEquivalent: "")
-        optionsButton.menu = menu
-
-        optionsButton.removeAllItems()
-        optionsButton.addItem(withTitle: "")
-        if let image = NSImage(systemSymbolName: "slider.horizontal.3", accessibilityDescription: "Navigator options") {
-            image.isTemplate = true
-            optionsButton.itemArray.first?.image = image
-        }
     }
 
     private func buildLayout() {
-        addSubview(topBar)
-        addSubview(scrollView)
-        addSubview(bottomBar)
-
-        topBar.addSubview(segmentedControl)
-        bottomBar.addSubview(searchField)
-        bottomBar.addSubview(optionsButton)
+        addSubview(panel)
+        panel.addSubview(topSpacer)
+        panel.addSubview(scrollView)
 
         NSLayoutConstraint.activate([
-            topBar.leadingAnchor.constraint(equalTo: leadingAnchor),
-            topBar.trailingAnchor.constraint(equalTo: trailingAnchor),
-            topBar.topAnchor.constraint(equalTo: topAnchor),
-            topBar.heightAnchor.constraint(equalToConstant: 34),
+            panel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
+            panel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
+            panel.topAnchor.constraint(equalTo: topAnchor, constant: 6),
+            panel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
 
-            segmentedControl.leadingAnchor.constraint(equalTo: topBar.leadingAnchor, constant: 8),
-            segmentedControl.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
-            segmentedControl.trailingAnchor.constraint(lessThanOrEqualTo: topBar.trailingAnchor, constant: -8),
+            topSpacer.leadingAnchor.constraint(equalTo: panel.leadingAnchor),
+            topSpacer.trailingAnchor.constraint(equalTo: panel.trailingAnchor),
+            topSpacer.topAnchor.constraint(equalTo: panel.topAnchor),
+            topSpacer.heightAnchor.constraint(equalToConstant: 28),
 
-            scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            scrollView.topAnchor.constraint(equalTo: topBar.bottomAnchor),
-
-            bottomBar.leadingAnchor.constraint(equalTo: leadingAnchor),
-            bottomBar.trailingAnchor.constraint(equalTo: trailingAnchor),
-            bottomBar.topAnchor.constraint(equalTo: scrollView.bottomAnchor),
-            bottomBar.bottomAnchor.constraint(equalTo: bottomAnchor),
-            bottomBar.heightAnchor.constraint(equalToConstant: 32),
-
-            searchField.leadingAnchor.constraint(equalTo: bottomBar.leadingAnchor, constant: 8),
-            searchField.centerYAnchor.constraint(equalTo: bottomBar.centerYAnchor),
-
-            optionsButton.leadingAnchor.constraint(equalTo: searchField.trailingAnchor, constant: 6),
-            optionsButton.trailingAnchor.constraint(equalTo: bottomBar.trailingAnchor, constant: -8),
-            optionsButton.centerYAnchor.constraint(equalTo: bottomBar.centerYAnchor),
-            optionsButton.widthAnchor.constraint(equalToConstant: 24),
-
-            searchField.heightAnchor.constraint(equalToConstant: 22)
+            scrollView.leadingAnchor.constraint(equalTo: panel.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: panel.trailingAnchor),
+            scrollView.topAnchor.constraint(equalTo: topSpacer.bottomAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: panel.bottomAnchor)
         ])
-    }
-
-    private static func navigatorImages() -> [NSImage] {
-        let symbols = [
-            "folder",
-            "doc.on.doc",
-            "bookmark",
-            "magnifyingglass",
-            "exclamationmark.triangle",
-            "scissors",
-            "tag",
-            "wrench.and.screwdriver"
-        ]
-
-        return symbols.map { symbol in
-            let image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil) ?? NSImage()
-            image.isTemplate = true
-            return image
-        }
     }
 }
 
@@ -286,9 +204,6 @@ private struct NavigatorSidebarView: NSViewRepresentable {
             coordinator?.openSelectedIfPossible()
         }
 
-        container.searchField.target = context.coordinator
-        container.searchField.action = #selector(Coordinator.searchQueryChanged(_:))
-
         context.coordinator.parent = self
         context.coordinator.bind(container: container)
         context.coordinator.updateSnapshot(snapshot)
@@ -306,11 +221,9 @@ private struct NavigatorSidebarView: NSViewRepresentable {
         var parent: NavigatorSidebarView
 
         private weak var container: NavigatorSidebarContainerView?
-        private var allRootNodes: [FileTreeNode] = []
-        private var visibleRootNodes: [FileTreeNode] = []
+        private var rootNodes: [FileTreeNode] = []
         private var suppressSelectionEvents = false
         private var suppressExpansionEvents = false
-        private var filterQuery: String = ""
         private var latestExpandedNodeIDs: Set<String> = []
         private var latestSelectedNodeID: String?
 
@@ -323,22 +236,9 @@ private struct NavigatorSidebarView: NSViewRepresentable {
         }
 
         func updateSnapshot(_ snapshot: FileTreeSnapshot) {
-            let roots = Self.buildOutlineNodes(from: snapshot.nodes)
-            allRootNodes = roots
+            rootNodes = Self.buildOutlineNodes(from: snapshot.nodes)
             latestExpandedNodeIDs = snapshot.expandedNodeIDs
             latestSelectedNodeID = snapshot.selectedNodeID
-
-            applyFilterAndReload()
-        }
-
-        @objc
-        func searchQueryChanged(_ sender: NSSearchField) {
-            filterQuery = sender.stringValue
-            applyFilterAndReload()
-        }
-
-        private func applyFilterAndReload() {
-            visibleRootNodes = filterTree(allRootNodes, query: filterQuery)
 
             guard let outlineView = container?.outlineView else {
                 return
@@ -347,25 +247,6 @@ private struct NavigatorSidebarView: NSViewRepresentable {
             outlineView.reloadData()
             restoreExpansionState(expandedNodeIDs: latestExpandedNodeIDs)
             restoreSelection(selectedNodeID: latestSelectedNodeID)
-        }
-
-        private func filterTree(_ roots: [FileTreeNode], query: String) -> [FileTreeNode] {
-            let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else {
-                return roots
-            }
-
-            let needle = trimmed.lowercased()
-            return roots.compactMap { filterNode($0, needle: needle) }
-        }
-
-        private func filterNode(_ node: FileTreeNode, needle: String) -> FileTreeNode? {
-            let filteredChildren = node.children.compactMap { filterNode($0, needle: needle) }
-            let matchesSelf = node.name.lowercased().contains(needle)
-            if matchesSelf || !filteredChildren.isEmpty {
-                return node.clone(with: filteredChildren)
-            }
-            return nil
         }
 
         private static func buildOutlineNodes(from snapshots: [FileTreeNodeSnapshot]) -> [FileTreeNode] {
@@ -396,7 +277,7 @@ private struct NavigatorSidebarView: NSViewRepresentable {
 
             suppressExpansionEvents = true
             applyExpansion(
-                to: visibleRootNodes,
+                to: rootNodes,
                 expandedNodeIDs: expandedNodeIDs,
                 parentExpanded: true,
                 outlineView: outlineView
@@ -411,7 +292,7 @@ private struct NavigatorSidebarView: NSViewRepresentable {
 
             guard
                 let selectedNodeID,
-                let nodePath = Self.path(to: selectedNodeID, in: visibleRootNodes),
+                let nodePath = Self.path(to: selectedNodeID, in: rootNodes),
                 let target = nodePath.last
             else {
                 if outlineView.selectedRow != -1 {
@@ -491,12 +372,12 @@ private struct NavigatorSidebarView: NSViewRepresentable {
         }
 
         func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
-            let nodes = (item as? FileTreeNode)?.children ?? visibleRootNodes
+            let nodes = (item as? FileTreeNode)?.children ?? rootNodes
             return nodes.count
         }
 
         func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any {
-            let nodes = (item as? FileTreeNode)?.children ?? visibleRootNodes
+            let nodes = (item as? FileTreeNode)?.children ?? rootNodes
             return nodes[index]
         }
 

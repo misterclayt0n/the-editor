@@ -47,13 +47,42 @@ private final class FileTreeNode: NSObject {
     let hasUnloadedChildren: Bool
     var children: [FileTreeNode]
 
-    init(snapshot: FileTreeNodeSnapshot) {
-        self.id = snapshot.id
-        self.path = snapshot.path
-        self.name = snapshot.name
-        self.isDirectory = snapshot.isDirectory
-        self.hasUnloadedChildren = snapshot.hasUnloadedChildren
-        self.children = []
+    init(
+        id: String,
+        path: String,
+        name: String,
+        isDirectory: Bool,
+        hasUnloadedChildren: Bool,
+        children: [FileTreeNode] = []
+    ) {
+        self.id = id
+        self.path = path
+        self.name = name
+        self.isDirectory = isDirectory
+        self.hasUnloadedChildren = hasUnloadedChildren
+        self.children = children
+    }
+
+    convenience init(snapshot: FileTreeNodeSnapshot) {
+        self.init(
+            id: snapshot.id,
+            path: snapshot.path,
+            name: snapshot.name,
+            isDirectory: snapshot.isDirectory,
+            hasUnloadedChildren: snapshot.hasUnloadedChildren,
+            children: []
+        )
+    }
+
+    func clone(with children: [FileTreeNode]) -> FileTreeNode {
+        FileTreeNode(
+            id: id,
+            path: path,
+            name: name,
+            isDirectory: isDirectory,
+            hasUnloadedChildren: hasUnloadedChildren,
+            children: children
+        )
     }
 }
 
@@ -62,97 +91,14 @@ struct FileTreeSidebarView: View {
     let onSetExpanded: (String, Bool) -> Void
     let onSelectPath: (String) -> Void
     let onOpenSelected: () -> Void
-    @State private var filterQuery: String = ""
 
     var body: some View {
-        let rootNodes = buildOutlineNodes(from: snapshot.nodes)
-
-        VStack(spacing: 0) {
-            ZStack {
-                SidebarMaterialBackground()
-
-                NativeOutlineFileTreeView(
-                    rootNodes: rootNodes,
-                    selectedNodeID: snapshot.selectedNodeID,
-                    expandedNodeIDs: snapshot.expandedNodeIDs,
-                    onSetExpanded: onSetExpanded,
-                    onSelectPath: onSelectPath,
-                    onOpenSelected: onOpenSelected
-                )
-                .padding(.top, 2)
-            }
-
-            Divider()
-
-            NavigatorFooterView(filterQuery: $filterQuery)
-        }
-        .overlay(alignment: .trailing) {
-            Rectangle()
-                .fill(Color(nsColor: NSColor.separatorColor).opacity(0.4))
-                .frame(width: 1)
-        }
-    }
-
-    private func buildOutlineNodes(from snapshots: [FileTreeNodeSnapshot]) -> [FileTreeNode] {
-        var roots: [FileTreeNode] = []
-        var stack: [(depth: Int, node: FileTreeNode)] = []
-
-        for snapshot in snapshots {
-            let node = FileTreeNode(snapshot: snapshot)
-            while let last = stack.last, last.depth >= snapshot.depth {
-                _ = stack.popLast()
-            }
-
-            if let parent = stack.last?.node {
-                parent.children.append(node)
-            } else {
-                roots.append(node)
-            }
-            stack.append((snapshot.depth, node))
-        }
-
-        return roots
-    }
-}
-
-private struct NavigatorFooterView: View {
-    @Binding var filterQuery: String
-
-    var body: some View {
-        HStack(spacing: 6) {
-            HStack(spacing: 4) {
-                TextField("Filter", text: $filterQuery)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 11))
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(
-                RoundedRectangle(cornerRadius: 7)
-                    .fill(Color(nsColor: .textBackgroundColor).opacity(0.7))
-            )
-
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 6)
-        .background(Color(nsColor: .windowBackgroundColor).opacity(0.62))
-    }
-}
-
-private struct SidebarMaterialBackground: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSVisualEffectView {
-        let view = NSVisualEffectView()
-        view.blendingMode = .withinWindow
-        view.material = .sidebar
-        view.state = .active
-        return view
-    }
-
-    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {
-        _ = context
-        nsView.material = .sidebar
-        nsView.state = .active
+        NavigatorSidebarView(
+            snapshot: snapshot,
+            onSetExpanded: onSetExpanded,
+            onSelectPath: onSelectPath,
+            onOpenSelected: onOpenSelected
+        )
     }
 }
 
@@ -168,10 +114,153 @@ private final class FileTreeOutlineView: NSOutlineView {
     }
 }
 
-private struct NativeOutlineFileTreeView: NSViewRepresentable {
-    let rootNodes: [FileTreeNode]
-    let selectedNodeID: String?
-    let expandedNodeIDs: Set<String>
+private final class NavigatorSidebarContainerView: NSView {
+    let topBar = NSVisualEffectView()
+    let segmentedControl: NSSegmentedControl
+    let scrollView = NSScrollView()
+    let outlineView = FileTreeOutlineView()
+    let bottomBar = NSVisualEffectView()
+    let searchField = NSSearchField()
+    let optionsButton = NSPopUpButton(frame: .zero, pullsDown: true)
+
+    override init(frame frameRect: NSRect) {
+        self.segmentedControl = NSSegmentedControl(images: Self.navigatorImages(), trackingMode: .selectOne, target: nil, action: nil)
+        super.init(frame: frameRect)
+        wantsLayer = true
+        configureViews()
+        buildLayout()
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    private func configureViews() {
+        topBar.translatesAutoresizingMaskIntoConstraints = false
+        topBar.material = .sidebar
+        topBar.blendingMode = .withinWindow
+        topBar.state = .active
+
+        segmentedControl.translatesAutoresizingMaskIntoConstraints = false
+        segmentedControl.selectedSegment = 0
+        segmentedControl.segmentStyle = .texturedRounded
+        segmentedControl.controlSize = .small
+
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.drawsBackground = false
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
+        scrollView.autohidesScrollers = true
+        scrollView.borderType = .noBorder
+
+        outlineView.translatesAutoresizingMaskIntoConstraints = false
+        outlineView.headerView = nil
+        outlineView.floatsGroupRows = false
+        outlineView.indentationMarkerFollowsCell = true
+        outlineView.backgroundColor = .clear
+        if #available(macOS 11.0, *) {
+            outlineView.style = .sourceList
+        }
+
+        scrollView.documentView = outlineView
+
+        bottomBar.translatesAutoresizingMaskIntoConstraints = false
+        bottomBar.material = .sidebar
+        bottomBar.blendingMode = .withinWindow
+        bottomBar.state = .active
+
+        searchField.translatesAutoresizingMaskIntoConstraints = false
+        searchField.placeholderString = "Filter"
+        searchField.controlSize = .small
+        searchField.sendsSearchStringImmediately = true
+
+        optionsButton.translatesAutoresizingMaskIntoConstraints = false
+        optionsButton.bezelStyle = .texturedRounded
+        optionsButton.controlSize = .small
+        optionsButton.imagePosition = .imageOnly
+        configureOptionsMenu()
+    }
+
+    private func configureOptionsMenu() {
+        let menu = NSMenu(title: "Navigator")
+        menu.addItem(withTitle: "Navigator Options", action: nil, keyEquivalent: "")
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "Collapse Folders", action: nil, keyEquivalent: "")
+        menu.addItem(withTitle: "Sort by Name", action: nil, keyEquivalent: "")
+        menu.addItem(withTitle: "Sort by Type", action: nil, keyEquivalent: "")
+        optionsButton.menu = menu
+
+        optionsButton.removeAllItems()
+        optionsButton.addItem(withTitle: "")
+        if let image = NSImage(systemSymbolName: "slider.horizontal.3", accessibilityDescription: "Navigator options") {
+            image.isTemplate = true
+            optionsButton.itemArray.first?.image = image
+        }
+    }
+
+    private func buildLayout() {
+        addSubview(topBar)
+        addSubview(scrollView)
+        addSubview(bottomBar)
+
+        topBar.addSubview(segmentedControl)
+        bottomBar.addSubview(searchField)
+        bottomBar.addSubview(optionsButton)
+
+        NSLayoutConstraint.activate([
+            topBar.leadingAnchor.constraint(equalTo: leadingAnchor),
+            topBar.trailingAnchor.constraint(equalTo: trailingAnchor),
+            topBar.topAnchor.constraint(equalTo: topAnchor),
+            topBar.heightAnchor.constraint(equalToConstant: 34),
+
+            segmentedControl.leadingAnchor.constraint(equalTo: topBar.leadingAnchor, constant: 8),
+            segmentedControl.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
+            segmentedControl.trailingAnchor.constraint(lessThanOrEqualTo: topBar.trailingAnchor, constant: -8),
+
+            scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            scrollView.topAnchor.constraint(equalTo: topBar.bottomAnchor),
+
+            bottomBar.leadingAnchor.constraint(equalTo: leadingAnchor),
+            bottomBar.trailingAnchor.constraint(equalTo: trailingAnchor),
+            bottomBar.topAnchor.constraint(equalTo: scrollView.bottomAnchor),
+            bottomBar.bottomAnchor.constraint(equalTo: bottomAnchor),
+            bottomBar.heightAnchor.constraint(equalToConstant: 32),
+
+            searchField.leadingAnchor.constraint(equalTo: bottomBar.leadingAnchor, constant: 8),
+            searchField.centerYAnchor.constraint(equalTo: bottomBar.centerYAnchor),
+
+            optionsButton.leadingAnchor.constraint(equalTo: searchField.trailingAnchor, constant: 6),
+            optionsButton.trailingAnchor.constraint(equalTo: bottomBar.trailingAnchor, constant: -8),
+            optionsButton.centerYAnchor.constraint(equalTo: bottomBar.centerYAnchor),
+            optionsButton.widthAnchor.constraint(equalToConstant: 24),
+
+            searchField.heightAnchor.constraint(equalToConstant: 22)
+        ])
+    }
+
+    private static func navigatorImages() -> [NSImage] {
+        let symbols = [
+            "folder",
+            "doc.on.doc",
+            "bookmark",
+            "magnifyingglass",
+            "exclamationmark.triangle",
+            "scissors",
+            "tag",
+            "wrench.and.screwdriver"
+        ]
+
+        return symbols.map { symbol in
+            let image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil) ?? NSImage()
+            image.isTemplate = true
+            return image
+        }
+    }
+}
+
+private struct NavigatorSidebarView: NSViewRepresentable {
+    let snapshot: FileTreeSnapshot
     let onSetExpanded: (String, Bool) -> Void
     let onSelectPath: (String) -> Void
     let onOpenSelected: () -> Void
@@ -180,18 +269,10 @@ private struct NativeOutlineFileTreeView: NSViewRepresentable {
         Coordinator(self)
     }
 
-    func makeNSView(context: Context) -> NSScrollView {
-        let scrollView = NSScrollView()
-        scrollView.drawsBackground = false
-        scrollView.hasVerticalScroller = true
-        scrollView.hasHorizontalScroller = false
-        scrollView.autohidesScrollers = true
-        scrollView.borderType = .noBorder
-        scrollView.scrollerStyle = .overlay
-        scrollView.contentInsets = NSEdgeInsets(top: 2, left: 0, bottom: 4, right: 0)
+    func makeNSView(context: Context) -> NavigatorSidebarContainerView {
+        let container = NavigatorSidebarContainerView(frame: .zero)
+        let outlineView = container.outlineView
 
-        let outlineView = FileTreeOutlineView()
-        outlineView.headerView = nil
         outlineView.delegate = context.coordinator
         outlineView.dataSource = context.coordinator
         outlineView.target = context.coordinator
@@ -200,65 +281,117 @@ private struct NativeOutlineFileTreeView: NSViewRepresentable {
             coordinator?.openSelectedIfPossible()
         }
 
-        if #available(macOS 11.0, *) {
-            outlineView.style = .sourceList
-        }
-
-        let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("name"))
-        column.title = "Name"
-        outlineView.addTableColumn(column)
-        outlineView.outlineTableColumn = column
-        outlineView.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
-
-        scrollView.documentView = outlineView
+        container.searchField.target = context.coordinator
+        container.searchField.action = #selector(Coordinator.searchQueryChanged(_:))
 
         context.coordinator.parent = self
-        context.coordinator.bind(outlineView: outlineView)
-        context.coordinator.rootNodes = rootNodes
+        context.coordinator.bind(container: container)
+        context.coordinator.updateSnapshot(snapshot)
 
-        outlineView.reloadData()
-        context.coordinator.restoreExpansionState(expandedNodeIDs: expandedNodeIDs)
-        context.coordinator.restoreSelection(selectedNodeID: selectedNodeID)
-
-        return scrollView
+        return container
     }
 
-    func updateNSView(_ nsView: NSScrollView, context: Context) {
-        guard let outlineView = nsView.documentView as? FileTreeOutlineView else {
-            return
-        }
-
+    func updateNSView(_ nsView: NavigatorSidebarContainerView, context: Context) {
         context.coordinator.parent = self
-        context.coordinator.rootNodes = rootNodes
-
-        outlineView.reloadData()
-        context.coordinator.restoreExpansionState(expandedNodeIDs: expandedNodeIDs)
-        context.coordinator.restoreSelection(selectedNodeID: selectedNodeID)
+        context.coordinator.bind(container: nsView)
+        context.coordinator.updateSnapshot(snapshot)
     }
 
     final class Coordinator: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate {
-        var parent: NativeOutlineFileTreeView
-        var rootNodes: [FileTreeNode] = []
-        private weak var outlineView: FileTreeOutlineView?
+        var parent: NavigatorSidebarView
+
+        private weak var container: NavigatorSidebarContainerView?
+        private var allRootNodes: [FileTreeNode] = []
+        private var visibleRootNodes: [FileTreeNode] = []
         private var suppressSelectionEvents = false
         private var suppressExpansionEvents = false
+        private var filterQuery: String = ""
+        private var latestExpandedNodeIDs: Set<String> = []
+        private var latestSelectedNodeID: String?
 
-        init(_ parent: NativeOutlineFileTreeView) {
+        init(_ parent: NavigatorSidebarView) {
             self.parent = parent
         }
 
-        func bind(outlineView: FileTreeOutlineView) {
-            self.outlineView = outlineView
+        func bind(container: NavigatorSidebarContainerView) {
+            self.container = container
+        }
+
+        func updateSnapshot(_ snapshot: FileTreeSnapshot) {
+            let roots = Self.buildOutlineNodes(from: snapshot.nodes)
+            allRootNodes = roots
+            latestExpandedNodeIDs = snapshot.expandedNodeIDs
+            latestSelectedNodeID = snapshot.selectedNodeID
+
+            applyFilterAndReload()
+        }
+
+        @objc
+        func searchQueryChanged(_ sender: NSSearchField) {
+            filterQuery = sender.stringValue
+            applyFilterAndReload()
+        }
+
+        private func applyFilterAndReload() {
+            visibleRootNodes = filterTree(allRootNodes, query: filterQuery)
+
+            guard let outlineView = container?.outlineView else {
+                return
+            }
+
+            outlineView.reloadData()
+            restoreExpansionState(expandedNodeIDs: latestExpandedNodeIDs)
+            restoreSelection(selectedNodeID: latestSelectedNodeID)
+        }
+
+        private func filterTree(_ roots: [FileTreeNode], query: String) -> [FileTreeNode] {
+            let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else {
+                return roots
+            }
+
+            let needle = trimmed.lowercased()
+            return roots.compactMap { filterNode($0, needle: needle) }
+        }
+
+        private func filterNode(_ node: FileTreeNode, needle: String) -> FileTreeNode? {
+            let filteredChildren = node.children.compactMap { filterNode($0, needle: needle) }
+            let matchesSelf = node.name.lowercased().contains(needle)
+            if matchesSelf || !filteredChildren.isEmpty {
+                return node.clone(with: filteredChildren)
+            }
+            return nil
+        }
+
+        private static func buildOutlineNodes(from snapshots: [FileTreeNodeSnapshot]) -> [FileTreeNode] {
+            var roots: [FileTreeNode] = []
+            var stack: [(depth: Int, node: FileTreeNode)] = []
+
+            for snapshot in snapshots {
+                let node = FileTreeNode(snapshot: snapshot)
+                while let last = stack.last, last.depth >= snapshot.depth {
+                    _ = stack.popLast()
+                }
+
+                if let parent = stack.last?.node {
+                    parent.children.append(node)
+                } else {
+                    roots.append(node)
+                }
+                stack.append((snapshot.depth, node))
+            }
+
+            return roots
         }
 
         func restoreExpansionState(expandedNodeIDs: Set<String>) {
-            guard let outlineView else {
+            guard let outlineView = container?.outlineView else {
                 return
             }
 
             suppressExpansionEvents = true
             applyExpansion(
-                to: rootNodes,
+                to: visibleRootNodes,
                 expandedNodeIDs: expandedNodeIDs,
                 parentExpanded: true,
                 outlineView: outlineView
@@ -267,13 +400,13 @@ private struct NativeOutlineFileTreeView: NSViewRepresentable {
         }
 
         func restoreSelection(selectedNodeID: String?) {
-            guard let outlineView else {
+            guard let outlineView = container?.outlineView else {
                 return
             }
 
             guard
                 let selectedNodeID,
-                let nodePath = Self.path(to: selectedNodeID, in: rootNodes),
+                let nodePath = Self.path(to: selectedNodeID, in: visibleRootNodes),
                 let target = nodePath.last
             else {
                 if outlineView.selectedRow != -1 {
@@ -317,6 +450,7 @@ private struct NativeOutlineFileTreeView: NSViewRepresentable {
                 } else {
                     outlineView.collapseItem(node, collapseChildren: true)
                 }
+
                 applyExpansion(
                     to: node.children,
                     expandedNodeIDs: expandedNodeIDs,
@@ -345,19 +479,19 @@ private struct NativeOutlineFileTreeView: NSViewRepresentable {
         }
 
         func openSelectedIfPossible() {
-            guard let outlineView, outlineView.selectedRow >= 0 else {
+            guard let outlineView = container?.outlineView, outlineView.selectedRow >= 0 else {
                 return
             }
             parent.onOpenSelected()
         }
 
         func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
-            let nodes = (item as? FileTreeNode)?.children ?? rootNodes
+            let nodes = (item as? FileTreeNode)?.children ?? visibleRootNodes
             return nodes.count
         }
 
         func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any {
-            let nodes = (item as? FileTreeNode)?.children ?? rootNodes
+            let nodes = (item as? FileTreeNode)?.children ?? visibleRootNodes
             return nodes[index]
         }
 
@@ -398,7 +532,7 @@ private struct NativeOutlineFileTreeView: NSViewRepresentable {
             _ = notification
             guard
                 !suppressSelectionEvents,
-                let outlineView,
+                let outlineView = container?.outlineView,
                 outlineView.selectedRow >= 0,
                 let node = outlineView.item(atRow: outlineView.selectedRow) as? FileTreeNode
             else {

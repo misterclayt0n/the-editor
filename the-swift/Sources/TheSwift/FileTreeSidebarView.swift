@@ -138,30 +138,6 @@ private final class FileTreeOutlineView: NSOutlineView {
     }
 }
 
-private final class SidebarRowView: NSTableRowView {
-    override var interiorBackgroundStyle: NSView.BackgroundStyle {
-        isSelected ? .emphasized : .normal
-    }
-
-    override func drawSelection(in dirtyRect: NSRect) {
-        _ = dirtyRect
-        guard selectionHighlightStyle != .none else {
-            return
-        }
-
-        let selectionRect = bounds.insetBy(dx: 4, dy: 1)
-        let path = NSBezierPath(roundedRect: selectionRect, xRadius: 5, yRadius: 5)
-        let fillColor: NSColor
-        if isEmphasized {
-            fillColor = NSColor.controlAccentColor.withAlphaComponent(0.72)
-        } else {
-            fillColor = NSColor.selectedContentBackgroundColor.withAlphaComponent(0.5)
-        }
-        fillColor.setFill()
-        path.fill()
-    }
-}
-
 private struct NativeOutlineFileTreeView: NSViewRepresentable {
     let rootNodes: [FileTreeNode]
     let selectedNodeID: String?
@@ -411,12 +387,6 @@ private struct NativeOutlineFileTreeView: NSViewRepresentable {
                 return
             }
             parent.onSelectPath(node.path)
-        }
-
-        func outlineView(_ outlineView: NSOutlineView, rowViewForItem item: Any) -> NSTableRowView? {
-            _ = outlineView
-            _ = item
-            return SidebarRowView()
         }
 
         func outlineView(

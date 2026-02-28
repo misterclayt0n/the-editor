@@ -162,16 +162,6 @@ private struct NativeOutlineFileTreeView: NSViewRepresentable {
         outlineView.headerView = nil
         outlineView.delegate = context.coordinator
         outlineView.dataSource = context.coordinator
-        outlineView.rowHeight = 20
-        outlineView.rowSizeStyle = .small
-        outlineView.indentationPerLevel = 12
-        outlineView.selectionHighlightStyle = .regular
-        outlineView.focusRingType = .none
-        outlineView.usesAlternatingRowBackgroundColors = false
-        outlineView.intercellSpacing = NSSize(width: 0, height: 1)
-        outlineView.floatsGroupRows = false
-        outlineView.indentationMarkerFollowsCell = true
-        outlineView.backgroundColor = .clear
         outlineView.target = context.coordinator
         outlineView.doubleAction = #selector(Coordinator.handleDoubleAction(_:))
         outlineView.onConfirmSelection = { [weak coordinator = context.coordinator] in

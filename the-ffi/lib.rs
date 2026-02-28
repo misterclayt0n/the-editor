@@ -79,6 +79,10 @@ use the_default::{
   FilePickerRowData,
   FilePickerRowKind,
   FilePickerState,
+  FileTreeMode as DefaultFileTreeMode,
+  FileTreeNodeKind as DefaultFileTreeNodeKind,
+  FileTreeSnapshot as DefaultFileTreeSnapshot,
+  FileTreeState,
   GlobalSearchState,
   KeyBinding,
   KeyEvent,
@@ -1538,6 +1542,7 @@ struct EditorState {
   completion_menu:               the_default::CompletionMenuState,
   signature_help:                the_default::SignatureHelpState,
   file_picker:                   FilePickerState,
+  file_tree:                     FileTreeState,
   search_prompt:                 SearchPromptState,
   ui_state:                      UiState,
   needs_render:                  bool,
@@ -1582,11 +1587,12 @@ struct PointerSelectionDragState {
 }
 
 impl EditorState {
-  fn new(loader: Option<Arc<Loader>>) -> Self {
+  fn new(loader: Option<Arc<Loader>>, workspace_root: &Path) -> Self {
     let mut command_palette_style = CommandPaletteStyle::floating(CommandPaletteTheme::ghostty());
     command_palette_style.layout = CommandPaletteLayout::Custom;
     let mut file_picker = FilePickerState::default();
     set_file_picker_syntax_loader(&mut file_picker, loader);
+    let file_tree = FileTreeState::with_workspace_root(workspace_root.to_path_buf());
     let (syntax_parse_tx, syntax_parse_rx) = channel();
 
     Self {
@@ -1597,6 +1603,7 @@ impl EditorState {
       completion_menu: the_default::CompletionMenuState::default(),
       signature_help: the_default::SignatureHelpState::default(),
       file_picker,
+      file_tree,
       search_prompt: SearchPromptState::new(),
       ui_state: UiState::default(),
       needs_render: true,
@@ -3501,6 +3508,7 @@ fn normalize_path_for_open(path: &Path) -> PathBuf {
 /// FFI-safe app wrapper with editor management.
 pub struct App {
   inner:                           LibApp,
+  workspace_root:                  PathBuf,
   dispatch:                        DefaultDispatchStatic<App>,
   keymaps:                         Keymaps,
   command_registry:                CommandRegistry<App>,
@@ -3870,6 +3878,148 @@ impl From<DefaultBufferTabsSnapshot> for BufferTabsSnapshotJson {
   }
 }
 
+pub struct FileTreeSnapshotData {
+  visible:            bool,
+  mode:               u8, // 0=workspace-root, 1=current-buffer-directory
+  root:               String,
+  selected_path:      String,
+  refresh_generation: u64,
+  nodes:              Vec<FileTreeNodeFFI>,
+}
+
+impl Default for FileTreeSnapshotData {
+  fn default() -> Self {
+    Self {
+      visible:            false,
+      mode:               0,
+      root:               String::new(),
+      selected_path:      String::new(),
+      refresh_generation: 0,
+      nodes:              Vec::new(),
+    }
+  }
+}
+
+impl FileTreeSnapshotData {
+  fn visible(&self) -> bool {
+    self.visible
+  }
+  fn mode(&self) -> u8 {
+    self.mode
+  }
+  fn root(&self) -> String {
+    self.root.clone()
+  }
+  fn selected_path(&self) -> String {
+    self.selected_path.clone()
+  }
+  fn refresh_generation(&self) -> u64 {
+    self.refresh_generation
+  }
+  fn node_count(&self) -> usize {
+    self.nodes.len()
+  }
+  fn node_at(&self, index: usize) -> FileTreeNodeFFI {
+    self.nodes.get(index).cloned().unwrap_or_default()
+  }
+}
+
+#[derive(Clone)]
+pub struct FileTreeNodeFFI {
+  id:                    String,
+  path:                  String,
+  name:                  String,
+  depth:                 usize,
+  kind:                  u8, // 0=file, 1=directory
+  expanded:              bool,
+  selected:              bool,
+  has_unloaded_children: bool,
+}
+
+impl Default for FileTreeNodeFFI {
+  fn default() -> Self {
+    Self {
+      id:                    String::new(),
+      path:                  String::new(),
+      name:                  String::new(),
+      depth:                 0,
+      kind:                  0,
+      expanded:              false,
+      selected:              false,
+      has_unloaded_children: false,
+    }
+  }
+}
+
+impl FileTreeNodeFFI {
+  fn id(&self) -> String {
+    self.id.clone()
+  }
+  fn path(&self) -> String {
+    self.path.clone()
+  }
+  fn name(&self) -> String {
+    self.name.clone()
+  }
+  fn depth(&self) -> usize {
+    self.depth
+  }
+  fn kind(&self) -> u8 {
+    self.kind
+  }
+  fn expanded(&self) -> bool {
+    self.expanded
+  }
+  fn selected(&self) -> bool {
+    self.selected
+  }
+  fn has_unloaded_children(&self) -> bool {
+    self.has_unloaded_children
+  }
+}
+
+fn build_file_tree_snapshot_data(snapshot: DefaultFileTreeSnapshot, max_nodes: usize) -> FileTreeSnapshotData {
+  let mode = match snapshot.mode {
+    DefaultFileTreeMode::WorkspaceRoot => 0,
+    DefaultFileTreeMode::CurrentBufferDirectory => 1,
+  };
+
+  let limit = max_nodes.max(1);
+  let nodes = snapshot
+    .nodes
+    .into_iter()
+    .take(limit)
+    .map(|node| {
+      let kind = match node.kind {
+        DefaultFileTreeNodeKind::File => 0,
+        DefaultFileTreeNodeKind::Directory => 1,
+      };
+      FileTreeNodeFFI {
+        id: node.id,
+        path: node.path.to_string_lossy().into_owned(),
+        name: node.name,
+        depth: node.depth,
+        kind,
+        expanded: node.expanded,
+        selected: node.selected,
+        has_unloaded_children: node.has_unloaded_children,
+      }
+    })
+    .collect::<Vec<_>>();
+
+  FileTreeSnapshotData {
+    visible: snapshot.visible,
+    mode,
+    root: snapshot.root.to_string_lossy().into_owned(),
+    selected_path: snapshot
+      .selected_path
+      .map(|path| path.to_string_lossy().into_owned())
+      .unwrap_or_default(),
+    refresh_generation: snapshot.refresh_generation,
+    nodes,
+  }
+}
+
 pub struct FilePickerSnapshotData {
   active:        bool,
   title:         String,
@@ -4106,7 +4256,7 @@ impl App {
       .map(|path| the_loader::find_workspace_in(path).0)
       .unwrap_or_else(|| the_loader::find_workspace().0);
     let lsp_runtime = LspRuntime::new(
-      LspRuntimeConfig::new(workspace_root)
+      LspRuntimeConfig::new(workspace_root.clone())
         .with_restart_policy(true, Duration::from_millis(250))
         .with_restart_limits(6, Duration::from_secs(30))
         .with_request_policy(Duration::from_secs(8), 1),
@@ -4117,6 +4267,7 @@ impl App {
 
     Self {
       inner: LibApp::default(),
+      workspace_root,
       dispatch,
       keymaps: config_build_keymaps(),
       command_registry: CommandRegistry::new(),
@@ -4240,7 +4391,7 @@ impl App {
     let id = self.inner.create_editor(Rope::from_str(text), view);
     self
       .states
-      .insert(id, EditorState::new(self.loader.clone()));
+      .insert(id, EditorState::new(self.loader.clone(), self.workspace_root.as_path()));
     self.active_editor.get_or_insert(id);
     ffi::EditorId::from(id)
   }
@@ -5624,6 +5775,108 @@ impl App {
       elapsed.as_secs_f64() * 1000.0
     ));
     data
+  }
+
+  pub fn file_tree_set_visible(&mut self, id: ffi::EditorId, visible: bool) -> bool {
+    if self.activate(id).is_none() {
+      return false;
+    }
+    self.active_state_mut().file_tree.set_visible(visible);
+    self.request_render();
+    true
+  }
+
+  pub fn file_tree_toggle(&mut self, id: ffi::EditorId) -> bool {
+    if self.activate(id).is_none() {
+      return false;
+    }
+    self.active_state_mut().file_tree.toggle_visible();
+    self.request_render();
+    true
+  }
+
+  pub fn file_tree_open_workspace_root(&mut self, id: ffi::EditorId) -> bool {
+    if self.activate(id).is_none() {
+      return false;
+    }
+    let workspace_root = self.workspace_root.clone();
+    self
+      .active_state_mut()
+      .file_tree
+      .open_workspace_root(workspace_root.as_path());
+    self.request_render();
+    true
+  }
+
+  pub fn file_tree_open_current_buffer_directory(&mut self, id: ffi::EditorId) -> bool {
+    if self.activate(id).is_none() {
+      return false;
+    }
+    let workspace_root = self.workspace_root.clone();
+    let active_path = self.active_editor_ref().active_file_path().map(Path::to_path_buf);
+    self
+      .active_state_mut()
+      .file_tree
+      .open_current_buffer_directory(active_path.as_deref(), workspace_root.as_path());
+    self.request_render();
+    true
+  }
+
+  pub fn file_tree_set_expanded(
+    &mut self,
+    id: ffi::EditorId,
+    path: &str,
+    expanded: bool,
+  ) -> bool {
+    if path.is_empty() || self.activate(id).is_none() {
+      return false;
+    }
+    let changed = self
+      .active_state_mut()
+      .file_tree
+      .set_expanded(Path::new(path), expanded);
+    if changed {
+      self.request_render();
+    }
+    changed
+  }
+
+  pub fn file_tree_select_path(&mut self, id: ffi::EditorId, path: &str) -> bool {
+    if path.is_empty() || self.activate(id).is_none() {
+      return false;
+    }
+    let selected = self
+      .active_state_mut()
+      .file_tree
+      .select_path(Path::new(path));
+    if selected {
+      self.request_render();
+    }
+    selected
+  }
+
+  pub fn file_tree_open_selected(&mut self, id: ffi::EditorId) -> bool {
+    if self.activate(id).is_none() {
+      return false;
+    }
+    let selected = self.active_state_mut().file_tree.open_selected();
+    if let Some(path) = selected {
+      return <Self as DefaultContext>::open_file(self, path.as_path()).is_ok();
+    }
+    self.request_render();
+    true
+  }
+
+  pub fn file_tree_snapshot(
+    &mut self,
+    id: ffi::EditorId,
+    max_nodes: usize,
+  ) -> FileTreeSnapshotData {
+    if self.activate(id).is_none() {
+      return FileTreeSnapshotData::default();
+    }
+    let snapshot = self.active_state_mut().file_tree.snapshot(max_nodes);
+    build_file_tree_snapshot_data(snapshot, max_nodes)
   }
 
   /// Direct FFI preview data — no JSON serialization.
@@ -9131,7 +9384,7 @@ impl App {
     self
       .states
       .entry(id)
-      .or_insert_with(|| EditorState::new(loader.clone()));
+      .or_insert_with(|| EditorState::new(loader.clone(), self.workspace_root.as_path()));
     if changed {
       self.refresh_lsp_runtime_for_active_file();
     }
@@ -9761,6 +10014,29 @@ impl DefaultContext for App {
     true
   }
 
+  fn open_native_file_explorer(&mut self, current_buffer_directory: bool) -> bool {
+    let workspace_root = self.workspace_root.clone();
+    let active_path = self.active_editor_ref().active_file_path().map(Path::to_path_buf);
+    let state = self.active_state_mut();
+
+    if current_buffer_directory {
+      state
+        .file_tree
+        .open_current_buffer_directory(active_path.as_deref(), workspace_root.as_path());
+      self.request_render();
+      return true;
+    }
+
+    state.file_tree.toggle_workspace_root(workspace_root.as_path());
+    if state.file_tree.visible
+      && let Some(active_path) = active_path.as_deref()
+    {
+      let _ = state.file_tree.select_path(active_path);
+    }
+    self.request_render();
+    true
+  }
+
   fn global_search(&mut self) {
     self.start_global_search();
   }
@@ -10103,6 +10379,17 @@ impl DefaultContext for App {
       } else {
         return;
       }
+
+      let active_path = self
+        .inner
+        .editor(id)
+        .and_then(|editor| editor.active_file_path().map(Path::to_path_buf));
+      if let Some(state) = self.states.get_mut(&id) {
+        state
+          .file_tree
+          .sync_for_active_file(self.workspace_root.as_path(), active_path.as_deref());
+      }
+
       self.refresh_editor_syntax(id);
       self.refresh_lsp_runtime_for_active_file();
       self.refresh_vcs_diff_base_for_editor(id);
@@ -10941,6 +11228,19 @@ mod ffi {
     fn file_picker_submit(self: &mut App, id: EditorId, index: usize) -> bool;
     fn file_picker_close(self: &mut App, id: EditorId) -> bool;
     fn file_picker_select_index(self: &mut App, id: EditorId, index: usize) -> bool;
+    fn file_tree_set_visible(self: &mut App, id: EditorId, visible: bool) -> bool;
+    fn file_tree_toggle(self: &mut App, id: EditorId) -> bool;
+    fn file_tree_open_workspace_root(self: &mut App, id: EditorId) -> bool;
+    fn file_tree_open_current_buffer_directory(self: &mut App, id: EditorId) -> bool;
+    fn file_tree_set_expanded(
+      self: &mut App,
+      id: EditorId,
+      path: &str,
+      expanded: bool,
+    ) -> bool;
+    fn file_tree_select_path(self: &mut App, id: EditorId, path: &str) -> bool;
+    fn file_tree_open_selected(self: &mut App, id: EditorId) -> bool;
+    fn file_tree_snapshot(self: &mut App, id: EditorId, max_nodes: usize) -> FileTreeSnapshotData;
     fn file_picker_snapshot(
       self: &mut App,
       id: EditorId,
@@ -11205,6 +11505,29 @@ mod ffi {
   }
 
   // File picker snapshot (direct FFI, no JSON)
+  extern "Rust" {
+    type FileTreeSnapshotData;
+    fn visible(self: &FileTreeSnapshotData) -> bool;
+    fn mode(self: &FileTreeSnapshotData) -> u8;
+    fn root(self: &FileTreeSnapshotData) -> String;
+    fn selected_path(self: &FileTreeSnapshotData) -> String;
+    fn refresh_generation(self: &FileTreeSnapshotData) -> u64;
+    fn node_count(self: &FileTreeSnapshotData) -> usize;
+    fn node_at(self: &FileTreeSnapshotData, index: usize) -> FileTreeNodeFFI;
+  }
+
+  extern "Rust" {
+    type FileTreeNodeFFI;
+    fn id(self: &FileTreeNodeFFI) -> String;
+    fn path(self: &FileTreeNodeFFI) -> String;
+    fn name(self: &FileTreeNodeFFI) -> String;
+    fn depth(self: &FileTreeNodeFFI) -> usize;
+    fn kind(self: &FileTreeNodeFFI) -> u8;
+    fn expanded(self: &FileTreeNodeFFI) -> bool;
+    fn selected(self: &FileTreeNodeFFI) -> bool;
+    fn has_unloaded_children(self: &FileTreeNodeFFI) -> bool;
+  }
+
   extern "Rust" {
     type FilePickerSnapshotData;
     fn active(self: &FilePickerSnapshotData) -> bool;

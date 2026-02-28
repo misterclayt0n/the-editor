@@ -11,6 +11,7 @@ mod command_palette;
 mod command_registry;
 mod command_types;
 mod completion_menu;
+mod file_tree;
 mod file_picker;
 mod global_search;
 mod input;
@@ -93,6 +94,13 @@ pub use completion_menu::{
   completion_prev,
   set_completion_docs_scroll,
   show_completion_menu,
+};
+pub use file_tree::{
+  FileTreeMode,
+  FileTreeNodeKind,
+  FileTreeNodeSnapshot,
+  FileTreeSnapshot,
+  FileTreeState,
 };
 pub use file_picker::{
   FilePickerChangedFileItem,

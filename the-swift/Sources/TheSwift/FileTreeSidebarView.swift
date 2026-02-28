@@ -119,6 +119,7 @@ private final class NavigatorSidebarContainerView: NSView {
     let segmentedControl: NSSegmentedControl
     let scrollView = NSScrollView()
     let outlineView = FileTreeOutlineView()
+    let nameColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("name"))
     let bottomBar = NSVisualEffectView()
     let searchField = NSSearchField()
     let optionsButton = NSPopUpButton(frame: .zero, pullsDown: true)
@@ -158,6 +159,10 @@ private final class NavigatorSidebarContainerView: NSView {
         outlineView.floatsGroupRows = false
         outlineView.indentationMarkerFollowsCell = true
         outlineView.backgroundColor = .clear
+        nameColumn.title = "Name"
+        outlineView.addTableColumn(nameColumn)
+        outlineView.outlineTableColumn = nameColumn
+        outlineView.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
         if #available(macOS 11.0, *) {
             outlineView.style = .sourceList
         }

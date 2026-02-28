@@ -37,20 +37,13 @@ struct FileTreeSnapshot: Equatable {
     var expandedNodeIDs: Set<String> {
         Set(nodes.filter { $0.isDirectory && $0.expanded }.map(\.id))
     }
-
-    var rootDisplayName: String {
-        guard !root.isEmpty else {
-            return "workspace"
-        }
-        let value = URL(fileURLWithPath: root).lastPathComponent
-        return value.isEmpty ? root : value
-    }
 }
 
 private final class FileTreeNode: NSObject {
     let id: String
     let path: String
     let name: String
+    let depth: Int
     let isDirectory: Bool
     let hasUnloadedChildren: Bool
     var children: [FileTreeNode]
@@ -59,6 +52,7 @@ private final class FileTreeNode: NSObject {
         self.id = snapshot.id
         self.path = snapshot.path
         self.name = snapshot.name
+        self.depth = snapshot.depth
         self.isDirectory = snapshot.isDirectory
         self.hasUnloadedChildren = snapshot.hasUnloadedChildren
         self.children = []
@@ -67,7 +61,6 @@ private final class FileTreeNode: NSObject {
 
 struct FileTreeSidebarView: View {
     let snapshot: FileTreeSnapshot
-    let onSetVisible: (Bool) -> Void
     let onSetExpanded: (String, Bool) -> Void
     let onSelectPath: (String) -> Void
     let onOpenSelected: () -> Void
@@ -75,26 +68,8 @@ struct FileTreeSidebarView: View {
     var body: some View {
         let rootNodes = buildOutlineNodes(from: snapshot.nodes)
 
-        VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                Text(snapshot.mode == 1 ? "Explorer (Current Folder)" : "Explorer")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Button {
-                    onSetVisible(false)
-                } label: {
-                    Image(systemName: "sidebar.left")
-                        .font(.system(size: 11, weight: .semibold))
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .background(Color(nsColor: .windowBackgroundColor).opacity(0.65))
-
-            Divider()
+        ZStack {
+            SidebarMaterialBackground()
 
             NativeOutlineFileTreeView(
                 rootNodes: rootNodes,
@@ -104,8 +79,13 @@ struct FileTreeSidebarView: View {
                 onSelectPath: onSelectPath,
                 onOpenSelected: onOpenSelected
             )
+            .padding(.top, 4)
         }
-        .background(Color(nsColor: .controlBackgroundColor))
+        .overlay(alignment: .trailing) {
+            Rectangle()
+                .fill(Color(nsColor: NSColor.separatorColor).opacity(0.4))
+                .frame(width: 1)
+        }
     }
 
     private func buildOutlineNodes(from snapshots: [FileTreeNodeSnapshot]) -> [FileTreeNode] {
@@ -130,6 +110,22 @@ struct FileTreeSidebarView: View {
     }
 }
 
+private struct SidebarMaterialBackground: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.blendingMode = .withinWindow
+        view.material = .sidebar
+        view.state = .active
+        return view
+    }
+
+    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {
+        _ = context
+        nsView.material = .sidebar
+        nsView.state = .active
+    }
+}
+
 private final class FileTreeOutlineView: NSOutlineView {
     var onConfirmSelection: (() -> Void)?
 
@@ -139,6 +135,30 @@ private final class FileTreeOutlineView: NSOutlineView {
             return
         }
         super.keyDown(with: event)
+    }
+}
+
+private final class SidebarRowView: NSTableRowView {
+    override var interiorBackgroundStyle: NSView.BackgroundStyle {
+        isSelected ? .emphasized : .normal
+    }
+
+    override func drawSelection(in dirtyRect: NSRect) {
+        _ = dirtyRect
+        guard selectionHighlightStyle != .none else {
+            return
+        }
+
+        let selectionRect = bounds.insetBy(dx: 4, dy: 1)
+        let path = NSBezierPath(roundedRect: selectionRect, xRadius: 5, yRadius: 5)
+        let fillColor: NSColor
+        if isEmphasized {
+            fillColor = NSColor.controlAccentColor.withAlphaComponent(0.72)
+        } else {
+            fillColor = NSColor.selectedContentBackgroundColor.withAlphaComponent(0.5)
+        }
+        fillColor.setFill()
+        path.fill()
     }
 }
 
@@ -161,21 +181,29 @@ private struct NativeOutlineFileTreeView: NSViewRepresentable {
         scrollView.hasHorizontalScroller = false
         scrollView.autohidesScrollers = true
         scrollView.borderType = .noBorder
+        scrollView.scrollerStyle = .overlay
+        scrollView.contentInsets = NSEdgeInsets(top: 2, left: 0, bottom: 4, right: 0)
 
         let outlineView = FileTreeOutlineView()
         outlineView.headerView = nil
         outlineView.delegate = context.coordinator
         outlineView.dataSource = context.coordinator
-        outlineView.rowHeight = 22
-        outlineView.indentationPerLevel = 14
+        outlineView.rowHeight = 20
+        outlineView.rowSizeStyle = .small
+        outlineView.indentationPerLevel = 12
         outlineView.selectionHighlightStyle = .regular
         outlineView.focusRingType = .none
         outlineView.usesAlternatingRowBackgroundColors = false
+        outlineView.intercellSpacing = NSSize(width: 0, height: 1)
+        outlineView.floatsGroupRows = false
+        outlineView.indentationMarkerFollowsCell = true
+        outlineView.backgroundColor = .clear
         outlineView.target = context.coordinator
         outlineView.doubleAction = #selector(Coordinator.handleDoubleAction(_:))
         outlineView.onConfirmSelection = { [weak coordinator = context.coordinator] in
             coordinator?.openSelectedIfPossible()
         }
+
         if #available(macOS 11.0, *) {
             outlineView.style = .sourceList
         }
@@ -218,6 +246,8 @@ private struct NativeOutlineFileTreeView: NSViewRepresentable {
         private weak var outlineView: FileTreeOutlineView?
         private var suppressSelectionEvents = false
         private var suppressExpansionEvents = false
+
+        private static var iconCache: [String: NSImage] = [:]
 
         init(_ parent: NativeOutlineFileTreeView) {
             self.parent = parent
@@ -383,6 +413,12 @@ private struct NativeOutlineFileTreeView: NSViewRepresentable {
             parent.onSelectPath(node.path)
         }
 
+        func outlineView(_ outlineView: NSOutlineView, rowViewForItem item: Any) -> NSTableRowView? {
+            _ = outlineView
+            _ = item
+            return SidebarRowView()
+        }
+
         func outlineView(
             _ outlineView: NSOutlineView,
             viewFor tableColumn: NSTableColumn?,
@@ -398,13 +434,9 @@ private struct NativeOutlineFileTreeView: NSViewRepresentable {
                 ?? makeCellView(identifier: identifier)
 
             cell.textField?.stringValue = node.name
-            cell.textField?.font = NSFont.systemFont(
-                ofSize: 12,
-                weight: node.isDirectory ? .semibold : .regular
-            )
-            cell.textField?.textColor = .labelColor
+            cell.textField?.font = NSFont.systemFont(ofSize: 12, weight: .regular)
             cell.imageView?.image = Self.icon(for: node)
-            cell.imageView?.contentTintColor = node.isDirectory ? .secondaryLabelColor : .tertiaryLabelColor
+            cell.imageView?.contentTintColor = nil
             return cell
         }
 
@@ -419,6 +451,7 @@ private struct NativeOutlineFileTreeView: NSViewRepresentable {
             let textField = NSTextField(labelWithString: "")
             textField.translatesAutoresizingMaskIntoConstraints = false
             textField.lineBreakMode = .byTruncatingTail
+            textField.usesSingleLineMode = true
 
             cell.addSubview(imageView)
             cell.addSubview(textField)
@@ -440,11 +473,26 @@ private struct NativeOutlineFileTreeView: NSViewRepresentable {
         }
 
         private static func icon(for node: FileTreeNode) -> NSImage? {
-            let symbolName = node.isDirectory ? "folder.fill" : "doc.text"
-            guard let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil) else {
+            if let cached = iconCache[node.path] {
+                return cached
+            }
+
+            let image: NSImage?
+            if node.isDirectory {
+                image = NSImage(named: NSImage.folderName) ?? NSWorkspace.shared.icon(forFile: node.path)
+            } else {
+                image = NSWorkspace.shared.icon(forFile: node.path)
+            }
+            guard let image else {
                 return nil
             }
-            image.isTemplate = true
+
+            let sized = image.copy() as? NSImage
+            sized?.size = NSSize(width: 16, height: 16)
+            if let sized {
+                iconCache[node.path] = sized
+                return sized
+            }
             return image
         }
     }

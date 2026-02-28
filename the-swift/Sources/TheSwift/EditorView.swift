@@ -47,9 +47,6 @@ struct EditorView: View {
                 if fileTreeSnapshot.visible {
                     FileTreeSidebarView(
                         snapshot: fileTreeSnapshot,
-                        onSetVisible: { visible in
-                            model.setFileTreeVisible(visible)
-                        },
                         onSetExpanded: { path, expanded in
                             model.fileTreeSetExpanded(path: path, expanded: expanded)
                         },

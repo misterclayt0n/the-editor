@@ -364,6 +364,9 @@ fn read_directory_entries(path: &Path) -> std::io::Result<Vec<FileTreeEntry>> {
         return None;
       }
       let is_dir = entry.file_type().map(|ft| ft.is_dir()).unwrap_or_else(|_| path.is_dir());
+      if should_hide_entry(name.as_str(), is_dir) {
+        return None;
+      }
       Some(FileTreeEntry {
         path,
         name,
@@ -385,4 +388,11 @@ fn read_directory_entries(path: &Path) -> std::io::Result<Vec<FileTreeEntry>> {
   });
 
   Ok(entries)
+}
+
+fn should_hide_entry(name: &str, is_dir: bool) -> bool {
+  if is_dir && matches!(name, ".git" | ".jj") {
+    return true;
+  }
+  name == ".DS_Store"
 }

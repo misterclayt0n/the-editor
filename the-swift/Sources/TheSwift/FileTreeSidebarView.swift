@@ -62,22 +62,33 @@ struct FileTreeSidebarView: View {
     let onSetExpanded: (String, Bool) -> Void
     let onSelectPath: (String) -> Void
     let onOpenSelected: () -> Void
+    @State private var filterQuery: String = ""
 
     var body: some View {
         let rootNodes = buildOutlineNodes(from: snapshot.nodes)
 
-        ZStack {
-            SidebarMaterialBackground()
+        VStack(spacing: 0) {
+            NavigatorChromeView()
 
-            NativeOutlineFileTreeView(
-                rootNodes: rootNodes,
-                selectedNodeID: snapshot.selectedNodeID,
-                expandedNodeIDs: snapshot.expandedNodeIDs,
-                onSetExpanded: onSetExpanded,
-                onSelectPath: onSelectPath,
-                onOpenSelected: onOpenSelected
-            )
-            .padding(.top, 4)
+            Divider()
+
+            ZStack {
+                SidebarMaterialBackground()
+
+                NativeOutlineFileTreeView(
+                    rootNodes: rootNodes,
+                    selectedNodeID: snapshot.selectedNodeID,
+                    expandedNodeIDs: snapshot.expandedNodeIDs,
+                    onSetExpanded: onSetExpanded,
+                    onSelectPath: onSelectPath,
+                    onOpenSelected: onOpenSelected
+                )
+                .padding(.top, 2)
+            }
+
+            Divider()
+
+            NavigatorFooterView(filterQuery: $filterQuery)
         }
         .overlay(alignment: .trailing) {
             Rectangle()
@@ -105,6 +116,84 @@ struct FileTreeSidebarView: View {
         }
 
         return roots
+    }
+}
+
+private struct NavigatorChromeView: View {
+    private let symbols: [String] = [
+        "folder",
+        "doc.on.doc",
+        "bookmark",
+        "magnifyingglass",
+        "exclamationmark.triangle",
+        "scissors",
+        "tag",
+        "wrench.and.screwdriver"
+    ]
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ForEach(Array(symbols.enumerated()), id: \.offset) { index, symbol in
+                let selected = index == 0
+                Image(systemName: symbol)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(selected ? Color.accentColor : Color.secondary)
+                    .frame(width: 20, height: 20)
+                    .background(
+                        RoundedRectangle(cornerRadius: 5)
+                            .fill(selected ? Color.accentColor.opacity(0.16) : Color.clear)
+                    )
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(Color(nsColor: .windowBackgroundColor).opacity(0.6))
+    }
+}
+
+private struct NavigatorFooterView: View {
+    @Binding var filterQuery: String
+
+    var body: some View {
+        HStack(spacing: 6) {
+            footerIconButton("plus")
+
+            HStack(spacing: 4) {
+                Image(systemName: "line.3.horizontal.decrease.circle")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.secondary)
+                TextField("Filter", text: $filterQuery)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 11))
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(
+                RoundedRectangle(cornerRadius: 7)
+                    .fill(Color(nsColor: .textBackgroundColor).opacity(0.7))
+            )
+
+            Spacer(minLength: 0)
+
+            footerIconButton("clock.arrow.circlepath")
+            footerIconButton("slider.horizontal.3")
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 6)
+        .background(Color(nsColor: .windowBackgroundColor).opacity(0.62))
+    }
+
+    @ViewBuilder
+    private func footerIconButton(_ symbol: String) -> some View {
+        Image(systemName: symbol)
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(.secondary)
+            .frame(width: 20, height: 20)
+            .background(
+                RoundedRectangle(cornerRadius: 5)
+                    .fill(Color(nsColor: .windowBackgroundColor).opacity(0.5))
+            )
     }
 }
 

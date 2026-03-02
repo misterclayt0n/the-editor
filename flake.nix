@@ -7,6 +7,8 @@
     flake-utils.url = "github:numtide/flake-utils";
     fenix.url       = "github:nix-community/fenix";
   };
+  
+  inputs = {
 
   outputs =
     {

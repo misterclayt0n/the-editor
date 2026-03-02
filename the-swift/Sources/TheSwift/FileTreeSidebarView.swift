@@ -1,4 +1,3 @@
-import AppKit
 import Foundation
 import SwiftUI
 
@@ -39,42 +38,6 @@ struct FileTreeSnapshot: Equatable {
     }
 }
 
-private final class FileTreeNode: NSObject {
-    let id: String
-    let path: String
-    let name: String
-    let isDirectory: Bool
-    let hasUnloadedChildren: Bool
-    var children: [FileTreeNode]
-
-    init(
-        id: String,
-        path: String,
-        name: String,
-        isDirectory: Bool,
-        hasUnloadedChildren: Bool,
-        children: [FileTreeNode] = []
-    ) {
-        self.id = id
-        self.path = path
-        self.name = name
-        self.isDirectory = isDirectory
-        self.hasUnloadedChildren = hasUnloadedChildren
-        self.children = children
-    }
-
-    convenience init(snapshot: FileTreeNodeSnapshot) {
-        self.init(
-            id: snapshot.id,
-            path: snapshot.path,
-            name: snapshot.name,
-            isDirectory: snapshot.isDirectory,
-            hasUnloadedChildren: snapshot.hasUnloadedChildren,
-            children: []
-        )
-    }
-}
-
 struct FileTreeSidebarView: View {
     let snapshot: FileTreeSnapshot
     let onSetExpanded: (String, Bool) -> Void
@@ -82,7 +45,7 @@ struct FileTreeSidebarView: View {
     let onOpenSelected: () -> Void
 
     var body: some View {
-        NavigatorSidebarView(
+        FileTreeListView(
             snapshot: snapshot,
             onSetExpanded: onSetExpanded,
             onSelectPath: onSelectPath,
@@ -91,405 +54,235 @@ struct FileTreeSidebarView: View {
     }
 }
 
-private final class FileTreeOutlineView: NSOutlineView {
-    var onConfirmSelection: (() -> Void)?
+// MARK: - Data model
 
-    override func keyDown(with event: NSEvent) {
-        if event.keyCode == 36 || event.keyCode == 76 {
-            onConfirmSelection?()
-            return
+private struct FileTreeItem: Identifiable {
+    let id: String
+    let path: String
+    let name: String
+    let isDirectory: Bool
+    let hasUnloadedChildren: Bool
+    var children: [FileTreeItem] = []
+}
+
+private func buildTree(from snapshots: [FileTreeNodeSnapshot]) -> [FileTreeItem] {
+    guard !snapshots.isEmpty else { return [] }
+
+    var parentIndex: [Int: Int] = [:]
+    var childrenIndices: [Int: [Int]] = [:]
+    var rootIndices: [Int] = []
+    var stack: [(depth: Int, index: Int)] = []
+
+    for i in 0..<snapshots.count {
+        let depth = snapshots[i].depth
+        while let last = stack.last, last.depth >= depth { stack.removeLast() }
+        if let p = stack.last {
+            parentIndex[i] = p.index
+        } else {
+            rootIndices.append(i)
         }
-        super.keyDown(with: event)
+        stack.append((depth, i))
+    }
+    for (child, parent) in parentIndex {
+        childrenIndices[parent, default: []].append(child)
+    }
+
+    func makeItem(_ i: Int) -> FileTreeItem {
+        let s = snapshots[i]
+        var item = FileTreeItem(
+            id: s.id,
+            path: s.path,
+            name: s.name,
+            isDirectory: s.isDirectory,
+            hasUnloadedChildren: s.hasUnloadedChildren
+        )
+        item.children = (childrenIndices[i] ?? []).map { makeItem($0) }
+        return item
+    }
+    return rootIndices.map { makeItem($0) }
+}
+
+// MARK: - Icon system
+
+private func iconInfo(for item: FileTreeItem) -> (symbolName: String, color: Color) {
+    if item.isDirectory {
+        return ("folder.fill", .blue)
+    }
+    let ext = (item.name as NSString).pathExtension.lowercased()
+    switch ext {
+    case "swift":
+        return ("swift", .orange)
+    case "rs":
+        return ("doc.text", Color(red: 0.76, green: 0.35, blue: 0.14))
+    case "py":
+        return ("doc.text", .yellow)
+    case "js", "ts", "jsx", "tsx", "mjs", "cjs":
+        return ("doc.text", .yellow)
+    case "c", "h":
+        return ("doc.text", .blue)
+    case "cpp", "cc", "cxx", "hpp", "hxx":
+        return ("doc.text", .blue)
+    case "go":
+        return ("doc.text", .teal)
+    case "java", "kt", "kts":
+        return ("doc.text", .orange)
+    case "rb":
+        return ("doc.text", .red)
+    case "cs":
+        return ("doc.text", .purple)
+    case "toml":
+        return ("gearshape", .secondary)
+    case "yaml", "yml":
+        return ("list.bullet.indent", .secondary)
+    case "json":
+        return ("curlybraces", .secondary)
+    case "xml", "plist":
+        return ("chevron.left.forwardslash.chevron.right", .secondary)
+    case "md", "markdown":
+        return ("doc.richtext", .secondary)
+    case "txt":
+        return ("doc.text", .secondary)
+    case "pdf":
+        return ("doc.fill", .red)
+    case "png", "jpg", "jpeg", "gif", "svg", "webp", "ico", "tiff", "heic":
+        return ("photo", .secondary)
+    case "sh", "bash", "zsh", "fish":
+        return ("terminal", .secondary)
+    case "lock":
+        return ("lock", .secondary)
+    case "env":
+        return ("lock.fill", .secondary)
+    default:
+        break
+    }
+
+    let name = item.name.lowercased()
+    if name == ".gitignore" || name == ".gitattributes" {
+        return ("eye.slash", .secondary)
+    }
+    if name.hasPrefix(".env") {
+        return ("lock.fill", .secondary)
+    }
+    if name == "makefile" || name == "dockerfile" || name == "containerfile" {
+        return ("shippingbox", .secondary)
+    }
+    if name == "license" || name == "licence" || name == "license.md" || name == "license.txt" {
+        return ("doc.badge.checkmark", .secondary)
+    }
+    return ("doc", .secondary)
+}
+
+// MARK: - Views
+
+private struct FileTreeItemRow: View {
+    let item: FileTreeItem
+
+    var body: some View {
+        let info = iconInfo(for: item)
+        Label {
+            Text(item.name)
+                .font(.system(size: 11))
+                .lineLimit(1)
+                .truncationMode(.middle)
+        } icon: {
+            Image(systemName: info.symbolName)
+                .foregroundStyle(info.color)
+                .imageScale(.small)
+        }
     }
 }
 
-private final class NavigatorSidebarContainerView: NSView {
-    let panel = NSVisualEffectView()
-    let topSpacer = NSView()
-    let scrollView = NSScrollView()
-    let outlineView = FileTreeOutlineView()
-    let nameColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("name"))
+private struct FileTreeNodeView: View {
+    let item: FileTreeItem
+    @Binding var expandedIDs: Set<String>
+    let onExpand: (String, Bool) -> Void
+    let onOpen: () -> Void
 
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
-        wantsLayer = true
-        configureViews()
-        buildLayout()
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    private func configureViews() {
-        panel.translatesAutoresizingMaskIntoConstraints = false
-        panel.material = .sidebar
-        panel.blendingMode = .withinWindow
-        panel.state = .active
-        panel.wantsLayer = true
-        panel.layer?.cornerRadius = 10
-        panel.layer?.masksToBounds = true
-        panel.layer?.borderWidth = 1
-        panel.layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.30).cgColor
-
-        topSpacer.translatesAutoresizingMaskIntoConstraints = false
-
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
-        scrollView.drawsBackground = false
-        scrollView.hasVerticalScroller = true
-        scrollView.hasHorizontalScroller = false
-        scrollView.autohidesScrollers = true
-        scrollView.borderType = .noBorder
-        scrollView.scrollerStyle = .overlay
-
-        outlineView.translatesAutoresizingMaskIntoConstraints = false
-        outlineView.headerView = nil
-        outlineView.floatsGroupRows = false
-        outlineView.indentationMarkerFollowsCell = true
-        outlineView.backgroundColor = .clear
-        nameColumn.title = "Name"
-        outlineView.addTableColumn(nameColumn)
-        outlineView.outlineTableColumn = nameColumn
-        outlineView.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
-        if #available(macOS 11.0, *) {
-            outlineView.style = .sourceList
+    var body: some View {
+        if item.isDirectory {
+            DisclosureGroup(
+                isExpanded: Binding(
+                    get: { expandedIDs.contains(item.id) },
+                    set: { open in
+                        if open {
+                            expandedIDs.insert(item.id)
+                        } else {
+                            expandedIDs.remove(item.id)
+                        }
+                        onExpand(item.path, open)
+                    }
+                )
+            ) {
+                ForEach(item.children) { child in
+                    FileTreeNodeView(
+                        item: child,
+                        expandedIDs: $expandedIDs,
+                        onExpand: onExpand,
+                        onOpen: onOpen
+                    )
+                }
+            } label: {
+                FileTreeItemRow(item: item)
+            }
+            .tag(item.path)
+        } else {
+            FileTreeItemRow(item: item)
+                .tag(item.path)
+                .onTapGesture(count: 2) { onOpen() }
         }
-
-        scrollView.documentView = outlineView
-    }
-
-    private func buildLayout() {
-        addSubview(panel)
-        panel.addSubview(topSpacer)
-        panel.addSubview(scrollView)
-
-        NSLayoutConstraint.activate([
-            panel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
-            panel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
-            panel.topAnchor.constraint(equalTo: topAnchor, constant: 6),
-            panel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
-
-            topSpacer.leadingAnchor.constraint(equalTo: panel.leadingAnchor),
-            topSpacer.trailingAnchor.constraint(equalTo: panel.trailingAnchor),
-            topSpacer.topAnchor.constraint(equalTo: panel.topAnchor),
-            topSpacer.heightAnchor.constraint(equalToConstant: 28),
-
-            scrollView.leadingAnchor.constraint(equalTo: panel.leadingAnchor),
-            scrollView.trailingAnchor.constraint(equalTo: panel.trailingAnchor),
-            scrollView.topAnchor.constraint(equalTo: topSpacer.bottomAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: panel.bottomAnchor)
-        ])
     }
 }
 
-private struct NavigatorSidebarView: NSViewRepresentable {
+private struct FileTreeListView: View {
     let snapshot: FileTreeSnapshot
     let onSetExpanded: (String, Bool) -> Void
     let onSelectPath: (String) -> Void
     let onOpenSelected: () -> Void
 
-    func makeCoordinator() -> Coordinator {
-        Coordinator(self)
-    }
+    @State private var rootItems: [FileTreeItem] = []
+    @State private var expandedIDs: Set<String> = []
+    @State private var selectedPath: String? = nil
+    @State private var suppressSelectionCallback = false
+    @State private var suppressExpansionCallback = false
 
-    func makeNSView(context: Context) -> NavigatorSidebarContainerView {
-        let container = NavigatorSidebarContainerView(frame: .zero)
-        let outlineView = container.outlineView
-
-        outlineView.delegate = context.coordinator
-        outlineView.dataSource = context.coordinator
-        outlineView.target = context.coordinator
-        outlineView.doubleAction = #selector(Coordinator.handleDoubleAction(_:))
-        outlineView.onConfirmSelection = { [weak coordinator = context.coordinator] in
-            coordinator?.openSelectedIfPossible()
-        }
-
-        context.coordinator.parent = self
-        context.coordinator.bind(container: container)
-        context.coordinator.updateSnapshot(snapshot)
-
-        return container
-    }
-
-    func updateNSView(_ nsView: NavigatorSidebarContainerView, context: Context) {
-        context.coordinator.parent = self
-        context.coordinator.bind(container: nsView)
-        context.coordinator.updateSnapshot(snapshot)
-    }
-
-    final class Coordinator: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate {
-        var parent: NavigatorSidebarView
-
-        private weak var container: NavigatorSidebarContainerView?
-        private var rootNodes: [FileTreeNode] = []
-        private var suppressSelectionEvents = false
-        private var suppressExpansionEvents = false
-        private var latestExpandedNodeIDs: Set<String> = []
-        private var latestSelectedNodeID: String?
-
-        init(_ parent: NavigatorSidebarView) {
-            self.parent = parent
-        }
-
-        func bind(container: NavigatorSidebarContainerView) {
-            self.container = container
-        }
-
-        func updateSnapshot(_ snapshot: FileTreeSnapshot) {
-            rootNodes = Self.buildOutlineNodes(from: snapshot.nodes)
-            latestExpandedNodeIDs = snapshot.expandedNodeIDs
-            latestSelectedNodeID = snapshot.selectedNodeID
-
-            guard let outlineView = container?.outlineView else {
-                return
-            }
-
-            outlineView.reloadData()
-            restoreExpansionState(expandedNodeIDs: latestExpandedNodeIDs)
-            restoreSelection(selectedNodeID: latestSelectedNodeID)
-        }
-
-        private static func buildOutlineNodes(from snapshots: [FileTreeNodeSnapshot]) -> [FileTreeNode] {
-            var roots: [FileTreeNode] = []
-            var stack: [(depth: Int, node: FileTreeNode)] = []
-
-            for snapshot in snapshots {
-                let node = FileTreeNode(snapshot: snapshot)
-                while let last = stack.last, last.depth >= snapshot.depth {
-                    _ = stack.popLast()
-                }
-
-                if let parent = stack.last?.node {
-                    parent.children.append(node)
-                } else {
-                    roots.append(node)
-                }
-                stack.append((snapshot.depth, node))
-            }
-
-            return roots
-        }
-
-        func restoreExpansionState(expandedNodeIDs: Set<String>) {
-            guard let outlineView = container?.outlineView else {
-                return
-            }
-
-            suppressExpansionEvents = true
-            applyExpansion(
-                to: rootNodes,
-                expandedNodeIDs: expandedNodeIDs,
-                parentExpanded: true,
-                outlineView: outlineView
-            )
-            suppressExpansionEvents = false
-        }
-
-        func restoreSelection(selectedNodeID: String?) {
-            guard let outlineView = container?.outlineView else {
-                return
-            }
-
-            guard
-                let selectedNodeID,
-                let nodePath = Self.path(to: selectedNodeID, in: rootNodes),
-                let target = nodePath.last
-            else {
-                if outlineView.selectedRow != -1 {
-                    suppressSelectionEvents = true
-                    outlineView.deselectAll(nil)
-                    suppressSelectionEvents = false
-                }
-                return
-            }
-
-            suppressExpansionEvents = true
-            for ancestor in nodePath.dropLast() where ancestor.isDirectory {
-                outlineView.expandItem(ancestor)
-            }
-            suppressExpansionEvents = false
-
-            let row = outlineView.row(forItem: target)
-            guard row >= 0, row != outlineView.selectedRow else {
-                return
-            }
-
-            suppressSelectionEvents = true
-            outlineView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
-            suppressSelectionEvents = false
-        }
-
-        private func applyExpansion(
-            to nodes: [FileTreeNode],
-            expandedNodeIDs: Set<String>,
-            parentExpanded: Bool,
-            outlineView: NSOutlineView
-        ) {
-            guard parentExpanded else {
-                return
-            }
-
-            for node in nodes where node.isDirectory {
-                let shouldExpand = expandedNodeIDs.contains(node.id)
-                if shouldExpand {
-                    outlineView.expandItem(node)
-                } else {
-                    outlineView.collapseItem(node, collapseChildren: true)
-                }
-
-                applyExpansion(
-                    to: node.children,
-                    expandedNodeIDs: expandedNodeIDs,
-                    parentExpanded: shouldExpand,
-                    outlineView: outlineView
+    var body: some View {
+        List(selection: $selectedPath) {
+            ForEach(rootItems) { item in
+                FileTreeNodeView(
+                    item: item,
+                    expandedIDs: $expandedIDs,
+                    onExpand: { path, expanded in
+                        guard !suppressExpansionCallback else { return }
+                        DispatchQueue.main.async { onSetExpanded(path, expanded) }
+                    },
+                    onOpen: onOpenSelected
                 )
             }
         }
-
-        private static func path(to targetID: String, in nodes: [FileTreeNode]) -> [FileTreeNode]? {
-            for node in nodes {
-                if node.id == targetID {
-                    return [node]
-                }
-                if let childPath = path(to: targetID, in: node.children) {
-                    return [node] + childPath
-                }
-            }
-            return nil
+        .listStyle(.sidebar)
+        .onChange(of: selectedPath) { newPath in
+            guard !suppressSelectionCallback, let newPath else { return }
+            DispatchQueue.main.async { onSelectPath(newPath) }
         }
-
-        @objc
-        func handleDoubleAction(_ sender: Any?) {
-            _ = sender
-            openSelectedIfPossible()
+        .onChange(of: snapshot.selectedPath) { newPath in
+            guard selectedPath != newPath else { return }
+            suppressSelectionCallback = true
+            selectedPath = newPath
+            suppressSelectionCallback = false
         }
-
-        func openSelectedIfPossible() {
-            guard let outlineView = container?.outlineView, outlineView.selectedRow >= 0 else {
-                return
-            }
-            parent.onOpenSelected()
+        .onChange(of: snapshot.expandedNodeIDs) { newIDs in
+            guard expandedIDs != newIDs else { return }
+            suppressExpansionCallback = true
+            expandedIDs = newIDs
+            suppressExpansionCallback = false
         }
-
-        func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
-            let nodes = (item as? FileTreeNode)?.children ?? rootNodes
-            return nodes.count
+        .onChange(of: snapshot.refreshGeneration) { _ in
+            rootItems = buildTree(from: snapshot.nodes)
         }
-
-        func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any {
-            let nodes = (item as? FileTreeNode)?.children ?? rootNodes
-            return nodes[index]
-        }
-
-        func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool {
-            guard let node = item as? FileTreeNode else {
-                return false
-            }
-            return node.isDirectory
-        }
-
-        func outlineView(
-            _ outlineView: NSOutlineView,
-            shouldExpandItem item: Any
-        ) -> Bool {
-            guard let node = item as? FileTreeNode else {
-                return true
-            }
-            if !suppressExpansionEvents {
-                parent.onSetExpanded(node.path, true)
-            }
-            return true
-        }
-
-        func outlineView(
-            _ outlineView: NSOutlineView,
-            shouldCollapseItem item: Any
-        ) -> Bool {
-            guard let node = item as? FileTreeNode else {
-                return true
-            }
-            if !suppressExpansionEvents {
-                parent.onSetExpanded(node.path, false)
-            }
-            return true
-        }
-
-        func outlineViewSelectionDidChange(_ notification: Notification) {
-            _ = notification
-            guard
-                !suppressSelectionEvents,
-                let outlineView = container?.outlineView,
-                outlineView.selectedRow >= 0,
-                let node = outlineView.item(atRow: outlineView.selectedRow) as? FileTreeNode
-            else {
-                return
-            }
-            parent.onSelectPath(node.path)
-        }
-
-        func outlineView(
-            _ outlineView: NSOutlineView,
-            viewFor tableColumn: NSTableColumn?,
-            item: Any
-        ) -> NSView? {
-            _ = tableColumn
-            guard let node = item as? FileTreeNode else {
-                return nil
-            }
-
-            let identifier = NSUserInterfaceItemIdentifier("file-tree-cell")
-            let cell = (outlineView.makeView(withIdentifier: identifier, owner: nil) as? NSTableCellView)
-                ?? makeCellView(identifier: identifier)
-
-            cell.textField?.stringValue = node.name
-            cell.imageView?.image = Self.icon(for: node)
-            return cell
-        }
-
-        private func makeCellView(identifier: NSUserInterfaceItemIdentifier) -> NSTableCellView {
-            let cell = NSTableCellView(frame: .zero)
-            cell.identifier = identifier
-
-            let imageView = NSImageView(frame: .zero)
-            imageView.translatesAutoresizingMaskIntoConstraints = false
-            imageView.imageScaling = .scaleProportionallyDown
-
-            let textField = NSTextField(labelWithString: "")
-            textField.translatesAutoresizingMaskIntoConstraints = false
-            textField.lineBreakMode = .byTruncatingTail
-            textField.usesSingleLineMode = true
-
-            cell.addSubview(imageView)
-            cell.addSubview(textField)
-            cell.imageView = imageView
-            cell.textField = textField
-
-            NSLayoutConstraint.activate([
-                imageView.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 4),
-                imageView.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-                imageView.widthAnchor.constraint(equalToConstant: 16),
-                imageView.heightAnchor.constraint(equalToConstant: 16),
-
-                textField.leadingAnchor.constraint(equalTo: imageView.trailingAnchor, constant: 6),
-                textField.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-                textField.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -6)
-            ])
-
-            return cell
-        }
-
-        private static func icon(for node: FileTreeNode) -> NSImage? {
-            let image: NSImage?
-            if node.isDirectory {
-                image = NSImage(named: NSImage.folderName) ?? NSWorkspace.shared.icon(forFile: node.path)
-            } else {
-                image = NSWorkspace.shared.icon(forFile: node.path)
-            }
-            guard let image else {
-                return nil
-            }
-            image.size = NSSize(width: 16, height: 16)
-            return image
+        .onAppear {
+            rootItems = buildTree(from: snapshot.nodes)
+            expandedIDs = snapshot.expandedNodeIDs
+            selectedPath = snapshot.selectedPath
         }
     }
 }

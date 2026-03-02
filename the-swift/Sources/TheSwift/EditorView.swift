@@ -5,6 +5,7 @@ struct EditorView: View {
     @Environment(\.openWindow) private var openWindow
     @StateObject private var model: EditorModel
     private let windowRoute: EditorWindowRoute?
+    @State private var columnVisibility: NavigationSplitViewVisibility = .detailOnly
 
     private struct CursorPickState {
         let remove: Bool
@@ -42,25 +43,22 @@ struct EditorView: View {
         let splitResizeHandles = splitResizeHandles(from: model.splitSeparators, cellSize: cellSize)
         let pointerPanes = pointerPanes(from: model.framePlan, cellSize: cellSize)
         let fileTreeSnapshot = model.fileTreeSnapshot
-        GeometryReader { _ in
-            HSplitView {
-                if fileTreeSnapshot.visible {
-                    FileTreeSidebarView(
-                        snapshot: fileTreeSnapshot,
-                        onSetExpanded: { path, expanded in
-                            model.fileTreeSetExpanded(path: path, expanded: expanded)
-                        },
-                        onSelectPath: { path in
-                            model.fileTreeSelectPath(path: path)
-                        },
-                        onOpenSelected: {
-                            model.fileTreeOpenSelected()
-                        }
-                    )
-                    .frame(minWidth: 180, idealWidth: 240, maxWidth: 360)
+        NavigationSplitView(columnVisibility: $columnVisibility) {
+            FileTreeSidebarView(
+                snapshot: fileTreeSnapshot,
+                onSetExpanded: { path, expanded in
+                    model.fileTreeSetExpanded(path: path, expanded: expanded)
+                },
+                onSelectPath: { path in
+                    model.fileTreeSelectPath(path: path)
+                },
+                onOpenSelected: {
+                    model.fileTreeOpenSelected()
                 }
-
-                VStack(spacing: 0) {
+            )
+            .navigationSplitViewColumnWidth(min: 180, ideal: 240, max: 360)
+        } detail: {
+            VStack(spacing: 0) {
                     GeometryReader { contentProxy in
                         ZStack {
                             Canvas { context, size in
@@ -258,6 +256,8 @@ struct EditorView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
+            .navigationTitle("")
+            .toolbarBackground(.hidden, for: .windowToolbar)
             .background(
                 WindowTabbingBridge(
                     route: windowRoute,
@@ -266,6 +266,12 @@ struct EditorView: View {
                     },
                     onWindowChanged: { window in
                         model.setHostWindow(window)
+                        if let window {
+                            window.titlebarAppearsTransparent = true
+                            window.styleMask.insert(.fullSizeContentView)
+                            window.backgroundColor = .black
+                            window.titleVisibility = .hidden
+                        }
                     }
                 )
                 .frame(width: 0, height: 0)
@@ -275,8 +281,11 @@ struct EditorView: View {
                 model.setOpenWindowTabHandler { route in
                     openWindow(id: TheSwiftApp.editorWindowSceneId, value: route)
                 }
+                columnVisibility = fileTreeSnapshot.visible ? .all : .detailOnly
             }
-        }
+            .onChange(of: fileTreeSnapshot.visible) { isVisible in
+                columnVisibility = isVisible ? .all : .detailOnly
+            }
     }
 
     private func splitResizeHandles(

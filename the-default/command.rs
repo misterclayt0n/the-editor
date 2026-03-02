@@ -646,6 +646,7 @@ pub trait DefaultContext: Sized + 'static {
   fn lsp_goto_type_definition(&mut self) {}
   fn lsp_goto_implementation(&mut self) {}
   fn lsp_hover(&mut self) {}
+  fn lsp_select_references_to_symbol_under_cursor(&mut self) {}
   fn lsp_references(&mut self) {}
   fn lsp_document_symbols(&mut self) {}
   fn lsp_workspace_symbols(&mut self) {}
@@ -682,8 +683,7 @@ where
       on_pointer_event::<Ctx> as fn(&mut Ctx, PointerEvent) -> PointerEventOutcome,
     )
     .with_post_on_pointer_event(
-      post_on_pointer_event::<Ctx>
-        as fn(&mut Ctx, PointerEventOutcome) -> PointerEventOutcome,
+      post_on_pointer_event::<Ctx> as fn(&mut Ctx, PointerEventOutcome) -> PointerEventOutcome,
     )
     .with_render_request(render_request::<Ctx> as fn(&mut Ctx, ()))
     .with_pre_render(pre_render::<Ctx> as fn(&mut Ctx, ()))
@@ -1271,6 +1271,8 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::HSplitNew => split_new_scratch(ctx, SplitAxis::Horizontal),
     Command::VSplitNew => split_new_scratch(ctx, SplitAxis::Vertical),
     Command::ToggleComments => toggle_comments(ctx),
+    Command::ToggleBlockComments => toggle_block_comments(ctx),
+    Command::ToggleLineComments => toggle_line_comments(ctx),
     Command::JumpForward { count } => {
       if !ctx.jump_forward_in_jumplist(count.max(1)) {
         ctx.push_warning("jump", "no newer selection in jumplist");
@@ -1413,6 +1415,8 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::LspGotoTypeDefinition => ctx.lsp_goto_type_definition(),
     Command::LspGotoImplementation => ctx.lsp_goto_implementation(),
     Command::LspHover => ctx.lsp_hover(),
+    Command::RenameSymbol => rename_symbol(ctx),
+    Command::SelectReferencesToSymbolUnderCursor => select_references_to_symbol_under_cursor(ctx),
     Command::LspReferences => ctx.lsp_references(),
     Command::LspDocumentSymbols => ctx.lsp_document_symbols(),
     Command::LspWorkspaceSymbols => ctx.lsp_workspace_symbols(),
@@ -2433,6 +2437,36 @@ fn active_or_fallback_pick(editor: &Editor, fallback: CursorPick) -> CursorPick 
   fallback
 }
 
+fn rename_prefill_from_word_boundary(editor: &Editor) -> String {
+  let Some(primary_selection) = active_or_first_range(editor) else {
+    return String::new();
+  };
+
+  let doc = editor.document();
+  let text = doc.text().slice(..);
+  let prefill_range = if primary_selection.len() > 1 {
+    primary_selection
+  } else {
+    text_object::textobject_word(
+      text,
+      primary_selection,
+      text_object::TextObject::Inside,
+      1,
+      false,
+    )
+  };
+  prefill_range.fragment(text).into_owned()
+}
+
+fn rename_symbol<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  let prefill = rename_prefill_from_word_boundary(ctx.editor_ref());
+  crate::search_prompt::open_rename_symbol_prompt(ctx, prefill);
+}
+
+fn select_references_to_symbol_under_cursor<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  ctx.lsp_select_references_to_symbol_under_cursor();
+}
+
 fn goto_word<Ctx: DefaultContext>(ctx: &mut Ctx, extend: bool) {
   let targets = collect_word_jump_targets(ctx);
   if targets.is_empty() {
@@ -2875,6 +2909,39 @@ fn toggle_comments<Ctx: DefaultContext>(ctx: &mut Ctx) {
     }
   };
 
+  apply_comment_transaction(ctx, transaction);
+}
+
+fn toggle_line_comments<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  let transaction = {
+    let doc = ctx.editor_ref().document();
+    let selection = doc.selection().clone();
+    let line_token = comment_tokens_for_document(ctx, doc).0;
+    comment::toggle_line_comments(doc.text(), &selection, line_token.as_deref())
+      .map_err(|err| format!("failed to toggle line comments: {err}"))
+  };
+
+  apply_comment_transaction(ctx, transaction);
+}
+
+fn toggle_block_comments<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  let transaction = {
+    let doc = ctx.editor_ref().document();
+    let selection = doc.selection().clone();
+    let block_tokens = comment_tokens_for_document(ctx, doc)
+      .1
+      .unwrap_or_else(|| vec![BlockCommentToken::default()]);
+    comment::toggle_block_comments(doc.text(), &selection, &block_tokens)
+      .map_err(|err| format!("failed to toggle block comments: {err}"))
+  };
+
+  apply_comment_transaction(ctx, transaction);
+}
+
+fn apply_comment_transaction<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  transaction: Result<Transaction, String>,
+) {
   let tx = match transaction {
     Ok(tx) => tx,
     Err(err) => {
@@ -4394,7 +4461,11 @@ fn yank_notification_message(register: char, fragments: &[String]) -> Option<Str
     return None;
   }
 
-  let noun = if count == 1 { "selection" } else { "selections" };
+  let noun = if count == 1 {
+    "selection"
+  } else {
+    "selections"
+  };
   if register == '+' {
     Some(format!("yanked {count} {noun} to clipboard"))
   } else {
@@ -5674,6 +5745,8 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "hsplit_new" => Some(Command::hsplit_new()),
     "vsplit_new" => Some(Command::vsplit_new()),
     "toggle_comments" => Some(Command::toggle_comments()),
+    "toggle_block_comments" => Some(Command::toggle_block_comments()),
+    "toggle_line_comments" => Some(Command::toggle_line_comments()),
     "jump_forward" => Some(Command::jump_forward(1)),
     "jump_backward" => Some(Command::jump_backward(1)),
     "save_selection" => Some(Command::save_selection()),
@@ -5731,6 +5804,10 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "goto_implementation" => Some(Command::lsp_goto_implementation()),
     "lsp_hover" => Some(Command::lsp_hover()),
     "hover" => Some(Command::lsp_hover()),
+    "rename_symbol" => Some(Command::rename_symbol()),
+    "select_references_to_symbol_under_cursor" => {
+      Some(Command::select_references_to_symbol_under_cursor())
+    },
     "lsp_references" => Some(Command::lsp_references()),
     "goto_reference" => Some(Command::lsp_references()),
     "lsp_document_symbols" => Some(Command::lsp_document_symbols()),

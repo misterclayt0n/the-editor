@@ -5,14 +5,14 @@
 //! This crate provides a reusable, policy-level layer that sits on top of
 //! `the-lib` without hard-coding UI event types into `the-dispatch`.
 
-mod command;
 mod buffer_tabs;
+mod command;
 mod command_palette;
 mod command_registry;
 mod command_types;
 mod completion_menu;
-mod file_tree;
 mod file_picker;
+mod file_tree;
 mod global_search;
 mod input;
 mod keymap;
@@ -23,6 +23,18 @@ mod search_prompt;
 mod signature_help;
 mod statusline;
 
+pub use buffer_tabs::{
+  BufferTabItemSnapshot,
+  BufferTabsOrder,
+  BufferTabsSnapshot,
+  BufferTabsSnapshotOptions,
+  activate_buffer_tab,
+  buffer_tabs_snapshot,
+  buffer_tabs_snapshot_for_editor,
+  buffer_tabs_snapshot_for_editor_with_options,
+  buffer_tabs_snapshot_with_options,
+  close_buffer_tab,
+};
 pub use command::{
   DefaultApi,
   DefaultContext,
@@ -41,18 +53,6 @@ pub use command::{
   render_plan_with_styles,
   ui_event,
   ui_tree,
-};
-pub use buffer_tabs::{
-  BufferTabItemSnapshot,
-  BufferTabsOrder,
-  BufferTabsSnapshot,
-  BufferTabsSnapshotOptions,
-  activate_buffer_tab,
-  close_buffer_tab,
-  buffer_tabs_snapshot,
-  buffer_tabs_snapshot_for_editor,
-  buffer_tabs_snapshot_for_editor_with_options,
-  buffer_tabs_snapshot_with_options,
 };
 pub use command_palette::{
   CommandPaletteItem,
@@ -95,13 +95,6 @@ pub use completion_menu::{
   set_completion_docs_scroll,
   show_completion_menu,
 };
-pub use file_tree::{
-  FileTreeMode,
-  FileTreeNodeKind,
-  FileTreeNodeSnapshot,
-  FileTreeSnapshot,
-  FileTreeState,
-};
 pub use file_picker::{
   FilePickerChangedFileItem,
   FilePickerChangedKind,
@@ -138,9 +131,9 @@ pub use file_picker::{
   open_file_picker_with_root_and_split,
   open_jumplist_picker,
   poll_scan_results,
+  refresh_file_picker_preview,
   refresh_matcher_state,
   replace_file_picker_items,
-  refresh_file_picker_preview,
   scroll_file_picker_list,
   scroll_file_picker_preview,
   select_file_picker_index,
@@ -153,6 +146,13 @@ pub use file_picker::{
   set_picker_visible_rows,
   submit_file_picker,
   workspace_root,
+};
+pub use file_tree::{
+  FileTreeMode,
+  FileTreeNodeKind,
+  FileTreeNodeSnapshot,
+  FileTreeSnapshot,
+  FileTreeState,
 };
 pub use global_search::{
   GlobalSearchResponse,
@@ -195,6 +195,7 @@ pub use search_prompt::{
   SearchPromptState,
   finalize_keep_selections,
   finalize_remove_selections,
+  finalize_rename_symbol,
   finalize_search,
   finalize_select_regex,
   finalize_split_selection,

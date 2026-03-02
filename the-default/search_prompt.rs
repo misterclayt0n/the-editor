@@ -67,6 +67,7 @@ pub enum SearchPromptKind {
   SplitSelection,
   KeepSelections,
   RemoveSelections,
+  RenameSymbol,
 }
 
 impl SearchPromptState {
@@ -153,6 +154,23 @@ pub fn open_remove_selections_prompt<Ctx: DefaultContext>(ctx: &mut Ctx) {
   open_selection_prompt(ctx, SearchPromptKind::RemoveSelections);
 }
 
+pub fn open_rename_symbol_prompt<Ctx: DefaultContext>(ctx: &mut Ctx, prefill: String) {
+  let prompt = ctx.search_prompt_mut();
+  prompt.active = true;
+  prompt.kind = SearchPromptKind::RenameSymbol;
+  prompt.direction = Direction::Forward;
+  prompt.query = prefill;
+  prompt.cursor = prompt.query.len();
+  prompt.completions.clear();
+  prompt.error = None;
+  prompt.register = '/';
+  prompt.extend = false;
+  prompt.original_selection = None;
+  prompt.selected = None;
+
+  ctx.request_render();
+}
+
 fn open_selection_prompt<Ctx: DefaultContext>(ctx: &mut Ctx, kind: SearchPromptKind) {
   let original_selection = ctx.editor_ref().document().selection().clone();
   let prompt = ctx.search_prompt_mut();
@@ -194,6 +212,7 @@ pub fn handle_search_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEven
         SearchPromptKind::SplitSelection => finalize_split_selection(ctx),
         SearchPromptKind::KeepSelections => finalize_keep_selections(ctx),
         SearchPromptKind::RemoveSelections => finalize_remove_selections(ctx),
+        SearchPromptKind::RenameSymbol => finalize_rename_symbol(ctx),
       };
       if should_close {
         ctx.search_prompt_mut().clear();
@@ -397,6 +416,7 @@ pub fn update_search_prompt_preview<Ctx: DefaultContext>(ctx: &mut Ctx) {
     SearchPromptKind::SplitSelection => update_split_selection_preview(ctx),
     SearchPromptKind::KeepSelections => update_keep_selections_preview(ctx),
     SearchPromptKind::RemoveSelections => update_remove_selections_preview(ctx),
+    SearchPromptKind::RenameSymbol => update_rename_symbol_preview(ctx),
   }
 }
 
@@ -704,6 +724,24 @@ pub fn finalize_remove_selections<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool {
   finalize_keep_or_remove(ctx, true)
 }
 
+pub fn update_rename_symbol_preview<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  ctx.search_prompt_mut().error = None;
+}
+
+pub fn finalize_rename_symbol<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool {
+  let new_name = ctx.search_prompt_ref().query.trim().to_string();
+  if new_name.is_empty() {
+    let message = "rename requires a non-empty name".to_string();
+    ctx.search_prompt_mut().error = Some(message.clone());
+    ctx.push_error("rename", message);
+    return false;
+  }
+
+  ctx.search_prompt_mut().error = None;
+  ctx.lsp_rename(&new_name);
+  true
+}
+
 fn finalize_keep_or_remove<Ctx: DefaultContext>(ctx: &mut Ctx, remove: bool) -> bool {
   let (query, base_selection) = {
     let prompt = ctx.search_prompt_ref();
@@ -810,6 +848,7 @@ pub fn build_search_prompt_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNode>
       SearchPromptKind::SplitSelection => "split",
       SearchPromptKind::KeepSelections => "keep",
       SearchPromptKind::RemoveSelections => "remove",
+      SearchPromptKind::RenameSymbol => "rename-to",
     }
     .to_string(),
   );

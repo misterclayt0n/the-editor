@@ -36,11 +36,11 @@ use the_lsp::{
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SessionKey {
-  workspace_root: String,
-  server_name: String,
-  command: String,
-  args: Vec<String>,
-  env: Vec<(String, String)>,
+  workspace_root:     String,
+  server_name:        String,
+  command:            String,
+  args:               Vec<String>,
+  env:                Vec<(String, String)>,
   initialize_options: Option<String>,
 }
 
@@ -48,11 +48,13 @@ impl SessionKey {
   pub fn from_runtime_config(config: &LspRuntimeConfig) -> Option<Self> {
     let server = config.server()?;
     Some(Self {
-      workspace_root: normalize_workspace_root(config.workspace_root()).to_string_lossy().into(),
-      server_name: server.name().to_string(),
-      command: server.command().to_string(),
-      args: server.args().to_vec(),
-      env: server.env().to_vec(),
+      workspace_root:     normalize_workspace_root(config.workspace_root())
+        .to_string_lossy()
+        .into(),
+      server_name:        server.name().to_string(),
+      command:            server.command().to_string(),
+      args:               server.args().to_vec(),
+      env:                server.env().to_vec(),
       initialize_options: server
         .initialize_options()
         .and_then(|value| serde_json::to_string(value).ok()),
@@ -63,7 +65,7 @@ impl SessionKey {
 #[derive(Debug, Clone, Default)]
 pub struct BrokerCounters {
   pub sessions_created: u64,
-  pub runtime_starts: u64,
+  pub runtime_starts:   u64,
 }
 
 #[derive(Default)]
@@ -121,32 +123,32 @@ impl LspBrokerRegistry {
 
 #[derive(Default)]
 struct ClientState {
-  inbox: VecDeque<LspEvent>,
+  inbox:           VecDeque<LspEvent>,
   subscribed_uris: HashSet<String>,
 }
 
 #[derive(Default)]
 struct UriBinding {
   subscribers: HashSet<u64>,
-  owner: Option<u64>,
+  owner:       Option<u64>,
 }
 
 struct LspBrokerSession {
-  runtime: LspRuntime,
-  clients: HashMap<u64, ClientState>,
+  runtime:                   LspRuntime,
+  clients:                   HashMap<u64, ClientState>,
   runtime_to_client_request: HashMap<u64, (u64, u64)>,
   client_to_runtime_request: HashMap<(u64, u64), u64>,
-  uri_bindings: HashMap<String, UriBinding>,
+  uri_bindings:              HashMap<String, UriBinding>,
 }
 
 impl LspBrokerSession {
   fn new(config: LspRuntimeConfig) -> Self {
     Self {
-      runtime: LspRuntime::new(config),
-      clients: HashMap::new(),
+      runtime:                   LspRuntime::new(config),
+      clients:                   HashMap::new(),
       runtime_to_client_request: HashMap::new(),
       client_to_runtime_request: HashMap::new(),
-      uri_bindings: HashMap::new(),
+      uri_bindings:              HashMap::new(),
     }
   }
 
@@ -190,46 +192,35 @@ impl LspBrokerSession {
           if let Some((client_id, client_request_id)) =
             self.runtime_to_client_request.get(&id).copied()
           {
-            self.enqueue_client(
-              client_id,
-              LspEvent::RequestDispatched {
-                id: client_request_id,
-                method,
-              },
-            );
+            self.enqueue_client(client_id, LspEvent::RequestDispatched {
+              id: client_request_id,
+              method,
+            });
           } else {
             self.broadcast(LspEvent::RequestDispatched { id, method });
           }
         },
         LspEvent::RequestCompleted { id } => {
-          if let Some((client_id, client_request_id)) = self.runtime_to_client_request.remove(&id)
-          {
+          if let Some((client_id, client_request_id)) = self.runtime_to_client_request.remove(&id) {
             self
               .client_to_runtime_request
               .remove(&(client_id, client_request_id));
-            self.enqueue_client(
-              client_id,
-              LspEvent::RequestCompleted {
-                id: client_request_id,
-              },
-            );
+            self.enqueue_client(client_id, LspEvent::RequestCompleted {
+              id: client_request_id,
+            });
           } else {
             self.broadcast(LspEvent::RequestCompleted { id });
           }
         },
         LspEvent::RequestTimedOut { id, method } => {
-          if let Some((client_id, client_request_id)) = self.runtime_to_client_request.remove(&id)
-          {
+          if let Some((client_id, client_request_id)) = self.runtime_to_client_request.remove(&id) {
             self
               .client_to_runtime_request
               .remove(&(client_id, client_request_id));
-            self.enqueue_client(
-              client_id,
-              LspEvent::RequestTimedOut {
-                id: client_request_id,
-                method,
-              },
-            );
+            self.enqueue_client(client_id, LspEvent::RequestTimedOut {
+              id: client_request_id,
+              method,
+            });
           } else {
             self.broadcast(LspEvent::RequestTimedOut { id, method });
           }
@@ -277,12 +268,9 @@ impl LspBrokerSession {
       .client_to_runtime_request
       .remove(&(client_id, client_request_id));
     response.id = jsonrpc::Id::Number(client_request_id);
-    self.enqueue_client(
-      client_id,
-      LspEvent::RpcMessage {
-        message: jsonrpc::Message::Response(response),
-      },
-    );
+    self.enqueue_client(client_id, LspEvent::RpcMessage {
+      message: jsonrpc::Message::Response(response),
+    });
   }
 
   fn fanout_diagnostics(&mut self, diagnostics: DocumentDiagnostics) {
@@ -299,19 +287,13 @@ impl LspBrokerSession {
     }
 
     for client_id in subscribers {
-      self.enqueue_client(
-        client_id,
-        LspEvent::DiagnosticsPublished {
-          diagnostics: diagnostics.clone(),
-        },
-      );
+      self.enqueue_client(client_id, LspEvent::DiagnosticsPublished {
+        diagnostics: diagnostics.clone(),
+      });
     }
   }
 
-  fn resolve_workspace_edit_client(
-    &self,
-    documents: &[the_lsp::LspDocumentEdit],
-  ) -> Option<u64> {
+  fn resolve_workspace_edit_client(&self, documents: &[the_lsp::LspDocumentEdit]) -> Option<u64> {
     for document in documents {
       if let Some(binding) = self.uri_bindings.get(document.uri.as_str()) {
         if let Some(owner) = binding.owner {
@@ -366,7 +348,8 @@ impl LspBrokerSession {
         client_id, client_request_id, runtime_request_id, method
       ),
     );
-    self.runtime_to_client_request
+    self
+      .runtime_to_client_request
       .insert(runtime_request_id, (client_id, client_request_id));
     self
       .client_to_runtime_request
@@ -642,17 +625,19 @@ pub fn cancel_request(
   key: &SessionKey,
   client_request_id: u64,
 ) -> Result<(), String> {
-  with_session(key, |session| session.cancel_request(client_id, client_request_id))
-    .unwrap_or_else(|| {
-      trace_log(
-        "cancel_request_missing_session",
-        format!(
-          "client_id={} client_req_id={} key={:?}",
-          client_id, client_request_id, key
-        ),
-      );
-      Err("missing broker session".to_string())
-    })
+  with_session(key, |session| {
+    session.cancel_request(client_id, client_request_id)
+  })
+  .unwrap_or_else(|| {
+    trace_log(
+      "cancel_request_missing_session",
+      format!(
+        "client_id={} client_req_id={} key={:?}",
+        client_id, client_request_id, key
+      ),
+    );
+    Err("missing broker session".to_string())
+  })
 }
 
 pub fn send_notification(
@@ -660,14 +645,13 @@ pub fn send_notification(
   method: &str,
   params: Option<Value>,
 ) -> Result<(), String> {
-  with_session(key, |session| session.send_notification(method, params))
-    .unwrap_or_else(|| {
-      trace_log(
-        "send_notification_missing_session",
-        format!("method={} key={:?}", method, key),
-      );
-      Err("missing broker session".to_string())
-    })
+  with_session(key, |session| session.send_notification(method, params)).unwrap_or_else(|| {
+    trace_log(
+      "send_notification_missing_session",
+      format!("method={} key={:?}", method, key),
+    );
+    Err("missing broker session".to_string())
+  })
 }
 
 pub fn focus_document(
@@ -692,14 +676,13 @@ pub fn focus_document(
 }
 
 pub fn close_document(client_id: u64, key: &SessionKey, uri: &str) -> Result<(), String> {
-  with_session(key, |session| session.close_document(client_id, uri))
-    .unwrap_or_else(|| {
-      trace_log(
-        "close_document_missing_session",
-        format!("client_id={} uri={} key={:?}", client_id, uri, key),
-      );
-      Err("missing broker session".to_string())
-    })
+  with_session(key, |session| session.close_document(client_id, uri)).unwrap_or_else(|| {
+    trace_log(
+      "close_document_missing_session",
+      format!("client_id={} uri={} key={:?}", client_id, uri, key),
+    );
+    Err("missing broker session".to_string())
+  })
 }
 
 pub fn send_document_change(
@@ -778,7 +761,11 @@ mod tests {
 
     let key = SessionKey::from_runtime_config(&config).expect("session key");
     assert_eq!(key.server_name, "test");
-    assert!(key.workspace_root.contains(workspace.file_name().unwrap().to_string_lossy().as_ref()));
+    assert!(
+      key
+        .workspace_root
+        .contains(workspace.file_name().unwrap().to_string_lossy().as_ref())
+    );
   }
 
   #[test]
@@ -786,11 +773,11 @@ mod tests {
     let workspace = std::env::current_dir().expect("cwd");
     let config = LspRuntimeConfig::new(workspace.clone());
     let key = SessionKey {
-      workspace_root: workspace.to_string_lossy().into_owned(),
-      server_name: "none".into(),
-      command: "none".into(),
-      args: Vec::new(),
-      env: Vec::new(),
+      workspace_root:     workspace.to_string_lossy().into_owned(),
+      server_name:        "none".into(),
+      command:            "none".into(),
+      args:               Vec::new(),
+      env:                Vec::new(),
       initialize_options: None,
     };
 

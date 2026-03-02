@@ -45,8 +45,8 @@ use crate::{
     CapabilityRegistry,
     ServerCapabilitiesSnapshot,
   },
-  editing::parse_workspace_apply_edit_request,
   diagnostics::parse_publish_diagnostics,
+  editing::parse_workspace_apply_edit_request,
   jsonrpc,
   parse_progress_notification,
   text_sync::file_uri_for_path,
@@ -691,10 +691,7 @@ fn handle_server_request_message(
       match parse_workspace_apply_edit_request(request.params.as_ref()) {
         Ok((label, edit)) => {
           let _ = event_tx.send(LspEvent::WorkspaceApplyEdit { label, edit });
-          jsonrpc::Message::response_ok(
-            request.id.clone(),
-            Some(json!({ "applied": true })),
-          )
+          jsonrpc::Message::response_ok(request.id.clone(), Some(json!({ "applied": true })))
         },
         Err(err) => {
           let failure = format!("failed to parse workspace/applyEdit: {err}");

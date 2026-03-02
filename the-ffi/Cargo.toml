@@ -12,6 +12,7 @@ path       = "lib.rs"
 ropey.workspace      = true
 serde.workspace      = true
 serde_json.workspace = true
+smallvec.workspace   = true
 swift-bridge         = "0.1"
 the-config           = { path = "../the-config" }
 the-default          = { path = "../the-default" }

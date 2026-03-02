@@ -658,10 +658,19 @@ fn cmd_quit<Ctx: DefaultContext>(ctx: &mut Ctx, _args: Args, event: CommandEvent
       .map(|buffer| buffer.display_name.as_str())
       .collect::<Vec<_>>()
       .join(", ");
-    let suffix = if modified_buffers.len() > 3 { ", ..." } else { "" };
-    let noun = if modified_buffers.len() == 1 { "buffer" } else { "buffers" };
+    let suffix = if modified_buffers.len() > 3 {
+      ", ..."
+    } else {
+      ""
+    };
+    let noun = if modified_buffers.len() == 1 {
+      "buffer"
+    } else {
+      "buffers"
+    };
     return Err(CommandError::new(format!(
-      "unsaved changes in modified {noun}: {preview}{suffix}; use :wq to save and quit, or :q! to discard changes"
+      "unsaved changes in modified {noun}: {preview}{suffix}; use :wq to save and quit, or :q! to \
+       discard changes"
     )));
   }
 

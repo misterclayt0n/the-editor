@@ -48,6 +48,7 @@ use std::{
 use ropey::Rope;
 use serde::Serialize;
 use serde_json::Value;
+use smallvec::SmallVec;
 use the_config::{
   build_dispatch as config_build_dispatch,
   build_keymaps as config_build_keymaps,
@@ -106,6 +107,7 @@ use the_default::{
   file_picker_row_data,
   finalize_keep_selections,
   finalize_remove_selections,
+  finalize_rename_symbol,
   finalize_search,
   finalize_select_regex,
   finalize_split_selection,
@@ -253,6 +255,7 @@ use the_lsp::{
   ServerCapabilitiesSnapshot,
   code_action_params,
   completion_params,
+  document_highlight_params,
   document_symbols_params,
   execute_command_params,
   goto_declaration_params,
@@ -264,6 +267,7 @@ use the_lsp::{
   parse_code_actions_response,
   parse_completion_item_response,
   parse_completion_response_with_raw,
+  parse_document_highlights_response,
   parse_document_symbols_response,
   parse_hover_response,
   parse_locations_response,
@@ -1459,6 +1463,9 @@ enum PendingLspRequestKind {
   Hover {
     uri: String,
   },
+  DocumentHighlightSelect {
+    uri: String,
+  },
   DocumentSymbols {
     uri: String,
   },
@@ -1492,6 +1499,7 @@ impl PendingLspRequestKind {
       Self::GotoTypeDefinition { .. } => "goto-type-definition",
       Self::GotoImplementation { .. } => "goto-implementation",
       Self::Hover { .. } => "hover",
+      Self::DocumentHighlightSelect { .. } => "document-highlight-select",
       Self::DocumentSymbols { .. } => "document-symbols",
       Self::WorkspaceSymbols { .. } => "workspace-symbols",
       Self::Completion { .. } => "completion",
@@ -1508,6 +1516,7 @@ impl PendingLspRequestKind {
       Self::GotoTypeDefinition { uri } => Some(uri.as_str()),
       Self::GotoImplementation { uri } => Some(uri.as_str()),
       Self::Hover { uri } => Some(uri.as_str()),
+      Self::DocumentHighlightSelect { uri } => Some(uri.as_str()),
       Self::DocumentSymbols { uri } => Some(uri.as_str()),
       Self::WorkspaceSymbols { .. } => None,
       Self::Completion { uri, .. } => Some(uri.as_str()),
@@ -1524,6 +1533,7 @@ impl PendingLspRequestKind {
       Self::GotoTypeDefinition { uri } => ("goto-type-definition", Some(uri)),
       Self::GotoImplementation { uri } => ("goto-implementation", Some(uri)),
       Self::Hover { uri } => ("hover", Some(uri)),
+      Self::DocumentHighlightSelect { uri } => ("document-highlight-select", Some(uri)),
       Self::DocumentSymbols { uri } => ("document-symbols", Some(uri)),
       Self::WorkspaceSymbols { .. } => ("workspace-symbols", None),
       Self::Completion { uri, .. } => ("completion", Some(uri)),
@@ -5715,6 +5725,7 @@ impl App {
       SearchPromptKind::SplitSelection => finalize_split_selection(self),
       SearchPromptKind::KeepSelections => finalize_keep_selections(self),
       SearchPromptKind::RemoveSelections => finalize_remove_selections(self),
+      SearchPromptKind::RenameSymbol => finalize_rename_symbol(self),
     };
     if should_close {
       self.search_prompt_mut().clear();
@@ -6832,6 +6843,9 @@ impl App {
         }
         true
       },
+      PendingLspRequestKind::DocumentHighlightSelect { .. } => {
+        self.handle_document_highlight_selection_response(response.result.as_ref())
+      },
       PendingLspRequestKind::DocumentSymbols { uri } => {
         let symbols = match parse_document_symbols_response(&uri, response.result.as_ref()) {
           Ok(symbols) => symbols,
@@ -7048,6 +7062,78 @@ impl App {
     }
 
     self.show_code_action_menu(actions);
+    true
+  }
+
+  fn handle_document_highlight_selection_response(&mut self, result: Option<&Value>) -> bool {
+    let highlights = match parse_document_highlights_response(result) {
+      Ok(highlights) => highlights,
+      Err(err) => {
+        self.publish_lsp_message(
+          the_lib::messages::MessageLevel::Error,
+          format!("failed to parse document-highlight response: {err}"),
+        );
+        return true;
+      },
+    };
+
+    if highlights.is_empty() {
+      self.publish_lsp_message(
+        the_lib::messages::MessageLevel::Info,
+        "no references under cursor",
+      );
+      return true;
+    }
+
+    let editor = self.active_editor_ref();
+    let doc = editor.document();
+    let text = doc.text();
+    let text_slice = text.slice(..);
+    let cursor_pos = self
+      .active_or_first_selection_range()
+      .map(|range| range.cursor(text_slice))
+      .unwrap_or(0);
+
+    let mut ranges: SmallVec<[Range; 1]> = SmallVec::new();
+    let mut primary_index = 0usize;
+    for highlight in highlights {
+      let start = utf16_position_to_char_idx(text, highlight.start.line, highlight.start.character);
+      let end = utf16_position_to_char_idx(text, highlight.end.line, highlight.end.character);
+      let range = Range::new(start.min(end), start.max(end));
+      if range.contains(cursor_pos) {
+        primary_index = ranges.len();
+      }
+      ranges.push(range);
+    }
+
+    if ranges.is_empty() {
+      self.publish_lsp_message(
+        the_lib::messages::MessageLevel::Info,
+        "no references under cursor",
+      );
+      return true;
+    }
+
+    let next_selection = match Selection::new(ranges) {
+      Ok(selection) => selection,
+      Err(err) => {
+        self.publish_lsp_message(
+          the_lib::messages::MessageLevel::Error,
+          format!("failed to apply document highlights: {err}"),
+        );
+        return true;
+      },
+    };
+
+    let next_active_cursor = next_selection
+      .cursor_id_at(primary_index.min(next_selection.len().saturating_sub(1)))
+      .ok();
+    let _ = self
+      .active_editor_mut()
+      .document_mut()
+      .set_selection(next_selection);
+    self.active_editor_mut().view_mut().active_cursor = next_active_cursor;
+    self.request_render();
     true
   }
 
@@ -10899,6 +10985,30 @@ impl DefaultContext for App {
       "textDocument/hover",
       hover_params(&uri, position),
       PendingLspRequestKind::Hover { uri },
+    );
+  }
+
+  fn lsp_select_references_to_symbol_under_cursor(&mut self) {
+    if !self.lsp_supports(LspCapability::DocumentHighlight) {
+      self.publish_lsp_message(
+        the_lib::messages::MessageLevel::Warning,
+        "document highlights are not supported by the active server",
+      );
+      return;
+    }
+
+    let Some((uri, position)) = self.current_lsp_position() else {
+      self.publish_lsp_message(
+        the_lib::messages::MessageLevel::Warning,
+        "document highlights unavailable: no active LSP document",
+      );
+      return;
+    };
+
+    self.dispatch_lsp_request(
+      "textDocument/documentHighlight",
+      document_highlight_params(&uri, position),
+      PendingLspRequestKind::DocumentHighlightSelect { uri },
     );
   }
 

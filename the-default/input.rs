@@ -178,7 +178,11 @@ impl PointerEventOutcome {
 
   #[must_use]
   pub const fn from_handled(handled: bool) -> Self {
-    if handled { Self::Handled } else { Self::Continue }
+    if handled {
+      Self::Handled
+    } else {
+      Self::Continue
+    }
   }
 }
 

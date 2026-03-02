@@ -507,6 +507,8 @@ pub enum Command {
   HSplitNew,
   VSplitNew,
   ToggleComments,
+  ToggleBlockComments,
+  ToggleLineComments,
   JumpForward {
     count: usize,
   },
@@ -658,6 +660,8 @@ pub enum Command {
   LspGotoTypeDefinition,
   LspGotoImplementation,
   LspHover,
+  RenameSymbol,
+  SelectReferencesToSymbolUnderCursor,
   LspReferences,
   LspDocumentSymbols,
   LspWorkspaceSymbols,
@@ -999,6 +1003,16 @@ impl Command {
   #[must_use]
   pub const fn toggle_comments() -> Self {
     Self::ToggleComments
+  }
+
+  #[must_use]
+  pub const fn toggle_block_comments() -> Self {
+    Self::ToggleBlockComments
+  }
+
+  #[must_use]
+  pub const fn toggle_line_comments() -> Self {
+    Self::ToggleLineComments
   }
 
   #[must_use]
@@ -1837,6 +1851,16 @@ impl Command {
   #[must_use]
   pub const fn lsp_hover() -> Self {
     Self::LspHover
+  }
+
+  #[must_use]
+  pub const fn rename_symbol() -> Self {
+    Self::RenameSymbol
+  }
+
+  #[must_use]
+  pub const fn select_references_to_symbol_under_cursor() -> Self {
+    Self::SelectReferencesToSymbolUnderCursor
   }
 
   #[must_use]

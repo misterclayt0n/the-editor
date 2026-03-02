@@ -223,7 +223,11 @@ impl FileTreeState {
       let _ = self.set_expanded(&selected, true);
       return None;
     }
-    if selected.is_file() { Some(selected) } else { None }
+    if selected.is_file() {
+      Some(selected)
+    } else {
+      None
+    }
   }
 
   #[must_use]
@@ -368,28 +372,29 @@ fn read_directory_entries(path: &Path) -> std::io::Result<Vec<FileTreeEntry>> {
       if name.is_empty() {
         return None;
       }
-      let is_dir = entry.file_type().map(|ft| ft.is_dir()).unwrap_or_else(|_| path.is_dir());
+      let is_dir = entry
+        .file_type()
+        .map(|ft| ft.is_dir())
+        .unwrap_or_else(|_| path.is_dir());
       if should_hide_entry(name.as_str(), is_dir) {
         return None;
       }
-      Some(FileTreeEntry {
-        path,
-        name,
-        is_dir,
-      })
+      Some(FileTreeEntry { path, name, is_dir })
     })
     .collect::<Vec<_>>();
 
-  entries.sort_by(|left, right| match (left.is_dir, right.is_dir) {
-    (true, false) => Ordering::Less,
-    (false, true) => Ordering::Greater,
-    _ => {
-      let left_lower = left.name.to_lowercase();
-      let right_lower = right.name.to_lowercase();
-      left_lower
-        .cmp(&right_lower)
-        .then_with(|| left.name.cmp(&right.name))
-    },
+  entries.sort_by(|left, right| {
+    match (left.is_dir, right.is_dir) {
+      (true, false) => Ordering::Less,
+      (false, true) => Ordering::Greater,
+      _ => {
+        let left_lower = left.name.to_lowercase();
+        let right_lower = right.name.to_lowercase();
+        left_lower
+          .cmp(&right_lower)
+          .then_with(|| left.name.cmp(&right.name))
+      },
+    }
   });
 
   Ok(entries)

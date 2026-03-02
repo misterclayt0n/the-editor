@@ -69,6 +69,10 @@ pub fn hover_params(uri: &str, position: LspPosition) -> Value {
   text_document_position_params(uri, position)
 }
 
+pub fn document_highlight_params(uri: &str, position: LspPosition) -> Value {
+  text_document_position_params(uri, position)
+}
+
 pub fn references_params(uri: &str, position: LspPosition, include_declaration: bool) -> Value {
   json!({
     "textDocument": { "uri": uri },
@@ -117,6 +121,28 @@ pub fn parse_locations_response(
       links
         .into_iter()
         .map(LocationLinkPayload::into_location)
+        .collect(),
+    );
+  }
+
+  Err(NavigationParseError::InvalidShape)
+}
+
+pub fn parse_document_highlights_response(
+  result: Option<&Value>,
+) -> Result<Vec<LspRange>, NavigationParseError> {
+  let Some(result) = result else {
+    return Ok(Vec::new());
+  };
+  if result.is_null() {
+    return Ok(Vec::new());
+  }
+
+  if let Ok(highlights) = serde_json::from_value::<Vec<DocumentHighlightPayload>>(result.clone()) {
+    return Ok(
+      highlights
+        .into_iter()
+        .map(|highlight| highlight.range.into_range())
         .collect(),
     );
   }
@@ -433,6 +459,11 @@ impl LocationLinkPayload {
 }
 
 #[derive(Debug, Deserialize)]
+struct DocumentHighlightPayload {
+  range: RangePayload,
+}
+
+#[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct DocumentSymbolPayload {
   name:            String,
@@ -523,6 +554,24 @@ mod tests {
     let locations = parse_locations_response(Some(&value)).expect("locations parse");
     assert_eq!(locations.len(), 1);
     assert_eq!(locations[0].uri, "file:///tmp/a.rs");
+  }
+
+  #[test]
+  fn parses_document_highlights_array() {
+    let value = json!([
+      {
+        "range": {
+          "start": { "line": 3, "character": 4 },
+          "end": { "line": 3, "character": 8 }
+        }
+      }
+    ]);
+    let highlights = parse_document_highlights_response(Some(&value)).expect("highlights parse");
+    assert_eq!(highlights.len(), 1);
+    assert_eq!(highlights[0].start.line, 3);
+    assert_eq!(highlights[0].start.character, 4);
+    assert_eq!(highlights[0].end.line, 3);
+    assert_eq!(highlights[0].end.character, 8);
   }
 
   #[test]

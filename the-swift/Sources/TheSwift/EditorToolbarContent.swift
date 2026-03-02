@@ -55,6 +55,55 @@ struct EditorToolbarLeading: View {
     }
 }
 
+// MARK: - Toolbar VCS (left: branch badge)
+
+struct EditorToolbarVCS: View {
+    let snapshot: StatuslineSnapshot
+
+    static func text(from snapshot: StatuslineSnapshot) -> String? {
+        let vcsRaw = snapshot.rightSegments
+            .first {
+                let text = $0.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                let emphasis = $0.style?.emphasis ?? .normal
+                return emphasis == .muted && !text.isEmpty && !text.hasPrefix("lsp:")
+            }?
+            .text
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard let vcsRaw, !vcsRaw.isEmpty else {
+            return nil
+        }
+        return normalizedVcsText(vcsRaw)
+    }
+
+    private static func normalizedVcsText(_ raw: String) -> String? {
+        let tokens = raw.split(whereSeparator: { $0.isWhitespace })
+        guard !tokens.isEmpty else { return nil }
+        if tokens.count >= 2,
+           let firstScalar = tokens[0].unicodeScalars.first,
+           !firstScalar.isASCII {
+            let value = tokens.dropFirst().joined(separator: " ")
+            return value.isEmpty ? nil : value
+        }
+        return raw
+    }
+
+    var body: some View {
+        if let text = Self.text(from: snapshot) {
+            Label {
+                Text(text)
+                    .lineLimit(1)
+            } icon: {
+                Image(systemName: "arrow.triangle.branch")
+            }
+            .font(FontLoader.uiFont(size: 11).weight(.medium))
+            .foregroundStyle(.secondary)
+            .labelStyle(.titleAndIcon)
+            .padding(.horizontal, 8)
+        }
+    }
+}
+
 // MARK: - Toolbar Title (buffer icon + filename outside mode badge)
 
 struct EditorToolbarTitle: View {

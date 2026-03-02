@@ -264,6 +264,9 @@ struct EditorView: View {
                         EditorToolbarLeading(snapshot: snap)
                     }
                     ToolbarItemGroup(placement: .automatic) {
+                        if EditorToolbarVCS.text(from: snap) != nil {
+                            EditorToolbarVCS(snapshot: snap)
+                        }
                         EditorToolbarTrailing(snapshot: snap, pendingKeys: model.pendingKeys)
                     }
                 }

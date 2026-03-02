@@ -68,6 +68,11 @@ pub enum SearchPromptKind {
   KeepSelections,
   RemoveSelections,
   RenameSymbol,
+  ShellPipe,
+  ShellPipeTo,
+  ShellInsertOutput,
+  ShellAppendOutput,
+  ShellKeepPipe,
 }
 
 impl SearchPromptState {
@@ -171,6 +176,23 @@ pub fn open_rename_symbol_prompt<Ctx: DefaultContext>(ctx: &mut Ctx, prefill: St
   ctx.request_render();
 }
 
+pub fn open_shell_prompt<Ctx: DefaultContext>(ctx: &mut Ctx, kind: SearchPromptKind) {
+  let prompt = ctx.search_prompt_mut();
+  prompt.active = true;
+  prompt.kind = kind;
+  prompt.direction = Direction::Forward;
+  prompt.query.clear();
+  prompt.cursor = 0;
+  prompt.completions.clear();
+  prompt.error = None;
+  prompt.register = '/';
+  prompt.extend = false;
+  prompt.original_selection = None;
+  prompt.selected = None;
+
+  ctx.request_render();
+}
+
 fn open_selection_prompt<Ctx: DefaultContext>(ctx: &mut Ctx, kind: SearchPromptKind) {
   let original_selection = ctx.editor_ref().document().selection().clone();
   let prompt = ctx.search_prompt_mut();
@@ -213,6 +235,11 @@ pub fn handle_search_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEven
         SearchPromptKind::KeepSelections => finalize_keep_selections(ctx),
         SearchPromptKind::RemoveSelections => finalize_remove_selections(ctx),
         SearchPromptKind::RenameSymbol => finalize_rename_symbol(ctx),
+        SearchPromptKind::ShellPipe => finalize_shell_pipe(ctx),
+        SearchPromptKind::ShellPipeTo => finalize_shell_pipe_to(ctx),
+        SearchPromptKind::ShellInsertOutput => finalize_shell_insert_output(ctx),
+        SearchPromptKind::ShellAppendOutput => finalize_shell_append_output(ctx),
+        SearchPromptKind::ShellKeepPipe => finalize_shell_keep_pipe(ctx),
       };
       if should_close {
         ctx.search_prompt_mut().clear();
@@ -417,6 +444,11 @@ pub fn update_search_prompt_preview<Ctx: DefaultContext>(ctx: &mut Ctx) {
     SearchPromptKind::KeepSelections => update_keep_selections_preview(ctx),
     SearchPromptKind::RemoveSelections => update_remove_selections_preview(ctx),
     SearchPromptKind::RenameSymbol => update_rename_symbol_preview(ctx),
+    SearchPromptKind::ShellPipe
+    | SearchPromptKind::ShellPipeTo
+    | SearchPromptKind::ShellInsertOutput
+    | SearchPromptKind::ShellAppendOutput
+    | SearchPromptKind::ShellKeepPipe => ctx.search_prompt_mut().error = None,
   }
 }
 
@@ -742,6 +774,51 @@ pub fn finalize_rename_symbol<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool {
   true
 }
 
+fn finalize_shell<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  behavior: crate::command::ShellBehavior,
+) -> bool {
+  let command = ctx.search_prompt_ref().query.trim().to_string();
+  if command.is_empty() {
+    let message = "shell command cannot be empty".to_string();
+    ctx.search_prompt_mut().error = Some(message.clone());
+    ctx.push_error("shell", message);
+    return false;
+  }
+
+  match crate::command::apply_shell_behavior(ctx, &command, behavior) {
+    Ok(()) => {
+      ctx.search_prompt_mut().error = None;
+      true
+    },
+    Err(err) => {
+      ctx.search_prompt_mut().error = Some(err.clone());
+      ctx.push_error("shell", err);
+      false
+    },
+  }
+}
+
+pub fn finalize_shell_pipe<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool {
+  finalize_shell(ctx, crate::command::ShellBehavior::Replace)
+}
+
+pub fn finalize_shell_pipe_to<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool {
+  finalize_shell(ctx, crate::command::ShellBehavior::Ignore)
+}
+
+pub fn finalize_shell_insert_output<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool {
+  finalize_shell(ctx, crate::command::ShellBehavior::Insert)
+}
+
+pub fn finalize_shell_append_output<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool {
+  finalize_shell(ctx, crate::command::ShellBehavior::Append)
+}
+
+pub fn finalize_shell_keep_pipe<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool {
+  finalize_shell(ctx, crate::command::ShellBehavior::Keep)
+}
+
 fn finalize_keep_or_remove<Ctx: DefaultContext>(ctx: &mut Ctx, remove: bool) -> bool {
   let (query, base_selection) = {
     let prompt = ctx.search_prompt_ref();
@@ -849,6 +926,11 @@ pub fn build_search_prompt_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNode>
       SearchPromptKind::KeepSelections => "keep",
       SearchPromptKind::RemoveSelections => "remove",
       SearchPromptKind::RenameSymbol => "rename-to",
+      SearchPromptKind::ShellPipe => "pipe",
+      SearchPromptKind::ShellPipeTo => "pipe-to",
+      SearchPromptKind::ShellInsertOutput => "insert-output",
+      SearchPromptKind::ShellAppendOutput => "append-output",
+      SearchPromptKind::ShellKeepPipe => "keep-pipe",
     }
     .to_string(),
   );

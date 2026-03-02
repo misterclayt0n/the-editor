@@ -515,6 +515,13 @@ pub enum Command {
   ToggleComments,
   ToggleBlockComments,
   ToggleLineComments,
+  SelectRegister,
+  ShellPipe,
+  ShellPipeTo,
+  ShellInsertOutput,
+  ShellAppendOutput,
+  ShellKeepPipe,
+  Suspend,
   JumpForward {
     count: usize,
   },
@@ -1019,6 +1026,41 @@ impl Command {
   #[must_use]
   pub const fn toggle_line_comments() -> Self {
     Self::ToggleLineComments
+  }
+
+  #[must_use]
+  pub const fn select_register() -> Self {
+    Self::SelectRegister
+  }
+
+  #[must_use]
+  pub const fn shell_pipe() -> Self {
+    Self::ShellPipe
+  }
+
+  #[must_use]
+  pub const fn shell_pipe_to() -> Self {
+    Self::ShellPipeTo
+  }
+
+  #[must_use]
+  pub const fn shell_insert_output() -> Self {
+    Self::ShellInsertOutput
+  }
+
+  #[must_use]
+  pub const fn shell_append_output() -> Self {
+    Self::ShellAppendOutput
+  }
+
+  #[must_use]
+  pub const fn shell_keep_pipe() -> Self {
+    Self::ShellKeepPipe
+  }
+
+  #[must_use]
+  pub const fn suspend() -> Self {
+    Self::Suspend
   }
 
   #[must_use]

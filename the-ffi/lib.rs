@@ -110,6 +110,11 @@ use the_default::{
   finalize_keep_selections,
   finalize_remove_selections,
   finalize_rename_symbol,
+  finalize_shell_append_output,
+  finalize_shell_insert_output,
+  finalize_shell_keep_pipe,
+  finalize_shell_pipe,
+  finalize_shell_pipe_to,
   finalize_search,
   finalize_select_regex,
   finalize_split_selection,
@@ -5819,6 +5824,11 @@ impl App {
       SearchPromptKind::KeepSelections => finalize_keep_selections(self),
       SearchPromptKind::RemoveSelections => finalize_remove_selections(self),
       SearchPromptKind::RenameSymbol => finalize_rename_symbol(self),
+      SearchPromptKind::ShellPipe => finalize_shell_pipe(self),
+      SearchPromptKind::ShellPipeTo => finalize_shell_pipe_to(self),
+      SearchPromptKind::ShellInsertOutput => finalize_shell_insert_output(self),
+      SearchPromptKind::ShellAppendOutput => finalize_shell_append_output(self),
+      SearchPromptKind::ShellKeepPipe => finalize_shell_keep_pipe(self),
     };
     if should_close {
       self.search_prompt_mut().clear();

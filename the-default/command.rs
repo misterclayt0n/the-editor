@@ -7,6 +7,7 @@ use std::{
     HashMap,
     VecDeque,
   },
+  io::Write,
   path::{
     Path,
     PathBuf,
@@ -657,6 +658,81 @@ pub trait DefaultContext: Sized + 'static {
   fn lsp_code_actions(&mut self) {}
   fn lsp_rename(&mut self, _new_name: &str) {}
   fn lsp_format(&mut self) {}
+  fn shell_program(&self) -> Vec<String> {
+    #[cfg(windows)]
+    {
+      let shell = std::env::var("COMSPEC")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "cmd.exe".to_string());
+      vec![shell, "/C".to_string()]
+    }
+    #[cfg(not(windows))]
+    {
+      let shell = std::env::var("SHELL")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "/bin/sh".to_string());
+      vec![shell, "-c".to_string()]
+    }
+  }
+  fn run_shell_command(&mut self, cmd: &str, input: Option<Rope>) -> Result<Tendril, String> {
+    use std::process::Stdio;
+
+    let shell = self.shell_program();
+    if shell.is_empty() {
+      return Err("No shell configured".to_string());
+    }
+
+    let mut process = std::process::Command::new(&shell[0]);
+    process
+      .args(&shell[1..])
+      .arg(cmd)
+      .stdout(Stdio::piped())
+      .stderr(Stdio::piped());
+
+    if input.is_some() || cfg!(windows) {
+      process.stdin(Stdio::piped());
+    } else {
+      process.stdin(Stdio::null());
+    }
+
+    let mut child = process
+      .spawn()
+      .map_err(|err| format!("Failed to start shell: {err}"))?;
+
+    if let Some(mut stdin) = child.stdin.take()
+      && let Some(input) = input
+    {
+      stdin
+        .write_all(input.to_string().as_bytes())
+        .map_err(|err| format!("Failed writing shell stdin: {err}"))?;
+    }
+
+    let output = child
+      .wait_with_output()
+      .map_err(|err| format!("Failed waiting for shell command: {err}"))?;
+
+    if !output.status.success() {
+      if output.stderr.is_empty() {
+        return Err(match output.status.code() {
+          Some(code) => format!("Shell command failed: status {code}"),
+          None => "Shell command failed".to_string(),
+        });
+      }
+      return Err(String::from_utf8_lossy(&output.stderr).into_owned());
+    }
+
+    let text = if !output.stderr.is_empty() {
+      String::from_utf8_lossy(&output.stderr).into_owned()
+    } else {
+      String::from_utf8_lossy(&output.stdout).into_owned()
+    };
+    Ok(Tendril::from(text.as_str()))
+  }
+  fn suspend_editor(&mut self) -> Result<(), String> {
+    Err("suspend is not supported in this client".to_string())
+  }
   fn global_search(&mut self) {}
   fn file_picker_query_changed(&mut self, _query: &str) {}
   fn file_picker_closed(&mut self) {}
@@ -914,7 +990,13 @@ fn handle_pending_input<Ctx: DefaultContext>(
       }
       true
     },
-    PendingInput::InsertRegister => true, // TODO
+    PendingInput::InsertRegister => {
+      if let Key::Char(ch) = key.key {
+        ctx.set_register(Some(ch));
+        ctx.push_info("register", format!("selected register '{ch}'"));
+      }
+      true
+    },
     PendingInput::Placeholder => true,
     PendingInput::ReplaceSelection => {
       match key.key {
@@ -1281,6 +1363,13 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::ToggleComments => toggle_comments(ctx),
     Command::ToggleBlockComments => toggle_block_comments(ctx),
     Command::ToggleLineComments => toggle_line_comments(ctx),
+    Command::SelectRegister => select_register(ctx),
+    Command::ShellPipe => shell_pipe(ctx),
+    Command::ShellPipeTo => shell_pipe_to(ctx),
+    Command::ShellInsertOutput => shell_insert_output(ctx),
+    Command::ShellAppendOutput => shell_append_output(ctx),
+    Command::ShellKeepPipe => shell_keep_pipe(ctx),
+    Command::Suspend => suspend(ctx),
     Command::JumpForward { count } => {
       if !ctx.jump_forward_in_jumplist(count.max(1)) {
         ctx.push_warning("jump", "no newer selection in jumplist");
@@ -3059,6 +3148,172 @@ fn comment_tokens_for_document<Ctx: DefaultContext>(
     .cloned();
   let block_tokens = syntax_config.block_comment_tokens.clone();
   (line_token, block_tokens)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ShellBehavior {
+  Replace,
+  Ignore,
+  Insert,
+  Append,
+  Keep,
+}
+
+fn select_register<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  ctx.set_pending_input(Some(PendingInput::InsertRegister));
+  ctx.push_info("register", "select register: press the register key");
+}
+
+fn shell_pipe<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  crate::search_prompt::open_shell_prompt(ctx, crate::SearchPromptKind::ShellPipe);
+}
+
+fn shell_pipe_to<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  crate::search_prompt::open_shell_prompt(ctx, crate::SearchPromptKind::ShellPipeTo);
+}
+
+fn shell_insert_output<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  crate::search_prompt::open_shell_prompt(ctx, crate::SearchPromptKind::ShellInsertOutput);
+}
+
+fn shell_append_output<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  crate::search_prompt::open_shell_prompt(ctx, crate::SearchPromptKind::ShellAppendOutput);
+}
+
+fn shell_keep_pipe<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  crate::search_prompt::open_shell_prompt(ctx, crate::SearchPromptKind::ShellKeepPipe);
+}
+
+fn suspend<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  if let Err(err) = ctx.suspend_editor() {
+    ctx.push_warning("suspend", err);
+  }
+}
+
+pub(crate) fn apply_shell_behavior<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  command: &str,
+  behavior: ShellBehavior,
+) -> Result<(), String> {
+  let command = command.trim();
+  if command.is_empty() {
+    return Err("shell command cannot be empty".to_string());
+  }
+
+  if behavior == ShellBehavior::Keep {
+    return keep_pipe_selections(ctx, command);
+  }
+
+  let pipe = matches!(behavior, ShellBehavior::Replace | ShellBehavior::Ignore);
+  let (selection, text) = {
+    let doc = ctx.editor_ref().document();
+    (doc.selection().clone(), doc.text().clone())
+  };
+  let text_slice = text.slice(..);
+
+  let mut changes = Vec::with_capacity(selection.len());
+  let mut new_ranges = SmallVec::with_capacity(selection.len());
+  let mut shell_output: Option<Tendril> = None;
+  let mut offset = 0isize;
+
+  for range in selection.ranges() {
+    let output = if !pipe {
+      if let Some(cached) = shell_output.as_ref() {
+        cached.clone()
+      } else {
+        let fresh = ctx.run_shell_command(command, None)?;
+        shell_output = Some(fresh.clone());
+        fresh
+      }
+    } else {
+      let input_text = range.slice(text_slice).to_string();
+      let input = Rope::from_str(&input_text);
+      let mut fresh = ctx.run_shell_command(command, Some(input))?;
+      if !input_text.ends_with('\n') && fresh.ends_with('\n') {
+        fresh.pop();
+        if fresh.ends_with('\r') {
+          fresh.pop();
+        }
+      }
+      fresh
+    };
+
+    if behavior == ShellBehavior::Ignore {
+      continue;
+    }
+
+    let output_len = output.chars().count();
+    let (from, to, deleted_len) = match behavior {
+      ShellBehavior::Replace => (range.from(), range.to(), range.len()),
+      ShellBehavior::Insert => (range.from(), range.from(), 0),
+      ShellBehavior::Append => (range.to(), range.to(), 0),
+      ShellBehavior::Ignore | ShellBehavior::Keep => (range.from(), range.from(), 0),
+    };
+
+    let anchor = to
+      .checked_add_signed(offset)
+      .expect("selection ranges cannot overlap")
+      .checked_sub(deleted_len)
+      .expect("selection ranges cannot overlap");
+    let new_range = Range::new(anchor, anchor + output_len).with_direction(range.direction());
+    new_ranges.push(new_range);
+
+    offset = offset
+      .checked_add_unsigned(output_len)
+      .expect("selection ranges cannot overlap")
+      .checked_sub_unsigned(deleted_len)
+      .expect("selection ranges cannot overlap");
+
+    changes.push((from, to, Some(output)));
+  }
+
+  if behavior == ShellBehavior::Ignore {
+    return Ok(());
+  }
+
+  let cursor_ids: SmallVec<[CursorId; 1]> = selection.cursor_ids().iter().copied().collect();
+  let next_selection =
+    Selection::new_with_ids(new_ranges, cursor_ids).unwrap_or_else(|_| selection.clone());
+  let tx = Transaction::change(&text, changes.into_iter())
+    .map_err(|err| format!("failed to build shell transaction: {err}"))?
+    .with_selection(next_selection);
+
+  if !ctx.apply_transaction(&tx) {
+    return Err("failed to apply shell transaction".to_string());
+  }
+  let _ = ctx.editor().document_mut().commit();
+  Ok(())
+}
+
+fn keep_pipe_selections<Ctx: DefaultContext>(ctx: &mut Ctx, command: &str) -> Result<(), String> {
+  let (selection, text) = {
+    let doc = ctx.editor_ref().document();
+    (doc.selection().clone(), doc.text().clone())
+  };
+  let text_slice = text.slice(..);
+
+  let mut ranges = SmallVec::with_capacity(selection.len());
+  let mut cursor_ids = SmallVec::with_capacity(selection.len());
+  for (cursor_id, range) in selection.iter_with_ids() {
+    let input = Rope::from_str(&range.slice(text_slice).to_string());
+    if ctx.run_shell_command(command, Some(input)).is_ok() {
+      ranges.push(*range);
+      cursor_ids.push(cursor_id);
+    }
+  }
+
+  if ranges.is_empty() {
+    return Err("No selections remaining".to_string());
+  }
+
+  let next =
+    Selection::new_with_ids(ranges, cursor_ids).map_err(|err| format!("selection error: {err}"))?;
+  ctx
+    .editor()
+    .document_mut()
+    .set_selection(next)
+    .map_err(|err| format!("failed to set filtered selection: {err}"))?;
+  Ok(())
 }
 
 fn save_selection<Ctx: DefaultContext>(ctx: &mut Ctx) {
@@ -5994,6 +6249,13 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "toggle_comments" => Some(Command::toggle_comments()),
     "toggle_block_comments" => Some(Command::toggle_block_comments()),
     "toggle_line_comments" => Some(Command::toggle_line_comments()),
+    "select_register" => Some(Command::select_register()),
+    "shell_pipe" => Some(Command::shell_pipe()),
+    "shell_pipe_to" => Some(Command::shell_pipe_to()),
+    "shell_insert_output" => Some(Command::shell_insert_output()),
+    "shell_append_output" => Some(Command::shell_append_output()),
+    "shell_keep_pipe" => Some(Command::shell_keep_pipe()),
+    "suspend" => Some(Command::suspend()),
     "jump_forward" => Some(Command::jump_forward(1)),
     "jump_backward" => Some(Command::jump_backward(1)),
     "save_selection" => Some(Command::save_selection()),

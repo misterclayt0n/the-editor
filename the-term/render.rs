@@ -5524,6 +5524,11 @@ fn search_statusline_text(
     the_default::SearchPromptKind::KeepSelections => "KEEP",
     the_default::SearchPromptKind::RemoveSelections => "REMOVE",
     the_default::SearchPromptKind::RenameSymbol => "RENAME",
+    the_default::SearchPromptKind::ShellPipe => "PIPE",
+    the_default::SearchPromptKind::ShellPipeTo => "PIPE-TO",
+    the_default::SearchPromptKind::ShellInsertOutput => "INSERT-OUTPUT",
+    the_default::SearchPromptKind::ShellAppendOutput => "APPEND-OUTPUT",
+    the_default::SearchPromptKind::ShellKeepPipe => "KEEP-PIPE",
   };
   format!("{prefix} {before}█{after}")
 }

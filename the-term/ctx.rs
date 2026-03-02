@@ -6518,6 +6518,28 @@ impl the_default::DefaultContext for Ctx {
     );
   }
 
+  fn suspend_editor(&mut self) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+      let _ = crossterm::terminal::disable_raw_mode();
+      let pid = std::process::id().to_string();
+      let status = std::process::Command::new("kill")
+        .args(["-TSTP", &pid])
+        .status()
+        .map_err(|err| format!("failed to suspend process: {err}"))?;
+      let _ = crossterm::terminal::enable_raw_mode();
+      if status.success() {
+        Ok(())
+      } else {
+        Err(format!("suspend command failed with status {status}"))
+      }
+    }
+    #[cfg(not(unix))]
+    {
+      Err("suspend is not supported on this platform".to_string())
+    }
+  }
+
   fn on_file_saved(&mut self, _path: &Path, text: &str) {
     if let Some(watch) = self.lsp_watched_file.as_mut() {
       watch.stream.suppress_until = Some(Instant::now() + lsp_self_save_suppress_window());

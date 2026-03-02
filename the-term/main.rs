@@ -100,7 +100,8 @@ fn main() -> Result<()> {
   ctx.needs_render = false;
   terminal.draw(|f| render::render(f, &mut ctx))?;
   terminal.apply_editor_cursor(
-    ctx.term_hardware_cursor
+    ctx
+      .term_hardware_cursor
       .map(|cursor| (cursor.x, cursor.y, cursor.kind)),
   )?;
 
@@ -163,6 +164,9 @@ fn main() -> Result<()> {
     if ctx.tick_lsp_statusline() {
       ctx.needs_render = true;
     }
+    if ctx.tick_vcs_statusline() {
+      ctx.needs_render = true;
+    }
     ctx.flush_message_log();
 
     // Render if needed
@@ -170,7 +174,8 @@ fn main() -> Result<()> {
       ctx.needs_render = false;
       terminal.draw(|f| render::render(f, &mut ctx))?;
       terminal.apply_editor_cursor(
-        ctx.term_hardware_cursor
+        ctx
+          .term_hardware_cursor
           .map(|cursor| (cursor.x, cursor.y, cursor.kind)),
       )?;
     }

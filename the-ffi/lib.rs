@@ -95,6 +95,7 @@ use the_default::{
   SIGNATURE_HELP_ACTIVE_PARAM_START_MARKER,
   SearchPromptKind,
   SearchPromptState,
+  buffer_tabs_snapshot,
   close_file_picker,
   command_palette_filtered_indices,
   command_palette_selected_filtered_index,
@@ -120,7 +121,6 @@ use the_default::{
   submit_file_picker,
   update_command_palette_for_input,
   update_search_prompt_preview,
-  buffer_tabs_snapshot,
 };
 use the_lib::{
   Tendril,
@@ -180,6 +180,7 @@ use the_lib::{
     apply_diagnostic_gutter_markers,
     apply_diff_gutter_markers,
     build_plan,
+    char_at_visual_pos,
     graphics::{
       Color as LibColor,
       CursorKind as LibCursorKind,
@@ -189,7 +190,6 @@ use the_lib::{
       UnderlineStyle as LibUnderlineStyle,
     },
     gutter_width_for_document,
-    char_at_visual_pos,
     text_annotations::{
       InlineAnnotation,
       Overlay,
@@ -237,9 +237,8 @@ use the_lsp::{
   LspCompletionContext,
   LspCompletionItem,
   LspCompletionItemKind,
-  LspExecuteCommand,
-  LspTextEdit,
   LspEvent,
+  LspExecuteCommand,
   LspInsertTextFormat,
   LspLocation,
   LspPosition,
@@ -247,11 +246,14 @@ use the_lsp::{
   LspRuntime,
   LspRuntimeConfig,
   LspServerConfig,
-  ServerCapabilitiesSnapshot,
   LspSignatureHelpContext,
+  LspSymbol,
+  LspTextEdit,
   LspWorkspaceEdit,
+  ServerCapabilitiesSnapshot,
   code_action_params,
   completion_params,
+  document_symbols_params,
   execute_command_params,
   goto_declaration_params,
   goto_definition_params,
@@ -259,19 +261,16 @@ use the_lsp::{
   goto_type_definition_params,
   hover_params,
   jsonrpc,
-  parse_document_symbols_response,
   parse_code_actions_response,
   parse_completion_item_response,
   parse_completion_response_with_raw,
+  parse_document_symbols_response,
   parse_hover_response,
   parse_locations_response,
-  parse_workspace_symbols_response,
   parse_signature_help_response,
-  document_symbols_params,
+  parse_workspace_symbols_response,
   render_lsp_snippet,
   signature_help_params,
-  workspace_symbols_params,
-  LspSymbol,
   text_sync::{
     FileChangeType,
     char_idx_to_utf16_position,
@@ -284,6 +283,7 @@ use the_lsp::{
     path_for_file_uri,
     utf16_position_to_char_idx,
   },
+  workspace_symbols_params,
 };
 use the_runtime::{
   clipboard::ClipboardProvider as RuntimeClipboardProvider,
@@ -2109,6 +2109,10 @@ fn lsp_file_watch_latency() -> Duration {
   Duration::from_millis(120)
 }
 
+fn vcs_statusline_refresh_interval() -> Duration {
+  Duration::from_millis(500)
+}
+
 fn is_symbol_word_char(ch: char) -> bool {
   ch == '_' || ch.is_alphanumeric()
 }
@@ -2231,9 +2235,7 @@ fn completion_menu_item_for_lsp_item(item: &LspCompletionItem) -> the_default::C
   menu_item
 }
 
-fn completion_menu_item_for_code_action(
-  action: &LspCodeAction,
-) -> the_default::CompletionMenuItem {
+fn completion_menu_item_for_code_action(action: &LspCodeAction) -> the_default::CompletionMenuItem {
   let mut menu_item = the_default::CompletionMenuItem::new(action.title.clone());
   let mut tags: Vec<&str> = Vec::new();
   if action.is_preferred {
@@ -3530,6 +3532,7 @@ pub struct App {
   lsp_statusline:                  LspStatuslineState,
   lsp_spinner_index:               usize,
   lsp_spinner_last_tick:           Instant,
+  vcs_statusline_last_tick:        Instant,
   lsp_active_progress_tokens:      HashSet<String>,
   lsp_watched_file:                Option<LspWatchedFileState>,
   lsp_pending_requests:            HashMap<u64, PendingLspRequestKind>,
@@ -3796,12 +3799,12 @@ struct BufferTabItemSnapshotJson {
 impl From<DefaultBufferTabItemSnapshot> for BufferTabItemSnapshotJson {
   fn from(value: DefaultBufferTabItemSnapshot) -> Self {
     Self {
-      buffer_id: value.buffer_id,
-      buffer_index: value.buffer_index,
-      title: value.title,
-      modified: value.modified,
-      is_active: value.is_active,
-      file_path: value.file_path.map(|path| path.display().to_string()),
+      buffer_id:      value.buffer_id,
+      buffer_index:   value.buffer_index,
+      title:          value.title,
+      modified:       value.modified,
+      is_active:      value.is_active,
+      file_path:      value.file_path.map(|path| path.display().to_string()),
       directory_hint: value.directory_hint,
     }
   }
@@ -3854,7 +3857,9 @@ impl From<NativeTabOpenRequest> for NativeTabOpenRequestJson {
     Self {
       kind,
       buffer_id: value.buffer_id,
-      file_path: value.file_path.map(|path| path.to_string_lossy().into_owned()),
+      file_path: value
+        .file_path
+        .map(|path| path.to_string_lossy().into_owned()),
     }
   }
 }
@@ -3870,10 +3875,14 @@ struct BufferTabsSnapshotJson {
 impl From<DefaultBufferTabsSnapshot> for BufferTabsSnapshotJson {
   fn from(value: DefaultBufferTabsSnapshot) -> Self {
     Self {
-      visible: value.visible,
-      active_tab: value.active_tab,
+      visible:             value.visible,
+      active_tab:          value.active_tab,
       active_buffer_index: value.active_buffer_index,
-      tabs: value.tabs.into_iter().map(BufferTabItemSnapshotJson::from).collect(),
+      tabs:                value
+        .tabs
+        .into_iter()
+        .map(BufferTabItemSnapshotJson::from)
+        .collect(),
     }
   }
 }
@@ -3978,7 +3987,10 @@ impl FileTreeNodeFFI {
   }
 }
 
-fn build_file_tree_snapshot_data(snapshot: DefaultFileTreeSnapshot, max_nodes: usize) -> FileTreeSnapshotData {
+fn build_file_tree_snapshot_data(
+  snapshot: DefaultFileTreeSnapshot,
+  max_nodes: usize,
+) -> FileTreeSnapshotData {
   let mode = match snapshot.mode {
     DefaultFileTreeMode::WorkspaceRoot => 0,
     DefaultFileTreeMode::CurrentBufferDirectory => 1,
@@ -4289,6 +4301,7 @@ impl App {
       lsp_statusline: LspStatuslineState::off(Some("unavailable".into())),
       lsp_spinner_index: 0,
       lsp_spinner_last_tick: Instant::now(),
+      vcs_statusline_last_tick: Instant::now(),
       lsp_active_progress_tokens: HashSet::new(),
       lsp_watched_file: None,
       lsp_pending_requests: HashMap::new(),
@@ -4317,16 +4330,16 @@ impl App {
   fn editor_render_styles_from_theme(&self) -> RenderStyles {
     let theme = &self.ui_theme;
     RenderStyles {
-      selection: theme.try_get("ui.selection").unwrap_or_default(),
-      cursor: theme.try_get("ui.cursor").unwrap_or_default(),
-      active_cursor: theme
+      selection:          theme.try_get("ui.selection").unwrap_or_default(),
+      cursor:             theme.try_get("ui.cursor").unwrap_or_default(),
+      active_cursor:      theme
         .try_get("ui.cursor.active")
         .or_else(|| theme.try_get("ui.cursor"))
         .unwrap_or_default(),
-      cursor_kind: LibCursorKind::Block,
+      cursor_kind:        LibCursorKind::Block,
       active_cursor_kind: LibCursorKind::Block,
-      gutter: theme.try_get("ui.linenr").unwrap_or_default(),
-      gutter_active: theme
+      gutter:             theme.try_get("ui.linenr").unwrap_or_default(),
+      gutter_active:      theme
         .try_get("ui.linenr.selected")
         .or_else(|| theme.try_get("ui.linenr"))
         .unwrap_or_default(),
@@ -4389,9 +4402,10 @@ impl App {
   ) -> ffi::EditorId {
     let view = ViewState::new(viewport.to_lib(), scroll.to_lib());
     let id = self.inner.create_editor(Rope::from_str(text), view);
-    self
-      .states
-      .insert(id, EditorState::new(self.loader.clone(), self.workspace_root.as_path()));
+    self.states.insert(
+      id,
+      EditorState::new(self.loader.clone(), self.workspace_root.as_path()),
+    );
     self.active_editor.get_or_insert(id);
     ffi::EditorId::from(id)
   }
@@ -4528,7 +4542,11 @@ impl App {
     let opened_index = {
       let editor = self.active_editor_mut();
       let view = ViewState::new(viewport, LibPosition::new(0, 0));
-      editor.open_buffer_without_activation(Rope::from_str(&content), view, Some(path.to_path_buf()))
+      editor.open_buffer_without_activation(
+        Rope::from_str(&content),
+        view,
+        Some(path.to_path_buf()),
+      )
     };
 
     {
@@ -4583,7 +4601,10 @@ impl App {
       return false;
     }
     let normalized_path = normalize_path_for_open(Path::new(path));
-    if let Some(existing_index) = self.active_editor_ref().find_buffer_by_path(&normalized_path) {
+    if let Some(existing_index) = self
+      .active_editor_ref()
+      .find_buffer_by_path(&normalized_path)
+    {
       if let Some(buffer_id) = self
         .active_editor_ref()
         .buffer_snapshot(existing_index)
@@ -4602,14 +4623,19 @@ impl App {
         return self.active_editor_mut().set_active_buffer(existing_index);
       }
     }
-    let buffer_id = self.open_file_in_new_buffer_for_native_tab(&normalized_path).unwrap_or(0);
+    let buffer_id = self
+      .open_file_in_new_buffer_for_native_tab(&normalized_path)
+      .unwrap_or(0);
     if buffer_id == 0 {
       return false;
     }
     if self.native_tab_open_gateway_enabled {
       self
         .native_tab_open_requests
-        .push_back(NativeTabOpenRequest::open_new(buffer_id, Some(normalized_path)));
+        .push_back(NativeTabOpenRequest::open_new(
+          buffer_id,
+          Some(normalized_path),
+        ));
     }
     self.request_render();
     true
@@ -5813,7 +5839,10 @@ impl App {
       return false;
     }
     let workspace_root = self.workspace_root.clone();
-    let active_path = self.active_editor_ref().active_file_path().map(Path::to_path_buf);
+    let active_path = self
+      .active_editor_ref()
+      .active_file_path()
+      .map(Path::to_path_buf);
     self
       .active_state_mut()
       .file_tree
@@ -5822,12 +5851,7 @@ impl App {
     true
   }
 
-  pub fn file_tree_set_expanded(
-    &mut self,
-    id: ffi::EditorId,
-    path: &str,
-    expanded: bool,
-  ) -> bool {
+  pub fn file_tree_set_expanded(&mut self, id: ffi::EditorId, path: &str, expanded: bool) -> bool {
     if path.is_empty() || self.activate(id).is_none() {
       return false;
     }
@@ -5953,6 +5977,9 @@ impl App {
     if self.tick_lsp_statusline() {
       changed = true;
     }
+    if self.tick_vcs_statusline() {
+      changed = true;
+    }
     if self.file_picker().active {
       let picker = self.file_picker_mut();
       if file_picker_poll_scan_results(picker) {
@@ -5967,7 +5994,10 @@ impl App {
 
   fn next_lsp_client_request_id(&mut self) -> u64 {
     let next = self.lsp_client_request_counter;
-    self.lsp_client_request_counter = self.lsp_client_request_counter.saturating_add(1).max(10_000);
+    self.lsp_client_request_counter = self
+      .lsp_client_request_counter
+      .saturating_add(1)
+      .max(10_000);
     next
   }
 
@@ -6040,13 +6070,7 @@ impl App {
             .unwrap_or_else(|| "<none>".to_string())
         ),
       );
-      lsp_broker::send_request(
-        self.lsp_client_id,
-        &key,
-        request_id,
-        method,
-        Some(params),
-      )?;
+      lsp_broker::send_request(self.lsp_client_id, &key, request_id, method, Some(params))?;
       return Ok(request_id);
     }
 
@@ -6318,6 +6342,18 @@ impl App {
     self.lsp_spinner_last_tick = now;
     self.lsp_spinner_index = (self.lsp_spinner_index + 1) % 8;
     true
+  }
+
+  fn tick_vcs_statusline(&mut self) -> bool {
+    let Some(id) = self.active_editor else {
+      return false;
+    };
+    let now = Instant::now();
+    if now.duration_since(self.vcs_statusline_last_tick) < vcs_statusline_refresh_interval() {
+      return false;
+    }
+    self.vcs_statusline_last_tick = now;
+    self.refresh_vcs_diff_base_for_editor(id)
   }
 
   fn lsp_statusline_text_value(&self) -> Option<String> {
@@ -7006,11 +7042,8 @@ impl App {
       if self.active_editor.is_some() {
         self.completion_menu_mut().clear();
       }
-      let _ = <Self as DefaultContext>::push_error(
-        self,
-        "code actions",
-        "No code actions available",
-      );
+      let _ =
+        <Self as DefaultContext>::push_error(self, "code actions", "No code actions available");
       return true;
     }
 
@@ -7741,7 +7774,10 @@ impl App {
     let context = trigger.to_lsp_context();
     log_shared_lsp_debug(
       "signature_help_dispatch",
-      format!("uri={} line={} char={}", uri, position.line, position.character),
+      format!(
+        "uri={} line={} char={}",
+        uri, position.line, position.character
+      ),
     );
     self.dispatch_lsp_request(
       "textDocument/signatureHelp",
@@ -8318,10 +8354,7 @@ impl App {
     for id in ids_to_cancel {
       let _ = self.lsp_pending_requests.remove(&id);
       if let Err(err) = self.lsp_cancel_request_raw(id) {
-        self.publish_lsp_message(
-          the_lib::messages::MessageLevel::Warning,
-          err,
-        );
+        self.publish_lsp_message(the_lib::messages::MessageLevel::Warning, err);
       }
     }
   }
@@ -8450,7 +8483,9 @@ impl App {
       }
     } else {
       let params = did_open_params(&uri, &language_id, version, &text);
-      self.lsp_send_notification_raw("textDocument/didOpen", params).is_ok()
+      self
+        .lsp_send_notification_raw("textDocument/didOpen", params)
+        .is_ok()
     };
 
     if opened && let Some(state) = self.lsp_document.as_mut() {
@@ -8531,12 +8566,7 @@ impl App {
           Ok(true) => true,
           Ok(false) => {
             self.lsp_open_current_document();
-            match lsp_broker::send_document_change(
-              self.lsp_client_id,
-              &key,
-              uri.as_str(),
-              params,
-            ) {
+            match lsp_broker::send_document_change(self.lsp_client_id, &key, uri.as_str(), params) {
               Ok(applied) => applied,
               Err(_) => false,
             }
@@ -8547,7 +8577,9 @@ impl App {
         false
       }
     } else {
-      self.lsp_send_notification_raw("textDocument/didChange", params).is_ok()
+      self
+        .lsp_send_notification_raw("textDocument/didChange", params)
+        .is_ok()
     };
 
     if changed && let Some(state) = self.lsp_document.as_mut() {
@@ -8970,9 +9002,16 @@ impl App {
         let Some(target) = self.pointer_char_idx_for_event(event) else {
           return PointerEventOutcome::Handled;
         };
-        let drag_state = self.active_state_ref().pointer_drag_selection.unwrap_or_else(|| {
-          self.pointer_selection_drag_state_for_target(PointerSelectionDragMode::Char, target, false)
-        });
+        let drag_state = self
+          .active_state_ref()
+          .pointer_drag_selection
+          .unwrap_or_else(|| {
+            self.pointer_selection_drag_state_for_target(
+              PointerSelectionDragMode::Char,
+              target,
+              false,
+            )
+          });
         if self.active_state_ref().pointer_drag_selection.is_none() {
           self.active_state_mut().pointer_drag_selection = Some(drag_state);
         }
@@ -9161,7 +9200,9 @@ impl App {
       return (line_start, line_start);
     }
 
-    let local = clamped.saturating_sub(line_start).min(line.len().saturating_sub(1));
+    let local = clamped
+      .saturating_sub(line_start)
+      .min(line.len().saturating_sub(1));
     let class = classify(line[local]);
     let mut start = local;
     while start > 0 && classify(line[start - 1]) == class {
@@ -9630,14 +9671,7 @@ impl App {
     }
   }
 
-  fn clear_vcs_diff_for_editor(&mut self, id: LibEditorId) {
-    self.vcs_diff_handles.remove(&id);
-    if let Some(state) = self.states.get_mut(&id) {
-      state.gutter_diff_signs.clear();
-    }
-  }
-
-  fn refresh_vcs_diff_base_for_editor(&mut self, id: LibEditorId) {
+  fn refresh_vcs_diff_base_for_editor(&mut self, id: LibEditorId) -> bool {
     let path = self
       .inner
       .editor(id)
@@ -9646,33 +9680,41 @@ impl App {
       .as_deref()
       .and_then(|path| self.vcs_provider.get_statusline_info(path))
       .map(|info| info.statusline_text());
-    if let Some(state) = self.states.get_mut(&id) {
-      state.vcs_statusline = statusline;
-      state.needs_render = true;
+    let mut next_handle: Option<DiffHandle> = None;
+    let mut next_signs: BTreeMap<usize, RenderGutterDiffKind> = BTreeMap::new();
+
+    if let Some(path) = path
+      && let Some(diff_base) = self.vcs_provider.get_diff_base(&path)
+      && let Some(editor) = self.inner.editor(id)
+    {
+      let diff_base = Rope::from_str(String::from_utf8_lossy(&diff_base).as_ref());
+      let doc = editor.document().text().clone();
+      let handle = DiffHandle::new(diff_base, doc);
+      next_signs = vcs_gutter_signs(&handle);
+      next_handle = Some(handle);
     }
 
-    let Some(path) = path else {
-      self.clear_vcs_diff_for_editor(id);
-      return;
-    };
-    let Some(diff_base) = self.vcs_provider.get_diff_base(&path) else {
-      self.clear_vcs_diff_for_editor(id);
-      return;
-    };
-    let Some(editor) = self.inner.editor(id) else {
-      self.clear_vcs_diff_for_editor(id);
-      return;
-    };
-
-    let diff_base = Rope::from_str(String::from_utf8_lossy(&diff_base).as_ref());
-    let doc = editor.document().text().clone();
-    let handle = DiffHandle::new(diff_base, doc);
-    let signs = vcs_gutter_signs(&handle);
-    self.vcs_diff_handles.insert(id, handle);
-    if let Some(state) = self.states.get_mut(&id) {
-      state.gutter_diff_signs = signs;
-      state.needs_render = true;
+    if let Some(handle) = next_handle {
+      self.vcs_diff_handles.insert(id, handle);
+    } else {
+      self.vcs_diff_handles.remove(&id);
     }
+
+    let mut changed = false;
+    if let Some(state) = self.states.get_mut(&id) {
+      if state.vcs_statusline != statusline {
+        state.vcs_statusline = statusline;
+        changed = true;
+      }
+      if state.gutter_diff_signs != next_signs {
+        state.gutter_diff_signs = next_signs;
+        changed = true;
+      }
+      if changed {
+        state.needs_render = true;
+      }
+    }
+    changed
   }
 
   fn refresh_vcs_diff_document_for_editor(&mut self, id: LibEditorId) {
@@ -10016,7 +10058,10 @@ impl DefaultContext for App {
 
   fn open_native_file_explorer(&mut self, current_buffer_directory: bool) -> bool {
     let workspace_root = self.workspace_root.clone();
-    let active_path = self.active_editor_ref().active_file_path().map(Path::to_path_buf);
+    let active_path = self
+      .active_editor_ref()
+      .active_file_path()
+      .map(Path::to_path_buf);
     let state = self.active_state_mut();
 
     if current_buffer_directory {
@@ -10027,7 +10072,9 @@ impl DefaultContext for App {
       return true;
     }
 
-    state.file_tree.toggle_workspace_root(workspace_root.as_path());
+    state
+      .file_tree
+      .toggle_workspace_root(workspace_root.as_path());
     if state.file_tree.visible
       && let Some(active_path) = active_path.as_deref()
     {
@@ -10067,7 +10114,10 @@ impl DefaultContext for App {
     &mut self.active_state_mut().ui_state
   }
 
-  fn pointer_event(&mut self, event: the_default::PointerEvent) -> the_default::PointerEventOutcome {
+  fn pointer_event(
+    &mut self,
+    event: the_default::PointerEvent,
+  ) -> the_default::PointerEventOutcome {
     self.handle_editor_pointer_event(event)
   }
 
@@ -10550,7 +10600,10 @@ impl DefaultContext for App {
     if self.native_tab_open_gateway_enabled {
       let route_context = {
         let editor = self.active_editor_ref();
-        (editor.active_buffer_index(), editor.find_buffer_by_path(&normalized_path))
+        (
+          editor.active_buffer_index(),
+          editor.find_buffer_by_path(&normalized_path),
+        )
       };
       if let Some(existing_index) = route_context.1
         && existing_index != route_context.0
@@ -10595,13 +10648,15 @@ impl DefaultContext for App {
           editor.can_reuse_active_untitled_buffer_for_open()
         };
         if replace_active {
-          let _ = editor.replace_active_buffer(
-            Rope::from_str(&content),
-            Some(normalized_path.clone()),
-          );
+          let _ =
+            editor.replace_active_buffer(Rope::from_str(&content), Some(normalized_path.clone()));
         } else {
           let view = ViewState::new(viewport, LibPosition::new(0, 0));
-          let _ = editor.open_buffer(Rope::from_str(&content), view, Some(normalized_path.clone()));
+          let _ = editor.open_buffer(
+            Rope::from_str(&content),
+            view,
+            Some(normalized_path.clone()),
+          );
         }
         let doc = editor.document_mut();
         doc.set_display_name(
@@ -10634,7 +10689,10 @@ impl DefaultContext for App {
 
     log_shared_lsp_debug(
       "goto_definition_dispatch",
-      format!("uri={} line={} char={}", uri, position.line, position.character),
+      format!(
+        "uri={} line={} char={}",
+        uri, position.line, position.character
+      ),
     );
     self.dispatch_lsp_request(
       "textDocument/definition",
@@ -10659,7 +10717,10 @@ impl DefaultContext for App {
 
     log_shared_lsp_debug(
       "goto_declaration_dispatch",
-      format!("uri={} line={} char={}", uri, position.line, position.character),
+      format!(
+        "uri={} line={} char={}",
+        uri, position.line, position.character
+      ),
     );
     self.dispatch_lsp_request(
       "textDocument/declaration",
@@ -10684,7 +10745,10 @@ impl DefaultContext for App {
 
     log_shared_lsp_debug(
       "goto_type_definition_dispatch",
-      format!("uri={} line={} char={}", uri, position.line, position.character),
+      format!(
+        "uri={} line={} char={}",
+        uri, position.line, position.character
+      ),
     );
     self.dispatch_lsp_request(
       "textDocument/typeDefinition",
@@ -10709,7 +10773,10 @@ impl DefaultContext for App {
 
     log_shared_lsp_debug(
       "goto_implementation_dispatch",
-      format!("uri={} line={} char={}", uri, position.line, position.character),
+      format!(
+        "uri={} line={} char={}",
+        uri, position.line, position.character
+      ),
     );
     self.dispatch_lsp_request(
       "textDocument/implementation",
@@ -10823,7 +10890,10 @@ impl DefaultContext for App {
     self.clear_hover_state();
     log_shared_lsp_debug(
       "hover_dispatch",
-      format!("uri={} line={} char={}", uri, position.line, position.character),
+      format!(
+        "uri={} line={} char={}",
+        uri, position.line, position.character
+      ),
     );
     self.dispatch_lsp_request(
       "textDocument/hover",
@@ -11232,12 +11302,7 @@ mod ffi {
     fn file_tree_toggle(self: &mut App, id: EditorId) -> bool;
     fn file_tree_open_workspace_root(self: &mut App, id: EditorId) -> bool;
     fn file_tree_open_current_buffer_directory(self: &mut App, id: EditorId) -> bool;
-    fn file_tree_set_expanded(
-      self: &mut App,
-      id: EditorId,
-      path: &str,
-      expanded: bool,
-    ) -> bool;
+    fn file_tree_set_expanded(self: &mut App, id: EditorId, path: &str, expanded: bool) -> bool;
     fn file_tree_select_path(self: &mut App, id: EditorId, path: &str) -> bool;
     fn file_tree_open_selected(self: &mut App, id: EditorId) -> bool;
     fn file_tree_snapshot(self: &mut App, id: EditorId, max_nodes: usize) -> FileTreeSnapshotData;
@@ -11652,13 +11717,13 @@ impl From<LibPosition> for ffi::Position {
 impl ffi::RenderStyles {
   fn to_lib(self) -> RenderStyles {
     RenderStyles {
-      selection:     self.selection.to_lib(),
-      cursor:        self.cursor.to_lib(),
-      active_cursor: self.active_cursor.to_lib(),
-      cursor_kind:   LibCursorKind::Block,
+      selection:          self.selection.to_lib(),
+      cursor:             self.cursor.to_lib(),
+      active_cursor:      self.active_cursor.to_lib(),
+      cursor_kind:        LibCursorKind::Block,
       active_cursor_kind: LibCursorKind::Block,
-      gutter:        self.gutter.to_lib(),
-      gutter_active: self.gutter_active.to_lib(),
+      gutter:             self.gutter.to_lib(),
+      gutter_active:      self.gutter_active.to_lib(),
     }
   }
 }

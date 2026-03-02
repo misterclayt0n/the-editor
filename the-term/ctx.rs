@@ -97,9 +97,6 @@ use the_lib::{
   position::Position,
   registers::Registers,
   render::{
-    char_at_visual_pos,
-    gutter_width_for_document,
-    visual_pos_at_char,
     FrameRenderPlan,
     GutterConfig,
     InlineDiagnosticRenderLine,
@@ -107,7 +104,9 @@ use the_lib::{
     RenderPlan,
     RenderStyles,
     UiState,
+    char_at_visual_pos,
     graphics::Rect,
+    gutter_width_for_document,
     text_annotations::{
       InlineAnnotation,
       Overlay,
@@ -119,6 +118,7 @@ use the_lib::{
       base16_default_theme,
       default_theme,
     },
+    visual_pos_at_char,
   },
   selection::{
     Range,
@@ -292,11 +292,11 @@ pub(crate) struct BufferTabHoverState {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct BufferTabLayoutSlot {
-  pub tab_index:     usize,
-  pub buffer_index:  usize,
-  pub x:             u16,
-  pub width:         u16,
-  pub close_x:       Option<u16>,
+  pub tab_index:    usize,
+  pub buffer_index: usize,
+  pub x:            u16,
+  pub width:        u16,
+  pub close_x:      Option<u16>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -570,6 +570,7 @@ pub struct Ctx {
   lsp_statusline:                    LspStatuslineState,
   lsp_spinner_index:                 usize,
   lsp_spinner_last_tick:             Instant,
+  vcs_statusline_last_tick:          Instant,
   lsp_active_progress_tokens:        HashSet<String>,
   lsp_watched_file:                  Option<LspWatchedFileState>,
   lsp_pending_requests:              HashMap<u64, PendingLspRequestKind>,
@@ -953,6 +954,7 @@ impl Ctx {
       },
       lsp_spinner_index: 0,
       lsp_spinner_last_tick: Instant::now(),
+      vcs_statusline_last_tick: Instant::now(),
       lsp_active_progress_tokens: HashSet::new(),
       lsp_watched_file: None,
       lsp_pending_requests: HashMap::new(),
@@ -1019,32 +1021,44 @@ impl Ctx {
     self.dispatch = Some(NonNull::from(dispatch));
   }
 
-  fn clear_vcs_diff(&mut self) {
+  fn clear_vcs_diff(&mut self) -> bool {
+    let changed = self.vcs_diff.is_some() || !self.gutter_diff_signs.is_empty();
     self.vcs_diff = None;
     self.gutter_diff_signs.clear();
+    changed
   }
 
-  fn refresh_vcs_diff_base(&mut self) {
-    self.vcs_statusline = self
+  fn refresh_vcs_diff_base(&mut self) -> bool {
+    let mut changed = false;
+    let statusline = self
       .file_path
       .as_deref()
       .and_then(|path| self.vcs_provider.get_statusline_info(path))
       .map(|info| info.statusline_text());
+    if self.vcs_statusline != statusline {
+      self.vcs_statusline = statusline;
+      changed = true;
+    }
 
     let Some(path) = self.file_path.clone() else {
-      self.clear_vcs_diff();
-      return;
+      changed |= self.clear_vcs_diff();
+      return changed;
     };
     let Some(diff_base) = self.vcs_provider.get_diff_base(&path) else {
-      self.clear_vcs_diff();
-      return;
+      changed |= self.clear_vcs_diff();
+      return changed;
     };
 
     let diff_base = Rope::from_str(String::from_utf8_lossy(&diff_base).as_ref());
     let doc = self.editor.document().text().clone();
     let handle = DiffHandle::new(diff_base, doc);
-    self.gutter_diff_signs = vcs_gutter_signs(&handle);
+    let signs = vcs_gutter_signs(&handle);
+    if self.gutter_diff_signs != signs {
+      self.gutter_diff_signs = signs;
+      changed = true;
+    }
     self.vcs_diff = Some(handle);
+    changed
   }
 
   fn refresh_vcs_diff_document(&mut self) {
@@ -1397,6 +1411,18 @@ impl Ctx {
     self.lsp_spinner_last_tick = now;
     self.lsp_spinner_index = (self.lsp_spinner_index + 1) % 8;
     true
+  }
+
+  pub fn tick_vcs_statusline(&mut self) -> bool {
+    if self.file_path.is_none() {
+      return false;
+    }
+    let now = Instant::now();
+    if now.duration_since(self.vcs_statusline_last_tick) < vcs_statusline_refresh_interval() {
+      return false;
+    }
+    self.vcs_statusline_last_tick = now;
+    self.refresh_vcs_diff_base()
   }
 
   fn lsp_statusline_text_value(&self) -> Option<String> {
@@ -2801,7 +2827,10 @@ impl Ctx {
     }
   }
 
-  pub(crate) fn buffer_tab_layout_slots(&self, width: u16) -> (BufferTabsSnapshot, Vec<BufferTabLayoutSlot>) {
+  pub(crate) fn buffer_tab_layout_slots(
+    &self,
+    width: u16,
+  ) -> (BufferTabsSnapshot, Vec<BufferTabLayoutSlot>) {
     let snapshot = self.buffer_tabs_snapshot_for_ui();
     if !snapshot.visible || width == 0 || snapshot.tabs.is_empty() {
       return (snapshot, Vec::new());
@@ -2851,7 +2880,12 @@ impl Ctx {
     (snapshot, slots)
   }
 
-  pub(crate) fn buffer_tab_close_buffer_index_at(&self, x: u16, y: u16, width: u16) -> Option<usize> {
+  pub(crate) fn buffer_tab_close_buffer_index_at(
+    &self,
+    x: u16,
+    y: u16,
+    width: u16,
+  ) -> Option<usize> {
     if y >= self.buffer_tabs_top_chrome_rows() {
       return None;
     }
@@ -2870,12 +2904,12 @@ impl Ctx {
           over_close: true,
         })
       } else {
-        self
-          .buffer_tab_slot_at(x, y, width)
-          .map(|slot| BufferTabHoverState {
+        self.buffer_tab_slot_at(x, y, width).map(|slot| {
+          BufferTabHoverState {
             buffer_index: slot.buffer_index,
-            over_close: false,
-          })
+            over_close:   false,
+          }
+        })
       }
     } else {
       None
@@ -2903,7 +2937,12 @@ impl Ctx {
       .map(|slot| slot.buffer_index)
   }
 
-  pub(crate) fn buffer_tab_slot_at(&self, x: u16, y: u16, width: u16) -> Option<BufferTabLayoutSlot> {
+  pub(crate) fn buffer_tab_slot_at(
+    &self,
+    x: u16,
+    y: u16,
+    width: u16,
+  ) -> Option<BufferTabLayoutSlot> {
     if y >= self.buffer_tabs_top_chrome_rows() {
       return None;
     }
@@ -3002,7 +3041,11 @@ impl Ctx {
     let (_snapshot, slots) = self.buffer_tab_layout_slots(width);
     let Some(target_slot) = slots
       .iter()
-      .find(|slot| x >= slot.x && x < slot.x.saturating_add(slot.width) && y < self.buffer_tabs_top_chrome_rows())
+      .find(|slot| {
+        x >= slot.x
+          && x < slot.x.saturating_add(slot.width)
+          && y < self.buffer_tabs_top_chrome_rows()
+      })
       .copied()
     else {
       self.buffer_tab_drag = Some(drag);
@@ -3096,8 +3139,14 @@ impl Ctx {
   }
 
   fn pointer_char_idx_for_pane_point(&self, pane: PaneSnapshot, x: u16, y: u16) -> Option<usize> {
-    let max_x = pane.rect.x.saturating_add(pane.rect.width.saturating_sub(1));
-    let max_y = pane.rect.y.saturating_add(pane.rect.height.saturating_sub(1));
+    let max_x = pane
+      .rect
+      .x
+      .saturating_add(pane.rect.width.saturating_sub(1));
+    let max_y = pane
+      .rect
+      .y
+      .saturating_add(pane.rect.height.saturating_sub(1));
     let x = x.clamp(pane.rect.x, max_x);
     let y = y.clamp(pane.rect.y, max_y);
 
@@ -3253,7 +3302,9 @@ impl Ctx {
       return (line_start, line_start);
     }
 
-    let local = clamped.saturating_sub(line_start).min(line.len().saturating_sub(1));
+    let local = clamped
+      .saturating_sub(line_start)
+      .min(line.len().saturating_sub(1));
     let class = classify(line[local]);
 
     let mut start = local;
@@ -3300,7 +3351,12 @@ impl Ctx {
     } else {
       1
     };
-    self.mouse_last_primary_click = Some(PointerClickTracker { at: now, x, y, count });
+    self.mouse_last_primary_click = Some(PointerClickTracker {
+      at: now,
+      x,
+      y,
+      count,
+    });
     count
   }
 
@@ -3400,7 +3456,10 @@ impl Ctx {
 
   fn pointer_drag_autoscroll_rows(&self, y: u16, pane: PaneSnapshot) -> i32 {
     let top = pane.rect.y;
-    let bottom = pane.rect.y.saturating_add(pane.rect.height.saturating_sub(1));
+    let bottom = pane
+      .rect
+      .y
+      .saturating_add(pane.rect.height.saturating_sub(1));
 
     if y < top {
       return -i32::from((top - y).min(4));
@@ -3500,7 +3559,8 @@ impl Ctx {
           return PointerEventOutcome::Continue;
         };
 
-        let scrolled = self.pointer_scroll_active_view_by(self.pointer_drag_autoscroll_rows(y, pane), 0);
+        let scrolled =
+          self.pointer_scroll_active_view_by(self.pointer_drag_autoscroll_rows(y, pane), 0);
         if scrolled {
           self.mouse_viewport_detached = true;
         }
@@ -3511,7 +3571,11 @@ impl Ctx {
           return PointerEventOutcome::Handled;
         };
         let drag_state = self.pointer_drag_selection.unwrap_or_else(|| {
-          self.pointer_selection_drag_state_for_target(PointerSelectionDragMode::Char, target, false)
+          self.pointer_selection_drag_state_for_target(
+            PointerSelectionDragMode::Char,
+            target,
+            false,
+          )
         });
         if self.pointer_drag_selection.is_none() {
           self.pointer_drag_selection = Some(drag_state);
@@ -4497,6 +4561,10 @@ fn lsp_file_watch_latency() -> Duration {
   Duration::from_millis(120)
 }
 
+fn vcs_statusline_refresh_interval() -> Duration {
+  Duration::from_millis(500)
+}
+
 fn lsp_completion_auto_trigger_latency() -> Duration {
   Duration::from_millis(80)
 }
@@ -4823,9 +4891,7 @@ fn completion_menu_item_for_lsp_item(item: &LspCompletionItem) -> the_default::C
   menu_item
 }
 
-fn completion_menu_item_for_code_action(
-  action: &LspCodeAction,
-) -> the_default::CompletionMenuItem {
+fn completion_menu_item_for_code_action(action: &LspCodeAction) -> the_default::CompletionMenuItem {
   let mut menu_item = the_default::CompletionMenuItem::new(action.title.clone());
   let mut tags: Vec<&str> = Vec::new();
   if action.is_preferred {

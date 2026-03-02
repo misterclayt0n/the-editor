@@ -274,8 +274,10 @@ use the_lsp::{
   parse_document_symbols_response,
   parse_hover_response,
   parse_locations_response,
+  parse_workspace_edit_response,
   parse_signature_help_response,
   parse_workspace_symbols_response,
+  rename_params,
   render_lsp_snippet,
   signature_help_params,
   text_sync::{
@@ -1492,6 +1494,9 @@ enum PendingLspRequestKind {
   CodeActions {
     uri: String,
   },
+  Rename {
+    uri: String,
+  },
 }
 
 impl PendingLspRequestKind {
@@ -1509,6 +1514,7 @@ impl PendingLspRequestKind {
       Self::CompletionResolve { .. } => "completion-resolve",
       Self::SignatureHelp { .. } => "signature-help",
       Self::CodeActions { .. } => "code-actions",
+      Self::Rename { .. } => "rename",
     }
   }
 
@@ -1526,6 +1532,7 @@ impl PendingLspRequestKind {
       Self::CompletionResolve { uri, .. } => Some(uri.as_str()),
       Self::SignatureHelp { uri } => Some(uri.as_str()),
       Self::CodeActions { uri } => Some(uri.as_str()),
+      Self::Rename { uri } => Some(uri.as_str()),
     }
   }
 
@@ -1543,6 +1550,7 @@ impl PendingLspRequestKind {
       Self::CompletionResolve { uri, .. } => ("completion-resolve", Some(uri)),
       Self::SignatureHelp { uri } => ("signature-help", Some(uri)),
       Self::CodeActions { uri } => ("code-actions", Some(uri)),
+      Self::Rename { uri } => ("rename", Some(uri)),
     }
   }
 }
@@ -6981,7 +6989,31 @@ impl App {
       PendingLspRequestKind::CodeActions { .. } => {
         self.handle_code_actions_response(response.result.as_ref())
       },
+      PendingLspRequestKind::Rename { .. } => self.handle_rename_response(response.result.as_ref()),
     }
+  }
+
+  fn handle_rename_response(&mut self, result: Option<&Value>) -> bool {
+    let workspace_edit = match parse_workspace_edit_response(result) {
+      Ok(edit) => edit,
+      Err(err) => {
+        self.publish_lsp_message(
+          the_lib::messages::MessageLevel::Error,
+          format!("failed to parse rename response: {err}"),
+        );
+        return true;
+      },
+    };
+
+    let Some(workspace_edit) = workspace_edit else {
+      self.publish_lsp_message(
+        the_lib::messages::MessageLevel::Info,
+        "rename produced no edits",
+      );
+      return true;
+    };
+
+    self.apply_workspace_edit(&workspace_edit, "rename")
   }
 
   fn handle_completion_response(
@@ -11035,6 +11067,39 @@ impl DefaultContext for App {
       "textDocument/codeAction",
       code_action_params(&uri, range, diagnostics, None),
       PendingLspRequestKind::CodeActions { uri },
+    );
+  }
+
+  fn lsp_rename(&mut self, new_name: &str) {
+    if !self.lsp_supports(LspCapability::RenameSymbol) {
+      self.publish_lsp_message(
+        the_lib::messages::MessageLevel::Warning,
+        "rename is not supported by the active server",
+      );
+      return;
+    }
+
+    let new_name = new_name.trim();
+    if new_name.is_empty() {
+      self.publish_lsp_message(
+        the_lib::messages::MessageLevel::Warning,
+        "rename requires a non-empty name",
+      );
+      return;
+    }
+
+    let Some((uri, position)) = self.current_lsp_position() else {
+      self.publish_lsp_message(
+        the_lib::messages::MessageLevel::Warning,
+        "rename unavailable: no active LSP document",
+      );
+      return;
+    };
+
+    self.dispatch_lsp_request(
+      "textDocument/rename",
+      rename_params(&uri, position, new_name),
+      PendingLspRequestKind::Rename { uri },
     );
   }
 

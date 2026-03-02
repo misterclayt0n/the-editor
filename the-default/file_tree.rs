@@ -191,17 +191,22 @@ impl FileTreeState {
     let mut changed = self.selected_path.as_ref() != Some(&normalized);
     self.selected_path = Some(normalized.clone());
 
-    let ancestors = normalized
-      .ancestors()
-      .take_while(|ancestor| ancestor.starts_with(root))
-      .map(Path::to_path_buf)
-      .collect::<Vec<_>>();
-    for ancestor in ancestors {
-      if self.expanded_dirs.insert(ancestor.clone()) {
-        changed = true;
-      }
-      if ancestor.is_dir() {
-        let _ = self.load_children(&ancestor);
+    // Keep selection independent from expansion: selecting a directory should
+    // not force it open. We only ensure parents are expanded so the selected
+    // entry remains visible.
+    if let Some(parent) = normalized.parent() {
+      let ancestors = parent
+        .ancestors()
+        .take_while(|ancestor| ancestor.starts_with(root))
+        .map(Path::to_path_buf)
+        .collect::<Vec<_>>();
+      for ancestor in ancestors {
+        if self.expanded_dirs.insert(ancestor.clone()) {
+          changed = true;
+        }
+        if ancestor.is_dir() {
+          let _ = self.load_children(&ancestor);
+        }
       }
     }
 

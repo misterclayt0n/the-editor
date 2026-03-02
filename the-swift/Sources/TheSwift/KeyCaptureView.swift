@@ -6,36 +6,52 @@ import TheEditorFFIBridge
 final class KeyCaptureFocusBridge {
     static let shared = KeyCaptureFocusBridge()
 
-    weak var keyCaptureView: NSView?
+    private let keyCaptureViews = NSHashTable<NSView>.weakObjects()
 
     private init() {}
 
     func register(_ view: NSView) {
-        keyCaptureView = view
+        keyCaptureViews.add(view)
+    }
+
+    private func keyCaptureView(in window: NSWindow?) -> NSView? {
+        guard let window else {
+            return nil
+        }
+        for view in keyCaptureViews.allObjects where view.window === window {
+            return view
+        }
+        return nil
     }
 
     func keyResponder(in window: NSWindow?) -> NSResponder? {
-        guard let view = keyCaptureView,
-              view.window === window else {
-            return nil
-        }
-        return view
+        keyCaptureView(in: window)
     }
 
-    func reclaim(in window: NSWindow?) {
-        guard let view = keyCaptureView,
-              view.window === window else {
-            return
+    @discardableResult
+    func reclaim(in window: NSWindow?) -> Bool {
+        guard let window,
+              let view = keyCaptureView(in: window) else {
+            return false
         }
-        window?.makeFirstResponder(view)
+        return window.makeFirstResponder(view)
     }
 
     func reclaimActive() {
-        guard let view = keyCaptureView,
-              let window = view.window else {
+        if reclaim(in: NSApp.keyWindow) {
             return
         }
-        window.makeFirstResponder(view)
+        if reclaim(in: NSApp.mainWindow) {
+            return
+        }
+
+        for view in keyCaptureViews.allObjects {
+            guard let window = view.window else {
+                continue
+            }
+            window.makeFirstResponder(view)
+            return
+        }
     }
 }
 

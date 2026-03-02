@@ -258,6 +258,16 @@ struct EditorView: View {
             }
             .navigationTitle(model.navigationTitle)
             .toolbarBackground(.hidden, for: .windowToolbar)
+            .toolbar {
+                if let snap = model.uiTree.statuslineSnapshot() {
+                    ToolbarItem(placement: .navigation) {
+                        EditorToolbarLeading(snapshot: snap)
+                    }
+                    ToolbarItemGroup(placement: .automatic) {
+                        EditorToolbarTrailing(snapshot: snap, pendingKeys: model.pendingKeys)
+                    }
+                }
+            }
             .background(
                 WindowTabbingBridge(
                     route: windowRoute,

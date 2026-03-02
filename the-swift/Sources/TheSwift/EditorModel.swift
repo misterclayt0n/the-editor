@@ -220,12 +220,6 @@ final class EditorModel: ObservableObject {
     }
 
     private func statuslineReservedRows(in tree: UiTreeSnapshot) -> Int {
-        for node in tree.overlays {
-            if case .panel(let panel) = node, panel.id == "statusline" {
-                // Fixed 22pt statusline height
-                return max(1, Int((22.0 / cellSize.height).rounded()))
-            }
-        }
         return 0
     }
 
@@ -1100,7 +1094,7 @@ final class EditorModel: ObservableObject {
 
         let representedPath = hostWindow.representedURL?.path
         let windowMatchesPresentation = hostWindow.title == presentation.title
-            && hostWindow.subtitle == presentation.subtitle
+            && hostWindow.subtitle == ""
             && hostWindow.isDocumentEdited == presentation.isDocumentEdited
             && representedPath == presentation.representedFilePath
 
@@ -1113,7 +1107,7 @@ final class EditorModel: ObservableObject {
         }
 
         hostWindow.title = presentation.title
-        hostWindow.subtitle = presentation.subtitle
+        hostWindow.subtitle = ""
         hostWindow.isDocumentEdited = presentation.isDocumentEdited
         if let representedPath = presentation.representedFilePath {
             hostWindow.representedURL = URL(fileURLWithPath: representedPath)

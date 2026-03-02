@@ -1218,6 +1218,12 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::PageDown { extend } => ctx.dispatch().page_down(ctx, extend),
     Command::PageCursorHalfUp => page_cursor_half_up(ctx),
     Command::PageCursorHalfDown => page_cursor_half_down(ctx),
+    Command::AlignViewTop => align_view(ctx, WindowAlign::Top),
+    Command::AlignViewCenter => align_view(ctx, WindowAlign::Center),
+    Command::AlignViewBottom => align_view(ctx, WindowAlign::Bottom),
+    Command::AlignViewMiddle => align_view_middle(ctx),
+    Command::ScrollUp => scroll_view(ctx, Direction::Backward),
+    Command::ScrollDown => scroll_view(ctx, Direction::Forward),
     Command::FindChar {
       direction,
       inclusive,
@@ -2486,6 +2492,18 @@ fn active_or_first_range(editor: &Editor) -> Option<Range> {
   selection.ranges().first().copied()
 }
 
+fn active_or_first_range_with_index(editor: &Editor) -> Option<(usize, Range)> {
+  let doc = editor.document();
+  let selection = doc.selection();
+  if let Some(active_cursor) = editor.view().active_cursor
+    && let Some(index) = selection.index_of(active_cursor)
+    && let Ok(range) = selection.range_at(index)
+  {
+    return Some((index, range));
+  }
+  selection.range_at(0).ok().map(|range| (0, range))
+}
+
 fn active_or_fallback_pick(editor: &Editor, fallback: CursorPick) -> CursorPick {
   let selection = editor.document().selection();
   if let Some(active_cursor) = editor.view().active_cursor
@@ -3680,6 +3698,170 @@ fn page_cursor_by_rows<Ctx: DefaultContext>(
   };
 
   let _ = ctx.editor().document_mut().set_selection(new_selection);
+}
+
+fn max_scroll_row<'a>(
+  text: RopeSlice<'a>,
+  text_fmt: &'a TextFormat,
+  annotations: &mut TextAnnotations<'a>,
+  viewport_height: usize,
+) -> usize {
+  let viewport_last_row = viewport_height.saturating_sub(1);
+  let doc_last_row = visual_pos_at_char(text, text_fmt, annotations, text.len_chars())
+    .map(|pos| pos.row)
+    .unwrap_or(0);
+  doc_last_row.saturating_sub(viewport_last_row)
+}
+
+fn align_view<Ctx: DefaultContext>(ctx: &mut Ctx, align: WindowAlign) {
+  let target_row = {
+    let editor = ctx.editor_ref();
+    let view = editor.view();
+    let viewport_height = view.viewport.height as usize;
+    if viewport_height == 0 {
+      return;
+    }
+
+    let Some((_, range)) = active_or_first_range_with_index(editor) else {
+      return;
+    };
+
+    let doc = editor.document();
+    let text = doc.text().slice(..);
+    let mut text_fmt = ctx.text_format();
+    text_fmt.viewport_width = view.viewport.width;
+    let cursor = range.cursor(text);
+
+    let mut annotations = ctx.text_annotations();
+    let Some(cursor_visual_pos) = visual_pos_at_char(text, &text_fmt, &mut annotations, cursor)
+    else {
+      return;
+    };
+
+    let relative = match align {
+      WindowAlign::Top => 0,
+      WindowAlign::Center => viewport_height.saturating_sub(1) / 2,
+      WindowAlign::Bottom => viewport_height.saturating_sub(1),
+    };
+
+    let mut clamp_annotations = ctx.text_annotations();
+    let max_row = max_scroll_row(text, &text_fmt, &mut clamp_annotations, viewport_height);
+    cursor_visual_pos.row.saturating_sub(relative).min(max_row)
+  };
+
+  ctx.editor().view_mut().scroll.row = target_row;
+}
+
+fn align_view_middle<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  let target_col = {
+    let editor = ctx.editor_ref();
+    let view = editor.view();
+    let viewport_width = view.viewport.width as usize;
+    if viewport_width == 0 {
+      return;
+    }
+
+    let Some((_, range)) = active_or_first_range_with_index(editor) else {
+      return;
+    };
+
+    let doc = editor.document();
+    let text = doc.text().slice(..);
+    let mut text_fmt = ctx.text_format();
+    text_fmt.viewport_width = view.viewport.width;
+    if text_fmt.soft_wrap {
+      return;
+    }
+
+    let mut annotations = ctx.text_annotations();
+    let Some(cursor_visual_pos) = visual_pos_at_char(
+      text,
+      &text_fmt,
+      &mut annotations,
+      range.cursor(text),
+    ) else {
+      return;
+    };
+
+    cursor_visual_pos.col.saturating_sub(viewport_width / 2)
+  };
+
+  ctx.editor().view_mut().scroll.col = target_col;
+}
+
+fn scroll_view<Ctx: DefaultContext>(ctx: &mut Ctx, direction: Direction) {
+  let (new_scroll_row, range_idx, new_cursor_char) = {
+    let editor = ctx.editor_ref();
+    let view = editor.view();
+    let viewport_height = view.viewport.height as usize;
+    if viewport_height == 0 {
+      return;
+    }
+
+    let Some((range_idx, range)) = active_or_first_range_with_index(editor) else {
+      return;
+    };
+
+    let doc = editor.document();
+    let text = doc.text().slice(..);
+    let mut text_fmt = ctx.text_format();
+    text_fmt.viewport_width = view.viewport.width;
+
+    let mut clamp_annotations = ctx.text_annotations();
+    let max_row = max_scroll_row(text, &text_fmt, &mut clamp_annotations, viewport_height);
+    let current_row = view.scroll.row;
+    let new_scroll_row = match direction {
+      Direction::Forward => current_row.saturating_add(1).min(max_row),
+      Direction::Backward => current_row.saturating_sub(1),
+      _ => return,
+    };
+
+    let scrolloff = ctx.scrolloff().min(viewport_height.saturating_sub(1) / 2);
+    let cursor = range.cursor(text);
+    let mut annotations = ctx.text_annotations();
+    let Some(cursor_visual_pos) = visual_pos_at_char(text, &text_fmt, &mut annotations, cursor)
+    else {
+      return;
+    };
+
+    let target_cursor_row = match direction {
+      Direction::Forward => {
+        let min_visible_row = new_scroll_row.saturating_add(scrolloff);
+        (cursor_visual_pos.row < min_visible_row).then_some(min_visible_row)
+      },
+      Direction::Backward => {
+        let max_visible_row = new_scroll_row
+          .saturating_add(viewport_height.saturating_sub(scrolloff.saturating_add(1)));
+        (cursor_visual_pos.row > max_visible_row).then_some(max_visible_row)
+      },
+      _ => None,
+    };
+
+    let new_cursor_char = target_cursor_row.and_then(|row| {
+      char_at_visual_pos(text, &text_fmt, &mut annotations, Position::new(row, 0))
+    });
+
+    (new_scroll_row, range_idx, new_cursor_char)
+  };
+
+  ctx.editor().view_mut().scroll.row = new_scroll_row;
+
+  let Some(new_cursor_char) = new_cursor_char else {
+    return;
+  };
+
+  let extend = ctx.mode() == Mode::Select;
+  let doc = ctx.editor().document_mut();
+  let text = doc.text().slice(..);
+  let selection = doc.selection().clone();
+  let Ok(active_range) = selection.range_at(range_idx) else {
+    return;
+  };
+  let new_range = active_range.put_cursor(text, new_cursor_char, extend);
+  let Ok(selection) = selection.replace(range_idx, new_range) else {
+    return;
+  };
+  let _ = doc.set_selection(selection);
 }
 
 fn find_char_impl<Ctx: DefaultContext>(
@@ -5764,6 +5946,12 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "page_down" => Some(Command::page_down()),
     "page_cursor_half_up" => Some(Command::page_cursor_half_up()),
     "page_cursor_half_down" => Some(Command::page_cursor_half_down()),
+    "align_view_top" => Some(Command::align_view_top()),
+    "align_view_center" => Some(Command::align_view_center()),
+    "align_view_bottom" => Some(Command::align_view_bottom()),
+    "align_view_middle" => Some(Command::align_view_middle()),
+    "scroll_up" => Some(Command::scroll_up()),
+    "scroll_down" => Some(Command::scroll_down()),
 
     "find_next_char" => Some(Command::find_next_char()),
     "find_till_char" => Some(Command::find_till_char()),

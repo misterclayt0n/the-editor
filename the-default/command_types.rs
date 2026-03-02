@@ -461,6 +461,12 @@ pub enum Command {
   },
   PageCursorHalfUp,
   PageCursorHalfDown,
+  AlignViewTop,
+  AlignViewCenter,
+  AlignViewBottom,
+  AlignViewMiddle,
+  ScrollUp,
+  ScrollDown,
   FindChar {
     direction: Direction,
     inclusive: bool,
@@ -1268,6 +1274,36 @@ impl Command {
   #[must_use]
   pub const fn page_cursor_half_down() -> Self {
     Self::PageCursorHalfDown
+  }
+
+  #[must_use]
+  pub const fn align_view_top() -> Self {
+    Self::AlignViewTop
+  }
+
+  #[must_use]
+  pub const fn align_view_center() -> Self {
+    Self::AlignViewCenter
+  }
+
+  #[must_use]
+  pub const fn align_view_bottom() -> Self {
+    Self::AlignViewBottom
+  }
+
+  #[must_use]
+  pub const fn align_view_middle() -> Self {
+    Self::AlignViewMiddle
+  }
+
+  #[must_use]
+  pub const fn scroll_up() -> Self {
+    Self::ScrollUp
+  }
+
+  #[must_use]
+  pub const fn scroll_down() -> Self {
+    Self::ScrollDown
   }
 
   #[must_use]

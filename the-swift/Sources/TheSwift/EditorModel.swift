@@ -40,6 +40,7 @@ final class EditorModel: ObservableObject {
     @Published var splitSeparators: [SplitSeparatorSnapshot] = []
     @Published var uiTree: UiTreeSnapshot = .empty
     @Published var bufferTabsSnapshot: BufferTabsSnapshot? = nil
+    @Published var navigationTitle: String = "untitled"
     private var viewport: Rect
     private var effectiveViewport: Rect
     let cellSize: CGSize
@@ -435,7 +436,8 @@ final class EditorModel: ObservableObject {
 
         refresh(trigger: "window_should_close")
         guard let context = currentBufferCloseContext() else {
-            return false
+            // No active buffer context: allow native close behavior.
+            return true
         }
 
         guard context.modified else {
@@ -956,7 +958,9 @@ final class EditorModel: ObservableObject {
             return true
         }
         if let tabGroup = hostWindow.tabGroup {
-            return tabGroup.selectedWindow === hostWindow
+            if tabGroup.selectedWindow === hostWindow {
+                return true
+            }
         }
         return hostWindow.isKeyWindow || hostWindow.isMainWindow
     }
@@ -1036,7 +1040,8 @@ final class EditorModel: ObservableObject {
 
         if let activeTab {
             let titleFromPath = activeFileURL?.lastPathComponent
-            let title = (titleFromPath?.isEmpty == false) ? titleFromPath! : activeTab.title
+            let titleSource = (titleFromPath?.isEmpty == false) ? titleFromPath! : activeTab.title
+            let title = normalizeFallbackTitle(titleSource)
             let subtitle: String
             if let activeFileURL {
                 subtitle = activeFileURL.deletingLastPathComponent().lastPathComponent
@@ -1059,7 +1064,7 @@ final class EditorModel: ObservableObject {
             )
         } else if let activeFileURL {
             presentation = NativeWindowPresentation(
-                title: activeFileURL.lastPathComponent,
+                title: normalizeFallbackTitle(activeFileURL.lastPathComponent),
                 subtitle: activeFileURL.deletingLastPathComponent().lastPathComponent,
                 representedFilePath: activeFileURL.path,
                 isDocumentEdited: false
@@ -1067,7 +1072,7 @@ final class EditorModel: ObservableObject {
         } else if let initialFilePath {
             let url = URL(fileURLWithPath: initialFilePath)
             presentation = NativeWindowPresentation(
-                title: url.lastPathComponent,
+                title: normalizeFallbackTitle(url.lastPathComponent),
                 subtitle: url.deletingLastPathComponent().lastPathComponent,
                 representedFilePath: url.path,
                 isDocumentEdited: false
@@ -1081,10 +1086,31 @@ final class EditorModel: ObservableObject {
             )
         }
 
-        if lastNativeWindowPresentation == presentation {
+        if DiagnosticsDebugLog.enabled {
+            let tabTitle = activeTab?.title ?? "<nil>"
+            let tabPath = activeTab?.filePath ?? "<nil>"
+            let keyWindow = hostWindow.isKeyWindow ? "1" : "0"
+            let mainWindow = hostWindow.isMainWindow ? "1" : "0"
+            let tabSelected = (hostWindow.tabGroup?.selectedWindow === hostWindow) ? "1" : "0"
+            DiagnosticsDebugLog.logChanged(
+                key: "window.presentation.input",
+                value: "active_path=\(debugTruncate(activeFilePathString, limit: 160)) tab_title=\(debugTruncate(tabTitle, limit: 80)) tab_path=\(debugTruncate(tabPath, limit: 160)) computed_title=\(debugTruncate(presentation.title, limit: 80)) host_title=\(debugTruncate(hostWindow.title, limit: 80)) key=\(keyWindow) main=\(mainWindow) tab_selected=\(tabSelected)"
+            )
+        }
+
+        let representedPath = hostWindow.representedURL?.path
+        let windowMatchesPresentation = hostWindow.title == presentation.title
+            && hostWindow.subtitle == presentation.subtitle
+            && hostWindow.isDocumentEdited == presentation.isDocumentEdited
+            && representedPath == presentation.representedFilePath
+
+        if lastNativeWindowPresentation == presentation && windowMatchesPresentation {
             return
         }
         lastNativeWindowPresentation = presentation
+        if navigationTitle != presentation.title {
+            navigationTitle = presentation.title
+        }
 
         hostWindow.title = presentation.title
         hostWindow.subtitle = presentation.subtitle
@@ -1093,6 +1119,13 @@ final class EditorModel: ObservableObject {
             hostWindow.representedURL = URL(fileURLWithPath: representedPath)
         } else {
             hostWindow.representedURL = nil
+        }
+
+        if DiagnosticsDebugLog.enabled {
+            DiagnosticsDebugLog.logChanged(
+                key: "window.presentation.output",
+                value: "host_title=\(debugTruncate(hostWindow.title, limit: 80)) host_subtitle=\(debugTruncate(hostWindow.subtitle, limit: 80)) represented=\(debugTruncate(hostWindow.representedURL?.path ?? "<nil>", limit: 160)) edited=\(hostWindow.isDocumentEdited ? "1" : "0")"
+            )
         }
 
         SwiftWindowTabsCoordinator.shared.windowPresentationDidChange(hostWindow)
@@ -1147,15 +1180,30 @@ final class EditorModel: ObservableObject {
     }
 
     private func currentBufferCloseContext() -> BufferCloseContext? {
+        if bufferTabsSnapshot == nil {
+            let tabsFetch = fetchBufferTabsSnapshot()
+            if tabsFetch.changed {
+                bufferTabsSnapshot = tabsFetch.snapshot
+            }
+        }
+
         let targetBufferId = pendingInitialBoundBufferId ?? boundBufferId
-        guard let targetBufferId,
-              let tab = targetBufferTab(forBufferId: targetBufferId) else {
+        if let targetBufferId,
+           let tab = targetBufferTab(forBufferId: targetBufferId) {
+            return BufferCloseContext(
+                bufferId: targetBufferId,
+                title: displayTitle(fromPath: tab.filePath) ?? normalizeFallbackTitle(tab.title),
+                modified: tab.modified
+            )
+        }
+
+        guard let fallbackTab = activeBufferTabSnapshot() ?? bufferTabsSnapshot?.tabs.first else {
             return nil
         }
         return BufferCloseContext(
-            bufferId: targetBufferId,
-            title: displayTitle(fromPath: tab.filePath) ?? normalizeFallbackTitle(tab.title),
-            modified: tab.modified
+            bufferId: fallbackTab.bufferId,
+            title: displayTitle(fromPath: fallbackTab.filePath) ?? normalizeFallbackTitle(fallbackTab.title),
+            modified: fallbackTab.modified
         )
     }
 
@@ -1209,7 +1257,7 @@ final class EditorModel: ObservableObject {
     private func closeBufferForWindowClose(_ context: BufferCloseContext) -> Bool {
         guard app.close_buffer_by_id(editorId, context.bufferId) else {
             refresh(trigger: "buffer_close_retry")
-            return false
+            return canCloseWindowWithoutBufferClose(failedBufferId: context.bufferId)
         }
         if boundBufferId == context.bufferId {
             boundBufferId = nil
@@ -1219,6 +1267,31 @@ final class EditorModel: ObservableObject {
         }
         refresh(trigger: "buffer_closed")
         return true
+    }
+
+    private func canCloseWindowWithoutBufferClose(failedBufferId: UInt64) -> Bool {
+        if bufferTabsSnapshot == nil {
+            let tabsFetch = fetchBufferTabsSnapshot()
+            if tabsFetch.changed {
+                bufferTabsSnapshot = tabsFetch.snapshot
+            }
+        }
+
+        guard let snapshot = bufferTabsSnapshot else {
+            // If we cannot read tab state, don't block native close.
+            return true
+        }
+
+        if snapshot.tabs.count <= 1 {
+            return true
+        }
+
+        // The requested buffer is no longer present in this editor instance.
+        if !snapshot.tabs.contains(where: { $0.bufferId == failedBufferId }) {
+            return true
+        }
+
+        return false
     }
 
     func colorForHighlight(_ highlight: UInt32) -> SwiftUI.Color? {

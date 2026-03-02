@@ -256,7 +256,7 @@ struct EditorView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .navigationTitle("")
+            .navigationTitle(model.navigationTitle)
             .toolbarBackground(.hidden, for: .windowToolbar)
             .background(
                 WindowTabbingBridge(
@@ -266,12 +266,6 @@ struct EditorView: View {
                     },
                     onWindowChanged: { window in
                         model.setHostWindow(window)
-                        if let window {
-                            window.titlebarAppearsTransparent = true
-                            window.styleMask.insert(.fullSizeContentView)
-                            window.backgroundColor = .black
-                            window.titleVisibility = .hidden
-                        }
                     }
                 )
                 .frame(width: 0, height: 0)

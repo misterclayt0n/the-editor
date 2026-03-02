@@ -27,7 +27,9 @@ pub enum PendingInput {
     extend:    bool,
     count:     usize,
   },
-  /// Await a register name (e.g. insert-register).
+  /// Await a register name for selecting the active register.
+  SelectRegister,
+  /// Await a register name and insert that register's content.
   InsertRegister,
   /// Await a character to replace the selection with.
   ReplaceSelection,

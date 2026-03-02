@@ -419,9 +419,10 @@ pub struct PendingKeyHints {
 
 #[derive(Debug, Clone)]
 pub struct Keymaps {
-  pub map:    HashMap<Mode, KeyTrie>,
-  state:      Vec<KeyBinding>,
-  pub sticky: Option<KeyTrieNode>,
+  pub map:      HashMap<Mode, KeyTrie>,
+  state:        Vec<KeyBinding>,
+  pub sticky:   Option<KeyTrieNode>,
+  count_prefix: Option<usize>,
 }
 
 impl Keymaps {
@@ -430,6 +431,7 @@ impl Keymaps {
       map,
       state: Vec::new(),
       sticky: None,
+      count_prefix: None,
     }
   }
 
@@ -439,6 +441,14 @@ impl Keymaps {
 
   pub fn sticky(&self) -> Option<&KeyTrieNode> {
     self.sticky.as_ref()
+  }
+
+  pub fn pending_count(&self) -> Option<usize> {
+    self.count_prefix
+  }
+
+  pub fn take_count_prefix(&mut self) -> Option<usize> {
+    self.count_prefix.take()
   }
 
   pub fn pending_hints(&self, mode: Mode) -> Option<PendingKeyHints> {
@@ -494,9 +504,39 @@ impl Keymaps {
 
     if matches!(binding.code, Key::Escape) {
       if !self.state.is_empty() {
+        self.count_prefix = None;
         return KeymapResult::Cancelled(self.state.drain(..).collect());
       }
+      if self.count_prefix.take().is_some() {
+        self.sticky = None;
+        return KeymapResult::Cancelled(Vec::new());
+      }
       self.sticky = None;
+    }
+
+    if matches!(mode, Mode::Normal | Mode::Select)
+      && self.state.is_empty()
+      && !binding.ctrl
+      && !binding.alt
+      && let Key::Char(ch) = binding.code
+      && ch.is_ascii_digit()
+    {
+      if ch != '0' || self.count_prefix.is_some() {
+        let digit = ch.to_digit(10).expect("ascii digit") as usize;
+        self.count_prefix = Some(
+          self
+            .count_prefix
+            .unwrap_or(0)
+            .saturating_mul(10)
+            .saturating_add(digit),
+        );
+        let pending = self
+          .sticky
+          .clone()
+          .or_else(|| keymap.node().cloned())
+          .unwrap_or_default();
+        return KeymapResult::Pending(pending);
+      }
     }
 
     let first = self.state.first().copied().unwrap_or(binding);
@@ -508,7 +548,10 @@ impl Keymaps {
     let trie = match base.search(&[first]) {
       Some(KeyTrie::Command(cmd)) => return KeymapResult::Matched(*cmd),
       Some(KeyTrie::Sequence(cmds)) => return KeymapResult::MatchedSequence(cmds.clone()),
-      None => return KeymapResult::NotFound,
+      None => {
+        self.count_prefix = None;
+        return KeymapResult::NotFound;
+      },
       Some(t) => t,
     };
 
@@ -529,7 +572,10 @@ impl Keymaps {
         self.state.clear();
         KeymapResult::MatchedSequence(cmds.clone())
       },
-      None => KeymapResult::Cancelled(self.state.drain(..).collect()),
+      None => {
+        self.count_prefix = None;
+        KeymapResult::Cancelled(self.state.drain(..).collect())
+      },
     }
   }
 }
@@ -553,17 +599,18 @@ pub fn handle_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent) -> KeyOutco
 }
 
 fn apply_actions<Ctx: DefaultContext>(ctx: &mut Ctx, actions: &[KeyAction]) -> KeyOutcome {
+  let count = ctx.keymaps().take_count_prefix().unwrap_or(1);
   let mut commands: SmallVec<[Command; 4]> = SmallVec::new();
 
   for action in actions {
     match *action {
-      KeyAction::Command(command) => commands.push(command),
+      KeyAction::Command(command) => commands.push(apply_count_prefix(command, count)),
       KeyAction::Mode(mode) => apply_mode(ctx, mode),
       KeyAction::Named(name) => {
         if name == "command_palette" {
           open_action_palette(ctx);
         } else if let Some(command) = command_from_name(name) {
-          commands.push(command);
+          commands.push(apply_count_prefix(command, count));
         } else if let Some(mode) = mode_from_name(name) {
           apply_mode(ctx, mode);
         }
@@ -575,6 +622,18 @@ fn apply_actions<Ctx: DefaultContext>(ctx: &mut Ctx, actions: &[KeyAction]) -> K
     0 => KeyOutcome::Handled,
     1 => KeyOutcome::Command(commands[0]),
     _ => KeyOutcome::Commands(commands),
+  }
+}
+
+fn apply_count_prefix(command: Command, count: usize) -> Command {
+  if count <= 1 {
+    return command;
+  }
+
+  match command {
+    Command::Increment { .. } => Command::increment(count),
+    Command::Decrement { .. } => Command::decrement(count),
+    _ => command,
   }
 }
 
@@ -1333,8 +1392,8 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     "$" => shell_keep_pipe,
     "C-z" => suspend,
 
-    // "C-a" => increment,
-    // "C-x" => decrement,
+    "C-a" => increment,
+    "C-x" => decrement,
   });
   let mut select = normal.clone();
   select.merge_nodes(crate::keymap!({ "Select mode"
@@ -1385,7 +1444,7 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     "C-y" => completion_accept,
     "C-e" => completion_cancel,
     "A-k" => lsp_signature_help,
-    // "C-r" => insert_register,
+    "C-r" => insert_register,
 
     "C-w" | "A-backspace" => delete_word_backward,
     "A-d" | "A-del" => delete_word_forward,
@@ -1404,7 +1463,7 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     "pageup" => completion_docs_scroll_up,
     "pagedown" => completion_docs_scroll_down,
     "home" => goto_line_start,
-    // "end" => goto_line_end_newline,
+    "end" => goto_line_end_newline,
   });
 
   let mut command = normal.clone();

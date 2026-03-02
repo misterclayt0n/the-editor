@@ -990,10 +990,16 @@ fn handle_pending_input<Ctx: DefaultContext>(
       }
       true
     },
-    PendingInput::InsertRegister => {
+    PendingInput::SelectRegister => {
       if let Key::Char(ch) = key.key {
         ctx.set_register(Some(ch));
         ctx.push_info("register", format!("selected register '{ch}'"));
+      }
+      true
+    },
+    PendingInput::InsertRegister => {
+      if let Key::Char(ch) = key.key {
+        insert_register_contents(ctx, ch);
       }
       true
     },
@@ -1296,6 +1302,7 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
       ctx.dispatch().goto_first_nonwhitespace(ctx, extend);
     },
     Command::GotoLineEnd { extend } => ctx.dispatch().goto_line_end(ctx, extend),
+    Command::GotoLineEndNewline => goto_line_end_newline(ctx),
     Command::PageUp { extend } => ctx.dispatch().page_up(ctx, extend),
     Command::PageDown { extend } => ctx.dispatch().page_down(ctx, extend),
     Command::PageCursorHalfUp => page_cursor_half_up(ctx),
@@ -1364,12 +1371,15 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::ToggleBlockComments => toggle_block_comments(ctx),
     Command::ToggleLineComments => toggle_line_comments(ctx),
     Command::SelectRegister => select_register(ctx),
+    Command::InsertRegister => insert_register(ctx),
     Command::ShellPipe => shell_pipe(ctx),
     Command::ShellPipeTo => shell_pipe_to(ctx),
     Command::ShellInsertOutput => shell_insert_output(ctx),
     Command::ShellAppendOutput => shell_append_output(ctx),
     Command::ShellKeepPipe => shell_keep_pipe(ctx),
     Command::Suspend => suspend(ctx),
+    Command::Increment { count } => increment(ctx, count),
+    Command::Decrement { count } => decrement(ctx, count),
     Command::JumpForward { count } => {
       if !ctx.jump_forward_in_jumplist(count.max(1)) {
         ctx.push_warning("jump", "no newer selection in jumplist");
@@ -3160,8 +3170,80 @@ pub(crate) enum ShellBehavior {
 }
 
 fn select_register<Ctx: DefaultContext>(ctx: &mut Ctx) {
-  ctx.set_pending_input(Some(PendingInput::InsertRegister));
+  ctx.set_pending_input(Some(PendingInput::SelectRegister));
   ctx.push_info("register", "select register: press the register key");
+}
+
+fn insert_register<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  ctx.set_pending_input(Some(PendingInput::InsertRegister));
+  ctx.push_info("register", "insert register: press the register key");
+}
+
+fn insert_register_contents<Ctx: DefaultContext>(ctx: &mut Ctx, register: char) {
+  ctx.set_register(Some(register));
+
+  let values: Option<Vec<String>> = {
+    let doc = ctx.editor_ref().document();
+    ctx
+      .registers()
+      .read(register, doc)
+      .map(|iter| iter.map(|value| value.into_owned()).collect())
+  };
+
+  let Some(values) = values else {
+    ctx.request_render();
+    return;
+  };
+
+  if values.is_empty() {
+    ctx.request_render();
+    return;
+  }
+
+  let doc = ctx.editor().document_mut();
+  let text = doc.text();
+  let selection = doc.selection().clone();
+  let line_ending = doc.line_ending().as_str();
+
+  let normalize_line_endings = |value: &str| {
+    let mut out = String::with_capacity(value.len());
+    let mut chars = value.chars().peekable();
+    while let Some(ch) = chars.next() {
+      match ch {
+        '\r' => {
+          if chars.peek() == Some(&'\n') {
+            chars.next();
+          }
+          out.push_str(line_ending);
+        },
+        '\n' => out.push_str(line_ending),
+        _ => out.push(ch),
+      }
+    }
+    out
+  };
+
+  let map_value = |value: &str| {
+    let normalized = normalize_line_endings(value);
+    Tendril::from(normalized.as_str())
+  };
+
+  let last = map_value(values.last().expect("register values are non-empty"));
+  let mut values = values
+    .iter()
+    .map(|value| map_value(value))
+    .chain(std::iter::repeat(last));
+
+  let Ok(tx) = Transaction::change_by_selection(text, &selection, |range| {
+    let pos = range.cursor(text.slice(..));
+    let value = values.next();
+    (pos, pos, value)
+  }) else {
+    return;
+  };
+
+  let _ = ctx.apply_transaction(&tx);
+  ctx.request_render();
 }
 
 fn shell_pipe<Ctx: DefaultContext>(ctx: &mut Ctx) {
@@ -3187,6 +3269,86 @@ fn shell_keep_pipe<Ctx: DefaultContext>(ctx: &mut Ctx) {
 fn suspend<Ctx: DefaultContext>(ctx: &mut Ctx) {
   if let Err(err) = ctx.suspend_editor() {
     ctx.push_warning("suspend", err);
+  }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IncrementDirection {
+  Increase,
+  Decrease,
+}
+
+fn increment<Ctx: DefaultContext>(ctx: &mut Ctx, count: usize) {
+  increment_impl(ctx, IncrementDirection::Increase, count);
+}
+
+fn decrement<Ctx: DefaultContext>(ctx: &mut Ctx, count: usize) {
+  increment_impl(ctx, IncrementDirection::Decrease, count);
+}
+
+fn increment_impl<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  direction: IncrementDirection,
+  count: usize,
+) {
+  let sign = match direction {
+    IncrementDirection::Increase => 1i64,
+    IncrementDirection::Decrease => -1i64,
+  };
+
+  let count_i64 = count.max(1).min(i64::MAX as usize) as i64;
+  let mut amount = sign.saturating_mul(count_i64);
+  let increase_by = if ctx.register() == Some('#') { sign } else { 0 };
+
+  let doc = ctx.editor().document_mut();
+  let selection = doc.selection().clone();
+  let text = doc.text().slice(..);
+
+  let mut new_selection_ranges: SmallVec<[Range; 1]> = SmallVec::with_capacity(selection.ranges().len());
+  let mut cumulative_length_diff: i128 = 0;
+  let mut changes: Vec<(usize, usize, Option<Tendril>)> = Vec::new();
+
+  for range in selection.ranges() {
+    let selected_text: Cow<'_, str> = range.fragment(text);
+    let selected_char_len = selected_text.chars().count();
+    let new_from = ((range.from() as i128) + cumulative_length_diff) as usize;
+
+    let incremented = [crate::increment::integer, crate::increment::date_time]
+      .iter()
+      .find_map(|incrementor| incrementor(selected_text.as_ref(), amount));
+
+    amount = amount.saturating_add(increase_by);
+
+    match incremented {
+      None => {
+        let new_to = ((range.to() as i128) + cumulative_length_diff) as usize;
+        new_selection_ranges.push(Range::new(new_from, new_to));
+      },
+      Some(new_text) => {
+        let new_text_char_len = new_text.chars().count();
+        let new_to = new_from + new_text_char_len;
+        new_selection_ranges.push(Range::new(new_from, new_to));
+        cumulative_length_diff += new_text_char_len as i128 - selected_char_len as i128;
+        changes.push((range.from(), range.to(), Some(new_text.into())));
+      },
+    }
+  }
+
+  if changes.is_empty() {
+    return;
+  }
+
+  let cursor_ids = selection.cursor_ids().iter().copied().collect();
+  let new_selection = Selection::new_with_ids(new_selection_ranges, cursor_ids)
+    .unwrap_or_else(|_| selection.clone());
+  let Ok(tx) = Transaction::change(doc.text(), changes.into_iter()) else {
+    return;
+  };
+  let tx = tx.with_selection(new_selection);
+  let _ = ctx.apply_transaction(&tx);
+
+  if ctx.mode() == Mode::Select {
+    ctx.set_mode(Mode::Normal);
   }
 }
 
@@ -3894,6 +4056,10 @@ fn goto_line_end<Ctx: DefaultContext>(ctx: &mut Ctx, extend: bool) {
   });
 
   let _ = doc.set_selection(new_selection);
+}
+
+fn goto_line_end_newline<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  goto_line_end(ctx, false);
 }
 
 fn page_up<Ctx: DefaultContext>(ctx: &mut Ctx, extend: bool) {
@@ -6196,6 +6362,7 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "extend_to_first_nonwhitespace" => Some(Command::extend_to_first_nonwhitespace()),
     "goto_line_end" => Some(Command::goto_line_end()),
     "extend_to_line_end" => Some(Command::extend_to_line_end()),
+    "goto_line_end_newline" => Some(Command::goto_line_end_newline()),
 
     "page_up" => Some(Command::page_up()),
     "page_down" => Some(Command::page_down()),
@@ -6250,12 +6417,15 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "toggle_block_comments" => Some(Command::toggle_block_comments()),
     "toggle_line_comments" => Some(Command::toggle_line_comments()),
     "select_register" => Some(Command::select_register()),
+    "insert_register" => Some(Command::insert_register()),
     "shell_pipe" => Some(Command::shell_pipe()),
     "shell_pipe_to" => Some(Command::shell_pipe_to()),
     "shell_insert_output" => Some(Command::shell_insert_output()),
     "shell_append_output" => Some(Command::shell_append_output()),
     "shell_keep_pipe" => Some(Command::shell_keep_pipe()),
     "suspend" => Some(Command::suspend()),
+    "increment" => Some(Command::increment(1)),
+    "decrement" => Some(Command::decrement(1)),
     "jump_forward" => Some(Command::jump_forward(1)),
     "jump_backward" => Some(Command::jump_backward(1)),
     "save_selection" => Some(Command::save_selection()),

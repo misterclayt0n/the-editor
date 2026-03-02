@@ -15,6 +15,7 @@ mod file_picker;
 mod file_tree;
 mod global_search;
 mod input;
+mod increment;
 mod keymap;
 mod message_bar;
 mod overlay_layout;

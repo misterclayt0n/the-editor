@@ -453,6 +453,7 @@ pub enum Command {
   GotoLineEnd {
     extend: bool,
   },
+  GotoLineEndNewline,
   PageUp {
     extend: bool,
   },
@@ -516,12 +517,19 @@ pub enum Command {
   ToggleBlockComments,
   ToggleLineComments,
   SelectRegister,
+  InsertRegister,
   ShellPipe,
   ShellPipeTo,
   ShellInsertOutput,
   ShellAppendOutput,
   ShellKeepPipe,
   Suspend,
+  Increment {
+    count: usize,
+  },
+  Decrement {
+    count: usize,
+  },
   JumpForward {
     count: usize,
   },
@@ -1034,6 +1042,11 @@ impl Command {
   }
 
   #[must_use]
+  pub const fn insert_register() -> Self {
+    Self::InsertRegister
+  }
+
+  #[must_use]
   pub const fn shell_pipe() -> Self {
     Self::ShellPipe
   }
@@ -1061,6 +1074,16 @@ impl Command {
   #[must_use]
   pub const fn suspend() -> Self {
     Self::Suspend
+  }
+
+  #[must_use]
+  pub const fn increment(count: usize) -> Self {
+    Self::Increment { count }
+  }
+
+  #[must_use]
+  pub const fn decrement(count: usize) -> Self {
+    Self::Decrement { count }
   }
 
   #[must_use]
@@ -1286,6 +1309,11 @@ impl Command {
   #[must_use]
   pub const fn extend_to_line_end() -> Self {
     Self::GotoLineEnd { extend: true }
+  }
+
+  #[must_use]
+  pub const fn goto_line_end_newline() -> Self {
+    Self::GotoLineEndNewline
   }
 
   #[must_use]

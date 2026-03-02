@@ -8,6 +8,7 @@ license = "MIT"
 path = "lib.rs"
 
 [dependencies]
+chrono       = "0.4"
 fff-core     = { path = "../../fff.nvim/crates/fff-core" }
 ignore       = { workspace = true }
 nucleo       = { workspace = true }

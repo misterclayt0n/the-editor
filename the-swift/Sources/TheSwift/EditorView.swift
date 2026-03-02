@@ -650,7 +650,7 @@ struct EditorView: View {
         contentOffsetX: CGFloat
     ) {
         let lineCount = Int(plan.gutter_line_count())
-        guard lineCount > 0, contentOffsetX > 0 else { return }
+        guard contentOffsetX > 0 else { return }
 
         let activeRow = activeCursorRow(plan: plan)
 
@@ -673,34 +673,36 @@ struct EditorView: View {
         context.stroke(sepPath, with: .color(SwiftUI.Color(nsColor: .separatorColor).opacity(0.3)), lineWidth: 0.5)
 
         // Layer 4: Per-span rendering
-        for lineIndex in 0..<lineCount {
-            let line = plan.gutter_line_at(UInt(lineIndex))
-            let y = CGFloat(line.row()) * cellSize.height
-            let isActiveLine = activeRow == line.row()
-            let spanCount = Int(line.span_count())
+        if lineCount > 0 {
+            for lineIndex in 0..<lineCount {
+                let line = plan.gutter_line_at(UInt(lineIndex))
+                let y = CGFloat(line.row()) * cellSize.height
+                let isActiveLine = activeRow == line.row()
+                let spanCount = Int(line.span_count())
 
-            for spanIndex in 0..<spanCount {
-                let span = line.span_at(UInt(spanIndex))
-                let x = CGFloat(span.col()) * cellSize.width
-                let kind = classifyGutterSpan(span)
+                for spanIndex in 0..<spanCount {
+                    let span = line.span_at(UInt(spanIndex))
+                    let x = CGFloat(span.col()) * cellSize.width
+                    let kind = classifyGutterSpan(span)
 
-                switch kind {
-                case .diagnostic:
-                    let color = colorForStyle(span.style(), fallback: SwiftUI.Color(nsColor: .systemRed))
-                    drawDiagnosticIndicator(in: context, y: y, cellSize: cellSize, gutterWidth: contentOffsetX, color: color)
-                case .diff:
-                    let fallback: SwiftUI.Color
-                    switch span.text().toString().trimmingCharacters(in: .whitespaces) {
-                    case "+": fallback = SwiftUI.Color(nsColor: .systemGreen)
-                    case "~": fallback = SwiftUI.Color(nsColor: .systemYellow)
-                    default:  fallback = SwiftUI.Color(nsColor: .systemRed)
+                    switch kind {
+                    case .diagnostic:
+                        let color = colorForStyle(span.style(), fallback: SwiftUI.Color(nsColor: .systemRed))
+                        drawDiagnosticIndicator(in: context, y: y, cellSize: cellSize, gutterWidth: contentOffsetX, color: color)
+                    case .diff:
+                        let fallback: SwiftUI.Color
+                        switch span.text().toString().trimmingCharacters(in: .whitespaces) {
+                        case "+": fallback = SwiftUI.Color(nsColor: .systemGreen)
+                        case "~": fallback = SwiftUI.Color(nsColor: .systemYellow)
+                        default:  fallback = SwiftUI.Color(nsColor: .systemRed)
+                        }
+                        let color = colorForStyle(span.style(), fallback: fallback)
+                        drawDiffBar(in: context, y: y, cellSize: cellSize, gutterWidth: contentOffsetX, color: color)
+                    case .lineNumber:
+                        drawLineNumber(in: context, span: span, x: x, y: y, font: font, isActive: isActiveLine)
+                    case .other:
+                        break
                     }
-                    let color = colorForStyle(span.style(), fallback: fallback)
-                    drawDiffBar(in: context, y: y, cellSize: cellSize, gutterWidth: contentOffsetX, color: color)
-                case .lineNumber:
-                    drawLineNumber(in: context, span: span, x: x, y: y, font: font, isActive: isActiveLine)
-                case .other:
-                    break
                 }
             }
         }

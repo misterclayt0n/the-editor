@@ -10,7 +10,9 @@ use the_lib::selection::Range;
 
 use crate::{
   Command,
+  CommandPaletteAction,
   CommandPaletteItem,
+  CommandPaletteSource,
   DefaultContext,
   Key,
   KeyEvent,
@@ -558,7 +560,9 @@ fn apply_actions<Ctx: DefaultContext>(ctx: &mut Ctx, actions: &[KeyAction]) -> K
       KeyAction::Command(command) => commands.push(command),
       KeyAction::Mode(mode) => apply_mode(ctx, mode),
       KeyAction::Named(name) => {
-        if let Some(command) = command_from_name(name) {
+        if name == "command_palette" {
+          open_action_palette(ctx);
+        } else if let Some(command) = command_from_name(name) {
           commands.push(command);
         } else if let Some(mode) = mode_from_name(name) {
           apply_mode(ctx, mode);
@@ -631,13 +635,23 @@ fn apply_mode<Ctx: DefaultContext>(ctx: &mut Ctx, mode: Mode) {
   {
     let palette = ctx.command_palette_mut();
     palette.is_open = palette_open;
+    palette.source = CommandPaletteSource::CommandLine;
     if palette.is_open {
       palette.query = palette_query;
       palette.items = palette_items;
       palette.selected = None;
+      palette.prefiltered = false;
+      palette.max_results = usize::MAX;
+      palette.scroll_offset = 0;
+      palette.prompt_text = None;
     } else {
       palette.query.clear();
+      palette.items.clear();
       palette.selected = None;
+      palette.prefiltered = false;
+      palette.max_results = usize::MAX;
+      palette.scroll_offset = 0;
+      palette.prompt_text = None;
     }
   }
 
@@ -646,6 +660,187 @@ fn apply_mode<Ctx: DefaultContext>(ctx: &mut Ctx, mode: Mode) {
     ctx.lsp_signature_help();
   }
   ctx.request_render();
+}
+
+fn open_action_palette<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  let source_mode = ctx.mode();
+  apply_mode(ctx, Mode::Command);
+
+  let items = build_action_palette_items(ctx, source_mode);
+
+  {
+    let prompt = ctx.command_prompt_mut();
+    prompt.input.clear();
+    prompt.cursor = 0;
+    prompt.completions.clear();
+    prompt.help = None;
+    prompt.error = None;
+  }
+
+  {
+    let palette = ctx.command_palette_mut();
+    palette.is_open = true;
+    palette.source = CommandPaletteSource::ActionPalette;
+    palette.query.clear();
+    palette.selected = None;
+    palette.items = items;
+    palette.max_results = usize::MAX;
+    palette.prefiltered = false;
+    palette.scroll_offset = 0;
+    palette.prompt_text = None;
+  }
+
+  ctx.request_render();
+}
+
+fn build_action_palette_items<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  mode: Mode,
+) -> Vec<CommandPaletteItem> {
+  let keymap = {
+    let keymaps = ctx.keymaps();
+    keymaps.map.get(&mode).cloned()
+  };
+  let Some(keymap) = keymap else {
+    return Vec::new();
+  };
+
+  let mut bindings_by_name: HashMap<String, Vec<Vec<KeyBinding>>> = HashMap::new();
+  collect_action_bindings(&keymap, &mut Vec::new(), &mut bindings_by_name);
+
+  let mut items = Vec::new();
+
+  let mut static_names: Vec<_> = bindings_by_name.keys().cloned().collect();
+  static_names.sort();
+  for name in static_names {
+    let Some(command) = command_from_name(&name) else {
+      continue;
+    };
+    let mut item = CommandPaletteItem::new(name.clone());
+    item.description = Some(command_hint_label(command));
+    item.shortcut = bindings_by_name
+      .get(&name)
+      .and_then(|bindings| format_shortcut_list(bindings));
+    item.action = Some(CommandPaletteAction::StaticCommand(command));
+    items.push(item);
+  }
+
+  for cmd in ctx.command_registry_ref().all_commands() {
+    let mut item = CommandPaletteItem::new(format!(":{}", cmd.name));
+    item.description = Some(cmd.doc.to_string());
+    if !cmd.aliases.is_empty() {
+      item.aliases = cmd
+        .aliases
+        .iter()
+        .map(|alias| format!(":{}", alias))
+        .collect();
+    }
+
+    let mut bindings = Vec::new();
+    if let Some(command_bindings) = bindings_by_name.get(cmd.name) {
+      bindings.extend(command_bindings.iter().cloned());
+    }
+    for alias in cmd.aliases {
+      if let Some(command_bindings) = bindings_by_name.get(*alias) {
+        bindings.extend(command_bindings.iter().cloned());
+      }
+    }
+    item.shortcut = format_shortcut_list(&bindings);
+    item.action = Some(CommandPaletteAction::TypableCommand {
+      name: cmd.name.to_string(),
+      args: String::new(),
+    });
+    items.push(item);
+  }
+
+  items.sort_by(|left, right| left.title.cmp(&right.title));
+  items
+}
+
+fn collect_action_bindings(
+  trie: &KeyTrie,
+  path: &mut Vec<KeyBinding>,
+  out: &mut HashMap<String, Vec<Vec<KeyBinding>>>,
+) {
+  match trie {
+    KeyTrie::Node(node) => {
+      for key in &node.order {
+        let Some(entry) = node.map.get(key) else {
+          continue;
+        };
+        path.push(*key);
+        collect_action_bindings(entry, path, out);
+        path.pop();
+      }
+    },
+    KeyTrie::Command(action) => collect_action_binding(*action, path, out),
+    KeyTrie::Sequence(actions) => {
+      for action in actions {
+        collect_action_binding(*action, path, out);
+      }
+    },
+  }
+}
+
+fn collect_action_binding(
+  action: KeyAction,
+  path: &[KeyBinding],
+  out: &mut HashMap<String, Vec<Vec<KeyBinding>>>,
+) {
+  let Some(name) = action_name(action) else {
+    return;
+  };
+  let key_sequences = out.entry(name).or_default();
+  if !key_sequences.iter().any(|seq| seq == path) {
+    key_sequences.push(path.to_vec());
+  }
+}
+
+fn action_name(action: KeyAction) -> Option<String> {
+  match action {
+    KeyAction::Named(name) => Some(name.to_string()),
+    KeyAction::Mode(Mode::Normal) => Some("normal_mode".to_string()),
+    KeyAction::Mode(Mode::Insert) => Some("insert_mode".to_string()),
+    KeyAction::Mode(Mode::Select) => Some("select_mode".to_string()),
+    KeyAction::Mode(Mode::Command) => Some("command_mode".to_string()),
+    KeyAction::Command(command) => Some(format!("{command:?}")),
+  }
+}
+
+fn format_shortcut_list(bindings: &[Vec<KeyBinding>]) -> Option<String> {
+  if bindings.is_empty() {
+    return None;
+  }
+
+  let mut unique = Vec::new();
+  for binding in bindings {
+    if !unique
+      .iter()
+      .any(|existing: &Vec<KeyBinding>| existing == binding)
+    {
+      unique.push(binding.clone());
+    }
+  }
+
+  const MAX_SHORTCUTS: usize = 4;
+  let mut parts: Vec<String> = unique
+    .iter()
+    .take(MAX_SHORTCUTS)
+    .map(|sequence| {
+      sequence
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(" ")
+    })
+    .collect();
+
+  let hidden_count = unique.len().saturating_sub(MAX_SHORTCUTS);
+  if hidden_count > 0 {
+    parts.push(format!("+{hidden_count}"));
+  }
+
+  Some(parts.join("  "))
 }
 
 fn fallback_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent) -> KeyOutcome {
@@ -808,10 +1003,6 @@ fn humanize_identifier(input: &str) -> String {
 pub fn action_from_name(name: &'static str) -> KeyAction {
   if let Some(mode) = mode_from_name(name) {
     return KeyAction::Mode(mode);
-  }
-
-  if let Some(command) = command_from_name(name) {
-    return KeyAction::Command(command);
   }
 
   KeyAction::Named(name)
@@ -1097,7 +1288,7 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
       "c" => toggle_comments,
       "C" => toggle_block_comments,
       "A-c" => toggle_line_comments,
-      // "?" => command_palette,
+      "?" => command_palette,
     },
     "z" => { "View"
       // "z" | "c" => align_view_center,

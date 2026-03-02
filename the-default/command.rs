@@ -145,6 +145,8 @@ use crate::{
   PointerEventOutcome,
   WordMotion,
   command_palette::{
+    CommandPaletteAction,
+    CommandPaletteSource,
     CommandPaletteState,
     CommandPaletteStyle,
   },
@@ -1595,13 +1597,27 @@ fn on_ui<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) -> UiTree {
     tree.focus = Some(focus.clone());
     ctx.ui_state_mut().set_focus(Some(focus));
   } else if ctx.command_palette().is_open {
-    let cursor = if ctx.command_palette().query.is_empty() {
-      1
-    } else {
-      byte_to_char_idx(
-        &ctx.command_palette().query,
-        ctx.command_palette().query.len(),
-      ) + 1
+    let cursor = match ctx.command_palette().source {
+      CommandPaletteSource::CommandLine => {
+        if ctx.command_palette().query.is_empty() {
+          1
+        } else {
+          byte_to_char_idx(
+            &ctx.command_palette().query,
+            ctx.command_palette().query.len(),
+          ) + 1
+        }
+      },
+      CommandPaletteSource::ActionPalette => {
+        if ctx.command_palette().query.is_empty() {
+          0
+        } else {
+          byte_to_char_idx(
+            &ctx.command_palette().query,
+            ctx.command_palette().query.len(),
+          )
+        }
+      },
     };
     let focus = UiFocus {
       id:     "command_palette_input".to_string(),
@@ -1899,17 +1915,55 @@ fn submit_command_palette_selected<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool {
   }
 
   let filtered = crate::command_palette::command_palette_filtered_indices(palette);
-  let selected = palette.selected.filter(|sel| filtered.contains(sel));
+  let selected = palette
+    .selected
+    .filter(|sel| filtered.contains(sel))
+    .or_else(|| {
+      if matches!(palette.source, CommandPaletteSource::ActionPalette) {
+        filtered.first().copied()
+      } else {
+        None
+      }
+    });
 
   let Some(item_idx) = selected else {
     return false;
   };
 
-  let command_name = palette
-    .items
-    .get(item_idx)
-    .map(|item| item.title.clone())
-    .unwrap_or_default();
+  let item = palette.items.get(item_idx).cloned();
+  let Some(item) = item else {
+    return false;
+  };
+
+  if let Some(action) = item.action {
+    match action {
+      CommandPaletteAction::StaticCommand(command) => {
+        close_command_palette(ctx);
+        ctx.dispatch().post_on_keypress(ctx, command);
+        return true;
+      },
+      CommandPaletteAction::TypableCommand { name, args } => {
+        let registry = ctx.command_registry_ref() as *const CommandRegistry<Ctx>;
+        let result = unsafe { (&*registry).execute(ctx, &name, &args, CommandEvent::Validate) };
+
+        match result {
+          Ok(()) => {
+            close_command_palette(ctx);
+            return true;
+          },
+          Err(err) => {
+            let message = err.to_string();
+            ctx.command_prompt_mut().error = Some(message.clone());
+            ctx.push_error("command_palette", message);
+            close_command_palette(ctx);
+            return true;
+          },
+        }
+      },
+    }
+  }
+
+  let command_name = item.title;
 
   if command_name.is_empty() {
     return false;
@@ -1938,8 +1992,13 @@ fn close_command_palette<Ctx: DefaultContext>(ctx: &mut Ctx) {
   ctx.command_prompt_mut().clear();
   let palette = ctx.command_palette_mut();
   palette.is_open = false;
+  palette.source = CommandPaletteSource::CommandLine;
   palette.query.clear();
+  palette.items.clear();
   palette.selected = None;
+  palette.prefiltered = false;
+  palette.max_results = usize::MAX;
+  palette.scroll_offset = 0;
   palette.prompt_text = None;
   ctx.request_render();
 }

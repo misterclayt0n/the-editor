@@ -55,8 +55,10 @@ pub use command::{
   ui_tree,
 };
 pub use command_palette::{
+  CommandPaletteAction,
   CommandPaletteItem,
   CommandPaletteLayout,
+  CommandPaletteSource,
   CommandPaletteState,
   CommandPaletteStyle,
   CommandPaletteTheme,
@@ -75,6 +77,7 @@ pub use command_registry::{
   TypableCommand,
   completers,
   handle_command_prompt_key,
+  update_action_palette_for_input,
   update_command_palette_for_input,
 };
 pub use command_types::{

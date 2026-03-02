@@ -117,8 +117,9 @@ pub fn handle_key(ctx: &mut Ctx, event: CrosstermKeyEvent) {
   }
 
   if ctx.mode() == Mode::Command {
-    if let Some(mut key) = to_ui_key(event.code) {
-      if matches!(event.code, KeyCode::Tab | KeyCode::BackTab) {
+    let normalized_code = normalize_shifted_key_code(event.code, event.modifiers);
+    if let Some(mut key) = to_ui_key(normalized_code) {
+      if matches!(normalized_code, KeyCode::Tab | KeyCode::BackTab) {
         key = if event.modifiers.contains(KeyModifiers::SHIFT) || event.code == KeyCode::BackTab {
           UiKey::Up
         } else {
@@ -138,8 +139,9 @@ pub fn handle_key(ctx: &mut Ctx, event: CrosstermKeyEvent) {
     }
   }
 
-  let modifiers = to_modifiers(event.modifiers, event.code);
-  let Some(key) = to_key(event.code) else {
+  let normalized_code = normalize_shifted_key_code(event.code, event.modifiers);
+  let modifiers = to_modifiers(event.modifiers, normalized_code);
+  let Some(key) = to_key(normalized_code) else {
     return;
   };
 
@@ -763,6 +765,43 @@ fn to_key(code: KeyCode) -> Option<Key> {
   }
 }
 
+fn normalize_shifted_key_code(code: KeyCode, modifiers: KeyModifiers) -> KeyCode {
+  if !modifiers.contains(KeyModifiers::SHIFT) {
+    return code;
+  }
+
+  match code {
+    KeyCode::Char(ch) => {
+      let shifted = match ch {
+        '1' => '!',
+        '2' => '@',
+        '3' => '#',
+        '4' => '$',
+        '5' => '%',
+        '6' => '^',
+        '7' => '&',
+        '8' => '*',
+        '9' => '(',
+        '0' => ')',
+        '-' => '_',
+        '=' => '+',
+        '[' => '{',
+        ']' => '}',
+        '\\' => '|',
+        ';' => ':',
+        '\'' => '"',
+        ',' => '<',
+        '.' => '>',
+        '/' => '?',
+        '`' => '~',
+        _ => ch,
+      };
+      KeyCode::Char(shifted)
+    },
+    other => other,
+  }
+}
+
 fn to_ui_key(code: KeyCode) -> Option<UiKey> {
   match code {
     KeyCode::Char(c) => Some(UiKey::Char(c)),
@@ -898,6 +937,7 @@ mod tests {
     MouseEvent,
   };
   use the_default::{
+    CommandPaletteSource,
     CompletionMenuItem,
     DefaultContext,
     show_completion_menu,
@@ -928,6 +968,39 @@ mod tests {
     let mut event = key_event(code);
     event.kind = kind;
     event
+  }
+
+  #[test]
+  fn space_shift_slash_opens_action_palette() {
+    let dispatch = build_dispatch::<Ctx>();
+    let mut ctx = Ctx::new(None).expect("ctx");
+    ctx.set_dispatch(&dispatch);
+
+    handle_key(&mut ctx, key_event(KeyCode::Char(' ')));
+
+    let mut shifted_slash = KeyEvent::new(KeyCode::Char('/'), KeyModifiers::SHIFT);
+    shifted_slash.kind = KeyEventKind::Press;
+    handle_key(&mut ctx, shifted_slash);
+
+    assert!(ctx.command_palette.is_open);
+    assert!(matches!(
+      ctx.command_palette.source,
+      CommandPaletteSource::ActionPalette
+    ));
+  }
+
+  #[test]
+  fn normalize_shifted_slash_into_question_mark() {
+    let code = normalize_shifted_key_code(KeyCode::Char('/'), KeyModifiers::SHIFT);
+    assert_eq!(to_key(code), Some(Key::Char('?')));
+    assert!(!to_modifiers(KeyModifiers::SHIFT, code).shift());
+  }
+
+  #[test]
+  fn normalize_shifted_semicolon_into_colon() {
+    let code = normalize_shifted_key_code(KeyCode::Char(';'), KeyModifiers::SHIFT);
+    assert_eq!(to_key(code), Some(Key::Char(':')));
+    assert!(!to_modifiers(KeyModifiers::SHIFT, code).shift());
   }
 
   #[test]

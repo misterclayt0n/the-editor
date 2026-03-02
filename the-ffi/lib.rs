@@ -58,7 +58,9 @@ use the_default::{
   BufferTabsSnapshot as DefaultBufferTabsSnapshot,
   Command,
   CommandEvent,
+  CommandPaletteAction,
   CommandPaletteLayout,
+  CommandPaletteSource,
   CommandPaletteState,
   CommandPaletteStyle,
   CommandPaletteTheme,
@@ -121,6 +123,7 @@ use the_default::{
   set_file_picker_syntax_loader,
   signature_help_panel_rect as default_signature_help_panel_rect,
   submit_file_picker,
+  update_action_palette_for_input,
   update_command_palette_for_input,
   update_search_prompt_preview,
 };
@@ -5566,9 +5569,69 @@ impl App {
       return false;
     };
 
+    let source = self.active_state_ref().command_palette.source;
     let is_prefiltered = self.active_state_ref().command_palette.prefiltered;
 
-    if is_prefiltered {
+    if matches!(source, CommandPaletteSource::ActionPalette) {
+      let action = self
+        .active_state_ref()
+        .command_palette
+        .items
+        .get(item_idx)
+        .and_then(|item| item.action.clone());
+
+      let Some(action) = action else {
+        return false;
+      };
+
+      match action {
+        CommandPaletteAction::StaticCommand(command) => {
+          self.set_mode(Mode::Normal);
+          self.command_prompt_mut().clear();
+          let palette = self.command_palette_mut();
+          palette.is_open = false;
+          palette.source = CommandPaletteSource::CommandLine;
+          palette.query.clear();
+          palette.items.clear();
+          palette.selected = None;
+          palette.prefiltered = false;
+          palette.max_results = usize::MAX;
+          palette.scroll_offset = 0;
+          palette.prompt_text = None;
+          let dispatch = self.dispatch();
+          dispatch.post_on_keypress(self, command);
+          self.request_render();
+          true
+        },
+        CommandPaletteAction::TypableCommand { name, args } => {
+          let registry = self.command_registry_ref() as *const CommandRegistry<App>;
+          let result = unsafe { (&*registry).execute(self, &name, &args, CommandEvent::Validate) };
+          match result {
+            Ok(()) => {
+              self.set_mode(Mode::Normal);
+              self.command_prompt_mut().clear();
+              let palette = self.command_palette_mut();
+              palette.is_open = false;
+              palette.source = CommandPaletteSource::CommandLine;
+              palette.query.clear();
+              palette.items.clear();
+              palette.selected = None;
+              palette.prefiltered = false;
+              palette.max_results = usize::MAX;
+              palette.scroll_offset = 0;
+              palette.prompt_text = None;
+              self.request_render();
+              true
+            },
+            Err(err) => {
+              self.command_prompt_mut().error = Some(err.to_string());
+              self.request_render();
+              false
+            },
+          }
+        },
+      }
+    } else if is_prefiltered {
       // Check if the selected item is a directory (ends with '/').
       let is_dir = self
         .active_state_ref()
@@ -5615,8 +5678,13 @@ impl App {
           self.command_prompt_mut().clear();
           let palette = self.command_palette_mut();
           palette.is_open = false;
+          palette.source = CommandPaletteSource::CommandLine;
           palette.query.clear();
+          palette.items.clear();
           palette.selected = None;
+          palette.prefiltered = false;
+          palette.max_results = usize::MAX;
+          palette.scroll_offset = 0;
           palette.prompt_text = None;
           self.request_render();
           true
@@ -5651,8 +5719,13 @@ impl App {
           self.command_prompt_mut().clear();
           let palette = self.command_palette_mut();
           palette.is_open = false;
+          palette.source = CommandPaletteSource::CommandLine;
           palette.query.clear();
+          palette.items.clear();
           palette.selected = None;
+          palette.prefiltered = false;
+          palette.max_results = usize::MAX;
+          palette.scroll_offset = 0;
           palette.prompt_text = None;
           self.request_render();
           true
@@ -5674,8 +5747,13 @@ impl App {
     self.command_prompt_mut().clear();
     let palette = self.command_palette_mut();
     palette.is_open = false;
+    palette.source = CommandPaletteSource::CommandLine;
     palette.query.clear();
+    palette.items.clear();
     palette.selected = None;
+    palette.prefiltered = false;
+    palette.max_results = usize::MAX;
+    palette.scroll_offset = 0;
     palette.prompt_text = None;
     self.request_render();
     true
@@ -5685,7 +5763,14 @@ impl App {
     if self.activate(id).is_none() {
       return false;
     }
-    update_command_palette_for_input(self, query);
+    if matches!(
+      self.active_state_ref().command_palette.source,
+      CommandPaletteSource::ActionPalette
+    ) {
+      update_action_palette_for_input(self, query);
+    } else {
+      update_command_palette_for_input(self, query);
+    }
     true
   }
 

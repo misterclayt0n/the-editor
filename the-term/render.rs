@@ -76,6 +76,7 @@ use the_lib::{
     RenderDiffGutterStyles,
     RenderPlan,
     RenderStyles,
+    SelectionMatchHighlightOptions,
     SharedInlineDiagnosticsRenderData,
     SyntaxHighlightAdapter,
     UiAlign,
@@ -100,7 +101,6 @@ use the_lib::{
     UiText,
     UiTooltip,
     UiTree,
-    SelectionMatchHighlightOptions,
     add_selection_match_highlights,
     apply_diagnostic_gutter_markers,
     apply_diff_gutter_markers,
@@ -4914,7 +4914,9 @@ fn node_layer(node: &UiNode) -> UiLayer {
 }
 
 fn editor_top_chrome_rows(_ctx: &Ctx, _area: Rect) -> u16 {
-  _ctx.buffer_tabs_top_chrome_rows().min(_area.height.saturating_sub(1))
+  _ctx
+    .buffer_tabs_top_chrome_rows()
+    .min(_area.height.saturating_sub(1))
 }
 
 fn apply_ui_viewport(ctx: &mut Ctx, ui: &UiTree, area: Rect) {
@@ -4934,7 +4936,12 @@ fn apply_ui_viewport(ctx: &mut Ctx, ui: &UiTree, area: Rect) {
     if available == 0 {
       break;
     }
-    let rect_area = Rect::new(area.x, area.y.saturating_add(reserved_top), area.width, available);
+    let rect_area = Rect::new(
+      area.x,
+      area.y.saturating_add(reserved_top),
+      area.width,
+      available,
+    );
     let height = panel_height_for_area(panel, rect_area);
     reserved_bottom = reserved_bottom.saturating_add(height);
   }
@@ -6194,7 +6201,11 @@ fn draw_buffer_tabs_row(buf: &mut Buffer, area: Rect, ctx: &Ctx) {
   let active = theme_style_or(
     ctx,
     "ui.buffer_tabs.tab.active",
-    theme_style_or(ctx, "ui.window.active", inactive.add_modifier(Modifier::BOLD)),
+    theme_style_or(
+      ctx,
+      "ui.window.active",
+      inactive.add_modifier(Modifier::BOLD),
+    ),
   );
   let modified_style = theme_style_or(
     ctx,
@@ -6243,7 +6254,11 @@ fn draw_buffer_tabs_row(buf: &mut Buffer, area: Rect, ctx: &Ctx) {
     let marker_width = marker_text.chars().count() as u16;
     let close_text = if slot.close_x.is_some() { "×" } else { "" };
     let close_width = close_text.chars().count() as u16;
-    let close_pad_width = if close_width > 0 && text_width > close_width { 1 } else { 0 };
+    let close_pad_width = if close_width > 0 && text_width > close_width {
+      1
+    } else {
+      0
+    };
     let close_trailing_pad_width = if close_width > 0 { 1 } else { 0 };
     let title_width = text_width
       .saturating_sub(icon_extra)
@@ -6263,7 +6278,12 @@ fn draw_buffer_tabs_row(buf: &mut Buffer, area: Rect, ctx: &Ctx) {
         remaining_text_width = remaining_text_width.saturating_sub(icon_extra);
       }
       if tab.modified && marker_width <= remaining_text_width {
-        buf.set_string(cursor_x, slot_rect.y, marker_text, tab_style.patch(modified_style));
+        buf.set_string(
+          cursor_x,
+          slot_rect.y,
+          marker_text,
+          tab_style.patch(modified_style),
+        );
         cursor_x = cursor_x.saturating_add(marker_width.min(remaining_text_width));
       }
       truncate_with_ellipsis_in_place(&mut title, title_width as usize);
@@ -6278,14 +6298,20 @@ fn draw_buffer_tabs_row(buf: &mut Buffer, area: Rect, ctx: &Ctx) {
           area.x.saturating_add(close_x),
           slot_rect.y,
           close_text,
-          tab_style.patch(if close_is_hovered { close_hover_style } else { close_style }),
+          tab_style.patch(if close_is_hovered {
+            close_hover_style
+          } else {
+            close_style
+          }),
         );
       }
     }
   }
 
   if let Some(drag) = ctx.buffer_tab_drag
-    && let Some(slot) = slots.iter().find(|slot| slot.buffer_index == drag.buffer_index)
+    && let Some(slot) = slots
+      .iter()
+      .find(|slot| slot.buffer_index == drag.buffer_index)
     && let Some(tab) = snapshot.tabs.get(slot.tab_index)
   {
     let ghost_width = slot.width.min(area.width).max(1);
@@ -6327,7 +6353,11 @@ fn draw_buffer_tabs_row(buf: &mut Buffer, area: Rect, ctx: &Ctx) {
         ""
       };
       let close_width = close_text.chars().count() as u16;
-      let close_pad_width = if close_width > 0 && text_width > close_width { 1 } else { 0 };
+      let close_pad_width = if close_width > 0 && text_width > close_width {
+        1
+      } else {
+        0
+      };
       let close_trailing_pad_width = if close_width > 0 { 1 } else { 0 };
       let title_width = text_width
         .saturating_sub(icon_extra)
@@ -6348,21 +6378,38 @@ fn draw_buffer_tabs_row(buf: &mut Buffer, area: Rect, ctx: &Ctx) {
           remaining_text_width = remaining_text_width.saturating_sub(icon_extra);
         }
         if tab.modified && marker_width <= remaining_text_width {
-          buf.set_string(cursor_x, ghost_rect.y, marker_text, ghost_style.patch(modified_style));
+          buf.set_string(
+            cursor_x,
+            ghost_rect.y,
+            marker_text,
+            ghost_style.patch(modified_style),
+          );
           cursor_x = cursor_x.saturating_add(marker_width.min(remaining_text_width));
         }
         truncate_with_ellipsis_in_place(&mut title, title_width as usize);
         buf.set_string(cursor_x, ghost_rect.y, title, ghost_style);
         if close_width > 0 {
-          let close_x = ghost_rect
-            .x
-            .saturating_add(ghost_rect.width.saturating_sub(close_width.saturating_add(1)));
+          let close_x = ghost_rect.x.saturating_add(
+            ghost_rect
+              .width
+              .saturating_sub(close_width.saturating_add(1)),
+          );
           let close_is_hovered = ctx
             .buffer_tab_hover
             .is_some_and(|hover| hover.buffer_index == tab.buffer_index && hover.over_close);
-          buf.set_string(close_x, ghost_rect.y, close_text, ghost_style.patch(close_style));
+          buf.set_string(
+            close_x,
+            ghost_rect.y,
+            close_text,
+            ghost_style.patch(close_style),
+          );
           if close_is_hovered {
-            buf.set_string(close_x, ghost_rect.y, close_text, ghost_style.patch(close_hover_style));
+            buf.set_string(
+              close_x,
+              ghost_rect.y,
+              close_text,
+              ghost_style.patch(close_hover_style),
+            );
           }
         }
       }
@@ -6830,6 +6877,7 @@ mod tests {
   fn term_command_palette_selection_stays_empty_without_explicit_selection() {
     let state = CommandPaletteState {
       is_open:       true,
+      source:        the_default::CommandPaletteSource::CommandLine,
       query:         String::new(),
       selected:      None,
       items:         vec![

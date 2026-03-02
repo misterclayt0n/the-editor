@@ -35,6 +35,8 @@ use the_lib::{
 
 use crate::{
   Command,
+  CommandPaletteAction,
+  CommandPaletteSource,
   DefaultContext,
   Key,
   KeyEvent,
@@ -1229,6 +1231,15 @@ pub fn handle_command_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEve
       return true;
     },
     Key::Enter | Key::NumpadEnter => {
+      if matches!(
+        ctx.command_palette().source,
+        CommandPaletteSource::ActionPalette
+      ) {
+        let _ = submit_action_palette(ctx);
+        ctx.request_render();
+        return true;
+      }
+
       // If a directory is selected in argument-completion mode, expand it
       // into the input instead of executing the command.
       let expand_dir = {
@@ -1449,16 +1460,80 @@ pub fn handle_command_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEve
   }
 
   if should_update {
-    let (input, cursor) = {
+    let (input, cursor, source) = {
       let prompt = ctx.command_prompt_ref();
-      (prompt.input.clone(), prompt.cursor)
+      (
+        prompt.input.clone(),
+        prompt.cursor,
+        ctx.command_palette().source,
+      )
     };
-    update_command_palette_for_input(ctx, &input);
-    // Restore cursor — key handlers already positioned it correctly.
-    ctx.command_prompt_mut().cursor = cursor;
+    match source {
+      CommandPaletteSource::CommandLine => {
+        update_command_palette_for_input(ctx, &input);
+        // Restore cursor — key handlers already positioned it correctly.
+        ctx.command_prompt_mut().cursor = cursor;
+      },
+      CommandPaletteSource::ActionPalette => {
+        let _ = cursor;
+        update_action_palette_for_input(ctx, &input);
+      },
+    }
   }
 
   true
+}
+
+fn submit_action_palette<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool {
+  let filtered = command_palette_filtered_indices(ctx.command_palette());
+  if filtered.is_empty() {
+    return false;
+  }
+
+  let selected = ctx
+    .command_palette()
+    .selected
+    .filter(|sel| filtered.contains(sel))
+    .or_else(|| filtered.first().copied());
+
+  let Some(item_idx) = selected else {
+    return false;
+  };
+
+  let action = ctx
+    .command_palette()
+    .items
+    .get(item_idx)
+    .and_then(|item| item.action.clone());
+
+  let Some(action) = action else {
+    return false;
+  };
+
+  match action {
+    CommandPaletteAction::StaticCommand(command) => {
+      close_command_prompt_and_palette(ctx);
+      ctx.dispatch().post_on_keypress(ctx, command);
+      true
+    },
+    CommandPaletteAction::TypableCommand { name, args } => {
+      let registry = ctx.command_registry_ref() as *const CommandRegistry<Ctx>;
+      let result = unsafe { (&*registry).execute(ctx, &name, &args, CommandEvent::Validate) };
+      match result {
+        Ok(()) => {
+          close_command_prompt_and_palette(ctx);
+          true
+        },
+        Err(err) => {
+          let message = err.to_string();
+          ctx.command_prompt_mut().error = Some(message.clone());
+          ctx.push_error("command_palette", message);
+          close_command_prompt_and_palette(ctx);
+          true
+        },
+      }
+    },
+  }
 }
 
 fn close_command_prompt_and_palette<Ctx: DefaultContext>(ctx: &mut Ctx) {
@@ -1467,8 +1542,12 @@ fn close_command_prompt_and_palette<Ctx: DefaultContext>(ctx: &mut Ctx) {
   {
     let palette = ctx.command_palette_mut();
     palette.is_open = false;
+    palette.source = CommandPaletteSource::CommandLine;
     palette.query.clear();
+    palette.items.clear();
     palette.selected = None;
+    palette.prefiltered = false;
+    palette.max_results = usize::MAX;
     palette.scroll_offset = 0;
     palette.prompt_text = None;
   }
@@ -1533,6 +1612,7 @@ pub fn update_command_palette_for_input<Ctx: DefaultContext>(ctx: &mut Ctx, inpu
 
   {
     let palette = ctx.command_palette_mut();
+    palette.source = CommandPaletteSource::CommandLine;
     if let Some(items) = palette_items {
       palette.max_results = items.len().max(50);
       palette.items = items;
@@ -1562,6 +1642,33 @@ pub fn update_command_palette_for_input<Ctx: DefaultContext>(ctx: &mut Ctx, inpu
       }
     }
   }
+  ctx.request_render();
+}
+
+pub fn update_action_palette_for_input<Ctx: DefaultContext>(ctx: &mut Ctx, input: &str) {
+  let prompt = ctx.command_prompt_mut();
+  prompt.input = input.to_string();
+  prompt.cursor = prompt.input.len();
+  prompt.completions.clear();
+  prompt.help = None;
+  prompt.error = None;
+
+  {
+    let palette = ctx.command_palette_mut();
+    palette.source = CommandPaletteSource::ActionPalette;
+    palette.query = input.to_string();
+    palette.prefiltered = false;
+    palette.max_results = usize::MAX;
+    palette.scroll_offset = 0;
+    palette.prompt_text = None;
+    if let Some(sel) = palette.selected {
+      let filtered = command_palette_filtered_indices(palette);
+      if !filtered.contains(&sel) {
+        palette.selected = None;
+      }
+    }
+  }
+
   ctx.request_render();
 }
 

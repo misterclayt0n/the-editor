@@ -21,7 +21,22 @@ use the_lib::{
   },
 };
 
-use crate::DefaultContext;
+use crate::{
+  Command,
+  DefaultContext,
+};
+
+#[derive(Debug, Clone)]
+pub enum CommandPaletteAction {
+  StaticCommand(Command),
+  TypableCommand { name: String, args: String },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommandPaletteSource {
+  CommandLine,
+  ActionPalette,
+}
 
 #[derive(Debug, Clone)]
 pub struct CommandPaletteItem {
@@ -35,6 +50,7 @@ pub struct CommandPaletteItem {
   pub leading_color: Option<Color>,
   pub symbols:       Option<Vec<String>>,
   pub emphasis:      bool,
+  pub action:        Option<CommandPaletteAction>,
 }
 
 impl CommandPaletteItem {
@@ -50,6 +66,7 @@ impl CommandPaletteItem {
       leading_color: None,
       symbols:       None,
       emphasis:      false,
+      action:        None,
     }
   }
 }
@@ -57,6 +74,7 @@ impl CommandPaletteItem {
 #[derive(Debug, Clone)]
 pub struct CommandPaletteState {
   pub is_open:       bool,
+  pub source:        CommandPaletteSource,
   pub query:         String,
   pub selected:      Option<usize>,
   pub items:         Vec<CommandPaletteItem>,
@@ -137,24 +155,45 @@ pub fn build_command_palette_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNod
   }
 
   let display_value = state.prompt_text.clone().unwrap_or_else(|| {
-    if state.query.is_empty() {
-      String::new()
-    } else {
-      format!(":{}", state.query)
+    match state.source {
+      CommandPaletteSource::CommandLine => {
+        if state.query.is_empty() {
+          String::new()
+        } else {
+          format!(":{}", state.query)
+        }
+      },
+      CommandPaletteSource::ActionPalette => state.query.clone(),
     }
   });
   let mut input = UiInput::new("command_palette_input", display_value.clone());
   input.style = input.style.with_role("command_palette");
   input.style.accent = Some(UiColor::Value(placeholder_color));
-  input.placeholder = if state.prefiltered {
-    Some("Open file…".to_string())
-  } else {
-    Some(":Execute a command…".to_string())
+  input.placeholder = match state.source {
+    CommandPaletteSource::ActionPalette => Some("Search commands…".to_string()),
+    CommandPaletteSource::CommandLine => {
+      if state.prefiltered {
+        Some("Open file…".to_string())
+      } else {
+        Some(":Execute a command…".to_string())
+      }
+    },
   };
-  input.cursor = if display_value.is_empty() {
-    1
-  } else {
-    byte_to_char_idx(&display_value, display_value.len()) + 1
+  input.cursor = match state.source {
+    CommandPaletteSource::CommandLine => {
+      if display_value.is_empty() {
+        1
+      } else {
+        byte_to_char_idx(&display_value, display_value.len()) + 1
+      }
+    },
+    CommandPaletteSource::ActionPalette => {
+      if display_value.is_empty() {
+        0
+      } else {
+        byte_to_char_idx(&display_value, display_value.len())
+      }
+    },
   };
   let input = UiNode::Input(input);
 
@@ -201,6 +240,7 @@ impl Default for CommandPaletteState {
   fn default() -> Self {
     Self {
       is_open:       false,
+      source:        CommandPaletteSource::CommandLine,
       query:         String::new(),
       selected:      None,
       items:         Vec::new(),
@@ -314,6 +354,7 @@ pub fn command_palette_default_selected(_state: &CommandPaletteState) -> Option<
 mod tests {
   use super::{
     CommandPaletteItem,
+    CommandPaletteSource,
     CommandPaletteState,
     command_palette_default_selected,
     command_palette_filtered_indices,
@@ -327,6 +368,7 @@ mod tests {
 
     let state = CommandPaletteState {
       is_open:       true,
+      source:        CommandPaletteSource::CommandLine,
       query:         "w".to_string(),
       selected:      None,
       items:         vec![watch, write],
@@ -344,6 +386,7 @@ mod tests {
   fn default_selected_is_none_even_with_query_matches() {
     let state = CommandPaletteState {
       is_open:       true,
+      source:        CommandPaletteSource::CommandLine,
       query:         "w".to_string(),
       selected:      None,
       items:         vec![CommandPaletteItem::new("write")],

@@ -282,6 +282,7 @@ private final class NavigatorSidebarContainerView: NSView {
     let scrollView = NSScrollView()
     let outlineView = FileTreeOutlineView()
     let nameColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("name"))
+    private let debugIdentity = String(describing: UUID())
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -293,6 +294,22 @@ private final class NavigatorSidebarContainerView: NSView {
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        debugLogScrollerState(reason: "move_to_window")
+    }
+
+    override func viewDidMoveToSuperview() {
+        super.viewDidMoveToSuperview()
+        debugLogScrollerState(reason: "move_to_superview")
+    }
+
+    override func layout() {
+        super.layout()
+        applyScrollerAppearance()
+        debugLogScrollerState(reason: "layout")
     }
 
     private func configureViews() {
@@ -328,7 +345,42 @@ private final class NavigatorSidebarContainerView: NSView {
         }
 
         scrollView.documentView = outlineView
+        // Build our own scroller so width is stable across tabs/windows.
+        let verticalScroller = NSScroller()
+        verticalScroller.controlSize = .small
+        scrollView.verticalScroller = verticalScroller
+        applyScrollerAppearance()
+        debugLogScrollerState(reason: "configure")
+    }
+
+    private func applyScrollerAppearance() {
+        // Keep style consistent across tab/windows; AppKit may otherwise switch
+        // the key tab to .legacy while background tabs remain .overlay.
+        scrollView.scrollerStyle = .overlay
         scrollView.verticalScroller?.controlSize = .small
+    }
+
+    private func debugLogScrollerState(reason: String) {
+        guard DiagnosticsDebugLog.enabled else { return }
+
+        let style = (scrollView.scrollerStyle == .overlay) ? "overlay" : "legacy"
+        let preferred = (NSScroller.preferredScrollerStyle == .overlay) ? "overlay" : "legacy"
+        let windowNumber = window.map { String($0.windowNumber) } ?? "nil"
+        let key = (window?.isKeyWindow == true) ? "1" : "0"
+        let main = (window?.isMainWindow == true) ? "1" : "0"
+        let tabBarVisible = (window?.tabGroup?.isTabBarVisible == true) ? "1" : "0"
+        let tabSelected = ((window?.tabGroup?.selectedWindow) === window) ? "1" : "0"
+        let hidden = (scrollView.verticalScroller?.isHidden == true) ? "1" : "0"
+        let alpha = String(format: "%.2f", scrollView.verticalScroller?.alphaValue ?? -1)
+        let width = String(format: "%.1f", scrollView.verticalScroller?.frame.width ?? -1)
+        let contentY = String(format: "%.1f", scrollView.contentView.bounds.minY)
+        let contentHeight = String(format: "%.1f", scrollView.contentView.bounds.height)
+        let docHeight = String(format: "%.1f", scrollView.documentView?.bounds.height ?? -1)
+
+        DiagnosticsDebugLog.logChanged(
+            key: "filetree.scroller.\(debugIdentity)",
+            value: "reason=\(reason) style=\(style) preferred=\(preferred) width=\(width) hidden=\(hidden) alpha=\(alpha) key=\(key) main=\(main) tabbar=\(tabBarVisible) tabsel=\(tabSelected) win=\(windowNumber) y=\(contentY) vh=\(contentHeight) dh=\(docHeight)"
+        )
     }
 
     private func buildLayout() {
@@ -382,12 +434,19 @@ private struct NavigatorSidebarView: NSViewRepresentable {
     final class Coordinator: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate {
         var parent: NavigatorSidebarView
 
+        private struct ScrollRestoreState {
+            let anchorNodeID: String?
+            let anchorOffsetY: CGFloat
+            let fallbackOriginY: CGFloat
+        }
+
         private weak var container: NavigatorSidebarContainerView?
         private var rootNodes: [FileTreeNode] = []
         private var suppressSelectionEvents = false
         private var suppressExpansionEvents = false
         private var latestExpandedNodeIDs: Set<String> = []
         private var latestSelectedNodeID: String?
+        private var lastAppliedSnapshot: FileTreeSnapshot?
 
         init(_ parent: NavigatorSidebarView) {
             self.parent = parent
@@ -398,6 +457,14 @@ private struct NavigatorSidebarView: NSViewRepresentable {
         }
 
         func updateSnapshot(_ snapshot: FileTreeSnapshot) {
+            if let lastAppliedSnapshot,
+               Self.isDisplayEquivalent(lhs: lastAppliedSnapshot, rhs: snapshot) {
+                debugSnapshotUpdate(snapshot, skipped: true)
+                return
+            }
+            lastAppliedSnapshot = snapshot
+            debugSnapshotUpdate(snapshot, skipped: false)
+
             rootNodes = Self.buildOutlineNodes(from: snapshot.nodes)
             latestExpandedNodeIDs = snapshot.expandedNodeIDs
             latestSelectedNodeID = snapshot.selectedNodeID
@@ -406,9 +473,32 @@ private struct NavigatorSidebarView: NSViewRepresentable {
                 return
             }
 
+            let scrollState = captureScrollState(in: outlineView)
             outlineView.reloadData()
             restoreExpansionState(expandedNodeIDs: latestExpandedNodeIDs)
             restoreSelection(selectedNodeID: latestSelectedNodeID)
+            restoreScrollState(scrollState, in: outlineView)
+        }
+
+        private func debugSnapshotUpdate(_ snapshot: FileTreeSnapshot, skipped: Bool) {
+            guard DiagnosticsDebugLog.enabled else { return }
+            let identity: String = {
+                guard let container else { return "nil" }
+                return String(describing: Unmanaged.passUnretained(container).toOpaque())
+            }()
+            let selected = snapshot.selectedPath ?? "<nil>"
+            DiagnosticsDebugLog.logChanged(
+                key: "filetree.snapshot.\(identity)",
+                value: "skipped=\(skipped ? 1 : 0) visible=\(snapshot.visible ? 1 : 0) mode=\(snapshot.mode) root=\(snapshot.root) generation=\(snapshot.refreshGeneration) nodes=\(snapshot.nodes.count) selected=\(selected)"
+            )
+        }
+
+        private static func isDisplayEquivalent(lhs: FileTreeSnapshot, rhs: FileTreeSnapshot) -> Bool {
+            lhs.visible == rhs.visible
+                && lhs.mode == rhs.mode
+                && lhs.root == rhs.root
+                && lhs.selectedPath == rhs.selectedPath
+                && lhs.nodes == rhs.nodes
         }
 
         private static func buildOutlineNodes(from snapshots: [FileTreeNodeSnapshot]) -> [FileTreeNode] {
@@ -518,6 +608,70 @@ private struct NavigatorSidebarView: NSViewRepresentable {
                 }
             }
             return nil
+        }
+
+        private static func node(withID targetID: String, in nodes: [FileTreeNode]) -> FileTreeNode? {
+            for node in nodes {
+                if node.id == targetID {
+                    return node
+                }
+                if let child = Self.node(withID: targetID, in: node.children) {
+                    return child
+                }
+            }
+            return nil
+        }
+
+        private func captureScrollState(in outlineView: NSOutlineView) -> ScrollRestoreState? {
+            guard let clipView = outlineView.enclosingScrollView?.contentView else {
+                return nil
+            }
+
+            let originY = clipView.bounds.minY
+            let samplePoint = CGPoint(x: 4, y: originY + 1)
+            let row = outlineView.row(at: samplePoint)
+            guard row >= 0, let node = outlineView.item(atRow: row) as? FileTreeNode else {
+                return ScrollRestoreState(anchorNodeID: nil, anchorOffsetY: 0, fallbackOriginY: originY)
+            }
+
+            let rowRect = outlineView.rect(ofRow: row)
+            return ScrollRestoreState(
+                anchorNodeID: node.id,
+                anchorOffsetY: originY - rowRect.minY,
+                fallbackOriginY: originY
+            )
+        }
+
+        private func restoreScrollState(_ state: ScrollRestoreState?, in outlineView: NSOutlineView) {
+            guard
+                let state,
+                let clipView = outlineView.enclosingScrollView?.contentView
+            else {
+                return
+            }
+
+            let targetY: CGFloat = {
+                guard
+                    let anchorID = state.anchorNodeID,
+                    let node = Self.node(withID: anchorID, in: rootNodes)
+                else {
+                    return state.fallbackOriginY
+                }
+                let row = outlineView.row(forItem: node)
+                guard row >= 0 else {
+                    return state.fallbackOriginY
+                }
+                return outlineView.rect(ofRow: row).minY + state.anchorOffsetY
+            }()
+
+            let maxY = max(0, outlineView.bounds.height - clipView.bounds.height)
+            let clampedY = min(max(0, targetY), maxY)
+            guard abs(clampedY - clipView.bounds.minY) > 0.5 else {
+                return
+            }
+
+            clipView.scroll(to: NSPoint(x: clipView.bounds.minX, y: clampedY))
+            outlineView.enclosingScrollView?.reflectScrolledClipView(clipView)
         }
 
         @objc

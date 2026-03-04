@@ -10341,6 +10341,32 @@ impl DefaultContext for App {
     true
   }
 
+  fn supports_embedded_terminal(&self) -> bool {
+    true
+  }
+
+  fn open_terminal_in_active_pane(&mut self) -> bool {
+    if self.active_editor.is_none() {
+      return false;
+    }
+    let _ = self.active_editor_mut().open_terminal_in_active_pane();
+    true
+  }
+
+  fn close_terminal_in_active_pane(&mut self) -> bool {
+    if self.active_editor.is_none() {
+      return false;
+    }
+    self.active_editor_mut().close_terminal_in_active_pane()
+  }
+
+  fn is_active_pane_terminal(&self) -> bool {
+    self
+      .active_editor
+      .and_then(|id| self.inner.editor(id))
+      .is_some_and(the_lib::editor::Editor::is_active_pane_terminal)
+  }
+
   fn global_search(&mut self) {
     self.start_global_search();
   }

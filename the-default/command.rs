@@ -521,6 +521,18 @@ pub trait DefaultContext: Sized + 'static {
   fn open_native_file_explorer(&mut self, _current_buffer_directory: bool) -> bool {
     false
   }
+  fn supports_embedded_terminal(&self) -> bool {
+    false
+  }
+  fn open_terminal_in_active_pane(&mut self) -> bool {
+    false
+  }
+  fn close_terminal_in_active_pane(&mut self) -> bool {
+    false
+  }
+  fn is_active_pane_terminal(&self) -> bool {
+    false
+  }
   fn registers(&self) -> &Registers;
   fn registers_mut(&mut self) -> &mut Registers;
   fn register(&self) -> Option<char>;
@@ -1517,6 +1529,8 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::DiagnosticsPicker => crate::file_picker::open_diagnostics_picker(ctx, false),
     Command::WorkspaceDiagnosticsPicker => crate::file_picker::open_diagnostics_picker(ctx, true),
     Command::ChangedFilePicker => crate::file_picker::open_changed_file_picker(ctx),
+    Command::TerminalOpen => terminal_open(ctx),
+    Command::TerminalClose => terminal_close(ctx),
     Command::LspGotoDeclaration => ctx.lsp_goto_declaration(),
     Command::LspGotoDefinition => ctx.lsp_goto_definition(),
     Command::LspGotoTypeDefinition => ctx.lsp_goto_type_definition(),
@@ -2561,6 +2575,38 @@ fn split_new_scratch<Ctx: DefaultContext>(ctx: &mut Ctx, axis: SplitAxis) {
   let view = ViewState::new(viewport, Position::new(0, 0));
   let _ = ctx.editor().open_buffer(Rope::new(), view, None);
   ctx.set_file_path(None);
+  ctx.request_render();
+}
+
+fn terminal_open<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  if !ctx.supports_embedded_terminal() {
+    ctx.push_warning("terminal", "embedded terminal is not supported in this client");
+    return;
+  }
+  if ctx.is_active_pane_terminal() {
+    ctx.push_info("terminal", "active view is already a terminal");
+    return;
+  }
+  if !ctx.open_terminal_in_active_pane() {
+    ctx.push_warning("terminal", "failed to open terminal in active view");
+    return;
+  }
+  ctx.request_render();
+}
+
+fn terminal_close<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  if !ctx.supports_embedded_terminal() {
+    ctx.push_warning("terminal", "embedded terminal is not supported in this client");
+    return;
+  }
+  if !ctx.is_active_pane_terminal() {
+    ctx.push_warning("terminal", "active view is not a terminal");
+    return;
+  }
+  if !ctx.close_terminal_in_active_pane() {
+    ctx.push_warning("terminal", "failed to close terminal in active view");
+    return;
+  }
   ctx.request_render();
 }
 
@@ -6473,6 +6519,8 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "diagnostics_picker" => Some(Command::diagnostics_picker()),
     "workspace_diagnostics_picker" => Some(Command::workspace_diagnostics_picker()),
     "changed_file_picker" => Some(Command::changed_file_picker()),
+    "terminal_open" => Some(Command::terminal_open()),
+    "terminal_close" => Some(Command::terminal_close()),
     "lsp_goto_declaration" => Some(Command::lsp_goto_declaration()),
     "goto_declaration" => Some(Command::lsp_goto_declaration()),
     "lsp_goto_definition" => Some(Command::lsp_goto_definition()),
@@ -6585,6 +6633,20 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "add_newline_below" => Some(Command::add_newline_below()),
 
     _ => None,
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::{
+    Command,
+    command_from_name,
+  };
+
+  #[test]
+  fn terminal_command_names_map_to_commands() {
+    assert_eq!(command_from_name("terminal_open"), Some(Command::terminal_open()));
+    assert_eq!(command_from_name("terminal_close"), Some(Command::terminal_close()));
   }
 }
 

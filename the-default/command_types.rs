@@ -676,6 +676,8 @@ pub enum Command {
   DiagnosticsPicker,
   WorkspaceDiagnosticsPicker,
   ChangedFilePicker,
+  TerminalOpen,
+  TerminalClose,
   LspGotoDeclaration,
   LspGotoDefinition,
   LspGotoTypeDefinition,
@@ -1932,6 +1934,16 @@ impl Command {
   #[must_use]
   pub const fn changed_file_picker() -> Self {
     Self::ChangedFilePicker
+  }
+
+  #[must_use]
+  pub const fn terminal_open() -> Self {
+    Self::TerminalOpen
+  }
+
+  #[must_use]
+  pub const fn terminal_close() -> Self {
+    Self::TerminalClose
   }
 
   #[must_use]

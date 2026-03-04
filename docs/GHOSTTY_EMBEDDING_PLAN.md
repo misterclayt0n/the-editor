@@ -248,6 +248,8 @@ Exit criteria:
 - FFI tests validate pane metadata and active pane behavior.
 
 ### Phase 3: Default command semantics
+Status: completed.
+
 Work:
 - add terminal commands + mappings.
 - add `DefaultContext` hooks and default fallbacks.

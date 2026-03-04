@@ -4750,6 +4750,39 @@ impl App {
     buffer_id
   }
 
+  pub fn supports_embedded_terminal(&self) -> bool {
+    <Self as DefaultContext>::supports_embedded_terminal(self)
+  }
+
+  pub fn open_terminal_in_active_pane(&mut self, id: ffi::EditorId) -> bool {
+    if self.activate(id).is_none() {
+      return false;
+    }
+    let opened = <Self as DefaultContext>::open_terminal_in_active_pane(self);
+    if opened {
+      self.request_render();
+    }
+    opened
+  }
+
+  pub fn close_terminal_in_active_pane(&mut self, id: ffi::EditorId) -> bool {
+    if self.activate(id).is_none() {
+      return false;
+    }
+    let closed = <Self as DefaultContext>::close_terminal_in_active_pane(self);
+    if closed {
+      self.request_render();
+    }
+    closed
+  }
+
+  pub fn is_active_pane_terminal(&mut self, id: ffi::EditorId) -> bool {
+    if self.activate(id).is_none() {
+      return false;
+    }
+    <Self as DefaultContext>::is_active_pane_terminal(self)
+  }
+
   pub fn active_file_path(&self, id: ffi::EditorId) -> String {
     self
       .editor(id)
@@ -9204,6 +9237,16 @@ impl App {
       pane_changed = self.set_active_pane_from_pointer_surface(surface_id);
     }
 
+    // Terminal panes own pointer semantics in the Swift Ghostty host. The Rust
+    // editor pointer path should only update active-pane focus for terminal
+    // surfaces and must not attempt text selection/drag behavior.
+    if self.active_editor_ref().is_active_pane_terminal() {
+      if pane_changed {
+        self.request_render();
+      }
+      return PointerEventOutcome::Handled;
+    }
+
     match event.kind {
       PointerKind::Scroll => {
         let row_delta = event.scroll_y.trunc() as i32;
@@ -11556,6 +11599,10 @@ mod ffi {
     fn open_file_path_in_new_tab(self: &mut App, id: EditorId, path: &str) -> bool;
     fn open_untitled_buffer(self: &mut App, id: EditorId) -> u64;
     fn open_untitled_buffer_in_new_tab(self: &mut App, id: EditorId) -> u64;
+    fn supports_embedded_terminal(self: &App) -> bool;
+    fn open_terminal_in_active_pane(self: &mut App, id: EditorId) -> bool;
+    fn close_terminal_in_active_pane(self: &mut App, id: EditorId) -> bool;
+    fn is_active_pane_terminal(self: &mut App, id: EditorId) -> bool;
     fn active_file_path(self: &App, id: EditorId) -> String;
     fn set_native_tab_open_gateway(self: &mut App, enabled: bool);
     fn take_native_tab_open_request_path(self: &mut App) -> String;

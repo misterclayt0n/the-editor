@@ -13,6 +13,18 @@ struct SplitSeparatorSnapshot: Identifiable {
     var id: UInt64 { splitId }
 }
 
+struct TerminalPaneSnapshot: Identifiable, Equatable {
+    let paneId: UInt64
+    let terminalId: UInt64
+    let x: UInt16
+    let y: UInt16
+    let width: UInt16
+    let height: UInt16
+    let isActive: Bool
+
+    var id: UInt64 { paneId }
+}
+
 private struct NativeTabOpenRequest: Decodable, Hashable {
     enum Kind: String, Decodable {
         case focusExisting = "focus_existing"
@@ -38,6 +50,8 @@ final class EditorModel: ObservableObject {
     @Published var plan: RenderPlan
     @Published var framePlan: RenderFramePlan
     @Published var splitSeparators: [SplitSeparatorSnapshot] = []
+    @Published var terminalPanes: [TerminalPaneSnapshot] = []
+    @Published var isActivePaneTerminal: Bool = false
     @Published var uiTree: UiTreeSnapshot = .empty
     @Published var bufferTabsSnapshot: BufferTabsSnapshot? = nil
     @Published var navigationTitle: String = "untitled"
@@ -110,7 +124,10 @@ final class EditorModel: ObservableObject {
         self.framePlan = initialFramePlan
         self.plan = initialFramePlan.active_plan()
         self.splitSeparators = []
+        self.terminalPanes = []
+        self.isActivePaneTerminal = false
         self.mode = EditorMode(rawValue: app.mode(editorId)) ?? .normal
+        updateTerminalPaneSnapshots(from: initialFramePlan)
         refreshFileTree(force: true)
         if DiagnosticsDebugLog.enabled {
             DiagnosticsDebugLog.log(
@@ -179,6 +196,7 @@ final class EditorModel: ObservableObject {
         framePlan = app.frame_render_plan(editorId)
         plan = framePlan.active_plan()
         splitSeparators = fetchSplitSeparators()
+        updateTerminalPaneSnapshots(from: framePlan)
         debugDiagnosticsSnapshot(trigger: trigger, plan: plan)
 
         mode = EditorMode(rawValue: app.mode(editorId)) ?? .normal
@@ -318,6 +336,24 @@ final class EditorModel: ObservableObject {
         refresh(trigger: "split_resize_drag")
     }
 
+    @discardableResult
+    func openTerminalInActivePane() -> Bool {
+        guard app.open_terminal_in_active_pane(editorId) else {
+            return false
+        }
+        refresh(trigger: "terminal_open")
+        return true
+    }
+
+    @discardableResult
+    func closeTerminalInActivePane() -> Bool {
+        guard app.close_terminal_in_active_pane(editorId) else {
+            return false
+        }
+        refresh(trigger: "terminal_close")
+        return true
+    }
+
     private func scrollDelta(deltaX: CGFloat, deltaY: CGFloat, precise: Bool) -> (Int, Int) {
         let lineDeltaY: CGFloat
         let lineDeltaX: CGFloat
@@ -358,6 +394,62 @@ final class EditorModel: ObservableObject {
             )
         }
         return separators
+    }
+
+    private func updateTerminalPaneSnapshots(from framePlan: RenderFramePlan) {
+        let count = Int(framePlan.pane_count())
+        guard count > 0 else {
+            if !terminalPanes.isEmpty {
+                terminalPanes = []
+            }
+            if isActivePaneTerminal {
+                isActivePaneTerminal = false
+            }
+            GhosttyRuntime.shared.reconcileTerminalIds(Set<UInt64>())
+            return
+        }
+
+        var panes: [TerminalPaneSnapshot] = []
+        panes.reserveCapacity(count)
+        var activeTerminal = false
+        for index in 0..<count {
+            let pane = framePlan.pane_at(UInt(index))
+            let paneKind = pane.pane_kind()
+            guard paneKind == 1 else {
+                continue
+            }
+
+            let terminalId = pane.terminal_id()
+            guard terminalId != 0 else {
+                continue
+            }
+
+            let rect = pane.rect()
+            let isActive = pane.is_active()
+            if isActive {
+                activeTerminal = true
+            }
+            panes.append(
+                TerminalPaneSnapshot(
+                    paneId: pane.pane_id(),
+                    terminalId: terminalId,
+                    x: rect.x,
+                    y: rect.y,
+                    width: rect.width,
+                    height: rect.height,
+                    isActive: isActive
+                )
+            )
+        }
+
+        if panes != terminalPanes {
+            terminalPanes = panes
+        }
+        if activeTerminal != isActivePaneTerminal {
+            isActivePaneTerminal = activeTerminal
+        }
+
+        GhosttyRuntime.shared.reconcileTerminalIds(Set(panes.map(\.terminalId)))
     }
 
     func selectCommandPalette(index: Int) {

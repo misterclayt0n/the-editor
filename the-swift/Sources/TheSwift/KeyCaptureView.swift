@@ -330,6 +330,7 @@ struct ScrollCaptureView: NSViewRepresentable {
                 window?.invalidateCursorRects(for: self)
             }
         }
+        var passthroughRects: [CGRect] = []
         var panes: [PaneHandle] = []
         var cellSize: CGSize = .init(width: 1, height: 1)
         private var trackingArea: NSTrackingArea?
@@ -371,6 +372,16 @@ struct ScrollCaptureView: NSViewRepresentable {
                 addCursorRect(rect, cursor: cursor(for: separator))
             }
             addCursorRect(bounds, cursor: .arrow)
+        }
+
+        override func hitTest(_ point: NSPoint) -> NSView? {
+            if hitSeparator(at: point) != nil {
+                return self
+            }
+            if shouldPassthrough(at: point) {
+                return nil
+            }
+            return super.hitTest(point)
         }
 
         override func cursorUpdate(with event: NSEvent) {
@@ -598,6 +609,10 @@ struct ScrollCaptureView: NSViewRepresentable {
             return best?.0
         }
 
+        private func shouldPassthrough(at point: NSPoint) -> Bool {
+            passthroughRects.contains(where: { $0.contains(point) })
+        }
+
         private func hitPane(at point: NSPoint) -> PaneHandle? {
             panes.first(where: { $0.rect.contains(point) })
         }
@@ -705,6 +720,7 @@ struct ScrollCaptureView: NSViewRepresentable {
     let onScroll: (CGFloat, CGFloat, Bool) -> Void
     let onPointer: (MouseBridgeEvent) -> Void
     let separators: [SeparatorHandle]
+    let passthroughRects: [CGRect]
     let panes: [PaneHandle]
     let cellSize: CGSize
     let onSplitResize: (UInt64, CGPoint) -> Void
@@ -714,6 +730,7 @@ struct ScrollCaptureView: NSViewRepresentable {
         view.onScroll = onScroll
         view.onPointer = onPointer
         view.separators = separators
+        view.passthroughRects = passthroughRects
         view.panes = panes
         view.cellSize = cellSize
         view.onSplitResize = onSplitResize
@@ -724,6 +741,7 @@ struct ScrollCaptureView: NSViewRepresentable {
         nsView.onScroll = onScroll
         nsView.onPointer = onPointer
         nsView.separators = separators
+        nsView.passthroughRects = passthroughRects
         nsView.panes = panes
         nsView.cellSize = cellSize
         nsView.onSplitResize = onSplitResize

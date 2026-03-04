@@ -38,8 +38,12 @@ struct EditorView: View {
         let isCompletionOpen = completionSnapshot != nil
         let isHoverOpen = hoverSnapshot != nil && !isCompletionOpen
         let isSignatureOpen = signatureSnapshot != nil && !isCompletionOpen && !isHoverOpen
+        let shouldTerminalOwnFocus = !isOverlayOpen && !isCompletionOpen && !isHoverOpen && !isSignatureOpen
         let cursorPickState = cursorPickState(from: model.uiTree.statuslineSnapshot())
         let activePaneOrigin = panePixelOrigin(model.activePaneRect(), cellSize: cellSize)
+        let terminalPaneIds = Set(model.terminalPanes.map(\.paneId))
+        let terminalPaneLayouts = terminalPaneLayouts(from: model.terminalPanes, cellSize: cellSize)
+        let terminalPassthroughRects = terminalPaneLayouts.map(\.frame)
         let splitResizeHandles = splitResizeHandles(from: model.splitSeparators, cellSize: cellSize)
         let pointerPanes = pointerPanes(from: model.framePlan, cellSize: cellSize)
         let fileTreeSnapshot = model.fileTreeSnapshot
@@ -67,6 +71,7 @@ struct EditorView: View {
                                     size: size,
                                     framePlan: model.framePlan,
                                     fallbackPlan: model.plan,
+                                    terminalPaneIds: terminalPaneIds,
                                     cellSize: cellSize,
                                     bufferFont: bufferFont,
                                     bufferNSFont: bufferNSFont,
@@ -74,6 +79,21 @@ struct EditorView: View {
                                 )
                             }
                             .background(SwiftUI.Color.black)
+
+                            ForEach(terminalPaneLayouts) { pane in
+                                GhosttyPaneView(
+                                    paneId: pane.paneId,
+                                    terminalId: pane.terminalId,
+                                    cellSize: cellSize,
+                                    focused: pane.isActive && shouldTerminalOwnFocus,
+                                    onPointer: { event in
+                                        model.handlePointerEvent(event)
+                                    }
+                                )
+                                .frame(width: pane.frame.width, height: pane.frame.height)
+                                .position(x: pane.frame.midX, y: pane.frame.midY)
+                                .clipped()
+                            }
 
                             UiOverlayHost(
                                 tree: model.uiTree,
@@ -188,7 +208,7 @@ struct EditorView: View {
                         }
                         .background(
                             Group {
-                                if !isOverlayOpen {
+                                if !isOverlayOpen && !model.isActivePaneTerminal {
                                     KeyCaptureView(
                                         onKey: { event in
                                             model.handleKeyEvent(event)
@@ -222,6 +242,7 @@ struct EditorView: View {
                                             model.handlePointerEvent(event)
                                         },
                                         separators: splitResizeHandles,
+                                        passthroughRects: terminalPassthroughRects,
                                         panes: pointerPanes,
                                         cellSize: cellSize,
                                         onSplitResize: { splitId, point in
@@ -246,6 +267,17 @@ struct EditorView: View {
                         }
                         .onChange(of: isCompletionOpen) { isOpen in
                             guard !isOpen else {
+                                return
+                            }
+                            guard !model.isActivePaneTerminal else {
+                                return
+                            }
+                            DispatchQueue.main.async {
+                                KeyCaptureFocusBridge.shared.reclaimActive()
+                            }
+                        }
+                        .onChange(of: model.isActivePaneTerminal) { isTerminal in
+                            guard !isTerminal && !isOverlayOpen else {
                                 return
                             }
                             DispatchQueue.main.async {
@@ -322,6 +354,34 @@ struct EditorView: View {
         }
     }
 
+    private struct TerminalPaneLayout: Identifiable {
+        let paneId: UInt64
+        let terminalId: UInt64
+        let frame: CGRect
+        let isActive: Bool
+
+        var id: UInt64 { paneId }
+    }
+
+    private func terminalPaneLayouts(
+        from panes: [TerminalPaneSnapshot],
+        cellSize: CGSize
+    ) -> [TerminalPaneLayout] {
+        panes.map { pane in
+            TerminalPaneLayout(
+                paneId: pane.paneId,
+                terminalId: pane.terminalId,
+                frame: CGRect(
+                    x: CGFloat(pane.x) * cellSize.width,
+                    y: CGFloat(pane.y) * cellSize.height,
+                    width: CGFloat(pane.width) * cellSize.width,
+                    height: CGFloat(pane.height) * cellSize.height
+                ),
+                isActive: pane.isActive
+            )
+        }
+    }
+
     private func pointerPanes(
         from framePlan: RenderFramePlan,
         cellSize: CGSize
@@ -332,6 +392,9 @@ struct EditorView: View {
         handles.reserveCapacity(count)
         for index in 0..<count {
             let pane = framePlan.pane_at(UInt(index))
+            if pane.pane_kind() == 1 {
+                continue
+            }
             let rect = pane.rect()
             let paneRect = CGRect(
                 x: CGFloat(rect.x) * cellSize.width,
@@ -366,6 +429,7 @@ struct EditorView: View {
         size: CGSize,
         framePlan: RenderFramePlan,
         fallbackPlan: RenderPlan,
+        terminalPaneIds: Set<UInt64>,
         cellSize: CGSize,
         bufferFont: Font,
         bufferNSFont: NSFont,
@@ -387,6 +451,9 @@ struct EditorView: View {
 
         for index in 0..<paneCount {
             let pane = framePlan.pane_at(UInt(index))
+            if terminalPaneIds.contains(pane.pane_id()) {
+                continue
+            }
             let paneRect = pane.rect()
             let paneSize = CGSize(
                 width: CGFloat(paneRect.width) * cellSize.width,
@@ -434,6 +501,9 @@ struct EditorView: View {
         for index in 0..<paneCount {
             let pane = framePlan.pane_at(UInt(index))
             if pane.is_active() {
+                continue
+            }
+            if pane.pane_kind() == 1 {
                 continue
             }
             let rect = pane.rect()

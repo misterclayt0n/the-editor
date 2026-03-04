@@ -87,6 +87,18 @@ extension AppRefMut {
         __swift_bridge__$App$open_untitled_buffer_in_new_tab(ptr, id.intoFfiRepr())
     }
 
+    public func open_terminal_in_active_pane(_ id: EditorId) -> Bool {
+        __swift_bridge__$App$open_terminal_in_active_pane(ptr, id.intoFfiRepr())
+    }
+
+    public func close_terminal_in_active_pane(_ id: EditorId) -> Bool {
+        __swift_bridge__$App$close_terminal_in_active_pane(ptr, id.intoFfiRepr())
+    }
+
+    public func is_active_pane_terminal(_ id: EditorId) -> Bool {
+        __swift_bridge__$App$is_active_pane_terminal(ptr, id.intoFfiRepr())
+    }
+
     public func set_native_tab_open_gateway(_ enabled: Bool) {
         __swift_bridge__$App$set_native_tab_open_gateway(ptr, enabled)
     }
@@ -389,6 +401,10 @@ public class AppRef {
     }
 }
 extension AppRef {
+    public func supports_embedded_terminal() -> Bool {
+        __swift_bridge__$App$supports_embedded_terminal(ptr)
+    }
+
     public func active_file_path(_ id: EditorId) -> RustString {
         RustString(ptr: __swift_bridge__$App$active_file_path(ptr, id.intoFfiRepr()))
     }
@@ -2065,6 +2081,14 @@ extension RenderFramePaneRef {
 
     public func is_active() -> Bool {
         __swift_bridge__$RenderFramePane$is_active(ptr)
+    }
+
+    public func pane_kind() -> UInt8 {
+        __swift_bridge__$RenderFramePane$pane_kind(ptr)
+    }
+
+    public func terminal_id() -> UInt64 {
+        __swift_bridge__$RenderFramePane$terminal_id(ptr)
     }
 
     public func plan() -> RenderPlan {

@@ -18,7 +18,9 @@
 - [x] Phase 1: Core pane content model (`EditorBuffer`/`Terminal`) in `the-lib`
 - [x] Phase 2: Render and FFI pane-kind contract
 - [x] Phase 3: Default terminal command semantics
-- [ ] Phase 4: Swift Ghostty runtime MVP
+- [x] Phase 4: Swift Ghostty runtime MVP
+  - Implementation landed in `the-swift` (runtime wrappers, pane embedding, focus mapping).
+  - Local GhosttyKit validation is blocked until the host installs Xcode's Metal Toolchain.
 - [ ] Phase 5: Swift composition polish
 - [ ] Phase 6: `the-term` fallback
 - [ ] Phase 7: Packaging and CI

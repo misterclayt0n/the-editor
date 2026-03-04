@@ -207,6 +207,30 @@ void* __swift_bridge__$Vec_SplitSeparator$get_mut(void* vec_ptr, uintptr_t index
 uintptr_t __swift_bridge__$Vec_SplitSeparator$len(void* vec_ptr);
 void* __swift_bridge__$Vec_SplitSeparator$as_ptr(void* vec_ptr);
 
+typedef struct FileTreeSnapshotData FileTreeSnapshotData;
+void __swift_bridge__$FileTreeSnapshotData$_free(void* self);
+
+void* __swift_bridge__$Vec_FileTreeSnapshotData$new(void);
+void __swift_bridge__$Vec_FileTreeSnapshotData$drop(void* vec_ptr);
+void __swift_bridge__$Vec_FileTreeSnapshotData$push(void* vec_ptr, void* item_ptr);
+void* __swift_bridge__$Vec_FileTreeSnapshotData$pop(void* vec_ptr);
+void* __swift_bridge__$Vec_FileTreeSnapshotData$get(void* vec_ptr, uintptr_t index);
+void* __swift_bridge__$Vec_FileTreeSnapshotData$get_mut(void* vec_ptr, uintptr_t index);
+uintptr_t __swift_bridge__$Vec_FileTreeSnapshotData$len(void* vec_ptr);
+void* __swift_bridge__$Vec_FileTreeSnapshotData$as_ptr(void* vec_ptr);
+
+typedef struct FileTreeNodeFFI FileTreeNodeFFI;
+void __swift_bridge__$FileTreeNodeFFI$_free(void* self);
+
+void* __swift_bridge__$Vec_FileTreeNodeFFI$new(void);
+void __swift_bridge__$Vec_FileTreeNodeFFI$drop(void* vec_ptr);
+void __swift_bridge__$Vec_FileTreeNodeFFI$push(void* vec_ptr, void* item_ptr);
+void* __swift_bridge__$Vec_FileTreeNodeFFI$pop(void* vec_ptr);
+void* __swift_bridge__$Vec_FileTreeNodeFFI$get(void* vec_ptr, uintptr_t index);
+void* __swift_bridge__$Vec_FileTreeNodeFFI$get_mut(void* vec_ptr, uintptr_t index);
+uintptr_t __swift_bridge__$Vec_FileTreeNodeFFI$len(void* vec_ptr);
+void* __swift_bridge__$Vec_FileTreeNodeFFI$as_ptr(void* vec_ptr);
+
 typedef struct FilePickerSnapshotData FilePickerSnapshotData;
 void __swift_bridge__$FilePickerSnapshotData$_free(void* self);
 
@@ -277,6 +301,10 @@ bool __swift_bridge__$App$open_file_path(void* self, struct __swift_bridge__$Edi
 bool __swift_bridge__$App$open_file_path_in_new_tab(void* self, struct __swift_bridge__$EditorId id, struct RustStr path);
 uint64_t __swift_bridge__$App$open_untitled_buffer(void* self, struct __swift_bridge__$EditorId id);
 uint64_t __swift_bridge__$App$open_untitled_buffer_in_new_tab(void* self, struct __swift_bridge__$EditorId id);
+bool __swift_bridge__$App$supports_embedded_terminal(void* self);
+bool __swift_bridge__$App$open_terminal_in_active_pane(void* self, struct __swift_bridge__$EditorId id);
+bool __swift_bridge__$App$close_terminal_in_active_pane(void* self, struct __swift_bridge__$EditorId id);
+bool __swift_bridge__$App$is_active_pane_terminal(void* self, struct __swift_bridge__$EditorId id);
 void* __swift_bridge__$App$active_file_path(void* self, struct __swift_bridge__$EditorId id);
 void __swift_bridge__$App$set_native_tab_open_gateway(void* self, bool enabled);
 void* __swift_bridge__$App$take_native_tab_open_request_path(void* self);
@@ -331,6 +359,14 @@ bool __swift_bridge__$App$file_picker_set_query(void* self, struct __swift_bridg
 bool __swift_bridge__$App$file_picker_submit(void* self, struct __swift_bridge__$EditorId id, uintptr_t index);
 bool __swift_bridge__$App$file_picker_close(void* self, struct __swift_bridge__$EditorId id);
 bool __swift_bridge__$App$file_picker_select_index(void* self, struct __swift_bridge__$EditorId id, uintptr_t index);
+bool __swift_bridge__$App$file_tree_set_visible(void* self, struct __swift_bridge__$EditorId id, bool visible);
+bool __swift_bridge__$App$file_tree_toggle(void* self, struct __swift_bridge__$EditorId id);
+bool __swift_bridge__$App$file_tree_open_workspace_root(void* self, struct __swift_bridge__$EditorId id);
+bool __swift_bridge__$App$file_tree_open_current_buffer_directory(void* self, struct __swift_bridge__$EditorId id);
+bool __swift_bridge__$App$file_tree_set_expanded(void* self, struct __swift_bridge__$EditorId id, struct RustStr path, bool expanded);
+bool __swift_bridge__$App$file_tree_select_path(void* self, struct __swift_bridge__$EditorId id, struct RustStr path);
+bool __swift_bridge__$App$file_tree_open_selected(void* self, struct __swift_bridge__$EditorId id);
+void* __swift_bridge__$App$file_tree_snapshot(void* self, struct __swift_bridge__$EditorId id, uintptr_t max_nodes);
 void* __swift_bridge__$App$file_picker_snapshot(void* self, struct __swift_bridge__$EditorId id, uintptr_t max_items);
 void* __swift_bridge__$App$file_picker_preview(void* self, struct __swift_bridge__$EditorId id);
 void* __swift_bridge__$App$file_picker_preview_window(void* self, struct __swift_bridge__$EditorId id, uintptr_t offset, uintptr_t visible_rows, uintptr_t overscan);
@@ -438,6 +474,8 @@ uint8_t __swift_bridge__$RenderDiagnosticUnderline$severity(void* self);
 uint64_t __swift_bridge__$RenderFramePane$pane_id(void* self);
 struct __swift_bridge__$Rect __swift_bridge__$RenderFramePane$rect(void* self);
 bool __swift_bridge__$RenderFramePane$is_active(void* self);
+uint8_t __swift_bridge__$RenderFramePane$pane_kind(void* self);
+uint64_t __swift_bridge__$RenderFramePane$terminal_id(void* self);
 void* __swift_bridge__$RenderFramePane$plan(void* self);
 uint64_t __swift_bridge__$RenderFramePlan$active_pane_id(void* self);
 uintptr_t __swift_bridge__$RenderFramePlan$pane_count(void* self);
@@ -448,6 +486,21 @@ uint8_t __swift_bridge__$SplitSeparator$axis(void* self);
 uint16_t __swift_bridge__$SplitSeparator$line(void* self);
 uint16_t __swift_bridge__$SplitSeparator$span_start(void* self);
 uint16_t __swift_bridge__$SplitSeparator$span_end(void* self);
+bool __swift_bridge__$FileTreeSnapshotData$visible(void* self);
+uint8_t __swift_bridge__$FileTreeSnapshotData$mode(void* self);
+void* __swift_bridge__$FileTreeSnapshotData$root(void* self);
+void* __swift_bridge__$FileTreeSnapshotData$selected_path(void* self);
+uint64_t __swift_bridge__$FileTreeSnapshotData$refresh_generation(void* self);
+uintptr_t __swift_bridge__$FileTreeSnapshotData$node_count(void* self);
+void* __swift_bridge__$FileTreeSnapshotData$node_at(void* self, uintptr_t index);
+void* __swift_bridge__$FileTreeNodeFFI$id(void* self);
+void* __swift_bridge__$FileTreeNodeFFI$path(void* self);
+void* __swift_bridge__$FileTreeNodeFFI$name(void* self);
+uintptr_t __swift_bridge__$FileTreeNodeFFI$depth(void* self);
+uint8_t __swift_bridge__$FileTreeNodeFFI$kind(void* self);
+bool __swift_bridge__$FileTreeNodeFFI$expanded(void* self);
+bool __swift_bridge__$FileTreeNodeFFI$selected(void* self);
+bool __swift_bridge__$FileTreeNodeFFI$has_unloaded_children(void* self);
 bool __swift_bridge__$FilePickerSnapshotData$active(void* self);
 void* __swift_bridge__$FilePickerSnapshotData$title(void* self);
 uint8_t __swift_bridge__$FilePickerSnapshotData$picker_kind(void* self);

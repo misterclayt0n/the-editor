@@ -238,6 +238,8 @@ Exit criteria:
 - new tests for mixed pane content pass.
 
 ### Phase 2: Render and FFI contract
+Status: completed.
+
 Work:
 - extend frame pane with `pane_kind` + `terminal_id`.
 - keep compatibility for existing clients.

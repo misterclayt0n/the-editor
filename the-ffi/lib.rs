@@ -110,13 +110,13 @@ use the_default::{
   finalize_keep_selections,
   finalize_remove_selections,
   finalize_rename_symbol,
+  finalize_search,
+  finalize_select_regex,
   finalize_shell_append_output,
   finalize_shell_insert_output,
   finalize_shell_keep_pipe,
   finalize_shell_pipe,
   finalize_shell_pipe_to,
-  finalize_search,
-  finalize_select_regex,
   finalize_split_selection,
   handle_query_change as file_picker_handle_query_change,
   poll_scan_results as file_picker_poll_scan_results,
@@ -155,7 +155,11 @@ use the_lib::{
     Document as LibDocument,
     DocumentId,
   },
-  editor::EditorId as LibEditorId,
+  editor::{
+    EditorId as LibEditorId,
+    PaneContent,
+    PaneContentKind,
+  },
   messages::MessageCenter,
   movement::{
     self,
@@ -279,8 +283,8 @@ use the_lsp::{
   parse_document_symbols_response,
   parse_hover_response,
   parse_locations_response,
-  parse_workspace_edit_response,
   parse_signature_help_response,
+  parse_workspace_edit_response,
   parse_workspace_symbols_response,
   rename_params,
   render_lsp_snippet,
@@ -1039,19 +1043,23 @@ impl From<the_lib::render::RenderPlan> for RenderPlan {
 
 #[derive(Debug, Clone)]
 pub struct RenderFramePane {
-  pane_id:   u64,
-  rect:      LibRect,
-  is_active: bool,
-  plan:      RenderPlan,
+  pane_id:     u64,
+  rect:        LibRect,
+  is_active:   bool,
+  pane_kind:   u8,
+  terminal_id: u64,
+  plan:        RenderPlan,
 }
 
 impl RenderFramePane {
   fn empty() -> Self {
     Self {
-      pane_id:   0,
-      rect:      LibRect::new(0, 0, 0, 0),
-      is_active: false,
-      plan:      RenderPlan::empty(),
+      pane_id:     0,
+      rect:        LibRect::new(0, 0, 0, 0),
+      is_active:   false,
+      pane_kind:   0,
+      terminal_id: 0,
+      plan:        RenderPlan::empty(),
     }
   }
 
@@ -1065,6 +1073,14 @@ impl RenderFramePane {
 
   fn is_active(&self) -> bool {
     self.is_active
+  }
+
+  fn pane_kind(&self) -> u8 {
+    self.pane_kind
+  }
+
+  fn terminal_id(&self) -> u64 {
+    self.terminal_id
   }
 
   fn plan(&self) -> RenderPlan {
@@ -1109,6 +1125,8 @@ impl RenderFramePlan {
           pane_id: pane.pane_id.get().get() as u64,
           rect: pane.rect,
           is_active,
+          pane_kind: pane_content_kind_to_u8(pane.pane_kind),
+          terminal_id: pane.terminal_id.map_or(0, |id| id.get().get() as u64),
           plan: wrapped_plan,
         }
       })
@@ -1190,6 +1208,13 @@ fn split_axis_to_u8(axis: the_lib::split_tree::SplitAxis) -> u8 {
   match axis {
     the_lib::split_tree::SplitAxis::Vertical => 0,
     the_lib::split_tree::SplitAxis::Horizontal => 1,
+  }
+}
+
+fn pane_content_kind_to_u8(kind: PaneContentKind) -> u8 {
+  match kind {
+    PaneContentKind::EditorBuffer => 0,
+    PaneContentKind::Terminal => 1,
   }
 }
 
@@ -5305,7 +5330,10 @@ impl App {
     let (active_pane, panes) = {
       let editor = self.active_editor_ref();
       let viewport = editor.layout_viewport();
-      (editor.active_pane_id(), editor.pane_snapshots(viewport))
+      (
+        editor.active_pane_id(),
+        editor.frame_pane_snapshots(viewport),
+      )
     };
     if panes.is_empty() {
       self.inline_diagnostic_lines.clear();
@@ -5317,20 +5345,36 @@ impl App {
     {
       let editor = self.active_editor_mut();
       for pane in &panes {
-        let _ = editor.set_buffer_viewport(pane.buffer_index, pane.rect);
+        if let PaneContent::EditorBuffer { buffer_index } = pane.content {
+          let _ = editor.set_buffer_viewport(buffer_index, pane.rect);
+        }
       }
     }
 
     let mut pane_plans = Vec::with_capacity(panes.len());
     for pane in panes {
-      let plan = if pane.is_active_pane {
-        self.build_render_plan_with_styles_impl(styles)
-      } else {
-        self.build_inactive_pane_render_plan_with_styles_impl(pane.buffer_index, styles)
+      let (pane_kind, terminal_id, plan) = match pane.content {
+        PaneContent::EditorBuffer { buffer_index } => {
+          let plan = if pane.is_active_pane {
+            self.build_render_plan_with_styles_impl(styles)
+          } else {
+            self.build_inactive_pane_render_plan_with_styles_impl(buffer_index, styles)
+          };
+          (PaneContentKind::EditorBuffer, None, plan)
+        },
+        PaneContent::Terminal { terminal_id } => {
+          (
+            PaneContentKind::Terminal,
+            Some(terminal_id),
+            the_lib::render::RenderPlan::default(),
+          )
+        },
       };
       pane_plans.push(the_lib::render::PaneRenderPlan {
         pane_id: pane.pane_id,
         rect: pane.rect,
+        pane_kind,
+        terminal_id,
         plan,
       });
     }
@@ -11819,6 +11863,8 @@ mod ffi {
     fn pane_id(self: &RenderFramePane) -> u64;
     fn rect(self: &RenderFramePane) -> Rect;
     fn is_active(self: &RenderFramePane) -> bool;
+    fn pane_kind(self: &RenderFramePane) -> u8;
+    fn terminal_id(self: &RenderFramePane) -> u64;
     fn plan(self: &RenderFramePane) -> RenderPlan;
   }
 
@@ -12320,6 +12366,29 @@ mod tests {
     let line = plan.line_at(0);
     assert_eq!(line.span_count(), 1);
     assert_eq!(line.span_at(0).text(), "hello");
+  }
+
+  #[test]
+  fn frame_render_plan_exposes_terminal_pane_metadata() {
+    let _guard = ffi_test_guard();
+    let mut app = App::new();
+    let viewport = ffi::Rect {
+      x:      0,
+      y:      0,
+      width:  80,
+      height: 24,
+    };
+    let scroll = ffi::Position { row: 0, col: 0 };
+    let id = app.create_editor("hello", viewport, scroll);
+
+    let terminal_id = app.active_editor_mut().open_terminal_in_active_pane();
+    let frame = app.frame_render_plan(id);
+    assert_eq!(frame.pane_count(), 1);
+    let pane = frame.pane_at(0);
+    assert!(pane.is_active());
+    assert_eq!(pane.pane_kind(), 1);
+    assert_eq!(pane.terminal_id(), terminal_id.get().get() as u64);
+    assert_eq!(pane.plan().line_count(), 0);
   }
 
   #[test]

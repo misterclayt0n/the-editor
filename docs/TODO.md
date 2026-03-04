@@ -16,7 +16,7 @@
 ### Ghostty Embedding (`docs/GHOSTTY_EMBEDDING_PLAN.md`)
 - [x] Phase 0: Design lock (no new crate, Ghostty runtime in `the-swift`, `the-ffi` stays thin bridge)
 - [x] Phase 1: Core pane content model (`EditorBuffer`/`Terminal`) in `the-lib`
-- [ ] Phase 2: Render and FFI pane-kind contract
+- [x] Phase 2: Render and FFI pane-kind contract
 - [ ] Phase 3: Default terminal command semantics
 - [ ] Phase 4: Swift Ghostty runtime MVP
 - [ ] Phase 5: Swift composition polish

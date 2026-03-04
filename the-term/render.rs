@@ -63,6 +63,7 @@ use the_lib::{
     language_filename_hints,
     parse_markdown_blocks,
   },
+  editor::PaneContent,
   render::{
     FrameRenderPlan,
     InlineDiagnostic,
@@ -5966,7 +5967,7 @@ pub fn build_frame_render_plan(ctx: &mut Ctx) -> FrameRenderPlan {
 
 pub fn build_frame_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> FrameRenderPlan {
   let viewport = ctx.editor.layout_viewport();
-  let pane_snapshots = ctx.editor.pane_snapshots(viewport);
+  let pane_snapshots = ctx.editor.frame_pane_snapshots(viewport);
   if pane_snapshots.is_empty() {
     ctx.inline_diagnostic_lines.clear();
     ctx.diagnostic_underlines.clear();
@@ -5974,21 +5975,37 @@ pub fn build_frame_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) 
   }
 
   for pane in &pane_snapshots {
-    let _ = ctx.editor.set_buffer_viewport(pane.buffer_index, pane.rect);
+    if let PaneContent::EditorBuffer { buffer_index } = pane.content {
+      let _ = ctx.editor.set_buffer_viewport(buffer_index, pane.rect);
+    }
   }
 
   let active_pane = ctx.editor.active_pane_id();
   let panes = pane_snapshots
     .into_iter()
     .map(|pane| {
-      let plan = if pane.is_active_pane {
-        build_render_plan_with_styles(ctx, styles)
-      } else {
-        build_inactive_pane_plan_with_styles(ctx, pane.buffer_index, styles)
+      let (pane_kind, terminal_id, plan) = match pane.content {
+        PaneContent::EditorBuffer { buffer_index } => {
+          let plan = if pane.is_active_pane {
+            build_render_plan_with_styles(ctx, styles)
+          } else {
+            build_inactive_pane_plan_with_styles(ctx, buffer_index, styles)
+          };
+          (the_lib::editor::PaneContentKind::EditorBuffer, None, plan)
+        },
+        PaneContent::Terminal { terminal_id } => {
+          (
+            the_lib::editor::PaneContentKind::Terminal,
+            Some(terminal_id),
+            RenderPlan::default(),
+          )
+        },
       };
       PaneRenderPlan {
         pane_id: pane.pane_id,
         rect: pane.rect,
+        pane_kind,
+        terminal_id,
         plan,
       }
     })

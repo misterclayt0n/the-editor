@@ -98,6 +98,14 @@ pub struct PaneSnapshot {
   pub is_active_pane: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FramePaneSnapshot {
+  pub pane_id:        PaneId,
+  pub content:        PaneContent,
+  pub rect:           Rect,
+  pub is_active_pane: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct TerminalId(NonZeroUsize);
 
@@ -378,19 +386,38 @@ impl Editor {
   }
 
   pub fn pane_snapshots(&self, area: Rect) -> Vec<PaneSnapshot> {
+    self
+      .frame_pane_snapshots(area)
+      .into_iter()
+      .filter_map(|pane| {
+        match pane.content {
+          PaneContent::EditorBuffer { buffer_index } => {
+            Some(PaneSnapshot {
+              pane_id: pane.pane_id,
+              buffer_index,
+              rect: pane.rect,
+              is_active_pane: pane.is_active_pane,
+            })
+          },
+          PaneContent::Terminal { .. } => None,
+        }
+      })
+      .collect()
+  }
+
+  pub fn frame_pane_snapshots(&self, area: Rect) -> Vec<FramePaneSnapshot> {
     let active = self.split_tree.active_pane();
     self
       .split_tree
       .layout(area)
       .into_iter()
       .filter_map(|(pane_id, rect)| {
-        let Some(PaneContent::EditorBuffer { buffer_index }) = self.pane_content.get(&pane_id)
-        else {
+        let Some(content) = self.pane_content.get(&pane_id).copied() else {
           return None;
         };
-        Some(PaneSnapshot {
+        Some(FramePaneSnapshot {
           pane_id,
-          buffer_index: *buffer_index,
+          content,
           rect,
           is_active_pane: pane_id == active,
         })

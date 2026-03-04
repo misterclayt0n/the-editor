@@ -65,6 +65,10 @@ use crate::{
   Tendril,
   diagnostics::DiagnosticSeverity,
   document::Document,
+  editor::{
+    PaneContentKind,
+    TerminalId,
+  },
   position::Position,
   render::{
     FormattedGrapheme,
@@ -209,13 +213,13 @@ pub struct RenderSelection {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RenderStyles {
-  pub selection:     Style,
-  pub cursor:        Style,
-  pub active_cursor: Style,
-  pub cursor_kind:   CursorKind,
+  pub selection:          Style,
+  pub cursor:             Style,
+  pub active_cursor:      Style,
+  pub cursor_kind:        CursorKind,
   pub active_cursor_kind: CursorKind,
-  pub gutter:        Style,
-  pub gutter_active: Style,
+  pub gutter:             Style,
+  pub gutter_active:      Style,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -229,8 +233,8 @@ impl Default for SelectionMatchHighlightOptions {
   fn default() -> Self {
     Self {
       enable_point_cursor_match: false,
-      max_needle_chars: 128,
-      max_matches: 1000,
+      max_needle_chars:          128,
+      max_matches:               1000,
     }
   }
 }
@@ -238,13 +242,13 @@ impl Default for SelectionMatchHighlightOptions {
 impl Default for RenderStyles {
   fn default() -> Self {
     Self {
-      selection:     Style::default(),
-      cursor:        Style::default(),
-      active_cursor: Style::default(),
-      cursor_kind:   CursorKind::Block,
+      selection:          Style::default(),
+      cursor:             Style::default(),
+      active_cursor:      Style::default(),
+      cursor_kind:        CursorKind::Block,
       active_cursor_kind: CursorKind::Block,
-      gutter:        Style::default(),
-      gutter_active: Style::default(),
+      gutter:             Style::default(),
+      gutter_active:      Style::default(),
     }
   }
 }
@@ -300,9 +304,11 @@ impl Default for RenderPlan {
 
 #[derive(Debug, Clone)]
 pub struct PaneRenderPlan {
-  pub pane_id: PaneId,
-  pub rect:    Rect,
-  pub plan:    RenderPlan,
+  pub pane_id:     PaneId,
+  pub rect:        Rect,
+  pub pane_kind:   PaneContentKind,
+  pub terminal_id: Option<TerminalId>,
+  pub plan:        RenderPlan,
 }
 
 #[derive(Debug, Clone)]
@@ -327,6 +333,8 @@ impl FrameRenderPlan {
       panes:       vec![PaneRenderPlan {
         pane_id,
         rect,
+        pane_kind: PaneContentKind::EditorBuffer,
+        terminal_id: None,
         plan,
       }],
     }
@@ -1015,7 +1023,10 @@ pub fn add_selection_match_highlights<'a>(
     if line_from != line_to {
       return;
     }
-    (active_range.from().min(text_len), active_range.to().min(text_len))
+    (
+      active_range.from().min(text_len),
+      active_range.to().min(text_len),
+    )
   };
 
   if needle_to <= needle_from {
@@ -1041,7 +1052,9 @@ pub fn add_selection_match_highlights<'a>(
   let row_visible_end_cols = visible_line_end_cols(plan, doc, text_fmt, annotations);
   let mut visible_lines = BTreeMap::<usize, usize>::new();
   for row in &plan.visible_rows {
-    visible_lines.entry(row.doc_line).or_insert_with(|| text.line_to_char(row.doc_line));
+    visible_lines
+      .entry(row.doc_line)
+      .or_insert_with(|| text.line_to_char(row.doc_line));
   }
 
   let needle_len_bytes = needle.len();
@@ -1609,6 +1622,8 @@ mod tests {
 
     let frame = FrameRenderPlan::from_active_plan(plan.clone());
     assert_eq!(frame.panes.len(), 1);
+    assert_eq!(frame.panes[0].pane_kind, PaneContentKind::EditorBuffer);
+    assert_eq!(frame.panes[0].terminal_id, None);
     assert_eq!(
       frame
         .active_plan()

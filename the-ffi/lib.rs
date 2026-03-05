@@ -159,6 +159,7 @@ use the_lib::{
     EditorId as LibEditorId,
     PaneContent,
     PaneContentKind,
+    TerminalSurfaceSnapshot as LibTerminalSurfaceSnapshot,
   },
   messages::MessageCenter,
   movement::{
@@ -1160,6 +1161,43 @@ impl RenderFramePlan {
       .find(|pane| pane.is_active)
       .map(|pane| pane.plan.clone())
       .unwrap_or_else(RenderPlan::empty)
+  }
+}
+
+#[derive(Debug, Clone)]
+pub struct TerminalSurfaceSnapshot {
+  terminal_id: u64,
+  pane_id:     u64,
+  is_active:   bool,
+}
+
+impl TerminalSurfaceSnapshot {
+  fn empty() -> Self {
+    Self {
+      terminal_id: 0,
+      pane_id:     0,
+      is_active:   false,
+    }
+  }
+
+  fn from_lib(snapshot: LibTerminalSurfaceSnapshot) -> Self {
+    Self {
+      terminal_id: snapshot.terminal_id.get().get() as u64,
+      pane_id:     snapshot.attached_pane.map_or(0, |pane| pane.get().get() as u64),
+      is_active:   snapshot.is_active,
+    }
+  }
+
+  fn terminal_id(&self) -> u64 {
+    self.terminal_id
+  }
+
+  fn pane_id(&self) -> u64 {
+    self.pane_id
+  }
+
+  fn is_active(&self) -> bool {
+    self.is_active
   }
 }
 
@@ -4921,6 +4959,46 @@ impl App {
       state.needs_render = true;
     }
     resized
+  }
+
+  pub fn terminal_surface_count(&mut self, id: ffi::EditorId) -> usize {
+    if self.activate(id).is_none() {
+      return 0;
+    }
+    self.active_editor_ref().terminal_surface_snapshots().len()
+  }
+
+  pub fn terminal_surface_at(
+    &mut self,
+    id: ffi::EditorId,
+    index: usize,
+  ) -> TerminalSurfaceSnapshot {
+    if self.activate(id).is_none() {
+      return TerminalSurfaceSnapshot::empty();
+    }
+    self
+      .active_editor_ref()
+      .terminal_surface_snapshots()
+      .get(index)
+      .copied()
+      .map(TerminalSurfaceSnapshot::from_lib)
+      .unwrap_or_else(TerminalSurfaceSnapshot::empty)
+  }
+
+  pub fn focus_terminal_surface(
+    &mut self,
+    id: ffi::EditorId,
+    terminal_id: u64,
+  ) -> bool {
+    if self.activate(id).is_none() {
+      return false;
+    }
+    let Some(raw) = usize::try_from(terminal_id).ok().and_then(NonZeroUsize::new) else {
+      return false;
+    };
+    self
+      .active_editor_mut()
+      .focus_terminal_surface(the_lib::editor::TerminalId::new(raw))
   }
 
   pub fn render_plan(&mut self, id: ffi::EditorId) -> RenderPlan {
@@ -11639,6 +11717,9 @@ mod ffi {
     fn split_separator_count(self: &mut App, id: EditorId) -> usize;
     fn split_separator_at(self: &mut App, id: EditorId, index: usize) -> SplitSeparator;
     fn resize_split(self: &mut App, id: EditorId, split_id: u64, x: u16, y: u16) -> bool;
+    fn terminal_surface_count(self: &mut App, id: EditorId) -> usize;
+    fn terminal_surface_at(self: &mut App, id: EditorId, index: usize) -> TerminalSurfaceSnapshot;
+    fn focus_terminal_surface(self: &mut App, id: EditorId, terminal_id: u64) -> bool;
     fn render_plan(self: &mut App, id: EditorId) -> RenderPlan;
     fn frame_render_plan(self: &mut App, id: EditorId) -> RenderFramePlan;
     fn render_plan_with_styles(self: &mut App, id: EditorId, styles: RenderStyles) -> RenderPlan;
@@ -11974,6 +12055,13 @@ mod ffi {
     fn pane_count(self: &RenderFramePlan) -> usize;
     fn pane_at(self: &RenderFramePlan, index: usize) -> RenderFramePane;
     fn active_plan(self: &RenderFramePlan) -> RenderPlan;
+  }
+
+  extern "Rust" {
+    type TerminalSurfaceSnapshot;
+    fn terminal_id(self: &TerminalSurfaceSnapshot) -> u64;
+    fn pane_id(self: &TerminalSurfaceSnapshot) -> u64;
+    fn is_active(self: &TerminalSurfaceSnapshot) -> bool;
   }
 
   extern "Rust" {
@@ -12558,6 +12646,34 @@ mod tests {
     }
     assert_eq!(terminal_count, 1);
     assert!(found_original_terminal);
+  }
+
+  #[test]
+  fn terminal_surface_snapshot_persists_when_terminal_detaches() {
+    let _guard = ffi_test_guard();
+    let mut app = App::new();
+    let id = app.create_editor("hello", default_viewport(), ffi::Position { row: 0, col: 0 });
+
+    let active_pane = app.active_editor_ref().active_pane_id();
+    let terminal_id = app.active_editor_mut().open_terminal_in_active_pane();
+    assert!(app.active_editor_mut().set_active_buffer_in_pane(active_pane, 0));
+
+    assert_eq!(app.terminal_surface_count(id), 1);
+    let snapshot = app.terminal_surface_at(id, 0);
+    assert_eq!(snapshot.terminal_id(), terminal_id.get().get() as u64);
+    assert_eq!(snapshot.pane_id(), 0);
+    assert!(!snapshot.is_active());
+
+    assert!(app.focus_terminal_surface(id, terminal_id.get().get() as u64));
+    let snapshot = app.terminal_surface_at(id, 0);
+    assert_ne!(snapshot.pane_id(), 0);
+    assert!(snapshot.is_active());
+
+    let frame = app.frame_render_plan(id);
+    assert_eq!(frame.pane_count(), 1);
+    let pane = frame.pane_at(0);
+    assert_eq!(pane.pane_kind(), 1);
+    assert_eq!(pane.terminal_id(), terminal_id.get().get() as u64);
   }
 
   #[test]

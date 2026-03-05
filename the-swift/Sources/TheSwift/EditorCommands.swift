@@ -139,7 +139,7 @@ enum EditorNamedCommand: String, CaseIterable {
     }
 
     static func shouldDeferKeyEquivalentToApp(_ event: NSEvent) -> Bool {
-        command(for: event) != nil || isNativeTabSelectionShortcut(event) || isAppQuitShortcut(event)
+        isNativeTabSelectionShortcut(event) || isAppQuitShortcut(event)
     }
 
     static func command(for event: NSEvent) -> EditorNamedCommand? {
@@ -148,7 +148,21 @@ enum EditorNamedCommand: String, CaseIterable {
         guard relevantFlags.contains(.command) else { return nil }
         let key = (event.charactersIgnoringModifiers ?? "").lowercased()
         return allCases.first { command in
-            command.keyEquivalentString == key && command.appKitModifiers == relevantFlags
+            command.appKitModifiers == relevantFlags
+                && command.matches(event: event, normalizedKey: key)
+        }
+    }
+
+    private func matches(event: NSEvent, normalizedKey: String) -> Bool {
+        if keyEquivalentString == normalizedKey {
+            return true
+        }
+
+        switch self {
+        case .toggleLastTerminal, .openGlobalTerminalSwitcher:
+            return event.keyCode == 50
+        default:
+            return false
         }
     }
 
@@ -260,12 +274,31 @@ final class EditorCommandModelRegistry {
             entries.append(contentsOf: model.globalTerminalSurfaceEntries(isCurrentWindow: window === anchorWindow))
         }
 
+        if DiagnosticsDebugLog.enabled {
+            let anchor = anchorWindow?.windowNumber ?? 0
+            let windows = windowModels.map { pair in
+                let surfaceCount = pair.model.terminalSurfaces.count
+                return "w\(pair.window.windowNumber):r\(pair.model.runtimeInstanceId):e\(pair.model.editorId.value):s\(surfaceCount)"
+            }.joined(separator: ",")
+            DiagnosticsDebugLog.log(
+                "terminal.switcher.entries anchor=\(anchor) windows=[\(windows)] total=\(entries.count)"
+            )
+        }
+
         return entries
     }
 
     @discardableResult
     func focusTerminalSurface(runtimeId: UInt64, terminalId: UInt64) -> Bool {
         let windowModels = orderedWindowModels(anchorWindow: NSApp.keyWindow ?? NSApp.mainWindow)
+        if DiagnosticsDebugLog.enabled {
+            let candidates = windowModels.map { pair in
+                "w\(pair.window.windowNumber):r\(pair.model.runtimeInstanceId):e\(pair.model.editorId.value)"
+            }.joined(separator: ",")
+            DiagnosticsDebugLog.log(
+                "terminal.switcher.focus.request runtime=\(runtimeId) terminal=\(terminalId) candidates=[\(candidates)]"
+            )
+        }
         for (_, model) in windowModels where model.runtimeInstanceId == runtimeId {
             if model.focusTerminalSurface(terminalId: terminalId) {
                 return true

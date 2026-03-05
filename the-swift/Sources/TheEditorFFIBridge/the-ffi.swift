@@ -133,6 +133,18 @@ extension AppRefMut {
         __swift_bridge__$App$resize_split(ptr, id.intoFfiRepr(), split_id, x, y)
     }
 
+    public func terminal_surface_count(_ id: EditorId) -> UInt {
+        __swift_bridge__$App$terminal_surface_count(ptr, id.intoFfiRepr())
+    }
+
+    public func terminal_surface_at(_ id: EditorId, _ index: UInt) -> TerminalSurfaceSnapshot {
+        TerminalSurfaceSnapshot(ptr: __swift_bridge__$App$terminal_surface_at(ptr, id.intoFfiRepr(), index))
+    }
+
+    public func focus_terminal_surface(_ id: EditorId, _ terminal_id: UInt64) -> Bool {
+        __swift_bridge__$App$focus_terminal_surface(ptr, id.intoFfiRepr(), terminal_id)
+    }
+
     public func render_plan(_ id: EditorId) -> RenderPlan {
         RenderPlan(ptr: __swift_bridge__$App$render_plan(ptr, id.intoFfiRepr()))
     }
@@ -2239,6 +2251,94 @@ extension RenderFramePlan: Vectorizable {
 
     public static func vecOfSelfLen(vecPtr: UnsafeMutableRawPointer) -> UInt {
         __swift_bridge__$Vec_RenderFramePlan$len(vecPtr)
+    }
+}
+
+
+public class TerminalSurfaceSnapshot: TerminalSurfaceSnapshotRefMut {
+    var isOwned: Bool = true
+
+    public override init(ptr: UnsafeMutableRawPointer) {
+        super.init(ptr: ptr)
+    }
+
+    deinit {
+        if isOwned {
+            __swift_bridge__$TerminalSurfaceSnapshot$_free(ptr)
+        }
+    }
+}
+public class TerminalSurfaceSnapshotRefMut: TerminalSurfaceSnapshotRef {
+    public override init(ptr: UnsafeMutableRawPointer) {
+        super.init(ptr: ptr)
+    }
+}
+public class TerminalSurfaceSnapshotRef {
+    var ptr: UnsafeMutableRawPointer
+
+    public init(ptr: UnsafeMutableRawPointer) {
+        self.ptr = ptr
+    }
+}
+extension TerminalSurfaceSnapshotRef {
+    public func terminal_id() -> UInt64 {
+        __swift_bridge__$TerminalSurfaceSnapshot$terminal_id(ptr)
+    }
+
+    public func pane_id() -> UInt64 {
+        __swift_bridge__$TerminalSurfaceSnapshot$pane_id(ptr)
+    }
+
+    public func is_active() -> Bool {
+        __swift_bridge__$TerminalSurfaceSnapshot$is_active(ptr)
+    }
+}
+extension TerminalSurfaceSnapshot: Vectorizable {
+    public static func vecOfSelfNew() -> UnsafeMutableRawPointer {
+        __swift_bridge__$Vec_TerminalSurfaceSnapshot$new()
+    }
+
+    public static func vecOfSelfFree(vecPtr: UnsafeMutableRawPointer) {
+        __swift_bridge__$Vec_TerminalSurfaceSnapshot$drop(vecPtr)
+    }
+
+    public static func vecOfSelfPush(vecPtr: UnsafeMutableRawPointer, value: TerminalSurfaceSnapshot) {
+        __swift_bridge__$Vec_TerminalSurfaceSnapshot$push(vecPtr, {value.isOwned = false; return value.ptr;}())
+    }
+
+    public static func vecOfSelfPop(vecPtr: UnsafeMutableRawPointer) -> Optional<Self> {
+        let pointer = __swift_bridge__$Vec_TerminalSurfaceSnapshot$pop(vecPtr)
+        if pointer == nil {
+            return nil
+        } else {
+            return (TerminalSurfaceSnapshot(ptr: pointer!) as! Self)
+        }
+    }
+
+    public static func vecOfSelfGet(vecPtr: UnsafeMutableRawPointer, index: UInt) -> Optional<TerminalSurfaceSnapshotRef> {
+        let pointer = __swift_bridge__$Vec_TerminalSurfaceSnapshot$get(vecPtr, index)
+        if pointer == nil {
+            return nil
+        } else {
+            return TerminalSurfaceSnapshotRef(ptr: pointer!)
+        }
+    }
+
+    public static func vecOfSelfGetMut(vecPtr: UnsafeMutableRawPointer, index: UInt) -> Optional<TerminalSurfaceSnapshotRefMut> {
+        let pointer = __swift_bridge__$Vec_TerminalSurfaceSnapshot$get_mut(vecPtr, index)
+        if pointer == nil {
+            return nil
+        } else {
+            return TerminalSurfaceSnapshotRefMut(ptr: pointer!)
+        }
+    }
+
+    public static func vecOfSelfAsPtr(vecPtr: UnsafeMutableRawPointer) -> UnsafePointer<TerminalSurfaceSnapshotRef> {
+        UnsafePointer<TerminalSurfaceSnapshotRef>(OpaquePointer(__swift_bridge__$Vec_TerminalSurfaceSnapshot$as_ptr(vecPtr)))
+    }
+
+    public static func vecOfSelfLen(vecPtr: UnsafeMutableRawPointer) -> UInt {
+        __swift_bridge__$Vec_TerminalSurfaceSnapshot$len(vecPtr)
     }
 }
 

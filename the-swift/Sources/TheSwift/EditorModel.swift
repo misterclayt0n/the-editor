@@ -25,6 +25,15 @@ struct TerminalPaneSnapshot: Identifiable, Equatable {
     var id: UInt64 { paneId }
 }
 
+struct TerminalSurfaceSnapshot: Identifiable, Equatable {
+    let terminalId: UInt64
+    let paneId: UInt64?
+    let isActive: Bool
+
+    var id: UInt64 { terminalId }
+    var isAttached: Bool { paneId != nil }
+}
+
 private struct NativeTabOpenRequest: Decodable, Hashable {
     enum Kind: String, Decodable {
         case focusExisting = "focus_existing"
@@ -62,6 +71,7 @@ final class EditorModel: ObservableObject {
     @Published var framePlan: RenderFramePlan
     @Published var splitSeparators: [SplitSeparatorSnapshot] = []
     @Published var terminalPanes: [TerminalPaneSnapshot] = []
+    @Published var terminalSurfaces: [TerminalSurfaceSnapshot] = []
     @Published var isActivePaneTerminal: Bool = false
     @Published var uiTree: UiTreeSnapshot = .empty
     @Published var bufferTabsSnapshot: BufferTabsSnapshot? = nil
@@ -78,7 +88,6 @@ final class EditorModel: ObservableObject {
     private(set) var mode: EditorMode = .normal
     @Published var pendingKeys: [String] = []
     @Published var pendingKeyHints: PendingKeyHintsSnapshot? = nil
-    @Published var globalTerminalSwitcherSnapshot: GlobalTerminalSwitcherSnapshot = .closed
     @Published var filePickerSnapshot: FilePickerSnapshot? = nil
     @Published var fileTreeSnapshot: FileTreeSnapshot = .hidden
     let filePickerPreviewModel = FilePickerPreviewModel()
@@ -141,9 +150,11 @@ final class EditorModel: ObservableObject {
         self.plan = initialFramePlan.active_plan()
         self.splitSeparators = []
         self.terminalPanes = []
+        self.terminalSurfaces = []
         self.isActivePaneTerminal = false
         self.mode = EditorMode(rawValue: app.mode(editorId)) ?? .normal
         updateTerminalPaneSnapshots(from: initialFramePlan)
+        updateTerminalSurfaceSnapshots()
         refreshFileTree(force: true)
         if DiagnosticsDebugLog.enabled {
             DiagnosticsDebugLog.log(
@@ -211,6 +222,7 @@ final class EditorModel: ObservableObject {
         plan = framePlan.active_plan()
         splitSeparators = fetchSplitSeparators()
         updateTerminalPaneSnapshots(from: framePlan)
+        updateTerminalSurfaceSnapshots()
         updateSurfaceOverviewSnapshots(from: framePlan)
         debugDiagnosticsSnapshot(trigger: trigger, plan: plan)
 
@@ -376,7 +388,7 @@ final class EditorModel: ObservableObject {
     }
 
     func handleTerminalMetadataUpdate(terminalId: UInt64) {
-        guard terminalPanes.contains(where: { $0.terminalId == terminalId }) else {
+        guard terminalSurfaces.contains(where: { $0.terminalId == terminalId }) else {
             return
         }
         refresh(trigger: "terminal_metadata")
@@ -393,22 +405,27 @@ final class EditorModel: ObservableObject {
 
     @discardableResult
     func toggleGlobalTerminalSwitcher() -> Bool {
-        if globalTerminalSwitcherSnapshot.isOpen {
-            closeGlobalTerminalSwitcher()
-            return true
-        }
-
         let anchorWindow = hostWindow ?? NSApp.keyWindow ?? NSApp.mainWindow
+        if DiagnosticsDebugLog.enabled {
+            DiagnosticsDebugLog.log(
+                "terminal.switcher.anchor runtime=\(runtimeInstanceId) editor=\(editorId.value) host=\(hostWindow?.windowNumber ?? 0) key=\(NSApp.keyWindow?.windowNumber ?? 0) main=\(NSApp.mainWindow?.windowNumber ?? 0) resolved=\(anchorWindow?.windowNumber ?? 0)"
+            )
+        }
         let entries = EditorCommandModelRegistry.shared.globalTerminalEntries(anchorWindow: anchorWindow)
-        globalTerminalSwitcherSnapshot = .opened(items: entries)
-        return true
+        let opened = GlobalTerminalSwitcherController.shared.toggle(
+            ownerWindow: anchorWindow,
+            items: entries
+        )
+        if DiagnosticsDebugLog.enabled, let anchorWindow {
+            DiagnosticsDebugLog.log(
+                "terminal.switcher.toggle runtime=\(runtimeInstanceId) editor=\(editorId.value) window=\(anchorWindow.windowNumber) entries=\(entries.count) opened=\(opened ? 1 : 0)"
+            )
+        }
+        return opened
     }
 
     func closeGlobalTerminalSwitcher() {
-        guard globalTerminalSwitcherSnapshot.isOpen else {
-            return
-        }
-        globalTerminalSwitcherSnapshot = .closed
+        GlobalTerminalSwitcherController.shared.close(ownerWindow: hostWindow)
     }
 
     @discardableResult
@@ -580,7 +597,6 @@ final class EditorModel: ObservableObject {
                     "editor.term.snapshot.empty runtime=\(runtimeInstanceId) editor=\(editorId.value)"
                 )
             }
-            GhosttyRuntime.shared.reconcileTerminalIds(runtimeId: runtimeInstanceId, Set<UInt64>())
             return
         }
 
@@ -633,7 +649,43 @@ final class EditorModel: ObservableObject {
             )
         }
 
-        GhosttyRuntime.shared.reconcileTerminalIds(runtimeId: runtimeInstanceId, Set(panes.map(\.terminalId)))
+    }
+
+    private func updateTerminalSurfaceSnapshots() {
+        let count = Int(app.terminal_surface_count(editorId))
+        var snapshots: [TerminalSurfaceSnapshot] = []
+        snapshots.reserveCapacity(count)
+
+        for index in 0..<count {
+            let snapshot = app.terminal_surface_at(editorId, UInt(index))
+            let paneId = snapshot.pane_id()
+            snapshots.append(
+                TerminalSurfaceSnapshot(
+                    terminalId: snapshot.terminal_id(),
+                    paneId: paneId == 0 ? nil : paneId,
+                    isActive: snapshot.is_active()
+                )
+            )
+        }
+
+        if snapshots != terminalSurfaces {
+            terminalSurfaces = snapshots
+        }
+
+        GhosttyRuntime.shared.reconcileTerminalIds(
+            runtimeId: runtimeInstanceId,
+            Set(snapshots.map(\.terminalId))
+        )
+
+        if DiagnosticsDebugLog.enabled {
+            let summary = snapshots
+                .map { "t\($0.terminalId):p\($0.paneId ?? 0):a\($0.isActive ? 1 : 0)" }
+                .joined(separator: ",")
+            DiagnosticsDebugLog.logChanged(
+                key: "editor.term.surfaces.\(runtimeInstanceId).\(editorId.value)",
+                value: "count=\(snapshots.count) surfaces=[\(summary)]"
+            )
+        }
     }
 
     private func updateSurfaceOverviewSnapshots(from framePlan: RenderFramePlan) {
@@ -698,30 +750,31 @@ final class EditorModel: ObservableObject {
     }
 
     func globalTerminalSurfaceEntries(isCurrentWindow: Bool) -> [GlobalTerminalSurfaceEntry] {
-        guard !terminalPanes.isEmpty else {
+        guard !terminalSurfaces.isEmpty else {
             return []
         }
 
         let currentWindowTitle = normalizedTerminalSwitcherWindowTitle()
-        let sortedPanes = terminalPanes.sorted { lhs, rhs in
+        let sortedSurfaces = terminalSurfaces.sorted { lhs, rhs in
             if lhs.isActive != rhs.isActive {
                 return lhs.isActive && !rhs.isActive
             }
-            return lhs.paneId < rhs.paneId
+            return lhs.terminalId < rhs.terminalId
         }
 
-        return sortedPanes.map { pane in
-            let metadata = GhosttyRuntime.shared.terminalMetadata(runtimeId: runtimeInstanceId, for: pane.terminalId)
+        return sortedSurfaces.map { surface in
+            let metadata = GhosttyRuntime.shared.terminalMetadata(runtimeId: runtimeInstanceId, for: surface.terminalId)
             let title = terminalPresentationTitle(from: metadata)
-            let subtitle = terminalSwitcherSubtitle(for: pane, metadata: metadata)
+            let subtitle = terminalSwitcherSubtitle(for: surface, metadata: metadata)
             return GlobalTerminalSurfaceEntry(
                 runtimeId: runtimeInstanceId,
-                terminalId: pane.terminalId,
-                paneId: pane.paneId,
+                terminalId: surface.terminalId,
+                paneId: surface.paneId,
                 title: title,
                 subtitle: subtitle,
                 windowTitle: currentWindowTitle,
-                isActive: pane.isActive,
+                isActive: surface.isActive,
+                isAttached: surface.isAttached,
                 isInCurrentWindow: isCurrentWindow
             )
         }
@@ -729,14 +782,31 @@ final class EditorModel: ObservableObject {
 
     @discardableResult
     func focusTerminalSurface(terminalId: UInt64) -> Bool {
-        guard let pane = terminalPanes.first(where: { $0.terminalId == terminalId }) else {
-            return false
+        if let pane = terminalPanes.first(where: { $0.terminalId == terminalId }) {
+            if DiagnosticsDebugLog.enabled {
+                DiagnosticsDebugLog.log(
+                    "terminal.switcher.focus runtime=\(runtimeInstanceId) editor=\(editorId.value) terminal=\(terminalId) mode=attached pane=\(pane.paneId)"
+                )
+            }
+            if let hostWindow {
+                hostWindow.makeKeyAndOrderFront(nil)
+            }
+            return focusPane(paneId: pane.paneId, trigger: "global_terminal_switcher")
         }
 
+        guard app.focus_terminal_surface(editorId, terminalId) else {
+            return false
+        }
+        if DiagnosticsDebugLog.enabled {
+            DiagnosticsDebugLog.log(
+                "terminal.switcher.focus runtime=\(runtimeInstanceId) editor=\(editorId.value) terminal=\(terminalId) mode=reattach"
+            )
+        }
         if let hostWindow {
             hostWindow.makeKeyAndOrderFront(nil)
         }
-        return focusPane(paneId: pane.paneId, trigger: "global_terminal_switcher")
+        refresh(trigger: "global_terminal_switcher_attach")
+        return true
     }
 
     func selectCommandPalette(index: Int) {
@@ -754,6 +824,11 @@ final class EditorModel: ObservableObject {
 
     func setHostWindow(_ window: NSWindow?) {
         let previousWindow = hostWindow
+        if DiagnosticsDebugLog.enabled, previousWindow !== window {
+            DiagnosticsDebugLog.log(
+                "editor.window.bind runtime=\(runtimeInstanceId) editor=\(editorId.value) old=\(previousWindow?.windowNumber ?? 0) new=\(window?.windowNumber ?? 0)"
+            )
+        }
         if previousWindow !== window {
             EditorCommandModelRegistry.shared.unregister(window: previousWindow)
             closeConfirmationAlert = nil
@@ -775,6 +850,10 @@ final class EditorModel: ObservableObject {
 
     func setOpenWindowTabHandler(_ handler: @escaping (EditorWindowRoute) -> Void) {
         openWindowTabHandler = handler
+    }
+
+    func currentHostWindow() -> NSWindow? {
+        hostWindow
     }
 
     func selectNativeWindowTab(indexOneBased: Int) -> Bool {
@@ -1660,15 +1739,16 @@ final class EditorModel: ObservableObject {
     }
 
     private func terminalSwitcherSubtitle(
-        for pane: TerminalPaneSnapshot,
+        for surface: TerminalSurfaceSnapshot,
         metadata: GhosttyTerminalMetadata?
     ) -> String {
         let rawPath = metadata.flatMap { representedPathFromTerminalPwd($0.pwd) } ?? ""
         let abbreviatedPath = rawPath.isEmpty ? "" : (rawPath as NSString).abbreviatingWithTildeInPath
+        let paneLabel = surface.paneId.map { "p\($0)" } ?? "detached"
         if abbreviatedPath.isEmpty {
-            return "t\(pane.terminalId) • p\(pane.paneId)"
+            return "t\(surface.terminalId) • \(paneLabel)"
         }
-        return "\(abbreviatedPath) • t\(pane.terminalId) • p\(pane.paneId)"
+        return "\(abbreviatedPath) • t\(surface.terminalId) • \(paneLabel)"
     }
 
     private func normalizedTerminalSwitcherWindowTitle() -> String {

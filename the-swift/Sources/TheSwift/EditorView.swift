@@ -4,6 +4,7 @@ import TheEditorFFIBridge
 struct EditorView: View {
     @Environment(\.openWindow) private var openWindow
     @StateObject private var model: EditorModel
+    @ObservedObject private var globalTerminalSwitcher = GlobalTerminalSwitcherController.shared
     private let windowRoute: EditorWindowRoute?
     @State private var columnVisibility: NavigationSplitViewVisibility = .detailOnly
 
@@ -31,7 +32,7 @@ struct EditorView: View {
         let isSearchOpen = model.uiTree.hasSearchPromptPanel
         let isFilePickerOpen = model.filePickerSnapshot?.active ?? false
         let isInputPromptOpen = model.uiTree.hasInputPromptPanel
-        let terminalSwitcherSnapshot = model.globalTerminalSwitcherSnapshot
+        let terminalSwitcherSnapshot = globalTerminalSwitcher.snapshot(for: model.currentHostWindow())
         let isTerminalSwitcherOpen = terminalSwitcherSnapshot.isOpen
         let isOverlayOpen = isPaletteOpen || isSearchOpen || isFilePickerOpen || isInputPromptOpen || isTerminalSwitcherOpen
         let completionSnapshot = model.uiTree.completionSnapshot()
@@ -95,6 +96,9 @@ struct EditorView: View {
                                     },
                                     onCloseRequest: {
                                         model.closeSurface()
+                                    },
+                                    onNamedCommand: { command in
+                                        model.executeNamedCommand(command)
                                     },
                                     onMetadataChange: {
                                         model.handleTerminalMetadataUpdate(terminalId: pane.terminalId)

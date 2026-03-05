@@ -92,7 +92,7 @@ private enum GhosttyPasteboardHelper {
 }
 
 private final class GhosttySurfaceCallbackContext {
-    weak var controller: GhosttySurfaceController?
+    fileprivate weak var controller: GhosttySurfaceController?
 
     init(controller: GhosttySurfaceController) {
         self.controller = controller
@@ -330,7 +330,8 @@ private final class GhosttySurfaceController {
     private let terminalId: UInt64
     private unowned let runtime: GhosttyRuntime
 
-    private weak var hostView: GhosttySurfaceHostView?
+    private let hostedView: GhosttySurfaceHostView
+    private weak var containerView: GhosttySurfaceContainerView?
     private var surface: ghostty_surface_t?
     private var focused = false
     private var lastPixelWidth: UInt32 = 0
@@ -345,6 +346,9 @@ private final class GhosttySurfaceController {
         self.runtimeId = runtimeId
         self.terminalId = terminalId
         self.runtime = runtime
+        self.hostedView = GhosttySurfaceHostView(frame: .zero)
+        self.hostedView.autoresizingMask = [.width, .height]
+        self.hostedView.controller = self
     }
 
     deinit {
@@ -353,6 +357,10 @@ private final class GhosttySurfaceController {
 
     fileprivate var surfaceHandle: ghostty_surface_t? {
         surface
+    }
+
+    fileprivate var terminalIdForDiagnostics: UInt64 {
+        terminalId
     }
 
     fileprivate func metadataSnapshot() -> GhosttyTerminalMetadata {
@@ -374,23 +382,45 @@ private final class GhosttySurfaceController {
         }
     }
 
-    func attach(to hostView: GhosttySurfaceHostView) {
+    func attach(
+        to containerView: GhosttySurfaceContainerView,
+        paneId: UInt64,
+        cellSize: CGSize,
+        focused: Bool,
+        onPointer: @escaping (MouseBridgeEvent) -> Void,
+        onCloseRequest: @escaping () -> Bool,
+        onNamedCommand: @escaping (EditorNamedCommand) -> Bool,
+        onMetadataChange: @escaping () -> Void
+    ) {
         if DiagnosticsDebugLog.enabled {
-            let replacingHost = self.hostView !== nil && self.hostView !== hostView
+            let replacingHost = self.containerView !== nil && self.containerView !== containerView
             DiagnosticsDebugLog.log(
                 "ghostty.surface.attach runtime=\(runtimeId) terminal=\(terminalId) replacing_host=\(replacingHost ? 1 : 0)"
             )
         }
-        self.hostView = hostView
+        self.containerView = containerView
+        hostedView.paneId = paneId
+        hostedView.cellSize = cellSize
+        hostedView.onPointer = onPointer
+        hostedView.onCloseRequest = onCloseRequest
+        hostedView.onNamedCommand = onNamedCommand
+        hostedView.onMetadataChange = onMetadataChange
+        if hostedView.superview !== containerView {
+            hostedView.removeFromSuperview()
+            hostedView.frame = containerView.bounds
+            containerView.addSubview(hostedView)
+        } else {
+            hostedView.frame = containerView.bounds
+        }
         createSurfaceIfNeeded()
         updateSurfaceSize()
         updateDisplayID()
         setFocused(focused)
-        applyColorScheme(hostView.currentColorScheme())
+        applyColorScheme(hostedView.currentColorScheme())
     }
 
-    func detach(from hostView: GhosttySurfaceHostView) {
-        guard self.hostView === hostView else {
+    func detach(from containerView: GhosttySurfaceContainerView) {
+        guard self.containerView === containerView else {
             return
         }
         if DiagnosticsDebugLog.enabled {
@@ -398,8 +428,11 @@ private final class GhosttySurfaceController {
                 "ghostty.surface.detach runtime=\(runtimeId) terminal=\(terminalId) surface_exists=\(surface != nil ? 1 : 0)"
             )
         }
-        self.hostView = nil
-        destroySurface()
+        self.containerView = nil
+        if hostedView.superview === containerView {
+            hostedView.removeFromSuperview()
+        }
+        setFocused(false)
     }
 
     func shutdown() {
@@ -408,7 +441,9 @@ private final class GhosttySurfaceController {
                 "ghostty.surface.shutdown runtime=\(runtimeId) terminal=\(terminalId) surface_exists=\(surface != nil ? 1 : 0)"
             )
         }
-        hostView = nil
+        containerView = nil
+        hostedView.removeFromSuperview()
+        hostedView.controller = nil
         destroySurface()
     }
 
@@ -418,10 +453,9 @@ private final class GhosttySurfaceController {
         ghostty_surface_set_focus(surface, focused)
 
         if focused,
-           let hostView,
-           let window = hostView.window,
-           window.firstResponder !== hostView {
-            window.makeFirstResponder(hostView)
+           let window = hostedView.window,
+           window.firstResponder !== hostedView {
+            window.makeFirstResponder(hostedView)
         }
     }
 
@@ -431,11 +465,10 @@ private final class GhosttySurfaceController {
     }
 
     func updateDisplayID() {
-        guard let surface,
-              let hostView else {
+        guard let surface else {
             return
         }
-        guard let displayID = (hostView.window?.screen ?? NSScreen.main)?.ghosttyDisplayID,
+        guard let displayID = (hostedView.window?.screen ?? NSScreen.main)?.ghosttyDisplayID,
               displayID != 0 else {
             return
         }
@@ -443,17 +476,16 @@ private final class GhosttySurfaceController {
     }
 
     func updateSurfaceSize() {
-        guard let hostView,
-              let surface else {
+        guard let surface else {
             return
         }
 
-        let size = hostView.bounds.size
+        let size = hostedView.bounds.size
         guard size.width > 0, size.height > 0 else {
             return
         }
 
-        let backingSize = hostView.convertToBacking(NSRect(origin: .zero, size: size)).size
+        let backingSize = hostedView.convertToBacking(NSRect(origin: .zero, size: size)).size
         guard backingSize.width > 0, backingSize.height > 0 else {
             return
         }
@@ -493,17 +525,16 @@ private final class GhosttySurfaceController {
     }
 
     func handleMouseMove(event: NSEvent) {
-        guard let surface,
-              let hostView else {
+        guard let surface else {
             return
         }
-        let point = hostView.convert(event.locationInWindow, from: nil)
-        let ghostY = mouseY(for: point, in: hostView)
+        let point = hostedView.convert(event.locationInWindow, from: nil)
+        let ghostY = mouseY(for: point, in: hostedView)
         if DiagnosticsDebugLog.terminalMouseEnabled {
-            let row = mouseRow(forGhostY: ghostY, in: hostView)
+            let row = mouseRow(forGhostY: ghostY, in: hostedView)
             if row <= 2 {
                 logMouse(
-                    "move term=\(terminalId) pane=\(hostView.paneId) local=(\(fmt(point.x)),\(fmt(point.y))) ghost=(\(fmt(point.x)),\(fmt(ghostY))) row=\(row) bounds=(\(fmt(hostView.bounds.width))x\(fmt(hostView.bounds.height)))"
+                    "move term=\(terminalId) pane=\(hostedView.paneId) local=(\(fmt(point.x)),\(fmt(point.y))) ghost=(\(fmt(point.x)),\(fmt(ghostY))) row=\(row) bounds=(\(fmt(hostedView.bounds.width))x\(fmt(hostedView.bounds.height)))"
                 )
             }
         }
@@ -511,17 +542,16 @@ private final class GhosttySurfaceController {
     }
 
     func handleMouseButton(event: NSEvent, state: ghostty_input_mouse_state_e, button: ghostty_input_mouse_button_e) {
-        guard let surface,
-              let hostView else {
+        guard let surface else {
             return
         }
-        let point = hostView.convert(event.locationInWindow, from: nil)
+        let point = hostedView.convert(event.locationInWindow, from: nil)
         let mods = modsFromEvent(event)
-        let ghostY = mouseY(for: point, in: hostView)
+        let ghostY = mouseY(for: point, in: hostedView)
         if DiagnosticsDebugLog.terminalMouseEnabled {
-            let row = mouseRow(forGhostY: ghostY, in: hostView)
+            let row = mouseRow(forGhostY: ghostY, in: hostedView)
             logMouse(
-                "button term=\(terminalId) pane=\(hostView.paneId) state=\(state.rawValue) btn=\(button.rawValue) click=\(event.clickCount) local=(\(fmt(point.x)),\(fmt(point.y))) ghost=(\(fmt(point.x)),\(fmt(ghostY))) row=\(row) bounds=(\(fmt(hostView.bounds.width))x\(fmt(hostView.bounds.height))) mods=\(mods.rawValue)"
+                "button term=\(terminalId) pane=\(hostedView.paneId) state=\(state.rawValue) btn=\(button.rawValue) click=\(event.clickCount) local=(\(fmt(point.x)),\(fmt(point.y))) ghost=(\(fmt(point.x)),\(fmt(ghostY))) row=\(row) bounds=(\(fmt(hostedView.bounds.width))x\(fmt(hostedView.bounds.height))) mods=\(mods.rawValue)"
             )
         }
         ghostty_surface_mouse_pos(surface, point.x, ghostY, mods)
@@ -656,10 +686,10 @@ private final class GhosttySurfaceController {
 
     func closeRequested(needsConfirmClose: Bool) {
         DispatchQueue.main.async { [weak self] in
-            guard let self, let hostView = self.hostView else {
+            guard let self else {
                 return
             }
-            hostView.handleRuntimeCloseRequest(needsConfirmClose: needsConfirmClose)
+            self.hostedView.handleRuntimeCloseRequest(needsConfirmClose: needsConfirmClose)
         }
     }
 
@@ -672,7 +702,7 @@ private final class GhosttySurfaceController {
                 return
             }
             self.metadata = next
-            self.hostView?.handleRuntimeMetadataUpdated()
+            self.hostedView.handleRuntimeMetadataUpdated()
         }
 
         if Thread.isMainThread {
@@ -684,22 +714,21 @@ private final class GhosttySurfaceController {
 
     private func createSurfaceIfNeeded() {
         guard surface == nil,
-              let app = runtime.app,
-              let hostView else {
+              let app = runtime.app else {
             return
         }
 
         var surfaceConfig = ghostty_surface_config_new()
         surfaceConfig.platform_tag = GHOSTTY_PLATFORM_MACOS
         surfaceConfig.platform = ghostty_platform_u(
-            macos: ghostty_platform_macos_s(nsview: Unmanaged.passUnretained(hostView).toOpaque())
+            macos: ghostty_platform_macos_s(nsview: Unmanaged.passUnretained(hostedView).toOpaque())
         )
         let callbackContext = Unmanaged.passRetained(GhosttySurfaceCallbackContext(controller: self))
         surfaceConfig.userdata = callbackContext.toOpaque()
         surfaceCallbackContext?.release()
         surfaceCallbackContext = callbackContext
         surfaceConfig.context = GHOSTTY_SURFACE_CONTEXT_SPLIT
-        let scaleFactor = Double(hostView.window?.backingScaleFactor ?? hostView.layer?.contentsScale ?? 1.0)
+        let scaleFactor = Double(hostedView.window?.backingScaleFactor ?? hostedView.layer?.contentsScale ?? 1.0)
         surfaceConfig.scale_factor = scaleFactor
 
         guard let created = ghostty_surface_new(app, &surfaceConfig) else {
@@ -722,7 +751,7 @@ private final class GhosttySurfaceController {
         updateDisplayID()
         updateSurfaceSize()
         ghostty_surface_set_focus(created, focused)
-        applyColorScheme(hostView.currentColorScheme())
+        applyColorScheme(hostedView.currentColorScheme())
         ghostty_surface_refresh(created)
     }
 
@@ -778,16 +807,24 @@ private final class GhosttySurfaceController {
     }
 }
 
+final class GhosttySurfaceContainerView: NSView {
+    override func layout() {
+        super.layout()
+        subviews.first?.frame = bounds
+    }
+}
+
 final class GhosttySurfaceHostView: NSView {
     override var acceptsFirstResponder: Bool { true }
 
+    fileprivate weak var controller: GhosttySurfaceController?
     var paneId: UInt64 = 0
     var cellSize: CGSize = .init(width: 1, height: 1)
     var onPointer: ((MouseBridgeEvent) -> Void)?
     var onCloseRequest: (() -> Bool)?
+    var onNamedCommand: ((EditorNamedCommand) -> Bool)?
     var onMetadataChange: (() -> Void)?
 
-    private var controller: GhosttySurfaceController?
     private var keyTextAccumulator: [String]? = nil
     private var markedText = NSMutableAttributedString()
     private var lastPerformKeyEvent: TimeInterval?
@@ -807,34 +844,12 @@ final class GhosttySurfaceHostView: NSView {
         if let observer = occlusionObserver {
             NotificationCenter.default.removeObserver(observer)
         }
-        if let controller {
-            controller.detach(from: self)
-        }
-    }
-
-    fileprivate func bind(controller: GhosttySurfaceController) {
-        guard self.controller !== controller else {
-            controller.attach(to: self)
-            return
-        }
-
-        if DiagnosticsDebugLog.enabled {
-            DiagnosticsDebugLog.log(
-                "ghostty.host.bind pane=\(paneId) replacing_controller=\(self.controller != nil ? 1 : 0)"
-            )
-        }
-        if let current = self.controller {
-            current.detach(from: self)
-        }
-        self.controller = controller
-        controller.attach(to: self)
     }
 
     private func ensureSurfaceReadyForInput() -> ghostty_surface_t? {
         guard let controller else {
             return nil
         }
-        controller.attach(to: self)
         controller.updateSurfaceSize()
         controller.updateDisplayID()
         controller.applyColorScheme(currentColorScheme())
@@ -911,7 +926,6 @@ final class GhosttySurfaceHostView: NSView {
             occlusionObserver = nil
         }
 
-        controller?.attach(to: self)
         controller?.updateDisplayID()
         controller?.updateSurfaceSize()
         controller?.applyColorScheme(currentColorScheme())
@@ -1053,11 +1067,15 @@ final class GhosttySurfaceHostView: NSView {
         guard event.type == .keyDown else { return false }
         guard let fr = window?.firstResponder as? NSView,
               fr === self || fr.isDescendant(of: self) else { return false }
-        if isCloseSurfaceKeyEquivalent(event),
-           controller?.performBindingAction("close_surface") == true {
-            return true
+        if let command = EditorNamedCommand.command(for: event) {
+            if DiagnosticsDebugLog.enabled {
+                DiagnosticsDebugLog.log(
+                    "ghostty.command.local pane=\(paneId) terminal=\(controller?.terminalIdForDiagnostics ?? 0) command=\(command.rawValue)"
+                )
+            }
+            lastPerformKeyEvent = nil
+            return onNamedCommand?(command) ?? false
         }
-        // Let app-level shortcuts (menu key equivalents) run before terminal bindings.
         if EditorNamedCommand.shouldDeferKeyEquivalentToApp(event) {
             lastPerformKeyEvent = nil
             return false
@@ -1303,12 +1321,6 @@ final class GhosttySurfaceHostView: NSView {
                 surfaceId: paneId
             )
         )
-    }
-
-    private func isCloseSurfaceKeyEquivalent(_ event: NSEvent) -> Bool {
-        let relevantFlags = event.modifierFlags.intersection([.command, .shift, .option, .control])
-        guard relevantFlags == [.command] else { return false }
-        return (event.charactersIgnoringModifiers ?? "").lowercased() == "w"
     }
 
     private func logMouseEvent(_ name: String, event: NSEvent) {
@@ -1562,33 +1574,49 @@ struct GhosttyPaneView: NSViewRepresentable {
     let focused: Bool
     let onPointer: (MouseBridgeEvent) -> Void
     let onCloseRequest: () -> Bool
+    let onNamedCommand: (EditorNamedCommand) -> Bool
     let onMetadataChange: () -> Void
 
-    func makeNSView(context: Context) -> GhosttySurfaceHostView {
-        let view = GhosttySurfaceHostView(frame: .zero)
+    func makeNSView(context: Context) -> GhosttySurfaceContainerView {
+        let view = GhosttySurfaceContainerView(frame: .zero)
         view.wantsLayer = true
         view.layer?.backgroundColor = NSColor.clear.cgColor
-        view.paneId = paneId
-        view.cellSize = cellSize
-        view.onPointer = onPointer
-        view.onCloseRequest = onCloseRequest
-        view.onMetadataChange = onMetadataChange
         let controller = GhosttyRuntime.shared.controller(for: runtimeId, terminalId: terminalId)
-        view.bind(controller: controller)
-        view.updateFocus(focused)
+        controller.attach(
+            to: view,
+            paneId: paneId,
+            cellSize: cellSize,
+            focused: focused,
+            onPointer: onPointer,
+            onCloseRequest: onCloseRequest,
+            onNamedCommand: onNamedCommand,
+            onMetadataChange: onMetadataChange
+        )
         return view
     }
 
-    func updateNSView(_ nsView: GhosttySurfaceHostView, context: Context) {
-        nsView.paneId = paneId
-        nsView.cellSize = cellSize
-        nsView.onPointer = onPointer
-        nsView.onCloseRequest = onCloseRequest
-        nsView.onMetadataChange = onMetadataChange
+    func updateNSView(_ nsView: GhosttySurfaceContainerView, context: Context) {
         let controller = GhosttyRuntime.shared.controller(for: runtimeId, terminalId: terminalId)
-        nsView.bind(controller: controller)
-        nsView.updateFocus(focused)
+        controller.attach(
+            to: nsView,
+            paneId: paneId,
+            cellSize: cellSize,
+            focused: focused,
+            onPointer: onPointer,
+            onCloseRequest: onCloseRequest,
+            onNamedCommand: onNamedCommand,
+            onMetadataChange: onMetadataChange
+        )
     }
+
+    static func dismantleNSView(_ nsView: GhosttySurfaceContainerView, coordinator: ()) {
+        guard let hostView = nsView.subviews.first as? GhosttySurfaceHostView,
+              let controller = hostView.controller else {
+            return
+        }
+        controller.detach(from: nsView)
+    }
+
 }
 
 #else
@@ -1641,6 +1669,7 @@ struct GhosttyPaneView: NSViewRepresentable {
     let focused: Bool
     let onPointer: (MouseBridgeEvent) -> Void
     let onCloseRequest: () -> Bool
+    let onNamedCommand: (EditorNamedCommand) -> Bool
     let onMetadataChange: () -> Void
 
     func makeNSView(context: Context) -> MissingGhosttyView {
@@ -1651,6 +1680,7 @@ struct GhosttyPaneView: NSViewRepresentable {
         _ = focused
         _ = onPointer
         _ = onCloseRequest
+        _ = onNamedCommand
         _ = onMetadataChange
         return MissingGhosttyView(frame: .zero)
     }

@@ -600,6 +600,11 @@ struct WindowTabbingBridge: NSViewRepresentable {
             updateCloseInterceptors(activeWindow: window)
 
             if lastWindow !== window {
+                if DiagnosticsDebugLog.enabled {
+                    DiagnosticsDebugLog.log(
+                        "window.bridge.changed old=\(lastWindow?.windowNumber ?? 0) new=\(window?.windowNumber ?? 0)"
+                    )
+                }
                 lastWindow = window
                 onWindowChanged(window)
             }

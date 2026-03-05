@@ -3,11 +3,12 @@ import SwiftUI
 struct GlobalTerminalSurfaceEntry: Identifiable, Equatable {
     let runtimeId: UInt64
     let terminalId: UInt64
-    let paneId: UInt64
+    let paneId: UInt64?
     let title: String
     let subtitle: String
     let windowTitle: String
     let isActive: Bool
+    let isAttached: Bool
     let isInCurrentWindow: Bool
 
     var id: String {
@@ -15,7 +16,7 @@ struct GlobalTerminalSurfaceEntry: Identifiable, Equatable {
     }
 
     var searchText: String {
-        "\(title) \(subtitle) \(windowTitle) t\(terminalId) p\(paneId)".lowercased()
+        "\(title) \(subtitle) \(windowTitle) t\(terminalId) p\(paneId ?? 0) \(isAttached ? "attached" : "detached")".lowercased()
     }
 }
 
@@ -152,6 +153,9 @@ struct GlobalTerminalSwitcherView: View {
             }
             if item.isActive {
                 badge(text: "ACTIVE", tint: Color.green)
+            }
+            if !item.isAttached {
+                badge(text: "DETACHED", tint: Color.orange)
             }
 
             Text(item.windowTitle)

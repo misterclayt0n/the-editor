@@ -66,6 +66,7 @@ pub struct Editor {
   layout_viewport:   Rect,
   split_tree:        SplitTree,
   pane_content:      BTreeMap<PaneId, PaneContent>,
+  terminal_surfaces: BTreeMap<TerminalId, TerminalSurface>,
   next_terminal_id:  NonZeroUsize,
   next_document_id:  NonZeroUsize,
   access_history:    Vec<usize>,
@@ -144,6 +145,19 @@ impl PaneContent {
       Self::Terminal { .. } => PaneContentKind::Terminal,
     }
   }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TerminalSurface {
+  terminal_id:    TerminalId,
+  attached_pane:  Option<PaneId>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TerminalSurfaceSnapshot {
+  pub terminal_id:   TerminalId,
+  pub attached_pane: Option<PaneId>,
+  pub is_active:     bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -234,6 +248,7 @@ impl Editor {
       layout_viewport: view.viewport,
       split_tree,
       pane_content,
+      terminal_surfaces: BTreeMap::new(),
       next_terminal_id: NonZeroUsize::new(1).expect("nonzero"),
       next_document_id,
       access_history: Vec::new(),
@@ -248,6 +263,35 @@ impl Editor {
     let next = self.next_terminal_id.get().saturating_add(1);
     self.next_terminal_id = NonZeroUsize::new(next).unwrap_or(self.next_terminal_id);
     id
+  }
+
+  fn detach_terminal_surface_in_pane(&mut self, pane: PaneId) -> Option<TerminalId> {
+    let Some(PaneContent::Terminal { terminal_id }) = self.pane_content.get(&pane).copied() else {
+      return None;
+    };
+    if let Some(surface) = self.terminal_surfaces.get_mut(&terminal_id) {
+      surface.attached_pane = None;
+    }
+    Some(terminal_id)
+  }
+
+  fn remove_terminal_surface(&mut self, terminal_id: TerminalId) -> bool {
+    let Some(surface) = self.terminal_surfaces.remove(&terminal_id) else {
+      return false;
+    };
+
+    if let Some(pane) = surface.attached_pane
+      && matches!(
+        self.pane_content.get(&pane),
+        Some(PaneContent::Terminal { terminal_id: attached }) if *attached == terminal_id
+      )
+    {
+      let fallback = self.active_buffer.min(self.buffers.len().saturating_sub(1));
+      self.pane_content.insert(pane, PaneContent::EditorBuffer {
+        buffer_index: fallback,
+      });
+    }
+    true
   }
 
   fn first_editor_pane(&self) -> Option<PaneId> {
@@ -490,6 +534,22 @@ impl Editor {
     }
   }
 
+  pub fn terminal_surface_snapshots(&self) -> Vec<TerminalSurfaceSnapshot> {
+    let active_pane = self.active_pane_id();
+    self
+      .terminal_surfaces
+      .values()
+      .copied()
+      .map(|surface| {
+        TerminalSurfaceSnapshot {
+          terminal_id:   surface.terminal_id,
+          attached_pane: surface.attached_pane,
+          is_active:     surface.attached_pane == Some(active_pane),
+        }
+      })
+      .collect()
+  }
+
   pub fn is_active_pane_terminal(&self) -> bool {
     matches!(
       self.active_pane_content(),
@@ -498,8 +558,13 @@ impl Editor {
   }
 
   pub fn open_terminal_in_active_pane(&mut self) -> TerminalId {
-    let terminal_id = self.alloc_terminal_id();
     let pane = self.active_pane_id();
+    let _ = self.detach_terminal_surface_in_pane(pane);
+    let terminal_id = self.alloc_terminal_id();
+    self.terminal_surfaces.insert(terminal_id, TerminalSurface {
+      terminal_id,
+      attached_pane: Some(pane),
+    });
     self
       .pane_content
       .insert(pane, PaneContent::Terminal { terminal_id });
@@ -512,17 +577,10 @@ impl Editor {
 
   pub fn close_terminal_in_active_pane(&mut self) -> bool {
     let pane = self.active_pane_id();
-    if !matches!(
-      self.pane_content.get(&pane),
-      Some(PaneContent::Terminal { .. })
-    ) {
+    let Some(PaneContent::Terminal { terminal_id }) = self.pane_content.get(&pane).copied() else {
       return false;
-    }
-    let fallback = self.active_buffer.min(self.buffers.len().saturating_sub(1));
-    self.pane_content.insert(pane, PaneContent::EditorBuffer {
-      buffer_index: fallback,
-    });
-    true
+    };
+    self.remove_terminal_surface(terminal_id)
   }
 
   pub fn set_active_buffer_in_pane(&mut self, pane: PaneId, index: usize) -> bool {
@@ -530,6 +588,7 @@ impl Editor {
       return false;
     }
     let was_active = pane == self.active_pane_id();
+    let _ = self.detach_terminal_surface_in_pane(pane);
     self.pane_content.insert(pane, PaneContent::EditorBuffer {
       buffer_index: index,
     });
@@ -605,6 +664,7 @@ impl Editor {
       return false;
     };
 
+    let _ = self.detach_terminal_surface_in_pane(closing);
     self.pane_content.remove(&closing);
     let Some(next_content) = self.pane_content.get(&next_active).copied() else {
       return false;
@@ -625,6 +685,16 @@ impl Editor {
     let Some(active_content) = self.pane_content.get(&active).copied() else {
       return false;
     };
+
+    let removed_panes: Vec<PaneId> = self
+      .pane_content
+      .keys()
+      .copied()
+      .filter(|pane| *pane != active)
+      .collect();
+    for pane in removed_panes {
+      let _ = self.detach_terminal_surface_in_pane(pane);
+    }
 
     self.split_tree.only_active();
     self.pane_content.retain(|pane, _| *pane == active);
@@ -670,6 +740,24 @@ impl Editor {
 
   pub fn transpose_active_pane_branch(&mut self) -> bool {
     self.split_tree.transpose_active_branch()
+  }
+
+  pub fn focus_terminal_surface(&mut self, terminal_id: TerminalId) -> bool {
+    let Some(surface) = self.terminal_surfaces.get(&terminal_id).copied() else {
+      return false;
+    };
+
+    if let Some(pane) = surface.attached_pane {
+      return self.set_active_pane(pane);
+    }
+
+    let pane = self.active_pane_id();
+    let _ = self.detach_terminal_surface_in_pane(pane);
+    self.pane_content.insert(pane, PaneContent::Terminal { terminal_id });
+    if let Some(surface) = self.terminal_surfaces.get_mut(&terminal_id) {
+      surface.attached_pane = Some(pane);
+    }
+    true
   }
 
   pub fn set_active_buffer_preserving_terminal(&mut self, index: usize) -> bool {
@@ -1427,6 +1515,87 @@ mod tests {
       ),
       "opening a buffer should not remove the existing terminal pane"
     );
+  }
+
+  #[test]
+  fn editor_set_active_buffer_in_terminal_pane_detaches_terminal_surface() {
+    let doc_id = DocumentId::new(NonZeroUsize::new(1).unwrap());
+    let doc = Document::new(doc_id, Rope::from("one"));
+    let view = ViewState::new(Rect::new(0, 0, 80, 24), Position::new(0, 0));
+    let editor_id = EditorId::new(NonZeroUsize::new(1).unwrap());
+    let mut editor = Editor::new(editor_id, doc, view);
+
+    let active_pane = editor.active_pane_id();
+    let terminal_id = editor.open_terminal_in_active_pane();
+    assert!(editor.set_active_buffer_in_pane(active_pane, 0));
+    assert_eq!(
+      editor.pane_content(active_pane),
+      Some(PaneContent::EditorBuffer { buffer_index: 0 })
+    );
+    assert_eq!(
+      editor.terminal_surface_snapshots(),
+      vec![TerminalSurfaceSnapshot {
+        terminal_id,
+        attached_pane: None,
+        is_active: false,
+      }]
+    );
+    assert!(editor.focus_terminal_surface(terminal_id));
+    assert_eq!(
+      editor.pane_content(active_pane),
+      Some(PaneContent::Terminal { terminal_id })
+    );
+  }
+
+  #[test]
+  fn editor_only_active_pane_detaches_non_active_terminal_surface() {
+    let doc_id = DocumentId::new(NonZeroUsize::new(1).unwrap());
+    let doc = Document::new(doc_id, Rope::from("one"));
+    let view = ViewState::new(Rect::new(0, 0, 80, 24), Position::new(0, 0));
+    let editor_id = EditorId::new(NonZeroUsize::new(1).unwrap());
+    let mut editor = Editor::new(editor_id, doc, view);
+
+    let terminal_id = editor.open_terminal_in_active_pane();
+    assert!(editor.set_active_buffer(0));
+    assert_eq!(editor.pane_count(), 2);
+    assert!(editor.only_active_pane());
+    assert_eq!(editor.pane_count(), 1);
+    assert_eq!(
+      editor.terminal_surface_snapshots(),
+      vec![TerminalSurfaceSnapshot {
+        terminal_id,
+        attached_pane: None,
+        is_active: false,
+      }]
+    );
+    let panes = editor.frame_pane_snapshots(editor.layout_viewport());
+    assert!(
+      panes.iter().all(|pane| {
+        !matches!(pane.content, PaneContent::Terminal { terminal_id: id } if id == terminal_id)
+      }),
+      "terminal pane should be detached from layout after only_active_pane"
+    );
+  }
+
+  #[test]
+  fn editor_focus_terminal_surface_reattaches_detached_terminal() {
+    let doc_id = DocumentId::new(NonZeroUsize::new(1).unwrap());
+    let doc = Document::new(doc_id, Rope::from("one"));
+    let view = ViewState::new(Rect::new(0, 0, 80, 24), Position::new(0, 0));
+    let editor_id = EditorId::new(NonZeroUsize::new(1).unwrap());
+    let mut editor = Editor::new(editor_id, doc, view);
+
+    let terminal_id = editor.open_terminal_in_active_pane();
+    assert!(editor.set_active_buffer(0));
+    assert!(editor.only_active_pane());
+    assert!(editor.focus_terminal_surface(terminal_id));
+    assert!(editor.is_active_pane_terminal());
+    assert_eq!(editor.active_terminal_id(), Some(terminal_id));
+    let snapshots = editor.terminal_surface_snapshots();
+    assert_eq!(snapshots.len(), 1);
+    assert_eq!(snapshots[0].terminal_id, terminal_id);
+    assert_eq!(snapshots[0].attached_pane, Some(editor.active_pane_id()));
+    assert!(snapshots[0].is_active);
   }
 
   #[test]

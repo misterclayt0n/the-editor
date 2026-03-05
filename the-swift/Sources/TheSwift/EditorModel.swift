@@ -44,6 +44,16 @@ final class EditorModel: ObservableObject {
         let isDocumentEdited: Bool
     }
 
+    private enum PaneSurfaceKind {
+        case editor
+        case terminal
+    }
+
+    private struct PaneSurfaceSnapshot: Equatable {
+        let paneId: UInt64
+        let kind: PaneSurfaceKind
+    }
+
     private let runtime: SharedEditorRuntime
     private let app: TheEditorFFIBridge.App
     let runtimeInstanceId: UInt64
@@ -103,6 +113,9 @@ final class EditorModel: ObservableObject {
     private var allowProgrammaticWindowClose: Bool = false
     private var lastNativeWindowPresentation: NativeWindowPresentation? = nil
     private var seededUntitledForUnroutedWindow: Bool = false
+    private var paneSurfaceItems: [PaneSurfaceSnapshot] = []
+    private var lastFocusedTerminalPaneId: UInt64? = nil
+    private var lastFocusedEditorPaneId: UInt64? = nil
 
     init(filePath: String? = nil, bufferId: UInt64? = nil) {
         self.runtime = SharedEditorRuntime()
@@ -143,6 +156,7 @@ final class EditorModel: ObservableObject {
         filePickerTimer?.invalidate()
         backgroundTimer?.invalidate()
         unregisterHostWindowNotifications()
+        EditorCommandModelRegistry.shared.unregister(window: hostWindow)
     }
 
     private static func loadText(filePath: String?) -> String {
@@ -199,6 +213,7 @@ final class EditorModel: ObservableObject {
         plan = framePlan.active_plan()
         splitSeparators = fetchSplitSeparators()
         updateTerminalPaneSnapshots(from: framePlan)
+        updateSurfaceOverviewSnapshots(from: framePlan)
         debugDiagnosticsSnapshot(trigger: trigger, plan: plan)
 
         mode = EditorMode(rawValue: app.mode(editorId)) ?? .normal
@@ -364,10 +379,72 @@ final class EditorModel: ObservableObject {
     }
 
     @discardableResult
+    func toggleSurfaceOverview() -> Bool {
+        guard let hostWindow else {
+            return false
+        }
+        hostWindow.toggleTabOverview(nil)
+        return true
+    }
+
+    @discardableResult
+    func toggleLastTerminalSurface() -> Bool {
+        let activePaneId = framePlan.active_pane_id()
+        guard let activeItem = paneSurfaceItems.first(where: { $0.paneId == activePaneId }) else {
+            return false
+        }
+
+        switch activeItem.kind {
+        case .terminal:
+            if let target = preferredEditorPaneId(excluding: activePaneId) {
+                return focusPane(paneId: target, trigger: "toggle_last_terminal")
+            }
+            return closeTerminalInActivePane()
+        case .editor:
+            if let target = preferredTerminalPaneId(excluding: activePaneId) {
+                return focusPane(paneId: target, trigger: "toggle_last_terminal")
+            }
+            lastFocusedEditorPaneId = activePaneId
+            return openTerminalInActivePane()
+        }
+    }
+
+    @discardableResult
+    private func focusPane(paneId: UInt64, trigger: String) -> Bool {
+        guard paneId != 0 else {
+            return false
+        }
+        let event = MouseBridgeEvent(
+            kind: 0,
+            button: 1,
+            logicalCol: UInt16.max,
+            logicalRow: UInt16.max,
+            modifiers: 0,
+            clickCount: 1,
+            surfaceId: paneId
+        )
+        guard app.handle_mouse(
+            editorId,
+            event.packed,
+            event.logicalCol,
+            event.logicalRow,
+            event.surfaceId
+        ) else {
+            return false
+        }
+        refresh(trigger: trigger)
+        return true
+    }
+
+    @discardableResult
     func executeNamedCommand(_ command: EditorNamedCommand) -> Bool {
         switch command {
         case .openNativeTab:
             return openNativeUntitledTab()
+        case .toggleLastTerminal:
+            return toggleLastTerminalSurface()
+        case .toggleSurfaceOverview:
+            return toggleSurfaceOverview()
         default:
             return executeNamedCommand(command.rawValue)
         }
@@ -499,6 +576,67 @@ final class EditorModel: ObservableObject {
         GhosttyRuntime.shared.reconcileTerminalIds(runtimeId: runtimeInstanceId, Set(panes.map(\.terminalId)))
     }
 
+    private func updateSurfaceOverviewSnapshots(from framePlan: RenderFramePlan) {
+        trackLastFocusedPane(from: framePlan)
+
+        let count = Int(framePlan.pane_count())
+
+        var items: [PaneSurfaceSnapshot] = []
+        items.reserveCapacity(count)
+
+        for index in 0..<count {
+            let pane = framePlan.pane_at(UInt(index))
+            let paneId = pane.pane_id()
+            if pane.pane_kind() == 1 {
+                items.append(PaneSurfaceSnapshot(paneId: paneId, kind: .terminal))
+                continue
+            }
+
+            items.append(PaneSurfaceSnapshot(paneId: paneId, kind: .editor))
+        }
+
+        paneSurfaceItems = items
+    }
+
+    private func trackLastFocusedPane(from framePlan: RenderFramePlan) {
+        let activePaneId = framePlan.active_pane_id()
+        let count = Int(framePlan.pane_count())
+        for index in 0..<count {
+            let pane = framePlan.pane_at(UInt(index))
+            guard pane.pane_id() == activePaneId else {
+                continue
+            }
+            if pane.pane_kind() == 1 {
+                lastFocusedTerminalPaneId = activePaneId
+            } else {
+                lastFocusedEditorPaneId = activePaneId
+            }
+            return
+        }
+    }
+
+    private func preferredTerminalPaneId(excluding excludedPaneId: UInt64?) -> UInt64? {
+        if let last = lastFocusedTerminalPaneId,
+           paneSurfaceItems.contains(where: { $0.paneId == last && $0.kind == .terminal }),
+           last != excludedPaneId {
+            return last
+        }
+        return paneSurfaceItems.first(where: {
+            $0.kind == .terminal && $0.paneId != excludedPaneId
+        })?.paneId
+    }
+
+    private func preferredEditorPaneId(excluding excludedPaneId: UInt64?) -> UInt64? {
+        if let last = lastFocusedEditorPaneId,
+           paneSurfaceItems.contains(where: { $0.paneId == last && $0.kind == .editor }),
+           last != excludedPaneId {
+            return last
+        }
+        return paneSurfaceItems.first(where: {
+            $0.kind == .editor && $0.paneId != excludedPaneId
+        })?.paneId
+    }
+
     func selectCommandPalette(index: Int) {
         _ = app.command_palette_select_filtered(editorId, UInt(index))
         refresh()
@@ -513,16 +651,20 @@ final class EditorModel: ObservableObject {
     }
 
     func setHostWindow(_ window: NSWindow?) {
-        if hostWindow !== window {
+        let previousWindow = hostWindow
+        if previousWindow !== window {
+            EditorCommandModelRegistry.shared.unregister(window: previousWindow)
             closeConfirmationAlert = nil
             lastNativeWindowPresentation = nil
             unregisterHostWindowNotifications()
             hostWindow = window
+            EditorCommandModelRegistry.shared.register(window: window, model: self)
             registerHostWindowNotifications(for: window)
             seedUntitledBufferForUnroutedWindowIfNeeded()
             refresh(trigger: "window_attach")
         } else {
             hostWindow = window
+            EditorCommandModelRegistry.shared.register(window: window, model: self)
         }
         if shouldSyncNativeWindowPresentation() {
             syncNativeWindowPresentation()

@@ -31,7 +31,9 @@ struct EditorView: View {
         let isSearchOpen = model.uiTree.hasSearchPromptPanel
         let isFilePickerOpen = model.filePickerSnapshot?.active ?? false
         let isInputPromptOpen = model.uiTree.hasInputPromptPanel
-        let isOverlayOpen = isPaletteOpen || isSearchOpen || isFilePickerOpen || isInputPromptOpen
+        let terminalSwitcherSnapshot = model.globalTerminalSwitcherSnapshot
+        let isTerminalSwitcherOpen = terminalSwitcherSnapshot.isOpen
+        let isOverlayOpen = isPaletteOpen || isSearchOpen || isFilePickerOpen || isInputPromptOpen || isTerminalSwitcherOpen
         let completionSnapshot = model.uiTree.completionSnapshot()
         let hoverSnapshot = model.uiTree.hoverSnapshot()
         let signatureSnapshot = model.uiTree.signatureHelpSnapshot()
@@ -171,6 +173,18 @@ struct EditorView: View {
                                     model.submitSearch()
                                 }
                             )
+
+                            if terminalSwitcherSnapshot.isOpen {
+                                GlobalTerminalSwitcherView(
+                                    snapshot: terminalSwitcherSnapshot,
+                                    onSubmit: { entry in
+                                        _ = model.submitGlobalTerminalSwitcher(entry: entry)
+                                    },
+                                    onClose: {
+                                        model.closeGlobalTerminalSwitcher()
+                                    }
+                                )
+                            }
 
                             if !isOverlayOpen {
                                 if let completion = completionSnapshot {

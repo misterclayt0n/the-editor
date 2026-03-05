@@ -10,6 +10,7 @@ enum EditorNamedCommand: String, CaseIterable {
     case openTerminal = "terminal_open"
     case closeTerminal = "terminal_close"
     case toggleLastTerminal = "terminal_toggle_last"
+    case openGlobalTerminalSwitcher = "terminal_switcher_global"
     case toggleSurfaceOverview = "surface_overview"
 
     var title: String {
@@ -30,6 +31,8 @@ enum EditorNamedCommand: String, CaseIterable {
             return "Close Terminal"
         case .toggleLastTerminal:
             return "Toggle Last Terminal"
+        case .openGlobalTerminalSwitcher:
+            return "Global Terminal Switcher"
         case .toggleSurfaceOverview:
             return "Tab Overview"
         }
@@ -52,6 +55,8 @@ enum EditorNamedCommand: String, CaseIterable {
         case .closeTerminal:
             return "t"
         case .toggleLastTerminal:
+            return "`"
+        case .openGlobalTerminalSwitcher:
             return "`"
         case .toggleSurfaceOverview:
             return "o"
@@ -76,6 +81,8 @@ enum EditorNamedCommand: String, CaseIterable {
             return "t"
         case .toggleLastTerminal:
             return "`"
+        case .openGlobalTerminalSwitcher:
+            return "`"
         case .toggleSurfaceOverview:
             return "o"
         }
@@ -99,6 +106,8 @@ enum EditorNamedCommand: String, CaseIterable {
             return [.command, .option, .shift]
         case .toggleLastTerminal:
             return [.command]
+        case .openGlobalTerminalSwitcher:
+            return [.command, .shift]
         case .toggleSurfaceOverview:
             return [.command, .shift]
         }
@@ -122,6 +131,8 @@ enum EditorNamedCommand: String, CaseIterable {
             return [.command, .option, .shift]
         case .toggleLastTerminal:
             return [.command]
+        case .openGlobalTerminalSwitcher:
+            return [.command, .shift]
         case .toggleSurfaceOverview:
             return [.command, .shift]
         }
@@ -238,6 +249,29 @@ final class EditorCommandModelRegistry {
         return nil
     }
 
+    func globalTerminalEntries(anchorWindow: NSWindow?) -> [GlobalTerminalSurfaceEntry] {
+        let windowModels = orderedWindowModels(anchorWindow: anchorWindow)
+        var entries: [GlobalTerminalSurfaceEntry] = []
+        entries.reserveCapacity(windowModels.count * 2)
+
+        for (window, model) in windowModels {
+            entries.append(contentsOf: model.globalTerminalSurfaceEntries(isCurrentWindow: window === anchorWindow))
+        }
+
+        return entries
+    }
+
+    @discardableResult
+    func focusTerminalSurface(runtimeId: UInt64, terminalId: UInt64) -> Bool {
+        let windowModels = orderedWindowModels(anchorWindow: NSApp.keyWindow ?? NSApp.mainWindow)
+        for (_, model) in windowModels where model.runtimeInstanceId == runtimeId {
+            if model.focusTerminalSurface(terminalId: terminalId) {
+                return true
+            }
+        }
+        return false
+    }
+
     private func model(for window: NSWindow) -> EditorModel? {
         modelsByWindow[ObjectIdentifier(window)]?.model
     }
@@ -251,6 +285,50 @@ final class EditorCommandModelRegistry {
                 model?.selectNativeWindowTab(indexOneBased: indexOneBased) ?? false
             }
         )
+    }
+
+    private func orderedWindowModels(anchorWindow: NSWindow?) -> [(NSWindow, EditorModel)] {
+        pruneDeadEntries()
+
+        var seen = Set<ObjectIdentifier>()
+        var pairs: [(window: NSWindow, model: EditorModel)] = []
+        for window in NSApp.windows {
+            guard let model = model(for: window) else { continue }
+            let key = ObjectIdentifier(window)
+            guard !seen.contains(key) else { continue }
+            seen.insert(key)
+            pairs.append((window, model))
+        }
+
+        pairs.sort { lhs, rhs in
+            let lhsScore = windowPriority(lhs.window, anchorWindow: anchorWindow)
+            let rhsScore = windowPriority(rhs.window, anchorWindow: anchorWindow)
+            if lhsScore != rhsScore {
+                return lhsScore > rhsScore
+            }
+            return lhs.window.windowNumber > rhs.window.windowNumber
+        }
+
+        return pairs
+    }
+
+    private func windowPriority(_ window: NSWindow, anchorWindow: NSWindow?) -> Int {
+        if let anchorWindow, window === anchorWindow {
+            return 100
+        }
+        if let anchorWindow, anchorWindow.tabGroup?.selectedWindow === window {
+            return 90
+        }
+        if window.isKeyWindow {
+            return 80
+        }
+        if window.isMainWindow {
+            return 70
+        }
+        if window.isVisible {
+            return 60
+        }
+        return 10
     }
 
     private func pruneDeadEntries() {
@@ -301,6 +379,7 @@ struct EditorAppCommands: Commands {
             commandButton(.closeTerminal)
             Divider()
             commandButton(.toggleLastTerminal)
+            commandButton(.openGlobalTerminalSwitcher)
             commandButton(.toggleSurfaceOverview)
         }
     }

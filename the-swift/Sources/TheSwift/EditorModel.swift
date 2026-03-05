@@ -78,6 +78,7 @@ final class EditorModel: ObservableObject {
     private(set) var mode: EditorMode = .normal
     @Published var pendingKeys: [String] = []
     @Published var pendingKeyHints: PendingKeyHintsSnapshot? = nil
+    @Published var globalTerminalSwitcherSnapshot: GlobalTerminalSwitcherSnapshot = .closed
     @Published var filePickerSnapshot: FilePickerSnapshot? = nil
     @Published var fileTreeSnapshot: FileTreeSnapshot = .hidden
     let filePickerPreviewModel = FilePickerPreviewModel()
@@ -391,6 +392,35 @@ final class EditorModel: ObservableObject {
     }
 
     @discardableResult
+    func toggleGlobalTerminalSwitcher() -> Bool {
+        if globalTerminalSwitcherSnapshot.isOpen {
+            closeGlobalTerminalSwitcher()
+            return true
+        }
+
+        let anchorWindow = hostWindow ?? NSApp.keyWindow ?? NSApp.mainWindow
+        let entries = EditorCommandModelRegistry.shared.globalTerminalEntries(anchorWindow: anchorWindow)
+        globalTerminalSwitcherSnapshot = .opened(items: entries)
+        return true
+    }
+
+    func closeGlobalTerminalSwitcher() {
+        guard globalTerminalSwitcherSnapshot.isOpen else {
+            return
+        }
+        globalTerminalSwitcherSnapshot = .closed
+    }
+
+    @discardableResult
+    func submitGlobalTerminalSwitcher(entry: GlobalTerminalSurfaceEntry) -> Bool {
+        closeGlobalTerminalSwitcher()
+        return EditorCommandModelRegistry.shared.focusTerminalSurface(
+            runtimeId: entry.runtimeId,
+            terminalId: entry.terminalId
+        )
+    }
+
+    @discardableResult
     func closeSurface() -> Bool {
         if isActivePaneTerminal, closeTerminalInActivePane() {
             return true
@@ -471,6 +501,8 @@ final class EditorModel: ObservableObject {
             return closeSurface()
         case .toggleLastTerminal:
             return toggleLastTerminalSurface()
+        case .openGlobalTerminalSwitcher:
+            return toggleGlobalTerminalSwitcher()
         case .toggleSurfaceOverview:
             return toggleSurfaceOverview()
         default:
@@ -663,6 +695,48 @@ final class EditorModel: ObservableObject {
         return paneSurfaceItems.first(where: {
             $0.kind == .editor && $0.paneId != excludedPaneId
         })?.paneId
+    }
+
+    func globalTerminalSurfaceEntries(isCurrentWindow: Bool) -> [GlobalTerminalSurfaceEntry] {
+        guard !terminalPanes.isEmpty else {
+            return []
+        }
+
+        let currentWindowTitle = normalizedTerminalSwitcherWindowTitle()
+        let sortedPanes = terminalPanes.sorted { lhs, rhs in
+            if lhs.isActive != rhs.isActive {
+                return lhs.isActive && !rhs.isActive
+            }
+            return lhs.paneId < rhs.paneId
+        }
+
+        return sortedPanes.map { pane in
+            let metadata = GhosttyRuntime.shared.terminalMetadata(runtimeId: runtimeInstanceId, for: pane.terminalId)
+            let title = terminalPresentationTitle(from: metadata)
+            let subtitle = terminalSwitcherSubtitle(for: pane, metadata: metadata)
+            return GlobalTerminalSurfaceEntry(
+                runtimeId: runtimeInstanceId,
+                terminalId: pane.terminalId,
+                paneId: pane.paneId,
+                title: title,
+                subtitle: subtitle,
+                windowTitle: currentWindowTitle,
+                isActive: pane.isActive,
+                isInCurrentWindow: isCurrentWindow
+            )
+        }
+    }
+
+    @discardableResult
+    func focusTerminalSurface(terminalId: UInt64) -> Bool {
+        guard let pane = terminalPanes.first(where: { $0.terminalId == terminalId }) else {
+            return false
+        }
+
+        if let hostWindow {
+            hostWindow.makeKeyAndOrderFront(nil)
+        }
+        return focusPane(paneId: pane.paneId, trigger: "global_terminal_switcher")
     }
 
     func selectCommandPalette(index: Int) {
@@ -1583,6 +1657,27 @@ final class EditorModel: ObservableObject {
             return title
         }
         return "terminal"
+    }
+
+    private func terminalSwitcherSubtitle(
+        for pane: TerminalPaneSnapshot,
+        metadata: GhosttyTerminalMetadata?
+    ) -> String {
+        let rawPath = metadata.flatMap { representedPathFromTerminalPwd($0.pwd) } ?? ""
+        let abbreviatedPath = rawPath.isEmpty ? "" : (rawPath as NSString).abbreviatingWithTildeInPath
+        if abbreviatedPath.isEmpty {
+            return "t\(pane.terminalId) • p\(pane.paneId)"
+        }
+        return "\(abbreviatedPath) • t\(pane.terminalId) • p\(pane.paneId)"
+    }
+
+    private func normalizedTerminalSwitcherWindowTitle() -> String {
+        let rawTitle = hostWindow?.title ?? navigationTitle
+        let trimmed = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            return "window"
+        }
+        return normalizeFallbackTitle(trimmed)
     }
 
     private func representedPathFromTerminalPwd(_ rawPwd: String) -> String? {

@@ -105,20 +105,21 @@ struct KeyCaptureView: NSViewRepresentable {
 
         override func keyDown(with event: NSEvent) {
             lastModifiers = event.modifierFlags
+            let relevantFlags = event.modifierFlags.intersection([.command, .shift, .option, .control])
 
-            if event.modifierFlags.contains(.command),
+            if relevantFlags == [.command],
                Self.isCommandCloseSurface(from: event) {
                 onCommandCloseSurface?()
                 return
             }
 
-            if event.modifierFlags.contains(.command),
+            if relevantFlags == [.command],
                Self.isCommandNewTab(from: event) {
                 onCommandNewTab?()
                 return
             }
 
-            if event.modifierFlags.contains(.command),
+            if relevantFlags == [.command],
                let digit = Self.commandDigitIndex(from: event) {
                 onCommandDigit?(digit)
                 return

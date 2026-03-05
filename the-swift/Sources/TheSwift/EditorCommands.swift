@@ -142,7 +142,7 @@ enum EditorNamedCommand: String, CaseIterable {
         command(for: event) != nil || isNativeTabSelectionShortcut(event) || isAppQuitShortcut(event)
     }
 
-    private static func command(for event: NSEvent) -> EditorNamedCommand? {
+    static func command(for event: NSEvent) -> EditorNamedCommand? {
         guard event.type == .keyDown else { return nil }
         let relevantFlags = event.modifierFlags.intersection([.command, .shift, .option, .control])
         guard relevantFlags.contains(.command) else { return nil }
@@ -196,10 +196,12 @@ extension FocusedValues {
     }
 }
 
-private final class WeakEditorModelReference {
+private final class WindowModelReference {
     weak var model: EditorModel?
+    weak var window: NSWindow?
 
-    init(_ model: EditorModel?) {
+    init(window: NSWindow?, model: EditorModel?) {
+        self.window = window
         self.model = model
     }
 }
@@ -207,14 +209,14 @@ private final class WeakEditorModelReference {
 final class EditorCommandModelRegistry {
     static let shared = EditorCommandModelRegistry()
 
-    private var modelsByWindow: [ObjectIdentifier: WeakEditorModelReference] = [:]
+    private var modelsByWindow: [ObjectIdentifier: WindowModelReference] = [:]
 
     private init() {}
 
     func register(window: NSWindow?, model: EditorModel) {
         guard let window else { return }
         pruneDeadEntries()
-        modelsByWindow[ObjectIdentifier(window)] = WeakEditorModelReference(model)
+        modelsByWindow[ObjectIdentifier(window)] = WindowModelReference(window: window, model: model)
     }
 
     func unregister(window: NSWindow?) {
@@ -287,29 +289,24 @@ final class EditorCommandModelRegistry {
         )
     }
 
-    private func orderedWindowModels(anchorWindow: NSWindow?) -> [(NSWindow, EditorModel)] {
+    private func orderedWindowModels(anchorWindow: NSWindow?) -> [(window: NSWindow, model: EditorModel)] {
         pruneDeadEntries()
-
-        var seen = Set<ObjectIdentifier>()
-        var pairs: [(window: NSWindow, model: EditorModel)] = []
-        for window in NSApp.windows {
-            guard let model = model(for: window) else { continue }
-            let key = ObjectIdentifier(window)
-            guard !seen.contains(key) else { continue }
-            seen.insert(key)
-            pairs.append((window, model))
+        let pairs: [(window: NSWindow, model: EditorModel)] = modelsByWindow.values.compactMap { reference in
+            guard let window = reference.window,
+                  let model = reference.model else {
+                return nil
+            }
+            return (window: window, model: model)
         }
 
-        pairs.sort { lhs, rhs in
+        return pairs.sorted(by: { lhs, rhs in
             let lhsScore = windowPriority(lhs.window, anchorWindow: anchorWindow)
             let rhsScore = windowPriority(rhs.window, anchorWindow: anchorWindow)
             if lhsScore != rhsScore {
                 return lhsScore > rhsScore
             }
             return lhs.window.windowNumber > rhs.window.windowNumber
-        }
-
-        return pairs
+        })
     }
 
     private func windowPriority(_ window: NSWindow, anchorWindow: NSWindow?) -> Int {
@@ -332,7 +329,7 @@ final class EditorCommandModelRegistry {
     }
 
     private func pruneDeadEntries() {
-        modelsByWindow = modelsByWindow.filter { $0.value.model != nil }
+        modelsByWindow = modelsByWindow.filter { $0.value.model != nil && $0.value.window != nil }
     }
 }
 

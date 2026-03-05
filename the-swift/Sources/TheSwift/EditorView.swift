@@ -248,11 +248,8 @@ struct EditorView: View {
                                         onCommandDigit: { digit in
                                             _ = model.selectNativeWindowTab(indexOneBased: digit)
                                         },
-                                        onCommandNewTab: {
-                                            _ = model.openNativeUntitledTab()
-                                        },
-                                        onCommandCloseSurface: {
-                                            _ = model.closeSurface()
+                                        onNamedCommand: { command in
+                                            _ = model.executeNamedCommand(command)
                                         },
                                         onScroll: { _, _, _ in },
                                         modeProvider: {

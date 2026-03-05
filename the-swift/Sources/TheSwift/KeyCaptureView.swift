@@ -60,8 +60,7 @@ struct KeyCaptureView: NSViewRepresentable {
         var onKey: ((KeyEvent) -> Void)?
         var onText: ((String, NSEvent.ModifierFlags) -> Void)?
         var onCommandDigit: ((Int) -> Void)?
-        var onCommandNewTab: (() -> Void)?
-        var onCommandCloseSurface: (() -> Void)?
+        var onNamedCommand: ((EditorNamedCommand) -> Void)?
         var modeProvider: (() -> EditorMode)?
         var onScroll: ((CGFloat, CGFloat, Bool) -> Void)?
 
@@ -83,19 +82,14 @@ struct KeyCaptureView: NSViewRepresentable {
         override func performKeyEquivalent(with event: NSEvent) -> Bool {
             guard event.type == .keyDown else { return false }
             let relevantFlags = event.modifierFlags.intersection([.command, .shift, .option, .control])
-            guard relevantFlags == [.command] else { return false }
 
-            if Self.isCommandCloseSurface(from: event) {
-                onCommandCloseSurface?()
+            if let command = EditorNamedCommand.command(for: event) {
+                onNamedCommand?(command)
                 return true
             }
 
-            if Self.isCommandNewTab(from: event) {
-                onCommandNewTab?()
-                return true
-            }
-
-            if let digit = Self.commandDigitIndex(from: event) {
+            if relevantFlags == [.command],
+               let digit = Self.commandDigitIndex(from: event) {
                 onCommandDigit?(digit)
                 return true
             }
@@ -107,15 +101,8 @@ struct KeyCaptureView: NSViewRepresentable {
             lastModifiers = event.modifierFlags
             let relevantFlags = event.modifierFlags.intersection([.command, .shift, .option, .control])
 
-            if relevantFlags == [.command],
-               Self.isCommandCloseSurface(from: event) {
-                onCommandCloseSurface?()
-                return
-            }
-
-            if relevantFlags == [.command],
-               Self.isCommandNewTab(from: event) {
-                onCommandNewTab?()
+            if let command = EditorNamedCommand.command(for: event) {
+                onNamedCommand?(command)
                 return
             }
 
@@ -275,28 +262,12 @@ struct KeyCaptureView: NSViewRepresentable {
             }
         }
 
-        private static func isCommandNewTab(from event: NSEvent) -> Bool {
-            guard let chars = event.charactersIgnoringModifiers,
-                  chars.count == 1 else {
-                return false
-            }
-            return chars.lowercased() == "t"
-        }
-
-        private static func isCommandCloseSurface(from event: NSEvent) -> Bool {
-            guard let chars = event.charactersIgnoringModifiers,
-                  chars.count == 1 else {
-                return false
-            }
-            return chars.lowercased() == "w"
-        }
     }
 
     let onKey: (KeyEvent) -> Void
     let onText: (String, NSEvent.ModifierFlags) -> Void
     let onCommandDigit: (Int) -> Void
-    let onCommandNewTab: () -> Void
-    let onCommandCloseSurface: () -> Void
+    let onNamedCommand: (EditorNamedCommand) -> Void
     let onScroll: (CGFloat, CGFloat, Bool) -> Void
     let modeProvider: () -> EditorMode
 
@@ -305,8 +276,7 @@ struct KeyCaptureView: NSViewRepresentable {
         view.onKey = onKey
         view.onText = onText
         view.onCommandDigit = onCommandDigit
-        view.onCommandNewTab = onCommandNewTab
-        view.onCommandCloseSurface = onCommandCloseSurface
+        view.onNamedCommand = onNamedCommand
         view.onScroll = onScroll
         view.modeProvider = modeProvider
         KeyCaptureFocusBridge.shared.register(view)
@@ -320,8 +290,7 @@ struct KeyCaptureView: NSViewRepresentable {
         nsView.onKey = onKey
         nsView.onText = onText
         nsView.onCommandDigit = onCommandDigit
-        nsView.onCommandNewTab = onCommandNewTab
-        nsView.onCommandCloseSurface = onCommandCloseSurface
+        nsView.onNamedCommand = onNamedCommand
         nsView.onScroll = onScroll
         nsView.modeProvider = modeProvider
         KeyCaptureFocusBridge.shared.register(nsView)

@@ -375,13 +375,35 @@ struct ScrollCaptureView: NSViewRepresentable {
         }
 
         override func hitTest(_ point: NSPoint) -> NSView? {
-            if hitSeparator(at: point) != nil {
+            // AppKit passes hitTest points in superview coordinates.
+            // Convert once so separator/pane/passthrough checks use this view's local space.
+            let localPoint = convert(point, from: superview)
+            let separator = hitSeparator(at: localPoint)
+            if separator != nil {
+                if shouldDebugTerminalBand(at: localPoint) {
+                    DiagnosticsDebugLog.terminalMouseLog(
+                        "overlay.hitTest edge=\(terminalMouseEdgeTag(for: localPoint)) point=(\(fmt(localPoint.x)),\(fmt(localPoint.y))) topDist=\(fmt(topDistance(for: localPoint))) sep=1 passthrough=0 result=self"
+                    )
+                }
                 return self
             }
-            if shouldPassthrough(at: point) {
+            let passthrough = shouldPassthrough(at: localPoint)
+            if passthrough {
+                if shouldDebugTerminalBand(at: localPoint) {
+                    let pane = hitPane(at: localPoint)
+                    DiagnosticsDebugLog.terminalMouseLog(
+                        "overlay.hitTest edge=\(terminalMouseEdgeTag(for: localPoint)) point=(\(fmt(localPoint.x)),\(fmt(localPoint.y))) topDist=\(fmt(topDistance(for: localPoint))) sep=0 passthrough=1 pane=\(pane?.paneId ?? 0) result=nil"
+                    )
+                }
                 return nil
             }
-            return super.hitTest(point)
+            if shouldDebugTerminalBand(at: localPoint) {
+                let pane = hitPane(at: localPoint)
+                DiagnosticsDebugLog.terminalMouseLog(
+                    "overlay.hitTest edge=\(terminalMouseEdgeTag(for: localPoint)) point=(\(fmt(localPoint.x)),\(fmt(localPoint.y))) topDist=\(fmt(topDistance(for: localPoint))) sep=0 passthrough=0 pane=\(pane?.paneId ?? 0) result=self"
+                )
+            }
+            return self
         }
 
         override func cursorUpdate(with event: NSEvent) {
@@ -398,6 +420,13 @@ struct ScrollCaptureView: NSViewRepresentable {
         override func mouseDown(with event: NSEvent) {
             let point = convert(event.locationInWindow, from: nil)
             KeyCaptureFocusBridge.shared.reclaim(in: window)
+            if shouldDebugTerminalBand(at: point) {
+                let pane = hitPane(at: point)
+                let inPassthrough = shouldPassthrough(at: point)
+                DiagnosticsDebugLog.terminalMouseLog(
+                    "overlay.mouseDown edge=\(terminalMouseEdgeTag(for: point)) point=(\(fmt(point.x)),\(fmt(point.y))) topDist=\(fmt(topDistance(for: point))) pane=\(pane?.paneId ?? 0) passthrough=\(inPassthrough ? 1 : 0) separators=\(separators.count)"
+                )
+            }
             if let separator = hitSeparator(at: point) {
                 activeSeparator = separator
                 activeEditorPane = nil
@@ -714,6 +743,39 @@ struct ScrollCaptureView: NSViewRepresentable {
 
         private func cursor(for separator: SeparatorHandle) -> NSCursor {
             separator.axis == 0 ? .resizeLeftRight : .resizeUpDown
+        }
+
+        private var terminalMouseDebugBandPx: CGFloat {
+            max(64, cellSize.height * 3)
+        }
+
+        private func shouldDebugTerminalBand(at point: NSPoint) -> Bool {
+            guard DiagnosticsDebugLog.terminalMouseEnabled else { return false }
+            let topDistance = topDistance(for: point)
+            let bottomDistance = max(0, point.y)
+            return topDistance <= terminalMouseDebugBandPx || bottomDistance <= terminalMouseDebugBandPx
+        }
+
+        private func terminalMouseEdgeTag(for point: NSPoint) -> String {
+            let topDistance = topDistance(for: point)
+            if topDistance <= terminalMouseDebugBandPx {
+                return "top"
+            }
+            if point.y <= terminalMouseDebugBandPx {
+                return "bottom"
+            }
+            return "mid"
+        }
+
+        private func topDistance(for point: NSPoint) -> CGFloat {
+            if isFlipped {
+                return max(0, point.y)
+            }
+            return max(0, bounds.height - point.y)
+        }
+
+        private func fmt(_ value: CGFloat) -> String {
+            String(format: "%.1f", value)
         }
     }
 

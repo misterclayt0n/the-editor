@@ -362,7 +362,16 @@ private final class GhosttySurfaceController {
             return
         }
         let point = hostView.convert(event.locationInWindow, from: nil)
-        ghostty_surface_mouse_pos(surface, point.x, point.y, modsFromEvent(event))
+        let ghostY = mouseY(for: point, in: hostView)
+        if DiagnosticsDebugLog.terminalMouseEnabled {
+            let row = mouseRow(forGhostY: ghostY, in: hostView)
+            if row <= 2 {
+                logMouse(
+                    "move term=\(terminalId) pane=\(hostView.paneId) local=(\(fmt(point.x)),\(fmt(point.y))) ghost=(\(fmt(point.x)),\(fmt(ghostY))) row=\(row) bounds=(\(fmt(hostView.bounds.width))x\(fmt(hostView.bounds.height)))"
+                )
+            }
+        }
+        ghostty_surface_mouse_pos(surface, point.x, ghostY, modsFromEvent(event))
     }
 
     func handleMouseButton(event: NSEvent, state: ghostty_input_mouse_state_e, button: ghostty_input_mouse_button_e) {
@@ -372,7 +381,14 @@ private final class GhosttySurfaceController {
         }
         let point = hostView.convert(event.locationInWindow, from: nil)
         let mods = modsFromEvent(event)
-        ghostty_surface_mouse_pos(surface, point.x, point.y, mods)
+        let ghostY = mouseY(for: point, in: hostView)
+        if DiagnosticsDebugLog.terminalMouseEnabled {
+            let row = mouseRow(forGhostY: ghostY, in: hostView)
+            logMouse(
+                "button term=\(terminalId) pane=\(hostView.paneId) state=\(state.rawValue) btn=\(button.rawValue) click=\(event.clickCount) local=(\(fmt(point.x)),\(fmt(point.y))) ghost=(\(fmt(point.x)),\(fmt(ghostY))) row=\(row) bounds=(\(fmt(hostView.bounds.width))x\(fmt(hostView.bounds.height))) mods=\(mods.rawValue)"
+            )
+        }
+        ghostty_surface_mouse_pos(surface, point.x, ghostY, mods)
         _ = ghostty_surface_mouse_button(surface, state, button, mods)
     }
 
@@ -569,10 +585,27 @@ private final class GhosttySurfaceController {
         if event.modifierFlags.contains(.command) { mods |= GHOSTTY_MODS_SUPER.rawValue }
         return ghostty_input_mods_e(rawValue: mods)
     }
+
+    /// Ghostty pointer APIs use a top-origin Y coordinate.
+    private func mouseY(for point: CGPoint, in hostView: GhosttySurfaceHostView) -> CGFloat {
+        hostView.bounds.height - point.y
+    }
+
+    private func mouseRow(forGhostY ghostY: CGFloat, in hostView: GhosttySurfaceHostView) -> Int {
+        let cellHeight = max(1, hostView.cellSize.height)
+        return max(0, Int(floor(ghostY / cellHeight)))
+    }
+
+    private func fmt(_ value: CGFloat) -> String {
+        String(format: "%.1f", value)
+    }
+
+    private func logMouse(_ message: @autoclosure () -> String) {
+        DiagnosticsDebugLog.terminalMouseLog(message())
+    }
 }
 
 final class GhosttySurfaceHostView: NSView {
-    override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
 
     var paneId: UInt64 = 0
@@ -699,6 +732,7 @@ final class GhosttySurfaceHostView: NSView {
 
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
+        logMouseEvent("host.mouseDown", event: event)
         // Send only pane identity to Rust so it can update active pane safely.
         dispatchPointer(kind: 0, button: 1, event: event)
         controller?.setFocused(true)
@@ -706,6 +740,7 @@ final class GhosttySurfaceHostView: NSView {
     }
 
     override func mouseUp(with event: NSEvent) {
+        logMouseEvent("host.mouseUp", event: event)
         controller?.handleMouseButton(event: event, state: GHOSTTY_MOUSE_RELEASE, button: GHOSTTY_MOUSE_LEFT)
     }
 
@@ -750,6 +785,7 @@ final class GhosttySurfaceHostView: NSView {
     }
 
     override func mouseDragged(with event: NSEvent) {
+        logMouseEvent("host.mouseDragged", event: event)
         controller?.handleMouseMove(event: event)
     }
 
@@ -1031,6 +1067,19 @@ final class GhosttySurfaceHostView: NSView {
         )
     }
 
+    private func logMouseEvent(_ name: String, event: NSEvent) {
+        guard DiagnosticsDebugLog.terminalMouseEnabled else { return }
+        let point = convert(event.locationInWindow, from: nil)
+        let ghostY = bounds.height - point.y
+        let row = max(0, Int(floor(ghostY / max(1, cellSize.height))))
+        let topDistance = max(0, bounds.height - point.y)
+        let nearEdge = topDistance <= max(64, cellSize.height * 3) || point.y <= max(64, cellSize.height * 3)
+        guard nearEdge || name == "host.mouseDown" || name == "host.mouseUp" else { return }
+        DiagnosticsDebugLog.terminalMouseLog(
+            "\(name) pane=\(paneId) local=(\(String(format: "%.1f", point.x)),\(String(format: "%.1f", point.y))) ghostY=\(String(format: "%.1f", ghostY)) row=\(row) topDist=\(String(format: "%.1f", topDistance)) bounds=(\(String(format: "%.1f", bounds.width))x\(String(format: "%.1f", bounds.height))) click=\(event.clickCount)"
+        )
+    }
+
     private func modsFromEvent(_ event: NSEvent) -> ghostty_input_mods_e {
         var mods = GHOSTTY_MODS_NONE.rawValue
         if event.modifierFlags.contains(.shift) { mods |= GHOSTTY_MODS_SHIFT.rawValue }
@@ -1212,7 +1261,7 @@ extension GhosttySurfaceHostView: NSTextInputClient {
         let width = range.length == 0 ? 0 : w
         let viewRect = NSRect(
             x: x,
-            y: y,
+            y: frame.size.height - y,
             width: width,
             height: max(h, cellSize.height)
         )

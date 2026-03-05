@@ -3,6 +3,7 @@ import Foundation
 enum DiagnosticsDebugLog {
     private static let enabledFlag = ProcessInfo.processInfo.environment["THE_SWIFT_DEBUG_DIAGNOSTICS"] == "1"
     private static let pickerPerfEnabledFlag = ProcessInfo.processInfo.environment["THE_SWIFT_DEBUG_PICKER_PERF"] == "1"
+    private static let terminalMouseEnabledFlag = ProcessInfo.processInfo.environment["THE_SWIFT_DEBUG_TERMINAL_MOUSE"] == "1"
     private static let lock = NSLock()
     private static let startNanos = DispatchTime.now().uptimeNanoseconds
     private static var lastValues: [String: String] = [:]
@@ -13,6 +14,10 @@ enum DiagnosticsDebugLog {
 
     static var pickerPerfEnabled: Bool {
         pickerPerfEnabledFlag
+    }
+
+    static var terminalMouseEnabled: Bool {
+        terminalMouseEnabledFlag
     }
 
     static func log(_ message: @autoclosure () -> String) {
@@ -37,6 +42,11 @@ enum DiagnosticsDebugLog {
     static func pickerPerfLog(_ message: @autoclosure () -> String) {
         guard pickerPerfEnabledFlag else { return }
         write("[pickerperf] \(message())")
+    }
+
+    static func terminalMouseLog(_ message: @autoclosure () -> String) {
+        guard terminalMouseEnabledFlag else { return }
+        write("[termmouse] \(message())")
     }
 
     private static func write(_ message: String) {

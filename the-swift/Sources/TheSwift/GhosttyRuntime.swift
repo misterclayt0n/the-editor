@@ -519,9 +519,12 @@ private final class GhosttySurfaceController {
     }
 
     func closeRequested(needsConfirmClose: Bool) {
-        _ = needsConfirmClose
-        // MVP: do not auto-close panes from runtime callback yet.
-        // The host editor controls pane lifecycle; we keep the terminal surface alive.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let hostView = self.hostView else {
+                return
+            }
+            hostView.handleRuntimeCloseRequest(needsConfirmClose: needsConfirmClose)
+        }
     }
 
     private func createSurfaceIfNeeded() {
@@ -611,6 +614,7 @@ final class GhosttySurfaceHostView: NSView {
     var paneId: UInt64 = 0
     var cellSize: CGSize = .init(width: 1, height: 1)
     var onPointer: ((MouseBridgeEvent) -> Void)?
+    var onCloseRequest: (() -> Bool)?
 
     private var controller: GhosttySurfaceController?
     private var keyTextAccumulator: [String]? = nil
@@ -618,6 +622,7 @@ final class GhosttySurfaceHostView: NSView {
     private var lastPerformKeyEvent: TimeInterval?
     private var screenObserver: NSObjectProtocol?
     private var occlusionObserver: NSObjectProtocol?
+    private var closeConfirmationAlert: NSAlert?
 
     deinit {
         if let observer = screenObserver {
@@ -668,6 +673,45 @@ final class GhosttySurfaceHostView: NSView {
         let visible = isHiddenOrHasHiddenAncestor == false
             && (window?.occlusionState.contains(.visible) ?? false || window?.isKeyWindow == true)
         controller?.setOcclusionVisible(visible)
+    }
+
+    fileprivate func handleRuntimeCloseRequest(needsConfirmClose: Bool) {
+        guard needsConfirmClose else {
+            _ = onCloseRequest?()
+            return
+        }
+        presentCloseConfirmation()
+    }
+
+    private func presentCloseConfirmation() {
+        guard closeConfirmationAlert == nil else {
+            return
+        }
+
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Close Terminal?"
+        alert.informativeText = "The terminal still has a running process. If you close the terminal the process will be killed."
+        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: "Close")
+        closeConfirmationAlert = alert
+
+        if let window {
+            alert.beginSheetModal(for: window) { [weak self] response in
+                guard let self else { return }
+                self.closeConfirmationAlert = nil
+                if response == .alertSecondButtonReturn {
+                    _ = self.onCloseRequest?()
+                }
+            }
+            return
+        }
+
+        let response = alert.runModal()
+        closeConfirmationAlert = nil
+        if response == .alertSecondButtonReturn {
+            _ = onCloseRequest?()
+        }
     }
 
     override func viewDidMoveToWindow() {
@@ -824,6 +868,15 @@ final class GhosttySurfaceHostView: NSView {
         guard event.type == .keyDown else { return false }
         guard let fr = window?.firstResponder as? NSView,
               fr === self || fr.isDescendant(of: self) else { return false }
+        if isCloseSurfaceKeyEquivalent(event),
+           controller?.performBindingAction("close_surface") == true {
+            return true
+        }
+        // Let app-level shortcuts (menu key equivalents) run before terminal bindings.
+        if EditorNamedCommand.shouldDeferKeyEquivalentToApp(event) {
+            lastPerformKeyEvent = nil
+            return false
+        }
         guard let surface = ensureSurfaceReadyForInput() else { return false }
 
         if hasMarkedText(), !event.modifierFlags.intersection(.deviceIndependentFlagsMask).contains(.command) {
@@ -1065,6 +1118,12 @@ final class GhosttySurfaceHostView: NSView {
                 surfaceId: paneId
             )
         )
+    }
+
+    private func isCloseSurfaceKeyEquivalent(_ event: NSEvent) -> Bool {
+        let relevantFlags = event.modifierFlags.intersection([.command, .shift, .option, .control])
+        guard relevantFlags == [.command] else { return false }
+        return (event.charactersIgnoringModifiers ?? "").lowercased() == "w"
     }
 
     private func logMouseEvent(_ name: String, event: NSEvent) {
@@ -1316,6 +1375,7 @@ struct GhosttyPaneView: NSViewRepresentable {
     let cellSize: CGSize
     let focused: Bool
     let onPointer: (MouseBridgeEvent) -> Void
+    let onCloseRequest: () -> Bool
 
     func makeNSView(context: Context) -> GhosttySurfaceHostView {
         let view = GhosttySurfaceHostView(frame: .zero)
@@ -1324,6 +1384,7 @@ struct GhosttyPaneView: NSViewRepresentable {
         view.paneId = paneId
         view.cellSize = cellSize
         view.onPointer = onPointer
+        view.onCloseRequest = onCloseRequest
         let controller = GhosttyRuntime.shared.controller(for: terminalId)
         view.bind(controller: controller)
         view.updateFocus(focused)
@@ -1334,6 +1395,7 @@ struct GhosttyPaneView: NSViewRepresentable {
         nsView.paneId = paneId
         nsView.cellSize = cellSize
         nsView.onPointer = onPointer
+        nsView.onCloseRequest = onCloseRequest
         let controller = GhosttyRuntime.shared.controller(for: terminalId)
         nsView.bind(controller: controller)
         nsView.updateFocus(focused)
@@ -1381,6 +1443,7 @@ struct GhosttyPaneView: NSViewRepresentable {
     let cellSize: CGSize
     let focused: Bool
     let onPointer: (MouseBridgeEvent) -> Void
+    let onCloseRequest: () -> Bool
 
     func makeNSView(context: Context) -> MissingGhosttyView {
         _ = paneId
@@ -1388,6 +1451,7 @@ struct GhosttyPaneView: NSViewRepresentable {
         _ = cellSize
         _ = focused
         _ = onPointer
+        _ = onCloseRequest
         return MissingGhosttyView(frame: .zero)
     }
 

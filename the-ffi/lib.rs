@@ -4776,6 +4776,31 @@ impl App {
     closed
   }
 
+  pub fn execute_command_named(&mut self, id: ffi::EditorId, name: &str) -> bool {
+    if self.activate(id).is_none() {
+      return false;
+    }
+
+    let command_name = name.trim();
+    if command_name.is_empty() {
+      return false;
+    }
+
+    if command_name == "command_palette" {
+      the_default::open_action_palette(self);
+      return true;
+    }
+
+    let Some(command) = the_default::command_from_name(command_name) else {
+      return false;
+    };
+
+    let dispatch = self.dispatch();
+    the_default::handle_command(&*dispatch, self, command);
+    let _ = self.ensure_cursor_visible(id);
+    true
+  }
+
   pub fn is_active_pane_terminal(&mut self, id: ffi::EditorId) -> bool {
     if self.activate(id).is_none() {
       return false;
@@ -11602,6 +11627,7 @@ mod ffi {
     fn supports_embedded_terminal(self: &App) -> bool;
     fn open_terminal_in_active_pane(self: &mut App, id: EditorId) -> bool;
     fn close_terminal_in_active_pane(self: &mut App, id: EditorId) -> bool;
+    fn execute_command_named(self: &mut App, id: EditorId, name: &str) -> bool;
     fn is_active_pane_terminal(self: &mut App, id: EditorId) -> bool;
     fn active_file_path(self: &App, id: EditorId) -> String;
     fn set_native_tab_open_gateway(self: &mut App, enabled: bool);
@@ -12462,6 +12488,53 @@ mod tests {
     assert_eq!(pane.pane_kind(), 1);
     assert_eq!(pane.terminal_id(), terminal_id.get().get() as u64);
     assert_eq!(pane.plan().line_count(), 0);
+  }
+
+  #[test]
+  fn execute_command_named_runs_default_commands() {
+    let _guard = ffi_test_guard();
+    let mut app = App::new();
+    let viewport = ffi::Rect {
+      x:      0,
+      y:      0,
+      width:  80,
+      height: 24,
+    };
+    let scroll = ffi::Position { row: 0, col: 0 };
+    let id = app.create_editor("hello", viewport, scroll);
+
+    assert!(app.execute_command_named(id, "file_picker"));
+    assert!(app.file_picker_snapshot(id, 128).active());
+    assert!(app.command_palette_close(id));
+
+    let initial_tree_visible = app.file_tree_snapshot(id, 128).visible();
+    assert!(app.execute_command_named(id, "file_explorer"));
+    assert_ne!(app.file_tree_snapshot(id, 128).visible(), initial_tree_visible);
+
+    assert!(app.execute_command_named(id, "terminal_open"));
+    assert!(App::is_active_pane_terminal(&mut app, id));
+    assert!(app.execute_command_named(id, "terminal_close"));
+    assert!(!App::is_active_pane_terminal(&mut app, id));
+  }
+
+  #[test]
+  fn execute_command_named_supports_action_palette_alias() {
+    let _guard = ffi_test_guard();
+    let mut app = App::new();
+    let viewport = ffi::Rect {
+      x:      0,
+      y:      0,
+      width:  80,
+      height: 24,
+    };
+    let scroll = ffi::Position { row: 0, col: 0 };
+    let id = app.create_editor("hello", viewport, scroll);
+
+    assert!(app.execute_command_named(id, "command_palette"));
+    assert_eq!(app.mode(id), 3);
+    assert!(app.command_palette_is_open(id));
+
+    assert!(!app.execute_command_named(id, "does_not_exist"));
   }
 
   #[test]

@@ -88,6 +88,9 @@ struct EditorView: View {
                                     focused: pane.isActive && shouldTerminalOwnFocus,
                                     onPointer: { event in
                                         model.handlePointerEvent(event)
+                                    },
+                                    onCloseRequest: {
+                                        model.closeTerminalInActivePane()
                                     }
                                 )
                                 .frame(width: pane.frame.width, height: pane.frame.height)
@@ -325,6 +328,17 @@ struct EditorView: View {
             .onChange(of: fileTreeSnapshot.visible) { isVisible in
                 columnVisibility = isVisible ? .all : .detailOnly
             }
+            .focusedValue(
+                \.editorCommandExecutor,
+                EditorCommandExecutor(
+                    executeNamedCommand: { command in
+                        model.executeNamedCommand(command)
+                    },
+                    selectNativeTabCommand: { indexOneBased in
+                        model.selectNativeWindowTab(indexOneBased: indexOneBased)
+                    }
+                )
+            )
     }
 
     private func splitResizeHandles(

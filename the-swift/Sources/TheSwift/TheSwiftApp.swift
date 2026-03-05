@@ -20,6 +20,9 @@ struct TheSwiftApp: App {
                 .environment(\.font, FontLoader.uiFont(size: 13))
                 .frame(minWidth: 640, minHeight: 360)
         }
+        .commands {
+            EditorAppCommands()
+        }
     }
 
     private static var initialFileArgumentConsumed = false

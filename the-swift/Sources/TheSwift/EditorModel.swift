@@ -354,6 +354,25 @@ final class EditorModel: ObservableObject {
         return true
     }
 
+    @discardableResult
+    func executeNamedCommand(_ command: EditorNamedCommand) -> Bool {
+        switch command {
+        case .openNativeTab:
+            return openNativeUntitledTab()
+        default:
+            return executeNamedCommand(command.rawValue)
+        }
+    }
+
+    @discardableResult
+    func executeNamedCommand(_ commandName: String) -> Bool {
+        guard app.execute_command_named(editorId, commandName) else {
+            return false
+        }
+        refresh(trigger: "named_command:\(commandName)")
+        return true
+    }
+
     private func scrollDelta(deltaX: CGFloat, deltaY: CGFloat, precise: Bool) -> (Int, Int) {
         let lineDeltaY: CGFloat
         let lineDeltaX: CGFloat

@@ -182,6 +182,7 @@ pub use keymap::{
   Mode,
   action_from_name,
   default,
+  open_action_palette,
 };
 pub use message_bar::{
   MessagePresentation,

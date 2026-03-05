@@ -721,7 +721,7 @@ fn apply_mode<Ctx: DefaultContext>(ctx: &mut Ctx, mode: Mode) {
   ctx.request_render();
 }
 
-fn open_action_palette<Ctx: DefaultContext>(ctx: &mut Ctx) {
+pub fn open_action_palette<Ctx: DefaultContext>(ctx: &mut Ctx) {
   let source_mode = ctx.mode();
   apply_mode(ctx, Mode::Command);
 

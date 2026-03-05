@@ -95,6 +95,12 @@ extension AppRefMut {
         __swift_bridge__$App$close_terminal_in_active_pane(ptr, id.intoFfiRepr())
     }
 
+    public func execute_command_named<GenericToRustStr: ToRustStr>(_ id: EditorId, _ name: GenericToRustStr) -> Bool {
+        return name.toRustStr({ nameAsRustStr in
+            __swift_bridge__$App$execute_command_named(ptr, id.intoFfiRepr(), nameAsRustStr)
+        })
+    }
+
     public func is_active_pane_terminal(_ id: EditorId) -> Bool {
         __swift_bridge__$App$is_active_pane_terminal(ptr, id.intoFfiRepr())
     }

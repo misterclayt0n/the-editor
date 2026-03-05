@@ -202,9 +202,6 @@ final class EditorModel: ObservableObject {
             bufferTabsSnapshot = tabsFetch.snapshot
         }
         updateBoundBufferIdFromActiveBufferIfNeeded()
-        if shouldSyncNativeWindowPresentation() {
-            syncNativeWindowPresentation()
-        }
         // Buffer tabs in the Swift app are native window tabs, not in-content chrome.
         setTopChromeReservedRows(0)
         updateEffectiveViewport()
@@ -221,6 +218,12 @@ final class EditorModel: ObservableObject {
         pendingKeyHints = fetchPendingKeyHints()
         refreshFilePicker()
         refreshFileTree()
+
+        // Sync title/subtitle after pane snapshots update so terminal/editor focus
+        // state reflects the latest frame.
+        if shouldSyncNativeWindowPresentation() {
+            syncNativeWindowPresentation()
+        }
 
         if app.take_should_quit() {
             NSApp.terminate(nil)

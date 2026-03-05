@@ -43,6 +43,7 @@ struct EditorView: View {
         let activePaneOrigin = panePixelOrigin(model.activePaneRect(), cellSize: cellSize)
         let terminalPaneIds = Set(model.terminalPanes.map(\.paneId))
         let terminalPaneLayouts = terminalPaneLayouts(from: model.terminalPanes, cellSize: cellSize)
+        let shouldDimInactivePanes = Int(model.framePlan.pane_count()) > 1
         let terminalPassthroughRects = terminalPaneLayouts.map(\.frame)
         let splitResizeHandles = splitResizeHandles(from: model.splitSeparators, cellSize: cellSize)
         let pointerPanes = pointerPanes(from: model.framePlan, cellSize: cellSize)
@@ -99,6 +100,13 @@ struct EditorView: View {
                                 )
                                 .frame(width: pane.frame.width, height: pane.frame.height)
                                 .position(x: pane.frame.midX, y: pane.frame.midY)
+                                .overlay {
+                                    if shouldDimInactivePanes && !pane.isActive {
+                                        Rectangle()
+                                            .fill(SwiftUI.Color.black.opacity(0.16))
+                                            .allowsHitTesting(false)
+                                    }
+                                }
                                 .clipped()
                             }
 

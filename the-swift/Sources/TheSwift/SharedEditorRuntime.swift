@@ -4,11 +4,16 @@ import TheEditorFFIBridge
 
 /// Editor core runtime backing one Swift editor window/tab instance.
 final class SharedEditorRuntime {
+    private static let instanceIdLock = NSLock()
+    private static var nextInstanceId: UInt64 = 1
+
     let app: TheEditorFFIBridge.App
     let editorId: EditorId
+    let instanceId: UInt64
     private var nativeTabGatewayRefCount: Int = 0
 
     init() {
+        instanceId = SharedEditorRuntime.allocateInstanceId()
         setenv("THE_EDITOR_SWIFT_SHARED_LSP", "1", 1)
         app = TheEditorFFIBridge.App()
         let viewport = Rect(x: 0, y: 0, width: 80, height: 24)
@@ -70,5 +75,14 @@ final class SharedEditorRuntime {
         if shouldRestore {
             app.set_native_tab_open_gateway(true)
         }
+    }
+
+    private static func allocateInstanceId() -> UInt64 {
+        instanceIdLock.lock()
+        defer { instanceIdLock.unlock() }
+        let id = nextInstanceId
+        let next = nextInstanceId &+ 1
+        nextInstanceId = (next == 0) ? 1 : next
+        return id
     }
 }

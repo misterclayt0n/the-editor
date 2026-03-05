@@ -99,12 +99,17 @@ private final class GhosttySurfaceCallbackContext {
     }
 }
 
+private struct GhosttySurfaceKey: Hashable {
+    let runtimeId: UInt64
+    let terminalId: UInt64
+}
+
 final class GhosttyRuntime {
     static let shared = GhosttyRuntime()
 
     private(set) var app: ghostty_app_t?
     private var config: ghostty_config_t?
-    private var controllers: [UInt64: GhosttySurfaceController] = [:]
+    private var controllers: [GhosttySurfaceKey: GhosttySurfaceController] = [:]
     private var appObservers: [NSObjectProtocol] = []
 
     private init() {
@@ -128,25 +133,58 @@ final class GhosttyRuntime {
         }
     }
 
-    func reconcileTerminalIds(_ terminalIds: Set<UInt64>) {
-        let stale = controllers.keys.filter { !terminalIds.contains($0) }
-        for terminalId in stale {
-            controllers[terminalId]?.shutdown()
-            controllers.removeValue(forKey: terminalId)
+    func reconcileTerminalIds(runtimeId: UInt64, _ terminalIds: Set<UInt64>) {
+        let ownedBefore = controllers.keys
+            .filter { $0.runtimeId == runtimeId }
+            .map(\.terminalId)
+            .sorted()
+        let stale = controllers.keys.filter { key in
+            key.runtimeId == runtimeId && !terminalIds.contains(key.terminalId)
+        }
+        if DiagnosticsDebugLog.enabled {
+            let staleTerminals = stale.map(\.terminalId).sorted()
+            DiagnosticsDebugLog.log(
+                "ghostty.reconcile runtime=\(runtimeId) owned=\(ownedBefore) incoming=\(terminalIds.sorted()) stale=\(staleTerminals)"
+            )
+        }
+        for key in stale {
+            if DiagnosticsDebugLog.enabled {
+                DiagnosticsDebugLog.log(
+                    "ghostty.reconcile.shutdown runtime=\(key.runtimeId) terminal=\(key.terminalId)"
+                )
+            }
+            controllers[key]?.shutdown()
+            controllers.removeValue(forKey: key)
         }
     }
 
-    fileprivate func controller(for terminalId: UInt64) -> GhosttySurfaceController {
-        if let existing = controllers[terminalId] {
+    fileprivate func controller(for runtimeId: UInt64, terminalId: UInt64) -> GhosttySurfaceController {
+        let key = GhosttySurfaceKey(runtimeId: runtimeId, terminalId: terminalId)
+        if let existing = controllers[key] {
+            if DiagnosticsDebugLog.enabled {
+                DiagnosticsDebugLog.log(
+                    "ghostty.controller.reuse runtime=\(runtimeId) terminal=\(terminalId)"
+                )
+            }
             return existing
         }
-        let created = GhosttySurfaceController(terminalId: terminalId, runtime: self)
-        controllers[terminalId] = created
+        if DiagnosticsDebugLog.enabled {
+            DiagnosticsDebugLog.log(
+                "ghostty.controller.create runtime=\(runtimeId) terminal=\(terminalId)"
+            )
+        }
+        let created = GhosttySurfaceController(
+            runtimeId: runtimeId,
+            terminalId: terminalId,
+            runtime: self
+        )
+        controllers[key] = created
         return created
     }
 
-    func terminalMetadata(for terminalId: UInt64) -> GhosttyTerminalMetadata? {
-        controllers[terminalId]?.metadataSnapshot()
+    func terminalMetadata(runtimeId: UInt64, for terminalId: UInt64) -> GhosttyTerminalMetadata? {
+        let key = GhosttySurfaceKey(runtimeId: runtimeId, terminalId: terminalId)
+        return controllers[key]?.metadataSnapshot()
     }
 
     fileprivate func tick() {
@@ -288,6 +326,7 @@ final class GhosttyRuntime {
 }
 
 private final class GhosttySurfaceController {
+    private let runtimeId: UInt64
     private let terminalId: UInt64
     private unowned let runtime: GhosttyRuntime
 
@@ -302,7 +341,8 @@ private final class GhosttySurfaceController {
     private var surfaceCallbackContext: Unmanaged<GhosttySurfaceCallbackContext>?
     private var metadata = GhosttyTerminalMetadata()
 
-    init(terminalId: UInt64, runtime: GhosttyRuntime) {
+    init(runtimeId: UInt64, terminalId: UInt64, runtime: GhosttyRuntime) {
+        self.runtimeId = runtimeId
         self.terminalId = terminalId
         self.runtime = runtime
     }
@@ -335,6 +375,12 @@ private final class GhosttySurfaceController {
     }
 
     func attach(to hostView: GhosttySurfaceHostView) {
+        if DiagnosticsDebugLog.enabled {
+            let replacingHost = self.hostView !== nil && self.hostView !== hostView
+            DiagnosticsDebugLog.log(
+                "ghostty.surface.attach runtime=\(runtimeId) terminal=\(terminalId) replacing_host=\(replacingHost ? 1 : 0)"
+            )
+        }
         self.hostView = hostView
         createSurfaceIfNeeded()
         updateSurfaceSize()
@@ -347,11 +393,21 @@ private final class GhosttySurfaceController {
         guard self.hostView === hostView else {
             return
         }
+        if DiagnosticsDebugLog.enabled {
+            DiagnosticsDebugLog.log(
+                "ghostty.surface.detach runtime=\(runtimeId) terminal=\(terminalId) surface_exists=\(surface != nil ? 1 : 0)"
+            )
+        }
         self.hostView = nil
         destroySurface()
     }
 
     func shutdown() {
+        if DiagnosticsDebugLog.enabled {
+            DiagnosticsDebugLog.log(
+                "ghostty.surface.shutdown runtime=\(runtimeId) terminal=\(terminalId) surface_exists=\(surface != nil ? 1 : 0)"
+            )
+        }
         hostView = nil
         destroySurface()
     }
@@ -649,10 +705,20 @@ private final class GhosttySurfaceController {
         guard let created = ghostty_surface_new(app, &surfaceConfig) else {
             surfaceCallbackContext?.release()
             surfaceCallbackContext = nil
+            if DiagnosticsDebugLog.enabled {
+                DiagnosticsDebugLog.log(
+                    "ghostty.surface.create_failed runtime=\(runtimeId) terminal=\(terminalId)"
+                )
+            }
             return
         }
 
         surface = created
+        if DiagnosticsDebugLog.enabled {
+            DiagnosticsDebugLog.log(
+                "ghostty.surface.created runtime=\(runtimeId) terminal=\(terminalId)"
+            )
+        }
         updateDisplayID()
         updateSurfaceSize()
         ghostty_surface_set_focus(created, focused)
@@ -663,6 +729,11 @@ private final class GhosttySurfaceController {
     private func destroySurface() {
         guard let surface else {
             return
+        }
+        if DiagnosticsDebugLog.enabled {
+            DiagnosticsDebugLog.log(
+                "ghostty.surface.destroy runtime=\(runtimeId) terminal=\(terminalId)"
+            )
         }
         let callbackContext = surfaceCallbackContext
         surfaceCallbackContext = nil
@@ -725,6 +796,11 @@ final class GhosttySurfaceHostView: NSView {
     private var closeConfirmationAlert: NSAlert?
 
     deinit {
+        if DiagnosticsDebugLog.enabled {
+            DiagnosticsDebugLog.log(
+                "ghostty.host.deinit pane=\(paneId) has_controller=\(controller != nil ? 1 : 0)"
+            )
+        }
         if let observer = screenObserver {
             NotificationCenter.default.removeObserver(observer)
         }
@@ -742,6 +818,11 @@ final class GhosttySurfaceHostView: NSView {
             return
         }
 
+        if DiagnosticsDebugLog.enabled {
+            DiagnosticsDebugLog.log(
+                "ghostty.host.bind pane=\(paneId) replacing_controller=\(self.controller != nil ? 1 : 0)"
+            )
+        }
         if let current = self.controller {
             current.detach(from: self)
         }
@@ -1474,6 +1555,7 @@ extension GhosttySurfaceHostView: NSTextInputClient {
 }
 
 struct GhosttyPaneView: NSViewRepresentable {
+    let runtimeId: UInt64
     let paneId: UInt64
     let terminalId: UInt64
     let cellSize: CGSize
@@ -1491,7 +1573,7 @@ struct GhosttyPaneView: NSViewRepresentable {
         view.onPointer = onPointer
         view.onCloseRequest = onCloseRequest
         view.onMetadataChange = onMetadataChange
-        let controller = GhosttyRuntime.shared.controller(for: terminalId)
+        let controller = GhosttyRuntime.shared.controller(for: runtimeId, terminalId: terminalId)
         view.bind(controller: controller)
         view.updateFocus(focused)
         return view
@@ -1503,7 +1585,7 @@ struct GhosttyPaneView: NSViewRepresentable {
         nsView.onPointer = onPointer
         nsView.onCloseRequest = onCloseRequest
         nsView.onMetadataChange = onMetadataChange
-        let controller = GhosttyRuntime.shared.controller(for: terminalId)
+        let controller = GhosttyRuntime.shared.controller(for: runtimeId, terminalId: terminalId)
         nsView.bind(controller: controller)
         nsView.updateFocus(focused)
     }
@@ -1516,11 +1598,13 @@ final class GhosttyRuntime {
 
     private init() {}
 
-    func reconcileTerminalIds(_ terminalIds: Set<UInt64>) {
+    func reconcileTerminalIds(runtimeId: UInt64, _ terminalIds: Set<UInt64>) {
+        _ = runtimeId
         _ = terminalIds
     }
 
-    func terminalMetadata(for terminalId: UInt64) -> GhosttyTerminalMetadata? {
+    func terminalMetadata(runtimeId: UInt64, for terminalId: UInt64) -> GhosttyTerminalMetadata? {
+        _ = runtimeId
         _ = terminalId
         return nil
     }
@@ -1550,6 +1634,7 @@ final class MissingGhosttyView: NSView {
 }
 
 struct GhosttyPaneView: NSViewRepresentable {
+    let runtimeId: UInt64
     let paneId: UInt64
     let terminalId: UInt64
     let cellSize: CGSize
@@ -1559,6 +1644,7 @@ struct GhosttyPaneView: NSViewRepresentable {
     let onMetadataChange: () -> Void
 
     func makeNSView(context: Context) -> MissingGhosttyView {
+        _ = runtimeId
         _ = paneId
         _ = terminalId
         _ = cellSize

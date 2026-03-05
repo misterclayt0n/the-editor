@@ -46,6 +46,7 @@ final class EditorModel: ObservableObject {
 
     private let runtime: SharedEditorRuntime
     private let app: TheEditorFFIBridge.App
+    let runtimeInstanceId: UInt64
     let editorId: EditorId
     @Published var plan: RenderPlan
     @Published var framePlan: RenderFramePlan
@@ -110,6 +111,7 @@ final class EditorModel: ObservableObject {
         self.boundBufferId = bufferId
         self.pendingInitialBoundBufferId = bufferId
         self.pendingInitialBoundFilePath = EditorModel.normalizedFilePath(filePath)
+        self.runtimeInstanceId = runtime.instanceId
         let fontInfo = FontLoader.loadBufferFont(size: 14)
         self.cellSize = fontInfo.cellSize
         self.bufferFont = fontInfo.font
@@ -424,6 +426,11 @@ final class EditorModel: ObservableObject {
 
     private func updateTerminalPaneSnapshots(from framePlan: RenderFramePlan) {
         let count = Int(framePlan.pane_count())
+        if DiagnosticsDebugLog.enabled {
+            DiagnosticsDebugLog.log(
+                "editor.term.snapshot.begin runtime=\(runtimeInstanceId) editor=\(editorId.value) pane_count=\(count)"
+            )
+        }
         guard count > 0 else {
             if !terminalPanes.isEmpty {
                 terminalPanes = []
@@ -431,7 +438,12 @@ final class EditorModel: ObservableObject {
             if isActivePaneTerminal {
                 isActivePaneTerminal = false
             }
-            GhosttyRuntime.shared.reconcileTerminalIds(Set<UInt64>())
+            if DiagnosticsDebugLog.enabled {
+                DiagnosticsDebugLog.log(
+                    "editor.term.snapshot.empty runtime=\(runtimeInstanceId) editor=\(editorId.value)"
+                )
+            }
+            GhosttyRuntime.shared.reconcileTerminalIds(runtimeId: runtimeInstanceId, Set<UInt64>())
             return
         }
 
@@ -474,8 +486,17 @@ final class EditorModel: ObservableObject {
         if activeTerminal != isActivePaneTerminal {
             isActivePaneTerminal = activeTerminal
         }
+        if DiagnosticsDebugLog.enabled {
+            let summary = panes
+                .map { "p\($0.paneId):t\($0.terminalId):a\($0.isActive ? 1 : 0)" }
+                .joined(separator: ",")
+            DiagnosticsDebugLog.logChanged(
+                key: "editor.term.snapshot.\(runtimeInstanceId).\(editorId.value)",
+                value: "count=\(panes.count) active_terminal=\(activeTerminal ? 1 : 0) panes=[\(summary)]"
+            )
+        }
 
-        GhosttyRuntime.shared.reconcileTerminalIds(Set(panes.map(\.terminalId)))
+        GhosttyRuntime.shared.reconcileTerminalIds(runtimeId: runtimeInstanceId, Set(panes.map(\.terminalId)))
     }
 
     func selectCommandPalette(index: Int) {
@@ -524,6 +545,11 @@ final class EditorModel: ObservableObject {
 
     @discardableResult
     func openNativeUntitledTab() -> Bool {
+        if DiagnosticsDebugLog.enabled {
+            DiagnosticsDebugLog.log(
+                "editor.native_new_tab.request editor=\(editorId.value) has_handler=\(openWindowTabHandler != nil ? 1 : 0)"
+            )
+        }
         guard let openWindowTabHandler else {
             let fallbackBuffer = app.open_untitled_buffer(editorId)
             guard fallbackBuffer != 0 else { return false }
@@ -1145,7 +1171,7 @@ final class EditorModel: ObservableObject {
         let activeTab = activeBufferTabSnapshot()
         let activeTerminal = terminalPanes.first(where: \.isActive)
         let activeTerminalMetadata = activeTerminal.flatMap { pane in
-            GhosttyRuntime.shared.terminalMetadata(for: pane.terminalId)
+            GhosttyRuntime.shared.terminalMetadata(runtimeId: runtimeInstanceId, for: pane.terminalId)
         }
         let activeFilePathString = app.active_file_path(editorId).toString()
         let activeFileURL: URL? = {
@@ -1366,6 +1392,11 @@ final class EditorModel: ObservableObject {
 
     private func terminalPresentationTitle(from metadata: GhosttyTerminalMetadata?) -> String {
         guard let metadata else {
+            if DiagnosticsDebugLog.enabled {
+                DiagnosticsDebugLog.log(
+                    "editor.term.title_fallback editor=\(editorId.value) reason=no_metadata"
+                )
+            }
             return "terminal"
         }
 

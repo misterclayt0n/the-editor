@@ -82,6 +82,7 @@ struct EditorView: View {
 
                             ForEach(terminalPaneLayouts) { pane in
                                 GhosttyPaneView(
+                                    runtimeId: model.runtimeInstanceId,
                                     paneId: pane.paneId,
                                     terminalId: pane.terminalId,
                                     cellSize: cellSize,

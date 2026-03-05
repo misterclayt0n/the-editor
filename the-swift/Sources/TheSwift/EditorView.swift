@@ -1,6 +1,8 @@
 import SwiftUI
 import TheEditorFFIBridge
 
+private let embeddedTerminalCropInset: CGFloat = 2
+
 struct EditorView: View {
     @Environment(\.openWindow) private var openWindow
     @StateObject private var model: EditorModel
@@ -45,9 +47,7 @@ struct EditorView: View {
         let cursorPickState = cursorPickState(from: model.uiTree.statuslineSnapshot())
         let activePaneOrigin = panePixelOrigin(model.activePaneRect(), cellSize: cellSize)
         let terminalPaneIds = Set(model.terminalPanes.map(\.paneId))
-        let terminalPaneLayouts = terminalPaneLayouts(from: model.terminalPanes, cellSize: cellSize)
         let shouldDimInactivePanes = Int(model.framePlan.pane_count()) > 1
-        let terminalPassthroughRects = terminalPaneLayouts.map(\.frame)
         let splitResizeHandles = splitResizeHandles(from: model.splitSeparators, cellSize: cellSize)
         let pointerPanes = pointerPanes(from: model.framePlan, cellSize: cellSize)
         let fileTreeSnapshot = model.fileTreeSnapshot
@@ -66,9 +66,16 @@ struct EditorView: View {
             )
             .navigationSplitViewColumnWidth(min: 180, ideal: 240, max: 360)
         } detail: {
-            VStack(spacing: 0) {
-                    GeometryReader { contentProxy in
-                        ZStack {
+	            VStack(spacing: 0) {
+	                    GeometryReader { contentProxy in
+                        let terminalPaneLayouts = terminalPaneLayouts(
+                            from: model.terminalPanes,
+                            framePlan: model.framePlan,
+                            cellSize: cellSize,
+                            contentSize: contentProxy.size
+                        )
+                        let terminalPassthroughRects = terminalPaneLayouts.map(\.frame)
+	                        ZStack {
                             Canvas { context, size in
                                 drawFrame(
                                     in: context,
@@ -85,26 +92,41 @@ struct EditorView: View {
                             .background(SwiftUI.Color.black)
 
                             ForEach(terminalPaneLayouts) { pane in
-                                GhosttyPaneView(
-                                    runtimeId: model.runtimeInstanceId,
-                                    paneId: pane.paneId,
-                                    terminalId: pane.terminalId,
-                                    cellSize: cellSize,
-                                    focused: pane.isActive && shouldTerminalOwnFocus,
-                                    onPointer: { event in
-                                        model.handlePointerEvent(event)
-                                    },
-                                    onCloseRequest: {
-                                        model.closeSurface()
-                                    },
-                                    onNamedCommand: { command in
-                                        model.executeNamedCommand(command)
-                                    },
-                                    onMetadataChange: {
-                                        model.handleTerminalMetadataUpdate(terminalId: pane.terminalId)
-                                    }
-                                )
+                                SwiftUI.Color.clear
                                 .frame(width: pane.frame.width, height: pane.frame.height)
+                                .overlay {
+                                    // Ghostty's embedded surface ships with a default 2pt edge
+                                    // padding. Crop it at the pane boundary so terminal content
+                                    // hugs editor splits until the local GhosttyKit can be rebuilt
+                                    // with a surface-specific config override.
+                                    GhosttyPaneView(
+                                        runtimeId: model.runtimeInstanceId,
+                                        paneId: pane.paneId,
+                                        terminalId: pane.terminalId,
+                                        requestedSize: CGSize(
+                                            width: pane.frame.width + (embeddedTerminalCropInset * 2),
+                                            height: pane.frame.height + (embeddedTerminalCropInset * 2)
+                                        ),
+                                        cellSize: cellSize,
+                                        focused: pane.isActive && shouldTerminalOwnFocus,
+                                        onPointer: { event in
+                                            model.handlePointerEvent(event)
+                                        },
+                                        onCloseRequest: {
+                                            model.closeSurface()
+                                        },
+                                        onNamedCommand: { command in
+                                            model.executeNamedCommand(command)
+                                        },
+                                        onMetadataChange: {
+                                            model.handleTerminalMetadataUpdate(terminalId: pane.terminalId)
+                                        }
+                                    )
+                                    .frame(
+                                        width: pane.frame.width + (embeddedTerminalCropInset * 2),
+                                        height: pane.frame.height + (embeddedTerminalCropInset * 2)
+                                    )
+                                }
                                 .position(x: pane.frame.midX, y: pane.frame.midY)
                                 .overlay {
                                     if shouldDimInactivePanes && !pane.isActive {
@@ -409,21 +431,56 @@ struct EditorView: View {
 
     private func terminalPaneLayouts(
         from panes: [TerminalPaneSnapshot],
-        cellSize: CGSize
+        framePlan: RenderFramePlan,
+        cellSize: CGSize,
+        contentSize: CGSize
     ) -> [TerminalPaneLayout] {
-        panes.map { pane in
-            TerminalPaneLayout(
+        let gridExtent = framePlanGridExtent(framePlan)
+        return panes.map { pane in
+            let x = CGFloat(pane.x) * cellSize.width
+            let y = CGFloat(pane.y) * cellSize.height
+            let paneMaxX = pane.x + pane.width
+            let paneMaxY = pane.y + pane.height
+            var width = CGFloat(pane.width) * cellSize.width
+            var height = CGFloat(pane.height) * cellSize.height
+
+            // Ghostty expects to own the full pixel size of its host view. The editor
+            // core layout is cell-based, so any remainder pixels from the window size
+            // live on the outermost pane edges. Let edge panes absorb that remainder
+            // so the terminal surface fills the real pane bounds the same way Ghostty's
+            // own host views do.
+            if paneMaxX == gridExtent.cols {
+                width = max(width, contentSize.width - x)
+            }
+            if paneMaxY == gridExtent.rows {
+                height = max(height, contentSize.height - y)
+            }
+
+            return TerminalPaneLayout(
                 paneId: pane.paneId,
                 terminalId: pane.terminalId,
                 frame: CGRect(
-                    x: CGFloat(pane.x) * cellSize.width,
-                    y: CGFloat(pane.y) * cellSize.height,
-                    width: CGFloat(pane.width) * cellSize.width,
-                    height: CGFloat(pane.height) * cellSize.height
+                    x: x,
+                    y: y,
+                    width: width,
+                    height: height
                 ),
                 isActive: pane.isActive
             )
         }
+    }
+
+    private func framePlanGridExtent(_ framePlan: RenderFramePlan) -> (cols: Int, rows: Int) {
+        let count = Int(framePlan.pane_count())
+        var maxCols = 0
+        var maxRows = 0
+        for index in 0..<count {
+            let pane = framePlan.pane_at(UInt(index))
+            let rect = pane.rect()
+            maxCols = max(maxCols, Int(rect.x) + Int(rect.width))
+            maxRows = max(maxRows, Int(rect.y) + Int(rect.height))
+        }
+        return (cols: maxCols, rows: maxRows)
     }
 
     private func pointerPanes(

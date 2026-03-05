@@ -124,7 +124,7 @@ final class EditorModel: ObservableObject {
     private var lastNativeWindowPresentation: NativeWindowPresentation? = nil
     private var seededUntitledForUnroutedWindow: Bool = false
     private var paneSurfaceItems: [PaneSurfaceSnapshot] = []
-    private var lastFocusedTerminalPaneId: UInt64? = nil
+    private var lastFocusedTerminalSurfaceId: UInt64? = nil
     private var lastFocusedEditorPaneId: UInt64? = nil
 
     init(filePath: String? = nil, bufferId: UInt64? = nil) {
@@ -387,6 +387,15 @@ final class EditorModel: ObservableObject {
         return true
     }
 
+    @discardableResult
+    func hideActiveTerminalSurface() -> Bool {
+        guard app.hide_active_terminal_surface(editorId) else {
+            return false
+        }
+        refresh(trigger: "terminal_hide")
+        return true
+    }
+
     func handleTerminalMetadataUpdate(terminalId: UInt64) {
         guard terminalSurfaces.contains(where: { $0.terminalId == terminalId }) else {
             return
@@ -472,10 +481,10 @@ final class EditorModel: ObservableObject {
             if let target = preferredEditorPaneId(excluding: activePaneId) {
                 return focusPane(paneId: target, trigger: "toggle_last_terminal")
             }
-            return closeTerminalInActivePane()
+            return hideActiveTerminalSurface()
         case .editor:
-            if let target = preferredTerminalPaneId(excluding: activePaneId) {
-                return focusPane(paneId: target, trigger: "toggle_last_terminal")
+            if let terminalId = preferredTerminalSurfaceId() {
+                return focusTerminalSurface(terminalId: terminalId)
             }
             lastFocusedEditorPaneId = activePaneId
             return openTerminalInActivePane()
@@ -672,6 +681,18 @@ final class EditorModel: ObservableObject {
             terminalSurfaces = snapshots
         }
 
+        if let activeSurface = snapshots.first(where: \.isActive) {
+            lastFocusedTerminalSurfaceId = activeSurface.terminalId
+        } else if let last = lastFocusedTerminalSurfaceId,
+                  !snapshots.contains(where: { $0.terminalId == last }) {
+            lastFocusedTerminalSurfaceId = nil
+        }
+
+        EditorCommandModelRegistry.shared.reconcileTerminalSurfaces(
+            runtimeId: runtimeInstanceId,
+            terminalIds: Set(snapshots.map(\.terminalId))
+        )
+
         GhosttyRuntime.shared.reconcileTerminalIds(
             runtimeId: runtimeInstanceId,
             Set(snapshots.map(\.terminalId))
@@ -719,23 +740,44 @@ final class EditorModel: ObservableObject {
                 continue
             }
             if pane.pane_kind() == 1 {
-                lastFocusedTerminalPaneId = activePaneId
+                if let window = hostWindow,
+                   window.isKeyWindow || window.isMainWindow,
+                   let terminalId = activeTerminalId(for: pane.pane_id()) {
+                    EditorCommandModelRegistry.shared.noteFocusedTerminalSurface(
+                        runtimeId: runtimeInstanceId,
+                        terminalId: terminalId
+                    )
+                }
             } else {
                 lastFocusedEditorPaneId = activePaneId
+                if let window = hostWindow,
+                   window.isKeyWindow || window.isMainWindow {
+                    EditorCommandModelRegistry.shared.noteFocusedEditorPane(
+                        runtimeId: runtimeInstanceId,
+                        paneId: activePaneId
+                    )
+                }
             }
             return
         }
     }
 
-    private func preferredTerminalPaneId(excluding excludedPaneId: UInt64?) -> UInt64? {
-        if let last = lastFocusedTerminalPaneId,
-           paneSurfaceItems.contains(where: { $0.paneId == last && $0.kind == .terminal }),
-           last != excludedPaneId {
+    private func activeTerminalId(for paneId: UInt64) -> UInt64? {
+        terminalPanes.first(where: { $0.paneId == paneId && $0.isActive })?.terminalId
+    }
+
+    private func preferredTerminalSurfaceId() -> UInt64? {
+        if let last = lastFocusedTerminalSurfaceId,
+           terminalSurfaces.contains(where: { $0.terminalId == last }) {
             return last
         }
-        return paneSurfaceItems.first(where: {
-            $0.kind == .terminal && $0.paneId != excludedPaneId
-        })?.paneId
+
+        return terminalSurfaces.sorted { lhs, rhs in
+            if lhs.isAttached != rhs.isAttached {
+                return lhs.isAttached && !rhs.isAttached
+            }
+            return lhs.terminalId < rhs.terminalId
+        }.first?.terminalId
     }
 
     private func preferredEditorPaneId(excluding excludedPaneId: UInt64?) -> UInt64? {
@@ -747,6 +789,18 @@ final class EditorModel: ObservableObject {
         return paneSurfaceItems.first(where: {
             $0.kind == .editor && $0.paneId != excludedPaneId
         })?.paneId
+    }
+
+    func preferredEditorPaneIdForGlobalToggle() -> UInt64? {
+        preferredEditorPaneId(excluding: nil)
+    }
+
+    @discardableResult
+    func focusEditorPaneForGlobalToggle(paneId: UInt64) -> Bool {
+        if let hostWindow {
+            hostWindow.makeKeyAndOrderFront(nil)
+        }
+        return focusPane(paneId: paneId, trigger: "global_editor_toggle")
     }
 
     func globalTerminalSurfaceEntries(isCurrentWindow: Bool) -> [GlobalTerminalSurfaceEntry] {

@@ -304,6 +304,7 @@ uint64_t __swift_bridge__$App$open_untitled_buffer_in_new_tab(void* self, struct
 bool __swift_bridge__$App$supports_embedded_terminal(void* self);
 bool __swift_bridge__$App$open_terminal_in_active_pane(void* self, struct __swift_bridge__$EditorId id);
 bool __swift_bridge__$App$close_terminal_in_active_pane(void* self, struct __swift_bridge__$EditorId id);
+bool __swift_bridge__$App$hide_active_terminal_surface(void* self, struct __swift_bridge__$EditorId id);
 bool __swift_bridge__$App$is_active_pane_terminal(void* self, struct __swift_bridge__$EditorId id);
 void* __swift_bridge__$App$active_file_path(void* self, struct __swift_bridge__$EditorId id);
 void __swift_bridge__$App$set_native_tab_open_gateway(void* self, bool enabled);
@@ -545,5 +546,4 @@ void* __swift_bridge__$PreviewLine$segment_at(void* self, uintptr_t index);
 void* __swift_bridge__$PreviewLineSegment$text(void* self);
 uint32_t __swift_bridge__$PreviewLineSegment$highlight_id(void* self);
 bool __swift_bridge__$PreviewLineSegment$is_match(void* self);
-
 

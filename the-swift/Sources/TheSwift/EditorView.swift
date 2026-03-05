@@ -426,7 +426,11 @@ struct EditorView: View {
         let frame: CGRect
         let isActive: Bool
 
-        var id: UInt64 { paneId }
+        // The mounted Ghostty host view is owned per terminal surface/controller,
+        // not per pane slot. If a detached terminal is reattached into the same
+        // pane, the pane id stays the same while the terminal id changes. Keying
+        // by terminal id forces SwiftUI to swap the embedded NSView correctly.
+        var id: UInt64 { terminalId }
     }
 
     private func terminalPaneLayouts(

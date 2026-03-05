@@ -223,7 +223,19 @@ private final class WindowModelReference {
 final class EditorCommandModelRegistry {
     static let shared = EditorCommandModelRegistry()
 
+    private struct TerminalSurfaceTarget: Equatable {
+        let runtimeId: UInt64
+        let terminalId: UInt64
+    }
+
+    private struct EditorPaneTarget: Equatable {
+        let runtimeId: UInt64
+        let paneId: UInt64
+    }
+
     private var modelsByWindow: [ObjectIdentifier: WindowModelReference] = [:]
+    private var lastFocusedTerminalSurface: TerminalSurfaceTarget? = nil
+    private var lastFocusedEditorPane: EditorPaneTarget? = nil
 
     private init() {}
 
@@ -288,6 +300,96 @@ final class EditorCommandModelRegistry {
         return entries
     }
 
+    func noteFocusedTerminalSurface(runtimeId: UInt64, terminalId: UInt64) {
+        let target = TerminalSurfaceTarget(runtimeId: runtimeId, terminalId: terminalId)
+        guard lastFocusedTerminalSurface != target else {
+            return
+        }
+        lastFocusedTerminalSurface = target
+        if DiagnosticsDebugLog.enabled {
+            DiagnosticsDebugLog.log(
+                "terminal.history.note runtime=\(runtimeId) terminal=\(terminalId)"
+            )
+        }
+    }
+
+    func noteFocusedEditorPane(runtimeId: UInt64, paneId: UInt64) {
+        let target = EditorPaneTarget(runtimeId: runtimeId, paneId: paneId)
+        guard lastFocusedEditorPane != target else {
+            return
+        }
+        lastFocusedEditorPane = target
+        if DiagnosticsDebugLog.enabled {
+            DiagnosticsDebugLog.log(
+                "editor.history.note runtime=\(runtimeId) pane=\(paneId)"
+            )
+        }
+    }
+
+    func reconcileTerminalSurfaces(runtimeId: UInt64, terminalIds: Set<UInt64>) {
+        guard let lastFocusedTerminalSurface,
+              lastFocusedTerminalSurface.runtimeId == runtimeId else {
+            return
+        }
+        guard !terminalIds.contains(lastFocusedTerminalSurface.terminalId) else {
+            return
+        }
+        if DiagnosticsDebugLog.enabled {
+            DiagnosticsDebugLog.log(
+                "terminal.history.clear runtime=\(runtimeId) terminal=\(lastFocusedTerminalSurface.terminalId)"
+            )
+        }
+        self.lastFocusedTerminalSurface = nil
+    }
+
+    @discardableResult
+    func focusLastTerminalSurface(anchorWindow: NSWindow?) -> Bool {
+        pruneDeadEntries()
+
+        if let target = lastFocusedTerminalSurface {
+            if DiagnosticsDebugLog.enabled {
+                DiagnosticsDebugLog.log(
+                    "terminal.history.focus_last runtime=\(target.runtimeId) terminal=\(target.terminalId)"
+                )
+            }
+            if focusTerminalSurface(runtimeId: target.runtimeId, terminalId: target.terminalId) {
+                return true
+            }
+            lastFocusedTerminalSurface = nil
+        }
+
+        guard let fallback = globalTerminalEntries(anchorWindow: anchorWindow).first else {
+            return false
+        }
+        return focusTerminalSurface(runtimeId: fallback.runtimeId, terminalId: fallback.terminalId)
+    }
+
+    @discardableResult
+    func focusLastEditorPane(anchorWindow: NSWindow?) -> Bool {
+        pruneDeadEntries()
+
+        if let target = lastFocusedEditorPane {
+            if DiagnosticsDebugLog.enabled {
+                DiagnosticsDebugLog.log(
+                    "editor.history.focus_last runtime=\(target.runtimeId) pane=\(target.paneId)"
+                )
+            }
+            if focusEditorPane(runtimeId: target.runtimeId, paneId: target.paneId) {
+                return true
+            }
+            lastFocusedEditorPane = nil
+        }
+
+        let windowModels = orderedWindowModels(anchorWindow: anchorWindow)
+        for (_, model) in windowModels {
+            if let paneId = model.preferredEditorPaneIdForGlobalToggle(),
+               focusEditorPane(runtimeId: model.runtimeInstanceId, paneId: paneId) {
+                return true
+            }
+        }
+        return false
+    }
+
     @discardableResult
     func focusTerminalSurface(runtimeId: UInt64, terminalId: UInt64) -> Bool {
         let windowModels = orderedWindowModels(anchorWindow: NSApp.keyWindow ?? NSApp.mainWindow)
@@ -301,6 +403,27 @@ final class EditorCommandModelRegistry {
         }
         for (_, model) in windowModels where model.runtimeInstanceId == runtimeId {
             if model.focusTerminalSurface(terminalId: terminalId) {
+                noteFocusedTerminalSurface(runtimeId: runtimeId, terminalId: terminalId)
+                return true
+            }
+        }
+        return false
+    }
+
+    @discardableResult
+    func focusEditorPane(runtimeId: UInt64, paneId: UInt64) -> Bool {
+        let windowModels = orderedWindowModels(anchorWindow: NSApp.keyWindow ?? NSApp.mainWindow)
+        if DiagnosticsDebugLog.enabled {
+            let candidates = windowModels.map { pair in
+                "w\(pair.window.windowNumber):r\(pair.model.runtimeInstanceId):e\(pair.model.editorId.value)"
+            }.joined(separator: ",")
+            DiagnosticsDebugLog.log(
+                "editor.history.focus.request runtime=\(runtimeId) pane=\(paneId) candidates=[\(candidates)]"
+            )
+        }
+        for (_, model) in windowModels where model.runtimeInstanceId == runtimeId {
+            if model.focusEditorPaneForGlobalToggle(paneId: paneId) {
+                noteFocusedEditorPane(runtimeId: runtimeId, paneId: paneId)
                 return true
             }
         }

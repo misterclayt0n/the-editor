@@ -4814,6 +4814,17 @@ impl App {
     closed
   }
 
+  pub fn hide_active_terminal_surface(&mut self, id: ffi::EditorId) -> bool {
+    if self.activate(id).is_none() {
+      return false;
+    }
+    let hidden = self.active_editor_mut().hide_active_terminal_surface();
+    if hidden {
+      self.request_render();
+    }
+    hidden
+  }
+
   pub fn execute_command_named(&mut self, id: ffi::EditorId, name: &str) -> bool {
     if self.activate(id).is_none() {
       return false;
@@ -11706,6 +11717,7 @@ mod ffi {
     fn supports_embedded_terminal(self: &App) -> bool;
     fn open_terminal_in_active_pane(self: &mut App, id: EditorId) -> bool;
     fn close_terminal_in_active_pane(self: &mut App, id: EditorId) -> bool;
+    fn hide_active_terminal_surface(self: &mut App, id: EditorId) -> bool;
     fn execute_command_named(self: &mut App, id: EditorId, name: &str) -> bool;
     fn is_active_pane_terminal(self: &mut App, id: EditorId) -> bool;
     fn active_file_path(self: &App, id: EditorId) -> String;
@@ -12674,6 +12686,22 @@ mod tests {
     let pane = frame.pane_at(0);
     assert_eq!(pane.pane_kind(), 1);
     assert_eq!(pane.terminal_id(), terminal_id.get().get() as u64);
+  }
+
+  #[test]
+  fn hide_active_terminal_surface_detaches_without_destroying_surface() {
+    let _guard = ffi_test_guard();
+    let mut app = App::new();
+    let id = app.create_editor("hello", default_viewport(), ffi::Position { row: 0, col: 0 });
+
+    let terminal_id = app.active_editor_mut().open_terminal_in_active_pane();
+    assert!(app.hide_active_terminal_surface(id));
+    assert!(!App::is_active_pane_terminal(&mut app, id));
+    assert_eq!(app.terminal_surface_count(id), 1);
+    let snapshot = app.terminal_surface_at(id, 0);
+    assert_eq!(snapshot.terminal_id(), terminal_id.get().get() as u64);
+    assert_eq!(snapshot.pane_id(), 0);
+    assert!(!snapshot.is_active());
   }
 
   #[test]

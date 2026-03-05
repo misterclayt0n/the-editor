@@ -1363,7 +1363,10 @@ pub fn submit_file_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
     },
     FilePickerItemAction::GroupHeader { .. } => {},
     FilePickerItemAction::SwitchBuffer { buffer_index } => {
-      if !ctx.editor().set_active_buffer(*buffer_index) {
+      if !ctx
+        .editor()
+        .set_active_buffer_preserving_terminal(*buffer_index)
+      {
         ctx.push_warning("buffer_picker", "selected buffer is no longer available");
         return;
       }
@@ -1374,7 +1377,10 @@ pub fn submit_file_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
       selection,
       active_cursor,
     } => {
-      if !ctx.editor().set_active_buffer(*buffer_index) {
+      if !ctx
+        .editor()
+        .set_active_buffer_preserving_terminal(*buffer_index)
+      {
         ctx.push_warning(
           "jumplist_picker",
           "selected jump target is no longer available",

@@ -250,18 +250,43 @@ impl Editor {
     id
   }
 
+  fn first_editor_pane(&self) -> Option<PaneId> {
+    self
+      .split_tree
+      .pane_order()
+      .into_iter()
+      .find(|pane| {
+        matches!(
+          self.pane_content.get(pane),
+          Some(PaneContent::EditorBuffer { .. })
+        )
+      })
+  }
+
   fn activate_buffer(&mut self, index: usize) -> bool {
     if index >= self.buffers.len() {
       return false;
     }
+
+    let target_pane = match self.active_pane_content() {
+      Some(PaneContent::EditorBuffer { .. }) | None => self.active_pane_id(),
+      Some(PaneContent::Terminal { .. }) => {
+        if let Some(existing_editor_pane) = self.first_editor_pane() {
+          let _ = self.split_tree.set_active_pane(existing_editor_pane);
+          existing_editor_pane
+        } else {
+          self.split_tree.split_active(SplitAxis::Vertical)
+        }
+      },
+    };
+
     if index != self.active_buffer {
       self.access_history.push(self.active_buffer);
       self.active_buffer = index;
     }
-    let active_pane = self.split_tree.active_pane();
     self
       .pane_content
-      .insert(active_pane, PaneContent::EditorBuffer {
+      .insert(target_pane, PaneContent::EditorBuffer {
         buffer_index: index,
       });
     true
@@ -647,8 +672,12 @@ impl Editor {
     self.split_tree.transpose_active_branch()
   }
 
-  pub fn set_active_buffer(&mut self, index: usize) -> bool {
+  pub fn set_active_buffer_preserving_terminal(&mut self, index: usize) -> bool {
     self.activate_buffer(index)
+  }
+
+  pub fn set_active_buffer(&mut self, index: usize) -> bool {
+    self.set_active_buffer_preserving_terminal(index)
   }
 
   pub fn switch_buffer_forward(&mut self, count: usize) -> bool {
@@ -1305,6 +1334,98 @@ mod tests {
     assert_eq!(
       editor.active_pane_content_kind(),
       Some(PaneContentKind::Terminal)
+    );
+  }
+
+  #[test]
+  fn editor_set_active_buffer_preserves_terminal_when_editor_pane_exists() {
+    let doc_id = DocumentId::new(NonZeroUsize::new(1).unwrap());
+    let doc = Document::new(doc_id, Rope::from("one"));
+    let view = ViewState::new(Rect::new(0, 0, 80, 24), Position::new(0, 0));
+    let editor_id = EditorId::new(NonZeroUsize::new(1).unwrap());
+    let mut editor = Editor::new(editor_id, doc, view);
+
+    let second = editor.open_buffer(
+      Rope::from("two"),
+      view,
+      Some(PathBuf::from("/tmp/two.txt")),
+    );
+    assert_eq!(second, 1);
+    assert!(editor.split_active_pane(SplitAxis::Vertical));
+    let terminal_id = editor.open_terminal_in_active_pane();
+    assert!(editor.is_active_pane_terminal());
+
+    assert!(editor.set_active_buffer(0));
+    assert_eq!(
+      editor.active_pane_content_kind(),
+      Some(PaneContentKind::EditorBuffer)
+    );
+    assert_eq!(editor.pane_count(), 2);
+    let panes = editor.frame_pane_snapshots(editor.layout_viewport());
+    assert!(
+      panes.iter().any(
+        |pane| matches!(pane.content, PaneContent::Terminal { terminal_id: id } if id == terminal_id)
+      ),
+      "terminal pane should remain present after buffer activation"
+    );
+  }
+
+  #[test]
+  fn editor_set_active_buffer_from_terminal_only_layout_creates_editor_split() {
+    let doc_id = DocumentId::new(NonZeroUsize::new(1).unwrap());
+    let doc = Document::new(doc_id, Rope::from("one"));
+    let view = ViewState::new(Rect::new(0, 0, 80, 24), Position::new(0, 0));
+    let editor_id = EditorId::new(NonZeroUsize::new(1).unwrap());
+    let mut editor = Editor::new(editor_id, doc, view);
+
+    let terminal_id = editor.open_terminal_in_active_pane();
+    assert_eq!(editor.pane_count(), 1);
+    assert!(editor.is_active_pane_terminal());
+
+    assert!(editor.set_active_buffer(0));
+    assert_eq!(
+      editor.active_pane_content_kind(),
+      Some(PaneContentKind::EditorBuffer)
+    );
+    assert_eq!(editor.pane_count(), 2);
+    let panes = editor.frame_pane_snapshots(editor.layout_viewport());
+    assert!(
+      panes.iter().any(
+        |pane| matches!(pane.content, PaneContent::Terminal { terminal_id: id } if id == terminal_id)
+      ),
+      "terminal pane should survive and become non-active after split"
+    );
+  }
+
+  #[test]
+  fn editor_open_buffer_from_terminal_only_layout_creates_editor_split() {
+    let doc_id = DocumentId::new(NonZeroUsize::new(1).unwrap());
+    let doc = Document::new(doc_id, Rope::from("one"));
+    let view = ViewState::new(Rect::new(0, 0, 80, 24), Position::new(0, 0));
+    let editor_id = EditorId::new(NonZeroUsize::new(1).unwrap());
+    let mut editor = Editor::new(editor_id, doc, view);
+
+    let terminal_id = editor.open_terminal_in_active_pane();
+    assert!(editor.is_active_pane_terminal());
+
+    let opened = editor.open_buffer(
+      Rope::from("two"),
+      view,
+      Some(PathBuf::from("/tmp/two.txt")),
+    );
+    assert_eq!(opened, 1);
+    assert_eq!(editor.active_buffer_index(), 1);
+    assert_eq!(
+      editor.active_pane_content_kind(),
+      Some(PaneContentKind::EditorBuffer)
+    );
+    assert_eq!(editor.pane_count(), 2);
+    let panes = editor.frame_pane_snapshots(editor.layout_viewport());
+    assert!(
+      panes.iter().any(
+        |pane| matches!(pane.content, PaneContent::Terminal { terminal_id: id } if id == terminal_id)
+      ),
+      "opening a buffer should not remove the existing terminal pane"
     );
   }
 

@@ -354,6 +354,13 @@ final class EditorModel: ObservableObject {
         return true
     }
 
+    func handleTerminalMetadataUpdate(terminalId: UInt64) {
+        guard terminalPanes.contains(where: { $0.terminalId == terminalId }) else {
+            return
+        }
+        refresh(trigger: "terminal_metadata")
+    }
+
     @discardableResult
     func executeNamedCommand(_ command: EditorNamedCommand) -> Bool {
         switch command {
@@ -1136,6 +1143,10 @@ final class EditorModel: ObservableObject {
     private func syncNativeWindowPresentation() {
         guard let hostWindow else { return }
         let activeTab = activeBufferTabSnapshot()
+        let activeTerminal = terminalPanes.first(where: \.isActive)
+        let activeTerminalMetadata = activeTerminal.flatMap { pane in
+            GhosttyRuntime.shared.terminalMetadata(for: pane.terminalId)
+        }
         let activeFilePathString = app.active_file_path(editorId).toString()
         let activeFileURL: URL? = {
             guard !activeFilePathString.isEmpty else { return nil }
@@ -1143,7 +1154,18 @@ final class EditorModel: ObservableObject {
         }()
         let presentation: NativeWindowPresentation
 
-        if let activeTab {
+        if isActivePaneTerminal {
+            let title = terminalPresentationTitle(from: activeTerminalMetadata)
+            let representedPath = activeTerminalMetadata.flatMap { metadata in
+                representedPathFromTerminalPwd(metadata.pwd)
+            }
+            presentation = NativeWindowPresentation(
+                title: title,
+                subtitle: "",
+                representedFilePath: representedPath,
+                isDocumentEdited: false
+            )
+        } else if let activeTab {
             let titleFromPath = activeFileURL?.lastPathComponent
             let titleSource = (titleFromPath?.isEmpty == false) ? titleFromPath! : activeTab.title
             let title = normalizeFallbackTitle(titleSource)
@@ -1194,12 +1216,15 @@ final class EditorModel: ObservableObject {
         if DiagnosticsDebugLog.enabled {
             let tabTitle = activeTab?.title ?? "<nil>"
             let tabPath = activeTab?.filePath ?? "<nil>"
+            let terminalTitle = activeTerminalMetadata?.title ?? "<nil>"
+            let terminalPwd = activeTerminalMetadata?.pwd ?? "<nil>"
+            let terminalSeenTitle = activeTerminalMetadata?.seenTitle == true ? "1" : "0"
             let keyWindow = hostWindow.isKeyWindow ? "1" : "0"
             let mainWindow = hostWindow.isMainWindow ? "1" : "0"
             let tabSelected = (hostWindow.tabGroup?.selectedWindow === hostWindow) ? "1" : "0"
             DiagnosticsDebugLog.logChanged(
                 key: "window.presentation.input",
-                value: "active_path=\(debugTruncate(activeFilePathString, limit: 160)) tab_title=\(debugTruncate(tabTitle, limit: 80)) tab_path=\(debugTruncate(tabPath, limit: 160)) computed_title=\(debugTruncate(presentation.title, limit: 80)) host_title=\(debugTruncate(hostWindow.title, limit: 80)) key=\(keyWindow) main=\(mainWindow) tab_selected=\(tabSelected)"
+                value: "active_path=\(debugTruncate(activeFilePathString, limit: 160)) tab_title=\(debugTruncate(tabTitle, limit: 80)) tab_path=\(debugTruncate(tabPath, limit: 160)) term_seen_title=\(terminalSeenTitle) term_title=\(debugTruncate(terminalTitle, limit: 120)) term_pwd=\(debugTruncate(terminalPwd, limit: 160)) computed_title=\(debugTruncate(presentation.title, limit: 80)) host_title=\(debugTruncate(hostWindow.title, limit: 80)) key=\(keyWindow) main=\(mainWindow) tab_selected=\(tabSelected)"
             )
         }
 
@@ -1337,6 +1362,44 @@ final class EditorModel: ObservableObject {
             return "untitled"
         }
         return trimmed
+    }
+
+    private func terminalPresentationTitle(from metadata: GhosttyTerminalMetadata?) -> String {
+        guard let metadata else {
+            return "terminal"
+        }
+
+        let title = metadata.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if metadata.seenTitle, !title.isEmpty {
+            return title
+        }
+
+        let pwd = metadata.pwd.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let representedPath = representedPathFromTerminalPwd(pwd), !representedPath.isEmpty {
+            return (representedPath as NSString).abbreviatingWithTildeInPath
+        }
+        if !title.isEmpty {
+            return title
+        }
+        return "terminal"
+    }
+
+    private func representedPathFromTerminalPwd(_ rawPwd: String) -> String? {
+        let trimmed = rawPwd.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return nil
+        }
+
+        if let url = URL(string: trimmed), url.isFileURL {
+            let path = url.path
+            return path.isEmpty ? nil : path
+        }
+
+        if trimmed.hasPrefix("/") {
+            return trimmed
+        }
+
+        return nil
     }
 
     private func presentCloseConfirmation(for context: BufferCloseContext, in window: NSWindow) {

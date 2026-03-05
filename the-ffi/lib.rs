@@ -10994,9 +10994,10 @@ impl DefaultContext for App {
       {
         let editor = self.active_editor_mut();
         let replace_active = if native_tab_gateway_enabled {
-          !editor.document().flags().modified
+          !editor.is_active_pane_terminal() && !editor.document().flags().modified
         } else {
-          editor.can_reuse_active_untitled_buffer_for_open()
+          !editor.is_active_pane_terminal()
+            && editor.can_reuse_active_untitled_buffer_for_open()
         };
         if replace_active {
           let _ =
@@ -12488,6 +12489,75 @@ mod tests {
     assert_eq!(pane.pane_kind(), 1);
     assert_eq!(pane.terminal_id(), terminal_id.get().get() as u64);
     assert_eq!(pane.plan().line_count(), 0);
+  }
+
+  #[test]
+  fn open_untitled_buffer_preserves_active_terminal_pane() {
+    let _guard = ffi_test_guard();
+    let mut app = App::new();
+    let id = app.create_editor("hello", default_viewport(), ffi::Position { row: 0, col: 0 });
+
+    assert!(app.open_terminal_in_active_pane(id));
+    let terminal_id = {
+      let frame = app.frame_render_plan(id);
+      assert_eq!(frame.pane_count(), 1);
+      frame.pane_at(0).terminal_id()
+    };
+
+    let opened_buffer = app.open_untitled_buffer(id);
+    assert_ne!(opened_buffer, 0);
+    assert!(!App::is_active_pane_terminal(&mut app, id));
+
+    let frame = app.frame_render_plan(id);
+    assert_eq!(frame.pane_count(), 2);
+    let mut terminal_count = 0usize;
+    let mut found_original_terminal = false;
+    for index in 0..frame.pane_count() {
+      let pane = frame.pane_at(index);
+      if pane.pane_kind() == 1 {
+        terminal_count += 1;
+        if pane.terminal_id() == terminal_id {
+          found_original_terminal = true;
+        }
+      }
+    }
+    assert_eq!(terminal_count, 1);
+    assert!(found_original_terminal);
+  }
+
+  #[test]
+  fn open_file_path_preserves_active_terminal_pane() {
+    let _guard = ffi_test_guard();
+    let mut app = App::new();
+    let id = app.create_editor("", default_viewport(), ffi::Position { row: 0, col: 0 });
+    let fixture = TempTestFile::new("terminal-open-file-preserve", "alpha\nbeta\n");
+
+    assert!(app.open_terminal_in_active_pane(id));
+    let terminal_id = {
+      let frame = app.frame_render_plan(id);
+      assert_eq!(frame.pane_count(), 1);
+      frame.pane_at(0).terminal_id()
+    };
+
+    assert!(app.open_file_path(id, fixture.as_path().to_string_lossy().as_ref()));
+    assert!(!App::is_active_pane_terminal(&mut app, id));
+    assert_eq!(app.text(id).as_str(), "alpha\nbeta\n");
+
+    let frame = app.frame_render_plan(id);
+    assert_eq!(frame.pane_count(), 2);
+    let mut terminal_count = 0usize;
+    let mut found_original_terminal = false;
+    for index in 0..frame.pane_count() {
+      let pane = frame.pane_at(index);
+      if pane.pane_kind() == 1 {
+        terminal_count += 1;
+        if pane.terminal_id() == terminal_id {
+          found_original_terminal = true;
+        }
+      }
+    }
+    assert_eq!(terminal_count, 1);
+    assert!(found_original_terminal);
   }
 
   #[test]

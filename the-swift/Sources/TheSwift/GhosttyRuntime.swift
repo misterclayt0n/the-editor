@@ -2,6 +2,32 @@ import AppKit
 import Foundation
 import SwiftUI
 
+struct GhosttyTerminalMetadata: Equatable {
+    var seenTitle: Bool = false
+    var title: String = ""
+    var pwd: String = ""
+
+    mutating func applySetTitle(_ value: String) {
+        title = value
+        guard !value.isEmpty else {
+            seenTitle = false
+            return
+        }
+
+        // Ghostty treats a reset title as "use pwd-driven title" behavior.
+        if !pwd.isEmpty, value == pwd {
+            seenTitle = false
+            return
+        }
+
+        seenTitle = true
+    }
+
+    mutating func applyPwd(_ value: String) {
+        pwd = value
+    }
+}
+
 #if canImport(GhosttyKit)
 import GhosttyKit
 
@@ -119,6 +145,10 @@ final class GhosttyRuntime {
         return created
     }
 
+    func terminalMetadata(for terminalId: UInt64) -> GhosttyTerminalMetadata? {
+        controllers[terminalId]?.metadataSnapshot()
+    }
+
     fileprivate func tick() {
         guard let app else { return }
         ghostty_app_tick(app)
@@ -154,7 +184,12 @@ final class GhosttyRuntime {
                 GhosttyRuntime.shared.tick()
             }
         }
-        runtimeConfig.action_cb = { _, _, _ in false }
+        runtimeConfig.action_cb = { app, target, action in
+            guard let runtime = GhosttyRuntime.runtime(from: app) else {
+                return false
+            }
+            return runtime.handleRuntimeAction(target: target, action: action)
+        }
         runtimeConfig.read_clipboard_cb = { userdata, location, state in
             guard let callbackContext = GhosttyRuntime.callbackContext(from: userdata),
                   let controller = callbackContext.controller else {
@@ -204,6 +239,31 @@ final class GhosttyRuntime {
         return Unmanaged<GhosttySurfaceCallbackContext>.fromOpaque(userdata).takeUnretainedValue()
     }
 
+    private static func runtime(from app: ghostty_app_t?) -> GhosttyRuntime? {
+        guard let app else { return nil }
+        guard let userdata = ghostty_app_userdata(app) else { return nil }
+        return Unmanaged<GhosttyRuntime>.fromOpaque(userdata).takeUnretainedValue()
+    }
+
+    private func handleRuntimeAction(target: ghostty_target_s, action: ghostty_action_s) -> Bool {
+        guard let controller = controller(for: target) else {
+            return false
+        }
+        return controller.handleRuntimeAction(action)
+    }
+
+    private func controller(for target: ghostty_target_s) -> GhosttySurfaceController? {
+        guard target.tag == GHOSTTY_TARGET_SURFACE,
+              let surface = target.target.surface else {
+            return nil
+        }
+        guard let callbackContext = GhosttyRuntime.callbackContext(from: ghostty_surface_userdata(surface)),
+              let controller = callbackContext.controller else {
+            return nil
+        }
+        return controller
+    }
+
     private func installAppFocusObservers(_ app: ghostty_app_t) {
         ghostty_app_set_focus(app, NSApp.isActive)
         appObservers.append(
@@ -240,6 +300,7 @@ private final class GhosttySurfaceController {
     private var lastScaleY: CGFloat = 0
     private var lastColorScheme: ghostty_color_scheme_e?
     private var surfaceCallbackContext: Unmanaged<GhosttySurfaceCallbackContext>?
+    private var metadata = GhosttyTerminalMetadata()
 
     init(terminalId: UInt64, runtime: GhosttyRuntime) {
         self.terminalId = terminalId
@@ -252,6 +313,25 @@ private final class GhosttySurfaceController {
 
     fileprivate var surfaceHandle: ghostty_surface_t? {
         surface
+    }
+
+    fileprivate func metadataSnapshot() -> GhosttyTerminalMetadata {
+        metadata
+    }
+
+    func handleRuntimeAction(_ action: ghostty_action_s) -> Bool {
+        switch action.tag {
+        case GHOSTTY_ACTION_SET_TITLE:
+            let title = action.action.set_title.title.map { String(cString: $0) } ?? ""
+            updateMetadata { $0.applySetTitle(title) }
+            return true
+        case GHOSTTY_ACTION_PWD:
+            let pwd = action.action.pwd.pwd.map { String(cString: $0) } ?? ""
+            updateMetadata { $0.applyPwd(pwd) }
+            return true
+        default:
+            return false
+        }
     }
 
     func attach(to hostView: GhosttySurfaceHostView) {
@@ -527,6 +607,25 @@ private final class GhosttySurfaceController {
         }
     }
 
+    private func updateMetadata(_ apply: @escaping (inout GhosttyTerminalMetadata) -> Void) {
+        let update = { [weak self] in
+            guard let self else { return }
+            var next = self.metadata
+            apply(&next)
+            guard next != self.metadata else {
+                return
+            }
+            self.metadata = next
+            self.hostView?.handleRuntimeMetadataUpdated()
+        }
+
+        if Thread.isMainThread {
+            update()
+        } else {
+            DispatchQueue.main.async(execute: update)
+        }
+    }
+
     private func createSurfaceIfNeeded() {
         guard surface == nil,
               let app = runtime.app,
@@ -615,6 +714,7 @@ final class GhosttySurfaceHostView: NSView {
     var cellSize: CGSize = .init(width: 1, height: 1)
     var onPointer: ((MouseBridgeEvent) -> Void)?
     var onCloseRequest: (() -> Bool)?
+    var onMetadataChange: (() -> Void)?
 
     private var controller: GhosttySurfaceController?
     private var keyTextAccumulator: [String]? = nil
@@ -681,6 +781,10 @@ final class GhosttySurfaceHostView: NSView {
             return
         }
         presentCloseConfirmation()
+    }
+
+    fileprivate func handleRuntimeMetadataUpdated() {
+        onMetadataChange?()
     }
 
     private func presentCloseConfirmation() {
@@ -1376,6 +1480,7 @@ struct GhosttyPaneView: NSViewRepresentable {
     let focused: Bool
     let onPointer: (MouseBridgeEvent) -> Void
     let onCloseRequest: () -> Bool
+    let onMetadataChange: () -> Void
 
     func makeNSView(context: Context) -> GhosttySurfaceHostView {
         let view = GhosttySurfaceHostView(frame: .zero)
@@ -1385,6 +1490,7 @@ struct GhosttyPaneView: NSViewRepresentable {
         view.cellSize = cellSize
         view.onPointer = onPointer
         view.onCloseRequest = onCloseRequest
+        view.onMetadataChange = onMetadataChange
         let controller = GhosttyRuntime.shared.controller(for: terminalId)
         view.bind(controller: controller)
         view.updateFocus(focused)
@@ -1396,6 +1502,7 @@ struct GhosttyPaneView: NSViewRepresentable {
         nsView.cellSize = cellSize
         nsView.onPointer = onPointer
         nsView.onCloseRequest = onCloseRequest
+        nsView.onMetadataChange = onMetadataChange
         let controller = GhosttyRuntime.shared.controller(for: terminalId)
         nsView.bind(controller: controller)
         nsView.updateFocus(focused)
@@ -1411,6 +1518,11 @@ final class GhosttyRuntime {
 
     func reconcileTerminalIds(_ terminalIds: Set<UInt64>) {
         _ = terminalIds
+    }
+
+    func terminalMetadata(for terminalId: UInt64) -> GhosttyTerminalMetadata? {
+        _ = terminalId
+        return nil
     }
 }
 
@@ -1444,6 +1556,7 @@ struct GhosttyPaneView: NSViewRepresentable {
     let focused: Bool
     let onPointer: (MouseBridgeEvent) -> Void
     let onCloseRequest: () -> Bool
+    let onMetadataChange: () -> Void
 
     func makeNSView(context: Context) -> MissingGhosttyView {
         _ = paneId
@@ -1452,6 +1565,7 @@ struct GhosttyPaneView: NSViewRepresentable {
         _ = focused
         _ = onPointer
         _ = onCloseRequest
+        _ = onMetadataChange
         return MissingGhosttyView(frame: .zero)
     }
 

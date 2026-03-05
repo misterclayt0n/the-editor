@@ -91,6 +91,9 @@ struct EditorView: View {
                                     },
                                     onCloseRequest: {
                                         model.closeTerminalInActivePane()
+                                    },
+                                    onMetadataChange: {
+                                        model.handleTerminalMetadataUpdate(terminalId: pane.terminalId)
                                     }
                                 )
                                 .frame(width: pane.frame.width, height: pane.frame.height)

@@ -61,6 +61,7 @@ struct KeyCaptureView: NSViewRepresentable {
         var onText: ((String, NSEvent.ModifierFlags) -> Void)?
         var onCommandDigit: ((Int) -> Void)?
         var onCommandNewTab: (() -> Void)?
+        var onCommandCloseSurface: (() -> Void)?
         var modeProvider: (() -> EditorMode)?
         var onScroll: ((CGFloat, CGFloat, Bool) -> Void)?
 
@@ -79,8 +80,37 @@ struct KeyCaptureView: NSViewRepresentable {
             lastModifiers = event.modifierFlags
         }
 
+        override func performKeyEquivalent(with event: NSEvent) -> Bool {
+            guard event.type == .keyDown else { return false }
+            let relevantFlags = event.modifierFlags.intersection([.command, .shift, .option, .control])
+            guard relevantFlags == [.command] else { return false }
+
+            if Self.isCommandCloseSurface(from: event) {
+                onCommandCloseSurface?()
+                return true
+            }
+
+            if Self.isCommandNewTab(from: event) {
+                onCommandNewTab?()
+                return true
+            }
+
+            if let digit = Self.commandDigitIndex(from: event) {
+                onCommandDigit?(digit)
+                return true
+            }
+
+            return false
+        }
+
         override func keyDown(with event: NSEvent) {
             lastModifiers = event.modifierFlags
+
+            if event.modifierFlags.contains(.command),
+               Self.isCommandCloseSurface(from: event) {
+                onCommandCloseSurface?()
+                return
+            }
 
             if event.modifierFlags.contains(.command),
                Self.isCommandNewTab(from: event) {
@@ -251,12 +281,21 @@ struct KeyCaptureView: NSViewRepresentable {
             }
             return chars.lowercased() == "t"
         }
+
+        private static func isCommandCloseSurface(from event: NSEvent) -> Bool {
+            guard let chars = event.charactersIgnoringModifiers,
+                  chars.count == 1 else {
+                return false
+            }
+            return chars.lowercased() == "w"
+        }
     }
 
     let onKey: (KeyEvent) -> Void
     let onText: (String, NSEvent.ModifierFlags) -> Void
     let onCommandDigit: (Int) -> Void
     let onCommandNewTab: () -> Void
+    let onCommandCloseSurface: () -> Void
     let onScroll: (CGFloat, CGFloat, Bool) -> Void
     let modeProvider: () -> EditorMode
 
@@ -266,6 +305,7 @@ struct KeyCaptureView: NSViewRepresentable {
         view.onText = onText
         view.onCommandDigit = onCommandDigit
         view.onCommandNewTab = onCommandNewTab
+        view.onCommandCloseSurface = onCommandCloseSurface
         view.onScroll = onScroll
         view.modeProvider = modeProvider
         KeyCaptureFocusBridge.shared.register(view)
@@ -280,6 +320,7 @@ struct KeyCaptureView: NSViewRepresentable {
         nsView.onText = onText
         nsView.onCommandDigit = onCommandDigit
         nsView.onCommandNewTab = onCommandNewTab
+        nsView.onCommandCloseSurface = onCommandCloseSurface
         nsView.onScroll = onScroll
         nsView.modeProvider = modeProvider
         KeyCaptureFocusBridge.shared.register(nsView)

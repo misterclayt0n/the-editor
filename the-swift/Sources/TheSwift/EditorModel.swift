@@ -391,6 +391,29 @@ final class EditorModel: ObservableObject {
     }
 
     @discardableResult
+    func closeSurface() -> Bool {
+        if isActivePaneTerminal, closeTerminalInActivePane() {
+            return true
+        }
+
+        let paneCountBefore = Int(framePlan.pane_count())
+        if paneCountBefore > 1 {
+            let didExecuteClose = executeNamedCommand("wclose")
+            let paneCountAfter = Int(framePlan.pane_count())
+            if paneCountAfter < paneCountBefore || didExecuteClose {
+                return true
+            }
+            return false
+        }
+
+        guard let hostWindow else {
+            return false
+        }
+        hostWindow.performClose(nil)
+        return true
+    }
+
+    @discardableResult
     func toggleLastTerminalSurface() -> Bool {
         let activePaneId = framePlan.active_pane_id()
         guard let activeItem = paneSurfaceItems.first(where: { $0.paneId == activePaneId }) else {
@@ -444,6 +467,8 @@ final class EditorModel: ObservableObject {
         switch command {
         case .openNativeTab:
             return openNativeUntitledTab()
+        case .closeSurface:
+            return closeSurface()
         case .toggleLastTerminal:
             return toggleLastTerminalSurface()
         case .toggleSurfaceOverview:

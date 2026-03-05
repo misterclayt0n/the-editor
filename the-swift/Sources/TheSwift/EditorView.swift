@@ -92,7 +92,7 @@ struct EditorView: View {
                                         model.handlePointerEvent(event)
                                     },
                                     onCloseRequest: {
-                                        model.closeTerminalInActivePane()
+                                        model.closeSurface()
                                     },
                                     onMetadataChange: {
                                         model.handleTerminalMetadataUpdate(terminalId: pane.terminalId)
@@ -236,6 +236,9 @@ struct EditorView: View {
                                         },
                                         onCommandNewTab: {
                                             _ = model.openNativeUntitledTab()
+                                        },
+                                        onCommandCloseSurface: {
+                                            _ = model.closeSurface()
                                         },
                                         onScroll: { _, _, _ in },
                                         modeProvider: {

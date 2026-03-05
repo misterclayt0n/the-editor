@@ -3,6 +3,7 @@ import SwiftUI
 
 enum EditorNamedCommand: String, CaseIterable {
     case openNativeTab = "native_new_tab"
+    case closeSurface = "close_surface"
     case openFilePicker = "file_picker"
     case openCommandPalette = "command_palette"
     case toggleFileTree = "file_explorer"
@@ -15,6 +16,8 @@ enum EditorNamedCommand: String, CaseIterable {
         switch self {
         case .openNativeTab:
             return "New Tab"
+        case .closeSurface:
+            return "Close Surface"
         case .openFilePicker:
             return "Open File Picker"
         case .openCommandPalette:
@@ -36,6 +39,8 @@ enum EditorNamedCommand: String, CaseIterable {
         switch self {
         case .openNativeTab:
             return "t"
+        case .closeSurface:
+            return "w"
         case .openFilePicker:
             return "p"
         case .openCommandPalette:
@@ -57,6 +62,8 @@ enum EditorNamedCommand: String, CaseIterable {
         switch self {
         case .openNativeTab:
             return "t"
+        case .closeSurface:
+            return "w"
         case .openFilePicker:
             return "p"
         case .openCommandPalette:
@@ -78,6 +85,8 @@ enum EditorNamedCommand: String, CaseIterable {
         switch self {
         case .openNativeTab:
             return [.command]
+        case .closeSurface:
+            return [.command]
         case .openFilePicker:
             return [.command]
         case .openCommandPalette:
@@ -98,6 +107,8 @@ enum EditorNamedCommand: String, CaseIterable {
     private var appKitModifiers: NSEvent.ModifierFlags {
         switch self {
         case .openNativeTab:
+            return [.command]
+        case .closeSurface:
             return [.command]
         case .openFilePicker:
             return [.command]
@@ -257,6 +268,10 @@ struct EditorAppCommands: Commands {
     var body: some Commands {
         CommandGroup(replacing: .printItem) {
             commandButton(.openFilePicker)
+        }
+
+        CommandGroup(replacing: .saveItem) {
+            commandButton(.closeSurface)
         }
 
         CommandGroup(before: .pasteboard) {

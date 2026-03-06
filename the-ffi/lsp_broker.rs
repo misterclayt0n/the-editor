@@ -187,59 +187,62 @@ impl LspBrokerSession {
 
   fn poll_runtime_events(&mut self) {
     while let Some(event) = self.runtime.try_recv_event() {
-      match event {
-        LspEvent::RequestDispatched { id, method } => {
-          if let Some((client_id, client_request_id)) =
-            self.runtime_to_client_request.get(&id).copied()
-          {
-            self.enqueue_client(client_id, LspEvent::RequestDispatched {
-              id: client_request_id,
-              method,
-            });
-          } else {
-            self.broadcast(LspEvent::RequestDispatched { id, method });
-          }
-        },
-        LspEvent::RequestCompleted { id } => {
-          if let Some((client_id, client_request_id)) = self.runtime_to_client_request.remove(&id) {
-            self
-              .client_to_runtime_request
-              .remove(&(client_id, client_request_id));
-            self.enqueue_client(client_id, LspEvent::RequestCompleted {
-              id: client_request_id,
-            });
-          } else {
-            self.broadcast(LspEvent::RequestCompleted { id });
-          }
-        },
-        LspEvent::RequestTimedOut { id, method } => {
-          if let Some((client_id, client_request_id)) = self.runtime_to_client_request.remove(&id) {
-            self
-              .client_to_runtime_request
-              .remove(&(client_id, client_request_id));
-            self.enqueue_client(client_id, LspEvent::RequestTimedOut {
-              id: client_request_id,
-              method,
-            });
-          } else {
-            self.broadcast(LspEvent::RequestTimedOut { id, method });
-          }
-        },
-        LspEvent::RpcMessage { message } => {
-          self.route_rpc_message(message);
-        },
-        LspEvent::DiagnosticsPublished { diagnostics } => {
-          self.fanout_diagnostics(diagnostics);
-        },
-        LspEvent::WorkspaceApplyEdit { label, edit } => {
-          if let Some(client_id) = self.resolve_workspace_edit_client(&edit.documents) {
-            self.enqueue_client(client_id, LspEvent::WorkspaceApplyEdit { label, edit });
-          }
-        },
-        other => {
-          self.broadcast(other);
-        },
-      }
+      self.handle_runtime_event(event);
+    }
+  }
+
+  fn handle_runtime_event(&mut self, event: LspEvent) {
+    match event {
+      LspEvent::RequestDispatched { id, method } => {
+        if let Some((client_id, client_request_id)) = self.runtime_to_client_request.get(&id).copied() {
+          self.enqueue_client(client_id, LspEvent::RequestDispatched {
+            id: client_request_id,
+            method,
+          });
+        } else {
+          self.broadcast(LspEvent::RequestDispatched { id, method });
+        }
+      },
+      LspEvent::RequestCompleted { id } => {
+        // Keep the runtime<->client request mapping until the matching JSON-RPC
+        // response is routed. The LSP runtime emits RequestCompleted before the
+        // Response event, so removing the mapping here makes the response
+        // unrouteable for shared sessions.
+        if let Some((client_id, client_request_id)) = self.runtime_to_client_request.get(&id).copied() {
+          self.enqueue_client(client_id, LspEvent::RequestCompleted {
+            id: client_request_id,
+          });
+        } else {
+          self.broadcast(LspEvent::RequestCompleted { id });
+        }
+      },
+      LspEvent::RequestTimedOut { id, method } => {
+        if let Some((client_id, client_request_id)) = self.runtime_to_client_request.remove(&id) {
+          self
+            .client_to_runtime_request
+            .remove(&(client_id, client_request_id));
+          self.enqueue_client(client_id, LspEvent::RequestTimedOut {
+            id: client_request_id,
+            method,
+          });
+        } else {
+          self.broadcast(LspEvent::RequestTimedOut { id, method });
+        }
+      },
+      LspEvent::RpcMessage { message } => {
+        self.route_rpc_message(message);
+      },
+      LspEvent::DiagnosticsPublished { diagnostics } => {
+        self.fanout_diagnostics(diagnostics);
+      },
+      LspEvent::WorkspaceApplyEdit { label, edit } => {
+        if let Some(client_id) = self.resolve_workspace_edit_client(&edit.documents) {
+          self.enqueue_client(client_id, LspEvent::WorkspaceApplyEdit { label, edit });
+        }
+      },
+      other => {
+        self.broadcast(other);
+      },
     }
   }
 
@@ -787,5 +790,32 @@ mod tests {
     let events = poll_client_events(202, &key);
     assert!(events.is_empty());
     unregister_client(202, &key);
+  }
+
+  #[test]
+  fn request_completed_keeps_mapping_until_response_is_routed() {
+    let workspace = std::env::current_dir().expect("cwd");
+    let mut session = LspBrokerSession::new(LspRuntimeConfig::new(workspace));
+    session.register_client(101);
+    session.runtime_to_client_request.insert(42, (101, 7001));
+    session.client_to_runtime_request.insert((101, 7001), 42);
+
+    session.handle_runtime_event(LspEvent::RequestCompleted { id: 42 });
+    session.route_rpc_message(jsonrpc::Message::response_ok(
+      jsonrpc::Id::Number(42),
+      Some(serde_json::json!({"ok": true})),
+    ));
+
+    let events = session.drain_client_events(101);
+    assert_eq!(events.len(), 2);
+    assert!(matches!(events[0], LspEvent::RequestCompleted { id: 7001 }));
+    assert!(matches!(
+      &events[1],
+      LspEvent::RpcMessage {
+        message: jsonrpc::Message::Response(response),
+      } if response.id == jsonrpc::Id::Number(7001)
+    ));
+    assert!(session.runtime_to_client_request.is_empty());
+    assert!(session.client_to_runtime_request.is_empty());
   }
 }

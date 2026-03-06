@@ -35,6 +35,10 @@ typedef struct __swift_bridge__$Position { uint64_t row; uint64_t col; } __swift
 typedef struct __swift_bridge__$Option$Position { bool is_some; __swift_bridge__$Position val; } __swift_bridge__$Option$Position;
 typedef struct __swift_bridge__$Color { uint8_t kind; uint32_t value; } __swift_bridge__$Color;
 typedef struct __swift_bridge__$Option$Color { bool is_some; __swift_bridge__$Color val; } __swift_bridge__$Option$Color;
+typedef struct __swift_bridge__$OptionalColor { bool has_value; struct __swift_bridge__$Color color; } __swift_bridge__$OptionalColor;
+typedef struct __swift_bridge__$Option$OptionalColor { bool is_some; __swift_bridge__$OptionalColor val; } __swift_bridge__$Option$OptionalColor;
+typedef struct __swift_bridge__$GhosttyThemeSnapshot { struct __swift_bridge__$OptionalColor background; struct __swift_bridge__$OptionalColor foreground; struct __swift_bridge__$OptionalColor cursor_color; struct __swift_bridge__$OptionalColor cursor_text; struct __swift_bridge__$OptionalColor selection_background; struct __swift_bridge__$OptionalColor selection_foreground; struct __swift_bridge__$OptionalColor palette0; struct __swift_bridge__$OptionalColor palette1; struct __swift_bridge__$OptionalColor palette2; struct __swift_bridge__$OptionalColor palette3; struct __swift_bridge__$OptionalColor palette4; struct __swift_bridge__$OptionalColor palette5; struct __swift_bridge__$OptionalColor palette6; struct __swift_bridge__$OptionalColor palette7; struct __swift_bridge__$OptionalColor palette8; struct __swift_bridge__$OptionalColor palette9; struct __swift_bridge__$OptionalColor palette10; struct __swift_bridge__$OptionalColor palette11; struct __swift_bridge__$OptionalColor palette12; struct __swift_bridge__$OptionalColor palette13; struct __swift_bridge__$OptionalColor palette14; struct __swift_bridge__$OptionalColor palette15; } __swift_bridge__$GhosttyThemeSnapshot;
+typedef struct __swift_bridge__$Option$GhosttyThemeSnapshot { bool is_some; __swift_bridge__$GhosttyThemeSnapshot val; } __swift_bridge__$Option$GhosttyThemeSnapshot;
 typedef struct __swift_bridge__$Style { bool has_fg; struct __swift_bridge__$Color fg; bool has_bg; struct __swift_bridge__$Color bg; bool has_underline_color; struct __swift_bridge__$Color underline_color; uint8_t underline_style; uint16_t add_modifier; uint16_t sub_modifier; } __swift_bridge__$Style;
 typedef struct __swift_bridge__$Option$Style { bool is_some; __swift_bridge__$Style val; } __swift_bridge__$Option$Style;
 typedef struct __swift_bridge__$RenderStyles { struct __swift_bridge__$Style selection; struct __swift_bridge__$Style cursor; struct __swift_bridge__$Style active_cursor; struct __swift_bridge__$Style gutter; struct __swift_bridge__$Style gutter_active; } __swift_bridge__$RenderStyles;
@@ -195,6 +199,18 @@ void* __swift_bridge__$Vec_RenderFramePlan$get_mut(void* vec_ptr, uintptr_t inde
 uintptr_t __swift_bridge__$Vec_RenderFramePlan$len(void* vec_ptr);
 void* __swift_bridge__$Vec_RenderFramePlan$as_ptr(void* vec_ptr);
 
+typedef struct TerminalSurfaceSnapshot TerminalSurfaceSnapshot;
+void __swift_bridge__$TerminalSurfaceSnapshot$_free(void* self);
+
+void* __swift_bridge__$Vec_TerminalSurfaceSnapshot$new(void);
+void __swift_bridge__$Vec_TerminalSurfaceSnapshot$drop(void* vec_ptr);
+void __swift_bridge__$Vec_TerminalSurfaceSnapshot$push(void* vec_ptr, void* item_ptr);
+void* __swift_bridge__$Vec_TerminalSurfaceSnapshot$pop(void* vec_ptr);
+void* __swift_bridge__$Vec_TerminalSurfaceSnapshot$get(void* vec_ptr, uintptr_t index);
+void* __swift_bridge__$Vec_TerminalSurfaceSnapshot$get_mut(void* vec_ptr, uintptr_t index);
+uintptr_t __swift_bridge__$Vec_TerminalSurfaceSnapshot$len(void* vec_ptr);
+void* __swift_bridge__$Vec_TerminalSurfaceSnapshot$as_ptr(void* vec_ptr);
+
 typedef struct SplitSeparator SplitSeparator;
 void __swift_bridge__$SplitSeparator$_free(void* self);
 
@@ -305,6 +321,7 @@ bool __swift_bridge__$App$supports_embedded_terminal(void* self);
 bool __swift_bridge__$App$open_terminal_in_active_pane(void* self, struct __swift_bridge__$EditorId id);
 bool __swift_bridge__$App$close_terminal_in_active_pane(void* self, struct __swift_bridge__$EditorId id);
 bool __swift_bridge__$App$hide_active_terminal_surface(void* self, struct __swift_bridge__$EditorId id);
+bool __swift_bridge__$App$execute_command_named(void* self, struct __swift_bridge__$EditorId id, struct RustStr name);
 bool __swift_bridge__$App$is_active_pane_terminal(void* self, struct __swift_bridge__$EditorId id);
 void* __swift_bridge__$App$active_file_path(void* self, struct __swift_bridge__$EditorId id);
 void __swift_bridge__$App$set_native_tab_open_gateway(void* self, bool enabled);
@@ -314,7 +331,12 @@ bool __swift_bridge__$App$clear_active_cursor(void* self, struct __swift_bridge_
 void* __swift_bridge__$App$cursor_ids(void* self, struct __swift_bridge__$EditorId id);
 uintptr_t __swift_bridge__$App$split_separator_count(void* self, struct __swift_bridge__$EditorId id);
 void* __swift_bridge__$App$split_separator_at(void* self, struct __swift_bridge__$EditorId id, uintptr_t index);
+bool __swift_bridge__$App$split_active_pane(void* self, struct __swift_bridge__$EditorId id, uint8_t axis);
+bool __swift_bridge__$App$jump_active_pane(void* self, struct __swift_bridge__$EditorId id, uint8_t direction);
 bool __swift_bridge__$App$resize_split(void* self, struct __swift_bridge__$EditorId id, uint64_t split_id, uint16_t x, uint16_t y);
+uintptr_t __swift_bridge__$App$terminal_surface_count(void* self, struct __swift_bridge__$EditorId id);
+void* __swift_bridge__$App$terminal_surface_at(void* self, struct __swift_bridge__$EditorId id, uintptr_t index);
+bool __swift_bridge__$App$focus_terminal_surface(void* self, struct __swift_bridge__$EditorId id, uint64_t terminal_id);
 void* __swift_bridge__$App$render_plan(void* self, struct __swift_bridge__$EditorId id);
 void* __swift_bridge__$App$frame_render_plan(void* self, struct __swift_bridge__$EditorId id);
 void* __swift_bridge__$App$render_plan_with_styles(void* self, struct __swift_bridge__$EditorId id, struct __swift_bridge__$RenderStyles styles);
@@ -332,6 +354,8 @@ void* __swift_bridge__$App$pending_key_hints_json(void* self, struct __swift_bri
 uint8_t __swift_bridge__$App$mode(void* self, struct __swift_bridge__$EditorId id);
 struct __swift_bridge__$Style __swift_bridge__$App$theme_highlight_style(void* self, uint32_t highlight);
 struct __swift_bridge__$Style __swift_bridge__$App$theme_ui_style(void* self, struct RustStr scope);
+void* __swift_bridge__$App$theme_effective_name(void* self);
+struct __swift_bridge__$GhosttyThemeSnapshot __swift_bridge__$App$theme_ghostty_snapshot(void* self);
 void* __swift_bridge__$App$completion_docs_render_json(struct RustStr markdown, uintptr_t content_width, struct RustStr language_hint);
 void* __swift_bridge__$App$completion_popup_layout_json(uintptr_t area_width, uintptr_t area_height, int64_t cursor_x, int64_t cursor_y, uintptr_t list_width, uintptr_t list_height, uintptr_t docs_width, uintptr_t docs_height);
 void* __swift_bridge__$App$signature_help_popup_layout_json(uintptr_t area_width, uintptr_t area_height, int64_t cursor_x, int64_t cursor_y, uintptr_t panel_width, uintptr_t panel_height);
@@ -482,6 +506,9 @@ uint64_t __swift_bridge__$RenderFramePlan$active_pane_id(void* self);
 uintptr_t __swift_bridge__$RenderFramePlan$pane_count(void* self);
 void* __swift_bridge__$RenderFramePlan$pane_at(void* self, uintptr_t index);
 void* __swift_bridge__$RenderFramePlan$active_plan(void* self);
+uint64_t __swift_bridge__$TerminalSurfaceSnapshot$terminal_id(void* self);
+uint64_t __swift_bridge__$TerminalSurfaceSnapshot$pane_id(void* self);
+bool __swift_bridge__$TerminalSurfaceSnapshot$is_active(void* self);
 uint64_t __swift_bridge__$SplitSeparator$split_id(void* self);
 uint8_t __swift_bridge__$SplitSeparator$axis(void* self);
 uint16_t __swift_bridge__$SplitSeparator$line(void* self);
@@ -546,4 +573,5 @@ void* __swift_bridge__$PreviewLine$segment_at(void* self, uintptr_t index);
 void* __swift_bridge__$PreviewLineSegment$text(void* self);
 uint32_t __swift_bridge__$PreviewLineSegment$highlight_id(void* self);
 bool __swift_bridge__$PreviewLineSegment$is_match(void* self);
+
 

@@ -3611,6 +3611,11 @@ fn log_shared_lsp_debug(context: &str, message: impl AsRef<str>) {
   eprintln!("[the-ffi lsp-broker] {context} {}", message.as_ref());
 }
 
+fn shared_lsp_editor_id_label(id: Option<LibEditorId>) -> String {
+  id.map(|editor_id| editor_id.get().get().to_string())
+    .unwrap_or_else(|| "none".to_string())
+}
+
 fn watch_statusline_text_for_state(state: FileWatchReloadState) -> Option<String> {
   match state {
     FileWatchReloadState::Conflict => Some("watch: conflict".to_string()),
@@ -4389,6 +4394,49 @@ fn build_file_picker_snapshot(
 }
 
 impl App {
+  fn shared_lsp_editor_state_summary(&self, editor_id: Option<LibEditorId>) -> String {
+    let Some(editor_id) = editor_id else {
+      return "editor=none".to_string();
+    };
+    let mode = self
+      .states
+      .get(&editor_id)
+      .map(|state| match state.mode {
+        Mode::Normal => "normal",
+        Mode::Insert => "insert",
+        Mode::Select => "select",
+        Mode::Command => "command",
+      })
+      .unwrap_or("missing");
+    let completion = self.states.get(&editor_id).map(|state| &state.completion_menu);
+    let signature = self.states.get(&editor_id).map(|state| &state.signature_help);
+    let hover_present = self
+      .states
+      .get(&editor_id)
+      .and_then(|state| state.hover_docs.as_deref())
+      .map(str::trim)
+      .is_some_and(|text| !text.is_empty());
+    let completion_active = completion.is_some_and(|state| state.active);
+    let completion_items = completion.map(|state| state.items.len()).unwrap_or(0);
+    let completion_selected = completion
+      .and_then(|state| state.selected)
+      .map(|index| index.to_string())
+      .unwrap_or_else(|| "none".to_string());
+    let signature_active = signature.is_some_and(|state| state.active);
+    let signature_count = signature.map(|state| state.signatures.len()).unwrap_or(0);
+    format!(
+      "editor={} mode={} completion_active={} completion_items={} completion_selected={} signature_active={} signature_items={} hover_present={}",
+      editor_id.get().get(),
+      mode,
+      completion_active as u8,
+      completion_items,
+      completion_selected,
+      signature_active as u8,
+      signature_count,
+      hover_present as u8
+    )
+  }
+
   pub fn new() -> Self {
     let dispatch = config_build_dispatch::<App>();
     let workspace_root = env::current_dir()
@@ -5243,6 +5291,29 @@ impl App {
 
     let mut tree = the_default::ui_tree(self);
     self.append_lsp_hover_overlay(&mut tree);
+    if shared_lsp_trace_enabled() {
+      let overlay_ids = tree
+        .overlays
+        .iter()
+        .filter_map(|node| {
+          if let the_lib::render::UiNode::Panel(panel) = node {
+            Some(panel.id.clone())
+          } else {
+            None
+          }
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+      log_shared_lsp_debug(
+        "ui_tree_json",
+        format!(
+          "editor={} overlays=[{}] {}",
+          shared_lsp_editor_id_label(self.active_editor),
+          overlay_ids,
+          self.shared_lsp_editor_state_summary(self.active_editor)
+        ),
+      );
+    }
     let json = serde_json::to_string(&tree).unwrap_or_else(|_| "{}".to_string());
     let elapsed = started.elapsed();
     if ffi_ui_profile_should_log(elapsed) {
@@ -7179,6 +7250,22 @@ impl App {
     let Some(kind) = self.lsp_pending_requests.remove(&id) else {
       return false;
     };
+    log_shared_lsp_debug(
+      "handle_response_begin",
+      format!(
+        "request_id={} kind={} active_editor={} request_uri={} active_uri={} {}",
+        id,
+        kind.label(),
+        shared_lsp_editor_id_label(self.active_editor),
+        kind.uri().unwrap_or("<none>"),
+        self
+          .lsp_document
+          .as_ref()
+          .map(|state| state.uri.as_str())
+          .unwrap_or("<none>"),
+        self.shared_lsp_editor_state_summary(self.active_editor)
+      ),
+    );
 
     if let Some(request_uri) = kind.uri()
       && self
@@ -7187,6 +7274,20 @@ impl App {
         .map(|state| state.uri.as_str())
         .is_some_and(|uri| uri != request_uri)
     {
+      log_shared_lsp_debug(
+        "handle_response_skip",
+        format!(
+          "request_id={} kind={} reason=uri_mismatch request_uri={} active_uri={}",
+          id,
+          kind.label(),
+          request_uri,
+          self
+            .lsp_document
+            .as_ref()
+            .map(|state| state.uri.as_str())
+            .unwrap_or("<none>")
+        ),
+      );
       return false;
     }
 
@@ -7291,6 +7392,15 @@ impl App {
               let state = self.active_state_mut();
               state.hover_docs = Some(trimmed.to_string());
               state.hover_docs_scroll = 0;
+              log_shared_lsp_debug(
+                "hover_state_set",
+                format!(
+                  "active_editor={} hover_len={} {}",
+                  shared_lsp_editor_id_label(self.active_editor),
+                  trimmed.len(),
+                  self.shared_lsp_editor_state_summary(self.active_editor)
+                ),
+              );
             }
           },
           None => {
@@ -7393,15 +7503,48 @@ impl App {
   ) -> bool {
     let started = Instant::now();
     if generation != self.lsp_completion_generation {
+      log_shared_lsp_debug(
+        "completion_response_skip",
+        format!(
+          "reason=generation_mismatch response_generation={} current_generation={} active_editor={}",
+          generation,
+          self.lsp_completion_generation,
+          shared_lsp_editor_id_label(self.active_editor)
+        ),
+      );
       return false;
     }
     if self.active_state_ref().mode != Mode::Insert {
+      log_shared_lsp_debug(
+        "completion_response_skip",
+        format!(
+          "reason=mode active_editor={} mode={:?}",
+          shared_lsp_editor_id_label(self.active_editor),
+          self.active_state_ref().mode
+        ),
+      );
       return false;
     }
     let Some(current_cursor) = self.active_cursor_char_idx() else {
+      log_shared_lsp_debug(
+        "completion_response_skip",
+        format!(
+          "reason=no_cursor active_editor={}",
+          shared_lsp_editor_id_label(self.active_editor)
+        ),
+      );
       return false;
     };
     if current_cursor != request_cursor {
+      log_shared_lsp_debug(
+        "completion_response_skip",
+        format!(
+          "reason=cursor_mismatch request_cursor={} current_cursor={} active_editor={}",
+          request_cursor,
+          current_cursor,
+          shared_lsp_editor_id_label(self.active_editor)
+        ),
+      );
       return false;
     }
 
@@ -7432,6 +7575,16 @@ impl App {
     self.lsp_completion_resolved.clear();
     self.lsp_completion_start = Some(replace_start.min(request_cursor));
     self.rebuild_completion_menu();
+    log_shared_lsp_debug(
+      "completion_state_set",
+      format!(
+        "active_editor={} total_items={} visible_items={} {}",
+        shared_lsp_editor_id_label(self.active_editor),
+        self.lsp_completion_items.len(),
+        self.lsp_completion_visible.len(),
+        self.shared_lsp_editor_state_summary(self.active_editor)
+      ),
+    );
     let elapsed = started.elapsed();
     if ffi_ui_profile_should_log(elapsed) {
       ffi_ui_profile_log(format!(
@@ -7516,6 +7669,15 @@ impl App {
       })
       .collect::<Vec<_>>();
     the_default::show_signature_help(self, signatures, active_signature);
+    log_shared_lsp_debug(
+      "signature_state_set",
+      format!(
+        "active_editor={} active_signature={} {}",
+        shared_lsp_editor_id_label(self.active_editor),
+        active_signature,
+        self.shared_lsp_editor_state_summary(self.active_editor)
+      ),
+    );
     true
   }
 
@@ -8935,19 +9097,22 @@ impl App {
     params: serde_json::Value,
     pending: PendingLspRequestKind,
   ) {
+    let request_editor = self.active_editor;
     log_shared_lsp_debug(
       "dispatch_request",
       format!(
-        "method={} pending_kind={} ready={} doc_opened={} uri={}",
+        "method={} pending_kind={} request_editor={} ready={} doc_opened={} uri={} {}",
         method,
         pending.label(),
+        shared_lsp_editor_id_label(request_editor),
         self.lsp_ready,
         self.lsp_document.as_ref().is_some_and(|doc| doc.opened),
         self
           .lsp_document
           .as_ref()
           .map(|doc| doc.uri.clone())
-          .unwrap_or_else(|| "<none>".to_string())
+          .unwrap_or_else(|| "<none>".to_string()),
+        self.shared_lsp_editor_state_summary(request_editor)
       ),
     );
     if self.lsp_shared_enabled {
@@ -8956,6 +9121,15 @@ impl App {
     self.cancel_pending_lsp_requests_for(&pending);
     match self.lsp_send_request_raw(method, params) {
       Ok(request_id) => {
+        log_shared_lsp_debug(
+          "dispatch_request_insert",
+          format!(
+            "request_id={} pending_kind={} request_editor={}",
+            request_id,
+            pending.label(),
+            shared_lsp_editor_id_label(request_editor)
+          ),
+        );
         self.lsp_pending_requests.insert(request_id, pending);
       },
       Err(err) => {
@@ -9999,6 +10173,7 @@ impl App {
     if self.inner.editor(id).is_none() {
       return false;
     }
+    let previous = self.active_editor;
     let changed = self.active_editor != Some(id);
     self.active_editor = Some(id);
     let loader = self.loader.clone();
@@ -10007,6 +10182,15 @@ impl App {
       .entry(id)
       .or_insert_with(|| EditorState::new(loader.clone(), self.workspace_root.as_path()));
     if changed {
+      log_shared_lsp_debug(
+        "activate_editor",
+        format!(
+          "prev={} next={} {}",
+          shared_lsp_editor_id_label(previous),
+          id.get().get(),
+          self.shared_lsp_editor_state_summary(Some(id))
+        ),
+      );
       self.refresh_lsp_runtime_for_active_file();
     }
     true

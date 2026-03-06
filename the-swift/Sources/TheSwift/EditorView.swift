@@ -166,6 +166,14 @@ struct EditorView: View {
             terminalPaneLayouts: terminalPaneLayouts,
             effectiveActivePaneId: effectiveActivePaneId
         )
+        let _ = {
+            guard DiagnosticsDebugLog.enabled else { return }
+            let windowNumber = model.currentHostWindow()?.windowNumber ?? 0
+            DiagnosticsDebugLog.logChanged(
+                key: "editor.popup.mount.window\(windowNumber).runtime\(model.runtimeInstanceId).editor\(model.editorId.value)",
+                value: "overlay_open=\(isOverlayOpen ? 1 : 0) completion=\(isCompletionOpen ? 1 : 0) hover=\(isHoverOpen ? 1 : 0) signature=\(isSignatureOpen ? 1 : 0) active_pane=\(effectiveActivePaneId)"
+            )
+        }()
         let terminalPassthroughRects = terminalPaneLayouts.map(\.frame)
 
         ZStack {

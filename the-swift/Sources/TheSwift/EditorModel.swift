@@ -1437,6 +1437,21 @@ final class EditorModel: ObservableObject {
             let tree = try decoder.decode(UiTreeSnapshot.self, from: data)
             lastUiTreeJson = json
             debugUiLog("ui_tree decoded overlays=\(tree.overlays.count)")
+            if DiagnosticsDebugLog.enabled {
+                let overlayIds = tree.overlays.compactMap { node -> String? in
+                    if case .panel(let panel) = node {
+                        return panel.id
+                    }
+                    return nil
+                }
+                let completion = tree.completionSnapshot()
+                let hover = tree.hoverSnapshot()
+                let signature = tree.signatureHelpSnapshot()
+                DiagnosticsDebugLog.logChanged(
+                    key: "editor.popup.tree.runtime\(runtimeInstanceId).editor\(editorId.value)",
+                    value: "overlays=[\(overlayIds.joined(separator: ","))] completion_items=\(completion?.items.count ?? 0) completion_selected=\(completion?.selectedIndex ?? -1) hover=\(hover != nil ? 1 : 0) signature=\(signature != nil ? 1 : 0)"
+                )
+            }
             return UiTreeFetchResult(tree: tree, changed: true)
         } catch {
             lastUiTreeJson = nil

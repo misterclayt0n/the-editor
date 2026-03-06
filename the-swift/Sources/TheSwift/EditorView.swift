@@ -2,6 +2,7 @@ import SwiftUI
 import TheEditorFFIBridge
 
 private let embeddedTerminalCropInset: CGFloat = 2
+private let inactivePaneDimOpacity: CGFloat = 0.22
 
 struct EditorView: View {
     @Environment(\.openWindow) private var openWindow
@@ -44,6 +45,8 @@ struct EditorView: View {
         let isHoverOpen = hoverSnapshot != nil && !isCompletionOpen
         let isSignatureOpen = signatureSnapshot != nil && !isCompletionOpen && !isHoverOpen
         let shouldTerminalOwnFocus = !isOverlayOpen && !isCompletionOpen && !isHoverOpen && !isSignatureOpen
+        let focusedTerminalPaneId = GhosttyRuntime.shared.firstResponderPaneId(in: model.currentHostWindow())
+        let effectiveActivePaneId = focusedTerminalPaneId ?? model.framePlan.active_pane_id()
         let cursorPickState = cursorPickState(from: model.uiTree.statuslineSnapshot())
         let activePaneOrigin = panePixelOrigin(model.activePaneRect(), cellSize: cellSize)
         let terminalPaneIds = Set(model.terminalPanes.map(\.paneId))
@@ -67,12 +70,26 @@ struct EditorView: View {
             .navigationSplitViewColumnWidth(min: 180, ideal: 240, max: 360)
         } detail: {
 	            VStack(spacing: 0) {
-	                    GeometryReader { contentProxy in
+                    GeometryReader { contentProxy in
                         let terminalPaneLayouts = terminalPaneLayouts(
                             from: model.terminalPanes,
                             framePlan: model.framePlan,
                             cellSize: cellSize,
-                            contentSize: contentProxy.size
+                            contentSize: contentProxy.size,
+                            focusedPaneId: effectiveActivePaneId
+                        )
+                        let paneFocusLayouts = paneFocusLayouts(
+                            framePlan: model.framePlan,
+                            cellSize: cellSize,
+                            contentSize: contentProxy.size,
+                            activePaneId: effectiveActivePaneId
+                        )
+                        let _ = debugTerminalFocusState(
+                            model: model,
+                            focusedTerminalPaneId: focusedTerminalPaneId,
+                            shouldTerminalOwnFocus: shouldTerminalOwnFocus,
+                            terminalPaneLayouts: terminalPaneLayouts,
+                            effectiveActivePaneId: effectiveActivePaneId
                         )
                         let terminalPassthroughRects = terminalPaneLayouts.map(\.frame)
 	                        ZStack {
@@ -83,6 +100,7 @@ struct EditorView: View {
                                     framePlan: model.framePlan,
                                     fallbackPlan: model.plan,
                                     terminalPaneIds: terminalPaneIds,
+                                    activePaneId: effectiveActivePaneId,
                                     cellSize: cellSize,
                                     bufferFont: bufferFont,
                                     bufferNSFont: bufferNSFont,
@@ -128,14 +146,17 @@ struct EditorView: View {
                                     )
                                 }
                                 .position(x: pane.frame.midX, y: pane.frame.midY)
-                                .overlay {
-                                    if shouldDimInactivePanes && !pane.isActive {
-                                        Rectangle()
-                                            .fill(SwiftUI.Color.black.opacity(0.16))
-                                            .allowsHitTesting(false)
-                                    }
-                                }
                                 .clipped()
+                            }
+
+                            ForEach(paneFocusLayouts) { pane in
+                                if shouldDimInactivePanes && !pane.isActive {
+                                    Rectangle()
+                                        .fill(SwiftUI.Color.black.opacity(inactivePaneDimOpacity))
+                                        .frame(width: pane.frame.width, height: pane.frame.height)
+                                        .position(x: pane.frame.midX, y: pane.frame.midY)
+                                        .allowsHitTesting(false)
+                                }
                             }
 
                             UiOverlayHost(
@@ -433,13 +454,23 @@ struct EditorView: View {
         var id: UInt64 { terminalId }
     }
 
+    private struct PaneFocusLayout: Identifiable {
+        let paneId: UInt64
+        let frame: CGRect
+        let isActive: Bool
+
+        var id: UInt64 { paneId }
+    }
+
     private func terminalPaneLayouts(
         from panes: [TerminalPaneSnapshot],
         framePlan: RenderFramePlan,
         cellSize: CGSize,
-        contentSize: CGSize
+        contentSize: CGSize,
+        focusedPaneId: UInt64?
     ) -> [TerminalPaneLayout] {
         let gridExtent = framePlanGridExtent(framePlan)
+        let activePaneId = focusedPaneId ?? framePlan.active_pane_id()
         return panes.map { pane in
             let x = CGFloat(pane.x) * cellSize.width
             let y = CGFloat(pane.y) * cellSize.height
@@ -469,9 +500,46 @@ struct EditorView: View {
                     width: width,
                     height: height
                 ),
-                isActive: pane.isActive
+                isActive: pane.paneId == activePaneId
             )
         }
+    }
+
+    private func paneFocusLayouts(
+        framePlan: RenderFramePlan,
+        cellSize: CGSize,
+        contentSize: CGSize,
+        activePaneId: UInt64
+    ) -> [PaneFocusLayout] {
+        let gridExtent = framePlanGridExtent(framePlan)
+        let count = Int(framePlan.pane_count())
+        guard count > 0 else { return [] }
+        var layouts: [PaneFocusLayout] = []
+        layouts.reserveCapacity(count)
+        for index in 0..<count {
+            let pane = framePlan.pane_at(UInt(index))
+            let rect = pane.rect()
+            let x = CGFloat(rect.x) * cellSize.width
+            let y = CGFloat(rect.y) * cellSize.height
+            let paneMaxX = Int(rect.x) + Int(rect.width)
+            let paneMaxY = Int(rect.y) + Int(rect.height)
+            var width = CGFloat(rect.width) * cellSize.width
+            var height = CGFloat(rect.height) * cellSize.height
+            if paneMaxX == gridExtent.cols {
+                width = max(width, contentSize.width - x)
+            }
+            if paneMaxY == gridExtent.rows {
+                height = max(height, contentSize.height - y)
+            }
+            layouts.append(
+                PaneFocusLayout(
+                    paneId: pane.pane_id(),
+                    frame: CGRect(x: x, y: y, width: width, height: height),
+                    isActive: pane.pane_id() == activePaneId
+                )
+            )
+        }
+        return layouts
     }
 
     private func framePlanGridExtent(_ framePlan: RenderFramePlan) -> (cols: Int, rows: Int) {
@@ -535,6 +603,7 @@ struct EditorView: View {
         framePlan: RenderFramePlan,
         fallbackPlan: RenderPlan,
         terminalPaneIds: Set<UInt64>,
+        activePaneId: UInt64,
         cellSize: CGSize,
         bufferFont: Font,
         bufferNSFont: NSFont,
@@ -576,15 +645,9 @@ struct EditorView: View {
                 cellSize: cellSize,
                 bufferFont: bufferFont,
                 bufferNSFont: bufferNSFont,
-                cursorPickState: pane.is_active() ? cursorPickState : nil
+                cursorPickState: pane.pane_id() == activePaneId ? cursorPickState : nil
             )
         }
-
-        drawInactivePaneDimming(
-            in: context,
-            framePlan: framePlan,
-            cellSize: cellSize
-        )
 
         drawPaneSeparators(
             in: context,
@@ -592,34 +655,6 @@ struct EditorView: View {
             canvasSize: size,
             cellSize: cellSize
         )
-    }
-
-    private func drawInactivePaneDimming(
-        in context: GraphicsContext,
-        framePlan: RenderFramePlan,
-        cellSize: CGSize
-    ) {
-        let paneCount = Int(framePlan.pane_count())
-        guard paneCount > 1 else { return }
-
-        let dimColor = SwiftUI.Color.black.opacity(0.16)
-        for index in 0..<paneCount {
-            let pane = framePlan.pane_at(UInt(index))
-            if pane.is_active() {
-                continue
-            }
-            if pane.pane_kind() == 1 {
-                continue
-            }
-            let rect = pane.rect()
-            let dimRect = CGRect(
-                x: CGFloat(rect.x) * cellSize.width,
-                y: CGFloat(rect.y) * cellSize.height,
-                width: CGFloat(rect.width) * cellSize.width,
-                height: CGFloat(rect.height) * cellSize.height
-            )
-            context.fill(Path(dimRect), with: .color(dimColor))
-        }
     }
 
     private struct SplitEdge {
@@ -1263,6 +1298,28 @@ struct EditorView: View {
         DiagnosticsDebugLog.logChanged(
             key: "view.draw",
             value: "cursor=\(cursorSummary) drawn_spans=\(textStats.drawnSpans) skipped_virtual=\(textStats.skippedVirtualSpans) inline=\(inlineSummary) eol=\(eolSummary)"
+        )
+    }
+
+    private func debugTerminalFocusState(
+        model: EditorModel,
+        focusedTerminalPaneId: UInt64?,
+        shouldTerminalOwnFocus: Bool,
+        terminalPaneLayouts: [TerminalPaneLayout],
+        effectiveActivePaneId: UInt64
+    ) {
+        guard DiagnosticsDebugLog.enabled else { return }
+        let frameActivePaneId = model.framePlan.active_pane_id()
+        let windowNumber = model.currentHostWindow()?.windowNumber ?? 0
+        let snapshotSummary = model.terminalPanes
+            .map { "p\($0.paneId):t\($0.terminalId):s\($0.isActive ? 1 : 0)" }
+            .joined(separator: ",")
+        let layoutSummary = terminalPaneLayouts
+            .map { "p\($0.paneId):t\($0.terminalId):l\($0.isActive ? 1 : 0)" }
+            .joined(separator: ",")
+        DiagnosticsDebugLog.logChanged(
+            key: "editor.view.terminal_focus.window\(windowNumber).runtime\(model.runtimeInstanceId).editor\(model.editorId.value)",
+            value: "frame_active=\(frameActivePaneId) responder=\(focusedTerminalPaneId ?? 0) effective_active=\(effectiveActivePaneId) terminal_focus_owns=\(shouldTerminalOwnFocus ? 1 : 0) snapshots=[\(snapshotSummary)] layouts=[\(layoutSummary)]"
         )
     }
 

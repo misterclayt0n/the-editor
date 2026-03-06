@@ -187,6 +187,47 @@ final class GhosttyRuntime {
         return controllers[key]?.metadataSnapshot()
     }
 
+    func firstResponderPaneId(in window: NSWindow?) -> UInt64? {
+        guard let window else {
+            if DiagnosticsDebugLog.enabled {
+                DiagnosticsDebugLog.logChanged(
+                    key: "ghostty.first_responder.window.nil",
+                    value: "pane=<nil>"
+                )
+            }
+            return nil
+        }
+        guard let firstResponder = window.firstResponder as? NSView else {
+            if DiagnosticsDebugLog.enabled {
+                DiagnosticsDebugLog.logChanged(
+                    key: "ghostty.first_responder.window.\(window.windowNumber)",
+                    value: "class=\(String(describing: type(of: window.firstResponder as Any))) pane=<nil>"
+                )
+            }
+            return nil
+        }
+        var candidate: NSView? = firstResponder
+        while let view = candidate {
+            if let hostView = view as? GhosttySurfaceHostView {
+                if DiagnosticsDebugLog.enabled {
+                    DiagnosticsDebugLog.logChanged(
+                        key: "ghostty.first_responder.window.\(window.windowNumber)",
+                        value: "class=\(String(describing: type(of: firstResponder))) pane=\(hostView.paneId)"
+                    )
+                }
+                return hostView.paneId
+            }
+            candidate = view.superview
+        }
+        if DiagnosticsDebugLog.enabled {
+            DiagnosticsDebugLog.logChanged(
+                key: "ghostty.first_responder.window.\(window.windowNumber)",
+                value: "class=\(String(describing: type(of: firstResponder))) pane=<nil>"
+            )
+        }
+        return nil
+    }
+
     fileprivate func tick() {
         guard let app else { return }
         ghostty_app_tick(app)
@@ -402,7 +443,7 @@ private final class GhosttySurfaceController {
     ) {
         if DiagnosticsDebugLog.enabled {
             DiagnosticsDebugLog.log(
-                "ghostty.surface.attach runtime=\(runtimeId) terminal=\(terminalId) root_view=\(ObjectIdentifier(hostedView).hashValue)"
+                "ghostty.surface.attach runtime=\(runtimeId) terminal=\(terminalId) pane=\(paneId) prev_pane=\(hostedView.paneId) focused=\(focused ? 1 : 0) root_view=\(ObjectIdentifier(hostedView).hashValue)"
             )
         }
         hostedView.paneId = paneId
@@ -440,6 +481,12 @@ private final class GhosttySurfaceController {
     }
 
     func setFocused(_ focused: Bool) {
+        if DiagnosticsDebugLog.enabled {
+            DiagnosticsDebugLog.logChanged(
+                key: "ghostty.surface.focus.runtime\(runtimeId).terminal\(terminalId)",
+                value: "pane=\(hostedView.paneId) focused=\(focused ? 1 : 0) window=\(hostedView.window?.windowNumber ?? 0) responder_pane=\(runtime.firstResponderPaneId(in: hostedView.window) ?? 0)"
+            )
+        }
         self.focused = focused
         guard let surface else { return }
         ghostty_surface_set_focus(surface, focused)
@@ -901,6 +948,26 @@ final class GhosttySurfaceHostView: NSView {
         }
     }
 
+    override func becomeFirstResponder() -> Bool {
+        let didBecome = super.becomeFirstResponder()
+        if DiagnosticsDebugLog.enabled {
+            DiagnosticsDebugLog.log(
+                "ghostty.host.become_first_responder pane=\(paneId) terminal=\(controller?.terminalIdForDiagnostics ?? 0) ok=\(didBecome ? 1 : 0) window=\(window?.windowNumber ?? 0)"
+            )
+        }
+        return didBecome
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let didResign = super.resignFirstResponder()
+        if DiagnosticsDebugLog.enabled {
+            DiagnosticsDebugLog.log(
+                "ghostty.host.resign_first_responder pane=\(paneId) terminal=\(controller?.terminalIdForDiagnostics ?? 0) ok=\(didResign ? 1 : 0) window=\(window?.windowNumber ?? 0)"
+            )
+        }
+        return didResign
+    }
+
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
 
@@ -987,12 +1054,22 @@ final class GhosttySurfaceHostView: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
+        if DiagnosticsDebugLog.enabled {
+            DiagnosticsDebugLog.log(
+                "ghostty.host.mouse_down.begin pane=\(paneId) terminal=\(controller?.terminalIdForDiagnostics ?? 0) window=\(window?.windowNumber ?? 0) responder_pane=\(controller.flatMap { _ in GhosttyRuntime.shared.firstResponderPaneId(in: window) } ?? 0)"
+            )
+        }
         window?.makeFirstResponder(self)
         logMouseEvent("host.mouseDown", event: event)
         // Send only pane identity to Rust so it can update active pane safely.
         dispatchPointer(kind: 0, button: 1, event: event)
         controller?.setFocused(true)
         controller?.handleMouseButton(event: event, state: GHOSTTY_MOUSE_PRESS, button: GHOSTTY_MOUSE_LEFT)
+        if DiagnosticsDebugLog.enabled {
+            DiagnosticsDebugLog.log(
+                "ghostty.host.mouse_down.end pane=\(paneId) terminal=\(controller?.terminalIdForDiagnostics ?? 0) window=\(window?.windowNumber ?? 0) responder_pane=\(controller.flatMap { _ in GhosttyRuntime.shared.firstResponderPaneId(in: window) } ?? 0)"
+            )
+        }
     }
 
     override func mouseUp(with event: NSEvent) {
@@ -1650,6 +1727,11 @@ final class GhosttyRuntime {
     func terminalMetadata(runtimeId: UInt64, for terminalId: UInt64) -> GhosttyTerminalMetadata? {
         _ = runtimeId
         _ = terminalId
+        return nil
+    }
+
+    func firstResponderPaneId(in window: NSWindow?) -> UInt64? {
+        _ = window
         return nil
     }
 }

@@ -15,7 +15,6 @@ enum EditorNamedCommand: String, CaseIterable {
     case focusPaneDown = "pane_focus_down"
     case openTerminal = "terminal_open"
     case closeTerminal = "terminal_close"
-    case toggleLastTerminal = "terminal_toggle_last"
     case openGlobalTerminalSwitcher = "terminal_switcher_global"
     case toggleSurfaceOverview = "surface_overview"
 
@@ -47,8 +46,6 @@ enum EditorNamedCommand: String, CaseIterable {
             return "New Terminal"
         case .closeTerminal:
             return "Close Terminal"
-        case .toggleLastTerminal:
-            return "Toggle Last Terminal"
         case .openGlobalTerminalSwitcher:
             return "Global Terminal Switcher"
         case .toggleSurfaceOverview:
@@ -84,8 +81,6 @@ enum EditorNamedCommand: String, CaseIterable {
             return "t"
         case .closeTerminal:
             return "t"
-        case .toggleLastTerminal:
-            return "`"
         case .openGlobalTerminalSwitcher:
             return "`"
         case .toggleSurfaceOverview:
@@ -115,8 +110,6 @@ enum EditorNamedCommand: String, CaseIterable {
             return "t"
         case .closeTerminal:
             return "t"
-        case .toggleLastTerminal:
-            return "`"
         case .openGlobalTerminalSwitcher:
             return "`"
         case .toggleSurfaceOverview:
@@ -146,8 +139,6 @@ enum EditorNamedCommand: String, CaseIterable {
             return [.command, .option]
         case .closeTerminal:
             return [.command, .option, .shift]
-        case .toggleLastTerminal:
-            return [.command]
         case .openGlobalTerminalSwitcher:
             return [.command, .shift]
         case .toggleSurfaceOverview:
@@ -177,8 +168,6 @@ enum EditorNamedCommand: String, CaseIterable {
             return [.command, .option]
         case .closeTerminal:
             return [.command, .option, .shift]
-        case .toggleLastTerminal:
-            return [.command]
         case .openGlobalTerminalSwitcher:
             return [.command, .shift]
         case .toggleSurfaceOverview:
@@ -207,7 +196,7 @@ enum EditorNamedCommand: String, CaseIterable {
         }
 
         switch self {
-        case .toggleLastTerminal, .openGlobalTerminalSwitcher:
+        case .openGlobalTerminalSwitcher:
             return event.keyCode == 50
         case .focusPaneLeft:
             return event.keyCode == 123
@@ -597,7 +586,6 @@ struct EditorAppCommands: Commands {
             commandButton(.openTerminal)
             commandButton(.closeTerminal)
             Divider()
-            commandButton(.toggleLastTerminal)
             commandButton(.openGlobalTerminalSwitcher)
             commandButton(.toggleSurfaceOverview)
         }

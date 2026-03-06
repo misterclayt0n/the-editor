@@ -361,11 +361,12 @@ final class EditorModel: ObservableObject {
     }
 
     func activePaneRect() -> Rect? {
+        let activePaneId = framePlan.active_pane_id()
         let paneCount = Int(framePlan.pane_count())
         guard paneCount > 0 else { return nil }
         for index in 0..<paneCount {
             let pane = framePlan.pane_at(UInt(index))
-            if pane.is_active() {
+            if pane.pane_id() == activePaneId {
                 return pane.rect()
             }
         }
@@ -502,28 +503,6 @@ final class EditorModel: ObservableObject {
     }
 
     @discardableResult
-    func toggleLastTerminalSurface() -> Bool {
-        let activePaneId = framePlan.active_pane_id()
-        guard let activeItem = paneSurfaceItems.first(where: { $0.paneId == activePaneId }) else {
-            return false
-        }
-
-        switch activeItem.kind {
-        case .terminal:
-            if let target = preferredEditorPaneId(excluding: activePaneId) {
-                return focusPane(paneId: target, trigger: "toggle_last_terminal")
-            }
-            return hideActiveTerminalSurface()
-        case .editor:
-            if let terminalId = preferredTerminalSurfaceId() {
-                return focusTerminalSurface(terminalId: terminalId)
-            }
-            lastFocusedEditorPaneId = activePaneId
-            return openTerminalInActivePane()
-        }
-    }
-
-    @discardableResult
     private func focusPane(paneId: UInt64, trigger: String) -> Bool {
         guard paneId != 0 else {
             return false
@@ -569,8 +548,6 @@ final class EditorModel: ObservableObject {
             return focusPane(direction: .up)
         case .focusPaneDown:
             return focusPane(direction: .down)
-        case .toggleLastTerminal:
-            return toggleLastTerminalSurface()
         case .openGlobalTerminalSwitcher:
             return toggleGlobalTerminalSwitcher()
         case .toggleSurfaceOverview:
@@ -633,6 +610,7 @@ final class EditorModel: ObservableObject {
 
     private func updateTerminalPaneSnapshots(from framePlan: RenderFramePlan) {
         let count = Int(framePlan.pane_count())
+        let activePaneId = framePlan.active_pane_id()
         if DiagnosticsDebugLog.enabled {
             DiagnosticsDebugLog.log(
                 "editor.term.snapshot.begin runtime=\(runtimeInstanceId) editor=\(editorId.value) pane_count=\(count)"
@@ -669,7 +647,9 @@ final class EditorModel: ObservableObject {
             }
 
             let rect = pane.rect()
-            let isActive = pane.is_active()
+            // `active_pane_id` is the authoritative focus source for Swift-side
+            // pane rendering and terminal dimming.
+            let isActive = pane.pane_id() == activePaneId
             if isActive {
                 activeTerminal = true
             }

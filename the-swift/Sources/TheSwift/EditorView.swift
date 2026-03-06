@@ -27,7 +27,100 @@ struct EditorView: View {
     }
 
     var body: some View {
-        let model = model
+        let fileTreeSnapshot = model.fileTreeSnapshot
+        let editorBackgroundColor = model.editorBackgroundColor()
+
+        NavigationSplitView(columnVisibility: $columnVisibility) {
+            sidebar(snapshot: fileTreeSnapshot)
+        } detail: {
+            detailContent(editorBackgroundColor: editorBackgroundColor)
+        }
+        .navigationTitle(model.navigationTitle)
+        .toolbarBackground(.hidden, for: .windowToolbar)
+        .toolbar {
+            if let snap = model.uiTree.statuslineSnapshot() {
+                ToolbarItem(placement: .navigation) {
+                    EditorToolbarLeading(snapshot: snap)
+                }
+                ToolbarItemGroup(placement: .automatic) {
+                    if EditorToolbarVCS.text(from: snap) != nil {
+                        EditorToolbarVCS(snapshot: snap)
+                    }
+                    EditorToolbarTrailing(snapshot: snap, pendingKeys: model.pendingKeys)
+                }
+            }
+        }
+        .background(
+            WindowTabbingBridge(
+                route: windowRoute,
+                onWindowShouldClose: { window in
+                    model.handleWindowShouldClose(window)
+                },
+                onWindowChanged: { window in
+                    model.setHostWindow(window)
+                }
+            )
+            .frame(width: 0, height: 0)
+            .allowsHitTesting(false)
+        )
+        .onAppear {
+            model.setOpenWindowTabHandler { route in
+                openWindow(id: TheSwiftApp.editorWindowSceneId, value: route)
+            }
+            columnVisibility = fileTreeSnapshot.visible ? .all : .detailOnly
+        }
+        .onChange(of: fileTreeSnapshot.visible) { isVisible in
+            columnVisibility = isVisible ? .all : .detailOnly
+        }
+        .focusedValue(
+            \.editorCommandExecutor,
+            EditorCommandExecutor(
+                executeNamedCommand: { command in
+                    model.executeNamedCommand(command)
+                },
+                selectNativeTabCommand: { indexOneBased in
+                    model.selectNativeWindowTab(indexOneBased: indexOneBased)
+                }
+            )
+        )
+    }
+
+    @ViewBuilder
+    private func sidebar(snapshot: FileTreeSnapshot) -> some View {
+        FileTreeSidebarView(
+            snapshot: snapshot,
+            onSetExpanded: { path, expanded in
+                model.fileTreeSetExpanded(path: path, expanded: expanded)
+            },
+            onSelectPath: { path in
+                model.fileTreeSelectPath(path: path)
+            },
+            onOpenSelected: {
+                model.fileTreeOpenSelected()
+            }
+        )
+        .navigationSplitViewColumnWidth(min: 180, ideal: 240, max: 360)
+    }
+
+    @ViewBuilder
+    private func detailContent(editorBackgroundColor: SwiftUI.Color) -> some View {
+        VStack(spacing: 0) {
+            GeometryReader { contentProxy in
+                detailGeometryContent(
+                    contentProxy: contentProxy,
+                    editorBackgroundColor: editorBackgroundColor
+                )
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(editorBackgroundColor)
+    }
+
+    @ViewBuilder
+    private func detailGeometryContent(
+        contentProxy: GeometryProxy,
+        editorBackgroundColor: SwiftUI.Color
+    ) -> some View {
         let cellSize = model.cellSize
         let bufferFont = model.bufferFont
         let bufferNSFont = model.bufferNSFont
@@ -53,367 +146,386 @@ struct EditorView: View {
         let shouldDimInactivePanes = Int(model.framePlan.pane_count()) > 1
         let splitResizeHandles = splitResizeHandles(from: model.splitSeparators, cellSize: cellSize)
         let pointerPanes = pointerPanes(from: model.framePlan, cellSize: cellSize)
-        let fileTreeSnapshot = model.fileTreeSnapshot
-        NavigationSplitView(columnVisibility: $columnVisibility) {
-            FileTreeSidebarView(
-                snapshot: fileTreeSnapshot,
-                onSetExpanded: { path, expanded in
-                    model.fileTreeSetExpanded(path: path, expanded: expanded)
-                },
-                onSelectPath: { path in
-                    model.fileTreeSelectPath(path: path)
-                },
-                onOpenSelected: {
-                    model.fileTreeOpenSelected()
-                }
+        let terminalPaneLayouts = terminalPaneLayouts(
+            from: model.terminalPanes,
+            framePlan: model.framePlan,
+            cellSize: cellSize,
+            contentSize: contentProxy.size,
+            focusedPaneId: effectiveActivePaneId
+        )
+        let paneFocusLayouts = paneFocusLayouts(
+            framePlan: model.framePlan,
+            cellSize: cellSize,
+            contentSize: contentProxy.size,
+            activePaneId: effectiveActivePaneId
+        )
+        let _ = debugTerminalFocusState(
+            model: model,
+            focusedTerminalPaneId: focusedTerminalPaneId,
+            shouldTerminalOwnFocus: shouldTerminalOwnFocus,
+            terminalPaneLayouts: terminalPaneLayouts,
+            effectiveActivePaneId: effectiveActivePaneId
+        )
+        let terminalPassthroughRects = terminalPaneLayouts.map(\.frame)
+
+        ZStack {
+            terminalCanvas(
+                cellSize: cellSize,
+                bufferFont: bufferFont,
+                bufferNSFont: bufferNSFont,
+                terminalPaneIds: terminalPaneIds,
+                effectiveActivePaneId: effectiveActivePaneId,
+                cursorPickState: cursorPickState,
+                editorBackgroundColor: editorBackgroundColor
             )
-            .navigationSplitViewColumnWidth(min: 180, ideal: 240, max: 360)
-        } detail: {
-	            VStack(spacing: 0) {
-                    GeometryReader { contentProxy in
-                        let terminalPaneLayouts = terminalPaneLayouts(
-                            from: model.terminalPanes,
-                            framePlan: model.framePlan,
-                            cellSize: cellSize,
-                            contentSize: contentProxy.size,
-                            focusedPaneId: effectiveActivePaneId
-                        )
-                        let paneFocusLayouts = paneFocusLayouts(
-                            framePlan: model.framePlan,
-                            cellSize: cellSize,
-                            contentSize: contentProxy.size,
-                            activePaneId: effectiveActivePaneId
-                        )
-                        let _ = debugTerminalFocusState(
-                            model: model,
-                            focusedTerminalPaneId: focusedTerminalPaneId,
-                            shouldTerminalOwnFocus: shouldTerminalOwnFocus,
-                            terminalPaneLayouts: terminalPaneLayouts,
-                            effectiveActivePaneId: effectiveActivePaneId
-                        )
-                        let terminalPassthroughRects = terminalPaneLayouts.map(\.frame)
-	                        ZStack {
-                            Canvas { context, size in
-                                drawFrame(
-                                    in: context,
-                                    size: size,
-                                    framePlan: model.framePlan,
-                                    fallbackPlan: model.plan,
-                                    terminalPaneIds: terminalPaneIds,
-                                    activePaneId: effectiveActivePaneId,
-                                    cellSize: cellSize,
-                                    bufferFont: bufferFont,
-                                    bufferNSFont: bufferNSFont,
-                                    cursorPickState: cursorPickState
-                                )
-                            }
-                            .background(SwiftUI.Color.black)
 
-                            ForEach(terminalPaneLayouts) { pane in
-                                SwiftUI.Color.clear
-                                .frame(width: pane.frame.width, height: pane.frame.height)
-                                .overlay {
-                                    // Ghostty's embedded surface ships with a default 2pt edge
-                                    // padding. Crop it at the pane boundary so terminal content
-                                    // hugs editor splits until the local GhosttyKit can be rebuilt
-                                    // with a surface-specific config override.
-                                    GhosttyPaneView(
-                                        runtimeId: model.runtimeInstanceId,
-                                        paneId: pane.paneId,
-                                        terminalId: pane.terminalId,
-                                        requestedSize: CGSize(
-                                            width: pane.frame.width + (embeddedTerminalCropInset * 2),
-                                            height: pane.frame.height + (embeddedTerminalCropInset * 2)
-                                        ),
-                                        cellSize: cellSize,
-                                        focused: pane.isActive && shouldTerminalOwnFocus,
-                                        onPointer: { event in
-                                            model.handlePointerEvent(event)
-                                        },
-                                        onCloseRequest: {
-                                            model.closeSurface()
-                                        },
-                                        onNamedCommand: { command in
-                                            model.executeNamedCommand(command)
-                                        },
-                                        onMetadataChange: {
-                                            model.handleTerminalMetadataUpdate(terminalId: pane.terminalId)
-                                        }
-                                    )
-                                    .frame(
-                                        width: pane.frame.width + (embeddedTerminalCropInset * 2),
-                                        height: pane.frame.height + (embeddedTerminalCropInset * 2)
-                                    )
-                                }
-                                .position(x: pane.frame.midX, y: pane.frame.midY)
-                                .clipped()
-                            }
-
-                            ForEach(paneFocusLayouts) { pane in
-                                if shouldDimInactivePanes && !pane.isActive {
-                                    Rectangle()
-                                        .fill(SwiftUI.Color.black.opacity(inactivePaneDimOpacity))
-                                        .frame(width: pane.frame.width, height: pane.frame.height)
-                                        .position(x: pane.frame.midX, y: pane.frame.midY)
-                                        .allowsHitTesting(false)
-                                }
-                            }
-
-                            UiOverlayHost(
-                                tree: model.uiTree,
-                                cellSize: cellSize,
-                                filePickerSnapshot: model.filePickerSnapshot,
-                                filePickerPreviewModel: model.filePickerPreviewModel,
-                                pendingKeys: model.pendingKeys,
-                                onSelectCommand: { index in
-                                    model.selectCommandPalette(index: index)
-                                },
-                                onSubmitCommand: { index in
-                                    model.submitCommandPalette(index: index)
-                                },
-                                onCloseCommandPalette: {
-                                    model.closeCommandPalette()
-                                },
-                                onQueryChange: { query in
-                                    model.setCommandPaletteQuery(query)
-                                },
-                                onSearchQueryChange: { query in
-                                    model.setSearchQuery(query)
-                                },
-                                onSearchPrev: {
-                                    model.searchPrev()
-                                },
-                                onSearchNext: {
-                                    model.searchNext()
-                                },
-                                onSearchClose: {
-                                    model.closeSearch()
-                                },
-                                onSearchSubmit: {
-                                    model.submitSearch()
-                                },
-                                onFilePickerQueryChange: { query in
-                                    model.setFilePickerQuery(query)
-                                },
-                                onFilePickerSubmit: { index in
-                                    model.submitFilePicker(index: index)
-                                },
-                                onFilePickerClose: {
-                                    model.closeFilePicker()
-                                },
-                                onFilePickerSelectionChange: { index in
-                                    model.filePickerSelectIndex(index)
-                                },
-                                onFilePickerPreviewWindowRequest: { offset, visibleRows, overscan in
-                                    model.filePickerPreviewWindowRequest(offset: offset, visibleRows: visibleRows, overscan: overscan)
-                                },
-                                colorForHighlight: { highlightId in
-                                    model.colorForHighlight(highlightId)
-                                },
-                                onInputPromptQueryChange: { query in
-                                    model.setSearchQuery(query)
-                                },
-                                onInputPromptClose: {
-                                    model.closeSearch()
-                                },
-                                onInputPromptSubmit: {
-                                    model.submitSearch()
-                                }
-                            )
-
-                            if terminalSwitcherSnapshot.isOpen {
-                                GlobalTerminalSwitcherView(
-                                    snapshot: terminalSwitcherSnapshot,
-                                    onSubmit: { entry in
-                                        _ = model.submitGlobalTerminalSwitcher(entry: entry)
-                                    },
-                                    onClose: {
-                                        model.closeGlobalTerminalSwitcher()
-                                    }
-                                )
-                            }
-
-                            if !isOverlayOpen {
-                                if let completion = completionSnapshot {
-                                    CompletionPopupView(
-                                        snapshot: completion,
-                                        cursorOrigin: cursorPixelPosition(
-                                            plan: model.plan,
-                                            paneOrigin: activePaneOrigin,
-                                            cellSize: cellSize
-                                        ),
-                                        cellSize: cellSize,
-                                        containerSize: contentProxy.size,
-                                        languageHint: model.completionDocsLanguageHint(),
-                                        onSelect: { index in
-                                            model.selectCompletion(index: index)
-                                        },
-                                        onSubmit: { index in
-                                            model.submitCompletion(index: index)
-                                        }
-                                    )
-                                    .allowsHitTesting(true)
-                                } else if let hover = hoverSnapshot {
-                                    HoverPopupView(
-                                        snapshot: hover,
-                                        cursorOrigin: cursorPixelPosition(
-                                            plan: model.plan,
-                                            paneOrigin: activePaneOrigin,
-                                            cellSize: cellSize
-                                        ),
-                                        cellSize: cellSize,
-                                        containerSize: contentProxy.size,
-                                        languageHint: model.completionDocsLanguageHint()
-                                    )
-                                    .allowsHitTesting(true)
-                                } else if let signature = signatureSnapshot {
-                                    SignatureHelpPopupView(
-                                        snapshot: signature,
-                                        cursorOrigin: cursorPixelPosition(
-                                            plan: model.plan,
-                                            paneOrigin: activePaneOrigin,
-                                            cellSize: cellSize
-                                        ),
-                                        cellSize: cellSize,
-                                        containerSize: contentProxy.size,
-                                        languageHint: model.completionDocsLanguageHint()
-                                    )
-                                    .allowsHitTesting(true)
-                                }
-                            }
-                        }
-                        .background(
-                            Group {
-                                if !isOverlayOpen && !model.isActivePaneTerminal {
-                                    KeyCaptureView(
-                                        onKey: { event in
-                                            model.handleKeyEvent(event)
-                                        },
-                                        onText: { text, modifiers in
-                                            model.handleText(text, modifiers: modifiers)
-                                        },
-                                        onCommandDigit: { digit in
-                                            _ = model.selectNativeWindowTab(indexOneBased: digit)
-                                        },
-                                        onNamedCommand: { command in
-                                            _ = model.executeNamedCommand(command)
-                                        },
-                                        onScroll: { _, _, _ in },
-                                        modeProvider: {
-                                            model.mode
-                                        }
-                                    )
-                                    .allowsHitTesting(false)
-                                }
-                            }
-                        )
-                        .overlay(
-                            Group {
-                                if !isOverlayOpen && !isCompletionOpen && !isHoverOpen && !isSignatureOpen {
-                                    ScrollCaptureView(
-                                        onScroll: { deltaX, deltaY, precise in
-                                            model.handlePointerScroll(deltaX: deltaX, deltaY: deltaY, precise: precise)
-                                        },
-                                        onPointer: { event in
-                                            model.handlePointerEvent(event)
-                                        },
-                                        separators: splitResizeHandles,
-                                        passthroughRects: terminalPassthroughRects,
-                                        panes: pointerPanes,
-                                        cellSize: cellSize,
-                                        onSplitResize: { splitId, point in
-                                            model.resizeSplit(splitId: splitId, pixelPoint: point)
-                                        }
-                                    )
-                                    .allowsHitTesting(true)
-                                }
-                            }
-                        )
-                        .overlay(
-                            KeySequenceIndicator(keys: model.pendingKeys, hints: model.pendingKeyHints)
-                                .padding(.bottom, 28)
-                                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom),
-                            alignment: .bottom
-                        )
-                        .onAppear {
-                            model.updateViewport(pixelSize: contentProxy.size, cellSize: cellSize)
-                        }
-                        .onChange(of: contentProxy.size) { newSize in
-                            model.updateViewport(pixelSize: newSize, cellSize: cellSize)
-                        }
-                        .onChange(of: isCompletionOpen) { isOpen in
-                            guard !isOpen else {
-                                return
-                            }
-                            guard !model.isActivePaneTerminal else {
-                                return
-                            }
-                            DispatchQueue.main.async {
-                                KeyCaptureFocusBridge.shared.reclaimActive()
-                            }
-                        }
-                        .onChange(of: model.isActivePaneTerminal) { isTerminal in
-                            guard !isTerminal && !isOverlayOpen else {
-                                return
-                            }
-                            DispatchQueue.main.async {
-                                KeyCaptureFocusBridge.shared.reclaimActive()
-                            }
-                        }
-                    }
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-            .navigationTitle(model.navigationTitle)
-            .toolbarBackground(.hidden, for: .windowToolbar)
-            .toolbar {
-                if let snap = model.uiTree.statuslineSnapshot() {
-                    ToolbarItem(placement: .navigation) {
-                        EditorToolbarLeading(snapshot: snap)
-                    }
-                    ToolbarItemGroup(placement: .automatic) {
-                        if EditorToolbarVCS.text(from: snap) != nil {
-                            EditorToolbarVCS(snapshot: snap)
-                        }
-                        EditorToolbarTrailing(snapshot: snap, pendingKeys: model.pendingKeys)
-                    }
-                }
-            }
-            .background(
-                WindowTabbingBridge(
-                    route: windowRoute,
-                    onWindowShouldClose: { window in
-                        model.handleWindowShouldClose(window)
-                    },
-                    onWindowChanged: { window in
-                        model.setHostWindow(window)
-                    }
-                )
-                .frame(width: 0, height: 0)
-                .allowsHitTesting(false)
+            terminalSurfaceLayer(
+                terminalPaneLayouts: terminalPaneLayouts,
+                cellSize: cellSize,
+                shouldTerminalOwnFocus: shouldTerminalOwnFocus
             )
-            .onAppear {
-                model.setOpenWindowTabHandler { route in
-                    openWindow(id: TheSwiftApp.editorWindowSceneId, value: route)
-                }
-                columnVisibility = fileTreeSnapshot.visible ? .all : .detailOnly
-            }
-            .onChange(of: fileTreeSnapshot.visible) { isVisible in
-                columnVisibility = isVisible ? .all : .detailOnly
-            }
-            .focusedValue(
-                \.editorCommandExecutor,
-                EditorCommandExecutor(
-                    executeNamedCommand: { command in
-                        model.executeNamedCommand(command)
-                    },
-                    selectNativeTabCommand: { indexOneBased in
-                        model.selectNativeWindowTab(indexOneBased: indexOneBased)
-                    }
-                )
+
+            inactivePaneOverlay(
+                paneFocusLayouts: paneFocusLayouts,
+                shouldDimInactivePanes: shouldDimInactivePanes
             )
+
+            overlayHost(terminalSwitcherSnapshot: terminalSwitcherSnapshot)
+
+            popupOverlay(
+                isOverlayOpen: isOverlayOpen,
+                completionSnapshot: completionSnapshot,
+                hoverSnapshot: hoverSnapshot,
+                signatureSnapshot: signatureSnapshot,
+                activePaneOrigin: activePaneOrigin,
+                cellSize: cellSize,
+                contentSize: contentProxy.size
+            )
+        }
+        .background(keyCaptureBackground(isOverlayOpen: isOverlayOpen))
+        .overlay(
+            scrollCaptureOverlay(
+                isOverlayOpen: isOverlayOpen,
+                isCompletionOpen: isCompletionOpen,
+                isHoverOpen: isHoverOpen,
+                isSignatureOpen: isSignatureOpen,
+                splitResizeHandles: splitResizeHandles,
+                terminalPassthroughRects: terminalPassthroughRects,
+                pointerPanes: pointerPanes,
+                cellSize: cellSize
+            )
+        )
+        .overlay(
+            KeySequenceIndicator(keys: model.pendingKeys, hints: model.pendingKeyHints)
+                .padding(.bottom, 28)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom),
+            alignment: .bottom
+        )
+        .onAppear {
+            model.updateViewport(pixelSize: contentProxy.size, cellSize: cellSize)
+        }
+        .onChange(of: contentProxy.size) { newSize in
+            model.updateViewport(pixelSize: newSize, cellSize: cellSize)
+        }
+        .onChange(of: isCompletionOpen) { isOpen in
+            guard !isOpen else {
+                return
+            }
+            guard !model.isActivePaneTerminal else {
+                return
+            }
+            DispatchQueue.main.async {
+                KeyCaptureFocusBridge.shared.reclaimActive()
+            }
+        }
+        .onChange(of: model.isActivePaneTerminal) { isTerminal in
+            guard !isTerminal && !isOverlayOpen else {
+                return
+            }
+            DispatchQueue.main.async {
+                KeyCaptureFocusBridge.shared.reclaimActive()
+            }
+        }
     }
 
+    @ViewBuilder
+    private func terminalCanvas(
+        cellSize: CGSize,
+        bufferFont: Font,
+        bufferNSFont: NSFont,
+        terminalPaneIds: Set<UInt64>,
+        effectiveActivePaneId: UInt64,
+        cursorPickState: CursorPickState?,
+        editorBackgroundColor: SwiftUI.Color
+    ) -> some View {
+        Canvas { context, size in
+            drawFrame(
+                in: context,
+                size: size,
+                framePlan: model.framePlan,
+                fallbackPlan: model.plan,
+                terminalPaneIds: terminalPaneIds,
+                activePaneId: effectiveActivePaneId,
+                cellSize: cellSize,
+                bufferFont: bufferFont,
+                bufferNSFont: bufferNSFont,
+                cursorPickState: cursorPickState
+            )
+        }
+        .background(editorBackgroundColor)
+    }
+
+    @ViewBuilder
+    private func terminalSurfaceLayer(
+        terminalPaneLayouts: [TerminalPaneLayout],
+        cellSize: CGSize,
+        shouldTerminalOwnFocus: Bool
+    ) -> some View {
+        ForEach(terminalPaneLayouts) { pane in
+            SwiftUI.Color.clear
+                .frame(width: pane.frame.width, height: pane.frame.height)
+                .overlay {
+                    GhosttyPaneView(
+                        runtimeId: model.runtimeInstanceId,
+                        paneId: pane.paneId,
+                        terminalId: pane.terminalId,
+                        requestedSize: CGSize(
+                            width: pane.frame.width + (embeddedTerminalCropInset * 2),
+                            height: pane.frame.height + (embeddedTerminalCropInset * 2)
+                        ),
+                        cellSize: cellSize,
+                        focused: pane.isActive && shouldTerminalOwnFocus,
+                        onPointer: { event in
+                            model.handlePointerEvent(event)
+                        },
+                        onCloseRequest: {
+                            model.closeSurface()
+                        },
+                        onNamedCommand: { command in
+                            model.executeNamedCommand(command)
+                        },
+                        onMetadataChange: {
+                            model.handleTerminalMetadataUpdate(terminalId: pane.terminalId)
+                        }
+                    )
+                    .frame(
+                        width: pane.frame.width + (embeddedTerminalCropInset * 2),
+                        height: pane.frame.height + (embeddedTerminalCropInset * 2)
+                    )
+                }
+                .position(x: pane.frame.midX, y: pane.frame.midY)
+                .clipped()
+        }
+    }
+
+    @ViewBuilder
+    private func inactivePaneOverlay(
+        paneFocusLayouts: [PaneFocusLayout],
+        shouldDimInactivePanes: Bool
+    ) -> some View {
+        ForEach(paneFocusLayouts) { pane in
+            if shouldDimInactivePanes && !pane.isActive {
+                Rectangle()
+                    .fill(SwiftUI.Color.black.opacity(inactivePaneDimOpacity))
+                    .frame(width: pane.frame.width, height: pane.frame.height)
+                    .position(x: pane.frame.midX, y: pane.frame.midY)
+                    .allowsHitTesting(false)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func overlayHost(terminalSwitcherSnapshot: GlobalTerminalSwitcherSnapshot) -> some View {
+        UiOverlayHost(
+            tree: model.uiTree,
+            cellSize: model.cellSize,
+            filePickerSnapshot: model.filePickerSnapshot,
+            filePickerPreviewModel: model.filePickerPreviewModel,
+            pendingKeys: model.pendingKeys,
+            onSelectCommand: { index in
+                model.selectCommandPalette(index: index)
+            },
+            onSubmitCommand: { index in
+                model.submitCommandPalette(index: index)
+            },
+            onCloseCommandPalette: {
+                model.closeCommandPalette()
+            },
+            onQueryChange: { query in
+                model.setCommandPaletteQuery(query)
+            },
+            onSearchQueryChange: { query in
+                model.setSearchQuery(query)
+            },
+            onSearchPrev: {
+                model.searchPrev()
+            },
+            onSearchNext: {
+                model.searchNext()
+            },
+            onSearchClose: {
+                model.closeSearch()
+            },
+            onSearchSubmit: {
+                model.submitSearch()
+            },
+            onFilePickerQueryChange: { query in
+                model.setFilePickerQuery(query)
+            },
+            onFilePickerSubmit: { index in
+                model.submitFilePicker(index: index)
+            },
+            onFilePickerClose: {
+                model.closeFilePicker()
+            },
+            onFilePickerSelectionChange: { index in
+                model.filePickerSelectIndex(index)
+            },
+            onFilePickerPreviewWindowRequest: { offset, visibleRows, overscan in
+                model.filePickerPreviewWindowRequest(offset: offset, visibleRows: visibleRows, overscan: overscan)
+            },
+            colorForHighlight: { highlightId in
+                model.colorForHighlight(highlightId)
+            },
+            onInputPromptQueryChange: { query in
+                model.setSearchQuery(query)
+            },
+            onInputPromptClose: {
+                model.closeSearch()
+            },
+            onInputPromptSubmit: {
+                model.submitSearch()
+            }
+        )
+
+        if terminalSwitcherSnapshot.isOpen {
+            GlobalTerminalSwitcherView(
+                snapshot: terminalSwitcherSnapshot,
+                onSubmit: { entry in
+                    _ = model.submitGlobalTerminalSwitcher(entry: entry)
+                },
+                onClose: {
+                    model.closeGlobalTerminalSwitcher()
+                }
+            )
+        }
+    }
+
+    @ViewBuilder
+    private func popupOverlay(
+        isOverlayOpen: Bool,
+        completionSnapshot: CompletionSnapshot?,
+        hoverSnapshot: HoverSnapshot?,
+        signatureSnapshot: SignatureHelpSnapshot?,
+        activePaneOrigin: CGPoint,
+        cellSize: CGSize,
+        contentSize: CGSize
+    ) -> some View {
+        if !isOverlayOpen {
+            if let completionSnapshot {
+                CompletionPopupView(
+                    snapshot: completionSnapshot,
+                    cursorOrigin: cursorPixelPosition(
+                        plan: model.plan,
+                        paneOrigin: activePaneOrigin,
+                        cellSize: cellSize
+                    ),
+                    cellSize: cellSize,
+                    containerSize: contentSize,
+                    languageHint: model.completionDocsLanguageHint(),
+                    onSelect: { index in
+                        model.selectCompletion(index: index)
+                    },
+                    onSubmit: { index in
+                        model.submitCompletion(index: index)
+                    }
+                )
+                .allowsHitTesting(true)
+            } else if let hoverSnapshot {
+                HoverPopupView(
+                    snapshot: hoverSnapshot,
+                    cursorOrigin: cursorPixelPosition(
+                        plan: model.plan,
+                        paneOrigin: activePaneOrigin,
+                        cellSize: cellSize
+                    ),
+                    cellSize: cellSize,
+                    containerSize: contentSize,
+                    languageHint: model.completionDocsLanguageHint()
+                )
+                .allowsHitTesting(true)
+            } else if let signatureSnapshot {
+                SignatureHelpPopupView(
+                    snapshot: signatureSnapshot,
+                    cursorOrigin: cursorPixelPosition(
+                        plan: model.plan,
+                        paneOrigin: activePaneOrigin,
+                        cellSize: cellSize
+                    ),
+                    cellSize: cellSize,
+                    containerSize: contentSize,
+                    languageHint: model.completionDocsLanguageHint()
+                )
+                .allowsHitTesting(true)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func keyCaptureBackground(isOverlayOpen: Bool) -> some View {
+        if !isOverlayOpen && !model.isActivePaneTerminal {
+            KeyCaptureView(
+                onKey: { event in
+                    model.handleKeyEvent(event)
+                },
+                onText: { text, modifiers in
+                    model.handleText(text, modifiers: modifiers)
+                },
+                onCommandDigit: { digit in
+                    _ = model.selectNativeWindowTab(indexOneBased: digit)
+                },
+                onNamedCommand: { command in
+                    _ = model.executeNamedCommand(command)
+                },
+                onScroll: { _, _, _ in },
+                modeProvider: {
+                    model.mode
+                }
+            )
+            .allowsHitTesting(false)
+        }
+    }
+
+    @ViewBuilder
+    private func scrollCaptureOverlay(
+        isOverlayOpen: Bool,
+        isCompletionOpen: Bool,
+        isHoverOpen: Bool,
+        isSignatureOpen: Bool,
+        splitResizeHandles: [ScrollCaptureView.SeparatorHandle],
+        terminalPassthroughRects: [CGRect],
+        pointerPanes: [ScrollCaptureView.PaneHandle],
+        cellSize: CGSize
+    ) -> some View {
+        if !isOverlayOpen && !isCompletionOpen && !isHoverOpen && !isSignatureOpen {
+            ScrollCaptureView(
+                onScroll: { deltaX, deltaY, precise in
+                    model.handlePointerScroll(deltaX: deltaX, deltaY: deltaY, precise: precise)
+                },
+                onPointer: { event in
+                    model.handlePointerEvent(event)
+                },
+                separators: splitResizeHandles,
+                passthroughRects: terminalPassthroughRects,
+                panes: pointerPanes,
+                cellSize: cellSize,
+                onSplitResize: { splitId, point in
+                    model.resizeSplit(splitId: splitId, pixelPoint: point)
+                }
+            )
+            .allowsHitTesting(true)
+        }
+    }
     private func splitResizeHandles(
         from separators: [SplitSeparatorSnapshot],
         cellSize: CGSize
@@ -866,16 +978,19 @@ struct EditorView: View {
         guard contentOffsetX > 0 else { return }
 
         let activeRow = activeCursorRow(plan: plan)
+        let gutterBackground = gutterBackgroundColor()
+        let gutterActiveBackground = gutterActiveRowColor()
+        let gutterSeparator = gutterSeparatorColor()
 
         // Layer 1: Gutter background
         let gutterBg = CGRect(x: 0, y: 0, width: contentOffsetX, height: size.height)
-        context.fill(Path(gutterBg), with: .color(SwiftUI.Color(white: 0.055)))
+        context.fill(Path(gutterBg), with: .color(gutterBackground))
 
         // Layer 2: Active line highlight
         if let activeRow {
             let y = CGFloat(activeRow) * cellSize.height
             let rect = CGRect(x: 0, y: y, width: contentOffsetX, height: cellSize.height)
-            context.fill(Path(rect), with: .color(SwiftUI.Color.white.opacity(0.04)))
+            context.fill(Path(rect), with: .color(gutterActiveBackground))
         }
 
         // Layer 3: Vertical separator
@@ -883,7 +998,7 @@ struct EditorView: View {
             p.move(to: CGPoint(x: contentOffsetX - 0.5, y: 0))
             p.addLine(to: CGPoint(x: contentOffsetX - 0.5, y: size.height))
         }
-        context.stroke(sepPath, with: .color(SwiftUI.Color(nsColor: .separatorColor).opacity(0.3)), lineWidth: 0.5)
+        context.stroke(sepPath, with: .color(gutterSeparator), lineWidth: 0.5)
 
         // Layer 4: Per-span rendering
         if lineCount > 0 {
@@ -969,9 +1084,9 @@ struct EditorView: View {
         if style.has_fg, let themeColor = ColorMapper.color(from: style.fg) {
             color = themeColor
         } else if isActive {
-            color = SwiftUI.Color(nsColor: .secondaryLabelColor)
+            color = gutterLineNumberColor(active: true)
         } else {
-            color = SwiftUI.Color(nsColor: .tertiaryLabelColor)
+            color = gutterLineNumberColor(active: false)
         }
         let text = Text(span.text().toString()).font(font).foregroundColor(color)
         context.draw(text, at: CGPoint(x: x, y: y), anchor: .topLeading)
@@ -1258,6 +1373,39 @@ struct EditorView: View {
         return color
     }
 
+    private func gutterBackgroundColor() -> SwiftUI.Color {
+        let lineNumberStyle = model.uiThemeStyle("ui.linenr")
+        if lineNumberStyle.has_bg, let color = ColorMapper.color(from: lineNumberStyle.bg) {
+            return color
+        }
+        return model.editorBackgroundColor()
+    }
+
+    private func gutterActiveRowColor() -> SwiftUI.Color {
+        let cursorLineStyle = model.uiThemeStyle("ui.cursorline.active")
+        if cursorLineStyle.has_bg, let color = ColorMapper.color(from: cursorLineStyle.bg) {
+            return color
+        }
+        return SwiftUI.Color.white.opacity(0.04)
+    }
+
+    private func gutterSeparatorColor() -> SwiftUI.Color {
+        let separatorStyle = model.uiThemeStyle("ui.background.separator")
+        if separatorStyle.has_fg, let color = ColorMapper.color(from: separatorStyle.fg) {
+            return color.opacity(0.55)
+        }
+        return SwiftUI.Color(nsColor: .separatorColor).opacity(0.3)
+    }
+
+    private func gutterLineNumberColor(active: Bool) -> SwiftUI.Color {
+        let scope = active ? "ui.linenr.selected" : "ui.linenr"
+        let style = model.uiThemeStyle(scope)
+        if style.has_fg, let color = ColorMapper.color(from: style.fg) {
+            return color
+        }
+        return active ? SwiftUI.Color(nsColor: .secondaryLabelColor) : SwiftUI.Color(nsColor: .tertiaryLabelColor)
+    }
+
     private func cursorColor(for style: Style, fallback: SwiftUI.Color) -> SwiftUI.Color {
         if style.has_bg, let bg = ColorMapper.color(from: style.bg) {
             return bg
@@ -1269,15 +1417,16 @@ struct EditorView: View {
     }
 
     private func colorForSpan(_ span: RenderSpan) -> SwiftUI.Color {
+        let baseTextColor = model.editorTextColor()
         if span.has_highlight() {
             if let color = model.colorForHighlight(span.highlight()) {
                 return color
             }
         }
         if span.is_virtual() {
-            return SwiftUI.Color.white.opacity(0.4)
+            return model.editorVirtualTextColor()
         }
-        return SwiftUI.Color.white
+        return baseTextColor
     }
 
     private func debugDrawSnapshot(

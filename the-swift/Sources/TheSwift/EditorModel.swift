@@ -110,6 +110,7 @@ final class EditorModel: ObservableObject {
     private var scrollRemainderX: CGFloat = 0
     private var scrollRemainderY: CGFloat = 0
     private var syntaxHighlightStyleCache: [UInt32: Style] = [:]
+    private var effectiveThemeName: String = ""
     private var lastUiTreeJson: String? = nil
     private var lastBufferTabsJson: String? = nil
     private var lastPickerQuery: String? = nil
@@ -167,6 +168,7 @@ final class EditorModel: ObservableObject {
         self.terminalSurfaces = []
         self.isActivePaneTerminal = false
         self.mode = EditorMode(rawValue: app.mode(editorId)) ?? .normal
+        synchronizeEffectiveTheme(force: true)
         updateTerminalPaneSnapshots(from: initialFramePlan)
         updateTerminalSurfaceSnapshots()
         refreshFileTree(force: true)
@@ -183,6 +185,7 @@ final class EditorModel: ObservableObject {
         backgroundTimer?.invalidate()
         unregisterHostWindowNotifications()
         EditorCommandModelRegistry.shared.unregister(window: hostWindow)
+        GhosttyRuntime.shared.clearThemeSnapshot(for: runtimeInstanceId)
     }
 
     private static func loadText(filePath: String?) -> String {
@@ -219,6 +222,7 @@ final class EditorModel: ObservableObject {
         if shouldDriveRuntime {
             _ = app.poll_background(editorId)
         }
+        synchronizeEffectiveTheme()
         let uiFetch = fetchUiTree()
         if uiFetch.changed {
             uiTree = uiFetch.tree
@@ -1044,10 +1048,7 @@ final class EditorModel: ObservableObject {
 
     func setCommandPaletteQuery(_ query: String) {
         _ = app.command_palette_set_query(editorId, query)
-        let uiFetch = fetchUiTree()
-        if uiFetch.changed {
-            uiTree = uiFetch.tree
-        }
+        refresh(trigger: "command_palette_query")
     }
 
     // MARK: - File picker
@@ -1924,8 +1925,29 @@ final class EditorModel: ObservableObject {
         return ColorMapper.color(from: style.fg)
     }
 
+    func editorTextColor() -> SwiftUI.Color {
+        uiThemeForegroundColor(
+            scopes: ["ui.text", "ui.text.focus"],
+            fallback: .white
+        )
+    }
+
+    func editorVirtualTextColor() -> SwiftUI.Color {
+        uiThemeForegroundColor(
+            scopes: ["ui.virtual", "ui.text.inactive", "ui.text"],
+            fallback: editorTextColor().opacity(0.65)
+        )
+    }
+
     func uiThemeStyle(_ scope: String) -> Style {
         app.theme_ui_style(scope)
+    }
+
+    func editorBackgroundColor() -> SwiftUI.Color {
+        uiThemeBackgroundColor(
+            scopes: ["ui.background", "ui.window", "ui.popup"],
+            fallback: .black
+        )
     }
 
     func bufferTabBarTheme() -> BufferTabBarTheme {
@@ -2047,6 +2069,47 @@ final class EditorModel: ObservableObject {
         let style = app.theme_highlight_style(highlight)
         syntaxHighlightStyleCache[highlight] = style
         return style
+    }
+
+    private func uiThemeBackgroundColor(
+        scopes: [String],
+        fallback: SwiftUI.Color
+    ) -> SwiftUI.Color {
+        for scope in scopes {
+            let style = uiThemeStyle(scope)
+            if style.has_bg, let color = ColorMapper.color(from: style.bg) {
+                return color
+            }
+        }
+        return fallback
+    }
+
+    private func uiThemeForegroundColor(
+        scopes: [String],
+        fallback: SwiftUI.Color
+    ) -> SwiftUI.Color {
+        for scope in scopes {
+            let style = uiThemeStyle(scope)
+            if style.has_fg, let color = ColorMapper.color(from: style.fg) {
+                return color
+            }
+        }
+        return fallback
+    }
+
+    private func synchronizeEffectiveTheme(force: Bool = false) {
+        let nextThemeName = app.theme_effective_name().toString()
+        guard force || nextThemeName != effectiveThemeName else {
+            return
+        }
+
+        effectiveThemeName = nextThemeName
+        syntaxHighlightStyleCache.removeAll(keepingCapacity: true)
+        GhosttyRuntime.shared.setThemeSnapshot(
+            app.theme_ghostty_snapshot(),
+            themeName: nextThemeName,
+            for: runtimeInstanceId
+        )
     }
 
     private func debugUiLog(_ message: String) {

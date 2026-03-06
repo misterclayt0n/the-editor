@@ -2204,6 +2204,8 @@ dependencies = [
  "the-lib",
  "the-loader",
  "the-stdx",
+ "toml",
+ "tracing",
 ]
 
 [[package]]

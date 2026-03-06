@@ -120,6 +120,47 @@ impl<'de> Deserialize<'de> for Config {
     })
   }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct GhosttyTheme {
+  palette:              [Option<Color>; 16],
+  background:           Option<Color>,
+  foreground:           Option<Color>,
+  cursor_color:         Option<Color>,
+  cursor_text:          Option<Color>,
+  selection_background: Option<Color>,
+  selection_foreground: Option<Color>,
+}
+
+impl GhosttyTheme {
+  pub fn palette_color(&self, index: usize) -> Option<Color> {
+    self.palette.get(index).copied().flatten()
+  }
+
+  pub fn background(&self) -> Option<Color> {
+    self.background
+  }
+
+  pub fn foreground(&self) -> Option<Color> {
+    self.foreground
+  }
+
+  pub fn cursor_color(&self) -> Option<Color> {
+    self.cursor_color
+  }
+
+  pub fn cursor_text(&self) -> Option<Color> {
+    self.cursor_text
+  }
+
+  pub fn selection_background(&self) -> Option<Color> {
+    self.selection_background
+  }
+
+  pub fn selection_foreground(&self) -> Option<Color> {
+    self.selection_foreground
+  }
+}
 // Theme loading (IO + inheritance) intentionally lives outside the-lib.
 
 #[derive(Clone, Debug, Default)]
@@ -132,6 +173,7 @@ pub struct Theme {
   scopes:         Vec<String>,
   highlights:     Vec<Style>,
   rainbow_length: usize,
+  ghostty:        GhosttyTheme,
 }
 
 impl From<Value> for Theme {
@@ -166,6 +208,7 @@ fn build_theme_values(
   Vec<String>,
   Vec<Style>,
   usize,
+  GhosttyTheme,
   Vec<String>,
 ) {
   let mut styles = HashMap::new();
@@ -184,6 +227,10 @@ fn build_theme_values(
         ThemePalette::default()
       })
     })
+    .unwrap_or_default();
+  let ghostty = values
+    .remove("ghostty")
+    .map(|value| parse_ghostty_theme(&palette, value, &mut warnings))
     .unwrap_or_default();
   // remove inherits from value to prevent errors
   let _ = values.remove("inherits");
@@ -225,7 +272,7 @@ fn build_theme_values(
     highlights.push(style);
   }
 
-  (styles, scopes, highlights, rainbow_length, warnings)
+  (styles, scopes, highlights, rainbow_length, ghostty, warnings)
 }
 
 fn default_rainbow() -> Vec<Style> {
@@ -274,6 +321,10 @@ impl Theme {
 
   pub fn name(&self) -> &str {
     &self.name
+  }
+
+  pub fn ghostty(&self) -> &GhosttyTheme {
+    &self.ghostty
   }
 
   pub fn get(&self, scope: &str) -> Style {
@@ -343,16 +394,27 @@ impl Theme {
   }
 
   fn from_keys(toml_keys: Map<String, Value>) -> (Self, Vec<String>) {
-    let (styles, scopes, highlights, rainbow_length, load_errors) = build_theme_values(toml_keys);
+    let (styles, scopes, highlights, rainbow_length, ghostty, load_errors) =
+      build_theme_values(toml_keys);
 
     let theme = Self {
       styles,
       scopes,
       highlights,
       rainbow_length,
+      ghostty,
       ..Default::default()
     };
     (theme, load_errors)
+  }
+
+  pub fn from_named_value(name: impl Into<String>, value: Value) -> Self {
+    let (mut theme, warnings) = Theme::from_toml(value);
+    for warning in warnings {
+      warn!("{}", warning);
+    }
+    theme.name = name.into();
+    theme
   }
 }
 
@@ -529,6 +591,66 @@ impl TryFrom<Value> for ThemePalette {
   }
 }
 
+fn parse_ghostty_theme(
+  palette: &ThemePalette,
+  value: Value,
+  warnings: &mut Vec<String>,
+) -> GhosttyTheme {
+  let Value::Table(mut entries) = value else {
+    warnings.push(format!("Failed to parse ghostty theme: expected table, found {value:?}"));
+    return GhosttyTheme::default();
+  };
+
+  let mut ghostty = GhosttyTheme::default();
+
+  if let Some(palette_value) = entries.remove("palette") {
+    match palette_value {
+      Value::Table(palette_entries) => {
+        for (index, value) in palette_entries {
+          match index.parse::<usize>() {
+            Ok(slot @ 0..=15) => match palette.parse_color(value) {
+              Ok(color) => ghostty.palette[slot] = Some(color),
+              Err(err) => warnings.push(format!(
+                "Failed to parse ghostty palette color for slot {slot}: {err}"
+              )),
+            },
+            Ok(other) => warnings.push(format!(
+              "Failed to parse ghostty palette color: slot {other} is out of range 0..=15"
+            )),
+            Err(_) => warnings.push(format!(
+              "Failed to parse ghostty palette color: invalid slot {index:?}"
+            )),
+          }
+        }
+      },
+      other => warnings.push(format!(
+        "Failed to parse ghostty palette: expected table, found {other:?}"
+      )),
+    }
+  }
+
+  for (key, value) in entries {
+    let target = match key.as_str() {
+      "background" => &mut ghostty.background,
+      "foreground" => &mut ghostty.foreground,
+      "cursor-color" => &mut ghostty.cursor_color,
+      "cursor-text" => &mut ghostty.cursor_text,
+      "selection-background" => &mut ghostty.selection_background,
+      "selection-foreground" => &mut ghostty.selection_foreground,
+      other => {
+        warnings.push(format!("Unknown ghostty theme key: {other}"));
+        continue;
+      },
+    };
+    match palette.parse_color(value) {
+      Ok(color) => *target = Some(color),
+      Err(err) => warnings.push(format!("Failed to parse ghostty theme key {key}: {err}")),
+    }
+  }
+
+  ghostty
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -625,5 +747,44 @@ mod tests {
   fn out_of_bounds() {
     let highlight = Highlight::new(Theme::rgb_highlight(0, 0, 0).get() - 1);
     Theme::default().highlight(highlight);
+  }
+
+  #[test]
+  fn parse_ghostty_theme_block() {
+    let table = toml::toml! {
+      [ghostty]
+      background = "#303446"
+      foreground = "#c6d0f5"
+      cursor-color = "#f2d5cf"
+      cursor-text = "#c6d0f5"
+      selection-background = "#626880"
+      selection-foreground = "#c6d0f5"
+
+      [ghostty.palette]
+      "0" = "#51576d"
+      "1" = "#e78284"
+      "15" = "#b5bfe2"
+    };
+
+    let theme = Theme::from_named_value("ghostty-test", toml::Value::Table(table));
+    let ghostty = theme.ghostty();
+
+    assert_eq!(theme.name(), "ghostty-test");
+    assert_eq!(ghostty.background(), Some(Color::Rgb(0x30, 0x34, 0x46)));
+    assert_eq!(ghostty.foreground(), Some(Color::Rgb(0xc6, 0xd0, 0xf5)));
+    assert_eq!(ghostty.cursor_color(), Some(Color::Rgb(0xf2, 0xd5, 0xcf)));
+    assert_eq!(ghostty.cursor_text(), Some(Color::Rgb(0xc6, 0xd0, 0xf5)));
+    assert_eq!(
+      ghostty.selection_background(),
+      Some(Color::Rgb(0x62, 0x68, 0x80))
+    );
+    assert_eq!(
+      ghostty.selection_foreground(),
+      Some(Color::Rgb(0xc6, 0xd0, 0xf5))
+    );
+    assert_eq!(ghostty.palette_color(0), Some(Color::Rgb(0x51, 0x57, 0x6d)));
+    assert_eq!(ghostty.palette_color(1), Some(Color::Rgb(0xe7, 0x82, 0x84)));
+    assert_eq!(ghostty.palette_color(15), Some(Color::Rgb(0xb5, 0xbf, 0xe2)));
+    assert_eq!(ghostty.palette_color(2), None);
   }
 }

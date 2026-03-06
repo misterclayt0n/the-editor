@@ -468,6 +468,14 @@ extension AppRef {
             __swift_bridge__$App$theme_ui_style(ptr, scopeAsRustStr).intoSwiftRepr()
         })
     }
+
+    public func theme_effective_name() -> RustString {
+        RustString(ptr: __swift_bridge__$App$theme_effective_name(ptr))
+    }
+
+    public func theme_ghostty_snapshot() -> GhosttyThemeSnapshot {
+        __swift_bridge__$App$theme_ghostty_snapshot(ptr).intoSwiftRepr()
+    }
 }
 extension App: Vectorizable {
     public static func vecOfSelfNew() -> UnsafeMutableRawPointer {
@@ -901,6 +909,124 @@ extension __swift_bridge__$Option$Color {
             return __swift_bridge__$Option$Color(is_some: true, val: v.intoFfiRepr())
         } else {
             return __swift_bridge__$Option$Color(is_some: false, val: __swift_bridge__$Color())
+        }
+    }
+}
+public struct OptionalColor {
+    public var has_value: Bool
+    public var color: Color
+
+    public init(has_value: Bool,color: Color) {
+        self.has_value = has_value
+        self.color = color
+    }
+
+    @inline(__always)
+    func intoFfiRepr() -> __swift_bridge__$OptionalColor {
+        { let val = self; return __swift_bridge__$OptionalColor(has_value: val.has_value, color: val.color.intoFfiRepr()); }()
+    }
+}
+extension __swift_bridge__$OptionalColor {
+    @inline(__always)
+    func intoSwiftRepr() -> OptionalColor {
+        { let val = self; return OptionalColor(has_value: val.has_value, color: val.color.intoSwiftRepr()); }()
+    }
+}
+extension __swift_bridge__$Option$OptionalColor {
+    @inline(__always)
+    func intoSwiftRepr() -> Optional<OptionalColor> {
+        if self.is_some {
+            return self.val.intoSwiftRepr()
+        } else {
+            return nil
+        }
+    }
+
+    @inline(__always)
+    static func fromSwiftRepr(_ val: Optional<OptionalColor>) -> __swift_bridge__$Option$OptionalColor {
+        if let v = val {
+            return __swift_bridge__$Option$OptionalColor(is_some: true, val: v.intoFfiRepr())
+        } else {
+            return __swift_bridge__$Option$OptionalColor(is_some: false, val: __swift_bridge__$OptionalColor())
+        }
+    }
+}
+public struct GhosttyThemeSnapshot {
+    public var background: OptionalColor
+    public var foreground: OptionalColor
+    public var cursor_color: OptionalColor
+    public var cursor_text: OptionalColor
+    public var selection_background: OptionalColor
+    public var selection_foreground: OptionalColor
+    public var palette0: OptionalColor
+    public var palette1: OptionalColor
+    public var palette2: OptionalColor
+    public var palette3: OptionalColor
+    public var palette4: OptionalColor
+    public var palette5: OptionalColor
+    public var palette6: OptionalColor
+    public var palette7: OptionalColor
+    public var palette8: OptionalColor
+    public var palette9: OptionalColor
+    public var palette10: OptionalColor
+    public var palette11: OptionalColor
+    public var palette12: OptionalColor
+    public var palette13: OptionalColor
+    public var palette14: OptionalColor
+    public var palette15: OptionalColor
+
+    public init(background: OptionalColor,foreground: OptionalColor,cursor_color: OptionalColor,cursor_text: OptionalColor,selection_background: OptionalColor,selection_foreground: OptionalColor,palette0: OptionalColor,palette1: OptionalColor,palette2: OptionalColor,palette3: OptionalColor,palette4: OptionalColor,palette5: OptionalColor,palette6: OptionalColor,palette7: OptionalColor,palette8: OptionalColor,palette9: OptionalColor,palette10: OptionalColor,palette11: OptionalColor,palette12: OptionalColor,palette13: OptionalColor,palette14: OptionalColor,palette15: OptionalColor) {
+        self.background = background
+        self.foreground = foreground
+        self.cursor_color = cursor_color
+        self.cursor_text = cursor_text
+        self.selection_background = selection_background
+        self.selection_foreground = selection_foreground
+        self.palette0 = palette0
+        self.palette1 = palette1
+        self.palette2 = palette2
+        self.palette3 = palette3
+        self.palette4 = palette4
+        self.palette5 = palette5
+        self.palette6 = palette6
+        self.palette7 = palette7
+        self.palette8 = palette8
+        self.palette9 = palette9
+        self.palette10 = palette10
+        self.palette11 = palette11
+        self.palette12 = palette12
+        self.palette13 = palette13
+        self.palette14 = palette14
+        self.palette15 = palette15
+    }
+
+    @inline(__always)
+    func intoFfiRepr() -> __swift_bridge__$GhosttyThemeSnapshot {
+        { let val = self; return __swift_bridge__$GhosttyThemeSnapshot(background: val.background.intoFfiRepr(), foreground: val.foreground.intoFfiRepr(), cursor_color: val.cursor_color.intoFfiRepr(), cursor_text: val.cursor_text.intoFfiRepr(), selection_background: val.selection_background.intoFfiRepr(), selection_foreground: val.selection_foreground.intoFfiRepr(), palette0: val.palette0.intoFfiRepr(), palette1: val.palette1.intoFfiRepr(), palette2: val.palette2.intoFfiRepr(), palette3: val.palette3.intoFfiRepr(), palette4: val.palette4.intoFfiRepr(), palette5: val.palette5.intoFfiRepr(), palette6: val.palette6.intoFfiRepr(), palette7: val.palette7.intoFfiRepr(), palette8: val.palette8.intoFfiRepr(), palette9: val.palette9.intoFfiRepr(), palette10: val.palette10.intoFfiRepr(), palette11: val.palette11.intoFfiRepr(), palette12: val.palette12.intoFfiRepr(), palette13: val.palette13.intoFfiRepr(), palette14: val.palette14.intoFfiRepr(), palette15: val.palette15.intoFfiRepr()); }()
+    }
+}
+extension __swift_bridge__$GhosttyThemeSnapshot {
+    @inline(__always)
+    func intoSwiftRepr() -> GhosttyThemeSnapshot {
+        { let val = self; return GhosttyThemeSnapshot(background: val.background.intoSwiftRepr(), foreground: val.foreground.intoSwiftRepr(), cursor_color: val.cursor_color.intoSwiftRepr(), cursor_text: val.cursor_text.intoSwiftRepr(), selection_background: val.selection_background.intoSwiftRepr(), selection_foreground: val.selection_foreground.intoSwiftRepr(), palette0: val.palette0.intoSwiftRepr(), palette1: val.palette1.intoSwiftRepr(), palette2: val.palette2.intoSwiftRepr(), palette3: val.palette3.intoSwiftRepr(), palette4: val.palette4.intoSwiftRepr(), palette5: val.palette5.intoSwiftRepr(), palette6: val.palette6.intoSwiftRepr(), palette7: val.palette7.intoSwiftRepr(), palette8: val.palette8.intoSwiftRepr(), palette9: val.palette9.intoSwiftRepr(), palette10: val.palette10.intoSwiftRepr(), palette11: val.palette11.intoSwiftRepr(), palette12: val.palette12.intoSwiftRepr(), palette13: val.palette13.intoSwiftRepr(), palette14: val.palette14.intoSwiftRepr(), palette15: val.palette15.intoSwiftRepr()); }()
+    }
+}
+extension __swift_bridge__$Option$GhosttyThemeSnapshot {
+    @inline(__always)
+    func intoSwiftRepr() -> Optional<GhosttyThemeSnapshot> {
+        if self.is_some {
+            return self.val.intoSwiftRepr()
+        } else {
+            return nil
+        }
+    }
+
+    @inline(__always)
+    static func fromSwiftRepr(_ val: Optional<GhosttyThemeSnapshot>) -> __swift_bridge__$Option$GhosttyThemeSnapshot {
+        if let v = val {
+            return __swift_bridge__$Option$GhosttyThemeSnapshot(is_some: true, val: v.intoFfiRepr())
+        } else {
+            return __swift_bridge__$Option$GhosttyThemeSnapshot(is_some: false, val: __swift_bridge__$GhosttyThemeSnapshot())
         }
     }
 }

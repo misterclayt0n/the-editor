@@ -553,6 +553,11 @@ pub trait DefaultContext: Sized + 'static {
   fn text_annotations(&self) -> TextAnnotations<'_>;
   fn syntax_loader(&self) -> Option<&Loader>;
   fn ui_theme(&self) -> &Theme;
+  fn ui_theme_name(&self) -> &str;
+  fn available_theme_names(&self) -> Vec<String>;
+  fn set_ui_theme(&mut self, theme_name: &str) -> Result<(), String>;
+  fn set_ui_theme_preview(&mut self, theme_name: &str) -> Result<(), String>;
+  fn clear_ui_theme_preview(&mut self);
   fn set_file_path(&mut self, path: Option<PathBuf>);
   fn open_file(&mut self, path: &Path) -> std::io::Result<()>;
   fn goto_buffer(&mut self, _direction: Direction, _count: usize) -> bool {

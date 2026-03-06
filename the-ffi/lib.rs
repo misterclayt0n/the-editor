@@ -27,6 +27,7 @@ use std::{
   sync::{
     Arc,
     OnceLock,
+    RwLock,
     atomic::{
       AtomicUsize,
       Ordering,
@@ -98,6 +99,7 @@ use the_default::{
   SIGNATURE_HELP_ACTIVE_PARAM_START_MARKER,
   SearchPromptKind,
   SearchPromptState,
+  ThemeCatalog,
   buffer_tabs_snapshot,
   close_file_picker,
   command_palette_filtered_indices,
@@ -213,7 +215,6 @@ use the_lib::{
     text_format::TextFormat,
     theme::{
       Theme,
-      base16_default_theme,
       default_theme,
     },
     visual_pos_at_char,
@@ -1743,14 +1744,28 @@ impl EditorState {
   }
 }
 
-fn select_ui_theme() -> Theme {
-  match env::var("THE_EDITOR_THEME").ok().as_deref() {
-    Some("base16") | Some("base16_default") => base16_default_theme().clone(),
-    Some("default") | None => default_theme().clone(),
-    Some(other) => {
-      eprintln!("Unknown theme '{other}', falling back to default theme.");
-      default_theme().clone()
+fn select_ui_theme(catalog: &ThemeCatalog) -> (String, Theme) {
+  match env::var("THE_EDITOR_THEME").ok() {
+    Some(theme_name) => {
+      let theme_name = theme_name.trim();
+      if let Some(theme) = catalog.load_theme(theme_name) {
+        (theme_name.to_string(), theme)
+      } else {
+        eprintln!("Unknown theme '{theme_name}', falling back to default theme.");
+        (
+          default_theme().name().to_string(),
+          catalog
+            .load_theme(default_theme().name())
+            .unwrap_or_else(|| default_theme().clone()),
+        )
+      }
     },
+    None => (
+      default_theme().name().to_string(),
+      catalog
+        .load_theme(default_theme().name())
+        .unwrap_or_else(|| default_theme().clone()),
+    ),
   }
 }
 
@@ -3214,13 +3229,21 @@ struct DocsRenderRuntime {
   loader: Option<Arc<Loader>>,
 }
 
-fn docs_render_runtime() -> &'static DocsRenderRuntime {
-  static RUNTIME: OnceLock<DocsRenderRuntime> = OnceLock::new();
+fn docs_render_runtime() -> &'static RwLock<DocsRenderRuntime> {
+  static RUNTIME: OnceLock<RwLock<DocsRenderRuntime>> = OnceLock::new();
   RUNTIME.get_or_init(|| {
-    let theme = select_ui_theme();
+    let catalog = ThemeCatalog::load(None);
+    let (_, theme) = select_ui_theme(&catalog);
     let loader = init_loader(&theme).ok().map(Arc::new);
-    DocsRenderRuntime { theme, loader }
+    RwLock::new(DocsRenderRuntime { theme, loader })
   })
+}
+
+fn set_docs_render_theme(theme: &Theme) {
+  let runtime = docs_render_runtime();
+  let mut runtime = runtime.write().unwrap_or_else(|err| err.into_inner());
+  runtime.theme = theme.clone();
+  runtime.loader = init_loader(theme).ok().map(Arc::new);
 }
 
 fn completion_docs_render_json_impl(
@@ -3228,7 +3251,7 @@ fn completion_docs_render_json_impl(
   content_width: usize,
   language_hint: &str,
 ) -> String {
-  let runtime = docs_render_runtime();
+  let runtime = docs_render_runtime().read().unwrap_or_else(|err| err.into_inner());
   let base = runtime
     .theme
     .try_get("ui.text")
@@ -3660,6 +3683,10 @@ pub struct App {
   inline_diagnostic_lines:         Vec<InlineDiagnosticRenderLine>,
   eol_diagnostics:                 Vec<EolDiagnosticEntry>,
   diagnostic_underlines:           Vec<DiagnosticUnderlineEntry>,
+  ui_theme_catalog:                ThemeCatalog,
+  ui_theme_name:                   String,
+  ui_theme_base:                   Theme,
+  ui_theme_preview_name:           Option<String>,
   ui_theme:                        Theme,
   loader:                          Option<Arc<Loader>>,
   native_tab_open_gateway_enabled: bool,
@@ -4364,7 +4391,12 @@ fn build_file_picker_snapshot(
 impl App {
   pub fn new() -> Self {
     let dispatch = config_build_dispatch::<App>();
-    let ui_theme = select_ui_theme();
+    let workspace_root = env::current_dir()
+      .ok()
+      .map(|path| the_loader::find_workspace_in(path).0)
+      .unwrap_or_else(|| the_loader::find_workspace().0);
+    let ui_theme_catalog = ThemeCatalog::load(Some(workspace_root.as_path()));
+    let (ui_theme_name, ui_theme) = select_ui_theme(&ui_theme_catalog);
     let loader = match init_loader(&ui_theme) {
       Ok(loader) => Some(Arc::new(loader)),
       Err(error) => {
@@ -4372,10 +4404,6 @@ impl App {
         None
       },
     };
-    let workspace_root = env::current_dir()
-      .ok()
-      .map(|path| the_loader::find_workspace_in(path).0)
-      .unwrap_or_else(|| the_loader::find_workspace().0);
     let lsp_runtime = LspRuntime::new(
       LspRuntimeConfig::new(workspace_root.clone())
         .with_restart_policy(true, Duration::from_millis(250))
@@ -4385,6 +4413,7 @@ impl App {
     let lsp_shared_enabled = shared_lsp_feature_enabled_by_env();
     let lsp_client_id = lsp_broker::allocate_client_id();
     let clipboard = Arc::new(RuntimeClipboardProvider::detect());
+    set_docs_render_theme(&ui_theme);
 
     Self {
       inner: LibApp::default(),
@@ -4429,10 +4458,70 @@ impl App {
       inline_diagnostic_lines: Vec::new(),
       eol_diagnostics: Vec::new(),
       diagnostic_underlines: Vec::new(),
+      ui_theme_catalog,
+      ui_theme_name,
+      ui_theme_base: ui_theme.clone(),
+      ui_theme_preview_name: None,
       ui_theme,
       loader,
       native_tab_open_gateway_enabled: false,
       native_tab_open_requests: VecDeque::new(),
+    }
+  }
+
+  fn apply_effective_theme(&mut self, theme: Theme) {
+    if let Some(loader) = &self.loader {
+      loader.set_scopes(theme.scopes().to_vec());
+    }
+    set_docs_render_theme(&theme);
+    self.ui_theme = theme;
+    self.invalidate_theme_render_state();
+  }
+
+  fn set_ui_theme_named(&mut self, theme_name: &str) -> Result<(), String> {
+    let theme = self
+      .ui_theme_catalog
+      .load_theme(theme_name)
+      .ok_or_else(|| format!("Could not load theme: {theme_name}"))?;
+    self.ui_theme_name = theme_name.to_string();
+    self.ui_theme_base = theme.clone();
+    self.ui_theme_preview_name = None;
+    self.apply_effective_theme(theme);
+    Ok(())
+  }
+
+  fn set_ui_theme_preview_named(&mut self, theme_name: &str) -> Result<(), String> {
+    let theme = self
+      .ui_theme_catalog
+      .load_theme(theme_name)
+      .ok_or_else(|| format!("Could not load theme: {theme_name}"))?;
+    self.ui_theme_preview_name = Some(theme_name.to_string());
+    self.apply_effective_theme(theme);
+    Ok(())
+  }
+
+  fn clear_ui_theme_preview_state(&mut self) {
+    if self.ui_theme_preview_name.take().is_some() {
+      self.apply_effective_theme(self.ui_theme_base.clone());
+    }
+  }
+
+  fn invalidate_theme_render_state(&mut self) {
+    let editor_ids: Vec<_> = self.states.keys().copied().collect();
+    for editor_id in editor_ids {
+      let has_syntax = self
+        .inner
+        .editor(editor_id)
+        .is_some_and(|editor| editor.document().syntax().is_some());
+      if let Some(state) = self.states.get_mut(&editor_id) {
+        state.highlight_cache.clear();
+        if has_syntax {
+          state.syntax_parse_highlight_state.mark_parsed();
+        } else {
+          state.syntax_parse_highlight_state.mark_cleared();
+        }
+        state.needs_render = true;
+      }
     }
   }
 
@@ -5626,6 +5715,18 @@ impl App {
       .unwrap_or_default()
   }
 
+  pub fn theme_effective_name(&self) -> String {
+    self
+      .ui_theme_preview_name
+      .as_deref()
+      .unwrap_or(self.ui_theme_name.as_str())
+      .to_string()
+  }
+
+  pub fn theme_ghostty_snapshot(&self) -> ffi::GhosttyThemeSnapshot {
+    ghostty_theme_snapshot_from_theme(&self.ui_theme)
+  }
+
   pub fn command_palette_is_open(&mut self, id: ffi::EditorId) -> bool {
     if self.activate(id).is_none() {
       return false;
@@ -5820,6 +5921,7 @@ impl App {
     };
     let palette = &mut self.active_state_mut().command_palette;
     palette.selected = Some(item_idx);
+    the_default::sync_command_palette_preview(self);
     self.request_render();
     true
   }
@@ -5869,9 +5971,9 @@ impl App {
         },
         CommandPaletteAction::TypableCommand { name, args } => {
           let registry = self.command_registry_ref() as *const CommandRegistry<App>;
-          let result = unsafe { (&*registry).execute(self, &name, &args, CommandEvent::Validate) };
-          match result {
-            Ok(()) => {
+        let result = unsafe { (&*registry).execute(self, &name, &args, CommandEvent::Validate) };
+        match result {
+          Ok(()) => {
               self.set_mode(Mode::Normal);
               self.command_prompt_mut().clear();
               let palette = self.command_palette_mut();
@@ -5885,14 +5987,15 @@ impl App {
               palette.scroll_offset = 0;
               palette.prompt_text = None;
               self.request_render();
-              true
-            },
-            Err(err) => {
-              self.command_prompt_mut().error = Some(err.to_string());
-              self.request_render();
-              false
-            },
-          }
+            true
+          },
+          Err(err) => {
+            self.clear_ui_theme_preview_state();
+            self.command_prompt_mut().error = Some(err.to_string());
+            self.request_render();
+            false
+          },
+        }
         },
       }
     } else if is_prefiltered {
@@ -5954,6 +6057,7 @@ impl App {
           true
         },
         Err(err) => {
+          self.clear_ui_theme_preview_state();
           self.command_prompt_mut().error = Some(err.to_string());
           self.request_render();
           false
@@ -5995,6 +6099,7 @@ impl App {
           true
         },
         Err(err) => {
+          self.clear_ui_theme_preview_state();
           self.command_prompt_mut().error = Some(err.to_string());
           self.request_render();
           false
@@ -6007,6 +6112,7 @@ impl App {
     if self.activate(id).is_none() {
       return false;
     }
+    self.clear_ui_theme_preview_state();
     self.set_mode(Mode::Normal);
     self.command_prompt_mut().clear();
     let palette = self.command_palette_mut();
@@ -10920,6 +11026,26 @@ impl DefaultContext for App {
     &self.ui_theme
   }
 
+  fn ui_theme_name(&self) -> &str {
+    &self.ui_theme_name
+  }
+
+  fn available_theme_names(&self) -> Vec<String> {
+    self.ui_theme_catalog.names()
+  }
+
+  fn set_ui_theme(&mut self, theme_name: &str) -> Result<(), String> {
+    self.set_ui_theme_named(theme_name)
+  }
+
+  fn set_ui_theme_preview(&mut self, theme_name: &str) -> Result<(), String> {
+    self.set_ui_theme_preview_named(theme_name)
+  }
+
+  fn clear_ui_theme_preview(&mut self) {
+    self.clear_ui_theme_preview_state();
+  }
+
   fn set_file_path(&mut self, path: Option<PathBuf>) {
     if let Some(id) = self.active_editor {
       self.clear_hover_state();
@@ -11814,6 +11940,8 @@ mod ffi {
     fn mode(self: &App, id: EditorId) -> u8;
     fn theme_highlight_style(self: &App, highlight: u32) -> Style;
     fn theme_ui_style(self: &App, scope: &str) -> Style;
+    fn theme_effective_name(self: &App) -> String;
+    fn theme_ghostty_snapshot(self: &App) -> GhosttyThemeSnapshot;
     #[swift_bridge(associated_to = App)]
     fn completion_docs_render_json(
       markdown: &str,
@@ -11993,6 +12121,38 @@ mod ffi {
   struct Color {
     kind:  u8,
     value: u32,
+  }
+
+  #[swift_bridge(swift_repr = "struct")]
+  struct OptionalColor {
+    has_value: bool,
+    color:     Color,
+  }
+
+  #[swift_bridge(swift_repr = "struct")]
+  struct GhosttyThemeSnapshot {
+    background:           OptionalColor,
+    foreground:           OptionalColor,
+    cursor_color:         OptionalColor,
+    cursor_text:          OptionalColor,
+    selection_background: OptionalColor,
+    selection_foreground: OptionalColor,
+    palette0:             OptionalColor,
+    palette1:             OptionalColor,
+    palette2:             OptionalColor,
+    palette3:             OptionalColor,
+    palette4:             OptionalColor,
+    palette5:             OptionalColor,
+    palette6:             OptionalColor,
+    palette7:             OptionalColor,
+    palette8:             OptionalColor,
+    palette9:             OptionalColor,
+    palette10:            OptionalColor,
+    palette11:            OptionalColor,
+    palette12:            OptionalColor,
+    palette13:            OptionalColor,
+    palette14:            OptionalColor,
+    palette15:            OptionalColor,
   }
 
   #[swift_bridge(swift_repr = "struct")]
@@ -12464,6 +12624,79 @@ impl ffi::Color {
 impl Default for ffi::Color {
   fn default() -> Self {
     Self { kind: 0, value: 0 }
+  }
+}
+
+impl Default for ffi::OptionalColor {
+  fn default() -> Self {
+    Self {
+      has_value: false,
+      color:     ffi::Color::default(),
+    }
+  }
+}
+
+impl Default for ffi::GhosttyThemeSnapshot {
+  fn default() -> Self {
+    Self {
+      background:           ffi::OptionalColor::default(),
+      foreground:           ffi::OptionalColor::default(),
+      cursor_color:         ffi::OptionalColor::default(),
+      cursor_text:          ffi::OptionalColor::default(),
+      selection_background: ffi::OptionalColor::default(),
+      selection_foreground: ffi::OptionalColor::default(),
+      palette0:             ffi::OptionalColor::default(),
+      palette1:             ffi::OptionalColor::default(),
+      palette2:             ffi::OptionalColor::default(),
+      palette3:             ffi::OptionalColor::default(),
+      palette4:             ffi::OptionalColor::default(),
+      palette5:             ffi::OptionalColor::default(),
+      palette6:             ffi::OptionalColor::default(),
+      palette7:             ffi::OptionalColor::default(),
+      palette8:             ffi::OptionalColor::default(),
+      palette9:             ffi::OptionalColor::default(),
+      palette10:            ffi::OptionalColor::default(),
+      palette11:            ffi::OptionalColor::default(),
+      palette12:            ffi::OptionalColor::default(),
+      palette13:            ffi::OptionalColor::default(),
+      palette14:            ffi::OptionalColor::default(),
+      palette15:            ffi::OptionalColor::default(),
+    }
+  }
+}
+
+fn optional_color_snapshot(color: Option<LibColor>) -> ffi::OptionalColor {
+  ffi::OptionalColor {
+    has_value: color.is_some(),
+    color:     color.map(ffi::Color::from).unwrap_or_default(),
+  }
+}
+
+fn ghostty_theme_snapshot_from_theme(theme: &Theme) -> ffi::GhosttyThemeSnapshot {
+  let ghostty = theme.ghostty();
+  ffi::GhosttyThemeSnapshot {
+    background:           optional_color_snapshot(ghostty.background()),
+    foreground:           optional_color_snapshot(ghostty.foreground()),
+    cursor_color:         optional_color_snapshot(ghostty.cursor_color()),
+    cursor_text:          optional_color_snapshot(ghostty.cursor_text()),
+    selection_background: optional_color_snapshot(ghostty.selection_background()),
+    selection_foreground: optional_color_snapshot(ghostty.selection_foreground()),
+    palette0:             optional_color_snapshot(ghostty.palette_color(0)),
+    palette1:             optional_color_snapshot(ghostty.palette_color(1)),
+    palette2:             optional_color_snapshot(ghostty.palette_color(2)),
+    palette3:             optional_color_snapshot(ghostty.palette_color(3)),
+    palette4:             optional_color_snapshot(ghostty.palette_color(4)),
+    palette5:             optional_color_snapshot(ghostty.palette_color(5)),
+    palette6:             optional_color_snapshot(ghostty.palette_color(6)),
+    palette7:             optional_color_snapshot(ghostty.palette_color(7)),
+    palette8:             optional_color_snapshot(ghostty.palette_color(8)),
+    palette9:             optional_color_snapshot(ghostty.palette_color(9)),
+    palette10:            optional_color_snapshot(ghostty.palette_color(10)),
+    palette11:            optional_color_snapshot(ghostty.palette_color(11)),
+    palette12:            optional_color_snapshot(ghostty.palette_color(12)),
+    palette13:            optional_color_snapshot(ghostty.palette_color(13)),
+    palette14:            optional_color_snapshot(ghostty.palette_color(14)),
+    palette15:            optional_color_snapshot(ghostty.palette_color(15)),
   }
 }
 
@@ -12948,6 +13181,36 @@ mod tests {
     assert_eq!(app.command_palette_query(id), "");
     assert_eq!(app.command_palette_filtered_count(id), 0);
     assert_eq!(app.command_palette_filtered_selected_index(id), -1);
+  }
+
+  #[test]
+  fn theme_command_preview_updates_effective_theme_and_reverts_on_close() {
+    let _guard = ffi_test_guard();
+    let mut app = App::new();
+    let id = app.create_editor("", default_viewport(), ffi::Position { row: 0, col: 0 });
+
+    assert_eq!(app.theme_effective_name(), "default");
+    assert!(app.handle_key(id, key_char(':')));
+    assert!(app.command_palette_set_query(id, "theme base16"));
+    assert!(app.command_palette_filtered_count(id) > 0);
+    assert!(app.command_palette_select_filtered(id, 0));
+    assert_eq!(app.theme_effective_name(), "base16_default");
+
+    assert!(app.command_palette_close(id));
+    assert_eq!(app.theme_effective_name(), "default");
+  }
+
+  #[test]
+  fn theme_command_validate_commits_selected_theme() {
+    let _guard = ffi_test_guard();
+    let mut app = App::new();
+    let id = app.create_editor("", default_viewport(), ffi::Position { row: 0, col: 0 });
+
+    assert!(app.handle_key(id, key_char(':')));
+    assert!(app.command_palette_set_query(id, "theme base16"));
+    assert!(app.command_palette_select_filtered(id, 0));
+    assert!(app.command_palette_submit_filtered(id, 0));
+    assert_eq!(app.theme_effective_name(), "base16_default");
   }
 
   #[test]

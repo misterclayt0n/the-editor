@@ -537,6 +537,18 @@ impl<Ctx: DefaultContext + 'static> CommandRegistry<Ctx> {
     ));
 
     self.register(TypableCommand::new(
+      "theme",
+      &[],
+      "Preview or switch the active theme",
+      cmd_theme::<Ctx>,
+      CommandCompleter::all(completers::theme_name),
+      Signature {
+        positionals: (0, Some(1)),
+        ..Signature::DEFAULT
+      },
+    ));
+
+    self.register(TypableCommand::new(
       "log-open",
       &["open-log"],
       "Open a debug log file (messages/lsp/watch)",
@@ -950,6 +962,31 @@ fn cmd_help<Ctx: DefaultContext>(ctx: &mut Ctx, args: Args, event: CommandEvent)
   Ok(())
 }
 
+fn cmd_theme<Ctx: DefaultContext>(ctx: &mut Ctx, args: Args, event: CommandEvent) -> CommandResult {
+  match event {
+    CommandEvent::Cancel => {
+      ctx.clear_ui_theme_preview();
+      Ok(())
+    },
+    CommandEvent::Preview => {
+      if let Some(theme_name) = args.first() {
+        let _ = ctx.set_ui_theme_preview(theme_name);
+      } else {
+        ctx.clear_ui_theme_preview();
+      }
+      Ok(())
+    },
+    CommandEvent::Validate => {
+      if let Some(theme_name) = args.first() {
+        ctx.set_ui_theme(theme_name).map_err(CommandError::new)?;
+      } else {
+        ctx.push_info("theme", ctx.ui_theme_name().to_string());
+      }
+      Ok(())
+    },
+  }
+}
+
 fn cmd_log_open<Ctx: DefaultContext>(
   ctx: &mut Ctx,
   args: Args,
@@ -1226,6 +1263,7 @@ pub fn handle_command_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEve
 
   match key.key {
     Key::Escape => {
+      cancel_command_palette_preview(ctx);
       close_command_prompt_and_palette(ctx);
       ctx.request_render();
       return true;
@@ -1334,6 +1372,7 @@ pub fn handle_command_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEve
             let message = err.to_string();
             ctx.command_prompt_mut().error = Some(message.clone());
             ctx.push_error("command", message);
+            ctx.clear_ui_theme_preview();
             close_command_prompt_and_palette(ctx);
           },
         }
@@ -1372,6 +1411,7 @@ pub fn handle_command_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEve
           // Wrapped to bottom.
           palette.scroll_offset = next.saturating_sub(VISIBLE_ITEMS - 1);
         }
+        sync_command_palette_preview(ctx);
         ctx.request_render();
       }
       return true;
@@ -1397,6 +1437,7 @@ pub fn handle_command_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEve
           // Wrapped to top.
           palette.scroll_offset = 0;
         }
+        sync_command_palette_preview(ctx);
         ctx.request_render();
       }
       return true;
@@ -1536,6 +1577,54 @@ fn submit_action_palette<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool {
   }
 }
 
+fn preview_command_line<Ctx: DefaultContext>(ctx: &Ctx) -> Option<String> {
+  if !matches!(
+    ctx.command_palette().source,
+    CommandPaletteSource::CommandLine
+  ) {
+    return None;
+  }
+
+  let prompt = ctx.command_prompt_ref();
+  if prompt.input.trim().is_empty() {
+    return None;
+  }
+
+  if ctx.command_palette().prefiltered {
+    if let Some(sel) = ctx.command_palette().selected {
+      if let Some(completion) = prompt.completions.get(sel) {
+        let mut input = prompt.input.clone();
+        let start = completion.range.start.min(input.len());
+        input.replace_range(start.., &completion.text);
+        return Some(input.trim().trim_start_matches(':').to_string());
+      }
+    }
+  }
+
+  Some(prompt.input.trim().trim_start_matches(':').to_string())
+}
+
+pub fn sync_command_palette_preview<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  let Some(line) = preview_command_line(ctx) else {
+    ctx.clear_ui_theme_preview();
+    return;
+  };
+
+  let (command, args, complete_command_name) = split(&line);
+  if complete_command_name || command != "theme" {
+    ctx.clear_ui_theme_preview();
+    return;
+  }
+
+  let registry = ctx.command_registry_ref() as *const CommandRegistry<Ctx>;
+  let _ = unsafe { (&*registry).execute(ctx, command, args, CommandEvent::Preview) };
+}
+
+fn cancel_command_palette_preview<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  let registry = ctx.command_registry_ref() as *const CommandRegistry<Ctx>;
+  let _ = unsafe { (&*registry).execute(ctx, "theme", "", CommandEvent::Cancel) };
+}
+
 fn close_command_prompt_and_palette<Ctx: DefaultContext>(ctx: &mut Ctx) {
   ctx.set_mode(Mode::Normal);
   ctx.command_prompt_mut().clear();
@@ -1642,6 +1731,7 @@ pub fn update_command_palette_for_input<Ctx: DefaultContext>(ctx: &mut Ctx, inpu
       }
     }
   }
+  sync_command_palette_preview(ctx);
   ctx.request_render();
 }
 
@@ -1669,6 +1759,7 @@ pub fn update_action_palette_for_input<Ctx: DefaultContext>(ctx: &mut Ctx, input
     }
   }
 
+  ctx.clear_ui_theme_preview();
   ctx.request_render();
 }
 
@@ -1698,6 +1789,20 @@ pub mod completers {
             .get(name)
             .map(|cmd| cmd.doc.to_string()),
         }
+      })
+      .collect()
+  }
+
+  pub fn theme_name<Ctx: DefaultContext>(ctx: &Ctx, input: &str) -> Vec<Completion> {
+    let input_lower = input.to_lowercase();
+    ctx
+      .available_theme_names()
+      .into_iter()
+      .filter(|name| name.to_lowercase().contains(&input_lower))
+      .map(|name| Completion {
+        range: 0..,
+        text:  name,
+        doc:   None,
       })
       .collect()
   }

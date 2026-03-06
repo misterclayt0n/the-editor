@@ -70,6 +70,7 @@ use the_default::{
   PointerEvent,
   PointerEventOutcome,
   PointerKind,
+  ThemeCatalog,
   buffer_tabs_snapshot,
   replace_file_picker_items,
   set_file_picker_query_external,
@@ -116,7 +117,6 @@ use the_lib::{
     text_format::TextFormat,
     theme::{
       Theme,
-      base16_default_theme,
       default_theme,
     },
     visual_pos_at_char,
@@ -607,6 +607,10 @@ pub struct Ctx {
   mouse_last_primary_click:          Option<PointerClickTracker>,
   pub search_prompt:                 the_default::SearchPromptState,
   global_search:                     GlobalSearchState,
+  pub ui_theme_catalog:              ThemeCatalog,
+  pub ui_theme_name:                 String,
+  pub ui_theme_base:                 Theme,
+  pub ui_theme_preview_name:         Option<String>,
   pub ui_theme:                      Theme,
   pub ui_state:                      UiState,
   pub pending_input:                 Option<the_default::PendingInput>,
@@ -671,14 +675,28 @@ pub struct TermHardwareCursor {
   pub kind: the_lib::render::graphics::CursorKind,
 }
 
-fn select_ui_theme() -> Theme {
-  match env::var("THE_EDITOR_THEME").ok().as_deref() {
-    Some("base16") | Some("base16_default") => base16_default_theme().clone(),
-    Some("default") | None => default_theme().clone(),
-    Some(other) => {
-      eprintln!("Unknown theme '{other}', falling back to default theme.");
-      default_theme().clone()
+fn select_ui_theme(catalog: &ThemeCatalog) -> (String, Theme) {
+  match env::var("THE_EDITOR_THEME").ok() {
+    Some(theme_name) => {
+      let theme_name = theme_name.trim();
+      if let Some(theme) = catalog.load_theme(theme_name) {
+        (theme_name.to_string(), theme)
+      } else {
+        eprintln!("Unknown theme '{theme_name}', falling back to default theme.");
+        (
+          default_theme().name().to_string(),
+          catalog
+            .load_theme(default_theme().name())
+            .unwrap_or_else(|| default_theme().clone()),
+        )
+      }
     },
+    None => (
+      default_theme().name().to_string(),
+      catalog
+        .load_theme(default_theme().name())
+        .unwrap_or_else(|| default_theme().clone()),
+    ),
   }
 }
 
@@ -866,8 +884,22 @@ impl Ctx {
       editor.set_active_file_path(Some(PathBuf::from(path)));
     }
 
+    let workspace_root = file_path
+      .map(PathBuf::from)
+      .and_then(|path| {
+        let path = if path.is_absolute() {
+          path
+        } else {
+          env::current_dir().ok()?.join(path)
+        };
+        path.parent().map(|parent| parent.to_path_buf())
+      })
+      .map(|path| the_loader::find_workspace_in(path).0)
+      .unwrap_or_else(|| the_loader::find_workspace().0);
+
     // Initialize syntax loader
-    let ui_theme = select_ui_theme();
+    let ui_theme_catalog = ThemeCatalog::load(Some(workspace_root.as_path()));
+    let (ui_theme_name, ui_theme) = select_ui_theme(&ui_theme_catalog);
 
     let loader = match init_loader(&ui_theme) {
       Ok(loader) => Some(Arc::new(loader)),
@@ -903,18 +935,6 @@ impl Ctx {
     the_default::set_file_picker_wake_sender(&mut file_picker, Some(file_picker_wake_tx));
     the_default::set_file_picker_syntax_loader(&mut file_picker, loader.clone());
     let (syntax_parse_tx, syntax_parse_rx) = channel();
-    let workspace_root = file_path
-      .map(PathBuf::from)
-      .and_then(|path| {
-        let path = if path.is_absolute() {
-          path
-        } else {
-          env::current_dir().ok()?.join(path)
-        };
-        path.parent().map(|parent| parent.to_path_buf())
-      })
-      .map(|path| the_loader::find_workspace_in(path).0)
-      .unwrap_or_else(|| the_loader::find_workspace().0);
     let mut lsp_runtime_config = LspRuntimeConfig::new(workspace_root)
       .with_restart_policy(true, Duration::from_millis(250))
       .with_restart_limits(6, Duration::from_secs(30))
@@ -991,6 +1011,10 @@ impl Ctx {
       mouse_last_primary_click: None,
       search_prompt: the_default::SearchPromptState::new(),
       global_search: GlobalSearchState::default(),
+      ui_theme_catalog,
+      ui_theme_name,
+      ui_theme_base: ui_theme.clone(),
+      ui_theme_preview_name: None,
       ui_theme,
       ui_state: UiState::default(),
       pending_input: None,
@@ -1028,6 +1052,52 @@ impl Ctx {
 
   pub fn set_dispatch(&mut self, dispatch: &DefaultDispatchStatic<Ctx>) {
     self.dispatch = Some(NonNull::from(dispatch));
+  }
+
+  fn apply_effective_theme(&mut self, theme: Theme) {
+    if let Some(loader) = &self.loader {
+      loader.set_scopes(theme.scopes().to_vec());
+    }
+    self.ui_theme = theme;
+    self.invalidate_theme_render_state();
+  }
+
+  fn set_ui_theme_named(&mut self, theme_name: &str) -> Result<(), String> {
+    let theme = self
+      .ui_theme_catalog
+      .load_theme(theme_name)
+      .ok_or_else(|| format!("Could not load theme: {theme_name}"))?;
+    self.ui_theme_name = theme_name.to_string();
+    self.ui_theme_base = theme.clone();
+    self.ui_theme_preview_name = None;
+    self.apply_effective_theme(theme);
+    Ok(())
+  }
+
+  fn set_ui_theme_preview_named(&mut self, theme_name: &str) -> Result<(), String> {
+    let theme = self
+      .ui_theme_catalog
+      .load_theme(theme_name)
+      .ok_or_else(|| format!("Could not load theme: {theme_name}"))?;
+    self.ui_theme_preview_name = Some(theme_name.to_string());
+    self.apply_effective_theme(theme);
+    Ok(())
+  }
+
+  fn clear_ui_theme_preview_state(&mut self) {
+    if self.ui_theme_preview_name.take().is_some() {
+      self.apply_effective_theme(self.ui_theme_base.clone());
+    }
+  }
+
+  fn invalidate_theme_render_state(&mut self) {
+    self.highlight_cache.clear();
+    if self.editor.document().syntax().is_some() {
+      self.syntax_parse_highlight_state.mark_parsed();
+    } else {
+      self.syntax_parse_highlight_state.mark_cleared();
+    }
+    self.needs_render = true;
   }
 
   fn clear_vcs_diff(&mut self) -> bool {
@@ -5999,6 +6069,26 @@ impl the_default::DefaultContext for Ctx {
 
   fn ui_theme(&self) -> &Theme {
     &self.ui_theme
+  }
+
+  fn ui_theme_name(&self) -> &str {
+    &self.ui_theme_name
+  }
+
+  fn available_theme_names(&self) -> Vec<String> {
+    self.ui_theme_catalog.names()
+  }
+
+  fn set_ui_theme(&mut self, theme_name: &str) -> Result<(), String> {
+    self.set_ui_theme_named(theme_name)
+  }
+
+  fn set_ui_theme_preview(&mut self, theme_name: &str) -> Result<(), String> {
+    self.set_ui_theme_preview_named(theme_name)
+  }
+
+  fn clear_ui_theme_preview(&mut self) {
+    self.clear_ui_theme_preview_state();
   }
 
   fn set_file_path(&mut self, path: Option<PathBuf>) {

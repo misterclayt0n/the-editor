@@ -23,6 +23,7 @@ mod pending;
 mod search_prompt;
 mod signature_help;
 mod statusline;
+mod theme_catalog;
 
 pub use buffer_tabs::{
   BufferTabItemSnapshot,
@@ -78,6 +79,7 @@ pub use command_registry::{
   TypableCommand,
   completers,
   handle_command_prompt_key,
+  sync_command_palette_preview,
   update_action_palette_for_input,
   update_command_palette_for_input,
 };
@@ -229,6 +231,7 @@ pub use signature_help::{
   signature_help_next,
   signature_help_prev,
 };
+pub use theme_catalog::ThemeCatalog;
 pub use the_lib::messages::{
   Message,
   MessageCenter,

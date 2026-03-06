@@ -1,6 +1,8 @@
 import AppKit
+import Darwin
 import Foundation
 import SwiftUI
+import TheEditorFFIBridge
 
 struct GhosttyTerminalMetadata: Equatable {
     var seenTitle: Bool = false
@@ -99,6 +101,38 @@ private final class GhosttySurfaceCallbackContext {
     }
 }
 
+private enum GhosttyConfigSetterSymbols {
+    typealias SetRGBFn = @convention(c) (ghostty_config_t?, UInt32) -> Void
+    typealias SetPaletteFn = @convention(c) (ghostty_config_t?, UInt8, UInt32) -> Bool
+
+    private static let processHandle = dlopen(nil, RTLD_NOW)
+
+    static let setBackground = load("ghostty_config_set_background_rgb", as: SetRGBFn.self)
+    static let setForeground = load("ghostty_config_set_foreground_rgb", as: SetRGBFn.self)
+    static let setCursorColor = load("ghostty_config_set_cursor_color_rgb", as: SetRGBFn.self)
+    static let setCursorText = load("ghostty_config_set_cursor_text_rgb", as: SetRGBFn.self)
+    static let setSelectionBackground = load("ghostty_config_set_selection_background_rgb", as: SetRGBFn.self)
+    static let setSelectionForeground = load("ghostty_config_set_selection_foreground_rgb", as: SetRGBFn.self)
+    static let setPalette = load("ghostty_config_set_palette_rgb", as: SetPaletteFn.self)
+
+    static let supportsThemeMutation =
+        setBackground != nil &&
+        setForeground != nil &&
+        setCursorColor != nil &&
+        setCursorText != nil &&
+        setSelectionBackground != nil &&
+        setSelectionForeground != nil &&
+        setPalette != nil
+
+    private static func load<T>(_ symbol: String, as type: T.Type) -> T? {
+        guard let processHandle,
+              let rawSymbol = dlsym(processHandle, symbol) else {
+            return nil
+        }
+        return unsafeBitCast(rawSymbol, to: type)
+    }
+}
+
 private struct GhosttySurfaceKey: Hashable {
     let runtimeId: UInt64
     let terminalId: UInt64
@@ -110,6 +144,8 @@ final class GhosttyRuntime {
     private(set) var app: ghostty_app_t?
     private var config: ghostty_config_t?
     private var controllers: [GhosttySurfaceKey: GhosttySurfaceController] = [:]
+    private var runtimeThemeNames: [UInt64: String] = [:]
+    private var runtimeThemeSnapshots: [UInt64: GhosttyThemeSnapshot] = [:]
     private var appObservers: [NSObjectProtocol] = []
 
     private init() {
@@ -156,6 +192,25 @@ final class GhosttyRuntime {
             controllers[key]?.shutdown()
             controllers.removeValue(forKey: key)
         }
+    }
+
+    func setThemeSnapshot(_ snapshot: GhosttyThemeSnapshot, themeName: String, for runtimeId: UInt64) {
+        let previousThemeName = runtimeThemeNames[runtimeId]
+        runtimeThemeNames[runtimeId] = themeName
+        runtimeThemeSnapshots[runtimeId] = snapshot
+
+        guard previousThemeName != themeName else {
+            return
+        }
+
+        for (key, controller) in controllers where key.runtimeId == runtimeId {
+            applyThemeIfNeeded(to: controller, force: true)
+        }
+    }
+
+    func clearThemeSnapshot(for runtimeId: UInt64) {
+        runtimeThemeNames.removeValue(forKey: runtimeId)
+        runtimeThemeSnapshots.removeValue(forKey: runtimeId)
     }
 
     fileprivate func controller(for runtimeId: UInt64, terminalId: UInt64) -> GhosttySurfaceController {
@@ -231,6 +286,67 @@ final class GhosttyRuntime {
     fileprivate func tick() {
         guard let app else { return }
         ghostty_app_tick(app)
+    }
+
+    fileprivate func applyThemeIfNeeded(to controller: GhosttySurfaceController, force: Bool = false) {
+        guard let themeName = runtimeThemeNames[controller.runtimeIdForTheme],
+              let snapshot = runtimeThemeSnapshots[controller.runtimeIdForTheme],
+              let surface = controller.surfaceHandle else {
+            return
+        }
+
+        guard force || controller.lastAppliedThemeName != themeName else {
+            return
+        }
+
+        guard let baseConfig = config,
+              let themedConfig = ghostty_config_clone(baseConfig) else {
+            return
+        }
+        defer { ghostty_config_free(themedConfig) }
+
+        applyThemeSnapshot(snapshot, to: themedConfig)
+        ghostty_config_finalize(themedConfig)
+        ghostty_surface_update_config(surface, themedConfig)
+        controller.lastAppliedThemeName = themeName
+    }
+
+    private func applyThemeSnapshot(_ snapshot: GhosttyThemeSnapshot, to config: ghostty_config_t?) {
+        guard let config else { return }
+        guard GhosttyConfigSetterSymbols.supportsThemeMutation else {
+            if DiagnosticsDebugLog.enabled {
+                DiagnosticsDebugLog.logChanged(
+                    key: "ghostty.theme.mutation",
+                    value: "supported=0"
+                )
+            }
+            return
+        }
+
+        if let rgb = snapshot.background.rgbValue {
+            GhosttyConfigSetterSymbols.setBackground?(config, rgb)
+        }
+        if let rgb = snapshot.foreground.rgbValue {
+            GhosttyConfigSetterSymbols.setForeground?(config, rgb)
+        }
+        if let rgb = snapshot.cursor_color.rgbValue {
+            GhosttyConfigSetterSymbols.setCursorColor?(config, rgb)
+        }
+        if let rgb = snapshot.cursor_text.rgbValue {
+            GhosttyConfigSetterSymbols.setCursorText?(config, rgb)
+        }
+        if let rgb = snapshot.selection_background.rgbValue {
+            GhosttyConfigSetterSymbols.setSelectionBackground?(config, rgb)
+        }
+        if let rgb = snapshot.selection_foreground.rgbValue {
+            GhosttyConfigSetterSymbols.setSelectionForeground?(config, rgb)
+        }
+
+        for index in 0..<16 {
+            if let rgb = snapshot.paletteColor(at: index)?.rgbValue {
+                _ = GhosttyConfigSetterSymbols.setPalette?(config, UInt8(index), rgb)
+            }
+        }
     }
 
     private func initialize() {
@@ -366,6 +482,39 @@ final class GhosttyRuntime {
     }
 }
 
+private extension OptionalColor {
+    var rgbValue: UInt32? {
+        guard has_value, color.kind == 2 else {
+            return nil
+        }
+        return color.value
+    }
+}
+
+private extension GhosttyThemeSnapshot {
+    func paletteColor(at index: Int) -> OptionalColor? {
+        switch index {
+        case 0: return palette0
+        case 1: return palette1
+        case 2: return palette2
+        case 3: return palette3
+        case 4: return palette4
+        case 5: return palette5
+        case 6: return palette6
+        case 7: return palette7
+        case 8: return palette8
+        case 9: return palette9
+        case 10: return palette10
+        case 11: return palette11
+        case 12: return palette12
+        case 13: return palette13
+        case 14: return palette14
+        case 15: return palette15
+        default: return nil
+        }
+    }
+}
+
 private final class GhosttySurfaceController {
     private let runtimeId: UInt64
     private let terminalId: UInt64
@@ -382,6 +531,7 @@ private final class GhosttySurfaceController {
     private var lastColorScheme: ghostty_color_scheme_e?
     private var surfaceCallbackContext: Unmanaged<GhosttySurfaceCallbackContext>?
     private var metadata = GhosttyTerminalMetadata()
+    fileprivate var lastAppliedThemeName: String?
 
     init(runtimeId: UInt64, terminalId: UInt64, runtime: GhosttyRuntime) {
         self.runtimeId = runtimeId
@@ -402,6 +552,10 @@ private final class GhosttySurfaceController {
 
     fileprivate var terminalIdForDiagnostics: UInt64 {
         terminalId
+    }
+
+    fileprivate var runtimeIdForTheme: UInt64 {
+        runtimeId
     }
 
     fileprivate var mountedView: GhosttySurfaceHostView {
@@ -784,6 +938,7 @@ private final class GhosttySurfaceController {
         }
 
         surface = created
+        lastAppliedThemeName = nil
         if DiagnosticsDebugLog.enabled {
             DiagnosticsDebugLog.log(
                 "ghostty.surface.created runtime=\(runtimeId) terminal=\(terminalId)"
@@ -793,6 +948,7 @@ private final class GhosttySurfaceController {
         updateSurfaceSize()
         ghostty_surface_set_focus(created, focused)
         applyColorScheme(hostedView.currentColorScheme())
+        runtime.applyThemeIfNeeded(to: self, force: true)
         ghostty_surface_refresh(created)
     }
 
@@ -807,6 +963,7 @@ private final class GhosttySurfaceController {
         }
         let callbackContext = surfaceCallbackContext
         surfaceCallbackContext = nil
+        lastAppliedThemeName = nil
 
         ghostty_surface_set_focus(surface, false)
         ghostty_surface_free(surface)

@@ -7,6 +7,12 @@ enum EditorNamedCommand: String, CaseIterable {
     case openFilePicker = "file_picker"
     case openCommandPalette = "command_palette"
     case toggleFileTree = "file_explorer"
+    case splitPaneDown = "pane_split_down"
+    case splitPaneRight = "pane_split_right"
+    case focusPaneLeft = "pane_focus_left"
+    case focusPaneRight = "pane_focus_right"
+    case focusPaneUp = "pane_focus_up"
+    case focusPaneDown = "pane_focus_down"
     case openTerminal = "terminal_open"
     case closeTerminal = "terminal_close"
     case toggleLastTerminal = "terminal_toggle_last"
@@ -25,6 +31,18 @@ enum EditorNamedCommand: String, CaseIterable {
             return "Open Command Palette"
         case .toggleFileTree:
             return "Toggle File Tree"
+        case .splitPaneDown:
+            return "Split Down"
+        case .splitPaneRight:
+            return "Split Right"
+        case .focusPaneLeft:
+            return "Focus Left Split"
+        case .focusPaneRight:
+            return "Focus Right Split"
+        case .focusPaneUp:
+            return "Focus Upper Split"
+        case .focusPaneDown:
+            return "Focus Lower Split"
         case .openTerminal:
             return "New Terminal"
         case .closeTerminal:
@@ -50,6 +68,18 @@ enum EditorNamedCommand: String, CaseIterable {
             return "p"
         case .toggleFileTree:
             return "e"
+        case .splitPaneDown:
+            return "d"
+        case .splitPaneRight:
+            return "d"
+        case .focusPaneLeft:
+            return .leftArrow
+        case .focusPaneRight:
+            return .rightArrow
+        case .focusPaneUp:
+            return .upArrow
+        case .focusPaneDown:
+            return .downArrow
         case .openTerminal:
             return "t"
         case .closeTerminal:
@@ -75,6 +105,12 @@ enum EditorNamedCommand: String, CaseIterable {
             return "p"
         case .toggleFileTree:
             return "e"
+        case .splitPaneDown:
+            return "d"
+        case .splitPaneRight:
+            return "d"
+        case .focusPaneLeft, .focusPaneRight, .focusPaneUp, .focusPaneDown:
+            return ""
         case .openTerminal:
             return "t"
         case .closeTerminal:
@@ -100,6 +136,12 @@ enum EditorNamedCommand: String, CaseIterable {
             return [.command, .shift]
         case .toggleFileTree:
             return [.command]
+        case .splitPaneDown:
+            return [.command]
+        case .splitPaneRight:
+            return [.command, .shift]
+        case .focusPaneLeft, .focusPaneRight, .focusPaneUp, .focusPaneDown:
+            return [.command, .option]
         case .openTerminal:
             return [.command, .option]
         case .closeTerminal:
@@ -125,6 +167,12 @@ enum EditorNamedCommand: String, CaseIterable {
             return [.command, .shift]
         case .toggleFileTree:
             return [.command]
+        case .splitPaneDown:
+            return [.command]
+        case .splitPaneRight:
+            return [.command, .shift]
+        case .focusPaneLeft, .focusPaneRight, .focusPaneUp, .focusPaneDown:
+            return [.command, .option]
         case .openTerminal:
             return [.command, .option]
         case .closeTerminal:
@@ -161,6 +209,14 @@ enum EditorNamedCommand: String, CaseIterable {
         switch self {
         case .toggleLastTerminal, .openGlobalTerminalSwitcher:
             return event.keyCode == 50
+        case .focusPaneLeft:
+            return event.keyCode == 123
+        case .focusPaneRight:
+            return event.keyCode == 124
+        case .focusPaneDown:
+            return event.keyCode == 125
+        case .focusPaneUp:
+            return event.keyCode == 126
         default:
             return false
         }
@@ -525,6 +581,16 @@ struct EditorAppCommands: Commands {
             tabSelectionButton(7)
             tabSelectionButton(8)
             tabSelectionButton(9)
+        }
+
+        CommandMenu("Pane") {
+            commandButton(.splitPaneDown)
+            commandButton(.splitPaneRight)
+            Divider()
+            commandButton(.focusPaneLeft)
+            commandButton(.focusPaneRight)
+            commandButton(.focusPaneUp)
+            commandButton(.focusPaneDown)
         }
 
         CommandMenu("Terminal") {

@@ -225,7 +225,9 @@ use the_lib::{
     Selection,
   },
   split_tree::{
+    PaneDirection,
     PaneId,
+    SplitAxis,
     SplitNodeId,
   },
   syntax::{
@@ -1242,10 +1244,28 @@ impl SplitSeparator {
   }
 }
 
-fn split_axis_to_u8(axis: the_lib::split_tree::SplitAxis) -> u8 {
+fn split_axis_to_u8(axis: SplitAxis) -> u8 {
   match axis {
-    the_lib::split_tree::SplitAxis::Vertical => 0,
-    the_lib::split_tree::SplitAxis::Horizontal => 1,
+    SplitAxis::Vertical => 0,
+    SplitAxis::Horizontal => 1,
+  }
+}
+
+fn split_axis_from_u8(axis: u8) -> Option<SplitAxis> {
+  match axis {
+    0 => Some(SplitAxis::Vertical),
+    1 => Some(SplitAxis::Horizontal),
+    _ => None,
+  }
+}
+
+fn pane_direction_from_u8(direction: u8) -> Option<PaneDirection> {
+  match direction {
+    0 => Some(PaneDirection::Left),
+    1 => Some(PaneDirection::Right),
+    2 => Some(PaneDirection::Up),
+    3 => Some(PaneDirection::Down),
+    _ => None,
   }
 }
 
@@ -4949,6 +4969,46 @@ impl App {
         }
       })
       .unwrap_or_else(SplitSeparator::empty)
+  }
+
+  pub fn split_active_pane(&mut self, id: ffi::EditorId, axis: u8) -> bool {
+    if self.activate(id).is_none() {
+      return false;
+    }
+    let Some(axis) = split_axis_from_u8(axis) else {
+      return false;
+    };
+    let Some(editor_id) = self.active_editor else {
+      return false;
+    };
+    let split = {
+      let editor = self.active_editor_mut();
+      editor.split_active_pane(axis)
+    };
+    if split && let Some(state) = self.states.get_mut(&editor_id) {
+      state.needs_render = true;
+    }
+    split
+  }
+
+  pub fn jump_active_pane(&mut self, id: ffi::EditorId, direction: u8) -> bool {
+    if self.activate(id).is_none() {
+      return false;
+    }
+    let Some(direction) = pane_direction_from_u8(direction) else {
+      return false;
+    };
+    let Some(editor_id) = self.active_editor else {
+      return false;
+    };
+    let jumped = {
+      let editor = self.active_editor_mut();
+      editor.jump_active_pane(direction)
+    };
+    if jumped && let Some(state) = self.states.get_mut(&editor_id) {
+      state.needs_render = true;
+    }
+    jumped
   }
 
   pub fn resize_split(&mut self, id: ffi::EditorId, split_id: u64, x: u16, y: u16) -> bool {
@@ -11731,6 +11791,8 @@ mod ffi {
     fn cursor_ids(self: &App, id: EditorId) -> Vec<u64>;
     fn split_separator_count(self: &mut App, id: EditorId) -> usize;
     fn split_separator_at(self: &mut App, id: EditorId, index: usize) -> SplitSeparator;
+    fn split_active_pane(self: &mut App, id: EditorId, axis: u8) -> bool;
+    fn jump_active_pane(self: &mut App, id: EditorId, direction: u8) -> bool;
     fn resize_split(self: &mut App, id: EditorId, split_id: u64, x: u16, y: u16) -> bool;
     fn terminal_surface_count(self: &mut App, id: EditorId) -> usize;
     fn terminal_surface_at(self: &mut App, id: EditorId, index: usize) -> TerminalSurfaceSnapshot;
@@ -12592,6 +12654,23 @@ mod tests {
     assert_eq!(pane.pane_kind(), 1);
     assert_eq!(pane.terminal_id(), terminal_id.get().get() as u64);
     assert_eq!(pane.plan().line_count(), 0);
+  }
+
+  #[test]
+  fn split_and_jump_active_pane_through_ffi() {
+    let _guard = ffi_test_guard();
+    let mut app = App::new();
+    let id = app.create_editor("hello", default_viewport(), ffi::Position { row: 0, col: 0 });
+
+    assert!(app.split_active_pane(id, 0));
+    let frame = app.frame_render_plan(id);
+    assert_eq!(frame.pane_count(), 2);
+    let active_after_split = frame.active_pane_id();
+
+    assert!(app.jump_active_pane(id, 0));
+    let frame = app.frame_render_plan(id);
+    assert_eq!(frame.pane_count(), 2);
+    assert_ne!(frame.active_pane_id(), active_after_split);
   }
 
   #[test]

@@ -58,6 +58,20 @@ final class EditorModel: ObservableObject {
         case terminal
     }
 
+    private enum PaneFocusDirection: UInt8 {
+        case left = 0
+        case right = 1
+        case up = 2
+        case down = 3
+    }
+
+    private enum PaneSplitAxis: UInt8 {
+        // Vertical creates a right-hand pane (like :vsplit).
+        case vertical = 0
+        // Horizontal creates a pane below (like :hsplit).
+        case horizontal = 1
+    }
+
     private struct PaneSurfaceSnapshot: Equatable {
         let paneId: UInt64
         let kind: PaneSurfaceKind
@@ -370,6 +384,24 @@ final class EditorModel: ObservableObject {
     }
 
     @discardableResult
+    private func splitActivePane(axis: PaneSplitAxis) -> Bool {
+        guard app.split_active_pane(editorId, axis.rawValue) else {
+            return false
+        }
+        refresh(trigger: "pane_split")
+        return true
+    }
+
+    @discardableResult
+    private func focusPane(direction: PaneFocusDirection) -> Bool {
+        guard app.jump_active_pane(editorId, direction.rawValue) else {
+            return false
+        }
+        refresh(trigger: "pane_focus")
+        return true
+    }
+
+    @discardableResult
     func openTerminalInActivePane() -> Bool {
         guard app.open_terminal_in_active_pane(editorId) else {
             return false
@@ -525,6 +557,18 @@ final class EditorModel: ObservableObject {
             return openNativeUntitledTab()
         case .closeSurface:
             return closeSurface()
+        case .splitPaneDown:
+            return splitActivePane(axis: .horizontal)
+        case .splitPaneRight:
+            return splitActivePane(axis: .vertical)
+        case .focusPaneLeft:
+            return focusPane(direction: .left)
+        case .focusPaneRight:
+            return focusPane(direction: .right)
+        case .focusPaneUp:
+            return focusPane(direction: .up)
+        case .focusPaneDown:
+            return focusPane(direction: .down)
         case .toggleLastTerminal:
             return toggleLastTerminalSurface()
         case .openGlobalTerminalSwitcher:

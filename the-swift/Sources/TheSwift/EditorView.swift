@@ -10,6 +10,9 @@ struct EditorView: View {
     @ObservedObject private var globalTerminalSwitcher = GlobalTerminalSwitcherController.shared
     private let windowRoute: EditorWindowRoute?
     @State private var columnVisibility: NavigationSplitViewVisibility = .detailOnly
+    @SceneStorage("surfaceRailVisible") private var surfaceRailVisible = false
+
+    private static let surfaceRailWidth: CGFloat = 248
 
     private struct CursorPickState {
         let remove: Bool
@@ -29,11 +32,15 @@ struct EditorView: View {
     var body: some View {
         let fileTreeSnapshot = model.fileTreeSnapshot
         let editorBackgroundColor = model.editorBackgroundColor()
+        let surfaceRailSnapshot = model.surfaceRailSnapshot()
 
         NavigationSplitView(columnVisibility: $columnVisibility) {
             sidebar(snapshot: fileTreeSnapshot)
         } detail: {
-            detailContent(editorBackgroundColor: editorBackgroundColor)
+            detailContent(
+                editorBackgroundColor: editorBackgroundColor,
+                surfaceRailSnapshot: surfaceRailSnapshot
+            )
         }
         .navigationTitle(model.navigationTitle)
         .toolbarBackground(.hidden, for: .windowToolbar)
@@ -47,6 +54,13 @@ struct EditorView: View {
                         EditorToolbarVCS(snapshot: snap)
                     }
                     EditorToolbarTrailing(snapshot: snap, pendingKeys: model.pendingKeys)
+                    Button {
+                        surfaceRailVisible.toggle()
+                    } label: {
+                        Image(systemName: "sidebar.right")
+                    }
+                    .help("Toggle Surface Rail")
+                    .accessibilityLabel("Toggle Surface Rail")
                 }
             }
         }
@@ -103,16 +117,35 @@ struct EditorView: View {
     }
 
     @ViewBuilder
-    private func detailContent(editorBackgroundColor: SwiftUI.Color) -> some View {
-        VStack(spacing: 0) {
-            GeometryReader { contentProxy in
-                detailGeometryContent(
-                    contentProxy: contentProxy,
-                    editorBackgroundColor: editorBackgroundColor
+    private func detailContent(
+        editorBackgroundColor: SwiftUI.Color,
+        surfaceRailSnapshot: SurfaceRailSnapshot
+    ) -> some View {
+        HStack(spacing: 0) {
+            VStack(spacing: 0) {
+                GeometryReader { contentProxy in
+                    detailGeometryContent(
+                        contentProxy: contentProxy,
+                        editorBackgroundColor: editorBackgroundColor
+                    )
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            if surfaceRailVisible {
+                SurfaceRailView(
+                    snapshot: surfaceRailSnapshot,
+                    onSelectBuffer: { bufferIndex in
+                        model.selectBufferTab(bufferIndex: bufferIndex)
+                    },
+                    onSelectTerminal: { terminalId in
+                        _ = model.focusTerminalSurface(terminalId: terminalId)
+                    }
                 )
+                .frame(width: Self.surfaceRailWidth)
+                .transition(.move(edge: .trailing))
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(editorBackgroundColor)
     }
 

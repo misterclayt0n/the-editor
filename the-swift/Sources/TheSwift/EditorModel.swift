@@ -861,6 +861,34 @@ final class EditorModel: ObservableObject {
         }
     }
 
+    func surfaceRailSnapshot() -> SurfaceRailSnapshot {
+        let bufferItems = surfaceRailBufferItems()
+        let terminalItems = surfaceRailTerminalItems()
+        var sections: [SurfaceRailSectionSnapshot] = []
+
+        if !bufferItems.isEmpty {
+            sections.append(
+                SurfaceRailSectionSnapshot(
+                    kind: .buffer,
+                    title: "Buffers",
+                    items: bufferItems
+                )
+            )
+        }
+
+        if !terminalItems.isEmpty {
+            sections.append(
+                SurfaceRailSectionSnapshot(
+                    kind: .terminal,
+                    title: "Terminals",
+                    items: terminalItems
+                )
+            )
+        }
+
+        return SurfaceRailSnapshot(sections: sections)
+    }
+
     @discardableResult
     func focusTerminalSurface(terminalId: UInt64) -> Bool {
         if let pane = terminalPanes.first(where: { $0.terminalId == terminalId }) {
@@ -1796,6 +1824,76 @@ final class EditorModel: ObservableObject {
         guard let path, !path.isEmpty else { return nil }
         let value = URL(fileURLWithPath: path).lastPathComponent
         return value.isEmpty ? nil : value
+    }
+
+    private func surfaceRailBufferItems() -> [SurfaceRailItemSnapshot] {
+        guard let snapshot = bufferTabsSnapshot else {
+            return []
+        }
+
+        return snapshot.tabs.map { tab in
+            SurfaceRailItemSnapshot(
+                id: "buffer:\(tab.bufferId)",
+                kind: .buffer,
+                title: normalizeFallbackTitle(tab.title),
+                subtitle: surfaceRailBufferSubtitle(for: tab),
+                isActive: !isActivePaneTerminal && tab.isActive,
+                isModified: tab.modified,
+                statusText: nil,
+                bufferIndex: tab.bufferIndex,
+                terminalId: nil
+            )
+        }
+    }
+
+    private func surfaceRailTerminalItems() -> [SurfaceRailItemSnapshot] {
+        guard !terminalSurfaces.isEmpty else {
+            return []
+        }
+
+        let sortedSurfaces = terminalSurfaces.sorted { lhs, rhs in
+            if lhs.isActive != rhs.isActive {
+                return lhs.isActive && !rhs.isActive
+            }
+            if lhs.isAttached != rhs.isAttached {
+                return lhs.isAttached && !rhs.isAttached
+            }
+            return lhs.terminalId < rhs.terminalId
+        }
+
+        return sortedSurfaces.map { surface in
+            let metadata = GhosttyRuntime.shared.terminalMetadata(runtimeId: runtimeInstanceId, for: surface.terminalId)
+            return SurfaceRailItemSnapshot(
+                id: "terminal:\(surface.terminalId)",
+                kind: .terminal,
+                title: terminalPresentationTitle(from: metadata),
+                subtitle: terminalSwitcherSubtitle(for: surface, metadata: metadata),
+                isActive: surface.isActive,
+                isModified: false,
+                statusText: surface.isAttached ? nil : "DETACHED",
+                bufferIndex: nil,
+                terminalId: surface.terminalId
+            )
+        }
+    }
+
+    private func surfaceRailBufferSubtitle(for tab: BufferTabItemSnapshot) -> String? {
+        let hint = tab.directoryHint?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !hint.isEmpty {
+            return hint
+        }
+
+        guard let filePath = tab.filePath?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !filePath.isEmpty else {
+            return nil
+        }
+
+        let directory = URL(fileURLWithPath: filePath).deletingLastPathComponent().path
+        guard !directory.isEmpty, directory != "/" else {
+            return nil
+        }
+
+        return (directory as NSString).abbreviatingWithTildeInPath
     }
 
     private func normalizeFallbackTitle(_ title: String) -> String {

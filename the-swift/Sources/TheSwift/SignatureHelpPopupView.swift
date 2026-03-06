@@ -5,6 +5,7 @@ import class TheEditorFFIBridge.App
 struct SignatureHelpPopupView: View {
     let snapshot: SignatureHelpSnapshot
     let cursorOrigin: CGPoint
+    let theme: PopupChromeTheme
     let cellSize: CGSize
     let containerSize: CGSize
     let languageHint: String
@@ -22,7 +23,7 @@ struct SignatureHelpPopupView: View {
 
             if hasDocs {
                 Divider()
-                    .opacity(0.4)
+                    .background(theme.panelBorderColor.opacity(0.4))
 
                 docsView(width: placement.width, maxHeight: placement.height - signatureHeight)
             }
@@ -30,7 +31,7 @@ struct SignatureHelpPopupView: View {
         .frame(width: placement.width)
         .fixedSize(horizontal: false, vertical: true)
         .frame(maxHeight: placement.height)
-        .glassBackground(cornerRadius: cornerRadius)
+        .popupBackground(theme: theme, cornerRadius: cornerRadius)
         .offset(x: placement.x, y: placement.y)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .onDisappear {
@@ -98,7 +99,8 @@ struct SignatureHelpPopupView: View {
             docs: signatureMarkdown,
             width: width,
             height: signatureHeight,
-            languageHint: languageHint
+            languageHint: languageHint,
+            theme: theme.docsTheme
         )
         .frame(width: width, height: signatureHeight)
         .clipped()
@@ -113,7 +115,8 @@ struct SignatureHelpPopupView: View {
                 docs: text,
                 width: width,
                 height: height,
-                languageHint: languageHint
+                languageHint: languageHint,
+                theme: theme.docsTheme
             )
             .frame(width: width, height: height)
         }

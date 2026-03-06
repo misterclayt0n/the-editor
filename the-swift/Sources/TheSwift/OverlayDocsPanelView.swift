@@ -5,15 +5,17 @@ struct OverlayDocsPanelView: View {
     let width: CGFloat
     let height: CGFloat
     let languageHint: String
+    let theme: PopupChromeTheme
 
     var body: some View {
         CompletionDocsTextView(
             docs: docs,
             width: width,
             height: height,
-            languageHint: languageHint
+            languageHint: languageHint,
+            theme: theme.docsTheme
         )
         .frame(width: width, height: height)
-        .glassBackground(cornerRadius: 8)
+        .popupBackground(theme: theme, cornerRadius: 8)
     }
 }

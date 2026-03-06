@@ -5,6 +5,7 @@ import class TheEditorFFIBridge.App
 struct HoverPopupView: View {
     let snapshot: HoverSnapshot
     let cursorOrigin: CGPoint
+    let theme: PopupChromeTheme
     let cellSize: CGSize
     let containerSize: CGSize
     let languageHint: String
@@ -23,7 +24,8 @@ struct HoverPopupView: View {
                 docs: snapshot.docsText,
                 width: placement.width,
                 height: placement.height,
-                languageHint: languageHint
+                languageHint: languageHint,
+                theme: theme
             )
             .offset(x: placement.x, y: placement.y)
         }

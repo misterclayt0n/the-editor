@@ -6,6 +6,7 @@ import class TheEditorFFIBridge.App
 struct CompletionPopupView: View {
     let snapshot: CompletionSnapshot
     let cursorOrigin: CGPoint
+    let theme: PopupChromeTheme
     let cellSize: CGSize
     let containerSize: CGSize
     let languageHint: String
@@ -288,7 +289,7 @@ struct CompletionPopupView: View {
             }
             .frame(width: width, height: height)
             .scrollIndicators(.visible)
-            .glassBackground(cornerRadius: 8)
+            .popupBackground(theme: theme, cornerRadius: 8)
             .onChange(of: snapshot.selectedIndex) { newIndex in
                 guard let index = newIndex else { return }
                 withAnimation(.none) {
@@ -313,7 +314,7 @@ struct CompletionPopupView: View {
             // Kind icon badge.
             if reserveIconColumn {
                 if let icon = item.kindIcon, !icon.isEmpty {
-                    let color = item.kindColor ?? Color(nsColor: .tertiaryLabelColor)
+                    let color = item.kindColor ?? theme.secondaryTextColor
                     Text(icon)
                         .font(FontLoader.uiFont(size: 10).weight(.bold))
                         .foregroundColor(color)
@@ -330,7 +331,7 @@ struct CompletionPopupView: View {
             // Label.
             Text(item.label)
                 .font(FontLoader.uiFont(size: 13).weight(.medium))
-                .foregroundStyle(.primary)
+                .foregroundColor(isSelected ? theme.selectedTextColor : theme.primaryTextColor)
                 .lineLimit(1)
                 .truncationMode(.tail)
                 .layoutPriority(1)
@@ -341,7 +342,7 @@ struct CompletionPopupView: View {
             if let detail = item.detail, !detail.isEmpty {
                 Text(detail)
                     .font(FontLoader.uiFont(size: 12))
-                    .foregroundStyle(.tertiary)
+                    .foregroundColor(isSelected ? theme.selectedTextColor.opacity(0.78) : theme.secondaryTextColor)
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .layoutPriority(0)
@@ -356,8 +357,8 @@ struct CompletionPopupView: View {
             RoundedRectangle(cornerRadius: 5)
                 .fill(
                     isSelected
-                        ? Color.accentColor.opacity(0.22)
-                        : (isHovered ? Color.white.opacity(0.08) : Color.clear)
+                        ? theme.selectedBackgroundColor
+                        : (isHovered ? theme.hoveredBackgroundColor : Color.clear)
                 )
                 .padding(.horizontal, 4)
         )
@@ -371,7 +372,8 @@ struct CompletionPopupView: View {
             docs: text,
             width: width,
             height: height,
-            languageHint: languageHint
+            languageHint: languageHint,
+            theme: theme
         )
     }
 }
@@ -381,23 +383,19 @@ struct CompletionDocsTextView: View {
     let width: CGFloat
     let height: CGFloat
     let languageHint: String
-
-    @Environment(\.colorScheme) private var colorScheme
+    let theme: CompletionDocsTheme
     @StateObject private var viewModel = CompletionDocsViewModel()
 
     private var contentWidth: CGFloat {
         max(1, width - 20)
     }
 
-    private var theme: CompletionDocsTheme {
-        CompletionDocsTheme(colorScheme: colorScheme)
-    }
-
     var body: some View {
         CompletionDocsAppKitTextView(
             attributedText: viewModel.attributedText,
             isLoading: viewModel.isLoading,
-            renderKey: viewModel.renderKey
+            renderKey: viewModel.renderKey,
+            theme: theme
         )
         .onAppear {
             viewModel.update(docs: docs, contentWidth: contentWidth, theme: theme, languageHint: languageHint)
@@ -408,11 +406,11 @@ struct CompletionDocsTextView: View {
         .onChange(of: contentWidth) { nextWidth in
             viewModel.update(docs: docs, contentWidth: nextWidth, theme: theme, languageHint: languageHint)
         }
-        .onChange(of: colorScheme) { _ in
-            viewModel.update(docs: docs, contentWidth: contentWidth, theme: theme, languageHint: languageHint)
-        }
         .onChange(of: languageHint) { nextHint in
             viewModel.update(docs: docs, contentWidth: contentWidth, theme: theme, languageHint: nextHint)
+        }
+        .onChange(of: theme.cacheKey) { _ in
+            viewModel.update(docs: docs, contentWidth: contentWidth, theme: theme, languageHint: languageHint)
         }
     }
 }
@@ -421,6 +419,7 @@ private struct CompletionDocsAppKitTextView: NSViewRepresentable {
     let attributedText: NSAttributedString
     let isLoading: Bool
     let renderKey: String
+    let theme: CompletionDocsTheme
 
     final class CompletionDocsScrollView: NSScrollView {
         override func mouseUp(with event: NSEvent) {
@@ -522,6 +521,7 @@ private struct CompletionDocsAppKitTextView: NSViewRepresentable {
     final class Coordinator: NSObject, NSTextViewDelegate {
         var lastRenderKey: String?
         var lastLoadingState = false
+        var lastThemeKey: String?
         private var keyMonitor: Any?
 
         deinit {
@@ -604,10 +604,7 @@ private struct CompletionDocsAppKitTextView: NSViewRepresentable {
         textView.textContainer?.widthTracksTextView = true
         textView.textContainer?.heightTracksTextView = false
         textView.textContainer?.lineBreakMode = .byWordWrapping
-        textView.linkTextAttributes = [
-            .foregroundColor: NSColor.systemBlue,
-            .underlineStyle: NSUnderlineStyle.single.rawValue,
-        ]
+        applyTheme(to: textView, coordinator: context.coordinator)
 
         scrollView.documentView = textView
         scrollView.verticalScroller?.controlSize = .small
@@ -622,6 +619,7 @@ private struct CompletionDocsAppKitTextView: NSViewRepresentable {
             return
         }
 
+        applyTheme(to: textView, coordinator: context.coordinator)
         let shouldResetScroll =
             context.coordinator.lastRenderKey != nil &&
             context.coordinator.lastRenderKey != renderKey
@@ -641,12 +639,23 @@ private struct CompletionDocsAppKitTextView: NSViewRepresentable {
         coordinator.lastLoadingState = isLoading
 
         if isLoading && attributedText.length == 0 {
-            textView.textStorage?.setAttributedString(CompletionDocsRenderer.loadingPlaceholder)
+            textView.textStorage?.setAttributedString(CompletionDocsRenderer.loadingPlaceholder(theme: theme))
             textView.window?.invalidateCursorRects(for: textView)
             return
         }
         textView.textStorage?.setAttributedString(attributedText)
         textView.window?.invalidateCursorRects(for: textView)
+    }
+
+    private func applyTheme(to textView: NSTextView, coordinator: Coordinator) {
+        if coordinator.lastThemeKey == theme.cacheKey {
+            return
+        }
+        coordinator.lastThemeKey = theme.cacheKey
+        textView.linkTextAttributes = [
+            .foregroundColor: theme.linkColor,
+            .underlineStyle: NSUnderlineStyle.single.rawValue,
+        ]
     }
 }
 
@@ -767,18 +776,57 @@ private final class CompletionDocsLayoutCacheEntry: NSObject {
     }
 }
 
-private struct CompletionDocsTheme: Hashable {
-    let colorScheme: ColorScheme
+struct PopupChromeTheme: Hashable {
+    let panelBackground: NSColor
+    let panelBorder: NSColor
+    let primaryText: NSColor
+    let secondaryText: NSColor
+    let selectedText: NSColor
+    let selectedBackground: NSColor
+    let hoveredBackground: NSColor
+    let accent: NSColor
+    let docsTheme: CompletionDocsTheme
+
+    var panelBackgroundColor: Color { Color(nsColor: panelBackground) }
+    var panelBorderColor: Color { Color(nsColor: panelBorder) }
+    var primaryTextColor: Color { Color(nsColor: primaryText) }
+    var secondaryTextColor: Color { Color(nsColor: secondaryText) }
+    var selectedTextColor: Color { Color(nsColor: selectedText) }
+    var selectedBackgroundColor: Color { Color(nsColor: selectedBackground) }
+    var hoveredBackgroundColor: Color { Color(nsColor: hoveredBackground) }
+    var accentColor: Color { Color(nsColor: accent) }
+}
+
+struct CompletionDocsTheme: Hashable {
+    let panelBackground: NSColor
+    let panelBorder: NSColor
+    let bodyColor: NSColor
+    let headingColor: NSColor
+    let linkColor: NSColor
+    let codeColor: NSColor
+    let keywordColor: NSColor
+    let typeColor: NSColor
+    let numberColor: NSColor
+    let stringColor: NSColor
+    let commentColor: NSColor
+    let ansiPalette: [NSColor?]
 
     var cacheKey: String {
-        switch colorScheme {
-        case .dark:
-            return "dark"
-        case .light:
-            return "light"
-        @unknown default:
-            return "unknown"
-        }
+        (
+            [
+                panelBackground.popupThemeKeyFragment,
+                panelBorder.popupThemeKeyFragment,
+                bodyColor.popupThemeKeyFragment,
+                headingColor.popupThemeKeyFragment,
+                linkColor.popupThemeKeyFragment,
+                codeColor.popupThemeKeyFragment,
+                keywordColor.popupThemeKeyFragment,
+                typeColor.popupThemeKeyFragment,
+                numberColor.popupThemeKeyFragment,
+                stringColor.popupThemeKeyFragment,
+                commentColor.popupThemeKeyFragment,
+            ] + ansiPalette.map { $0?.popupThemeKeyFragment ?? "none" }
+        ).joined(separator: "|")
     }
 
     var baseFont: NSFont {
@@ -787,60 +835,6 @@ private struct CompletionDocsTheme: Hashable {
 
     var codeFont: NSFont {
         FontLoader.bufferNSFont(size: 12)
-    }
-
-    var bodyColor: NSColor {
-        colorScheme == .dark
-            ? NSColor(calibratedRed: 0.78, green: 0.80, blue: 0.88, alpha: 1)
-            : NSColor.secondaryLabelColor
-    }
-
-    var headingColor: NSColor {
-        colorScheme == .dark
-            ? NSColor(calibratedRed: 0.88, green: 0.89, blue: 0.95, alpha: 1)
-            : NSColor.labelColor
-    }
-
-    var linkColor: NSColor {
-        colorScheme == .dark
-            ? NSColor(calibratedRed: 0.58, green: 0.72, blue: 1.00, alpha: 1)
-            : NSColor.systemBlue
-    }
-
-    var codeColor: NSColor {
-        colorScheme == .dark
-            ? NSColor(calibratedRed: 0.73, green: 0.75, blue: 0.86, alpha: 1)
-            : NSColor.labelColor
-    }
-
-    var keywordColor: NSColor {
-        colorScheme == .dark
-            ? NSColor(calibratedRed: 0.80, green: 0.66, blue: 0.98, alpha: 1)
-            : NSColor.systemPurple
-    }
-
-    var typeColor: NSColor {
-        colorScheme == .dark
-            ? NSColor(calibratedRed: 0.59, green: 0.75, blue: 1.00, alpha: 1)
-            : NSColor.systemBlue
-    }
-
-    var numberColor: NSColor {
-        colorScheme == .dark
-            ? NSColor(calibratedRed: 0.95, green: 0.73, blue: 0.46, alpha: 1)
-            : NSColor.systemOrange
-    }
-
-    var stringColor: NSColor {
-        colorScheme == .dark
-            ? NSColor(calibratedRed: 0.60, green: 0.84, blue: 0.65, alpha: 1)
-            : NSColor.systemGreen
-    }
-
-    var commentColor: NSColor {
-        colorScheme == .dark
-            ? NSColor(calibratedRed: 0.50, green: 0.52, blue: 0.63, alpha: 1)
-            : NSColor.tertiaryLabelColor
     }
 
     func paragraphStyle(code: Bool) -> NSParagraphStyle {
@@ -958,13 +952,15 @@ private enum CompletionDocsRenderer {
     }
 
     static let emptyPlaceholder = NSAttributedString(string: "")
-    static let loadingPlaceholder = NSAttributedString(
-        string: "Loading docs...",
-        attributes: [
-            .font: FontLoader.uiNSFont(size: 13),
-            .foregroundColor: NSColor.secondaryLabelColor,
-        ]
-    )
+    static func loadingPlaceholder(theme: CompletionDocsTheme) -> NSAttributedString {
+        NSAttributedString(
+            string: "Loading docs...",
+            attributes: [
+                .font: FontLoader.uiNSFont(size: 13),
+                .foregroundColor: theme.commentColor,
+            ]
+        )
+    }
 
     static func render(
         docs: String,
@@ -1087,7 +1083,7 @@ private enum CompletionDocsRenderer {
         }
 
         let defaultForeground = headingLike ? theme.headingColor : (codeLike ? theme.codeColor : theme.bodyColor)
-        var foreground = style.has_fg ? nsColor(from: style.fg) ?? defaultForeground : defaultForeground
+        var foreground = style.has_fg ? nsColor(from: style.fg, theme: theme) ?? defaultForeground : defaultForeground
         if (style.add_modifier & modifierDim) != 0 {
             foreground = foreground.withAlphaComponent(foreground.alphaComponent * 0.72)
         }
@@ -1098,12 +1094,12 @@ private enum CompletionDocsRenderer {
             .paragraphStyle: theme.paragraphStyle(code: codeLike),
         ]
 
-        if style.has_bg, let bg = nsColor(from: style.bg) {
+        if style.has_bg, let bg = nsColor(from: style.bg, theme: theme) {
             attrs[.backgroundColor] = bg
         }
         if style.underline_style != 0 {
             attrs[.underlineStyle] = NSUnderlineStyle.single.rawValue
-            if style.has_underline_color, let underline = nsColor(from: style.underline_color) {
+            if style.has_underline_color, let underline = nsColor(from: style.underline_color, theme: theme) {
                 attrs[.underlineColor] = underline
             }
         }
@@ -1150,7 +1146,7 @@ private enum CompletionDocsRenderer {
         let contentWidth = max(12, width - 20)
         let strokeColor = (
             style.has_fg
-                ? (nsColor(from: style.fg) ?? theme.bodyColor)
+                ? (nsColor(from: style.fg, theme: theme) ?? theme.bodyColor)
                 : theme.bodyColor
         ).withAlphaComponent(0.45)
 
@@ -1179,41 +1175,37 @@ private enum CompletionDocsRenderer {
         return out
     }
 
-    private static func nsColor(from color: RustDocsColor) -> NSColor? {
+    private static func nsColor(from color: RustDocsColor, theme: CompletionDocsTheme) -> NSColor? {
         switch color.kind {
         case 0:
             return nil
         case 1:
-            let palette: [NSColor] = [
-                .black, .systemRed, .systemGreen, .systemYellow, .systemBlue, .systemPurple, .systemCyan, .gray,
-                .systemRed.withAlphaComponent(0.85), .systemGreen.withAlphaComponent(0.85),
-                .systemYellow.withAlphaComponent(0.85), .systemBlue.withAlphaComponent(0.85),
-                .systemPurple.withAlphaComponent(0.85), .systemCyan.withAlphaComponent(0.85),
-                .lightGray, .white,
-            ]
             let idx = Int(color.value)
-            guard idx >= 0, idx < palette.count else {
-                return NSColor.white
+            guard idx >= 0 else {
+                return nil
             }
-            return palette[idx]
+            if idx < theme.ansiPalette.count, let palette = theme.ansiPalette[idx] {
+                return palette
+            }
+            return nil
         case 2:
             let r = CGFloat((color.value >> 16) & 0xFF) / 255.0
             let g = CGFloat((color.value >> 8) & 0xFF) / 255.0
             let b = CGFloat(color.value & 0xFF) / 255.0
             return NSColor(red: r, green: g, blue: b, alpha: 1.0)
         case 3:
-            return xterm256Color(index: Int(color.value))
+            return xterm256Color(index: Int(color.value), theme: theme)
         default:
             return nil
         }
     }
 
-    private static func xterm256Color(index: Int) -> NSColor? {
+    private static func xterm256Color(index: Int, theme: CompletionDocsTheme) -> NSColor? {
         guard index >= 0 else {
             return nil
         }
         if index < 16 {
-            return nsColor(from: RustDocsColor(kind: 1, value: UInt32(index)))
+            return nsColor(from: RustDocsColor(kind: 1, value: UInt32(index)), theme: theme)
         }
         if index >= 232 {
             let level = CGFloat(index - 232) / 23.0
@@ -1591,9 +1583,9 @@ private enum CompletionDocsRenderer {
 
 // MARK: - Glass background modifier
 
-private struct GlassBackgroundModifier: ViewModifier {
+private struct PopupBackgroundModifier: ViewModifier {
+    let theme: PopupChromeTheme
     let cornerRadius: CGFloat
-    private var tint: Color { Color(nsColor: .windowBackgroundColor) }
 
     @ViewBuilder
     func body(content: Content) -> some View {
@@ -1601,12 +1593,12 @@ private struct GlassBackgroundModifier: ViewModifier {
             content
                 .background(
                     RoundedRectangle(cornerRadius: cornerRadius)
-                        .fill(tint.opacity(0.98))
+                        .fill(theme.panelBackgroundColor.opacity(0.98))
                 )
                 .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
                 .overlay(
                     RoundedRectangle(cornerRadius: cornerRadius)
-                        .stroke(Color(nsColor: .tertiaryLabelColor).opacity(0.35), lineWidth: 0.5)
+                        .stroke(theme.panelBorderColor.opacity(0.35), lineWidth: 0.5)
                 )
         } else {
             content
@@ -1615,7 +1607,7 @@ private struct GlassBackgroundModifier: ViewModifier {
                         RoundedRectangle(cornerRadius: cornerRadius)
                             .fill(.ultraThinMaterial)
                         RoundedRectangle(cornerRadius: cornerRadius)
-                            .fill(tint)
+                            .fill(theme.panelBackgroundColor)
                             .blendMode(.color)
                     }
                     .compositingGroup()
@@ -1623,7 +1615,7 @@ private struct GlassBackgroundModifier: ViewModifier {
                 .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
                 .overlay(
                     RoundedRectangle(cornerRadius: cornerRadius)
-                        .stroke(Color(nsColor: .tertiaryLabelColor).opacity(0.5), lineWidth: 0.5)
+                        .stroke(theme.panelBorderColor.opacity(0.5), lineWidth: 0.5)
                 )
                 .shadow(color: Color.black.opacity(0.25), radius: 16, x: 0, y: 6)
         }
@@ -1641,7 +1633,39 @@ private enum CompletionPopupRenderConfig {
 }
 
 extension View {
+    func popupBackground(theme: PopupChromeTheme, cornerRadius: CGFloat) -> some View {
+        modifier(PopupBackgroundModifier(theme: theme, cornerRadius: cornerRadius))
+    }
+
     func glassBackground(cornerRadius: CGFloat) -> some View {
-        modifier(GlassBackgroundModifier(cornerRadius: cornerRadius))
+        background(
+            ZStack {
+                RoundedRectangle(cornerRadius: cornerRadius)
+                    .fill(.ultraThinMaterial)
+                RoundedRectangle(cornerRadius: cornerRadius)
+                    .fill(Color(nsColor: .windowBackgroundColor))
+                    .blendMode(.color)
+            }
+            .compositingGroup()
+        )
+        .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
+        .overlay(
+            RoundedRectangle(cornerRadius: cornerRadius)
+                .stroke(Color(nsColor: .tertiaryLabelColor).opacity(0.5), lineWidth: 0.5)
+        )
+        .shadow(color: Color.black.opacity(0.25), radius: 16, x: 0, y: 6)
+    }
+}
+
+private extension NSColor {
+    var popupThemeKeyFragment: String {
+        let rgb = usingColorSpace(.deviceRGB) ?? self
+        return String(
+            format: "%02X%02X%02X%02X",
+            Int(round(rgb.redComponent * 255)),
+            Int(round(rgb.greenComponent * 255)),
+            Int(round(rgb.blueComponent * 255)),
+            Int(round(rgb.alphaComponent * 255))
+        )
     }
 }

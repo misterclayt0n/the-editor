@@ -1965,6 +1965,120 @@ final class EditorModel: ObservableObject {
         )
     }
 
+    func popupTheme() -> PopupChromeTheme {
+        let panelBackground = themeNSBackgroundColor(
+            scopes: ["ui.popup", "ui.background", "ui.window"],
+            fallback: NSColor.windowBackgroundColor
+        )
+        let panelBorder = themeNSForegroundColor(
+            scopes: ["ui.window", "ui.background.separator", "ui.text.inactive"],
+            fallback: NSColor.separatorColor
+        )
+        let primaryText = themeNSForegroundColor(
+            scopes: ["ui.text", "ui.text.focus"],
+            fallback: NSColor.labelColor
+        )
+        let secondaryText = themeNSForegroundColor(
+            scopes: ["ui.text.inactive", "ui.virtual", "ui.text"],
+            fallback: NSColor.secondaryLabelColor
+        )
+        let accent = themeNSForegroundColor(
+            scopes: ["ui.text.focus", "ui.linenr.selected", "ui.text"],
+            fallback: NSColor.controlAccentColor
+        )
+        let selectedText = themeNSForegroundColor(
+            scopes: ["ui.menu.selected", "ui.text.focus", "ui.text"],
+            fallback: primaryText
+        )
+        let selectedBackground = themeNSBackgroundColor(
+            scopes: ["ui.menu.selected", "ui.selection", "ui.menu", "ui.popup"],
+            fallback: accent.withAlphaComponent(0.22)
+        )
+        let hoveredBackground = themeNSBackgroundColor(
+            scopes: ["ui.menu", "ui.popup"],
+            fallback: accent.withAlphaComponent(0.10)
+        )
+        let link = themeNSForegroundColor(
+            scopes: ["markup.link.url", "markup.link.text", "ui.text.focus", "ui.text"],
+            fallback: accent
+        )
+        let heading = themeNSForegroundColor(
+            scopes: ["markup.heading", "ui.text.focus", "ui.text"],
+            fallback: primaryText
+        )
+        let code = themeNSForegroundColor(
+            scopes: ["markup.raw", "markup.raw.inline", "ui.text"],
+            fallback: primaryText
+        )
+        let keyword = themeNSForegroundColor(
+            scopes: ["keyword", "keyword.control", "storage.type", "ui.text.focus"],
+            fallback: accent
+        )
+        let typeName = themeNSForegroundColor(
+            scopes: ["type", "type.builtin", "constructor", "ui.text.focus", "ui.text"],
+            fallback: accent
+        )
+        let number = themeNSForegroundColor(
+            scopes: ["constant.numeric", "constant", "ui.text"],
+            fallback: primaryText
+        )
+        let string = themeNSForegroundColor(
+            scopes: ["string", "string.special", "ui.text"],
+            fallback: primaryText
+        )
+        let comment = themeNSForegroundColor(
+            scopes: ["comment", "ui.text.inactive", "ui.virtual"],
+            fallback: secondaryText
+        )
+
+        let ghostty = app.theme_ghostty_snapshot()
+        let ansiPalette = [
+            popupNSColor(from: ghostty.palette0),
+            popupNSColor(from: ghostty.palette1),
+            popupNSColor(from: ghostty.palette2),
+            popupNSColor(from: ghostty.palette3),
+            popupNSColor(from: ghostty.palette4),
+            popupNSColor(from: ghostty.palette5),
+            popupNSColor(from: ghostty.palette6),
+            popupNSColor(from: ghostty.palette7),
+            popupNSColor(from: ghostty.palette8),
+            popupNSColor(from: ghostty.palette9),
+            popupNSColor(from: ghostty.palette10),
+            popupNSColor(from: ghostty.palette11),
+            popupNSColor(from: ghostty.palette12),
+            popupNSColor(from: ghostty.palette13),
+            popupNSColor(from: ghostty.palette14),
+            popupNSColor(from: ghostty.palette15),
+        ]
+
+        let docsTheme = CompletionDocsTheme(
+            panelBackground: panelBackground,
+            panelBorder: panelBorder,
+            bodyColor: primaryText,
+            headingColor: heading,
+            linkColor: link,
+            codeColor: code,
+            keywordColor: keyword,
+            typeColor: typeName,
+            numberColor: number,
+            stringColor: string,
+            commentColor: comment,
+            ansiPalette: ansiPalette
+        )
+
+        return PopupChromeTheme(
+            panelBackground: panelBackground,
+            panelBorder: panelBorder,
+            primaryText: primaryText,
+            secondaryText: secondaryText,
+            selectedText: selectedText,
+            selectedBackground: selectedBackground,
+            hoveredBackground: hoveredBackground,
+            accent: accent,
+            docsTheme: docsTheme
+        )
+    }
+
     func bufferTabBarTheme() -> BufferTabBarTheme {
         func bg(_ scope: String) -> SwiftUI.Color? {
             let style = uiThemeStyle(scope)
@@ -2110,6 +2224,97 @@ final class EditorModel: ObservableObject {
             }
         }
         return fallback
+    }
+
+    private func themeNSBackgroundColor(scopes: [String], fallback: NSColor) -> NSColor {
+        for scope in scopes {
+            let style = uiThemeStyle(scope)
+            if style.has_bg, let color = popupNSColor(from: style.bg) {
+                return color
+            }
+        }
+        return fallback
+    }
+
+    private func themeNSForegroundColor(scopes: [String], fallback: NSColor) -> NSColor {
+        for scope in scopes {
+            let style = uiThemeStyle(scope)
+            if style.has_fg, let color = popupNSColor(from: style.fg) {
+                return color
+            }
+        }
+        return fallback
+    }
+
+    private func popupNSColor(from color: TheEditorFFIBridge.Color) -> NSColor? {
+        switch color.kind {
+        case 0:
+            return nil
+        case 1:
+            let palette: [NSColor] = [
+                .black,
+                .systemRed,
+                .systemGreen,
+                .systemYellow,
+                .systemBlue,
+                .systemPurple,
+                .systemCyan,
+                .gray,
+                .systemRed.withAlphaComponent(0.85),
+                .systemGreen.withAlphaComponent(0.85),
+                .systemYellow.withAlphaComponent(0.85),
+                .systemBlue.withAlphaComponent(0.85),
+                .systemPurple.withAlphaComponent(0.85),
+                .systemCyan.withAlphaComponent(0.85),
+                .lightGray,
+                .white,
+            ]
+            let index = Int(color.value)
+            return (index >= 0 && index < palette.count) ? palette[index] : nil
+        case 2:
+            let r = CGFloat((color.value >> 16) & 0xFF) / 255.0
+            let g = CGFloat((color.value >> 8) & 0xFF) / 255.0
+            let b = CGFloat(color.value & 0xFF) / 255.0
+            return NSColor(red: r, green: g, blue: b, alpha: 1.0)
+        case 3:
+            return popupXtermNSColor(index: Int(color.value))
+        default:
+            return nil
+        }
+    }
+
+    private func popupNSColor(from optionalColor: OptionalColor) -> NSColor? {
+        guard optionalColor.has_value else {
+            return nil
+        }
+        return popupNSColor(from: optionalColor.color)
+    }
+
+    private func popupXtermNSColor(index: Int) -> NSColor? {
+        guard index >= 0 else {
+            return nil
+        }
+        if index < 16 {
+            return popupNSColor(from: TheEditorFFIBridge.Color(kind: 1, value: UInt32(index)))
+        }
+        if index >= 232 {
+            let level = CGFloat(index - 232) / 23.0
+            return NSColor(white: level, alpha: 1.0)
+        }
+        let idx = index - 16
+        let r = idx / 36
+        let g = (idx % 36) / 6
+        let b = idx % 6
+        func component(_ value: Int) -> CGFloat {
+            let levels: [CGFloat] = [0.0, 0.37, 0.58, 0.74, 0.87, 1.0]
+            return levels[min(max(value, 0), levels.count - 1)]
+        }
+        return NSColor(
+            red: component(r),
+            green: component(g),
+            blue: component(b),
+            alpha: 1.0
+        )
     }
 
     private func synchronizeEffectiveTheme(force: Bool = false) {

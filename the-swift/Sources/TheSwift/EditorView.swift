@@ -134,6 +134,7 @@ struct EditorView: View {
         let completionSnapshot = model.uiTree.completionSnapshot()
         let hoverSnapshot = model.uiTree.hoverSnapshot()
         let signatureSnapshot = model.uiTree.signatureHelpSnapshot()
+        let popupTheme = model.popupTheme()
         let isCompletionOpen = completionSnapshot != nil
         let isHoverOpen = hoverSnapshot != nil && !isCompletionOpen
         let isSignatureOpen = signatureSnapshot != nil && !isCompletionOpen && !isHoverOpen
@@ -205,6 +206,7 @@ struct EditorView: View {
                 completionSnapshot: completionSnapshot,
                 hoverSnapshot: hoverSnapshot,
                 signatureSnapshot: signatureSnapshot,
+                popupTheme: popupTheme,
                 activePaneOrigin: activePaneOrigin,
                 cellSize: cellSize,
                 contentSize: contentProxy.size
@@ -425,6 +427,7 @@ struct EditorView: View {
         completionSnapshot: CompletionSnapshot?,
         hoverSnapshot: HoverSnapshot?,
         signatureSnapshot: SignatureHelpSnapshot?,
+        popupTheme: PopupChromeTheme,
         activePaneOrigin: CGPoint,
         cellSize: CGSize,
         contentSize: CGSize
@@ -438,6 +441,7 @@ struct EditorView: View {
                         paneOrigin: activePaneOrigin,
                         cellSize: cellSize
                     ),
+                    theme: popupTheme,
                     cellSize: cellSize,
                     containerSize: contentSize,
                     languageHint: model.completionDocsLanguageHint(),
@@ -457,6 +461,7 @@ struct EditorView: View {
                         paneOrigin: activePaneOrigin,
                         cellSize: cellSize
                     ),
+                    theme: popupTheme,
                     cellSize: cellSize,
                     containerSize: contentSize,
                     languageHint: model.completionDocsLanguageHint()
@@ -470,6 +475,7 @@ struct EditorView: View {
                         paneOrigin: activePaneOrigin,
                         cellSize: cellSize
                     ),
+                    theme: popupTheme,
                     cellSize: cellSize,
                     containerSize: contentSize,
                     languageHint: model.completionDocsLanguageHint()

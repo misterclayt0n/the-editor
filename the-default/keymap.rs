@@ -608,7 +608,7 @@ fn apply_actions<Ctx: DefaultContext>(ctx: &mut Ctx, actions: &[KeyAction]) -> K
       KeyAction::Mode(mode) => apply_mode(ctx, mode),
       KeyAction::Named(name) => {
         if name == "command_palette" {
-          open_action_palette(ctx);
+          open_command_palette(ctx);
         } else if let Some(command) = command_from_name(name) {
           commands.push(apply_count_prefix(command, count));
         } else if let Some(mode) = mode_from_name(name) {
@@ -750,6 +750,10 @@ pub fn open_action_palette<Ctx: DefaultContext>(ctx: &mut Ctx) {
   }
 
   ctx.request_render();
+}
+
+pub fn open_command_palette<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  apply_mode(ctx, Mode::Command);
 }
 
 fn build_action_palette_items<Ctx: DefaultContext>(

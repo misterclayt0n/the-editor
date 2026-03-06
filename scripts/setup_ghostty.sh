@@ -25,11 +25,29 @@ if ! xcrun -sdk macosx --find metal >/dev/null 2>&1; then
   exit 1
 fi
 
+if ! xcrun -sdk macosx metal -v >/dev/null 2>&1; then
+  echo "error: xcrun can locate 'metal' but cannot execute it."
+  echo "error: the Xcode Metal compiler payload/toolchain is missing or not registered."
+  echo "run: sudo xcodebuild -downloadComponent MetalToolchain"
+  exit 1
+fi
+
 mkdir -p "$SWIFT_FRAMEWORK_DIR"
 
 GHOSTTY_SHA="$(git -C "$GHOSTTY_DIR" rev-parse HEAD)"
+GHOSTTY_WORKTREE_HASH="$(
+  {
+    git -C "$GHOSTTY_DIR" diff --no-ext-diff --binary HEAD -- .
+    git -C "$GHOSTTY_DIR" ls-files --others --exclude-standard -z |
+      while IFS= read -r -d '' path; do
+        printf 'untracked %s\n' "$path"
+        shasum "$GHOSTTY_DIR/$path"
+      done
+  } | shasum | awk '{print $1}'
+)"
+CACHE_KEY="$GHOSTTY_SHA-$GHOSTTY_WORKTREE_HASH"
 CACHE_ROOT="${THE_EDITOR_GHOSTTY_CACHE_DIR:-$HOME/.cache/the-editor/ghosttykit}"
-CACHE_DIR="$CACHE_ROOT/$GHOSTTY_SHA"
+CACHE_DIR="$CACHE_ROOT/$CACHE_KEY"
 CACHE_XCFRAMEWORK="$CACHE_DIR/GhosttyKit.xcframework"
 LOCAL_XCFRAMEWORK="$GHOSTTY_DIR/macos/GhosttyKit.xcframework"
 ZIG_GLOBAL_CACHE_DIR="${ZIG_GLOBAL_CACHE_DIR:-$HOME/.cache/the-editor/zig-global-cache}"
@@ -40,7 +58,7 @@ mkdir -p "$CACHE_ROOT"
 mkdir -p "$ZIG_GLOBAL_CACHE_DIR"
 
 if [[ ! -d "$CACHE_XCFRAMEWORK" ]]; then
-  echo "==> building GhosttyKit for commit $GHOSTTY_SHA"
+  echo "==> building GhosttyKit for commit $GHOSTTY_SHA (worktree $GHOSTTY_WORKTREE_HASH)"
   build_ok=0
   for attempt in $(seq 1 "$BUILD_RETRIES"); do
     if (

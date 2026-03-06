@@ -4993,7 +4993,7 @@ impl App {
     }
 
     if command_name == "command_palette" {
-      the_default::open_action_palette(self);
+      the_default::open_command_palette(self);
       return true;
     }
 
@@ -6008,7 +6008,6 @@ impl App {
 
     let source = self.active_state_ref().command_palette.source;
     let is_prefiltered = self.active_state_ref().command_palette.prefiltered;
-
     if matches!(source, CommandPaletteSource::ActionPalette) {
       let action = self
         .active_state_ref()
@@ -12850,37 +12849,144 @@ impl Default for ffi::GhosttyThemeSnapshot {
 }
 
 fn optional_color_snapshot(color: Option<LibColor>) -> ffi::OptionalColor {
+  let rgb = color.and_then(color_to_rgb);
   ffi::OptionalColor {
-    has_value: color.is_some(),
-    color:     color.map(ffi::Color::from).unwrap_or_default(),
+    has_value: rgb.is_some(),
+    color:     rgb
+      .map(|value| ffi::Color {
+        kind:  2,
+        value,
+      })
+      .unwrap_or_default(),
   }
+}
+
+fn style_fg(theme: &Theme, scope: &str) -> Option<LibColor> {
+  theme.try_get(scope).and_then(|style| style.fg)
+}
+
+fn style_bg(theme: &Theme, scope: &str) -> Option<LibColor> {
+  theme.try_get(scope).and_then(|style| style.bg)
+}
+
+fn palette_named(theme: &Theme, name: &str) -> Option<LibColor> {
+  theme.palette_color(name)
+}
+
+fn color_to_rgb(color: LibColor) -> Option<u32> {
+  match color {
+    LibColor::Reset => None,
+    LibColor::Rgb(r, g, b) => Some(((r as u32) << 16) | ((g as u32) << 8) | b as u32),
+    LibColor::Indexed(idx) => ansi_index_to_rgb(idx),
+    LibColor::Black => ansi_index_to_rgb(0),
+    LibColor::Red => ansi_index_to_rgb(1),
+    LibColor::Green => ansi_index_to_rgb(2),
+    LibColor::Yellow => ansi_index_to_rgb(3),
+    LibColor::Blue => ansi_index_to_rgb(4),
+    LibColor::Magenta => ansi_index_to_rgb(5),
+    LibColor::Cyan => ansi_index_to_rgb(6),
+    LibColor::Gray => ansi_index_to_rgb(7),
+    LibColor::LightRed => ansi_index_to_rgb(8),
+    LibColor::LightGreen => ansi_index_to_rgb(9),
+    LibColor::LightYellow => ansi_index_to_rgb(10),
+    LibColor::LightBlue => ansi_index_to_rgb(11),
+    LibColor::LightMagenta => ansi_index_to_rgb(12),
+    LibColor::LightCyan => ansi_index_to_rgb(13),
+    LibColor::LightGray => ansi_index_to_rgb(14),
+    LibColor::White => ansi_index_to_rgb(15),
+  }
+}
+
+fn ansi_index_to_rgb(index: u8) -> Option<u32> {
+  let rgb = match index {
+    0 => 0x000000,
+    1 => 0xcd0000,
+    2 => 0x00cd00,
+    3 => 0xcdcd00,
+    4 => 0x0000ee,
+    5 => 0xcd00cd,
+    6 => 0x00cdcd,
+    7 => 0xe5e5e5,
+    8 => 0x7f7f7f,
+    9 => 0xff0000,
+    10 => 0x00ff00,
+    11 => 0xffff00,
+    12 => 0x5c5cff,
+    13 => 0xff00ff,
+    14 => 0x00ffff,
+    15 => 0xffffff,
+    _ => return None,
+  };
+  Some(rgb)
 }
 
 fn ghostty_theme_snapshot_from_theme(theme: &Theme) -> ffi::GhosttyThemeSnapshot {
   let ghostty = theme.ghostty();
+  let background = ghostty.background().or_else(|| {
+    style_bg(theme, "ui.background")
+      .or_else(|| style_bg(theme, "ui.window"))
+      .or_else(|| style_bg(theme, "ui.popup"))
+  });
+  let foreground = ghostty.foreground().or_else(|| {
+    style_fg(theme, "ui.text")
+      .or_else(|| style_fg(theme, "ui.statusline"))
+      .or_else(|| style_fg(theme, "ui.popup"))
+  });
+  let cursor_color = ghostty.cursor_color().or_else(|| {
+    style_bg(theme, "ui.cursor").or_else(|| style_fg(theme, "ui.cursor"))
+  });
+  let cursor_text = ghostty.cursor_text().or_else(|| {
+    style_fg(theme, "ui.cursor").or(foreground)
+  });
+  let selection_background = ghostty.selection_background().or_else(|| {
+    style_bg(theme, "ui.selection")
+      .or_else(|| style_bg(theme, "ui.menu.selected"))
+      .or_else(|| style_bg(theme, "ui.cursor.match"))
+  });
+  let selection_foreground = ghostty.selection_foreground().or_else(|| {
+    style_fg(theme, "ui.selection").or(foreground)
+  });
+  let derived_palette = [
+    ghostty.palette_color(0).or_else(|| palette_named(theme, "black")),
+    ghostty.palette_color(1).or_else(|| palette_named(theme, "red")),
+    ghostty.palette_color(2).or_else(|| palette_named(theme, "green")),
+    ghostty.palette_color(3).or_else(|| palette_named(theme, "yellow")),
+    ghostty.palette_color(4).or_else(|| palette_named(theme, "blue")),
+    ghostty.palette_color(5).or_else(|| palette_named(theme, "magenta")),
+    ghostty.palette_color(6).or_else(|| palette_named(theme, "cyan")),
+    ghostty.palette_color(7).or_else(|| palette_named(theme, "gray")),
+    ghostty.palette_color(8).or_else(|| palette_named(theme, "light-red")),
+    ghostty.palette_color(9).or_else(|| palette_named(theme, "light-green")),
+    ghostty.palette_color(10).or_else(|| palette_named(theme, "light-yellow")),
+    ghostty.palette_color(11).or_else(|| palette_named(theme, "light-blue")),
+    ghostty.palette_color(12).or_else(|| palette_named(theme, "light-magenta")),
+    ghostty.palette_color(13).or_else(|| palette_named(theme, "light-cyan")),
+    ghostty.palette_color(14).or_else(|| palette_named(theme, "light-gray")),
+    ghostty.palette_color(15).or_else(|| palette_named(theme, "white")),
+  ];
   ffi::GhosttyThemeSnapshot {
-    background:           optional_color_snapshot(ghostty.background()),
-    foreground:           optional_color_snapshot(ghostty.foreground()),
-    cursor_color:         optional_color_snapshot(ghostty.cursor_color()),
-    cursor_text:          optional_color_snapshot(ghostty.cursor_text()),
-    selection_background: optional_color_snapshot(ghostty.selection_background()),
-    selection_foreground: optional_color_snapshot(ghostty.selection_foreground()),
-    palette0:             optional_color_snapshot(ghostty.palette_color(0)),
-    palette1:             optional_color_snapshot(ghostty.palette_color(1)),
-    palette2:             optional_color_snapshot(ghostty.palette_color(2)),
-    palette3:             optional_color_snapshot(ghostty.palette_color(3)),
-    palette4:             optional_color_snapshot(ghostty.palette_color(4)),
-    palette5:             optional_color_snapshot(ghostty.palette_color(5)),
-    palette6:             optional_color_snapshot(ghostty.palette_color(6)),
-    palette7:             optional_color_snapshot(ghostty.palette_color(7)),
-    palette8:             optional_color_snapshot(ghostty.palette_color(8)),
-    palette9:             optional_color_snapshot(ghostty.palette_color(9)),
-    palette10:            optional_color_snapshot(ghostty.palette_color(10)),
-    palette11:            optional_color_snapshot(ghostty.palette_color(11)),
-    palette12:            optional_color_snapshot(ghostty.palette_color(12)),
-    palette13:            optional_color_snapshot(ghostty.palette_color(13)),
-    palette14:            optional_color_snapshot(ghostty.palette_color(14)),
-    palette15:            optional_color_snapshot(ghostty.palette_color(15)),
+    background:           optional_color_snapshot(background),
+    foreground:           optional_color_snapshot(foreground),
+    cursor_color:         optional_color_snapshot(cursor_color),
+    cursor_text:          optional_color_snapshot(cursor_text),
+    selection_background: optional_color_snapshot(selection_background),
+    selection_foreground: optional_color_snapshot(selection_foreground),
+    palette0:             optional_color_snapshot(derived_palette[0]),
+    palette1:             optional_color_snapshot(derived_palette[1]),
+    palette2:             optional_color_snapshot(derived_palette[2]),
+    palette3:             optional_color_snapshot(derived_palette[3]),
+    palette4:             optional_color_snapshot(derived_palette[4]),
+    palette5:             optional_color_snapshot(derived_palette[5]),
+    palette6:             optional_color_snapshot(derived_palette[6]),
+    palette7:             optional_color_snapshot(derived_palette[7]),
+    palette8:             optional_color_snapshot(derived_palette[8]),
+    palette9:             optional_color_snapshot(derived_palette[9]),
+    palette10:            optional_color_snapshot(derived_palette[10]),
+    palette11:            optional_color_snapshot(derived_palette[11]),
+    palette12:            optional_color_snapshot(derived_palette[12]),
+    palette13:            optional_color_snapshot(derived_palette[13]),
+    palette14:            optional_color_snapshot(derived_palette[14]),
+    palette15:            optional_color_snapshot(derived_palette[15]),
   }
 }
 
@@ -13240,7 +13346,7 @@ mod tests {
   }
 
   #[test]
-  fn execute_command_named_supports_action_palette_alias() {
+  fn execute_command_named_opens_command_palette() {
     let _guard = ffi_test_guard();
     let mut app = App::new();
     let viewport = ffi::Rect {
@@ -13255,6 +13361,10 @@ mod tests {
     assert!(app.execute_command_named(id, "command_palette"));
     assert_eq!(app.mode(id), 3);
     assert!(app.command_palette_is_open(id));
+    assert!(matches!(
+      app.active_state_ref().command_palette.source,
+      the_default::CommandPaletteSource::CommandLine
+    ));
 
     assert!(!app.execute_command_named(id, "does_not_exist"));
   }
@@ -13395,6 +13505,28 @@ mod tests {
     assert!(app.command_palette_select_filtered(id, 0));
     assert!(app.command_palette_submit_filtered(id, 0));
     assert_eq!(app.theme_effective_name(), "base16_default");
+  }
+
+  #[test]
+  fn theme_command_preview_updates_ghostty_snapshot() {
+    let _guard = ffi_test_guard();
+    let mut app = App::new();
+    let id = app.create_editor("", default_viewport(), ffi::Position { row: 0, col: 0 });
+
+    let default_snapshot = app.theme_ghostty_snapshot();
+    assert!(default_snapshot.background.has_value);
+
+    assert!(app.handle_key(id, key_char(':')));
+    assert!(app.command_palette_set_query(id, "theme base16"));
+    assert!(app.command_palette_filtered_count(id) > 0);
+    assert!(app.command_palette_select_filtered(id, 0));
+
+    let preview_snapshot = app.theme_ghostty_snapshot();
+    assert!(preview_snapshot.background.has_value);
+    assert_ne!(
+      default_snapshot.background.color.value,
+      preview_snapshot.background.color.value
+    );
   }
 
   #[test]

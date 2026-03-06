@@ -185,7 +185,6 @@ final class EditorModel: ObservableObject {
         backgroundTimer?.invalidate()
         unregisterHostWindowNotifications()
         EditorCommandModelRegistry.shared.unregister(window: hostWindow)
-        GhosttyRuntime.shared.clearThemeSnapshot(for: runtimeInstanceId)
     }
 
     private static func loadText(filePath: String?) -> String {
@@ -2325,11 +2324,6 @@ final class EditorModel: ObservableObject {
 
         effectiveThemeName = nextThemeName
         syntaxHighlightStyleCache.removeAll(keepingCapacity: true)
-        GhosttyRuntime.shared.setThemeSnapshot(
-            app.theme_ghostty_snapshot(),
-            themeName: nextThemeName,
-            for: runtimeInstanceId
-        )
     }
 
     private func debugUiLog(_ message: String) {

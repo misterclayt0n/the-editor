@@ -185,6 +185,7 @@ pub use keymap::{
   action_from_name,
   default,
   open_action_palette,
+  open_command_palette,
 };
 pub use message_bar::{
   MessagePresentation,

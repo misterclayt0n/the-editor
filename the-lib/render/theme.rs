@@ -168,6 +168,7 @@ pub struct Theme {
   name: String,
 
   // UI styles are stored in a HashMap
+  palette:        HashMap<String, Color>,
   styles:         HashMap<String, Style>,
   // tree-sitter highlight styles are stored in a Vec to optimize lookups
   scopes:         Vec<String>,
@@ -204,6 +205,7 @@ impl<'de> Deserialize<'de> for Theme {
 fn build_theme_values(
   mut values: Map<String, Value>,
 ) -> (
+  HashMap<String, Color>,
   HashMap<String, Style>,
   Vec<String>,
   Vec<Style>,
@@ -272,7 +274,15 @@ fn build_theme_values(
     highlights.push(style);
   }
 
-  (styles, scopes, highlights, rainbow_length, ghostty, warnings)
+  (
+    palette.palette.clone(),
+    styles,
+    scopes,
+    highlights,
+    rainbow_length,
+    ghostty,
+    warnings,
+  )
 }
 
 fn default_rainbow() -> Vec<Style> {
@@ -325,6 +335,10 @@ impl Theme {
 
   pub fn ghostty(&self) -> &GhosttyTheme {
     &self.ghostty
+  }
+
+  pub fn palette_color(&self, name: &str) -> Option<Color> {
+    self.palette.get(name).copied()
   }
 
   pub fn get(&self, scope: &str) -> Style {
@@ -394,10 +408,11 @@ impl Theme {
   }
 
   fn from_keys(toml_keys: Map<String, Value>) -> (Self, Vec<String>) {
-    let (styles, scopes, highlights, rainbow_length, ghostty, load_errors) =
+    let (palette, styles, scopes, highlights, rainbow_length, ghostty, load_errors) =
       build_theme_values(toml_keys);
 
     let theme = Self {
+      palette,
       styles,
       scopes,
       highlights,

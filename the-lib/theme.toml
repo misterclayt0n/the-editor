@@ -132,7 +132,7 @@ delta     = "#6F44F0"
 lightning = "#ffcd1c"
 
 [ghostty]
-background = "#303446"
+background = "#3b224c"
 foreground = "#c6d0f5"
 cursor-color = "#f2d5cf"
 cursor-text = "#c6d0f5"

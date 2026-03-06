@@ -147,6 +147,9 @@ final class GhosttyRuntime {
     private var runtimeThemeNames: [UInt64: String] = [:]
     private var runtimeThemeSnapshots: [UInt64: GhosttyThemeSnapshot] = [:]
     private var appObservers: [NSObjectProtocol] = []
+    private var defaultBackgroundColor: NSColor = .windowBackgroundColor
+    private var defaultBackgroundOpacity: Double = 1.0
+    private var lastAppColorScheme: ghostty_color_scheme_e?
 
     private init() {
         initialize()
@@ -288,6 +291,27 @@ final class GhosttyRuntime {
         ghostty_app_tick(app)
     }
 
+    fileprivate func applyConfiguredBackground(to hostView: GhosttySurfaceHostView) {
+        hostView.wantsLayer = true
+        let color = defaultBackgroundColor.withAlphaComponent(
+            CGFloat(min(1.0, max(0.0, defaultBackgroundOpacity)))
+        )
+        hostView.layer?.backgroundColor = color.cgColor
+        hostView.layer?.isOpaque = color.alphaComponent >= 1.0
+    }
+
+    fileprivate func applyAppColorScheme(_ scheme: ghostty_color_scheme_e) {
+        guard let app else {
+            return
+        }
+        if let lastAppColorScheme, lastAppColorScheme == scheme {
+            return
+        }
+        ghostty_app_set_color_scheme(app, scheme)
+        lastAppColorScheme = scheme
+        updateDefaultBackgroundFromConfig()
+    }
+
     fileprivate func applyThemeIfNeeded(to controller: GhosttySurfaceController, force: Bool = false) {
         guard let themeName = runtimeThemeNames[controller.runtimeIdForTheme],
               let snapshot = runtimeThemeSnapshots[controller.runtimeIdForTheme],
@@ -314,12 +338,6 @@ final class GhosttyRuntime {
     private func applyThemeSnapshot(_ snapshot: GhosttyThemeSnapshot, to config: ghostty_config_t?) {
         guard let config else { return }
         guard GhosttyConfigSetterSymbols.supportsThemeMutation else {
-            if DiagnosticsDebugLog.enabled {
-                DiagnosticsDebugLog.logChanged(
-                    key: "ghostty.theme.mutation",
-                    value: "supported=0"
-                )
-            }
             return
         }
 
@@ -426,7 +444,54 @@ final class GhosttyRuntime {
 
         self.config = config
         self.app = app
+        updateDefaultBackgroundFromConfig()
         installAppFocusObservers(app)
+        applyAppColorScheme(currentAppColorScheme())
+    }
+
+    private func updateDefaultBackgroundFromConfig() {
+        guard let config else {
+            return
+        }
+
+        var resolvedColor = defaultBackgroundColor
+        var color = ghostty_config_color_s()
+        let backgroundKey = "background"
+        if ghostty_config_get(
+            config,
+            &color,
+            backgroundKey,
+            UInt(backgroundKey.lengthOfBytes(using: .utf8))
+        ) {
+            resolvedColor = NSColor(
+                red: CGFloat(color.r) / 255.0,
+                green: CGFloat(color.g) / 255.0,
+                blue: CGFloat(color.b) / 255.0,
+                alpha: 1.0
+            )
+        }
+
+        var resolvedOpacity = defaultBackgroundOpacity
+        let opacityKey = "background-opacity"
+        _ = ghostty_config_get(
+            config,
+            &resolvedOpacity,
+            opacityKey,
+            UInt(opacityKey.lengthOfBytes(using: .utf8))
+        )
+        resolvedOpacity = min(1.0, max(0.0, resolvedOpacity))
+
+        defaultBackgroundColor = resolvedColor
+        defaultBackgroundOpacity = resolvedOpacity
+
+        for controller in controllers.values {
+            controller.applyConfiguredBackground()
+        }
+    }
+
+    private func currentAppColorScheme() -> ghostty_color_scheme_e {
+        let bestMatch = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua])
+        return bestMatch == .darkAqua ? GHOSTTY_COLOR_SCHEME_DARK : GHOSTTY_COLOR_SCHEME_LIGHT
     }
 
     private static func callbackContext(from userdata: UnsafeMutableRawPointer?) -> GhosttySurfaceCallbackContext? {
@@ -562,6 +627,10 @@ private final class GhosttySurfaceController {
         hostedView
     }
 
+    fileprivate func applyConfiguredBackground() {
+        runtime.applyConfiguredBackground(to: hostedView)
+    }
+
     fileprivate var isFocused: Bool {
         focused
     }
@@ -607,6 +676,7 @@ private final class GhosttySurfaceController {
         hostedView.onCloseRequest = onCloseRequest
         hostedView.onNamedCommand = onNamedCommand
         hostedView.onMetadataChange = onMetadataChange
+        applyConfiguredBackground()
         createSurfaceIfNeeded()
         updateSurfaceSize()
         updateDisplayID()
@@ -704,6 +774,8 @@ private final class GhosttySurfaceController {
     }
 
     func applyColorScheme(_ scheme: ghostty_color_scheme_e) {
+        runtime.applyAppColorScheme(scheme)
+        applyConfiguredBackground()
         guard let surface else {
             return
         }

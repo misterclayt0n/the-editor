@@ -90,6 +90,7 @@ final class EditorModel: ObservableObject {
     @Published var uiTree: UiTreeSnapshot = .empty
     @Published var bufferTabsSnapshot: BufferTabsSnapshot? = nil
     @Published var navigationTitle: String = "untitled"
+    @Published private(set) var isHostWindowFocused: Bool = false
     @Published private(set) var bufferFontSize: CGFloat
     private var viewport: Rect
     private var effectiveViewport: Rect
@@ -1000,6 +1001,7 @@ final class EditorModel: ObservableObject {
             hostWindow = window
             EditorCommandModelRegistry.shared.register(window: window, model: self)
         }
+        syncHostWindowFocusState()
         if shouldSyncNativeWindowPresentation() {
             syncNativeWindowPresentation()
         }
@@ -1630,11 +1632,16 @@ final class EditorModel: ObservableObject {
         let center = NotificationCenter.default
         let names: [Notification.Name] = [
             NSWindow.didBecomeKeyNotification,
-            NSWindow.didBecomeMainNotification
+            NSWindow.didBecomeMainNotification,
+            NSWindow.didResignKeyNotification,
+            NSWindow.didResignMainNotification
         ]
         hostWindowNotificationTokens = names.map { name in
             center.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
-                self?.activateBoundBufferForFocusedWindow(trigger: "window_focus")
+                self?.syncHostWindowFocusState()
+                if name == NSWindow.didBecomeKeyNotification || name == NSWindow.didBecomeMainNotification {
+                    self?.activateBoundBufferForFocusedWindow(trigger: "window_focus")
+                }
             }
         }
     }
@@ -1645,6 +1652,14 @@ final class EditorModel: ObservableObject {
             center.removeObserver(token)
         }
         hostWindowNotificationTokens.removeAll()
+    }
+
+    private func syncHostWindowFocusState() {
+        let isFocused = hostWindow?.isKeyWindow == true || hostWindow?.isMainWindow == true
+        guard isHostWindowFocused != isFocused else {
+            return
+        }
+        isHostWindowFocused = isFocused
     }
 
     private func updateNativeTabOpenGatewayState() {

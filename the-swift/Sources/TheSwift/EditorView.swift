@@ -11,6 +11,7 @@ private enum SidebarChromeBaselineCache {
 struct EditorView: View {
     @Environment(\.openWindow) private var openWindow
     @StateObject private var model: EditorModel
+    @StateObject private var cursorBlinkController = CursorBlinkController()
     @ObservedObject private var globalTerminalSwitcher = GlobalTerminalSwitcherController.shared
     private let windowRoute: EditorWindowRoute?
     @State private var columnVisibility: NavigationSplitViewVisibility = .detailOnly
@@ -232,9 +233,15 @@ struct EditorView: View {
         let isHoverOpen = hoverSnapshot != nil && !isCompletionOpen
         let isSignatureOpen = signatureSnapshot != nil && !isCompletionOpen && !isHoverOpen
         let shouldTerminalOwnFocus = !isOverlayOpen && !isCompletionOpen && !isHoverOpen && !isSignatureOpen
+        let bufferOwnsFocus = model.isHostWindowFocused
+            && (!model.isActivePaneTerminal || !shouldTerminalOwnFocus)
         let focusedTerminalPaneId = GhosttyRuntime.shared.firstResponderPaneId(in: model.currentHostWindow())
         let effectiveActivePaneId = focusedTerminalPaneId ?? model.framePlan.active_pane_id()
         let cursorPickState = cursorPickState(from: model.uiTree.statuslineSnapshot())
+        let cursorBlinkDescriptor = cursorBlinkDescriptor(
+            plan: model.plan,
+            bufferOwnsFocus: bufferOwnsFocus
+        )
         let activePaneOrigin = panePixelOrigin(model.activePaneRect(), cellSize: cellSize)
         let terminalPaneIds = Set(model.terminalPanes.map(\.paneId))
         let shouldDimInactivePanes = Int(model.framePlan.pane_count()) > 1
@@ -278,6 +285,7 @@ struct EditorView: View {
                 terminalPaneIds: terminalPaneIds,
                 effectiveActivePaneId: effectiveActivePaneId,
                 cursorPickState: cursorPickState,
+                cursorOpacity: cursorBlinkController.opacity,
                 editorBackgroundColor: editorBackgroundColor
             )
 
@@ -326,12 +334,16 @@ struct EditorView: View {
         )
         .onAppear {
             model.updateViewport(pixelSize: contentProxy.size, cellSize: cellSize)
+            cursorBlinkController.update(cursorBlinkDescriptor)
         }
         .onChange(of: contentProxy.size) { newSize in
             model.updateViewport(pixelSize: newSize, cellSize: cellSize)
         }
         .onChange(of: cellSize) { newCellSize in
             model.updateViewport(pixelSize: contentProxy.size, cellSize: newCellSize)
+        }
+        .onChange(of: cursorBlinkDescriptor) { newDescriptor in
+            cursorBlinkController.update(newDescriptor)
         }
         .onChange(of: isCompletionOpen) { isOpen in
             guard !isOpen else {
@@ -362,6 +374,7 @@ struct EditorView: View {
         terminalPaneIds: Set<UInt64>,
         effectiveActivePaneId: UInt64,
         cursorPickState: CursorPickState?,
+        cursorOpacity: Double,
         editorBackgroundColor: SwiftUI.Color
     ) -> some View {
         Canvas { context, size in
@@ -375,10 +388,24 @@ struct EditorView: View {
                 cellSize: cellSize,
                 bufferFont: bufferFont,
                 bufferNSFont: bufferNSFont,
-                cursorPickState: cursorPickState
+                cursorPickState: cursorPickState,
+                cursorOpacity: cursorOpacity
             )
         }
         .background(editorBackgroundColor)
+    }
+
+    private func cursorBlinkDescriptor(
+        plan: RenderPlan,
+        bufferOwnsFocus: Bool
+    ) -> CursorBlinkDescriptor {
+        CursorBlinkDescriptor(
+            enabled: bufferOwnsFocus && plan.cursor_blink_enabled(),
+            cursorCount: Int(plan.cursor_count()),
+            intervalMilliseconds: UInt64(plan.cursor_blink_interval_ms()),
+            delayMilliseconds: UInt64(plan.cursor_blink_delay_ms()),
+            generation: plan.cursor_blink_generation()
+        )
     }
 
     @ViewBuilder
@@ -829,7 +856,8 @@ struct EditorView: View {
         cellSize: CGSize,
         bufferFont: Font,
         bufferNSFont: NSFont,
-        cursorPickState: CursorPickState?
+        cursorPickState: CursorPickState?,
+        cursorOpacity: Double
     ) {
         let paneCount = Int(framePlan.pane_count())
         guard paneCount > 0 else {
@@ -840,7 +868,8 @@ struct EditorView: View {
                 cellSize: cellSize,
                 bufferFont: bufferFont,
                 bufferNSFont: bufferNSFont,
-                cursorPickState: cursorPickState
+                cursorPickState: cursorPickState,
+                cursorOpacity: cursorOpacity
             )
             return
         }
@@ -867,7 +896,8 @@ struct EditorView: View {
                 cellSize: cellSize,
                 bufferFont: bufferFont,
                 bufferNSFont: bufferNSFont,
-                cursorPickState: pane.pane_id() == activePaneId ? cursorPickState : nil
+                cursorPickState: pane.pane_id() == activePaneId ? cursorPickState : nil,
+                cursorOpacity: cursorOpacity
             )
         }
 
@@ -1001,7 +1031,8 @@ struct EditorView: View {
         cellSize: CGSize,
         bufferFont: Font,
         bufferNSFont: NSFont,
-        cursorPickState: CursorPickState?
+        cursorPickState: CursorPickState?,
+        cursorOpacity: Double
     ) {
         let contentOffsetX = CGFloat(plan.content_offset_x()) * cellSize.width
         drawGutter(
@@ -1040,7 +1071,8 @@ struct EditorView: View {
             plan: plan,
             cellSize: cellSize,
             contentOffsetX: contentOffsetX,
-            cursorPickState: cursorPickState
+            cursorPickState: cursorPickState,
+            cursorOpacity: cursorOpacity
         )
         debugDrawSnapshot(
             plan: plan,
@@ -1213,12 +1245,12 @@ struct EditorView: View {
 
         for index in 0..<count {
             let selection = plan.selection_at(UInt(index))
-            let rect = selection.rect()
+            let selectionRect = selection.rect()
             let style = selection.style()
-            let x = contentOffsetX + CGFloat(rect.x) * cellSize.width
-            let y = CGFloat(rect.y) * cellSize.height
-            let width = CGFloat(rect.width) * cellSize.width
-            let height = CGFloat(rect.height) * cellSize.height
+            let x = contentOffsetX + CGFloat(selectionRect.x) * cellSize.width
+            let y = CGFloat(selectionRect.y) * cellSize.height
+            let width = CGFloat(selectionRect.width) * cellSize.width
+            let height = CGFloat(selectionRect.height) * cellSize.height
             let path = Path(CGRect(x: x, y: y, width: width, height: height))
             let color = if style.has_bg, let bg = ColorMapper.color(from: style.bg) {
                 bg.opacity(0.42)
@@ -1278,8 +1310,11 @@ struct EditorView: View {
         plan: RenderPlan,
         cellSize: CGSize,
         contentOffsetX: CGFloat,
-        cursorPickState: CursorPickState?
+        cursorPickState: CursorPickState?,
+        cursorOpacity: Double
     ) {
+        let effectiveCursorOpacity = max(0.0, min(1.0, cursorOpacity))
+        guard effectiveCursorOpacity > 0.001 else { return }
         let count = Int(plan.cursor_count())
         guard count > 0 else { return }
 
@@ -1303,7 +1338,8 @@ struct EditorView: View {
             let x = contentOffsetX + CGFloat(pos.col) * cellSize.width
             let y = CGFloat(pos.row) * cellSize.height
             let isPickedCursor = pickedCursorId == cursor.id()
-            let strokeColor = cursorColor(for: cursor.style(), fallback: fallbackCursorColor)
+            let baseCursorColor = cursorColor(for: cursor.style(), fallback: fallbackCursorColor)
+            let strokeColor = baseCursorColor.opacity(effectiveCursorOpacity)
 
             switch cursor.kind() {
             case 1: // bar
@@ -1325,7 +1361,10 @@ struct EditorView: View {
                 continue
             default: // block
                 let rect = CGRect(x: x, y: y, width: cellSize.width, height: cellSize.height)
-                context.fill(Path(rect), with: .color(strokeColor.opacity(isPickedCursor ? 0.65 : 0.5)))
+                context.fill(
+                    Path(rect),
+                    with: .color(baseCursorColor.opacity((isPickedCursor ? 0.65 : 0.5) * effectiveCursorOpacity))
+                )
             }
         }
     }

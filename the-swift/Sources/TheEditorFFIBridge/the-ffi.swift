@@ -1618,6 +1618,10 @@ extension RenderSelectionRef {
     public func style() -> Style {
         __swift_bridge__$RenderSelection$style(ptr).intoSwiftRepr()
     }
+
+    public func kind() -> UInt8 {
+        __swift_bridge__$RenderSelection$kind(ptr)
+    }
 }
 extension RenderSelection: Vectorizable {
     public static func vecOfSelfNew() -> UnsafeMutableRawPointer {
@@ -2085,6 +2089,22 @@ extension RenderPlanRef {
 
     public func content_offset_x() -> UInt16 {
         __swift_bridge__$RenderPlan$content_offset_x(ptr)
+    }
+
+    public func cursor_blink_enabled() -> Bool {
+        __swift_bridge__$RenderPlan$cursor_blink_enabled(ptr)
+    }
+
+    public func cursor_blink_interval_ms() -> UInt16 {
+        __swift_bridge__$RenderPlan$cursor_blink_interval_ms(ptr)
+    }
+
+    public func cursor_blink_delay_ms() -> UInt16 {
+        __swift_bridge__$RenderPlan$cursor_blink_delay_ms(ptr)
+    }
+
+    public func cursor_blink_generation() -> UInt64 {
+        __swift_bridge__$RenderPlan$cursor_blink_generation(ptr)
     }
 
     public func gutter_line_count() -> UInt {

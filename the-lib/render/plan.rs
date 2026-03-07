@@ -205,10 +205,17 @@ pub struct RenderCursor {
   pub style: Style,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RenderSelectionKind {
+  Primary,
+  Match,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RenderSelection {
   pub rect:  Rect,
   pub style: Style,
+  pub kind:  RenderSelectionKind,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -258,6 +265,10 @@ pub struct RenderPlan {
   pub viewport:         Rect,
   pub scroll:           Position,
   pub content_offset_x: u16,
+  pub cursor_blink_enabled: bool,
+  pub cursor_blink_interval_ms: u16,
+  pub cursor_blink_delay_ms: u16,
+  pub cursor_blink_generation: u64,
   pub gutter_columns:   Vec<RenderGutterColumn>,
   pub visible_rows:     Vec<RenderVisibleRow>,
   pub gutter_lines:     Vec<RenderGutterLine>,
@@ -273,6 +284,10 @@ impl RenderPlan {
       viewport,
       scroll,
       content_offset_x: 0,
+      cursor_blink_enabled: false,
+      cursor_blink_interval_ms: 0,
+      cursor_blink_delay_ms: 0,
+      cursor_blink_generation: 0,
       gutter_columns: Vec::new(),
       visible_rows: Vec::new(),
       gutter_lines: Vec::new(),
@@ -947,7 +962,14 @@ fn add_selections_and_cursor<'a>(
         continue;
       };
 
-      push_selection_rects(plan, start, end, styles.selection, &row_visible_end_cols);
+      push_selection_rects(
+        plan,
+        start,
+        end,
+        styles.selection,
+        RenderSelectionKind::Primary,
+        &row_visible_end_cols,
+      );
     }
 
     let cursor_kind = if view.active_cursor == Some(cursor_id) {
@@ -1095,7 +1117,14 @@ pub fn add_selection_match_highlights<'a>(
       let start = visual_position::visual_pos_at_char(text_slice, text_fmt, annotations, abs_start);
       let end = visual_position::visual_pos_at_char(text_slice, text_fmt, annotations, abs_end);
       if let (Some(start), Some(end)) = (start, end) {
-        push_selection_rects(plan, start, end, style, &row_visible_end_cols);
+        push_selection_rects(
+          plan,
+          start,
+          end,
+          style,
+          RenderSelectionKind::Match,
+          &row_visible_end_cols,
+        );
         emitted = emitted.saturating_add(1);
         if emitted >= options.max_matches {
           break;
@@ -1205,6 +1234,7 @@ fn push_selection_rects(
   start: Position,
   end: Position,
   style: Style,
+  kind: RenderSelectionKind,
   row_visible_end_cols: &[usize],
 ) {
   let row_start = plan.scroll.row;
@@ -1235,6 +1265,7 @@ fn push_selection_rects(
         1,
       ),
       style,
+      kind,
     });
     return;
   }
@@ -1267,6 +1298,7 @@ fn push_selection_rects(
         1,
       ),
       style,
+      kind,
     });
   }
 }
@@ -1286,6 +1318,7 @@ mod tests {
     render::{
       GutterConfig,
       SyntaxHighlightAdapter,
+      graphics::Color,
       text_annotations::Overlay,
     },
     selection::{
@@ -1385,11 +1418,109 @@ mod tests {
     assert_eq!(plan.selections.len(), 2);
     assert_eq!(plan.selections[0].rect, Rect::new(2, 0, 3, 1));
     assert_eq!(plan.selections[1].rect, Rect::new(0, 1, 2, 1));
+    assert_eq!(plan.selections[0].kind, RenderSelectionKind::Primary);
+    assert_eq!(plan.selections[1].kind, RenderSelectionKind::Primary);
 
     assert_eq!(plan.cursors.len(), 2);
     let cursor_positions: Vec<_> = plan.cursors.iter().map(|c| c.pos).collect();
     assert!(cursor_positions.contains(&Position::new(0, 1)));
     assert!(cursor_positions.contains(&Position::new(1, 1)));
+  }
+
+  #[test]
+  fn build_plan_bar_cursor_uses_selection_head_position() {
+    let id = DocumentId::new(std::num::NonZeroUsize::new(1).unwrap());
+    let mut doc = Document::new(id, Rope::from("printf\n"));
+    doc.set_selection(Selection::single(0, 6)).unwrap();
+
+    let view = ViewState::new(Rect::new(0, 0, 10, 1), Position::new(0, 0));
+    let text_fmt = TextFormat::default();
+    let mut annotations = TextAnnotations::default();
+    let mut highlights = NoHighlights;
+    let gutter = no_gutter();
+    let mut cache = RenderCache::default();
+    let styles = RenderStyles {
+      cursor_kind: CursorKind::Bar,
+      active_cursor_kind: CursorKind::Bar,
+      ..RenderStyles::default()
+    };
+
+    let plan = build_plan(
+      &doc,
+      view,
+      &text_fmt,
+      &gutter,
+      &mut annotations,
+      &mut highlights,
+      &mut cache,
+      styles,
+    );
+
+    assert_eq!(plan.cursors.len(), 1);
+    assert_eq!(plan.cursors[0].kind, CursorKind::Bar);
+    assert_eq!(plan.cursors[0].pos, Position::new(0, 6));
+  }
+
+  #[test]
+  fn add_selection_match_highlights_marks_secondary_matches() {
+    let id = DocumentId::new(std::num::NonZeroUsize::new(1).unwrap());
+    let mut doc = Document::new(id, Rope::from("alpha beta alpha\n"));
+    doc.set_selection(Selection::single(0, 5)).unwrap();
+
+    let view = ViewState::new(Rect::new(0, 0, 20, 1), Position::new(0, 0));
+    let text_fmt = TextFormat::default();
+    let mut annotations = TextAnnotations::default();
+    let mut highlights = NoHighlights;
+    let gutter = no_gutter();
+    let mut cache = RenderCache::default();
+    let styles = RenderStyles::default();
+
+    let mut plan = build_plan(
+      &doc,
+      view,
+      &text_fmt,
+      &gutter,
+      &mut annotations,
+      &mut highlights,
+      &mut cache,
+      styles,
+    );
+
+    add_selection_match_highlights(
+      &mut plan,
+      &doc,
+      &text_fmt,
+      &mut annotations,
+      view,
+      Style::default().bg(Color::Rgb(75, 42, 115)),
+      SelectionMatchHighlightOptions::default(),
+    );
+
+    assert_eq!(
+      plan
+        .selections
+        .iter()
+        .filter(|selection| selection.kind == RenderSelectionKind::Primary)
+        .count(),
+      1
+    );
+    assert_eq!(
+      plan
+        .selections
+        .iter()
+        .filter(|selection| selection.kind == RenderSelectionKind::Match)
+        .count(),
+      1
+    );
+    assert_eq!(
+      plan
+        .selections
+        .iter()
+        .find(|selection| selection.kind == RenderSelectionKind::Match)
+        .expect("match selection")
+        .rect,
+      Rect::new(11, 0, 5, 1)
+    );
   }
 
   #[test]

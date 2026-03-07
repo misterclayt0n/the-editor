@@ -557,6 +557,7 @@ pub struct Ctx {
   pub file_path:                     Option<PathBuf>,
   pub should_quit:                   bool,
   pub needs_render:                  bool,
+  cursor_blink_generation:           u64,
   pub messages:                      MessageCenter,
   message_log:                       Option<BufWriter<std::fs::File>>,
   message_log_seq:                   u64,
@@ -954,6 +955,7 @@ impl Ctx {
       file_path: file_path.map(PathBuf::from),
       should_quit: false,
       needs_render: true,
+      cursor_blink_generation: 0,
       messages: MessageCenter::default(),
       message_log,
       message_log_seq: 0,
@@ -5564,6 +5566,14 @@ impl the_default::DefaultContext for Ctx {
 
   fn mode(&self) -> Mode {
     self.mode
+  }
+
+  fn cursor_blink_generation(&self) -> u64 {
+    self.cursor_blink_generation
+  }
+
+  fn bump_cursor_blink_generation(&mut self) {
+    self.cursor_blink_generation = self.cursor_blink_generation.wrapping_add(1);
   }
 
   fn set_mode(&mut self, mode: Mode) {

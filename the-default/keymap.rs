@@ -663,6 +663,18 @@ fn apply_mode<Ctx: DefaultContext>(ctx: &mut Ctx, mode: Mode) {
     let _ = doc.set_selection(selection);
   }
 
+  if previous_mode == Mode::Normal && mode == Mode::Insert {
+    let doc = ctx.editor().document_mut();
+    let text = doc.text().slice(..);
+    // Normal mode uses block-cursor semantics, so entering insert mode should
+    // always collapse to the left edge of that block cursor.
+    let selection = doc
+      .selection()
+      .clone()
+      .transform(|range| Range::point(range.cursor(text)));
+    let _ = doc.set_selection(selection);
+  }
+
   if mode == Mode::Command {
     ctx.command_prompt_mut().clear();
   }

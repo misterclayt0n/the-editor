@@ -374,6 +374,19 @@ pub trait DefaultContext: Sized + 'static {
   fn editor_ref(&self) -> &Editor;
   fn file_path(&self) -> Option<&Path>;
   fn request_render(&mut self);
+  fn cursor_blink_enabled(&self) -> bool {
+    true
+  }
+  fn cursor_blink_interval_ms(&self) -> u16 {
+    500
+  }
+  fn cursor_blink_delay_ms(&self) -> u16 {
+    500
+  }
+  fn cursor_blink_generation(&self) -> u64 {
+    0
+  }
+  fn bump_cursor_blink_generation(&mut self) {}
   fn messages(&self) -> &MessageCenter;
   fn messages_mut(&mut self) -> &mut MessageCenter;
   fn push_message(
@@ -1292,9 +1305,12 @@ fn on_pointer_event<Ctx: DefaultContext>(
 }
 
 fn post_on_pointer_event<Ctx: DefaultContext>(
-  _ctx: &mut Ctx,
+  ctx: &mut Ctx,
   outcome: PointerEventOutcome,
 ) -> PointerEventOutcome {
+  if outcome.handled() {
+    ctx.bump_cursor_blink_generation();
+  }
   outcome
 }
 
@@ -1641,6 +1657,7 @@ fn post_on_action<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
   if ctx.mode() != Mode::Insert {
     let _ = ctx.editor().document_mut().commit();
   }
+  ctx.bump_cursor_blink_generation();
   ctx.dispatch().render_request(ctx, ());
 }
 
@@ -1655,7 +1672,11 @@ fn on_render<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) -> RenderPlan {
 }
 
 fn post_render<Ctx: DefaultContext>(ctx: &mut Ctx, plan: RenderPlan) -> RenderPlan {
-  let _ = ctx;
+  let mut plan = plan;
+  plan.cursor_blink_enabled = ctx.cursor_blink_enabled();
+  plan.cursor_blink_interval_ms = ctx.cursor_blink_interval_ms();
+  plan.cursor_blink_delay_ms = ctx.cursor_blink_delay_ms();
+  plan.cursor_blink_generation = ctx.cursor_blink_generation();
   plan
 }
 
@@ -2143,12 +2164,31 @@ fn insert_char<Ctx: DefaultContext>(ctx: &mut Ctx, ch: char) {
 
   let mut text = Tendril::new();
   text.push(ch);
+  let inserted_len = text.chars().count() as isize;
+  let mut offset = 0isize;
+  let mut ranges = SmallVec::<[Range; 1]>::with_capacity(selection.len());
 
-  let cursors = selection.clone().cursors(doc.text().slice(..));
-  let Ok(tx) = Transaction::insert(doc.text(), &cursors, text) else {
+  let Ok(tx) = Transaction::change_by_selection(doc.text(), &selection, |range| {
+    let (from, to) = if range.is_empty() {
+      (range.head, range.head)
+    } else {
+      (range.from(), range.to())
+    };
+    let next_cursor = (from as isize + offset + inserted_len).max(0) as usize;
+    ranges.push(Range::point(next_cursor));
+    offset += inserted_len - (to.saturating_sub(from) as isize);
+    (from, to, Some(text.clone()))
+  }) else {
     return;
   };
 
+  let cursor_ids: SmallVec<[CursorId; 1]> = selection.cursor_ids().iter().copied().collect();
+  let new_selection = if cursor_ids.len() == ranges.len() {
+    Selection::new_with_ids(ranges, cursor_ids).unwrap_or_else(|_| selection.clone())
+  } else {
+    Selection::new(ranges).unwrap_or_else(|_| selection.clone())
+  };
+  let tx = tx.with_selection(new_selection);
   let _ = ctx.apply_transaction(&tx);
 }
 

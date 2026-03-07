@@ -419,7 +419,7 @@ impl Document {
   pub fn cursor_count(&self) -> usize {
     self.inner.selection().len()
   }
-
+  
   /// Get cursor position at the given index.
   /// Returns None if index is out of bounds.
   pub fn cursor_at(&self, index: usize) -> Option<usize> {
@@ -785,6 +785,7 @@ impl Default for RenderSelection {
       inner: the_lib::render::RenderSelection {
         rect:  LibRect::new(0, 0, 0, 0),
         style: LibStyle::default(),
+        kind:  the_lib::render::RenderSelectionKind::Primary,
       },
     }
   }
@@ -797,6 +798,13 @@ impl RenderSelection {
 
   fn style(&self) -> ffi::Style {
     self.inner.style.into()
+  }
+
+  fn kind(&self) -> u8 {
+    match self.inner.kind {
+      the_lib::render::RenderSelectionKind::Primary => 1,
+      the_lib::render::RenderSelectionKind::Match => 2,
+    }
   }
 }
 
@@ -909,6 +917,22 @@ impl RenderPlan {
 
   fn content_offset_x(&self) -> u16 {
     self.inner.content_offset_x
+  }
+
+  fn cursor_blink_enabled(&self) -> bool {
+    self.inner.cursor_blink_enabled
+  }
+
+  fn cursor_blink_interval_ms(&self) -> u16 {
+    self.inner.cursor_blink_interval_ms
+  }
+
+  fn cursor_blink_delay_ms(&self) -> u16 {
+    self.inner.cursor_blink_delay_ms
+  }
+
+  fn cursor_blink_generation(&self) -> u64 {
+    self.inner.cursor_blink_generation
   }
 
   fn gutter_line_count(&self) -> usize {
@@ -3656,6 +3680,7 @@ pub struct App {
   vcs_diff_handles:                HashMap<LibEditorId, DiffHandle>,
   active_editor:                   Option<LibEditorId>,
   should_quit:                     bool,
+  cursor_blink_generation:         u64,
   registers:                       Registers,
   last_motion:                     Option<Motion>,
   lsp_shared_enabled:              bool,
@@ -4474,6 +4499,7 @@ impl App {
       vcs_diff_handles: HashMap::new(),
       active_editor: None,
       should_quit: false,
+      cursor_blink_generation: 0,
       registers: Registers::with_clipboard(clipboard),
       last_motion: None,
       lsp_shared_enabled,
@@ -9744,7 +9770,12 @@ impl App {
         let drag_state =
           self.pointer_selection_drag_state_for_target(click_mode, target, event.modifiers.shift());
         self.active_state_mut().pointer_drag_selection = Some(drag_state);
-        let changed = self.pointer_apply_drag_selection(drag_state, target);
+        let changed = match click_mode {
+          PointerSelectionDragMode::Char if !event.modifiers.shift() => {
+            self.pointer_set_primary_range(Range::point(target))
+          },
+          _ => self.pointer_apply_drag_selection(drag_state, target),
+        };
         self.clear_hover_state();
         if changed || pane_changed {
           self.request_render();
@@ -9827,6 +9858,23 @@ impl App {
       .is_ok()
   }
 
+  fn pointer_set_primary_range(&mut self, range: Range) -> bool {
+    self
+      .active_editor_mut()
+      .document_mut()
+      .set_selection(range.into())
+      .is_ok()
+  }
+
+  fn pointer_char_drag_range(&self, anchor: usize, target: usize) -> Range {
+    if target == anchor {
+      return Range::point(target);
+    }
+
+    let text = self.active_editor_ref().document().text().slice(..);
+    Range::point(anchor).put_cursor(text, target, true)
+  }
+
   fn pointer_drag_mode_for_click_count(click_count: u8) -> PointerSelectionDragMode {
     if click_count >= 3 {
       PointerSelectionDragMode::Line
@@ -9887,7 +9935,10 @@ impl App {
     target: usize,
   ) -> bool {
     match state.mode {
-      PointerSelectionDragMode::Char => self.pointer_set_primary_selection(state.anchor, target),
+      PointerSelectionDragMode::Char => {
+        let range = self.pointer_char_drag_range(state.anchor, target);
+        self.pointer_set_primary_range(range)
+      },
       PointerSelectionDragMode::Word => {
         let (target_from, target_to) = self.pointer_word_range_at_char(target);
         if target_from < state.initial_from {
@@ -10531,6 +10582,14 @@ impl DefaultContext for App {
 
   fn request_render(&mut self) {
     self.active_state_mut().needs_render = true;
+  }
+
+  fn cursor_blink_generation(&self) -> u64 {
+    self.cursor_blink_generation
+  }
+
+  fn bump_cursor_blink_generation(&mut self) {
+    self.cursor_blink_generation = self.cursor_blink_generation.wrapping_add(1);
   }
 
   fn messages(&self) -> &MessageCenter {
@@ -12403,6 +12462,7 @@ mod ffi {
     type RenderSelection;
     fn rect(self: &RenderSelection) -> Rect;
     fn style(self: &RenderSelection) -> Style;
+    fn kind(self: &RenderSelection) -> u8;
   }
 
   extern "Rust" {
@@ -12421,6 +12481,10 @@ mod ffi {
     fn viewport(self: &RenderPlan) -> Rect;
     fn scroll(self: &RenderPlan) -> Position;
     fn content_offset_x(self: &RenderPlan) -> u16;
+    fn cursor_blink_enabled(self: &RenderPlan) -> bool;
+    fn cursor_blink_interval_ms(self: &RenderPlan) -> u16;
+    fn cursor_blink_delay_ms(self: &RenderPlan) -> u16;
+    fn cursor_blink_generation(self: &RenderPlan) -> u64;
     fn gutter_line_count(self: &RenderPlan) -> usize;
     fn gutter_line_at(self: &RenderPlan, index: usize) -> RenderGutterLine;
     fn line_count(self: &RenderPlan) -> usize;
@@ -15437,6 +15501,96 @@ pkgs.mkShell {
     assert_eq!(selection.ranges().len(), 1);
     assert_eq!(selection.cursor_ids()[0], active_cursor_id);
     assert_eq!(selection.ranges()[0], Range::point(active_cursor_point));
+  }
+
+  #[test]
+  fn insert_mode_key_collapses_normal_mode_selection_to_block_cursor_edge() {
+    let _guard = ffi_test_guard();
+    let mut app = App::new();
+    let id = app.create_editor("printf(\"hello\")\n", default_viewport(), ffi::Position {
+      row: 0,
+      col: 0,
+    });
+    assert!(app.activate(id).is_some());
+    let _ = app
+      .active_editor_mut()
+      .document_mut()
+      .set_selection(Selection::single(0, 6));
+
+    assert!(app.handle_key(id, key_char('i')));
+    assert_eq!(app.active_state_ref().mode, Mode::Insert);
+    assert_eq!(
+      app.active_editor_ref().document().selection().ranges()[0],
+      Range::point(5)
+    );
+  }
+
+  #[test]
+  fn insert_mode_mouse_drag_keeps_selection_and_bar_cursor_on_active_edge() {
+    let _guard = ffi_test_guard();
+    let mut app = App::new();
+    let id = app.create_editor("printf\n", default_viewport(), ffi::Position { row: 0, col: 0 });
+    assert!(app.activate(id).is_some());
+    app.set_mode(Mode::Insert);
+
+    let down = the_default::PointerEvent::new(
+      the_default::PointerKind::Down(the_default::PointerButton::Left),
+      0,
+      0,
+    )
+    .with_logical_pos(0, 0)
+    .with_click_count(1);
+    assert_eq!(
+      app.pointer_event(down),
+      the_default::PointerEventOutcome::Handled
+    );
+    assert_eq!(
+      app.active_editor_ref().document().selection().ranges()[0],
+      Range::point(0)
+    );
+
+    let drag = the_default::PointerEvent::new(
+      the_default::PointerKind::Drag(the_default::PointerButton::Left),
+      0,
+      0,
+    )
+    .with_logical_pos(5, 0)
+    .with_click_count(1);
+    assert_eq!(
+      app.pointer_event(drag),
+      the_default::PointerEventOutcome::Handled
+    );
+    assert_eq!(
+      app.active_editor_ref().document().selection().ranges()[0],
+      Range::new(0, 6)
+    );
+
+    let plan = app.render_plan(id);
+    assert_eq!(plan.selection_count(), 1);
+    assert_eq!(plan.cursor_count(), 1);
+    assert_eq!(plan.cursor_at(0).kind(), 1);
+    assert_eq!(plan.cursor_at(0).pos().row, 0);
+    assert_eq!(plan.cursor_at(0).pos().col, 6);
+  }
+
+  #[test]
+  fn insert_mode_typing_replaces_mouse_selection() {
+    let _guard = ffi_test_guard();
+    let mut app = App::new();
+    let id = app.create_editor("printf\n", default_viewport(), ffi::Position { row: 0, col: 0 });
+    assert!(app.activate(id).is_some());
+    app.set_mode(Mode::Insert);
+    let _ = app
+      .active_editor_mut()
+      .document_mut()
+      .set_selection(Selection::single(0, 6));
+
+    assert!(app.handle_key(id, key_char('x')));
+    assert_eq!(app.text(id), "x\n");
+    assert_eq!(
+      app.active_editor_ref().document().selection().ranges()[0],
+      Range::point(1)
+    );
   }
 
   #[test]

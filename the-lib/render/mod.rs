@@ -62,6 +62,7 @@ pub use plan::{
   RenderLine,
   RenderPlan,
   RenderSelection,
+  RenderSelectionKind,
   SelectionMatchHighlightOptions,
   RenderSpan,
   RenderStyles,

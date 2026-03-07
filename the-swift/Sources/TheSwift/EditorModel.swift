@@ -925,6 +925,9 @@ final class EditorModel: ObservableObject {
 
     func selectBufferTab(bufferIndex: Int) {
         guard bufferIndex >= 0 else { return }
+        if isActivePaneTerminal {
+            _ = app.hide_active_terminal_surface(editorId)
+        }
         guard app.activate_buffer_tab(editorId, UInt(bufferIndex)) else {
             return
         }
@@ -1840,6 +1843,7 @@ final class EditorModel: ObservableObject {
                 isActive: !isActivePaneTerminal && tab.isActive,
                 isModified: tab.modified,
                 statusText: nil,
+                bufferId: tab.bufferId,
                 bufferIndex: tab.bufferIndex,
                 terminalId: nil
             )
@@ -1867,14 +1871,53 @@ final class EditorModel: ObservableObject {
                 id: "terminal:\(surface.terminalId)",
                 kind: .terminal,
                 title: terminalPresentationTitle(from: metadata),
-                subtitle: terminalSwitcherSubtitle(for: surface, metadata: metadata),
+                subtitle: surfaceRailTerminalSubtitle(metadata: metadata),
                 isActive: surface.isActive,
                 isModified: false,
                 statusText: surface.isAttached ? nil : "DETACHED",
+                bufferId: nil,
                 bufferIndex: nil,
                 terminalId: surface.terminalId
             )
         }
+    }
+
+    @discardableResult
+    func closeSurfaceRailBuffer(bufferId: UInt64) -> Bool {
+        guard let tab = targetBufferTab(forBufferId: bufferId) else {
+            refresh(trigger: "surface_rail_buffer_close_missing")
+            return false
+        }
+
+        let context = BufferCloseContext(
+            bufferId: bufferId,
+            title: displayTitle(fromPath: tab.filePath) ?? normalizeFallbackTitle(tab.title),
+            modified: tab.modified
+        )
+
+        if context.modified, let hostWindow {
+            let alert = NSAlert()
+            alert.messageText = "Close Buffer Without Saving?"
+            alert.informativeText = "\"\(context.title)\" has unsaved changes. If you close the buffer the changes will be lost."
+            alert.addButton(withTitle: "Close")
+            alert.addButton(withTitle: "Cancel")
+            alert.alertStyle = .warning
+            alert.beginSheetModal(for: hostWindow) { [weak self] response in
+                guard let self, response == .alertFirstButtonReturn else { return }
+                _ = self.closeBufferForWindowClose(context)
+            }
+            return true
+        }
+
+        return closeBufferForWindowClose(context)
+    }
+
+    @discardableResult
+    func closeSurfaceRailTerminal(terminalId: UInt64) -> Bool {
+        guard focusTerminalSurface(terminalId: terminalId) else {
+            return false
+        }
+        return closeSurface()
     }
 
     private func surfaceRailBufferSubtitle(for tab: BufferTabItemSnapshot) -> String? {
@@ -1940,6 +1983,14 @@ final class EditorModel: ObservableObject {
             return "t\(surface.terminalId) • \(paneLabel)"
         }
         return "\(abbreviatedPath) • t\(surface.terminalId) • \(paneLabel)"
+    }
+
+    private func surfaceRailTerminalSubtitle(metadata: GhosttyTerminalMetadata?) -> String? {
+        guard let rawPath = metadata.flatMap({ representedPathFromTerminalPwd($0.pwd) }),
+              !rawPath.isEmpty else {
+            return nil
+        }
+        return (rawPath as NSString).abbreviatingWithTildeInPath
     }
 
     private func normalizedTerminalSwitcherWindowTitle() -> String {

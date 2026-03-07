@@ -10,9 +10,13 @@ struct EditorView: View {
     @ObservedObject private var globalTerminalSwitcher = GlobalTerminalSwitcherController.shared
     private let windowRoute: EditorWindowRoute?
     @State private var columnVisibility: NavigationSplitViewVisibility = .detailOnly
-    @SceneStorage("surfaceRailVisible") private var surfaceRailVisible = false
 
-    private static let surfaceRailWidth: CGFloat = 248
+    private enum SidebarNavigatorMode: String {
+        case files
+        case surfaces
+    }
+
+    @SceneStorage("sidebarNavigatorMode") private var sidebarNavigatorModeRaw = SidebarNavigatorMode.files.rawValue
 
     private struct CursorPickState {
         let remove: Bool
@@ -35,12 +39,9 @@ struct EditorView: View {
         let surfaceRailSnapshot = model.surfaceRailSnapshot()
 
         NavigationSplitView(columnVisibility: $columnVisibility) {
-            sidebar(snapshot: fileTreeSnapshot)
+            sidebar(snapshot: fileTreeSnapshot, surfaceRailSnapshot: surfaceRailSnapshot)
         } detail: {
-            detailContent(
-                editorBackgroundColor: editorBackgroundColor,
-                surfaceRailSnapshot: surfaceRailSnapshot
-            )
+            detailContent(editorBackgroundColor: editorBackgroundColor)
         }
         .navigationTitle(model.navigationTitle)
         .toolbarBackground(.hidden, for: .windowToolbar)
@@ -54,13 +55,6 @@ struct EditorView: View {
                         EditorToolbarVCS(snapshot: snap)
                     }
                     EditorToolbarTrailing(snapshot: snap, pendingKeys: model.pendingKeys)
-                    Button {
-                        surfaceRailVisible.toggle()
-                    } label: {
-                        Image(systemName: "sidebar.right")
-                    }
-                    .help("Toggle Surface Rail")
-                    .accessibilityLabel("Toggle Surface Rail")
                 }
             }
         }
@@ -100,53 +94,113 @@ struct EditorView: View {
     }
 
     @ViewBuilder
-    private func sidebar(snapshot: FileTreeSnapshot) -> some View {
-        FileTreeSidebarView(
-            snapshot: snapshot,
-            onSetExpanded: { path, expanded in
-                model.fileTreeSetExpanded(path: path, expanded: expanded)
-            },
-            onSelectPath: { path in
-                model.fileTreeSelectPath(path: path)
-            },
-            onOpenSelected: {
-                model.fileTreeOpenSelected()
+    private func sidebar(
+        snapshot: FileTreeSnapshot,
+        surfaceRailSnapshot: SurfaceRailSnapshot
+    ) -> some View {
+        VStack(spacing: 0) {
+            sidebarNavigatorTabs
+
+            Group {
+                switch sidebarNavigatorMode {
+                case .files:
+                    FileTreeSidebarView(
+                        snapshot: snapshot,
+                        onSetExpanded: { path, expanded in
+                            model.fileTreeSetExpanded(path: path, expanded: expanded)
+                        },
+                        onSelectPath: { path in
+                            model.fileTreeSelectPath(path: path)
+                        },
+                        onOpenSelected: {
+                            model.fileTreeOpenSelected()
+                        }
+                    )
+                case .surfaces:
+                    SurfaceRailView(
+                        snapshot: surfaceRailSnapshot,
+                        onSelectBuffer: { bufferIndex in
+                            model.selectBufferTab(bufferIndex: bufferIndex)
+                        },
+                        onSelectTerminal: { terminalId in
+                            _ = model.focusTerminalSurface(terminalId: terminalId)
+                        },
+                        onCloseBuffer: { bufferId in
+                            _ = model.closeSurfaceRailBuffer(bufferId: bufferId)
+                        },
+                        onCloseTerminal: { terminalId in
+                            _ = model.closeSurfaceRailTerminal(terminalId: terminalId)
+                        }
+                    )
+                }
             }
-        )
+        }
         .navigationSplitViewColumnWidth(min: 180, ideal: 240, max: 360)
     }
 
     @ViewBuilder
-    private func detailContent(
-        editorBackgroundColor: SwiftUI.Color,
-        surfaceRailSnapshot: SurfaceRailSnapshot
-    ) -> some View {
-        HStack(spacing: 0) {
-            VStack(spacing: 0) {
-                GeometryReader { contentProxy in
-                    detailGeometryContent(
-                        contentProxy: contentProxy,
-                        editorBackgroundColor: editorBackgroundColor
-                    )
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-            if surfaceRailVisible {
-                SurfaceRailView(
-                    snapshot: surfaceRailSnapshot,
-                    onSelectBuffer: { bufferIndex in
-                        model.selectBufferTab(bufferIndex: bufferIndex)
-                    },
-                    onSelectTerminal: { terminalId in
-                        _ = model.focusTerminalSurface(terminalId: terminalId)
-                    }
+    private func detailContent(editorBackgroundColor: SwiftUI.Color) -> some View {
+        VStack(spacing: 0) {
+            GeometryReader { contentProxy in
+                detailGeometryContent(
+                    contentProxy: contentProxy,
+                    editorBackgroundColor: editorBackgroundColor
                 )
-                .frame(width: Self.surfaceRailWidth)
-                .transition(.move(edge: .trailing))
             }
         }
         .background(editorBackgroundColor)
+    }
+
+    private var sidebarNavigatorMode: SidebarNavigatorMode {
+        get { SidebarNavigatorMode(rawValue: sidebarNavigatorModeRaw) ?? .files }
+        nonmutating set { sidebarNavigatorModeRaw = newValue.rawValue }
+    }
+
+    private var sidebarNavigatorTabs: some View {
+        HStack(spacing: 6) {
+            sidebarNavigatorButton(
+                mode: .files,
+                systemImage: "folder.fill",
+                help: "File Tree"
+            )
+            sidebarNavigatorButton(
+                mode: .surfaces,
+                systemImage: "square.on.square",
+                help: "Open Surfaces"
+            )
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 10)
+        .padding(.bottom, 9)
+        .background(.clear)
+        .overlay(alignment: .bottom) {
+            Divider()
+        }
+    }
+
+    private func sidebarNavigatorButton(
+        mode: SidebarNavigatorMode,
+        systemImage: String,
+        help: String
+    ) -> some View {
+        let isSelected = sidebarNavigatorMode == mode
+
+        return Button {
+            sidebarNavigatorMode = mode
+        } label: {
+            Image(systemName: systemImage)
+                .font(.system(size: 12, weight: .semibold))
+                .frame(width: 32, height: 28)
+                .foregroundStyle(isSelected ? .primary : .secondary)
+                .background {
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(isSelected ? Color(nsColor: .quaternaryLabelColor).opacity(0.22) : Color(nsColor: .quaternaryLabelColor).opacity(0.08))
+                }
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .accessibilityLabel(help)
     }
 
     @ViewBuilder

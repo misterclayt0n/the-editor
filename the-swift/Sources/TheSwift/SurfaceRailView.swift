@@ -14,6 +14,7 @@ struct SurfaceRailItemSnapshot: Identifiable, Equatable {
     let isActive: Bool
     let isModified: Bool
     let statusText: String?
+    let bufferId: UInt64?
     let bufferIndex: Int?
     let terminalId: UInt64?
 }
@@ -44,12 +45,16 @@ struct SurfaceRailView: View {
     let snapshot: SurfaceRailSnapshot
     let onSelectBuffer: (Int) -> Void
     let onSelectTerminal: (UInt64) -> Void
+    let onCloseBuffer: (UInt64) -> Void
+    let onCloseTerminal: (UInt64) -> Void
 
     var body: some View {
         SurfaceRailNativeView(
             snapshot: snapshot,
             onSelectBuffer: onSelectBuffer,
-            onSelectTerminal: onSelectTerminal
+            onSelectTerminal: onSelectTerminal,
+            onCloseBuffer: onCloseBuffer,
+            onCloseTerminal: onCloseTerminal
         )
     }
 }
@@ -83,21 +88,15 @@ private final class SurfaceRailRowView: NSTableRowView {
     }
 }
 
-private final class SurfaceRailContainerView: NSVisualEffectView {
+private final class SurfaceRailContainerView: NSView {
     let scrollView = NSScrollView()
     let outlineView = NSOutlineView()
     let nameColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("surface-rail-name"))
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        blendingMode = .behindWindow
-        if #available(macOS 13.0, *) {
-            material = .sidebar
-        } else {
-            material = .underWindowBackground
-        }
-        state = .active
-        isEmphasized = false
+        wantsLayer = true
+        layer?.backgroundColor = .clear
         configureViews()
         buildLayout()
     }
@@ -115,17 +114,16 @@ private final class SurfaceRailContainerView: NSVisualEffectView {
         scrollView.borderType = .noBorder
         scrollView.scrollerStyle = .overlay
         scrollView.automaticallyAdjustsContentInsets = false
-        scrollView.contentInsets = NSEdgeInsets(top: 6, left: 0, bottom: 6, right: 0)
+        scrollView.contentInsets = NSEdgeInsets(top: 4, left: 0, bottom: 4, right: 0)
 
         outlineView.translatesAutoresizingMaskIntoConstraints = false
         outlineView.headerView = nil
         outlineView.floatsGroupRows = false
         outlineView.backgroundColor = .clear
         outlineView.intercellSpacing = NSSize(width: 0, height: 0)
-        outlineView.indentationPerLevel = 10
+        outlineView.indentationPerLevel = 0
         outlineView.focusRingType = .none
         outlineView.selectionHighlightStyle = .regular
-        outlineView.rowSizeStyle = .default
 
         nameColumn.title = "Surface"
         outlineView.addTableColumn(nameColumn)
@@ -154,6 +152,8 @@ private struct SurfaceRailNativeView: NSViewRepresentable {
     let snapshot: SurfaceRailSnapshot
     let onSelectBuffer: (Int) -> Void
     let onSelectTerminal: (UInt64) -> Void
+    let onCloseBuffer: (UInt64) -> Void
+    let onCloseTerminal: (UInt64) -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -308,6 +308,19 @@ private struct SurfaceRailNativeView: NSViewRepresentable {
             }
         }
 
+        private func close(_ snapshot: SurfaceRailItemSnapshot) {
+            switch snapshot.kind {
+            case .buffer:
+                if let bufferId = snapshot.bufferId {
+                    parent.onCloseBuffer(bufferId)
+                }
+            case .terminal:
+                if let terminalId = snapshot.terminalId {
+                    parent.onCloseTerminal(terminalId)
+                }
+            }
+        }
+
         func outlineView(_ outlineView: NSOutlineView, rowViewForItem item: Any) -> NSTableRowView? {
             guard item is SurfaceRailItemNode else {
                 return nil
@@ -338,6 +351,9 @@ private struct SurfaceRailNativeView: NSViewRepresentable {
             let view = (outlineView.makeView(withIdentifier: identifier, owner: nil) as? SurfaceRailItemCellView)
                 ?? SurfaceRailItemCellView(identifier: identifier)
             view.configure(item: itemNode.snapshot)
+            view.onClose = { [weak self] item in
+                self?.close(item)
+            }
             return view
         }
     }
@@ -387,8 +403,10 @@ private final class SurfaceRailItemCellView: NSTableCellView {
     private let titleLabel = NSTextField(labelWithString: "")
     private let subtitleLabel = NSTextField(labelWithString: "")
     private let modifiedDot = DotView()
-    private let statusBadge = StatusBadgeView()
+    private let closeButton = NSButton()
     private var currentItem: SurfaceRailItemSnapshot?
+    private var trackingArea: NSTrackingArea?
+    var onClose: ((SurfaceRailItemSnapshot) -> Void)?
 
     convenience init(identifier: NSUserInterfaceItemIdentifier) {
         self.init(frame: .zero)
@@ -397,65 +415,95 @@ private final class SurfaceRailItemCellView: NSTableCellView {
         iconView.translatesAutoresizingMaskIntoConstraints = false
         iconView.imageScaling = .scaleProportionallyDown
         iconView.imageAlignment = .alignCenter
-        iconView.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 12, weight: .semibold)
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.font = NSFont.systemFont(ofSize: 12, weight: .medium)
+        titleLabel.font = .systemFont(ofSize: 12)
         titleLabel.lineBreakMode = .byTruncatingTail
         titleLabel.usesSingleLineMode = true
+        titleLabel.textColor = .labelColor
 
         subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
-        subtitleLabel.font = NSFont.systemFont(ofSize: 11)
+        subtitleLabel.font = .systemFont(ofSize: 11)
         subtitleLabel.lineBreakMode = .byTruncatingMiddle
         subtitleLabel.usesSingleLineMode = true
+        subtitleLabel.textColor = .secondaryLabelColor
 
         modifiedDot.translatesAutoresizingMaskIntoConstraints = false
         modifiedDot.isHidden = true
 
-        statusBadge.translatesAutoresizingMaskIntoConstraints = false
-        statusBadge.isHidden = true
+        closeButton.translatesAutoresizingMaskIntoConstraints = false
+        closeButton.bezelStyle = .inline
+        closeButton.isBordered = false
+        if #available(macOS 11.0, *) {
+            closeButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Close")
+            closeButton.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 9, weight: .medium)
+        }
+        closeButton.imageScaling = .scaleProportionallyDown
+        closeButton.isHidden = true
+        closeButton.target = self
+        closeButton.action = #selector(handleCloseButton)
 
         addSubview(iconView)
         addSubview(titleLabel)
         addSubview(subtitleLabel)
         addSubview(modifiedDot)
-        addSubview(statusBadge)
+        addSubview(closeButton)
 
         self.imageView = iconView
         self.textField = titleLabel
 
         NSLayoutConstraint.activate([
-            iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
-            iconView.topAnchor.constraint(equalTo: topAnchor, constant: 7),
+            iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 2),
+            iconView.topAnchor.constraint(equalTo: topAnchor, constant: 8),
             iconView.widthAnchor.constraint(equalToConstant: 14),
             iconView.heightAnchor.constraint(equalToConstant: 14),
 
-            titleLabel.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 8),
+            titleLabel.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 4),
             titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 5),
+            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: closeButton.leadingAnchor, constant: -4),
 
-            modifiedDot.leadingAnchor.constraint(equalTo: titleLabel.trailingAnchor, constant: 6),
+            modifiedDot.leadingAnchor.constraint(equalTo: titleLabel.trailingAnchor, constant: 4),
             modifiedDot.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
             modifiedDot.widthAnchor.constraint(equalToConstant: 6),
             modifiedDot.heightAnchor.constraint(equalToConstant: 6),
 
-            statusBadge.leadingAnchor.constraint(greaterThanOrEqualTo: modifiedDot.trailingAnchor, constant: 6),
-            statusBadge.leadingAnchor.constraint(greaterThanOrEqualTo: titleLabel.trailingAnchor, constant: 6),
-            statusBadge.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
-            statusBadge.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
-
             subtitleLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
             subtitleLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 1),
-            subtitleLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+            subtitleLabel.trailingAnchor.constraint(lessThanOrEqualTo: closeButton.leadingAnchor, constant: -4),
             subtitleLabel.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -5),
+
+            closeButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+            closeButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
+            closeButton.widthAnchor.constraint(equalToConstant: 14),
+            closeButton.heightAnchor.constraint(equalToConstant: 14),
         ])
 
         updateColors()
     }
 
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let trackingArea { removeTrackingArea(trackingArea) }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeInKeyWindow],
+            owner: self,
+            userInfo: nil
+        )
+        trackingArea = area
+        addTrackingArea(area)
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        closeButton.isHidden = false
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        closeButton.isHidden = true
+    }
+
     override var backgroundStyle: NSView.BackgroundStyle {
-        didSet {
-            updateColors()
-        }
+        didSet { updateColors() }
     }
 
     func configure(item: SurfaceRailItemSnapshot) {
@@ -464,13 +512,17 @@ private final class SurfaceRailItemCellView: NSTableCellView {
         subtitleLabel.stringValue = item.subtitle ?? ""
         subtitleLabel.isHidden = (item.subtitle ?? "").isEmpty
         modifiedDot.isHidden = !item.isModified
-        statusBadge.isHidden = (item.statusText ?? "").isEmpty
-        statusBadge.text = item.statusText ?? ""
         iconView.image = NSImage(
             systemSymbolName: item.kind == .buffer ? "doc.text" : "terminal.fill",
             accessibilityDescription: nil
         )
         updateColors()
+    }
+
+    @objc
+    private func handleCloseButton() {
+        guard let currentItem else { return }
+        onClose?(currentItem)
     }
 
     private func updateColors() {
@@ -479,8 +531,10 @@ private final class SurfaceRailItemCellView: NSTableCellView {
         subtitleLabel.textColor = emphasized
             ? NSColor.alternateSelectedControlTextColor.withAlphaComponent(0.72)
             : .secondaryLabelColor
-        statusBadge.applySelectedStyle(emphasized)
-        modifiedDot.fillColor = emphasized ? NSColor.alternateSelectedControlTextColor : .systemOrange
+        modifiedDot.fillColor = emphasized ? .alternateSelectedControlTextColor : .systemOrange
+        closeButton.contentTintColor = emphasized
+            ? NSColor.alternateSelectedControlTextColor.withAlphaComponent(0.8)
+            : .tertiaryLabelColor
         if #available(macOS 11.0, *) {
             iconView.contentTintColor = emphasized ? .alternateSelectedControlTextColor : .secondaryLabelColor
         }
@@ -501,48 +555,5 @@ private final class DotView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         fillColor.setFill()
         NSBezierPath(ovalIn: bounds).fill()
-    }
-}
-
-private final class StatusBadgeView: NSView {
-    private let textField = NSTextField(labelWithString: "")
-
-    var text: String {
-        get { textField.stringValue }
-        set { textField.stringValue = newValue }
-    }
-
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
-        wantsLayer = true
-        layer?.cornerRadius = 7
-        layer?.masksToBounds = true
-
-        textField.translatesAutoresizingMaskIntoConstraints = false
-        textField.font = NSFont.systemFont(ofSize: 10, weight: .semibold)
-        addSubview(textField)
-
-        NSLayoutConstraint.activate([
-            textField.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
-            textField.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
-            textField.topAnchor.constraint(equalTo: topAnchor, constant: 2),
-            textField.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -2),
-        ])
-
-        applySelectedStyle(false)
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    func applySelectedStyle(_ selected: Bool) {
-        if selected {
-            layer?.backgroundColor = NSColor.alternateSelectedControlTextColor.withAlphaComponent(0.18).cgColor
-            textField.textColor = .alternateSelectedControlTextColor
-        } else {
-            layer?.backgroundColor = NSColor.quaternaryLabelColor.withAlphaComponent(0.28).cgColor
-            textField.textColor = .secondaryLabelColor
-        }
     }
 }

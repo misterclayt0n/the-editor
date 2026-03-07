@@ -90,11 +90,12 @@ final class EditorModel: ObservableObject {
     @Published var uiTree: UiTreeSnapshot = .empty
     @Published var bufferTabsSnapshot: BufferTabsSnapshot? = nil
     @Published var navigationTitle: String = "untitled"
+    @Published private(set) var bufferFontSize: CGFloat
     private var viewport: Rect
     private var effectiveViewport: Rect
-    let cellSize: CGSize
-    let bufferFont: Font
-    let bufferNSFont: NSFont
+    private(set) var cellSize: CGSize
+    private(set) var bufferFont: Font
+    private(set) var bufferNSFont: NSFont
     private let initialFilePath: String?
     private var boundBufferId: UInt64? = nil
     private var pendingInitialBoundBufferId: UInt64? = nil
@@ -150,7 +151,8 @@ final class EditorModel: ObservableObject {
         self.pendingInitialBoundBufferId = bufferId
         self.pendingInitialBoundFilePath = EditorModel.normalizedFilePath(filePath)
         self.runtimeInstanceId = runtime.instanceId
-        let fontInfo = FontLoader.loadBufferFont(size: 14)
+        let fontInfo = FontLoader.loadBufferFont(size: FontZoomLimits.defaultBufferPointSize)
+        self.bufferFontSize = FontZoomLimits.defaultBufferPointSize
         self.cellSize = fontInfo.cellSize
         self.bufferFont = fontInfo.font
         self.bufferNSFont = fontInfo.nsFont
@@ -543,6 +545,12 @@ final class EditorModel: ObservableObject {
             return openNativeUntitledTab()
         case .closeSurface:
             return closeSurface()
+        case .increaseFontSize:
+            return resizeFonts(.increase)
+        case .decreaseFontSize:
+            return resizeFonts(.decrease)
+        case .resetFontSize:
+            return resizeFonts(.reset)
         case .splitPaneDown:
             return splitActivePane(axis: .horizontal)
         case .splitPaneRight:
@@ -570,6 +578,39 @@ final class EditorModel: ObservableObject {
             return false
         }
         refresh(trigger: "named_command:\(commandName)")
+        return true
+    }
+
+    @discardableResult
+    private func resizeFonts(_ action: FontZoomAction) -> Bool {
+        let didResizeBuffer = resizeBufferFont(action)
+        let didResizeTerminals = GhosttyRuntime.shared.changeFontSize(
+            runtimeId: runtimeInstanceId,
+            terminalIds: Set(terminalSurfaces.map(\.terminalId)),
+            action: action
+        )
+        return didResizeBuffer || didResizeTerminals
+    }
+
+    @discardableResult
+    private func resizeBufferFont(_ action: FontZoomAction) -> Bool {
+        let nextSize = action.adjustedBufferPointSize(from: bufferFontSize)
+        guard abs(nextSize - bufferFontSize) > 0.001 else {
+            return false
+        }
+
+        let fontInfo = FontLoader.loadBufferFont(size: nextSize)
+        bufferFontSize = nextSize
+        cellSize = fontInfo.cellSize
+        bufferFont = fontInfo.font
+        bufferNSFont = fontInfo.nsFont
+
+        if DiagnosticsDebugLog.enabled {
+            DiagnosticsDebugLog.log(
+                "font resize: nsFont=\(fontInfo.nsFont.fontName) pointSize=\(fontInfo.nsFont.pointSize) cell=\(Int(cellSize.width))x\(Int(cellSize.height))"
+            )
+        }
+
         return true
     }
 

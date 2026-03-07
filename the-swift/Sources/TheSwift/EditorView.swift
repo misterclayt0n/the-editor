@@ -330,6 +330,9 @@ struct EditorView: View {
         .onChange(of: contentProxy.size) { newSize in
             model.updateViewport(pixelSize: newSize, cellSize: cellSize)
         }
+        .onChange(of: cellSize) { newCellSize in
+            model.updateViewport(pixelSize: contentProxy.size, cellSize: newCellSize)
+        }
         .onChange(of: isCompletionOpen) { isOpen in
             guard !isOpen else {
                 return

@@ -6,6 +6,9 @@ enum EditorNamedCommand: String, CaseIterable {
     case closeSurface = "close_surface"
     case openFilePicker = "file_picker"
     case openCommandPalette = "command_palette"
+    case increaseFontSize = "font_size_increase"
+    case decreaseFontSize = "font_size_decrease"
+    case resetFontSize = "font_size_reset"
     case toggleFileTree = "file_explorer"
     case splitPaneDown = "pane_split_down"
     case splitPaneRight = "pane_split_right"
@@ -28,6 +31,12 @@ enum EditorNamedCommand: String, CaseIterable {
             return "Open File Picker"
         case .openCommandPalette:
             return "Open Command Palette"
+        case .increaseFontSize:
+            return "Increase Font Size"
+        case .decreaseFontSize:
+            return "Decrease Font Size"
+        case .resetFontSize:
+            return "Reset Font Size"
         case .toggleFileTree:
             return "Toggle File Tree"
         case .splitPaneDown:
@@ -63,6 +72,12 @@ enum EditorNamedCommand: String, CaseIterable {
             return "p"
         case .openCommandPalette:
             return "p"
+        case .increaseFontSize:
+            return "="
+        case .decreaseFontSize:
+            return "-"
+        case .resetFontSize:
+            return "0"
         case .toggleFileTree:
             return "e"
         case .splitPaneDown:
@@ -98,6 +113,12 @@ enum EditorNamedCommand: String, CaseIterable {
             return "p"
         case .openCommandPalette:
             return "p"
+        case .increaseFontSize:
+            return "="
+        case .decreaseFontSize:
+            return "-"
+        case .resetFontSize:
+            return "0"
         case .toggleFileTree:
             return "e"
         case .splitPaneDown:
@@ -127,6 +148,8 @@ enum EditorNamedCommand: String, CaseIterable {
             return [.command]
         case .openCommandPalette:
             return [.command, .shift]
+        case .increaseFontSize, .decreaseFontSize, .resetFontSize:
+            return [.command]
         case .toggleFileTree:
             return [.command]
         case .splitPaneDown:
@@ -156,6 +179,8 @@ enum EditorNamedCommand: String, CaseIterable {
             return [.command]
         case .openCommandPalette:
             return [.command, .shift]
+        case .increaseFontSize, .decreaseFontSize, .resetFontSize:
+            return [.command]
         case .toggleFileTree:
             return [.command]
         case .splitPaneDown:
@@ -185,8 +210,17 @@ enum EditorNamedCommand: String, CaseIterable {
         guard relevantFlags.contains(.command) else { return nil }
         let key = (event.charactersIgnoringModifiers ?? "").lowercased()
         return allCases.first { command in
-            command.appKitModifiers == relevantFlags
+            command.matchesModifiers(relevantFlags)
                 && command.matches(event: event, normalizedKey: key)
+        }
+    }
+
+    private func matchesModifiers(_ flags: NSEvent.ModifierFlags) -> Bool {
+        switch self {
+        case .increaseFontSize:
+            return flags == [.command] || flags == [.command, .shift]
+        default:
+            return appKitModifiers == flags
         }
     }
 
@@ -196,6 +230,12 @@ enum EditorNamedCommand: String, CaseIterable {
         }
 
         switch self {
+        case .increaseFontSize:
+            return event.keyCode == 24 || normalizedKey == "+"
+        case .decreaseFontSize:
+            return event.keyCode == 27
+        case .resetFontSize:
+            return event.keyCode == 29
         case .openGlobalTerminalSwitcher:
             return event.keyCode == 50
         case .focusPaneLeft:
@@ -558,6 +598,10 @@ struct EditorAppCommands: Commands {
         CommandMenu("Editor") {
             commandButton(.openNativeTab)
             commandButton(.openCommandPalette)
+            Divider()
+            commandButton(.increaseFontSize)
+            commandButton(.decreaseFontSize)
+            commandButton(.resetFontSize)
         }
 
         CommandMenu("Tabs") {

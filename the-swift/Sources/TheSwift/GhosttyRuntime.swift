@@ -240,6 +240,29 @@ final class GhosttyRuntime {
         return created
     }
 
+    @discardableResult
+    func changeFontSize(
+        runtimeId: UInt64,
+        terminalIds: Set<UInt64>,
+        action: FontZoomAction
+    ) -> Bool {
+        guard !terminalIds.isEmpty else {
+            return false
+        }
+
+        var didChange = false
+        for terminalId in terminalIds {
+            let key = GhosttySurfaceKey(runtimeId: runtimeId, terminalId: terminalId)
+            guard let controller = controllers[key] else {
+                continue
+            }
+            if controller.changeFontSize(action) {
+                didChange = true
+            }
+        }
+        return didChange
+    }
+
     func terminalMetadata(runtimeId: UInt64, for terminalId: UInt64) -> GhosttyTerminalMetadata? {
         let key = GhosttySurfaceKey(runtimeId: runtimeId, terminalId: terminalId)
         return controllers[key]?.metadataSnapshot()
@@ -892,6 +915,11 @@ private final class GhosttySurfaceController {
         return action.withCString { cString in
             ghostty_surface_binding_action(surface, cString, UInt(strlen(cString)))
         }
+    }
+
+    @discardableResult
+    func changeFontSize(_ action: FontZoomAction) -> Bool {
+        performBindingAction(action.terminalBindingAction)
     }
 
     func readClipboard(location: ghostty_clipboard_e, state: UnsafeMutableRawPointer?) {

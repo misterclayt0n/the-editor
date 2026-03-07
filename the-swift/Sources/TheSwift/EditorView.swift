@@ -4,6 +4,10 @@ import TheEditorFFIBridge
 private let embeddedTerminalCropInset: CGFloat = 2
 private let inactivePaneDimOpacity: CGFloat = 0.22
 
+private enum SidebarChromeBaselineCache {
+    static var topInset: CGFloat?
+}
+
 struct EditorView: View {
     @Environment(\.openWindow) private var openWindow
     @StateObject private var model: EditorModel
@@ -98,40 +102,42 @@ struct EditorView: View {
         snapshot: FileTreeSnapshot,
         surfaceRailSnapshot: SurfaceRailSnapshot
     ) -> some View {
-        VStack(spacing: 0) {
-            sidebarNavigatorTabs
+        SidebarChromeCompensationView {
+            VStack(spacing: 0) {
+                sidebarNavigatorTabs
 
-            Group {
-                switch sidebarNavigatorMode {
-                case .files:
-                    FileTreeSidebarView(
-                        snapshot: snapshot,
-                        onSetExpanded: { path, expanded in
-                            model.fileTreeSetExpanded(path: path, expanded: expanded)
-                        },
-                        onSelectPath: { path in
-                            model.fileTreeSelectPath(path: path)
-                        },
-                        onOpenSelected: {
-                            model.fileTreeOpenSelected()
-                        }
-                    )
-                case .surfaces:
-                    SurfaceRailView(
-                        snapshot: surfaceRailSnapshot,
-                        onSelectBuffer: { bufferIndex in
-                            model.selectBufferTab(bufferIndex: bufferIndex)
-                        },
-                        onSelectTerminal: { terminalId in
-                            _ = model.focusTerminalSurface(terminalId: terminalId)
-                        },
-                        onCloseBuffer: { bufferId in
-                            _ = model.closeSurfaceRailBuffer(bufferId: bufferId)
-                        },
-                        onCloseTerminal: { terminalId in
-                            _ = model.closeSurfaceRailTerminal(terminalId: terminalId)
-                        }
-                    )
+                Group {
+                    switch sidebarNavigatorMode {
+                    case .files:
+                        FileTreeSidebarView(
+                            snapshot: snapshot,
+                            onSetExpanded: { path, expanded in
+                                model.fileTreeSetExpanded(path: path, expanded: expanded)
+                            },
+                            onSelectPath: { path in
+                                model.fileTreeSelectPath(path: path)
+                            },
+                            onOpenSelected: {
+                                model.fileTreeOpenSelected()
+                            }
+                        )
+                    case .surfaces:
+                        SurfaceRailView(
+                            snapshot: surfaceRailSnapshot,
+                            onSelectBuffer: { bufferIndex in
+                                model.selectBufferTab(bufferIndex: bufferIndex)
+                            },
+                            onSelectTerminal: { terminalId in
+                                _ = model.focusTerminalSurface(terminalId: terminalId)
+                            },
+                            onCloseBuffer: { bufferId in
+                                _ = model.closeSurfaceRailBuffer(bufferId: bufferId)
+                            },
+                            onCloseTerminal: { terminalId in
+                                _ = model.closeSurfaceRailTerminal(terminalId: terminalId)
+                            }
+                        )
+                    }
                 }
             }
         }
@@ -1582,5 +1588,71 @@ struct EditorView: View {
         }
         let idx = normalized.index(normalized.startIndex, offsetBy: limit)
         return "\(normalized[..<idx])..."
+    }
+}
+
+private struct SidebarChromeCompensationView<Content: View>: View {
+    @State private var topInset: CGFloat = 0
+    @State private var baselineTopInset: CGFloat?
+    @State private var tabBarVisibilityKnown = false
+    @State private var nativeTabBarVisible = false
+    private let content: Content
+
+    init(@ViewBuilder content: () -> Content) {
+        self.content = content()
+    }
+
+    var body: some View {
+        GeometryReader { proxy in
+            let safeAreaTopInset = proxy.safeAreaInsets.top
+            content
+                .padding(.top, -topInsetCompensation(for: safeAreaTopInset))
+                .onAppear {
+                    updateTopInset(safeAreaTopInset)
+                }
+                .onChange(of: safeAreaTopInset) { newValue in
+                    updateTopInset(newValue)
+                }
+                .background(
+                    WindowTabBarVisibilityProbe { visible in
+                        tabBarVisibilityKnown = true
+                        nativeTabBarVisible = visible
+                        if !visible {
+                            learnBaseline(from: topInset)
+                        }
+                    }
+                    .frame(width: 0, height: 0)
+                    .allowsHitTesting(false)
+                )
+        }
+    }
+
+    private var effectiveBaselineTopInset: CGFloat? {
+        baselineTopInset ?? SidebarChromeBaselineCache.topInset
+    }
+
+    private func topInsetCompensation(for currentTopInset: CGFloat) -> CGFloat {
+        guard nativeTabBarVisible else { return 0 }
+        guard let baseline = effectiveBaselineTopInset else { return 0 }
+        return max(0, currentTopInset - baseline)
+    }
+
+    private func updateTopInset(_ newValue: CGFloat) {
+        if abs(topInset - newValue) > 0.5 {
+            topInset = newValue
+        }
+        learnBaseline(from: newValue)
+    }
+
+    private func learnBaseline(from currentTopInset: CGFloat) {
+        guard tabBarVisibilityKnown else { return }
+        guard !nativeTabBarVisible else { return }
+        guard currentTopInset > 1 else { return }
+        guard abs((effectiveBaselineTopInset ?? .zero) - currentTopInset) > 0.5 else {
+            return
+        }
+
+        baselineTopInset = currentTopInset
+        SidebarChromeBaselineCache.topInset = currentTopInset
     }
 }

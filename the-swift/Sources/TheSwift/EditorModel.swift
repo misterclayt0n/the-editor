@@ -1860,9 +1860,6 @@ final class EditorModel: ObservableObject {
         }
 
         let sortedSurfaces = terminalSurfaces.sorted { lhs, rhs in
-            if lhs.isActive != rhs.isActive {
-                return lhs.isActive && !rhs.isActive
-            }
             if lhs.isAttached != rhs.isAttached {
                 return lhs.isAttached && !rhs.isAttached
             }

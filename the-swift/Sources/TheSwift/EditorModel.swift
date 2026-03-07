@@ -389,8 +389,12 @@ final class EditorModel: ObservableObject {
 
     @discardableResult
     private func splitActivePane(axis: PaneSplitAxis) -> Bool {
+        let wasTerminal = isActivePaneTerminal
         guard app.split_active_pane(editorId, axis.rawValue) else {
             return false
+        }
+        if wasTerminal {
+            _ = app.open_terminal_in_active_pane(editorId)
         }
         refresh(trigger: "pane_split")
         return true

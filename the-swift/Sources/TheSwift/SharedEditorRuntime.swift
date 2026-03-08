@@ -1,5 +1,4 @@
 import Foundation
-import Darwin
 import TheEditorFFIBridge
 
 /// Editor core runtime backing one Swift editor window/tab instance.
@@ -14,7 +13,6 @@ final class SharedEditorRuntime {
 
     init() {
         instanceId = SharedEditorRuntime.allocateInstanceId()
-        setenv("THE_EDITOR_SWIFT_SHARED_LSP", "1", 1)
         app = TheEditorFFIBridge.App()
         let viewport = Rect(x: 0, y: 0, width: 80, height: 24)
         let scroll = Position(row: 0, col: 0)

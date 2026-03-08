@@ -4,8 +4,6 @@
 //! This crate provides a C-compatible interface to the-lib, allowing the
 //! SwiftUI client to interact with the Rust editor core.
 
-mod lsp_broker;
-
 use std::{
   cell::RefCell,
   collections::{
@@ -419,7 +417,7 @@ impl Document {
   pub fn cursor_count(&self) -> usize {
     self.inner.selection().len()
   }
-  
+
   /// Get cursor position at the given index.
   /// Returns None if index is out of bounds.
   pub fn cursor_at(&self, index: usize) -> Option<usize> {
@@ -1210,7 +1208,9 @@ impl TerminalSurfaceSnapshot {
   fn from_lib(snapshot: LibTerminalSurfaceSnapshot) -> Self {
     Self {
       terminal_id: snapshot.terminal_id.get().get() as u64,
-      pane_id:     snapshot.attached_pane.map_or(0, |pane| pane.get().get() as u64),
+      pane_id:     snapshot
+        .attached_pane
+        .map_or(0, |pane| pane.get().get() as u64),
       is_active:   snapshot.is_active,
     }
   }
@@ -1784,12 +1784,14 @@ fn select_ui_theme(catalog: &ThemeCatalog) -> (String, Theme) {
         )
       }
     },
-    None => (
-      default_theme().name().to_string(),
-      catalog
-        .load_theme(default_theme().name())
-        .unwrap_or_else(|| default_theme().clone()),
-    ),
+    None => {
+      (
+        default_theme().name().to_string(),
+        catalog
+          .load_theme(default_theme().name())
+          .unwrap_or_else(|| default_theme().clone()),
+      )
+    },
   }
 }
 
@@ -3275,7 +3277,9 @@ fn completion_docs_render_json_impl(
   content_width: usize,
   language_hint: &str,
 ) -> String {
-  let runtime = docs_render_runtime().read().unwrap_or_else(|err| err.into_inner());
+  let runtime = docs_render_runtime()
+    .read()
+    .unwrap_or_else(|err| err.into_inner());
   let base = runtime
     .theme
     .try_get("ui.text")
@@ -3591,19 +3595,6 @@ fn lsp_self_save_suppress_window() -> Duration {
   Duration::from_millis(500)
 }
 
-fn shared_lsp_feature_enabled_by_env() -> bool {
-  static ENABLED: OnceLock<bool> = OnceLock::new();
-  *ENABLED.get_or_init(|| {
-    env::var("THE_EDITOR_SWIFT_SHARED_LSP")
-      .ok()
-      .map(|value| {
-        let normalized = value.trim().to_ascii_lowercase();
-        normalized == "1" || normalized == "true" || normalized == "yes" || normalized == "on"
-      })
-      .unwrap_or(false)
-  })
-}
-
 fn shared_lsp_trace_enabled() -> bool {
   static ENABLED: OnceLock<bool> = OnceLock::new();
   *ENABLED.get_or_init(|| {
@@ -3617,22 +3608,11 @@ fn shared_lsp_trace_enabled() -> bool {
   })
 }
 
-fn log_shared_lsp_counters(context: &str) {
-  if !shared_lsp_trace_enabled() {
-    return;
-  }
-  let counters = lsp_broker::counters();
-  eprintln!(
-    "[the-ffi lsp-broker] {context} sessions_created={} runtime_starts={}",
-    counters.sessions_created, counters.runtime_starts
-  );
-}
-
 fn log_shared_lsp_debug(context: &str, message: impl AsRef<str>) {
   if !shared_lsp_trace_enabled() {
     return;
   }
-  eprintln!("[the-ffi lsp-broker] {context} {}", message.as_ref());
+  eprintln!("[the-ffi lsp] {context} {}", message.as_ref());
 }
 
 fn shared_lsp_editor_id_label(id: Option<LibEditorId>) -> String {
@@ -3683,10 +3663,6 @@ pub struct App {
   cursor_blink_generation:         u64,
   registers:                       Registers,
   last_motion:                     Option<Motion>,
-  lsp_shared_enabled:              bool,
-  lsp_client_id:                   u64,
-  lsp_client_request_counter:      u64,
-  lsp_session_key:                 Option<lsp_broker::SessionKey>,
   lsp_server_name:                 Option<String>,
   lsp_runtime:                     LspRuntime,
   lsp_ready:                       bool,
@@ -4426,15 +4402,23 @@ impl App {
     let mode = self
       .states
       .get(&editor_id)
-      .map(|state| match state.mode {
-        Mode::Normal => "normal",
-        Mode::Insert => "insert",
-        Mode::Select => "select",
-        Mode::Command => "command",
+      .map(|state| {
+        match state.mode {
+          Mode::Normal => "normal",
+          Mode::Insert => "insert",
+          Mode::Select => "select",
+          Mode::Command => "command",
+        }
       })
       .unwrap_or("missing");
-    let completion = self.states.get(&editor_id).map(|state| &state.completion_menu);
-    let signature = self.states.get(&editor_id).map(|state| &state.signature_help);
+    let completion = self
+      .states
+      .get(&editor_id)
+      .map(|state| &state.completion_menu);
+    let signature = self
+      .states
+      .get(&editor_id)
+      .map(|state| &state.signature_help);
     let hover_present = self
       .states
       .get(&editor_id)
@@ -4450,7 +4434,8 @@ impl App {
     let signature_active = signature.is_some_and(|state| state.active);
     let signature_count = signature.map(|state| state.signatures.len()).unwrap_or(0);
     format!(
-      "editor={} mode={} completion_active={} completion_items={} completion_selected={} signature_active={} signature_items={} hover_present={}",
+      "editor={} mode={} completion_active={} completion_items={} completion_selected={} \
+       signature_active={} signature_items={} hover_present={}",
       editor_id.get().get(),
       mode,
       completion_active as u8,
@@ -4483,8 +4468,6 @@ impl App {
         .with_restart_limits(6, Duration::from_secs(30))
         .with_request_policy(Duration::from_secs(8), 1),
     );
-    let lsp_shared_enabled = shared_lsp_feature_enabled_by_env();
-    let lsp_client_id = lsp_broker::allocate_client_id();
     let clipboard = Arc::new(RuntimeClipboardProvider::detect());
     set_docs_render_theme(&ui_theme);
 
@@ -4502,10 +4485,6 @@ impl App {
       cursor_blink_generation: 0,
       registers: Registers::with_clipboard(clipboard),
       last_motion: None,
-      lsp_shared_enabled,
-      lsp_client_id,
-      lsp_client_request_counter: 10_000,
-      lsp_session_key: None,
       lsp_server_name: None,
       lsp_runtime,
       lsp_ready: false,
@@ -4692,18 +4671,7 @@ impl App {
       self.vcs_diff_handles.remove(&id);
       if self.active_editor == Some(id) {
         self.active_editor = None;
-        self.lsp_close_current_document();
-        if self.lsp_shared_enabled {
-          self.lsp_detach_shared_session();
-        } else {
-          let _ = self.lsp_runtime.shutdown();
-        }
-        self.lsp_ready = false;
-        self.lsp_document = None;
-        self.lsp_watched_file = None;
-        self.lsp_active_progress_tokens.clear();
-        self.lsp_pending_requests.clear();
-        self.set_lsp_status(LspStatusPhase::Off, Some("stopped".into()));
+        self.stop_lsp_runtime(Some("stopped"));
         self.global_search.deactivate();
       }
     }
@@ -5219,15 +5187,14 @@ impl App {
       .unwrap_or_else(TerminalSurfaceSnapshot::empty)
   }
 
-  pub fn focus_terminal_surface(
-    &mut self,
-    id: ffi::EditorId,
-    terminal_id: u64,
-  ) -> bool {
+  pub fn focus_terminal_surface(&mut self, id: ffi::EditorId, terminal_id: u64) -> bool {
     if self.activate(id).is_none() {
       return false;
     }
-    let Some(raw) = usize::try_from(terminal_id).ok().and_then(NonZeroUsize::new) else {
+    let Some(raw) = usize::try_from(terminal_id)
+      .ok()
+      .and_then(NonZeroUsize::new)
+    else {
       return false;
     };
     self
@@ -6067,9 +6034,9 @@ impl App {
         },
         CommandPaletteAction::TypableCommand { name, args } => {
           let registry = self.command_registry_ref() as *const CommandRegistry<App>;
-        let result = unsafe { (&*registry).execute(self, &name, &args, CommandEvent::Validate) };
-        match result {
-          Ok(()) => {
+          let result = unsafe { (&*registry).execute(self, &name, &args, CommandEvent::Validate) };
+          match result {
+            Ok(()) => {
               self.set_mode(Mode::Normal);
               self.command_prompt_mut().clear();
               let palette = self.command_palette_mut();
@@ -6083,15 +6050,15 @@ impl App {
               palette.scroll_offset = 0;
               palette.prompt_text = None;
               self.request_render();
-            true
-          },
-          Err(err) => {
-            self.clear_ui_theme_preview_state();
-            self.command_prompt_mut().error = Some(err.to_string());
-            self.request_render();
-            false
-          },
-        }
+              true
+            },
+            Err(err) => {
+              self.clear_ui_theme_preview_state();
+              self.command_prompt_mut().error = Some(err.to_string());
+              self.request_render();
+              false
+            },
+          }
         },
       }
     } else if is_prefiltered {
@@ -6559,35 +6526,7 @@ impl App {
     changed
   }
 
-  fn next_lsp_client_request_id(&mut self) -> u64 {
-    let next = self.lsp_client_request_counter;
-    self.lsp_client_request_counter = self
-      .lsp_client_request_counter
-      .saturating_add(1)
-      .max(10_000);
-    next
-  }
-
-  fn lsp_detach_shared_session(&mut self) {
-    let Some(key) = self.lsp_session_key.take() else {
-      return;
-    };
-    log_shared_lsp_debug(
-      "detach",
-      format!("client_id={} session_key={:?}", self.lsp_client_id, key),
-    );
-    lsp_broker::unregister_client(self.lsp_client_id, &key);
-    log_shared_lsp_counters("detached");
-  }
-
   fn lsp_poll_events_for_active_transport(&mut self) -> Vec<LspEvent> {
-    if self.lsp_shared_enabled {
-      let Some(key) = self.lsp_session_key.as_ref() else {
-        return Vec::new();
-      };
-      return lsp_broker::poll_client_events(self.lsp_client_id, key);
-    }
-
     let mut events = Vec::new();
     while let Some(event) = self.lsp_runtime.try_recv_event() {
       events.push(event);
@@ -6597,17 +6536,10 @@ impl App {
 
   fn lsp_server_capabilities_snapshot(&self) -> Option<ServerCapabilitiesSnapshot> {
     let server_name = self.lsp_server_name.as_deref()?;
-    if self.lsp_shared_enabled {
-      let key = self.lsp_session_key.as_ref()?;
-      return lsp_broker::server_capabilities(key, server_name);
-    }
     self.lsp_runtime.server_capabilities(server_name)
   }
 
   fn lsp_has_configured_server(&self) -> bool {
-    if self.lsp_shared_enabled {
-      return self.lsp_server_name.is_some();
-    }
     self.lsp_runtime.config().server().is_some()
   }
 
@@ -6616,31 +6548,6 @@ impl App {
     method: &'static str,
     params: serde_json::Value,
   ) -> Result<u64, String> {
-    if self.lsp_shared_enabled {
-      let key = self
-        .lsp_session_key
-        .clone()
-        .ok_or_else(|| "missing broker session".to_string())?;
-      let request_id = self.next_lsp_client_request_id();
-      log_shared_lsp_debug(
-        "send_request_shared",
-        format!(
-          "method={} request_id={} ready={} doc_opened={} uri={}",
-          method,
-          request_id,
-          self.lsp_ready,
-          self.lsp_document.as_ref().is_some_and(|doc| doc.opened),
-          self
-            .lsp_document
-            .as_ref()
-            .map(|doc| doc.uri.clone())
-            .unwrap_or_else(|| "<none>".to_string())
-        ),
-      );
-      lsp_broker::send_request(self.lsp_client_id, &key, request_id, method, Some(params))?;
-      return Ok(request_id);
-    }
-
     self
       .lsp_runtime
       .send_request(method, Some(params))
@@ -6648,14 +6555,6 @@ impl App {
   }
 
   fn lsp_cancel_request_raw(&mut self, request_id: u64) -> Result<(), String> {
-    if self.lsp_shared_enabled {
-      let key = self
-        .lsp_session_key
-        .as_ref()
-        .ok_or_else(|| "missing broker session".to_string())?;
-      return lsp_broker::cancel_request(self.lsp_client_id, key, request_id);
-    }
-
     self
       .lsp_runtime
       .cancel_request(request_id)
@@ -6667,14 +6566,6 @@ impl App {
     method: &'static str,
     params: serde_json::Value,
   ) -> Result<(), String> {
-    if self.lsp_shared_enabled {
-      let key = self
-        .lsp_session_key
-        .as_ref()
-        .ok_or_else(|| "missing broker session".to_string())?;
-      return lsp_broker::send_notification(key, method, Some(params));
-    }
-
     self
       .lsp_runtime
       .send_notification(method, Some(params))
@@ -6716,51 +6607,32 @@ impl App {
     log_shared_lsp_debug(
       "refresh_begin",
       format!(
-        "shared={} file_path={} prev_ready={} prev_doc_opened={} prev_session_key={:?}",
-        self.lsp_shared_enabled,
+        "file_path={} prev_ready={} prev_doc_opened={}",
         self
           .file_path()
           .map(|path| path.display().to_string())
           .unwrap_or_else(|| "<none>".to_string()),
         self.lsp_ready,
-        self.lsp_document.as_ref().is_some_and(|doc| doc.opened),
-        self.lsp_session_key
+        self.lsp_document.as_ref().is_some_and(|doc| doc.opened)
       ),
     );
 
     let (config, configured) = self.lsp_runtime_config_for_active_file();
-    self.lsp_server_name = config.server().map(|server| server.name().to_string());
-    let target_session_key = if self.lsp_shared_enabled && configured {
-      lsp_broker::SessionKey::from_runtime_config(&config)
-    } else {
-      None
-    };
-    let reuse_shared_session = self.lsp_shared_enabled
-      && self
-        .lsp_session_key
-        .as_ref()
-        .zip(target_session_key.as_ref())
-        .is_some_and(|(current, next)| current == next);
     log_shared_lsp_debug(
-      "refresh_session_plan",
+      "refresh_plan",
       format!(
-        "configured={} server={} workspace={} current_key={:?} target_key={:?} reuse={}",
+        "configured={} server={} workspace={}",
         configured,
-        self
-          .lsp_server_name
-          .clone()
+        config
+          .server()
+          .map(|server| server.name().to_string())
           .unwrap_or_else(|| "<none>".to_string()),
-        config.workspace_root().display(),
-        self.lsp_session_key,
-        target_session_key,
-        reuse_shared_session
+        config.workspace_root().display()
       ),
     );
 
     self.lsp_close_current_document();
-    if !reuse_shared_session {
-      self.lsp_ready = false;
-    }
+    self.lsp_ready = false;
     self.lsp_spinner_index = 0;
     self.diagnostics.clear();
     self.lsp_active_progress_tokens.clear();
@@ -6770,13 +6642,13 @@ impl App {
     self.cancel_auto_completion();
     self.clear_signature_help_state();
     self.cancel_auto_signature_help();
-    if self.lsp_shared_enabled {
-      if !reuse_shared_session {
-        self.lsp_detach_shared_session();
-      }
-    } else {
-      let _ = self.lsp_runtime.shutdown();
-    }
+    let _ = self.lsp_runtime.shutdown();
+    self.lsp_runtime = LspRuntime::new(config);
+    self.lsp_server_name = self
+      .lsp_runtime
+      .config()
+      .server()
+      .map(|server| server.name().to_string());
 
     let active_path = self.file_path().map(Path::to_path_buf);
     self.lsp_document =
@@ -6785,94 +6657,34 @@ impl App {
 
     if configured {
       self.set_lsp_status(LspStatusPhase::Starting, Some("starting".into()));
-      if self.lsp_shared_enabled {
-        if let Some(session_key) = target_session_key {
-          if !reuse_shared_session {
-            if let Err(err) =
-              lsp_broker::register_client(self.lsp_client_id, session_key.clone(), config)
-            {
-              self.set_lsp_status_error(err.as_str());
-              self.publish_lsp_message(
-                the_lib::messages::MessageLevel::Error,
-                format!("failed to attach shared lsp session: {err}"),
-              );
-            } else {
-              self.lsp_session_key = Some(session_key.clone());
-              log_shared_lsp_counters("attached");
-              log_shared_lsp_debug(
-                "refresh_attach_ok",
-                format!(
-                  "client_id={} session_key={:?}",
-                  self.lsp_client_id, self.lsp_session_key
-                ),
-              );
-            }
-          } else {
-            self.lsp_session_key = Some(session_key.clone());
-            log_shared_lsp_debug(
-              "refresh_reuse_existing_session",
-              format!(
-                "client_id={} session_key={:?}",
-                self.lsp_client_id, self.lsp_session_key
-              ),
-            );
-          }
-
-          if self.lsp_session_key.is_some() {
-            if let Some(server_name) = self.lsp_server_name.clone()
-              && self.lsp_server_capabilities_snapshot().is_some()
-            {
-              // Re-attaching to an already initialized broker session does not
-              // necessarily replay CapabilitiesRegistered, so hydrate readiness
-              // from the shared capability registry.
-              self.lsp_ready = true;
-              self.lsp_open_current_document();
-              self.set_lsp_status(LspStatusPhase::Ready, Some(server_name));
-              log_shared_lsp_debug(
-                "refresh_attach_hydrate_ready",
-                format!(
-                  "ready={} doc_opened={} active_uri={}",
-                  self.lsp_ready,
-                  self.lsp_document.as_ref().is_some_and(|doc| doc.opened),
-                  self
-                    .lsp_document
-                    .as_ref()
-                    .map(|doc| doc.uri.clone())
-                    .unwrap_or_else(|| "<none>".to_string())
-                ),
-              );
-            } else {
-              self.lsp_ready = false;
-              log_shared_lsp_debug(
-                "refresh_attach_wait_capabilities",
-                format!(
-                  "server={} caps_available={}",
-                  self
-                    .lsp_server_name
-                    .clone()
-                    .unwrap_or_else(|| "<none>".to_string()),
-                  self.lsp_server_capabilities_snapshot().is_some()
-                ),
-              );
-            }
-          }
-        } else {
-          self.lsp_ready = false;
-          self.set_lsp_status(LspStatusPhase::Off, Some("unavailable".into()));
-        }
-      } else {
-        self.lsp_runtime = LspRuntime::new(config);
-        if let Err(err) = self.lsp_runtime.start() {
-          self.set_lsp_status_error(&err.to_string());
-          self.publish_lsp_message(
-            the_lib::messages::MessageLevel::Error,
-            format!("failed to start lsp server: {err}"),
-          );
-        }
+      if let Err(err) = self.lsp_runtime.start() {
+        self.set_lsp_status_error(&err.to_string());
+        self.publish_lsp_message(
+          the_lib::messages::MessageLevel::Error,
+          format!("failed to start lsp server: {err}"),
+        );
       }
     } else {
       self.lsp_ready = false;
       self.set_lsp_status(LspStatusPhase::Off, Some("unavailable".into()));
+    }
+  }
+
+  fn stop_lsp_runtime(&mut self, status_detail: Option<&str>) {
+    self.lsp_close_current_document();
+    let _ = self.lsp_runtime.shutdown();
+    self.lsp_ready = false;
+    self.lsp_document = None;
+    self.lsp_watched_file = None;
+    self.lsp_active_progress_tokens.clear();
+    self.lsp_pending_requests.clear();
+    self.clear_hover_state();
+    self.clear_completion_state();
+    self.cancel_auto_completion();
+    self.clear_signature_help_state();
+    self.cancel_auto_signature_help();
+    if let Some(detail) = status_detail {
+      self.set_lsp_status(LspStatusPhase::Off, Some(detail.into()));
     }
   }
 
@@ -7531,7 +7343,8 @@ impl App {
       log_shared_lsp_debug(
         "completion_response_skip",
         format!(
-          "reason=generation_mismatch response_generation={} current_generation={} active_editor={}",
+          "reason=generation_mismatch response_generation={} current_generation={} \
+           active_editor={}",
           generation,
           self.lsp_completion_generation,
           shared_lsp_editor_id_label(self.active_editor)
@@ -7809,9 +7622,7 @@ impl App {
   }
 
   fn execute_lsp_command_action(&mut self, command: LspExecuteCommand, title: String) -> bool {
-    if self.lsp_shared_enabled {
-      self.lsp_open_current_document();
-    }
+    self.lsp_open_current_document();
     let params = execute_command_params(&command.command, command.arguments);
     match self.lsp_send_request_raw("workspace/executeCommand", params) {
       Ok(_) => {
@@ -8869,7 +8680,7 @@ impl App {
       log_shared_lsp_debug(
         "supports_false",
         format!(
-          "capability={:?} ready={} server={} has_caps={} session_key_present={}",
+          "capability={:?} ready={} server={} has_caps={} doc_opened={}",
           capability,
           self.lsp_ready,
           self
@@ -8877,7 +8688,7 @@ impl App {
             .clone()
             .unwrap_or_else(|| "<none>".to_string()),
           self.lsp_server_capabilities_snapshot().is_some(),
-          self.lsp_session_key.is_some()
+          self.lsp_document.as_ref().is_some_and(|state| state.opened)
         ),
       );
     }
@@ -9140,9 +8951,7 @@ impl App {
         self.shared_lsp_editor_state_summary(request_editor)
       ),
     );
-    if self.lsp_shared_enabled {
-      self.lsp_open_current_document();
-    }
+    self.lsp_open_current_document();
     self.cancel_pending_lsp_requests_for(&pending);
     match self.lsp_send_request_raw(method, params) {
       Ok(request_id) => {
@@ -9186,76 +8995,18 @@ impl App {
       return;
     };
     let uri = state.uri.clone();
-    if self.lsp_shared_enabled {
-      if state.opened
-        && let Some(key) = self.lsp_session_key.as_ref()
-      {
-        let owned = lsp_broker::document_owned_by(self.lsp_client_id, key, uri.as_str());
-        log_shared_lsp_debug(
-          "open_doc_check_owner",
-          format!(
-            "uri={} state_opened={} owned_by_client={} client_id={}",
-            uri, state.opened, owned, self.lsp_client_id
-          ),
-        );
-        if owned {
-          return;
-        }
-      }
-    } else if state.opened {
-      log_shared_lsp_debug(
-        "open_doc_skip",
-        format!("reason=already_open_legacy uri={}", uri),
-      );
+    if state.opened {
+      log_shared_lsp_debug("open_doc_skip", format!("reason=already_open uri={}", uri));
       return;
     }
 
     let language_id = state.language_id.clone();
     let version = state.version;
     let text = self.active_editor_ref().document().text().clone();
-    let opened = if self.lsp_shared_enabled {
-      if let Some(key) = self.lsp_session_key.as_ref() {
-        let text_string = text.to_string();
-        log_shared_lsp_debug(
-          "open_doc_shared",
-          format!(
-            "uri={} lang={} version={} text_chars={}",
-            uri,
-            language_id,
-            version,
-            text_string.chars().count()
-          ),
-        );
-        match lsp_broker::focus_document(
-          self.lsp_client_id,
-          key,
-          uri.as_str(),
-          language_id.as_str(),
-          version,
-          text_string.as_str(),
-        ) {
-          Ok(()) => true,
-          Err(err) => {
-            self.publish_lsp_message(
-              the_lib::messages::MessageLevel::Warning,
-              format!("failed to focus lsp document: {err}"),
-            );
-            false
-          },
-        }
-      } else {
-        log_shared_lsp_debug(
-          "open_doc_skip",
-          format!("reason=missing_session_key uri={}", uri),
-        );
-        false
-      }
-    } else {
-      let params = did_open_params(&uri, &language_id, version, &text);
-      self
-        .lsp_send_notification_raw("textDocument/didOpen", params)
-        .is_ok()
-    };
+    let params = did_open_params(&uri, &language_id, version, &text);
+    let opened = self
+      .lsp_send_notification_raw("textDocument/didOpen", params)
+      .is_ok();
 
     if opened && let Some(state) = self.lsp_document.as_mut() {
       state.opened = true;
@@ -9277,22 +9028,10 @@ impl App {
     else {
       return;
     };
-    log_shared_lsp_debug(
-      "close_doc_begin",
-      format!(
-        "uri={} shared={} client_id={}",
-        uri, self.lsp_shared_enabled, self.lsp_client_id
-      ),
-    );
+    log_shared_lsp_debug("close_doc_begin", format!("uri={}", uri));
 
-    if self.lsp_shared_enabled {
-      if let Some(key) = self.lsp_session_key.as_ref() {
-        let _ = lsp_broker::close_document(self.lsp_client_id, key, uri.as_str());
-      }
-    } else {
-      let params = did_close_params(&uri);
-      let _ = self.lsp_send_notification_raw("textDocument/didClose", params);
-    }
+    let params = did_close_params(&uri);
+    let _ = self.lsp_send_notification_raw("textDocument/didClose", params);
     if let Some(state) = self.lsp_document.as_mut() {
       state.opened = false;
       log_shared_lsp_debug("close_doc_done", format!("uri={} state_opened=false", uri));
@@ -9324,32 +9063,9 @@ impl App {
       return;
     };
 
-    let changed = if self.lsp_shared_enabled {
-      if let Some(key) = self.lsp_session_key.clone() {
-        match lsp_broker::send_document_change(
-          self.lsp_client_id,
-          &key,
-          uri.as_str(),
-          params.clone(),
-        ) {
-          Ok(true) => true,
-          Ok(false) => {
-            self.lsp_open_current_document();
-            match lsp_broker::send_document_change(self.lsp_client_id, &key, uri.as_str(), params) {
-              Ok(applied) => applied,
-              Err(_) => false,
-            }
-          },
-          Err(_) => false,
-        }
-      } else {
-        false
-      }
-    } else {
-      self
-        .lsp_send_notification_raw("textDocument/didChange", params)
-        .is_ok()
-    };
+    let changed = self
+      .lsp_send_notification_raw("textDocument/didChange", params)
+      .is_ok();
 
     if changed && let Some(state) = self.lsp_document.as_mut() {
       state.version = next_version;
@@ -9376,13 +9092,7 @@ impl App {
       None
     };
     let params = did_save_params(&uri, payload_text);
-    if self.lsp_shared_enabled {
-      if let Some(key) = self.lsp_session_key.as_ref() {
-        let _ = lsp_broker::send_document_save(self.lsp_client_id, key, uri.as_str(), params);
-      }
-    } else {
-      let _ = self.lsp_send_notification_raw("textDocument/didSave", params);
-    }
+    let _ = self.lsp_send_notification_raw("textDocument/didSave", params);
   }
 
   fn lsp_sync_watched_file_state(&mut self) {
@@ -10553,13 +10263,7 @@ impl Default for App {
 
 impl Drop for App {
   fn drop(&mut self) {
-    self.lsp_close_current_document();
-    if self.lsp_shared_enabled {
-      self.lsp_detach_shared_session();
-      lsp_broker::unregister_client_everywhere(self.lsp_client_id);
-    } else {
-      let _ = self.lsp_runtime.shutdown();
-    }
+    self.stop_lsp_runtime(None);
   }
 }
 
@@ -11840,23 +11544,7 @@ impl DefaultContext for App {
   }
 
   fn on_before_quit(&mut self) {
-    self.lsp_close_current_document();
-    if self.lsp_shared_enabled {
-      self.lsp_detach_shared_session();
-    } else {
-      let _ = self.lsp_runtime.shutdown();
-    }
-    self.lsp_ready = false;
-    self.lsp_document = None;
-    self.lsp_watched_file = None;
-    self.lsp_active_progress_tokens.clear();
-    self.lsp_pending_requests.clear();
-    self.clear_hover_state();
-    self.clear_completion_state();
-    self.cancel_auto_completion();
-    self.clear_signature_help_state();
-    self.cancel_auto_signature_help();
-    self.set_lsp_status(LspStatusPhase::Off, Some("stopped".into()));
+    self.stop_lsp_runtime(Some("stopped"));
   }
 
   fn scrolloff(&self) -> usize {
@@ -12917,10 +12605,7 @@ fn optional_color_snapshot(color: Option<LibColor>) -> ffi::OptionalColor {
   ffi::OptionalColor {
     has_value: rgb.is_some(),
     color:     rgb
-      .map(|value| ffi::Color {
-        kind:  2,
-        value,
-      })
+      .map(|value| ffi::Color { kind: 2, value })
       .unwrap_or_default(),
   }
 }
@@ -12964,21 +12649,21 @@ fn color_to_rgb(color: LibColor) -> Option<u32> {
 fn ansi_index_to_rgb(index: u8) -> Option<u32> {
   let rgb = match index {
     0 => 0x000000,
-    1 => 0xcd0000,
-    2 => 0x00cd00,
-    3 => 0xcdcd00,
-    4 => 0x0000ee,
-    5 => 0xcd00cd,
-    6 => 0x00cdcd,
-    7 => 0xe5e5e5,
-    8 => 0x7f7f7f,
-    9 => 0xff0000,
-    10 => 0x00ff00,
-    11 => 0xffff00,
-    12 => 0x5c5cff,
-    13 => 0xff00ff,
-    14 => 0x00ffff,
-    15 => 0xffffff,
+    1 => 0xCD0000,
+    2 => 0x00CD00,
+    3 => 0xCDCD00,
+    4 => 0x0000EE,
+    5 => 0xCD00CD,
+    6 => 0x00CDCD,
+    7 => 0xE5E5E5,
+    8 => 0x7F7F7F,
+    9 => 0xFF0000,
+    10 => 0x00FF00,
+    11 => 0xFFFF00,
+    12 => 0x5C5CFF,
+    13 => 0xFF00FF,
+    14 => 0x00FFFF,
+    15 => 0xFFFFFF,
     _ => return None,
   };
   Some(rgb)
@@ -12996,37 +12681,69 @@ fn ghostty_theme_snapshot_from_theme(theme: &Theme) -> ffi::GhosttyThemeSnapshot
       .or_else(|| style_fg(theme, "ui.statusline"))
       .or_else(|| style_fg(theme, "ui.popup"))
   });
-  let cursor_color = ghostty.cursor_color().or_else(|| {
-    style_bg(theme, "ui.cursor").or_else(|| style_fg(theme, "ui.cursor"))
-  });
-  let cursor_text = ghostty.cursor_text().or_else(|| {
-    style_fg(theme, "ui.cursor").or(foreground)
-  });
+  let cursor_color = ghostty
+    .cursor_color()
+    .or_else(|| style_bg(theme, "ui.cursor").or_else(|| style_fg(theme, "ui.cursor")));
+  let cursor_text = ghostty
+    .cursor_text()
+    .or_else(|| style_fg(theme, "ui.cursor").or(foreground));
   let selection_background = ghostty.selection_background().or_else(|| {
     style_bg(theme, "ui.selection")
       .or_else(|| style_bg(theme, "ui.menu.selected"))
       .or_else(|| style_bg(theme, "ui.cursor.match"))
   });
-  let selection_foreground = ghostty.selection_foreground().or_else(|| {
-    style_fg(theme, "ui.selection").or(foreground)
-  });
+  let selection_foreground = ghostty
+    .selection_foreground()
+    .or_else(|| style_fg(theme, "ui.selection").or(foreground));
   let derived_palette = [
-    ghostty.palette_color(0).or_else(|| palette_named(theme, "black")),
-    ghostty.palette_color(1).or_else(|| palette_named(theme, "red")),
-    ghostty.palette_color(2).or_else(|| palette_named(theme, "green")),
-    ghostty.palette_color(3).or_else(|| palette_named(theme, "yellow")),
-    ghostty.palette_color(4).or_else(|| palette_named(theme, "blue")),
-    ghostty.palette_color(5).or_else(|| palette_named(theme, "magenta")),
-    ghostty.palette_color(6).or_else(|| palette_named(theme, "cyan")),
-    ghostty.palette_color(7).or_else(|| palette_named(theme, "gray")),
-    ghostty.palette_color(8).or_else(|| palette_named(theme, "light-red")),
-    ghostty.palette_color(9).or_else(|| palette_named(theme, "light-green")),
-    ghostty.palette_color(10).or_else(|| palette_named(theme, "light-yellow")),
-    ghostty.palette_color(11).or_else(|| palette_named(theme, "light-blue")),
-    ghostty.palette_color(12).or_else(|| palette_named(theme, "light-magenta")),
-    ghostty.palette_color(13).or_else(|| palette_named(theme, "light-cyan")),
-    ghostty.palette_color(14).or_else(|| palette_named(theme, "light-gray")),
-    ghostty.palette_color(15).or_else(|| palette_named(theme, "white")),
+    ghostty
+      .palette_color(0)
+      .or_else(|| palette_named(theme, "black")),
+    ghostty
+      .palette_color(1)
+      .or_else(|| palette_named(theme, "red")),
+    ghostty
+      .palette_color(2)
+      .or_else(|| palette_named(theme, "green")),
+    ghostty
+      .palette_color(3)
+      .or_else(|| palette_named(theme, "yellow")),
+    ghostty
+      .palette_color(4)
+      .or_else(|| palette_named(theme, "blue")),
+    ghostty
+      .palette_color(5)
+      .or_else(|| palette_named(theme, "magenta")),
+    ghostty
+      .palette_color(6)
+      .or_else(|| palette_named(theme, "cyan")),
+    ghostty
+      .palette_color(7)
+      .or_else(|| palette_named(theme, "gray")),
+    ghostty
+      .palette_color(8)
+      .or_else(|| palette_named(theme, "light-red")),
+    ghostty
+      .palette_color(9)
+      .or_else(|| palette_named(theme, "light-green")),
+    ghostty
+      .palette_color(10)
+      .or_else(|| palette_named(theme, "light-yellow")),
+    ghostty
+      .palette_color(11)
+      .or_else(|| palette_named(theme, "light-blue")),
+    ghostty
+      .palette_color(12)
+      .or_else(|| palette_named(theme, "light-magenta")),
+    ghostty
+      .palette_color(13)
+      .or_else(|| palette_named(theme, "light-cyan")),
+    ghostty
+      .palette_color(14)
+      .or_else(|| palette_named(theme, "light-gray")),
+    ghostty
+      .palette_color(15)
+      .or_else(|| palette_named(theme, "white")),
   ];
   ffi::GhosttyThemeSnapshot {
     background:           optional_color_snapshot(background),
@@ -13182,6 +12899,7 @@ mod tests {
     LspLocation,
     LspPosition,
     LspRange,
+    LspRuntime,
   };
   use the_runtime::file_watch::{
     PathEvent,
@@ -13195,6 +12913,7 @@ mod tests {
     LibStyle,
     PendingAutoSignatureHelp,
     SignatureHelpTriggerSource,
+    build_lsp_document_state,
     capabilities_support_single_char,
     dedupe_inline_diagnostic_lines,
     ffi,
@@ -13247,7 +12966,10 @@ mod tests {
   fn split_and_jump_active_pane_through_ffi() {
     let _guard = ffi_test_guard();
     let mut app = App::new();
-    let id = app.create_editor("hello", default_viewport(), ffi::Position { row: 0, col: 0 });
+    let id = app.create_editor("hello", default_viewport(), ffi::Position {
+      row: 0,
+      col: 0,
+    });
 
     assert!(app.split_active_pane(id, 0));
     let frame = app.frame_render_plan(id);
@@ -13264,7 +12986,10 @@ mod tests {
   fn open_untitled_buffer_preserves_active_terminal_pane() {
     let _guard = ffi_test_guard();
     let mut app = App::new();
-    let id = app.create_editor("hello", default_viewport(), ffi::Position { row: 0, col: 0 });
+    let id = app.create_editor("hello", default_viewport(), ffi::Position {
+      row: 0,
+      col: 0,
+    });
 
     assert!(app.open_terminal_in_active_pane(id));
     let terminal_id = {
@@ -13330,7 +13055,10 @@ mod tests {
 
     assert!(app.open_file_path(id, fixture.as_path().to_string_lossy().as_ref()));
     assert!(!App::is_active_pane_terminal(&mut app, id));
-    assert_eq!(app.active_editor_ref().active_buffer_index(), original_buffer);
+    assert_eq!(
+      app.active_editor_ref().active_buffer_index(),
+      original_buffer
+    );
 
     let frame = app.frame_render_plan(id);
     assert_eq!(frame.pane_count(), 1);
@@ -13342,11 +13070,18 @@ mod tests {
   fn terminal_surface_snapshot_persists_when_terminal_detaches() {
     let _guard = ffi_test_guard();
     let mut app = App::new();
-    let id = app.create_editor("hello", default_viewport(), ffi::Position { row: 0, col: 0 });
+    let id = app.create_editor("hello", default_viewport(), ffi::Position {
+      row: 0,
+      col: 0,
+    });
 
     let active_pane = app.active_editor_ref().active_pane_id();
     let terminal_id = app.active_editor_mut().open_terminal_in_active_pane();
-    assert!(app.active_editor_mut().set_active_buffer_in_pane(active_pane, 0));
+    assert!(
+      app
+        .active_editor_mut()
+        .set_active_buffer_in_pane(active_pane, 0)
+    );
 
     assert_eq!(app.terminal_surface_count(id), 1);
     let snapshot = app.terminal_surface_at(id, 0);
@@ -13370,7 +13105,10 @@ mod tests {
   fn hide_active_terminal_surface_detaches_without_destroying_surface() {
     let _guard = ffi_test_guard();
     let mut app = App::new();
-    let id = app.create_editor("hello", default_viewport(), ffi::Position { row: 0, col: 0 });
+    let id = app.create_editor("hello", default_viewport(), ffi::Position {
+      row: 0,
+      col: 0,
+    });
 
     let terminal_id = app.active_editor_mut().open_terminal_in_active_pane();
     assert!(app.hide_active_terminal_surface(id));
@@ -13401,7 +13139,10 @@ mod tests {
 
     let initial_tree_visible = app.file_tree_snapshot(id, 128).visible();
     assert!(app.execute_command_named(id, "file_explorer"));
-    assert_ne!(app.file_tree_snapshot(id, 128).visible(), initial_tree_visible);
+    assert_ne!(
+      app.file_tree_snapshot(id, 128).visible(),
+      initial_tree_visible
+    );
 
     assert!(app.execute_command_named(id, "terminal_open"));
     assert!(App::is_active_pane_terminal(&mut app, id));
@@ -13699,6 +13440,42 @@ mod tests {
     }
   }
 
+  struct TempTestWorkspace {
+    root: PathBuf,
+    file: PathBuf,
+  }
+
+  impl TempTestWorkspace {
+    fn new(prefix: &str, file_name: &str, content: &str) -> Self {
+      let nonce = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+      let root = std::env::temp_dir().join(format!(
+        "the-editor-ffi-workspace-{prefix}-{}-{nonce}",
+        std::process::id()
+      ));
+      fs::create_dir_all(root.join(".the-editor")).expect("create workspace marker");
+      let file = root.join(file_name);
+      fs::write(&file, content).expect("write workspace file");
+      Self { root, file }
+    }
+
+    fn root_path(&self) -> &Path {
+      &self.root
+    }
+
+    fn file_path(&self) -> &Path {
+      &self.file
+    }
+  }
+
+  impl Drop for TempTestWorkspace {
+    fn drop(&mut self) {
+      let _ = fs::remove_dir_all(&self.root);
+    }
+  }
+
   fn default_viewport() -> ffi::Rect {
     ffi::Rect {
       x:      0,
@@ -13730,6 +13507,21 @@ mod tests {
       codepoint: ch as u32,
       modifiers: KeyModifiers::CTRL,
     }
+  }
+
+  fn install_test_lsp_state(app: &mut App, id: ffi::EditorId, path: &Path) {
+    assert!(app.activate(id).is_some());
+    app
+      .active_editor_mut()
+      .set_active_file_path(Some(path.to_path_buf()));
+    let (config, _configured) = app.lsp_runtime_config_for_active_file();
+    app.lsp_runtime = LspRuntime::new(config);
+    app.lsp_server_name = app
+      .lsp_runtime
+      .config()
+      .server()
+      .map(|server| server.name().to_string());
+    app.lsp_document = build_lsp_document_state(path, app.loader.as_deref());
   }
 
   fn statusline_left_and_segments(
@@ -15529,7 +15321,10 @@ pkgs.mkShell {
   fn insert_mode_mouse_drag_keeps_selection_and_bar_cursor_on_active_edge() {
     let _guard = ffi_test_guard();
     let mut app = App::new();
-    let id = app.create_editor("printf\n", default_viewport(), ffi::Position { row: 0, col: 0 });
+    let id = app.create_editor("printf\n", default_viewport(), ffi::Position {
+      row: 0,
+      col: 0,
+    });
     assert!(app.activate(id).is_some());
     app.set_mode(Mode::Insert);
 
@@ -15577,7 +15372,10 @@ pkgs.mkShell {
   fn insert_mode_typing_replaces_mouse_selection() {
     let _guard = ffi_test_guard();
     let mut app = App::new();
-    let id = app.create_editor("printf\n", default_viewport(), ffi::Position { row: 0, col: 0 });
+    let id = app.create_editor("printf\n", default_viewport(), ffi::Position {
+      row: 0,
+      col: 0,
+    });
     assert!(app.activate(id).is_some());
     app.set_mode(Mode::Insert);
     let _ = app
@@ -15993,6 +15791,88 @@ pkgs.mkShell {
     assert_eq!(app.text(id), "created\n");
     let _ = fs::remove_file(&missing_path);
     let _ = fs::remove_dir_all(&root);
+  }
+
+  #[test]
+  fn lsp_runtime_config_tracks_active_workspace_without_shared_broker_state() {
+    let _guard = ffi_test_guard();
+    let workspace_a = TempTestWorkspace::new("lsp-runtime-a", "one.txt", "alpha\n");
+    let workspace_b = TempTestWorkspace::new("lsp-runtime-b", "two.txt", "beta\n");
+
+    let mut app = App::new();
+    let id = app.create_editor("", default_viewport(), ffi::Position { row: 0, col: 0 });
+    install_test_lsp_state(&mut app, id, workspace_a.file_path());
+    assert_eq!(
+      app.lsp_runtime.config().workspace_root(),
+      workspace_a.root_path()
+    );
+    assert_eq!(
+      app.lsp_document.as_ref().map(|state| state.path.as_path()),
+      Some(workspace_a.file_path())
+    );
+
+    install_test_lsp_state(&mut app, id, workspace_b.file_path());
+    assert_eq!(
+      app.lsp_runtime.config().workspace_root(),
+      workspace_b.root_path()
+    );
+    assert_eq!(
+      app.lsp_document.as_ref().map(|state| state.path.as_path()),
+      Some(workspace_b.file_path())
+    );
+  }
+
+  #[test]
+  fn separate_apps_keep_lsp_document_state_isolated() {
+    let _guard = ffi_test_guard();
+    let workspace_a = TempTestWorkspace::new("lsp-isolated-a", "one.txt", "alpha\n");
+    let workspace_b = TempTestWorkspace::new("lsp-isolated-b", "two.txt", "beta\n");
+
+    let mut app_a = App::new();
+    let id_a = app_a.create_editor("", default_viewport(), ffi::Position { row: 0, col: 0 });
+    install_test_lsp_state(&mut app_a, id_a, workspace_a.file_path());
+
+    let mut app_b = App::new();
+    let id_b = app_b.create_editor("", default_viewport(), ffi::Position { row: 0, col: 0 });
+    install_test_lsp_state(&mut app_b, id_b, workspace_b.file_path());
+
+    assert_eq!(
+      app_a.lsp_runtime.config().workspace_root(),
+      workspace_a.root_path()
+    );
+    assert_eq!(
+      app_b.lsp_runtime.config().workspace_root(),
+      workspace_b.root_path()
+    );
+    assert_eq!(
+      app_a
+        .lsp_document
+        .as_ref()
+        .map(|state| state.path.as_path()),
+      Some(workspace_a.file_path())
+    );
+    assert_eq!(
+      app_b
+        .lsp_document
+        .as_ref()
+        .map(|state| state.path.as_path()),
+      Some(workspace_b.file_path())
+    );
+
+    app_a.on_before_quit();
+
+    assert!(app_a.lsp_document.is_none());
+    assert_eq!(
+      app_b
+        .lsp_document
+        .as_ref()
+        .map(|state| state.path.as_path()),
+      Some(workspace_b.file_path())
+    );
+    assert_eq!(
+      app_b.lsp_runtime.config().workspace_root(),
+      workspace_b.root_path()
+    );
   }
 
   #[test]

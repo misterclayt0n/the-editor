@@ -156,6 +156,7 @@ use the_lib::{
     DocumentId,
   },
   editor::{
+    EditorSurfaceSnapshot as LibEditorSurfaceSnapshot,
     EditorId as LibEditorId,
     PaneContent,
     PaneContentKind,
@@ -1221,6 +1222,74 @@ impl TerminalSurfaceSnapshot {
 
   fn pane_id(&self) -> u64 {
     self.pane_id
+  }
+
+  fn is_active(&self) -> bool {
+    self.is_active
+  }
+}
+
+#[derive(Debug, Clone)]
+pub struct EditorSurfaceSnapshot {
+  pane_id:      u64,
+  buffer_id:    u64,
+  buffer_index: usize,
+  title:        String,
+  modified:     bool,
+  file_path:    String,
+  is_active:    bool,
+}
+
+impl EditorSurfaceSnapshot {
+  fn empty() -> Self {
+    Self {
+      pane_id:      0,
+      buffer_id:    0,
+      buffer_index: 0,
+      title:        String::new(),
+      modified:     false,
+      file_path:    String::new(),
+      is_active:    false,
+    }
+  }
+
+  fn from_lib(snapshot: LibEditorSurfaceSnapshot) -> Self {
+    Self {
+      pane_id:      snapshot.pane_id.get().get() as u64,
+      buffer_id:    snapshot.buffer_id,
+      buffer_index: snapshot.buffer_index,
+      title:        snapshot.display_name,
+      modified:     snapshot.modified,
+      file_path:    snapshot
+        .file_path
+        .map(|path| path.display().to_string())
+        .unwrap_or_default(),
+      is_active:    snapshot.is_active,
+    }
+  }
+
+  fn pane_id(&self) -> u64 {
+    self.pane_id
+  }
+
+  fn buffer_id(&self) -> u64 {
+    self.buffer_id
+  }
+
+  fn buffer_index(&self) -> usize {
+    self.buffer_index
+  }
+
+  fn title(&self) -> String {
+    self.title.clone()
+  }
+
+  fn modified(&self) -> bool {
+    self.modified
+  }
+
+  fn file_path(&self) -> String {
+    self.file_path.clone()
   }
 
   fn is_active(&self) -> bool {
@@ -5185,6 +5254,30 @@ impl App {
       .copied()
       .map(TerminalSurfaceSnapshot::from_lib)
       .unwrap_or_else(TerminalSurfaceSnapshot::empty)
+  }
+
+  pub fn editor_surface_count(&mut self, id: ffi::EditorId) -> usize {
+    if self.activate(id).is_none() {
+      return 0;
+    }
+    self.active_editor_ref().editor_surface_snapshots().len()
+  }
+
+  pub fn editor_surface_at(
+    &mut self,
+    id: ffi::EditorId,
+    index: usize,
+  ) -> EditorSurfaceSnapshot {
+    if self.activate(id).is_none() {
+      return EditorSurfaceSnapshot::empty();
+    }
+    self
+      .active_editor_ref()
+      .editor_surface_snapshots()
+      .get(index)
+      .cloned()
+      .map(EditorSurfaceSnapshot::from_lib)
+      .unwrap_or_else(EditorSurfaceSnapshot::empty)
   }
 
   pub fn focus_terminal_surface(&mut self, id: ffi::EditorId, terminal_id: u64) -> bool {
@@ -11852,6 +11945,8 @@ mod ffi {
     fn resize_split(self: &mut App, id: EditorId, split_id: u64, x: u16, y: u16) -> bool;
     fn terminal_surface_count(self: &mut App, id: EditorId) -> usize;
     fn terminal_surface_at(self: &mut App, id: EditorId, index: usize) -> TerminalSurfaceSnapshot;
+    fn editor_surface_count(self: &mut App, id: EditorId) -> usize;
+    fn editor_surface_at(self: &mut App, id: EditorId, index: usize) -> EditorSurfaceSnapshot;
     fn focus_terminal_surface(self: &mut App, id: EditorId, terminal_id: u64) -> bool;
     fn render_plan(self: &mut App, id: EditorId) -> RenderPlan;
     fn frame_render_plan(self: &mut App, id: EditorId) -> RenderFramePlan;
@@ -12227,6 +12322,17 @@ mod ffi {
     fn pane_count(self: &RenderFramePlan) -> usize;
     fn pane_at(self: &RenderFramePlan, index: usize) -> RenderFramePane;
     fn active_plan(self: &RenderFramePlan) -> RenderPlan;
+  }
+
+  extern "Rust" {
+    type EditorSurfaceSnapshot;
+    fn pane_id(self: &EditorSurfaceSnapshot) -> u64;
+    fn buffer_id(self: &EditorSurfaceSnapshot) -> u64;
+    fn buffer_index(self: &EditorSurfaceSnapshot) -> usize;
+    fn title(self: &EditorSurfaceSnapshot) -> String;
+    fn modified(self: &EditorSurfaceSnapshot) -> bool;
+    fn file_path(self: &EditorSurfaceSnapshot) -> String;
+    fn is_active(self: &EditorSurfaceSnapshot) -> bool;
   }
 
   extern "Rust" {
@@ -12867,6 +12973,7 @@ mod tests {
     Value,
     json,
   };
+  use ropey::Rope;
   use the_default::{
     Command,
     CommandEvent,
@@ -12894,6 +13001,7 @@ mod tests {
     },
     syntax::Highlight,
     transaction::Transaction,
+    view::ViewState,
   };
   use the_lsp::{
     LspLocation,
@@ -12960,6 +13068,41 @@ mod tests {
     assert_eq!(pane.pane_kind(), 1);
     assert_eq!(pane.terminal_id(), terminal_id.get().get() as u64);
     assert_eq!(pane.plan().line_count(), 0);
+  }
+
+  #[test]
+  fn editor_surface_snapshots_expose_editor_pane_metadata() {
+    let _guard = ffi_test_guard();
+    let mut app = App::new();
+    let id = app.create_editor("one", default_viewport(), ffi::Position {
+      row: 0,
+      col: 0,
+    });
+
+    assert!(app.split_active_pane(id, 0));
+    let viewport = app.active_editor_ref().layout_viewport();
+    let second_index = app.active_editor_mut().open_buffer(
+      Rope::from("two"),
+      ViewState::new(viewport, LibPosition::new(0, 0)),
+      Some(PathBuf::from("/tmp/project/src/two.rs")),
+    );
+
+    assert_eq!(app.editor_surface_count(id), 2);
+    let mut seen_indices = Vec::new();
+    let mut active_count = 0usize;
+    for index in 0..app.editor_surface_count(id) {
+      let snapshot = app.editor_surface_at(id, index);
+      seen_indices.push(snapshot.buffer_index());
+      if snapshot.is_active() {
+        active_count += 1;
+      }
+      if snapshot.buffer_index() == second_index {
+        assert_eq!(snapshot.file_path(), "/tmp/project/src/two.rs");
+      }
+    }
+    assert_eq!(active_count, 1);
+    assert!(seen_indices.contains(&0));
+    assert!(seen_indices.contains(&second_index));
   }
 
   #[test]

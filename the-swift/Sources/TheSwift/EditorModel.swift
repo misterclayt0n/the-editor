@@ -34,6 +34,18 @@ struct TerminalSurfaceSnapshot: Identifiable, Equatable {
     var isAttached: Bool { paneId != nil }
 }
 
+struct EditorPaneSurfaceSnapshot: Identifiable, Equatable {
+    let paneId: UInt64
+    let bufferId: UInt64
+    let bufferIndex: Int
+    let title: String
+    let modified: Bool
+    let filePath: String?
+    let isActive: Bool
+
+    var id: UInt64 { paneId }
+}
+
 private struct NativeTabOpenRequest: Decodable, Hashable {
     enum Kind: String, Decodable {
         case focusExisting = "focus_existing"
@@ -86,6 +98,7 @@ final class EditorModel: ObservableObject {
     @Published var splitSeparators: [SplitSeparatorSnapshot] = []
     @Published var terminalPanes: [TerminalPaneSnapshot] = []
     @Published var terminalSurfaces: [TerminalSurfaceSnapshot] = []
+    @Published var editorSurfacePanes: [EditorPaneSurfaceSnapshot] = []
     @Published var isActivePaneTerminal: Bool = false
     @Published var uiTree: UiTreeSnapshot = .empty
     @Published var bufferTabsSnapshot: BufferTabsSnapshot? = nil
@@ -244,6 +257,8 @@ final class EditorModel: ObservableObject {
         updateTerminalPaneSnapshots(from: framePlan)
         updateTerminalSurfaceSnapshots()
         updateSurfaceOverviewSnapshots(from: framePlan)
+        updateEditorSurfaceSnapshots()
+        debugSurfaceRailState(trigger: trigger)
         debugDiagnosticsSnapshot(trigger: trigger, plan: plan)
 
         mode = EditorMode(rawValue: app.mode(editorId)) ?? .normal
@@ -517,6 +532,7 @@ final class EditorModel: ObservableObject {
         guard paneId != 0 else {
             return false
         }
+        let activePaneBefore = framePlan.active_pane_id()
         let event = MouseBridgeEvent(
             kind: 0,
             button: 1,
@@ -533,9 +549,19 @@ final class EditorModel: ObservableObject {
             event.logicalRow,
             event.surfaceId
         ) else {
+            if DiagnosticsDebugLog.enabled {
+                DiagnosticsDebugLog.log(
+                    "surface_rail.focus trigger=\(trigger) requestedPane=\(paneId) beforeActivePane=\(activePaneBefore) handled=0"
+                )
+            }
             return false
         }
         refresh(trigger: trigger)
+        if DiagnosticsDebugLog.enabled {
+            DiagnosticsDebugLog.log(
+                "surface_rail.focus trigger=\(trigger) requestedPane=\(paneId) beforeActivePane=\(activePaneBefore) afterActivePane=\(framePlan.active_pane_id()) handled=1 responder=\(debugFirstResponderSummary())"
+            )
+        }
         return true
     }
 
@@ -782,6 +808,33 @@ final class EditorModel: ObservableObject {
         }
     }
 
+    private func updateEditorSurfaceSnapshots() {
+        let count = Int(app.editor_surface_count(editorId))
+        var snapshots: [EditorPaneSurfaceSnapshot] = []
+        snapshots.reserveCapacity(count)
+
+        for index in 0..<count {
+            let snapshot = app.editor_surface_at(editorId, UInt(index))
+            let rawFilePath = snapshot.file_path().toString().trimmingCharacters(in: .whitespacesAndNewlines)
+            let filePath = rawFilePath.isEmpty ? nil : rawFilePath
+            snapshots.append(
+                EditorPaneSurfaceSnapshot(
+                    paneId: snapshot.pane_id(),
+                    bufferId: snapshot.buffer_id(),
+                    bufferIndex: Int(snapshot.buffer_index()),
+                    title: snapshot.title().toString(),
+                    modified: snapshot.modified(),
+                    filePath: filePath,
+                    isActive: snapshot.is_active()
+                )
+            )
+        }
+
+        if snapshots != editorSurfacePanes {
+            editorSurfacePanes = snapshots
+        }
+    }
+
     private func updateSurfaceOverviewSnapshots(from framePlan: RenderFramePlan) {
         trackLastFocusedPane(from: framePlan)
 
@@ -868,6 +921,58 @@ final class EditorModel: ObservableObject {
         preferredEditorPaneId(excluding: nil)
     }
 
+    private func focusEditorAfterOpenBufferSelection() {
+        let activePaneId = framePlan.active_pane_id()
+        if paneSurfaceItems.contains(where: { $0.paneId == activePaneId && $0.kind == .editor }) {
+            if let hostWindow {
+                let reclaimed = KeyCaptureFocusBridge.shared.reclaim(in: hostWindow)
+                if DiagnosticsDebugLog.enabled {
+                    DiagnosticsDebugLog.log(
+                        "surface_rail.buffer.reclaim targetPane=\(activePaneId) activePane=\(framePlan.active_pane_id()) reclaimed=\(reclaimed ? 1 : 0) responder=\(debugFirstResponderSummary()) mode=direct"
+                    )
+                }
+            }
+            return
+        }
+
+        let targetPaneId = preferredEditorPaneId(excluding: nil) ?? activePaneId
+        if targetPaneId != 0 {
+            _ = focusPane(paneId: targetPaneId, trigger: "surface_rail_buffer_focus")
+        }
+        if let hostWindow {
+            let reclaimed = KeyCaptureFocusBridge.shared.reclaim(in: hostWindow)
+            if DiagnosticsDebugLog.enabled {
+                DiagnosticsDebugLog.log(
+                    "surface_rail.buffer.reclaim targetPane=\(targetPaneId) activePane=\(framePlan.active_pane_id()) reclaimed=\(reclaimed ? 1 : 0) responder=\(debugFirstResponderSummary()) mode=focus_pane"
+                )
+            }
+        }
+    }
+
+    @discardableResult
+    func focusEditorSurface(paneId: UInt64) -> Bool {
+        if let hostWindow {
+            hostWindow.makeKeyAndOrderFront(nil)
+        }
+        if DiagnosticsDebugLog.enabled {
+            DiagnosticsDebugLog.log(
+                "surface_rail.editor.request pane=\(paneId) activeBefore=\(framePlan.active_pane_id())"
+            )
+        }
+        let focused = focusPane(paneId: paneId, trigger: "surface_rail_editor_surface")
+        if focused, let hostWindow {
+            DispatchQueue.main.async {
+                let reclaimed = KeyCaptureFocusBridge.shared.reclaim(in: hostWindow)
+                if DiagnosticsDebugLog.enabled {
+                    DiagnosticsDebugLog.log(
+                        "surface_rail.editor.reclaim pane=\(paneId) activeAfter=\(self.framePlan.active_pane_id()) reclaimed=\(reclaimed ? 1 : 0) responder=\(self.debugFirstResponderSummary())"
+                    )
+                }
+            }
+        }
+        return focused
+    }
+
     @discardableResult
     func focusEditorPaneForGlobalToggle(paneId: UInt64) -> Bool {
         if let hostWindow {
@@ -908,16 +1013,16 @@ final class EditorModel: ObservableObject {
     }
 
     func surfaceRailSnapshot() -> SurfaceRailSnapshot {
-        let bufferItems = surfaceRailBufferItems()
-        let terminalItems = surfaceRailTerminalItems()
+        let fileItems = surfaceRailOpenFileItems()
+        let terminalItems = surfaceRailOpenTerminalItems()
         var sections: [SurfaceRailSectionSnapshot] = []
 
-        if !bufferItems.isEmpty {
+        if !fileItems.isEmpty {
             sections.append(
                 SurfaceRailSectionSnapshot(
-                    kind: .buffer,
-                    title: "Buffers",
-                    items: bufferItems
+                    id: "open-files",
+                    title: "Files",
+                    items: fileItems
                 )
             )
         }
@@ -925,7 +1030,7 @@ final class EditorModel: ObservableObject {
         if !terminalItems.isEmpty {
             sections.append(
                 SurfaceRailSectionSnapshot(
-                    kind: .terminal,
+                    id: "open-terminals",
                     title: "Terminals",
                     items: terminalItems
                 )
@@ -969,15 +1074,48 @@ final class EditorModel: ObservableObject {
         refresh()
     }
 
-    func selectBufferTab(bufferIndex: Int) {
+    func selectOpenBuffer(bufferIndex: Int) {
         guard bufferIndex >= 0 else { return }
-        if isActivePaneTerminal {
-            _ = app.hide_active_terminal_surface(editorId)
+        if let hostWindow {
+            hostWindow.makeKeyAndOrderFront(nil)
         }
-        guard app.activate_buffer_tab(editorId, UInt(bufferIndex)) else {
+        let selectedTab = targetBufferTab(forBufferIndex: bufferIndex)
+        let selectedFilePath = EditorModel.normalizedFilePath(selectedTab?.filePath)
+        let alreadyActiveBuffer = activeBufferTabSnapshot()?.bufferIndex == bufferIndex
+        if DiagnosticsDebugLog.enabled {
+            DiagnosticsDebugLog.log(
+                "surface_rail.buffer.request bufferIndex=\(bufferIndex) activePaneBefore=\(framePlan.active_pane_id()) activeBufferBefore=\(debugActiveBufferSummary()) alreadyActive=\(alreadyActiveBuffer ? 1 : 0) mode=\(selectedFilePath == nil ? "activate_buffer" : "open_file_path")"
+            )
+        }
+        if alreadyActiveBuffer && !isActivePaneTerminal {
+            DispatchQueue.main.async { [weak self] in
+                self?.focusEditorAfterOpenBufferSelection()
+            }
             return
         }
-        refresh(trigger: "buffer_tab")
+        let handled: Bool
+        if let selectedFilePath {
+            handled = app.open_file_path(editorId, selectedFilePath)
+        } else {
+            handled = app.activate_buffer_tab(editorId, UInt(bufferIndex))
+        }
+        guard handled else {
+            if DiagnosticsDebugLog.enabled {
+                DiagnosticsDebugLog.log(
+                    "surface_rail.buffer.request bufferIndex=\(bufferIndex) handled=0"
+                )
+            }
+            return
+        }
+        refresh(trigger: "surface_rail_open_buffer")
+        if DiagnosticsDebugLog.enabled {
+            DiagnosticsDebugLog.log(
+                "surface_rail.buffer.request bufferIndex=\(bufferIndex) handled=1 activePaneAfterRefresh=\(framePlan.active_pane_id()) activeBufferAfter=\(debugActiveBufferSummary())"
+            )
+        }
+        DispatchQueue.main.async { [weak self] in
+            self?.focusEditorAfterOpenBufferSelection()
+        }
     }
 
     func setHostWindow(_ window: NSWindow?) {
@@ -1877,6 +2015,19 @@ final class EditorModel: ObservableObject {
         return snapshot.tabs.first(where: { $0.bufferId == bufferId })
     }
 
+    private func targetBufferTab(forBufferIndex bufferIndex: Int) -> BufferTabItemSnapshot? {
+        if let snapshot = bufferTabsSnapshot,
+           let tab = snapshot.tabs.first(where: { $0.bufferIndex == bufferIndex }) {
+            return tab
+        }
+
+        let tabsFetch = fetchBufferTabsSnapshot()
+        if tabsFetch.changed {
+            bufferTabsSnapshot = tabsFetch.snapshot
+        }
+        return tabsFetch.snapshot?.tabs.first(where: { $0.bufferIndex == bufferIndex })
+    }
+
     private static func normalizedFilePath(_ path: String?) -> String? {
         guard let path, !path.isEmpty else { return nil }
         let url = URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath()
@@ -1889,54 +2040,44 @@ final class EditorModel: ObservableObject {
         return value.isEmpty ? nil : value
     }
 
-    private func surfaceRailBufferItems() -> [SurfaceRailItemSnapshot] {
-        guard let snapshot = bufferTabsSnapshot else {
-            return []
-        }
-
-        return snapshot.tabs.map { tab in
+    private func surfaceRailOpenFileItems() -> [SurfaceRailItemSnapshot] {
+        (bufferTabsSnapshot?.tabs ?? []).map { tab in
             SurfaceRailItemSnapshot(
                 id: "buffer:\(tab.bufferId)",
                 kind: .buffer,
                 title: normalizeFallbackTitle(tab.title),
-                subtitle: surfaceRailBufferSubtitle(for: tab),
-                isActive: !isActivePaneTerminal && tab.isActive,
+                subtitle: surfaceRailOpenBufferSubtitle(for: tab),
+                isActive: tab.isActive && !isActivePaneTerminal,
                 isModified: tab.modified,
                 statusText: nil,
+                paneId: nil,
                 bufferId: tab.bufferId,
                 bufferIndex: tab.bufferIndex,
-                terminalId: nil
+                terminalId: nil,
+                canClose: true
             )
         }
     }
 
-    private func surfaceRailTerminalItems() -> [SurfaceRailItemSnapshot] {
-        guard !terminalSurfaces.isEmpty else {
-            return []
-        }
-
-        let sortedSurfaces = terminalSurfaces.sorted { lhs, rhs in
-            if lhs.isAttached != rhs.isAttached {
-                return lhs.isAttached && !rhs.isAttached
+    private func surfaceRailOpenTerminalItems() -> [SurfaceRailItemSnapshot] {
+        terminalSurfaces
+            .map { surface in
+                let metadata = GhosttyRuntime.shared.terminalMetadata(runtimeId: runtimeInstanceId, for: surface.terminalId)
+                return SurfaceRailItemSnapshot(
+                    id: "terminal:\(surface.terminalId)",
+                    kind: .terminal,
+                    title: terminalPresentationTitle(from: metadata),
+                    subtitle: terminalSwitcherSubtitle(for: surface, metadata: metadata),
+                    isActive: surface.isActive,
+                    isModified: false,
+                    statusText: nil,
+                    paneId: surface.paneId,
+                    bufferId: nil,
+                    bufferIndex: nil,
+                    terminalId: surface.terminalId,
+                    canClose: true
+                )
             }
-            return lhs.terminalId < rhs.terminalId
-        }
-
-        return sortedSurfaces.map { surface in
-            let metadata = GhosttyRuntime.shared.terminalMetadata(runtimeId: runtimeInstanceId, for: surface.terminalId)
-            return SurfaceRailItemSnapshot(
-                id: "terminal:\(surface.terminalId)",
-                kind: .terminal,
-                title: terminalPresentationTitle(from: metadata),
-                subtitle: surfaceRailTerminalSubtitle(metadata: metadata),
-                isActive: surface.isActive,
-                isModified: false,
-                statusText: surface.isAttached ? nil : "DETACHED",
-                bufferId: nil,
-                bufferIndex: nil,
-                terminalId: surface.terminalId
-            )
-        }
     }
 
     @discardableResult
@@ -1977,7 +2118,7 @@ final class EditorModel: ObservableObject {
         return closeSurface()
     }
 
-    private func surfaceRailBufferSubtitle(for tab: BufferTabItemSnapshot) -> String? {
+    private func surfaceRailOpenBufferSubtitle(for tab: BufferTabItemSnapshot) -> String? {
         let hint = tab.directoryHint?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if !hint.isEmpty {
             return hint
@@ -2042,12 +2183,12 @@ final class EditorModel: ObservableObject {
         return "\(abbreviatedPath) • t\(surface.terminalId) • \(paneLabel)"
     }
 
-    private func surfaceRailTerminalSubtitle(metadata: GhosttyTerminalMetadata?) -> String? {
-        guard let rawPath = metadata.flatMap({ representedPathFromTerminalPwd($0.pwd) }),
-              !rawPath.isEmpty else {
+    private func abbreviatedPath(_ path: String?) -> String? {
+        guard let path = path?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !path.isEmpty else {
             return nil
         }
-        return (rawPath as NSString).abbreviatingWithTildeInPath
+        return (path as NSString).abbreviatingWithTildeInPath
     }
 
     private func normalizedTerminalSwitcherWindowTitle() -> String {
@@ -2659,5 +2800,57 @@ final class EditorModel: ObservableObject {
         DiagnosticsDebugLog.log(
             "picker.preview diagnostics requested=\(requested) hint=\(filePickerPreviewOffsetHint) visible=\(filePickerPreviewVisibleRows) overscan=\(filePickerPreviewOverscan) returned_offset=\(preview.offset()) window_start=\(preview.window_start()) total=\(preview.total_lines()) count=\(lineCount) focused=\(focusedSummary) first=\(firstLineSummary) last=\(lastLineSummary) path=\(preview.path().toString())"
         )
+    }
+
+    private func debugSurfaceRailState(trigger: String) {
+        guard DiagnosticsDebugLog.enabled else { return }
+
+        let paneSummary = paneSurfaceItems.map { pane in
+            let kind = pane.kind == .editor ? "e" : "t"
+            return "p\(pane.paneId):\(kind)"
+        }.joined(separator: ",")
+
+        let editorSummary = editorSurfacePanes.map { surface in
+            "p\(surface.paneId):b\(surface.bufferIndex):a\(surface.isActive ? 1 : 0):\(normalizeFallbackTitle(surface.title))"
+        }.joined(separator: ",")
+
+        let terminalSummary = terminalSurfaces.map { surface in
+            "t\(surface.terminalId):p\(surface.paneId ?? 0):a\(surface.isActive ? 1 : 0)"
+        }.joined(separator: ",")
+
+        let bufferSummary = bufferTabsSnapshot?.tabs.map { tab in
+            "b\(tab.bufferIndex):a\(tab.isActive ? 1 : 0):\(normalizeFallbackTitle(tab.title))"
+        }.joined(separator: ",") ?? ""
+
+        let summary = [
+            "trigger=\(trigger)",
+            "activePane=\(framePlan.active_pane_id())",
+            "activeBuffer=\(debugActiveBufferSummary())",
+            "lastEditorPane=\(lastFocusedEditorPaneId ?? 0)",
+            "lastTerminal=\(lastFocusedTerminalSurfaceId ?? 0)",
+            "panes=[\(paneSummary)]",
+            "editorSurfaces=[\(editorSummary)]",
+            "terminalSurfaces=[\(terminalSummary)]",
+            "openBuffers=[\(bufferSummary)]"
+        ].joined(separator: " ")
+
+        DiagnosticsDebugLog.logChanged(
+            key: "surface_rail.state.\(runtimeInstanceId).\(editorId.value)",
+            value: summary
+        )
+    }
+
+    private func debugActiveBufferSummary() -> String {
+        guard let activeTab = activeBufferTabSnapshot() else {
+            return "none"
+        }
+        return "b\(activeTab.bufferIndex):\(normalizeFallbackTitle(activeTab.title))"
+    }
+
+    private func debugFirstResponderSummary() -> String {
+        guard let responder = hostWindow?.firstResponder else {
+            return "none"
+        }
+        return String(describing: type(of: responder))
     }
 }

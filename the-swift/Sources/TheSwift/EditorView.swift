@@ -125,8 +125,11 @@ struct EditorView: View {
                     case .surfaces:
                         SurfaceRailView(
                             snapshot: surfaceRailSnapshot,
-                            onSelectBuffer: { bufferIndex in
-                                model.selectBufferTab(bufferIndex: bufferIndex)
+                            onFocusEditorSurface: { paneId in
+                                _ = model.focusEditorSurface(paneId: paneId)
+                            },
+                            onSelectOpenBuffer: { bufferIndex in
+                                model.selectOpenBuffer(bufferIndex: bufferIndex)
                             },
                             onSelectTerminal: { terminalId in
                                 _ = model.focusTerminalSurface(terminalId: terminalId)
@@ -173,7 +176,7 @@ struct EditorView: View {
             sidebarNavigatorButton(
                 mode: .surfaces,
                 systemImage: "square.on.square",
-                help: "Open Surfaces"
+                help: "Open Files and Terminals"
             )
             Spacer(minLength: 0)
         }

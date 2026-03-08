@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 
 enum SurfaceRailItemKind: String, Equatable {
+    case editorSurface
     case buffer
     case terminal
 }
@@ -14,17 +15,17 @@ struct SurfaceRailItemSnapshot: Identifiable, Equatable {
     let isActive: Bool
     let isModified: Bool
     let statusText: String?
+    let paneId: UInt64?
     let bufferId: UInt64?
     let bufferIndex: Int?
     let terminalId: UInt64?
+    let canClose: Bool
 }
 
 struct SurfaceRailSectionSnapshot: Identifiable, Equatable {
-    let kind: SurfaceRailItemKind
+    let id: String
     let title: String
     let items: [SurfaceRailItemSnapshot]
-
-    var id: String { kind.rawValue }
 }
 
 struct SurfaceRailSnapshot: Equatable {
@@ -43,7 +44,8 @@ struct SurfaceRailSnapshot: Equatable {
 
 struct SurfaceRailView: View {
     let snapshot: SurfaceRailSnapshot
-    let onSelectBuffer: (Int) -> Void
+    let onFocusEditorSurface: (UInt64) -> Void
+    let onSelectOpenBuffer: (Int) -> Void
     let onSelectTerminal: (UInt64) -> Void
     let onCloseBuffer: (UInt64) -> Void
     let onCloseTerminal: (UInt64) -> Void
@@ -51,7 +53,8 @@ struct SurfaceRailView: View {
     var body: some View {
         SurfaceRailNativeView(
             snapshot: snapshot,
-            onSelectBuffer: onSelectBuffer,
+            onFocusEditorSurface: onFocusEditorSurface,
+            onSelectOpenBuffer: onSelectOpenBuffer,
             onSelectTerminal: onSelectTerminal,
             onCloseBuffer: onCloseBuffer,
             onCloseTerminal: onCloseTerminal
@@ -76,6 +79,8 @@ private final class SurfaceRailItemNode: NSObject {
 }
 
 private final class SurfaceRailRowView: NSTableRowView {
+    var diagnosticSummary: String?
+
     override func drawSelection(in dirtyRect: NSRect) {
         guard selectionHighlightStyle != .none else { return }
         let rect = bounds.insetBy(dx: 5, dy: 1.5)
@@ -86,11 +91,61 @@ private final class SurfaceRailRowView: NSTableRowView {
         ).setFill()
         path.fill()
     }
+
+    override func mouseDown(with event: NSEvent) {
+        let parentTableView = enclosingScrollView?.documentView as? NSTableView
+        if DiagnosticsDebugLog.enabled {
+            DiagnosticsDebugLog.log(
+                "surface_rail.row.mouse_down row=\(parentTableView?.row(for: self) ?? -1) selectedRow=\(parentTableView?.selectedRow ?? -1) item=\(diagnosticSummary ?? "none")"
+            )
+        }
+        super.mouseDown(with: event)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        let parentTableView = enclosingScrollView?.documentView as? NSTableView
+        if DiagnosticsDebugLog.enabled {
+            DiagnosticsDebugLog.log(
+                "surface_rail.row.mouse_up row=\(parentTableView?.row(for: self) ?? -1) selectedRow=\(parentTableView?.selectedRow ?? -1) item=\(diagnosticSummary ?? "none")"
+            )
+        }
+        super.mouseUp(with: event)
+    }
+}
+
+private final class SurfaceRailOutlineView: NSOutlineView {
+    var diagnosticsItemSummary: ((Any?) -> String)?
+
+    override func mouseDown(with event: NSEvent) {
+        logMouseEvent(event, phase: "down_before")
+        super.mouseDown(with: event)
+        logMouseEvent(event, phase: "down_after")
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        logMouseEvent(event, phase: "up_before")
+        super.mouseUp(with: event)
+        logMouseEvent(event, phase: "up_after")
+    }
+
+    private func logMouseEvent(_ event: NSEvent, phase: String) {
+        guard DiagnosticsDebugLog.enabled else { return }
+        let point = convert(event.locationInWindow, from: nil)
+        let row = row(at: point)
+        let column = self.column(at: point)
+        let hitView = hitTest(point)
+        let item = row >= 0 ? self.item(atRow: row) : nil
+        let hitDescription = hitView.map { String(describing: type(of: $0)) } ?? "none"
+        let itemSummary = diagnosticsItemSummary?(item) ?? "none"
+        DiagnosticsDebugLog.log(
+            "surface_rail.outline.mouse_\(phase) point=\(Int(point.x)),\(Int(point.y)) row=\(row) column=\(column) clickedRow=\(clickedRow) selectedRow=\(selectedRow) hit=\(hitDescription) item=\(itemSummary)"
+        )
+    }
 }
 
 private final class SurfaceRailContainerView: NSView {
     let scrollView = NSScrollView()
-    let outlineView = NSOutlineView()
+    let outlineView = SurfaceRailOutlineView()
     let nameColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("surface-rail-name"))
 
     override init(frame frameRect: NSRect) {
@@ -150,7 +205,8 @@ private final class SurfaceRailContainerView: NSView {
 
 private struct SurfaceRailNativeView: NSViewRepresentable {
     let snapshot: SurfaceRailSnapshot
-    let onSelectBuffer: (Int) -> Void
+    let onFocusEditorSurface: (UInt64) -> Void
+    let onSelectOpenBuffer: (Int) -> Void
     let onSelectTerminal: (UInt64) -> Void
     let onCloseBuffer: (UInt64) -> Void
     let onCloseTerminal: (UInt64) -> Void
@@ -163,6 +219,8 @@ private struct SurfaceRailNativeView: NSViewRepresentable {
         let container = SurfaceRailContainerView(frame: .zero)
         container.outlineView.delegate = context.coordinator
         container.outlineView.dataSource = context.coordinator
+        container.outlineView.target = context.coordinator
+        container.outlineView.action = #selector(Coordinator.handlePrimaryAction(_:))
         context.coordinator.bind(container: container)
         context.coordinator.parent = self
         context.coordinator.updateSnapshot(snapshot)
@@ -190,11 +248,13 @@ private struct SurfaceRailNativeView: NSViewRepresentable {
 
         func bind(container: SurfaceRailContainerView) {
             self.container = container
+            container.outlineView.diagnosticsItemSummary = { [weak self] item in
+                self?.debugSummary(for: item) ?? "none"
+            }
         }
 
         func updateSnapshot(_ snapshot: SurfaceRailSnapshot) {
             guard lastSnapshot != snapshot else {
-                restoreSelection()
                 return
             }
             lastSnapshot = snapshot
@@ -274,7 +334,36 @@ private struct SurfaceRailNativeView: NSViewRepresentable {
         }
 
         func outlineView(_ outlineView: NSOutlineView, shouldSelectItem item: Any) -> Bool {
-            item is SurfaceRailItemNode
+            let shouldSelect = item is SurfaceRailItemNode
+            if DiagnosticsDebugLog.enabled {
+                DiagnosticsDebugLog.log(
+                    "surface_rail.should_select row=\(outlineView.row(forItem: item)) allow=\(shouldSelect ? 1 : 0) item=\(debugSummary(for: item))"
+                )
+            }
+            return shouldSelect
+        }
+
+        func outlineViewSelectionIsChanging(_ notification: Notification) {
+            guard let outlineView = notification.object as? NSOutlineView else {
+                return
+            }
+            if DiagnosticsDebugLog.enabled {
+                DiagnosticsDebugLog.log(
+                    "surface_rail.selection_changing selectedRows=\(outlineView.selectedRowIndexes.map(String.init).joined(separator: ",")) clickedRow=\(outlineView.clickedRow)"
+                )
+            }
+        }
+
+        func outlineView(
+            _ outlineView: NSOutlineView,
+            selectionIndexesForProposedSelection proposedSelectionIndexes: IndexSet
+        ) -> IndexSet {
+            if DiagnosticsDebugLog.enabled {
+                DiagnosticsDebugLog.log(
+                    "surface_rail.selection_proposed rows=\(proposedSelectionIndexes.map(String.init).joined(separator: ",")) currentSelected=\(outlineView.selectedRowIndexes.map(String.init).joined(separator: ",")) clickedRow=\(outlineView.clickedRow)"
+                )
+            }
+            return proposedSelectionIndexes
         }
 
         func outlineView(_ outlineView: NSOutlineView, heightOfRowByItem item: Any) -> CGFloat {
@@ -292,14 +381,46 @@ private struct SurfaceRailNativeView: NSViewRepresentable {
                   let item = outlineView.item(atRow: outlineView.selectedRow) as? SurfaceRailItemNode else {
                 return
             }
+            if DiagnosticsDebugLog.enabled {
+                DiagnosticsDebugLog.log(
+                    "surface_rail.selection row=\(outlineView.selectedRow) item=\(debugSummary(for: item.snapshot))"
+                )
+            }
+            activate(item.snapshot)
+        }
+
+        @objc
+        func handlePrimaryAction(_ sender: Any?) {
+            let outlineView = (sender as? NSOutlineView) ?? container?.outlineView
+            guard let outlineView,
+                  outlineView.clickedRow >= 0,
+                  outlineView.clickedRow == outlineView.selectedRow,
+                  let item = outlineView.item(atRow: outlineView.clickedRow) as? SurfaceRailItemNode,
+                  item.snapshot.isActive else {
+                return
+            }
+            if DiagnosticsDebugLog.enabled {
+                DiagnosticsDebugLog.log(
+                    "surface_rail.primary_action row=\(outlineView.clickedRow) item=\(debugSummary(for: item.snapshot))"
+                )
+            }
             activate(item.snapshot)
         }
 
         private func activate(_ snapshot: SurfaceRailItemSnapshot) {
+            if DiagnosticsDebugLog.enabled {
+                DiagnosticsDebugLog.log(
+                    "surface_rail.activate item=\(debugSummary(for: snapshot))"
+                )
+            }
             switch snapshot.kind {
+            case .editorSurface:
+                if let paneId = snapshot.paneId {
+                    parent.onFocusEditorSurface(paneId)
+                }
             case .buffer:
                 if let bufferIndex = snapshot.bufferIndex {
-                    parent.onSelectBuffer(bufferIndex)
+                    parent.onSelectOpenBuffer(bufferIndex)
                 }
             case .terminal:
                 if let terminalId = snapshot.terminalId {
@@ -310,6 +431,8 @@ private struct SurfaceRailNativeView: NSViewRepresentable {
 
         private func close(_ snapshot: SurfaceRailItemSnapshot) {
             switch snapshot.kind {
+            case .editorSurface:
+                break
             case .buffer:
                 if let bufferId = snapshot.bufferId {
                     parent.onCloseBuffer(bufferId)
@@ -321,11 +444,36 @@ private struct SurfaceRailNativeView: NSViewRepresentable {
             }
         }
 
+        private func debugSummary(for snapshot: SurfaceRailItemSnapshot) -> String {
+            [
+                "id=\(snapshot.id)",
+                "kind=\(snapshot.kind.rawValue)",
+                "active=\(snapshot.isActive ? 1 : 0)",
+                "pane=\(snapshot.paneId ?? 0)",
+                "bufferIndex=\(snapshot.bufferIndex ?? -1)",
+                "bufferId=\(snapshot.bufferId ?? 0)",
+                "terminal=\(snapshot.terminalId ?? 0)",
+                "title=\(snapshot.title)"
+            ].joined(separator: " ")
+        }
+
+        private func debugSummary(for item: Any?) -> String {
+            if let snapshot = (item as? SurfaceRailItemNode)?.snapshot {
+                return debugSummary(for: snapshot)
+            }
+            if let section = item as? SurfaceRailSectionNode {
+                return "section id=\(section.snapshot.id) title=\(section.snapshot.title)"
+            }
+            return "none"
+        }
+
         func outlineView(_ outlineView: NSOutlineView, rowViewForItem item: Any) -> NSTableRowView? {
             guard item is SurfaceRailItemNode else {
                 return nil
             }
-            return SurfaceRailRowView()
+            let rowView = SurfaceRailRowView()
+            rowView.diagnosticSummary = debugSummary(for: item)
+            return rowView
         }
 
         func outlineView(
@@ -495,15 +643,36 @@ private final class SurfaceRailItemCellView: NSTableCellView {
     }
 
     override func mouseEntered(with event: NSEvent) {
+        _ = event
+        guard currentItem?.canClose == true else { return }
         closeButton.isHidden = false
     }
 
     override func mouseExited(with event: NSEvent) {
+        _ = event
         closeButton.isHidden = true
     }
 
     override var backgroundStyle: NSView.BackgroundStyle {
         didSet { updateColors() }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        if DiagnosticsDebugLog.enabled {
+            DiagnosticsDebugLog.log(
+                "surface_rail.cell.mouse_down hit=\(debugHitDescription(for: event)) item=\(debugCurrentItemSummary())"
+            )
+        }
+        super.mouseDown(with: event)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        if DiagnosticsDebugLog.enabled {
+            DiagnosticsDebugLog.log(
+                "surface_rail.cell.mouse_up hit=\(debugHitDescription(for: event)) item=\(debugCurrentItemSummary())"
+            )
+        }
+        super.mouseUp(with: event)
     }
 
     func configure(item: SurfaceRailItemSnapshot) {
@@ -512,8 +681,10 @@ private final class SurfaceRailItemCellView: NSTableCellView {
         subtitleLabel.stringValue = item.subtitle ?? ""
         subtitleLabel.isHidden = (item.subtitle ?? "").isEmpty
         modifiedDot.isHidden = !item.isModified
+        closeButton.isHidden = !item.canClose
+        closeButton.isEnabled = item.canClose
         iconView.image = NSImage(
-            systemSymbolName: item.kind == .buffer ? "doc.text" : "terminal.fill",
+            systemSymbolName: iconName(for: item.kind),
             accessibilityDescription: nil
         )
         updateColors()
@@ -522,6 +693,11 @@ private final class SurfaceRailItemCellView: NSTableCellView {
     @objc
     private func handleCloseButton() {
         guard let currentItem else { return }
+        if DiagnosticsDebugLog.enabled {
+            DiagnosticsDebugLog.log(
+                "surface_rail.close_button item=\(debugCurrentItemSummary())"
+            )
+        }
         onClose?(currentItem)
     }
 
@@ -538,6 +714,37 @@ private final class SurfaceRailItemCellView: NSTableCellView {
         if #available(macOS 11.0, *) {
             iconView.contentTintColor = emphasized ? .alternateSelectedControlTextColor : .secondaryLabelColor
         }
+    }
+
+    private func iconName(for kind: SurfaceRailItemKind) -> String {
+        switch kind {
+        case .editorSurface:
+            return "rectangle.split.2x1"
+        case .buffer:
+            return "doc.text"
+        case .terminal:
+            return "terminal.fill"
+        }
+    }
+
+    private func debugCurrentItemSummary() -> String {
+        guard let currentItem else { return "none" }
+        return [
+            "id=\(currentItem.id)",
+            "kind=\(currentItem.kind.rawValue)",
+            "active=\(currentItem.isActive ? 1 : 0)",
+            "pane=\(currentItem.paneId ?? 0)",
+            "bufferIndex=\(currentItem.bufferIndex ?? -1)",
+            "bufferId=\(currentItem.bufferId ?? 0)",
+            "terminal=\(currentItem.terminalId ?? 0)",
+            "title=\(currentItem.title)"
+        ].joined(separator: " ")
+    }
+
+    private func debugHitDescription(for event: NSEvent) -> String {
+        let point = convert(event.locationInWindow, from: nil)
+        let hitView = hitTest(point)
+        return hitView.map { String(describing: type(of: $0)) } ?? "none"
     }
 }
 

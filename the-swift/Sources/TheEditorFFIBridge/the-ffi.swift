@@ -153,6 +153,14 @@ extension AppRefMut {
         TerminalSurfaceSnapshot(ptr: __swift_bridge__$App$terminal_surface_at(ptr, id.intoFfiRepr(), index))
     }
 
+    public func editor_surface_count(_ id: EditorId) -> UInt {
+        __swift_bridge__$App$editor_surface_count(ptr, id.intoFfiRepr())
+    }
+
+    public func editor_surface_at(_ id: EditorId, _ index: UInt) -> EditorSurfaceSnapshot {
+        EditorSurfaceSnapshot(ptr: __swift_bridge__$App$editor_surface_at(ptr, id.intoFfiRepr(), index))
+    }
+
     public func focus_terminal_surface(_ id: EditorId, _ terminal_id: UInt64) -> Bool {
         __swift_bridge__$App$focus_terminal_surface(ptr, id.intoFfiRepr(), terminal_id)
     }
@@ -2409,6 +2417,110 @@ extension RenderFramePlan: Vectorizable {
 
     public static func vecOfSelfLen(vecPtr: UnsafeMutableRawPointer) -> UInt {
         __swift_bridge__$Vec_RenderFramePlan$len(vecPtr)
+    }
+}
+
+
+public class EditorSurfaceSnapshot: EditorSurfaceSnapshotRefMut {
+    var isOwned: Bool = true
+
+    public override init(ptr: UnsafeMutableRawPointer) {
+        super.init(ptr: ptr)
+    }
+
+    deinit {
+        if isOwned {
+            __swift_bridge__$EditorSurfaceSnapshot$_free(ptr)
+        }
+    }
+}
+public class EditorSurfaceSnapshotRefMut: EditorSurfaceSnapshotRef {
+    public override init(ptr: UnsafeMutableRawPointer) {
+        super.init(ptr: ptr)
+    }
+}
+public class EditorSurfaceSnapshotRef {
+    var ptr: UnsafeMutableRawPointer
+
+    public init(ptr: UnsafeMutableRawPointer) {
+        self.ptr = ptr
+    }
+}
+extension EditorSurfaceSnapshotRef {
+    public func pane_id() -> UInt64 {
+        __swift_bridge__$EditorSurfaceSnapshot$pane_id(ptr)
+    }
+
+    public func buffer_id() -> UInt64 {
+        __swift_bridge__$EditorSurfaceSnapshot$buffer_id(ptr)
+    }
+
+    public func buffer_index() -> UInt {
+        __swift_bridge__$EditorSurfaceSnapshot$buffer_index(ptr)
+    }
+
+    public func title() -> RustString {
+        RustString(ptr: __swift_bridge__$EditorSurfaceSnapshot$title(ptr))
+    }
+
+    public func modified() -> Bool {
+        __swift_bridge__$EditorSurfaceSnapshot$modified(ptr)
+    }
+
+    public func file_path() -> RustString {
+        RustString(ptr: __swift_bridge__$EditorSurfaceSnapshot$file_path(ptr))
+    }
+
+    public func is_active() -> Bool {
+        __swift_bridge__$EditorSurfaceSnapshot$is_active(ptr)
+    }
+}
+extension EditorSurfaceSnapshot: Vectorizable {
+    public static func vecOfSelfNew() -> UnsafeMutableRawPointer {
+        __swift_bridge__$Vec_EditorSurfaceSnapshot$new()
+    }
+
+    public static func vecOfSelfFree(vecPtr: UnsafeMutableRawPointer) {
+        __swift_bridge__$Vec_EditorSurfaceSnapshot$drop(vecPtr)
+    }
+
+    public static func vecOfSelfPush(vecPtr: UnsafeMutableRawPointer, value: EditorSurfaceSnapshot) {
+        __swift_bridge__$Vec_EditorSurfaceSnapshot$push(vecPtr, {value.isOwned = false; return value.ptr;}())
+    }
+
+    public static func vecOfSelfPop(vecPtr: UnsafeMutableRawPointer) -> Optional<Self> {
+        let pointer = __swift_bridge__$Vec_EditorSurfaceSnapshot$pop(vecPtr)
+        if pointer == nil {
+            return nil
+        } else {
+            return (EditorSurfaceSnapshot(ptr: pointer!) as! Self)
+        }
+    }
+
+    public static func vecOfSelfGet(vecPtr: UnsafeMutableRawPointer, index: UInt) -> Optional<EditorSurfaceSnapshotRef> {
+        let pointer = __swift_bridge__$Vec_EditorSurfaceSnapshot$get(vecPtr, index)
+        if pointer == nil {
+            return nil
+        } else {
+            return EditorSurfaceSnapshotRef(ptr: pointer!)
+        }
+    }
+
+    public static func vecOfSelfGetMut(vecPtr: UnsafeMutableRawPointer, index: UInt) -> Optional<EditorSurfaceSnapshotRefMut> {
+        let pointer = __swift_bridge__$Vec_EditorSurfaceSnapshot$get_mut(vecPtr, index)
+        if pointer == nil {
+            return nil
+        } else {
+            return EditorSurfaceSnapshotRefMut(ptr: pointer!)
+        }
+    }
+
+    public static func vecOfSelfAsPtr(vecPtr: UnsafeMutableRawPointer) -> UnsafePointer<EditorSurfaceSnapshotRef> {
+        UnsafePointer<EditorSurfaceSnapshotRef>(OpaquePointer(__swift_bridge__$Vec_EditorSurfaceSnapshot$as_ptr(vecPtr)))
+    }
+
+    public static func vecOfSelfLen(vecPtr: UnsafeMutableRawPointer) -> UInt {
+        __swift_bridge__$Vec_EditorSurfaceSnapshot$len(vecPtr)
     }
 }
 

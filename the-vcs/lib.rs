@@ -1,4 +1,4 @@
-//! `helix_vcs` provides types for working with diffs from a Version Control
+//! `the-vcs` provides types for working with diffs from a Version Control
 //! System (VCS). Currently `git` and `jj` providers are supported for diffs.
 
 use std::{

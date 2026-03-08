@@ -171,6 +171,17 @@ pub struct BufferSnapshot {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EditorSurfaceSnapshot {
+  pub pane_id:      PaneId,
+  pub buffer_id:    u64,
+  pub buffer_index: usize,
+  pub file_path:    Option<PathBuf>,
+  pub display_name: String,
+  pub modified:     bool,
+  pub is_active:    bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JumpSnapshot {
   pub buffer_index:  usize,
   pub selection:     Selection,
@@ -470,6 +481,25 @@ impl Editor {
           },
           PaneContent::Terminal { .. } => None,
         }
+      })
+      .collect()
+  }
+
+  pub fn editor_surface_snapshots(&self) -> Vec<EditorSurfaceSnapshot> {
+    self
+      .pane_snapshots(self.layout_viewport())
+      .into_iter()
+      .filter_map(|pane| {
+        let buffer = self.buffer_snapshot_for_index(pane.buffer_index)?;
+        Some(EditorSurfaceSnapshot {
+          pane_id:      pane.pane_id,
+          buffer_id:    buffer.buffer_id,
+          buffer_index: buffer.buffer_index,
+          file_path:    buffer.file_path,
+          display_name: buffer.display_name,
+          modified:     buffer.modified,
+          is_active:    pane.is_active_pane,
+        })
       })
       .collect()
   }
@@ -1658,6 +1688,34 @@ mod tests {
       .map(|pane| pane.rect.width as usize * pane.rect.height as usize)
       .sum();
     assert_eq!(total_area, 120 * 40);
+  }
+
+  #[test]
+  fn editor_surface_snapshots_track_visible_editor_panes() {
+    let doc_id = DocumentId::new(NonZeroUsize::new(1).unwrap());
+    let doc = Document::new(doc_id, Rope::from("one"));
+    let view = ViewState::new(Rect::new(0, 0, 120, 40), Position::new(0, 0));
+    let editor_id = EditorId::new(NonZeroUsize::new(1).unwrap());
+    let mut editor = Editor::new(editor_id, doc, view);
+
+    editor.document_mut().set_display_name("one.rs");
+    assert!(editor.split_active_pane(SplitAxis::Vertical));
+    let two_idx = editor.open_buffer(
+      Rope::from("two"),
+      ViewState::new(Rect::new(0, 0, 120, 40), Position::new(0, 0)),
+      Some(PathBuf::from("/tmp/project/src/two.rs")),
+    );
+    assert!(editor.set_active_buffer(two_idx));
+
+    let surfaces = editor.editor_surface_snapshots();
+    assert_eq!(surfaces.len(), 2);
+    assert_eq!(surfaces.iter().filter(|surface| surface.is_active).count(), 1);
+    assert!(surfaces.iter().any(|surface| surface.buffer_index == 0));
+    assert!(surfaces.iter().any(|surface| surface.buffer_index == two_idx));
+    assert!(surfaces.iter().any(|surface| {
+      surface.buffer_index == two_idx
+        && surface.file_path == Some(PathBuf::from("/tmp/project/src/two.rs"))
+    }));
   }
 
   #[test]

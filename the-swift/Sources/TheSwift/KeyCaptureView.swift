@@ -341,8 +341,16 @@ struct ScrollCaptureView: NSViewRepresentable {
                 window?.invalidateCursorRects(for: self)
             }
         }
-        var passthroughRects: [CGRect] = []
-        var panes: [PaneHandle] = []
+        var passthroughRects: [CGRect] = [] {
+            didSet {
+                window?.invalidateCursorRects(for: self)
+            }
+        }
+        var panes: [PaneHandle] = [] {
+            didSet {
+                window?.invalidateCursorRects(for: self)
+            }
+        }
         var cellSize: CGSize = .init(width: 1, height: 1)
         private var trackingArea: NSTrackingArea?
         private var activeSeparator: SeparatorHandle?
@@ -377,12 +385,16 @@ struct ScrollCaptureView: NSViewRepresentable {
 
         override func resetCursorRects() {
             super.resetCursorRects()
+            for pane in panes {
+                let rect = pane.rect.intersection(bounds)
+                guard !rect.isEmpty else { continue }
+                addCursorRect(rect, cursor: .iBeam)
+            }
             for separator in separators {
                 let rect = cursorRect(for: separator).intersection(bounds)
                 guard !rect.isEmpty else { continue }
                 addCursorRect(rect, cursor: cursor(for: separator))
             }
-            addCursorRect(bounds, cursor: .arrow)
         }
 
         override func hitTest(_ point: NSPoint) -> NSView? {
@@ -616,11 +628,17 @@ struct ScrollCaptureView: NSViewRepresentable {
         }
 
         private func updateCursor(at point: NSPoint) {
+            preferredCursor(at: point).set()
+        }
+
+        private func preferredCursor(at point: NSPoint) -> NSCursor {
             if let separator = hitSeparator(at: point) {
-                cursor(for: separator).set()
-            } else {
-                NSCursor.arrow.set()
+                return cursor(for: separator)
             }
+            if hitPane(at: point) != nil {
+                return .iBeam
+            }
+            return .arrow
         }
 
         private func hitSeparator(at point: NSPoint) -> SeparatorHandle? {

@@ -1122,6 +1122,8 @@ final class GhosttySurfaceHostView: NSView {
     private var screenObserver: NSObjectProtocol?
     private var occlusionObserver: NSObjectProtocol?
     private var closeConfirmationAlert: NSAlert?
+    private var trackingArea: NSTrackingArea?
+    private var lastPointerUsesTextCursor: Bool?
 
     deinit {
         if DiagnosticsDebugLog.enabled {
@@ -1241,6 +1243,8 @@ final class GhosttySurfaceHostView: NSView {
         controller?.updateSurfaceSize()
         controller?.applyColorScheme(currentColorScheme())
         updateOcclusion()
+        window?.acceptsMouseMovedEvents = true
+        window?.invalidateCursorRects(for: self)
 
         if let window {
             screenObserver = NotificationCenter.default.addObserver(
@@ -1276,6 +1280,22 @@ final class GhosttySurfaceHostView: NSView {
         }
     }
 
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let trackingArea {
+            removeTrackingArea(trackingArea)
+        }
+        let options: NSTrackingArea.Options = [.activeInKeyWindow, .inVisibleRect, .mouseMoved, .cursorUpdate]
+        let area = NSTrackingArea(rect: .zero, options: options, owner: self, userInfo: nil)
+        addTrackingArea(area)
+        trackingArea = area
+    }
+
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        addCursorRect(bounds, cursor: preferredCursor())
+    }
+
     override func viewDidMoveToSuperview() {
         super.viewDidMoveToSuperview()
         updateOcclusion()
@@ -1308,6 +1328,7 @@ final class GhosttySurfaceHostView: NSView {
         super.layout()
         controller?.updateSurfaceSize()
         updateOcclusion()
+        window?.invalidateCursorRects(for: self)
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -1322,6 +1343,7 @@ final class GhosttySurfaceHostView: NSView {
         dispatchPointer(kind: 0, button: 1, event: event)
         controller?.setFocused(true)
         controller?.handleMouseButton(event: event, state: GHOSTTY_MOUSE_PRESS, button: GHOSTTY_MOUSE_LEFT)
+        updatePointerCursor()
         if DiagnosticsDebugLog.enabled {
             DiagnosticsDebugLog.log(
                 "ghostty.host.mouse_down.end pane=\(paneId) terminal=\(controller?.terminalIdForDiagnostics ?? 0) window=\(window?.windowNumber ?? 0) responder_pane=\(controller.flatMap { _ in GhosttyRuntime.shared.firstResponderPaneId(in: window) } ?? 0)"
@@ -1332,6 +1354,7 @@ final class GhosttySurfaceHostView: NSView {
     override func mouseUp(with event: NSEvent) {
         logMouseEvent("host.mouseUp", event: event)
         controller?.handleMouseButton(event: event, state: GHOSTTY_MOUSE_RELEASE, button: GHOSTTY_MOUSE_LEFT)
+        updatePointerCursor()
     }
 
     override func rightMouseDown(with event: NSEvent) {
@@ -1344,6 +1367,7 @@ final class GhosttySurfaceHostView: NSView {
         dispatchPointer(kind: 0, button: 3, event: event)
         controller?.setFocused(true)
         controller?.handleMouseButton(event: event, state: GHOSTTY_MOUSE_PRESS, button: GHOSTTY_MOUSE_RIGHT)
+        updatePointerCursor()
     }
 
     override func rightMouseUp(with event: NSEvent) {
@@ -1352,6 +1376,7 @@ final class GhosttySurfaceHostView: NSView {
             return
         }
         controller?.handleMouseButton(event: event, state: GHOSTTY_MOUSE_RELEASE, button: GHOSTTY_MOUSE_RIGHT)
+        updatePointerCursor()
     }
 
     override func otherMouseDown(with event: NSEvent) {
@@ -1364,6 +1389,7 @@ final class GhosttySurfaceHostView: NSView {
         dispatchPointer(kind: 0, button: 2, event: event)
         controller?.setFocused(true)
         controller?.handleMouseButton(event: event, state: GHOSTTY_MOUSE_PRESS, button: GHOSTTY_MOUSE_MIDDLE)
+        updatePointerCursor()
     }
 
     override func otherMouseUp(with event: NSEvent) {
@@ -1372,27 +1398,33 @@ final class GhosttySurfaceHostView: NSView {
             return
         }
         controller?.handleMouseButton(event: event, state: GHOSTTY_MOUSE_RELEASE, button: GHOSTTY_MOUSE_MIDDLE)
+        updatePointerCursor()
     }
 
     override func mouseDragged(with event: NSEvent) {
         logMouseEvent("host.mouseDragged", event: event)
         controller?.handleMouseMove(event: event)
+        updatePointerCursor()
     }
 
     override func rightMouseDragged(with event: NSEvent) {
         controller?.handleMouseMove(event: event)
+        updatePointerCursor()
     }
 
     override func otherMouseDragged(with event: NSEvent) {
         controller?.handleMouseMove(event: event)
+        updatePointerCursor()
     }
 
     override func mouseMoved(with event: NSEvent) {
         controller?.handleMouseMove(event: event)
+        updatePointerCursor()
     }
 
     override func mouseEntered(with event: NSEvent) {
         controller?.handleMouseMove(event: event)
+        updatePointerCursor()
     }
 
     override func mouseExited(with event: NSEvent) {
@@ -1404,10 +1436,38 @@ final class GhosttySurfaceHostView: NSView {
         }
         let mods = modsFromEvent(event)
         ghostty_surface_mouse_pos(surface, -1, -1, mods)
+        NSCursor.arrow.set()
     }
 
     override func scrollWheel(with event: NSEvent) {
         controller?.handleScroll(event: event)
+    }
+
+    override func cursorUpdate(with event: NSEvent) {
+        updatePointerCursor()
+    }
+
+    private func preferredCursor() -> NSCursor {
+        guard controller != nil else {
+            return .arrow
+        }
+        return preferredCursorUsesTextInsertion() ? .iBeam : .arrow
+    }
+
+    private func preferredCursorUsesTextInsertion() -> Bool {
+        guard controller != nil else {
+            return false
+        }
+        return controller?.isMouseCaptured() != true
+    }
+
+    private func updatePointerCursor() {
+        let usesTextCursor = preferredCursorUsesTextInsertion()
+        if lastPointerUsesTextCursor != usesTextCursor {
+            lastPointerUsesTextCursor = usesTextCursor
+            window?.invalidateCursorRects(for: self)
+        }
+        preferredCursor().set()
     }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {

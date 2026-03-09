@@ -265,6 +265,7 @@ use the_lsp::{
   LspEvent,
   LspExecuteCommand,
   LspInsertTextFormat,
+  LspHoverDetails,
   LspLocation,
   LspPosition,
   LspProgressKind,
@@ -292,7 +293,7 @@ use the_lsp::{
   parse_completion_response_with_raw,
   parse_document_highlights_response,
   parse_document_symbols_response,
-  parse_hover_response,
+  parse_hover_details_response,
   parse_locations_response,
   parse_signature_help_response,
   parse_workspace_edit_response,
@@ -811,6 +812,7 @@ impl RenderSelection {
     match self.inner.kind {
       the_lib::render::RenderSelectionKind::Primary => 1,
       the_lib::render::RenderSelectionKind::Match => 2,
+      the_lib::render::RenderSelectionKind::Hover => 3,
     }
   }
 }
@@ -1647,6 +1649,30 @@ struct PendingAutoSignatureHelp {
   trigger: SignatureHelpTriggerSource,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HoverTriggerSource {
+  Keyboard,
+  Mouse,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct HoverUiState {
+  trigger:        HoverTriggerSource,
+  anchor_char:    usize,
+  highlight_from: usize,
+  highlight_to:   usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PendingMouseHover {
+  editor_id:      LibEditorId,
+  pane_id:        PaneId,
+  anchor_char:    usize,
+  highlight_from: usize,
+  highlight_to:   usize,
+  due_at:         Instant,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum PendingLspRequestKind {
   GotoDeclaration {
@@ -1662,7 +1688,11 @@ enum PendingLspRequestKind {
     uri: String,
   },
   Hover {
-    uri: String,
+    uri:            String,
+    generation:     u64,
+    trigger:        HoverTriggerSource,
+    anchor_char:    usize,
+    fallback_range: Option<(usize, usize)>,
   },
   DocumentHighlightSelect {
     uri: String,
@@ -1720,7 +1750,7 @@ impl PendingLspRequestKind {
       Self::GotoDefinition { uri } => Some(uri.as_str()),
       Self::GotoTypeDefinition { uri } => Some(uri.as_str()),
       Self::GotoImplementation { uri } => Some(uri.as_str()),
-      Self::Hover { uri } => Some(uri.as_str()),
+      Self::Hover { uri, .. } => Some(uri.as_str()),
       Self::DocumentHighlightSelect { uri } => Some(uri.as_str()),
       Self::DocumentSymbols { uri } => Some(uri.as_str()),
       Self::WorkspaceSymbols { .. } => None,
@@ -1738,7 +1768,7 @@ impl PendingLspRequestKind {
       Self::GotoDefinition { uri } => ("goto-definition", Some(uri)),
       Self::GotoTypeDefinition { uri } => ("goto-type-definition", Some(uri)),
       Self::GotoImplementation { uri } => ("goto-implementation", Some(uri)),
-      Self::Hover { uri } => ("hover", Some(uri)),
+      Self::Hover { uri, .. } => ("hover", Some(uri)),
       Self::DocumentHighlightSelect { uri } => ("document-highlight-select", Some(uri)),
       Self::DocumentSymbols { uri } => ("document-symbols", Some(uri)),
       Self::WorkspaceSymbols { .. } => ("workspace-symbols", None),
@@ -1785,6 +1815,7 @@ struct EditorState {
   diagnostic_popup:              Option<DiagnosticPopupState>,
   hover_docs:                    Option<String>,
   hover_docs_scroll:             usize,
+  hover_ui:                      Option<HoverUiState>,
   scrolloff:                     usize,
   pointer_drag_selection:        Option<PointerSelectionDragState>,
 }
@@ -1853,6 +1884,7 @@ impl EditorState {
       diagnostic_popup: None,
       hover_docs: None,
       hover_docs_scroll: 0,
+      hover_ui: None,
       scrolloff: 5,
       pointer_drag_selection: None,
     }
@@ -2204,6 +2236,153 @@ fn compute_eol_diagnostics(
   }
 
   out
+}
+
+fn render_plan_row_end_cols(plan: &the_lib::render::RenderPlan) -> Vec<usize> {
+  let col_start = plan.scroll.col;
+  let mut row_end_cols = vec![col_start; plan.viewport.height as usize];
+  for line in &plan.lines {
+    let row = line.row as usize;
+    if row >= row_end_cols.len() {
+      continue;
+    }
+    let end_col = line
+      .spans
+      .iter()
+      .map(|span| col_start + span.col.saturating_add(span.cols) as usize)
+      .max()
+      .unwrap_or(col_start);
+    row_end_cols[row] = row_end_cols[row].max(end_col);
+  }
+  row_end_cols
+}
+
+fn render_plan_row_visible_end_col(
+  plan: &the_lib::render::RenderPlan,
+  row: usize,
+  row_visible_end_cols: &[usize],
+) -> usize {
+  let row_start = plan.scroll.row;
+  let relative_row = row.saturating_sub(row_start);
+  row_visible_end_cols
+    .get(relative_row)
+    .copied()
+    .unwrap_or(plan.scroll.col)
+}
+
+fn push_render_selection_rects(
+  out: &mut Vec<the_lib::render::RenderSelection>,
+  plan: &the_lib::render::RenderPlan,
+  start: LibPosition,
+  end: LibPosition,
+  style: LibStyle,
+  kind: the_lib::render::RenderSelectionKind,
+  row_visible_end_cols: &[usize],
+) {
+  let row_start = plan.scroll.row;
+  let row_end = row_start + plan.viewport.height as usize;
+  let col_start = plan.scroll.col;
+  let col_end = col_start + plan.content_width();
+
+  let start_row = start.row;
+  let end_row = end.row;
+
+  if start_row == end_row {
+    let row = start_row;
+    if row < row_start || row >= row_end {
+      return;
+    }
+    let from = start.col.min(end.col).max(col_start);
+    let mut to = start.col.max(end.col);
+    to = to.min(render_plan_row_visible_end_col(plan, row, row_visible_end_cols));
+    if to <= from {
+      return;
+    }
+    out.push(the_lib::render::RenderSelection {
+      rect: LibRect::new(
+        (from - col_start) as u16,
+        (row - row_start) as u16,
+        (to - from) as u16,
+        1,
+      ),
+      style,
+      kind,
+    });
+    return;
+  }
+
+  for row in start_row..=end_row {
+    if row < row_start || row >= row_end {
+      continue;
+    }
+    let row_end_col = render_plan_row_visible_end_col(plan, row, row_visible_end_cols);
+    let (from, to) = if row == start_row {
+      (start.col, row_end_col)
+    } else if row == end_row {
+      (col_start, end.col.min(row_end_col))
+    } else {
+      (col_start, row_end_col)
+    };
+
+    let from = from.max(col_start);
+    let to = to.min(col_end);
+    if to <= from {
+      continue;
+    }
+
+    out.push(the_lib::render::RenderSelection {
+      rect: LibRect::new(
+        (from - col_start) as u16,
+        (row - row_start) as u16,
+        (to - from) as u16,
+        1,
+      ),
+      style,
+      kind,
+    });
+  }
+}
+
+fn compute_hover_highlight_selections<'a>(
+  text: &'a Rope,
+  hover_ui: HoverUiState,
+  plan: &the_lib::render::RenderPlan,
+  text_fmt: &'a TextFormat,
+  annotations: &mut TextAnnotations<'a>,
+  style: LibStyle,
+) -> Vec<the_lib::render::RenderSelection> {
+  let Some((highlight_from, highlight_to)) =
+    App::normalize_char_range(text, hover_ui.highlight_from, hover_ui.highlight_to)
+  else {
+    return Vec::new();
+  };
+
+  let text_slice = text.slice(..);
+  let Some(start_pos) = visual_pos_at_char(text_slice, text_fmt, annotations, highlight_from) else {
+    return Vec::new();
+  };
+  let Some(end_pos) = visual_pos_at_char(text_slice, text_fmt, annotations, highlight_to) else {
+    return Vec::new();
+  };
+
+  let (start_pos, end_pos) = if (end_pos.row, end_pos.col) < (start_pos.row, start_pos.col) {
+    (end_pos, start_pos)
+  } else {
+    (start_pos, end_pos)
+  };
+
+  let row_visible_end_cols = render_plan_row_end_cols(plan);
+  let mut selections = Vec::new();
+  push_render_selection_rects(
+    &mut selections,
+    plan,
+    start_pos,
+    end_pos,
+    style,
+    the_lib::render::RenderSelectionKind::Hover,
+    &row_visible_end_cols,
+  );
+  selections
 }
 
 fn compute_diagnostic_underlines<'a>(
@@ -2594,6 +2773,10 @@ fn lsp_signature_help_retrigger_latency() -> Duration {
 
 fn lsp_signature_help_trigger_char_latency() -> Duration {
   Duration::from_millis(20)
+}
+
+fn lsp_hover_auto_trigger_latency() -> Duration {
+  Duration::from_millis(350)
 }
 
 fn capabilities_support_single_char(
@@ -3926,6 +4109,8 @@ pub struct App {
   lsp_code_action_menu_active:     bool,
   lsp_pending_auto_completion:     Option<PendingAutoCompletion>,
   lsp_pending_auto_signature_help: Option<PendingAutoSignatureHelp>,
+  lsp_pending_mouse_hover:         Option<PendingMouseHover>,
+  lsp_hover_generation:            u64,
   diagnostics:                     DiagnosticsState,
   global_search:                   GlobalSearchState,
   inline_diagnostic_lines:         Vec<InlineDiagnosticRenderLine>,
@@ -4755,6 +4940,8 @@ impl App {
       lsp_code_action_menu_active: false,
       lsp_pending_auto_completion: None,
       lsp_pending_auto_signature_help: None,
+      lsp_pending_mouse_hover: None,
+      lsp_hover_generation: 0,
       diagnostics: DiagnosticsState::default(),
       global_search: GlobalSearchState::default(),
       inline_diagnostic_lines: Vec::new(),
@@ -5574,6 +5761,78 @@ impl App {
     )
   }
 
+  pub fn docs_popup_anchor(&mut self, id: ffi::EditorId) -> ffi::DocsPopupAnchor {
+    if self.activate(id).is_none() {
+      return ffi::DocsPopupAnchor::default();
+    }
+    if self.active_editor_ref().is_active_pane_terminal() {
+      return ffi::DocsPopupAnchor::default();
+    }
+
+    let Some(hover_ui) = self.active_state_ref().hover_ui else {
+      return ffi::DocsPopupAnchor::default();
+    };
+    let (
+      mut text_fmt,
+      gutter_config,
+      inline_annotations,
+      overlay_annotations,
+      word_jump_inline_annotations,
+      word_jump_overlay_annotations,
+    ) = {
+      let state = self.active_state_ref();
+      (
+        state.text_format.clone(),
+        state.gutter_config.clone(),
+        state.inline_annotations.clone(),
+        state.overlay_annotations.clone(),
+        state.word_jump_inline_annotations.clone(),
+        state.word_jump_overlay_annotations.clone(),
+      )
+    };
+
+    let editor = self.active_editor_ref();
+    let view = editor.view();
+    let doc = editor.document();
+    let gutter_width = gutter_width_for_document(doc, view.viewport.width, &gutter_config);
+    text_fmt.viewport_width = view.viewport.width.saturating_sub(gutter_width).max(1);
+
+    let mut annotations = TextAnnotations::default();
+    if !inline_annotations.is_empty() {
+      let _ = annotations.add_inline_annotations(&inline_annotations, None);
+    }
+    if !overlay_annotations.is_empty() {
+      let _ = annotations.add_overlay(&overlay_annotations, None);
+    }
+    if !word_jump_inline_annotations.is_empty() {
+      let _ = annotations.add_inline_annotations(&word_jump_inline_annotations, None);
+    }
+    if !word_jump_overlay_annotations.is_empty() {
+      let _ = annotations.add_overlay(&word_jump_overlay_annotations, None);
+    }
+
+    let anchor_char = hover_ui.anchor_char.min(doc.text().len_chars());
+    let Some(pos) = visual_pos_at_char(doc.text().slice(..), &text_fmt, &mut annotations, anchor_char)
+    else {
+      return ffi::DocsPopupAnchor::default();
+    };
+
+    let row_start = view.scroll.row;
+    let row_end = row_start.saturating_add(view.viewport.height as usize);
+    let col_start = view.scroll.col;
+    let col_end = col_start.saturating_add(text_fmt.viewport_width.max(1) as usize);
+    if pos.row < row_start || pos.row >= row_end || pos.col < col_start || pos.col >= col_end {
+      return ffi::DocsPopupAnchor::default();
+    }
+
+    ffi::DocsPopupAnchor {
+      has_value: true,
+      pane_id: self.active_editor_ref().active_pane_id().get().get() as u64,
+      row: (pos.row - row_start) as u16,
+      col: (pos.col - col_start) as u16,
+    }
+  }
+
   pub fn render_plan_with_styles(
     &mut self,
     id: ffi::EditorId,
@@ -5762,6 +6021,7 @@ impl App {
       overlay_annotations,
       word_jump_inline_annotations,
       word_jump_overlay_annotations,
+      hover_ui,
       allow_cache_refresh,
     ) = {
       let state = self.active_state_ref();
@@ -5773,6 +6033,7 @@ impl App {
         state.overlay_annotations.clone(),
         state.word_jump_inline_annotations.clone(),
         state.word_jump_overlay_annotations.clone(),
+        state.hover_ui,
         state
           .syntax_parse_highlight_state
           .allow_cache_refresh(&state.syntax_parse_lifecycle),
@@ -5797,6 +6058,12 @@ impl App {
       .ui_theme
       .try_get("ui.selection.match")
       .unwrap_or_else(|| LibStyle::default().bg(LibColor::Rgb(47, 63, 116)));
+    let hover_highlight_style = self
+      .ui_theme
+      .try_get("ui.hover.highlight")
+      .or_else(|| self.ui_theme.try_get("ui.cursor.match"))
+      .or_else(|| self.ui_theme.try_get("ui.selection.match"))
+      .unwrap_or_else(|| LibStyle::default().bg(LibColor::Rgb(47, 63, 116)));
     let enable_point_selection_match = self.active_state_ref().mode == Mode::Select;
 
     let raw_diagnostics = self
@@ -5810,7 +6077,7 @@ impl App {
     let inline_diagnostic_render_data: SharedInlineDiagnosticsRenderData =
       Rc::new(RefCell::new(InlineDiagnosticsRenderData::default()));
 
-    let (mut plan, underlines, inline_lines) = {
+    let (mut plan, hover_selections, underlines, inline_lines) = {
       let editor = self.active_editor_mut();
       let view = editor.view();
 
@@ -5914,6 +6181,19 @@ impl App {
         },
       );
 
+      let hover_selections = hover_ui
+        .map(|hover_ui| {
+          compute_hover_highlight_selections(
+            doc.text(),
+            hover_ui,
+            &plan,
+            &text_fmt,
+            &mut annotations,
+            hover_highlight_style,
+          )
+        })
+        .unwrap_or_default();
+
       // Snapshot inline diagnostic render output now. Subsequent visual position
       // queries (e.g. underline mapping) can traverse annotations again and
       // should not duplicate overlay lines.
@@ -5930,8 +6210,11 @@ impl App {
         &mut annotations,
       );
 
-      (plan, underlines, inline_lines)
+      (plan, hover_selections, underlines, inline_lines)
     };
+    if !hover_selections.is_empty() {
+      plan.selections.splice(0..0, hover_selections);
+    }
     apply_diagnostic_gutter_markers(&mut plan, &diagnostics_by_line, diagnostic_styles);
     apply_diff_gutter_markers(&mut plan, &diff_signs, diff_styles);
 
@@ -6821,6 +7104,9 @@ impl App {
     if self.poll_lsp_signature_help_auto_trigger() {
       changed = true;
     }
+    if self.poll_lsp_mouse_hover() {
+      changed = true;
+    }
     if self.poll_active_syntax_parse_results() {
       changed = true;
     }
@@ -7163,6 +7449,25 @@ impl App {
     false
   }
 
+  fn poll_lsp_mouse_hover(&mut self) -> bool {
+    let Some(pending) = self.lsp_pending_mouse_hover else {
+      return false;
+    };
+    if Instant::now() < pending.due_at {
+      return false;
+    }
+
+    self.lsp_pending_mouse_hover = None;
+    if self.active_editor != Some(pending.editor_id) {
+      return false;
+    }
+    if self.active_editor_ref().active_pane_id() != pending.pane_id {
+      return false;
+    }
+
+    self.start_hover_at_char(HoverTriggerSource::Mouse, pending.anchor_char, false, false)
+  }
+
   fn poll_lsp_events(&mut self) -> bool {
     let mut changed = false;
     for event in self.lsp_poll_events_for_active_transport() {
@@ -7454,6 +7759,25 @@ impl App {
     }
 
     if let Some(error) = response.error {
+      if let PendingLspRequestKind::Hover {
+        generation,
+        trigger,
+        anchor_char,
+        fallback_range,
+        ..
+      } = &kind
+      {
+        if *trigger == HoverTriggerSource::Mouse {
+          return self.apply_hover_response(
+            None,
+            *generation,
+            *trigger,
+            *anchor_char,
+            *fallback_range,
+          );
+        }
+      }
+
       self.publish_lsp_message(
         the_lib::messages::MessageLevel::Error,
         format!("lsp {} failed: {}", kind.label(), error.message),
@@ -7530,10 +7854,25 @@ impl App {
         }
         self.apply_locations_result("implementation", locations)
       },
-      PendingLspRequestKind::Hover { .. } => {
-        let hover = match parse_hover_response(response.result.as_ref()) {
+      PendingLspRequestKind::Hover {
+        generation,
+        trigger,
+        anchor_char,
+        fallback_range,
+        ..
+      } => {
+        let hover = match parse_hover_details_response(response.result.as_ref()) {
           Ok(hover) => hover,
           Err(err) => {
+            if trigger == HoverTriggerSource::Mouse {
+              return self.apply_hover_response(
+                None,
+                generation,
+                trigger,
+                anchor_char,
+                fallback_range,
+              );
+            }
             self.publish_lsp_message(
               the_lib::messages::MessageLevel::Error,
               format!("failed to parse hover response: {err}"),
@@ -7541,8 +7880,13 @@ impl App {
             return true;
           },
         };
-        self.apply_hover_response(hover);
-        true
+        self.apply_hover_response(
+          Some(hover),
+          generation,
+          trigger,
+          anchor_char,
+          fallback_range,
+        )
       },
       PendingLspRequestKind::DocumentHighlightSelect { .. } => {
         self.handle_document_highlight_selection_response(response.result.as_ref())
@@ -8555,9 +8899,50 @@ impl App {
     }
   }
 
+  fn bump_hover_generation(&mut self) -> u64 {
+    self.lsp_hover_generation = self.lsp_hover_generation.wrapping_add(1);
+    if self.lsp_hover_generation == 0 {
+      self.lsp_hover_generation = 1;
+    }
+    self.lsp_hover_generation
+  }
+
+  fn hover_request_pending_for_current_generation(&self) -> bool {
+    self.lsp_pending_requests.values().any(|kind| {
+      matches!(
+        kind,
+        PendingLspRequestKind::Hover { generation, .. }
+          if *generation == self.lsp_hover_generation
+      )
+    })
+  }
+
+  fn prune_hover_ui_state(&mut self) {
+    let Some(id) = self.active_editor else {
+      return;
+    };
+    let keep = self.docs_popup_visible() || self.hover_request_pending_for_current_generation();
+    if keep {
+      return;
+    }
+    if let Some(state) = self.states.get_mut(&id) {
+      state.hover_ui = None;
+    }
+  }
+
   fn clear_hover_state(&mut self) {
-    self.clear_hover_docs_state();
-    self.clear_diagnostic_popup_state();
+    self.bump_hover_generation();
+    self.lsp_pending_mouse_hover = None;
+    let Some(id) = self.active_editor else {
+      return;
+    };
+    let Some(state) = self.states.get_mut(&id) else {
+      return;
+    };
+    state.hover_docs = None;
+    state.hover_docs_scroll = 0;
+    state.diagnostic_popup = None;
+    state.hover_ui = None;
   }
 
   fn clear_hover_docs_state(&mut self) {
@@ -8569,16 +8954,7 @@ impl App {
     };
     state.hover_docs = None;
     state.hover_docs_scroll = 0;
-  }
-
-  fn clear_diagnostic_popup_state(&mut self) {
-    let Some(id) = self.active_editor else {
-      return;
-    };
-    let Some(state) = self.states.get_mut(&id) else {
-      return;
-    };
-    state.diagnostic_popup = None;
+    self.prune_hover_ui_state();
   }
 
   fn hover_docs_text(&self) -> Option<&str> {
@@ -8612,11 +8988,75 @@ impl App {
     self.hover_docs_text().is_some() || self.diagnostic_popup_text().is_some()
   }
 
-  fn current_cursor_diagnostics(&self) -> Vec<Diagnostic> {
-    let Some((uri, position)) = self.current_lsp_position() else {
-      return Vec::new();
+  fn hover_ui_contains_char(hover_ui: HoverUiState, target: usize) -> bool {
+    if hover_ui.highlight_to > hover_ui.highlight_from {
+      target >= hover_ui.highlight_from && target < hover_ui.highlight_to
+    } else {
+      target == hover_ui.anchor_char
+    }
+  }
+
+  fn pending_mouse_hover_contains_char(pending: &PendingMouseHover, target: usize) -> bool {
+    if pending.highlight_to > pending.highlight_from {
+      target >= pending.highlight_from && target < pending.highlight_to
+    } else {
+      target == pending.anchor_char
+    }
+  }
+
+  fn set_hover_ui_state(
+    &mut self,
+    trigger: HoverTriggerSource,
+    anchor_char: usize,
+    highlight_range: Option<(usize, usize)>,
+  ) -> bool {
+    let text_len = self.active_editor_ref().document().text().len_chars();
+    let anchor_char = anchor_char.min(text_len);
+    let (mut highlight_from, mut highlight_to) = highlight_range.unwrap_or((anchor_char, anchor_char));
+    highlight_from = highlight_from.min(text_len);
+    highlight_to = highlight_to.min(text_len);
+    if highlight_to < highlight_from {
+      std::mem::swap(&mut highlight_from, &mut highlight_to);
+    }
+
+    let next = HoverUiState {
+      trigger,
+      anchor_char,
+      highlight_from,
+      highlight_to,
     };
-    let Some(document) = self.diagnostics.document(&uri) else {
+    let Some(id) = self.active_editor else {
+      return false;
+    };
+    let Some(state) = self.states.get_mut(&id) else {
+      return false;
+    };
+    let changed = state.hover_ui != Some(next);
+    state.hover_ui = Some(next);
+    changed
+  }
+
+  fn clear_mouse_hover_preview(&mut self) -> bool {
+    self.lsp_pending_mouse_hover = None;
+    let visible_mouse_hover = self
+      .active_editor
+      .and_then(|id| self.states.get(&id))
+      .and_then(|state| state.hover_ui)
+      .is_some_and(|hover_ui| hover_ui.trigger == HoverTriggerSource::Mouse);
+    if visible_mouse_hover {
+      self.clear_hover_state();
+      return true;
+    }
+    false
+  }
+
+  fn diagnostics_for_lsp_position(
+    &self,
+    uri: &str,
+    position: LspPosition,
+    line_fallback: bool,
+  ) -> Vec<Diagnostic> {
+    let Some(document) = self.diagnostics.document(uri) else {
       return Vec::new();
     };
 
@@ -8627,7 +9067,7 @@ impl App {
       .cloned()
       .collect();
 
-    if diagnostics.is_empty() {
+    if diagnostics.is_empty() && line_fallback {
       diagnostics = document
         .diagnostics
         .iter()
@@ -8640,8 +9080,14 @@ impl App {
     diagnostics
   }
 
-  fn update_diagnostic_popup_for_cursor(&mut self) -> bool {
-    let next_popup = build_diagnostic_popup_state(&self.current_cursor_diagnostics());
+  fn update_diagnostic_popup_for_lsp_position(
+    &mut self,
+    uri: &str,
+    position: LspPosition,
+    line_fallback: bool,
+  ) -> bool {
+    let next_popup =
+      build_diagnostic_popup_state(&self.diagnostics_for_lsp_position(uri, position, line_fallback));
     let Some(id) = self.active_editor else {
       return false;
     };
@@ -8651,6 +9097,151 @@ impl App {
     let changed = state.diagnostic_popup.as_ref() != next_popup.as_ref();
     state.diagnostic_popup = next_popup;
     changed
+  }
+
+  fn hover_preview_range_at_char(&self, target: usize) -> Option<(usize, usize)> {
+    let (from, to) = self.pointer_word_range_at_char(target);
+    if to <= from {
+      return None;
+    }
+    let text = self.active_editor_ref().document().text();
+    let slice = text.slice(from..to);
+    if slice.chars().all(char::is_whitespace) {
+      return None;
+    }
+    Some((from, to))
+  }
+
+  fn lsp_position_for_active_char(&self, char_idx: usize) -> Option<(String, LspPosition)> {
+    if !self.lsp_ready {
+      return None;
+    }
+    let state = self.lsp_document.as_ref()?.clone();
+    if !state.opened {
+      return None;
+    }
+
+    let doc = self.active_editor_ref().document();
+    let cursor = char_idx.min(doc.text().len_chars());
+    let (line, character) = char_idx_to_utf16_position(doc.text(), cursor);
+    Some((state.uri, LspPosition { line, character }))
+  }
+
+  fn normalize_char_range(text: &Rope, mut from: usize, mut to: usize) -> Option<(usize, usize)> {
+    let text_len = text.len_chars();
+    from = from.min(text_len);
+    to = to.min(text_len);
+    if to < from {
+      std::mem::swap(&mut from, &mut to);
+    }
+    if to == from {
+      if from < text_len {
+        to = from.saturating_add(1).min(text_len);
+      } else if from > 0 {
+        from = from.saturating_sub(1);
+      } else {
+        return None;
+      }
+    }
+    Some((from, to))
+  }
+
+  fn char_range_from_lsp_range(&self, range: &the_lsp::LspRange) -> Option<(usize, usize)> {
+    let text = self.active_editor_ref().document().text();
+    let start = utf16_position_to_char_idx(text, range.start.line, range.start.character);
+    let end = utf16_position_to_char_idx(text, range.end.line, range.end.character);
+    Self::normalize_char_range(text, start, end)
+  }
+
+  fn start_hover_at_char(
+    &mut self,
+    trigger: HoverTriggerSource,
+    anchor_char: usize,
+    line_fallback_diagnostics: bool,
+    announce_failures: bool,
+  ) -> bool {
+    let before_popup = self.docs_popup_visible();
+    let before_hover_ui = self.active_state_ref().hover_ui;
+    let fallback_range = self.hover_preview_range_at_char(anchor_char);
+    let generation = self.bump_hover_generation();
+    self.lsp_pending_mouse_hover = None;
+
+    let Some(id) = self.active_editor else {
+      return false;
+    };
+    if let Some(state) = self.states.get_mut(&id) {
+      state.hover_docs = None;
+      state.hover_docs_scroll = 0;
+      state.diagnostic_popup = None;
+    }
+    let mut hover_ui_changed = false;
+
+    let Some((uri, position)) = self.lsp_position_for_active_char(anchor_char) else {
+      let has_diagnostic = self.diagnostic_popup_text().is_some();
+      if !has_diagnostic {
+        if let Some(state) = self.states.get_mut(&id) {
+          state.hover_ui = None;
+        }
+        if announce_failures {
+          self.publish_lsp_message(
+            the_lib::messages::MessageLevel::Warning,
+            "hover unavailable: no active LSP document",
+          );
+        }
+      }
+      let after_popup = self.docs_popup_visible();
+      let after_hover_ui = self.active_state_ref().hover_ui;
+      return before_popup != after_popup
+        || before_hover_ui != after_hover_ui
+        || hover_ui_changed
+        || announce_failures;
+    };
+
+    let diagnostic_changed =
+      self.update_diagnostic_popup_for_lsp_position(&uri, position, line_fallback_diagnostics);
+    if self.diagnostic_popup_text().is_some() {
+      hover_ui_changed = self.set_hover_ui_state(trigger, anchor_char, fallback_range);
+    }
+
+    if !self.lsp_supports(LspCapability::Hover) {
+      if self.diagnostic_popup_text().is_none() {
+        if let Some(state) = self.states.get_mut(&id) {
+          state.hover_ui = None;
+        }
+        if announce_failures {
+          self.publish_lsp_message(
+            the_lib::messages::MessageLevel::Warning,
+            "hover is not supported by the active server",
+          );
+        }
+      }
+      let after_popup = self.docs_popup_visible();
+      let after_hover_ui = self.active_state_ref().hover_ui;
+      return before_popup != after_popup
+        || before_hover_ui != after_hover_ui
+        || diagnostic_changed
+        || hover_ui_changed
+        || announce_failures;
+    }
+
+    self.dispatch_lsp_request(
+      "textDocument/hover",
+      hover_params(&uri, position),
+      PendingLspRequestKind::Hover {
+        uri,
+        generation,
+        trigger,
+        anchor_char,
+        fallback_range,
+      },
+    );
+
+    let after_popup = self.docs_popup_visible();
+    let after_hover_ui = self.active_state_ref().hover_ui;
+    before_popup != after_popup
+      || before_hover_ui != after_hover_ui
+      || diagnostic_changed
+      || hover_ui_changed
   }
 
   fn build_docs_popup_overlay(
@@ -8723,43 +9314,69 @@ impl App {
     }
   }
 
-  fn apply_hover_response(&mut self, hover: Option<String>) {
-    match hover {
-      Some(text) => {
-        let trimmed = text.trim();
-        if trimmed.is_empty() {
-          self.clear_hover_docs_state();
-          if self.diagnostic_popup_text().is_none() {
-            self.publish_lsp_message(
-              the_lib::messages::MessageLevel::Info,
-              "no hover information",
-            );
-          }
-        } else {
+  fn apply_hover_response(
+    &mut self,
+    hover: Option<LspHoverDetails>,
+    generation: u64,
+    trigger: HoverTriggerSource,
+    anchor_char: usize,
+    fallback_range: Option<(usize, usize)>,
+  ) -> bool {
+    if generation != self.lsp_hover_generation {
+      return false;
+    }
+
+    let before_popup = self.docs_popup_visible();
+    let before_hover_ui = self.active_state_ref().hover_ui;
+    let hover_text = hover
+      .as_ref()
+      .and_then(|details| details.text.as_deref())
+      .map(str::trim)
+      .filter(|text| !text.is_empty())
+      .map(ToOwned::to_owned);
+    let next_range = hover
+      .as_ref()
+      .and_then(|details| details.range.as_ref())
+      .and_then(|range| self.char_range_from_lsp_range(range))
+      .or(fallback_range);
+
+    match hover_text {
+      Some(ref text) => {
+        {
           let state = self.active_state_mut();
-          state.hover_docs = Some(trimmed.to_string());
+          state.hover_docs = Some(text.clone());
           state.hover_docs_scroll = 0;
-          log_shared_lsp_debug(
-            "hover_state_set",
-            format!(
-              "active_editor={} hover_len={} {}",
-              shared_lsp_editor_id_label(self.active_editor),
-              trimmed.len(),
-              self.shared_lsp_editor_state_summary(self.active_editor)
-            ),
-          );
         }
+        let _ = self.set_hover_ui_state(trigger, anchor_char, next_range);
+        log_shared_lsp_debug(
+          "hover_state_set",
+          format!(
+            "active_editor={} hover_len={} {}",
+            shared_lsp_editor_id_label(self.active_editor),
+            text.len(),
+            self.shared_lsp_editor_state_summary(self.active_editor)
+          ),
+        );
       },
       None => {
         self.clear_hover_docs_state();
-        if self.diagnostic_popup_text().is_none() {
-          self.publish_lsp_message(
-            the_lib::messages::MessageLevel::Info,
-            "no hover information",
-          );
+        if self.diagnostic_popup_text().is_some() {
+          let _ = self.set_hover_ui_state(trigger, anchor_char, next_range);
+        } else if let Some(id) = self.active_editor && let Some(state) = self.states.get_mut(&id) {
+          state.hover_ui = None;
         }
       },
     }
+
+    let mut published_message = false;
+    if hover_text.is_none() && self.diagnostic_popup_text().is_none() && trigger == HoverTriggerSource::Keyboard {
+      self.publish_lsp_message(the_lib::messages::MessageLevel::Info, "no hover information");
+      published_message = true;
+    }
+
+    let after_popup = self.docs_popup_visible();
+    let after_hover_ui = self.active_state_ref().hover_ui;
+    before_popup != after_popup || before_hover_ui != after_hover_ui || published_message
   }
 
   fn dispatch_signature_help_request(
@@ -9817,6 +10434,9 @@ impl App {
       return false;
     }
 
+    let before_selection = self.active_editor_ref().document().selection().clone();
+    let before_active_pane = self.active_editor_ref().active_pane_id();
+
     let event_kind = event.kind;
     let event_codepoint = event.codepoint;
     if event_kind == 3 && self.docs_popup_visible() && !self.completion_menu().active {
@@ -9835,7 +10455,17 @@ impl App {
     let key_event = key_event_from_ffi(event);
     let dispatch = self.dispatch();
     dispatch.pre_on_keypress(self, key_event);
+    let cursor_changed = self.active_editor_ref().active_pane_id() != before_active_pane
+      || self.active_editor_ref().document().selection() != &before_selection;
+    let hover_cleared = if cursor_changed {
+      self.clear_mouse_hover_preview()
+    } else {
+      false
+    };
     self.ensure_cursor_visible(id);
+    if hover_cleared {
+      self.request_render();
+    }
     let elapsed = started.elapsed();
     if ffi_ui_profile_should_log(elapsed) {
       ffi_ui_profile_log(format!(
@@ -9886,6 +10516,107 @@ impl App {
       PointerKind,
     };
 
+    if event.kind == PointerKind::Move {
+      let Some(surface_id) = event.surface_id else {
+        if self.clear_mouse_hover_preview() {
+          self.request_render();
+          return PointerEventOutcome::Handled;
+        }
+        return PointerEventOutcome::Continue;
+      };
+      let Some(target_pane) = pane_id_from_u64(surface_id) else {
+        if self.clear_mouse_hover_preview() {
+          self.request_render();
+          return PointerEventOutcome::Handled;
+        }
+        return PointerEventOutcome::Continue;
+      };
+      if self.active_editor_ref().active_pane_id() != target_pane
+        || self.active_editor_ref().is_active_pane_terminal()
+      {
+        if self.clear_mouse_hover_preview() {
+          self.request_render();
+          return PointerEventOutcome::Handled;
+        }
+        return PointerEventOutcome::Continue;
+      }
+
+      let Some(target) = self.pointer_char_idx_for_event(event) else {
+        if self.clear_mouse_hover_preview() {
+          self.request_render();
+          return PointerEventOutcome::Handled;
+        }
+        return PointerEventOutcome::Continue;
+      };
+      let highlight_range = self.hover_preview_range_at_char(target);
+      let has_diagnostic = self
+        .lsp_position_for_active_char(target)
+        .map(|(uri, position)| {
+          !self
+            .diagnostics_for_lsp_position(&uri, position, false)
+            .is_empty()
+        })
+        .unwrap_or(false);
+
+      if highlight_range.is_none() && !has_diagnostic {
+        if self.clear_mouse_hover_preview() {
+          self.request_render();
+          return PointerEventOutcome::Handled;
+        }
+        return PointerEventOutcome::Continue;
+      }
+
+      if self
+        .active_state_ref()
+        .hover_ui
+        .is_some_and(|hover_ui| {
+          hover_ui.trigger == HoverTriggerSource::Mouse
+            && Self::hover_ui_contains_char(hover_ui, target)
+        })
+      {
+        self.lsp_pending_mouse_hover = None;
+        return PointerEventOutcome::Continue;
+      }
+
+      if self
+        .lsp_pending_mouse_hover
+        .as_ref()
+        .is_some_and(|pending| {
+          pending.editor_id == self.active_editor.expect("active editor must exist")
+            && pending.pane_id == target_pane
+            && Self::pending_mouse_hover_contains_char(pending, target)
+        })
+      {
+        return PointerEventOutcome::Continue;
+      }
+
+      let mut changed = false;
+      if self
+        .active_state_ref()
+        .hover_ui
+        .is_some_and(|hover_ui| hover_ui.trigger == HoverTriggerSource::Mouse)
+      {
+        self.clear_hover_state();
+        changed = true;
+      } else {
+        self.lsp_pending_mouse_hover = None;
+      }
+
+      self.lsp_pending_mouse_hover = Some(PendingMouseHover {
+        editor_id: self.active_editor.expect("active editor must exist"),
+        pane_id: target_pane,
+        anchor_char: target,
+        highlight_from: highlight_range.map(|range| range.0).unwrap_or(target),
+        highlight_to: highlight_range.map(|range| range.1).unwrap_or(target),
+        due_at: Instant::now() + lsp_hover_auto_trigger_latency(),
+      });
+      if changed {
+        self.request_render();
+        return PointerEventOutcome::Handled;
+      }
+      return PointerEventOutcome::Continue;
+    }
+
     let mut pane_changed = false;
     if let Some(surface_id) = event.surface_id {
       pane_changed = self.set_active_pane_from_pointer_surface(surface_id);
@@ -9927,8 +10658,9 @@ impl App {
           current.col.saturating_sub((-col_delta) as usize)
         };
         let changed = self.set_active_editor_scroll_clamped(LibPosition::new(new_row, new_col));
+        let hover_cleared = self.clear_mouse_hover_preview();
 
-        if changed || pane_changed {
+        if changed || pane_changed || hover_cleared {
           self.request_render();
         }
         return PointerEventOutcome::Handled;
@@ -11943,59 +12675,17 @@ impl DefaultContext for App {
 
   fn lsp_hover(&mut self) {
     log_shared_lsp_debug("hover_begin", "entered");
-    let had_docs_popup = self.docs_popup_visible();
-    self.clear_hover_state();
-    let diagnostic_changed = self.update_diagnostic_popup_for_cursor();
-    if had_docs_popup || diagnostic_changed {
+    self.lsp_pending_mouse_hover = None;
+    let anchor_char = self
+      .active_or_first_selection_range()
+      .map(|range| {
+        let doc = self.active_editor_ref().document();
+        range.cursor(doc.text().slice(..))
+      })
+      .unwrap_or(0);
+    if self.start_hover_at_char(HoverTriggerSource::Keyboard, anchor_char, true, true) {
       self.request_render();
     }
-
-    if !self.lsp_supports(LspCapability::Hover) {
-      log_shared_lsp_debug(
-        "hover_skip",
-        format!(
-          "reason=unsupported diagnostic_present={}",
-          self.diagnostic_popup_text().is_some() as u8
-        ),
-      );
-      if self.diagnostic_popup_text().is_none() {
-        self.publish_lsp_message(
-          the_lib::messages::MessageLevel::Warning,
-          "hover is not supported by the active server",
-        );
-      }
-      return;
-    }
-
-    let Some((uri, position)) = self.current_lsp_position() else {
-      log_shared_lsp_debug(
-        "hover_skip",
-        format!(
-          "reason=no_position diagnostic_present={}",
-          self.diagnostic_popup_text().is_some() as u8
-        ),
-      );
-      if self.diagnostic_popup_text().is_none() {
-        self.publish_lsp_message(
-          the_lib::messages::MessageLevel::Warning,
-          "hover unavailable: no active LSP document",
-        );
-      }
-      return;
-    };
-
-    log_shared_lsp_debug(
-      "hover_dispatch",
-      format!(
-        "uri={} line={} char={}",
-        uri, position.line, position.character
-      ),
-    );
-    self.dispatch_lsp_request(
-      "textDocument/hover",
-      hover_params(&uri, position),
-      PendingLspRequestKind::Hover { uri },
-    );
   }
 
   fn lsp_select_references_to_symbol_under_cursor(&mut self) {
@@ -12352,6 +13042,7 @@ mod ffi {
     fn focus_terminal_surface(self: &mut App, id: EditorId, terminal_id: u64) -> bool;
     fn render_plan(self: &mut App, id: EditorId) -> RenderPlan;
     fn frame_render_plan(self: &mut App, id: EditorId) -> RenderFramePlan;
+    fn docs_popup_anchor(self: &mut App, id: EditorId) -> DocsPopupAnchor;
     fn render_plan_with_styles(self: &mut App, id: EditorId, styles: RenderStyles) -> RenderPlan;
     fn ui_tree_json(self: &mut App, id: EditorId) -> String;
     fn buffer_tabs_snapshot_json(self: &mut App, id: EditorId) -> String;
@@ -12542,6 +13233,14 @@ mod ffi {
   struct Position {
     row: u64,
     col: u64,
+  }
+
+  #[swift_bridge(swift_repr = "struct")]
+  struct DocsPopupAnchor {
+    has_value: bool,
+    pane_id:   u64,
+    row:       u16,
+    col:       u16,
   }
 
   #[swift_bridge(swift_repr = "struct")]
@@ -12894,6 +13593,17 @@ impl From<LibPosition> for ffi::Position {
     Self {
       row: pos.row as u64,
       col: pos.col as u64,
+    }
+  }
+}
+
+impl Default for ffi::DocsPopupAnchor {
+  fn default() -> Self {
+    Self {
+      has_value: false,
+      pane_id: 0,
+      row: 0,
+      col: 0,
     }
   }
 }
@@ -13376,6 +14086,7 @@ mod tests {
     Value,
     json,
   };
+  use crate::HoverTriggerSource;
   use the_default::{
     Command,
     CommandEvent,
@@ -13883,7 +14594,8 @@ mod tests {
       }]);
 
     let before_seq = app.active_state_ref().messages.latest_seq();
-    app.apply_hover_response(None);
+    let generation = app.lsp_hover_generation;
+    app.apply_hover_response(None, generation, HoverTriggerSource::Keyboard, 0, None);
 
     assert!(app.diagnostic_popup_text().is_some());
     assert!(app.hover_docs_text().is_none());
@@ -13893,6 +14605,77 @@ mod tests {
         .messages
         .events_since(before_seq)
         .is_empty()
+    );
+  }
+
+  #[test]
+  fn empty_mouse_hover_response_clears_hover_ui_without_diagnostics() {
+    let _guard = ffi_test_guard();
+    let mut app = App::new();
+    let id = app.create_editor("hello", default_viewport(), ffi::Position {
+      row: 0,
+      col: 0,
+    });
+    assert!(app.activate(id).is_some());
+    assert!(app.set_hover_ui_state(HoverTriggerSource::Mouse, 1, Some((0, 5))));
+
+    let generation = app.lsp_hover_generation;
+    app.apply_hover_response(
+      None,
+      generation,
+      HoverTriggerSource::Mouse,
+      1,
+      Some((0, 5)),
+    );
+
+    assert!(app.hover_docs_text().is_none());
+    assert!(app.diagnostic_popup_text().is_none());
+    assert!(app.active_state_ref().hover_ui.is_none());
+  }
+
+  #[test]
+  fn keyboard_cursor_move_closes_visible_mouse_hover() {
+    let _guard = ffi_test_guard();
+    let mut app = App::new();
+    let id = app.create_editor("printf\n", default_viewport(), ffi::Position {
+      row: 0,
+      col: 0,
+    });
+    assert!(app.activate(id).is_some());
+    assert!(app.set_hover_ui_state(HoverTriggerSource::Mouse, 1, Some((0, 6))));
+    let before = app.active_editor_ref().document().selection().clone();
+
+    assert!(app.handle_key(id, key_char('l')));
+
+    assert_ne!(app.active_editor_ref().document().selection(), &before);
+    assert!(app.active_state_ref().hover_ui.is_none());
+  }
+
+  #[test]
+  fn mouse_move_within_visible_hover_range_preserves_mouse_hover() {
+    let _guard = ffi_test_guard();
+    let mut app = App::new();
+    let id = app.create_editor("printf\n", default_viewport(), ffi::Position {
+      row: 0,
+      col: 0,
+    });
+    assert!(app.activate(id).is_some());
+    assert!(app.set_hover_ui_state(HoverTriggerSource::Mouse, 1, Some((0, 6))));
+    let pane_id = app.active_editor_ref().active_pane_id().get().get() as u64;
+
+    let move_event = the_default::PointerEvent::new(the_default::PointerKind::Move, 0, 0)
+      .with_logical_pos(2, 0)
+      .with_surface_id(pane_id);
+
+    assert_eq!(
+      app.pointer_event(move_event),
+      the_default::PointerEventOutcome::Continue
+    );
+    assert!(
+      app
+        .active_state_ref()
+        .hover_ui
+        .is_some_and(|hover_ui| hover_ui.trigger == HoverTriggerSource::Mouse)
     );
   }
 

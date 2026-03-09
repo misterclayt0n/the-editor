@@ -181,6 +181,10 @@ extension AppRefMut {
         RenderFramePlan(ptr: __swift_bridge__$App$frame_render_plan(ptr, id.intoFfiRepr()))
     }
 
+    public func docs_popup_anchor(_ id: EditorId) -> DocsPopupAnchor {
+        __swift_bridge__$App$docs_popup_anchor(ptr, id.intoFfiRepr()).intoSwiftRepr()
+    }
+
     public func render_plan_with_styles(_ id: EditorId, _ styles: RenderStyles) -> RenderPlan {
         RenderPlan(ptr: __swift_bridge__$App$render_plan_with_styles(ptr, id.intoFfiRepr(), styles.intoFfiRepr()))
     }
@@ -886,6 +890,49 @@ extension __swift_bridge__$Option$Position {
             return __swift_bridge__$Option$Position(is_some: true, val: v.intoFfiRepr())
         } else {
             return __swift_bridge__$Option$Position(is_some: false, val: __swift_bridge__$Position())
+        }
+    }
+}
+public struct DocsPopupAnchor {
+    public var has_value: Bool
+    public var pane_id: UInt64
+    public var row: UInt16
+    public var col: UInt16
+
+    public init(has_value: Bool,pane_id: UInt64,row: UInt16,col: UInt16) {
+        self.has_value = has_value
+        self.pane_id = pane_id
+        self.row = row
+        self.col = col
+    }
+
+    @inline(__always)
+    func intoFfiRepr() -> __swift_bridge__$DocsPopupAnchor {
+        { let val = self; return __swift_bridge__$DocsPopupAnchor(has_value: val.has_value, pane_id: val.pane_id, row: val.row, col: val.col); }()
+    }
+}
+extension __swift_bridge__$DocsPopupAnchor {
+    @inline(__always)
+    func intoSwiftRepr() -> DocsPopupAnchor {
+        { let val = self; return DocsPopupAnchor(has_value: val.has_value, pane_id: val.pane_id, row: val.row, col: val.col); }()
+    }
+}
+extension __swift_bridge__$Option$DocsPopupAnchor {
+    @inline(__always)
+    func intoSwiftRepr() -> Optional<DocsPopupAnchor> {
+        if self.is_some {
+            return self.val.intoSwiftRepr()
+        } else {
+            return nil
+        }
+    }
+
+    @inline(__always)
+    static func fromSwiftRepr(_ val: Optional<DocsPopupAnchor>) -> __swift_bridge__$Option$DocsPopupAnchor {
+        if let v = val {
+            return __swift_bridge__$Option$DocsPopupAnchor(is_some: true, val: v.intoFfiRepr())
+        } else {
+            return __swift_bridge__$Option$DocsPopupAnchor(is_some: false, val: __swift_bridge__$DocsPopupAnchor())
         }
     }
 }

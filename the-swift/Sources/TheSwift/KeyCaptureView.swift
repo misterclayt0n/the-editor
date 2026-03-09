@@ -348,6 +348,12 @@ struct ScrollCaptureView: NSViewRepresentable {
                 window?.invalidateCursorRects(for: self)
             }
         }
+        var popupPassthroughRects: [CGRect] = [] {
+            didSet {
+                guard oldValue != popupPassthroughRects else { return }
+                window?.invalidateCursorRects(for: self)
+            }
+        }
         var panes: [PaneHandle] = [] {
             didSet {
                 guard oldValue != panes else { return }
@@ -365,6 +371,7 @@ struct ScrollCaptureView: NSViewRepresentable {
         private var activeSeparator: SeparatorHandle?
         private var activeEditorPane: PaneHandle?
         private var lastDragSignature: (paneId: UInt64, row: UInt16, col: UInt16)?
+        private var lastMoveSignature: (paneId: UInt64, row: UInt16, col: UInt16)?
         private var dragPointerModifiers: UInt8 = 0
         private var dragPointerClickCount: UInt8 = 1
         private var dragRawPoint: NSPoint?
@@ -386,7 +393,13 @@ struct ScrollCaptureView: NSViewRepresentable {
             if let trackingArea {
                 removeTrackingArea(trackingArea)
             }
-            let options: NSTrackingArea.Options = [.activeInKeyWindow, .inVisibleRect, .mouseMoved, .cursorUpdate]
+            let options: NSTrackingArea.Options = [
+                .activeInKeyWindow,
+                .inVisibleRect,
+                .mouseMoved,
+                .mouseEnteredAndExited,
+                .cursorUpdate
+            ]
             let area = NSTrackingArea(rect: .zero, options: options, owner: self, userInfo: nil)
             addTrackingArea(area)
             trackingArea = area
@@ -422,6 +435,14 @@ struct ScrollCaptureView: NSViewRepresentable {
             // AppKit passes hitTest points in superview coordinates.
             // Convert once so separator/pane/passthrough checks use this view's local space.
             let localPoint = convert(point, from: superview)
+            if isInPopupPassthroughRect(localPoint) {
+                logPaneDragCursor(
+                    "scroll.hitTest",
+                    point: localPoint,
+                    extra: "separator=0 exclusion=0 passthrough=0 popup=1 result=nil"
+                )
+                return nil
+            }
             let separator = hitSeparator(at: localPoint)
             if separator != nil {
                 logPaneDragCursor(
@@ -481,12 +502,45 @@ struct ScrollCaptureView: NSViewRepresentable {
         override func mouseMoved(with event: NSEvent) {
             let point = convert(event.locationInWindow, from: nil)
             updateCursor(at: point, source: "mouseMoved")
+            guard activeSeparator == nil, activeEditorPane == nil else {
+                super.mouseMoved(with: event)
+                return
+            }
+
+            if isInPopupPassthroughRect(point) {
+                super.mouseMoved(with: event)
+                return
+            }
+
+            if hitSeparator(at: point) != nil || isInCursorExclusionRect(point) || shouldPassthrough(at: point) {
+                if let pointer = makePointerEvent(kind: 3, button: 0, point: point, event: event, pane: nil) {
+                    emitMovePointerIfNeeded(pointer)
+                }
+                super.mouseMoved(with: event)
+                return
+            }
+
+            let pane = hitPane(at: point)
+            if let pointer = makePointerEvent(kind: 3, button: 0, point: point, event: event, pane: pane) {
+                emitMovePointerIfNeeded(pointer)
+            }
             super.mouseMoved(with: event)
+        }
+
+        override func mouseExited(with event: NSEvent) {
+            let point = convert(event.locationInWindow, from: nil)
+            updateCursor(at: point, source: "mouseExited")
+            if let pointer = makePointerEvent(kind: 3, button: 0, point: point, event: event, pane: nil) {
+                emitMovePointerIfNeeded(pointer)
+            }
+            lastMoveSignature = nil
+            super.mouseExited(with: event)
         }
 
         override func mouseDown(with event: NSEvent) {
             let point = convert(event.locationInWindow, from: nil)
             KeyCaptureFocusBridge.shared.reclaim(in: window)
+            lastMoveSignature = nil
             if shouldDebugTerminalBand(at: point) {
                 let pane = hitPane(at: point)
                 let inPassthrough = shouldPassthrough(at: point)
@@ -566,6 +620,7 @@ struct ScrollCaptureView: NSViewRepresentable {
             activeSeparator = nil
             activeEditorPane = nil
             lastDragSignature = nil
+            lastMoveSignature = nil
             updateCursor(at: point, source: "mouseUp")
             super.mouseUp(with: event)
         }
@@ -682,11 +737,17 @@ struct ScrollCaptureView: NSViewRepresentable {
         }
 
         private func preferredCursor(at point: NSPoint) -> NSCursor {
+            if isInPopupPassthroughRect(point) {
+                return .arrow
+            }
             if let separator = hitSeparator(at: point) {
                 return cursor(for: separator)
             }
             if isInCursorExclusionRect(point) {
                 return .openHand
+            }
+            if shouldPassthrough(at: point) {
+                return .arrow
             }
             if hitPane(at: point) != nil {
                 return .iBeam
@@ -724,6 +785,10 @@ struct ScrollCaptureView: NSViewRepresentable {
             passthroughRects.contains(where: { $0.contains(point) })
         }
 
+        private func isInPopupPassthroughRect(_ point: NSPoint) -> Bool {
+            popupPassthroughRects.contains(where: { $0.contains(point) })
+        }
+
         private func hitPane(at point: NSPoint) -> PaneHandle? {
             panes.first(where: { $0.rect.contains(point) })
         }
@@ -751,6 +816,12 @@ struct ScrollCaptureView: NSViewRepresentable {
             var rects = [pane.rect]
             for exclusion in cursorExclusionRects {
                 rects = rects.flatMap { subtract(rect: $0, excluding: exclusion) }
+            }
+            for passthrough in passthroughRects {
+                rects = rects.flatMap { subtract(rect: $0, excluding: passthrough) }
+            }
+            for popup in popupPassthroughRects {
+                rects = rects.flatMap { subtract(rect: $0, excluding: popup) }
             }
             return rects.filter { !$0.isEmpty }
         }
@@ -832,6 +903,18 @@ struct ScrollCaptureView: NSViewRepresentable {
                 clickCount: UInt8(clamping: event.clickCount),
                 pane: pane
             )
+        }
+
+        private func emitMovePointerIfNeeded(_ pointer: MouseBridgeEvent) {
+            let signature = (pointer.surfaceId, pointer.logicalRow, pointer.logicalCol)
+            if let lastMoveSignature,
+               lastMoveSignature.0 == signature.0,
+               lastMoveSignature.1 == signature.1,
+               lastMoveSignature.2 == signature.2 {
+                return
+            }
+            lastMoveSignature = signature
+            onPointer?(pointer)
         }
 
         private func makePointerEvent(
@@ -972,6 +1055,7 @@ struct ScrollCaptureView: NSViewRepresentable {
     let onPointer: (MouseBridgeEvent) -> Void
     let separators: [SeparatorHandle]
     let passthroughRects: [CGRect]
+    let popupPassthroughRects: [CGRect]
     let panes: [PaneHandle]
     let cursorExclusionRects: [CGRect]
     let cellSize: CGSize
@@ -983,6 +1067,7 @@ struct ScrollCaptureView: NSViewRepresentable {
         view.onPointer = onPointer
         view.separators = separators
         view.passthroughRects = passthroughRects
+        view.popupPassthroughRects = popupPassthroughRects
         view.panes = panes
         view.cursorExclusionRects = cursorExclusionRects
         view.cellSize = cellSize
@@ -995,6 +1080,7 @@ struct ScrollCaptureView: NSViewRepresentable {
         nsView.onPointer = onPointer
         nsView.separators = separators
         nsView.passthroughRects = passthroughRects
+        nsView.popupPassthroughRects = popupPassthroughRects
         nsView.panes = panes
         nsView.cursorExclusionRects = cursorExclusionRects
         nsView.cellSize = cellSize

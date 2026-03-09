@@ -27,6 +27,12 @@ pub struct LspRange {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LspHoverDetails {
+  pub text:  Option<String>,
+  pub range: Option<LspRange>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LspLocation {
   pub uri:   String,
   pub range: LspRange,
@@ -153,18 +159,40 @@ pub fn parse_document_highlights_response(
 pub fn parse_hover_response(
   result: Option<&Value>,
 ) -> Result<Option<String>, NavigationParseError> {
+  Ok(parse_hover_details_response(result)?.text)
+}
+
+pub fn parse_hover_details_response(
+  result: Option<&Value>,
+) -> Result<LspHoverDetails, NavigationParseError> {
   let Some(result) = result else {
-    return Ok(None);
+    return Ok(LspHoverDetails {
+      text:  None,
+      range: None,
+    });
   };
   if result.is_null() {
-    return Ok(None);
+    return Ok(LspHoverDetails {
+      text:  None,
+      range: None,
+    });
   }
 
   let contents = result
     .get("contents")
     .ok_or(NavigationParseError::InvalidShape)?;
   let text = hover_contents_to_text(contents).ok_or(NavigationParseError::InvalidShape)?;
-  Ok(normalize_hover_text(&text))
+  let range = result
+    .get("range")
+    .cloned()
+    .map(serde_json::from_value::<RangePayload>)
+    .transpose()?
+    .map(RangePayload::into_range);
+
+  Ok(LspHoverDetails {
+    text: normalize_hover_text(&text),
+    range,
+  })
 }
 
 pub fn parse_document_symbols_response(
@@ -584,6 +612,27 @@ mod tests {
     });
     let hover = parse_hover_response(Some(&value)).expect("hover parse");
     assert_eq!(hover, Some("```rust\nfn test()\n```".to_string()));
+  }
+
+  #[test]
+  fn parses_hover_range_when_present() {
+    let value = json!({
+      "contents": {
+        "kind": "markdown",
+        "value": "```rust\nfn test()\n```"
+      },
+      "range": {
+        "start": { "line": 3, "character": 4 },
+        "end": { "line": 3, "character": 8 }
+      }
+    });
+
+    let hover = parse_hover_details_response(Some(&value)).expect("hover parse");
+    assert_eq!(hover.text, Some("```rust\nfn test()\n```".to_string()));
+    assert_eq!(hover.range.map(|range| range.start.line), Some(3));
+    assert_eq!(hover.range.map(|range| range.start.character), Some(4));
+    assert_eq!(hover.range.map(|range| range.end.line), Some(3));
+    assert_eq!(hover.range.map(|range| range.end.character), Some(8));
   }
 
   #[test]

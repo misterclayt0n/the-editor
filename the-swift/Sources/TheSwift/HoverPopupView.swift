@@ -2,61 +2,101 @@ import AppKit
 import Foundation
 import SwiftUI
 
-struct DocsPopoverStackView: View {
-    let popovers: [DocsPopoverSnapshot]
-    let cursorOrigin: CGPoint
-    let theme: PopupChromeTheme
-    let cellSize: CGSize
-    let containerSize: CGSize
-    let languageHint: String
+struct DocsPopoverPlacementSnapshot: Identifiable {
+    let snapshot: DocsPopoverSnapshot
+    let x: CGFloat
+    let y: CGFloat
+    let width: CGFloat
+    let height: CGFloat
 
-    private let minDocsWidth: CGFloat = 220
-    private let maxDocsWidth: CGFloat = 520
-    private let minDocsHeight: CGFloat = 64
-    private let maxDocsHeight: CGFloat = 360
-    private let docsLineHeight: CGFloat = 18
-    private let stackGap: CGFloat = 14
-    private let outerInset: CGFloat = 8
-
-    var body: some View {
-        let placements = computePlacements()
-
-        ZStack(alignment: .topLeading) {
-            ForEach(placements) { placement in
-                DocsPopoverView(
-                    snapshot: placement.snapshot,
-                    width: placement.width,
-                    height: placement.height,
-                    theme: theme,
-                    languageHint: languageHint
-                )
-                .offset(x: placement.x, y: placement.y)
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .onDisappear {
-            DispatchQueue.main.async {
-                KeyCaptureFocusBridge.shared.reclaimActive()
-            }
-        }
+    var id: String { snapshot.id }
+    var frame: CGRect {
+        CGRect(x: x, y: y, width: width, height: height)
     }
+}
 
-    private struct DocsPopoverPlacement: Identifiable {
-        let snapshot: DocsPopoverSnapshot
-        let x: CGFloat
-        let y: CGFloat
-        let width: CGFloat
-        let height: CGFloat
-
-        var id: String { snapshot.id }
-    }
+enum DocsPopoverLayout {
+    private static let minDocsWidth: CGFloat = 220
+    private static let maxDocsWidth: CGFloat = 520
+    private static let minDocsHeight: CGFloat = 64
+    private static let maxDocsHeight: CGFloat = 360
+    private static let docsLineHeight: CGFloat = 18
+    private static let stackGap: CGFloat = 14
+    private static let outerInset: CGFloat = 8
 
     private struct DocsPopoverMeasurement {
         let width: CGFloat
         let height: CGFloat
     }
 
-    private func estimatedDocsWidth(for docs: String) -> CGFloat {
+    static func placements(
+        popovers: [DocsPopoverSnapshot],
+        cursorOrigin: CGPoint,
+        cellSize: CGSize,
+        containerSize: CGSize
+    ) -> [DocsPopoverPlacementSnapshot] {
+        guard !popovers.isEmpty else { return [] }
+
+        let measurements = popovers.map { measurePopover($0, containerSize: containerSize) }
+        let maxPopoverWidth = measurements.map(\.width).max() ?? minDocsWidth
+        let initialX = cursorOrigin.x + max(10, cellSize.width * 0.7)
+        let maxX = max(outerInset, containerSize.width - maxPopoverWidth - outerInset)
+        let sharedX = min(max(initialX, outerInset), maxX)
+
+        let totalHeight = measurements.reduce(CGFloat.zero) { partialResult, measurement in
+            partialResult + measurement.height
+        } + CGFloat(max(0, measurements.count - 1)) * stackGap
+
+        let belowAnchorY = min(
+            containerSize.height - outerInset,
+            cursorOrigin.y + max(12, cellSize.height * 1.05)
+        )
+        let aboveAnchorY = max(
+            outerInset,
+            cursorOrigin.y - max(8, cellSize.height * 0.45)
+        )
+        let availableBelow = max(0, containerSize.height - belowAnchorY - outerInset)
+        let availableAbove = max(0, aboveAnchorY - outerInset)
+        let placeBelow = totalHeight <= availableBelow || availableBelow >= availableAbove
+
+        var placements: [DocsPopoverPlacementSnapshot] = []
+        placements.reserveCapacity(popovers.count)
+
+        if placeBelow {
+            var y = belowAnchorY
+            for (popover, measurement) in zip(popovers, measurements) {
+                placements.append(
+                    DocsPopoverPlacementSnapshot(
+                        snapshot: popover,
+                        x: sharedX,
+                        y: y,
+                        width: measurement.width,
+                        height: measurement.height
+                    )
+                )
+                y += measurement.height + stackGap
+            }
+        } else {
+            var nextBottom = aboveAnchorY
+            for (popover, measurement) in zip(popovers, measurements) {
+                let y = nextBottom - measurement.height
+                placements.append(
+                    DocsPopoverPlacementSnapshot(
+                        snapshot: popover,
+                        x: sharedX,
+                        y: y,
+                        width: measurement.width,
+                        height: measurement.height
+                    )
+                )
+                nextBottom = y - stackGap
+            }
+        }
+
+        return shiftPlacementsIntoBounds(placements, containerSize: containerSize)
+    }
+
+    private static func estimatedDocsWidth(for docs: String) -> CGFloat {
         let longestLine = docs
             .split(separator: "\n", omittingEmptySubsequences: false)
             .map { line in
@@ -70,7 +110,7 @@ struct DocsPopoverStackView: View {
         return min(max(minDocsWidth, width), maxDocsWidth)
     }
 
-    private func estimatedDocsHeight(for docs: String, width: CGFloat) -> CGFloat {
+    private static func estimatedDocsHeight(for docs: String, width: CGFloat) -> CGFloat {
         let columns = max(30, Int((width - 22) / 6.8))
         var wrappedLines = 0
         for rawLine in docs.split(separator: "\n", omittingEmptySubsequences: false) {
@@ -103,7 +143,10 @@ struct DocsPopoverStackView: View {
         return min(max(minDocsHeight, height), maxDocsHeight)
     }
 
-    private func measurePopover(_ popover: DocsPopoverSnapshot) -> DocsPopoverMeasurement {
+    private static func measurePopover(
+        _ popover: DocsPopoverSnapshot,
+        containerSize: CGSize
+    ) -> DocsPopoverMeasurement {
         let availableWidth = max(1, containerSize.width - (outerInset * 2))
         let width = min(estimatedDocsWidth(for: popover.docsText), availableWidth)
         let availableHeight = max(1, containerSize.height - (outerInset * 2))
@@ -111,71 +154,10 @@ struct DocsPopoverStackView: View {
         return DocsPopoverMeasurement(width: width, height: height)
     }
 
-    private func computePlacements() -> [DocsPopoverPlacement] {
-        guard !popovers.isEmpty else { return [] }
-
-        let measurements = popovers.map(measurePopover)
-        let maxPopoverWidth = measurements.map(\.width).max() ?? minDocsWidth
-        let initialX = cursorOrigin.x + max(10, cellSize.width * 0.7)
-        let maxX = max(outerInset, containerSize.width - maxPopoverWidth - outerInset)
-        let sharedX = min(max(initialX, outerInset), maxX)
-
-        let totalHeight = measurements.reduce(CGFloat.zero) { partialResult, measurement in
-            partialResult + measurement.height
-        } + CGFloat(max(0, measurements.count - 1)) * stackGap
-
-        let belowAnchorY = min(
-            containerSize.height - outerInset,
-            cursorOrigin.y + max(12, cellSize.height * 1.05)
-        )
-        let aboveAnchorY = max(
-            outerInset,
-            cursorOrigin.y - max(8, cellSize.height * 0.45)
-        )
-        let availableBelow = max(0, containerSize.height - belowAnchorY - outerInset)
-        let availableAbove = max(0, aboveAnchorY - outerInset)
-        let placeBelow = totalHeight <= availableBelow || availableBelow >= availableAbove
-
-        var placements: [DocsPopoverPlacement] = []
-        placements.reserveCapacity(popovers.count)
-
-        if placeBelow {
-            var y = belowAnchorY
-            for (popover, measurement) in zip(popovers, measurements) {
-                placements.append(
-                    DocsPopoverPlacement(
-                        snapshot: popover,
-                        x: sharedX,
-                        y: y,
-                        width: measurement.width,
-                        height: measurement.height
-                    )
-                )
-                y += measurement.height + stackGap
-            }
-        } else {
-            var nextBottom = aboveAnchorY
-            for (popover, measurement) in zip(popovers, measurements) {
-                let y = nextBottom - measurement.height
-                placements.append(
-                    DocsPopoverPlacement(
-                        snapshot: popover,
-                        x: sharedX,
-                        y: y,
-                        width: measurement.width,
-                        height: measurement.height
-                    )
-                )
-                nextBottom = y - stackGap
-            }
-        }
-
-        return shiftPlacementsIntoBounds(placements)
-    }
-
-    private func shiftPlacementsIntoBounds(
-        _ placements: [DocsPopoverPlacement]
-    ) -> [DocsPopoverPlacement] {
+    private static func shiftPlacementsIntoBounds(
+        _ placements: [DocsPopoverPlacementSnapshot],
+        containerSize: CGSize
+    ) -> [DocsPopoverPlacementSnapshot] {
         guard let minY = placements.map(\.y).min(),
               let maxY = placements.map({ $0.y + $0.height }).max()
         else {
@@ -196,13 +178,50 @@ struct DocsPopoverStackView: View {
         guard deltaY != 0 else { return placements }
 
         return placements.map { placement in
-            DocsPopoverPlacement(
+            DocsPopoverPlacementSnapshot(
                 snapshot: placement.snapshot,
                 x: placement.x,
                 y: placement.y + deltaY,
                 width: placement.width,
                 height: placement.height
             )
+        }
+    }
+}
+
+struct DocsPopoverStackView: View {
+    let popovers: [DocsPopoverSnapshot]
+    let cursorOrigin: CGPoint
+    let theme: PopupChromeTheme
+    let cellSize: CGSize
+    let containerSize: CGSize
+    let languageHint: String
+
+    var body: some View {
+        let placements = DocsPopoverLayout.placements(
+            popovers: popovers,
+            cursorOrigin: cursorOrigin,
+            cellSize: cellSize,
+            containerSize: containerSize
+        )
+
+        ZStack(alignment: .topLeading) {
+            ForEach(placements) { placement in
+                DocsPopoverView(
+                    snapshot: placement.snapshot,
+                    width: placement.width,
+                    height: placement.height,
+                    theme: theme,
+                    languageHint: languageHint
+                )
+                .offset(x: placement.x, y: placement.y)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .onDisappear {
+            DispatchQueue.main.async {
+                KeyCaptureFocusBridge.shared.reclaimActive()
+            }
         }
     }
 }

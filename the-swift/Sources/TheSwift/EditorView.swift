@@ -315,6 +315,20 @@ struct EditorView: View {
             )
         }()
         let terminalPassthroughRects = terminalPaneLayouts.map(\.frame)
+        let docsPopupOrigin = docsPopupPixelPosition(
+            anchor: model.docsPopupAnchor,
+            framePlan: model.framePlan,
+            fallbackPlan: model.plan,
+            fallbackPaneOrigin: activePaneOrigin,
+            cellSize: cellSize
+        )
+        let docsPopupPassthroughRects = DocsPopoverLayout.placements(
+            popovers: docsPopoverSnapshots,
+            cursorOrigin: docsPopupOrigin,
+            cellSize: cellSize,
+            containerSize: contentProxy.size
+        )
+        .map(\.frame)
 
         ZStack {
             terminalCanvas(
@@ -350,6 +364,7 @@ struct EditorView: View {
                 signatureSnapshot: signatureSnapshot,
                 popupTheme: popupTheme,
                 activePaneOrigin: activePaneOrigin,
+                docsPopupOrigin: docsPopupOrigin,
                 cellSize: cellSize,
                 contentSize: contentProxy.size
             )
@@ -363,6 +378,7 @@ struct EditorView: View {
                 isSignatureOpen: isSignatureOpen,
                 splitResizeHandles: splitResizeHandles,
                 terminalPassthroughRects: terminalPassthroughRects,
+                popupPassthroughRects: docsPopupPassthroughRects,
                 pointerPanes: pointerPanes,
                 cursorExclusionRects: paneDragInteractionRects,
                 cellSize: cellSize
@@ -726,6 +742,7 @@ struct EditorView: View {
         signatureSnapshot: SignatureHelpSnapshot?,
         popupTheme: PopupChromeTheme,
         activePaneOrigin: CGPoint,
+        docsPopupOrigin: CGPoint,
         cellSize: CGSize,
         contentSize: CGSize
     ) -> some View {
@@ -753,11 +770,7 @@ struct EditorView: View {
             } else if !docsPopoverSnapshots.isEmpty {
                 DocsPopoverStackView(
                     popovers: docsPopoverSnapshots,
-                    cursorOrigin: cursorPixelPosition(
-                        plan: model.plan,
-                        paneOrigin: activePaneOrigin,
-                        cellSize: cellSize
-                    ),
+                    cursorOrigin: docsPopupOrigin,
                     theme: popupTheme,
                     cellSize: cellSize,
                     containerSize: contentSize,
@@ -815,11 +828,12 @@ struct EditorView: View {
         isSignatureOpen: Bool,
         splitResizeHandles: [ScrollCaptureView.SeparatorHandle],
         terminalPassthroughRects: [CGRect],
+        popupPassthroughRects: [CGRect],
         pointerPanes: [ScrollCaptureView.PaneHandle],
         cursorExclusionRects: [CGRect],
         cellSize: CGSize
     ) -> some View {
-        if !isOverlayOpen && !isCompletionOpen && !isDocsPopupOpen && !isSignatureOpen {
+        if !isOverlayOpen && !isCompletionOpen && !isSignatureOpen {
             ScrollCaptureView(
                 onScroll: { deltaX, deltaY, precise in
                     model.handlePointerScroll(deltaX: deltaX, deltaY: deltaY, precise: precise)
@@ -829,6 +843,7 @@ struct EditorView: View {
                 },
                 separators: splitResizeHandles,
                 passthroughRects: terminalPassthroughRects,
+                popupPassthroughRects: popupPassthroughRects,
                 panes: pointerPanes,
                 cursorExclusionRects: cursorExclusionRects,
                 cellSize: cellSize,
@@ -1066,6 +1081,19 @@ struct EditorView: View {
         )
     }
 
+    private func paneRect(
+        for paneId: UInt64,
+        in framePlan: RenderFramePlan
+    ) -> Rect? {
+        let count = Int(framePlan.pane_count())
+        for index in 0..<count {
+            let pane = framePlan.pane_at(UInt(index))
+            guard pane.pane_id() == paneId else { continue }
+            return pane.rect()
+        }
+        return nil
+    }
+
     private func drawFrame(
         in context: GraphicsContext,
         size: CGSize,
@@ -1198,6 +1226,31 @@ struct EditorView: View {
         return CGPoint(
             x: paneOrigin.x + contentOffsetX + CGFloat(pos.col) * cellSize.width,
             y: paneOrigin.y + CGFloat(pos.row) * cellSize.height
+        )
+    }
+
+    private func docsPopupPixelPosition(
+        anchor: DocsPopupAnchorSnapshot?,
+        framePlan: RenderFramePlan,
+        fallbackPlan: RenderPlan,
+        fallbackPaneOrigin: CGPoint,
+        cellSize: CGSize
+    ) -> CGPoint {
+        guard let anchor else {
+            return cursorPixelPosition(
+                plan: fallbackPlan,
+                paneOrigin: fallbackPaneOrigin,
+                cellSize: cellSize
+            )
+        }
+
+        let paneOrigin = panePixelOrigin(
+            paneRect(for: anchor.paneId, in: framePlan),
+            cellSize: cellSize
+        )
+        return CGPoint(
+            x: paneOrigin.x + CGFloat(anchor.col) * cellSize.width,
+            y: paneOrigin.y + CGFloat(anchor.row) * cellSize.height
         )
     }
 

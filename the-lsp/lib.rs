@@ -61,6 +61,7 @@ pub use event::{
   LspProgressKind,
 };
 pub use navigation::{
+  LspHoverDetails,
   LspLocation,
   LspPosition,
   LspRange,
@@ -73,6 +74,7 @@ pub use navigation::{
   goto_implementation_params,
   goto_type_definition_params,
   hover_params,
+  parse_hover_details_response,
   parse_document_highlights_response,
   parse_document_symbols_response,
   parse_hover_response,

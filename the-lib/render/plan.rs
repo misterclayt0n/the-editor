@@ -209,6 +209,7 @@ pub struct RenderCursor {
 pub enum RenderSelectionKind {
   Primary,
   Match,
+  Hover,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -46,6 +46,12 @@ struct EditorPaneSurfaceSnapshot: Identifiable, Equatable {
     var id: UInt64 { paneId }
 }
 
+struct DocsPopupAnchorSnapshot: Equatable {
+    let paneId: UInt64
+    let row: UInt16
+    let col: UInt16
+}
+
 private struct NativeTabOpenRequest: Decodable, Hashable {
     enum Kind: String, Decodable {
         case focusExisting = "focus_existing"
@@ -101,6 +107,7 @@ final class EditorModel: ObservableObject {
     @Published var editorSurfacePanes: [EditorPaneSurfaceSnapshot] = []
     @Published var isActivePaneTerminal: Bool = false
     @Published var uiTree: UiTreeSnapshot = .empty
+    @Published var docsPopupAnchor: DocsPopupAnchorSnapshot? = nil
     @Published var bufferTabsSnapshot: BufferTabsSnapshot? = nil
     @Published var navigationTitle: String = "untitled"
     @Published private(set) var isHostWindowFocused: Bool = false
@@ -270,6 +277,14 @@ final class EditorModel: ObservableObject {
 
         framePlan = app.frame_render_plan(editorId)
         plan = framePlan.active_plan()
+        let popupAnchor = app.docs_popup_anchor(editorId)
+        docsPopupAnchor = popupAnchor.has_value
+            ? DocsPopupAnchorSnapshot(
+                paneId: popupAnchor.pane_id,
+                row: popupAnchor.row,
+                col: popupAnchor.col
+            )
+            : nil
         let perfAfterFrame = perfEnabled ? perfNow() : 0
         splitSeparators = fetchSplitSeparators()
         updateTerminalPaneSnapshots(from: framePlan)

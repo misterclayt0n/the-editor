@@ -143,6 +143,7 @@ final class EditorModel: ObservableObject {
     private var lastPickerRoot: String? = nil
     private var lastPickerKind: UInt8 = 0
     private var lastFileTreeRefreshGeneration: UInt64 = 0
+    private var lastFileTreeVcsGeneration: UInt64 = 0
     private var lastFileTreeVisible: Bool = false
     private var lastFileTreeRoot: String = ""
     private var lastFileTreeMode: UInt8 = 0
@@ -1738,10 +1739,12 @@ final class EditorModel: ObservableObject {
         let mode = data.mode()
         let root = data.root().toString()
         let generation = data.refresh_generation()
+        let vcsGeneration = data.vcs_generation()
         let nodeCount = Int(data.node_count())
 
         if !force
             && generation == lastFileTreeRefreshGeneration
+            && vcsGeneration == lastFileTreeVcsGeneration
             && visible == lastFileTreeVisible
             && mode == lastFileTreeMode
             && root == lastFileTreeRoot
@@ -1764,7 +1767,9 @@ final class EditorModel: ObservableObject {
                     isDirectory: node.kind() == 1,
                     expanded: node.expanded(),
                     selected: node.selected(),
-                    hasUnloadedChildren: node.has_unloaded_children()
+                    hasUnloadedChildren: node.has_unloaded_children(),
+                    vcsStatus: VcsStatusSnapshot(rawValue: node.vcs_status()) ?? .none,
+                    vcsDescendantCount: Int(node.vcs_descendant_count())
                 )
             )
         }
@@ -1778,6 +1783,7 @@ final class EditorModel: ObservableObject {
             nodes: nodes
         )
         lastFileTreeRefreshGeneration = generation
+        lastFileTreeVcsGeneration = vcsGeneration
         lastFileTreeVisible = visible
         lastFileTreeMode = mode
         lastFileTreeRoot = root
@@ -2233,7 +2239,8 @@ final class EditorModel: ObservableObject {
                 subtitle: surfaceRailOpenBufferSubtitle(for: tab),
                 isActive: tab.isActive && !isActivePaneTerminal,
                 isModified: tab.modified,
-                statusText: nil,
+                statusText: tab.vcsStatus.token,
+                vcsStatus: tab.vcsStatus,
                 paneId: nil,
                 bufferId: tab.bufferId,
                 bufferIndex: tab.bufferIndex,
@@ -2255,6 +2262,7 @@ final class EditorModel: ObservableObject {
                     isActive: surface.isActive,
                     isModified: false,
                     statusText: nil,
+                    vcsStatus: .none,
                     paneId: surface.paneId,
                     bufferId: nil,
                     bufferIndex: nil,

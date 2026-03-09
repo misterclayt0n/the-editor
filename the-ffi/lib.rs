@@ -18,6 +18,7 @@ use std::{
     NonZeroUsize,
   },
   path::{
+    Component,
     Path,
     PathBuf,
   },
@@ -2684,6 +2685,185 @@ fn vcs_statusline_refresh_interval() -> Duration {
   Duration::from_millis(500)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
+#[repr(u8)]
+enum VcsFileStatusKind {
+  #[default]
+  None = 0,
+  Modified = 1,
+  Untracked = 2,
+  Conflict = 3,
+  Deleted = 4,
+  Renamed = 5,
+}
+
+impl VcsFileStatusKind {
+  fn from_change(change: &the_vcs::FileChange) -> Self {
+    match change {
+      the_vcs::FileChange::Modified { .. } => Self::Modified,
+      the_vcs::FileChange::Untracked { .. } => Self::Untracked,
+      the_vcs::FileChange::Conflict { .. } => Self::Conflict,
+      the_vcs::FileChange::Deleted { .. } => Self::Deleted,
+      the_vcs::FileChange::Renamed { .. } => Self::Renamed,
+    }
+  }
+
+  fn merge(self, other: Self) -> Self {
+    if self.priority() >= other.priority() {
+      self
+    } else {
+      other
+    }
+  }
+
+  fn priority(self) -> u8 {
+    match self {
+      Self::None => 0,
+      Self::Untracked => 1,
+      Self::Modified => 2,
+      Self::Renamed => 3,
+      Self::Deleted => 4,
+      Self::Conflict => 5,
+    }
+  }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+struct VcsChangeCounts {
+  modified:  usize,
+  untracked: usize,
+  conflict:  usize,
+  deleted:   usize,
+  renamed:   usize,
+}
+
+impl VcsChangeCounts {
+  fn record(&mut self, status: VcsFileStatusKind) {
+    match status {
+      VcsFileStatusKind::None => {},
+      VcsFileStatusKind::Modified => self.modified += 1,
+      VcsFileStatusKind::Untracked => self.untracked += 1,
+      VcsFileStatusKind::Conflict => self.conflict += 1,
+      VcsFileStatusKind::Deleted => self.deleted += 1,
+      VcsFileStatusKind::Renamed => self.renamed += 1,
+    }
+  }
+
+  fn summary_text(&self) -> Option<String> {
+    let mut parts = Vec::new();
+    if self.conflict > 0 {
+      parts.push(format!("U{}", self.conflict));
+    }
+    if self.modified > 0 {
+      parts.push(format!("M{}", self.modified));
+    }
+    if self.deleted > 0 {
+      parts.push(format!("D{}", self.deleted));
+    }
+    if self.renamed > 0 {
+      parts.push(format!("R{}", self.renamed));
+    }
+    if self.untracked > 0 {
+      parts.push(format!("?{}", self.untracked));
+    }
+    if parts.is_empty() {
+      None
+    } else {
+      Some(parts.join(" "))
+    }
+  }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+struct VcsUiState {
+  generation:               u64,
+  counts:                   VcsChangeCounts,
+  status_by_path:           HashMap<PathBuf, VcsFileStatusKind>,
+  directory_changed_counts: HashMap<PathBuf, usize>,
+}
+
+impl VcsUiState {
+  fn from_changes(changes: Vec<the_vcs::FileChange>) -> Self {
+    let mut status_by_path: HashMap<PathBuf, VcsFileStatusKind> = HashMap::new();
+    for change in changes {
+      let status = VcsFileStatusKind::from_change(&change);
+      let path = normalize_vcs_lookup_path(change.path());
+      status_by_path
+        .entry(path)
+        .and_modify(|existing| *existing = existing.merge(status))
+        .or_insert(status);
+    }
+
+    let mut counts = VcsChangeCounts::default();
+    let mut directory_changed_counts = HashMap::new();
+    for (path, status) in &status_by_path {
+      counts.record(*status);
+      let mut ancestor = path.parent();
+      while let Some(dir) = ancestor {
+        *directory_changed_counts.entry(dir.to_path_buf()).or_insert(0) += 1;
+        ancestor = dir.parent();
+      }
+    }
+
+    Self {
+      generation: 0,
+      counts,
+      status_by_path,
+      directory_changed_counts,
+    }
+  }
+
+  fn semantically_eq(&self, other: &Self) -> bool {
+    self.counts == other.counts
+      && self.status_by_path == other.status_by_path
+      && self.directory_changed_counts == other.directory_changed_counts
+  }
+
+  fn status_for_path(&self, path: &Path) -> VcsFileStatusKind {
+    let normalized = normalize_vcs_lookup_path(path);
+    self
+      .status_by_path
+      .get(&normalized)
+      .copied()
+      .unwrap_or(VcsFileStatusKind::None)
+  }
+
+  fn changed_descendant_count(&self, path: &Path) -> usize {
+    let normalized = normalize_vcs_lookup_path(path);
+    self
+      .directory_changed_counts
+      .get(&normalized)
+      .copied()
+      .unwrap_or(0)
+  }
+}
+
+fn normalize_vcs_lookup_path(path: &Path) -> PathBuf {
+  let absolute = if path.is_absolute() {
+    path.to_path_buf()
+  } else {
+    env::current_dir()
+      .unwrap_or_else(|_| PathBuf::from("."))
+      .join(path)
+  };
+
+  let mut normalized = PathBuf::new();
+  for component in absolute.components() {
+    match component {
+      Component::CurDir => {},
+      Component::ParentDir => {
+        normalized.pop();
+      },
+      other => normalized.push(other.as_os_str()),
+    }
+  }
+  normalized
+}
+
+fn format_vcs_statusline_text(info: &the_vcs::VcsStatuslineInfo) -> String {
+  info.statusline_text()
+}
+
 fn is_symbol_word_char(ch: char) -> bool {
   ch == '_' || ch.is_alphanumeric()
 }
@@ -4096,6 +4276,7 @@ pub struct App {
   lsp_spinner_index:               usize,
   lsp_spinner_last_tick:           Instant,
   vcs_statusline_last_tick:        Instant,
+  vcs_ui:                          VcsUiState,
   lsp_active_progress_tokens:      HashSet<String>,
   lsp_watched_file:                Option<LspWatchedFileState>,
   lsp_pending_requests:            HashMap<u64, PendingLspRequestKind>,
@@ -4364,10 +4545,16 @@ struct BufferTabItemSnapshotJson {
   is_active:      bool,
   file_path:      Option<String>,
   directory_hint: Option<String>,
+  vcs_status:     u8,
 }
 
-impl From<DefaultBufferTabItemSnapshot> for BufferTabItemSnapshotJson {
-  fn from(value: DefaultBufferTabItemSnapshot) -> Self {
+impl BufferTabItemSnapshotJson {
+  fn from_snapshot(value: DefaultBufferTabItemSnapshot, vcs_ui: &VcsUiState) -> Self {
+    let vcs_status = value
+      .file_path
+      .as_deref()
+      .map(|path| vcs_ui.status_for_path(path) as u8)
+      .unwrap_or(VcsFileStatusKind::None as u8);
     Self {
       buffer_id:      value.buffer_id,
       buffer_index:   value.buffer_index,
@@ -4376,6 +4563,7 @@ impl From<DefaultBufferTabItemSnapshot> for BufferTabItemSnapshotJson {
       is_active:      value.is_active,
       file_path:      value.file_path.map(|path| path.display().to_string()),
       directory_hint: value.directory_hint,
+      vcs_status,
     }
   }
 }
@@ -4442,8 +4630,8 @@ struct BufferTabsSnapshotJson {
   tabs:                Vec<BufferTabItemSnapshotJson>,
 }
 
-impl From<DefaultBufferTabsSnapshot> for BufferTabsSnapshotJson {
-  fn from(value: DefaultBufferTabsSnapshot) -> Self {
+impl BufferTabsSnapshotJson {
+  fn from_snapshot(value: DefaultBufferTabsSnapshot, vcs_ui: &VcsUiState) -> Self {
     Self {
       visible:             value.visible,
       active_tab:          value.active_tab,
@@ -4451,7 +4639,7 @@ impl From<DefaultBufferTabsSnapshot> for BufferTabsSnapshotJson {
       tabs:                value
         .tabs
         .into_iter()
-        .map(BufferTabItemSnapshotJson::from)
+        .map(|tab| BufferTabItemSnapshotJson::from_snapshot(tab, vcs_ui))
         .collect(),
     }
   }
@@ -4463,6 +4651,7 @@ pub struct FileTreeSnapshotData {
   root:               String,
   selected_path:      String,
   refresh_generation: u64,
+  vcs_generation:     u64,
   nodes:              Vec<FileTreeNodeFFI>,
 }
 
@@ -4474,6 +4663,7 @@ impl Default for FileTreeSnapshotData {
       root:               String::new(),
       selected_path:      String::new(),
       refresh_generation: 0,
+      vcs_generation:     0,
       nodes:              Vec::new(),
     }
   }
@@ -4495,6 +4685,9 @@ impl FileTreeSnapshotData {
   fn refresh_generation(&self) -> u64 {
     self.refresh_generation
   }
+  fn vcs_generation(&self) -> u64 {
+    self.vcs_generation
+  }
   fn node_count(&self) -> usize {
     self.nodes.len()
   }
@@ -4513,6 +4706,8 @@ pub struct FileTreeNodeFFI {
   expanded:              bool,
   selected:              bool,
   has_unloaded_children: bool,
+  vcs_status:            u8,
+  vcs_descendant_count:  usize,
 }
 
 impl Default for FileTreeNodeFFI {
@@ -4526,6 +4721,8 @@ impl Default for FileTreeNodeFFI {
       expanded:              false,
       selected:              false,
       has_unloaded_children: false,
+      vcs_status:            0,
+      vcs_descendant_count:  0,
     }
   }
 }
@@ -4555,11 +4752,18 @@ impl FileTreeNodeFFI {
   fn has_unloaded_children(&self) -> bool {
     self.has_unloaded_children
   }
+  fn vcs_status(&self) -> u8 {
+    self.vcs_status
+  }
+  fn vcs_descendant_count(&self) -> usize {
+    self.vcs_descendant_count
+  }
 }
 
 fn build_file_tree_snapshot_data(
   snapshot: DefaultFileTreeSnapshot,
   max_nodes: usize,
+  vcs_ui: &VcsUiState,
 ) -> FileTreeSnapshotData {
   let mode = match snapshot.mode {
     DefaultFileTreeMode::WorkspaceRoot => 0,
@@ -4585,6 +4789,16 @@ fn build_file_tree_snapshot_data(
         expanded: node.expanded,
         selected: node.selected,
         has_unloaded_children: node.has_unloaded_children,
+        vcs_status: if matches!(node.kind, DefaultFileTreeNodeKind::File) {
+          vcs_ui.status_for_path(node.path.as_path()) as u8
+        } else {
+          VcsFileStatusKind::None as u8
+        },
+        vcs_descendant_count: if matches!(node.kind, DefaultFileTreeNodeKind::Directory) {
+          vcs_ui.changed_descendant_count(node.path.as_path())
+        } else {
+          0
+        },
       }
     })
     .collect::<Vec<_>>();
@@ -4598,6 +4812,7 @@ fn build_file_tree_snapshot_data(
       .map(|path| path.to_string_lossy().into_owned())
       .unwrap_or_default(),
     refresh_generation: snapshot.refresh_generation,
+    vcs_generation: vcs_ui.generation,
     nodes,
   }
 }
@@ -4905,7 +5120,7 @@ impl App {
     let clipboard = Arc::new(RuntimeClipboardProvider::detect());
     set_docs_render_theme(&ui_theme);
 
-    Self {
+    let mut app = Self {
       inner: LibApp::default(),
       workspace_root,
       dispatch,
@@ -4927,6 +5142,7 @@ impl App {
       lsp_spinner_index: 0,
       lsp_spinner_last_tick: Instant::now(),
       vcs_statusline_last_tick: Instant::now(),
+      vcs_ui: VcsUiState::default(),
       lsp_active_progress_tokens: HashSet::new(),
       lsp_watched_file: None,
       lsp_pending_requests: HashMap::new(),
@@ -4956,7 +5172,9 @@ impl App {
       loader,
       native_tab_open_gateway_enabled: false,
       native_tab_open_requests: VecDeque::new(),
-    }
+    };
+    let _ = app.refresh_vcs_ui_state();
+    app
   }
 
   fn apply_effective_theme(&mut self, theme: Theme) {
@@ -5095,6 +5313,7 @@ impl App {
       EditorState::new(self.loader.clone(), self.workspace_root.as_path()),
     );
     self.active_editor.get_or_insert(id);
+    let _ = self.refresh_vcs_diff_base_for_editor(id);
     ffi::EditorId::from(id)
   }
 
@@ -5903,7 +6122,7 @@ impl App {
     if self.activate(id).is_none() {
       return "null".to_string();
     }
-    let snapshot = BufferTabsSnapshotJson::from(buffer_tabs_snapshot(self));
+    let snapshot = BufferTabsSnapshotJson::from_snapshot(buffer_tabs_snapshot(self), &self.vcs_ui);
     serde_json::to_string(&snapshot).unwrap_or_else(|_| "null".to_string())
   }
 
@@ -7042,7 +7261,7 @@ impl App {
       return FileTreeSnapshotData::default();
     }
     let snapshot = self.active_state_mut().file_tree.snapshot(max_nodes);
-    build_file_tree_snapshot_data(snapshot, max_nodes)
+    build_file_tree_snapshot_data(snapshot, max_nodes, &self.vcs_ui)
   }
 
   /// Direct FFI preview data — no JSON serialization.
@@ -7335,15 +7554,16 @@ impl App {
   }
 
   fn tick_vcs_statusline(&mut self) -> bool {
-    let Some(id) = self.active_editor else {
-      return false;
-    };
     let now = Instant::now();
     if now.duration_since(self.vcs_statusline_last_tick) < vcs_statusline_refresh_interval() {
       return false;
     }
     self.vcs_statusline_last_tick = now;
-    self.refresh_vcs_diff_base_for_editor(id)
+    let cache_changed = self.refresh_vcs_ui_state();
+    let editor_changed = self
+      .active_editor
+      .is_some_and(|id| self.refresh_vcs_diff_base_for_editor(id));
+    cache_changed || editor_changed
   }
 
   fn lsp_statusline_text_value(&self) -> Option<String> {
@@ -11149,6 +11369,7 @@ impl App {
         ),
       );
       self.refresh_lsp_runtime_for_active_file();
+      let _ = self.refresh_vcs_diff_base_for_editor(id);
     }
     true
   }
@@ -11392,15 +11613,35 @@ impl App {
     }
   }
 
+  fn refresh_vcs_ui_state(&mut self) -> bool {
+    let next = if self.workspace_root.exists() {
+      match self.vcs_provider.collect_changed_files(&self.workspace_root) {
+        Ok(changes) => VcsUiState::from_changes(changes),
+        Err(_) => VcsUiState::default(),
+      }
+    } else {
+      VcsUiState::default()
+    };
+
+    if self.vcs_ui.semantically_eq(&next) {
+      return false;
+    }
+
+    let mut next = next;
+    next.generation = self.vcs_ui.generation.saturating_add(1);
+    self.vcs_ui = next;
+    true
+  }
+
   fn refresh_vcs_diff_base_for_editor(&mut self, id: LibEditorId) -> bool {
     let path = self
       .inner
       .editor(id)
       .and_then(|editor| editor.active_file_path().map(Path::to_path_buf));
-    let statusline = path
-      .as_deref()
-      .and_then(|path| self.vcs_provider.get_statusline_info(path))
-      .map(|info| info.statusline_text());
+    let statusline = self
+      .vcs_provider
+      .get_statusline_info(path.as_deref().unwrap_or(self.workspace_root.as_path()))
+      .map(|info| format_vcs_statusline_text(&info));
     let mut next_handle: Option<DiffHandle> = None;
     let mut next_signs: BTreeMap<usize, RenderGutterDiffKind> = BTreeMap::new();
 
@@ -13460,6 +13701,7 @@ mod ffi {
     fn root(self: &FileTreeSnapshotData) -> String;
     fn selected_path(self: &FileTreeSnapshotData) -> String;
     fn refresh_generation(self: &FileTreeSnapshotData) -> u64;
+    fn vcs_generation(self: &FileTreeSnapshotData) -> u64;
     fn node_count(self: &FileTreeSnapshotData) -> usize;
     fn node_at(self: &FileTreeSnapshotData, index: usize) -> FileTreeNodeFFI;
   }
@@ -13474,6 +13716,8 @@ mod ffi {
     fn expanded(self: &FileTreeNodeFFI) -> bool;
     fn selected(self: &FileTreeNodeFFI) -> bool;
     fn has_unloaded_children(self: &FileTreeNodeFFI) -> bool;
+    fn vcs_status(self: &FileTreeNodeFFI) -> u8;
+    fn vcs_descendant_count(self: &FileTreeNodeFFI) -> usize;
   }
 
   extern "Rust" {
@@ -14126,6 +14370,10 @@ mod tests {
     PathEvent,
     PathEventKind,
   };
+  use the_vcs::{
+    FileChange,
+    VcsStatuslineInfo,
+  };
 
   use super::{
     App,
@@ -14139,6 +14387,9 @@ mod tests {
     capabilities_support_single_char,
     dedupe_inline_diagnostic_lines,
     ffi,
+    VcsFileStatusKind,
+    VcsUiState,
+    format_vcs_statusline_text,
   };
 
   #[test]
@@ -14159,6 +14410,54 @@ mod tests {
     let line = plan.line_at(0);
     assert_eq!(line.span_count(), 1);
     assert_eq!(line.span_at(0).text(), "hello");
+  }
+
+  #[test]
+  fn vcs_ui_state_tracks_statuses_and_collapsed_directory_counts() {
+    let state = VcsUiState::from_changes(vec![
+      FileChange::Modified {
+        path: PathBuf::from("/tmp/the-editor-vcs/src/main.c"),
+      },
+      FileChange::Untracked {
+        path: PathBuf::from("/tmp/the-editor-vcs/src/new.c"),
+      },
+      FileChange::Conflict {
+        path: PathBuf::from("/tmp/the-editor-vcs/README.md"),
+      },
+      FileChange::Renamed {
+        from_path: PathBuf::from("/tmp/the-editor-vcs/old.rs"),
+        to_path:   PathBuf::from("/tmp/the-editor-vcs/src/renamed.rs"),
+      },
+    ]);
+
+    assert_eq!(
+      state.status_for_path(Path::new("/tmp/the-editor-vcs/src/main.c")),
+      VcsFileStatusKind::Modified
+    );
+    assert_eq!(
+      state.status_for_path(Path::new("/tmp/the-editor-vcs/src/new.c")),
+      VcsFileStatusKind::Untracked
+    );
+    assert_eq!(
+      state.status_for_path(Path::new("/tmp/the-editor-vcs/src/renamed.rs")),
+      VcsFileStatusKind::Renamed
+    );
+    assert_eq!(
+      state.status_for_path(Path::new("/tmp/the-editor-vcs/old.rs")),
+      VcsFileStatusKind::None
+    );
+    assert_eq!(state.changed_descendant_count(Path::new("/tmp/the-editor-vcs/src")), 3);
+    assert_eq!(state.changed_descendant_count(Path::new("/tmp/the-editor-vcs")), 4);
+    assert_eq!(state.counts.summary_text().as_deref(), Some("U1 M1 R1 ?1"));
+  }
+
+  #[test]
+  fn format_vcs_statusline_text_returns_branch_only() {
+    let info = VcsStatuslineInfo::Git {
+      branch: "main".to_string(),
+    };
+
+    assert_eq!(format_vcs_statusline_text(&info), "main");
   }
 
   #[test]

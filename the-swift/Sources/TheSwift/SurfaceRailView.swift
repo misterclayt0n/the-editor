@@ -15,6 +15,7 @@ struct SurfaceRailItemSnapshot: Identifiable, Equatable {
     let isActive: Bool
     let isModified: Bool
     let statusText: String?
+    let vcsStatus: VcsStatusSnapshot
     let paneId: UInt64?
     let bufferId: UInt64?
     let bufferIndex: Int?
@@ -551,6 +552,7 @@ private final class SurfaceRailItemCellView: NSTableCellView {
     private let titleLabel = NSTextField(labelWithString: "")
     private let subtitleLabel = NSTextField(labelWithString: "")
     private let modifiedDot = DotView()
+    private let statusLabel = NSTextField(labelWithString: "")
     private let closeButton = NSButton()
     private var currentItem: SurfaceRailItemSnapshot?
     private var trackingArea: NSTrackingArea?
@@ -579,6 +581,13 @@ private final class SurfaceRailItemCellView: NSTableCellView {
         modifiedDot.translatesAutoresizingMaskIntoConstraints = false
         modifiedDot.isHidden = true
 
+        statusLabel.translatesAutoresizingMaskIntoConstraints = false
+        statusLabel.font = .monospacedSystemFont(ofSize: 10, weight: .semibold)
+        statusLabel.lineBreakMode = .byClipping
+        statusLabel.usesSingleLineMode = true
+        statusLabel.alignment = .left
+        statusLabel.isHidden = true
+
         closeButton.translatesAutoresizingMaskIntoConstraints = false
         closeButton.bezelStyle = .inline
         closeButton.isBordered = false
@@ -595,6 +604,7 @@ private final class SurfaceRailItemCellView: NSTableCellView {
         addSubview(titleLabel)
         addSubview(subtitleLabel)
         addSubview(modifiedDot)
+        addSubview(statusLabel)
         addSubview(closeButton)
 
         self.imageView = iconView
@@ -614,6 +624,10 @@ private final class SurfaceRailItemCellView: NSTableCellView {
             modifiedDot.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
             modifiedDot.widthAnchor.constraint(equalToConstant: 6),
             modifiedDot.heightAnchor.constraint(equalToConstant: 6),
+
+            statusLabel.leadingAnchor.constraint(equalTo: modifiedDot.trailingAnchor, constant: 4),
+            statusLabel.firstBaselineAnchor.constraint(equalTo: titleLabel.firstBaselineAnchor),
+            statusLabel.trailingAnchor.constraint(lessThanOrEqualTo: closeButton.leadingAnchor, constant: -4),
 
             subtitleLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
             subtitleLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 1),
@@ -681,6 +695,8 @@ private final class SurfaceRailItemCellView: NSTableCellView {
         subtitleLabel.stringValue = item.subtitle ?? ""
         subtitleLabel.isHidden = (item.subtitle ?? "").isEmpty
         modifiedDot.isHidden = !item.isModified
+        statusLabel.stringValue = item.statusText ?? ""
+        statusLabel.isHidden = (item.statusText ?? "").isEmpty
         closeButton.isHidden = !item.canClose
         closeButton.isEnabled = item.canClose
         iconView.image = NSImage(
@@ -708,6 +724,7 @@ private final class SurfaceRailItemCellView: NSTableCellView {
             ? NSColor.alternateSelectedControlTextColor.withAlphaComponent(0.72)
             : .secondaryLabelColor
         modifiedDot.fillColor = emphasized ? .alternateSelectedControlTextColor : .systemOrange
+        statusLabel.textColor = currentItem?.vcsStatus.appKitTextColor(emphasized: emphasized) ?? .tertiaryLabelColor
         closeButton.contentTintColor = emphasized
             ? NSColor.alternateSelectedControlTextColor.withAlphaComponent(0.8)
             : .tertiaryLabelColor

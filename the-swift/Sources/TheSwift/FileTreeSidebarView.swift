@@ -11,6 +11,8 @@ struct FileTreeNodeSnapshot: Identifiable, Equatable {
     let expanded: Bool
     let selected: Bool
     let hasUnloadedChildren: Bool
+    let vcsStatus: VcsStatusSnapshot
+    let vcsDescendantCount: Int
 }
 
 struct FileTreeSnapshot: Equatable {
@@ -45,6 +47,9 @@ private final class FileTreeNode: NSObject {
     let name: String
     let isDirectory: Bool
     let hasUnloadedChildren: Bool
+    let expanded: Bool
+    let vcsStatus: VcsStatusSnapshot
+    let vcsDescendantCount: Int
     var children: [FileTreeNode]
 
     init(
@@ -53,6 +58,9 @@ private final class FileTreeNode: NSObject {
         name: String,
         isDirectory: Bool,
         hasUnloadedChildren: Bool,
+        expanded: Bool,
+        vcsStatus: VcsStatusSnapshot,
+        vcsDescendantCount: Int,
         children: [FileTreeNode] = []
     ) {
         self.id = id
@@ -60,6 +68,9 @@ private final class FileTreeNode: NSObject {
         self.name = name
         self.isDirectory = isDirectory
         self.hasUnloadedChildren = hasUnloadedChildren
+        self.expanded = expanded
+        self.vcsStatus = vcsStatus
+        self.vcsDescendantCount = vcsDescendantCount
         self.children = children
     }
 
@@ -70,6 +81,9 @@ private final class FileTreeNode: NSObject {
             name: snapshot.name,
             isDirectory: snapshot.isDirectory,
             hasUnloadedChildren: snapshot.hasUnloadedChildren,
+            expanded: snapshot.expanded,
+            vcsStatus: snapshot.vcsStatus,
+            vcsDescendantCount: snapshot.vcsDescendantCount,
             children: []
         )
     }
@@ -635,6 +649,8 @@ private struct NavigatorSidebarView: NSViewRepresentable {
 private final class FileTreeCellView: NSTableCellView {
     private let iconView = NSImageView(frame: .zero)
     private let label = NSTextField(labelWithString: "")
+    private let statusLabel = NSTextField(labelWithString: "")
+    private var currentNode: FileTreeNode?
 
     convenience init(identifier: NSUserInterfaceItemIdentifier) {
         self.init(frame: .zero)
@@ -651,8 +667,14 @@ private final class FileTreeCellView: NSTableCellView {
         label.font = .systemFont(ofSize: 12)
         label.textColor = .labelColor
 
+        statusLabel.translatesAutoresizingMaskIntoConstraints = false
+        statusLabel.lineBreakMode = .byClipping
+        statusLabel.usesSingleLineMode = true
+        statusLabel.alignment = .right
+
         addSubview(iconView)
         addSubview(label)
+        addSubview(statusLabel)
         // Wire NSTableCellView outlets — AppKit auto-manages label color on selection.
         self.imageView = iconView
         self.textField = label
@@ -667,16 +689,49 @@ private final class FileTreeCellView: NSTableCellView {
             // 4px gap after icon, 4px trailing margin.
             label.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 4),
             label.centerYAnchor.constraint(equalTo: centerYAnchor),
-            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
+            label.trailingAnchor.constraint(lessThanOrEqualTo: statusLabel.leadingAnchor, constant: -6),
+
+            statusLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+            statusLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
         ])
     }
 
+    override var backgroundStyle: NSView.BackgroundStyle {
+        didSet { updateStatusAppearance() }
+    }
+
     func configure(node: FileTreeNode) {
+        currentNode = node
         label.stringValue = node.name
         let (image, tint) = Self.iconAndTint(for: node)
         iconView.image = image
         if #available(macOS 11.0, *) {
             iconView.contentTintColor = tint
+        }
+        if node.isDirectory {
+            let count = (!node.expanded && node.vcsDescendantCount > 0) ? String(node.vcsDescendantCount) : ""
+            statusLabel.stringValue = count
+            statusLabel.isHidden = count.isEmpty
+            statusLabel.font = .systemFont(ofSize: 10, weight: .medium)
+        } else {
+            let token = node.vcsStatus.token ?? ""
+            statusLabel.stringValue = token
+            statusLabel.isHidden = token.isEmpty
+            statusLabel.font = .monospacedSystemFont(ofSize: 10, weight: .semibold)
+        }
+        updateStatusAppearance()
+    }
+
+    private func updateStatusAppearance() {
+        let emphasized = backgroundStyle == .emphasized
+        guard let currentNode else {
+            statusLabel.textColor = .tertiaryLabelColor
+            return
+        }
+        if currentNode.isDirectory {
+            statusLabel.textColor = VcsStatusSnapshot.neutralCountColor(emphasized: emphasized)
+        } else {
+            statusLabel.textColor = currentNode.vcsStatus.appKitTextColor(emphasized: emphasized)
         }
     }
 

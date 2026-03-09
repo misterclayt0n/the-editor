@@ -8,6 +8,7 @@ struct BufferTabItemSnapshot: Identifiable, Decodable, Equatable {
     let isActive: Bool
     let filePath: String?
     let directoryHint: String?
+    let vcsStatus: VcsStatusSnapshot
 
     var id: UInt64 { bufferId }
 }
@@ -95,6 +96,13 @@ struct BufferTabBarView: View {
                 Text(tab.title)
                     .lineLimit(1)
                     .truncationMode(.tail)
+                    .layoutPriority(1)
+
+                if let token = tab.vcsStatus.token {
+                    Text(token)
+                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(tab.vcsStatus.swiftUIColor.opacity(tab.isActive ? 0.95 : 0.86))
+                }
 
                 if let directoryHint = tab.directoryHint, !directoryHint.isEmpty {
                     Text(directoryHint)

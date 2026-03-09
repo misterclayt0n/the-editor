@@ -2810,6 +2810,10 @@ extension FileTreeSnapshotDataRef {
         __swift_bridge__$FileTreeSnapshotData$refresh_generation(ptr)
     }
 
+    public func vcs_generation() -> UInt64 {
+        __swift_bridge__$FileTreeSnapshotData$vcs_generation(ptr)
+    }
+
     public func node_count() -> UInt {
         __swift_bridge__$FileTreeSnapshotData$node_count(ptr)
     }
@@ -2924,6 +2928,14 @@ extension FileTreeNodeFFIRef {
 
     public func has_unloaded_children() -> Bool {
         __swift_bridge__$FileTreeNodeFFI$has_unloaded_children(ptr)
+    }
+
+    public func vcs_status() -> UInt8 {
+        __swift_bridge__$FileTreeNodeFFI$vcs_status(ptr)
+    }
+
+    public func vcs_descendant_count() -> UInt {
+        __swift_bridge__$FileTreeNodeFFI$vcs_descendant_count(ptr)
     }
 }
 extension FileTreeNodeFFI: Vectorizable {

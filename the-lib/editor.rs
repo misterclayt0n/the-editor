@@ -776,6 +776,22 @@ impl Editor {
     true
   }
 
+  pub fn move_pane(&mut self, pane: PaneId, target: PaneId, direction: PaneDirection) -> bool {
+    if !self.split_tree.move_pane(pane, target, direction) {
+      return false;
+    }
+    let active = self.split_tree.active_pane();
+    let Some(content) = self.pane_content.get(&active).copied() else {
+      return false;
+    };
+    if let PaneContent::EditorBuffer { buffer_index } = content {
+      self.active_buffer = buffer_index.min(self.buffers.len().saturating_sub(1));
+    } else {
+      self.active_buffer = self.active_buffer.min(self.buffers.len().saturating_sub(1));
+    }
+    true
+  }
+
   pub fn swap_active_pane(&mut self, direction: PaneDirection) -> bool {
     self.split_tree.swap_active(direction)
   }
@@ -1815,6 +1831,82 @@ mod tests {
     assert_eq!(editor.active_buffer_index(), right_bottom_idx);
     assert!(editor.jump_active_pane(PaneDirection::Down));
     assert_eq!(editor.active_buffer_index(), right_top_idx);
+  }
+
+  #[test]
+  fn editor_move_pane_reorders_tree_and_focuses_moved_buffer() {
+    let doc_id = DocumentId::new(NonZeroUsize::new(1).unwrap());
+    let doc = Document::new(doc_id, Rope::from("one"));
+    let viewport = Rect::new(0, 0, 80, 24);
+    let view = ViewState::new(viewport, Position::new(0, 0));
+    let editor_id = EditorId::new(NonZeroUsize::new(1).unwrap());
+    let mut editor = Editor::new(editor_id, doc, view);
+
+    let left_pane = editor.active_pane_id();
+    assert!(editor.split_active_pane(SplitAxis::Vertical));
+    let right_top_pane = editor.active_pane_id();
+    let right_top_idx = editor.open_buffer(
+      Rope::from("right-top"),
+      ViewState::new(viewport, Position::new(0, 0)),
+      Some(PathBuf::from("/tmp/right-top.txt")),
+    );
+    assert_eq!(editor.active_buffer_index(), right_top_idx);
+
+    assert!(editor.split_active_pane(SplitAxis::Horizontal));
+    let right_bottom_pane = editor.active_pane_id();
+    let right_bottom_idx = editor.open_buffer(
+      Rope::from("right-bottom"),
+      ViewState::new(viewport, Position::new(0, 0)),
+      Some(PathBuf::from("/tmp/right-bottom.txt")),
+    );
+    assert_eq!(editor.active_buffer_index(), right_bottom_idx);
+
+    assert!(editor.move_pane(left_pane, right_top_pane, PaneDirection::Right));
+    assert_eq!(editor.active_pane_id(), left_pane);
+    assert_eq!(editor.active_buffer_index(), 0);
+    assert_eq!(
+      editor
+        .frame_pane_snapshots(viewport)
+        .into_iter()
+        .map(|pane| pane.pane_id)
+        .collect::<Vec<_>>(),
+      vec![right_top_pane, left_pane, right_bottom_pane]
+    );
+  }
+
+  #[test]
+  fn editor_move_pane_preserves_terminal_attachment() {
+    let doc_id = DocumentId::new(NonZeroUsize::new(1).unwrap());
+    let doc = Document::new(doc_id, Rope::from("one"));
+    let viewport = Rect::new(0, 0, 80, 24);
+    let view = ViewState::new(viewport, Position::new(0, 0));
+    let editor_id = EditorId::new(NonZeroUsize::new(1).unwrap());
+    let mut editor = Editor::new(editor_id, doc, view);
+
+    let terminal_id = editor.replace_active_pane_with_terminal();
+    let terminal_pane = editor.active_pane_id();
+
+    assert!(editor.split_active_pane(SplitAxis::Vertical));
+    let editor_pane = editor.active_pane_id();
+
+    assert!(editor.move_pane(terminal_pane, editor_pane, PaneDirection::Right));
+    assert_eq!(editor.active_pane_id(), terminal_pane);
+    assert_eq!(
+      editor.terminal_surface_snapshots(),
+      vec![TerminalSurfaceSnapshot {
+        terminal_id,
+        attached_pane: Some(terminal_pane),
+        is_active: true,
+      }]
+    );
+    assert_eq!(
+      editor
+        .frame_pane_snapshots(viewport)
+        .into_iter()
+        .map(|pane| pane.pane_id)
+        .collect::<Vec<_>>(),
+      vec![editor_pane, terminal_pane]
+    );
   }
 
   #[test]

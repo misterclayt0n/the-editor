@@ -390,6 +390,21 @@ impl SplitTree {
     true
   }
 
+  pub fn move_pane(
+    &mut self,
+    pane: PaneId,
+    target: PaneId,
+    direction: PaneDirection,
+  ) -> bool {
+    let Ok(moved) = self.try_move_pane(pane, target, direction) else {
+      return false;
+    };
+    if moved {
+      debug_assert!(self.validate().is_ok());
+    }
+    moved
+  }
+
   pub fn transpose_active_branch(&mut self) -> bool {
     let Some(leaf_id) = self.pane_nodes.get(&self.active).copied() else {
       return false;
@@ -419,6 +434,32 @@ impl SplitTree {
       SplitNode::Branch { axis, .. } => Some(axis),
       SplitNode::Leaf { .. } => None,
     }
+  }
+
+  fn try_move_pane(
+    &mut self,
+    pane: PaneId,
+    target: PaneId,
+    direction: PaneDirection,
+  ) -> Result<bool, SplitTreeError> {
+    if pane == target || self.pane_count() <= 1 {
+      return Ok(false);
+    }
+    if !self.contains_pane(pane) {
+      return Err(SplitTreeError::UnknownPane(pane));
+    }
+    if !self.contains_pane(target) {
+      return Err(SplitTreeError::UnknownPane(target));
+    }
+
+    if self.active == pane {
+      self.active = target;
+    }
+
+    self.detach_pane_leaf(pane)?;
+    self.insert_existing_pane(pane, target, direction)?;
+    self.active = pane;
+    Ok(true)
   }
 
   pub fn layout(&self, area: Rect) -> Vec<(PaneId, Rect)> {
@@ -684,6 +725,125 @@ impl SplitTree {
     let state = self.nodes.get_mut(&child).ok_or(SplitTreeError::Corrupt)?;
     state.parent = parent;
     Ok(())
+  }
+
+  fn detach_pane_leaf(&mut self, pane: PaneId) -> Result<(), SplitTreeError> {
+    let leaf = *self
+      .pane_nodes
+      .get(&pane)
+      .ok_or(SplitTreeError::UnknownPane(pane))?;
+    let parent = self.node_parent(leaf).ok_or(SplitTreeError::LastPane)?;
+
+    let (first, second) = match self.node(parent).ok_or(SplitTreeError::Corrupt)? {
+      SplitNode::Branch { first, second, .. } => (first, second),
+      SplitNode::Leaf { .. } => return Err(SplitTreeError::Corrupt),
+    };
+    let sibling = if first == leaf {
+      second
+    } else if second == leaf {
+      first
+    } else {
+      return Err(SplitTreeError::Corrupt);
+    };
+
+    let grand_parent = self.node_parent(parent);
+
+    self.nodes.remove(&leaf);
+    self.nodes.remove(&parent);
+    self.pane_nodes.remove(&pane);
+
+    if let Some(grand_parent) = grand_parent {
+      self.replace_child(grand_parent, parent, sibling)?;
+      self.set_parent(sibling, Some(grand_parent))?;
+    } else {
+      self.root = sibling;
+      self.set_parent(sibling, None)?;
+    }
+
+    Ok(())
+  }
+
+  fn insert_existing_pane(
+    &mut self,
+    pane: PaneId,
+    target: PaneId,
+    direction: PaneDirection,
+  ) -> Result<(), SplitTreeError> {
+    let target_leaf = *self
+      .pane_nodes
+      .get(&target)
+      .ok_or(SplitTreeError::UnknownPane(target))?;
+    let target_parent = self.node_parent(target_leaf);
+    let branch_id = self.alloc_node_id();
+    let leaf_id = self.alloc_node_id();
+    let axis = Self::axis_for_direction(direction);
+    let (first, second) = if Self::direction_places_before(direction) {
+      (leaf_id, target_leaf)
+    } else {
+      (target_leaf, leaf_id)
+    };
+
+    self.nodes.insert(leaf_id, NodeState {
+      parent: Some(branch_id),
+      node:   SplitNode::Leaf { pane },
+    });
+    self.nodes.insert(branch_id, NodeState {
+      parent: target_parent,
+      node:   SplitNode::Branch {
+        axis,
+        ratio: 0.5,
+        first,
+        second,
+      },
+    });
+
+    if let Some(target_parent) = target_parent {
+      self.replace_child(target_parent, target_leaf, branch_id)?;
+    } else {
+      self.root = branch_id;
+    }
+    self.set_parent(target_leaf, Some(branch_id))?;
+    self.pane_nodes.insert(pane, leaf_id);
+    Ok(())
+  }
+
+  fn replace_child(
+    &mut self,
+    parent: SplitNodeId,
+    old_child: SplitNodeId,
+    new_child: SplitNodeId,
+  ) -> Result<(), SplitTreeError> {
+    let state = self.nodes.get_mut(&parent).ok_or(SplitTreeError::Corrupt)?;
+    let SplitNode::Branch {
+      first: ref mut branch_first,
+      second: ref mut branch_second,
+      ..
+    } = state.node
+    else {
+      return Err(SplitTreeError::Corrupt);
+    };
+
+    if *branch_first == old_child {
+      *branch_first = new_child;
+      return Ok(());
+    }
+    if *branch_second == old_child {
+      *branch_second = new_child;
+      return Ok(());
+    }
+
+    Err(SplitTreeError::Corrupt)
+  }
+
+  fn axis_for_direction(direction: PaneDirection) -> SplitAxis {
+    match direction {
+      PaneDirection::Left | PaneDirection::Right => SplitAxis::Vertical,
+      PaneDirection::Up | PaneDirection::Down => SplitAxis::Horizontal,
+    }
+  }
+
+  fn direction_places_before(direction: PaneDirection) -> bool {
+    matches!(direction, PaneDirection::Left | PaneDirection::Up)
   }
 
   fn find_pane_in_direction(&self, pane: PaneId, direction: PaneDirection) -> Option<PaneId> {
@@ -1008,6 +1168,47 @@ mod tests {
 
     assert!(tree.jump_active(PaneDirection::Down));
     assert_eq!(tree.active_pane(), right_top);
+    assert_eq!(tree.validate(), Ok(()));
+  }
+
+  #[test]
+  fn move_pane_reinserts_existing_leaf_at_target_edge() {
+    let mut tree = SplitTree::new();
+    let left = tree.active_pane();
+    let right_top = tree.split_active(SplitAxis::Vertical);
+    let right_bottom = tree.split_active(SplitAxis::Horizontal);
+
+    assert_eq!(tree.pane_order(), vec![left, right_top, right_bottom]);
+    assert!(tree.move_pane(left, right_top, PaneDirection::Right));
+
+    assert_eq!(tree.active_pane(), left);
+    assert_eq!(tree.pane_order(), vec![right_top, left, right_bottom]);
+    assert_eq!(tree.validate(), Ok(()));
+  }
+
+  #[test]
+  fn move_pane_to_outer_edge_preserves_valid_tree() {
+    let mut tree = SplitTree::new();
+    let first = tree.active_pane();
+    let second = tree.split_active(SplitAxis::Vertical);
+    let third = tree.split_active(SplitAxis::Horizontal);
+
+    assert_eq!(tree.pane_order(), vec![first, second, third]);
+    assert!(tree.move_pane(third, first, PaneDirection::Left));
+
+    assert_eq!(tree.active_pane(), third);
+    assert_eq!(tree.pane_order(), vec![third, first, second]);
+    assert_eq!(tree.validate(), Ok(()));
+  }
+
+  #[test]
+  fn move_pane_rejects_self_drop() {
+    let mut tree = SplitTree::new();
+    let first = tree.active_pane();
+    let second = tree.split_active(SplitAxis::Vertical);
+
+    assert!(!tree.move_pane(second, second, PaneDirection::Left));
+    assert_eq!(tree.pane_order(), vec![first, second]);
     assert_eq!(tree.validate(), Ok(()));
   }
 

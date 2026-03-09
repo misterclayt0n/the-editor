@@ -466,6 +466,29 @@ final class EditorModel: ObservableObject {
         refresh(trigger: "split_resize_drag")
     }
 
+    func paneDragPreviewTitle(for paneId: UInt64) -> String {
+        if let editorSurface = editorSurfacePanes.first(where: { $0.paneId == paneId }) {
+            return normalizeFallbackTitle(editorSurface.title)
+        }
+        if let terminalPane = terminalPanes.first(where: { $0.paneId == paneId }) {
+            let metadata = GhosttyRuntime.shared.terminalMetadata(
+                runtimeId: runtimeInstanceId,
+                for: terminalPane.terminalId
+            )
+            return terminalPresentationTitle(from: metadata)
+        }
+        return "pane"
+    }
+
+    @discardableResult
+    func movePane(sourcePaneId: UInt64, destinationPaneId: UInt64, directionRaw: UInt8) -> Bool {
+        guard app.move_pane(editorId, sourcePaneId, destinationPaneId, directionRaw) else {
+            return false
+        }
+        refresh(trigger: "pane_move_drag")
+        return true
+    }
+
     @discardableResult
     private func splitActivePane(axis: PaneSplitAxis) -> Bool {
         let wasTerminal = isActivePaneTerminal

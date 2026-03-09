@@ -199,6 +199,18 @@ void* __swift_bridge__$Vec_RenderFramePlan$get_mut(void* vec_ptr, uintptr_t inde
 uintptr_t __swift_bridge__$Vec_RenderFramePlan$len(void* vec_ptr);
 void* __swift_bridge__$Vec_RenderFramePlan$as_ptr(void* vec_ptr);
 
+typedef struct EditorSurfaceSnapshot EditorSurfaceSnapshot;
+void __swift_bridge__$EditorSurfaceSnapshot$_free(void* self);
+
+void* __swift_bridge__$Vec_EditorSurfaceSnapshot$new(void);
+void __swift_bridge__$Vec_EditorSurfaceSnapshot$drop(void* vec_ptr);
+void __swift_bridge__$Vec_EditorSurfaceSnapshot$push(void* vec_ptr, void* item_ptr);
+void* __swift_bridge__$Vec_EditorSurfaceSnapshot$pop(void* vec_ptr);
+void* __swift_bridge__$Vec_EditorSurfaceSnapshot$get(void* vec_ptr, uintptr_t index);
+void* __swift_bridge__$Vec_EditorSurfaceSnapshot$get_mut(void* vec_ptr, uintptr_t index);
+uintptr_t __swift_bridge__$Vec_EditorSurfaceSnapshot$len(void* vec_ptr);
+void* __swift_bridge__$Vec_EditorSurfaceSnapshot$as_ptr(void* vec_ptr);
+
 typedef struct TerminalSurfaceSnapshot TerminalSurfaceSnapshot;
 void __swift_bridge__$TerminalSurfaceSnapshot$_free(void* self);
 
@@ -325,6 +337,7 @@ bool __swift_bridge__$App$execute_command_named(void* self, struct __swift_bridg
 bool __swift_bridge__$App$is_active_pane_terminal(void* self, struct __swift_bridge__$EditorId id);
 void* __swift_bridge__$App$active_file_path(void* self, struct __swift_bridge__$EditorId id);
 void __swift_bridge__$App$set_native_tab_open_gateway(void* self, bool enabled);
+void __swift_bridge__$App$set_inline_diagnostic_rendering_enabled(void* self, bool enabled);
 void* __swift_bridge__$App$take_native_tab_open_request_path(void* self);
 bool __swift_bridge__$App$set_active_cursor(void* self, struct __swift_bridge__$EditorId id, uint64_t cursor_id);
 bool __swift_bridge__$App$clear_active_cursor(void* self, struct __swift_bridge__$EditorId id);
@@ -333,9 +346,12 @@ uintptr_t __swift_bridge__$App$split_separator_count(void* self, struct __swift_
 void* __swift_bridge__$App$split_separator_at(void* self, struct __swift_bridge__$EditorId id, uintptr_t index);
 bool __swift_bridge__$App$split_active_pane(void* self, struct __swift_bridge__$EditorId id, uint8_t axis);
 bool __swift_bridge__$App$jump_active_pane(void* self, struct __swift_bridge__$EditorId id, uint8_t direction);
+bool __swift_bridge__$App$move_pane(void* self, struct __swift_bridge__$EditorId id, uint64_t source_pane, uint64_t destination_pane, uint8_t direction);
 bool __swift_bridge__$App$resize_split(void* self, struct __swift_bridge__$EditorId id, uint64_t split_id, uint16_t x, uint16_t y);
 uintptr_t __swift_bridge__$App$terminal_surface_count(void* self, struct __swift_bridge__$EditorId id);
 void* __swift_bridge__$App$terminal_surface_at(void* self, struct __swift_bridge__$EditorId id, uintptr_t index);
+uintptr_t __swift_bridge__$App$editor_surface_count(void* self, struct __swift_bridge__$EditorId id);
+void* __swift_bridge__$App$editor_surface_at(void* self, struct __swift_bridge__$EditorId id, uintptr_t index);
 bool __swift_bridge__$App$focus_terminal_surface(void* self, struct __swift_bridge__$EditorId id, uint64_t terminal_id);
 void* __swift_bridge__$App$render_plan(void* self, struct __swift_bridge__$EditorId id);
 void* __swift_bridge__$App$frame_render_plan(void* self, struct __swift_bridge__$EditorId id);
@@ -458,6 +474,7 @@ uint8_t __swift_bridge__$RenderCursor$kind(void* self);
 struct __swift_bridge__$Style __swift_bridge__$RenderCursor$style(void* self);
 struct __swift_bridge__$Rect __swift_bridge__$RenderSelection$rect(void* self);
 struct __swift_bridge__$Style __swift_bridge__$RenderSelection$style(void* self);
+uint8_t __swift_bridge__$RenderSelection$kind(void* self);
 uint8_t __swift_bridge__$RenderOverlayNode$kind(void* self);
 uint8_t __swift_bridge__$RenderOverlayNode$rect_kind(void* self);
 struct __swift_bridge__$Rect __swift_bridge__$RenderOverlayNode$rect(void* self);
@@ -468,6 +485,10 @@ struct __swift_bridge__$Style __swift_bridge__$RenderOverlayNode$style(void* sel
 struct __swift_bridge__$Rect __swift_bridge__$RenderPlan$viewport(void* self);
 struct __swift_bridge__$Position __swift_bridge__$RenderPlan$scroll(void* self);
 uint16_t __swift_bridge__$RenderPlan$content_offset_x(void* self);
+bool __swift_bridge__$RenderPlan$cursor_blink_enabled(void* self);
+uint16_t __swift_bridge__$RenderPlan$cursor_blink_interval_ms(void* self);
+uint16_t __swift_bridge__$RenderPlan$cursor_blink_delay_ms(void* self);
+uint64_t __swift_bridge__$RenderPlan$cursor_blink_generation(void* self);
 uintptr_t __swift_bridge__$RenderPlan$gutter_line_count(void* self);
 void* __swift_bridge__$RenderPlan$gutter_line_at(void* self, uintptr_t index);
 uintptr_t __swift_bridge__$RenderPlan$line_count(void* self);
@@ -506,6 +527,13 @@ uint64_t __swift_bridge__$RenderFramePlan$active_pane_id(void* self);
 uintptr_t __swift_bridge__$RenderFramePlan$pane_count(void* self);
 void* __swift_bridge__$RenderFramePlan$pane_at(void* self, uintptr_t index);
 void* __swift_bridge__$RenderFramePlan$active_plan(void* self);
+uint64_t __swift_bridge__$EditorSurfaceSnapshot$pane_id(void* self);
+uint64_t __swift_bridge__$EditorSurfaceSnapshot$buffer_id(void* self);
+uintptr_t __swift_bridge__$EditorSurfaceSnapshot$buffer_index(void* self);
+void* __swift_bridge__$EditorSurfaceSnapshot$title(void* self);
+bool __swift_bridge__$EditorSurfaceSnapshot$modified(void* self);
+void* __swift_bridge__$EditorSurfaceSnapshot$file_path(void* self);
+bool __swift_bridge__$EditorSurfaceSnapshot$is_active(void* self);
 uint64_t __swift_bridge__$TerminalSurfaceSnapshot$terminal_id(void* self);
 uint64_t __swift_bridge__$TerminalSurfaceSnapshot$pane_id(void* self);
 bool __swift_bridge__$TerminalSurfaceSnapshot$is_active(void* self);

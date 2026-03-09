@@ -5,6 +5,7 @@ enum DiagnosticsDebugLog {
     private static let pickerPerfEnabledFlag = ProcessInfo.processInfo.environment["THE_SWIFT_DEBUG_PICKER_PERF"] == "1"
     private static let editorPerfEnabledFlag = ProcessInfo.processInfo.environment["THE_SWIFT_DEBUG_EDITOR_PERF"] == "1"
     private static let terminalMouseEnabledFlag = ProcessInfo.processInfo.environment["THE_SWIFT_DEBUG_TERMINAL_MOUSE"] == "1"
+    private static let paneDragCursorEnabledFlag = ProcessInfo.processInfo.environment["THE_SWIFT_DEBUG_PANE_DRAG_CURSOR"] == "1"
     private static let editorPerfMinDurationMs: Double = {
         guard let raw = ProcessInfo.processInfo.environment["THE_SWIFT_DEBUG_EDITOR_PERF_MIN_MS"] else {
             return 12
@@ -37,6 +38,10 @@ enum DiagnosticsDebugLog {
 
     static var terminalMouseEnabled: Bool {
         terminalMouseEnabledFlag
+    }
+
+    static var paneDragCursorEnabled: Bool {
+        paneDragCursorEnabledFlag
     }
 
     static func log(_ message: @autoclosure () -> String) {
@@ -75,6 +80,11 @@ enum DiagnosticsDebugLog {
     static func terminalMouseLog(_ message: @autoclosure () -> String) {
         guard terminalMouseEnabledFlag else { return }
         write("[termmouse] \(message())")
+    }
+
+    static func paneDragCursorLog(_ message: @autoclosure () -> String) {
+        guard paneDragCursorEnabledFlag else { return }
+        write("[panedragcursor] \(message())")
     }
 
     private static func write(_ message: String) {

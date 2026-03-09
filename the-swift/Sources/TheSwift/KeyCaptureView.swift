@@ -337,17 +337,26 @@ struct ScrollCaptureView: NSViewRepresentable {
         var onSplitResize: ((UInt64, CGPoint) -> Void)?
         var separators: [SeparatorHandle] = [] {
             didSet {
+                guard oldValue != separators else { return }
                 needsDisplay = true
                 window?.invalidateCursorRects(for: self)
             }
         }
         var passthroughRects: [CGRect] = [] {
             didSet {
+                guard oldValue != passthroughRects else { return }
                 window?.invalidateCursorRects(for: self)
             }
         }
         var panes: [PaneHandle] = [] {
             didSet {
+                guard oldValue != panes else { return }
+                window?.invalidateCursorRects(for: self)
+            }
+        }
+        var cursorExclusionRects: [CGRect] = [] {
+            didSet {
+                guard oldValue != cursorExclusionRects else { return }
                 window?.invalidateCursorRects(for: self)
             }
         }
@@ -385,10 +394,22 @@ struct ScrollCaptureView: NSViewRepresentable {
 
         override func resetCursorRects() {
             super.resetCursorRects()
-            for pane in panes {
-                let rect = pane.rect.intersection(bounds)
+            if DiagnosticsDebugLog.paneDragCursorEnabled {
+                DiagnosticsDebugLog.paneDragCursorLog(
+                    "scroll.resetCursorRects panes=\(panes.count) exclusions=\(cursorExclusionRectsSummary()) separators=\(separators.count)"
+                )
+            }
+            for exclusionRect in cursorExclusionRects {
+                let rect = exclusionRect.intersection(bounds)
                 guard !rect.isEmpty else { continue }
-                addCursorRect(rect, cursor: .iBeam)
+                addCursorRect(rect, cursor: .openHand)
+            }
+            for pane in panes {
+                for rect in paneCursorRects(for: pane) {
+                    let clipped = rect.intersection(bounds)
+                    guard !clipped.isEmpty else { continue }
+                    addCursorRect(clipped, cursor: .iBeam)
+                }
             }
             for separator in separators {
                 let rect = cursorRect(for: separator).intersection(bounds)
@@ -403,6 +424,11 @@ struct ScrollCaptureView: NSViewRepresentable {
             let localPoint = convert(point, from: superview)
             let separator = hitSeparator(at: localPoint)
             if separator != nil {
+                logPaneDragCursor(
+                    "scroll.hitTest",
+                    point: localPoint,
+                    extra: "separator=1 exclusion=0 passthrough=0 result=self"
+                )
                 if shouldDebugTerminalBand(at: localPoint) {
                     DiagnosticsDebugLog.terminalMouseLog(
                         "overlay.hitTest edge=\(terminalMouseEdgeTag(for: localPoint)) point=(\(fmt(localPoint.x)),\(fmt(localPoint.y))) topDist=\(fmt(topDistance(for: localPoint))) sep=1 passthrough=0 result=self"
@@ -410,8 +436,21 @@ struct ScrollCaptureView: NSViewRepresentable {
                 }
                 return self
             }
+            if isInCursorExclusionRect(localPoint) {
+                logPaneDragCursor(
+                    "scroll.hitTest",
+                    point: localPoint,
+                    extra: "separator=0 exclusion=1 passthrough=0 result=nil"
+                )
+                return nil
+            }
             let passthrough = shouldPassthrough(at: localPoint)
             if passthrough {
+                logPaneDragCursor(
+                    "scroll.hitTest",
+                    point: localPoint,
+                    extra: "separator=0 exclusion=0 passthrough=1 result=nil"
+                )
                 if shouldDebugTerminalBand(at: localPoint) {
                     let pane = hitPane(at: localPoint)
                     DiagnosticsDebugLog.terminalMouseLog(
@@ -420,6 +459,11 @@ struct ScrollCaptureView: NSViewRepresentable {
                 }
                 return nil
             }
+            logPaneDragCursor(
+                "scroll.hitTest",
+                point: localPoint,
+                extra: "separator=0 exclusion=0 passthrough=0 result=self"
+            )
             if shouldDebugTerminalBand(at: localPoint) {
                 let pane = hitPane(at: localPoint)
                 DiagnosticsDebugLog.terminalMouseLog(
@@ -431,12 +475,12 @@ struct ScrollCaptureView: NSViewRepresentable {
 
         override func cursorUpdate(with event: NSEvent) {
             let point = convert(event.locationInWindow, from: nil)
-            updateCursor(at: point)
+            updateCursor(at: point, source: "cursorUpdate")
         }
 
         override func mouseMoved(with event: NSEvent) {
             let point = convert(event.locationInWindow, from: nil)
-            updateCursor(at: point)
+            updateCursor(at: point, source: "mouseMoved")
             super.mouseMoved(with: event)
         }
 
@@ -522,7 +566,7 @@ struct ScrollCaptureView: NSViewRepresentable {
             activeSeparator = nil
             activeEditorPane = nil
             lastDragSignature = nil
-            updateCursor(at: point)
+            updateCursor(at: point, source: "mouseUp")
             super.mouseUp(with: event)
         }
 
@@ -627,13 +671,22 @@ struct ScrollCaptureView: NSViewRepresentable {
             return 0
         }
 
-        private func updateCursor(at point: NSPoint) {
-            preferredCursor(at: point).set()
+        private func updateCursor(at point: NSPoint, source: String) {
+            let cursor = preferredCursor(at: point)
+            logPaneDragCursor(
+                "scroll.\(source)",
+                point: point,
+                extra: "cursor=\(cursorName(cursor)) activeSeparator=\(activeSeparator?.splitId ?? 0) activePane=\(activeEditorPane?.paneId ?? 0)"
+            )
+            cursor.set()
         }
 
         private func preferredCursor(at point: NSPoint) -> NSCursor {
             if let separator = hitSeparator(at: point) {
                 return cursor(for: separator)
+            }
+            if isInCursorExclusionRect(point) {
+                return .openHand
             }
             if hitPane(at: point) != nil {
                 return .iBeam
@@ -673,6 +726,84 @@ struct ScrollCaptureView: NSViewRepresentable {
 
         private func hitPane(at point: NSPoint) -> PaneHandle? {
             panes.first(where: { $0.rect.contains(point) })
+        }
+
+        private func isInCursorExclusionRect(_ point: CGPoint) -> Bool {
+            cursorExclusionRects.contains(where: { $0.contains(point) })
+        }
+
+        private func shouldDebugPaneDragCursor(at point: CGPoint) -> Bool {
+            guard DiagnosticsDebugLog.paneDragCursorEnabled else { return false }
+            return cursorExclusionRects.contains { rect in
+                rect.insetBy(dx: -8, dy: -6).contains(point)
+            }
+        }
+
+        private func logPaneDragCursor(_ event: String, point: CGPoint, extra: String) {
+            guard shouldDebugPaneDragCursor(at: point) else { return }
+            let paneId = hitPane(at: point)?.paneId ?? 0
+            DiagnosticsDebugLog.paneDragCursorLog(
+                "\(event) point=(\(fmt(point.x)),\(fmt(point.y))) pane=\(paneId) exclusion=\(isInCursorExclusionRect(point) ? 1 : 0) \(extra)"
+            )
+        }
+
+        private func paneCursorRects(for pane: PaneHandle) -> [CGRect] {
+            var rects = [pane.rect]
+            for exclusion in cursorExclusionRects {
+                rects = rects.flatMap { subtract(rect: $0, excluding: exclusion) }
+            }
+            return rects.filter { !$0.isEmpty }
+        }
+
+        private func subtract(rect: CGRect, excluding exclusion: CGRect) -> [CGRect] {
+            let intersection = rect.intersection(exclusion)
+            guard !intersection.isEmpty else {
+                return [rect]
+            }
+
+            var result: [CGRect] = []
+
+            let top = CGRect(
+                x: rect.minX,
+                y: rect.minY,
+                width: rect.width,
+                height: max(0, intersection.minY - rect.minY)
+            )
+            if !top.isEmpty {
+                result.append(top)
+            }
+
+            let bottom = CGRect(
+                x: rect.minX,
+                y: intersection.maxY,
+                width: rect.width,
+                height: max(0, rect.maxY - intersection.maxY)
+            )
+            if !bottom.isEmpty {
+                result.append(bottom)
+            }
+
+            let left = CGRect(
+                x: rect.minX,
+                y: intersection.minY,
+                width: max(0, intersection.minX - rect.minX),
+                height: intersection.height
+            )
+            if !left.isEmpty {
+                result.append(left)
+            }
+
+            let right = CGRect(
+                x: intersection.maxX,
+                y: intersection.minY,
+                width: max(0, rect.maxX - intersection.maxX),
+                height: intersection.height
+            )
+            if !right.isEmpty {
+                result.append(right)
+            }
+
+            return result
         }
 
         private func clampToPane(_ point: NSPoint, pane: PaneHandle) -> NSPoint {
@@ -806,6 +937,35 @@ struct ScrollCaptureView: NSViewRepresentable {
         private func fmt(_ value: CGFloat) -> String {
             String(format: "%.1f", value)
         }
+
+        private func cursorName(_ cursor: NSCursor) -> String {
+            if cursor === NSCursor.openHand {
+                return "openHand"
+            }
+            if cursor === NSCursor.closedHand {
+                return "closedHand"
+            }
+            if cursor === NSCursor.arrow {
+                return "arrow"
+            }
+            if cursor === NSCursor.iBeam {
+                return "iBeam"
+            }
+            if cursor === NSCursor.resizeLeftRight {
+                return "resizeLeftRight"
+            }
+            if cursor === NSCursor.resizeUpDown {
+                return "resizeUpDown"
+            }
+            return "other"
+        }
+
+        private func cursorExclusionRectsSummary() -> String {
+            cursorExclusionRects.map { rect in
+                "\(fmt(rect.minX)),\(fmt(rect.minY)),\(fmt(rect.width))x\(fmt(rect.height))"
+            }
+            .joined(separator: "|")
+        }
     }
 
     let onScroll: (CGFloat, CGFloat, Bool) -> Void
@@ -813,6 +973,7 @@ struct ScrollCaptureView: NSViewRepresentable {
     let separators: [SeparatorHandle]
     let passthroughRects: [CGRect]
     let panes: [PaneHandle]
+    let cursorExclusionRects: [CGRect]
     let cellSize: CGSize
     let onSplitResize: (UInt64, CGPoint) -> Void
 
@@ -823,6 +984,7 @@ struct ScrollCaptureView: NSViewRepresentable {
         view.separators = separators
         view.passthroughRects = passthroughRects
         view.panes = panes
+        view.cursorExclusionRects = cursorExclusionRects
         view.cellSize = cellSize
         view.onSplitResize = onSplitResize
         return view
@@ -834,6 +996,7 @@ struct ScrollCaptureView: NSViewRepresentable {
         nsView.separators = separators
         nsView.passthroughRects = passthroughRects
         nsView.panes = panes
+        nsView.cursorExclusionRects = cursorExclusionRects
         nsView.cellSize = cellSize
         nsView.onSplitResize = onSplitResize
     }

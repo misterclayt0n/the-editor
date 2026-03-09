@@ -1371,6 +1371,12 @@ fn pane_direction_from_u8(direction: u8) -> Option<PaneDirection> {
   }
 }
 
+fn pane_id_from_u64(pane: u64) -> Option<PaneId> {
+  let raw = usize::try_from(pane).ok()?;
+  let raw = NonZeroUsize::new(raw)?;
+  Some(PaneId::from(raw))
+}
+
 fn pane_content_kind_to_u8(kind: PaneContentKind) -> u8 {
   match kind {
     PaneContentKind::EditorBuffer => 0,
@@ -5391,6 +5397,38 @@ impl App {
       state.needs_render = true;
     }
     jumped
+  }
+
+  pub fn move_pane(
+    &mut self,
+    id: ffi::EditorId,
+    source_pane: u64,
+    destination_pane: u64,
+    direction: u8,
+  ) -> bool {
+    if self.activate(id).is_none() {
+      return false;
+    }
+    let Some(source_pane) = pane_id_from_u64(source_pane) else {
+      return false;
+    };
+    let Some(destination_pane) = pane_id_from_u64(destination_pane) else {
+      return false;
+    };
+    let Some(direction) = pane_direction_from_u8(direction) else {
+      return false;
+    };
+    let Some(editor_id) = self.active_editor else {
+      return false;
+    };
+    let moved = {
+      let editor = self.active_editor_mut();
+      editor.move_pane(source_pane, destination_pane, direction)
+    };
+    if moved && let Some(state) = self.states.get_mut(&editor_id) {
+      state.needs_render = true;
+    }
+    moved
   }
 
   pub fn resize_split(&mut self, id: ffi::EditorId, split_id: u64, x: u16, y: u16) -> bool {
@@ -12299,6 +12337,13 @@ mod ffi {
     fn split_separator_at(self: &mut App, id: EditorId, index: usize) -> SplitSeparator;
     fn split_active_pane(self: &mut App, id: EditorId, axis: u8) -> bool;
     fn jump_active_pane(self: &mut App, id: EditorId, direction: u8) -> bool;
+    fn move_pane(
+      self: &mut App,
+      id: EditorId,
+      source_pane: u64,
+      destination_pane: u64,
+      direction: u8,
+    ) -> bool;
     fn resize_split(self: &mut App, id: EditorId, split_id: u64, x: u16, y: u16) -> bool;
     fn terminal_surface_count(self: &mut App, id: EditorId) -> usize;
     fn terminal_surface_at(self: &mut App, id: EditorId, index: usize) -> TerminalSurfaceSnapshot;

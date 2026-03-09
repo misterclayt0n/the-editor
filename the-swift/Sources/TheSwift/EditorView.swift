@@ -286,6 +286,8 @@ struct EditorView: View {
             contentSize: contentProxy.size,
             activePaneId: effectiveActivePaneId
         )
+        let paneDragPanes = paneDragPanes(from: paneFocusLayouts)
+        let paneDragInteractionRects = paneDragInteractionRects(from: paneFocusLayouts)
         let eolDiagnosticStyle = eolDiagnosticOverlayStyle(
             bufferFontSize: model.bufferFontSize,
             cellSize: cellSize
@@ -362,8 +364,19 @@ struct EditorView: View {
                 splitResizeHandles: splitResizeHandles,
                 terminalPassthroughRects: terminalPassthroughRects,
                 pointerPanes: pointerPanes,
+                cursorExclusionRects: paneDragInteractionRects,
                 cellSize: cellSize
             )
+        )
+        .overlay(
+            paneDragOverlay(
+                isOverlayOpen: isOverlayOpen,
+                isCompletionOpen: isCompletionOpen,
+                isDocsPopupOpen: isDocsPopupOpen,
+                isSignatureOpen: isSignatureOpen,
+                paneDragPanes: paneDragPanes
+            ),
+            alignment: .topLeading
         )
         .overlay(
             KeySequenceIndicator(keys: model.pendingKeys, hints: model.pendingKeyHints)
@@ -803,6 +816,7 @@ struct EditorView: View {
         splitResizeHandles: [ScrollCaptureView.SeparatorHandle],
         terminalPassthroughRects: [CGRect],
         pointerPanes: [ScrollCaptureView.PaneHandle],
+        cursorExclusionRects: [CGRect],
         cellSize: CGSize
     ) -> some View {
         if !isOverlayOpen && !isCompletionOpen && !isDocsPopupOpen && !isSignatureOpen {
@@ -816,6 +830,7 @@ struct EditorView: View {
                 separators: splitResizeHandles,
                 passthroughRects: terminalPassthroughRects,
                 panes: pointerPanes,
+                cursorExclusionRects: cursorExclusionRects,
                 cellSize: cellSize,
                 onSplitResize: { splitId, point in
                     model.resizeSplit(splitId: splitId, pixelPoint: point)
@@ -824,6 +839,29 @@ struct EditorView: View {
             .allowsHitTesting(true)
         }
     }
+
+    @ViewBuilder
+    private func paneDragOverlay(
+        isOverlayOpen: Bool,
+        isCompletionOpen: Bool,
+        isDocsPopupOpen: Bool,
+        isSignatureOpen: Bool,
+        paneDragPanes: [PaneDragPaneSnapshot]
+    ) -> some View {
+        if !isOverlayOpen && !isCompletionOpen && !isDocsPopupOpen && !isSignatureOpen && paneDragPanes.count > 1 {
+            PaneDragOverlayView(
+                panes: paneDragPanes,
+                onMovePane: { sourcePaneId, destinationPaneId, directionRaw in
+                    _ = model.movePane(
+                        sourcePaneId: sourcePaneId,
+                        destinationPaneId: destinationPaneId,
+                        directionRaw: directionRaw
+                    )
+                }
+            )
+        }
+    }
+
     private func splitResizeHandles(
         from separators: [SplitSeparatorSnapshot],
         cellSize: CGSize
@@ -950,6 +988,27 @@ struct EditorView: View {
             )
         }
         return layouts
+    }
+
+    private func paneDragPanes(
+        from paneFocusLayouts: [PaneFocusLayout]
+    ) -> [PaneDragPaneSnapshot] {
+        paneFocusLayouts.map { pane in
+            PaneDragPaneSnapshot(
+                paneId: pane.paneId,
+                frame: pane.frame,
+                isActive: pane.isActive,
+                previewTitle: model.paneDragPreviewTitle(for: pane.paneId)
+            )
+        }
+    }
+
+    private func paneDragInteractionRects(
+        from paneFocusLayouts: [PaneFocusLayout]
+    ) -> [CGRect] {
+        paneFocusLayouts.map { pane in
+            PaneDragHandleLayout.interactionFrame(for: pane.frame)
+        }
     }
 
     private func framePlanGridExtent(_ framePlan: RenderFramePlan) -> (cols: Int, rows: Int) {

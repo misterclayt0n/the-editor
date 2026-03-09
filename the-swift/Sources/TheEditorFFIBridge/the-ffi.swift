@@ -145,6 +145,10 @@ extension AppRefMut {
         __swift_bridge__$App$jump_active_pane(ptr, id.intoFfiRepr(), direction)
     }
 
+    public func move_pane(_ id: EditorId, _ source_pane: UInt64, _ destination_pane: UInt64, _ direction: UInt8) -> Bool {
+        __swift_bridge__$App$move_pane(ptr, id.intoFfiRepr(), source_pane, destination_pane, direction)
+    }
+
     public func resize_split(_ id: EditorId, _ split_id: UInt64, _ x: UInt16, _ y: UInt16) -> Bool {
         __swift_bridge__$App$resize_split(ptr, id.intoFfiRepr(), split_id, x, y)
     }

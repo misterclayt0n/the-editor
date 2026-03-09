@@ -263,20 +263,20 @@ impl Default for RenderStyles {
 
 #[derive(Debug, Clone)]
 pub struct RenderPlan {
-  pub viewport:         Rect,
-  pub scroll:           Position,
-  pub content_offset_x: u16,
-  pub cursor_blink_enabled: bool,
+  pub viewport:                 Rect,
+  pub scroll:                   Position,
+  pub content_offset_x:         u16,
+  pub cursor_blink_enabled:     bool,
   pub cursor_blink_interval_ms: u16,
-  pub cursor_blink_delay_ms: u16,
-  pub cursor_blink_generation: u64,
-  pub gutter_columns:   Vec<RenderGutterColumn>,
-  pub visible_rows:     Vec<RenderVisibleRow>,
-  pub gutter_lines:     Vec<RenderGutterLine>,
-  pub lines:            Vec<RenderLine>,
-  pub cursors:          Vec<RenderCursor>,
-  pub selections:       Vec<RenderSelection>,
-  pub overlays:         Vec<OverlayNode>,
+  pub cursor_blink_delay_ms:    u16,
+  pub cursor_blink_generation:  u64,
+  pub gutter_columns:           Vec<RenderGutterColumn>,
+  pub visible_rows:             Vec<RenderVisibleRow>,
+  pub gutter_lines:             Vec<RenderGutterLine>,
+  pub lines:                    Vec<RenderLine>,
+  pub cursors:                  Vec<RenderCursor>,
+  pub selections:               Vec<RenderSelection>,
+  pub overlays:                 Vec<OverlayNode>,
 }
 
 impl RenderPlan {

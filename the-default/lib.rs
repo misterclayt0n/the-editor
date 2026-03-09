@@ -14,8 +14,8 @@ mod completion_menu;
 mod file_picker;
 mod file_tree;
 mod global_search;
-mod input;
 mod increment;
+mod input;
 mod keymap;
 mod message_bar;
 mod overlay_layout;
@@ -131,6 +131,7 @@ pub use file_picker::{
   open_changed_file_picker,
   open_custom_picker,
   open_diagnostics_picker,
+  open_dynamic_picker,
   open_file_picker,
   open_file_picker_in_current_directory,
   open_file_picker_index,
@@ -146,7 +147,7 @@ pub use file_picker::{
   set_file_picker_config,
   set_file_picker_list_offset,
   set_file_picker_preview_offset,
-  set_file_picker_query_external,
+  set_file_picker_query_text,
   set_file_picker_syntax_loader,
   set_file_picker_wake_sender,
   set_picker_visible_rows,
@@ -161,6 +162,8 @@ pub use file_tree::{
   FileTreeState,
 };
 pub use global_search::{
+  GlobalSearchConfig,
+  GlobalSearchDocumentSnapshot,
   GlobalSearchResponse,
   GlobalSearchState,
 };
@@ -204,13 +207,13 @@ pub use search_prompt::{
   finalize_keep_selections,
   finalize_remove_selections,
   finalize_rename_symbol,
+  finalize_search,
+  finalize_select_regex,
   finalize_shell_append_output,
   finalize_shell_insert_output,
   finalize_shell_keep_pipe,
   finalize_shell_pipe,
   finalize_shell_pipe_to,
-  finalize_search,
-  finalize_select_regex,
   finalize_split_selection,
   update_keep_selections_preview,
   update_remove_selections_preview,
@@ -232,7 +235,6 @@ pub use signature_help::{
   signature_help_next,
   signature_help_prev,
 };
-pub use theme_catalog::ThemeCatalog;
 pub use the_lib::messages::{
   Message,
   MessageCenter,
@@ -241,3 +243,4 @@ pub use the_lib::messages::{
   MessageLevel,
   MessageSnapshot,
 };
+pub use theme_catalog::ThemeCatalog;

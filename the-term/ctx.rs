@@ -59,6 +59,7 @@ use the_default::{
   FilePickerItem,
   FilePickerItemAction,
   FilePickerState,
+  GlobalSearchConfig,
   GlobalSearchState,
   KeyBinding,
   KeyEvent,
@@ -72,8 +73,8 @@ use the_default::{
   PointerKind,
   ThemeCatalog,
   buffer_tabs_snapshot,
+  open_dynamic_picker,
   replace_file_picker_items,
-  set_file_picker_query_external,
 };
 use the_lib::{
   diagnostics::{
@@ -692,12 +693,14 @@ fn select_ui_theme(catalog: &ThemeCatalog) -> (String, Theme) {
         )
       }
     },
-    None => (
-      default_theme().name().to_string(),
-      catalog
-        .load_theme(default_theme().name())
-        .unwrap_or_else(|| default_theme().clone()),
-    ),
+    None => {
+      (
+        default_theme().name().to_string(),
+        catalog
+          .load_theme(default_theme().name())
+          .unwrap_or_else(|| default_theme().clone()),
+      )
+    },
   }
 }
 
@@ -1225,29 +1228,21 @@ impl Ctx {
       return;
     }
 
-    if let Err(err) = self.global_search.activate(root.as_path()) {
+    let config = GlobalSearchConfig {
+      smart_case:  true,
+      file_picker: self.file_picker.config.clone(),
+    };
+    if let Err(err) = self.global_search.activate(root.as_path(), config) {
       let _ = <Self as the_default::DefaultContext>::push_error(
         self,
         "global_search",
-        format!("Failed to initialize global search index: {err}"),
+        format!("Failed to initialize global search: {err}"),
       );
       return;
     }
 
     let initial_query = self.workspace_symbol_query_from_cursor();
-    the_default::open_custom_picker(self, "Live Grep", root, None, Vec::new(), 0);
-    {
-      let picker = &mut self.file_picker;
-      set_file_picker_query_external(picker, true);
-      picker.query = initial_query.clone();
-      picker.cursor = initial_query.len();
-      picker.error = None;
-      picker.preview = the_default::FilePickerPreview::Message(if initial_query.is_empty() {
-        "Type to search".to_string()
-      } else {
-        "Searching…".to_string()
-      });
-    }
+    open_dynamic_picker(self, "Live Grep", root, None, initial_query.clone());
 
     if !initial_query.trim().is_empty() {
       self.schedule_global_search(initial_query);
@@ -1260,7 +1255,9 @@ impl Ctx {
     if !self.global_search.is_active() {
       return;
     }
-    self.global_search.schedule(query);
+    self
+      .global_search
+      .schedule(query, self.global_search_documents());
   }
 
   pub fn poll_global_search(&mut self) -> bool {
@@ -1280,7 +1277,6 @@ impl Ctx {
     replace_file_picker_items(self, response.items, 0);
     {
       let picker = &mut self.file_picker;
-      set_file_picker_query_external(picker, true);
       picker.query = response.query.clone();
       picker.cursor = response.query.len();
       if let Some(error) = response.error {
@@ -5749,7 +5745,18 @@ impl the_default::DefaultContext for Ctx {
 
   fn file_picker_query_changed(&mut self, query: &str) {
     if self.global_search.is_active() {
-      self.schedule_global_search(query.to_string());
+      if query.trim().is_empty() {
+        self.global_search.cancel_pending();
+        replace_file_picker_items(self, Vec::new(), 0);
+        self.file_picker.query = query.to_string();
+        self.file_picker.cursor = query.len();
+        self.file_picker.error = None;
+        self.file_picker.preview =
+          the_default::FilePickerPreview::Message("Type to search".to_string());
+        self.needs_render = true;
+      } else {
+        self.schedule_global_search(query.to_string());
+      }
     }
   }
 

@@ -32,9 +32,9 @@ use ratatui::{
   Terminal as RatatuiTerminal,
   prelude::Rect,
 };
+use the_lib::render::graphics::CursorKind as LibCursorKind;
 
 use crate::undercurl_backend::UndercurlCrosstermBackend;
-use the_lib::render::graphics::CursorKind as LibCursorKind;
 
 pub struct Terminal {
   terminal:                      RatatuiTerminal<UndercurlCrosstermBackend<Stdout>>,
@@ -97,10 +97,7 @@ impl Terminal {
     Ok(())
   }
 
-  pub fn apply_editor_cursor(
-    &mut self,
-    cursor: Option<(u16, u16, LibCursorKind)>,
-  ) -> Result<()> {
+  pub fn apply_editor_cursor(&mut self, cursor: Option<(u16, u16, LibCursorKind)>) -> Result<()> {
     match cursor {
       Some((x, y, kind)) => {
         let shape = match kind {

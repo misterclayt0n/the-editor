@@ -390,12 +390,7 @@ impl SplitTree {
     true
   }
 
-  pub fn move_pane(
-    &mut self,
-    pane: PaneId,
-    target: PaneId,
-    direction: PaneDirection,
-  ) -> bool {
+  pub fn move_pane(&mut self, pane: PaneId, target: PaneId, direction: PaneDirection) -> bool {
     let Ok(moved) = self.try_move_pane(pane, target, direction) else {
       return false;
     };
@@ -850,7 +845,8 @@ impl SplitTree {
     let start_leaf = self.pane_nodes.get(&pane).copied()?;
     let origins = self.node_origins();
     let (current_x, current_y) = origins.get(&start_leaf).copied()?;
-    let target_leaf = self.find_leaf_in_direction(start_leaf, direction, current_x, current_y, &origins)?;
+    let target_leaf =
+      self.find_leaf_in_direction(start_leaf, direction, current_x, current_y, &origins)?;
     self.leaf_pane(target_leaf)
   }
 

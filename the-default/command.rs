@@ -763,6 +763,21 @@ pub trait DefaultContext: Sized + 'static {
   fn suspend_editor(&mut self) -> Result<(), String> {
     Err("suspend is not supported in this client".to_string())
   }
+  fn global_search_documents(&self) -> Vec<crate::GlobalSearchDocumentSnapshot> {
+    let editor = self.editor_ref();
+    editor
+      .buffer_snapshots_mru()
+      .into_iter()
+      .filter_map(|snapshot| {
+        let path = snapshot.file_path?;
+        let document = editor.buffer_document(snapshot.buffer_index)?;
+        Some(crate::GlobalSearchDocumentSnapshot {
+          path,
+          text: document.text().to_string(),
+        })
+      })
+      .collect()
+  }
   fn global_search(&mut self) {}
   fn file_picker_query_changed(&mut self, _query: &str) {}
   fn file_picker_closed(&mut self) {}
@@ -2625,7 +2640,10 @@ fn split_new_scratch<Ctx: DefaultContext>(ctx: &mut Ctx, axis: SplitAxis) {
 
 fn terminal_open<Ctx: DefaultContext>(ctx: &mut Ctx) {
   if !ctx.supports_embedded_terminal() {
-    ctx.push_warning("terminal", "embedded terminal is not supported in this client");
+    ctx.push_warning(
+      "terminal",
+      "embedded terminal is not supported in this client",
+    );
     return;
   }
   if ctx.is_active_pane_terminal() {
@@ -2641,7 +2659,10 @@ fn terminal_open<Ctx: DefaultContext>(ctx: &mut Ctx) {
 
 fn terminal_close<Ctx: DefaultContext>(ctx: &mut Ctx) {
   if !ctx.supports_embedded_terminal() {
-    ctx.push_warning("terminal", "embedded terminal is not supported in this client");
+    ctx.push_warning(
+      "terminal",
+      "embedded terminal is not supported in this client",
+    );
     return;
   }
   if !ctx.is_active_pane_terminal() {
@@ -3377,11 +3398,7 @@ fn decrement<Ctx: DefaultContext>(ctx: &mut Ctx, count: usize) {
   increment_impl(ctx, IncrementDirection::Decrease, count);
 }
 
-fn increment_impl<Ctx: DefaultContext>(
-  ctx: &mut Ctx,
-  direction: IncrementDirection,
-  count: usize,
-) {
+fn increment_impl<Ctx: DefaultContext>(ctx: &mut Ctx, direction: IncrementDirection, count: usize) {
   let sign = match direction {
     IncrementDirection::Increase => 1i64,
     IncrementDirection::Decrease => -1i64,
@@ -3395,7 +3412,8 @@ fn increment_impl<Ctx: DefaultContext>(
   let selection = doc.selection().clone();
   let text = doc.text().slice(..);
 
-  let mut new_selection_ranges: SmallVec<[Range; 1]> = SmallVec::with_capacity(selection.ranges().len());
+  let mut new_selection_ranges: SmallVec<[Range; 1]> =
+    SmallVec::with_capacity(selection.ranges().len());
   let mut cumulative_length_diff: i128 = 0;
   let mut changes: Vec<(usize, usize, Option<Tendril>)> = Vec::new();
 
@@ -3430,8 +3448,8 @@ fn increment_impl<Ctx: DefaultContext>(
   }
 
   let cursor_ids = selection.cursor_ids().iter().copied().collect();
-  let new_selection = Selection::new_with_ids(new_selection_ranges, cursor_ids)
-    .unwrap_or_else(|_| selection.clone());
+  let new_selection =
+    Selection::new_with_ids(new_selection_ranges, cursor_ids).unwrap_or_else(|_| selection.clone());
   let Ok(tx) = Transaction::change(doc.text(), changes.into_iter()) else {
     return;
   };
@@ -4286,12 +4304,9 @@ fn align_view_middle<Ctx: DefaultContext>(ctx: &mut Ctx) {
     }
 
     let mut annotations = ctx.text_annotations();
-    let Some(cursor_visual_pos) = visual_pos_at_char(
-      text,
-      &text_fmt,
-      &mut annotations,
-      range.cursor(text),
-    ) else {
+    let Some(cursor_visual_pos) =
+      visual_pos_at_char(text, &text_fmt, &mut annotations, range.cursor(text))
+    else {
       return;
     };
 
@@ -4349,9 +4364,8 @@ fn scroll_view<Ctx: DefaultContext>(ctx: &mut Ctx, direction: Direction) {
       _ => None,
     };
 
-    let new_cursor_char = target_cursor_row.and_then(|row| {
-      char_at_visual_pos(text, &text_fmt, &mut annotations, Position::new(row, 0))
-    });
+    let new_cursor_char = target_cursor_row
+      .and_then(|row| char_at_visual_pos(text, &text_fmt, &mut annotations, Position::new(row, 0)));
 
     (new_scroll_row, range_idx, new_cursor_char)
   };
@@ -6690,8 +6704,14 @@ mod tests {
 
   #[test]
   fn terminal_command_names_map_to_commands() {
-    assert_eq!(command_from_name("terminal_open"), Some(Command::terminal_open()));
-    assert_eq!(command_from_name("terminal_close"), Some(Command::terminal_close()));
+    assert_eq!(
+      command_from_name("terminal_open"),
+      Some(Command::terminal_open())
+    );
+    assert_eq!(
+      command_from_name("terminal_close"),
+      Some(Command::terminal_close())
+    );
   }
 }
 

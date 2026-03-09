@@ -1,11 +1,16 @@
 use std::{
+  collections::HashMap,
+  fs,
   path::{
     Path,
     PathBuf,
   },
   sync::{
     Arc,
-    RwLock,
+    atomic::{
+      AtomicBool,
+      Ordering,
+    },
     mpsc::{
       Receiver,
       Sender,
@@ -16,27 +21,45 @@ use std::{
   thread,
 };
 
-use fff_core::{
-  SharedFrecency as FffSharedFrecency,
-  SharedPicker as FffSharedPicker,
-  file_picker::FilePicker as FffFilePicker,
-  grep::{
-    GrepMode as FffGrepMode,
-    GrepSearchOptions as FffGrepSearchOptions,
-    grep_search as fff_grep_search,
-    parse_grep_query as fff_parse_grep_query,
-  },
+use grep_regex::RegexMatcherBuilder;
+use grep_searcher::{
+  BinaryDetection,
+  SearcherBuilder,
+  sinks,
 };
+use regex::RegexBuilder;
 
 use crate::{
+  FilePickerConfig,
   FilePickerItem,
   FilePickerItemAction,
+  file_picker::build_file_walk_builder,
 };
 
 const GLOBAL_SEARCH_MAX_RESULTS: usize = 10_000;
 const GLOBAL_SEARCH_MAX_FILE_SIZE: u64 = 10 * 1024 * 1024;
 const GLOBAL_SEARCH_MAX_MATCHES_PER_FILE: usize = 200;
-const GLOBAL_SEARCH_TIME_BUDGET_MS: u64 = 120;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GlobalSearchDocumentSnapshot {
+  pub path: PathBuf,
+  pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GlobalSearchConfig {
+  pub smart_case:  bool,
+  pub file_picker: FilePickerConfig,
+}
+
+impl Default for GlobalSearchConfig {
+  fn default() -> Self {
+    Self {
+      smart_case:  true,
+      file_picker: FilePickerConfig::default(),
+    }
+  }
+}
 
 #[derive(Debug, Clone)]
 pub struct GlobalSearchResponse {
@@ -51,10 +74,10 @@ pub struct GlobalSearchResponse {
 pub struct GlobalSearchState {
   active:             bool,
   root:               PathBuf,
-  shared_picker:      Option<FffSharedPicker>,
-  shared_frecency:    Option<FffSharedFrecency>,
+  config:             GlobalSearchConfig,
   generation:         u64,
   pending_generation: Option<u64>,
+  cancel:             Option<Arc<AtomicBool>>,
   result_tx:          Option<Sender<GlobalSearchResponse>>,
   result_rx:          Option<Receiver<GlobalSearchResponse>>,
 }
@@ -64,42 +87,56 @@ impl GlobalSearchState {
     self.active
   }
 
-  pub fn activate(&mut self, root: &Path) -> Result<(), String> {
-    self.ensure_index(root)?;
+  pub fn activate(&mut self, root: &Path, config: GlobalSearchConfig) -> Result<(), String> {
+    self.cancel_active_worker();
     let (tx, rx) = channel();
-    self.result_tx = Some(tx);
-    self.result_rx = Some(rx);
     self.active = true;
+    self.root = root.to_path_buf();
+    self.config = config;
     self.generation = 0;
     self.pending_generation = None;
+    self.result_tx = Some(tx);
+    self.result_rx = Some(rx);
     Ok(())
   }
 
   pub fn deactivate(&mut self) {
+    self.cancel_active_worker();
     self.active = false;
     self.pending_generation = None;
     self.result_tx = None;
     self.result_rx = None;
   }
 
-  pub fn schedule(&mut self, query: String) {
+  pub fn cancel_pending(&mut self) {
     if !self.active {
       return;
     }
-    let Some(shared_picker) = self.shared_picker.clone() else {
+    self.cancel_active_worker();
+    self.generation = self.generation.wrapping_add(1);
+    self.pending_generation = Some(self.generation);
+  }
+
+  pub fn schedule(&mut self, query: String, documents: Vec<GlobalSearchDocumentSnapshot>) {
+    if !self.active {
       return;
-    };
+    }
     let Some(response_tx) = self.result_tx.clone() else {
       return;
     };
 
+    self.cancel_active_worker();
     self.generation = self.generation.wrapping_add(1);
     let generation = self.generation;
     self.pending_generation = Some(generation);
 
+    let cancel = Arc::new(AtomicBool::new(false));
+    self.cancel = Some(cancel.clone());
+
     let root = self.root.clone();
+    let config = self.config.clone();
     thread::spawn(move || {
-      let result = run_global_search_request(generation, root, query, shared_picker);
+      let result = run_global_search_request(generation, root, query, config, documents, cancel);
       let _ = response_tx.send(result);
     });
   }
@@ -141,57 +178,37 @@ impl GlobalSearchState {
       return None;
     }
 
-    self.pending_generation = None;
+    if self
+      .pending_generation
+      .is_some_and(|pending| response.generation == pending)
+    {
+      self.pending_generation = None;
+      self.cancel = None;
+    }
     Some(response)
   }
 
-  pub fn root(&self) -> &Path {
-    &self.root
-  }
-
-  fn stop_index(&mut self) {
-    let Some(shared_picker) = self.shared_picker.take() else {
-      self.shared_frecency = None;
-      return;
-    };
-
-    if let Ok(mut guard) = shared_picker.write()
-      && let Some(mut picker) = guard.take()
-    {
-      picker.stop_background_monitor();
+  fn cancel_active_worker(&mut self) {
+    if let Some(cancel) = self.cancel.take() {
+      cancel.store(true, Ordering::Relaxed);
     }
-
-    self.shared_frecency = None;
-  }
-
-  fn ensure_index(&mut self, root: &Path) -> Result<(), String> {
-    if self.shared_picker.is_some() && self.root == root {
-      return Ok(());
-    }
-
-    self.stop_index();
-
-    let shared_picker: FffSharedPicker = Arc::new(RwLock::new(None));
-    let shared_frecency: FffSharedFrecency = Arc::new(RwLock::new(None));
-    FffFilePicker::new_with_shared_state(
-      root.to_string_lossy().to_string(),
-      false,
-      Arc::clone(&shared_picker),
-      Arc::clone(&shared_frecency),
-    )
-    .map_err(|err| err.to_string())?;
-
-    self.shared_picker = Some(shared_picker);
-    self.shared_frecency = Some(shared_frecency);
-    self.root = root.to_path_buf();
-    Ok(())
   }
 }
 
-impl Drop for GlobalSearchState {
-  fn drop(&mut self) {
-    self.stop_index();
+fn normalize_search_path(path: &Path) -> PathBuf {
+  path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn display_relative_path(path: &Path, root: &Path) -> String {
+  let mut text = path
+    .strip_prefix(root)
+    .unwrap_or(path)
+    .display()
+    .to_string();
+  if std::path::MAIN_SEPARATOR != '/' {
+    text = text.replace(std::path::MAIN_SEPARATOR, "/");
   }
+  text
 }
 
 fn clamp_utf8_boundary(text: &str, idx: usize, round_up: bool) -> usize {
@@ -223,7 +240,7 @@ fn sanitize_global_search_excerpt(line: &str) -> String {
 fn build_global_search_item(
   root: &Path,
   absolute: &Path,
-  relative_path: Option<&str>,
+  relative_path: &str,
   line_number_one_based: usize,
   line_text: &str,
   match_bytes: Option<(usize, usize)>,
@@ -243,16 +260,9 @@ fn build_global_search_item(
   } else {
     (None, None)
   };
-  let relative = relative_path.map(str::to_string).unwrap_or_else(|| {
-    absolute
-      .strip_prefix(root)
-      .unwrap_or(&absolute)
-      .display()
-      .to_string()
-  });
   let column_display = column_char.map(|col| col + 1).unwrap_or(1);
   let display = format!(
-    "{relative}\t{}\t{column_display}\t{}",
+    "{relative_path}\t{}\t{column_display}\t{}",
     line_idx.saturating_add(1),
     snippet
   );
@@ -279,25 +289,18 @@ fn build_global_search_item(
 fn build_global_search_header_item(
   root: &Path,
   absolute: &Path,
-  relative_path: Option<&str>,
+  relative_path: &str,
 ) -> FilePickerItem {
   let absolute = if absolute.is_absolute() {
     absolute.to_path_buf()
   } else {
     root.join(absolute)
   };
-  let relative = relative_path.map(str::to_string).unwrap_or_else(|| {
-    absolute
-      .strip_prefix(root)
-      .unwrap_or(&absolute)
-      .display()
-      .to_string()
-  });
   let icon = crate::file_picker::file_picker_icon_name_for_path(&absolute).to_string();
 
   FilePickerItem {
     absolute: absolute.clone(),
-    display: relative,
+    display: relative_path.to_string(),
     icon,
     is_dir: false,
     display_path: false,
@@ -308,11 +311,117 @@ fn build_global_search_header_item(
   }
 }
 
+#[derive(Debug, Clone)]
+struct SearchLineMatch {
+  line_number_one_based: usize,
+  line_text:             String,
+  match_bytes:           Option<(usize, usize)>,
+}
+
+fn build_display_regex(query: &str, smart_case: bool) -> Option<regex::Regex> {
+  let case_insensitive = smart_case && !query.chars().any(|ch| ch.is_uppercase());
+  RegexBuilder::new(query)
+    .case_insensitive(case_insensitive)
+    .build()
+    .ok()
+}
+
+fn collect_search_matches_in_bytes(
+  path: &Path,
+  matcher: &grep_regex::RegexMatcher,
+  display_regex: Option<&regex::Regex>,
+  haystack: &[u8],
+  cancel: &Arc<AtomicBool>,
+) -> Result<Vec<SearchLineMatch>, String> {
+  let mut searcher = SearcherBuilder::new()
+    .binary_detection(BinaryDetection::quit(b'\x00'))
+    .line_number(true)
+    .build();
+  let mut matches = Vec::new();
+
+  let sink = sinks::UTF8(|line_num, line_content| {
+    if cancel.load(Ordering::Relaxed) || matches.len() >= GLOBAL_SEARCH_MAX_MATCHES_PER_FILE {
+      return Ok(false);
+    }
+    let line_text = line_content.to_string();
+    let match_bytes =
+      display_regex.and_then(|regex| regex.find(line_content).map(|mat| (mat.start(), mat.end())));
+    matches.push(SearchLineMatch {
+      line_number_one_based: line_num as usize,
+      line_text,
+      match_bytes,
+    });
+    Ok(true)
+  });
+
+  searcher
+    .search_slice(matcher, haystack, sink)
+    .map_err(|err| format!("{}: {err}", path.display()))?;
+  Ok(matches)
+}
+
+fn collect_search_matches_from_path(
+  path: &Path,
+  matcher: &grep_regex::RegexMatcher,
+  display_regex: Option<&regex::Regex>,
+  cancel: &Arc<AtomicBool>,
+) -> Result<Vec<SearchLineMatch>, String> {
+  let file_len = fs::metadata(path).map(|meta| meta.len()).unwrap_or(0);
+  if file_len > GLOBAL_SEARCH_MAX_FILE_SIZE {
+    return Ok(Vec::new());
+  }
+
+  let bytes = fs::read(path).map_err(|err| format!("{}: {err}", path.display()))?;
+  collect_search_matches_in_bytes(path, matcher, display_regex, &bytes, cancel)
+}
+
+fn collect_search_matches_from_document(
+  path: &Path,
+  matcher: &grep_regex::RegexMatcher,
+  display_regex: Option<&regex::Regex>,
+  text: &str,
+  cancel: &Arc<AtomicBool>,
+) -> Result<Vec<SearchLineMatch>, String> {
+  if text.len() as u64 > GLOBAL_SEARCH_MAX_FILE_SIZE {
+    return Ok(Vec::new());
+  }
+  collect_search_matches_in_bytes(path, matcher, display_regex, text.as_bytes(), cancel)
+}
+
+fn extend_items_with_file_matches(
+  items: &mut Vec<FilePickerItem>,
+  root: &Path,
+  path: &Path,
+  relative_path: &str,
+  matches: Vec<SearchLineMatch>,
+) {
+  if matches.is_empty() {
+    return;
+  }
+
+  items.push(build_global_search_header_item(root, path, relative_path));
+  for matched in matches {
+    if items.len() >= GLOBAL_SEARCH_MAX_RESULTS {
+      break;
+    }
+    items.push(build_global_search_item(
+      root,
+      path,
+      relative_path,
+      matched.line_number_one_based,
+      matched.line_text.as_str(),
+      matched.match_bytes,
+    ));
+  }
+}
+
 fn run_global_search_request(
   generation: u64,
   root: PathBuf,
   query: String,
-  shared_picker: FffSharedPicker,
+  config: GlobalSearchConfig,
+  documents: Vec<GlobalSearchDocumentSnapshot>,
+  cancel: Arc<AtomicBool>,
 ) -> GlobalSearchResponse {
   if query.trim().is_empty() {
     return GlobalSearchResponse {
@@ -324,82 +433,90 @@ fn run_global_search_request(
     };
   }
 
-  let picker_guard = match shared_picker.read() {
-    Ok(guard) => guard,
-    Err(_) => {
+  let matcher = match RegexMatcherBuilder::new()
+    .case_smart(config.smart_case)
+    .build(&query)
+  {
+    Ok(matcher) => matcher,
+    Err(err) => {
       return GlobalSearchResponse {
         generation,
         query,
         items: Vec::new(),
         indexing: false,
-        error: Some("failed to read global search index".to_string()),
+        error: Some(format!("Failed to compile regex: {err}")),
       };
     },
   };
-  let Some(picker) = picker_guard.as_ref() else {
-    return GlobalSearchResponse {
-      generation,
-      query,
-      items: Vec::new(),
-      indexing: true,
-      error: None,
-    };
-  };
+  let display_regex = build_display_regex(&query, config.smart_case);
+  let mut documents_by_path: HashMap<PathBuf, GlobalSearchDocumentSnapshot> = documents
+    .into_iter()
+    .filter(|document| !document.path.as_os_str().is_empty())
+    .map(|document| (normalize_search_path(&document.path), document))
+    .collect();
 
-  let indexing = picker.is_scan_active();
-  let files = picker.get_files();
-  if files.is_empty() {
-    return GlobalSearchResponse {
-      generation,
-      query,
-      items: Vec::new(),
-      indexing,
-      error: None,
+  let mut items = Vec::new();
+  let mut walker = build_file_walk_builder(&root, &config.file_picker).build();
+  for entry in &mut walker {
+    if cancel.load(Ordering::Relaxed) || items.len() >= GLOBAL_SEARCH_MAX_RESULTS {
+      break;
+    }
+
+    let entry = match entry {
+      Ok(entry) => entry,
+      Err(_) => continue,
     };
+    if !entry
+      .file_type()
+      .is_some_and(|file_type| file_type.is_file())
+    {
+      continue;
+    }
+
+    let path = entry.into_path();
+    let normalized = normalize_search_path(&path);
+    let document = documents_by_path.remove(&normalized);
+    let relative_path = display_relative_path(&path, &root);
+    let matches = if let Some(document) = document {
+      collect_search_matches_from_document(
+        &document.path,
+        &matcher,
+        display_regex.as_ref(),
+        document.text.as_str(),
+        &cancel,
+      )
+    } else {
+      collect_search_matches_from_path(&path, &matcher, display_regex.as_ref(), &cancel)
+    };
+
+    let matches = match matches {
+      Ok(matches) => matches,
+      Err(_) => continue,
+    };
+    extend_items_with_file_matches(&mut items, &root, &path, &relative_path, matches);
   }
 
-  let parsed = fff_parse_grep_query(&query);
-  let options = FffGrepSearchOptions {
-    max_file_size:        GLOBAL_SEARCH_MAX_FILE_SIZE,
-    max_matches_per_file: GLOBAL_SEARCH_MAX_MATCHES_PER_FILE,
-    smart_case:           true,
-    file_offset:          0,
-    page_limit:           GLOBAL_SEARCH_MAX_RESULTS,
-    mode:                 FffGrepMode::PlainText,
-    time_budget_ms:       GLOBAL_SEARCH_TIME_BUDGET_MS,
-  };
-  let result = fff_grep_search(files, &query, parsed, &options);
+  if !cancel.load(Ordering::Relaxed) && items.len() < GLOBAL_SEARCH_MAX_RESULTS {
+    for document in documents_by_path.into_values() {
+      if cancel.load(Ordering::Relaxed) || items.len() >= GLOBAL_SEARCH_MAX_RESULTS {
+        break;
+      }
+      if !document.path.starts_with(&root) {
+        continue;
+      }
 
-  let mut items = Vec::with_capacity(result.matches.len().min(GLOBAL_SEARCH_MAX_RESULTS));
-  let mut previous_relative_path: Option<String> = None;
-  for matched in result.matches {
-    let Some(file) = result.files.get(matched.file_index).copied() else {
-      continue;
-    };
-    let relative_path = file.relative_path.as_str();
-    if previous_relative_path.as_deref() != Some(relative_path) {
-      items.push(build_global_search_header_item(
-        &root,
-        file.path.as_path(),
-        Some(relative_path),
-      ));
-      previous_relative_path = Some(relative_path.to_string());
-    }
-    let line_number_one_based = matched.line_number.min(usize::MAX as u64) as usize;
-    let match_bytes = matched
-      .match_byte_offsets
-      .first()
-      .map(|(start, end)| (*start as usize, *end as usize));
-    items.push(build_global_search_item(
-      &root,
-      file.path.as_path(),
-      Some(relative_path),
-      line_number_one_based,
-      matched.line_content.as_str(),
-      match_bytes,
-    ));
-    if items.len() >= GLOBAL_SEARCH_MAX_RESULTS {
-      break;
+      let relative_path = display_relative_path(&document.path, &root);
+      let matches = match collect_search_matches_from_document(
+        &document.path,
+        &matcher,
+        display_regex.as_ref(),
+        document.text.as_str(),
+        &cancel,
+      ) {
+        Ok(matches) => matches,
+        Err(_) => continue,
+      };
+      extend_items_with_file_matches(&mut items, &root, &document.path, &relative_path, matches);
     }
   }
 
@@ -407,7 +524,74 @@ fn run_global_search_request(
     generation,
     query,
     items,
-    indexing,
+    indexing: false,
     error: None,
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use std::fs;
+
+  use tempfile::tempdir;
+
+  use super::*;
+
+  #[test]
+  fn global_search_matches_workspace_files_and_groups_results() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+    fs::write(root.join("alpha.txt"), "first needle\nsecond\n").unwrap();
+    fs::write(root.join("beta.txt"), "needle again\n").unwrap();
+
+    let response = run_global_search_request(
+      1,
+      root.to_path_buf(),
+      "needle".to_string(),
+      GlobalSearchConfig::default(),
+      Vec::new(),
+      Arc::new(AtomicBool::new(false)),
+    );
+
+    assert!(response.error.is_none());
+    assert_eq!(response.items.len(), 4);
+    assert!(matches!(
+      response.items[0].action,
+      FilePickerItemAction::GroupHeader { .. }
+    ));
+    assert_eq!(response.items[1].display, "alpha.txt\t1\t7\tfirst needle");
+    assert!(matches!(
+      response.items[2].action,
+      FilePickerItemAction::GroupHeader { .. }
+    ));
+    assert_eq!(response.items[3].display, "beta.txt\t1\t1\tneedle again");
+  }
+
+  #[test]
+  fn global_search_uses_unsaved_buffer_text_over_disk_contents() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+    let path = root.join("alpha.txt");
+    fs::write(&path, "disk only\n").unwrap();
+
+    let response = run_global_search_request(
+      1,
+      root.to_path_buf(),
+      "buffer".to_string(),
+      GlobalSearchConfig::default(),
+      vec![GlobalSearchDocumentSnapshot {
+        path: path.clone(),
+        text: "buffer match\n".to_string(),
+      }],
+      Arc::new(AtomicBool::new(false)),
+    );
+
+    assert!(response.error.is_none());
+    assert_eq!(response.items.len(), 2);
+    assert!(matches!(
+      response.items[0].action,
+      FilePickerItemAction::GroupHeader { .. }
+    ));
+    assert_eq!(response.items[1].display, "alpha.txt\t1\t1\tbuffer match");
   }
 }

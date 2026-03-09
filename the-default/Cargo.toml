@@ -9,7 +9,8 @@ path = "lib.rs"
 
 [dependencies]
 chrono       = "0.4"
-fff-core     = { path = "../../fff.nvim/crates/fff-core" }
+grep-regex   = { workspace = true }
+grep-searcher = { workspace = true }
 ignore       = { workspace = true }
 nucleo       = { workspace = true }
 regex        = { workspace = true }
@@ -22,6 +23,9 @@ the-loader   = { path = "../the-loader" }
 the-stdx     = { path = "../the-stdx" }
 toml         = { workspace = true }
 tracing      = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
 
 [features]
 cow-handlers     = [ "the-dispatch/cow-handlers" ]

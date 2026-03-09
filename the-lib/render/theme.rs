@@ -612,7 +612,9 @@ fn parse_ghostty_theme(
   warnings: &mut Vec<String>,
 ) -> GhosttyTheme {
   let Value::Table(mut entries) = value else {
-    warnings.push(format!("Failed to parse ghostty theme: expected table, found {value:?}"));
+    warnings.push(format!(
+      "Failed to parse ghostty theme: expected table, found {value:?}"
+    ));
     return GhosttyTheme::default();
   };
 
@@ -623,24 +625,34 @@ fn parse_ghostty_theme(
       Value::Table(palette_entries) => {
         for (index, value) in palette_entries {
           match index.parse::<usize>() {
-            Ok(slot @ 0..=15) => match palette.parse_color(value) {
-              Ok(color) => ghostty.palette[slot] = Some(color),
-              Err(err) => warnings.push(format!(
-                "Failed to parse ghostty palette color for slot {slot}: {err}"
-              )),
+            Ok(slot @ 0..=15) => {
+              match palette.parse_color(value) {
+                Ok(color) => ghostty.palette[slot] = Some(color),
+                Err(err) => {
+                  warnings.push(format!(
+                    "Failed to parse ghostty palette color for slot {slot}: {err}"
+                  ))
+                },
+              }
             },
-            Ok(other) => warnings.push(format!(
-              "Failed to parse ghostty palette color: slot {other} is out of range 0..=15"
-            )),
-            Err(_) => warnings.push(format!(
-              "Failed to parse ghostty palette color: invalid slot {index:?}"
-            )),
+            Ok(other) => {
+              warnings.push(format!(
+                "Failed to parse ghostty palette color: slot {other} is out of range 0..=15"
+              ))
+            },
+            Err(_) => {
+              warnings.push(format!(
+                "Failed to parse ghostty palette color: invalid slot {index:?}"
+              ))
+            },
           }
         }
       },
-      other => warnings.push(format!(
-        "Failed to parse ghostty palette: expected table, found {other:?}"
-      )),
+      other => {
+        warnings.push(format!(
+          "Failed to parse ghostty palette: expected table, found {other:?}"
+        ))
+      },
     }
   }
 
@@ -786,20 +798,23 @@ mod tests {
 
     assert_eq!(theme.name(), "ghostty-test");
     assert_eq!(ghostty.background(), Some(Color::Rgb(0x30, 0x34, 0x46)));
-    assert_eq!(ghostty.foreground(), Some(Color::Rgb(0xc6, 0xd0, 0xf5)));
-    assert_eq!(ghostty.cursor_color(), Some(Color::Rgb(0xf2, 0xd5, 0xcf)));
-    assert_eq!(ghostty.cursor_text(), Some(Color::Rgb(0xc6, 0xd0, 0xf5)));
+    assert_eq!(ghostty.foreground(), Some(Color::Rgb(0xC6, 0xD0, 0xF5)));
+    assert_eq!(ghostty.cursor_color(), Some(Color::Rgb(0xF2, 0xD5, 0xCF)));
+    assert_eq!(ghostty.cursor_text(), Some(Color::Rgb(0xC6, 0xD0, 0xF5)));
     assert_eq!(
       ghostty.selection_background(),
       Some(Color::Rgb(0x62, 0x68, 0x80))
     );
     assert_eq!(
       ghostty.selection_foreground(),
-      Some(Color::Rgb(0xc6, 0xd0, 0xf5))
+      Some(Color::Rgb(0xC6, 0xD0, 0xF5))
     );
-    assert_eq!(ghostty.palette_color(0), Some(Color::Rgb(0x51, 0x57, 0x6d)));
-    assert_eq!(ghostty.palette_color(1), Some(Color::Rgb(0xe7, 0x82, 0x84)));
-    assert_eq!(ghostty.palette_color(15), Some(Color::Rgb(0xb5, 0xbf, 0xe2)));
+    assert_eq!(ghostty.palette_color(0), Some(Color::Rgb(0x51, 0x57, 0x6D)));
+    assert_eq!(ghostty.palette_color(1), Some(Color::Rgb(0xE7, 0x82, 0x84)));
+    assert_eq!(
+      ghostty.palette_color(15),
+      Some(Color::Rgb(0xB5, 0xBF, 0xE2))
+    );
     assert_eq!(ghostty.palette_color(2), None);
   }
 }

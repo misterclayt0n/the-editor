@@ -152,7 +152,9 @@ pub fn handle_key(ctx: &mut Ctx, event: CrosstermKeyEvent) {
 
 pub fn handle_mouse(ctx: &mut Ctx, event: CrosstermMouseEvent) {
   let click_count = match event.kind {
-    MouseEventKind::Down(MouseButton::Left) => ctx.pointer_click_count_for_left_down(event.column, event.row),
+    MouseEventKind::Down(MouseButton::Left) => {
+      ctx.pointer_click_count_for_left_down(event.column, event.row)
+    },
     _ => 0,
   };
   let Some(mut pointer_event) = crossterm_mouse_to_pointer_event(event) else {
@@ -897,24 +899,20 @@ fn crossterm_mouse_to_pointer_event(event: CrosstermMouseEvent) -> Option<Pointe
 }
 
 fn pointer_event_coords(event: PointerEvent) -> Option<(u16, u16)> {
-  let x = event
-    .logical_col
-    .or_else(|| {
-      if event.x < 0 {
-        None
-      } else {
-        Some((event.x.min(i32::from(u16::MAX))) as u16)
-      }
-    })?;
-  let y = event
-    .logical_row
-    .or_else(|| {
-      if event.y < 0 {
-        None
-      } else {
-        Some((event.y.min(i32::from(u16::MAX))) as u16)
-      }
-    })?;
+  let x = event.logical_col.or_else(|| {
+    if event.x < 0 {
+      None
+    } else {
+      Some((event.x.min(i32::from(u16::MAX))) as u16)
+    }
+  })?;
+  let y = event.logical_row.or_else(|| {
+    if event.y < 0 {
+      None
+    } else {
+      Some((event.y.min(i32::from(u16::MAX))) as u16)
+    }
+  })?;
   Some((x, y))
 }
 

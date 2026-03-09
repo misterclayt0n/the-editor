@@ -149,8 +149,8 @@ impl PaneContent {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct TerminalSurface {
-  terminal_id:    TerminalId,
-  attached_pane:  Option<PaneId>,
+  terminal_id:   TerminalId,
+  attached_pane: Option<PaneId>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -306,16 +306,12 @@ impl Editor {
   }
 
   fn first_editor_pane(&self) -> Option<PaneId> {
-    self
-      .split_tree
-      .pane_order()
-      .into_iter()
-      .find(|pane| {
-        matches!(
-          self.pane_content.get(pane),
-          Some(PaneContent::EditorBuffer { .. })
-        )
-      })
+    self.split_tree.pane_order().into_iter().find(|pane| {
+      matches!(
+        self.pane_content.get(pane),
+        Some(PaneContent::EditorBuffer { .. })
+      )
+    })
   }
 
   fn activate_buffer(&mut self, index: usize) -> bool {
@@ -811,7 +807,9 @@ impl Editor {
 
     let pane = self.active_pane_id();
     let _ = self.detach_terminal_surface_in_pane(pane);
-    self.pane_content.insert(pane, PaneContent::Terminal { terminal_id });
+    self
+      .pane_content
+      .insert(pane, PaneContent::Terminal { terminal_id });
     if let Some(surface) = self.terminal_surfaces.get_mut(&terminal_id) {
       surface.attached_pane = Some(pane);
     }
@@ -1491,11 +1489,7 @@ mod tests {
     let editor_id = EditorId::new(NonZeroUsize::new(1).unwrap());
     let mut editor = Editor::new(editor_id, doc, view);
 
-    let second = editor.open_buffer(
-      Rope::from("two"),
-      view,
-      Some(PathBuf::from("/tmp/two.txt")),
-    );
+    let second = editor.open_buffer(Rope::from("two"), view, Some(PathBuf::from("/tmp/two.txt")));
     assert_eq!(second, 1);
     assert!(editor.split_active_pane(SplitAxis::Vertical));
     let terminal_id = editor.open_terminal_in_active_pane();
@@ -1554,11 +1548,7 @@ mod tests {
     let terminal_id = editor.open_terminal_in_active_pane();
     assert!(editor.is_active_pane_terminal());
 
-    let opened = editor.open_buffer(
-      Rope::from("two"),
-      view,
-      Some(PathBuf::from("/tmp/two.txt")),
-    );
+    let opened = editor.open_buffer(Rope::from("two"), view, Some(PathBuf::from("/tmp/two.txt")));
     assert_eq!(opened, 1);
     assert_eq!(editor.active_buffer_index(), 1);
     assert_eq!(
@@ -1590,14 +1580,13 @@ mod tests {
       editor.pane_content(active_pane),
       Some(PaneContent::EditorBuffer { buffer_index: 0 })
     );
-    assert_eq!(
-      editor.terminal_surface_snapshots(),
-      vec![TerminalSurfaceSnapshot {
+    assert_eq!(editor.terminal_surface_snapshots(), vec![
+      TerminalSurfaceSnapshot {
         terminal_id,
         attached_pane: None,
         is_active: false,
-      }]
-    );
+      }
+    ]);
     assert!(editor.focus_terminal_surface(terminal_id));
     assert_eq!(
       editor.pane_content(active_pane),
@@ -1618,14 +1607,13 @@ mod tests {
     assert_eq!(editor.pane_count(), 2);
     assert!(editor.only_active_pane());
     assert_eq!(editor.pane_count(), 1);
-    assert_eq!(
-      editor.terminal_surface_snapshots(),
-      vec![TerminalSurfaceSnapshot {
+    assert_eq!(editor.terminal_surface_snapshots(), vec![
+      TerminalSurfaceSnapshot {
         terminal_id,
         attached_pane: None,
         is_active: false,
-      }]
-    );
+      }
+    ]);
     let panes = editor.frame_pane_snapshots(editor.layout_viewport());
     assert!(
       panes.iter().all(|pane| {
@@ -1671,14 +1659,13 @@ mod tests {
       editor.pane_content(active_pane),
       Some(PaneContent::EditorBuffer { buffer_index: 0 })
     );
-    assert_eq!(
-      editor.terminal_surface_snapshots(),
-      vec![TerminalSurfaceSnapshot {
+    assert_eq!(editor.terminal_surface_snapshots(), vec![
+      TerminalSurfaceSnapshot {
         terminal_id,
         attached_pane: None,
         is_active: false,
-      }]
-    );
+      }
+    ]);
     assert!(editor.focus_terminal_surface(terminal_id));
     assert_eq!(
       editor.pane_content(active_pane),
@@ -1725,9 +1712,16 @@ mod tests {
 
     let surfaces = editor.editor_surface_snapshots();
     assert_eq!(surfaces.len(), 2);
-    assert_eq!(surfaces.iter().filter(|surface| surface.is_active).count(), 1);
+    assert_eq!(
+      surfaces.iter().filter(|surface| surface.is_active).count(),
+      1
+    );
     assert!(surfaces.iter().any(|surface| surface.buffer_index == 0));
-    assert!(surfaces.iter().any(|surface| surface.buffer_index == two_idx));
+    assert!(
+      surfaces
+        .iter()
+        .any(|surface| surface.buffer_index == two_idx)
+    );
     assert!(surfaces.iter().any(|surface| {
       surface.buffer_index == two_idx
         && surface.file_path == Some(PathBuf::from("/tmp/project/src/two.rs"))
@@ -1891,14 +1885,13 @@ mod tests {
 
     assert!(editor.move_pane(terminal_pane, editor_pane, PaneDirection::Right));
     assert_eq!(editor.active_pane_id(), terminal_pane);
-    assert_eq!(
-      editor.terminal_surface_snapshots(),
-      vec![TerminalSurfaceSnapshot {
+    assert_eq!(editor.terminal_surface_snapshots(), vec![
+      TerminalSurfaceSnapshot {
         terminal_id,
         attached_pane: Some(terminal_pane),
         is_active: true,
-      }]
-    );
+      }
+    ]);
     assert_eq!(
       editor
         .frame_pane_snapshots(viewport)

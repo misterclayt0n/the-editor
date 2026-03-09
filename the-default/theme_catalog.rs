@@ -36,7 +36,11 @@ impl ThemeCatalog {
     }
 
     theme_dirs.push(the_loader::config_dir().join("themes"));
-    theme_dirs.extend(the_loader::runtime_dirs().iter().map(|dir| dir.join("themes")));
+    theme_dirs.extend(
+      the_loader::runtime_dirs()
+        .iter()
+        .map(|dir| dir.join("themes")),
+    );
 
     let mut names = BTreeSet::from([
       default_theme().name().to_string(),
@@ -61,10 +65,13 @@ impl ThemeCatalog {
   }
 
   pub fn load_theme(&self, name: &str) -> Option<Theme> {
-    self.load_theme_impl(name).map_err(|error| {
-      warn!("Failed to load theme '{name}': {error}");
-      error
-    }).ok()
+    self
+      .load_theme_impl(name)
+      .map_err(|error| {
+        warn!("Failed to load theme '{name}': {error}");
+        error
+      })
+      .ok()
   }
 
   fn load_theme_impl(&self, name: &str) -> Result<Theme, String> {
@@ -94,10 +101,14 @@ impl ThemeCatalog {
         .ok_or_else(|| format!("expected 'inherits' to be a string in '{}'", path.display()))?;
 
       let parent_theme_toml = match parent_theme_name {
-        "default" => toml::from_str(include_str!("../the-lib/theme.toml"))
-          .map_err(|error| format!("failed to parse embedded default theme: {error}"))?,
-        "base16_default" => toml::from_str(include_str!("../the-lib/base16_theme.toml"))
-          .map_err(|error| format!("failed to parse embedded base16 theme: {error}"))?,
+        "default" => {
+          toml::from_str(include_str!("../the-lib/theme.toml"))
+            .map_err(|error| format!("failed to parse embedded default theme: {error}"))?
+        },
+        "base16_default" => {
+          toml::from_str(include_str!("../the-lib/base16_theme.toml"))
+            .map_err(|error| format!("failed to parse embedded base16 theme: {error}"))?
+        },
         _ => self.load_theme_value(parent_theme_name, visited_paths)?,
       };
 
@@ -167,11 +178,7 @@ impl ThemeCatalog {
       .map_err(|error| format!("failed to parse theme '{}': {error}", path.display()))
   }
 
-  fn path(
-    &self,
-    name: &str,
-    visited_paths: &mut HashSet<PathBuf>,
-  ) -> Result<PathBuf, String> {
+  fn path(&self, name: &str, visited_paths: &mut HashSet<PathBuf>) -> Result<PathBuf, String> {
     let filename = format!("{name}.toml");
     let mut cycle_found = false;
 
@@ -259,10 +266,12 @@ keyword = "#abcdef"
 
     let catalog = ThemeCatalog {
       theme_dirs: vec![high.join("themes"), low.join("themes")],
-      names: BTreeSet::from(["child".to_string(), "parent".to_string()]),
+      names:      BTreeSet::from(["child".to_string(), "parent".to_string()]),
     };
 
-    let theme = catalog.load_theme("child").expect("child theme should load");
+    let theme = catalog
+      .load_theme("child")
+      .expect("child theme should load");
     let ghostty = theme.ghostty();
     assert_eq!(
       ghostty.background(),

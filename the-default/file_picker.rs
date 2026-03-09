@@ -297,6 +297,13 @@ impl Default for FilePickerConfig {
   }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FilePickerQueryMode {
+  #[default]
+  Static,
+  Dynamic,
+}
+
 #[derive(Debug, Clone)]
 pub enum FilePickerPreview {
   Empty,
@@ -410,7 +417,8 @@ pub struct FilePickerState {
   pub error:              Option<String>,
   pub scanning:           bool,
   pub matcher_running:    bool,
-  pub query_external:     bool,
+  pub query_mode:         FilePickerQueryMode,
+  pub dynamic_running:    bool,
   preview_cache:          PreviewCache,
   preview_req_tx:         Option<Sender<PreviewRequest>>,
   preview_res_rx:         Option<Receiver<PreviewResult>>,
@@ -453,7 +461,8 @@ impl Default for FilePickerState {
       error: None,
       scanning: false,
       matcher_running: false,
-      query_external: false,
+      query_mode: FilePickerQueryMode::Static,
+      dynamic_running: false,
       preview_cache: PreviewCache::with_capacity(PREVIEW_CACHE_CAPACITY),
       preview_req_tx: None,
       preview_res_rx: None,
@@ -942,8 +951,78 @@ pub fn open_custom_picker<Ctx: DefaultContext>(
   open_static_picker(ctx, title, root, open_split, items, initial_cursor);
 }
 
-pub fn set_file_picker_query_external(state: &mut FilePickerState, external: bool) {
-  state.query_external = external;
+pub fn open_dynamic_picker<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  title: &str,
+  root: PathBuf,
+  open_split: Option<SplitAxis>,
+  initial_query: String,
+) {
+  let mut state = base_picker_state(ctx, title, open_split);
+  state.root = root;
+  state.query_mode = FilePickerQueryMode::Dynamic;
+  state.query = initial_query;
+  state.cursor = state.query.len();
+  prepare_dynamic_query_change(&mut state);
+  start_preview_worker(&mut state);
+
+  *ctx.file_picker_mut() = state;
+  ctx.request_render();
+}
+
+pub fn set_file_picker_query_text(state: &mut FilePickerState, query: &str) -> bool {
+  let old_query = state.query.clone();
+  state.query = query.to_string();
+  state.cursor = state.query.len();
+  if state.query_mode == FilePickerQueryMode::Dynamic {
+    prepare_dynamic_query_change(state);
+    true
+  } else {
+    handle_query_change(state, &old_query);
+    refresh_preview(state);
+    false
+  }
+}
+
+fn reset_picker_matcher(state: &mut FilePickerState) {
+  state.matcher = new_matcher(state.wake_tx.clone());
+  state.matcher_running = false;
+}
+
+fn prepare_dynamic_query_change(state: &mut FilePickerState) {
+  reset_picker_matcher(state);
+  state.selected = None;
+  state.hovered = None;
+  state.list_offset = 0;
+  state.preview_scroll = 0;
+  state.error = None;
+  state.dynamic_running = !state.query.trim().is_empty();
+  state.preview_path = None;
+  state.preview_focus_line = None;
+  state.preview_pending_id = None;
+  state.preview_latest_request.store(0, Ordering::Relaxed);
+  state.preview = FilePickerPreview::Message(if state.dynamic_running {
+    "Searching…".to_string()
+  } else {
+    "Type to search".to_string()
+  });
+}
+
+fn finalize_query_edit<Ctx: DefaultContext>(ctx: &mut Ctx, old_query: &str) {
+  let mut changed_query = None;
+  {
+    let picker = ctx.file_picker_mut();
+    if picker.query_mode == FilePickerQueryMode::Dynamic {
+      prepare_dynamic_query_change(picker);
+      changed_query = Some(picker.query.clone());
+    } else {
+      handle_query_change(picker, old_query);
+      refresh_preview(picker);
+    }
+  }
+  if let Some(query) = changed_query {
+    ctx.file_picker_query_changed(&query);
+  }
 }
 
 pub fn replace_file_picker_items<Ctx: DefaultContext>(
@@ -961,6 +1040,7 @@ fn replace_picker_items(
   items: Vec<FilePickerItem>,
   initial_cursor: usize,
 ) {
+  state.dynamic_running = false;
   state.preview = FilePickerPreview::Message("No matches".to_string());
   if state.preview_req_tx.is_none() || state.preview_res_rx.is_none() {
     start_preview_worker(state);
@@ -1027,7 +1107,8 @@ pub fn close_file_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
   picker.preview = FilePickerPreview::Empty;
   picker.scanning = false;
   picker.matcher_running = false;
-  picker.query_external = false;
+  picker.query_mode = FilePickerQueryMode::Static;
+  picker.dynamic_running = false;
   picker.preview_req_tx = None;
   picker.preview_res_rx = None;
   picker.preview_pending_id = None;
@@ -1192,62 +1273,34 @@ pub fn handle_file_picker_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent)
       true
     },
     Key::Backspace => {
-      let mut changed_query = None;
+      let mut old_query = None;
       {
         let picker = ctx.file_picker_mut();
         if picker.cursor > 0 && picker.cursor <= picker.query.len() {
-          let old_query = picker.query.clone();
+          old_query = Some(picker.query.clone());
           let prev = prev_char_boundary(&picker.query, picker.cursor);
           picker.query.replace_range(prev..picker.cursor, "");
           picker.cursor = prev;
-          if picker.query_external {
-            picker.selected = Some(0);
-            picker.list_offset = 0;
-            picker.error = None;
-            picker.preview = FilePickerPreview::Message("Searching…".to_string());
-            set_preview_focus_line(picker, None);
-            picker.preview_path = None;
-            picker.preview_pending_id = None;
-            picker.preview_latest_request.store(0, Ordering::Relaxed);
-            changed_query = Some(picker.query.clone());
-          } else {
-            handle_query_change(picker, &old_query);
-            refresh_preview(picker);
-          }
         }
       }
-      if let Some(query) = changed_query {
-        ctx.file_picker_query_changed(&query);
+      if let Some(old_query) = old_query {
+        finalize_query_edit(ctx, &old_query);
       }
       ctx.request_render();
       true
     },
     Key::Delete => {
-      let mut changed_query = None;
+      let mut old_query = None;
       {
         let picker = ctx.file_picker_mut();
         if picker.cursor < picker.query.len() {
-          let old_query = picker.query.clone();
+          old_query = Some(picker.query.clone());
           let next = next_char_boundary(&picker.query, picker.cursor);
           picker.query.replace_range(picker.cursor..next, "");
-          if picker.query_external {
-            picker.selected = Some(0);
-            picker.list_offset = 0;
-            picker.error = None;
-            picker.preview = FilePickerPreview::Message("Searching…".to_string());
-            set_preview_focus_line(picker, None);
-            picker.preview_path = None;
-            picker.preview_pending_id = None;
-            picker.preview_latest_request.store(0, Ordering::Relaxed);
-            changed_query = Some(picker.query.clone());
-          } else {
-            handle_query_change(picker, &old_query);
-            refresh_preview(picker);
-          }
         }
       }
-      if let Some(query) = changed_query {
-        ctx.file_picker_query_changed(&query);
+      if let Some(old_query) = old_query {
+        finalize_query_edit(ctx, &old_query);
       }
       ctx.request_render();
       true
@@ -1306,30 +1359,14 @@ pub fn handle_file_picker_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent)
       if key.modifiers.ctrl() || key.modifiers.alt() {
         return true;
       }
-      let mut changed_query = None;
-      {
+      let old_query = {
         let picker = ctx.file_picker_mut();
         let old_query = picker.query.clone();
         picker.query.insert(picker.cursor, ch);
         picker.cursor += ch.len_utf8();
-        if picker.query_external {
-          picker.selected = Some(0);
-          picker.list_offset = 0;
-          picker.error = None;
-          picker.preview = FilePickerPreview::Message("Searching…".to_string());
-          set_preview_focus_line(picker, None);
-          picker.preview_path = None;
-          picker.preview_pending_id = None;
-          picker.preview_latest_request.store(0, Ordering::Relaxed);
-          changed_query = Some(picker.query.clone());
-        } else {
-          handle_query_change(picker, &old_query);
-          refresh_preview(picker);
-        }
-      }
-      if let Some(query) = changed_query {
-        ctx.file_picker_query_changed(&query);
-      }
+        old_query
+      };
+      finalize_query_edit(ctx, &old_query);
       ctx.request_render();
       true
     },
@@ -1580,7 +1617,7 @@ pub fn build_file_picker_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNode> {
     return Vec::new();
   }
   let picker = ctx.file_picker();
-  let is_running = picker.scanning || picker.matcher_running;
+  let is_running = picker.scanning || picker.matcher_running || picker.dynamic_running;
 
   let mut status = format!(
     "{}{}/{}",
@@ -1997,6 +2034,8 @@ fn start_scan(state: &mut FilePickerState, root: PathBuf) {
   state.error = None;
   state.scanning = true;
   state.matcher_running = false;
+  state.query_mode = FilePickerQueryMode::Static;
+  state.dynamic_running = false;
   state.preview = FilePickerPreview::Message("Scanning files…".to_string());
 
   state.matcher.restart(true);
@@ -2013,7 +2052,7 @@ fn start_scan(state: &mut FilePickerState, root: PathBuf) {
   state.scan_cancel = Some(cancel.clone());
   let injector = state.matcher.injector();
 
-  let mut walker = build_file_walker(&root, &state.config);
+  let mut walker = build_file_walk_builder(&root, &state.config).build();
   let timeout = Instant::now() + Duration::from_millis(WARMUP_SCAN_BUDGET_MS);
   let mut scanned = 0usize;
   let mut hit_timeout = false;
@@ -2063,7 +2102,10 @@ fn start_scan(state: &mut FilePickerState, root: PathBuf) {
   );
 }
 
-fn build_file_walker(root: &Path, config: &FilePickerConfig) -> ignore::Walk {
+pub(crate) fn build_file_walk_builder(
+  root: &Path,
+  config: &FilePickerConfig,
+) -> ignore::WalkBuilder {
   let absolute_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
   let deduplicate_links = config.deduplicate_links;
   let mut walk_builder = ignore::WalkBuilder::new(root);
@@ -2080,8 +2122,8 @@ fn build_file_walker(root: &Path, config: &FilePickerConfig) -> ignore::Walk {
     .filter_entry(move |entry| filter_picker_entry(entry, &absolute_root, deduplicate_links))
     .add_custom_ignore_filename(the_loader::config_dir().join("ignore"))
     .add_custom_ignore_filename(".helix/ignore")
-    .types(excluded_types())
-    .build()
+    .types(excluded_types());
+  walk_builder
 }
 
 fn entry_to_picker_item(entry: DirEntry, root: &Path) -> Option<FilePickerItem> {

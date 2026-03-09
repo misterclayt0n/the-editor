@@ -86,6 +86,7 @@ use the_default::{
   FileTreeNodeKind as DefaultFileTreeNodeKind,
   FileTreeSnapshot as DefaultFileTreeSnapshot,
   FileTreeState,
+  GlobalSearchConfig,
   GlobalSearchState,
   KeyBinding,
   KeyEvent,
@@ -119,13 +120,12 @@ use the_default::{
   finalize_shell_pipe,
   finalize_shell_pipe_to,
   finalize_split_selection,
-  handle_query_change as file_picker_handle_query_change,
+  open_dynamic_picker,
   poll_scan_results as file_picker_poll_scan_results,
-  refresh_file_picker_preview,
   refresh_matcher_state as file_picker_refresh_matcher_state,
   replace_file_picker_items,
   select_file_picker_index,
-  set_file_picker_query_external,
+  set_file_picker_query_text,
   set_file_picker_syntax_loader,
   signature_help_panel_rect as default_signature_help_panel_rect,
   submit_file_picker,
@@ -265,8 +265,8 @@ use the_lsp::{
   LspCompletionItemKind,
   LspEvent,
   LspExecuteCommand,
-  LspInsertTextFormat,
   LspHoverDetails,
+  LspInsertTextFormat,
   LspLocation,
   LspPosition,
   LspProgressKind,
@@ -2295,7 +2295,11 @@ fn push_render_selection_rects(
     }
     let from = start.col.min(end.col).max(col_start);
     let mut to = start.col.max(end.col);
-    to = to.min(render_plan_row_visible_end_col(plan, row, row_visible_end_cols));
+    to = to.min(render_plan_row_visible_end_col(
+      plan,
+      row,
+      row_visible_end_cols,
+    ));
     if to <= from {
       return;
     }
@@ -2359,7 +2363,8 @@ fn compute_hover_highlight_selections<'a>(
   };
 
   let text_slice = text.slice(..);
-  let Some(start_pos) = visual_pos_at_char(text_slice, text_fmt, annotations, highlight_from) else {
+  let Some(start_pos) = visual_pos_at_char(text_slice, text_fmt, annotations, highlight_from)
+  else {
     return Vec::new();
   };
   let Some(end_pos) = visual_pos_at_char(text_slice, text_fmt, annotations, highlight_to) else {
@@ -2689,12 +2694,12 @@ fn vcs_statusline_refresh_interval() -> Duration {
 #[repr(u8)]
 enum VcsFileStatusKind {
   #[default]
-  None = 0,
-  Modified = 1,
+  None      = 0,
+  Modified  = 1,
   Untracked = 2,
-  Conflict = 3,
-  Deleted = 4,
-  Renamed = 5,
+  Conflict  = 3,
+  Deleted   = 4,
+  Renamed   = 5,
 }
 
 impl VcsFileStatusKind {
@@ -2800,7 +2805,9 @@ impl VcsUiState {
       counts.record(*status);
       let mut ancestor = path.parent();
       while let Some(dir) = ancestor {
-        *directory_changed_counts.entry(dir.to_path_buf()).or_insert(0) += 1;
+        *directory_changed_counts
+          .entry(dir.to_path_buf())
+          .or_insert(0) += 1;
         ancestor = dir.parent();
       }
     }
@@ -4556,12 +4563,12 @@ impl BufferTabItemSnapshotJson {
       .map(|path| vcs_ui.status_for_path(path) as u8)
       .unwrap_or(VcsFileStatusKind::None as u8);
     Self {
-      buffer_id:      value.buffer_id,
-      buffer_index:   value.buffer_index,
-      title:          value.title,
-      modified:       value.modified,
-      is_active:      value.is_active,
-      file_path:      value.file_path.map(|path| path.display().to_string()),
+      buffer_id: value.buffer_id,
+      buffer_index: value.buffer_index,
+      title: value.title,
+      modified: value.modified,
+      is_active: value.is_active,
+      file_path: value.file_path.map(|path| path.display().to_string()),
       directory_hint: value.directory_hint,
       vcs_status,
     }
@@ -6031,8 +6038,12 @@ impl App {
     }
 
     let anchor_char = hover_ui.anchor_char.min(doc.text().len_chars());
-    let Some(pos) = visual_pos_at_char(doc.text().slice(..), &text_fmt, &mut annotations, anchor_char)
-    else {
+    let Some(pos) = visual_pos_at_char(
+      doc.text().slice(..),
+      &text_fmt,
+      &mut annotations,
+      anchor_char,
+    ) else {
       return ffi::DocsPopupAnchor::default();
     };
 
@@ -6046,9 +6057,9 @@ impl App {
 
     ffi::DocsPopupAnchor {
       has_value: true,
-      pane_id: self.active_editor_ref().active_pane_id().get().get() as u64,
-      row: (pos.row - row_start) as u16,
-      col: (pos.col - col_start) as u16,
+      pane_id:   self.active_editor_ref().active_pane_id().get().get() as u64,
+      row:       (pos.row - row_start) as u16,
+      col:       (pos.col - col_start) as u16,
     }
   }
 
@@ -7090,18 +7101,16 @@ impl App {
     if self.activate(id).is_none() {
       return false;
     }
-    {
+    let should_notify_dynamic_query = {
       let picker = self.file_picker_mut();
       if !picker.active {
         return false;
       }
-      let old_query = picker.query.clone();
-      picker.query = query.to_string();
-      picker.cursor = query.len();
-      file_picker_handle_query_change(picker, &old_query);
-      refresh_file_picker_preview(picker);
+      set_file_picker_query_text(picker, query)
+    };
+    if should_notify_dynamic_query {
+      <Self as DefaultContext>::file_picker_query_changed(self, query);
     }
-    <Self as DefaultContext>::file_picker_query_changed(self, query);
     self.request_render();
     true
   }
@@ -9232,7 +9241,8 @@ impl App {
   ) -> bool {
     let text_len = self.active_editor_ref().document().text().len_chars();
     let anchor_char = anchor_char.min(text_len);
-    let (mut highlight_from, mut highlight_to) = highlight_range.unwrap_or((anchor_char, anchor_char));
+    let (mut highlight_from, mut highlight_to) =
+      highlight_range.unwrap_or((anchor_char, anchor_char));
     highlight_from = highlight_from.min(text_len);
     highlight_to = highlight_to.min(text_len);
     if highlight_to < highlight_from {
@@ -9306,8 +9316,11 @@ impl App {
     position: LspPosition,
     line_fallback: bool,
   ) -> bool {
-    let next_popup =
-      build_diagnostic_popup_state(&self.diagnostics_for_lsp_position(uri, position, line_fallback));
+    let next_popup = build_diagnostic_popup_state(&self.diagnostics_for_lsp_position(
+      uri,
+      position,
+      line_fallback,
+    ));
     let Some(id) = self.active_editor else {
       return false;
     };
@@ -9582,15 +9595,23 @@ impl App {
         self.clear_hover_docs_state();
         if self.diagnostic_popup_text().is_some() {
           let _ = self.set_hover_ui_state(trigger, anchor_char, next_range);
-        } else if let Some(id) = self.active_editor && let Some(state) = self.states.get_mut(&id) {
+        } else if let Some(id) = self.active_editor
+          && let Some(state) = self.states.get_mut(&id)
+        {
           state.hover_ui = None;
         }
       },
     }
 
     let mut published_message = false;
-    if hover_text.is_none() && self.diagnostic_popup_text().is_none() && trigger == HoverTriggerSource::Keyboard {
-      self.publish_lsp_message(the_lib::messages::MessageLevel::Info, "no hover information");
+    if hover_text.is_none()
+      && self.diagnostic_popup_text().is_none()
+      && trigger == HoverTriggerSource::Keyboard
+    {
+      self.publish_lsp_message(
+        the_lib::messages::MessageLevel::Info,
+        "no hover information",
+      );
       published_message = true;
     }
 
@@ -10131,29 +10152,21 @@ impl App {
       return;
     }
 
-    if let Err(err) = self.global_search.activate(root.as_path()) {
+    let config = GlobalSearchConfig {
+      smart_case:  true,
+      file_picker: self.file_picker().config.clone(),
+    };
+    if let Err(err) = self.global_search.activate(root.as_path(), config) {
       let _ = <Self as DefaultContext>::push_error(
         self,
         "global_search",
-        format!("Failed to initialize global search index: {err}"),
+        format!("Failed to initialize global search: {err}"),
       );
       return;
     }
 
     let initial_query = self.workspace_symbol_query_from_cursor();
-    the_default::open_custom_picker(self, "Live Grep", root, None, Vec::new(), 0);
-    {
-      let picker = self.file_picker_mut();
-      set_file_picker_query_external(picker, true);
-      picker.query = initial_query.clone();
-      picker.cursor = initial_query.len();
-      picker.error = None;
-      picker.preview = FilePickerPreview::Message(if initial_query.is_empty() {
-        "Type to search".to_string()
-      } else {
-        "Searching…".to_string()
-      });
-    }
+    open_dynamic_picker(self, "Live Grep", root, None, initial_query.clone());
 
     if !initial_query.trim().is_empty() {
       self.schedule_global_search(initial_query);
@@ -10166,7 +10179,9 @@ impl App {
     if !self.global_search.is_active() {
       return;
     }
-    self.global_search.schedule(query);
+    self
+      .global_search
+      .schedule(query, self.global_search_documents());
   }
 
   fn poll_global_search(&mut self) -> bool {
@@ -10186,7 +10201,6 @@ impl App {
     replace_file_picker_items(self, response.items, 0);
     {
       let picker = self.file_picker_mut();
-      set_file_picker_query_external(picker, true);
       picker.query = response.query.clone();
       picker.cursor = response.query.len();
       if let Some(error) = response.error {
@@ -10786,14 +10800,10 @@ impl App {
         return PointerEventOutcome::Continue;
       }
 
-      if self
-        .active_state_ref()
-        .hover_ui
-        .is_some_and(|hover_ui| {
-          hover_ui.trigger == HoverTriggerSource::Mouse
-            && Self::hover_ui_contains_char(hover_ui, target)
-        })
-      {
+      if self.active_state_ref().hover_ui.is_some_and(|hover_ui| {
+        hover_ui.trigger == HoverTriggerSource::Mouse
+          && Self::hover_ui_contains_char(hover_ui, target)
+      }) {
         self.lsp_pending_mouse_hover = None;
         return PointerEventOutcome::Continue;
       }
@@ -10823,12 +10833,12 @@ impl App {
       }
 
       self.lsp_pending_mouse_hover = Some(PendingMouseHover {
-        editor_id: self.active_editor.expect("active editor must exist"),
-        pane_id: target_pane,
-        anchor_char: target,
+        editor_id:      self.active_editor.expect("active editor must exist"),
+        pane_id:        target_pane,
+        anchor_char:    target,
         highlight_from: highlight_range.map(|range| range.0).unwrap_or(target),
-        highlight_to: highlight_range.map(|range| range.1).unwrap_or(target),
-        due_at: Instant::now() + lsp_hover_auto_trigger_latency(),
+        highlight_to:   highlight_range.map(|range| range.1).unwrap_or(target),
+        due_at:         Instant::now() + lsp_hover_auto_trigger_latency(),
       });
       if changed {
         self.request_render();
@@ -11615,7 +11625,10 @@ impl App {
 
   fn refresh_vcs_ui_state(&mut self) -> bool {
     let next = if self.workspace_root.exists() {
-      match self.vcs_provider.collect_changed_files(&self.workspace_root) {
+      match self
+        .vcs_provider
+        .collect_changed_files(&self.workspace_root)
+      {
         Ok(changes) => VcsUiState::from_changes(changes),
         Err(_) => VcsUiState::default(),
       }
@@ -12080,7 +12093,18 @@ impl DefaultContext for App {
 
   fn file_picker_query_changed(&mut self, query: &str) {
     if self.global_search.is_active() {
-      self.schedule_global_search(query.to_string());
+      if query.trim().is_empty() {
+        self.global_search.cancel_pending();
+        replace_file_picker_items(self, Vec::new(), 0);
+        let picker = self.file_picker_mut();
+        picker.query = query.to_string();
+        picker.cursor = query.len();
+        picker.error = None;
+        picker.preview = FilePickerPreview::Message("Type to search".to_string());
+        self.request_render();
+      } else {
+        self.schedule_global_search(query.to_string());
+      }
     }
   }
 
@@ -13845,9 +13869,9 @@ impl Default for ffi::DocsPopupAnchor {
   fn default() -> Self {
     Self {
       has_value: false,
-      pane_id: 0,
-      row: 0,
-      col: 0,
+      pane_id:   0,
+      row:       0,
+      col:       0,
     }
   }
 }
@@ -14330,7 +14354,6 @@ mod tests {
     Value,
     json,
   };
-  use crate::HoverTriggerSource;
   use the_default::{
     Command,
     CommandEvent,
@@ -14382,15 +14405,16 @@ mod tests {
     LibStyle,
     PendingAutoSignatureHelp,
     SignatureHelpTriggerSource,
+    VcsFileStatusKind,
+    VcsUiState,
     build_diagnostic_popup_state,
     build_lsp_document_state,
     capabilities_support_single_char,
     dedupe_inline_diagnostic_lines,
     ffi,
-    VcsFileStatusKind,
-    VcsUiState,
     format_vcs_statusline_text,
   };
+  use crate::HoverTriggerSource;
 
   #[test]
   fn app_render_plan_basic() {
@@ -14446,8 +14470,14 @@ mod tests {
       state.status_for_path(Path::new("/tmp/the-editor-vcs/old.rs")),
       VcsFileStatusKind::None
     );
-    assert_eq!(state.changed_descendant_count(Path::new("/tmp/the-editor-vcs/src")), 3);
-    assert_eq!(state.changed_descendant_count(Path::new("/tmp/the-editor-vcs")), 4);
+    assert_eq!(
+      state.changed_descendant_count(Path::new("/tmp/the-editor-vcs/src")),
+      3
+    );
+    assert_eq!(
+      state.changed_descendant_count(Path::new("/tmp/the-editor-vcs")),
+      4
+    );
     assert_eq!(state.counts.summary_text().as_deref(), Some("U1 M1 R1 ?1"));
   }
 
@@ -14919,13 +14949,7 @@ mod tests {
     assert!(app.set_hover_ui_state(HoverTriggerSource::Mouse, 1, Some((0, 5))));
 
     let generation = app.lsp_hover_generation;
-    app.apply_hover_response(
-      None,
-      generation,
-      HoverTriggerSource::Mouse,
-      1,
-      Some((0, 5)),
-    );
+    app.apply_hover_response(None, generation, HoverTriggerSource::Mouse, 1, Some((0, 5)));
 
     assert!(app.hover_docs_text().is_none());
     assert!(app.diagnostic_popup_text().is_none());

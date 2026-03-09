@@ -1799,10 +1799,12 @@ pub mod completers {
       .available_theme_names()
       .into_iter()
       .filter(|name| name.to_lowercase().contains(&input_lower))
-      .map(|name| Completion {
-        range: 0..,
-        text:  name,
-        doc:   None,
+      .map(|name| {
+        Completion {
+          range: 0..,
+          text:  name,
+          doc:   None,
+        }
       })
       .collect()
   }

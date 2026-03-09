@@ -153,9 +153,9 @@ enum EditorNamedCommand: String, CaseIterable {
         case .toggleFileTree:
             return [.command]
         case .splitPaneDown:
-            return [.command]
-        case .splitPaneRight:
             return [.command, .shift]
+        case .splitPaneRight:
+            return [.command]
         case .focusPaneLeft, .focusPaneRight, .focusPaneUp, .focusPaneDown:
             return [.command, .option]
         case .openTerminal:
@@ -184,9 +184,9 @@ enum EditorNamedCommand: String, CaseIterable {
         case .toggleFileTree:
             return [.command]
         case .splitPaneDown:
-            return [.command]
-        case .splitPaneRight:
             return [.command, .shift]
+        case .splitPaneRight:
+            return [.command]
         case .focusPaneLeft, .focusPaneRight, .focusPaneUp, .focusPaneDown:
             return [.command, .option]
         case .openTerminal:

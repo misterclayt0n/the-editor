@@ -232,17 +232,33 @@ final class EditorModel: ObservableObject {
     }
 
     func refresh(trigger: String = "manual") {
-        _ = trigger
-        let shouldDriveRuntime = shouldDriveSharedRuntime()
-        if shouldDriveRuntime {
-            _ = app.poll_background(editorId)
+        let perfEnabled = DiagnosticsDebugLog.editorPerfEnabled
+        let perfStart = perfEnabled ? DispatchTime.now().uptimeNanoseconds : 0
+        func perfNow() -> UInt64 {
+            DispatchTime.now().uptimeNanoseconds
         }
+        func perfMs(_ start: UInt64, _ end: UInt64) -> Double {
+            guard end >= start else { return 0 }
+            return Double(end - start) / 1_000_000.0
+        }
+
+        let shouldDriveRuntime = shouldDriveSharedRuntime()
+        let runtimePollChanged: Bool
+        if shouldDriveRuntime {
+            runtimePollChanged = app.poll_background(editorId)
+        } else {
+            runtimePollChanged = false
+        }
+        let perfAfterPoll = perfEnabled ? perfNow() : 0
         synchronizeEffectiveTheme()
+        let perfAfterTheme = perfEnabled ? perfNow() : 0
         let uiFetch = fetchUiTree()
+        let perfAfterUi = perfEnabled ? perfNow() : 0
         if uiFetch.changed {
             uiTree = uiFetch.tree
         }
         let tabsFetch = fetchBufferTabsSnapshot()
+        let perfAfterTabs = perfEnabled ? perfNow() : 0
         if tabsFetch.changed {
             bufferTabsSnapshot = tabsFetch.snapshot
         }
@@ -250,32 +266,77 @@ final class EditorModel: ObservableObject {
         // Buffer tabs in the Swift app are native window tabs, not in-content chrome.
         setTopChromeReservedRows(0)
         updateEffectiveViewport()
+        let perfAfterViewport = perfEnabled ? perfNow() : 0
 
         framePlan = app.frame_render_plan(editorId)
         plan = framePlan.active_plan()
+        let perfAfterFrame = perfEnabled ? perfNow() : 0
         splitSeparators = fetchSplitSeparators()
         updateTerminalPaneSnapshots(from: framePlan)
         updateTerminalSurfaceSnapshots()
         updateSurfaceOverviewSnapshots(from: framePlan)
         updateEditorSurfaceSnapshots()
+        let perfAfterSnapshots = perfEnabled ? perfNow() : 0
         debugSurfaceRailState(trigger: trigger)
         debugDiagnosticsSnapshot(trigger: trigger, plan: plan)
 
         mode = EditorMode(rawValue: app.mode(editorId)) ?? .normal
         pendingKeys = fetchPendingKeys()
         pendingKeyHints = fetchPendingKeyHints()
+        let perfAfterInputState = perfEnabled ? perfNow() : 0
         refreshFilePicker()
+        let perfAfterPicker = perfEnabled ? perfNow() : 0
         refreshFileTree()
+        let perfAfterTree = perfEnabled ? perfNow() : 0
 
         // Sync title/subtitle after pane snapshots update so terminal/editor focus
         // state reflects the latest frame.
         if shouldSyncNativeWindowPresentation() {
             syncNativeWindowPresentation()
         }
+        let perfAfterWindow = perfEnabled ? perfNow() : 0
 
         if app.take_should_quit() {
             NSApp.terminate(nil)
         }
+
+        guard perfEnabled else {
+            return
+        }
+        let totalMs = perfMs(perfStart, perfAfterWindow)
+        guard DiagnosticsDebugLog.editorPerfShouldLog(durationMs: totalMs) else {
+            return
+        }
+
+        DiagnosticsDebugLog.editorPerfLog(
+            String(
+                format: "refresh trigger=%@ total=%.2fms poll=%.2fms theme=%.2fms ui=%.2fms tabs=%.2fms viewport=%.2fms frame=%.2fms snapshots=%.2fms input=%.2fms picker=%.2fms tree=%.2fms window=%.2fms runtime_drive=%d runtime_changed=%d ui_changed=%d tabs_changed=%d overlays=%d panes=%d lines=%d eol=%d underlines=%d terminals=%d active_terminal=%d",
+                trigger,
+                totalMs,
+                perfMs(perfStart, perfAfterPoll),
+                perfMs(perfAfterPoll, perfAfterTheme),
+                perfMs(perfAfterTheme, perfAfterUi),
+                perfMs(perfAfterUi, perfAfterTabs),
+                perfMs(perfAfterTabs, perfAfterViewport),
+                perfMs(perfAfterViewport, perfAfterFrame),
+                perfMs(perfAfterFrame, perfAfterSnapshots),
+                perfMs(perfAfterSnapshots, perfAfterInputState),
+                perfMs(perfAfterInputState, perfAfterPicker),
+                perfMs(perfAfterPicker, perfAfterTree),
+                perfMs(perfAfterTree, perfAfterWindow),
+                shouldDriveRuntime ? 1 : 0,
+                runtimePollChanged ? 1 : 0,
+                uiFetch.changed ? 1 : 0,
+                tabsFetch.changed ? 1 : 0,
+                uiTree.overlays.count,
+                Int(framePlan.pane_count()),
+                Int(plan.line_count()),
+                Int(plan.eol_diagnostic_count()),
+                Int(plan.diagnostic_underline_count()),
+                terminalPanes.count,
+                isActivePaneTerminal ? 1 : 0
+            )
+        )
     }
 
     private func updateEffectiveViewport() {
@@ -1743,11 +1804,13 @@ final class EditorModel: ObservableObject {
                     return nil
                 }
                 let completion = tree.completionSnapshot()
+                let diagnostic = tree.diagnosticSnapshot()
                 let hover = tree.hoverSnapshot()
+                let docsPopoverCount = tree.docsPopoverSnapshots().count
                 let signature = tree.signatureHelpSnapshot()
                 DiagnosticsDebugLog.logChanged(
                     key: "editor.popup.tree.runtime\(runtimeInstanceId).editor\(editorId.value)",
-                    value: "overlays=[\(overlayIds.joined(separator: ","))] completion_items=\(completion?.items.count ?? 0) completion_selected=\(completion?.selectedIndex ?? -1) hover=\(hover != nil ? 1 : 0) signature=\(signature != nil ? 1 : 0)"
+                    value: "overlays=[\(overlayIds.joined(separator: ","))] completion_items=\(completion?.items.count ?? 0) completion_selected=\(completion?.selectedIndex ?? -1) diagnostic=\(diagnostic != nil ? 1 : 0) hover=\(hover != nil ? 1 : 0) docs_count=\(docsPopoverCount) signature=\(signature != nil ? 1 : 0)"
                 )
             }
             return UiTreeFetchResult(tree: tree, changed: true)

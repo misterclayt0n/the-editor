@@ -1,5 +1,96 @@
 import SwiftUI
 
+private enum DocsPopupSourceSnapshot: String {
+    case completion
+    case hover
+    case signature
+    case diagnostic
+    case commandPalette = "command_palette"
+}
+
+private func docsPopupSource(from value: String?) -> DocsPopupSourceSnapshot? {
+    guard let value else { return nil }
+    let normalized = value
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .lowercased()
+        .replacingOccurrences(of: "-", with: "_")
+    if let direct = DocsPopupSourceSnapshot(rawValue: normalized) {
+        return direct
+    }
+    switch normalized {
+    case "signature_help":
+        return .signature
+    case "lsp_hover", "hover_docs":
+        return .hover
+    case "diagnostic_docs", "lsp_diagnostic":
+        return .diagnostic
+    case "completion_docs":
+        return .completion
+    default:
+        return nil
+    }
+}
+
+private func docsPopupSource(from panel: UiPanelSnapshot) -> DocsPopupSourceSnapshot? {
+    docsPopupSource(from: panel.source) ?? docsPopupSource(from: panel.id)
+}
+
+private func docsPopupSource(from text: UiTextSnapshot) -> DocsPopupSourceSnapshot? {
+    docsPopupSource(from: text.source) ?? docsPopupSource(from: text.id)
+}
+
+enum DocsPopupToneSnapshot {
+    case neutral
+    case error
+    case warning
+    case information
+    case hint
+}
+
+enum DocsPopoverKindSnapshot {
+    case diagnostic
+    case hover
+}
+
+private func diagnosticPopupTone(from docsText: String) -> DocsPopupToneSnapshot {
+    let normalized = docsText.lowercased()
+    if normalized.contains("### error") {
+        return .error
+    }
+    if normalized.contains("### warning") {
+        return .warning
+    }
+    if normalized.contains("### information") {
+        return .information
+    }
+    if normalized.contains("### hint") {
+        return .hint
+    }
+    return .error
+}
+
+private func diagnosticPopupTone(from role: String?) -> DocsPopupToneSnapshot? {
+    guard let role else { return nil }
+    let normalized = role
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .lowercased()
+        .replacingOccurrences(of: "-", with: "_")
+    let suffix = normalized.split(separator: ".").last.map(String.init) ?? normalized
+
+    switch suffix {
+    case "error":
+        return .error
+    case "warning":
+        return .warning
+    case "information", "info":
+        return .information
+    case "hint":
+        return .hint
+    default:
+        return nil
+    }
+}
+
 struct UiOverlayHost: View {
     let tree: UiTreeSnapshot
     let cellSize: CGSize
@@ -48,11 +139,7 @@ struct UiOverlayHost: View {
                         EmptyView()
                     } else if case .panel(let panel) = node, panel.id == "completion" {
                         EmptyView()
-                    } else if case .panel(let panel) = node, panel.id == "completion_docs" {
-                        EmptyView()
-                    } else if case .panel(let panel) = node, panel.id == "signature_help" {
-                        EmptyView()
-                    } else if case .panel(let panel) = node, panel.id == "lsp_hover" {
+                    } else if case .panel(let panel) = node, docsPopupSource(from: panel) != nil {
                         EmptyView()
                     } else {
                         UiNodeView(node: node, cellSize: cellSize, containerSize: proxy.size)
@@ -771,7 +858,7 @@ extension UiTreeSnapshot {
         for node in overlays {
             if case .panel(let panel) = node {
                 if panel.id == "completion" { completionPanel = panel }
-                if panel.id == "completion_docs" { docsPanel = panel }
+                if docsPopupSource(from: panel) == .completion { docsPanel = panel }
             }
         }
 
@@ -805,42 +892,65 @@ extension UiTreeSnapshot {
         )
     }
 
-    func hoverSnapshot() -> HoverSnapshot? {
-        let hoverPanel = overlays.compactMap { node in
-            if case .panel(let panel) = node, panel.id == "lsp_hover" {
-                return panel
-            }
+    func diagnosticSnapshot() -> DiagnosticPopupSnapshot? {
+        guard let panel = docsPopupPanel(for: .diagnostic),
+              let popup = docsPopupContent(in: panel, source: .diagnostic)
+        else {
             return nil
-        }.first
+        }
 
-        guard let hoverPanel else { return nil }
+        return DiagnosticPopupSnapshot(
+            docsText: popup.docsText,
+            tone: popup.tone
+        )
+    }
 
-        let docsText = findText(in: hoverPanel.child, id: "lsp_hover_text")?.content
-            ?? firstTextContent(in: hoverPanel.child)
+    func hoverSnapshot() -> HoverSnapshot? {
+        guard let panel = docsPopupPanel(for: .hover),
+              let popup = docsPopupContent(in: panel, source: .hover)
+        else {
+            return nil
+        }
 
-        guard let docsText else { return nil }
-        let trimmed = docsText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
-        return HoverSnapshot(docsText: trimmed)
+        return HoverSnapshot(docsText: popup.docsText)
+    }
+
+    func docsPopoverSnapshots() -> [DocsPopoverSnapshot] {
+        var popovers: [DocsPopoverSnapshot] = []
+
+        if let diagnostic = diagnosticSnapshot() {
+            popovers.append(
+                DocsPopoverSnapshot(
+                    id: "diagnostic",
+                    kind: .diagnostic,
+                    docsText: diagnostic.docsText,
+                    tone: diagnostic.tone
+                )
+            )
+        }
+
+        if let hover = hoverSnapshot() {
+            popovers.append(
+                DocsPopoverSnapshot(
+                    id: "hover",
+                    kind: .hover,
+                    docsText: hover.docsText,
+                    tone: .neutral
+                )
+            )
+        }
+
+        return popovers
     }
 
     func signatureHelpSnapshot() -> SignatureHelpSnapshot? {
-        let signaturePanel = overlays.compactMap { node in
-            if case .panel(let panel) = node, panel.id == "signature_help" {
-                return panel
-            }
+        guard let panel = docsPopupPanel(for: .signature),
+              let popup = docsPopupContent(in: panel, source: .signature)
+        else {
             return nil
-        }.first
+        }
 
-        guard let signaturePanel else { return nil }
-
-        let docsText = findText(in: signaturePanel.child, id: "signature_help_text")?.content
-            ?? firstTextContent(in: signaturePanel.child)
-        guard let docsText else { return nil }
-
-        let trimmed = docsText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
-        return SignatureHelpSnapshot(docsText: trimmed)
+        return SignatureHelpSnapshot(docsText: popup.docsText)
     }
 
     var hasSearchPromptPanel: Bool {
@@ -877,6 +987,40 @@ extension UiTreeSnapshot {
             }
         }
         return nil
+    }
+
+    private func docsPopupPanel(for source: DocsPopupSourceSnapshot) -> UiPanelSnapshot? {
+        overlays.compactMap({ node -> UiPanelSnapshot? in
+            guard case .panel(let panel) = node, docsPopupSource(from: panel) == source else {
+                return nil
+            }
+            return panel
+        }).first
+    }
+
+    private func docsPopupContent(
+        in panel: UiPanelSnapshot,
+        source: DocsPopupSourceSnapshot
+    ) -> DocsPopupContentSnapshot? {
+        let docsTextNode = firstDocsText(in: panel.child, source: source)
+        let docsText = docsTextNode?.content ?? firstTextContent(in: panel.child)
+        guard let docsText else { return nil }
+        let trimmed = docsText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        let tone: DocsPopupToneSnapshot
+        if source == .diagnostic {
+            tone = diagnosticPopupTone(from: docsTextNode?.style.role)
+                ?? diagnosticPopupTone(from: panel.style.role)
+                ?? diagnosticPopupTone(from: trimmed)
+        } else {
+            tone = .neutral
+        }
+
+        return DocsPopupContentSnapshot(
+            docsText: trimmed,
+            tone: tone
+        )
     }
 
     private func findInput(in node: UiNodeSnapshot, id: String) -> UiInputSnapshot? {
@@ -928,6 +1072,24 @@ extension UiTreeSnapshot {
             return nil
         case .panel(let panel):
             return findText(in: panel.child, id: id)
+        default:
+            return nil
+        }
+    }
+
+    private func firstDocsText(in node: UiNodeSnapshot, source: DocsPopupSourceSnapshot) -> UiTextSnapshot? {
+        switch node {
+        case .text(let text):
+            return docsPopupSource(from: text) == source ? text : nil
+        case .container(let container):
+            for child in container.children {
+                if let found = firstDocsText(in: child, source: source) {
+                    return found
+                }
+            }
+            return nil
+        case .panel(let panel):
+            return firstDocsText(in: panel.child, source: source)
         default:
             return nil
         }
@@ -1003,6 +1165,23 @@ struct CompletionItemSnapshot: Identifiable {
     let detail: String?
     let kindIcon: String?
     let kindColor: Color?
+}
+
+private struct DocsPopupContentSnapshot {
+    let docsText: String
+    let tone: DocsPopupToneSnapshot
+}
+
+struct DocsPopoverSnapshot: Identifiable {
+    let id: String
+    let kind: DocsPopoverKindSnapshot
+    let docsText: String
+    let tone: DocsPopupToneSnapshot
+}
+
+struct DiagnosticPopupSnapshot {
+    let docsText: String
+    let tone: DocsPopupToneSnapshot
 }
 
 struct HoverSnapshot {

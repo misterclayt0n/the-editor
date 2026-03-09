@@ -14,6 +14,7 @@ final class SharedEditorRuntime {
     init() {
         instanceId = SharedEditorRuntime.allocateInstanceId()
         app = TheEditorFFIBridge.App()
+        app.set_inline_diagnostic_rendering_enabled(false)
         let viewport = Rect(x: 0, y: 0, width: 80, height: 24)
         let scroll = Position(row: 0, col: 0)
         editorId = app.create_editor("", viewport, scroll)

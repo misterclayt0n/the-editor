@@ -113,6 +113,10 @@ extension AppRefMut {
         __swift_bridge__$App$set_native_tab_open_gateway(ptr, enabled)
     }
 
+    public func set_inline_diagnostic_rendering_enabled(_ enabled: Bool) {
+        __swift_bridge__$App$set_inline_diagnostic_rendering_enabled(ptr, enabled)
+    }
+
     public func take_native_tab_open_request_path() -> RustString {
         RustString(ptr: __swift_bridge__$App$take_native_tab_open_request_path(ptr))
     }

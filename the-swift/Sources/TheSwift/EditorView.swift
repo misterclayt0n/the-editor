@@ -1,3 +1,4 @@
+import Foundation
 import SwiftUI
 import TheEditorFFIBridge
 
@@ -26,6 +27,26 @@ struct EditorView: View {
     private struct CursorPickState {
         let remove: Bool
         let currentIndex: Int
+    }
+
+    private struct EolDiagnosticOverlayLayout: Identifiable {
+        let id: String
+        let x: CGFloat
+        let y: CGFloat
+        let maxWidth: CGFloat
+        let message: String
+        let severity: UInt8
+    }
+
+    private struct EolDiagnosticOverlayStyle {
+        let fontSize: CGFloat
+        let horizontalPadding: CGFloat
+        let verticalPadding: CGFloat
+        let cornerRadius: CGFloat
+        let backgroundOpacity: CGFloat
+        let borderOpacity: CGFloat
+        let textGap: CGFloat
+        let rowOffset: CGFloat
     }
 
     init(filePath: String? = nil, windowRoute: EditorWindowRoute? = nil) {
@@ -229,13 +250,15 @@ struct EditorView: View {
         let isTerminalSwitcherOpen = terminalSwitcherSnapshot.isOpen
         let isOverlayOpen = isPaletteOpen || isSearchOpen || isFilePickerOpen || isInputPromptOpen || isTerminalSwitcherOpen
         let completionSnapshot = model.uiTree.completionSnapshot()
+        let diagnosticPopupSnapshot = model.uiTree.diagnosticSnapshot()
         let hoverSnapshot = model.uiTree.hoverSnapshot()
+        let docsPopoverSnapshots = model.uiTree.docsPopoverSnapshots()
         let signatureSnapshot = model.uiTree.signatureHelpSnapshot()
         let popupTheme = model.popupTheme()
         let isCompletionOpen = completionSnapshot != nil
-        let isHoverOpen = hoverSnapshot != nil && !isCompletionOpen
-        let isSignatureOpen = signatureSnapshot != nil && !isCompletionOpen && !isHoverOpen
-        let shouldTerminalOwnFocus = !isOverlayOpen && !isCompletionOpen && !isHoverOpen && !isSignatureOpen
+        let isDocsPopupOpen = !docsPopoverSnapshots.isEmpty && !isCompletionOpen
+        let isSignatureOpen = signatureSnapshot != nil && !isCompletionOpen && !isDocsPopupOpen
+        let shouldTerminalOwnFocus = !isOverlayOpen && !isCompletionOpen && !isDocsPopupOpen && !isSignatureOpen
         let bufferOwnsFocus = model.isHostWindowFocused
             && (!model.isActivePaneTerminal || !shouldTerminalOwnFocus)
         let focusedTerminalPaneId = GhosttyRuntime.shared.firstResponderPaneId(in: model.currentHostWindow())
@@ -263,6 +286,17 @@ struct EditorView: View {
             contentSize: contentProxy.size,
             activePaneId: effectiveActivePaneId
         )
+        let eolDiagnosticStyle = eolDiagnosticOverlayStyle(
+            bufferFontSize: model.bufferFontSize,
+            cellSize: cellSize
+        )
+        let eolDiagnosticOverlays = eolDiagnosticOverlayLayouts(
+            plan: model.plan,
+            paneOrigin: activePaneOrigin,
+            cellSize: cellSize,
+            containerSize: contentProxy.size,
+            style: eolDiagnosticStyle
+        )
         let _ = debugTerminalFocusState(
             model: model,
             focusedTerminalPaneId: focusedTerminalPaneId,
@@ -275,7 +309,7 @@ struct EditorView: View {
             let windowNumber = model.currentHostWindow()?.windowNumber ?? 0
             DiagnosticsDebugLog.logChanged(
                 key: "editor.popup.mount.window\(windowNumber).runtime\(model.runtimeInstanceId).editor\(model.editorId.value)",
-                value: "overlay_open=\(isOverlayOpen ? 1 : 0) completion=\(isCompletionOpen ? 1 : 0) hover=\(isHoverOpen ? 1 : 0) signature=\(isSignatureOpen ? 1 : 0) active_pane=\(effectiveActivePaneId)"
+                value: "overlay_open=\(isOverlayOpen ? 1 : 0) completion=\(isCompletionOpen ? 1 : 0) diagnostic=\(diagnosticPopupSnapshot != nil ? 1 : 0) hover=\(hoverSnapshot != nil ? 1 : 0) docs=\(isDocsPopupOpen ? 1 : 0) signature=\(isSignatureOpen ? 1 : 0) active_pane=\(effectiveActivePaneId)"
             )
         }()
         let terminalPassthroughRects = terminalPaneLayouts.map(\.frame)
@@ -291,6 +325,8 @@ struct EditorView: View {
                 cursorOpacity: cursorBlinkController.opacity,
                 editorBackgroundColor: editorBackgroundColor
             )
+
+            eolDiagnosticsOverlay(layouts: eolDiagnosticOverlays, style: eolDiagnosticStyle)
 
             terminalSurfaceLayer(
                 terminalPaneLayouts: terminalPaneLayouts,
@@ -308,7 +344,7 @@ struct EditorView: View {
             popupOverlay(
                 isOverlayOpen: isOverlayOpen,
                 completionSnapshot: completionSnapshot,
-                hoverSnapshot: hoverSnapshot,
+                docsPopoverSnapshots: docsPopoverSnapshots,
                 signatureSnapshot: signatureSnapshot,
                 popupTheme: popupTheme,
                 activePaneOrigin: activePaneOrigin,
@@ -321,7 +357,7 @@ struct EditorView: View {
             scrollCaptureOverlay(
                 isOverlayOpen: isOverlayOpen,
                 isCompletionOpen: isCompletionOpen,
-                isHoverOpen: isHoverOpen,
+                isDocsPopupOpen: isDocsPopupOpen,
                 isSignatureOpen: isSignatureOpen,
                 splitResizeHandles: splitResizeHandles,
                 terminalPassthroughRects: terminalPassthroughRects,
@@ -398,6 +434,44 @@ struct EditorView: View {
         .background(editorBackgroundColor)
     }
 
+    @ViewBuilder
+    private func eolDiagnosticsOverlay(
+        layouts: [EolDiagnosticOverlayLayout],
+        style: EolDiagnosticOverlayStyle
+    ) -> some View {
+        ZStack(alignment: .topLeading) {
+            ForEach(layouts) { layout in
+                Text(layout.message)
+                    .font(FontLoader.bufferFont(size: style.fontSize, weight: .regular))
+                    .foregroundStyle(diagnosticColor(severity: layout.severity).opacity(0.76))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                .padding(.horizontal, style.horizontalPadding)
+                .padding(.vertical, style.verticalPadding)
+                .background {
+                    RoundedRectangle(cornerRadius: style.cornerRadius, style: .continuous)
+                        .fill(
+                            diagnosticColor(severity: layout.severity)
+                                .opacity(style.backgroundOpacity)
+                        )
+                }
+                .overlay {
+                    RoundedRectangle(cornerRadius: style.cornerRadius, style: .continuous)
+                        .stroke(
+                            diagnosticColor(severity: layout.severity)
+                                .opacity(style.borderOpacity),
+                            lineWidth: 0.5
+                        )
+                }
+                .frame(maxWidth: layout.maxWidth, alignment: .leading)
+                .offset(x: layout.x, y: layout.y)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
     private func cursorBlinkDescriptor(
         plan: RenderPlan,
         bufferOwnsFocus: Bool
@@ -408,6 +482,90 @@ struct EditorView: View {
             intervalMilliseconds: UInt64(plan.cursor_blink_interval_ms()),
             delayMilliseconds: UInt64(plan.cursor_blink_delay_ms()),
             generation: plan.cursor_blink_generation()
+        )
+    }
+
+    private func eolDiagnosticOverlayLayouts(
+        plan: RenderPlan,
+        paneOrigin: CGPoint,
+        cellSize: CGSize,
+        containerSize: CGSize,
+        style: EolDiagnosticOverlayStyle
+    ) -> [EolDiagnosticOverlayLayout] {
+        let perfEnabled = DiagnosticsDebugLog.editorPerfEnabled
+        let perfStart = perfEnabled ? DispatchTime.now().uptimeNanoseconds : 0
+        let count = Int(plan.eol_diagnostic_count())
+        guard count > 0 else { return [] }
+
+        let contentOffsetX = CGFloat(plan.content_offset_x()) * cellSize.width
+        var layouts: [EolDiagnosticOverlayLayout] = []
+        layouts.reserveCapacity(count)
+        var totalMessageChars = 0
+        var maxMessageChars = 0
+
+        for index in 0..<count {
+            let entry = plan.eol_diagnostic_at(UInt(index))
+            let message = entry.message().toString().trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !message.isEmpty else { continue }
+            totalMessageChars += message.count
+            maxMessageChars = max(maxMessageChars, message.count)
+
+            let x = paneOrigin.x + contentOffsetX + CGFloat(entry.col()) * cellSize.width + style.textGap
+            let availableWidth = containerSize.width - x - 8
+            guard availableWidth >= 72 else { continue }
+
+            layouts.append(
+                EolDiagnosticOverlayLayout(
+                    id: "\(entry.row()):\(entry.col()):\(entry.severity()):\(message)",
+                    x: x,
+                    y: paneOrigin.y + CGFloat(entry.row()) * cellSize.height + style.rowOffset,
+                    maxWidth: availableWidth,
+                    message: message,
+                    severity: entry.severity()
+                )
+            )
+        }
+
+        if perfEnabled {
+            let elapsedMs = Double(DispatchTime.now().uptimeNanoseconds - perfStart) / 1_000_000.0
+            if DiagnosticsDebugLog.editorPerfShouldLog(durationMs: elapsedMs) {
+                DiagnosticsDebugLog.editorPerfLog(
+                    String(
+                        format: "eol_overlay_layout elapsed=%.2fms raw=%d laid_out=%d lines=%d total_chars=%d max_chars=%d pane_origin=(%.1f,%.1f) content_offset_x=%.1f container=(%.1f,%.1f)",
+                        elapsedMs,
+                        count,
+                        layouts.count,
+                        Int(plan.line_count()),
+                        totalMessageChars,
+                        maxMessageChars,
+                        paneOrigin.x,
+                        paneOrigin.y,
+                        contentOffsetX,
+                        containerSize.width,
+                        containerSize.height
+                    )
+                )
+            }
+        }
+
+        return layouts
+    }
+
+    private func eolDiagnosticOverlayStyle(
+        bufferFontSize: CGFloat,
+        cellSize: CGSize
+    ) -> EolDiagnosticOverlayStyle {
+        let scale = max(0.45, min(1.8, bufferFontSize / FontZoomLimits.defaultBufferPointSize))
+        let fontSize = max(5.5, min(20, min(cellSize.height * 0.72, 11 * scale)))
+        return EolDiagnosticOverlayStyle(
+            fontSize: fontSize,
+            horizontalPadding: max(4, min(10, 6 * scale)),
+            verticalPadding: max(1.5, min(5, 2.6 * scale)),
+            cornerRadius: max(4, min(10, 6 * scale)),
+            backgroundOpacity: 0.10,
+            borderOpacity: 0.22,
+            textGap: max(3, min(10, 6 * scale)),
+            rowOffset: max(0, floor(max(0, cellSize.height - fontSize) * 0.16))
         )
     }
 
@@ -551,7 +709,7 @@ struct EditorView: View {
     private func popupOverlay(
         isOverlayOpen: Bool,
         completionSnapshot: CompletionSnapshot?,
-        hoverSnapshot: HoverSnapshot?,
+        docsPopoverSnapshots: [DocsPopoverSnapshot],
         signatureSnapshot: SignatureHelpSnapshot?,
         popupTheme: PopupChromeTheme,
         activePaneOrigin: CGPoint,
@@ -579,9 +737,9 @@ struct EditorView: View {
                     }
                 )
                 .allowsHitTesting(true)
-            } else if let hoverSnapshot {
-                HoverPopupView(
-                    snapshot: hoverSnapshot,
+            } else if !docsPopoverSnapshots.isEmpty {
+                DocsPopoverStackView(
+                    popovers: docsPopoverSnapshots,
                     cursorOrigin: cursorPixelPosition(
                         plan: model.plan,
                         paneOrigin: activePaneOrigin,
@@ -640,14 +798,14 @@ struct EditorView: View {
     private func scrollCaptureOverlay(
         isOverlayOpen: Bool,
         isCompletionOpen: Bool,
-        isHoverOpen: Bool,
+        isDocsPopupOpen: Bool,
         isSignatureOpen: Bool,
         splitResizeHandles: [ScrollCaptureView.SeparatorHandle],
         terminalPassthroughRects: [CGRect],
         pointerPanes: [ScrollCaptureView.PaneHandle],
         cellSize: CGSize
     ) -> some View {
-        if !isOverlayOpen && !isCompletionOpen && !isHoverOpen && !isSignatureOpen {
+        if !isOverlayOpen && !isCompletionOpen && !isDocsPopupOpen && !isSignatureOpen {
             ScrollCaptureView(
                 onScroll: { deltaX, deltaY, precise in
                     model.handlePointerScroll(deltaX: deltaX, deltaY: deltaY, precise: precise)
@@ -1037,6 +1195,7 @@ struct EditorView: View {
         cursorPickState: CursorPickState?,
         cursorOpacity: Double
     ) {
+        _ = bufferNSFont
         let contentOffsetX = CGFloat(plan.content_offset_x()) * cellSize.width
         drawGutter(
             in: context,
@@ -1055,20 +1214,8 @@ struct EditorView: View {
             font: bufferFont,
             contentOffsetX: contentOffsetX
         )
-        let inlineSummary = drawInlineDiagnostics(
-            in: context,
-            plan: plan,
-            cellSize: cellSize,
-            nsFont: bufferNSFont,
-            contentOffsetX: contentOffsetX
-        )
-        let eolSummary = drawEolDiagnostics(
-            in: context,
-            plan: plan,
-            cellSize: cellSize,
-            nsFont: bufferNSFont,
-            contentOffsetX: contentOffsetX
-        )
+        let inlineSummary = "count=\(Int(plan.inline_diagnostic_line_count())) native=0"
+        let eolSummary = "count=\(Int(plan.eol_diagnostic_count())) native=1"
         drawCursors(
             in: context,
             plan: plan,

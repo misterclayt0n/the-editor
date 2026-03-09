@@ -78,6 +78,7 @@ struct UiPanelSnapshot: Decodable {
     let id: String
     let title: String?
     let intent: LayoutIntentSnapshot
+    let source: String?
     let style: UiStyleSnapshot
     let constraints: UiConstraintsSnapshot
     let layer: UiLayerSnapshot
@@ -87,6 +88,7 @@ struct UiPanelSnapshot: Decodable {
 struct UiTextSnapshot: Decodable {
     let id: String?
     let content: String
+    let source: String?
     let style: UiStyleSnapshot
     let maxLines: UInt16?
     let clip: Bool
@@ -94,6 +96,7 @@ struct UiTextSnapshot: Decodable {
     private enum CodingKeys: String, CodingKey {
         case id
         case content
+        case source
         case style
         case maxLines
         case clip
@@ -103,6 +106,7 @@ struct UiTextSnapshot: Decodable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try? container.decode(String.self, forKey: .id)
         content = try container.decode(String.self, forKey: .content)
+        source = try? container.decode(String.self, forKey: .source)
         style = (try? container.decode(UiStyleSnapshot.self, forKey: .style)) ?? .fallback
         maxLines = try? container.decode(UInt16.self, forKey: .maxLines)
         clip = (try? container.decode(Bool.self, forKey: .clip)) ?? true

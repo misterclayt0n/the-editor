@@ -156,8 +156,8 @@ use the_lib::{
     DocumentId,
   },
   editor::{
-    EditorSurfaceSnapshot as LibEditorSurfaceSnapshot,
     EditorId as LibEditorId,
+    EditorSurfaceSnapshot as LibEditorSurfaceSnapshot,
     PaneContent,
     PaneContentKind,
     TerminalSurfaceSnapshot as LibTerminalSurfaceSnapshot,
@@ -190,8 +190,16 @@ use the_lib::{
     SelectionMatchHighlightOptions,
     SharedInlineDiagnosticsRenderData,
     SyntaxHighlightAdapter,
+    UiAlign,
+    UiAlignPair,
+    UiConstraints,
+    UiContainer,
+    UiInsets,
+    UiLayer,
     UiNode,
+    UiPanel,
     UiState,
+    UiText,
     add_selection_match_highlights,
     apply_diagnostic_gutter_markers,
     apply_diff_gutter_markers,
@@ -1768,10 +1776,17 @@ struct EditorState {
   syntax_parse_rx:               Receiver<SyntaxParseResult>,
   syntax_parse_lifecycle:        ParseLifecycle<SyntaxParseJob>,
   syntax_parse_highlight_state:  ParseHighlightState,
+  diagnostic_popup:              Option<DiagnosticPopupState>,
   hover_docs:                    Option<String>,
   hover_docs_scroll:             usize,
   scrolloff:                     usize,
   pointer_drag_selection:        Option<PointerSelectionDragState>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DiagnosticPopupState {
+  markdown: String,
+  severity: DiagnosticSeverity,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1829,6 +1844,7 @@ impl EditorState {
       syntax_parse_rx,
       syntax_parse_lifecycle: ParseLifecycle::default(),
       syntax_parse_highlight_state: ParseHighlightState::default(),
+      diagnostic_popup: None,
       hover_docs: None,
       hover_docs_scroll: 0,
       scrolloff: 5,
@@ -1928,6 +1944,157 @@ fn diagnostic_severity_rank(severity: DiagnosticSeverity) -> u8 {
     DiagnosticSeverity::Warning => 3,
     DiagnosticSeverity::Information => 2,
     DiagnosticSeverity::Hint => 1,
+  }
+}
+
+fn diagnostic_severity_label(severity: DiagnosticSeverity) -> &'static str {
+  match severity {
+    DiagnosticSeverity::Error => "Error",
+    DiagnosticSeverity::Warning => "Warning",
+    DiagnosticSeverity::Information => "Information",
+    DiagnosticSeverity::Hint => "Hint",
+  }
+}
+
+fn diagnostic_popup_role(severity: DiagnosticSeverity) -> &'static str {
+  match severity {
+    DiagnosticSeverity::Error => "diagnostic_docs.error",
+    DiagnosticSeverity::Warning => "diagnostic_docs.warning",
+    DiagnosticSeverity::Information => "diagnostic_docs.information",
+    DiagnosticSeverity::Hint => "diagnostic_docs.hint",
+  }
+}
+
+fn escape_docs_markdown(text: &str) -> String {
+  let mut escaped = String::with_capacity(text.len());
+  for ch in text.chars() {
+    match ch {
+      '\\' | '`' | '*' | '_' | '{' | '}' | '[' | ']' | '(' | ')' | '#' | '+' | '-' | '!' | '|'
+      | '>' => {
+        escaped.push('\\');
+        escaped.push(ch);
+      },
+      _ => escaped.push(ch),
+    }
+  }
+  escaped
+}
+
+fn escape_docs_code_span(text: &str) -> String {
+  text.replace('\\', "\\\\").replace('`', "\\`")
+}
+
+fn lsp_position_tuple(position: LspPosition) -> (u32, u32) {
+  (position.line, position.character)
+}
+
+fn diagnostic_range_tuples(diagnostic: &Diagnostic) -> ((u32, u32), (u32, u32)) {
+  let start = (
+    diagnostic.range.start.line,
+    diagnostic.range.start.character,
+  );
+  let end = (diagnostic.range.end.line, diagnostic.range.end.character);
+  if start <= end {
+    (start, end)
+  } else {
+    (end, start)
+  }
+}
+
+fn diagnostic_contains_lsp_position(diagnostic: &Diagnostic, position: LspPosition) -> bool {
+  let point = lsp_position_tuple(position);
+  let (start, end) = diagnostic_range_tuples(diagnostic);
+  start <= point && point <= end
+}
+
+fn diagnostic_touches_lsp_line(diagnostic: &Diagnostic, line: u32) -> bool {
+  let (start, end) = diagnostic_range_tuples(diagnostic);
+  start.0 <= line && line <= end.0
+}
+
+fn diagnostic_popup_range_len(diagnostic: &Diagnostic) -> u64 {
+  let (start, end) = diagnostic_range_tuples(diagnostic);
+  let line_span = end.0.saturating_sub(start.0) as u64;
+  let char_span = end.1.saturating_sub(start.1) as u64;
+  line_span
+    .saturating_mul(1_000_000)
+    .saturating_add(char_span)
+}
+
+fn sort_diagnostics_for_popup(diagnostics: &mut [Diagnostic]) {
+  diagnostics.sort_by(|left, right| {
+    diagnostic_severity_rank(right.severity.unwrap_or(DiagnosticSeverity::Warning))
+      .cmp(&diagnostic_severity_rank(
+        left.severity.unwrap_or(DiagnosticSeverity::Warning),
+      ))
+      .then_with(|| diagnostic_popup_range_len(left).cmp(&diagnostic_popup_range_len(right)))
+      .then_with(|| left.range.start.line.cmp(&right.range.start.line))
+      .then_with(|| left.range.start.character.cmp(&right.range.start.character))
+      .then_with(|| left.message.cmp(&right.message))
+  });
+}
+
+fn build_diagnostic_popup_state(diagnostics: &[Diagnostic]) -> Option<DiagnosticPopupState> {
+  let mut markdown = String::new();
+  let mut wrote_any = false;
+  let mut popup_severity = None;
+
+  for diagnostic in diagnostics {
+    let message = diagnostic.message.trim();
+    if message.is_empty() {
+      continue;
+    }
+
+    if wrote_any {
+      markdown.push_str("\n\n---\n\n");
+    }
+
+    let severity = diagnostic.severity.unwrap_or(DiagnosticSeverity::Warning);
+    popup_severity.get_or_insert(severity);
+    markdown.push_str("### ");
+    markdown.push_str(diagnostic_severity_label(severity));
+    markdown.push_str("\n\n");
+
+    let escaped_message = message
+      .lines()
+      .map(escape_docs_markdown)
+      .collect::<Vec<_>>()
+      .join("\n");
+    markdown.push_str(escaped_message.trim_end());
+
+    let mut metadata_lines = Vec::new();
+    if let Some(source) = diagnostic
+      .source
+      .as_deref()
+      .map(str::trim)
+      .filter(|text| !text.is_empty())
+    {
+      metadata_lines.push(format!("Source: `{}`", escape_docs_code_span(source)));
+    }
+    if let Some(code) = diagnostic
+      .code
+      .as_deref()
+      .map(str::trim)
+      .filter(|text| !text.is_empty())
+    {
+      metadata_lines.push(format!("Code: `{}`", escape_docs_code_span(code)));
+    }
+    if !metadata_lines.is_empty() {
+      markdown.push_str("\n\n");
+      for line in metadata_lines {
+        markdown.push_str("- ");
+        markdown.push_str(&line);
+        markdown.push('\n');
+      }
+      markdown.truncate(markdown.trim_end_matches('\n').len());
+    }
+
+    wrote_any = true;
+  }
+
+  match (wrote_any, popup_severity) {
+    (true, Some(severity)) => Some(DiagnosticPopupState { markdown, severity }),
+    _ => None,
   }
 }
 
@@ -3758,6 +3925,7 @@ pub struct App {
   inline_diagnostic_lines:         Vec<InlineDiagnosticRenderLine>,
   eol_diagnostics:                 Vec<EolDiagnosticEntry>,
   diagnostic_underlines:           Vec<DiagnosticUnderlineEntry>,
+  render_inline_diagnostic_lines:  bool,
   ui_theme_catalog:                ThemeCatalog,
   ui_theme_name:                   String,
   ui_theme_base:                   Theme,
@@ -4494,6 +4662,11 @@ impl App {
       .and_then(|state| state.hover_docs.as_deref())
       .map(str::trim)
       .is_some_and(|text| !text.is_empty());
+    let diagnostic_present = self
+      .states
+      .get(&editor_id)
+      .and_then(|state| state.diagnostic_popup.as_ref())
+      .is_some_and(|popup| !popup.markdown.trim().is_empty());
     let completion_active = completion.is_some_and(|state| state.active);
     let completion_items = completion.map(|state| state.items.len()).unwrap_or(0);
     let completion_selected = completion
@@ -4504,7 +4677,7 @@ impl App {
     let signature_count = signature.map(|state| state.signatures.len()).unwrap_or(0);
     format!(
       "editor={} mode={} completion_active={} completion_items={} completion_selected={} \
-       signature_active={} signature_items={} hover_present={}",
+       signature_active={} signature_items={} hover_present={} diagnostic_present={}",
       editor_id.get().get(),
       mode,
       completion_active as u8,
@@ -4512,7 +4685,8 @@ impl App {
       completion_selected,
       signature_active as u8,
       signature_count,
-      hover_present as u8
+      hover_present as u8,
+      diagnostic_present as u8
     )
   }
 
@@ -4580,6 +4754,7 @@ impl App {
       inline_diagnostic_lines: Vec::new(),
       eol_diagnostics: Vec::new(),
       diagnostic_underlines: Vec::new(),
+      render_inline_diagnostic_lines: true,
       ui_theme_catalog,
       ui_theme_name,
       ui_theme_base: ui_theme.clone(),
@@ -5092,6 +5267,13 @@ impl App {
     }
   }
 
+  pub fn set_inline_diagnostic_rendering_enabled(&mut self, enabled: bool) {
+    self.render_inline_diagnostic_lines = enabled;
+    if !enabled {
+      self.inline_diagnostic_lines.clear();
+    }
+  }
+
   pub fn take_native_tab_open_request_path(&mut self) -> String {
     self
       .native_tab_open_requests
@@ -5263,11 +5445,7 @@ impl App {
     self.active_editor_ref().editor_surface_snapshots().len()
   }
 
-  pub fn editor_surface_at(
-    &mut self,
-    id: ffi::EditorId,
-    index: usize,
-  ) -> EditorSurfaceSnapshot {
+  pub fn editor_surface_at(&mut self, id: ffi::EditorId, index: usize) -> EditorSurfaceSnapshot {
     if self.activate(id).is_none() {
       return EditorSurfaceSnapshot::empty();
     }
@@ -5309,7 +5487,15 @@ impl App {
     let diagnostic_underlines = std::mem::take(&mut self.diagnostic_underlines);
     let elapsed = started.elapsed();
     if ffi_ui_profile_should_log(elapsed) {
-      ffi_ui_profile_log(format!("render_plan elapsed={}ms", elapsed.as_millis()));
+      ffi_ui_profile_log(format!(
+        "render_plan elapsed={}ms lines={} overlays={} inline_diag={} eol_diag={} underlines={}",
+        elapsed.as_millis(),
+        plan.lines.len(),
+        plan.overlays.len(),
+        inline_diagnostic_lines.len(),
+        eol_diagnostics.len(),
+        diagnostic_underlines.len()
+      ));
     }
     RenderPlan {
       inner: plan,
@@ -5334,8 +5520,12 @@ impl App {
     let elapsed = started.elapsed();
     if ffi_ui_profile_should_log(elapsed) {
       ffi_ui_profile_log(format!(
-        "frame_render_plan elapsed={}ms",
-        elapsed.as_millis()
+        "frame_render_plan elapsed={}ms panes={} inline_diag={} eol_diag={} underlines={}",
+        elapsed.as_millis(),
+        frame.panes.len(),
+        inline_diagnostic_lines.len(),
+        eol_diagnostics.len(),
+        diagnostic_underlines.len()
       ));
     }
     RenderFramePlan::from_lib(
@@ -5376,7 +5566,7 @@ impl App {
     let _ = self.poll_background_active();
 
     let mut tree = the_default::ui_tree(self);
-    self.append_lsp_hover_overlay(&mut tree);
+    self.append_docs_popup_overlays(&mut tree);
     if shared_lsp_trace_enabled() {
       let overlay_ids = tree
         .overlays
@@ -5558,7 +5748,11 @@ impl App {
     let diagnostics_by_line = self.active_diagnostics_by_line();
     let diagnostic_styles = render_diagnostic_styles_from_theme(&self.ui_theme);
     let diff_styles = render_diff_styles_from_theme(&self.ui_theme);
-    let inline_diagnostics = self.active_inline_diagnostics();
+    let inline_diagnostics = if self.render_inline_diagnostic_lines {
+      self.active_inline_diagnostics()
+    } else {
+      Vec::new()
+    };
     let enable_cursor_line = self.active_state_ref().mode != Mode::Insert;
     let jump_label_style = self.ui_theme.find_highlight("ui.virtual.jump-label");
     let selection_match_style = self
@@ -7309,38 +7503,7 @@ impl App {
             return true;
           },
         };
-        match hover {
-          Some(text) => {
-            let trimmed = text.trim();
-            if trimmed.is_empty() {
-              self.clear_hover_state();
-              self.publish_lsp_message(
-                the_lib::messages::MessageLevel::Info,
-                "no hover information",
-              );
-            } else {
-              let state = self.active_state_mut();
-              state.hover_docs = Some(trimmed.to_string());
-              state.hover_docs_scroll = 0;
-              log_shared_lsp_debug(
-                "hover_state_set",
-                format!(
-                  "active_editor={} hover_len={} {}",
-                  shared_lsp_editor_id_label(self.active_editor),
-                  trimmed.len(),
-                  self.shared_lsp_editor_state_summary(self.active_editor)
-                ),
-              );
-            }
-          },
-          None => {
-            self.clear_hover_state();
-            self.publish_lsp_message(
-              the_lib::messages::MessageLevel::Info,
-              "no hover information",
-            );
-          },
-        }
+        self.apply_hover_response(hover);
         true
       },
       PendingLspRequestKind::DocumentHighlightSelect { .. } => {
@@ -8355,6 +8518,11 @@ impl App {
   }
 
   fn clear_hover_state(&mut self) {
+    self.clear_hover_docs_state();
+    self.clear_diagnostic_popup_state();
+  }
+
+  fn clear_hover_docs_state(&mut self) {
     let Some(id) = self.active_editor else {
       return;
     };
@@ -8363,6 +8531,16 @@ impl App {
     };
     state.hover_docs = None;
     state.hover_docs_scroll = 0;
+  }
+
+  fn clear_diagnostic_popup_state(&mut self) {
+    let Some(id) = self.active_editor else {
+      return;
+    };
+    let Some(state) = self.states.get_mut(&id) else {
+      return;
+    };
+    state.diagnostic_popup = None;
   }
 
   fn hover_docs_text(&self) -> Option<&str> {
@@ -8375,18 +8553,174 @@ impl App {
       .filter(|text| !text.is_empty())
   }
 
-  fn build_lsp_hover_overlay(&self) -> Option<UiNode> {
-    let docs = self.hover_docs_text()?;
-    Some(UiNode::panel(
-      "lsp_hover",
-      LayoutIntent::Custom("lsp_hover".to_string()),
-      UiNode::text("lsp_hover_text", docs),
+  fn diagnostic_popup_state(&self) -> Option<&DiagnosticPopupState> {
+    let id = self.active_editor?;
+    self
+      .states
+      .get(&id)
+      .and_then(|state| state.diagnostic_popup.as_ref())
+      .filter(|popup| !popup.markdown.trim().is_empty())
+  }
+
+  fn diagnostic_popup_text(&self) -> Option<&str> {
+    self
+      .diagnostic_popup_state()
+      .map(|state| state.markdown.as_str())
+      .map(str::trim)
+      .filter(|text| !text.is_empty())
+  }
+
+  fn docs_popup_visible(&self) -> bool {
+    self.hover_docs_text().is_some() || self.diagnostic_popup_text().is_some()
+  }
+
+  fn current_cursor_diagnostics(&self) -> Vec<Diagnostic> {
+    let Some((uri, position)) = self.current_lsp_position() else {
+      return Vec::new();
+    };
+    let Some(document) = self.diagnostics.document(&uri) else {
+      return Vec::new();
+    };
+
+    let mut diagnostics: Vec<Diagnostic> = document
+      .diagnostics
+      .iter()
+      .filter(|diagnostic| diagnostic_contains_lsp_position(diagnostic, position))
+      .cloned()
+      .collect();
+
+    if diagnostics.is_empty() {
+      diagnostics = document
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic_touches_lsp_line(diagnostic, position.line))
+        .cloned()
+        .collect();
+    }
+
+    sort_diagnostics_for_popup(&mut diagnostics);
+    diagnostics
+  }
+
+  fn update_diagnostic_popup_for_cursor(&mut self) -> bool {
+    let next_popup = build_diagnostic_popup_state(&self.current_cursor_diagnostics());
+    let Some(id) = self.active_editor else {
+      return false;
+    };
+    let Some(state) = self.states.get_mut(&id) else {
+      return false;
+    };
+    let changed = state.diagnostic_popup.as_ref() != next_popup.as_ref();
+    state.diagnostic_popup = next_popup;
+    changed
+  }
+
+  fn build_docs_popup_overlay(
+    &self,
+    panel_id: &str,
+    text_id: &str,
+    source: &str,
+    role: &str,
+    docs: &str,
+  ) -> UiNode {
+    let mut text = UiText::new(text_id, docs);
+    text.source = Some(source.to_string());
+    text.style = text.style.with_role(role);
+    text.clip = false;
+
+    let mut container =
+      UiContainer::column(format!("{panel_id}_container"), 0, vec![UiNode::Text(text)]);
+    container.style = container.style.with_role(role);
+
+    let mut panel = UiPanel::new(
+      panel_id,
+      LayoutIntent::Custom(panel_id.to_string()),
+      UiNode::Container(container),
+    );
+    panel.source = Some(source.to_string());
+    panel.style = panel.style.with_role(role);
+    panel.layer = UiLayer::Tooltip;
+    panel.constraints = UiConstraints {
+      min_width:  Some(30),
+      max_width:  Some(100),
+      min_height: None,
+      max_height: Some(22),
+      padding:    UiInsets {
+        left:   1,
+        right:  1,
+        top:    1,
+        bottom: 1,
+      },
+      align:      UiAlignPair {
+        horizontal: UiAlign::Start,
+        vertical:   UiAlign::End,
+      },
+    };
+
+    UiNode::Panel(panel)
+  }
+
+  fn build_lsp_diagnostic_overlay(&self) -> Option<UiNode> {
+    let popup = self.diagnostic_popup_state()?;
+    Some(self.build_docs_popup_overlay(
+      "lsp_diagnostic",
+      "lsp_diagnostic_text",
+      "diagnostic",
+      diagnostic_popup_role(popup.severity),
+      popup.markdown.trim(),
     ))
   }
 
-  fn append_lsp_hover_overlay(&self, tree: &mut the_lib::render::UiTree) {
+  fn build_lsp_hover_overlay(&self) -> Option<UiNode> {
+    let docs = self.hover_docs_text()?;
+    Some(self.build_docs_popup_overlay("lsp_hover", "lsp_hover_text", "hover", "hover_docs", docs))
+  }
+
+  fn append_docs_popup_overlays(&self, tree: &mut the_lib::render::UiTree) {
+    if let Some(node) = self.build_lsp_diagnostic_overlay() {
+      tree.overlays.push(node);
+    }
     if let Some(node) = self.build_lsp_hover_overlay() {
       tree.overlays.push(node);
+    }
+  }
+
+  fn apply_hover_response(&mut self, hover: Option<String>) {
+    match hover {
+      Some(text) => {
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+          self.clear_hover_docs_state();
+          if self.diagnostic_popup_text().is_none() {
+            self.publish_lsp_message(
+              the_lib::messages::MessageLevel::Info,
+              "no hover information",
+            );
+          }
+        } else {
+          let state = self.active_state_mut();
+          state.hover_docs = Some(trimmed.to_string());
+          state.hover_docs_scroll = 0;
+          log_shared_lsp_debug(
+            "hover_state_set",
+            format!(
+              "active_editor={} hover_len={} {}",
+              shared_lsp_editor_id_label(self.active_editor),
+              trimmed.len(),
+              self.shared_lsp_editor_state_summary(self.active_editor)
+            ),
+          );
+        }
+      },
+      None => {
+        self.clear_hover_docs_state();
+        if self.diagnostic_popup_text().is_none() {
+          self.publish_lsp_message(
+            the_lib::messages::MessageLevel::Info,
+            "no hover information",
+          );
+        }
+      },
     }
   }
 
@@ -9447,7 +9781,7 @@ impl App {
 
     let event_kind = event.kind;
     let event_codepoint = event.codepoint;
-    if event_kind == 3 && self.hover_docs_text().is_some() && !self.completion_menu().active {
+    if event_kind == 3 && self.docs_popup_visible() && !self.completion_menu().active {
       self.clear_hover_state();
       self.request_render();
       return true;
@@ -11571,25 +11905,47 @@ impl DefaultContext for App {
 
   fn lsp_hover(&mut self) {
     log_shared_lsp_debug("hover_begin", "entered");
+    let had_docs_popup = self.docs_popup_visible();
+    self.clear_hover_state();
+    let diagnostic_changed = self.update_diagnostic_popup_for_cursor();
+    if had_docs_popup || diagnostic_changed {
+      self.request_render();
+    }
+
     if !self.lsp_supports(LspCapability::Hover) {
-      log_shared_lsp_debug("hover_skip", "reason=unsupported");
-      self.publish_lsp_message(
-        the_lib::messages::MessageLevel::Warning,
-        "hover is not supported by the active server",
+      log_shared_lsp_debug(
+        "hover_skip",
+        format!(
+          "reason=unsupported diagnostic_present={}",
+          self.diagnostic_popup_text().is_some() as u8
+        ),
       );
+      if self.diagnostic_popup_text().is_none() {
+        self.publish_lsp_message(
+          the_lib::messages::MessageLevel::Warning,
+          "hover is not supported by the active server",
+        );
+      }
       return;
     }
 
     let Some((uri, position)) = self.current_lsp_position() else {
-      log_shared_lsp_debug("hover_skip", "reason=no_position");
-      self.publish_lsp_message(
-        the_lib::messages::MessageLevel::Warning,
-        "hover unavailable: no active LSP document",
+      log_shared_lsp_debug(
+        "hover_skip",
+        format!(
+          "reason=no_position diagnostic_present={}",
+          self.diagnostic_popup_text().is_some() as u8
+        ),
       );
+      if self.diagnostic_popup_text().is_none() {
+        self.publish_lsp_message(
+          the_lib::messages::MessageLevel::Warning,
+          "hover unavailable: no active LSP document",
+        );
+      }
       return;
     };
 
-    self.clear_hover_state();
     log_shared_lsp_debug(
       "hover_dispatch",
       format!(
@@ -11934,6 +12290,7 @@ mod ffi {
     fn is_active_pane_terminal(self: &mut App, id: EditorId) -> bool;
     fn active_file_path(self: &App, id: EditorId) -> String;
     fn set_native_tab_open_gateway(self: &mut App, enabled: bool);
+    fn set_inline_diagnostic_rendering_enabled(self: &mut App, enabled: bool);
     fn take_native_tab_open_request_path(self: &mut App) -> String;
     fn set_active_cursor(self: &mut App, id: EditorId, cursor_id: u64) -> bool;
     fn clear_active_cursor(self: &mut App, id: EditorId) -> bool;
@@ -12969,11 +13326,11 @@ mod tests {
     },
   };
 
+  use ropey::Rope;
   use serde_json::{
     Value,
     json,
   };
-  use ropey::Rope;
   use the_default::{
     Command,
     CommandEvent,
@@ -13021,6 +13378,7 @@ mod tests {
     LibStyle,
     PendingAutoSignatureHelp,
     SignatureHelpTriggerSource,
+    build_diagnostic_popup_state,
     build_lsp_document_state,
     capabilities_support_single_char,
     dedupe_inline_diagnostic_lines,
@@ -13074,10 +13432,7 @@ mod tests {
   fn editor_surface_snapshots_expose_editor_pane_metadata() {
     let _guard = ffi_test_guard();
     let mut app = App::new();
-    let id = app.create_editor("one", default_viewport(), ffi::Position {
-      row: 0,
-      col: 0,
-    });
+    let id = app.create_editor("one", default_viewport(), ffi::Position { row: 0, col: 0 });
 
     assert!(app.split_active_pane(id, 0));
     let viewport = app.active_editor_ref().layout_viewport();
@@ -13366,6 +13721,134 @@ mod tests {
     assert_eq!(lines[1].col, 10);
     assert_eq!(lines[2].col, 11);
     assert_eq!(lines[2].text.as_str(), "declared and not used: err");
+  }
+
+  #[test]
+  fn diagnostic_popup_markdown_includes_metadata() {
+    let popup = build_diagnostic_popup_state(&[the_lib::diagnostics::Diagnostic {
+      range:    the_lib::diagnostics::DiagnosticRange {
+        start: the_lib::diagnostics::DiagnosticPosition {
+          line:      3,
+          character: 5,
+        },
+        end:   the_lib::diagnostics::DiagnosticPosition {
+          line:      3,
+          character: 8,
+        },
+      },
+      severity: Some(DiagnosticSeverity::Error),
+      code:     Some("typecheck_call_too_few_args".to_string()),
+      source:   Some("clang".to_string()),
+      message:  "Too few arguments to function call".to_string(),
+    }])
+    .expect("diagnostic popup");
+
+    assert!(popup.markdown.contains("### Error"));
+    assert!(
+      popup
+        .markdown
+        .contains("Too few arguments to function call")
+    );
+    assert!(popup.markdown.contains("Source: `clang`"));
+    assert!(
+      popup
+        .markdown
+        .contains("Code: `typecheck_call_too_few_args`")
+    );
+  }
+
+  #[test]
+  fn lsp_hover_seeds_diagnostic_popup_without_hover_support() {
+    let _guard = ffi_test_guard();
+    let workspace = TempTestWorkspace::new("hover-diagnostic", "main.c", "add()\n");
+    let mut app = App::new();
+    let id = app.create_editor("add()\n", default_viewport(), ffi::Position {
+      row: 0,
+      col: 0,
+    });
+    install_test_lsp_state(&mut app, id, workspace.file_path());
+    app.lsp_ready = true;
+    app.lsp_document.as_mut().expect("lsp document").opened = true;
+
+    let uri = app
+      .lsp_document
+      .as_ref()
+      .map(|state| state.uri.clone())
+      .expect("lsp document uri");
+    let _ = app
+      .diagnostics
+      .apply_document(the_lib::diagnostics::DocumentDiagnostics {
+        uri,
+        version: None,
+        diagnostics: vec![the_lib::diagnostics::Diagnostic {
+          range:    the_lib::diagnostics::DiagnosticRange {
+            start: the_lib::diagnostics::DiagnosticPosition {
+              line:      0,
+              character: 0,
+            },
+            end:   the_lib::diagnostics::DiagnosticPosition {
+              line:      0,
+              character: 3,
+            },
+          },
+          severity: Some(DiagnosticSeverity::Error),
+          code:     Some("call_too_few_args".to_string()),
+          source:   Some("clang".to_string()),
+          message:  "Too few arguments to function call".to_string(),
+        }],
+      });
+
+    let before_seq = app.active_state_ref().messages.latest_seq();
+    app.lsp_hover();
+
+    assert!(app.diagnostic_popup_text().is_some());
+    assert!(app.hover_docs_text().is_none());
+    assert!(
+      app
+        .active_state_ref()
+        .messages
+        .events_since(before_seq)
+        .is_empty()
+    );
+  }
+
+  #[test]
+  fn empty_hover_response_keeps_diagnostic_popup_without_info_message() {
+    let _guard = ffi_test_guard();
+    let mut app = App::new();
+    let id = app.create_editor("", default_viewport(), ffi::Position { row: 0, col: 0 });
+    assert!(app.activate(id).is_some());
+
+    app.active_state_mut().diagnostic_popup =
+      build_diagnostic_popup_state(&[the_lib::diagnostics::Diagnostic {
+        range:    the_lib::diagnostics::DiagnosticRange {
+          start: the_lib::diagnostics::DiagnosticPosition {
+            line:      0,
+            character: 0,
+          },
+          end:   the_lib::diagnostics::DiagnosticPosition {
+            line:      0,
+            character: 1,
+          },
+        },
+        severity: Some(DiagnosticSeverity::Warning),
+        code:     None,
+        source:   Some("swift".to_string()),
+        message:  "Expected ';' at end of declaration".to_string(),
+      }]);
+
+    let before_seq = app.active_state_ref().messages.latest_seq();
+    app.apply_hover_response(None);
+
+    assert!(app.diagnostic_popup_text().is_some());
+    assert!(app.hover_docs_text().is_none());
+    assert!(
+      app
+        .active_state_ref()
+        .messages
+        .events_since(before_seq)
+        .is_empty()
+    );
   }
 
   #[test]

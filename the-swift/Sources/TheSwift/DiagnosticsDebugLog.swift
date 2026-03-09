@@ -3,7 +3,15 @@ import Foundation
 enum DiagnosticsDebugLog {
     private static let enabledFlag = ProcessInfo.processInfo.environment["THE_SWIFT_DEBUG_DIAGNOSTICS"] == "1"
     private static let pickerPerfEnabledFlag = ProcessInfo.processInfo.environment["THE_SWIFT_DEBUG_PICKER_PERF"] == "1"
+    private static let editorPerfEnabledFlag = ProcessInfo.processInfo.environment["THE_SWIFT_DEBUG_EDITOR_PERF"] == "1"
     private static let terminalMouseEnabledFlag = ProcessInfo.processInfo.environment["THE_SWIFT_DEBUG_TERMINAL_MOUSE"] == "1"
+    private static let editorPerfMinDurationMs: Double = {
+        guard let raw = ProcessInfo.processInfo.environment["THE_SWIFT_DEBUG_EDITOR_PERF_MIN_MS"] else {
+            return 12
+        }
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return Double(trimmed) ?? 12
+    }()
     private static let diagnosticsFilePath: String? = {
         guard let raw = ProcessInfo.processInfo.environment["THE_SWIFT_DEBUG_DIAGNOSTICS_FILE"] else {
             return nil
@@ -21,6 +29,10 @@ enum DiagnosticsDebugLog {
 
     static var pickerPerfEnabled: Bool {
         pickerPerfEnabledFlag
+    }
+
+    static var editorPerfEnabled: Bool {
+        editorPerfEnabledFlag
     }
 
     static var terminalMouseEnabled: Bool {
@@ -49,6 +61,15 @@ enum DiagnosticsDebugLog {
     static func pickerPerfLog(_ message: @autoclosure () -> String) {
         guard pickerPerfEnabledFlag else { return }
         write("[pickerperf] \(message())")
+    }
+
+    static func editorPerfShouldLog(durationMs: Double) -> Bool {
+        editorPerfEnabledFlag && durationMs >= editorPerfMinDurationMs
+    }
+
+    static func editorPerfLog(_ message: @autoclosure () -> String) {
+        guard editorPerfEnabledFlag else { return }
+        write("[editorperf] \(message())")
     }
 
     static func terminalMouseLog(_ message: @autoclosure () -> String) {

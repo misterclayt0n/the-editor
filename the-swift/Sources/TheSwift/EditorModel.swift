@@ -506,24 +506,102 @@ final class EditorModel: ObservableObject {
 
     @discardableResult
     func closeSurface() -> Bool {
-        if isActivePaneTerminal, closeTerminalInActivePane() {
+        let paneCountBefore = Int(framePlan.pane_count())
+        if isActivePaneTerminal {
+            if paneCountBefore > 1 {
+                guard closeTerminalInActivePane() else {
+                    return false
+                }
+                let didExecuteClose = executeNamedCommand("wclose")
+                let paneCountAfter = Int(framePlan.pane_count())
+                if paneCountAfter < paneCountBefore || didExecuteClose {
+                    return true
+                }
+                return false
+            }
+            return closeTerminalInActivePane()
+        }
+
+        guard let context = currentBufferCloseContext() else {
+            return false
+        }
+
+        if context.modified {
+            guard let hostWindow else {
+                return false
+            }
+            presentCloseConfirmation(for: context, in: hostWindow) { [weak self, paneCountBefore] in
+                _ = self?.closeBufferSurface(context, paneCountBefore: paneCountBefore)
+            }
             return true
         }
 
-        let paneCountBefore = Int(framePlan.pane_count())
-        if paneCountBefore > 1 {
-            let didExecuteClose = executeNamedCommand("wclose")
-            let paneCountAfter = Int(framePlan.pane_count())
-            if paneCountAfter < paneCountBefore || didExecuteClose {
-                return true
-            }
+        return closeBufferSurface(context, paneCountBefore: paneCountBefore)
+    }
+
+    @discardableResult
+    private func closeBufferSurface(_ context: BufferCloseContext, paneCountBefore: Int) -> Bool {
+        guard closeBufferForSurface(context) else {
             return false
         }
 
-        guard let hostWindow else {
+        guard paneCountBefore > 1 else {
+            return true
+        }
+
+        let didExecuteClose = executeNamedCommand("wclose")
+        let paneCountAfter = Int(framePlan.pane_count())
+        if paneCountAfter < paneCountBefore || didExecuteClose {
+            return true
+        }
+        return false
+    }
+
+    @discardableResult
+    private func closeBufferForSurface(_ context: BufferCloseContext) -> Bool {
+        if bufferTabsSnapshot == nil {
+            let tabsFetch = fetchBufferTabsSnapshot()
+            if tabsFetch.changed {
+                bufferTabsSnapshot = tabsFetch.snapshot
+            }
+        }
+
+        let bufferCount = bufferTabsSnapshot?.tabs.count ?? 0
+        if bufferCount <= 1 {
+            let fallbackBufferId = app.open_untitled_buffer(editorId)
+            guard fallbackBufferId != 0 else {
+                return false
+            }
+            refresh(trigger: "buffer_close_seed")
+        }
+
+        guard app.close_buffer_by_id(editorId, context.bufferId) else {
+            refresh(trigger: "buffer_close_retry")
             return false
         }
-        hostWindow.performClose(nil)
+        if boundBufferId == context.bufferId {
+            boundBufferId = nil
+        }
+        if pendingInitialBoundBufferId == context.bufferId {
+            pendingInitialBoundBufferId = nil
+        }
+        refresh(trigger: "buffer_closed")
+        return true
+    }
+
+    @discardableResult
+    private func closeBufferForWindowClose(_ context: BufferCloseContext) -> Bool {
+        guard app.close_buffer_by_id(editorId, context.bufferId) else {
+            refresh(trigger: "buffer_close_retry")
+            return canCloseWindowWithoutBufferClose(failedBufferId: context.bufferId)
+        }
+        if boundBufferId == context.bufferId {
+            boundBufferId = nil
+        }
+        if pendingInitialBoundBufferId == context.bufferId {
+            pendingInitialBoundBufferId = nil
+        }
+        refresh(trigger: "buffer_closed")
         return true
     }
 
@@ -1202,7 +1280,12 @@ final class EditorModel: ObservableObject {
             return closeBufferForWindowClose(context)
         }
 
-        presentCloseConfirmation(for: context, in: window)
+        presentCloseConfirmation(for: context, in: window) { [weak self, weak window] in
+            guard let self, let window else { return }
+            guard self.closeBufferForWindowClose(context) else { return }
+            self.allowProgrammaticWindowClose = true
+            window.performClose(nil)
+        }
         return false
     }
 
@@ -2218,7 +2301,11 @@ final class EditorModel: ObservableObject {
         return nil
     }
 
-    private func presentCloseConfirmation(for context: BufferCloseContext, in window: NSWindow) {
+    private func presentCloseConfirmation(
+        for context: BufferCloseContext,
+        in window: NSWindow,
+        onConfirm: @escaping () -> Void
+    ) {
         let alert = NSAlert()
         alert.messageText = "Close Buffer Without Saving?"
         alert.informativeText = "\"\(context.title)\" has unsaved changes. If you close the buffer the changes will be lost."
@@ -2231,26 +2318,9 @@ final class EditorModel: ObservableObject {
             self.closeConfirmationAlert = nil
             guard response == .alertFirstButtonReturn else { return }
             alertWindow.orderOut(nil)
-            guard self.closeBufferForWindowClose(context) else { return }
-            self.allowProgrammaticWindowClose = true
-            window.performClose(nil)
+            onConfirm()
         }
         closeConfirmationAlert = alert
-    }
-
-    private func closeBufferForWindowClose(_ context: BufferCloseContext) -> Bool {
-        guard app.close_buffer_by_id(editorId, context.bufferId) else {
-            refresh(trigger: "buffer_close_retry")
-            return canCloseWindowWithoutBufferClose(failedBufferId: context.bufferId)
-        }
-        if boundBufferId == context.bufferId {
-            boundBufferId = nil
-        }
-        if pendingInitialBoundBufferId == context.bufferId {
-            pendingInitialBoundBufferId = nil
-        }
-        refresh(trigger: "buffer_closed")
-        return true
     }
 
     private func canCloseWindowWithoutBufferClose(failedBufferId: UInt64) -> Bool {

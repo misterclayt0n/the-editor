@@ -252,6 +252,9 @@ fileprivate enum PickerPreviewPerfTrace {
 struct FilePickerItemSnapshot: Identifiable {
     let id: Int
     let display: String
+    let filename: String
+    let directory: String
+    let fileExtension: String
     let isDir: Bool
     let icon: String?
     let matchIndices: [Int]
@@ -265,17 +268,43 @@ struct FilePickerItemSnapshot: Identifiable {
     let column: Int
     let depth: Int
 
-    var filename: String {
-        (display as NSString).lastPathComponent
-    }
+    init(
+        id: Int,
+        display: String,
+        isDir: Bool,
+        icon: String?,
+        matchIndices: [Int],
+        rowKind: UInt8,
+        severity: UInt8,
+        primary: String,
+        secondary: String,
+        tertiary: String,
+        quaternary: String,
+        line: Int,
+        column: Int,
+        depth: Int
+    ) {
+        let nsDisplay = display as NSString
+        let filename = nsDisplay.lastPathComponent
+        let directory = nsDisplay.deletingLastPathComponent
 
-    var directory: String {
-        let parent = (display as NSString).deletingLastPathComponent
-        return parent.isEmpty ? "" : parent
-    }
-
-    var fileExtension: String {
-        (filename as NSString).pathExtension.lowercased()
+        self.id = id
+        self.display = display
+        self.filename = filename
+        self.directory = directory.isEmpty ? "" : directory
+        self.fileExtension = (filename as NSString).pathExtension.lowercased()
+        self.isDir = isDir
+        self.icon = icon
+        self.matchIndices = matchIndices
+        self.rowKind = rowKind
+        self.severity = severity
+        self.primary = primary
+        self.secondary = secondary
+        self.tertiary = tertiary
+        self.quaternary = quaternary
+        self.line = line
+        self.column = column
+        self.depth = depth
     }
 
     var filenameMatchIndices: [Int] {
@@ -493,6 +522,34 @@ struct FilePickerView: View {
         snapshot.pickerKind == 3
     }
 
+    private var isGenericFilePicker: Bool {
+        snapshot.pickerKind == 0
+    }
+
+    private var virtualListConfig: PickerPanelVirtualListConfig? {
+        if isLiveGrepPicker {
+            return PickerPanelVirtualListConfig(
+                rowHeight: 32,
+                rowSpacing: 4,
+                verticalPadding: 10,
+                horizontalPadding: 10,
+                overscanRows: 24
+            )
+        }
+
+        if isGenericFilePicker {
+            return PickerPanelVirtualListConfig(
+                rowHeight: 50,
+                rowSpacing: 4,
+                verticalPadding: 10,
+                horizontalPadding: 10,
+                overscanRows: 32
+            )
+        }
+
+        return nil
+    }
+
     // Always show preview layout — the preview panel handles its own empty state.
     // This avoids re-evaluating the body when preview data arrives.
     private let hasPreview = true
@@ -518,13 +575,7 @@ struct FilePickerView: View {
                 showCtrlCClose: true,
                 autoSelectFirstItem: true,
                 showBackground: !hasPreview,
-                virtualList: isLiveGrepPicker ? PickerPanelVirtualListConfig(
-                    rowHeight: 32,
-                    rowSpacing: 4,
-                    verticalPadding: 10,
-                    horizontalPadding: 10,
-                    overscanRows: 24
-                ) : nil,
+                virtualList: virtualListConfig,
                 isRowSelectable: isLiveGrepPicker ? { index in
                     guard items.indices.contains(index) else { return false }
                     return items[index].rowKind != 3

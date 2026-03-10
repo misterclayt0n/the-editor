@@ -671,6 +671,7 @@ pub enum Command {
   FilePickerInCurrentDirectory,
   FileExplorer,
   FileExplorerInCurrentBufferDirectory,
+  EditCurrentFilePath,
   BufferPicker,
   JumplistPicker,
   DiagnosticsPicker,
@@ -1909,6 +1910,11 @@ impl Command {
   #[must_use]
   pub const fn file_explorer_in_current_buffer_directory() -> Self {
     Self::FileExplorerInCurrentBufferDirectory
+  }
+
+  #[must_use]
+  pub const fn edit_current_file_path() -> Self {
+    Self::EditCurrentFilePath
   }
 
   #[must_use]

@@ -768,6 +768,11 @@ pub fn open_command_palette<Ctx: DefaultContext>(ctx: &mut Ctx) {
   apply_mode(ctx, Mode::Command);
 }
 
+pub fn open_command_palette_with_input<Ctx: DefaultContext>(ctx: &mut Ctx, input: &str) {
+  apply_mode(ctx, Mode::Command);
+  crate::update_command_palette_for_input(ctx, input);
+}
+
 fn build_action_palette_items<Ctx: DefaultContext>(
   ctx: &mut Ctx,
   mode: Mode,
@@ -1005,6 +1010,7 @@ fn command_hint_label(command: Command) -> String {
     Command::FilePickerInCurrentDirectory => "find file in buffer dir".to_string(),
     Command::FileExplorer => "file explorer".to_string(),
     Command::FileExplorerInCurrentBufferDirectory => "file explorer in buffer dir".to_string(),
+    Command::EditCurrentFilePath => "edit current path".to_string(),
     Command::BufferPicker => "find buffer".to_string(),
     Command::JumplistPicker => "find jump".to_string(),
     Command::DiagnosticsPicker => "find diagnostic".to_string(),
@@ -1300,7 +1306,7 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
       "t" => terminal_open,
       "T" => terminal_close,
       "e" => file_explorer,
-      "E" => file_explorer_in_current_buffer_directory,
+      "E" => edit_current_file_path,
       "b" => buffer_picker,
       "j" => jumplist_picker,
       "s" => lsp_document_symbols,

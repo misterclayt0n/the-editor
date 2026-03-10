@@ -1,4 +1,5 @@
 use std::{
+  borrow::Cow,
   collections::{
     HashMap,
     HashSet,
@@ -654,6 +655,66 @@ fn workspace_root_for_ctx<Ctx: DefaultContext>(ctx: &Ctx) -> PathBuf {
   crate::file_picker::workspace_root(&start)
 }
 
+fn resolve_command_path(base: &Path, input: &Path) -> PathBuf {
+  let expanded = the_stdx::path::expand_tilde(Cow::Borrowed(input));
+  if expanded.is_absolute() {
+    expanded.into_owned()
+  } else {
+    base.join(expanded.as_ref())
+  }
+}
+
+struct FilenameCompletionQuery {
+  search_dir:     PathBuf,
+  file_prefix:    String,
+  display_prefix: String,
+}
+
+fn filename_completion_query(base: &Path, input: &str) -> FilenameCompletionQuery {
+  let input_path = Path::new(input);
+
+  if input.is_empty() {
+    return FilenameCompletionQuery {
+      search_dir:     base.to_path_buf(),
+      file_prefix:    String::new(),
+      display_prefix: String::new(),
+    };
+  }
+
+  if input == "~" {
+    return FilenameCompletionQuery {
+      search_dir:     resolve_command_path(base, input_path),
+      file_prefix:    String::new(),
+      display_prefix: "~/".to_string(),
+    };
+  }
+
+  if input.ends_with('/') {
+    return FilenameCompletionQuery {
+      search_dir:     resolve_command_path(base, input_path),
+      file_prefix:    String::new(),
+      display_prefix: input.to_string(),
+    };
+  }
+
+  let parent = input_path.parent().unwrap_or(Path::new(""));
+  let file_prefix = input_path
+    .file_name()
+    .and_then(|name| name.to_str())
+    .unwrap_or("")
+    .to_string();
+  let display_prefix = input
+    .rfind('/')
+    .map(|pos| input[..=pos].to_string())
+    .unwrap_or_default();
+
+  FilenameCompletionQuery {
+    search_dir: resolve_command_path(base, parent),
+    file_prefix,
+    display_prefix,
+  }
+}
+
 fn cmd_quit<Ctx: DefaultContext>(ctx: &mut Ctx, _args: Args, event: CommandEvent) -> CommandResult {
   if event != CommandEvent::Validate {
     return Ok(());
@@ -713,13 +774,7 @@ fn cmd_open<Ctx: DefaultContext>(ctx: &mut Ctx, args: Args, event: CommandEvent)
   let path_str = args
     .first()
     .ok_or_else(|| CommandError::new("usage: :open <path>"))?;
-  let path = Path::new(path_str);
-
-  let resolved = if path.is_absolute() {
-    path.to_path_buf()
-  } else {
-    workspace_root_for_ctx(ctx).join(path)
-  };
+  let resolved = resolve_command_path(&workspace_root_for_ctx(ctx), Path::new(path_str));
 
   match ctx.open_file(&resolved) {
     Ok(()) => Ok(()),
@@ -1900,31 +1955,14 @@ pub mod completers {
   }
 
   pub fn filename<Ctx: DefaultContext>(ctx: &Ctx, input: &str) -> Vec<Completion> {
-    use std::path::Path;
-
     let base = super::workspace_root_for_ctx(ctx);
+    let query = super::filename_completion_query(&base, input);
 
-    let (search_dir, file_prefix) = if input.is_empty() {
-      (base.clone(), "")
-    } else {
-      let input_path = Path::new(input);
-      if input.ends_with('/') {
-        (base.join(input_path), "")
-      } else {
-        let parent = input_path.parent().unwrap_or(Path::new(""));
-        let file_name = input_path
-          .file_name()
-          .and_then(|n| n.to_str())
-          .unwrap_or("");
-        (base.join(parent), file_name)
-      }
-    };
-
-    let Ok(read_dir) = std::fs::read_dir(&search_dir) else {
+    let Ok(read_dir) = std::fs::read_dir(&query.search_dir) else {
       return Vec::new();
     };
 
-    let prefix_lower = file_prefix.to_lowercase();
+    let prefix_lower = query.file_prefix.to_lowercase();
     let mut completions = Vec::new();
 
     for entry in read_dir.flatten() {
@@ -1933,7 +1971,7 @@ pub mod completers {
         continue;
       };
 
-      if name_str.starts_with('.') && !file_prefix.starts_with('.') {
+      if name_str.starts_with('.') && !query.file_prefix.starts_with('.') {
         continue;
       }
 
@@ -1948,20 +1986,9 @@ pub mod completers {
         name_str.to_string()
       };
 
-      let dir_prefix = if input.is_empty() {
-        String::new()
-      } else if input.ends_with('/') {
-        input.to_string()
-      } else {
-        input
-          .rfind('/')
-          .map(|pos| input[..=pos].to_string())
-          .unwrap_or_default()
-      };
-
       completions.push(Completion {
         range: 0..,
-        text:  format!("{}{}", dir_prefix, display),
+        text:  format!("{}{}", query.display_prefix, display),
         doc:   if is_dir {
           Some("directory".to_string())
         } else {
@@ -1977,5 +2004,45 @@ pub mod completers {
     });
 
     completions
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use std::{
+    borrow::Cow,
+    path::Path,
+  };
+
+  use super::{
+    filename_completion_query,
+    resolve_command_path,
+  };
+
+  #[test]
+  fn resolve_command_path_expands_tilde_to_home() {
+    let home = the_stdx::path::expand_tilde(Cow::Borrowed(Path::new("~"))).into_owned();
+    let resolved = resolve_command_path(Path::new("/workspace"), Path::new("~/code"));
+    assert_eq!(resolved, home.join("code"));
+  }
+
+  #[test]
+  fn filename_completion_query_expands_tilde_directory() {
+    let home = the_stdx::path::expand_tilde(Cow::Borrowed(Path::new("~"))).into_owned();
+    let query = filename_completion_query(Path::new("/workspace"), "~/");
+
+    assert_eq!(query.search_dir, home);
+    assert_eq!(query.file_prefix, "");
+    assert_eq!(query.display_prefix, "~/");
+  }
+
+  #[test]
+  fn filename_completion_query_expands_tilde_parent_before_filtering() {
+    let home = the_stdx::path::expand_tilde(Cow::Borrowed(Path::new("~"))).into_owned();
+    let query = filename_completion_query(Path::new("/workspace"), "~/Do");
+
+    assert_eq!(query.search_dir, home);
+    assert_eq!(query.file_prefix, "Do");
+    assert_eq!(query.display_prefix, "~/");
   }
 }

@@ -163,6 +163,7 @@ use crate::{
     Mode,
     ParseKeyBindingError,
     handle_key as keymap_handle_key,
+    open_command_palette_with_input,
   },
   message_bar::MessagePresentation,
   pending::WordJumpTarget,
@@ -1560,6 +1561,7 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
         crate::file_picker::open_file_picker_in_current_directory(ctx);
       }
     },
+    Command::EditCurrentFilePath => edit_current_file_path(ctx),
     Command::BufferPicker => crate::file_picker::open_buffer_picker(ctx),
     Command::JumplistPicker => crate::file_picker::open_jumplist_picker(ctx),
     Command::DiagnosticsPicker => crate::file_picker::open_diagnostics_picker(ctx, false),
@@ -2636,6 +2638,29 @@ fn split_new_scratch<Ctx: DefaultContext>(ctx: &mut Ctx, axis: SplitAxis) {
   let _ = ctx.editor().open_buffer(Rope::new(), view, None);
   ctx.set_file_path(None);
   ctx.request_render();
+}
+
+fn edit_current_file_path_prompt_input(path: Option<&Path>) -> String {
+  let Some(path) = path else {
+    return "e ".to_string();
+  };
+
+  let folded = the_stdx::path::fold_home_dir(Cow::Borrowed(path));
+  let path = folded.to_string_lossy();
+  let needs_quotes = path
+    .chars()
+    .any(|ch| ch.is_whitespace() || matches!(ch, '\'' | '"' | '`'));
+
+  if needs_quotes {
+    format!("e '{}'", path.replace('\'', "''"))
+  } else {
+    format!("e {path}")
+  }
+}
+
+fn edit_current_file_path<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  let input = edit_current_file_path_prompt_input(ctx.file_path());
+  open_command_palette_with_input(ctx, &input);
 }
 
 fn terminal_open<Ctx: DefaultContext>(ctx: &mut Ctx) {
@@ -6573,6 +6598,7 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "file_explorer_in_current_buffer_directory" => {
       Some(Command::file_explorer_in_current_buffer_directory())
     },
+    "edit_current_file_path" => Some(Command::edit_current_file_path()),
     "buffer_picker" => Some(Command::buffer_picker()),
     "jumplist_picker" => Some(Command::jumplist_picker()),
     "diagnostics_picker" => Some(Command::diagnostics_picker()),
@@ -6700,7 +6726,9 @@ mod tests {
   use super::{
     Command,
     command_from_name,
+    edit_current_file_path_prompt_input,
   };
+  use std::path::Path;
 
   #[test]
   fn terminal_command_names_map_to_commands() {
@@ -6711,6 +6739,27 @@ mod tests {
     assert_eq!(
       command_from_name("terminal_close"),
       Some(Command::terminal_close())
+    );
+    assert_eq!(
+      command_from_name("edit_current_file_path"),
+      Some(Command::edit_current_file_path())
+    );
+  }
+
+  #[test]
+  fn edit_current_file_path_prompt_prefills_current_path() {
+    assert_eq!(edit_current_file_path_prompt_input(None), "e ");
+    assert_eq!(
+      edit_current_file_path_prompt_input(Some(Path::new("/tmp/example.rs"))),
+      "e /tmp/example.rs"
+    );
+    assert_eq!(
+      edit_current_file_path_prompt_input(Some(Path::new("/tmp/hello world.rs"))),
+      "e '/tmp/hello world.rs'"
+    );
+    assert_eq!(
+      edit_current_file_path_prompt_input(Some(Path::new("/tmp/it's.rs"))),
+      "e '/tmp/it''s.rs'"
     );
   }
 }

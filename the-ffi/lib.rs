@@ -17073,7 +17073,7 @@ pkgs.mkShell {
   }
 
   #[test]
-  fn insert_mode_key_collapses_normal_mode_selection_to_block_cursor_edge() {
+  fn insert_mode_key_moves_cursor_to_selection_start() {
     let _guard = ffi_test_guard();
     let mut app = App::new();
     let id = app.create_editor("printf(\"hello\")\n", default_viewport(), ffi::Position {
@@ -17090,8 +17090,13 @@ pkgs.mkShell {
     assert_eq!(app.active_state_ref().mode, Mode::Insert);
     assert_eq!(
       app.active_editor_ref().document().selection().ranges()[0],
-      Range::point(5)
+      Range::new(6, 0)
     );
+
+    let plan = app.render_plan(id);
+    assert_eq!(plan.cursor_count(), 1);
+    assert_eq!(plan.cursor_at(0).kind(), 1);
+    assert_eq!(plan.cursor_at(0).pos().col, 0);
   }
 
   #[test]
@@ -17166,6 +17171,40 @@ pkgs.mkShell {
       app.active_editor_ref().document().selection().ranges()[0],
       Range::new(0, 7)
     );
+  }
+
+  #[test]
+  fn insert_mode_typing_moves_bar_cursor_with_backward_selection() {
+    let _guard = ffi_test_guard();
+    let mut app = App::new();
+    let id = app.create_editor("factorial\n", default_viewport(), ffi::Position {
+      row: 0,
+      col: 0,
+    });
+    assert!(app.activate(id).is_some());
+    let _ = app
+      .active_editor_mut()
+      .document_mut()
+      .set_selection(Selection::single(0, 9));
+
+    assert!(app.handle_key(id, key_char('i')));
+    assert_eq!(app.active_state_ref().mode, Mode::Insert);
+    assert_eq!(
+      app.active_editor_ref().document().selection().ranges()[0],
+      Range::new(9, 0)
+    );
+
+    assert!(app.handle_key(id, key_char('x')));
+    assert_eq!(app.text(id), "xfactorial\n");
+    assert_eq!(
+      app.active_editor_ref().document().selection().ranges()[0],
+      Range::new(10, 1)
+    );
+
+    let plan = app.render_plan(id);
+    assert_eq!(plan.cursor_count(), 1);
+    assert_eq!(plan.cursor_at(0).kind(), 1);
+    assert_eq!(plan.cursor_at(0).pos().col, 1);
   }
 
   #[test]

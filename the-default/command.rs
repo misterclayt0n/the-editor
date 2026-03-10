@@ -2198,7 +2198,7 @@ fn insert_char<Ctx: DefaultContext>(ctx: &mut Ctx, ch: char) {
     } else {
       Range::new(
         (range.anchor as isize + offset + inserted_len).max(0) as usize,
-        head,
+        head + inserted_len.max(0) as usize,
       )
     };
     ranges.push(next_range);

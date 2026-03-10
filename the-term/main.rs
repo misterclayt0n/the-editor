@@ -19,7 +19,10 @@ mod undercurl_backend;
 
 use std::{
   sync::mpsc::TryRecvError,
-  time::Duration,
+  time::{
+    Duration,
+    Instant,
+  },
 };
 
 use clap::{
@@ -98,12 +101,27 @@ fn main() -> Result<()> {
 
   // Initial render
   ctx.needs_render = false;
+  let initial_render_start = Instant::now();
   terminal.draw(|f| render::render(f, &mut ctx))?;
+  let initial_after_draw = Instant::now();
   terminal.apply_editor_cursor(
     ctx
       .term_hardware_cursor
       .map(|cursor| (cursor.x, cursor.y, cursor.kind)),
   )?;
+  let initial_total_ms = initial_render_start.elapsed().as_secs_f64() * 1000.0;
+  let initial_draw_ms = initial_after_draw
+    .duration_since(initial_render_start)
+    .as_secs_f64()
+    * 1000.0;
+  let initial_cursor_ms = initial_total_ms - initial_draw_ms;
+  render::log_present_perf(
+    &ctx,
+    "initial",
+    initial_draw_ms,
+    initial_cursor_ms,
+    initial_total_ms,
+  );
 
   // Event loop
   loop {
@@ -172,12 +190,18 @@ fn main() -> Result<()> {
     // Render if needed
     if ctx.needs_render {
       ctx.needs_render = false;
+      let render_start = Instant::now();
       terminal.draw(|f| render::render(f, &mut ctx))?;
+      let after_draw = Instant::now();
       terminal.apply_editor_cursor(
         ctx
           .term_hardware_cursor
           .map(|cursor| (cursor.x, cursor.y, cursor.kind)),
       )?;
+      let total_ms = render_start.elapsed().as_secs_f64() * 1000.0;
+      let draw_ms = after_draw.duration_since(render_start).as_secs_f64() * 1000.0;
+      let cursor_ms = total_ms - draw_ms;
+      render::log_present_perf(&ctx, "update", draw_ms, cursor_ms, total_ms);
     }
   }
 

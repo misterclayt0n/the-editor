@@ -1783,44 +1783,44 @@ impl PendingLspRequestKind {
 }
 
 struct EditorState {
-  mode:                          Mode,
+  mode:                              Mode,
   insert_mouse_selection_edit_armed: bool,
-  append_restore_cursor_pending: bool,
-  command_prompt:                CommandPromptState,
-  command_palette:               CommandPaletteState,
-  command_palette_style:         CommandPaletteStyle,
-  completion_menu:               the_default::CompletionMenuState,
-  signature_help:                the_default::SignatureHelpState,
-  file_picker:                   FilePickerState,
-  file_tree:                     FileTreeState,
-  search_prompt:                 SearchPromptState,
-  ui_state:                      UiState,
-  needs_render:                  bool,
-  messages:                      MessageCenter,
-  pending_input:                 Option<the_default::PendingInput>,
-  register:                      Option<char>,
-  macro_recording:               Option<(char, Vec<KeyBinding>)>,
-  macro_replaying:               Vec<char>,
-  macro_queue:                   VecDeque<KeyEvent>,
-  text_format:                   TextFormat,
-  gutter_config:                 GutterConfig,
-  gutter_diff_signs:             BTreeMap<usize, RenderGutterDiffKind>,
-  vcs_statusline:                Option<String>,
-  inline_annotations:            Vec<InlineAnnotation>,
-  overlay_annotations:           Vec<Overlay>,
-  word_jump_inline_annotations:  Vec<InlineAnnotation>,
-  word_jump_overlay_annotations: Vec<Overlay>,
-  highlight_cache:               HighlightCache,
-  syntax_parse_tx:               Sender<SyntaxParseResult>,
-  syntax_parse_rx:               Receiver<SyntaxParseResult>,
-  syntax_parse_lifecycle:        ParseLifecycle<SyntaxParseJob>,
-  syntax_parse_highlight_state:  ParseHighlightState,
-  diagnostic_popup:              Option<DiagnosticPopupState>,
-  hover_docs:                    Option<String>,
-  hover_docs_scroll:             usize,
-  hover_ui:                      Option<HoverUiState>,
-  scrolloff:                     usize,
-  pointer_drag_selection:        Option<PointerSelectionDragState>,
+  append_restore_cursor_pending:     bool,
+  command_prompt:                    CommandPromptState,
+  command_palette:                   CommandPaletteState,
+  command_palette_style:             CommandPaletteStyle,
+  completion_menu:                   the_default::CompletionMenuState,
+  signature_help:                    the_default::SignatureHelpState,
+  file_picker:                       FilePickerState,
+  file_tree:                         FileTreeState,
+  search_prompt:                     SearchPromptState,
+  ui_state:                          UiState,
+  needs_render:                      bool,
+  messages:                          MessageCenter,
+  pending_input:                     Option<the_default::PendingInput>,
+  register:                          Option<char>,
+  macro_recording:                   Option<(char, Vec<KeyBinding>)>,
+  macro_replaying:                   Vec<char>,
+  macro_queue:                       VecDeque<KeyEvent>,
+  text_format:                       TextFormat,
+  gutter_config:                     GutterConfig,
+  gutter_diff_signs:                 BTreeMap<usize, RenderGutterDiffKind>,
+  vcs_statusline:                    Option<String>,
+  inline_annotations:                Vec<InlineAnnotation>,
+  overlay_annotations:               Vec<Overlay>,
+  word_jump_inline_annotations:      Vec<InlineAnnotation>,
+  word_jump_overlay_annotations:     Vec<Overlay>,
+  highlight_cache:                   HighlightCache,
+  syntax_parse_tx:                   Sender<SyntaxParseResult>,
+  syntax_parse_rx:                   Receiver<SyntaxParseResult>,
+  syntax_parse_lifecycle:            ParseLifecycle<SyntaxParseJob>,
+  syntax_parse_highlight_state:      ParseHighlightState,
+  diagnostic_popup:                  Option<DiagnosticPopupState>,
+  hover_docs:                        Option<String>,
+  hover_docs_scroll:                 usize,
+  hover_ui:                          Option<HoverUiState>,
+  scrolloff:                         usize,
+  pointer_drag_selection:            Option<PointerSelectionDragState>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -5247,17 +5247,17 @@ impl App {
   fn editor_render_styles_from_theme(&self) -> RenderStyles {
     let theme = &self.ui_theme;
     RenderStyles {
-      selection:          theme.try_get("ui.selection").unwrap_or_default(),
-      cursor:             theme.try_get("ui.cursor").unwrap_or_default(),
-      active_cursor:      theme
+      selection:                  theme.try_get("ui.selection").unwrap_or_default(),
+      cursor:                     theme.try_get("ui.cursor").unwrap_or_default(),
+      active_cursor:              theme
         .try_get("ui.cursor.active")
         .or_else(|| theme.try_get("ui.cursor"))
         .unwrap_or_default(),
-      cursor_kind:        LibCursorKind::Block,
-      active_cursor_kind: LibCursorKind::Block,
+      cursor_kind:                LibCursorKind::Block,
+      active_cursor_kind:         LibCursorKind::Block,
       non_block_cursor_uses_head: true,
-      gutter:             theme.try_get("ui.linenr").unwrap_or_default(),
-      gutter_active:      theme
+      gutter:                     theme.try_get("ui.linenr").unwrap_or_default(),
+      gutter_active:              theme
         .try_get("ui.linenr.selected")
         .or_else(|| theme.try_get("ui.linenr"))
         .unwrap_or_default(),
@@ -12742,7 +12742,13 @@ impl DefaultContext for App {
     self
       .lsp_server_name
       .clone()
-      .or_else(|| self.lsp_runtime.config().server().map(|server| server.name().to_string()))
+      .or_else(|| {
+        self
+          .lsp_runtime
+          .config()
+          .server()
+          .map(|server| server.name().to_string())
+      })
       .into_iter()
       .collect()
   }
@@ -12755,7 +12761,11 @@ impl DefaultContext for App {
 
     let invalid = names
       .iter()
-      .filter(|name| !configured.iter().any(|configured_name| configured_name == *name))
+      .filter(|name| {
+        !configured
+          .iter()
+          .any(|configured_name| configured_name == *name)
+      })
       .cloned()
       .collect::<Vec<_>>();
     if !invalid.is_empty() {
@@ -14057,14 +14067,14 @@ impl Default for ffi::DocsPopupAnchor {
 impl ffi::RenderStyles {
   fn to_lib(self) -> RenderStyles {
     RenderStyles {
-      selection:          self.selection.to_lib(),
-      cursor:             self.cursor.to_lib(),
-      active_cursor:      self.active_cursor.to_lib(),
-      cursor_kind:        LibCursorKind::Block,
-      active_cursor_kind: LibCursorKind::Block,
+      selection:                  self.selection.to_lib(),
+      cursor:                     self.cursor.to_lib(),
+      active_cursor:              self.active_cursor.to_lib(),
+      cursor_kind:                LibCursorKind::Block,
+      active_cursor_kind:         LibCursorKind::Block,
       non_block_cursor_uses_head: true,
-      gutter:             self.gutter.to_lib(),
-      gutter_active:      self.gutter_active.to_lib(),
+      gutter:                     self.gutter.to_lib(),
+      gutter_active:              self.gutter_active.to_lib(),
     }
   }
 }
@@ -17710,6 +17720,123 @@ pkgs.mkShell {
     assert!(app.set_scroll(id, ffi::Position { row: 0, col: 40 }));
     assert!(app.ensure_cursor_visible(id));
     assert_eq!(app.active_editor_ref().view().scroll.col, 0);
+  }
+
+  #[test]
+  #[ignore = "profiling helper for repeated down-arrow movement on plain-text buffers"]
+  fn profile_plain_text_scroll_rebuild_cost() {
+    let _guard = ffi_test_guard();
+    let text = fs::read_to_string(
+      Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root")
+        .join("t8.shakespeare.txt"),
+    )
+    .expect("read plain text fixture");
+    let viewport = ffi::Rect {
+      x:      0,
+      y:      0,
+      width:  80,
+      height: 24,
+    };
+
+    let mut app = App::new();
+    let id = app.create_editor(&text, viewport, ffi::Position { row: 0, col: 0 });
+
+    // Warm the initial frame so subsequent timings reflect steady-state movement.
+    let _ = app.frame_render_plan(id);
+
+    let mut total_handle_ns = 0u128;
+    let mut total_frame_ns = 0u128;
+    let mut total_scroll_handle_ns = 0u128;
+    let mut total_scroll_frame_ns = 0u128;
+    let mut total_in_view_handle_ns = 0u128;
+    let mut total_in_view_frame_ns = 0u128;
+    let mut scroll_steps = 0usize;
+    let mut in_view_steps = 0usize;
+    let mut max_frame_ms = 0.0f64;
+    let mut max_handle_ms = 0.0f64;
+    let mut notable_steps = Vec::new();
+
+    for step in 0..96usize {
+      let before_scroll = app.active_editor_ref().view().scroll.row;
+      let before_cursor = app.active_editor_ref().document().selection().ranges()[0]
+        .cursor_line(app.active_editor_ref().document().text().slice(..));
+
+      let handle_started = Instant::now();
+      assert!(app.handle_key(id, ffi::KeyEvent {
+        kind:      15,
+        codepoint: 0,
+        modifiers: 0,
+      },));
+      let handle_elapsed = handle_started.elapsed();
+
+      let frame_started = Instant::now();
+      let frame = app.frame_render_plan(id);
+      let frame_elapsed = frame_started.elapsed();
+
+      let after_scroll = app.active_editor_ref().view().scroll.row;
+      let after_cursor = app.active_editor_ref().document().selection().ranges()[0]
+        .cursor_line(app.active_editor_ref().document().text().slice(..));
+
+      let handle_ms = handle_elapsed.as_secs_f64() * 1000.0;
+      let frame_ms = frame_elapsed.as_secs_f64() * 1000.0;
+      let scrolled = after_scroll != before_scroll;
+      let active_plan = frame.active_plan();
+
+      total_handle_ns += handle_elapsed.as_nanos();
+      total_frame_ns += frame_elapsed.as_nanos();
+      max_handle_ms = max_handle_ms.max(handle_ms);
+      max_frame_ms = max_frame_ms.max(frame_ms);
+
+      if scrolled {
+        scroll_steps += 1;
+        total_scroll_handle_ns += handle_elapsed.as_nanos();
+        total_scroll_frame_ns += frame_elapsed.as_nanos();
+      } else {
+        in_view_steps += 1;
+        total_in_view_handle_ns += handle_elapsed.as_nanos();
+        total_in_view_frame_ns += frame_elapsed.as_nanos();
+      }
+
+      if scrolled || frame_ms >= 1.0 || handle_ms >= 1.0 {
+        notable_steps.push(format!(
+          "step={step} cursor_line={before_cursor}->{after_cursor} \
+           scroll_row={before_scroll}->{after_scroll} scrolled={} handle_ms={handle_ms:.3} \
+           frame_ms={frame_ms:.3} lines={}",
+          if scrolled { 1 } else { 0 },
+          active_plan.line_count(),
+        ));
+      }
+    }
+
+    fn avg_ms(total_ns: u128, steps: usize) -> f64 {
+      if steps == 0 {
+        0.0
+      } else {
+        (total_ns as f64 / steps as f64) / 1_000_000.0
+      }
+    }
+
+    eprintln!(
+      "plain_text_scroll_profile total_steps=96 in_view_steps={} scroll_steps={} \
+       avg_handle_ms={:.3} avg_frame_ms={:.3} avg_in_view_handle_ms={:.3} \
+       avg_in_view_frame_ms={:.3} avg_scroll_handle_ms={:.3} avg_scroll_frame_ms={:.3} \
+       max_handle_ms={:.3} max_frame_ms={:.3}",
+      in_view_steps,
+      scroll_steps,
+      avg_ms(total_handle_ns, 96),
+      avg_ms(total_frame_ns, 96),
+      avg_ms(total_in_view_handle_ns, in_view_steps),
+      avg_ms(total_in_view_frame_ns, in_view_steps),
+      avg_ms(total_scroll_handle_ns, scroll_steps),
+      avg_ms(total_scroll_frame_ns, scroll_steps),
+      max_handle_ms,
+      max_frame_ms,
+    );
+    for line in notable_steps {
+      eprintln!("{line}");
+    }
   }
 
   #[test]

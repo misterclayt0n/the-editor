@@ -1117,9 +1117,13 @@ struct EditorView: View {
         cursorPickState: CursorPickState?,
         cursorOpacity: Double
     ) {
+        let perfEnabled = DiagnosticsDebugLog.editorPerfEnabled
+        let perfStart = perfEnabled ? DispatchTime.now().uptimeNanoseconds : 0
         let paneCount = Int(framePlan.pane_count())
+        var aggregateStats = DrawPlanPerfStats.zero
+        var activePlanStats = DrawPlanPerfStats.zero
         guard paneCount > 0 else {
-            drawPlan(
+            let fallbackStats = drawPlan(
                 in: context,
                 size: size,
                 plan: fallbackPlan,
@@ -1129,6 +1133,33 @@ struct EditorView: View {
                 cursorPickState: cursorPickState,
                 cursorOpacity: cursorOpacity
             )
+            if perfEnabled {
+                let elapsedMs = Double(DispatchTime.now().uptimeNanoseconds - perfStart) / 1_000_000.0
+                if DiagnosticsDebugLog.editorPerfShouldLog(durationMs: elapsedMs) {
+                    DiagnosticsDebugLog.editorPerfLog(
+                        String(
+                            format: "canvas_draw total=%.2fms panes=%d terminal_panes=%d active_pane=%llu active_scroll=%d:%d active_lines=%d gutter=%.2fms selections=%.2fms underlines=%.2fms text=%.2fms cursors=%.2fms separators=%.2fms drawn_spans=%d skipped_virtual=%d canvas=(%.0f,%.0f)",
+                            elapsedMs,
+                            0,
+                            terminalPaneIds.count,
+                            CUnsignedLongLong(activePaneId),
+                            fallbackStats.scrollRow,
+                            fallbackStats.scrollCol,
+                            fallbackStats.lineCount,
+                            fallbackStats.gutterMs,
+                            fallbackStats.selectionsMs,
+                            fallbackStats.underlinesMs,
+                            fallbackStats.textMs,
+                            fallbackStats.cursorsMs,
+                            0.0,
+                            fallbackStats.drawnSpans,
+                            fallbackStats.skippedVirtualSpans,
+                            size.width,
+                            size.height
+                        )
+                    )
+                }
+            }
             return
         }
 
@@ -1138,6 +1169,7 @@ struct EditorView: View {
                 continue
             }
             let paneRect = pane.rect()
+            let panePlan = pane.plan()
             let paneSize = CGSize(
                 width: CGFloat(paneRect.width) * cellSize.width,
                 height: CGFloat(paneRect.height) * cellSize.height
@@ -1147,24 +1179,59 @@ struct EditorView: View {
                 x: CGFloat(paneRect.x) * cellSize.width,
                 y: CGFloat(paneRect.y) * cellSize.height
             )
-            drawPlan(
+            let paneStats = drawPlan(
                 in: paneContext,
                 size: paneSize,
-                plan: pane.plan(),
+                plan: panePlan,
                 cellSize: cellSize,
                 bufferFont: bufferFont,
                 bufferNSFont: bufferNSFont,
                 cursorPickState: pane.pane_id() == activePaneId ? cursorPickState : nil,
                 cursorOpacity: cursorOpacity
             )
+            aggregateStats = aggregateStats.adding(paneStats)
+            if pane.pane_id() == activePaneId {
+                activePlanStats = paneStats
+            }
         }
 
+        let separatorsStart = perfEnabled ? DispatchTime.now().uptimeNanoseconds : 0
         drawPaneSeparators(
             in: context,
             framePlan: framePlan,
             canvasSize: size,
             cellSize: cellSize
         )
+        let separatorsMs = perfEnabled
+            ? Double(DispatchTime.now().uptimeNanoseconds - separatorsStart) / 1_000_000.0
+            : 0
+        if perfEnabled {
+            let elapsedMs = Double(DispatchTime.now().uptimeNanoseconds - perfStart) / 1_000_000.0
+            if DiagnosticsDebugLog.editorPerfShouldLog(durationMs: elapsedMs) {
+                DiagnosticsDebugLog.editorPerfLog(
+                    String(
+                        format: "canvas_draw total=%.2fms panes=%d terminal_panes=%d active_pane=%llu active_scroll=%d:%d active_lines=%d gutter=%.2fms selections=%.2fms underlines=%.2fms text=%.2fms cursors=%.2fms separators=%.2fms drawn_spans=%d skipped_virtual=%d canvas=(%.0f,%.0f)",
+                        elapsedMs,
+                        paneCount,
+                        terminalPaneIds.count,
+                        CUnsignedLongLong(activePaneId),
+                        activePlanStats.scrollRow,
+                        activePlanStats.scrollCol,
+                        activePlanStats.lineCount,
+                        aggregateStats.gutterMs,
+                        aggregateStats.selectionsMs,
+                        aggregateStats.underlinesMs,
+                        aggregateStats.textMs,
+                        aggregateStats.cursorsMs,
+                        separatorsMs,
+                        aggregateStats.drawnSpans,
+                        aggregateStats.skippedVirtualSpans,
+                        size.width,
+                        size.height
+                    )
+                )
+            }
+        }
     }
 
     private struct SplitEdge {
@@ -1316,9 +1383,19 @@ struct EditorView: View {
         bufferNSFont: NSFont,
         cursorPickState: CursorPickState?,
         cursorOpacity: Double
-    ) {
+    ) -> DrawPlanPerfStats {
         _ = bufferNSFont
+        let perfEnabled = DiagnosticsDebugLog.editorPerfEnabled
+        let perfStart = perfEnabled ? DispatchTime.now().uptimeNanoseconds : 0
+        func perfNow() -> UInt64 {
+            DispatchTime.now().uptimeNanoseconds
+        }
+        func perfMs(_ start: UInt64, _ end: UInt64) -> Double {
+            guard perfEnabled, end >= start else { return 0 }
+            return Double(end - start) / 1_000_000.0
+        }
         let contentOffsetX = CGFloat(plan.content_offset_x()) * cellSize.width
+        let perfAfterStart = perfEnabled ? perfStart : 0
         drawGutter(
             in: context,
             size: size,
@@ -1327,8 +1404,11 @@ struct EditorView: View {
             font: bufferFont,
             contentOffsetX: contentOffsetX
         )
+        let perfAfterGutter = perfEnabled ? perfNow() : 0
         drawSelections(in: context, plan: plan, cellSize: cellSize, contentOffsetX: contentOffsetX)
+        let perfAfterSelections = perfEnabled ? perfNow() : 0
         drawDiagnosticUnderlines(in: context, plan: plan, cellSize: cellSize, contentOffsetX: contentOffsetX)
+        let perfAfterUnderlines = perfEnabled ? perfNow() : 0
         let textStats = drawText(
             in: context,
             plan: plan,
@@ -1336,6 +1416,7 @@ struct EditorView: View {
             font: bufferFont,
             contentOffsetX: contentOffsetX
         )
+        let perfAfterText = perfEnabled ? perfNow() : 0
         let inlineSummary = "count=\(Int(plan.inline_diagnostic_line_count())) native=0"
         let eolSummary = "count=\(Int(plan.eol_diagnostic_count())) native=1"
         drawCursors(
@@ -1346,11 +1427,25 @@ struct EditorView: View {
             cursorPickState: cursorPickState,
             cursorOpacity: cursorOpacity
         )
+        let perfAfterCursors = perfEnabled ? perfNow() : 0
         debugDrawSnapshot(
             plan: plan,
             textStats: textStats,
             inlineSummary: inlineSummary,
             eolSummary: eolSummary
+        )
+        let scroll = plan.scroll()
+        return DrawPlanPerfStats(
+            gutterMs: perfMs(perfAfterStart, perfAfterGutter),
+            selectionsMs: perfMs(perfAfterGutter, perfAfterSelections),
+            underlinesMs: perfMs(perfAfterSelections, perfAfterUnderlines),
+            textMs: perfMs(perfAfterUnderlines, perfAfterText),
+            cursorsMs: perfMs(perfAfterText, perfAfterCursors),
+            drawnSpans: textStats.drawnSpans,
+            skippedVirtualSpans: textStats.skippedVirtualSpans,
+            lineCount: Int(plan.line_count()),
+            scrollRow: Int(scroll.row),
+            scrollCol: Int(scroll.col)
         )
     }
 
@@ -1536,6 +1631,47 @@ struct EditorView: View {
     private struct DrawTextStats {
         let drawnSpans: Int
         let skippedVirtualSpans: Int
+    }
+
+    private struct DrawPlanPerfStats {
+        let gutterMs: Double
+        let selectionsMs: Double
+        let underlinesMs: Double
+        let textMs: Double
+        let cursorsMs: Double
+        let drawnSpans: Int
+        let skippedVirtualSpans: Int
+        let lineCount: Int
+        let scrollRow: Int
+        let scrollCol: Int
+
+        static let zero = DrawPlanPerfStats(
+            gutterMs: 0,
+            selectionsMs: 0,
+            underlinesMs: 0,
+            textMs: 0,
+            cursorsMs: 0,
+            drawnSpans: 0,
+            skippedVirtualSpans: 0,
+            lineCount: 0,
+            scrollRow: 0,
+            scrollCol: 0
+        )
+
+        func adding(_ other: DrawPlanPerfStats) -> DrawPlanPerfStats {
+            DrawPlanPerfStats(
+                gutterMs: gutterMs + other.gutterMs,
+                selectionsMs: selectionsMs + other.selectionsMs,
+                underlinesMs: underlinesMs + other.underlinesMs,
+                textMs: textMs + other.textMs,
+                cursorsMs: cursorsMs + other.cursorsMs,
+                drawnSpans: drawnSpans + other.drawnSpans,
+                skippedVirtualSpans: skippedVirtualSpans + other.skippedVirtualSpans,
+                lineCount: lineCount + other.lineCount,
+                scrollRow: scrollRow,
+                scrollCol: scrollCol
+            )
+        }
     }
 
     private func drawText(

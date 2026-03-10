@@ -4,8 +4,22 @@ use std::{
   cell::RefCell,
   collections::BTreeMap,
   env,
-  path::Path,
+  fs::OpenOptions,
+  io::Write,
+  path::{
+    Path,
+    PathBuf,
+  },
   rc::Rc,
+  sync::{
+    Mutex,
+    OnceLock,
+    atomic::{
+      AtomicU64,
+      Ordering,
+    },
+  },
+  time::Instant,
 };
 
 use ratatui::{
@@ -146,6 +160,112 @@ use crate::{
     compute_scrollbar_metrics,
   },
 };
+
+#[derive(Debug)]
+struct TermRenderPerfConfig {
+  min_duration_ms: f64,
+  file_path:       Option<PathBuf>,
+  start:           Instant,
+}
+
+#[derive(Debug, Default)]
+struct TermRenderPerfState {
+  last_scroll: Option<(usize, usize)>,
+}
+
+static TERM_RENDER_PERF_CONFIG: OnceLock<Option<TermRenderPerfConfig>> = OnceLock::new();
+static TERM_RENDER_PERF_STATE: OnceLock<Mutex<TermRenderPerfState>> = OnceLock::new();
+static TERM_RENDER_PERF_SEQ: AtomicU64 = AtomicU64::new(0);
+
+fn term_render_perf_config() -> Option<&'static TermRenderPerfConfig> {
+  TERM_RENDER_PERF_CONFIG
+    .get_or_init(|| {
+      if env::var("THE_TERM_DEBUG_RENDER_PERF").ok().as_deref() != Some("1") {
+        return None;
+      }
+
+      let min_duration_ms = env::var("THE_TERM_DEBUG_RENDER_PERF_MIN_MS")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<f64>().ok())
+        .unwrap_or(1.0);
+      let file_path = env::var("THE_TERM_DEBUG_RENDER_PERF_FILE")
+        .ok()
+        .map(|raw| raw.trim().to_string())
+        .filter(|raw| !raw.is_empty())
+        .map(PathBuf::from);
+      Some(TermRenderPerfConfig {
+        min_duration_ms,
+        file_path,
+        start: Instant::now(),
+      })
+    })
+    .as_ref()
+}
+
+fn term_render_perf_should_log(duration_ms: f64) -> bool {
+  term_render_perf_config().is_some_and(|cfg| duration_ms >= cfg.min_duration_ms)
+}
+
+fn term_render_perf_state() -> &'static Mutex<TermRenderPerfState> {
+  TERM_RENDER_PERF_STATE.get_or_init(|| Mutex::new(TermRenderPerfState::default()))
+}
+
+fn term_render_perf_scroll_changed(row: usize, col: usize) -> bool {
+  let Ok(mut state) = term_render_perf_state().lock() else {
+    return false;
+  };
+  let previous = state.last_scroll.replace((row, col));
+  previous != Some((row, col))
+}
+
+fn term_render_perf_write(message: String) {
+  let Some(cfg) = term_render_perf_config() else {
+    return;
+  };
+  let elapsed_ms = cfg.start.elapsed().as_millis();
+  let line = format!("[termrender +{elapsed_ms}ms] {message}\n");
+  eprint!("{line}");
+  if let Some(path) = &cfg.file_path {
+    append_term_render_perf_line(path, line.as_bytes());
+  }
+}
+
+fn append_term_render_perf_line(path: &Path, data: &[u8]) {
+  if let Some(parent) = path.parent() {
+    let _ = std::fs::create_dir_all(parent);
+  }
+
+  if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
+    let _ = file.write_all(data);
+  }
+}
+
+pub fn last_render_perf_seq() -> u64 {
+  TERM_RENDER_PERF_SEQ.load(Ordering::Relaxed)
+}
+
+pub fn log_present_perf(ctx: &Ctx, phase: &str, draw_ms: f64, cursor_ms: f64, total_ms: f64) {
+  if !term_render_perf_should_log(total_ms) {
+    return;
+  }
+
+  let view = ctx.editor.view();
+  let cursor = ctx
+    .term_hardware_cursor
+    .map(|cursor| format!("{}:{}:{:?}", cursor.x, cursor.y, cursor.kind))
+    .unwrap_or_else(|| "none".to_string());
+  term_render_perf_write(format!(
+    "kind=present seq={} phase={} total={total_ms:.2}ms draw={draw_ms:.2}ms \
+     cursor={cursor_ms:.2}ms scroll={}:{} viewport={}x{} hardware_cursor={}",
+    last_render_perf_seq(),
+    phase,
+    view.scroll.row,
+    view.scroll.col,
+    view.viewport.width,
+    view.viewport.height,
+    cursor,
+  ));
+}
 
 fn lib_color_to_ratatui(color: the_lib::render::graphics::Color) -> Color {
   use the_lib::render::graphics::Color as LibColor;
@@ -6442,24 +6562,46 @@ fn draw_buffer_tabs_row(buf: &mut Buffer, area: Rect, ctx: &Ctx) {
 
 /// Render the current document state to the terminal.
 pub fn render(f: &mut Frame, ctx: &mut Ctx) {
+  let perf_enabled = term_render_perf_config().is_some();
+  let perf_seq = if perf_enabled {
+    TERM_RENDER_PERF_SEQ.fetch_add(1, Ordering::Relaxed) + 1
+  } else {
+    0
+  };
+  let perf_start = perf_enabled.then(Instant::now);
   let area = f.size();
   sync_file_picker_viewport(ctx, area);
+  let perf_after_picker = perf_enabled.then(Instant::now);
   let mut ui = ui_tree(ctx);
   adapt_ui_tree_for_term(ctx, &mut ui);
   resolve_ui_tree(&mut ui, &ctx.ui_theme);
   apply_ui_viewport(ctx, &ui, f.size());
+  let perf_after_ui = perf_enabled.then(Instant::now);
   if !ctx.mouse_selection_drag_active && !ctx.mouse_viewport_detached {
     ensure_cursor_visible(ctx);
   }
+  let perf_after_visibility = perf_enabled.then(Instant::now);
   let frame_plan = frame_render_plan(ctx);
+  let perf_after_plan = perf_enabled.then(Instant::now);
 
   f.render_widget(Clear, area);
+  let perf_after_clear = perf_enabled.then(Instant::now);
 
-  let (ui_cursor, active_editor_cursor, active_editor_cursor_kind) = {
+  let (
+    ui_cursor,
+    active_editor_cursor,
+    active_editor_cursor_kind,
+    pane_draw_ms,
+    ui_draw_ms,
+    active_line_count,
+    active_span_count,
+  ) = {
     let buf = f.buffer_mut();
     let mut cursor_out = None;
     let mut editor_cursor = None;
     let mut editor_cursor_kind = None;
+    let mut active_line_count = 0usize;
+    let mut active_span_count = 0usize;
     let base_text_style = lib_style_to_ratatui(ctx.ui_theme.try_get("ui.text").unwrap_or_default());
     if let Some(bg) = ctx
       .ui_theme
@@ -6471,6 +6613,7 @@ pub fn render(f: &mut Frame, ctx: &mut Ctx) {
 
     draw_buffer_tabs_row(buf, area, ctx);
 
+    let pane_draw_start = perf_enabled.then(Instant::now);
     for pane in &frame_plan.panes {
       let pane_area = pane_screen_rect(area, pane.rect);
       let is_active = pane.pane_id == frame_plan.active_pane;
@@ -6479,11 +6622,15 @@ pub fn render(f: &mut Frame, ctx: &mut Ctx) {
       if is_active {
         editor_cursor = pane_cursor;
         editor_cursor_kind = pane.plan.cursors.first().map(|cursor| cursor.kind);
+        active_line_count = pane.plan.lines.len();
+        active_span_count = pane.plan.lines.iter().map(|line| line.spans.len()).sum();
       }
     }
+    let pane_draw_ms = pane_draw_start.map_or(0.0, |start| start.elapsed().as_secs_f64() * 1000.0);
 
     draw_pane_separators(buf, area, &frame_plan, ctx);
 
+    let ui_draw_start = perf_enabled.then(Instant::now);
     draw_ui_node(
       buf,
       area,
@@ -6494,7 +6641,16 @@ pub fn render(f: &mut Frame, ctx: &mut Ctx) {
       &mut cursor_out,
     );
     draw_ui_overlays(buf, area, ctx, &ui, editor_cursor, &mut cursor_out);
-    (cursor_out, editor_cursor, editor_cursor_kind)
+    let ui_draw_ms = ui_draw_start.map_or(0.0, |start| start.elapsed().as_secs_f64() * 1000.0);
+    (
+      cursor_out,
+      editor_cursor,
+      editor_cursor_kind,
+      pane_draw_ms,
+      ui_draw_ms,
+      active_line_count,
+      active_span_count,
+    )
   };
 
   ctx.term_hardware_cursor = if ui_cursor.is_none()
@@ -6505,6 +6661,48 @@ pub fn render(f: &mut Frame, ctx: &mut Ctx) {
   } else {
     None
   };
+
+  if let Some(perf_start) = perf_start {
+    let total_ms = perf_start.elapsed().as_secs_f64() * 1000.0;
+    if term_render_perf_should_log(total_ms) {
+      let perf_after_picker_ms = perf_after_picker
+        .map(|instant| instant.duration_since(perf_start).as_secs_f64() * 1000.0)
+        .unwrap_or(0.0);
+      let perf_after_ui_ms = perf_after_ui
+        .map(|instant| instant.duration_since(perf_start).as_secs_f64() * 1000.0)
+        .unwrap_or(perf_after_picker_ms);
+      let perf_after_visibility_ms = perf_after_visibility
+        .map(|instant| instant.duration_since(perf_start).as_secs_f64() * 1000.0)
+        .unwrap_or(perf_after_ui_ms);
+      let perf_after_plan_ms = perf_after_plan
+        .map(|instant| instant.duration_since(perf_start).as_secs_f64() * 1000.0)
+        .unwrap_or(perf_after_visibility_ms);
+      let perf_after_clear_ms = perf_after_clear
+        .map(|instant| instant.duration_since(perf_start).as_secs_f64() * 1000.0)
+        .unwrap_or(perf_after_plan_ms);
+      let view = ctx.editor.view();
+      let scroll_changed = term_render_perf_scroll_changed(view.scroll.row, view.scroll.col);
+      term_render_perf_write(format!(
+        "kind=render seq={perf_seq} total={total_ms:.2}ms picker={picker_ms:.2}ms ui={ui_ms:.2}ms \
+         ensure_visible={ensure_ms:.2}ms plan={plan_ms:.2}ms clear={clear_ms:.2}ms \
+         panes={pane_draw_ms:.2}ms overlays={ui_draw_ms:.2}ms pane_count={} active_lines={} \
+         active_spans={} scroll={}:{} scroll_changed={} viewport={}x{}",
+        frame_plan.panes.len(),
+        active_line_count,
+        active_span_count,
+        view.scroll.row,
+        view.scroll.col,
+        if scroll_changed { 1 } else { 0 },
+        view.viewport.width,
+        view.viewport.height,
+        picker_ms = perf_after_picker_ms,
+        ui_ms = perf_after_ui_ms - perf_after_picker_ms,
+        ensure_ms = perf_after_visibility_ms - perf_after_ui_ms,
+        plan_ms = perf_after_plan_ms - perf_after_visibility_ms,
+        clear_ms = perf_after_clear_ms - perf_after_plan_ms,
+      ));
+    }
+  }
 }
 
 fn is_diff_gutter_marker(text: &str) -> bool {

@@ -627,6 +627,14 @@ struct EditorView: View {
                         onNamedCommand: { command in
                             model.executeNamedCommand(command)
                         },
+                        onNotification: { notification in
+                            model.handleTerminalNotification(
+                                terminalId: pane.terminalId,
+                                title: notification.title,
+                                body: notification.body,
+                                terminalTitle: notification.terminalTitle
+                            )
+                        },
                         onMetadataChange: {
                             model.handleTerminalMetadataUpdate(terminalId: pane.terminalId)
                         }
@@ -720,6 +728,8 @@ struct EditorView: View {
                 model.submitSearch()
             }
         )
+
+        EditorNotificationOverlay(banners: model.notificationBanners)
 
         if terminalSwitcherSnapshot.isOpen {
             GlobalTerminalSwitcherView(

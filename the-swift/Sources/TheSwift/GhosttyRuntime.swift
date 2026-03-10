@@ -30,6 +30,12 @@ struct GhosttyTerminalMetadata: Equatable {
     }
 }
 
+struct GhosttyDesktopNotification: Equatable {
+    let title: String
+    let body: String
+    let terminalTitle: String?
+}
+
 #if canImport(GhosttyKit)
 import GhosttyKit
 
@@ -672,6 +678,11 @@ private final class GhosttySurfaceController {
             let pwd = action.action.pwd.pwd.map { String(cString: $0) } ?? ""
             updateMetadata { $0.applyPwd(pwd) }
             return true
+        case GHOSTTY_ACTION_DESKTOP_NOTIFICATION:
+            let title = action.action.desktop_notification.title.map { String(cString: $0) } ?? ""
+            let body = action.action.desktop_notification.body.map { String(cString: $0) } ?? ""
+            dispatchDesktopNotification(title: title, body: body)
+            return true
         default:
             return false
         }
@@ -685,6 +696,7 @@ private final class GhosttySurfaceController {
         onPointer: @escaping (MouseBridgeEvent) -> Void,
         onCloseRequest: @escaping () -> Bool,
         onNamedCommand: @escaping (EditorNamedCommand) -> Bool,
+        onNotification: @escaping (GhosttyDesktopNotification) -> Void,
         onMetadataChange: @escaping () -> Void
     ) {
         if DiagnosticsDebugLog.enabled {
@@ -698,6 +710,7 @@ private final class GhosttySurfaceController {
         hostedView.onPointer = onPointer
         hostedView.onCloseRequest = onCloseRequest
         hostedView.onNamedCommand = onNamedCommand
+        hostedView.onNotification = onNotification
         hostedView.onMetadataChange = onMetadataChange
         applyConfiguredBackground()
         createSurfaceIfNeeded()
@@ -1007,6 +1020,26 @@ private final class GhosttySurfaceController {
         }
     }
 
+    private func dispatchDesktopNotification(title: String, body: String) {
+        let emit = { [weak self] in
+            guard let self else { return }
+            let terminalTitle = self.metadata.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            self.hostedView.handleRuntimeDesktopNotification(
+                GhosttyDesktopNotification(
+                    title: title,
+                    body: body,
+                    terminalTitle: terminalTitle.isEmpty ? nil : terminalTitle
+                )
+            )
+        }
+
+        if Thread.isMainThread {
+            emit()
+        } else {
+            DispatchQueue.main.async(execute: emit)
+        }
+    }
+
     private func createSurfaceIfNeeded() {
         guard surface == nil,
               let app = runtime.app else {
@@ -1114,6 +1147,7 @@ final class GhosttySurfaceHostView: NSView {
     var onPointer: ((MouseBridgeEvent) -> Void)?
     var onCloseRequest: (() -> Bool)?
     var onNamedCommand: ((EditorNamedCommand) -> Bool)?
+    var onNotification: ((GhosttyDesktopNotification) -> Void)?
     var onMetadataChange: (() -> Void)?
 
     private var keyTextAccumulator: [String]? = nil
@@ -1174,6 +1208,10 @@ final class GhosttySurfaceHostView: NSView {
 
     fileprivate func handleRuntimeMetadataUpdated() {
         onMetadataChange?()
+    }
+
+    fileprivate func handleRuntimeDesktopNotification(_ notification: GhosttyDesktopNotification) {
+        onNotification?(notification)
     }
 
     private func presentCloseConfirmation() {
@@ -1983,6 +2021,7 @@ struct GhosttyPaneView: NSViewRepresentable {
     let onPointer: (MouseBridgeEvent) -> Void
     let onCloseRequest: () -> Bool
     let onNamedCommand: (EditorNamedCommand) -> Bool
+    let onNotification: (GhosttyDesktopNotification) -> Void
     let onMetadataChange: () -> Void
 
     func makeNSView(context: Context) -> GhosttySurfaceHostView {
@@ -2001,6 +2040,7 @@ struct GhosttyPaneView: NSViewRepresentable {
             onPointer: onPointer,
             onCloseRequest: onCloseRequest,
             onNamedCommand: onNamedCommand,
+            onNotification: onNotification,
             onMetadataChange: onMetadataChange
         )
         return view
@@ -2016,6 +2056,7 @@ struct GhosttyPaneView: NSViewRepresentable {
             onPointer: onPointer,
             onCloseRequest: onCloseRequest,
             onNamedCommand: onNamedCommand,
+            onNotification: onNotification,
             onMetadataChange: onMetadataChange
         )
     }
@@ -2086,6 +2127,7 @@ struct GhosttyPaneView: NSViewRepresentable {
     let onPointer: (MouseBridgeEvent) -> Void
     let onCloseRequest: () -> Bool
     let onNamedCommand: (EditorNamedCommand) -> Bool
+    let onNotification: (GhosttyDesktopNotification) -> Void
     let onMetadataChange: () -> Void
 
     func makeNSView(context: Context) -> MissingGhosttyView {
@@ -2098,6 +2140,7 @@ struct GhosttyPaneView: NSViewRepresentable {
         _ = onPointer
         _ = onCloseRequest
         _ = onNamedCommand
+        _ = onNotification
         _ = onMetadataChange
         return MissingGhosttyView(frame: .zero)
     }

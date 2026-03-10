@@ -1,11 +1,40 @@
 import SwiftUI
 import AppKit
+import UserNotifications
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSWindow.allowsAutomaticWindowTabbing = true
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
+        if EditorNotificationPlatformSupport.supportsUserNotifications {
+            UNUserNotificationCenter.current().delegate = self
+            EditorSystemNotificationManager.shared.prepareAuthorizationIfNeeded()
+        }
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        if EditorNotificationPlatformSupport.supportsUserNotifications {
+            EditorSystemNotificationManager.shared.prepareAuthorizationIfNeeded()
+        }
+        EditorSystemNotificationManager.shared.clearDeliveredNotifications()
+    }
+
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        completionHandler([.banner, .list, .sound])
+    }
+
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void
+    ) {
+        NSApp.activate(ignoringOtherApps: true)
+        completionHandler()
     }
 }
 

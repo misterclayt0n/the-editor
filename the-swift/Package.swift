@@ -54,6 +54,7 @@ packageTargets.append(
     linkerSettings: [
       .linkedFramework("SwiftUI"),
       .linkedFramework("AppKit"),
+      .linkedFramework("UserNotifications"),
       .linkedFramework("Carbon"),
       .linkedLibrary("c++"),
     ]

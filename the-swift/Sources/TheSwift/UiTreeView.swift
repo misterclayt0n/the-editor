@@ -122,7 +122,6 @@ struct UiOverlayHost: View {
             ZStack {
                 let paletteSnapshot = tree.commandPaletteSnapshot()
                 let searchSnapshot = tree.searchPromptSnapshot()
-                let toastSnapshot = tree.messageToastSnapshot()
 
                 ForEach(Array(tree.overlays.enumerated()), id: \.offset) { _, node in
                     if case .panel(let panel) = node, panel.id == "command_palette" {
@@ -145,10 +144,6 @@ struct UiOverlayHost: View {
                         UiNodeView(node: node, cellSize: cellSize, containerSize: proxy.size)
                     }
                 }
-
-                MessageToastContainer(snapshot: toastSnapshot)
-                    .padding(.bottom, 28)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
 
                 if let searchSnapshot {
                     SearchPromptView(

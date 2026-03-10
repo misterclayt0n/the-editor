@@ -21,6 +21,66 @@ private final class WeakWindowRef {
     }
 }
 
+private final class NativeTabAccessoryView: NSStackView {
+    private let indicatorView = NSView()
+    private let shortcutLabel = NSTextField(labelWithString: "")
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        orientation = .horizontal
+        alignment = .centerY
+        spacing = 4
+        edgeInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
+
+        indicatorView.translatesAutoresizingMaskIntoConstraints = false
+        indicatorView.wantsLayer = true
+        indicatorView.layer?.cornerRadius = 3.5
+        indicatorView.isHidden = true
+        addArrangedSubview(indicatorView)
+        NSLayoutConstraint.activate([
+            indicatorView.widthAnchor.constraint(equalToConstant: 7),
+            indicatorView.heightAnchor.constraint(equalToConstant: 7)
+        ])
+
+        shortcutLabel.font = .monospacedDigitSystemFont(ofSize: 10, weight: .semibold)
+        shortcutLabel.alignment = .center
+        shortcutLabel.lineBreakMode = .byClipping
+        shortcutLabel.backgroundColor = .clear
+        shortcutLabel.isBezeled = false
+        shortcutLabel.isEditable = false
+        shortcutLabel.drawsBackground = false
+        shortcutLabel.isHidden = true
+        addArrangedSubview(shortcutLabel)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func apply(shortcut: String?, indicator: EditorNotificationTabState?, active: Bool) {
+        if let indicator, let severity = indicator.highestSeverity, indicator.isVisible {
+            indicatorView.isHidden = false
+            indicatorView.layer?.backgroundColor = severity.nsColor.cgColor
+            toolTip = "\(indicator.unreadCount) unread notification\(indicator.unreadCount == 1 ? "" : "s")"
+        } else {
+            indicatorView.isHidden = true
+            toolTip = nil
+        }
+
+        if let shortcut, !shortcut.isEmpty {
+            shortcutLabel.stringValue = shortcut
+            shortcutLabel.textColor = active ? .labelColor : .secondaryLabelColor
+            shortcutLabel.isHidden = false
+        } else {
+            shortcutLabel.stringValue = ""
+            shortcutLabel.isHidden = true
+        }
+
+        isHidden = !(indicator?.isVisible ?? false) && (shortcut?.isEmpty ?? true)
+        invalidateIntrinsicContentSize()
+    }
+}
+
 private final class NativeTabWindowObserver {
     private weak var window: NSWindow?
     private weak var coordinator: SwiftWindowTabsCoordinator?
@@ -120,6 +180,7 @@ final class SwiftWindowTabsCoordinator {
     private var pendingSourceWindows: [UUID: WeakWindowRef] = [:]
     private var observedWindows: [ObjectIdentifier: NativeTabWindowObserver] = [:]
     private var windowBoundBufferIds: [ObjectIdentifier: UInt64] = [:]
+    private var windowNotificationIndicators: [ObjectIdentifier: EditorNotificationTabState] = [:]
     private weak var pendingRelabelWindow: NSWindow?
     private var relabelScheduled: Bool = false
 
@@ -225,7 +286,7 @@ final class SwiftWindowTabsCoordinator {
             observedWindows[ObjectIdentifier(tabWindow)]?.refreshTabGroupObservers()
             syncNativeTabTitle(for: tabWindow)
             let oneBased = index + 1
-            updateShortcutAccessoryLabel((oneBased <= 9) ? "⌘\(oneBased)" : nil, for: tabWindow)
+            updateTabAccessory((oneBased <= 9) ? "⌘\(oneBased)" : nil, for: tabWindow)
         }
     }
 
@@ -249,6 +310,17 @@ final class SwiftWindowTabsCoordinator {
     func windowPresentationDidChange(_ window: NSWindow?) {
         guard let window else { return }
         syncNativeTabTitle(for: window)
+        relabelNativeTabs(around: window)
+    }
+
+    func windowNotificationStateDidChange(_ window: NSWindow?, state: EditorNotificationTabState) {
+        guard let window else { return }
+        let key = ObjectIdentifier(window)
+        if state.isVisible {
+            windowNotificationIndicators[key] = state
+        } else {
+            windowNotificationIndicators.removeValue(forKey: key)
+        }
         relabelNativeTabs(around: window)
     }
 
@@ -325,42 +397,21 @@ final class SwiftWindowTabsCoordinator {
         return true
     }
 
-    private func updateShortcutAccessoryLabel(_ text: String?, for window: NSWindow) {
+    private func updateTabAccessory(_ text: String?, for window: NSWindow) {
         let tab = window.tab
-        let label: NSTextField
-        if let existing = tab.accessoryView as? NSTextField,
+        let accessory: NativeTabAccessoryView
+        if let existing = tab.accessoryView as? NativeTabAccessoryView,
            existing.identifier == Self.tabAccessoryIdentifier {
-            label = existing
+            accessory = existing
         } else {
-            label = NSTextField(labelWithString: "")
-            label.identifier = Self.tabAccessoryIdentifier
-            label.font = .monospacedDigitSystemFont(ofSize: 10, weight: .semibold)
-            label.alignment = .center
-            label.lineBreakMode = .byClipping
-            label.backgroundColor = .clear
-            label.isBezeled = false
-            label.isEditable = false
-            label.drawsBackground = false
-            label.frame = NSRect(x: 0, y: 0, width: 24, height: 12)
-            tab.accessoryView = label
+            accessory = NativeTabAccessoryView(frame: .zero)
+            accessory.identifier = Self.tabAccessoryIdentifier
+            tab.accessoryView = accessory
         }
 
-        if let text, !text.isEmpty {
-            if label.stringValue != text {
-                label.stringValue = text
-            }
-            label.isHidden = false
-            let active = (window.tabGroup?.selectedWindow === window) || (window.isKeyWindow && (window.tabbedWindows?.count ?? 1) <= 1)
-            let textColor = active ? NSColor.labelColor : NSColor.secondaryLabelColor
-            if label.textColor != textColor {
-                label.textColor = textColor
-            }
-        } else {
-            if !label.stringValue.isEmpty {
-                label.stringValue = ""
-            }
-            label.isHidden = true
-        }
+        let active = (window.tabGroup?.selectedWindow === window) || (window.isKeyWindow && (window.tabbedWindows?.count ?? 1) <= 1)
+        let state = windowNotificationIndicators[ObjectIdentifier(window)] ?? .none
+        accessory.apply(shortcut: text, indicator: state, active: active)
     }
 
     private func observeWindowIfNeeded(_ window: NSWindow) {
@@ -380,6 +431,7 @@ final class SwiftWindowTabsCoordinator {
             aliveKeys.insert(ObjectIdentifier(window))
         }
         windowBoundBufferIds = windowBoundBufferIds.filter { aliveKeys.contains($0.key) }
+        windowNotificationIndicators = windowNotificationIndicators.filter { aliveKeys.contains($0.key) }
     }
 
     private func existingWindow(

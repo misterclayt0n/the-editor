@@ -110,6 +110,7 @@ final class EditorModel: ObservableObject {
     @Published var docsPopupAnchor: DocsPopupAnchorSnapshot? = nil
     @Published var bufferTabsSnapshot: BufferTabsSnapshot? = nil
     @Published var navigationTitle: String = "untitled"
+    @Published private(set) var notificationBanners: [EditorNotificationBannerSnapshot] = []
     @Published private(set) var isHostWindowFocused: Bool = false
     @Published private(set) var bufferFontSize: CGFloat
     private var viewport: Rect
@@ -152,6 +153,7 @@ final class EditorModel: ObservableObject {
     private var filePickerPreviewVisibleRows: Int = 24
     private var filePickerPreviewOverscan: Int = 24
     private var topChromeReservedRows: Int = 0
+    private var notificationDismissTimer: Timer? = nil
     private weak var hostWindow: NSWindow? = nil
     private var hostWindowNotificationTokens: [NSObjectProtocol] = []
     private var openWindowTabHandler: ((EditorWindowRoute) -> Void)? = nil
@@ -164,6 +166,10 @@ final class EditorModel: ObservableObject {
     private var paneSurfaceItems: [PaneSurfaceSnapshot] = []
     private var lastFocusedTerminalSurfaceId: UInt64? = nil
     private var lastFocusedEditorPaneId: UInt64? = nil
+    private var lastMessageEventSeq: UInt64? = nil
+    private var tabNotificationState: EditorNotificationTabState = .none
+    private var bufferNotificationStates: [UInt64: EditorNotificationTabState] = [:]
+    private var terminalNotificationStates: [UInt64: EditorNotificationTabState] = [:]
 
     init(filePath: String? = nil, bufferId: UInt64? = nil) {
         self.runtime = SharedEditorRuntime()
@@ -207,7 +213,9 @@ final class EditorModel: ObservableObject {
     deinit {
         filePickerTimer?.invalidate()
         backgroundTimer?.invalidate()
+        notificationDismissTimer?.invalidate()
         unregisterHostWindowNotifications()
+        SwiftWindowTabsCoordinator.shared.windowNotificationStateDidChange(hostWindow, state: .none)
         EditorCommandModelRegistry.shared.unregister(window: hostWindow)
     }
 
@@ -270,6 +278,7 @@ final class EditorModel: ObservableObject {
         if tabsFetch.changed {
             bufferTabsSnapshot = tabsFetch.snapshot
         }
+        pollMessageNotifications()
         updateBoundBufferIdFromActiveBufferIfNeeded()
         // Buffer tabs in the Swift app are native window tabs, not in-content chrome.
         setTopChromeReservedRows(0)
@@ -292,6 +301,7 @@ final class EditorModel: ObservableObject {
         updateTerminalSurfaceSnapshots()
         updateSurfaceOverviewSnapshots(from: framePlan)
         updateEditorSurfaceSnapshots()
+        clearActiveSurfaceNotificationsIfNeeded()
         let perfAfterSnapshots = perfEnabled ? perfNow() : 0
         debugSurfaceRailState(trigger: trigger)
         debugDiagnosticsSnapshot(trigger: trigger, plan: plan)
@@ -1308,14 +1318,17 @@ final class EditorModel: ObservableObject {
             closeConfirmationAlert = nil
             lastNativeWindowPresentation = nil
             unregisterHostWindowNotifications()
+            SwiftWindowTabsCoordinator.shared.windowNotificationStateDidChange(previousWindow, state: .none)
             hostWindow = window
             EditorCommandModelRegistry.shared.register(window: window, model: self)
             registerHostWindowNotifications(for: window)
+            syncWindowTabNotificationIndicator()
             seedUntitledBufferForUnroutedWindowIfNeeded()
             refresh(trigger: "window_attach")
         } else {
             hostWindow = window
             EditorCommandModelRegistry.shared.register(window: window, model: self)
+            syncWindowTabNotificationIndicator()
         }
         syncHostWindowFocusState()
         if shouldSyncNativeWindowPresentation() {
@@ -1913,6 +1926,293 @@ final class EditorModel: ObservableObject {
         return try? decoder.decode(PendingKeyHintsSnapshot.self, from: data)
     }
 
+    private func fetchMessageSnapshot() -> MessageSnapshotPayload? {
+        let json = app.message_snapshot_json(editorId).toString()
+        guard let data = json.data(using: .utf8) else {
+            return nil
+        }
+
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try? decoder.decode(MessageSnapshotPayload.self, from: data)
+    }
+
+    private func fetchMessageEvents(since seq: UInt64) -> [MessageEventPayload] {
+        let json = app.message_events_since_json(editorId, seq).toString()
+        guard let data = json.data(using: .utf8) else {
+            return []
+        }
+
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return (try? decoder.decode([MessageEventPayload].self, from: data)) ?? []
+    }
+
+    private func pollMessageNotifications() {
+        guard let lastMessageEventSeq else {
+            guard let snapshot = fetchMessageSnapshot() else { return }
+            self.lastMessageEventSeq = snapshot.latestSeq
+            return
+        }
+
+        let events = fetchMessageEvents(since: lastMessageEventSeq)
+        guard !events.isEmpty else { return }
+        self.lastMessageEventSeq = events.last?.seq ?? lastMessageEventSeq
+
+        for event in events where event.kind == .published {
+            guard let message = event.message else { continue }
+            publishEditorMessage(message)
+        }
+    }
+
+    private func publishEditorMessage(_ message: MessagePayload) {
+        guard !Self.isBackgroundMessageSource(message.source) else {
+            return
+        }
+
+        let title = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty else {
+            return
+        }
+
+        publishNotification(
+            EditorNotificationPayload(
+                title: title,
+                body: nil,
+                sourceLabel: Self.notificationSourceLabel(from: message.source),
+                severity: message.level,
+                sourceKind: .editor,
+                surfaceTarget: activeBufferTabSnapshot().map { .buffer($0.bufferId) },
+                route: [.banner, .tab]
+            )
+        )
+    }
+
+    func handleTerminalNotification(
+        terminalId: UInt64,
+        title: String,
+        body: String,
+        terminalTitle: String?
+    ) {
+        _ = terminalId
+        let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedBody = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedTitle.isEmpty || !trimmedBody.isEmpty else {
+            return
+        }
+
+        let resolvedTitle = trimmedTitle.isEmpty ? trimmedBody : trimmedTitle
+        let resolvedBody = trimmedTitle.isEmpty || trimmedBody.isEmpty ? nil : trimmedBody
+        let sourceLabel = Self.notificationSourceLabel(from: terminalTitle) ?? "Terminal"
+
+        publishNotification(
+            EditorNotificationPayload(
+                title: resolvedTitle,
+                body: resolvedBody,
+                sourceLabel: sourceLabel == resolvedTitle ? nil : sourceLabel,
+                severity: .info,
+                sourceKind: .terminal,
+                surfaceTarget: .terminal(terminalId),
+                route: [.banner, .tab, .system]
+            )
+        )
+    }
+
+    private func publishNotification(_ payload: EditorNotificationPayload) {
+        let isAppFocused = isEditorAppFocused()
+        let isFocused = isNotificationWindowFocused()
+        let shouldTrackSurfaceUnread = shouldTrackUnreadSurfaceNotification(
+            target: payload.surfaceTarget,
+            isWindowFocused: isFocused
+        )
+
+        if payload.route.contains(.banner), isAppFocused {
+            showNotificationBanner(payload)
+        }
+
+        if shouldTrackSurfaceUnread {
+            incrementSurfaceNotificationState(
+                target: payload.surfaceTarget,
+                severity: payload.severity
+            )
+        }
+
+        if payload.route.contains(.tab), !isFocused {
+            tabNotificationState = tabNotificationState.appending(severity: payload.severity)
+            syncWindowTabNotificationIndicator()
+        }
+
+        if payload.route.contains(.system), !isAppFocused {
+            EditorSystemNotificationManager.shared.deliver(payload, windowTitle: hostWindow?.title)
+        }
+    }
+
+    private func showNotificationBanner(_ payload: EditorNotificationPayload) {
+        clearExpiredNotificationBanners(referenceDate: Date())
+
+        let lifetime: TimeInterval
+        switch (payload.sourceKind, payload.severity) {
+        case (.terminal, _):
+            lifetime = 6.0
+        case (_, .error):
+            lifetime = 7.0
+        case (_, .warning):
+            lifetime = 6.0
+        case (_, .info):
+            lifetime = 4.5
+        }
+        let expiresAt = Date().addingTimeInterval(lifetime)
+        let snapshot = EditorNotificationBannerSnapshot(
+            id: UUID(),
+            title: payload.title,
+            body: payload.body,
+            sourceLabel: payload.sourceLabel,
+            severity: payload.severity,
+            sourceKind: payload.sourceKind,
+            expiresAt: expiresAt
+        )
+
+        if let index = notificationBanners.lastIndex(where: {
+            $0.title == snapshot.title &&
+            $0.body == snapshot.body &&
+            $0.sourceLabel == snapshot.sourceLabel &&
+            $0.severity == snapshot.severity &&
+            $0.sourceKind == snapshot.sourceKind
+        }) {
+            notificationBanners.remove(at: index)
+        }
+
+        notificationBanners.append(snapshot)
+        if notificationBanners.count > 3 {
+            notificationBanners.removeFirst(notificationBanners.count - 3)
+        }
+        scheduleNotificationDismissTimer()
+    }
+
+    private func clearExpiredNotificationBanners(referenceDate: Date) {
+        let retained = notificationBanners.filter { $0.expiresAt > referenceDate }
+        if retained != notificationBanners {
+            notificationBanners = retained
+        }
+    }
+
+    private func scheduleNotificationDismissTimer() {
+        notificationDismissTimer?.invalidate()
+        guard let nextExpiration = notificationBanners.map(\.expiresAt).min() else {
+            notificationDismissTimer = nil
+            return
+        }
+
+        let interval = max(0.05, nextExpiration.timeIntervalSinceNow)
+        let timer = Timer(timeInterval: interval, repeats: false) { [weak self] _ in
+            guard let self else { return }
+            self.clearExpiredNotificationBanners(referenceDate: Date())
+            self.scheduleNotificationDismissTimer()
+        }
+        notificationDismissTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
+    private func clearUnreadTabNotifications() {
+        guard tabNotificationState != .none else { return }
+        tabNotificationState = .none
+        syncWindowTabNotificationIndicator()
+    }
+
+    private func syncWindowTabNotificationIndicator() {
+        SwiftWindowTabsCoordinator.shared.windowNotificationStateDidChange(
+            hostWindow,
+            state: tabNotificationState
+        )
+    }
+
+    private func shouldTrackUnreadSurfaceNotification(
+        target: EditorNotificationSurfaceTarget?,
+        isWindowFocused: Bool
+    ) -> Bool {
+        guard let target else {
+            return false
+        }
+        if !isWindowFocused {
+            return true
+        }
+        return !isSurfaceTargetActive(target)
+    }
+
+    private func isSurfaceTargetActive(_ target: EditorNotificationSurfaceTarget) -> Bool {
+        switch target {
+        case .buffer(let bufferId):
+            guard !isActivePaneTerminal else { return false }
+            return activeBufferTabSnapshot()?.bufferId == bufferId
+        case .terminal(let terminalId):
+            return terminalSurfaces.first(where: \.isActive)?.terminalId == terminalId
+        }
+    }
+
+    private func incrementSurfaceNotificationState(
+        target: EditorNotificationSurfaceTarget?,
+        severity: EditorNotificationSeverity
+    ) {
+        guard let target else { return }
+        switch target {
+        case .buffer(let bufferId):
+            let current = bufferNotificationStates[bufferId] ?? .none
+            bufferNotificationStates[bufferId] = current.appending(severity: severity)
+        case .terminal(let terminalId):
+            let current = terminalNotificationStates[terminalId] ?? .none
+            terminalNotificationStates[terminalId] = current.appending(severity: severity)
+        }
+    }
+
+    private func clearActiveSurfaceNotificationsIfNeeded() {
+        guard isNotificationWindowFocused() else { return }
+
+        if !isActivePaneTerminal, let activeBufferId = activeBufferTabSnapshot()?.bufferId {
+            clearSurfaceNotificationState(target: .buffer(activeBufferId))
+        }
+
+        if let activeTerminalId = terminalSurfaces.first(where: \.isActive)?.terminalId {
+            clearSurfaceNotificationState(target: .terminal(activeTerminalId))
+        }
+    }
+
+    private func clearSurfaceNotificationState(target: EditorNotificationSurfaceTarget) {
+        switch target {
+        case .buffer(let bufferId):
+            _ = bufferNotificationStates.removeValue(forKey: bufferId)
+        case .terminal(let terminalId):
+            _ = terminalNotificationStates.removeValue(forKey: terminalId)
+        }
+    }
+
+    private func isNotificationWindowFocused() -> Bool {
+        guard let hostWindow else {
+            return NSApp.isActive
+        }
+        if let tabGroup = hostWindow.tabGroup, tabGroup.selectedWindow !== hostWindow {
+            return false
+        }
+        return hostWindow.isKeyWindow || hostWindow.isMainWindow
+    }
+
+    private func isEditorAppFocused() -> Bool {
+        NSApp.isActive
+    }
+
+    private static func isBackgroundMessageSource(_ source: String?) -> Bool {
+        source?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "lsp"
+    }
+
+    private static func notificationSourceLabel(from value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return trimmed
+            .replacingOccurrences(of: "_", with: " ")
+            .replacingOccurrences(of: "-", with: " ")
+            .localizedCapitalized
+    }
+
     private func shouldDriveSharedRuntime() -> Bool {
         guard let hostWindow else {
             return true
@@ -1988,6 +2288,9 @@ final class EditorModel: ObservableObject {
             return
         }
         isHostWindowFocused = isFocused
+        if isFocused {
+            clearUnreadTabNotifications()
+        }
     }
 
     private func updateNativeTabOpenGatewayState() {
@@ -2245,6 +2548,7 @@ final class EditorModel: ObservableObject {
                 bufferId: tab.bufferId,
                 bufferIndex: tab.bufferIndex,
                 terminalId: nil,
+                notificationState: bufferNotificationStates[tab.bufferId] ?? .none,
                 canClose: true
             )
         }
@@ -2267,6 +2571,7 @@ final class EditorModel: ObservableObject {
                     bufferId: nil,
                     bufferIndex: nil,
                     terminalId: surface.terminalId,
+                    notificationState: terminalNotificationStates[surface.terminalId] ?? .none,
                     canClose: true
                 )
             }

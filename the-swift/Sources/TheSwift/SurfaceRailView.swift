@@ -20,6 +20,7 @@ struct SurfaceRailItemSnapshot: Identifiable, Equatable {
     let bufferId: UInt64?
     let bufferIndex: Int?
     let terminalId: UInt64?
+    let notificationState: EditorNotificationTabState
     let canClose: Bool
 }
 
@@ -551,6 +552,7 @@ private final class SurfaceRailItemCellView: NSTableCellView {
     private let iconView = NSImageView(frame: .zero)
     private let titleLabel = NSTextField(labelWithString: "")
     private let subtitleLabel = NSTextField(labelWithString: "")
+    private let notificationDot = DotView()
     private let modifiedDot = DotView()
     private let statusLabel = NSTextField(labelWithString: "")
     private let closeButton = NSButton()
@@ -578,6 +580,9 @@ private final class SurfaceRailItemCellView: NSTableCellView {
         subtitleLabel.usesSingleLineMode = true
         subtitleLabel.textColor = .secondaryLabelColor
 
+        notificationDot.translatesAutoresizingMaskIntoConstraints = false
+        notificationDot.isHidden = true
+
         modifiedDot.translatesAutoresizingMaskIntoConstraints = false
         modifiedDot.isHidden = true
 
@@ -603,6 +608,7 @@ private final class SurfaceRailItemCellView: NSTableCellView {
         addSubview(iconView)
         addSubview(titleLabel)
         addSubview(subtitleLabel)
+        addSubview(notificationDot)
         addSubview(modifiedDot)
         addSubview(statusLabel)
         addSubview(closeButton)
@@ -620,7 +626,12 @@ private final class SurfaceRailItemCellView: NSTableCellView {
             titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 5),
             titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: closeButton.leadingAnchor, constant: -4),
 
-            modifiedDot.leadingAnchor.constraint(equalTo: titleLabel.trailingAnchor, constant: 4),
+            notificationDot.leadingAnchor.constraint(equalTo: titleLabel.trailingAnchor, constant: 4),
+            notificationDot.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
+            notificationDot.widthAnchor.constraint(equalToConstant: 7),
+            notificationDot.heightAnchor.constraint(equalToConstant: 7),
+
+            modifiedDot.leadingAnchor.constraint(equalTo: notificationDot.trailingAnchor, constant: 4),
             modifiedDot.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
             modifiedDot.widthAnchor.constraint(equalToConstant: 6),
             modifiedDot.heightAnchor.constraint(equalToConstant: 6),
@@ -694,6 +705,12 @@ private final class SurfaceRailItemCellView: NSTableCellView {
         titleLabel.stringValue = item.title
         subtitleLabel.stringValue = item.subtitle ?? ""
         subtitleLabel.isHidden = (item.subtitle ?? "").isEmpty
+        notificationDot.isHidden = !item.notificationState.isVisible
+        if item.notificationState.isVisible {
+            notificationDot.toolTip = "\(item.notificationState.unreadCount) unread notification\(item.notificationState.unreadCount == 1 ? "" : "s")"
+        } else {
+            notificationDot.toolTip = nil
+        }
         modifiedDot.isHidden = !item.isModified
         statusLabel.stringValue = item.statusText ?? ""
         statusLabel.isHidden = (item.statusText ?? "").isEmpty
@@ -723,6 +740,9 @@ private final class SurfaceRailItemCellView: NSTableCellView {
         subtitleLabel.textColor = emphasized
             ? NSColor.alternateSelectedControlTextColor.withAlphaComponent(0.72)
             : .secondaryLabelColor
+        notificationDot.fillColor = emphasized
+            ? .alternateSelectedControlTextColor
+            : (currentItem?.notificationState.highestSeverity?.nsColor ?? .controlAccentColor)
         modifiedDot.fillColor = emphasized ? .alternateSelectedControlTextColor : .systemOrange
         statusLabel.textColor = currentItem?.vcsStatus.appKitTextColor(emphasized: emphasized) ?? .tertiaryLabelColor
         closeButton.contentTintColor = emphasized

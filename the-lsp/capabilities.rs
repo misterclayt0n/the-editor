@@ -150,6 +150,26 @@ impl ServerCapabilitiesSnapshot {
   pub fn text_document_sync(&self) -> TextDocumentSyncOptions {
     self.text_document_sync
   }
+
+  pub fn workspace_commands(&self) -> Vec<String> {
+    let Some(commands) = self
+      .raw
+      .get("executeCommandProvider")
+      .and_then(|provider| provider.get("commands"))
+      .and_then(Value::as_array)
+    else {
+      return Vec::new();
+    };
+
+    let mut out = commands
+      .iter()
+      .filter_map(Value::as_str)
+      .map(ToOwned::to_owned)
+      .collect::<Vec<_>>();
+    out.sort();
+    out.dedup();
+    out
+  }
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -242,5 +262,41 @@ fn parse_text_document_sync(raw: &Value) -> TextDocumentSyncOptions {
       }
     },
     _ => TextDocumentSyncOptions::default(),
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use serde_json::json;
+
+  use super::ServerCapabilitiesSnapshot;
+
+  #[test]
+  fn workspace_commands_are_sorted_and_deduped() {
+    let snapshot = ServerCapabilitiesSnapshot::from_raw(json!({
+      "executeCommandProvider": {
+        "commands": [
+          "zeta.command",
+          "alpha.command",
+          "alpha.command",
+          1,
+          null
+        ]
+      }
+    }));
+
+    assert_eq!(
+      snapshot.workspace_commands(),
+      vec!["alpha.command".to_string(), "zeta.command".to_string()]
+    );
+  }
+
+  #[test]
+  fn workspace_commands_are_empty_when_provider_is_missing() {
+    let snapshot = ServerCapabilitiesSnapshot::from_raw(json!({
+      "hoverProvider": true
+    }));
+
+    assert!(snapshot.workspace_commands().is_empty());
   }
 }

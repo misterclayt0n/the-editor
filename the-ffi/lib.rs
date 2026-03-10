@@ -12673,6 +12673,139 @@ impl DefaultContext for App {
     }
   }
 
+  fn lsp_workspace_command_names(&self) -> Vec<String> {
+    self
+      .lsp_server_capabilities_snapshot()
+      .map(|capabilities| capabilities.workspace_commands())
+      .unwrap_or_default()
+  }
+
+  fn lsp_execute_workspace_command(
+    &mut self,
+    command: &str,
+    raw_args: Option<&str>,
+  ) -> Result<String, String> {
+    let command = command.trim();
+    if command.is_empty() {
+      return Err("workspace command name required".to_string());
+    }
+    if self.active_language_server_names().is_empty() {
+      return Err("no active language server for current file".to_string());
+    }
+    if !self.lsp_ready {
+      return Err("language server is not ready".to_string());
+    }
+    if !self.lsp_supports(LspCapability::WorkspaceCommand) {
+      return Err("workspace commands are not supported by the active server".to_string());
+    }
+
+    let available = self.lsp_workspace_command_names();
+    if !available.is_empty() && !available.iter().any(|name| name == command) {
+      return Err(format!("unknown workspace command '{command}'"));
+    }
+
+    let arguments = raw_args
+      .map(str::trim)
+      .filter(|raw| !raw.is_empty())
+      .map(|raw| {
+        serde_json::Deserializer::from_str(raw)
+          .into_iter::<Value>()
+          .collect::<Result<Vec<_>, _>>()
+          .map_err(|err| format!("failed to parse workspace command arguments: {err}"))
+      })
+      .transpose()?
+      .filter(|arguments| !arguments.is_empty());
+
+    self.lsp_open_current_document();
+    let params = execute_command_params(command, arguments);
+    self
+      .lsp_send_request_raw("workspace/executeCommand", params)
+      .map_err(|err| format!("failed to dispatch workspace command '{command}': {err}"))?;
+
+    Ok(format!("dispatched workspace command: {command}"))
+  }
+
+  fn configured_language_server_names(&self) -> Vec<String> {
+    self
+      .lsp_runtime
+      .config()
+      .server()
+      .map(|server| vec![server.name().to_string()])
+      .unwrap_or_default()
+  }
+
+  fn active_language_server_names(&self) -> Vec<String> {
+    if !self.lsp_runtime.is_running() {
+      return Vec::new();
+    }
+
+    self
+      .lsp_server_name
+      .clone()
+      .or_else(|| self.lsp_runtime.config().server().map(|server| server.name().to_string()))
+      .into_iter()
+      .collect()
+  }
+
+  fn lsp_restart_servers(&mut self, names: &[String]) -> Result<String, String> {
+    let configured = self.configured_language_server_names();
+    let Some(server_name) = configured.first().cloned() else {
+      return Err("no configured language server for current file".to_string());
+    };
+
+    let invalid = names
+      .iter()
+      .filter(|name| !configured.iter().any(|configured_name| configured_name == *name))
+      .cloned()
+      .collect::<Vec<_>>();
+    if !invalid.is_empty() {
+      let noun = if invalid.len() == 1 {
+        "language server"
+      } else {
+        "language servers"
+      };
+      return Err(format!("unknown {noun}: {}", invalid.join(", ")));
+    }
+
+    if self.lsp_runtime.is_running() {
+      self
+        .lsp_runtime
+        .restart_server()
+        .map_err(|err| format!("failed to restart language server '{server_name}': {err}"))?;
+    } else {
+      self.refresh_lsp_runtime_for_active_file();
+      if !self.lsp_runtime.is_running() {
+        return Err(format!("failed to start language server '{server_name}'"));
+      }
+    }
+
+    Ok(format!("restarting language server: {server_name}"))
+  }
+
+  fn lsp_stop_servers(&mut self, names: &[String]) -> Result<String, String> {
+    let active = self.active_language_server_names();
+    let Some(server_name) = active.first().cloned() else {
+      return Err("no active language server for current file".to_string());
+    };
+
+    let invalid = names
+      .iter()
+      .filter(|name| !active.iter().any(|active_name| active_name == *name))
+      .cloned()
+      .collect::<Vec<_>>();
+    if !invalid.is_empty() {
+      let noun = if invalid.len() == 1 {
+        "language server"
+      } else {
+        "language servers"
+      };
+      return Err(format!("unknown {noun}: {}", invalid.join(", ")));
+    }
+
+    self.stop_lsp_runtime(Some("stopped"));
+    Ok(format!("stopped language server: {server_name}"))
+  }
+
   fn open_file(&mut self, path: &Path) -> std::io::Result<()> {
     let normalized_path = normalize_path_for_open(path);
 

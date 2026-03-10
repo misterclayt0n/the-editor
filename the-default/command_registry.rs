@@ -574,6 +574,39 @@ impl<Ctx: DefaultContext + 'static> CommandRegistry<Ctx> {
     ));
 
     self.register(TypableCommand::new(
+      "lsp-workspace-command",
+      &[],
+      "Execute an LSP workspace command (shows available commands when no name is given)",
+      cmd_lsp_workspace_command::<Ctx>,
+      CommandCompleter::positional(&[completers::lsp_workspace_command], completers::none),
+      LSP_WORKSPACE_COMMAND_SIGNATURE,
+    ));
+
+    self.register(TypableCommand::new(
+      "lsp-restart",
+      &[],
+      "Restart the configured language server for the current file",
+      cmd_lsp_restart::<Ctx>,
+      CommandCompleter::all(completers::configured_language_server),
+      Signature {
+        positionals: (0, None),
+        ..Signature::DEFAULT
+      },
+    ));
+
+    self.register(TypableCommand::new(
+      "lsp-stop",
+      &[],
+      "Stop the active language server for the current file",
+      cmd_lsp_stop::<Ctx>,
+      CommandCompleter::all(completers::active_language_server),
+      Signature {
+        positionals: (0, None),
+        ..Signature::DEFAULT
+      },
+    ));
+
+    self.register(TypableCommand::new(
       "soft-wrap",
       &["wrap"],
       "Configure soft line wrapping (on/off/toggle/status)",
@@ -631,6 +664,12 @@ where
     Self::new()
   }
 }
+
+const LSP_WORKSPACE_COMMAND_SIGNATURE: Signature = Signature {
+  positionals: (0, None),
+  raw_after:   Some(1),
+  ..Signature::DEFAULT
+};
 
 fn workspace_root_for_ctx<Ctx: DefaultContext>(ctx: &Ctx) -> PathBuf {
   let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
@@ -1106,6 +1145,85 @@ fn cmd_lsp_format<Ctx: DefaultContext>(
     return Ok(());
   }
   ctx.dispatch().pre_on_action(ctx, Command::LspFormat);
+  Ok(())
+}
+
+fn summarize_named_items(items: &[String], limit: usize) -> String {
+  let preview = items
+    .iter()
+    .take(limit)
+    .map(String::as_str)
+    .collect::<Vec<_>>()
+    .join(", ");
+  if items.len() > limit {
+    format!("{preview}, ...")
+  } else {
+    preview
+  }
+}
+
+fn cmd_lsp_workspace_command<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  args: Args,
+  event: CommandEvent,
+) -> CommandResult {
+  if event != CommandEvent::Validate {
+    return Ok(());
+  }
+
+  if args.is_empty() {
+    let commands = ctx.lsp_workspace_command_names();
+    if commands.is_empty() {
+      return Err(CommandError::new(
+        "no workspace commands are available for the active language server",
+      ));
+    }
+    ctx.push_info(
+      "lsp",
+      format!(
+        "available workspace commands: {}",
+        summarize_named_items(&commands, 8)
+      ),
+    );
+    return Ok(());
+  }
+
+  let command = args.first().unwrap_or_default();
+  let raw_args = args.get(1);
+  let status = ctx
+    .lsp_execute_workspace_command(command, raw_args)
+    .map_err(CommandError::new)?;
+  ctx.push_info("lsp", status);
+  Ok(())
+}
+
+fn cmd_lsp_restart<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  args: Args,
+  event: CommandEvent,
+) -> CommandResult {
+  if event != CommandEvent::Validate {
+    return Ok(());
+  }
+
+  let names = args.iter().map(|name| name.to_string()).collect::<Vec<_>>();
+  let status = ctx.lsp_restart_servers(&names).map_err(CommandError::new)?;
+  ctx.push_info("lsp", status);
+  Ok(())
+}
+
+fn cmd_lsp_stop<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  args: Args,
+  event: CommandEvent,
+) -> CommandResult {
+  if event != CommandEvent::Validate {
+    return Ok(());
+  }
+
+  let names = args.iter().map(|name| name.to_string()).collect::<Vec<_>>();
+  let status = ctx.lsp_stop_servers(&names).map_err(CommandError::new)?;
+  ctx.push_info("lsp", status);
   Ok(())
 }
 
@@ -1828,6 +1946,21 @@ pub mod completers {
     Vec::new()
   }
 
+  fn named_values(values: Vec<String>, input: &str) -> Vec<Completion> {
+    let mut matches = values
+      .into_iter()
+      .filter(|value| value.starts_with(input))
+      .map(|value| Completion {
+        range: 0..,
+        text:  value,
+        doc:   None,
+      })
+      .collect::<Vec<_>>();
+    matches.sort_by(|left, right| left.text.cmp(&right.text));
+    matches.dedup_by(|left, right| left.text == right.text);
+    matches
+  }
+
   pub fn command<Ctx: DefaultContext>(ctx: &Ctx, input: &str) -> Vec<Completion> {
     let input_lower = input.to_lowercase();
     ctx
@@ -1862,6 +1995,21 @@ pub mod completers {
         }
       })
       .collect()
+  }
+
+  pub fn lsp_workspace_command<Ctx: DefaultContext>(ctx: &Ctx, input: &str) -> Vec<Completion> {
+    named_values(ctx.lsp_workspace_command_names(), input)
+  }
+
+  pub fn configured_language_server<Ctx: DefaultContext>(
+    ctx: &Ctx,
+    input: &str,
+  ) -> Vec<Completion> {
+    named_values(ctx.configured_language_server_names(), input)
+  }
+
+  pub fn active_language_server<Ctx: DefaultContext>(ctx: &Ctx, input: &str) -> Vec<Completion> {
+    named_values(ctx.active_language_server_names(), input)
   }
 
   pub fn wrap_mode<Ctx>(_ctx: &Ctx, input: &str) -> Vec<Completion> {
@@ -2011,12 +2159,17 @@ pub mod completers {
 mod tests {
   use std::{
     borrow::Cow,
+    convert::Infallible,
     path::Path,
   };
+
+  use the_lib::command_line::Args;
 
   use super::{
     filename_completion_query,
     resolve_command_path,
+    summarize_named_items,
+    LSP_WORKSPACE_COMMAND_SIGNATURE,
   };
 
   #[test]
@@ -2044,5 +2197,30 @@ mod tests {
     assert_eq!(query.search_dir, home);
     assert_eq!(query.file_prefix, "Do");
     assert_eq!(query.display_prefix, "~/");
+  }
+
+  #[test]
+  fn lsp_workspace_command_signature_preserves_raw_arguments() {
+    let args = Args::parse::<Infallible, _>(
+      "rust-analyzer.runSingle {\"foo\":1} [2, 3]",
+      LSP_WORKSPACE_COMMAND_SIGNATURE,
+      true,
+      |token| Ok(token.content),
+    )
+    .unwrap();
+
+    assert_eq!(args.first(), Some("rust-analyzer.runSingle"));
+    assert_eq!(args.get(1), Some("{\"foo\":1} [2, 3]"));
+  }
+
+  #[test]
+  fn summarize_named_items_truncates_long_lists() {
+    let items = vec![
+      "one".to_string(),
+      "two".to_string(),
+      "three".to_string(),
+    ];
+
+    assert_eq!(summarize_named_items(&items, 2), "one, two, ...");
   }
 }

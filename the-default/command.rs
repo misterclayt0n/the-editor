@@ -697,6 +697,28 @@ pub trait DefaultContext: Sized + 'static {
   fn lsp_code_actions(&mut self) {}
   fn lsp_rename(&mut self, _new_name: &str) {}
   fn lsp_format(&mut self) {}
+  fn lsp_workspace_command_names(&self) -> Vec<String> {
+    Vec::new()
+  }
+  fn lsp_execute_workspace_command(
+    &mut self,
+    _command: &str,
+    _raw_args: Option<&str>,
+  ) -> Result<String, String> {
+    Err("workspace commands are not supported by the active server".to_string())
+  }
+  fn configured_language_server_names(&self) -> Vec<String> {
+    Vec::new()
+  }
+  fn active_language_server_names(&self) -> Vec<String> {
+    Vec::new()
+  }
+  fn lsp_restart_servers(&mut self, _names: &[String]) -> Result<String, String> {
+    Err("no configured language server for current file".to_string())
+  }
+  fn lsp_stop_servers(&mut self, _names: &[String]) -> Result<String, String> {
+    Err("no active language server for current file".to_string())
+  }
   fn shell_program(&self) -> Vec<String> {
     #[cfg(windows)]
     {

@@ -17146,7 +17146,7 @@ pkgs.mkShell {
   }
 
   #[test]
-  fn insert_mode_typing_replaces_mouse_selection() {
+  fn insert_mode_typing_inserts_at_selection_cursor() {
     let _guard = ffi_test_guard();
     let mut app = App::new();
     let id = app.create_editor("printf\n", default_viewport(), ffi::Position {
@@ -17161,10 +17161,10 @@ pkgs.mkShell {
       .set_selection(Selection::single(0, 6));
 
     assert!(app.handle_key(id, key_char('x')));
-    assert_eq!(app.text(id), "x\n");
+    assert_eq!(app.text(id), "printxf\n");
     assert_eq!(
       app.active_editor_ref().document().selection().ranges()[0],
-      Range::point(1)
+      Range::new(0, 7)
     );
   }
 

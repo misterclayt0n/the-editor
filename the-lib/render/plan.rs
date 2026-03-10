@@ -226,6 +226,7 @@ pub struct RenderStyles {
   pub active_cursor:      Style,
   pub cursor_kind:        CursorKind,
   pub active_cursor_kind: CursorKind,
+  pub non_block_cursor_uses_head: bool,
   pub gutter:             Style,
   pub gutter_active:      Style,
 }
@@ -255,6 +256,7 @@ impl Default for RenderStyles {
       active_cursor:      Style::default(),
       cursor_kind:        CursorKind::Block,
       active_cursor_kind: CursorKind::Block,
+      non_block_cursor_uses_head: true,
       gutter:             Style::default(),
       gutter_active:      Style::default(),
     }
@@ -980,7 +982,13 @@ fn add_selections_and_cursor<'a>(
     };
     let cursor_pos = match cursor_kind {
       CursorKind::Block | CursorKind::Hollow => range.cursor(doc.text().slice(..)),
-      CursorKind::Bar | CursorKind::Underline | CursorKind::Hidden => range.head,
+      CursorKind::Bar | CursorKind::Underline | CursorKind::Hidden => {
+        if styles.non_block_cursor_uses_head {
+          range.head
+        } else {
+          range.cursor(doc.text().slice(..))
+        }
+      },
     };
     if let Some(pos) =
       visual_position::visual_pos_at_char(doc.text().slice(..), text_fmt, annotations, cursor_pos)

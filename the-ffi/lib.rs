@@ -1784,6 +1784,8 @@ impl PendingLspRequestKind {
 
 struct EditorState {
   mode:                          Mode,
+  insert_mouse_selection_edit_armed: bool,
+  append_restore_cursor_pending: bool,
   command_prompt:                CommandPromptState,
   command_palette:               CommandPaletteState,
   command_palette_style:         CommandPaletteStyle,
@@ -1853,6 +1855,8 @@ impl EditorState {
 
     Self {
       mode: Mode::Normal,
+      insert_mouse_selection_edit_armed: false,
+      append_restore_cursor_pending: false,
       command_prompt: CommandPromptState::new(),
       command_palette: CommandPaletteState::default(),
       command_palette_style,
@@ -5251,6 +5255,7 @@ impl App {
         .unwrap_or_default(),
       cursor_kind:        LibCursorKind::Block,
       active_cursor_kind: LibCursorKind::Block,
+      non_block_cursor_uses_head: true,
       gutter:             theme.try_get("ui.linenr").unwrap_or_default(),
       gutter_active:      theme
         .try_get("ui.linenr.selected")
@@ -10987,20 +10992,40 @@ impl App {
     char_at_visual_pos(text.slice(..), &text_fmt, &mut annotations, target)
   }
 
+  fn sync_insert_mouse_selection_edit_arm(&mut self) {
+    let armed = self.active_state_ref().mode == Mode::Insert
+      && self
+        .active_editor_ref()
+        .document()
+        .selection()
+        .ranges()
+        .iter()
+        .any(|range| !range.is_empty());
+    self.active_state_mut().insert_mouse_selection_edit_armed = armed;
+  }
+
   fn pointer_set_primary_selection(&mut self, anchor: usize, head: usize) -> bool {
-    self
+    let changed = self
       .active_editor_mut()
       .document_mut()
       .set_selection(Selection::single(anchor, head))
-      .is_ok()
+      .is_ok();
+    if changed {
+      self.sync_insert_mouse_selection_edit_arm();
+    }
+    changed
   }
 
   fn pointer_set_primary_range(&mut self, range: Range) -> bool {
-    self
+    let changed = self
       .active_editor_mut()
       .document_mut()
       .set_selection(range.into())
-      .is_ok()
+      .is_ok();
+    if changed {
+      self.sync_insert_mouse_selection_edit_arm();
+    }
+    changed
   }
 
   fn pointer_char_drag_range(&self, anchor: usize, target: usize) -> Range {
@@ -11867,10 +11892,30 @@ impl DefaultContext for App {
   }
 
   fn set_mode(&mut self, mode: Mode) {
-    self.active_state_mut().mode = mode;
+    let state = self.active_state_mut();
+    state.mode = mode;
+    if mode != Mode::Insert {
+      state.insert_mouse_selection_edit_armed = false;
+    }
     if mode != Mode::Insert {
       self.cancel_auto_completion();
     }
+  }
+
+  fn insert_mouse_selection_edit_armed(&self) -> bool {
+    self.active_state_ref().insert_mouse_selection_edit_armed
+  }
+
+  fn set_insert_mouse_selection_edit_armed(&mut self, armed: bool) {
+    self.active_state_mut().insert_mouse_selection_edit_armed = armed;
+  }
+
+  fn append_restore_cursor_pending(&self) -> bool {
+    self.active_state_ref().append_restore_cursor_pending
+  }
+
+  fn set_append_restore_cursor_pending(&mut self, pending: bool) {
+    self.active_state_mut().append_restore_cursor_pending = pending;
   }
 
   fn keymaps(&mut self) -> &mut Keymaps {
@@ -13884,6 +13929,7 @@ impl ffi::RenderStyles {
       active_cursor:      self.active_cursor.to_lib(),
       cursor_kind:        LibCursorKind::Block,
       active_cursor_kind: LibCursorKind::Block,
+      non_block_cursor_uses_head: true,
       gutter:             self.gutter.to_lib(),
       gutter_active:      self.gutter_active.to_lib(),
     }
@@ -15283,6 +15329,30 @@ mod tests {
       kind:      0,
       codepoint: ch as u32,
       modifiers: KeyModifiers::CTRL,
+    }
+  }
+
+  fn key_backspace() -> ffi::KeyEvent {
+    ffi::KeyEvent {
+      kind:      4,
+      codepoint: 0,
+      modifiers: 0,
+    }
+  }
+
+  fn key_delete() -> ffi::KeyEvent {
+    ffi::KeyEvent {
+      kind:      6,
+      codepoint: 0,
+      modifiers: 0,
+    }
+  }
+
+  fn key_left() -> ffi::KeyEvent {
+    ffi::KeyEvent {
+      kind:      12,
+      codepoint: 0,
+      modifiers: 0,
     }
   }
 
@@ -17225,14 +17295,14 @@ pkgs.mkShell {
     assert_eq!(app.active_state_ref().mode, Mode::Insert);
     assert_eq!(
       app.active_editor_ref().document().selection().ranges()[0],
-      Range::new(8, 9)
+      Range::new(8, 10)
     );
 
     assert!(app.handle_key(id, key_char('x')));
-    assert_eq!(app.text(id), "factorialx()\n");
+    assert_eq!(app.text(id), "factorial(x)\n");
     assert_eq!(
       app.active_editor_ref().document().selection().ranges()[0],
-      Range::new(8, 10)
+      Range::new(8, 11)
     );
   }
 
@@ -17254,15 +17324,239 @@ pkgs.mkShell {
     assert_eq!(app.active_state_ref().mode, Mode::Insert);
     assert_eq!(
       app.active_editor_ref().document().selection().ranges()[0],
-      Range::new(0, 4)
+      Range::new(0, 5)
     );
 
     assert!(app.handle_key(id, key_char('x')));
-    assert_eq!(app.text(id), "mainx()\n");
+    assert_eq!(app.text(id), "main(x)\n");
     assert_eq!(
       app.active_editor_ref().document().selection().ranges()[0],
-      Range::new(0, 5)
+      Range::new(0, 6)
     );
+  }
+
+  #[test]
+  fn insert_mode_fresh_mouse_selection_typing_replaces_once_then_expands() {
+    let _guard = ffi_test_guard();
+    let mut app = App::new();
+    let id = app.create_editor("printf\n", default_viewport(), ffi::Position {
+      row: 0,
+      col: 0,
+    });
+    assert!(app.activate(id).is_some());
+    app.set_mode(Mode::Insert);
+
+    let down = the_default::PointerEvent::new(
+      the_default::PointerKind::Down(the_default::PointerButton::Left),
+      0,
+      0,
+    )
+    .with_logical_pos(0, 0)
+    .with_click_count(1);
+    assert_eq!(
+      app.pointer_event(down),
+      the_default::PointerEventOutcome::Handled
+    );
+    let drag = the_default::PointerEvent::new(
+      the_default::PointerKind::Drag(the_default::PointerButton::Left),
+      0,
+      0,
+    )
+    .with_logical_pos(5, 0)
+    .with_click_count(1);
+    assert_eq!(
+      app.pointer_event(drag),
+      the_default::PointerEventOutcome::Handled
+    );
+    assert!(app.active_state_ref().insert_mouse_selection_edit_armed);
+
+    assert!(app.handle_key(id, key_char('x')));
+    assert_eq!(app.text(id), "x\n");
+    assert_eq!(
+      app.active_editor_ref().document().selection().ranges()[0],
+      Range::point(1)
+    );
+    assert!(!app.active_state_ref().insert_mouse_selection_edit_armed);
+
+    assert!(app.handle_key(id, key_char('y')));
+    assert_eq!(app.text(id), "xy\n");
+    assert_eq!(
+      app.active_editor_ref().document().selection().ranges()[0],
+      Range::point(2)
+    );
+  }
+
+  #[test]
+  fn insert_mode_fresh_mouse_selection_backspace_deletes_selection() {
+    let _guard = ffi_test_guard();
+    let mut app = App::new();
+    let id = app.create_editor("printf\n", default_viewport(), ffi::Position {
+      row: 0,
+      col: 0,
+    });
+    assert!(app.activate(id).is_some());
+    app.set_mode(Mode::Insert);
+
+    let down = the_default::PointerEvent::new(
+      the_default::PointerKind::Down(the_default::PointerButton::Left),
+      0,
+      0,
+    )
+    .with_logical_pos(0, 0)
+    .with_click_count(1);
+    let drag = the_default::PointerEvent::new(
+      the_default::PointerKind::Drag(the_default::PointerButton::Left),
+      0,
+      0,
+    )
+    .with_logical_pos(5, 0)
+    .with_click_count(1);
+    assert_eq!(
+      app.pointer_event(down),
+      the_default::PointerEventOutcome::Handled
+    );
+    assert_eq!(
+      app.pointer_event(drag),
+      the_default::PointerEventOutcome::Handled
+    );
+
+    assert!(app.handle_key(id, key_backspace()));
+    assert_eq!(app.text(id), "\n");
+    assert_eq!(
+      app.active_editor_ref().document().selection().ranges()[0],
+      Range::point(0)
+    );
+    assert!(!app.active_state_ref().insert_mouse_selection_edit_armed);
+  }
+
+  #[test]
+  fn insert_mode_fresh_mouse_selection_delete_key_deletes_selection() {
+    let _guard = ffi_test_guard();
+    let mut app = App::new();
+    let id = app.create_editor("printf\n", default_viewport(), ffi::Position {
+      row: 0,
+      col: 0,
+    });
+    assert!(app.activate(id).is_some());
+    app.set_mode(Mode::Insert);
+
+    let down = the_default::PointerEvent::new(
+      the_default::PointerKind::Down(the_default::PointerButton::Left),
+      0,
+      0,
+    )
+    .with_logical_pos(0, 0)
+    .with_click_count(1);
+    let drag = the_default::PointerEvent::new(
+      the_default::PointerKind::Drag(the_default::PointerButton::Left),
+      0,
+      0,
+    )
+    .with_logical_pos(5, 0)
+    .with_click_count(1);
+    assert_eq!(
+      app.pointer_event(down),
+      the_default::PointerEventOutcome::Handled
+    );
+    assert_eq!(
+      app.pointer_event(drag),
+      the_default::PointerEventOutcome::Handled
+    );
+
+    assert!(app.handle_key(id, key_delete()));
+    assert_eq!(app.text(id), "\n");
+    assert_eq!(
+      app.active_editor_ref().document().selection().ranges()[0],
+      Range::point(0)
+    );
+    assert!(!app.active_state_ref().insert_mouse_selection_edit_armed);
+  }
+
+  #[test]
+  fn insert_mode_fresh_mouse_selection_alt_d_cuts_selection() {
+    let _guard = ffi_test_guard();
+    let mut app = App::new();
+    let id = app.create_editor("printf\n", default_viewport(), ffi::Position {
+      row: 0,
+      col: 0,
+    });
+    assert!(app.activate(id).is_some());
+    app.set_mode(Mode::Insert);
+
+    let down = the_default::PointerEvent::new(
+      the_default::PointerKind::Down(the_default::PointerButton::Left),
+      0,
+      0,
+    )
+    .with_logical_pos(0, 0)
+    .with_click_count(1);
+    let drag = the_default::PointerEvent::new(
+      the_default::PointerKind::Drag(the_default::PointerButton::Left),
+      0,
+      0,
+    )
+    .with_logical_pos(5, 0)
+    .with_click_count(1);
+    assert_eq!(
+      app.pointer_event(down),
+      the_default::PointerEventOutcome::Handled
+    );
+    assert_eq!(
+      app.pointer_event(drag),
+      the_default::PointerEventOutcome::Handled
+    );
+
+    assert!(app.handle_key(id, key_char_alt('d')));
+    assert_eq!(app.text(id), "\n");
+    let values: Vec<_> = app
+      .registers
+      .read('"', app.active_editor_ref().document())
+      .expect("default register")
+      .map(|value| value.into_owned())
+      .collect();
+    assert_eq!(values, vec!["printf".to_string()]);
+  }
+
+  #[test]
+  fn insert_mode_keyboard_move_clears_mouse_selection_edit_arm() {
+    let _guard = ffi_test_guard();
+    let mut app = App::new();
+    let id = app.create_editor("printf\n", default_viewport(), ffi::Position {
+      row: 0,
+      col: 0,
+    });
+    assert!(app.activate(id).is_some());
+    app.set_mode(Mode::Insert);
+
+    let down = the_default::PointerEvent::new(
+      the_default::PointerKind::Down(the_default::PointerButton::Left),
+      0,
+      0,
+    )
+    .with_logical_pos(0, 0)
+    .with_click_count(1);
+    let drag = the_default::PointerEvent::new(
+      the_default::PointerKind::Drag(the_default::PointerButton::Left),
+      0,
+      0,
+    )
+    .with_logical_pos(5, 0)
+    .with_click_count(1);
+    assert_eq!(
+      app.pointer_event(down),
+      the_default::PointerEventOutcome::Handled
+    );
+    assert_eq!(
+      app.pointer_event(drag),
+      the_default::PointerEventOutcome::Handled
+    );
+    assert!(app.active_state_ref().insert_mouse_selection_edit_armed);
+
+    assert!(app.handle_key(id, key_left()));
+    assert!(!app.active_state_ref().insert_mouse_selection_edit_armed);
+
+    assert!(app.handle_key(id, key_char('x')));
+    assert_ne!(app.text(id), "x\n");
   }
 
   #[test]

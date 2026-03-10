@@ -649,10 +649,25 @@ fn insert_mode_selection(selection: &Selection) -> Selection {
 fn apply_mode<Ctx: DefaultContext>(ctx: &mut Ctx, mode: Mode) {
   let previous_mode = ctx.mode();
   if previous_mode == Mode::Insert && mode != Mode::Insert {
+    if ctx.append_restore_cursor_pending() {
+      let doc = ctx.editor().document_mut();
+      let text = doc.text().slice(..);
+      let selection = doc.selection().clone().transform(|range| {
+        let mut head = range.to();
+        if range.head > range.anchor {
+          head = prev_grapheme_boundary(text, head);
+        }
+        Range::new(range.from(), head)
+      });
+      let _ = doc.set_selection(selection);
+      ctx.set_append_restore_cursor_pending(false);
+    }
     let _ = ctx.editor().document_mut().commit();
   }
 
   if mode != Mode::Insert {
+    ctx.set_insert_mouse_selection_edit_armed(false);
+    ctx.set_append_restore_cursor_pending(false);
     ctx.completion_menu_mut().clear();
     if let Some(state) = ctx.signature_help_mut() {
       state.clear();

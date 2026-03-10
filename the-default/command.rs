@@ -470,6 +470,14 @@ pub trait DefaultContext: Sized + 'static {
   fn request_quit(&mut self);
   fn mode(&self) -> Mode;
   fn set_mode(&mut self, mode: Mode);
+  fn insert_mouse_selection_edit_armed(&self) -> bool {
+    false
+  }
+  fn set_insert_mouse_selection_edit_armed(&mut self, _armed: bool) {}
+  fn append_restore_cursor_pending(&self) -> bool {
+    false
+  }
+  fn set_append_restore_cursor_pending(&mut self, _pending: bool) {}
   fn keymaps(&mut self) -> &mut Keymaps;
   fn command_prompt_mut(&mut self) -> &mut CommandPromptState;
   fn command_prompt_ref(&self) -> &CommandPromptState;
@@ -1302,7 +1310,28 @@ fn post_on_keypress<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
 }
 
 fn pre_on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
+  if ctx.mode() == Mode::Insert
+    && ctx.insert_mouse_selection_edit_armed()
+    && !insert_mouse_selection_edit_arm_is_consumed_by(command)
+  {
+    ctx.set_insert_mouse_selection_edit_armed(false);
+  }
   ctx.dispatch().on_action(ctx, command);
+}
+
+fn insert_mouse_selection_edit_arm_is_consumed_by(command: Command) -> bool {
+  matches!(
+    command,
+    Command::InsertChar(_)
+      | Command::InsertNewline
+      | Command::DeleteChar
+      | Command::DeleteCharForward { .. }
+      | Command::DeleteWordBackward { .. }
+      | Command::DeleteWordForward { .. }
+      | Command::KillToLineStart
+      | Command::KillToLineEnd
+      | Command::InsertTab
+  )
 }
 
 fn pre_on_pointer_event<Ctx: DefaultContext>(
@@ -1708,6 +1737,7 @@ fn pre_render_with_styles<Ctx: DefaultContext>(
   };
   styles.cursor_kind = cursor_kind;
   styles.active_cursor_kind = active_cursor_kind;
+  styles.non_block_cursor_uses_head = matches!(ctx.mode(), Mode::Insert | Mode::Select);
 
   // When picking a cursor to keep/remove, make the focused cursor use the
   // match cursor style so it stands out from the rest.
@@ -2169,7 +2199,39 @@ fn on_render_with_styles<Ctx: DefaultContext>(ctx: &mut Ctx, styles: RenderStyle
   ctx.build_render_plan_with_styles(styles)
 }
 
+fn insert_edit_position(insert_mode: bool, range: &Range, slice: RopeSlice) -> usize {
+  if insert_mode {
+    range.head
+  } else {
+    range.cursor(slice)
+  }
+}
+
+fn selection_after_uniform_insert(selection: &Selection, inserted_chars: usize) -> Selection {
+  if inserted_chars == 0 {
+    return selection.clone();
+  }
+
+  let mut ranges = SmallVec::with_capacity(selection.len());
+  let mut global_offs = 0isize;
+  for range in selection.ranges() {
+    let head = (range.head as isize + global_offs + inserted_chars as isize) as usize;
+    let anchor = if range.anchor >= range.head {
+      (range.anchor as isize + global_offs + inserted_chars as isize) as usize
+    } else {
+      (range.anchor as isize + global_offs) as usize
+    };
+    ranges.push(Range::new(anchor, head));
+    global_offs += inserted_chars as isize;
+  }
+
+  let cursor_ids: SmallVec<[CursorId; 1]> = selection.cursor_ids().iter().copied().collect();
+  Selection::new_with_ids(ranges, cursor_ids).unwrap_or_else(|_| selection.clone())
+}
+
 fn insert_char<Ctx: DefaultContext>(ctx: &mut Ctx, ch: char) {
+  consume_mouse_selection_before_insert(ctx);
+
   let doc = ctx.editor().document_mut();
   let selection = doc.selection().clone();
 
@@ -2181,44 +2243,21 @@ fn insert_char<Ctx: DefaultContext>(ctx: &mut Ctx, ch: char) {
 
   let mut text = Tendril::new();
   text.push(ch);
-  let inserted_len = text.chars().count() as isize;
-  let mut offset = 0isize;
-  let mut ranges = SmallVec::<[Range; 1]>::with_capacity(selection.len());
-
-  let Ok(tx) = Transaction::change_by_selection(doc.text(), &selection, |range| {
-    let head = (range.head as isize + offset).max(0) as usize;
-    let next_range = if range.is_empty() {
-      let cursor = head + inserted_len.max(0) as usize;
-      Range::point(cursor)
-    } else if range.direction() == MoveDir::Forward {
-      Range::new(
-        (range.anchor as isize + offset).max(0) as usize,
-        head + inserted_len.max(0) as usize,
-      )
-    } else {
-      Range::new(
-        (range.anchor as isize + offset + inserted_len).max(0) as usize,
-        head + inserted_len.max(0) as usize,
-      )
-    };
-    ranges.push(next_range);
-    offset += inserted_len;
-    (range.head, range.head, Some(text.clone()))
-  }) else {
+  let inserted_chars = text.chars().count();
+  let new_selection = selection_after_uniform_insert(&selection, inserted_chars);
+  let Ok(tx) = Transaction::insert(doc.text(), &selection, text) else {
     return;
-  };
-
-  let cursor_ids: SmallVec<[CursorId; 1]> = selection.cursor_ids().iter().copied().collect();
-  let new_selection = if cursor_ids.len() == ranges.len() {
-    Selection::new_with_ids(ranges, cursor_ids).unwrap_or_else(|_| selection.clone())
-  } else {
-    Selection::new(ranges).unwrap_or_else(|_| selection.clone())
   };
   let tx = tx.with_selection(new_selection);
   let _ = ctx.apply_transaction(&tx);
 }
 
 fn delete_char<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
+  if consume_mouse_selection_for_delete(ctx, false) {
+    return;
+  }
+
+  let insert_mode = ctx.mode() == Mode::Insert;
   let doc = ctx.editor().document_mut();
   let selection = doc.selection().clone();
   let slice = doc.text().slice(..);
@@ -2233,12 +2272,12 @@ fn delete_char<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
   let indent_width = doc.indent_style().indent_width(tab_width);
 
   let tx = Transaction::delete_by_selection(doc.text(), &selection, |range| {
-    let pos = range.cursor(slice);
+    let pos = insert_edit_position(insert_mode, range, slice);
     if pos == 0 {
       return (pos, pos);
     }
 
-    let line_start_pos = slice.line_to_char(range.cursor_line(slice));
+    let line_start_pos = slice.line_to_char(slice.char_to_line(pos));
     let fragment: Cow<'_, str> = Cow::from(slice.slice(line_start_pos..pos));
 
     if !fragment.is_empty() && fragment.chars().all(|ch| ch == ' ' || ch == '\t') {
@@ -2278,13 +2317,18 @@ fn delete_char<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
 }
 
 fn delete_char_forward<Ctx: DefaultContext>(ctx: &mut Ctx, count: usize) {
+  if consume_mouse_selection_for_delete(ctx, false) {
+    return;
+  }
+
+  let insert_mode = ctx.mode() == Mode::Insert;
   let doc = ctx.editor().document_mut();
   let selection = doc.selection().clone();
   let slice = doc.text().slice(..);
   let count = count.max(1);
 
   let tx = Transaction::delete_by_selection(doc.text(), &selection, |range| {
-    let pos = range.cursor(slice);
+    let pos = insert_edit_position(insert_mode, range, slice);
     (pos, nth_next_grapheme_boundary(slice, pos, count))
   });
 
@@ -2296,13 +2340,18 @@ fn delete_char_forward<Ctx: DefaultContext>(ctx: &mut Ctx, count: usize) {
 }
 
 fn delete_word_backward<Ctx: DefaultContext>(ctx: &mut Ctx, count: usize) {
+  if consume_mouse_selection_for_delete(ctx, false) {
+    return;
+  }
+
+  let insert_mode = ctx.mode() == Mode::Insert;
   let doc = ctx.editor().document_mut();
   let selection = doc.selection().clone();
   let slice = doc.text().slice(..);
   let count = count.max(1);
 
   let tx = Transaction::delete_by_selection(doc.text(), &selection, |range| {
-    let cursor_pos = range.cursor(slice);
+    let cursor_pos = insert_edit_position(insert_mode, range, slice);
     if cursor_pos == 0 {
       return (0, 0);
     }
@@ -2318,6 +2367,11 @@ fn delete_word_backward<Ctx: DefaultContext>(ctx: &mut Ctx, count: usize) {
 }
 
 fn delete_word_forward<Ctx: DefaultContext>(ctx: &mut Ctx, count: usize) {
+  if consume_mouse_selection_for_delete(ctx, true) {
+    return;
+  }
+
+  let insert_mode = ctx.mode() == Mode::Insert;
   let doc = ctx.editor().document_mut();
   let selection = doc.selection().clone();
   let slice = doc.text().slice(..);
@@ -2325,7 +2379,7 @@ fn delete_word_forward<Ctx: DefaultContext>(ctx: &mut Ctx, count: usize) {
   let text_len = slice.len_chars();
 
   let tx = Transaction::delete_by_selection(doc.text(), &selection, |range| {
-    let cursor_pos = range.cursor(slice);
+    let cursor_pos = insert_edit_position(insert_mode, range, slice);
     if cursor_pos >= text_len {
       return (cursor_pos, cursor_pos);
     }
@@ -2341,13 +2395,18 @@ fn delete_word_forward<Ctx: DefaultContext>(ctx: &mut Ctx, count: usize) {
 }
 
 fn kill_to_line_start<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
+  if consume_mouse_selection_for_delete(ctx, false) {
+    return;
+  }
+
+  let insert_mode = ctx.mode() == Mode::Insert;
   let doc = ctx.editor().document_mut();
   let selection = doc.selection().clone();
   let slice = doc.text().slice(..);
 
   let tx = Transaction::delete_by_selection(doc.text(), &selection, |range| {
-    let cursor_pos = range.cursor(slice);
-    let line = range.cursor_line(slice);
+    let cursor_pos = insert_edit_position(insert_mode, range, slice);
+    let line = slice.char_to_line(cursor_pos);
     let line_start = slice.line_to_char(line);
 
     let head = if cursor_pos == line_start && line != 0 {
@@ -2381,13 +2440,18 @@ fn kill_to_line_start<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
 }
 
 fn kill_to_line_end<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
+  if consume_mouse_selection_for_delete(ctx, false) {
+    return;
+  }
+
+  let insert_mode = ctx.mode() == Mode::Insert;
   let doc = ctx.editor().document_mut();
   let selection = doc.selection().clone();
   let slice = doc.text().slice(..);
 
   let tx = Transaction::delete_by_selection(doc.text(), &selection, |range| {
-    let cursor_pos = range.cursor(slice);
-    let line = range.cursor_line(slice);
+    let cursor_pos = insert_edit_position(insert_mode, range, slice);
+    let line = slice.char_to_line(cursor_pos);
     let line_end_pos = line_end_char_index(&slice, line);
 
     if cursor_pos == line_end_pos {
@@ -2408,20 +2472,26 @@ fn kill_to_line_end<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
 }
 
 fn insert_tab<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
+  consume_mouse_selection_before_insert(ctx);
+
   let doc = ctx.editor().document_mut();
   let selection = doc.selection().clone();
 
   let indent = Tendril::from(doc.indent_style().as_str());
-  let cursors = selection.cursors(doc.text().slice(..));
-
-  let Ok(tx) = Transaction::insert(doc.text(), &cursors, indent) else {
+  let inserted_chars = indent.chars().count();
+  let new_selection = selection_after_uniform_insert(&selection, inserted_chars);
+  let Ok(tx) = Transaction::insert(doc.text(), &selection, indent) else {
     return;
   };
 
+  let tx = tx.with_selection(new_selection);
   let _ = ctx.apply_transaction(&tx);
 }
 
 fn insert_newline<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
+  consume_mouse_selection_before_insert(ctx);
+
+  let insert_mode = ctx.mode() == Mode::Insert;
   let doc = ctx.editor().document_mut();
   let contents = doc.text();
   let text = contents.slice(..);
@@ -2436,7 +2506,7 @@ fn insert_newline<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
   let pairs = AutoPairs::default();
 
   let tx = Transaction::change_by_selection(contents, &selection, |range| {
-    let pos = range.cursor(text);
+    let pos = insert_edit_position(insert_mode, range, text);
     let current_line = text.char_to_line(pos);
     let line_start = text.line_to_char(current_line);
     let mut chars_deleted = 0usize;
@@ -2493,7 +2563,7 @@ fn insert_newline<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
         (line_start, line_start, new_text.chars().count() as isize)
       };
 
-    let new_range = if range.cursor(text) > range.anchor {
+    let new_range = if pos > range.anchor {
       Range::new(
         (range.anchor as isize + global_offs) as usize,
         (range.head as isize + local_offs + global_offs) as usize,
@@ -5003,6 +5073,7 @@ fn quit<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
 }
 
 fn delete_selection<Ctx: DefaultContext>(ctx: &mut Ctx, yank: bool) {
+  ctx.set_insert_mouse_selection_edit_armed(false);
   let doc = ctx.editor().document_mut();
   let selection = doc.selection().clone();
   let slice = doc.text().slice(..);
@@ -5074,11 +5145,41 @@ fn selection_is_linewise(selection: &Selection, text: &ropey::Rope) -> bool {
 }
 
 fn enter_insert_mode<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  ctx.set_insert_mouse_selection_edit_armed(false);
+  ctx.set_append_restore_cursor_pending(false);
   ctx.set_mode(Mode::Insert);
   ctx.lsp_signature_help();
 }
 
+fn selection_has_nonempty_ranges(selection: &Selection) -> bool {
+  selection.ranges().iter().any(|range| !range.is_empty())
+}
+
+fn consume_mouse_selection_before_insert<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  if ctx.mode() != Mode::Insert || !ctx.insert_mouse_selection_edit_armed() {
+    return;
+  }
+  ctx.set_insert_mouse_selection_edit_armed(false);
+  if selection_has_nonempty_ranges(ctx.editor_ref().document().selection()) {
+    ctx.dispatch().delete_selection(ctx, false);
+  }
+}
+
+fn consume_mouse_selection_for_delete<Ctx: DefaultContext>(ctx: &mut Ctx, yank: bool) -> bool {
+  if ctx.mode() != Mode::Insert || !ctx.insert_mouse_selection_edit_armed() {
+    return false;
+  }
+  ctx.set_insert_mouse_selection_edit_armed(false);
+  if selection_has_nonempty_ranges(ctx.editor_ref().document().selection()) {
+    ctx.dispatch().delete_selection(ctx, yank);
+    true
+  } else {
+    false
+  }
+}
+
 fn change_selection<Ctx: DefaultContext>(ctx: &mut Ctx, yank: bool) {
+  ctx.set_insert_mouse_selection_edit_armed(false);
   let doc = ctx.editor().document_mut();
   let selection = doc.selection().clone();
   let only_whole_lines = selection_is_linewise(&selection, doc.text());
@@ -5598,17 +5699,50 @@ fn insert_at_line_end<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
   ctx.request_render();
 }
 
+fn append_mode_should_insert_eof_newline(selection: &Selection, slice: RopeSlice) -> bool {
+  selection
+    .iter()
+    .last()
+    .is_some_and(|range| !range.is_empty() && range.to() == slice.len_chars())
+}
+
 fn append_mode_selection(selection: &Selection, slice: RopeSlice) -> Selection {
   selection.clone().transform(|range| {
-    if range.is_empty() {
-      Range::new(range.head, next_grapheme_boundary(slice, range.head))
-    } else {
-      Range::new(range.from(), range.to())
-    }
+    Range::new(range.from(), next_grapheme_boundary(slice, range.to()))
   })
 }
 
 fn append_mode<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
+  enter_insert_mode(ctx);
+  ctx.set_append_restore_cursor_pending(true);
+
+  let should_insert_newline = {
+    let doc = ctx.editor_ref().document();
+    let slice = doc.text().slice(..);
+    append_mode_should_insert_eof_newline(doc.selection(), slice)
+  };
+
+  if should_insert_newline {
+    let tx = {
+      let doc = ctx.editor_ref().document();
+      let end = doc.text().len_chars();
+      Transaction::change(
+        doc.text(),
+        [(end, end, Some(doc.line_ending().as_str().into()))].into_iter(),
+      )
+    };
+
+    let Ok(tx) = tx else {
+      ctx.push_error("append", "failed to build newline transaction");
+      return;
+    };
+
+    if !ctx.apply_transaction(&tx) {
+      ctx.push_error("append", "failed to extend buffer for append mode");
+      return;
+    }
+  }
+
   let new_selection = {
     let doc = ctx.editor_ref().document();
     let slice = doc.text().slice(..);
@@ -5616,7 +5750,6 @@ fn append_mode<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
   };
 
   let _ = ctx.editor().document_mut().set_selection(new_selection);
-  enter_insert_mode(ctx);
   ctx.request_render();
 }
 
@@ -6799,7 +6932,7 @@ mod tests {
     let text = Rope::from("factorial(");
     let selection = Selection::single(0, 9);
     let result = append_mode_selection(&selection, text.slice(..));
-    assert_eq!(result.ranges(), &[Range::new(0, 9)]);
+    assert_eq!(result.ranges(), &[Range::new(0, 10)]);
   }
 
   #[test]
@@ -6815,7 +6948,7 @@ mod tests {
     let text = Rope::from("main()");
     let selection = Selection::single(3, 4);
     let result = append_mode_selection(&selection, text.slice(..));
-    assert_eq!(result.ranges(), &[Range::new(3, 4)]);
+    assert_eq!(result.ranges(), &[Range::new(3, 5)]);
   }
 }
 

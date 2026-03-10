@@ -5060,6 +5060,11 @@ fn selection_is_linewise(selection: &Selection, text: &ropey::Rope) -> bool {
   })
 }
 
+fn enter_insert_mode<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  ctx.set_mode(Mode::Insert);
+  ctx.lsp_signature_help();
+}
+
 fn change_selection<Ctx: DefaultContext>(ctx: &mut Ctx, yank: bool) {
   let doc = ctx.editor().document_mut();
   let selection = doc.selection().clone();
@@ -5114,7 +5119,7 @@ fn change_selection<Ctx: DefaultContext>(ctx: &mut Ctx, yank: bool) {
   if only_whole_lines {
     open(ctx, OpenDirection::Above, CommentContinuation::Disabled);
   } else {
-    ctx.set_mode(Mode::Insert);
+    enter_insert_mode(ctx);
     ctx.request_render();
   }
 }
@@ -5560,7 +5565,7 @@ fn insert_at_line_start<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
   });
 
   let _ = doc.set_selection(new_selection);
-  ctx.set_mode(Mode::Insert);
+  enter_insert_mode(ctx);
   ctx.request_render();
 }
 
@@ -5576,7 +5581,7 @@ fn insert_at_line_end<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
   });
 
   let _ = doc.set_selection(new_selection);
-  ctx.set_mode(Mode::Insert);
+  enter_insert_mode(ctx);
   ctx.request_render();
 }
 
@@ -5628,7 +5633,7 @@ fn append_mode<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
   };
 
   let _ = ctx.editor().document_mut().set_selection(new_selection);
-  ctx.set_mode(Mode::Insert);
+  enter_insert_mode(ctx);
   ctx.request_render();
 }
 
@@ -6314,7 +6319,6 @@ fn open<Ctx: DefaultContext>(
 
   // NOTE: count support isn't wired yet in the new context.
   let count = 1usize;
-  ctx.set_mode(Mode::Insert);
 
   let doc = ctx.editor().document_mut();
   let contents = doc.text();
@@ -6459,6 +6463,7 @@ fn open<Ctx: DefaultContext>(
     let _ = doc.set_selection(clamped);
   }
 
+  enter_insert_mode(ctx);
   ctx.request_render();
 }
 

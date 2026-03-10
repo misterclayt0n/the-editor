@@ -653,11 +653,9 @@ fn apply_mode<Ctx: DefaultContext>(ctx: &mut Ctx, mode: Mode) {
       let doc = ctx.editor().document_mut();
       let text = doc.text().slice(..);
       let selection = doc.selection().clone().transform(|range| {
-        let mut head = range.to();
-        if range.head > range.anchor {
-          head = prev_grapheme_boundary(text, head);
-        }
-        Range::new(range.from(), head)
+        let head = range.head;
+        let anchor = prev_grapheme_boundary(text, head);
+        Range::new(anchor, head)
       });
       let _ = doc.set_selection(selection);
       ctx.set_append_restore_cursor_pending(false);

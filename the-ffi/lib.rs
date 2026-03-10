@@ -17295,14 +17295,14 @@ pkgs.mkShell {
     assert_eq!(app.active_state_ref().mode, Mode::Insert);
     assert_eq!(
       app.active_editor_ref().document().selection().ranges()[0],
-      Range::new(8, 10)
+      Range::new(8, 9)
     );
 
     assert!(app.handle_key(id, key_char('x')));
-    assert_eq!(app.text(id), "factorial(x)\n");
+    assert_eq!(app.text(id), "factorialx()\n");
     assert_eq!(
       app.active_editor_ref().document().selection().ranges()[0],
-      Range::new(8, 11)
+      Range::new(8, 10)
     );
   }
 
@@ -17324,14 +17324,14 @@ pkgs.mkShell {
     assert_eq!(app.active_state_ref().mode, Mode::Insert);
     assert_eq!(
       app.active_editor_ref().document().selection().ranges()[0],
-      Range::new(0, 5)
+      Range::new(0, 4)
     );
 
     assert!(app.handle_key(id, key_char('x')));
-    assert_eq!(app.text(id), "main(x)\n");
+    assert_eq!(app.text(id), "mainx()\n");
     assert_eq!(
       app.active_editor_ref().document().selection().ranges()[0],
-      Range::new(0, 6)
+      Range::new(0, 5)
     );
   }
 

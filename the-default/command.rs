@@ -5699,49 +5699,19 @@ fn insert_at_line_end<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
   ctx.request_render();
 }
 
-fn append_mode_should_insert_eof_newline(selection: &Selection, slice: RopeSlice) -> bool {
-  selection
-    .iter()
-    .last()
-    .is_some_and(|range| !range.is_empty() && range.to() == slice.len_chars())
-}
-
 fn append_mode_selection(selection: &Selection, slice: RopeSlice) -> Selection {
   selection.clone().transform(|range| {
-    Range::new(range.from(), next_grapheme_boundary(slice, range.to()))
+    if range.is_empty() {
+      Range::new(range.from(), next_grapheme_boundary(slice, range.to()))
+    } else {
+      Range::new(range.from(), range.to())
+    }
   })
 }
 
 fn append_mode<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
   enter_insert_mode(ctx);
   ctx.set_append_restore_cursor_pending(true);
-
-  let should_insert_newline = {
-    let doc = ctx.editor_ref().document();
-    let slice = doc.text().slice(..);
-    append_mode_should_insert_eof_newline(doc.selection(), slice)
-  };
-
-  if should_insert_newline {
-    let tx = {
-      let doc = ctx.editor_ref().document();
-      let end = doc.text().len_chars();
-      Transaction::change(
-        doc.text(),
-        [(end, end, Some(doc.line_ending().as_str().into()))].into_iter(),
-      )
-    };
-
-    let Ok(tx) = tx else {
-      ctx.push_error("append", "failed to build newline transaction");
-      return;
-    };
-
-    if !ctx.apply_transaction(&tx) {
-      ctx.push_error("append", "failed to extend buffer for append mode");
-      return;
-    }
-  }
 
   let new_selection = {
     let doc = ctx.editor_ref().document();
@@ -6932,7 +6902,7 @@ mod tests {
     let text = Rope::from("factorial(");
     let selection = Selection::single(0, 9);
     let result = append_mode_selection(&selection, text.slice(..));
-    assert_eq!(result.ranges(), &[Range::new(0, 10)]);
+    assert_eq!(result.ranges(), &[Range::new(0, 9)]);
   }
 
   #[test]
@@ -6948,7 +6918,7 @@ mod tests {
     let text = Rope::from("main()");
     let selection = Selection::single(3, 4);
     let result = append_mode_selection(&selection, text.slice(..));
-    assert_eq!(result.ranges(), &[Range::new(3, 5)]);
+    assert_eq!(result.ranges(), &[Range::new(3, 4)]);
   }
 }
 

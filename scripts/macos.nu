@@ -79,61 +79,65 @@ def launch_debug_app_bundle [swift_dir: path, deployment_target: string] {
   ^open -n $app_dir
 }
 
-if not ($module_cache | path exists) { mkdir $module_cache }
-if not ($clang_cache | path exists) { mkdir $clang_cache }
-if not ($swift_bridge_dir | path exists) { mkdir $swift_bridge_dir }
-if not ($headers_dir | path exists) { mkdir $headers_dir }
-if not ($frameworks_dir | path exists) { mkdir $frameworks_dir }
+def main [--release] {
+  if not ($module_cache | path exists) { mkdir $module_cache }
+  if not ($clang_cache | path exists) { mkdir $clang_cache }
+  if not ($swift_bridge_dir | path exists) { mkdir $swift_bridge_dir }
+  if not ($headers_dir | path exists) { mkdir $headers_dir }
+  if not ($frameworks_dir | path exists) { mkdir $frameworks_dir }
 
-^cargo build -p the-ffi --release
+  ^cargo build -p the-ffi --release
 
-let swift_core = ($swift_bridge_dir | path join "SwiftBridgeCore.swift")
-let ffi_swift = ($swift_bridge_dir | path join "the-ffi.swift")
-cp -f ($gen_dir | path join "SwiftBridgeCore.swift") $swift_core
-cp -f ($gen_dir | path join "the-ffi" "the-ffi.swift") $ffi_swift
-cp -f ($gen_dir | path join "SwiftBridgeCore.h") ($headers_dir | path join "SwiftBridgeCore.h")
-cp -f ($gen_dir | path join "the-ffi" "the-ffi.h") ($headers_dir | path join "the-ffi.h")
+  let swift_core = ($swift_bridge_dir | path join "SwiftBridgeCore.swift")
+  let ffi_swift = ($swift_bridge_dir | path join "the-ffi.swift")
+  cp -f ($gen_dir | path join "SwiftBridgeCore.swift") $swift_core
+  cp -f ($gen_dir | path join "the-ffi" "the-ffi.swift") $ffi_swift
+  cp -f ($gen_dir | path join "SwiftBridgeCore.h") ($headers_dir | path join "SwiftBridgeCore.h")
+  cp -f ($gen_dir | path join "the-ffi" "the-ffi.h") ($headers_dir | path join "the-ffi.h")
 
-let umbrella = ($headers_dir | path join "TheEditorFFI.h")
-[
-  "// Umbrella header for the Swift/C bridge."
-  "// Keep SwiftBridgeCore before the-ffi to ensure all core types are visible."
-  "#include \"SwiftBridgeCore.h\""
-  "#include \"the-ffi.h\""
-] | str join "\n" | save -f $umbrella
+  let umbrella = ($headers_dir | path join "TheEditorFFI.h")
+  [
+    "// Umbrella header for the Swift/C bridge."
+    "// Keep SwiftBridgeCore before the-ffi to ensure all core types are visible."
+    "#include \"SwiftBridgeCore.h\""
+    "#include \"the-ffi.h\""
+  ] | str join "\n" | save -f $umbrella
 
-let modulemap = ($headers_dir | path join "module.modulemap")
-[
-  "module TheEditorFFI {"
-  "  umbrella header \"TheEditorFFI.h\""
-  "  export *"
-  "  module * { export * }"
-  "}"
-] | str join "\n" | save -f $modulemap
+  let modulemap = ($headers_dir | path join "module.modulemap")
+  [
+    "module TheEditorFFI {"
+    "  umbrella header \"TheEditorFFI.h\""
+    "  export *"
+    "  module * { export * }"
+    "}"
+  ] | str join "\n" | save -f $modulemap
 
-if not (open $swift_core | str contains "import TheEditorFFI") {
-  let contents = (open $swift_core)
-  ("import TheEditorFFI\n" + $contents) | save -f $swift_core
-}
+  if not (open $swift_core | str contains "import TheEditorFFI") {
+    let contents = (open $swift_core)
+    ("import TheEditorFFI\n" + $contents) | save -f $swift_core
+  }
 
-let patched_swift_core = (
-  open $swift_core
-  | str replace "extension RustStr: Identifiable {" "extension RustStr: @retroactive Identifiable {"
-  | str replace "extension RustStr: Equatable {" "extension RustStr: @retroactive Equatable {"
-)
-$patched_swift_core | save -f $swift_core
+  let patched_swift_core = (
+    open $swift_core
+    | str replace "extension RustStr: Identifiable {" "extension RustStr: @retroactive Identifiable {"
+    | str replace "extension RustStr: Equatable {" "extension RustStr: @retroactive Equatable {"
+  )
+  $patched_swift_core | save -f $swift_core
 
-if not (open $ffi_swift | str contains "import TheEditorFFI") {
-  let contents = (open $ffi_swift)
-  ("import Foundation\nimport TheEditorFFI\n\n" + $contents) | save -f $ffi_swift
-}
+  if not (open $ffi_swift | str contains "import TheEditorFFI") {
+    let contents = (open $ffi_swift)
+    ("import Foundation\nimport TheEditorFFI\n\n" + $contents) | save -f $ffi_swift
+  }
 
-rm -rf $xcframework
-^xcodebuild -create-xcframework -library $lib_path -headers $headers_dir -output $xcframework
+  rm -rf $xcframework
+  ^xcodebuild -create-xcframework -library $lib_path -headers $headers_dir -output $xcframework
 
-cd $swift_dir
-if $launch_mode == "app" {
-  launch_debug_app_bundle $swift_dir $env.MACOSX_DEPLOYMENT_TARGET
-} else {
-  ^swift run the-swift
+  cd $swift_dir
+  if $launch_mode == "app" {
+    launch_debug_app_bundle $swift_dir $env.MACOSX_DEPLOYMENT_TARGET
+  } else if $release {
+    ^swift run -c release the-swift
+  } else {
+    ^swift run the-swift
+  }
 }

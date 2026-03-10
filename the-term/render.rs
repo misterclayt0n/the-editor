@@ -254,6 +254,7 @@ fn render_styles_from_theme(ctx: &Ctx) -> RenderStyles {
     active_cursor,
     cursor_kind,
     active_cursor_kind,
+    non_block_cursor_uses_head: true,
     gutter: theme.try_get("ui.linenr").unwrap_or_default(),
     gutter_active: theme
       .try_get("ui.linenr.selected")

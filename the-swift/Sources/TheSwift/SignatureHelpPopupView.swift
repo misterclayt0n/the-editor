@@ -13,6 +13,10 @@ struct SignatureHelpPopupView: View {
     private let maxWidth: CGFloat = 480
     private let maxHeight: CGFloat = 300
     private let cornerRadius: CGFloat = 6
+    private let headerHorizontalPadding: CGFloat = 14
+    private let headerVerticalPadding: CGFloat = 12
+    private let headerInnerSpacing: CGFloat = 10
+    private let headerContainerInset: CGFloat = 8
 
     var body: some View {
         let placement = computePlacement()
@@ -24,8 +28,9 @@ struct SignatureHelpPopupView: View {
             if hasDocs {
                 Divider()
                     .background(theme.panelBorderColor.opacity(0.4))
+                    .padding(.horizontal, headerContainerInset)
 
-                docsView(width: placement.width, maxHeight: placement.height - signatureHeight)
+                docsView(width: placement.width, maxHeight: placement.height - placement.signatureHeight)
             }
         }
         .frame(width: placement.width)
@@ -42,6 +47,17 @@ struct SignatureHelpPopupView: View {
     }
 
     // MARK: - Content parsing
+
+    private struct SignatureSegment: Equatable {
+        let text: String
+        let isActive: Bool
+    }
+
+    private struct SignaturePresentation {
+        let counter: String?
+        let segments: [SignatureSegment]
+        let plainText: String
+    }
 
     /// The signature line content is always a code block. The markdown from Rust looks like:
     /// ```
@@ -89,21 +105,91 @@ struct SignatureHelpPopupView: View {
         return trimmed.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    // MARK: - Subviews
+    private var signaturePresentation: SignaturePresentation {
+        let lines = signatureMarkdown
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map(String.init)
 
-    private let signatureHeight: CGFloat = 36
+        var index = 0
+        while index < lines.count, lines[index].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            index += 1
+        }
+
+        var counter: String?
+        if index < lines.count, isSignatureCounter(lines[index]) {
+            counter = lines[index].trimmingCharacters(in: .whitespacesAndNewlines)
+            index += 1
+        }
+
+        while index < lines.count, lines[index].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            index += 1
+        }
+
+        let signature: String
+        if index < lines.count, lines[index].trimmingCharacters(in: .whitespaces).hasPrefix("```") {
+            index += 1
+            var codeLines: [String] = []
+            while index < lines.count, !lines[index].trimmingCharacters(in: .whitespaces).hasPrefix("```") {
+                codeLines.append(lines[index])
+                index += 1
+            }
+            signature = codeLines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        } else {
+            signature = lines.suffix(from: index).joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        let segments = parseSignatureSegments(from: signature)
+        let plainText = segments.map(\.text).joined()
+
+        return SignaturePresentation(
+            counter: counter,
+            segments: segments.isEmpty ? [SignatureSegment(text: signature, isActive: false)] : segments,
+            plainText: plainText.isEmpty ? signature : plainText
+        )
+    }
+
+    // MARK: - Subviews
 
     @ViewBuilder
     private func signatureView(width: CGFloat) -> some View {
-        CompletionDocsTextView(
-            docs: signatureMarkdown,
-            width: width,
-            height: signatureHeight,
-            languageHint: languageHint,
-            theme: theme.docsTheme
+        let presentation = signaturePresentation
+
+        HStack(alignment: .top, spacing: headerInnerSpacing) {
+            if let counter = presentation.counter {
+                Text(counter)
+                    .font(FontLoader.uiFont(size: 10.5, weight: .semibold))
+                    .foregroundStyle(theme.secondaryTextColor.opacity(0.96))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(
+                        Capsule()
+                            .fill(theme.hoveredBackgroundColor.opacity(0.88))
+                    )
+                    .overlay(
+                        Capsule()
+                            .stroke(theme.panelBorderColor.opacity(0.38), lineWidth: 0.5)
+                    )
+            }
+
+            signatureText(for: presentation.segments)
+                .font(FontLoader.bufferFont(size: 13))
+                .lineSpacing(2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, headerHorizontalPadding)
+        .padding(.vertical, headerVerticalPadding)
+        .frame(width: width - (headerContainerInset * 2), alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(theme.hoveredBackgroundColor.opacity(0.18))
         )
-        .frame(width: width, height: signatureHeight)
-        .clipped()
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(theme.panelBorderColor.opacity(0.28), lineWidth: 0.5)
+        )
+        .padding(headerContainerInset)
+        .frame(width: width, alignment: .leading)
     }
 
     @ViewBuilder
@@ -174,6 +260,7 @@ struct SignatureHelpPopupView: View {
         let y: CGFloat
         let width: CGFloat
         let height: CGFloat
+        let signatureHeight: CGFloat
     }
 
     private struct SharedRect: Decodable {
@@ -216,6 +303,7 @@ struct SignatureHelpPopupView: View {
         let panelWidth = min(max(160, sigWidth), min(maxWidth, areaWidth))
 
         // Height: signature + optional docs.
+        let signatureHeight = estimatedSignatureHeight(for: panelWidth)
         var panelHeight = signatureHeight
         if contentHasDocs {
             let docsText = docsMarkdown
@@ -248,7 +336,101 @@ struct SignatureHelpPopupView: View {
             x: pixelsForCols(shared.panel.x),
             y: pixelsForRows(shared.panel.y),
             width: pixelsForCols(shared.panel.width),
-            height: pixelsForRows(shared.panel.height)
+            height: pixelsForRows(shared.panel.height),
+            signatureHeight: signatureHeight
         )
+    }
+
+    private func estimatedSignatureHeight(for width: CGFloat) -> CGFloat {
+        let presentation = signaturePresentation
+        let badgeWidth = presentation.counter == nil ? 0 : 54
+        let contentWidth = max(
+            120,
+            width
+                - (headerContainerInset * 2)
+                - (headerHorizontalPadding * 2)
+                - CGFloat(badgeWidth)
+                - (presentation.counter == nil ? 0 : headerInnerSpacing)
+        )
+        let columns = max(18, Int(floor(contentWidth / 7.4)))
+        let lineCount = max(1, Int(ceil(Double(max(1, presentation.plainText.count)) / Double(columns))))
+        let contentHeight = CGFloat(lineCount) * 18 + (headerVerticalPadding * 2)
+        return max(48, contentHeight + (headerContainerInset * 2))
+    }
+
+    private func isSignatureCounter(_ line: String) -> Bool {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.first == "(", trimmed.last == ")" else {
+            return false
+        }
+
+        let body = trimmed.dropFirst().dropLast()
+        let parts = body.split(separator: "/", omittingEmptySubsequences: false)
+        guard parts.count == 2 else {
+            return false
+        }
+
+        return parts.allSatisfy { !$0.isEmpty && $0.allSatisfy(\.isNumber) }
+    }
+
+    private func parseSignatureSegments(from raw: String) -> [SignatureSegment] {
+        let startMarker = "<<the-editor-active-param>>"
+        let endMarker = "<</the-editor-active-param>>"
+
+        guard !raw.isEmpty else {
+            return []
+        }
+
+        var segments: [SignatureSegment] = []
+        var remainder = raw[...]
+        var active = false
+
+        while !remainder.isEmpty {
+            let marker = active ? endMarker : startMarker
+            if let range = remainder.range(of: marker) {
+                let text = String(remainder[..<range.lowerBound])
+                if !text.isEmpty {
+                    appendSegment(text, isActive: active, to: &segments)
+                }
+                remainder = remainder[range.upperBound...]
+                active.toggle()
+            } else {
+                let text = String(remainder)
+                if !text.isEmpty {
+                    appendSegment(text, isActive: active, to: &segments)
+                }
+                break
+            }
+        }
+
+        return segments
+    }
+
+    private func appendSegment(_ text: String, isActive: Bool, to segments: inout [SignatureSegment]) {
+        guard !text.isEmpty else {
+            return
+        }
+        if let last = segments.last, last.isActive == isActive {
+            segments[segments.count - 1] = SignatureSegment(text: last.text + text, isActive: isActive)
+        } else {
+            segments.append(SignatureSegment(text: text, isActive: isActive))
+        }
+    }
+
+    private func signatureText(for segments: [SignatureSegment]) -> Text {
+        segments.reduce(Text("")) { partial, segment in
+            partial + signatureTextSegment(segment)
+        }
+    }
+
+    private func signatureTextSegment(_ segment: SignatureSegment) -> Text {
+        let text = Text(verbatim: segment.text)
+        if segment.isActive {
+            return text
+                .fontWeight(.semibold)
+                .foregroundColor(theme.accentColor.opacity(0.96))
+                .underline(true, color: theme.accentColor.opacity(0.55))
+        }
+        return text.foregroundColor(theme.primaryTextColor.opacity(0.94))
     }
 }

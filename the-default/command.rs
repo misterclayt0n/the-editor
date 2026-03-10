@@ -2172,7 +2172,6 @@ fn on_render_with_styles<Ctx: DefaultContext>(ctx: &mut Ctx, styles: RenderStyle
 fn insert_char<Ctx: DefaultContext>(ctx: &mut Ctx, ch: char) {
   let doc = ctx.editor().document_mut();
   let selection = doc.selection().clone();
-  let cursor_selection = selection.clone().cursors(doc.text().slice(..));
 
   let pairs = AutoPairs::default();
   if let Ok(Some(tx)) = auto_pairs::hook(doc.text(), &selection, ch, &pairs) {
@@ -2182,9 +2181,40 @@ fn insert_char<Ctx: DefaultContext>(ctx: &mut Ctx, ch: char) {
 
   let mut text = Tendril::new();
   text.push(ch);
-  let Ok(tx) = Transaction::insert(doc.text(), &cursor_selection, text) else {
+  let inserted_len = text.chars().count() as isize;
+  let mut offset = 0isize;
+  let mut ranges = SmallVec::<[Range; 1]>::with_capacity(selection.len());
+
+  let Ok(tx) = Transaction::change_by_selection(doc.text(), &selection, |range| {
+    let head = (range.head as isize + offset).max(0) as usize;
+    let next_range = if range.is_empty() {
+      let cursor = head + inserted_len.max(0) as usize;
+      Range::point(cursor)
+    } else if range.direction() == MoveDir::Forward {
+      Range::new(
+        (range.anchor as isize + offset).max(0) as usize,
+        head + inserted_len.max(0) as usize,
+      )
+    } else {
+      Range::new(
+        (range.anchor as isize + offset + inserted_len).max(0) as usize,
+        head,
+      )
+    };
+    ranges.push(next_range);
+    offset += inserted_len;
+    (range.head, range.head, Some(text.clone()))
+  }) else {
     return;
   };
+
+  let cursor_ids: SmallVec<[CursorId; 1]> = selection.cursor_ids().iter().copied().collect();
+  let new_selection = if cursor_ids.len() == ranges.len() {
+    Selection::new_with_ids(ranges, cursor_ids).unwrap_or_else(|_| selection.clone())
+  } else {
+    Selection::new(ranges).unwrap_or_else(|_| selection.clone())
+  };
+  let tx = tx.with_selection(new_selection);
   let _ = ctx.apply_transaction(&tx);
 }
 

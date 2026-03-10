@@ -5594,47 +5594,17 @@ fn insert_at_line_end<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
   ctx.request_render();
 }
 
-fn append_mode_should_insert_eof_newline(selection: &Selection, slice: RopeSlice) -> bool {
-  selection
-    .iter()
-    .last()
-    .is_some_and(|range| !range.is_empty() && range.to() == slice.len_chars())
-}
-
 fn append_mode_selection(selection: &Selection, slice: RopeSlice) -> Selection {
   selection.clone().transform(|range| {
-    Range::new(range.from(), next_grapheme_boundary(slice, range.to()))
+    if range.is_empty() {
+      Range::new(range.head, next_grapheme_boundary(slice, range.head))
+    } else {
+      Range::new(range.from(), range.to())
+    }
   })
 }
 
 fn append_mode<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
-  let should_insert_newline = {
-    let doc = ctx.editor_ref().document();
-    let slice = doc.text().slice(..);
-    append_mode_should_insert_eof_newline(doc.selection(), slice)
-  };
-
-  if should_insert_newline {
-    let tx = {
-      let doc = ctx.editor_ref().document();
-      let end = doc.text().len_chars();
-      Transaction::change(
-        doc.text(),
-        [(end, end, Some(doc.line_ending().as_str().into()))].into_iter(),
-      )
-    };
-
-    let Ok(tx) = tx else {
-      ctx.push_error("append", "failed to build newline transaction");
-      return;
-    };
-
-    if !ctx.apply_transaction(&tx) {
-      ctx.push_error("append", "failed to extend buffer for append mode");
-      return;
-    }
-  }
-
   let new_selection = {
     let doc = ctx.editor_ref().document();
     let slice = doc.text().slice(..);
@@ -6777,7 +6747,6 @@ mod tests {
   use super::{
     Command,
     append_mode_selection,
-    append_mode_should_insert_eof_newline,
     command_from_name,
     edit_current_file_path_prompt_input,
   };
@@ -6826,22 +6795,23 @@ mod tests {
     let text = Rope::from("factorial(");
     let selection = Selection::single(0, 9);
     let result = append_mode_selection(&selection, text.slice(..));
-    assert_eq!(result.ranges(), &[Range::new(0, 10)]);
+    assert_eq!(result.ranges(), &[Range::new(0, 9)]);
   }
 
   #[test]
-  fn append_mode_only_inserts_newline_for_non_empty_selection_at_eof() {
-    let text = Rope::from("factorial");
+  fn append_mode_moves_point_cursor_after_current_grapheme() {
+    let text = Rope::from("factorial()");
+    let selection = Selection::point(8);
+    let result = append_mode_selection(&selection, text.slice(..));
+    assert_eq!(result.ranges(), &[Range::new(8, 9)]);
+  }
 
-    assert!(append_mode_should_insert_eof_newline(
-      &Selection::single(0, text.len_chars()),
-      text.slice(..)
-    ));
-
-    assert!(!append_mode_should_insert_eof_newline(
-      &Selection::single(text.len_chars(), text.len_chars()),
-      text.slice(..)
-    ));
+  #[test]
+  fn append_mode_keeps_single_grapheme_cursor_after_current_grapheme() {
+    let text = Rope::from("main()");
+    let selection = Selection::single(3, 4);
+    let result = append_mode_selection(&selection, text.slice(..));
+    assert_eq!(result.ranges(), &[Range::new(3, 4)]);
   }
 }
 

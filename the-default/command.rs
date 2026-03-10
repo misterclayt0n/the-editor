@@ -5052,7 +5052,11 @@ fn delete_selection<Ctx: DefaultContext>(ctx: &mut Ctx, yank: bool) {
     let _ = ctx.registers_mut().write('"', fragments);
   }
 
-  ctx.set_mode(Mode::Normal);
+  match ctx.mode() {
+    Mode::Normal | Mode::Select => ctx.set_mode(Mode::Normal),
+    Mode::Insert => ctx.set_mode(Mode::Insert),
+    _ => {},
+  }
   ctx.request_render();
 }
 

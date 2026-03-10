@@ -1480,6 +1480,7 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     "C-h" | "backspace" | "S-backspace" => delete_char_backward,
     "C-d" | "del" => delete_char_forward,
     "C-j" | "ret" => insert_newline,
+    "C-s" => delete_selection,
     "tab" => smart_tab,
     "S-tab" => insert_tab,
 

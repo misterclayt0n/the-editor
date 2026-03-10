@@ -5580,17 +5580,54 @@ fn insert_at_line_end<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
   ctx.request_render();
 }
 
+fn append_mode_should_insert_eof_newline(selection: &Selection, slice: RopeSlice) -> bool {
+  selection
+    .iter()
+    .last()
+    .is_some_and(|range| !range.is_empty() && range.to() == slice.len_chars())
+}
+
+fn append_mode_selection(selection: &Selection, slice: RopeSlice) -> Selection {
+  selection.clone().transform(|range| {
+    Range::new(range.from(), next_grapheme_boundary(slice, range.to()))
+  })
+}
+
 fn append_mode<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
-  let doc = ctx.editor().document_mut();
-  let selection = doc.selection().clone();
-  let slice = doc.text().slice(..);
+  let should_insert_newline = {
+    let doc = ctx.editor_ref().document();
+    let slice = doc.text().slice(..);
+    append_mode_should_insert_eof_newline(doc.selection(), slice)
+  };
 
-  let new_selection = selection.transform(|range| {
-    let pos = nth_next_grapheme_boundary(slice, range.cursor(slice), 1);
-    range.put_cursor(slice, pos, false)
-  });
+  if should_insert_newline {
+    let tx = {
+      let doc = ctx.editor_ref().document();
+      let end = doc.text().len_chars();
+      Transaction::change(
+        doc.text(),
+        [(end, end, Some(doc.line_ending().as_str().into()))].into_iter(),
+      )
+    };
 
-  let _ = doc.set_selection(new_selection);
+    let Ok(tx) = tx else {
+      ctx.push_error("append", "failed to build newline transaction");
+      return;
+    };
+
+    if !ctx.apply_transaction(&tx) {
+      ctx.push_error("append", "failed to extend buffer for append mode");
+      return;
+    }
+  }
+
+  let new_selection = {
+    let doc = ctx.editor_ref().document();
+    let slice = doc.text().slice(..);
+    append_mode_selection(doc.selection(), slice)
+  };
+
+  let _ = ctx.editor().document_mut().set_selection(new_selection);
   ctx.set_mode(Mode::Insert);
   ctx.request_render();
 }
@@ -6725,10 +6762,17 @@ pub fn command_from_name(name: &str) -> Option<Command> {
 mod tests {
   use super::{
     Command,
+    append_mode_selection,
+    append_mode_should_insert_eof_newline,
     command_from_name,
     edit_current_file_path_prompt_input,
   };
+  use ropey::Rope;
   use std::path::Path;
+  use the_lib::selection::{
+    Range,
+    Selection,
+  };
 
   #[test]
   fn terminal_command_names_map_to_commands() {
@@ -6761,6 +6805,29 @@ mod tests {
       edit_current_file_path_prompt_input(Some(Path::new("/tmp/it's.rs"))),
       "e '/tmp/it''s.rs'"
     );
+  }
+
+  #[test]
+  fn append_mode_keeps_selection_and_moves_cursor_to_end() {
+    let text = Rope::from("factorial(");
+    let selection = Selection::single(0, 9);
+    let result = append_mode_selection(&selection, text.slice(..));
+    assert_eq!(result.ranges(), &[Range::new(0, 10)]);
+  }
+
+  #[test]
+  fn append_mode_only_inserts_newline_for_non_empty_selection_at_eof() {
+    let text = Rope::from("factorial");
+
+    assert!(append_mode_should_insert_eof_newline(
+      &Selection::single(0, text.len_chars()),
+      text.slice(..)
+    ));
+
+    assert!(!append_mode_should_insert_eof_newline(
+      &Selection::single(text.len_chars(), text.len_chars()),
+      text.slice(..)
+    ));
   }
 }
 

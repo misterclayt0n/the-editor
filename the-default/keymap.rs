@@ -6,7 +6,10 @@ use std::{
 
 use smallvec::SmallVec;
 use the_core::grapheme::prev_grapheme_boundary;
-use the_lib::selection::Range;
+use the_lib::selection::{
+  Range,
+  Selection,
+};
 
 use crate::{
   Command,
@@ -637,6 +640,12 @@ fn apply_count_prefix(command: Command, count: usize) -> Command {
   }
 }
 
+fn insert_mode_selection(selection: &Selection) -> Selection {
+  selection
+    .clone()
+    .transform(|range| Range::new(range.to(), range.from()))
+}
+
 fn apply_mode<Ctx: DefaultContext>(ctx: &mut Ctx, mode: Mode) {
   let previous_mode = ctx.mode();
   if previous_mode == Mode::Insert && mode != Mode::Insert {
@@ -665,13 +674,7 @@ fn apply_mode<Ctx: DefaultContext>(ctx: &mut Ctx, mode: Mode) {
 
   if previous_mode == Mode::Normal && mode == Mode::Insert {
     let doc = ctx.editor().document_mut();
-    let text = doc.text().slice(..);
-    // Normal mode uses block-cursor semantics, so entering insert mode should
-    // always collapse to the left edge of that block cursor.
-    let selection = doc
-      .selection()
-      .clone()
-      .transform(|range| Range::point(range.cursor(text)));
+    let selection = insert_mode_selection(doc.selection());
     let _ = doc.set_selection(selection);
   }
 
@@ -1501,6 +1504,29 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
   map.insert(Mode::Insert, insert);
   map.insert(Mode::Command, command);
   map
+}
+
+#[cfg(test)]
+mod tests {
+  use super::insert_mode_selection;
+  use the_lib::selection::{
+    Range,
+    Selection,
+  };
+
+  #[test]
+  fn insert_mode_keeps_selection_and_moves_cursor_to_start() {
+    let selection = Selection::single(2, 11);
+    let result = insert_mode_selection(&selection);
+    assert_eq!(result.ranges(), &[Range::new(11, 2)]);
+  }
+
+  #[test]
+  fn insert_mode_leaves_point_cursors_in_place() {
+    let selection = Selection::single(5, 5);
+    let result = insert_mode_selection(&selection);
+    assert_eq!(result.ranges(), &[Range::new(5, 5)]);
+  }
 }
 
 #[macro_export]

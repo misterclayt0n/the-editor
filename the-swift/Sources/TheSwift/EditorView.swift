@@ -1124,7 +1124,7 @@ struct EditorView: View {
         var aggregateStats = DrawPlanPerfStats.zero
         var activePlanStats = DrawPlanPerfStats.zero
         guard paneCount > 0 else {
-            renderSceneCache.pruneTextScenes(retaining: Set([0]))
+            renderSceneCache.pruneScenes(retaining: Set([0]))
             let fallbackStats = drawPlan(
                 in: context,
                 size: size,
@@ -1170,7 +1170,7 @@ struct EditorView: View {
         for index in 0..<paneCount {
             retainedPaneIds.insert(framePlan.pane_at(UInt(index)).pane_id())
         }
-        renderSceneCache.pruneTextScenes(retaining: retainedPaneIds)
+        renderSceneCache.pruneScenes(retaining: retainedPaneIds)
 
         for index in 0..<paneCount {
             let pane = framePlan.pane_at(UInt(index))
@@ -1416,9 +1416,20 @@ struct EditorView: View {
             contentOffsetX: contentOffsetX
         )
         let perfAfterGutter = perfEnabled ? perfNow() : 0
-        drawSelections(in: context, plan: plan, cellSize: cellSize, contentOffsetX: contentOffsetX)
+        let decorationScene = renderSceneCache.preparedDecorationScene(
+            paneId: paneId,
+            plan: plan,
+            cellSize: cellSize,
+            contentOffsetX: contentOffsetX,
+            selectionColor: { selection in
+                selectionColor(for: selection)
+            },
+            underlineColor: { severity in
+                diagnosticColor(severity: severity)
+            }
+        )
+        renderSceneCache.drawDecorationScene(decorationScene, in: context)
         let perfAfterSelections = perfEnabled ? perfNow() : 0
-        drawDiagnosticUnderlines(in: context, plan: plan, cellSize: cellSize, contentOffsetX: contentOffsetX)
         let perfAfterUnderlines = perfEnabled ? perfNow() : 0
         let textStats = drawText(
             in: context,
@@ -1431,12 +1442,22 @@ struct EditorView: View {
         let perfAfterText = perfEnabled ? perfNow() : 0
         let inlineSummary = "count=\(Int(plan.inline_diagnostic_line_count())) native=0"
         let eolSummary = "count=\(Int(plan.eol_diagnostic_count())) native=1"
-        drawCursors(
-            in: context,
+        let preparedCursorScene = renderSceneCache.preparedCursorScene(
+            paneId: paneId,
             plan: plan,
             cellSize: cellSize,
             contentOffsetX: contentOffsetX,
-            cursorPickState: cursorPickState,
+            backingScale: NSApp.keyWindow?.backingScaleFactor
+                ?? NSScreen.main?.backingScaleFactor
+                ?? 2.0,
+            cursorColor: { cursor in
+                cursorColor(for: cursor.style(), fallback: SwiftUI.Color.accentColor)
+            }
+        )
+        renderSceneCache.drawCursorScene(
+            preparedCursorScene,
+            in: context,
+            pickedCursorId: pickedCursorId(plan: plan, cursorPickState: cursorPickState),
             cursorOpacity: cursorOpacity
         )
         let perfAfterCursors = perfEnabled ? perfNow() : 0
@@ -1656,6 +1677,14 @@ struct EditorView: View {
         }
     }
 
+    private func selectionColor(for selection: RenderSelection) -> SwiftUI.Color {
+        let style = selection.style()
+        if style.has_bg, let bg = ColorMapper.color(from: style.bg) {
+            return bg.opacity(0.42)
+        }
+        return SwiftUI.Color(red: 0.28, green: 0.52, blue: 1.0).opacity(0.36)
+    }
+
     private struct DrawTextStats {
         let drawnSpans: Int
         let skippedVirtualSpans: Int
@@ -1796,6 +1825,13 @@ struct EditorView: View {
                 )
             }
         }
+    }
+
+    private func pickedCursorId(plan: RenderPlan, cursorPickState: CursorPickState?) -> UInt64? {
+        let count = Int(plan.cursor_count())
+        guard let cursorPickState else { return nil }
+        guard cursorPickState.currentIndex >= 0 && cursorPickState.currentIndex < count else { return nil }
+        return plan.cursor_at(UInt(cursorPickState.currentIndex)).id()
     }
 
     // MARK: - Inline Diagnostics

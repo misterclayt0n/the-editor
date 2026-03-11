@@ -177,6 +177,30 @@ impl FileTreeState {
     }
   }
 
+  pub fn invalidate_visible_subtree(&mut self) -> bool {
+    let Some(root) = self.root.clone() else {
+      return false;
+    };
+
+    let mut invalidated = false;
+    let visible_dirs = self
+      .expanded_dirs
+      .iter()
+      .filter(|path| path.starts_with(&root))
+      .cloned()
+      .collect::<Vec<_>>();
+
+    for path in visible_dirs {
+      invalidated |= self.nodes_cache.remove(&path).is_some();
+    }
+    invalidated |= self.nodes_cache.remove(&root).is_some();
+
+    if invalidated {
+      self.bump_generation();
+    }
+    invalidated
+  }
+
   pub fn set_expanded(&mut self, path: &Path, expanded: bool) -> bool {
     let normalized = normalize_path(path);
     let Some(root) = self.root.as_ref() else {

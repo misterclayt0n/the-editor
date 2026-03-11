@@ -1661,6 +1661,12 @@ struct LspWatchedFileState {
   _watch_handle: WatchHandle,
 }
 
+struct FileTreeWatchedRootState {
+  editor_id:     LibEditorId,
+  stream:        WatchedFileEventsState,
+  _watch_handle: WatchHandle,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LspStatusPhase {
   Off,
@@ -2903,6 +2909,10 @@ fn summarize_lsp_error(message: &str) -> String {
 }
 
 fn lsp_file_watch_latency() -> Duration {
+  Duration::from_millis(120)
+}
+
+fn file_tree_watch_latency() -> Duration {
   Duration::from_millis(120)
 }
 
@@ -4501,6 +4511,7 @@ pub struct App {
   vcs_ui:                          VcsUiState,
   lsp_active_progress_tokens:      HashSet<String>,
   lsp_watched_file:                Option<LspWatchedFileState>,
+  file_tree_watched_root:          Option<FileTreeWatchedRootState>,
   lsp_pending_requests:            HashMap<u64, PendingLspRequestKind>,
   lsp_completion_items:            Vec<LspCompletionItem>,
   lsp_completion_raw_items:        Vec<Value>,
@@ -5391,6 +5402,99 @@ impl App {
     the_default::effective_working_directory(workspace_root.as_path())
   }
 
+  fn sync_file_tree_watch_state(&mut self) -> bool {
+    let Some(editor_id) = self.active_editor else {
+      let had_watch = self.file_tree_watched_root.take().is_some();
+      return had_watch;
+    };
+
+    let working_directory = self.effective_file_tree_root();
+    let (root, tree_changed) = {
+      let Some(state) = self.states.get_mut(&editor_id) else {
+        let had_watch = self.file_tree_watched_root.take().is_some();
+        return had_watch;
+      };
+      let before_generation = state.file_tree.refresh_generation;
+      state
+        .file_tree
+        .sync_for_working_directory(working_directory.as_path());
+      let root = if state.file_tree.visible {
+        state.file_tree.root().map(Path::to_path_buf)
+      } else {
+        None
+      };
+      (
+        root,
+        state.file_tree.refresh_generation != before_generation,
+      )
+    };
+
+    let Some(root) = root else {
+      let had_watch = self.file_tree_watched_root.take().is_some();
+      return had_watch;
+    };
+
+    let needs_rebind = self
+      .file_tree_watched_root
+      .as_ref()
+      .is_none_or(|watch| watch.editor_id != editor_id || watch.stream.path != root);
+    if needs_rebind {
+      let (events_rx, watch_handle) = watch_path(root.as_path(), file_tree_watch_latency());
+      self.file_tree_watched_root = Some(FileTreeWatchedRootState {
+        editor_id,
+        stream: WatchedFileEventsState {
+          path: root,
+          uri: String::new(),
+          events_rx,
+          suppress_until: None,
+          reload_state: FileWatchReloadState::Clean,
+          reload_io: FileWatchReloadIoState::default(),
+        },
+        _watch_handle: watch_handle,
+      });
+    }
+
+    tree_changed
+  }
+
+  fn poll_file_tree_watch(&mut self) -> bool {
+    let watched_path = match poll_watch_events(
+      self
+        .file_tree_watched_root
+        .as_mut()
+        .map(|watch| &mut watch.stream),
+      Instant::now(),
+      "ffi-file-tree",
+      |event, message| trace_file_watch_event(event, message),
+    ) {
+      WatchPollOutcome::NoChanges => return false,
+      WatchPollOutcome::Disconnected { .. } => {
+        self.file_tree_watched_root = None;
+        let _ = self.sync_file_tree_watch_state();
+        return false;
+      },
+      WatchPollOutcome::Changes { path, .. } => path,
+    };
+
+    trace_file_watch_event(
+      "consumer_file_tree_changes_collected",
+      format!("client=ffi path={}", watched_path.display()),
+    );
+
+    let mut changed = false;
+    if let Some(editor_id) = self.active_editor
+      && let Some(state) = self.states.get_mut(&editor_id)
+    {
+      changed = state.file_tree.invalidate_visible_subtree();
+    }
+
+    if watched_path.starts_with(&self.workspace_root) && self.refresh_vcs_ui_state() {
+      changed = true;
+    }
+
+    changed
+  }
+
   pub fn new() -> Self {
     let dispatch = config_build_dispatch::<App>();
     let workspace_root = env::current_dir()
@@ -5439,6 +5543,7 @@ impl App {
       vcs_ui: VcsUiState::default(),
       lsp_active_progress_tokens: HashSet::new(),
       lsp_watched_file: None,
+      file_tree_watched_root: None,
       lsp_pending_requests: HashMap::new(),
       lsp_completion_items: Vec::new(),
       lsp_completion_raw_items: Vec::new(),
@@ -5624,6 +5729,7 @@ impl App {
       self.vcs_diff_handles.remove(&id);
       if self.active_editor == Some(id) {
         self.active_editor = None;
+        self.file_tree_watched_root = None;
         self.stop_lsp_runtime(Some("stopped"));
         self.global_search.deactivate();
       }
@@ -7675,6 +7781,7 @@ impl App {
       return false;
     }
     self.active_state_mut().file_tree.set_visible(visible);
+    let _ = self.sync_file_tree_watch_state();
     self.request_render();
     true
   }
@@ -7684,6 +7791,7 @@ impl App {
       return false;
     }
     self.active_state_mut().file_tree.toggle_visible();
+    let _ = self.sync_file_tree_watch_state();
     self.request_render();
     true
   }
@@ -7697,6 +7805,7 @@ impl App {
       .active_state_mut()
       .file_tree
       .open_working_directory(working_directory.as_path());
+    let _ = self.sync_file_tree_watch_state();
     self.request_render();
     true
   }
@@ -7714,6 +7823,7 @@ impl App {
       .active_state_mut()
       .file_tree
       .open_current_buffer_directory(active_path.as_deref(), working_directory.as_path());
+    let _ = self.sync_file_tree_watch_state();
     self.request_render();
     true
   }
@@ -7828,6 +7938,9 @@ impl App {
 
   fn poll_background_active(&mut self) -> bool {
     let mut changed = false;
+    if self.sync_file_tree_watch_state() {
+      changed = true;
+    }
     if self.poll_lsp_completion_auto_trigger() {
       changed = true;
     }
@@ -7847,6 +7960,9 @@ impl App {
       changed = true;
     }
     if self.poll_lsp_file_watch() {
+      changed = true;
+    }
+    if self.poll_file_tree_watch() {
       changed = true;
     }
     if self.tick_lsp_statusline() {
@@ -11886,6 +12002,7 @@ impl App {
       );
       self.refresh_lsp_runtime_for_active_file();
       let _ = self.refresh_vcs_diff_base_for_editor(id);
+      let _ = self.sync_file_tree_watch_state();
     }
     true
   }
@@ -12565,24 +12682,27 @@ impl DefaultContext for App {
       .active_editor_ref()
       .active_file_path()
       .map(Path::to_path_buf);
-    let state = self.active_state_mut();
 
     if current_buffer_directory {
-      state
+      self
+        .active_state_mut()
         .file_tree
         .open_current_buffer_directory(active_path.as_deref(), working_directory.as_path());
+      let _ = self.sync_file_tree_watch_state();
       self.request_render();
       return true;
     }
 
-    state
+    self
+      .active_state_mut()
       .file_tree
       .toggle_working_directory(working_directory.as_path());
-    if state.file_tree.visible
+    if self.active_state_ref().file_tree.visible
       && let Some(active_path) = active_path.as_deref()
     {
-      let _ = state.file_tree.select_path(active_path);
+      let _ = self.active_state_mut().file_tree.select_path(active_path);
     }
+    let _ = self.sync_file_tree_watch_state();
     self.request_render();
     true
   }
@@ -13000,6 +13120,7 @@ impl DefaultContext for App {
           .file_tree
           .sync_for_active_file(working_directory.as_path(), active_path.as_deref());
       }
+      let _ = self.sync_file_tree_watch_state();
 
       self.refresh_editor_syntax(id);
       self.refresh_lsp_runtime_for_active_file();
@@ -15469,6 +15590,36 @@ mod tests {
   }
 
   #[test]
+  fn file_tree_watch_refreshes_visible_tree_after_external_create() {
+    let _guard = ffi_test_guard();
+    let workspace = TempTestWorkspace::new("file-tree-watch", "main.rs", "fn main() {}\n");
+    let mut app = App::new();
+    let id = app.create_editor("", default_viewport(), ffi::Position { row: 0, col: 0 });
+
+    assert!(app.open_file_path(id, workspace.file_path().to_string_lossy().as_ref()));
+    assert!(app.file_tree_open_workspace_root(id));
+
+    let before = app.file_tree_snapshot(id, 128);
+    let expected_root = fs::canonicalize(workspace.root_path()).expect("canonical root");
+    assert_eq!(PathBuf::from(before.root().to_string()), expected_root);
+    assert!((0..before.node_count()).all(|index| before.node_at(index).name() != "created.txt"));
+
+    let watch_tx = install_test_file_tree_watch_state(&mut app, id, workspace.root_path());
+    let created_path = workspace.root_path().join("created.txt");
+    fs::write(&created_path, "created\n").expect("create watched file");
+    watch_tx
+      .send(vec![PathEvent {
+        path: created_path,
+        kind: PathEventKind::Created,
+      }])
+      .expect("send file-tree watch event");
+
+    assert!(app.poll_background(id));
+    let after = app.file_tree_snapshot(id, 128);
+    assert!((0..after.node_count()).any(|index| after.node_at(index).name() == "created.txt"));
+  }
+
+  #[test]
   fn file_picker_window_snapshot_tracks_window_start_and_selection() {
     let _guard = ffi_test_guard();
     let mut app = App::new();
@@ -16224,6 +16375,31 @@ mod tests {
       stream:        super::WatchedFileEventsState {
         path: path.to_path_buf(),
         uri,
+        events_rx,
+        suppress_until: None,
+        reload_state: super::FileWatchReloadState::Clean,
+        reload_io: super::FileWatchReloadIoState::default(),
+      },
+      _watch_handle: watch_handle,
+    });
+
+    events_tx
+  }
+
+  fn install_test_file_tree_watch_state(
+    app: &mut App,
+    id: ffi::EditorId,
+    path: &Path,
+  ) -> Sender<Vec<PathEvent>> {
+    assert!(app.activate(id).is_some());
+    let (events_tx, events_rx) = channel();
+    let (_unused_rx, watch_handle) = super::watch_path(path, Duration::from_millis(0));
+
+    app.file_tree_watched_root = Some(super::FileTreeWatchedRootState {
+      editor_id:     app.active_editor.expect("active editor"),
+      stream:        super::WatchedFileEventsState {
+        path: path.to_path_buf(),
+        uri: String::new(),
         events_rx,
         suppress_until: None,
         reload_state: super::FileWatchReloadState::Clean,

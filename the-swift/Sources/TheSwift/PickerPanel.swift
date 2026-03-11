@@ -292,6 +292,10 @@ struct PickerPanel<
         onMoveSelectionRequest != nil
     }
 
+    private var displayedSelectedIndex: Int? {
+        usesExternalSelection ? clampedIndex(externalSelectedIndex) : selectedIndex
+    }
+
     var body: some View {
         panelContainer
             .background(
@@ -439,7 +443,7 @@ struct PickerPanel<
                 .textFieldStyle(.plain)
                 .focused($isTextFieldFocused)
                 .onSubmit {
-                    onSubmit(clampedIndex(selectedIndex))
+                    onSubmit(displayedSelectedIndex)
                 }
                 .onExitCommand {
                     onClose()
@@ -505,7 +509,7 @@ struct PickerPanel<
                 scrollSelectionIntoView(index: index, proxy: proxy)
             }
             .onAppear {
-                guard let index = selectedIndex else { return }
+                guard let index = displayedSelectedIndex else { return }
                 scrollSelectionIntoView(index: index, proxy: proxy)
             }
         }
@@ -560,7 +564,7 @@ struct PickerPanel<
             recomputeVisibleIndexRangeNative(config: config)
             if let anchor = clampedIndex(externalScrollAnchorIndex) {
                 scrollListOffsetIntoViewNative(topIndex: anchor, config: config)
-            } else if let index = selectedIndex {
+            } else if let index = displayedSelectedIndex {
                 scrollSelectionIntoViewNative(index: index, config: config)
             }
         }
@@ -592,7 +596,7 @@ struct PickerPanel<
     @ViewBuilder
     private func rowButton(index: Int, fixedRowHeight: CGFloat?) -> some View {
         let selectable = canSelectRow(index)
-        let isSelected = selectable && (selectedIndex == index)
+        let isSelected = selectable && (displayedSelectedIndex == index)
         let isHovered = selectable && (hoveredIndex == index)
 
         let rowVisual = itemContent(index, isSelected, isHovered)
@@ -606,7 +610,9 @@ struct PickerPanel<
 
         if selectable {
             Button {
-                selectedIndex = index
+                if !usesExternalSelection {
+                    selectedIndex = index
+                }
                 onSelectionChange?(index)
                 onSubmit(index)
             } label: {
@@ -644,7 +650,7 @@ struct PickerPanel<
         let step = virtualRowStep(config: config)
         let fallbackViewport = max(1, maxListHeight)
         let estimatedVisible = max(1, Int(ceil(fallbackViewport / max(1, step))))
-        let anchor = clampedIndex(selectedIndex) ?? 0
+        let anchor = displayedSelectedIndex ?? 0
         let end = min(itemCount - 1, anchor + estimatedVisible - 1)
         return anchor...max(anchor, end)
     }

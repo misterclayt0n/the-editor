@@ -714,6 +714,9 @@ struct EditorView: View {
             onFilePickerSelectionChange: { index in
                 model.filePickerSelectIndex(index)
             },
+            onFilePickerMoveSelection: { delta in
+                model.filePickerMoveSelection(delta)
+            },
             onFilePickerListWindowRequest: { offset, visibleRows, overscan in
                 model.filePickerListWindowRequest(anchorIndex: offset, visibleRows: visibleRows, overscan: overscan)
             },

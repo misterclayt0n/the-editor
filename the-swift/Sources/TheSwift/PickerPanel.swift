@@ -29,10 +29,16 @@ private struct PickerViewportFramePreferenceKey: PreferenceKey {
     }
 }
 
+private enum PickerNativeScrollMode: Equatable {
+    case revealRow
+    case setTop
+}
+
 private struct PickerNativeScrollRequest: Equatable {
     let id: Int
     let rowTop: CGFloat
     let rowHeight: CGFloat
+    let mode: PickerNativeScrollMode
 }
 
 private final class PickerNativeScrollDocumentView: NSView {
@@ -201,15 +207,23 @@ private struct NativePickerScrollView<Content: View>: NSViewRepresentable {
             guard let request else { return }
             guard request.id != lastHandledRequestId else { return }
             guard let scrollView else { return }
+            guard !isLiveScrolling else { return }
 
             let rowHeight = max(1, request.rowHeight)
-            let maxRowTop = max(0, contentHeight - rowHeight)
-            let rowTop = max(0, min(request.rowTop, maxRowTop))
             let width = max(1, scrollView.contentSize.width)
-            let rect = NSRect(x: 0, y: rowTop, width: width, height: rowHeight)
 
-            // Native minimal scroll behavior (only scroll when needed).
-            scrollView.documentView?.scrollToVisible(rect)
+            switch request.mode {
+            case .revealRow:
+                let maxRowTop = max(0, contentHeight - rowHeight)
+                let rowTop = max(0, min(request.rowTop, maxRowTop))
+                let rect = NSRect(x: 0, y: rowTop, width: width, height: rowHeight)
+                scrollView.documentView?.scrollToVisible(rect)
+            case .setTop:
+                let maxViewportTop = max(0, contentHeight - max(1, scrollView.contentSize.height))
+                let top = max(0, min(request.rowTop, maxViewportTop))
+                scrollView.contentView.scroll(to: NSPoint(x: 0, y: top))
+            }
+
             scrollView.reflectScrolledClipView(scrollView.contentView)
             lastHandledRequestId = request.id
             reportMetrics()
@@ -238,6 +252,8 @@ struct PickerPanel<
     var virtualList: PickerPanelVirtualListConfig? = nil
     var isRowSelectable: ((Int) -> Bool)? = nil
     var onVisibleRangeChange: ((ClosedRange<Int>) -> Void)? = nil
+    var onMoveSelectionRequest: ((Int) -> Void)? = nil
+    var externalScrollAnchorIndex: Int? = nil
 
     // Data
     let itemCount: Int
@@ -272,11 +288,21 @@ struct PickerPanel<
 
     private let backgroundColor: Color = Color(nsColor: .windowBackgroundColor)
 
+    private var usesExternalSelection: Bool {
+        onMoveSelectionRequest != nil
+    }
+
     var body: some View {
         panelContainer
             .background(
                 PickerKeyInterceptor(
-                    onMoveSelection: { delta in moveSelection(delta) },
+                    onMoveSelection: { delta in
+                        if let onMoveSelectionRequest {
+                            onMoveSelectionRequest(delta)
+                        } else {
+                            moveSelection(delta)
+                        }
+                    },
                     onClose: showCtrlCClose ? { onClose() } : nil,
                     onTextInput: { chars in
                         query.append(chars)
@@ -300,7 +326,7 @@ struct PickerPanel<
                 DispatchQueue.main.async {
                     isTextFieldFocused = true
                 }
-                if let sel = selectedIndex {
+                if !usesExternalSelection, let sel = selectedIndex {
                     onSelectionChange?(sel)
                 }
             }
@@ -311,11 +337,17 @@ struct PickerPanel<
                 lastProgrammaticScrollIndex = nil
                 syncSelection()
             }
+            .onChange(of: externalSelectedIndex) { _ in
+                if usesExternalSelection {
+                    syncSelectionFromExternal()
+                }
+            }
             .onChange(of: itemCount) { _ in
                 lastProgrammaticScrollIndex = nil
                 syncSelection()
             }
             .onChange(of: selectedIndex) { newValue in
+                guard !usesExternalSelection else { return }
                 normalizeSelection(newValue)
             }
     }
@@ -516,16 +548,27 @@ struct PickerPanel<
         }
         .frame(maxHeight: maxListHeight)
         .onChange(of: selectedIndex) { newIndex in
+            guard externalScrollAnchorIndex == nil else { return }
             guard let index = newIndex else { return }
             scrollSelectionIntoViewNative(index: index, config: config)
         }
+        .onChange(of: externalScrollAnchorIndex) { newAnchor in
+            guard let anchor = clampedIndex(newAnchor) else { return }
+            scrollListOffsetIntoViewNative(topIndex: anchor, config: config)
+        }
         .onAppear {
             recomputeVisibleIndexRangeNative(config: config)
-            guard let index = selectedIndex else { return }
-            scrollSelectionIntoViewNative(index: index, config: config)
+            if let anchor = clampedIndex(externalScrollAnchorIndex) {
+                scrollListOffsetIntoViewNative(topIndex: anchor, config: config)
+            } else if let index = selectedIndex {
+                scrollSelectionIntoViewNative(index: index, config: config)
+            }
         }
         .onChange(of: itemCount) { _ in
             recomputeVisibleIndexRangeNative(config: config)
+            if let anchor = clampedIndex(externalScrollAnchorIndex) {
+                scrollListOffsetIntoViewNative(topIndex: anchor, config: config)
+            }
         }
     }
 
@@ -658,9 +701,21 @@ struct PickerPanel<
         nativeScrollRequest = PickerNativeScrollRequest(
             id: nativeScrollRequestCounter,
             rowTop: virtualRowTop(index, config: config),
-            rowHeight: max(1, config.rowHeight)
+            rowHeight: max(1, config.rowHeight),
+            mode: .revealRow
         )
         lastProgrammaticScrollIndex = index
+    }
+
+    private func scrollListOffsetIntoViewNative(topIndex: Int, config: PickerPanelVirtualListConfig) {
+        nativeScrollRequestCounter += 1
+        nativeScrollRequest = PickerNativeScrollRequest(
+            id: nativeScrollRequestCounter,
+            rowTop: virtualRowTop(topIndex, config: config),
+            rowHeight: max(1, config.rowHeight),
+            mode: .setTop
+        )
+        lastProgrammaticScrollIndex = nil
     }
 
     // MARK: - Selection logic
@@ -688,6 +743,11 @@ struct PickerPanel<
     }
 
     private func syncSelection() {
+        if usesExternalSelection {
+            syncSelectionFromExternal()
+            return
+        }
+
         if itemCount == 0 {
             selectedIndex = nil
             return
@@ -705,6 +765,13 @@ struct PickerPanel<
         }
     }
 
+    private func syncSelectionFromExternal() {
+        let next = clampedIndex(externalSelectedIndex)
+        if selectedIndex != next {
+            selectedIndex = next
+        }
+    }
+
     private func clampedIndex(_ index: Int?) -> Int? {
         guard itemCount > 0 else { return nil }
         guard let index else { return nil }
@@ -713,6 +780,9 @@ struct PickerPanel<
 
     private func initialSelection() -> Int? {
         guard itemCount > 0 else { return nil }
+        if usesExternalSelection {
+            return clampedIndex(externalSelectedIndex)
+        }
         return normalizedSelectableIndex(externalSelectedIndex, preferredDirection: 1)
             ?? (autoSelectFirstItem ? firstSelectableIndex() : nil)
     }

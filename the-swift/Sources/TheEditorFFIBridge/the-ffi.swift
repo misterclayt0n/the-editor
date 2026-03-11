@@ -341,6 +341,26 @@ extension AppRefMut {
         __swift_bridge__$App$file_picker_select_index(ptr, id.intoFfiRepr(), index)
     }
 
+    public func file_picker_list_offset(_ id: EditorId) -> UInt {
+        __swift_bridge__$App$file_picker_list_offset(ptr, id.intoFfiRepr())
+    }
+
+    public func file_picker_list_visible(_ id: EditorId) -> UInt {
+        __swift_bridge__$App$file_picker_list_visible(ptr, id.intoFfiRepr())
+    }
+
+    public func file_picker_set_list_offset(_ id: EditorId, _ offset: UInt) -> Bool {
+        __swift_bridge__$App$file_picker_set_list_offset(ptr, id.intoFfiRepr(), offset)
+    }
+
+    public func file_picker_set_visible_rows(_ id: EditorId, _ visible_rows: UInt) -> Bool {
+        __swift_bridge__$App$file_picker_set_visible_rows(ptr, id.intoFfiRepr(), visible_rows)
+    }
+
+    public func file_picker_move_selection(_ id: EditorId, _ delta: Int64) -> Bool {
+        __swift_bridge__$App$file_picker_move_selection(ptr, id.intoFfiRepr(), delta)
+    }
+
     public func file_tree_set_visible(_ id: EditorId, _ visible: Bool) -> Bool {
         __swift_bridge__$App$file_tree_set_visible(ptr, id.intoFfiRepr(), visible)
     }
@@ -3128,6 +3148,14 @@ extension FilePickerSnapshotDataRef {
 
     public func selected_index() -> Int64 {
         __swift_bridge__$FilePickerSnapshotData$selected_index(ptr)
+    }
+
+    public func list_offset() -> UInt {
+        __swift_bridge__$FilePickerSnapshotData$list_offset(ptr)
+    }
+
+    public func list_visible() -> UInt {
+        __swift_bridge__$FilePickerSnapshotData$list_visible(ptr)
     }
 
     public func window_start() -> UInt {

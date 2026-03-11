@@ -167,9 +167,7 @@ final class EditorModel: ObservableObject {
     private var lastPickerRoot: String? = nil
     private var lastPickerKind: UInt8 = 0
     private var lastPickerSelectedIndex: Int? = nil
-    private var filePickerListAnchorIndex: Int = 0
-    private var filePickerListVisibleRows: Int = 24
-    private var filePickerListOverscan: Int = 32
+    private let filePickerListOverscanRows: Int = 32
     private var lastFileTreeRefreshGeneration: UInt64 = 0
     private var lastFileTreeVcsGeneration: UInt64 = 0
     private var lastFileTreeVisible: Bool = false
@@ -1636,7 +1634,6 @@ final class EditorModel: ObservableObject {
 
     func setFilePickerQuery(_ query: String) {
         _ = app.file_picker_set_query(editorId, query)
-        filePickerListAnchorIndex = 0
         filePickerPreviewOffsetHint = -1
         refreshFilePicker(force: true)
         refreshFilePickerPreview()
@@ -1649,7 +1646,31 @@ final class EditorModel: ObservableObject {
 
     func filePickerSelectIndex(_ index: Int) {
         _ = app.file_picker_select_index(editorId, UInt(index))
-        if let snapshot = filePickerSnapshot {
+        filePickerPreviewOffsetHint = -1
+        refreshFilePicker(force: true)
+        refreshFilePickerPreview()
+    }
+
+    func filePickerMoveSelection(_ delta: Int) {
+        guard delta != 0 else { return }
+        _ = app.file_picker_move_selection(editorId, Int64(delta))
+        filePickerPreviewOffsetHint = -1
+        refreshFilePicker(force: true)
+        refreshFilePickerPreview()
+    }
+
+    func filePickerListWindowRequest(anchorIndex: Int, visibleRows: Int, overscan: Int) {
+        let requestedVisibleRows = max(1, visibleRows)
+        let requestedOffset = max(0, anchorIndex)
+        let requestedOverscan = max(1, overscan)
+
+        let visibleChanged = app.file_picker_set_visible_rows(editorId, UInt(requestedVisibleRows))
+        let offsetChanged = app.file_picker_set_list_offset(editorId, UInt(requestedOffset))
+
+        let listOffset = Int(app.file_picker_list_offset(editorId))
+        let listVisible = max(1, Int(app.file_picker_list_visible(editorId)))
+        if let snapshot = filePickerSnapshot,
+           snapshot.listOffset != listOffset || snapshot.listVisible != listVisible {
             filePickerSnapshot = FilePickerSnapshot(
                 active: snapshot.active,
                 title: snapshot.title,
@@ -1659,31 +1680,25 @@ final class EditorModel: ObservableObject {
                 totalCount: snapshot.totalCount,
                 scanning: snapshot.scanning,
                 root: snapshot.root,
-                selectedIndex: index,
+                selectedIndex: snapshot.selectedIndex,
+                listOffset: listOffset,
+                listVisible: listVisible,
                 windowStart: snapshot.windowStart,
                 items: snapshot.items
             )
         }
-        filePickerPreviewOffsetHint = -1
-        refreshFilePickerPreview()
-    }
-
-    func filePickerListWindowRequest(anchorIndex: Int, visibleRows: Int, overscan: Int) {
-        filePickerListAnchorIndex = max(0, anchorIndex)
-        filePickerListVisibleRows = max(1, visibleRows)
-        filePickerListOverscan = max(1, overscan)
 
         guard let snapshot = filePickerSnapshot else {
             refreshFilePicker(force: true)
             return
         }
 
-        let requestedStart = max(0, filePickerListAnchorIndex - filePickerListOverscan)
-        let requestedCount = max(1, filePickerListVisibleRows + (filePickerListOverscan * 2))
+        let requestedStart = max(0, listOffset - requestedOverscan)
+        let requestedCount = max(1, listVisible + (requestedOverscan * 2))
         let loadedStart = snapshot.windowStart
         let loadedEnd = loadedStart + snapshot.items.count
         let requestedEnd = requestedStart + requestedCount
-        guard requestedStart < loadedStart || requestedEnd > loadedEnd else {
+        guard visibleChanged || offsetChanged || requestedStart < loadedStart || requestedEnd > loadedEnd else {
             return
         }
         refreshFilePicker(force: true)
@@ -1711,9 +1726,6 @@ final class EditorModel: ObservableObject {
         lastPickerRoot = nil
         lastPickerKind = 0
         lastPickerSelectedIndex = nil
-        filePickerListAnchorIndex = 0
-        filePickerListVisibleRows = 24
-        filePickerListOverscan = 32
         filePickerPreviewOffsetHint = -1
         filePickerPreviewVisibleRows = 24
         filePickerPreviewOverscan = 24
@@ -1725,8 +1737,10 @@ final class EditorModel: ObservableObject {
     func refreshFilePicker(force: Bool = false) {
         let t0 = CFAbsoluteTimeGetCurrent()
         let perfT0 = DispatchTime.now().uptimeNanoseconds
-        let requestedStart = max(0, filePickerListAnchorIndex - filePickerListOverscan)
-        let requestedCount = max(1, filePickerListVisibleRows + (filePickerListOverscan * 2))
+        let listOffset = Int(app.file_picker_list_offset(editorId))
+        let listVisible = max(1, Int(app.file_picker_list_visible(editorId)))
+        let requestedStart = max(0, listOffset - filePickerListOverscanRows)
+        let requestedCount = max(1, listVisible + (filePickerListOverscanRows * 2))
         let data = app.file_picker_window_snapshot(
             editorId,
             UInt(requestedStart),
@@ -1766,12 +1780,13 @@ final class EditorModel: ObservableObject {
             let raw = Int(data.selected_index())
             return raw >= 0 ? raw : nil
         }()
+        let coreListOffset = Int(data.list_offset())
+        let coreListVisible = max(1, Int(data.list_visible()))
         let windowStart = Int(data.window_start())
         let pickerIdentityChanged = title != lastPickerTitle
             || root != lastPickerRoot
             || pickerKind != lastPickerKind
         if pickerIdentityChanged || filePickerSnapshot == nil {
-            filePickerListAnchorIndex = selectedIndex ?? 0
             filePickerPreviewOffsetHint = -1
             if DiagnosticsDebugLog.enabled {
                 DiagnosticsDebugLog.log(
@@ -1791,6 +1806,8 @@ final class EditorModel: ObservableObject {
             && totalCount == lastPickerTotalCount
             && scanning == lastPickerScanning
             && selectedIndex == lastPickerSelectedIndex
+            && filePickerSnapshot?.listOffset == coreListOffset
+            && filePickerSnapshot?.listVisible == coreListVisible
             && filePickerSnapshot?.windowStart == windowStart
             && filePickerSnapshot?.items.count == Int(data.item_count()) {
             let perfDecodeEnd = DispatchTime.now().uptimeNanoseconds
@@ -1864,6 +1881,8 @@ final class EditorModel: ObservableObject {
             scanning: scanning,
             root: root,
             selectedIndex: selectedIndex,
+            listOffset: coreListOffset,
+            listVisible: coreListVisible,
             windowStart: windowStart,
             items: items
         )

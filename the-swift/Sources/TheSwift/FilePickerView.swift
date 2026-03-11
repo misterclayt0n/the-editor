@@ -14,6 +14,8 @@ struct FilePickerSnapshot {
     let scanning: Bool
     let root: String
     let selectedIndex: Int?
+    let listOffset: Int
+    let listVisible: Int
     let windowStart: Int
     let items: [FilePickerItemSnapshot]
 }
@@ -493,6 +495,7 @@ struct FilePickerView: View {
     let onSubmit: (Int) -> Void
     let onClose: () -> Void
     let onSelectionChange: ((Int) -> Void)?
+    let onMoveSelectionRequest: ((Int) -> Void)?
     let onListWindowRequest: ((Int, Int, Int) -> Void)?
     let onPreviewWindowRequest: ((Int, Int, Int) -> Void)?
 
@@ -599,6 +602,8 @@ struct FilePickerView: View {
                     return item.rowKind != 3
                 } : nil,
                 onVisibleRangeChange: handleVisibleRangeChange,
+                onMoveSelectionRequest: onMoveSelectionRequest,
+                externalScrollAnchorIndex: snapshot.listOffset,
                 itemCount: matchedCount,
                 externalQuery: snapshot.query,
                 externalSelectedIndex: snapshot.selectedIndex,

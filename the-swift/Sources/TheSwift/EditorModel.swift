@@ -1558,7 +1558,7 @@ final class EditorModel: ObservableObject {
     }
 
     func setCommandPaletteQuery(_ query: String) {
-        _ = app.command_palette_set_query(editorId, query)
+        _ = app.command_palette_set_display_query(editorId, query)
         refreshCommandPalette()
     }
 
@@ -1570,7 +1570,7 @@ final class EditorModel: ObservableObject {
             return
         }
 
-        let query = app.command_palette_query(editorId).toString()
+        let query = app.command_palette_display_query(editorId).toString()
         let layout = CommandPaletteLayout.from(rawValue: app.command_palette_layout(editorId))
         let rawSelectedIndex = Int(app.command_palette_filtered_selected_index(editorId))
         let selectedIndex = rawSelectedIndex >= 0 ? rawSelectedIndex : nil

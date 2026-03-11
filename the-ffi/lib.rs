@@ -17765,6 +17765,35 @@ pkgs.mkShell {
   }
 
   #[test]
+  fn append_mode_with_selection_auto_pair_inserts_at_selection_end() {
+    let _guard = ffi_test_guard();
+    let mut app = App::new();
+    let id = app.create_editor("printf\n", default_viewport(), ffi::Position {
+      row: 0,
+      col: 0,
+    });
+    assert!(app.activate(id).is_some());
+    let _ = app
+      .active_editor_mut()
+      .document_mut()
+      .set_selection(Selection::single(0, 6));
+
+    assert!(app.handle_key(id, key_char('a')));
+    assert_eq!(app.active_state_ref().mode, Mode::Insert);
+    assert_eq!(
+      app.active_editor_ref().document().selection().ranges()[0],
+      Range::new(0, 6)
+    );
+
+    assert!(app.handle_key(id, key_char('[')));
+    assert_eq!(app.text(id), "printf[\n");
+    assert_eq!(
+      app.active_editor_ref().document().selection().ranges()[0],
+      Range::new(0, 7)
+    );
+  }
+
+  #[test]
   fn insert_mode_fresh_mouse_selection_typing_replaces_once_then_expands() {
     let _guard = ffi_test_guard();
     let mut app = App::new();

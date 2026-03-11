@@ -351,7 +351,9 @@ fn make_change_for_range(
   ch: char,
   pairs: &AutoPairs,
 ) -> ChangeOutcome {
-  let cursor = range.cursor(doc_slice);
+  // Auto-pairs runs on insert-mode typing, so edits must use the insertion
+  // edge (`head`) rather than the block-cursor edge (`cursor()`).
+  let cursor = range.head;
 
   if let Some(pair) = match_close_pair(doc_slice, cursor, ch, pairs) {
     return skip(cursor, pair.close_len());
@@ -928,5 +930,16 @@ mod test {
     let sel = Selection::new(smallvec::smallvec![Range::point(3), Range::point(10)]).unwrap();
     let tx = delete_hook(&doc, &sel, &pairs).unwrap().unwrap();
     assert_eq!(apply_transaction(&doc, &tx), " ");
+  }
+
+  #[test]
+  fn hook_uses_insert_edge_for_forward_selection() {
+    let pairs = AutoPairs::default();
+    let doc = Rope::from("printf");
+    let selection = Selection::single(0, 6);
+
+    let tx = hook(&doc, &selection, '[', &pairs).unwrap().unwrap();
+    assert_eq!(apply_transaction(&doc, &tx), "printf[");
+    assert_eq!(tx.selection().unwrap().ranges(), &[Range::new(0, 7)]);
   }
 }

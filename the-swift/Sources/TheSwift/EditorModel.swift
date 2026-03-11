@@ -71,6 +71,28 @@ final class EditorModel: ObservableObject {
         let isDocumentEdited: Bool
     }
 
+    private struct RenderThemeColors {
+        let editorText: SwiftUI.Color
+        let editorVirtualText: SwiftUI.Color
+        let editorBackground: SwiftUI.Color
+        let gutterBackground: SwiftUI.Color
+        let gutterActiveRow: SwiftUI.Color
+        let gutterSeparator: SwiftUI.Color
+        let gutterLineNumber: SwiftUI.Color
+        let gutterActiveLineNumber: SwiftUI.Color
+
+        static let fallback = RenderThemeColors(
+            editorText: .white,
+            editorVirtualText: .white.opacity(0.65),
+            editorBackground: .black,
+            gutterBackground: .black,
+            gutterActiveRow: SwiftUI.Color.white.opacity(0.04),
+            gutterSeparator: SwiftUI.Color(nsColor: .separatorColor).opacity(0.3),
+            gutterLineNumber: SwiftUI.Color(nsColor: .tertiaryLabelColor),
+            gutterActiveLineNumber: SwiftUI.Color(nsColor: .secondaryLabelColor)
+        )
+    }
+
     private enum PaneSurfaceKind {
         case editor
         case terminal
@@ -134,6 +156,7 @@ final class EditorModel: ObservableObject {
     private var scrollRemainderY: CGFloat = 0
     private var syntaxHighlightStyleCache: [UInt32: Style] = [:]
     private var effectiveThemeName: String = ""
+    private var renderThemeColors: RenderThemeColors = .fallback
     private var lastUiTreeJson: String? = nil
     private var lastBufferTabsJson: String? = nil
     private var lastPickerQuery: String? = nil
@@ -2840,17 +2863,11 @@ final class EditorModel: ObservableObject {
     }
 
     func editorTextColor() -> SwiftUI.Color {
-        uiThemeForegroundColor(
-            scopes: ["ui.text", "ui.text.focus"],
-            fallback: .white
-        )
+        renderThemeColors.editorText
     }
 
     func editorVirtualTextColor() -> SwiftUI.Color {
-        uiThemeForegroundColor(
-            scopes: ["ui.virtual", "ui.text.inactive", "ui.text"],
-            fallback: editorTextColor().opacity(0.65)
-        )
+        renderThemeColors.editorVirtualText
     }
 
     func uiThemeStyle(_ scope: String) -> Style {
@@ -2858,10 +2875,23 @@ final class EditorModel: ObservableObject {
     }
 
     func editorBackgroundColor() -> SwiftUI.Color {
-        uiThemeBackgroundColor(
-            scopes: ["ui.background", "ui.window", "ui.popup"],
-            fallback: .black
-        )
+        renderThemeColors.editorBackground
+    }
+
+    func gutterBackgroundColor() -> SwiftUI.Color {
+        renderThemeColors.gutterBackground
+    }
+
+    func gutterActiveRowColor() -> SwiftUI.Color {
+        renderThemeColors.gutterActiveRow
+    }
+
+    func gutterSeparatorColor() -> SwiftUI.Color {
+        renderThemeColors.gutterSeparator
+    }
+
+    func gutterLineNumberColor(active: Bool) -> SwiftUI.Color {
+        active ? renderThemeColors.gutterActiveLineNumber : renderThemeColors.gutterLineNumber
     }
 
     func popupTheme() -> PopupChromeTheme {
@@ -3224,6 +3254,67 @@ final class EditorModel: ObservableObject {
 
         effectiveThemeName = nextThemeName
         syntaxHighlightStyleCache.removeAll(keepingCapacity: true)
+        refreshRenderThemeColors()
+    }
+
+    private func refreshRenderThemeColors() {
+        let editorText = uiThemeForegroundColor(
+            scopes: ["ui.text", "ui.text.focus"],
+            fallback: RenderThemeColors.fallback.editorText
+        )
+        let editorBackground = uiThemeBackgroundColor(
+            scopes: ["ui.background", "ui.window", "ui.popup"],
+            fallback: RenderThemeColors.fallback.editorBackground
+        )
+        let gutterBackground = {
+            let lineNumberStyle = uiThemeStyle("ui.linenr")
+            if lineNumberStyle.has_bg, let color = ColorMapper.color(from: lineNumberStyle.bg) {
+                return color
+            }
+            return editorBackground
+        }()
+        let gutterActiveRow = {
+            let cursorLineStyle = uiThemeStyle("ui.cursorline.active")
+            if cursorLineStyle.has_bg, let color = ColorMapper.color(from: cursorLineStyle.bg) {
+                return color
+            }
+            return RenderThemeColors.fallback.gutterActiveRow
+        }()
+        let gutterSeparator = {
+            let separatorStyle = uiThemeStyle("ui.background.separator")
+            if separatorStyle.has_fg, let color = ColorMapper.color(from: separatorStyle.fg) {
+                return color.opacity(0.55)
+            }
+            return RenderThemeColors.fallback.gutterSeparator
+        }()
+        let gutterLineNumber = {
+            let style = uiThemeStyle("ui.linenr")
+            if style.has_fg, let color = ColorMapper.color(from: style.fg) {
+                return color
+            }
+            return RenderThemeColors.fallback.gutterLineNumber
+        }()
+        let gutterActiveLineNumber = {
+            let style = uiThemeStyle("ui.linenr.selected")
+            if style.has_fg, let color = ColorMapper.color(from: style.fg) {
+                return color
+            }
+            return RenderThemeColors.fallback.gutterActiveLineNumber
+        }()
+
+        renderThemeColors = RenderThemeColors(
+            editorText: editorText,
+            editorVirtualText: uiThemeForegroundColor(
+                scopes: ["ui.virtual", "ui.text.inactive", "ui.text"],
+                fallback: editorText.opacity(0.65)
+            ),
+            editorBackground: editorBackground,
+            gutterBackground: gutterBackground,
+            gutterActiveRow: gutterActiveRow,
+            gutterSeparator: gutterSeparator,
+            gutterLineNumber: gutterLineNumber,
+            gutterActiveLineNumber: gutterActiveLineNumber
+        )
     }
 
     private func debugUiLog(_ message: String) {

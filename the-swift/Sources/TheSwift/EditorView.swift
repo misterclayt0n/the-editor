@@ -1384,7 +1384,6 @@ struct EditorView: View {
         cursorPickState: CursorPickState?,
         cursorOpacity: Double
     ) -> DrawPlanPerfStats {
-        _ = bufferNSFont
         let perfEnabled = DiagnosticsDebugLog.editorPerfEnabled
         let perfStart = perfEnabled ? DispatchTime.now().uptimeNanoseconds : 0
         func perfNow() -> UInt64 {
@@ -1402,6 +1401,7 @@ struct EditorView: View {
             plan: plan,
             cellSize: cellSize,
             font: bufferFont,
+            nsFont: bufferNSFont,
             contentOffsetX: contentOffsetX
         )
         let perfAfterGutter = perfEnabled ? perfNow() : 0
@@ -1413,7 +1413,7 @@ struct EditorView: View {
             in: context,
             plan: plan,
             cellSize: cellSize,
-            font: bufferFont,
+            nsFont: bufferNSFont,
             contentOffsetX: contentOffsetX
         )
         let perfAfterText = perfEnabled ? perfNow() : 0
@@ -1481,6 +1481,7 @@ struct EditorView: View {
         plan: RenderPlan,
         cellSize: CGSize,
         font: Font,
+        nsFont: NSFont,
         contentOffsetX: CGFloat
     ) {
         let lineCount = Int(plan.gutter_line_count())
@@ -1536,7 +1537,15 @@ struct EditorView: View {
                         let color = colorForStyle(span.style(), fallback: fallback)
                         drawDiffBar(in: context, y: y, cellSize: cellSize, gutterWidth: contentOffsetX, color: color)
                     case .lineNumber:
-                        drawLineNumber(in: context, span: span, x: x, y: y, font: font, isActive: isActiveLine)
+                        drawLineNumber(
+                            in: context,
+                            span: span,
+                            x: x,
+                            y: y,
+                            font: font,
+                            nsFont: nsFont,
+                            isActive: isActiveLine
+                        )
                     case .other:
                         break
                     }
@@ -1586,8 +1595,10 @@ struct EditorView: View {
         span: RenderGutterSpan,
         x: CGFloat, y: CGFloat,
         font: Font,
+        nsFont: NSFont,
         isActive: Bool
     ) {
+        _ = font
         let style = span.style()
         let color: SwiftUI.Color
         if style.has_fg, let themeColor = ColorMapper.color(from: style.fg) {
@@ -1597,8 +1608,13 @@ struct EditorView: View {
         } else {
             color = gutterLineNumberColor(active: false)
         }
-        let text = Text(span.text().toString()).font(font).foregroundColor(color)
-        context.draw(text, at: CGPoint(x: x, y: y), anchor: .topLeading)
+        drawAttributedText(
+            in: context,
+            text: span.text().toString(),
+            at: CGPoint(x: x, y: y),
+            nsFont: nsFont,
+            color: nsColor(from: color)
+        )
     }
 
     private func drawSelections(
@@ -1678,7 +1694,7 @@ struct EditorView: View {
         in context: GraphicsContext,
         plan: RenderPlan,
         cellSize: CGSize,
-        font: Font,
+        nsFont: NSFont,
         contentOffsetX: CGFloat
     ) -> DrawTextStats {
         let lineCount = Int(plan.line_count())
@@ -1705,8 +1721,13 @@ struct EditorView: View {
                 drawnSpans += 1
                 let x = contentOffsetX + CGFloat(span.col()) * cellSize.width
                 let color = colorForSpan(span)
-                let text = Text(span.text().toString()).font(font).foregroundColor(color)
-                context.draw(text, at: CGPoint(x: x, y: y), anchor: .topLeading)
+                drawAttributedText(
+                    in: context,
+                    text: span.text().toString(),
+                    at: CGPoint(x: x, y: y),
+                    nsFont: nsFont,
+                    color: nsColor(from: color)
+                )
             }
         }
 
@@ -1829,7 +1850,7 @@ struct EditorView: View {
         }
     }
 
-    private func drawDiagnosticText(
+    private func drawAttributedText(
         in context: GraphicsContext,
         text: String,
         at point: CGPoint,
@@ -1848,6 +1869,22 @@ struct EditorView: View {
             attributed.draw(at: point)
             NSGraphicsContext.restoreGraphicsState()
         }
+    }
+
+    private func drawDiagnosticText(
+        in context: GraphicsContext,
+        text: String,
+        at point: CGPoint,
+        nsFont: NSFont,
+        color: NSColor
+    ) {
+        drawAttributedText(
+            in: context,
+            text: text,
+            at: point,
+            nsFont: nsFont,
+            color: color
+        )
     }
 
     // MARK: - End-of-Line Diagnostics
@@ -1931,36 +1968,19 @@ struct EditorView: View {
     }
 
     private func gutterBackgroundColor() -> SwiftUI.Color {
-        let lineNumberStyle = model.uiThemeStyle("ui.linenr")
-        if lineNumberStyle.has_bg, let color = ColorMapper.color(from: lineNumberStyle.bg) {
-            return color
-        }
-        return model.editorBackgroundColor()
+        model.gutterBackgroundColor()
     }
 
     private func gutterActiveRowColor() -> SwiftUI.Color {
-        let cursorLineStyle = model.uiThemeStyle("ui.cursorline.active")
-        if cursorLineStyle.has_bg, let color = ColorMapper.color(from: cursorLineStyle.bg) {
-            return color
-        }
-        return SwiftUI.Color.white.opacity(0.04)
+        model.gutterActiveRowColor()
     }
 
     private func gutterSeparatorColor() -> SwiftUI.Color {
-        let separatorStyle = model.uiThemeStyle("ui.background.separator")
-        if separatorStyle.has_fg, let color = ColorMapper.color(from: separatorStyle.fg) {
-            return color.opacity(0.55)
-        }
-        return SwiftUI.Color(nsColor: .separatorColor).opacity(0.3)
+        model.gutterSeparatorColor()
     }
 
     private func gutterLineNumberColor(active: Bool) -> SwiftUI.Color {
-        let scope = active ? "ui.linenr.selected" : "ui.linenr"
-        let style = model.uiThemeStyle(scope)
-        if style.has_fg, let color = ColorMapper.color(from: style.fg) {
-            return color
-        }
-        return active ? SwiftUI.Color(nsColor: .secondaryLabelColor) : SwiftUI.Color(nsColor: .tertiaryLabelColor)
+        model.gutterLineNumberColor(active: active)
     }
 
     private func cursorColor(for style: Style, fallback: SwiftUI.Color) -> SwiftUI.Color {
@@ -1984,6 +2004,10 @@ struct EditorView: View {
             return model.editorVirtualTextColor()
         }
         return baseTextColor
+    }
+
+    private func nsColor(from color: SwiftUI.Color) -> NSColor {
+        NSColor(color)
     }
 
     private func debugDrawSnapshot(

@@ -6102,7 +6102,6 @@ impl App {
     if self.activate(id).is_none() {
       return "{}".to_string();
     }
-    let _ = self.poll_background_active();
 
     let mut tree = the_default::ui_tree(self);
     self.append_docs_popup_overlays(&mut tree);

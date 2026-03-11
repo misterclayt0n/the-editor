@@ -1811,6 +1811,7 @@ struct EditorState {
   word_jump_inline_annotations:      Vec<InlineAnnotation>,
   word_jump_overlay_annotations:     Vec<Overlay>,
   highlight_cache:                   HighlightCache,
+  inactive_highlight_caches:         BTreeMap<usize, HighlightCache>,
   syntax_parse_tx:                   Sender<SyntaxParseResult>,
   syntax_parse_rx:                   Receiver<SyntaxParseResult>,
   syntax_parse_lifecycle:            ParseLifecycle<SyntaxParseJob>,
@@ -1882,6 +1883,7 @@ impl EditorState {
       word_jump_inline_annotations: Vec::new(),
       word_jump_overlay_annotations: Vec::new(),
       highlight_cache: HighlightCache::default(),
+      inactive_highlight_caches: BTreeMap::new(),
       syntax_parse_tx,
       syntax_parse_rx,
       syntax_parse_lifecycle: ParseLifecycle::default(),
@@ -1893,6 +1895,11 @@ impl EditorState {
       scrolloff: 5,
       pointer_drag_selection: None,
     }
+  }
+
+  fn clear_highlight_caches(&mut self) {
+    self.highlight_cache.clear();
+    self.inactive_highlight_caches.clear();
   }
 }
 
@@ -5233,7 +5240,7 @@ impl App {
         .editor(editor_id)
         .is_some_and(|editor| editor.document().syntax().is_some());
       if let Some(state) = self.states.get_mut(&editor_id) {
-        state.highlight_cache.clear();
+        state.clear_highlight_caches();
         if has_syntax {
           state.syntax_parse_highlight_state.mark_parsed();
         } else {
@@ -6476,54 +6483,69 @@ impl App {
       )
     };
     let mut annotations = TextAnnotations::default();
-    let mut local_highlight_cache = HighlightCache::default();
+    let mut local_highlight_cache = {
+      let state = self.active_state_mut();
+      state
+        .inactive_highlight_caches
+        .remove(&buffer_index)
+        .unwrap_or_default()
+    };
     let loader = self.loader.clone();
 
-    let editor = self.active_editor_mut();
-    let Some(view) = editor.buffer_view(buffer_index) else {
-      return the_lib::render::RenderPlan::default();
-    };
-    let Some((doc, cache)) = editor.document_and_cache_at_mut(buffer_index) else {
-      return the_lib::render::RenderPlan::default();
-    };
-    let gutter_width = gutter_width_for_document(doc, view.viewport.width, &gutter_config);
-    text_fmt.viewport_width = view.viewport.width.saturating_sub(gutter_width).max(1);
+    let plan = {
+      let editor = self.active_editor_mut();
+      let Some(view) = editor.buffer_view(buffer_index) else {
+        return the_lib::render::RenderPlan::default();
+      };
+      let Some((doc, cache)) = editor.document_and_cache_at_mut(buffer_index) else {
+        return the_lib::render::RenderPlan::default();
+      };
+      let gutter_width = gutter_width_for_document(doc, view.viewport.width, &gutter_config);
+      text_fmt.viewport_width = view.viewport.width.saturating_sub(gutter_width).max(1);
 
-    if let (Some(loader), Some(syntax)) = (loader.as_deref(), doc.syntax()) {
-      let line_range = view.scroll.row..(view.scroll.row + view.viewport.height as usize);
-      let mut adapter = SyntaxHighlightAdapter::new(
-        doc.text().slice(..),
-        syntax,
-        loader,
-        &mut local_highlight_cache,
-        line_range,
-        doc.version(),
-        doc.syntax_version(),
-        allow_cache_refresh,
-      );
-      build_plan(
-        doc,
-        view,
-        &text_fmt,
-        &gutter_config,
-        &mut annotations,
-        &mut adapter,
-        cache,
-        styles,
-      )
-    } else {
-      let mut highlights = NoHighlights;
-      build_plan(
-        doc,
-        view,
-        &text_fmt,
-        &gutter_config,
-        &mut annotations,
-        &mut highlights,
-        cache,
-        styles,
-      )
-    }
+      if let (Some(loader), Some(syntax)) = (loader.as_deref(), doc.syntax()) {
+        let line_range = view.scroll.row..(view.scroll.row + view.viewport.height as usize);
+        let mut adapter = SyntaxHighlightAdapter::new(
+          doc.text().slice(..),
+          syntax,
+          loader,
+          &mut local_highlight_cache,
+          line_range,
+          doc.version(),
+          doc.syntax_version(),
+          allow_cache_refresh,
+        );
+        build_plan(
+          doc,
+          view,
+          &text_fmt,
+          &gutter_config,
+          &mut annotations,
+          &mut adapter,
+          cache,
+          styles,
+        )
+      } else {
+        let mut highlights = NoHighlights;
+        build_plan(
+          doc,
+          view,
+          &text_fmt,
+          &gutter_config,
+          &mut annotations,
+          &mut highlights,
+          cache,
+          styles,
+        )
+      }
+    };
+    drop(annotations);
+
+    self
+      .active_state_mut()
+      .inactive_highlight_caches
+      .insert(buffer_index, local_highlight_cache);
+    plan
   }
 
   fn build_frame_render_plan_with_styles_impl(
@@ -11590,7 +11612,7 @@ impl App {
 
       if let Some(state) = self.states.get_mut(&id) {
         if parsed_state == Some(true) {
-          state.highlight_cache.clear();
+          state.clear_highlight_caches();
           state.syntax_parse_highlight_state.mark_parsed();
           changed = true;
           state.needs_render = true;
@@ -11639,7 +11661,7 @@ impl App {
 
     if let Some(state) = self.states.get_mut(&id) {
       state.syntax_parse_lifecycle.cancel_pending();
-      state.highlight_cache.clear();
+      state.clear_highlight_caches();
       if parsed {
         state.syntax_parse_highlight_state.mark_parsed();
       } else {
@@ -11850,7 +11872,7 @@ impl DefaultContext for App {
 
     if let Some(state) = self.states.get_mut(&editor_id) {
       state.syntax_parse_lifecycle.cancel_pending();
-      state.highlight_cache.clear();
+      state.clear_highlight_caches();
       if has_syntax {
         state.syntax_parse_highlight_state.mark_parsed();
       } else {

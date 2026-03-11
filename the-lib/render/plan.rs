@@ -436,6 +436,8 @@ impl RenderCache {
   }
 }
 
+const ORIGIN_CACHE_ROW_STRIDE: usize = 32;
+
 pub trait HighlightProvider {
   fn highlight_at(&mut self, char_idx: usize) -> Option<Highlight>;
 }
@@ -453,8 +455,8 @@ impl HighlightProvider for NoHighlights {
 ///
 /// This uses `DocumentFormatter` to produce visual positions. When soft wrap
 /// and line annotations are disabled it fast-starts at the scroll position via
-/// `visual_position`. When soft wrap is enabled it uses `RenderCache` to start
-/// from the nearest cached block origin, avoiding full rescans in steady-state.
+/// `visual_position`. Otherwise it uses `RenderCache` to resume from the
+/// nearest cached origin, and records periodic row checkpoints while walking.
 #[allow(clippy::too_many_arguments)]
 pub fn build_plan<'a, 't, H: HighlightProvider>(
   doc: &'a Document,
@@ -505,8 +507,6 @@ pub fn build_plan<'a, 't, H: HighlightProvider>(
         .unwrap_or_else(|| Position::new(0, 0))
     };
     (block_char_idx, origin)
-  } else if has_line_annotations {
-    (0, Position::new(0, 0))
   } else if let Some((char_idx, pos)) = cache.nearest_origin(view.scroll) {
     (char_idx, pos)
   } else {
@@ -525,6 +525,7 @@ pub fn build_plan<'a, 't, H: HighlightProvider>(
     let mut current_row: Option<usize> = None;
     let mut current_line = RenderLine::new(0);
     let mut visible_rows: Vec<Option<RenderVisibleRow>> = vec![None; view.viewport.height as usize];
+    let mut last_cached_origin_row = origin.row;
 
     for grapheme in &mut formatter {
       if grapheme.source.is_eof() {
@@ -538,6 +539,14 @@ pub fn build_plan<'a, 't, H: HighlightProvider>(
       } else {
         rel_pos.col
       };
+
+      if !grapheme.source.is_virtual()
+        && abs_col == 0
+        && abs_row >= last_cached_origin_row.saturating_add(ORIGIN_CACHE_ROW_STRIDE)
+      {
+        cache.insert_origin(grapheme.char_idx, Position::new(abs_row, abs_col));
+        last_cached_origin_row = abs_row;
+      }
 
       if abs_row >= row_start && abs_row < row_end {
         let row = abs_row - row_start;
@@ -1314,6 +1323,11 @@ fn push_selection_rects(
 
 #[cfg(test)]
 mod tests {
+  use std::{
+    cell::RefCell,
+    rc::Rc,
+  };
+
   use ropey::Rope;
   use smallvec::smallvec;
 
@@ -1326,6 +1340,11 @@ mod tests {
     },
     render::{
       GutterConfig,
+      InlineDiagnostic,
+      InlineDiagnosticFilter,
+      InlineDiagnosticsConfig,
+      InlineDiagnosticsLineAnnotation,
+      SharedInlineDiagnosticsRenderData,
       SyntaxHighlightAdapter,
       graphics::Color,
       text_annotations::Overlay,
@@ -1753,6 +1772,66 @@ mod tests {
       .find(|line| line.row == 0)
       .expect("row 0 exists");
     assert!(row0.spans.iter().any(|span| span.text == "~"));
+  }
+
+  #[test]
+  fn build_plan_populates_origin_cache_for_line_annotations() {
+    let id = DocumentId::new(std::num::NonZeroUsize::new(1).unwrap());
+    let text = (0..80)
+      .map(|index| format!("line {index}\n"))
+      .collect::<String>();
+    let doc = Document::new(id, Rope::from(text));
+    let view = ViewState::new(Rect::new(0, 0, 80, 40), Position::new(0, 0));
+    let mut text_fmt = TextFormat::default();
+    text_fmt.soft_wrap = false;
+    text_fmt.viewport_width = 80;
+
+    let diagnostic_char_idx = doc.text().line_to_char(8).saturating_add(2);
+    let diagnostics = vec![InlineDiagnostic::new(
+      diagnostic_char_idx,
+      DiagnosticSeverity::Warning,
+      "line annotation cache test",
+    )];
+    let config = InlineDiagnosticsConfig {
+      cursor_line:          InlineDiagnosticFilter::Disable,
+      other_lines:          InlineDiagnosticFilter::Enable(DiagnosticSeverity::Hint),
+      min_diagnostic_width: 12,
+      prefix_len:           1,
+      max_wrap:             4,
+      max_diagnostics:      2,
+    };
+    let render_data: SharedInlineDiagnosticsRenderData = Rc::new(RefCell::new(Default::default()));
+    let annotation = InlineDiagnosticsLineAnnotation::new(
+      diagnostics,
+      usize::MAX,
+      None,
+      80,
+      0,
+      config,
+      render_data,
+    );
+
+    let mut annotations = TextAnnotations::default();
+    let _ = annotations.add_line_annotation(Box::new(annotation));
+    let mut highlights = NoHighlights;
+    let gutter = no_gutter();
+    let mut cache = RenderCache::default();
+
+    let _ = build_plan(
+      &doc,
+      view,
+      &text_fmt,
+      &gutter,
+      &mut annotations,
+      &mut highlights,
+      &mut cache,
+      RenderStyles::default(),
+    );
+
+    let checkpoint = cache
+      .nearest_origin(Position::new(ORIGIN_CACHE_ROW_STRIDE + 1, 0))
+      .expect("line annotations should populate row checkpoints");
+    assert!(checkpoint.1.row >= ORIGIN_CACHE_ROW_STRIDE);
   }
 
   #[test]

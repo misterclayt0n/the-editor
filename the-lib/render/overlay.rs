@@ -6,7 +6,7 @@ use crate::{
   },
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum OverlayRectKind {
   Panel,
   Divider,

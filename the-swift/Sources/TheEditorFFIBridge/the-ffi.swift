@@ -2154,6 +2154,46 @@ extension RenderPlanRef {
         __swift_bridge__$RenderPlan$content_offset_x(ptr)
     }
 
+    public func layout_generation() -> UInt64 {
+        __swift_bridge__$RenderPlan$layout_generation(ptr)
+    }
+
+    public func text_generation() -> UInt64 {
+        __swift_bridge__$RenderPlan$text_generation(ptr)
+    }
+
+    public func decoration_generation() -> UInt64 {
+        __swift_bridge__$RenderPlan$decoration_generation(ptr)
+    }
+
+    public func cursor_generation() -> UInt64 {
+        __swift_bridge__$RenderPlan$cursor_generation(ptr)
+    }
+
+    public func scroll_generation() -> UInt64 {
+        __swift_bridge__$RenderPlan$scroll_generation(ptr)
+    }
+
+    public func theme_generation() -> UInt64 {
+        __swift_bridge__$RenderPlan$theme_generation(ptr)
+    }
+
+    public func damage_start_row() -> UInt16 {
+        __swift_bridge__$RenderPlan$damage_start_row(ptr)
+    }
+
+    public func damage_end_row() -> UInt16 {
+        __swift_bridge__$RenderPlan$damage_end_row(ptr)
+    }
+
+    public func damage_is_full() -> Bool {
+        __swift_bridge__$RenderPlan$damage_is_full(ptr)
+    }
+
+    public func damage_reason() -> UInt8 {
+        __swift_bridge__$RenderPlan$damage_reason(ptr)
+    }
+
     public func cursor_blink_enabled() -> Bool {
         __swift_bridge__$RenderPlan$cursor_blink_enabled(ptr)
     }
@@ -2414,6 +2454,14 @@ extension RenderFramePlanRef {
         __swift_bridge__$RenderFramePlan$active_pane_id(ptr)
     }
 
+    public func frame_generation() -> UInt64 {
+        __swift_bridge__$RenderFramePlan$frame_generation(ptr)
+    }
+
+    public func pane_structure_generation() -> UInt64 {
+        __swift_bridge__$RenderFramePlan$pane_structure_generation(ptr)
+    }
+
     public func pane_count() -> UInt {
         __swift_bridge__$RenderFramePlan$pane_count(ptr)
     }
@@ -2424,6 +2472,22 @@ extension RenderFramePlanRef {
 
     public func active_plan() -> RenderPlan {
         RenderPlan(ptr: __swift_bridge__$RenderFramePlan$active_plan(ptr))
+    }
+
+    public func changed_pane_count() -> UInt {
+        __swift_bridge__$RenderFramePlan$changed_pane_count(ptr)
+    }
+
+    public func changed_pane_id_at(_ index: UInt) -> UInt64 {
+        __swift_bridge__$RenderFramePlan$changed_pane_id_at(ptr, index)
+    }
+
+    public func damage_is_full() -> Bool {
+        __swift_bridge__$RenderFramePlan$damage_is_full(ptr)
+    }
+
+    public func damage_reason() -> UInt8 {
+        __swift_bridge__$RenderFramePlan$damage_reason(ptr)
     }
 }
 extension RenderFramePlan: Vectorizable {

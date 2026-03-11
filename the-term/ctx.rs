@@ -665,6 +665,10 @@ pub struct Ctx {
   pub inline_diagnostic_lines:       Vec<InlineDiagnosticRenderLine>,
   /// Underline spans for diagnostic ranges in the current viewport.
   pub diagnostic_underlines:         Vec<DiagnosticUnderlineRenderSpan>,
+  /// Last emitted render generations and row hashes per pane.
+  pub frame_generation_state:        the_lib::render::FrameGenerationState,
+  /// Theme generation token for render metadata consumers.
+  pub render_theme_generation:       u64,
   /// Lines to keep above/below cursor when scrolling.
   pub scrolloff:                     usize,
   pub term_hardware_cursor:          Option<TermHardwareCursor>,
@@ -1048,6 +1052,8 @@ impl Ctx {
       word_jump_overlay_annotations: Vec::new(),
       inline_diagnostic_lines: Vec::new(),
       diagnostic_underlines: Vec::new(),
+      frame_generation_state: the_lib::render::FrameGenerationState::default(),
+      render_theme_generation: 0,
       scrolloff: 5,
       term_hardware_cursor: None,
     };
@@ -1096,6 +1102,7 @@ impl Ctx {
   }
 
   fn invalidate_theme_render_state(&mut self) {
+    self.render_theme_generation = self.render_theme_generation.wrapping_add(1);
     self.highlight_cache.clear();
     if self.editor.document().syntax().is_some() {
       self.syntax_parse_highlight_state.mark_parsed();

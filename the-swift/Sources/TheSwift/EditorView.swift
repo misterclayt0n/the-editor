@@ -14,6 +14,7 @@ struct EditorView: View {
     @StateObject private var model: EditorModel
     @StateObject private var cursorBlinkController = CursorBlinkController()
     @ObservedObject private var globalTerminalSwitcher = GlobalTerminalSwitcherController.shared
+    @State private var renderSceneCache = EditorRenderSceneCache()
     private let windowRoute: EditorWindowRoute?
     @State private var columnVisibility: NavigationSplitViewVisibility = .detailOnly
 
@@ -1123,9 +1124,11 @@ struct EditorView: View {
         var aggregateStats = DrawPlanPerfStats.zero
         var activePlanStats = DrawPlanPerfStats.zero
         guard paneCount > 0 else {
+            renderSceneCache.pruneTextScenes(retaining: Set([0]))
             let fallbackStats = drawPlan(
                 in: context,
                 size: size,
+                paneId: 0,
                 plan: fallbackPlan,
                 cellSize: cellSize,
                 bufferFont: bufferFont,
@@ -1163,6 +1166,12 @@ struct EditorView: View {
             return
         }
 
+        var retainedPaneIds: Set<UInt64> = []
+        for index in 0..<paneCount {
+            retainedPaneIds.insert(framePlan.pane_at(UInt(index)).pane_id())
+        }
+        renderSceneCache.pruneTextScenes(retaining: retainedPaneIds)
+
         for index in 0..<paneCount {
             let pane = framePlan.pane_at(UInt(index))
             if terminalPaneIds.contains(pane.pane_id()) {
@@ -1182,6 +1191,7 @@ struct EditorView: View {
             let paneStats = drawPlan(
                 in: paneContext,
                 size: paneSize,
+                paneId: pane.pane_id(),
                 plan: panePlan,
                 cellSize: cellSize,
                 bufferFont: bufferFont,
@@ -1377,6 +1387,7 @@ struct EditorView: View {
     private func drawPlan(
         in context: GraphicsContext,
         size: CGSize,
+        paneId: UInt64,
         plan: RenderPlan,
         cellSize: CGSize,
         bufferFont: Font,
@@ -1411,6 +1422,7 @@ struct EditorView: View {
         let perfAfterUnderlines = perfEnabled ? perfNow() : 0
         let textStats = drawText(
             in: context,
+            paneId: paneId,
             plan: plan,
             cellSize: cellSize,
             nsFont: bufferNSFont,
@@ -1692,6 +1704,7 @@ struct EditorView: View {
 
     private func drawText(
         in context: GraphicsContext,
+        paneId: UInt64,
         plan: RenderPlan,
         cellSize: CGSize,
         nsFont: NSFont,
@@ -1702,36 +1715,23 @@ struct EditorView: View {
             return DrawTextStats(drawnSpans: 0, skippedVirtualSpans: 0)
         }
 
-        var drawnSpans = 0
-        var skippedVirtualSpans = 0
-
-        for lineIndex in 0..<lineCount {
-            let line = plan.line_at(UInt(lineIndex))
-            let y = CGFloat(line.row()) * cellSize.height
-            let spanCount = Int(line.span_count())
-
-            for spanIndex in 0..<spanCount {
-                let span = line.span_at(UInt(spanIndex))
-                // Inline diagnostics are rendered explicitly in dedicated passes
-                // below; skipping virtual spans avoids double-drawing artifacts.
-                if span.is_virtual() {
-                    skippedVirtualSpans += 1
-                    continue
-                }
-                drawnSpans += 1
-                let x = contentOffsetX + CGFloat(span.col()) * cellSize.width
-                let color = colorForSpan(span)
-                drawAttributedText(
-                    in: context,
-                    text: span.text().toString(),
-                    at: CGPoint(x: x, y: y),
-                    nsFont: nsFont,
-                    color: nsColor(from: color)
-                )
-            }
+        let preparedScene = renderSceneCache.preparedTextScene(
+            paneId: paneId,
+            plan: plan,
+            nsFont: nsFont
+        ) { span in
+            nsColor(from: colorForSpan(span))
         }
-
-        return DrawTextStats(drawnSpans: drawnSpans, skippedVirtualSpans: skippedVirtualSpans)
+        renderSceneCache.drawTextScene(
+            preparedScene,
+            in: context,
+            cellSize: cellSize,
+            contentOffsetX: contentOffsetX
+        )
+        return DrawTextStats(
+            drawnSpans: preparedScene.drawnSpans,
+            skippedVirtualSpans: preparedScene.skippedVirtualSpans
+        )
     }
 
     private func drawCursors(

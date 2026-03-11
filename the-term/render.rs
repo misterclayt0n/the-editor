@@ -4,6 +4,11 @@ use std::{
   collections::BTreeMap,
   env,
   fs::OpenOptions,
+  hash::{
+    DefaultHasher,
+    Hash,
+    Hasher,
+  },
   io::Write,
   path::{
     Path,
@@ -77,8 +82,10 @@ use the_lib::{
   },
   editor::PaneContent,
   render::{
+    FrameGenerationState,
     FrameRenderPlan,
     InlineDiagnostic,
+    InlineDiagnosticRenderLine,
     InlineDiagnosticFilter,
     InlineDiagnosticsConfig,
     InlineDiagnosticsViewportLayout,
@@ -86,7 +93,9 @@ use the_lib::{
     NoHighlights,
     PaneRenderPlan,
     RenderDiagnosticGutterStyles,
+    RenderGenerationState,
     RenderDiffGutterStyles,
+    RenderLayerRowHashes,
     RenderPlan,
     RenderStyles,
     SelectionMatchHighlightOptions,
@@ -117,7 +126,10 @@ use the_lib::{
     apply_row_insertions,
     apply_diagnostic_gutter_markers,
     apply_diff_gutter_markers,
+    base_render_layer_row_hashes,
     build_plan,
+    finish_frame_generations,
+    finish_render_generations,
     graphics::{
       Color as LibColor,
       CursorKind as LibCursorKind,
@@ -689,6 +701,70 @@ fn apply_row_insertions_to_underlines(
     entry.row = row;
     true
   });
+}
+
+fn update_render_row_hash(row_hashes: &mut [u64], row: usize, value: impl Hash) {
+  let Some(slot) = row_hashes.get_mut(row) else {
+    return;
+  };
+  let mut hasher = DefaultHasher::new();
+  slot.hash(&mut hasher);
+  value.hash(&mut hasher);
+  *slot = hasher.finish();
+}
+
+fn diagnostic_severity_code(severity: DiagnosticSeverity) -> u8 {
+  match severity {
+    DiagnosticSeverity::Error => 1,
+    DiagnosticSeverity::Warning => 2,
+    DiagnosticSeverity::Information => 3,
+    DiagnosticSeverity::Hint => 4,
+  }
+}
+
+fn append_inline_diagnostic_row_hashes(
+  row_hashes: &mut [u64],
+  lines: &[InlineDiagnosticRenderLine],
+) {
+  for line in lines {
+    update_render_row_hash(
+      row_hashes,
+      line.row as usize,
+      (
+        line.col,
+        line.text.as_str(),
+        diagnostic_severity_code(line.severity),
+      ),
+    );
+  }
+}
+
+fn append_diagnostic_underline_row_hashes(
+  row_hashes: &mut [u64],
+  entries: &[DiagnosticUnderlineRenderSpan],
+) {
+  for entry in entries {
+    update_render_row_hash(
+      row_hashes,
+      entry.row as usize,
+      (
+        entry.start_col,
+        entry.end_col,
+        diagnostic_severity_code(entry.severity),
+      ),
+    );
+  }
+}
+
+fn build_render_layer_row_hashes(
+  plan: &RenderPlan,
+  inline_diagnostic_lines: &[InlineDiagnosticRenderLine],
+  diagnostic_underlines: &[DiagnosticUnderlineRenderSpan],
+) -> RenderLayerRowHashes {
+  let mut row_hashes = base_render_layer_row_hashes(plan);
+  append_inline_diagnostic_row_hashes(&mut row_hashes.decoration_rows, inline_diagnostic_lines);
+  append_diagnostic_underline_row_hashes(&mut row_hashes.decoration_rows, diagnostic_underlines);
+  row_hashes
 }
 
 fn active_inline_diagnostics(ctx: &Ctx) -> Vec<InlineDiagnostic> {
@@ -5851,6 +5927,12 @@ pub fn build_render_plan(ctx: &mut Ctx) -> RenderPlan {
 }
 
 pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> RenderPlan {
+  let active_pane_id = ctx.editor.active_pane_id();
+  let previous_generation_state = ctx
+    .frame_generation_state
+    .pane_states
+    .get(&active_pane_id)
+    .cloned();
   let view = ctx.editor.view();
   let gutter_width = gutter_width_for_document(
     ctx.editor.document(),
@@ -6011,6 +6093,18 @@ pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> Ren
   ctx.diagnostic_underlines = diagnostic_underlines;
   ctx.inline_diagnostic_lines = inline_lines;
   drop(annotations);
+  let row_hashes =
+    build_render_layer_row_hashes(&plan, &ctx.inline_diagnostic_lines, &ctx.diagnostic_underlines);
+  let generation_state = finish_render_generations(
+    &mut plan,
+    previous_generation_state.as_ref(),
+    ctx.render_theme_generation,
+    row_hashes,
+  );
+  ctx
+    .frame_generation_state
+    .pane_states
+    .insert(active_pane_id, generation_state);
 
   let should_trace_inline_diagnostics = inline_diagnostics_trace_enabled()
     || (lsp_diag_count > 0 && inline_diag_count > 0 && ctx.inline_diagnostic_lines.is_empty());
@@ -6135,11 +6229,13 @@ pub fn build_frame_render_plan(ctx: &mut Ctx) -> FrameRenderPlan {
 }
 
 pub fn build_frame_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> FrameRenderPlan {
+  let previous_frame_generation_state = ctx.frame_generation_state.clone();
   let viewport = ctx.editor.layout_viewport();
   let pane_snapshots = ctx.editor.frame_pane_snapshots(viewport);
   if pane_snapshots.is_empty() {
     ctx.inline_diagnostic_lines.clear();
     ctx.diagnostic_underlines.clear();
+    ctx.frame_generation_state = FrameGenerationState::default();
     return FrameRenderPlan::empty();
   }
 
@@ -6150,19 +6246,50 @@ pub fn build_frame_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) 
   }
 
   let active_pane = ctx.editor.active_pane_id();
+  let mut pane_generation_states = BTreeMap::new();
   let panes = pane_snapshots
     .into_iter()
     .map(|pane| {
       let (pane_kind, terminal_id, plan) = match pane.content {
         PaneContent::EditorBuffer { buffer_index } => {
-          let plan = if pane.is_active_pane {
+          let mut plan = if pane.is_active_pane {
             build_render_plan_with_styles(ctx, styles)
           } else {
             build_inactive_pane_plan_with_styles(ctx, buffer_index, styles)
           };
+          let generation_state = if pane.is_active_pane {
+            ctx
+              .frame_generation_state
+              .pane_states
+              .get(&pane.pane_id)
+              .cloned()
+              .unwrap_or_else(|| RenderGenerationState {
+                layout_generation: plan.layout_generation,
+                text_generation: plan.text_generation,
+                decoration_generation: plan.decoration_generation,
+                cursor_generation: plan.cursor_generation,
+                cursor_blink_generation: plan.cursor_blink_generation,
+                scroll_generation: plan.scroll_generation,
+                theme_generation: plan.theme_generation,
+                text_rows: Vec::new(),
+                decoration_rows: Vec::new(),
+                cursor_rows: Vec::new(),
+              })
+          } else {
+            let previous = previous_frame_generation_state.pane_states.get(&pane.pane_id);
+            let row_hashes = build_render_layer_row_hashes(&plan, &[], &[]);
+            finish_render_generations(
+              &mut plan,
+              previous,
+              ctx.render_theme_generation,
+              row_hashes,
+            )
+          };
+          pane_generation_states.insert(pane.pane_id, generation_state);
           (the_lib::editor::PaneContentKind::EditorBuffer, None, plan)
         },
         PaneContent::Terminal { terminal_id } => {
+          pane_generation_states.insert(pane.pane_id, RenderGenerationState::default());
           (
             the_lib::editor::PaneContentKind::Terminal,
             Some(terminal_id),
@@ -6180,7 +6307,21 @@ pub fn build_frame_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) 
     })
     .collect();
 
-  FrameRenderPlan { active_pane, panes }
+  let mut frame = FrameRenderPlan {
+    active_pane,
+    panes,
+    frame_generation: 0,
+    pane_structure_generation: 0,
+    changed_pane_ids: Vec::new(),
+    damage_is_full: false,
+    damage_reason: the_lib::render::RenderDamageReason::None,
+  };
+  ctx.frame_generation_state = finish_frame_generations(
+    &mut frame,
+    Some(&previous_frame_generation_state),
+    pane_generation_states,
+  );
+  frame
 }
 
 fn pane_screen_rect(area: Rect, pane: the_lib::render::graphics::Rect) -> Rect {

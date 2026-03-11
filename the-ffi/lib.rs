@@ -12,6 +12,11 @@ use std::{
     VecDeque,
   },
   env,
+  hash::{
+    DefaultHasher,
+    Hash,
+    Hasher,
+  },
   num::{
     NonZeroU64,
     NonZeroUsize,
@@ -170,6 +175,7 @@ use the_lib::{
   position::Position as LibPosition,
   registers::Registers,
   render::{
+    FrameGenerationState,
     GutterConfig,
     InlineDiagnostic,
     InlineDiagnosticFilter,
@@ -180,7 +186,9 @@ use the_lib::{
     OverlayNode,
     OverlayRectKind,
     OverlayText,
+    RenderGenerationState,
     RenderDiagnosticGutterStyles,
+    RenderLayerRowHashes,
     RenderDiffGutterStyles,
     RenderGutterDiffKind,
     RenderStyles,
@@ -200,8 +208,11 @@ use the_lib::{
     apply_row_insertions,
     apply_diagnostic_gutter_markers,
     apply_diff_gutter_markers,
+    base_render_layer_row_hashes,
     build_plan,
     char_at_visual_pos,
+    finish_frame_generations,
+    finish_render_generations,
     graphics::{
       Color as LibColor,
       CursorKind as LibCursorKind,
@@ -926,6 +937,46 @@ impl RenderPlan {
     self.inner.content_offset_x
   }
 
+  fn layout_generation(&self) -> u64 {
+    self.inner.layout_generation
+  }
+
+  fn text_generation(&self) -> u64 {
+    self.inner.text_generation
+  }
+
+  fn decoration_generation(&self) -> u64 {
+    self.inner.decoration_generation
+  }
+
+  fn cursor_generation(&self) -> u64 {
+    self.inner.cursor_generation
+  }
+
+  fn scroll_generation(&self) -> u64 {
+    self.inner.scroll_generation
+  }
+
+  fn theme_generation(&self) -> u64 {
+    self.inner.theme_generation
+  }
+
+  fn damage_start_row(&self) -> u16 {
+    self.inner.damage_start_row
+  }
+
+  fn damage_end_row(&self) -> u16 {
+    self.inner.damage_end_row
+  }
+
+  fn damage_is_full(&self) -> bool {
+    self.inner.damage_is_full
+  }
+
+  fn damage_reason(&self) -> u8 {
+    self.inner.damage_reason.code()
+  }
+
   fn cursor_blink_enabled(&self) -> bool {
     self.inner.cursor_blink_enabled
   }
@@ -1125,8 +1176,13 @@ impl RenderFramePane {
 
 #[derive(Debug, Clone)]
 pub struct RenderFramePlan {
-  active_pane_id: u64,
-  panes:          Vec<RenderFramePane>,
+  active_pane_id:             u64,
+  panes:                      Vec<RenderFramePane>,
+  frame_generation:           u64,
+  pane_structure_generation:  u64,
+  changed_pane_ids:           Vec<u64>,
+  damage_is_full:             bool,
+  damage_reason:              u8,
 }
 
 impl RenderFramePlan {
@@ -1134,6 +1190,11 @@ impl RenderFramePlan {
     Self {
       active_pane_id: 0,
       panes:          Vec::new(),
+      frame_generation: 0,
+      pane_structure_generation: 0,
+      changed_pane_ids: Vec::new(),
+      damage_is_full: false,
+      damage_reason: 0,
     }
   }
 
@@ -1145,6 +1206,15 @@ impl RenderFramePlan {
   ) -> Self {
     let active = frame.active_pane;
     let active_pane_id = active.get().get() as u64;
+    let frame_generation = frame.frame_generation;
+    let pane_structure_generation = frame.pane_structure_generation;
+    let changed_pane_ids = frame
+      .changed_pane_ids
+      .iter()
+      .map(|pane_id| pane_id.get().get() as u64)
+      .collect::<Vec<_>>();
+    let damage_is_full = frame.damage_is_full;
+    let damage_reason = frame.damage_reason.code();
     let panes = frame
       .panes
       .into_iter()
@@ -1169,11 +1239,20 @@ impl RenderFramePlan {
     Self {
       active_pane_id,
       panes,
+      frame_generation,
+      pane_structure_generation,
+      changed_pane_ids,
+      damage_is_full,
+      damage_reason,
     }
   }
 
   fn active_pane_id(&self) -> u64 {
     self.active_pane_id
+  }
+
+  fn frame_generation(&self) -> u64 {
+    self.frame_generation
   }
 
   fn pane_count(&self) -> usize {
@@ -1195,6 +1274,26 @@ impl RenderFramePlan {
       .find(|pane| pane.is_active)
       .map(|pane| pane.plan.clone())
       .unwrap_or_else(RenderPlan::empty)
+  }
+
+  fn pane_structure_generation(&self) -> u64 {
+    self.pane_structure_generation
+  }
+
+  fn changed_pane_count(&self) -> usize {
+    self.changed_pane_ids.len()
+  }
+
+  fn changed_pane_id_at(&self, index: usize) -> u64 {
+    self.changed_pane_ids.get(index).copied().unwrap_or(0)
+  }
+
+  fn damage_is_full(&self) -> bool {
+    self.damage_is_full
+  }
+
+  fn damage_reason(&self) -> u8 {
+    self.damage_reason
   }
 }
 
@@ -1813,6 +1912,7 @@ struct EditorState {
   syntax_parse_rx:                   Receiver<SyntaxParseResult>,
   syntax_parse_lifecycle:            ParseLifecycle<SyntaxParseJob>,
   syntax_parse_highlight_state:      ParseHighlightState,
+  frame_generation_state:            FrameGenerationState,
   diagnostic_popup:                  Option<DiagnosticPopupState>,
   hover_docs:                        Option<String>,
   hover_docs_scroll:                 usize,
@@ -1885,6 +1985,7 @@ impl EditorState {
       syntax_parse_rx,
       syntax_parse_lifecycle: ParseLifecycle::default(),
       syntax_parse_highlight_state: ParseHighlightState::default(),
+      frame_generation_state: FrameGenerationState::default(),
       diagnostic_popup: None,
       hover_docs: None,
       hover_docs_scroll: 0,
@@ -2551,6 +2652,80 @@ fn apply_row_insertions_to_underlines(
     entry.row = row;
     true
   });
+}
+
+fn update_render_row_hash(row_hashes: &mut [u64], row: usize, value: impl Hash) {
+  let Some(slot) = row_hashes.get_mut(row) else {
+    return;
+  };
+  let mut hasher = DefaultHasher::new();
+  slot.hash(&mut hasher);
+  value.hash(&mut hasher);
+  *slot = hasher.finish();
+}
+
+fn append_inline_diagnostic_row_hashes(
+  row_hashes: &mut [u64],
+  lines: &[InlineDiagnosticRenderLine],
+) {
+  for line in lines {
+    update_render_row_hash(
+      row_hashes,
+      line.row as usize,
+      (
+        line.col,
+        line.text.as_str(),
+        severity_to_u8(line.severity),
+      ),
+    );
+  }
+}
+
+fn append_eol_diagnostic_row_hashes(
+  row_hashes: &mut [u64],
+  entries: &[EolDiagnosticEntry],
+) {
+  for entry in entries {
+    update_render_row_hash(
+      row_hashes,
+      entry.row as usize,
+      (
+        entry.col,
+        entry.message.as_str(),
+        severity_to_u8(entry.severity),
+      ),
+    );
+  }
+}
+
+fn append_diagnostic_underline_row_hashes(
+  row_hashes: &mut [u64],
+  entries: &[DiagnosticUnderlineEntry],
+) {
+  for entry in entries {
+    update_render_row_hash(
+      row_hashes,
+      entry.row as usize,
+      (
+        entry.start_col,
+        entry.end_col,
+        severity_to_u8(entry.severity),
+      ),
+    );
+  }
+}
+
+fn build_render_layer_row_hashes(
+  plan: &the_lib::render::RenderPlan,
+  inline_diagnostic_lines: &[InlineDiagnosticRenderLine],
+  eol_diagnostics: &[EolDiagnosticEntry],
+  diagnostic_underlines: &[DiagnosticUnderlineEntry],
+) -> RenderLayerRowHashes {
+  let mut row_hashes = base_render_layer_row_hashes(plan);
+  append_inline_diagnostic_row_hashes(&mut row_hashes.decoration_rows, inline_diagnostic_lines);
+  append_eol_diagnostic_row_hashes(&mut row_hashes.decoration_rows, eol_diagnostics);
+  append_diagnostic_underline_row_hashes(&mut row_hashes.decoration_rows, diagnostic_underlines);
+  row_hashes
 }
 
 fn init_loader(theme: &Theme) -> Result<Loader, String> {
@@ -4352,6 +4527,7 @@ pub struct App {
   eol_diagnostics:                 Vec<EolDiagnosticEntry>,
   diagnostic_underlines:           Vec<DiagnosticUnderlineEntry>,
   render_inline_diagnostic_lines:  bool,
+  render_theme_generation:         u64,
   ui_theme_catalog:                ThemeCatalog,
   ui_theme_name:                   String,
   ui_theme_base:                   Theme,
@@ -5218,6 +5394,7 @@ impl App {
       eol_diagnostics: Vec::new(),
       diagnostic_underlines: Vec::new(),
       render_inline_diagnostic_lines: true,
+      render_theme_generation: 0,
       ui_theme_catalog,
       ui_theme_name,
       ui_theme_base: ui_theme.clone(),
@@ -5269,6 +5446,7 @@ impl App {
   }
 
   fn invalidate_theme_render_state(&mut self) {
+    self.render_theme_generation = self.render_theme_generation.wrapping_add(1);
     let editor_ids: Vec<_> = self.states.keys().copied().collect();
     for editor_id in editor_ids {
       let has_syntax = self
@@ -6289,6 +6467,13 @@ impl App {
     styles: RenderStyles,
   ) -> the_lib::render::RenderPlan {
     let _ = self.poll_active_syntax_parse_results();
+    let active_pane_id = self.active_editor_ref().active_pane_id();
+    let previous_generation_state = self
+      .active_state_ref()
+      .frame_generation_state
+      .pane_states
+      .get(&active_pane_id)
+      .cloned();
 
     let (
       mut text_fmt,
@@ -6481,10 +6666,25 @@ impl App {
     apply_diagnostic_gutter_markers(&mut plan, &diagnostics_by_line, diagnostic_styles);
     apply_diff_gutter_markers(&mut plan, &diff_signs, diff_styles);
 
+    let eol_diagnostics = compute_eol_diagnostics(&raw_diagnostics, &plan);
+    let row_hashes =
+      build_render_layer_row_hashes(&plan, &inline_lines, &eol_diagnostics, &underlines);
+    let generation_state = finish_render_generations(
+      &mut plan,
+      previous_generation_state.as_ref(),
+      self.render_theme_generation,
+      row_hashes,
+    );
+
     self.inline_diagnostic_lines = inline_lines;
-    self.eol_diagnostics = compute_eol_diagnostics(&raw_diagnostics, &plan);
+    self.eol_diagnostics = eol_diagnostics;
     self.diagnostic_underlines = underlines;
-    self.active_state_mut().highlight_cache = highlight_cache;
+    let state = self.active_state_mut();
+    state.highlight_cache = highlight_cache;
+    state
+      .frame_generation_state
+      .pane_states
+      .insert(active_pane_id, generation_state);
     plan
   }
 
@@ -6573,6 +6773,7 @@ impl App {
     &mut self,
     styles: RenderStyles,
   ) -> the_lib::render::FrameRenderPlan {
+    let previous_frame_generation_state = self.active_state_ref().frame_generation_state.clone();
     let (active_pane, panes) = {
       let editor = self.active_editor_ref();
       let viewport = editor.layout_viewport();
@@ -6585,6 +6786,7 @@ impl App {
       self.inline_diagnostic_lines.clear();
       self.eol_diagnostics.clear();
       self.diagnostic_underlines.clear();
+      self.active_state_mut().frame_generation_state = FrameGenerationState::default();
       return the_lib::render::FrameRenderPlan::empty();
     }
 
@@ -6598,17 +6800,49 @@ impl App {
     }
 
     let mut pane_plans = Vec::with_capacity(panes.len());
+    let mut pane_generation_states = BTreeMap::new();
     for pane in panes {
       let (pane_kind, terminal_id, plan) = match pane.content {
         PaneContent::EditorBuffer { buffer_index } => {
-          let plan = if pane.is_active_pane {
+          let mut plan = if pane.is_active_pane {
             self.build_render_plan_with_styles_impl(styles)
           } else {
             self.build_inactive_pane_render_plan_with_styles_impl(buffer_index, styles)
           };
+          let generation_state = if pane.is_active_pane {
+            self
+              .active_state_ref()
+              .frame_generation_state
+              .pane_states
+              .get(&pane.pane_id)
+              .cloned()
+              .unwrap_or_else(|| RenderGenerationState {
+                layout_generation: plan.layout_generation,
+                text_generation: plan.text_generation,
+                decoration_generation: plan.decoration_generation,
+                cursor_generation: plan.cursor_generation,
+                cursor_blink_generation: plan.cursor_blink_generation,
+                scroll_generation: plan.scroll_generation,
+                theme_generation: plan.theme_generation,
+                text_rows: Vec::new(),
+                decoration_rows: Vec::new(),
+                cursor_rows: Vec::new(),
+              })
+          } else {
+            let previous = previous_frame_generation_state.pane_states.get(&pane.pane_id);
+            let row_hashes = build_render_layer_row_hashes(&plan, &[], &[], &[]);
+            finish_render_generations(
+              &mut plan,
+              previous,
+              self.render_theme_generation,
+              row_hashes,
+            )
+          };
+          pane_generation_states.insert(pane.pane_id, generation_state);
           (PaneContentKind::EditorBuffer, None, plan)
         },
         PaneContent::Terminal { terminal_id } => {
+          pane_generation_states.insert(pane.pane_id, RenderGenerationState::default());
           (
             PaneContentKind::Terminal,
             Some(terminal_id),
@@ -6625,10 +6859,22 @@ impl App {
       });
     }
 
-    the_lib::render::FrameRenderPlan {
+    let mut frame = the_lib::render::FrameRenderPlan {
       active_pane,
       panes: pane_plans,
-    }
+      frame_generation: 0,
+      pane_structure_generation: 0,
+      changed_pane_ids: Vec::new(),
+      damage_is_full: false,
+      damage_reason: the_lib::render::RenderDamageReason::None,
+    };
+    let next_frame_generation_state = finish_frame_generations(
+      &mut frame,
+      Some(&previous_frame_generation_state),
+      pane_generation_states,
+    );
+    self.active_state_mut().frame_generation_state = next_frame_generation_state;
+    frame
   }
 
   pub fn text(&self, id: ffi::EditorId) -> String {
@@ -13861,6 +14107,16 @@ mod ffi {
     fn viewport(self: &RenderPlan) -> Rect;
     fn scroll(self: &RenderPlan) -> Position;
     fn content_offset_x(self: &RenderPlan) -> u16;
+    fn layout_generation(self: &RenderPlan) -> u64;
+    fn text_generation(self: &RenderPlan) -> u64;
+    fn decoration_generation(self: &RenderPlan) -> u64;
+    fn cursor_generation(self: &RenderPlan) -> u64;
+    fn scroll_generation(self: &RenderPlan) -> u64;
+    fn theme_generation(self: &RenderPlan) -> u64;
+    fn damage_start_row(self: &RenderPlan) -> u16;
+    fn damage_end_row(self: &RenderPlan) -> u16;
+    fn damage_is_full(self: &RenderPlan) -> bool;
+    fn damage_reason(self: &RenderPlan) -> u8;
     fn cursor_blink_enabled(self: &RenderPlan) -> bool;
     fn cursor_blink_interval_ms(self: &RenderPlan) -> u16;
     fn cursor_blink_delay_ms(self: &RenderPlan) -> u16;
@@ -13916,9 +14172,15 @@ mod ffi {
   extern "Rust" {
     type RenderFramePlan;
     fn active_pane_id(self: &RenderFramePlan) -> u64;
+    fn frame_generation(self: &RenderFramePlan) -> u64;
+    fn pane_structure_generation(self: &RenderFramePlan) -> u64;
     fn pane_count(self: &RenderFramePlan) -> usize;
     fn pane_at(self: &RenderFramePlan, index: usize) -> RenderFramePane;
     fn active_plan(self: &RenderFramePlan) -> RenderPlan;
+    fn changed_pane_count(self: &RenderFramePlan) -> usize;
+    fn changed_pane_id_at(self: &RenderFramePlan, index: usize) -> u64;
+    fn damage_is_full(self: &RenderFramePlan) -> bool;
+    fn damage_reason(self: &RenderFramePlan) -> u8;
   }
 
   extern "Rust" {

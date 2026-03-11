@@ -51,6 +51,11 @@
 
 use std::{
   collections::BTreeMap,
+  hash::{
+    DefaultHasher,
+    Hash,
+    Hasher,
+  },
   num::NonZeroUsize,
 };
 
@@ -205,7 +210,7 @@ pub struct RenderCursor {
   pub style: Style,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RenderSelectionKind {
   Primary,
   Match,
@@ -269,11 +274,78 @@ pub struct RenderRowInsertion {
   pub inserted_rows: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RenderDamageReason {
+  None,
+  Full,
+  Layout,
+  Text,
+  Decoration,
+  Cursor,
+  Scroll,
+  Theme,
+  PaneStructure,
+}
+
+impl RenderDamageReason {
+  pub fn code(self) -> u8 {
+    match self {
+      Self::None => 0,
+      Self::Full => 1,
+      Self::Layout => 2,
+      Self::Text => 3,
+      Self::Decoration => 4,
+      Self::Cursor => 5,
+      Self::Scroll => 6,
+      Self::Theme => 7,
+      Self::PaneStructure => 8,
+    }
+  }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct RenderLayerRowHashes {
+  pub text_rows:       Vec<u64>,
+  pub decoration_rows: Vec<u64>,
+  pub cursor_rows:     Vec<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct RenderGenerationState {
+  pub layout_generation:     u64,
+  pub text_generation:       u64,
+  pub decoration_generation: u64,
+  pub cursor_generation:     u64,
+  pub cursor_blink_generation: u64,
+  pub scroll_generation:     u64,
+  pub theme_generation:      u64,
+  pub text_rows:             Vec<u64>,
+  pub decoration_rows:       Vec<u64>,
+  pub cursor_rows:           Vec<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct FrameGenerationState {
+  pub frame_generation:          u64,
+  pub pane_structure_generation: u64,
+  pub pane_states:               BTreeMap<PaneId, RenderGenerationState>,
+}
+
 #[derive(Debug, Clone)]
 pub struct RenderPlan {
   pub viewport:                 Rect,
   pub scroll:                   Position,
   pub content_offset_x:         u16,
+  pub layout_generation:        u64,
+  pub text_generation:          u64,
+  pub decoration_generation:    u64,
+  pub cursor_generation:        u64,
+  pub scroll_generation:        u64,
+  pub theme_generation:         u64,
+  pub damage_start_row:         u16,
+  pub damage_end_row:           u16,
+  pub damage_is_full:           bool,
+  pub damage_reason:            RenderDamageReason,
   pub cursor_blink_enabled:     bool,
   pub cursor_blink_interval_ms: u16,
   pub cursor_blink_delay_ms:    u16,
@@ -293,6 +365,16 @@ impl RenderPlan {
       viewport,
       scroll,
       content_offset_x: 0,
+      layout_generation: 0,
+      text_generation: 0,
+      decoration_generation: 0,
+      cursor_generation: 0,
+      scroll_generation: 0,
+      theme_generation: 0,
+      damage_start_row: 0,
+      damage_end_row: 0,
+      damage_is_full: false,
+      damage_reason: RenderDamageReason::None,
       cursor_blink_enabled: false,
       cursor_blink_interval_ms: 0,
       cursor_blink_delay_ms: 0,
@@ -414,8 +496,13 @@ pub struct PaneRenderPlan {
 
 #[derive(Debug, Clone)]
 pub struct FrameRenderPlan {
-  pub active_pane: PaneId,
-  pub panes:       Vec<PaneRenderPlan>,
+  pub active_pane:               PaneId,
+  pub panes:                     Vec<PaneRenderPlan>,
+  pub frame_generation:          u64,
+  pub pane_structure_generation: u64,
+  pub changed_pane_ids:          Vec<PaneId>,
+  pub damage_is_full:            bool,
+  pub damage_reason:             RenderDamageReason,
 }
 
 impl FrameRenderPlan {
@@ -423,6 +510,11 @@ impl FrameRenderPlan {
     Self {
       active_pane: default_pane_id(),
       panes:       Vec::new(),
+      frame_generation: 0,
+      pane_structure_generation: 0,
+      changed_pane_ids: Vec::new(),
+      damage_is_full: false,
+      damage_reason: RenderDamageReason::None,
     }
   }
 
@@ -438,6 +530,11 @@ impl FrameRenderPlan {
         terminal_id: None,
         plan,
       }],
+      frame_generation: 0,
+      pane_structure_generation: 0,
+      changed_pane_ids: Vec::new(),
+      damage_is_full: false,
+      damage_reason: RenderDamageReason::None,
     }
   }
 
@@ -474,6 +571,330 @@ impl Default for FrameRenderPlan {
 
 fn default_pane_id() -> PaneId {
   PaneId::new(NonZeroUsize::new(1).expect("nonzero"))
+}
+
+fn hash_value<T: Hash>(value: &T) -> u64 {
+  let mut hasher = DefaultHasher::new();
+  value.hash(&mut hasher);
+  hasher.finish()
+}
+
+fn combine_hashes(values: &[u64]) -> u64 {
+  hash_value(&values)
+}
+
+fn update_row_hash(row_hashes: &mut [u64], row: usize, value: impl Hash) {
+  let Some(slot) = row_hashes.get_mut(row) else {
+    return;
+  };
+  let mut hasher = DefaultHasher::new();
+  slot.hash(&mut hasher);
+  value.hash(&mut hasher);
+  *slot = hasher.finish();
+}
+
+fn full_damage_end_row(plan: &RenderPlan) -> u16 {
+  plan.viewport.height.saturating_sub(1)
+}
+
+fn nonzero_row_range(rows: &[u64]) -> Option<(u16, u16)> {
+  let start = rows.iter().position(|hash| *hash != 0)? as u16;
+  let end = rows.iter().rposition(|hash| *hash != 0)? as u16;
+  Some((start, end))
+}
+
+fn row_damage(reason: RenderDamageReason, full: bool, start_row: u16, end_row: u16) -> (u16, u16, bool, RenderDamageReason) {
+  (start_row, end_row, full, reason)
+}
+
+pub fn diff_row_hashes(previous: &[u64], next: &[u64]) -> Option<(u16, u16)> {
+  let max_len = previous.len().max(next.len());
+  let mut first = None;
+  let mut last = None;
+  for idx in 0..max_len {
+    let previous_hash = previous.get(idx).copied().unwrap_or_default();
+    let next_hash = next.get(idx).copied().unwrap_or_default();
+    if previous_hash != next_hash {
+      first.get_or_insert(idx as u16);
+      last = Some(idx as u16);
+    }
+  }
+  first.zip(last)
+}
+
+pub fn base_render_layer_row_hashes(plan: &RenderPlan) -> RenderLayerRowHashes {
+  let row_count = plan.viewport.height as usize;
+  let mut text_rows = vec![0; row_count];
+  let mut decoration_rows = vec![0; row_count];
+  let mut cursor_rows = vec![0; row_count];
+
+  for line in &plan.lines {
+    let row = line.row as usize;
+    for span in &line.spans {
+      update_row_hash(
+        &mut text_rows,
+        row,
+        (
+          span.col,
+          span.cols,
+          span.text.as_str(),
+          span.highlight.map(|highlight| highlight.get()),
+          span.is_virtual,
+        ),
+      );
+    }
+  }
+
+  for line in &plan.gutter_lines {
+    let row = line.row as usize;
+    for span in &line.spans {
+      update_row_hash(&mut text_rows, row, (span.col, span.text.as_str()));
+    }
+  }
+
+  for selection in &plan.selections {
+    update_row_hash(
+      &mut decoration_rows,
+      selection.rect.y as usize,
+      (
+        selection.rect.x,
+        selection.rect.y,
+        selection.rect.width,
+        selection.rect.height,
+        selection.kind,
+      ),
+    );
+  }
+
+  for overlay in &plan.overlays {
+    match overlay {
+      OverlayNode::Rect(rect) => {
+        let start_row = rect.rect.y as usize;
+        let end_row = start_row.saturating_add(rect.rect.height as usize).max(start_row + 1);
+        for row in start_row..end_row.min(row_count) {
+          update_row_hash(
+            &mut decoration_rows,
+            row,
+            (
+              rect.rect.x,
+              rect.rect.width,
+              rect.kind,
+              rect.radius,
+            ),
+          );
+        }
+      },
+      OverlayNode::Text(text) => {
+        update_row_hash(
+          &mut decoration_rows,
+          text.pos.row,
+          (text.pos.col, text.text.as_str()),
+        );
+      },
+    }
+  }
+
+  for cursor in &plan.cursors {
+    update_row_hash(
+      &mut cursor_rows,
+      cursor.pos.row,
+      (
+        cursor.id,
+        cursor.pos.col,
+        cursor.kind,
+      ),
+    );
+  }
+
+  RenderLayerRowHashes {
+    text_rows,
+    decoration_rows,
+    cursor_rows,
+  }
+}
+
+pub fn hash_render_plan_layout(plan: &RenderPlan) -> u64 {
+  let gutter_columns = plan
+    .gutter_columns
+    .iter()
+    .map(|column| (column.kind, column.col, column.width))
+    .collect::<Vec<_>>();
+  let visible_rows = plan
+    .visible_rows
+    .iter()
+    .map(|row| (row.row, row.doc_line, row.first_visual_line))
+    .collect::<Vec<_>>();
+  hash_value(&(
+    plan.viewport.x,
+    plan.viewport.y,
+    plan.viewport.width,
+    plan.viewport.height,
+    plan.content_offset_x,
+    gutter_columns,
+    visible_rows,
+  ))
+}
+
+pub fn finish_render_generations(
+  plan: &mut RenderPlan,
+  previous: Option<&RenderGenerationState>,
+  theme_generation: u64,
+  row_hashes: RenderLayerRowHashes,
+) -> RenderGenerationState {
+  let layout_generation = hash_render_plan_layout(plan);
+  let text_generation = combine_hashes(&row_hashes.text_rows);
+  let decoration_generation = combine_hashes(&row_hashes.decoration_rows);
+  let cursor_generation = combine_hashes(&row_hashes.cursor_rows);
+  let scroll_generation = hash_value(&(plan.scroll.row, plan.scroll.col));
+
+  let damage = if let Some(previous) = previous {
+    if previous.theme_generation != theme_generation {
+      row_damage(RenderDamageReason::Theme, true, 0, full_damage_end_row(plan))
+    } else if previous.layout_generation != layout_generation {
+      row_damage(RenderDamageReason::Layout, true, 0, full_damage_end_row(plan))
+    } else if previous.scroll_generation != scroll_generation {
+      row_damage(RenderDamageReason::Scroll, true, 0, full_damage_end_row(plan))
+    } else if previous.text_generation != text_generation {
+      let (start, end) =
+        diff_row_hashes(&previous.text_rows, &row_hashes.text_rows).unwrap_or((0, full_damage_end_row(plan)));
+      row_damage(RenderDamageReason::Text, false, start, end)
+    } else if previous.decoration_generation != decoration_generation {
+      let (start, end) = diff_row_hashes(
+        &previous.decoration_rows,
+        &row_hashes.decoration_rows,
+      )
+      .unwrap_or((0, full_damage_end_row(plan)));
+      row_damage(RenderDamageReason::Decoration, false, start, end)
+    } else if previous.cursor_generation != cursor_generation
+      || previous.cursor_blink_generation != plan.cursor_blink_generation
+    {
+      let (start, end) = diff_row_hashes(&previous.cursor_rows, &row_hashes.cursor_rows)
+        .or_else(|| nonzero_row_range(&row_hashes.cursor_rows))
+        .or_else(|| nonzero_row_range(&previous.cursor_rows))
+        .unwrap_or((0, full_damage_end_row(plan)));
+      row_damage(RenderDamageReason::Cursor, false, start, end)
+    } else {
+      row_damage(RenderDamageReason::None, false, 0, 0)
+    }
+  } else {
+    row_damage(RenderDamageReason::Full, true, 0, full_damage_end_row(plan))
+  };
+
+  plan.layout_generation = layout_generation;
+  plan.text_generation = text_generation;
+  plan.decoration_generation = decoration_generation;
+  plan.cursor_generation = cursor_generation;
+  plan.scroll_generation = scroll_generation;
+  plan.theme_generation = theme_generation;
+  plan.damage_start_row = damage.0;
+  plan.damage_end_row = damage.1;
+  plan.damage_is_full = damage.2;
+  plan.damage_reason = damage.3;
+
+  RenderGenerationState {
+    layout_generation,
+    text_generation,
+    decoration_generation,
+    cursor_generation,
+    cursor_blink_generation: plan.cursor_blink_generation,
+    scroll_generation,
+    theme_generation,
+    text_rows: row_hashes.text_rows,
+    decoration_rows: row_hashes.decoration_rows,
+    cursor_rows: row_hashes.cursor_rows,
+  }
+}
+
+pub fn finish_frame_generations(
+  frame: &mut FrameRenderPlan,
+  previous: Option<&FrameGenerationState>,
+  pane_states: BTreeMap<PaneId, RenderGenerationState>,
+) -> FrameGenerationState {
+  let pane_structure_generation = hash_value(
+    &frame
+      .panes
+      .iter()
+      .map(|pane| {
+        (
+          pane.pane_id,
+          pane.rect.x,
+          pane.rect.y,
+          pane.rect.width,
+          pane.rect.height,
+          pane.pane_kind,
+          pane.terminal_id,
+        )
+      })
+      .collect::<Vec<_>>(),
+  );
+  let frame_generation = hash_value(
+    &(
+      frame.active_pane,
+      pane_structure_generation,
+      frame
+        .panes
+        .iter()
+        .map(|pane| {
+          (
+            pane.pane_id,
+            pane.plan.layout_generation,
+            pane.plan.text_generation,
+            pane.plan.decoration_generation,
+            pane.plan.cursor_generation,
+            pane.plan.scroll_generation,
+            pane.plan.theme_generation,
+          )
+        })
+        .collect::<Vec<_>>(),
+    ),
+  );
+
+  let mut changed_pane_ids = Vec::new();
+  let mut damage_is_full = previous.is_none();
+  let mut damage_reason = if previous.is_none() {
+    RenderDamageReason::Full
+  } else {
+    RenderDamageReason::None
+  };
+
+  if let Some(previous) = previous {
+    if previous.pane_structure_generation != pane_structure_generation {
+      damage_is_full = true;
+      damage_reason = RenderDamageReason::PaneStructure;
+    }
+
+    for pane in &frame.panes {
+      let current = pane_states.get(&pane.pane_id);
+      let previous_state = previous.pane_states.get(&pane.pane_id);
+      if current != previous_state {
+        changed_pane_ids.push(pane.pane_id);
+        if damage_reason == RenderDamageReason::None {
+          damage_reason = pane.plan.damage_reason;
+        }
+        damage_is_full |= pane.plan.damage_is_full;
+      }
+    }
+
+    for pane_id in previous.pane_states.keys() {
+      if !pane_states.contains_key(pane_id) {
+        changed_pane_ids.push(*pane_id);
+      }
+    }
+  } else {
+    changed_pane_ids.extend(frame.panes.iter().map(|pane| pane.pane_id));
+  }
+
+  frame.frame_generation = frame_generation;
+  frame.pane_structure_generation = pane_structure_generation;
+  frame.changed_pane_ids = changed_pane_ids.clone();
+  frame.damage_is_full = damage_is_full;
+  frame.damage_reason = damage_reason;
+
+  FrameGenerationState {
+    frame_generation,
+    pane_structure_generation,
+    pane_states,
+  }
 }
 
 #[derive(Debug, Default)]
@@ -1947,5 +2368,117 @@ mod tests {
     let frame = FrameRenderPlan::empty();
     assert!(frame.active_plan().is_none());
     assert!(frame.into_active_plan().is_none());
+  }
+
+  #[test]
+  fn finish_render_generations_tracks_text_row_damage() {
+    let mut initial = RenderPlan::empty(Rect::new(0, 0, 12, 3), Position::new(0, 0));
+    initial.lines.push(RenderLine {
+      row: 0,
+      spans: vec![RenderSpan {
+        col: 0,
+        cols: 3,
+        text: "abc".into(),
+        highlight: None,
+        is_virtual: false,
+      }],
+    });
+
+    let initial_rows = base_render_layer_row_hashes(&initial);
+    let previous = finish_render_generations(&mut initial, None, 0, initial_rows);
+    assert!(initial.damage_is_full);
+    assert_eq!(initial.damage_reason, RenderDamageReason::Full);
+
+    let mut updated = initial.clone();
+    updated.lines[0].spans[0].text = "abd".into();
+    let updated_rows = base_render_layer_row_hashes(&updated);
+    let next = finish_render_generations(&mut updated, Some(&previous), 0, updated_rows);
+
+    assert_eq!(updated.damage_reason, RenderDamageReason::Text);
+    assert!(!updated.damage_is_full);
+    assert_eq!(updated.damage_start_row, 0);
+    assert_eq!(updated.damage_end_row, 0);
+    assert_ne!(previous.text_generation, next.text_generation);
+  }
+
+  #[test]
+  fn finish_frame_generations_tracks_changed_panes() {
+    let pane_id = PaneId::new(std::num::NonZeroUsize::new(2).unwrap());
+    let mut initial_plan = RenderPlan::empty(Rect::new(0, 0, 12, 3), Position::new(0, 0));
+    initial_plan.lines.push(RenderLine {
+      row: 0,
+      spans: vec![RenderSpan {
+        col: 0,
+        cols: 3,
+        text: "abc".into(),
+        highlight: None,
+        is_virtual: false,
+      }],
+    });
+    let initial_plan_rows = base_render_layer_row_hashes(&initial_plan);
+    let initial_pane_state =
+      finish_render_generations(&mut initial_plan, None, 0, initial_plan_rows);
+
+    let mut frame = FrameRenderPlan {
+      active_pane: pane_id,
+      panes: vec![PaneRenderPlan {
+        pane_id,
+        rect: Rect::new(0, 0, 12, 3),
+        pane_kind: PaneContentKind::EditorBuffer,
+        terminal_id: None,
+        plan: initial_plan.clone(),
+      }],
+      frame_generation: 0,
+      pane_structure_generation: 0,
+      changed_pane_ids: Vec::new(),
+      damage_is_full: false,
+      damage_reason: RenderDamageReason::None,
+    };
+    let initial_frame_state = finish_frame_generations(
+      &mut frame,
+      None,
+      BTreeMap::from([(pane_id, initial_pane_state.clone())]),
+    );
+    assert!(frame.damage_is_full);
+    assert_eq!(frame.damage_reason, RenderDamageReason::Full);
+    assert_eq!(frame.changed_pane_ids, vec![pane_id]);
+
+    let mut updated_plan = initial_plan.clone();
+    updated_plan.lines[0].spans[0].text = "xyz".into();
+    let updated_plan_rows = base_render_layer_row_hashes(&updated_plan);
+    let updated_pane_state = finish_render_generations(
+      &mut updated_plan,
+      Some(&initial_pane_state),
+      0,
+      updated_plan_rows,
+    );
+    let mut updated_frame = FrameRenderPlan {
+      active_pane: pane_id,
+      panes: vec![PaneRenderPlan {
+        pane_id,
+        rect: Rect::new(0, 0, 12, 3),
+        pane_kind: PaneContentKind::EditorBuffer,
+        terminal_id: None,
+        plan: updated_plan,
+      }],
+      frame_generation: 0,
+      pane_structure_generation: 0,
+      changed_pane_ids: Vec::new(),
+      damage_is_full: false,
+      damage_reason: RenderDamageReason::None,
+    };
+    let next_frame_state = finish_frame_generations(
+      &mut updated_frame,
+      Some(&initial_frame_state),
+      BTreeMap::from([(pane_id, updated_pane_state)]),
+    );
+
+    assert!(!updated_frame.damage_is_full);
+    assert_eq!(updated_frame.damage_reason, RenderDamageReason::Text);
+    assert_eq!(updated_frame.changed_pane_ids, vec![pane_id]);
+    assert_ne!(
+      initial_frame_state.frame_generation,
+      next_frame_state.frame_generation
+    );
   }
 }

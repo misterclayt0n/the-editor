@@ -50,17 +50,21 @@ pub use overlay::{
 };
 pub use plan::{
   FrameRenderPlan,
+  FrameGenerationState,
   HighlightProvider,
   NoHighlights,
   PaneRenderPlan,
+  RenderDamageReason,
   RenderCache,
   RenderCursor,
   RenderDiagnosticGutterStyles,
   RenderDiffGutterStyles,
+  RenderGenerationState,
   RenderGutterColumn,
   RenderGutterDiffKind,
   RenderGutterLine,
   RenderGutterSpan,
+  RenderLayerRowHashes,
   RenderLine,
   RenderPlan,
   RenderRowInsertion,
@@ -74,8 +78,13 @@ pub use plan::{
   add_selection_match_highlights,
   apply_diagnostic_gutter_markers,
   apply_diff_gutter_markers,
+  base_render_layer_row_hashes,
   build_plan,
+  diff_row_hashes,
+  finish_frame_generations,
+  finish_render_generations,
   gutter_width_for_document,
+  hash_render_plan_layout,
 };
 pub use ui::*;
 pub use visual_position::{

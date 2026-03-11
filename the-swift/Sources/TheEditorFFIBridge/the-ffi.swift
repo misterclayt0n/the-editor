@@ -1,7 +1,6 @@
 import Foundation
 import TheEditorFFI
 
-
 public class App: AppRefMut {
     var isOwned: Bool = true
 
@@ -231,6 +230,10 @@ extension AppRefMut {
         RustString(ptr: __swift_bridge__$App$command_palette_query(ptr, id.intoFfiRepr()))
     }
 
+    public func command_palette_display_query(_ id: EditorId) -> RustString {
+        RustString(ptr: __swift_bridge__$App$command_palette_display_query(ptr, id.intoFfiRepr()))
+    }
+
     public func command_palette_layout(_ id: EditorId) -> UInt8 {
         __swift_bridge__$App$command_palette_layout(ptr, id.intoFfiRepr())
     }
@@ -306,6 +309,12 @@ extension AppRefMut {
     public func command_palette_set_query<GenericToRustStr: ToRustStr>(_ id: EditorId, _ query: GenericToRustStr) -> Bool {
         return query.toRustStr({ queryAsRustStr in
             __swift_bridge__$App$command_palette_set_query(ptr, id.intoFfiRepr(), queryAsRustStr)
+        })
+    }
+
+    public func command_palette_set_display_query<GenericToRustStr: ToRustStr>(_ id: EditorId, _ query: GenericToRustStr) -> Bool {
+        return query.toRustStr({ queryAsRustStr in
+            __swift_bridge__$App$command_palette_set_display_query(ptr, id.intoFfiRepr(), queryAsRustStr)
         })
     }
 

@@ -6964,6 +6964,21 @@ impl App {
     self.active_state_ref().command_palette.query.clone()
   }
 
+  pub fn command_palette_display_query(&mut self, id: ffi::EditorId) -> String {
+    if self.activate(id).is_none() {
+      return String::new();
+    }
+
+    let palette = &self.active_state_ref().command_palette;
+    if matches!(palette.source, CommandPaletteSource::CommandLine) && palette.prefiltered {
+      let input = self.command_prompt_ref().input.trim().trim_start_matches(':');
+      let (_, args, _) = command_line_split(input);
+      return args.to_string();
+    }
+
+    palette.query.clone()
+  }
+
   pub fn command_palette_layout(&mut self, id: ffi::EditorId) -> u8 {
     if self.activate(id).is_none() {
       return 0;
@@ -7400,6 +7415,40 @@ impl App {
     } else {
       update_command_palette_for_input(self, query);
     }
+    true
+  }
+
+  pub fn command_palette_set_display_query(&mut self, id: ffi::EditorId, query: &str) -> bool {
+    if self.activate(id).is_none() {
+      return false;
+    }
+
+    let source = self.active_state_ref().command_palette.source;
+    if matches!(source, CommandPaletteSource::ActionPalette) {
+      update_action_palette_for_input(self, query);
+      return true;
+    }
+
+    if self.active_state_ref().command_palette.prefiltered {
+      let current_input = self
+        .command_prompt_ref()
+        .input
+        .trim()
+        .trim_start_matches(':')
+        .to_string();
+      let (command, _, _) = command_line_split(&current_input);
+      let next_input = if command.is_empty() {
+        query.to_string()
+      } else if query.is_empty() {
+        format!("{command} ")
+      } else {
+        format!("{command} {query}")
+      };
+      update_command_palette_for_input(self, &next_input);
+      return true;
+    }
+
+    update_command_palette_for_input(self, query);
     true
   }
 
@@ -13948,6 +13997,7 @@ mod ffi {
     ) -> String;
     fn command_palette_is_open(self: &mut App, id: EditorId) -> bool;
     fn command_palette_query(self: &mut App, id: EditorId) -> String;
+    fn command_palette_display_query(self: &mut App, id: EditorId) -> String;
     fn command_palette_layout(self: &mut App, id: EditorId) -> u8;
     fn command_palette_placeholder(self: &mut App, id: EditorId) -> String;
     fn command_palette_is_file_mode(self: &mut App, id: EditorId) -> bool;
@@ -13972,6 +14022,7 @@ mod ffi {
     fn command_palette_submit_filtered(self: &mut App, id: EditorId, index: usize) -> bool;
     fn command_palette_close(self: &mut App, id: EditorId) -> bool;
     fn command_palette_set_query(self: &mut App, id: EditorId, query: &str) -> bool;
+    fn command_palette_set_display_query(self: &mut App, id: EditorId, query: &str) -> bool;
     fn search_prompt_set_query(self: &mut App, id: EditorId, query: &str) -> bool;
     fn search_prompt_close(self: &mut App, id: EditorId) -> bool;
     fn search_prompt_submit(self: &mut App, id: EditorId) -> bool;
@@ -15748,6 +15799,38 @@ mod tests {
     assert_eq!(app.command_palette_query(id), "");
     assert_eq!(app.command_palette_filtered_count(id), 0);
     assert_eq!(app.command_palette_filtered_selected_index(id), -1);
+  }
+
+  #[test]
+  fn command_palette_display_query_preserves_prefiltered_file_mode() {
+    let _guard = ffi_test_guard();
+    let mut app = App::new();
+    let id = app.create_editor("", default_viewport(), ffi::Position { row: 0, col: 0 });
+
+    assert!(app.handle_key(id, key_char(':')));
+    assert!(app.command_palette_set_query(id, "e "));
+    assert!(app.command_palette_is_file_mode(id));
+    assert_eq!(app.command_palette_display_query(id), "");
+
+    assert!(app.command_palette_set_display_query(id, "assets"));
+    assert!(app.command_palette_is_file_mode(id));
+    assert_eq!(app.command_palette_query(id), "");
+    assert_eq!(app.command_palette_display_query(id), "assets");
+    assert!(app.command_palette_filtered_count(id) > 0);
+  }
+
+  #[test]
+  fn command_palette_display_query_preserves_prefiltered_theme_mode() {
+    let _guard = ffi_test_guard();
+    let mut app = App::new();
+    let id = app.create_editor("", default_viewport(), ffi::Position { row: 0, col: 0 });
+
+    assert!(app.handle_key(id, key_char(':')));
+    assert!(app.command_palette_set_query(id, "theme "));
+
+    assert!(app.command_palette_set_display_query(id, "base16"));
+    assert_eq!(app.command_palette_display_query(id), "base16");
+    assert!(app.command_palette_filtered_count(id) > 0);
   }
 
   #[test]

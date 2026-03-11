@@ -380,6 +380,7 @@ void* __swift_bridge__$App$completion_popup_layout_json(uintptr_t area_width, ui
 void* __swift_bridge__$App$signature_help_popup_layout_json(uintptr_t area_width, uintptr_t area_height, int64_t cursor_x, int64_t cursor_y, uintptr_t panel_width, uintptr_t panel_height);
 bool __swift_bridge__$App$command_palette_is_open(void* self, struct __swift_bridge__$EditorId id);
 void* __swift_bridge__$App$command_palette_query(void* self, struct __swift_bridge__$EditorId id);
+void* __swift_bridge__$App$command_palette_display_query(void* self, struct __swift_bridge__$EditorId id);
 uint8_t __swift_bridge__$App$command_palette_layout(void* self, struct __swift_bridge__$EditorId id);
 void* __swift_bridge__$App$command_palette_placeholder(void* self, struct __swift_bridge__$EditorId id);
 bool __swift_bridge__$App$command_palette_is_file_mode(void* self, struct __swift_bridge__$EditorId id);
@@ -399,6 +400,7 @@ bool __swift_bridge__$App$command_palette_select_filtered(void* self, struct __s
 bool __swift_bridge__$App$command_palette_submit_filtered(void* self, struct __swift_bridge__$EditorId id, uintptr_t index);
 bool __swift_bridge__$App$command_palette_close(void* self, struct __swift_bridge__$EditorId id);
 bool __swift_bridge__$App$command_palette_set_query(void* self, struct __swift_bridge__$EditorId id, struct RustStr query);
+bool __swift_bridge__$App$command_palette_set_display_query(void* self, struct __swift_bridge__$EditorId id, struct RustStr query);
 bool __swift_bridge__$App$search_prompt_set_query(void* self, struct __swift_bridge__$EditorId id, struct RustStr query);
 bool __swift_bridge__$App$search_prompt_close(void* self, struct __swift_bridge__$EditorId id);
 bool __swift_bridge__$App$search_prompt_submit(void* self, struct __swift_bridge__$EditorId id);

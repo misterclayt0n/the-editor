@@ -381,6 +381,8 @@ void* __swift_bridge__$App$signature_help_popup_layout_json(uintptr_t area_width
 bool __swift_bridge__$App$command_palette_is_open(void* self, struct __swift_bridge__$EditorId id);
 void* __swift_bridge__$App$command_palette_query(void* self, struct __swift_bridge__$EditorId id);
 uint8_t __swift_bridge__$App$command_palette_layout(void* self, struct __swift_bridge__$EditorId id);
+void* __swift_bridge__$App$command_palette_placeholder(void* self, struct __swift_bridge__$EditorId id);
+bool __swift_bridge__$App$command_palette_is_file_mode(void* self, struct __swift_bridge__$EditorId id);
 uintptr_t __swift_bridge__$App$command_palette_filtered_count(void* self, struct __swift_bridge__$EditorId id);
 int64_t __swift_bridge__$App$command_palette_filtered_selected_index(void* self, struct __swift_bridge__$EditorId id);
 void* __swift_bridge__$App$command_palette_filtered_title(void* self, struct __swift_bridge__$EditorId id, uintptr_t index);
@@ -391,6 +393,7 @@ void* __swift_bridge__$App$command_palette_filtered_badge(void* self, struct __s
 void* __swift_bridge__$App$command_palette_filtered_leading_icon(void* self, struct __swift_bridge__$EditorId id, uintptr_t index);
 struct __swift_bridge__$Color __swift_bridge__$App$command_palette_filtered_leading_color(void* self, struct __swift_bridge__$EditorId id, uintptr_t index);
 uintptr_t __swift_bridge__$App$command_palette_filtered_symbol_count(void* self, struct __swift_bridge__$EditorId id, uintptr_t index);
+bool __swift_bridge__$App$command_palette_filtered_emphasis(void* self, struct __swift_bridge__$EditorId id, uintptr_t index);
 void* __swift_bridge__$App$command_palette_filtered_symbol(void* self, struct __swift_bridge__$EditorId id, uintptr_t index, uintptr_t symbol_index);
 bool __swift_bridge__$App$command_palette_select_filtered(void* self, struct __swift_bridge__$EditorId id, uintptr_t index);
 bool __swift_bridge__$App$command_palette_submit_filtered(void* self, struct __swift_bridge__$EditorId id, uintptr_t index);
@@ -412,6 +415,7 @@ bool __swift_bridge__$App$file_tree_select_path(void* self, struct __swift_bridg
 bool __swift_bridge__$App$file_tree_open_selected(void* self, struct __swift_bridge__$EditorId id);
 void* __swift_bridge__$App$file_tree_snapshot(void* self, struct __swift_bridge__$EditorId id, uintptr_t max_nodes);
 void* __swift_bridge__$App$file_picker_snapshot(void* self, struct __swift_bridge__$EditorId id, uintptr_t max_items);
+void* __swift_bridge__$App$file_picker_window_snapshot(void* self, struct __swift_bridge__$EditorId id, uintptr_t window_start, uintptr_t max_items);
 void* __swift_bridge__$App$file_picker_preview(void* self, struct __swift_bridge__$EditorId id);
 void* __swift_bridge__$App$file_picker_preview_window(void* self, struct __swift_bridge__$EditorId id, uintptr_t offset, uintptr_t visible_rows, uintptr_t overscan);
 bool __swift_bridge__$App$poll_background(void* self, struct __swift_bridge__$EditorId id);
@@ -587,6 +591,8 @@ uintptr_t __swift_bridge__$FilePickerSnapshotData$matched_count(void* self);
 uintptr_t __swift_bridge__$FilePickerSnapshotData$total_count(void* self);
 bool __swift_bridge__$FilePickerSnapshotData$scanning(void* self);
 void* __swift_bridge__$FilePickerSnapshotData$root(void* self);
+int64_t __swift_bridge__$FilePickerSnapshotData$selected_index(void* self);
+uintptr_t __swift_bridge__$FilePickerSnapshotData$window_start(void* self);
 uintptr_t __swift_bridge__$FilePickerSnapshotData$item_count(void* self);
 void* __swift_bridge__$FilePickerSnapshotData$item_at(void* self, uintptr_t index);
 void* __swift_bridge__$FilePickerItemFFI$display(void* self);

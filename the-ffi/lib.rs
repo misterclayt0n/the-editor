@@ -5051,6 +5051,8 @@ pub struct FilePickerSnapshotData {
   total_count:   usize,
   scanning:      bool,
   root:          String,
+  selected_index: i64,
+  window_start:  usize,
   items:         Vec<FilePickerItemFFI>,
 }
 
@@ -5065,6 +5067,8 @@ impl Default for FilePickerSnapshotData {
       total_count:   0,
       scanning:      false,
       root:          String::new(),
+      selected_index: -1,
+      window_start:  0,
       items:         Vec::new(),
     }
   }
@@ -5094,6 +5098,14 @@ impl FilePickerSnapshotData {
   }
   fn root(&self) -> String {
     self.root.clone()
+  }
+
+  fn selected_index(&self) -> i64 {
+    self.selected_index
+  }
+
+  fn window_start(&self) -> usize {
+    self.window_start
   }
 
   fn item_count(&self) -> usize {
@@ -5187,8 +5199,9 @@ impl FilePickerItemFFI {
   }
 }
 
-fn build_file_picker_snapshot(
+fn build_file_picker_snapshot_window(
   picker: &FilePickerState,
+  window_start: usize,
   max_items: usize,
 ) -> FilePickerSnapshotData {
   if !picker.active {
@@ -5211,11 +5224,12 @@ fn build_file_picker_snapshot(
     .map(|n| n.to_string_lossy().into_owned())
     .unwrap_or_default();
 
-  let limit = max_items.min(matched_count);
+  let clamped_start = window_start.min(matched_count);
+  let limit = max_items.min(matched_count.saturating_sub(clamped_start));
   let mut items = Vec::with_capacity(limit);
   let mut match_buf = Vec::new();
-  for i in 0..limit {
-    if let Some(item) = picker.matched_item_with_match_indices(i, &mut match_buf) {
+  for matched_index in clamped_start..clamped_start.saturating_add(limit) {
+    if let Some(item) = picker.matched_item_with_match_indices(matched_index, &mut match_buf) {
       let row: FilePickerRowData = file_picker_row_data(picker.title.as_str(), &item);
       let row_kind = match row.kind {
         FilePickerRowKind::Generic => 0,
@@ -5258,6 +5272,8 @@ fn build_file_picker_snapshot(
     total_count,
     scanning,
     root: root_display,
+    selected_index: picker.selected.map(|index| index as i64).unwrap_or(-1),
+    window_start: clamped_start,
     items,
   }
 }
@@ -6943,6 +6959,31 @@ impl App {
     }
   }
 
+  pub fn command_palette_placeholder(&mut self, id: ffi::EditorId) -> String {
+    if self.activate(id).is_none() {
+      return "Execute a command…".to_string();
+    }
+    let palette = &self.active_state_ref().command_palette;
+    match palette.source {
+      CommandPaletteSource::ActionPalette => "Search commands…".to_string(),
+      CommandPaletteSource::CommandLine => {
+        if palette.prefiltered {
+          "Open file…".to_string()
+        } else {
+          "Execute a command…".to_string()
+        }
+      },
+    }
+  }
+
+  pub fn command_palette_is_file_mode(&mut self, id: ffi::EditorId) -> bool {
+    if self.activate(id).is_none() {
+      return false;
+    }
+    let palette = &self.active_state_ref().command_palette;
+    matches!(palette.source, CommandPaletteSource::CommandLine) && palette.prefiltered
+  }
+
   pub fn command_palette_filtered_count(&mut self, id: ffi::EditorId) -> usize {
     if self.activate(id).is_none() {
       return 0;
@@ -7079,6 +7120,18 @@ impl App {
       .and_then(|item| item.symbols.as_ref())
       .map(|symbols| symbols.len())
       .unwrap_or(0)
+  }
+
+  pub fn command_palette_filtered_emphasis(&mut self, id: ffi::EditorId, index: usize) -> bool {
+    if self.activate(id).is_none() {
+      return false;
+    }
+    let state = self.active_state_ref();
+    let filtered = command_palette_filtered_indices(&state.command_palette);
+    filtered
+      .get(index)
+      .and_then(|idx| state.command_palette.items.get(*idx))
+      .is_some_and(|item| item.emphasis)
   }
 
   pub fn command_palette_filtered_symbol(
@@ -7442,6 +7495,15 @@ impl App {
     id: ffi::EditorId,
     max_items: usize,
   ) -> FilePickerSnapshotData {
+    self.file_picker_window_snapshot(id, 0, max_items)
+  }
+
+  pub fn file_picker_window_snapshot(
+    &mut self,
+    id: ffi::EditorId,
+    window_start: usize,
+    max_items: usize,
+  ) -> FilePickerSnapshotData {
     let started = Instant::now();
     if self.activate(id).is_none() {
       return FilePickerSnapshotData::default();
@@ -7451,10 +7513,11 @@ impl App {
     file_picker_refresh_matcher_state(picker);
 
     let picker = self.file_picker();
-    let data = build_file_picker_snapshot(picker, max_items);
+    let data = build_file_picker_snapshot_window(picker, window_start, max_items);
     let elapsed = started.elapsed();
     ffi_ui_profile_log(format!(
-      "file_picker_snapshot items={} elapsed={:.2}ms",
+      "file_picker_window_snapshot start={} items={} elapsed={:.2}ms",
+      data.window_start,
       data.items.len(),
       elapsed.as_secs_f64() * 1000.0
     ));
@@ -13812,6 +13875,8 @@ mod ffi {
     fn command_palette_is_open(self: &mut App, id: EditorId) -> bool;
     fn command_palette_query(self: &mut App, id: EditorId) -> String;
     fn command_palette_layout(self: &mut App, id: EditorId) -> u8;
+    fn command_palette_placeholder(self: &mut App, id: EditorId) -> String;
+    fn command_palette_is_file_mode(self: &mut App, id: EditorId) -> bool;
     fn command_palette_filtered_count(self: &mut App, id: EditorId) -> usize;
     fn command_palette_filtered_selected_index(self: &mut App, id: EditorId) -> i64;
     fn command_palette_filtered_title(self: &mut App, id: EditorId, index: usize) -> String;
@@ -13822,6 +13887,7 @@ mod ffi {
     fn command_palette_filtered_leading_icon(self: &mut App, id: EditorId, index: usize) -> String;
     fn command_palette_filtered_leading_color(self: &mut App, id: EditorId, index: usize) -> Color;
     fn command_palette_filtered_symbol_count(self: &mut App, id: EditorId, index: usize) -> usize;
+    fn command_palette_filtered_emphasis(self: &mut App, id: EditorId, index: usize) -> bool;
     fn command_palette_filtered_symbol(
       self: &mut App,
       id: EditorId,
@@ -13850,6 +13916,12 @@ mod ffi {
     fn file_picker_snapshot(
       self: &mut App,
       id: EditorId,
+      max_items: usize,
+    ) -> FilePickerSnapshotData;
+    fn file_picker_window_snapshot(
+      self: &mut App,
+      id: EditorId,
+      window_start: usize,
       max_items: usize,
     ) -> FilePickerSnapshotData;
     fn file_picker_preview(self: &mut App, id: EditorId) -> PreviewData;
@@ -14228,6 +14300,8 @@ mod ffi {
     fn total_count(self: &FilePickerSnapshotData) -> usize;
     fn scanning(self: &FilePickerSnapshotData) -> bool;
     fn root(self: &FilePickerSnapshotData) -> String;
+    fn selected_index(self: &FilePickerSnapshotData) -> i64;
+    fn window_start(self: &FilePickerSnapshotData) -> usize;
     fn item_count(self: &FilePickerSnapshotData) -> usize;
     fn item_at(self: &FilePickerSnapshotData, index: usize) -> FilePickerItemFFI;
   }
@@ -15230,6 +15304,32 @@ mod tests {
     ));
 
     assert!(!app.execute_command_named(id, "does_not_exist"));
+  }
+
+  #[test]
+  fn file_picker_window_snapshot_tracks_window_start_and_selection() {
+    let _guard = ffi_test_guard();
+    let mut app = App::new();
+    let viewport = ffi::Rect {
+      x:      0,
+      y:      0,
+      width:  80,
+      height: 24,
+    };
+    let scroll = ffi::Position { row: 0, col: 0 };
+    let id = app.create_editor("hello", viewport, scroll);
+
+    assert!(app.execute_command_named(id, "file_picker"));
+    let full = app.file_picker_snapshot(id, 8);
+    assert!(full.active());
+    assert_eq!(full.window_start(), 0);
+    assert_eq!(full.selected_index(), 0);
+
+    let windowed = app.file_picker_window_snapshot(id, 3, 5);
+    assert!(windowed.active());
+    assert_eq!(windowed.window_start(), 3);
+    assert_eq!(windowed.selected_index(), 0);
+    assert!(windowed.item_count() <= 5);
   }
 
   #[test]

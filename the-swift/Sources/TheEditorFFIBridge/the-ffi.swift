@@ -235,6 +235,14 @@ extension AppRefMut {
         __swift_bridge__$App$command_palette_layout(ptr, id.intoFfiRepr())
     }
 
+    public func command_palette_placeholder(_ id: EditorId) -> RustString {
+        RustString(ptr: __swift_bridge__$App$command_palette_placeholder(ptr, id.intoFfiRepr()))
+    }
+
+    public func command_palette_is_file_mode(_ id: EditorId) -> Bool {
+        __swift_bridge__$App$command_palette_is_file_mode(ptr, id.intoFfiRepr())
+    }
+
     public func command_palette_filtered_count(_ id: EditorId) -> UInt {
         __swift_bridge__$App$command_palette_filtered_count(ptr, id.intoFfiRepr())
     }
@@ -273,6 +281,10 @@ extension AppRefMut {
 
     public func command_palette_filtered_symbol_count(_ id: EditorId, _ index: UInt) -> UInt {
         __swift_bridge__$App$command_palette_filtered_symbol_count(ptr, id.intoFfiRepr(), index)
+    }
+
+    public func command_palette_filtered_emphasis(_ id: EditorId, _ index: UInt) -> Bool {
+        __swift_bridge__$App$command_palette_filtered_emphasis(ptr, id.intoFfiRepr(), index)
     }
 
     public func command_palette_filtered_symbol(_ id: EditorId, _ index: UInt, _ symbol_index: UInt) -> RustString {
@@ -367,6 +379,10 @@ extension AppRefMut {
 
     public func file_picker_snapshot(_ id: EditorId, _ max_items: UInt) -> FilePickerSnapshotData {
         FilePickerSnapshotData(ptr: __swift_bridge__$App$file_picker_snapshot(ptr, id.intoFfiRepr(), max_items))
+    }
+
+    public func file_picker_window_snapshot(_ id: EditorId, _ window_start: UInt, _ max_items: UInt) -> FilePickerSnapshotData {
+        FilePickerSnapshotData(ptr: __swift_bridge__$App$file_picker_window_snapshot(ptr, id.intoFfiRepr(), window_start, max_items))
     }
 
     public func file_picker_preview(_ id: EditorId) -> PreviewData {
@@ -3108,6 +3124,14 @@ extension FilePickerSnapshotDataRef {
 
     public func root() -> RustString {
         RustString(ptr: __swift_bridge__$FilePickerSnapshotData$root(ptr))
+    }
+
+    public func selected_index() -> Int64 {
+        __swift_bridge__$FilePickerSnapshotData$selected_index(ptr)
+    }
+
+    public func window_start() -> UInt {
+        __swift_bridge__$FilePickerSnapshotData$window_start(ptr)
     }
 
     public func item_count() -> UInt {

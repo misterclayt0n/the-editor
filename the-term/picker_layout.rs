@@ -182,7 +182,14 @@ pub fn compute_file_picker_layout(
       && preview_total_lines > preview_visible_rows
       && inner.width > 1
       && inner.height > 0)
-      .then(|| Rect::new(inner.x + inner.width.saturating_sub(1), inner.y, 1, inner.height))
+      .then(|| {
+        Rect::new(
+          inner.x + inner.width.saturating_sub(1),
+          inner.y,
+          1,
+          inner.height,
+        )
+      })
   });
   let preview_content = preview_inner.map(|inner| {
     let w = if preview_scrollbar.is_some() {

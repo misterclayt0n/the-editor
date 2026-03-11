@@ -58,9 +58,9 @@ use the_default::{
   command_palette_filtered_indices,
   completion_docs_panel_rect as default_completion_docs_panel_rect,
   completion_panel_rect as default_completion_panel_rect,
-  file_picker_preview_window,
   file_picker_icon_glyph,
   file_picker_icon_name_for_path,
+  file_picker_preview_window,
   frame_render_plan,
   set_picker_visible_rows,
   signature_help_markdown,
@@ -86,16 +86,16 @@ use the_lib::{
     FrameGenerationState,
     FrameRenderPlan,
     InlineDiagnostic,
-    InlineDiagnosticRenderLine,
     InlineDiagnosticFilter,
+    InlineDiagnosticRenderLine,
     InlineDiagnosticsConfig,
     InlineDiagnosticsViewportLayout,
     LayoutIntent,
     NoHighlights,
     PaneRenderPlan,
     RenderDiagnosticGutterStyles,
-    RenderGenerationState,
     RenderDiffGutterStyles,
+    RenderGenerationState,
     RenderLayerRowHashes,
     RenderPlan,
     RenderStyles,
@@ -124,9 +124,9 @@ use the_lib::{
     UiTooltip,
     UiTree,
     add_selection_match_highlights,
-    apply_row_insertions,
     apply_diagnostic_gutter_markers,
     apply_diff_gutter_markers,
+    apply_row_insertions,
     base_render_layer_row_hashes,
     build_plan,
     finish_frame_generations,
@@ -4414,7 +4414,13 @@ fn draw_file_picker_preview_window(
     let y = area.y + row as u16;
     match line.kind {
       FilePickerPreviewLineKind::TruncatedAbove | FilePickerPreviewLineKind::TruncatedBelow => {
-        buf.set_stringn(area.x, y, line.marker.as_str(), area.width as usize, gutter_style);
+        buf.set_stringn(
+          area.x,
+          y,
+          line.marker.as_str(),
+          area.width as usize,
+          gutter_style,
+        );
       },
       FilePickerPreviewLineKind::Content => {
         if line.focused {
@@ -4425,7 +4431,9 @@ fn draw_file_picker_preview_window(
         let mut text_width = area.width;
 
         if show_line_numbers {
-          let line_number = line.line_number.unwrap_or(line.virtual_row.saturating_add(1));
+          let line_number = line
+            .line_number
+            .unwrap_or(line.virtual_row.saturating_add(1));
           let marker = if line.focused { "▶" } else { " " };
           let gutter = format!("{marker}{line_number:>line_number_width$} ");
           let gutter_width = gutter.chars().count() as u16;
@@ -4450,14 +4458,12 @@ fn draw_file_picker_preview_window(
           continue;
         }
 
-        let spans =
-          preview_window_line_spans(line, text_style, match_style, theme);
+        let spans = preview_window_line_spans(line, text_style, match_style, theme);
         if spans.is_empty() {
           continue;
         }
 
-        Paragraph::new(Line::from(spans))
-          .render(Rect::new(text_x, y, text_width, 1), buf);
+        Paragraph::new(Line::from(spans)).render(Rect::new(text_x, y, text_width, 1), buf);
       },
     }
   }
@@ -4487,7 +4493,9 @@ fn preview_window_line_spans<'a>(
 
     let mut style = base_text_style;
     if let Some(highlight_id) = segment.highlight_id {
-      style = style.patch(lib_style_to_ratatui(theme.highlight(Highlight::new(highlight_id))));
+      style = style.patch(lib_style_to_ratatui(
+        theme.highlight(Highlight::new(highlight_id)),
+      ));
     }
     if segment.is_match {
       style = style.patch(match_style);
@@ -5925,8 +5933,11 @@ pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> Ren
   ctx.diagnostic_underlines = diagnostic_underlines;
   ctx.inline_diagnostic_lines = inline_lines;
   drop(annotations);
-  let row_hashes =
-    build_render_layer_row_hashes(&plan, &ctx.inline_diagnostic_lines, &ctx.diagnostic_underlines);
+  let row_hashes = build_render_layer_row_hashes(
+    &plan,
+    &ctx.inline_diagnostic_lines,
+    &ctx.diagnostic_underlines,
+  );
   let generation_state = finish_render_generations(
     &mut plan,
     previous_generation_state.as_ref(),
@@ -6095,27 +6106,26 @@ pub fn build_frame_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) 
               .pane_states
               .get(&pane.pane_id)
               .cloned()
-              .unwrap_or_else(|| RenderGenerationState {
-                layout_generation: plan.layout_generation,
-                text_generation: plan.text_generation,
-                decoration_generation: plan.decoration_generation,
-                cursor_generation: plan.cursor_generation,
-                cursor_blink_generation: plan.cursor_blink_generation,
-                scroll_generation: plan.scroll_generation,
-                theme_generation: plan.theme_generation,
-                text_rows: Vec::new(),
-                decoration_rows: Vec::new(),
-                cursor_rows: Vec::new(),
+              .unwrap_or_else(|| {
+                RenderGenerationState {
+                  layout_generation:       plan.layout_generation,
+                  text_generation:         plan.text_generation,
+                  decoration_generation:   plan.decoration_generation,
+                  cursor_generation:       plan.cursor_generation,
+                  cursor_blink_generation: plan.cursor_blink_generation,
+                  scroll_generation:       plan.scroll_generation,
+                  theme_generation:        plan.theme_generation,
+                  text_rows:               Vec::new(),
+                  decoration_rows:         Vec::new(),
+                  cursor_rows:             Vec::new(),
+                }
               })
           } else {
-            let previous = previous_frame_generation_state.pane_states.get(&pane.pane_id);
+            let previous = previous_frame_generation_state
+              .pane_states
+              .get(&pane.pane_id);
             let row_hashes = build_render_layer_row_hashes(&plan, &[], &[]);
-            finish_render_generations(
-              &mut plan,
-              previous,
-              ctx.render_theme_generation,
-              row_hashes,
-            )
+            finish_render_generations(&mut plan, previous, ctx.render_theme_generation, row_hashes)
           };
           pane_generation_states.insert(pane.pane_id, generation_state);
           (the_lib::editor::PaneContentKind::EditorBuffer, None, plan)

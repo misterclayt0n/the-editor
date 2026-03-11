@@ -191,10 +191,7 @@ pub fn render_inline_diagnostics_for_viewport<'a>(
   config: &InlineDiagnosticsConfig,
 ) -> InlineDiagnosticsViewportLayout {
   let viewport_width = text_fmt.viewport_width.max(1) as u16;
-  if diagnostics.is_empty()
-    || config.disabled()
-    || viewport_width == 0
-    || plan.viewport.height == 0
+  if diagnostics.is_empty() || config.disabled() || viewport_width == 0 || plan.viewport.height == 0
   {
     return InlineDiagnosticsViewportLayout::default();
   }
@@ -232,8 +229,7 @@ pub fn render_inline_diagnostics_for_viewport<'a>(
       continue;
     }
 
-    let Some(diagnostic_pos) =
-      visual_pos_at_char(text, text_fmt, annotations, diagnostic_char_idx)
+    let Some(diagnostic_pos) = visual_pos_at_char(text, text_fmt, annotations, diagnostic_char_idx)
     else {
       continue;
     };
@@ -283,9 +279,7 @@ pub fn render_inline_diagnostics_for_viewport<'a>(
       continue;
     }
 
-    let row_start = base_row
-      .saturating_add(inserted_before)
-      .saturating_add(1);
+    let row_start = base_row.saturating_add(inserted_before).saturating_add(1);
     let mut row = row_start;
     let base_line_count = layout.lines.len();
     let fallback_diagnostics = filtered.clone();

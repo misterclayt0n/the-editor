@@ -4,18 +4,20 @@ use std::{
     HashMap,
     HashSet,
   },
-  env,
   fs,
   path::{
     Path,
     PathBuf,
   },
+  time::SystemTime,
 };
+
+use the_stdx::env::current_working_dir;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FileTreeMode {
   #[default]
-  WorkspaceRoot,
+  WorkingDirectory,
   CurrentBufferDirectory,
 }
 
@@ -54,6 +56,18 @@ struct FileTreeEntry {
   is_dir: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DirectoryCacheFingerprint {
+  modified: SystemTime,
+  len:      u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DirectoryCacheEntry {
+  fingerprint: Option<DirectoryCacheFingerprint>,
+  entries:     Option<Vec<FileTreeEntry>>,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct FileTreeState {
   pub visible:            bool,
@@ -62,15 +76,20 @@ pub struct FileTreeState {
   pub refresh_generation: u64,
   root:                   Option<PathBuf>,
   expanded_dirs:          HashSet<PathBuf>,
-  nodes_cache:            HashMap<PathBuf, Option<Vec<FileTreeEntry>>>,
+  nodes_cache:            HashMap<PathBuf, DirectoryCacheEntry>,
 }
 
 impl FileTreeState {
   #[must_use]
-  pub fn with_workspace_root(root: PathBuf) -> Self {
+  pub fn with_working_directory(root: PathBuf) -> Self {
     let mut state = Self::default();
-    state.set_root_internal(FileTreeMode::WorkspaceRoot, root);
+    state.set_root_internal(FileTreeMode::WorkingDirectory, root);
     state
+  }
+
+  #[must_use]
+  pub fn with_workspace_root(root: PathBuf) -> Self {
+    Self::with_working_directory(root)
   }
 
   #[must_use]
@@ -89,28 +108,34 @@ impl FileTreeState {
     self.set_visible(!self.visible);
   }
 
-  pub fn toggle_workspace_root(&mut self, workspace_root: &Path) {
-    if self.visible && self.mode == FileTreeMode::WorkspaceRoot {
+  pub fn toggle_working_directory(&mut self, working_directory: &Path) {
+    if self.visible && self.mode == FileTreeMode::WorkingDirectory {
       self.set_visible(false);
       return;
     }
-    self.set_root_internal(FileTreeMode::WorkspaceRoot, workspace_root.to_path_buf());
+    self.set_root_internal(
+      FileTreeMode::WorkingDirectory,
+      working_directory.to_path_buf(),
+    );
     self.set_visible(true);
   }
 
-  pub fn open_workspace_root(&mut self, workspace_root: &Path) {
-    self.set_root_internal(FileTreeMode::WorkspaceRoot, workspace_root.to_path_buf());
+  pub fn open_working_directory(&mut self, working_directory: &Path) {
+    self.set_root_internal(
+      FileTreeMode::WorkingDirectory,
+      working_directory.to_path_buf(),
+    );
     self.set_visible(true);
   }
 
   pub fn open_current_buffer_directory(
     &mut self,
     current_file: Option<&Path>,
-    workspace_root: &Path,
+    working_directory: &Path,
   ) {
     let root = current_file
       .and_then(Path::parent)
-      .unwrap_or(workspace_root)
+      .unwrap_or(working_directory)
       .to_path_buf();
     self.set_root_internal(FileTreeMode::CurrentBufferDirectory, root);
     if let Some(path) = current_file {
@@ -119,17 +144,29 @@ impl FileTreeState {
     self.set_visible(true);
   }
 
-  pub fn sync_for_active_file(&mut self, workspace_root: &Path, active_file: Option<&Path>) {
+  pub fn sync_for_working_directory(&mut self, working_directory: &Path) {
+    if self.mode == FileTreeMode::WorkingDirectory {
+      self.set_root_internal(
+        FileTreeMode::WorkingDirectory,
+        working_directory.to_path_buf(),
+      );
+    }
+  }
+
+  pub fn sync_for_active_file(&mut self, working_directory: &Path, active_file: Option<&Path>) {
     match self.mode {
-      FileTreeMode::WorkspaceRoot => {
+      FileTreeMode::WorkingDirectory => {
         if self.root.is_none() {
-          self.set_root_internal(FileTreeMode::WorkspaceRoot, workspace_root.to_path_buf());
+          self.set_root_internal(
+            FileTreeMode::WorkingDirectory,
+            working_directory.to_path_buf(),
+          );
         }
       },
       FileTreeMode::CurrentBufferDirectory => {
         let root = active_file
           .and_then(Path::parent)
-          .unwrap_or(workspace_root)
+          .unwrap_or(working_directory)
           .to_path_buf();
         self.set_root_internal(FileTreeMode::CurrentBufferDirectory, root);
       },
@@ -326,11 +363,37 @@ impl FileTreeState {
 
   fn load_children(&mut self, dir: &Path) -> Option<Vec<FileTreeEntry>> {
     let key = normalize_path(dir);
-    if !self.nodes_cache.contains_key(&key) {
-      let loaded = read_directory_entries(&key).ok();
-      self.nodes_cache.insert(key.clone(), loaded);
+    let next_fingerprint = directory_cache_fingerprint(&key);
+    let cached = self.nodes_cache.get(&key).cloned();
+    let should_reload = match cached.as_ref() {
+      Some(entry) => {
+        match (entry.fingerprint.as_ref(), next_fingerprint.as_ref()) {
+          (Some(previous), Some(next)) => previous != next,
+          _ => true,
+        }
+      },
+      None => true,
+    };
+
+    if should_reload {
+      let next_entries = read_directory_entries(&key).ok();
+      let replacement = DirectoryCacheEntry {
+        fingerprint: next_fingerprint,
+        entries:     next_entries,
+      };
+      let entries_changed = cached
+        .as_ref()
+        .is_some_and(|previous| previous.entries != replacement.entries);
+      self.nodes_cache.insert(key.clone(), replacement);
+      if entries_changed {
+        self.bump_generation();
+      }
     }
-    self.nodes_cache.get(&key).cloned().flatten()
+
+    self
+      .nodes_cache
+      .get(&key)
+      .and_then(|entry| entry.entries.clone())
   }
 
   fn bump_generation(&mut self) {
@@ -355,12 +418,21 @@ fn normalize_path(path: &Path) -> PathBuf {
   let absolute = if path.is_absolute() {
     path.to_path_buf()
   } else {
-    env::current_dir()
+    current_working_dir()
       .ok()
       .map(|cwd| cwd.join(path))
       .unwrap_or_else(|| path.to_path_buf())
   };
   fs::canonicalize(&absolute).unwrap_or(absolute)
+}
+
+fn directory_cache_fingerprint(path: &Path) -> Option<DirectoryCacheFingerprint> {
+  let metadata = fs::metadata(path).ok()?;
+  let modified = metadata.modified().ok()?;
+  Some(DirectoryCacheFingerprint {
+    modified,
+    len: metadata.len(),
+  })
 }
 
 fn read_directory_entries(path: &Path) -> std::io::Result<Vec<FileTreeEntry>> {
@@ -405,4 +477,70 @@ fn should_hide_entry(name: &str, is_dir: bool) -> bool {
     return true;
   }
   name == ".DS_Store"
+}
+
+#[cfg(test)]
+mod tests {
+  use std::{
+    fs,
+    thread,
+    time::Duration,
+  };
+
+  use tempfile::tempdir;
+
+  use super::{
+    FileTreeMode,
+    FileTreeState,
+    directory_cache_fingerprint,
+    normalize_path,
+  };
+
+  fn wait_for_directory_fingerprint_change(path: &std::path::Path) {
+    let before = directory_cache_fingerprint(path);
+    for _ in 0..150 {
+      thread::sleep(Duration::from_millis(20));
+      if directory_cache_fingerprint(path) != before {
+        return;
+      }
+    }
+  }
+
+  #[test]
+  fn working_directory_mode_re_roots_when_directory_changes() {
+    let temp = tempdir().expect("tempdir");
+    let alpha = temp.path().join("alpha");
+    let beta = temp.path().join("beta");
+    fs::create_dir_all(&alpha).expect("create alpha");
+    fs::create_dir_all(&beta).expect("create beta");
+
+    let mut tree = FileTreeState::with_working_directory(alpha.clone());
+    assert_eq!(tree.mode, FileTreeMode::WorkingDirectory);
+    let alpha_root = normalize_path(&alpha);
+    assert_eq!(tree.root(), Some(alpha_root.as_path()));
+
+    tree.sync_for_working_directory(&beta);
+
+    let beta_root = normalize_path(&beta);
+    assert_eq!(tree.root(), Some(beta_root.as_path()));
+  }
+
+  #[test]
+  fn snapshot_refreshes_cached_directory_entries_when_contents_change() {
+    let temp = tempdir().expect("tempdir");
+    let root = temp.path().to_path_buf();
+    fs::write(root.join("alpha.txt"), "alpha\n").expect("seed alpha");
+
+    let mut tree = FileTreeState::with_working_directory(root.clone());
+    let first = tree.snapshot(32);
+    assert!(first.nodes.iter().any(|node| node.name == "alpha.txt"));
+    let first_generation = tree.refresh_generation;
+
+    fs::write(root.join("beta.txt"), "beta\n").expect("seed beta");
+    wait_for_directory_fingerprint_change(&root);
+
+    let second = tree.snapshot(32);
+    assert!(second.nodes.iter().any(|node| node.name == "beta.txt"));
+    assert!(tree.refresh_generation > first_generation);
+  }
 }

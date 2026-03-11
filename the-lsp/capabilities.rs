@@ -285,10 +285,10 @@ mod tests {
       }
     }));
 
-    assert_eq!(
-      snapshot.workspace_commands(),
-      vec!["alpha.command".to_string(), "zeta.command".to_string()]
-    );
+    assert_eq!(snapshot.workspace_commands(), vec![
+      "alpha.command".to_string(),
+      "zeta.command".to_string()
+    ]);
   }
 
   #[test]

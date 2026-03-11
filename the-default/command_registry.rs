@@ -842,12 +842,17 @@ fn current_working_directory() -> Result<PathBuf, CommandError> {
   the_stdx::env::current_working_dir().map_err(|err| CommandError::new(err.to_string()))
 }
 
-fn effective_working_directory_for_ctx<Ctx: DefaultContext>(ctx: &Ctx) -> PathBuf {
+#[must_use]
+pub fn effective_working_directory(workspace_root: &Path) -> PathBuf {
   if explicit_working_directory_enabled() {
-    current_working_directory().unwrap_or_else(|_| workspace_root_for_ctx(ctx))
+    the_stdx::env::current_working_dir().unwrap_or_else(|_| workspace_root.to_path_buf())
   } else {
-    workspace_root_for_ctx(ctx)
+    workspace_root.to_path_buf()
   }
+}
+
+fn effective_working_directory_for_ctx<Ctx: DefaultContext>(ctx: &Ctx) -> PathBuf {
+  effective_working_directory(&workspace_root_for_ctx(ctx))
 }
 
 fn home_directory() -> Result<PathBuf, CommandError> {

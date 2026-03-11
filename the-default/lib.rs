@@ -82,6 +82,7 @@ pub use command_registry::{
   apply_command_palette_completion,
   command_palette_completion_action,
   completers,
+  effective_working_directory,
   handle_command_prompt_key,
   sync_command_palette_preview,
   update_action_palette_for_input,

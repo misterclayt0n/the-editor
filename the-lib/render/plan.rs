@@ -263,6 +263,12 @@ impl Default for RenderStyles {
   }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RenderRowInsertion {
+  pub base_row:      usize,
+  pub inserted_rows: usize,
+}
+
 #[derive(Debug, Clone)]
 pub struct RenderPlan {
   pub viewport:                 Rect,
@@ -318,6 +324,83 @@ impl Default for RenderPlan {
   fn default() -> Self {
     Self::empty(Rect::default(), Position::default())
   }
+}
+
+fn remap_relative_row(
+  relative_row: usize,
+  scroll_row: usize,
+  viewport_height: usize,
+  row_insertions: &[RenderRowInsertion],
+) -> Option<u16> {
+  let absolute_row = scroll_row.saturating_add(relative_row);
+  let inserted_before = row_insertions
+    .iter()
+    .filter(|insertion| insertion.base_row < absolute_row)
+    .map(|insertion| insertion.inserted_rows)
+    .sum::<usize>();
+  let shifted_relative_row = relative_row.saturating_add(inserted_before);
+  (shifted_relative_row < viewport_height).then_some(shifted_relative_row as u16)
+}
+
+pub fn apply_row_insertions(plan: &mut RenderPlan, row_insertions: &[RenderRowInsertion]) {
+  if row_insertions.is_empty() {
+    return;
+  }
+  let scroll_row = plan.scroll.row;
+  let viewport_height = plan.viewport.height as usize;
+
+  plan.lines.retain_mut(|line| {
+    let Some(row) =
+      remap_relative_row(line.row as usize, scroll_row, viewport_height, row_insertions)
+    else {
+      return false;
+    };
+    line.row = row;
+    true
+  });
+
+  plan.visible_rows.retain_mut(|row| {
+    let Some(shifted_row) =
+      remap_relative_row(row.row as usize, scroll_row, viewport_height, row_insertions)
+    else {
+      return false;
+    };
+    row.row = shifted_row;
+    true
+  });
+
+  plan.gutter_lines.retain_mut(|line| {
+    let Some(row) =
+      remap_relative_row(line.row as usize, scroll_row, viewport_height, row_insertions)
+    else {
+      return false;
+    };
+    line.row = row;
+    true
+  });
+
+  plan.selections.retain_mut(|selection| {
+    let Some(row) = remap_relative_row(
+      selection.rect.y as usize,
+      scroll_row,
+      viewport_height,
+      row_insertions,
+    ) else {
+      return false;
+    };
+    selection.rect.y = row;
+    true
+  });
+
+  plan.cursors.retain_mut(|cursor| {
+    let Some(row) =
+      remap_relative_row(cursor.pos.row, scroll_row, viewport_height, row_insertions)
+    else {
+      return false;
+    };
+    cursor.pos.row = row as usize;
+    true
+  });
 }
 
 #[derive(Debug, Clone)]

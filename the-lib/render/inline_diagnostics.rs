@@ -1,10 +1,14 @@
 use std::{
   cell::RefCell,
   cmp::Ordering,
+  collections::BTreeMap,
   rc::Rc,
 };
 
-use ropey::Rope;
+use ropey::{
+  Rope,
+  RopeSlice,
+};
 use the_core::grapheme::Grapheme;
 
 use crate::{
@@ -13,11 +17,16 @@ use crate::{
   position::Position,
   render::{
     doc_formatter::DocumentFormatter,
+    plan::{
+      RenderPlan,
+      RenderRowInsertion,
+    },
     text_annotations::{
       LineAnnotation,
       TextAnnotations,
     },
     text_format::TextFormat,
+    visual_position::visual_pos_at_char,
   },
 };
 
@@ -139,10 +148,23 @@ pub struct InlineDiagnosticRenderLine {
   pub severity: DiagnosticSeverity,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InlineDiagnosticRowInsertion {
+  pub base_row:      usize,
+  pub inserted_rows: usize,
+}
+
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct InlineDiagnosticsRenderData {
   pub lines:      Vec<InlineDiagnosticRenderLine>,
   pub last_trace: Option<InlineDiagnosticsRenderTrace>,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct InlineDiagnosticsViewportLayout {
+  pub lines:          Vec<InlineDiagnosticRenderLine>,
+  pub row_insertions: Vec<RenderRowInsertion>,
+  pub last_trace:     Option<InlineDiagnosticsRenderTrace>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -158,6 +180,179 @@ pub struct InlineDiagnosticsRenderTrace {
 }
 
 pub type SharedInlineDiagnosticsRenderData = Rc<RefCell<InlineDiagnosticsRenderData>>;
+
+pub fn render_inline_diagnostics_for_viewport<'a>(
+  text: RopeSlice<'a>,
+  plan: &RenderPlan,
+  text_fmt: &'a TextFormat,
+  annotations: &mut TextAnnotations<'a>,
+  diagnostics: &[InlineDiagnostic],
+  cursor_doc_line: Option<usize>,
+  config: &InlineDiagnosticsConfig,
+) -> InlineDiagnosticsViewportLayout {
+  let viewport_width = text_fmt.viewport_width.max(1) as u16;
+  if diagnostics.is_empty()
+    || config.disabled()
+    || viewport_width == 0
+    || plan.viewport.height == 0
+  {
+    return InlineDiagnosticsViewportLayout::default();
+  }
+
+  let row_start = plan.scroll.row;
+  let row_end = row_start.saturating_add(plan.viewport.height as usize);
+  let text_len = text.len_chars();
+  let line_count = text.len_lines().max(1);
+  let mut diagnostics_by_line: BTreeMap<usize, (usize, Vec<(InlineDiagnostic, u16)>)> =
+    BTreeMap::new();
+
+  for diagnostic in diagnostics {
+    let diagnostic_char_idx = diagnostic.start_char_idx.min(text_len);
+    let diagnostic_line_idx = if text_len == 0 {
+      0
+    } else {
+      text.char_to_line(diagnostic_char_idx.min(text_len.saturating_sub(1)))
+    };
+    let line_start_char_idx = text.line_to_char(diagnostic_line_idx);
+    let line_end_char_idx = if diagnostic_line_idx + 1 < line_count {
+      text.line_to_char(diagnostic_line_idx + 1)
+    } else {
+      text_len
+    };
+    let anchor_char_idx = if line_end_char_idx > line_start_char_idx {
+      line_end_char_idx.saturating_sub(1)
+    } else {
+      line_start_char_idx.min(text_len)
+    };
+    let Some(line_end_pos) = visual_pos_at_char(text, text_fmt, annotations, anchor_char_idx)
+    else {
+      continue;
+    };
+    if line_end_pos.row < row_start || line_end_pos.row >= row_end {
+      continue;
+    }
+
+    let Some(diagnostic_pos) =
+      visual_pos_at_char(text, text_fmt, annotations, diagnostic_char_idx)
+    else {
+      continue;
+    };
+    let anchor_col = diagnostic_pos
+      .col
+      .saturating_sub(plan.scroll.col)
+      .min(viewport_width.saturating_sub(1) as usize) as u16;
+    diagnostics_by_line
+      .entry(diagnostic_line_idx)
+      .or_insert_with(|| (line_end_pos.row, Vec::new()))
+      .1
+      .push((diagnostic.clone(), anchor_col));
+  }
+
+  let mut layout = InlineDiagnosticsViewportLayout::default();
+  let mut inserted_before = 0usize;
+
+  for (doc_line, (base_row, mut line_diagnostics)) in diagnostics_by_line {
+    let use_cursor_line_filter = cursor_doc_line == Some(doc_line);
+    let filter = if use_cursor_line_filter {
+      config.cursor_line
+    } else {
+      config.other_lines
+    };
+    let stack_len = line_diagnostics.len();
+
+    let mut filtered = line_diagnostics
+      .drain(..)
+      .filter(|(diagnostic, _)| filter.allows(diagnostic.severity))
+      .collect::<Vec<_>>();
+    let filtered_len = filtered.len();
+    if filtered.len() > config.max_diagnostics {
+      filtered.truncate(config.max_diagnostics);
+    }
+
+    if filtered.is_empty() {
+      layout.last_trace = Some(InlineDiagnosticsRenderTrace {
+        doc_line,
+        cursor_doc_line,
+        cursor_anchor_hit: use_cursor_line_filter,
+        stack_len,
+        filtered_len,
+        emitted_line_count: 0,
+        row_delta: 0,
+        used_cursor_line_filter: use_cursor_line_filter,
+      });
+      continue;
+    }
+
+    let row_start = base_row
+      .saturating_add(inserted_before)
+      .saturating_add(1);
+    let mut row = row_start;
+    let base_line_count = layout.lines.len();
+    let fallback_diagnostics = filtered.clone();
+    for (_, anchor) in &mut filtered {
+      *anchor = (*anchor).min(viewport_width.saturating_sub(1));
+    }
+
+    draw_multi_diagnostics(
+      &mut layout.lines,
+      &mut filtered,
+      config,
+      viewport_width,
+      &mut row,
+    );
+    draw_diagnostics(
+      &mut layout.lines,
+      &mut filtered,
+      row_start,
+      config,
+      viewport_width,
+      &mut row,
+    );
+
+    if layout.lines.len() == base_line_count {
+      let max_anchor_start = config.max_diagnostic_start(viewport_width);
+      for (diagnostic, anchor) in fallback_diagnostics {
+        let anchor = anchor.min(max_anchor_start);
+        let text_col = anchor.saturating_add(config.prefix_len) as usize;
+        let text_fmt = config.text_format(anchor, viewport_width);
+        let wrapped = soft_wrap_message_lines(diagnostic.message.as_ref(), &text_fmt);
+        if wrapped.is_empty() {
+          continue;
+        }
+        for line in wrapped {
+          layout.lines.push(InlineDiagnosticRenderLine {
+            row,
+            col: text_col,
+            text: line,
+            severity: diagnostic.severity,
+          });
+          row = row.saturating_add(1);
+        }
+      }
+    }
+
+    let row_delta = row.saturating_sub(row_start);
+    if row_delta > 0 {
+      layout.row_insertions.push(RenderRowInsertion {
+        base_row,
+        inserted_rows: row_delta,
+      });
+      inserted_before = inserted_before.saturating_add(row_delta);
+    }
+    layout.last_trace = Some(InlineDiagnosticsRenderTrace {
+      doc_line,
+      cursor_doc_line,
+      cursor_anchor_hit: use_cursor_line_filter,
+      stack_len,
+      filtered_len,
+      emitted_line_count: layout.lines.len().saturating_sub(base_line_count),
+      row_delta,
+      used_cursor_line_filter: use_cursor_line_filter,
+    });
+  }
+
+  layout
+}
 
 pub struct InlineDiagnosticsLineAnnotation {
   diagnostics:       Vec<InlineDiagnostic>,
@@ -657,6 +852,17 @@ mod tests {
   use ropey::Rope;
 
   use super::*;
+  use crate::{
+    position::Position,
+    render::{
+      GutterConfig,
+      NoHighlights,
+      apply_row_insertions,
+      build_plan,
+      graphics::Rect,
+    },
+    view::ViewState,
+  };
 
   #[test]
   fn inline_diagnostics_prepare_disables_when_too_narrow() {
@@ -778,6 +984,63 @@ mod tests {
 
     let lines = render_data.borrow().lines.clone();
     assert!(!lines.is_empty());
+  }
+
+  #[test]
+  fn inline_diagnostics_viewport_layout_remaps_base_plan_rows() {
+    let text = Rope::from("alpha\nbeta\ngamma\n");
+    let diagnostics = vec![InlineDiagnostic::new(
+      text.line_to_char(0).saturating_add(1),
+      DiagnosticSeverity::Warning,
+      "viewport inline diagnostic message",
+    )];
+    let view = ViewState::new(Rect::new(0, 0, 40, 3), Position::new(0, 0));
+    let mut text_fmt = TextFormat::default();
+    text_fmt.soft_wrap = false;
+    text_fmt.viewport_width = 40;
+    let gutter = GutterConfig::default();
+    let doc = crate::document::Document::new(
+      crate::document::DocumentId::new(std::num::NonZeroUsize::new(1).unwrap()),
+      text.clone(),
+    );
+    let mut annotations = TextAnnotations::default();
+    let mut highlights = NoHighlights;
+    let mut cache = crate::render::RenderCache::default();
+    let mut plan = build_plan(
+      &doc,
+      view,
+      &text_fmt,
+      &gutter,
+      &mut annotations,
+      &mut highlights,
+      &mut cache,
+      crate::render::RenderStyles::default(),
+    );
+
+    let layout = render_inline_diagnostics_for_viewport(
+      text.slice(..),
+      &plan,
+      &text_fmt,
+      &mut annotations,
+      &diagnostics,
+      None,
+      &InlineDiagnosticsConfig {
+        cursor_line:          InlineDiagnosticFilter::Disable,
+        other_lines:          InlineDiagnosticFilter::Enable(DiagnosticSeverity::Hint),
+        min_diagnostic_width: 12,
+        prefix_len:           1,
+        max_wrap:             8,
+        max_diagnostics:      4,
+      },
+    );
+    assert!(!layout.lines.is_empty());
+    assert_eq!(layout.row_insertions.len(), 1);
+    assert_eq!(layout.row_insertions[0].base_row, 0);
+    assert!(layout.row_insertions[0].inserted_rows > 0);
+
+    apply_row_insertions(&mut plan, &layout.row_insertions);
+    assert_eq!(plan.lines[0].row, 0);
+    assert!(plan.lines.iter().any(|line| line.row > 1));
   }
 
   #[test]

@@ -38,7 +38,9 @@ pub use inline_diagnostics::{
   InlineDiagnosticsConfig,
   InlineDiagnosticsLineAnnotation,
   InlineDiagnosticsRenderData,
+  InlineDiagnosticsViewportLayout,
   SharedInlineDiagnosticsRenderData,
+  render_inline_diagnostics_for_viewport,
 };
 pub use overlay::{
   OverlayNode,
@@ -61,11 +63,13 @@ pub use plan::{
   RenderGutterSpan,
   RenderLine,
   RenderPlan,
+  RenderRowInsertion,
   RenderSelection,
   RenderSelectionKind,
   RenderSpan,
   RenderStyles,
   RenderVisibleRow,
+  apply_row_insertions,
   SelectionMatchHighlightOptions,
   add_selection_match_highlights,
   apply_diagnostic_gutter_markers,

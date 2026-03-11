@@ -1,7 +1,6 @@
 //! Rendering - converts RenderPlan to ratatui draw calls.
 
 use std::{
-  cell::RefCell,
   collections::BTreeMap,
   env,
   fs::OpenOptions,
@@ -10,7 +9,6 @@ use std::{
     Path,
     PathBuf,
   },
-  rc::Rc,
   sync::{
     Mutex,
     OnceLock,
@@ -83,7 +81,7 @@ use the_lib::{
     InlineDiagnostic,
     InlineDiagnosticFilter,
     InlineDiagnosticsConfig,
-    InlineDiagnosticsLineAnnotation,
+    InlineDiagnosticsViewportLayout,
     LayoutIntent,
     NoHighlights,
     PaneRenderPlan,
@@ -92,7 +90,6 @@ use the_lib::{
     RenderPlan,
     RenderStyles,
     SelectionMatchHighlightOptions,
-    SharedInlineDiagnosticsRenderData,
     SyntaxHighlightAdapter,
     UiAlign,
     UiAlignPair,
@@ -117,6 +114,7 @@ use the_lib::{
     UiTooltip,
     UiTree,
     add_selection_match_highlights,
+    apply_row_insertions,
     apply_diagnostic_gutter_markers,
     apply_diff_gutter_markers,
     build_plan,
@@ -128,6 +126,7 @@ use the_lib::{
       UnderlineStyle as LibUnderlineStyle,
     },
     gutter_width_for_document,
+    render_inline_diagnostics_for_viewport,
     text_annotations::TextAnnotations,
     ui_theme::resolve_ui_tree,
     visual_pos_at_char,
@@ -651,6 +650,45 @@ fn diagnostic_underlines_for_document<'a>(
   }
 
   out
+}
+
+fn remap_relative_row_with_insertions(
+  relative_row: usize,
+  scroll_row: usize,
+  viewport_height: usize,
+  row_insertions: &[the_lib::render::RenderRowInsertion],
+) -> Option<u16> {
+  let absolute_row = scroll_row.saturating_add(relative_row);
+  let inserted_before = row_insertions
+    .iter()
+    .filter(|insertion| insertion.base_row < absolute_row)
+    .map(|insertion| insertion.inserted_rows)
+    .sum::<usize>();
+  let shifted_row = relative_row.saturating_add(inserted_before);
+  (shifted_row < viewport_height).then_some(shifted_row as u16)
+}
+
+fn apply_row_insertions_to_underlines(
+  entries: &mut Vec<DiagnosticUnderlineRenderSpan>,
+  plan: &RenderPlan,
+  row_insertions: &[the_lib::render::RenderRowInsertion],
+) {
+  if row_insertions.is_empty() {
+    return;
+  }
+
+  entries.retain_mut(|entry| {
+    let Some(row) = remap_relative_row_with_insertions(
+      entry.row as usize,
+      plan.scroll.row,
+      plan.viewport.height as usize,
+      row_insertions,
+    ) else {
+      return false;
+    };
+    entry.row = row;
+    true
+  });
 }
 
 fn active_inline_diagnostics(ctx: &Ctx) -> Vec<InlineDiagnostic> {
@@ -5844,8 +5882,6 @@ pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> Ren
     let _ = annotations.add_overlay(&ctx.word_jump_overlay_annotations, jump_label_style);
   }
   ctx.inline_diagnostic_lines.clear();
-  let inline_diagnostic_render_data: SharedInlineDiagnosticsRenderData =
-    Rc::new(RefCell::new(Default::default()));
   let inline_diagnostics = active_inline_diagnostics(ctx);
   let inline_diag_count = inline_diagnostics.len();
   let first_inline_diag_start_idx = inline_diagnostics.first().map(|diag| diag.start_char_idx);
@@ -5871,30 +5907,19 @@ pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> Ren
   let lsp_diag_count = diagnostics_for_underlines.len();
   let mut inline_enable_cursor_line = false;
   let mut inline_config_snapshot: Option<InlineDiagnosticsConfig> = None;
+  let mut cursor_line_idx = None;
   if !inline_diagnostics.is_empty() {
     inline_enable_cursor_line = ctx.mode() != Mode::Insert;
     let inline_config = inline_diagnostics_config()
       .prepare(text_fmt.viewport_width.max(1), inline_enable_cursor_line);
     inline_config_snapshot = Some(inline_config.clone());
-    if !inline_config.disabled() {
-      let cursor_char_idx = active_cursor_char_idx(ctx).unwrap_or(0);
-      let cursor_line_idx = active_cursor_line_idx(ctx);
-      let _ = annotations.add_line_annotation(Box::new(InlineDiagnosticsLineAnnotation::new(
-        inline_diagnostics,
-        cursor_char_idx,
-        cursor_line_idx,
-        text_fmt.viewport_width.max(1),
-        view.scroll.col,
-        inline_config,
-        inline_diagnostic_render_data.clone(),
-      )));
-    }
+    cursor_line_idx = active_cursor_line_idx(ctx);
   }
 
   let allow_cache_refresh = ctx.syntax_highlight_refresh_allowed();
 
   // Build the render plan (with or without syntax highlighting).
-  let (mut plan, diagnostic_underlines) = {
+  let (mut plan, diagnostic_underlines, inline_lines, inline_render_trace) = {
     let (doc, render_cache) = ctx.editor.document_and_cache();
     let mut plan = if let (Some(loader), Some(syntax)) = (&ctx.loader, doc.syntax()) {
       // Calculate line range for highlighting
@@ -5949,19 +5974,42 @@ pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> Ren
       },
     );
 
-    let diagnostic_underlines = diagnostic_underlines_for_document(
+    let mut diagnostic_underlines = diagnostic_underlines_for_document(
       doc.text(),
       &diagnostics_for_underlines,
       &plan,
       text_fmt,
       &mut annotations,
     );
-    (plan, diagnostic_underlines)
+    let inline_layout = if let Some(inline_config) = inline_config_snapshot.as_ref() {
+      render_inline_diagnostics_for_viewport(
+        doc.text().slice(..),
+        &plan,
+        text_fmt,
+        &mut annotations,
+        &inline_diagnostics,
+        cursor_line_idx,
+        inline_config,
+      )
+    } else {
+      InlineDiagnosticsViewportLayout::default()
+    };
+    apply_row_insertions_to_underlines(
+      &mut diagnostic_underlines,
+      &plan,
+      &inline_layout.row_insertions,
+    );
+    apply_row_insertions(&mut plan, &inline_layout.row_insertions);
+    (
+      plan,
+      diagnostic_underlines,
+      inline_layout.lines,
+      inline_layout.last_trace,
+    )
   };
 
   ctx.diagnostic_underlines = diagnostic_underlines;
-  let inline_render_trace = inline_diagnostic_render_data.borrow().last_trace.clone();
-  ctx.inline_diagnostic_lines = inline_diagnostic_render_data.borrow().lines.clone();
+  ctx.inline_diagnostic_lines = inline_lines;
   drop(annotations);
 
   let should_trace_inline_diagnostics = inline_diagnostics_trace_enabled()

@@ -5,7 +5,6 @@
 //! SwiftUI client to interact with the Rust editor core.
 
 use std::{
-  cell::RefCell,
   collections::{
     BTreeMap,
     HashMap,
@@ -22,7 +21,6 @@ use std::{
     Path,
     PathBuf,
   },
-  rc::Rc,
   sync::{
     Arc,
     OnceLock,
@@ -177,8 +175,6 @@ use the_lib::{
     InlineDiagnosticFilter,
     InlineDiagnosticRenderLine,
     InlineDiagnosticsConfig,
-    InlineDiagnosticsLineAnnotation,
-    InlineDiagnosticsRenderData,
     LayoutIntent,
     NoHighlights,
     OverlayNode,
@@ -189,7 +185,6 @@ use the_lib::{
     RenderGutterDiffKind,
     RenderStyles,
     SelectionMatchHighlightOptions,
-    SharedInlineDiagnosticsRenderData,
     SyntaxHighlightAdapter,
     UiAlign,
     UiAlignPair,
@@ -202,6 +197,7 @@ use the_lib::{
     UiState,
     UiText,
     add_selection_match_highlights,
+    apply_row_insertions,
     apply_diagnostic_gutter_markers,
     apply_diff_gutter_markers,
     build_plan,
@@ -215,6 +211,7 @@ use the_lib::{
       UnderlineStyle as LibUnderlineStyle,
     },
     gutter_width_for_document,
+    render_inline_diagnostics_for_viewport,
     text_annotations::{
       InlineAnnotation,
       Overlay,
@@ -2515,6 +2512,45 @@ fn compute_diagnostic_underlines<'a>(
   }
 
   out
+}
+
+fn remap_relative_row_with_insertions(
+  relative_row: usize,
+  scroll_row: usize,
+  viewport_height: usize,
+  row_insertions: &[the_lib::render::RenderRowInsertion],
+) -> Option<u16> {
+  let absolute_row = scroll_row.saturating_add(relative_row);
+  let inserted_before = row_insertions
+    .iter()
+    .filter(|insertion| insertion.base_row < absolute_row)
+    .map(|insertion| insertion.inserted_rows)
+    .sum::<usize>();
+  let shifted_row = relative_row.saturating_add(inserted_before);
+  (shifted_row < viewport_height).then_some(shifted_row as u16)
+}
+
+fn apply_row_insertions_to_underlines(
+  entries: &mut Vec<DiagnosticUnderlineEntry>,
+  plan: &the_lib::render::RenderPlan,
+  row_insertions: &[the_lib::render::RenderRowInsertion],
+) {
+  if row_insertions.is_empty() {
+    return;
+  }
+
+  entries.retain_mut(|entry| {
+    let Some(row) = remap_relative_row_with_insertions(
+      entry.row as usize,
+      plan.scroll.row,
+      plan.viewport.height as usize,
+      row_insertions,
+    ) else {
+      return false;
+    };
+    entry.row = row;
+    true
+  });
 }
 
 fn init_loader(theme: &Theme) -> Result<Loader, String> {
@@ -6315,10 +6351,7 @@ impl App {
       .map(|doc| doc.diagnostics.clone())
       .unwrap_or_default();
 
-    let inline_diagnostic_render_data: SharedInlineDiagnosticsRenderData =
-      Rc::new(RefCell::new(InlineDiagnosticsRenderData::default()));
-
-    let (mut plan, hover_selections, underlines, inline_lines) = {
+    let (mut plan, underlines, inline_lines) = {
       let editor = self.active_editor_mut();
       let view = editor.view();
 
@@ -6337,6 +6370,11 @@ impl App {
       }
 
       let (doc, cache) = editor.document_and_cache();
+      let cursor_line_idx = doc
+        .selection()
+        .ranges()
+        .first()
+        .map(|range| range.cursor_line(doc.text().slice(..)));
       let gutter_width = gutter_width_for_document(doc, view.viewport.width, &gutter_config);
       text_fmt.viewport_width = view.viewport.width.saturating_sub(gutter_width).max(1);
 
@@ -6350,28 +6388,6 @@ impl App {
           ..InlineDiagnosticsConfig::default()
         }
       };
-      if !inline_diagnostics.is_empty() && !inline_config.disabled() {
-        let cursor_char_idx = doc
-          .selection()
-          .ranges()
-          .first()
-          .map(|r| r.cursor(doc.text().slice(..)))
-          .unwrap_or(0);
-        let cursor_line_idx = doc
-          .selection()
-          .ranges()
-          .first()
-          .map(|r| r.cursor_line(doc.text().slice(..)));
-        let _ = annotations.add_line_annotation(Box::new(InlineDiagnosticsLineAnnotation::new(
-          inline_diagnostics,
-          cursor_char_idx,
-          cursor_line_idx,
-          text_fmt.viewport_width.max(1),
-          view.scroll.col,
-          inline_config,
-          inline_diagnostic_render_data.clone(),
-        )));
-      }
 
       let mut plan = if let (Some(loader), Some(syntax)) = (loader.as_deref(), doc.syntax()) {
         let line_range = view.scroll.row..(view.scroll.row + view.viewport.height as usize);
@@ -6434,28 +6450,34 @@ impl App {
           )
         })
         .unwrap_or_default();
-
-      // Snapshot inline diagnostic render output now. Subsequent visual position
-      // queries (e.g. underline mapping) can traverse annotations again and
-      // should not duplicate overlay lines.
-      let mut inline_lines = inline_diagnostic_render_data.borrow().lines.clone();
-      dedupe_inline_diagnostic_lines(&mut inline_lines);
+      if !hover_selections.is_empty() {
+        plan.selections.splice(0..0, hover_selections);
+      }
 
       // Compute diagnostic underlines after build_plan while annotations are still
       // alive.
-      let underlines = compute_diagnostic_underlines(
+      let mut underlines = compute_diagnostic_underlines(
         doc.text(),
         &raw_diagnostics,
         &plan,
         &text_fmt,
         &mut annotations,
       );
+      let mut inline_lines = render_inline_diagnostics_for_viewport(
+        doc.text().slice(..),
+        &plan,
+        &text_fmt,
+        &mut annotations,
+        &inline_diagnostics,
+        cursor_line_idx,
+        &inline_config,
+      );
+      dedupe_inline_diagnostic_lines(&mut inline_lines.lines);
+      apply_row_insertions_to_underlines(&mut underlines, &plan, &inline_lines.row_insertions);
+      apply_row_insertions(&mut plan, &inline_lines.row_insertions);
 
-      (plan, hover_selections, underlines, inline_lines)
+      (plan, underlines, inline_lines.lines)
     };
-    if !hover_selections.is_empty() {
-      plan.selections.splice(0..0, hover_selections);
-    }
     apply_diagnostic_gutter_markers(&mut plan, &diagnostics_by_line, diagnostic_styles);
     apply_diff_gutter_markers(&mut plan, &diff_signs, diff_styles);
 

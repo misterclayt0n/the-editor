@@ -370,11 +370,27 @@ impl<Ctx> std::ops::Deref for DispatchRef<Ctx> {
   }
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct WorkingDirectoryState {
+  pub current:  Option<PathBuf>,
+  pub previous: Option<PathBuf>,
+}
+
 pub trait DefaultContext: Sized + 'static {
   fn editor(&mut self) -> &mut Editor;
   fn editor_ref(&self) -> &Editor;
   fn file_path(&self) -> Option<&Path>;
+  fn workspace_root(&self) -> PathBuf;
+  fn working_directory_state(&self) -> &WorkingDirectoryState;
+  fn working_directory_state_mut(&mut self) -> &mut WorkingDirectoryState;
   fn request_render(&mut self);
+  fn effective_working_directory(&self) -> PathBuf {
+    self
+      .working_directory_state()
+      .current
+      .clone()
+      .unwrap_or_else(|| self.workspace_root())
+  }
   fn cursor_blink_enabled(&self) -> bool {
     true
   }

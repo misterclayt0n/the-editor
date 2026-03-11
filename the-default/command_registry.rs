@@ -11,11 +11,7 @@ use std::{
     Path,
     PathBuf,
   },
-  sync::{
-    Arc,
-    Mutex,
-    OnceLock,
-  },
+  sync::Arc,
 };
 
 use the_core::chars::{
@@ -772,28 +768,6 @@ const LSP_WORKSPACE_COMMAND_SIGNATURE: Signature = Signature {
   ..Signature::DEFAULT
 };
 
-fn workspace_root_for_ctx<Ctx: DefaultContext>(ctx: &Ctx) -> PathBuf {
-  let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-  let start = ctx
-    .file_path()
-    .map(|p| {
-      let full = if p.is_relative() {
-        cwd.join(p)
-      } else {
-        p.to_path_buf()
-      };
-      if full.is_dir() {
-        full
-      } else {
-        full
-          .parent()
-          .map(Path::to_path_buf)
-          .unwrap_or_else(|| cwd.clone())
-      }
-    })
-    .unwrap_or_else(|| cwd);
-  crate::file_picker::workspace_root(&start)
-}
 
 fn resolve_command_path(base: &Path, input: &Path) -> PathBuf {
   let expanded = the_stdx::path::expand_tilde(Cow::Borrowed(input));
@@ -804,55 +778,13 @@ fn resolve_command_path(base: &Path, input: &Path) -> PathBuf {
   }
 }
 
-#[derive(Debug, Clone, Default)]
-struct WorkingDirectoryState {
-  previous: Option<PathBuf>,
-  explicit: bool,
-}
-
-fn working_directory_state_slot() -> &'static Mutex<WorkingDirectoryState> {
-  static WORKING_DIRECTORY_STATE: OnceLock<Mutex<WorkingDirectoryState>> = OnceLock::new();
-  WORKING_DIRECTORY_STATE.get_or_init(|| Mutex::new(WorkingDirectoryState::default()))
-}
-
-fn previous_working_directory() -> Option<PathBuf> {
-  working_directory_state_slot()
-    .lock()
-    .unwrap_or_else(|poisoned| poisoned.into_inner())
-    .previous
-    .clone()
-}
-
-fn explicit_working_directory_enabled() -> bool {
-  working_directory_state_slot()
-    .lock()
-    .unwrap_or_else(|poisoned| poisoned.into_inner())
-    .explicit
-}
-
-fn set_explicit_working_directory(previous: Option<PathBuf>) {
-  let mut state = working_directory_state_slot()
-    .lock()
-    .unwrap_or_else(|poisoned| poisoned.into_inner());
-  state.previous = previous;
-  state.explicit = true;
-}
-
-fn current_working_directory() -> Result<PathBuf, CommandError> {
-  the_stdx::env::current_working_dir().map_err(|err| CommandError::new(err.to_string()))
-}
-
 #[must_use]
-pub fn effective_working_directory(workspace_root: &Path) -> PathBuf {
-  if explicit_working_directory_enabled() {
-    the_stdx::env::current_working_dir().unwrap_or_else(|_| workspace_root.to_path_buf())
-  } else {
-    workspace_root.to_path_buf()
-  }
+pub fn effective_working_directory<Ctx: DefaultContext>(ctx: &Ctx) -> PathBuf {
+  ctx.effective_working_directory()
 }
 
 fn effective_working_directory_for_ctx<Ctx: DefaultContext>(ctx: &Ctx) -> PathBuf {
-  effective_working_directory(&workspace_root_for_ctx(ctx))
+  effective_working_directory(ctx)
 }
 
 fn home_directory() -> Result<PathBuf, CommandError> {
@@ -1038,7 +970,7 @@ fn cmd_open<Ctx: DefaultContext>(ctx: &mut Ctx, args: Args, event: CommandEvent)
   let path_str = args
     .first()
     .ok_or_else(|| CommandError::new("usage: :open <path>"))?;
-  let resolved = resolve_command_path(&workspace_root_for_ctx(ctx), Path::new(path_str));
+  let resolved = resolve_command_path(&effective_working_directory_for_ctx(ctx), Path::new(path_str));
 
   match ctx.open_file(&resolved) {
     Ok(()) => Ok(()),
@@ -1093,23 +1025,25 @@ fn cmd_change_current_directory<Ctx: DefaultContext>(
 
   let dir = match args.first() {
     Some("-") => {
-      previous_working_directory()
+      ctx
+        .working_directory_state()
+        .previous
+        .clone()
         .ok_or_else(|| CommandError::new("no previous working directory"))?
     },
     Some(path) => resolve_directory_command_path(ctx, path),
     None => home_directory()?,
   };
-
-  let previous_before_change = current_working_directory().ok();
-  let previous = the_stdx::env::set_current_working_dir(&dir).map_err(|err| {
+  let cwd = the_stdx::path::canonicalize(&dir).map_err(|err| {
     CommandError::new(format!(
       "failed to change directory to '{}': {err}",
       dir.display()
     ))
   })?;
-  set_explicit_working_directory(previous.or(previous_before_change));
-
-  let cwd = current_working_directory()?;
+  let previous = ctx.effective_working_directory();
+  let state = ctx.working_directory_state_mut();
+  state.previous = Some(previous);
+  state.current = Some(cwd.clone());
   ctx.push_info(
     "cwd",
     format!("current working directory: {}", cwd.display()),
@@ -2392,7 +2326,7 @@ pub mod completers {
   }
 
   pub fn filename<Ctx: DefaultContext>(ctx: &Ctx, input: &str) -> Vec<Completion> {
-    let base = super::workspace_root_for_ctx(ctx);
+    let base = super::effective_working_directory_for_ctx(ctx);
     super::path_completions(&base, input, false)
   }
 

@@ -43,6 +43,7 @@ pub use command::{
   DefaultDispatch,
   DefaultDispatchStatic,
   DispatchRef,
+  WorkingDirectoryState,
   build_dispatch,
   command_from_name,
   default_pre_on_keypress,

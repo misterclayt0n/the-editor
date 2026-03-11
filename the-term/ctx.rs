@@ -72,6 +72,7 @@ use the_default::{
   PointerEventOutcome,
   PointerKind,
   ThemeCatalog,
+  WorkingDirectoryState,
   buffer_tabs_snapshot,
   open_dynamic_picker,
   replace_file_picker_items,
@@ -556,6 +557,7 @@ impl PendingLspRequestKind {
 pub struct Ctx {
   pub editor:                        Editor,
   pub file_path:                     Option<PathBuf>,
+  pub working_directory:             WorkingDirectoryState,
   pub should_quit:                   bool,
   pub needs_render:                  bool,
   cursor_blink_generation:           u64,
@@ -959,6 +961,10 @@ impl Ctx {
     let mut ctx = Self {
       editor,
       file_path: file_path.map(PathBuf::from),
+      working_directory: WorkingDirectoryState {
+        current: Some(lsp_runtime.config().workspace_root().to_path_buf()),
+        previous: None,
+      },
       should_quit: false,
       needs_render: true,
       cursor_blink_generation: 0,
@@ -1222,8 +1228,7 @@ impl Ctx {
   }
 
   fn start_global_search(&mut self) {
-    let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let root = the_default::workspace_root(&cwd);
+    let root = the_default::workspace_root(self.effective_working_directory().as_path());
     if !root.exists() {
       let _ = <Self as the_default::DefaultContext>::push_error(
         self,
@@ -2219,8 +2224,7 @@ impl Ctx {
       return true;
     }
 
-    let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let root = the_default::workspace_root(&cwd);
+    let root = the_default::workspace_root(self.effective_working_directory().as_path());
     let active_uri = self.current_lsp_uri();
     let mut external_rope_cache: HashMap<PathBuf, Rope> = HashMap::new();
     let mut items = Vec::with_capacity(symbols.len());
@@ -2257,7 +2261,7 @@ impl Ctx {
       };
 
       let path_display = path
-        .strip_prefix(&cwd)
+        .strip_prefix(&root)
         .unwrap_or(&path)
         .display()
         .to_string();
@@ -5451,6 +5455,18 @@ impl the_default::DefaultContext for Ctx {
     self.file_path.as_deref()
   }
 
+  fn workspace_root(&self) -> PathBuf {
+    self.lsp_runtime.config().workspace_root().to_path_buf()
+  }
+
+  fn working_directory_state(&self) -> &WorkingDirectoryState {
+    &self.working_directory
+  }
+
+  fn working_directory_state_mut(&mut self) -> &mut WorkingDirectoryState {
+    &mut self.working_directory
+  }
+
   fn request_render(&mut self) {
     self.needs_render = true;
   }
@@ -5925,7 +5941,7 @@ impl the_default::DefaultContext for Ctx {
   fn file_picker_changed_files(
     &self,
   ) -> std::result::Result<Vec<FilePickerChangedFileItem>, String> {
-    let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let cwd = self.effective_working_directory();
     if !cwd.exists() {
       return Err("current working directory does not exist".to_string());
     }

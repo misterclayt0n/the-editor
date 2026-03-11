@@ -67,6 +67,12 @@ extension AppRefMut {
         })
     }
 
+    public func seed_editor_context_path<GenericToRustStr: ToRustStr>(_ id: EditorId, _ path: GenericToRustStr) -> Bool {
+        return path.toRustStr({ pathAsRustStr in
+            __swift_bridge__$App$seed_editor_context_path(ptr, id.intoFfiRepr(), pathAsRustStr)
+        })
+    }
+
     public func open_file_path<GenericToRustStr: ToRustStr>(_ id: EditorId, _ path: GenericToRustStr) -> Bool {
         return path.toRustStr({ pathAsRustStr in
             __swift_bridge__$App$open_file_path(ptr, id.intoFfiRepr(), pathAsRustStr)

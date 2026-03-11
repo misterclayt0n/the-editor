@@ -26,6 +26,11 @@ final class SharedEditorRuntime {
     }
 
     @discardableResult
+    func seedEditorContextPath(_ path: String) -> Bool {
+        app.seed_editor_context_path(editorId, path)
+    }
+
+    @discardableResult
     func openFilePathInNewTab(_ path: String) -> Bool {
         app.open_file_path_in_new_tab(editorId, path)
     }

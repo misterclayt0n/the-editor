@@ -627,7 +627,7 @@ pub fn open_file_picker_with_split<Ctx: DefaultContext>(
   ctx: &mut Ctx,
   open_split: Option<SplitAxis>,
 ) {
-  open_file_picker_with_root_and_split(ctx, picker_root(ctx), open_split);
+  open_file_picker_with_root_and_split(ctx, ctx.effective_working_directory(), open_split);
 }
 
 pub fn open_file_picker_with_root_and_split<Ctx: DefaultContext>(
@@ -645,7 +645,7 @@ pub fn open_file_picker_in_current_directory<Ctx: DefaultContext>(ctx: &mut Ctx)
   let root = match doc_dir {
     Some(path) => path,
     None => {
-      let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+      let cwd = ctx.effective_working_directory();
       if !cwd.exists() {
         ctx.push_error(
           "file_picker",
@@ -664,7 +664,7 @@ pub fn open_file_picker_in_current_directory<Ctx: DefaultContext>(ctx: &mut Ctx)
 }
 
 pub fn open_buffer_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
-  let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+  let cwd = ctx.effective_working_directory();
   let root = picker_root(ctx);
   let editor = ctx.editor_ref();
   let snapshots = editor.buffer_snapshots_mru();
@@ -731,7 +731,7 @@ pub fn open_buffer_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
 }
 
 pub fn open_jumplist_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
-  let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+  let cwd = ctx.effective_working_directory();
   let root = picker_root(ctx);
   let editor = ctx.editor_ref();
   let jumps = editor.jumplist_backward_snapshots();
@@ -801,7 +801,7 @@ pub fn open_jumplist_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
 }
 
 pub fn open_diagnostics_picker<Ctx: DefaultContext>(ctx: &mut Ctx, workspace: bool) {
-  let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+  let cwd = ctx.effective_working_directory();
   let root = picker_root(ctx);
   let diagnostics = ctx.file_picker_diagnostics(workspace);
   if diagnostics.is_empty() {
@@ -891,7 +891,7 @@ pub fn open_diagnostics_picker<Ctx: DefaultContext>(ctx: &mut Ctx, workspace: bo
 }
 
 pub fn open_changed_file_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
-  let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+  let cwd = ctx.effective_working_directory();
   if !cwd.exists() {
     ctx.push_error(
       "changed_file_picker",
@@ -912,7 +912,7 @@ pub fn open_changed_file_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
     return;
   }
 
-  let root = workspace_root(&cwd);
+  let root = picker_root(ctx);
   let items = changed
     .into_iter()
     .map(|entry| {
@@ -2048,8 +2048,7 @@ pub fn file_picker_row_data(title: &str, item: &FilePickerItem) -> FilePickerRow
 }
 
 fn picker_root<Ctx: DefaultContext>(_ctx: &Ctx) -> PathBuf {
-  let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-  workspace_root(&cwd)
+  _ctx.workspace_root()
 }
 
 pub fn workspace_root(start: &Path) -> PathBuf {

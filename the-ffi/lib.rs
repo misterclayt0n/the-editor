@@ -103,6 +103,7 @@ use the_default::{
   SearchPromptKind,
   SearchPromptState,
   ThemeCatalog,
+  WorkingDirectoryState,
   buffer_tabs_snapshot,
   close_file_picker,
   command_palette_filtered_indices,
@@ -1928,6 +1929,8 @@ struct EditorState {
   hover_ui:                          Option<HoverUiState>,
   scrolloff:                         usize,
   pointer_drag_selection:            Option<PointerSelectionDragState>,
+  workspace_root:                    PathBuf,
+  working_directory:                 WorkingDirectoryState,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1952,14 +1955,16 @@ struct PointerSelectionDragState {
 }
 
 impl EditorState {
-  fn new(loader: Option<Arc<Loader>>, workspace_root: &Path) -> Self {
+  fn new(
+    loader: Option<Arc<Loader>>,
+    workspace_root: &Path,
+    working_directory: WorkingDirectoryState,
+  ) -> Self {
     let mut command_palette_style = CommandPaletteStyle::floating(CommandPaletteTheme::ghostty());
     command_palette_style.layout = CommandPaletteLayout::Custom;
     let mut file_picker = FilePickerState::default();
     set_file_picker_syntax_loader(&mut file_picker, loader);
-    let file_tree = FileTreeState::with_working_directory(
-      the_default::effective_working_directory(workspace_root),
-    );
+    let file_tree = FileTreeState::with_working_directory(workspace_root.to_path_buf());
     let (syntax_parse_tx, syntax_parse_rx) = channel();
 
     Self {
@@ -2003,6 +2008,13 @@ impl EditorState {
       hover_ui: None,
       scrolloff: 5,
       pointer_drag_selection: None,
+      workspace_root: workspace_root.to_path_buf(),
+      working_directory: WorkingDirectoryState {
+        current: working_directory
+          .current
+          .or_else(|| Some(workspace_root.to_path_buf())),
+        previous: working_directory.previous,
+      },
     }
   }
 
@@ -4486,6 +4498,23 @@ fn normalize_path_for_open(path: &Path) -> PathBuf {
   std::fs::canonicalize(&absolute).unwrap_or(absolute)
 }
 
+fn workspace_root_for_editor_path(base_root: &Path, path: &Path) -> PathBuf {
+  let full = if path.is_absolute() {
+    path.to_path_buf()
+  } else {
+    base_root.join(path)
+  };
+  let start = if full.is_dir() {
+    full
+  } else {
+    full
+      .parent()
+      .map(Path::to_path_buf)
+      .unwrap_or_else(|| base_root.to_path_buf())
+  };
+  the_default::workspace_root(&start)
+}
+
 /// FFI-safe app wrapper with editor management.
 pub struct App {
   inner:                           LibApp,
@@ -5372,34 +5401,40 @@ impl App {
     )
   }
 
-  fn file_tree_workspace_root(&self) -> PathBuf {
-    let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let start = self
+  fn active_workspace_root(&self) -> PathBuf {
+    self
       .active_editor
-      .and_then(|id| self.inner.editor(id))
-      .and_then(|editor| editor.active_file_path())
-      .map(|path| {
-        let full = if path.is_relative() {
-          cwd.join(path)
-        } else {
-          path.to_path_buf()
-        };
-        if full.is_dir() {
-          full
-        } else {
-          full
-            .parent()
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| cwd.clone())
-        }
+      .and_then(|id| self.states.get(&id))
+      .map(|state| state.workspace_root.clone())
+      .unwrap_or_else(|| self.workspace_root.clone())
+  }
+
+  fn inherited_editor_context(&self) -> (PathBuf, WorkingDirectoryState) {
+    self
+      .active_editor
+      .and_then(|id| self.states.get(&id))
+      .map(|state| (state.workspace_root.clone(), state.working_directory.clone()))
+      .unwrap_or_else(|| {
+        (
+          self.workspace_root.clone(),
+          WorkingDirectoryState {
+            current: Some(self.workspace_root.clone()),
+            previous: None,
+          },
+        )
       })
-      .unwrap_or_else(|| cwd.clone());
-    the_default::workspace_root(&start)
+  }
+
+  fn file_tree_workspace_root(&self) -> PathBuf {
+    self.active_workspace_root()
   }
 
   fn effective_file_tree_root(&self) -> PathBuf {
-    let workspace_root = self.file_tree_workspace_root();
-    the_default::effective_working_directory(workspace_root.as_path())
+    self
+      .active_editor
+      .and_then(|id| self.states.get(&id))
+      .and_then(|state| state.working_directory.current.clone())
+      .unwrap_or_else(|| self.file_tree_workspace_root())
   }
 
   fn sync_file_tree_watch_state(&mut self) -> bool {
@@ -5488,7 +5523,8 @@ impl App {
       changed = state.file_tree.invalidate_visible_subtree();
     }
 
-    if watched_path.starts_with(&self.workspace_root) && self.refresh_vcs_ui_state() {
+    let active_workspace_root = self.active_workspace_root();
+    if watched_path.starts_with(&active_workspace_root) && self.refresh_vcs_ui_state() {
       changed = true;
     }
 
@@ -5710,9 +5746,14 @@ impl App {
   ) -> ffi::EditorId {
     let view = ViewState::new(viewport.to_lib(), scroll.to_lib());
     let id = self.inner.create_editor(Rope::from_str(text), view);
+    let (workspace_root, working_directory) = self.inherited_editor_context();
     self.states.insert(
       id,
-      EditorState::new(self.loader.clone(), self.workspace_root.as_path()),
+      EditorState::new(
+        self.loader.clone(),
+        workspace_root.as_path(),
+        working_directory,
+      ),
     );
     self.active_editor.get_or_insert(id);
     let _ = self.refresh_vcs_diff_base_for_editor(id);
@@ -5879,6 +5920,31 @@ impl App {
     } else {
       DefaultContext::set_file_path(self, Some(PathBuf::from(path)));
     }
+    true
+  }
+
+  pub fn seed_editor_context_path(&mut self, id: ffi::EditorId, path: &str) -> bool {
+    if path.is_empty() || self.activate(id).is_none() {
+      return false;
+    }
+
+    let normalized_path = normalize_path_for_open(Path::new(path));
+    let Some(active_id) = self.active_editor else {
+      return false;
+    };
+    let Some(state) = self.states.get_mut(&active_id) else {
+      return false;
+    };
+    let next_workspace_root =
+      workspace_root_for_editor_path(state.workspace_root.as_path(), &normalized_path);
+    state.workspace_root = next_workspace_root.clone();
+    state.working_directory.current = Some(next_workspace_root.clone());
+    if state.file_tree.mode == DefaultFileTreeMode::WorkingDirectory {
+      state
+        .file_tree
+        .sync_for_working_directory(next_workspace_root.as_path());
+    }
+    let _ = self.sync_file_tree_watch_state();
     true
   }
 
@@ -8033,12 +8099,12 @@ impl App {
         let absolute = if path.is_absolute() {
           path.to_path_buf()
         } else {
-          env::current_dir().ok()?.join(path)
+          self.file_tree_workspace_root().join(path)
         };
         let anchor = absolute.parent().map(|parent| parent.to_path_buf())?;
         Some(the_loader::find_workspace_in(anchor).0)
       })
-      .unwrap_or_else(|| the_loader::find_workspace().0);
+      .unwrap_or_else(|| self.file_tree_workspace_root());
 
     let mut config = LspRuntimeConfig::new(workspace_root)
       .with_restart_policy(true, Duration::from_millis(250))
@@ -9367,8 +9433,7 @@ impl App {
       return true;
     }
 
-    let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let root = the_default::workspace_root(&cwd);
+    let root = self.file_tree_workspace_root();
     let active_uri = self.current_lsp_uri();
     let mut external_rope_cache: HashMap<PathBuf, Rope> = HashMap::new();
     let mut items = Vec::with_capacity(symbols.len());
@@ -9405,7 +9470,7 @@ impl App {
       };
 
       let path_display = path
-        .strip_prefix(&cwd)
+        .strip_prefix(&root)
         .unwrap_or(&path)
         .display()
         .to_string();
@@ -10743,8 +10808,7 @@ impl App {
   }
 
   fn start_global_search(&mut self) {
-    let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let root = the_default::workspace_root(&cwd);
+    let root = the_default::workspace_root(self.effective_working_directory().as_path());
     if !root.exists() {
       let _ = <Self as DefaultContext>::push_error(
         self,
@@ -11984,12 +12048,23 @@ impl App {
     }
     let previous = self.active_editor;
     let changed = self.active_editor != Some(id);
+    let (workspace_root, working_directory) = previous
+      .and_then(|editor_id| self.states.get(&editor_id))
+      .map(|state| (state.workspace_root.clone(), state.working_directory.clone()))
+      .unwrap_or_else(|| {
+        (
+          self.workspace_root.clone(),
+          WorkingDirectoryState {
+            current: Some(self.workspace_root.clone()),
+            previous: None,
+          },
+        )
+      });
     self.active_editor = Some(id);
     let loader = self.loader.clone();
-    self
-      .states
-      .entry(id)
-      .or_insert_with(|| EditorState::new(loader.clone(), self.workspace_root.as_path()));
+    self.states.entry(id).or_insert_with(|| {
+      EditorState::new(loader.clone(), workspace_root.as_path(), working_directory)
+    });
     if changed {
       log_shared_lsp_debug(
         "activate_editor",
@@ -12247,10 +12322,11 @@ impl App {
   }
 
   fn refresh_vcs_ui_state(&mut self) -> bool {
-    let next = if self.workspace_root.exists() {
+    let workspace_root = self.active_workspace_root();
+    let next = if workspace_root.exists() {
       match self
         .vcs_provider
-        .collect_changed_files(&self.workspace_root)
+        .collect_changed_files(&workspace_root)
       {
         Ok(changes) => VcsUiState::from_changes(changes),
         Err(_) => VcsUiState::default(),
@@ -12274,9 +12350,14 @@ impl App {
       .inner
       .editor(id)
       .and_then(|editor| editor.active_file_path().map(Path::to_path_buf));
+    let workspace_root = self
+      .states
+      .get(&id)
+      .map(|state| state.workspace_root.clone())
+      .unwrap_or_else(|| self.workspace_root.clone());
     let statusline = self
       .vcs_provider
-      .get_statusline_info(path.as_deref().unwrap_or(self.workspace_root.as_path()))
+      .get_statusline_info(path.as_deref().unwrap_or(workspace_root.as_path()))
       .map(|info| format_vcs_statusline_text(&info));
     let mut next_handle: Option<DiffHandle> = None;
     let mut next_signs: BTreeMap<usize, RenderGutterDiffKind> = BTreeMap::new();
@@ -12356,6 +12437,18 @@ impl DefaultContext for App {
       .inner
       .editor(id)
       .and_then(|editor| editor.active_file_path())
+  }
+
+  fn workspace_root(&self) -> PathBuf {
+    self.active_workspace_root()
+  }
+
+  fn working_directory_state(&self) -> &WorkingDirectoryState {
+    &self.active_state_ref().working_directory
+  }
+
+  fn working_directory_state_mut(&mut self) -> &mut WorkingDirectoryState {
+    &mut self.active_state_mut().working_directory
   }
 
   fn request_render(&mut self) {
@@ -12925,7 +13018,7 @@ impl DefaultContext for App {
   fn file_picker_changed_files(
     &self,
   ) -> std::result::Result<Vec<FilePickerChangedFileItem>, String> {
-    let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let cwd = self.effective_working_directory();
     if !cwd.exists() {
       return Err("current working directory does not exist".to_string());
     }
@@ -13114,6 +13207,11 @@ impl DefaultContext for App {
         .inner
         .editor(id)
         .and_then(|editor| editor.active_file_path().map(Path::to_path_buf));
+      if let Some(state) = self.states.get_mut(&id)
+        && let Some(path) = active_path.as_deref()
+      {
+        state.workspace_root = workspace_root_for_editor_path(state.workspace_root.as_path(), path);
+      }
       let working_directory = self.effective_file_tree_root();
       if let Some(state) = self.states.get_mut(&id) {
         state
@@ -14065,6 +14163,7 @@ mod ffi {
     fn set_viewport(self: &mut App, id: EditorId, viewport: Rect) -> bool;
     fn set_scroll(self: &mut App, id: EditorId, scroll: Position) -> bool;
     fn set_file_path(self: &mut App, id: EditorId, path: &str) -> bool;
+    fn seed_editor_context_path(self: &mut App, id: EditorId, path: &str) -> bool;
     fn open_file_path(self: &mut App, id: EditorId, path: &str) -> bool;
     fn open_file_path_in_new_tab(self: &mut App, id: EditorId, path: &str) -> bool;
     fn open_untitled_buffer(self: &mut App, id: EditorId) -> u64;
@@ -16023,6 +16122,38 @@ mod tests {
     assert_eq!(command_palette_titles(&mut app, id), vec![
       "docs/", "scripts/", "src/"
     ]);
+  }
+
+  #[test]
+  fn open_file_path_updates_workspace_root_without_changing_working_directory() {
+    let _guard = ffi_test_guard();
+    let source_workspace = TempTestWorkspace::new("open-file-cwd-source", "main.rs", "fn main() {}\n");
+    let target_workspace = TempTestWorkspace::new("open-file-cwd-target", "lib.rs", "pub fn value() {}\n");
+    let working_directory = source_workspace.root_path().join("nested");
+    fs::create_dir_all(&working_directory).expect("create working directory");
+    fs::write(working_directory.join("local.txt"), "local\n").expect("write local file");
+
+    let mut app = App::new();
+    let id = app.create_editor("", default_viewport(), ffi::Position { row: 0, col: 0 });
+    assert!(app.activate(id).is_some());
+
+    {
+      let state = app.active_state_mut();
+      state.workspace_root = source_workspace.root_path().to_path_buf();
+      state.working_directory.current = Some(working_directory.clone());
+      state.working_directory.previous = None;
+    }
+
+    assert!(app.open_file_path(id, target_workspace.file_path().to_string_lossy().as_ref()));
+    assert_eq!(
+      app.active_state_ref().working_directory.current.as_deref(),
+      Some(working_directory.as_path())
+    );
+    assert_eq!(app.active_state_ref().workspace_root, target_workspace.root_path());
+
+    assert!(app.handle_key(id, key_char(':')));
+    assert!(app.command_palette_set_query(id, "e "));
+    assert_eq!(command_palette_titles(&mut app, id), vec!["local.txt"]);
   }
 
   #[test]

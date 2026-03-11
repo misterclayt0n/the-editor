@@ -213,6 +213,7 @@ final class EditorModel: ObservableObject {
         self.effectiveViewport = self.viewport
         self.editorId = runtime.editorId
         if let filePath, bufferId == nil {
+            _ = runtime.seedEditorContextPath(filePath)
             _ = app.open_file_path(editorId, filePath)
         }
         let initialFramePlan = app.frame_render_plan(editorId)

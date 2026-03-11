@@ -365,6 +365,71 @@ final class EditorModel: ObservableObject {
         )
     }
 
+    private func refreshRenderSurface(trigger: String, includePaneMetadata: Bool) {
+        let perfEnabled = DiagnosticsDebugLog.editorPerfEnabled
+        let perfStart = perfEnabled ? DispatchTime.now().uptimeNanoseconds : 0
+        func perfNow() -> UInt64 {
+            DispatchTime.now().uptimeNanoseconds
+        }
+        func perfMs(_ start: UInt64, _ end: UInt64) -> Double {
+            guard end >= start else { return 0 }
+            return Double(end - start) / 1_000_000.0
+        }
+
+        synchronizeEffectiveTheme()
+        let perfAfterTheme = perfEnabled ? perfNow() : 0
+
+        framePlan = app.frame_render_plan(editorId)
+        plan = framePlan.active_plan()
+        let popupAnchor = app.docs_popup_anchor(editorId)
+        docsPopupAnchor = popupAnchor.has_value
+            ? DocsPopupAnchorSnapshot(
+                paneId: popupAnchor.pane_id,
+                row: popupAnchor.row,
+                col: popupAnchor.col
+            )
+            : nil
+        let perfAfterFrame = perfEnabled ? perfNow() : 0
+
+        if includePaneMetadata {
+            splitSeparators = fetchSplitSeparators()
+            updateTerminalPaneSnapshots(from: framePlan)
+            updateTerminalSurfaceSnapshots()
+            updateSurfaceOverviewSnapshots(from: framePlan)
+            updateEditorSurfaceSnapshots()
+            clearActiveSurfaceNotificationsIfNeeded()
+            debugSurfaceRailState(trigger: trigger)
+        }
+        let perfAfterMetadata = perfEnabled ? perfNow() : 0
+
+        debugDiagnosticsSnapshot(trigger: trigger, plan: plan)
+
+        guard perfEnabled else {
+            return
+        }
+        let totalMs = perfMs(perfStart, perfAfterMetadata)
+        guard DiagnosticsDebugLog.editorPerfShouldLog(durationMs: totalMs) else {
+            return
+        }
+
+        DiagnosticsDebugLog.editorPerfLog(
+            String(
+                format: "refresh_surface trigger=%@ total=%.2fms theme=%.2fms frame=%.2fms metadata=%.2fms include_pane_metadata=%d panes=%d lines=%d eol=%d underlines=%d overlays=%d",
+                trigger,
+                totalMs,
+                perfMs(perfStart, perfAfterTheme),
+                perfMs(perfAfterTheme, perfAfterFrame),
+                perfMs(perfAfterFrame, perfAfterMetadata),
+                includePaneMetadata ? 1 : 0,
+                Int(framePlan.pane_count()),
+                Int(plan.line_count()),
+                Int(plan.eol_diagnostic_count()),
+                Int(plan.diagnostic_underline_count()),
+                uiTree.overlays.count
+            )
+        )
+    }
+
     private func updateEffectiveViewport() {
         let reserved = statuslineReservedRows(in: uiTree) + max(0, topChromeReservedRows)
         let height = max(1, Int(viewport.height) - reserved)
@@ -448,7 +513,11 @@ final class EditorModel: ObservableObject {
         let newCol = max(0, Int(current.col) + colDelta)
         let scroll = Position(row: UInt64(newRow), col: UInt64(newCol))
         _ = app.set_scroll(editorId, scroll)
-        refresh(trigger: "scroll")
+        if uiTree.overlays.isEmpty {
+            refreshRenderSurface(trigger: "scroll", includePaneMetadata: false)
+        } else {
+            refresh(trigger: "scroll")
+        }
     }
 
     func handlePointerEvent(_ event: MouseBridgeEvent) {

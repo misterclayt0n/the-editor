@@ -279,6 +279,7 @@ struct PickerPanel<
     @State private var rowFrames: [Int: CGRect] = [:]
     @State private var viewportFrame: CGRect = .zero
     @State private var visibleIndexRange: ClosedRange<Int>? = nil
+    @State private var reportedVisibleRange: ClosedRange<Int>? = nil
     @State private var lastProgrammaticScrollIndex: Int? = nil
     @State private var nativeScrollTop: CGFloat = 0
     @State private var nativeViewportHeight: CGFloat = 0
@@ -657,11 +658,11 @@ struct PickerPanel<
 
     private func recomputeVisibleIndexRangeNative(config: PickerPanelVirtualListConfig) {
         guard itemCount > 0 else {
-            updateVisibleIndexRange(nil)
+            updateVisibleIndexRange(nil, callbackRange: nil)
             return
         }
         guard nativeViewportHeight > 0 else {
-            updateVisibleIndexRange(nil)
+            updateVisibleIndexRange(nil, callbackRange: nil)
             return
         }
 
@@ -671,7 +672,18 @@ struct PickerPanel<
 
         let first = max(0, min(itemCount - 1, Int(floor(startY / max(1, step)))))
         let last = max(0, min(itemCount - 1, Int(floor(max(0, endY - 1) / max(1, step)))))
-        updateVisibleIndexRange(first...max(first, last))
+        let renderRange = first...max(first, last)
+
+        let fullyVisibleEndY = max(0, nativeScrollTop + nativeViewportHeight - config.verticalPadding - config.rowHeight)
+        let lastFullyVisible = max(
+            first - 1,
+            min(itemCount - 1, Int(floor(fullyVisibleEndY / max(1, step))))
+        )
+        let fullyVisibleCount = max(1, (lastFullyVisible - first) + 1)
+        let callbackEnd = min(itemCount - 1, first + fullyVisibleCount - 1)
+        let callbackRange = first...max(first, callbackEnd)
+
+        updateVisibleIndexRange(renderRange, callbackRange: callbackRange)
     }
 
     private func virtualRowStep(config: PickerPanelVirtualListConfig) -> CGFloat {
@@ -912,13 +924,25 @@ struct PickerPanel<
         updateVisibleIndexRange(first...last)
     }
 
-    private func updateVisibleIndexRange(_ nextRange: ClosedRange<Int>?) {
-        guard visibleIndexRange != nextRange else {
+    private func updateVisibleIndexRange(
+        _ nextRange: ClosedRange<Int>?,
+        callbackRange: ClosedRange<Int>? = nil
+    ) {
+        let nextCallbackRange = callbackRange ?? nextRange
+        let renderChanged = visibleIndexRange != nextRange
+        let callbackChanged = reportedVisibleRange != nextCallbackRange
+        guard renderChanged || callbackChanged else {
             return
         }
-        visibleIndexRange = nextRange
-        if let nextRange {
-            onVisibleRangeChange?(nextRange)
+
+        if renderChanged {
+            visibleIndexRange = nextRange
+        }
+        if callbackChanged {
+            reportedVisibleRange = nextCallbackRange
+            if let nextCallbackRange {
+                onVisibleRangeChange?(nextCallbackRange)
+            }
         }
     }
 }

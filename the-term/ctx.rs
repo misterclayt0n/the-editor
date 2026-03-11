@@ -581,7 +581,6 @@ pub struct Ctx {
   lsp_statusline:                    LspStatuslineState,
   lsp_spinner_index:                 usize,
   lsp_spinner_last_tick:             Instant,
-  vcs_statusline_last_tick:          Instant,
   lsp_active_progress_tokens:        HashSet<String>,
   lsp_watched_file:                  Option<LspWatchedFileState>,
   lsp_pending_requests:              HashMap<u64, PendingLspRequestKind>,
@@ -992,7 +991,6 @@ impl Ctx {
       },
       lsp_spinner_index: 0,
       lsp_spinner_last_tick: Instant::now(),
-      vcs_statusline_last_tick: Instant::now(),
       lsp_active_progress_tokens: HashSet::new(),
       lsp_watched_file: None,
       lsp_pending_requests: HashMap::new(),
@@ -1495,18 +1493,6 @@ impl Ctx {
     self.lsp_spinner_last_tick = now;
     self.lsp_spinner_index = (self.lsp_spinner_index + 1) % 8;
     true
-  }
-
-  pub fn tick_vcs_statusline(&mut self) -> bool {
-    if self.file_path.is_none() {
-      return false;
-    }
-    let now = Instant::now();
-    if now.duration_since(self.vcs_statusline_last_tick) < vcs_statusline_refresh_interval() {
-      return false;
-    }
-    self.vcs_statusline_last_tick = now;
-    self.refresh_vcs_diff_base()
   }
 
   fn lsp_statusline_text_value(&self) -> Option<String> {
@@ -4718,10 +4704,6 @@ fn is_completion_replace_char(ch: char) -> bool {
 
 fn lsp_file_watch_latency() -> Duration {
   Duration::from_millis(120)
-}
-
-fn vcs_statusline_refresh_interval() -> Duration {
-  Duration::from_millis(500)
 }
 
 fn lsp_completion_auto_trigger_latency() -> Duration {

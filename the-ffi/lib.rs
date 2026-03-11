@@ -2908,10 +2908,6 @@ fn lsp_file_watch_latency() -> Duration {
   Duration::from_millis(120)
 }
 
-fn vcs_statusline_refresh_interval() -> Duration {
-  Duration::from_millis(500)
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
 #[repr(u8)]
 enum VcsFileStatusKind {
@@ -4504,7 +4500,6 @@ pub struct App {
   lsp_statusline:                  LspStatuslineState,
   lsp_spinner_index:               usize,
   lsp_spinner_last_tick:           Instant,
-  vcs_statusline_last_tick:        Instant,
   vcs_ui:                          VcsUiState,
   lsp_active_progress_tokens:      HashSet<String>,
   lsp_watched_file:                Option<LspWatchedFileState>,
@@ -5371,7 +5366,6 @@ impl App {
       lsp_statusline: LspStatuslineState::off(Some("unavailable".into())),
       lsp_spinner_index: 0,
       lsp_spinner_last_tick: Instant::now(),
-      vcs_statusline_last_tick: Instant::now(),
       vcs_ui: VcsUiState::default(),
       lsp_active_progress_tokens: HashSet::new(),
       lsp_watched_file: None,
@@ -7644,9 +7638,6 @@ impl App {
     if self.tick_lsp_statusline() {
       changed = true;
     }
-    if self.tick_vcs_statusline() {
-      changed = true;
-    }
     if self.file_picker().active {
       let picker = self.file_picker_mut();
       if file_picker_poll_scan_results(picker) {
@@ -7854,19 +7845,6 @@ impl App {
     self.lsp_spinner_last_tick = now;
     self.lsp_spinner_index = (self.lsp_spinner_index + 1) % 8;
     true
-  }
-
-  fn tick_vcs_statusline(&mut self) -> bool {
-    let now = Instant::now();
-    if now.duration_since(self.vcs_statusline_last_tick) < vcs_statusline_refresh_interval() {
-      return false;
-    }
-    self.vcs_statusline_last_tick = now;
-    let cache_changed = self.refresh_vcs_ui_state();
-    let editor_changed = self
-      .active_editor
-      .is_some_and(|id| self.refresh_vcs_diff_base_for_editor(id));
-    cache_changed || editor_changed
   }
 
   fn lsp_statusline_text_value(&self) -> Option<String> {
@@ -13460,6 +13438,9 @@ impl DefaultContext for App {
       clear_reload_state(&mut watch.stream.reload_state);
     }
     self.lsp_send_did_save(Some(text));
+    if self.refresh_vcs_ui_state() {
+      self.request_render();
+    }
   }
 
   fn on_before_quit(&mut self) {

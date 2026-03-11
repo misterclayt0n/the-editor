@@ -182,9 +182,6 @@ fn main() -> Result<()> {
     if ctx.tick_lsp_statusline() {
       ctx.needs_render = true;
     }
-    if ctx.tick_vcs_statusline() {
-      ctx.needs_render = true;
-    }
     ctx.flush_message_log();
 
     // Render if needed

@@ -262,8 +262,17 @@ struct EditorView: View {
         let shouldTerminalOwnFocus = !isOverlayOpen && !isCompletionOpen && !isDocsPopupOpen && !isSignatureOpen
         let bufferOwnsFocus = model.isHostWindowFocused
             && (!model.isActivePaneTerminal || !shouldTerminalOwnFocus)
+        let frameActivePaneId = model.framePlan.active_pane_id()
         let focusedTerminalPaneId = GhosttyRuntime.shared.firstResponderPaneId(in: model.currentHostWindow())
-        let effectiveActivePaneId = focusedTerminalPaneId ?? model.framePlan.active_pane_id()
+        let effectiveActivePaneId = {
+            guard shouldTerminalOwnFocus,
+                  model.isActivePaneTerminal,
+                  let focusedTerminalPaneId,
+                  focusedTerminalPaneId == frameActivePaneId else {
+                return frameActivePaneId
+            }
+            return focusedTerminalPaneId
+        }()
         let cursorPickState = cursorPickState(from: model.uiTree.statuslineSnapshot())
         let cursorBlinkDescriptor = cursorBlinkDescriptor(
             plan: model.plan,

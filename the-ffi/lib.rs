@@ -110,6 +110,7 @@ use the_default::{
   completion_docs_panel_rect as default_completion_docs_panel_rect,
   completion_panel_rect as default_completion_panel_rect,
   file_picker_kind_from_title,
+  move_selection as file_picker_move_selection,
   file_picker_preview_window,
   file_picker_row_data,
   finalize_keep_selections,
@@ -128,7 +129,9 @@ use the_default::{
   refresh_matcher_state as file_picker_refresh_matcher_state,
   replace_file_picker_items,
   select_file_picker_index,
+  set_file_picker_list_offset,
   set_file_picker_query_text,
+  set_picker_visible_rows,
   set_file_picker_syntax_loader,
   signature_help_panel_rect as default_signature_help_panel_rect,
   submit_file_picker,
@@ -5043,33 +5046,37 @@ fn build_file_tree_snapshot_data(
 }
 
 pub struct FilePickerSnapshotData {
-  active:        bool,
-  title:         String,
-  picker_kind:   u8, // 0=generic, 1=diagnostics, 2=symbols, 3=live_grep
-  query:         String,
-  matched_count: usize,
-  total_count:   usize,
-  scanning:      bool,
-  root:          String,
+  active:         bool,
+  title:          String,
+  picker_kind:    u8, // 0=generic, 1=diagnostics, 2=symbols, 3=live_grep
+  query:          String,
+  matched_count:  usize,
+  total_count:    usize,
+  scanning:       bool,
+  root:           String,
   selected_index: i64,
-  window_start:  usize,
-  items:         Vec<FilePickerItemFFI>,
+  list_offset:    usize,
+  list_visible:   usize,
+  window_start:   usize,
+  items:          Vec<FilePickerItemFFI>,
 }
 
 impl Default for FilePickerSnapshotData {
   fn default() -> Self {
     Self {
-      active:        false,
-      title:         String::new(),
-      picker_kind:   0,
-      query:         String::new(),
-      matched_count: 0,
-      total_count:   0,
-      scanning:      false,
-      root:          String::new(),
+      active:         false,
+      title:          String::new(),
+      picker_kind:    0,
+      query:          String::new(),
+      matched_count:  0,
+      total_count:    0,
+      scanning:       false,
+      root:           String::new(),
       selected_index: -1,
-      window_start:  0,
-      items:         Vec::new(),
+      list_offset:    0,
+      list_visible:   0,
+      window_start:   0,
+      items:          Vec::new(),
     }
   }
 }
@@ -5102,6 +5109,14 @@ impl FilePickerSnapshotData {
 
   fn selected_index(&self) -> i64 {
     self.selected_index
+  }
+
+  fn list_offset(&self) -> usize {
+    self.list_offset
+  }
+
+  fn list_visible(&self) -> usize {
+    self.list_visible
   }
 
   fn window_start(&self) -> usize {
@@ -5273,6 +5288,8 @@ fn build_file_picker_snapshot_window(
     scanning,
     root: root_display,
     selected_index: picker.selected.map(|index| index as i64).unwrap_or(-1),
+    list_offset: picker.list_offset.min(matched_count.saturating_sub(picker.list_visible.max(1))),
+    list_visible: picker.list_visible.max(1),
     window_start: clamped_start,
     items,
   }
@@ -7488,6 +7505,63 @@ impl App {
     }
     select_file_picker_index(self, index);
     true
+  }
+
+  pub fn file_picker_list_offset(&mut self, id: ffi::EditorId) -> usize {
+    if self.activate(id).is_none() || !self.file_picker().active {
+      return 0;
+    }
+    let picker = self.file_picker();
+    picker
+      .list_offset
+      .min(picker.matched_count().saturating_sub(picker.list_visible.max(1)))
+  }
+
+  pub fn file_picker_list_visible(&mut self, id: ffi::EditorId) -> usize {
+    if self.activate(id).is_none() || !self.file_picker().active {
+      return 0;
+    }
+    self.file_picker().list_visible.max(1)
+  }
+
+  pub fn file_picker_set_list_offset(&mut self, id: ffi::EditorId, offset: usize) -> bool {
+    if self.activate(id).is_none() {
+      return false;
+    }
+    if !self.file_picker().active {
+      return false;
+    }
+    let before = self.file_picker_list_offset(id);
+    set_file_picker_list_offset(self, offset);
+    self.file_picker_list_offset(id) != before
+  }
+
+  pub fn file_picker_set_visible_rows(&mut self, id: ffi::EditorId, visible_rows: usize) -> bool {
+    if self.activate(id).is_none() {
+      return false;
+    }
+    if !self.file_picker().active {
+      return false;
+    }
+    let before = self.file_picker_list_visible(id);
+    let picker = self.file_picker_mut();
+    set_picker_visible_rows(picker, visible_rows);
+    self.file_picker_list_visible(id) != before
+  }
+
+  pub fn file_picker_move_selection(&mut self, id: ffi::EditorId, delta: i64) -> bool {
+    if self.activate(id).is_none() {
+      return false;
+    }
+    if !self.file_picker().active {
+      return false;
+    }
+    let before_selected = self.file_picker().selected;
+    let before_offset = self.file_picker_list_offset(id);
+    let delta = delta.clamp(isize::MIN as i64, isize::MAX as i64) as isize;
+    file_picker_move_selection(self, delta);
+    let picker = self.file_picker();
+    picker.selected != before_selected || self.file_picker_list_offset(id) != before_offset
   }
 
   pub fn file_picker_snapshot(
@@ -13905,6 +13979,11 @@ mod ffi {
     fn file_picker_submit(self: &mut App, id: EditorId, index: usize) -> bool;
     fn file_picker_close(self: &mut App, id: EditorId) -> bool;
     fn file_picker_select_index(self: &mut App, id: EditorId, index: usize) -> bool;
+    fn file_picker_list_offset(self: &mut App, id: EditorId) -> usize;
+    fn file_picker_list_visible(self: &mut App, id: EditorId) -> usize;
+    fn file_picker_set_list_offset(self: &mut App, id: EditorId, offset: usize) -> bool;
+    fn file_picker_set_visible_rows(self: &mut App, id: EditorId, visible_rows: usize) -> bool;
+    fn file_picker_move_selection(self: &mut App, id: EditorId, delta: i64) -> bool;
     fn file_tree_set_visible(self: &mut App, id: EditorId, visible: bool) -> bool;
     fn file_tree_toggle(self: &mut App, id: EditorId) -> bool;
     fn file_tree_open_workspace_root(self: &mut App, id: EditorId) -> bool;
@@ -14301,6 +14380,8 @@ mod ffi {
     fn scanning(self: &FilePickerSnapshotData) -> bool;
     fn root(self: &FilePickerSnapshotData) -> String;
     fn selected_index(self: &FilePickerSnapshotData) -> i64;
+    fn list_offset(self: &FilePickerSnapshotData) -> usize;
+    fn list_visible(self: &FilePickerSnapshotData) -> usize;
     fn window_start(self: &FilePickerSnapshotData) -> usize;
     fn item_count(self: &FilePickerSnapshotData) -> usize;
     fn item_at(self: &FilePickerSnapshotData, index: usize) -> FilePickerItemFFI;
@@ -15320,16 +15401,51 @@ mod tests {
     let id = app.create_editor("hello", viewport, scroll);
 
     assert!(app.execute_command_named(id, "file_picker"));
+    assert_eq!(app.file_picker_list_offset(id), 0);
+    assert_eq!(app.file_picker_list_visible(id), 32);
+
     let full = app.file_picker_snapshot(id, 8);
     assert!(full.active());
     assert_eq!(full.window_start(), 0);
     assert_eq!(full.selected_index(), 0);
+    assert_eq!(full.list_offset(), 0);
+    assert_eq!(full.list_visible(), 32);
+
+    assert!(app.file_picker_set_visible_rows(id, 7));
+    assert_eq!(app.file_picker_list_visible(id), 7);
+    assert!(app.file_picker_set_list_offset(id, 3));
+    assert_eq!(app.file_picker_list_offset(id), 3);
 
     let windowed = app.file_picker_window_snapshot(id, 3, 5);
     assert!(windowed.active());
     assert_eq!(windowed.window_start(), 3);
     assert_eq!(windowed.selected_index(), 0);
+    assert_eq!(windowed.list_offset(), 3);
+    assert_eq!(windowed.list_visible(), 7);
     assert!(windowed.item_count() <= 5);
+  }
+
+  #[test]
+  fn file_picker_move_selection_updates_core_scroll_state() {
+    let _guard = ffi_test_guard();
+    let mut app = App::new();
+    let viewport = ffi::Rect {
+      x:      0,
+      y:      0,
+      width:  80,
+      height: 24,
+    };
+    let scroll = ffi::Position { row: 0, col: 0 };
+    let id = app.create_editor("hello", viewport, scroll);
+
+    assert!(app.execute_command_named(id, "file_picker"));
+    assert!(app.file_picker_set_visible_rows(id, 4));
+    assert!(app.file_picker_move_selection(id, 5));
+
+    let snapshot = app.file_picker_snapshot(id, 12);
+    assert_eq!(snapshot.selected_index(), 5);
+    assert_eq!(snapshot.list_offset(), 2);
+    assert_eq!(snapshot.list_visible(), 4);
   }
 
   #[test]

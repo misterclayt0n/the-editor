@@ -137,6 +137,7 @@ pub use file_picker::{
   open_file_picker_index,
   open_file_picker_with_root_and_split,
   open_jumplist_picker,
+  move_selection,
   poll_scan_results,
   refresh_file_picker_preview,
   refresh_matcher_state,

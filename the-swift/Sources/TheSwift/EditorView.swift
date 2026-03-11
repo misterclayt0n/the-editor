@@ -671,6 +671,7 @@ struct EditorView: View {
         UiOverlayHost(
             tree: model.uiTree,
             cellSize: model.cellSize,
+            commandPaletteSnapshot: model.commandPaletteSnapshot,
             filePickerSnapshot: model.filePickerSnapshot,
             filePickerPreviewModel: model.filePickerPreviewModel,
             pendingKeys: model.pendingKeys,
@@ -713,11 +714,11 @@ struct EditorView: View {
             onFilePickerSelectionChange: { index in
                 model.filePickerSelectIndex(index)
             },
+            onFilePickerListWindowRequest: { offset, visibleRows, overscan in
+                model.filePickerListWindowRequest(anchorIndex: offset, visibleRows: visibleRows, overscan: overscan)
+            },
             onFilePickerPreviewWindowRequest: { offset, visibleRows, overscan in
                 model.filePickerPreviewWindowRequest(offset: offset, visibleRows: visibleRows, overscan: overscan)
-            },
-            colorForHighlight: { highlightId in
-                model.colorForHighlight(highlightId)
             },
             onInputPromptQueryChange: { query in
                 model.setSearchQuery(query)

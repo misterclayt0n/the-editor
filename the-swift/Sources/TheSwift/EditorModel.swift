@@ -131,6 +131,7 @@ final class EditorModel: ObservableObject {
     @Published var uiTree: UiTreeSnapshot = .empty
     @Published var docsPopupAnchor: DocsPopupAnchorSnapshot? = nil
     @Published var bufferTabsSnapshot: BufferTabsSnapshot? = nil
+    @Published var commandPaletteSnapshot: CommandPaletteSnapshot = .closed
     @Published var navigationTitle: String = "untitled"
     @Published private(set) var notificationBanners: [EditorNotificationBannerSnapshot] = []
     @Published private(set) var isHostWindowFocused: Bool = false
@@ -150,7 +151,6 @@ final class EditorModel: ObservableObject {
     @Published var filePickerSnapshot: FilePickerSnapshot? = nil
     @Published var fileTreeSnapshot: FileTreeSnapshot = .hidden
     let filePickerPreviewModel = FilePickerPreviewModel()
-    private var filePickerTimer: Timer? = nil
     private var backgroundTimer: Timer? = nil
     private var scrollRemainderX: CGFloat = 0
     private var scrollRemainderY: CGFloat = 0
@@ -166,6 +166,10 @@ final class EditorModel: ObservableObject {
     private var lastPickerTitle: String? = nil
     private var lastPickerRoot: String? = nil
     private var lastPickerKind: UInt8 = 0
+    private var lastPickerSelectedIndex: Int? = nil
+    private var filePickerListAnchorIndex: Int = 0
+    private var filePickerListVisibleRows: Int = 24
+    private var filePickerListOverscan: Int = 32
     private var lastFileTreeRefreshGeneration: UInt64 = 0
     private var lastFileTreeVcsGeneration: UInt64 = 0
     private var lastFileTreeVisible: Bool = false
@@ -234,7 +238,6 @@ final class EditorModel: ObservableObject {
     }
 
     deinit {
-        filePickerTimer?.invalidate()
         backgroundTimer?.invalidate()
         notificationDismissTimer?.invalidate()
         unregisterHostWindowNotifications()
@@ -333,6 +336,8 @@ final class EditorModel: ObservableObject {
         pendingKeys = fetchPendingKeys()
         pendingKeyHints = fetchPendingKeyHints()
         let perfAfterInputState = perfEnabled ? perfNow() : 0
+        refreshCommandPalette()
+        let perfAfterPalette = perfEnabled ? perfNow() : 0
         refreshFilePicker()
         let perfAfterPicker = perfEnabled ? perfNow() : 0
         refreshFileTree()
@@ -359,7 +364,7 @@ final class EditorModel: ObservableObject {
 
         DiagnosticsDebugLog.editorPerfLog(
             String(
-                format: "refresh trigger=%@ total=%.2fms poll=%.2fms theme=%.2fms ui=%.2fms tabs=%.2fms viewport=%.2fms frame=%.2fms snapshots=%.2fms input=%.2fms picker=%.2fms tree=%.2fms window=%.2fms runtime_drive=%d runtime_changed=%d ui_changed=%d tabs_changed=%d overlays=%d panes=%d lines=%d eol=%d underlines=%d terminals=%d active_terminal=%d",
+                format: "refresh trigger=%@ total=%.2fms poll=%.2fms theme=%.2fms ui=%.2fms tabs=%.2fms viewport=%.2fms frame=%.2fms snapshots=%.2fms input=%.2fms palette=%.2fms picker=%.2fms tree=%.2fms window=%.2fms runtime_drive=%d runtime_changed=%d ui_changed=%d tabs_changed=%d overlays=%d panes=%d lines=%d eol=%d underlines=%d terminals=%d active_terminal=%d",
                 trigger,
                 totalMs,
                 perfMs(perfStart, perfAfterPoll),
@@ -370,7 +375,8 @@ final class EditorModel: ObservableObject {
                 perfMs(perfAfterViewport, perfAfterFrame),
                 perfMs(perfAfterFrame, perfAfterSnapshots),
                 perfMs(perfAfterSnapshots, perfAfterInputState),
-                perfMs(perfAfterInputState, perfAfterPicker),
+                perfMs(perfAfterInputState, perfAfterPalette),
+                perfMs(perfAfterPalette, perfAfterPicker),
                 perfMs(perfAfterPicker, perfAfterTree),
                 perfMs(perfAfterTree, perfAfterWindow),
                 shouldDriveRuntime ? 1 : 0,
@@ -1351,7 +1357,7 @@ final class EditorModel: ObservableObject {
 
     func selectCommandPalette(index: Int) {
         _ = app.command_palette_select_filtered(editorId, UInt(index))
-        refresh()
+        refreshCommandPalette()
     }
 
     func selectOpenBuffer(bufferIndex: Int) {
@@ -1506,7 +1512,7 @@ final class EditorModel: ObservableObject {
 
     func closeCommandPalette() {
         _ = app.command_palette_close(editorId)
-        refresh()
+        refresh(trigger: "command_palette_close")
     }
 
     func setSearchQuery(_ query: String) {
@@ -1549,16 +1555,91 @@ final class EditorModel: ObservableObject {
         refresh()
     }
 
+    private func emptyToNil(_ value: String) -> String? {
+        value.isEmpty ? nil : value
+    }
+
     func setCommandPaletteQuery(_ query: String) {
         _ = app.command_palette_set_query(editorId, query)
-        refresh(trigger: "command_palette_query")
+        refreshCommandPalette()
+    }
+
+    func refreshCommandPalette() {
+        guard app.command_palette_is_open(editorId) else {
+            if commandPaletteSnapshot.isOpen {
+                commandPaletteSnapshot = .closed
+            }
+            return
+        }
+
+        let query = app.command_palette_query(editorId).toString()
+        let layout = CommandPaletteLayout.from(rawValue: app.command_palette_layout(editorId))
+        let rawSelectedIndex = Int(app.command_palette_filtered_selected_index(editorId))
+        let selectedIndex = rawSelectedIndex >= 0 ? rawSelectedIndex : nil
+        let placeholder = app.command_palette_placeholder(editorId).toString()
+        let isFileMode = app.command_palette_is_file_mode(editorId)
+        let itemCount = Int(app.command_palette_filtered_count(editorId))
+
+        var items: [CommandPaletteItemSnapshot] = []
+        items.reserveCapacity(itemCount)
+        for index in 0..<itemCount {
+            let symbolCount = Int(app.command_palette_filtered_symbol_count(editorId, UInt(index)))
+            var symbols: [String] = []
+            symbols.reserveCapacity(symbolCount)
+            for symbolIndex in 0..<symbolCount {
+                symbols.append(
+                    app.command_palette_filtered_symbol(editorId, UInt(index), UInt(symbolIndex)).toString()
+                )
+            }
+
+            items.append(
+                CommandPaletteItemSnapshot(
+                    id: index,
+                    title: app.command_palette_filtered_title(editorId, UInt(index)).toString(),
+                    subtitle: emptyToNil(
+                        app.command_palette_filtered_subtitle(editorId, UInt(index)).toString()
+                    ),
+                    description: emptyToNil(
+                        app.command_palette_filtered_description(editorId, UInt(index)).toString()
+                    ),
+                    shortcut: emptyToNil(
+                        app.command_palette_filtered_shortcut(editorId, UInt(index)).toString()
+                    ),
+                    badge: emptyToNil(
+                        app.command_palette_filtered_badge(editorId, UInt(index)).toString()
+                    ),
+                    leadingIcon: emptyToNil(
+                        app.command_palette_filtered_leading_icon(editorId, UInt(index)).toString()
+                    ),
+                    leadingColor: ColorMapper.color(
+                        from: app.command_palette_filtered_leading_color(editorId, UInt(index))
+                    ),
+                    symbols: symbols,
+                    emphasis: app.command_palette_filtered_emphasis(editorId, UInt(index))
+                )
+            )
+        }
+
+        let snapshot = CommandPaletteSnapshot(
+            isOpen: true,
+            query: query,
+            selectedIndex: selectedIndex,
+            items: items,
+            layout: layout,
+            placeholder: placeholder,
+            isFileMode: isFileMode
+        )
+        commandPaletteSnapshot = snapshot
     }
 
     // MARK: - File picker
 
     func setFilePickerQuery(_ query: String) {
         _ = app.file_picker_set_query(editorId, query)
-        refreshFilePicker()
+        filePickerListAnchorIndex = 0
+        filePickerPreviewOffsetHint = -1
+        refreshFilePicker(force: true)
+        refreshFilePickerPreview()
     }
 
     func submitFilePicker(index: Int) {
@@ -1568,10 +1649,44 @@ final class EditorModel: ObservableObject {
 
     func filePickerSelectIndex(_ index: Int) {
         _ = app.file_picker_select_index(editorId, UInt(index))
+        if let snapshot = filePickerSnapshot {
+            filePickerSnapshot = FilePickerSnapshot(
+                active: snapshot.active,
+                title: snapshot.title,
+                pickerKind: snapshot.pickerKind,
+                query: snapshot.query,
+                matchedCount: snapshot.matchedCount,
+                totalCount: snapshot.totalCount,
+                scanning: snapshot.scanning,
+                root: snapshot.root,
+                selectedIndex: index,
+                windowStart: snapshot.windowStart,
+                items: snapshot.items
+            )
+        }
         filePickerPreviewOffsetHint = -1
-        // Only refresh the preview — don't re-serialize the full item list
-        // (up to 10k items) on every arrow key press.
         refreshFilePickerPreview()
+    }
+
+    func filePickerListWindowRequest(anchorIndex: Int, visibleRows: Int, overscan: Int) {
+        filePickerListAnchorIndex = max(0, anchorIndex)
+        filePickerListVisibleRows = max(1, visibleRows)
+        filePickerListOverscan = max(1, overscan)
+
+        guard let snapshot = filePickerSnapshot else {
+            refreshFilePicker(force: true)
+            return
+        }
+
+        let requestedStart = max(0, filePickerListAnchorIndex - filePickerListOverscan)
+        let requestedCount = max(1, filePickerListVisibleRows + (filePickerListOverscan * 2))
+        let loadedStart = snapshot.windowStart
+        let loadedEnd = loadedStart + snapshot.items.count
+        let requestedEnd = requestedStart + requestedCount
+        guard requestedStart < loadedStart || requestedEnd > loadedEnd else {
+            return
+        }
+        refreshFilePicker(force: true)
     }
 
     func filePickerPreviewWindowRequest(offset: Int, visibleRows: Int, overscan: Int) {
@@ -1587,13 +1702,18 @@ final class EditorModel: ObservableObject {
     }
 
     func closeFilePicker() {
-        filePickerTimer?.invalidate()
-        filePickerTimer = nil
         _ = app.file_picker_close(editorId)
         lastPickerQuery = nil
         lastPickerMatchedCount = -1
         lastPickerTotalCount = -1
         lastPickerScanning = false
+        lastPickerTitle = nil
+        lastPickerRoot = nil
+        lastPickerKind = 0
+        lastPickerSelectedIndex = nil
+        filePickerListAnchorIndex = 0
+        filePickerListVisibleRows = 24
+        filePickerListOverscan = 32
         filePickerPreviewOffsetHint = -1
         filePickerPreviewVisibleRows = 24
         filePickerPreviewOverscan = 24
@@ -1602,20 +1722,29 @@ final class EditorModel: ObservableObject {
         refresh(trigger: "file_picker_close")
     }
 
-    func refreshFilePicker() {
+    func refreshFilePicker(force: Bool = false) {
         let t0 = CFAbsoluteTimeGetCurrent()
         let perfT0 = DispatchTime.now().uptimeNanoseconds
-        let data = app.file_picker_snapshot(editorId, 10_000)
+        let requestedStart = max(0, filePickerListAnchorIndex - filePickerListOverscan)
+        let requestedCount = max(1, filePickerListVisibleRows + (filePickerListOverscan * 2))
+        let data = app.file_picker_window_snapshot(
+            editorId,
+            UInt(requestedStart),
+            UInt(requestedCount)
+        )
         let perfAfterFfi = DispatchTime.now().uptimeNanoseconds
 
         guard data.active() else {
-            stopFilePickerTimerIfNeeded()
             lastPickerQuery = nil
             lastPickerMatchedCount = -1
+            lastPickerTotalCount = -1
+            lastPickerScanning = false
             lastPickerTitle = nil
             lastPickerRoot = nil
             lastPickerKind = 0
+            lastPickerSelectedIndex = nil
             filePickerSnapshot = nil
+            filePickerPreviewModel.preview = nil
             if DiagnosticsDebugLog.pickerPerfEnabled {
                 let ffiMs = Double(perfAfterFfi - perfT0) / 1_000_000.0
                 DiagnosticsDebugLog.pickerPerfLog(
@@ -1629,10 +1758,20 @@ final class EditorModel: ObservableObject {
         let title = data.title().toString()
         let root = data.root().toString()
         let pickerKind = data.picker_kind()
+        let query = data.query().toString()
+        let matchedCount = Int(data.matched_count())
+        let totalCount = Int(data.total_count())
+        let scanning = data.scanning()
+        let selectedIndex = {
+            let raw = Int(data.selected_index())
+            return raw >= 0 ? raw : nil
+        }()
+        let windowStart = Int(data.window_start())
         let pickerIdentityChanged = title != lastPickerTitle
             || root != lastPickerRoot
             || pickerKind != lastPickerKind
         if pickerIdentityChanged || filePickerSnapshot == nil {
+            filePickerListAnchorIndex = selectedIndex ?? 0
             filePickerPreviewOffsetHint = -1
             if DiagnosticsDebugLog.enabled {
                 DiagnosticsDebugLog.log(
@@ -1644,40 +1783,30 @@ final class EditorModel: ObservableObject {
         lastPickerRoot = root
         lastPickerKind = pickerKind
 
-        let query = data.query().toString()
-        let matchedCount = Int(data.matched_count())
-        let totalCount = Int(data.total_count())
-        let scanning = data.scanning()
-
-        if scanning {
-            startFilePickerTimerIfNeeded(scanning: true)
-        } else {
-            stopFilePickerTimerIfNeeded()
-        }
-
         // Skip full item rebuild if metadata hasn't changed.
-        if query == lastPickerQuery
+        if !force
+            && !pickerIdentityChanged
+            && query == lastPickerQuery
             && matchedCount == lastPickerMatchedCount
             && totalCount == lastPickerTotalCount
-            && scanning == lastPickerScanning {
-            // Only poll the preview while matches are still streaming in.
+            && scanning == lastPickerScanning
+            && selectedIndex == lastPickerSelectedIndex
+            && filePickerSnapshot?.windowStart == windowStart
+            && filePickerSnapshot?.items.count == Int(data.item_count()) {
             let perfDecodeEnd = DispatchTime.now().uptimeNanoseconds
-            let refreshedPreview = scanning
-            if refreshedPreview {
-                refreshFilePickerPreview()
-            }
             if DiagnosticsDebugLog.pickerPerfEnabled {
                 let ffiMs = Double(perfAfterFfi - perfT0) / 1_000_000.0
                 let decodeMs = Double(perfDecodeEnd - perfDecodeStart) / 1_000_000.0
                 let totalMs = Double(DispatchTime.now().uptimeNanoseconds - perfT0) / 1_000_000.0
                 DiagnosticsDebugLog.pickerPerfLog(
                     String(
-                        format: "list_refresh skip kind=%d matched=%d total=%d scanning=%d preview_refreshed=%d ffi=%.2fms decode=%.2fms total=%.2fms",
+                        format: "list_refresh skip kind=%d matched=%d total=%d scanning=%d start=%d count=%d ffi=%.2fms decode=%.2fms total=%.2fms",
                         Int(pickerKind),
                         matchedCount,
                         totalCount,
                         scanning ? 1 : 0,
-                        refreshedPreview ? 1 : 0,
+                        windowStart,
+                        Int(data.item_count()),
                         ffiMs,
                         decodeMs,
                         totalMs
@@ -1693,6 +1822,7 @@ final class EditorModel: ObservableObject {
         lastPickerMatchedCount = matchedCount
         lastPickerTotalCount = totalCount
         lastPickerScanning = scanning
+        lastPickerSelectedIndex = selectedIndex
 
         let itemCount = Int(data.item_count())
         var items = [FilePickerItemSnapshot]()
@@ -1707,7 +1837,7 @@ final class EditorModel: ObservableObject {
             }
             let iconStr = item.icon().toString()
             items.append(FilePickerItemSnapshot(
-                id: i,
+                id: windowStart + i,
                 display: item.display().toString(),
                 isDir: item.is_dir(),
                 icon: iconStr.isEmpty ? nil : iconStr,
@@ -1733,10 +1863,11 @@ final class EditorModel: ObservableObject {
             totalCount: totalCount,
             scanning: scanning,
             root: root,
+            selectedIndex: selectedIndex,
+            windowStart: windowStart,
             items: items
         )
         let perfDecodeEnd = DispatchTime.now().uptimeNanoseconds
-        refreshFilePickerPreview()
 
         if DiagnosticsDebugLog.pickerPerfEnabled {
             let ffiMs = Double(perfAfterFfi - perfT0) / 1_000_000.0
@@ -1744,12 +1875,13 @@ final class EditorModel: ObservableObject {
             let totalMs = Double(DispatchTime.now().uptimeNanoseconds - perfT0) / 1_000_000.0
             DiagnosticsDebugLog.pickerPerfLog(
                 String(
-                    format: "list_refresh full kind=%d items=%d matched=%d total=%d scanning=%d ffi=%.2fms decode=%.2fms total=%.2fms",
+                    format: "list_refresh full kind=%d items=%d matched=%d total=%d scanning=%d start=%d ffi=%.2fms decode=%.2fms total=%.2fms",
                     Int(pickerKind),
                     itemCount,
                     matchedCount,
                     totalCount,
                     scanning ? 1 : 0,
+                    windowStart,
                     ffiMs,
                     decodeMs,
                     totalMs
@@ -1778,7 +1910,10 @@ final class EditorModel: ObservableObject {
         )
         let perfAfterFfi = DispatchTime.now().uptimeNanoseconds
         debugLogFilePickerPreview(preview: preview, requestedOffset: offset)
-        let snapshot = FilePickerPreviewSnapshot(preview: preview)
+        let snapshot = FilePickerPreviewSnapshot(
+            preview: preview,
+            colorForHighlight: colorForHighlight
+        )
         let perfAfterDecode = DispatchTime.now().uptimeNanoseconds
         filePickerPreviewModel.preview = snapshot
         let perfAfterPublish = DispatchTime.now().uptimeNanoseconds
@@ -1895,16 +2030,17 @@ final class EditorModel: ObservableObject {
         lastFileTreeNodeCount = nodeCount
     }
 
-    private func startFilePickerTimerIfNeeded(scanning: Bool) {
-        guard filePickerTimer == nil, scanning else { return }
-        filePickerTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
-            self?.refreshFilePicker()
+    private func refreshTransientPickerStateForBackgroundTick() {
+        if filePickerSnapshot?.active == true {
+            refreshFilePicker(force: true)
+            refreshFilePickerPreview()
+            return
         }
-    }
-
-    private func stopFilePickerTimerIfNeeded() {
-        filePickerTimer?.invalidate()
-        filePickerTimer = nil
+        if commandPaletteSnapshot.isOpen {
+            refreshCommandPalette()
+            return
+        }
+        refresh(trigger: "background")
     }
 
     private func startBackgroundTimerIfNeeded() {
@@ -1913,7 +2049,7 @@ final class EditorModel: ObservableObject {
             guard let self else { return }
             guard self.shouldDriveSharedRuntime() else { return }
             if self.app.poll_background(self.editorId) {
-                self.refresh(trigger: "background")
+                self.refreshTransientPickerStateForBackgroundTick()
             }
         }
     }

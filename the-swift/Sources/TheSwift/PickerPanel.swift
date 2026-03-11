@@ -237,6 +237,7 @@ struct PickerPanel<
     var showBackground: Bool = true
     var virtualList: PickerPanelVirtualListConfig? = nil
     var isRowSelectable: ((Int) -> Bool)? = nil
+    var onVisibleRangeChange: ((ClosedRange<Int>) -> Void)? = nil
 
     // Data
     let itemCount: Int
@@ -607,11 +608,11 @@ struct PickerPanel<
 
     private func recomputeVisibleIndexRangeNative(config: PickerPanelVirtualListConfig) {
         guard itemCount > 0 else {
-            visibleIndexRange = nil
+            updateVisibleIndexRange(nil)
             return
         }
         guard nativeViewportHeight > 0 else {
-            visibleIndexRange = nil
+            updateVisibleIndexRange(nil)
             return
         }
 
@@ -621,7 +622,7 @@ struct PickerPanel<
 
         let first = max(0, min(itemCount - 1, Int(floor(startY / max(1, step)))))
         let last = max(0, min(itemCount - 1, Int(floor(max(0, endY - 1) / max(1, step)))))
-        visibleIndexRange = first...max(first, last)
+        updateVisibleIndexRange(first...max(first, last))
     }
 
     private func virtualRowStep(config: PickerPanelVirtualListConfig) -> CGFloat {
@@ -817,7 +818,7 @@ struct PickerPanel<
 
     private func recomputeVisibleIndexRange() {
         guard viewportFrame != .zero, !rowFrames.isEmpty else {
-            visibleIndexRange = nil
+            updateVisibleIndexRange(nil)
             return
         }
 
@@ -829,10 +830,20 @@ struct PickerPanel<
             .sorted()
 
         guard let first = visibleIndices.first, let last = visibleIndices.last else {
-            visibleIndexRange = nil
+            updateVisibleIndexRange(nil)
             return
         }
-        visibleIndexRange = first...last
+        updateVisibleIndexRange(first...last)
+    }
+
+    private func updateVisibleIndexRange(_ nextRange: ClosedRange<Int>?) {
+        guard visibleIndexRange != nextRange else {
+            return
+        }
+        visibleIndexRange = nextRange
+        if let nextRange {
+            onVisibleRangeChange?(nextRange)
+        }
     }
 }
 

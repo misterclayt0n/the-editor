@@ -1,9 +1,6 @@
 import AppKit
 import SwiftUI
 import class TheEditorFFIBridge.PreviewData
-import class TheEditorFFIBridge.PreviewLine
-import class TheEditorFFIBridge.FilePickerSnapshotData
-import class TheEditorFFIBridge.FilePickerItemFFI
 
 // MARK: - Data model
 
@@ -16,16 +13,12 @@ struct FilePickerSnapshot {
     let totalCount: Int
     let scanning: Bool
     let root: String
+    let selectedIndex: Int?
+    let windowStart: Int
     let items: [FilePickerItemSnapshot]
 }
 
 // MARK: - Preview model (isolated from main EditorModel to avoid re-rendering the file list)
-
-struct FilePickerPreviewSegmentSnapshot {
-    let text: String
-    let highlightId: UInt32
-    let isMatch: Bool
-}
 
 struct FilePickerPreviewLineSnapshot: Identifiable {
     let virtualRow: Int
@@ -33,7 +26,7 @@ struct FilePickerPreviewLineSnapshot: Identifiable {
     let marker: String
     let focused: Bool
     let lineNumber: Int
-    let segments: [FilePickerPreviewSegmentSnapshot]
+    let attributedText: AttributedString
 
     var id: Int { virtualRow }
 }
@@ -47,7 +40,7 @@ struct FilePickerPreviewSnapshot {
     let totalLines: Int
     let lines: [FilePickerPreviewLineSnapshot]
 
-    init(preview: PreviewData) {
+    init(preview: PreviewData, colorForHighlight: ((UInt32) -> SwiftUI.Color?)?) {
         self.kind = preview.kind()
         self.path = preview.path().toString()
         self.truncated = preview.truncated()
@@ -62,17 +55,22 @@ struct FilePickerPreviewSnapshot {
         for index in 0..<lineCount {
             let line = preview.line_at(UInt(index))
             let segmentCount = Int(line.segment_count())
-            var decodedSegments: [FilePickerPreviewSegmentSnapshot] = []
-            decodedSegments.reserveCapacity(segmentCount)
+            var attributedText = AttributedString("")
             for segmentIndex in 0..<segmentCount {
                 let segment = line.segment_at(UInt(segmentIndex))
-                decodedSegments.append(
-                    FilePickerPreviewSegmentSnapshot(
-                        text: segment.text().toString(),
-                        highlightId: segment.highlight_id(),
-                        isMatch: segment.is_match()
-                    )
-                )
+                let text = segment.text().toString()
+                var fragment = AttributedString(text.isEmpty ? " " : text)
+                let highlightId = segment.highlight_id()
+                let isMatch = segment.is_match()
+                let baseColor: SwiftUI.Color
+                if highlightId > 0, let mapped = colorForHighlight?(highlightId) {
+                    baseColor = mapped
+                } else {
+                    baseColor = .primary.opacity(0.75)
+                }
+                fragment.foregroundColor = isMatch ? .accentColor : baseColor
+                fragment.font = FontLoader.bufferFont(size: 11).weight(isMatch ? .bold : .regular)
+                attributedText += fragment
             }
 
             decodedLines.append(
@@ -82,7 +80,7 @@ struct FilePickerPreviewSnapshot {
                     marker: line.marker().toString(),
                     focused: line.focused(),
                     lineNumber: Int(line.line_number()),
-                    segments: decodedSegments
+                    attributedText: attributedText.characters.isEmpty ? AttributedString(" ") : attributedText
                 )
             )
         }
@@ -495,8 +493,8 @@ struct FilePickerView: View {
     let onSubmit: (Int) -> Void
     let onClose: () -> Void
     let onSelectionChange: ((Int) -> Void)?
+    let onListWindowRequest: ((Int, Int, Int) -> Void)?
     let onPreviewWindowRequest: ((Int, Int, Int) -> Void)?
-    let colorForHighlight: ((UInt32) -> SwiftUI.Color?)?
 
     private var items: [FilePickerItemSnapshot] {
         snapshot.items
@@ -527,6 +525,26 @@ struct FilePickerView: View {
     }
 
     private var virtualListConfig: PickerPanelVirtualListConfig? {
+        if isDiagnosticsPicker {
+            return PickerPanelVirtualListConfig(
+                rowHeight: 54,
+                rowSpacing: 4,
+                verticalPadding: 10,
+                horizontalPadding: 10,
+                overscanRows: 24
+            )
+        }
+
+        if snapshot.pickerKind == 2 {
+            return PickerPanelVirtualListConfig(
+                rowHeight: 34,
+                rowSpacing: 4,
+                verticalPadding: 10,
+                horizontalPadding: 10,
+                overscanRows: 24
+            )
+        }
+
         if isLiveGrepPicker {
             return PickerPanelVirtualListConfig(
                 rowHeight: 32,
@@ -577,12 +595,13 @@ struct FilePickerView: View {
                 showBackground: !hasPreview,
                 virtualList: virtualListConfig,
                 isRowSelectable: isLiveGrepPicker ? { index in
-                    guard items.indices.contains(index) else { return false }
-                    return items[index].rowKind != 3
+                    guard let item = rowItem(at: index) else { return false }
+                    return item.rowKind != 3
                 } : nil,
-                itemCount: items.count,
+                onVisibleRangeChange: handleVisibleRangeChange,
+                itemCount: matchedCount,
                 externalQuery: snapshot.query,
-                externalSelectedIndex: nil,
+                externalSelectedIndex: snapshot.selectedIndex,
                 onQueryChange: onQueryChange,
                 onSubmit: { index in
                     if let index {
@@ -600,19 +619,7 @@ struct FilePickerView: View {
                     statusText
                 },
                 itemContent: { index, isSelected, isHovered in
-                    let item = items[index]
-                    let previousItem: FilePickerItemSnapshot? = index > 0 ? items[index - 1] : nil
-                    let nextItem: FilePickerItemSnapshot? = (index + 1) < items.count ? items[index + 1] : nil
-                    switch item.rowKind {
-                    case 1:
-                        return AnyView(diagnosticsRowContent(for: item, isSelected: isSelected))
-                    case 2:
-                        return AnyView(symbolsRowContent(for: item, nextItem: nextItem, isSelected: isSelected))
-                    case 3, 4:
-                        return AnyView(liveGrepRowContent(for: item, previousItem: previousItem, isSelected: isSelected))
-                    default:
-                        return AnyView(fileRowContent(for: item, isSelected: isSelected))
-                    }
+                    rowContent(index: index, isSelected: isSelected, isHovered: isHovered)
                 },
                 emptyContent: {
                     VStack(spacing: 8) {
@@ -636,8 +643,7 @@ struct FilePickerView: View {
                 Divider()
                 FilePreviewPanel(
                     previewModel: previewModel,
-                    onWindowRequest: onPreviewWindowRequest,
-                    colorForHighlight: colorForHighlight
+                    onWindowRequest: onPreviewWindowRequest
                 )
                 .frame(maxWidth: .infinity)
             }
@@ -666,7 +672,7 @@ struct FilePickerView: View {
 
     @ViewBuilder
     private var statusText: some View {
-        if items.isEmpty && !snapshot.query.isEmpty && !isScanning {
+        if matchedCount == 0 && !snapshot.query.isEmpty && !isScanning {
             Text("No matches")
                 .font(FontLoader.uiFont(size: 12))
                 .foregroundStyle(.tertiary)
@@ -694,6 +700,60 @@ struct FilePickerView: View {
                 }
             }
         }
+    }
+
+    private func rowItem(at index: Int) -> FilePickerItemSnapshot? {
+        let localIndex = index - snapshot.windowStart
+        guard items.indices.contains(localIndex) else {
+            return nil
+        }
+        return items[localIndex]
+    }
+
+    private func previousRowItem(for index: Int) -> FilePickerItemSnapshot? {
+        rowItem(at: index - 1)
+    }
+
+    private func nextRowItem(for index: Int) -> FilePickerItemSnapshot? {
+        rowItem(at: index + 1)
+    }
+
+    private func handleVisibleRangeChange(_ range: ClosedRange<Int>) {
+        guard let config = virtualListConfig else { return }
+        let visibleCount = max(1, range.upperBound - range.lowerBound + 1)
+        onListWindowRequest?(range.lowerBound, visibleCount, config.overscanRows)
+    }
+
+    @ViewBuilder
+    private func rowContent(index: Int, isSelected: Bool, isHovered _: Bool) -> some View {
+        if let item = rowItem(at: index) {
+            switch item.rowKind {
+            case 1:
+                diagnosticsRowContent(for: item, isSelected: isSelected)
+            case 2:
+                symbolsRowContent(
+                    for: item,
+                    nextItem: nextRowItem(for: index),
+                    isSelected: isSelected
+                )
+            case 3, 4:
+                liveGrepRowContent(
+                    for: item,
+                    previousItem: previousRowItem(for: index),
+                    isSelected: isSelected
+                )
+            default:
+                fileRowContent(for: item, isSelected: isSelected)
+            }
+        } else {
+            unloadedRowPlaceholder()
+        }
+    }
+
+    private func unloadedRowPlaceholder() -> some View {
+        RoundedRectangle(cornerRadius: 6)
+            .fill(Color.secondary.opacity(0.08))
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: - Row content
@@ -1431,7 +1491,6 @@ fileprivate struct NativePreviewScrollView<Content: View>: NSViewRepresentable {
 struct FilePreviewPanel: View {
     @ObservedObject var previewModel: FilePickerPreviewModel
     let onWindowRequest: ((Int, Int, Int) -> Void)?
-    let colorForHighlight: ((UInt32) -> SwiftUI.Color?)?
 
     private var preview: FilePickerPreviewSnapshot? { previewModel.preview }
     private let rowHeight: CGFloat = 16
@@ -1573,22 +1632,19 @@ struct FilePreviewPanel: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    @ViewBuilder
     private func previewLineView(line: FilePickerPreviewLineSnapshot, showLineNumbers: Bool, totalRows: Int) -> some View {
         let lineKind = Int(line.kind)
         if lineKind == 1 || lineKind == 2 {
-            return AnyView(
-                Text(line.marker)
-                    .font(FontLoader.bufferFont(size: 11))
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .frame(height: rowHeight)
-            )
-        }
-
-        let focused = line.focused
-        let lineNumber = line.lineNumber
-        let lineNumberWidth = max(3, String(max(1, totalRows)).count)
-        return AnyView(
+            Text(line.marker)
+                .font(FontLoader.bufferFont(size: 11))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(height: rowHeight)
+        } else {
+            let focused = line.focused
+            let lineNumber = line.lineNumber
+            let lineNumberWidth = max(3, String(max(1, totalRows)).count)
             HStack(alignment: .top, spacing: 0) {
                 if showLineNumbers {
                     let marker = focused ? "▶" : " "
@@ -1599,8 +1655,7 @@ struct FilePreviewPanel: View {
                         .padding(.trailing, 6)
                 }
 
-                previewSegmentsText(line)
-                    .font(FontLoader.bufferFont(size: 11))
+                Text(line.attributedText)
                     .lineLimit(1)
 
                 Spacer(minLength: 0)
@@ -1608,34 +1663,7 @@ struct FilePreviewPanel: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .frame(height: rowHeight)
             .background(focused ? Color.accentColor.opacity(0.12) : Color.clear)
-        )
-    }
-
-    private func previewSegmentsText(_ line: FilePickerPreviewLineSnapshot) -> Text {
-        let segmentCount = line.segments.count
-        guard segmentCount > 0 else {
-            return Text(" ")
         }
-
-        var output = Text("")
-        for segment in line.segments {
-            let text = segment.text
-            let highlightId = segment.highlightId
-            let isMatch = segment.isMatch
-
-            let baseColor: Color
-            if highlightId > 0, let mapped = colorForHighlight?(highlightId) {
-                baseColor = mapped
-            } else {
-                baseColor = .primary.opacity(0.75)
-            }
-
-            let color = isMatch ? Color.accentColor : baseColor
-            output = output + Text(text)
-                .foregroundColor(color)
-                .font(FontLoader.bufferFont(size: 11).weight(isMatch ? .bold : .regular))
-        }
-        return output
     }
 
     private func requestWindow() {

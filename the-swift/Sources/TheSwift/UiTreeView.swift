@@ -94,6 +94,7 @@ private func diagnosticPopupTone(from role: String?) -> DocsPopupToneSnapshot? {
 struct UiOverlayHost: View {
     let tree: UiTreeSnapshot
     let cellSize: CGSize
+    let commandPaletteSnapshot: CommandPaletteSnapshot
     let filePickerSnapshot: FilePickerSnapshot?
     let filePickerPreviewModel: FilePickerPreviewModel
     let pendingKeys: [String]
@@ -110,8 +111,8 @@ struct UiOverlayHost: View {
     let onFilePickerSubmit: (Int) -> Void
     let onFilePickerClose: () -> Void
     let onFilePickerSelectionChange: ((Int) -> Void)?
+    let onFilePickerListWindowRequest: ((Int, Int, Int) -> Void)?
     let onFilePickerPreviewWindowRequest: ((Int, Int, Int) -> Void)?
-    let colorForHighlight: ((UInt32) -> SwiftUI.Color?)?
     let onInputPromptQueryChange: (String) -> Void
     let onInputPromptClose: () -> Void
     let onInputPromptSubmit: () -> Void
@@ -120,7 +121,6 @@ struct UiOverlayHost: View {
     var body: some View {
         GeometryReader { proxy in
             ZStack {
-                let paletteSnapshot = tree.commandPaletteSnapshot()
                 let searchSnapshot = tree.searchPromptSnapshot()
 
                 ForEach(Array(tree.overlays.enumerated()), id: \.offset) { _, node in
@@ -175,14 +175,14 @@ struct UiOverlayHost: View {
                         onSubmit: onFilePickerSubmit,
                         onClose: onFilePickerClose,
                         onSelectionChange: onFilePickerSelectionChange,
-                        onPreviewWindowRequest: onFilePickerPreviewWindowRequest,
-                        colorForHighlight: colorForHighlight
+                        onListWindowRequest: onFilePickerListWindowRequest,
+                        onPreviewWindowRequest: onFilePickerPreviewWindowRequest
                     )
                 }
 
-                if let paletteSnapshot {
+                if commandPaletteSnapshot.isOpen {
                     CommandPaletteView(
-                        snapshot: paletteSnapshot,
+                        snapshot: commandPaletteSnapshot,
                         onSelect: onSelectCommand,
                         onSubmit: onSubmitCommand,
                         onClose: onCloseCommandPalette,

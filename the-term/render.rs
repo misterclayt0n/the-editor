@@ -49,7 +49,7 @@ use serde_json::{
 };
 use the_default::{
   DefaultContext,
-  FilePickerPreview,
+  FilePickerPreviewLineKind,
   Mode,
   OverlayRect as DefaultOverlayRect,
   PendingInput,
@@ -58,6 +58,7 @@ use the_default::{
   command_palette_filtered_indices,
   completion_docs_panel_rect as default_completion_docs_panel_rect,
   completion_panel_rect as default_completion_panel_rect,
+  file_picker_preview_window,
   file_picker_icon_glyph,
   file_picker_icon_name_for_path,
   frame_render_plan,
@@ -4306,7 +4307,6 @@ fn draw_file_picker_preview_pane(
     .map(|severity| diagnostic_severity_color(theme, severity))
     .or(focus_kind_color)
     .or(focus_search_color);
-  let focus_col = current_item.as_ref().and_then(|item| item.preview_col);
   let mut preview_border_style = border_style;
   if (diagnostics_picker || symbols_picker)
     && let Some(accent) = focus_accent
@@ -4359,37 +4359,17 @@ fn draw_file_picker_preview_pane(
 
   let scroll_offset = layout.preview_scroll_offset;
   let visible_rows = content.height as usize;
-  let total_lines = picker.preview_line_count();
+  let preview_window = file_picker_preview_window(picker, scroll_offset, visible_rows, 0);
+  let total_lines = preview_window.total_virtual_rows;
 
-  match &picker.preview {
-    FilePickerPreview::Empty => {},
-    FilePickerPreview::Source(source) => {
-      draw_file_picker_source_preview(
-        buf,
-        content,
-        source,
-        text_style,
-        theme,
-        scroll_offset,
-        focus_line,
-        focus_accent,
-        focus_col,
-      );
-    },
-    FilePickerPreview::Text(text) | FilePickerPreview::Message(text) => {
-      draw_file_picker_plain_preview(
-        buf,
-        content,
-        text,
-        text_style,
-        scroll_offset,
-        theme,
-        focus_line,
-        focus_accent,
-        focus_col,
-      );
-    },
-  }
+  draw_file_picker_preview_window(
+    buf,
+    content,
+    &preview_window,
+    text_style,
+    theme,
+    focus_accent,
+  );
 
   if let Some(track) = layout.preview_scrollbar
     && let Some(metrics) =
@@ -4408,262 +4388,114 @@ fn draw_file_picker_preview_pane(
   }
 }
 
-fn draw_file_picker_source_preview(
+fn draw_file_picker_preview_window(
   buf: &mut Buffer,
   area: Rect,
-  source: &the_default::FilePickerSourcePreview,
+  window: &the_default::FilePickerPreviewWindow,
   text_style: Style,
   theme: &the_lib::render::theme::Theme,
-  scroll_offset: usize,
-  focus_line: Option<usize>,
   focus_accent: Option<Color>,
-  focus_col: Option<(usize, usize)>,
 ) {
   if area.width == 0 || area.height == 0 {
     return;
   }
+  if window.kind == 0 {
+    return;
+  }
 
-  let has_top_marker = source.truncated_above_lines > 0;
-  let has_bottom_marker = source.truncated_below_lines > 0;
-  let total_virtual_rows = source
-    .lines
-    .len()
-    .saturating_add(has_top_marker as usize)
-    .saturating_add(has_bottom_marker as usize);
-  let max_line_number = source
-    .base_line
-    .saturating_add(source.lines.len())
-    .saturating_add(source.truncated_below_lines)
-    .max(1);
-  let line_number_width = max_line_number.to_string().len();
+  let show_line_numbers = window.kind == 1;
+  let line_number_width = window.total_virtual_rows.max(1).to_string().len();
   let (focus_fill_style, focus_marker_style) =
     file_picker_preview_focus_styles(theme, text_style, focus_accent);
   let gutter_style = text_style.add_modifier(Modifier::DIM);
   let match_style = file_picker_match_highlight_style(theme, text_style, focus_accent);
 
-  for row in 0..area.height as usize {
+  for (row, line) in window.lines.iter().take(area.height as usize).enumerate() {
     let y = area.y + row as u16;
-    let virtual_row = scroll_offset.saturating_add(row);
-    if virtual_row >= total_virtual_rows {
-      continue;
-    }
-
-    if has_top_marker && virtual_row == 0 {
-      let marker = format!("… {} lines above", source.truncated_above_lines);
-      buf.set_stringn(area.x, y, marker, area.width as usize, gutter_style);
-      continue;
-    }
-
-    let local_line_idx = virtual_row.saturating_sub(has_top_marker as usize);
-    if local_line_idx >= source.lines.len() {
-      if has_bottom_marker && local_line_idx == source.lines.len() {
-        let marker = format!("… {} lines below", source.truncated_below_lines);
-        buf.set_stringn(area.x, y, marker, area.width as usize, gutter_style);
-      }
-      continue;
-    }
-
-    let absolute_line_idx = source.base_line.saturating_add(local_line_idx);
-    let focused = focus_line.is_some_and(|focus_line| focus_line == absolute_line_idx);
-    if focused {
-      fill_rect(buf, Rect::new(area.x, y, area.width, 1), focus_fill_style);
-    }
-
-    let line_number = absolute_line_idx + 1;
-    let marker = if focused { "▶" } else { " " };
-    let gutter = format!("{marker}{line_number:>line_number_width$} ");
-    let gutter_width = gutter.chars().count() as u16;
-    let active_gutter_style = if focused {
-      focus_marker_style
-    } else {
-      gutter_style
-    };
-    buf.set_stringn(area.x, y, &gutter, area.width as usize, active_gutter_style);
-
-    if gutter_width >= area.width {
-      continue;
-    }
-
-    let line = &source.lines[local_line_idx];
-    if line.is_empty() {
-      continue;
-    }
-
-    let line_start = source.line_starts[local_line_idx];
-    let base_line_style = if focused {
-      text_style.add_modifier(Modifier::BOLD)
-    } else {
-      text_style
-    };
-    let line_spans =
-      preview_line_spans(line, line_start, &source.highlights, base_line_style, theme);
-
-    Paragraph::new(Line::from(line_spans)).render(
-      Rect::new(
-        area.x + gutter_width,
-        y,
-        area.width.saturating_sub(gutter_width),
-        1,
-      ),
-      buf,
-    );
-
-    if focused && let Some((start, end)) = focus_col {
-      highlight_char_range(
-        buf,
-        area.x.saturating_add(gutter_width),
-        y,
-        area.width.saturating_sub(gutter_width),
-        start,
-        end,
-        match_style,
-      );
-    }
-  }
-}
-
-fn draw_file_picker_plain_preview(
-  buf: &mut Buffer,
-  area: Rect,
-  text: &str,
-  text_style: Style,
-  scroll_offset: usize,
-  theme: &the_lib::render::theme::Theme,
-  focus_line: Option<usize>,
-  focus_accent: Option<Color>,
-  focus_col: Option<(usize, usize)>,
-) {
-  if area.width == 0 || area.height == 0 {
-    return;
-  }
-
-  let (focus_fill_style, focus_marker_style) =
-    file_picker_preview_focus_styles(theme, text_style, focus_accent);
-  let match_style = file_picker_match_highlight_style(theme, text_style, focus_accent);
-  for (row, line) in text
-    .lines()
-    .skip(scroll_offset)
-    .take(area.height as usize)
-    .enumerate()
-  {
-    let line_idx = scroll_offset.saturating_add(row);
-    let focused = focus_line.is_some_and(|focus_line| focus_line == line_idx);
-    if focused {
-      fill_rect(
-        buf,
-        Rect::new(area.x, area.y + row as u16, area.width, 1),
-        focus_fill_style,
-      );
-      if area.width > 0 {
-        buf.set_stringn(area.x, area.y + row as u16, "▶", 1, focus_marker_style);
-      }
-    }
-    let text_x = if focused {
-      area.x.saturating_add(1)
-    } else {
-      area.x
-    };
-    let text_width = if focused {
-      area.width.saturating_sub(1)
-    } else {
-      area.width
-    };
-    buf.set_stringn(
-      text_x,
-      area.y + row as u16,
-      line,
-      text_width as usize,
-      if focused {
-        text_style.add_modifier(Modifier::BOLD)
-      } else {
-        text_style
+    match line.kind {
+      FilePickerPreviewLineKind::TruncatedAbove | FilePickerPreviewLineKind::TruncatedBelow => {
+        buf.set_stringn(area.x, y, line.marker.as_str(), area.width as usize, gutter_style);
       },
-    );
+      FilePickerPreviewLineKind::Content => {
+        if line.focused {
+          fill_rect(buf, Rect::new(area.x, y, area.width, 1), focus_fill_style);
+        }
 
-    if focused && let Some((start, end)) = focus_col {
-      highlight_char_range(
-        buf,
-        text_x,
-        area.y + row as u16,
-        text_width,
-        start,
-        end,
-        match_style,
-      );
+        let mut text_x = area.x;
+        let mut text_width = area.width;
+
+        if show_line_numbers {
+          let line_number = line.line_number.unwrap_or(line.virtual_row.saturating_add(1));
+          let marker = if line.focused { "▶" } else { " " };
+          let gutter = format!("{marker}{line_number:>line_number_width$} ");
+          let gutter_width = gutter.chars().count() as u16;
+          let active_gutter_style = if line.focused {
+            focus_marker_style
+          } else {
+            gutter_style
+          };
+          buf.set_stringn(area.x, y, &gutter, area.width as usize, active_gutter_style);
+          if gutter_width >= area.width {
+            continue;
+          }
+          text_x = area.x.saturating_add(gutter_width);
+          text_width = area.width.saturating_sub(gutter_width);
+        } else if line.focused && area.width > 0 {
+          buf.set_stringn(area.x, y, "▶", 1, focus_marker_style);
+          text_x = area.x.saturating_add(1);
+          text_width = area.width.saturating_sub(1);
+        }
+
+        if text_width == 0 {
+          continue;
+        }
+
+        let spans =
+          preview_window_line_spans(line, text_style, match_style, theme);
+        if spans.is_empty() {
+          continue;
+        }
+
+        Paragraph::new(Line::from(spans))
+          .render(Rect::new(text_x, y, text_width, 1), buf);
+      },
     }
   }
 }
 
-fn preview_line_spans<'a>(
-  line: &'a str,
-  line_start: usize,
-  highlights: &[(Highlight, std::ops::Range<usize>)],
+fn preview_window_line_spans<'a>(
+  line: &'a the_default::FilePickerPreviewWindowLine,
   text_style: Style,
+  match_style: Style,
   theme: &the_lib::render::theme::Theme,
 ) -> Vec<Span<'a>> {
-  if line.is_empty() {
+  if line.segments.is_empty() {
     return Vec::new();
   }
 
-  if highlights.is_empty() {
-    return vec![Span::styled(line, text_style)];
-  }
+  let mut spans = Vec::with_capacity(line.segments.len());
+  let base_text_style = if line.focused {
+    text_style.add_modifier(Modifier::BOLD)
+  } else {
+    text_style
+  };
 
-  let line_end = line_start.saturating_add(line.len());
-  let mut boundaries = vec![line_start, line_end];
-  for (_highlight, range) in highlights {
-    if range.end <= line_start || range.start >= line_end {
-      continue;
-    }
-    boundaries.push(range.start.max(line_start));
-    boundaries.push(range.end.min(line_end));
-  }
-  boundaries.sort_unstable();
-  boundaries.dedup();
-
-  let mut spans = Vec::new();
-  for pair in boundaries.windows(2) {
-    let absolute_start = pair[0];
-    let absolute_end = pair[1];
-    if absolute_end <= absolute_start {
+  for segment in &line.segments {
+    if segment.text.is_empty() {
       continue;
     }
 
-    let local_start = clamp_boundary(line, absolute_start.saturating_sub(line_start), false);
-    let local_end = clamp_boundary(line, absolute_end.saturating_sub(line_start), true);
-    if local_end <= local_start {
-      continue;
+    let mut style = base_text_style;
+    if let Some(highlight_id) = segment.highlight_id {
+      style = style.patch(lib_style_to_ratatui(theme.highlight(Highlight::new(highlight_id))));
     }
-
-    let sample_byte = absolute_start + (absolute_end - absolute_start) / 2;
-    let style = preview_highlight_at(highlights, sample_byte)
-      .map(|highlight| text_style.patch(lib_style_to_ratatui(theme.highlight(highlight))))
-      .unwrap_or(text_style);
-
-    spans.push(Span::styled(&line[local_start..local_end], style));
+    if segment.is_match {
+      style = style.patch(match_style);
+    }
+    spans.push(Span::styled(segment.text.as_str(), style));
   }
 
-  if spans.is_empty() {
-    spans.push(Span::styled(line, text_style));
-  }
   spans
-}
-
-fn clamp_boundary(text: &str, idx: usize, round_up: bool) -> usize {
-  let mut idx = idx.min(text.len());
-  if text.is_char_boundary(idx) {
-    return idx;
-  }
-  if round_up {
-    while idx < text.len() && !text.is_char_boundary(idx) {
-      idx += 1;
-    }
-    return idx;
-  }
-  while idx > 0 && !text.is_char_boundary(idx) {
-    idx -= 1;
-  }
-  idx
 }
 
 fn preview_highlight_at(

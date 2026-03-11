@@ -3388,6 +3388,10 @@ public class PreviewDataRef {
     }
 }
 extension PreviewDataRef {
+    public func navigation_mode() -> UInt8 {
+        __swift_bridge__$PreviewData$navigation_mode(ptr)
+    }
+
     public func kind() -> UInt8 {
         __swift_bridge__$PreviewData$kind(ptr)
     }

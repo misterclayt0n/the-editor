@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use the_core::chars::byte_to_char_idx;
 use the_lib::{
+  command_line::split,
   fuzzy::{
     MatchMode,
     fuzzy_match,
@@ -88,6 +89,78 @@ pub struct CommandPaletteState {
   pub prompt_text:   Option<String>,
 }
 
+fn active_command_line(state: &CommandPaletteState) -> Option<&str> {
+  if !matches!(state.source, CommandPaletteSource::CommandLine) {
+    return None;
+  }
+
+  let line = state.prompt_text.as_deref().unwrap_or(state.query.as_str());
+  let line = line.trim().trim_start_matches(':');
+  if line.is_empty() {
+    return None;
+  }
+
+  let (command, _, complete_command_name) = split(line);
+  if command.is_empty() || complete_command_name {
+    None
+  } else {
+    Some(command)
+  }
+}
+
+fn humanize_command_name(name: &str) -> String {
+  let mut words = Vec::new();
+  for word in name.split('-').filter(|word| !word.is_empty()) {
+    let mut chars = word.chars();
+    let Some(first) = chars.next() else {
+      continue;
+    };
+
+    let mut title = String::new();
+    title.extend(first.to_uppercase());
+    title.push_str(chars.as_str());
+    words.push(title);
+  }
+
+  if words.is_empty() {
+    "Command".to_string()
+  } else {
+    words.join(" ")
+  }
+}
+
+fn argument_placeholder_for_command<Ctx>(command: &crate::TypableCommand<Ctx>) -> String
+where
+  Ctx: 'static,
+{
+  command
+    .palette_placeholder
+    .map(str::to_string)
+    .unwrap_or_else(|| format!("{}…", humanize_command_name(command.name)))
+}
+
+pub fn command_palette_placeholder_text<Ctx: DefaultContext>(ctx: &Ctx) -> String {
+  let state = ctx.command_palette();
+  match state.source {
+    CommandPaletteSource::ActionPalette => "Search commands…".to_string(),
+    CommandPaletteSource::CommandLine => {
+      if !state.prefiltered {
+        return "Execute a command…".to_string();
+      }
+
+      let Some(command_name) = active_command_line(state) else {
+        return "Execute a command…".to_string();
+      };
+
+      ctx
+        .command_registry_ref()
+        .get(command_name)
+        .map(argument_placeholder_for_command)
+        .unwrap_or_else(|| format!("{}…", humanize_command_name(command_name)))
+    },
+  }
+}
+
 impl From<CommandPaletteLayout> for LayoutIntent {
   fn from(layout: CommandPaletteLayout) -> Self {
     match layout {
@@ -100,6 +173,7 @@ impl From<CommandPaletteLayout> for LayoutIntent {
 }
 
 pub fn build_command_palette_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNode> {
+  let placeholder = command_palette_placeholder_text(ctx);
   let state = ctx.command_palette();
   if !state.is_open {
     return Vec::new();
@@ -170,12 +244,12 @@ pub fn build_command_palette_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNod
   input.style = input.style.with_role("command_palette");
   input.style.accent = Some(UiColor::Value(placeholder_color));
   input.placeholder = match state.source {
-    CommandPaletteSource::ActionPalette => Some("Search commands…".to_string()),
+    CommandPaletteSource::ActionPalette => Some(placeholder),
     CommandPaletteSource::CommandLine => {
       if state.prefiltered {
-        Some("Open file…".to_string())
+        Some(placeholder)
       } else {
-        Some(":Execute a command…".to_string())
+        Some(format!(":{placeholder}"))
       }
     },
   };

@@ -87,9 +87,7 @@ use crate::{
 const MAX_SCAN_ITEMS: usize = 100_000;
 const MAX_FILE_SIZE_FOR_PREVIEW: u64 = 10 * 1024 * 1024;
 const MAX_PREVIEW_BYTES: usize = MAX_FILE_SIZE_FOR_PREVIEW as usize;
-const MAX_PREVIEW_SOURCE_LINES: usize = 16_384;
 const MAX_PREVIEW_DIRECTORY_ENTRIES: usize = 1024;
-const PREVIEW_FOCUS_WINDOW_LINES: usize = 240;
 const PREVIEW_CACHE_CAPACITY: usize = 128;
 const PAGE_SIZE: usize = 12;
 const MATCHER_TICK_TIMEOUT_MS: u64 = 10;
@@ -233,11 +231,20 @@ pub struct FilePickerPreviewWindowLine {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct FilePickerPreviewWindow {
+  pub navigation_mode:    FilePickerPreviewNavigationMode,
   pub kind:               u8, // 0=empty, 1=source, 2=text, 3=message
   pub total_virtual_rows: usize,
   pub offset:             usize,
   pub window_start:       usize,
   pub lines:              Vec<FilePickerPreviewWindowLine>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FilePickerPreviewNavigationMode {
+  #[default]
+  Static,
+  Scrollable,
+  Anchored,
 }
 
 #[derive(Debug, Clone)]
@@ -314,12 +321,36 @@ pub enum FilePickerPreview {
 
 #[derive(Debug, Clone)]
 pub struct FilePickerSourcePreview {
-  pub lines:                 Arc<[String]>,
-  pub line_starts:           Arc<[usize]>,
-  pub highlights:            Arc<[(Highlight, Range<usize>)]>,
-  pub base_line:             usize,
-  pub truncated_above_lines: usize,
-  pub truncated_below_lines: usize,
+  pub text:               Arc<str>,
+  pub line_starts:        Arc<[usize]>,
+  pub highlights:         Arc<[(Highlight, Range<usize>)]>,
+  pub truncated_by_bytes: bool,
+}
+
+impl FilePickerSourcePreview {
+  pub fn total_lines(&self) -> usize {
+    self.line_starts.len()
+  }
+
+  pub fn line_start(&self, line_index: usize) -> Option<usize> {
+    self.line_starts.get(line_index).copied()
+  }
+
+  pub fn line_text(&self, line_index: usize) -> Option<&str> {
+    let start = self.line_start(line_index)?;
+    let end = self
+      .line_starts
+      .get(line_index + 1)
+      .copied()
+      .unwrap_or(self.text.len());
+    let raw = self.text.get(start..end)?;
+    Some(
+      raw
+        .strip_suffix('\n')
+        .map(|line| line.strip_suffix('\r').unwrap_or(line))
+        .unwrap_or(raw),
+    )
+  }
 }
 
 struct PreviewRequest {
@@ -550,22 +581,35 @@ impl FilePickerState {
     self.preview_pending_id.is_some()
   }
 
+  pub fn preview_navigation_mode(&self) -> FilePickerPreviewNavigationMode {
+    match &self.preview {
+      FilePickerPreview::Empty | FilePickerPreview::Message(_) => {
+        FilePickerPreviewNavigationMode::Static
+      },
+      FilePickerPreview::Source(_) | FilePickerPreview::Text(_) => {
+        if self.preview_focus_line.is_some() {
+          FilePickerPreviewNavigationMode::Anchored
+        } else {
+          FilePickerPreviewNavigationMode::Scrollable
+        }
+      },
+    }
+  }
+
   pub fn preview_line_count(&self) -> usize {
     match &self.preview {
       FilePickerPreview::Empty => 0,
-      FilePickerPreview::Source(source) => {
-        source
-          .lines
-          .len()
-          .saturating_add((source.truncated_above_lines > 0) as usize)
-          .saturating_add((source.truncated_below_lines > 0) as usize)
-      },
+      FilePickerPreview::Source(source) => source.total_lines(),
       FilePickerPreview::Text(text) => text.lines().count().max(1),
       FilePickerPreview::Message(message) => message.lines().count().max(1),
     }
   }
 
   pub fn clamp_preview_scroll(&mut self, visible_rows: usize) {
+    if self.preview_navigation_mode() != FilePickerPreviewNavigationMode::Scrollable {
+      self.preview_scroll = 0;
+      return;
+    }
     let max_offset = self
       .preview_line_count()
       .saturating_sub(visible_rows.max(1));
@@ -1577,6 +1621,13 @@ pub fn set_file_picker_preview_offset<Ctx: DefaultContext>(
   visible_rows: usize,
 ) {
   let picker = ctx.file_picker_mut();
+  if picker.preview_navigation_mode() != FilePickerPreviewNavigationMode::Scrollable {
+    if picker.preview_scroll != 0 {
+      picker.preview_scroll = 0;
+      ctx.request_render();
+    }
+    return;
+  }
   let max_offset = picker
     .preview_line_count()
     .saturating_sub(visible_rows.max(1));
@@ -1594,6 +1645,9 @@ pub fn scroll_file_picker_preview<Ctx: DefaultContext>(
   visible_rows: usize,
 ) {
   let picker = ctx.file_picker();
+  if picker.preview_navigation_mode() != FilePickerPreviewNavigationMode::Scrollable {
+    return;
+  }
   let current = picker.preview_scroll;
   let target = if delta < 0 {
     current.saturating_sub(delta.unsigned_abs())
@@ -2807,7 +2861,11 @@ fn refresh_preview(state: &mut FilePickerState) {
   }
 
   state.preview_path = Some(preview_target.clone());
-  if let Some(preview) = state.preview_cache.get(preview_target) {
+  if let Some(preview) = state
+    .preview_cache
+    .get(preview_target)
+    .filter(preview_is_cacheable)
+  {
     if !preview_contains_focus_line(&preview, preview_focus_line) {
       // Cache entry for this path is not focused near the selected line.
       // Rebuild so preview recenters around the current hit.
@@ -2822,9 +2880,11 @@ fn refresh_preview(state: &mut FilePickerState) {
 
   match preview_for_path_base(preview_target, item.is_dir, preview_focus_line) {
     PreviewBuild::Final(preview) => {
-      state
-        .preview_cache
-        .insert(preview_target.clone(), preview.clone());
+      if preview_is_cacheable(&preview) {
+        state
+          .preview_cache
+          .insert(preview_target.clone(), preview.clone());
+      }
       state.preview = preview;
       set_preview_focus_line(state, preview_focus_line);
       state.preview_pending_id = None;
@@ -2832,9 +2892,6 @@ fn refresh_preview(state: &mut FilePickerState) {
     },
     PreviewBuild::Source(mut source_preview) => {
       let base_preview = FilePickerPreview::Source(source_preview.source.clone());
-      state
-        .preview_cache
-        .insert(preview_target.clone(), base_preview.clone());
       state.preview = base_preview;
       set_preview_focus_line(state, preview_focus_line);
 
@@ -2883,9 +2940,6 @@ fn refresh_preview(state: &mut FilePickerState) {
       }
 
       let preview = FilePickerPreview::Source(source_preview.source);
-      state
-        .preview_cache
-        .insert(preview_target.clone(), preview.clone());
       state.preview = preview;
       set_preview_focus_line(state, preview_focus_line);
       state.preview_pending_id = None;
@@ -2896,6 +2950,10 @@ fn refresh_preview(state: &mut FilePickerState) {
 
 fn set_preview_focus_line(state: &mut FilePickerState, line: Option<usize>) {
   state.preview_focus_line = line;
+  if state.preview_navigation_mode() != FilePickerPreviewNavigationMode::Scrollable {
+    state.preview_scroll = 0;
+    return;
+  }
   let next_scroll = preview_focus_row(&state.preview, line)
     .map(|row| row.saturating_sub(PREVIEW_FOCUS_CONTEXT_LINES))
     .unwrap_or_else(|| {
@@ -2909,15 +2967,7 @@ fn set_preview_focus_line(state: &mut FilePickerState, line: Option<usize>) {
 fn preview_focus_row(preview: &FilePickerPreview, focus_line: Option<usize>) -> Option<usize> {
   let focus_line = focus_line?;
   match preview {
-    FilePickerPreview::Source(source) => {
-      let start = source.base_line;
-      let end = source.base_line.saturating_add(source.lines.len());
-      if !(start..end).contains(&focus_line) {
-        return None;
-      }
-      let top_marker = (source.truncated_above_lines > 0) as usize;
-      Some(top_marker.saturating_add(focus_line.saturating_sub(start)))
-    },
+    FilePickerPreview::Source(source) => (focus_line < source.total_lines()).then_some(focus_line),
     FilePickerPreview::Text(_) | FilePickerPreview::Message(_) => Some(focus_line),
     FilePickerPreview::Empty => None,
   }
@@ -2928,13 +2978,15 @@ fn preview_contains_focus_line(preview: &FilePickerPreview, focus_line: Option<u
     return true;
   };
   match preview {
-    FilePickerPreview::Source(source) => {
-      let start = source.base_line;
-      let end = source.base_line.saturating_add(source.lines.len());
-      (start..end).contains(&focus_line)
-    },
-    _ => true,
+    FilePickerPreview::Source(source) => focus_line < source.total_lines(),
+    FilePickerPreview::Text(text) => focus_line < text.lines().count().max(1),
+    FilePickerPreview::Message(message) => focus_line < message.lines().count().max(1),
+    FilePickerPreview::Empty => false,
   }
+}
+
+fn preview_is_cacheable(preview: &FilePickerPreview) -> bool {
+  !matches!(preview, FilePickerPreview::Source(_))
 }
 
 fn preview_highlight_at(highlights: &[(Highlight, Range<usize>)], byte_idx: usize) -> Option<u32> {
@@ -3117,25 +3169,80 @@ pub fn file_picker_preview_window(
   let overscan = overscan.max(1);
   let focus_line = state.preview_focus_line;
   let focus_col = state.current_item().and_then(|item| item.preview_col);
+  let navigation_mode = state.preview_navigation_mode();
 
   match &state.preview {
     FilePickerPreview::Empty => {
       FilePickerPreviewWindow {
-        kind:               0,
+        navigation_mode,
+        kind: 0,
         total_virtual_rows: 0,
-        offset:             0,
-        window_start:       0,
-        lines:              Vec::new(),
+        offset: 0,
+        window_start: 0,
+        lines: Vec::new(),
       }
     },
     FilePickerPreview::Source(source) => {
-      let has_top_marker = source.truncated_above_lines > 0;
-      let has_bottom_marker = source.truncated_below_lines > 0;
-      let total_virtual_rows = source
-        .lines
-        .len()
-        .saturating_add(has_top_marker as usize)
-        .saturating_add(has_bottom_marker as usize);
+      build_source_preview_window(
+        source,
+        navigation_mode,
+        focus_line,
+        focus_col,
+        offset,
+        visible_rows,
+        overscan,
+      )
+    },
+    FilePickerPreview::Text(text) => {
+      build_plain_preview_window(
+        text,
+        2,
+        navigation_mode,
+        focus_line,
+        focus_col,
+        offset,
+        visible_rows,
+        overscan,
+      )
+    },
+    FilePickerPreview::Message(text) => {
+      build_plain_preview_window(
+        text,
+        3,
+        FilePickerPreviewNavigationMode::Static,
+        focus_line,
+        focus_col,
+        offset,
+        visible_rows,
+        overscan,
+      )
+    },
+  }
+}
+
+fn build_source_preview_window(
+  source: &FilePickerSourcePreview,
+  navigation_mode: FilePickerPreviewNavigationMode,
+  focus_line: Option<usize>,
+  focus_col: Option<(usize, usize)>,
+  offset: usize,
+  visible_rows: usize,
+  overscan: usize,
+) -> FilePickerPreviewWindow {
+  let total_virtual_rows = source.total_lines();
+  if total_virtual_rows == 0 {
+    return FilePickerPreviewWindow {
+      navigation_mode,
+      kind: 1,
+      total_virtual_rows: 0,
+      offset: 0,
+      window_start: 0,
+      lines: Vec::new(),
+    };
+  }
+
+  match navigation_mode {
+    FilePickerPreviewNavigationMode::Scrollable => {
       let max_offset = total_virtual_rows.saturating_sub(visible_rows);
       let offset = offset.min(max_offset);
       let window_start = offset.saturating_sub(overscan);
@@ -3143,48 +3250,21 @@ pub fn file_picker_preview_window(
         .saturating_add(visible_rows)
         .saturating_add(overscan)
         .min(total_virtual_rows);
-
       let mut lines = Vec::with_capacity(window_end.saturating_sub(window_start));
-      for virtual_row in window_start..window_end {
-        if has_top_marker && virtual_row == 0 {
-          lines.push(FilePickerPreviewWindowLine {
-            virtual_row,
-            kind: FilePickerPreviewLineKind::TruncatedAbove,
-            line_number: None,
-            focused: false,
-            marker: format!("… {} lines above", source.truncated_above_lines),
-            segments: Vec::new(),
-          });
+      for line_index in window_start..window_end {
+        let Some(line) = source.line_text(line_index) else {
           continue;
-        }
-
-        let local_idx = virtual_row.saturating_sub(has_top_marker as usize);
-        if local_idx >= source.lines.len() {
-          if has_bottom_marker && local_idx == source.lines.len() {
-            lines.push(FilePickerPreviewWindowLine {
-              virtual_row,
-              kind: FilePickerPreviewLineKind::TruncatedBelow,
-              line_number: None,
-              focused: false,
-              marker: format!("… {} lines below", source.truncated_below_lines),
-              segments: Vec::new(),
-            });
-          }
-          continue;
-        }
-
-        let absolute_line_idx = source.base_line.saturating_add(local_idx);
-        let focused = focus_line.is_some_and(|focus| focus == absolute_line_idx);
-        let line = source.lines[local_idx].as_str();
-        let line_start = source.line_starts.get(local_idx).copied().unwrap_or(0);
+        };
+        let line_start = source.line_start(line_index).unwrap_or(0);
         let mut segments = preview_line_segments(line, line_start, &source.highlights);
+        let focused = focus_line.is_some_and(|focus| focus == line_index);
         if focused {
           segments = apply_match_to_preview_segments(segments, focus_col);
         }
         lines.push(FilePickerPreviewWindowLine {
-          virtual_row,
+          virtual_row: line_index,
           kind: FilePickerPreviewLineKind::Content,
-          line_number: Some(absolute_line_idx.saturating_add(1)),
+          line_number: Some(line_index.saturating_add(1)),
           focused,
           marker: String::new(),
           segments,
@@ -3192,6 +3272,7 @@ pub fn file_picker_preview_window(
       }
 
       FilePickerPreviewWindow {
+        navigation_mode,
         kind: 1,
         total_virtual_rows,
         offset,
@@ -3199,86 +3280,71 @@ pub fn file_picker_preview_window(
         lines,
       }
     },
-    FilePickerPreview::Text(text) => {
-      let mut plain_lines: Vec<&str> = text.lines().collect();
-      if plain_lines.is_empty() {
-        plain_lines.push("");
+    FilePickerPreviewNavigationMode::Anchored | FilePickerPreviewNavigationMode::Static => {
+      let target_line = focus_line
+        .map(|line| line.min(total_virtual_rows.saturating_sub(1)))
+        .unwrap_or(0);
+      let target_content_rows = visible_rows.saturating_sub(2).max(1);
+      let (window_start, window_end) =
+        centered_window(target_line, total_virtual_rows, target_content_rows);
+      let hidden_above = window_start;
+      let hidden_below = total_virtual_rows.saturating_sub(window_end);
+      let has_top_marker = hidden_above > 0;
+      let has_bottom_marker = hidden_below > 0 || source.truncated_by_bytes;
+      let mut lines = Vec::with_capacity(
+        window_end
+          .saturating_sub(window_start)
+          .saturating_add(has_top_marker as usize)
+          .saturating_add(has_bottom_marker as usize),
+      );
+
+      if has_top_marker {
+        lines.push(FilePickerPreviewWindowLine {
+          virtual_row: window_start.saturating_sub(1),
+          kind:        FilePickerPreviewLineKind::TruncatedAbove,
+          line_number: None,
+          focused:     false,
+          marker:      format!("… {} lines above", hidden_above),
+          segments:    Vec::new(),
+        });
       }
-      let total_virtual_rows = plain_lines.len();
-      let max_offset = total_virtual_rows.saturating_sub(visible_rows);
-      let offset = offset.min(max_offset);
-      let window_start = offset.saturating_sub(overscan);
-      let window_end = offset
-        .saturating_add(visible_rows)
-        .saturating_add(overscan)
-        .min(total_virtual_rows);
-      let mut lines = Vec::with_capacity(window_end.saturating_sub(window_start));
-      for virtual_row in window_start..window_end {
-        let focused = focus_line.is_some_and(|focus| focus == virtual_row);
-        let mut segments = vec![FilePickerPreviewSegment {
-          text:         plain_lines[virtual_row].to_string(),
-          highlight_id: None,
-          is_match:     false,
-        }];
+
+      for line_index in window_start..window_end {
+        let Some(line) = source.line_text(line_index) else {
+          continue;
+        };
+        let line_start = source.line_start(line_index).unwrap_or(0);
+        let mut segments = preview_line_segments(line, line_start, &source.highlights);
+        let focused = focus_line.is_some_and(|focus| focus == line_index);
         if focused {
           segments = apply_match_to_preview_segments(segments, focus_col);
         }
         lines.push(FilePickerPreviewWindowLine {
-          virtual_row,
+          virtual_row: line_index,
           kind: FilePickerPreviewLineKind::Content,
-          line_number: None,
+          line_number: Some(line_index.saturating_add(1)),
           focused,
           marker: String::new(),
           segments,
         });
       }
 
-      FilePickerPreviewWindow {
-        kind: 2,
-        total_virtual_rows,
-        offset,
-        window_start,
-        lines,
-      }
-    },
-    FilePickerPreview::Message(text) => {
-      let mut plain_lines: Vec<&str> = text.lines().collect();
-      if plain_lines.is_empty() {
-        plain_lines.push("");
-      }
-      let total_virtual_rows = plain_lines.len();
-      let max_offset = total_virtual_rows.saturating_sub(visible_rows);
-      let offset = offset.min(max_offset);
-      let window_start = offset.saturating_sub(overscan);
-      let window_end = offset
-        .saturating_add(visible_rows)
-        .saturating_add(overscan)
-        .min(total_virtual_rows);
-      let mut lines = Vec::with_capacity(window_end.saturating_sub(window_start));
-      for virtual_row in window_start..window_end {
-        let focused = focus_line.is_some_and(|focus| focus == virtual_row);
-        let mut segments = vec![FilePickerPreviewSegment {
-          text:         plain_lines[virtual_row].to_string(),
-          highlight_id: None,
-          is_match:     false,
-        }];
-        if focused {
-          segments = apply_match_to_preview_segments(segments, focus_col);
-        }
+      if has_bottom_marker {
         lines.push(FilePickerPreviewWindowLine {
-          virtual_row,
-          kind: FilePickerPreviewLineKind::Content,
+          virtual_row: window_end,
+          kind:        FilePickerPreviewLineKind::TruncatedBelow,
           line_number: None,
-          focused,
-          marker: String::new(),
-          segments,
+          focused:     false,
+          marker:      source_bottom_marker(hidden_below, source.truncated_by_bytes),
+          segments:    Vec::new(),
         });
       }
 
       FilePickerPreviewWindow {
-        kind: 3,
+        navigation_mode,
+        kind: 1,
         total_virtual_rows,
-        offset,
+        offset: window_start,
         window_start,
         lines,
       }
@@ -3286,7 +3352,186 @@ pub fn file_picker_preview_window(
   }
 }
 
+fn build_plain_preview_window(
+  text: &str,
+  kind: u8,
+  navigation_mode: FilePickerPreviewNavigationMode,
+  focus_line: Option<usize>,
+  focus_col: Option<(usize, usize)>,
+  offset: usize,
+  visible_rows: usize,
+  overscan: usize,
+) -> FilePickerPreviewWindow {
+  let mut plain_lines: Vec<&str> = text.lines().collect();
+  if plain_lines.is_empty() {
+    plain_lines.push("");
+  }
+  let total_virtual_rows = plain_lines.len();
+
+  match navigation_mode {
+    FilePickerPreviewNavigationMode::Scrollable => {
+      let max_offset = total_virtual_rows.saturating_sub(visible_rows);
+      let offset = offset.min(max_offset);
+      let window_start = offset.saturating_sub(overscan);
+      let window_end = offset
+        .saturating_add(visible_rows)
+        .saturating_add(overscan)
+        .min(total_virtual_rows);
+      let mut lines = Vec::with_capacity(window_end.saturating_sub(window_start));
+      for virtual_row in window_start..window_end {
+        let focused = focus_line.is_some_and(|focus| focus == virtual_row);
+        let mut segments = vec![FilePickerPreviewSegment {
+          text:         plain_lines[virtual_row].to_string(),
+          highlight_id: None,
+          is_match:     false,
+        }];
+        if focused {
+          segments = apply_match_to_preview_segments(segments, focus_col);
+        }
+        lines.push(FilePickerPreviewWindowLine {
+          virtual_row,
+          kind: FilePickerPreviewLineKind::Content,
+          line_number: None,
+          focused,
+          marker: String::new(),
+          segments,
+        });
+      }
+
+      FilePickerPreviewWindow {
+        navigation_mode,
+        kind,
+        total_virtual_rows,
+        offset,
+        window_start,
+        lines,
+      }
+    },
+    FilePickerPreviewNavigationMode::Anchored => {
+      let target_line = focus_line
+        .map(|line| line.min(total_virtual_rows.saturating_sub(1)))
+        .unwrap_or(0);
+      let target_content_rows = visible_rows.saturating_sub(2).max(1);
+      let (window_start, window_end) =
+        centered_window(target_line, total_virtual_rows, target_content_rows);
+      let hidden_above = window_start;
+      let hidden_below = total_virtual_rows.saturating_sub(window_end);
+      let has_top_marker = hidden_above > 0;
+      let has_bottom_marker = hidden_below > 0;
+      let mut lines = Vec::with_capacity(
+        window_end
+          .saturating_sub(window_start)
+          .saturating_add(has_top_marker as usize)
+          .saturating_add(has_bottom_marker as usize),
+      );
+
+      if has_top_marker {
+        lines.push(FilePickerPreviewWindowLine {
+          virtual_row: window_start.saturating_sub(1),
+          kind:        FilePickerPreviewLineKind::TruncatedAbove,
+          line_number: None,
+          focused:     false,
+          marker:      format!("… {} lines above", hidden_above),
+          segments:    Vec::new(),
+        });
+      }
+
+      for virtual_row in window_start..window_end {
+        let focused = focus_line.is_some_and(|focus| focus == virtual_row);
+        let mut segments = vec![FilePickerPreviewSegment {
+          text:         plain_lines[virtual_row].to_string(),
+          highlight_id: None,
+          is_match:     false,
+        }];
+        if focused {
+          segments = apply_match_to_preview_segments(segments, focus_col);
+        }
+        lines.push(FilePickerPreviewWindowLine {
+          virtual_row,
+          kind: FilePickerPreviewLineKind::Content,
+          line_number: None,
+          focused,
+          marker: String::new(),
+          segments,
+        });
+      }
+
+      if has_bottom_marker {
+        lines.push(FilePickerPreviewWindowLine {
+          virtual_row: window_end,
+          kind:        FilePickerPreviewLineKind::TruncatedBelow,
+          line_number: None,
+          focused:     false,
+          marker:      format!("… {} lines below", hidden_below),
+          segments:    Vec::new(),
+        });
+      }
+
+      FilePickerPreviewWindow {
+        navigation_mode,
+        kind,
+        total_virtual_rows,
+        offset: window_start,
+        window_start,
+        lines,
+      }
+    },
+    FilePickerPreviewNavigationMode::Static => {
+      let lines = plain_lines
+        .into_iter()
+        .enumerate()
+        .map(|(virtual_row, line)| {
+          FilePickerPreviewWindowLine {
+            virtual_row,
+            kind: FilePickerPreviewLineKind::Content,
+            line_number: None,
+            focused: false,
+            marker: String::new(),
+            segments: vec![FilePickerPreviewSegment {
+              text:         line.to_string(),
+              highlight_id: None,
+              is_match:     false,
+            }],
+          }
+        })
+        .collect();
+
+      FilePickerPreviewWindow {
+        navigation_mode,
+        kind,
+        total_virtual_rows,
+        offset: 0,
+        window_start: 0,
+        lines,
+      }
+    },
+  }
+}
+
+fn centered_window(focus_line: usize, total_rows: usize, target_rows: usize) -> (usize, usize) {
+  let target_rows = target_rows.max(1).min(total_rows.max(1));
+  let mut window_start = focus_line.saturating_sub(target_rows / 2);
+  if window_start.saturating_add(target_rows) > total_rows {
+    window_start = total_rows.saturating_sub(target_rows);
+  }
+  let window_end = window_start.saturating_add(target_rows).min(total_rows);
+  (window_start, window_end)
+}
+
+fn source_bottom_marker(hidden_below: usize, truncated_by_bytes: bool) -> String {
+  if truncated_by_bytes {
+    if hidden_below > 0 {
+      format!("… {} lines below (truncated file)", hidden_below)
+    } else {
+      "… truncated file below".to_string()
+    }
+  } else {
+    format!("… {} lines below", hidden_below)
+  }
+}
+
 fn preview_for_path_base(path: &Path, is_dir: bool, focus_line: Option<usize>) -> PreviewBuild {
+  let _ = focus_line;
   if is_dir {
     return PreviewBuild::Final(directory_preview(path));
   }
@@ -3333,8 +3578,7 @@ fn preview_for_path_base(path: &Path, is_dir: bool, focus_line: Option<usize>) -
   }
 
   let text = String::from_utf8_lossy(&bytes).into_owned();
-  let Some((source, end_byte, preview_text)) =
-    source_preview(path, &metadata, &text, truncated, focus_line)
+  let Some((source, end_byte, preview_text)) = source_preview(path, &metadata, &text, truncated)
   else {
     return PreviewBuild::Final(FilePickerPreview::Message("<Empty file>".to_string()));
   };
@@ -3428,79 +3672,27 @@ fn source_preview(
   metadata: &fs::Metadata,
   text: &str,
   truncated_by_bytes: bool,
-  focus_line: Option<usize>,
 ) -> Option<(FilePickerSourcePreview, usize, String)> {
   if text.is_empty() {
     return None;
   }
 
   let all_line_starts = line_start_index_for_path(path, metadata, text);
-  let total_lines = all_line_starts.len();
-  if total_lines == 0 {
+  if all_line_starts.is_empty() {
     return None;
   }
 
-  let window_size = PREVIEW_FOCUS_WINDOW_LINES
-    .max(1)
-    .min(MAX_PREVIEW_SOURCE_LINES.max(1));
-  let focus_line = focus_line
-    .map(|line| line.min(total_lines.saturating_sub(1)))
-    .unwrap_or(0);
-  let mut window_start = focus_line.saturating_sub(window_size / 2);
-  if window_start.saturating_add(window_size) > total_lines {
-    window_start = total_lines.saturating_sub(window_size);
-  }
-  let window_end = window_start.saturating_add(window_size).min(total_lines);
-
-  let start_byte = all_line_starts[window_start];
-  let end_byte = if window_end < total_lines {
-    all_line_starts[window_end]
-  } else {
-    text.len()
-  };
-  let window_text = &text[start_byte..end_byte];
-
-  let mut lines = Vec::new();
-  let mut line_starts = Vec::new();
-  let mut consumed_bytes = 0usize;
-  for segment in window_text.split_inclusive('\n') {
-    let line = segment
-      .strip_suffix('\n')
-      .map(|line| line.strip_suffix('\r').unwrap_or(line))
-      .unwrap_or(segment);
-    line_starts.push(consumed_bytes);
-    lines.push(line.to_string());
-    consumed_bytes = consumed_bytes.saturating_add(segment.len());
-  }
-  if !window_text.is_empty() && !window_text.ends_with('\n') && lines.is_empty() {
-    line_starts.push(0);
-    lines.push(window_text.to_string());
-    consumed_bytes = window_text.len();
-  }
-  if lines.is_empty() {
-    return None;
-  }
-
-  let mut truncated_above_lines = window_start;
-  let mut truncated_below_lines = total_lines.saturating_sub(window_end);
-  if truncated_by_bytes {
-    truncated_below_lines = truncated_below_lines.saturating_add(1);
-  }
-  if truncated_by_bytes && window_start > 0 {
-    truncated_above_lines = truncated_above_lines.saturating_add(1);
-  }
+  let owned_text = text.to_string();
 
   Some((
     FilePickerSourcePreview {
-      lines: lines.into(),
-      line_starts: line_starts.into(),
+      text: Arc::<str>::from(owned_text.clone()),
+      line_starts: all_line_starts,
       highlights: Vec::<(Highlight, Range<usize>)>::new().into(),
-      base_line: window_start,
-      truncated_above_lines,
-      truncated_below_lines,
+      truncated_by_bytes,
     },
-    consumed_bytes,
-    window_text.to_string(),
+    owned_text.len(),
+    owned_text,
   ))
 }
 
@@ -3536,30 +3728,25 @@ fn collect_source_highlights(
 }
 
 fn source_preview_text(source: &FilePickerSourcePreview) -> String {
-  let total_lines = source
-    .base_line
-    .saturating_add(source.lines.len())
-    .saturating_add(source.truncated_below_lines)
-    .max(1);
+  let total_lines = source.total_lines().max(1);
   let width = total_lines.to_string().len();
   let mut output = String::new();
-  if source.truncated_above_lines > 0 {
-    let _ = std::fmt::Write::write_fmt(
-      &mut output,
-      format_args!("… {} lines above\n", source.truncated_above_lines),
-    );
-  }
-  for (line_idx, line) in source.lines.iter().enumerate() {
-    let absolute_line = source.base_line.saturating_add(line_idx).saturating_add(1);
+  for line_idx in 0..source.total_lines().min(240) {
+    let absolute_line = line_idx.saturating_add(1);
+    let line = source.line_text(line_idx).unwrap_or_default();
     let _ = std::fmt::Write::write_fmt(
       &mut output,
       format_args!("{:>width$} {}\n", absolute_line, line, width = width),
     );
   }
-  if source.truncated_below_lines > 0 {
+  if source.truncated_by_bytes || source.total_lines() > 240 {
+    let remaining = source.total_lines().saturating_sub(240);
     let _ = std::fmt::Write::write_fmt(
       &mut output,
-      format_args!("… {} lines below", source.truncated_below_lines),
+      format_args!(
+        "… {} lines below",
+        remaining.max(source.truncated_by_bytes as usize)
+      ),
     );
   }
   output
@@ -3698,7 +3885,7 @@ mod tests {
   }
 
   #[test]
-  fn refresh_preview_updates_scroll_for_new_focus_line_in_same_file() {
+  fn refresh_preview_anchors_new_focus_line_in_same_file() {
     let mut path = std::env::temp_dir();
     let stamp = SystemTime::now()
       .duration_since(UNIX_EPOCH)
@@ -3780,9 +3967,81 @@ mod tests {
     normalize_selection_and_scroll(&mut state);
     refresh_preview(&mut state);
     assert_eq!(
-      state.preview_scroll,
-      40usize.saturating_sub(PREVIEW_FOCUS_CONTEXT_LINES)
+      state.preview_navigation_mode(),
+      FilePickerPreviewNavigationMode::Anchored
     );
+    assert_eq!(state.preview_scroll, 0);
+
+    let anchored_window = file_picker_preview_window(&state, 69, 10, 4);
+    assert_eq!(
+      anchored_window.navigation_mode,
+      FilePickerPreviewNavigationMode::Anchored
+    );
+    assert_ne!(anchored_window.offset, 69);
+    assert!(
+      anchored_window
+        .lines
+        .iter()
+        .any(|line| line.focused && line.virtual_row == 40)
+    );
+
+    let _ = std::fs::remove_file(path);
+  }
+
+  #[test]
+  fn generic_source_preview_windows_full_document() {
+    let mut path = std::env::temp_dir();
+    let stamp = SystemTime::now()
+      .duration_since(UNIX_EPOCH)
+      .expect("clock should be after epoch")
+      .as_nanos();
+    path.push(format!("the-editor-file-picker-scroll-preview-{stamp}.txt"));
+
+    let mut text = String::new();
+    for idx in 1..=200 {
+      text.push_str(&format!("line {idx}\n"));
+    }
+    std::fs::write(&path, text).expect("should create preview file");
+
+    let mut state = FilePickerState::default();
+    let injector = state.matcher.injector();
+    inject_item(&injector, FilePickerItem {
+      absolute:     path.clone(),
+      display:      "plain".to_string(),
+      icon:         "file_generic".to_string(),
+      is_dir:       false,
+      display_path: false,
+      action:       FilePickerItemAction::OpenFile(path.clone()),
+      preview_path: Some(path.clone()),
+      preview_line: None,
+      preview_col:  None,
+    });
+    drop(injector);
+
+    state
+      .matcher
+      .pattern
+      .reparse(0, "", CaseMatching::Smart, Normalization::Smart, false);
+    let _ = refresh_matcher_state(&mut state);
+    state.selected = Some(0);
+    normalize_selection_and_scroll(&mut state);
+    refresh_preview(&mut state);
+
+    assert_eq!(
+      state.preview_navigation_mode(),
+      FilePickerPreviewNavigationMode::Scrollable
+    );
+    assert_eq!(state.preview_line_count(), 200);
+
+    let window = file_picker_preview_window(&state, 69, 8, 0);
+    assert_eq!(
+      window.navigation_mode,
+      FilePickerPreviewNavigationMode::Scrollable
+    );
+    assert_eq!(window.offset, 69);
+    assert_eq!(window.window_start, 69);
+    assert_eq!(window.lines.first().map(|line| line.virtual_row), Some(69));
+    assert_eq!(window.lines.last().map(|line| line.virtual_row), Some(76));
 
     let _ = std::fs::remove_file(path);
   }

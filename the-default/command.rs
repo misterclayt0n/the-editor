@@ -2149,6 +2149,47 @@ fn submit_command_palette_selected<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool {
     return false;
   };
 
+  if palette.prefiltered {
+    let action = crate::command_palette_completion_action(ctx, item_idx)
+      .unwrap_or(crate::DirectoryCompletionAction::Submit);
+    let _ = crate::apply_command_palette_completion(ctx, item_idx);
+
+    if matches!(action, crate::DirectoryCompletionAction::Expand) {
+      let input = ctx.command_prompt_ref().input.clone();
+      crate::update_command_palette_for_input(ctx, &input);
+      return true;
+    }
+
+    let line = ctx
+      .command_prompt_ref()
+      .input
+      .trim()
+      .trim_start_matches(':')
+      .to_string();
+    let (command, args, _) = the_lib::command_line::split(&line);
+
+    if command.is_empty() {
+      return false;
+    }
+
+    let registry = ctx.command_registry_ref() as *const CommandRegistry<Ctx>;
+    let result = unsafe { (&*registry).execute(ctx, command, args, CommandEvent::Validate) };
+
+    match result {
+      Ok(()) => {
+        close_command_palette(ctx);
+        return true;
+      },
+      Err(err) => {
+        let message = err.to_string();
+        ctx.command_prompt_mut().error = Some(message.clone());
+        ctx.push_error("command_palette", message);
+        close_command_palette(ctx);
+        return true;
+      },
+    }
+  }
+
   if let Some(action) = item.action {
     match action {
       CommandPaletteAction::StaticCommand(command) => {
@@ -6873,17 +6914,19 @@ pub fn command_from_name(name: &str) -> Option<Command> {
 
 #[cfg(test)]
 mod tests {
+  use std::path::Path;
+
+  use ropey::Rope;
+  use the_lib::selection::{
+    Range,
+    Selection,
+  };
+
   use super::{
     Command,
     append_mode_selection,
     command_from_name,
     edit_current_file_path_prompt_input,
-  };
-  use ropey::Rope;
-  use std::path::Path;
-  use the_lib::selection::{
-    Range,
-    Selection,
   };
 
   #[test]

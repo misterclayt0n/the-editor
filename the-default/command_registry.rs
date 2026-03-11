@@ -11,7 +11,11 @@ use std::{
     Path,
     PathBuf,
   },
-  sync::Arc,
+  sync::{
+    Arc,
+    Mutex,
+    OnceLock,
+  },
 };
 
 use the_core::chars::{
@@ -50,6 +54,13 @@ pub enum CommandEvent {
   Preview,
   Validate,
   Cancel,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DirectoryCompletionAction {
+  #[default]
+  Submit,
+  Expand,
 }
 
 #[derive(Debug, Clone)]
@@ -121,12 +132,14 @@ impl<Ctx: 'static> CommandCompleter<Ctx> {
 
 #[derive(Clone)]
 pub struct TypableCommand<Ctx: 'static> {
-  pub name:      &'static str,
-  pub aliases:   &'static [&'static str],
-  pub doc:       &'static str,
-  pub fun:       CommandFn<Ctx>,
-  pub completer: CommandCompleter<Ctx>,
-  pub signature: Signature,
+  pub name:                        &'static str,
+  pub aliases:                     &'static [&'static str],
+  pub doc:                         &'static str,
+  pub fun:                         CommandFn<Ctx>,
+  pub completer:                   CommandCompleter<Ctx>,
+  pub signature:                   Signature,
+  pub palette_placeholder:         Option<&'static str>,
+  pub directory_completion_action: DirectoryCompletionAction,
 }
 
 impl<Ctx: 'static> TypableCommand<Ctx> {
@@ -145,7 +158,22 @@ impl<Ctx: 'static> TypableCommand<Ctx> {
       fun,
       completer,
       signature,
+      palette_placeholder: None,
+      directory_completion_action: DirectoryCompletionAction::Submit,
     }
+  }
+
+  pub const fn with_palette_placeholder(mut self, placeholder: &'static str) -> Self {
+    self.palette_placeholder = Some(placeholder);
+    self
+  }
+
+  pub const fn with_directory_completion_action(
+    mut self,
+    action: DirectoryCompletionAction,
+  ) -> Self {
+    self.directory_completion_action = action;
+    self
   }
 
   pub fn execute(&self, ctx: &mut Ctx, args: Args, event: CommandEvent) -> CommandResult {
@@ -338,7 +366,10 @@ impl<Ctx: DefaultContext + 'static> CommandRegistry<Ctx> {
 
     match args.completion_state() {
       CompletionState::Positional => {
-        let arg_index = args.len();
+        let arg_index = positional_completion_arg_index(
+          args.len(),
+          matches!(&last_token, Some(token) if !token.is_terminated),
+        );
         let completer = cmd.completer.get(arg_index);
 
         let (arg_input, arg_start_offset) = match &last_token {
@@ -642,14 +673,46 @@ impl<Ctx: DefaultContext + 'static> CommandRegistry<Ctx> {
       },
     ));
 
+    self.register(
+      TypableCommand::new(
+        "open",
+        &["o", "e", "edit"],
+        "Open a file",
+        cmd_open::<Ctx>,
+        CommandCompleter::all(completers::filename),
+        Signature {
+          positionals: (1, Some(1)),
+          ..Signature::DEFAULT
+        },
+      )
+      .with_directory_completion_action(DirectoryCompletionAction::Expand)
+      .with_palette_placeholder("Open file…"),
+    );
+
+    self.register(
+      TypableCommand::new(
+        "change-current-directory",
+        &["cd"],
+        "Change the current working directory.",
+        cmd_change_current_directory::<Ctx>,
+        CommandCompleter::positional(&[completers::directory], completers::none),
+        Signature {
+          positionals: (0, Some(1)),
+          ..Signature::DEFAULT
+        },
+      )
+      .with_directory_completion_action(DirectoryCompletionAction::Submit)
+      .with_palette_placeholder("Change to directory…"),
+    );
+
     self.register(TypableCommand::new(
-      "open",
-      &["o", "e", "edit"],
-      "Open a file",
-      cmd_open::<Ctx>,
-      CommandCompleter::all(completers::filename),
+      "show-directory",
+      &["pwd"],
+      "Show the current working directory.",
+      cmd_show_current_directory::<Ctx>,
+      CommandCompleter::none(),
       Signature {
-        positionals: (1, Some(1)),
+        positionals: (0, Some(0)),
         ..Signature::DEFAULT
       },
     ));
@@ -665,9 +728,47 @@ where
   }
 }
 
+fn positional_completion_arg_index(args_len: usize, completing_existing_arg: bool) -> usize {
+  if completing_existing_arg {
+    args_len.saturating_sub(1)
+  } else {
+    args_len
+  }
+}
+
+fn active_command_name_in_line(line: &str) -> Option<&str> {
+  let line = line.trim().trim_start_matches(':');
+  if line.is_empty() {
+    return None;
+  }
+
+  let (command, _, complete_command_name) = split(line);
+  if command.is_empty() || complete_command_name {
+    None
+  } else {
+    Some(command)
+  }
+}
+
+fn prefiltered_completion_action_for_command<Ctx>(
+  command: Option<&TypableCommand<Ctx>>,
+  completion: &Completion,
+) -> DirectoryCompletionAction
+where
+  Ctx: 'static,
+{
+  if !completion.text.ends_with('/') {
+    return DirectoryCompletionAction::Submit;
+  }
+
+  command
+    .map(|command| command.directory_completion_action)
+    .unwrap_or(DirectoryCompletionAction::Submit)
+}
+
 const LSP_WORKSPACE_COMMAND_SIGNATURE: Signature = Signature {
   positionals: (0, None),
-  raw_after:   Some(1),
+  raw_after: Some(1),
   ..Signature::DEFAULT
 };
 
@@ -700,6 +801,61 @@ fn resolve_command_path(base: &Path, input: &Path) -> PathBuf {
     expanded.into_owned()
   } else {
     base.join(expanded.as_ref())
+  }
+}
+
+#[derive(Debug, Clone, Default)]
+struct WorkingDirectoryState {
+  previous: Option<PathBuf>,
+  explicit: bool,
+}
+
+fn working_directory_state_slot() -> &'static Mutex<WorkingDirectoryState> {
+  static WORKING_DIRECTORY_STATE: OnceLock<Mutex<WorkingDirectoryState>> = OnceLock::new();
+  WORKING_DIRECTORY_STATE.get_or_init(|| Mutex::new(WorkingDirectoryState::default()))
+}
+
+fn previous_working_directory() -> Option<PathBuf> {
+  working_directory_state_slot()
+    .lock()
+    .unwrap_or_else(|poisoned| poisoned.into_inner())
+    .previous
+    .clone()
+}
+
+fn explicit_working_directory_enabled() -> bool {
+  working_directory_state_slot()
+    .lock()
+    .unwrap_or_else(|poisoned| poisoned.into_inner())
+    .explicit
+}
+
+fn set_explicit_working_directory(previous: Option<PathBuf>) {
+  let mut state = working_directory_state_slot()
+    .lock()
+    .unwrap_or_else(|poisoned| poisoned.into_inner());
+  state.previous = previous;
+  state.explicit = true;
+}
+
+fn current_working_directory() -> Result<PathBuf, CommandError> {
+  the_stdx::env::current_working_dir().map_err(|err| CommandError::new(err.to_string()))
+}
+
+fn effective_working_directory_for_ctx<Ctx: DefaultContext>(ctx: &Ctx) -> PathBuf {
+  if explicit_working_directory_enabled() {
+    current_working_directory().unwrap_or_else(|_| workspace_root_for_ctx(ctx))
+  } else {
+    workspace_root_for_ctx(ctx)
+  }
+}
+
+fn home_directory() -> Result<PathBuf, CommandError> {
+  let home = the_stdx::path::expand_tilde(Cow::Borrowed(Path::new("~"))).into_owned();
+  if home == PathBuf::from("~") {
+    Err(CommandError::new("home directory is not available"))
+  } else {
+    Ok(home)
   }
 }
 
@@ -751,6 +907,70 @@ fn filename_completion_query(base: &Path, input: &str) -> FilenameCompletionQuer
     search_dir: resolve_command_path(base, parent),
     file_prefix,
     display_prefix,
+  }
+}
+
+fn path_completions(base: &Path, input: &str, directories_only: bool) -> Vec<Completion> {
+  let query = filename_completion_query(base, input);
+
+  let Ok(read_dir) = std::fs::read_dir(&query.search_dir) else {
+    return Vec::new();
+  };
+
+  let prefix_lower = query.file_prefix.to_lowercase();
+  let mut completions = Vec::new();
+
+  for entry in read_dir.flatten() {
+    let name = entry.file_name();
+    let Some(name_str) = name.to_str() else {
+      continue;
+    };
+
+    if name_str.starts_with('.') && !query.file_prefix.starts_with('.') {
+      continue;
+    }
+
+    if !prefix_lower.is_empty() && !name_str.to_lowercase().contains(&prefix_lower) {
+      continue;
+    }
+
+    let is_dir = entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
+    if directories_only && !is_dir {
+      continue;
+    }
+
+    let display = if is_dir {
+      format!("{}/", name_str)
+    } else {
+      name_str.to_string()
+    };
+
+    completions.push(Completion {
+      range: 0..,
+      text:  format!("{}{}", query.display_prefix, display),
+      doc:   if is_dir {
+        Some("directory".to_string())
+      } else {
+        None
+      },
+    });
+  }
+
+  completions.sort_by(|a, b| {
+    let a_dir = a.text.ends_with('/');
+    let b_dir = b.text.ends_with('/');
+    b_dir.cmp(&a_dir).then_with(|| a.text.cmp(&b.text))
+  });
+
+  completions
+}
+
+fn resolve_directory_command_path<Ctx: DefaultContext>(ctx: &Ctx, input: &str) -> PathBuf {
+  let expanded = the_stdx::path::expand_tilde(Cow::Borrowed(Path::new(input)));
+  if expanded.is_absolute() {
+    expanded.into_owned()
+  } else {
+    effective_working_directory_for_ctx(ctx).join(expanded.as_ref())
   }
 }
 
@@ -855,6 +1075,60 @@ fn cmd_open<Ctx: DefaultContext>(ctx: &mut Ctx, args: Args, event: CommandEvent)
       )))
     },
   }
+}
+
+fn cmd_change_current_directory<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  args: Args,
+  event: CommandEvent,
+) -> CommandResult {
+  if event != CommandEvent::Validate {
+    return Ok(());
+  }
+
+  let dir = match args.first() {
+    Some("-") => {
+      previous_working_directory()
+        .ok_or_else(|| CommandError::new("no previous working directory"))?
+    },
+    Some(path) => resolve_directory_command_path(ctx, path),
+    None => home_directory()?,
+  };
+
+  let previous_before_change = current_working_directory().ok();
+  let previous = the_stdx::env::set_current_working_dir(&dir).map_err(|err| {
+    CommandError::new(format!(
+      "failed to change directory to '{}': {err}",
+      dir.display()
+    ))
+  })?;
+  set_explicit_working_directory(previous.or(previous_before_change));
+
+  let cwd = current_working_directory()?;
+  ctx.push_info(
+    "cwd",
+    format!("current working directory: {}", cwd.display()),
+  );
+  Ok(())
+}
+
+fn cmd_show_current_directory<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  _args: Args,
+  event: CommandEvent,
+) -> CommandResult {
+  if event != CommandEvent::Validate {
+    return Ok(());
+  }
+
+  let cwd = effective_working_directory_for_ctx(ctx);
+  let message = format!("current working directory: {}", cwd.display());
+  if cwd.exists() {
+    ctx.push_info("cwd", message);
+  } else {
+    ctx.push_error("cwd", format!("{message} (deleted)"));
+  }
+  Ok(())
 }
 
 fn cmd_write<Ctx: DefaultContext>(
@@ -1451,48 +1725,28 @@ pub fn handle_command_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEve
         return true;
       }
 
-      // If a directory is selected in argument-completion mode, expand it
-      // into the input instead of executing the command.
-      let expand_dir = {
-        let palette = ctx.command_palette();
-        if palette.prefiltered {
-          palette
-            .selected
-            .and_then(|sel| palette.items.get(sel))
-            .is_some_and(|item| item.title.ends_with('/'))
-        } else {
-          false
-        }
+      let prefiltered_selection = if ctx.command_palette().prefiltered {
+        let selected = ctx.command_palette().selected.unwrap_or(0);
+        command_palette_completion_action(ctx, selected).map(|action| (selected, action))
+      } else {
+        None
       };
 
-      if expand_dir {
-        let completion = {
-          let prompt = ctx.command_prompt_ref();
-          let sel = ctx.command_palette().selected.unwrap_or(0);
-          prompt.completions.get(sel).cloned()
-        };
-        if let Some(completion) = completion {
-          let prompt = ctx.command_prompt_mut();
-          let start = completion.range.start.min(prompt.input.len());
-          prompt.input.replace_range(start.., &completion.text);
-          prompt.cursor = prompt.input.len();
+      if matches!(
+        prefiltered_selection,
+        Some((_, DirectoryCompletionAction::Expand))
+      ) {
+        if let Some((selected, _)) = prefiltered_selection
+          && apply_command_palette_completion(ctx, selected)
+        {
           should_update = true;
         }
-        // Fall through to should_update below instead of executing.
       } else {
         // When in argument-completion mode, apply the selected completion
         // to the input so the command receives the selected path, not the
         // directory prefix currently shown in the prompt.
-        if ctx.command_palette().prefiltered {
-          if let Some(sel) = ctx.command_palette().selected {
-            let completion = ctx.command_prompt_ref().completions.get(sel).cloned();
-            if let Some(completion) = completion {
-              let prompt = ctx.command_prompt_mut();
-              let start = completion.range.start.min(prompt.input.len());
-              prompt.input.replace_range(start.., &completion.text);
-              prompt.cursor = prompt.input.len();
-            }
-          }
+        if let Some((selected, _)) = prefiltered_selection {
+          let _ = apply_command_palette_completion(ctx, selected);
         }
 
         let mut line = {
@@ -1777,6 +2031,34 @@ fn preview_command_line<Ctx: DefaultContext>(ctx: &Ctx) -> Option<String> {
   Some(prompt.input.trim().trim_start_matches(':').to_string())
 }
 
+pub fn apply_command_palette_completion<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  item_idx: usize,
+) -> bool {
+  let completion = ctx.command_prompt_ref().completions.get(item_idx).cloned();
+  let Some(completion) = completion else {
+    return false;
+  };
+
+  let prompt = ctx.command_prompt_mut();
+  let start = completion.range.start.min(prompt.input.len());
+  prompt.input.replace_range(start.., &completion.text);
+  prompt.cursor = prompt.input.len();
+  true
+}
+
+pub fn command_palette_completion_action<Ctx: DefaultContext>(
+  ctx: &Ctx,
+  item_idx: usize,
+) -> Option<DirectoryCompletionAction> {
+  let completion = ctx.command_prompt_ref().completions.get(item_idx)?;
+  let command_name = active_command_name_in_line(&ctx.command_prompt_ref().input)?;
+  let command = ctx.command_registry_ref().get(command_name);
+  Some(prefiltered_completion_action_for_command(
+    command, completion,
+  ))
+}
+
 pub fn sync_command_palette_preview<Ctx: DefaultContext>(ctx: &mut Ctx) {
   let Some(line) = preview_command_line(ctx) else {
     ctx.clear_ui_theme_preview();
@@ -1950,10 +2232,12 @@ pub mod completers {
     let mut matches = values
       .into_iter()
       .filter(|value| value.starts_with(input))
-      .map(|value| Completion {
-        range: 0..,
-        text:  value,
-        doc:   None,
+      .map(|value| {
+        Completion {
+          range: 0..,
+          text:  value,
+          doc:   None,
+        }
       })
       .collect::<Vec<_>>();
     matches.sort_by(|left, right| left.text.cmp(&right.text));
@@ -2104,54 +2388,12 @@ pub mod completers {
 
   pub fn filename<Ctx: DefaultContext>(ctx: &Ctx, input: &str) -> Vec<Completion> {
     let base = super::workspace_root_for_ctx(ctx);
-    let query = super::filename_completion_query(&base, input);
+    super::path_completions(&base, input, false)
+  }
 
-    let Ok(read_dir) = std::fs::read_dir(&query.search_dir) else {
-      return Vec::new();
-    };
-
-    let prefix_lower = query.file_prefix.to_lowercase();
-    let mut completions = Vec::new();
-
-    for entry in read_dir.flatten() {
-      let name = entry.file_name();
-      let Some(name_str) = name.to_str() else {
-        continue;
-      };
-
-      if name_str.starts_with('.') && !query.file_prefix.starts_with('.') {
-        continue;
-      }
-
-      if !prefix_lower.is_empty() && !name_str.to_lowercase().contains(&prefix_lower) {
-        continue;
-      }
-
-      let is_dir = entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
-      let display = if is_dir {
-        format!("{}/", name_str)
-      } else {
-        name_str.to_string()
-      };
-
-      completions.push(Completion {
-        range: 0..,
-        text:  format!("{}{}", query.display_prefix, display),
-        doc:   if is_dir {
-          Some("directory".to_string())
-        } else {
-          None
-        },
-      });
-    }
-
-    completions.sort_by(|a, b| {
-      let a_dir = a.text.ends_with('/');
-      let b_dir = b.text.ends_with('/');
-      b_dir.cmp(&a_dir).then_with(|| a.text.cmp(&b.text))
-    });
-
-    completions
+  pub fn directory<Ctx: DefaultContext>(ctx: &Ctx, input: &str) -> Vec<Completion> {
+    let base = super::effective_working_directory_for_ctx(ctx);
+    super::path_completions(&base, input, true)
   }
 }
 
@@ -2160,16 +2402,28 @@ mod tests {
   use std::{
     borrow::Cow,
     convert::Infallible,
+    fs,
     path::Path,
   };
 
-  use the_lib::command_line::Args;
+  use tempfile::tempdir;
+  use the_lib::command_line::{
+    Args,
+    Signature,
+  };
 
   use super::{
+    CommandCompleter,
+    Completion,
+    DirectoryCompletionAction,
+    LSP_WORKSPACE_COMMAND_SIGNATURE,
+    TypableCommand,
     filename_completion_query,
+    path_completions,
+    positional_completion_arg_index,
+    prefiltered_completion_action_for_command,
     resolve_command_path,
     summarize_named_items,
-    LSP_WORKSPACE_COMMAND_SIGNATURE,
   };
 
   #[test]
@@ -2215,12 +2469,86 @@ mod tests {
 
   #[test]
   fn summarize_named_items_truncates_long_lists() {
-    let items = vec![
-      "one".to_string(),
-      "two".to_string(),
-      "three".to_string(),
-    ];
+    let items = vec!["one".to_string(), "two".to_string(), "three".to_string()];
 
     assert_eq!(summarize_named_items(&items, 2), "one, two, ...");
+  }
+
+  #[test]
+  fn path_completions_can_filter_to_directories_only() {
+    let temp = tempdir().unwrap();
+    fs::create_dir(temp.path().join("alpha")).unwrap();
+    fs::write(temp.path().join("beta.txt"), "beta").unwrap();
+
+    let directory_completions = path_completions(temp.path(), "", true);
+    let filename_completions = path_completions(temp.path(), "", false);
+
+    assert_eq!(
+      directory_completions
+        .iter()
+        .map(|completion| completion.text.as_str())
+        .collect::<Vec<_>>(),
+      vec!["alpha/"]
+    );
+    assert_eq!(
+      filename_completions
+        .iter()
+        .map(|completion| completion.text.as_str())
+        .collect::<Vec<_>>(),
+      vec!["alpha/", "beta.txt"]
+    );
+  }
+
+  #[test]
+  fn positional_completion_uses_current_argument_index_while_typing() {
+    assert_eq!(positional_completion_arg_index(1, true), 0);
+    assert_eq!(positional_completion_arg_index(1, false), 1);
+    assert_eq!(positional_completion_arg_index(0, true), 0);
+  }
+
+  #[test]
+  fn directory_completion_action_is_command_specific() {
+    let expand_command = TypableCommand::new(
+      "open",
+      &[],
+      "",
+      |_ctx: &mut (), _args, _event| Ok(()),
+      CommandCompleter::none(),
+      Signature::DEFAULT,
+    )
+    .with_directory_completion_action(DirectoryCompletionAction::Expand);
+    let submit_command = TypableCommand::new(
+      "change-current-directory",
+      &[],
+      "",
+      |_ctx: &mut (), _args, _event| Ok(()),
+      CommandCompleter::none(),
+      Signature::DEFAULT,
+    )
+    .with_directory_completion_action(DirectoryCompletionAction::Submit);
+
+    let directory_completion = Completion {
+      range: 0..,
+      text:  "src/".to_string(),
+      doc:   Some("directory".to_string()),
+    };
+    let file_completion = Completion {
+      range: 0..,
+      text:  "src/main.rs".to_string(),
+      doc:   None,
+    };
+
+    assert_eq!(
+      prefiltered_completion_action_for_command(Some(&expand_command), &directory_completion),
+      DirectoryCompletionAction::Expand
+    );
+    assert_eq!(
+      prefiltered_completion_action_for_command(Some(&submit_command), &directory_completion),
+      DirectoryCompletionAction::Submit
+    );
+    assert_eq!(
+      prefiltered_completion_action_for_command(Some(&expand_command), &file_completion),
+      DirectoryCompletionAction::Submit
+    );
   }
 }

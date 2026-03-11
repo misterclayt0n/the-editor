@@ -33,7 +33,22 @@ struct FilePickerPreviewLineSnapshot: Identifiable {
     var id: Int { virtualRow }
 }
 
+enum FilePickerPreviewNavigationMode: UInt8 {
+    case staticContent = 0
+    case scrollable = 1
+    case anchored = 2
+
+    init(ffiValue: UInt8) {
+        self = Self(rawValue: ffiValue) ?? .staticContent
+    }
+
+    var allowsScrolling: Bool {
+        self == .scrollable
+    }
+}
+
 struct FilePickerPreviewSnapshot {
+    let navigationMode: FilePickerPreviewNavigationMode
     let kind: UInt8
     let path: String
     let truncated: Bool
@@ -43,6 +58,7 @@ struct FilePickerPreviewSnapshot {
     let lines: [FilePickerPreviewLineSnapshot]
 
     init(preview: PreviewData, colorForHighlight: ((UInt32) -> SwiftUI.Color?)?) {
+        self.navigationMode = FilePickerPreviewNavigationMode(ffiValue: preview.navigation_mode())
         self.kind = preview.kind()
         self.path = preview.path().toString()
         self.truncated = preview.truncated()
@@ -1498,6 +1514,9 @@ struct FilePreviewPanel: View {
     let onWindowRequest: ((Int, Int, Int) -> Void)?
 
     private var preview: FilePickerPreviewSnapshot? { previewModel.preview }
+    private var previewMode: FilePickerPreviewNavigationMode {
+        preview?.navigationMode ?? .staticContent
+    }
     private let rowHeight: CGFloat = 16
     private let defaultVisibleRows: Int = 24
     private let overscanRows: Int = 24
@@ -1518,15 +1537,11 @@ struct FilePreviewPanel: View {
             previewContent
         }
         .onAppear {
-            pendingFocusReset = true
+            resetPreviewWindowState()
             requestWindow()
         }
-        .onChange(of: preview?.path ?? "") { _ in
-            pendingFocusReset = true
-            requestWindow()
-        }
-        .onChange(of: preview?.kind ?? 0) { _ in
-            pendingFocusReset = true
+        .onChange(of: previewIdentity) { _ in
+            resetPreviewWindowState()
             requestWindow()
         }
     }
@@ -1578,9 +1593,9 @@ struct FilePreviewPanel: View {
         let kind = preview?.kind ?? 0
         switch kind {
         case 1:
-            windowedPreview(showLineNumbers: true)
+            previewBody(showLineNumbers: true)
         case 2, 3:
-            windowedPreview(showLineNumbers: false)
+            previewBody(showLineNumbers: false)
         default: emptyPreview
         }
     }
@@ -1597,7 +1612,16 @@ struct FilePreviewPanel: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private func windowedPreview(showLineNumbers: Bool) -> some View {
+    @ViewBuilder
+    private func previewBody(showLineNumbers: Bool) -> some View {
+        if previewMode.allowsScrolling {
+            scrollablePreview(showLineNumbers: showLineNumbers)
+        } else {
+            fixedPreview(showLineNumbers: showLineNumbers)
+        }
+    }
+
+    private func scrollablePreview(showLineNumbers: Bool) -> some View {
         let previewLines = preview?.lines ?? []
         let lineCount = previewLines.count
         let totalRows = preview?.totalLines ?? 0
@@ -1637,6 +1661,37 @@ struct FilePreviewPanel: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    private func fixedPreview(showLineNumbers: Bool) -> some View {
+        GeometryReader { geometry in
+            let previewLines = preview?.lines ?? []
+            let totalRows = preview?.totalLines ?? 0
+            let windowStart = preview?.windowStart ?? 0
+            let _ = PickerPreviewPerfTrace.noteBodyBuild(
+                lineCount: previewLines.count,
+                totalRows: totalRows,
+                windowStart: windowStart
+            )
+
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(previewLines) { line in
+                    previewLineView(line: line, showLineNumbers: showLineNumbers, totalRows: totalRows)
+                }
+            }
+            .padding(.vertical, verticalPadding)
+            .padding(.horizontal, horizontalPadding)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .clipped()
+            .onAppear {
+                updateFixedViewport(height: geometry.size.height)
+            }
+            .onChange(of: geometry.size.height) { newHeight in
+                updateFixedViewport(height: newHeight)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .clipped()
+    }
+
     @ViewBuilder
     private func previewLineView(line: FilePickerPreviewLineSnapshot, showLineNumbers: Bool, totalRows: Int) -> some View {
         let lineKind = Int(line.kind)
@@ -1672,22 +1727,29 @@ struct FilePreviewPanel: View {
     }
 
     private func requestWindow() {
-        guard let onWindowRequest else { return }
+        guard let onWindowRequest, let preview else { return }
+        guard preview.navigationMode != .staticContent else { return }
         PickerPreviewPerfTrace.noteWindowCall()
         let visibleRows = computedVisibleRows()
-        let rawOffset = max(0, Int(floor(max(0, scrollTop - verticalPadding) / rowHeight)))
-        let nextOffset = pendingFocusReset ? -1 : rawOffset
-        let overscan = overscanRows
+        let overscan = preview.navigationMode.allowsScrolling ? overscanRows : 1
 
-        if !pendingFocusReset,
-           previewWindowCovers(offset: rawOffset, visibleRows: visibleRows, overscan: overscan) {
-            PickerPreviewPerfTrace.noteWindowDecision("skip_covered", offset: rawOffset, visibleRows: visibleRows, overscan: overscan)
-            if DiagnosticsDebugLog.enabled {
-                DiagnosticsDebugLog.log(
-                    "picker.window_skip offset=\(rawOffset) visible=\(visibleRows) overscan=\(overscan) reason=covered"
-                )
+        let nextOffset: Int
+        if preview.navigationMode.allowsScrolling {
+            let rawOffset = max(0, Int(floor(max(0, scrollTop - verticalPadding) / rowHeight)))
+            nextOffset = pendingFocusReset ? -1 : rawOffset
+
+            if !pendingFocusReset,
+               previewWindowCovers(offset: rawOffset, visibleRows: visibleRows, overscan: overscan) {
+                PickerPreviewPerfTrace.noteWindowDecision("skip_covered", offset: rawOffset, visibleRows: visibleRows, overscan: overscan)
+                if DiagnosticsDebugLog.enabled {
+                    DiagnosticsDebugLog.log(
+                        "picker.window_skip offset=\(rawOffset) visible=\(visibleRows) overscan=\(overscan) reason=covered"
+                    )
+                }
+                return
             }
-            return
+        } else {
+            nextOffset = -1
         }
 
         if nextOffset == lastRequestedOffset
@@ -1733,6 +1795,7 @@ struct FilePreviewPanel: View {
 
     private func previewRequestedScrollTop() -> CGFloat? {
         guard let preview else { return nil }
+        guard preview.navigationMode.allowsScrolling else { return nil }
         let targetOffset = max(0, preview.offset)
         return verticalPadding + (CGFloat(targetOffset) * rowHeight)
     }
@@ -1740,5 +1803,27 @@ struct FilePreviewPanel: View {
     private func previewContentHeight(totalRows: Int) -> CGFloat {
         let rowsHeight = CGFloat(max(0, totalRows)) * rowHeight
         return rowsHeight + (verticalPadding * 2)
+    }
+
+    private var previewIdentity: String {
+        guard let preview else { return "empty" }
+        return "\(preview.navigationMode.rawValue)|\(preview.kind)|\(preview.path)"
+    }
+
+    private func resetPreviewWindowState() {
+        pendingFocusReset = true
+        scrollTop = 0
+        lastRequestedOffset = Int.min
+        lastRequestedVisibleRows = 0
+        lastRequestedOverscan = 0
+    }
+
+    private func updateFixedViewport(height: CGFloat) {
+        let clampedHeight = max(0, height)
+        if abs(viewportHeight - clampedHeight) < 0.5 {
+            return
+        }
+        viewportHeight = clampedHeight
+        requestWindow()
     }
 }

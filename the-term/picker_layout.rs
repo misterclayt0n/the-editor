@@ -10,7 +10,10 @@ use ratatui::{
     Borders,
   },
 };
-use the_default::FilePickerState;
+use the_default::{
+  FilePickerPreviewNavigationMode,
+  FilePickerState,
+};
 
 use crate::docs_panel::DocsPanelSource;
 
@@ -161,22 +164,25 @@ pub fn compute_file_picker_layout(
   let preview_pane = show_preview.then_some(panes[1]);
   let preview_inner = preview_pane.map(|pane| Block::default().borders(Borders::ALL).inner(pane));
   let preview_total_lines = picker.preview_line_count();
+  let preview_navigation_mode = picker.preview_navigation_mode();
   // Title is now in the border, so the full inner area is available for content.
   let preview_visible_rows = preview_inner
     .map(|rect| rect.height.max(1) as usize)
     .unwrap_or(1);
-  let preview_scroll_offset = picker
-    .preview_scroll
-    .min(preview_total_lines.saturating_sub(preview_visible_rows));
+  let preview_scroll_offset =
+    if preview_navigation_mode == FilePickerPreviewNavigationMode::Scrollable {
+      picker
+        .preview_scroll
+        .min(preview_total_lines.saturating_sub(preview_visible_rows))
+    } else {
+      0
+    };
   let preview_scrollbar = preview_inner.and_then(|inner| {
-    (preview_total_lines > preview_visible_rows && inner.width > 1 && inner.height > 0).then(|| {
-      Rect::new(
-        inner.x + inner.width.saturating_sub(1),
-        inner.y,
-        1,
-        inner.height,
-      )
-    })
+    (preview_navigation_mode == FilePickerPreviewNavigationMode::Scrollable
+      && preview_total_lines > preview_visible_rows
+      && inner.width > 1
+      && inner.height > 0)
+      .then(|| Rect::new(inner.x + inner.width.saturating_sub(1), inner.y, 1, inner.height))
   });
   let preview_content = preview_inner.map(|inner| {
     let w = if preview_scrollbar.is_some() {

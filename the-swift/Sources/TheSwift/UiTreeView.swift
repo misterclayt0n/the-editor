@@ -746,7 +746,7 @@ extension UiTreeSnapshot {
 
         let rawPlaceholder = input?.placeholder ?? ":Execute a command…"
         let placeholder = rawPlaceholder.hasPrefix(":") ? String(rawPlaceholder.dropFirst()) : rawPlaceholder
-        let isFileMode = rawPlaceholder == "Open file…"
+        let isFileMode = rawPlaceholder != ":Execute a command…" && rawPlaceholder != "Search commands…"
 
         return CommandPaletteSnapshot(
             isOpen: true,

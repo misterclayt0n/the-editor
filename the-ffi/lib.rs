@@ -110,7 +110,6 @@ use the_default::{
   completion_docs_panel_rect as default_completion_docs_panel_rect,
   completion_panel_rect as default_completion_panel_rect,
   file_picker_kind_from_title,
-  move_selection as file_picker_move_selection,
   file_picker_preview_window,
   file_picker_row_data,
   finalize_keep_selections,
@@ -124,6 +123,7 @@ use the_default::{
   finalize_shell_pipe,
   finalize_shell_pipe_to,
   finalize_split_selection,
+  move_selection as file_picker_move_selection,
   open_dynamic_picker,
   poll_scan_results as file_picker_poll_scan_results,
   refresh_matcher_state as file_picker_refresh_matcher_state,
@@ -131,8 +131,8 @@ use the_default::{
   select_file_picker_index,
   set_file_picker_list_offset,
   set_file_picker_query_text,
-  set_picker_visible_rows,
   set_file_picker_syntax_loader,
+  set_picker_visible_rows,
   signature_help_panel_rect as default_signature_help_panel_rect,
   submit_file_picker,
   update_action_palette_for_input,
@@ -189,11 +189,11 @@ use the_lib::{
     OverlayNode,
     OverlayRectKind,
     OverlayText,
-    RenderGenerationState,
     RenderDiagnosticGutterStyles,
-    RenderLayerRowHashes,
     RenderDiffGutterStyles,
+    RenderGenerationState,
     RenderGutterDiffKind,
+    RenderLayerRowHashes,
     RenderStyles,
     SelectionMatchHighlightOptions,
     SyntaxHighlightAdapter,
@@ -208,9 +208,9 @@ use the_lib::{
     UiState,
     UiText,
     add_selection_match_highlights,
-    apply_row_insertions,
     apply_diagnostic_gutter_markers,
     apply_diff_gutter_markers,
+    apply_row_insertions,
     base_render_layer_row_hashes,
     build_plan,
     char_at_visual_pos,
@@ -1179,25 +1179,25 @@ impl RenderFramePane {
 
 #[derive(Debug, Clone)]
 pub struct RenderFramePlan {
-  active_pane_id:             u64,
-  panes:                      Vec<RenderFramePane>,
-  frame_generation:           u64,
-  pane_structure_generation:  u64,
-  changed_pane_ids:           Vec<u64>,
-  damage_is_full:             bool,
-  damage_reason:              u8,
+  active_pane_id:            u64,
+  panes:                     Vec<RenderFramePane>,
+  frame_generation:          u64,
+  pane_structure_generation: u64,
+  changed_pane_ids:          Vec<u64>,
+  damage_is_full:            bool,
+  damage_reason:             u8,
 }
 
 impl RenderFramePlan {
   fn empty() -> Self {
     Self {
-      active_pane_id: 0,
-      panes:          Vec::new(),
-      frame_generation: 0,
+      active_pane_id:            0,
+      panes:                     Vec::new(),
+      frame_generation:          0,
       pane_structure_generation: 0,
-      changed_pane_ids: Vec::new(),
-      damage_is_full: false,
-      damage_reason: 0,
+      changed_pane_ids:          Vec::new(),
+      damage_is_full:            false,
+      damage_reason:             0,
     }
   }
 
@@ -2675,19 +2675,12 @@ fn append_inline_diagnostic_row_hashes(
     update_render_row_hash(
       row_hashes,
       line.row as usize,
-      (
-        line.col,
-        line.text.as_str(),
-        severity_to_u8(line.severity),
-      ),
+      (line.col, line.text.as_str(), severity_to_u8(line.severity)),
     );
   }
 }
 
-fn append_eol_diagnostic_row_hashes(
-  row_hashes: &mut [u64],
-  entries: &[EolDiagnosticEntry],
-) {
+fn append_eol_diagnostic_row_hashes(row_hashes: &mut [u64], entries: &[EolDiagnosticEntry]) {
   for entry in entries {
     update_render_row_hash(
       row_hashes,
@@ -4626,34 +4619,40 @@ impl PreviewLine {
 /// Snapshot of the file picker preview, ready for Swift consumption.
 /// Built as a small window around the visible rows.
 pub struct PreviewData {
-  kind:         u8, // 0=empty, 1=source, 2=text, 3=message
-  path:         String,
-  loading:      bool,
-  truncated:    bool,
-  total_lines:  usize,
-  show:         bool,
-  offset:       usize,
-  window_start: usize,
-  lines:        Vec<PreviewLine>,
+  navigation_mode: u8, // 0=static, 1=scrollable, 2=anchored
+  kind:            u8, // 0=empty, 1=source, 2=text, 3=message
+  path:            String,
+  loading:         bool,
+  truncated:       bool,
+  total_lines:     usize,
+  show:            bool,
+  offset:          usize,
+  window_start:    usize,
+  lines:           Vec<PreviewLine>,
 }
 
 impl Default for PreviewData {
   fn default() -> Self {
     Self {
-      kind:         0,
-      path:         String::new(),
-      loading:      false,
-      truncated:    false,
-      total_lines:  0,
-      show:         true,
-      offset:       0,
-      window_start: 0,
-      lines:        Vec::new(),
+      navigation_mode: 0,
+      kind:            0,
+      path:            String::new(),
+      loading:         false,
+      truncated:       false,
+      total_lines:     0,
+      show:            true,
+      offset:          0,
+      window_start:    0,
+      lines:           Vec::new(),
     }
   }
 }
 
 impl PreviewData {
+  fn navigation_mode(&self) -> u8 {
+    self.navigation_mode
+  }
+
   fn kind(&self) -> u8 {
     self.kind
   }
@@ -4716,8 +4715,7 @@ fn build_preview_data(
     file_picker_preview_window(picker, offset, visible_rows, overscan);
   let truncated = matches!(
     &picker.preview,
-    FilePickerPreview::Source(source)
-      if source.truncated_above_lines > 0 || source.truncated_below_lines > 0
+    FilePickerPreview::Source(source) if source.truncated_by_bytes
   );
 
   let lines = window
@@ -4750,6 +4748,11 @@ fn build_preview_data(
     .collect();
 
   PreviewData {
+    navigation_mode: match window.navigation_mode {
+      the_default::FilePickerPreviewNavigationMode::Static => 0,
+      the_default::FilePickerPreviewNavigationMode::Scrollable => 1,
+      the_default::FilePickerPreviewNavigationMode::Anchored => 2,
+    },
     kind: window.kind,
     path: preview_path,
     loading: picker.preview_loading(),
@@ -5288,7 +5291,9 @@ fn build_file_picker_snapshot_window(
     scanning,
     root: root_display,
     selected_index: picker.selected.map(|index| index as i64).unwrap_or(-1),
-    list_offset: picker.list_offset.min(matched_count.saturating_sub(picker.list_visible.max(1))),
+    list_offset: picker
+      .list_offset
+      .min(matched_count.saturating_sub(picker.list_visible.max(1))),
     list_visible: picker.list_visible.max(1),
     window_start: clamped_start,
     items,
@@ -6843,20 +6848,24 @@ impl App {
               .pane_states
               .get(&pane.pane_id)
               .cloned()
-              .unwrap_or_else(|| RenderGenerationState {
-                layout_generation: plan.layout_generation,
-                text_generation: plan.text_generation,
-                decoration_generation: plan.decoration_generation,
-                cursor_generation: plan.cursor_generation,
-                cursor_blink_generation: plan.cursor_blink_generation,
-                scroll_generation: plan.scroll_generation,
-                theme_generation: plan.theme_generation,
-                text_rows: Vec::new(),
-                decoration_rows: Vec::new(),
-                cursor_rows: Vec::new(),
+              .unwrap_or_else(|| {
+                RenderGenerationState {
+                  layout_generation:       plan.layout_generation,
+                  text_generation:         plan.text_generation,
+                  decoration_generation:   plan.decoration_generation,
+                  cursor_generation:       plan.cursor_generation,
+                  cursor_blink_generation: plan.cursor_blink_generation,
+                  scroll_generation:       plan.scroll_generation,
+                  theme_generation:        plan.theme_generation,
+                  text_rows:               Vec::new(),
+                  decoration_rows:         Vec::new(),
+                  cursor_rows:             Vec::new(),
+                }
               })
           } else {
-            let previous = previous_frame_generation_state.pane_states.get(&pane.pane_id);
+            let previous = previous_frame_generation_state
+              .pane_states
+              .get(&pane.pane_id);
             let row_hashes = build_render_layer_row_hashes(&plan, &[], &[], &[]);
             finish_render_generations(
               &mut plan,
@@ -6971,7 +6980,11 @@ impl App {
 
     let palette = &self.active_state_ref().command_palette;
     if matches!(palette.source, CommandPaletteSource::CommandLine) && palette.prefiltered {
-      let input = self.command_prompt_ref().input.trim().trim_start_matches(':');
+      let input = self
+        .command_prompt_ref()
+        .input
+        .trim()
+        .trim_start_matches(':');
       let (_, args, _) = command_line_split(input);
       return args.to_string();
     }
@@ -6995,17 +7008,7 @@ impl App {
     if self.activate(id).is_none() {
       return "Execute a command…".to_string();
     }
-    let palette = &self.active_state_ref().command_palette;
-    match palette.source {
-      CommandPaletteSource::ActionPalette => "Search commands…".to_string(),
-      CommandPaletteSource::CommandLine => {
-        if palette.prefiltered {
-          "Open file…".to_string()
-        } else {
-          "Execute a command…".to_string()
-        }
-      },
-    }
+    the_default::command_palette_placeholder_text(self)
   }
 
   pub fn command_palette_is_file_mode(&mut self, id: ffi::EditorId) -> bool {
@@ -7273,25 +7276,11 @@ impl App {
         },
       }
     } else if is_prefiltered {
-      // Check if the selected item is a directory (ends with '/').
-      let is_dir = self
-        .active_state_ref()
-        .command_palette
-        .items
-        .get(item_idx)
-        .is_some_and(|item| item.title.ends_with('/'));
+      let action = the_default::command_palette_completion_action(self, item_idx)
+        .unwrap_or(the_default::DirectoryCompletionAction::Submit);
+      let _ = the_default::apply_command_palette_completion(self, item_idx);
 
-      // Apply the completion to the prompt input.
-      let completion = self.command_prompt_ref().completions.get(item_idx).cloned();
-      if let Some(completion) = completion {
-        let prompt = self.command_prompt_mut();
-        let start = completion.range.start.min(prompt.input.len());
-        prompt.input.replace_range(start.., &completion.text);
-        prompt.cursor = prompt.input.len();
-      }
-
-      if is_dir {
-        // Directory — expand instead of executing.
+      if matches!(action, the_default::DirectoryCompletionAction::Expand) {
         let input = self.command_prompt_ref().input.clone();
         update_command_palette_for_input(self, &input);
         return true;
@@ -7436,7 +7425,7 @@ impl App {
         .trim()
         .trim_start_matches(':')
         .to_string();
-      let (command, _, _) = command_line_split(&current_input);
+      let (command, ..) = command_line_split(&current_input);
       let next_input = if command.is_empty() {
         query.to_string()
       } else if query.is_empty() {
@@ -7561,9 +7550,11 @@ impl App {
       return 0;
     }
     let picker = self.file_picker();
-    picker
-      .list_offset
-      .min(picker.matched_count().saturating_sub(picker.list_visible.max(1)))
+    picker.list_offset.min(
+      picker
+        .matched_count()
+        .saturating_sub(picker.list_visible.max(1)),
+    )
   }
 
   pub fn file_picker_list_visible(&mut self, id: ffi::EditorId) -> usize {
@@ -14459,6 +14450,7 @@ mod ffi {
   // File picker preview (direct FFI, no JSON)
   extern "Rust" {
     type PreviewData;
+    fn navigation_mode(self: &PreviewData) -> u8;
     fn kind(self: &PreviewData) -> u8;
     fn path(self: &PreviewData) -> String;
     fn loading(self: &PreviewData) -> bool;
@@ -15820,6 +15812,31 @@ mod tests {
   }
 
   #[test]
+  fn command_palette_cd_uses_workspace_root_completions_before_explicit_cwd() {
+    let _guard = ffi_test_guard();
+    let workspace = TempTestWorkspace::new("command-palette-cd", "main.rs", "fn main() {}\n");
+    fs::create_dir_all(workspace.root_path().join("docs")).expect("create docs dir");
+    fs::create_dir_all(workspace.root_path().join("scripts")).expect("create scripts dir");
+    fs::create_dir_all(workspace.root_path().join("src")).expect("create src dir");
+
+    let mut app = App::new();
+    let id = app.create_editor("", default_viewport(), ffi::Position { row: 0, col: 0 });
+    assert!(app.open_file_path(id, workspace.file_path().to_string_lossy().as_ref()));
+    assert!(app.handle_key(id, key_char(':')));
+
+    assert!(app.command_palette_set_query(id, "e "));
+    assert_eq!(command_palette_titles(&mut app, id), vec![
+      "docs/", "scripts/", "src/", "main.rs"
+    ]);
+
+    assert!(app.command_palette_set_query(id, "cd "));
+    assert_eq!(app.command_palette_placeholder(id), "Change to directory…");
+    assert_eq!(command_palette_titles(&mut app, id), vec![
+      "docs/", "scripts/", "src/"
+    ]);
+  }
+
+  #[test]
   fn command_palette_display_query_preserves_prefiltered_theme_mode() {
     let _guard = ffi_test_guard();
     let mut app = App::new();
@@ -16008,6 +16025,9 @@ mod tests {
       ));
       fs::create_dir_all(root.join(".the-editor")).expect("create workspace marker");
       let file = root.join(file_name);
+      if let Some(parent) = file.parent() {
+        fs::create_dir_all(parent).expect("create workspace file parent");
+      }
       fs::write(&file, content).expect("write workspace file");
       Self { root, file }
     }
@@ -16082,6 +16102,13 @@ mod tests {
       codepoint: 0,
       modifiers: 0,
     }
+  }
+
+  fn command_palette_titles(app: &mut App, id: ffi::EditorId) -> Vec<String> {
+    let count = app.command_palette_filtered_count(id);
+    (0..count)
+      .map(|index| app.command_palette_filtered_title(id, index))
+      .collect()
   }
 
   fn install_test_lsp_state(app: &mut App, id: ffi::EditorId, path: &Path) {

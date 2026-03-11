@@ -618,6 +618,7 @@ void* __swift_bridge__$FilePickerItemFFI$quaternary(void* self);
 uintptr_t __swift_bridge__$FilePickerItemFFI$line(void* self);
 uintptr_t __swift_bridge__$FilePickerItemFFI$column(void* self);
 uintptr_t __swift_bridge__$FilePickerItemFFI$depth(void* self);
+uint8_t __swift_bridge__$PreviewData$navigation_mode(void* self);
 uint8_t __swift_bridge__$PreviewData$kind(void* self);
 void* __swift_bridge__$PreviewData$path(void* self);
 bool __swift_bridge__$PreviewData$loading(void* self);
@@ -638,5 +639,4 @@ void* __swift_bridge__$PreviewLine$segment_at(void* self, uintptr_t index);
 void* __swift_bridge__$PreviewLineSegment$text(void* self);
 uint32_t __swift_bridge__$PreviewLineSegment$highlight_id(void* self);
 bool __swift_bridge__$PreviewLineSegment$is_match(void* self);
-
 

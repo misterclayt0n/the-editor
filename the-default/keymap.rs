@@ -1522,11 +1522,12 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
 
 #[cfg(test)]
 mod tests {
-  use super::insert_mode_selection;
   use the_lib::selection::{
     Range,
     Selection,
   };
+
+  use super::insert_mode_selection;
 
   #[test]
   fn insert_mode_keeps_selection_and_moves_cursor_to_start() {

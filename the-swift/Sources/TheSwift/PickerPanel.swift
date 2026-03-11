@@ -666,22 +666,23 @@ struct PickerPanel<
             return
         }
 
-        let step = virtualRowStep(config: config)
-        let startY = max(0, nativeScrollTop - config.verticalPadding)
-        let endY = max(0, nativeScrollTop + nativeViewportHeight - config.verticalPadding)
+        let viewportTop = max(0, nativeScrollTop)
+        let viewportBottom = max(viewportTop, nativeScrollTop + nativeViewportHeight)
+        guard let renderRange = nativeIntersectingIndexRange(
+            top: viewportTop,
+            bottom: viewportBottom,
+            config: config
+        ) else {
+            updateVisibleIndexRange(nil, callbackRange: nil)
+            return
+        }
 
-        let first = max(0, min(itemCount - 1, Int(floor(startY / max(1, step)))))
-        let last = max(0, min(itemCount - 1, Int(floor(max(0, endY - 1) / max(1, step)))))
-        let renderRange = first...max(first, last)
-
-        let fullyVisibleEndY = max(0, nativeScrollTop + nativeViewportHeight - config.verticalPadding - config.rowHeight)
-        let lastFullyVisible = max(
-            first - 1,
-            min(itemCount - 1, Int(floor(fullyVisibleEndY / max(1, step))))
+        let callbackEnd = nativeLastFullyVisibleIndex(
+            in: renderRange,
+            bottom: viewportBottom,
+            config: config
         )
-        let fullyVisibleCount = max(1, (lastFullyVisible - first) + 1)
-        let callbackEnd = min(itemCount - 1, first + fullyVisibleCount - 1)
-        let callbackRange = first...max(first, callbackEnd)
+        let callbackRange = renderRange.lowerBound...max(renderRange.lowerBound, callbackEnd)
 
         updateVisibleIndexRange(renderRange, callbackRange: callbackRange)
     }
@@ -692,6 +693,10 @@ struct PickerPanel<
 
     private func virtualRowTop(_ index: Int, config: PickerPanelVirtualListConfig) -> CGFloat {
         config.verticalPadding + (CGFloat(max(0, index)) * virtualRowStep(config: config))
+    }
+
+    private func virtualRowBottom(_ index: Int, config: PickerPanelVirtualListConfig) -> CGFloat {
+        virtualRowTop(index, config: config) + config.rowHeight
     }
 
     private func virtualContentHeight(config: PickerPanelVirtualListConfig) -> CGFloat {
@@ -712,6 +717,51 @@ struct PickerPanel<
         guard itemCount > 0 else { return config.verticalPadding }
         let remainingRows = max(0, itemCount - endIndex - 1)
         return config.verticalPadding + (CGFloat(remainingRows) * virtualRowStep(config: config))
+    }
+
+    private func nativeIntersectingIndexRange(
+        top: CGFloat,
+        bottom: CGFloat,
+        config: PickerPanelVirtualListConfig
+    ) -> ClosedRange<Int>? {
+        guard itemCount > 0, bottom > top else { return nil }
+
+        let step = virtualRowStep(config: config)
+        var first = Int(floor(max(0, top - config.verticalPadding) / step))
+        first = max(0, min(itemCount - 1, first))
+
+        // NSScrollView can stop inside the inter-row gap near the bottom of the list.
+        // Skip rows whose content is fully above the viewport so the reported range
+        // does not stay one row behind at the end.
+        while first < itemCount && virtualRowBottom(first, config: config) <= top {
+            first += 1
+        }
+        guard first < itemCount else { return nil }
+
+        var last = Int(floor(max(0, bottom - config.verticalPadding - 1) / step))
+        last = max(first, min(itemCount - 1, last))
+
+        while last >= first && virtualRowTop(last, config: config) >= bottom {
+            last -= 1
+        }
+        guard last >= first else { return nil }
+
+        return first...last
+    }
+
+    private func nativeLastFullyVisibleIndex(
+        in range: ClosedRange<Int>,
+        bottom: CGFloat,
+        config: PickerPanelVirtualListConfig
+    ) -> Int {
+        var last = range.upperBound
+        while last >= range.lowerBound {
+            if virtualRowBottom(last, config: config) <= bottom {
+                return last
+            }
+            last -= 1
+        }
+        return range.lowerBound
     }
 
     private func scrollSelectionIntoViewNative(index: Int, config: PickerPanelVirtualListConfig) {

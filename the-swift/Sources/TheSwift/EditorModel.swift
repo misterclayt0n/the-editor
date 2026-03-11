@@ -1354,8 +1354,11 @@ final class EditorModel: ObservableObject {
     }
 
     func selectCommandPalette(index: Int) {
-        _ = app.command_palette_select_filtered(editorId, UInt(index))
+        guard app.command_palette_select_filtered(editorId, UInt(index)) else {
+            return
+        }
         refreshCommandPalette()
+        refreshRenderSurface(trigger: "command_palette_select", includePaneMetadata: false)
     }
 
     func selectOpenBuffer(bufferIndex: Int) {

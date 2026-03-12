@@ -151,6 +151,16 @@ impl ServerCapabilitiesSnapshot {
     self.text_document_sync
   }
 
+  pub fn supports_code_action_resolve(&self) -> bool {
+    self
+      .raw
+      .get("codeActionProvider")
+      .and_then(Value::as_object)
+      .and_then(|provider| provider.get("resolveProvider"))
+      .and_then(Value::as_bool)
+      .unwrap_or(false)
+  }
+
   pub fn workspace_commands(&self) -> Vec<String> {
     let Some(commands) = self
       .raw

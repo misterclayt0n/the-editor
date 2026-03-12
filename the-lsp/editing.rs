@@ -156,6 +156,29 @@ pub struct LspCodeAction {
   pub edit:         Option<LspWorkspaceEdit>,
   pub command:      Option<LspExecuteCommand>,
   pub is_preferred: bool,
+  pub raw:          Option<Value>,
+}
+
+impl LspCodeAction {
+  pub fn needs_resolve(&self) -> bool {
+    self.raw.is_some() && (self.edit.is_none() || self.command.is_none())
+  }
+
+  pub fn merge_resolved(mut self, resolved: LspCodeAction) -> Self {
+    if self.edit.is_none() {
+      self.edit = resolved.edit;
+    }
+    if self.command.is_none() {
+      self.command = resolved.command;
+    }
+    if !self.is_preferred {
+      self.is_preferred = resolved.is_preferred;
+    }
+    if self.raw.is_none() {
+      self.raw = resolved.raw;
+    }
+    self
+  }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -738,13 +761,21 @@ pub fn parse_code_actions_response(
     return Ok(Vec::new());
   }
 
-  let payload: Vec<CodeActionOrCommandPayload> = serde_json::from_value(result.clone())?;
-  Ok(
-    payload
-      .into_iter()
-      .map(CodeActionOrCommandPayload::into_code_action)
-      .collect(),
-  )
+  let raw_items: Vec<Value> = serde_json::from_value(result.clone())?;
+  raw_items.into_iter().map(parse_code_action_value).collect()
+}
+
+pub fn parse_code_action_response(
+  result: Option<&Value>,
+) -> Result<Option<LspCodeAction>, EditingParseError> {
+  let Some(result) = result else {
+    return Ok(None);
+  };
+  if result.is_null() {
+    return Ok(None);
+  }
+
+  Ok(Some(parse_code_action_value(result.clone())?))
 }
 
 pub fn parse_workspace_edit_response(
@@ -1085,7 +1116,7 @@ struct CodeActionPayload {
 }
 
 impl CodeActionPayload {
-  fn into_code_action(self) -> LspCodeAction {
+  fn into_code_action(self, raw: Value) -> LspCodeAction {
     LspCodeAction {
       title:        self.title,
       edit:         self
@@ -1094,6 +1125,7 @@ impl CodeActionPayload {
         .filter(|edit| !edit.documents.is_empty()),
       command:      self.command.map(CommandPayload::into_command),
       is_preferred: self.is_preferred.unwrap_or(false),
+      raw:          Some(raw),
     }
   }
 }
@@ -1106,9 +1138,9 @@ enum CodeActionOrCommandPayload {
 }
 
 impl CodeActionOrCommandPayload {
-  fn into_code_action(self) -> LspCodeAction {
+  fn into_code_action(self, raw: Value) -> LspCodeAction {
     match self {
-      Self::CodeAction(action) => action.into_code_action(),
+      Self::CodeAction(action) => action.into_code_action(raw),
       Self::Command(command) => command.into_code_action(),
     }
   }
@@ -1132,8 +1164,14 @@ impl CodeActionCommandPayload {
         arguments: self.arguments,
       }),
       is_preferred: false,
+      raw:          None,
     }
   }
+}
+
+fn parse_code_action_value(raw: Value) -> Result<LspCodeAction, EditingParseError> {
+  let payload: CodeActionOrCommandPayload = serde_json::from_value(raw.clone())?;
+  Ok(payload.into_code_action(raw))
 }
 
 #[derive(Debug, Deserialize)]
@@ -1489,6 +1527,60 @@ mod tests {
       parsed[1].command.as_ref().map(|cmd| cmd.command.as_str()),
       Some("clangd.applyFix")
     );
+  }
+
+  #[test]
+  fn parse_code_actions_response_preserves_raw_payload_for_resolve() {
+    let value = json!([
+      {
+        "title": "Import HashMap",
+        "kind": "quickfix",
+        "data": {
+          "id": "import-hash-map"
+        }
+      }
+    ]);
+
+    let parsed = parse_code_actions_response(Some(&value)).expect("parse ok");
+    assert_eq!(parsed.len(), 1);
+    assert!(parsed[0].needs_resolve());
+    assert_eq!(parsed[0].raw.as_ref().and_then(|raw| raw.get("data")), Some(&json!({
+      "id": "import-hash-map"
+    })));
+  }
+
+  #[test]
+  fn parse_code_action_response_merges_resolved_edit() {
+    let unresolved = parse_code_action_response(Some(&json!({
+      "title": "Import HashMap",
+      "kind": "quickfix",
+      "data": {
+        "id": "import-hash-map"
+      }
+    })))
+    .expect("parse ok")
+    .expect("action");
+    let resolved = parse_code_action_response(Some(&json!({
+      "title": "Import HashMap",
+      "kind": "quickfix",
+      "edit": {
+        "changes": {
+          "file:///tmp/main.rs": [{
+            "range": {
+              "start": { "line": 0, "character": 0 },
+              "end": { "line": 0, "character": 0 }
+            },
+            "newText": "use std::collections::HashMap;\\n"
+          }]
+        }
+      }
+    })))
+    .expect("parse ok")
+    .expect("action");
+
+    let merged = unresolved.merge_resolved(resolved);
+    assert!(merged.edit.is_some());
+    assert!(merged.raw.is_some());
   }
 
   #[test]

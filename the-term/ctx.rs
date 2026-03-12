@@ -179,6 +179,7 @@ use the_lsp::{
   hover_params,
   jsonrpc,
   parse_code_actions_response,
+  parse_code_action_response,
   parse_completion_item_response,
   parse_completion_response_with_raw,
   parse_document_highlights_response,
@@ -437,7 +438,7 @@ struct PendingAutoSignatureHelp {
   trigger: SignatureHelpTriggerSource,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 enum PendingLspRequestKind {
   GotoDeclaration {
     uri: String,
@@ -483,6 +484,10 @@ enum PendingLspRequestKind {
   CodeActions {
     uri: String,
   },
+  CodeActionResolve {
+    uri:    String,
+    action: LspCodeAction,
+  },
   Rename {
     uri: String,
   },
@@ -507,6 +512,7 @@ impl PendingLspRequestKind {
       Self::CompletionResolve { .. } => "completion-resolve",
       Self::SignatureHelp { .. } => "signature-help",
       Self::CodeActions { .. } => "code-actions",
+      Self::CodeActionResolve { .. } => "code-action-resolve",
       Self::Rename { .. } => "rename",
       Self::Format { .. } => "format",
     }
@@ -526,6 +532,7 @@ impl PendingLspRequestKind {
       | Self::CompletionResolve { uri, .. }
       | Self::SignatureHelp { uri }
       | Self::CodeActions { uri }
+      | Self::CodeActionResolve { uri, .. }
       | Self::Rename { uri }
       | Self::Format { uri } => Some(uri.as_str()),
       Self::WorkspaceSymbols { .. } => None,
@@ -547,6 +554,7 @@ impl PendingLspRequestKind {
       Self::CompletionResolve { uri, .. } => ("completion-resolve", Some(uri)),
       Self::SignatureHelp { uri } => ("signature-help", Some(uri)),
       Self::CodeActions { uri } => ("code-actions", Some(uri)),
+      Self::CodeActionResolve { uri, .. } => ("code-action-resolve", Some(uri)),
       Self::Rename { uri } => ("rename", Some(uri)),
       Self::Format { uri } => ("format", Some(uri)),
     }
@@ -2184,6 +2192,9 @@ impl Ctx {
       PendingLspRequestKind::CodeActions { .. } => {
         self.handle_code_actions_response(response.result.as_ref())
       },
+      PendingLspRequestKind::CodeActionResolve { action, .. } => {
+        self.handle_code_action_resolve_response(action, response.result.as_ref())
+      },
       PendingLspRequestKind::Rename { .. } => self.handle_rename_response(response.result.as_ref()),
       PendingLspRequestKind::Format { .. } => self.handle_format_response(response.result.as_ref()),
     }
@@ -2608,6 +2619,30 @@ impl Ctx {
     true
   }
 
+  fn handle_code_action_resolve_response(
+    &mut self,
+    action: LspCodeAction,
+    result: Option<&Value>,
+  ) -> bool {
+    let resolved = match parse_code_action_response(result) {
+      Ok(action) => action,
+      Err(err) => {
+        self.messages.publish(
+          MessageLevel::Warning,
+          Some("lsp".into()),
+          format!("failed to parse code action resolve response: {err}"),
+        );
+        return true;
+      },
+    };
+
+    let action = match resolved {
+      Some(resolved) => action.merge_resolved(resolved),
+      None => action,
+    };
+    self.apply_code_action_now(action)
+  }
+
   fn handle_document_highlight_selection_response(&mut self, result: Option<&Value>) -> bool {
     let highlights = match parse_document_highlights_response(result) {
       Ok(highlights) => highlights,
@@ -2766,6 +2801,50 @@ impl Ctx {
       },
     }
     true
+  }
+
+  fn lsp_supports_code_action_resolve(&self) -> bool {
+    let Some(server) = self.lsp_runtime.config().server() else {
+      return false;
+    };
+    self
+      .lsp_runtime
+      .server_capabilities(server.name())
+      .is_some_and(|capabilities| capabilities.supports_code_action_resolve())
+  }
+
+  fn resolve_code_action(&mut self, action: LspCodeAction) -> bool {
+    if !self.lsp_supports_code_action_resolve() || !action.needs_resolve() {
+      return false;
+    }
+
+    let Some(uri) = self.current_lsp_uri() else {
+      return false;
+    };
+    let Some(params) = action.raw.clone() else {
+      return false;
+    };
+
+    match self
+      .lsp_runtime
+      .send_request("codeAction/resolve", Some(params))
+    {
+      Ok(request_id) => {
+        self.lsp_pending_requests.insert(
+          request_id,
+          PendingLspRequestKind::CodeActionResolve { uri, action },
+        );
+        true
+      },
+      Err(err) => {
+        self.messages.publish(
+          MessageLevel::Warning,
+          Some("lsp".into()),
+          format!("failed to dispatch codeAction/resolve: {err}"),
+        );
+        false
+      },
+    }
   }
 
   fn apply_workspace_edit(&mut self, workspace_edit: &LspWorkspaceEdit, source: &str) -> bool {
@@ -3935,6 +4014,13 @@ impl Ctx {
   }
 
   fn apply_code_action(&mut self, action: LspCodeAction) -> bool {
+    if self.resolve_code_action(action.clone()) {
+      return true;
+    }
+    self.apply_code_action_now(action)
+  }
+
+  fn apply_code_action_now(&mut self, action: LspCodeAction) -> bool {
     let title = action.title.clone();
     let mut handled = false;
 

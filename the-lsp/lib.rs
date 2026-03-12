@@ -41,6 +41,7 @@ pub use editing::{
   LspTextEdit,
   LspWorkspaceEdit,
   code_action_params,
+  parse_code_action_response,
   completion_params,
   execute_command_params,
   formatting_params,

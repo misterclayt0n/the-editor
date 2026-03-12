@@ -302,6 +302,7 @@ use the_lsp::{
   hover_params,
   jsonrpc,
   parse_code_actions_response,
+  parse_code_action_response,
   parse_completion_item_response,
   parse_completion_response_with_raw,
   parse_document_highlights_response,
@@ -1780,7 +1781,7 @@ struct PendingMouseHover {
   due_at:         Instant,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 enum PendingLspRequestKind {
   GotoDeclaration {
     uri: String,
@@ -1827,6 +1828,10 @@ enum PendingLspRequestKind {
   CodeActions {
     uri: String,
   },
+  CodeActionResolve {
+    uri:    String,
+    action: LspCodeAction,
+  },
   Rename {
     uri: String,
   },
@@ -1847,6 +1852,7 @@ impl PendingLspRequestKind {
       Self::CompletionResolve { .. } => "completion-resolve",
       Self::SignatureHelp { .. } => "signature-help",
       Self::CodeActions { .. } => "code-actions",
+      Self::CodeActionResolve { .. } => "code-action-resolve",
       Self::Rename { .. } => "rename",
     }
   }
@@ -1865,6 +1871,7 @@ impl PendingLspRequestKind {
       Self::CompletionResolve { uri, .. } => Some(uri.as_str()),
       Self::SignatureHelp { uri } => Some(uri.as_str()),
       Self::CodeActions { uri } => Some(uri.as_str()),
+      Self::CodeActionResolve { uri, .. } => Some(uri.as_str()),
       Self::Rename { uri } => Some(uri.as_str()),
     }
   }
@@ -1883,6 +1890,7 @@ impl PendingLspRequestKind {
       Self::CompletionResolve { uri, .. } => ("completion-resolve", Some(uri)),
       Self::SignatureHelp { uri } => ("signature-help", Some(uri)),
       Self::CodeActions { uri } => ("code-actions", Some(uri)),
+      Self::CodeActionResolve { uri, .. } => ("code-action-resolve", Some(uri)),
       Self::Rename { uri } => ("rename", Some(uri)),
     }
   }
@@ -8838,6 +8846,9 @@ impl App {
       PendingLspRequestKind::CodeActions { .. } => {
         self.handle_code_actions_response(response.result.as_ref())
       },
+      PendingLspRequestKind::CodeActionResolve { action, .. } => {
+        self.handle_code_action_resolve_response(action, response.result.as_ref())
+      },
       PendingLspRequestKind::Rename { .. } => self.handle_rename_response(response.result.as_ref()),
     }
   }
@@ -9084,6 +9095,29 @@ impl App {
     true
   }
 
+  fn handle_code_action_resolve_response(
+    &mut self,
+    action: LspCodeAction,
+    result: Option<&Value>,
+  ) -> bool {
+    let resolved = match parse_code_action_response(result) {
+      Ok(action) => action,
+      Err(err) => {
+        self.publish_lsp_message(
+          the_lib::messages::MessageLevel::Warning,
+          format!("failed to parse code action resolve response: {err}"),
+        );
+        return true;
+      },
+    };
+
+    let action = match resolved {
+      Some(resolved) => action.merge_resolved(resolved),
+      None => action,
+    };
+    self.apply_code_action_now(action)
+  }
+
   fn handle_document_highlight_selection_response(&mut self, result: Option<&Value>) -> bool {
     let highlights = match parse_document_highlights_response(result) {
       Ok(highlights) => highlights,
@@ -9174,6 +9208,39 @@ impl App {
       },
     }
     true
+  }
+
+  fn lsp_supports_code_action_resolve(&self) -> bool {
+    self
+      .lsp_server_capabilities_snapshot()
+      .is_some_and(|capabilities| capabilities.supports_code_action_resolve())
+  }
+
+  fn resolve_code_action(&mut self, action: LspCodeAction) -> bool {
+    if !self.lsp_supports_code_action_resolve() || !action.needs_resolve() {
+      return false;
+    }
+
+    let Some(uri) = self.current_lsp_uri() else {
+      return false;
+    };
+    let Some(params) = action.raw.clone() else {
+      return false;
+    };
+
+    match self.lsp_send_request_raw("codeAction/resolve", params) {
+      Ok(request_id) => {
+        self.lsp_pending_requests.insert(
+          request_id,
+          PendingLspRequestKind::CodeActionResolve { uri, action },
+        );
+        true
+      },
+      Err(err) => {
+        self.publish_lsp_message(the_lib::messages::MessageLevel::Warning, err);
+        false
+      },
+    }
   }
 
   fn apply_workspace_edit(&mut self, workspace_edit: &LspWorkspaceEdit, source: &str) -> bool {
@@ -9767,6 +9834,13 @@ impl App {
   }
 
   fn apply_code_action(&mut self, action: LspCodeAction) -> bool {
+    if self.resolve_code_action(action.clone()) {
+      return true;
+    }
+    self.apply_code_action_now(action)
+  }
+
+  fn apply_code_action_now(&mut self, action: LspCodeAction) -> bool {
     let title = action.title.clone();
     let mut handled = false;
 
@@ -16122,6 +16196,69 @@ mod tests {
     assert_eq!(command_palette_titles(&mut app, id), vec![
       "docs/", "scripts/", "src/"
     ]);
+  }
+
+  #[test]
+  fn code_action_resolve_response_applies_top_level_import_edit() {
+    let _guard = ffi_test_guard();
+    let workspace = TempTestWorkspace::new(
+      "code-action-resolve",
+      "main.rs",
+      "use serde::{Serialize, Deserialize};\n\nstruct Body {\n    rest: HashMap<String, serde_json::Value>,\n}\n",
+    );
+    let uri = the_lsp::text_sync::file_uri_for_path(workspace.file_path()).expect("file uri");
+
+    let mut app = App::new();
+    let id = app.create_editor(
+      &fs::read_to_string(workspace.file_path()).expect("read fixture"),
+      default_viewport(),
+      ffi::Position { row: 0, col: 0 },
+    );
+    assert!(app.activate(id).is_some());
+    assert!(app.set_file_path(id, workspace.file_path().to_string_lossy().as_ref()));
+
+    app.lsp_ready = true;
+    let mut document =
+      super::build_lsp_document_state(workspace.file_path(), app.loader.as_deref()).expect("doc");
+    document.opened = true;
+    app.lsp_document = Some(document);
+
+    let unresolved = the_lsp::parse_code_action_response(Some(&json!({
+      "title": "Import `std::collections::HashMap`",
+      "kind": "quickfix",
+      "data": {
+        "id": "import-hash-map"
+      }
+    })))
+    .expect("parse ok")
+    .expect("action");
+
+    let mut resolved = json!({
+      "title": "Import `std::collections::HashMap`",
+      "kind": "quickfix",
+      "edit": {
+        "changes": {}
+      }
+    });
+    resolved["edit"]["changes"] = Value::Object(serde_json::Map::from_iter([(
+      uri.clone(),
+      json!([{
+        "range": {
+          "start": { "line": 0, "character": 0 },
+          "end": { "line": 0, "character": 0 }
+        },
+        "newText": "use std::collections::HashMap;\n"
+      }]),
+    )]));
+
+    assert!(app.handle_code_action_resolve_response(
+      unresolved,
+      Some(&resolved)
+    ));
+
+    let text = app.text(id);
+    assert!(text.starts_with("use std::collections::HashMap;\n"));
+    assert!(text.contains("rest: HashMap<String, serde_json::Value>,"));
   }
 
   #[test]

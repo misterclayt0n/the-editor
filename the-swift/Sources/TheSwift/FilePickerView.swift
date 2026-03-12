@@ -5,6 +5,7 @@ import class TheEditorFFIBridge.PreviewData
 // MARK: - Data model
 
 struct FilePickerSnapshot {
+    let sessionId: Int
     let active: Bool
     let title: String
     let pickerKind: UInt8
@@ -267,6 +268,7 @@ fileprivate enum PickerPreviewPerfTrace {
 
 struct FilePickerItemSnapshot: Identifiable {
     let id: Int
+    let itemId: UInt64
     let display: String
     let filename: String
     let directory: String
@@ -286,6 +288,7 @@ struct FilePickerItemSnapshot: Identifiable {
 
     init(
         id: Int,
+        itemId: UInt64,
         display: String,
         isDir: Bool,
         icon: String?,
@@ -305,6 +308,7 @@ struct FilePickerItemSnapshot: Identifiable {
         let directory = nsDisplay.deletingLastPathComponent
 
         self.id = id
+        self.itemId = itemId
         self.display = display
         self.filename = filename
         self.directory = directory.isEmpty ? "" : directory
@@ -508,7 +512,8 @@ struct FilePickerView: View {
     let snapshot: FilePickerSnapshot
     let previewModel: FilePickerPreviewModel
     let onQueryChange: (String) -> Void
-    let onSubmit: (Int) -> Void
+    let onSubmit: (UInt64?, Int) -> Void
+    let onSubmitSelection: () -> Void
     let onClose: () -> Void
     let onSelectionChange: ((Int) -> Void)?
     let onMoveSelectionRequest: ((Int) -> Void)?
@@ -626,11 +631,16 @@ struct FilePickerView: View {
                 onQueryChange: onQueryChange,
                 onSubmit: { index in
                     if let index {
-                        onSubmit(index)
+                        debugLogInteraction(event: "submit_request", index: index)
+                        onSubmit(rowItem(at: index)?.itemId, index)
                     }
                 },
+                onSubmitSelection: onSubmitSelection,
                 onClose: onClose,
-                onSelectionChange: onSelectionChange,
+                onSelectionChange: { index in
+                    debugLogInteraction(event: "select_request", index: index)
+                    onSelectionChange?(index)
+                },
                 leadingHeader: {
                     Image(systemName: "magnifyingglass")
                         .font(FontLoader.uiFont(size: 14).weight(.medium))
@@ -669,6 +679,7 @@ struct FilePickerView: View {
                 .frame(maxWidth: .infinity)
             }
         }
+        .id(snapshot.sessionId)
         .frame(maxWidth: totalWidth, maxHeight: hasPreview ? 500 : nil)
         .background(
             ZStack {
@@ -743,6 +754,27 @@ struct FilePickerView: View {
         guard let config = virtualListConfig else { return }
         let visibleCount = max(1, range.upperBound - range.lowerBound + 1)
         onListWindowRequest?(range.lowerBound, visibleCount, config.overscanRows)
+    }
+
+    private func debugLogInteraction(event: String, index: Int) {
+        guard DiagnosticsDebugLog.enabled else { return }
+        let item = rowItem(at: index)
+        let localIndex = index - snapshot.windowStart
+        let label = item.map { debugLabel($0.display) } ?? "<missing>"
+        DiagnosticsDebugLog.log(
+            "picker.\(event) session=\(snapshot.sessionId) title=\(debugLabel(snapshot.title)) kind=\(snapshot.pickerKind) query=\(debugLabel(snapshot.query)) index=\(index) local=\(localIndex) selected=\(snapshot.selectedIndex.map(String.init) ?? "nil") window_start=\(snapshot.windowStart) list_offset=\(snapshot.listOffset) list_visible=\(snapshot.listVisible) matched=\(snapshot.matchedCount) item_id=\(item?.itemId ?? 0) item=\(label)"
+        )
+    }
+
+    private func debugLabel(_ text: String) -> String {
+        let normalized = text
+            .replacingOccurrences(of: "\n", with: "\\n")
+            .replacingOccurrences(of: "\t", with: "\\t")
+        if normalized.count <= 96 {
+            return normalized
+        }
+        let end = normalized.index(normalized.startIndex, offsetBy: 96)
+        return "\(normalized[..<end])..."
     }
 
     @ViewBuilder

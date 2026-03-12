@@ -349,6 +349,10 @@ extension AppRefMut {
         __swift_bridge__$App$file_picker_submit(ptr, id.intoFfiRepr(), index)
     }
 
+    public func file_picker_submit_item(_ id: EditorId, _ item_id: UInt64) -> Bool {
+        __swift_bridge__$App$file_picker_submit_item(ptr, id.intoFfiRepr(), item_id)
+    }
+
     public func file_picker_close(_ id: EditorId) -> Bool {
         __swift_bridge__$App$file_picker_close(ptr, id.intoFfiRepr())
     }
@@ -3262,6 +3266,10 @@ public class FilePickerItemFFIRef {
     }
 }
 extension FilePickerItemFFIRef {
+    public func item_id() -> UInt64 {
+        __swift_bridge__$FilePickerItemFFI$item_id(ptr)
+    }
+
     public func display() -> RustString {
         RustString(ptr: __swift_bridge__$FilePickerItemFFI$display(ptr))
     }

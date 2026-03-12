@@ -714,8 +714,11 @@ struct EditorView: View {
             onFilePickerQueryChange: { query in
                 model.setFilePickerQuery(query)
             },
-            onFilePickerSubmit: { index in
-                model.submitFilePicker(index: index)
+            onFilePickerSubmit: { itemId, index in
+                model.submitFilePicker(itemId: itemId, index: index)
+            },
+            onFilePickerSubmitSelection: {
+                model.submitSelectedFilePicker()
             },
             onFilePickerClose: {
                 model.closeFilePicker()

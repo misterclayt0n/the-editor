@@ -167,6 +167,7 @@ final class EditorModel: ObservableObject {
     private var lastPickerRoot: String? = nil
     private var lastPickerKind: UInt8 = 0
     private var lastPickerSelectedIndex: Int? = nil
+    private var filePickerSessionGeneration: Int = 0
     private let filePickerListOverscanRows: Int = 32
     private var lastFileTreeRefreshGeneration: UInt64 = 0
     private var lastFileTreeVcsGeneration: UInt64 = 0
@@ -1643,12 +1644,50 @@ final class EditorModel: ObservableObject {
         refreshFilePickerPreview()
     }
 
-    func submitFilePicker(index: Int) {
-        _ = app.file_picker_submit(editorId, UInt(index))
+    func submitFilePicker(itemId: UInt64?, index: Int) {
+        let activeFileBefore = app.active_file_path(editorId).toString()
+        let requestedItem = filePickerSnapshot.flatMap { snapshot -> FilePickerItemSnapshot? in
+            let localIndex = index - snapshot.windowStart
+            guard snapshot.items.indices.contains(localIndex) else { return nil }
+            return snapshot.items[localIndex]
+        }
+        if DiagnosticsDebugLog.enabled {
+            DiagnosticsDebugLog.log(
+                "picker.submit_bridge session=\(filePickerSnapshot?.sessionId ?? -1) title=\(debugTruncate(filePickerSnapshot?.title ?? "", limit: 80)) query=\(debugTruncate(filePickerSnapshot?.query ?? "", limit: 80)) index=\(index) selected=\(filePickerSnapshot?.selectedIndex.map(String.init) ?? "nil") item_id_param=\(itemId.map(String.init) ?? "nil") item_id_window=\(requestedItem.map { String($0.itemId) } ?? "nil") item=\(debugTruncate(requestedItem?.display ?? "<missing>", limit: 120)) active_before=\(debugTruncate(activeFileBefore, limit: 120))"
+            )
+        }
+        let submittedByItemId = itemId.map { app.file_picker_submit_item(editorId, $0) } ?? false
+        if !submittedByItemId {
+            _ = app.file_picker_submit(editorId, UInt(index))
+        }
+        if DiagnosticsDebugLog.enabled {
+            let activeFileAfter = app.active_file_path(editorId).toString()
+            DiagnosticsDebugLog.log(
+                "picker.submit_bridge_result session=\(filePickerSnapshot?.sessionId ?? -1) index=\(index) item_id_param=\(itemId.map(String.init) ?? "nil") submitted_by_item_id=\(submittedByItemId ? 1 : 0) active_after=\(debugTruncate(activeFileAfter, limit: 120))"
+            )
+        }
         refresh(trigger: "file_picker_submit")
     }
 
+    func submitSelectedFilePicker() {
+        guard let snapshot = filePickerSnapshot else { return }
+        let selectedIndex = snapshot.selectedIndex ?? 0
+        let localIndex = selectedIndex - snapshot.windowStart
+        let selectedItem = snapshot.items.indices.contains(localIndex) ? snapshot.items[localIndex] : nil
+        if DiagnosticsDebugLog.enabled {
+            DiagnosticsDebugLog.log(
+                "picker.submit_selected session=\(snapshot.sessionId) selected=\(snapshot.selectedIndex.map(String.init) ?? "nil") window_start=\(snapshot.windowStart) item_id=\(selectedItem.map { String($0.itemId) } ?? "nil") item=\(debugTruncate(selectedItem?.display ?? "<missing>", limit: 120))"
+            )
+        }
+        submitFilePicker(itemId: selectedItem?.itemId, index: selectedIndex)
+    }
+
     func filePickerSelectIndex(_ index: Int) {
+        if DiagnosticsDebugLog.enabled {
+            DiagnosticsDebugLog.log(
+                "picker.select_bridge_request session=\(filePickerSnapshot?.sessionId ?? -1) index=\(index) selected_before=\(filePickerSnapshot?.selectedIndex.map { String($0) } ?? "nil")"
+            )
+        }
         _ = app.file_picker_select_index(editorId, UInt(index))
         filePickerPreviewOffsetHint = -1
         refreshFilePicker(force: true)
@@ -1657,6 +1696,11 @@ final class EditorModel: ObservableObject {
 
     func filePickerMoveSelection(_ delta: Int) {
         guard delta != 0 else { return }
+        if DiagnosticsDebugLog.enabled {
+            DiagnosticsDebugLog.log(
+                "picker.move_bridge_request session=\(filePickerSnapshot?.sessionId ?? -1) delta=\(delta) selected_before=\(filePickerSnapshot?.selectedIndex.map { String($0) } ?? "nil")"
+            )
+        }
         _ = app.file_picker_move_selection(editorId, Int64(delta))
         filePickerPreviewOffsetHint = -1
         refreshFilePicker(force: true)
@@ -1676,6 +1720,7 @@ final class EditorModel: ObservableObject {
         if let snapshot = filePickerSnapshot,
            snapshot.listOffset != listOffset || snapshot.listVisible != listVisible {
             filePickerSnapshot = FilePickerSnapshot(
+                sessionId: snapshot.sessionId,
                 active: snapshot.active,
                 title: snapshot.title,
                 pickerKind: snapshot.pickerKind,
@@ -1790,6 +1835,14 @@ final class EditorModel: ObservableObject {
         let pickerIdentityChanged = title != lastPickerTitle
             || root != lastPickerRoot
             || pickerKind != lastPickerKind
+        let pickerSessionChanged = pickerIdentityChanged || filePickerSnapshot == nil
+        let pickerSessionId: Int
+        if pickerSessionChanged {
+            filePickerSessionGeneration = filePickerSessionGeneration &+ 1
+            pickerSessionId = filePickerSessionGeneration
+        } else {
+            pickerSessionId = filePickerSnapshot?.sessionId ?? filePickerSessionGeneration
+        }
         if pickerIdentityChanged || filePickerSnapshot == nil {
             filePickerPreviewOffsetHint = -1
             if DiagnosticsDebugLog.enabled {
@@ -1859,6 +1912,7 @@ final class EditorModel: ObservableObject {
             let iconStr = item.icon().toString()
             items.append(FilePickerItemSnapshot(
                 id: windowStart + i,
+                itemId: item.item_id(),
                 display: item.display().toString(),
                 isDir: item.is_dir(),
                 icon: iconStr.isEmpty ? nil : iconStr,
@@ -1876,6 +1930,7 @@ final class EditorModel: ObservableObject {
         }
 
         filePickerSnapshot = FilePickerSnapshot(
+            sessionId: pickerSessionId,
             active: true,
             title: title,
             pickerKind: pickerKind,
@@ -1890,6 +1945,9 @@ final class EditorModel: ObservableObject {
             windowStart: windowStart,
             items: items
         )
+        if let snapshot = filePickerSnapshot {
+            debugLogFilePickerSnapshot(trigger: force ? "refresh_force" : "refresh", snapshot: snapshot)
+        }
         let perfDecodeEnd = DispatchTime.now().uptimeNanoseconds
 
         if DiagnosticsDebugLog.pickerPerfEnabled {
@@ -3602,6 +3660,46 @@ final class EditorModel: ObservableObject {
         let requested = requestedOffset == UInt.max ? "focus" : String(requestedOffset)
         DiagnosticsDebugLog.log(
             "picker.preview diagnostics requested=\(requested) hint=\(filePickerPreviewOffsetHint) visible=\(filePickerPreviewVisibleRows) overscan=\(filePickerPreviewOverscan) returned_offset=\(preview.offset()) window_start=\(preview.window_start()) total=\(preview.total_lines()) count=\(lineCount) focused=\(focusedSummary) first=\(firstLineSummary) last=\(lastLineSummary) path=\(preview.path().toString())"
+        )
+    }
+
+    private func debugLogFilePickerSnapshot(trigger: String, snapshot: FilePickerSnapshot) {
+        guard DiagnosticsDebugLog.enabled else { return }
+
+        let selectedItem: FilePickerItemSnapshot? = {
+            guard let selectedIndex = snapshot.selectedIndex else { return nil }
+            let localIndex = selectedIndex - snapshot.windowStart
+            guard snapshot.items.indices.contains(localIndex) else { return nil }
+            return snapshot.items[localIndex]
+        }()
+
+        let itemSummary = snapshot.items.prefix(8).enumerated().map { offset, item in
+            let absoluteIndex = snapshot.windowStart + offset
+            return "\(absoluteIndex):\(item.itemId):\(debugTruncate(item.display, limit: 64))"
+        }.joined(separator: " | ")
+
+        let summary = [
+            "trigger=\(trigger)",
+            "session=\(snapshot.sessionId)",
+            "title=\(debugTruncate(snapshot.title, limit: 40))",
+            "kind=\(snapshot.pickerKind)",
+            "query=\(debugTruncate(snapshot.query, limit: 64))",
+            "matched=\(snapshot.matchedCount)",
+            "total=\(snapshot.totalCount)",
+            "scanning=\(snapshot.scanning ? 1 : 0)",
+            "selected=\(snapshot.selectedIndex.map(String.init) ?? "nil")",
+            "selected_item_id=\(selectedItem.map { String($0.itemId) } ?? "nil")",
+            "selected_item=\(debugTruncate(selectedItem?.display ?? "<off_window>", limit: 72))",
+            "list_offset=\(snapshot.listOffset)",
+            "list_visible=\(snapshot.listVisible)",
+            "window_start=\(snapshot.windowStart)",
+            "window_count=\(snapshot.items.count)",
+            "items=[\(itemSummary)]"
+        ].joined(separator: " ")
+
+        DiagnosticsDebugLog.logChanged(
+            key: "picker.snapshot.\(runtimeInstanceId).\(editorId.value)",
+            value: summary
         )
     }
 

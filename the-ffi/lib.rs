@@ -4449,6 +4449,42 @@ fn ffi_ui_profile_log(message: impl AsRef<str>) {
   }
 }
 
+fn file_picker_debug_enabled() -> bool {
+  static ENABLED: OnceLock<bool> = OnceLock::new();
+  *ENABLED.get_or_init(|| {
+    ["THE_SWIFT_DEBUG_DIAGNOSTICS", "THE_EDITOR_DEBUG_FILE_PICKER"]
+      .into_iter()
+      .any(|name| {
+        env::var(name)
+          .ok()
+          .map(|value| {
+            let normalized = value.trim().to_ascii_lowercase();
+            normalized == "1" || normalized == "true" || normalized == "yes" || normalized == "on"
+          })
+          .unwrap_or(false)
+      })
+  })
+}
+
+fn file_picker_debug_log(message: impl AsRef<str>) {
+  if file_picker_debug_enabled() {
+    eprintln!("[the-ffi picker] {}", message.as_ref());
+  }
+}
+
+fn file_picker_debug_item_summary(item: Option<&FilePickerItem>) -> String {
+  let Some(item) = item else {
+    return "none".to_string();
+  };
+  let display = item.display.replace('\n', "\\n");
+  format!(
+    "id={} display={} path={}",
+    item.stable_id(),
+    display,
+    item.absolute.display()
+  )
+}
+
 fn lsp_self_save_suppress_window() -> Duration {
   Duration::from_millis(500)
 }
@@ -5187,6 +5223,7 @@ impl FilePickerSnapshotData {
 
 #[derive(Clone)]
 pub struct FilePickerItemFFI {
+  item_id:       u64,
   display:       String,
   is_dir:        bool,
   icon:          String,
@@ -5205,6 +5242,7 @@ pub struct FilePickerItemFFI {
 impl Default for FilePickerItemFFI {
   fn default() -> Self {
     Self {
+      item_id:       0,
       display:       String::new(),
       is_dir:        false,
       icon:          String::new(),
@@ -5223,6 +5261,9 @@ impl Default for FilePickerItemFFI {
 }
 
 impl FilePickerItemFFI {
+  fn item_id(&self) -> u64 {
+    self.item_id
+  }
   fn display(&self) -> String {
     self.display.clone()
   }
@@ -5314,6 +5355,7 @@ fn build_file_picker_snapshot_window(
         None => 0,
       };
       items.push(FilePickerItemFFI {
+        item_id: item.stable_id(),
         display: item.display.to_string(),
         is_dir: item.is_dir,
         icon: item.icon.to_string(),
@@ -7730,8 +7772,120 @@ impl App {
     if !self.file_picker().active {
       return false;
     }
+    if file_picker_debug_enabled() {
+      let picker = self.file_picker();
+      let target = picker.matched_item(index);
+      file_picker_debug_log(format!(
+        "submit_by_index editor={} query={} index={} selected_before={} matched={} list_offset={} target={}",
+        id.value,
+        picker.query,
+        index,
+        picker
+          .selected
+          .map(|value| value.to_string())
+          .unwrap_or_else(|| "none".to_string()),
+        picker.matched_count(),
+        picker.list_offset,
+        file_picker_debug_item_summary(target.as_deref())
+      ));
+    }
     select_file_picker_index(self, index);
+    if file_picker_debug_enabled() {
+      let picker = self.file_picker();
+      file_picker_debug_log(format!(
+        "submit_by_index_resolved editor={} index={} selected_after={} current={}",
+        id.value,
+        index,
+        picker
+          .selected
+          .map(|value| value.to_string())
+          .unwrap_or_else(|| "none".to_string()),
+        file_picker_debug_item_summary(picker.current_item().as_deref())
+      ));
+    }
     submit_file_picker(self);
+    if file_picker_debug_enabled() {
+      file_picker_debug_log(format!(
+        "submit_by_index_done editor={} index={} active_file={}",
+        id.value,
+        index,
+        self.active_file_path(id)
+      ));
+    }
+    true
+  }
+
+  pub fn file_picker_submit_item(&mut self, id: ffi::EditorId, item_id: u64) -> bool {
+    if item_id == 0 {
+      return false;
+    }
+    if self.activate(id).is_none() {
+      return false;
+    }
+    if !self.file_picker().active {
+      return false;
+    }
+    let Some(index) = self.file_picker().matched_index_for_stable_id(item_id) else {
+      if file_picker_debug_enabled() {
+        let picker = self.file_picker();
+        file_picker_debug_log(format!(
+          "submit_by_item_missing editor={} item_id={} query={} matched={} selected={} list_offset={}",
+          id.value,
+          item_id,
+          picker.query,
+          picker.matched_count(),
+          picker
+            .selected
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "none".to_string()),
+          picker.list_offset
+        ));
+      }
+      return false;
+    };
+    if file_picker_debug_enabled() {
+      let picker = self.file_picker();
+      let target = picker.matched_item(index);
+      file_picker_debug_log(format!(
+        "submit_by_item editor={} item_id={} resolved_index={} query={} selected_before={} matched={} list_offset={} target={}",
+        id.value,
+        item_id,
+        index,
+        picker.query,
+        picker
+          .selected
+          .map(|value| value.to_string())
+          .unwrap_or_else(|| "none".to_string()),
+        picker.matched_count(),
+        picker.list_offset,
+        file_picker_debug_item_summary(target.as_deref())
+      ));
+    }
+    select_file_picker_index(self, index);
+    if file_picker_debug_enabled() {
+      let picker = self.file_picker();
+      file_picker_debug_log(format!(
+        "submit_by_item_resolved editor={} item_id={} resolved_index={} selected_after={} current={}",
+        id.value,
+        item_id,
+        index,
+        picker
+          .selected
+          .map(|value| value.to_string())
+          .unwrap_or_else(|| "none".to_string()),
+        file_picker_debug_item_summary(picker.current_item().as_deref())
+      ));
+    }
+    submit_file_picker(self);
+    if file_picker_debug_enabled() {
+      file_picker_debug_log(format!(
+        "submit_by_item_done editor={} item_id={} resolved_index={} active_file={}",
+        id.value,
+        item_id,
+        index,
+        self.active_file_path(id)
+      ));
+    }
     true
   }
 
@@ -14351,6 +14505,7 @@ mod ffi {
     fn search_prompt_submit(self: &mut App, id: EditorId) -> bool;
     fn file_picker_set_query(self: &mut App, id: EditorId, query: &str) -> bool;
     fn file_picker_submit(self: &mut App, id: EditorId, index: usize) -> bool;
+    fn file_picker_submit_item(self: &mut App, id: EditorId, item_id: u64) -> bool;
     fn file_picker_close(self: &mut App, id: EditorId) -> bool;
     fn file_picker_select_index(self: &mut App, id: EditorId, index: usize) -> bool;
     fn file_picker_list_offset(self: &mut App, id: EditorId) -> usize;
@@ -14763,6 +14918,7 @@ mod ffi {
 
   extern "Rust" {
     type FilePickerItemFFI;
+    fn item_id(self: &FilePickerItemFFI) -> u64;
     fn display(self: &FilePickerItemFFI) -> String;
     fn is_dir(self: &FilePickerItemFFI) -> bool;
     fn icon(self: &FilePickerItemFFI) -> String;
@@ -15851,6 +16007,126 @@ mod tests {
     assert_eq!(snapshot.selected_index(), 5);
     assert_eq!(snapshot.list_offset(), 2);
     assert_eq!(snapshot.list_visible(), 4);
+  }
+
+  #[test]
+  fn file_picker_can_reopen_and_submit_a_second_file() {
+    let _guard = ffi_test_guard();
+    let workspace = TempTestWorkspace::new(
+      "file-picker-reopen-submit",
+      "first_unique_picker_target.rs",
+      "fn first() {}\n",
+    );
+    let second = workspace.root_path().join("second_unique_picker_target.rs");
+    fs::write(&second, "fn second() {}\n").expect("write second workspace file");
+
+    let mut app = App::new();
+    let id = app.create_editor("", default_viewport(), ffi::Position { row: 0, col: 0 });
+    assert!(app.seed_editor_context_path(id, workspace.file_path().to_string_lossy().as_ref()));
+
+    assert!(app.execute_command_named(id, "file_picker"));
+    let mut first_ready = false;
+    for _ in 0..80 {
+      let snapshot = app.file_picker_snapshot(id, 64);
+      if snapshot.active() && snapshot.matched_count() >= 2 {
+        first_ready = true;
+        break;
+      }
+      let _ = app.poll_background(id);
+      thread::sleep(Duration::from_millis(5));
+    }
+    assert!(first_ready, "first file picker session never populated");
+
+    assert!(app.file_picker_set_query(id, "first_unique_picker_target"));
+    let first_snapshot = app.file_picker_snapshot(id, 16);
+    assert!(first_snapshot.active());
+    assert_eq!(first_snapshot.matched_count(), 1);
+    assert_eq!(
+      first_snapshot.item_at(0).display(),
+      "first_unique_picker_target.rs"
+    );
+    assert!(app.file_picker_submit(id, 0));
+    assert_eq!(
+      app.active_file_path(id),
+      crate::normalize_path_for_open(workspace.file_path())
+        .to_string_lossy()
+        .into_owned()
+    );
+
+    assert!(app.execute_command_named(id, "file_picker"));
+    let mut second_ready = false;
+    for _ in 0..80 {
+      let snapshot = app.file_picker_snapshot(id, 64);
+      if snapshot.active() && snapshot.matched_count() >= 2 {
+        second_ready = true;
+        break;
+      }
+      let _ = app.poll_background(id);
+      thread::sleep(Duration::from_millis(5));
+    }
+    assert!(second_ready, "second file picker session never populated");
+
+    assert!(app.file_picker_set_query(id, "second_unique_picker_target"));
+    let second_snapshot = app.file_picker_snapshot(id, 16);
+    assert!(second_snapshot.active());
+    assert_eq!(second_snapshot.matched_count(), 1);
+    assert_eq!(
+      second_snapshot.item_at(0).display(),
+      "second_unique_picker_target.rs"
+    );
+    assert!(app.file_picker_submit(id, 0));
+    assert_eq!(
+      app.active_file_path(id),
+      crate::normalize_path_for_open(&second)
+        .to_string_lossy()
+        .into_owned()
+    );
+  }
+
+  #[test]
+  fn file_picker_submit_item_opens_the_clicked_file() {
+    let _guard = ffi_test_guard();
+    let workspace = TempTestWorkspace::new(
+      "file-picker-submit-item",
+      "cargo.toml",
+      "[package]\nname = \"demo\"\n",
+    );
+    let second = workspace.root_path().join("font_bug.md");
+    fs::write(&second, "# font bug\n").expect("write second workspace file");
+
+    let mut app = App::new();
+    let id = app.create_editor("", default_viewport(), ffi::Position { row: 0, col: 0 });
+    assert!(app.seed_editor_context_path(id, workspace.file_path().to_string_lossy().as_ref()));
+    assert!(app.execute_command_named(id, "file_picker"));
+
+    let mut ready = false;
+    for _ in 0..80 {
+      let snapshot = app.file_picker_snapshot(id, 64);
+      if snapshot.active() && snapshot.matched_count() >= 2 {
+        ready = true;
+        break;
+      }
+      let _ = app.poll_background(id);
+      thread::sleep(Duration::from_millis(5));
+    }
+    assert!(ready, "file picker session never populated");
+
+    let snapshot = app.file_picker_snapshot(id, 16);
+    assert!(snapshot.active());
+    assert!(snapshot.item_count() >= 2);
+    let first = snapshot.item_at(0);
+    let second_item = snapshot.item_at(1);
+    assert_eq!(first.display(), "cargo.toml");
+    assert_eq!(second_item.display(), "font_bug.md");
+    assert_ne!(second_item.item_id(), 0);
+
+    assert!(app.file_picker_submit_item(id, second_item.item_id()));
+    assert_eq!(
+      app.active_file_path(id),
+      crate::normalize_path_for_open(&second)
+        .to_string_lossy()
+        .into_owned()
+    );
   }
 
   #[test]

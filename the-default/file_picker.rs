@@ -3,10 +3,15 @@ use std::{
   cell::RefCell,
   cmp::Reverse,
   collections::{
+    hash_map::DefaultHasher,
     HashMap,
     VecDeque,
   },
   fs,
+  hash::{
+    Hash,
+    Hasher,
+  },
   io::Read,
   ops::Range,
   path::{
@@ -149,11 +154,75 @@ impl FilePickerItemAction {
   fn is_selectable(&self) -> bool {
     !matches!(self, Self::GroupHeader { .. })
   }
+
+  fn stable_id(&self) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    match self {
+      Self::OpenFile(path) => {
+        0_u8.hash(&mut hasher);
+        path.hash(&mut hasher);
+      },
+      Self::GroupHeader { path } => {
+        1_u8.hash(&mut hasher);
+        path.hash(&mut hasher);
+      },
+      Self::SwitchBuffer { buffer_index } => {
+        2_u8.hash(&mut hasher);
+        buffer_index.hash(&mut hasher);
+      },
+      Self::RestoreJump {
+        buffer_index,
+        selection,
+        active_cursor,
+      } => {
+        3_u8.hash(&mut hasher);
+        buffer_index.hash(&mut hasher);
+        for range in selection.ranges() {
+          range.anchor.hash(&mut hasher);
+          range.head.hash(&mut hasher);
+          range.old_visual_pos.hash(&mut hasher);
+        }
+        for cursor_id in selection.cursor_ids() {
+          cursor_id.hash(&mut hasher);
+        }
+        active_cursor.map(CursorId::get).hash(&mut hasher);
+      },
+      Self::OpenLocation {
+        path,
+        cursor_char,
+        line,
+        column,
+      } => {
+        4_u8.hash(&mut hasher);
+        path.hash(&mut hasher);
+        cursor_char.hash(&mut hasher);
+        line.hash(&mut hasher);
+        column.hash(&mut hasher);
+      },
+    }
+    let id = hasher.finish();
+    if id == 0 { 1 } else { id }
+  }
 }
 
 impl FilePickerItem {
   fn is_selectable(&self) -> bool {
     self.action.is_selectable()
+  }
+
+  pub fn stable_id(&self) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    self.action.stable_id().hash(&mut hasher);
+    self.absolute.hash(&mut hasher);
+    self.display.hash(&mut hasher);
+    self.icon.hash(&mut hasher);
+    self.is_dir.hash(&mut hasher);
+    self.display_path.hash(&mut hasher);
+    self.preview_path.hash(&mut hasher);
+    self.preview_line.hash(&mut hasher);
+    self.preview_col.hash(&mut hasher);
+    let id = hasher.finish();
+    if id == 0 { 1 } else { id }
   }
 }
 
@@ -567,6 +636,24 @@ impl FilePickerState {
     });
 
     Some(item.data.clone())
+  }
+
+  pub fn matched_item_stable_id(&self, matched_index: usize) -> Option<u64> {
+    self.matched_item(matched_index).map(|item| item.stable_id())
+  }
+
+  pub fn selected_item_stable_id(&self) -> Option<u64> {
+    self.selected.and_then(|matched_index| self.matched_item_stable_id(matched_index))
+  }
+
+  pub fn matched_index_for_stable_id(&self, stable_id: u64) -> Option<usize> {
+    let snapshot = self.matcher.snapshot();
+    let matched_count = snapshot.matched_item_count() as usize;
+    (0..matched_count).find(|&matched_index| {
+      snapshot
+        .get_matched_item(matched_index as u32)
+        .is_some_and(|item| item.data.stable_id() == stable_id)
+    })
   }
 
   pub fn matched_count(&self) -> usize {
@@ -2510,6 +2597,7 @@ fn excluded_types() -> ignore::types::Types {
 }
 
 pub fn poll_scan_results(state: &mut FilePickerState) -> bool {
+  let selected_item_stable_id = state.selected_item_stable_id();
   let mut changed = false;
   for _ in 0..64 {
     let scan_result = match state.scan_rx.as_ref() {
@@ -2560,6 +2648,7 @@ pub fn poll_scan_results(state: &mut FilePickerState) -> bool {
   }
 
   if refresh_matcher_state(state) {
+    let _ = restore_selection_by_stable_id(state, selected_item_stable_id);
     refresh_preview(state);
     changed = true;
   }
@@ -2770,6 +2859,21 @@ fn normalize_selection_and_scroll(state: &mut FilePickerState) {
   if state.list_offset > max_offset {
     state.list_offset = max_offset;
   }
+}
+
+fn restore_selection_by_stable_id(state: &mut FilePickerState, stable_id: Option<u64>) -> bool {
+  let Some(stable_id) = stable_id else {
+    return false;
+  };
+  let Some(next_selected) = state.matched_index_for_stable_id(stable_id) else {
+    return false;
+  };
+  if state.selected == Some(next_selected) {
+    return false;
+  }
+  state.selected = Some(next_selected);
+  normalize_selection_and_scroll(state);
+  true
 }
 
 fn clamp_selection_and_offsets(state: &mut FilePickerState) -> bool {
@@ -3881,6 +3985,48 @@ mod tests {
     assert!(first_changed);
     assert!(!second_changed);
     assert_eq!(state.selected, None);
+  }
+
+  #[test]
+  fn restore_selection_by_stable_id_keeps_same_item_after_reorder() {
+    let mut state = FilePickerState::default();
+    let injector = state.matcher.injector();
+    inject_item(&injector, sample_item("cargo.toml"));
+    inject_item(&injector, sample_item("font_bug.md"));
+    drop(injector);
+
+    state
+      .matcher
+      .pattern
+      .reparse(0, "", CaseMatching::Smart, Normalization::Smart, false);
+    let _ = refresh_matcher_state(&mut state);
+
+    state.selected = Some(1);
+    let stable_id = state.selected_item_stable_id().expect("selected item should have an id");
+
+    state.matcher.restart(true);
+    state
+      .matcher
+      .pattern
+      .reparse(0, "", CaseMatching::Smart, Normalization::Smart, false);
+    let injector = state.matcher.injector();
+    inject_item(&injector, sample_item("font_bug.md"));
+    inject_item(&injector, sample_item("cargo.toml"));
+    drop(injector);
+
+    let _ = refresh_matcher_state(&mut state);
+    assert_eq!(state.selected, Some(1));
+    assert_eq!(
+      state.current_item().map(|item| item.display.clone()),
+      Some("cargo.toml".to_string())
+    );
+
+    assert!(restore_selection_by_stable_id(&mut state, Some(stable_id)));
+    assert_eq!(state.selected, Some(0));
+    assert_eq!(
+      state.current_item().map(|item| item.display.clone()),
+      Some("font_bug.md".to_string())
+    );
   }
 
   #[test]

@@ -108,7 +108,8 @@ struct UiOverlayHost: View {
     let onSearchClose: () -> Void
     let onSearchSubmit: () -> Void
     let onFilePickerQueryChange: (String) -> Void
-    let onFilePickerSubmit: (Int) -> Void
+    let onFilePickerSubmit: (UInt64?, Int) -> Void
+    let onFilePickerSubmitSelection: () -> Void
     let onFilePickerClose: () -> Void
     let onFilePickerSelectionChange: ((Int) -> Void)?
     let onFilePickerMoveSelection: ((Int) -> Void)?
@@ -174,6 +175,7 @@ struct UiOverlayHost: View {
                         previewModel: filePickerPreviewModel,
                         onQueryChange: onFilePickerQueryChange,
                         onSubmit: onFilePickerSubmit,
+                        onSubmitSelection: onFilePickerSubmitSelection,
                         onClose: onFilePickerClose,
                         onSelectionChange: onFilePickerSelectionChange,
                         onMoveSelectionRequest: onFilePickerMoveSelection,

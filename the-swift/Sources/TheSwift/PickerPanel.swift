@@ -263,6 +263,7 @@ struct PickerPanel<
     // Callbacks
     let onQueryChange: (String) -> Void
     let onSubmit: (Int?) -> Void
+    var onSubmitSelection: (() -> Void)? = nil
     let onClose: () -> Void
     let onSelectionChange: ((Int) -> Void)?
 
@@ -308,6 +309,7 @@ struct PickerPanel<
                             moveSelection(delta)
                         }
                     },
+                    onSubmitSelection: submitDisplayedSelection,
                     onClose: showCtrlCClose ? { onClose() } : nil,
                     onTextInput: { chars in
                         query.append(chars)
@@ -444,7 +446,7 @@ struct PickerPanel<
                 .textFieldStyle(.plain)
                 .focused($isTextFieldFocused)
                 .onSubmit {
-                    onSubmit(displayedSelectedIndex)
+                    submitDisplayedSelection()
                 }
                 .onExitCommand {
                     onClose()
@@ -611,11 +613,13 @@ struct PickerPanel<
 
         if selectable {
             Button {
-                if !usesExternalSelection {
+                if usesExternalSelection {
+                    onSubmit(index)
+                } else {
                     selectedIndex = index
+                    onSelectionChange?(index)
+                    onSubmit(index)
                 }
-                onSelectionChange?(index)
-                onSubmit(index)
             } label: {
                 rowVisual
             }
@@ -784,6 +788,14 @@ struct PickerPanel<
             mode: .setTop
         )
         lastProgrammaticScrollIndex = nil
+    }
+
+    private func submitDisplayedSelection() {
+        if let onSubmitSelection {
+            onSubmitSelection()
+            return
+        }
+        onSubmit(displayedSelectedIndex)
     }
 
     // MARK: - Selection logic
@@ -1008,6 +1020,7 @@ struct PickerPanel<
 /// stolen keyboard focus.
 private struct PickerKeyInterceptor: NSViewRepresentable {
     let onMoveSelection: (Int) -> Void
+    let onSubmitSelection: () -> Void
     let onClose: (() -> Void)?
     let onTextInput: ((String) -> Void)?
     let onBackspace: (() -> Void)?
@@ -1030,6 +1043,7 @@ private struct PickerKeyInterceptor: NSViewRepresentable {
     func updateNSView(_ nsView: NSView, context: Context) {
         let c = context.coordinator
         c.onMoveSelection = onMoveSelection
+        c.onSubmitSelection = onSubmitSelection
         c.onClose = onClose
         c.onTextInput = onTextInput
         c.onBackspace = onBackspace
@@ -1050,6 +1064,7 @@ private struct PickerKeyInterceptor: NSViewRepresentable {
     func makeCoordinator() -> Coordinator {
         Coordinator(
             onMoveSelection: onMoveSelection,
+            onSubmitSelection: onSubmitSelection,
             onClose: onClose,
             onTextInput: onTextInput,
             onBackspace: onBackspace,
@@ -1062,6 +1077,7 @@ private struct PickerKeyInterceptor: NSViewRepresentable {
 
     class Coordinator {
         var onMoveSelection: (Int) -> Void
+        var onSubmitSelection: () -> Void
         var onClose: (() -> Void)?
         var onTextInput: ((String) -> Void)?
         var onBackspace: (() -> Void)?
@@ -1074,6 +1090,7 @@ private struct PickerKeyInterceptor: NSViewRepresentable {
 
         init(
             onMoveSelection: @escaping (Int) -> Void,
+            onSubmitSelection: @escaping () -> Void,
             onClose: (() -> Void)?,
             onTextInput: ((String) -> Void)?,
             onBackspace: (() -> Void)?,
@@ -1083,6 +1100,7 @@ private struct PickerKeyInterceptor: NSViewRepresentable {
             showPageNavigation: Bool
         ) {
             self.onMoveSelection = onMoveSelection
+            self.onSubmitSelection = onSubmitSelection
             self.onClose = onClose
             self.onTextInput = onTextInput
             self.onBackspace = onBackspace
@@ -1111,6 +1129,12 @@ private struct PickerKeyInterceptor: NSViewRepresentable {
             // Down arrow (no modifiers)
             if keyCode == 125 && importantMods.isEmpty {
                 onMoveSelection(1)
+                return nil
+            }
+
+            // Return / Enter (no modifiers)
+            if (keyCode == 36 || keyCode == 76) && importantMods.isEmpty {
+                onSubmitSelection()
                 return nil
             }
 

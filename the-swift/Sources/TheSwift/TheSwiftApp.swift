@@ -38,7 +38,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
 }
 
-@main
 struct TheSwiftApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     static let editorWindowSceneId = "editor-window"
@@ -77,6 +76,12 @@ struct TheSwiftApp: App {
             return arg
         }
         return nil
+    }
+}
+
+public enum TheSwiftLauncher {
+    public static func run() {
+        TheSwiftApp.main()
     }
 }
 

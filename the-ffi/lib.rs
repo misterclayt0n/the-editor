@@ -295,6 +295,7 @@ use the_lsp::{
   document_highlight_params,
   document_symbols_params,
   execute_command_params,
+  formatting_params,
   goto_declaration_params,
   goto_definition_params,
   goto_implementation_params,
@@ -307,6 +308,7 @@ use the_lsp::{
   parse_completion_response_with_raw,
   parse_document_highlights_response,
   parse_document_symbols_response,
+  parse_formatting_response,
   parse_hover_details_response,
   parse_locations_response,
   parse_signature_help_response,
@@ -1835,6 +1837,9 @@ enum PendingLspRequestKind {
   Rename {
     uri: String,
   },
+  Format {
+    uri: String,
+  },
 }
 
 impl PendingLspRequestKind {
@@ -1854,6 +1859,7 @@ impl PendingLspRequestKind {
       Self::CodeActions { .. } => "code-actions",
       Self::CodeActionResolve { .. } => "code-action-resolve",
       Self::Rename { .. } => "rename",
+      Self::Format { .. } => "format",
     }
   }
 
@@ -1873,6 +1879,7 @@ impl PendingLspRequestKind {
       Self::CodeActions { uri } => Some(uri.as_str()),
       Self::CodeActionResolve { uri, .. } => Some(uri.as_str()),
       Self::Rename { uri } => Some(uri.as_str()),
+      Self::Format { uri } => Some(uri.as_str()),
     }
   }
 
@@ -1892,6 +1899,7 @@ impl PendingLspRequestKind {
       Self::CodeActions { uri } => ("code-actions", Some(uri)),
       Self::CodeActionResolve { uri, .. } => ("code-action-resolve", Some(uri)),
       Self::Rename { uri } => ("rename", Some(uri)),
+      Self::Format { uri } => ("format", Some(uri)),
     }
   }
 }
@@ -9102,6 +9110,7 @@ impl App {
         self.handle_code_action_resolve_response(action, response.result.as_ref())
       },
       PendingLspRequestKind::Rename { .. } => self.handle_rename_response(response.result.as_ref()),
+      PendingLspRequestKind::Format { .. } => self.handle_format_response(response.result.as_ref()),
     }
   }
 
@@ -9126,6 +9135,44 @@ impl App {
     };
 
     self.apply_workspace_edit(&workspace_edit, "rename")
+  }
+
+  fn handle_format_response(&mut self, result: Option<&Value>) -> bool {
+    let edits = match parse_formatting_response(result) {
+      Ok(edits) => edits,
+      Err(err) => {
+        self.publish_lsp_message(
+          the_lib::messages::MessageLevel::Error,
+          format!("failed to parse formatting response: {err}"),
+        );
+        return true;
+      },
+    };
+
+    if edits.is_empty() {
+      self.publish_lsp_message(
+        the_lib::messages::MessageLevel::Info,
+        "already formatted",
+      );
+      return true;
+    }
+
+    let Some(uri) = self.current_lsp_uri() else {
+      self.publish_lsp_message(
+        the_lib::messages::MessageLevel::Warning,
+        "format unavailable: no active LSP document",
+      );
+      return true;
+    };
+
+    let workspace_edit = LspWorkspaceEdit {
+      documents: vec![the_lsp::LspDocumentEdit {
+        uri,
+        version: None,
+        edits,
+      }],
+    };
+    self.apply_workspace_edit(&workspace_edit, "format")
   }
 
   fn handle_completion_response(
@@ -14170,6 +14217,35 @@ impl DefaultContext for App {
     );
   }
 
+  fn lsp_format(&mut self) {
+    if !self.lsp_supports(LspCapability::Format) {
+      self.publish_lsp_message(
+        the_lib::messages::MessageLevel::Warning,
+        "format is not supported by the active server",
+      );
+      return;
+    }
+
+    let Some(uri) = self.current_lsp_uri() else {
+      self.publish_lsp_message(
+        the_lib::messages::MessageLevel::Warning,
+        "format unavailable: no active LSP document",
+      );
+      return;
+    };
+
+    let (tab_size, insert_spaces) = match self.active_editor_ref().document().indent_style() {
+      the_lib::indent::IndentStyle::Tabs => (4, false),
+      the_lib::indent::IndentStyle::Spaces(width) => (width as u32, true),
+    };
+
+    self.dispatch_lsp_request(
+      "textDocument/formatting",
+      formatting_params(&uri, tab_size, insert_spaces),
+      PendingLspRequestKind::Format { uri },
+    );
+  }
+
   fn lsp_hover(&mut self) {
     log_shared_lsp_debug("hover_begin", "entered");
     self.lsp_pending_mouse_hover = None;
@@ -17435,6 +17511,38 @@ pkgs.mkShell {
 
     let toggled = app.render_plan(id);
     assert_eq!(toggled.line_count(), no_wrap.line_count());
+  }
+
+  #[test]
+  fn format_command_reports_lsp_warning_when_no_server_is_available() {
+    let _guard = ffi_test_guard();
+    let mut app = App::new();
+    let id = app.create_editor("hello", default_viewport(), ffi::Position {
+      row: 0,
+      col: 0,
+    });
+    assert!(app.activate(id).is_some());
+
+    let before_seq = app.active_state_ref().messages.latest_seq();
+    let registry = app.command_registry_ref() as *const CommandRegistry<App>;
+    unsafe { (&*registry).execute(&mut app, "format", "", CommandEvent::Validate) }
+      .expect("format command");
+
+    let events = app.active_state_ref().messages.events_since(before_seq);
+    let warning = events
+      .iter()
+      .find_map(|event| {
+        match &event.kind {
+          MessageEventKind::Published { message } => {
+            (message.level == the_lib::messages::MessageLevel::Warning
+              && message.source.as_deref() == Some("lsp"))
+            .then_some(message.text.as_str())
+          },
+          _ => None,
+        }
+      })
+      .expect("format warning message");
+    assert_eq!(warning, "format is not supported by the active server");
   }
 
   #[test]

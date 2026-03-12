@@ -1,0 +1,48 @@
+{
+  "color-space-for-untagged-svg-colors" : "display-p3",
+  "fill" : {
+    "linear-gradient" : [
+      "display-p3:0.06500,0.06500,0.07000,1.00000",
+      "display-p3:0.00000,0.00000,0.00000,1.00000"
+    ]
+  },
+  "groups" : [
+    {
+      "blend-mode" : "normal",
+      "blur-material" : null,
+      "layers" : [
+        {
+          "blend-mode" : "normal",
+          "fill" : "automatic",
+          "hidden" : false,
+          "image-name" : "TheEditorWheel.png",
+          "name" : "TheEditorWheel",
+          "position" : {
+            "scale" : 0.92,
+            "translation-in-points" : [
+              0,
+              0
+            ]
+          }
+        }
+      ],
+      "lighting" : "individual",
+      "name" : "Wheel",
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.22
+      },
+      "specular" : false,
+      "translucency" : {
+        "enabled" : false,
+        "value" : 0.5
+      }
+    }
+  ],
+  "supported-platforms" : {
+    "circles" : [
+      "watchOS"
+    ],
+    "squares" : "shared"
+  }
+}

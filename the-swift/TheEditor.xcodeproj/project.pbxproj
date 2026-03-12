@@ -1,0 +1,778 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 70;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		A10000000000000000000101 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000011 /* main.swift */; };
+		A10000000000000000000102 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000017 /* Assets.xcassets */; };
+		A10000000000000000000110 /* TheEditor.icon in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000023 /* TheEditor.icon */; };
+		A10000000000000000000103 /* TheSwift.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A10000000000000000000019 /* TheSwift.framework */; };
+		A10000000000000000000104 /* TheSwift.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = A10000000000000000000019 /* TheSwift.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		A10000000000000000000105 /* TheEditorFFIBridge.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = A10000000000000000000018 /* TheEditorFFIBridge.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		A10000000000000000000106 /* GhosttyKit.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = A10000000000000000000021 /* GhosttyKit.xcframework */; };
+		A10000000000000000000107 /* TheEditorFFIBridge.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A10000000000000000000018 /* TheEditorFFIBridge.framework */; };
+		A10000000000000000000108 /* TheEditorFFI.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = A10000000000000000000020 /* TheEditorFFI.xcframework */; };
+		A10000000000000000000109 /* Carbon.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A10000000000000000000022 /* Carbon.framework */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		A10000000000000000000801 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A10000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A10000000000000000000303;
+			remoteInfo = TheSwiftAppCore;
+		};
+		A10000000000000000000803 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A10000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A10000000000000000000302;
+			remoteInfo = TheEditorFFIBridge;
+		};
+		A10000000000000000000805 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A10000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A10000000000000000000302;
+			remoteInfo = TheEditorFFIBridge;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		A10000000000000000000204 /* Embed Frameworks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				A10000000000000000000104 /* TheSwift.framework in Embed Frameworks */,
+				A10000000000000000000105 /* TheEditorFFIBridge.framework in Embed Frameworks */,
+			);
+			name = "Embed Frameworks";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		A10000000000000000000010 /* The Editor.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "The Editor.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		A10000000000000000000011 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
+		A10000000000000000000012 /* TheEditor-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = TheEditor-Info.plist; sourceTree = "<group>"; };
+		A10000000000000000000013 /* TheEditor.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = TheEditor.entitlements; sourceTree = "<group>"; };
+		A10000000000000000000014 /* TheEditorDebug.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = TheEditorDebug.entitlements; sourceTree = "<group>"; };
+		A10000000000000000000015 /* TheEditorReleaseLocal.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = TheEditorReleaseLocal.entitlements; sourceTree = "<group>"; };
+		A10000000000000000000017 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		A10000000000000000000018 /* TheEditorFFIBridge.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = TheEditorFFIBridge.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+		A10000000000000000000019 /* TheSwift.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = TheSwift.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+		A10000000000000000000020 /* TheEditorFFI.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = TheEditorFFI.xcframework; sourceTree = "<group>"; };
+		A10000000000000000000021 /* GhosttyKit.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = GhosttyKit.xcframework; sourceTree = "<group>"; };
+		A10000000000000000000022 /* Carbon.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Carbon.framework; path = System/Library/Frameworks/Carbon.framework; sourceTree = SDKROOT; };
+		A10000000000000000000023 /* TheEditor.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = TheEditor.icon; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		A10000000000000000000007 /* TheSwift Sources */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = TheSwift; sourceTree = "<group>"; };
+		A10000000000000000000008 /* TheEditorFFIBridge Sources */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = TheEditorFFIBridge; sourceTree = "<group>"; };
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		A10000000000000000000202 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000000000000000000103 /* TheSwift.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A10000000000000000000206 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000000000000000000108 /* TheEditorFFI.xcframework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A10000000000000000000209 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000000000000000000107 /* TheEditorFFIBridge.framework in Frameworks */,
+				A10000000000000000000106 /* GhosttyKit.xcframework in Frameworks */,
+				A10000000000000000000109 /* Carbon.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		A10000000000000000000002 = {
+			isa = PBXGroup;
+			children = (
+				A10000000000000000000004 /* App */,
+				A10000000000000000000005 /* Sources */,
+				A10000000000000000000006 /* Frameworks */,
+				A10000000000000000000003 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		A10000000000000000000003 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A10000000000000000000010 /* The Editor.app */,
+				A10000000000000000000019 /* TheSwift.framework */,
+				A10000000000000000000018 /* TheEditorFFIBridge.framework */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		A10000000000000000000004 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				A10000000000000000000011 /* main.swift */,
+				A10000000000000000000012 /* TheEditor-Info.plist */,
+				A10000000000000000000013 /* TheEditor.entitlements */,
+				A10000000000000000000014 /* TheEditorDebug.entitlements */,
+				A10000000000000000000015 /* TheEditorReleaseLocal.entitlements */,
+				A10000000000000000000017 /* Assets.xcassets */,
+				A10000000000000000000023 /* TheEditor.icon */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		A10000000000000000000005 /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				A10000000000000000000007 /* TheSwift Sources */,
+				A10000000000000000000008 /* TheEditorFFIBridge Sources */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+		A10000000000000000000006 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				A10000000000000000000020 /* TheEditorFFI.xcframework */,
+				A10000000000000000000021 /* GhosttyKit.xcframework */,
+				A10000000000000000000022 /* Carbon.framework */,
+			);
+			path = Frameworks;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		A10000000000000000000301 /* TheEditor */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A10000000000000000000502 /* Build configuration list for PBXNativeTarget "TheEditor" */;
+			buildPhases = (
+				A10000000000000000000201 /* Sources */,
+				A10000000000000000000202 /* Frameworks */,
+				A10000000000000000000203 /* Resources */,
+				A10000000000000000000204 /* Embed Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				A10000000000000000000802 /* PBXTargetDependency */,
+				A10000000000000000000804 /* PBXTargetDependency */,
+			);
+			name = TheEditor;
+			productName = TheEditor;
+			productReference = A10000000000000000000010 /* The Editor.app */;
+			productType = "com.apple.product-type.application";
+		};
+		A10000000000000000000302 /* TheEditorFFIBridge */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A10000000000000000000503 /* Build configuration list for PBXNativeTarget "TheEditorFFIBridge" */;
+			buildPhases = (
+				A10000000000000000000205 /* Sources */,
+				A10000000000000000000206 /* Frameworks */,
+				A10000000000000000000207 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				A10000000000000000000008 /* TheEditorFFIBridge Sources */,
+			);
+			name = TheEditorFFIBridge;
+			productName = TheEditorFFIBridge;
+			productReference = A10000000000000000000018 /* TheEditorFFIBridge.framework */;
+			productType = "com.apple.product-type.framework";
+		};
+		A10000000000000000000303 /* TheSwiftAppCore */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A10000000000000000000504 /* Build configuration list for PBXNativeTarget "TheSwiftAppCore" */;
+			buildPhases = (
+				A10000000000000000000208 /* Sources */,
+				A10000000000000000000209 /* Frameworks */,
+				A10000000000000000000210 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				A10000000000000000000806 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				A10000000000000000000007 /* TheSwift Sources */,
+			);
+			name = TheSwiftAppCore;
+			productName = TheSwiftAppCore;
+			productReference = A10000000000000000000019 /* TheSwift.framework */;
+			productType = "com.apple.product-type.framework";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A10000000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2600;
+				LastUpgradeCheck = 2600;
+				TargetAttributes = {
+					A10000000000000000000301 = {
+						CreatedOnToolsVersion = 26.0;
+					};
+					A10000000000000000000302 = {
+						CreatedOnToolsVersion = 26.0;
+					};
+					A10000000000000000000303 = {
+						CreatedOnToolsVersion = 26.0;
+					};
+				};
+			};
+			buildConfigurationList = A10000000000000000000501 /* Build configuration list for PBXProject "TheEditor" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = A10000000000000000000002;
+			productRefGroup = A10000000000000000000003 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				A10000000000000000000301 /* TheEditor */,
+				A10000000000000000000302 /* TheEditorFFIBridge */,
+				A10000000000000000000303 /* TheSwiftAppCore */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		A10000000000000000000203 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000000000000000000102 /* Assets.xcassets in Resources */,
+				A10000000000000000000110 /* TheEditor.icon in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A10000000000000000000207 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A10000000000000000000210 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		A10000000000000000000201 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000000000000000000101 /* main.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A10000000000000000000205 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A10000000000000000000208 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		A10000000000000000000802 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A10000000000000000000303 /* TheSwiftAppCore */;
+			targetProxy = A10000000000000000000801 /* PBXContainerItemProxy */;
+		};
+		A10000000000000000000804 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A10000000000000000000302 /* TheEditorFFIBridge */;
+			targetProxy = A10000000000000000000803 /* PBXContainerItemProxy */;
+		};
+		A10000000000000000000806 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A10000000000000000000302 /* TheEditorFFIBridge */;
+			targetProxy = A10000000000000000000805 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		A10000000000000000000401 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ENABLE_MODULES = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		A10000000000000000000402 /* ReleaseLocal */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ENABLE_MODULES = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_NO_COMMON_BLOCKS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+			};
+			name = ReleaseLocal;
+		};
+		A10000000000000000000403 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ENABLE_MODULES = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_NO_COMMON_BLOCKS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+			};
+			name = Release;
+		};
+		A10000000000000000000404 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
+				ASSETCATALOG_COMPILER_APPICON_NAME = TheEditor;
+				CODE_SIGN_ENTITLEMENTS = App/TheEditorDebug.entitlements;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_HARDENED_RUNTIME = YES;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(BUILD_DIR)/FrameworkProducts/$(CONFIGURATION)/TheSwiftAppCore",
+					"$(BUILD_DIR)/FrameworkProducts/$(CONFIGURATION)/TheEditorFFIBridge",
+				);
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = App/TheEditor-Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				MARKETING_VERSION = 0.1.0;
+				EXECUTABLE_NAME = TheEditor;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.theeditor.app.debug;
+				PRODUCT_NAME = "The Editor";
+				SWIFT_INCLUDE_PATHS = (
+					"$(inherited)",
+					"$(BUILD_DIR)/FrameworkProducts/$(CONFIGURATION)/TheEditorFFIBridge/include",
+					"$(BUILD_DIR)/FrameworkProducts/$(CONFIGURATION)/TheSwiftAppCore/include",
+				);
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.9;
+			};
+			name = Debug;
+		};
+		A10000000000000000000405 /* ReleaseLocal */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
+				ASSETCATALOG_COMPILER_APPICON_NAME = TheEditor;
+				CODE_SIGN_ENTITLEMENTS = App/TheEditorReleaseLocal.entitlements;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_HARDENED_RUNTIME = YES;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(BUILD_DIR)/FrameworkProducts/$(CONFIGURATION)/TheSwiftAppCore",
+					"$(BUILD_DIR)/FrameworkProducts/$(CONFIGURATION)/TheEditorFFIBridge",
+				);
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = App/TheEditor-Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				MARKETING_VERSION = 0.1.0;
+				EXECUTABLE_NAME = TheEditor;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.theeditor.app.local;
+				PRODUCT_NAME = "The Editor";
+				SWIFT_INCLUDE_PATHS = (
+					"$(inherited)",
+					"$(BUILD_DIR)/FrameworkProducts/$(CONFIGURATION)/TheEditorFFIBridge/include",
+					"$(BUILD_DIR)/FrameworkProducts/$(CONFIGURATION)/TheSwiftAppCore/include",
+				);
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.9;
+			};
+			name = ReleaseLocal;
+		};
+		A10000000000000000000406 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
+				ASSETCATALOG_COMPILER_APPICON_NAME = TheEditor;
+				CODE_SIGN_ENTITLEMENTS = App/TheEditor.entitlements;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_HARDENED_RUNTIME = YES;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(BUILD_DIR)/FrameworkProducts/$(CONFIGURATION)/TheSwiftAppCore",
+					"$(BUILD_DIR)/FrameworkProducts/$(CONFIGURATION)/TheEditorFFIBridge",
+				);
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = App/TheEditor-Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				MARKETING_VERSION = 0.1.0;
+				EXECUTABLE_NAME = TheEditor;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.theeditor.app;
+				PRODUCT_NAME = "The Editor";
+				SWIFT_INCLUDE_PATHS = (
+					"$(inherited)",
+					"$(BUILD_DIR)/FrameworkProducts/$(CONFIGURATION)/TheEditorFFIBridge/include",
+					"$(BUILD_DIR)/FrameworkProducts/$(CONFIGURATION)/TheSwiftAppCore/include",
+				);
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.9;
+			};
+			name = Release;
+		};
+		A10000000000000000000407 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
+				CODE_SIGN_STYLE = Automatic;
+				CONFIGURATION_BUILD_DIR = "$(BUILD_DIR)/FrameworkProducts/$(CONFIGURATION)/TheEditorFFIBridge";
+				CURRENT_PROJECT_VERSION = 1;
+				DEFINES_MODULE = YES;
+				DYLIB_INSTALL_NAME_BASE = "@rpath";
+				GENERATE_INFOPLIST_FILE = YES;
+				INSTALL_PATH = "$(LOCAL_LIBRARY_DIR)/Frameworks";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@loader_path/../Frameworks",
+					"@rpath",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				MARKETING_VERSION = 0.1.0;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-liconv",
+					"-lz",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.theeditor.framework.bridge;
+				PRODUCT_MODULE_NAME = TheEditorFFIBridge;
+				PRODUCT_NAME = TheEditorFFIBridge;
+				SKIP_INSTALL = YES;
+				SWIFT_INCLUDE_PATHS = (
+					"$(inherited)",
+					"$(CONFIGURATION_BUILD_DIR)/include",
+				);
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.9;
+			};
+			name = Debug;
+		};
+		A10000000000000000000408 /* ReleaseLocal */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
+				CODE_SIGN_STYLE = Automatic;
+				CONFIGURATION_BUILD_DIR = "$(BUILD_DIR)/FrameworkProducts/$(CONFIGURATION)/TheEditorFFIBridge";
+				CURRENT_PROJECT_VERSION = 1;
+				DEFINES_MODULE = YES;
+				DYLIB_INSTALL_NAME_BASE = "@rpath";
+				GENERATE_INFOPLIST_FILE = YES;
+				INSTALL_PATH = "$(LOCAL_LIBRARY_DIR)/Frameworks";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@loader_path/../Frameworks",
+					"@rpath",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				MARKETING_VERSION = 0.1.0;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-liconv",
+					"-lz",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.theeditor.framework.bridge;
+				PRODUCT_MODULE_NAME = TheEditorFFIBridge;
+				PRODUCT_NAME = TheEditorFFIBridge;
+				SKIP_INSTALL = YES;
+				SWIFT_INCLUDE_PATHS = (
+					"$(inherited)",
+					"$(CONFIGURATION_BUILD_DIR)/include",
+				);
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.9;
+			};
+			name = ReleaseLocal;
+		};
+		A10000000000000000000409 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
+				CODE_SIGN_STYLE = Automatic;
+				CONFIGURATION_BUILD_DIR = "$(BUILD_DIR)/FrameworkProducts/$(CONFIGURATION)/TheEditorFFIBridge";
+				CURRENT_PROJECT_VERSION = 1;
+				DEFINES_MODULE = YES;
+				DYLIB_INSTALL_NAME_BASE = "@rpath";
+				GENERATE_INFOPLIST_FILE = YES;
+				INSTALL_PATH = "$(LOCAL_LIBRARY_DIR)/Frameworks";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@loader_path/../Frameworks",
+					"@rpath",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				MARKETING_VERSION = 0.1.0;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-liconv",
+					"-lz",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.theeditor.framework.bridge;
+				PRODUCT_MODULE_NAME = TheEditorFFIBridge;
+				PRODUCT_NAME = TheEditorFFIBridge;
+				SKIP_INSTALL = YES;
+				SWIFT_INCLUDE_PATHS = (
+					"$(inherited)",
+					"$(CONFIGURATION_BUILD_DIR)/include",
+				);
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.9;
+			};
+			name = Release;
+		};
+		A10000000000000000000410 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
+				CODE_SIGN_STYLE = Automatic;
+				CONFIGURATION_BUILD_DIR = "$(BUILD_DIR)/FrameworkProducts/$(CONFIGURATION)/TheSwiftAppCore";
+				CURRENT_PROJECT_VERSION = 1;
+				DEFINES_MODULE = YES;
+				DYLIB_INSTALL_NAME_BASE = "@rpath";
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(BUILD_DIR)/FrameworkProducts/$(CONFIGURATION)/TheEditorFFIBridge",
+				);
+				GENERATE_INFOPLIST_FILE = YES;
+				INSTALL_PATH = "$(LOCAL_LIBRARY_DIR)/Frameworks";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@loader_path/../Frameworks",
+					"@rpath",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				MARKETING_VERSION = 0.1.0;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-lc++",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.theeditor.framework.appcore;
+				PRODUCT_MODULE_NAME = TheSwift;
+				PRODUCT_NAME = TheSwift;
+				SKIP_INSTALL = YES;
+				SWIFT_INCLUDE_PATHS = (
+					"$(inherited)",
+					"$(BUILD_DIR)/FrameworkProducts/$(CONFIGURATION)/TheEditorFFIBridge/include",
+				);
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.9;
+			};
+			name = Debug;
+		};
+		A10000000000000000000411 /* ReleaseLocal */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
+				CODE_SIGN_STYLE = Automatic;
+				CONFIGURATION_BUILD_DIR = "$(BUILD_DIR)/FrameworkProducts/$(CONFIGURATION)/TheSwiftAppCore";
+				CURRENT_PROJECT_VERSION = 1;
+				DEFINES_MODULE = YES;
+				DYLIB_INSTALL_NAME_BASE = "@rpath";
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(BUILD_DIR)/FrameworkProducts/$(CONFIGURATION)/TheEditorFFIBridge",
+				);
+				GENERATE_INFOPLIST_FILE = YES;
+				INSTALL_PATH = "$(LOCAL_LIBRARY_DIR)/Frameworks";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@loader_path/../Frameworks",
+					"@rpath",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				MARKETING_VERSION = 0.1.0;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-lc++",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.theeditor.framework.appcore;
+				PRODUCT_MODULE_NAME = TheSwift;
+				PRODUCT_NAME = TheSwift;
+				SKIP_INSTALL = YES;
+				SWIFT_INCLUDE_PATHS = (
+					"$(inherited)",
+					"$(BUILD_DIR)/FrameworkProducts/$(CONFIGURATION)/TheEditorFFIBridge/include",
+				);
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.9;
+			};
+			name = ReleaseLocal;
+		};
+		A10000000000000000000412 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
+				CODE_SIGN_STYLE = Automatic;
+				CONFIGURATION_BUILD_DIR = "$(BUILD_DIR)/FrameworkProducts/$(CONFIGURATION)/TheSwiftAppCore";
+				CURRENT_PROJECT_VERSION = 1;
+				DEFINES_MODULE = YES;
+				DYLIB_INSTALL_NAME_BASE = "@rpath";
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(BUILD_DIR)/FrameworkProducts/$(CONFIGURATION)/TheEditorFFIBridge",
+				);
+				GENERATE_INFOPLIST_FILE = YES;
+				INSTALL_PATH = "$(LOCAL_LIBRARY_DIR)/Frameworks";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@loader_path/../Frameworks",
+					"@rpath",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				MARKETING_VERSION = 0.1.0;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-lc++",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.theeditor.framework.appcore;
+				PRODUCT_MODULE_NAME = TheSwift;
+				PRODUCT_NAME = TheSwift;
+				SKIP_INSTALL = YES;
+				SWIFT_INCLUDE_PATHS = (
+					"$(inherited)",
+					"$(BUILD_DIR)/FrameworkProducts/$(CONFIGURATION)/TheEditorFFIBridge/include",
+				);
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.9;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		A10000000000000000000501 /* Build configuration list for PBXProject "TheEditor" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A10000000000000000000401 /* Debug */,
+				A10000000000000000000402 /* ReleaseLocal */,
+				A10000000000000000000403 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A10000000000000000000502 /* Build configuration list for PBXNativeTarget "TheEditor" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A10000000000000000000404 /* Debug */,
+				A10000000000000000000405 /* ReleaseLocal */,
+				A10000000000000000000406 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A10000000000000000000503 /* Build configuration list for PBXNativeTarget "TheEditorFFIBridge" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A10000000000000000000407 /* Debug */,
+				A10000000000000000000408 /* ReleaseLocal */,
+				A10000000000000000000409 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A10000000000000000000504 /* Build configuration list for PBXNativeTarget "TheSwiftAppCore" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A10000000000000000000410 /* Debug */,
+				A10000000000000000000411 /* ReleaseLocal */,
+				A10000000000000000000412 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = A10000000000000000000001 /* Project object */;
+}

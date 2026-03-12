@@ -13,3 +13,4 @@ the-ffi/generated/
 
 the-swift/.build
 the-swift/Frameworks/
+dist/

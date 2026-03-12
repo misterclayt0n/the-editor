@@ -108,7 +108,7 @@ private final class SvgIconCache {
             append(URL(fileURLWithPath: explicitPath, isDirectory: true))
         }
 
-        if let resourceURL = Bundle.module.resourceURL {
+        if let resourceURL = TheSwiftResourceBundle.bundle.resourceURL {
             append(resourceURL.appendingPathComponent("icons", isDirectory: true))
             append(resourceURL)
             appendCandidates(from: resourceURL)

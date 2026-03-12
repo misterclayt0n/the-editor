@@ -4489,6 +4489,26 @@ fn lsp_self_save_suppress_window() -> Duration {
   Duration::from_millis(500)
 }
 
+fn lsp_server_configs_equal(lhs: Option<&LspServerConfig>, rhs: Option<&LspServerConfig>) -> bool {
+  match (lhs, rhs) {
+    (None, None) => true,
+    (Some(lhs), Some(rhs)) => {
+      lhs.name() == rhs.name()
+        && lhs.command() == rhs.command()
+        && lhs.args() == rhs.args()
+        && lhs.env() == rhs.env()
+        && lhs.initialize_options() == rhs.initialize_options()
+        && lhs.initialize_timeout() == rhs.initialize_timeout()
+    },
+    _ => false,
+  }
+}
+
+fn lsp_runtime_configs_equal(lhs: &LspRuntimeConfig, rhs: &LspRuntimeConfig) -> bool {
+  lhs.workspace_root() == rhs.workspace_root()
+    && lsp_server_configs_equal(lhs.server(), rhs.server())
+}
+
 fn shared_lsp_trace_enabled() -> bool {
   static ENABLED: OnceLock<bool> = OnceLock::new();
   *ENABLED.get_or_init(|| {
@@ -8283,6 +8303,84 @@ impl App {
     }
     let configured = config.server().is_some();
     (config, configured)
+  }
+
+  fn lsp_reconfigure_runtime_for_active_file(&mut self) {
+    let (config, configured) = self.lsp_runtime_config_for_active_file();
+    log_shared_lsp_debug(
+      "reconfigure_plan",
+      format!(
+        "configured={} server={} workspace={}",
+        configured,
+        config
+          .server()
+          .map(|server| server.name().to_string())
+          .unwrap_or_else(|| "<none>".to_string()),
+        config.workspace_root().display()
+      ),
+    );
+
+    if lsp_runtime_configs_equal(self.lsp_runtime.config(), &config) {
+      self.lsp_server_name = self
+        .lsp_runtime
+        .config()
+        .server()
+        .map(|server| server.name().to_string());
+      log_shared_lsp_debug(
+        "reconfigure_skip",
+        format!(
+          "reason=config_unchanged ready={} running={} opened={}",
+          self.lsp_ready,
+          self.lsp_runtime.is_running(),
+          self.lsp_document.as_ref().is_some_and(|doc| doc.opened)
+        ),
+      );
+      return;
+    }
+
+    let was_running = self.lsp_runtime.is_running();
+    self.lsp_ready = false;
+    self.lsp_spinner_index = 0;
+    self.diagnostics.clear();
+    self.lsp_active_progress_tokens.clear();
+    self.lsp_pending_requests.clear();
+    self.clear_hover_state();
+    self.clear_completion_state();
+    self.cancel_auto_completion();
+    self.clear_signature_help_state();
+    self.cancel_auto_signature_help();
+    if was_running {
+      let _ = self.lsp_runtime.shutdown();
+    }
+
+    self.lsp_runtime = LspRuntime::new(config);
+    self.lsp_server_name = self
+      .lsp_runtime
+      .config()
+      .server()
+      .map(|server| server.name().to_string());
+
+    if configured {
+      self.set_lsp_status(LspStatusPhase::Starting, Some("starting".into()));
+      if let Err(err) = self.lsp_runtime.start() {
+        self.set_lsp_status_error(&err.to_string());
+        self.publish_lsp_message(
+          the_lib::messages::MessageLevel::Error,
+          format!("failed to start lsp server: {err}"),
+        );
+      }
+    } else {
+      self.lsp_ready = false;
+      self.set_lsp_status(LspStatusPhase::Off, Some("unavailable".into()));
+    }
+  }
+
+  fn lsp_refresh_document_state_for_active_file(&mut self) {
+    let active_path = self.file_path().map(Path::to_path_buf);
+    self.lsp_document =
+      active_path.and_then(|path| build_lsp_document_state(&path, self.loader.as_deref()));
+    self.lsp_reconfigure_runtime_for_active_file();
+    self.lsp_sync_watched_file_state();
   }
 
   fn refresh_lsp_runtime_for_active_file(&mut self) {
@@ -12276,6 +12374,11 @@ impl App {
     }
     let previous = self.active_editor;
     let changed = self.active_editor != Some(id);
+    if changed {
+      self.lsp_close_current_document();
+      self.clear_hover_state();
+      self.clear_signature_help_state();
+    }
     let (workspace_root, working_directory) = previous
       .and_then(|editor_id| self.states.get(&editor_id))
       .map(|state| (state.workspace_root.clone(), state.working_directory.clone()))
@@ -12303,7 +12406,8 @@ impl App {
           self.shared_lsp_editor_state_summary(Some(id))
         ),
       );
-      self.refresh_lsp_runtime_for_active_file();
+      self.lsp_refresh_document_state_for_active_file();
+      self.lsp_open_current_document();
       let _ = self.refresh_vcs_diff_base_for_editor(id);
       let _ = self.sync_file_tree_watch_state();
     }
@@ -12344,6 +12448,7 @@ impl App {
         .editor(current)
         .and_then(|editor| editor.active_file_path().map(|path| path.to_path_buf()));
       <Self as DefaultContext>::set_file_path(self, active_path);
+      self.lsp_open_current_document();
       self.request_render();
       return true;
     }
@@ -13449,7 +13554,7 @@ impl DefaultContext for App {
       let _ = self.sync_file_tree_watch_state();
 
       self.refresh_editor_syntax(id);
-      self.refresh_lsp_runtime_for_active_file();
+      self.lsp_refresh_document_state_for_active_file();
       self.refresh_vcs_diff_base_for_editor(id);
     }
   }
@@ -13462,6 +13567,10 @@ impl DefaultContext for App {
     let Some(current) = self.active_editor else {
       return false;
     };
+    if self.active_editor_ref().active_buffer_index() == index {
+      self.request_render();
+      return true;
+    }
 
     self.lsp_close_current_document();
     let switched = {
@@ -13479,6 +13588,7 @@ impl DefaultContext for App {
       .editor(current)
       .and_then(|editor| editor.active_file_path().map(Path::to_path_buf));
     <Self as DefaultContext>::set_file_path(self, active_path);
+    self.lsp_open_current_document();
     self.request_render();
     true
   }
@@ -13504,6 +13614,7 @@ impl DefaultContext for App {
       .editor(current)
       .and_then(|editor| editor.active_file_path().map(Path::to_path_buf));
     <Self as DefaultContext>::set_file_path(self, active_path);
+    self.lsp_open_current_document();
     self.request_render();
     true
   }
@@ -13529,6 +13640,7 @@ impl DefaultContext for App {
       .editor(current)
       .and_then(|editor| editor.active_file_path().map(Path::to_path_buf));
     <Self as DefaultContext>::set_file_path(self, active_path);
+    self.lsp_open_current_document();
     self.request_render();
     true
   }
@@ -13556,6 +13668,7 @@ impl DefaultContext for App {
         .editor(current)
         .and_then(|editor| editor.active_file_path().map(Path::to_path_buf));
       <Self as DefaultContext>::set_file_path(self, active_path);
+      self.lsp_open_current_document();
     }
 
     self.request_render();
@@ -13585,6 +13698,7 @@ impl DefaultContext for App {
         .editor(current)
         .and_then(|editor| editor.active_file_path().map(Path::to_path_buf));
       <Self as DefaultContext>::set_file_path(self, active_path);
+      self.lsp_open_current_document();
     }
 
     self.request_render();
@@ -13824,6 +13938,7 @@ impl DefaultContext for App {
       }
     }
     DefaultContext::set_file_path(self, Some(normalized_path));
+    self.lsp_open_current_document();
     self.request_render();
     Ok(())
   }
@@ -19647,6 +19762,60 @@ pkgs.mkShell {
       app.lsp_document.as_ref().map(|state| state.path.as_path()),
       Some(workspace_b.file_path())
     );
+  }
+
+  #[test]
+  fn activate_buffer_same_workspace_keeps_existing_lsp_runtime() {
+    let _guard = ffi_test_guard();
+    let workspace = TempTestWorkspace::new("lsp-runtime-switch", "one.rs", "fn one() {}\n");
+    let second_path = workspace.root_path().join("two.rs");
+    fs::write(&second_path, "fn two() {}\n").expect("write second workspace file");
+
+    let mut app = App::new();
+    let id = app.create_editor("fn one() {}\n", default_viewport(), ffi::Position {
+      row: 0,
+      col: 0,
+    });
+    install_test_lsp_state(&mut app, id, workspace.file_path());
+    app.lsp_ready = true;
+    app.lsp_document.as_mut().expect("lsp document").opened = true;
+
+    let runtime_config = app.lsp_runtime.config().clone();
+    let server_name = app.lsp_server_name.clone();
+    let viewport = app.active_editor_ref().view().viewport;
+    let second_index = {
+      let editor = app.active_editor_mut();
+      let view = ViewState::new(viewport, LibPosition::new(0, 0));
+      editor.open_buffer_without_activation(
+        Rope::from_str("fn two() {}\n"),
+        view,
+        Some(second_path.clone()),
+      )
+    };
+    {
+      let editor = app.active_editor_mut();
+      let doc = editor
+        .buffer_document_mut(second_index)
+        .expect("second buffer document");
+      doc.set_display_name("two.rs".to_string());
+      let _ = doc.mark_saved();
+    }
+
+    assert!(<App as DefaultContext>::activate_buffer_by_index(
+      &mut app,
+      second_index
+    ));
+    assert!(app.lsp_ready);
+    assert_eq!(app.lsp_server_name, server_name);
+    assert!(crate::lsp_runtime_configs_equal(
+      app.lsp_runtime.config(),
+      &runtime_config
+    ));
+    assert_eq!(
+      app.lsp_document.as_ref().map(|state| state.path.as_path()),
+      Some(second_path.as_path())
+    );
+    assert_eq!(app.lsp_runtime.config().workspace_root(), workspace.root_path());
   }
 
   #[test]

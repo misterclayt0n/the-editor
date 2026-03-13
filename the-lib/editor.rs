@@ -1021,6 +1021,25 @@ impl Editor {
       .position(|buffer| buffer.file_path.as_deref() == Some(path))
   }
 
+  pub fn rename_file_path(&mut self, from: &Path, to: PathBuf) -> bool {
+    let mut changed = false;
+    let display_name = to
+      .file_name()
+      .map(|name| name.to_string_lossy().to_string())
+      .unwrap_or_else(|| to.display().to_string());
+
+    for buffer in &mut self.buffers {
+      if buffer.file_path.as_deref() != Some(from) {
+        continue;
+      }
+      buffer.file_path = Some(to.clone());
+      buffer.document.set_display_name(display_name.clone());
+      changed = true;
+    }
+
+    changed
+  }
+
   pub fn open_buffer(&mut self, text: Rope, view: ViewState, file_path: Option<PathBuf>) -> usize {
     let document_id = DocumentId::new(self.next_document_id);
     let next_doc = self.next_document_id.get().saturating_add(1);

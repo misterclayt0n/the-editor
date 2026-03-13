@@ -11,6 +11,7 @@ mod command_palette;
 mod command_registry;
 mod command_types;
 mod completion_menu;
+mod context_menu;
 mod file_picker;
 mod file_tree;
 mod global_search;
@@ -106,6 +107,16 @@ pub use completion_menu::{
   completion_prev,
   set_completion_docs_scroll,
   show_completion_menu,
+};
+pub use context_menu::{
+  ContextMenuActionId,
+  ContextMenuItem,
+  ContextMenuSection,
+  ContextMenuSnapshot,
+  EditorContextMenuOptions,
+  FileTreeContextMenuOptions,
+  build_editor_context_menu,
+  build_file_tree_context_menu,
 };
 pub use file_picker::{
   FilePickerChangedFileItem,
@@ -223,6 +234,7 @@ pub use search_prompt::{
   finalize_shell_pipe,
   finalize_shell_pipe_to,
   finalize_split_selection,
+  open_rename_symbol_prompt,
   update_keep_selections_preview,
   update_remove_selections_preview,
   update_search_preview,

@@ -142,6 +142,9 @@ struct EditorView: View {
                             },
                             onOpenSelected: {
                                 model.fileTreeOpenSelected()
+                            },
+                            onContextMenu: { path, window in
+                                model.fileTreeContextMenu(path: path, window: window)
                             }
                         )
                     case .surfaces:
@@ -902,6 +905,14 @@ struct EditorView: View {
                 cellSize: cellSize,
                 onSplitResize: { splitId, point in
                     model.resizeSplit(splitId: splitId, pixelPoint: point)
+                },
+                onContextMenu: { paneId, logicalCol, logicalRow, window in
+                    model.editorContextMenu(
+                        paneId: paneId,
+                        logicalCol: logicalCol,
+                        logicalRow: logicalRow,
+                        window: window
+                    )
                 }
             )
             .allowsHitTesting(true)

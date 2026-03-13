@@ -495,6 +495,15 @@ final class EditorModel: ObservableObject {
         refresh()
     }
 
+    private func reclaimKeyCapture(in window: NSWindow?) {
+        guard let window else {
+            return
+        }
+        DispatchQueue.main.async {
+            _ = KeyCaptureFocusBridge.shared.reclaim(in: window)
+        }
+    }
+
     func handleKeyEvent(_ keyEvent: KeyEvent) {
         if mode == .command {
             if sendUiKeyEvent(keyEvent) {
@@ -2079,6 +2088,151 @@ final class EditorModel: ObservableObject {
         refresh(trigger: "file_tree_open_selected")
     }
 
+    func workspaceRootPath() -> String? {
+        let path = app.workspace_root_path(editorId).toString()
+        return path.isEmpty ? nil : path
+    }
+
+    private func fileTreeContextMenuItems(path: String) -> [SharedContextMenuItemSnapshot] {
+        let data = app.file_tree_context_menu_snapshot(editorId, path)
+        return SecondaryClickMenuSupport.decodeSnapshot(data)
+    }
+
+    @discardableResult
+    private func executeFileTreeContextMenuAction(
+        path: String,
+        actionId: String,
+        input: String = ""
+    ) -> Bool {
+        guard app.file_tree_context_menu_execute(editorId, path, actionId, input) else {
+            return false
+        }
+        refresh(trigger: "file_tree_context_menu_action")
+        return true
+    }
+
+    func fileTreeContextMenu(path: String, window: NSWindow?) -> NSMenu? {
+        guard !path.isEmpty else {
+            return nil
+        }
+
+        let sharedItems = fileTreeContextMenuItems(path: path)
+        guard !sharedItems.isEmpty else {
+            return nil
+        }
+
+        var isDirectory = ObjCBool(false)
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) else {
+            return nil
+        }
+
+        let menu = NSMenu(title: "")
+        menu.autoenablesItems = false
+        let workspaceRoot = workspaceRootPath()
+
+        var insertedPrimaryLocalItems = false
+        let addPrimaryLocalItems: () -> Void = {
+            guard !insertedPrimaryLocalItems else {
+                return
+            }
+            insertedPrimaryLocalItems = true
+
+            if isDirectory.boolValue {
+                menu.addActionItem(title: "Reveal in Finder") {
+                    SecondaryClickMenuSupport.revealInFinder(path: path)
+                }
+                menu.addActionItem(title: "Open in Terminal Here") {
+                    SecondaryClickMenuSupport.openInTerminal(directoryPath: path)
+                }
+            } else {
+                menu.addActionItem(title: "Open in Default App") {
+                    SecondaryClickMenuSupport.openInDefaultApp(path: path)
+                }
+                menu.addActionItem(title: "Reveal in Finder") {
+                    SecondaryClickMenuSupport.revealInFinder(path: path)
+                }
+            }
+        }
+
+        for item in sharedItems {
+            if item.separatorBefore {
+                addPrimaryLocalItems()
+                SecondaryClickMenuSupport.addSeparatorIfNeeded(to: menu)
+            }
+
+            menu.addActionItem(
+                title: item.title,
+                enabled: item.enabled,
+                destructive: item.destructive
+            ) { [weak self] in
+                guard let self else { return }
+
+                let input: String?
+                switch item.id {
+                case "file_tree.new_file":
+                    input = SecondaryClickMenuSupport.promptForText(
+                        title: "New File",
+                        message: "Create a new file in the selected directory.",
+                        confirmTitle: "Create"
+                    )
+                case "file_tree.new_folder":
+                    input = SecondaryClickMenuSupport.promptForText(
+                        title: "New Folder",
+                        message: "Create a new folder in the selected directory.",
+                        confirmTitle: "Create"
+                    )
+                case "file_tree.rename":
+                    input = SecondaryClickMenuSupport.promptForText(
+                        title: "Rename",
+                        message: "Enter a new name.",
+                        confirmTitle: "Rename",
+                        initialValue: URL(fileURLWithPath: path).lastPathComponent
+                    )
+                default:
+                    input = ""
+                }
+
+                guard let input else { return }
+                if self.executeFileTreeContextMenuAction(
+                    path: path,
+                    actionId: item.id,
+                    input: input
+                ) {
+                    self.reclaimKeyCapture(in: window)
+                }
+            }
+        }
+
+        addPrimaryLocalItems()
+
+        SecondaryClickMenuSupport.addSeparatorIfNeeded(to: menu)
+        menu.addActionItem(title: "Copy Path") {
+            SecondaryClickMenuSupport.copyToPasteboard(path)
+        }
+        if let workspaceRoot,
+           let relativePath = SecondaryClickMenuSupport.relativePath(
+            targetPath: path,
+            rootPath: workspaceRoot
+           ) {
+            menu.addActionItem(title: "Copy Relative Path") {
+                SecondaryClickMenuSupport.copyToPasteboard(relativePath)
+            }
+        }
+
+        if workspaceRoot != path {
+            SecondaryClickMenuSupport.addSeparatorIfNeeded(to: menu)
+            menu.addActionItem(title: "Move to Trash", destructive: true) { [weak self] in
+                guard let self else { return }
+                guard SecondaryClickMenuSupport.moveToTrash(path: path) else {
+                    return
+                }
+                self.refresh(trigger: "file_tree_move_to_trash")
+            }
+        }
+
+        return menu.items.isEmpty ? nil : menu
+    }
+
     func refreshFileTree(force: Bool = false) {
         let data = app.file_tree_snapshot(editorId, 10_000)
         let visible = data.visible()
@@ -2134,6 +2288,185 @@ final class EditorModel: ObservableObject {
         lastFileTreeMode = mode
         lastFileTreeRoot = root
         lastFileTreeNodeCount = nodeCount
+    }
+
+    private func editorContextMenuItems(
+        paneId: UInt64,
+        logicalCol: UInt16,
+        logicalRow: UInt16
+    ) -> [SharedContextMenuItemSnapshot] {
+        let data = app.editor_context_menu_snapshot(
+            editorId,
+            paneId,
+            logicalCol,
+            logicalRow
+        )
+        return SecondaryClickMenuSupport.decodeSnapshot(data)
+    }
+
+    @discardableResult
+    private func executeEditorContextMenuAction(
+        paneId: UInt64,
+        logicalCol: UInt16,
+        logicalRow: UInt16,
+        actionId: String,
+        input: String = ""
+    ) -> Bool {
+        guard app.editor_context_menu_execute(
+            editorId,
+            paneId,
+            logicalCol,
+            logicalRow,
+            actionId,
+            input
+        ) else {
+            return false
+        }
+        refresh(trigger: "editor_context_menu_action")
+        return true
+    }
+
+    private func editorContextSelectionActionsEnabled(
+        paneId: UInt64,
+        logicalCol: UInt16,
+        logicalRow: UInt16
+    ) -> Bool {
+        app.editor_context_selection_actions_enabled(
+            editorId,
+            paneId,
+            logicalCol,
+            logicalRow
+        )
+    }
+
+    @discardableResult
+    private func moveEditorContextCursor(
+        paneId: UInt64,
+        logicalCol: UInt16,
+        logicalRow: UInt16
+    ) -> Bool {
+        guard app.editor_context_move_cursor(
+            editorId,
+            paneId,
+            logicalCol,
+            logicalRow
+        ) else {
+            return false
+        }
+        refresh(trigger: "editor_context_move_cursor")
+        return true
+    }
+
+    private func editorSurfaceFilePath(paneId: UInt64) -> String? {
+        editorSurfacePanes.first(where: { $0.paneId == paneId })?.filePath
+    }
+
+    func editorContextMenu(
+        paneId: UInt64,
+        logicalCol: UInt16,
+        logicalRow: UInt16,
+        window: NSWindow?
+    ) -> NSMenu? {
+        guard paneId != 0 else {
+            return nil
+        }
+
+        if framePlan.active_pane_id() != paneId {
+            _ = focusPane(paneId: paneId, trigger: "editor_context_menu_focus")
+        }
+
+        let sharedItems = editorContextMenuItems(
+            paneId: paneId,
+            logicalCol: logicalCol,
+            logicalRow: logicalRow
+        )
+        let selectionActionsEnabled = editorContextSelectionActionsEnabled(
+            paneId: paneId,
+            logicalCol: logicalCol,
+            logicalRow: logicalRow
+        )
+        let pasteEnabled = SecondaryClickMenuSupport.pasteboardString() != nil
+        let filePath = editorSurfaceFilePath(paneId: paneId)
+        let workspaceRoot = workspaceRootPath()
+
+        let menu = NSMenu(title: "")
+        menu.autoenablesItems = false
+
+        for item in sharedItems {
+            if item.separatorBefore {
+                SecondaryClickMenuSupport.addSeparatorIfNeeded(to: menu)
+            }
+
+            menu.addActionItem(
+                title: item.title,
+                enabled: item.enabled,
+                destructive: item.destructive
+            ) { [weak self] in
+                guard let self else { return }
+                if self.executeEditorContextMenuAction(
+                    paneId: paneId,
+                    logicalCol: logicalCol,
+                    logicalRow: logicalRow,
+                    actionId: item.id
+                ) {
+                    self.reclaimKeyCapture(in: window)
+                }
+            }
+        }
+
+        SecondaryClickMenuSupport.addSeparatorIfNeeded(to: menu)
+        menu.addActionItem(title: "Cut", enabled: selectionActionsEnabled) { [weak self] in
+            guard let self else { return }
+            guard self.executeNamedCommand("yank_to_clipboard") else {
+                return
+            }
+            _ = self.executeNamedCommand("delete_selection_noyank")
+            self.reclaimKeyCapture(in: window)
+        }
+        menu.addActionItem(title: "Copy", enabled: selectionActionsEnabled) { [weak self] in
+            guard let self else { return }
+            _ = self.executeNamedCommand("yank_to_clipboard")
+            self.reclaimKeyCapture(in: window)
+        }
+        menu.addActionItem(title: "Paste", enabled: pasteEnabled) { [weak self] in
+            guard let self else { return }
+            if selectionActionsEnabled {
+                _ = self.executeNamedCommand("replace_selections_with_clipboard")
+            } else if self.moveEditorContextCursor(
+                paneId: paneId,
+                logicalCol: logicalCol,
+                logicalRow: logicalRow
+            ) {
+                _ = self.executeNamedCommand("paste_clipboard_before")
+            }
+            self.reclaimKeyCapture(in: window)
+        }
+
+        if let filePath {
+            SecondaryClickMenuSupport.addSeparatorIfNeeded(to: menu)
+            menu.addActionItem(title: "Reveal in Finder") {
+                SecondaryClickMenuSupport.revealInFinder(path: filePath)
+            }
+            if let directoryPath = SecondaryClickMenuSupport.directoryPath(for: filePath) {
+                menu.addActionItem(title: "Open Buffer Directory in Terminal") {
+                    SecondaryClickMenuSupport.openInTerminal(directoryPath: directoryPath)
+                }
+            }
+            menu.addActionItem(title: "Copy Path") {
+                SecondaryClickMenuSupport.copyToPasteboard(filePath)
+            }
+            if let workspaceRoot,
+               let relativePath = SecondaryClickMenuSupport.relativePath(
+                targetPath: filePath,
+                rootPath: workspaceRoot
+               ) {
+                menu.addActionItem(title: "Copy Relative Path") {
+                    SecondaryClickMenuSupport.copyToPasteboard(relativePath)
+                }
+            }
+        }
+
+        return menu.items.isEmpty ? nil : menu
     }
 
     private func refreshTransientPickerStateForBackgroundTick() {

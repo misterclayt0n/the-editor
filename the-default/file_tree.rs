@@ -240,6 +240,11 @@ impl FileTreeState {
     true
   }
 
+  #[must_use]
+  pub fn is_expanded(&self, path: &Path) -> bool {
+    self.expanded_dirs.contains(&normalize_path(path))
+  }
+
   pub fn select_path(&mut self, path: &Path) -> bool {
     let normalized = normalize_path(path);
     let Some(root) = self.root.as_ref() else {

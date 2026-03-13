@@ -417,6 +417,22 @@ extension AppRefMut {
         FileTreeSnapshotData(ptr: __swift_bridge__$App$file_tree_snapshot(ptr, id.intoFfiRepr(), max_nodes))
     }
 
+    public func file_tree_context_menu_snapshot<GenericToRustStr: ToRustStr>(_ id: EditorId, _ path: GenericToRustStr) -> ContextMenuSnapshotData {
+        return path.toRustStr({ pathAsRustStr in
+            ContextMenuSnapshotData(ptr: __swift_bridge__$App$file_tree_context_menu_snapshot(ptr, id.intoFfiRepr(), pathAsRustStr))
+        })
+    }
+
+    public func file_tree_context_menu_execute<GenericToRustStr: ToRustStr>(_ id: EditorId, _ path: GenericToRustStr, _ action_id: GenericToRustStr, _ input: GenericToRustStr) -> Bool {
+        return input.toRustStr({ inputAsRustStr in
+            return action_id.toRustStr({ action_idAsRustStr in
+            return path.toRustStr({ pathAsRustStr in
+            __swift_bridge__$App$file_tree_context_menu_execute(ptr, id.intoFfiRepr(), pathAsRustStr, action_idAsRustStr, inputAsRustStr)
+        })
+        })
+        })
+    }
+
     public func file_picker_snapshot(_ id: EditorId, _ max_items: UInt) -> FilePickerSnapshotData {
         FilePickerSnapshotData(ptr: __swift_bridge__$App$file_picker_snapshot(ptr, id.intoFfiRepr(), max_items))
     }
@@ -451,6 +467,26 @@ extension AppRefMut {
 
     public func ensure_cursor_visible(_ id: EditorId) -> Bool {
         __swift_bridge__$App$ensure_cursor_visible(ptr, id.intoFfiRepr())
+    }
+
+    public func editor_context_menu_snapshot(_ id: EditorId, _ pane_id: UInt64, _ logical_col: UInt16, _ logical_row: UInt16) -> ContextMenuSnapshotData {
+        ContextMenuSnapshotData(ptr: __swift_bridge__$App$editor_context_menu_snapshot(ptr, id.intoFfiRepr(), pane_id, logical_col, logical_row))
+    }
+
+    public func editor_context_menu_execute<GenericToRustStr: ToRustStr>(_ id: EditorId, _ pane_id: UInt64, _ logical_col: UInt16, _ logical_row: UInt16, _ action_id: GenericToRustStr, _ input: GenericToRustStr) -> Bool {
+        return input.toRustStr({ inputAsRustStr in
+            return action_id.toRustStr({ action_idAsRustStr in
+            __swift_bridge__$App$editor_context_menu_execute(ptr, id.intoFfiRepr(), pane_id, logical_col, logical_row, action_idAsRustStr, inputAsRustStr)
+        })
+        })
+    }
+
+    public func editor_context_selection_actions_enabled(_ id: EditorId, _ pane_id: UInt64, _ logical_col: UInt16, _ logical_row: UInt16) -> Bool {
+        __swift_bridge__$App$editor_context_selection_actions_enabled(ptr, id.intoFfiRepr(), pane_id, logical_col, logical_row)
+    }
+
+    public func editor_context_move_cursor(_ id: EditorId, _ pane_id: UInt64, _ logical_col: UInt16, _ logical_row: UInt16) -> Bool {
+        __swift_bridge__$App$editor_context_move_cursor(ptr, id.intoFfiRepr(), pane_id, logical_col, logical_row)
     }
 
     public func insert<GenericToRustStr: ToRustStr>(_ id: EditorId, _ text: GenericToRustStr) -> Bool {
@@ -513,6 +549,10 @@ extension AppRef {
 
     public func active_file_path(_ id: EditorId) -> RustString {
         RustString(ptr: __swift_bridge__$App$active_file_path(ptr, id.intoFfiRepr()))
+    }
+
+    public func workspace_root_path(_ id: EditorId) -> RustString {
+        RustString(ptr: __swift_bridge__$App$workspace_root_path(ptr, id.intoFfiRepr()))
     }
 
     public func cursor_ids(_ id: EditorId) -> RustVec<UInt64> {
@@ -3104,6 +3144,186 @@ extension FileTreeNodeFFI: Vectorizable {
 
     public static func vecOfSelfLen(vecPtr: UnsafeMutableRawPointer) -> UInt {
         __swift_bridge__$Vec_FileTreeNodeFFI$len(vecPtr)
+    }
+}
+
+
+public class ContextMenuSnapshotData: ContextMenuSnapshotDataRefMut {
+    var isOwned: Bool = true
+
+    public override init(ptr: UnsafeMutableRawPointer) {
+        super.init(ptr: ptr)
+    }
+
+    deinit {
+        if isOwned {
+            __swift_bridge__$ContextMenuSnapshotData$_free(ptr)
+        }
+    }
+}
+public class ContextMenuSnapshotDataRefMut: ContextMenuSnapshotDataRef {
+    public override init(ptr: UnsafeMutableRawPointer) {
+        super.init(ptr: ptr)
+    }
+}
+public class ContextMenuSnapshotDataRef {
+    var ptr: UnsafeMutableRawPointer
+
+    public init(ptr: UnsafeMutableRawPointer) {
+        self.ptr = ptr
+    }
+}
+extension ContextMenuSnapshotDataRef {
+    public func item_count() -> UInt {
+        __swift_bridge__$ContextMenuSnapshotData$item_count(ptr)
+    }
+
+    public func item_at(_ index: UInt) -> ContextMenuItemFFI {
+        ContextMenuItemFFI(ptr: __swift_bridge__$ContextMenuSnapshotData$item_at(ptr, index))
+    }
+}
+extension ContextMenuSnapshotData: Vectorizable {
+    public static func vecOfSelfNew() -> UnsafeMutableRawPointer {
+        __swift_bridge__$Vec_ContextMenuSnapshotData$new()
+    }
+
+    public static func vecOfSelfFree(vecPtr: UnsafeMutableRawPointer) {
+        __swift_bridge__$Vec_ContextMenuSnapshotData$drop(vecPtr)
+    }
+
+    public static func vecOfSelfPush(vecPtr: UnsafeMutableRawPointer, value: ContextMenuSnapshotData) {
+        __swift_bridge__$Vec_ContextMenuSnapshotData$push(vecPtr, {value.isOwned = false; return value.ptr;}())
+    }
+
+    public static func vecOfSelfPop(vecPtr: UnsafeMutableRawPointer) -> Optional<Self> {
+        let pointer = __swift_bridge__$Vec_ContextMenuSnapshotData$pop(vecPtr)
+        if pointer == nil {
+            return nil
+        } else {
+            return (ContextMenuSnapshotData(ptr: pointer!) as! Self)
+        }
+    }
+
+    public static func vecOfSelfGet(vecPtr: UnsafeMutableRawPointer, index: UInt) -> Optional<ContextMenuSnapshotDataRef> {
+        let pointer = __swift_bridge__$Vec_ContextMenuSnapshotData$get(vecPtr, index)
+        if pointer == nil {
+            return nil
+        } else {
+            return ContextMenuSnapshotDataRef(ptr: pointer!)
+        }
+    }
+
+    public static func vecOfSelfGetMut(vecPtr: UnsafeMutableRawPointer, index: UInt) -> Optional<ContextMenuSnapshotDataRefMut> {
+        let pointer = __swift_bridge__$Vec_ContextMenuSnapshotData$get_mut(vecPtr, index)
+        if pointer == nil {
+            return nil
+        } else {
+            return ContextMenuSnapshotDataRefMut(ptr: pointer!)
+        }
+    }
+
+    public static func vecOfSelfAsPtr(vecPtr: UnsafeMutableRawPointer) -> UnsafePointer<ContextMenuSnapshotDataRef> {
+        UnsafePointer<ContextMenuSnapshotDataRef>(OpaquePointer(__swift_bridge__$Vec_ContextMenuSnapshotData$as_ptr(vecPtr)))
+    }
+
+    public static func vecOfSelfLen(vecPtr: UnsafeMutableRawPointer) -> UInt {
+        __swift_bridge__$Vec_ContextMenuSnapshotData$len(vecPtr)
+    }
+}
+
+
+public class ContextMenuItemFFI: ContextMenuItemFFIRefMut {
+    var isOwned: Bool = true
+
+    public override init(ptr: UnsafeMutableRawPointer) {
+        super.init(ptr: ptr)
+    }
+
+    deinit {
+        if isOwned {
+            __swift_bridge__$ContextMenuItemFFI$_free(ptr)
+        }
+    }
+}
+public class ContextMenuItemFFIRefMut: ContextMenuItemFFIRef {
+    public override init(ptr: UnsafeMutableRawPointer) {
+        super.init(ptr: ptr)
+    }
+}
+public class ContextMenuItemFFIRef {
+    var ptr: UnsafeMutableRawPointer
+
+    public init(ptr: UnsafeMutableRawPointer) {
+        self.ptr = ptr
+    }
+}
+extension ContextMenuItemFFIRef {
+    public func id() -> RustString {
+        RustString(ptr: __swift_bridge__$ContextMenuItemFFI$id(ptr))
+    }
+
+    public func title() -> RustString {
+        RustString(ptr: __swift_bridge__$ContextMenuItemFFI$title(ptr))
+    }
+
+    public func enabled() -> Bool {
+        __swift_bridge__$ContextMenuItemFFI$enabled(ptr)
+    }
+
+    public func destructive() -> Bool {
+        __swift_bridge__$ContextMenuItemFFI$destructive(ptr)
+    }
+
+    public func separator_before() -> Bool {
+        __swift_bridge__$ContextMenuItemFFI$separator_before(ptr)
+    }
+}
+extension ContextMenuItemFFI: Vectorizable {
+    public static func vecOfSelfNew() -> UnsafeMutableRawPointer {
+        __swift_bridge__$Vec_ContextMenuItemFFI$new()
+    }
+
+    public static func vecOfSelfFree(vecPtr: UnsafeMutableRawPointer) {
+        __swift_bridge__$Vec_ContextMenuItemFFI$drop(vecPtr)
+    }
+
+    public static func vecOfSelfPush(vecPtr: UnsafeMutableRawPointer, value: ContextMenuItemFFI) {
+        __swift_bridge__$Vec_ContextMenuItemFFI$push(vecPtr, {value.isOwned = false; return value.ptr;}())
+    }
+
+    public static func vecOfSelfPop(vecPtr: UnsafeMutableRawPointer) -> Optional<Self> {
+        let pointer = __swift_bridge__$Vec_ContextMenuItemFFI$pop(vecPtr)
+        if pointer == nil {
+            return nil
+        } else {
+            return (ContextMenuItemFFI(ptr: pointer!) as! Self)
+        }
+    }
+
+    public static func vecOfSelfGet(vecPtr: UnsafeMutableRawPointer, index: UInt) -> Optional<ContextMenuItemFFIRef> {
+        let pointer = __swift_bridge__$Vec_ContextMenuItemFFI$get(vecPtr, index)
+        if pointer == nil {
+            return nil
+        } else {
+            return ContextMenuItemFFIRef(ptr: pointer!)
+        }
+    }
+
+    public static func vecOfSelfGetMut(vecPtr: UnsafeMutableRawPointer, index: UInt) -> Optional<ContextMenuItemFFIRefMut> {
+        let pointer = __swift_bridge__$Vec_ContextMenuItemFFI$get_mut(vecPtr, index)
+        if pointer == nil {
+            return nil
+        } else {
+            return ContextMenuItemFFIRefMut(ptr: pointer!)
+        }
+    }
+
+    public static func vecOfSelfAsPtr(vecPtr: UnsafeMutableRawPointer) -> UnsafePointer<ContextMenuItemFFIRef> {
+        UnsafePointer<ContextMenuItemFFIRef>(OpaquePointer(__swift_bridge__$Vec_ContextMenuItemFFI$as_ptr(vecPtr)))
+    }
+
+    public static func vecOfSelfLen(vecPtr: UnsafeMutableRawPointer) -> UInt {
+        __swift_bridge__$Vec_ContextMenuItemFFI$len(vecPtr)
     }
 }
 

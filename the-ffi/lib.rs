@@ -69,10 +69,13 @@ use the_default::{
   CommandPaletteTheme,
   CommandPromptState,
   CommandRegistry,
+  ContextMenuActionId,
+  ContextMenuSnapshot as DefaultContextMenuSnapshot,
   DefaultContext,
   DefaultDispatchStatic,
   Direction as CommandDirection,
   DispatchRef,
+  EditorContextMenuOptions,
   FilePickerChangedFileItem,
   FilePickerChangedKind,
   FilePickerDiagnosticItem,
@@ -89,6 +92,7 @@ use the_default::{
   FileTreeNodeKind as DefaultFileTreeNodeKind,
   FileTreeSnapshot as DefaultFileTreeSnapshot,
   FileTreeState,
+  FileTreeContextMenuOptions,
   GlobalSearchConfig,
   GlobalSearchState,
   KeyBinding,
@@ -106,6 +110,8 @@ use the_default::{
   WorkingDirectoryState,
   buffer_tabs_snapshot,
   close_file_picker,
+  build_editor_context_menu,
+  build_file_tree_context_menu,
   command_palette_filtered_indices,
   command_palette_selected_filtered_index,
   completion_docs_panel_rect as default_completion_docs_panel_rect,
@@ -125,6 +131,7 @@ use the_default::{
   finalize_shell_pipe_to,
   finalize_split_selection,
   move_selection as file_picker_move_selection,
+  open_rename_symbol_prompt,
   open_dynamic_picker,
   poll_scan_results as file_picker_poll_scan_results,
   refresh_matcher_state as file_picker_refresh_matcher_state,
@@ -262,6 +269,7 @@ use the_lib::{
     ParseLifecycle,
     ParseRequest,
   },
+  text_object,
   transaction::{
     Assoc,
     Transaction,
@@ -314,6 +322,7 @@ use the_lsp::{
   parse_signature_help_response,
   parse_workspace_edit_response,
   parse_workspace_symbols_response,
+  references_params,
   rename_params,
   render_lsp_snippet,
   signature_help_params,
@@ -1804,6 +1813,9 @@ enum PendingLspRequestKind {
   GotoImplementation {
     uri: String,
   },
+  References {
+    uri: String,
+  },
   Hover {
     uri:            String,
     generation:     u64,
@@ -1856,6 +1868,7 @@ impl PendingLspRequestKind {
       Self::GotoDefinition { .. } => "goto-definition",
       Self::GotoTypeDefinition { .. } => "goto-type-definition",
       Self::GotoImplementation { .. } => "goto-implementation",
+      Self::References { .. } => "references",
       Self::Hover { .. } => "hover",
       Self::DocumentHighlightSelect { .. } => "document-highlight-select",
       Self::DocumentSymbols { .. } => "document-symbols",
@@ -1876,6 +1889,7 @@ impl PendingLspRequestKind {
       Self::GotoDefinition { uri } => Some(uri.as_str()),
       Self::GotoTypeDefinition { uri } => Some(uri.as_str()),
       Self::GotoImplementation { uri } => Some(uri.as_str()),
+      Self::References { uri } => Some(uri.as_str()),
       Self::Hover { uri, .. } => Some(uri.as_str()),
       Self::DocumentHighlightSelect { uri } => Some(uri.as_str()),
       Self::DocumentSymbols { uri } => Some(uri.as_str()),
@@ -1896,6 +1910,7 @@ impl PendingLspRequestKind {
       Self::GotoDefinition { uri } => ("goto-definition", Some(uri)),
       Self::GotoTypeDefinition { uri } => ("goto-type-definition", Some(uri)),
       Self::GotoImplementation { uri } => ("goto-implementation", Some(uri)),
+      Self::References { uri } => ("references", Some(uri)),
       Self::Hover { uri, .. } => ("hover", Some(uri)),
       Self::DocumentHighlightSelect { uri } => ("document-highlight-select", Some(uri)),
       Self::DocumentSymbols { uri } => ("document-symbols", Some(uri)),
@@ -5169,6 +5184,91 @@ fn build_file_tree_snapshot_data(
   }
 }
 
+pub struct ContextMenuSnapshotData {
+  items: Vec<ContextMenuItemFFI>,
+}
+
+impl Default for ContextMenuSnapshotData {
+  fn default() -> Self {
+    Self { items: Vec::new() }
+  }
+}
+
+impl ContextMenuSnapshotData {
+  fn item_count(&self) -> usize {
+    self.items.len()
+  }
+
+  fn item_at(&self, index: usize) -> ContextMenuItemFFI {
+    self.items.get(index).cloned().unwrap_or_default()
+  }
+}
+
+#[derive(Clone)]
+pub struct ContextMenuItemFFI {
+  id:               String,
+  title:            String,
+  enabled:          bool,
+  destructive:      bool,
+  separator_before: bool,
+}
+
+impl Default for ContextMenuItemFFI {
+  fn default() -> Self {
+    Self {
+      id: String::new(),
+      title: String::new(),
+      enabled: false,
+      destructive: false,
+      separator_before: false,
+    }
+  }
+}
+
+impl ContextMenuItemFFI {
+  fn id(&self) -> String {
+    self.id.clone()
+  }
+
+  fn title(&self) -> String {
+    self.title.clone()
+  }
+
+  fn enabled(&self) -> bool {
+    self.enabled
+  }
+
+  fn destructive(&self) -> bool {
+    self.destructive
+  }
+
+  fn separator_before(&self) -> bool {
+    self.separator_before
+  }
+}
+
+fn build_context_menu_snapshot_data(
+  snapshot: DefaultContextMenuSnapshot
+) -> ContextMenuSnapshotData {
+  let mut items = Vec::new();
+  let mut first_section = true;
+
+  for section in snapshot.sections.into_iter().filter(|section| !section.items.is_empty()) {
+    for (index, item) in section.items.into_iter().enumerate() {
+      items.push(ContextMenuItemFFI {
+        id: item.id.to_string(),
+        title: item.title,
+        enabled: item.enabled,
+        destructive: item.destructive,
+        separator_before: !first_section && index == 0,
+      });
+    }
+    first_section = false;
+  }
+
+  ContextMenuSnapshotData { items }
+}
+
 pub struct FilePickerSnapshotData {
   active:         bool,
   title:          String,
@@ -6225,6 +6325,17 @@ impl App {
       .editor(id)
       .and_then(|editor| editor.active_file_path())
       .map(|path| path.to_string_lossy().into_owned())
+      .unwrap_or_default()
+  }
+
+  pub fn workspace_root_path(&self, id: ffi::EditorId) -> String {
+    let Some(id) = id.to_lib() else {
+      return String::new();
+    };
+    self
+      .states
+      .get(&id)
+      .map(|state| state.workspace_root.to_string_lossy().into_owned())
       .unwrap_or_default()
   }
 
@@ -8236,6 +8347,36 @@ impl App {
     build_file_tree_snapshot_data(snapshot, max_nodes, &self.vcs_ui)
   }
 
+  pub fn file_tree_context_menu_snapshot(
+    &mut self,
+    id: ffi::EditorId,
+    path: &str,
+  ) -> ContextMenuSnapshotData {
+    if path.is_empty() || self.activate(id).is_none() {
+      return ContextMenuSnapshotData::default();
+    }
+    let Some(snapshot) = self.file_tree_context_menu_for_path(Path::new(path)) else {
+      return ContextMenuSnapshotData::default();
+    };
+    build_context_menu_snapshot_data(snapshot)
+  }
+
+  pub fn file_tree_context_menu_execute(
+    &mut self,
+    id: ffi::EditorId,
+    path: &str,
+    action_id: &str,
+    input: &str,
+  ) -> bool {
+    if path.is_empty() || action_id.trim().is_empty() || self.activate(id).is_none() {
+      return false;
+    }
+    let Ok(action) = action_id.parse::<ContextMenuActionId>() else {
+      return false;
+    };
+    self.execute_file_tree_context_action(Path::new(path), action, input)
+  }
+
   /// Direct FFI preview data — no JSON serialization.
   pub fn file_picker_preview(&mut self, id: ffi::EditorId) -> PreviewData {
     self.file_picker_preview_window(id, usize::MAX, 24, 24)
@@ -9123,6 +9264,23 @@ impl App {
           return true;
         }
         self.apply_locations_result("implementation", locations)
+      },
+      PendingLspRequestKind::References { .. } => {
+        let locations = match parse_locations_response(response.result.as_ref()) {
+          Ok(locations) => locations,
+          Err(err) => {
+            self.publish_lsp_message(
+              the_lib::messages::MessageLevel::Error,
+              format!("failed to parse references response: {err}"),
+            );
+            return true;
+          },
+        };
+        if locations.is_empty() {
+          let _ = <Self as DefaultContext>::push_error(self, "goto", "No references found.");
+          return true;
+        }
+        self.apply_locations_result("references", locations)
       },
       PendingLspRequestKind::Hover {
         generation,
@@ -11884,6 +12042,66 @@ impl App {
     the_default::handle_pointer_event(&*dispatch, self, pointer_event).handled()
   }
 
+  pub fn editor_context_menu_snapshot(
+    &mut self,
+    id: ffi::EditorId,
+    pane_id: u64,
+    logical_col: u16,
+    logical_row: u16,
+  ) -> ContextMenuSnapshotData {
+    if self.activate(id).is_none() {
+      return ContextMenuSnapshotData::default();
+    }
+    let Some(snapshot) = self.editor_context_menu_snapshot_for_point(pane_id, logical_col, logical_row) else {
+      return ContextMenuSnapshotData::default();
+    };
+    build_context_menu_snapshot_data(snapshot)
+  }
+
+  pub fn editor_context_menu_execute(
+    &mut self,
+    id: ffi::EditorId,
+    pane_id: u64,
+    logical_col: u16,
+    logical_row: u16,
+    action_id: &str,
+    input: &str,
+  ) -> bool {
+    if action_id.trim().is_empty() || self.activate(id).is_none() {
+      return false;
+    }
+    let Ok(action) = action_id.parse::<ContextMenuActionId>() else {
+      return false;
+    };
+    self.execute_editor_context_action(pane_id, logical_col, logical_row, action, input)
+  }
+
+  pub fn editor_context_selection_actions_enabled(
+    &mut self,
+    id: ffi::EditorId,
+    pane_id: u64,
+    logical_col: u16,
+    logical_row: u16,
+  ) -> bool {
+    if self.activate(id).is_none() {
+      return false;
+    }
+    self.editor_context_selection_actions_enabled_for_point(pane_id, logical_col, logical_row)
+  }
+
+  pub fn editor_context_move_cursor(
+    &mut self,
+    id: ffi::EditorId,
+    pane_id: u64,
+    logical_col: u16,
+    logical_row: u16,
+  ) -> bool {
+    if self.activate(id).is_none() {
+      return false;
+    }
+    self.move_editor_cursor_to_context_point(pane_id, logical_col, logical_row)
+  }
+
   fn handle_editor_pointer_event(
     &mut self,
     event: the_default::PointerEvent,
@@ -12964,6 +13182,515 @@ impl App {
     self.lsp_refresh_document_state_for_active_file();
     self.refresh_vcs_diff_base_for_editor(id);
     self.lsp_open_current_document();
+  }
+
+  fn file_tree_context_menu_for_path(
+    &self,
+    path: &Path,
+  ) -> Option<DefaultContextMenuSnapshot> {
+    let path = self.validated_file_tree_path(path)?;
+    let root = self.active_state_ref().file_tree.root()?.to_path_buf();
+    Some(build_file_tree_context_menu(FileTreeContextMenuOptions {
+      is_directory:      path.is_dir(),
+      expanded:          path.is_dir() && self.active_state_ref().file_tree.is_expanded(&path),
+      is_workspace_root: path == root,
+    }))
+  }
+
+  fn execute_file_tree_context_action(
+    &mut self,
+    path: &Path,
+    action: ContextMenuActionId,
+    input: &str,
+  ) -> bool {
+    let Some(path) = self.validated_file_tree_path(path) else {
+      return false;
+    };
+    let _ = self.active_state_mut().file_tree.select_path(&path);
+
+    match action {
+      ContextMenuActionId::FileTreeOpen => {
+        if !path.is_file() {
+          return false;
+        }
+        <Self as DefaultContext>::open_file(self, &path).is_ok()
+      },
+      ContextMenuActionId::FileTreeOpenSplitRight => {
+        self.open_file_in_split(path.as_path(), SplitAxis::Vertical)
+      },
+      ContextMenuActionId::FileTreeOpenSplitDown => {
+        self.open_file_in_split(path.as_path(), SplitAxis::Horizontal)
+      },
+      ContextMenuActionId::FileTreeExpand => {
+        let changed = self.active_state_mut().file_tree.set_expanded(&path, true);
+        if changed {
+          self.request_render();
+        }
+        changed
+      },
+      ContextMenuActionId::FileTreeCollapse => {
+        let changed = self.active_state_mut().file_tree.set_expanded(&path, false);
+        if changed {
+          self.request_render();
+        }
+        changed
+      },
+      ContextMenuActionId::FileTreeNewFile => {
+        self.create_file_tree_entry(path.as_path(), input, false)
+      },
+      ContextMenuActionId::FileTreeNewFolder => {
+        self.create_file_tree_entry(path.as_path(), input, true)
+      },
+      ContextMenuActionId::FileTreeRename => self.rename_file_tree_entry(path.as_path(), input),
+      _ => false,
+    }
+  }
+
+  fn validated_file_tree_path(&self, path: &Path) -> Option<PathBuf> {
+    let normalized = normalize_path_for_open(path);
+    let root = self.active_state_ref().file_tree.root()?.to_path_buf();
+    normalized.starts_with(&root).then_some(normalized)
+  }
+
+  fn create_file_tree_entry(&mut self, target: &Path, input: &str, is_directory: bool) -> bool {
+    let Some(target) = self.validated_file_tree_path(target) else {
+      return false;
+    };
+    let Some(base_dir) = (if target.is_dir() {
+      Some(target)
+    } else {
+      target.parent().map(Path::to_path_buf)
+    }) else {
+      self.push_warning("file tree", "cannot create an item at the file tree root");
+      return false;
+    };
+    let Some(name) = validated_context_menu_entry_name(input) else {
+      self.push_warning("file tree", "enter a single file or folder name");
+      return false;
+    };
+    let created_path = base_dir.join(name);
+    if created_path.exists() {
+      self.push_warning(
+        "file tree",
+        format!("'{}' already exists", created_path.display()),
+      );
+      return false;
+    }
+
+    let result = if is_directory {
+      std::fs::create_dir(&created_path)
+    } else {
+      std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&created_path)
+        .map(|_| ())
+    };
+    if let Err(err) = result {
+      self.push_error(
+        "file tree",
+        format!("failed to create '{}': {err}", created_path.display()),
+      );
+      return false;
+    }
+
+    let _ = self.active_state_mut().file_tree.set_expanded(&base_dir, true);
+    let _ = self.active_state_mut().file_tree.invalidate_visible_subtree();
+    let _ = self.active_state_mut().file_tree.select_path(&created_path);
+    let _ = self.sync_file_tree_watch_state();
+
+    if is_directory {
+      self.request_render();
+      return true;
+    }
+
+    <Self as DefaultContext>::open_file(self, &created_path).is_ok()
+  }
+
+  fn rename_file_tree_entry(&mut self, target: &Path, input: &str) -> bool {
+    let Some(current_path) = self.validated_file_tree_path(target) else {
+      return false;
+    };
+    if self
+      .active_state_ref()
+      .file_tree
+      .root()
+      .is_some_and(|root| root == current_path.as_path())
+    {
+      self.push_warning("file tree", "cannot rename the workspace root");
+      return false;
+    }
+    let Some(parent) = current_path.parent().map(Path::to_path_buf) else {
+      self.push_warning("file tree", "cannot rename the file tree root");
+      return false;
+    };
+    let Some(name) = validated_context_menu_entry_name(input) else {
+      self.push_warning("file tree", "enter a single file or folder name");
+      return false;
+    };
+    let next_path = parent.join(name);
+    if next_path == current_path {
+      return true;
+    }
+    if next_path.exists() {
+      self.push_warning(
+        "file tree",
+        format!("'{}' already exists", next_path.display()),
+      );
+      return false;
+    }
+
+    if let Err(err) = std::fs::rename(&current_path, &next_path) {
+      self.push_error(
+        "file tree",
+        format!(
+          "failed to rename '{}' to '{}': {err}",
+          current_path.display(),
+          next_path.display()
+        ),
+      );
+      return false;
+    }
+
+    let _ = self.active_editor_mut().rename_file_path(&current_path, next_path.clone());
+    if self.active_editor_ref().active_file_path() == Some(current_path.as_path()) {
+      <Self as DefaultContext>::set_file_path(self, Some(next_path.clone()));
+    }
+
+    let _ = self.active_state_mut().file_tree.invalidate_visible_subtree();
+    let _ = self.active_state_mut().file_tree.select_path(&next_path);
+    let _ = self.sync_file_tree_watch_state();
+    self.request_render();
+    true
+  }
+
+  fn open_file_in_split(&mut self, path: &Path, axis: SplitAxis) -> bool {
+    if !path.is_file() {
+      return false;
+    }
+    let previous_buffer_index = self.active_editor_ref().active_buffer_index();
+    if !self.active_editor_mut().split_active_pane(axis) {
+      self.push_warning("file tree", "failed to split the active pane");
+      return false;
+    }
+    self.sync_state_after_active_pane_change(previous_buffer_index);
+    <Self as DefaultContext>::open_file(self, path).is_ok()
+  }
+
+  fn editor_context_menu_snapshot_for_point(
+    &mut self,
+    pane_id: u64,
+    logical_col: u16,
+    logical_row: u16,
+  ) -> Option<DefaultContextMenuSnapshot> {
+    if !self.activate_editor_context_pane(pane_id) {
+      return None;
+    }
+    let target = self.editor_context_char_for_point(pane_id, logical_col, logical_row)?;
+    let has_position = self.lsp_position_for_active_char(target).is_some();
+    let options = EditorContextMenuOptions {
+      can_goto_definition:      has_position && self.lsp_supports(LspCapability::GotoDefinition),
+      can_goto_type_definition: has_position
+        && self.lsp_supports(LspCapability::GotoTypeDefinition),
+      can_goto_implementation:  has_position && self.lsp_supports(LspCapability::GotoImplementation),
+      can_find_references:      has_position && self.lsp_supports(LspCapability::GotoReference),
+      can_rename_symbol:        has_position && self.lsp_supports(LspCapability::RenameSymbol),
+      can_show_code_actions:    self
+        .lsp_code_action_range_for_char(target)
+        .is_some_and(|_| self.lsp_supports(LspCapability::CodeAction)),
+      can_format_buffer:        self.current_lsp_uri().is_some()
+        && self.lsp_supports(LspCapability::Format),
+    };
+    Some(build_editor_context_menu(options))
+  }
+
+  fn execute_editor_context_action(
+    &mut self,
+    pane_id: u64,
+    logical_col: u16,
+    logical_row: u16,
+    action: ContextMenuActionId,
+    input: &str,
+  ) -> bool {
+    let _ = input;
+    if !self.activate_editor_context_pane(pane_id) {
+      return false;
+    }
+    let target = self.editor_context_char_for_point(pane_id, logical_col, logical_row);
+
+    match action {
+      ContextMenuActionId::EditorGotoDefinition => {
+        target.is_some_and(|char_idx| self.lsp_goto_definition_at_char(char_idx))
+      },
+      ContextMenuActionId::EditorGotoTypeDefinition => {
+        target.is_some_and(|char_idx| self.lsp_goto_type_definition_at_char(char_idx))
+      },
+      ContextMenuActionId::EditorGotoImplementation => {
+        target.is_some_and(|char_idx| self.lsp_goto_implementation_at_char(char_idx))
+      },
+      ContextMenuActionId::EditorFindReferences => {
+        target.is_some_and(|char_idx| self.lsp_references_at_char(char_idx))
+      },
+      ContextMenuActionId::EditorRenameSymbol => {
+        target.is_some_and(|char_idx| self.open_rename_symbol_prompt_at_char(char_idx))
+      },
+      ContextMenuActionId::EditorShowCodeActions => {
+        target.is_some_and(|char_idx| self.lsp_code_actions_at_char(char_idx))
+      },
+      ContextMenuActionId::EditorFormatBuffer => {
+        self.lsp_format();
+        true
+      },
+      _ => false,
+    }
+  }
+
+  fn editor_context_selection_actions_enabled_for_point(
+    &mut self,
+    pane_id: u64,
+    logical_col: u16,
+    logical_row: u16,
+  ) -> bool {
+    if !self.activate_editor_context_pane(pane_id) {
+      return false;
+    }
+    let Some(target) = self.editor_context_char_for_point(pane_id, logical_col, logical_row) else {
+      return false;
+    };
+    let selection = self.active_editor_ref().document().selection();
+    if selection.len() != 1 {
+      return false;
+    }
+    self
+      .active_or_first_selection_range()
+      .is_some_and(|range| !range.is_empty() && range.contains(target))
+  }
+
+  fn move_editor_cursor_to_context_point(
+    &mut self,
+    pane_id: u64,
+    logical_col: u16,
+    logical_row: u16,
+  ) -> bool {
+    if !self.activate_editor_context_pane(pane_id) {
+      return false;
+    }
+    let Some(target) = self.editor_context_char_for_point(pane_id, logical_col, logical_row) else {
+      return false;
+    };
+    let selection = Selection::point(target);
+    if self.active_editor_mut().document_mut().set_selection(selection).is_err() {
+      return false;
+    }
+    self.request_render();
+    true
+  }
+
+  fn activate_editor_context_pane(&mut self, pane_id: u64) -> bool {
+    if pane_id == 0 {
+      return false;
+    }
+    let pane_changed = self.set_active_pane_from_pointer_surface(pane_id);
+    if pane_changed {
+      self.request_render();
+    }
+    let Ok(raw) = usize::try_from(pane_id) else {
+      return false;
+    };
+    let Some(raw) = NonZeroUsize::new(raw) else {
+      return false;
+    };
+    let pane = PaneId::from(raw);
+    matches!(
+      self.active_editor_ref().pane_content(pane),
+      Some(PaneContent::EditorBuffer { .. })
+    )
+  }
+
+  fn editor_context_char_for_point(
+    &self,
+    pane_id: u64,
+    logical_col: u16,
+    logical_row: u16,
+  ) -> Option<usize> {
+    let event = the_default::PointerEvent::new(the_default::PointerKind::Move, 0, 0)
+      .with_logical_pos(logical_col, logical_row)
+      .with_surface_id(pane_id);
+    self.pointer_char_idx_for_event(event)
+  }
+
+  fn lsp_goto_definition_at_char(&mut self, char_idx: usize) -> bool {
+    if !self.lsp_supports(LspCapability::GotoDefinition) {
+      let _ = <Self as DefaultContext>::push_error(self, "goto", "No definition found.");
+      return false;
+    }
+    let Some((uri, position)) = self.lsp_position_for_active_char(char_idx) else {
+      let _ = <Self as DefaultContext>::push_error(self, "goto", "No definition found.");
+      return false;
+    };
+    self.dispatch_lsp_request(
+      "textDocument/definition",
+      goto_definition_params(&uri, position),
+      PendingLspRequestKind::GotoDefinition { uri },
+    );
+    true
+  }
+
+  fn lsp_goto_type_definition_at_char(&mut self, char_idx: usize) -> bool {
+    if !self.lsp_supports(LspCapability::GotoTypeDefinition) {
+      let _ = <Self as DefaultContext>::push_error(self, "goto", "No type definition found.");
+      return false;
+    }
+    let Some((uri, position)) = self.lsp_position_for_active_char(char_idx) else {
+      let _ = <Self as DefaultContext>::push_error(self, "goto", "No type definition found.");
+      return false;
+    };
+    self.dispatch_lsp_request(
+      "textDocument/typeDefinition",
+      goto_type_definition_params(&uri, position),
+      PendingLspRequestKind::GotoTypeDefinition { uri },
+    );
+    true
+  }
+
+  fn lsp_goto_implementation_at_char(&mut self, char_idx: usize) -> bool {
+    if !self.lsp_supports(LspCapability::GotoImplementation) {
+      let _ = <Self as DefaultContext>::push_error(self, "goto", "No implementation found.");
+      return false;
+    }
+    let Some((uri, position)) = self.lsp_position_for_active_char(char_idx) else {
+      let _ = <Self as DefaultContext>::push_error(self, "goto", "No implementation found.");
+      return false;
+    };
+    self.dispatch_lsp_request(
+      "textDocument/implementation",
+      goto_implementation_params(&uri, position),
+      PendingLspRequestKind::GotoImplementation { uri },
+    );
+    true
+  }
+
+  fn lsp_references_at_char(&mut self, char_idx: usize) -> bool {
+    if !self.lsp_supports(LspCapability::GotoReference) {
+      let _ = <Self as DefaultContext>::push_error(self, "goto", "No references found.");
+      return false;
+    }
+    let Some((uri, position)) = self.lsp_position_for_active_char(char_idx) else {
+      let _ = <Self as DefaultContext>::push_error(self, "goto", "No references found.");
+      return false;
+    };
+    self.dispatch_lsp_request(
+      "textDocument/references",
+      references_params(&uri, position, false),
+      PendingLspRequestKind::References { uri },
+    );
+    true
+  }
+
+  fn lsp_code_actions_at_char(&mut self, char_idx: usize) -> bool {
+    if !self.lsp_supports(LspCapability::CodeAction) {
+      self.publish_lsp_message(
+        the_lib::messages::MessageLevel::Warning,
+        "code actions are not supported by the active server",
+      );
+      return false;
+    }
+    let Some((uri, range)) = self.lsp_code_action_range_for_char(char_idx) else {
+      self.publish_lsp_message(
+        the_lib::messages::MessageLevel::Warning,
+        "code actions unavailable: no active LSP document",
+      );
+      return false;
+    };
+    let diagnostics = self.current_lsp_diagnostics_payload(&uri, &range);
+    self.clear_completion_state();
+    self.dispatch_lsp_request(
+      "textDocument/codeAction",
+      code_action_params(&uri, range, diagnostics, None),
+      PendingLspRequestKind::CodeActions { uri },
+    );
+    true
+  }
+
+  fn lsp_code_action_range_for_char(
+    &self,
+    char_idx: usize,
+  ) -> Option<(String, the_lsp::LspRange)> {
+    let Some(uri) = self.current_lsp_uri() else {
+      return None;
+    };
+    let doc = self.active_editor_ref().document();
+    let mut start = char_idx.min(doc.text().len_chars());
+    let mut end = start;
+    if start == end {
+      let len = doc.text().len_chars();
+      if end < len {
+        end = end.saturating_add(1);
+      } else if start > 0 {
+        start = start.saturating_sub(1);
+      }
+    }
+    let (start_line, start_character) = char_idx_to_utf16_position(doc.text(), start);
+    let (end_line, end_character) = char_idx_to_utf16_position(doc.text(), end);
+    Some((uri, the_lsp::LspRange {
+      start: LspPosition {
+        line:      start_line,
+        character: start_character,
+      },
+      end:   LspPosition {
+        line:      end_line,
+        character: end_character,
+      },
+    }))
+  }
+
+  fn open_rename_symbol_prompt_at_char(&mut self, char_idx: usize) -> bool {
+    let prefill = self.rename_symbol_prefill_at_char(char_idx);
+    open_rename_symbol_prompt(self, prefill);
+    true
+  }
+
+  fn rename_symbol_prefill_at_char(&self, char_idx: usize) -> String {
+    let doc = self.active_editor_ref().document();
+    let text = doc.text().slice(..);
+    let base_range = self
+      .active_or_first_selection_range()
+      .filter(|range| !range.is_empty() && range.contains(char_idx))
+      .unwrap_or_else(|| Range::point(char_idx));
+    let prefill_range = if base_range.len() > 1 {
+      base_range
+    } else {
+      text_object::textobject_word(
+        text,
+        base_range,
+        text_object::TextObject::Inside,
+        1,
+        false,
+      )
+    };
+    prefill_range.fragment(text).into_owned()
+  }
+}
+
+fn validated_context_menu_entry_name(input: &str) -> Option<String> {
+  let trimmed = input.trim();
+  if trimmed.is_empty() {
+    return None;
+  }
+  let path = Path::new(trimmed);
+  if path.is_absolute() {
+    return None;
+  }
+  let components = path.components().collect::<Vec<_>>();
+  if components.len() != 1 {
+    return None;
+  }
+  match components.first().copied() {
+    Some(Component::Normal(name)) => {
+      let name = name.to_string_lossy();
+      (!name.is_empty()).then(|| name.into_owned())
+    },
+    _ => None,
   }
 }
 
@@ -14283,6 +15010,34 @@ impl DefaultContext for App {
     );
   }
 
+  fn lsp_references(&mut self) {
+    log_shared_lsp_debug("references_begin", "entered");
+    if !self.lsp_supports(LspCapability::GotoReference) {
+      log_shared_lsp_debug("references_skip", "reason=unsupported");
+      let _ = <Self as DefaultContext>::push_error(self, "references", "No references found.");
+      return;
+    }
+
+    let Some((uri, position)) = self.current_lsp_position() else {
+      log_shared_lsp_debug("references_skip", "reason=no_position");
+      let _ = <Self as DefaultContext>::push_error(self, "references", "No references found.");
+      return;
+    };
+
+    log_shared_lsp_debug(
+      "references_dispatch",
+      format!(
+        "uri={} line={} char={}",
+        uri, position.line, position.character
+      ),
+    );
+    self.dispatch_lsp_request(
+      "textDocument/references",
+      references_params(&uri, position, false),
+      PendingLspRequestKind::References { uri },
+    );
+  }
+
   fn lsp_document_symbols(&mut self) {
     if !self.lsp_supports(LspCapability::DocumentSymbols) {
       self.publish_lsp_message(
@@ -14775,6 +15530,7 @@ mod ffi {
     fn execute_command_named(self: &mut App, id: EditorId, name: &str) -> bool;
     fn is_active_pane_terminal(self: &mut App, id: EditorId) -> bool;
     fn active_file_path(self: &App, id: EditorId) -> String;
+    fn workspace_root_path(self: &App, id: EditorId) -> String;
     fn set_native_tab_open_gateway(self: &mut App, enabled: bool);
     fn set_inline_diagnostic_rendering_enabled(self: &mut App, enabled: bool);
     fn take_native_tab_open_request_path(self: &mut App) -> String;
@@ -14893,6 +15649,18 @@ mod ffi {
     fn file_tree_select_path(self: &mut App, id: EditorId, path: &str) -> bool;
     fn file_tree_open_selected(self: &mut App, id: EditorId) -> bool;
     fn file_tree_snapshot(self: &mut App, id: EditorId, max_nodes: usize) -> FileTreeSnapshotData;
+    fn file_tree_context_menu_snapshot(
+      self: &mut App,
+      id: EditorId,
+      path: &str,
+    ) -> ContextMenuSnapshotData;
+    fn file_tree_context_menu_execute(
+      self: &mut App,
+      id: EditorId,
+      path: &str,
+      action_id: &str,
+      input: &str,
+    ) -> bool;
     fn file_picker_snapshot(
       self: &mut App,
       id: EditorId,
@@ -14924,6 +15692,36 @@ mod ffi {
       surface_id: u64,
     ) -> bool;
     fn ensure_cursor_visible(self: &mut App, id: EditorId) -> bool;
+    fn editor_context_menu_snapshot(
+      self: &mut App,
+      id: EditorId,
+      pane_id: u64,
+      logical_col: u16,
+      logical_row: u16,
+    ) -> ContextMenuSnapshotData;
+    fn editor_context_menu_execute(
+      self: &mut App,
+      id: EditorId,
+      pane_id: u64,
+      logical_col: u16,
+      logical_row: u16,
+      action_id: &str,
+      input: &str,
+    ) -> bool;
+    fn editor_context_selection_actions_enabled(
+      self: &mut App,
+      id: EditorId,
+      pane_id: u64,
+      logical_col: u16,
+      logical_row: u16,
+    ) -> bool;
+    fn editor_context_move_cursor(
+      self: &mut App,
+      id: EditorId,
+      pane_id: u64,
+      logical_col: u16,
+      logical_row: u16,
+    ) -> bool;
 
     // Editor editing
     fn insert(self: &mut App, id: EditorId, text: &str) -> bool;
@@ -15268,6 +16066,21 @@ mod ffi {
     fn has_unloaded_children(self: &FileTreeNodeFFI) -> bool;
     fn vcs_status(self: &FileTreeNodeFFI) -> u8;
     fn vcs_descendant_count(self: &FileTreeNodeFFI) -> usize;
+  }
+
+  extern "Rust" {
+    type ContextMenuSnapshotData;
+    fn item_count(self: &ContextMenuSnapshotData) -> usize;
+    fn item_at(self: &ContextMenuSnapshotData, index: usize) -> ContextMenuItemFFI;
+  }
+
+  extern "Rust" {
+    type ContextMenuItemFFI;
+    fn id(self: &ContextMenuItemFFI) -> String;
+    fn title(self: &ContextMenuItemFFI) -> String;
+    fn enabled(self: &ContextMenuItemFFI) -> bool;
+    fn destructive(self: &ContextMenuItemFFI) -> bool;
+    fn separator_before(self: &ContextMenuItemFFI) -> bool;
   }
 
   extern "Rust" {

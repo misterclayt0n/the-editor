@@ -96,13 +96,15 @@ struct FileTreeSidebarView: View {
     let onSetExpanded: (String, Bool) -> Void
     let onSelectPath: (String) -> Void
     let onOpenSelected: () -> Void
+    let onContextMenu: (String, NSWindow?) -> NSMenu?
 
     var body: some View {
         NavigatorSidebarView(
             snapshot: snapshot,
             onSetExpanded: onSetExpanded,
             onSelectPath: onSelectPath,
-            onOpenSelected: onOpenSelected
+            onOpenSelected: onOpenSelected,
+            onContextMenu: onContextMenu
         )
     }
 }
@@ -111,6 +113,7 @@ struct FileTreeSidebarView: View {
 
 private final class FileTreeOutlineView: NSOutlineView {
     var onConfirmSelection: (() -> Void)?
+    var secondaryClickMenuProvider: ((NSEvent) -> NSMenu?)?
 
     override func keyDown(with event: NSEvent) {
         if event.keyCode == 36 || event.keyCode == 76 {
@@ -118,6 +121,10 @@ private final class FileTreeOutlineView: NSOutlineView {
             return
         }
         super.keyDown(with: event)
+    }
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        secondaryClickMenuProvider?(event) ?? super.menu(for: event)
     }
 }
 
@@ -268,6 +275,7 @@ private struct NavigatorSidebarView: NSViewRepresentable {
     let onSetExpanded: (String, Bool) -> Void
     let onSelectPath: (String) -> Void
     let onOpenSelected: () -> Void
+    let onContextMenu: (String, NSWindow?) -> NSMenu?
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -284,6 +292,9 @@ private struct NavigatorSidebarView: NSViewRepresentable {
         outlineView.onConfirmSelection = { [weak coordinator = context.coordinator] in
             coordinator?.openSelectedIfPossible()
         }
+        outlineView.secondaryClickMenuProvider = { [weak coordinator = context.coordinator] event in
+            coordinator?.menu(for: event)
+        }
 
         context.coordinator.parent = self
         context.coordinator.bind(container: container)
@@ -295,6 +306,9 @@ private struct NavigatorSidebarView: NSViewRepresentable {
     func updateNSView(_ nsView: NavigatorSidebarContainerView, context: Context) {
         context.coordinator.parent = self
         context.coordinator.bind(container: nsView)
+        nsView.outlineView.secondaryClickMenuProvider = { [weak coordinator = context.coordinator] event in
+            coordinator?.menu(for: event)
+        }
         context.coordinator.updateSnapshot(snapshot)
     }
 
@@ -539,6 +553,34 @@ private struct NavigatorSidebarView: NSViewRepresentable {
 
             clipView.scroll(to: NSPoint(x: clipView.bounds.minX, y: clampedY))
             outlineView.enclosingScrollView?.reflectScrolledClipView(clipView)
+        }
+
+        func menu(for event: NSEvent) -> NSMenu? {
+            guard let outlineView = container?.outlineView else {
+                return nil
+            }
+
+            let point = outlineView.convert(event.locationInWindow, from: nil)
+            let row = outlineView.row(at: point)
+            guard row >= 0 else {
+                let rootPath = parent.snapshot.root.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !rootPath.isEmpty else {
+                    return nil
+                }
+                return parent.onContextMenu(rootPath, outlineView.window)
+            }
+            guard let node = outlineView.item(atRow: row) as? FileTreeNode else {
+                return nil
+            }
+
+            if outlineView.selectedRow != row {
+                suppressSelectionEvents = true
+                outlineView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+                suppressSelectionEvents = false
+                parent.onSelectPath(node.path)
+            }
+
+            return parent.onContextMenu(node.path, outlineView.window)
         }
 
         @objc

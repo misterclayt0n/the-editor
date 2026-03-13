@@ -335,6 +335,7 @@ struct ScrollCaptureView: NSViewRepresentable {
         var onScroll: ((CGFloat, CGFloat, Bool, UInt64?) -> Void)?
         var onPointer: ((MouseBridgeEvent) -> Void)?
         var onSplitResize: ((UInt64, CGPoint) -> Void)?
+        var onContextMenu: ((UInt64, UInt16, UInt16, NSWindow?) -> NSMenu?)?
         var separators: [SeparatorHandle] = [] {
             didSet {
                 guard oldValue != separators else { return }
@@ -640,6 +641,33 @@ struct ScrollCaptureView: NSViewRepresentable {
                 event.scrollingDeltaY,
                 event.hasPreciseScrollingDeltas,
                 hitPane(at: point)?.paneId
+            )
+        }
+
+        override func menu(for event: NSEvent) -> NSMenu? {
+            let point = convert(event.locationInWindow, from: nil)
+            guard !isInPopupPassthroughRect(point),
+                  hitSeparator(at: point) == nil,
+                  !isInCursorExclusionRect(point),
+                  !shouldPassthrough(at: point),
+                  let pane = hitPane(at: point),
+                  let pointer = makePointerEvent(
+                    kind: 0,
+                    button: 2,
+                    point: point,
+                    modifiers: pointerModifierBits(from: event.modifierFlags),
+                    clickCount: UInt8(clamping: event.clickCount),
+                    pane: pane
+                  ) else {
+                return nil
+            }
+
+            KeyCaptureFocusBridge.shared.reclaim(in: window)
+            return onContextMenu?(
+                pane.paneId,
+                pointer.logicalCol,
+                pointer.logicalRow,
+                window
             )
         }
 
@@ -1074,6 +1102,7 @@ struct ScrollCaptureView: NSViewRepresentable {
     let cursorExclusionRects: [CGRect]
     let cellSize: CGSize
     let onSplitResize: (UInt64, CGPoint) -> Void
+    let onContextMenu: (UInt64, UInt16, UInt16, NSWindow?) -> NSMenu?
 
     func makeNSView(context: Context) -> ScrollCaptureNSView {
         let view = ScrollCaptureNSView(frame: .zero)
@@ -1086,6 +1115,7 @@ struct ScrollCaptureView: NSViewRepresentable {
         view.cursorExclusionRects = cursorExclusionRects
         view.cellSize = cellSize
         view.onSplitResize = onSplitResize
+        view.onContextMenu = onContextMenu
         return view
     }
 
@@ -1099,5 +1129,6 @@ struct ScrollCaptureView: NSViewRepresentable {
         nsView.cursorExclusionRects = cursorExclusionRects
         nsView.cellSize = cellSize
         nsView.onSplitResize = onSplitResize
+        nsView.onContextMenu = onContextMenu
     }
 }

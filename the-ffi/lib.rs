@@ -88,11 +88,11 @@ use the_default::{
   FilePickerRowData,
   FilePickerRowKind,
   FilePickerState,
+  FileTreeContextMenuOptions,
   FileTreeMode as DefaultFileTreeMode,
   FileTreeNodeKind as DefaultFileTreeNodeKind,
   FileTreeSnapshot as DefaultFileTreeSnapshot,
   FileTreeState,
-  FileTreeContextMenuOptions,
   GlobalSearchConfig,
   GlobalSearchState,
   KeyBinding,
@@ -109,9 +109,9 @@ use the_default::{
   ThemeCatalog,
   WorkingDirectoryState,
   buffer_tabs_snapshot,
-  close_file_picker,
   build_editor_context_menu,
   build_file_tree_context_menu,
+  close_file_picker,
   command_palette_filtered_indices,
   command_palette_selected_filtered_index,
   completion_docs_panel_rect as default_completion_docs_panel_rect,
@@ -131,8 +131,8 @@ use the_default::{
   finalize_shell_pipe_to,
   finalize_split_selection,
   move_selection as file_picker_move_selection,
-  open_rename_symbol_prompt,
   open_dynamic_picker,
+  open_rename_symbol_prompt,
   poll_scan_results as file_picker_poll_scan_results,
   refresh_matcher_state as file_picker_refresh_matcher_state,
   replace_file_picker_items,
@@ -310,8 +310,8 @@ use the_lsp::{
   goto_type_definition_params,
   hover_params,
   jsonrpc,
-  parse_code_actions_response,
   parse_code_action_response,
+  parse_code_actions_response,
   parse_completion_item_response,
   parse_completion_response_with_raw,
   parse_document_highlights_response,
@@ -1242,10 +1242,7 @@ impl RenderFramePlan {
       .map(|pane| {
         let pane_id = pane.pane_id.get().get() as u64;
         let mut wrapped_plan: RenderPlan = pane.plan.into();
-        let decorations = pane_decorations
-          .get(&pane_id)
-          .cloned()
-          .unwrap_or_default();
+        let decorations = pane_decorations.get(&pane_id).cloned().unwrap_or_default();
         wrapped_plan.inline_diagnostic_lines = decorations.inline_diagnostic_lines;
         wrapped_plan.eol_diagnostics = decorations.eol_diagnostics;
         wrapped_plan.diagnostic_underlines = decorations.diagnostic_underlines;
@@ -2048,7 +2045,7 @@ impl EditorState {
       pointer_drag_selection: None,
       workspace_root: workspace_root.to_path_buf(),
       working_directory: WorkingDirectoryState {
-        current: working_directory
+        current:  working_directory
           .current
           .or_else(|| Some(workspace_root.to_path_buf())),
         previous: working_directory.previous,
@@ -4482,17 +4479,20 @@ fn ffi_ui_profile_log(message: impl AsRef<str>) {
 fn file_picker_debug_enabled() -> bool {
   static ENABLED: OnceLock<bool> = OnceLock::new();
   *ENABLED.get_or_init(|| {
-    ["THE_SWIFT_DEBUG_DIAGNOSTICS", "THE_EDITOR_DEBUG_FILE_PICKER"]
-      .into_iter()
-      .any(|name| {
-        env::var(name)
-          .ok()
-          .map(|value| {
-            let normalized = value.trim().to_ascii_lowercase();
-            normalized == "1" || normalized == "true" || normalized == "yes" || normalized == "on"
-          })
-          .unwrap_or(false)
-      })
+    [
+      "THE_SWIFT_DEBUG_DIAGNOSTICS",
+      "THE_EDITOR_DEBUG_FILE_PICKER",
+    ]
+    .into_iter()
+    .any(|name| {
+      env::var(name)
+        .ok()
+        .map(|value| {
+          let normalized = value.trim().to_ascii_lowercase();
+          normalized == "1" || normalized == "true" || normalized == "yes" || normalized == "on"
+        })
+        .unwrap_or(false)
+    })
   })
 }
 
@@ -5216,10 +5216,10 @@ pub struct ContextMenuItemFFI {
 impl Default for ContextMenuItemFFI {
   fn default() -> Self {
     Self {
-      id: String::new(),
-      title: String::new(),
-      enabled: false,
-      destructive: false,
+      id:               String::new(),
+      title:            String::new(),
+      enabled:          false,
+      destructive:      false,
       separator_before: false,
     }
   }
@@ -5248,18 +5248,22 @@ impl ContextMenuItemFFI {
 }
 
 fn build_context_menu_snapshot_data(
-  snapshot: DefaultContextMenuSnapshot
+  snapshot: DefaultContextMenuSnapshot,
 ) -> ContextMenuSnapshotData {
   let mut items = Vec::new();
   let mut first_section = true;
 
-  for section in snapshot.sections.into_iter().filter(|section| !section.items.is_empty()) {
+  for section in snapshot
+    .sections
+    .into_iter()
+    .filter(|section| !section.items.is_empty())
+  {
     for (index, item) in section.items.into_iter().enumerate() {
       items.push(ContextMenuItemFFI {
-        id: item.id.to_string(),
-        title: item.title,
-        enabled: item.enabled,
-        destructive: item.destructive,
+        id:               item.id.to_string(),
+        title:            item.title,
+        enabled:          item.enabled,
+        destructive:      item.destructive,
         separator_before: !first_section && index == 0,
       });
     }
@@ -5598,15 +5602,17 @@ impl App {
     self
       .active_editor
       .and_then(|id| self.states.get(&id))
-      .map(|state| (state.workspace_root.clone(), state.working_directory.clone()))
-      .unwrap_or_else(|| {
+      .map(|state| {
         (
-          self.workspace_root.clone(),
-          WorkingDirectoryState {
-            current: Some(self.workspace_root.clone()),
-            previous: None,
-          },
+          state.workspace_root.clone(),
+          state.working_directory.clone(),
         )
+      })
+      .unwrap_or_else(|| {
+        (self.workspace_root.clone(), WorkingDirectoryState {
+          current:  Some(self.workspace_root.clone()),
+          previous: None,
+        })
       })
   }
 
@@ -5620,6 +5626,27 @@ impl App {
       .and_then(|id| self.states.get(&id))
       .and_then(|state| state.working_directory.current.clone())
       .unwrap_or_else(|| self.file_tree_workspace_root())
+  }
+
+  fn vcs_refresh_roots(&self) -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    let mut seen = HashSet::new();
+    for root in [
+      self.active_workspace_root(),
+      self.effective_file_tree_root(),
+    ] {
+      if seen.insert(root.clone()) {
+        roots.push(root);
+      }
+    }
+    roots
+  }
+
+  fn should_refresh_vcs_for_path(&self, path: &Path) -> bool {
+    self
+      .vcs_refresh_roots()
+      .into_iter()
+      .any(|root| path.starts_with(&root) || root.starts_with(path))
   }
 
   fn sync_file_tree_watch_state(&mut self) -> bool {
@@ -5674,7 +5701,12 @@ impl App {
       });
     }
 
-    tree_changed
+    let mut changed = tree_changed;
+    if (tree_changed || needs_rebind) && self.refresh_vcs_ui_state() {
+      changed = true;
+    }
+
+    changed
   }
 
   fn poll_file_tree_watch(&mut self) -> bool {
@@ -5708,8 +5740,7 @@ impl App {
       changed = state.file_tree.invalidate_visible_subtree();
     }
 
-    let active_workspace_root = self.active_workspace_root();
-    if watched_path.starts_with(&active_workspace_root) && self.refresh_vcs_ui_state() {
+    if self.should_refresh_vcs_for_path(watched_path.as_path()) && self.refresh_vcs_ui_state() {
       changed = true;
     }
 
@@ -6965,7 +6996,8 @@ impl App {
       .unwrap_or_else(|| LibStyle::default().bg(LibColor::Rgb(47, 63, 116)));
     let enable_point_selection_match = self.active_state_ref().mode == Mode::Select;
 
-    let raw_diagnostics = self.diagnostics_for_buffer(self.active_editor_ref().active_buffer_index());
+    let raw_diagnostics =
+      self.diagnostics_for_buffer(self.active_editor_ref().active_buffer_index());
 
     let (mut plan, underlines, inline_lines) = {
       let editor = self.active_editor_mut();
@@ -7221,8 +7253,8 @@ impl App {
         ));
       }
       inline_diagnostics.sort_by_key(|diagnostic| diagnostic.start_char_idx);
-      let inline_config = InlineDiagnosticsConfig::default()
-        .prepare(text_fmt.viewport_width.max(1), false);
+      let inline_config =
+        InlineDiagnosticsConfig::default().prepare(text_fmt.viewport_width.max(1), false);
       let mut underlines = compute_diagnostic_underlines(
         doc.text(),
         &raw_diagnostics,
@@ -7245,14 +7277,11 @@ impl App {
       apply_diagnostic_gutter_markers(&mut plan, &diagnostics_by_line, diagnostic_styles);
       apply_diff_gutter_markers(&mut plan, &diff_signs, diff_styles);
       let eol_diagnostics = compute_eol_diagnostics(&raw_diagnostics, &plan);
-      (
-        plan,
-        PaneRenderDecorations {
-          inline_diagnostic_lines: inline_lines.lines,
-          eol_diagnostics,
-          diagnostic_underlines: underlines,
-        },
-      )
+      (plan, PaneRenderDecorations {
+        inline_diagnostic_lines: inline_lines.lines,
+        eol_diagnostics,
+        diagnostic_underlines: underlines,
+      })
     };
     drop(annotations);
 
@@ -7266,7 +7295,10 @@ impl App {
   fn build_frame_render_plan_with_decorations_impl(
     &mut self,
     styles: RenderStyles,
-  ) -> (the_lib::render::FrameRenderPlan, BTreeMap<u64, PaneRenderDecorations>) {
+  ) -> (
+    the_lib::render::FrameRenderPlan,
+    BTreeMap<u64, PaneRenderDecorations>,
+  ) {
     let previous_frame_generation_state = self.active_state_ref().frame_generation_state.clone();
     let (active_pane, panes) = {
       let editor = self.active_editor_ref();
@@ -7301,14 +7333,11 @@ impl App {
         PaneContent::EditorBuffer { buffer_index } => {
           let (mut plan, decorations) = if pane.is_active_pane {
             let plan = self.build_render_plan_with_styles_impl(styles);
-            (
-              plan,
-              PaneRenderDecorations {
-                inline_diagnostic_lines: self.inline_diagnostic_lines.clone(),
-                eol_diagnostics: self.eol_diagnostics.clone(),
-                diagnostic_underlines: self.diagnostic_underlines.clone(),
-              },
-            )
+            (plan, PaneRenderDecorations {
+              inline_diagnostic_lines: self.inline_diagnostic_lines.clone(),
+              eol_diagnostics:         self.eol_diagnostics.clone(),
+              diagnostic_underlines:   self.diagnostic_underlines.clone(),
+            })
           } else {
             self.build_inactive_pane_render_plan_with_styles_impl(
               pane.pane_id,
@@ -8010,7 +8039,8 @@ impl App {
       let picker = self.file_picker();
       let target = picker.matched_item(index);
       file_picker_debug_log(format!(
-        "submit_by_index editor={} query={} index={} selected_before={} matched={} list_offset={} target={}",
+        "submit_by_index editor={} query={} index={} selected_before={} matched={} list_offset={} \
+         target={}",
         id.value,
         picker.query,
         index,
@@ -8063,7 +8093,8 @@ impl App {
       if file_picker_debug_enabled() {
         let picker = self.file_picker();
         file_picker_debug_log(format!(
-          "submit_by_item_missing editor={} item_id={} query={} matched={} selected={} list_offset={}",
+          "submit_by_item_missing editor={} item_id={} query={} matched={} selected={} \
+           list_offset={}",
           id.value,
           item_id,
           picker.query,
@@ -8081,7 +8112,8 @@ impl App {
       let picker = self.file_picker();
       let target = picker.matched_item(index);
       file_picker_debug_log(format!(
-        "submit_by_item editor={} item_id={} resolved_index={} query={} selected_before={} matched={} list_offset={} target={}",
+        "submit_by_item editor={} item_id={} resolved_index={} query={} selected_before={} \
+         matched={} list_offset={} target={}",
         id.value,
         item_id,
         index,
@@ -8099,7 +8131,8 @@ impl App {
     if file_picker_debug_enabled() {
       let picker = self.file_picker();
       file_picker_debug_log(format!(
-        "submit_by_item_resolved editor={} item_id={} resolved_index={} selected_after={} current={}",
+        "submit_by_item_resolved editor={} item_id={} resolved_index={} selected_after={} \
+         current={}",
         id.value,
         item_id,
         index,
@@ -8338,6 +8371,7 @@ impl App {
     if self.activate(id).is_none() {
       return FileTreeSnapshotData::default();
     }
+    let _ = self.sync_file_tree_watch_state();
     let working_directory = self.effective_file_tree_root();
     self
       .active_state_mut()
@@ -9072,7 +9106,10 @@ impl App {
       .unwrap_or_default()
   }
 
-  fn diagnostics_by_line_for_buffer(&self, buffer_index: usize) -> BTreeMap<usize, DiagnosticSeverity> {
+  fn diagnostics_by_line_for_buffer(
+    &self,
+    buffer_index: usize,
+  ) -> BTreeMap<usize, DiagnosticSeverity> {
     let mut out = BTreeMap::new();
     for diagnostic in self.diagnostics_for_buffer(buffer_index) {
       let line = diagnostic.range.start.line as usize;
@@ -9088,7 +9125,11 @@ impl App {
   }
 
   fn inline_diagnostics_for_buffer(&self, buffer_index: usize) -> Vec<InlineDiagnostic> {
-    let Some(text) = self.active_editor_ref().buffer_document(buffer_index).map(|doc| doc.text()) else {
+    let Some(text) = self
+      .active_editor_ref()
+      .buffer_document(buffer_index)
+      .map(|doc| doc.text())
+    else {
       return Vec::new();
     };
     let diagnostics = self.diagnostics_for_buffer(buffer_index);
@@ -9413,10 +9454,7 @@ impl App {
     };
 
     if edits.is_empty() {
-      self.publish_lsp_message(
-        the_lib::messages::MessageLevel::Info,
-        "already formatted",
-      );
+      self.publish_lsp_message(the_lib::messages::MessageLevel::Info, "already formatted");
       return true;
     }
 
@@ -9792,10 +9830,12 @@ impl App {
 
     match self.lsp_send_request_raw("codeAction/resolve", params) {
       Ok(request_id) => {
-        self.lsp_pending_requests.insert(
-          request_id,
-          PendingLspRequestKind::CodeActionResolve { uri, action },
-        );
+        self
+          .lsp_pending_requests
+          .insert(request_id, PendingLspRequestKind::CodeActionResolve {
+            uri,
+            action,
+          });
         true
       },
       Err(err) => {
@@ -12052,7 +12092,9 @@ impl App {
     if self.activate(id).is_none() {
       return ContextMenuSnapshotData::default();
     }
-    let Some(snapshot) = self.editor_context_menu_snapshot_for_point(pane_id, logical_col, logical_row) else {
+    let Some(snapshot) =
+      self.editor_context_menu_snapshot_for_point(pane_id, logical_col, logical_row)
+    else {
       return ContextMenuSnapshotData::default();
     };
     build_context_menu_snapshot_data(snapshot)
@@ -12782,15 +12824,17 @@ impl App {
     }
     let (workspace_root, working_directory) = previous
       .and_then(|editor_id| self.states.get(&editor_id))
-      .map(|state| (state.workspace_root.clone(), state.working_directory.clone()))
-      .unwrap_or_else(|| {
+      .map(|state| {
         (
-          self.workspace_root.clone(),
-          WorkingDirectoryState {
-            current: Some(self.workspace_root.clone()),
-            previous: None,
-          },
+          state.workspace_root.clone(),
+          state.working_directory.clone(),
         )
+      })
+      .unwrap_or_else(|| {
+        (self.workspace_root.clone(), WorkingDirectoryState {
+          current:  Some(self.workspace_root.clone()),
+          previous: None,
+        })
       });
     self.active_editor = Some(id);
     let loader = self.loader.clone();
@@ -13056,15 +13100,20 @@ impl App {
   }
 
   fn refresh_vcs_ui_state(&mut self) -> bool {
-    let workspace_root = self.active_workspace_root();
-    let next = if workspace_root.exists() {
-      match self
-        .vcs_provider
-        .collect_changed_files(&workspace_root)
-      {
-        Ok(changes) => VcsUiState::from_changes(changes),
-        Err(_) => VcsUiState::default(),
+    let mut all_changes = Vec::new();
+    let mut any_success = false;
+    for root in self.vcs_refresh_roots() {
+      if !root.exists() {
+        continue;
       }
+      if let Ok(mut changes) = self.vcs_provider.collect_changed_files(&root) {
+        all_changes.append(&mut changes);
+        any_success = true;
+      }
+    }
+
+    let next = if any_success {
+      VcsUiState::from_changes(all_changes)
     } else {
       VcsUiState::default()
     };
@@ -13184,10 +13233,7 @@ impl App {
     self.lsp_open_current_document();
   }
 
-  fn file_tree_context_menu_for_path(
-    &self,
-    path: &Path,
-  ) -> Option<DefaultContextMenuSnapshot> {
+  fn file_tree_context_menu_for_path(&self, path: &Path) -> Option<DefaultContextMenuSnapshot> {
     let path = self.validated_file_tree_path(path)?;
     let root = self.active_state_ref().file_tree.root()?.to_path_buf();
     Some(build_file_tree_context_menu(FileTreeContextMenuOptions {
@@ -13294,8 +13340,14 @@ impl App {
       return false;
     }
 
-    let _ = self.active_state_mut().file_tree.set_expanded(&base_dir, true);
-    let _ = self.active_state_mut().file_tree.invalidate_visible_subtree();
+    let _ = self
+      .active_state_mut()
+      .file_tree
+      .set_expanded(&base_dir, true);
+    let _ = self
+      .active_state_mut()
+      .file_tree
+      .invalidate_visible_subtree();
     let _ = self.active_state_mut().file_tree.select_path(&created_path);
     let _ = self.sync_file_tree_watch_state();
 
@@ -13352,12 +13404,17 @@ impl App {
       return false;
     }
 
-    let _ = self.active_editor_mut().rename_file_path(&current_path, next_path.clone());
+    let _ = self
+      .active_editor_mut()
+      .rename_file_path(&current_path, next_path.clone());
     if self.active_editor_ref().active_file_path() == Some(current_path.as_path()) {
       <Self as DefaultContext>::set_file_path(self, Some(next_path.clone()));
     }
 
-    let _ = self.active_state_mut().file_tree.invalidate_visible_subtree();
+    let _ = self
+      .active_state_mut()
+      .file_tree
+      .invalidate_visible_subtree();
     let _ = self.active_state_mut().file_tree.select_path(&next_path);
     let _ = self.sync_file_tree_watch_state();
     self.request_render();
@@ -13392,7 +13449,8 @@ impl App {
       can_goto_definition:      has_position && self.lsp_supports(LspCapability::GotoDefinition),
       can_goto_type_definition: has_position
         && self.lsp_supports(LspCapability::GotoTypeDefinition),
-      can_goto_implementation:  has_position && self.lsp_supports(LspCapability::GotoImplementation),
+      can_goto_implementation:  has_position
+        && self.lsp_supports(LspCapability::GotoImplementation),
       can_find_references:      has_position && self.lsp_supports(LspCapability::GotoReference),
       can_rename_symbol:        has_position && self.lsp_supports(LspCapability::RenameSymbol),
       can_show_code_actions:    self
@@ -13479,7 +13537,12 @@ impl App {
       return false;
     };
     let selection = Selection::point(target);
-    if self.active_editor_mut().document_mut().set_selection(selection).is_err() {
+    if self
+      .active_editor_mut()
+      .document_mut()
+      .set_selection(selection)
+      .is_err()
+    {
       return false;
     }
     self.request_render();
@@ -13612,10 +13675,7 @@ impl App {
     true
   }
 
-  fn lsp_code_action_range_for_char(
-    &self,
-    char_idx: usize,
-  ) -> Option<(String, the_lsp::LspRange)> {
+  fn lsp_code_action_range_for_char(&self, char_idx: usize) -> Option<(String, the_lsp::LspRange)> {
     let Some(uri) = self.current_lsp_uri() else {
       return None;
     };
@@ -13660,13 +13720,7 @@ impl App {
     let prefill_range = if base_range.len() > 1 {
       base_range
     } else {
-      text_object::textobject_word(
-        text,
-        base_range,
-        text_object::TextObject::Inside,
-        1,
-        false,
-      )
+      text_object::textobject_word(text, base_range, text_object::TextObject::Inside, 1, false)
     };
     prefill_range.fragment(text).into_owned()
   }
@@ -16679,6 +16733,7 @@ mod tests {
       Path,
       PathBuf,
     },
+    process::Command as ProcessCommand,
     sync::{
       Mutex,
       OnceLock,
@@ -16951,7 +17006,10 @@ mod tests {
     app.active_state_mut().hover_docs = Some("resolver docs".to_string());
     app.active_state_mut().completion_menu.active = true;
 
-    assert_eq!(<App as DefaultContext>::file_path(&app), Some(cargo_toml.as_path()));
+    assert_eq!(
+      <App as DefaultContext>::file_path(&app),
+      Some(cargo_toml.as_path())
+    );
     assert!(app.jump_active_pane(id, 0));
 
     assert_eq!(
@@ -17020,26 +17078,28 @@ mod tests {
     }
 
     let rust_uri = the_lsp::text_sync::file_uri_for_path(workspace.file_path()).expect("rust uri");
-    app.diagnostics.apply_document(the_lib::diagnostics::DocumentDiagnostics {
-      uri:         rust_uri,
-      version:     Some(1),
-      diagnostics: vec![the_lib::diagnostics::Diagnostic {
-        range:    the_lib::diagnostics::DiagnosticRange {
-          start: the_lib::diagnostics::DiagnosticPosition {
-            line:      0,
-            character: 16,
+    app
+      .diagnostics
+      .apply_document(the_lib::diagnostics::DocumentDiagnostics {
+        uri:         rust_uri,
+        version:     Some(1),
+        diagnostics: vec![the_lib::diagnostics::Diagnostic {
+          range:    the_lib::diagnostics::DiagnosticRange {
+            start: the_lib::diagnostics::DiagnosticPosition {
+              line:      0,
+              character: 16,
+            },
+            end:   the_lib::diagnostics::DiagnosticPosition {
+              line:      0,
+              character: 17,
+            },
           },
-          end:   the_lib::diagnostics::DiagnosticPosition {
-            line:      0,
-            character: 17,
-          },
-        },
-        severity: Some(the_lib::diagnostics::DiagnosticSeverity::Error),
-        code:     None,
-        source:   Some("rust-analyzer".into()),
-        message:  "expected expression".into(),
-      }],
-    });
+          severity: Some(the_lib::diagnostics::DiagnosticSeverity::Error),
+          code:     None,
+          source:   Some("rust-analyzer".into()),
+          message:  "expected expression".into(),
+        }],
+      });
 
     assert!(app.split_active_pane(id, 0));
     let toml_view = {
@@ -17055,26 +17115,28 @@ mod tests {
       );
     }
     let toml_uri = the_lsp::text_sync::file_uri_for_path(&cargo_toml).expect("toml uri");
-    app.diagnostics.apply_document(the_lib::diagnostics::DocumentDiagnostics {
-      uri:         toml_uri,
-      version:     Some(1),
-      diagnostics: vec![the_lib::diagnostics::Diagnostic {
-        range:    the_lib::diagnostics::DiagnosticRange {
-          start: the_lib::diagnostics::DiagnosticPosition {
-            line:      1,
-            character: 7,
+    app
+      .diagnostics
+      .apply_document(the_lib::diagnostics::DocumentDiagnostics {
+        uri:         toml_uri,
+        version:     Some(1),
+        diagnostics: vec![the_lib::diagnostics::Diagnostic {
+          range:    the_lib::diagnostics::DiagnosticRange {
+            start: the_lib::diagnostics::DiagnosticPosition {
+              line:      1,
+              character: 7,
+            },
+            end:   the_lib::diagnostics::DiagnosticPosition {
+              line:      1,
+              character: 8,
+            },
           },
-          end:   the_lib::diagnostics::DiagnosticPosition {
-            line:      1,
-            character: 8,
-          },
-        },
-        severity: Some(the_lib::diagnostics::DiagnosticSeverity::Error),
-        code:     None,
-        source:   Some("taplo".into()),
-        message:  "expected string".into(),
-      }],
-    });
+          severity: Some(the_lib::diagnostics::DiagnosticSeverity::Error),
+          code:     None,
+          source:   Some("taplo".into()),
+          message:  "expected string".into(),
+        }],
+      });
 
     assert!(app.activate(id).is_some());
     let styles = app.editor_render_styles_from_theme();
@@ -17096,8 +17158,12 @@ mod tests {
 
     let rust_pane_id = rust_pane_id.expect("rust pane");
     let toml_pane_id = toml_pane_id.expect("toml pane");
-    let rust_decorations = pane_decorations.get(&rust_pane_id).expect("rust decorations");
-    let toml_decorations = pane_decorations.get(&toml_pane_id).expect("toml decorations");
+    let rust_decorations = pane_decorations
+      .get(&rust_pane_id)
+      .expect("rust decorations");
+    let toml_decorations = pane_decorations
+      .get(&toml_pane_id)
+      .expect("toml decorations");
     assert!(!rust_decorations.diagnostic_underlines.is_empty());
     assert!(!toml_decorations.diagnostic_underlines.is_empty());
   }
@@ -17301,7 +17367,7 @@ mod tests {
     let mut app = App::new();
     let id = app.create_editor("", default_viewport(), ffi::Position { row: 0, col: 0 });
 
-    assert!(app.open_file_path(id, workspace.file_path().to_string_lossy().as_ref()));
+    assert!(app.seed_editor_context_path(id, workspace.file_path().to_string_lossy().as_ref()));
     assert!(app.file_tree_open_workspace_root(id));
 
     let before = app.file_tree_snapshot(id, 128);
@@ -17309,8 +17375,8 @@ mod tests {
     assert_eq!(PathBuf::from(before.root().to_string()), expected_root);
     assert!((0..before.node_count()).all(|index| before.node_at(index).name() != "created.txt"));
 
-    let watch_tx = install_test_file_tree_watch_state(&mut app, id, workspace.root_path());
-    let created_path = workspace.root_path().join("created.txt");
+    let watch_tx = install_test_file_tree_watch_state(&mut app, id, expected_root.as_path());
+    let created_path = expected_root.join("created.txt");
     fs::write(&created_path, "created\n").expect("create watched file");
     watch_tx
       .send(vec![PathEvent {
@@ -17322,6 +17388,153 @@ mod tests {
     assert!(app.poll_background(id));
     let after = app.file_tree_snapshot(id, 128);
     assert!((0..after.node_count()).any(|index| after.node_at(index).name() == "created.txt"));
+  }
+
+  #[test]
+  fn file_tree_vcs_refreshes_after_working_directory_switch() {
+    let _guard = ffi_test_guard();
+    if !require_git() {
+      return;
+    }
+
+    let source_workspace = TempTestWorkspace::new("file-tree-vcs-source", "source.txt", "source\n");
+    let target_workspace =
+      TempTestWorkspace::new("file-tree-vcs-target", "main.rs", "fn main() {}\n");
+    init_git_repo(target_workspace.root_path());
+    git_commit_all(target_workspace.root_path(), "init");
+    fs::write(
+      target_workspace.file_path(),
+      "fn main() { println!(\"changed\"); }\n",
+    )
+    .expect("modify target file");
+
+    let mut app = App::new();
+    let id = app.create_editor("", default_viewport(), ffi::Position { row: 0, col: 0 });
+    assert!(app.activate(id).is_some());
+
+    {
+      let state = app.active_state_mut();
+      state.workspace_root = source_workspace.root_path().to_path_buf();
+      state.working_directory.current = Some(source_workspace.root_path().to_path_buf());
+      state.working_directory.previous = None;
+    }
+
+    assert!(app.file_tree_open_workspace_root(id));
+
+    {
+      let state = app.active_state_mut();
+      state.working_directory.previous = Some(source_workspace.root_path().to_path_buf());
+      state.working_directory.current = Some(target_workspace.root_path().to_path_buf());
+    }
+
+    assert!(app.poll_background(id));
+
+    let snapshot = app.file_tree_snapshot(id, 128);
+    assert_eq!(
+      PathBuf::from(snapshot.root().to_string()),
+      fs::canonicalize(target_workspace.root_path()).expect("canonical target root")
+    );
+    let main = file_tree_node_by_name(&snapshot, "main.rs").expect("target file tree node");
+    assert_eq!(main.vcs_status(), VcsFileStatusKind::Modified as u8);
+  }
+
+  #[test]
+  fn file_tree_watch_refreshes_vcs_for_visible_working_directory_root() {
+    let _guard = ffi_test_guard();
+    if !require_git() {
+      return;
+    }
+
+    let source_workspace =
+      TempTestWorkspace::new("file-tree-watch-vcs-source", "source.txt", "source\n");
+    let target_workspace =
+      TempTestWorkspace::new("file-tree-watch-vcs-target", "main.rs", "fn main() {}\n");
+    init_git_repo(target_workspace.root_path());
+    git_commit_all(target_workspace.root_path(), "init");
+
+    let mut app = App::new();
+    let id = app.create_editor("", default_viewport(), ffi::Position { row: 0, col: 0 });
+    assert!(app.activate(id).is_some());
+
+    {
+      let state = app.active_state_mut();
+      state.workspace_root = source_workspace.root_path().to_path_buf();
+      state.working_directory.current = Some(target_workspace.root_path().to_path_buf());
+      state.working_directory.previous = Some(source_workspace.root_path().to_path_buf());
+    }
+
+    assert!(app.file_tree_open_workspace_root(id));
+    let before = app.file_tree_snapshot(id, 128);
+    let main = file_tree_node_by_name(&before, "main.rs").expect("target file tree node");
+    assert_eq!(main.vcs_status(), VcsFileStatusKind::None as u8);
+
+    let watch_tx = install_test_file_tree_watch_state(&mut app, id, target_workspace.root_path());
+    fs::write(
+      target_workspace.file_path(),
+      "fn main() { println!(\"changed\"); }\n",
+    )
+    .expect("modify target file");
+    watch_tx
+      .send(vec![PathEvent {
+        path: target_workspace.file_path().to_path_buf(),
+        kind: PathEventKind::Changed,
+      }])
+      .expect("send file-tree watch event");
+
+    assert!(app.poll_background(id));
+
+    let after = app.file_tree_snapshot(id, 128);
+    let main = file_tree_node_by_name(&after, "main.rs").expect("target file tree node");
+    assert_eq!(main.vcs_status(), VcsFileStatusKind::Modified as u8);
+  }
+
+  #[test]
+  fn command_palette_cd_updates_file_tree_vcs_without_waiting_for_watch_events() {
+    let _guard = ffi_test_guard();
+    if !require_git() {
+      return;
+    }
+
+    let source_workspace = TempTestWorkspace::new("command-palette-cd-vcs-source", "source.txt", "source\n");
+    let target_workspace = TempTestWorkspace::new(
+      "command-palette-cd-vcs-target",
+      "main.rs",
+      "fn main() {}\n",
+    );
+    init_git_repo(target_workspace.root_path());
+    git_commit_all(target_workspace.root_path(), "init");
+    fs::write(target_workspace.file_path(), "fn main() { println!(\"changed\"); }\n")
+      .expect("modify target file");
+
+    let mut app = App::new();
+    let id = app.create_editor("", default_viewport(), ffi::Position { row: 0, col: 0 });
+    assert!(app.activate(id).is_some());
+
+    {
+      let state = app.active_state_mut();
+      state.workspace_root = source_workspace.root_path().to_path_buf();
+      state.working_directory.current = Some(source_workspace.root_path().to_path_buf());
+      state.working_directory.previous = None;
+    }
+
+    assert!(app.file_tree_open_workspace_root(id));
+    assert!(app.handle_key(id, key_char(':')));
+    for ch in format!("cd {}", target_workspace.root_path().display()).chars() {
+      assert!(app.handle_key(id, key_char(ch)));
+    }
+    assert!(app.handle_key(id, ffi::KeyEvent {
+      kind:      1,
+      codepoint: 0,
+      modifiers: 0,
+    }));
+
+    let snapshot = app.file_tree_snapshot(id, 128);
+    assert_eq!(
+      PathBuf::from(snapshot.root().to_string()),
+      fs::canonicalize(target_workspace.root_path()).expect("canonical target root")
+    );
+    let main = file_tree_node_by_name(&snapshot, "main.rs").expect("target file tree node");
+    assert_eq!(main.vcs_status(), VcsFileStatusKind::Modified as u8);
   }
 
   #[test]
@@ -17856,7 +18069,8 @@ mod tests {
     let workspace = TempTestWorkspace::new(
       "code-action-resolve",
       "main.rs",
-      "use serde::{Serialize, Deserialize};\n\nstruct Body {\n    rest: HashMap<String, serde_json::Value>,\n}\n",
+      "use serde::{Serialize, Deserialize};\n\nstruct Body {\n    rest: HashMap<String, \
+       serde_json::Value>,\n}\n",
     );
     let uri = the_lsp::text_sync::file_uri_for_path(workspace.file_path()).expect("file uri");
 
@@ -17903,10 +18117,7 @@ mod tests {
       }]),
     )]));
 
-    assert!(app.handle_code_action_resolve_response(
-      unresolved,
-      Some(&resolved)
-    ));
+    assert!(app.handle_code_action_resolve_response(unresolved, Some(&resolved)));
 
     let text = app.text(id);
     assert!(text.starts_with("use std::collections::HashMap;\n"));
@@ -17916,8 +18127,10 @@ mod tests {
   #[test]
   fn open_file_path_updates_workspace_root_without_changing_working_directory() {
     let _guard = ffi_test_guard();
-    let source_workspace = TempTestWorkspace::new("open-file-cwd-source", "main.rs", "fn main() {}\n");
-    let target_workspace = TempTestWorkspace::new("open-file-cwd-target", "lib.rs", "pub fn value() {}\n");
+    let source_workspace =
+      TempTestWorkspace::new("open-file-cwd-source", "main.rs", "fn main() {}\n");
+    let target_workspace =
+      TempTestWorkspace::new("open-file-cwd-target", "lib.rs", "pub fn value() {}\n");
     let working_directory = source_workspace.root_path().join("nested");
     fs::create_dir_all(&working_directory).expect("create working directory");
     fs::write(working_directory.join("local.txt"), "local\n").expect("write local file");
@@ -17938,7 +18151,10 @@ mod tests {
       app.active_state_ref().working_directory.current.as_deref(),
       Some(working_directory.as_path())
     );
-    assert_eq!(app.active_state_ref().workspace_root, target_workspace.root_path());
+    assert_eq!(
+      app.active_state_ref().workspace_root,
+      fs::canonicalize(target_workspace.root_path()).expect("canonical target root")
+    );
 
     assert!(app.handle_key(id, key_char(':')));
     assert!(app.command_palette_set_query(id, "e "));
@@ -18329,6 +18545,73 @@ mod tests {
     });
 
     events_tx
+  }
+
+  fn has_git() -> bool {
+    ProcessCommand::new("git")
+      .arg("--version")
+      .output()
+      .map(|output| output.status.success())
+      .unwrap_or(false)
+  }
+
+  fn require_git() -> bool {
+    if has_git() {
+      true
+    } else {
+      eprintln!("skipping git tests: `git` executable not available");
+      false
+    }
+  }
+
+  fn exec_git_cmd(args: &[&str], repo: &Path) {
+    let res = ProcessCommand::new("git")
+      .arg("-C")
+      .arg(repo)
+      .args(args)
+      .env_remove("GIT_DIR")
+      .env_remove("GIT_WORK_TREE")
+      .env_remove("GIT_ASKPASS")
+      .env_remove("SSH_ASKPASS")
+      .env("GIT_TERMINAL_PROMPT", "false")
+      .env("GIT_AUTHOR_DATE", "2000-01-01 00:00:00 +0000")
+      .env("GIT_AUTHOR_EMAIL", "author@example.com")
+      .env("GIT_AUTHOR_NAME", "author")
+      .env("GIT_COMMITTER_DATE", "2000-01-02 00:00:00 +0000")
+      .env("GIT_COMMITTER_EMAIL", "committer@example.com")
+      .env("GIT_COMMITTER_NAME", "committer")
+      .env("GIT_CONFIG_COUNT", "2")
+      .env("GIT_CONFIG_KEY_0", "commit.gpgsign")
+      .env("GIT_CONFIG_VALUE_0", "false")
+      .env("GIT_CONFIG_KEY_1", "init.defaultBranch")
+      .env("GIT_CONFIG_VALUE_1", "main")
+      .output()
+      .unwrap_or_else(|_| panic!("`git {args:?}` failed"));
+    if !res.status.success() {
+      println!("{}", String::from_utf8_lossy(&res.stdout));
+      eprintln!("{}", String::from_utf8_lossy(&res.stderr));
+      panic!("`git {args:?}` failed (see output above)")
+    }
+  }
+
+  fn init_git_repo(repo: &Path) {
+    exec_git_cmd(&["init"], repo);
+    exec_git_cmd(&["config", "user.email", "test@the-editor.dev"], repo);
+    exec_git_cmd(&["config", "user.name", "the-editor-test"], repo);
+  }
+
+  fn git_commit_all(repo: &Path, message: &str) {
+    exec_git_cmd(&["add", "-A"], repo);
+    exec_git_cmd(&["commit", "-m", message], repo);
+  }
+
+  fn file_tree_node_by_name(
+    snapshot: &super::FileTreeSnapshotData,
+    name: &str,
+  ) -> Option<super::FileTreeNodeFFI> {
+    (0..snapshot.node_count())
+      .map(|index| snapshot.node_at(index))
+      .find(|node| node.name() == name)
   }
 
   #[test]
@@ -21308,7 +21591,10 @@ pkgs.mkShell {
       app.lsp_document.as_ref().map(|state| state.path.as_path()),
       Some(second_path.as_path())
     );
-    assert_eq!(app.lsp_runtime.config().workspace_root(), workspace.root_path());
+    assert_eq!(
+      app.lsp_runtime.config().workspace_root(),
+      workspace.root_path()
+    );
   }
 
   #[test]

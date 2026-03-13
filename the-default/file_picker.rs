@@ -3,9 +3,9 @@ use std::{
   cell::RefCell,
   cmp::Reverse,
   collections::{
-    hash_map::DefaultHasher,
     HashMap,
     VecDeque,
+    hash_map::DefaultHasher,
   },
   fs,
   hash::{
@@ -639,11 +639,15 @@ impl FilePickerState {
   }
 
   pub fn matched_item_stable_id(&self, matched_index: usize) -> Option<u64> {
-    self.matched_item(matched_index).map(|item| item.stable_id())
+    self
+      .matched_item(matched_index)
+      .map(|item| item.stable_id())
   }
 
   pub fn selected_item_stable_id(&self) -> Option<u64> {
-    self.selected.and_then(|matched_index| self.matched_item_stable_id(matched_index))
+    self
+      .selected
+      .and_then(|matched_index| self.matched_item_stable_id(matched_index))
   }
 
   pub fn matched_index_for_stable_id(&self, stable_id: u64) -> Option<usize> {
@@ -4002,7 +4006,9 @@ mod tests {
     let _ = refresh_matcher_state(&mut state);
 
     state.selected = Some(1);
-    let stable_id = state.selected_item_stable_id().expect("selected item should have an id");
+    let stable_id = state
+      .selected_item_stable_id()
+      .expect("selected item should have an id");
 
     state.matcher.restart(true);
     state

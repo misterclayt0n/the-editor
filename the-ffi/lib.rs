@@ -17495,16 +17495,17 @@ mod tests {
       return;
     }
 
-    let source_workspace = TempTestWorkspace::new("command-palette-cd-vcs-source", "source.txt", "source\n");
-    let target_workspace = TempTestWorkspace::new(
-      "command-palette-cd-vcs-target",
-      "main.rs",
-      "fn main() {}\n",
-    );
+    let source_workspace =
+      TempTestWorkspace::new("command-palette-cd-vcs-source", "source.txt", "source\n");
+    let target_workspace =
+      TempTestWorkspace::new("command-palette-cd-vcs-target", "main.rs", "fn main() {}\n");
     init_git_repo(target_workspace.root_path());
     git_commit_all(target_workspace.root_path(), "init");
-    fs::write(target_workspace.file_path(), "fn main() { println!(\"changed\"); }\n")
-      .expect("modify target file");
+    fs::write(
+      target_workspace.file_path(),
+      "fn main() { println!(\"changed\"); }\n",
+    )
+    .expect("modify target file");
 
     let mut app = App::new();
     let id = app.create_editor("", default_viewport(), ffi::Position { row: 0, col: 0 });
@@ -19465,7 +19466,42 @@ pkgs.mkShell {
   }
 
   #[test]
-  fn page_cursor_half_down_keymap_moves_by_half_viewport_height() {
+  fn find_char_keymaps_extend_selection_in_normal_mode() {
+    let _guard = ffi_test_guard();
+    let mut app = App::new();
+    let id = app.create_editor("abcdef\n", default_viewport(), ffi::Position {
+      row: 0,
+      col: 0,
+    });
+    assert!(app.activate(id).is_some());
+
+    let _ = app
+      .active_editor_mut()
+      .document_mut()
+      .set_selection(Selection::point(0));
+
+    assert!(app.handle_key(id, key_char('f')));
+    assert!(app.handle_key(id, key_char('d')));
+    assert_eq!(
+      app.active_editor_ref().document().selection().ranges()[0],
+      Range::new(0, 4)
+    );
+
+    let _ = app
+      .active_editor_mut()
+      .document_mut()
+      .set_selection(Selection::point(0));
+
+    assert!(app.handle_key(id, key_char('t')));
+    assert!(app.handle_key(id, key_char('d')));
+    assert_eq!(
+      app.active_editor_ref().document().selection().ranges()[0],
+      Range::new(0, 3)
+    );
+  }
+
+  #[test]
+  fn page_cursor_half_down_keymap_keeps_cursor_at_same_viewport_row() {
     let _guard = ffi_test_guard();
     let mut content = String::new();
     for line in 0..64usize {
@@ -19492,14 +19528,57 @@ pkgs.mkShell {
 
     let row = {
       let text = app.active_editor_ref().document().text().slice(..);
-      let head = app.active_editor_ref().document().selection().ranges()[0].head;
-      coords_at_pos(text, head).row
+      let cursor = app.active_editor_ref().document().selection().ranges()[0].cursor(text);
+      coords_at_pos(text, cursor).row
     };
+    let scroll_row = app.active_editor_ref().view().scroll.row;
+
     assert_eq!(row, 17);
+    assert_eq!(scroll_row, 12);
+    assert_eq!(row.saturating_sub(scroll_row), 5);
   }
 
   #[test]
-  fn page_cursor_half_up_keymap_moves_by_half_viewport_height() {
+  fn page_cursor_half_up_keymap_keeps_cursor_at_same_viewport_row() {
+    let _guard = ffi_test_guard();
+    let mut content = String::new();
+    for line in 0..64usize {
+      content.push_str(&format!("line-{line}\n"));
+    }
+
+    let mut app = App::new();
+    let id = app.create_editor(&content, default_viewport(), ffi::Position {
+      row: 0,
+      col: 0,
+    });
+    assert!(app.activate(id).is_some());
+    assert!(app.set_scroll(id, ffi::Position { row: 12, col: 0 }));
+
+    let start = {
+      let text = app.active_editor_ref().document().text().slice(..);
+      char_idx_at_coords(text, LibPosition::new(17, 0))
+    };
+    let _ = app
+      .active_editor_mut()
+      .document_mut()
+      .set_selection(Selection::point(start));
+
+    assert!(app.handle_key(id, key_char_ctrl('u')));
+
+    let row = {
+      let text = app.active_editor_ref().document().text().slice(..);
+      let cursor = app.active_editor_ref().document().selection().ranges()[0].cursor(text);
+      coords_at_pos(text, cursor).row
+    };
+    let scroll_row = app.active_editor_ref().view().scroll.row;
+
+    assert_eq!(row, 5);
+    assert_eq!(scroll_row, 0);
+    assert_eq!(row.saturating_sub(scroll_row), 5);
+  }
+
+  #[test]
+  fn page_cursor_half_down_extends_selection_in_select_mode() {
     let _guard = ffi_test_guard();
     let mut content = String::new();
     for line in 0..64usize {
@@ -19515,21 +19594,22 @@ pkgs.mkShell {
 
     let start = {
       let text = app.active_editor_ref().document().text().slice(..);
-      char_idx_at_coords(text, LibPosition::new(20, 0))
+      char_idx_at_coords(text, LibPosition::new(5, 0))
     };
     let _ = app
       .active_editor_mut()
       .document_mut()
       .set_selection(Selection::point(start));
+    app.set_mode(Mode::Select);
 
-    assert!(app.handle_key(id, key_char_ctrl('u')));
+    assert!(app.handle_key(id, key_char_ctrl('d')));
 
-    let row = {
-      let text = app.active_editor_ref().document().text().slice(..);
-      let head = app.active_editor_ref().document().selection().ranges()[0].head;
-      coords_at_pos(text, head).row
-    };
-    assert_eq!(row, 8);
+    let text = app.active_editor_ref().document().text().slice(..);
+    let range = app.active_editor_ref().document().selection().ranges()[0];
+    assert!(!range.is_empty());
+    assert_eq!(range.from(), start);
+    assert_eq!(coords_at_pos(text, range.cursor(text)).row, 17);
+    assert_eq!(app.active_editor_ref().view().scroll.row, 12);
   }
 
   #[test]
@@ -20029,6 +20109,29 @@ pkgs.mkShell {
     assert_eq!(
       app.active_editor_ref().document().text().to_string(),
       "aZc\n"
+    );
+  }
+
+  #[test]
+  fn paste_after_keymap_inserts_after_point_cursor() {
+    let _guard = ffi_test_guard();
+    let mut app = App::new();
+    let id = app.create_editor("abc\n", default_viewport(), ffi::Position {
+      row: 0,
+      col: 0,
+    });
+    assert!(app.activate(id).is_some());
+    let _ = app.registers.write('"', vec!["Z".to_string()]);
+    let _ = app
+      .active_editor_mut()
+      .document_mut()
+      .set_selection(Selection::point(1));
+
+    assert!(app.handle_key(id, key_char('p')));
+
+    assert_eq!(
+      app.active_editor_ref().document().text().to_string(),
+      "abZc\n"
     );
   }
 

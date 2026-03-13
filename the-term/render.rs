@@ -464,9 +464,7 @@ fn diagnostics_by_line(diagnostics: &[Diagnostic]) -> BTreeMap<usize, Diagnostic
 }
 
 fn active_diagnostics_by_line(ctx: &Ctx) -> BTreeMap<usize, DiagnosticSeverity> {
-  diagnostics_by_line(
-    diagnostics_for_buffer(ctx, ctx.editor.active_buffer_index()).unwrap_or(&[]),
-  )
+  diagnostics_by_line(diagnostics_for_buffer(ctx, ctx.editor.active_buffer_index()).unwrap_or(&[]))
 }
 
 fn diagnostic_theme_style(
@@ -1009,10 +1007,7 @@ fn draw_diagnostic_underlines(
       continue;
     }
 
-    let style = lib_style_to_ratatui(diagnostic_underline_theme_style(
-      theme,
-      underline.severity,
-    ));
+    let style = lib_style_to_ratatui(diagnostic_underline_theme_style(theme, underline.severity));
     let x_limit = x_end.min(area.x + area.width);
     for x in x_start..x_limit {
       let cell = buf.get_mut(x, y);
@@ -6005,9 +6000,9 @@ pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> Ren
 
 #[derive(Default)]
 struct PaneDiagnosticRenderData {
-  raw_diagnostics: Vec<Diagnostic>,
+  raw_diagnostics:         Vec<Diagnostic>,
   inline_diagnostic_lines: Vec<InlineDiagnosticRenderLine>,
-  diagnostic_underlines: Vec<DiagnosticUnderlineRenderSpan>,
+  diagnostic_underlines:   Vec<DiagnosticUnderlineRenderSpan>,
 }
 
 fn build_inactive_pane_plan_with_styles(
@@ -6077,8 +6072,8 @@ fn build_inactive_pane_plan_with_styles(
   };
 
   let inline_diagnostics = inline_diagnostics_from_document(doc.text(), &raw_diagnostics);
-  let inline_config = InlineDiagnosticsConfig::default()
-    .prepare(text_fmt.viewport_width.max(1) as u16, false);
+  let inline_config =
+    InlineDiagnosticsConfig::default().prepare(text_fmt.viewport_width.max(1) as u16, false);
   let mut diagnostic_underlines = diagnostic_underlines_for_document(
     doc.text(),
     &raw_diagnostics,
@@ -6107,14 +6102,11 @@ fn build_inactive_pane_plan_with_styles(
   ctx
     .inactive_highlight_caches
     .insert(buffer_index, local_highlight_cache);
-  (
-    plan,
-    PaneDiagnosticRenderData {
-      raw_diagnostics,
-      inline_diagnostic_lines: inline_layout.lines,
-      diagnostic_underlines,
-    },
-  )
+  (plan, PaneDiagnosticRenderData {
+    raw_diagnostics,
+    inline_diagnostic_lines: inline_layout.lines,
+    diagnostic_underlines,
+  })
 }
 
 pub fn build_frame_render_plan(ctx: &mut Ctx) -> FrameRenderPlan {
@@ -6154,16 +6146,13 @@ pub fn build_frame_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) 
         PaneContent::EditorBuffer { buffer_index } => {
           let (mut plan, diagnostic_data) = if pane.is_active_pane {
             let plan = build_render_plan_with_styles(ctx, styles);
-            (
-              plan,
-              PaneDiagnosticRenderData {
-                raw_diagnostics: diagnostics_for_buffer(ctx, buffer_index)
-                  .map(<[Diagnostic]>::to_vec)
-                  .unwrap_or_default(),
-                inline_diagnostic_lines: ctx.inline_diagnostic_lines.clone(),
-                diagnostic_underlines: ctx.diagnostic_underlines.clone(),
-              },
-            )
+            (plan, PaneDiagnosticRenderData {
+              raw_diagnostics:         diagnostics_for_buffer(ctx, buffer_index)
+                .map(<[Diagnostic]>::to_vec)
+                .unwrap_or_default(),
+              inline_diagnostic_lines: ctx.inline_diagnostic_lines.clone(),
+              diagnostic_underlines:   ctx.diagnostic_underlines.clone(),
+            })
           } else {
             build_inactive_pane_plan_with_styles(ctx, pane.pane_id, buffer_index, styles)
           };
@@ -6174,10 +6163,9 @@ pub fn build_frame_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) 
             pane.pane_id,
             diagnostic_data.inline_diagnostic_lines.clone(),
           );
-          ctx.frame_diagnostic_underlines.insert(
-            pane.pane_id,
-            diagnostic_data.diagnostic_underlines.clone(),
-          );
+          ctx
+            .frame_diagnostic_underlines
+            .insert(pane.pane_id, diagnostic_data.diagnostic_underlines.clone());
           let generation_state = if pane.is_active_pane {
             ctx
               .frame_generation_state
@@ -6345,7 +6333,11 @@ fn draw_pane_content(
       diagnostic_underlines,
     );
   }
-  let pane_diagnostics = ctx.frame_diagnostics.get(&pane_id).cloned().unwrap_or_default();
+  let pane_diagnostics = ctx
+    .frame_diagnostics
+    .get(&pane_id)
+    .cloned()
+    .unwrap_or_default();
   if !pane_diagnostics.is_empty() {
     let cursor_doc_line = if draw_active_annotations {
       active_cursor_line_idx(ctx)
@@ -6990,10 +6982,10 @@ mod tests {
   use the_lib::{
     diagnostics::{
       Diagnostic,
-      DocumentDiagnostics,
       DiagnosticPosition,
       DiagnosticRange,
       DiagnosticSeverity,
+      DocumentDiagnostics,
     },
     editor::PaneContent,
     position::Position,
@@ -7228,7 +7220,10 @@ mod tests {
 
     let mut rust_pane = None;
     let mut toml_pane = None;
-    for pane in ctx.editor.frame_pane_snapshots(ctx.editor.layout_viewport()) {
+    for pane in ctx
+      .editor
+      .frame_pane_snapshots(ctx.editor.layout_viewport())
+    {
       let PaneContent::EditorBuffer { buffer_index } = pane.content else {
         continue;
       };
@@ -7241,14 +7236,8 @@ mod tests {
 
     let rust_pane = rust_pane.expect("rust pane");
     let toml_pane = toml_pane.expect("toml pane");
-    assert_eq!(
-      ctx.frame_diagnostics.get(&rust_pane).map(Vec::len),
-      Some(1)
-    );
-    assert_eq!(
-      ctx.frame_diagnostics.get(&toml_pane).map(Vec::len),
-      Some(1)
-    );
+    assert_eq!(ctx.frame_diagnostics.get(&rust_pane).map(Vec::len), Some(1));
+    assert_eq!(ctx.frame_diagnostics.get(&toml_pane).map(Vec::len), Some(1));
     assert!(
       !ctx
         .frame_diagnostic_underlines

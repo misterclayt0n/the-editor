@@ -181,8 +181,8 @@ use the_lsp::{
   goto_type_definition_params,
   hover_params,
   jsonrpc,
-  parse_code_actions_response,
   parse_code_action_response,
+  parse_code_actions_response,
   parse_completion_item_response,
   parse_completion_response_with_raw,
   parse_document_highlights_response,
@@ -981,7 +981,7 @@ impl Ctx {
       editor,
       file_path: file_path.map(PathBuf::from),
       working_directory: WorkingDirectoryState {
-        current: Some(lsp_runtime.config().workspace_root().to_path_buf()),
+        current:  Some(lsp_runtime.config().workspace_root().to_path_buf()),
         previous: None,
       },
       should_quit: false,
@@ -2846,10 +2846,12 @@ impl Ctx {
       .send_request("codeAction/resolve", Some(params))
     {
       Ok(request_id) => {
-        self.lsp_pending_requests.insert(
-          request_id,
-          PendingLspRequestKind::CodeActionResolve { uri, action },
-        );
+        self
+          .lsp_pending_requests
+          .insert(request_id, PendingLspRequestKind::CodeActionResolve {
+            uri,
+            action,
+          });
         true
       },
       Err(err) => {
@@ -6910,7 +6912,6 @@ fn setup_syntax(doc: &mut Document, path: &Path, loader: &Arc<Loader>) -> Result
 
 #[cfg(test)]
 mod tests {
-  use super::build_lsp_document_state;
   use std::{
     fs,
     path::{
@@ -6991,6 +6992,7 @@ mod tests {
     PendingAutoSignatureHelp,
     SignatureHelpTriggerSource,
     WatchedFileEventsState,
+    build_lsp_document_state,
     capabilities_support_single_char,
     completion_item_accepts_commit_char,
     completion_match_score,

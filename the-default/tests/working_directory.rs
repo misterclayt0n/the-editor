@@ -19,7 +19,6 @@ use the_default::{
   DefaultContext,
   DispatchRef,
   FilePickerState,
-  open_file_picker,
   KeyBinding,
   KeyEvent,
   Keymaps,
@@ -29,6 +28,7 @@ use the_default::{
   SearchPromptState,
   WorkingDirectoryState,
   effective_working_directory,
+  open_file_picker,
 };
 use the_lib::{
   document::{
@@ -67,17 +67,14 @@ struct TestCtx {
 
 impl TestCtx {
   fn new(workspace_root: PathBuf) -> Self {
-    let doc = Document::new(
-      DocumentId::new(NonZeroUsize::new(1).unwrap()),
-      Rope::new(),
-    );
+    let doc = Document::new(DocumentId::new(NonZeroUsize::new(1).unwrap()), Rope::new());
     let view = ViewState::new(Rect::new(0, 0, 80, 24), Position::new(0, 0));
     let editor = Editor::new(EditorId::new(NonZeroUsize::new(1).unwrap()), doc, view);
     Self {
       editor,
       messages: MessageCenter::default(),
       working_directory: WorkingDirectoryState {
-        current: Some(workspace_root.clone()),
+        current:  Some(workspace_root.clone()),
         previous: None,
       },
       workspace_root,

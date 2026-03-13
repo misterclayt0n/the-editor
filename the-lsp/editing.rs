@@ -1544,9 +1544,12 @@ mod tests {
     let parsed = parse_code_actions_response(Some(&value)).expect("parse ok");
     assert_eq!(parsed.len(), 1);
     assert!(parsed[0].needs_resolve());
-    assert_eq!(parsed[0].raw.as_ref().and_then(|raw| raw.get("data")), Some(&json!({
-      "id": "import-hash-map"
-    })));
+    assert_eq!(
+      parsed[0].raw.as_ref().and_then(|raw| raw.get("data")),
+      Some(&json!({
+        "id": "import-hash-map"
+      }))
+    );
   }
 
   #[test]

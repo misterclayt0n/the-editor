@@ -4369,49 +4369,69 @@ fn goto_line_end_newline<Ctx: DefaultContext>(ctx: &mut Ctx) {
 fn page_up<Ctx: DefaultContext>(ctx: &mut Ctx, extend: bool) {
   let height = ctx.editor().view().viewport.height as usize;
   let count = height.saturating_sub(2).max(1); // Leave some overlap
-  page_cursor_by_rows(ctx, count, MoveDir::Backward, extend);
+  scroll_cursor_by_rows(ctx, count, MoveDir::Backward, extend);
 }
 
 fn page_down<Ctx: DefaultContext>(ctx: &mut Ctx, extend: bool) {
   let height = ctx.editor().view().viewport.height as usize;
   let count = height.saturating_sub(2).max(1); // Leave some overlap
-  page_cursor_by_rows(ctx, count, MoveDir::Forward, extend);
+  scroll_cursor_by_rows(ctx, count, MoveDir::Forward, extend);
 }
 
 fn page_cursor_half_up<Ctx: DefaultContext>(ctx: &mut Ctx) {
   let height = ctx.editor().view().viewport.height as usize;
   let count = (height / 2).max(1);
-  page_cursor_by_rows(ctx, count, MoveDir::Backward, false);
+  scroll_cursor_by_rows(ctx, count, MoveDir::Backward, false);
 }
 
 fn page_cursor_half_down<Ctx: DefaultContext>(ctx: &mut Ctx) {
   let height = ctx.editor().view().viewport.height as usize;
   let count = (height / 2).max(1);
-  page_cursor_by_rows(ctx, count, MoveDir::Forward, false);
+  scroll_cursor_by_rows(ctx, count, MoveDir::Forward, false);
 }
 
-fn page_cursor_by_rows<Ctx: DefaultContext>(
+fn scroll_cursor_by_rows<Ctx: DefaultContext>(
   ctx: &mut Ctx,
   count: usize,
   direction: MoveDir,
   extend: bool,
 ) {
-  let new_selection = {
-    let doc = ctx.editor().document_mut();
-    let selection = doc.selection().clone();
-    let slice = doc.text().slice(..);
+  let (new_scroll_row, new_selection) = {
+    let editor = ctx.editor_ref();
+    let view = editor.view();
+    let viewport_height = view.viewport.height as usize;
+    if viewport_height == 0 {
+      return;
+    }
 
-    let text_fmt = TextFormat::default();
-    let mut annotations = TextAnnotations::default();
+    let doc = editor.document();
+    let selection = doc.selection().clone();
+    let text = doc.text().slice(..);
+
+    let mut text_fmt = ctx.text_format();
+    let gutter_width = gutter_width_for_document(doc, view.viewport.width, ctx.gutter_config());
+    text_fmt.viewport_width = view.viewport.width.saturating_sub(gutter_width).max(1);
+
+    let mut clamp_annotations = ctx.text_annotations();
+    let max_row = max_scroll_row(text, &text_fmt, &mut clamp_annotations, viewport_height);
+    let current_scroll_row = view.scroll.row;
+    let new_scroll_row = match direction {
+      MoveDir::Forward => current_scroll_row.saturating_add(count).min(max_row),
+      MoveDir::Backward => current_scroll_row.saturating_sub(count),
+    };
+
+    let mut annotations = ctx.text_annotations();
     let behavior = if extend {
+      Movement::Extend
+    } else if ctx.mode() == Mode::Select {
       Movement::Extend
     } else {
       Movement::Move
     };
 
-    selection.transform(|range| {
-      move_vertically(
-        slice,
+    let new_selection = selection.transform(|range| {
+      move_vertically_visual(
+        text,
         range,
         direction,
         count,
@@ -4419,9 +4439,12 @@ fn page_cursor_by_rows<Ctx: DefaultContext>(
         &text_fmt,
         &mut annotations,
       )
-    })
+    });
+
+    (new_scroll_row, new_selection)
   };
 
+  ctx.editor().view_mut().scroll.row = new_scroll_row;
   let _ = ctx.editor().document_mut().set_selection(new_selection);
 }
 
@@ -4601,6 +4624,7 @@ fn find_char_impl<Ctx: DefaultContext>(
     find_nth,
   };
 
+  let extend = extend || ctx.mode() == Mode::Select;
   let doc = ctx.editor().document_mut();
   let selection = doc.selection().clone();
   let slice = doc.text().slice(..);
@@ -4639,7 +4663,11 @@ fn find_char_impl<Ctx: DefaultContext>(
           _ => return range, // Should not happen
         }
       };
-      range.put_cursor(slice, target, extend)
+      if extend {
+        range.put_cursor(slice, target, true)
+      } else {
+        Range::point(range.cursor(slice)).put_cursor(slice, target, true)
+      }
     } else {
       range // No match found, keep original
     }
@@ -5559,7 +5587,11 @@ fn paste_with_register<Ctx: DefaultContext>(ctx: &mut Ctx, register: char, after
         text.line_to_char(text.char_to_line(range.from()))
       }
     } else if after {
-      range.to()
+      if mode == Mode::Normal && range.is_empty() {
+        next_grapheme_boundary(text.slice(..), range.to())
+      } else {
+        range.to()
+      }
     } else {
       range.from()
     };

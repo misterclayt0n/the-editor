@@ -768,7 +768,6 @@ const LSP_WORKSPACE_COMMAND_SIGNATURE: Signature = Signature {
   ..Signature::DEFAULT
 };
 
-
 fn resolve_command_path(base: &Path, input: &Path) -> PathBuf {
   let expanded = the_stdx::path::expand_tilde(Cow::Borrowed(input));
   if expanded.is_absolute() {
@@ -970,7 +969,10 @@ fn cmd_open<Ctx: DefaultContext>(ctx: &mut Ctx, args: Args, event: CommandEvent)
   let path_str = args
     .first()
     .ok_or_else(|| CommandError::new("usage: :open <path>"))?;
-  let resolved = resolve_command_path(&effective_working_directory_for_ctx(ctx), Path::new(path_str));
+  let resolved = resolve_command_path(
+    &effective_working_directory_for_ctx(ctx),
+    Path::new(path_str),
+  );
 
   match ctx.open_file(&resolved) {
     Ok(()) => Ok(()),

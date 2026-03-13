@@ -114,3 +114,9 @@ pub fn scroll_row_to_keep_visible(
     None
   }
 }
+
+/// Compute the greatest vertical scroll origin that still keeps content in
+/// view.
+pub fn max_scroll_row_for_content(last_visual_row: usize, viewport_height: usize) -> usize {
+  last_visual_row.saturating_sub(viewport_height.saturating_sub(1))
+}

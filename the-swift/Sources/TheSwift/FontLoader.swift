@@ -60,9 +60,26 @@ enum FontLoader {
     }
 
     private static func measureCellSize(font: NSFont) -> CGSize {
-        let attributes: [NSAttributedString.Key: Any] = [.font: font]
-        let width = ("M" as NSString).size(withAttributes: attributes).width
-        let height = font.ascender - font.descender + font.leading
-        return CGSize(width: ceil(width), height: ceil(height))
+        let ctFont = font as CTFont
+        let width = glyphAdvanceWidth(for: 0x004D, font: ctFont)
+            ?? glyphAdvanceWidth(for: 0x0030, font: ctFont)
+            ?? ("M" as NSString).size(withAttributes: [.font: font]).width
+        let height = CTFontGetAscent(ctFont) + CTFontGetDescent(ctFont) + CTFontGetLeading(ctFont)
+
+        // Preserve the font's true fractional metrics so cursor placement,
+        // wrapping, and mouse hit-testing stay aligned across zoom levels.
+        return CGSize(width: max(1, width), height: max(1, height))
+    }
+
+    private static func glyphAdvanceWidth(for character: UniChar, font: CTFont) -> CGFloat? {
+        var input = [character]
+        var glyphs = [CGGlyph](repeating: 0, count: 1)
+        guard CTFontGetGlyphsForCharacters(font, &input, &glyphs, 1), glyphs[0] != 0 else {
+            return nil
+        }
+
+        var advance = CGSize.zero
+        CTFontGetAdvancesForGlyphs(font, .horizontal, glyphs, &advance, 1)
+        return abs(advance.width) > 0.001 ? advance.width : nil
     }
 }

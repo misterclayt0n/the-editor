@@ -1176,7 +1176,6 @@ impl Ctx {
   pub fn resize(&mut self, width: u16, height: u16) {
     let viewport = Rect::new(0, 0, width, height);
     self.editor.set_layout_viewport(viewport);
-    self.editor.view_mut().viewport = viewport;
   }
 
   pub fn syntax_highlight_refresh_allowed(&self) -> bool {
@@ -3379,7 +3378,7 @@ impl Ctx {
     let y = y.clamp(pane.rect.y, max_y);
 
     let doc = self.editor.buffer_document(pane.buffer_index)?;
-    let view = self.editor.buffer_view(pane.buffer_index)?;
+    let view = self.editor.pane_view(pane.pane_id)?;
     let gutter_width = gutter_width_for_document(doc, view.viewport.width, &self.gutter_config);
 
     let local_row = usize::from(y.saturating_sub(pane.rect.y));
@@ -3631,7 +3630,12 @@ impl Ctx {
       visual_pos_at_char(text_slice, &text_format, &mut annotations, text.len_chars())
         .unwrap_or_else(|| Position::new(0, 0))
     };
-    clamped.row = clamped.row.min(eof_pos.row);
+    let max_scroll_row = if text_format.soft_wrap {
+      the_lib::view::max_scroll_row_for_content(eof_pos.row, view.viewport.height as usize)
+    } else {
+      eof_pos.row
+    };
+    clamped.row = clamped.row.min(max_scroll_row);
 
     if !text_format.soft_wrap && clamped.col != view.scroll.col {
       let max_col = self.max_visual_col_for_text(text, &text_format, &mut annotations);
@@ -6896,6 +6900,7 @@ mod tests {
       Range,
       Selection,
     },
+    split_tree::SplitAxis,
     transaction::Transaction,
   };
   use the_lsp::{
@@ -6986,6 +6991,46 @@ mod tests {
       Some(CompletionSnippetCursorOrigin::InsertText)
     );
     assert_eq!(prepared.cursor_range, Some(4..4));
+  }
+
+  #[test]
+  fn pointer_hit_testing_uses_pane_local_view_state_for_shared_buffers() {
+    let mut ctx = Ctx::new(None).expect("ctx");
+    let tx = Transaction::change(
+      ctx.editor.document().text(),
+      std::iter::once((0, 0, Some("alpha\nbeta\ngamma\n".into()))),
+    )
+    .expect("seed transaction");
+    assert!(DefaultContext::apply_transaction(&mut ctx, &tx));
+
+    assert!(ctx.editor.split_active_pane(SplitAxis::Vertical));
+    let bottom_pane_id = ctx.editor.active_pane_id();
+    assert!(ctx.editor.set_active_pane(bottom_pane_id));
+    ctx.editor.view_mut().scroll = Position::new(1, 0);
+
+    let panes = ctx.editor.pane_snapshots(ctx.editor.layout_viewport());
+    assert_eq!(panes.len(), 2);
+
+    let top_pane = panes
+      .iter()
+      .find(|pane| pane.pane_id != bottom_pane_id)
+      .copied()
+      .expect("top pane");
+    let bottom_pane = panes
+      .iter()
+      .find(|pane| pane.pane_id == bottom_pane_id)
+      .copied()
+      .expect("bottom pane");
+
+    let top_target = ctx
+      .pointer_char_idx_for_pane_point(top_pane, top_pane.rect.x, top_pane.rect.y)
+      .expect("top pane target");
+    let bottom_target = ctx
+      .pointer_char_idx_for_pane_point(bottom_pane, bottom_pane.rect.x, bottom_pane.rect.y)
+      .expect("bottom pane target");
+
+    assert_eq!(top_target, 0);
+    assert_eq!(bottom_target, 6);
   }
 
   #[test]
@@ -7525,6 +7570,91 @@ pkgs.mkShell {
     ctx.editor.view_mut().scroll.col = 40;
     ensure_cursor_visible(&mut ctx);
     assert_eq!(ctx.editor.view().scroll.col, 0);
+  }
+
+  #[test]
+  fn ensure_cursor_visible_tracks_wrapped_visual_rows() {
+    let mut ctx = Ctx::new(None).expect("ctx");
+    ctx.resize(14, 3);
+    DefaultContext::set_soft_wrap_enabled(&mut ctx, true);
+
+    let long_line = "aaaa bbbb cccc dddd eeee ffff gggg";
+    let tx = Transaction::change(
+      ctx.editor.document().text(),
+      std::iter::once((0, 0, Some(long_line.into()))),
+    )
+    .expect("seed transaction");
+    assert!(DefaultContext::apply_transaction(&mut ctx, &tx));
+
+    let cursor_char = ctx.editor.document().text().len_chars().saturating_sub(1);
+    let _ = ctx
+      .editor
+      .document_mut()
+      .set_selection(Selection::single(cursor_char, cursor_char));
+
+    ensure_cursor_visible(&mut ctx);
+
+    let view = ctx.editor.view();
+    let doc = ctx.editor.document();
+    let mut text_format = <Ctx as DefaultContext>::text_format(&ctx);
+    let gutter_width =
+      the_lib::render::gutter_width_for_document(doc, view.viewport.width, &ctx.gutter_config);
+    text_format.viewport_width = view.viewport.width.saturating_sub(gutter_width).max(1);
+    let mut annotations = <Ctx as DefaultContext>::text_annotations(&ctx);
+    let visual_pos = the_lib::render::visual_pos_at_char(
+      doc.text().slice(..),
+      &text_format,
+      &mut annotations,
+      cursor_char,
+    )
+    .expect("wrapped visual position");
+    let expected = the_lib::view::scroll_row_to_keep_visible(
+      visual_pos.row,
+      0,
+      view.viewport.height as usize,
+      ctx.scrolloff,
+    )
+    .expect("scroll adjustment");
+
+    assert!(visual_pos.row > 0);
+    assert_eq!(view.scroll.row, expected);
+  }
+
+  #[test]
+  fn soft_wrap_scroll_clamps_to_last_visible_visual_row() {
+    let mut ctx = Ctx::new(None).expect("ctx");
+    ctx.resize(14, 3);
+    DefaultContext::set_soft_wrap_enabled(&mut ctx, true);
+
+    let long_line = "aaaa bbbb cccc dddd eeee ffff gggg";
+    let tx = Transaction::change(
+      ctx.editor.document().text(),
+      std::iter::once((0, 0, Some(long_line.into()))),
+    )
+    .expect("seed transaction");
+    assert!(DefaultContext::apply_transaction(&mut ctx, &tx));
+
+    assert!(ctx.set_active_view_scroll_clamped(Position::new(99, 7)));
+
+    let view = ctx.editor.view();
+    let doc = ctx.editor.document();
+    let mut text_format = <Ctx as DefaultContext>::text_format(&ctx);
+    let gutter_width =
+      the_lib::render::gutter_width_for_document(doc, view.viewport.width, &ctx.gutter_config);
+    text_format.viewport_width = view.viewport.width.saturating_sub(gutter_width).max(1);
+    let mut annotations = <Ctx as DefaultContext>::text_annotations(&ctx);
+    let eof_pos = the_lib::render::visual_pos_at_char(
+      doc.text().slice(..),
+      &text_format,
+      &mut annotations,
+      doc.text().len_chars(),
+    )
+    .expect("eof visual position");
+    let expected =
+      the_lib::view::max_scroll_row_for_content(eof_pos.row, view.viewport.height as usize);
+
+    assert_eq!(view.scroll.col, 0);
+    assert_eq!(view.scroll.row, expected);
   }
 
   #[test]

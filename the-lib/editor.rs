@@ -1,7 +1,7 @@
 //! Minimal editor/surface state for the-lib.
 //!
 //! This is intentionally small: it owns a set of document buffers plus
-//! per-buffer view/render state. IO, UI, and dispatch logic live outside
+//! per-pane view/render state. IO, UI, and dispatch logic live outside
 //! of the-lib.
 
 use std::{
@@ -66,6 +66,7 @@ pub struct Editor {
   layout_viewport:   Rect,
   split_tree:        SplitTree,
   pane_content:      BTreeMap<PaneId, PaneContent>,
+  pane_views:        BTreeMap<PaneId, ViewState>,
   terminal_surfaces: BTreeMap<TerminalId, TerminalSurface>,
   next_terminal_id:  NonZeroUsize,
   next_document_id:  NonZeroUsize,
@@ -251,6 +252,8 @@ impl Editor {
     pane_content.insert(split_tree.active_pane(), PaneContent::EditorBuffer {
       buffer_index: 0,
     });
+    let mut pane_views = BTreeMap::new();
+    pane_views.insert(split_tree.active_pane(), view);
 
     Self {
       id,
@@ -259,6 +262,7 @@ impl Editor {
       layout_viewport: view.viewport,
       split_tree,
       pane_content,
+      pane_views,
       terminal_surfaces: BTreeMap::new(),
       next_terminal_id: NonZeroUsize::new(1).expect("nonzero"),
       next_document_id,
@@ -331,6 +335,8 @@ impl Editor {
       },
     };
 
+    self.sync_pane_view_to_buffer(target_pane);
+
     if index != self.active_buffer {
       self.access_history.push(self.active_buffer);
       self.active_buffer = index;
@@ -340,6 +346,9 @@ impl Editor {
       .insert(target_pane, PaneContent::EditorBuffer {
         buffer_index: index,
       });
+    self
+      .pane_views
+      .insert(target_pane, self.buffers[index].view);
     true
   }
 
@@ -367,10 +376,26 @@ impl Editor {
   }
 
   pub fn view(&self) -> ViewState {
+    if matches!(
+      self.active_pane_content(),
+      Some(PaneContent::EditorBuffer { .. })
+    ) {
+      if let Some(view) = self.pane_view(self.active_pane_id()) {
+        return view;
+      }
+    }
     self.buffers[self.active_buffer].view
   }
 
   pub fn view_mut(&mut self) -> &mut ViewState {
+    if matches!(
+      self.active_pane_content(),
+      Some(PaneContent::EditorBuffer { .. })
+    ) {
+      return self
+        .pane_view_mut(self.active_pane_id())
+        .expect("active editor pane must have a view");
+    }
     &mut self.buffers[self.active_buffer].view
   }
 
@@ -449,14 +474,18 @@ impl Editor {
   }
 
   pub fn set_active_pane(&mut self, pane: PaneId) -> bool {
+    let previous_active = self.active_pane_id();
     if !self.split_tree.set_active_pane(pane) {
       return false;
     }
+    self.sync_pane_view_to_buffer(previous_active);
     let Some(content) = self.pane_content.get(&pane).copied() else {
       return false;
     };
     if let PaneContent::EditorBuffer { buffer_index } = content {
       self.active_buffer = buffer_index.min(self.buffers.len().saturating_sub(1));
+      let fallback = self.buffers[self.active_buffer].view;
+      self.pane_views.entry(pane).or_insert(fallback);
     }
     true
   }
@@ -541,6 +570,37 @@ impl Editor {
     self.pane_content.get(&pane).copied()
   }
 
+  pub fn pane_view(&self, pane: PaneId) -> Option<ViewState> {
+    match self.pane_content.get(&pane).copied() {
+      Some(PaneContent::EditorBuffer { buffer_index }) => {
+        let mut view = self
+          .pane_views
+          .get(&pane)
+          .copied()
+          .or_else(|| self.buffers.get(buffer_index).map(|buffer| buffer.view))?;
+        if let Some(rect) = self.pane_rect(pane) {
+          view.viewport = rect;
+        }
+        Some(view)
+      },
+      _ => None,
+    }
+  }
+
+  pub fn pane_view_mut(&mut self, pane: PaneId) -> Option<&mut ViewState> {
+    let buffer_index = match self.pane_content.get(&pane).copied() {
+      Some(PaneContent::EditorBuffer { buffer_index }) => buffer_index,
+      _ => return None,
+    };
+    let fallback = self.buffers.get(buffer_index)?.view;
+    let pane_rect = self.pane_rect(pane);
+    let view = self.pane_views.entry(pane).or_insert(fallback);
+    if let Some(rect) = pane_rect {
+      view.viewport = rect;
+    }
+    Some(view)
+  }
+
   pub fn pane_content_kind(&self, pane: PaneId) -> Option<PaneContentKind> {
     self.pane_content(pane).map(PaneContent::kind)
   }
@@ -585,6 +645,7 @@ impl Editor {
 
   pub fn open_terminal_in_active_pane(&mut self) -> TerminalId {
     let pane = self.active_pane_id();
+    self.sync_pane_view_to_buffer(pane);
     let _ = self.detach_terminal_surface_in_pane(pane);
     let terminal_id = self.alloc_terminal_id();
     self.terminal_surfaces.insert(terminal_id, TerminalSurface {
@@ -618,6 +679,8 @@ impl Editor {
     self.pane_content.insert(pane, PaneContent::EditorBuffer {
       buffer_index: fallback,
     });
+    let fallback_view = self.buffers[fallback].view;
+    self.pane_views.entry(pane).or_insert(fallback_view);
     true
   }
 
@@ -626,10 +689,12 @@ impl Editor {
       return false;
     }
     let was_active = pane == self.active_pane_id();
+    self.sync_pane_view_to_buffer(pane);
     let _ = self.detach_terminal_surface_in_pane(pane);
     self.pane_content.insert(pane, PaneContent::EditorBuffer {
       buffer_index: index,
     });
+    self.pane_views.insert(pane, self.buffers[index].view);
     if was_active {
       self.active_buffer = index;
     }
@@ -637,6 +702,18 @@ impl Editor {
   }
 
   pub fn buffer_view(&self, index: usize) -> Option<ViewState> {
+    if self.active_buffer == index {
+      return Some(self.view());
+    }
+
+    if let Some((pane, _)) = self
+      .pane_content
+      .iter()
+      .find(|(_, content)| matches!(content, PaneContent::EditorBuffer { buffer_index } if *buffer_index == index))
+    {
+      return self.pane_view(*pane);
+    }
+
     self.buffers.get(index).map(|buffer| buffer.view)
   }
 
@@ -659,10 +736,32 @@ impl Editor {
   }
 
   pub fn set_buffer_viewport(&mut self, index: usize, viewport: Rect) -> bool {
+    let mut changed = false;
+    for (pane, content) in self.pane_content.clone() {
+      if let PaneContent::EditorBuffer { buffer_index } = content
+        && buffer_index == index
+      {
+        if let Some(view) = self.pane_view_mut(pane) {
+          view.viewport = viewport;
+          changed = true;
+        }
+      }
+    }
+    if changed {
+      return true;
+    }
     let Some(buffer) = self.buffers.get_mut(index) else {
       return false;
     };
     buffer.view.viewport = viewport;
+    true
+  }
+
+  pub fn set_pane_viewport(&mut self, pane: PaneId, viewport: Rect) -> bool {
+    let Some(view) = self.pane_view_mut(pane) else {
+      return false;
+    };
+    view.viewport = viewport;
     true
   }
 
@@ -675,11 +774,17 @@ impl Editor {
   }
 
   pub fn split_active_pane(&mut self, axis: SplitAxis) -> bool {
+    let source_pane = self.active_pane_id();
     let current_content = self
       .active_pane_content()
       .unwrap_or(PaneContent::EditorBuffer {
         buffer_index: self.active_buffer,
       });
+    let current_view = self
+      .pane_views
+      .get(&source_pane)
+      .copied()
+      .unwrap_or_else(|| self.view());
     let pane = self.split_tree.split_active(axis);
     let content = match current_content {
       PaneContent::EditorBuffer { buffer_index } => PaneContent::EditorBuffer { buffer_index },
@@ -690,6 +795,7 @@ impl Editor {
       },
     };
     self.pane_content.insert(pane, content);
+    self.pane_views.insert(pane, current_view);
     if let PaneContent::EditorBuffer { buffer_index } = content {
       self.active_buffer = buffer_index.min(self.buffers.len().saturating_sub(1));
     }
@@ -698,17 +804,21 @@ impl Editor {
 
   pub fn close_active_pane(&mut self) -> bool {
     let closing = self.split_tree.active_pane();
+    self.sync_pane_view_to_buffer(closing);
     let Ok(next_active) = self.split_tree.close_active() else {
       return false;
     };
 
     let _ = self.detach_terminal_surface_in_pane(closing);
     self.pane_content.remove(&closing);
+    self.pane_views.remove(&closing);
     let Some(next_content) = self.pane_content.get(&next_active).copied() else {
       return false;
     };
     if let PaneContent::EditorBuffer { buffer_index } = next_content {
       self.active_buffer = buffer_index.min(self.buffers.len().saturating_sub(1));
+      let fallback = self.buffers[self.active_buffer].view;
+      self.pane_views.entry(next_active).or_insert(fallback);
     } else {
       self.active_buffer = self.active_buffer.min(self.buffers.len().saturating_sub(1));
     }
@@ -724,6 +834,10 @@ impl Editor {
       return false;
     };
 
+    let panes_to_sync: Vec<PaneId> = self.pane_content.keys().copied().collect();
+    for pane in panes_to_sync {
+      self.sync_pane_view_to_buffer(pane);
+    }
     let removed_panes: Vec<PaneId> = self
       .pane_content
       .keys()
@@ -736,8 +850,11 @@ impl Editor {
 
     self.split_tree.only_active();
     self.pane_content.retain(|pane, _| *pane == active);
+    self.pane_views.retain(|pane, _| *pane == active);
     if let PaneContent::EditorBuffer { buffer_index } = active_content {
       self.active_buffer = buffer_index.min(self.buffers.len().saturating_sub(1));
+      let fallback = self.buffers[self.active_buffer].view;
+      self.pane_views.entry(active).or_insert(fallback);
     } else {
       self.active_buffer = self.active_buffer.min(self.buffers.len().saturating_sub(1));
     }
@@ -745,43 +862,55 @@ impl Editor {
   }
 
   pub fn rotate_active_pane(&mut self, next: bool) -> bool {
+    let previous_active = self.active_pane_id();
     if !self.split_tree.rotate_focus(next) {
       return false;
     }
+    self.sync_pane_view_to_buffer(previous_active);
     let active = self.split_tree.active_pane();
     let Some(content) = self.pane_content.get(&active).copied() else {
       return false;
     };
     if let PaneContent::EditorBuffer { buffer_index } = content {
       self.active_buffer = buffer_index.min(self.buffers.len().saturating_sub(1));
+      let fallback = self.buffers[self.active_buffer].view;
+      self.pane_views.entry(active).or_insert(fallback);
     }
     true
   }
 
   pub fn jump_active_pane(&mut self, direction: PaneDirection) -> bool {
+    let previous_active = self.active_pane_id();
     if !self.split_tree.jump_active(direction) {
       return false;
     }
+    self.sync_pane_view_to_buffer(previous_active);
     let active = self.split_tree.active_pane();
     let Some(content) = self.pane_content.get(&active).copied() else {
       return false;
     };
     if let PaneContent::EditorBuffer { buffer_index } = content {
       self.active_buffer = buffer_index.min(self.buffers.len().saturating_sub(1));
+      let fallback = self.buffers[self.active_buffer].view;
+      self.pane_views.entry(active).or_insert(fallback);
     }
     true
   }
 
   pub fn move_pane(&mut self, pane: PaneId, target: PaneId, direction: PaneDirection) -> bool {
+    let previous_active = self.active_pane_id();
     if !self.split_tree.move_pane(pane, target, direction) {
       return false;
     }
+    self.sync_pane_view_to_buffer(previous_active);
     let active = self.split_tree.active_pane();
     let Some(content) = self.pane_content.get(&active).copied() else {
       return false;
     };
     if let PaneContent::EditorBuffer { buffer_index } = content {
       self.active_buffer = buffer_index.min(self.buffers.len().saturating_sub(1));
+      let fallback = self.buffers[self.active_buffer].view;
+      self.pane_views.entry(active).or_insert(fallback);
     } else {
       self.active_buffer = self.active_buffer.min(self.buffers.len().saturating_sub(1));
     }
@@ -865,13 +994,10 @@ impl Editor {
   }
 
   pub fn replace_active_buffer(&mut self, text: Rope, file_path: Option<PathBuf>) -> bool {
-    let Some(current_view) = self
-      .buffers
-      .get(self.active_buffer)
-      .map(|buffer| buffer.view)
-    else {
+    let current_view = self.view();
+    if self.buffers.get(self.active_buffer).is_none() {
       return false;
-    };
+    }
     let document_id = DocumentId::new(self.next_document_id);
     let next_doc = self.next_document_id.get().saturating_add(1);
     self.next_document_id = NonZeroUsize::new(next_doc).unwrap_or(self.next_document_id);
@@ -903,6 +1029,27 @@ impl Editor {
     let next_index = self.buffers.len() - 1;
     let _ = self.activate_buffer(next_index);
     next_index
+  }
+
+  fn sync_pane_view_to_buffer(&mut self, pane: PaneId) {
+    let Some(PaneContent::EditorBuffer { buffer_index }) = self.pane_content.get(&pane).copied()
+    else {
+      return;
+    };
+    let Some(view) = self.pane_views.get(&pane).copied() else {
+      return;
+    };
+    if let Some(buffer) = self.buffers.get_mut(buffer_index) {
+      buffer.view = view;
+    }
+  }
+
+  fn pane_rect(&self, pane: PaneId) -> Option<Rect> {
+    self
+      .split_tree
+      .layout(self.layout_viewport)
+      .into_iter()
+      .find_map(|(candidate, rect)| (candidate == pane).then_some(rect))
   }
 
   pub fn open_buffer_without_activation(
@@ -1403,6 +1550,71 @@ mod tests {
     assert!(editor.only_active_pane());
     assert_eq!(editor.pane_count(), 1);
     assert!(!editor.only_active_pane());
+  }
+
+  #[test]
+  fn split_panes_clone_and_keep_independent_view_state() {
+    let doc_id = DocumentId::new(NonZeroUsize::new(1).unwrap());
+    let doc = Document::new(doc_id, Rope::from("one"));
+    let view = ViewState::new(Rect::new(0, 0, 80, 24), Position::new(3, 5));
+    let editor_id = EditorId::new(NonZeroUsize::new(1).unwrap());
+    let mut editor = Editor::new(editor_id, doc, view);
+
+    let first = editor.active_pane_id();
+    assert!(editor.split_active_pane(SplitAxis::Vertical));
+    let second = editor.active_pane_id();
+
+    assert_eq!(editor.pane_view(first).unwrap().scroll, Position::new(3, 5));
+    assert_eq!(
+      editor.pane_view(second).unwrap().scroll,
+      Position::new(3, 5)
+    );
+
+    assert!(editor.set_active_pane(first));
+    editor.view_mut().scroll = Position::new(11, 2);
+    editor.view_mut().viewport = Rect::new(0, 0, 40, 24);
+
+    assert!(editor.set_active_pane(second));
+    editor.view_mut().scroll = Position::new(19, 7);
+    editor.view_mut().viewport = Rect::new(40, 0, 40, 24);
+
+    assert_eq!(
+      editor.pane_view(first).unwrap().scroll,
+      Position::new(11, 2)
+    );
+    assert_eq!(
+      editor.pane_view(first).unwrap().viewport,
+      Rect::new(0, 0, 40, 24)
+    );
+    assert_eq!(
+      editor.pane_view(second).unwrap().scroll,
+      Position::new(19, 7)
+    );
+    assert_eq!(
+      editor.pane_view(second).unwrap().viewport,
+      Rect::new(40, 0, 40, 24)
+    );
+  }
+
+  #[test]
+  fn active_view_uses_current_split_rect() {
+    let doc_id = DocumentId::new(NonZeroUsize::new(1).unwrap());
+    let doc = Document::new(doc_id, Rope::from("one\ntwo\nthree\n"));
+    let view = ViewState::new(Rect::new(0, 0, 80, 24), Position::new(0, 0));
+    let editor_id = EditorId::new(NonZeroUsize::new(1).unwrap());
+    let mut editor = Editor::new(editor_id, doc, view);
+
+    assert!(editor.split_active_pane(SplitAxis::Vertical));
+    assert!(editor.split_active_pane(SplitAxis::Horizontal));
+
+    let active_rect = editor
+      .frame_pane_snapshots(editor.layout_viewport())
+      .into_iter()
+      .find(|pane| pane.is_active_pane)
+      .map(|pane| pane.rect)
+      .expect("active pane rect");
+
+    assert_eq!(editor.view().viewport, active_rect);
   }
 
   #[test]

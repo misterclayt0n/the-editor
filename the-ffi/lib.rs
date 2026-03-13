@@ -5863,7 +5863,6 @@ impl App {
     };
     let viewport = viewport.to_lib();
     editor.set_layout_viewport(viewport);
-    editor.view_mut().viewport = viewport;
     true
   }
 
@@ -5902,10 +5901,13 @@ impl App {
       visual_pos_at_char(text_slice, &text_fmt, &mut annotations, text.len_chars())
         .unwrap_or_else(|| LibPosition::new(0, 0))
     };
-    // Zed-like page padding vertically: allow the last visual row to reach the
-    // top edge of the viewport (up to one viewport of empty space after content).
-    // Horizontally we clamp to the actual scrollable width (no page padding).
-    clamped.row = clamped.row.min(eof_pos.row);
+    let max_scroll_row = if text_fmt.soft_wrap {
+      the_lib::view::max_scroll_row_for_content(eof_pos.row, view.viewport.height as usize)
+    } else {
+      // Preserve the existing page-padding behavior for unwrapped text.
+      eof_pos.row
+    };
+    clamped.row = clamped.row.min(max_scroll_row);
 
     if !text_fmt.soft_wrap && clamped.col != view.scroll.col {
       let max_col = Self::max_visual_col_for_text(text, &text_fmt, &mut annotations);
@@ -7004,6 +7006,7 @@ impl App {
 
   fn build_inactive_pane_render_plan_with_styles_impl(
     &mut self,
+    pane_id: PaneId,
     buffer_index: usize,
     styles: RenderStyles,
   ) -> the_lib::render::RenderPlan {
@@ -7029,7 +7032,7 @@ impl App {
 
     let plan = {
       let editor = self.active_editor_mut();
-      let Some(view) = editor.buffer_view(buffer_index) else {
+      let Some(view) = editor.pane_view(pane_id) else {
         return the_lib::render::RenderPlan::default();
       };
       let Some((doc, cache)) = editor.document_and_cache_at_mut(buffer_index) else {
@@ -7107,8 +7110,8 @@ impl App {
     {
       let editor = self.active_editor_mut();
       for pane in &panes {
-        if let PaneContent::EditorBuffer { buffer_index } = pane.content {
-          let _ = editor.set_buffer_viewport(buffer_index, pane.rect);
+        if let PaneContent::EditorBuffer { .. } = pane.content {
+          let _ = editor.set_pane_viewport(pane.pane_id, pane.rect);
         }
       }
     }
@@ -7121,7 +7124,11 @@ impl App {
           let mut plan = if pane.is_active_pane {
             self.build_render_plan_with_styles_impl(styles)
           } else {
-            self.build_inactive_pane_render_plan_with_styles_impl(buffer_index, styles)
+            self.build_inactive_pane_render_plan_with_styles_impl(
+              pane.pane_id,
+              buffer_index,
+              styles,
+            )
           };
           let generation_state = if pane.is_active_pane {
             self
@@ -12015,13 +12022,16 @@ impl App {
 
     let editor = self.active_editor_ref();
     let view = editor.view();
+    let doc = editor.document();
     let target = LibPosition::new(
       view.scroll.row.saturating_add(logical_row),
       view.scroll.col.saturating_add(logical_col),
     );
 
-    let text = editor.document().text();
-    let text_fmt = self.text_format();
+    let text = doc.text();
+    let mut text_fmt = self.text_format();
+    let gutter_width = gutter_width_for_document(doc, view.viewport.width, self.gutter_config());
+    text_fmt.viewport_width = view.viewport.width.saturating_sub(gutter_width).max(1);
     let mut annotations = self.text_annotations();
     char_at_visual_pos(text.slice(..), &text_fmt, &mut annotations, target)
   }
@@ -12239,36 +12249,59 @@ impl App {
 
     let scrolloff = self.active_state_ref().scrolloff;
     let soft_wrap = self.active_state_ref().text_format.soft_wrap;
+    let gutter_config = self.gutter_config().clone();
+    let (view, viewport_height, viewport_width, cursor_line, cursor_col, cursor_visual_row) = {
+      let editor = self.active_editor_ref();
+      let doc = editor.document();
+      let text = doc.text();
+      let selection = doc.selection();
+      let range = if let Some(active_cursor) = editor.view().active_cursor {
+        selection.range_by_id(active_cursor).copied()
+      } else {
+        selection.ranges().first().copied()
+      };
+      let Some(range) = range else {
+        return false;
+      };
+
+      let cursor_pos = range.cursor(text.slice(..));
+      let cursor_line = text.char_to_line(cursor_pos);
+      let cursor_col = cursor_pos - text.line_to_char(cursor_line);
+
+      let view = editor.view();
+      let viewport_height = view.viewport.height as usize;
+      let gutter_width = gutter_width_for_document(doc, view.viewport.width, &gutter_config);
+      let viewport_width = view.viewport.width.saturating_sub(gutter_width).max(1) as usize;
+      let cursor_visual_row = if soft_wrap {
+        let mut text_format = self.text_format();
+        text_format.viewport_width = view.viewport.width.saturating_sub(gutter_width).max(1);
+        let mut annotations = self.text_annotations();
+        visual_pos_at_char(text.slice(..), &text_format, &mut annotations, cursor_pos)
+          .map(|pos| pos.row)
+          .unwrap_or(cursor_line)
+      } else {
+        cursor_line
+      };
+
+      (
+        view,
+        viewport_height,
+        viewport_width,
+        cursor_line,
+        cursor_col,
+        cursor_visual_row,
+      )
+    };
 
     let Some(editor) = self.editor_mut(id) else {
       return false;
     };
 
-    let doc = editor.document();
-    let text = doc.text();
-    let selection = doc.selection();
-    let range = if let Some(active_cursor) = editor.view().active_cursor {
-      selection.range_by_id(active_cursor).copied()
-    } else {
-      selection.ranges().first().copied()
-    };
-    let Some(range) = range else {
-      return false;
-    };
-
-    let cursor_pos = range.cursor(text.slice(..));
-    let cursor_line = text.char_to_line(cursor_pos);
-    let cursor_col = cursor_pos - text.line_to_char(cursor_line);
-
-    let view = editor.view();
-    let viewport_height = view.viewport.height as usize;
-    let viewport_width = view.viewport.width as usize;
-
     if soft_wrap {
       let mut changed = false;
       let mut new_scroll = view.scroll;
       if let Some(new_row) = the_lib::view::scroll_row_to_keep_visible(
-        cursor_line,
+        cursor_visual_row,
         view.scroll.row,
         viewport_height,
         scrolloff,
@@ -15918,6 +15951,34 @@ mod tests {
   }
 
   #[test]
+  fn frame_render_plan_preserves_per_pane_viewports_for_shared_buffers() {
+    let _guard = ffi_test_guard();
+    let mut app = App::new();
+    let id = app.create_editor("hello", default_viewport(), ffi::Position {
+      row: 0,
+      col: 0,
+    });
+
+    assert!(app.split_active_pane(id, 1));
+    assert!(app.split_active_pane(id, 0));
+
+    let frame = app.frame_render_plan(id);
+    assert_eq!(frame.pane_count(), 3);
+    for index in 0..frame.pane_count() {
+      let pane = frame.pane_at(index);
+      if pane.pane_kind() != 0 {
+        continue;
+      }
+      let viewport = pane.plan().viewport();
+      let rect = pane.rect();
+      assert_eq!(viewport.x, rect.x);
+      assert_eq!(viewport.y, rect.y);
+      assert_eq!(viewport.width, rect.width);
+      assert_eq!(viewport.height, rect.height);
+    }
+  }
+
+  #[test]
   fn open_untitled_buffer_preserves_active_terminal_pane() {
     let _guard = ffi_test_guard();
     let mut app = App::new();
@@ -17511,6 +17572,51 @@ pkgs.mkShell {
 
     let toggled = app.render_plan(id);
     assert_eq!(toggled.line_count(), no_wrap.line_count());
+  }
+
+  #[test]
+  fn pointer_char_idx_for_event_uses_wrapped_viewport_width() {
+    let _guard = ffi_test_guard();
+    let mut app = App::new();
+    let viewport = ffi::Rect {
+      x:      0,
+      y:      0,
+      width:  14,
+      height: 10,
+    };
+    let id = app.create_editor("aaaa bbbb cccc dddd", viewport, ffi::Position {
+      row: 0,
+      col: 0,
+    });
+    assert!(app.activate(id).is_some());
+
+    let registry = app.command_registry_ref() as *const CommandRegistry<App>;
+    unsafe { (&*registry).execute(&mut app, "wrap", "on", CommandEvent::Validate) }
+      .expect("wrap on");
+
+    let editor = app.active_editor_ref();
+    let view = editor.view();
+    let doc = editor.document();
+    let text = doc.text();
+    let mut text_fmt = app.text_format();
+    let gutter_width =
+      the_lib::render::gutter_width_for_document(doc, view.viewport.width, app.gutter_config());
+    text_fmt.viewport_width = view.viewport.width.saturating_sub(gutter_width).max(1);
+    let mut annotations = app.text_annotations();
+    let wrapped_pos =
+      the_lib::render::visual_pos_at_char(text.slice(..), &text_fmt, &mut annotations, 15)
+        .expect("wrapped visual position");
+    assert!(wrapped_pos.row > 0);
+
+    let event = the_default::PointerEvent::new(
+      the_default::PointerKind::Down(the_default::PointerButton::Left),
+      0,
+      0,
+    )
+    .with_logical_pos(wrapped_pos.col as u16, wrapped_pos.row as u16)
+    .with_click_count(1);
+
+    assert_eq!(app.pointer_char_idx_for_event(event), Some(15));
   }
 
   #[test]
@@ -19342,6 +19448,106 @@ pkgs.mkShell {
     assert!(app.set_scroll(id, ffi::Position { row: 0, col: 40 }));
     assert!(app.ensure_cursor_visible(id));
     assert_eq!(app.active_editor_ref().view().scroll.col, 0);
+  }
+
+  #[test]
+  fn ensure_cursor_visible_tracks_wrapped_visual_rows() {
+    let _guard = ffi_test_guard();
+    let mut app = App::new();
+    let viewport = ffi::Rect {
+      x:      0,
+      y:      0,
+      width:  14,
+      height: 3,
+    };
+    let id = app.create_editor(
+      "aaaa bbbb cccc dddd eeee ffff gggg",
+      viewport,
+      ffi::Position { row: 0, col: 0 },
+    );
+    assert!(app.activate(id).is_some());
+    DefaultContext::set_soft_wrap_enabled(&mut app, true);
+
+    let cursor_char = app
+      .active_editor_ref()
+      .document()
+      .text()
+      .len_chars()
+      .saturating_sub(1);
+    let _ = app
+      .active_editor_mut()
+      .document_mut()
+      .set_selection(Selection::single(cursor_char, cursor_char));
+
+    assert!(app.ensure_cursor_visible(id));
+
+    let editor = app.active_editor_ref();
+    let view = editor.view();
+    let doc = editor.document();
+    let mut text_format = app.text_format();
+    let gutter_width =
+      the_lib::render::gutter_width_for_document(doc, view.viewport.width, app.gutter_config());
+    text_format.viewport_width = view.viewport.width.saturating_sub(gutter_width).max(1);
+    let mut annotations = app.text_annotations();
+    let visual_pos = the_lib::render::visual_pos_at_char(
+      doc.text().slice(..),
+      &text_format,
+      &mut annotations,
+      cursor_char,
+    )
+    .expect("wrapped visual position");
+    let expected = the_lib::view::scroll_row_to_keep_visible(
+      visual_pos.row,
+      0,
+      view.viewport.height as usize,
+      app.scrolloff(),
+    )
+    .expect("scroll adjustment");
+
+    assert!(visual_pos.row > 0);
+    assert_eq!(view.scroll.row, expected);
+  }
+
+  #[test]
+  fn set_scroll_clamps_to_last_wrapped_viewport_row() {
+    let _guard = ffi_test_guard();
+    let mut app = App::new();
+    let viewport = ffi::Rect {
+      x:      0,
+      y:      0,
+      width:  14,
+      height: 3,
+    };
+    let id = app.create_editor(
+      "aaaa bbbb cccc dddd eeee ffff gggg",
+      viewport,
+      ffi::Position { row: 0, col: 0 },
+    );
+    assert!(app.activate(id).is_some());
+    DefaultContext::set_soft_wrap_enabled(&mut app, true);
+
+    assert!(app.set_scroll(id, ffi::Position { row: 99, col: 7 }));
+
+    let editor = app.active_editor_ref();
+    let view = editor.view();
+    let doc = editor.document();
+    let mut text_format = app.text_format();
+    let gutter_width =
+      the_lib::render::gutter_width_for_document(doc, view.viewport.width, app.gutter_config());
+    text_format.viewport_width = view.viewport.width.saturating_sub(gutter_width).max(1);
+    let mut annotations = app.text_annotations();
+    let eof_pos = the_lib::render::visual_pos_at_char(
+      doc.text().slice(..),
+      &text_format,
+      &mut annotations,
+      doc.text().len_chars(),
+    )
+    .expect("eof visual position");
+    let expected =
+      the_lib::view::max_scroll_row_for_content(eof_pos.row, view.viewport.height as usize);
+
+    assert_eq!(view.scroll.col, 0);
+    assert_eq!(view.scroll.row, expected);
   }
 
   #[test]

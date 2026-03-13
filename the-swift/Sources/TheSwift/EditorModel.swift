@@ -562,7 +562,10 @@ final class EditorModel: ObservableObject {
         refresh(trigger: "pointer")
     }
 
-    func handlePointerScroll(deltaX: CGFloat, deltaY: CGFloat, precise: Bool) {
+    func handlePointerScroll(deltaX: CGFloat, deltaY: CGFloat, precise: Bool, paneId: UInt64?) {
+        if let paneId {
+            focusPaneForPointerScroll(paneId)
+        }
         handleScroll(deltaX: deltaX, deltaY: deltaY, precise: precise)
     }
 
@@ -849,6 +852,28 @@ final class EditorModel: ObservableObject {
             )
         }
         return true
+    }
+
+    private func focusPaneForPointerScroll(_ paneId: UInt64) {
+        guard paneId != 0, framePlan.active_pane_id() != paneId else {
+            return
+        }
+        let event = MouseBridgeEvent(
+            kind: 0,
+            button: 1,
+            logicalCol: UInt16.max,
+            logicalRow: UInt16.max,
+            modifiers: 0,
+            clickCount: 1,
+            surfaceId: paneId
+        )
+        _ = app.handle_mouse(
+            editorId,
+            event.packed,
+            event.logicalCol,
+            event.logicalRow,
+            event.surfaceId
+        )
     }
 
     @discardableResult

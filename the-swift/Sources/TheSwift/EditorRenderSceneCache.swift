@@ -383,7 +383,8 @@ final class EditorRenderSceneCache {
                 drawnSpans += 1
                 let attrs: [NSAttributedString.Key: Any] = [
                     .font: nsFont,
-                    .foregroundColor: colorForSpan(span)
+                    .foregroundColor: colorForSpan(span),
+                    .ligature: 0
                 ]
                 runs.append(
                     PreparedTextRun(

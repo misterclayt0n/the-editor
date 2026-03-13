@@ -332,7 +332,7 @@ struct ScrollCaptureView: NSViewRepresentable {
     final class ScrollCaptureNSView: NSView {
         override var isFlipped: Bool { true }
 
-        var onScroll: ((CGFloat, CGFloat, Bool) -> Void)?
+        var onScroll: ((CGFloat, CGFloat, Bool, UInt64?) -> Void)?
         var onPointer: ((MouseBridgeEvent) -> Void)?
         var onSplitResize: ((UInt64, CGPoint) -> Void)?
         var separators: [SeparatorHandle] = [] {
@@ -626,7 +626,21 @@ struct ScrollCaptureView: NSViewRepresentable {
         }
 
         override func scrollWheel(with event: NSEvent) {
-            onScroll?(event.scrollingDeltaX, event.scrollingDeltaY, event.hasPreciseScrollingDeltas)
+            let point = convert(event.locationInWindow, from: nil)
+            guard !isInPopupPassthroughRect(point),
+                  hitSeparator(at: point) == nil,
+                  !isInCursorExclusionRect(point),
+                  !shouldPassthrough(at: point)
+            else {
+                super.scrollWheel(with: event)
+                return
+            }
+            onScroll?(
+                event.scrollingDeltaX,
+                event.scrollingDeltaY,
+                event.hasPreciseScrollingDeltas,
+                hitPane(at: point)?.paneId
+            )
         }
 
         private func updateDragAutoScrollState(for point: NSPoint, pane: PaneHandle) {
@@ -667,7 +681,7 @@ struct ScrollCaptureView: NSViewRepresentable {
                 return
             }
 
-            onScroll?(0, verticalDeltaPx, true)
+            onScroll?(0, verticalDeltaPx, true, pane.paneId)
 
             let clamped = clampToPane(rawPoint, pane: pane)
             guard let pointer = makePointerEvent(
@@ -1051,7 +1065,7 @@ struct ScrollCaptureView: NSViewRepresentable {
         }
     }
 
-    let onScroll: (CGFloat, CGFloat, Bool) -> Void
+    let onScroll: (CGFloat, CGFloat, Bool, UInt64?) -> Void
     let onPointer: (MouseBridgeEvent) -> Void
     let separators: [SeparatorHandle]
     let passthroughRects: [CGRect]

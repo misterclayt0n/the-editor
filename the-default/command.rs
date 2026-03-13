@@ -91,6 +91,7 @@ use the_lib::{
     UiTree,
     char_at_visual_pos,
     graphics::CursorKind,
+    gutter_width_for_document,
     text_annotations::{
       InlineAnnotation,
       Overlay,
@@ -4419,11 +4420,10 @@ fn max_scroll_row<'a>(
   annotations: &mut TextAnnotations<'a>,
   viewport_height: usize,
 ) -> usize {
-  let viewport_last_row = viewport_height.saturating_sub(1);
   let doc_last_row = visual_pos_at_char(text, text_fmt, annotations, text.len_chars())
     .map(|pos| pos.row)
     .unwrap_or(0);
-  doc_last_row.saturating_sub(viewport_last_row)
+  the_lib::view::max_scroll_row_for_content(doc_last_row, viewport_height)
 }
 
 fn align_view<Ctx: DefaultContext>(ctx: &mut Ctx, align: WindowAlign) {
@@ -4442,7 +4442,8 @@ fn align_view<Ctx: DefaultContext>(ctx: &mut Ctx, align: WindowAlign) {
     let doc = editor.document();
     let text = doc.text().slice(..);
     let mut text_fmt = ctx.text_format();
-    text_fmt.viewport_width = view.viewport.width;
+    let gutter_width = gutter_width_for_document(doc, view.viewport.width, ctx.gutter_config());
+    text_fmt.viewport_width = view.viewport.width.saturating_sub(gutter_width).max(1);
     let cursor = range.cursor(text);
 
     let mut annotations = ctx.text_annotations();
@@ -4481,7 +4482,8 @@ fn align_view_middle<Ctx: DefaultContext>(ctx: &mut Ctx) {
     let doc = editor.document();
     let text = doc.text().slice(..);
     let mut text_fmt = ctx.text_format();
-    text_fmt.viewport_width = view.viewport.width;
+    let gutter_width = gutter_width_for_document(doc, view.viewport.width, ctx.gutter_config());
+    text_fmt.viewport_width = view.viewport.width.saturating_sub(gutter_width).max(1);
     if text_fmt.soft_wrap {
       return;
     }
@@ -4515,7 +4517,8 @@ fn scroll_view<Ctx: DefaultContext>(ctx: &mut Ctx, direction: Direction) {
     let doc = editor.document();
     let text = doc.text().slice(..);
     let mut text_fmt = ctx.text_format();
-    text_fmt.viewport_width = view.viewport.width;
+    let gutter_width = gutter_width_for_document(doc, view.viewport.width, ctx.gutter_config());
+    text_fmt.viewport_width = view.viewport.width.saturating_sub(gutter_width).max(1);
 
     let mut clamp_annotations = ctx.text_annotations();
     let max_row = max_scroll_row(text, &text_fmt, &mut clamp_annotations, viewport_height);

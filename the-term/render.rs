@@ -145,6 +145,7 @@ use the_lib::{
     visual_pos_at_char,
   },
   selection::Range,
+  split_tree::PaneId,
   syntax::{
     Highlight,
     Syntax,
@@ -5032,10 +5033,6 @@ fn apply_ui_viewport(ctx: &mut Ctx, ui: &UiTree, area: Rect) {
   if ctx.editor.layout_viewport() != layout_viewport {
     ctx.editor.set_layout_viewport(layout_viewport);
   }
-  let view = ctx.editor.view_mut();
-  if view.viewport.width != width || view.viewport.height != height {
-    view.viewport = the_lib::render::graphics::Rect::new(0, 0, width, height);
-  }
 }
 
 fn draw_ui_tooltip(buf: &mut Buffer, area: Rect, _ctx: &Ctx, tooltip: &UiTooltip) {
@@ -6013,10 +6010,11 @@ pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> Ren
 
 fn build_inactive_pane_plan_with_styles(
   ctx: &mut Ctx,
+  pane_id: PaneId,
   buffer_index: usize,
   styles: RenderStyles,
 ) -> RenderPlan {
-  let Some(view) = ctx.editor.buffer_view(buffer_index) else {
+  let Some(view) = ctx.editor.pane_view(pane_id) else {
     return RenderPlan::default();
   };
   let allow_cache_refresh = ctx.syntax_highlight_refresh_allowed();
@@ -6083,8 +6081,8 @@ pub fn build_frame_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) 
   }
 
   for pane in &pane_snapshots {
-    if let PaneContent::EditorBuffer { buffer_index } = pane.content {
-      let _ = ctx.editor.set_buffer_viewport(buffer_index, pane.rect);
+    if let PaneContent::EditorBuffer { .. } = pane.content {
+      let _ = ctx.editor.set_pane_viewport(pane.pane_id, pane.rect);
     }
   }
 
@@ -6098,7 +6096,7 @@ pub fn build_frame_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) 
           let mut plan = if pane.is_active_pane {
             build_render_plan_with_styles(ctx, styles)
           } else {
-            build_inactive_pane_plan_with_styles(ctx, buffer_index, styles)
+            build_inactive_pane_plan_with_styles(ctx, pane.pane_id, buffer_index, styles)
           };
           let generation_state = if pane.is_active_pane {
             ctx
@@ -6767,26 +6765,30 @@ fn sync_file_picker_viewport(ctx: &mut Ctx, area: Rect) {
 
 /// Ensure cursor is visible by adjusting scroll if needed.
 pub fn ensure_cursor_visible(ctx: &mut Ctx) {
-  let doc = ctx.editor.document();
-  let text = doc.text();
-  let max = text.len_chars();
+  let (cursor_pos, cursor_line, cursor_col) = {
+    let doc = ctx.editor.document();
+    let text = doc.text();
+    let max = text.len_chars();
 
-  // Get the selected cursor position (active cursor if available).
-  let selection = doc.selection();
-  let range = if let Some(active_cursor) = ctx.editor.view().active_cursor {
-    selection.range_by_id(active_cursor).copied()
-  } else {
-    selection.ranges().first().copied()
+    // Get the selected cursor position (active cursor if available).
+    let selection = doc.selection();
+    let range = if let Some(active_cursor) = ctx.editor.view().active_cursor {
+      selection.range_by_id(active_cursor).copied()
+    } else {
+      selection.ranges().first().copied()
+    };
+    let Some(range) = range else {
+      return;
+    };
+    let clamped = Range::new(range.anchor.min(max), range.head.min(max));
+    let cursor_pos = clamped.cursor(text.slice(..));
+    let cursor_line = text.char_to_line(cursor_pos);
+    let cursor_col = cursor_pos - text.line_to_char(cursor_line);
+    (cursor_pos, cursor_line, cursor_col)
   };
-  let Some(range) = range else {
-    return;
-  };
-  let clamped = Range::new(range.anchor.min(max), range.head.min(max));
-  let cursor_pos = clamped.cursor(text.slice(..));
-  let cursor_line = text.char_to_line(cursor_pos);
-  let cursor_col = cursor_pos - text.line_to_char(cursor_line);
 
   let view = ctx.editor.view();
+  let doc = ctx.editor.document();
   let viewport_height = view.viewport.height as usize;
   let gutter_width = gutter_width_for_document(doc, view.viewport.width, &ctx.gutter_config);
   let viewport_width = view.viewport.width.saturating_sub(gutter_width).max(1) as usize;
@@ -6794,9 +6796,22 @@ pub fn ensure_cursor_visible(ctx: &mut Ctx) {
   if ctx.text_format.soft_wrap {
     let mut changed = false;
     let mut new_scroll = view.scroll;
+    let cursor_visual_row = {
+      let mut text_format = ctx.text_format.clone();
+      text_format.viewport_width = view.viewport.width.saturating_sub(gutter_width).max(1);
+      let mut annotations = ctx.text_annotations();
+      visual_pos_at_char(
+        doc.text().slice(..),
+        &text_format,
+        &mut annotations,
+        cursor_pos,
+      )
+      .map(|pos| pos.row)
+      .unwrap_or(cursor_line)
+    };
 
     if let Some(new_row) = the_lib::view::scroll_row_to_keep_visible(
-      cursor_line,
+      cursor_visual_row,
       view.scroll.row,
       viewport_height,
       ctx.scrolloff,
@@ -6860,6 +6875,7 @@ mod tests {
       UiText,
       UiTree,
     },
+    split_tree::SplitAxis,
   };
 
   use super::{
@@ -7061,6 +7077,23 @@ mod tests {
     let completion_rect = Rect::new(2, 6, 76, 10);
     let docs_rect = completion_docs_panel_rect(area, 36, 9, completion_rect);
     assert!(docs_rect.is_none());
+  }
+
+  #[test]
+  fn frame_render_plan_keeps_per_pane_viewports_for_shared_buffers() {
+    let mut ctx = Ctx::new(None).expect("ctx");
+    assert!(ctx.editor.split_active_pane(SplitAxis::Vertical));
+    assert!(ctx.editor.split_active_pane(SplitAxis::Horizontal));
+
+    let frame = super::build_frame_render_plan(&mut ctx);
+    assert_eq!(frame.panes.len(), 3);
+
+    for pane in frame.panes {
+      if pane.pane_kind != the_lib::editor::PaneContentKind::EditorBuffer {
+        continue;
+      }
+      assert_eq!(pane.plan.viewport, pane.rect);
+    }
   }
 
   #[test]

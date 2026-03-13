@@ -282,7 +282,11 @@ struct EditorView: View {
         let terminalPaneIds = Set(model.terminalPanes.map(\.paneId))
         let shouldDimInactivePanes = Int(model.framePlan.pane_count()) > 1
         let splitResizeHandles = splitResizeHandles(from: model.splitSeparators, cellSize: cellSize)
-        let pointerPanes = pointerPanes(from: model.framePlan, cellSize: cellSize)
+        let pointerPanes = pointerPanes(
+            from: model.framePlan,
+            cellSize: cellSize,
+            contentSize: contentProxy.size
+        )
         let terminalPaneLayouts = terminalPaneLayouts(
             from: model.terminalPanes,
             framePlan: model.framePlan,
@@ -862,8 +866,13 @@ struct EditorView: View {
     ) -> some View {
         if !isOverlayOpen && !isCompletionOpen && !isSignatureOpen {
             ScrollCaptureView(
-                onScroll: { deltaX, deltaY, precise in
-                    model.handlePointerScroll(deltaX: deltaX, deltaY: deltaY, precise: precise)
+                onScroll: { deltaX, deltaY, precise, paneId in
+                    model.handlePointerScroll(
+                        deltaX: deltaX,
+                        deltaY: deltaY,
+                        precise: precise,
+                        paneId: paneId
+                    )
                 },
                 onPointer: { event in
                     model.handlePointerEvent(event)
@@ -962,34 +971,17 @@ struct EditorView: View {
         let gridExtent = framePlanGridExtent(framePlan)
         let activePaneId = focusedPaneId ?? framePlan.active_pane_id()
         return panes.map { pane in
-            let x = CGFloat(pane.x) * cellSize.width
-            let y = CGFloat(pane.y) * cellSize.height
-            let paneMaxX = pane.x + pane.width
-            let paneMaxY = pane.y + pane.height
-            var width = CGFloat(pane.width) * cellSize.width
-            var height = CGFloat(pane.height) * cellSize.height
-
-            // Ghostty expects to own the full pixel size of its host view. The editor
-            // core layout is cell-based, so any remainder pixels from the window size
-            // live on the outermost pane edges. Let edge panes absorb that remainder
-            // so the terminal surface fills the real pane bounds the same way Ghostty's
-            // own host views do.
-            if paneMaxX == gridExtent.cols {
-                width = max(width, contentSize.width - x)
-            }
-            if paneMaxY == gridExtent.rows {
-                height = max(height, contentSize.height - y)
-            }
+            let frame = paneFrame(
+                rect: Rect(x: pane.x, y: pane.y, width: pane.width, height: pane.height),
+                gridExtent: gridExtent,
+                cellSize: cellSize,
+                contentSize: contentSize
+            )
 
             return TerminalPaneLayout(
                 paneId: pane.paneId,
                 terminalId: pane.terminalId,
-                frame: CGRect(
-                    x: x,
-                    y: y,
-                    width: width,
-                    height: height
-                ),
+                frame: frame,
                 isActive: pane.paneId == activePaneId
             )
         }
@@ -1009,22 +1001,15 @@ struct EditorView: View {
         for index in 0..<count {
             let pane = framePlan.pane_at(UInt(index))
             let rect = pane.rect()
-            let x = CGFloat(rect.x) * cellSize.width
-            let y = CGFloat(rect.y) * cellSize.height
-            let paneMaxX = Int(rect.x) + Int(rect.width)
-            let paneMaxY = Int(rect.y) + Int(rect.height)
-            var width = CGFloat(rect.width) * cellSize.width
-            var height = CGFloat(rect.height) * cellSize.height
-            if paneMaxX == gridExtent.cols {
-                width = max(width, contentSize.width - x)
-            }
-            if paneMaxY == gridExtent.rows {
-                height = max(height, contentSize.height - y)
-            }
             layouts.append(
                 PaneFocusLayout(
                     paneId: pane.pane_id(),
-                    frame: CGRect(x: x, y: y, width: width, height: height),
+                    frame: paneFrame(
+                        rect: rect,
+                        gridExtent: gridExtent,
+                        cellSize: cellSize,
+                        contentSize: contentSize
+                    ),
                     isActive: pane.pane_id() == activePaneId
                 )
             )
@@ -1068,8 +1053,10 @@ struct EditorView: View {
 
     private func pointerPanes(
         from framePlan: RenderFramePlan,
-        cellSize: CGSize
+        cellSize: CGSize,
+        contentSize: CGSize
     ) -> [ScrollCaptureView.PaneHandle] {
+        let gridExtent = framePlanGridExtent(framePlan)
         let count = Int(framePlan.pane_count())
         guard count > 0 else { return [] }
         var handles: [ScrollCaptureView.PaneHandle] = []
@@ -1080,11 +1067,11 @@ struct EditorView: View {
                 continue
             }
             let rect = pane.rect()
-            let paneRect = CGRect(
-                x: CGFloat(rect.x) * cellSize.width,
-                y: CGFloat(rect.y) * cellSize.height,
-                width: CGFloat(rect.width) * cellSize.width,
-                height: CGFloat(rect.height) * cellSize.height
+            let paneRect = paneFrame(
+                rect: rect,
+                gridExtent: gridExtent,
+                cellSize: cellSize,
+                contentSize: contentSize
             )
             let contentOffsetXPx = CGFloat(pane.plan().content_offset_x()) * cellSize.width
             handles.append(
@@ -1096,6 +1083,33 @@ struct EditorView: View {
             )
         }
         return handles
+    }
+
+    private func paneFrame(
+        rect: Rect,
+        gridExtent: (cols: Int, rows: Int),
+        cellSize: CGSize,
+        contentSize: CGSize
+    ) -> CGRect {
+        let x = CGFloat(rect.x) * cellSize.width
+        let y = CGFloat(rect.y) * cellSize.height
+        let paneMaxX = Int(rect.x) + Int(rect.width)
+        let paneMaxY = Int(rect.y) + Int(rect.height)
+        var width = CGFloat(rect.width) * cellSize.width
+        var height = CGFloat(rect.height) * cellSize.height
+
+        // The core layout is cell-based, but the Swift surface can have leftover
+        // edge pixels once fractional cell metrics are multiplied by the current size.
+        // Keep hit-testing and hosted surfaces aligned by letting edge panes absorb
+        // that remainder exactly once.
+        if paneMaxX == gridExtent.cols {
+            width = max(width, contentSize.width - x)
+        }
+        if paneMaxY == gridExtent.rows {
+            height = max(height, contentSize.height - y)
+        }
+
+        return CGRect(x: x, y: y, width: width, height: height)
     }
 
     private func panePixelOrigin(_ rect: Rect?, cellSize: CGSize) -> CGPoint {
@@ -1912,7 +1926,8 @@ struct EditorView: View {
         guard !text.isEmpty else { return }
         let attrs: [NSAttributedString.Key: Any] = [
             .font: nsFont,
-            .foregroundColor: color
+            .foregroundColor: color,
+            .ligature: 0
         ]
         let attributed = NSAttributedString(string: text, attributes: attrs)
         context.withCGContext { cg in

@@ -2061,6 +2061,18 @@ final class EditorModel: ObservableObject {
 
     // MARK: - File tree
 
+    @discardableResult
+    func setFileTreeVisible(_ visible: Bool) -> Bool {
+        if fileTreeSnapshot.visible == visible {
+            return true
+        }
+        guard app.file_tree_set_visible(editorId, visible) else {
+            return false
+        }
+        refresh(trigger: visible ? "file_tree_show" : "file_tree_hide")
+        return true
+    }
+
     func fileTreeSetExpanded(path: String, expanded: Bool) {
         guard !path.isEmpty else {
             return

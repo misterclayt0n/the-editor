@@ -10,6 +10,8 @@ enum EditorNamedCommand: String, CaseIterable {
     case decreaseFontSize = "font_size_decrease"
     case resetFontSize = "font_size_reset"
     case toggleFileTree = "file_explorer"
+    case showSidebarFiles = "sidebar_show_files"
+    case showSidebarBuffers = "sidebar_show_buffers"
     case splitPaneDown = "pane_split_down"
     case splitPaneRight = "pane_split_right"
     case focusPaneLeft = "pane_focus_left"
@@ -39,6 +41,10 @@ enum EditorNamedCommand: String, CaseIterable {
             return "Reset Font Size"
         case .toggleFileTree:
             return "Toggle File Tree"
+        case .showSidebarFiles:
+            return "Show File Tree"
+        case .showSidebarBuffers:
+            return "Show Buffer List"
         case .splitPaneDown:
             return "Split Down"
         case .splitPaneRight:
@@ -80,6 +86,10 @@ enum EditorNamedCommand: String, CaseIterable {
             return "0"
         case .toggleFileTree:
             return "e"
+        case .showSidebarFiles:
+            return "e"
+        case .showSidebarBuffers:
+            return "b"
         case .splitPaneDown:
             return "d"
         case .splitPaneRight:
@@ -121,6 +131,10 @@ enum EditorNamedCommand: String, CaseIterable {
             return "0"
         case .toggleFileTree:
             return "e"
+        case .showSidebarFiles:
+            return "e"
+        case .showSidebarBuffers:
+            return "b"
         case .splitPaneDown:
             return "d"
         case .splitPaneRight:
@@ -151,6 +165,8 @@ enum EditorNamedCommand: String, CaseIterable {
         case .increaseFontSize, .decreaseFontSize, .resetFontSize:
             return [.command]
         case .toggleFileTree:
+            return [.command, .shift]
+        case .showSidebarFiles, .showSidebarBuffers:
             return [.command]
         case .splitPaneDown:
             return [.command, .shift]
@@ -182,6 +198,8 @@ enum EditorNamedCommand: String, CaseIterable {
         case .increaseFontSize, .decreaseFontSize, .resetFontSize:
             return [.command]
         case .toggleFileTree:
+            return [.command, .shift]
+        case .showSidebarFiles, .showSidebarBuffers:
             return [.command]
         case .splitPaneDown:
             return [.command, .shift]
@@ -591,6 +609,9 @@ struct EditorAppCommands: Commands {
         }
 
         CommandGroup(before: .pasteboard) {
+            commandButton(.showSidebarFiles)
+            commandButton(.showSidebarBuffers)
+            Divider()
             commandButton(.toggleFileTree)
             Divider()
         }

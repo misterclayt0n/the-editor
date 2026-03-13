@@ -1,158 +1,172 @@
-attribute               = "lilac"
-keyword                 = "almond"
-"keyword.directive"     = "lilac"    # -- preprocessor comments (#if in C)
-namespace               = "lilac"
-operator                = "lilac"
-punctuation             = "lavender"
-"punctuation.delimiter" = "lavender"
-special                 = "honey"
-variable                = "lavender"
-"variable.other.member" = "white"
-# variable = "almond" # TODO: metavariables only
-# "variable.parameter" = { fg = "lavender", modifiers = ["underlined"] }
-comment                     = "sirocco"
-constant                    = "white"
-"constant.builtin"          = "white"
-"constant.character.escape" = "honey"
-"constant.numeric"          = "chamois"
-constructor                 = "lilac"
-function                    = "white"
-"function.builtin"          = "white"
-"function.macro"            = "lilac"
-string                      = "silver"
-tag                         = "almond"
-type                        = "white"
-"type.builtin"              = "white"             # TODO: distinguish?
-"variable.builtin"          = "mint"
-"variable.parameter"        = { fg = "lavender" }
-# used for lifetimes
-label   = "honey"
-tabstop = { bg = "bossanova", modifiers = [ "italic" ] }
+attribute               = "dharma_gold"
+keyword                 = "sacred_white"
+"keyword.directive"     = "wheel_spoke"
+namespace               = "wheel_spoke"
+operator                = "dharma_gold"
+punctuation             = "ash_veil"
+"punctuation.delimiter" = "ash_veil"
+special                 = "ritual_amber"
+variable                = "pale_stone"
+"variable.other.member" = "ivory"
+
+comment                     = "temple_shadow"
+constant                    = "ivory"
+"constant.builtin"          = "ivory"
+"constant.character.escape" = "ritual_amber"
+"constant.numeric"          = "ochre_rune"
+constructor                 = "wheel_spoke"
+function                    = "sacred_white"
+"function.builtin"          = "sacred_white"
+"function.macro"            = "dharma_gold"
+string                      = "bone_dust"
+tag                         = "sacred_white"
+type                        = "sacred_white"
+"type.builtin"              = "sacred_white"
+"variable.builtin"          = "cursed_green"
+"variable.parameter"        = { fg = "pale_stone" }
+
+label   = "ritual_amber"
+tabstop = { bg = "void_deep", modifiers = [ "italic" ] }
 
 "markup.bold"          = { modifiers = [ "bold" ] }
-"markup.heading"       = "lilac"
+"markup.heading"       = "dharma_gold"
 "markup.italic"        = { modifiers = [ "italic" ] }
-"markup.link.text"     = "almond"
-"markup.link.url"      = { fg = "silver", modifiers = [ "underlined" ] }
-"markup.raw"           = "almond"
+"markup.link.text"     = "sacred_white"
+"markup.link.url"      = { fg = "bone_dust", modifiers = [ "underlined" ] }
+"markup.raw"           = "sacred_white"
 "markup.strikethrough" = { modifiers = [ "crossed_out" ] }
 
-"diff.delta" = "#6f44f0"
-"diff.minus" = "#f22c86"
-"diff.plus"  = "#35bf86"
+"diff.delta" = "#c8922a"
+"diff.minus" = "#c0392b"
+"diff.plus"  = "#4a9e6b"
 
-# TODO: differentiate doc comment
-# concat (ERROR) @error.syntax and "MISSING ;" selectors for errors
+# --- UI Elements ---
 
-"ui.background"           = { bg = "midnight" }
-"ui.background.separator" = { fg = "comet" }
-"ui.help"                 = { bg = "#7958DC", fg = "#171452" }
-"ui.linenr"               = { fg = "comet" }
-"ui.linenr.selected"      = { fg = "lilac" }
-"ui.popup"                = { bg = "revolver" }
-"ui.statusline"           = { bg = "revolver", fg = "lilac" }
-"ui.statusline.inactive"  = { bg = "revolver", fg = "lavender" }
-"ui.text"                 = { fg = "lavender" }
-"ui.text.directory"       = { fg = "lilac" }
-"ui.text.focus"           = { fg = "white" }
-"ui.text.inactive"        = "sirocco"
-"ui.virtual"              = { fg = "comet" }
-"ui.virtual.jump-label"   = { fg = "apricot", modifiers = [ "bold" ] }
-"ui.virtual.ruler"        = { bg = "bossanova" }
-"ui.window"               = { fg = "bossanova" }
-"ui.buffer_tabs"          = { bg = "revolver", fg = "comet" }
-"ui.buffer_tabs.tab.inactive" = { fg = "lavender" }
-"ui.buffer_tabs.tab.active"   = { bg = "bossanova", fg = "white" }
-"ui.buffer_tabs.tab.hovered"  = { bg = "#342043" }
-"ui.buffer_tabs.tab.modified" = { fg = "honey" }
+"ui.background"           = { bg = "abyss" }
+"ui.background.separator" = { fg = "iron_veil" }
+"ui.help"                 = { bg = "dharma_gold", fg = "abyss" }
+"ui.linenr"               = { fg = "iron_veil" }
+"ui.linenr.selected"      = { fg = "dharma_gold" }
+"ui.popup"                = { bg = "obsidian" }
+"ui.statusline"           = { bg = "obsidian", fg = "dharma_gold" }
+"ui.statusline.inactive"  = { bg = "obsidian", fg = "ash_veil" }
+"ui.text"                 = { fg = "pale_stone" }
+"ui.text.directory"       = { fg = "dharma_gold" }
+"ui.text.focus"           = { fg = "ivory" }
+"ui.text.inactive"        = "temple_shadow"
+"ui.virtual"              = { fg = "iron_veil" }
+"ui.virtual.jump-label"   = { fg = "ritual_amber", modifiers = [ "bold" ] }
+"ui.virtual.ruler"        = { bg = "void_deep" }
+"ui.window"               = { fg = "void_deep" }
+"ui.buffer_tabs"          = { bg = "obsidian", fg = "iron_veil" }
+"ui.buffer_tabs.tab.inactive" = { fg = "ash_veil" }
+"ui.buffer_tabs.tab.active"   = { bg = "void_deep", fg = "ivory" }
+"ui.buffer_tabs.tab.hovered"  = { bg = "#1e1a12" }
+"ui.buffer_tabs.tab.modified" = { fg = "ritual_amber" }
 
-"ui.virtual.indent-guide" = { fg = "comet" }
+"ui.virtual.indent-guide" = { fg = "iron_veil" }
 
-"ui.selection"         = { bg = "#540099" }
-"ui.selection.active"  = { bg = "#540099" }
-"ui.selection.match"   = { bg = "#4b2a73" }
-# TODO: namespace ui.cursor as ui.selection.cursor?
+"ui.selection"         = { bg = "#3d2e0a" }
+"ui.selection.active"  = { bg = "#5a420d" }
+"ui.selection.match"   = { bg = "#2e2208" }
 "ui.cursor"                = { modifiers = [ "reversed" ] }
-"ui.cursor.insert"         = { bg = "white" }
-"ui.cursor.match"          = { bg = "#6C6999", fg = "#212121" }
-"ui.cursor.active.insert"  = { bg = "white" }
-"ui.cursor.active.select"  = { bg = "delta" }
-"ui.cursor.select"         = { bg = "delta" }
-"ui.cursorline.active"     = { bg = "bossanova" }
-"ui.debug"                 = { fg = "#634450" }
-"ui.debug.breakpoint"      = { fg = "apricot" }
-"ui.highlight"             = { bg = "bossanova" }
-"ui.highlight.frameline"   = { bg = "#634450" }
-"ui.menu"                  = { bg = "revolver", fg = "lavender" }
-"ui.menu.scroll"           = { bg = "comet", fg = "lavender" }
-"ui.menu.selected"         = { bg = "white", fg = "revolver" }
+"ui.cursor.insert"         = { bg = "ivory" }
+"ui.cursor.match"          = { bg = "#7a6030", fg = "#0d0b07" }
+"ui.cursor.active.insert"  = { bg = "ivory" }
+"ui.cursor.active.select"  = { bg = "dharma_gold" }
+"ui.cursor.select"         = { bg = "dharma_gold" }
+"ui.cursorline.active"     = { bg = "void_deep" }
+"ui.debug"                 = { fg = "#5a3a2a" }
+"ui.debug.breakpoint"      = { fg = "ritual_amber" }
+"ui.highlight"             = { bg = "void_deep" }
+"ui.highlight.frameline"   = { bg = "#5a3a2a" }
+"ui.menu"                  = { bg = "obsidian", fg = "pale_stone" }
+"ui.menu.scroll"           = { bg = "iron_veil", fg = "pale_stone" }
+"ui.menu.selected"         = { bg = "dharma_gold", fg = "abyss" }
 
-"ui.command_palette"               = { bg = "revolver", fg = "lavender" }
-"ui.command_palette.list.selected" = { bg = "white", fg = "revolver" }
-"ui.file_picker"                   = { bg = "revolver", fg = "lavender" }
-"ui.file_picker.list.selected"     = { bg = "white", fg = "revolver" }
-"ui.search_prompt"                 = { bg = "revolver", fg = "lavender" }
-"ui.search_prompt.list.selected"   = { bg = "white", fg = "revolver" }
-"ui.search_prompt.panel.border"    = { fg = "comet" }
+"ui.command_palette"               = { bg = "obsidian", fg = "pale_stone" }
+"ui.command_palette.list.selected" = { bg = "dharma_gold", fg = "abyss" }
+"ui.file_picker"                   = { bg = "obsidian", fg = "pale_stone" }
+"ui.file_picker.list.selected"     = { bg = "dharma_gold", fg = "abyss" }
+"ui.search_prompt"                 = { bg = "obsidian", fg = "pale_stone" }
+"ui.search_prompt.list.selected"   = { bg = "dharma_gold", fg = "abyss" }
+"ui.search_prompt.panel.border"    = { fg = "iron_veil" }
 
-"ui.message_error"   = { bg = "revolver", fg = "apricot" }
-"ui.message_info"    = { bg = "revolver", fg = "lavender" }
-"ui.message_warning" = { bg = "revolver", fg = "honey" }
+"ui.message_error"   = { bg = "obsidian", fg = "blood_curse" }
+"ui.message_info"    = { bg = "obsidian", fg = "pale_stone" }
+"ui.message_warning" = { bg = "obsidian", fg = "ritual_amber" }
+
+# --- Diagnostics ---
 
 "diagnostic.deprecated"  = { modifiers = [ "crossed_out" ] }
-"diagnostic.error"       = { underline = { color = "apricot", style = "curl" } }
-"diagnostic.hint"        = { underline = { color = "silver", style = "curl" } }
-"diagnostic.info"        = { underline = { color = "delta", style = "curl" } }
+"diagnostic.error"       = { underline = { color = "blood_curse", style = "curl" } }
+"diagnostic.hint"        = { underline = { color = "bone_dust", style = "curl" } }
+"diagnostic.info"        = { underline = { color = "dharma_gold", style = "curl" } }
 "diagnostic.unnecessary" = { modifiers = [ "dim" ] }
-"diagnostic.warning"     = { underline = { color = "lightning", style = "curl" } }
+"diagnostic.warning"     = { underline = { color = "ritual_amber", style = "curl" } }
 
-error   = "apricot"
-hint    = "silver"
-info    = "delta"
-warning = "lightning"
+error   = "blood_curse"
+hint    = "bone_dust"
+info    = "dharma_gold"
+warning = "ritual_amber"
+
+# --- Palette ---
+# Built from Mahoraga's divine aesthetic:
+# deep void blacks, ancient stone greys, sacred gold, ritual amber
 
 [palette]
-bossanova = "#452859"
-comet     = "#5a5977"
-lavender  = "#a4a0e8"
-lilac     = "#dbbfef"
-midnight  = "#3b224c"
-revolver  = "#281733"
-white     = "#ffffff"
+# Backgrounds — the void between worlds
+abyss      = "#0a0905"   # deepest background, the boundless dark
+obsidian   = "#111009"   # panels, popups, statusline
+void_deep  = "#1a1710"   # cursorline, active tab bg, ruler
 
-almond  = "#eccdba"
-chamois = "#E8DCA0"
-honey   = "#efba5d"
-mint    = "#9ff28f"
-silver  = "#cccccc"
-sirocco = "#697C81"
+# Structural — ancient iron and shadow
+iron_veil     = "#3d3928"   # line numbers, borders, virtual text
+temple_shadow = "#5c5440"   # comments, inactive text
+ash_veil      = "#8a8060"   # punctuation, inactive tabs
 
-apricot   = "#f47868"
-delta     = "#6F44F0"
-lightning = "#ffcd1c"
+# Foregrounds — bone and sacred ivory
+pale_stone = "#c8b99a"   # primary text, variables
+bone_dust  = "#e0cdb0"   # strings
+ivory      = "#f5eed8"   # constants, focused text, sacred_white alias
+sacred_white = "#f5eed8"
+
+# Gold — the divine wheel, Mahoraga's mark
+dharma_gold  = "#c8922a"   # keywords, operators, headings, UI accent
+ritual_amber = "#e8a030"   # special tokens, labels, modified tabs
+ochre_rune   = "#d4a445"   # numeric constants
+
+# Accent — spoke and adaptation
+wheel_spoke  = "#b8a070"   # directives, namespaces, constructors, macro
+
+# Life / curse contrast
+cursed_green = "#5a9e6f"   # variable.builtin — the cursed technique
+blood_curse  = "#c0392b"   # errors — the price of power
+
+# --- Ghostty Terminal ---
 
 [ghostty]
-background = "#3b224c"
-foreground = "#c6d0f5"
-cursor-color = "#f2d5cf"
-cursor-text = "#c6d0f5"
-selection-background = "#626880"
-selection-foreground = "#c6d0f5"
+background   = "#0a0905"
+foreground   = "#c8b99a"
+cursor-color = "#c8922a"
+cursor-text  = "#0a0905"
+selection-background = "#3d2e0a"
+selection-foreground = "#f5eed8"
 
 [ghostty.palette]
-"0" = "#51576d"
-"1" = "#e78284"
-"2" = "#a6d189"
-"3" = "#e5c890"
-"4" = "#8caaee"
-"5" = "#f4b8e4"
-"6" = "#81c8be"
-"7" = "#a5adce"
-"8" = "#626880"
-"9" = "#e67172"
-"10" = "#8ec772"
-"11" = "#d9ba73"
-"12" = "#7b9ef0"
-"13" = "#f2a4db"
-"14" = "#5abfb5"
-"15" = "#b5bfe2"
+"0"  = "#1a1710"
+"1"  = "#c0392b"
+"2"  = "#4a9e6b"
+"3"  = "#c8922a"
+"4"  = "#7a6840"
+"5"  = "#9a7850"
+"6"  = "#8a9060"
+"7"  = "#c8b99a"
+"8"  = "#3d3928"
+"9"  = "#d44a3a"
+"10" = "#5aae7b"
+"11" = "#e8a030"
+"12" = "#9a8050"
+"13" = "#b09060"
+"14" = "#a0a870"
+"15" = "#f5eed8"

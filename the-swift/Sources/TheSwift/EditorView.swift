@@ -111,7 +111,7 @@ struct EditorView: View {
             \.editorCommandExecutor,
             EditorCommandExecutor(
                 executeNamedCommand: { command in
-                    model.executeNamedCommand(command)
+                    handleNamedCommand(command)
                 },
                 selectNativeTabCommand: { indexOneBased in
                     model.selectNativeWindowTab(indexOneBased: indexOneBased)
@@ -189,6 +189,34 @@ struct EditorView: View {
     private var sidebarNavigatorMode: SidebarNavigatorMode {
         get { SidebarNavigatorMode(rawValue: sidebarNavigatorModeRaw) ?? .files }
         nonmutating set { sidebarNavigatorModeRaw = newValue.rawValue }
+    }
+
+    @discardableResult
+    private func handleNamedCommand(_ command: EditorNamedCommand) -> Bool {
+        switch command {
+        case .showSidebarFiles:
+            return selectSidebarNavigatorMode(.files)
+        case .showSidebarBuffers:
+            return selectSidebarNavigatorMode(.surfaces)
+        default:
+            return model.executeNamedCommand(command)
+        }
+    }
+
+    @discardableResult
+    private func selectSidebarNavigatorMode(_ mode: SidebarNavigatorMode) -> Bool {
+        if model.fileTreeSnapshot.visible, sidebarNavigatorMode == mode {
+            columnVisibility = .detailOnly
+            return model.setFileTreeVisible(false)
+        }
+        if !model.fileTreeSnapshot.visible {
+            guard model.setFileTreeVisible(true) else {
+                return false
+            }
+        }
+        columnVisibility = .all
+        sidebarNavigatorMode = mode
+        return true
     }
 
     private var sidebarNavigatorTabs: some View {
@@ -659,7 +687,7 @@ struct EditorView: View {
                             model.closeSurface()
                         },
                         onNamedCommand: { command in
-                            model.executeNamedCommand(command)
+                            handleNamedCommand(command)
                         },
                         onNotification: { notification in
                             model.handleTerminalNotification(
@@ -860,7 +888,7 @@ struct EditorView: View {
                     _ = model.selectNativeWindowTab(indexOneBased: digit)
                 },
                 onNamedCommand: { command in
-                    _ = model.executeNamedCommand(command)
+                    _ = handleNamedCommand(command)
                 },
                 onScroll: { _, _, _ in },
                 modeProvider: {

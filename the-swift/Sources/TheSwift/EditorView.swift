@@ -278,7 +278,14 @@ struct EditorView: View {
             plan: model.plan,
             bufferOwnsFocus: bufferOwnsFocus
         )
-        let activePaneOrigin = panePixelOrigin(model.activePaneRect(), cellSize: cellSize)
+        let activePaneRect = model.activePaneRect()
+        let activePaneOrigin = panePixelOrigin(activePaneRect, cellSize: cellSize)
+        let activePaneFrame = panePixelFrame(
+            activePaneRect,
+            in: model.framePlan,
+            cellSize: cellSize,
+            contentSize: contentProxy.size
+        )
         let terminalPaneIds = Set(model.terminalPanes.map(\.paneId))
         let shouldDimInactivePanes = Int(model.framePlan.pane_count()) > 1
         let splitResizeHandles = splitResizeHandles(from: model.splitSeparators, cellSize: cellSize)
@@ -308,9 +315,8 @@ struct EditorView: View {
         )
         let eolDiagnosticOverlays = eolDiagnosticOverlayLayouts(
             plan: model.plan,
-            paneOrigin: activePaneOrigin,
+            paneFrame: activePaneFrame,
             cellSize: cellSize,
-            containerSize: contentProxy.size,
             style: eolDiagnosticStyle
         )
         let _ = debugTerminalFocusState(
@@ -356,7 +362,11 @@ struct EditorView: View {
                 editorBackgroundColor: editorBackgroundColor
             )
 
-            eolDiagnosticsOverlay(layouts: eolDiagnosticOverlays, style: eolDiagnosticStyle)
+            eolDiagnosticsOverlay(
+                layouts: eolDiagnosticOverlays,
+                paneFrame: activePaneFrame,
+                style: eolDiagnosticStyle
+            )
 
             terminalSurfaceLayer(
                 terminalPaneLayouts: terminalPaneLayouts,
@@ -480,34 +490,42 @@ struct EditorView: View {
     @ViewBuilder
     private func eolDiagnosticsOverlay(
         layouts: [EolDiagnosticOverlayLayout],
+        paneFrame: CGRect?,
         style: EolDiagnosticOverlayStyle
     ) -> some View {
         ZStack(alignment: .topLeading) {
-            ForEach(layouts) { layout in
-                Text(layout.message)
-                    .font(FontLoader.bufferFont(size: style.fontSize, weight: .regular))
-                    .foregroundStyle(diagnosticColor(severity: layout.severity).opacity(0.76))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                .padding(.horizontal, style.horizontalPadding)
-                .padding(.vertical, style.verticalPadding)
-                .background {
-                    RoundedRectangle(cornerRadius: style.cornerRadius, style: .continuous)
-                        .fill(
-                            diagnosticColor(severity: layout.severity)
-                                .opacity(style.backgroundOpacity)
-                        )
+            if let paneFrame {
+                ZStack(alignment: .topLeading) {
+                    ForEach(layouts) { layout in
+                        Text(layout.message)
+                            .font(FontLoader.bufferFont(size: style.fontSize, weight: .regular))
+                            .foregroundStyle(diagnosticColor(severity: layout.severity).opacity(0.76))
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                            .padding(.horizontal, style.horizontalPadding)
+                            .padding(.vertical, style.verticalPadding)
+                            .background {
+                                RoundedRectangle(cornerRadius: style.cornerRadius, style: .continuous)
+                                    .fill(
+                                        diagnosticColor(severity: layout.severity)
+                                            .opacity(style.backgroundOpacity)
+                                    )
+                            }
+                            .overlay {
+                                RoundedRectangle(cornerRadius: style.cornerRadius, style: .continuous)
+                                    .stroke(
+                                        diagnosticColor(severity: layout.severity)
+                                            .opacity(style.borderOpacity),
+                                        lineWidth: 0.5
+                                    )
+                            }
+                            .frame(maxWidth: layout.maxWidth, alignment: .leading)
+                            .offset(x: layout.x, y: layout.y)
+                    }
                 }
-                .overlay {
-                    RoundedRectangle(cornerRadius: style.cornerRadius, style: .continuous)
-                        .stroke(
-                            diagnosticColor(severity: layout.severity)
-                                .opacity(style.borderOpacity),
-                            lineWidth: 0.5
-                        )
-                }
-                .frame(maxWidth: layout.maxWidth, alignment: .leading)
-                .offset(x: layout.x, y: layout.y)
+                .frame(width: paneFrame.width, height: paneFrame.height, alignment: .topLeading)
+                .offset(x: paneFrame.minX, y: paneFrame.minY)
+                .clipped()
                 .allowsHitTesting(false)
                 .accessibilityHidden(true)
             }
@@ -530,15 +548,14 @@ struct EditorView: View {
 
     private func eolDiagnosticOverlayLayouts(
         plan: RenderPlan,
-        paneOrigin: CGPoint,
+        paneFrame: CGRect?,
         cellSize: CGSize,
-        containerSize: CGSize,
         style: EolDiagnosticOverlayStyle
     ) -> [EolDiagnosticOverlayLayout] {
         let perfEnabled = DiagnosticsDebugLog.editorPerfEnabled
         let perfStart = perfEnabled ? DispatchTime.now().uptimeNanoseconds : 0
         let count = Int(plan.eol_diagnostic_count())
-        guard count > 0 else { return [] }
+        guard count > 0, let paneFrame else { return [] }
 
         let contentOffsetX = CGFloat(plan.content_offset_x()) * cellSize.width
         var layouts: [EolDiagnosticOverlayLayout] = []
@@ -553,15 +570,15 @@ struct EditorView: View {
             totalMessageChars += message.count
             maxMessageChars = max(maxMessageChars, message.count)
 
-            let x = paneOrigin.x + contentOffsetX + CGFloat(entry.col()) * cellSize.width + style.textGap
-            let availableWidth = containerSize.width - x - 8
+            let x = contentOffsetX + CGFloat(entry.col()) * cellSize.width + style.textGap
+            let availableWidth = paneFrame.width - x - 8
             guard availableWidth >= 72 else { continue }
 
             layouts.append(
                 EolDiagnosticOverlayLayout(
                     id: "\(entry.row()):\(entry.col()):\(entry.severity()):\(message)",
                     x: x,
-                    y: paneOrigin.y + CGFloat(entry.row()) * cellSize.height + style.rowOffset,
+                    y: CGFloat(entry.row()) * cellSize.height + style.rowOffset,
                     maxWidth: availableWidth,
                     message: message,
                     severity: entry.severity()
@@ -574,18 +591,18 @@ struct EditorView: View {
             if DiagnosticsDebugLog.editorPerfShouldLog(durationMs: elapsedMs) {
                 DiagnosticsDebugLog.editorPerfLog(
                     String(
-                        format: "eol_overlay_layout elapsed=%.2fms raw=%d laid_out=%d lines=%d total_chars=%d max_chars=%d pane_origin=(%.1f,%.1f) content_offset_x=%.1f container=(%.1f,%.1f)",
+                        format: "eol_overlay_layout elapsed=%.2fms raw=%d laid_out=%d lines=%d total_chars=%d max_chars=%d pane_frame=(%.1f,%.1f,%.1f,%.1f) content_offset_x=%.1f",
                         elapsedMs,
                         count,
                         layouts.count,
                         Int(plan.line_count()),
                         totalMessageChars,
                         maxMessageChars,
-                        paneOrigin.x,
-                        paneOrigin.y,
-                        contentOffsetX,
-                        containerSize.width,
-                        containerSize.height
+                        paneFrame.minX,
+                        paneFrame.minY,
+                        paneFrame.width,
+                        paneFrame.height,
+                        contentOffsetX
                     )
                 )
             }
@@ -1119,6 +1136,23 @@ struct EditorView: View {
         return CGPoint(
             x: CGFloat(rect.x) * cellSize.width,
             y: CGFloat(rect.y) * cellSize.height
+        )
+    }
+
+    private func panePixelFrame(
+        _ rect: Rect?,
+        in framePlan: RenderFramePlan,
+        cellSize: CGSize,
+        contentSize: CGSize
+    ) -> CGRect? {
+        guard let rect else {
+            return nil
+        }
+        return paneFrame(
+            rect: rect,
+            gridExtent: framePlanGridExtent(framePlan),
+            cellSize: cellSize,
+            contentSize: contentSize
         )
     }
 

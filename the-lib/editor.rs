@@ -721,6 +721,10 @@ impl Editor {
     self.buffers.get(index).map(|buffer| &buffer.document)
   }
 
+  pub fn buffer_file_path(&self, index: usize) -> Option<&Path> {
+    self.buffers.get(index)?.file_path.as_deref()
+  }
+
   pub fn buffer_document_mut(&mut self, index: usize) -> Option<&mut Document> {
     self
       .buffers

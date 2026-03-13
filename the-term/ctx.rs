@@ -127,7 +127,10 @@ use the_lib::{
     Range,
     Selection,
   },
-  split_tree::SplitNodeId,
+  split_tree::{
+    PaneId,
+    SplitNodeId,
+  },
   syntax::{
     HighlightCache,
     Loader,
@@ -630,6 +633,8 @@ pub struct Ctx {
   pub loader:                        Option<Arc<Loader>>,
   /// Cache for syntax highlights (reused across renders).
   pub highlight_cache:               HighlightCache,
+  /// Per-buffer caches for inactive split panes.
+  pub inactive_highlight_caches:     BTreeMap<usize, HighlightCache>,
   /// Background parse result channel (async syntax fallback).
   pub syntax_parse_tx:               Sender<SyntaxParseResult>,
   /// Background parse result receiver (async syntax fallback).
@@ -674,6 +679,12 @@ pub struct Ctx {
   pub inline_diagnostic_lines:       Vec<InlineDiagnosticRenderLine>,
   /// Underline spans for diagnostic ranges in the current viewport.
   pub diagnostic_underlines:         Vec<DiagnosticUnderlineRenderSpan>,
+  /// Per-pane inline diagnostic state for frame rendering.
+  pub frame_inline_diagnostic_lines: BTreeMap<PaneId, Vec<InlineDiagnosticRenderLine>>,
+  /// Per-pane diagnostic underlines for frame rendering.
+  pub frame_diagnostic_underlines:   BTreeMap<PaneId, Vec<DiagnosticUnderlineRenderSpan>>,
+  /// Per-pane raw diagnostics used by split-pane end-of-line rendering.
+  pub frame_diagnostics:             BTreeMap<PaneId, Vec<Diagnostic>>,
   /// Last emitted render generations and row hashes per pane.
   pub frame_generation_state:        the_lib::render::FrameGenerationState,
   /// Theme generation token for render metadata consumers.
@@ -1042,6 +1053,7 @@ impl Ctx {
       dispatch: None,
       loader,
       highlight_cache: HighlightCache::default(),
+      inactive_highlight_caches: BTreeMap::new(),
       syntax_parse_tx,
       syntax_parse_rx,
       syntax_parse_lifecycle: ParseLifecycle::default(),
@@ -1064,6 +1076,9 @@ impl Ctx {
       word_jump_overlay_annotations: Vec::new(),
       inline_diagnostic_lines: Vec::new(),
       diagnostic_underlines: Vec::new(),
+      frame_inline_diagnostic_lines: BTreeMap::new(),
+      frame_diagnostic_underlines: BTreeMap::new(),
+      frame_diagnostics: BTreeMap::new(),
       frame_generation_state: the_lib::render::FrameGenerationState::default(),
       render_theme_generation: 0,
       scrolloff: 5,
@@ -1116,6 +1131,7 @@ impl Ctx {
   fn invalidate_theme_render_state(&mut self) {
     self.render_theme_generation = self.render_theme_generation.wrapping_add(1);
     self.highlight_cache.clear();
+    self.inactive_highlight_caches.clear();
     if self.editor.document().syntax().is_some() {
       self.syntax_parse_highlight_state.mark_parsed();
     } else {
@@ -1225,6 +1241,7 @@ impl Ctx {
       if parsed_state == Some(true) {
         self.syntax_parse_highlight_state.mark_parsed();
         self.highlight_cache.clear();
+        self.inactive_highlight_caches.clear();
         changed = true;
       } else {
         self.syntax_parse_highlight_state.mark_interpolated();
@@ -3225,6 +3242,7 @@ impl Ctx {
     if closing_active {
       self.syntax_parse_lifecycle.cancel_pending();
       self.highlight_cache.clear();
+      self.inactive_highlight_caches.clear();
       if self.editor.document().syntax().is_some() {
         self.syntax_parse_highlight_state.mark_parsed();
       } else {
@@ -3714,9 +3732,13 @@ impl Ctx {
     };
 
     let hit_pane = self.pointer_hit_pane_at(x, y);
+    let previous_buffer_index = self.editor.active_buffer_index();
     let mut pane_changed = false;
     if let Some(pane) = hit_pane {
       pane_changed = self.editor.set_active_pane(pane.pane_id);
+      if pane_changed {
+        self.sync_state_after_active_pane_change(previous_buffer_index);
+      }
     }
 
     match event.kind {
@@ -5532,6 +5554,36 @@ fn build_transaction_from_lsp_text_edits(
   Transaction::change(text, changes).map_err(|err| err.to_string())
 }
 
+impl Ctx {
+  fn sync_state_after_active_pane_change(&mut self, previous_buffer_index: usize) {
+    self.clear_hover_state();
+    self.clear_completion_state();
+    self.cancel_auto_completion();
+    self.clear_signature_help_state();
+    self.cancel_auto_signature_help();
+
+    if self.editor.active_buffer_index() == previous_buffer_index {
+      return;
+    }
+
+    self.lsp_close_current_document();
+    self.syntax_parse_lifecycle.cancel_pending();
+    self.highlight_cache.clear();
+    self.inactive_highlight_caches.clear();
+    if self.editor.document().syntax().is_some() {
+      self.syntax_parse_highlight_state.mark_parsed();
+    } else {
+      self.syntax_parse_highlight_state.mark_cleared();
+    }
+
+    let active_path = self.editor.active_file_path().map(Path::to_path_buf);
+    self.file_path = active_path.clone();
+    self.lsp_refresh_document_state(active_path.as_deref());
+    self.lsp_open_current_document();
+    self.refresh_vcs_diff_base();
+  }
+}
+
 impl the_default::DefaultContext for Ctx {
   fn editor(&mut self) -> &mut Editor {
     &mut self.editor
@@ -5623,6 +5675,7 @@ impl the_default::DefaultContext for Ctx {
     self.clear_hover_state();
     self.syntax_parse_lifecycle.cancel_pending();
     self.highlight_cache.clear();
+    self.inactive_highlight_caches.clear();
     if has_syntax {
       self.syntax_parse_highlight_state.mark_parsed();
     } else {
@@ -6211,6 +6264,10 @@ impl the_default::DefaultContext for Ctx {
     self.refresh_vcs_diff_base();
   }
 
+  fn did_change_active_pane(&mut self, previous_buffer_index: usize) {
+    self.sync_state_after_active_pane_change(previous_buffer_index);
+  }
+
   fn goto_buffer(&mut self, direction: the_default::Direction, count: usize) -> bool {
     self.lsp_close_current_document();
     let switched = match direction {
@@ -6224,6 +6281,7 @@ impl the_default::DefaultContext for Ctx {
 
     self.syntax_parse_lifecycle.cancel_pending();
     self.highlight_cache.clear();
+    self.inactive_highlight_caches.clear();
     if self.editor.document().syntax().is_some() {
       self.syntax_parse_highlight_state.mark_parsed();
     } else {
@@ -6256,6 +6314,7 @@ impl the_default::DefaultContext for Ctx {
 
     self.syntax_parse_lifecycle.cancel_pending();
     self.highlight_cache.clear();
+    self.inactive_highlight_caches.clear();
     if self.editor.document().syntax().is_some() {
       self.syntax_parse_highlight_state.mark_parsed();
     } else {
@@ -6280,6 +6339,7 @@ impl the_default::DefaultContext for Ctx {
 
     self.syntax_parse_lifecycle.cancel_pending();
     self.highlight_cache.clear();
+    self.inactive_highlight_caches.clear();
     if self.editor.document().syntax().is_some() {
       self.syntax_parse_highlight_state.mark_parsed();
     } else {
@@ -6307,6 +6367,7 @@ impl the_default::DefaultContext for Ctx {
 
     self.syntax_parse_lifecycle.cancel_pending();
     self.highlight_cache.clear();
+    self.inactive_highlight_caches.clear();
     if self.editor.document().syntax().is_some() {
       self.syntax_parse_highlight_state.mark_parsed();
     } else {
@@ -6336,6 +6397,7 @@ impl the_default::DefaultContext for Ctx {
       self.lsp_close_current_document();
       self.syntax_parse_lifecycle.cancel_pending();
       self.highlight_cache.clear();
+      self.inactive_highlight_caches.clear();
       if self.editor.document().syntax().is_some() {
         self.syntax_parse_highlight_state.mark_parsed();
       } else {
@@ -6367,6 +6429,7 @@ impl the_default::DefaultContext for Ctx {
       self.lsp_close_current_document();
       self.syntax_parse_lifecycle.cancel_pending();
       self.highlight_cache.clear();
+      self.inactive_highlight_caches.clear();
       if self.editor.document().syntax().is_some() {
         self.syntax_parse_highlight_state.mark_parsed();
       } else {
@@ -6791,6 +6854,7 @@ impl the_default::DefaultContext for Ctx {
 
     self.syntax_parse_lifecycle.cancel_pending();
     self.highlight_cache.clear();
+    self.inactive_highlight_caches.clear();
     if self.editor.document().syntax().is_some() {
       self.syntax_parse_highlight_state.mark_parsed();
     } else {
@@ -6846,6 +6910,7 @@ fn setup_syntax(doc: &mut Document, path: &Path, loader: &Arc<Loader>) -> Result
 
 #[cfg(test)]
 mod tests {
+  use super::build_lsp_document_state;
   use std::{
     fs,
     path::{
@@ -6864,6 +6929,7 @@ mod tests {
     },
   };
 
+  use ropey::Rope;
   use serde_json::json;
   use the_default::{
     Command,
@@ -6902,6 +6968,7 @@ mod tests {
     },
     split_tree::SplitAxis,
     transaction::Transaction,
+    view::ViewState,
   };
   use the_lsp::{
     LspCompletionItem,
@@ -7031,6 +7098,60 @@ mod tests {
 
     assert_eq!(top_target, 0);
     assert_eq!(bottom_target, 6);
+  }
+
+  #[test]
+  fn active_pane_change_rebinds_file_path_and_lsp_state() {
+    let rust = TempTestFile::new("pane-switch-main", "fn main() {}\n");
+    let cargo = rust
+      .as_path()
+      .parent()
+      .expect("temp parent")
+      .join("Cargo.toml");
+    fs::write(
+      &cargo,
+      "[package]\nname = \"pane-switch\"\nversion = \"0.1.0\"\n",
+    )
+    .expect("write cargo");
+
+    let mut ctx = Ctx::new(None).expect("ctx");
+    ctx.loader = None;
+    assert!(ctx.editor.replace_active_buffer(
+      Rope::from_str("fn main() {}\n"),
+      Some(rust.as_path().to_path_buf())
+    ));
+    ctx.file_path = Some(rust.as_path().to_path_buf());
+    ctx.lsp_document = build_lsp_document_state(rust.as_path(), None);
+    assert!(ctx.editor.split_active_pane(SplitAxis::Vertical));
+    let cargo_view = ViewState::new(ctx.editor.view().viewport, Position::new(0, 0));
+    let _ = ctx.editor.open_buffer(
+      Rope::from_str("[package]\nname = \"pane-switch\"\nversion = \"0.1.0\"\n"),
+      cargo_view,
+      Some(cargo.clone()),
+    );
+    ctx.file_path = Some(cargo.clone());
+    ctx.lsp_document = build_lsp_document_state(cargo.as_path(), None);
+    ctx.hover_docs = Some("resolver docs".to_string());
+    ctx.completion_menu.active = true;
+
+    let rust_pane = ctx
+      .editor
+      .pane_snapshots(ctx.editor.layout_viewport())
+      .into_iter()
+      .find(|pane| ctx.editor.buffer_file_path(pane.buffer_index) == Some(rust.as_path()))
+      .expect("rust pane");
+    let previous_buffer_index = ctx.editor.active_buffer_index();
+    assert!(ctx.editor.set_active_pane(rust_pane.pane_id));
+    <Ctx as DefaultContext>::did_change_active_pane(&mut ctx, previous_buffer_index);
+
+    assert_eq!(ctx.file_path.as_deref(), Some(rust.as_path()));
+    assert_eq!(ctx.editor.active_file_path(), Some(rust.as_path()));
+    assert_eq!(
+      ctx.lsp_document.as_ref().map(|state| state.path.as_path()),
+      Some(rust.as_path())
+    );
+    assert!(ctx.hover_docs.is_none());
+    assert!(!ctx.completion_menu.active);
   }
 
   #[test]

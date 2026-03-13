@@ -599,6 +599,7 @@ pub trait DefaultContext: Sized + 'static {
   fn clear_ui_theme_preview(&mut self);
   fn set_file_path(&mut self, path: Option<PathBuf>);
   fn open_file(&mut self, path: &Path) -> std::io::Result<()>;
+  fn did_change_active_pane(&mut self, _previous_buffer_index: usize) {}
   fn goto_buffer(&mut self, _direction: Direction, _count: usize) -> bool {
     false
   }
@@ -2727,18 +2728,22 @@ fn goto_window<Ctx: DefaultContext>(ctx: &mut Ctx, align: WindowAlign, count: us
 }
 
 fn rotate_view<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  let previous_buffer_index = ctx.editor_ref().active_buffer_index();
   if !ctx.editor().rotate_active_pane(true) {
     ctx.push_warning("window", "no other view to rotate");
     return;
   }
+  ctx.did_change_active_pane(previous_buffer_index);
   ctx.request_render();
 }
 
 fn split_view<Ctx: DefaultContext>(ctx: &mut Ctx, axis: SplitAxis) {
+  let previous_buffer_index = ctx.editor_ref().active_buffer_index();
   if !ctx.editor().split_active_pane(axis) {
     ctx.push_warning("window", "failed to split view");
     return;
   }
+  ctx.did_change_active_pane(previous_buffer_index);
   ctx.request_render();
 }
 
@@ -2751,26 +2756,32 @@ fn transpose_view<Ctx: DefaultContext>(ctx: &mut Ctx) {
 }
 
 fn close_view<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  let previous_buffer_index = ctx.editor_ref().active_buffer_index();
   if !ctx.editor().close_active_pane() {
     ctx.push_warning("window", "cannot close the last view");
     return;
   }
+  ctx.did_change_active_pane(previous_buffer_index);
   ctx.request_render();
 }
 
 fn only_view<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  let previous_buffer_index = ctx.editor_ref().active_buffer_index();
   if !ctx.editor().only_active_pane() {
     ctx.push_warning("window", "already in a single view");
     return;
   }
+  ctx.did_change_active_pane(previous_buffer_index);
   ctx.request_render();
 }
 
 fn jump_view<Ctx: DefaultContext>(ctx: &mut Ctx, direction: PaneDirection) {
+  let previous_buffer_index = ctx.editor_ref().active_buffer_index();
   if !ctx.editor().jump_active_pane(direction) {
     ctx.push_warning("window", "no view in that direction");
     return;
   }
+  ctx.did_change_active_pane(previous_buffer_index);
   ctx.request_render();
 }
 

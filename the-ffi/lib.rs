@@ -1134,6 +1134,13 @@ impl From<the_lib::render::RenderPlan> for RenderPlan {
   }
 }
 
+#[derive(Debug, Clone, Default)]
+struct PaneRenderDecorations {
+  inline_diagnostic_lines: Vec<InlineDiagnosticRenderLine>,
+  eol_diagnostics:         Vec<EolDiagnosticEntry>,
+  diagnostic_underlines:   Vec<DiagnosticUnderlineEntry>,
+}
+
 #[derive(Debug, Clone)]
 pub struct RenderFramePane {
   pane_id:     u64,
@@ -1207,9 +1214,7 @@ impl RenderFramePlan {
 
   fn from_lib(
     frame: the_lib::render::FrameRenderPlan,
-    inline_diagnostic_lines: Vec<InlineDiagnosticRenderLine>,
-    eol_diagnostics: Vec<EolDiagnosticEntry>,
-    diagnostic_underlines: Vec<DiagnosticUnderlineEntry>,
+    pane_decorations: BTreeMap<u64, PaneRenderDecorations>,
   ) -> Self {
     let active = frame.active_pane;
     let active_pane_id = active.get().get() as u64;
@@ -1226,17 +1231,19 @@ impl RenderFramePlan {
       .panes
       .into_iter()
       .map(|pane| {
-        let is_active = pane.pane_id == active;
+        let pane_id = pane.pane_id.get().get() as u64;
         let mut wrapped_plan: RenderPlan = pane.plan.into();
-        if is_active {
-          wrapped_plan.inline_diagnostic_lines = inline_diagnostic_lines.clone();
-          wrapped_plan.eol_diagnostics = eol_diagnostics.clone();
-          wrapped_plan.diagnostic_underlines = diagnostic_underlines.clone();
-        }
+        let decorations = pane_decorations
+          .get(&pane_id)
+          .cloned()
+          .unwrap_or_default();
+        wrapped_plan.inline_diagnostic_lines = decorations.inline_diagnostic_lines;
+        wrapped_plan.eol_diagnostics = decorations.eol_diagnostics;
+        wrapped_plan.diagnostic_underlines = decorations.diagnostic_underlines;
         RenderFramePane {
-          pane_id: pane.pane_id.get().get() as u64,
+          pane_id,
           rect: pane.rect,
-          is_active,
+          is_active: pane.pane_id == active,
           pane_kind: pane_content_kind_to_u8(pane.pane_kind),
           terminal_id: pane.terminal_id.map_or(0, |id| id.get().get() as u64),
           plan: wrapped_plan,
@@ -6324,12 +6331,16 @@ impl App {
     let Some(editor_id) = self.active_editor else {
       return false;
     };
+    let previous_buffer_index = self.active_editor_ref().active_buffer_index();
     let split = {
       let editor = self.active_editor_mut();
       editor.split_active_pane(axis)
     };
-    if split && let Some(state) = self.states.get_mut(&editor_id) {
-      state.needs_render = true;
+    if split {
+      self.sync_state_after_active_pane_change(previous_buffer_index);
+      if let Some(state) = self.states.get_mut(&editor_id) {
+        state.needs_render = true;
+      }
     }
     split
   }
@@ -6344,12 +6355,16 @@ impl App {
     let Some(editor_id) = self.active_editor else {
       return false;
     };
+    let previous_buffer_index = self.active_editor_ref().active_buffer_index();
     let jumped = {
       let editor = self.active_editor_mut();
       editor.jump_active_pane(direction)
     };
-    if jumped && let Some(state) = self.states.get_mut(&editor_id) {
-      state.needs_render = true;
+    if jumped {
+      self.sync_state_after_active_pane_change(previous_buffer_index);
+      if let Some(state) = self.states.get_mut(&editor_id) {
+        state.needs_render = true;
+      }
     }
     jumped
   }
@@ -6505,28 +6520,23 @@ impl App {
     }
     let _ = self.poll_background_active();
 
-    let styles = self.editor_render_styles_from_theme();
-    let frame = the_default::frame_render_plan_with_styles(self, styles);
-    let inline_diagnostic_lines = std::mem::take(&mut self.inline_diagnostic_lines);
-    let eol_diagnostics = std::mem::take(&mut self.eol_diagnostics);
-    let diagnostic_underlines = std::mem::take(&mut self.diagnostic_underlines);
+    let dispatch = self.dispatch();
+    dispatch.pre_render(self, ());
+    let styles = dispatch.pre_render_with_styles(self, self.editor_render_styles_from_theme());
+    let (mut frame, pane_decorations) = self.build_frame_render_plan_with_decorations_impl(styles);
+    for pane in &mut frame.panes {
+      pane.plan = dispatch.post_render(self, std::mem::take(&mut pane.plan));
+    }
     let elapsed = started.elapsed();
     if ffi_ui_profile_should_log(elapsed) {
       ffi_ui_profile_log(format!(
-        "frame_render_plan elapsed={}ms panes={} inline_diag={} eol_diag={} underlines={}",
+        "frame_render_plan elapsed={}ms panes={} decorated_panes={}",
         elapsed.as_millis(),
         frame.panes.len(),
-        inline_diagnostic_lines.len(),
-        eol_diagnostics.len(),
-        diagnostic_underlines.len()
+        pane_decorations.len()
       ));
     }
-    RenderFramePlan::from_lib(
-      frame,
-      inline_diagnostic_lines,
-      eol_diagnostics,
-      diagnostic_underlines,
-    )
+    RenderFramePlan::from_lib(frame, pane_decorations)
   }
 
   pub fn docs_popup_anchor(&mut self, id: ffi::EditorId) -> ffi::DocsPopupAnchor {
@@ -6844,13 +6854,7 @@ impl App {
       .unwrap_or_else(|| LibStyle::default().bg(LibColor::Rgb(47, 63, 116)));
     let enable_point_selection_match = self.active_state_ref().mode == Mode::Select;
 
-    let raw_diagnostics = self
-      .lsp_document
-      .as_ref()
-      .filter(|state| state.opened)
-      .and_then(|state| self.diagnostics.document(&state.uri))
-      .map(|doc| doc.diagnostics.clone())
-      .unwrap_or_default();
+    let raw_diagnostics = self.diagnostics_for_buffer(self.active_editor_ref().active_buffer_index());
 
     let (mut plan, underlines, inline_lines) = {
       let editor = self.active_editor_mut();
@@ -7009,7 +7013,7 @@ impl App {
     pane_id: PaneId,
     buffer_index: usize,
     styles: RenderStyles,
-  ) -> the_lib::render::RenderPlan {
+  ) -> (the_lib::render::RenderPlan, PaneRenderDecorations) {
     let (mut text_fmt, gutter_config, allow_cache_refresh) = {
       let state = self.active_state_ref();
       (
@@ -7029,19 +7033,30 @@ impl App {
         .unwrap_or_default()
     };
     let loader = self.loader.clone();
+    let raw_diagnostics = self.diagnostics_for_buffer(buffer_index);
+    let diagnostics_by_line = self.diagnostics_by_line_for_buffer(buffer_index);
+    let diagnostic_styles = render_diagnostic_styles_from_theme(&self.ui_theme);
+    let diff_styles = render_diff_styles_from_theme(&self.ui_theme);
+    let diff_signs = self.active_state_ref().gutter_diff_signs.clone();
 
-    let plan = {
+    let (plan, decorations) = {
       let editor = self.active_editor_mut();
       let Some(view) = editor.pane_view(pane_id) else {
-        return the_lib::render::RenderPlan::default();
+        return (
+          the_lib::render::RenderPlan::default(),
+          PaneRenderDecorations::default(),
+        );
       };
       let Some((doc, cache)) = editor.document_and_cache_at_mut(buffer_index) else {
-        return the_lib::render::RenderPlan::default();
+        return (
+          the_lib::render::RenderPlan::default(),
+          PaneRenderDecorations::default(),
+        );
       };
       let gutter_width = gutter_width_for_document(doc, view.viewport.width, &gutter_config);
       text_fmt.viewport_width = view.viewport.width.saturating_sub(gutter_width).max(1);
 
-      if let (Some(loader), Some(syntax)) = (loader.as_deref(), doc.syntax()) {
+      let mut plan = if let (Some(loader), Some(syntax)) = (loader.as_deref(), doc.syntax()) {
         let line_range = view.scroll.row..(view.scroll.row + view.viewport.height as usize);
         let mut adapter = SyntaxHighlightAdapter::new(
           doc.text().slice(..),
@@ -7075,7 +7090,58 @@ impl App {
           cache,
           styles,
         )
+      };
+      let mut inline_diagnostics = Vec::with_capacity(raw_diagnostics.len());
+      for diagnostic in &raw_diagnostics {
+        let message = diagnostic.message.trim();
+        if message.is_empty() {
+          continue;
+        }
+        let start_char_idx = utf16_position_to_char_idx(
+          doc.text(),
+          diagnostic.range.start.line,
+          diagnostic.range.start.character,
+        );
+        let severity = diagnostic.severity.unwrap_or(DiagnosticSeverity::Warning);
+        inline_diagnostics.push(InlineDiagnostic::new(
+          start_char_idx,
+          severity,
+          message.to_string(),
+        ));
       }
+      inline_diagnostics.sort_by_key(|diagnostic| diagnostic.start_char_idx);
+      let inline_config = InlineDiagnosticsConfig::default()
+        .prepare(text_fmt.viewport_width.max(1), false);
+      let mut underlines = compute_diagnostic_underlines(
+        doc.text(),
+        &raw_diagnostics,
+        &plan,
+        &text_fmt,
+        &mut annotations,
+      );
+      let mut inline_lines = render_inline_diagnostics_for_viewport(
+        doc.text().slice(..),
+        &plan,
+        &text_fmt,
+        &mut annotations,
+        &inline_diagnostics,
+        None,
+        &inline_config,
+      );
+      dedupe_inline_diagnostic_lines(&mut inline_lines.lines);
+      apply_row_insertions_to_underlines(&mut underlines, &plan, &inline_lines.row_insertions);
+      apply_row_insertions(&mut plan, &inline_lines.row_insertions);
+      apply_diagnostic_gutter_markers(&mut plan, &diagnostics_by_line, diagnostic_styles);
+      apply_diff_gutter_markers(&mut plan, &diff_signs, diff_styles);
+      let eol_diagnostics = compute_eol_diagnostics(&raw_diagnostics, &plan);
+      (
+        plan,
+        PaneRenderDecorations {
+          inline_diagnostic_lines: inline_lines.lines,
+          eol_diagnostics,
+          diagnostic_underlines: underlines,
+        },
+      )
     };
     drop(annotations);
 
@@ -7083,13 +7149,13 @@ impl App {
       .active_state_mut()
       .inactive_highlight_caches
       .insert(buffer_index, local_highlight_cache);
-    plan
+    (plan, decorations)
   }
 
-  fn build_frame_render_plan_with_styles_impl(
+  fn build_frame_render_plan_with_decorations_impl(
     &mut self,
     styles: RenderStyles,
-  ) -> the_lib::render::FrameRenderPlan {
+  ) -> (the_lib::render::FrameRenderPlan, BTreeMap<u64, PaneRenderDecorations>) {
     let previous_frame_generation_state = self.active_state_ref().frame_generation_state.clone();
     let (active_pane, panes) = {
       let editor = self.active_editor_ref();
@@ -7104,7 +7170,7 @@ impl App {
       self.eol_diagnostics.clear();
       self.diagnostic_underlines.clear();
       self.active_state_mut().frame_generation_state = FrameGenerationState::default();
-      return the_lib::render::FrameRenderPlan::empty();
+      return (the_lib::render::FrameRenderPlan::empty(), BTreeMap::new());
     }
 
     {
@@ -7118,11 +7184,20 @@ impl App {
 
     let mut pane_plans = Vec::with_capacity(panes.len());
     let mut pane_generation_states = BTreeMap::new();
+    let mut pane_decorations = BTreeMap::new();
     for pane in panes {
       let (pane_kind, terminal_id, plan) = match pane.content {
         PaneContent::EditorBuffer { buffer_index } => {
-          let mut plan = if pane.is_active_pane {
-            self.build_render_plan_with_styles_impl(styles)
+          let (mut plan, decorations) = if pane.is_active_pane {
+            let plan = self.build_render_plan_with_styles_impl(styles);
+            (
+              plan,
+              PaneRenderDecorations {
+                inline_diagnostic_lines: self.inline_diagnostic_lines.clone(),
+                eol_diagnostics: self.eol_diagnostics.clone(),
+                diagnostic_underlines: self.diagnostic_underlines.clone(),
+              },
+            )
           } else {
             self.build_inactive_pane_render_plan_with_styles_impl(
               pane.pane_id,
@@ -7130,6 +7205,7 @@ impl App {
               styles,
             )
           };
+          pane_decorations.insert(pane.pane_id.get().get() as u64, decorations.clone());
           let generation_state = if pane.is_active_pane {
             self
               .active_state_ref()
@@ -7155,7 +7231,12 @@ impl App {
             let previous = previous_frame_generation_state
               .pane_states
               .get(&pane.pane_id);
-            let row_hashes = build_render_layer_row_hashes(&plan, &[], &[], &[]);
+            let row_hashes = build_render_layer_row_hashes(
+              &plan,
+              &decorations.inline_diagnostic_lines,
+              &decorations.eol_diagnostics,
+              &decorations.diagnostic_underlines,
+            );
             finish_render_generations(
               &mut plan,
               previous,
@@ -7199,7 +7280,14 @@ impl App {
       pane_generation_states,
     );
     self.active_state_mut().frame_generation_state = next_frame_generation_state;
-    frame
+    (frame, pane_decorations)
+  }
+
+  fn build_frame_render_plan_with_styles_impl(
+    &mut self,
+    styles: RenderStyles,
+  ) -> the_lib::render::FrameRenderPlan {
+    self.build_frame_render_plan_with_decorations_impl(styles).0
   }
 
   pub fn text(&self, id: ffi::EditorId) -> String {
@@ -8356,7 +8444,6 @@ impl App {
     let was_running = self.lsp_runtime.is_running();
     self.lsp_ready = false;
     self.lsp_spinner_index = 0;
-    self.diagnostics.clear();
     self.lsp_active_progress_tokens.clear();
     self.lsp_pending_requests.clear();
     self.clear_hover_state();
@@ -8429,7 +8516,6 @@ impl App {
     self.lsp_close_current_document();
     self.lsp_ready = false;
     self.lsp_spinner_index = 0;
-    self.diagnostics.clear();
     self.lsp_active_progress_tokens.clear();
     self.lsp_pending_requests.clear();
     self.clear_hover_state();
@@ -8824,15 +8910,30 @@ impl App {
   }
 
   fn active_diagnostics_by_line(&self) -> BTreeMap<usize, DiagnosticSeverity> {
-    let Some(state) = self.lsp_document.as_ref().filter(|state| state.opened) else {
-      return BTreeMap::new();
-    };
-    let Some(document) = self.diagnostics.document(&state.uri) else {
-      return BTreeMap::new();
-    };
+    self.diagnostics_by_line_for_buffer(self.active_editor_ref().active_buffer_index())
+  }
 
+  fn active_inline_diagnostics(&self) -> Vec<InlineDiagnostic> {
+    self.inline_diagnostics_for_buffer(self.active_editor_ref().active_buffer_index())
+  }
+
+  fn diagnostics_for_buffer(&self, buffer_index: usize) -> Vec<Diagnostic> {
+    let Some(path) = self.active_editor_ref().buffer_file_path(buffer_index) else {
+      return Vec::new();
+    };
+    let Some(uri) = file_uri_for_path(path) else {
+      return Vec::new();
+    };
+    self
+      .diagnostics
+      .document(&uri)
+      .map(|document| document.diagnostics.clone())
+      .unwrap_or_default()
+  }
+
+  fn diagnostics_by_line_for_buffer(&self, buffer_index: usize) -> BTreeMap<usize, DiagnosticSeverity> {
     let mut out = BTreeMap::new();
-    for diagnostic in &document.diagnostics {
+    for diagnostic in self.diagnostics_for_buffer(buffer_index) {
       let line = diagnostic.range.start.line as usize;
       let severity = diagnostic.severity.unwrap_or(DiagnosticSeverity::Warning);
       match out.get(&line).copied() {
@@ -8845,16 +8946,13 @@ impl App {
     out
   }
 
-  fn active_inline_diagnostics(&self) -> Vec<InlineDiagnostic> {
-    let Some(state) = self.lsp_document.as_ref().filter(|state| state.opened) else {
+  fn inline_diagnostics_for_buffer(&self, buffer_index: usize) -> Vec<InlineDiagnostic> {
+    let Some(text) = self.active_editor_ref().buffer_document(buffer_index).map(|doc| doc.text()) else {
       return Vec::new();
     };
-    let Some(document) = self.diagnostics.document(&state.uri) else {
-      return Vec::new();
-    };
-    let text = self.active_editor_ref().document().text();
-    let mut out = Vec::with_capacity(document.diagnostics.len());
-    for diagnostic in &document.diagnostics {
+    let diagnostics = self.diagnostics_for_buffer(buffer_index);
+    let mut out = Vec::with_capacity(diagnostics.len());
+    for diagnostic in &diagnostics {
       let message = diagnostic.message.trim();
       if message.is_empty() {
         continue;
@@ -8871,7 +8969,7 @@ impl App {
         message.to_string(),
       ));
     }
-    out.sort_by_key(|d| d.start_char_idx);
+    out.sort_by_key(|diagnostic| diagnostic.start_char_idx);
     out
   }
 
@@ -12013,7 +12111,12 @@ impl App {
     if self.active_editor_ref().active_pane_id() == pane {
       return false;
     }
-    self.active_editor_mut().set_active_pane(pane)
+    let previous_buffer_index = self.active_editor_ref().active_buffer_index();
+    let changed = self.active_editor_mut().set_active_pane(pane);
+    if changed {
+      self.sync_state_after_active_pane_change(previous_buffer_index);
+    }
+    changed
   }
 
   fn pointer_char_idx_for_event(&self, event: the_default::PointerEvent) -> Option<usize> {
@@ -12820,6 +12923,47 @@ impl App {
     if let Some(state) = self.states.get_mut(&id) {
       state.gutter_diff_signs = vcs_gutter_signs(handle);
     }
+  }
+
+  fn sync_state_after_active_pane_change(&mut self, previous_buffer_index: usize) {
+    let Some(id) = self.active_editor else {
+      return;
+    };
+
+    self.lsp_pending_mouse_hover = None;
+    self.clear_hover_state();
+    self.clear_completion_state();
+    self.cancel_auto_completion();
+    self.clear_signature_help_state();
+    self.cancel_auto_signature_help();
+
+    if self.active_editor_ref().active_buffer_index() == previous_buffer_index {
+      return;
+    }
+
+    self.lsp_close_current_document();
+
+    let active_path = self
+      .inner
+      .editor(id)
+      .and_then(|editor| editor.active_file_path().map(Path::to_path_buf));
+    if let Some(state) = self.states.get_mut(&id)
+      && let Some(path) = active_path.as_deref()
+    {
+      state.workspace_root = workspace_root_for_editor_path(state.workspace_root.as_path(), path);
+    }
+    let working_directory = self.effective_file_tree_root();
+    if let Some(state) = self.states.get_mut(&id) {
+      state
+        .file_tree
+        .sync_for_active_file(working_directory.as_path(), active_path.as_deref());
+    }
+    let _ = self.sync_file_tree_watch_state();
+
+    self.refresh_editor_syntax(id);
+    self.lsp_refresh_document_state_for_active_file();
+    self.refresh_vcs_diff_base_for_editor(id);
+    self.lsp_open_current_document();
   }
 }
 
@@ -13637,6 +13781,10 @@ impl DefaultContext for App {
       self.lsp_refresh_document_state_for_active_file();
       self.refresh_vcs_diff_base_for_editor(id);
     }
+  }
+
+  fn did_change_active_pane(&mut self, previous_buffer_index: usize) {
+    self.sync_state_after_active_pane_change(previous_buffer_index);
   }
 
   fn goto_buffer(&mut self, direction: CommandDirection, count: usize) -> bool {
@@ -15951,6 +16099,61 @@ mod tests {
   }
 
   #[test]
+  fn jump_active_pane_rebinds_file_path_and_lsp_state() {
+    let _guard = ffi_test_guard();
+    let workspace = TempTestWorkspace::new("pane-jump-lsp", "main.rs", "fn main() {}\n");
+    let cargo_toml = workspace.root_path().join("Cargo.toml");
+    fs::write(
+      &cargo_toml,
+      "[package]\nname = \"pane-jump\"\nversion = \"0.1.0\"\n",
+    )
+    .expect("write cargo");
+
+    let mut app = App::new();
+    app.loader = None;
+    let id = app.create_editor("", default_viewport(), ffi::Position { row: 0, col: 0 });
+    assert!(app.activate(id).is_some());
+    {
+      let editor = app.active_editor_mut();
+      assert!(editor.replace_active_buffer(
+        Rope::from_str("fn main() {}\n"),
+        Some(workspace.file_path().to_path_buf())
+      ));
+    }
+    app.lsp_document = build_lsp_document_state(workspace.file_path(), app.loader.as_deref());
+    assert!(app.split_active_pane(id, 0));
+    let cargo_view = {
+      let editor = app.active_editor_ref();
+      ViewState::new(editor.view().viewport, LibPosition::new(0, 0))
+    };
+    {
+      let editor = app.active_editor_mut();
+      let _ = editor.open_buffer(
+        Rope::from_str("[package]\nname = \"pane-jump\"\nversion = \"0.1.0\"\n"),
+        cargo_view,
+        Some(cargo_toml.clone()),
+      );
+    }
+    app.lsp_document = build_lsp_document_state(&cargo_toml, app.loader.as_deref());
+    app.active_state_mut().hover_docs = Some("resolver docs".to_string());
+    app.active_state_mut().completion_menu.active = true;
+
+    assert_eq!(<App as DefaultContext>::file_path(&app), Some(cargo_toml.as_path()));
+    assert!(app.jump_active_pane(id, 0));
+
+    assert_eq!(
+      <App as DefaultContext>::file_path(&app),
+      Some(workspace.file_path())
+    );
+    assert_eq!(
+      app.lsp_document.as_ref().map(|state| state.path.as_path()),
+      Some(workspace.file_path())
+    );
+    assert!(app.active_state_ref().hover_docs.is_none());
+    assert!(!app.active_state_ref().completion_menu.active);
+  }
+
+  #[test]
   fn frame_render_plan_preserves_per_pane_viewports_for_shared_buffers() {
     let _guard = ffi_test_guard();
     let mut app = App::new();
@@ -15976,6 +16179,114 @@ mod tests {
       assert_eq!(viewport.width, rect.width);
       assert_eq!(viewport.height, rect.height);
     }
+  }
+
+  #[test]
+  fn frame_render_plan_keeps_diagnostics_for_inactive_split_panes() {
+    let _guard = ffi_test_guard();
+    let workspace = TempTestWorkspace::new(
+      "split-pane-diagnostics",
+      "main.rs",
+      "fn main() { let x = ; }\n",
+    );
+    let cargo_toml = workspace.root_path().join("Cargo.toml");
+    fs::write(
+      &cargo_toml,
+      "[package]\nname = 7\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .expect("write cargo toml");
+
+    let mut app = App::new();
+    let id = app.create_editor("", default_viewport(), ffi::Position { row: 0, col: 0 });
+    {
+      let editor = app.active_editor_mut();
+      assert!(editor.replace_active_buffer(
+        Rope::from_str("fn main() { let x = ; }\n"),
+        Some(workspace.file_path().to_path_buf()),
+      ));
+    }
+
+    let rust_uri = the_lsp::text_sync::file_uri_for_path(workspace.file_path()).expect("rust uri");
+    app.diagnostics.apply_document(the_lib::diagnostics::DocumentDiagnostics {
+      uri:         rust_uri,
+      version:     Some(1),
+      diagnostics: vec![the_lib::diagnostics::Diagnostic {
+        range:    the_lib::diagnostics::DiagnosticRange {
+          start: the_lib::diagnostics::DiagnosticPosition {
+            line:      0,
+            character: 16,
+          },
+          end:   the_lib::diagnostics::DiagnosticPosition {
+            line:      0,
+            character: 17,
+          },
+        },
+        severity: Some(the_lib::diagnostics::DiagnosticSeverity::Error),
+        code:     None,
+        source:   Some("rust-analyzer".into()),
+        message:  "expected expression".into(),
+      }],
+    });
+
+    assert!(app.split_active_pane(id, 0));
+    let toml_view = {
+      let editor = app.active_editor_ref();
+      ViewState::new(editor.view().viewport, LibPosition::new(0, 0))
+    };
+    {
+      let editor = app.active_editor_mut();
+      let _ = editor.open_buffer(
+        Rope::from_str("[package]\nname = 7\nversion = \"0.1.0\"\nedition = \"2024\"\n"),
+        toml_view,
+        Some(cargo_toml.clone()),
+      );
+    }
+    let toml_uri = the_lsp::text_sync::file_uri_for_path(&cargo_toml).expect("toml uri");
+    app.diagnostics.apply_document(the_lib::diagnostics::DocumentDiagnostics {
+      uri:         toml_uri,
+      version:     Some(1),
+      diagnostics: vec![the_lib::diagnostics::Diagnostic {
+        range:    the_lib::diagnostics::DiagnosticRange {
+          start: the_lib::diagnostics::DiagnosticPosition {
+            line:      1,
+            character: 7,
+          },
+          end:   the_lib::diagnostics::DiagnosticPosition {
+            line:      1,
+            character: 8,
+          },
+        },
+        severity: Some(the_lib::diagnostics::DiagnosticSeverity::Error),
+        code:     None,
+        source:   Some("taplo".into()),
+        message:  "expected string".into(),
+      }],
+    });
+
+    assert!(app.activate(id).is_some());
+    let styles = app.editor_render_styles_from_theme();
+    let (frame, pane_decorations) = app.build_frame_render_plan_with_decorations_impl(styles);
+    assert_eq!(frame.panes.len(), 2);
+
+    let rust_path = workspace.file_path().to_string_lossy().to_string();
+    let toml_path = cargo_toml.to_string_lossy().to_string();
+    let mut rust_pane_id = None;
+    let mut toml_pane_id = None;
+    for index in 0..app.editor_surface_count(id) {
+      let surface = app.editor_surface_at(id, index);
+      if surface.file_path() == rust_path {
+        rust_pane_id = Some(surface.pane_id());
+      } else if surface.file_path() == toml_path {
+        toml_pane_id = Some(surface.pane_id());
+      }
+    }
+
+    let rust_pane_id = rust_pane_id.expect("rust pane");
+    let toml_pane_id = toml_pane_id.expect("toml pane");
+    let rust_decorations = pane_decorations.get(&rust_pane_id).expect("rust decorations");
+    let toml_decorations = pane_decorations.get(&toml_pane_id).expect("toml decorations");
+    assert!(!rust_decorations.diagnostic_underlines.is_empty());
+    assert!(!toml_decorations.diagnostic_underlines.is_empty());
   }
 
   #[test]
@@ -19117,6 +19428,61 @@ pkgs.mkShell {
     assert_eq!(plan.cursor_count(), 1);
     assert_eq!(plan.cursor_at(0).kind(), 1);
     assert_eq!(plan.cursor_at(0).pos().col, 1);
+  }
+
+  #[test]
+  fn frame_render_plan_uses_mode_specific_cursor_kinds() {
+    let _guard = ffi_test_guard();
+    let mut app = App::new();
+    let id = app.create_editor("main()\n", default_viewport(), ffi::Position {
+      row: 0,
+      col: 0,
+    });
+    assert!(app.activate(id).is_some());
+
+    app.set_mode(Mode::Insert);
+    let frame = app.frame_render_plan(id);
+    let plan = frame.active_plan();
+    assert_eq!(plan.cursor_count(), 1);
+    assert_eq!(plan.cursor_at(0).kind(), 1);
+
+    app.set_mode(Mode::Select);
+    let frame = app.frame_render_plan(id);
+    let plan = frame.active_plan();
+    assert_eq!(plan.cursor_count(), 1);
+    assert_eq!(plan.cursor_at(0).kind(), 2);
+
+    app.set_mode(Mode::Normal);
+    let frame = app.frame_render_plan(id);
+    let plan = frame.active_plan();
+    assert_eq!(plan.cursor_count(), 1);
+    assert_eq!(plan.cursor_at(0).kind(), 0);
+  }
+
+  #[test]
+  fn frame_render_plan_uses_active_edge_for_append_cursor() {
+    let _guard = ffi_test_guard();
+    let mut app = App::new();
+    let id = app.create_editor("println!(\"hello\")\n", default_viewport(), ffi::Position {
+      row: 0,
+      col: 0,
+    });
+    assert!(app.activate(id).is_some());
+    let _ = app
+      .active_editor_mut()
+      .document_mut()
+      .set_selection(Selection::single(0, 7));
+    app.set_mode(Mode::Select);
+
+    assert!(app.handle_key(id, key_char('a')));
+    assert_eq!(app.active_state_ref().mode, Mode::Insert);
+
+    let frame = app.frame_render_plan(id);
+    let plan = frame.active_plan();
+    assert_eq!(plan.cursor_count(), 1);
+    assert_eq!(plan.cursor_at(0).kind(), 1);
+    assert_eq!(plan.cursor_at(0).pos().row, 0);
+    assert_eq!(plan.cursor_at(0).pos().col, 7);
   }
 
   #[test]

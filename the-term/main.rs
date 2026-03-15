@@ -35,10 +35,7 @@ use crossterm::event::{
 };
 use eyre::Result;
 
-use crate::{
-  ctx::Ctx,
-  dispatch::build_dispatch,
-};
+use crate::ctx::Ctx;
 
 #[derive(Debug, Parser)]
 #[command(name = "the-editor")]
@@ -91,9 +88,14 @@ fn main() -> Result<()> {
 
   // Initialize application state
   let mut ctx = Ctx::new(file_path)?;
-  ctx.keymaps = the_config::build_keymaps();
-  let dispatch = build_dispatch::<Ctx>();
+  let assembly = the_config::build_editor_assembly::<Ctx>().build();
+  let (dispatch, keymaps, command_registry, startup_hooks) = assembly.into_parts();
+  ctx.keymaps = keymaps;
+  ctx.command_registry = command_registry;
   ctx.set_dispatch(&dispatch);
+  for hook in startup_hooks {
+    hook(&mut ctx);
+  }
   ctx.start_background_services();
   let mut terminal = terminal::Terminal::new()?;
 

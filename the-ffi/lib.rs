@@ -52,10 +52,7 @@ use ropey::Rope;
 use serde::Serialize;
 use serde_json::Value;
 use smallvec::SmallVec;
-use the_config::{
-  build_dispatch as config_build_dispatch,
-  build_keymaps as config_build_keymaps,
-};
+use the_config::build_editor_assembly as config_build_editor_assembly;
 use the_default::{
   BufferTabItemSnapshot as DefaultBufferTabItemSnapshot,
   BufferTabsSnapshot as DefaultBufferTabsSnapshot,
@@ -5748,7 +5745,8 @@ impl App {
   }
 
   pub fn new() -> Self {
-    let dispatch = config_build_dispatch::<App>();
+    let assembly = config_build_editor_assembly::<App>().build();
+    let (dispatch, keymaps, command_registry, startup_hooks) = assembly.into_parts();
     let workspace_root = env::current_dir()
       .ok()
       .map(|path| the_loader::find_workspace_in(path).0)
@@ -5775,8 +5773,8 @@ impl App {
       inner: LibApp::default(),
       workspace_root,
       dispatch,
-      keymaps: config_build_keymaps(),
-      command_registry: CommandRegistry::new(),
+      keymaps,
+      command_registry,
       states: HashMap::new(),
       vcs_provider: DiffProviderRegistry::default(),
       vcs_diff_handles: HashMap::new(),
@@ -5825,6 +5823,9 @@ impl App {
       native_tab_open_gateway_enabled: false,
       native_tab_open_requests: VecDeque::new(),
     };
+    for hook in startup_hooks {
+      hook(&mut app);
+    }
     let _ = app.refresh_vcs_ui_state();
     app
   }

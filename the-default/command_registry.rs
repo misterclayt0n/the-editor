@@ -66,6 +66,11 @@ pub struct Completion {
   pub doc:   Option<String>,
 }
 
+/// Concrete `fn`-pointer command entry used by the current shared default
+/// surface.
+///
+/// This keeps typable commands simple and static today, while leaving room for
+/// a richer assembly-oriented authoring path later.
 pub type CommandFn<Ctx> = fn(&mut Ctx, Args, CommandEvent) -> CommandResult;
 
 pub type CommandResult = Result<(), CommandError>;

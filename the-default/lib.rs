@@ -5,6 +5,7 @@
 //! This crate provides a reusable, policy-level layer that sits on top of
 //! `the-lib` without hard-coding UI event types into `the-dispatch`.
 
+mod assembly;
 mod buffer_tabs;
 mod command;
 mod command_palette;
@@ -26,6 +27,12 @@ mod signature_help;
 mod statusline;
 mod theme_catalog;
 
+pub use assembly::{
+  BuiltEditorAssembly,
+  CommandRegistryInstaller,
+  EditorAssembly,
+  StartupHook,
+};
 pub use buffer_tabs::{
   BufferTabItemSnapshot,
   BufferTabsOrder,

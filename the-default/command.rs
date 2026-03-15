@@ -262,6 +262,10 @@ define! {
   }
 }
 
+/// Concrete `fn`-pointer specialization of the generic `DefaultDispatch`.
+///
+/// `the-dispatch` itself remains generic, but `the-default` currently exposes
+/// this fully static surface as its shipped fast path.
 pub type DefaultDispatchStatic<Ctx> = DefaultDispatch<
   Ctx,
   fn(&mut Ctx, KeyEvent),

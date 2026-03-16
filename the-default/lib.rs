@@ -13,6 +13,7 @@ mod command_registry;
 mod command_types;
 mod completion_menu;
 mod context_menu;
+mod extension_state;
 mod extensions;
 mod file_picker;
 mod file_tree;
@@ -29,10 +30,11 @@ mod statusline;
 mod theme_catalog;
 
 pub use assembly::{
-  BuiltEditorAssembly,
+  BuiltEditorPreset,
   CommandRegistryInstaller,
-  EditorAssembly,
+  EditorPreset,
   StartupHook,
+  default_editor_preset,
 };
 pub use buffer_tabs::{
   BufferTabItemSnapshot,
@@ -50,7 +52,7 @@ pub use command::{
   DefaultApi,
   DefaultContext,
   DefaultDispatch,
-  DefaultDispatchStatic,
+  DefaultDispatchBuiltin,
   DispatchRef,
   WorkingDirectoryState,
   build_dispatch,
@@ -126,6 +128,7 @@ pub use context_menu::{
   build_editor_context_menu,
   build_file_tree_context_menu,
 };
+pub use extension_state::ExtensionStateStore;
 pub use extensions::{
   EditorExtensions,
   NamedAction,
@@ -133,8 +136,10 @@ pub use extensions::{
   NamedActionInfo,
   PickerQueryHandler,
   PickerQueryHandlerEntry,
+  PickerQueryHandlerId,
   PickerSubmitHandler,
   PickerSubmitHandlerEntry,
+  PickerSubmitHandlerId,
   PickerSubmitResult,
   RenderPlanPostProcessor,
   TextAnnotationsProvider,
@@ -159,6 +164,11 @@ pub use file_picker::{
   FilePickerRowKind,
   FilePickerSourcePreview,
   FilePickerState,
+  PickerBuilder,
+  PickerItemSpec,
+  PickerItemSpecAction,
+  PickerRoot,
+  PickerSubmitHandlerRef,
   build_file_picker_ui,
   close_file_picker,
   file_picker_icon_glyph,

@@ -88,6 +88,14 @@ use crate::{
   DefaultContext,
   Key,
   KeyEvent,
+  PickerQueryHandlerId,
+  PickerSubmitHandlerId,
+  PickerSubmitResult,
+  command_registry::{
+    CommandCompleter,
+    CommandEvent,
+    TypableCommand,
+  },
 };
 
 const MAX_SCAN_ITEMS: usize = 100_000;
@@ -153,9 +161,16 @@ pub enum FilePickerItemAction {
     column:      Option<usize>,
   },
   Custom {
-    handler:    &'static str,
+    handler:    PickerSubmitHandlerRef,
     selectable: bool,
   },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PickerSubmitHandlerRef {
+  Extension(PickerSubmitHandlerId),
+  Runtime(PickerRuntimeSessionId),
+  Named(&'static str),
 }
 
 impl FilePickerItemAction {
@@ -216,7 +231,20 @@ impl FilePickerItemAction {
         selectable,
       } => {
         5_u8.hash(&mut hasher);
-        handler.hash(&mut hasher);
+        match handler {
+          PickerSubmitHandlerRef::Extension(id) => {
+            0_u8.hash(&mut hasher);
+            id.hash(&mut hasher);
+          },
+          PickerSubmitHandlerRef::Runtime(id) => {
+            1_u8.hash(&mut hasher);
+            id.hash(&mut hasher);
+          },
+          PickerSubmitHandlerRef::Named(name) => {
+            2_u8.hash(&mut hasher);
+            name.hash(&mut hasher);
+          },
+        }
         selectable.hash(&mut hasher);
       },
     }
@@ -461,6 +489,53 @@ pub enum FilePickerQueryMode {
   Dynamic,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[doc(hidden)]
+pub struct PickerRuntimeSessionId(u64);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum PickerQueryHandlerRef {
+  Extension(PickerQueryHandlerId),
+  Runtime(PickerRuntimeSessionId),
+}
+
+type PickerQuerySource<Ctx> = dyn Fn(&mut Ctx, &str) -> Vec<PickerItemSpec> + 'static;
+type PickerRuntimeSubmit<Ctx> = dyn Fn(&mut Ctx, &FilePickerItem) -> PickerSubmitResult + 'static;
+type PickerPathFilter = dyn Fn(&Path, &Path) -> bool + Send + Sync + 'static;
+
+struct PickerRuntimeSession<Ctx> {
+  query:  Option<Box<PickerQuerySource<Ctx>>>,
+  submit: Option<Box<PickerRuntimeSubmit<Ctx>>>,
+}
+
+struct PickerRuntimeRegistry<Ctx> {
+  next_id:  u64,
+  sessions: HashMap<PickerRuntimeSessionId, PickerRuntimeSession<Ctx>>,
+}
+
+impl<Ctx> Default for PickerRuntimeRegistry<Ctx> {
+  fn default() -> Self {
+    Self {
+      next_id:  0,
+      sessions: HashMap::new(),
+    }
+  }
+}
+
+impl<Ctx> PickerRuntimeRegistry<Ctx> {
+  fn register(&mut self, session: PickerRuntimeSession<Ctx>) -> PickerRuntimeSessionId {
+    let next = self.next_id.wrapping_add(1).max(1);
+    self.next_id = next;
+    let id = PickerRuntimeSessionId(next);
+    self.sessions.insert(id, session);
+    id
+  }
+
+  fn remove(&mut self, id: PickerRuntimeSessionId) {
+    self.sessions.remove(&id);
+  }
+}
+
 #[derive(Debug, Clone)]
 pub enum FilePickerPreview {
   Empty,
@@ -578,41 +653,53 @@ impl PreviewCache {
   }
 }
 
+#[derive(Clone)]
+struct FilePickerScanSource {
+  config:         FilePickerConfig,
+  max_results:    usize,
+  extensions:     Option<Arc<[String]>>,
+  path_filter:    Option<Arc<PickerPathFilter>>,
+  preview:        bool,
+  submit_handler: Option<PickerSubmitHandlerRef>,
+}
+
 pub struct FilePickerState {
-  pub active:               bool,
-  pub root:                 PathBuf,
-  pub title:                String,
-  pub config:               FilePickerConfig,
-  pub query:                String,
-  pub cursor:               usize,
-  pub selected:             Option<usize>,
-  pub hovered:              Option<usize>,
-  pub list_offset:          usize,
-  pub list_visible:         usize,
-  pub preview_scroll:       usize,
-  pub show_preview:         bool,
-  pub open_split:           Option<SplitAxis>,
-  pub preview_path:         Option<PathBuf>,
-  pub preview_focus_line:   Option<usize>,
-  pub preview:              FilePickerPreview,
-  pub error:                Option<String>,
-  pub scanning:             bool,
-  pub matcher_running:      bool,
-  pub query_mode:           FilePickerQueryMode,
-  pub custom_query_handler: Option<&'static str>,
-  pub dynamic_running:      bool,
-  preview_cache:            PreviewCache,
-  preview_req_tx:           Option<Sender<PreviewRequest>>,
-  preview_res_rx:           Option<Receiver<PreviewResult>>,
-  preview_request_id:       u64,
-  preview_pending_id:       Option<u64>,
-  scan_generation:          u64,
-  scan_rx:                  Option<Receiver<(u64, ScanMessage)>>,
-  scan_cancel:              Option<Arc<AtomicBool>>,
-  preview_latest_request:   Arc<AtomicU64>,
-  wake_tx:                  Option<Sender<()>>,
-  syntax_loader:            Option<Arc<Loader>>,
-  matcher:                  Nucleo<Arc<FilePickerItem>>,
+  pub active:             bool,
+  pub root:               PathBuf,
+  pub title:              String,
+  pub config:             FilePickerConfig,
+  pub query:              String,
+  pub cursor:             usize,
+  pub selected:           Option<usize>,
+  pub hovered:            Option<usize>,
+  pub list_offset:        usize,
+  pub list_visible:       usize,
+  pub preview_scroll:     usize,
+  pub show_preview:       bool,
+  pub open_split:         Option<SplitAxis>,
+  pub preview_path:       Option<PathBuf>,
+  pub preview_focus_line: Option<usize>,
+  pub preview:            FilePickerPreview,
+  pub error:              Option<String>,
+  pub scanning:           bool,
+  pub matcher_running:    bool,
+  pub query_mode:         FilePickerQueryMode,
+  custom_query_handler:   Option<PickerQueryHandlerRef>,
+  pub dynamic_running:    bool,
+  runtime_session:        Option<PickerRuntimeSessionId>,
+  scan_source:            Option<FilePickerScanSource>,
+  preview_cache:          PreviewCache,
+  preview_req_tx:         Option<Sender<PreviewRequest>>,
+  preview_res_rx:         Option<Receiver<PreviewResult>>,
+  preview_request_id:     u64,
+  preview_pending_id:     Option<u64>,
+  scan_generation:        u64,
+  scan_rx:                Option<Receiver<(u64, ScanMessage)>>,
+  scan_cancel:            Option<Arc<AtomicBool>>,
+  preview_latest_request: Arc<AtomicU64>,
+  wake_tx:                Option<Sender<()>>,
+  syntax_loader:          Option<Arc<Loader>>,
+  matcher:                Nucleo<Arc<FilePickerItem>>,
 }
 
 enum ScanMessage {
@@ -646,6 +733,8 @@ impl Default for FilePickerState {
       query_mode: FilePickerQueryMode::Static,
       custom_query_handler: None,
       dynamic_running: false,
+      runtime_session: None,
+      scan_source: None,
       preview_cache: PreviewCache::with_capacity(PREVIEW_CACHE_CAPACITY),
       preview_req_tx: None,
       preview_res_rx: None,
@@ -790,6 +879,480 @@ impl FilePickerState {
     if self.preview_scroll > max_offset {
       self.preview_scroll = max_offset;
     }
+  }
+}
+
+#[derive(Debug, Clone)]
+pub enum PickerRoot {
+  Workspace,
+  EffectiveWorkingDirectory,
+  Fixed(PathBuf),
+}
+
+impl PickerRoot {
+  fn resolve<Ctx: DefaultContext>(&self, ctx: &Ctx) -> PathBuf {
+    match self {
+      Self::Workspace => ctx.workspace_root(),
+      Self::EffectiveWorkingDirectory => ctx.effective_working_directory(),
+      Self::Fixed(path) => path.clone(),
+    }
+  }
+}
+
+#[derive(Debug, Clone)]
+pub enum PickerItemSpecAction {
+  OpenFile(PathBuf),
+  OpenLocation {
+    path:        PathBuf,
+    cursor_char: usize,
+    line:        usize,
+    column:      Option<usize>,
+  },
+  Custom {
+    selectable: bool,
+  },
+}
+
+#[derive(Debug, Clone)]
+pub struct PickerItemSpec {
+  absolute:     PathBuf,
+  display:      String,
+  icon:         String,
+  is_dir:       bool,
+  display_path: bool,
+  action:       PickerItemSpecAction,
+  preview_path: Option<PathBuf>,
+  preview_line: Option<usize>,
+  preview_col:  Option<(usize, usize)>,
+  row_data:     Option<FilePickerRowData>,
+  preview:      Option<FilePickerPreview>,
+  payload:      Option<FilePickerItemPayload>,
+}
+
+impl PickerItemSpec {
+  pub fn custom(display: impl Into<String>) -> Self {
+    let display = display.into();
+    Self {
+      absolute: PathBuf::from(display.clone()),
+      display,
+      icon: "sparkle".to_string(),
+      is_dir: false,
+      display_path: false,
+      action: PickerItemSpecAction::Custom { selectable: true },
+      preview_path: None,
+      preview_line: None,
+      preview_col: None,
+      row_data: None,
+      preview: None,
+      payload: None,
+    }
+  }
+
+  pub fn file(root: impl AsRef<Path>, path: impl AsRef<Path>) -> Option<Self> {
+    let root = root.as_ref();
+    let path = path.as_ref();
+    let relative = path.strip_prefix(root).ok()?;
+    let mut display = relative.to_string_lossy().into_owned();
+    if std::path::MAIN_SEPARATOR != '/' {
+      display = display.replace(std::path::MAIN_SEPARATOR, "/");
+    }
+    let path_buf = path.to_path_buf();
+    Some(Self {
+      absolute: path_buf.clone(),
+      display,
+      icon: file_picker_icon_name_for_path(relative).to_string(),
+      is_dir: false,
+      display_path: false,
+      action: PickerItemSpecAction::OpenFile(path_buf.clone()),
+      preview_path: Some(path_buf),
+      preview_line: None,
+      preview_col: None,
+      row_data: None,
+      preview: None,
+      payload: None,
+    })
+  }
+
+  pub fn location(
+    display: impl Into<String>,
+    path: impl Into<PathBuf>,
+    cursor_char: usize,
+    line: usize,
+    column: Option<usize>,
+  ) -> Self {
+    let path = path.into();
+    Self {
+      absolute:     path.clone(),
+      display:      display.into(),
+      icon:         file_picker_icon_name_for_path(&path).to_string(),
+      is_dir:       false,
+      display_path: false,
+      action:       PickerItemSpecAction::OpenLocation {
+        path: path.clone(),
+        cursor_char,
+        line,
+        column,
+      },
+      preview_path: Some(path),
+      preview_line: Some(line),
+      preview_col:  column.map(|col| (col, col)),
+      row_data:     None,
+      preview:      None,
+      payload:      None,
+    }
+  }
+
+  pub fn with_icon(mut self, icon: impl Into<String>) -> Self {
+    self.icon = icon.into();
+    self
+  }
+
+  pub fn with_preview_path(mut self, path: impl Into<PathBuf>) -> Self {
+    self.preview_path = Some(path.into());
+    self
+  }
+
+  pub fn with_preview_line(mut self, line: usize) -> Self {
+    self.preview_line = Some(line);
+    self
+  }
+
+  pub fn with_preview(mut self, preview: FilePickerPreview) -> Self {
+    self.preview = Some(preview);
+    self
+  }
+
+  pub fn with_row_data(mut self, row_data: FilePickerRowData) -> Self {
+    self.row_data = Some(row_data);
+    self
+  }
+
+  pub fn with_payload<T>(mut self, payload: T) -> Self
+  where
+    T: Any + Send + Sync,
+  {
+    self.payload = Some(FilePickerItemPayload::new(payload));
+    self
+  }
+
+  fn into_item(self, submit_handler: Option<PickerSubmitHandlerRef>) -> FilePickerItem {
+    let action = match self.action {
+      PickerItemSpecAction::OpenFile(path) => FilePickerItemAction::OpenFile(path),
+      PickerItemSpecAction::OpenLocation {
+        path,
+        cursor_char,
+        line,
+        column,
+      } => {
+        FilePickerItemAction::OpenLocation {
+          path,
+          cursor_char,
+          line,
+          column,
+        }
+      },
+      PickerItemSpecAction::Custom { selectable } => {
+        FilePickerItemAction::Custom {
+          handler:    submit_handler.unwrap_or(PickerSubmitHandlerRef::Named("")),
+          selectable: selectable && submit_handler.is_some(),
+        }
+      },
+    };
+
+    FilePickerItem {
+      absolute: self.absolute,
+      display: self.display,
+      icon: self.icon,
+      is_dir: self.is_dir,
+      display_path: self.display_path,
+      action,
+      preview_path: self.preview_path,
+      preview_line: self.preview_line,
+      preview_col: self.preview_col,
+      row_data: self.row_data,
+      preview: self.preview,
+      payload: self.payload,
+    }
+  }
+}
+
+enum PickerSource<Ctx> {
+  Files {
+    scan_source:    FilePickerScanSource,
+    submit_handler: Option<Arc<PickerRuntimeSubmit<Ctx>>>,
+  },
+  Static {
+    items:          Arc<[PickerItemSpec]>,
+    submit_handler: Option<Arc<PickerRuntimeSubmit<Ctx>>>,
+  },
+  Dynamic {
+    query:          Arc<PickerQuerySource<Ctx>>,
+    submit_handler: Option<Arc<PickerRuntimeSubmit<Ctx>>>,
+  },
+}
+
+pub struct PickerBuilder<Ctx> {
+  title:         String,
+  root:          PickerRoot,
+  open_split:    Option<SplitAxis>,
+  initial_query: String,
+  source:        PickerSource<Ctx>,
+}
+
+impl<Ctx> Clone for PickerSource<Ctx> {
+  fn clone(&self) -> Self {
+    match self {
+      Self::Files {
+        scan_source,
+        submit_handler,
+      } => {
+        Self::Files {
+          scan_source: scan_source.clone(),
+          submit_handler: submit_handler.clone(),
+        }
+      },
+      Self::Static {
+        items,
+        submit_handler,
+      } => {
+        Self::Static {
+          items: items.clone(),
+          submit_handler: submit_handler.clone(),
+        }
+      },
+      Self::Dynamic {
+        query,
+        submit_handler,
+      } => {
+        Self::Dynamic {
+          query: query.clone(),
+          submit_handler: submit_handler.clone(),
+        }
+      },
+    }
+  }
+}
+
+impl<Ctx> Clone for PickerBuilder<Ctx> {
+  fn clone(&self) -> Self {
+    Self {
+      title: self.title.clone(),
+      root: self.root.clone(),
+      open_split: self.open_split,
+      initial_query: self.initial_query.clone(),
+      source: self.source.clone(),
+    }
+  }
+}
+
+impl<Ctx> PickerBuilder<Ctx>
+where
+  Ctx: DefaultContext,
+{
+  pub fn files(title: impl Into<String>) -> Self {
+    Self {
+      title:         title.into(),
+      root:          PickerRoot::EffectiveWorkingDirectory,
+      open_split:    None,
+      initial_query: String::new(),
+      source:        PickerSource::Files {
+        scan_source:    FilePickerScanSource {
+          config:         FilePickerConfig::default(),
+          max_results:    MAX_SCAN_ITEMS,
+          extensions:     None,
+          path_filter:    None,
+          preview:        true,
+          submit_handler: None,
+        },
+        submit_handler: None,
+      },
+    }
+  }
+
+  pub fn static_items<I>(title: impl Into<String>, items: I) -> Self
+  where
+    I: IntoIterator<Item = PickerItemSpec>,
+  {
+    Self {
+      title:         title.into(),
+      root:          PickerRoot::EffectiveWorkingDirectory,
+      open_split:    None,
+      initial_query: String::new(),
+      source:        PickerSource::Static {
+        items:          items.into_iter().collect::<Vec<_>>().into(),
+        submit_handler: None,
+      },
+    }
+  }
+
+  pub fn dynamic<F>(title: impl Into<String>, query: F) -> Self
+  where
+    F: Fn(&mut Ctx, &str) -> Vec<PickerItemSpec> + 'static,
+  {
+    Self {
+      title:         title.into(),
+      root:          PickerRoot::EffectiveWorkingDirectory,
+      open_split:    None,
+      initial_query: String::new(),
+      source:        PickerSource::Dynamic {
+        query:          Arc::new(query),
+        submit_handler: None,
+      },
+    }
+  }
+
+  pub fn root(mut self, root: PickerRoot) -> Self {
+    self.root = root;
+    self
+  }
+
+  pub fn open_split(mut self, open_split: Option<SplitAxis>) -> Self {
+    self.open_split = open_split;
+    self
+  }
+
+  pub fn initial_query(mut self, query: impl Into<String>) -> Self {
+    self.initial_query = query.into();
+    self
+  }
+
+  pub fn extension(mut self, extension: impl Into<String>) -> Self {
+    self = self.extensions([extension]);
+    self
+  }
+
+  pub fn extensions<I, S>(mut self, extensions: I) -> Self
+  where
+    I: IntoIterator<Item = S>,
+    S: Into<String>,
+  {
+    if let PickerSource::Files { scan_source, .. } = &mut self.source {
+      let values = extensions
+        .into_iter()
+        .map(Into::into)
+        .map(|value| value.trim_start_matches('.').to_ascii_lowercase())
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+      scan_source.extensions = (!values.is_empty()).then_some(values.into());
+    }
+    self
+  }
+
+  pub fn max_results(mut self, max_results: usize) -> Self {
+    if let PickerSource::Files { scan_source, .. } = &mut self.source {
+      scan_source.max_results = max_results.max(1);
+    }
+    self
+  }
+
+  pub fn max_depth(mut self, max_depth: Option<usize>) -> Self {
+    if let PickerSource::Files { scan_source, .. } = &mut self.source {
+      scan_source.config.max_depth = max_depth;
+    }
+    self
+  }
+
+  pub fn path_filter<F>(mut self, filter: F) -> Self
+  where
+    F: Fn(&Path, &Path) -> bool + Send + Sync + 'static,
+  {
+    if let PickerSource::Files { scan_source, .. } = &mut self.source {
+      scan_source.path_filter = Some(Arc::new(filter));
+    }
+    self
+  }
+
+  pub fn preview(mut self, enabled: bool) -> Self {
+    if let PickerSource::Files { scan_source, .. } = &mut self.source {
+      scan_source.preview = enabled;
+    }
+    self
+  }
+
+  pub fn on_submit<F>(mut self, submit: F) -> Self
+  where
+    F: Fn(&mut Ctx, &FilePickerItem) -> PickerSubmitResult + 'static,
+  {
+    let submit = Arc::new(submit);
+    match &mut self.source {
+      PickerSource::Files { submit_handler, .. } => {
+        *submit_handler = Some(submit);
+      },
+      PickerSource::Static { submit_handler, .. } => {
+        *submit_handler = Some(submit);
+      },
+      PickerSource::Dynamic { submit_handler, .. } => {
+        *submit_handler = Some(submit);
+      },
+    }
+    self
+  }
+
+  pub fn open(&self, ctx: &mut Ctx) {
+    let root = self.root.resolve(ctx);
+    match &self.source {
+      PickerSource::Files {
+        scan_source,
+        submit_handler,
+      } => {
+        open_picker_from_builder_files(
+          ctx,
+          &self.title,
+          root,
+          self.open_split,
+          scan_source.clone(),
+          submit_handler.clone(),
+        );
+      },
+      PickerSource::Static {
+        items,
+        submit_handler,
+      } => {
+        open_picker_from_builder_items(
+          ctx,
+          &self.title,
+          root,
+          self.open_split,
+          items.iter().cloned().collect(),
+          submit_handler.clone(),
+        );
+      },
+      PickerSource::Dynamic {
+        query,
+        submit_handler,
+      } => {
+        open_picker_from_builder_query(
+          ctx,
+          &self.title,
+          root,
+          self.open_split,
+          self.initial_query.clone(),
+          query.clone(),
+          submit_handler.clone(),
+        );
+      },
+    }
+  }
+
+  pub fn named_action(self, name: &'static str, doc: &'static str) -> crate::NamedAction<Ctx> {
+    crate::NamedAction::new(name, doc, move |ctx| self.open(ctx))
+  }
+
+  pub fn command(self, name: &'static str, doc: &'static str) -> TypableCommand<Ctx> {
+    TypableCommand::new(
+      name,
+      &[],
+      doc,
+      move |ctx, _args, _event: CommandEvent| {
+        self.open(ctx);
+        Ok(())
+      },
+      CommandCompleter::none(),
+      the_lib::command_line::Signature {
+        positionals: (0, Some(0)),
+        ..the_lib::command_line::Signature::DEFAULT
+      },
+    )
   }
 }
 
@@ -1213,15 +1776,172 @@ pub fn open_dynamic_picker_with_handler<Ctx: DefaultContext>(
   let mut state = base_picker_state(ctx, title, open_split);
   state.root = root;
   state.query_mode = FilePickerQueryMode::Dynamic;
-  state.custom_query_handler = if query_handler.is_empty() {
-    None
-  } else {
-    Some(query_handler)
-  };
+  state.custom_query_handler = (!query_handler.is_empty())
+    .then(|| ctx.picker_query_handler_id(query_handler))
+    .flatten()
+    .map(PickerQueryHandlerRef::Extension);
   state.query = initial_query;
   state.cursor = state.query.len();
   prepare_dynamic_query_change(&mut state);
   start_preview_worker(&mut state);
+
+  *ctx.file_picker_mut() = state;
+  ctx.request_render();
+}
+
+fn register_picker_runtime_session<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  session: PickerRuntimeSession<Ctx>,
+) -> PickerRuntimeSessionId {
+  ctx
+    .extension_state_or_default::<PickerRuntimeRegistry<Ctx>>()
+    .register(session)
+}
+
+fn drop_picker_runtime_session<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  session_id: PickerRuntimeSessionId,
+) {
+  if let Some(registry) = ctx.extension_state_mut::<PickerRuntimeRegistry<Ctx>>() {
+    registry.remove(session_id);
+  }
+}
+
+fn run_picker_runtime_query<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  session_id: PickerRuntimeSessionId,
+  query: &str,
+) -> Option<Vec<PickerItemSpec>> {
+  let registry =
+    ctx.extension_state::<PickerRuntimeRegistry<Ctx>>()? as *const PickerRuntimeRegistry<Ctx>;
+  let handler = unsafe {
+    let session = (&*registry).sessions.get(&session_id)?;
+    session
+      .query
+      .as_ref()
+      .map(|handler| &**handler as *const PickerQuerySource<Ctx>)?
+  };
+  Some(unsafe { (&*handler)(ctx, query) })
+}
+
+fn run_picker_runtime_submit<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  session_id: PickerRuntimeSessionId,
+  item: &FilePickerItem,
+) -> PickerSubmitResult {
+  let Some(registry) = ctx.extension_state::<PickerRuntimeRegistry<Ctx>>() else {
+    return PickerSubmitResult::Unhandled;
+  };
+  let registry = registry as *const PickerRuntimeRegistry<Ctx>;
+  let Some(handler) = (unsafe { (&*registry).sessions.get(&session_id) }).and_then(|session| {
+    session
+      .submit
+      .as_ref()
+      .map(|handler| &**handler as *const PickerRuntimeSubmit<Ctx>)
+  }) else {
+    return PickerSubmitResult::Unhandled;
+  };
+  unsafe { (&*handler)(ctx, item) }
+}
+
+fn picker_items_from_specs(
+  specs: Vec<PickerItemSpec>,
+  submit_handler: Option<PickerSubmitHandlerRef>,
+) -> Vec<FilePickerItem> {
+  specs
+    .into_iter()
+    .map(|spec| spec.into_item(submit_handler))
+    .collect()
+}
+
+fn open_picker_from_builder_items<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  title: &str,
+  root: PathBuf,
+  open_split: Option<SplitAxis>,
+  items: Vec<PickerItemSpec>,
+  submit_handler: Option<Arc<PickerRuntimeSubmit<Ctx>>>,
+) {
+  let runtime_session = submit_handler.map(|submit| {
+    register_picker_runtime_session(ctx, PickerRuntimeSession {
+      query:  None,
+      submit: Some(Box::new(move |ctx: &mut Ctx, item: &FilePickerItem| {
+        submit(ctx, item)
+      })),
+    })
+  });
+  let mut state = base_picker_state(ctx, title, open_split);
+  state.root = root;
+  state.runtime_session = runtime_session;
+  replace_picker_items(
+    &mut state,
+    picker_items_from_specs(items, runtime_session.map(PickerSubmitHandlerRef::Runtime)),
+    0,
+  );
+
+  *ctx.file_picker_mut() = state;
+  ctx.request_render();
+}
+
+fn open_picker_from_builder_query<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  title: &str,
+  root: PathBuf,
+  open_split: Option<SplitAxis>,
+  initial_query: String,
+  query: Arc<PickerQuerySource<Ctx>>,
+  submit_handler: Option<Arc<PickerRuntimeSubmit<Ctx>>>,
+) {
+  let runtime_session = register_picker_runtime_session(ctx, PickerRuntimeSession {
+    query:  Some(Box::new(move |ctx: &mut Ctx, input: &str| {
+      query(ctx, input)
+    })),
+    submit: submit_handler.map(|submit| {
+      Box::new(move |ctx: &mut Ctx, item: &FilePickerItem| submit(ctx, item))
+        as Box<PickerRuntimeSubmit<Ctx>>
+    }),
+  });
+
+  let mut state = base_picker_state(ctx, title, open_split);
+  state.root = root;
+  state.query_mode = FilePickerQueryMode::Dynamic;
+  state.custom_query_handler = Some(PickerQueryHandlerRef::Runtime(runtime_session));
+  state.query = initial_query.clone();
+  state.cursor = state.query.len();
+  state.runtime_session = Some(runtime_session);
+  prepare_dynamic_query_change(&mut state);
+  start_preview_worker(&mut state);
+
+  *ctx.file_picker_mut() = state;
+  notify_file_picker_query_changed(ctx, &initial_query);
+  ctx.request_render();
+}
+
+fn open_picker_from_builder_files<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  title: &str,
+  root: PathBuf,
+  open_split: Option<SplitAxis>,
+  mut scan_source: FilePickerScanSource,
+  submit_handler: Option<Arc<PickerRuntimeSubmit<Ctx>>>,
+) {
+  let runtime_session = submit_handler.map(|submit| {
+    register_picker_runtime_session(ctx, PickerRuntimeSession {
+      query:  None,
+      submit: Some(Box::new(move |ctx: &mut Ctx, item: &FilePickerItem| {
+        submit(ctx, item)
+      })),
+    })
+  });
+  scan_source.submit_handler = runtime_session.map(PickerSubmitHandlerRef::Runtime);
+
+  let mut state = base_picker_state(ctx, title, open_split);
+  state.preview = FilePickerPreview::Message("Scanning files…".to_string());
+  state.runtime_session = runtime_session;
+  state.scan_source = Some(scan_source);
+  start_preview_worker(&mut state);
+  start_scan(&mut state, root);
+  poll_scan_results(&mut state);
 
   *ctx.file_picker_mut() = state;
   ctx.request_render();
@@ -1267,10 +1987,24 @@ fn prepare_dynamic_query_change(state: &mut FilePickerState) {
 
 pub fn notify_file_picker_query_changed<Ctx: DefaultContext>(ctx: &mut Ctx, query: &str) {
   let handler = ctx.file_picker().custom_query_handler;
-  if let Some(handler) = handler
-    && ctx.handle_picker_query_action(handler, query)
-  {
-    return;
+  if let Some(handler) = handler {
+    match handler {
+      PickerQueryHandlerRef::Extension(handler) => {
+        if ctx.handle_picker_query_action(handler, query) {
+          return;
+        }
+      },
+      PickerQueryHandlerRef::Runtime(session_id) => {
+        if let Some(items) = run_picker_runtime_query(ctx, session_id, query) {
+          replace_file_picker_items(
+            ctx,
+            picker_items_from_specs(items, Some(PickerSubmitHandlerRef::Runtime(session_id))),
+            0,
+          );
+          return;
+        }
+      },
+    }
   }
   ctx.file_picker_query_changed(query);
 }
@@ -1339,6 +2073,9 @@ fn base_picker_state<Ctx: DefaultContext>(
   title: &str,
   open_split: Option<SplitAxis>,
 ) -> FilePickerState {
+  if let Some(runtime_session) = ctx.file_picker().runtime_session {
+    drop_picker_runtime_session(ctx, runtime_session);
+  }
   let show_preview = ctx.file_picker().show_preview;
   let config = ctx.file_picker().config.clone();
   let wake_tx = ctx.file_picker().wake_tx.clone();
@@ -1360,6 +2097,7 @@ fn base_picker_state<Ctx: DefaultContext>(
 }
 
 pub fn close_file_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  let runtime_session = ctx.file_picker().runtime_session;
   let picker = ctx.file_picker_mut();
   if let Some(cancel) = picker.scan_cancel.as_ref() {
     cancel.store(true, Ordering::Relaxed);
@@ -1377,12 +2115,18 @@ pub fn close_file_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
   picker.query_mode = FilePickerQueryMode::Static;
   picker.custom_query_handler = None;
   picker.dynamic_running = false;
+  picker.runtime_session = None;
+  picker.scan_source = None;
   picker.preview_req_tx = None;
   picker.preview_res_rx = None;
   picker.preview_pending_id = None;
   picker.preview_latest_request.store(0, Ordering::Relaxed);
   picker.scan_rx = None;
   picker.scan_cancel = None;
+  let _ = picker;
+  if let Some(runtime_session) = runtime_session {
+    drop_picker_runtime_session(ctx, runtime_session);
+  }
   ctx.file_picker_closed();
   ctx.request_render();
 }
@@ -1766,18 +2510,30 @@ pub fn submit_file_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
       close_file_picker(ctx);
     },
     FilePickerItemAction::Custom { handler, .. } => {
-      match ctx.submit_picker_item_action(handler, &item) {
-        crate::extensions::PickerSubmitResult::Unhandled => {
-          ctx.push_warning(
-            "file_picker",
-            format!("picker action handler not found: {handler}"),
-          );
+      let result = match handler {
+        PickerSubmitHandlerRef::Extension(handler) => {
+          ctx.submit_picker_item_action(*handler, &item)
+        },
+        PickerSubmitHandlerRef::Runtime(session_id) => {
+          run_picker_runtime_submit(ctx, *session_id, &item)
+        },
+        PickerSubmitHandlerRef::Named(name) => {
+          ctx
+            .picker_submit_handler_id(name)
+            .map(|handler| ctx.submit_picker_item_action(handler, &item))
+            .unwrap_or(PickerSubmitResult::Unhandled)
+        },
+      };
+
+      match result {
+        PickerSubmitResult::Unhandled => {
+          ctx.push_warning("file_picker", "picker action handler not found");
           ctx.request_render();
         },
-        crate::extensions::PickerSubmitResult::KeepOpen => {
+        PickerSubmitResult::KeepOpen => {
           ctx.request_render();
         },
-        crate::extensions::PickerSubmitResult::Close => {
+        PickerSubmitResult::Close => {
           close_file_picker(ctx);
         },
       }
@@ -2351,10 +3107,20 @@ fn start_scan(state: &mut FilePickerState, root: PathBuf) {
   state.scan_cancel = Some(cancel.clone());
   let injector = state.matcher.injector();
 
-  let mut walker = build_file_walk_builder(&root, &state.config).build();
+  let scan_source = state.scan_source.clone();
+  let walk_config = scan_source
+    .as_ref()
+    .map(|source| &source.config)
+    .unwrap_or(&state.config);
+  let mut walker = build_file_walk_builder(&root, walk_config).build();
   let timeout = Instant::now() + Duration::from_millis(WARMUP_SCAN_BUDGET_MS);
   let mut scanned = 0usize;
   let mut hit_timeout = false;
+  let max_results = scan_source
+    .as_ref()
+    .map(|source| source.max_results)
+    .unwrap_or(MAX_SCAN_ITEMS)
+    .min(MAX_SCAN_ITEMS);
 
   for entry in &mut walker {
     if cancel.load(Ordering::Relaxed) {
@@ -2365,13 +3131,13 @@ fn start_scan(state: &mut FilePickerState, root: PathBuf) {
       Ok(entry) => entry,
       Err(_) => continue,
     };
-    let Some(item) = entry_to_picker_item(entry, &root) else {
+    let Some(item) = entry_to_picker_item(entry, &root, scan_source.as_ref()) else {
       continue;
     };
     inject_item(&injector, item);
     scanned += 1;
 
-    if scanned >= MAX_SCAN_ITEMS {
+    if scanned >= max_results {
       break;
     }
     if Instant::now() >= timeout {
@@ -2392,12 +3158,13 @@ fn start_scan(state: &mut FilePickerState, root: PathBuf) {
   spawn_scan_thread(
     walker,
     root,
-    MAX_SCAN_ITEMS.saturating_sub(scanned),
+    max_results.saturating_sub(scanned),
     generation,
     scan_tx,
     cancel,
     injector,
     state.wake_tx.clone(),
+    scan_source,
   );
 }
 
@@ -2425,7 +3192,11 @@ pub(crate) fn build_file_walk_builder(
   walk_builder
 }
 
-fn entry_to_picker_item(entry: DirEntry, root: &Path) -> Option<FilePickerItem> {
+fn entry_to_picker_item(
+  entry: DirEntry,
+  root: &Path,
+  scan_source: Option<&FilePickerScanSource>,
+) -> Option<FilePickerItem> {
   if !entry
     .file_type()
     .is_some_and(|file_type| file_type.is_file())
@@ -2435,20 +3206,52 @@ fn entry_to_picker_item(entry: DirEntry, root: &Path) -> Option<FilePickerItem> 
 
   let path = entry.into_path();
   let rel = path.strip_prefix(root).ok()?;
+  if let Some(scan_source) = scan_source {
+    if let Some(extensions) = &scan_source.extensions {
+      let extension = rel
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(|value| value.to_ascii_lowercase());
+      if extension
+        .as_deref()
+        .is_none_or(|candidate| !extensions.iter().any(|value| value == candidate))
+      {
+        return None;
+      }
+    }
+    if let Some(filter) = &scan_source.path_filter
+      && !filter(&path, rel)
+    {
+      return None;
+    }
+  }
+
   let mut display = rel.to_string_lossy().to_string();
   if std::path::MAIN_SEPARATOR != '/' {
     display = display.replace(std::path::MAIN_SEPARATOR, "/");
   }
   let icon = file_picker_icon_name_for_path(rel).to_string();
+  let submit_handler = scan_source.and_then(|source| source.submit_handler);
+  let preview_path = scan_source
+    .map(|source| source.preview.then_some(path.clone()))
+    .unwrap_or_else(|| Some(path.clone()));
 
   Some(FilePickerItem {
-    action: FilePickerItemAction::OpenFile(path.clone()),
+    action: submit_handler.map_or_else(
+      || FilePickerItemAction::OpenFile(path.clone()),
+      |handler| {
+        FilePickerItemAction::Custom {
+          handler,
+          selectable: true,
+        }
+      },
+    ),
     absolute: path,
     display,
     icon,
     is_dir: false,
     display_path: true,
-    preview_path: None,
+    preview_path,
     preview_line: None,
     preview_col: None,
     row_data: None,
@@ -2667,6 +3470,7 @@ fn spawn_scan_thread(
   cancel: Arc<AtomicBool>,
   injector: nucleo::Injector<Arc<FilePickerItem>>,
   wake_tx: Option<Sender<()>>,
+  scan_source: Option<FilePickerScanSource>,
 ) {
   std::thread::spawn(move || {
     if !root.exists() {
@@ -2694,7 +3498,7 @@ fn spawn_scan_thread(
         Ok(entry) => entry,
         Err(_) => continue,
       };
-      let Some(item) = entry_to_picker_item(entry, &root) else {
+      let Some(item) = entry_to_picker_item(entry, &root, scan_source.as_ref()) else {
         continue;
       };
       inject_item(&injector, item);

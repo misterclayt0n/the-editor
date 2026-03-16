@@ -18,6 +18,7 @@ use the_default::{
   CompletionMenuState,
   DefaultContext,
   DispatchRef,
+  ExtensionStateStore,
   FilePickerState,
   KeyBinding,
   KeyEvent,
@@ -25,10 +26,14 @@ use the_default::{
   Mode,
   Motion,
   PendingInput,
+  PickerBuilder,
+  PickerItemSpec,
+  PickerRoot,
   SearchPromptState,
   WorkingDirectoryState,
   effective_working_directory,
   open_file_picker,
+  poll_scan_results,
 };
 use the_lib::{
   document::{
@@ -62,6 +67,7 @@ struct TestCtx {
   workspace_root:    PathBuf,
   working_directory: WorkingDirectoryState,
   file_picker:       FilePickerState,
+  extension_state:   ExtensionStateStore,
   opened_paths:      Vec<PathBuf>,
 }
 
@@ -79,6 +85,7 @@ impl TestCtx {
       },
       workspace_root,
       file_picker: FilePickerState::default(),
+      extension_state: ExtensionStateStore::default(),
       opened_paths: Vec::new(),
     }
   }
@@ -137,6 +144,14 @@ impl DefaultContext for TestCtx {
 
   fn keymaps(&mut self) -> &mut Keymaps {
     todo!()
+  }
+
+  fn extension_states(&self) -> &ExtensionStateStore {
+    &self.extension_state
+  }
+
+  fn extension_states_mut(&mut self) -> &mut ExtensionStateStore {
+    &mut self.extension_state
   }
 
   fn command_prompt_mut(&mut self) -> &mut CommandPromptState {
@@ -345,4 +360,69 @@ fn change_current_directory_is_isolated_per_context() {
   assert_eq!(effective_working_directory(&ctx_a), nested_a);
   assert_eq!(ctx_a.opened_paths.last(), Some(&nested_a.join("file.txt")));
   assert_eq!(effective_working_directory(&ctx_b), workspace_b.path());
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct TestExtensionState {
+  counter: usize,
+}
+
+#[test]
+fn default_context_extension_state_helpers_round_trip_typed_state() {
+  let workspace = tempdir().unwrap();
+  let mut ctx = TestCtx::new(workspace.path().to_path_buf());
+
+  assert!(ctx.extension_state::<TestExtensionState>().is_none());
+
+  let state = ctx.extension_state_or_insert_with(|| TestExtensionState { counter: 4 });
+  assert_eq!(state.counter, 4);
+  state.counter += 3;
+
+  assert_eq!(
+    ctx.extension_state::<TestExtensionState>(),
+    Some(&TestExtensionState { counter: 7 })
+  );
+  assert_eq!(
+    ctx.remove_extension_state::<TestExtensionState>(),
+    Some(TestExtensionState { counter: 7 })
+  );
+  assert!(ctx.extension_state::<TestExtensionState>().is_none());
+}
+
+#[test]
+fn dynamic_picker_builder_populates_items_from_query_callback() {
+  let workspace = tempdir().unwrap();
+  let mut ctx = TestCtx::new(workspace.path().to_path_buf());
+
+  let picker = PickerBuilder::<TestCtx>::dynamic("Demo", |_ctx, query| {
+    vec![PickerItemSpec::custom(format!("match:{query}"))]
+  })
+  .initial_query("rust");
+
+  picker.open(&mut ctx);
+
+  assert!(ctx.file_picker.active);
+  assert_eq!(ctx.file_picker.matched_count(), 1);
+  let item = ctx.file_picker.current_item().expect("picker item");
+  assert_eq!(item.display, "match:rust");
+}
+
+#[test]
+fn file_picker_builder_reuses_scan_pipeline_with_extension_filter() {
+  let workspace = tempdir().unwrap();
+  std::fs::write(workspace.path().join("main.rs"), "fn main() {}\n").unwrap();
+  std::fs::write(workspace.path().join("main.py"), "print('hi')\n").unwrap();
+
+  let mut ctx = TestCtx::new(workspace.path().to_path_buf());
+  let picker = PickerBuilder::<TestCtx>::files("Rust Files")
+    .root(PickerRoot::Fixed(workspace.path().to_path_buf()))
+    .extension("rs");
+
+  picker.open(&mut ctx);
+  let _ = poll_scan_results(ctx.file_picker_mut());
+
+  assert!(ctx.file_picker.active);
+  assert_eq!(ctx.file_picker.matched_count(), 1);
+  let item = ctx.file_picker.current_item().expect("scanned item");
+  assert_eq!(item.display, "main.rs");
 }

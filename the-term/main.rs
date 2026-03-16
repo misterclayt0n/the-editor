@@ -1,10 +1,4 @@
-//! Proof-of-life terminal client for the-editor.
-//!
-//! This is a minimal terminal client that validates the-lib's infrastructure:
-//! - Document creation and editing via Transactions
-//! - RenderPlan generation and display
-//! - Syntax highlighting via tree-sitter
-//! - Multiple cursor support
+//! Terminal client for the-editor.
 
 mod config_cli;
 mod ctx;
@@ -18,6 +12,9 @@ mod theme;
 mod undercurl_backend;
 
 use std::{
+  ffi::OsString,
+  path::PathBuf,
+  process,
   sync::mpsc::TryRecvError,
   time::{
     Duration,
@@ -39,7 +36,7 @@ use crate::ctx::Ctx;
 
 #[derive(Debug, Parser)]
 #[command(name = "the-editor")]
-#[command(about = "Proof-of-life terminal client for the-editor")]
+#[command(about = "Terminal client for the-editor")]
 struct Cli {
   #[command(subcommand)]
   command: Option<Command>,
@@ -59,10 +56,73 @@ enum Command {
 
 #[derive(Debug, Subcommand)]
 enum ConfigCommand {
-  /// Install a default config crate in ~/.config/the-editor
-  Install,
-  /// Build the editor using ~/.config/the-editor if present
-  Build,
+  /// Create a config crate from the template
+  #[command(alias = "install")]
+  Init {
+    /// Config crate directory
+    #[arg(long)]
+    config_dir:   Option<PathBuf>,
+    /// Optional package name for the created config crate
+    #[arg(long)]
+    package_name: Option<String>,
+  },
+  /// Print the resolved config crate directory
+  Path {
+    /// Config crate directory
+    #[arg(long)]
+    config_dir: Option<PathBuf>,
+  },
+  /// Show config path, package, target, and build harness status
+  Status {
+    /// Config crate directory
+    #[arg(long)]
+    config_dir: Option<PathBuf>,
+  },
+  /// Validate the selected config workflow with cargo check
+  Check {
+    /// Config crate directory
+    #[arg(long)]
+    config_dir: Option<PathBuf>,
+    /// Client target to validate
+    #[arg(long, value_enum, default_value_t = config_cli::ConfigTarget::Term)]
+    target:     config_cli::ConfigTarget,
+    /// Use release mode
+    #[arg(long)]
+    release:    bool,
+  },
+  /// Build the selected client target with the config crate
+  Build {
+    /// Config crate directory
+    #[arg(long)]
+    config_dir: Option<PathBuf>,
+    /// Client target to build
+    #[arg(long, value_enum, default_value_t = config_cli::ConfigTarget::Term)]
+    target:     config_cli::ConfigTarget,
+    /// Use release mode
+    #[arg(long)]
+    release:    bool,
+    /// Copy the built binary to an explicit output path
+    #[arg(long)]
+    out:        Option<PathBuf>,
+    /// Install a stable copy under the config crate directory
+    #[arg(long)]
+    install:    bool,
+  },
+  /// Build and run the selected client target with the config crate
+  Run {
+    /// Config crate directory
+    #[arg(long)]
+    config_dir: Option<PathBuf>,
+    /// Client target to run
+    #[arg(long, value_enum, default_value_t = config_cli::ConfigTarget::Term)]
+    target:     config_cli::ConfigTarget,
+    /// Use release mode
+    #[arg(long)]
+    release:    bool,
+    /// Arguments passed through to the configured binary
+    #[arg(last = true, allow_hyphen_values = true)]
+    args:       Vec<OsString>,
+  },
 }
 
 fn main() -> Result<()> {
@@ -71,13 +131,67 @@ fn main() -> Result<()> {
     match command {
       Command::Config { command } => {
         match command {
-          ConfigCommand::Install => {
-            config_cli::install_config_template()?;
+          ConfigCommand::Init {
+            config_dir,
+            package_name,
+          } => {
+            config_cli::init_config_template(config_cli::ConfigInitOptions {
+              config_dir,
+              package_name,
+            })?;
             return Ok(());
           },
-          ConfigCommand::Build => {
-            config_cli::build_config_binary()?;
+          ConfigCommand::Path { config_dir } => {
+            config_cli::print_config_path(config_cli::ConfigPathOptions { config_dir })?;
             return Ok(());
+          },
+          ConfigCommand::Status { config_dir } => {
+            config_cli::print_config_status(config_cli::ConfigPathOptions { config_dir })?;
+            return Ok(());
+          },
+          ConfigCommand::Check {
+            config_dir,
+            target,
+            release,
+          } => {
+            config_cli::check_config_binary(config_cli::ConfigBuildOptions {
+              config_dir,
+              target,
+              release,
+              out_path: None,
+              install: false,
+            })?;
+            return Ok(());
+          },
+          ConfigCommand::Build {
+            config_dir,
+            target,
+            release,
+            out,
+            install,
+          } => {
+            config_cli::build_config_binary(config_cli::ConfigBuildOptions {
+              config_dir,
+              target,
+              release,
+              out_path: out,
+              install,
+            })?;
+            return Ok(());
+          },
+          ConfigCommand::Run {
+            config_dir,
+            target,
+            release,
+            args,
+          } => {
+            let status = config_cli::run_config_binary(config_cli::ConfigRunOptions {
+              config_dir,
+              target,
+              release,
+              args,
+            })?;
+            process::exit(status.code().unwrap_or(1));
           },
         }
       },
@@ -88,14 +202,16 @@ fn main() -> Result<()> {
 
   // Initialize application state
   let mut ctx = Ctx::new(file_path)?;
-  let assembly = the_config::build_editor_assembly::<Ctx>().build();
-  let (dispatch, keymaps, command_registry, extensions, startup_hooks) = assembly.into_parts();
+  let preset = the_config::build_editor_preset::<Ctx>().build();
+  let (dispatch, keymaps, command_registry, extensions, extension_state, startup_hooks) =
+    preset.into_parts();
   ctx.keymaps = keymaps;
   ctx.command_registry = command_registry;
   ctx.extensions = extensions;
+  ctx.extension_state = extension_state;
   ctx.set_dispatch(&dispatch);
   for hook in startup_hooks {
-    hook(&mut ctx);
+    hook.run(&mut ctx);
   }
   ctx.start_background_services();
   let mut terminal = terminal::Terminal::new()?;

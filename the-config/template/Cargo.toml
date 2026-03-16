@@ -6,6 +6,7 @@ edition = "2024"
 [lib]
 path = "src/lib.rs"
 
+# This crate is intended to be built via `the-editor config check/build`.
 [dependencies]
-the-default = { path = "{{THE_EDITOR_REPO}}/the-default" }
-the-lib     = { path = "{{THE_EDITOR_REPO}}/the-lib" }
+the-default = "0.1.0"
+the-lib     = "0.1.0"

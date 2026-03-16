@@ -59,14 +59,16 @@ macro_rules! define {
         }
       }
 
-      impl<Ctx> [<$name Dispatch>]<Ctx, $( fn(&mut Ctx, $input) -> $crate::__dispatch_output!($($output)?) ),* >
+      impl<Ctx> [<$name Dispatch>]<Ctx, $( $crate::NoopHandler<Ctx, $input, $crate::__dispatch_output!($($output)?)> ),* >
       where
         $( $crate::__dispatch_output!($($output)?): ::std::default::Default ),*
       {
         pub fn new() -> Self {
           Self {
             $(
-              $point: $crate::handler_slot(|_, _| ::std::default::Default::default()),
+              $point: $crate::handler_slot(
+                $crate::NoopHandler::<Ctx, $input, $crate::__dispatch_output!($($output)?)>::new()
+              ),
             )*
             #[cfg(feature = "dynamic-registry")]
             registry: $crate::registry_slot(),

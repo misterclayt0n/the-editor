@@ -51,9 +51,9 @@ use the_default::{
   CommandPromptState,
   CommandRegistry,
   DefaultContext,
-  DefaultDispatchStatic,
   DispatchRef,
   EditorExtensions,
+  ExtensionStateStore,
   FilePickerChangedFileItem,
   FilePickerChangedKind,
   FilePickerDiagnosticItem,
@@ -585,6 +585,7 @@ pub struct Ctx {
   pub command_prompt:                CommandPromptState,
   pub command_registry:              CommandRegistry<Ctx>,
   pub extensions:                    EditorExtensions<Ctx>,
+  pub extension_state:               ExtensionStateStore,
   pub command_palette:               CommandPaletteState,
   pub command_palette_style:         CommandPaletteStyle,
   pub completion_menu:               the_default::CompletionMenuState,
@@ -632,7 +633,7 @@ pub struct Ctx {
   pub ui_theme:                      Theme,
   pub ui_state:                      UiState,
   pub pending_input:                 Option<the_default::PendingInput>,
-  pub dispatch:                      Option<NonNull<DefaultDispatchStatic<Ctx>>>,
+  pub dispatch:                      Option<NonNull<dyn the_default::DefaultApi<Ctx>>>,
   /// Syntax loader for language detection and highlighting.
   pub loader:                        Option<Arc<Loader>>,
   /// Cache for syntax highlights (reused across renders).
@@ -1001,6 +1002,7 @@ impl Ctx {
       command_prompt: CommandPromptState::new(),
       command_registry: CommandRegistry::new(),
       extensions: EditorExtensions::default(),
+      extension_state: ExtensionStateStore::default(),
       command_palette: CommandPaletteState::default(),
       command_palette_style: CommandPaletteStyle::helix_bottom(),
       completion_menu: the_default::CompletionMenuState::default(),
@@ -1093,8 +1095,11 @@ impl Ctx {
     Ok(ctx)
   }
 
-  pub fn set_dispatch(&mut self, dispatch: &DefaultDispatchStatic<Ctx>) {
-    self.dispatch = Some(NonNull::from(dispatch));
+  pub fn set_dispatch<D>(&mut self, dispatch: &D)
+  where
+    D: the_default::DefaultApi<Ctx> + 'static,
+  {
+    self.dispatch = Some(NonNull::from(dispatch as &dyn the_default::DefaultApi<Ctx>));
   }
 
   fn apply_effective_theme(&mut self, theme: Theme) {
@@ -5738,6 +5743,14 @@ impl the_default::DefaultContext for Ctx {
     &mut self.keymaps
   }
 
+  fn extension_states(&self) -> &ExtensionStateStore {
+    &self.extension_state
+  }
+
+  fn extension_states_mut(&mut self) -> &mut ExtensionStateStore {
+    &mut self.extension_state
+  }
+
   fn command_prompt_mut(&mut self) -> &mut CommandPromptState {
     &mut self.command_prompt
   }
@@ -5933,22 +5946,34 @@ impl the_default::DefaultContext for Ctx {
   }
 
   fn execute_named_action(&mut self, name: &str) -> bool {
-    let extensions = self.extensions.clone();
-    extensions.execute_named_action(self, name)
+    let extensions = &self.extensions as *const EditorExtensions<Self>;
+    unsafe { (&*extensions).execute_named_action(self, name) }
   }
 
-  fn handle_picker_query_action(&mut self, handler: &str, query: &str) -> bool {
-    let extensions = self.extensions.clone();
-    extensions.handle_picker_query(self, handler, query)
+  fn picker_query_handler_id(&self, name: &str) -> Option<the_default::PickerQueryHandlerId> {
+    self.extensions.picker_query_handler_id(name)
+  }
+
+  fn picker_submit_handler_id(&self, name: &str) -> Option<the_default::PickerSubmitHandlerId> {
+    self.extensions.picker_submit_handler_id(name)
+  }
+
+  fn handle_picker_query_action(
+    &mut self,
+    handler: the_default::PickerQueryHandlerId,
+    query: &str,
+  ) -> bool {
+    let extensions = &self.extensions as *const EditorExtensions<Self>;
+    unsafe { (&*extensions).handle_picker_query(self, handler, query) }
   }
 
   fn submit_picker_item_action(
     &mut self,
-    handler: &str,
+    handler: the_default::PickerSubmitHandlerId,
     item: &FilePickerItem,
   ) -> PickerSubmitResult {
-    let extensions = self.extensions.clone();
-    extensions.submit_picker_item(self, handler, item)
+    let extensions = &self.extensions as *const EditorExtensions<Self>;
+    unsafe { (&*extensions).submit_picker_item(self, handler, item) }
   }
 
   fn extend_text_annotations<'a>(&'a self, annotations: &mut TextAnnotations<'a>) {
@@ -5956,13 +5981,13 @@ impl the_default::DefaultContext for Ctx {
   }
 
   fn postprocess_render_plan(&mut self, plan: &mut RenderPlan) {
-    let extensions = self.extensions.clone();
-    extensions.postprocess_render_plan(self, plan);
+    let extensions = &self.extensions as *const EditorExtensions<Self>;
+    unsafe { (&*extensions).postprocess_render_plan(self, plan) };
   }
 
   fn postprocess_ui_tree(&mut self, tree: &mut UiTree) {
-    let extensions = self.extensions.clone();
-    extensions.postprocess_ui_tree(self, tree);
+    let extensions = &self.extensions as *const EditorExtensions<Self>;
+    unsafe { (&*extensions).postprocess_ui_tree(self, tree) };
   }
 
   fn file_picker_closed(&mut self) {

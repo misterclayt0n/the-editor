@@ -52,7 +52,7 @@ use ropey::Rope;
 use serde::Serialize;
 use serde_json::Value;
 use smallvec::SmallVec;
-use the_config::build_editor_assembly as config_build_editor_assembly;
+use the_config::build_editor_preset as config_build_editor_preset;
 use the_default::{
   BufferTabItemSnapshot as DefaultBufferTabItemSnapshot,
   BufferTabsSnapshot as DefaultBufferTabsSnapshot,
@@ -68,12 +68,13 @@ use the_default::{
   CommandRegistry,
   ContextMenuActionId,
   ContextMenuSnapshot as DefaultContextMenuSnapshot,
+  DefaultApi,
   DefaultContext,
-  DefaultDispatchStatic,
   Direction as CommandDirection,
   DispatchRef,
   EditorContextMenuOptions,
   EditorExtensions,
+  ExtensionStateStore,
   FilePickerChangedFileItem,
   FilePickerChangedKind,
   FilePickerDiagnosticItem,
@@ -4613,10 +4614,11 @@ fn workspace_root_for_editor_path(base_root: &Path, path: &Path) -> PathBuf {
 pub struct App {
   inner:                           LibApp,
   workspace_root:                  PathBuf,
-  dispatch:                        DefaultDispatchStatic<App>,
+  dispatch:                        Box<dyn DefaultApi<App>>,
   keymaps:                         Keymaps,
   command_registry:                CommandRegistry<App>,
   extensions:                      EditorExtensions<App>,
+  extension_state:                 ExtensionStateStore,
   states:                          HashMap<LibEditorId, EditorState>,
   vcs_provider:                    DiffProviderRegistry,
   vcs_diff_handles:                HashMap<LibEditorId, DiffHandle>,
@@ -5749,8 +5751,9 @@ impl App {
   }
 
   pub fn new() -> Self {
-    let assembly = config_build_editor_assembly::<App>().build();
-    let (dispatch, keymaps, command_registry, extensions, startup_hooks) = assembly.into_parts();
+    let preset = config_build_editor_preset::<App>().build();
+    let (dispatch, keymaps, command_registry, extensions, extension_state, startup_hooks) =
+      preset.into_parts();
     let workspace_root = env::current_dir()
       .ok()
       .map(|path| the_loader::find_workspace_in(path).0)
@@ -5776,10 +5779,11 @@ impl App {
     let mut app = Self {
       inner: LibApp::default(),
       workspace_root,
-      dispatch,
+      dispatch: Box::new(dispatch),
       keymaps,
       command_registry,
       extensions,
+      extension_state,
       states: HashMap::new(),
       vcs_provider: DiffProviderRegistry::default(),
       vcs_diff_handles: HashMap::new(),
@@ -5829,7 +5833,7 @@ impl App {
       native_tab_open_requests: VecDeque::new(),
     };
     for hook in startup_hooks {
-      hook(&mut app);
+      hook.run(&mut app);
     }
     let _ = app.refresh_vcs_ui_state();
     app
@@ -13979,6 +13983,14 @@ impl DefaultContext for App {
     &mut self.keymaps
   }
 
+  fn extension_states(&self) -> &ExtensionStateStore {
+    &self.extension_state
+  }
+
+  fn extension_states_mut(&mut self) -> &mut ExtensionStateStore {
+    &mut self.extension_state
+  }
+
   fn command_prompt_mut(&mut self) -> &mut CommandPromptState {
     &mut self.active_state_mut().command_prompt
   }
@@ -14228,22 +14240,34 @@ impl DefaultContext for App {
   }
 
   fn execute_named_action(&mut self, name: &str) -> bool {
-    let extensions = self.extensions.clone();
-    extensions.execute_named_action(self, name)
+    let extensions = &self.extensions as *const EditorExtensions<Self>;
+    unsafe { (&*extensions).execute_named_action(self, name) }
   }
 
-  fn handle_picker_query_action(&mut self, handler: &str, query: &str) -> bool {
-    let extensions = self.extensions.clone();
-    extensions.handle_picker_query(self, handler, query)
+  fn picker_query_handler_id(&self, name: &str) -> Option<the_default::PickerQueryHandlerId> {
+    self.extensions.picker_query_handler_id(name)
+  }
+
+  fn picker_submit_handler_id(&self, name: &str) -> Option<the_default::PickerSubmitHandlerId> {
+    self.extensions.picker_submit_handler_id(name)
+  }
+
+  fn handle_picker_query_action(
+    &mut self,
+    handler: the_default::PickerQueryHandlerId,
+    query: &str,
+  ) -> bool {
+    let extensions = &self.extensions as *const EditorExtensions<Self>;
+    unsafe { (&*extensions).handle_picker_query(self, handler, query) }
   }
 
   fn submit_picker_item_action(
     &mut self,
-    handler: &str,
+    handler: the_default::PickerSubmitHandlerId,
     item: &FilePickerItem,
   ) -> PickerSubmitResult {
-    let extensions = self.extensions.clone();
-    extensions.submit_picker_item(self, handler, item)
+    let extensions = &self.extensions as *const EditorExtensions<Self>;
+    unsafe { (&*extensions).submit_picker_item(self, handler, item) }
   }
 
   fn extend_text_annotations<'a>(&'a self, annotations: &mut TextAnnotations<'a>) {
@@ -14251,13 +14275,13 @@ impl DefaultContext for App {
   }
 
   fn postprocess_render_plan(&mut self, plan: &mut the_lib::render::RenderPlan) {
-    let extensions = self.extensions.clone();
-    extensions.postprocess_render_plan(self, plan);
+    let extensions = &self.extensions as *const EditorExtensions<Self>;
+    unsafe { (&*extensions).postprocess_render_plan(self, plan) };
   }
 
   fn postprocess_ui_tree(&mut self, tree: &mut UiTree) {
-    let extensions = self.extensions.clone();
-    extensions.postprocess_ui_tree(self, tree);
+    let extensions = &self.extensions as *const EditorExtensions<Self>;
+    unsafe { (&*extensions).postprocess_ui_tree(self, tree) };
   }
 
   fn file_picker_closed(&mut self) {
@@ -14288,7 +14312,7 @@ impl DefaultContext for App {
   }
 
   fn dispatch(&self) -> DispatchRef<Self> {
-    DispatchRef::from_ptr(&self.dispatch as *const _)
+    DispatchRef::from_ptr(self.dispatch.as_ref() as *const dyn DefaultApi<Self>)
   }
 
   fn pending_input(&self) -> Option<&the_default::PendingInput> {

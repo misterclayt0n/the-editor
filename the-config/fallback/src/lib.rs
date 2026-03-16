@@ -1,24 +1,25 @@
 use the_default::{
   Command,
+  DefaultApi,
   DefaultContext,
-  DefaultDispatchStatic,
   Direction,
-  EditorAssembly,
+  EditorPreset,
   Key,
   KeyEvent,
   Keymaps,
   build_dispatch as default_dispatch,
+  default_editor_preset,
   default_pre_on_keypress,
 };
 
 /// Build the dispatch pipeline for the editor.
 ///
 /// This is a fallback config used when no user config is installed.
-pub fn build_dispatch<Ctx>() -> DefaultDispatchStatic<Ctx>
+pub fn build_dispatch<Ctx>() -> impl DefaultApi<Ctx>
 where
   Ctx: DefaultContext,
 {
-  default_dispatch::<Ctx>().with_pre_on_keypress(pre_on_keypress::<Ctx> as fn(&mut Ctx, KeyEvent))
+  default_dispatch::<Ctx>().with_pre_on_keypress(pre_on_keypress::<Ctx>)
 }
 
 fn pre_on_keypress<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent) {
@@ -37,9 +38,11 @@ pub fn build_keymaps() -> Keymaps {
   Keymaps::default()
 }
 
-pub fn build_editor_assembly<Ctx>() -> EditorAssembly<Ctx>
+pub fn build_editor_preset<Ctx>() -> EditorPreset<Ctx, impl DefaultApi<Ctx>>
 where
   Ctx: DefaultContext,
 {
-  EditorAssembly::new(build_dispatch::<Ctx>(), build_keymaps())
+  default_editor_preset::<Ctx>()
+    .with_dispatch(build_dispatch::<Ctx>())
+    .with_keymaps(build_keymaps())
 }

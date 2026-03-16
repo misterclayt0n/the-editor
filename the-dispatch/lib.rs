@@ -227,11 +227,41 @@ pub fn registry_slot<Ctx>() -> RegistrySlot<Ctx> {
   DispatchRegistry::new()
 }
 
-/// Type alias for a simple function pointer handler.
+/// Default no-op handler used by `Dispatch::new()`.
 ///
-/// Handlers receive a mutable reference to the context and an input value.
-/// They return the output type defined for the dispatch point.
-pub type Handler<Ctx, Input, Output> = fn(&mut Ctx, Input) -> Output;
+/// This keeps dispatch construction generic while still providing a default
+/// handler value for every slot whose output implements `Default`.
+pub struct NoopHandler<Ctx, Input, Output> {
+  _marker: std::marker::PhantomData<fn(&mut Ctx, Input) -> Output>,
+}
+
+impl<Ctx, Input, Output> NoopHandler<Ctx, Input, Output> {
+  pub const fn new() -> Self {
+    Self {
+      _marker: std::marker::PhantomData,
+    }
+  }
+}
+
+impl<Ctx, Input, Output> Default for NoopHandler<Ctx, Input, Output> {
+  fn default() -> Self {
+    Self::new()
+  }
+}
+
+impl<Ctx, Input, Output> Clone for NoopHandler<Ctx, Input, Output> {
+  fn clone(&self) -> Self {
+    *self
+  }
+}
+
+impl<Ctx, Input, Output> Copy for NoopHandler<Ctx, Input, Output> {}
+
+impl<Ctx, Input, Output> std::fmt::Debug for NoopHandler<Ctx, Input, Output> {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.write_str("NoopHandler")
+  }
+}
 
 /// Trait for callable handlers.
 ///
@@ -250,6 +280,46 @@ where
 {
   fn call(&self, ctx: &mut Ctx, input: Input) -> Output {
     (self)(ctx, input)
+  }
+}
+
+impl<Ctx, Input, Output> HandlerFn<Ctx, Input, Output> for NoopHandler<Ctx, Input, Output>
+where
+  Output: Default,
+{
+  fn call(&self, _ctx: &mut Ctx, _input: Input) -> Output {
+    Output::default()
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::define;
+
+  define! {
+    Test {
+      ping: usize => usize,
+      pong: () => (),
+    }
+  }
+
+  #[test]
+  fn new_uses_generic_noop_handlers() {
+    let dispatch = TestDispatch::<(), _, _>::new();
+    let mut ctx = ();
+    assert_eq!(dispatch.ping(&mut ctx, 5), 0);
+    dispatch.pong(&mut ctx, ());
+  }
+
+  #[test]
+  fn function_items_attach_without_fn_pointer_casts() {
+    fn ping(_ctx: &mut (), input: usize) -> usize {
+      input + 1
+    }
+
+    let dispatch = TestDispatch::<(), _, _>::new().with_ping(ping);
+    let mut ctx = ();
+    assert_eq!(dispatch.ping(&mut ctx, 9), 10);
   }
 }
 

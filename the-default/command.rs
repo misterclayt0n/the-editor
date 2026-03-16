@@ -262,112 +262,268 @@ define! {
   }
 }
 
-/// Concrete `fn`-pointer specialization of the generic `DefaultDispatch`.
-///
-/// `the-dispatch` itself remains generic, but `the-default` currently exposes
-/// this fully static surface as its shipped fast path.
-pub type DefaultDispatchStatic<Ctx> = DefaultDispatch<
+macro_rules! default_dispatch_handler {
+  ($handler:ident, $input:ty => $output:ty, $fun:ident) => {
+    #[derive(Debug, Clone, Copy)]
+    pub struct $handler<Ctx>(std::marker::PhantomData<fn(&mut Ctx, $input) -> $output>);
+
+    impl<Ctx> Default for $handler<Ctx> {
+      fn default() -> Self {
+        Self(std::marker::PhantomData)
+      }
+    }
+
+    impl<Ctx> the_dispatch::HandlerFn<Ctx, $input, $output> for $handler<Ctx>
+    where
+      Ctx: DefaultContext,
+    {
+      fn call(&self, ctx: &mut Ctx, input: $input) -> $output {
+        $fun::<Ctx>(ctx, input)
+      }
+    }
+  };
+  ($handler:ident, $input:ty, $fun:ident) => {
+    default_dispatch_handler!($handler, $input => (), $fun);
+  };
+}
+
+default_dispatch_handler!(PreOnKeypressHandler, KeyEvent, pre_on_keypress);
+default_dispatch_handler!(OnKeypressHandler, KeyEvent, on_keypress);
+default_dispatch_handler!(PostOnKeypressHandler, Command, post_on_keypress);
+default_dispatch_handler!(PreOnActionHandler, Command, pre_on_action);
+default_dispatch_handler!(OnActionHandler, Command, on_action);
+default_dispatch_handler!(PostOnActionHandler, (), post_on_action);
+default_dispatch_handler!(
+  PreOnPointerEventHandler,
+  PointerEvent => PointerEventOutcome,
+  pre_on_pointer_event
+);
+default_dispatch_handler!(
+  OnPointerEventHandler,
+  PointerEvent => PointerEventOutcome,
+  on_pointer_event
+);
+default_dispatch_handler!(
+  PostOnPointerEventHandler,
+  PointerEventOutcome => PointerEventOutcome,
+  post_on_pointer_event
+);
+default_dispatch_handler!(RenderRequestHandler, (), render_request);
+default_dispatch_handler!(PreRenderHandler, (), pre_render);
+default_dispatch_handler!(OnRenderHandler, () => RenderPlan, on_render);
+default_dispatch_handler!(PostRenderHandler, RenderPlan => RenderPlan, post_render);
+default_dispatch_handler!(
+  PreRenderWithStylesHandler,
+  RenderStyles => RenderStyles,
+  pre_render_with_styles
+);
+default_dispatch_handler!(
+  OnRenderWithStylesHandler,
+  RenderStyles => RenderPlan,
+  on_render_with_styles
+);
+default_dispatch_handler!(PreUiHandler, (), pre_ui);
+default_dispatch_handler!(OnUiHandler, () => UiTree, on_ui);
+default_dispatch_handler!(PostUiHandler, UiTree => UiTree, post_ui);
+default_dispatch_handler!(PreUiEventHandler, UiEvent => UiEventOutcome, pre_ui_event);
+default_dispatch_handler!(OnUiEventHandler, UiEvent => UiEventOutcome, on_ui_event);
+default_dispatch_handler!(
+  PostUiEventHandler,
+  UiEventOutcome => UiEventOutcome,
+  post_ui_event
+);
+default_dispatch_handler!(InsertCharHandler, char, insert_char);
+default_dispatch_handler!(InsertNewlineHandler, (), insert_newline);
+default_dispatch_handler!(DeleteCharHandler, (), delete_char);
+default_dispatch_handler!(DeleteCharForwardHandler, usize, delete_char_forward);
+default_dispatch_handler!(DeleteWordBackwardHandler, usize, delete_word_backward);
+default_dispatch_handler!(DeleteWordForwardHandler, usize, delete_word_forward);
+default_dispatch_handler!(KillToLineStartHandler, (), kill_to_line_start);
+default_dispatch_handler!(KillToLineEndHandler, (), kill_to_line_end);
+default_dispatch_handler!(InsertTabHandler, (), insert_tab);
+default_dispatch_handler!(GotoLineStartHandler, bool, goto_line_start);
+default_dispatch_handler!(
+  GotoFirstNonwhitespaceHandler,
+  bool,
+  goto_first_nonwhitespace
+);
+default_dispatch_handler!(GotoLineEndHandler, bool, goto_line_end);
+default_dispatch_handler!(PageUpHandler, bool, page_up);
+default_dispatch_handler!(PageDownHandler, bool, page_down);
+default_dispatch_handler!(MoveCursorHandler, Direction, move_cursor);
+default_dispatch_handler!(AddCursorHandler, Direction, add_cursor);
+default_dispatch_handler!(MotionHandler, Motion, motion);
+default_dispatch_handler!(DeleteSelectionHandler, bool, delete_selection);
+default_dispatch_handler!(ChangeSelectionHandler, bool, change_selection);
+default_dispatch_handler!(ReplaceSelectionHandler, char, replace_selection);
+default_dispatch_handler!(ReplaceWithYankedHandler, (), replace_with_yanked);
+default_dispatch_handler!(YankHandler, (), yank);
+default_dispatch_handler!(PasteHandler, bool, paste);
+default_dispatch_handler!(SwitchCaseHandler, (), switch_case);
+default_dispatch_handler!(SaveHandler, (), save);
+default_dispatch_handler!(QuitHandler, (), quit);
+default_dispatch_handler!(FindCharHandler, (Direction, bool, bool), find_char);
+default_dispatch_handler!(SearchHandler, (), search);
+default_dispatch_handler!(RsearchHandler, (), rsearch);
+default_dispatch_handler!(SelectRegexHandler, (), select_regex);
+default_dispatch_handler!(
+  SearchNextOrPrevHandler,
+  (Direction, bool, usize),
+  search_next_or_prev
+);
+default_dispatch_handler!(ParentNodeEndHandler, bool, parent_node_end);
+default_dispatch_handler!(ParentNodeStartHandler, bool, parent_node_start);
+default_dispatch_handler!(RepeatLastMotionHandler, (), repeat_last_motion);
+default_dispatch_handler!(SwitchToUppercaseHandler, (), switch_to_uppercase);
+default_dispatch_handler!(SwitchToLowercaseHandler, (), switch_to_lowercase);
+default_dispatch_handler!(InsertAtLineStartHandler, (), insert_at_line_start);
+default_dispatch_handler!(InsertAtLineEndHandler, (), insert_at_line_end);
+default_dispatch_handler!(AppendModeHandler, (), append_mode);
+default_dispatch_handler!(OpenBelowHandler, (), open_below);
+default_dispatch_handler!(OpenAboveHandler, (), open_above);
+default_dispatch_handler!(CommitUndoCheckpointHandler, (), commit_undo_checkpoint);
+default_dispatch_handler!(
+  CopySelectionOnNextLineHandler,
+  (),
+  copy_selection_on_next_line
+);
+default_dispatch_handler!(
+  CopySelectionOnPrevLineHandler,
+  (),
+  copy_selection_on_prev_line
+);
+default_dispatch_handler!(SelectAllHandler, (), select_all);
+default_dispatch_handler!(ExtendLineBelowHandler, usize, extend_line_below);
+default_dispatch_handler!(ExtendLineAboveHandler, usize, extend_line_above);
+default_dispatch_handler!(ExtendToLineBoundsHandler, (), extend_to_line_bounds);
+default_dispatch_handler!(ShrinkToLineBoundsHandler, (), shrink_to_line_bounds);
+default_dispatch_handler!(UndoHandler, usize, undo);
+default_dispatch_handler!(RedoHandler, usize, redo);
+default_dispatch_handler!(EarlierHandler, usize, earlier);
+default_dispatch_handler!(LaterHandler, usize, later);
+default_dispatch_handler!(IndentHandler, usize, indent);
+default_dispatch_handler!(UnindentHandler, usize, unindent);
+default_dispatch_handler!(ReplaceHandler, (), replace);
+default_dispatch_handler!(RecordMacroHandler, (), record_macro);
+default_dispatch_handler!(ReplayMacroHandler, (), replay_macro);
+default_dispatch_handler!(MatchBracketsHandler, (), match_brackets);
+default_dispatch_handler!(SurroundAddHandler, (), surround_add);
+default_dispatch_handler!(SurroundDeleteHandler, usize, surround_delete);
+default_dispatch_handler!(SurroundReplaceHandler, usize, surround_replace);
+default_dispatch_handler!(SelectTextobjectAroundHandler, (), select_textobject_around);
+default_dispatch_handler!(SelectTextobjectInnerHandler, (), select_textobject_inner);
+
+pub type DefaultDispatchBuiltin<Ctx> = DefaultDispatch<
   Ctx,
-  fn(&mut Ctx, KeyEvent),
-  fn(&mut Ctx, KeyEvent),
-  fn(&mut Ctx, Command),
-  fn(&mut Ctx, Command),
-  fn(&mut Ctx, Command),
-  fn(&mut Ctx, ()),
-  fn(&mut Ctx, PointerEvent) -> PointerEventOutcome,
-  fn(&mut Ctx, PointerEvent) -> PointerEventOutcome,
-  fn(&mut Ctx, PointerEventOutcome) -> PointerEventOutcome,
-  fn(&mut Ctx, ()),
-  fn(&mut Ctx, ()),
-  fn(&mut Ctx, ()) -> RenderPlan,
-  fn(&mut Ctx, RenderPlan) -> RenderPlan,
-  fn(&mut Ctx, RenderStyles) -> RenderStyles,
-  fn(&mut Ctx, RenderStyles) -> RenderPlan,
-  fn(&mut Ctx, ()),
-  fn(&mut Ctx, ()) -> UiTree,
-  fn(&mut Ctx, UiTree) -> UiTree,
-  fn(&mut Ctx, UiEvent) -> UiEventOutcome,
-  fn(&mut Ctx, UiEvent) -> UiEventOutcome,
-  fn(&mut Ctx, UiEventOutcome) -> UiEventOutcome,
-  fn(&mut Ctx, char),
-  fn(&mut Ctx, ()),
-  fn(&mut Ctx, ()),
-  fn(&mut Ctx, usize),
-  fn(&mut Ctx, usize),
-  fn(&mut Ctx, usize),
-  fn(&mut Ctx, ()),
-  fn(&mut Ctx, ()),
-  fn(&mut Ctx, ()),
-  fn(&mut Ctx, bool),
-  fn(&mut Ctx, bool),
-  fn(&mut Ctx, bool),
-  fn(&mut Ctx, bool),
-  fn(&mut Ctx, bool),
-  fn(&mut Ctx, Direction),
-  fn(&mut Ctx, Direction),
-  fn(&mut Ctx, Motion),
-  fn(&mut Ctx, bool),
-  fn(&mut Ctx, bool),
-  fn(&mut Ctx, char),
-  fn(&mut Ctx, ()),
-  fn(&mut Ctx, ()),
-  fn(&mut Ctx, bool),
-  fn(&mut Ctx, ()),
-  fn(&mut Ctx, ()),
-  fn(&mut Ctx, ()),
-  fn(&mut Ctx, (Direction, bool, bool)),
-  fn(&mut Ctx, ()),
-  fn(&mut Ctx, ()),
-  fn(&mut Ctx, ()),
-  fn(&mut Ctx, (Direction, bool, usize)),
-  fn(&mut Ctx, bool),
-  fn(&mut Ctx, bool),
-  fn(&mut Ctx, ()),
-  fn(&mut Ctx, ()),
-  fn(&mut Ctx, ()),
-  fn(&mut Ctx, ()),
-  fn(&mut Ctx, ()),
-  fn(&mut Ctx, ()),
-  fn(&mut Ctx, ()),
-  fn(&mut Ctx, ()),
-  fn(&mut Ctx, ()),
-  fn(&mut Ctx, ()),
-  fn(&mut Ctx, ()),
-  fn(&mut Ctx, ()),
-  fn(&mut Ctx, usize),
-  fn(&mut Ctx, usize),
-  fn(&mut Ctx, ()),
-  fn(&mut Ctx, ()),
-  fn(&mut Ctx, usize),
-  fn(&mut Ctx, usize),
-  fn(&mut Ctx, usize),
-  fn(&mut Ctx, usize),
-  fn(&mut Ctx, usize),
-  fn(&mut Ctx, usize),
-  fn(&mut Ctx, ()),
-  fn(&mut Ctx, ()),
-  fn(&mut Ctx, ()),
-  fn(&mut Ctx, ()),
-  fn(&mut Ctx, ()),
-  fn(&mut Ctx, usize),
-  fn(&mut Ctx, usize),
-  fn(&mut Ctx, ()),
-  fn(&mut Ctx, ()),
+  PreOnKeypressHandler<Ctx>,
+  OnKeypressHandler<Ctx>,
+  PostOnKeypressHandler<Ctx>,
+  PreOnActionHandler<Ctx>,
+  OnActionHandler<Ctx>,
+  PostOnActionHandler<Ctx>,
+  PreOnPointerEventHandler<Ctx>,
+  OnPointerEventHandler<Ctx>,
+  PostOnPointerEventHandler<Ctx>,
+  RenderRequestHandler<Ctx>,
+  PreRenderHandler<Ctx>,
+  OnRenderHandler<Ctx>,
+  PostRenderHandler<Ctx>,
+  PreRenderWithStylesHandler<Ctx>,
+  OnRenderWithStylesHandler<Ctx>,
+  PreUiHandler<Ctx>,
+  OnUiHandler<Ctx>,
+  PostUiHandler<Ctx>,
+  PreUiEventHandler<Ctx>,
+  OnUiEventHandler<Ctx>,
+  PostUiEventHandler<Ctx>,
+  InsertCharHandler<Ctx>,
+  InsertNewlineHandler<Ctx>,
+  DeleteCharHandler<Ctx>,
+  DeleteCharForwardHandler<Ctx>,
+  DeleteWordBackwardHandler<Ctx>,
+  DeleteWordForwardHandler<Ctx>,
+  KillToLineStartHandler<Ctx>,
+  KillToLineEndHandler<Ctx>,
+  InsertTabHandler<Ctx>,
+  GotoLineStartHandler<Ctx>,
+  GotoFirstNonwhitespaceHandler<Ctx>,
+  GotoLineEndHandler<Ctx>,
+  PageUpHandler<Ctx>,
+  PageDownHandler<Ctx>,
+  MoveCursorHandler<Ctx>,
+  AddCursorHandler<Ctx>,
+  MotionHandler<Ctx>,
+  DeleteSelectionHandler<Ctx>,
+  ChangeSelectionHandler<Ctx>,
+  ReplaceSelectionHandler<Ctx>,
+  ReplaceWithYankedHandler<Ctx>,
+  YankHandler<Ctx>,
+  PasteHandler<Ctx>,
+  SwitchCaseHandler<Ctx>,
+  SaveHandler<Ctx>,
+  QuitHandler<Ctx>,
+  FindCharHandler<Ctx>,
+  SearchHandler<Ctx>,
+  RsearchHandler<Ctx>,
+  SelectRegexHandler<Ctx>,
+  SearchNextOrPrevHandler<Ctx>,
+  ParentNodeEndHandler<Ctx>,
+  ParentNodeStartHandler<Ctx>,
+  RepeatLastMotionHandler<Ctx>,
+  SwitchToUppercaseHandler<Ctx>,
+  SwitchToLowercaseHandler<Ctx>,
+  InsertAtLineStartHandler<Ctx>,
+  InsertAtLineEndHandler<Ctx>,
+  AppendModeHandler<Ctx>,
+  OpenBelowHandler<Ctx>,
+  OpenAboveHandler<Ctx>,
+  CommitUndoCheckpointHandler<Ctx>,
+  CopySelectionOnNextLineHandler<Ctx>,
+  CopySelectionOnPrevLineHandler<Ctx>,
+  SelectAllHandler<Ctx>,
+  ExtendLineBelowHandler<Ctx>,
+  ExtendLineAboveHandler<Ctx>,
+  ExtendToLineBoundsHandler<Ctx>,
+  ShrinkToLineBoundsHandler<Ctx>,
+  UndoHandler<Ctx>,
+  RedoHandler<Ctx>,
+  EarlierHandler<Ctx>,
+  LaterHandler<Ctx>,
+  IndentHandler<Ctx>,
+  UnindentHandler<Ctx>,
+  ReplaceHandler<Ctx>,
+  RecordMacroHandler<Ctx>,
+  ReplayMacroHandler<Ctx>,
+  MatchBracketsHandler<Ctx>,
+  SurroundAddHandler<Ctx>,
+  SurroundDeleteHandler<Ctx>,
+  SurroundReplaceHandler<Ctx>,
+  SelectTextobjectAroundHandler<Ctx>,
+  SelectTextobjectInnerHandler<Ctx>,
 >;
 
 #[derive(Clone, Copy)]
 pub struct DispatchRef<Ctx> {
-  ptr: *const DefaultDispatchStatic<Ctx>,
+  ptr: *const dyn DefaultApi<Ctx>,
 }
 
 impl<Ctx> DispatchRef<Ctx> {
-  pub fn from_ptr(ptr: *const DefaultDispatchStatic<Ctx>) -> Self {
+  pub fn from_ptr(ptr: *const dyn DefaultApi<Ctx>) -> Self {
     Self { ptr }
+  }
+
+  pub fn from_ref<D>(dispatch: &D) -> Self
+  where
+    D: DefaultApi<Ctx> + 'static,
+  {
+    Self {
+      ptr: dispatch as &dyn DefaultApi<Ctx> as *const dyn DefaultApi<Ctx>,
+    }
   }
 }
 
 impl<Ctx> std::ops::Deref for DispatchRef<Ctx> {
-  type Target = DefaultDispatchStatic<Ctx>;
+  type Target = dyn DefaultApi<Ctx>;
 
   fn deref(&self) -> &Self::Target {
     // Safety: DispatchRef is constructed from a valid dispatch pointer.
@@ -500,6 +656,45 @@ pub trait DefaultContext: Sized + 'static {
   }
   fn set_append_restore_cursor_pending(&mut self, _pending: bool) {}
   fn keymaps(&mut self) -> &mut Keymaps;
+  fn extension_states(&self) -> &crate::ExtensionStateStore;
+  fn extension_states_mut(&mut self) -> &mut crate::ExtensionStateStore;
+  fn extension_state<T>(&self) -> Option<&T>
+  where
+    T: 'static,
+  {
+    self.extension_states().get::<T>()
+  }
+  fn extension_state_mut<T>(&mut self) -> Option<&mut T>
+  where
+    T: 'static,
+  {
+    self.extension_states_mut().get_mut::<T>()
+  }
+  fn extension_state_or_insert_with<T, F>(&mut self, init: F) -> &mut T
+  where
+    T: 'static,
+    F: FnOnce() -> T,
+  {
+    self.extension_states_mut().get_or_insert_with(init)
+  }
+  fn extension_state_or_default<T>(&mut self) -> &mut T
+  where
+    T: Default + 'static,
+  {
+    self.extension_states_mut().get_or_default::<T>()
+  }
+  fn insert_extension_state<T>(&mut self, state: T) -> Option<T>
+  where
+    T: 'static,
+  {
+    self.extension_states_mut().insert(state)
+  }
+  fn remove_extension_state<T>(&mut self) -> Option<T>
+  where
+    T: 'static,
+  {
+    self.extension_states_mut().remove::<T>()
+  }
   fn command_prompt_mut(&mut self) -> &mut CommandPromptState;
   fn command_prompt_ref(&self) -> &CommandPromptState;
   fn command_registry_mut(&mut self) -> &mut CommandRegistry<Self>;
@@ -842,12 +1037,22 @@ pub trait DefaultContext: Sized + 'static {
   fn execute_named_action(&mut self, _name: &str) -> bool {
     false
   }
-  fn handle_picker_query_action(&mut self, _handler: &str, _query: &str) -> bool {
+  fn picker_query_handler_id(&self, _name: &str) -> Option<crate::PickerQueryHandlerId> {
+    None
+  }
+  fn picker_submit_handler_id(&self, _name: &str) -> Option<crate::PickerSubmitHandlerId> {
+    None
+  }
+  fn handle_picker_query_action(
+    &mut self,
+    _handler: crate::PickerQueryHandlerId,
+    _query: &str,
+  ) -> bool {
     false
   }
   fn submit_picker_item_action(
     &mut self,
-    _handler: &str,
+    _handler: crate::PickerSubmitHandlerId,
     _item: &crate::file_picker::FilePickerItem,
   ) -> crate::extensions::PickerSubmitResult {
     crate::extensions::PickerSubmitResult::Unhandled
@@ -863,112 +1068,102 @@ pub trait DefaultContext: Sized + 'static {
   }
 }
 
-pub fn build_dispatch<Ctx>() -> DefaultDispatchStatic<Ctx>
+pub fn build_dispatch<Ctx>() -> DefaultDispatchBuiltin<Ctx>
 where
   Ctx: DefaultContext,
 {
   DefaultDispatch::new()
-    .with_pre_on_keypress(pre_on_keypress::<Ctx> as fn(&mut Ctx, KeyEvent))
-    .with_on_keypress(on_keypress::<Ctx> as fn(&mut Ctx, KeyEvent))
-    .with_post_on_keypress(post_on_keypress::<Ctx> as fn(&mut Ctx, Command))
-    .with_pre_on_action(pre_on_action::<Ctx> as fn(&mut Ctx, Command))
-    .with_on_action(on_action::<Ctx> as fn(&mut Ctx, Command))
-    .with_post_on_action(post_on_action::<Ctx> as fn(&mut Ctx, ()))
-    .with_pre_on_pointer_event(
-      pre_on_pointer_event::<Ctx> as fn(&mut Ctx, PointerEvent) -> PointerEventOutcome,
-    )
-    .with_on_pointer_event(
-      on_pointer_event::<Ctx> as fn(&mut Ctx, PointerEvent) -> PointerEventOutcome,
-    )
-    .with_post_on_pointer_event(
-      post_on_pointer_event::<Ctx> as fn(&mut Ctx, PointerEventOutcome) -> PointerEventOutcome,
-    )
-    .with_render_request(render_request::<Ctx> as fn(&mut Ctx, ()))
-    .with_pre_render(pre_render::<Ctx> as fn(&mut Ctx, ()))
-    .with_on_render(on_render::<Ctx> as fn(&mut Ctx, ()) -> RenderPlan)
-    .with_post_render(post_render::<Ctx> as fn(&mut Ctx, RenderPlan) -> RenderPlan)
-    .with_pre_render_with_styles(
-      pre_render_with_styles::<Ctx> as fn(&mut Ctx, RenderStyles) -> RenderStyles,
-    )
-    .with_on_render_with_styles(
-      on_render_with_styles::<Ctx> as fn(&mut Ctx, RenderStyles) -> RenderPlan,
-    )
-    .with_pre_ui(pre_ui::<Ctx> as fn(&mut Ctx, ()))
-    .with_on_ui(on_ui::<Ctx> as fn(&mut Ctx, ()) -> UiTree)
-    .with_post_ui(post_ui::<Ctx> as fn(&mut Ctx, UiTree) -> UiTree)
-    .with_pre_ui_event(pre_ui_event::<Ctx> as fn(&mut Ctx, UiEvent) -> UiEventOutcome)
-    .with_on_ui_event(on_ui_event::<Ctx> as fn(&mut Ctx, UiEvent) -> UiEventOutcome)
-    .with_post_ui_event(post_ui_event::<Ctx> as fn(&mut Ctx, UiEventOutcome) -> UiEventOutcome)
-    .with_insert_char(insert_char::<Ctx> as fn(&mut Ctx, char))
-    .with_insert_newline(insert_newline::<Ctx> as fn(&mut Ctx, ()))
-    .with_delete_char(delete_char::<Ctx> as fn(&mut Ctx, ()))
-    .with_delete_char_forward(delete_char_forward::<Ctx> as fn(&mut Ctx, usize))
-    .with_delete_word_backward(delete_word_backward::<Ctx> as fn(&mut Ctx, usize))
-    .with_delete_word_forward(delete_word_forward::<Ctx> as fn(&mut Ctx, usize))
-    .with_kill_to_line_start(kill_to_line_start::<Ctx> as fn(&mut Ctx, ()))
-    .with_kill_to_line_end(kill_to_line_end::<Ctx> as fn(&mut Ctx, ()))
-    .with_insert_tab(insert_tab::<Ctx> as fn(&mut Ctx, ()))
-    .with_goto_line_start(goto_line_start::<Ctx> as fn(&mut Ctx, bool))
-    .with_goto_first_nonwhitespace(goto_first_nonwhitespace::<Ctx> as fn(&mut Ctx, bool))
-    .with_goto_line_end(goto_line_end::<Ctx> as fn(&mut Ctx, bool))
-    .with_page_up(page_up::<Ctx> as fn(&mut Ctx, bool))
-    .with_page_down(page_down::<Ctx> as fn(&mut Ctx, bool))
-    .with_move_cursor(move_cursor::<Ctx> as fn(&mut Ctx, Direction))
-    .with_add_cursor(add_cursor::<Ctx> as fn(&mut Ctx, Direction))
-    .with_motion(motion::<Ctx> as fn(&mut Ctx, Motion))
-    .with_delete_selection(delete_selection::<Ctx> as fn(&mut Ctx, bool))
-    .with_change_selection(change_selection::<Ctx> as fn(&mut Ctx, bool))
-    .with_replace_selection(replace_selection::<Ctx> as fn(&mut Ctx, char))
-    .with_replace_with_yanked(replace_with_yanked::<Ctx> as fn(&mut Ctx, ()))
-    .with_yank(yank::<Ctx> as fn(&mut Ctx, ()))
-    .with_paste(paste::<Ctx> as fn(&mut Ctx, bool))
-    .with_switch_case(switch_case::<Ctx> as fn(&mut Ctx, ()))
-    .with_save(save::<Ctx> as fn(&mut Ctx, ()))
-    .with_quit(quit::<Ctx> as fn(&mut Ctx, ()))
-    .with_find_char(find_char::<Ctx> as fn(&mut Ctx, (Direction, bool, bool)))
-    .with_search(search::<Ctx> as fn(&mut Ctx, ()))
-    .with_rsearch(rsearch::<Ctx> as fn(&mut Ctx, ()))
-    .with_select_regex(select_regex::<Ctx> as fn(&mut Ctx, ()))
-    .with_search_next_or_prev(search_next_or_prev::<Ctx> as fn(&mut Ctx, (Direction, bool, usize)))
-    .with_parent_node_end(parent_node_end::<Ctx> as fn(&mut Ctx, bool))
-    .with_parent_node_start(parent_node_start::<Ctx> as fn(&mut Ctx, bool))
-    .with_repeat_last_motion(repeat_last_motion::<Ctx> as fn(&mut Ctx, ()))
-    .with_switch_to_uppercase(switch_to_uppercase::<Ctx> as fn(&mut Ctx, ()))
-    .with_switch_to_lowercase(switch_to_lowercase::<Ctx> as fn(&mut Ctx, ()))
-    .with_insert_at_line_start(insert_at_line_start::<Ctx> as fn(&mut Ctx, ()))
-    .with_insert_at_line_end(insert_at_line_end::<Ctx> as fn(&mut Ctx, ()))
-    .with_append_mode(append_mode::<Ctx> as fn(&mut Ctx, ()))
-    .with_open_below(open_below::<Ctx> as fn(&mut Ctx, ()))
-    .with_open_above(open_above::<Ctx> as fn(&mut Ctx, ()))
-    .with_commit_undo_checkpoint(commit_undo_checkpoint::<Ctx> as fn(&mut Ctx, ()))
-    .with_copy_selection_on_next_line(copy_selection_on_next_line::<Ctx> as fn(&mut Ctx, ()))
-    .with_copy_selection_on_prev_line(copy_selection_on_prev_line::<Ctx> as fn(&mut Ctx, ()))
-    .with_select_all(select_all::<Ctx> as fn(&mut Ctx, ()))
-    .with_extend_line_below(extend_line_below::<Ctx> as fn(&mut Ctx, usize))
-    .with_extend_line_above(extend_line_above::<Ctx> as fn(&mut Ctx, usize))
-    .with_extend_to_line_bounds(extend_to_line_bounds::<Ctx> as fn(&mut Ctx, ()))
-    .with_shrink_to_line_bounds(shrink_to_line_bounds::<Ctx> as fn(&mut Ctx, ()))
-    .with_undo(undo::<Ctx> as fn(&mut Ctx, usize))
-    .with_redo(redo::<Ctx> as fn(&mut Ctx, usize))
-    .with_earlier(earlier::<Ctx> as fn(&mut Ctx, usize))
-    .with_later(later::<Ctx> as fn(&mut Ctx, usize))
-    .with_indent(indent::<Ctx> as fn(&mut Ctx, usize))
-    .with_unindent(unindent::<Ctx> as fn(&mut Ctx, usize))
-    .with_replace(replace::<Ctx> as fn(&mut Ctx, ()))
-    .with_record_macro(record_macro::<Ctx> as fn(&mut Ctx, ()))
-    .with_replay_macro(replay_macro::<Ctx> as fn(&mut Ctx, ()))
-    .with_match_brackets(match_brackets::<Ctx> as fn(&mut Ctx, ()))
-    .with_surround_add(surround_add::<Ctx> as fn(&mut Ctx, ()))
-    .with_surround_delete(surround_delete::<Ctx> as fn(&mut Ctx, usize))
-    .with_surround_replace(surround_replace::<Ctx> as fn(&mut Ctx, usize))
-    .with_select_textobject_around(select_textobject_around::<Ctx> as fn(&mut Ctx, ()))
-    .with_select_textobject_inner(select_textobject_inner::<Ctx> as fn(&mut Ctx, ()))
+    .with_pre_on_keypress(PreOnKeypressHandler::<Ctx>::default())
+    .with_on_keypress(OnKeypressHandler::<Ctx>::default())
+    .with_post_on_keypress(PostOnKeypressHandler::<Ctx>::default())
+    .with_pre_on_action(PreOnActionHandler::<Ctx>::default())
+    .with_on_action(OnActionHandler::<Ctx>::default())
+    .with_post_on_action(PostOnActionHandler::<Ctx>::default())
+    .with_pre_on_pointer_event(PreOnPointerEventHandler::<Ctx>::default())
+    .with_on_pointer_event(OnPointerEventHandler::<Ctx>::default())
+    .with_post_on_pointer_event(PostOnPointerEventHandler::<Ctx>::default())
+    .with_render_request(RenderRequestHandler::<Ctx>::default())
+    .with_pre_render(PreRenderHandler::<Ctx>::default())
+    .with_on_render(OnRenderHandler::<Ctx>::default())
+    .with_post_render(PostRenderHandler::<Ctx>::default())
+    .with_pre_render_with_styles(PreRenderWithStylesHandler::<Ctx>::default())
+    .with_on_render_with_styles(OnRenderWithStylesHandler::<Ctx>::default())
+    .with_pre_ui(PreUiHandler::<Ctx>::default())
+    .with_on_ui(OnUiHandler::<Ctx>::default())
+    .with_post_ui(PostUiHandler::<Ctx>::default())
+    .with_pre_ui_event(PreUiEventHandler::<Ctx>::default())
+    .with_on_ui_event(OnUiEventHandler::<Ctx>::default())
+    .with_post_ui_event(PostUiEventHandler::<Ctx>::default())
+    .with_insert_char(InsertCharHandler::<Ctx>::default())
+    .with_insert_newline(InsertNewlineHandler::<Ctx>::default())
+    .with_delete_char(DeleteCharHandler::<Ctx>::default())
+    .with_delete_char_forward(DeleteCharForwardHandler::<Ctx>::default())
+    .with_delete_word_backward(DeleteWordBackwardHandler::<Ctx>::default())
+    .with_delete_word_forward(DeleteWordForwardHandler::<Ctx>::default())
+    .with_kill_to_line_start(KillToLineStartHandler::<Ctx>::default())
+    .with_kill_to_line_end(KillToLineEndHandler::<Ctx>::default())
+    .with_insert_tab(InsertTabHandler::<Ctx>::default())
+    .with_goto_line_start(GotoLineStartHandler::<Ctx>::default())
+    .with_goto_first_nonwhitespace(GotoFirstNonwhitespaceHandler::<Ctx>::default())
+    .with_goto_line_end(GotoLineEndHandler::<Ctx>::default())
+    .with_page_up(PageUpHandler::<Ctx>::default())
+    .with_page_down(PageDownHandler::<Ctx>::default())
+    .with_move_cursor(MoveCursorHandler::<Ctx>::default())
+    .with_add_cursor(AddCursorHandler::<Ctx>::default())
+    .with_motion(MotionHandler::<Ctx>::default())
+    .with_delete_selection(DeleteSelectionHandler::<Ctx>::default())
+    .with_change_selection(ChangeSelectionHandler::<Ctx>::default())
+    .with_replace_selection(ReplaceSelectionHandler::<Ctx>::default())
+    .with_replace_with_yanked(ReplaceWithYankedHandler::<Ctx>::default())
+    .with_yank(YankHandler::<Ctx>::default())
+    .with_paste(PasteHandler::<Ctx>::default())
+    .with_switch_case(SwitchCaseHandler::<Ctx>::default())
+    .with_save(SaveHandler::<Ctx>::default())
+    .with_quit(QuitHandler::<Ctx>::default())
+    .with_find_char(FindCharHandler::<Ctx>::default())
+    .with_search(SearchHandler::<Ctx>::default())
+    .with_rsearch(RsearchHandler::<Ctx>::default())
+    .with_select_regex(SelectRegexHandler::<Ctx>::default())
+    .with_search_next_or_prev(SearchNextOrPrevHandler::<Ctx>::default())
+    .with_parent_node_end(ParentNodeEndHandler::<Ctx>::default())
+    .with_parent_node_start(ParentNodeStartHandler::<Ctx>::default())
+    .with_repeat_last_motion(RepeatLastMotionHandler::<Ctx>::default())
+    .with_switch_to_uppercase(SwitchToUppercaseHandler::<Ctx>::default())
+    .with_switch_to_lowercase(SwitchToLowercaseHandler::<Ctx>::default())
+    .with_insert_at_line_start(InsertAtLineStartHandler::<Ctx>::default())
+    .with_insert_at_line_end(InsertAtLineEndHandler::<Ctx>::default())
+    .with_append_mode(AppendModeHandler::<Ctx>::default())
+    .with_open_below(OpenBelowHandler::<Ctx>::default())
+    .with_open_above(OpenAboveHandler::<Ctx>::default())
+    .with_commit_undo_checkpoint(CommitUndoCheckpointHandler::<Ctx>::default())
+    .with_copy_selection_on_next_line(CopySelectionOnNextLineHandler::<Ctx>::default())
+    .with_copy_selection_on_prev_line(CopySelectionOnPrevLineHandler::<Ctx>::default())
+    .with_select_all(SelectAllHandler::<Ctx>::default())
+    .with_extend_line_below(ExtendLineBelowHandler::<Ctx>::default())
+    .with_extend_line_above(ExtendLineAboveHandler::<Ctx>::default())
+    .with_extend_to_line_bounds(ExtendToLineBoundsHandler::<Ctx>::default())
+    .with_shrink_to_line_bounds(ShrinkToLineBoundsHandler::<Ctx>::default())
+    .with_undo(UndoHandler::<Ctx>::default())
+    .with_redo(RedoHandler::<Ctx>::default())
+    .with_earlier(EarlierHandler::<Ctx>::default())
+    .with_later(LaterHandler::<Ctx>::default())
+    .with_indent(IndentHandler::<Ctx>::default())
+    .with_unindent(UnindentHandler::<Ctx>::default())
+    .with_replace(ReplaceHandler::<Ctx>::default())
+    .with_record_macro(RecordMacroHandler::<Ctx>::default())
+    .with_replay_macro(ReplayMacroHandler::<Ctx>::default())
+    .with_match_brackets(MatchBracketsHandler::<Ctx>::default())
+    .with_surround_add(SurroundAddHandler::<Ctx>::default())
+    .with_surround_delete(SurroundDeleteHandler::<Ctx>::default())
+    .with_surround_replace(SurroundReplaceHandler::<Ctx>::default())
+    .with_select_textobject_around(SelectTextobjectAroundHandler::<Ctx>::default())
+    .with_select_textobject_inner(SelectTextobjectInnerHandler::<Ctx>::default())
 }
 
 pub fn handle_command<Ctx, D>(dispatch: &D, ctx: &mut Ctx, command: Command)
 where
   Ctx: DefaultContext,
-  D: DefaultApi<Ctx>,
+  D: DefaultApi<Ctx> + ?Sized,
 {
   dispatch.pre_on_action(ctx, command);
 }
@@ -976,7 +1171,7 @@ where
 pub fn handle_key<Ctx, D>(dispatch: &D, ctx: &mut Ctx, key: KeyEvent)
 where
   Ctx: DefaultContext,
-  D: DefaultApi<Ctx>,
+  D: DefaultApi<Ctx> + ?Sized,
 {
   dispatch.pre_on_keypress(ctx, key);
 }
@@ -988,7 +1183,7 @@ pub fn handle_pointer_event<Ctx, D>(
 ) -> PointerEventOutcome
 where
   Ctx: DefaultContext,
-  D: DefaultApi<Ctx>,
+  D: DefaultApi<Ctx> + ?Sized,
 {
   dispatch.pre_on_pointer_event(ctx, event)
 }

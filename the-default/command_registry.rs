@@ -66,12 +66,7 @@ pub struct Completion {
   pub doc:   Option<String>,
 }
 
-/// Concrete `fn`-pointer command entry used by the current shared default
-/// surface.
-///
-/// This keeps typable commands simple and static today, while leaving room for
-/// a richer assembly-oriented authoring path later.
-pub type CommandFn<Ctx> = fn(&mut Ctx, Args, CommandEvent) -> CommandResult;
+pub type CommandFn<Ctx> = dyn Fn(&mut Ctx, Args, CommandEvent) -> CommandResult + 'static;
 
 pub type CommandResult = Result<(), CommandError>;
 
@@ -131,12 +126,11 @@ impl<Ctx: 'static> CommandCompleter<Ctx> {
   }
 }
 
-#[derive(Clone)]
 pub struct TypableCommand<Ctx: 'static> {
   pub name:                        &'static str,
   pub aliases:                     &'static [&'static str],
   pub doc:                         &'static str,
-  pub fun:                         CommandFn<Ctx>,
+  pub fun:                         Box<CommandFn<Ctx>>,
   pub completer:                   CommandCompleter<Ctx>,
   pub signature:                   Signature,
   pub palette_placeholder:         Option<&'static str>,
@@ -144,19 +138,22 @@ pub struct TypableCommand<Ctx: 'static> {
 }
 
 impl<Ctx: 'static> TypableCommand<Ctx> {
-  pub const fn new(
+  pub fn new<F>(
     name: &'static str,
     aliases: &'static [&'static str],
     doc: &'static str,
-    fun: CommandFn<Ctx>,
+    fun: F,
     completer: CommandCompleter<Ctx>,
     signature: Signature,
-  ) -> Self {
+  ) -> Self
+  where
+    F: Fn(&mut Ctx, Args, CommandEvent) -> CommandResult + 'static,
+  {
     Self {
       name,
       aliases,
       doc,
-      fun,
+      fun: Box::new(fun),
       completer,
       signature,
       palette_placeholder: None,
@@ -164,15 +161,12 @@ impl<Ctx: 'static> TypableCommand<Ctx> {
     }
   }
 
-  pub const fn with_palette_placeholder(mut self, placeholder: &'static str) -> Self {
+  pub fn with_palette_placeholder(mut self, placeholder: &'static str) -> Self {
     self.palette_placeholder = Some(placeholder);
     self
   }
 
-  pub const fn with_directory_completion_action(
-    mut self,
-    action: DirectoryCompletionAction,
-  ) -> Self {
+  pub fn with_directory_completion_action(mut self, action: DirectoryCompletionAction) -> Self {
     self.directory_completion_action = action;
     self
   }

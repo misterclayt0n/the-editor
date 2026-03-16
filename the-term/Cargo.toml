@@ -23,6 +23,10 @@ the-lsp             = { path = "../the-lsp" }
 the-loader          = { path = "../the-loader" }
 the-runtime         = { path = "../the-runtime" }
 the-vcs             = { path = "../the-vcs", features = [ "diff", "git", "jj" ] }
+toml.workspace      = true
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true

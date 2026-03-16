@@ -43,14 +43,61 @@ define! {
   }
 }
 
+macro_rules! calc_handler {
+  ($name:ident, $input:ty => $output:ty, $fun:ident) => {
+    #[derive(Clone, Copy, Default)]
+    struct $name;
+
+    impl the_dispatch::HandlerFn<CalcCtx, $input, $output> for $name {
+      fn call(&self, ctx: &mut CalcCtx, input: $input) -> $output {
+        $fun(ctx, input)
+      }
+    }
+  };
+}
+
+calc_handler!(ParseHandler, String => Option<Expr>, parse_handler);
+calc_handler!(AddHandler, (i64, i64) => i64, add_handler);
+calc_handler!(SubHandler, (i64, i64) => i64, sub_handler);
+calc_handler!(MulHandler, (i64, i64) => i64, mul_handler);
+calc_handler!(DivHandler, (i64, i64) => i64, div_handler);
+
 type CalcDispatch = CalculatorDispatch<
   CalcCtx,
-  fn(&mut CalcCtx, String) -> Option<Expr>,
-  fn(&mut CalcCtx, (i64, i64)) -> i64,
-  fn(&mut CalcCtx, (i64, i64)) -> i64,
-  fn(&mut CalcCtx, (i64, i64)) -> i64,
-  fn(&mut CalcCtx, (i64, i64)) -> i64,
+  ParseHandler,
+  AddHandler,
+  SubHandler,
+  MulHandler,
+  DivHandler,
 >;
+
+trait CalcDispatchRegistry: CalculatorApi<CalcCtx> {
+  #[cfg(feature = "dynamic-registry")]
+  fn registry(&self) -> &the_dispatch::DispatchRegistry<CalcCtx>;
+
+  #[cfg(feature = "dynamic-registry")]
+  fn registry_mut(&mut self) -> &mut the_dispatch::DispatchRegistry<CalcCtx>;
+}
+
+impl<Parse, Add, Sub, Mul, Div> CalcDispatchRegistry
+  for CalculatorDispatch<CalcCtx, Parse, Add, Sub, Mul, Div>
+where
+  the_dispatch::HandlerSlot<Parse>: the_dispatch::HandlerFn<CalcCtx, String, Option<Expr>>,
+  the_dispatch::HandlerSlot<Add>: the_dispatch::HandlerFn<CalcCtx, (i64, i64), i64>,
+  the_dispatch::HandlerSlot<Sub>: the_dispatch::HandlerFn<CalcCtx, (i64, i64), i64>,
+  the_dispatch::HandlerSlot<Mul>: the_dispatch::HandlerFn<CalcCtx, (i64, i64), i64>,
+  the_dispatch::HandlerSlot<Div>: the_dispatch::HandlerFn<CalcCtx, (i64, i64), i64>,
+{
+  #[cfg(feature = "dynamic-registry")]
+  fn registry(&self) -> &the_dispatch::DispatchRegistry<CalcCtx> {
+    CalculatorDispatch::registry(self)
+  }
+
+  #[cfg(feature = "dynamic-registry")]
+  fn registry_mut(&mut self) -> &mut the_dispatch::DispatchRegistry<CalcCtx> {
+    CalculatorDispatch::registry_mut(self)
+  }
+}
 
 fn parse_expr(input: &str) -> Option<Expr> {
   let mut parts = input.split_whitespace();
@@ -104,11 +151,11 @@ fn tuned_add_handler(ctx: &mut CalcCtx, (a, b): (i64, i64)) -> i64 {
 
 fn build_dispatch() -> CalcDispatch {
   CalculatorDispatch::new()
-    .with_parse(parse_handler as fn(&mut CalcCtx, String) -> Option<Expr>)
-    .with_add(add_handler as fn(&mut CalcCtx, (i64, i64)) -> i64)
-    .with_sub(sub_handler as fn(&mut CalcCtx, (i64, i64)) -> i64)
-    .with_mul(mul_handler as fn(&mut CalcCtx, (i64, i64)) -> i64)
-    .with_div(div_handler as fn(&mut CalcCtx, (i64, i64)) -> i64)
+    .with_parse(ParseHandler)
+    .with_add(AddHandler)
+    .with_sub(SubHandler)
+    .with_mul(MulHandler)
+    .with_div(DivHandler)
 }
 
 fn eval_line<Ctx>(dispatch: &impl CalculatorApi<Ctx>, ctx: &mut Ctx, line: &str) -> Option<i64> {
@@ -124,7 +171,7 @@ fn eval_line<Ctx>(dispatch: &impl CalculatorApi<Ctx>, ctx: &mut Ctx, line: &str)
 }
 
 #[cfg(feature = "dynamic-registry")]
-fn install_post_eval_add_one(dispatch: &mut CalcDispatch) {
+fn install_post_eval_add_one(dispatch: &mut impl CalcDispatchRegistry) {
   let handler: DynHandler<CalcCtx> = Arc::new(|ctx, input| {
     match input.downcast::<i64>() {
       Ok(val) => {
@@ -138,10 +185,10 @@ fn install_post_eval_add_one(dispatch: &mut CalcDispatch) {
 }
 
 #[cfg(not(feature = "dynamic-registry"))]
-fn install_post_eval_add_one(_dispatch: &mut CalcDispatch) {}
+fn install_post_eval_add_one(_dispatch: &mut impl CalcDispatchRegistry) {}
 
 #[cfg(feature = "dynamic-registry")]
-fn install_post_eval_times_ten(dispatch: &mut CalcDispatch) {
+fn install_post_eval_times_ten(dispatch: &mut impl CalcDispatchRegistry) {
   let handler: DynHandler<CalcCtx> = Arc::new(|ctx, input| {
     match input.downcast::<i64>() {
       Ok(val) => {
@@ -155,10 +202,14 @@ fn install_post_eval_times_ten(dispatch: &mut CalcDispatch) {
 }
 
 #[cfg(not(feature = "dynamic-registry"))]
-fn install_post_eval_times_ten(_dispatch: &mut CalcDispatch) {}
+fn install_post_eval_times_ten(_dispatch: &mut impl CalcDispatchRegistry) {}
 
 #[cfg(feature = "dynamic-registry")]
-fn apply_post_eval(dispatch: &CalcDispatch, ctx: &mut CalcCtx, result: i64) -> i64 {
+fn apply_post_eval(
+  dispatch: &impl CalcDispatchRegistry,
+  ctx: &mut CalcCtx,
+  result: i64,
+) -> i64 {
   let Some(handler) = dispatch.registry().get("post_eval") else {
     return result;
   };
@@ -171,7 +222,11 @@ fn apply_post_eval(dispatch: &CalcDispatch, ctx: &mut CalcCtx, result: i64) -> i
 }
 
 #[cfg(not(feature = "dynamic-registry"))]
-fn apply_post_eval(_dispatch: &CalcDispatch, _ctx: &mut CalcCtx, result: i64) -> i64 {
+fn apply_post_eval(
+  _dispatch: &impl CalcDispatchRegistry,
+  _ctx: &mut CalcCtx,
+  result: i64,
+) -> i64 {
   result
 }
 
@@ -186,7 +241,7 @@ fn main() {
   let mut tuned = build_dispatch();
 
   install_post_eval_times_ten(&mut tuned);
-  let tuned = tuned.with_add(tuned_add_handler as fn(&mut CalcCtx, (i64, i64)) -> i64);
+  let tuned = tuned.with_add(tuned_add_handler);
 
   let inputs = ["1 + 2", "6 / 0", "3 * 4", "bad input"];
   let mut base_ctx = CalcCtx::default();

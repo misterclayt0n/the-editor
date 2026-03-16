@@ -6,26 +6,70 @@ use the_lib::render::{
 
 use crate::file_picker::FilePickerItem;
 
-pub type NamedActionFn<Ctx> = fn(&mut Ctx);
-pub type PickerQueryHandler<Ctx> = fn(&mut Ctx, &str);
-pub type PickerSubmitHandler<Ctx> = fn(&mut Ctx, &FilePickerItem) -> PickerSubmitResult;
-pub type TextAnnotationsProvider<Ctx> = for<'a> fn(&'a Ctx, &mut TextAnnotations<'a>);
-pub type RenderPlanPostProcessor<Ctx> = fn(&mut Ctx, &mut RenderPlan);
-pub type UiTreePostProcessor<Ctx> = fn(&mut Ctx, &mut UiTree);
+pub type NamedActionFn<Ctx> = dyn Fn(&mut Ctx) + 'static;
+pub type PickerQueryHandler<Ctx> = dyn Fn(&mut Ctx, &str) + 'static;
+pub type PickerSubmitHandler<Ctx> =
+  dyn Fn(&mut Ctx, &FilePickerItem) -> PickerSubmitResult + 'static;
+pub type TextAnnotationsProvider<Ctx> = dyn for<'a> Fn(&'a Ctx, &mut TextAnnotations<'a>) + 'static;
+pub type RenderPlanPostProcessor<Ctx> = dyn Fn(&mut Ctx, &mut RenderPlan) + 'static;
+pub type UiTreePostProcessor<Ctx> = dyn Fn(&mut Ctx, &mut UiTree) + 'static;
 
-pub struct NamedAction<Ctx> {
-  pub name:    &'static str,
-  pub doc:     &'static str,
-  pub handler: NamedActionFn<Ctx>,
-}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct PickerQueryHandlerId(usize);
 
-impl<Ctx> Clone for NamedAction<Ctx> {
-  fn clone(&self) -> Self {
-    *self
+impl PickerQueryHandlerId {
+  pub const fn new(raw: usize) -> Self {
+    Self(raw)
+  }
+
+  pub const fn get(self) -> usize {
+    self.0
   }
 }
 
-impl<Ctx> Copy for NamedAction<Ctx> {}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct PickerSubmitHandlerId(usize);
+
+impl PickerSubmitHandlerId {
+  pub const fn new(raw: usize) -> Self {
+    Self(raw)
+  }
+
+  pub const fn get(self) -> usize {
+    self.0
+  }
+}
+
+pub struct NamedAction<Ctx> {
+  name:    &'static str,
+  doc:     &'static str,
+  handler: Box<NamedActionFn<Ctx>>,
+}
+
+impl<Ctx> NamedAction<Ctx> {
+  pub fn new<F>(name: &'static str, doc: &'static str, handler: F) -> Self
+  where
+    F: Fn(&mut Ctx) + 'static,
+  {
+    Self {
+      name,
+      doc,
+      handler: Box::new(handler),
+    }
+  }
+
+  pub fn name(&self) -> &'static str {
+    self.name
+  }
+
+  pub fn doc(&self) -> &'static str {
+    self.doc
+  }
+
+  pub fn execute(&self, ctx: &mut Ctx) {
+    (self.handler)(ctx);
+  }
+}
 
 impl<Ctx> std::fmt::Debug for NamedAction<Ctx> {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -44,14 +88,6 @@ pub struct NamedActionInfo {
 
 pub struct NamedActionRegistry<Ctx> {
   actions: Vec<NamedAction<Ctx>>,
-}
-
-impl<Ctx> Clone for NamedActionRegistry<Ctx> {
-  fn clone(&self) -> Self {
-    Self {
-      actions: self.actions.iter().copied().collect(),
-    }
-  }
 }
 
 impl<Ctx> Default for NamedActionRegistry<Ctx> {
@@ -75,7 +111,7 @@ impl<Ctx> NamedActionRegistry<Ctx> {
     if let Some(existing) = self
       .actions
       .iter_mut()
-      .find(|existing| existing.name == action.name)
+      .find(|existing| existing.name() == action.name())
     {
       *existing = action;
       return;
@@ -84,15 +120,11 @@ impl<Ctx> NamedActionRegistry<Ctx> {
   }
 
   pub fn get(&self, name: &str) -> Option<&NamedAction<Ctx>> {
-    self.actions.iter().find(|action| action.name == name)
-  }
-
-  pub fn handler(&self, name: &str) -> Option<NamedActionFn<Ctx>> {
-    self.get(name).map(|action| action.handler)
+    self.actions.iter().find(|action| action.name() == name)
   }
 
   pub fn doc(&self, name: &str) -> Option<&'static str> {
-    self.get(name).map(|action| action.doc)
+    self.get(name).map(NamedAction::doc)
   }
 
   pub fn infos(&self) -> Vec<NamedActionInfo> {
@@ -101,8 +133,8 @@ impl<Ctx> NamedActionRegistry<Ctx> {
       .iter()
       .map(|action| {
         NamedActionInfo {
-          name: action.name,
-          doc:  action.doc,
+          name: action.name(),
+          doc:  action.doc(),
         }
       })
       .collect()
@@ -117,17 +149,25 @@ pub enum PickerSubmitResult {
 }
 
 pub struct PickerQueryHandlerEntry<Ctx> {
-  pub name:    &'static str,
-  pub handler: PickerQueryHandler<Ctx>,
+  name:    &'static str,
+  handler: Box<PickerQueryHandler<Ctx>>,
 }
 
-impl<Ctx> Clone for PickerQueryHandlerEntry<Ctx> {
-  fn clone(&self) -> Self {
-    *self
+impl<Ctx> PickerQueryHandlerEntry<Ctx> {
+  pub fn new<F>(name: &'static str, handler: F) -> Self
+  where
+    F: Fn(&mut Ctx, &str) + 'static,
+  {
+    Self {
+      name,
+      handler: Box::new(handler),
+    }
+  }
+
+  pub fn name(&self) -> &'static str {
+    self.name
   }
 }
-
-impl<Ctx> Copy for PickerQueryHandlerEntry<Ctx> {}
 
 impl<Ctx> std::fmt::Debug for PickerQueryHandlerEntry<Ctx> {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -139,14 +179,6 @@ impl<Ctx> std::fmt::Debug for PickerQueryHandlerEntry<Ctx> {
 
 pub struct PickerQueryHandlerRegistry<Ctx> {
   handlers: Vec<PickerQueryHandlerEntry<Ctx>>,
-}
-
-impl<Ctx> Clone for PickerQueryHandlerRegistry<Ctx> {
-  fn clone(&self) -> Self {
-    Self {
-      handlers: self.handlers.iter().copied().collect(),
-    }
-  }
 }
 
 impl<Ctx> Default for PickerQueryHandlerRegistry<Ctx> {
@@ -166,39 +198,56 @@ impl<Ctx> std::fmt::Debug for PickerQueryHandlerRegistry<Ctx> {
 }
 
 impl<Ctx> PickerQueryHandlerRegistry<Ctx> {
-  pub fn register(&mut self, entry: PickerQueryHandlerEntry<Ctx>) {
-    if let Some(existing) = self
+  pub fn register(&mut self, entry: PickerQueryHandlerEntry<Ctx>) -> PickerQueryHandlerId {
+    if let Some(index) = self
       .handlers
-      .iter_mut()
-      .find(|existing| existing.name == entry.name)
+      .iter()
+      .position(|existing| existing.name() == entry.name())
     {
-      *existing = entry;
-      return;
+      self.handlers[index] = entry;
+      return PickerQueryHandlerId::new(index);
     }
     self.handlers.push(entry);
+    PickerQueryHandlerId::new(self.handlers.len() - 1)
   }
 
-  pub fn handler(&self, name: &str) -> Option<PickerQueryHandler<Ctx>> {
+  pub fn id_for_name(&self, name: &str) -> Option<PickerQueryHandlerId> {
     self
       .handlers
       .iter()
-      .find(|entry| entry.name == name)
-      .map(|entry| entry.handler)
+      .position(|entry| entry.name() == name)
+      .map(PickerQueryHandlerId::new)
+  }
+
+  pub fn execute(&self, id: PickerQueryHandlerId, ctx: &mut Ctx, query: &str) -> bool {
+    let Some(entry) = self.handlers.get(id.get()) else {
+      return false;
+    };
+    (entry.handler)(ctx, query);
+    true
   }
 }
 
 pub struct PickerSubmitHandlerEntry<Ctx> {
-  pub name:    &'static str,
-  pub handler: PickerSubmitHandler<Ctx>,
+  name:    &'static str,
+  handler: Box<PickerSubmitHandler<Ctx>>,
 }
 
-impl<Ctx> Clone for PickerSubmitHandlerEntry<Ctx> {
-  fn clone(&self) -> Self {
-    *self
+impl<Ctx> PickerSubmitHandlerEntry<Ctx> {
+  pub fn new<F>(name: &'static str, handler: F) -> Self
+  where
+    F: Fn(&mut Ctx, &FilePickerItem) -> PickerSubmitResult + 'static,
+  {
+    Self {
+      name,
+      handler: Box::new(handler),
+    }
+  }
+
+  pub fn name(&self) -> &'static str {
+    self.name
   }
 }
-
-impl<Ctx> Copy for PickerSubmitHandlerEntry<Ctx> {}
 
 impl<Ctx> std::fmt::Debug for PickerSubmitHandlerEntry<Ctx> {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -210,14 +259,6 @@ impl<Ctx> std::fmt::Debug for PickerSubmitHandlerEntry<Ctx> {
 
 pub struct PickerSubmitHandlerRegistry<Ctx> {
   handlers: Vec<PickerSubmitHandlerEntry<Ctx>>,
-}
-
-impl<Ctx> Clone for PickerSubmitHandlerRegistry<Ctx> {
-  fn clone(&self) -> Self {
-    Self {
-      handlers: self.handlers.iter().copied().collect(),
-    }
-  }
 }
 
 impl<Ctx> Default for PickerSubmitHandlerRegistry<Ctx> {
@@ -237,24 +278,37 @@ impl<Ctx> std::fmt::Debug for PickerSubmitHandlerRegistry<Ctx> {
 }
 
 impl<Ctx> PickerSubmitHandlerRegistry<Ctx> {
-  pub fn register(&mut self, entry: PickerSubmitHandlerEntry<Ctx>) {
-    if let Some(existing) = self
+  pub fn register(&mut self, entry: PickerSubmitHandlerEntry<Ctx>) -> PickerSubmitHandlerId {
+    if let Some(index) = self
       .handlers
-      .iter_mut()
-      .find(|existing| existing.name == entry.name)
+      .iter()
+      .position(|existing| existing.name() == entry.name())
     {
-      *existing = entry;
-      return;
+      self.handlers[index] = entry;
+      return PickerSubmitHandlerId::new(index);
     }
     self.handlers.push(entry);
+    PickerSubmitHandlerId::new(self.handlers.len() - 1)
   }
 
-  pub fn handler(&self, name: &str) -> Option<PickerSubmitHandler<Ctx>> {
+  pub fn id_for_name(&self, name: &str) -> Option<PickerSubmitHandlerId> {
     self
       .handlers
       .iter()
-      .find(|entry| entry.name == name)
-      .map(|entry| entry.handler)
+      .position(|entry| entry.name() == name)
+      .map(PickerSubmitHandlerId::new)
+  }
+
+  pub fn execute(
+    &self,
+    id: PickerSubmitHandlerId,
+    ctx: &mut Ctx,
+    item: &FilePickerItem,
+  ) -> PickerSubmitResult {
+    let Some(entry) = self.handlers.get(id.get()) else {
+      return PickerSubmitResult::Unhandled;
+    };
+    (entry.handler)(ctx, item)
   }
 }
 
@@ -262,22 +316,9 @@ pub struct EditorExtensions<Ctx> {
   pub named_actions:           NamedActionRegistry<Ctx>,
   pub picker_query_handlers:   PickerQueryHandlerRegistry<Ctx>,
   pub picker_submit_handlers:  PickerSubmitHandlerRegistry<Ctx>,
-  text_annotations_providers:  Vec<TextAnnotationsProvider<Ctx>>,
-  render_plan_post_processors: Vec<RenderPlanPostProcessor<Ctx>>,
-  ui_tree_post_processors:     Vec<UiTreePostProcessor<Ctx>>,
-}
-
-impl<Ctx> Clone for EditorExtensions<Ctx> {
-  fn clone(&self) -> Self {
-    Self {
-      named_actions:               self.named_actions.clone(),
-      picker_query_handlers:       self.picker_query_handlers.clone(),
-      picker_submit_handlers:      self.picker_submit_handlers.clone(),
-      text_annotations_providers:  self.text_annotations_providers.clone(),
-      render_plan_post_processors: self.render_plan_post_processors.clone(),
-      ui_tree_post_processors:     self.ui_tree_post_processors.clone(),
-    }
-  }
+  text_annotations_providers:  Vec<Box<TextAnnotationsProvider<Ctx>>>,
+  render_plan_post_processors: Vec<Box<RenderPlanPostProcessor<Ctx>>>,
+  ui_tree_post_processors:     Vec<Box<UiTreePostProcessor<Ctx>>>,
 }
 
 impl<Ctx> Default for EditorExtensions<Ctx> {
@@ -320,52 +361,68 @@ impl<Ctx> EditorExtensions<Ctx> {
     self.named_actions.register(action);
   }
 
-  pub fn register_picker_query_handler(&mut self, entry: PickerQueryHandlerEntry<Ctx>) {
-    self.picker_query_handlers.register(entry);
+  pub fn register_picker_query_handler(
+    &mut self,
+    entry: PickerQueryHandlerEntry<Ctx>,
+  ) -> PickerQueryHandlerId {
+    self.picker_query_handlers.register(entry)
   }
 
-  pub fn register_picker_submit_handler(&mut self, entry: PickerSubmitHandlerEntry<Ctx>) {
-    self.picker_submit_handlers.register(entry);
+  pub fn register_picker_submit_handler(
+    &mut self,
+    entry: PickerSubmitHandlerEntry<Ctx>,
+  ) -> PickerSubmitHandlerId {
+    self.picker_submit_handlers.register(entry)
   }
 
-  pub fn register_text_annotations_provider(&mut self, provider: TextAnnotationsProvider<Ctx>) {
-    self.text_annotations_providers.push(provider);
+  pub fn register_text_annotations_provider<F>(&mut self, provider: F)
+  where
+    F: for<'a> Fn(&'a Ctx, &mut TextAnnotations<'a>) + 'static,
+  {
+    self.text_annotations_providers.push(Box::new(provider));
   }
 
-  pub fn register_render_plan_post_processor(&mut self, processor: RenderPlanPostProcessor<Ctx>) {
-    self.render_plan_post_processors.push(processor);
+  pub fn register_render_plan_post_processor<F>(&mut self, processor: F)
+  where
+    F: Fn(&mut Ctx, &mut RenderPlan) + 'static,
+  {
+    self.render_plan_post_processors.push(Box::new(processor));
   }
 
-  pub fn register_ui_tree_post_processor(&mut self, processor: UiTreePostProcessor<Ctx>) {
-    self.ui_tree_post_processors.push(processor);
+  pub fn register_ui_tree_post_processor<F>(&mut self, processor: F)
+  where
+    F: Fn(&mut Ctx, &mut UiTree) + 'static,
+  {
+    self.ui_tree_post_processors.push(Box::new(processor));
+  }
+
+  pub fn picker_query_handler_id(&self, name: &str) -> Option<PickerQueryHandlerId> {
+    self.picker_query_handlers.id_for_name(name)
+  }
+
+  pub fn picker_submit_handler_id(&self, name: &str) -> Option<PickerSubmitHandlerId> {
+    self.picker_submit_handlers.id_for_name(name)
   }
 
   pub fn execute_named_action(&self, ctx: &mut Ctx, name: &str) -> bool {
-    let Some(handler) = self.named_actions.handler(name) else {
+    let Some(action) = self.named_actions.get(name) else {
       return false;
     };
-    handler(ctx);
+    action.execute(ctx);
     true
   }
 
-  pub fn handle_picker_query(&self, ctx: &mut Ctx, name: &str, query: &str) -> bool {
-    let Some(handler) = self.picker_query_handlers.handler(name) else {
-      return false;
-    };
-    handler(ctx, query);
-    true
+  pub fn handle_picker_query(&self, ctx: &mut Ctx, id: PickerQueryHandlerId, query: &str) -> bool {
+    self.picker_query_handlers.execute(id, ctx, query)
   }
 
   pub fn submit_picker_item(
     &self,
     ctx: &mut Ctx,
-    name: &str,
+    id: PickerSubmitHandlerId,
     item: &FilePickerItem,
   ) -> PickerSubmitResult {
-    let Some(handler) = self.picker_submit_handlers.handler(name) else {
-      return PickerSubmitResult::Unhandled;
-    };
-    handler(ctx, item)
+    self.picker_submit_handlers.execute(id, ctx, item)
   }
 
   pub fn extend_text_annotations<'a>(&self, ctx: &'a Ctx, annotations: &mut TextAnnotations<'a>) {

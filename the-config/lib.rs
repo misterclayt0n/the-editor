@@ -1,12 +1,13 @@
 use the_default::{
+  DefaultApi,
   DefaultContext,
-  DefaultDispatchStatic,
-  EditorAssembly,
+  EditorPreset,
   Key,
   KeyEvent,
   Keymaps,
   build_dispatch as default_dispatch,
   default_pre_on_keypress,
+  default_editor_preset,
 };
 use the_default::{
   Command,
@@ -16,7 +17,7 @@ use the_default::{
 /// Build the dispatch pipeline for the editor.
 ///
 /// Replace this with your own bindings/logic as needed.
-pub fn build_dispatch<Ctx>() -> DefaultDispatchStatic<Ctx>
+pub fn build_dispatch<Ctx>() -> impl DefaultApi<Ctx>
 where
   Ctx: DefaultContext,
 {
@@ -45,9 +46,11 @@ pub fn build_keymaps() -> Keymaps {
   Keymaps::default()
 }
 
-pub fn build_editor_assembly<Ctx>() -> EditorAssembly<Ctx>
+pub fn build_editor_preset<Ctx>() -> EditorPreset<Ctx, impl DefaultApi<Ctx>>
 where
   Ctx: DefaultContext,
 {
-  EditorAssembly::new(build_dispatch::<Ctx>(), build_keymaps())
+  default_editor_preset::<Ctx>()
+    .with_dispatch(build_dispatch::<Ctx>())
+    .with_keymaps(build_keymaps())
 }

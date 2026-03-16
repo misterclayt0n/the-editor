@@ -73,6 +73,7 @@ use the_default::{
   Direction as CommandDirection,
   DispatchRef,
   EditorContextMenuOptions,
+  EditorExtensions,
   FilePickerChangedFileItem,
   FilePickerChangedKind,
   FilePickerDiagnosticItem,
@@ -99,6 +100,7 @@ use the_default::{
   Mode,
   Motion,
   OverlayRect as DefaultOverlayRect,
+  PickerSubmitResult,
   SIGNATURE_HELP_ACTIVE_PARAM_END_MARKER,
   SIGNATURE_HELP_ACTIVE_PARAM_START_MARKER,
   SearchPromptKind,
@@ -212,6 +214,7 @@ use the_lib::{
     UiPanel,
     UiState,
     UiText,
+    UiTree,
     add_selection_match_highlights,
     apply_diagnostic_gutter_markers,
     apply_diff_gutter_markers,
@@ -4613,6 +4616,7 @@ pub struct App {
   dispatch:                        DefaultDispatchStatic<App>,
   keymaps:                         Keymaps,
   command_registry:                CommandRegistry<App>,
+  extensions:                      EditorExtensions<App>,
   states:                          HashMap<LibEditorId, EditorState>,
   vcs_provider:                    DiffProviderRegistry,
   vcs_diff_handles:                HashMap<LibEditorId, DiffHandle>,
@@ -5746,7 +5750,7 @@ impl App {
 
   pub fn new() -> Self {
     let assembly = config_build_editor_assembly::<App>().build();
-    let (dispatch, keymaps, command_registry, startup_hooks) = assembly.into_parts();
+    let (dispatch, keymaps, command_registry, extensions, startup_hooks) = assembly.into_parts();
     let workspace_root = env::current_dir()
       .ok()
       .map(|path| the_loader::find_workspace_in(path).0)
@@ -5775,6 +5779,7 @@ impl App {
       dispatch,
       keymaps,
       command_registry,
+      extensions,
       states: HashMap::new(),
       vcs_provider: DiffProviderRegistry::default(),
       vcs_diff_handles: HashMap::new(),
@@ -7764,6 +7769,25 @@ impl App {
           self.request_render();
           true
         },
+        CommandPaletteAction::NamedAction(name) => {
+          self.set_mode(Mode::Normal);
+          self.command_prompt_mut().clear();
+          let palette = self.command_palette_mut();
+          palette.is_open = false;
+          palette.source = CommandPaletteSource::CommandLine;
+          palette.query.clear();
+          palette.items.clear();
+          palette.selected = None;
+          palette.prefiltered = false;
+          palette.max_results = usize::MAX;
+          palette.scroll_offset = 0;
+          palette.prompt_text = None;
+          if !self.execute_named_action(&name) {
+            self.push_error("command_palette", format!("named action not found: {name}"));
+          }
+          self.request_render();
+          true
+        },
         CommandPaletteAction::TypableCommand { name, args } => {
           let registry = self.command_registry_ref() as *const CommandRegistry<App>;
           let result = unsafe { (&*registry).execute(self, &name, &args, CommandEvent::Validate) };
@@ -8023,7 +8047,7 @@ impl App {
       set_file_picker_query_text(picker, query)
     };
     if should_notify_dynamic_query {
-      <Self as DefaultContext>::file_picker_query_changed(self, query);
+      the_default::notify_file_picker_query_changed(self, query);
     }
     self.request_render();
     true
@@ -10190,6 +10214,9 @@ impl App {
         preview_path: Some(path),
         preview_line: Some(line),
         preview_col: None,
+        row_data: None,
+        preview: None,
+        payload: None,
       });
     }
 
@@ -14186,6 +14213,53 @@ impl DefaultContext for App {
     }
   }
 
+  fn named_action_names(&self) -> Vec<&'static str> {
+    self
+      .extensions
+      .named_actions
+      .infos()
+      .into_iter()
+      .map(|info| info.name)
+      .collect()
+  }
+
+  fn named_action_doc(&self, name: &str) -> Option<&'static str> {
+    self.extensions.named_actions.doc(name)
+  }
+
+  fn execute_named_action(&mut self, name: &str) -> bool {
+    let extensions = self.extensions.clone();
+    extensions.execute_named_action(self, name)
+  }
+
+  fn handle_picker_query_action(&mut self, handler: &str, query: &str) -> bool {
+    let extensions = self.extensions.clone();
+    extensions.handle_picker_query(self, handler, query)
+  }
+
+  fn submit_picker_item_action(
+    &mut self,
+    handler: &str,
+    item: &FilePickerItem,
+  ) -> PickerSubmitResult {
+    let extensions = self.extensions.clone();
+    extensions.submit_picker_item(self, handler, item)
+  }
+
+  fn extend_text_annotations<'a>(&'a self, annotations: &mut TextAnnotations<'a>) {
+    self.extensions.extend_text_annotations(self, annotations);
+  }
+
+  fn postprocess_render_plan(&mut self, plan: &mut the_lib::render::RenderPlan) {
+    let extensions = self.extensions.clone();
+    extensions.postprocess_render_plan(self, plan);
+  }
+
+  fn postprocess_ui_tree(&mut self, tree: &mut UiTree) {
+    let extensions = self.extensions.clone();
+    extensions.postprocess_ui_tree(self, tree);
+  }
+
   fn file_picker_closed(&mut self) {
     self.global_search.deactivate();
   }
@@ -14501,6 +14575,7 @@ impl DefaultContext for App {
       let jump_label_style = self.ui_theme.find_highlight("ui.virtual.jump-label");
       let _ = annotations.add_overlay(&state.word_jump_overlay_annotations, jump_label_style);
     }
+    self.extend_text_annotations(&mut annotations);
     annotations
   }
 

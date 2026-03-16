@@ -53,6 +53,7 @@ use the_default::{
   DefaultContext,
   DefaultDispatchStatic,
   DispatchRef,
+  EditorExtensions,
   FilePickerChangedFileItem,
   FilePickerChangedKind,
   FilePickerDiagnosticItem,
@@ -67,6 +68,7 @@ use the_default::{
   MessagePresentation,
   Mode,
   Motion,
+  PickerSubmitResult,
   PointerButton,
   PointerEvent,
   PointerEventOutcome,
@@ -108,6 +110,7 @@ use the_lib::{
     RenderPlan,
     RenderStyles,
     UiState,
+    UiTree,
     char_at_visual_pos,
     graphics::Rect,
     gutter_width_for_document,
@@ -581,6 +584,7 @@ pub struct Ctx {
   pub keymaps:                       Keymaps,
   pub command_prompt:                CommandPromptState,
   pub command_registry:              CommandRegistry<Ctx>,
+  pub extensions:                    EditorExtensions<Ctx>,
   pub command_palette:               CommandPaletteState,
   pub command_palette_style:         CommandPaletteStyle,
   pub completion_menu:               the_default::CompletionMenuState,
@@ -996,6 +1000,7 @@ impl Ctx {
       keymaps: Keymaps::default(),
       command_prompt: CommandPromptState::new(),
       command_registry: CommandRegistry::new(),
+      extensions: EditorExtensions::default(),
       command_palette: CommandPaletteState::default(),
       command_palette_style: CommandPaletteStyle::helix_bottom(),
       completion_menu: the_default::CompletionMenuState::default(),
@@ -2337,6 +2342,9 @@ impl Ctx {
         preview_path: Some(path),
         preview_line: Some(line),
         preview_col: None,
+        row_data: None,
+        preview: None,
+        payload: None,
       });
     }
 
@@ -5910,6 +5918,53 @@ impl the_default::DefaultContext for Ctx {
     }
   }
 
+  fn named_action_names(&self) -> Vec<&'static str> {
+    self
+      .extensions
+      .named_actions
+      .infos()
+      .into_iter()
+      .map(|info| info.name)
+      .collect()
+  }
+
+  fn named_action_doc(&self, name: &str) -> Option<&'static str> {
+    self.extensions.named_actions.doc(name)
+  }
+
+  fn execute_named_action(&mut self, name: &str) -> bool {
+    let extensions = self.extensions.clone();
+    extensions.execute_named_action(self, name)
+  }
+
+  fn handle_picker_query_action(&mut self, handler: &str, query: &str) -> bool {
+    let extensions = self.extensions.clone();
+    extensions.handle_picker_query(self, handler, query)
+  }
+
+  fn submit_picker_item_action(
+    &mut self,
+    handler: &str,
+    item: &FilePickerItem,
+  ) -> PickerSubmitResult {
+    let extensions = self.extensions.clone();
+    extensions.submit_picker_item(self, handler, item)
+  }
+
+  fn extend_text_annotations<'a>(&'a self, annotations: &mut TextAnnotations<'a>) {
+    self.extensions.extend_text_annotations(self, annotations);
+  }
+
+  fn postprocess_render_plan(&mut self, plan: &mut RenderPlan) {
+    let extensions = self.extensions.clone();
+    extensions.postprocess_render_plan(self, plan);
+  }
+
+  fn postprocess_ui_tree(&mut self, tree: &mut UiTree) {
+    let extensions = self.extensions.clone();
+    extensions.postprocess_ui_tree(self, tree);
+  }
+
   fn file_picker_closed(&mut self) {
     self.global_search.deactivate();
   }
@@ -6227,6 +6282,7 @@ impl the_default::DefaultContext for Ctx {
       let jump_label_style = self.ui_theme.find_highlight("ui.virtual.jump-label");
       let _ = annotations.add_overlay(&self.word_jump_overlay_annotations, jump_label_style);
     }
+    self.extend_text_annotations(&mut annotations);
     annotations
   }
 

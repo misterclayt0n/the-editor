@@ -30,6 +30,7 @@ use crate::{
 #[derive(Debug, Clone)]
 pub enum CommandPaletteAction {
   StaticCommand(Command),
+  NamedAction(String),
   TypableCommand { name: String, args: String },
 }
 

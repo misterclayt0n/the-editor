@@ -833,6 +833,28 @@ pub trait DefaultContext: Sized + 'static {
   }
   fn global_search(&mut self) {}
   fn file_picker_query_changed(&mut self, _query: &str) {}
+  fn named_action_names(&self) -> Vec<&'static str> {
+    Vec::new()
+  }
+  fn named_action_doc(&self, _name: &str) -> Option<&'static str> {
+    None
+  }
+  fn execute_named_action(&mut self, _name: &str) -> bool {
+    false
+  }
+  fn handle_picker_query_action(&mut self, _handler: &str, _query: &str) -> bool {
+    false
+  }
+  fn submit_picker_item_action(
+    &mut self,
+    _handler: &str,
+    _item: &crate::file_picker::FilePickerItem,
+  ) -> crate::extensions::PickerSubmitResult {
+    crate::extensions::PickerSubmitResult::Unhandled
+  }
+  fn extend_text_annotations<'a>(&'a self, _annotations: &mut TextAnnotations<'a>) {}
+  fn postprocess_render_plan(&mut self, _plan: &mut RenderPlan) {}
+  fn postprocess_ui_tree(&mut self, _tree: &mut UiTree) {}
   fn file_picker_closed(&mut self) {}
   fn on_file_saved(&mut self, _path: &Path, _text: &str) {}
   fn on_before_quit(&mut self) {}
@@ -1767,6 +1789,7 @@ fn post_render<Ctx: DefaultContext>(ctx: &mut Ctx, plan: RenderPlan) -> RenderPl
   plan.cursor_blink_interval_ms = ctx.cursor_blink_interval_ms();
   plan.cursor_blink_delay_ms = ctx.cursor_blink_delay_ms();
   plan.cursor_blink_generation = ctx.cursor_blink_generation();
+  ctx.postprocess_render_plan(&mut plan);
   plan
 }
 
@@ -1872,7 +1895,9 @@ fn on_ui<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) -> UiTree {
   tree
 }
 
-fn post_ui<Ctx: DefaultContext>(_ctx: &mut Ctx, tree: UiTree) -> UiTree {
+fn post_ui<Ctx: DefaultContext>(ctx: &mut Ctx, tree: UiTree) -> UiTree {
+  let mut tree = tree;
+  ctx.postprocess_ui_tree(&mut tree);
   tree
 }
 
@@ -2217,6 +2242,13 @@ fn submit_command_palette_selected<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool {
       CommandPaletteAction::StaticCommand(command) => {
         close_command_palette(ctx);
         ctx.dispatch().post_on_keypress(ctx, command);
+        return true;
+      },
+      CommandPaletteAction::NamedAction(name) => {
+        close_command_palette(ctx);
+        if !ctx.execute_named_action(&name) {
+          ctx.push_error("command_palette", format!("named action not found: {name}"));
+        }
         return true;
       },
       CommandPaletteAction::TypableCommand { name, args } => {

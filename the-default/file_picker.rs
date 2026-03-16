@@ -1,4 +1,5 @@
 use std::{
+  any::Any,
   borrow::Cow,
   cell::RefCell,
   cmp::Reverse,
@@ -126,6 +127,9 @@ pub struct FilePickerItem {
   pub preview_path: Option<PathBuf>,
   pub preview_line: Option<usize>,
   pub preview_col:  Option<(usize, usize)>,
+  pub row_data:     Option<FilePickerRowData>,
+  pub preview:      Option<FilePickerPreview>,
+  pub payload:      Option<FilePickerItemPayload>,
 }
 
 #[derive(Debug, Clone)]
@@ -148,11 +152,19 @@ pub enum FilePickerItemAction {
     line:        usize,
     column:      Option<usize>,
   },
+  Custom {
+    handler:    &'static str,
+    selectable: bool,
+  },
 }
 
 impl FilePickerItemAction {
   fn is_selectable(&self) -> bool {
     !matches!(self, Self::GroupHeader { .. })
+      && !matches!(self, Self::Custom {
+        selectable: false,
+        ..
+      })
   }
 
   fn stable_id(&self) -> u64 {
@@ -199,9 +211,50 @@ impl FilePickerItemAction {
         line.hash(&mut hasher);
         column.hash(&mut hasher);
       },
+      Self::Custom {
+        handler,
+        selectable,
+      } => {
+        5_u8.hash(&mut hasher);
+        handler.hash(&mut hasher);
+        selectable.hash(&mut hasher);
+      },
     }
     let id = hasher.finish();
     if id == 0 { 1 } else { id }
+  }
+}
+
+#[derive(Clone)]
+pub struct FilePickerItemPayload {
+  type_name: &'static str,
+  value:     Arc<dyn Any + Send + Sync>,
+}
+
+impl FilePickerItemPayload {
+  pub fn new<T>(value: T) -> Self
+  where
+    T: Any + Send + Sync,
+  {
+    Self {
+      type_name: std::any::type_name::<T>(),
+      value:     Arc::new(value),
+    }
+  }
+
+  pub fn get<T>(&self) -> Option<&T>
+  where
+    T: Any + Send + Sync,
+  {
+    self.value.as_ref().downcast_ref::<T>()
+  }
+}
+
+impl std::fmt::Debug for FilePickerItemPayload {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.debug_struct("FilePickerItemPayload")
+      .field("type_name", &self.type_name)
+      .finish()
   }
 }
 
@@ -223,6 +276,34 @@ impl FilePickerItem {
     self.preview_col.hash(&mut hasher);
     let id = hasher.finish();
     if id == 0 { 1 } else { id }
+  }
+
+  pub fn with_row_data(mut self, row_data: FilePickerRowData) -> Self {
+    self.row_data = Some(row_data);
+    self
+  }
+
+  pub fn with_preview(mut self, preview: FilePickerPreview) -> Self {
+    self.preview = Some(preview);
+    self
+  }
+
+  pub fn with_payload<T>(mut self, payload: T) -> Self
+  where
+    T: Any + Send + Sync,
+  {
+    self.payload = Some(FilePickerItemPayload::new(payload));
+    self
+  }
+
+  pub fn payload<T>(&self) -> Option<&T>
+  where
+    T: Any + Send + Sync,
+  {
+    self
+      .payload
+      .as_ref()
+      .and_then(FilePickerItemPayload::get::<T>)
   }
 }
 
@@ -498,39 +579,40 @@ impl PreviewCache {
 }
 
 pub struct FilePickerState {
-  pub active:             bool,
-  pub root:               PathBuf,
-  pub title:              String,
-  pub config:             FilePickerConfig,
-  pub query:              String,
-  pub cursor:             usize,
-  pub selected:           Option<usize>,
-  pub hovered:            Option<usize>,
-  pub list_offset:        usize,
-  pub list_visible:       usize,
-  pub preview_scroll:     usize,
-  pub show_preview:       bool,
-  pub open_split:         Option<SplitAxis>,
-  pub preview_path:       Option<PathBuf>,
-  pub preview_focus_line: Option<usize>,
-  pub preview:            FilePickerPreview,
-  pub error:              Option<String>,
-  pub scanning:           bool,
-  pub matcher_running:    bool,
-  pub query_mode:         FilePickerQueryMode,
-  pub dynamic_running:    bool,
-  preview_cache:          PreviewCache,
-  preview_req_tx:         Option<Sender<PreviewRequest>>,
-  preview_res_rx:         Option<Receiver<PreviewResult>>,
-  preview_request_id:     u64,
-  preview_pending_id:     Option<u64>,
-  scan_generation:        u64,
-  scan_rx:                Option<Receiver<(u64, ScanMessage)>>,
-  scan_cancel:            Option<Arc<AtomicBool>>,
-  preview_latest_request: Arc<AtomicU64>,
-  wake_tx:                Option<Sender<()>>,
-  syntax_loader:          Option<Arc<Loader>>,
-  matcher:                Nucleo<Arc<FilePickerItem>>,
+  pub active:               bool,
+  pub root:                 PathBuf,
+  pub title:                String,
+  pub config:               FilePickerConfig,
+  pub query:                String,
+  pub cursor:               usize,
+  pub selected:             Option<usize>,
+  pub hovered:              Option<usize>,
+  pub list_offset:          usize,
+  pub list_visible:         usize,
+  pub preview_scroll:       usize,
+  pub show_preview:         bool,
+  pub open_split:           Option<SplitAxis>,
+  pub preview_path:         Option<PathBuf>,
+  pub preview_focus_line:   Option<usize>,
+  pub preview:              FilePickerPreview,
+  pub error:                Option<String>,
+  pub scanning:             bool,
+  pub matcher_running:      bool,
+  pub query_mode:           FilePickerQueryMode,
+  pub custom_query_handler: Option<&'static str>,
+  pub dynamic_running:      bool,
+  preview_cache:            PreviewCache,
+  preview_req_tx:           Option<Sender<PreviewRequest>>,
+  preview_res_rx:           Option<Receiver<PreviewResult>>,
+  preview_request_id:       u64,
+  preview_pending_id:       Option<u64>,
+  scan_generation:          u64,
+  scan_rx:                  Option<Receiver<(u64, ScanMessage)>>,
+  scan_cancel:              Option<Arc<AtomicBool>>,
+  preview_latest_request:   Arc<AtomicU64>,
+  wake_tx:                  Option<Sender<()>>,
+  syntax_loader:            Option<Arc<Loader>>,
+  matcher:                  Nucleo<Arc<FilePickerItem>>,
 }
 
 enum ScanMessage {
@@ -562,6 +644,7 @@ impl Default for FilePickerState {
       scanning: false,
       matcher_running: false,
       query_mode: FilePickerQueryMode::Static,
+      custom_query_handler: None,
       dynamic_running: false,
       preview_cache: PreviewCache::with_capacity(PREVIEW_CACHE_CAPACITY),
       preview_req_tx: None,
@@ -814,6 +897,9 @@ pub fn open_buffer_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
         preview_path: snapshot.file_path,
         preview_line,
         preview_col: None,
+        row_data: None,
+        preview: None,
+        payload: None,
       }
     })
     .collect();
@@ -879,6 +965,9 @@ pub fn open_jumplist_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
         preview_path: snapshot.file_path,
         preview_line: Some(preview_line),
         preview_col: None,
+        row_data: None,
+        preview: None,
+        payload: None,
       })
     })
     .collect::<Vec<_>>();
@@ -963,6 +1052,9 @@ pub fn open_diagnostics_picker<Ctx: DefaultContext>(ctx: &mut Ctx, workspace: bo
         preview_path: Some(diagnostic.path),
         preview_line: Some(diagnostic.line),
         preview_col: None,
+        row_data: None,
+        preview: None,
+        payload: None,
       }
     })
     .collect();
@@ -1036,6 +1128,9 @@ pub fn open_changed_file_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
         preview_path: Some(entry.path),
         preview_line: None,
         preview_col: None,
+        row_data: None,
+        preview: None,
+        payload: None,
       }
     })
     .collect();
@@ -1086,6 +1181,17 @@ pub fn open_custom_picker<Ctx: DefaultContext>(
   open_static_picker(ctx, title, root, open_split, items, initial_cursor);
 }
 
+pub fn open_custom_picker_with_query_handler<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  title: &str,
+  root: PathBuf,
+  open_split: Option<SplitAxis>,
+  initial_query: String,
+  query_handler: &'static str,
+) {
+  open_dynamic_picker_with_handler(ctx, title, root, open_split, initial_query, query_handler);
+}
+
 pub fn open_dynamic_picker<Ctx: DefaultContext>(
   ctx: &mut Ctx,
   title: &str,
@@ -1093,9 +1199,25 @@ pub fn open_dynamic_picker<Ctx: DefaultContext>(
   open_split: Option<SplitAxis>,
   initial_query: String,
 ) {
+  open_dynamic_picker_with_handler(ctx, title, root, open_split, initial_query, "");
+}
+
+pub fn open_dynamic_picker_with_handler<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  title: &str,
+  root: PathBuf,
+  open_split: Option<SplitAxis>,
+  initial_query: String,
+  query_handler: &'static str,
+) {
   let mut state = base_picker_state(ctx, title, open_split);
   state.root = root;
   state.query_mode = FilePickerQueryMode::Dynamic;
+  state.custom_query_handler = if query_handler.is_empty() {
+    None
+  } else {
+    Some(query_handler)
+  };
   state.query = initial_query;
   state.cursor = state.query.len();
   prepare_dynamic_query_change(&mut state);
@@ -1143,6 +1265,16 @@ fn prepare_dynamic_query_change(state: &mut FilePickerState) {
   });
 }
 
+pub fn notify_file_picker_query_changed<Ctx: DefaultContext>(ctx: &mut Ctx, query: &str) {
+  let handler = ctx.file_picker().custom_query_handler;
+  if let Some(handler) = handler
+    && ctx.handle_picker_query_action(handler, query)
+  {
+    return;
+  }
+  ctx.file_picker_query_changed(query);
+}
+
 fn finalize_query_edit<Ctx: DefaultContext>(ctx: &mut Ctx, old_query: &str) {
   let mut changed_query = None;
   {
@@ -1156,7 +1288,7 @@ fn finalize_query_edit<Ctx: DefaultContext>(ctx: &mut Ctx, old_query: &str) {
     }
   }
   if let Some(query) = changed_query {
-    ctx.file_picker_query_changed(&query);
+    notify_file_picker_query_changed(ctx, &query);
   }
 }
 
@@ -1243,6 +1375,7 @@ pub fn close_file_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
   picker.scanning = false;
   picker.matcher_running = false;
   picker.query_mode = FilePickerQueryMode::Static;
+  picker.custom_query_handler = None;
   picker.dynamic_running = false;
   picker.preview_req_tx = None;
   picker.preview_res_rx = None;
@@ -1631,6 +1764,23 @@ pub fn submit_file_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
         ctx.editor().view_mut().scroll = next;
       }
       close_file_picker(ctx);
+    },
+    FilePickerItemAction::Custom { handler, .. } => {
+      match ctx.submit_picker_item_action(handler, &item) {
+        crate::extensions::PickerSubmitResult::Unhandled => {
+          ctx.push_warning(
+            "file_picker",
+            format!("picker action handler not found: {handler}"),
+          );
+          ctx.request_render();
+        },
+        crate::extensions::PickerSubmitResult::KeepOpen => {
+          ctx.request_render();
+        },
+        crate::extensions::PickerSubmitResult::Close => {
+          close_file_picker(ctx);
+        },
+      }
     },
   }
 }
@@ -2118,6 +2268,10 @@ fn parse_live_grep_row(item: &FilePickerItem) -> FilePickerRowData {
 }
 
 pub fn file_picker_row_data(title: &str, item: &FilePickerItem) -> FilePickerRowData {
+  if let Some(row_data) = &item.row_data {
+    return row_data.clone();
+  }
+
   match file_picker_kind_from_title(title) {
     FilePickerKind::Diagnostics => parse_diagnostics_row(item.display.as_str(), item.icon.as_str()),
     FilePickerKind::Symbols => parse_symbols_row(item.display.as_str()),
@@ -2179,6 +2333,7 @@ fn start_scan(state: &mut FilePickerState, root: PathBuf) {
   state.scanning = true;
   state.matcher_running = false;
   state.query_mode = FilePickerQueryMode::Static;
+  state.custom_query_handler = None;
   state.dynamic_running = false;
   state.preview = FilePickerPreview::Message("Scanning files…".to_string());
 
@@ -2296,6 +2451,9 @@ fn entry_to_picker_item(entry: DirEntry, root: &Path) -> Option<FilePickerItem> 
     preview_path: None,
     preview_line: None,
     preview_col: None,
+    row_data: None,
+    preview: None,
+    payload: None,
   })
 }
 
@@ -2950,6 +3108,15 @@ fn refresh_preview(state: &mut FilePickerState) {
     }
     return;
   };
+
+  if let Some(preview) = item.preview.clone() {
+    state.preview_path = None;
+    state.preview = preview;
+    set_preview_focus_line(state, item.preview_line);
+    state.preview_pending_id = None;
+    state.preview_latest_request.store(0, Ordering::Relaxed);
+    return;
+  }
 
   let preview_target = item.preview_path.as_ref().unwrap_or(&item.absolute);
   let preview_focus_line = item.preview_line;
@@ -3883,6 +4050,9 @@ mod tests {
       preview_path: None,
       preview_line: None,
       preview_col:  None,
+      row_data:     None,
+      preview:      None,
+      payload:      None,
     }
   }
 
@@ -3898,7 +4068,56 @@ mod tests {
       preview_path: None,
       preview_line: None,
       preview_col:  None,
+      row_data:     None,
+      preview:      None,
+      payload:      None,
     }
+  }
+
+  #[test]
+  fn file_picker_row_data_prefers_custom_row_data() {
+    let item = sample_item("demo.rs").with_row_data(FilePickerRowData {
+      kind:       FilePickerRowKind::Generic,
+      severity:   None,
+      primary:    "custom".to_string(),
+      secondary:  "secondary".to_string(),
+      tertiary:   String::new(),
+      quaternary: String::new(),
+      line:       0,
+      column:     0,
+      depth:      0,
+    });
+
+    let row = file_picker_row_data("Generic", &item);
+
+    assert_eq!(row.primary, "custom");
+    assert_eq!(row.secondary, "secondary");
+  }
+
+  #[test]
+  fn refresh_preview_prefers_item_preview_over_path_preview() {
+    let mut state = FilePickerState::default();
+    let injector = state.matcher.injector();
+    inject_item(
+      &injector,
+      sample_item("virtual").with_preview(FilePickerPreview::Message("custom preview".to_string())),
+    );
+    drop(injector);
+
+    state
+      .matcher
+      .pattern
+      .reparse(0, "", CaseMatching::Smart, Normalization::Smart, false);
+    let _ = refresh_matcher_state(&mut state);
+    state.selected = Some(0);
+
+    refresh_preview(&mut state);
+
+    assert!(matches!(
+      &state.preview,
+      FilePickerPreview::Message(message) if message == "custom preview"
+    ));
+    assert_eq!(state.preview_path, None);
   }
 
   #[test]
@@ -4067,6 +4286,9 @@ mod tests {
       preview_path: Some(path.clone()),
       preview_line: Some(2),
       preview_col:  Some((0, 4)),
+      row_data:     None,
+      preview:      None,
+      payload:      None,
     });
     inject_item(&injector, FilePickerItem {
       absolute:     path.clone(),
@@ -4083,6 +4305,9 @@ mod tests {
       preview_path: Some(path.clone()),
       preview_line: Some(40),
       preview_col:  Some((0, 4)),
+      row_data:     None,
+      preview:      None,
+      payload:      None,
     });
     drop(injector);
 
@@ -4166,6 +4391,9 @@ mod tests {
       preview_path: Some(path.clone()),
       preview_line: None,
       preview_col:  None,
+      row_data:     None,
+      preview:      None,
+      payload:      None,
     });
     drop(injector);
 

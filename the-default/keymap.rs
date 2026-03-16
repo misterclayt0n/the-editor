@@ -1,5 +1,8 @@
 use std::{
-  collections::HashMap,
+  collections::{
+    HashMap,
+    HashSet,
+  },
   fmt,
   str::FromStr,
 };
@@ -581,6 +584,62 @@ impl Keymaps {
       },
     }
   }
+
+  pub fn merge(&mut self, mut other: Self) {
+    for (mode, trie) in other.map.drain() {
+      match self.map.get_mut(&mode) {
+        Some(existing) => {
+          match (existing, trie) {
+            (KeyTrie::Node(node), KeyTrie::Node(other_node)) => node.merge(other_node),
+            (existing, other) => *existing = other,
+          }
+        },
+        None => {
+          self.map.insert(mode, trie);
+        },
+      }
+    }
+  }
+
+  pub fn bind<L>(
+    &mut self,
+    mode: Mode,
+    binding: L,
+    action: KeyAction,
+  ) -> Result<(), ParseKeyBindingError>
+  where
+    L: IntoKeyBinding,
+  {
+    self.bind_sequence(mode, [binding], action)
+  }
+
+  pub fn bind_sequence<I, L>(
+    &mut self,
+    mode: Mode,
+    bindings: I,
+    action: KeyAction,
+  ) -> Result<(), ParseKeyBindingError>
+  where
+    I: IntoIterator<Item = L>,
+    L: IntoKeyBinding,
+  {
+    let bindings = bindings
+      .into_iter()
+      .map(IntoKeyBinding::into_binding)
+      .collect::<Result<Vec<_>, _>>()?;
+    if bindings.is_empty() {
+      return Err(ParseKeyBindingError(
+        "key sequence must not be empty".into(),
+      ));
+    }
+
+    let trie = self
+      .map
+      .entry(mode)
+      .or_insert_with(|| KeyTrie::Node(KeyTrieNode::default()));
+    insert_keymap_action(trie, &bindings, KeyTrie::Command(action));
+    Ok(())
+  }
 }
 
 impl Default for Keymaps {
@@ -616,6 +675,8 @@ fn apply_actions<Ctx: DefaultContext>(ctx: &mut Ctx, actions: &[KeyAction]) -> K
           commands.push(apply_count_prefix(command, count));
         } else if let Some(mode) = mode_from_name(name) {
           apply_mode(ctx, mode);
+        } else {
+          let _ = ctx.execute_named_action(name);
         }
       },
     }
@@ -805,19 +866,48 @@ fn build_action_palette_items<Ctx: DefaultContext>(
   collect_action_bindings(&keymap, &mut Vec::new(), &mut bindings_by_name);
 
   let mut items = Vec::new();
+  let mut seen_named_actions = HashSet::new();
 
   let mut static_names: Vec<_> = bindings_by_name.keys().cloned().collect();
   static_names.sort();
   for name in static_names {
-    let Some(command) = command_from_name(&name) else {
+    if let Some(command) = command_from_name(&name) {
+      let mut item = CommandPaletteItem::new(name.clone());
+      item.description = Some(command_hint_label(command));
+      item.shortcut = bindings_by_name
+        .get(&name)
+        .and_then(|bindings| format_shortcut_list(bindings));
+      item.action = Some(CommandPaletteAction::StaticCommand(command));
+      items.push(item);
+      continue;
+    }
+
+    let Some(doc) = ctx.named_action_doc(&name) else {
       continue;
     };
+
     let mut item = CommandPaletteItem::new(name.clone());
-    item.description = Some(command_hint_label(command));
+    item.description = Some(doc.to_string());
     item.shortcut = bindings_by_name
       .get(&name)
       .and_then(|bindings| format_shortcut_list(bindings));
-    item.action = Some(CommandPaletteAction::StaticCommand(command));
+    item.action = Some(CommandPaletteAction::NamedAction(name.clone()));
+    seen_named_actions.insert(name);
+    items.push(item);
+  }
+
+  let mut named_actions = ctx.named_action_names();
+  named_actions.sort();
+  for name in named_actions {
+    if seen_named_actions.contains(name) {
+      continue;
+    }
+    let mut item = CommandPaletteItem::new(name.to_string());
+    item.description = ctx.named_action_doc(name).map(str::to_string);
+    item.shortcut = bindings_by_name
+      .get(name)
+      .and_then(|bindings| format_shortcut_list(bindings));
+    item.action = Some(CommandPaletteAction::NamedAction(name.to_string()));
     items.push(item);
   }
 
@@ -1103,6 +1193,42 @@ pub fn action_from_name(name: &'static str) -> KeyAction {
   }
 
   KeyAction::Named(name)
+}
+
+fn insert_keymap_action(trie: &mut KeyTrie, path: &[KeyBinding], action: KeyTrie) {
+  debug_assert!(!path.is_empty());
+
+  if path.is_empty() {
+    return;
+  }
+
+  let mut current = trie;
+  for key in &path[..path.len() - 1] {
+    if !matches!(current, KeyTrie::Node(_)) {
+      *current = KeyTrie::Node(KeyTrieNode::default());
+    }
+
+    let node = current.node_mut().expect("expected key trie node");
+    if !node.order.contains(key) {
+      node.order.push(*key);
+    }
+
+    current = node
+      .map
+      .entry(*key)
+      .or_insert_with(|| KeyTrie::Node(KeyTrieNode::default()));
+  }
+
+  if !matches!(current, KeyTrie::Node(_)) {
+    *current = KeyTrie::Node(KeyTrieNode::default());
+  }
+
+  let node = current.node_mut().expect("expected key trie node");
+  let final_key = *path.last().expect("expected final key binding");
+  if !node.order.contains(&final_key) {
+    node.order.push(final_key);
+  }
+  node.map.insert(final_key, action);
 }
 
 pub fn default() -> HashMap<Mode, KeyTrie> {
@@ -1522,12 +1648,21 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
 
 #[cfg(test)]
 mod tests {
+  use std::collections::HashMap;
+
   use the_lib::selection::{
     Range,
     Selection,
   };
 
-  use super::insert_mode_selection;
+  use super::{
+    KeyAction,
+    KeyTrie,
+    Keymaps,
+    Mode,
+    binding_from_literal,
+    insert_mode_selection,
+  };
 
   #[test]
   fn insert_mode_keeps_selection_and_moves_cursor_to_start() {
@@ -1541,6 +1676,45 @@ mod tests {
     let selection = Selection::single(5, 5);
     let result = insert_mode_selection(&selection);
     assert_eq!(result.ranges(), &[Range::new(5, 5)]);
+  }
+
+  #[test]
+  fn keymaps_bind_sequence_creates_nested_binding() {
+    let mut keymaps = Keymaps::new(HashMap::new());
+    keymaps
+      .bind_sequence(Mode::Normal, ["g", "x"], KeyAction::Named("custom_action"))
+      .unwrap();
+
+    let trie = keymaps.map.get(&Mode::Normal).expect("normal mode keymap");
+    let bound = trie.search(&[binding_from_literal("g"), binding_from_literal("x")]);
+
+    assert!(matches!(
+      bound,
+      Some(KeyTrie::Command(KeyAction::Named("custom_action")))
+    ));
+  }
+
+  #[test]
+  fn keymaps_merge_overrides_existing_binding() {
+    let mut base = Keymaps::new(HashMap::new());
+    base
+      .bind(Mode::Normal, "x", KeyAction::Named("base_action"))
+      .unwrap();
+
+    let mut override_keymaps = Keymaps::new(HashMap::new());
+    override_keymaps
+      .bind(Mode::Normal, "x", KeyAction::Named("override_action"))
+      .unwrap();
+
+    base.merge(override_keymaps);
+
+    let trie = base.map.get(&Mode::Normal).expect("normal mode keymap");
+    let bound = trie.search(&[binding_from_literal("x")]);
+
+    assert!(matches!(
+      bound,
+      Some(KeyTrie::Command(KeyAction::Named("override_action")))
+    ));
   }
 }
 

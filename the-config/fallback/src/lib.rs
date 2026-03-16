@@ -3,6 +3,7 @@ use the_default::{
   DefaultContext,
   DefaultDispatchStatic,
   Direction,
+  EditorAssembly,
   Key,
   KeyEvent,
   Keymaps,
@@ -34,4 +35,11 @@ fn pre_on_keypress<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent) {
 /// Build the default keymaps.
 pub fn build_keymaps() -> Keymaps {
   Keymaps::default()
+}
+
+pub fn build_editor_assembly<Ctx>() -> EditorAssembly<Ctx>
+where
+  Ctx: DefaultContext,
+{
+  EditorAssembly::new(build_dispatch::<Ctx>(), build_keymaps())
 }

@@ -2,6 +2,7 @@ use the_default::{
   CommandPaletteLayout,
   DefaultContext,
   DefaultDispatchStatic,
+  EditorAssembly,
   Key,
   KeyEvent,
   Keymaps,
@@ -42,4 +43,11 @@ fn pre_render<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
 /// Replace this to provide your own layout.
 pub fn build_keymaps() -> Keymaps {
   Keymaps::default()
+}
+
+pub fn build_editor_assembly<Ctx>() -> EditorAssembly<Ctx>
+where
+  Ctx: DefaultContext,
+{
+  EditorAssembly::new(build_dispatch::<Ctx>(), build_keymaps())
 }

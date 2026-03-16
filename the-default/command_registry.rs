@@ -1930,6 +1930,13 @@ fn submit_action_palette<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool {
       ctx.dispatch().post_on_keypress(ctx, command);
       true
     },
+    CommandPaletteAction::NamedAction(name) => {
+      close_command_prompt_and_palette(ctx);
+      if !ctx.execute_named_action(&name) {
+        ctx.push_error("command_palette", format!("named action not found: {name}"));
+      }
+      true
+    },
     CommandPaletteAction::TypableCommand { name, args } => {
       let registry = ctx.command_registry_ref() as *const CommandRegistry<Ctx>;
       let result = unsafe { (&*registry).execute(ctx, &name, &args, CommandEvent::Validate) };

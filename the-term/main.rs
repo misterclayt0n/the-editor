@@ -89,9 +89,10 @@ fn main() -> Result<()> {
   // Initialize application state
   let mut ctx = Ctx::new(file_path)?;
   let assembly = the_config::build_editor_assembly::<Ctx>().build();
-  let (dispatch, keymaps, command_registry, startup_hooks) = assembly.into_parts();
+  let (dispatch, keymaps, command_registry, extensions, startup_hooks) = assembly.into_parts();
   ctx.keymaps = keymaps;
   ctx.command_registry = command_registry;
+  ctx.extensions = extensions;
   ctx.set_dispatch(&dispatch);
   for hook in startup_hooks {
     hook(&mut ctx);

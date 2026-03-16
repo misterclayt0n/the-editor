@@ -283,6 +283,9 @@ fn build_global_search_item(
     preview_path: Some(absolute),
     preview_line: Some(line_idx),
     preview_col,
+    row_data: None,
+    preview: None,
+    payload: None,
   }
 }
 
@@ -308,6 +311,9 @@ fn build_global_search_header_item(
     preview_path: None,
     preview_line: None,
     preview_col: None,
+    row_data: None,
+    preview: None,
+    payload: None,
   }
 }
 

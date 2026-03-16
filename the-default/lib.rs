@@ -13,6 +13,7 @@ mod command_registry;
 mod command_types;
 mod completion_menu;
 mod context_menu;
+mod extensions;
 mod file_picker;
 mod file_tree;
 mod global_search;
@@ -125,6 +126,20 @@ pub use context_menu::{
   build_editor_context_menu,
   build_file_tree_context_menu,
 };
+pub use extensions::{
+  EditorExtensions,
+  NamedAction,
+  NamedActionFn,
+  NamedActionInfo,
+  PickerQueryHandler,
+  PickerQueryHandlerEntry,
+  PickerSubmitHandler,
+  PickerSubmitHandlerEntry,
+  PickerSubmitResult,
+  RenderPlanPostProcessor,
+  TextAnnotationsProvider,
+  UiTreePostProcessor,
+};
 pub use file_picker::{
   FilePickerChangedFileItem,
   FilePickerChangedKind,
@@ -132,6 +147,7 @@ pub use file_picker::{
   FilePickerDiagnosticItem,
   FilePickerItem,
   FilePickerItemAction,
+  FilePickerItemPayload,
   FilePickerKind,
   FilePickerPreview,
   FilePickerPreviewLineKind,
@@ -153,11 +169,14 @@ pub use file_picker::{
   handle_file_picker_key,
   handle_query_change,
   move_selection,
+  notify_file_picker_query_changed,
   open_buffer_picker,
   open_changed_file_picker,
   open_custom_picker,
+  open_custom_picker_with_query_handler,
   open_diagnostics_picker,
   open_dynamic_picker,
+  open_dynamic_picker_with_handler,
   open_file_picker,
   open_file_picker_in_current_directory,
   open_file_picker_index,
@@ -204,6 +223,7 @@ pub use input::{
   PointerKind,
 };
 pub use keymap::{
+  IntoKeyBinding,
   KeyAction,
   KeyBinding,
   KeyTrie,
@@ -211,6 +231,7 @@ pub use keymap::{
   KeymapResult,
   Keymaps,
   Mode,
+  ParseKeyBindingError,
   action_from_name,
   default,
   open_action_palette,

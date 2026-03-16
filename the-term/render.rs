@@ -81,7 +81,10 @@ use the_lib::{
     language_filename_hints,
     parse_markdown_blocks,
   },
-  editor::PaneContent,
+  editor::{
+    BufferId,
+    PaneContent,
+  },
   render::{
     FrameGenerationState,
     FrameRenderPlan,
@@ -443,8 +446,8 @@ fn render_diff_styles_from_theme(theme: &the_lib::render::theme::Theme) -> Rende
   }
 }
 
-fn diagnostics_for_buffer<'a>(ctx: &'a Ctx, buffer_index: usize) -> Option<&'a [Diagnostic]> {
-  let uri = file_uri_for_path(ctx.editor.buffer_file_path(buffer_index)?)?;
+fn diagnostics_for_buffer<'a>(ctx: &'a Ctx, buffer_id: BufferId) -> Option<&'a [Diagnostic]> {
+  let uri = file_uri_for_path(ctx.editor.buffer_file_path(buffer_id)?)?;
   Some(&ctx.diagnostics.document(&uri)?.diagnostics)
 }
 
@@ -464,7 +467,7 @@ fn diagnostics_by_line(diagnostics: &[Diagnostic]) -> BTreeMap<usize, Diagnostic
 }
 
 fn active_diagnostics_by_line(ctx: &Ctx) -> BTreeMap<usize, DiagnosticSeverity> {
-  diagnostics_by_line(diagnostics_for_buffer(ctx, ctx.editor.active_buffer_index()).unwrap_or(&[]))
+  diagnostics_by_line(diagnostics_for_buffer(ctx, ctx.editor.active_buffer_id()).unwrap_or(&[]))
 }
 
 fn diagnostic_theme_style(
@@ -777,7 +780,7 @@ fn build_render_layer_row_hashes(
 fn active_inline_diagnostics(ctx: &Ctx) -> Vec<InlineDiagnostic> {
   inline_diagnostics_from_document(
     ctx.editor.document().text(),
-    diagnostics_for_buffer(ctx, ctx.editor.active_buffer_index()).unwrap_or(&[]),
+    diagnostics_for_buffer(ctx, ctx.editor.active_buffer_id()).unwrap_or(&[]),
   )
 }
 
@@ -5805,7 +5808,7 @@ pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> Ren
       "message_preview": diag.message.as_str().chars().take(120).collect::<String>(),
     })
   });
-  let diagnostics_for_underlines = diagnostics_for_buffer(ctx, ctx.editor.active_buffer_index())
+  let diagnostics_for_underlines = diagnostics_for_buffer(ctx, ctx.editor.active_buffer_id())
     .map(<[Diagnostic]>::to_vec)
     .unwrap_or_default();
   let selection_match_style = ctx
@@ -5848,7 +5851,7 @@ pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> Ren
 
       build_plan(
         doc,
-        view,
+        view.clone(),
         text_fmt,
         &ctx.gutter_config,
         &mut annotations,
@@ -5861,7 +5864,7 @@ pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> Ren
       let mut highlights = NoHighlights;
       build_plan(
         doc,
-        view,
+        view.clone(),
         text_fmt,
         &ctx.gutter_config,
         &mut annotations,
@@ -5875,7 +5878,7 @@ pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> Ren
       doc,
       text_fmt,
       &mut annotations,
-      view,
+      view.clone(),
       selection_match_style,
       SelectionMatchHighlightOptions {
         enable_point_cursor_match: enable_point_selection_match,
@@ -6008,7 +6011,7 @@ struct PaneDiagnosticRenderData {
 fn build_inactive_pane_plan_with_styles(
   ctx: &mut Ctx,
   pane_id: PaneId,
-  buffer_index: usize,
+  buffer_id: BufferId,
   styles: RenderStyles,
 ) -> (RenderPlan, PaneDiagnosticRenderData) {
   let Some(view) = ctx.editor.pane_view(pane_id) else {
@@ -6019,9 +6022,9 @@ fn build_inactive_pane_plan_with_styles(
   let mut annotations = TextAnnotations::default();
   let mut local_highlight_cache = ctx
     .inactive_highlight_caches
-    .remove(&buffer_index)
+    .remove(&buffer_id)
     .unwrap_or_default();
-  let raw_diagnostics = diagnostics_for_buffer(ctx, buffer_index)
+  let raw_diagnostics = diagnostics_for_buffer(ctx, buffer_id)
     .map(<[Diagnostic]>::to_vec)
     .unwrap_or_default();
   let diagnostics_by_line = diagnostics_by_line(&raw_diagnostics);
@@ -6029,7 +6032,7 @@ fn build_inactive_pane_plan_with_styles(
   let diff_styles = render_diff_styles_from_theme(&ctx.ui_theme);
   let diff_signs = ctx.gutter_diff_signs.clone();
 
-  let Some((doc, render_cache)) = ctx.editor.document_and_cache_at_mut(buffer_index) else {
+  let Some((doc, render_cache)) = ctx.editor.document_and_cache_at_mut(buffer_id) else {
     return (RenderPlan::default(), PaneDiagnosticRenderData::default());
   };
   let gutter_width = gutter_width_for_document(doc, view.viewport.width, &ctx.gutter_config);
@@ -6101,7 +6104,7 @@ fn build_inactive_pane_plan_with_styles(
 
   ctx
     .inactive_highlight_caches
-    .insert(buffer_index, local_highlight_cache);
+    .insert(buffer_id, local_highlight_cache);
   (plan, PaneDiagnosticRenderData {
     raw_diagnostics,
     inline_diagnostic_lines: inline_layout.lines,
@@ -6143,18 +6146,18 @@ pub fn build_frame_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) 
     .into_iter()
     .map(|pane| {
       let (pane_kind, terminal_id, plan) = match pane.content {
-        PaneContent::EditorBuffer { buffer_index } => {
+        PaneContent::EditorBuffer { buffer_id } => {
           let (mut plan, diagnostic_data) = if pane.is_active_pane {
             let plan = build_render_plan_with_styles(ctx, styles);
             (plan, PaneDiagnosticRenderData {
-              raw_diagnostics:         diagnostics_for_buffer(ctx, buffer_index)
+              raw_diagnostics:         diagnostics_for_buffer(ctx, buffer_id)
                 .map(<[Diagnostic]>::to_vec)
                 .unwrap_or_default(),
               inline_diagnostic_lines: ctx.inline_diagnostic_lines.clone(),
               diagnostic_underlines:   ctx.diagnostic_underlines.clone(),
             })
           } else {
-            build_inactive_pane_plan_with_styles(ctx, pane.pane_id, buffer_index, styles)
+            build_inactive_pane_plan_with_styles(ctx, pane.pane_id, buffer_id, styles)
           };
           ctx
             .frame_diagnostics
@@ -6573,7 +6576,7 @@ fn draw_buffer_tabs_row(buf: &mut Buffer, area: Rect, ctx: &Ctx) {
       {
         let close_is_hovered = ctx
           .buffer_tab_hover
-          .is_some_and(|hover| hover.buffer_index == tab.buffer_index && hover.over_close);
+          .is_some_and(|hover| hover.buffer_id == tab.buffer_id && hover.over_close);
         buf.set_string(
           area.x.saturating_add(close_x),
           slot_rect.y,
@@ -6591,7 +6594,7 @@ fn draw_buffer_tabs_row(buf: &mut Buffer, area: Rect, ctx: &Ctx) {
   if let Some(drag) = ctx.buffer_tab_drag
     && let Some(slot) = slots
       .iter()
-      .find(|slot| slot.buffer_index == drag.buffer_index)
+      .find(|slot| slot.buffer_id == drag.buffer_id)
     && let Some(tab) = snapshot.tabs.get(slot.tab_index)
   {
     let ghost_width = slot.width.min(area.width).max(1);
@@ -6676,7 +6679,7 @@ fn draw_buffer_tabs_row(buf: &mut Buffer, area: Rect, ctx: &Ctx) {
           );
           let close_is_hovered = ctx
             .buffer_tab_hover
-            .is_some_and(|hover| hover.buffer_index == tab.buffer_index && hover.over_close);
+            .is_some_and(|hover| hover.buffer_id == tab.buffer_id && hover.over_close);
           buf.set_string(
             close_x,
             ghost_rect.y,
@@ -7163,7 +7166,7 @@ mod tests {
       Rope::from_str("fn main() { let x = ; }\n"),
       Some(rust.as_path().to_path_buf()),
     ));
-    let rust_buffer = ctx.editor.active_buffer_index();
+    let rust_buffer = ctx.editor.active_buffer_id();
     assert!(ctx.editor.split_active_pane(SplitAxis::Vertical));
     let view = ViewState::new(ctx.editor.view().viewport, Position::new(0, 0));
     let toml_buffer = ctx.editor.open_buffer(
@@ -7224,12 +7227,12 @@ mod tests {
       .editor
       .frame_pane_snapshots(ctx.editor.layout_viewport())
     {
-      let PaneContent::EditorBuffer { buffer_index } = pane.content else {
+      let PaneContent::EditorBuffer { buffer_id } = pane.content else {
         continue;
       };
-      if buffer_index == rust_buffer {
+      if buffer_id == rust_buffer {
         rust_pane = Some(pane.pane_id);
-      } else if buffer_index == toml_buffer {
+      } else if buffer_id == toml_buffer {
         toml_pane = Some(pane.pane_id);
       }
     }
@@ -7272,7 +7275,7 @@ mod tests {
       Rope::from_str("fn main() {}\n"),
       Some(rust.as_path().to_path_buf()),
     ));
-    let rust_buffer = ctx.editor.active_buffer_index();
+    let rust_buffer = ctx.editor.active_buffer_id();
     assert!(ctx.editor.split_active_pane(SplitAxis::Vertical));
     let view = ViewState::new(ctx.editor.view().viewport, Position::new(0, 0));
     let _ = ctx.editor.open_buffer(

@@ -58,6 +58,7 @@ use the_core::chars::{
 };
 use the_lib::{
   diagnostics::DiagnosticSeverity,
+  editor::BufferId,
   render::{
     UiColor,
     UiColorToken,
@@ -146,10 +147,10 @@ pub enum FilePickerItemAction {
     path: PathBuf,
   },
   SwitchBuffer {
-    buffer_index: usize,
+    buffer_id: BufferId,
   },
   RestoreJump {
-    buffer_index:  usize,
+    buffer_id:     BufferId,
     selection:     Selection,
     active_cursor: Option<CursorId>,
   },
@@ -192,21 +193,20 @@ impl FilePickerItemAction {
         1_u8.hash(&mut hasher);
         path.hash(&mut hasher);
       },
-      Self::SwitchBuffer { buffer_index } => {
+      Self::SwitchBuffer { buffer_id } => {
         2_u8.hash(&mut hasher);
-        buffer_index.hash(&mut hasher);
+        buffer_id.hash(&mut hasher);
       },
       Self::RestoreJump {
-        buffer_index,
+        buffer_id,
         selection,
         active_cursor,
       } => {
         3_u8.hash(&mut hasher);
-        buffer_index.hash(&mut hasher);
+        buffer_id.hash(&mut hasher);
         for range in selection.ranges() {
           range.anchor.hash(&mut hasher);
           range.head.hash(&mut hasher);
-          range.old_visual_pos.hash(&mut hasher);
         }
         for cursor_id in selection.cursor_ids() {
           cursor_id.hash(&mut hasher);
@@ -1450,12 +1450,12 @@ pub fn open_buffer_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
       let absolute = snapshot
         .file_path
         .clone()
-        .unwrap_or_else(|| PathBuf::from(format!("<buffer:{}>", snapshot.buffer_index)));
-      let preview_line = editor.buffer_document(snapshot.buffer_index).map(|doc| {
+        .unwrap_or_else(|| PathBuf::from(format!("<buffer:{}>", snapshot.buffer_id.as_u64())));
+      let preview_line = editor.buffer_document(snapshot.buffer_id).map(|doc| {
         selection_focus_line(
           doc.selection(),
           editor
-            .buffer_view(snapshot.buffer_index)
+            .buffer_view(snapshot.buffer_id)
             .and_then(|view| view.active_cursor),
           doc.text().slice(..),
         )
@@ -1468,7 +1468,7 @@ pub fn open_buffer_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
         is_dir: false,
         display_path: true,
         action: FilePickerItemAction::SwitchBuffer {
-          buffer_index: snapshot.buffer_index,
+          buffer_id: snapshot.buffer_id,
         },
         preview_path: snapshot.file_path,
         preview_line,
@@ -1497,8 +1497,8 @@ pub fn open_jumplist_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
     .into_iter()
     .enumerate()
     .filter_map(|(index, jump)| {
-      let snapshot = editor.buffer_snapshot(jump.buffer_index)?;
-      let doc = editor.buffer_document(jump.buffer_index)?;
+      let snapshot = editor.buffer_snapshot(jump.buffer_id)?;
+      let doc = editor.buffer_document(jump.buffer_id)?;
       let text = doc.text().slice(..);
       let excerpt = jump
         .selection
@@ -1534,7 +1534,7 @@ pub fn open_jumplist_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
         is_dir: false,
         display_path: false,
         action: FilePickerItemAction::RestoreJump {
-          buffer_index:  jump.buffer_index,
+          buffer_id:     jump.buffer_id,
           selection:     jump.selection.clone(),
           active_cursor: jump.active_cursor,
         },
@@ -2408,10 +2408,10 @@ pub fn submit_file_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
       close_file_picker(ctx);
     },
     FilePickerItemAction::GroupHeader { .. } => {},
-    FilePickerItemAction::SwitchBuffer { buffer_index } => {
+    FilePickerItemAction::SwitchBuffer { buffer_id } => {
       if !ctx
         .editor()
-        .set_active_buffer_preserving_terminal(*buffer_index)
+        .set_active_buffer_preserving_terminal(*buffer_id)
       {
         ctx.push_warning("buffer_picker", "selected buffer is no longer available");
         return;
@@ -2419,13 +2419,13 @@ pub fn submit_file_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
       close_file_picker(ctx);
     },
     FilePickerItemAction::RestoreJump {
-      buffer_index,
+      buffer_id,
       selection,
       active_cursor,
     } => {
       if !ctx
         .editor()
-        .set_active_buffer_preserving_terminal(*buffer_index)
+        .set_active_buffer_preserving_terminal(*buffer_id)
       {
         ctx.push_warning(
           "jumplist_picker",

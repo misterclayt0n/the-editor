@@ -1333,7 +1333,7 @@ pub fn build_plan<'a, 't, H: HighlightProvider>(
     plan.gutter_lines = build_gutter_lines(
       &plan.visible_rows,
       doc,
-      view,
+      &view,
       gutter,
       &plan.gutter_columns,
       styles,
@@ -1397,7 +1397,7 @@ pub fn gutter_width_for_document(
 fn build_gutter_lines(
   visible_rows: &[RenderVisibleRow],
   doc: &Document,
-  view: ViewState,
+  view: &ViewState,
   gutter: &GutterConfig,
   columns: &[RenderGutterColumn],
   styles: RenderStyles,
@@ -1468,7 +1468,7 @@ fn line_number_text(
   Some(format!("{value:>width$}"))
 }
 
-fn active_doc_line(doc: &Document, view: ViewState) -> Option<usize> {
+fn active_doc_line(doc: &Document, view: &ViewState) -> Option<usize> {
   let text = doc.text().slice(..);
   let selection = doc.selection();
   if let Some(active_cursor) = view.active_cursor
@@ -2136,7 +2136,7 @@ mod tests {
 
     let mut plan = build_plan(
       &doc,
-      view,
+      view.clone(),
       &text_fmt,
       &gutter,
       &mut annotations,

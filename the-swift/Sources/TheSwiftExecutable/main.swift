@@ -1,3 +1,0 @@
-import TheSwift
-
-TheSwiftLauncher.run()

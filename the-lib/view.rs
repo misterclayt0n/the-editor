@@ -1,7 +1,8 @@
 //! View state owned by clients.
 //!
-//! This module models per-view UI state (scroll/viewport and an optional active
-//! cursor) without baking any view behavior into core selection logic.
+//! This module models per-view UI state (scroll/viewport, an optional active
+//! cursor, and per-cursor visual goal state) without baking any view behavior
+//! into core selection logic.
 //!
 //! # Example
 //!
@@ -18,23 +19,52 @@
 //! # let _ = view;
 //! ```
 
+use std::collections::BTreeMap;
+
 use crate::{
   position::Position,
   render::graphics::Rect,
-  selection::CursorId,
+  selection::{
+    CursorId,
+    Range,
+  },
 };
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CursorVisualGoal {
+  pub anchor: usize,
+  pub head:   usize,
+  pub row:    u32,
+  pub col:    u32,
+}
+
+impl CursorVisualGoal {
+  pub fn for_range(range: Range, row: u32, col: u32) -> Self {
+    Self {
+      anchor: range.anchor,
+      head: range.head,
+      row,
+      col,
+    }
+  }
+
+  pub fn matches(self, range: Range) -> bool {
+    self.anchor == range.anchor && self.head == range.head
+  }
+}
 
 /// Per-view state owned by the client.
 ///
 /// The core library stays cursor-agnostic; the client chooses which cursor
 /// (if any) is "active" for viewport following or collapse actions.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ViewState {
-  pub viewport:      Rect,
+  pub viewport:             Rect,
   /// Visual scroll offset (row/col) in rendered space.
-  pub scroll:        Position,
+  pub scroll:               Position,
   /// Optional active cursor selected by the client.
-  pub active_cursor: Option<CursorId>,
+  pub active_cursor:        Option<CursorId>,
+  cursor_visual_goals:      BTreeMap<CursorId, CursorVisualGoal>,
 }
 
 impl ViewState {
@@ -43,12 +73,52 @@ impl ViewState {
       viewport,
       scroll,
       active_cursor: None,
+      cursor_visual_goals: BTreeMap::new(),
     }
   }
 
   pub fn with_active_cursor(mut self, cursor_id: CursorId) -> Self {
     self.active_cursor = Some(cursor_id);
     self
+  }
+
+  pub fn cursor_visual_goal(
+    &self,
+    cursor_id: CursorId,
+    range: Range,
+  ) -> Option<(u32, u32)> {
+    self
+      .cursor_visual_goals
+      .get(&cursor_id)
+      .copied()
+      .filter(|goal| goal.matches(range))
+      .map(|goal| (goal.row, goal.col))
+  }
+
+  pub fn set_cursor_visual_goal(
+    &mut self,
+    cursor_id: CursorId,
+    range: Range,
+    row: u32,
+    col: u32,
+  ) {
+    self
+      .cursor_visual_goals
+      .insert(cursor_id, CursorVisualGoal::for_range(range, row, col));
+  }
+
+  pub fn clear_cursor_visual_goal(&mut self, cursor_id: CursorId) {
+    self.cursor_visual_goals.remove(&cursor_id);
+  }
+
+  pub fn clear_cursor_visual_goals(&mut self) {
+    self.cursor_visual_goals.clear();
+  }
+
+  pub fn retain_cursor_visual_goals(&mut self, cursor_ids: &[CursorId]) {
+    self
+      .cursor_visual_goals
+      .retain(|cursor_id, _| cursor_ids.contains(cursor_id));
   }
 }
 

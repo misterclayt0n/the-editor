@@ -92,6 +92,7 @@ use the_lib::{
     DocumentId,
   },
   editor::{
+    BufferId,
     Editor,
     EditorId,
     PaneSnapshot,
@@ -99,6 +100,7 @@ use the_lib::{
   indent::IndentStyle,
   messages::{
     MessageCenter,
+    MessageDisposition,
     MessageLevel,
   },
   position::Position,
@@ -290,26 +292,26 @@ struct PointerClickTracker {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct BufferTabPointerDragState {
-  pub buffer_index: usize,
-  pub pointer_x:    u16,
-  pub press_x:      u16,
-  pub grab_offset:  u16,
-  pub moved:        bool,
+  pub buffer_id:   BufferId,
+  pub pointer_x:   u16,
+  pub press_x:     u16,
+  pub grab_offset: u16,
+  pub moved:       bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct BufferTabHoverState {
-  pub buffer_index: usize,
-  pub over_close:   bool,
+  pub buffer_id:  BufferId,
+  pub over_close: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct BufferTabLayoutSlot {
-  pub tab_index:    usize,
-  pub buffer_index: usize,
-  pub x:            u16,
-  pub width:        u16,
-  pub close_x:      Option<u16>,
+  pub tab_index:  usize,
+  pub buffer_id:  BufferId,
+  pub x:          u16,
+  pub width:      u16,
+  pub close_x:    Option<u16>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -638,7 +640,7 @@ pub struct Ctx {
   /// Cache for syntax highlights (reused across renders).
   pub highlight_cache:               HighlightCache,
   /// Per-buffer caches for inactive split panes.
-  pub inactive_highlight_caches:     BTreeMap<usize, HighlightCache>,
+  pub inactive_highlight_caches:     BTreeMap<BufferId, HighlightCache>,
   /// Background parse result channel (async syntax fallback).
   pub syntax_parse_tx:               Sender<SyntaxParseResult>,
   /// Background parse result receiver (async syntax fallback).
@@ -1686,9 +1688,12 @@ impl Ctx {
                 format_lsp_progress_text(progress.title.as_deref(), progress.message.as_deref());
               self.lsp_active_progress_tokens.insert(progress.token);
               self.set_lsp_status(LspStatusPhase::Busy, Some(text.clone()));
-              self
-                .messages
-                .publish(MessageLevel::Info, Some("lsp".into()), text);
+              self.messages.publish_with_disposition(
+                MessageLevel::Info,
+                Some("lsp".into()),
+                MessageDisposition::Background,
+                text,
+              );
               needs_render = true;
             },
             LspProgressKind::End => {
@@ -1698,9 +1703,12 @@ impl Ctx {
                 needs_render = true;
               }
               if let Some(message) = progress.message.and_then(non_empty_trimmed) {
-                self
-                  .messages
-                  .publish(MessageLevel::Info, Some("lsp".into()), message);
+                self.messages.publish_with_disposition(
+                  MessageLevel::Info,
+                  Some("lsp".into()),
+                  MessageDisposition::Background,
+                  message,
+                );
                 needs_render = true;
               }
             },
@@ -3144,7 +3152,7 @@ impl Ctx {
       };
       slots.push(BufferTabLayoutSlot {
         tab_index,
-        buffer_index: tab.buffer_index,
+        buffer_id: tab.buffer_id,
         x,
         width: tab_width,
         close_x,
@@ -3154,12 +3162,12 @@ impl Ctx {
     (snapshot, slots)
   }
 
-  pub(crate) fn buffer_tab_close_buffer_index_at(
+  pub(crate) fn buffer_tab_close_buffer_id_at(
     &self,
     x: u16,
     y: u16,
     width: u16,
-  ) -> Option<usize> {
+  ) -> Option<BufferId> {
     if y >= self.buffer_tabs_top_chrome_rows() {
       return None;
     }
@@ -3167,21 +3175,21 @@ impl Ctx {
     slots
       .into_iter()
       .find(|slot| slot.close_x == Some(x))
-      .map(|slot| slot.buffer_index)
+      .map(|slot| slot.buffer_id)
   }
 
   pub(crate) fn update_buffer_tab_hover(&mut self, x: u16, y: u16, width: u16) {
     let next = if y < self.buffer_tabs_top_chrome_rows() {
-      if let Some(buffer_index) = self.buffer_tab_close_buffer_index_at(x, y, width) {
+      if let Some(buffer_id) = self.buffer_tab_close_buffer_id_at(x, y, width) {
         Some(BufferTabHoverState {
-          buffer_index,
+          buffer_id,
           over_close: true,
         })
       } else {
         self.buffer_tab_slot_at(x, y, width).map(|slot| {
           BufferTabHoverState {
-            buffer_index: slot.buffer_index,
-            over_close:   false,
+            buffer_id:  slot.buffer_id,
+            over_close: false,
           }
         })
       }
@@ -3200,7 +3208,7 @@ impl Ctx {
     }
   }
 
-  pub(crate) fn buffer_tab_buffer_index_at(&self, x: u16, y: u16, width: u16) -> Option<usize> {
+  pub(crate) fn buffer_tab_buffer_id_at(&self, x: u16, y: u16, width: u16) -> Option<BufferId> {
     if y >= self.buffer_tabs_top_chrome_rows() {
       return None;
     }
@@ -3208,7 +3216,7 @@ impl Ctx {
     slots
       .into_iter()
       .find(|slot| x >= slot.x && x < slot.x.saturating_add(slot.width))
-      .map(|slot| slot.buffer_index)
+      .map(|slot| slot.buffer_id)
   }
 
   pub(crate) fn buffer_tab_slot_at(
@@ -3226,11 +3234,11 @@ impl Ctx {
       .find(|slot| x >= slot.x && x < slot.x.saturating_add(slot.width))
   }
 
-  pub(crate) fn activate_buffer_tab(&mut self, index: usize) -> bool {
-    the_default::activate_buffer_tab(self, index)
+  pub(crate) fn activate_buffer_tab(&mut self, buffer_id: BufferId) -> bool {
+    the_default::activate_buffer_tab(self, buffer_id)
   }
 
-  pub(crate) fn move_buffer_tab(&mut self, from: usize, to: usize) -> bool {
+  pub(crate) fn move_buffer_tab(&mut self, from: BufferId, to: BufferId) -> bool {
     if !self.editor.move_buffer(from, to) {
       return false;
     }
@@ -3238,8 +3246,8 @@ impl Ctx {
     true
   }
 
-  pub(crate) fn close_buffer_tab(&mut self, index: usize) -> bool {
-    let Some(snapshot) = self.editor.buffer_snapshot(index) else {
+  pub(crate) fn close_buffer_tab(&mut self, buffer_id: BufferId) -> bool {
+    let Some(snapshot) = self.editor.buffer_snapshot(buffer_id) else {
       return false;
     };
     if snapshot.modified {
@@ -3261,11 +3269,11 @@ impl Ctx {
       return false;
     }
 
-    let closing_active = self.editor.active_buffer_index() == index;
+    let closing_active = self.editor.active_buffer_id() == buffer_id;
     if closing_active {
       self.lsp_close_current_document();
     }
-    if !self.editor.close_buffer(index) {
+    if !self.editor.close_buffer(buffer_id) {
       return false;
     }
 
@@ -3294,7 +3302,7 @@ impl Ctx {
   pub(crate) fn begin_buffer_tab_drag(&mut self, slot: BufferTabLayoutSlot, pointer_x: u16) {
     let max_offset = slot.width.saturating_sub(1);
     self.buffer_tab_drag = Some(BufferTabPointerDragState {
-      buffer_index: slot.buffer_index,
+      buffer_id: slot.buffer_id,
       pointer_x,
       press_x: pointer_x,
       grab_offset: pointer_x.saturating_sub(slot.x).min(max_offset),
@@ -3326,13 +3334,13 @@ impl Ctx {
       self.buffer_tab_drag = Some(drag);
       return;
     };
-    if target_slot.buffer_index == drag.buffer_index {
+    if target_slot.buffer_id == drag.buffer_id {
       self.buffer_tab_drag = Some(drag);
       return;
     }
     let Some(current_slot) = slots
       .iter()
-      .find(|slot| slot.buffer_index == drag.buffer_index)
+      .find(|slot| slot.buffer_id == drag.buffer_id)
       .copied()
     else {
       self.buffer_tab_drag = Some(drag);
@@ -3352,8 +3360,8 @@ impl Ctx {
       return;
     }
 
-    if self.move_buffer_tab(drag.buffer_index, target_slot.buffer_index) {
-      drag.buffer_index = target_slot.buffer_index;
+    if self.move_buffer_tab(drag.buffer_id, target_slot.buffer_id) {
+      drag.buffer_id = target_slot.buffer_id;
       drag.moved = true;
       self.buffer_tab_drag = Some(drag);
     } else {
@@ -3366,10 +3374,10 @@ impl Ctx {
     x: u16,
     y: u16,
     width: u16,
-  ) -> Option<(usize, bool)> {
+  ) -> Option<(BufferId, bool)> {
     let drag = self.buffer_tab_drag.take()?;
     let slot = self.buffer_tab_slot_at(x, y, width)?;
-    Some((slot.buffer_index, drag.moved))
+    Some((slot.buffer_id, drag.moved))
   }
 
   fn pointer_event_screen_coords(&self, event: PointerEvent) -> Option<(u16, u16)> {
@@ -3425,7 +3433,7 @@ impl Ctx {
     let x = x.clamp(pane.rect.x, max_x);
     let y = y.clamp(pane.rect.y, max_y);
 
-    let doc = self.editor.buffer_document(pane.buffer_index)?;
+    let doc = self.editor.buffer_document(pane.buffer_id)?;
     let view = self.editor.pane_view(pane.pane_id)?;
     let gutter_width = gutter_width_for_document(doc, view.viewport.width, &self.gutter_config);
 
@@ -3762,12 +3770,12 @@ impl Ctx {
     };
 
     let hit_pane = self.pointer_hit_pane_at(x, y);
-    let previous_buffer_index = self.editor.active_buffer_index();
+    let previous_buffer_id = self.editor.active_buffer_id();
     let mut pane_changed = false;
     if let Some(pane) = hit_pane {
       pane_changed = self.editor.set_active_pane(pane.pane_id);
       if pane_changed {
-        self.sync_state_after_active_pane_change(previous_buffer_index);
+        self.sync_state_after_active_pane_change(previous_buffer_id);
       }
     }
 
@@ -4831,7 +4839,14 @@ impl Ctx {
     } else {
       MessageLevel::Info
     };
-    self.messages.publish(level, Some("lsp".into()), text);
+    let disposition = if level == MessageLevel::Info {
+      MessageDisposition::Background
+    } else {
+      MessageDisposition::Foreground
+    };
+    self
+      .messages
+      .publish_with_disposition(level, Some("lsp".into()), disposition, text);
   }
 }
 
@@ -5580,14 +5595,14 @@ fn build_transaction_from_lsp_text_edits(
 }
 
 impl Ctx {
-  fn sync_state_after_active_pane_change(&mut self, previous_buffer_index: usize) {
+  fn sync_state_after_active_pane_change(&mut self, previous_buffer_id: BufferId) {
     self.clear_hover_state();
     self.clear_completion_state();
     self.cancel_auto_completion();
     self.clear_signature_help_state();
     self.cancel_auto_signature_help();
 
-    if self.editor.active_buffer_index() == previous_buffer_index {
+    if self.editor.active_buffer_id() == previous_buffer_id {
       return;
     }
 
@@ -6442,8 +6457,8 @@ impl the_default::DefaultContext for Ctx {
     self.refresh_vcs_diff_base();
   }
 
-  fn did_change_active_pane(&mut self, previous_buffer_index: usize) {
-    self.sync_state_after_active_pane_change(previous_buffer_index);
+  fn did_change_active_pane(&mut self, previous_buffer_id: BufferId) {
+    self.sync_state_after_active_pane_change(previous_buffer_id);
   }
 
   fn goto_buffer(&mut self, direction: the_default::Direction, count: usize) -> bool {
@@ -6479,14 +6494,14 @@ impl the_default::DefaultContext for Ctx {
     true
   }
 
-  fn activate_buffer_by_index(&mut self, index: usize) -> bool {
-    if self.editor.active_buffer_index() == index {
+  fn activate_buffer_by_id(&mut self, buffer_id: BufferId) -> bool {
+    if self.editor.active_buffer_id() == buffer_id {
       self.request_render();
       return true;
     }
 
     self.lsp_close_current_document();
-    if !self.editor.set_active_buffer(index) {
+    if !self.editor.set_active_buffer(buffer_id) {
       return false;
     }
 
@@ -6566,12 +6581,12 @@ impl the_default::DefaultContext for Ctx {
   }
 
   fn jump_forward_in_jumplist(&mut self, count: usize) -> bool {
-    let previous_buffer = self.editor.active_buffer_index();
+    let previous_buffer = self.editor.active_buffer_id();
     if !self.editor.jump_forward(count.max(1)) {
       return false;
     }
 
-    if self.editor.active_buffer_index() != previous_buffer {
+    if self.editor.active_buffer_id() != previous_buffer {
       self.lsp_close_current_document();
       self.syntax_parse_lifecycle.cancel_pending();
       self.highlight_cache.clear();
@@ -6598,12 +6613,12 @@ impl the_default::DefaultContext for Ctx {
   }
 
   fn jump_backward_in_jumplist(&mut self, count: usize) -> bool {
-    let previous_buffer = self.editor.active_buffer_index();
+    let previous_buffer = self.editor.active_buffer_id();
     if !self.editor.jump_backward(count.max(1)) {
       return false;
     }
 
-    if self.editor.active_buffer_index() != previous_buffer {
+    if self.editor.active_buffer_id() != previous_buffer {
       self.lsp_close_current_document();
       self.syntax_parse_lifecycle.cancel_pending();
       self.highlight_cache.clear();
@@ -7003,7 +7018,7 @@ impl the_default::DefaultContext for Ctx {
     } else {
       let content = std::fs::read_to_string(path)?;
       let viewport = self.editor.view().viewport;
-      let reused_untitled = self.editor.can_reuse_active_untitled_buffer_for_open();
+      let reused_untitled = self.editor.should_reuse_active_untitled_buffer_for_open();
       if reused_untitled {
         let _ = self
           .editor
@@ -7112,6 +7127,7 @@ mod tests {
     Command,
     CommandEvent,
     CompletionMenuItem,
+    DefaultApi,
     DefaultContext,
     Key,
     KeyEvent,
@@ -7316,11 +7332,11 @@ mod tests {
       .editor
       .pane_snapshots(ctx.editor.layout_viewport())
       .into_iter()
-      .find(|pane| ctx.editor.buffer_file_path(pane.buffer_index) == Some(rust.as_path()))
+      .find(|pane| ctx.editor.buffer_file_path(pane.buffer_id) == Some(rust.as_path()))
       .expect("rust pane");
-    let previous_buffer_index = ctx.editor.active_buffer_index();
+    let previous_buffer_id = ctx.editor.active_buffer_id();
     assert!(ctx.editor.set_active_pane(rust_pane.pane_id));
-    <Ctx as DefaultContext>::did_change_active_pane(&mut ctx, previous_buffer_index);
+    <Ctx as DefaultContext>::did_change_active_pane(&mut ctx, previous_buffer_id);
 
     assert_eq!(ctx.file_path.as_deref(), Some(rust.as_path()));
     assert_eq!(ctx.editor.active_file_path(), Some(rust.as_path()));

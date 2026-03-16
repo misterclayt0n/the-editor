@@ -117,6 +117,12 @@ pub enum Movement {
   Move,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VerticalMoveResult {
+  pub range:       Range,
+  pub visual_goal: Option<(u32, u32)>,
+}
+
 /// Possible targets of a word motion
 #[derive(Copy, Clone, Debug)]
 pub enum WordMotionTarget {
@@ -323,32 +329,38 @@ pub fn move_horizontally(
     Direction::Backward => nth_prev_grapheme_boundary(slice, pos, count),
   };
 
-  let mut new_range = range.put_cursor(slice, new_pos, behavior == Movement::Extend);
-  new_range.old_visual_pos = None;
-  new_range
+  range.put_cursor(slice, new_pos, behavior == Movement::Extend)
 }
 
 #[must_use]
 pub fn move_vertically_visual<'a>(
   slice: RopeSlice<'a>,
   range: Range,
+  visual_goal: Option<(u32, u32)>,
   dir: Direction,
   count: usize,
   behavior: Movement,
   text_fmt: &'a TextFormat,
   annotations: &mut TextAnnotations<'a>,
-) -> Range {
+) -> VerticalMoveResult {
   if !text_fmt.soft_wrap {
-    return move_vertically(slice, range, dir, count, behavior, text_fmt, annotations);
+    return move_vertically(
+      slice,
+      range,
+      visual_goal,
+      dir,
+      count,
+      behavior,
+      text_fmt,
+      annotations,
+    );
   }
 
   annotations.clear_line_annotations();
   let pos = range.cursor(slice);
 
   let (visual_pos, block_off) = visual_offset_from_block(slice, pos, pos, text_fmt, annotations);
-  let new_col = range
-    .old_visual_pos
-    .map_or(visual_pos.col as u32, |(_, col)| col);
+  let new_col = visual_goal.map_or(visual_pos.col as u32, |(_, col)| col);
 
   let mut row_off = match dir {
     Direction::Forward => count as isize,
@@ -372,24 +384,30 @@ pub fn move_vertically_visual<'a>(
     && new_pos < slice.len_chars()
     && slice.line(slice.char_to_line(new_pos)).len_chars() == 0
   {
-    return range;
+    return VerticalMoveResult {
+      range,
+      visual_goal,
+    };
   }
 
-  let mut new_range = range.put_cursor(slice, new_pos, behavior == Movement::Extend);
-  new_range.old_visual_pos = Some((0, new_col));
-  new_range
+  let new_range = range.put_cursor(slice, new_pos, behavior == Movement::Extend);
+  VerticalMoveResult {
+    range: new_range,
+    visual_goal: Some((0, new_col)),
+  }
 }
 
 #[must_use]
 pub fn move_vertically<'a>(
   slice: RopeSlice<'a>,
   range: Range,
+  visual_goal: Option<(u32, u32)>,
   dir: Direction,
   count: usize,
   behavior: Movement,
   text_fmt: &'a TextFormat,
   annotations: &mut TextAnnotations<'a>,
-) -> Range {
+) -> VerticalMoveResult {
   let pos = range.cursor(slice);
   let line_idx = if pos < slice.len_chars() {
     slice.char_to_line(pos)
@@ -401,9 +419,8 @@ pub fn move_vertically<'a>(
   // Compute the current positions's 2d coordinates.
   let visual_pos = visual_offset_from_block(slice, line_start, pos, text_fmt, annotations).0;
 
-  let (mut new_row, new_col) = range
-    .old_visual_pos
-    .map_or((visual_pos.row as u32, visual_pos.col as u32), |pos| pos);
+  let (mut new_row, new_col) =
+    visual_goal.map_or((visual_pos.row as u32, visual_pos.col as u32), |pos| pos);
   new_row = new_row.max(visual_pos.row as u32);
 
   // Compute the new position.
@@ -439,12 +456,17 @@ pub fn move_vertically<'a>(
 
   // Special-case to avoid moving to the end of the last non-empty line.
   if behavior == Movement::Extend && slice.line(new_line_idx).len_chars() == 0 {
-    return range;
+    return VerticalMoveResult {
+      range,
+      visual_goal,
+    };
   }
 
-  let mut new_range = range.put_cursor(slice, new_pos, behavior == Movement::Extend);
-  new_range.old_visual_pos = Some((new_row, new_col));
-  new_range
+  let new_range = range.put_cursor(slice, new_pos, behavior == Movement::Extend);
+  VerticalMoveResult {
+    range: new_range,
+    visual_goal: Some((new_row, new_col)),
+  }
 }
 
 fn word_move(slice: RopeSlice, range: Range, count: usize, target: WordMotionTarget) -> Range {

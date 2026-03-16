@@ -1,5 +1,8 @@
 use the_lib::{
-  messages::MessageLevel,
+  messages::{
+    MessageDisposition,
+    MessageLevel,
+  },
   render::{
     LayoutIntent,
     UiAlign,
@@ -25,15 +28,11 @@ pub enum MessagePresentation {
   Hidden,
 }
 
-fn is_lsp_source(source: Option<&str>) -> bool {
-  source.is_some_and(|source| source.eq_ignore_ascii_case("lsp"))
-}
-
 fn visible_message<Ctx: DefaultContext>(ctx: &Ctx) -> Option<&the_lib::messages::Message> {
   ctx
     .messages()
     .active()
-    .filter(|message| !is_lsp_source(message.source.as_deref()))
+    .filter(|message| message.disposition != MessageDisposition::Background)
 }
 
 pub fn inline_statusline_message<Ctx: DefaultContext>(ctx: &Ctx) -> Option<String> {

@@ -16,12 +16,21 @@ pub enum MessageLevel {
   Error,
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MessageDisposition {
+  #[default]
+  Foreground,
+  Background,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Message {
-  pub id:     u64,
-  pub level:  MessageLevel,
-  pub source: Option<String>,
-  pub text:   String,
+  pub id:          u64,
+  pub level:       MessageLevel,
+  pub source:      Option<String>,
+  pub disposition: MessageDisposition,
+  pub text:        String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -123,21 +132,32 @@ impl MessageCenter {
     source: Option<String>,
     text: impl Into<String>,
   ) -> Message {
+    self.publish_with_disposition(level, source, MessageDisposition::Foreground, text)
+  }
+
+  pub fn publish_with_disposition(
+    &mut self,
+    level: MessageLevel,
+    source: Option<String>,
+    disposition: MessageDisposition,
+    text: impl Into<String>,
+  ) -> Message {
     let message = Message {
       id: self.next_message_id,
       level,
       source,
+      disposition,
       text: text.into(),
     };
     self.next_message_id = self.next_message_id.saturating_add(1);
 
-    // A background message (source="lsp") must not displace an active
-    // foreground message.  It still goes into history and events.
-    let new_is_bg = is_background_source(message.source.as_deref());
+    // A background message must not displace an active foreground message. It
+    // still goes into history and events.
+    let new_is_bg = message.disposition == MessageDisposition::Background;
     let active_is_fg = self
       .active
       .as_ref()
-      .is_some_and(|m| !is_background_source(m.source.as_deref()));
+      .is_some_and(|m| m.disposition == MessageDisposition::Foreground);
     if !(new_is_bg && active_is_fg) {
       self.active = Some(message.clone());
     }
@@ -157,12 +177,38 @@ impl MessageCenter {
     self.publish(MessageLevel::Info, source, text)
   }
 
+  pub fn info_background(&mut self, source: Option<String>, text: impl Into<String>) -> Message {
+    self.publish_with_disposition(MessageLevel::Info, source, MessageDisposition::Background, text)
+  }
+
   pub fn warning(&mut self, source: Option<String>, text: impl Into<String>) -> Message {
     self.publish(MessageLevel::Warning, source, text)
   }
 
+  pub fn warning_background(
+    &mut self,
+    source: Option<String>,
+    text: impl Into<String>,
+  ) -> Message {
+    self.publish_with_disposition(
+      MessageLevel::Warning,
+      source,
+      MessageDisposition::Background,
+      text,
+    )
+  }
+
   pub fn error(&mut self, source: Option<String>, text: impl Into<String>) -> Message {
     self.publish(MessageLevel::Error, source, text)
+  }
+
+  pub fn error_background(&mut self, source: Option<String>, text: impl Into<String>) -> Message {
+    self.publish_with_disposition(
+      MessageLevel::Error,
+      source,
+      MessageDisposition::Background,
+      text,
+    )
   }
 
   pub fn dismiss_active(&mut self) -> Option<Message> {
@@ -193,10 +239,6 @@ impl MessageCenter {
       self.events.pop_front();
     }
   }
-}
-
-fn is_background_source(source: Option<&str>) -> bool {
-  source.is_some_and(|s| s.eq_ignore_ascii_case("lsp"))
 }
 
 #[cfg(test)]
@@ -239,7 +281,7 @@ mod tests {
     assert_eq!(center.active().unwrap().text, "File saved");
 
     // LSP message must not displace it.
-    center.info(Some("lsp".into()), "cargo check");
+    center.info_background(Some("lsp".into()), "cargo check");
     assert_eq!(center.active().unwrap().id, editor_msg.id);
 
     // But it still goes into history.
@@ -249,15 +291,15 @@ mod tests {
   #[test]
   fn lsp_message_replaces_lsp_active() {
     let mut center = MessageCenter::default();
-    center.info(Some("lsp".into()), "starting");
-    center.info(Some("lsp".into()), "cargo check");
+    center.info_background(Some("lsp".into()), "starting");
+    center.info_background(Some("lsp".into()), "cargo check");
     assert_eq!(center.active().unwrap().text, "cargo check");
   }
 
   #[test]
   fn editor_message_replaces_lsp_active() {
     let mut center = MessageCenter::default();
-    center.info(Some("lsp".into()), "cargo check");
+    center.info_background(Some("lsp".into()), "cargo check");
     center.info(Some("save".into()), "File saved");
     assert_eq!(center.active().unwrap().text, "File saved");
   }

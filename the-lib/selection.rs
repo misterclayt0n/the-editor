@@ -195,9 +195,8 @@ pub enum MatchCapture {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Range {
-  pub anchor:         usize,
-  pub head:           usize,
-  pub old_visual_pos: Option<(u32, u32)>,
+  pub anchor: usize,
+  pub head:   usize,
 }
 
 /// Result of mapping a [`Range`] through changes with delete tracking.
@@ -291,11 +290,7 @@ impl MappedSelection {
 
 impl Range {
   pub fn new(anchor: usize, head: usize) -> Self {
-    Self {
-      anchor,
-      head,
-      old_visual_pos: None,
-    }
+    Self { anchor, head }
   }
 
   pub fn from_node(node: Node, text: RopeSlice, direction: Direction) -> Self {
@@ -414,9 +409,8 @@ impl Range {
   pub fn flip(&self) -> Self {
     // NOTE: We're returning Self directly here instead of Self::new() for clarity.
     Self {
-      anchor:         self.head,
-      head:           self.anchor,
-      old_visual_pos: self.old_visual_pos,
+      anchor: self.head,
+      head:   self.anchor,
     }
   }
 
@@ -510,7 +504,6 @@ impl Range {
     };
 
     changes.update_positions(positions_to_map.into_iter())?;
-    self.old_visual_pos = None;
     Ok(self)
   }
 
@@ -565,9 +558,8 @@ impl Range {
     };
 
     let range = Range {
-      anchor:         anchor_result.position(),
-      head:           head_result.position(),
-      old_visual_pos: None,
+      anchor: anchor_result.position(),
+      head:   head_result.position(),
     };
 
     Ok(MappedRange {
@@ -584,15 +576,13 @@ impl Range {
 
     if self.anchor <= self.head {
       Self {
-        anchor:         self.anchor.min(from),
-        head:           self.head.max(to),
-        old_visual_pos: None,
+        anchor: self.anchor.min(from),
+        head:   self.head.max(to),
       }
     } else {
       Self {
-        anchor:         self.anchor.max(to),
-        head:           self.head.min(from),
-        old_visual_pos: None,
+        anchor: self.anchor.max(to),
+        head:   self.head.min(from),
       }
     }
   }
@@ -604,15 +594,13 @@ impl Range {
   pub fn merge(&self, other: Self) -> Self {
     if self.anchor > self.head && other.anchor > other.head {
       Self {
-        anchor:         self.anchor.max(other.anchor),
-        head:           self.head.min(other.head),
-        old_visual_pos: None,
+        anchor: self.anchor.max(other.anchor),
+        head:   self.head.min(other.head),
       }
     } else {
       Self {
-        anchor:         self.from().min(other.from()),
-        head:           self.to().max(other.to()),
-        old_visual_pos: None,
+        anchor: self.from().min(other.from()),
+        head:   self.to().max(other.to()),
       }
     }
   }
@@ -675,13 +663,8 @@ impl Range {
     };
 
     Range {
-      anchor:         new_anchor,
-      head:           new_head,
-      old_visual_pos: if new_anchor == self.anchor {
-        self.old_visual_pos
-      } else {
-        None
-      },
+      anchor: new_anchor,
+      head:   new_head,
     }
   }
 
@@ -702,9 +685,8 @@ impl Range {
   pub fn min_width_1(&self, slice: RopeSlice) -> Self {
     if self.anchor == self.head {
       Range {
-        anchor:         self.anchor,
-        head:           next_grapheme_boundary(slice, self.head),
-        old_visual_pos: self.old_visual_pos,
+        anchor: self.anchor,
+        head:   next_grapheme_boundary(slice, self.head),
       }
     } else {
       *self
@@ -953,7 +935,6 @@ impl Selection {
 
     let positions_to_map = self.ranges.iter_mut().flat_map(|range| {
       use std::cmp::Ordering;
-      range.old_visual_pos = None;
       match range.anchor.cmp(&range.head) {
         Ordering::Equal => {
           [

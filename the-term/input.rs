@@ -219,10 +219,10 @@ pub(crate) fn handle_pointer_event(ctx: &mut Ctx, event: PointerEvent) -> Pointe
         return PointerEventOutcome::Handled;
       },
       PointerKind::Up(SharedPointerButton::Left) => {
-        if let Some((buffer_index, moved)) = ctx.finish_buffer_tab_drag(x, y, width)
+        if let Some((buffer_id, moved)) = ctx.finish_buffer_tab_drag(x, y, width)
           && !moved
         {
-          let _ = ctx.activate_buffer_tab(buffer_index);
+          let _ = ctx.activate_buffer_tab(buffer_id);
         }
         return PointerEventOutcome::Handled;
       },
@@ -237,8 +237,8 @@ pub(crate) fn handle_pointer_event(ctx: &mut Ctx, event: PointerEvent) -> Pointe
       },
       PointerKind::Down(SharedPointerButton::Left) => {
         ctx.update_buffer_tab_hover(x, y, width);
-        if let Some(buffer_index) = ctx.buffer_tab_close_buffer_index_at(x, y, width) {
-          let _ = ctx.close_buffer_tab(buffer_index);
+        if let Some(buffer_id) = ctx.buffer_tab_close_buffer_id_at(x, y, width) {
+          let _ = ctx.close_buffer_tab(buffer_id);
           return PointerEventOutcome::Handled;
         }
         if let Some(slot) = ctx.buffer_tab_slot_at(x, y, width) {

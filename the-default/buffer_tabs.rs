@@ -4,6 +4,7 @@ use std::path::{
 };
 
 use the_lib::editor::{
+  BufferId,
   BufferSnapshot as EditorBufferSnapshot,
   Editor,
 };
@@ -36,8 +37,7 @@ impl Default for BufferTabsSnapshotOptions {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BufferTabItemSnapshot {
-  pub buffer_id:      u64,
-  pub buffer_index:   usize,
+  pub buffer_id:      BufferId,
   pub title:          String,
   pub modified:       bool,
   pub is_active:      bool,
@@ -47,23 +47,23 @@ pub struct BufferTabItemSnapshot {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BufferTabsSnapshot {
-  pub visible:             bool,
-  pub order:               BufferTabsOrder,
-  pub active_tab:          Option<usize>,
-  pub active_buffer_index: Option<usize>,
-  pub tabs:                Vec<BufferTabItemSnapshot>,
+  pub visible:          bool,
+  pub order:            BufferTabsOrder,
+  pub active_tab:       Option<usize>,
+  pub active_buffer_id: Option<BufferId>,
+  pub tabs:             Vec<BufferTabItemSnapshot>,
 }
 
 pub fn buffer_tabs_snapshot<Ctx: DefaultContext>(ctx: &Ctx) -> BufferTabsSnapshot {
   buffer_tabs_snapshot_with_options(ctx, BufferTabsSnapshotOptions::default())
 }
 
-pub fn activate_buffer_tab<Ctx: DefaultContext>(ctx: &mut Ctx, buffer_index: usize) -> bool {
-  ctx.activate_buffer_by_index(buffer_index)
+pub fn activate_buffer_tab<Ctx: DefaultContext>(ctx: &mut Ctx, buffer_id: BufferId) -> bool {
+  ctx.activate_buffer_by_id(buffer_id)
 }
 
-pub fn close_buffer_tab<Ctx: DefaultContext>(ctx: &mut Ctx, buffer_index: usize) -> bool {
-  let result = ctx.editor().close_buffer(buffer_index);
+pub fn close_buffer_tab<Ctx: DefaultContext>(ctx: &mut Ctx, buffer_id: BufferId) -> bool {
+  let result = ctx.editor().close_buffer(buffer_id);
   if result {
     let active_path = ctx.editor_ref().active_file_path().map(Path::to_path_buf);
     ctx.set_file_path(active_path);
@@ -87,11 +87,7 @@ pub fn buffer_tabs_snapshot_for_editor_with_options(
   options: BufferTabsSnapshotOptions,
 ) -> BufferTabsSnapshot {
   let raw_tabs = match options.order {
-    BufferTabsOrder::Natural => {
-      (0..editor.buffer_count())
-        .filter_map(|index| editor.buffer_snapshot(index))
-        .collect::<Vec<_>>()
-    },
+    BufferTabsOrder::Natural => editor.buffer_snapshots(),
     BufferTabsOrder::Mru => editor.buffer_snapshots_mru(),
   };
 
@@ -101,16 +97,16 @@ pub fn buffer_tabs_snapshot_for_editor_with_options(
     .collect::<Vec<_>>();
 
   let active_tab = tabs.iter().position(|tab| tab.is_active);
-  let active_buffer_index = tabs
+  let active_buffer_id = tabs
     .get(active_tab.unwrap_or(usize::MAX))
-    .map(|tab| tab.buffer_index);
+    .map(|tab| tab.buffer_id);
   let visible = tabs.len() >= options.min_tabs_to_show.max(1);
 
   BufferTabsSnapshot {
     visible,
     order: options.order,
     active_tab,
-    active_buffer_index,
+    active_buffer_id,
     tabs,
   }
 }
@@ -130,7 +126,6 @@ fn map_buffer_snapshot(
 
   BufferTabItemSnapshot {
     buffer_id: snapshot.buffer_id,
-    buffer_index: snapshot.buffer_index,
     title: snapshot.display_name.clone(),
     modified: snapshot.modified,
     is_active: snapshot.is_active,
@@ -161,6 +156,7 @@ mod tests {
       DocumentId,
     },
     editor::{
+      BufferId,
       Editor,
       EditorId,
     },
@@ -191,10 +187,18 @@ mod tests {
     )
   }
 
-  fn open_named_buffer(editor: &mut Editor, name: &str, path: Option<&str>) -> usize {
-    let idx = editor.open_buffer(Rope::from_str(name), test_view(), path.map(PathBuf::from));
+  fn first_buffer_id(editor: &Editor) -> BufferId {
+    editor
+      .buffer_snapshots()
+      .first()
+      .map(|snapshot| snapshot.buffer_id)
+      .expect("editor has a first buffer")
+  }
+
+  fn open_named_buffer(editor: &mut Editor, name: &str, path: Option<&str>) -> BufferId {
+    let buffer_id = editor.open_buffer(Rope::from_str(name), test_view(), path.map(PathBuf::from));
     editor.document_mut().set_display_name(name);
-    idx
+    buffer_id
   }
 
   #[test]
@@ -205,7 +209,7 @@ mod tests {
     assert_eq!(snapshot.tabs.len(), 1);
     assert!(!snapshot.visible);
     assert_eq!(snapshot.active_tab, Some(0));
-    assert_eq!(snapshot.active_buffer_index, Some(0));
+    assert_eq!(snapshot.active_buffer_id, Some(first_buffer_id(&editor)));
   }
 
   #[test]
@@ -222,10 +226,12 @@ mod tests {
         ..BufferTabsSnapshotOptions::default()
       });
 
-    let ids: Vec<usize> = snapshot.tabs.iter().map(|tab| tab.buffer_index).collect();
-    assert_eq!(ids, vec![0, 1, 2]);
+    let a = first_buffer_id(&editor);
+    let b = snapshot.tabs[1].buffer_id;
+    let ids: Vec<BufferId> = snapshot.tabs.iter().map(|tab| tab.buffer_id).collect();
+    assert_eq!(ids, vec![a, b, c]);
     assert_eq!(snapshot.active_tab, Some(2));
-    assert_eq!(snapshot.active_buffer_index, Some(2));
+    assert_eq!(snapshot.active_buffer_id, Some(c));
     assert_eq!(snapshot.tabs[1].directory_hint.as_deref(), Some("src"));
     assert_eq!(snapshot.tabs[2].directory_hint.as_deref(), Some("tests"));
   }
@@ -237,7 +243,8 @@ mod tests {
     let b = open_named_buffer(&mut editor, "b.rs", None);
     let c = open_named_buffer(&mut editor, "c.rs", None);
 
-    assert!(editor.set_active_buffer(0));
+    let a = first_buffer_id(&editor);
+    assert!(editor.set_active_buffer(a));
     assert!(editor.set_active_buffer(b));
     assert!(editor.set_active_buffer(c));
 
@@ -247,12 +254,12 @@ mod tests {
         ..BufferTabsSnapshotOptions::default()
       });
 
-    let ids: Vec<usize> = snapshot.tabs.iter().map(|tab| tab.buffer_index).collect();
+    let ids: Vec<BufferId> = snapshot.tabs.iter().map(|tab| tab.buffer_id).collect();
     assert_eq!(ids[0], c);
     assert_eq!(snapshot.active_tab, Some(0));
-    assert_eq!(snapshot.active_buffer_index, Some(c));
+    assert_eq!(snapshot.active_buffer_id, Some(c));
     assert!(ids.contains(&b));
-    assert!(ids.contains(&0));
+    assert!(ids.contains(&a));
   }
 
   #[test]

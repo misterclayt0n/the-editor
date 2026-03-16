@@ -45,7 +45,10 @@ use the_lib::{
   },
   comment,
   diff::compare_ropes,
-  editor::Editor,
+  editor::{
+    BufferId,
+    Editor,
+  },
   history::{
     HistoryJump,
     UndoKind,
@@ -61,6 +64,7 @@ use the_lib::{
     self,
     Direction as MoveDir,
     Movement,
+    VerticalMoveResult,
     move_horizontally,
     move_vertically,
     move_vertically_visual,
@@ -619,19 +623,14 @@ pub trait DefaultContext: Sized + 'static {
     "active-document"
   }
   fn apply_transaction(&mut self, transaction: &Transaction) -> bool {
-    let changed = !transaction.changes().is_empty();
     let loader_ptr = self.syntax_loader().map(|loader| loader as *const Loader);
-    let applied = {
-      let doc = self.editor().document_mut();
-      let loader = loader_ptr.map(|ptr| unsafe { &*ptr });
-      doc
-        .apply_transaction_with_syntax(transaction, loader)
-        .is_ok()
-    };
-    if applied && changed {
-      self.editor().mark_active_buffer_modified();
-    }
-    applied
+    self
+      .editor()
+      .apply_transaction_to_active_buffer(
+        transaction,
+        loader_ptr.map(|ptr| unsafe { &*ptr }),
+      )
+      .is_ok()
   }
   fn build_render_plan(&mut self) -> RenderPlan;
   fn build_render_plan_with_styles(&mut self, styles: RenderStyles) -> RenderPlan {
@@ -798,11 +797,11 @@ pub trait DefaultContext: Sized + 'static {
   fn clear_ui_theme_preview(&mut self);
   fn set_file_path(&mut self, path: Option<PathBuf>);
   fn open_file(&mut self, path: &Path) -> std::io::Result<()>;
-  fn did_change_active_pane(&mut self, _previous_buffer_index: usize) {}
+  fn did_change_active_pane(&mut self, _previous_buffer_id: BufferId) {}
   fn goto_buffer(&mut self, _direction: Direction, _count: usize) -> bool {
     false
   }
-  fn activate_buffer_by_index(&mut self, _index: usize) -> bool {
+  fn activate_buffer_by_id(&mut self, _buffer_id: BufferId) -> bool {
     false
   }
   fn goto_last_accessed_buffer(&mut self) -> bool {
@@ -1018,7 +1017,7 @@ pub trait DefaultContext: Sized + 'static {
       .into_iter()
       .filter_map(|snapshot| {
         let path = snapshot.file_path?;
-        let document = editor.buffer_document(snapshot.buffer_index)?;
+        let document = editor.buffer_document(snapshot.buffer_id)?;
         Some(crate::GlobalSearchDocumentSnapshot {
           path,
           text: document.text().to_string(),
@@ -3023,22 +3022,22 @@ fn goto_window<Ctx: DefaultContext>(ctx: &mut Ctx, align: WindowAlign, count: us
 }
 
 fn rotate_view<Ctx: DefaultContext>(ctx: &mut Ctx) {
-  let previous_buffer_index = ctx.editor_ref().active_buffer_index();
+  let previous_buffer_id = ctx.editor_ref().active_buffer_id();
   if !ctx.editor().rotate_active_pane(true) {
     ctx.push_warning("window", "no other view to rotate");
     return;
   }
-  ctx.did_change_active_pane(previous_buffer_index);
+  ctx.did_change_active_pane(previous_buffer_id);
   ctx.request_render();
 }
 
 fn split_view<Ctx: DefaultContext>(ctx: &mut Ctx, axis: SplitAxis) {
-  let previous_buffer_index = ctx.editor_ref().active_buffer_index();
+  let previous_buffer_id = ctx.editor_ref().active_buffer_id();
   if !ctx.editor().split_active_pane(axis) {
     ctx.push_warning("window", "failed to split view");
     return;
   }
-  ctx.did_change_active_pane(previous_buffer_index);
+  ctx.did_change_active_pane(previous_buffer_id);
   ctx.request_render();
 }
 
@@ -3051,32 +3050,32 @@ fn transpose_view<Ctx: DefaultContext>(ctx: &mut Ctx) {
 }
 
 fn close_view<Ctx: DefaultContext>(ctx: &mut Ctx) {
-  let previous_buffer_index = ctx.editor_ref().active_buffer_index();
+  let previous_buffer_id = ctx.editor_ref().active_buffer_id();
   if !ctx.editor().close_active_pane() {
     ctx.push_warning("window", "cannot close the last view");
     return;
   }
-  ctx.did_change_active_pane(previous_buffer_index);
+  ctx.did_change_active_pane(previous_buffer_id);
   ctx.request_render();
 }
 
 fn only_view<Ctx: DefaultContext>(ctx: &mut Ctx) {
-  let previous_buffer_index = ctx.editor_ref().active_buffer_index();
+  let previous_buffer_id = ctx.editor_ref().active_buffer_id();
   if !ctx.editor().only_active_pane() {
     ctx.push_warning("window", "already in a single view");
     return;
   }
-  ctx.did_change_active_pane(previous_buffer_index);
+  ctx.did_change_active_pane(previous_buffer_id);
   ctx.request_render();
 }
 
 fn jump_view<Ctx: DefaultContext>(ctx: &mut Ctx, direction: PaneDirection) {
-  let previous_buffer_index = ctx.editor_ref().active_buffer_index();
+  let previous_buffer_id = ctx.editor_ref().active_buffer_id();
   if !ctx.editor().jump_active_pane(direction) {
     ctx.push_warning("window", "no view in that direction");
     return;
   }
-  ctx.did_change_active_pane(previous_buffer_index);
+  ctx.did_change_active_pane(previous_buffer_id);
   ctx.request_render();
 }
 
@@ -4685,6 +4684,37 @@ fn page_cursor_half_down<Ctx: DefaultContext>(ctx: &mut Ctx) {
   scroll_cursor_by_rows(ctx, count, MoveDir::Forward, false);
 }
 
+fn map_selection_with_vertical_motion<F>(
+  view: &mut the_lib::view::ViewState,
+  selection: &Selection,
+  mut mover: F,
+) -> Option<Selection>
+where
+  F: FnMut(Range, Option<(u32, u32)>) -> VerticalMoveResult,
+{
+  let mut ranges: SmallVec<[Range; 1]> = SmallVec::with_capacity(selection.ranges().len());
+  let mut ids: SmallVec<[CursorId; 1]> = SmallVec::with_capacity(selection.cursor_ids().len());
+  let mut next_goals = Vec::with_capacity(selection.ranges().len());
+
+  for (cursor_id, range) in selection.iter_with_ids() {
+    let result = mover(*range, view.cursor_visual_goal(cursor_id, *range));
+    ranges.push(result.range);
+    ids.push(cursor_id);
+    next_goals.push((cursor_id, result.range, result.visual_goal));
+  }
+
+  let next_selection = Selection::new_with_ids(ranges, ids.clone()).ok()?;
+  view.retain_cursor_visual_goals(&ids);
+  for (cursor_id, range, visual_goal) in next_goals {
+    if let Some((row, col)) = visual_goal {
+      view.set_cursor_visual_goal(cursor_id, range, row, col);
+    } else {
+      view.clear_cursor_visual_goal(cursor_id);
+    }
+  }
+  Some(next_selection)
+}
+
 fn scroll_cursor_by_rows<Ctx: DefaultContext>(
   ctx: &mut Ctx,
   count: usize,
@@ -4724,22 +4754,32 @@ fn scroll_cursor_by_rows<Ctx: DefaultContext>(
       Movement::Move
     };
 
-    let new_selection = selection.transform(|range| {
-      move_vertically_visual(
-        text,
-        range,
-        direction,
-        count,
-        behavior,
-        &text_fmt,
-        &mut annotations,
-      )
-    });
+    let mut view_state = view.clone();
+    let Some(new_selection) = map_selection_with_vertical_motion(
+      &mut view_state,
+      &selection,
+      |range, visual_goal| {
+        move_vertically_visual(
+          text,
+          range,
+          visual_goal,
+          direction,
+          count,
+          behavior,
+          &text_fmt,
+          &mut annotations,
+        )
+      },
+    ) else {
+      return;
+    };
 
-    (new_scroll_row, new_selection)
+    (new_scroll_row, (new_selection, view_state))
   };
 
   ctx.editor().view_mut().scroll.row = new_scroll_row;
+  let (new_selection, next_view) = new_selection;
+  *ctx.editor().view_mut() = next_view;
   let _ = ctx.editor().document_mut().set_selection(new_selection);
 }
 
@@ -5157,57 +5197,65 @@ fn parent_node_start<Ctx: DefaultContext>(ctx: &mut Ctx, extend: bool) {
 }
 
 fn move_cursor<Ctx: DefaultContext>(ctx: &mut Ctx, direction: Direction) {
-  {
-    let editor = ctx.editor();
-    let doc = editor.document_mut();
-    let selection = doc.selection().clone();
+  let (dir, vertical) = match direction {
+    Direction::Left | Direction::Backward => (MoveDir::Backward, false),
+    Direction::Right | Direction::Forward => (MoveDir::Forward, false),
+    Direction::Up => (MoveDir::Backward, true),
+    Direction::Down => (MoveDir::Forward, true),
+  };
 
-    let (dir, vertical) = match direction {
-      Direction::Left | Direction::Backward => (MoveDir::Backward, false),
-      Direction::Right | Direction::Forward => (MoveDir::Forward, false),
-      Direction::Up => (MoveDir::Backward, true),
-      Direction::Down => (MoveDir::Forward, true),
-    };
+  let (new_selection, next_view) = {
+    let editor = ctx.editor_ref();
+    let selection = editor.document().selection().clone();
+    let slice = editor.document().text().slice(..);
+    let text_fmt = TextFormat::default();
+    let mut annotations = TextAnnotations::default();
 
-    let new_selection = {
-      let slice = doc.text().slice(..);
-      let text_fmt = TextFormat::default();
-      let mut annotations = TextAnnotations::default();
+    if vertical {
+      let mut view = editor.view();
+      let next_selection = map_selection_with_vertical_motion(
+        &mut view,
+        &selection,
+        |range, visual_goal| {
+          move_vertically(
+            slice,
+            range,
+            visual_goal,
+            dir,
+            1,
+            Movement::Move,
+            &text_fmt,
+            &mut annotations,
+          )
+        },
+      );
+      (next_selection, Some(view))
+    } else {
       let mut ranges: SmallVec<_> = SmallVec::with_capacity(selection.ranges().len());
       let mut ids: SmallVec<_> = SmallVec::with_capacity(selection.cursor_ids().len());
 
       for (cursor_id, range) in selection.iter_with_ids() {
-        let new_range = if vertical {
-          move_vertically(
-            slice,
-            *range,
-            dir,
-            1,
-            Movement::Move,
-            &text_fmt,
-            &mut annotations,
-          )
-        } else {
-          move_horizontally(
-            slice,
-            *range,
-            dir,
-            1,
-            Movement::Move,
-            &text_fmt,
-            &mut annotations,
-          )
-        };
-        ranges.push(new_range);
+        ranges.push(move_horizontally(
+          slice,
+          *range,
+          dir,
+          1,
+          Movement::Move,
+          &text_fmt,
+          &mut annotations,
+        ));
         ids.push(cursor_id);
       }
 
-      Selection::new_with_ids(ranges, ids).ok()
-    };
-
-    if let Some(selection) = new_selection {
-      let _ = doc.set_selection(selection);
+      (Selection::new_with_ids(ranges, ids).ok(), None)
     }
+  };
+
+  if let Some(view) = next_view {
+    *ctx.editor().view_mut() = view;
+  }
+  if let Some(selection) = new_selection {
+    let _ = ctx.editor().document_mut().set_selection(selection);
   }
 }
 
@@ -5217,38 +5265,45 @@ fn add_cursor<Ctx: DefaultContext>(ctx: &mut Ctx, direction: Direction) {
     Direction::Down => MoveDir::Forward,
     _ => return,
   };
-  {
-    let editor = ctx.editor();
-    let doc = editor.document_mut();
-    let selection = doc.selection().clone();
 
-    let new_selection = {
-      let slice = doc.text().slice(..);
-      let text_fmt = TextFormat::default();
-      let mut annotations = TextAnnotations::default();
-      let mut ranges: SmallVec<_> = selection.ranges().iter().copied().collect();
-      let mut ids: SmallVec<_> = selection.cursor_ids().iter().copied().collect();
+  let (new_selection, next_view) = {
+    let editor = ctx.editor_ref();
+    let selection = editor.document().selection().clone();
+    let slice = editor.document().text().slice(..);
+    let text_fmt = TextFormat::default();
+    let mut annotations = TextAnnotations::default();
+    let mut view = editor.view();
 
-      for range in selection.ranges() {
-        let moved = move_vertically(
-          slice,
-          *range,
-          dir,
-          1,
-          Movement::Move,
-          &text_fmt,
-          &mut annotations,
-        );
-        ranges.push(moved);
-        ids.push(CursorId::fresh());
+    let mut ranges: SmallVec<_> = selection.ranges().iter().copied().collect();
+    let mut ids: SmallVec<_> = selection.cursor_ids().iter().copied().collect();
+
+    for (cursor_id, range) in selection.iter_with_ids() {
+      let moved = move_vertically(
+        slice,
+        *range,
+        view.cursor_visual_goal(cursor_id, *range),
+        dir,
+        1,
+        Movement::Move,
+        &text_fmt,
+        &mut annotations,
+      );
+      let new_cursor_id = CursorId::fresh();
+      ranges.push(moved.range);
+      ids.push(new_cursor_id);
+      if let Some((row, col)) = moved.visual_goal {
+        view.set_cursor_visual_goal(new_cursor_id, moved.range, row, col);
+      } else {
+        view.clear_cursor_visual_goal(new_cursor_id);
       }
-
-      Selection::new_with_ids(ranges, ids).ok()
-    };
-
-    if let Some(selection) = new_selection {
-      let _ = doc.set_selection(selection);
     }
+
+    (Selection::new_with_ids(ranges, ids).ok(), view)
+  };
+
+  *ctx.editor().view_mut() = next_view;
+  if let Some(selection) = new_selection {
+    let _ = ctx.editor().document_mut().set_selection(selection);
   }
 }
 
@@ -5263,14 +5318,14 @@ fn motion<Ctx: DefaultContext>(ctx: &mut Ctx, motion: Motion) {
   let viewport_width = ctx.editor().view().viewport.width;
   let is_select = ctx.mode() == Mode::Select;
   let next = {
-    let editor = ctx.editor();
-    let doc = editor.document_mut();
-    let selection = doc.selection().clone();
-    let slice = doc.text().slice(..);
+    let editor = ctx.editor_ref();
+    let selection = editor.document().selection().clone();
+    let slice = editor.document().text().slice(..);
 
     let mut text_fmt = TextFormat::default();
     text_fmt.viewport_width = viewport_width;
     let mut annotations = TextAnnotations::default();
+    let mut view = editor.view();
 
     match motion {
       Motion::Char { dir, extend, count } => {
@@ -5285,7 +5340,7 @@ fn motion<Ctx: DefaultContext>(ctx: &mut Ctx, motion: Motion) {
           Movement::Move
         };
         let count = count.max(1);
-        selection.clone().transform(|range| {
+        let next = selection.clone().transform(|range| {
           move_horizontally(
             slice,
             range,
@@ -5295,7 +5350,8 @@ fn motion<Ctx: DefaultContext>(ctx: &mut Ctx, motion: Motion) {
             &text_fmt,
             &mut annotations,
           )
-        })
+        });
+        (next, None)
       },
       Motion::Line { dir, extend, count } => {
         let dir = match dir {
@@ -5309,17 +5365,25 @@ fn motion<Ctx: DefaultContext>(ctx: &mut Ctx, motion: Motion) {
           Movement::Move
         };
         let count = count.max(1);
-        selection.clone().transform(|range| {
-          move_vertically(
-            slice,
-            range,
-            dir,
-            count,
-            behavior,
-            &text_fmt,
-            &mut annotations,
-          )
-        })
+        let Some(next) = map_selection_with_vertical_motion(
+          &mut view,
+          &selection,
+          |range, visual_goal| {
+            move_vertically(
+              slice,
+              range,
+              visual_goal,
+              dir,
+              count,
+              behavior,
+              &text_fmt,
+              &mut annotations,
+            )
+          },
+        ) else {
+          return;
+        };
+        (next, Some(view))
       },
       Motion::VisualLine { dir, extend, count } => {
         let dir = match dir {
@@ -5333,17 +5397,25 @@ fn motion<Ctx: DefaultContext>(ctx: &mut Ctx, motion: Motion) {
           Movement::Move
         };
         let count = count.max(1);
-        selection.clone().transform(|range| {
-          move_vertically_visual(
-            slice,
-            range,
-            dir,
-            count,
-            behavior,
-            &text_fmt,
-            &mut annotations,
-          )
-        })
+        let Some(next) = map_selection_with_vertical_motion(
+          &mut view,
+          &selection,
+          |range, visual_goal| {
+            move_vertically_visual(
+              slice,
+              range,
+              visual_goal,
+              dir,
+              count,
+              behavior,
+              &text_fmt,
+              &mut annotations,
+            )
+          },
+        ) else {
+          return;
+        };
+        (next, Some(view))
       },
       Motion::Word {
         kind,
@@ -5352,7 +5424,7 @@ fn motion<Ctx: DefaultContext>(ctx: &mut Ctx, motion: Motion) {
       } => {
         let count = count.max(1);
         if extend || is_select {
-          selection.clone().transform(|range| {
+          let next = selection.clone().transform(|range| {
             let word = match kind {
               WordMotion::NextWordStart => movement::move_next_word_start(slice, range, count),
               WordMotion::PrevWordStart => movement::move_prev_word_start(slice, range, count),
@@ -5377,9 +5449,10 @@ fn motion<Ctx: DefaultContext>(ctx: &mut Ctx, motion: Motion) {
             };
             let pos = word.cursor(slice);
             range.put_cursor(slice, pos, true)
-          })
+          });
+          (next, None)
         } else {
-          selection.clone().transform(|range| {
+          let next = selection.clone().transform(|range| {
             match kind {
               WordMotion::NextWordStart => movement::move_next_word_start(slice, range, count),
               WordMotion::PrevWordStart => movement::move_prev_word_start(slice, range, count),
@@ -5402,38 +5475,43 @@ fn motion<Ctx: DefaultContext>(ctx: &mut Ctx, motion: Motion) {
               WordMotion::NextSubWordEnd => movement::move_next_sub_word_end(slice, range, count),
               WordMotion::PrevSubWordEnd => movement::move_prev_sub_word_end(slice, range, count),
             }
-          })
+          });
+          (next, None)
         }
       },
       Motion::FileStart { extend } => {
         let extend = extend || is_select;
-        selection
+        let next = selection
           .clone()
-          .transform(|range| range.put_cursor(slice, 0, extend))
+          .transform(|range| range.put_cursor(slice, 0, extend));
+        (next, None)
       },
       Motion::FileEnd { extend } => {
         let extend = extend || is_select;
         let pos = slice.len_chars();
-        selection
+        let next = selection
           .clone()
-          .transform(|range| range.put_cursor(slice, pos, extend))
+          .transform(|range| range.put_cursor(slice, pos, extend));
+        (next, None)
       },
       Motion::LastLine { extend } => {
         let extend = extend || is_select;
         let line = slice.len_lines().saturating_sub(1);
         let pos = slice.line_to_char(line);
-        selection
+        let next = selection
           .clone()
-          .transform(|range| range.put_cursor(slice, pos, extend))
+          .transform(|range| range.put_cursor(slice, pos, extend));
+        (next, None)
       },
       Motion::Column { col, extend } => {
         let extend = extend || is_select;
         let col = col.saturating_sub(1);
-        selection.clone().transform(|range| {
+        let next = selection.clone().transform(|range| {
           let line = slice.char_to_line(range.cursor(slice));
           let pos = char_idx_at_coords(slice, Position::new(line, col));
           range.put_cursor(slice, pos, extend)
-        })
+        });
+        (next, None)
       },
     }
   };
@@ -5442,10 +5520,11 @@ fn motion<Ctx: DefaultContext>(ctx: &mut Ctx, motion: Motion) {
     let _ = ctx.save_selection_to_jumplist();
   }
 
-  {
-    let doc = ctx.editor().document_mut();
-    let _ = doc.set_selection(next);
+  let (next_selection, next_view) = next;
+  if let Some(view) = next_view {
+    *ctx.editor().view_mut() = view;
   }
+  let _ = ctx.editor().document_mut().set_selection(next_selection);
 }
 
 fn save<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {

@@ -116,6 +116,7 @@ pub use command_registry::{
   effective_working_directory,
   handle_command_prompt_key,
   install_builtin_commands,
+  submit_command_palette,
   sync_command_palette_preview,
   update_action_palette_for_input,
   update_command_palette_for_input,

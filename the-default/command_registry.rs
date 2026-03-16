@@ -1739,97 +1739,9 @@ pub fn handle_command_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEve
       return true;
     },
     Key::Enter | Key::NumpadEnter => {
-      if matches!(
-        ctx.command_palette().source,
-        CommandPaletteSource::ActionPalette
-      ) {
-        let _ = submit_action_palette(ctx);
-        ctx.request_render();
-        return true;
-      }
-
-      let prefiltered_selection = if ctx.command_palette().prefiltered {
-        let selected = ctx.command_palette().selected.unwrap_or(0);
-        command_palette_completion_action(ctx, selected).map(|action| (selected, action))
-      } else {
-        None
-      };
-
-      if matches!(
-        prefiltered_selection,
-        Some((_, DirectoryCompletionAction::Expand))
-      ) {
-        if let Some((selected, _)) = prefiltered_selection
-          && apply_command_palette_completion(ctx, selected)
-        {
-          should_update = true;
-        }
-      } else {
-        // When in argument-completion mode, apply the selected completion
-        // to the input so the command receives the selected path, not the
-        // directory prefix currently shown in the prompt.
-        if let Some((selected, _)) = prefiltered_selection {
-          let _ = apply_command_palette_completion(ctx, selected);
-        }
-
-        let mut line = {
-          let prompt = ctx.command_prompt_ref();
-          prompt.input.trim().trim_start_matches(':').to_string()
-        };
-
-        if line.is_empty() || !line.chars().any(char::is_whitespace) {
-          let selected = {
-            let palette = ctx.command_palette_mut();
-            if let Some(sel) = palette.selected {
-              let filtered = command_palette_filtered_indices(palette);
-              if !filtered.contains(&sel) {
-                palette.selected = None;
-              }
-            }
-            palette.selected
-          };
-
-          if let Some(sel) = selected {
-            if let Some(item) = ctx.command_palette().items.get(sel) {
-              line = item.title.clone();
-            }
-          }
-        }
-
-        if line.is_empty() {
-          close_command_prompt_and_palette(ctx);
-          ctx.request_render();
-          return true;
-        }
-
-        let (command, args, _) = split(&line);
-        if command.is_empty() {
-          let message = "empty command".to_string();
-          ctx.command_prompt_mut().error = Some(message.clone());
-          ctx.push_error("command", message);
-          ctx.request_render();
-          return true;
-        }
-
-        let registry = ctx.command_registry_ref() as *const CommandRegistry<Ctx>;
-        let result = unsafe { (&*registry).execute(ctx, command, args, CommandEvent::Validate) };
-
-        match result {
-          Ok(()) => {
-            close_command_prompt_and_palette(ctx);
-          },
-          Err(err) => {
-            let message = err.to_string();
-            ctx.command_prompt_mut().error = Some(message.clone());
-            ctx.push_error("command", message);
-            ctx.clear_ui_theme_preview();
-            close_command_prompt_and_palette(ctx);
-          },
-        }
-
-        ctx.request_render();
-        return true;
-      } // end else (not expand_dir)
+      let _ = submit_command_palette(ctx);
+      ctx.request_render();
+      return true;
     },
     Key::Backspace => {
       let prompt = ctx.command_prompt_mut();
@@ -1975,17 +1887,115 @@ pub fn handle_command_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEve
   true
 }
 
+fn command_palette_filtered_selection(
+  palette: &crate::CommandPaletteState,
+) -> (Vec<usize>, Option<usize>) {
+  let filtered = command_palette_filtered_indices(palette);
+  let selected = palette.selected.filter(|sel| filtered.contains(sel));
+  (filtered, selected)
+}
+
+fn execute_command_line_submission<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  selected: Option<usize>,
+) -> bool {
+  let palette = ctx.command_palette();
+  let mut line = ctx
+    .command_prompt_ref()
+    .input
+    .trim()
+    .trim_start_matches(':')
+    .to_string();
+
+  if !palette.prefiltered && (line.is_empty() || !line.chars().any(char::is_whitespace)) {
+    if let Some(item_idx) = selected
+      && let Some(item) = palette.items.get(item_idx)
+    {
+      line = item.title.clone();
+    }
+  }
+
+  if line.is_empty() {
+    close_command_prompt_and_palette(ctx);
+    return true;
+  }
+
+  let (command, args, _) = split(&line);
+  if command.is_empty() {
+    let message = "empty command".to_string();
+    ctx.command_prompt_mut().error = Some(message.clone());
+    ctx.push_error("command", message);
+    return true;
+  }
+
+  let registry = ctx.command_registry_ref() as *const CommandRegistry<Ctx>;
+  let result = unsafe { (&*registry).execute(ctx, command, args, CommandEvent::Validate) };
+
+  match result {
+    Ok(()) => {
+      close_command_prompt_and_palette(ctx);
+    },
+    Err(err) => {
+      let message = err.to_string();
+      ctx.command_prompt_mut().error = Some(message.clone());
+      ctx.push_error("command", message);
+      ctx.clear_ui_theme_preview();
+      close_command_prompt_and_palette(ctx);
+    },
+  }
+
+  true
+}
+
+fn submit_command_line_palette<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool {
+  let palette = ctx.command_palette();
+  if !palette.is_open {
+    return false;
+  }
+
+  let (filtered, selected) = command_palette_filtered_selection(palette);
+  let selected = if palette.prefiltered {
+    selected.or_else(|| filtered.first().copied())
+  } else {
+    selected
+  };
+
+  if palette.prefiltered {
+    let prefiltered_selection =
+      selected.and_then(|item_idx| command_palette_completion_action(ctx, item_idx).map(|action| (item_idx, action)));
+
+    if let Some((item_idx, DirectoryCompletionAction::Expand)) = prefiltered_selection {
+      if apply_command_palette_completion(ctx, item_idx) {
+        let input = ctx.command_prompt_ref().input.clone();
+        update_command_palette_for_input(ctx, &input);
+        return true;
+      }
+    } else if let Some((item_idx, _)) = prefiltered_selection {
+      let _ = apply_command_palette_completion(ctx, item_idx);
+    }
+  }
+
+  execute_command_line_submission(ctx, selected)
+}
+
+pub fn submit_command_palette<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool {
+  if !ctx.command_palette().is_open {
+    return false;
+  }
+
+  match ctx.command_palette().source {
+    CommandPaletteSource::ActionPalette => submit_action_palette(ctx),
+    CommandPaletteSource::CommandLine => submit_command_line_palette(ctx),
+  }
+}
+
 fn submit_action_palette<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool {
-  let filtered = command_palette_filtered_indices(ctx.command_palette());
+  let (filtered, selected) = command_palette_filtered_selection(ctx.command_palette());
   if filtered.is_empty() {
     return false;
   }
 
-  let selected = ctx
-    .command_palette()
-    .selected
-    .filter(|sel| filtered.contains(sel))
-    .or_else(|| filtered.first().copied());
+  let selected = selected.or_else(|| filtered.first().copied());
 
   let Some(item_idx) = selected else {
     return false;

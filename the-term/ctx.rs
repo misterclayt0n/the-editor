@@ -9907,6 +9907,80 @@ pkgs.mkShell {
   }
 
   #[test]
+  fn command_palette_enter_submits_selected_open_completion() {
+    let dispatch = build_dispatch::<Ctx>();
+    let fixture = TempTestFile::with_extension("command-open-completion", "toml", "toolchain\n");
+    let mut ctx = Ctx::new(None).expect("ctx");
+    ctx.set_dispatch(&dispatch);
+
+    let parent = fixture
+      .as_path()
+      .parent()
+      .expect("temp test file should have a parent");
+    let file_name = fixture
+      .as_path()
+      .file_name()
+      .and_then(|name| name.to_str())
+      .expect("temp test file name should be utf-8");
+    let partial_len = file_name.len().saturating_sub(5).max(1);
+    let partial = &file_name[..partial_len];
+
+    handle_key(&dispatch, &mut ctx, KeyEvent {
+      key:       Key::Char(':'),
+      modifiers: Modifiers::empty(),
+    });
+    for ch in format!("e {}/{}", parent.display(), partial).chars() {
+      handle_key(&dispatch, &mut ctx, KeyEvent {
+        key:       Key::Char(ch),
+        modifiers: Modifiers::empty(),
+      });
+    }
+
+    assert!(ctx.command_palette.prefiltered);
+    assert!(!ctx.command_palette.items.is_empty());
+
+    handle_key(&dispatch, &mut ctx, KeyEvent {
+      key:       Key::Enter,
+      modifiers: Modifiers::empty(),
+    });
+
+    assert_eq!(ctx.mode(), Mode::Normal);
+    assert_eq!(ctx.file_path(), Some(fixture.as_path()));
+    assert_eq!(ctx.editor.document().text().to_string(), "toolchain\n");
+  }
+
+  #[test]
+  fn command_palette_enter_submits_selected_theme_completion() {
+    let dispatch = build_dispatch::<Ctx>();
+    let mut ctx = Ctx::new(None).expect("ctx");
+    ctx.set_dispatch(&dispatch);
+
+    handle_key(&dispatch, &mut ctx, KeyEvent {
+      key:       Key::Char(':'),
+      modifiers: Modifiers::empty(),
+    });
+    for ch in "theme base16".chars() {
+      handle_key(&dispatch, &mut ctx, KeyEvent {
+        key:       Key::Char(ch),
+        modifiers: Modifiers::empty(),
+      });
+    }
+
+    assert!(ctx.command_palette.prefiltered);
+    assert!(!ctx.command_palette.items.is_empty());
+    assert_eq!(ctx.ui_theme_preview_name.as_deref(), Some("base16_default"));
+
+    handle_key(&dispatch, &mut ctx, KeyEvent {
+      key:       Key::Enter,
+      modifiers: Modifiers::empty(),
+    });
+
+    assert_eq!(ctx.mode(), Mode::Normal);
+    assert_eq!(ctx.ui_theme_name(), "base16_default");
+    assert_eq!(ctx.ui_theme_preview_name.as_deref(), None);
+  }
+
+  #[test]
   fn command_open_creates_missing_file() {
     let dispatch = build_dispatch::<Ctx>();
     let mut ctx = Ctx::new(None).expect("ctx");

@@ -16,6 +16,8 @@ pub enum ContextMenuActionId {
   FileTreeNewFile,
   FileTreeNewFolder,
   FileTreeRename,
+  FileTreeDelete,
+  FileTreeRefresh,
   EditorGotoDefinition,
   EditorGotoTypeDefinition,
   EditorGotoImplementation,
@@ -37,6 +39,8 @@ impl ContextMenuActionId {
       Self::FileTreeNewFile => "file_tree.new_file",
       Self::FileTreeNewFolder => "file_tree.new_folder",
       Self::FileTreeRename => "file_tree.rename",
+      Self::FileTreeDelete => "file_tree.delete",
+      Self::FileTreeRefresh => "file_tree.refresh",
       Self::EditorGotoDefinition => "editor.goto_definition",
       Self::EditorGotoTypeDefinition => "editor.goto_type_definition",
       Self::EditorGotoImplementation => "editor.goto_implementation",
@@ -58,6 +62,8 @@ impl ContextMenuActionId {
       Self::FileTreeNewFile => "New File...",
       Self::FileTreeNewFolder => "New Folder...",
       Self::FileTreeRename => "Rename...",
+      Self::FileTreeDelete => "Delete",
+      Self::FileTreeRefresh => "Refresh",
       Self::EditorGotoDefinition => "Go to Definition",
       Self::EditorGotoTypeDefinition => "Go to Type Definition",
       Self::EditorGotoImplementation => "Go to Implementation",
@@ -88,6 +94,8 @@ impl FromStr for ContextMenuActionId {
       "file_tree.new_file" => Ok(Self::FileTreeNewFile),
       "file_tree.new_folder" => Ok(Self::FileTreeNewFolder),
       "file_tree.rename" => Ok(Self::FileTreeRename),
+      "file_tree.delete" => Ok(Self::FileTreeDelete),
+      "file_tree.refresh" => Ok(Self::FileTreeRefresh),
       "editor.goto_definition" => Ok(Self::EditorGotoDefinition),
       "editor.goto_type_definition" => Ok(Self::EditorGotoTypeDefinition),
       "editor.goto_implementation" => Ok(Self::EditorGotoImplementation),
@@ -250,6 +258,18 @@ pub fn build_file_tree_context_menu(options: FileTreeContextMenuOptions) -> Cont
     } else {
       ContextMenuItem::new(ContextMenuActionId::FileTreeRename)
     }],
+  });
+
+  sections.push(ContextMenuSection {
+    title: None,
+    items: vec![
+      ContextMenuItem::new(ContextMenuActionId::FileTreeRefresh),
+      if options.is_workspace_root {
+        ContextMenuItem::new(ContextMenuActionId::FileTreeDelete).disabled()
+      } else {
+        ContextMenuItem::new(ContextMenuActionId::FileTreeDelete).destructive()
+      },
+    ],
   });
 
   ContextMenuSnapshot { sections }

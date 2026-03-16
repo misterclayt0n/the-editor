@@ -32,6 +32,7 @@ use crate::{
   split_tree::{
     PaneDirection,
     PaneId,
+    PaneNeighbors,
     SplitAxis,
     SplitNodeId,
     SplitSeparator,
@@ -184,6 +185,64 @@ pub struct FramePaneSnapshot {
   pub content:        PaneContent,
   pub rect:           Rect,
   pub is_active_pane: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OpenTarget {
+  Active,
+  Pane(PaneId),
+  Neighbor {
+    direction:         PaneDirection,
+    create_if_missing: bool,
+  },
+  Split {
+    axis:      SplitAxis,
+    focus_new: bool,
+  },
+}
+
+impl OpenTarget {
+  pub const fn active() -> Self {
+    Self::Active
+  }
+
+  pub const fn pane(pane: PaneId) -> Self {
+    Self::Pane(pane)
+  }
+
+  pub const fn neighbor(direction: PaneDirection) -> Self {
+    Self::Neighbor {
+      direction,
+      create_if_missing: false,
+    }
+  }
+
+  pub const fn neighbor_or_split(direction: PaneDirection) -> Self {
+    Self::Neighbor {
+      direction,
+      create_if_missing: true,
+    }
+  }
+
+  pub const fn split(axis: SplitAxis) -> Self {
+    Self::Split {
+      axis,
+      focus_new: true,
+    }
+  }
+
+  pub const fn split_without_focus(axis: SplitAxis) -> Self {
+    Self::Split {
+      axis,
+      focus_new: false,
+    }
+  }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResolvedOpenTarget {
+  pub pane:             PaneId,
+  pub restore_focus_to: Option<PaneId>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -644,8 +703,25 @@ impl Editor {
     }
   }
 
+  pub fn pane_in_direction(&self, pane: PaneId, direction: PaneDirection) -> Option<PaneId> {
+    self.surface.split_tree.pane_in_direction(pane, direction)
+  }
+
+  pub fn pane_neighbors(&self, pane: PaneId) -> Option<PaneNeighbors> {
+    self.surface.split_tree.pane_neighbors(pane)
+  }
+
   pub fn pane_content(&self, pane: PaneId) -> Option<PaneContent> {
     self.surface.pane_content.get(&pane).copied()
+  }
+
+  pub fn pane_rect(&self, pane: PaneId) -> Option<Rect> {
+    self
+      .surface
+      .split_tree
+      .layout(self.surface.layout_viewport)
+      .into_iter()
+      .find_map(|(candidate, rect)| (candidate == pane).then_some(rect))
   }
 
   pub fn pane_view(&self, pane: PaneId) -> Option<ViewState> {
@@ -1048,6 +1124,68 @@ impl Editor {
     true
   }
 
+  pub fn resolve_open_target(&mut self, target: OpenTarget) -> Option<ResolvedOpenTarget> {
+    let previous_active = self.active_pane_id();
+
+    match target {
+      OpenTarget::Active => {
+        Some(ResolvedOpenTarget {
+          pane:             previous_active,
+          restore_focus_to: None,
+        })
+      },
+      OpenTarget::Pane(pane) => {
+        if !self.set_active_pane(pane) {
+          return None;
+        }
+        Some(ResolvedOpenTarget {
+          pane,
+          restore_focus_to: None,
+        })
+      },
+      OpenTarget::Neighbor {
+        direction,
+        create_if_missing,
+      } => {
+        if let Some(pane) = self.pane_in_direction(previous_active, direction) {
+          let _ = self.set_active_pane(pane);
+          return Some(ResolvedOpenTarget {
+            pane,
+            restore_focus_to: None,
+          });
+        }
+        if !create_if_missing {
+          return None;
+        }
+
+        let axis = direction.split_axis();
+        if !self.split_active_pane(axis) {
+          return None;
+        }
+
+        let pane = self.active_pane_id();
+        if direction.places_before() {
+          let _ = self.surface.split_tree.move_pane(pane, previous_active, direction);
+        }
+
+        Some(ResolvedOpenTarget {
+          pane,
+          restore_focus_to: None,
+        })
+      },
+      OpenTarget::Split { axis, focus_new } => {
+        if !self.split_active_pane(axis) {
+          return None;
+        }
+        let pane = self.active_pane_id();
+        Some(ResolvedOpenTarget {
+          pane,
+          restore_focus_to: (!focus_new).then_some(previous_active),
+        })
+      },
+    }
+  }
+
   pub fn set_active_buffer_preserving_terminal(&mut self, buffer_id: BufferId) -> bool {
     self.activate_buffer(buffer_id)
   }
@@ -1194,15 +1332,6 @@ impl Editor {
     {
       buffer.view = view;
     }
-  }
-
-  fn pane_rect(&self, pane: PaneId) -> Option<Rect> {
-    self
-      .surface
-      .split_tree
-      .layout(self.surface.layout_viewport)
-      .into_iter()
-      .find_map(|(candidate, rect)| (candidate == pane).then_some(rect))
   }
 
   pub fn open_buffer_without_activation(
@@ -2546,5 +2675,45 @@ mod tests {
 
     assert!(editor.activate_jump_snapshot(&snapshots[1]));
     assert_eq!(editor.document().selection().ranges()[0], Range::point(0));
+  }
+
+  #[test]
+  fn pane_queries_report_neighbors_and_rects() {
+    let doc_id = DocumentId::new(NonZeroUsize::new(1).unwrap());
+    let doc = Document::new(doc_id, Rope::from("one"));
+    let view = ViewState::new(Rect::new(0, 0, 80, 24), Position::new(0, 0));
+    let editor_id = EditorId::new(NonZeroUsize::new(1).unwrap());
+    let mut editor = Editor::new(editor_id, doc, view);
+
+    let left = editor.active_pane_id();
+    assert!(editor.split_active_pane(SplitAxis::Vertical));
+    let right = editor.active_pane_id();
+
+    let neighbors = editor.pane_neighbors(left).expect("neighbors");
+    assert_eq!(neighbors.right, Some(right));
+    assert_eq!(editor.pane_in_direction(right, PaneDirection::Left), Some(left));
+    assert!(editor.pane_rect(left).is_some());
+    assert!(editor.pane_rect(right).is_some());
+  }
+
+  #[test]
+  fn resolve_open_target_can_create_neighbor_without_stealing_focus_after_open() {
+    let doc_id = DocumentId::new(NonZeroUsize::new(1).unwrap());
+    let doc = Document::new(doc_id, Rope::from("one"));
+    let view = ViewState::new(Rect::new(0, 0, 80, 24), Position::new(0, 0));
+    let editor_id = EditorId::new(NonZeroUsize::new(1).unwrap());
+    let mut editor = Editor::new(editor_id, doc, view);
+
+    let first = editor.active_pane_id();
+    let resolved = editor
+      .resolve_open_target(OpenTarget::Split {
+        axis:      SplitAxis::Vertical,
+        focus_new: false,
+      })
+      .expect("resolved split target");
+
+    assert_ne!(resolved.pane, first);
+    assert_eq!(resolved.restore_focus_to, Some(first));
+    assert_eq!(editor.active_pane_id(), resolved.pane);
   }
 }

@@ -74,6 +74,38 @@ pub enum PaneDirection {
   Right,
 }
 
+impl PaneDirection {
+  pub const fn split_axis(self) -> SplitAxis {
+    match self {
+      Self::Left | Self::Right => SplitAxis::Vertical,
+      Self::Up | Self::Down => SplitAxis::Horizontal,
+    }
+  }
+
+  pub const fn places_before(self) -> bool {
+    matches!(self, Self::Left | Self::Up)
+  }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct PaneNeighbors {
+  pub up:    Option<PaneId>,
+  pub down:  Option<PaneId>,
+  pub left:  Option<PaneId>,
+  pub right: Option<PaneId>,
+}
+
+impl PaneNeighbors {
+  pub const fn in_direction(self, direction: PaneDirection) -> Option<PaneId> {
+    match direction {
+      PaneDirection::Up => self.up,
+      PaneDirection::Down => self.down,
+      PaneDirection::Left => self.left,
+      PaneDirection::Right => self.right,
+    }
+  }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SplitSeparator {
   pub split_id:   SplitNodeId,
@@ -572,6 +604,23 @@ impl SplitTree {
     *branch_ratio = ratio.clamp(0.0, 1.0);
     debug_assert!(self.validate().is_ok());
     true
+  }
+
+  pub fn pane_in_direction(&self, pane: PaneId, direction: PaneDirection) -> Option<PaneId> {
+    self.find_pane_in_direction(pane, direction)
+  }
+
+  pub fn pane_neighbors(&self, pane: PaneId) -> Option<PaneNeighbors> {
+    if !self.contains_pane(pane) {
+      return None;
+    }
+
+    Some(PaneNeighbors {
+      up:    self.find_pane_in_direction(pane, PaneDirection::Up),
+      down:  self.find_pane_in_direction(pane, PaneDirection::Down),
+      left:  self.find_pane_in_direction(pane, PaneDirection::Left),
+      right: self.find_pane_in_direction(pane, PaneDirection::Right),
+    })
   }
 
   pub fn validate(&self) -> Result<(), InvariantError> {

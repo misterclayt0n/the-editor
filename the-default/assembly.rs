@@ -16,6 +16,8 @@ use crate::{
   DefaultApi,
   DefaultContext,
   EditorContextMenuRequest,
+  FileTreeNodeDecoration,
+  FileTreeNodeRequest,
   ExtensionStateStore,
   FileTreeContextMenuRequest,
   KeyAction,
@@ -36,6 +38,7 @@ use crate::{
   extensions::{
     CompletionMenuProviderRegistry,
     EditorContextMenuProviderRegistry,
+    FileTreeNodeDecoratorRegistry,
     FileTreeContextMenuProviderRegistry,
     NamedActionRegistry,
     PickerQueryHandlerRegistry,
@@ -187,6 +190,7 @@ pub struct EditorPreset<Ctx: 'static, Dispatch> {
   signature_help_providers:         SignatureHelpProviderRegistry<Ctx>,
   editor_context_menu_providers:    EditorContextMenuProviderRegistry<Ctx>,
   file_tree_context_menu_providers: FileTreeContextMenuProviderRegistry<Ctx>,
+  file_tree_node_decorators:        FileTreeNodeDecoratorRegistry<Ctx>,
   picker_query_handlers:            PickerQueryHandlerRegistry<Ctx>,
   picker_submit_handlers:           PickerSubmitHandlerRegistry<Ctx>,
   text_annotations_providers:       Vec<Box<TextAnnotationsProvider<Ctx>>>,
@@ -209,6 +213,7 @@ impl<Ctx: 'static, Dispatch> EditorPreset<Ctx, Dispatch> {
       signature_help_providers: SignatureHelpProviderRegistry::default(),
       editor_context_menu_providers: EditorContextMenuProviderRegistry::default(),
       file_tree_context_menu_providers: FileTreeContextMenuProviderRegistry::default(),
+      file_tree_node_decorators: FileTreeNodeDecoratorRegistry::default(),
       picker_query_handlers: PickerQueryHandlerRegistry::default(),
       picker_submit_handlers: PickerSubmitHandlerRegistry::default(),
       text_annotations_providers: Vec::new(),
@@ -263,6 +268,7 @@ impl<Ctx: 'static, Dispatch> EditorPreset<Ctx, Dispatch> {
       signature_help_providers: self.signature_help_providers,
       editor_context_menu_providers: self.editor_context_menu_providers,
       file_tree_context_menu_providers: self.file_tree_context_menu_providers,
+      file_tree_node_decorators: self.file_tree_node_decorators,
       picker_query_handlers: self.picker_query_handlers,
       picker_submit_handlers: self.picker_submit_handlers,
       text_annotations_providers: self.text_annotations_providers,
@@ -451,6 +457,14 @@ impl<Ctx: 'static, Dispatch> EditorPreset<Ctx, Dispatch> {
     self
   }
 
+  pub fn install_file_tree_node_decorator<F>(mut self, provider: F) -> Self
+  where
+    F: for<'a> Fn(&mut Ctx, &FileTreeNodeRequest<'a>, &mut FileTreeNodeDecoration) + 'static,
+  {
+    self.file_tree_node_decorators.register(provider);
+    self
+  }
+
   pub fn install_text_annotations_provider<F>(mut self, provider: F) -> Self
   where
     F: for<'a> Fn(&'a Ctx, &mut TextAnnotations<'a>) + 'static,
@@ -515,6 +529,7 @@ impl<Ctx: 'static, Dispatch> EditorPreset<Ctx, Dispatch> {
       signature_help_providers: self.signature_help_providers,
       editor_context_menu_providers: self.editor_context_menu_providers,
       file_tree_context_menu_providers: self.file_tree_context_menu_providers,
+      file_tree_node_decorators: self.file_tree_node_decorators,
       picker_query_handlers: self.picker_query_handlers,
       picker_submit_handlers: self.picker_submit_handlers,
       text_annotations_providers: self.text_annotations_providers,
@@ -536,6 +551,7 @@ pub struct BuiltEditorPreset<Ctx: 'static, Dispatch> {
   signature_help_providers:         SignatureHelpProviderRegistry<Ctx>,
   editor_context_menu_providers:    EditorContextMenuProviderRegistry<Ctx>,
   file_tree_context_menu_providers: FileTreeContextMenuProviderRegistry<Ctx>,
+  file_tree_node_decorators:        FileTreeNodeDecoratorRegistry<Ctx>,
   picker_query_handlers:            PickerQueryHandlerRegistry<Ctx>,
   picker_submit_handlers:           PickerSubmitHandlerRegistry<Ctx>,
   text_annotations_providers:       Vec<Box<TextAnnotationsProvider<Ctx>>>,
@@ -693,6 +709,17 @@ impl<Ctx: 'static, Dispatch> BuiltEditorPreset<Ctx, Dispatch> {
       .postprocess(ctx, request, snapshot);
   }
 
+  pub fn decorate_file_tree_node(
+    &self,
+    ctx: &mut Ctx,
+    request: &FileTreeNodeRequest<'_>,
+    decoration: &mut FileTreeNodeDecoration,
+  ) {
+    self
+      .file_tree_node_decorators
+      .decorate(ctx, request, decoration);
+  }
+
   pub fn picker_query_handler_id(&self, name: &str) -> Option<crate::PickerQueryHandlerId> {
     self.picker_query_handlers.id_for_name(name)
   }
@@ -757,6 +784,7 @@ where
       signature_help_providers:         self.signature_help_providers,
       editor_context_menu_providers:    self.editor_context_menu_providers,
       file_tree_context_menu_providers: self.file_tree_context_menu_providers,
+      file_tree_node_decorators:        self.file_tree_node_decorators,
       picker_query_handlers:            self.picker_query_handlers,
       picker_submit_handlers:           self.picker_submit_handlers,
       text_annotations_providers:       self.text_annotations_providers,

@@ -29,6 +29,17 @@ mod signature_help;
 mod statusline;
 mod theme_catalog;
 
+pub use the_lib::{
+  editor::OpenTarget,
+  split_tree::{
+    PaneDirection,
+    PaneId,
+    PaneNeighbors,
+    SplitAxis,
+    SplitNodeId,
+  },
+};
+
 pub use assembly::{
   BuiltEditorPreset,
   BuiltinCompletionMenuKind,
@@ -152,6 +163,7 @@ pub use extensions::{
   CompletionMenuSelectionHandler,
   EditorContextMenuProvider,
   FileTreeContextMenuProvider,
+  FileTreeNodeDecorator,
   NamedAction,
   NamedActionFn,
   NamedActionHandle,
@@ -235,11 +247,36 @@ pub use file_picker::{
   workspace_root,
 };
 pub use file_tree::{
+  FileTreeDisclosure,
+  FileTreeEditEntry,
+  FileTreeEditError,
+  FileTreeEditPatch,
+  FileTreeEditSession,
   FileTreeMode,
+  FileTreeNodeBadge,
+  FileTreeNodeDecoration,
   FileTreeNodeKind,
+  FileTreeNodePayload,
+  FileTreeNodePresentation,
+  FileTreeNodeRequest,
   FileTreeNodeSnapshot,
+  FileTreeOp,
+  FileTreeOpOutcome,
+  FileTreeRowAccent,
+  FileTreeRowLayout,
   FileTreeSnapshot,
   FileTreeState,
+  build_file_tree_presentations,
+  build_file_tree_presentations_with_providers,
+  build_file_tree_row_layouts,
+  build_file_tree_row_layouts_with_providers,
+  execute_file_tree_edit_patch,
+  execute_file_tree_op,
+  file_tree_default_icon_name,
+  file_tree_disclosure,
+  file_tree_disclosure_glyph,
+  file_tree_indentation,
+  file_tree_row_layout,
 };
 pub use global_search::{
   GlobalSearchConfig,

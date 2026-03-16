@@ -48,6 +48,7 @@ use the_lib::{
   editor::{
     BufferId,
     Editor,
+    OpenTarget,
   },
   history::{
     HistoryJump,
@@ -721,6 +722,8 @@ pub trait DefaultContext: Sized + 'static {
   fn signature_help_mut(&mut self) -> Option<&mut SignatureHelpState> {
     None
   }
+  fn file_tree(&self) -> &crate::FileTreeState;
+  fn file_tree_mut(&mut self) -> &mut crate::FileTreeState;
   fn file_picker(&self) -> &crate::file_picker::FilePickerState;
   fn file_picker_mut(&mut self) -> &mut crate::file_picker::FilePickerState;
   fn search_prompt_ref(&self) -> &crate::SearchPromptState;
@@ -797,6 +800,17 @@ pub trait DefaultContext: Sized + 'static {
   fn clear_ui_theme_preview(&mut self);
   fn set_file_path(&mut self, path: Option<PathBuf>);
   fn open_file(&mut self, path: &Path) -> std::io::Result<()>;
+  fn open_file_in_target(&mut self, path: &Path, target: OpenTarget) -> std::io::Result<()> {
+    let resolution = self
+      .editor()
+      .resolve_open_target(target)
+      .ok_or_else(|| std::io::Error::other("failed to resolve open target"))?;
+    let result = self.open_file(path);
+    if let Some(pane) = resolution.restore_focus_to {
+      let _ = self.editor().set_active_pane(pane);
+    }
+    result
+  }
   fn did_change_active_pane(&mut self, _previous_buffer_id: BufferId) {}
   fn goto_buffer(&mut self, _direction: Direction, _count: usize) -> bool {
     false
@@ -1109,6 +1123,12 @@ pub trait DefaultContext: Sized + 'static {
     _item: &crate::file_picker::FilePickerItem,
   ) -> crate::extensions::PickerSubmitResult {
     crate::extensions::PickerSubmitResult::Unhandled
+  }
+  fn decorate_file_tree_node(
+    &mut self,
+    _request: &crate::FileTreeNodeRequest<'_>,
+    _decoration: &mut crate::FileTreeNodeDecoration,
+  ) {
   }
   fn extend_text_annotations<'a>(&'a self, _annotations: &mut TextAnnotations<'a>) {}
   fn postprocess_render_plan(&mut self, _plan: &mut RenderPlan) {}

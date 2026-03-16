@@ -1,4 +1,5 @@
 use std::{
+  any::Any,
   cmp::Ordering,
   collections::{
     HashMap,
@@ -9,10 +10,17 @@ use std::{
     Path,
     PathBuf,
   },
+  sync::Arc,
   time::SystemTime,
 };
 
 use the_stdx::env::current_working_dir;
+use the_lib::{
+  diagnostics::DiagnosticSeverity,
+  editor::OpenTarget,
+};
+
+use crate::DefaultContext;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FileTreeMode {
@@ -36,6 +44,7 @@ pub struct FileTreeNodeSnapshot {
   pub kind:                  FileTreeNodeKind,
   pub expanded:              bool,
   pub selected:              bool,
+  pub active:                bool,
   pub has_unloaded_children: bool,
 }
 
@@ -45,8 +54,282 @@ pub struct FileTreeSnapshot {
   pub root:               PathBuf,
   pub mode:               FileTreeMode,
   pub selected_path:      Option<PathBuf>,
+  pub active_path:        Option<PathBuf>,
   pub refresh_generation: u64,
   pub nodes:              Vec<FileTreeNodeSnapshot>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileTreeNodeBadge {
+  pub label: String,
+  pub role:  Option<String>,
+}
+
+impl FileTreeNodeBadge {
+  #[must_use]
+  pub fn new(label: impl Into<String>) -> Self {
+    Self {
+      label: label.into(),
+      role:  None,
+    }
+  }
+
+  #[must_use]
+  pub fn role(mut self, role: impl Into<String>) -> Self {
+    self.role = Some(role.into());
+    self
+  }
+}
+
+#[derive(Clone)]
+pub struct FileTreeNodePayload {
+  type_name: &'static str,
+  value:     Arc<dyn Any + Send + Sync>,
+}
+
+impl FileTreeNodePayload {
+  pub fn new<T>(value: T) -> Self
+  where
+    T: Any + Send + Sync,
+  {
+    Self {
+      type_name: std::any::type_name::<T>(),
+      value:     Arc::new(value),
+    }
+  }
+
+  pub fn get<T>(&self) -> Option<&T>
+  where
+    T: Any + Send + Sync,
+  {
+    self.value.as_ref().downcast_ref::<T>()
+  }
+}
+
+impl std::fmt::Debug for FileTreeNodePayload {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.debug_struct("FileTreeNodePayload")
+      .field("type_name", &self.type_name)
+      .finish()
+  }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct FileTreeNodeDecoration {
+  pub icon:           Option<String>,
+  pub badges:         Vec<FileTreeNodeBadge>,
+  pub severity:       Option<DiagnosticSeverity>,
+  pub secondary_text: Option<String>,
+  pub status:         Option<String>,
+  pub payload:        Option<FileTreeNodePayload>,
+}
+
+impl FileTreeNodeDecoration {
+  #[must_use]
+  pub fn with_icon(mut self, icon: impl Into<String>) -> Self {
+    self.icon = Some(icon.into());
+    self
+  }
+
+  #[must_use]
+  pub fn with_badge(mut self, badge: FileTreeNodeBadge) -> Self {
+    self.badges.push(badge);
+    self
+  }
+
+  #[must_use]
+  pub fn with_secondary_text(mut self, text: impl Into<String>) -> Self {
+    self.secondary_text = Some(text.into());
+    self
+  }
+
+  #[must_use]
+  pub fn with_status(mut self, status: impl Into<String>) -> Self {
+    self.status = Some(status.into());
+    self
+  }
+
+  #[must_use]
+  pub fn with_severity(mut self, severity: DiagnosticSeverity) -> Self {
+    self.severity = Some(severity);
+    self
+  }
+
+  #[must_use]
+  pub fn with_payload<T>(mut self, payload: T) -> Self
+  where
+    T: Any + Send + Sync,
+  {
+    self.payload = Some(FileTreeNodePayload::new(payload));
+    self
+  }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FileTreeNodeRequest<'a> {
+  pub tree: &'a FileTreeSnapshot,
+  pub node: &'a FileTreeNodeSnapshot,
+}
+
+#[derive(Debug, Clone)]
+pub struct FileTreeNodePresentation {
+  pub node:       FileTreeNodeSnapshot,
+  pub decoration: FileTreeNodeDecoration,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileTreeDisclosure {
+  None,
+  Collapsed,
+  Expanded,
+  Loading,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileTreeRowAccent {
+  Default,
+  Selected,
+  Active,
+  Hint,
+  Info,
+  Warning,
+  Error,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileTreeRowLayout {
+  pub id:               String,
+  pub path:             PathBuf,
+  pub depth:            usize,
+  pub indent_text:      String,
+  pub disclosure:       FileTreeDisclosure,
+  pub disclosure_glyph: &'static str,
+  pub icon:             String,
+  pub primary_text:     String,
+  pub secondary_text:   Option<String>,
+  pub badges:           Vec<FileTreeNodeBadge>,
+  pub status:           Option<String>,
+  pub accent:           FileTreeRowAccent,
+  pub selected:         bool,
+  pub active:           bool,
+  pub kind:             FileTreeNodeKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FileTreeOp {
+  Open {
+    path:   PathBuf,
+    target: OpenTarget,
+  },
+  CreateFile {
+    path: PathBuf,
+  },
+  CreateDirectory {
+    path: PathBuf,
+  },
+  Rename {
+    from: PathBuf,
+    to:   PathBuf,
+  },
+  Delete {
+    path:      PathBuf,
+    recursive: bool,
+  },
+  Move {
+    from: PathBuf,
+    to:   PathBuf,
+  },
+  Refresh {
+    path: Option<PathBuf>,
+  },
+}
+
+impl FileTreeOp {
+  #[must_use]
+  pub fn open(path: impl Into<PathBuf>, target: OpenTarget) -> Self {
+    Self::Open {
+      path:   path.into(),
+      target,
+    }
+  }
+
+  #[must_use]
+  pub fn create_file(path: impl Into<PathBuf>) -> Self {
+    Self::CreateFile { path: path.into() }
+  }
+
+  #[must_use]
+  pub fn create_directory(path: impl Into<PathBuf>) -> Self {
+    Self::CreateDirectory { path: path.into() }
+  }
+
+  #[must_use]
+  pub fn rename(from: impl Into<PathBuf>, to: impl Into<PathBuf>) -> Self {
+    Self::Rename {
+      from: from.into(),
+      to:   to.into(),
+    }
+  }
+
+  #[must_use]
+  pub fn delete(path: impl Into<PathBuf>) -> Self {
+    Self::Delete {
+      path:      path.into(),
+      recursive: true,
+    }
+  }
+
+  #[must_use]
+  pub fn move_to(from: impl Into<PathBuf>, to: impl Into<PathBuf>) -> Self {
+    Self::Move {
+      from: from.into(),
+      to:   to.into(),
+    }
+  }
+
+  #[must_use]
+  pub fn refresh(path: Option<impl Into<PathBuf>>) -> Self {
+    Self::Refresh {
+      path: path.map(Into::into),
+    }
+  }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FileTreeOpOutcome {
+  Opened {
+    path: PathBuf,
+  },
+  Changed {
+    path: PathBuf,
+  },
+  Refreshed {
+    path: Option<PathBuf>,
+  },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileTreeEditEntry {
+  pub path:  PathBuf,
+  pub depth: usize,
+  pub kind:  FileTreeNodeKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileTreeEditSession {
+  pub root:    PathBuf,
+  entries:     Vec<FileTreeEditEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct FileTreeEditPatch {
+  pub operations: Vec<FileTreeOp>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileTreeEditError {
+  pub line:    Option<usize>,
+  pub message: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -73,6 +356,7 @@ pub struct FileTreeState {
   pub visible:            bool,
   pub mode:               FileTreeMode,
   pub selected_path:      Option<PathBuf>,
+  pub active_path:        Option<PathBuf>,
   pub refresh_generation: u64,
   root:                   Option<PathBuf>,
   expanded_dirs:          HashSet<PathBuf>,
@@ -95,6 +379,16 @@ impl FileTreeState {
   #[must_use]
   pub fn root(&self) -> Option<&Path> {
     self.root.as_deref()
+  }
+
+  #[must_use]
+  pub fn selected_path(&self) -> Option<&Path> {
+    self.selected_path.as_deref()
+  }
+
+  #[must_use]
+  pub fn active_path(&self) -> Option<&Path> {
+    self.active_path.as_deref()
   }
 
   pub fn set_visible(&mut self, visible: bool) {
@@ -139,6 +433,7 @@ impl FileTreeState {
       .to_path_buf();
     self.set_root_internal(FileTreeMode::CurrentBufferDirectory, root);
     if let Some(path) = current_file {
+      let _ = self.set_active_path(Some(path));
       let _ = self.select_path(path);
     }
     self.set_visible(true);
@@ -173,8 +468,24 @@ impl FileTreeState {
     }
 
     if let Some(path) = active_file {
+      let _ = self.set_active_path(Some(path));
       let _ = self.select_path(path);
+    } else {
+      let _ = self.set_active_path(None::<&Path>);
     }
+  }
+
+  pub fn set_active_path<P>(&mut self, path: Option<P>) -> bool
+  where
+    P: AsRef<Path>,
+  {
+    let next = path.map(|value| normalize_path(value.as_ref()));
+    if self.active_path == next {
+      return false;
+    }
+    self.active_path = next;
+    self.bump_generation();
+    true
   }
 
   pub fn invalidate_visible_subtree(&mut self) -> bool {
@@ -243,6 +554,24 @@ impl FileTreeState {
   #[must_use]
   pub fn is_expanded(&self, path: &Path) -> bool {
     self.expanded_dirs.contains(&normalize_path(path))
+  }
+
+  pub fn refresh_path(&mut self, path: Option<&Path>) -> bool {
+    let target = path
+      .map(normalize_path)
+      .or_else(|| self.root.clone());
+    let Some(target) = target else {
+      return false;
+    };
+
+    let mut invalidated = self.nodes_cache.remove(&target).is_some();
+    if let Some(parent) = target.parent() {
+      invalidated |= self.nodes_cache.remove(parent).is_some();
+    }
+    if invalidated {
+      self.bump_generation();
+    }
+    invalidated
   }
 
   pub fn select_path(&mut self, path: &Path) -> bool {
@@ -316,9 +645,64 @@ impl FileTreeState {
       root,
       mode: self.mode,
       selected_path: self.selected_path.clone(),
+      active_path: self.active_path.clone(),
       refresh_generation: self.refresh_generation,
       nodes,
     }
+  }
+
+  pub fn selected_container_path(&self) -> Option<PathBuf> {
+    let Some(selected) = self.selected_path.as_ref() else {
+      return self.root.clone();
+    };
+    if selected.is_dir() {
+      return Some(selected.clone());
+    }
+    selected.parent().map(Path::to_path_buf)
+  }
+
+  pub fn open_selected_op(&self, target: OpenTarget) -> Option<FileTreeOp> {
+    self
+      .selected_path
+      .as_ref()
+      .cloned()
+      .map(|path| FileTreeOp::open(path, target))
+  }
+
+  pub fn create_child_op(&self, name: &str, directory: bool) -> Option<FileTreeOp> {
+    let container = self.selected_container_path()?;
+    let name = name.trim();
+    if name.is_empty() {
+      return None;
+    }
+    let path = container.join(name);
+    Some(if directory {
+      FileTreeOp::create_directory(path)
+    } else {
+      FileTreeOp::create_file(path)
+    })
+  }
+
+  pub fn rename_selected_op(&self, new_name: &str) -> Option<FileTreeOp> {
+    let selected = self.selected_path.as_ref()?;
+    let parent = selected.parent()?;
+    let new_name = new_name.trim();
+    if new_name.is_empty() {
+      return None;
+    }
+    let target = parent.join(new_name);
+    if target == *selected {
+      return None;
+    }
+    Some(path_change_op(selected, &target))
+  }
+
+  pub fn delete_selected_op(&self) -> Option<FileTreeOp> {
+    self.selected_path.as_ref().cloned().map(FileTreeOp::delete)
+  }
+
+  pub fn refresh_op(&self) -> FileTreeOp {
+    FileTreeOp::refresh(self.selected_path.clone())
   }
 
   fn set_root_internal(&mut self, mode: FileTreeMode, root: PathBuf) {
@@ -338,6 +722,11 @@ impl FileTreeState {
       && !selected.starts_with(&normalized_root)
     {
       self.selected_path = None;
+    }
+    if let Some(active) = self.active_path.as_ref()
+      && !active.starts_with(&normalized_root)
+    {
+      self.active_path = None;
     }
 
     let _ = self.load_children(&normalized_root);
@@ -360,6 +749,7 @@ impl FileTreeState {
     let expanded = is_dir && self.expanded_dirs.contains(&path_buf);
     let has_unloaded_children = is_dir && !expanded && !self.nodes_cache.contains_key(&path_buf);
     let selected = self.selected_path.as_ref() == Some(&path_buf);
+    let active = self.active_path.as_ref() == Some(&path_buf);
     out.push(FileTreeNodeSnapshot {
       id: stable_id_for_path(&path_buf),
       path: path_buf.clone(),
@@ -372,6 +762,7 @@ impl FileTreeState {
       },
       expanded,
       selected,
+      active,
       has_unloaded_children,
     });
 
@@ -428,6 +819,51 @@ impl FileTreeState {
   fn bump_generation(&mut self) {
     self.refresh_generation = self.refresh_generation.saturating_add(1);
   }
+
+  fn remap_path_prefix(&mut self, from: &Path, to: &Path) {
+    let from = normalize_path(from);
+    let to = normalize_path(to);
+
+    if let Some(root) = self.root.as_ref().cloned()
+      && let Some(remapped) = remap_path_if_matches(root, &from, &to)
+    {
+      self.root = Some(remapped);
+    }
+
+    if let Some(selected) = self.selected_path.as_ref().cloned() {
+      self.selected_path = remap_path_if_matches(selected, &from, &to);
+    }
+    if let Some(active) = self.active_path.as_ref().cloned() {
+      self.active_path = remap_path_if_matches(active, &from, &to);
+    }
+
+    self.expanded_dirs = self
+      .expanded_dirs
+      .iter()
+      .cloned()
+      .filter_map(|path| remap_path_if_matches(path, &from, &to))
+      .collect();
+    self.nodes_cache.clear();
+    self.bump_generation();
+  }
+
+  fn clear_removed_path(&mut self, path: &Path) {
+    let path = normalize_path(path);
+
+    if self.selected_path.as_ref().is_some_and(|selected| selected.starts_with(&path)) {
+      self.selected_path = path.parent().map(Path::to_path_buf);
+    }
+    if self.active_path.as_ref().is_some_and(|active| active.starts_with(&path)) {
+      self.active_path = None;
+    }
+    if self.root.as_ref().is_some_and(|root| root.starts_with(&path)) {
+      self.root = path.parent().map(Path::to_path_buf);
+    }
+
+    self.expanded_dirs.retain(|candidate| !candidate.starts_with(&path));
+    self.nodes_cache.clear();
+    self.bump_generation();
+  }
 }
 
 fn stable_id_for_path(path: &Path) -> String {
@@ -441,6 +877,419 @@ fn node_name_for_path(path: &Path) -> String {
     return name.to_string();
   }
   path.to_string_lossy().into_owned()
+}
+
+fn remap_path_if_matches(path: PathBuf, from: &Path, to: &Path) -> Option<PathBuf> {
+  if !path.starts_with(from) {
+    return Some(path);
+  }
+  let suffix = path.strip_prefix(from).ok()?;
+  Some(to.join(suffix))
+}
+
+fn path_change_op(from: &Path, to: &Path) -> FileTreeOp {
+  let from_parent = from.parent();
+  let to_parent = to.parent();
+  if from_parent == to_parent {
+    FileTreeOp::rename(from.to_path_buf(), to.to_path_buf())
+  } else {
+    FileTreeOp::move_to(from.to_path_buf(), to.to_path_buf())
+  }
+}
+
+#[must_use]
+pub fn file_tree_disclosure(node: &FileTreeNodeSnapshot) -> FileTreeDisclosure {
+  match node.kind {
+    FileTreeNodeKind::File => FileTreeDisclosure::None,
+    FileTreeNodeKind::Directory if node.expanded => FileTreeDisclosure::Expanded,
+    FileTreeNodeKind::Directory if node.has_unloaded_children => FileTreeDisclosure::Loading,
+    FileTreeNodeKind::Directory => FileTreeDisclosure::Collapsed,
+  }
+}
+
+#[must_use]
+pub const fn file_tree_disclosure_glyph(disclosure: FileTreeDisclosure) -> &'static str {
+  match disclosure {
+    FileTreeDisclosure::None => " ",
+    FileTreeDisclosure::Collapsed => "▸",
+    FileTreeDisclosure::Expanded => "▾",
+    FileTreeDisclosure::Loading => "◌",
+  }
+}
+
+#[must_use]
+pub const fn file_tree_default_icon_name(kind: FileTreeNodeKind, expanded: bool) -> &'static str {
+  match (kind, expanded) {
+    (FileTreeNodeKind::Directory, true) => "folder_open",
+    (FileTreeNodeKind::Directory, false) => "folder",
+    (FileTreeNodeKind::File, _) => "file",
+  }
+}
+
+#[must_use]
+pub fn file_tree_indentation(depth: usize) -> String {
+  "  ".repeat(depth)
+}
+
+#[must_use]
+pub fn file_tree_row_layout(node: &FileTreeNodePresentation) -> FileTreeRowLayout {
+  let disclosure = file_tree_disclosure(&node.node);
+  let icon = node
+    .decoration
+    .icon
+    .clone()
+    .unwrap_or_else(|| file_tree_default_icon_name(node.node.kind, node.node.expanded).to_string());
+  let accent = match node.decoration.severity {
+    Some(DiagnosticSeverity::Error) => FileTreeRowAccent::Error,
+    Some(DiagnosticSeverity::Warning) => FileTreeRowAccent::Warning,
+    Some(DiagnosticSeverity::Information) => FileTreeRowAccent::Info,
+    Some(DiagnosticSeverity::Hint) => FileTreeRowAccent::Hint,
+    None if node.node.selected => FileTreeRowAccent::Selected,
+    None if node.node.active => FileTreeRowAccent::Active,
+    None => FileTreeRowAccent::Default,
+  };
+
+  FileTreeRowLayout {
+    id:               node.node.id.clone(),
+    path:             node.node.path.clone(),
+    depth:            node.node.depth,
+    indent_text:      file_tree_indentation(node.node.depth.saturating_sub(1)),
+    disclosure,
+    disclosure_glyph: file_tree_disclosure_glyph(disclosure),
+    icon,
+    primary_text:     node.node.name.clone(),
+    secondary_text:   node.decoration.secondary_text.clone(),
+    badges:           node.decoration.badges.clone(),
+    status:           node.decoration.status.clone(),
+    accent,
+    selected:         node.node.selected,
+    active:           node.node.active,
+    kind:             node.node.kind,
+  }
+}
+
+#[must_use]
+pub fn build_file_tree_presentations(snapshot: &FileTreeSnapshot) -> Vec<FileTreeNodePresentation> {
+  snapshot
+    .nodes
+    .iter()
+    .cloned()
+    .map(|node| {
+      FileTreeNodePresentation {
+        node,
+        decoration: FileTreeNodeDecoration::default(),
+      }
+    })
+    .collect()
+}
+
+pub fn build_file_tree_presentations_with_providers<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  snapshot: &FileTreeSnapshot,
+) -> Vec<FileTreeNodePresentation> {
+  let mut presentations = Vec::with_capacity(snapshot.nodes.len());
+  for node in &snapshot.nodes {
+    let request = FileTreeNodeRequest {
+      tree: snapshot,
+      node,
+    };
+    let mut decoration = FileTreeNodeDecoration::default();
+    ctx.decorate_file_tree_node(&request, &mut decoration);
+    presentations.push(FileTreeNodePresentation {
+      node: node.clone(),
+      decoration,
+    });
+  }
+  presentations
+}
+
+#[must_use]
+pub fn build_file_tree_row_layouts(snapshot: &FileTreeSnapshot) -> Vec<FileTreeRowLayout> {
+  build_file_tree_presentations(snapshot)
+    .iter()
+    .map(file_tree_row_layout)
+    .collect()
+}
+
+pub fn build_file_tree_row_layouts_with_providers<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  snapshot: &FileTreeSnapshot,
+) -> Vec<FileTreeRowLayout> {
+  build_file_tree_presentations_with_providers(ctx, snapshot)
+    .iter()
+    .map(file_tree_row_layout)
+    .collect()
+}
+
+pub fn execute_file_tree_op<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  op: &FileTreeOp,
+) -> Result<FileTreeOpOutcome, String> {
+  match op {
+    FileTreeOp::Open { path, target } => {
+      if path.is_dir() {
+        let _ = ctx.file_tree_mut().set_expanded(path, true);
+        let _ = ctx.file_tree_mut().select_path(path);
+        ctx.request_render();
+        return Ok(FileTreeOpOutcome::Changed { path: path.clone() });
+      }
+      ctx
+        .open_file_in_target(path, *target)
+        .map_err(|error| format!("failed to open {}: {error}", path.display()))?;
+      let _ = ctx.file_tree_mut().set_active_path(Some(path.as_path()));
+      let _ = ctx.file_tree_mut().select_path(path);
+      ctx.request_render();
+      Ok(FileTreeOpOutcome::Opened { path: path.clone() })
+    },
+    FileTreeOp::CreateFile { path } => {
+      let Some(parent) = path.parent() else {
+        return Err(format!("cannot create file without parent: {}", path.display()));
+      };
+      fs::create_dir_all(parent)
+        .map_err(|error| format!("failed to create parent {}: {error}", parent.display()))?;
+      fs::write(path, "")
+        .map_err(|error| format!("failed to create file {}: {error}", path.display()))?;
+      {
+        let tree = ctx.file_tree_mut();
+        let _ = tree.refresh_path(Some(parent));
+        let _ = tree.select_path(path);
+      }
+      ctx.request_render();
+      Ok(FileTreeOpOutcome::Changed { path: path.clone() })
+    },
+    FileTreeOp::CreateDirectory { path } => {
+      fs::create_dir_all(path)
+        .map_err(|error| format!("failed to create directory {}: {error}", path.display()))?;
+      {
+        let tree = ctx.file_tree_mut();
+        let _ = tree.refresh_path(path.parent());
+        let _ = tree.select_path(path);
+      }
+      ctx.request_render();
+      Ok(FileTreeOpOutcome::Changed { path: path.clone() })
+    },
+    FileTreeOp::Rename { from, to } | FileTreeOp::Move { from, to } => {
+      if let Some(parent) = to.parent() {
+        fs::create_dir_all(parent)
+          .map_err(|error| format!("failed to create parent {}: {error}", parent.display()))?;
+      }
+      fs::rename(from, to)
+        .map_err(|error| format!("failed to move {} to {}: {error}", from.display(), to.display()))?;
+      if ctx.file_path() == Some(from.as_path()) {
+        ctx.set_file_path(Some(to.clone()));
+      }
+      let _ = ctx.editor().rename_file_path(from, to.clone());
+      ctx.file_tree_mut().remap_path_prefix(from, to);
+      ctx.request_render();
+      Ok(FileTreeOpOutcome::Changed { path: to.clone() })
+    },
+    FileTreeOp::Delete { path, recursive } => {
+      let metadata = fs::metadata(path)
+        .map_err(|error| format!("failed to inspect {}: {error}", path.display()))?;
+      if metadata.is_dir() {
+        if *recursive {
+          fs::remove_dir_all(path)
+            .map_err(|error| format!("failed to remove directory {}: {error}", path.display()))?;
+        } else {
+          fs::remove_dir(path)
+            .map_err(|error| format!("failed to remove directory {}: {error}", path.display()))?;
+        }
+      } else {
+        fs::remove_file(path)
+          .map_err(|error| format!("failed to remove file {}: {error}", path.display()))?;
+      }
+      if ctx.file_path() == Some(path.as_path()) {
+        ctx.set_file_path(None);
+      }
+      ctx.file_tree_mut().clear_removed_path(path);
+      ctx.request_render();
+      Ok(FileTreeOpOutcome::Changed { path: path.clone() })
+    },
+    FileTreeOp::Refresh { path } => {
+      let _ = ctx.file_tree_mut().refresh_path(path.as_deref());
+      ctx.request_render();
+      Ok(FileTreeOpOutcome::Refreshed { path: path.clone() })
+    },
+  }
+}
+
+pub fn execute_file_tree_edit_patch<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  patch: &FileTreeEditPatch,
+) -> Result<Vec<FileTreeOpOutcome>, String> {
+  let mut outcomes = Vec::with_capacity(patch.operations.len());
+  for op in &patch.operations {
+    outcomes.push(execute_file_tree_op(ctx, op)?);
+  }
+  Ok(outcomes)
+}
+
+impl FileTreeEditSession {
+  #[must_use]
+  pub fn from_snapshot(snapshot: &FileTreeSnapshot) -> Self {
+    let entries = snapshot
+      .nodes
+      .iter()
+      .filter(|node| node.path != snapshot.root)
+      .map(|node| {
+        FileTreeEditEntry {
+          path:  node.path.clone(),
+          depth: node.depth.saturating_sub(1),
+          kind:  node.kind,
+        }
+      })
+      .collect();
+    Self {
+      root: snapshot.root.clone(),
+      entries,
+    }
+  }
+
+  #[must_use]
+  pub fn entries(&self) -> &[FileTreeEditEntry] {
+    &self.entries
+  }
+
+  #[must_use]
+  pub fn to_text(&self) -> String {
+    self
+      .entries
+      .iter()
+      .map(|entry| {
+        let name = node_name_for_path(&entry.path);
+        let suffix = matches!(entry.kind, FileTreeNodeKind::Directory)
+          .then_some("/")
+          .unwrap_or("");
+        format!("{}{}{}", file_tree_indentation(entry.depth), name, suffix)
+      })
+      .collect::<Vec<_>>()
+      .join("\n")
+  }
+
+  pub fn parse(&self, text: &str) -> Result<FileTreeEditPatch, FileTreeEditError> {
+    let parsed = parse_edit_lines(&self.root, text)?;
+    Ok(FileTreeEditPatch {
+      operations: diff_edit_entries(&self.entries, &parsed),
+    })
+  }
+}
+
+fn parse_edit_lines(root: &Path, text: &str) -> Result<Vec<FileTreeEditEntry>, FileTreeEditError> {
+  let mut entries = Vec::new();
+  let mut stack = vec![root.to_path_buf()];
+
+  for (line_index, raw_line) in text.lines().enumerate() {
+    if raw_line.trim().is_empty() {
+      continue;
+    }
+    let indent_width = raw_line.chars().take_while(|ch| *ch == ' ').count();
+    if indent_width % 2 != 0 {
+      return Err(FileTreeEditError {
+        line:    Some(line_index + 1),
+        message: "indentation must use 2-space steps".to_string(),
+      });
+    }
+    let depth = indent_width / 2;
+    let trimmed = raw_line[indent_width..].trim();
+    if trimmed.is_empty() {
+      return Err(FileTreeEditError {
+        line:    Some(line_index + 1),
+        message: "tree row name cannot be empty".to_string(),
+      });
+    }
+    let (kind, name) = if let Some(name) = trimmed.strip_suffix('/') {
+      (FileTreeNodeKind::Directory, name.trim())
+    } else {
+      (FileTreeNodeKind::File, trimmed)
+    };
+    if name.is_empty() {
+      return Err(FileTreeEditError {
+        line:    Some(line_index + 1),
+        message: "tree row name cannot be empty".to_string(),
+      });
+    }
+    if depth + 1 > stack.len() {
+      return Err(FileTreeEditError {
+        line:    Some(line_index + 1),
+        message: "cannot indent more than one level deeper than the previous line".to_string(),
+      });
+    }
+    stack.truncate(depth + 1);
+    let Some(parent) = stack.last().cloned() else {
+      return Err(FileTreeEditError {
+        line:    Some(line_index + 1),
+        message: "missing parent directory".to_string(),
+      });
+    };
+    let path = parent.join(name);
+    if matches!(kind, FileTreeNodeKind::Directory) {
+      stack.push(path.clone());
+    }
+    entries.push(FileTreeEditEntry { path, depth, kind });
+  }
+
+  Ok(entries)
+}
+
+fn diff_edit_entries(original: &[FileTreeEditEntry], parsed: &[FileTreeEditEntry]) -> Vec<FileTreeOp> {
+  let shared = original.len().min(parsed.len());
+  let mut ops = Vec::new();
+  let mut renamed_dirs = Vec::<(PathBuf, PathBuf)>::new();
+
+  for index in 0..shared {
+    let before = &original[index];
+    let after = &parsed[index];
+    if before.kind != after.kind {
+      continue;
+    }
+    if before.kind == FileTreeNodeKind::Directory && before.path != after.path {
+      renamed_dirs.push((before.path.clone(), after.path.clone()));
+      ops.push(path_change_op(&before.path, &after.path));
+    }
+  }
+
+  for index in 0..shared {
+    let before = &original[index];
+    let after = &parsed[index];
+    if before.kind != after.kind {
+      continue;
+    }
+    if before.kind == FileTreeNodeKind::Directory {
+      continue;
+    }
+
+    let expected = renamed_dirs.iter().fold(before.path.clone(), |current, (from, to)| {
+      remap_path_if_matches(current, from, to).unwrap_or_else(|| to.clone())
+    });
+    if expected != after.path {
+      ops.push(path_change_op(&before.path, &after.path));
+    }
+  }
+
+  let deleted_ancestors = original
+    .iter()
+    .skip(shared)
+    .filter(|entry| entry.kind == FileTreeNodeKind::Directory)
+    .map(|entry| entry.path.clone())
+    .collect::<Vec<_>>();
+  for entry in original.iter().skip(shared) {
+    if deleted_ancestors
+      .iter()
+      .any(|ancestor| ancestor != &entry.path && entry.path.starts_with(ancestor))
+    {
+      continue;
+    }
+    ops.push(FileTreeOp::delete(entry.path.clone()));
+  }
+
+  for entry in parsed.iter().skip(shared) {
+    ops.push(match entry.kind {
+      FileTreeNodeKind::File => FileTreeOp::create_file(entry.path.clone()),
+      FileTreeNodeKind::Directory => FileTreeOp::create_directory(entry.path.clone()),
+    });
+  }
+
+  ops
 }
 
 fn normalize_path(path: &Path) -> PathBuf {
@@ -512,6 +1361,7 @@ fn should_hide_entry(name: &str, is_dir: bool) -> bool {
 mod tests {
   use std::{
     fs,
+    path::PathBuf,
     thread,
     time::Duration,
   };
@@ -519,9 +1369,20 @@ mod tests {
   use tempfile::tempdir;
 
   use super::{
+    FileTreeDisclosure,
+    FileTreeEditSession,
     FileTreeMode,
+    FileTreeNodeBadge,
+    FileTreeNodeDecoration,
+    FileTreeNodeKind,
+    FileTreeNodePresentation,
+    FileTreeNodeSnapshot,
+    FileTreeRowAccent,
     FileTreeState,
+    FileTreeSnapshot,
     directory_cache_fingerprint,
+    file_tree_disclosure,
+    file_tree_row_layout,
     normalize_path,
   };
 
@@ -571,5 +1432,119 @@ mod tests {
     let second = tree.snapshot(32);
     assert!(second.nodes.iter().any(|node| node.name == "beta.txt"));
     assert!(tree.refresh_generation > first_generation);
+  }
+
+  #[test]
+  fn snapshot_marks_active_node_separately_from_selection() {
+    let temp = tempdir().expect("tempdir");
+    let root = temp.path().to_path_buf();
+    let file = root.join("demo.rs");
+    fs::write(&file, "fn main() {}\n").expect("seed file");
+
+    let mut tree = FileTreeState::with_working_directory(root.clone());
+    let _ = tree.set_active_path(Some(file.as_path()));
+    let _ = tree.select_path(&file);
+
+    let snapshot = tree.snapshot(32);
+    let node = snapshot
+      .nodes
+      .iter()
+      .find(|node| node.path == file)
+      .expect("file node");
+    assert!(node.active);
+    assert!(node.selected);
+  }
+
+  #[test]
+  fn row_layout_uses_decoration_and_selection_accent() {
+    let presentation = FileTreeNodePresentation {
+      node: FileTreeNodeSnapshot {
+        id: "demo".to_string(),
+        path: PathBuf::from("/tmp/demo"),
+        name: "demo".to_string(),
+        depth: 1,
+        kind: FileTreeNodeKind::Directory,
+        expanded: true,
+        selected: true,
+        active: false,
+        has_unloaded_children: false,
+      },
+      decoration: FileTreeNodeDecoration::default()
+        .with_icon("folder_git")
+        .with_badge(FileTreeNodeBadge::new("git"))
+        .with_secondary_text("tracked")
+        .with_status("dirty"),
+    };
+
+    let layout = file_tree_row_layout(&presentation);
+
+    assert_eq!(file_tree_disclosure(&presentation.node), FileTreeDisclosure::Expanded);
+    assert_eq!(layout.icon, "folder_git");
+    assert_eq!(layout.secondary_text.as_deref(), Some("tracked"));
+    assert_eq!(layout.status.as_deref(), Some("dirty"));
+    assert_eq!(layout.badges.len(), 1);
+    assert_eq!(layout.accent, FileTreeRowAccent::Selected);
+  }
+
+  #[test]
+  fn edit_session_parses_rename_create_and_delete_operations() {
+    let snapshot = FileTreeSnapshot {
+      visible: true,
+      root: PathBuf::from("/workspace"),
+      mode: FileTreeMode::WorkingDirectory,
+      selected_path: None,
+      active_path: None,
+      refresh_generation: 1,
+      nodes: vec![
+        FileTreeNodeSnapshot {
+          id: "/workspace".to_string(),
+          path: PathBuf::from("/workspace"),
+          name: "workspace".to_string(),
+          depth: 0,
+          kind: FileTreeNodeKind::Directory,
+          expanded: true,
+          selected: false,
+          active: false,
+          has_unloaded_children: false,
+        },
+        FileTreeNodeSnapshot {
+          id: "/workspace/src".to_string(),
+          path: PathBuf::from("/workspace/src"),
+          name: "src".to_string(),
+          depth: 1,
+          kind: FileTreeNodeKind::Directory,
+          expanded: true,
+          selected: false,
+          active: false,
+          has_unloaded_children: false,
+        },
+        FileTreeNodeSnapshot {
+          id: "/workspace/src/main.rs".to_string(),
+          path: PathBuf::from("/workspace/src/main.rs"),
+          name: "main.rs".to_string(),
+          depth: 2,
+          kind: FileTreeNodeKind::File,
+          expanded: false,
+          selected: false,
+          active: false,
+          has_unloaded_children: false,
+        },
+      ],
+    };
+
+    let session = FileTreeEditSession::from_snapshot(&snapshot);
+    let patch = session
+      .parse("lib/\n  main.rs\nREADME.md")
+      .expect("parse patch");
+
+    assert_eq!(patch.operations.len(), 2);
+    assert!(patch.operations.iter().any(|op| {
+      matches!(op, super::FileTreeOp::Rename { from, to }
+        if from == &PathBuf::from("/workspace/src") && to == &PathBuf::from("/workspace/lib"))
+    }));
+    assert!(patch.operations.iter().any(|op| {
+      matches!(op, super::FileTreeOp::CreateFile { path }
+        if path == &PathBuf::from("/workspace/README.md"))
+    }));
   }
 }

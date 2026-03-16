@@ -10,6 +10,8 @@ use crate::{
   CompletionMenuItem,
   ContextMenuSnapshot,
   EditorContextMenuRequest,
+  FileTreeNodeDecoration,
+  FileTreeNodeRequest,
   FileTreeContextMenuRequest,
   Mode,
   SignatureHelpPresentation,
@@ -44,6 +46,8 @@ pub type EditorContextMenuProvider<Ctx> =
   dyn Fn(&mut Ctx, &EditorContextMenuRequest, &mut ContextMenuSnapshot) + 'static;
 pub type FileTreeContextMenuProvider<Ctx> =
   dyn Fn(&mut Ctx, &FileTreeContextMenuRequest, &mut ContextMenuSnapshot) + 'static;
+pub type FileTreeNodeDecorator<Ctx> =
+  dyn for<'a> Fn(&mut Ctx, &FileTreeNodeRequest<'a>, &mut FileTreeNodeDecoration) + 'static;
 pub type PickerQueryHandler<Ctx> = dyn Fn(&mut Ctx, &str) + 'static;
 pub type PickerSubmitHandler<Ctx> =
   dyn Fn(&mut Ctx, &FilePickerItem) -> PickerSubmitResult + 'static;
@@ -426,6 +430,46 @@ impl<Ctx> Default for FileTreeContextMenuProviderRegistry<Ctx> {
   fn default() -> Self {
     Self {
       providers: Vec::new(),
+    }
+  }
+}
+
+pub struct FileTreeNodeDecoratorRegistry<Ctx> {
+  providers: Vec<Box<FileTreeNodeDecorator<Ctx>>>,
+}
+
+impl<Ctx> Default for FileTreeNodeDecoratorRegistry<Ctx> {
+  fn default() -> Self {
+    Self {
+      providers: Vec::new(),
+    }
+  }
+}
+
+impl<Ctx> std::fmt::Debug for FileTreeNodeDecoratorRegistry<Ctx> {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.debug_struct("FileTreeNodeDecoratorRegistry")
+      .field("providers", &self.providers.len())
+      .finish()
+  }
+}
+
+impl<Ctx> FileTreeNodeDecoratorRegistry<Ctx> {
+  pub fn register<F>(&mut self, provider: F)
+  where
+    F: for<'a> Fn(&mut Ctx, &FileTreeNodeRequest<'a>, &mut FileTreeNodeDecoration) + 'static,
+  {
+    self.providers.push(Box::new(provider));
+  }
+
+  pub fn decorate(
+    &self,
+    ctx: &mut Ctx,
+    request: &FileTreeNodeRequest<'_>,
+    decoration: &mut FileTreeNodeDecoration,
+  ) {
+    for provider in &self.providers {
+      provider(ctx, request, decoration);
     }
   }
 }

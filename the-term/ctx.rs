@@ -61,6 +61,7 @@ use the_default::{
   FilePickerItem,
   FilePickerItemAction,
   FilePickerState,
+  FileTreeState,
   GlobalSearchConfig,
   GlobalSearchState,
   KeyBinding,
@@ -592,6 +593,7 @@ pub struct Ctx {
   pub signature_help:                the_default::SignatureHelpState,
   pub hover_docs:                    Option<String>,
   pub hover_docs_scroll:             usize,
+  pub file_tree:                     FileTreeState,
   pub file_picker:                   FilePickerState,
   pub lsp_runtime:                   LspRuntime,
   pub lsp_ready:                     bool,
@@ -985,6 +987,12 @@ impl Ctx {
     let preset = the_default::default_editor_preset::<Self>()
       .build()
       .box_dispatch();
+    let mut file_tree =
+      FileTreeState::with_working_directory(lsp_runtime.config().workspace_root().to_path_buf());
+    file_tree.sync_for_active_file(
+      lsp_runtime.config().workspace_root(),
+      file_path.map(Path::new),
+    );
 
     let mut ctx = Self {
       editor,
@@ -1010,6 +1018,7 @@ impl Ctx {
       signature_help: the_default::SignatureHelpState::default(),
       hover_docs: None,
       hover_docs_scroll: 0,
+      file_tree,
       file_picker,
       lsp_runtime,
       lsp_ready: false,
@@ -5618,6 +5627,10 @@ impl Ctx {
 
     let active_path = self.editor.active_file_path().map(Path::to_path_buf);
     self.file_path = active_path.clone();
+    self.file_tree.sync_for_active_file(
+      self.lsp_runtime.config().workspace_root(),
+      active_path.as_deref(),
+    );
     self.lsp_refresh_document_state(active_path.as_deref());
     self.lsp_open_current_document();
     self.refresh_vcs_diff_base();
@@ -5822,6 +5835,14 @@ impl the_default::DefaultContext for Ctx {
 
   fn signature_help_mut(&mut self) -> Option<&mut the_default::SignatureHelpState> {
     Some(&mut self.signature_help)
+  }
+
+  fn file_tree(&self) -> &the_default::FileTreeState {
+    &self.file_tree
+  }
+
+  fn file_tree_mut(&mut self) -> &mut the_default::FileTreeState {
+    &mut self.file_tree
   }
 
   fn completion_selection_changed(&mut self, index: usize) {
@@ -6058,6 +6079,15 @@ impl the_default::DefaultContext for Ctx {
   ) {
     let preset = &self.preset as *const BuiltEditorPreset<Self, Box<dyn DefaultApi<Self>>>;
     unsafe { (&*preset).postprocess_file_tree_context_menu(self, request, snapshot) };
+  }
+
+  fn decorate_file_tree_node(
+    &mut self,
+    request: &the_default::FileTreeNodeRequest<'_>,
+    decoration: &mut the_default::FileTreeNodeDecoration,
+  ) {
+    let preset = &self.preset as *const BuiltEditorPreset<Self, Box<dyn DefaultApi<Self>>>;
+    unsafe { (&*preset).decorate_file_tree_node(self, request, decoration) };
   }
 
   fn picker_query_handler_id(&self, name: &str) -> Option<the_default::PickerQueryHandlerId> {
@@ -6454,6 +6484,10 @@ impl the_default::DefaultContext for Ctx {
     self.lsp_refresh_document_state(path.as_deref());
     self.file_path = path.clone();
     self.editor.set_active_file_path(path);
+    self.file_tree.sync_for_active_file(
+      self.lsp_runtime.config().workspace_root(),
+      self.file_path.as_deref(),
+    );
     self.refresh_vcs_diff_base();
   }
 

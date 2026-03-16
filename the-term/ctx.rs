@@ -7835,7 +7835,8 @@ pkgs.mkShell {
       ctx
         .gutter_config
         .layout
-        .contains(&the_lib::render::GutterType::LineNumbers)
+        .iter()
+        .any(|slot| slot.is_builtin(the_lib::render::GutterType::LineNumbers))
     );
     assert_eq!(
       ctx.gutter_config.line_numbers.mode,
@@ -7848,7 +7849,8 @@ pkgs.mkShell {
       !ctx
         .gutter_config
         .layout
-        .contains(&the_lib::render::GutterType::LineNumbers)
+        .iter()
+        .any(|slot| slot.is_builtin(the_lib::render::GutterType::LineNumbers))
     );
   }
 

@@ -1,6 +1,13 @@
 # Minimal base16 theme (placeholder)
 "ui.background" = { bg = "black" }
 "ui.text"       = { fg = "white" }
+"ui.popup" = { bg = "#101010" }
+"ui.popup.border" = { fg = "white" }
+"ui.virtual" = { fg = "#808080" }
+"ui.virtual.inline" = { fg = "#808080" }
+"ui.virtual.overlay" = { fg = "#c0c0c0" }
+"ui.virtual.line" = { fg = "#c0c0c0" }
+"ui.virtual.gutter" = { fg = "#d0d0d0" }
 "ui.buffer_tabs" = { bg = "black", fg = "white" }
 "ui.buffer_tabs.tab.inactive" = { fg = "white" }
 "ui.buffer_tabs.tab.active" = { bg = "#202020", fg = "white" }

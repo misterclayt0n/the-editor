@@ -301,6 +301,112 @@ impl UiPanel {
   }
 }
 
+#[derive(Debug, Clone)]
+pub struct UiPopupBuilder {
+  panel_id:    String,
+  text_id:     String,
+  text:        String,
+  source:      Option<String>,
+  role:        Option<String>,
+  intent:      LayoutIntent,
+  layer:       UiLayer,
+  constraints: UiConstraints,
+  border:      bool,
+  clip:        bool,
+}
+
+impl UiPopupBuilder {
+  pub fn floating(
+    panel_id: impl Into<String>,
+    text_id: impl Into<String>,
+    text: impl Into<String>,
+  ) -> Self {
+    Self {
+      panel_id:    panel_id.into(),
+      text_id:     text_id.into(),
+      text:        text.into(),
+      source:      None,
+      role:        None,
+      intent:      LayoutIntent::Floating,
+      layer:       UiLayer::Overlay,
+      constraints: UiConstraints::floating_default(),
+      border:      false,
+      clip:        false,
+    }
+  }
+
+  pub fn panel_id(&self) -> &str {
+    &self.panel_id
+  }
+
+  pub fn text_id(&self) -> &str {
+    &self.text_id
+  }
+
+  pub fn source(mut self, source: impl Into<String>) -> Self {
+    self.source = Some(source.into());
+    self
+  }
+
+  pub fn role(mut self, role: impl Into<String>) -> Self {
+    self.role = Some(role.into());
+    self
+  }
+
+  pub fn intent(mut self, intent: LayoutIntent) -> Self {
+    self.intent = intent;
+    self
+  }
+
+  pub fn layer(mut self, layer: UiLayer) -> Self {
+    self.layer = layer;
+    self
+  }
+
+  pub fn constraints(mut self, constraints: UiConstraints) -> Self {
+    self.constraints = constraints;
+    self
+  }
+
+  pub fn border(mut self, border: bool) -> Self {
+    self.border = border;
+    self
+  }
+
+  pub fn clip(mut self, clip: bool) -> Self {
+    self.clip = clip;
+    self
+  }
+
+  pub fn build(self) -> UiNode {
+    let mut text = UiText::new(self.text_id, self.text);
+    text.source = self.source.clone();
+    if let Some(role) = self.role.as_ref() {
+      text.style = text.style.with_role(role.clone());
+    }
+    text.clip = self.clip;
+
+    let mut container = UiContainer::column(format!("{}_container", self.panel_id), 0, vec![
+      UiNode::Text(text),
+    ]);
+    if let Some(role) = self.role.as_ref() {
+      container.style = container.style.with_role(role.clone());
+    }
+
+    let mut panel = UiPanel::new(self.panel_id, self.intent, UiNode::Container(container));
+    panel.source = self.source;
+    if let Some(role) = self.role {
+      panel.style = panel.style.with_role(role);
+    }
+    if !self.border {
+      panel.style.border = None;
+    }
+    panel.layer = self.layer;
+    panel.constraints = self.constraints;
+    UiNode::Panel(panel)
+  }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UiText {
   pub id:        Option<String>,
@@ -451,6 +557,208 @@ pub struct UiStyledSpan {
   pub text:  String,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub style: Option<UiStyle>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum DocsPanelSource {
+  #[default]
+  Completion,
+  Hover,
+  Signature,
+  CommandPalette,
+}
+
+impl DocsPanelSource {
+  pub const fn as_str(self) -> &'static str {
+    match self {
+      Self::Completion => "completion",
+      Self::Hover => "hover",
+      Self::Signature => "signature",
+      Self::CommandPalette => "command_palette",
+    }
+  }
+
+  pub fn parse(value: &str) -> Option<Self> {
+    match value.trim().to_ascii_lowercase().as_str() {
+      "completion" => Some(Self::Completion),
+      "hover" => Some(Self::Hover),
+      "signature" | "signature_help" | "signature-help" => Some(Self::Signature),
+      "command_palette" | "commandpalette" | "command-palette" | "palette" => {
+        Some(Self::CommandPalette)
+      },
+      _ => None,
+    }
+  }
+}
+
+fn docs_panel_source_from_hint(hint: &str) -> Option<DocsPanelSource> {
+  let hint = hint.trim().to_ascii_lowercase();
+  if hint.is_empty() {
+    return None;
+  }
+  let has_docs = hint.contains("docs") || hint.contains("doc");
+  if hint.contains("hover") || hint.contains("tooltip") {
+    return Some(DocsPanelSource::Hover);
+  }
+  if hint.contains("signature") {
+    return Some(DocsPanelSource::Signature);
+  }
+  if has_docs && hint.contains("command") && hint.contains("palette") {
+    return Some(DocsPanelSource::CommandPalette);
+  }
+  if has_docs && hint.contains("completion") {
+    return Some(DocsPanelSource::Completion);
+  }
+  None
+}
+
+fn docs_panel_source_from_role(role: Option<&str>) -> Option<DocsPanelSource> {
+  let role = role?;
+  match role {
+    "completion_docs" => Some(DocsPanelSource::Completion),
+    "hover_docs" | "lsp_hover" => Some(DocsPanelSource::Hover),
+    "signature_help" | "signature_docs" => Some(DocsPanelSource::Signature),
+    "command_palette_docs" | "term_command_palette_docs" => Some(DocsPanelSource::CommandPalette),
+    _ => {
+      if role.contains("docs") || role.contains("doc") {
+        docs_panel_source_from_hint(role)
+      } else {
+        None
+      }
+    },
+  }
+}
+
+pub fn docs_panel_source_from_panel_id(id: &str) -> Option<DocsPanelSource> {
+  match id {
+    "completion_docs" => Some(DocsPanelSource::Completion),
+    "lsp_hover" => Some(DocsPanelSource::Hover),
+    "signature_help" => Some(DocsPanelSource::Signature),
+    "term_command_palette_docs" => Some(DocsPanelSource::CommandPalette),
+    _ => docs_panel_source_from_hint(id),
+  }
+}
+
+pub fn docs_panel_source_from_text_id(id: &str) -> Option<DocsPanelSource> {
+  match id {
+    "completion_docs_text" => Some(DocsPanelSource::Completion),
+    "lsp_hover_text" => Some(DocsPanelSource::Hover),
+    "signature_help_text" => Some(DocsPanelSource::Signature),
+    "term_command_palette_docs_text" => Some(DocsPanelSource::CommandPalette),
+    _ => docs_panel_source_from_hint(id),
+  }
+}
+
+pub fn docs_panel_source_from_panel(panel: &UiPanel) -> Option<DocsPanelSource> {
+  panel
+    .source
+    .as_deref()
+    .and_then(DocsPanelSource::parse)
+    .or_else(|| docs_panel_source_from_panel_id(panel.id.as_str()))
+    .or_else(|| docs_panel_source_from_role(panel.style.role.as_deref()))
+    .or_else(|| {
+      match &panel.intent {
+        LayoutIntent::Custom(name) => docs_panel_source_from_hint(name),
+        _ => None,
+      }
+    })
+}
+
+pub fn docs_panel_source_from_text(text: &UiText) -> Option<DocsPanelSource> {
+  text
+    .source
+    .as_deref()
+    .and_then(DocsPanelSource::parse)
+    .or_else(|| text.id.as_deref().and_then(docs_panel_source_from_text_id))
+    .or_else(|| docs_panel_source_from_role(text.style.role.as_deref()))
+}
+
+#[derive(Debug, Clone)]
+pub struct DocsPanelConfig<'a> {
+  pub panel_id:   &'a str,
+  pub text_id:    &'a str,
+  pub source:     DocsPanelSource,
+  pub intent:     LayoutIntent,
+  pub role:       &'a str,
+  pub layer:      UiLayer,
+  pub min_width:  Option<u16>,
+  pub max_width:  Option<u16>,
+  pub min_height: Option<u16>,
+  pub max_height: Option<u16>,
+  pub padding:    UiInsets,
+  pub align:      UiAlignPair,
+  pub border:     bool,
+  pub clip:       bool,
+}
+
+impl<'a> DocsPanelConfig<'a> {
+  pub fn completion_docs(panel_id: &'a str, text_id: &'a str, intent: LayoutIntent) -> Self {
+    Self {
+      panel_id,
+      text_id,
+      source: DocsPanelSource::Completion,
+      intent,
+      role: "completion_docs",
+      layer: UiLayer::Overlay,
+      min_width: Some(28),
+      max_width: Some(84),
+      min_height: None,
+      max_height: Some(18),
+      padding: UiInsets {
+        left:   1,
+        right:  1,
+        top:    1,
+        bottom: 1,
+      },
+      align: UiAlignPair {
+        horizontal: UiAlign::Start,
+        vertical:   UiAlign::End,
+      },
+      border: false,
+      clip: false,
+    }
+  }
+
+  pub fn hover_docs(panel_id: &'a str, text_id: &'a str, intent: LayoutIntent) -> Self {
+    let mut config = Self::completion_docs(panel_id, text_id, intent);
+    config.source = DocsPanelSource::Hover;
+    config.layer = UiLayer::Tooltip;
+    config.min_width = Some(30);
+    config.max_width = Some(100);
+    config.max_height = Some(22);
+    config
+  }
+
+  pub fn command_palette_docs(panel_id: &'a str, text_id: &'a str, intent: LayoutIntent) -> Self {
+    let mut config = Self::completion_docs(panel_id, text_id, intent);
+    config.source = DocsPanelSource::CommandPalette;
+    config
+  }
+
+  pub fn signature_help_docs(panel_id: &'a str, text_id: &'a str, intent: LayoutIntent) -> Self {
+    let mut config = Self::completion_docs(panel_id, text_id, intent);
+    config.source = DocsPanelSource::Signature;
+    config
+  }
+}
+
+pub fn build_docs_panel(config: DocsPanelConfig<'_>, docs: String) -> UiNode {
+  UiPopupBuilder::floating(config.panel_id, config.text_id, docs)
+    .source(config.source.as_str())
+    .role(config.role)
+    .intent(config.intent)
+    .layer(config.layer)
+    .constraints(UiConstraints {
+      min_width:  config.min_width,
+      max_width:  config.max_width,
+      min_height: config.min_height,
+      max_height: config.max_height,
+      padding:    config.padding,
+      align:      config.align,
+    })
+    .border(config.border)
+    .clip(config.clip)
+    .build()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

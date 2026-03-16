@@ -132,7 +132,7 @@ impl<'a> GraphemeWithSource<'a> {
 #[derive(Debug)]
 pub struct DocumentFormatter<'a, 't> {
   text_fmt:    &'a TextFormat,
-  annotations: TextAnnotationsCursor<'a, 't>,
+  annotations: TextAnnotationsCursor<'t, 'a>,
 
   /// The visual position at the end of the last yielded word boundary.
   visual_pos: Position,
@@ -216,7 +216,7 @@ impl<'a, 't> DocumentFormatter<'a, 't> {
       if let Some((annotation, highlight)) = self.annotations.next_inline_annotation_at(char_pos) {
         self.inline_annotation_highlight = highlight;
         self.inline_annotation_buf = UnicodeSegmentation::graphemes(&*annotation.text, true)
-          .map(GraphemeStr::from)
+          .map(|grapheme| GraphemeStr::from(grapheme.to_owned()))
           .collect();
       } else {
         return None;
@@ -232,7 +232,7 @@ impl<'a, 't> DocumentFormatter<'a, 't> {
 
         let overlay = self.annotations.overlay_at(char_pos);
         let grapheme = match overlay {
-          Some((overlay, _)) => GraphemeStr::from(overlay.grapheme.as_str()),
+          Some((overlay, _)) => GraphemeStr::from(overlay.grapheme.to_string()),
           None => Cow::from(grapheme).into(),
         };
         let overlay_highlight = overlay.and_then(|(_, highlight)| highlight);

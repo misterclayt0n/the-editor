@@ -25,8 +25,10 @@ pub use grapheme::{
   GraphemeSource,
 };
 pub use gutter::{
+  CustomGutterSlot,
   GutterConfig,
   GutterLineNumbersConfig,
+  GutterSlot,
   GutterType,
   LineNumberMode,
 };
@@ -85,6 +87,18 @@ pub use plan::{
   finish_render_generations,
   gutter_width_for_document,
   hash_render_plan_layout,
+};
+pub use text_annotations::{
+  InlineAnnotation,
+  LineAnnotation,
+  Overlay,
+  TextAnnotations,
+  VirtualLineAnnotation,
+  VirtualLineSpec,
+  VirtualLinesLayout,
+  VirtualRenderLine,
+  apply_virtual_lines_layout,
+  render_virtual_lines_for_viewport,
 };
 pub use ui::*;
 pub use visual_position::{

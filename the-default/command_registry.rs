@@ -29,6 +29,7 @@ use the_lib::{
   },
   render::{
     GutterConfig,
+    GutterSlot,
     GutterType,
     LineNumberMode,
   },
@@ -1547,20 +1548,23 @@ fn cmd_wrap<Ctx: DefaultContext>(ctx: &mut Ctx, args: Args, event: CommandEvent)
   Ok(())
 }
 
-fn default_gutter_layout() -> Vec<GutterType> {
+fn default_gutter_layout() -> Vec<GutterSlot> {
   GutterConfig::default().layout
 }
 
-fn ensure_line_number_column(layout: &mut Vec<GutterType>) {
-  if layout.contains(&GutterType::LineNumbers) {
+fn ensure_line_number_column(layout: &mut Vec<GutterSlot>) {
+  if layout
+    .iter()
+    .any(|slot| slot.is_builtin(GutterType::LineNumbers))
+  {
     return;
   }
 
   if layout.is_empty() {
     *layout = default_gutter_layout();
   } else {
-    layout.push(GutterType::Spacer);
-    layout.push(GutterType::LineNumbers);
+    layout.push(GutterSlot::builtin(GutterType::Spacer));
+    layout.push(GutterSlot::builtin(GutterType::LineNumbers));
   }
 }
 
@@ -1657,7 +1661,7 @@ fn cmd_line_number<Ctx: DefaultContext>(
         let prev_len = config.layout.len();
         config
           .layout
-          .retain(|column| *column != GutterType::LineNumbers);
+          .retain(|slot| !slot.is_builtin(GutterType::LineNumbers));
         changed |= config.layout.len() != prev_len;
       },
       "status" => {},
@@ -1668,7 +1672,7 @@ fn cmd_line_number<Ctx: DefaultContext>(
       },
     }
 
-    if config.layout.contains(&GutterType::LineNumbers) {
+    if config.contains_builtin(GutterType::LineNumbers) {
       let mode = match config.line_numbers.mode {
         LineNumberMode::Absolute => "absolute",
         LineNumberMode::Relative => "relative",

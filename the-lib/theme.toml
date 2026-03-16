@@ -48,6 +48,7 @@ tabstop = { bg = "void_deep", modifiers = [ "italic" ] }
 "ui.linenr"               = { fg = "iron_veil" }
 "ui.linenr.selected"      = { fg = "dharma_gold" }
 "ui.popup"                = { bg = "obsidian" }
+"ui.popup.border"         = { fg = "iron_veil" }
 "ui.statusline"           = { bg = "obsidian", fg = "dharma_gold" }
 "ui.statusline.inactive"  = { bg = "obsidian", fg = "ash_veil" }
 "ui.text"                 = { fg = "pale_stone" }
@@ -55,6 +56,10 @@ tabstop = { bg = "void_deep", modifiers = [ "italic" ] }
 "ui.text.focus"           = { fg = "ivory" }
 "ui.text.inactive"        = "temple_shadow"
 "ui.virtual"              = { fg = "iron_veil" }
+"ui.virtual.inline"       = { fg = "iron_veil" }
+"ui.virtual.overlay"      = { fg = "bone_dust" }
+"ui.virtual.line"         = { fg = "bone_dust" }
+"ui.virtual.gutter"       = { fg = "ritual_amber" }
 "ui.virtual.jump-label"   = { fg = "ritual_amber", modifiers = [ "bold" ] }
 "ui.virtual.ruler"        = { bg = "void_deep" }
 "ui.window"               = { fg = "void_deep" }

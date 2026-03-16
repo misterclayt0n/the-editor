@@ -336,7 +336,7 @@ fn token_scopes(token: UiColorToken) -> &'static [&'static str] {
     UiColorToken::Text => &["ui.text", "ui.text.focus"],
     UiColorToken::MutedText => &["ui.text.inactive", "ui.text", "ui.virtual"],
     UiColorToken::PanelBg => &["ui.popup", "ui.background"],
-    UiColorToken::PanelBorder => &["ui.window", "ui.background.separator"],
+    UiColorToken::PanelBorder => &["ui.popup.border", "ui.window", "ui.background.separator"],
     UiColorToken::Accent => &["ui.text.focus", "ui.linenr.selected", "ui.text"],
     UiColorToken::SelectedBg => &["ui.menu.selected", "ui.selection", "ui.menu"],
     UiColorToken::SelectedText => &["ui.menu.selected", "ui.text.focus", "ui.text"],
@@ -382,6 +382,7 @@ fn legacy_scopes_for_component(
         scopes.push("ui.background".to_string());
       }
       if prop == "border" {
+        scopes.push("ui.popup.border".to_string());
         scopes.push("ui.window".to_string());
       }
       if prop == "fg" {

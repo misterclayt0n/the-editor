@@ -188,6 +188,7 @@ use the_lib::{
   position::Position as LibPosition,
   registers::Registers,
   render::{
+    DocsPanelConfig,
     FrameGenerationState,
     GutterConfig,
     InlineDiagnostic,
@@ -210,19 +211,18 @@ use the_lib::{
     UiAlign,
     UiAlignPair,
     UiConstraints,
-    UiContainer,
     UiInsets,
     UiLayer,
     UiNode,
-    UiPanel,
+    UiPopupBuilder,
     UiState,
-    UiText,
     UiTree,
     add_selection_match_highlights,
     apply_diagnostic_gutter_markers,
     apply_diff_gutter_markers,
     apply_row_insertions,
     base_render_layer_row_hashes,
+    build_docs_panel,
     build_plan,
     char_at_visual_pos,
     finish_frame_generations,
@@ -10878,41 +10878,29 @@ impl App {
     role: &str,
     docs: &str,
   ) -> UiNode {
-    let mut text = UiText::new(text_id, docs);
-    text.source = Some(source.to_string());
-    text.style = text.style.with_role(role);
-    text.clip = false;
-
-    let mut container =
-      UiContainer::column(format!("{panel_id}_container"), 0, vec![UiNode::Text(text)]);
-    container.style = container.style.with_role(role);
-
-    let mut panel = UiPanel::new(
-      panel_id,
-      LayoutIntent::Custom(panel_id.to_string()),
-      UiNode::Container(container),
-    );
-    panel.source = Some(source.to_string());
-    panel.style = panel.style.with_role(role);
-    panel.layer = UiLayer::Tooltip;
-    panel.constraints = UiConstraints {
-      min_width:  Some(30),
-      max_width:  Some(100),
-      min_height: None,
-      max_height: Some(22),
-      padding:    UiInsets {
-        left:   1,
-        right:  1,
-        top:    1,
-        bottom: 1,
-      },
-      align:      UiAlignPair {
-        horizontal: UiAlign::Start,
-        vertical:   UiAlign::End,
-      },
-    };
-
-    UiNode::Panel(panel)
+    UiPopupBuilder::floating(panel_id, text_id, docs)
+      .source(source)
+      .role(role)
+      .intent(LayoutIntent::Custom(panel_id.to_string()))
+      .layer(UiLayer::Tooltip)
+      .constraints(UiConstraints {
+        min_width:  Some(30),
+        max_width:  Some(100),
+        min_height: None,
+        max_height: Some(22),
+        padding:    UiInsets {
+          left:   1,
+          right:  1,
+          top:    1,
+          bottom: 1,
+        },
+        align:      UiAlignPair {
+          horizontal: UiAlign::Start,
+          vertical:   UiAlign::End,
+        },
+      })
+      .clip(false)
+      .build()
   }
 
   fn build_lsp_diagnostic_overlay(&self) -> Option<UiNode> {
@@ -10928,7 +10916,12 @@ impl App {
 
   fn build_lsp_hover_overlay(&self) -> Option<UiNode> {
     let docs = self.hover_docs_text()?;
-    Some(self.build_docs_popup_overlay("lsp_hover", "lsp_hover_text", "hover", "hover_docs", docs))
+    let config = DocsPanelConfig::hover_docs(
+      "lsp_hover",
+      "lsp_hover_text",
+      LayoutIntent::Custom("lsp_hover".to_string()),
+    );
+    Some(build_docs_panel(config, docs.to_string()))
   }
 
   fn append_docs_popup_overlays(&self, tree: &mut the_lib::render::UiTree) {

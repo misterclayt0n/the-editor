@@ -89,10 +89,16 @@ use crate::{
     },
     gutter::{
       GutterConfig,
+      GutterSlot,
       GutterType,
       LineNumberMode,
     },
-    overlay::OverlayNode,
+    overlay::{
+      OverlayNode,
+      OverlayRect,
+      OverlayRectKind,
+      OverlayText,
+    },
     text_annotations::TextAnnotations,
     text_format::TextFormat,
     visual_position,
@@ -169,11 +175,21 @@ pub struct RenderGutterSpan {
   pub style: Style,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RenderGutterColumn {
-  pub kind:  GutterType,
+  pub slot:  GutterSlot,
   pub col:   u16,
   pub width: u16,
+}
+
+impl RenderGutterColumn {
+  pub fn builtin_kind(&self) -> Option<GutterType> {
+    self.slot.builtin_kind()
+  }
+
+  pub fn custom_id(&self) -> Option<&str> {
+    self.slot.custom_id()
+  }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -199,6 +215,12 @@ impl RenderGutterLine {
 
   fn sort_spans(&mut self) {
     self.spans.sort_by_key(|span| span.col);
+  }
+
+  fn clear_column(&mut self, column: &RenderGutterColumn) {
+    self
+      .spans
+      .retain(|span| span.col < column.col || span.col >= column.col.saturating_add(column.width));
   }
 }
 
@@ -397,8 +419,132 @@ impl RenderPlan {
     self
       .gutter_columns
       .iter()
-      .copied()
-      .find(|column| column.kind == kind)
+      .find(|column| column.slot.is_builtin(kind))
+      .cloned()
+  }
+
+  pub fn gutter_column_custom(&self, id: &str) -> Option<RenderGutterColumn> {
+    self
+      .gutter_columns
+      .iter()
+      .find(|column| column.custom_id() == Some(id))
+      .cloned()
+  }
+
+  pub fn gutter_column_slot(&self, slot: &GutterSlot) -> Option<RenderGutterColumn> {
+    self
+      .gutter_columns
+      .iter()
+      .find(|column| &column.slot == slot)
+      .cloned()
+  }
+
+  pub fn visible_row_for_doc_line(&self, doc_line: usize) -> Option<&RenderVisibleRow> {
+    self
+      .visible_rows
+      .iter()
+      .find(|row| row.doc_line == doc_line && row.first_visual_line)
+  }
+
+  pub fn clear_builtin_gutter_slot(&mut self, kind: GutterType) -> bool {
+    let Some(column) = self.gutter_column(kind) else {
+      return false;
+    };
+    self.clear_gutter_column(&column)
+  }
+
+  pub fn clear_custom_gutter_slot(&mut self, id: &str) -> bool {
+    let Some(column) = self.gutter_column_custom(id) else {
+      return false;
+    };
+    self.clear_gutter_column(&column)
+  }
+
+  pub fn set_builtin_gutter_text(
+    &mut self,
+    kind: GutterType,
+    doc_line: usize,
+    text: impl Into<Tendril>,
+    style: Style,
+  ) -> bool {
+    let Some(column) = self.gutter_column(kind) else {
+      return false;
+    };
+    self.set_gutter_text_for_doc_line(&column, doc_line, text.into(), style)
+  }
+
+  pub fn set_custom_gutter_text(
+    &mut self,
+    id: &str,
+    doc_line: usize,
+    text: impl Into<Tendril>,
+    style: Style,
+  ) -> bool {
+    let Some(column) = self.gutter_column_custom(id) else {
+      return false;
+    };
+    self.set_gutter_text_for_doc_line(&column, doc_line, text.into(), style)
+  }
+
+  pub fn add_overlay_rect(&mut self, rect: Rect, kind: OverlayRectKind, style: Style) -> &mut Self {
+    self.overlays.push(OverlayNode::Rect(OverlayRect {
+      rect,
+      kind,
+      radius: 0,
+      style,
+    }));
+    self
+  }
+
+  pub fn add_overlay_text(
+    &mut self,
+    pos: Position,
+    text: impl Into<String>,
+    style: Style,
+  ) -> &mut Self {
+    self.overlays.push(OverlayNode::Text(OverlayText {
+      pos,
+      text: text.into(),
+      style,
+    }));
+    self
+  }
+
+  fn clear_gutter_column(&mut self, column: &RenderGutterColumn) -> bool {
+    let mut changed = false;
+    for line in &mut self.gutter_lines {
+      let prev_len = line.spans.len();
+      line.clear_column(column);
+      changed |= prev_len != line.spans.len();
+    }
+    changed
+  }
+
+  fn set_gutter_text_for_doc_line(
+    &mut self,
+    column: &RenderGutterColumn,
+    doc_line: usize,
+    text: Tendril,
+    style: Style,
+  ) -> bool {
+    let Some(row_index) = self
+      .visible_rows
+      .iter()
+      .position(|row| row.doc_line == doc_line && row.first_visual_line)
+    else {
+      return false;
+    };
+    let Some(line) = self.gutter_lines.get_mut(row_index) else {
+      return false;
+    };
+    line.clear_column(column);
+    line.push_span(RenderGutterSpan {
+      col: column.col,
+      text,
+      style,
+    });
+    line.sort_spans();
+    true
   }
 }
 
@@ -723,7 +869,7 @@ pub fn hash_render_plan_layout(plan: &RenderPlan) -> u64 {
   let gutter_columns = plan
     .gutter_columns
     .iter()
-    .map(|column| (column.kind, column.col, column.width))
+    .map(|column| (column.slot.clone(), column.col, column.width))
     .collect::<Vec<_>>();
   let visible_rows = plan
     .visible_rows
@@ -1200,7 +1346,7 @@ pub fn build_plan<'a, 't, H: HighlightProvider>(
 }
 
 fn line_number_column_width(doc: &Document, gutter: &GutterConfig) -> usize {
-  if !gutter.layout.contains(&GutterType::LineNumbers) {
+  if !gutter.contains_builtin(GutterType::LineNumbers) {
     return 0;
   }
   let lines = doc.text().len_lines().max(1);
@@ -1213,16 +1359,13 @@ fn build_gutter_columns(
 ) -> Vec<RenderGutterColumn> {
   let mut out = Vec::with_capacity(gutter.layout.len());
   let mut col = 0u16;
-  for kind in &gutter.layout {
-    let width = match kind {
-      GutterType::Diagnostics | GutterType::Diff | GutterType::Spacer => 1,
-      GutterType::LineNumbers => line_number_width as u16,
-    };
+  for slot in &gutter.layout {
+    let width = slot.width(line_number_width);
     if width == 0 {
       continue;
     }
     out.push(RenderGutterColumn {
-      kind: *kind,
+      slot: slot.clone(),
       col,
       width,
     });
@@ -1269,8 +1412,8 @@ fn build_gutter_lines(
   for row in visible_rows {
     let mut line = RenderGutterLine::new(row.row);
     for column in columns {
-      match column.kind {
-        GutterType::LineNumbers => {
+      match column.builtin_kind() {
+        Some(GutterType::LineNumbers) => {
           if row.first_visual_line
             && let Some(text) = line_number_text(
               gutter.line_numbers.mode,
@@ -1291,7 +1434,7 @@ fn build_gutter_lines(
             });
           }
         },
-        GutterType::Diagnostics | GutterType::Diff | GutterType::Spacer => {},
+        Some(GutterType::Diagnostics | GutterType::Diff | GutterType::Spacer) | None => {},
       }
     }
     line.sort_spans();
@@ -1387,35 +1530,19 @@ pub fn apply_diagnostic_gutter_markers(
   diagnostics_by_line: &BTreeMap<usize, DiagnosticSeverity>,
   styles: RenderDiagnosticGutterStyles,
 ) {
-  let Some(column) = plan.gutter_column(GutterType::Diagnostics) else {
+  if plan.gutter_column(GutterType::Diagnostics).is_none() {
     return;
-  };
+  }
+  plan.clear_builtin_gutter_slot(GutterType::Diagnostics);
 
-  for (meta, line) in plan.visible_rows.iter().zip(plan.gutter_lines.iter_mut()) {
-    line
-      .spans
-      .retain(|span| span.col < column.col || span.col >= column.col.saturating_add(column.width));
-
-    if !meta.first_visual_line {
-      continue;
-    }
-
-    let Some(severity) = diagnostics_by_line.get(&meta.doc_line).copied() else {
-      continue;
-    };
-
+  for (&doc_line, severity) in diagnostics_by_line {
     let style = match severity {
       DiagnosticSeverity::Error => styles.error,
       DiagnosticSeverity::Warning => styles.warning,
       DiagnosticSeverity::Information => styles.info,
       DiagnosticSeverity::Hint => styles.hint,
     };
-    line.push_span(RenderGutterSpan {
-      col: column.col,
-      text: "●".into(),
-      style,
-    });
-    line.sort_spans();
+    let _ = plan.set_builtin_gutter_text(GutterType::Diagnostics, doc_line, "●", style);
   }
 }
 
@@ -1424,34 +1551,18 @@ pub fn apply_diff_gutter_markers(
   diff_by_line: &BTreeMap<usize, RenderGutterDiffKind>,
   styles: RenderDiffGutterStyles,
 ) {
-  let Some(column) = plan.gutter_column(GutterType::Diff) else {
+  if plan.gutter_column(GutterType::Diff).is_none() {
     return;
-  };
+  }
+  plan.clear_builtin_gutter_slot(GutterType::Diff);
 
-  for (meta, line) in plan.visible_rows.iter().zip(plan.gutter_lines.iter_mut()) {
-    line
-      .spans
-      .retain(|span| span.col < column.col || span.col >= column.col.saturating_add(column.width));
-
-    if !meta.first_visual_line {
-      continue;
-    }
-
-    let Some(kind) = diff_by_line.get(&meta.doc_line).copied() else {
-      continue;
-    };
-
+  for (&doc_line, kind) in diff_by_line {
     let (text, style) = match kind {
       RenderGutterDiffKind::Added => ("+", styles.added),
       RenderGutterDiffKind::Modified => ("~", styles.modified),
       RenderGutterDiffKind::Removed => ("-", styles.removed),
     };
-    line.push_span(RenderGutterSpan {
-      col: column.col,
-      text: text.into(),
-      style,
-    });
-    line.sort_spans();
+    let _ = plan.set_builtin_gutter_text(GutterType::Diff, doc_line, text, style);
   }
 }
 

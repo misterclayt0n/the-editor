@@ -45,14 +45,15 @@ use serde_json::{
 use smallvec::SmallVec;
 use the_default::{
   BufferTabsSnapshot,
+  BuiltEditorPreset,
   Command,
   CommandPaletteState,
   CommandPaletteStyle,
   CommandPromptState,
   CommandRegistry,
+  DefaultApi,
   DefaultContext,
   DispatchRef,
-  EditorExtensions,
   ExtensionStateStore,
   FilePickerChangedFileItem,
   FilePickerChangedKind,
@@ -581,11 +582,8 @@ pub struct Ctx {
   lsp_trace_log:                     Option<BufWriter<std::fs::File>>,
   pub file_picker_wake_rx:           Receiver<()>,
   pub mode:                          Mode,
-  pub keymaps:                       Keymaps,
+  pub preset:                        BuiltEditorPreset<Ctx, Box<dyn DefaultApi<Ctx>>>,
   pub command_prompt:                CommandPromptState,
-  pub command_registry:              CommandRegistry<Ctx>,
-  pub extensions:                    EditorExtensions<Ctx>,
-  pub extension_state:               ExtensionStateStore,
   pub command_palette:               CommandPaletteState,
   pub command_palette_style:         CommandPaletteStyle,
   pub completion_menu:               the_default::CompletionMenuState,
@@ -612,6 +610,7 @@ pub struct Ctx {
   lsp_completion_generation:         u64,
   lsp_pending_auto_completion:       Option<PendingAutoCompletion>,
   lsp_pending_auto_signature_help:   Option<PendingAutoSignatureHelp>,
+  lsp_signature_help_presentation:   Option<the_default::SignatureHelpPresentation>,
   pub diagnostics:                   DiagnosticsState,
   pub file_picker_layout:            Option<FilePickerLayout>,
   pub file_picker_drag:              Option<FilePickerDragState>,
@@ -633,7 +632,7 @@ pub struct Ctx {
   pub ui_theme:                      Theme,
   pub ui_state:                      UiState,
   pub pending_input:                 Option<the_default::PendingInput>,
-  pub dispatch:                      Option<NonNull<dyn the_default::DefaultApi<Ctx>>>,
+  pub dispatch_override:             Option<NonNull<dyn DefaultApi<Ctx>>>,
   /// Syntax loader for language detection and highlighting.
   pub loader:                        Option<Arc<Loader>>,
   /// Cache for syntax highlights (reused across renders).
@@ -981,6 +980,9 @@ impl Ctx {
       .map(PathBuf::from)
       .as_deref()
       .and_then(|path| build_lsp_document_state(path, loader.as_deref()));
+    let preset = the_default::default_editor_preset::<Self>()
+      .build()
+      .box_dispatch();
 
     let mut ctx = Self {
       editor,
@@ -998,11 +1000,8 @@ impl Ctx {
       lsp_trace_log,
       file_picker_wake_rx,
       mode: Mode::Normal,
-      keymaps: Keymaps::default(),
+      preset,
       command_prompt: CommandPromptState::new(),
-      command_registry: CommandRegistry::new(),
-      extensions: EditorExtensions::default(),
-      extension_state: ExtensionStateStore::default(),
       command_palette: CommandPaletteState::default(),
       command_palette_style: CommandPaletteStyle::helix_bottom(),
       completion_menu: the_default::CompletionMenuState::default(),
@@ -1036,6 +1035,7 @@ impl Ctx {
       lsp_completion_generation: 0,
       lsp_pending_auto_completion: None,
       lsp_pending_auto_signature_help: None,
+      lsp_signature_help_presentation: None,
       diagnostics: DiagnosticsState::default(),
       file_picker_layout: None,
       file_picker_drag: None,
@@ -1057,7 +1057,7 @@ impl Ctx {
       ui_theme,
       ui_state: UiState::default(),
       pending_input: None,
-      dispatch: None,
+      dispatch_override: None,
       loader,
       highlight_cache: HighlightCache::default(),
       inactive_highlight_caches: BTreeMap::new(),
@@ -1097,9 +1097,18 @@ impl Ctx {
 
   pub fn set_dispatch<D>(&mut self, dispatch: &D)
   where
-    D: the_default::DefaultApi<Ctx> + 'static,
+    D: DefaultApi<Ctx> + 'static,
   {
-    self.dispatch = Some(NonNull::from(dispatch as &dyn the_default::DefaultApi<Ctx>));
+    self.dispatch_override = Some(NonNull::from(dispatch as &dyn DefaultApi<Ctx>));
+  }
+
+  pub fn install_preset(&mut self, mut preset: BuiltEditorPreset<Ctx, Box<dyn DefaultApi<Ctx>>>) {
+    let hooks = preset.take_startup_hooks();
+    self.preset = preset;
+    self.dispatch_override = None;
+    for hook in hooks {
+      hook.run(self);
+    }
   }
 
   fn apply_effective_theme(&mut self, theme: Theme) {
@@ -2592,11 +2601,13 @@ impl Ctx {
     };
 
     let Some(signature) = signature else {
+      self.lsp_signature_help_presentation = None;
       the_default::close_signature_help(self);
       return true;
     };
 
     if signature.signatures.is_empty() {
+      self.lsp_signature_help_presentation = None;
       the_default::close_signature_help(self);
       return true;
     }
@@ -2614,7 +2625,11 @@ impl Ctx {
         }
       })
       .collect::<Vec<_>>();
-    the_default::show_signature_help(self, signatures, active_signature);
+    self.lsp_signature_help_presentation = Some(the_default::SignatureHelpPresentation::new(
+      signatures,
+      active_signature,
+    ));
+    the_default::show_builtin_signature_help(self);
     true
   }
 
@@ -4013,13 +4028,10 @@ impl Ctx {
       return;
     }
 
-    let menu_items = self
-      .lsp_completion_visible_indices
-      .iter()
-      .filter_map(|index| self.lsp_completion_items.get(*index))
-      .map(completion_menu_item_for_lsp_item)
-      .collect();
-    the_default::show_completion_menu(self, menu_items);
+    the_default::show_builtin_completion_menu(
+      self,
+      the_default::BuiltinCompletionMenuKind::LspCompletion,
+    );
   }
 
   fn clear_completion_state(&mut self) {
@@ -4046,12 +4058,10 @@ impl Ctx {
     self.clear_completion_state();
     self.lsp_code_action_items = actions;
     self.lsp_code_action_menu_active = !self.lsp_code_action_items.is_empty();
-    let menu_items = self
-      .lsp_code_action_items
-      .iter()
-      .map(completion_menu_item_for_code_action)
-      .collect();
-    the_default::show_completion_menu(self, menu_items);
+    the_default::show_builtin_completion_menu(
+      self,
+      the_default::BuiltinCompletionMenuKind::CodeActions,
+    );
   }
 
   fn apply_code_action(&mut self, action: LspCodeAction) -> bool {
@@ -5740,15 +5750,15 @@ impl the_default::DefaultContext for Ctx {
   }
 
   fn keymaps(&mut self) -> &mut Keymaps {
-    &mut self.keymaps
+    self.preset.keymaps_mut()
   }
 
   fn extension_states(&self) -> &ExtensionStateStore {
-    &self.extension_state
+    self.preset.extension_state()
   }
 
   fn extension_states_mut(&mut self) -> &mut ExtensionStateStore {
-    &mut self.extension_state
+    self.preset.extension_state_mut()
   }
 
   fn command_prompt_mut(&mut self) -> &mut CommandPromptState {
@@ -5760,11 +5770,11 @@ impl the_default::DefaultContext for Ctx {
   }
 
   fn command_registry_mut(&mut self) -> &mut CommandRegistry<Self> {
-    &mut self.command_registry
+    self.preset.command_registry_mut()
   }
 
   fn command_registry_ref(&self) -> &CommandRegistry<Self> {
-    &self.command_registry
+    self.preset.command_registry()
   }
 
   fn command_palette(&self) -> &CommandPaletteState {
@@ -5932,30 +5942,115 @@ impl the_default::DefaultContext for Ctx {
   }
 
   fn named_action_names(&self) -> Vec<&'static str> {
-    self
-      .extensions
-      .named_actions
-      .infos()
-      .into_iter()
-      .map(|info| info.name)
-      .collect()
+    self.preset.named_action_names()
   }
 
   fn named_action_doc(&self, name: &str) -> Option<&'static str> {
-    self.extensions.named_actions.doc(name)
+    self.preset.named_action_doc(name)
   }
 
   fn execute_named_action(&mut self, name: &str) -> bool {
-    let extensions = &self.extensions as *const EditorExtensions<Self>;
-    unsafe { (&*extensions).execute_named_action(self, name) }
+    let preset = &self.preset as *const BuiltEditorPreset<Self, Box<dyn DefaultApi<Self>>>;
+    unsafe { (&*preset).execute_named_action(self, name) }
+  }
+
+  fn command_palette_items(
+    &mut self,
+    source: the_default::CommandPaletteSource,
+    source_mode: Mode,
+    query: &str,
+  ) -> Vec<the_default::CommandPaletteItem> {
+    let preset = &self.preset as *const BuiltEditorPreset<Self, Box<dyn DefaultApi<Self>>>;
+    unsafe { (&*preset).command_palette_items(self, source, source_mode, query) }
+  }
+
+  fn builtin_completion_menu_items(
+    &mut self,
+    kind: the_default::BuiltinCompletionMenuKind,
+  ) -> Vec<the_default::CompletionMenuItem> {
+    match kind {
+      the_default::BuiltinCompletionMenuKind::LspCompletion => {
+        self
+          .lsp_completion_visible_indices
+          .iter()
+          .filter_map(|index| self.lsp_completion_items.get(*index))
+          .map(completion_menu_item_for_lsp_item)
+          .collect()
+      },
+      the_default::BuiltinCompletionMenuKind::CodeActions => {
+        self
+          .lsp_code_action_items
+          .iter()
+          .map(completion_menu_item_for_code_action)
+          .collect()
+      },
+    }
+  }
+
+  fn builtin_signature_help_presentation(
+    &mut self,
+  ) -> Option<the_default::SignatureHelpPresentation> {
+    self.lsp_signature_help_presentation.clone()
+  }
+
+  fn completion_menu_provider_items(
+    &mut self,
+    provider: the_default::CompletionMenuProviderId,
+  ) -> Option<Vec<the_default::CompletionMenuItem>> {
+    let preset = &self.preset as *const BuiltEditorPreset<Self, Box<dyn DefaultApi<Self>>>;
+    unsafe { (&*preset).completion_menu_items(self, provider) }
+  }
+
+  fn completion_menu_provider_selection_changed(
+    &mut self,
+    provider: the_default::CompletionMenuProviderId,
+    index: usize,
+  ) {
+    let preset = &self.preset as *const BuiltEditorPreset<Self, Box<dyn DefaultApi<Self>>>;
+    unsafe { (&*preset).completion_menu_selection_changed(self, provider, index) };
+  }
+
+  fn completion_menu_provider_accept_selected(
+    &mut self,
+    provider: the_default::CompletionMenuProviderId,
+    index: usize,
+  ) -> bool {
+    let preset = &self.preset as *const BuiltEditorPreset<Self, Box<dyn DefaultApi<Self>>>;
+    unsafe { (&*preset).completion_menu_accept_selected(self, provider, index) }
+  }
+
+  fn signature_help_presentation(
+    &mut self,
+    provider: the_default::SignatureHelpProviderId,
+  ) -> Option<the_default::SignatureHelpPresentation> {
+    let preset = &self.preset as *const BuiltEditorPreset<Self, Box<dyn DefaultApi<Self>>>;
+    unsafe { (&*preset).signature_help_presentation(self, provider) }
+  }
+
+  fn postprocess_editor_context_menu(
+    &mut self,
+    request: &the_default::EditorContextMenuRequest,
+    snapshot: &mut the_default::ContextMenuSnapshot,
+  ) {
+    let preset = &self.preset as *const BuiltEditorPreset<Self, Box<dyn DefaultApi<Self>>>;
+    unsafe { (&*preset).postprocess_editor_context_menu(self, request, snapshot) };
+  }
+
+  fn postprocess_file_tree_context_menu(
+    &mut self,
+    request: &the_default::FileTreeContextMenuRequest,
+    snapshot: &mut the_default::ContextMenuSnapshot,
+  ) {
+    let preset = &self.preset as *const BuiltEditorPreset<Self, Box<dyn DefaultApi<Self>>>;
+    unsafe { (&*preset).postprocess_file_tree_context_menu(self, request, snapshot) };
   }
 
   fn picker_query_handler_id(&self, name: &str) -> Option<the_default::PickerQueryHandlerId> {
-    self.extensions.picker_query_handler_id(name)
+    self.preset.picker_query_handler_id(name)
   }
 
   fn picker_submit_handler_id(&self, name: &str) -> Option<the_default::PickerSubmitHandlerId> {
-    self.extensions.picker_submit_handler_id(name)
+    self.preset.picker_submit_handler_id(name)
   }
 
   fn handle_picker_query_action(
@@ -5963,8 +6058,8 @@ impl the_default::DefaultContext for Ctx {
     handler: the_default::PickerQueryHandlerId,
     query: &str,
   ) -> bool {
-    let extensions = &self.extensions as *const EditorExtensions<Self>;
-    unsafe { (&*extensions).handle_picker_query(self, handler, query) }
+    let preset = &self.preset as *const BuiltEditorPreset<Self, Box<dyn DefaultApi<Self>>>;
+    unsafe { (&*preset).handle_picker_query(self, handler, query) }
   }
 
   fn submit_picker_item_action(
@@ -5972,22 +6067,22 @@ impl the_default::DefaultContext for Ctx {
     handler: the_default::PickerSubmitHandlerId,
     item: &FilePickerItem,
   ) -> PickerSubmitResult {
-    let extensions = &self.extensions as *const EditorExtensions<Self>;
-    unsafe { (&*extensions).submit_picker_item(self, handler, item) }
+    let preset = &self.preset as *const BuiltEditorPreset<Self, Box<dyn DefaultApi<Self>>>;
+    unsafe { (&*preset).submit_picker_item(self, handler, item) }
   }
 
   fn extend_text_annotations<'a>(&'a self, annotations: &mut TextAnnotations<'a>) {
-    self.extensions.extend_text_annotations(self, annotations);
+    self.preset.extend_text_annotations(self, annotations);
   }
 
   fn postprocess_render_plan(&mut self, plan: &mut RenderPlan) {
-    let extensions = &self.extensions as *const EditorExtensions<Self>;
-    unsafe { (&*extensions).postprocess_render_plan(self, plan) };
+    let preset = &self.preset as *const BuiltEditorPreset<Self, Box<dyn DefaultApi<Self>>>;
+    unsafe { (&*preset).postprocess_render_plan(self, plan) };
   }
 
   fn postprocess_ui_tree(&mut self, tree: &mut UiTree) {
-    let extensions = &self.extensions as *const EditorExtensions<Self>;
-    unsafe { (&*extensions).postprocess_ui_tree(self, tree) };
+    let preset = &self.preset as *const BuiltEditorPreset<Self, Box<dyn DefaultApi<Self>>>;
+    unsafe { (&*preset).postprocess_ui_tree(self, tree) };
   }
 
   fn file_picker_closed(&mut self) {
@@ -6023,10 +6118,10 @@ impl the_default::DefaultContext for Ctx {
   }
 
   fn dispatch(&self) -> DispatchRef<Self> {
-    let Some(ptr) = self.dispatch else {
-      panic!("dispatch is not set");
-    };
-    DispatchRef::from_ptr(ptr.as_ptr())
+    if let Some(ptr) = self.dispatch_override {
+      return DispatchRef::from_ptr(ptr.as_ptr());
+    }
+    DispatchRef::from_ptr(self.preset.dispatch().as_ref() as *const dyn DefaultApi<Self>)
   }
 
   fn pending_input(&self) -> Option<&the_default::PendingInput> {

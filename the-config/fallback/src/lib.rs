@@ -35,7 +35,7 @@ fn pre_on_keypress<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent) {
 
 /// Build the default keymaps.
 pub fn build_keymaps() -> Keymaps {
-  Keymaps::default()
+  the_default::builtin_keymaps()
 }
 
 pub fn build_editor_preset<Ctx>() -> EditorPreset<Ctx, impl DefaultApi<Ctx>>

@@ -336,7 +336,8 @@ fn change_current_directory_is_isolated_per_context() {
 
   let mut ctx_a = TestCtx::new(workspace_a.path().to_path_buf());
   let ctx_b = TestCtx::new(workspace_b.path().to_path_buf());
-  let registry = CommandRegistry::<TestCtx>::new();
+  let mut registry = CommandRegistry::<TestCtx>::new();
+  the_default::install_builtin_commands(&mut registry);
 
   assert_eq!(effective_working_directory(&ctx_a), workspace_a.path());
   assert_eq!(effective_working_directory(&ctx_b), workspace_b.path());

@@ -398,12 +398,12 @@ state without patching client internals ad hoc.
 
 ### Recommended direction
 
-Introduce an extension state bag on the shared context surface.
+Introduce a preset-owned state bag on the shared context surface.
 
 Conceptually:
 
 ```rust
-ctx.extensions_mut().get_or_insert_with::<MyState>(MyState::default)
+ctx.extension_state_or_insert_with::<MyState, _>(MyState::default)
 ```
 
 This can be implemented in multiple ways:

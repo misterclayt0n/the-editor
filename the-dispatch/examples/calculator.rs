@@ -62,14 +62,8 @@ calc_handler!(SubHandler, (i64, i64) => i64, sub_handler);
 calc_handler!(MulHandler, (i64, i64) => i64, mul_handler);
 calc_handler!(DivHandler, (i64, i64) => i64, div_handler);
 
-type CalcDispatch = CalculatorDispatch<
-  CalcCtx,
-  ParseHandler,
-  AddHandler,
-  SubHandler,
-  MulHandler,
-  DivHandler,
->;
+type CalcDispatch =
+  CalculatorDispatch<CalcCtx, ParseHandler, AddHandler, SubHandler, MulHandler, DivHandler>;
 
 trait CalcDispatchRegistry: CalculatorApi<CalcCtx> {
   #[cfg(feature = "dynamic-registry")]
@@ -205,11 +199,7 @@ fn install_post_eval_times_ten(dispatch: &mut impl CalcDispatchRegistry) {
 fn install_post_eval_times_ten(_dispatch: &mut impl CalcDispatchRegistry) {}
 
 #[cfg(feature = "dynamic-registry")]
-fn apply_post_eval(
-  dispatch: &impl CalcDispatchRegistry,
-  ctx: &mut CalcCtx,
-  result: i64,
-) -> i64 {
+fn apply_post_eval(dispatch: &impl CalcDispatchRegistry, ctx: &mut CalcCtx, result: i64) -> i64 {
   let Some(handler) = dispatch.registry().get("post_eval") else {
     return result;
   };
@@ -222,11 +212,7 @@ fn apply_post_eval(
 }
 
 #[cfg(not(feature = "dynamic-registry"))]
-fn apply_post_eval(
-  _dispatch: &impl CalcDispatchRegistry,
-  _ctx: &mut CalcCtx,
-  result: i64,
-) -> i64 {
+fn apply_post_eval(_dispatch: &impl CalcDispatchRegistry, _ctx: &mut CalcCtx, result: i64) -> i64 {
   result
 }
 

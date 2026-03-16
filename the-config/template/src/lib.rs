@@ -43,7 +43,7 @@ fn pre_render<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
 ///
 /// Replace this to provide your own layout.
 pub fn build_keymaps() -> Keymaps {
-  Keymaps::default()
+  the_default::builtin_keymaps()
 }
 
 pub fn build_editor_preset<Ctx>() -> EditorPreset<Ctx, impl DefaultApi<Ctx>>

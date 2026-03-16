@@ -1037,6 +1037,60 @@ pub trait DefaultContext: Sized + 'static {
   fn execute_named_action(&mut self, _name: &str) -> bool {
     false
   }
+  fn command_palette_items(
+    &mut self,
+    _source: CommandPaletteSource,
+    _source_mode: Mode,
+    _query: &str,
+  ) -> Vec<crate::CommandPaletteItem> {
+    Vec::new()
+  }
+  fn builtin_completion_menu_items(
+    &mut self,
+    _kind: crate::BuiltinCompletionMenuKind,
+  ) -> Vec<crate::CompletionMenuItem> {
+    Vec::new()
+  }
+  fn builtin_signature_help_presentation(&mut self) -> Option<crate::SignatureHelpPresentation> {
+    None
+  }
+  fn completion_menu_provider_items(
+    &mut self,
+    _provider: crate::CompletionMenuProviderId,
+  ) -> Option<Vec<crate::CompletionMenuItem>> {
+    None
+  }
+  fn completion_menu_provider_selection_changed(
+    &mut self,
+    _provider: crate::CompletionMenuProviderId,
+    _index: usize,
+  ) {
+  }
+  fn completion_menu_provider_accept_selected(
+    &mut self,
+    _provider: crate::CompletionMenuProviderId,
+    _index: usize,
+  ) -> bool {
+    false
+  }
+  fn signature_help_presentation(
+    &mut self,
+    _provider: crate::SignatureHelpProviderId,
+  ) -> Option<crate::SignatureHelpPresentation> {
+    None
+  }
+  fn postprocess_editor_context_menu(
+    &mut self,
+    _request: &crate::EditorContextMenuRequest,
+    _snapshot: &mut crate::ContextMenuSnapshot,
+  ) {
+  }
+  fn postprocess_file_tree_context_menu(
+    &mut self,
+    _request: &crate::FileTreeContextMenuRequest,
+    _snapshot: &mut crate::ContextMenuSnapshot,
+  ) {
+  }
   fn picker_query_handler_id(&self, _name: &str) -> Option<crate::PickerQueryHandlerId> {
     None
   }
@@ -2443,6 +2497,16 @@ fn submit_command_palette_selected<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool {
         close_command_palette(ctx);
         if !ctx.execute_named_action(&name) {
           ctx.push_error("command_palette", format!("named action not found: {name}"));
+        }
+        return true;
+      },
+      CommandPaletteAction::NamedActionHandle(handle) => {
+        close_command_palette(ctx);
+        if !ctx.execute_named_action(handle.name()) {
+          ctx.push_error(
+            "command_palette",
+            format!("named action not found: {}", handle.name()),
+          );
         }
         return true;
       },

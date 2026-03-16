@@ -25,12 +25,15 @@ use the_lib::{
 use crate::{
   Command,
   DefaultContext,
+  Mode,
+  NamedActionHandle,
 };
 
 #[derive(Debug, Clone)]
 pub enum CommandPaletteAction {
   StaticCommand(Command),
   NamedAction(String),
+  NamedActionHandle(NamedActionHandle),
   TypableCommand { name: String, args: String },
 }
 
@@ -71,12 +74,94 @@ impl CommandPaletteItem {
       action:        None,
     }
   }
+
+  pub fn subtitle(mut self, subtitle: impl Into<String>) -> Self {
+    self.subtitle = Some(subtitle.into());
+    self
+  }
+
+  pub fn description(mut self, description: impl Into<String>) -> Self {
+    self.description = Some(description.into());
+    self
+  }
+
+  pub fn alias(mut self, alias: impl Into<String>) -> Self {
+    self.aliases.push(alias.into());
+    self
+  }
+
+  pub fn aliases<I, S>(mut self, aliases: I) -> Self
+  where
+    I: IntoIterator<Item = S>,
+    S: Into<String>,
+  {
+    self.aliases = aliases.into_iter().map(Into::into).collect();
+    self
+  }
+
+  pub fn shortcut(mut self, shortcut: impl Into<String>) -> Self {
+    self.shortcut = Some(shortcut.into());
+    self
+  }
+
+  pub fn badge(mut self, badge: impl Into<String>) -> Self {
+    self.badge = Some(badge.into());
+    self
+  }
+
+  pub fn leading_icon(mut self, icon: impl Into<String>) -> Self {
+    self.leading_icon = Some(icon.into());
+    self
+  }
+
+  pub fn leading_color(mut self, color: Color) -> Self {
+    self.leading_color = Some(color);
+    self
+  }
+
+  pub fn symbols<I, S>(mut self, symbols: I) -> Self
+  where
+    I: IntoIterator<Item = S>,
+    S: Into<String>,
+  {
+    self.symbols = Some(symbols.into_iter().map(Into::into).collect());
+    self
+  }
+
+  pub fn emphasize(mut self) -> Self {
+    self.emphasis = true;
+    self
+  }
+
+  pub fn on_static_command(mut self, command: Command) -> Self {
+    self.action = Some(CommandPaletteAction::StaticCommand(command));
+    self
+  }
+
+  pub fn on_named_action(mut self, name: impl Into<String>) -> Self {
+    self.action = Some(CommandPaletteAction::NamedAction(name.into()));
+    self
+  }
+
+  pub fn on_named_action_handle(mut self, handle: NamedActionHandle) -> Self {
+    self.action = Some(CommandPaletteAction::NamedActionHandle(handle));
+    self
+  }
+
+  pub fn on_typable_command(mut self, name: impl Into<String>, args: impl Into<String>) -> Self {
+    self.action = Some(CommandPaletteAction::TypableCommand {
+      name: name.into(),
+      args: args.into(),
+    });
+    self
+  }
 }
 
 #[derive(Debug, Clone)]
 pub struct CommandPaletteState {
   pub is_open:       bool,
   pub source:        CommandPaletteSource,
+  pub source_mode:   Mode,
   pub query:         String,
   pub selected:      Option<usize>,
   pub items:         Vec<CommandPaletteItem>,
@@ -316,6 +401,7 @@ impl Default for CommandPaletteState {
     Self {
       is_open:       false,
       source:        CommandPaletteSource::CommandLine,
+      source_mode:   Mode::Command,
       query:         String::new(),
       selected:      None,
       items:         Vec::new(),
@@ -434,6 +520,10 @@ mod tests {
     command_palette_default_selected,
     command_palette_filtered_indices,
   };
+  use crate::{
+    Mode,
+    NamedActionHandle,
+  };
 
   #[test]
   fn alias_exact_match_is_ranked_above_title_fuzzy_match() {
@@ -444,6 +534,7 @@ mod tests {
     let state = CommandPaletteState {
       is_open:       true,
       source:        CommandPaletteSource::CommandLine,
+      source_mode:   Mode::Command,
       query:         "w".to_string(),
       selected:      None,
       items:         vec![watch, write],
@@ -462,6 +553,7 @@ mod tests {
     let state = CommandPaletteState {
       is_open:       true,
       source:        CommandPaletteSource::CommandLine,
+      source_mode:   Mode::Command,
       query:         "w".to_string(),
       selected:      None,
       items:         vec![CommandPaletteItem::new("write")],
@@ -472,6 +564,42 @@ mod tests {
     };
 
     assert_eq!(command_palette_default_selected(&state), None);
+  }
+
+  #[test]
+  fn item_builder_sets_palette_metadata_and_action() {
+    let item = CommandPaletteItem::new("Open Demo")
+      .subtitle("Demo")
+      .description("Open the demo surface")
+      .aliases(["demo.open", "demo"])
+      .shortcut("g p")
+      .badge("custom")
+      .leading_icon("sparkles")
+      .emphasize()
+      .on_named_action("demo.open");
+
+    assert_eq!(item.subtitle.as_deref(), Some("Demo"));
+    assert_eq!(item.description.as_deref(), Some("Open the demo surface"));
+    assert_eq!(item.aliases, vec!["demo.open", "demo"]);
+    assert_eq!(item.shortcut.as_deref(), Some("g p"));
+    assert_eq!(item.badge.as_deref(), Some("custom"));
+    assert_eq!(item.leading_icon.as_deref(), Some("sparkles"));
+    assert!(item.emphasis);
+    assert!(matches!(
+      item.action,
+      Some(super::CommandPaletteAction::NamedAction(ref name)) if name == "demo.open"
+    ));
+  }
+
+  #[test]
+  fn item_builder_supports_named_action_handles() {
+    let handle = NamedActionHandle::new("demo.handle");
+    let item = CommandPaletteItem::new("Handle Demo").on_named_action_handle(handle);
+
+    assert!(matches!(
+      item.action,
+      Some(super::CommandPaletteAction::NamedActionHandle(bound)) if bound == handle
+    ));
   }
 }
 

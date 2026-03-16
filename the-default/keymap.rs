@@ -16,7 +16,6 @@ use the_lib::selection::{
 
 use crate::{
   Command,
-  CommandPaletteAction,
   CommandPaletteItem,
   CommandPaletteSource,
   DefaultContext,
@@ -24,6 +23,7 @@ use crate::{
   KeyEvent,
   KeyOutcome,
   Modifiers,
+  NamedActionHandle,
   command_from_name,
 };
 
@@ -308,6 +308,13 @@ pub enum KeyAction {
   Command(Command),
   Mode(Mode),
   Named(&'static str),
+  NamedHandle(NamedActionHandle),
+}
+
+impl KeyAction {
+  pub const fn named(handle: NamedActionHandle) -> Self {
+    Self::NamedHandle(handle)
+  }
 }
 
 #[derive(Debug, Clone)]
@@ -644,7 +651,7 @@ impl Keymaps {
 
 impl Default for Keymaps {
   fn default() -> Self {
-    Self::new(default())
+    Self::new(HashMap::new())
   }
 }
 
@@ -678,6 +685,9 @@ fn apply_actions<Ctx: DefaultContext>(ctx: &mut Ctx, actions: &[KeyAction]) -> K
         } else {
           let _ = ctx.execute_named_action(name);
         }
+      },
+      KeyAction::NamedHandle(handle) => {
+        let _ = ctx.execute_named_action(handle.name());
       },
     }
   }
@@ -763,19 +773,7 @@ fn apply_mode<Ctx: DefaultContext>(ctx: &mut Ctx, mode: Mode) {
     String::new()
   };
   let palette_items = if palette_open {
-    ctx
-      .command_registry_ref()
-      .all_commands()
-      .into_iter()
-      .map(|cmd| {
-        let mut item = CommandPaletteItem::new(cmd.name);
-        item.description = Some(cmd.doc.to_string());
-        if !cmd.aliases.is_empty() {
-          item.aliases = cmd.aliases.iter().map(|alias| alias.to_string()).collect();
-        }
-        item
-      })
-      .collect()
+    crate::command_registry::command_palette_command_items(ctx, previous_mode, &palette_query)
   } else {
     Vec::new()
   };
@@ -784,6 +782,7 @@ fn apply_mode<Ctx: DefaultContext>(ctx: &mut Ctx, mode: Mode) {
     let palette = ctx.command_palette_mut();
     palette.is_open = palette_open;
     palette.source = CommandPaletteSource::CommandLine;
+    palette.source_mode = previous_mode;
     if palette.is_open {
       palette.query = palette_query;
       palette.items = palette_items;
@@ -814,7 +813,7 @@ pub fn open_action_palette<Ctx: DefaultContext>(ctx: &mut Ctx) {
   let source_mode = ctx.mode();
   apply_mode(ctx, Mode::Command);
 
-  let items = build_action_palette_items(ctx, source_mode);
+  let items = build_action_palette_items(ctx, source_mode, "");
 
   {
     let prompt = ctx.command_prompt_mut();
@@ -829,6 +828,7 @@ pub fn open_action_palette<Ctx: DefaultContext>(ctx: &mut Ctx) {
     let palette = ctx.command_palette_mut();
     palette.is_open = true;
     palette.source = CommandPaletteSource::ActionPalette;
+    palette.source_mode = source_mode;
     palette.query.clear();
     palette.selected = None;
     palette.items = items;
@@ -850,9 +850,10 @@ pub fn open_command_palette_with_input<Ctx: DefaultContext>(ctx: &mut Ctx, input
   crate::update_command_palette_for_input(ctx, input);
 }
 
-fn build_action_palette_items<Ctx: DefaultContext>(
+pub(crate) fn build_action_palette_items<Ctx: DefaultContext>(
   ctx: &mut Ctx,
   mode: Mode,
+  query: &str,
 ) -> Vec<CommandPaletteItem> {
   let keymap = {
     let keymaps = ctx.keymaps();
@@ -872,13 +873,10 @@ fn build_action_palette_items<Ctx: DefaultContext>(
   static_names.sort();
   for name in static_names {
     if let Some(command) = command_from_name(&name) {
-      let mut item = CommandPaletteItem::new(name.clone());
-      item.description = Some(command_hint_label(command));
-      item.shortcut = bindings_by_name
-        .get(&name)
-        .and_then(|bindings| format_shortcut_list(bindings));
-      item.action = Some(CommandPaletteAction::StaticCommand(command));
-      items.push(item);
+      let item = CommandPaletteItem::new(name.clone())
+        .description(command_hint_label(command))
+        .on_static_command(command);
+      items.push(with_shortcut(item, bindings_by_name.get(&name)));
       continue;
     }
 
@@ -886,14 +884,11 @@ fn build_action_palette_items<Ctx: DefaultContext>(
       continue;
     };
 
-    let mut item = CommandPaletteItem::new(name.clone());
-    item.description = Some(doc.to_string());
-    item.shortcut = bindings_by_name
-      .get(&name)
-      .and_then(|bindings| format_shortcut_list(bindings));
-    item.action = Some(CommandPaletteAction::NamedAction(name.clone()));
-    seen_named_actions.insert(name);
-    items.push(item);
+    seen_named_actions.insert(name.clone());
+    let item = CommandPaletteItem::new(name.clone())
+      .description(doc)
+      .on_named_action(name.clone());
+    items.push(with_shortcut(item, bindings_by_name.get(&name)));
   }
 
   let mut named_actions = ctx.named_action_names();
@@ -902,26 +897,14 @@ fn build_action_palette_items<Ctx: DefaultContext>(
     if seen_named_actions.contains(name) {
       continue;
     }
-    let mut item = CommandPaletteItem::new(name.to_string());
-    item.description = ctx.named_action_doc(name).map(str::to_string);
-    item.shortcut = bindings_by_name
-      .get(name)
-      .and_then(|bindings| format_shortcut_list(bindings));
-    item.action = Some(CommandPaletteAction::NamedAction(name.to_string()));
-    items.push(item);
+    let mut item = CommandPaletteItem::new(name.to_string()).on_named_action(name.to_string());
+    if let Some(doc) = ctx.named_action_doc(name) {
+      item = item.description(doc);
+    }
+    items.push(with_shortcut(item, bindings_by_name.get(name)));
   }
 
   for cmd in ctx.command_registry_ref().all_commands() {
-    let mut item = CommandPaletteItem::new(format!(":{}", cmd.name));
-    item.description = Some(cmd.doc.to_string());
-    if !cmd.aliases.is_empty() {
-      item.aliases = cmd
-        .aliases
-        .iter()
-        .map(|alias| format!(":{}", alias))
-        .collect();
-    }
-
     let mut bindings = Vec::new();
     if let Some(command_bindings) = bindings_by_name.get(cmd.name) {
       bindings.extend(command_bindings.iter().cloned());
@@ -931,16 +914,28 @@ fn build_action_palette_items<Ctx: DefaultContext>(
         bindings.extend(command_bindings.iter().cloned());
       }
     }
-    item.shortcut = format_shortcut_list(&bindings);
-    item.action = Some(CommandPaletteAction::TypableCommand {
-      name: cmd.name.to_string(),
-      args: String::new(),
-    });
-    items.push(item);
+    let mut item = CommandPaletteItem::new(format!(":{}", cmd.name))
+      .description(cmd.doc)
+      .on_typable_command(cmd.name, "");
+    if !cmd.aliases.is_empty() {
+      item = item.aliases(cmd.aliases.iter().map(|alias| format!(":{}", alias)));
+    }
+    items.push(with_shortcut(item, Some(&bindings)));
   }
 
+  items.extend(ctx.command_palette_items(CommandPaletteSource::ActionPalette, mode, query));
   items.sort_by(|left, right| left.title.cmp(&right.title));
   items
+}
+
+fn with_shortcut(
+  item: CommandPaletteItem,
+  bindings: Option<&Vec<Vec<KeyBinding>>>,
+) -> CommandPaletteItem {
+  match bindings.and_then(|bindings| format_shortcut_list(bindings)) {
+    Some(shortcut) => item.shortcut(shortcut),
+    None => item,
+  }
 }
 
 fn collect_action_bindings(
@@ -985,6 +980,7 @@ fn collect_action_binding(
 fn action_name(action: KeyAction) -> Option<String> {
   match action {
     KeyAction::Named(name) => Some(name.to_string()),
+    KeyAction::NamedHandle(handle) => Some(handle.name().to_string()),
     KeyAction::Mode(Mode::Normal) => Some("normal_mode".to_string()),
     KeyAction::Mode(Mode::Insert) => Some("insert_mode".to_string()),
     KeyAction::Mode(Mode::Select) => Some("select_mode".to_string()),
@@ -1107,6 +1103,7 @@ fn key_action_hint_label(action: KeyAction) -> String {
       }
     },
     KeyAction::Named(name) => humanize_identifier(name),
+    KeyAction::NamedHandle(handle) => humanize_identifier(handle.name()),
   }
 }
 
@@ -1231,7 +1228,7 @@ fn insert_keymap_action(trie: &mut KeyTrie, path: &[KeyBinding], action: KeyTrie
   node.map.insert(final_key, action);
 }
 
-pub fn default() -> HashMap<Mode, KeyTrie> {
+fn builtin_keymap_map() -> HashMap<Mode, KeyTrie> {
   let normal = crate::keymap!({ "Normal mode"
     "h" | "left" => move_char_left,
     "j" | "down" => move_visual_line_down,
@@ -1644,6 +1641,10 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
   map.insert(Mode::Insert, insert);
   map.insert(Mode::Command, command);
   map
+}
+
+pub fn builtin_keymaps() -> Keymaps {
+  Keymaps::new(builtin_keymap_map())
 }
 
 #[cfg(test)]

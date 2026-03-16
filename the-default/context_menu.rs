@@ -1,7 +1,10 @@
 use std::{
   fmt,
+  path::PathBuf,
   str::FromStr,
 };
+
+use crate::DefaultContext;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ContextMenuActionId {
@@ -117,6 +120,12 @@ impl ContextMenuItem {
   }
 
   #[must_use]
+  pub fn title(mut self, title: impl Into<String>) -> Self {
+    self.title = title.into();
+    self
+  }
+
+  #[must_use]
   pub fn disabled(mut self) -> Self {
     self.enabled = false;
     self
@@ -135,9 +144,41 @@ pub struct ContextMenuSection {
   pub items: Vec<ContextMenuItem>,
 }
 
+impl ContextMenuSection {
+  #[must_use]
+  pub fn new() -> Self {
+    Self::default()
+  }
+
+  #[must_use]
+  pub fn title(mut self, title: impl Into<String>) -> Self {
+    self.title = Some(title.into());
+    self
+  }
+
+  #[must_use]
+  pub fn item(mut self, item: ContextMenuItem) -> Self {
+    self.items.push(item);
+    self
+  }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ContextMenuSnapshot {
   pub sections: Vec<ContextMenuSection>,
+}
+
+impl ContextMenuSnapshot {
+  #[must_use]
+  pub fn new() -> Self {
+    Self::default()
+  }
+
+  #[must_use]
+  pub fn section(mut self, section: ContextMenuSection) -> Self {
+    self.sections.push(section);
+    self
+  }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -145,6 +186,12 @@ pub struct FileTreeContextMenuOptions {
   pub is_directory:      bool,
   pub expanded:          bool,
   pub is_workspace_root: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileTreeContextMenuRequest {
+  pub path:    PathBuf,
+  pub options: FileTreeContextMenuOptions,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -156,6 +203,12 @@ pub struct EditorContextMenuOptions {
   pub can_rename_symbol:        bool,
   pub can_show_code_actions:    bool,
   pub can_format_buffer:        bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct EditorContextMenuRequest {
+  pub char_index: Option<usize>,
+  pub options:    EditorContextMenuOptions,
 }
 
 #[must_use]
@@ -259,4 +312,24 @@ pub fn build_editor_context_menu(options: EditorContextMenuOptions) -> ContextMe
   }
 
   ContextMenuSnapshot { sections }
+}
+
+#[must_use]
+pub fn build_file_tree_context_menu_with_providers<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  request: &FileTreeContextMenuRequest,
+) -> ContextMenuSnapshot {
+  let mut snapshot = ContextMenuSnapshot::new();
+  ctx.postprocess_file_tree_context_menu(request, &mut snapshot);
+  snapshot
+}
+
+#[must_use]
+pub fn build_editor_context_menu_with_providers<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  request: &EditorContextMenuRequest,
+) -> ContextMenuSnapshot {
+  let mut snapshot = ContextMenuSnapshot::new();
+  ctx.postprocess_editor_context_menu(request, &mut snapshot);
+  snapshot
 }

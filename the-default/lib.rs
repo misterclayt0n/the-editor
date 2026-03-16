@@ -31,10 +31,17 @@ mod theme_catalog;
 
 pub use assembly::{
   BuiltEditorPreset,
+  BuiltinCompletionMenuKind,
   CommandRegistryInstaller,
+  CompletionMenuProviderBuilder,
+  DefaultPresetHandles,
   EditorPreset,
+  SignatureHelpProviderBuilder,
   StartupHook,
   default_editor_preset,
+  default_preset_handles,
+  show_builtin_completion_menu,
+  show_builtin_signature_help,
 };
 pub use buffer_tabs::{
   BufferTabItemSnapshot,
@@ -82,6 +89,7 @@ pub use command_palette::{
   command_palette_selected_filtered_index,
 };
 pub use command_registry::{
+  CommandBuilder,
   CommandCompleter,
   CommandError,
   CommandEvent,
@@ -96,6 +104,7 @@ pub use command_registry::{
   completers,
   effective_working_directory,
   handle_command_prompt_key,
+  install_builtin_commands,
   sync_command_palette_preview,
   update_action_palette_for_input,
   update_command_palette_for_input,
@@ -117,6 +126,7 @@ pub use completion_menu::{
   completion_prev,
   set_completion_docs_scroll,
   show_completion_menu,
+  show_completion_menu_provider,
 };
 pub use context_menu::{
   ContextMenuActionId,
@@ -124,15 +134,27 @@ pub use context_menu::{
   ContextMenuSection,
   ContextMenuSnapshot,
   EditorContextMenuOptions,
+  EditorContextMenuRequest,
   FileTreeContextMenuOptions,
+  FileTreeContextMenuRequest,
   build_editor_context_menu,
+  build_editor_context_menu_with_providers,
   build_file_tree_context_menu,
+  build_file_tree_context_menu_with_providers,
 };
 pub use extension_state::ExtensionStateStore;
 pub use extensions::{
-  EditorExtensions,
+  CommandPaletteItemProvider,
+  CompletionMenuAcceptHandler,
+  CompletionMenuItemsProvider,
+  CompletionMenuProviderEntry,
+  CompletionMenuProviderId,
+  CompletionMenuSelectionHandler,
+  EditorContextMenuProvider,
+  FileTreeContextMenuProvider,
   NamedAction,
   NamedActionFn,
+  NamedActionHandle,
   NamedActionInfo,
   PickerQueryHandler,
   PickerQueryHandlerEntry,
@@ -142,6 +164,9 @@ pub use extensions::{
   PickerSubmitHandlerId,
   PickerSubmitResult,
   RenderPlanPostProcessor,
+  SignatureHelpProviderEntry,
+  SignatureHelpProviderFn,
+  SignatureHelpProviderId,
   TextAnnotationsProvider,
   UiTreePostProcessor,
 };
@@ -243,7 +268,7 @@ pub use keymap::{
   Mode,
   ParseKeyBindingError,
   action_from_name,
-  default,
+  builtin_keymaps,
   open_action_palette,
   open_command_palette,
 };
@@ -284,10 +309,12 @@ pub use signature_help::{
   SIGNATURE_HELP_ACTIVE_PARAM_END_MARKER,
   SIGNATURE_HELP_ACTIVE_PARAM_START_MARKER,
   SignatureHelpItem,
+  SignatureHelpPresentation,
   SignatureHelpState,
   build_signature_help_ui,
   close_signature_help,
   show_signature_help,
+  show_signature_help_provider,
   signature_help_docs_scroll,
   signature_help_markdown,
   signature_help_next,

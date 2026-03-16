@@ -8,7 +8,10 @@ use the_lib::render::{
   UiText,
 };
 
-use crate::DefaultContext;
+use crate::{
+  DefaultContext,
+  extensions::SignatureHelpProviderId,
+};
 
 pub const SIGNATURE_HELP_ACTIVE_PARAM_START_MARKER: &str = "<<the-editor-active-param>>";
 pub const SIGNATURE_HELP_ACTIVE_PARAM_END_MARKER: &str = "<</the-editor-active-param>>";
@@ -28,6 +31,36 @@ impl SignatureHelpItem {
       documentation:          None,
       active_parameter:       None,
       active_parameter_range: None,
+    }
+  }
+
+  pub fn documentation(mut self, documentation: impl Into<String>) -> Self {
+    self.documentation = Some(documentation.into());
+    self
+  }
+
+  pub fn active_parameter(mut self, active_parameter: u32) -> Self {
+    self.active_parameter = Some(active_parameter);
+    self
+  }
+
+  pub fn active_parameter_range(mut self, range: std::ops::Range<usize>) -> Self {
+    self.active_parameter_range = Some(range);
+    self
+  }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SignatureHelpPresentation {
+  pub items:            Vec<SignatureHelpItem>,
+  pub active_signature: usize,
+}
+
+impl SignatureHelpPresentation {
+  pub fn new(items: Vec<SignatureHelpItem>, active_signature: usize) -> Self {
+    Self {
+      items,
+      active_signature,
     }
   }
 }
@@ -171,6 +204,23 @@ pub fn show_signature_help<Ctx: DefaultContext>(
   if changed {
     ctx.request_render();
   }
+}
+
+pub fn show_signature_help_provider<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  provider: SignatureHelpProviderId,
+) {
+  let Some(presentation) = ctx.signature_help_presentation(provider) else {
+    close_signature_help(ctx);
+    return;
+  };
+
+  if presentation.items.is_empty() {
+    close_signature_help(ctx);
+    return;
+  }
+
+  show_signature_help(ctx, presentation.items, presentation.active_signature);
 }
 
 pub fn signature_help_next<Ctx: DefaultContext>(ctx: &mut Ctx) {

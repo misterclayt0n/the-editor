@@ -251,6 +251,121 @@ impl<Ctx: 'static> fmt::Debug for TypableCommand<Ctx> {
   }
 }
 
+pub struct CommandBuilder<Ctx: 'static> {
+  name:                        &'static str,
+  aliases:                     &'static [&'static str],
+  doc:                         &'static str,
+  fun:                         Box<CommandFn<Ctx>>,
+  completer:                   CommandCompleter<Ctx>,
+  positionals:                 (usize, Option<usize>),
+  raw_after:                   Option<u8>,
+  flags:                       &'static [the_lib::command_line::Flag],
+  palette_placeholder:         Option<&'static str>,
+  directory_completion_action: DirectoryCompletionAction,
+}
+
+impl<Ctx: 'static> CommandBuilder<Ctx> {
+  pub fn new<F>(name: &'static str, doc: &'static str, fun: F) -> Self
+  where
+    F: Fn(&mut Ctx, Args, CommandEvent) -> CommandResult + 'static,
+  {
+    Self {
+      name,
+      aliases: &[],
+      doc,
+      fun: Box::new(fun),
+      completer: CommandCompleter::none(),
+      positionals: (0, Some(0)),
+      raw_after: None,
+      flags: &[],
+      palette_placeholder: None,
+      directory_completion_action: DirectoryCompletionAction::Submit,
+    }
+  }
+
+  pub fn aliases(mut self, aliases: &'static [&'static str]) -> Self {
+    self.aliases = aliases;
+    self
+  }
+
+  pub fn optional_arg(mut self) -> Self {
+    self.positionals = (0, Some(1));
+    self
+  }
+
+  pub fn required_arg(mut self) -> Self {
+    self.positionals = (1, Some(1));
+    self
+  }
+
+  pub fn variadic(mut self) -> Self {
+    self.positionals = (0, None);
+    self
+  }
+
+  pub fn one_or_more(mut self) -> Self {
+    self.positionals = (1, None);
+    self
+  }
+
+  pub fn positionals(mut self, min: usize, max: Option<usize>) -> Self {
+    self.positionals = (min, max);
+    self
+  }
+
+  pub fn complete_with(mut self, completer: Completer<Ctx>) -> Self {
+    self.completer = CommandCompleter::all(completer);
+    self
+  }
+
+  pub fn complete_positional(
+    mut self,
+    positional: &'static [Completer<Ctx>],
+    variadic: Completer<Ctx>,
+  ) -> Self {
+    self.completer = CommandCompleter::positional(positional, variadic);
+    self
+  }
+
+  pub fn raw_after(mut self, n: u8) -> Self {
+    self.raw_after = Some(n);
+    self
+  }
+
+  pub fn flags(mut self, flags: &'static [the_lib::command_line::Flag]) -> Self {
+    self.flags = flags;
+    self
+  }
+
+  pub fn palette_placeholder(mut self, placeholder: &'static str) -> Self {
+    self.palette_placeholder = Some(placeholder);
+    self
+  }
+
+  pub fn directory_completion(mut self, action: DirectoryCompletionAction) -> Self {
+    self.directory_completion_action = action;
+    self
+  }
+
+  pub fn build(self) -> TypableCommand<Ctx> {
+    TypableCommand {
+      name:                        self.name,
+      aliases:                     self.aliases,
+      doc:                         self.doc,
+      fun:                         self.fun,
+      completer:                   self.completer,
+      signature:                   Signature {
+        positionals: self.positionals,
+        raw_after:   self.raw_after,
+        flags:       self.flags,
+        _dummy:      (),
+      },
+      palette_placeholder:         self.palette_placeholder,
+      directory_completion_action: self.directory_completion_action,
+    }
+  }
+}
+
 #[derive(Debug, Clone)]
 pub struct CommandRegistry<Ctx: 'static> {
   commands: HashMap<String, Arc<TypableCommand<Ctx>>>,
@@ -258,11 +373,9 @@ pub struct CommandRegistry<Ctx: 'static> {
 
 impl<Ctx: DefaultContext + 'static> CommandRegistry<Ctx> {
   pub fn new() -> Self {
-    let mut registry = Self {
+    Self {
       commands: HashMap::new(),
-    };
-    registry.register_builtin_commands();
-    registry
+    }
   }
 
   pub fn register(&mut self, command: TypableCommand<Ctx>) {
@@ -443,275 +556,241 @@ impl<Ctx: DefaultContext + 'static> CommandRegistry<Ctx> {
   }
 
   fn register_builtin_commands(&mut self) {
-    self.register(TypableCommand::new(
-      "quit",
-      &["q"],
-      "Close the editor",
-      cmd_quit::<Ctx>,
-      CommandCompleter::none(),
-      Signature {
-        positionals: (0, Some(0)),
-        ..Signature::DEFAULT
-      },
-    ));
-
-    self.register(TypableCommand::new(
-      "quit!",
-      &["q!"],
-      "Close the editor and discard unsaved changes",
-      cmd_quit_force::<Ctx>,
-      CommandCompleter::none(),
-      Signature {
-        positionals: (0, Some(0)),
-        ..Signature::DEFAULT
-      },
-    ));
-
-    self.register(TypableCommand::new(
-      "write",
-      &["w"],
-      "Write buffer to file",
-      cmd_write::<Ctx>,
-      CommandCompleter::none(),
-      Signature {
-        positionals: (0, Some(0)),
-        ..Signature::DEFAULT
-      },
-    ));
-
-    self.register(TypableCommand::new(
-      "write!",
-      &["w!"],
-      "Force write buffer to file even when a watch conflict is active",
-      cmd_write_force::<Ctx>,
-      CommandCompleter::none(),
-      Signature {
-        positionals: (0, Some(0)),
-        ..Signature::DEFAULT
-      },
-    ));
-
-    self.register(TypableCommand::new(
-      "write-quit",
-      &["wq", "x"],
-      "Write buffer to file and close the editor",
-      cmd_write_quit::<Ctx>,
-      CommandCompleter::none(),
-      Signature {
-        positionals: (0, Some(0)),
-        ..Signature::DEFAULT
-      },
-    ));
-
-    self.register(TypableCommand::new(
-      "reload",
-      &["rl"],
-      "Reload current file from disk (use :reload force to discard unsaved changes)",
-      cmd_reload::<Ctx>,
-      CommandCompleter::all(completers::reload_mode),
-      Signature {
-        positionals: (0, Some(1)),
-        ..Signature::DEFAULT
-      },
-    ));
-
-    self.register(TypableCommand::new(
-      "reload-all",
-      &["rla"],
-      "Reload all open files from disk (single-buffer clients reload the active file)",
-      cmd_reload_all::<Ctx>,
-      CommandCompleter::all(completers::reload_mode),
-      Signature {
-        positionals: (0, Some(1)),
-        ..Signature::DEFAULT
-      },
-    ));
-
-    self.register(TypableCommand::new(
-      "watch-conflict",
-      &[],
-      "Inspect or resolve external file-watch conflicts (status/discard)",
-      cmd_watch_conflict::<Ctx>,
-      CommandCompleter::all(completers::watch_conflict_mode),
-      Signature {
-        positionals: (0, Some(1)),
-        ..Signature::DEFAULT
-      },
-    ));
-
-    self.register(TypableCommand::new(
-      "watch-scope",
-      &[],
-      "Show active file-watch scope policy",
-      cmd_watch_scope::<Ctx>,
-      CommandCompleter::none(),
-      Signature {
-        positionals: (0, Some(0)),
-        ..Signature::DEFAULT
-      },
-    ));
-
-    self.register(TypableCommand::new(
-      "help",
-      &["h"],
-      "Show help for commands",
-      cmd_help::<Ctx>,
-      CommandCompleter::all(completers::command),
-      Signature {
-        positionals: (0, Some(1)),
-        ..Signature::DEFAULT
-      },
-    ));
-
-    self.register(TypableCommand::new(
-      "theme",
-      &[],
-      "Preview or switch the active theme",
-      cmd_theme::<Ctx>,
-      CommandCompleter::all(completers::theme_name),
-      Signature {
-        positionals: (0, Some(1)),
-        ..Signature::DEFAULT
-      },
-    ));
-
-    self.register(TypableCommand::new(
-      "log-open",
-      &["open-log"],
-      "Open a debug log file (messages/lsp/watch)",
-      cmd_log_open::<Ctx>,
-      CommandCompleter::all(completers::log_target),
-      Signature {
-        positionals: (0, Some(1)),
-        ..Signature::DEFAULT
-      },
-    ));
-
-    self.register(TypableCommand::new(
-      "format",
-      &["fmt"],
-      "Format current document via LSP",
-      cmd_lsp_format::<Ctx>,
-      CommandCompleter::none(),
-      Signature {
-        positionals: (0, Some(0)),
-        ..Signature::DEFAULT
-      },
-    ));
-
-    self.register(TypableCommand::new(
-      "lsp-workspace-command",
-      &[],
-      "Execute an LSP workspace command (shows available commands when no name is given)",
-      cmd_lsp_workspace_command::<Ctx>,
-      CommandCompleter::positional(&[completers::lsp_workspace_command], completers::none),
-      LSP_WORKSPACE_COMMAND_SIGNATURE,
-    ));
-
-    self.register(TypableCommand::new(
-      "lsp-restart",
-      &[],
-      "Restart the configured language server for the current file",
-      cmd_lsp_restart::<Ctx>,
-      CommandCompleter::all(completers::configured_language_server),
-      Signature {
-        positionals: (0, None),
-        ..Signature::DEFAULT
-      },
-    ));
-
-    self.register(TypableCommand::new(
-      "lsp-stop",
-      &[],
-      "Stop the active language server for the current file",
-      cmd_lsp_stop::<Ctx>,
-      CommandCompleter::all(completers::active_language_server),
-      Signature {
-        positionals: (0, None),
-        ..Signature::DEFAULT
-      },
-    ));
-
-    self.register(TypableCommand::new(
-      "soft-wrap",
-      &["wrap"],
-      "Configure soft line wrapping (on/off/toggle/status)",
-      cmd_wrap::<Ctx>,
-      CommandCompleter::all(completers::wrap_mode),
-      Signature {
-        positionals: (0, Some(1)),
-        ..Signature::DEFAULT
-      },
-    ));
-
-    self.register(TypableCommand::new(
-      "gutter",
-      &[],
-      "Configure gutter visibility (on/off/toggle/status)",
-      cmd_gutter::<Ctx>,
-      CommandCompleter::all(completers::gutter_mode),
-      Signature {
-        positionals: (0, Some(1)),
-        ..Signature::DEFAULT
-      },
-    ));
-
-    self.register(TypableCommand::new(
-      "line-number",
-      &["line-numbers"],
-      "Configure line-number mode (absolute/relative/off/status)",
-      cmd_line_number::<Ctx>,
-      CommandCompleter::all(completers::line_number_mode),
-      Signature {
-        positionals: (0, Some(1)),
-        ..Signature::DEFAULT
-      },
-    ));
-
     self.register(
-      TypableCommand::new(
-        "open",
-        &["o", "e", "edit"],
-        "Open a file",
-        cmd_open::<Ctx>,
-        CommandCompleter::all(completers::filename),
-        Signature {
-          positionals: (1, Some(1)),
-          ..Signature::DEFAULT
-        },
-      )
-      .with_directory_completion_action(DirectoryCompletionAction::Expand)
-      .with_palette_placeholder("Open file…"),
+      CommandBuilder::new("quit", "Close the editor", cmd_quit::<Ctx>)
+        .aliases(&["q"])
+        .build(),
     );
 
     self.register(
-      TypableCommand::new(
+      CommandBuilder::new(
+        "quit!",
+        "Close the editor and discard unsaved changes",
+        cmd_quit_force::<Ctx>,
+      )
+      .aliases(&["q!"])
+      .build(),
+    );
+
+    self.register(
+      CommandBuilder::new("write", "Write buffer to file", cmd_write::<Ctx>)
+        .aliases(&["w"])
+        .build(),
+    );
+
+    self.register(
+      CommandBuilder::new(
+        "write!",
+        "Force write buffer to file even when a watch conflict is active",
+        cmd_write_force::<Ctx>,
+      )
+      .aliases(&["w!"])
+      .build(),
+    );
+
+    self.register(
+      CommandBuilder::new(
+        "write-quit",
+        "Write buffer to file and close the editor",
+        cmd_write_quit::<Ctx>,
+      )
+      .aliases(&["wq", "x"])
+      .build(),
+    );
+
+    self.register(
+      CommandBuilder::new(
+        "reload",
+        "Reload current file from disk (use :reload force to discard unsaved changes)",
+        cmd_reload::<Ctx>,
+      )
+      .aliases(&["rl"])
+      .optional_arg()
+      .complete_with(completers::reload_mode)
+      .build(),
+    );
+
+    self.register(
+      CommandBuilder::new(
+        "reload-all",
+        "Reload all open files from disk (single-buffer clients reload the active file)",
+        cmd_reload_all::<Ctx>,
+      )
+      .aliases(&["rla"])
+      .optional_arg()
+      .complete_with(completers::reload_mode)
+      .build(),
+    );
+
+    self.register(
+      CommandBuilder::new(
+        "watch-conflict",
+        "Inspect or resolve external file-watch conflicts (status/discard)",
+        cmd_watch_conflict::<Ctx>,
+      )
+      .optional_arg()
+      .complete_with(completers::watch_conflict_mode)
+      .build(),
+    );
+
+    self.register(
+      CommandBuilder::new(
+        "watch-scope",
+        "Show active file-watch scope policy",
+        cmd_watch_scope::<Ctx>,
+      )
+      .build(),
+    );
+
+    self.register(
+      CommandBuilder::new("help", "Show help for commands", cmd_help::<Ctx>)
+        .aliases(&["h"])
+        .optional_arg()
+        .complete_with(completers::command)
+        .build(),
+    );
+
+    self.register(
+      CommandBuilder::new(
+        "theme",
+        "Preview or switch the active theme",
+        cmd_theme::<Ctx>,
+      )
+      .optional_arg()
+      .complete_with(completers::theme_name)
+      .build(),
+    );
+
+    self.register(
+      CommandBuilder::new(
+        "log-open",
+        "Open a debug log file (messages/lsp/watch)",
+        cmd_log_open::<Ctx>,
+      )
+      .aliases(&["open-log"])
+      .optional_arg()
+      .complete_with(completers::log_target)
+      .build(),
+    );
+
+    self.register(
+      CommandBuilder::new(
+        "format",
+        "Format current document via LSP",
+        cmd_lsp_format::<Ctx>,
+      )
+      .aliases(&["fmt"])
+      .build(),
+    );
+
+    self.register(
+      CommandBuilder::new(
+        "lsp-workspace-command",
+        "Execute an LSP workspace command (shows available commands when no name is given)",
+        cmd_lsp_workspace_command::<Ctx>,
+      )
+      .complete_positional(&[completers::lsp_workspace_command], completers::none)
+      .raw_after(1)
+      .build(),
+    );
+
+    self.register(
+      CommandBuilder::new(
+        "lsp-restart",
+        "Restart the configured language server for the current file",
+        cmd_lsp_restart::<Ctx>,
+      )
+      .variadic()
+      .complete_with(completers::configured_language_server)
+      .build(),
+    );
+
+    self.register(
+      CommandBuilder::new(
+        "lsp-stop",
+        "Stop the active language server for the current file",
+        cmd_lsp_stop::<Ctx>,
+      )
+      .variadic()
+      .complete_with(completers::active_language_server)
+      .build(),
+    );
+
+    self.register(
+      CommandBuilder::new(
+        "soft-wrap",
+        "Configure soft line wrapping (on/off/toggle/status)",
+        cmd_wrap::<Ctx>,
+      )
+      .aliases(&["wrap"])
+      .optional_arg()
+      .complete_with(completers::wrap_mode)
+      .build(),
+    );
+
+    self.register(
+      CommandBuilder::new(
+        "gutter",
+        "Configure gutter visibility (on/off/toggle/status)",
+        cmd_gutter::<Ctx>,
+      )
+      .optional_arg()
+      .complete_with(completers::gutter_mode)
+      .build(),
+    );
+
+    self.register(
+      CommandBuilder::new(
+        "line-number",
+        "Configure line-number mode (absolute/relative/off/status)",
+        cmd_line_number::<Ctx>,
+      )
+      .aliases(&["line-numbers"])
+      .optional_arg()
+      .complete_with(completers::line_number_mode)
+      .build(),
+    );
+
+    self.register(
+      CommandBuilder::new("open", "Open a file", cmd_open::<Ctx>)
+        .aliases(&["o", "e", "edit"])
+        .required_arg()
+        .complete_with(completers::filename)
+        .directory_completion(DirectoryCompletionAction::Expand)
+        .palette_placeholder("Open file…")
+        .build(),
+    );
+
+    self.register(
+      CommandBuilder::new(
         "change-current-directory",
-        &["cd"],
         "Change the current working directory.",
         cmd_change_current_directory::<Ctx>,
-        CommandCompleter::positional(&[completers::directory], completers::none),
-        Signature {
-          positionals: (0, Some(1)),
-          ..Signature::DEFAULT
-        },
       )
-      .with_directory_completion_action(DirectoryCompletionAction::Submit)
-      .with_palette_placeholder("Change to directory…"),
+      .aliases(&["cd"])
+      .optional_arg()
+      .complete_positional(&[completers::directory], completers::none)
+      .palette_placeholder("Change to directory…")
+      .build(),
     );
 
-    self.register(TypableCommand::new(
-      "show-directory",
-      &["pwd"],
-      "Show the current working directory.",
-      cmd_show_current_directory::<Ctx>,
-      CommandCompleter::none(),
-      Signature {
-        positionals: (0, Some(0)),
-        ..Signature::DEFAULT
-      },
-    ));
+    self.register(
+      CommandBuilder::new(
+        "show-directory",
+        "Show the current working directory.",
+        cmd_show_current_directory::<Ctx>,
+      )
+      .aliases(&["pwd"])
+      .build(),
+    );
   }
+}
+
+pub fn install_builtin_commands<Ctx>(registry: &mut CommandRegistry<Ctx>)
+where
+  Ctx: DefaultContext + 'static,
+{
+  registry.register_builtin_commands();
 }
 
 impl<Ctx> Default for CommandRegistry<Ctx>
@@ -1931,6 +2010,16 @@ fn submit_action_palette<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool {
       }
       true
     },
+    CommandPaletteAction::NamedActionHandle(handle) => {
+      close_command_prompt_and_palette(ctx);
+      if !ctx.execute_named_action(handle.name()) {
+        ctx.push_error(
+          "command_palette",
+          format!("named action not found: {}", handle.name()),
+        );
+      }
+      true
+    },
     CommandPaletteAction::TypableCommand { name, args } => {
       let registry = ctx.command_registry_ref() as *const CommandRegistry<Ctx>;
       let result = unsafe { (&*registry).execute(ctx, &name, &args, CommandEvent::Validate) };
@@ -2044,6 +2133,28 @@ fn close_command_prompt_and_palette<Ctx: DefaultContext>(ctx: &mut Ctx) {
   }
 }
 
+pub(crate) fn command_palette_command_items<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  source_mode: Mode,
+  query: &str,
+) -> Vec<crate::CommandPaletteItem> {
+  let mut items = ctx
+    .command_registry_ref()
+    .all_commands()
+    .into_iter()
+    .map(|cmd| {
+      let mut item = crate::CommandPaletteItem::new(cmd.name).description(cmd.doc);
+      if !cmd.aliases.is_empty() {
+        item = item.aliases(cmd.aliases.iter().copied());
+      }
+      item
+    })
+    .collect::<Vec<_>>();
+  items.extend(ctx.command_palette_items(CommandPaletteSource::CommandLine, source_mode, query));
+  items.sort_by(|left, right| left.title.cmp(&right.title));
+  items
+}
+
 /// Shared logic for updating the command palette after a query change.
 ///
 /// Called by both `handle_command_prompt_key` (terminal) and the FFI
@@ -2051,6 +2162,7 @@ fn close_command_prompt_and_palette<Ctx: DefaultContext>(ctx: &mut Ctx) {
 /// palette items between command names and argument completions, and
 /// updates `prefiltered` / `scroll_offset` accordingly.
 pub fn update_command_palette_for_input<Ctx: DefaultContext>(ctx: &mut Ctx, input: &str) {
+  let source_mode = ctx.command_palette().source_mode;
   let completions = ctx.command_registry_ref().complete_command_line(ctx, input);
 
   let stripped = input.trim_start_matches(':');
@@ -2065,7 +2177,9 @@ pub fn update_command_palette_for_input<Ctx: DefaultContext>(ctx: &mut Ctx, inpu
           .iter()
           .map(|c| {
             let mut item = crate::CommandPaletteItem::new(&c.text);
-            item.description = c.doc.clone();
+            if let Some(doc) = c.doc.as_deref() {
+              item = item.description(doc);
+            }
             item
           })
           .collect(),
@@ -2076,21 +2190,7 @@ pub fn update_command_palette_for_input<Ctx: DefaultContext>(ctx: &mut Ctx, inpu
 
   let command_items: Option<Vec<crate::CommandPaletteItem>> =
     if complete_command_name && palette_items.is_none() {
-      Some(
-        ctx
-          .command_registry_ref()
-          .all_commands()
-          .into_iter()
-          .map(|cmd| {
-            let mut item = crate::CommandPaletteItem::new(cmd.name);
-            item.description = Some(cmd.doc.to_string());
-            if !cmd.aliases.is_empty() {
-              item.aliases = cmd.aliases.iter().map(|a| a.to_string()).collect();
-            }
-            item
-          })
-          .collect(),
-      )
+      Some(command_palette_command_items(ctx, source_mode, input))
     } else {
       None
     };
@@ -2138,6 +2238,9 @@ pub fn update_command_palette_for_input<Ctx: DefaultContext>(ctx: &mut Ctx, inpu
 }
 
 pub fn update_action_palette_for_input<Ctx: DefaultContext>(ctx: &mut Ctx, input: &str) {
+  let source_mode = ctx.command_palette().source_mode;
+  let items = crate::keymap::build_action_palette_items(ctx, source_mode, input);
+
   let prompt = ctx.command_prompt_mut();
   prompt.input = input.to_string();
   prompt.cursor = prompt.input.len();
@@ -2149,6 +2252,7 @@ pub fn update_action_palette_for_input<Ctx: DefaultContext>(ctx: &mut Ctx, input
     let palette = ctx.command_palette_mut();
     palette.source = CommandPaletteSource::ActionPalette;
     palette.query = input.to_string();
+    palette.items = items;
     palette.prefiltered = false;
     palette.max_results = usize::MAX;
     palette.scroll_offset = 0;
@@ -2497,5 +2601,44 @@ mod tests {
       prefiltered_completion_action_for_command(Some(&expand_command), &file_completion),
       DirectoryCompletionAction::Submit
     );
+  }
+
+  #[test]
+  fn command_builder_defaults() {
+    struct FakeCtx;
+
+    fn noop(_ctx: &mut FakeCtx, _args: Args, _event: super::CommandEvent) -> super::CommandResult {
+      Ok(())
+    }
+
+    let cmd = super::CommandBuilder::new("test-cmd", "A test command", noop).build();
+
+    assert_eq!(cmd.name, "test-cmd");
+    assert_eq!(cmd.aliases, &[] as &[&str]);
+    assert_eq!(cmd.doc, "A test command");
+    assert_eq!(cmd.signature.positionals, (0, Some(0)));
+    assert!(cmd.signature.raw_after.is_none());
+    assert!(cmd.signature.flags.is_empty());
+    assert!(cmd.palette_placeholder.is_none());
+  }
+
+  #[test]
+  fn command_builder_with_options() {
+    struct FakeCtx;
+
+    fn noop(_ctx: &mut FakeCtx, _args: Args, _event: super::CommandEvent) -> super::CommandResult {
+      Ok(())
+    }
+
+    let cmd = super::CommandBuilder::new("reload", "Reload file", noop)
+      .aliases(&["rl"])
+      .optional_arg()
+      .palette_placeholder("mode")
+      .build();
+
+    assert_eq!(cmd.name, "reload");
+    assert_eq!(cmd.aliases, &["rl"]);
+    assert_eq!(cmd.signature.positionals, (0, Some(1)));
+    assert_eq!(cmd.palette_placeholder, Some("mode"));
   }
 }

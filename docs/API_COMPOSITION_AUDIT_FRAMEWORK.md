@@ -550,6 +550,67 @@ reviewed.
 - Are completion menus and signature/help panels authorable or only consumable?
 - Are menu and palette items too raw to construct comfortably?
 
+### Current Findings
+
+The direction here is now clearer:
+
+- command authoring is in a much better state after `CommandBuilder`
+- action and command palette authoring was the main remaining shared-API gap
+- completion and signature-help state are reusable, but they are still closer
+  to "show this client UI state" than to a first-class authored surface
+- context menus are typed, but still mostly shipped as hardcoded snapshots
+- message, status, and theme surfaces are consumable and useful, but still not
+  very install-oriented for authored tools
+
+The most important correction in this section is:
+
+- command and action palette content should be an extension surface owned by
+  `EditorPreset`, not hardcoded population logic trapped in
+  `the-default/keymap.rs` and `the-default/command_registry.rs`
+
+That means the shared model should support:
+
+- installing palette item providers from config
+- contributing items to the action palette without patching keymap internals
+- contributing richer command-palette items when the palette is in
+  command-name browsing mode
+- using small item builders instead of filling raw structs by hand
+
+This does not mean the palette should become a scripting host.
+
+It means authored features should be able to install content into the same
+shared UI surfaces the shipped editor uses.
+
+### What To Look For In This Audit
+
+When reviewing these modules, prefer the following direction:
+
+- `CommandPaletteItem` should be easy to construct fluently and should not
+  force raw field assignment for common cases
+- palette content should come from registered providers where appropriate, not
+  only from hardcoded walks over builtin commands and keymaps
+- completion and signature-help items should be cheap to author directly from
+  config hooks
+- context-menu construction should use typed IDs plus light builders, not raw
+  section and item struct assembly everywhere
+- presentation surfaces like message, status, and theme should expose enough
+  shared helpers that authored tools can feel native without reaching into
+  client-only UI policy
+
+### Likely Follow-Up Work
+
+This section is not finished.
+
+The next probable upgrades after opening palette authoring are:
+
+- typed handles for named actions so key bindings and palette actions stop
+  coordinating through repeated string literals
+- authored completion providers and signature-help providers, if we want those
+  panels to become first-class composition surfaces instead of LSP and client
+  consumers only
+- context-menu provider and install hooks for editor and tree surfaces
+- higher-level status and message builders for feature-owned transient UI
+
 ---
 
 ## E. Render and annotation surfaces in `the-lib/render`

@@ -13,7 +13,10 @@ use the_lib::render::{
   graphics::Color,
 };
 
-use crate::DefaultContext;
+use crate::{
+  DefaultContext,
+  extensions::CompletionMenuProviderId,
+};
 
 const MAX_VISIBLE_ITEMS: usize = 10;
 
@@ -36,11 +39,28 @@ impl CompletionMenuItem {
       kind_color:    None,
     }
   }
+
+  pub fn detail(mut self, detail: impl Into<String>) -> Self {
+    self.detail = Some(detail.into());
+    self
+  }
+
+  pub fn documentation(mut self, documentation: impl Into<String>) -> Self {
+    self.documentation = Some(documentation.into());
+    self
+  }
+
+  pub fn kind(mut self, icon: impl Into<String>, color: Color) -> Self {
+    self.kind_icon = Some(icon.into());
+    self.kind_color = Some(color);
+    self
+  }
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct CompletionMenuState {
   pub active:      bool,
+  pub provider:    Option<CompletionMenuProviderId>,
   pub items:       Vec<CompletionMenuItem>,
   pub selected:    Option<usize>,
   pub scroll:      usize,
@@ -50,6 +70,7 @@ pub struct CompletionMenuState {
 impl CompletionMenuState {
   pub fn clear(&mut self) {
     self.active = false;
+    self.provider = None;
     self.items.clear();
     self.selected = None;
     self.scroll = 0;
@@ -101,14 +122,38 @@ pub fn close_completion_menu<Ctx: DefaultContext>(ctx: &mut Ctx) {
 }
 
 pub fn show_completion_menu<Ctx: DefaultContext>(ctx: &mut Ctx, items: Vec<CompletionMenuItem>) {
+  show_completion_menu_impl(ctx, items, None);
+}
+
+pub fn show_completion_menu_provider<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  provider: CompletionMenuProviderId,
+) {
+  let Some(items) = ctx.completion_menu_provider_items(provider) else {
+    close_completion_menu(ctx);
+    return;
+  };
+  if items.is_empty() {
+    close_completion_menu(ctx);
+    return;
+  }
+  show_completion_menu_impl(ctx, items, Some(provider));
+}
+
+fn show_completion_menu_impl<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  items: Vec<CompletionMenuItem>,
+  provider: Option<CompletionMenuProviderId>,
+) {
   let selected = {
     let state = ctx.completion_menu_mut();
     state.set_items(items);
+    state.provider = provider;
     state.clamp();
     state.selected
   };
   if let Some(index) = selected {
-    ctx.completion_selection_changed(index);
+    notify_selection_changed(ctx, index);
   }
   ctx.request_render();
 }
@@ -132,7 +177,7 @@ pub fn completion_next<Ctx: DefaultContext>(ctx: &mut Ctx) {
     state.selected
   };
   if let Some(index) = selected {
-    ctx.completion_selection_changed(index);
+    notify_selection_changed(ctx, index);
   }
   ctx.request_render();
 }
@@ -156,7 +201,7 @@ pub fn completion_prev<Ctx: DefaultContext>(ctx: &mut Ctx) {
     state.selected
   };
   if let Some(index) = selected {
-    ctx.completion_selection_changed(index);
+    notify_selection_changed(ctx, index);
   }
   ctx.request_render();
 }
@@ -173,7 +218,11 @@ pub fn completion_accept<Ctx: DefaultContext>(ctx: &mut Ctx) {
       .min(state.items.len().saturating_sub(1))
   };
 
-  let applied = ctx.completion_accept_selected(index);
+  let applied = if let Some(provider) = ctx.completion_menu().provider {
+    ctx.completion_menu_provider_accept_selected(provider, index)
+  } else {
+    ctx.completion_accept_selected(index)
+  };
   if applied {
     ctx.completion_menu_mut().clear();
     ctx.completion_menu_closed();
@@ -201,6 +250,14 @@ pub fn completion_docs_scroll<Ctx: DefaultContext>(ctx: &mut Ctx, delta: isize) 
   };
   if changed {
     ctx.request_render();
+  }
+}
+
+fn notify_selection_changed<Ctx: DefaultContext>(ctx: &mut Ctx, index: usize) {
+  if let Some(provider) = ctx.completion_menu().provider {
+    ctx.completion_menu_provider_selection_changed(provider, index);
+  } else {
+    ctx.completion_selection_changed(index);
   }
 }
 

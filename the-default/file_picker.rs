@@ -92,7 +92,6 @@ use crate::{
   PickerSubmitHandlerId,
   PickerSubmitResult,
   command_registry::{
-    CommandCompleter,
     CommandEvent,
     TypableCommand,
   },
@@ -1107,7 +1106,7 @@ impl<Ctx> Clone for PickerSource<Ctx> {
         submit_handler,
       } => {
         Self::Files {
-          scan_source: scan_source.clone(),
+          scan_source:    scan_source.clone(),
           submit_handler: submit_handler.clone(),
         }
       },
@@ -1116,7 +1115,7 @@ impl<Ctx> Clone for PickerSource<Ctx> {
         submit_handler,
       } => {
         Self::Static {
-          items: items.clone(),
+          items:          items.clone(),
           submit_handler: submit_handler.clone(),
         }
       },
@@ -1125,7 +1124,7 @@ impl<Ctx> Clone for PickerSource<Ctx> {
         submit_handler,
       } => {
         Self::Dynamic {
-          query: query.clone(),
+          query:          query.clone(),
           submit_handler: submit_handler.clone(),
         }
       },
@@ -1136,11 +1135,11 @@ impl<Ctx> Clone for PickerSource<Ctx> {
 impl<Ctx> Clone for PickerBuilder<Ctx> {
   fn clone(&self) -> Self {
     Self {
-      title: self.title.clone(),
-      root: self.root.clone(),
-      open_split: self.open_split,
+      title:         self.title.clone(),
+      root:          self.root.clone(),
+      open_split:    self.open_split,
       initial_query: self.initial_query.clone(),
-      source: self.source.clone(),
+      source:        self.source.clone(),
     }
   }
 }
@@ -1338,33 +1337,42 @@ where
     crate::NamedAction::new(name, doc, move |ctx| self.open(ctx))
   }
 
+  pub fn install<Dispatch, I, L>(
+    self,
+    preset: crate::EditorPreset<Ctx, Dispatch>,
+    name: &'static str,
+    doc: &'static str,
+    mode: crate::Mode,
+    bindings: I,
+  ) -> Result<crate::EditorPreset<Ctx, Dispatch>, crate::ParseKeyBindingError>
+  where
+    I: IntoIterator<Item = L>,
+    L: crate::IntoKeyBinding,
+  {
+    let action = self.named_action(name, doc);
+    preset.install_named_action_with_binding(action, mode, bindings)
+  }
+
   pub fn command(self, name: &'static str, doc: &'static str) -> TypableCommand<Ctx> {
-    TypableCommand::new(
-      name,
-      &[],
-      doc,
-      move |ctx, _args, _event: CommandEvent| {
-        self.open(ctx);
-        Ok(())
-      },
-      CommandCompleter::none(),
-      the_lib::command_line::Signature {
-        positionals: (0, Some(0)),
-        ..the_lib::command_line::Signature::DEFAULT
-      },
-    )
+    crate::CommandBuilder::new(name, doc, move |ctx, _args, _event: CommandEvent| {
+      self.open(ctx);
+      Ok(())
+    })
+    .build()
   }
 }
 
 pub fn open_file_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
-  open_file_picker_with_split(ctx, None);
+  PickerBuilder::<Ctx>::files("File Picker").open(ctx);
 }
 
 pub fn open_file_picker_with_split<Ctx: DefaultContext>(
   ctx: &mut Ctx,
   open_split: Option<SplitAxis>,
 ) {
-  open_file_picker_with_root_and_split(ctx, ctx.effective_working_directory(), open_split);
+  PickerBuilder::<Ctx>::files("File Picker")
+    .open_split(open_split)
+    .open(ctx);
 }
 
 pub fn open_file_picker_with_root_and_split<Ctx: DefaultContext>(
@@ -1372,7 +1380,10 @@ pub fn open_file_picker_with_root_and_split<Ctx: DefaultContext>(
   root: PathBuf,
   open_split: Option<SplitAxis>,
 ) {
-  open_scanned_picker(ctx, "File Picker", root, open_split);
+  PickerBuilder::<Ctx>::files("File Picker")
+    .root(PickerRoot::Fixed(root))
+    .open_split(open_split)
+    .open(ctx);
 }
 
 pub fn open_file_picker_in_current_directory<Ctx: DefaultContext>(ctx: &mut Ctx) {
@@ -1397,7 +1408,9 @@ pub fn open_file_picker_in_current_directory<Ctx: DefaultContext>(ctx: &mut Ctx)
       cwd
     },
   };
-  open_file_picker_with_root_and_split(ctx, root, None);
+  PickerBuilder::<Ctx>::files("File Picker")
+    .root(PickerRoot::Fixed(root))
+    .open(ctx);
 }
 
 pub fn open_buffer_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
@@ -1699,22 +1712,6 @@ pub fn open_changed_file_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
     .collect();
 
   open_static_picker(ctx, "Changed Files", root, None, items, 0);
-}
-
-fn open_scanned_picker<Ctx: DefaultContext>(
-  ctx: &mut Ctx,
-  title: &str,
-  root: PathBuf,
-  open_split: Option<SplitAxis>,
-) {
-  let mut state = base_picker_state(ctx, title, open_split);
-  state.preview = FilePickerPreview::Message("Scanning files…".to_string());
-  start_preview_worker(&mut state);
-  start_scan(&mut state, root);
-  poll_scan_results(&mut state);
-
-  *ctx.file_picker_mut() = state;
-  ctx.request_render();
 }
 
 fn open_static_picker<Ctx: DefaultContext>(

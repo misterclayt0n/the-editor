@@ -7458,6 +7458,7 @@ mod tests {
     let state = CommandPaletteState {
       is_open:       true,
       source:        the_default::CommandPaletteSource::CommandLine,
+      source_mode:   the_default::Mode::Command,
       query:         String::new(),
       selected:      None,
       items:         vec![

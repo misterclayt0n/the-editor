@@ -202,17 +202,10 @@ fn main() -> Result<()> {
 
   // Initialize application state
   let mut ctx = Ctx::new(file_path)?;
-  let preset = the_config::build_editor_preset::<Ctx>().build();
-  let (dispatch, keymaps, command_registry, extensions, extension_state, startup_hooks) =
-    preset.into_parts();
-  ctx.keymaps = keymaps;
-  ctx.command_registry = command_registry;
-  ctx.extensions = extensions;
-  ctx.extension_state = extension_state;
-  ctx.set_dispatch(&dispatch);
-  for hook in startup_hooks {
-    hook.run(&mut ctx);
-  }
+  let preset = the_config::build_editor_preset::<Ctx>()
+    .build()
+    .box_dispatch();
+  ctx.install_preset(preset);
   ctx.start_background_services();
   let mut terminal = terminal::Terminal::new()?;
 

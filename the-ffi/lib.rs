@@ -56,6 +56,7 @@ use the_config::build_editor_preset as config_build_editor_preset;
 use the_default::{
   BufferTabItemSnapshot as DefaultBufferTabItemSnapshot,
   BufferTabsSnapshot as DefaultBufferTabsSnapshot,
+  BuiltEditorPreset,
   Command,
   CommandEvent,
   CommandPaletteAction,
@@ -73,7 +74,7 @@ use the_default::{
   Direction as CommandDirection,
   DispatchRef,
   EditorContextMenuOptions,
-  EditorExtensions,
+  EditorContextMenuRequest,
   ExtensionStateStore,
   FilePickerChangedFileItem,
   FilePickerChangedKind,
@@ -88,6 +89,7 @@ use the_default::{
   FilePickerRowKind,
   FilePickerState,
   FileTreeContextMenuOptions,
+  FileTreeContextMenuRequest,
   FileTreeMode as DefaultFileTreeMode,
   FileTreeNodeKind as DefaultFileTreeNodeKind,
   FileTreeSnapshot as DefaultFileTreeSnapshot,
@@ -109,8 +111,8 @@ use the_default::{
   ThemeCatalog,
   WorkingDirectoryState,
   buffer_tabs_snapshot,
-  build_editor_context_menu,
-  build_file_tree_context_menu,
+  build_editor_context_menu_with_providers,
+  build_file_tree_context_menu_with_providers,
   close_file_picker,
   command_palette_filtered_indices,
   command_palette_selected_filtered_index,
@@ -4614,11 +4616,7 @@ fn workspace_root_for_editor_path(base_root: &Path, path: &Path) -> PathBuf {
 pub struct App {
   inner:                           LibApp,
   workspace_root:                  PathBuf,
-  dispatch:                        Box<dyn DefaultApi<App>>,
-  keymaps:                         Keymaps,
-  command_registry:                CommandRegistry<App>,
-  extensions:                      EditorExtensions<App>,
-  extension_state:                 ExtensionStateStore,
+  preset:                          BuiltEditorPreset<App, Box<dyn DefaultApi<App>>>,
   states:                          HashMap<LibEditorId, EditorState>,
   vcs_provider:                    DiffProviderRegistry,
   vcs_diff_handles:                HashMap<LibEditorId, DiffHandle>,
@@ -4649,6 +4647,7 @@ pub struct App {
   lsp_code_action_menu_active:     bool,
   lsp_pending_auto_completion:     Option<PendingAutoCompletion>,
   lsp_pending_auto_signature_help: Option<PendingAutoSignatureHelp>,
+  lsp_signature_help_presentation: Option<the_default::SignatureHelpPresentation>,
   lsp_pending_mouse_hover:         Option<PendingMouseHover>,
   lsp_hover_generation:            u64,
   diagnostics:                     DiagnosticsState,
@@ -5751,9 +5750,8 @@ impl App {
   }
 
   pub fn new() -> Self {
-    let preset = config_build_editor_preset::<App>().build();
-    let (dispatch, keymaps, command_registry, extensions, extension_state, startup_hooks) =
-      preset.into_parts();
+    let mut preset = config_build_editor_preset::<App>().build().box_dispatch();
+    let startup_hooks = preset.take_startup_hooks();
     let workspace_root = env::current_dir()
       .ok()
       .map(|path| the_loader::find_workspace_in(path).0)
@@ -5779,11 +5777,7 @@ impl App {
     let mut app = Self {
       inner: LibApp::default(),
       workspace_root,
-      dispatch: Box::new(dispatch),
-      keymaps,
-      command_registry,
-      extensions,
-      extension_state,
+      preset,
       states: HashMap::new(),
       vcs_provider: DiffProviderRegistry::default(),
       vcs_diff_handles: HashMap::new(),
@@ -5814,6 +5808,7 @@ impl App {
       lsp_code_action_menu_active: false,
       lsp_pending_auto_completion: None,
       lsp_pending_auto_signature_help: None,
+      lsp_signature_help_presentation: None,
       lsp_pending_mouse_hover: None,
       lsp_hover_generation: 0,
       diagnostics: DiagnosticsState::default(),
@@ -6865,7 +6860,7 @@ impl App {
   }
 
   pub fn pending_keys_json(&self, _id: ffi::EditorId) -> String {
-    let pending = self.keymaps.pending();
+    let pending = self.preset.keymaps().pending();
     if pending.is_empty() {
       return "[]".to_string();
     }
@@ -6880,7 +6875,7 @@ impl App {
     let Some(state) = self.states.get(&id) else {
       return "null".to_string();
     };
-    let Some(snapshot) = self.keymaps.pending_hints(state.mode) else {
+    let Some(snapshot) = self.preset.keymaps().pending_hints(state.mode) else {
       return "null".to_string();
     };
 
@@ -7788,6 +7783,28 @@ impl App {
           palette.prompt_text = None;
           if !self.execute_named_action(&name) {
             self.push_error("command_palette", format!("named action not found: {name}"));
+          }
+          self.request_render();
+          true
+        },
+        CommandPaletteAction::NamedActionHandle(handle) => {
+          self.set_mode(Mode::Normal);
+          self.command_prompt_mut().clear();
+          let palette = self.command_palette_mut();
+          palette.is_open = false;
+          palette.source = CommandPaletteSource::CommandLine;
+          palette.query.clear();
+          palette.items.clear();
+          palette.selected = None;
+          palette.prefiltered = false;
+          palette.max_results = usize::MAX;
+          palette.scroll_offset = 0;
+          palette.prompt_text = None;
+          if !self.execute_named_action(handle.name()) {
+            self.push_error(
+              "command_palette",
+              format!("named action not found: {}", handle.name()),
+            );
           }
           self.request_render();
           true
@@ -9659,11 +9676,13 @@ impl App {
     };
 
     let Some(signature) = signature else {
+      self.lsp_signature_help_presentation = None;
       the_default::close_signature_help(self);
       return true;
     };
 
     if signature.signatures.is_empty() {
+      self.lsp_signature_help_presentation = None;
       the_default::close_signature_help(self);
       return true;
     }
@@ -9681,7 +9700,11 @@ impl App {
         }
       })
       .collect::<Vec<_>>();
-    the_default::show_signature_help(self, signatures, active_signature);
+    self.lsp_signature_help_presentation = Some(the_default::SignatureHelpPresentation::new(
+      signatures,
+      active_signature,
+    ));
+    the_default::show_builtin_signature_help(self);
     log_shared_lsp_debug(
       "signature_state_set",
       format!(
@@ -10415,13 +10438,10 @@ impl App {
       return;
     }
 
-    let menu_items = self
-      .lsp_completion_visible
-      .iter()
-      .filter_map(|index| self.lsp_completion_items.get(*index))
-      .map(completion_menu_item_for_lsp_item)
-      .collect();
-    the_default::show_completion_menu(self, menu_items);
+    the_default::show_builtin_completion_menu(
+      self,
+      the_default::BuiltinCompletionMenuKind::LspCompletion,
+    );
     let elapsed = started.elapsed();
     if ffi_ui_profile_should_log(elapsed) {
       ffi_ui_profile_log(format!(
@@ -10459,12 +10479,10 @@ impl App {
     self.clear_completion_state();
     self.lsp_code_action_items = actions;
     self.lsp_code_action_menu_active = !self.lsp_code_action_items.is_empty();
-    let menu_items = self
-      .lsp_code_action_items
-      .iter()
-      .map(completion_menu_item_for_code_action)
-      .collect();
-    the_default::show_completion_menu(self, menu_items);
+    the_default::show_builtin_completion_menu(
+      self,
+      the_default::BuiltinCompletionMenuKind::CodeActions,
+    );
   }
 
   fn apply_code_action(&mut self, action: LspCodeAction) -> bool {
@@ -13265,14 +13283,18 @@ impl App {
     self.lsp_open_current_document();
   }
 
-  fn file_tree_context_menu_for_path(&self, path: &Path) -> Option<DefaultContextMenuSnapshot> {
+  fn file_tree_context_menu_for_path(&mut self, path: &Path) -> Option<DefaultContextMenuSnapshot> {
     let path = self.validated_file_tree_path(path)?;
     let root = self.active_state_ref().file_tree.root()?.to_path_buf();
-    Some(build_file_tree_context_menu(FileTreeContextMenuOptions {
-      is_directory:      path.is_dir(),
-      expanded:          path.is_dir() && self.active_state_ref().file_tree.is_expanded(&path),
-      is_workspace_root: path == root,
-    }))
+    let request = FileTreeContextMenuRequest {
+      path:    path.clone(),
+      options: FileTreeContextMenuOptions {
+        is_directory:      path.is_dir(),
+        expanded:          path.is_dir() && self.active_state_ref().file_tree.is_expanded(&path),
+        is_workspace_root: path == root,
+      },
+    };
+    Some(build_file_tree_context_menu_with_providers(self, &request))
   }
 
   fn execute_file_tree_context_action(
@@ -13477,21 +13499,24 @@ impl App {
     }
     let target = self.editor_context_char_for_point(pane_id, logical_col, logical_row)?;
     let has_position = self.lsp_position_for_active_char(target).is_some();
-    let options = EditorContextMenuOptions {
-      can_goto_definition:      has_position && self.lsp_supports(LspCapability::GotoDefinition),
-      can_goto_type_definition: has_position
-        && self.lsp_supports(LspCapability::GotoTypeDefinition),
-      can_goto_implementation:  has_position
-        && self.lsp_supports(LspCapability::GotoImplementation),
-      can_find_references:      has_position && self.lsp_supports(LspCapability::GotoReference),
-      can_rename_symbol:        has_position && self.lsp_supports(LspCapability::RenameSymbol),
-      can_show_code_actions:    self
-        .lsp_code_action_range_for_char(target)
-        .is_some_and(|_| self.lsp_supports(LspCapability::CodeAction)),
-      can_format_buffer:        self.current_lsp_uri().is_some()
-        && self.lsp_supports(LspCapability::Format),
+    let request = EditorContextMenuRequest {
+      char_index: Some(target),
+      options:    EditorContextMenuOptions {
+        can_goto_definition:      has_position && self.lsp_supports(LspCapability::GotoDefinition),
+        can_goto_type_definition: has_position
+          && self.lsp_supports(LspCapability::GotoTypeDefinition),
+        can_goto_implementation:  has_position
+          && self.lsp_supports(LspCapability::GotoImplementation),
+        can_find_references:      has_position && self.lsp_supports(LspCapability::GotoReference),
+        can_rename_symbol:        has_position && self.lsp_supports(LspCapability::RenameSymbol),
+        can_show_code_actions:    self
+          .lsp_code_action_range_for_char(target)
+          .is_some_and(|_| self.lsp_supports(LspCapability::CodeAction)),
+        can_format_buffer:        self.current_lsp_uri().is_some()
+          && self.lsp_supports(LspCapability::Format),
+      },
     };
-    Some(build_editor_context_menu(options))
+    Some(build_editor_context_menu_with_providers(self, &request))
   }
 
   fn execute_editor_context_action(
@@ -13980,15 +14005,15 @@ impl DefaultContext for App {
   }
 
   fn keymaps(&mut self) -> &mut Keymaps {
-    &mut self.keymaps
+    self.preset.keymaps_mut()
   }
 
   fn extension_states(&self) -> &ExtensionStateStore {
-    &self.extension_state
+    self.preset.extension_state()
   }
 
   fn extension_states_mut(&mut self) -> &mut ExtensionStateStore {
-    &mut self.extension_state
+    self.preset.extension_state_mut()
   }
 
   fn command_prompt_mut(&mut self) -> &mut CommandPromptState {
@@ -14000,11 +14025,11 @@ impl DefaultContext for App {
   }
 
   fn command_registry_mut(&mut self) -> &mut CommandRegistry<Self> {
-    &mut self.command_registry
+    self.preset.command_registry_mut()
   }
 
   fn command_registry_ref(&self) -> &CommandRegistry<Self> {
-    &self.command_registry
+    self.preset.command_registry()
   }
 
   fn command_palette(&self) -> &CommandPaletteState {
@@ -14226,30 +14251,115 @@ impl DefaultContext for App {
   }
 
   fn named_action_names(&self) -> Vec<&'static str> {
-    self
-      .extensions
-      .named_actions
-      .infos()
-      .into_iter()
-      .map(|info| info.name)
-      .collect()
+    self.preset.named_action_names()
   }
 
   fn named_action_doc(&self, name: &str) -> Option<&'static str> {
-    self.extensions.named_actions.doc(name)
+    self.preset.named_action_doc(name)
   }
 
   fn execute_named_action(&mut self, name: &str) -> bool {
-    let extensions = &self.extensions as *const EditorExtensions<Self>;
-    unsafe { (&*extensions).execute_named_action(self, name) }
+    let preset = &self.preset as *const BuiltEditorPreset<Self, Box<dyn DefaultApi<Self>>>;
+    unsafe { (&*preset).execute_named_action(self, name) }
+  }
+
+  fn command_palette_items(
+    &mut self,
+    source: the_default::CommandPaletteSource,
+    source_mode: Mode,
+    query: &str,
+  ) -> Vec<the_default::CommandPaletteItem> {
+    let preset = &self.preset as *const BuiltEditorPreset<Self, Box<dyn DefaultApi<Self>>>;
+    unsafe { (&*preset).command_palette_items(self, source, source_mode, query) }
+  }
+
+  fn builtin_completion_menu_items(
+    &mut self,
+    kind: the_default::BuiltinCompletionMenuKind,
+  ) -> Vec<the_default::CompletionMenuItem> {
+    match kind {
+      the_default::BuiltinCompletionMenuKind::LspCompletion => {
+        self
+          .lsp_completion_visible
+          .iter()
+          .filter_map(|index| self.lsp_completion_items.get(*index))
+          .map(completion_menu_item_for_lsp_item)
+          .collect()
+      },
+      the_default::BuiltinCompletionMenuKind::CodeActions => {
+        self
+          .lsp_code_action_items
+          .iter()
+          .map(completion_menu_item_for_code_action)
+          .collect()
+      },
+    }
+  }
+
+  fn builtin_signature_help_presentation(
+    &mut self,
+  ) -> Option<the_default::SignatureHelpPresentation> {
+    self.lsp_signature_help_presentation.clone()
+  }
+
+  fn completion_menu_provider_items(
+    &mut self,
+    provider: the_default::CompletionMenuProviderId,
+  ) -> Option<Vec<the_default::CompletionMenuItem>> {
+    let preset = &self.preset as *const BuiltEditorPreset<Self, Box<dyn DefaultApi<Self>>>;
+    unsafe { (&*preset).completion_menu_items(self, provider) }
+  }
+
+  fn completion_menu_provider_selection_changed(
+    &mut self,
+    provider: the_default::CompletionMenuProviderId,
+    index: usize,
+  ) {
+    let preset = &self.preset as *const BuiltEditorPreset<Self, Box<dyn DefaultApi<Self>>>;
+    unsafe { (&*preset).completion_menu_selection_changed(self, provider, index) };
+  }
+
+  fn completion_menu_provider_accept_selected(
+    &mut self,
+    provider: the_default::CompletionMenuProviderId,
+    index: usize,
+  ) -> bool {
+    let preset = &self.preset as *const BuiltEditorPreset<Self, Box<dyn DefaultApi<Self>>>;
+    unsafe { (&*preset).completion_menu_accept_selected(self, provider, index) }
+  }
+
+  fn signature_help_presentation(
+    &mut self,
+    provider: the_default::SignatureHelpProviderId,
+  ) -> Option<the_default::SignatureHelpPresentation> {
+    let preset = &self.preset as *const BuiltEditorPreset<Self, Box<dyn DefaultApi<Self>>>;
+    unsafe { (&*preset).signature_help_presentation(self, provider) }
+  }
+
+  fn postprocess_editor_context_menu(
+    &mut self,
+    request: &the_default::EditorContextMenuRequest,
+    snapshot: &mut the_default::ContextMenuSnapshot,
+  ) {
+    let preset = &self.preset as *const BuiltEditorPreset<Self, Box<dyn DefaultApi<Self>>>;
+    unsafe { (&*preset).postprocess_editor_context_menu(self, request, snapshot) };
+  }
+
+  fn postprocess_file_tree_context_menu(
+    &mut self,
+    request: &the_default::FileTreeContextMenuRequest,
+    snapshot: &mut the_default::ContextMenuSnapshot,
+  ) {
+    let preset = &self.preset as *const BuiltEditorPreset<Self, Box<dyn DefaultApi<Self>>>;
+    unsafe { (&*preset).postprocess_file_tree_context_menu(self, request, snapshot) };
   }
 
   fn picker_query_handler_id(&self, name: &str) -> Option<the_default::PickerQueryHandlerId> {
-    self.extensions.picker_query_handler_id(name)
+    self.preset.picker_query_handler_id(name)
   }
 
   fn picker_submit_handler_id(&self, name: &str) -> Option<the_default::PickerSubmitHandlerId> {
-    self.extensions.picker_submit_handler_id(name)
+    self.preset.picker_submit_handler_id(name)
   }
 
   fn handle_picker_query_action(
@@ -14257,8 +14367,8 @@ impl DefaultContext for App {
     handler: the_default::PickerQueryHandlerId,
     query: &str,
   ) -> bool {
-    let extensions = &self.extensions as *const EditorExtensions<Self>;
-    unsafe { (&*extensions).handle_picker_query(self, handler, query) }
+    let preset = &self.preset as *const BuiltEditorPreset<Self, Box<dyn DefaultApi<Self>>>;
+    unsafe { (&*preset).handle_picker_query(self, handler, query) }
   }
 
   fn submit_picker_item_action(
@@ -14266,22 +14376,22 @@ impl DefaultContext for App {
     handler: the_default::PickerSubmitHandlerId,
     item: &FilePickerItem,
   ) -> PickerSubmitResult {
-    let extensions = &self.extensions as *const EditorExtensions<Self>;
-    unsafe { (&*extensions).submit_picker_item(self, handler, item) }
+    let preset = &self.preset as *const BuiltEditorPreset<Self, Box<dyn DefaultApi<Self>>>;
+    unsafe { (&*preset).submit_picker_item(self, handler, item) }
   }
 
   fn extend_text_annotations<'a>(&'a self, annotations: &mut TextAnnotations<'a>) {
-    self.extensions.extend_text_annotations(self, annotations);
+    self.preset.extend_text_annotations(self, annotations);
   }
 
   fn postprocess_render_plan(&mut self, plan: &mut the_lib::render::RenderPlan) {
-    let extensions = &self.extensions as *const EditorExtensions<Self>;
-    unsafe { (&*extensions).postprocess_render_plan(self, plan) };
+    let preset = &self.preset as *const BuiltEditorPreset<Self, Box<dyn DefaultApi<Self>>>;
+    unsafe { (&*preset).postprocess_render_plan(self, plan) };
   }
 
   fn postprocess_ui_tree(&mut self, tree: &mut UiTree) {
-    let extensions = &self.extensions as *const EditorExtensions<Self>;
-    unsafe { (&*extensions).postprocess_ui_tree(self, tree) };
+    let preset = &self.preset as *const BuiltEditorPreset<Self, Box<dyn DefaultApi<Self>>>;
+    unsafe { (&*preset).postprocess_ui_tree(self, tree) };
   }
 
   fn file_picker_closed(&mut self) {
@@ -14312,7 +14422,7 @@ impl DefaultContext for App {
   }
 
   fn dispatch(&self) -> DispatchRef<Self> {
-    DispatchRef::from_ptr(self.dispatch.as_ref() as *const dyn DefaultApi<Self>)
+    DispatchRef::from_ptr(self.preset.dispatch().as_ref() as *const dyn DefaultApi<Self>)
   }
 
   fn pending_input(&self) -> Option<&the_default::PendingInput> {

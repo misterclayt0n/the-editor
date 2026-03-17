@@ -10,9 +10,6 @@ use crate::{
   CompletionMenuItem,
   ContextMenuSnapshot,
   EditorContextMenuRequest,
-  FileTreeNodeDecoration,
-  FileTreeNodeRequest,
-  FileTreeContextMenuRequest,
   Mode,
   SignatureHelpPresentation,
   file_picker::FilePickerItem,
@@ -44,10 +41,6 @@ pub type CompletionMenuAcceptHandler<Ctx> =
 pub type SignatureHelpProviderFn<Ctx> = dyn Fn(&mut Ctx) -> SignatureHelpPresentation + 'static;
 pub type EditorContextMenuProvider<Ctx> =
   dyn Fn(&mut Ctx, &EditorContextMenuRequest, &mut ContextMenuSnapshot) + 'static;
-pub type FileTreeContextMenuProvider<Ctx> =
-  dyn Fn(&mut Ctx, &FileTreeContextMenuRequest, &mut ContextMenuSnapshot) + 'static;
-pub type FileTreeNodeDecorator<Ctx> =
-  dyn for<'a> Fn(&mut Ctx, &FileTreeNodeRequest<'a>, &mut FileTreeNodeDecoration) + 'static;
 pub type PickerQueryHandler<Ctx> = dyn Fn(&mut Ctx, &str) + 'static;
 pub type PickerSubmitHandler<Ctx> =
   dyn Fn(&mut Ctx, &FilePickerItem) -> PickerSubmitResult + 'static;
@@ -422,86 +415,6 @@ impl<Ctx> EditorContextMenuProviderRegistry<Ctx> {
   }
 }
 
-pub struct FileTreeContextMenuProviderRegistry<Ctx> {
-  providers: Vec<Box<FileTreeContextMenuProvider<Ctx>>>,
-}
-
-impl<Ctx> Default for FileTreeContextMenuProviderRegistry<Ctx> {
-  fn default() -> Self {
-    Self {
-      providers: Vec::new(),
-    }
-  }
-}
-
-pub struct FileTreeNodeDecoratorRegistry<Ctx> {
-  providers: Vec<Box<FileTreeNodeDecorator<Ctx>>>,
-}
-
-impl<Ctx> Default for FileTreeNodeDecoratorRegistry<Ctx> {
-  fn default() -> Self {
-    Self {
-      providers: Vec::new(),
-    }
-  }
-}
-
-impl<Ctx> std::fmt::Debug for FileTreeNodeDecoratorRegistry<Ctx> {
-  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    f.debug_struct("FileTreeNodeDecoratorRegistry")
-      .field("providers", &self.providers.len())
-      .finish()
-  }
-}
-
-impl<Ctx> FileTreeNodeDecoratorRegistry<Ctx> {
-  pub fn register<F>(&mut self, provider: F)
-  where
-    F: for<'a> Fn(&mut Ctx, &FileTreeNodeRequest<'a>, &mut FileTreeNodeDecoration) + 'static,
-  {
-    self.providers.push(Box::new(provider));
-  }
-
-  pub fn decorate(
-    &self,
-    ctx: &mut Ctx,
-    request: &FileTreeNodeRequest<'_>,
-    decoration: &mut FileTreeNodeDecoration,
-  ) {
-    for provider in &self.providers {
-      provider(ctx, request, decoration);
-    }
-  }
-}
-
-impl<Ctx> std::fmt::Debug for FileTreeContextMenuProviderRegistry<Ctx> {
-  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    f.debug_struct("FileTreeContextMenuProviderRegistry")
-      .field("providers", &self.providers.len())
-      .finish()
-  }
-}
-
-impl<Ctx> FileTreeContextMenuProviderRegistry<Ctx> {
-  pub fn register<F>(&mut self, provider: F)
-  where
-    F: Fn(&mut Ctx, &FileTreeContextMenuRequest, &mut ContextMenuSnapshot) + 'static,
-  {
-    self.providers.push(Box::new(provider));
-  }
-
-  pub fn postprocess(
-    &self,
-    ctx: &mut Ctx,
-    request: &FileTreeContextMenuRequest,
-    snapshot: &mut ContextMenuSnapshot,
-  ) {
-    for provider in &self.providers {
-      provider(ctx, request, snapshot);
-    }
-  }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PickerSubmitResult {
   Unhandled,
@@ -687,7 +600,6 @@ mod tests {
     CompletionMenuProviderEntry,
     CompletionMenuProviderRegistry,
     EditorContextMenuProviderRegistry,
-    FileTreeContextMenuProviderRegistry,
     NamedAction,
     NamedActionRegistry,
     SignatureHelpProviderEntry,
@@ -703,8 +615,6 @@ mod tests {
     ContextMenuSnapshot,
     EditorContextMenuOptions,
     EditorContextMenuRequest,
-    FileTreeContextMenuOptions,
-    FileTreeContextMenuRequest,
     Mode,
     SignatureHelpItem,
     SignatureHelpPresentation,
@@ -817,14 +727,6 @@ mod tests {
           .item(ContextMenuItem::new(ContextMenuActionId::EditorFormatBuffer).title("Format Demo")),
       );
     });
-    let mut tree_providers = FileTreeContextMenuProviderRegistry::<TestCtx>::default();
-    tree_providers.register(|ctx, request, snapshot| {
-      ctx.queries.push(format!("tree:{}", request.path.display()));
-      snapshot.sections.push(
-        ContextMenuSection::new()
-          .item(ContextMenuItem::new(ContextMenuActionId::FileTreeRename).title("Rename Demo")),
-      );
-    });
 
     let mut ctx = TestCtx::default();
     let mut editor_snapshot = ContextMenuSnapshot::new();
@@ -834,22 +736,9 @@ mod tests {
     };
     editor_providers.postprocess(&mut ctx, &editor_request, &mut editor_snapshot);
 
-    let mut tree_snapshot = ContextMenuSnapshot::new();
-    let tree_request = FileTreeContextMenuRequest {
-      path:    "demo.txt".into(),
-      options: FileTreeContextMenuOptions {
-        is_directory:      false,
-        expanded:          false,
-        is_workspace_root: false,
-      },
-    };
-    tree_providers.postprocess(&mut ctx, &tree_request, &mut tree_snapshot);
-
-    assert_eq!(ctx.queries, vec!["editor:Some(42)", "tree:demo.txt"]);
+    assert_eq!(ctx.queries, vec!["editor:Some(42)"]);
     assert_eq!(editor_snapshot.sections.len(), 1);
     assert_eq!(editor_snapshot.sections[0].title.as_deref(), Some("Demo"));
     assert_eq!(editor_snapshot.sections[0].items[0].title, "Format Demo");
-    assert_eq!(tree_snapshot.sections.len(), 1);
-    assert_eq!(tree_snapshot.sections[0].items[0].title, "Rename Demo");
   }
 }

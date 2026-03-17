@@ -1,10 +1,5 @@
 //! Input handling - maps key events to dispatch calls.
 
-use std::path::{
-  Path,
-  PathBuf,
-};
-
 use crossterm::event::{
   KeyCode,
   KeyEvent as CrosstermKeyEvent,
@@ -16,25 +11,15 @@ use crossterm::event::{
 };
 use ratatui::layout::Rect;
 use the_default::{
-  CommandPaletteItem,
-  ContextMenuActionId,
-  FileTreeContextMenuOptions,
-  FileTreeContextMenuRequest,
   DefaultContext,
-  FileTreeNodeKind,
   Mode,
   PointerButton as SharedPointerButton,
   PointerEvent,
   PointerEventOutcome,
   PointerKind,
-  build_file_tree_context_menu_with_providers,
-  build_file_tree_row_layouts_with_providers,
   close_signature_help,
   completion_docs_scroll,
-  execute_file_tree_op,
   handle_pointer_event as dispatch_pointer_event,
-  open_action_palette_with_items,
-  open_command_palette_with_input,
   open_file_picker_index,
   scroll_file_picker_list,
   scroll_file_picker_preview,
@@ -45,12 +30,7 @@ use the_default::{
   ui_event as dispatch_ui_event,
 };
 use the_lib::{
-  editor::{
-    OpenTarget,
-    PaneContentKind,
-  },
   render::{
-    graphics::Rect as LibRect,
     UiEvent,
     UiEventKind,
     UiKey,
@@ -58,8 +38,6 @@ use the_lib::{
     UiModifiers,
   },
   split_tree::{
-    PaneDirection,
-    PaneId,
     SplitAxis,
     SplitNodeId,
   },
@@ -135,21 +113,6 @@ pub fn handle_key(ctx: &mut Ctx, event: CrosstermKeyEvent) {
         return;
       },
       _ => {},
-    }
-  }
-
-  if ctx.mode() == Mode::Normal
-    && !ctx.file_picker.active
-    && !ctx.completion_menu.active
-    && !ctx.signature_help.active
-    && ctx.hover_docs.is_none()
-    && !event
-      .modifiers
-      .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER)
-  {
-    let normalized_code = normalize_shifted_key_code(event.code, event.modifiers);
-    if handle_explorer_key(ctx, normalized_code) {
-      return;
     }
   }
 
@@ -294,513 +257,41 @@ pub(crate) fn handle_pointer_event(ctx: &mut Ctx, event: PointerEvent) -> Pointe
     return PointerEventOutcome::Handled;
   }
 
-  if let Some(layout) = ctx.completion_docs_layout {
-    match event.kind {
-      PointerKind::Down(SharedPointerButton::Left) => {
-        handle_completion_docs_left_down(ctx, layout, x, y);
-      },
-      PointerKind::Drag(SharedPointerButton::Left) => {
-        handle_completion_docs_drag(ctx, layout, y);
-      },
-      PointerKind::Move => {
-        if ctx.completion_docs_drag.is_some() {
-          handle_completion_docs_drag(ctx, layout, y);
-        }
-      },
-      PointerKind::Up(SharedPointerButton::Left) => {
-        ctx.completion_docs_drag = None;
-      },
-      PointerKind::Scroll => {
-        let delta = pointer_scroll_delta_lines(event);
-        if delta != 0 {
-          handle_completion_docs_wheel(ctx, layout, x, y, delta);
-        }
-      },
-      _ => {},
-    }
-    return PointerEventOutcome::Handled;
-  }
-
-  ctx.completion_docs_drag = None;
-  if handle_explorer_pointer_event(ctx, event, x, y) {
-    return PointerEventOutcome::Handled;
-  }
-
-  let overlay_active =
-    ctx.completion_menu.active || ctx.hover_docs.is_some() || ctx.signature_help.active;
-  if overlay_active {
-    PointerEventOutcome::Handled
-  } else {
-    PointerEventOutcome::Continue
-  }
-}
-
-#[derive(Debug, Clone, Copy)]
-struct ExplorerPaneFrame {
-  surface_id: the_lib::editor::ClientSurfaceId,
-  pane_id:    PaneId,
-  rect:       LibRect,
-}
-
-fn point_in_pane_rect(x: u16, y: u16, rect: LibRect) -> bool {
-  x >= rect.x
-    && x < rect.x.saturating_add(rect.width)
-    && y >= rect.y
-    && y < rect.y.saturating_add(rect.height)
-}
-
-fn active_explorer_pane_frame(ctx: &Ctx) -> Option<ExplorerPaneFrame> {
-  let surface_id = ctx.active_explorer_surface_id()?;
-  let pane_id = ctx.editor.active_pane_id();
-  let rect = ctx.editor.pane_rect(pane_id)?;
-  Some(ExplorerPaneFrame {
-    surface_id,
-    pane_id,
-    rect,
-  })
-}
-
-fn explorer_pane_frame_at(ctx: &Ctx, x: u16, y: u16) -> Option<ExplorerPaneFrame> {
-  ctx
-    .editor
-    .frame_pane_snapshots(ctx.editor.layout_viewport())
-    .into_iter()
-    .find_map(|pane| {
-      let surface_id = match pane.content {
-        the_lib::editor::PaneContent::ClientSurface { surface_id }
-          if ctx.explorer_surface(surface_id).is_some() => surface_id,
-        _ => return None,
-      };
-      point_in_pane_rect(x, y, pane.rect).then_some(ExplorerPaneFrame {
-        surface_id,
-        pane_id: pane.pane_id,
-        rect: pane.rect,
-      })
-    })
-}
-
-fn explorer_row_layouts_for_surface(
-  ctx: &mut Ctx,
-  frame: ExplorerPaneFrame,
-) -> (usize, Vec<the_default::FileTreeRowLayout>) {
-  let surface = ctx
-    .explorer_surface(frame.surface_id)
-    .cloned()
-    .expect("explorer surface");
-  let max_nodes = surface
-    .scroll_offset
-    .saturating_add(frame.rect.height as usize)
-    .saturating_add(256)
-    .max(512);
-  let snapshot = ctx.file_tree.snapshot(max_nodes);
-  let row_layouts = build_file_tree_row_layouts_with_providers(ctx, &snapshot);
-  let max_scroll = row_layouts.len().saturating_sub(frame.rect.height as usize);
-  let scroll_offset = surface.scroll_offset.min(max_scroll);
-  if scroll_offset != surface.scroll_offset
-    && let Some(state) = ctx.explorer_surface_mut(frame.surface_id)
-  {
-    state.scroll_offset = scroll_offset;
-  }
-  (scroll_offset, row_layouts)
-}
-
-fn normalize_explorer_selection(
-  ctx: &mut Ctx,
-  frame: ExplorerPaneFrame,
-  request_render: bool,
-) -> bool {
-  let snapshot = ctx.file_tree.snapshot(usize::MAX);
-  if snapshot.nodes.is_empty() {
-    return false;
-  }
-
-  let selection_is_visible = ctx
-    .file_tree
-    .selected_path()
-    .map(|selected| snapshot.nodes.iter().any(|node| node.path == selected))
-    .unwrap_or(false);
-  let changed = if selection_is_visible {
-    false
-  } else {
-    let fallback = snapshot
-      .active_path
-      .clone()
-      .filter(|path| snapshot.nodes.iter().any(|node| node.path == *path))
-      .or_else(|| snapshot.nodes.first().map(|node| node.path.clone()));
-    if let Some(path) = fallback {
-      ctx.file_tree.select_path(&path)
+  let Some(layout) = ctx.completion_docs_layout else {
+    ctx.completion_docs_drag = None;
+    let overlay_active =
+      ctx.completion_menu.active || ctx.hover_docs.is_some() || ctx.signature_help.active;
+    return if overlay_active {
+      PointerEventOutcome::Handled
     } else {
-      false
-    }
+      PointerEventOutcome::Continue
+    };
   };
-
-  let selected = ctx.file_tree.selected_path().map(PathBuf::from);
-  let selected_index = selected.and_then(|selected| {
-    snapshot
-      .nodes
-      .iter()
-      .position(|node| node.path == selected)
-  });
-  let Some(selected_index) = selected_index else {
-    return changed;
-  };
-
-  let visible_rows = frame.rect.height.max(1) as usize;
-  let mut scroll_changed = false;
-  if let Some(surface) = ctx.explorer_surface_mut(frame.surface_id) {
-    let max_scroll = snapshot.nodes.len().saturating_sub(visible_rows);
-    let mut next_scroll = surface.scroll_offset.min(max_scroll);
-    if selected_index < next_scroll {
-      next_scroll = selected_index;
-    } else if selected_index >= next_scroll.saturating_add(visible_rows) {
-      next_scroll = selected_index.saturating_add(1).saturating_sub(visible_rows);
-    }
-    if next_scroll != surface.scroll_offset {
-      surface.scroll_offset = next_scroll.min(max_scroll);
-      scroll_changed = true;
-    }
-  }
-
-  if request_render && (changed || scroll_changed) {
-    ctx.request_render();
-  }
-  changed || scroll_changed
-}
-
-fn move_explorer_selection(ctx: &mut Ctx, frame: ExplorerPaneFrame, delta: isize) -> bool {
-  let snapshot = ctx.file_tree.snapshot(usize::MAX);
-  if snapshot.nodes.is_empty() {
-    return false;
-  }
-
-  let current_index = ctx
-    .file_tree
-    .selected_path()
-    .and_then(|selected| snapshot.nodes.iter().position(|node| node.path == selected));
-  let next_index = match (current_index, delta.is_negative()) {
-    (Some(index), true) => index.saturating_sub(delta.unsigned_abs()),
-    (Some(index), false) => index
-      .saturating_add(delta as usize)
-      .min(snapshot.nodes.len().saturating_sub(1)),
-    (None, true) => snapshot.nodes.len().saturating_sub(1),
-    (None, false) => 0,
-  };
-  let changed = ctx.file_tree.select_path(&snapshot.nodes[next_index].path);
-  let normalized = normalize_explorer_selection(ctx, frame, false);
-  if changed || normalized {
-    ctx.request_render();
-  }
-  changed || normalized
-}
-
-fn explorer_default_open_target(ctx: &Ctx, pane_id: PaneId) -> OpenTarget {
-  let preferred = [PaneDirection::Right, PaneDirection::Left, PaneDirection::Down, PaneDirection::Up];
-  if let Some(neighbors) = ctx.editor.pane_neighbors(pane_id) {
-    for direction in preferred {
-      if let Some(pane) = neighbors.in_direction(direction)
-        && matches!(
-          ctx.editor.pane_content_kind(pane),
-          Some(PaneContentKind::EditorBuffer)
-        )
-      {
-        return OpenTarget::Pane(pane);
-      }
-    }
-  }
-
-  OpenTarget::neighbor_or_split(PaneDirection::Right)
-}
-
-fn explorer_primary_action(ctx: &mut Ctx, frame: ExplorerPaneFrame) -> bool {
-  let Some(op) = ctx
-    .file_tree
-    .open_selected_op(explorer_default_open_target(ctx, frame.pane_id))
-  else {
-    return false;
-  };
-  let changed = execute_file_tree_op(ctx, &op).is_ok();
-  let normalized = normalize_explorer_selection(ctx, frame, false);
-  if changed || normalized {
-    ctx.request_render();
-  }
-  changed || normalized
-}
-
-fn explorer_select_parent_or_collapse(ctx: &mut Ctx, frame: ExplorerPaneFrame) -> bool {
-  let Some(selected) = ctx.file_tree.selected_path().map(PathBuf::from) else {
-    return move_explorer_selection(ctx, frame, 0);
-  };
-
-  if selected.is_dir() && ctx.file_tree.is_expanded(&selected) {
-    if ctx.file_tree.set_expanded(&selected, false) {
-      let _ = normalize_explorer_selection(ctx, frame, false);
-      ctx.request_render();
-      return true;
-    }
-  }
-
-  let Some(root) = ctx.file_tree.root().map(PathBuf::from) else {
-    return false;
-  };
-  let parent = selected.parent().map(Path::to_path_buf).unwrap_or(root.clone());
-  if !parent.starts_with(&root) {
-    return false;
-  }
-  let changed = ctx.file_tree.select_path(&parent);
-  let normalized = normalize_explorer_selection(ctx, frame, false);
-  if changed || normalized {
-    ctx.request_render();
-  }
-  changed || normalized
-}
-
-fn explorer_sync_to_active_path(ctx: &mut Ctx, frame: ExplorerPaneFrame) -> bool {
-  let working_directory = ctx.effective_working_directory();
-  let active_path = ctx.editor.active_file_path().map(Path::to_path_buf);
-  ctx
-    .file_tree
-    .sync_for_active_file(&working_directory, active_path.as_deref());
-  normalize_explorer_selection(ctx, frame, true)
-}
-
-fn open_explorer_prompt(ctx: &mut Ctx, input: &str) -> bool {
-  open_command_palette_with_input(ctx, input);
-  true
-}
-
-fn command_palette_item_for_file_tree_action(
-  item: the_default::ContextMenuItem,
-) -> Option<CommandPaletteItem> {
-  if !item.enabled {
-    return None;
-  }
-
-  let mut palette_item = CommandPaletteItem::new(item.title.clone());
-  if item.destructive {
-    palette_item = palette_item.badge("delete").emphasize();
-  }
-
-  let palette_item = match item.id {
-    ContextMenuActionId::FileTreeOpen => palette_item.on_typable_command("explorer-open", ""),
-    ContextMenuActionId::FileTreeOpenSplitRight => {
-      palette_item.on_typable_command("explorer-open-split-right", "")
-    },
-    ContextMenuActionId::FileTreeOpenSplitDown => {
-      palette_item.on_typable_command("explorer-open-split-down", "")
-    },
-    ContextMenuActionId::FileTreeExpand => palette_item.on_typable_command("explorer-expand", ""),
-    ContextMenuActionId::FileTreeCollapse => {
-      palette_item.on_typable_command("explorer-collapse", "")
-    },
-    ContextMenuActionId::FileTreeNewFile => {
-      palette_item.on_typable_command("explorer-new-file", "")
-    },
-    ContextMenuActionId::FileTreeNewFolder => {
-      palette_item.on_typable_command("explorer-new-folder", "")
-    },
-    ContextMenuActionId::FileTreeRename => {
-      palette_item.on_typable_command("explorer-rename", "")
-    },
-    ContextMenuActionId::FileTreeDelete => {
-      palette_item.on_typable_command("explorer-delete", "")
-    },
-    ContextMenuActionId::FileTreeRefresh => {
-      palette_item.on_typable_command("explorer-refresh", "")
-    },
-    _ => return None,
-  };
-
-  Some(palette_item)
-}
-
-fn open_explorer_context_menu(ctx: &mut Ctx, row: &the_default::FileTreeRowLayout) -> bool {
-  let Some(root) = ctx.file_tree.root().map(Path::to_path_buf) else {
-    return false;
-  };
-
-  let request = FileTreeContextMenuRequest {
-    path: row.path.clone(),
-    options: FileTreeContextMenuOptions {
-      is_directory:      row.kind == FileTreeNodeKind::Directory,
-      expanded:          row.kind == FileTreeNodeKind::Directory && ctx.file_tree.is_expanded(&row.path),
-      is_workspace_root: row.path == root,
-    },
-  };
-  let snapshot = build_file_tree_context_menu_with_providers(ctx, &request);
-  let items = snapshot
-    .sections
-    .into_iter()
-    .flat_map(|section| section.items)
-    .filter_map(command_palette_item_for_file_tree_action)
-    .collect::<Vec<_>>();
-  if items.is_empty() {
-    return false;
-  }
-
-  open_action_palette_with_items(ctx, Mode::Normal, items);
-  true
-}
-
-fn handle_explorer_key(ctx: &mut Ctx, code: KeyCode) -> bool {
-  let Some(frame) = active_explorer_pane_frame(ctx) else {
-    return false;
-  };
-
-  match code {
-    KeyCode::Char('j') | KeyCode::Down => move_explorer_selection(ctx, frame, 1),
-    KeyCode::Char('k') | KeyCode::Up => move_explorer_selection(ctx, frame, -1),
-    KeyCode::Char('l') | KeyCode::Right | KeyCode::Enter => explorer_primary_action(ctx, frame),
-    KeyCode::Char('h') | KeyCode::Left | KeyCode::Backspace => {
-      explorer_select_parent_or_collapse(ctx, frame)
-    },
-    KeyCode::PageDown => move_explorer_selection(ctx, frame, frame.rect.height.max(1) as isize),
-    KeyCode::PageUp => move_explorer_selection(ctx, frame, -(frame.rect.height.max(1) as isize)),
-    KeyCode::Char('u') => {
-      let op = ctx.file_tree.refresh_op();
-      let changed = execute_file_tree_op(ctx, &op).is_ok();
-      let normalized = normalize_explorer_selection(ctx, frame, false);
-      if changed || normalized {
-        ctx.request_render();
-      }
-      changed || normalized
-    },
-    KeyCode::Char('a') => open_explorer_prompt(ctx, "explorer-new-file "),
-    KeyCode::Char('A') => open_explorer_prompt(ctx, "explorer-new-folder "),
-    KeyCode::Char('r') => {
-      let input = ctx
-        .file_tree
-        .selected_path()
-        .and_then(Path::file_name)
-        .map(|name| format!("explorer-rename {}", name.to_string_lossy()))
-        .unwrap_or_else(|| "explorer-rename ".to_string());
-      open_explorer_prompt(ctx, &input)
-    },
-    KeyCode::Char('d') => open_explorer_prompt(ctx, "explorer-delete "),
-    KeyCode::Char('.') => explorer_sync_to_active_path(ctx, frame),
-    KeyCode::Char('H') => {
-      let changed = ctx.file_tree.toggle_show_hidden();
-      let normalized = normalize_explorer_selection(ctx, frame, false);
-      if changed || normalized {
-        ctx.request_render();
-      }
-      changed || normalized
-    },
-    KeyCode::Char('I') => {
-      let changed = ctx.file_tree.toggle_show_ignored();
-      let normalized = normalize_explorer_selection(ctx, frame, false);
-      if changed || normalized {
-        ctx.request_render();
-      }
-      changed || normalized
-    },
-    KeyCode::Char('Z') => {
-      let changed = ctx.file_tree.close_all(None);
-      let normalized = normalize_explorer_selection(ctx, frame, false);
-      if changed || normalized {
-        ctx.request_render();
-      }
-      changed || normalized
-    },
-    _ => false,
-  }
-}
-
-fn handle_explorer_pointer_event(
-  ctx: &mut Ctx,
-  event: PointerEvent,
-  x: u16,
-  y: u16,
-) -> bool {
-  let Some(frame) = explorer_pane_frame_at(ctx, x, y) else {
-    return false;
-  };
-
-  let should_focus = matches!(
-    event.kind,
-    PointerKind::Down(SharedPointerButton::Left | SharedPointerButton::Right)
-      | PointerKind::Scroll
-  );
-  if should_focus {
-    let _ = ctx.focus_explorer_surface(frame.surface_id);
-  }
-
-  let (scroll_offset, row_layouts) = explorer_row_layouts_for_surface(ctx, frame);
-  let row_index = scroll_offset.saturating_add(y.saturating_sub(frame.rect.y) as usize);
-  let row = row_layouts.get(row_index).cloned();
-  let disclosure_hit = row.as_ref().is_some_and(|row| {
-    if row.kind != FileTreeNodeKind::Directory {
-      return false;
-    }
-    let guide_width = row.guides.ancestor_columns.len() as u16 * 2
-      + match row.guides.connector {
-        the_default::FileTreeGuideConnector::None => 0,
-        _ => 2,
-      };
-    let disclosure_x = frame.rect.x.saturating_add(guide_width);
-    let disclosure_width = row.disclosure_glyph.chars().count() as u16;
-    x >= disclosure_x && x < disclosure_x.saturating_add(disclosure_width.max(1))
-  });
 
   match event.kind {
     PointerKind::Down(SharedPointerButton::Left) => {
-      if let Some(row) = row {
-        let changed = ctx.file_tree.select_path(&row.path);
-        if disclosure_hit {
-          let expanded = !ctx.file_tree.is_expanded(&row.path);
-          let _ = ctx.file_tree.set_expanded(&row.path, expanded);
-        } else if event.click_count >= 2 {
-          let _ = explorer_primary_action(ctx, frame);
-        }
-        let normalized = normalize_explorer_selection(ctx, frame, false);
-        if changed || normalized || disclosure_hit || event.click_count >= 2 {
-          ctx.request_render();
-        }
-      }
-      true
+      handle_completion_docs_left_down(ctx, layout, x, y);
     },
-    PointerKind::Down(SharedPointerButton::Right) => {
-      if let Some(row) = row {
-        let changed = ctx.file_tree.select_path(&row.path);
-        let normalized = normalize_explorer_selection(ctx, frame, false);
-        let opened_menu = open_explorer_context_menu(ctx, &row);
-        if changed || normalized || opened_menu {
-          ctx.request_render();
-        }
+    PointerKind::Drag(SharedPointerButton::Left) => {
+      handle_completion_docs_drag(ctx, layout, y);
+    },
+    PointerKind::Move => {
+      if ctx.completion_docs_drag.is_some() {
+        handle_completion_docs_drag(ctx, layout, y);
       }
-      true
+    },
+    PointerKind::Up(SharedPointerButton::Left) => {
+      ctx.completion_docs_drag = None;
     },
     PointerKind::Scroll => {
       let delta = pointer_scroll_delta_lines(event);
-      if delta == 0 {
-        return true;
+      if delta != 0 {
+        handle_completion_docs_wheel(ctx, layout, x, y, delta);
       }
-      let max_scroll = row_layouts.len().saturating_sub(frame.rect.height.max(1) as usize);
-      if let Some(surface) = ctx.explorer_surface_mut(frame.surface_id) {
-        let next = if delta.is_negative() {
-          surface.scroll_offset.saturating_sub(delta.unsigned_abs())
-        } else {
-          surface.scroll_offset.saturating_add(delta as usize).min(max_scroll)
-        };
-        if next != surface.scroll_offset {
-          surface.scroll_offset = next;
-          ctx.request_render();
-        }
-      }
-      true
     },
-    PointerKind::Move => {
-      if let Some(surface) = ctx.explorer_surface_mut(frame.surface_id) {
-        let hovered = row.map(|_| row_index);
-        if surface.hovered_row != hovered {
-          surface.hovered_row = hovered;
-          ctx.request_render();
-        }
-      }
-      true
-    },
-    PointerKind::Up(SharedPointerButton::Left | SharedPointerButton::Right) => true,
-    _ => true,
+    _ => {},
   }
+  PointerEventOutcome::Handled
 }
 
 fn handle_pane_resize_mouse(ctx: &mut Ctx, kind: MouseEventKind, x: u16, y: u16) -> bool {
@@ -1437,15 +928,6 @@ fn pointer_scroll_delta_lines(event: PointerEvent) -> isize {
 
 #[cfg(test)]
 mod tests {
-  use std::{
-    fs,
-    path::{
-      Path,
-      PathBuf,
-    },
-    time::SystemTime,
-  };
-
   use crossterm::event::{
     KeyCode,
     KeyEvent,
@@ -1453,12 +935,9 @@ mod tests {
     MouseEvent,
   };
   use the_default::{
-    CommandEvent,
     CommandPaletteSource,
-    CommandRegistry,
     CompletionMenuItem,
     DefaultContext,
-    submit_command_palette,
     show_completion_menu,
   };
   use the_lib::{
@@ -1469,44 +948,6 @@ mod tests {
 
   use super::*;
   use crate::dispatch::build_dispatch;
-
-  struct TempExplorerDir {
-    path: PathBuf,
-  }
-
-  impl TempExplorerDir {
-    fn new(prefix: &str) -> Self {
-      let nonce = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or(0);
-      let path = std::env::temp_dir().join(format!(
-        "the-editor-input-explorer-{prefix}-{}-{nonce}",
-        std::process::id(),
-      ));
-      fs::create_dir_all(&path).expect("create temp explorer dir");
-      Self { path }
-    }
-
-    fn as_path(&self) -> &Path {
-      &self.path
-    }
-
-    fn write_file(&self, relative: &str, content: &str) -> PathBuf {
-      let path = self.path.join(relative);
-      if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).expect("create explorer dir parent");
-      }
-      fs::write(&path, content).expect("write explorer temp file");
-      path
-    }
-  }
-
-  impl Drop for TempExplorerDir {
-    fn drop(&mut self) {
-      let _ = fs::remove_dir_all(&self.path);
-    }
-  }
 
   fn mouse_event(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
     MouseEvent {
@@ -1848,289 +1289,5 @@ mod tests {
       .find(|next| next.split_id == separator.split_id)
       .expect("updated separator");
     assert!(moved.line > separator.line);
-  }
-
-  #[test]
-  fn explorer_keyboard_navigation_selects_visible_rows() {
-    let dir = TempExplorerDir::new("keyboard-nav");
-    dir.write_file("alpha.txt", "alpha\n");
-    dir.write_file("nested/beta.txt", "beta\n");
-
-    let mut ctx = Ctx::new(None).expect("ctx");
-    ctx.working_directory.current = Some(dir.as_path().to_path_buf());
-    assert!(<Ctx as DefaultContext>::open_native_file_explorer(&mut ctx, false));
-
-    let snapshot = ctx.file_tree.snapshot(usize::MAX);
-    assert!(snapshot.nodes.len() >= 2);
-
-    handle_key(&mut ctx, key_event(KeyCode::Char('j')));
-    assert_eq!(
-      ctx.file_tree.selected_path(),
-      Some(snapshot.nodes[0].path.as_path())
-    );
-
-    handle_key(&mut ctx, key_event(KeyCode::Char('j')));
-    assert_eq!(
-      ctx.file_tree.selected_path(),
-      Some(snapshot.nodes[1].path.as_path())
-    );
-  }
-
-  #[test]
-  fn explorer_enter_opens_file_in_neighbor_or_split() {
-    let dir = TempExplorerDir::new("enter-open");
-    let alpha = dir.write_file("alpha.txt", "alpha\n");
-
-    let mut ctx = Ctx::new(None).expect("ctx");
-    ctx.working_directory.current = Some(dir.as_path().to_path_buf());
-    assert!(<Ctx as DefaultContext>::open_native_file_explorer(&mut ctx, false));
-    assert!(ctx.file_tree.select_path(&alpha));
-
-    handle_key(&mut ctx, key_event(KeyCode::Enter));
-
-    assert_eq!(
-      ctx
-        .editor
-        .active_file_path()
-        .and_then(Path::file_name)
-        .and_then(|name| name.to_str()),
-      alpha.file_name().and_then(|name| name.to_str())
-    );
-    assert_eq!(
-      ctx.editor.active_pane_content_kind(),
-      Some(the_lib::editor::PaneContentKind::EditorBuffer)
-    );
-    assert_eq!(ctx.explorer_surface_snapshots().len(), 1);
-    assert!(ctx.editor.pane_count() >= 2);
-  }
-
-  #[test]
-  fn explorer_double_click_opens_selected_file() {
-    let dir = TempExplorerDir::new("double-click");
-    let alpha = dir.write_file("alpha.txt", "alpha\n");
-
-    let mut ctx = Ctx::new(None).expect("ctx");
-    ctx.resize(48, 12);
-    ctx.working_directory.current = Some(dir.as_path().to_path_buf());
-    assert!(<Ctx as DefaultContext>::open_native_file_explorer(&mut ctx, false));
-
-    let surface_id = ctx.active_explorer_surface_id().expect("explorer surface");
-    let pane = ctx
-      .editor
-      .frame_pane_snapshots(ctx.editor.layout_viewport())
-      .into_iter()
-      .find(|pane| {
-        matches!(
-          pane.content,
-          the_lib::editor::PaneContent::ClientSurface { surface_id: id } if id == surface_id
-        )
-      })
-      .expect("explorer pane");
-    let snapshot = ctx.file_tree.snapshot(usize::MAX);
-    let row_index = snapshot
-      .nodes
-      .iter()
-      .position(|node| node.name == "alpha.txt")
-      .expect("alpha row");
-    let x = pane.rect.x.saturating_add(6);
-    let y = pane.rect.y.saturating_add(row_index as u16);
-
-    handle_mouse(&mut ctx, mouse_event(MouseEventKind::Down(MouseButton::Left), x, y));
-    handle_mouse(&mut ctx, mouse_event(MouseEventKind::Down(MouseButton::Left), x, y));
-
-    assert_eq!(
-      ctx
-        .editor
-        .active_file_path()
-        .and_then(Path::file_name)
-        .and_then(|name| name.to_str()),
-      alpha.file_name().and_then(|name| name.to_str())
-    );
-    assert_eq!(
-      ctx.editor.active_pane_content_kind(),
-      Some(the_lib::editor::PaneContentKind::EditorBuffer)
-    );
-  }
-
-  #[test]
-  fn explorer_mouse_wheel_scrolls_surface() {
-    let dir = TempExplorerDir::new("wheel-scroll");
-    for index in 0..32 {
-      dir.write_file(&format!("item-{index:02}.txt"), "item\n");
-    }
-
-    let mut ctx = Ctx::new(None).expect("ctx");
-    ctx.resize(48, 8);
-    ctx.working_directory.current = Some(dir.as_path().to_path_buf());
-    assert!(<Ctx as DefaultContext>::open_native_file_explorer(&mut ctx, false));
-
-    let surface_id = ctx.active_explorer_surface_id().expect("explorer surface");
-    let pane = ctx
-      .editor
-      .frame_pane_snapshots(ctx.editor.layout_viewport())
-      .into_iter()
-      .find(|pane| {
-        matches!(
-          pane.content,
-          the_lib::editor::PaneContent::ClientSurface { surface_id: id } if id == surface_id
-        )
-      })
-      .expect("explorer pane");
-
-    assert_eq!(
-      ctx.explorer_surface(surface_id).map(|surface| surface.scroll_offset),
-      Some(0)
-    );
-    handle_mouse(
-      &mut ctx,
-      mouse_event(
-        MouseEventKind::ScrollDown,
-        pane.rect.x.saturating_add(2),
-        pane.rect.y.saturating_add(2),
-      ),
-    );
-    assert!(
-      ctx
-        .explorer_surface(surface_id)
-        .is_some_and(|surface| surface.scroll_offset > 0)
-    );
-  }
-
-  #[test]
-  fn explorer_key_prompts_open_command_palette_for_operations() {
-    let dir = TempExplorerDir::new("prompt-keys");
-    dir.write_file("alpha.txt", "alpha\n");
-
-    let mut ctx = Ctx::new(None).expect("ctx");
-    ctx.working_directory.current = Some(dir.as_path().to_path_buf());
-    assert!(<Ctx as DefaultContext>::open_native_file_explorer(&mut ctx, false));
-
-    handle_key(&mut ctx, key_event(KeyCode::Char('a')));
-    assert!(ctx.command_palette.is_open);
-    assert!(matches!(ctx.command_palette.source, CommandPaletteSource::CommandLine));
-    assert_eq!(ctx.command_prompt_ref().input, "explorer-new-file ");
-
-    ctx.set_mode(Mode::Normal);
-    handle_key(&mut ctx, key_event(KeyCode::Char('d')));
-    assert_eq!(ctx.command_prompt_ref().input, "explorer-delete ");
-  }
-
-  #[test]
-  fn explorer_new_file_command_creates_file() {
-    let dir = TempExplorerDir::new("new-file-command");
-    dir.write_file("alpha.txt", "alpha\n");
-
-    let mut ctx = Ctx::new(None).expect("ctx");
-    ctx.working_directory.current = Some(dir.as_path().to_path_buf());
-    assert!(<Ctx as DefaultContext>::open_native_file_explorer(&mut ctx, false));
-
-    let registry: *const CommandRegistry<Ctx> = ctx.command_registry_ref();
-    let result = unsafe {
-      (&*registry).execute(
-        &mut ctx,
-        "explorer-new-file",
-        "nested/created.txt",
-        CommandEvent::Validate,
-      )
-    };
-    assert!(result.is_ok());
-    assert!(dir.as_path().join("nested/created.txt").exists());
-  }
-
-  #[test]
-  fn explorer_rename_and_delete_commands_operate_on_selected_path() {
-    let dir = TempExplorerDir::new("rename-delete");
-    let alpha = dir.write_file("alpha.txt", "alpha\n");
-
-    let mut ctx = Ctx::new(None).expect("ctx");
-    ctx.working_directory.current = Some(dir.as_path().to_path_buf());
-    assert!(<Ctx as DefaultContext>::open_native_file_explorer(&mut ctx, false));
-    assert!(ctx.file_tree.select_path(&alpha));
-
-    let registry: *const CommandRegistry<Ctx> = ctx.command_registry_ref();
-    let rename_result = unsafe {
-      (&*registry).execute(
-        &mut ctx,
-        "explorer-rename",
-        "renamed.txt",
-        CommandEvent::Validate,
-      )
-    };
-    assert!(rename_result.is_ok());
-    let renamed = dir.as_path().join("renamed.txt");
-    assert!(renamed.exists());
-    assert!(!alpha.exists());
-
-    let reject_delete = unsafe {
-      (&*registry).execute(
-        &mut ctx,
-        "explorer-delete",
-        "nope",
-        CommandEvent::Validate,
-      )
-    };
-    assert!(reject_delete.is_err());
-    assert!(renamed.exists());
-
-    let accept_delete = unsafe {
-      (&*registry).execute(
-        &mut ctx,
-        "explorer-delete",
-        "DELETE",
-        CommandEvent::Validate,
-      )
-    };
-    assert!(accept_delete.is_ok());
-    assert!(!renamed.exists());
-  }
-
-  #[test]
-  fn explorer_right_click_opens_context_action_palette() {
-    let dir = TempExplorerDir::new("context-menu");
-    dir.write_file("alpha.txt", "alpha\n");
-
-    let mut ctx = Ctx::new(None).expect("ctx");
-    ctx.resize(48, 12);
-    ctx.working_directory.current = Some(dir.as_path().to_path_buf());
-    assert!(<Ctx as DefaultContext>::open_native_file_explorer(&mut ctx, false));
-
-    let surface_id = ctx.active_explorer_surface_id().expect("explorer surface");
-    let pane = ctx
-      .editor
-      .frame_pane_snapshots(ctx.editor.layout_viewport())
-      .into_iter()
-      .find(|pane| {
-        matches!(
-          pane.content,
-          the_lib::editor::PaneContent::ClientSurface { surface_id: id } if id == surface_id
-        )
-      })
-      .expect("explorer pane");
-    let snapshot = ctx.file_tree.snapshot(usize::MAX);
-    let row_index = snapshot
-      .nodes
-      .iter()
-      .position(|node| node.name == "alpha.txt")
-      .expect("alpha row");
-    let x = pane.rect.x.saturating_add(6);
-    let y = pane.rect.y.saturating_add(row_index as u16);
-
-    handle_mouse(&mut ctx, mouse_event(MouseEventKind::Down(MouseButton::Right), x, y));
-
-    assert!(ctx.command_palette.is_open);
-    assert!(matches!(ctx.command_palette.source, CommandPaletteSource::ActionPalette));
-    assert!(ctx.command_palette.items.iter().any(|item| item.title == "Open"));
-    assert!(ctx.command_palette.items.iter().any(|item| item.title == "Delete"));
-
-    let delete_index = ctx
-      .command_palette
-      .items
-      .iter()
-      .position(|item| item.title == "Delete")
-      .expect("delete item");
-    ctx.command_palette.selected = Some(delete_index);
-    assert!(submit_command_palette(&mut ctx));
-    assert!(ctx.command_palette.is_open);
-    assert_eq!(ctx.command_prompt_ref().input, "explorer-delete ");
   }
 }

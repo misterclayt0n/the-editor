@@ -16,7 +16,6 @@ mod context_menu;
 mod extension_state;
 mod extensions;
 mod file_picker;
-mod file_tree;
 mod global_search;
 mod increment;
 mod input;
@@ -147,12 +146,8 @@ pub use context_menu::{
   ContextMenuSnapshot,
   EditorContextMenuOptions,
   EditorContextMenuRequest,
-  FileTreeContextMenuOptions,
-  FileTreeContextMenuRequest,
   build_editor_context_menu,
   build_editor_context_menu_with_providers,
-  build_file_tree_context_menu,
-  build_file_tree_context_menu_with_providers,
 };
 pub use extension_state::ExtensionStateStore;
 pub use extensions::{
@@ -163,8 +158,6 @@ pub use extensions::{
   CompletionMenuProviderId,
   CompletionMenuSelectionHandler,
   EditorContextMenuProvider,
-  FileTreeContextMenuProvider,
-  FileTreeNodeDecorator,
   NamedAction,
   NamedActionFn,
   NamedActionHandle,
@@ -246,47 +239,6 @@ pub use file_picker::{
   set_picker_visible_rows,
   submit_file_picker,
   workspace_root,
-};
-pub use file_tree::{
-  FileTreeDisclosure,
-  FileTreeEditEntry,
-  FileTreeEditError,
-  FileTreeEditPatch,
-  FileTreeEditSession,
-  FileTreeFilter,
-  FileTreeDiagnosticSummary,
-  FileTreeGuideColumn,
-  FileTreeGuideConnector,
-  FileTreeMode,
-  FileTreeNodeBadge,
-  FileTreeNodeDecoration,
-  FileTreeNodeKind,
-  FileTreeNodePayload,
-  FileTreeNodePresentation,
-  FileTreeNodeRequest,
-  FileTreeNodeSnapshot,
-  FileTreeOp,
-  FileTreeOpOutcome,
-  FileTreeRowAccent,
-  FileTreeRowGuides,
-  FileTreeRowLayout,
-  FileTreeSnapshot,
-  FileTreeState,
-  FileTreeVcsStatusKind,
-  FileTreeVcsSummary,
-  build_file_tree_presentations,
-  build_file_tree_presentations_with_providers,
-  build_file_tree_row_guides,
-  build_file_tree_row_layouts,
-  build_file_tree_row_layouts_with_providers,
-  execute_file_tree_edit_patch,
-  execute_file_tree_op,
-  file_tree_default_icon_name,
-  file_tree_disclosure,
-  file_tree_disclosure_glyph,
-  file_tree_indentation,
-  file_tree_row_layout,
-  file_tree_row_layout_with_guides,
 };
 pub use global_search::{
   GlobalSearchConfig,

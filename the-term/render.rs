@@ -49,17 +49,12 @@ use serde_json::{
 };
 use the_default::{
   DefaultContext,
-  FileTreeGuideColumn,
-  FileTreeGuideConnector,
-  FileTreeNodeKind,
-  FileTreeRowAccent,
   FilePickerPreviewLineKind,
   Mode,
   OverlayRect as DefaultOverlayRect,
   PendingInput,
   SIGNATURE_HELP_ACTIVE_PARAM_END_MARKER,
   SIGNATURE_HELP_ACTIVE_PARAM_START_MARKER,
-  build_file_tree_row_layouts_with_providers,
   command_palette_filtered_indices,
   completion_docs_panel_rect as default_completion_docs_panel_rect,
   completion_panel_rect as default_completion_panel_rect,
@@ -6399,344 +6394,6 @@ fn draw_pane_content(
   editor_cursor
 }
 
-fn file_tree_accent_style(ctx: &Ctx, accent: FileTreeRowAccent, fallback: Style) -> Style {
-  match accent {
-    FileTreeRowAccent::Default => fallback,
-    FileTreeRowAccent::Selected => {
-      theme_style_or(ctx, "ui.selection", fallback.add_modifier(Modifier::BOLD))
-    },
-    FileTreeRowAccent::Active => {
-      theme_style_or(ctx, "ui.text.focus", fallback.add_modifier(Modifier::BOLD))
-    },
-    FileTreeRowAccent::Hint => theme_style_or(ctx, "hint", fallback.add_modifier(Modifier::BOLD)),
-    FileTreeRowAccent::Info => theme_style_or(ctx, "info", fallback.add_modifier(Modifier::BOLD)),
-    FileTreeRowAccent::Warning => {
-      theme_style_or(ctx, "warning", fallback.add_modifier(Modifier::BOLD))
-    },
-    FileTreeRowAccent::Error => {
-      theme_style_or(ctx, "error", fallback.add_modifier(Modifier::BOLD))
-    },
-  }
-}
-
-fn draw_explorer_row_guides(
-  buf: &mut Buffer,
-  row_area: Rect,
-  row_text_x: &mut u16,
-  guides: &the_default::FileTreeRowGuides,
-  style: Style,
-) {
-  for column in &guides.ancestor_columns {
-    if *row_text_x >= row_area.x.saturating_add(row_area.width) {
-      return;
-    }
-    let glyph = match column {
-      FileTreeGuideColumn::Empty => "  ",
-      FileTreeGuideColumn::Continue => "│ ",
-    };
-    let width = glyph.chars().count() as u16;
-    let max_width = row_area
-      .x
-      .saturating_add(row_area.width)
-      .saturating_sub(*row_text_x) as usize;
-    buf.set_stringn(*row_text_x, row_area.y, glyph, max_width, style);
-    *row_text_x = row_text_x.saturating_add(width);
-  }
-
-  if *row_text_x >= row_area.x.saturating_add(row_area.width) {
-    return;
-  }
-  let glyph = match guides.connector {
-    FileTreeGuideConnector::None => "",
-    FileTreeGuideConnector::Branch => "├ ",
-    FileTreeGuideConnector::LastChild => "└ ",
-  };
-  if glyph.is_empty() {
-    return;
-  }
-  let width = glyph.chars().count() as u16;
-  let max_width = row_area
-    .x
-    .saturating_add(row_area.width)
-    .saturating_sub(*row_text_x) as usize;
-  buf.set_stringn(*row_text_x, row_area.y, glyph, max_width, style);
-  *row_text_x = row_text_x.saturating_add(width);
-}
-
-fn draw_client_surface_placeholder(
-  buf: &mut Buffer,
-  pane_area: Rect,
-  ctx: &Ctx,
-  label: &str,
-  is_active: bool,
-) {
-  let base = if is_active {
-    theme_style_or(
-      ctx,
-      "ui.text",
-      lib_style_to_ratatui(ctx.ui_theme.try_get("ui.text").unwrap_or_default()),
-    )
-  } else {
-    theme_style_or(
-      ctx,
-      "ui.text.inactive",
-      lib_style_to_ratatui(ctx.ui_theme.try_get("ui.text").unwrap_or_default())
-        .add_modifier(Modifier::DIM),
-    )
-  };
-  let mut text = label.to_string();
-  truncate_with_ellipsis_in_place(&mut text, pane_area.width as usize);
-  buf.set_stringn(pane_area.x, pane_area.y, text, pane_area.width as usize, base);
-}
-
-fn draw_explorer_pane(
-  buf: &mut Buffer,
-  ctx: &mut Ctx,
-  pane_area: Rect,
-  surface_id: the_lib::editor::ClientSurfaceId,
-  is_active: bool,
-) {
-  let Some(surface) = ctx.explorer_surface(surface_id).cloned() else {
-    draw_client_surface_placeholder(buf, pane_area, ctx, "client surface", is_active);
-    return;
-  };
-
-  let max_nodes = surface
-    .scroll_offset
-    .saturating_add(pane_area.height as usize)
-    .saturating_add(256)
-    .max(512);
-  let snapshot = ctx.file_tree.snapshot(max_nodes);
-  let row_layouts = build_file_tree_row_layouts_with_providers(ctx, &snapshot);
-
-  if row_layouts.is_empty() {
-    draw_client_surface_placeholder(
-      buf,
-      pane_area,
-      ctx,
-      snapshot.root.to_string_lossy().as_ref(),
-      is_active,
-    );
-    return;
-  }
-
-  let max_scroll = row_layouts.len().saturating_sub(pane_area.height as usize);
-  let scroll_offset = surface.scroll_offset.min(max_scroll);
-  if scroll_offset != surface.scroll_offset
-    && let Some(state) = ctx.explorer_surface_mut(surface_id)
-  {
-    state.scroll_offset = scroll_offset;
-  }
-
-  let pane_base = if is_active {
-    theme_style_or(
-      ctx,
-      "ui.text",
-      lib_style_to_ratatui(ctx.ui_theme.try_get("ui.text").unwrap_or_default()),
-    )
-  } else {
-    theme_style_or(
-      ctx,
-      "ui.text.inactive",
-      lib_style_to_ratatui(ctx.ui_theme.try_get("ui.text").unwrap_or_default())
-        .add_modifier(Modifier::DIM),
-    )
-  };
-  let guide_style = pane_base.add_modifier(Modifier::DIM);
-  let directory_style = theme_style_or(ctx, "ui.text.directory", pane_base.add_modifier(Modifier::BOLD));
-  let selection_style = theme_style_or(
-    ctx,
-    if is_active { "ui.selection.active" } else { "ui.selection" },
-    pane_base.add_modifier(Modifier::REVERSED),
-  );
-  let badge_style = theme_style_or(ctx, "ui.virtual.gutter", pane_base.add_modifier(Modifier::DIM));
-  let status_base = theme_style_or(ctx, "ui.virtual.gutter", pane_base.add_modifier(Modifier::DIM));
-
-  for (row_index, row) in row_layouts
-    .iter()
-    .skip(scroll_offset)
-    .take(pane_area.height as usize)
-    .enumerate()
-  {
-    let y = pane_area.y.saturating_add(row_index as u16);
-    let row_area = Rect::new(pane_area.x, y, pane_area.width, 1);
-    let is_selected = row.selected;
-    if is_selected {
-      fill_rect(buf, row_area, selection_style);
-    }
-
-    let row_base = if is_selected { selection_style } else { pane_base };
-    let guide_row_style = if is_selected {
-      selection_style.patch(guide_style)
-    } else {
-      guide_style
-    };
-    let row_accent_style = file_tree_accent_style(ctx, row.accent, row_base);
-    let row_text_style = match row.kind {
-      FileTreeNodeKind::Directory => directory_style.patch(row_accent_style),
-      FileTreeNodeKind::File => row_accent_style,
-    };
-    let row_status_style = file_tree_accent_style(ctx, row.accent, status_base.patch(row_base));
-
-    let mut left_x = row_area.x;
-    draw_explorer_row_guides(buf, row_area, &mut left_x, &row.guides, guide_row_style);
-
-    let disclosure_width = row.disclosure_glyph.chars().count() as u16;
-    if disclosure_width > 0 && left_x < row_area.x.saturating_add(row_area.width) {
-      buf.set_stringn(
-        left_x,
-        row_area.y,
-        row.disclosure_glyph,
-        row_area
-          .x
-          .saturating_add(row_area.width)
-          .saturating_sub(left_x) as usize,
-        guide_row_style,
-      );
-      left_x = left_x.saturating_add(disclosure_width);
-      if left_x < row_area.x.saturating_add(row_area.width) {
-        buf.set_stringn(
-          left_x,
-          row_area.y,
-          " ",
-          row_area
-            .x
-            .saturating_add(row_area.width)
-            .saturating_sub(left_x) as usize,
-          row_base,
-        );
-        left_x = left_x.saturating_add(1);
-      }
-    }
-
-    let icon = file_picker_icon_glyph(row.icon.as_str(), row.kind == FileTreeNodeKind::Directory);
-    let icon_width = icon.chars().count() as u16;
-    if icon_width > 0 && left_x < row_area.x.saturating_add(row_area.width) {
-      buf.set_stringn(
-        left_x,
-        row_area.y,
-        icon,
-        row_area
-          .x
-          .saturating_add(row_area.width)
-          .saturating_sub(left_x) as usize,
-        row_text_style,
-      );
-      left_x = left_x.saturating_add(icon_width);
-      if left_x < row_area.x.saturating_add(row_area.width) {
-        buf.set_stringn(
-          left_x,
-          row_area.y,
-          " ",
-          row_area
-            .x
-            .saturating_add(row_area.width)
-            .saturating_sub(left_x) as usize,
-          row_base,
-        );
-        left_x = left_x.saturating_add(1);
-      }
-    }
-
-    let mut right_parts = Vec::new();
-    if let Some(secondary) = &row.secondary_text
-      && !secondary.is_empty()
-    {
-      right_parts.push(secondary.clone());
-    }
-    if let Some(status) = &row.status
-      && !status.is_empty()
-    {
-      right_parts.push(status.clone());
-    }
-    let right_text = right_parts.join("  ");
-    let right_width = right_text.chars().count() as u16;
-    let right_x = if right_width == 0 || right_width >= row_area.width {
-      None
-    } else {
-      Some(
-        row_area
-          .x
-          .saturating_add(row_area.width)
-          .saturating_sub(right_width),
-      )
-    };
-    if let Some(right_x) = right_x {
-      buf.set_stringn(
-        right_x,
-        row_area.y,
-        right_text.as_str(),
-        row_area
-          .x
-          .saturating_add(row_area.width)
-          .saturating_sub(right_x) as usize,
-        row_status_style,
-      );
-    }
-
-    let mut badge_texts = row
-      .badges
-      .iter()
-      .map(|badge| format!("[{}]", badge.label))
-      .collect::<Vec<_>>();
-    let badge_text = if badge_texts.is_empty() {
-      None
-    } else {
-      Some(badge_texts.drain(..).collect::<Vec<_>>().join(" "))
-    };
-    let badge_width = badge_text
-      .as_ref()
-      .map(|text| text.chars().count() as u16)
-      .unwrap_or(0);
-
-    let mut right_limit = right_x.unwrap_or_else(|| row_area.x.saturating_add(row_area.width));
-    if badge_width > 0 && badge_width.saturating_add(1) < row_area.width {
-      let candidate_x = row_area
-        .x
-        .saturating_add(row_area.width)
-        .saturating_sub(badge_width);
-      if candidate_x > left_x.saturating_add(1) && candidate_x < right_limit {
-        if let Some(badge_text) = &badge_text {
-          buf.set_stringn(
-            candidate_x,
-            row_area.y,
-            badge_text.as_str(),
-            row_area
-              .x
-              .saturating_add(row_area.width)
-              .saturating_sub(candidate_x) as usize,
-            badge_style.patch(row_base),
-          );
-          right_limit = candidate_x.saturating_sub(1);
-        }
-      }
-    }
-
-    if left_x >= right_limit {
-      continue;
-    }
-
-    let mut primary_text = row.primary_text.clone();
-    let available = right_limit.saturating_sub(left_x) as usize;
-    truncate_with_ellipsis_in_place(&mut primary_text, available);
-    buf.set_stringn(left_x, row_area.y, primary_text, available, row_text_style);
-  }
-}
-
-fn draw_client_surface_pane(
-  buf: &mut Buffer,
-  ctx: &mut Ctx,
-  pane_area: Rect,
-  surface_id: the_lib::editor::ClientSurfaceId,
-  is_active: bool,
-) {
-  if ctx.explorer_surface(surface_id).is_some() {
-    draw_explorer_pane(buf, ctx, pane_area, surface_id, is_active);
-  } else {
-    draw_client_surface_placeholder(buf, pane_area, ctx, "client surface", is_active);
-  }
-}
-
 fn draw_pane_separators(buf: &mut Buffer, area: Rect, frame: &FrameRenderPlan, ctx: &Ctx) {
   if frame.panes.len() <= 1 {
     return;
@@ -7100,24 +6757,20 @@ pub fn render(f: &mut Frame, ctx: &mut Ctx) {
     for pane in &frame_plan.panes {
       let pane_area = pane_screen_rect(area, pane.rect);
       let is_active = pane.pane_id == frame_plan.active_pane;
-      if let Some(surface_id) = pane.client_surface_id {
-        draw_client_surface_pane(buf, ctx, pane_area, surface_id, is_active);
-      } else {
-        let pane_cursor = draw_pane_content(
-          buf,
-          ctx,
-          pane.pane_id,
-          pane_area,
-          &pane.plan,
-          base_text_style,
-          is_active,
-        );
-        if is_active {
-          editor_cursor = pane_cursor;
-          editor_cursor_kind = pane.plan.cursors.first().map(|cursor| cursor.kind);
-          active_line_count = pane.plan.lines.len();
-          active_span_count = pane.plan.lines.iter().map(|line| line.spans.len()).sum();
-        }
+      let pane_cursor = draw_pane_content(
+        buf,
+        ctx,
+        pane.pane_id,
+        pane_area,
+        &pane.plan,
+        base_text_style,
+        is_active,
+      );
+      if is_active {
+        editor_cursor = pane_cursor;
+        editor_cursor_kind = pane.plan.cursors.first().map(|cursor| cursor.kind);
+        active_line_count = pane.plan.lines.len();
+        active_span_count = pane.plan.lines.iter().map(|line| line.spans.len()).sum();
       }
     }
     let pane_draw_ms = pane_draw_start.map_or(0.0, |start| start.elapsed().as_secs_f64() * 1000.0);
@@ -7328,7 +6981,6 @@ mod tests {
   use the_default::{
     CommandPaletteItem,
     CommandPaletteState,
-    DefaultContext,
   };
   use the_lib::{
     diagnostics::{
@@ -7367,7 +7019,6 @@ mod tests {
     completion_docs_panel_rect,
     completion_docs_rows,
     completion_panel_rect,
-    draw_client_surface_pane,
     draw_ui_list,
     draw_ui_text,
     file_picker_panel_styles,
@@ -7412,44 +7063,6 @@ mod tests {
   impl Drop for TempRenderFile {
     fn drop(&mut self) {
       let _ = fs::remove_file(&self.path);
-    }
-  }
-
-  struct TempRenderDir {
-    path: PathBuf,
-  }
-
-  impl TempRenderDir {
-    fn new(prefix: &str) -> Self {
-      let nonce = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or(0);
-      let path = std::env::temp_dir().join(format!(
-        "the-editor-render-dir-{prefix}-{}-{nonce}",
-        std::process::id(),
-      ));
-      fs::create_dir_all(&path).expect("create temp render dir");
-      Self { path }
-    }
-
-    fn as_path(&self) -> &Path {
-      &self.path
-    }
-
-    fn write_file(&self, relative: &str, content: &str) -> PathBuf {
-      let path = self.path.join(relative);
-      if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).expect("create temp render parent");
-      }
-      fs::write(&path, content).expect("write temp render dir file");
-      path
-    }
-  }
-
-  impl Drop for TempRenderDir {
-    fn drop(&mut self) {
-      let _ = fs::remove_dir_all(&self.path);
     }
   }
 
@@ -7779,36 +7392,6 @@ mod tests {
       }
       assert_eq!(pane.plan.viewport, pane.rect);
     }
-  }
-
-  #[test]
-  fn explorer_client_surface_renders_tree_rows() {
-    let dir = TempRenderDir::new("explorer-pane");
-    let entry_file = dir.write_file("entry.txt", "entry\n");
-    dir.write_file("alpha.txt", "alpha\n");
-    dir.write_file("nested/beta.rs", "fn beta() {}\n");
-
-    let mut ctx = Ctx::new(Some(entry_file.to_str().expect("entry path"))).expect("ctx");
-    ctx.working_directory.current = Some(dir.as_path().to_path_buf());
-
-    assert!(<Ctx as DefaultContext>::open_native_file_explorer(&mut ctx, false));
-    let surface_id = ctx.active_explorer_surface_id().expect("active explorer");
-
-    let rect = Rect::new(0, 0, 48, 8);
-    let mut buf = Buffer::empty(rect);
-    draw_client_surface_pane(&mut buf, &mut ctx, rect, surface_id, true);
-
-    let rows = (0..rect.height)
-      .map(|row| buffer_row_text(&buf, rect, rect.y + row))
-      .collect::<Vec<_>>();
-    assert!(
-      rows.iter().any(|row| row.contains("alpha.txt")),
-      "expected alpha.txt in explorer rows, got: {rows:?}"
-    );
-    assert!(
-      rows.iter().any(|row| row.contains("nested")),
-      "expected nested directory in explorer rows, got: {rows:?}"
-    );
   }
 
   #[test]

@@ -20,7 +20,6 @@ use the_default::{
   DispatchRef,
   ExtensionStateStore,
   FilePickerState,
-  FileTreeState,
   KeyBinding,
   KeyEvent,
   Keymaps,
@@ -67,7 +66,6 @@ struct TestCtx {
   messages:          MessageCenter,
   workspace_root:    PathBuf,
   working_directory: WorkingDirectoryState,
-  file_tree:         FileTreeState,
   file_picker:       FilePickerState,
   extension_state:   ExtensionStateStore,
   opened_paths:      Vec<PathBuf>,
@@ -86,7 +84,6 @@ impl TestCtx {
         previous: None,
       },
       workspace_root,
-      file_tree: FileTreeState::with_working_directory(workspace_root.clone()),
       file_picker: FilePickerState::default(),
       extension_state: ExtensionStateStore::default(),
       opened_paths: Vec::new(),
@@ -195,14 +192,6 @@ impl DefaultContext for TestCtx {
 
   fn completion_menu_mut(&mut self) -> &mut CompletionMenuState {
     todo!()
-  }
-
-  fn file_tree(&self) -> &FileTreeState {
-    &self.file_tree
-  }
-
-  fn file_tree_mut(&mut self) -> &mut FileTreeState {
-    &mut self.file_tree
   }
 
   fn file_picker(&self) -> &FilePickerState {

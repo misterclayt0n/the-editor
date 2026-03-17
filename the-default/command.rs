@@ -722,8 +722,6 @@ pub trait DefaultContext: Sized + 'static {
   fn signature_help_mut(&mut self) -> Option<&mut SignatureHelpState> {
     None
   }
-  fn file_tree(&self) -> &crate::FileTreeState;
-  fn file_tree_mut(&mut self) -> &mut crate::FileTreeState;
   fn file_picker(&self) -> &crate::file_picker::FilePickerState;
   fn file_picker_mut(&mut self) -> &mut crate::file_picker::FilePickerState;
   fn search_prompt_ref(&self) -> &crate::SearchPromptState;
@@ -754,15 +752,6 @@ pub trait DefaultContext: Sized + 'static {
     &self,
   ) -> Result<Vec<crate::file_picker::FilePickerChangedFileItem>, String> {
     Ok(Vec::new())
-  }
-  fn file_tree_vcs_summary(&self, _path: &Path) -> Option<crate::FileTreeVcsSummary> {
-    None
-  }
-  fn file_tree_diagnostic_summary(
-    &self,
-    _path: &Path,
-  ) -> Option<crate::FileTreeDiagnosticSummary> {
-    None
   }
   fn supports_native_file_explorer(&self) -> bool {
     false
@@ -1107,12 +1096,6 @@ pub trait DefaultContext: Sized + 'static {
     _snapshot: &mut crate::ContextMenuSnapshot,
   ) {
   }
-  fn postprocess_file_tree_context_menu(
-    &mut self,
-    _request: &crate::FileTreeContextMenuRequest,
-    _snapshot: &mut crate::ContextMenuSnapshot,
-  ) {
-  }
   fn picker_query_handler_id(&self, _name: &str) -> Option<crate::PickerQueryHandlerId> {
     None
   }
@@ -1132,12 +1115,6 @@ pub trait DefaultContext: Sized + 'static {
     _item: &crate::file_picker::FilePickerItem,
   ) -> crate::extensions::PickerSubmitResult {
     crate::extensions::PickerSubmitResult::Unhandled
-  }
-  fn decorate_file_tree_node(
-    &mut self,
-    _request: &crate::FileTreeNodeRequest<'_>,
-    _decoration: &mut crate::FileTreeNodeDecoration,
-  ) {
   }
   fn extend_text_annotations<'a>(&'a self, _annotations: &mut TextAnnotations<'a>) {}
   fn postprocess_render_plan(&mut self, _plan: &mut RenderPlan) {}
@@ -1924,12 +1901,12 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
       crate::file_picker::open_file_picker_in_current_directory(ctx);
     },
     Command::FileExplorer => {
-      if ctx.supports_native_file_explorer() && !ctx.open_native_file_explorer(false) {
+      if !ctx.supports_native_file_explorer() || !ctx.open_native_file_explorer(false) {
         crate::file_picker::open_file_picker(ctx);
       }
     },
     Command::FileExplorerInCurrentBufferDirectory => {
-      if ctx.supports_native_file_explorer() && !ctx.open_native_file_explorer(true) {
+      if !ctx.supports_native_file_explorer() || !ctx.open_native_file_explorer(true) {
         crate::file_picker::open_file_picker_in_current_directory(ctx);
       }
     },

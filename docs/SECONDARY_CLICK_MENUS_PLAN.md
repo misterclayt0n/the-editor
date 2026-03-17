@@ -230,7 +230,7 @@ The better fit is a small shared action snapshot.
 
 ```rust
 enum ContextMenuTarget {
-  FileTreePath { path: PathBuf, is_directory: bool },
+  PathItem { path: PathBuf, is_directory: bool },
   EditorBuffer {
     pane_id: u64,
     logical_row: u16,

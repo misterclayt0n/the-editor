@@ -503,7 +503,6 @@ reviewed.
 - `the-default/file_picker.rs`
 - `the-default/global_search.rs`
 - `the-default/search_prompt.rs`
-- `the-default/file_tree.rs`
 - `the-default/buffer_tabs.rs`
 
 ### Audit focus
@@ -512,7 +511,8 @@ reviewed.
 - whether file-scan, dynamic, and static picker paths are clean
 - whether preview behavior is ergonomic
 - whether search and navigation surfaces compose cleanly with pickers
-- whether tree and tab snapshots expose enough structure for reusable tools
+- whether tab snapshots and other navigation surfaces expose enough structure
+  for reusable tools
 
 ### Questions
 

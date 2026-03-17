@@ -2,7 +2,6 @@
 
 use std::{
   collections::{
-    BTreeSet,
     BTreeMap,
     HashMap,
     HashSet,
@@ -62,11 +61,6 @@ use the_default::{
   FilePickerItem,
   FilePickerItemAction,
   FilePickerState,
-  FileTreeDiagnosticSummary,
-  FileTreeMode,
-  FileTreeState,
-  FileTreeVcsStatusKind,
-  FileTreeVcsSummary,
   GlobalSearchConfig,
   GlobalSearchState,
   KeyBinding,
@@ -91,7 +85,6 @@ use the_lib::{
     Diagnostic,
     DiagnosticCounts,
     DiagnosticSeverity,
-    DocumentDiagnostics,
     DiagnosticsState,
   },
   document::{
@@ -100,7 +93,6 @@ use the_lib::{
   },
   editor::{
     BufferId,
-    ClientSurfaceId,
     Editor,
     EditorId,
     PaneSnapshot,
@@ -227,7 +219,6 @@ use the_lsp::{
 use the_runtime::{
   clipboard::ClipboardProvider,
   file_watch::{
-    PathEvent,
     PathEventKind,
     WatchHandle,
     resolve_trace_log_path as resolve_file_watch_trace_log_path,
@@ -253,7 +244,6 @@ use the_vcs::{
   DiffHandle,
   DiffProviderRegistry,
   DiffSignKind,
-  FileChange,
 };
 
 use crate::picker_layout::{
@@ -275,45 +265,6 @@ pub enum CompletionDocsDragState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PaneResizeDragState {
   Split { split_id: SplitNodeId },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ExplorerSurfaceState {
-  pub surface_id:          ClientSurfaceId,
-  pub mode:                FileTreeMode,
-  pub root:                PathBuf,
-  pub scroll_offset:       usize,
-  pub hovered_row:         Option<usize>,
-  pub follow_active_file:  bool,
-}
-
-impl ExplorerSurfaceState {
-  fn new(surface_id: ClientSurfaceId, mode: FileTreeMode, root: PathBuf) -> Self {
-    Self {
-      surface_id,
-      mode,
-      root,
-      scroll_offset: 0,
-      hovered_row: None,
-      follow_active_file: true,
-    }
-  }
-}
-
-fn explorer_watch_latency() -> Duration {
-  Duration::from_millis(120)
-}
-
-fn new_explorer_watch_state(seed: &Path) -> ExplorerWatchState {
-  let (events_rx, watch_handle) = watch_path(seed, explorer_watch_latency());
-  ExplorerWatchState {
-    events_rx,
-    _watch_handle: watch_handle,
-    watched_paths: BTreeSet::from([seed.to_path_buf()]),
-    watched_vcs_paths: BTreeSet::new(),
-    synced_refresh_generation: 0,
-    synced_roots: BTreeSet::new(),
-  }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -406,26 +357,6 @@ pub struct LspDocumentSyncState {
 struct LspWatchedFileState {
   stream:        WatchedFileEventsState,
   _watch_handle: WatchHandle,
-}
-
-struct ExplorerWatchState {
-  events_rx:               Receiver<Vec<PathEvent>>,
-  _watch_handle:           WatchHandle,
-  watched_paths:           BTreeSet<PathBuf>,
-  watched_vcs_paths:       BTreeSet<PathBuf>,
-  synced_refresh_generation: u64,
-  synced_roots:            BTreeSet<PathBuf>,
-}
-
-impl std::fmt::Debug for ExplorerWatchState {
-  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    f.debug_struct("ExplorerWatchState")
-      .field("watched_paths", &self.watched_paths)
-      .field("watched_vcs_paths", &self.watched_vcs_paths)
-      .field("synced_refresh_generation", &self.synced_refresh_generation)
-      .field("synced_roots", &self.synced_roots)
-      .finish()
-  }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -661,11 +592,6 @@ pub struct Ctx {
   pub signature_help:                the_default::SignatureHelpState,
   pub hover_docs:                    Option<String>,
   pub hover_docs_scroll:             usize,
-  pub file_tree:                     FileTreeState,
-  pub explorer_surfaces:             BTreeMap<ClientSurfaceId, ExplorerSurfaceState>,
-  explorer_watch:                    ExplorerWatchState,
-  explorer_vcs_summaries:            BTreeMap<PathBuf, FileTreeVcsSummary>,
-  explorer_diagnostic_summaries:     BTreeMap<PathBuf, FileTreeDiagnosticSummary>,
   pub file_picker:                   FilePickerState,
   pub lsp_runtime:                   LspRuntime,
   pub lsp_ready:                     bool,
@@ -1059,14 +985,6 @@ impl Ctx {
     let preset = the_default::default_editor_preset::<Self>()
       .build()
       .box_dispatch();
-    let mut file_tree =
-      FileTreeState::with_working_directory(lsp_runtime.config().workspace_root().to_path_buf());
-    file_tree.sync_for_active_file(
-      lsp_runtime.config().workspace_root(),
-      file_path.map(Path::new),
-    );
-    let explorer_watch = new_explorer_watch_state(lsp_runtime.config().workspace_root());
-
     let mut ctx = Self {
       editor,
       file_path: file_path.map(PathBuf::from),
@@ -1091,11 +1009,6 @@ impl Ctx {
       signature_help: the_default::SignatureHelpState::default(),
       hover_docs: None,
       hover_docs_scroll: 0,
-      file_tree,
-      explorer_surfaces: BTreeMap::new(),
-      explorer_watch,
-      explorer_vcs_summaries: BTreeMap::new(),
-      explorer_diagnostic_summaries: BTreeMap::new(),
       file_picker,
       lsp_runtime,
       lsp_ready: false,
@@ -1233,297 +1146,6 @@ impl Ctx {
     if self.ui_theme_preview_name.take().is_some() {
       self.apply_effective_theme(self.ui_theme_base.clone());
     }
-  }
-
-  fn explorer_root_for_mode(&self, mode: FileTreeMode) -> PathBuf {
-    let working_directory = self.effective_working_directory();
-    match mode {
-      FileTreeMode::WorkingDirectory => working_directory,
-      FileTreeMode::CurrentBufferDirectory => self
-        .file_path()
-        .and_then(Path::parent)
-        .map(Path::to_path_buf)
-        .unwrap_or(working_directory),
-    }
-  }
-
-  fn explorer_roots(&self) -> BTreeSet<PathBuf> {
-    self
-      .explorer_surfaces
-      .values()
-      .map(|surface| surface.root.clone())
-      .collect()
-  }
-
-  fn explorer_should_follow_active_file(&self) -> bool {
-    self
-      .active_explorer_surface_id()
-      .and_then(|surface_id| self.explorer_surfaces.get(&surface_id))
-      .map(|surface| surface.follow_active_file)
-      .or_else(|| {
-        self
-          .explorer_surfaces
-          .values()
-          .next()
-          .map(|surface| surface.follow_active_file)
-      })
-      .unwrap_or(true)
-  }
-
-  fn apply_active_path_to_file_tree(
-    &mut self,
-    working_directory: &Path,
-    active_path: Option<&Path>,
-    follow_active_file: bool,
-  ) {
-    if let Some(path) = active_path {
-      let _ = self.file_tree.set_active_path(Some(path));
-      if follow_active_file {
-        let _ = self.file_tree.select_path(path);
-      }
-    } else {
-      let _ = self.file_tree.set_active_path(None::<&Path>);
-      if follow_active_file && self.file_tree.mode == FileTreeMode::CurrentBufferDirectory {
-        self.file_tree.open_working_directory(working_directory);
-      }
-    }
-  }
-
-  fn sync_file_tree_for_explorer_mode(&mut self, mode: FileTreeMode) {
-    let working_directory = self.effective_working_directory();
-    let current_file = self.file_path().map(Path::to_path_buf);
-    match mode {
-      FileTreeMode::WorkingDirectory => self.file_tree.open_working_directory(&working_directory),
-      FileTreeMode::CurrentBufferDirectory => self.file_tree.open_current_buffer_directory(
-        current_file.as_deref(),
-        &working_directory,
-      ),
-    }
-
-    let active_path = self.editor.active_file_path().map(Path::to_path_buf);
-    self.apply_active_path_to_file_tree(
-      &working_directory,
-      active_path.as_deref(),
-      self.explorer_should_follow_active_file(),
-    );
-    self.refresh_explorer_decorations();
-    self.sync_explorer_watch_paths();
-  }
-
-  fn refresh_explorer_surface_roots(&mut self) {
-    let working_directory = self.effective_working_directory();
-    let file_path = self.file_path().map(Path::to_path_buf);
-    for surface in self.explorer_surfaces.values_mut() {
-      surface.root = match surface.mode {
-        FileTreeMode::WorkingDirectory => working_directory.clone(),
-        FileTreeMode::CurrentBufferDirectory => file_path
-          .as_deref()
-          .and_then(Path::parent)
-          .map(Path::to_path_buf)
-          .unwrap_or_else(|| working_directory.clone()),
-      };
-    }
-  }
-
-  fn rebuild_explorer_diagnostic_summaries(&mut self) {
-    let roots = self.explorer_roots().into_iter().collect::<Vec<_>>();
-    if roots.is_empty() {
-      self.explorer_diagnostic_summaries.clear();
-      return;
-    }
-    self.explorer_diagnostic_summaries =
-      aggregate_explorer_diagnostic_summaries(&roots, self.diagnostics.documents());
-  }
-
-  fn rebuild_explorer_vcs_summaries(&mut self) {
-    let roots = self.explorer_roots().into_iter().collect::<Vec<_>>();
-    if roots.is_empty() {
-      self.explorer_vcs_summaries.clear();
-      return;
-    }
-
-    let mut summaries = BTreeMap::new();
-    for root in &roots {
-      let Ok(changes) = self.vcs_provider.collect_changed_files(root) else {
-        continue;
-      };
-      let root_slice = [root.clone()];
-      merge_explorer_vcs_summaries(
-        &mut summaries,
-        aggregate_explorer_vcs_summaries(&root_slice, &changes),
-      );
-    }
-    self.explorer_vcs_summaries = summaries;
-  }
-
-  fn refresh_explorer_decorations(&mut self) {
-    self.rebuild_explorer_diagnostic_summaries();
-    self.rebuild_explorer_vcs_summaries();
-  }
-
-  fn sync_explorer_watch_paths(&mut self) {
-    let roots = self.explorer_roots();
-    let generation = self.file_tree.refresh_generation;
-    if roots == self.explorer_watch.synced_roots
-      && generation == self.explorer_watch.synced_refresh_generation
-    {
-      return;
-    }
-
-    let (desired_paths, desired_vcs_paths) = if roots.is_empty() {
-      (BTreeSet::new(), BTreeSet::new())
-    } else {
-      let mut desired_paths = roots.clone();
-      let snapshot = self.file_tree.snapshot(usize::MAX);
-      for node in snapshot.nodes {
-        if node.kind == the_default::FileTreeNodeKind::Directory && node.expanded {
-          desired_paths.insert(node.path);
-        }
-      }
-
-      let mut desired_vcs_paths = BTreeSet::new();
-      for root in &roots {
-        desired_vcs_paths.extend(discover_explorer_vcs_watch_paths(root));
-      }
-      (desired_paths, desired_vcs_paths)
-    };
-
-    let current_paths = self.explorer_watch.watched_paths.clone();
-    let current_vcs_paths = self.explorer_watch.watched_vcs_paths.clone();
-    for path in current_paths.difference(&desired_paths) {
-      let _ = self.explorer_watch._watch_handle.remove(path);
-    }
-    for path in desired_paths.difference(&current_paths) {
-      let _ = self.explorer_watch._watch_handle.add(path);
-    }
-    for path in current_vcs_paths.difference(&desired_vcs_paths) {
-      let _ = self.explorer_watch._watch_handle.remove(path);
-    }
-    for path in desired_vcs_paths.difference(&current_vcs_paths) {
-      let _ = self.explorer_watch._watch_handle.add(path);
-    }
-
-    self.explorer_watch.watched_paths = desired_paths;
-    self.explorer_watch.watched_vcs_paths = desired_vcs_paths;
-    self.explorer_watch.synced_roots = roots;
-    self.explorer_watch.synced_refresh_generation = generation;
-  }
-
-  pub fn active_explorer_surface_id(&self) -> Option<ClientSurfaceId> {
-    self
-      .editor
-      .active_client_surface_id()
-      .filter(|surface_id| self.explorer_surfaces.contains_key(surface_id))
-  }
-
-  pub fn explorer_surface(&self, surface_id: ClientSurfaceId) -> Option<&ExplorerSurfaceState> {
-    self.explorer_surfaces.get(&surface_id)
-  }
-
-  pub fn explorer_surface_mut(
-    &mut self,
-    surface_id: ClientSurfaceId,
-  ) -> Option<&mut ExplorerSurfaceState> {
-    self.explorer_surfaces.get_mut(&surface_id)
-  }
-
-  pub fn explorer_surface_snapshots(&self) -> Vec<ExplorerSurfaceState> {
-    self.explorer_surfaces.values().cloned().collect()
-  }
-
-  pub fn set_explorer_follow_active_file(
-    &mut self,
-    surface_id: ClientSurfaceId,
-    follow_active_file: bool,
-  ) -> bool {
-    let Some(surface) = self.explorer_surfaces.get_mut(&surface_id) else {
-      return false;
-    };
-    if surface.follow_active_file == follow_active_file {
-      return false;
-    }
-    let mode = surface.mode;
-    surface.follow_active_file = follow_active_file;
-    let is_active = self.active_explorer_surface_id() == Some(surface_id);
-    if is_active {
-      self.sync_file_tree_for_explorer_mode(mode);
-    } else {
-      self.refresh_explorer_decorations();
-      self.sync_explorer_watch_paths();
-      self.request_render();
-    }
-    true
-  }
-
-  pub fn set_active_explorer_follow_active_file(&mut self, follow_active_file: bool) -> bool {
-    let Some(surface_id) = self.active_explorer_surface_id() else {
-      return false;
-    };
-    self.set_explorer_follow_active_file(surface_id, follow_active_file)
-  }
-
-  pub fn focus_explorer_surface(&mut self, surface_id: ClientSurfaceId) -> bool {
-    if !self.explorer_surfaces.contains_key(&surface_id) {
-      return false;
-    }
-    let previous_buffer_id = self.editor.active_buffer_id();
-    if !self.editor.focus_client_surface(surface_id) {
-      return false;
-    }
-    self.sync_state_after_active_pane_change(previous_buffer_id);
-    self.request_render();
-    true
-  }
-
-  pub fn close_active_explorer_surface(&mut self) -> bool {
-    let Some(surface_id) = self.active_explorer_surface_id() else {
-      return false;
-    };
-    let previous_buffer_id = self.editor.active_buffer_id();
-    if !self.editor.close_active_client_surface() {
-      return false;
-    }
-    self.explorer_surfaces.remove(&surface_id);
-    self.sync_state_after_active_pane_change(previous_buffer_id);
-    self.request_render();
-    true
-  }
-
-  pub fn open_or_focus_explorer_surface(&mut self, mode: FileTreeMode) -> Option<ClientSurfaceId> {
-    let previous_buffer_id = self.editor.active_buffer_id();
-    let surface_id = if let Some(active) = self.active_explorer_surface_id() {
-      active
-    } else if let Some(existing) = self.explorer_surfaces.keys().next().copied() {
-      if !self.editor.focus_client_surface(existing) {
-        return None;
-      }
-      existing
-    } else {
-      let created = self.editor.create_client_surface();
-      let root = self.explorer_root_for_mode(mode);
-      self
-        .explorer_surfaces
-        .insert(created, ExplorerSurfaceState::new(created, mode, root));
-      if !self.editor.open_client_surface_in_active_pane(created) {
-        self.explorer_surfaces.remove(&created);
-        return None;
-      }
-      created
-    };
-
-    let root = self.explorer_root_for_mode(mode);
-    self
-      .explorer_surfaces
-      .entry(surface_id)
-      .and_modify(|surface| {
-        surface.mode = mode;
-        surface.root = root.clone();
-      })
-      .or_insert_with(|| ExplorerSurfaceState::new(surface_id, mode, root));
-
-    self.sync_state_after_active_pane_change(previous_buffer_id);
-    self.request_render();
-    Some(surface_id)
   }
 
   fn invalidate_theme_render_state(&mut self) {
@@ -2108,19 +1730,15 @@ impl Ctx {
         },
         LspEvent::DiagnosticsPublished { diagnostics } => {
           let diagnostic_uri = diagnostics.uri.clone();
-          let active_uri = self.lsp_document.as_ref().map(|state| state.uri.clone());
+          let active_uri = self.lsp_document.as_ref().map(|state| state.uri.as_str());
           let previous_counts = self
             .diagnostics
             .document(&diagnostic_uri)
             .map(|document| document.counts())
             .unwrap_or_default();
           let next_counts = self.diagnostics.apply_document(diagnostics);
-          self.rebuild_explorer_diagnostic_summaries();
           if active_uri.is_some_and(|uri| uri == diagnostic_uri) && previous_counts != next_counts {
             self.publish_lsp_diagnostic_message(next_counts);
-            needs_render = true;
-          }
-          if !self.explorer_surfaces.is_empty() && previous_counts != next_counts {
             needs_render = true;
           }
         },
@@ -2236,68 +1854,6 @@ impl Ctx {
       return self.handle_external_file_watch_change(&watched_path, change_type);
     }
 
-    false
-  }
-
-  pub fn poll_explorer_watchers(&mut self) -> bool {
-    self.sync_explorer_watch_paths();
-
-    let mut pending_events = Vec::new();
-    loop {
-      match self.explorer_watch.events_rx.try_recv() {
-        Ok(batch) => pending_events.extend(batch),
-        Err(TryRecvError::Empty) => break,
-        Err(TryRecvError::Disconnected) => {
-          self.explorer_watch = new_explorer_watch_state(self.lsp_runtime.config().workspace_root());
-          self.sync_explorer_watch_paths();
-          return false;
-        },
-      }
-    }
-
-    if pending_events.is_empty() {
-      return false;
-    }
-
-    let roots = self.explorer_roots();
-    let watched_vcs_paths = self.explorer_watch.watched_vcs_paths.clone();
-    let mut tree_changed = false;
-    let mut refresh_vcs = false;
-
-    for event in pending_events {
-      if watched_vcs_paths.contains(&event.path) {
-        refresh_vcs = true;
-        continue;
-      }
-      if !roots.iter().any(|root| event.path.starts_with(root)) {
-        continue;
-      }
-
-      refresh_vcs = true;
-      if event.kind == PathEventKind::Removed {
-        self.file_tree.clear_removed_path(&event.path);
-        tree_changed = true;
-      }
-
-      let refresh_target = match event.kind {
-        PathEventKind::Removed => event.path.parent(),
-        _ if event.path.is_dir() => Some(event.path.as_path()),
-        _ => event.path.parent(),
-      };
-      tree_changed |= self.file_tree.refresh_path(refresh_target);
-    }
-
-    if refresh_vcs {
-      self.rebuild_explorer_vcs_summaries();
-    }
-    if tree_changed {
-      self.sync_explorer_watch_paths();
-    }
-
-    if tree_changed || refresh_vcs {
-      self.request_render();
-      return true;
-    }
     false
   }
 
@@ -5301,201 +4857,6 @@ fn is_completion_replace_char(ch: char) -> bool {
   is_symbol_word_char(ch)
 }
 
-fn file_tree_vcs_status_rank(kind: FileTreeVcsStatusKind) -> u8 {
-  match kind {
-    FileTreeVcsStatusKind::Conflict => 5,
-    FileTreeVcsStatusKind::Deleted => 4,
-    FileTreeVcsStatusKind::Modified => 3,
-    FileTreeVcsStatusKind::Renamed => 2,
-    FileTreeVcsStatusKind::Untracked => 1,
-  }
-}
-
-fn merge_file_tree_vcs_summary(
-  current: Option<FileTreeVcsSummary>,
-  next: FileTreeVcsSummary,
-) -> FileTreeVcsSummary {
-  match current {
-    Some(existing) => {
-      let kind = if file_tree_vcs_status_rank(existing.kind) >= file_tree_vcs_status_rank(next.kind) {
-        existing.kind
-      } else {
-        next.kind
-      };
-      FileTreeVcsSummary::new(kind, existing.count.saturating_add(next.count))
-    },
-    None => next,
-  }
-}
-
-fn merge_explorer_vcs_summaries(
-  into: &mut BTreeMap<PathBuf, FileTreeVcsSummary>,
-  from: BTreeMap<PathBuf, FileTreeVcsSummary>,
-) {
-  for (path, summary) in from {
-    let merged = merge_file_tree_vcs_summary(into.get(&path).copied(), summary);
-    into.insert(path, merged);
-  }
-}
-
-fn file_tree_diagnostic_rank(severity: DiagnosticSeverity) -> u8 {
-  match severity {
-    DiagnosticSeverity::Error => 4,
-    DiagnosticSeverity::Warning => 3,
-    DiagnosticSeverity::Information => 2,
-    DiagnosticSeverity::Hint => 1,
-  }
-}
-
-fn merge_file_tree_diagnostic_summary(
-  current: Option<FileTreeDiagnosticSummary>,
-  next: FileTreeDiagnosticSummary,
-) -> FileTreeDiagnosticSummary {
-  match current {
-    Some(existing) => {
-      let severity = if file_tree_diagnostic_rank(existing.severity)
-        >= file_tree_diagnostic_rank(next.severity)
-      {
-        existing.severity
-      } else {
-        next.severity
-      };
-      FileTreeDiagnosticSummary::new(severity, existing.count.saturating_add(next.count))
-    },
-    None => next,
-  }
-}
-
-fn matching_explorer_root<'a>(roots: &'a [PathBuf], path: &Path) -> Option<&'a PathBuf> {
-  roots
-    .iter()
-    .filter(|root| path.starts_with(root.as_path()))
-    .max_by_key(|root| root.components().count())
-}
-
-fn accumulate_path_and_ancestors<T: Copy>(
-  map: &mut BTreeMap<PathBuf, T>,
-  root: &Path,
-  path: &Path,
-  value: T,
-  merge: impl Fn(Option<T>, T) -> T,
-) {
-  let mut current = Some(path);
-  while let Some(candidate) = current {
-    if !candidate.starts_with(root) {
-      break;
-    }
-    let path_buf = candidate.to_path_buf();
-    let merged = merge(map.get(&path_buf).copied(), value);
-    map.insert(path_buf, merged);
-    if candidate == root {
-      break;
-    }
-    current = candidate.parent();
-  }
-}
-
-fn file_tree_vcs_status_from_change(change: &FileChange) -> FileTreeVcsStatusKind {
-  match change {
-    FileChange::Conflict { .. } => FileTreeVcsStatusKind::Conflict,
-    FileChange::Deleted { .. } => FileTreeVcsStatusKind::Deleted,
-    FileChange::Modified { .. } => FileTreeVcsStatusKind::Modified,
-    FileChange::Renamed { .. } => FileTreeVcsStatusKind::Renamed,
-    FileChange::Untracked { .. } => FileTreeVcsStatusKind::Untracked,
-  }
-}
-
-fn aggregate_explorer_vcs_summaries(
-  roots: &[PathBuf],
-  changes: &[FileChange],
-) -> BTreeMap<PathBuf, FileTreeVcsSummary> {
-  let mut out = BTreeMap::new();
-  for change in changes {
-    let path = change.path();
-    let Some(root) = matching_explorer_root(roots, path) else {
-      continue;
-    };
-    let summary = FileTreeVcsSummary::new(file_tree_vcs_status_from_change(change), 1);
-    accumulate_path_and_ancestors(&mut out, root, path, summary, merge_file_tree_vcs_summary);
-  }
-  out
-}
-
-fn document_diagnostic_summary(
-  document: &DocumentDiagnostics,
-) -> Option<(PathBuf, FileTreeDiagnosticSummary)> {
-  let path = path_for_file_uri(&document.uri)?;
-  let mut total = 0usize;
-  let mut severity = None;
-  for diagnostic in &document.diagnostics {
-    total = total.saturating_add(1);
-    let next = diagnostic.severity.unwrap_or(DiagnosticSeverity::Warning);
-    severity = Some(match severity {
-      Some(current) if file_tree_diagnostic_rank(current) >= file_tree_diagnostic_rank(next) => {
-        current
-      },
-      _ => next,
-    });
-  }
-  Some((path, FileTreeDiagnosticSummary::new(severity?, total)))
-}
-
-fn aggregate_explorer_diagnostic_summaries<'a>(
-  roots: &[PathBuf],
-  documents: impl Iterator<Item = &'a DocumentDiagnostics>,
-) -> BTreeMap<PathBuf, FileTreeDiagnosticSummary> {
-  let mut out = BTreeMap::new();
-  for document in documents {
-    let Some((path, summary)) = document_diagnostic_summary(document) else {
-      continue;
-    };
-    let Some(root) = matching_explorer_root(roots, &path) else {
-      continue;
-    };
-    accumulate_path_and_ancestors(
-      &mut out,
-      root,
-      &path,
-      summary,
-      merge_file_tree_diagnostic_summary,
-    );
-  }
-  out
-}
-
-fn parse_gitdir_redirect(path: &Path) -> Option<PathBuf> {
-  let content = std::fs::read_to_string(path).ok()?;
-  let (_, raw_target) = content.trim().split_once(':')?;
-  let raw_target = raw_target.trim();
-  if raw_target.is_empty() {
-    return None;
-  }
-  let target = PathBuf::from(raw_target);
-  Some(if target.is_absolute() {
-    target
-  } else {
-    path.parent()?.join(target)
-  })
-}
-
-fn discover_explorer_vcs_watch_paths(root: &Path) -> BTreeSet<PathBuf> {
-  let mut out = BTreeSet::new();
-  for ancestor in root.ancestors() {
-    let git_dir = ancestor.join(".git");
-    if git_dir.is_dir() {
-      out.insert(git_dir.join("index"));
-      break;
-    }
-    if git_dir.is_file()
-      && let Some(target) = parse_gitdir_redirect(&git_dir)
-    {
-      out.insert(target.join("index"));
-      break;
-    }
-  }
-  out
-}
-
 fn lsp_file_watch_latency() -> Duration {
   Duration::from_millis(120)
 }
@@ -6239,29 +5600,6 @@ impl Ctx {
     self.cancel_auto_completion();
     self.clear_signature_help_state();
     self.cancel_auto_signature_help();
-    self.refresh_explorer_surface_roots();
-
-    if let Some(surface_id) = self.active_explorer_surface_id() {
-      let mode = self
-        .explorer_surfaces
-        .get(&surface_id)
-        .map(|surface| surface.mode)
-        .unwrap_or(FileTreeMode::WorkingDirectory);
-      self.sync_file_tree_for_explorer_mode(mode);
-      if let Some(root) = self.file_tree.root().map(Path::to_path_buf)
-        && let Some(surface) = self.explorer_surfaces.get_mut(&surface_id)
-      {
-        surface.root = root;
-      }
-      self.needs_render = true;
-      return;
-    }
-
-    if self.explorer_surfaces.is_empty() {
-      self.explorer_vcs_summaries.clear();
-      self.explorer_diagnostic_summaries.clear();
-      self.sync_explorer_watch_paths();
-    }
 
     if self.editor.active_buffer_id() == previous_buffer_id {
       return;
@@ -6279,14 +5617,6 @@ impl Ctx {
 
     let active_path = self.editor.active_file_path().map(Path::to_path_buf);
     self.file_path = active_path.clone();
-    if let Some(mode) = self.explorer_surfaces.values().next().map(|surface| surface.mode) {
-      self.sync_file_tree_for_explorer_mode(mode);
-    } else {
-      self.file_tree.sync_for_active_file(
-        self.lsp_runtime.config().workspace_root(),
-        active_path.as_deref(),
-      );
-    }
     self.lsp_refresh_document_state(active_path.as_deref());
     self.lsp_open_current_document();
     self.refresh_vcs_diff_base();
@@ -6491,14 +5821,6 @@ impl the_default::DefaultContext for Ctx {
 
   fn signature_help_mut(&mut self) -> Option<&mut the_default::SignatureHelpState> {
     Some(&mut self.signature_help)
-  }
-
-  fn file_tree(&self) -> &the_default::FileTreeState {
-    &self.file_tree
-  }
-
-  fn file_tree_mut(&mut self) -> &mut the_default::FileTreeState {
-    &mut self.file_tree
   }
 
   fn completion_selection_changed(&mut self, index: usize) {
@@ -6726,35 +6048,6 @@ impl the_default::DefaultContext for Ctx {
   ) {
     let preset = &self.preset as *const BuiltEditorPreset<Self, Box<dyn DefaultApi<Self>>>;
     unsafe { (&*preset).postprocess_editor_context_menu(self, request, snapshot) };
-  }
-
-  fn postprocess_file_tree_context_menu(
-    &mut self,
-    request: &the_default::FileTreeContextMenuRequest,
-    snapshot: &mut the_default::ContextMenuSnapshot,
-  ) {
-    let preset = &self.preset as *const BuiltEditorPreset<Self, Box<dyn DefaultApi<Self>>>;
-    unsafe { (&*preset).postprocess_file_tree_context_menu(self, request, snapshot) };
-  }
-
-  fn file_tree_vcs_summary(&self, path: &Path) -> Option<the_default::FileTreeVcsSummary> {
-    self.explorer_vcs_summaries.get(path).copied()
-  }
-
-  fn file_tree_diagnostic_summary(
-    &self,
-    path: &Path,
-  ) -> Option<the_default::FileTreeDiagnosticSummary> {
-    self.explorer_diagnostic_summaries.get(path).copied()
-  }
-
-  fn decorate_file_tree_node(
-    &mut self,
-    request: &the_default::FileTreeNodeRequest<'_>,
-    decoration: &mut the_default::FileTreeNodeDecoration,
-  ) {
-    let preset = &self.preset as *const BuiltEditorPreset<Self, Box<dyn DefaultApi<Self>>>;
-    unsafe { (&*preset).decorate_file_tree_node(self, request, decoration) };
   }
 
   fn picker_query_handler_id(&self, name: &str) -> Option<the_default::PickerQueryHandlerId> {
@@ -7028,19 +6321,6 @@ impl the_default::DefaultContext for Ctx {
     Ok(items)
   }
 
-  fn supports_native_file_explorer(&self) -> bool {
-    true
-  }
-
-  fn open_native_file_explorer(&mut self, current_buffer_directory: bool) -> bool {
-    let mode = if current_buffer_directory {
-      FileTreeMode::CurrentBufferDirectory
-    } else {
-      FileTreeMode::WorkingDirectory
-    };
-    self.open_or_focus_explorer_surface(mode).is_some()
-  }
-
   fn registers(&self) -> &Registers {
     &self.registers
   }
@@ -7164,15 +6444,6 @@ impl the_default::DefaultContext for Ctx {
     self.lsp_refresh_document_state(path.as_deref());
     self.file_path = path.clone();
     self.editor.set_active_file_path(path);
-    self.refresh_explorer_surface_roots();
-    if let Some(mode) = self.explorer_surfaces.values().next().map(|surface| surface.mode) {
-      self.sync_file_tree_for_explorer_mode(mode);
-    } else {
-      self.file_tree.sync_for_active_file(
-        self.lsp_runtime.config().workspace_root(),
-        self.file_path.as_deref(),
-      );
-    }
     self.refresh_vcs_diff_base();
   }
 
@@ -7823,7 +7094,6 @@ fn setup_syntax(doc: &mut Document, path: &Path, loader: &Arc<Loader>) -> Result
 #[cfg(test)]
 mod tests {
   use std::{
-    collections::BTreeSet,
     fs,
     path::{
       Path,
@@ -7849,23 +7119,18 @@ mod tests {
     CompletionMenuItem,
     DefaultApi,
     DefaultContext,
-    FileTreeDiagnosticSummary,
-    FileTreeVcsStatusKind,
-    FileTreeVcsSummary,
     Key,
     KeyEvent,
     Mode,
     Modifiers,
     PendingInput,
     SearchPromptKind,
-    build_file_tree_row_layouts_with_providers,
     handle_key,
     show_completion_menu,
     ui_event,
   };
   use the_lib::{
     clipboard::NoClipboard,
-    diagnostics::DiagnosticSeverity,
     messages::MessageEventKind,
     movement::Direction as SelectionDirection,
     position::{
@@ -7906,7 +7171,6 @@ mod tests {
   use super::{
     CompletionSnippetCursorOrigin,
     Ctx,
-    ExplorerWatchState,
     PendingAutoSignatureHelp,
     SignatureHelpTriggerSource,
     WatchedFileEventsState,
@@ -7928,10 +7192,6 @@ mod tests {
   };
 
   struct TempTestFile {
-    path: PathBuf,
-  }
-
-  struct TempTestDir {
     path: PathBuf,
   }
 
@@ -8084,143 +7344,6 @@ mod tests {
     item.commit_characters = vec![";".into(), "::".into()];
     assert!(completion_item_accepts_commit_char(&item, ';'));
     assert!(!completion_item_accepts_commit_char(&item, ':'));
-  }
-
-  #[test]
-  fn native_file_explorer_opens_client_surface_and_sets_working_directory_mode() {
-    let mut ctx = Ctx::new(None).expect("ctx");
-
-    assert!(<Ctx as DefaultContext>::supports_native_file_explorer(&ctx));
-    assert!(<Ctx as DefaultContext>::open_native_file_explorer(&mut ctx, false));
-
-    let surface_id = ctx.active_explorer_surface_id().expect("active explorer");
-    assert_eq!(
-      ctx.editor.active_pane_content_kind(),
-      Some(the_lib::editor::PaneContentKind::ClientSurface)
-    );
-    assert_eq!(
-      ctx.explorer_surface(surface_id).map(|surface| surface.mode),
-      Some(the_default::FileTreeMode::WorkingDirectory)
-    );
-    assert!(ctx.file_tree.visible);
-    assert_eq!(ctx.file_tree.mode, the_default::FileTreeMode::WorkingDirectory);
-  }
-
-  #[test]
-  fn native_file_explorer_reuses_existing_surface_and_updates_mode() {
-    let fixture =
-      TempTestFile::with_extension("native-file-explorer-mode", "rs", "fn main() {}\n");
-    let mut ctx = Ctx::new(Some(fixture.as_path().to_str().expect("fixture path"))).expect("ctx");
-
-    assert!(<Ctx as DefaultContext>::open_native_file_explorer(&mut ctx, false));
-    let first_surface = ctx.active_explorer_surface_id().expect("first explorer");
-
-    assert!(ctx.editor.split_active_pane(SplitAxis::Vertical));
-    let previous_buffer_id = ctx.editor.active_buffer_id();
-    <Ctx as DefaultContext>::did_change_active_pane(&mut ctx, previous_buffer_id);
-
-    assert!(<Ctx as DefaultContext>::open_native_file_explorer(&mut ctx, true));
-    let second_surface = ctx.active_explorer_surface_id().expect("reused explorer");
-
-    assert_eq!(first_surface, second_surface);
-    assert_eq!(
-      ctx.explorer_surface(second_surface).map(|surface| surface.mode),
-      Some(the_default::FileTreeMode::CurrentBufferDirectory)
-    );
-    assert_eq!(
-      ctx.file_tree.mode,
-      the_default::FileTreeMode::CurrentBufferDirectory
-    );
-    let expected_root = fixture
-      .as_path()
-      .parent()
-      .map(|path| fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()))
-      .expect("fixture parent");
-    assert_eq!(ctx.file_tree.root(), Some(expected_root.as_path()));
-  }
-
-  #[test]
-  fn explorer_file_tree_decorator_uses_cached_vcs_and_diagnostics() {
-    let dir = TempTestDir::new("explorer-decoration");
-    let alpha = dir.write_file("alpha.txt", "alpha\n");
-
-    let mut ctx = Ctx::new(None).expect("ctx");
-    ctx.working_directory.current = Some(dir.as_path().to_path_buf());
-    assert!(<Ctx as DefaultContext>::open_native_file_explorer(&mut ctx, false));
-
-    ctx.explorer_diagnostic_summaries.insert(
-      alpha.clone(),
-      FileTreeDiagnosticSummary::new(DiagnosticSeverity::Error, 2),
-    );
-    ctx.explorer_vcs_summaries.insert(
-      alpha.clone(),
-      FileTreeVcsSummary::new(FileTreeVcsStatusKind::Modified, 1),
-    );
-
-    let snapshot = ctx.file_tree.snapshot(usize::MAX);
-    let rows = build_file_tree_row_layouts_with_providers(&mut ctx, &snapshot);
-    let row = rows
-      .iter()
-      .find(|row| row.path == alpha)
-      .expect("decorated alpha row");
-
-    assert_eq!(row.status.as_deref(), Some("M"));
-    assert!(
-      row.badges.iter().any(|badge| badge.label == "E2"),
-      "expected diagnostic badge, got {:?}",
-      row.badges
-    );
-    assert_eq!(row.accent, the_default::FileTreeRowAccent::Error);
-  }
-
-  #[test]
-  fn explorer_watchers_refresh_tree_incrementally_for_created_files() {
-    let dir = TempTestDir::new("explorer-watchers");
-    dir.write_file("alpha.txt", "alpha\n");
-
-    let mut ctx = Ctx::new(None).expect("ctx");
-    ctx.working_directory.current = Some(dir.as_path().to_path_buf());
-    assert!(<Ctx as DefaultContext>::open_native_file_explorer(&mut ctx, false));
-
-    let watch_tx = install_test_explorer_watch_state(&mut ctx, dir.as_path());
-    ctx.sync_explorer_watch_paths();
-
-    let created = dir.write_file("beta.txt", "beta\n");
-    watch_tx
-      .send(vec![PathEvent {
-        path: created.clone(),
-        kind: PathEventKind::Created,
-      }])
-      .expect("send explorer watch event");
-
-    assert!(ctx.poll_explorer_watchers());
-    let snapshot = ctx.file_tree.snapshot(usize::MAX);
-    assert!(
-      snapshot.nodes.iter().any(|node| node.path == created),
-      "expected created file in tree snapshot"
-    );
-  }
-
-  #[test]
-  fn explorer_follow_active_file_toggle_controls_selection_sync() {
-    let dir = TempTestDir::new("explorer-follow-active");
-    let first = dir.write_file("first.txt", "first\n");
-    let second = dir.write_file("second.txt", "second\n");
-
-    let mut ctx = Ctx::new(Some(first.to_str().expect("first path"))).expect("ctx");
-    ctx.working_directory.current = Some(dir.as_path().to_path_buf());
-    assert!(<Ctx as DefaultContext>::open_native_file_explorer(&mut ctx, false));
-
-    let surface_id = ctx.active_explorer_surface_id().expect("explorer surface");
-    assert_eq!(ctx.file_tree.selected_path(), Some(first.as_path()));
-
-    assert!(ctx.set_explorer_follow_active_file(surface_id, false));
-    <Ctx as DefaultContext>::set_file_path(&mut ctx, Some(second.clone()));
-    assert_eq!(ctx.file_tree.active_path(), Some(second.as_path()));
-    assert_eq!(ctx.file_tree.selected_path(), Some(first.as_path()));
-
-    assert!(ctx.set_explorer_follow_active_file(surface_id, true));
-    assert_eq!(ctx.file_tree.selected_path(), Some(second.as_path()));
   }
 
   #[test]
@@ -8420,41 +7543,6 @@ mod tests {
     }
   }
 
-  impl TempTestDir {
-    fn new(prefix: &str) -> Self {
-      let nonce = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-      let path = std::env::temp_dir().join(format!(
-        "the-editor-ctx-{prefix}-{}-{nonce}",
-        std::process::id(),
-      ));
-      fs::create_dir_all(&path).expect("create temp test dir");
-      let path = fs::canonicalize(&path).unwrap_or(path);
-      Self { path }
-    }
-
-    fn as_path(&self) -> &Path {
-      &self.path
-    }
-
-    fn write_file(&self, relative: &str, content: &str) -> PathBuf {
-      let path = self.path.join(relative);
-      if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).expect("create parent dir");
-      }
-      fs::write(&path, content).expect("write temp file");
-      fs::canonicalize(&path).unwrap_or(path)
-    }
-  }
-
-  impl Drop for TempTestDir {
-    fn drop(&mut self) {
-      let _ = fs::remove_dir_all(&self.path);
-    }
-  }
-
   fn install_test_watch_state(ctx: &mut Ctx, path: &Path) -> Sender<Vec<PathEvent>> {
     let (events_tx, events_rx) = channel();
     let (_unused_rx, watch_handle) = super::watch_path(path, Duration::from_millis(0));
@@ -8470,20 +7558,6 @@ mod tests {
       },
       _watch_handle: watch_handle,
     });
-    events_tx
-  }
-
-  fn install_test_explorer_watch_state(ctx: &mut Ctx, path: &Path) -> Sender<Vec<PathEvent>> {
-    let (events_tx, events_rx) = channel();
-    let (_unused_rx, watch_handle) = super::watch_path(path, Duration::from_millis(0));
-    ctx.explorer_watch = ExplorerWatchState {
-      events_rx,
-      _watch_handle: watch_handle,
-      watched_paths: BTreeSet::new(),
-      watched_vcs_paths: BTreeSet::new(),
-      synced_refresh_generation: 0,
-      synced_roots: BTreeSet::new(),
-    };
     events_tx
   }
 

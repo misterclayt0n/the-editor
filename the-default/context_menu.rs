@@ -1,6 +1,5 @@
 use std::{
   fmt,
-  path::PathBuf,
   str::FromStr,
 };
 
@@ -8,16 +7,6 @@ use crate::DefaultContext;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ContextMenuActionId {
-  FileTreeOpen,
-  FileTreeOpenSplitRight,
-  FileTreeOpenSplitDown,
-  FileTreeExpand,
-  FileTreeCollapse,
-  FileTreeNewFile,
-  FileTreeNewFolder,
-  FileTreeRename,
-  FileTreeDelete,
-  FileTreeRefresh,
   EditorGotoDefinition,
   EditorGotoTypeDefinition,
   EditorGotoImplementation,
@@ -31,16 +20,6 @@ impl ContextMenuActionId {
   #[must_use]
   pub const fn as_str(self) -> &'static str {
     match self {
-      Self::FileTreeOpen => "file_tree.open",
-      Self::FileTreeOpenSplitRight => "file_tree.open_split_right",
-      Self::FileTreeOpenSplitDown => "file_tree.open_split_down",
-      Self::FileTreeExpand => "file_tree.expand",
-      Self::FileTreeCollapse => "file_tree.collapse",
-      Self::FileTreeNewFile => "file_tree.new_file",
-      Self::FileTreeNewFolder => "file_tree.new_folder",
-      Self::FileTreeRename => "file_tree.rename",
-      Self::FileTreeDelete => "file_tree.delete",
-      Self::FileTreeRefresh => "file_tree.refresh",
       Self::EditorGotoDefinition => "editor.goto_definition",
       Self::EditorGotoTypeDefinition => "editor.goto_type_definition",
       Self::EditorGotoImplementation => "editor.goto_implementation",
@@ -54,16 +33,6 @@ impl ContextMenuActionId {
   #[must_use]
   pub const fn default_title(self) -> &'static str {
     match self {
-      Self::FileTreeOpen => "Open",
-      Self::FileTreeOpenSplitRight => "Open in Split Right",
-      Self::FileTreeOpenSplitDown => "Open in Split Down",
-      Self::FileTreeExpand => "Expand",
-      Self::FileTreeCollapse => "Collapse",
-      Self::FileTreeNewFile => "New File...",
-      Self::FileTreeNewFolder => "New Folder...",
-      Self::FileTreeRename => "Rename...",
-      Self::FileTreeDelete => "Delete",
-      Self::FileTreeRefresh => "Refresh",
       Self::EditorGotoDefinition => "Go to Definition",
       Self::EditorGotoTypeDefinition => "Go to Type Definition",
       Self::EditorGotoImplementation => "Go to Implementation",
@@ -86,16 +55,6 @@ impl FromStr for ContextMenuActionId {
 
   fn from_str(value: &str) -> Result<Self, Self::Err> {
     match value {
-      "file_tree.open" => Ok(Self::FileTreeOpen),
-      "file_tree.open_split_right" => Ok(Self::FileTreeOpenSplitRight),
-      "file_tree.open_split_down" => Ok(Self::FileTreeOpenSplitDown),
-      "file_tree.expand" => Ok(Self::FileTreeExpand),
-      "file_tree.collapse" => Ok(Self::FileTreeCollapse),
-      "file_tree.new_file" => Ok(Self::FileTreeNewFile),
-      "file_tree.new_folder" => Ok(Self::FileTreeNewFolder),
-      "file_tree.rename" => Ok(Self::FileTreeRename),
-      "file_tree.delete" => Ok(Self::FileTreeDelete),
-      "file_tree.refresh" => Ok(Self::FileTreeRefresh),
       "editor.goto_definition" => Ok(Self::EditorGotoDefinition),
       "editor.goto_type_definition" => Ok(Self::EditorGotoTypeDefinition),
       "editor.goto_implementation" => Ok(Self::EditorGotoImplementation),
@@ -189,19 +148,6 @@ impl ContextMenuSnapshot {
   }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct FileTreeContextMenuOptions {
-  pub is_directory:      bool,
-  pub expanded:          bool,
-  pub is_workspace_root: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FileTreeContextMenuRequest {
-  pub path:    PathBuf,
-  pub options: FileTreeContextMenuOptions,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct EditorContextMenuOptions {
   pub can_goto_definition:      bool,
@@ -217,62 +163,6 @@ pub struct EditorContextMenuOptions {
 pub struct EditorContextMenuRequest {
   pub char_index: Option<usize>,
   pub options:    EditorContextMenuOptions,
-}
-
-#[must_use]
-pub fn build_file_tree_context_menu(options: FileTreeContextMenuOptions) -> ContextMenuSnapshot {
-  let mut sections = Vec::new();
-
-  if options.is_directory {
-    sections.push(ContextMenuSection {
-      title: None,
-      items: vec![ContextMenuItem::new(if options.expanded {
-        ContextMenuActionId::FileTreeCollapse
-      } else {
-        ContextMenuActionId::FileTreeExpand
-      })],
-    });
-  } else {
-    sections.push(ContextMenuSection {
-      title: None,
-      items: vec![
-        ContextMenuItem::new(ContextMenuActionId::FileTreeOpen),
-        ContextMenuItem::new(ContextMenuActionId::FileTreeOpenSplitRight),
-        ContextMenuItem::new(ContextMenuActionId::FileTreeOpenSplitDown),
-      ],
-    });
-  }
-
-  sections.push(ContextMenuSection {
-    title: None,
-    items: vec![
-      ContextMenuItem::new(ContextMenuActionId::FileTreeNewFile),
-      ContextMenuItem::new(ContextMenuActionId::FileTreeNewFolder),
-    ],
-  });
-
-  sections.push(ContextMenuSection {
-    title: None,
-    items: vec![if options.is_workspace_root {
-      ContextMenuItem::new(ContextMenuActionId::FileTreeRename).disabled()
-    } else {
-      ContextMenuItem::new(ContextMenuActionId::FileTreeRename)
-    }],
-  });
-
-  sections.push(ContextMenuSection {
-    title: None,
-    items: vec![
-      ContextMenuItem::new(ContextMenuActionId::FileTreeRefresh),
-      if options.is_workspace_root {
-        ContextMenuItem::new(ContextMenuActionId::FileTreeDelete).disabled()
-      } else {
-        ContextMenuItem::new(ContextMenuActionId::FileTreeDelete).destructive()
-      },
-    ],
-  });
-
-  ContextMenuSnapshot { sections }
 }
 
 #[must_use]
@@ -335,21 +225,11 @@ pub fn build_editor_context_menu(options: EditorContextMenuOptions) -> ContextMe
 }
 
 #[must_use]
-pub fn build_file_tree_context_menu_with_providers<Ctx: DefaultContext>(
-  ctx: &mut Ctx,
-  request: &FileTreeContextMenuRequest,
-) -> ContextMenuSnapshot {
-  let mut snapshot = build_file_tree_context_menu(request.options);
-  ctx.postprocess_file_tree_context_menu(request, &mut snapshot);
-  snapshot
-}
-
-#[must_use]
 pub fn build_editor_context_menu_with_providers<Ctx: DefaultContext>(
   ctx: &mut Ctx,
   request: &EditorContextMenuRequest,
 ) -> ContextMenuSnapshot {
-  let mut snapshot = build_editor_context_menu(request.options);
+  let mut snapshot = ContextMenuSnapshot::new();
   ctx.postprocess_editor_context_menu(request, &mut snapshot);
   snapshot
 }

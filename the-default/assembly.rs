@@ -1,4 +1,5 @@
 use the_lib::render::{
+  OwnedTextAnnotations,
   RenderPlan,
   UiTree,
   text_annotations::TextAnnotations,
@@ -22,6 +23,7 @@ use crate::{
   Mode,
   NamedAction,
   NamedActionHandle,
+  OwnedTextAnnotationsProvider,
   ParseKeyBindingError,
   PickerQueryHandlerEntry,
   PickerSubmitHandlerEntry,
@@ -188,6 +190,7 @@ pub struct EditorPreset<Ctx: 'static, Dispatch> {
   picker_query_handlers:            PickerQueryHandlerRegistry<Ctx>,
   picker_submit_handlers:           PickerSubmitHandlerRegistry<Ctx>,
   text_annotations_providers:       Vec<Box<TextAnnotationsProvider<Ctx>>>,
+  owned_text_annotations_providers: Vec<Box<OwnedTextAnnotationsProvider<Ctx>>>,
   render_plan_post_processors:      Vec<Box<RenderPlanPostProcessor<Ctx>>>,
   ui_tree_post_processors:          Vec<Box<UiTreePostProcessor<Ctx>>>,
   extension_state:                  ExtensionStateStore,
@@ -210,6 +213,7 @@ impl<Ctx: 'static, Dispatch> EditorPreset<Ctx, Dispatch> {
       picker_query_handlers: PickerQueryHandlerRegistry::default(),
       picker_submit_handlers: PickerSubmitHandlerRegistry::default(),
       text_annotations_providers: Vec::new(),
+      owned_text_annotations_providers: Vec::new(),
       render_plan_post_processors: Vec::new(),
       ui_tree_post_processors: Vec::new(),
       extension_state: ExtensionStateStore::default(),
@@ -264,6 +268,7 @@ impl<Ctx: 'static, Dispatch> EditorPreset<Ctx, Dispatch> {
       picker_query_handlers: self.picker_query_handlers,
       picker_submit_handlers: self.picker_submit_handlers,
       text_annotations_providers: self.text_annotations_providers,
+      owned_text_annotations_providers: self.owned_text_annotations_providers,
       render_plan_post_processors: self.render_plan_post_processors,
       ui_tree_post_processors: self.ui_tree_post_processors,
       extension_state: self.extension_state,
@@ -488,6 +493,14 @@ impl<Ctx: 'static, Dispatch> EditorPreset<Ctx, Dispatch> {
     self
   }
 
+  pub fn install_owned_text_annotations_provider<F>(mut self, provider: F) -> Self
+  where
+    F: Fn(&Ctx, &mut OwnedTextAnnotations) + 'static,
+  {
+    self.owned_text_annotations_providers.push(Box::new(provider));
+    self
+  }
+
   pub fn install_render_plan_post_processor<F>(mut self, processor: F) -> Self
   where
     F: Fn(&mut Ctx, &mut RenderPlan) + 'static,
@@ -547,6 +560,7 @@ impl<Ctx: 'static, Dispatch> EditorPreset<Ctx, Dispatch> {
       picker_query_handlers: self.picker_query_handlers,
       picker_submit_handlers: self.picker_submit_handlers,
       text_annotations_providers: self.text_annotations_providers,
+      owned_text_annotations_providers: self.owned_text_annotations_providers,
       render_plan_post_processors: self.render_plan_post_processors,
       ui_tree_post_processors: self.ui_tree_post_processors,
       extension_state: self.extension_state,
@@ -568,6 +582,7 @@ pub struct BuiltEditorPreset<Ctx: 'static, Dispatch> {
   picker_query_handlers:            PickerQueryHandlerRegistry<Ctx>,
   picker_submit_handlers:           PickerSubmitHandlerRegistry<Ctx>,
   text_annotations_providers:       Vec<Box<TextAnnotationsProvider<Ctx>>>,
+  owned_text_annotations_providers: Vec<Box<OwnedTextAnnotationsProvider<Ctx>>>,
   render_plan_post_processors:      Vec<Box<RenderPlanPostProcessor<Ctx>>>,
   ui_tree_post_processors:          Vec<Box<UiTreePostProcessor<Ctx>>>,
   extension_state:                  ExtensionStateStore,
@@ -755,6 +770,12 @@ impl<Ctx: 'static, Dispatch> BuiltEditorPreset<Ctx, Dispatch> {
     }
   }
 
+  pub fn extend_owned_text_annotations(&self, ctx: &Ctx, annotations: &mut OwnedTextAnnotations) {
+    for provider in &self.owned_text_annotations_providers {
+      provider(ctx, annotations);
+    }
+  }
+
   pub fn postprocess_render_plan(&self, ctx: &mut Ctx, plan: &mut RenderPlan) {
     for processor in &self.render_plan_post_processors {
       processor(ctx, plan);
@@ -786,6 +807,7 @@ where
       picker_query_handlers:            self.picker_query_handlers,
       picker_submit_handlers:           self.picker_submit_handlers,
       text_annotations_providers:       self.text_annotations_providers,
+      owned_text_annotations_providers: self.owned_text_annotations_providers,
       render_plan_post_processors:      self.render_plan_post_processors,
       ui_tree_post_processors:          self.ui_tree_post_processors,
       extension_state:                  self.extension_state,

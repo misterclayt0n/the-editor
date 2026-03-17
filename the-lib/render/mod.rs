@@ -91,6 +91,7 @@ pub use plan::{
 pub use text_annotations::{
   InlineAnnotation,
   LineAnnotation,
+  OwnedTextAnnotations,
   Overlay,
   TextAnnotations,
   VirtualLineAnnotation,

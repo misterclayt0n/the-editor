@@ -5797,6 +5797,8 @@ pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> Ren
     let jump_label_style = ctx.ui_theme.find_highlight("ui.virtual.jump-label");
     let _ = annotations.add_overlay(&ctx.word_jump_overlay_annotations, jump_label_style);
   }
+  let mut owned_annotations = the_lib::render::OwnedTextAnnotations::default();
+  ctx.extend_owned_text_annotations(&mut owned_annotations);
   ctx.inline_diagnostic_lines.clear();
   let inline_diagnostics = active_inline_diagnostics(ctx);
   let inline_diag_count = inline_diagnostics.len();
@@ -5833,6 +5835,14 @@ pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> Ren
   // Build the render plan (with or without syntax highlighting).
   let (mut plan, diagnostic_underlines, inline_lines, inline_render_trace) = {
     let (doc, render_cache) = ctx.editor.document_and_cache();
+    if !owned_annotations.is_empty() {
+      let _ = owned_annotations.extend_into(
+        &mut annotations,
+        doc.text().slice(..),
+        text_fmt.viewport_width.max(1),
+        view.scroll.col,
+      );
+    }
     let mut plan = if let (Some(loader), Some(syntax)) = (&ctx.loader, doc.syntax()) {
       // Calculate line range for highlighting
       let line_range = view.scroll.row..(view.scroll.row + view.viewport.height as usize);

@@ -1,4 +1,5 @@
 use the_lib::render::{
+  OwnedTextAnnotations,
   RenderPlan,
   UiTree,
   text_annotations::TextAnnotations,
@@ -45,6 +46,8 @@ pub type PickerQueryHandler<Ctx> = dyn Fn(&mut Ctx, &str) + 'static;
 pub type PickerSubmitHandler<Ctx> =
   dyn Fn(&mut Ctx, &FilePickerItem) -> PickerSubmitResult + 'static;
 pub type TextAnnotationsProvider<Ctx> = dyn for<'a> Fn(&'a Ctx, &mut TextAnnotations<'a>) + 'static;
+pub type OwnedTextAnnotationsProvider<Ctx> =
+  dyn Fn(&Ctx, &mut OwnedTextAnnotations) + 'static;
 pub type RenderPlanPostProcessor<Ctx> = dyn Fn(&mut Ctx, &mut RenderPlan) + 'static;
 pub type UiTreePostProcessor<Ctx> = dyn Fn(&mut Ctx, &mut UiTree) + 'static;
 

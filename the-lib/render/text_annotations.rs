@@ -574,6 +574,98 @@ impl Debug for TextAnnotations<'_> {
   }
 }
 
+#[derive(Debug, Default, Clone)]
+pub struct OwnedTextAnnotations {
+  inline_annotations: Vec<(Vec<InlineAnnotation>, Option<Highlight>)>,
+  overlays:           Vec<(Vec<Overlay>, Option<Highlight>)>,
+  virtual_lines:      Vec<VirtualLineSpec>,
+}
+
+impl OwnedTextAnnotations {
+  #[must_use]
+  pub fn is_empty(&self) -> bool {
+    self.inline_annotations.is_empty() && self.overlays.is_empty() && self.virtual_lines.is_empty()
+  }
+
+  #[must_use]
+  pub fn add_inline_annotations_owned(
+    &mut self,
+    mut layer: Vec<InlineAnnotation>,
+    highlight: Option<Highlight>,
+  ) -> &mut Self {
+    layer.sort_by_key(|annot| annot.char_idx);
+    if !layer.is_empty() {
+      self.inline_annotations.push((layer, highlight));
+    }
+    self
+  }
+
+  #[must_use]
+  pub fn add_inline_text(
+    &mut self,
+    char_idx: usize,
+    text: impl Into<Tendril>,
+    highlight: Option<Highlight>,
+  ) -> &mut Self {
+    self.add_inline_annotations_owned(vec![InlineAnnotation::new(char_idx, text)], highlight)
+  }
+
+  #[must_use]
+  pub fn add_overlays_owned(
+    &mut self,
+    mut layer: Vec<Overlay>,
+    highlight: Option<Highlight>,
+  ) -> &mut Self {
+    layer.sort_by_key(|overlay| overlay.char_idx);
+    if !layer.is_empty() {
+      self.overlays.push((layer, highlight));
+    }
+    self
+  }
+
+  #[must_use]
+  pub fn add_overlay_grapheme(
+    &mut self,
+    char_idx: usize,
+    grapheme: impl Into<Tendril>,
+    highlight: Option<Highlight>,
+  ) -> &mut Self {
+    self.add_overlays_owned(vec![Overlay::new(char_idx, grapheme)], highlight)
+  }
+
+  #[must_use]
+  pub fn add_virtual_line(&mut self, spec: VirtualLineSpec) -> &mut Self {
+    if !spec.text.is_empty() {
+      self.virtual_lines.push(spec);
+    }
+    self
+  }
+
+  #[must_use]
+  pub fn extend_into<'a>(
+    self,
+    annotations: &mut TextAnnotations<'a>,
+    text: RopeSlice<'_>,
+    viewport_width: u16,
+    horizontal_offset: usize,
+  ) {
+    for (layer, highlight) in self.inline_annotations {
+      let _ = annotations.add_inline_annotations_owned(layer, highlight);
+    }
+    for (layer, highlight) in self.overlays {
+      let _ = annotations.add_overlays_owned(layer, highlight);
+    }
+    if !self.virtual_lines.is_empty() {
+      let _ = annotations.add_line_annotation(Box::new(VirtualLineAnnotation::new(
+        text,
+        self.virtual_lines,
+        viewport_width.max(1),
+        horizontal_offset,
+      )));
+    }
+  }
+}
+
 impl<'a> TextAnnotations<'a> {
   /// Create a traversal cursor starting at `char_idx`.
   pub fn cursor<'t>(&'t mut self, char_idx: usize) -> TextAnnotationsCursor<'t, 'a> {

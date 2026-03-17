@@ -162,6 +162,7 @@ pub use extensions::{
   NamedActionFn,
   NamedActionHandle,
   NamedActionInfo,
+  OwnedTextAnnotationsProvider,
   PickerQueryHandler,
   PickerQueryHandlerEntry,
   PickerQueryHandlerId,
@@ -284,6 +285,7 @@ pub use overlay_layout::{
   completion_panel_rect,
   signature_help_panel_rect,
 };
+pub use the_lib::render::OwnedTextAnnotations;
 pub use pending::PendingInput;
 pub use search_prompt::{
   SearchPromptKind,

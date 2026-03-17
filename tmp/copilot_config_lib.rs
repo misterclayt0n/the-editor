@@ -42,8 +42,11 @@ use the_default::{
   DefaultApi,
   DefaultContext,
   EditorPreset,
+  KeyAction,
+  KeyBinding,
   Key,
   KeyEvent,
+  Keymaps,
   Mode,
   build_dispatch as default_dispatch,
   default_editor_preset,
@@ -52,12 +55,14 @@ use the_default::{
 use the_lib::{
   editor::BufferId,
   indent::IndentStyle,
-  render::RenderPlan,
+  render::{
+    OwnedTextAnnotations,
+    VirtualLineSpec,
+  },
   selection::{
     CursorId,
     Selection,
   },
-  syntax::Highlight,
   transaction::Transaction,
 };
 use the_lsp::text_sync::{
@@ -87,8 +92,9 @@ where
 {
   default_editor_preset::<Ctx>()
     .with_dispatch(build_dispatch::<Ctx>())
+    .with_completion_menu_keymaps(copilot_completion_menu_keymaps())
     .install_extension_state(CopilotState::default())
-    .install_render_plan_post_processor(render_copilot_preview::<Ctx>)
+    .install_owned_text_annotations_provider(render_copilot_preview::<Ctx>)
     .install_command(
       CommandBuilder::new(
         "copilot-toggle",
@@ -169,7 +175,7 @@ where
 }
 
 fn pre_on_keypress<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent) {
-  if ctx.mode() == Mode::Insert && !ctx.completion_menu().active {
+  if ctx.mode() == Mode::Insert {
     match key.key {
       Key::Tab if key.modifiers.is_empty() => {
         if accept_suggestion(ctx, AcceptKind::Full) {
@@ -196,8 +202,56 @@ fn pre_render<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
   schedule_or_send_query(ctx);
 }
 
-fn render_copilot_preview<Ctx: DefaultContext>(ctx: &mut Ctx, plan: &mut RenderPlan) {
-  if ctx.mode() != Mode::Insert || ctx.completion_menu().active {
+fn copilot_completion_menu_keymaps() -> Keymaps {
+  let mut keymaps = Keymaps::default();
+
+  for mode in [Mode::Insert, Mode::Normal] {
+    keymaps
+      .bind(mode, KeyBinding::new(Key::Up), KeyAction::Command(the_default::Command::CompletionPrev))
+      .expect("valid completion menu key");
+    keymaps
+      .bind(
+        mode,
+        KeyBinding::new(Key::Down),
+        KeyAction::Command(the_default::Command::CompletionNext),
+      )
+      .expect("valid completion menu key");
+    keymaps
+      .bind(
+        mode,
+        KeyBinding::new(Key::Tab).with_modifiers(true, false, false),
+        KeyAction::Command(the_default::Command::CompletionPrev),
+      )
+      .expect("valid completion menu key");
+    keymaps
+      .bind(
+        mode,
+        KeyBinding::new(Key::Enter),
+        KeyAction::Command(the_default::Command::CompletionAccept),
+      )
+      .expect("valid completion menu key");
+    keymaps
+      .bind(
+        mode,
+        KeyBinding::new(Key::NumpadEnter),
+        KeyAction::Command(the_default::Command::CompletionAccept),
+      )
+      .expect("valid completion menu key");
+  }
+
+  keymaps
+    .bind(
+      Mode::Normal,
+      KeyBinding::new(Key::Escape),
+      KeyAction::Command(the_default::Command::CompletionCancel),
+    )
+    .expect("valid completion menu key");
+
+  keymaps
+}
+
+fn render_copilot_preview<Ctx: DefaultContext>(ctx: &Ctx, annotations: &mut OwnedTextAnnotations) {
+  if ctx.mode() != Mode::Insert {
     return;
   }
 
@@ -205,9 +259,6 @@ fn render_copilot_preview<Ctx: DefaultContext>(ctx: &mut Ctx, plan: &mut RenderP
     return;
   };
   let Some(suggestion) = state.suggestion.as_ref() else {
-    return;
-  };
-  let Some(cursor) = plan.cursors.first().cloned() else {
     return;
   };
 
@@ -233,21 +284,23 @@ fn render_copilot_preview<Ctx: DefaultContext>(ctx: &mut Ctx, plan: &mut RenderP
     return;
   }
 
+  let highlight = ctx.ui_theme().find_highlight("ui.virtual.inline");
+  let cursor_line = text.char_to_line(cursor_char);
   let mut lines = preview_text.lines();
   let first_line = lines.next().unwrap_or_default();
   if !first_line.is_empty() {
-    let style = highlight_style(ctx.ui_theme().find_highlight("ui.virtual.inline"), ctx);
-    let _ = plan.add_overlay_text(cursor.pos, first_line.to_string(), style);
+    let _ = annotations.add_inline_text(cursor_char, first_line.to_string(), highlight);
   }
-}
 
-fn highlight_style<Ctx: DefaultContext>(
-  highlight: Option<Highlight>,
-  ctx: &Ctx,
-) -> the_lib::render::graphics::Style {
-  highlight
-    .map(|highlight| ctx.ui_theme().highlight(highlight))
-    .unwrap_or_default()
+  let remaining = lines.collect::<Vec<_>>();
+  if !remaining.is_empty() {
+    let _ = annotations.add_virtual_line(
+      VirtualLineSpec::after(cursor_line)
+        .text(remaining.join("\n"))
+        .highlight(highlight)
+        .wrap_to_viewport(),
+    );
+  }
 }
 
 fn preview_text_for_cursor(
@@ -798,7 +851,7 @@ fn ensure_transport<Ctx: DefaultContext>(ctx: &mut Ctx) -> Result<(), ()> {
 }
 
 fn current_prepared_query<Ctx: DefaultContext>(ctx: &Ctx) -> Option<PreparedQuery> {
-  if ctx.mode() != Mode::Insert || ctx.completion_menu().active {
+  if ctx.mode() != Mode::Insert {
     return None;
   }
 

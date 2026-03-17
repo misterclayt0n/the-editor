@@ -6123,6 +6123,10 @@ impl the_default::DefaultContext for Ctx {
     self.preset.extend_text_annotations(self, annotations);
   }
 
+  fn extend_owned_text_annotations(&self, annotations: &mut the_lib::render::OwnedTextAnnotations) {
+    self.preset.extend_owned_text_annotations(self, annotations);
+  }
+
   fn postprocess_render_plan(&mut self, plan: &mut RenderPlan) {
     let preset = &self.preset as *const BuiltEditorPreset<Self, Box<dyn DefaultApi<Self>>>;
     unsafe { (&*preset).postprocess_render_plan(self, plan) };
@@ -6449,6 +6453,14 @@ impl the_default::DefaultContext for Ctx {
     if !self.word_jump_overlay_annotations.is_empty() {
       let jump_label_style = self.ui_theme.find_highlight("ui.virtual.jump-label");
       let _ = annotations.add_overlay(&self.word_jump_overlay_annotations, jump_label_style);
+    }
+    let mut owned = the_lib::render::OwnedTextAnnotations::default();
+    self.extend_owned_text_annotations(&mut owned);
+    if !owned.is_empty() {
+      let viewport_width = self.text_format.viewport_width.max(1);
+      let horizontal_offset = self.editor.view().scroll.col;
+      let text = self.editor.document().text().slice(..);
+      let _ = owned.extend_into(&mut annotations, text, viewport_width, horizontal_offset);
     }
     self.extend_text_annotations(&mut annotations);
     annotations

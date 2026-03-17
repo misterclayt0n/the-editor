@@ -738,6 +738,11 @@ pub trait DefaultContext: Sized + 'static {
   fn set_pending_input(&mut self, pending: Option<PendingInput>);
   fn set_word_jump_annotations(&mut self, _inline: Vec<InlineAnnotation>, _overlay: Vec<Overlay>) {}
   fn clear_word_jump_annotations(&mut self) {}
+  fn extend_owned_text_annotations(
+    &self,
+    _annotations: &mut the_lib::render::OwnedTextAnnotations,
+  ) {
+  }
   fn active_diagnostic_ranges(&self) -> Vec<Range> {
     Vec::new()
   }

@@ -6368,6 +6368,37 @@ fn draw_pane_content(
     );
   }
 
+  for overlay in &plan.overlays {
+    match overlay {
+      the_lib::render::OverlayNode::Rect(rect) => {
+        let overlay_rect = Rect::new(
+          content_x.saturating_add(rect.rect.x),
+          pane_area.y.saturating_add(rect.rect.y),
+          rect.rect.width,
+          rect.rect.height,
+        );
+        fill_rect(buf, overlay_rect, lib_style_to_ratatui(rect.style));
+      },
+      the_lib::render::OverlayNode::Text(text) => {
+        let x = content_x.saturating_add(text.pos.col as u16);
+        let y = pane_area.y.saturating_add(text.pos.row as u16);
+        if x >= pane_area.x.saturating_add(pane_area.width)
+          || y >= pane_area.y.saturating_add(pane_area.height)
+        {
+          continue;
+        }
+        let max_width = pane_area
+          .x
+          .saturating_add(pane_area.width)
+          .saturating_sub(x) as usize;
+        if max_width == 0 {
+          continue;
+        }
+        buf.set_stringn(x, y, text.text.as_str(), max_width, lib_style_to_ratatui(text.style));
+      },
+    }
+  }
+
   if ctx.file_picker.active {
     return editor_cursor;
   }

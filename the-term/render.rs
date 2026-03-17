@@ -130,6 +130,7 @@ use the_lib::{
     apply_diagnostic_gutter_markers,
     apply_diff_gutter_markers,
     apply_row_insertions,
+    apply_virtual_lines_layout,
     base_render_layer_row_hashes,
     build_plan,
     finish_frame_generations,
@@ -143,6 +144,7 @@ use the_lib::{
     },
     gutter_width_for_document,
     render_inline_diagnostics_for_viewport,
+    render_virtual_lines_for_viewport,
     text_annotations::TextAnnotations,
     ui_theme::resolve_ui_tree,
     visual_pos_at_char,
@@ -5835,13 +5837,9 @@ pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> Ren
   // Build the render plan (with or without syntax highlighting).
   let (mut plan, diagnostic_underlines, inline_lines, inline_render_trace) = {
     let (doc, render_cache) = ctx.editor.document_and_cache();
+    let owned_virtual_lines = owned_annotations.virtual_lines().to_vec();
     if !owned_annotations.is_empty() {
-      let _ = owned_annotations.extend_into(
-        &mut annotations,
-        doc.text().slice(..),
-        text_fmt.viewport_width.max(1),
-        view.scroll.col,
-      );
+      let _ = owned_annotations.extend_inline_and_overlays_into(&mut annotations);
     }
     let mut plan = if let (Some(loader), Some(syntax)) = (&ctx.loader, doc.syntax()) {
       // Calculate line range for highlighting
@@ -5883,6 +5881,15 @@ pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> Ren
         styles,
       )
     };
+    if !owned_virtual_lines.is_empty() {
+      let layout = render_virtual_lines_for_viewport(
+        &plan,
+        text_fmt.viewport_width.max(1),
+        view.scroll.col,
+        &owned_virtual_lines,
+      );
+      apply_virtual_lines_layout(&mut plan, &layout);
+    }
     add_selection_match_highlights(
       &mut plan,
       doc,

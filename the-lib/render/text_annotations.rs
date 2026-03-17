@@ -588,6 +588,11 @@ impl OwnedTextAnnotations {
   }
 
   #[must_use]
+  pub fn virtual_lines(&self) -> &[VirtualLineSpec] {
+    &self.virtual_lines
+  }
+
+  #[must_use]
   pub fn add_inline_annotations_owned(
     &mut self,
     mut layer: Vec<InlineAnnotation>,
@@ -642,6 +647,16 @@ impl OwnedTextAnnotations {
   }
 
   #[must_use]
+  pub fn extend_inline_and_overlays_into<'a>(self, annotations: &mut TextAnnotations<'a>) {
+    for (layer, highlight) in self.inline_annotations {
+      let _ = annotations.add_inline_annotations_owned(layer, highlight);
+    }
+    for (layer, highlight) in self.overlays {
+      let _ = annotations.add_overlays_owned(layer, highlight);
+    }
+  }
+
+  #[must_use]
   pub fn extend_into<'a>(
     self,
     annotations: &mut TextAnnotations<'a>,
@@ -649,16 +664,12 @@ impl OwnedTextAnnotations {
     viewport_width: u16,
     horizontal_offset: usize,
   ) {
-    for (layer, highlight) in self.inline_annotations {
-      let _ = annotations.add_inline_annotations_owned(layer, highlight);
-    }
-    for (layer, highlight) in self.overlays {
-      let _ = annotations.add_overlays_owned(layer, highlight);
-    }
-    if !self.virtual_lines.is_empty() {
+    let virtual_lines = self.virtual_lines.clone();
+    let _ = self.extend_inline_and_overlays_into(annotations);
+    if !virtual_lines.is_empty() {
       let _ = annotations.add_line_annotation(Box::new(VirtualLineAnnotation::new(
         text,
-        self.virtual_lines,
+        virtual_lines,
         viewport_width.max(1),
         horizontal_offset,
       )));
@@ -991,7 +1002,7 @@ fn wrap_virtual_line_rows(
   viewport_width: u16,
   horizontal_offset: usize,
 ) -> Vec<Tendril> {
-  let text = spec.text.trim();
+  let text: &str = spec.text.as_ref();
   if text.is_empty() {
     return Vec::new();
   }
@@ -1066,6 +1077,7 @@ mod tests {
 
   use super::{
     LineAnnotation,
+    OwnedTextAnnotations,
     TextAnnotations,
     VirtualLineAnnotation,
     VirtualLineSpec,
@@ -1151,5 +1163,78 @@ mod tests {
     assert_eq!(line_text(&plan, 0).as_deref(), Some("one "));
     assert_eq!(line_text(&plan, 1).as_deref(), Some("ghost line"));
     assert_eq!(line_text(&plan, 2).as_deref(), Some("two"));
+  }
+
+  #[test]
+  fn owned_virtual_lines_can_be_applied_after_plan_build() {
+    let id = DocumentId::new(std::num::NonZeroUsize::new(1).unwrap());
+    let doc = Document::new(id, Rope::from("one\ntwo"));
+    let view = ViewState::new(Rect::new(0, 0, 20, 4), Position::new(0, 0));
+    let text_fmt = TextFormat::default();
+    let gutter = no_gutter();
+    let mut annotations = TextAnnotations::default();
+    let mut owned = OwnedTextAnnotations::default();
+    let _ = owned.add_virtual_line(VirtualLineSpec::after(0).text("ghost line").single_line());
+    let owned_virtual_lines = owned.virtual_lines().to_vec();
+    let _ = owned.extend_inline_and_overlays_into(&mut annotations);
+    let mut highlights = NoHighlights;
+    let mut cache = RenderCache::default();
+    let mut plan = build_plan(
+      &doc,
+      view,
+      &text_fmt,
+      &gutter,
+      &mut annotations,
+      &mut highlights,
+      &mut cache,
+      RenderStyles::default(),
+    );
+
+    let layout = render_virtual_lines_for_viewport(
+      &plan,
+      text_fmt.viewport_width.max(1) as u16,
+      0,
+      &owned_virtual_lines,
+    );
+    apply_virtual_lines_layout(&mut plan, &layout);
+
+    assert_eq!(line_text(&plan, 0).as_deref(), Some("one "));
+    assert_eq!(line_text(&plan, 1).as_deref(), Some("ghost line"));
+    assert_eq!(line_text(&plan, 2).as_deref(), Some("two"));
+  }
+
+  #[test]
+  fn virtual_lines_preserve_leading_indentation() {
+    let id = DocumentId::new(std::num::NonZeroUsize::new(1).unwrap());
+    let doc = Document::new(id, Rope::from("fn demo() {\n}\n"));
+    let view = ViewState::new(Rect::new(0, 0, 40, 6), Position::new(0, 0));
+    let text_fmt = TextFormat::default();
+    let gutter = no_gutter();
+    let mut annotations = TextAnnotations::default();
+    let mut highlights = NoHighlights;
+    let mut cache = RenderCache::default();
+    let mut plan = build_plan(
+      &doc,
+      view,
+      &text_fmt,
+      &gutter,
+      &mut annotations,
+      &mut highlights,
+      &mut cache,
+      RenderStyles::default(),
+    );
+
+    let specs = vec![
+      VirtualLineSpec::after(0)
+        .text("    if (n == 0) {\n        return 1;\n    }")
+        .single_line(),
+    ];
+    let layout =
+      render_virtual_lines_for_viewport(&plan, text_fmt.viewport_width.max(1) as u16, 0, &specs);
+    apply_virtual_lines_layout(&mut plan, &layout);
+
+    assert_eq!(line_text(&plan, 1).as_deref(), Some("    if (n == 0) {"));
+    assert_eq!(line_text(&plan, 2).as_deref(), Some("        return 1;"));
+    assert_eq!(line_text(&plan, 3).as_deref(), Some("    }"));
   }
 }

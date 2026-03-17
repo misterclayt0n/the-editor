@@ -550,6 +550,7 @@ pub trait DefaultContext: Sized + 'static {
   fn working_directory_state(&self) -> &WorkingDirectoryState;
   fn working_directory_state_mut(&mut self) -> &mut WorkingDirectoryState;
   fn request_render(&mut self);
+  fn render_waker(&self) -> crate::RenderWaker;
   fn effective_working_directory(&self) -> PathBuf {
     self
       .working_directory_state()

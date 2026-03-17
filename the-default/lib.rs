@@ -23,6 +23,7 @@ mod keymap;
 mod message_bar;
 mod overlay_layout;
 mod pending;
+mod render_waker;
 mod search_prompt;
 mod signature_help;
 mod statusline;
@@ -279,6 +280,7 @@ pub use message_bar::{
   MessagePresentation,
   build_message_bar_ui,
 };
+pub use render_waker::RenderWaker;
 pub use overlay_layout::{
   OverlayRect,
   completion_docs_panel_rect,

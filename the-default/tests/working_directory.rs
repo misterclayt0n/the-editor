@@ -118,6 +118,11 @@ impl DefaultContext for TestCtx {
 
   fn request_render(&mut self) {}
 
+  fn render_waker(&self) -> the_default::RenderWaker {
+    let (tx, _rx) = std::sync::mpsc::channel();
+    the_default::RenderWaker::new(tx)
+  }
+
   fn messages(&self) -> &MessageCenter {
     &self.messages
   }

@@ -582,7 +582,8 @@ pub struct Ctx {
   message_log:                       Option<BufWriter<std::fs::File>>,
   message_log_seq:                   u64,
   lsp_trace_log:                     Option<BufWriter<std::fs::File>>,
-  pub file_picker_wake_rx:           Receiver<()>,
+  render_wake_tx:                    Sender<()>,
+  pub render_wake_rx:                Receiver<()>,
   pub mode:                          Mode,
   pub preset:                        BuiltEditorPreset<Ctx, Box<dyn DefaultApi<Ctx>>>,
   pub command_prompt:                CommandPromptState,
@@ -961,13 +962,13 @@ impl Ctx {
     let message_log = open_message_log();
     let lsp_trace_log = open_lsp_trace_log();
 
-    let (file_picker_wake_tx, file_picker_wake_rx) = std::sync::mpsc::channel();
+    let (render_wake_tx, render_wake_rx) = std::sync::mpsc::channel();
     let mut file_picker = FilePickerState::default();
     the_default::set_file_picker_config(
       &mut file_picker,
       the_config::defaults::build_file_picker_config(),
     );
-    the_default::set_file_picker_wake_sender(&mut file_picker, Some(file_picker_wake_tx));
+    the_default::set_file_picker_wake_sender(&mut file_picker, Some(render_wake_tx.clone()));
     the_default::set_file_picker_syntax_loader(&mut file_picker, loader.clone());
     let (syntax_parse_tx, syntax_parse_rx) = channel();
     let mut lsp_runtime_config = LspRuntimeConfig::new(workspace_root)
@@ -1000,7 +1001,8 @@ impl Ctx {
       message_log,
       message_log_seq: 0,
       lsp_trace_log,
-      file_picker_wake_rx,
+      render_wake_tx,
+      render_wake_rx,
       mode: Mode::Normal,
       preset,
       command_prompt: CommandPromptState::new(),
@@ -5685,6 +5687,10 @@ impl the_default::DefaultContext for Ctx {
 
   fn request_render(&mut self) {
     self.needs_render = true;
+  }
+
+  fn render_waker(&self) -> the_default::RenderWaker {
+    the_default::RenderWaker::new(self.render_wake_tx.clone())
   }
 
   fn messages(&self) -> &MessageCenter {

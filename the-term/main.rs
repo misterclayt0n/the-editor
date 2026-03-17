@@ -259,7 +259,7 @@ fn main() -> Result<()> {
     }
 
     loop {
-      match ctx.file_picker_wake_rx.try_recv() {
+      match ctx.render_wake_rx.try_recv() {
         Ok(()) => {
           ctx.needs_render = true;
         },

@@ -194,6 +194,14 @@ impl DefaultContext for TestCtx {
     todo!()
   }
 
+  fn completion_menu_keymaps(&self) -> &Keymaps {
+    todo!()
+  }
+
+  fn completion_menu_keymaps_mut(&mut self) -> &mut Keymaps {
+    todo!()
+  }
+
   fn file_picker(&self) -> &FilePickerState {
     &self.file_picker
   }

@@ -705,6 +705,8 @@ pub trait DefaultContext: Sized + 'static {
   fn command_palette_style_mut(&mut self) -> &mut CommandPaletteStyle;
   fn completion_menu(&self) -> &CompletionMenuState;
   fn completion_menu_mut(&mut self) -> &mut CompletionMenuState;
+  fn completion_menu_keymaps(&self) -> &Keymaps;
+  fn completion_menu_keymaps_mut(&mut self) -> &mut Keymaps;
   fn completion_selection_changed(&mut self, _index: usize) {}
   fn completion_accept_selected(&mut self, _index: usize) -> bool {
     false
@@ -1550,7 +1552,7 @@ fn on_keypress<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent) {
     }
   }
 
-  if handle_insert_mode_completion_key(ctx, key) {
+  if handle_completion_menu_keymap(ctx, key) {
     return;
   }
 
@@ -1586,43 +1588,15 @@ fn handle_key_outcome<Ctx: DefaultContext>(ctx: &mut Ctx, outcome: KeyOutcome) -
   }
 }
 
-fn handle_insert_mode_completion_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent) -> bool {
+fn handle_completion_menu_keymap<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent) -> bool {
   if !ctx.completion_menu().active {
     return false;
   }
-  let is_insert_mode = ctx.mode() == Mode::Insert;
 
-  match key.key {
-    Key::Up => {
-      crate::completion_menu::completion_prev(ctx);
-      true
-    },
-    Key::Down => {
-      crate::completion_menu::completion_next(ctx);
-      true
-    },
-    Key::Tab if key.modifiers.shift() => {
-      crate::completion_menu::completion_prev(ctx);
-      true
-    },
-    Key::Tab => {
-      crate::completion_menu::completion_next(ctx);
-      true
-    },
-    Key::Enter | Key::NumpadEnter => {
-      crate::completion_menu::completion_accept(ctx);
-      true
-    },
-    // Preserve insert-mode escape semantics. Outside insert mode, close the
-    // popup directly so completion-style popups (e.g. code actions) can be
-    // navigated and dismissed in normal mode.
-    Key::Escape if is_insert_mode => false,
-    Key::Escape => {
-      crate::completion_menu::close_completion_menu(ctx);
-      true
-    },
-    _ => false,
-  }
+  let mut keymaps = std::mem::take(ctx.completion_menu_keymaps_mut());
+  let outcome = crate::keymap::handle_key_with_keymaps(ctx, &mut keymaps, key);
+  *ctx.completion_menu_keymaps_mut() = keymaps;
+  handle_key_outcome(ctx, outcome)
 }
 
 fn post_on_keypress<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {

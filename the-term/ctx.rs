@@ -5850,6 +5850,14 @@ impl the_default::DefaultContext for Ctx {
     &mut self.completion_menu
   }
 
+  fn completion_menu_keymaps(&self) -> &the_default::Keymaps {
+    self.preset.completion_menu_keymaps()
+  }
+
+  fn completion_menu_keymaps_mut(&mut self) -> &mut the_default::Keymaps {
+    self.preset.completion_menu_keymaps_mut()
+  }
+
   fn signature_help(&self) -> Option<&the_default::SignatureHelpState> {
     Some(&self.signature_help)
   }

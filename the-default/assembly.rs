@@ -178,6 +178,7 @@ impl<Ctx: 'static, Dispatch> std::fmt::Debug for SignatureHelpProviderBuilder<'_
 pub struct EditorPreset<Ctx: 'static, Dispatch> {
   dispatch:                         Dispatch,
   keymaps:                          Keymaps,
+  completion_menu_keymaps:          Keymaps,
   commands:                         Vec<TypableCommand<Ctx>>,
   named_actions:                    NamedActionRegistry<Ctx>,
   command_palette_providers:        Vec<Box<CommandPaletteItemProvider<Ctx>>>,
@@ -199,6 +200,7 @@ impl<Ctx: 'static, Dispatch> EditorPreset<Ctx, Dispatch> {
     Self {
       dispatch,
       keymaps,
+      completion_menu_keymaps: crate::builtin_completion_menu_keymaps(),
       commands: Vec::new(),
       named_actions: NamedActionRegistry::default(),
       command_palette_providers: Vec::new(),
@@ -252,6 +254,7 @@ impl<Ctx: 'static, Dispatch> EditorPreset<Ctx, Dispatch> {
     EditorPreset {
       dispatch,
       keymaps: self.keymaps,
+      completion_menu_keymaps: self.completion_menu_keymaps,
       commands: self.commands,
       named_actions: self.named_actions,
       command_palette_providers: self.command_palette_providers,
@@ -274,8 +277,18 @@ impl<Ctx: 'static, Dispatch> EditorPreset<Ctx, Dispatch> {
     self
   }
 
+  pub fn with_completion_menu_keymaps(mut self, keymaps: Keymaps) -> Self {
+    self.completion_menu_keymaps = keymaps;
+    self
+  }
+
   pub fn merge_keymaps(mut self, keymaps: Keymaps) -> Self {
     self.keymaps.merge(keymaps);
+    self
+  }
+
+  pub fn merge_completion_menu_keymaps(mut self, keymaps: Keymaps) -> Self {
+    self.completion_menu_keymaps.merge(keymaps);
     self
   }
 
@@ -303,6 +316,35 @@ impl<Ctx: 'static, Dispatch> EditorPreset<Ctx, Dispatch> {
     L: crate::IntoKeyBinding,
   {
     self.keymaps.bind_sequence(mode, bindings, action)?;
+    Ok(self)
+  }
+
+  pub fn bind_completion_menu_key<L>(
+    mut self,
+    mode: Mode,
+    binding: L,
+    action: KeyAction,
+  ) -> Result<Self, ParseKeyBindingError>
+  where
+    L: crate::IntoKeyBinding,
+  {
+    self.completion_menu_keymaps.bind(mode, binding, action)?;
+    Ok(self)
+  }
+
+  pub fn bind_completion_menu_key_sequence<I, L>(
+    mut self,
+    mode: Mode,
+    bindings: I,
+    action: KeyAction,
+  ) -> Result<Self, ParseKeyBindingError>
+  where
+    I: IntoIterator<Item = L>,
+    L: crate::IntoKeyBinding,
+  {
+    self
+      .completion_menu_keymaps
+      .bind_sequence(mode, bindings, action)?;
     Ok(self)
   }
 
@@ -495,6 +537,7 @@ impl<Ctx: 'static, Dispatch> EditorPreset<Ctx, Dispatch> {
     BuiltEditorPreset {
       dispatch: self.dispatch,
       keymaps: self.keymaps,
+      completion_menu_keymaps: self.completion_menu_keymaps,
       command_registry,
       named_actions: self.named_actions,
       command_palette_providers: self.command_palette_providers,
@@ -515,6 +558,7 @@ impl<Ctx: 'static, Dispatch> EditorPreset<Ctx, Dispatch> {
 pub struct BuiltEditorPreset<Ctx: 'static, Dispatch> {
   dispatch:                         Dispatch,
   keymaps:                          Keymaps,
+  completion_menu_keymaps:          Keymaps,
   command_registry:                 CommandRegistry<Ctx>,
   named_actions:                    NamedActionRegistry<Ctx>,
   command_palette_providers:        Vec<Box<CommandPaletteItemProvider<Ctx>>>,
@@ -541,6 +585,14 @@ impl<Ctx: 'static, Dispatch> BuiltEditorPreset<Ctx, Dispatch> {
 
   pub fn keymaps_mut(&mut self) -> &mut Keymaps {
     &mut self.keymaps
+  }
+
+  pub fn completion_menu_keymaps(&self) -> &Keymaps {
+    &self.completion_menu_keymaps
+  }
+
+  pub fn completion_menu_keymaps_mut(&mut self) -> &mut Keymaps {
+    &mut self.completion_menu_keymaps
   }
 
   pub fn command_registry(&self) -> &CommandRegistry<Ctx> {
@@ -724,6 +776,7 @@ where
     BuiltEditorPreset {
       dispatch:                         Box::new(self.dispatch),
       keymaps:                          self.keymaps,
+      completion_menu_keymaps:          self.completion_menu_keymaps,
       command_registry:                 self.command_registry,
       named_actions:                    self.named_actions,
       command_palette_providers:        self.command_palette_providers,

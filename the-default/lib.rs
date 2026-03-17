@@ -267,6 +267,7 @@ pub use keymap::{
   Mode,
   ParseKeyBindingError,
   action_from_name,
+  builtin_completion_menu_keymaps,
   builtin_keymaps,
   open_action_palette,
   open_action_palette_with_items,

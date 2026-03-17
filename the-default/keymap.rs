@@ -284,6 +284,12 @@ impl IntoKeyBinding for &'static str {
   }
 }
 
+impl IntoKeyBinding for KeyBinding {
+  fn into_binding(self) -> Result<KeyBinding, ParseKeyBindingError> {
+    Ok(self)
+  }
+}
+
 pub fn binding_from_literal<L: IntoKeyBinding>(literal: L) -> KeyBinding {
   literal
     .into_binding()
@@ -667,8 +673,62 @@ pub fn handle_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent) -> KeyOutco
   }
 }
 
+pub fn handle_key_with_keymaps<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  keymaps: &mut Keymaps,
+  key: KeyEvent,
+) -> KeyOutcome {
+  let mode = ctx.mode();
+  let result = keymaps.get(mode, &key);
+
+  match result {
+    KeymapResult::Matched(action) => apply_actions_with_keymaps(ctx, keymaps, &[action]),
+    KeymapResult::MatchedSequence(actions) => {
+      apply_actions_with_keymaps(ctx, keymaps, &actions)
+    },
+    KeymapResult::Pending(_) | KeymapResult::Cancelled(_) => KeyOutcome::Handled,
+    KeymapResult::NotFound => fallback_key(ctx, key),
+  }
+}
+
 fn apply_actions<Ctx: DefaultContext>(ctx: &mut Ctx, actions: &[KeyAction]) -> KeyOutcome {
   let count = ctx.keymaps().take_count_prefix().unwrap_or(1);
+  let mut commands: SmallVec<[Command; 4]> = SmallVec::new();
+
+  for action in actions {
+    match *action {
+      KeyAction::Command(command) => commands.push(apply_count_prefix(command, count)),
+      KeyAction::Mode(mode) => apply_mode(ctx, mode),
+      KeyAction::Named(name) => {
+        if name == "command_palette" {
+          open_command_palette(ctx);
+        } else if let Some(command) = command_from_name(name) {
+          commands.push(apply_count_prefix(command, count));
+        } else if let Some(mode) = mode_from_name(name) {
+          apply_mode(ctx, mode);
+        } else {
+          let _ = ctx.execute_named_action(name);
+        }
+      },
+      KeyAction::NamedHandle(handle) => {
+        let _ = ctx.execute_named_action(handle.name());
+      },
+    }
+  }
+
+  match commands.len() {
+    0 => KeyOutcome::Handled,
+    1 => KeyOutcome::Command(commands[0]),
+    _ => KeyOutcome::Commands(commands),
+  }
+}
+
+fn apply_actions_with_keymaps<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  keymaps: &mut Keymaps,
+  actions: &[KeyAction],
+) -> KeyOutcome {
+  let count = keymaps.take_count_prefix().unwrap_or(1);
   let mut commands: SmallVec<[Command; 4]> = SmallVec::new();
 
   for action in actions {
@@ -1654,6 +1714,53 @@ fn builtin_keymap_map() -> HashMap<Mode, KeyTrie> {
 
 pub fn builtin_keymaps() -> Keymaps {
   Keymaps::new(builtin_keymap_map())
+}
+
+pub fn builtin_completion_menu_keymaps() -> Keymaps {
+  let mut keymaps = Keymaps::default();
+
+  for mode in [Mode::Insert, Mode::Normal] {
+    keymaps
+      .bind(mode, KeyBinding::new(Key::Up), KeyAction::Command(Command::CompletionPrev))
+      .expect("valid completion menu key");
+    keymaps
+      .bind(mode, KeyBinding::new(Key::Down), KeyAction::Command(Command::CompletionNext))
+      .expect("valid completion menu key");
+    keymaps
+      .bind(
+        mode,
+        KeyBinding::new(Key::Tab).with_modifiers(true, false, false),
+        KeyAction::Command(Command::CompletionPrev),
+      )
+      .expect("valid completion menu key");
+    keymaps
+      .bind(mode, KeyBinding::new(Key::Tab), KeyAction::Command(Command::CompletionNext))
+      .expect("valid completion menu key");
+    keymaps
+      .bind(
+        mode,
+        KeyBinding::new(Key::Enter),
+        KeyAction::Command(Command::CompletionAccept),
+      )
+      .expect("valid completion menu key");
+    keymaps
+      .bind(
+        mode,
+        KeyBinding::new(Key::NumpadEnter),
+        KeyAction::Command(Command::CompletionAccept),
+      )
+      .expect("valid completion menu key");
+  }
+
+  keymaps
+    .bind(
+      Mode::Normal,
+      KeyBinding::new(Key::Escape),
+      KeyAction::Command(Command::CompletionCancel),
+    )
+    .expect("valid completion menu key");
+
+  keymaps
 }
 
 #[cfg(test)]

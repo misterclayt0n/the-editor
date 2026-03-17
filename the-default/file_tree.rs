@@ -14,6 +14,10 @@ use std::{
   time::SystemTime,
 };
 
+use ignore::gitignore::{
+  Gitignore,
+  GitignoreBuilder,
+};
 use the_stdx::env::current_working_dir;
 use the_lib::{
   diagnostics::DiagnosticSeverity,
@@ -36,12 +40,59 @@ pub enum FileTreeNodeKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileTreeFilter {
+  pub show_hidden:   bool,
+  pub show_ignored:  bool,
+  pub include_globs: Vec<String>,
+  pub exclude_globs: Vec<String>,
+}
+
+impl Default for FileTreeFilter {
+  fn default() -> Self {
+    Self {
+      show_hidden:   false,
+      show_ignored:  false,
+      include_globs: Vec::new(),
+      exclude_globs: Vec::new(),
+    }
+  }
+}
+
+impl FileTreeFilter {
+  #[must_use]
+  pub fn show_hidden(mut self, show_hidden: bool) -> Self {
+    self.show_hidden = show_hidden;
+    self
+  }
+
+  #[must_use]
+  pub fn show_ignored(mut self, show_ignored: bool) -> Self {
+    self.show_ignored = show_ignored;
+    self
+  }
+
+  #[must_use]
+  pub fn include_glob(mut self, glob: impl Into<String>) -> Self {
+    self.include_globs.push(glob.into());
+    self
+  }
+
+  #[must_use]
+  pub fn exclude_glob(mut self, glob: impl Into<String>) -> Self {
+    self.exclude_globs.push(glob.into());
+    self
+  }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileTreeNodeSnapshot {
   pub id:                    String,
   pub path:                  PathBuf,
   pub name:                  String,
   pub depth:                 usize,
   pub kind:                  FileTreeNodeKind,
+  pub hidden:                bool,
+  pub ignored:               bool,
   pub expanded:              bool,
   pub selected:              bool,
   pub active:                bool,
@@ -53,6 +104,7 @@ pub struct FileTreeSnapshot {
   pub visible:            bool,
   pub root:               PathBuf,
   pub mode:               FileTreeMode,
+  pub filter:             FileTreeFilter,
   pub selected_path:      Option<PathBuf>,
   pub active_path:        Option<PathBuf>,
   pub refresh_generation: u64,
@@ -78,6 +130,71 @@ impl FileTreeNodeBadge {
   pub fn role(mut self, role: impl Into<String>) -> Self {
     self.role = Some(role.into());
     self
+  }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum FileTreeVcsStatusKind {
+  Conflict,
+  Deleted,
+  Modified,
+  Renamed,
+  Untracked,
+}
+
+impl FileTreeVcsStatusKind {
+  #[must_use]
+  pub const fn short_label(self) -> &'static str {
+    match self {
+      Self::Conflict => "!",
+      Self::Deleted => "D",
+      Self::Modified => "M",
+      Self::Renamed => "R",
+      Self::Untracked => "?",
+    }
+  }
+
+  #[must_use]
+  pub const fn badge_role(self) -> &'static str {
+    match self {
+      Self::Conflict => "error",
+      Self::Deleted => "warning",
+      Self::Modified => "info",
+      Self::Renamed => "info",
+      Self::Untracked => "hint",
+    }
+  }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FileTreeVcsSummary {
+  pub kind:  FileTreeVcsStatusKind,
+  pub count: usize,
+}
+
+impl FileTreeVcsSummary {
+  #[must_use]
+  pub fn new(kind: FileTreeVcsStatusKind, count: usize) -> Self {
+    Self {
+      kind,
+      count: count.max(1),
+    }
+  }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FileTreeDiagnosticSummary {
+  pub severity: DiagnosticSeverity,
+  pub count:    usize,
+}
+
+impl FileTreeDiagnosticSummary {
+  #[must_use]
+  pub fn new(severity: DiagnosticSeverity, count: usize) -> Self {
+    Self {
+      severity,
+      count: count.max(1),
+    }
   }
 }
 
@@ -196,12 +313,33 @@ pub enum FileTreeRowAccent {
   Error,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileTreeGuideColumn {
+  Empty,
+  Continue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FileTreeGuideConnector {
+  #[default]
+  None,
+  Branch,
+  LastChild,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct FileTreeRowGuides {
+  pub ancestor_columns: Vec<FileTreeGuideColumn>,
+  pub connector:        FileTreeGuideConnector,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileTreeRowLayout {
   pub id:               String,
   pub path:             PathBuf,
   pub depth:            usize,
   pub indent_text:      String,
+  pub guides:           FileTreeRowGuides,
   pub disclosure:       FileTreeDisclosure,
   pub disclosure_glyph: &'static str,
   pub icon:             String,
@@ -351,10 +489,54 @@ struct DirectoryCacheEntry {
   entries:     Option<Vec<FileTreeEntry>>,
 }
 
+#[derive(Debug)]
+struct FileTreeFilterMatcher {
+  include: Option<Gitignore>,
+  exclude: Option<Gitignore>,
+  filter:  FileTreeFilter,
+}
+
+impl FileTreeFilterMatcher {
+  fn new(root: &Path, filter: &FileTreeFilter) -> Self {
+    Self {
+      include: compile_filter_globs(root, &filter.include_globs),
+      exclude: compile_filter_globs(root, &filter.exclude_globs),
+      filter:  filter.clone(),
+    }
+  }
+
+  fn is_visible_path(&self, path: &Path, name: &str, is_dir: bool) -> bool {
+    if !self.filter.show_hidden && is_hidden_entry_name(name) {
+      return false;
+    }
+    if !self.filter.show_ignored && is_ignored_entry_name(name, is_dir) {
+      return false;
+    }
+    if self
+      .exclude
+      .as_ref()
+      .is_some_and(|exclude| exclude.matched_path_or_any_parents(path, is_dir).is_ignore())
+    {
+      return false;
+    }
+    if self.filter.include_globs.is_empty() {
+      return true;
+    }
+    if is_dir {
+      return true;
+    }
+    self
+      .include
+      .as_ref()
+      .is_some_and(|include| include.matched_path_or_any_parents(path, false).is_ignore())
+  }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct FileTreeState {
   pub visible:            bool,
   pub mode:               FileTreeMode,
+  pub filter:             FileTreeFilter,
   pub selected_path:      Option<PathBuf>,
   pub active_path:        Option<PathBuf>,
   pub refresh_generation: u64,
@@ -389,6 +571,62 @@ impl FileTreeState {
   #[must_use]
   pub fn active_path(&self) -> Option<&Path> {
     self.active_path.as_deref()
+  }
+
+  #[must_use]
+  pub fn filter(&self) -> &FileTreeFilter {
+    &self.filter
+  }
+
+  pub fn set_filter(&mut self, filter: FileTreeFilter) -> bool {
+    if self.filter == filter {
+      return false;
+    }
+    self.filter = filter;
+    self.bump_generation();
+    true
+  }
+
+  pub fn set_show_hidden(&mut self, show_hidden: bool) -> bool {
+    let mut next = self.filter.clone();
+    next.show_hidden = show_hidden;
+    self.set_filter(next)
+  }
+
+  pub fn toggle_show_hidden(&mut self) -> bool {
+    let next = !self.filter.show_hidden;
+    self.set_show_hidden(next)
+  }
+
+  pub fn set_show_ignored(&mut self, show_ignored: bool) -> bool {
+    let mut next = self.filter.clone();
+    next.show_ignored = show_ignored;
+    self.set_filter(next)
+  }
+
+  pub fn toggle_show_ignored(&mut self) -> bool {
+    let next = !self.filter.show_ignored;
+    self.set_show_ignored(next)
+  }
+
+  pub fn set_include_globs<I, S>(&mut self, globs: I) -> bool
+  where
+    I: IntoIterator<Item = S>,
+    S: Into<String>,
+  {
+    let mut next = self.filter.clone();
+    next.include_globs = globs.into_iter().map(Into::into).collect();
+    self.set_filter(next)
+  }
+
+  pub fn set_exclude_globs<I, S>(&mut self, globs: I) -> bool
+  where
+    I: IntoIterator<Item = S>,
+    S: Into<String>,
+  {
+    let mut next = self.filter.clone();
+    next.exclude_globs = globs.into_iter().map(Into::into).collect();
+    self.set_filter(next)
   }
 
   pub fn set_visible(&mut self, visible: bool) {
@@ -556,6 +794,127 @@ impl FileTreeState {
     self.expanded_dirs.contains(&normalize_path(path))
   }
 
+  pub fn expand_to(&mut self, path: &Path) -> bool {
+    let normalized = normalize_path(path);
+    let Some(root) = self.root.clone() else {
+      return false;
+    };
+    if !normalized.starts_with(&root) {
+      return false;
+    }
+    self.expand_visible_ancestors(&normalized, &root)
+  }
+
+  #[must_use]
+  pub fn is_visible(&self, path: &Path) -> bool {
+    let normalized = normalize_path(path);
+    let Some(root) = self.root.as_ref() else {
+      return false;
+    };
+    if !normalized.starts_with(root) {
+      return false;
+    }
+
+    let Ok(metadata) = fs::metadata(&normalized) else {
+      return false;
+    };
+    let is_dir = metadata.is_dir();
+    let Some(name) = normalized.file_name().and_then(|name| name.to_str()) else {
+      return normalized == *root;
+    };
+    let matcher = FileTreeFilterMatcher::new(root, &self.filter);
+    if normalized != *root && !matcher.is_visible_path(&normalized, name, is_dir) {
+      return false;
+    }
+
+    let mut current = normalized.parent();
+    while let Some(ancestor) = current {
+      if ancestor == root {
+        break;
+      }
+      if !self.expanded_dirs.contains(ancestor) {
+        return false;
+      }
+      let Ok(ancestor_metadata) = fs::metadata(ancestor) else {
+        return false;
+      };
+      let Some(ancestor_name) = ancestor.file_name().and_then(|name| name.to_str()) else {
+        return false;
+      };
+      if !matcher.is_visible_path(ancestor, ancestor_name, ancestor_metadata.is_dir()) {
+        return false;
+      }
+      current = ancestor.parent();
+    }
+    true
+  }
+
+  pub fn ensure_visible(&mut self, path: &Path) -> bool {
+    self.expand_to(path) && self.is_visible(path)
+  }
+
+  pub fn next_visible<F>(&mut self, path: &Path, mut predicate: F) -> Option<PathBuf>
+  where
+    F: FnMut(&FileTreeNodeSnapshot) -> bool,
+  {
+    let normalized = normalize_path(path);
+    let snapshot = self.snapshot(usize::MAX);
+    let index = snapshot
+      .nodes
+      .iter()
+      .position(|node| node.path == normalized)?;
+    snapshot
+      .nodes
+      .iter()
+      .skip(index.saturating_add(1))
+      .find(|node| predicate(node))
+      .map(|node| node.path.clone())
+  }
+
+  pub fn prev_visible<F>(&mut self, path: &Path, mut predicate: F) -> Option<PathBuf>
+  where
+    F: FnMut(&FileTreeNodeSnapshot) -> bool,
+  {
+    let normalized = normalize_path(path);
+    let snapshot = self.snapshot(usize::MAX);
+    let index = snapshot
+      .nodes
+      .iter()
+      .position(|node| node.path == normalized)?;
+    snapshot
+      .nodes
+      .iter()
+      .take(index)
+      .rev()
+      .find(|node| predicate(node))
+      .map(|node| node.path.clone())
+  }
+
+  pub fn close_all(&mut self, root: Option<&Path>) -> bool {
+    let Some(current_root) = self.root.clone() else {
+      return false;
+    };
+    let base = root.map(normalize_path).unwrap_or_else(|| current_root.clone());
+    if !base.starts_with(&current_root) {
+      return false;
+    }
+
+    let descendants = self
+      .expanded_dirs
+      .iter()
+      .filter(|candidate| **candidate != base && candidate.starts_with(&base))
+      .cloned()
+      .collect::<Vec<_>>();
+    if descendants.is_empty() {
+      return false;
+    }
+    for descendant in descendants {
+      self.expanded_dirs.remove(&descendant);
+    }
+    self.bump_generation();
+    true
+  }
+
   pub fn refresh_path(&mut self, path: Option<&Path>) -> bool {
     let target = path
       .map(normalize_path)
@@ -576,34 +935,16 @@ impl FileTreeState {
 
   pub fn select_path(&mut self, path: &Path) -> bool {
     let normalized = normalize_path(path);
-    let Some(root) = self.root.as_ref() else {
+    let Some(root) = self.root.clone() else {
       return false;
     };
-    if !normalized.starts_with(root) {
+    if !normalized.starts_with(&root) {
       return false;
     }
 
     let mut changed = self.selected_path.as_ref() != Some(&normalized);
     self.selected_path = Some(normalized.clone());
-
-    // Keep selection independent from expansion: selecting a directory should
-    // not force it open. We only ensure parents are expanded so the selected
-    // entry remains visible.
-    if let Some(parent) = normalized.parent() {
-      let ancestors = parent
-        .ancestors()
-        .take_while(|ancestor| ancestor.starts_with(root))
-        .map(Path::to_path_buf)
-        .collect::<Vec<_>>();
-      for ancestor in ancestors {
-        if self.expanded_dirs.insert(ancestor.clone()) {
-          changed = true;
-        }
-        if ancestor.is_dir() {
-          let _ = self.load_children(&ancestor);
-        }
-      }
-    }
+    changed |= self.expand_visible_ancestors(&normalized, &root);
 
     if changed {
       self.bump_generation();
@@ -638,12 +979,14 @@ impl FileTreeState {
 
     let mut nodes = Vec::new();
     let limit = max_nodes.max(1);
-    self.append_node(&mut nodes, &root, 0, limit);
+    let matcher = FileTreeFilterMatcher::new(&root, &self.filter);
+    self.append_node(&mut nodes, &root, 0, limit, &matcher);
 
     FileTreeSnapshot {
       visible: self.visible,
       root,
       mode: self.mode,
+      filter: self.filter.clone(),
       selected_path: self.selected_path.clone(),
       active_path: self.active_path.clone(),
       refresh_generation: self.refresh_generation,
@@ -739,6 +1082,7 @@ impl FileTreeState {
     path: &Path,
     depth: usize,
     limit: usize,
+    matcher: &FileTreeFilterMatcher,
   ) {
     if out.len() >= limit {
       return;
@@ -746,6 +1090,13 @@ impl FileTreeState {
 
     let path_buf = path.to_path_buf();
     let is_dir = path_buf.is_dir();
+    let name = node_name_for_path(&path_buf);
+    let hidden = is_hidden_entry_name(&name);
+    let ignored = is_ignored_entry_name(&name, is_dir);
+    let is_root = self.root.as_ref() == Some(&path_buf);
+    if !is_root && !matcher.is_visible_path(&path_buf, &name, is_dir) {
+      return;
+    }
     let expanded = is_dir && self.expanded_dirs.contains(&path_buf);
     let has_unloaded_children = is_dir && !expanded && !self.nodes_cache.contains_key(&path_buf);
     let selected = self.selected_path.as_ref() == Some(&path_buf);
@@ -753,13 +1104,15 @@ impl FileTreeState {
     out.push(FileTreeNodeSnapshot {
       id: stable_id_for_path(&path_buf),
       path: path_buf.clone(),
-      name: node_name_for_path(&path_buf),
+      name,
       depth,
       kind: if is_dir {
         FileTreeNodeKind::Directory
       } else {
         FileTreeNodeKind::File
       },
+      hidden,
+      ignored,
       expanded,
       selected,
       active,
@@ -777,7 +1130,7 @@ impl FileTreeState {
       if out.len() >= limit {
         break;
       }
-      self.append_node(out, entry.path.as_path(), depth + 1, limit);
+      self.append_node(out, entry.path.as_path(), depth + 1, limit, matcher);
     }
   }
 
@@ -820,6 +1173,29 @@ impl FileTreeState {
     self.refresh_generation = self.refresh_generation.saturating_add(1);
   }
 
+  fn expand_visible_ancestors(&mut self, normalized: &Path, root: &Path) -> bool {
+    let Some(parent) = normalized.parent() else {
+      return false;
+    };
+
+    let ancestors = parent
+      .ancestors()
+      .take_while(|ancestor| ancestor.starts_with(root))
+      .map(Path::to_path_buf)
+      .collect::<Vec<_>>();
+
+    let mut changed = false;
+    for ancestor in ancestors {
+      if self.expanded_dirs.insert(ancestor.clone()) {
+        changed = true;
+      }
+      if ancestor.is_dir() {
+        let _ = self.load_children(&ancestor);
+      }
+    }
+    changed
+  }
+
   fn remap_path_prefix(&mut self, from: &Path, to: &Path) {
     let from = normalize_path(from);
     let to = normalize_path(to);
@@ -847,7 +1223,7 @@ impl FileTreeState {
     self.bump_generation();
   }
 
-  fn clear_removed_path(&mut self, path: &Path) {
+  pub fn clear_removed_path(&mut self, path: &Path) {
     let path = normalize_path(path);
 
     if self.selected_path.as_ref().is_some_and(|selected| selected.starts_with(&path)) {
@@ -884,6 +1260,9 @@ fn remap_path_if_matches(path: PathBuf, from: &Path, to: &Path) -> Option<PathBu
     return Some(path);
   }
   let suffix = path.strip_prefix(from).ok()?;
+  if suffix.as_os_str().is_empty() {
+    return Some(to.to_path_buf());
+  }
   Some(to.join(suffix))
 }
 
@@ -932,7 +1311,78 @@ pub fn file_tree_indentation(depth: usize) -> String {
 }
 
 #[must_use]
+pub fn build_file_tree_row_guides(snapshot: &FileTreeSnapshot) -> Vec<FileTreeRowGuides> {
+  let mut path_stack: Vec<usize> = Vec::new();
+  let mut ancestor_indices: Vec<Vec<usize>> = Vec::with_capacity(snapshot.nodes.len());
+
+  for (index, node) in snapshot.nodes.iter().enumerate() {
+    while path_stack.len() > node.depth {
+      path_stack.pop();
+    }
+    ancestor_indices.push(path_stack.clone());
+    path_stack.push(index);
+  }
+
+  let is_last_sibling = snapshot
+    .nodes
+    .iter()
+    .enumerate()
+    .map(|(index, node)| {
+      let mut is_last = true;
+      for next in snapshot.nodes.iter().skip(index.saturating_add(1)) {
+        if next.depth < node.depth {
+          break;
+        }
+        if next.depth == node.depth {
+          is_last = false;
+          break;
+        }
+      }
+      is_last
+    })
+    .collect::<Vec<_>>();
+
+  snapshot
+    .nodes
+    .iter()
+    .enumerate()
+    .map(|(index, node)| {
+      let ancestor_columns = ancestor_indices[index]
+        .iter()
+        .skip(1)
+        .map(|ancestor_index| {
+          if is_last_sibling[*ancestor_index] {
+            FileTreeGuideColumn::Empty
+          } else {
+            FileTreeGuideColumn::Continue
+          }
+        })
+        .collect::<Vec<_>>();
+      let connector = if node.depth == 0 {
+        FileTreeGuideConnector::None
+      } else if is_last_sibling[index] {
+        FileTreeGuideConnector::LastChild
+      } else {
+        FileTreeGuideConnector::Branch
+      };
+      FileTreeRowGuides {
+        ancestor_columns,
+        connector,
+      }
+    })
+    .collect()
+}
+
+#[must_use]
 pub fn file_tree_row_layout(node: &FileTreeNodePresentation) -> FileTreeRowLayout {
+  file_tree_row_layout_with_guides(node, FileTreeRowGuides::default())
+}
+
+#[must_use]
+pub fn file_tree_row_layout_with_guides(
+  node: &FileTreeNodePresentation,
+  guides: FileTreeRowGuides,
+) -> FileTreeRowLayout {
   let disclosure = file_tree_disclosure(&node.node);
   let icon = node
     .decoration
@@ -954,6 +1404,7 @@ pub fn file_tree_row_layout(node: &FileTreeNodePresentation) -> FileTreeRowLayou
     path:             node.node.path.clone(),
     depth:            node.node.depth,
     indent_text:      file_tree_indentation(node.node.depth.saturating_sub(1)),
+    guides,
     disclosure,
     disclosure_glyph: file_tree_disclosure_glyph(disclosure),
     icon,
@@ -1005,9 +1456,12 @@ pub fn build_file_tree_presentations_with_providers<Ctx: DefaultContext>(
 
 #[must_use]
 pub fn build_file_tree_row_layouts(snapshot: &FileTreeSnapshot) -> Vec<FileTreeRowLayout> {
-  build_file_tree_presentations(snapshot)
+  let presentations = build_file_tree_presentations(snapshot);
+  let guides = build_file_tree_row_guides(snapshot);
+  presentations
     .iter()
-    .map(file_tree_row_layout)
+    .zip(guides)
+    .map(|(node, guide)| file_tree_row_layout_with_guides(node, guide))
     .collect()
 }
 
@@ -1015,9 +1469,12 @@ pub fn build_file_tree_row_layouts_with_providers<Ctx: DefaultContext>(
   ctx: &mut Ctx,
   snapshot: &FileTreeSnapshot,
 ) -> Vec<FileTreeRowLayout> {
-  build_file_tree_presentations_with_providers(ctx, snapshot)
+  let presentations = build_file_tree_presentations_with_providers(ctx, snapshot);
+  let guides = build_file_tree_row_guides(snapshot);
+  presentations
     .iter()
-    .map(file_tree_row_layout)
+    .zip(guides)
+    .map(|(node, guide)| file_tree_row_layout_with_guides(node, guide))
     .collect()
 }
 
@@ -1313,6 +1770,18 @@ fn directory_cache_fingerprint(path: &Path) -> Option<DirectoryCacheFingerprint>
   })
 }
 
+fn compile_filter_globs(root: &Path, patterns: &[String]) -> Option<Gitignore> {
+  if patterns.is_empty() {
+    return None;
+  }
+
+  let mut builder = GitignoreBuilder::new(root);
+  for pattern in patterns {
+    let _ = builder.add_line(None, pattern);
+  }
+  builder.build().ok()
+}
+
 fn read_directory_entries(path: &Path) -> std::io::Result<Vec<FileTreeEntry>> {
   let mut entries = fs::read_dir(path)?
     .filter_map(Result::ok)
@@ -1326,9 +1795,6 @@ fn read_directory_entries(path: &Path) -> std::io::Result<Vec<FileTreeEntry>> {
         .file_type()
         .map(|ft| ft.is_dir())
         .unwrap_or_else(|_| path.is_dir());
-      if should_hide_entry(name.as_str(), is_dir) {
-        return None;
-      }
       Some(FileTreeEntry { path, name, is_dir })
     })
     .collect::<Vec<_>>();
@@ -1350,11 +1816,19 @@ fn read_directory_entries(path: &Path) -> std::io::Result<Vec<FileTreeEntry>> {
   Ok(entries)
 }
 
-fn should_hide_entry(name: &str, is_dir: bool) -> bool {
-  if is_dir && matches!(name, ".git" | ".jj") {
-    return true;
+fn is_hidden_entry_name(name: &str) -> bool {
+  name.starts_with('.')
+}
+
+fn is_ignored_entry_name(name: &str, is_dir: bool) -> bool {
+  if is_dir {
+    matches!(
+      name,
+      ".git" | ".jj" | ".hg" | ".svn" | "node_modules" | "target" | ".direnv"
+    )
+  } else {
+    name == ".DS_Store"
   }
-  name == ".DS_Store"
 }
 
 #[cfg(test)]
@@ -1371,6 +1845,9 @@ mod tests {
   use super::{
     FileTreeDisclosure,
     FileTreeEditSession,
+    FileTreeFilter,
+    FileTreeGuideColumn,
+    FileTreeGuideConnector,
     FileTreeMode,
     FileTreeNodeBadge,
     FileTreeNodeDecoration,
@@ -1380,6 +1857,7 @@ mod tests {
     FileTreeRowAccent,
     FileTreeState,
     FileTreeSnapshot,
+    build_file_tree_row_guides,
     directory_cache_fingerprint,
     file_tree_disclosure,
     file_tree_row_layout,
@@ -1440,6 +1918,7 @@ mod tests {
     let root = temp.path().to_path_buf();
     let file = root.join("demo.rs");
     fs::write(&file, "fn main() {}\n").expect("seed file");
+    let normalized_file = normalize_path(&file);
 
     let mut tree = FileTreeState::with_working_directory(root.clone());
     let _ = tree.set_active_path(Some(file.as_path()));
@@ -1449,7 +1928,7 @@ mod tests {
     let node = snapshot
       .nodes
       .iter()
-      .find(|node| node.path == file)
+      .find(|node| node.path == normalized_file)
       .expect("file node");
     assert!(node.active);
     assert!(node.selected);
@@ -1464,6 +1943,8 @@ mod tests {
         name: "demo".to_string(),
         depth: 1,
         kind: FileTreeNodeKind::Directory,
+        hidden: false,
+        ignored: false,
         expanded: true,
         selected: true,
         active: false,
@@ -1487,11 +1968,101 @@ mod tests {
   }
 
   #[test]
-  fn edit_session_parses_rename_create_and_delete_operations() {
+  fn snapshot_respects_hidden_and_ignored_filter_toggles() {
+    let temp = tempdir().expect("tempdir");
+    let root = temp.path().to_path_buf();
+    fs::create_dir_all(root.join(".git")).expect("create git dir");
+    fs::create_dir_all(root.join(".hidden_dir")).expect("create hidden dir");
+    fs::create_dir_all(root.join("target")).expect("create target dir");
+    fs::write(root.join("visible.rs"), "fn main() {}\n").expect("visible file");
+    fs::write(root.join(".env"), "KEY=value\n").expect("hidden file");
+
+    let mut tree = FileTreeState::with_working_directory(root.clone());
+    let snapshot = tree.snapshot(64);
+    assert!(snapshot.nodes.iter().any(|node| node.name == "visible.rs"));
+    assert!(!snapshot.nodes.iter().any(|node| node.name == ".env"));
+    assert!(!snapshot.nodes.iter().any(|node| node.name == ".hidden_dir"));
+    assert!(!snapshot.nodes.iter().any(|node| node.name == ".git"));
+    assert!(!snapshot.nodes.iter().any(|node| node.name == "target"));
+
+    assert!(tree.toggle_show_hidden());
+    let hidden_snapshot = tree.snapshot(64);
+    assert!(hidden_snapshot.nodes.iter().any(|node| node.name == ".env"));
+    assert!(hidden_snapshot.nodes.iter().any(|node| node.name == ".hidden_dir"));
+    assert!(!hidden_snapshot.nodes.iter().any(|node| node.name == ".git"));
+
+    assert!(tree.toggle_show_ignored());
+    let ignored_snapshot = tree.snapshot(64);
+    assert!(ignored_snapshot.nodes.iter().any(|node| node.name == ".git"));
+    assert!(ignored_snapshot.nodes.iter().any(|node| node.name == "target"));
+  }
+
+  #[test]
+  fn include_and_exclude_globs_filter_file_entries() {
+    let temp = tempdir().expect("tempdir");
+    let root = temp.path().to_path_buf();
+    fs::create_dir_all(root.join("src")).expect("create src");
+    fs::write(root.join("src").join("main.rs"), "fn main() {}\n").expect("main");
+    fs::write(root.join("src").join("main.ts"), "console.log('x')\n").expect("ts");
+    fs::write(root.join("README.md"), "# docs\n").expect("readme");
+
+    let mut tree = FileTreeState::with_working_directory(root.clone());
+    assert!(tree.set_include_globs(["**/*.rs"]));
+    assert!(tree.set_exclude_globs(["README.md"]));
+    let _ = tree.set_expanded(&root.join("src"), true);
+
+    let snapshot = tree.snapshot(64);
+    assert!(snapshot.nodes.iter().any(|node| node.name == "src"));
+    assert!(snapshot.nodes.iter().any(|node| node.name == "main.rs"));
+    assert!(!snapshot.nodes.iter().any(|node| node.name == "main.ts"));
+    assert!(!snapshot.nodes.iter().any(|node| node.name == "README.md"));
+  }
+
+  #[test]
+  fn visible_helpers_expand_reveal_and_navigate() {
+    let temp = tempdir().expect("tempdir");
+    let root = temp.path().to_path_buf();
+    fs::create_dir_all(root.join("src").join("nested")).expect("create nested");
+    fs::write(root.join("src").join("lib.rs"), "pub fn lib() {}\n").expect("lib");
+    fs::write(
+      root.join("src").join("nested").join("mod.rs"),
+      "pub fn nested() {}\n",
+    )
+    .expect("nested mod");
+
+    let mut tree = FileTreeState::with_working_directory(root.clone());
+    let nested_file = root.join("src").join("nested").join("mod.rs");
+
+    assert!(!tree.is_visible(&nested_file));
+    assert!(tree.ensure_visible(&nested_file));
+    assert!(tree.is_visible(&nested_file));
+
+    let next = tree
+      .next_visible(&root.join("src"), |node| node.kind == FileTreeNodeKind::File)
+      .expect("next visible file");
+    assert_eq!(next, normalize_path(&nested_file));
+
+    let next_after_nested = tree
+      .next_visible(&nested_file, |node| node.kind == FileTreeNodeKind::File)
+      .expect("next file after nested");
+    assert_eq!(next_after_nested, normalize_path(&root.join("src").join("lib.rs")));
+
+    let prev = tree
+      .prev_visible(&nested_file, |node| node.kind == FileTreeNodeKind::Directory)
+      .expect("previous visible directory");
+    assert_eq!(prev, normalize_path(&root.join("src").join("nested")));
+
+    assert!(tree.close_all(None));
+    assert!(!tree.is_visible(&nested_file));
+  }
+
+  #[test]
+  fn row_guides_capture_branch_and_continuation_shape() {
     let snapshot = FileTreeSnapshot {
       visible: true,
       root: PathBuf::from("/workspace"),
       mode: FileTreeMode::WorkingDirectory,
+      filter: FileTreeFilter::default(),
       selected_path: None,
       active_path: None,
       refresh_generation: 1,
@@ -1502,6 +2073,8 @@ mod tests {
           name: "workspace".to_string(),
           depth: 0,
           kind: FileTreeNodeKind::Directory,
+          hidden: false,
+          ignored: false,
           expanded: true,
           selected: false,
           active: false,
@@ -1513,6 +2086,82 @@ mod tests {
           name: "src".to_string(),
           depth: 1,
           kind: FileTreeNodeKind::Directory,
+          hidden: false,
+          ignored: false,
+          expanded: true,
+          selected: false,
+          active: false,
+          has_unloaded_children: false,
+        },
+        FileTreeNodeSnapshot {
+          id: "/workspace/src/lib.rs".to_string(),
+          path: PathBuf::from("/workspace/src/lib.rs"),
+          name: "lib.rs".to_string(),
+          depth: 2,
+          kind: FileTreeNodeKind::File,
+          hidden: false,
+          ignored: false,
+          expanded: false,
+          selected: false,
+          active: false,
+          has_unloaded_children: false,
+        },
+        FileTreeNodeSnapshot {
+          id: "/workspace/tests".to_string(),
+          path: PathBuf::from("/workspace/tests"),
+          name: "tests".to_string(),
+          depth: 1,
+          kind: FileTreeNodeKind::Directory,
+          hidden: false,
+          ignored: false,
+          expanded: false,
+          selected: false,
+          active: false,
+          has_unloaded_children: false,
+        },
+      ],
+    };
+
+    let guides = build_file_tree_row_guides(&snapshot);
+    assert_eq!(guides[0].connector, FileTreeGuideConnector::None);
+    assert_eq!(guides[1].connector, FileTreeGuideConnector::Branch);
+    assert_eq!(guides[2].ancestor_columns, vec![FileTreeGuideColumn::Continue]);
+    assert_eq!(guides[2].connector, FileTreeGuideConnector::LastChild);
+    assert_eq!(guides[3].connector, FileTreeGuideConnector::LastChild);
+  }
+
+  #[test]
+  fn edit_session_parses_rename_create_and_delete_operations() {
+    let snapshot = FileTreeSnapshot {
+      visible: true,
+      root: PathBuf::from("/workspace"),
+      mode: FileTreeMode::WorkingDirectory,
+      filter: FileTreeFilter::default(),
+      selected_path: None,
+      active_path: None,
+      refresh_generation: 1,
+      nodes: vec![
+        FileTreeNodeSnapshot {
+          id: "/workspace".to_string(),
+          path: PathBuf::from("/workspace"),
+          name: "workspace".to_string(),
+          depth: 0,
+          kind: FileTreeNodeKind::Directory,
+          hidden: false,
+          ignored: false,
+          expanded: true,
+          selected: false,
+          active: false,
+          has_unloaded_children: false,
+        },
+        FileTreeNodeSnapshot {
+          id: "/workspace/src".to_string(),
+          path: PathBuf::from("/workspace/src"),
+          name: "src".to_string(),
+          depth: 1,
+          kind: FileTreeNodeKind::Directory,
+          hidden: false,
+          ignored: false,
           expanded: true,
           selected: false,
           active: false,
@@ -1524,6 +2173,8 @@ mod tests {
           name: "main.rs".to_string(),
           depth: 2,
           kind: FileTreeNodeKind::File,
+          hidden: false,
+          ignored: false,
           expanded: false,
           selected: false,
           active: false,

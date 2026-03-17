@@ -339,7 +339,7 @@ pub fn build_file_tree_context_menu_with_providers<Ctx: DefaultContext>(
   ctx: &mut Ctx,
   request: &FileTreeContextMenuRequest,
 ) -> ContextMenuSnapshot {
-  let mut snapshot = ContextMenuSnapshot::new();
+  let mut snapshot = build_file_tree_context_menu(request.options);
   ctx.postprocess_file_tree_context_menu(request, &mut snapshot);
   snapshot
 }
@@ -349,7 +349,7 @@ pub fn build_editor_context_menu_with_providers<Ctx: DefaultContext>(
   ctx: &mut Ctx,
   request: &EditorContextMenuRequest,
 ) -> ContextMenuSnapshot {
-  let mut snapshot = ContextMenuSnapshot::new();
+  let mut snapshot = build_editor_context_menu(request.options);
   ctx.postprocess_editor_context_menu(request, &mut snapshot);
   snapshot
 }

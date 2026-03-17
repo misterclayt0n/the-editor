@@ -33,6 +33,11 @@ use the_lib::{
     GutterType,
     LineNumberMode,
   },
+  editor::{
+    OpenTarget,
+    PaneContentKind,
+  },
+  split_tree::PaneDirection,
 };
 
 use crate::{
@@ -756,10 +761,113 @@ impl<Ctx: DefaultContext + 'static> CommandRegistry<Ctx> {
       CommandBuilder::new("open", "Open a file", cmd_open::<Ctx>)
         .aliases(&["o", "e", "edit"])
         .required_arg()
+        .raw_after(0)
         .complete_with(completers::filename)
         .directory_completion(DirectoryCompletionAction::Expand)
         .palette_placeholder("Open file…")
         .build(),
+    );
+
+    self.register(
+      CommandBuilder::new(
+        "explorer-open",
+        "Open the selected explorer entry",
+        cmd_explorer_open::<Ctx>,
+      )
+      .build(),
+    );
+
+    self.register(
+      CommandBuilder::new(
+        "explorer-open-split-right",
+        "Open the selected explorer entry in a split to the right",
+        cmd_explorer_open_split_right::<Ctx>,
+      )
+      .build(),
+    );
+
+    self.register(
+      CommandBuilder::new(
+        "explorer-open-split-down",
+        "Open the selected explorer entry in a split below",
+        cmd_explorer_open_split_down::<Ctx>,
+      )
+      .build(),
+    );
+
+    self.register(
+      CommandBuilder::new(
+        "explorer-expand",
+        "Expand the selected explorer directory",
+        cmd_explorer_expand::<Ctx>,
+      )
+      .build(),
+    );
+
+    self.register(
+      CommandBuilder::new(
+        "explorer-collapse",
+        "Collapse the selected explorer directory",
+        cmd_explorer_collapse::<Ctx>,
+      )
+      .build(),
+    );
+
+    self.register(
+      CommandBuilder::new(
+        "explorer-refresh",
+        "Refresh the selected explorer subtree",
+        cmd_explorer_refresh::<Ctx>,
+      )
+      .build(),
+    );
+
+    self.register(
+      CommandBuilder::new(
+        "explorer-new-file",
+        "Create a file relative to the selected explorer entry",
+        cmd_explorer_new_file::<Ctx>,
+      )
+      .optional_arg()
+      .raw_after(0)
+      .palette_placeholder("New file path…")
+      .build(),
+    );
+
+    self.register(
+      CommandBuilder::new(
+        "explorer-new-folder",
+        "Create a directory relative to the selected explorer entry",
+        cmd_explorer_new_folder::<Ctx>,
+      )
+      .optional_arg()
+      .raw_after(0)
+      .palette_placeholder("New folder path…")
+      .build(),
+    );
+
+    self.register(
+      CommandBuilder::new(
+        "explorer-rename",
+        "Rename the selected explorer entry",
+        cmd_explorer_rename::<Ctx>,
+      )
+      .optional_arg()
+      .raw_after(0)
+      .palette_placeholder("Rename selected path…")
+      .build(),
+    );
+
+    self.register(
+      CommandBuilder::new(
+        "explorer-delete",
+        "Delete the selected explorer entry after confirmation",
+        cmd_explorer_delete::<Ctx>,
+      )
+      .optional_arg()
+      .raw_after(0)
+      .palette_placeholder("Type DELETE to confirm")
+      .build(),
     );
 
     self.register(
@@ -1093,6 +1201,245 @@ fn cmd_open<Ctx: DefaultContext>(ctx: &mut Ctx, args: Args, event: CommandEvent)
       )))
     },
   }
+}
+
+fn explorer_selected_path<Ctx: DefaultContext>(ctx: &Ctx) -> Result<PathBuf, CommandError> {
+  ctx
+    .file_tree()
+    .selected_path()
+    .map(Path::to_path_buf)
+    .ok_or_else(|| CommandError::new("explorer has no selected path"))
+}
+
+fn explorer_selected_name<Ctx: DefaultContext>(ctx: &Ctx) -> Option<String> {
+  ctx
+    .file_tree()
+    .selected_path()
+    .and_then(Path::file_name)
+    .map(|name| name.to_string_lossy().to_string())
+}
+
+fn explorer_open_target<Ctx: DefaultContext>(ctx: &Ctx) -> OpenTarget {
+  let editor = ctx.editor_ref();
+  let active_pane = editor.active_pane_id();
+  if !matches!(
+    editor.active_pane_content_kind(),
+    Some(PaneContentKind::ClientSurface)
+  ) {
+    return OpenTarget::Active;
+  }
+
+  if let Some(neighbors) = editor.pane_neighbors(active_pane) {
+    for direction in [
+      PaneDirection::Right,
+      PaneDirection::Left,
+      PaneDirection::Down,
+      PaneDirection::Up,
+    ] {
+      if let Some(pane) = neighbors.in_direction(direction)
+        && matches!(
+          editor.pane_content_kind(pane),
+          Some(PaneContentKind::EditorBuffer)
+        )
+      {
+        return OpenTarget::Pane(pane);
+      }
+    }
+  }
+
+  OpenTarget::neighbor_or_split(PaneDirection::Right)
+}
+
+fn execute_explorer_op<Ctx: DefaultContext>(ctx: &mut Ctx, op: crate::FileTreeOp) -> CommandResult {
+  crate::execute_file_tree_op(ctx, &op)
+    .map(|_| ())
+    .map_err(CommandError::new)
+}
+
+fn cmd_explorer_open<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  _args: Args,
+  event: CommandEvent,
+) -> CommandResult {
+  if event != CommandEvent::Validate {
+    return Ok(());
+  }
+
+  let op = ctx
+    .file_tree()
+    .open_selected_op(explorer_open_target(ctx))
+    .ok_or_else(|| CommandError::new("explorer has no selected path"))?;
+  execute_explorer_op(ctx, op)
+}
+
+fn cmd_explorer_open_split_right<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  _args: Args,
+  event: CommandEvent,
+) -> CommandResult {
+  if event != CommandEvent::Validate {
+    return Ok(());
+  }
+
+  let op = ctx
+    .file_tree()
+    .open_selected_op(OpenTarget::neighbor_or_split(PaneDirection::Right))
+    .ok_or_else(|| CommandError::new("explorer has no selected path"))?;
+  execute_explorer_op(ctx, op)
+}
+
+fn cmd_explorer_open_split_down<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  _args: Args,
+  event: CommandEvent,
+) -> CommandResult {
+  if event != CommandEvent::Validate {
+    return Ok(());
+  }
+
+  let op = ctx
+    .file_tree()
+    .open_selected_op(OpenTarget::neighbor_or_split(PaneDirection::Down))
+    .ok_or_else(|| CommandError::new("explorer has no selected path"))?;
+  execute_explorer_op(ctx, op)
+}
+
+fn cmd_explorer_expand<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  _args: Args,
+  event: CommandEvent,
+) -> CommandResult {
+  if event != CommandEvent::Validate {
+    return Ok(());
+  }
+
+  let path = explorer_selected_path(ctx)?;
+  if path.is_dir() {
+    let _ = ctx.file_tree_mut().set_expanded(&path, true);
+    ctx.request_render();
+  }
+  Ok(())
+}
+
+fn cmd_explorer_collapse<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  _args: Args,
+  event: CommandEvent,
+) -> CommandResult {
+  if event != CommandEvent::Validate {
+    return Ok(());
+  }
+
+  let path = explorer_selected_path(ctx)?;
+  if path.is_dir() {
+    let _ = ctx.file_tree_mut().set_expanded(&path, false);
+    ctx.request_render();
+  }
+  Ok(())
+}
+
+fn cmd_explorer_refresh<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  _args: Args,
+  event: CommandEvent,
+) -> CommandResult {
+  if event != CommandEvent::Validate {
+    return Ok(());
+  }
+  execute_explorer_op(ctx, ctx.file_tree().refresh_op())
+}
+
+fn cmd_explorer_new_file<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  args: Args,
+  event: CommandEvent,
+) -> CommandResult {
+  if event != CommandEvent::Validate {
+    return Ok(());
+  }
+
+  let Some(path) = args.first().map(str::trim).filter(|path| !path.is_empty()) else {
+    crate::open_command_palette_with_input(ctx, "explorer-new-file ");
+    return Ok(());
+  };
+
+  let op = ctx
+    .file_tree()
+    .create_child_op(path, false)
+    .ok_or_else(|| CommandError::new("explorer has no selected path"))?;
+  execute_explorer_op(ctx, op)
+}
+
+fn cmd_explorer_new_folder<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  args: Args,
+  event: CommandEvent,
+) -> CommandResult {
+  if event != CommandEvent::Validate {
+    return Ok(());
+  }
+
+  let Some(path) = args.first().map(str::trim).filter(|path| !path.is_empty()) else {
+    crate::open_command_palette_with_input(ctx, "explorer-new-folder ");
+    return Ok(());
+  };
+
+  let op = ctx
+    .file_tree()
+    .create_child_op(path, true)
+    .ok_or_else(|| CommandError::new("explorer has no selected path"))?;
+  execute_explorer_op(ctx, op)
+}
+
+fn cmd_explorer_rename<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  args: Args,
+  event: CommandEvent,
+) -> CommandResult {
+  if event != CommandEvent::Validate {
+    return Ok(());
+  }
+
+  let Some(new_name) = args.first().map(str::trim).filter(|name| !name.is_empty()) else {
+    let input = explorer_selected_name(ctx)
+      .map(|name| format!("explorer-rename {name}"))
+      .unwrap_or_else(|| "explorer-rename ".to_string());
+    crate::open_command_palette_with_input(ctx, &input);
+    return Ok(());
+  };
+
+  let current_name = explorer_selected_name(ctx);
+  let Some(op) = ctx.file_tree().rename_selected_op(new_name) else {
+    if current_name.as_deref() == Some(new_name) {
+      return Ok(());
+    }
+    return Err(CommandError::new("explorer has no selected path"));
+  };
+  execute_explorer_op(ctx, op)
+}
+
+fn cmd_explorer_delete<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  args: Args,
+  event: CommandEvent,
+) -> CommandResult {
+  if event != CommandEvent::Validate {
+    return Ok(());
+  }
+
+  let Some(confirmation) = args.first().map(str::trim).filter(|text| !text.is_empty()) else {
+    crate::open_command_palette_with_input(ctx, "explorer-delete ");
+    return Ok(());
+  };
+  if confirmation != "DELETE" {
+    return Err(CommandError::new("type DELETE to confirm"));
+  }
+
+  let op = ctx
+    .file_tree()
+    .delete_selected_op()
+    .ok_or_else(|| CommandError::new("explorer has no selected path"))?;
+  execute_explorer_op(ctx, op)
 }
 
 fn cmd_change_current_directory<Ctx: DefaultContext>(
@@ -2035,18 +2382,15 @@ fn submit_action_palette<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool {
       true
     },
     CommandPaletteAction::TypableCommand { name, args } => {
+      close_command_prompt_and_palette(ctx);
       let registry = ctx.command_registry_ref() as *const CommandRegistry<Ctx>;
       let result = unsafe { (&*registry).execute(ctx, &name, &args, CommandEvent::Validate) };
       match result {
-        Ok(()) => {
-          close_command_prompt_and_palette(ctx);
-          true
-        },
+        Ok(()) => true,
         Err(err) => {
           let message = err.to_string();
           ctx.command_prompt_mut().error = Some(message.clone());
           ctx.push_error("command_palette", message);
-          close_command_prompt_and_palette(ctx);
           true
         },
       }

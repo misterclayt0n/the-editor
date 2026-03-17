@@ -814,6 +814,15 @@ pub fn open_action_palette<Ctx: DefaultContext>(ctx: &mut Ctx) {
   apply_mode(ctx, Mode::Command);
 
   let items = build_action_palette_items(ctx, source_mode, "");
+  open_action_palette_with_items(ctx, source_mode, items);
+}
+
+pub fn open_action_palette_with_items<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  source_mode: Mode,
+  items: Vec<CommandPaletteItem>,
+) {
+  apply_mode(ctx, Mode::Command);
 
   {
     let prompt = ctx.command_prompt_mut();

@@ -1,7 +1,10 @@
-use the_lib::render::{
+use the_lib::{
+  diagnostics::DiagnosticSeverity,
+  render::{
   RenderPlan,
   UiTree,
   text_annotations::TextAnnotations,
+  },
 };
 
 use crate::{
@@ -20,6 +23,7 @@ use crate::{
   FileTreeNodeRequest,
   ExtensionStateStore,
   FileTreeContextMenuRequest,
+  FileTreeNodeBadge,
   KeyAction,
   Keymaps,
   Mode,
@@ -820,6 +824,72 @@ fn default_file_tree_context_menu_provider<Ctx: DefaultContext>(
   );
 }
 
+fn file_tree_diagnostic_rank(severity: DiagnosticSeverity) -> u8 {
+  match severity {
+    DiagnosticSeverity::Error => 4,
+    DiagnosticSeverity::Warning => 3,
+    DiagnosticSeverity::Information => 2,
+    DiagnosticSeverity::Hint => 1,
+  }
+}
+
+fn file_tree_diagnostic_badge_label(severity: DiagnosticSeverity, count: usize) -> String {
+  let prefix = match severity {
+    DiagnosticSeverity::Error => "E",
+    DiagnosticSeverity::Warning => "W",
+    DiagnosticSeverity::Information => "I",
+    DiagnosticSeverity::Hint => "H",
+  };
+  format!("{prefix}{}", count.max(1))
+}
+
+fn file_tree_diagnostic_badge_role(severity: DiagnosticSeverity) -> &'static str {
+  match severity {
+    DiagnosticSeverity::Error => "error",
+    DiagnosticSeverity::Warning => "warning",
+    DiagnosticSeverity::Information => "info",
+    DiagnosticSeverity::Hint => "hint",
+  }
+}
+
+fn merge_file_tree_decoration_severity(
+  decoration: &mut FileTreeNodeDecoration,
+  severity: DiagnosticSeverity,
+) {
+  match decoration.severity {
+    Some(existing) if file_tree_diagnostic_rank(existing) >= file_tree_diagnostic_rank(severity) => {},
+    _ => {
+      decoration.severity = Some(severity);
+    },
+  }
+}
+
+fn default_file_tree_node_decorator<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  request: &FileTreeNodeRequest<'_>,
+  decoration: &mut FileTreeNodeDecoration,
+) {
+  if let Some(summary) = ctx.file_tree_diagnostic_summary(&request.node.path) {
+    merge_file_tree_decoration_severity(decoration, summary.severity);
+    decoration.badges.push(
+      FileTreeNodeBadge::new(file_tree_diagnostic_badge_label(summary.severity, summary.count))
+        .role(file_tree_diagnostic_badge_role(summary.severity)),
+    );
+  }
+
+  if let Some(summary) = ctx.file_tree_vcs_summary(&request.node.path) {
+    if decoration.status.is_none() {
+      decoration.status = Some(summary.kind.short_label().to_string());
+    }
+    if summary.count > 1 {
+      decoration.badges.push(
+        FileTreeNodeBadge::new(format!("{}{}", summary.kind.short_label(), summary.count))
+          .role(summary.kind.badge_role()),
+      );
+    }
+  }
+}
+
 pub fn default_preset_handles<Ctx: DefaultContext>(ctx: &Ctx) -> Option<&DefaultPresetHandles> {
   ctx.extension_state::<DefaultPresetHandles>()
 }
@@ -854,7 +924,8 @@ where
   let mut preset = EditorPreset::new(crate::build_dispatch::<Ctx>(), crate::builtin_keymaps())
     .install_command_registry(crate::install_builtin_commands::<Ctx>)
     .install_editor_context_menu_provider(default_editor_context_menu_provider::<Ctx>)
-    .install_file_tree_context_menu_provider(default_file_tree_context_menu_provider::<Ctx>);
+    .install_file_tree_context_menu_provider(default_file_tree_context_menu_provider::<Ctx>)
+    .install_file_tree_node_decorator(default_file_tree_node_decorator::<Ctx>);
 
   let handles = DefaultPresetHandles {
     lsp_completion_menu: preset

@@ -71,8 +71,8 @@ use crate::{
   diagnostics::DiagnosticSeverity,
   document::Document,
   editor::{
+    ClientSurfaceId,
     PaneContentKind,
-    TerminalId,
   },
   position::Position,
   render::{
@@ -641,11 +641,11 @@ pub fn apply_row_insertions(plan: &mut RenderPlan, row_insertions: &[RenderRowIn
 
 #[derive(Debug, Clone)]
 pub struct PaneRenderPlan {
-  pub pane_id:     PaneId,
-  pub rect:        Rect,
-  pub pane_kind:   PaneContentKind,
-  pub terminal_id: Option<TerminalId>,
-  pub plan:        RenderPlan,
+  pub pane_id:           PaneId,
+  pub rect:              Rect,
+  pub pane_kind:         PaneContentKind,
+  pub client_surface_id: Option<ClientSurfaceId>,
+  pub plan:              RenderPlan,
 }
 
 #[derive(Debug, Clone)]
@@ -681,7 +681,7 @@ impl FrameRenderPlan {
         pane_id,
         rect,
         pane_kind: PaneContentKind::EditorBuffer,
-        terminal_id: None,
+        client_surface_id: None,
         plan,
       }],
       frame_generation:          0,
@@ -986,7 +986,7 @@ pub fn finish_frame_generations(
           pane.rect.width,
           pane.rect.height,
           pane.pane_kind,
-          pane.terminal_id,
+          pane.client_surface_id,
         )
       })
       .collect::<Vec<_>>(),
@@ -2473,7 +2473,7 @@ mod tests {
     let frame = FrameRenderPlan::from_active_plan(plan.clone());
     assert_eq!(frame.panes.len(), 1);
     assert_eq!(frame.panes[0].pane_kind, PaneContentKind::EditorBuffer);
-    assert_eq!(frame.panes[0].terminal_id, None);
+    assert_eq!(frame.panes[0].client_surface_id, None);
     assert_eq!(
       frame
         .active_plan()
@@ -2552,7 +2552,7 @@ mod tests {
         pane_id,
         rect: Rect::new(0, 0, 12, 3),
         pane_kind: PaneContentKind::EditorBuffer,
-        terminal_id: None,
+        client_surface_id: None,
         plan: initial_plan.clone(),
       }],
       frame_generation:          0,
@@ -2585,7 +2585,7 @@ mod tests {
         pane_id,
         rect: Rect::new(0, 0, 12, 3),
         pane_kind: PaneContentKind::EditorBuffer,
-        terminal_id: None,
+        client_surface_id: None,
         plan: updated_plan,
       }],
       frame_generation:          0,

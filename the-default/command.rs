@@ -755,6 +755,15 @@ pub trait DefaultContext: Sized + 'static {
   ) -> Result<Vec<crate::file_picker::FilePickerChangedFileItem>, String> {
     Ok(Vec::new())
   }
+  fn file_tree_vcs_summary(&self, _path: &Path) -> Option<crate::FileTreeVcsSummary> {
+    None
+  }
+  fn file_tree_diagnostic_summary(
+    &self,
+    _path: &Path,
+  ) -> Option<crate::FileTreeDiagnosticSummary> {
+    None
+  }
   fn supports_native_file_explorer(&self) -> bool {
     false
   }

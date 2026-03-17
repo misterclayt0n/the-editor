@@ -605,6 +605,7 @@ pub struct Ctx {
   lsp_completion_items:              Vec<LspCompletionItem>,
   lsp_completion_raw_items:          Vec<Value>,
   lsp_completion_resolved_indices:   HashSet<usize>,
+  lsp_completion_resolve_supported:  bool,
   lsp_completion_visible_indices:    Vec<usize>,
   lsp_completion_fallback_start:     Option<usize>,
   lsp_code_action_items:             Vec<LspCodeAction>,
@@ -1029,6 +1030,7 @@ impl Ctx {
       lsp_completion_items: Vec::new(),
       lsp_completion_raw_items: Vec::new(),
       lsp_completion_resolved_indices: HashSet::new(),
+      lsp_completion_resolve_supported: true,
       lsp_completion_visible_indices: Vec::new(),
       lsp_completion_fallback_start: None,
       lsp_code_action_items: Vec::new(),
@@ -2217,16 +2219,16 @@ impl Ctx {
         announce_empty,
         ..
       } => {
-        self.handle_completion_response(
-          response.result.as_ref(),
-          generation,
-          cursor,
-          replace_start,
-          announce_empty,
-        )
+      self.handle_completion_response(
+        response.result.as_ref(),
+        generation,
+        cursor,
+        replace_start,
+        announce_empty,
+      )
       },
       PendingLspRequestKind::CompletionResolve { index, .. } => {
-        self.handle_completion_resolve_response(index, response.result.as_ref())
+        self.handle_completion_resolve_response(index, &response)
       },
       PendingLspRequestKind::SignatureHelp { .. } => {
         self.handle_signature_help_response(response.result.as_ref())
@@ -2424,6 +2426,7 @@ impl Ctx {
       self.lsp_completion_items.clear();
       self.lsp_completion_raw_items.clear();
       self.lsp_completion_resolved_indices.clear();
+      self.lsp_completion_resolve_supported = self.lsp_completion_server_supports_resolve();
       self.lsp_completion_visible_indices.clear();
       self.lsp_completion_fallback_start = None;
       self.completion_menu.clear();
@@ -2440,13 +2443,32 @@ impl Ctx {
     self.lsp_completion_items = completion.items;
     self.lsp_completion_raw_items = completion.raw_items;
     self.lsp_completion_resolved_indices.clear();
+    self.lsp_completion_resolve_supported = self.lsp_completion_server_supports_resolve();
     self.lsp_completion_fallback_start = Some(replace_start.min(request_cursor));
     self.rebuild_completion_menu();
     true
   }
 
-  fn handle_completion_resolve_response(&mut self, index: usize, result: Option<&Value>) -> bool {
-    let resolved = match parse_completion_item_response(result) {
+  fn handle_completion_resolve_response(
+    &mut self,
+    index: usize,
+    response: &jsonrpc::Response,
+  ) -> bool {
+    if let Some(error) = response.error.as_ref() {
+      self.lsp_completion_resolved_indices.insert(index);
+      if lsp_method_is_unsupported(error) {
+        self.lsp_completion_resolve_supported = false;
+        return true;
+      }
+      self.messages.publish(
+        MessageLevel::Warning,
+        Some("lsp".into()),
+        format!("completion resolve failed: {}", error.message),
+      );
+      return true;
+    }
+
+    let resolved = match parse_completion_item_response(response.result.as_ref()) {
       Ok(item) => item,
       Err(err) => {
         self.messages.publish(
@@ -3965,6 +3987,16 @@ impl Ctx {
     self.lsp_provider_supports_single_char("completionProvider", "triggerCharacters", ch)
   }
 
+  fn lsp_completion_server_supports_resolve(&self) -> bool {
+    let Some(server) = self.lsp_runtime.config().server() else {
+      return false;
+    };
+    let Some(capabilities) = self.lsp_runtime.server_capabilities(server.name()) else {
+      return false;
+    };
+    capabilities.supports_completion_item_resolve()
+  }
+
   fn lsp_signature_help_supports_trigger_char(&self, ch: char) -> bool {
     self.lsp_provider_supports_single_char("signatureHelpProvider", "triggerCharacters", ch)
   }
@@ -4559,6 +4591,9 @@ impl Ctx {
 
   fn resolve_completion_item_if_needed(&mut self, index: usize) {
     if !self.completion_menu.active {
+      return;
+    }
+    if !self.lsp_completion_resolve_supported {
       return;
     }
     if self.lsp_completion_resolved_indices.contains(&index) {
@@ -7089,6 +7124,10 @@ fn setup_syntax(doc: &mut Document, path: &Path, loader: &Arc<Loader>) -> Result
   doc.set_syntax_with_loader(syntax, loader.clone());
 
   Ok(())
+}
+
+fn lsp_method_is_unsupported(error: &jsonrpc::ResponseError) -> bool {
+  error.code == -32601 || error.message.eq_ignore_ascii_case("method not found")
 }
 
 #[cfg(test)]

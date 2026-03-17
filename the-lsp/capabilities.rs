@@ -161,6 +161,16 @@ impl ServerCapabilitiesSnapshot {
       .unwrap_or(false)
   }
 
+  pub fn supports_completion_item_resolve(&self) -> bool {
+    self
+      .raw
+      .get("completionProvider")
+      .and_then(Value::as_object)
+      .and_then(|provider| provider.get("resolveProvider"))
+      .and_then(Value::as_bool)
+      .unwrap_or(false)
+  }
+
   pub fn workspace_commands(&self) -> Vec<String> {
     let Some(commands) = self
       .raw

@@ -730,9 +730,7 @@ fn render_config_bridge_manifest(
 }
 
 fn render_config_bridge_lib() -> &'static str {
-  "//! Generated config bridge crate.\n\npub use the_config_user::*;\n\npub mod defaults {\npub fn \
-   build_file_picker_config() -> the_default::FilePickerConfig \
-   {\nthe_default::FilePickerConfig::default()\n}\n}\n"
+  "//! Generated config bridge crate.\n\npub use the_config_user::*;\n"
 }
 
 fn render_target_manifest(

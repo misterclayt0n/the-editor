@@ -51,6 +51,22 @@ where
   Ctx: DefaultContext,
 {
   default_editor_preset::<Ctx>()
+    // Simple startup defaults can live directly on the preset.
+    // .with_defaults(
+    //   the_default::ConfigDefaults::new()
+    //     .theme("onedark")
+    //     .line_numbers(the_default::LineNumberMode::Relative)
+    //     .cursor_shapes(the_default::CursorShapes::new(
+    //       the_default::CursorKind::Bar,
+    //       the_default::CursorKind::Block,
+    //       the_default::CursorKind::Underline,
+    //     ))
+    //     .file_picker(the_default::FilePickerConfig {
+    //       hidden: false,
+    //       ..Default::default()
+    //     })
+    //     .term(the_default::TermDefaults::new().mouse(false)),
+    // )
     .with_dispatch(build_dispatch::<Ctx>())
     .with_keymaps(build_keymaps())
 }

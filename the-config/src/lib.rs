@@ -5,9 +5,3 @@
 //! stable path.
 
 pub use the_config_user::*;
-
-pub mod defaults {
-  pub fn build_file_picker_config() -> the_default::FilePickerConfig {
-    the_default::FilePickerConfig::default()
-  }
-}

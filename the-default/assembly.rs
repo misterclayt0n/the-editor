@@ -1,7 +1,9 @@
 use the_lib::render::{
+  LineNumberMode,
   OwnedTextAnnotations,
   RenderPlan,
   UiTree,
+  graphics::CursorKind,
   text_annotations::TextAnnotations,
 };
 
@@ -18,6 +20,7 @@ use crate::{
   DefaultContext,
   EditorContextMenuRequest,
   ExtensionStateStore,
+  FilePickerConfig,
   KeyAction,
   Keymaps,
   Mode,
@@ -177,8 +180,136 @@ impl<Ctx: 'static, Dispatch> std::fmt::Debug for SignatureHelpProviderBuilder<'_
   }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CursorShapes {
+  pub insert: CursorKind,
+  pub normal: CursorKind,
+  pub select: CursorKind,
+}
+
+impl CursorShapes {
+  pub const fn new(insert: CursorKind, normal: CursorKind, select: CursorKind) -> Self {
+    Self {
+      insert,
+      normal,
+      select,
+    }
+  }
+}
+
+impl Default for CursorShapes {
+  fn default() -> Self {
+    Self::new(CursorKind::Bar, CursorKind::Block, CursorKind::Underline)
+  }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct EditorDefaults {
+  pub line_numbers:  Option<LineNumberMode>,
+  pub cursor_shapes: Option<CursorShapes>,
+  pub file_picker:   Option<FilePickerConfig>,
+}
+
+impl EditorDefaults {
+  pub fn line_numbers(mut self, mode: LineNumberMode) -> Self {
+    self.line_numbers = Some(mode);
+    self
+  }
+
+  pub fn cursor_shapes(mut self, shapes: CursorShapes) -> Self {
+    self.cursor_shapes = Some(shapes);
+    self
+  }
+
+  pub fn file_picker(mut self, config: FilePickerConfig) -> Self {
+    self.file_picker = Some(config);
+    self
+  }
+
+  fn merge(&mut self, other: Self) {
+    if other.line_numbers.is_some() {
+      self.line_numbers = other.line_numbers;
+    }
+    if other.cursor_shapes.is_some() {
+      self.cursor_shapes = other.cursor_shapes;
+    }
+    if other.file_picker.is_some() {
+      self.file_picker = other.file_picker;
+    }
+  }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct TermDefaults {
+  pub mouse: Option<bool>,
+}
+
+impl TermDefaults {
+  pub fn new() -> Self {
+    Self::default()
+  }
+
+  pub fn mouse(mut self, enabled: bool) -> Self {
+    self.mouse = Some(enabled);
+    self
+  }
+
+  fn merge(&mut self, other: Self) {
+    if other.mouse.is_some() {
+      self.mouse = other.mouse;
+    }
+  }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ConfigDefaults {
+  pub theme:  Option<String>,
+  pub editor: EditorDefaults,
+  pub term:   TermDefaults,
+}
+
+impl ConfigDefaults {
+  pub fn new() -> Self {
+    Self::default()
+  }
+
+  pub fn theme(mut self, theme: impl Into<String>) -> Self {
+    self.theme = Some(theme.into());
+    self
+  }
+
+  pub fn line_numbers(mut self, mode: LineNumberMode) -> Self {
+    self.editor = self.editor.line_numbers(mode);
+    self
+  }
+
+  pub fn cursor_shapes(mut self, shapes: CursorShapes) -> Self {
+    self.editor = self.editor.cursor_shapes(shapes);
+    self
+  }
+
+  pub fn file_picker(mut self, config: FilePickerConfig) -> Self {
+    self.editor = self.editor.file_picker(config);
+    self
+  }
+
+  pub fn term(mut self, defaults: TermDefaults) -> Self {
+    self.term.merge(defaults);
+    self
+  }
+
+  fn merge(&mut self, other: Self) {
+    if other.theme.is_some() {
+      self.theme = other.theme;
+    }
+    self.editor.merge(other.editor);
+    self.term.merge(other.term);
+  }
+}
+
 pub struct EditorPreset<Ctx: 'static, Dispatch> {
   dispatch:                         Dispatch,
+  defaults:                         ConfigDefaults,
   keymaps:                          Keymaps,
   completion_menu_keymaps:          Keymaps,
   commands:                         Vec<TypableCommand<Ctx>>,
@@ -202,6 +333,7 @@ impl<Ctx: 'static, Dispatch> EditorPreset<Ctx, Dispatch> {
   pub fn new(dispatch: Dispatch, keymaps: Keymaps) -> Self {
     Self {
       dispatch,
+      defaults: ConfigDefaults::default(),
       keymaps,
       completion_menu_keymaps: crate::builtin_completion_menu_keymaps(),
       commands: Vec::new(),
@@ -228,6 +360,10 @@ impl<Ctx: 'static, Dispatch> EditorPreset<Ctx, Dispatch> {
 
   pub fn dispatch_mut(&mut self) -> &mut Dispatch {
     &mut self.dispatch
+  }
+
+  pub fn defaults(&self) -> &ConfigDefaults {
+    &self.defaults
   }
 
   pub fn keymaps(&self) -> &Keymaps {
@@ -257,6 +393,7 @@ impl<Ctx: 'static, Dispatch> EditorPreset<Ctx, Dispatch> {
   pub fn with_dispatch<NewDispatch>(self, dispatch: NewDispatch) -> EditorPreset<Ctx, NewDispatch> {
     EditorPreset {
       dispatch,
+      defaults: self.defaults,
       keymaps: self.keymaps,
       completion_menu_keymaps: self.completion_menu_keymaps,
       commands: self.commands,
@@ -279,6 +416,11 @@ impl<Ctx: 'static, Dispatch> EditorPreset<Ctx, Dispatch> {
 
   pub fn with_keymaps(mut self, keymaps: Keymaps) -> Self {
     self.keymaps = keymaps;
+    self
+  }
+
+  pub fn with_defaults(mut self, defaults: ConfigDefaults) -> Self {
+    self.defaults.merge(defaults);
     self
   }
 
@@ -549,6 +691,7 @@ impl<Ctx: 'static, Dispatch> EditorPreset<Ctx, Dispatch> {
 
     BuiltEditorPreset {
       dispatch: self.dispatch,
+      defaults: self.defaults,
       keymaps: self.keymaps,
       completion_menu_keymaps: self.completion_menu_keymaps,
       command_registry,
@@ -571,6 +714,7 @@ impl<Ctx: 'static, Dispatch> EditorPreset<Ctx, Dispatch> {
 
 pub struct BuiltEditorPreset<Ctx: 'static, Dispatch> {
   dispatch:                         Dispatch,
+  defaults:                         ConfigDefaults,
   keymaps:                          Keymaps,
   completion_menu_keymaps:          Keymaps,
   command_registry:                 CommandRegistry<Ctx>,
@@ -596,6 +740,10 @@ impl<Ctx: 'static, Dispatch> BuiltEditorPreset<Ctx, Dispatch> {
 
   pub fn keymaps(&self) -> &Keymaps {
     &self.keymaps
+  }
+
+  pub fn defaults(&self) -> &ConfigDefaults {
+    &self.defaults
   }
 
   pub fn keymaps_mut(&mut self) -> &mut Keymaps {
@@ -796,6 +944,7 @@ where
   pub fn box_dispatch(self) -> BuiltEditorPreset<Ctx, Box<dyn DefaultApi<Ctx>>> {
     BuiltEditorPreset {
       dispatch:                         Box::new(self.dispatch),
+      defaults:                         self.defaults,
       keymaps:                          self.keymaps,
       completion_menu_keymaps:          self.completion_menu_keymaps,
       command_registry:                 self.command_registry,
@@ -893,9 +1042,14 @@ where
 
 #[cfg(test)]
 mod tests {
-  use super::EditorPreset;
+  use super::{
+    ConfigDefaults,
+    CursorShapes,
+    EditorPreset,
+  };
   use crate::{
     CompletionMenuItem,
+    FilePickerConfig,
     IntoKeyBinding,
     KeyAction,
     KeyTrie,
@@ -903,6 +1057,9 @@ mod tests {
     Mode,
     NamedAction,
     SignatureHelpPresentation,
+  };
+  use the_lib::render::{
+    LineNumberMode,
   };
 
   struct TestCtx;
@@ -958,5 +1115,48 @@ mod tests {
       .register();
 
     assert_eq!(provider.get(), 0);
+  }
+
+  #[test]
+  fn preset_defaults_merge_and_survive_dispatch_replacement() {
+    let preset = EditorPreset::<TestCtx, ()>::new((), Keymaps::default())
+      .with_defaults(
+        ConfigDefaults::new()
+          .theme("onedark")
+          .line_numbers(LineNumberMode::Relative),
+      )
+      .with_defaults(
+        ConfigDefaults::new()
+          .cursor_shapes(CursorShapes::new(
+            crate::CursorKind::Underline,
+            crate::CursorKind::Bar,
+            crate::CursorKind::Block,
+          ))
+          .file_picker(FilePickerConfig {
+            hidden: false,
+            ..Default::default()
+          }),
+      )
+      .with_dispatch(());
+
+    let defaults = preset.defaults();
+    assert_eq!(defaults.theme.as_deref(), Some("onedark"));
+    assert_eq!(defaults.editor.line_numbers, Some(LineNumberMode::Relative));
+    assert_eq!(
+      defaults.editor.cursor_shapes,
+      Some(CursorShapes::new(
+        crate::CursorKind::Underline,
+        crate::CursorKind::Bar,
+        crate::CursorKind::Block,
+      ))
+    );
+    assert_eq!(
+      defaults
+        .editor
+        .file_picker
+        .as_ref()
+        .map(|config| config.hidden),
+      Some(false)
+    );
   }
 }

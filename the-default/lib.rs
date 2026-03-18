@@ -45,10 +45,14 @@ pub use assembly::{
   BuiltinCompletionMenuKind,
   CommandRegistryInstaller,
   CompletionMenuProviderBuilder,
+  ConfigDefaults,
+  CursorShapes,
   DefaultPresetHandles,
+  EditorDefaults,
   EditorPreset,
   SignatureHelpProviderBuilder,
   StartupHook,
+  TermDefaults,
   default_editor_preset,
   default_preset_handles,
   show_builtin_completion_menu,
@@ -334,4 +338,8 @@ pub use the_lib::messages::{
   MessageLevel,
   MessageSnapshot,
 };
+pub use the_lib::render::{
+  LineNumberMode,
+};
+pub use the_lib::render::graphics::CursorKind;
 pub use theme_catalog::ThemeCatalog;

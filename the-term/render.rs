@@ -367,10 +367,11 @@ fn lib_style_to_ratatui(style: LibStyle) -> Style {
 
 fn render_styles_from_theme(ctx: &Ctx) -> RenderStyles {
   let theme = &ctx.ui_theme;
+  let cursor_shapes = ctx.cursor_shapes;
   let (cursor_kind, active_cursor_kind) = match ctx.mode {
-    Mode::Insert => (LibCursorKind::Bar, LibCursorKind::Bar),
-    Mode::Select => (LibCursorKind::Underline, LibCursorKind::Underline),
-    Mode::Normal | Mode::Command => (LibCursorKind::Block, LibCursorKind::Block),
+    Mode::Insert => (cursor_shapes.insert, cursor_shapes.insert),
+    Mode::Select => (cursor_shapes.select, cursor_shapes.select),
+    Mode::Normal | Mode::Command => (cursor_shapes.normal, cursor_shapes.normal),
   };
   let selection = theme.try_get("ui.selection").unwrap_or_default();
   let cursor = theme.try_get("ui.cursor").unwrap_or_default();

@@ -570,6 +570,9 @@ pub trait DefaultContext: Sized + 'static {
   fn cursor_blink_generation(&self) -> u64 {
     0
   }
+  fn cursor_shapes(&self) -> crate::CursorShapes {
+    crate::CursorShapes::default()
+  }
   fn bump_cursor_blink_generation(&mut self) {}
   fn messages(&self) -> &MessageCenter;
   fn messages_mut(&mut self) -> &mut MessageCenter;
@@ -2031,10 +2034,11 @@ fn pre_render_with_styles<Ctx: DefaultContext>(
   ctx: &mut Ctx,
   mut styles: RenderStyles,
 ) -> RenderStyles {
+  let cursor_shapes = ctx.cursor_shapes();
   let (cursor_kind, active_cursor_kind) = match ctx.mode() {
-    Mode::Insert => (CursorKind::Bar, CursorKind::Bar),
-    Mode::Select => (CursorKind::Underline, CursorKind::Underline),
-    Mode::Normal | Mode::Command => (CursorKind::Block, CursorKind::Block),
+    Mode::Insert => (cursor_shapes.insert, cursor_shapes.insert),
+    Mode::Select => (cursor_shapes.select, cursor_shapes.select),
+    Mode::Normal | Mode::Command => (cursor_shapes.normal, cursor_shapes.normal),
   };
   styles.cursor_kind = cursor_kind;
   styles.active_cursor_kind = active_cursor_kind;

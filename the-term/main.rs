@@ -201,15 +201,15 @@ fn main() -> Result<()> {
   let file_path = cli.file.as_deref();
 
   // Initialize application state
-  let mut ctx = Ctx::new(file_path)?;
   let preset = the_config::build_editor_preset::<Ctx>()
     .build()
     .box_dispatch();
+  let mut ctx = Ctx::new_with_defaults(file_path, preset.defaults())?;
   ctx.install_preset(preset);
   ctx.start_background_services();
   let mut terminal = terminal::Terminal::new()?;
 
-  terminal.enter_raw_mode()?;
+  terminal.enter_raw_mode(ctx.preset.defaults().term.mouse.unwrap_or(true))?;
 
   // Initial render
   ctx.needs_render = false;

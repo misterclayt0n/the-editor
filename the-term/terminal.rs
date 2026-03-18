@@ -52,14 +52,18 @@ impl Terminal {
     })
   }
 
-  pub fn enter_raw_mode(&mut self) -> Result<()> {
+  pub fn enter_raw_mode(&mut self, enable_mouse: bool) -> Result<()> {
     enable_raw_mode()?;
-    execute!(
-      self.terminal.backend_mut(),
-      EnterAlternateScreen,
-      EnableMouseCapture,
-      Hide
-    )?;
+    if enable_mouse {
+      execute!(
+        self.terminal.backend_mut(),
+        EnterAlternateScreen,
+        EnableMouseCapture,
+        Hide
+      )?;
+    } else {
+      execute!(self.terminal.backend_mut(), EnterAlternateScreen, Hide)?;
+    }
     let enhancement_flags = KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
       | KeyboardEnhancementFlags::REPORT_EVENT_TYPES;
     if execute!(

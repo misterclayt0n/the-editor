@@ -51,6 +51,8 @@ use the_default::{
   CommandPaletteStyle,
   CommandPromptState,
   CommandRegistry,
+  ConfigDefaults,
+  CursorShapes,
   DefaultApi,
   DefaultContext,
   DispatchRef,
@@ -665,6 +667,7 @@ pub struct Ctx {
   pub last_motion:                   Option<Motion>,
   /// Render formatting used for visual position mapping.
   pub text_format:                   TextFormat,
+  pub cursor_shapes:                 CursorShapes,
   /// Gutter layout and line-number rendering config.
   pub gutter_config:                 GutterConfig,
   /// VCS-like gutter signs keyed by document line.
@@ -709,31 +712,26 @@ pub struct TermHardwareCursor {
   pub kind: the_lib::render::graphics::CursorKind,
 }
 
-fn select_ui_theme(catalog: &ThemeCatalog) -> (String, Theme) {
-  match env::var("THE_EDITOR_THEME").ok() {
-    Some(theme_name) => {
-      let theme_name = theme_name.trim();
-      if let Some(theme) = catalog.load_theme(theme_name) {
-        (theme_name.to_string(), theme)
-      } else {
-        eprintln!("Unknown theme '{theme_name}', falling back to default theme.");
-        (
-          default_theme().name().to_string(),
-          catalog
-            .load_theme(default_theme().name())
-            .unwrap_or_else(|| default_theme().clone()),
-        )
-      }
-    },
-    None => {
-      (
-        default_theme().name().to_string(),
-        catalog
-          .load_theme(default_theme().name())
-          .unwrap_or_else(|| default_theme().clone()),
-      )
-    },
+fn select_ui_theme(catalog: &ThemeCatalog, configured_theme: Option<&str>) -> (String, Theme) {
+  let requested_theme = env::var("THE_EDITOR_THEME")
+    .ok()
+    .map(|theme| theme.trim().to_string())
+    .filter(|theme| !theme.is_empty())
+    .or_else(|| configured_theme.map(str::trim).map(str::to_string).filter(|theme| !theme.is_empty()));
+
+  if let Some(theme_name) = requested_theme {
+    if let Some(theme) = catalog.load_theme(&theme_name) {
+      return (theme_name, theme);
+    }
+    eprintln!("Unknown theme '{theme_name}', falling back to default theme.");
   }
+
+  (
+    default_theme().name().to_string(),
+    catalog
+      .load_theme(default_theme().name())
+      .unwrap_or_else(|| default_theme().clone()),
+  )
 }
 
 fn resolve_message_log_path() -> Option<PathBuf> {
@@ -898,6 +896,10 @@ fn build_lsp_document_state(path: &Path, loader: Option<&Loader>) -> Option<LspD
 
 impl Ctx {
   pub fn new(file_path: Option<&str>) -> Result<Self> {
+    Self::new_with_defaults(file_path, &ConfigDefaults::default())
+  }
+
+  pub fn new_with_defaults(file_path: Option<&str>, defaults: &ConfigDefaults) -> Result<Self> {
     // Load text from file or create empty document
     let text = if let Some(path) = file_path {
       Rope::from(std::fs::read_to_string(path).unwrap_or_default())
@@ -935,7 +937,7 @@ impl Ctx {
 
     // Initialize syntax loader
     let ui_theme_catalog = ThemeCatalog::load(Some(workspace_root.as_path()));
-    let (ui_theme_name, ui_theme) = select_ui_theme(&ui_theme_catalog);
+    let (ui_theme_name, ui_theme) = select_ui_theme(&ui_theme_catalog, defaults.theme.as_deref());
 
     let loader = match init_loader(&ui_theme) {
       Ok(loader) => Some(Arc::new(loader)),
@@ -966,7 +968,7 @@ impl Ctx {
     let mut file_picker = FilePickerState::default();
     the_default::set_file_picker_config(
       &mut file_picker,
-      the_config::defaults::build_file_picker_config(),
+      defaults.editor.file_picker.clone().unwrap_or_default(),
     );
     the_default::set_file_picker_wake_sender(&mut file_picker, Some(render_wake_tx.clone()));
     the_default::set_file_picker_syntax_loader(&mut file_picker, loader.clone());
@@ -984,7 +986,14 @@ impl Ctx {
       .map(PathBuf::from)
       .as_deref()
       .and_then(|path| build_lsp_document_state(path, loader.as_deref()));
+    let mut gutter_config = GutterConfig::default();
+    if let Some(mode) = defaults.editor.line_numbers {
+      gutter_config.line_numbers.mode = mode;
+    }
+    let cursor_shapes = defaults.editor.cursor_shapes.unwrap_or_default();
+
     let preset = the_default::default_editor_preset::<Self>()
+      .with_defaults(defaults.clone())
       .build()
       .box_dispatch();
     let mut ctx = Self {
@@ -1077,7 +1086,8 @@ impl Ctx {
       macro_queue: VecDeque::new(),
       last_motion: None,
       text_format,
-      gutter_config: GutterConfig::default(),
+      cursor_shapes,
+      gutter_config,
       gutter_diff_signs: BTreeMap::new(),
       vcs_provider: DiffProviderRegistry::default(),
       vcs_statusline: None,
@@ -5796,6 +5806,10 @@ impl the_default::DefaultContext for Ctx {
     self.cursor_blink_generation
   }
 
+  fn cursor_shapes(&self) -> CursorShapes {
+    self.cursor_shapes
+  }
+
   fn bump_cursor_blink_generation(&mut self) {
     self.cursor_blink_generation = self.cursor_blink_generation.wrapping_add(1);
   }
@@ -7923,6 +7937,38 @@ pkgs.mkShell {
         .iter()
         .any(|slot| slot.is_builtin(the_lib::render::GutterType::LineNumbers))
     );
+  }
+
+  #[test]
+  fn bootstrap_defaults_apply_theme_picker_line_numbers_and_cursor_shapes() {
+    let defaults = the_default::ConfigDefaults::new()
+      .theme("base16_default")
+      .line_numbers(the_lib::render::LineNumberMode::Relative)
+      .cursor_shapes(the_default::CursorShapes::new(
+        the_default::CursorKind::Underline,
+        the_default::CursorKind::Bar,
+        the_default::CursorKind::Block,
+      ))
+      .file_picker(the_default::FilePickerConfig {
+        hidden: false,
+        ..Default::default()
+      });
+    let ctx = Ctx::new_with_defaults(None, &defaults).expect("ctx");
+
+    assert_eq!(ctx.ui_theme_name, "base16_default");
+    assert_eq!(
+      ctx.gutter_config.line_numbers.mode,
+      the_lib::render::LineNumberMode::Relative
+    );
+    assert_eq!(
+      ctx.cursor_shapes,
+      the_default::CursorShapes::new(
+        the_default::CursorKind::Underline,
+        the_default::CursorKind::Bar,
+        the_default::CursorKind::Block,
+      )
+    );
+    assert!(!ctx.file_picker.config.hidden);
   }
 
   #[test]

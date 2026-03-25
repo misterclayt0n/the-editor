@@ -444,6 +444,8 @@ pub trait DefaultContext: Sized + 'static {
   fn signature_help_mut(&mut self) -> Option<&mut SignatureHelpState> {
     None
   }
+  fn file_tree(&self) -> &crate::file_tree::FileTreeState;
+  fn file_tree_mut(&mut self) -> &mut crate::file_tree::FileTreeState;
   fn file_picker(&self) -> &crate::file_picker::FilePickerState;
   fn file_picker_mut(&mut self) -> &mut crate::file_picker::FilePickerState;
   fn picker_runtime_store(&self) -> &crate::PickerRuntimeStore<Self>;
@@ -1403,14 +1405,10 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
       crate::file_picker::open_file_picker_in_current_directory(ctx);
     },
     Command::FileExplorer => {
-      if !ctx.supports_native_file_explorer() || !ctx.open_native_file_explorer(false) {
-        crate::file_picker::open_file_picker(ctx);
-      }
+      crate::file_tree::toggle_file_tree(ctx);
     },
     Command::FileExplorerInCurrentBufferDirectory => {
-      if !ctx.supports_native_file_explorer() || !ctx.open_native_file_explorer(true) {
-        crate::file_picker::open_file_picker_in_current_directory(ctx);
-      }
+      crate::file_tree::toggle_file_tree_in_current_buffer_directory(ctx);
     },
     Command::EditCurrentFilePath => edit_current_file_path(ctx),
     Command::BufferPicker => crate::file_picker::open_buffer_picker(ctx),

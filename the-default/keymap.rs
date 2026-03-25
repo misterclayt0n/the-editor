@@ -459,6 +459,12 @@ impl Keymaps {
     self.count_prefix.take()
   }
 
+  pub fn reset_pending(&mut self) {
+    self.state.clear();
+    self.sticky = None;
+    self.count_prefix = None;
+  }
+
   pub fn pending_hints(&self, mode: Mode) -> Option<PendingKeyHints> {
     if self.state.is_empty() {
       return None;

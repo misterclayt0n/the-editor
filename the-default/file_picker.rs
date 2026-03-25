@@ -3213,12 +3213,10 @@ pub fn file_picker_icon_name_for_path(path: &Path) -> &'static str {
 }
 
 pub fn file_picker_icon_glyph(icon: &str, is_dir: bool) -> &'static str {
-  if is_dir {
-    return "";
-  }
-
   match icon {
-    "folder" | "folder_open" | "folder_search" => "",
+    "folder" => "",
+    "folder_open" => "",
+    "folder_search" => "",
     "archive" => "",
     "book" => "󰂺",
     "c" => "",
@@ -3257,6 +3255,7 @@ pub fn file_picker_icon_glyph(icon: &str, is_dir: bool) -> &'static str {
     "terminal" => "",
     "tool_hammer" => "󰛶",
     "typescript" => "",
+    _ if is_dir => "",
     _ => "󰈔",
   }
 }

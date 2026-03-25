@@ -1,0 +1,1065 @@
+use std::{
+  collections::BTreeSet,
+  fs::OpenOptions,
+  path::{
+    Path,
+    PathBuf,
+  },
+};
+
+use the_lib::{
+  editor::{
+    ClientSurfaceId,
+    OpenTarget,
+  },
+  split_tree::{
+    PaneDirection,
+    PaneId,
+    SplitAxis,
+  },
+  view::scroll_row_to_keep_visible,
+};
+
+use crate::{
+  CommandBuilder,
+  CommandEvent,
+  CommandRegistry,
+  DefaultContext,
+  Key,
+  KeyEvent,
+  Mode,
+  file_picker_icon_glyph,
+  file_picker_icon_name_for_path,
+  open_command_palette_with_input,
+};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileTreeRow {
+  pub path:              PathBuf,
+  pub display_name:      String,
+  pub depth:             usize,
+  pub ancestor_branches: Vec<bool>,
+  pub is_last_sibling:   bool,
+  pub has_children:      bool,
+  pub is_dir:            bool,
+  pub is_expanded:       bool,
+  pub is_current_file:   bool,
+  pub icon_name:         String,
+  pub icon_glyph:        &'static str,
+}
+
+#[derive(Debug, Clone)]
+pub struct FileTreeSnapshot {
+  pub surface_id:     ClientSurfaceId,
+  pub root:           PathBuf,
+  pub rows:           Vec<FileTreeRow>,
+  pub selected:       Option<usize>,
+  pub scroll_offset:  usize,
+  pub show_hidden:    bool,
+  pub follow_current: bool,
+  pub attached_pane:  Option<PaneId>,
+  pub active:         bool,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct FileTreeState {
+  pub surface_id:       Option<ClientSurfaceId>,
+  pub root:             Option<PathBuf>,
+  pub rows:             Vec<FileTreeRow>,
+  pub selected:         Option<usize>,
+  pub scroll_offset:    usize,
+  pub visible_rows:     usize,
+  pub selection_follow: bool,
+  pub expanded_dirs:    BTreeSet<PathBuf>,
+  pub show_hidden:      bool,
+  pub follow_current:   bool,
+  pub last_editor_pane: Option<PaneId>,
+}
+
+impl FileTreeState {
+  fn clear_rows(&mut self) {
+    self.rows.clear();
+    self.selected = None;
+    self.scroll_offset = 0;
+    self.selection_follow = false;
+  }
+}
+
+pub fn install_builtin_file_tree_commands<Ctx>(registry: &mut CommandRegistry<Ctx>)
+where
+  Ctx: DefaultContext + 'static,
+{
+  registry.register(
+    CommandBuilder::new(
+      "file-tree-add",
+      "Create a file or directory in the file tree",
+      cmd_add::<Ctx>,
+    )
+    .required_arg()
+    .build(),
+  );
+  registry.register(
+    CommandBuilder::new(
+      "file-tree-rename",
+      "Rename the selected file-tree entry",
+      cmd_rename::<Ctx>,
+    )
+    .required_arg()
+    .build(),
+  );
+  registry.register(
+    CommandBuilder::new(
+      "file-tree-delete",
+      "Delete the selected file-tree entry (use :file-tree-delete yes to confirm)",
+      cmd_delete::<Ctx>,
+    )
+    .optional_arg()
+    .build(),
+  );
+}
+
+pub fn file_tree_snapshot<Ctx: DefaultContext>(ctx: &Ctx) -> Option<FileTreeSnapshot> {
+  let state = ctx.file_tree();
+  let surface_id = state.surface_id?;
+  let root = state.root.clone()?;
+  Some(FileTreeSnapshot {
+    surface_id,
+    root,
+    rows: state.rows.clone(),
+    selected: state.selected,
+    scroll_offset: state.scroll_offset,
+    show_hidden: state.show_hidden,
+    follow_current: state.follow_current,
+    attached_pane: attached_tree_pane(ctx),
+    active: ctx.editor_ref().active_client_surface_id() == Some(surface_id),
+  })
+}
+
+pub fn file_tree_surface_id<Ctx: DefaultContext>(ctx: &Ctx) -> Option<ClientSurfaceId> {
+  ctx.file_tree().surface_id
+}
+
+pub fn is_file_tree_surface<Ctx: DefaultContext>(ctx: &Ctx, surface_id: ClientSurfaceId) -> bool {
+  ctx.file_tree().surface_id == Some(surface_id)
+}
+
+pub fn is_active_file_tree<Ctx: DefaultContext>(ctx: &Ctx) -> bool {
+  let Some(surface_id) = ctx.file_tree().surface_id else {
+    return false;
+  };
+  ctx.editor_ref().active_client_surface_id() == Some(surface_id)
+}
+
+pub fn remember_active_editor_pane<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  let pane = ctx.editor_ref().active_pane_id();
+  if matches!(
+    ctx.editor_ref().pane_content_kind(pane),
+    Some(the_lib::editor::PaneContentKind::EditorBuffer)
+  ) {
+    ctx.file_tree_mut().last_editor_pane = Some(pane);
+  }
+}
+
+pub fn sync_file_tree_to_active_file<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  if !ctx.file_tree().follow_current {
+    return;
+  }
+  let Some(root) = ctx.file_tree().root.clone() else {
+    return;
+  };
+  let Some(path) = ctx.file_path().map(PathBuf::from) else {
+    return;
+  };
+  if !path.starts_with(&root) {
+    return;
+  }
+  reveal_path(ctx, &path);
+}
+
+pub fn toggle_file_tree<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  toggle_file_tree_with_root(ctx, false);
+}
+
+pub fn toggle_file_tree_in_current_buffer_directory<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  toggle_file_tree_with_root(ctx, true);
+}
+
+pub fn set_file_tree_visible_rows<Ctx: DefaultContext>(ctx: &mut Ctx, visible_rows: usize) {
+  let scrolloff = ctx.scrolloff();
+  let state = ctx.file_tree_mut();
+  state.visible_rows = visible_rows;
+  sync_tree_scroll(state, scrolloff);
+}
+
+pub fn handle_file_tree_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent) -> bool {
+  if ctx.mode() == Mode::Command || ctx.file_picker().active || !is_active_file_tree(ctx) {
+    return false;
+  }
+
+  match key.key {
+    Key::Up => move_selection(ctx, -1),
+    Key::Down => move_selection(ctx, 1),
+    Key::Left => collapse_selected_or_select_parent(ctx),
+    Key::Right | Key::Enter | Key::NumpadEnter => expand_or_open_selected(ctx, None),
+    Key::Backspace => root_to_parent(ctx),
+    Key::Escape => close_file_tree(ctx),
+    Key::Char('j') => move_selection(ctx, 1),
+    Key::Char('k') => move_selection(ctx, -1),
+    Key::Char('h') => collapse_selected_or_select_parent(ctx),
+    Key::Char('l') => expand_or_open_selected(ctx, None),
+    Key::Char('s') => expand_or_open_selected(ctx, Some(SplitAxis::Horizontal)),
+    Key::Char('v') => expand_or_open_selected(ctx, Some(SplitAxis::Vertical)),
+    Key::Char('q') => close_file_tree(ctx),
+    Key::Char('.') => reveal_current_file(ctx),
+    Key::Char('u') => refresh_file_tree(ctx),
+    Key::Char('H') => toggle_hidden(ctx),
+    Key::Char('a') => open_command_palette_with_input(ctx, "file-tree-add "),
+    Key::Char('r') => open_command_palette_with_input(ctx, "file-tree-rename "),
+    Key::Char('d') => open_command_palette_with_input(ctx, "file-tree-delete yes"),
+    _ => return false,
+  }
+
+  true
+}
+
+pub fn refresh_file_tree<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  rebuild_rows(ctx);
+  ctx.request_render();
+}
+
+pub fn select_file_tree_index<Ctx: DefaultContext>(ctx: &mut Ctx, index: usize) -> bool {
+  let len = ctx.file_tree().rows.len();
+  if len == 0 {
+    return false;
+  }
+
+  let next = index.min(len.saturating_sub(1));
+  let scrolloff = ctx.scrolloff();
+  let state = ctx.file_tree_mut();
+  let changed = state.selected != Some(next);
+  state.selected = Some(next);
+  state.selection_follow = true;
+  sync_tree_scroll(state, scrolloff);
+  changed
+}
+
+pub fn activate_file_tree_index<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  index: usize,
+  split: Option<SplitAxis>,
+) -> bool {
+  let len = ctx.file_tree().rows.len();
+  if index >= len {
+    return false;
+  }
+  let _ = select_file_tree_index(ctx, index);
+  expand_or_open_selected(ctx, split);
+  true
+}
+
+pub fn scroll_file_tree<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  delta: isize,
+  visible_rows: usize,
+) -> bool {
+  let state = ctx.file_tree_mut();
+  state.visible_rows = visible_rows;
+  clamp_tree_state(state);
+  state.selection_follow = false;
+  let max_offset = tree_max_scroll_offset(state);
+  let next = state
+    .scroll_offset
+    .saturating_add_signed(delta)
+    .min(max_offset);
+  if next == state.scroll_offset {
+    return false;
+  }
+  state.scroll_offset = next;
+  true
+}
+
+pub fn reveal_current_file<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  let Some(path) = ctx.file_path().map(PathBuf::from) else {
+    return;
+  };
+  reveal_path(ctx, &path);
+}
+
+pub fn close_file_tree<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  let Some(surface_id) = ctx.file_tree().surface_id else {
+    return;
+  };
+  let Some(tree_pane) = attached_tree_pane(ctx) else {
+    return;
+  };
+
+  let previous_buffer_id = ctx.editor_ref().active_buffer_id();
+  let _ = ctx.editor().set_active_pane(tree_pane);
+  let closed = if ctx.editor_ref().pane_count() > 1 {
+    ctx.editor().close_active_pane()
+  } else if ctx.editor_ref().active_client_surface_id() == Some(surface_id) {
+    ctx.editor().hide_active_client_surface()
+  } else {
+    false
+  };
+
+  if closed {
+    ctx.did_change_active_pane(previous_buffer_id);
+    ctx.request_render();
+  }
+}
+
+fn toggle_file_tree_with_root<Ctx: DefaultContext>(ctx: &mut Ctx, current_buffer_directory: bool) {
+  if attached_tree_pane(ctx).is_some() {
+    close_file_tree(ctx);
+    return;
+  }
+
+  let root = desired_root(ctx, current_buffer_directory);
+  let surface_id = ensure_surface(ctx);
+
+  {
+    let state = ctx.file_tree_mut();
+    let root_changed = state.root.as_deref() != Some(root.as_path());
+    if root_changed {
+      state.root = Some(root.clone());
+      state.expanded_dirs.clear();
+      state.expanded_dirs.insert(root.clone());
+      state.selected = None;
+      state.scroll_offset = 0;
+    }
+    if !state.follow_current {
+      state.follow_current = true;
+    }
+  }
+
+  open_tree_in_sidebar(ctx, surface_id);
+  rebuild_rows(ctx);
+  reveal_current_file(ctx);
+  ctx.request_render();
+}
+
+fn open_tree_in_sidebar<Ctx: DefaultContext>(ctx: &mut Ctx, surface_id: ClientSurfaceId) {
+  let previous_pane = ctx.editor_ref().active_pane_id();
+  remember_active_editor_pane(ctx);
+  let _ = ctx.editor().open_client_surface(
+    OpenTarget::Neighbor {
+      direction:         PaneDirection::Left,
+      create_if_missing: true,
+    },
+    surface_id,
+  );
+  if let Some(tree_pane) = attached_tree_pane(ctx) {
+    let _ = ctx.editor().set_active_pane(tree_pane);
+  }
+  if matches!(
+    ctx.editor_ref().pane_content_kind(previous_pane),
+    Some(the_lib::editor::PaneContentKind::EditorBuffer)
+  ) {
+    ctx.file_tree_mut().last_editor_pane = Some(previous_pane);
+  }
+}
+
+fn move_selection<Ctx: DefaultContext>(ctx: &mut Ctx, amount: isize) {
+  let len = ctx.file_tree().rows.len();
+  if len == 0 {
+    return;
+  }
+
+  let current = ctx.file_tree().selected.unwrap_or(0);
+  let next = current
+    .saturating_add_signed(amount)
+    .min(len.saturating_sub(1));
+  let scrolloff = ctx.scrolloff();
+  let state = ctx.file_tree_mut();
+  state.selected = Some(next);
+  state.selection_follow = true;
+  sync_tree_scroll(state, scrolloff);
+  ctx.request_render();
+}
+
+fn collapse_selected_or_select_parent<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  let Some(index) = ctx.file_tree().selected else {
+    return;
+  };
+  let Some(row) = ctx.file_tree().rows.get(index).cloned() else {
+    return;
+  };
+
+  if row.is_dir && row.is_expanded {
+    ctx.file_tree_mut().expanded_dirs.remove(&row.path);
+    rebuild_rows(ctx);
+    ctx.request_render();
+    return;
+  }
+
+  let current_depth = row.depth;
+  if current_depth == 0 {
+    return;
+  }
+  if let Some(parent_index) = (0..index).rev().find(|candidate| {
+    ctx
+      .file_tree()
+      .rows
+      .get(*candidate)
+      .is_some_and(|candidate_row| candidate_row.depth < current_depth)
+  }) {
+    let scrolloff = ctx.scrolloff();
+    let state = ctx.file_tree_mut();
+    state.selected = Some(parent_index);
+    state.selection_follow = true;
+    sync_tree_scroll(state, scrolloff);
+    ctx.request_render();
+  }
+}
+
+fn expand_or_open_selected<Ctx: DefaultContext>(ctx: &mut Ctx, split: Option<SplitAxis>) {
+  let Some(index) = ctx.file_tree().selected else {
+    return;
+  };
+  let Some(row) = ctx.file_tree().rows.get(index).cloned() else {
+    return;
+  };
+
+  if row.is_dir {
+    if row.is_expanded {
+      ctx.file_tree_mut().expanded_dirs.remove(&row.path);
+    } else {
+      ctx.file_tree_mut().expanded_dirs.insert(row.path);
+    }
+    rebuild_rows(ctx);
+    ctx.request_render();
+    return;
+  }
+
+  if let Err(err) = open_file_from_tree(ctx, &row.path, split) {
+    let _ = ctx.push_error(
+      "file_tree",
+      format!("failed to open '{}': {err}", row.path.display()),
+    );
+  }
+}
+
+fn root_to_parent<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  let Some(root) = ctx.file_tree().root.clone() else {
+    return;
+  };
+  let Some(parent) = root.parent().map(Path::to_path_buf) else {
+    return;
+  };
+  let state = ctx.file_tree_mut();
+  state.root = Some(parent.clone());
+  state.expanded_dirs.clear();
+  state.expanded_dirs.insert(parent);
+  state.selected = None;
+  state.scroll_offset = 0;
+  state.selection_follow = true;
+  rebuild_rows(ctx);
+  ctx.request_render();
+}
+
+fn toggle_hidden<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  let show_hidden = !ctx.file_tree().show_hidden;
+  ctx.file_tree_mut().show_hidden = show_hidden;
+  rebuild_rows(ctx);
+  ctx.request_render();
+}
+
+fn cmd_add<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  args: the_lib::command_line::Args,
+  event: CommandEvent,
+) -> crate::CommandResult {
+  if event != CommandEvent::Validate {
+    return Ok(());
+  }
+
+  let input = args
+    .first()
+    .map(str::trim)
+    .filter(|value| !value.is_empty())
+    .ok_or_else(|| crate::CommandError::new("usage: :file-tree-add <name>"))?;
+  let base = add_base_directory(ctx)
+    .ok_or_else(|| crate::CommandError::new("file tree is not available"))?;
+  let target = resolve_tree_input_path(&base, input);
+
+  if target.exists() {
+    return Err(crate::CommandError::new(format!(
+      "'{}' already exists",
+      target.display()
+    )));
+  }
+
+  if input.ends_with('/') {
+    std::fs::create_dir_all(&target).map_err(|err| {
+      crate::CommandError::new(format!(
+        "failed to create directory '{}': {err}",
+        target.display()
+      ))
+    })?;
+  } else {
+    if let Some(parent) = target.parent()
+      && !parent.as_os_str().is_empty()
+    {
+      std::fs::create_dir_all(parent).map_err(|err| {
+        crate::CommandError::new(format!(
+          "failed to create directory '{}': {err}",
+          parent.display()
+        ))
+      })?;
+    }
+    OpenOptions::new()
+      .create_new(true)
+      .write(true)
+      .open(&target)
+      .map_err(|err| {
+        crate::CommandError::new(format!("failed to create '{}': {err}", target.display()))
+      })?;
+  }
+
+  rebuild_rows(ctx);
+  reveal_path(ctx, &target);
+  Ok(())
+}
+
+fn cmd_rename<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  args: the_lib::command_line::Args,
+  event: CommandEvent,
+) -> crate::CommandResult {
+  if event != CommandEvent::Validate {
+    return Ok(());
+  }
+
+  let input = args
+    .first()
+    .map(str::trim)
+    .filter(|value| !value.is_empty())
+    .ok_or_else(|| crate::CommandError::new("usage: :file-tree-rename <new-name>"))?;
+  let source =
+    selected_path(ctx).ok_or_else(|| crate::CommandError::new("no file-tree entry selected"))?;
+  let parent = source
+    .parent()
+    .ok_or_else(|| crate::CommandError::new("selected entry has no parent directory"))?;
+  let target = resolve_tree_input_path(parent, input);
+  if source == target {
+    return Ok(());
+  }
+  if target.exists() {
+    return Err(crate::CommandError::new(format!(
+      "'{}' already exists",
+      target.display()
+    )));
+  }
+
+  std::fs::rename(&source, &target).map_err(|err| {
+    crate::CommandError::new(format!(
+      "failed to rename '{}' to '{}': {err}",
+      source.display(),
+      target.display()
+    ))
+  })?;
+
+  retarget_expanded_dirs(ctx.file_tree_mut(), &source, &target);
+  rebuild_rows(ctx);
+  reveal_path(ctx, &target);
+  Ok(())
+}
+
+fn cmd_delete<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  args: the_lib::command_line::Args,
+  event: CommandEvent,
+) -> crate::CommandResult {
+  if event != CommandEvent::Validate {
+    return Ok(());
+  }
+
+  if args.first().map(str::trim) != Some("yes") {
+    return Err(crate::CommandError::new(
+      "delete is permanent; use :file-tree-delete yes to confirm",
+    ));
+  }
+
+  let target =
+    selected_path(ctx).ok_or_else(|| crate::CommandError::new("no file-tree entry selected"))?;
+  let parent = target.parent().map(Path::to_path_buf);
+
+  if target.is_dir() {
+    std::fs::remove_dir_all(&target).map_err(|err| {
+      crate::CommandError::new(format!(
+        "failed to delete directory '{}': {err}",
+        target.display()
+      ))
+    })?;
+  } else {
+    std::fs::remove_file(&target).map_err(|err| {
+      crate::CommandError::new(format!(
+        "failed to delete file '{}': {err}",
+        target.display()
+      ))
+    })?;
+  }
+
+  let state = ctx.file_tree_mut();
+  state
+    .expanded_dirs
+    .retain(|path| !path.starts_with(&target));
+  if let Some(parent) = parent {
+    state.expanded_dirs.insert(parent);
+  }
+  rebuild_rows(ctx);
+  Ok(())
+}
+
+fn ensure_surface<Ctx: DefaultContext>(ctx: &mut Ctx) -> ClientSurfaceId {
+  if let Some(surface_id) = ctx.file_tree().surface_id {
+    return surface_id;
+  }
+  let surface_id = ctx.editor().create_client_surface();
+  ctx.file_tree_mut().surface_id = Some(surface_id);
+  surface_id
+}
+
+fn desired_root<Ctx: DefaultContext>(ctx: &Ctx, current_buffer_directory: bool) -> PathBuf {
+  if current_buffer_directory {
+    ctx
+      .file_path()
+      .and_then(Path::parent)
+      .map(Path::to_path_buf)
+      .unwrap_or_else(|| ctx.effective_working_directory())
+  } else {
+    ctx.workspace_root()
+  }
+}
+
+fn attached_tree_pane<Ctx: DefaultContext>(ctx: &Ctx) -> Option<PaneId> {
+  let surface_id = ctx.file_tree().surface_id?;
+  ctx
+    .editor_ref()
+    .client_surface_snapshots()
+    .into_iter()
+    .find(|surface| surface.client_surface_id == surface_id)
+    .and_then(|surface| surface.attached_pane)
+}
+
+fn add_base_directory<Ctx: DefaultContext>(ctx: &Ctx) -> Option<PathBuf> {
+  let selected = selected_path(ctx);
+  match selected {
+    Some(path) if path.is_dir() => Some(path),
+    Some(path) => path.parent().map(Path::to_path_buf),
+    None => ctx.file_tree().root.clone(),
+  }
+}
+
+fn selected_path<Ctx: DefaultContext>(ctx: &Ctx) -> Option<PathBuf> {
+  let state = ctx.file_tree();
+  state
+    .selected
+    .and_then(|index| state.rows.get(index))
+    .map(|row| row.path.clone())
+}
+
+fn resolve_tree_input_path(base: &Path, input: &str) -> PathBuf {
+  let path = Path::new(input.trim_end_matches('/'));
+  if path.is_absolute() {
+    path.to_path_buf()
+  } else {
+    base.join(path)
+  }
+}
+
+fn rebuild_rows<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  let current_file = ctx.file_path().map(PathBuf::from);
+  let Some(root) = ctx.file_tree().root.clone() else {
+    ctx.file_tree_mut().clear_rows();
+    return;
+  };
+  let (selected_path, root, show_hidden, mut expanded_dirs) = {
+    let state = ctx.file_tree();
+    let selected_path = state
+      .selected
+      .and_then(|index| state.rows.get(index))
+      .map(|row| row.path.clone());
+    (
+      selected_path,
+      root.clone(),
+      state.show_hidden,
+      state.expanded_dirs.clone(),
+    )
+  };
+
+  expanded_dirs.retain(|path| path == &root || path.starts_with(&root));
+  expanded_dirs.insert(root.clone());
+  let mut rows = Vec::new();
+  append_rows(
+    &root,
+    &[],
+    show_hidden,
+    &expanded_dirs,
+    current_file.as_deref(),
+    &mut rows,
+  );
+  let scrolloff = ctx.scrolloff();
+  let state = ctx.file_tree_mut();
+  state.expanded_dirs = expanded_dirs;
+  state.rows = rows;
+  state.selected = selected_path
+    .as_ref()
+    .and_then(|path| state.rows.iter().position(|row| &row.path == path))
+    .or_else(|| {
+      current_file
+        .as_ref()
+        .and_then(|path| state.rows.iter().position(|row| row.path == *path))
+    })
+    .or_else(|| (!state.rows.is_empty()).then_some(0));
+  clamp_tree_state(state);
+  state.selection_follow = true;
+  sync_tree_scroll(state, scrolloff);
+}
+
+fn append_rows(
+  directory: &Path,
+  ancestor_branches: &[bool],
+  show_hidden: bool,
+  expanded_dirs: &BTreeSet<PathBuf>,
+  current_file: Option<&Path>,
+  rows: &mut Vec<FileTreeRow>,
+) {
+  let entries = visible_directory_entries(directory, show_hidden);
+
+  for (index, (path, name, is_dir)) in entries.iter().enumerate() {
+    let is_last_sibling = index + 1 == entries.len();
+    let expanded = *is_dir && expanded_dirs.contains(path.as_path());
+    let icon_name = if *is_dir {
+      if expanded {
+        "folder_open".to_string()
+      } else {
+        "folder".to_string()
+      }
+    } else {
+      file_picker_icon_name_for_path(path.as_path()).to_string()
+    };
+    let has_children = *is_dir && directory_has_visible_entries(path, show_hidden);
+    rows.push(FileTreeRow {
+      path: path.clone(),
+      display_name: name.clone(),
+      depth: ancestor_branches.len(),
+      ancestor_branches: ancestor_branches.to_vec(),
+      is_last_sibling,
+      has_children,
+      is_dir: *is_dir,
+      is_expanded: expanded,
+      is_current_file: current_file.is_some_and(|current| current == path.as_path()),
+      icon_glyph: file_picker_icon_glyph(&icon_name, *is_dir),
+      icon_name,
+    });
+
+    if *is_dir && expanded {
+      let mut next_ancestor_branches = ancestor_branches.to_vec();
+      next_ancestor_branches.push(!is_last_sibling);
+      append_rows(
+        path,
+        &next_ancestor_branches,
+        show_hidden,
+        expanded_dirs,
+        current_file,
+        rows,
+      );
+    }
+  }
+}
+
+fn visible_directory_entries(directory: &Path, show_hidden: bool) -> Vec<(PathBuf, String, bool)> {
+  let Ok(read_dir) = std::fs::read_dir(directory) else {
+    return Vec::new();
+  };
+
+  let mut entries = read_dir
+    .flatten()
+    .filter_map(|entry| {
+      let file_type = entry.file_type().ok()?;
+      let name = entry.file_name();
+      let name = name.to_str()?.to_string();
+      if !show_hidden && name.starts_with('.') {
+        return None;
+      }
+      Some((entry.path(), name, file_type.is_dir()))
+    })
+    .collect::<Vec<_>>();
+
+  entries.sort_by(|a, b| {
+    b.2
+      .cmp(&a.2)
+      .then_with(|| a.1.to_lowercase().cmp(&b.1.to_lowercase()))
+  });
+
+  entries
+}
+
+fn directory_has_visible_entries(directory: &Path, show_hidden: bool) -> bool {
+  !visible_directory_entries(directory, show_hidden).is_empty()
+}
+
+fn reveal_path<Ctx: DefaultContext>(ctx: &mut Ctx, path: &Path) {
+  let Some(root) = ctx.file_tree().root.clone() else {
+    return;
+  };
+  if !path.starts_with(&root) {
+    return;
+  }
+
+  let mut current = path.parent();
+  while let Some(dir) = current {
+    if dir.starts_with(&root) {
+      ctx.file_tree_mut().expanded_dirs.insert(dir.to_path_buf());
+    }
+    if dir == root.as_path() {
+      break;
+    }
+    current = dir.parent();
+  }
+
+  rebuild_rows(ctx);
+  if let Some(index) = ctx.file_tree().rows.iter().position(|row| row.path == path) {
+    let scrolloff = ctx.scrolloff();
+    let state = ctx.file_tree_mut();
+    state.selected = Some(index);
+    state.selection_follow = true;
+    sync_tree_scroll(state, scrolloff);
+  }
+}
+
+fn clamp_tree_state(state: &mut FileTreeState) {
+  if state.rows.is_empty() {
+    state.selected = None;
+    state.scroll_offset = 0;
+    return;
+  }
+
+  let max_index = state.rows.len().saturating_sub(1);
+  state.selected = Some(state.selected.unwrap_or(0).min(max_index));
+  clamp_tree_scroll_offset(state);
+}
+
+fn clamp_tree_scroll_offset(state: &mut FileTreeState) {
+  state.scroll_offset = state.scroll_offset.min(tree_max_scroll_offset(state));
+}
+
+fn sync_tree_scroll(state: &mut FileTreeState, scrolloff: usize) {
+  clamp_tree_state(state);
+  if state.selection_follow
+    && let Some(selected) = state.selected
+    && let Some(next) = scroll_row_to_keep_visible(
+      selected,
+      state.scroll_offset,
+      state.visible_rows.max(1),
+      scrolloff,
+    )
+  {
+    state.scroll_offset = next;
+  }
+  state.selection_follow = false;
+  clamp_tree_scroll_offset(state);
+}
+
+fn tree_max_scroll_offset(state: &FileTreeState) -> usize {
+  let visible_rows = state.visible_rows.max(1);
+  state.rows.len().saturating_sub(visible_rows)
+}
+
+fn retarget_expanded_dirs(state: &mut FileTreeState, source: &Path, target: &Path) {
+  let replacement = state
+    .expanded_dirs
+    .iter()
+    .map(|path| {
+      if path.starts_with(source) {
+        target.join(path.strip_prefix(source).unwrap_or(Path::new("")))
+      } else {
+        path.clone()
+      }
+    })
+    .collect::<BTreeSet<_>>();
+  state.expanded_dirs = replacement;
+}
+
+fn open_file_from_tree<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  path: &Path,
+  split: Option<SplitAxis>,
+) -> std::io::Result<()> {
+  let pane = resolve_editor_target_pane(ctx, split);
+  if let Some(pane) = pane {
+    let previous_buffer_id = ctx.editor_ref().active_buffer_id();
+    let _ = ctx.editor().set_active_pane(pane);
+    ctx.did_change_active_pane(previous_buffer_id);
+  }
+
+  if let Some(axis) = split {
+    let previous_buffer_id = ctx.editor_ref().active_buffer_id();
+    let _ = ctx.editor().resolve_open_target(OpenTarget::Split {
+      axis,
+      focus_new: true,
+    });
+    ctx.did_change_active_pane(previous_buffer_id);
+  }
+
+  let result = ctx.open_file(path);
+  remember_active_editor_pane(ctx);
+  sync_file_tree_to_active_file(ctx);
+  result
+}
+
+fn resolve_editor_target_pane<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  split: Option<SplitAxis>,
+) -> Option<PaneId> {
+  let tree_pane = attached_tree_pane(ctx);
+  if let Some(pane) = ctx.file_tree().last_editor_pane
+    && matches!(
+      ctx.editor_ref().pane_content_kind(pane),
+      Some(the_lib::editor::PaneContentKind::EditorBuffer)
+    )
+  {
+    return Some(pane);
+  }
+
+  if let Some(tree_pane) = tree_pane {
+    if split.is_none()
+      && let Some(right) = ctx
+        .editor_ref()
+        .pane_in_direction(tree_pane, PaneDirection::Right)
+      && matches!(
+        ctx.editor_ref().pane_content_kind(right),
+        Some(the_lib::editor::PaneContentKind::EditorBuffer)
+      )
+    {
+      return Some(right);
+    }
+
+    let previous_buffer_id = ctx.editor_ref().active_buffer_id();
+    let _ = ctx.editor().set_active_pane(tree_pane);
+    let target = OpenTarget::Neighbor {
+      direction:         PaneDirection::Right,
+      create_if_missing: true,
+    };
+    if let Some(resolved) = ctx.editor().resolve_open_target(target) {
+      ctx.did_change_active_pane(previous_buffer_id);
+      return Some(resolved.pane);
+    }
+  }
+
+  Some(ctx.editor_ref().active_pane_id())
+}
+
+#[cfg(test)]
+mod tests {
+  use std::{
+    fs,
+    time::{
+      SystemTime,
+      UNIX_EPOCH,
+    },
+  };
+
+  use super::*;
+
+  fn row(name: &str) -> FileTreeRow {
+    FileTreeRow {
+      path:              PathBuf::from(name),
+      display_name:      name.to_string(),
+      depth:             0,
+      ancestor_branches: Vec::new(),
+      is_last_sibling:   true,
+      has_children:      false,
+      is_dir:            false,
+      is_expanded:       false,
+      is_current_file:   false,
+      icon_name:         "file".to_string(),
+      icon_glyph:        "f",
+    }
+  }
+
+  #[test]
+  fn selection_follow_uses_scrolloff_padding() {
+    let mut state = FileTreeState {
+      rows: (0..20).map(|idx| row(&format!("row-{idx}"))).collect(),
+      selected: Some(4),
+      visible_rows: 5,
+      selection_follow: true,
+      ..FileTreeState::default()
+    };
+
+    sync_tree_scroll(&mut state, 2);
+
+    assert_eq!(state.scroll_offset, 2);
+    assert!(!state.selection_follow);
+  }
+
+  #[test]
+  fn manual_scroll_only_clamps_when_selection_follow_is_disabled() {
+    let mut state = FileTreeState {
+      rows: (0..20).map(|idx| row(&format!("row-{idx}"))).collect(),
+      selected: Some(4),
+      scroll_offset: 99,
+      visible_rows: 5,
+      selection_follow: false,
+      ..FileTreeState::default()
+    };
+
+    sync_tree_scroll(&mut state, 2);
+
+    assert_eq!(state.scroll_offset, 15);
+    assert!(!state.selection_follow);
+  }
+
+  #[test]
+  fn append_rows_tracks_branch_metadata() {
+    let unique = SystemTime::now()
+      .duration_since(UNIX_EPOCH)
+      .expect("system time")
+      .as_nanos();
+    let root = std::env::temp_dir().join(format!("the-editor-file-tree-{unique}"));
+    let first = root.join("alpha");
+    let second = root.join("beta");
+    let nested = first.join("child.txt");
+
+    fs::create_dir_all(&first).expect("create alpha");
+    fs::create_dir_all(&second).expect("create beta");
+    fs::write(&nested, "child").expect("create child");
+
+    let mut expanded_dirs = BTreeSet::new();
+    expanded_dirs.insert(root.clone());
+    expanded_dirs.insert(first.clone());
+
+    let mut rows = Vec::new();
+    append_rows(&root, &[], false, &expanded_dirs, None, &mut rows);
+
+    let alpha = rows
+      .iter()
+      .find(|row| row.display_name == "alpha")
+      .expect("alpha row");
+    assert_eq!(alpha.depth, 0);
+    assert_eq!(alpha.ancestor_branches, Vec::<bool>::new());
+    assert!(!alpha.is_last_sibling);
+    assert!(alpha.has_children);
+
+    let child = rows
+      .iter()
+      .find(|row| row.display_name == "child.txt")
+      .expect("child row");
+    assert_eq!(child.depth, 1);
+    assert_eq!(child.ancestor_branches, vec![true]);
+    assert!(child.is_last_sibling);
+    assert!(!child.has_children);
+
+    let beta = rows
+      .iter()
+      .find(|row| row.display_name == "beta")
+      .expect("beta row");
+    assert_eq!(beta.depth, 0);
+    assert!(beta.is_last_sibling);
+
+    fs::remove_dir_all(&root).expect("cleanup tree");
+  }
+}

@@ -61,6 +61,7 @@ use the_default::{
   FilePickerItem,
   FilePickerItemAction,
   FilePickerState,
+  FileTreeState,
   GlobalSearchOptions,
   GlobalSearchState,
   KeyBinding,
@@ -98,6 +99,7 @@ use the_lib::{
     BufferId,
     Editor,
     EditorId,
+    PaneContentKind,
     PaneSnapshot,
   },
   indent::IndentStyle,
@@ -266,6 +268,16 @@ pub enum CompletionDocsDragState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PaneResizeDragState {
   Split { split_id: SplitNodeId },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct FileTreeLayout {
+  pub pane_id:       PaneId,
+  pub pane:          ratatui::layout::Rect,
+  pub header:        ratatui::layout::Rect,
+  pub list:          ratatui::layout::Rect,
+  pub visible_rows:  usize,
+  pub scroll_offset: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -598,6 +610,7 @@ pub struct Ctx {
   pub signature_help:                the_default::SignatureHelpState,
   pub hover_docs:                    Option<String>,
   pub hover_docs_scroll:             usize,
+  pub file_tree:                     FileTreeState,
   pub file_picker:                   FilePickerState,
   pub picker_runtime_store:          the_default::PickerRuntimeStore<Ctx>,
   pub lsp_runtime:                   LspRuntime,
@@ -622,6 +635,7 @@ pub struct Ctx {
   lsp_pending_auto_signature_help:   Option<PendingAutoSignatureHelp>,
   lsp_signature_help_presentation:   Option<the_default::SignatureHelpPresentation>,
   pub diagnostics:                   DiagnosticsState,
+  pub file_tree_layout:              Option<FileTreeLayout>,
   pub file_picker_layout:            Option<FilePickerLayout>,
   pub file_picker_drag:              Option<FilePickerDragState>,
   pub completion_docs_layout:        Option<CompletionDocsLayout>,
@@ -705,7 +719,7 @@ pub struct Ctx {
   pub render_theme_generation:       u64,
   /// Lines to keep above/below cursor when scrolling.
   pub scrolloff:                     usize,
-  pub term_hardware_cursor:          Option<TermHardwareCursor>,
+  pub term_cursor_mode:              TermCursorMode,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -713,6 +727,13 @@ pub struct TermHardwareCursor {
   pub x:    u16,
   pub y:    u16,
   pub kind: the_lib::render::graphics::CursorKind,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub enum TermCursorMode {
+  #[default]
+  Hidden,
+  Hardware(TermHardwareCursor),
 }
 
 fn select_ui_theme(catalog: &ThemeCatalog, configured_theme: Option<&str>) -> (String, Theme) {
@@ -1030,6 +1051,7 @@ impl Ctx {
       signature_help: the_default::SignatureHelpState::default(),
       hover_docs: None,
       hover_docs_scroll: 0,
+      file_tree: FileTreeState::default(),
       file_picker,
       picker_runtime_store: the_default::PickerRuntimeStore::default(),
       lsp_runtime,
@@ -1061,6 +1083,7 @@ impl Ctx {
       lsp_pending_auto_signature_help: None,
       lsp_signature_help_presentation: None,
       diagnostics: DiagnosticsState::default(),
+      file_tree_layout: None,
       file_picker_layout: None,
       file_picker_drag: None,
       completion_docs_layout: None,
@@ -1113,7 +1136,7 @@ impl Ctx {
       frame_generation_state: the_lib::render::FrameGenerationState::default(),
       render_theme_generation: 0,
       scrolloff: 5,
-      term_hardware_cursor: None,
+      term_cursor_mode: TermCursorMode::Hidden,
     };
     ctx.refresh_vcs_diff_base();
     Ok(ctx)
@@ -1124,6 +1147,32 @@ impl Ctx {
     D: DefaultApi<Ctx> + 'static,
   {
     self.dispatch_override = Some(NonNull::from(dispatch as &dyn DefaultApi<Ctx>));
+  }
+
+  fn reset_transient_input_state(&mut self) {
+    self.keymaps.reset_pending();
+    self.completion_menu_keymaps.reset_pending();
+    self.pending_input = None;
+    self.file_picker_drag = None;
+    self.completion_docs_drag = None;
+    self.pane_resize_drag = None;
+    self.buffer_tab_drag = None;
+    self.buffer_tab_hover = None;
+    self.mouse_selection_drag_active = false;
+    self.mouse_viewport_detached = false;
+    self.pointer_drag_selection = None;
+    self.mouse_last_primary_click = None;
+  }
+
+  pub(crate) fn handle_terminal_focus_lost(&mut self) {
+    self.reset_transient_input_state();
+    self.term_cursor_mode = TermCursorMode::Hidden;
+    self.needs_render = true;
+  }
+
+  pub(crate) fn handle_terminal_focus_gained(&mut self) {
+    self.reset_transient_input_state();
+    self.needs_render = true;
   }
 
   fn apply_effective_theme(&mut self, theme: Theme) {
@@ -5641,7 +5690,34 @@ fn build_transaction_from_lsp_text_edits(
 }
 
 impl Ctx {
+  pub(crate) fn visible_editor_pane_for_viewport(&self) -> Option<PaneId> {
+    let active_pane = self.editor.active_pane_id();
+    if matches!(
+      self.editor.pane_content_kind(active_pane),
+      Some(PaneContentKind::EditorBuffer)
+    ) {
+      return Some(active_pane);
+    }
+
+    if let Some(pane) = self.file_tree.last_editor_pane
+      && matches!(
+        self.editor.pane_content_kind(pane),
+        Some(PaneContentKind::EditorBuffer)
+      )
+    {
+      return Some(pane);
+    }
+
+    self
+      .editor
+      .pane_snapshots(self.editor.layout_viewport())
+      .into_iter()
+      .next()
+      .map(|pane| pane.pane_id)
+  }
+
   fn sync_state_after_active_pane_change(&mut self, previous_buffer_id: BufferId) {
+    the_default::remember_active_editor_pane(self);
     self.clear_hover_state();
     self.clear_completion_state();
     self.cancel_auto_completion();
@@ -5667,6 +5743,7 @@ impl Ctx {
     self.lsp_refresh_document_state(active_path.as_deref());
     self.lsp_open_current_document();
     self.refresh_vcs_diff_base();
+    the_default::sync_file_tree_to_active_file(self);
   }
 }
 
@@ -5876,6 +5953,14 @@ impl the_default::DefaultContext for Ctx {
 
   fn signature_help_mut(&mut self) -> Option<&mut the_default::SignatureHelpState> {
     Some(&mut self.signature_help)
+  }
+
+  fn file_tree(&self) -> &FileTreeState {
+    &self.file_tree
+  }
+
+  fn file_tree_mut(&mut self) -> &mut FileTreeState {
+    &mut self.file_tree
   }
 
   fn completion_selection_changed(&mut self, index: usize) {
@@ -6393,6 +6478,7 @@ impl the_default::DefaultContext for Ctx {
     self.file_path = path.clone();
     self.editor.set_active_file_path(path);
     self.refresh_vcs_diff_base();
+    the_default::sync_file_tree_to_active_file(self);
   }
 
   fn did_change_active_pane(&mut self, previous_buffer_id: BufferId) {
@@ -7078,7 +7164,10 @@ mod tests {
     SearchPromptKind,
     handle_command,
     handle_key,
+    scroll_file_tree,
+    set_file_tree_visible_rows,
     show_completion_menu,
+    toggle_file_tree,
   };
   use the_lib::{
     clipboard::NoClipboard,
@@ -7127,9 +7216,12 @@ mod tests {
     merge_resolved_completion_item,
     normalize_completion_item_for_apply,
   };
-  use crate::render::{
-    build_render_plan,
-    ensure_cursor_visible,
+  use crate::{
+    ctx::TermCursorMode,
+    render::{
+      build_render_plan,
+      ensure_cursor_visible,
+    },
   };
 
   struct TempTestFile {
@@ -7887,6 +7979,86 @@ pkgs.mkShell {
 
     assert!(visual_pos.row > 0);
     assert_eq!(view.scroll.row, expected);
+  }
+
+  #[test]
+  fn ensure_cursor_visible_uses_editor_pane_when_tree_is_active() {
+    let mut ctx = Ctx::new(None).expect("ctx");
+    ctx.resize(40, 10);
+
+    let mut source = String::new();
+    for idx in 0..80 {
+      source.push_str(&format!("line {idx}\n"));
+    }
+    let tx = Transaction::change(
+      ctx.editor.document().text(),
+      std::iter::once((0, 0, Some(source.into()))),
+    )
+    .expect("seed long text");
+    assert!(DefaultContext::apply_transaction(&mut ctx, &tx));
+
+    let cursor_char = ctx.editor.document().text().line_to_char(79);
+    let _ = ctx
+      .editor
+      .document_mut()
+      .set_selection(Selection::single(cursor_char, cursor_char));
+
+    let editor_pane = ctx.editor.active_pane_id();
+    toggle_file_tree(&mut ctx);
+    assert!(ctx.editor.is_active_pane_client_surface());
+    assert_eq!(ctx.visible_editor_pane_for_viewport(), Some(editor_pane));
+
+    let before = ctx
+      .editor
+      .pane_view(editor_pane)
+      .expect("editor pane view")
+      .scroll
+      .row;
+    ensure_cursor_visible(&mut ctx);
+    let after = ctx
+      .editor
+      .pane_view(editor_pane)
+      .expect("editor pane view")
+      .scroll
+      .row;
+
+    assert!(after > before);
+  }
+
+  #[test]
+  fn file_tree_visible_rows_clamp_stale_scroll_offset() {
+    let mut ctx = Ctx::new(None).expect("ctx");
+    toggle_file_tree(&mut ctx);
+
+    set_file_tree_visible_rows(&mut ctx, 3);
+    assert!(scroll_file_tree(&mut ctx, 999, 3));
+    let before = ctx.file_tree.scroll_offset;
+    assert!(before > 0);
+    let large_visible_rows = ctx.file_tree.rows.len().saturating_add(8);
+
+    set_file_tree_visible_rows(&mut ctx, large_visible_rows);
+
+    assert!(ctx.file_tree.scroll_offset < before);
+    assert_eq!(ctx.file_tree.scroll_offset, 0);
+  }
+
+  #[test]
+  fn terminal_focus_reset_clears_pending_keymap_state() {
+    let mut ctx = Ctx::new(None).expect("ctx");
+
+    handle_key(&mut ctx, KeyEvent {
+      key:       Key::Char(' '),
+      modifiers: Modifiers::empty(),
+    });
+    assert!(!ctx.keymaps.pending().is_empty());
+
+    ctx.handle_terminal_focus_lost();
+
+    assert!(ctx.keymaps.pending().is_empty());
+    assert!(ctx.completion_menu_keymaps.pending().is_empty());
+    assert!(ctx.pending_input.is_none());
+    assert!(ctx.needs_render);
+    assert!(matches!(ctx.term_cursor_mode, TermCursorMode::Hidden));
   }
 
   #[test]

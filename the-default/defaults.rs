@@ -8,6 +8,7 @@ use crate::{
   DefaultContext,
   FilePickerOptions,
   install_builtin_commands,
+  install_builtin_file_tree_commands,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -152,4 +153,5 @@ where
   Ctx: DefaultContext + 'static,
 {
   install_builtin_commands(command_registry);
+  install_builtin_file_tree_commands(command_registry);
 }

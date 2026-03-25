@@ -50,6 +50,7 @@ use serde_json::{
 use the_default::{
   DefaultContext,
   FilePickerPreviewLineKind,
+  FileTreeSnapshot,
   Mode,
   OverlayRect as DefaultOverlayRect,
   PendingInput,
@@ -63,7 +64,9 @@ use the_default::{
   file_picker_icon_glyph,
   file_picker_icon_name_for_path,
   file_picker_preview_window,
+  file_tree_snapshot,
   frame_render_plan,
+  set_file_tree_visible_rows,
   set_picker_visible_rows,
   signature_help_markdown,
   signature_help_panel_rect as default_signature_help_panel_rect,
@@ -127,7 +130,10 @@ use the_lib::{
     visual_pos_at_char,
   },
   selection::Range,
-  split_tree::PaneId,
+  split_tree::{
+    PaneId,
+    SplitAxis,
+  },
   syntax::{
     Highlight,
     Syntax,
@@ -142,6 +148,8 @@ use crate::{
   Ctx,
   ctx::{
     DiagnosticUnderlineRenderSpan,
+    FileTreeLayout,
+    TermCursorMode,
     TermHardwareCursor,
   },
   docs_panel::DocsPanelSource,
@@ -242,10 +250,12 @@ pub fn log_present_perf(ctx: &Ctx, phase: &str, draw_ms: f64, cursor_ms: f64, to
   }
 
   let view = ctx.editor.view();
-  let cursor = ctx
-    .term_hardware_cursor
-    .map(|cursor| format!("{}:{}:{:?}", cursor.x, cursor.y, cursor.kind))
-    .unwrap_or_else(|| "none".to_string());
+  let cursor = match ctx.term_cursor_mode {
+    TermCursorMode::Hidden => "hidden".to_string(),
+    TermCursorMode::Hardware(cursor) => {
+      format!("{}:{}:{:?}", cursor.x, cursor.y, cursor.kind)
+    },
+  };
   term_render_perf_write(format!(
     "kind=present seq={} phase={} total={total_ms:.2}ms draw={draw_ms:.2}ms \
      cursor={cursor_ms:.2}ms scroll={}:{} viewport={}x{} hardware_cursor={}",
@@ -257,6 +267,25 @@ pub fn log_present_perf(ctx: &Ctx, phase: &str, draw_ms: f64, cursor_ms: f64, to
     view.viewport.height,
     cursor,
   ));
+}
+
+fn resolve_term_cursor_mode(
+  hide_cursor: bool,
+  ui_cursor: Option<(u16, u16)>,
+  active_editor_cursor: Option<(u16, u16)>,
+  active_editor_cursor_kind: Option<LibCursorKind>,
+) -> TermCursorMode {
+  if hide_cursor || ui_cursor.is_some() {
+    return TermCursorMode::Hidden;
+  }
+
+  if let (Some((x, y)), Some(kind)) = (active_editor_cursor, active_editor_cursor_kind)
+    && matches!(kind, LibCursorKind::Bar | LibCursorKind::Underline)
+  {
+    return TermCursorMode::Hardware(TermHardwareCursor { x, y, kind });
+  }
+
+  TermCursorMode::Hidden
 }
 
 fn lib_color_to_ratatui(color: the_lib::render::graphics::Color) -> Color {
@@ -4111,6 +4140,57 @@ fn apply_editor_viewport(ctx: &mut Ctx, area: Rect) {
   }
 }
 
+fn ensure_file_tree_sidebar_width(ctx: &mut Ctx) {
+  let Some(snapshot) = file_tree_snapshot(ctx) else {
+    return;
+  };
+  let Some(tree_pane) = snapshot.attached_pane else {
+    return;
+  };
+  if ctx.editor.pane_count() <= 1 {
+    return;
+  }
+
+  let viewport = ctx.editor.layout_viewport();
+  let Some(tree_rect) = ctx.editor.pane_rect(tree_pane) else {
+    return;
+  };
+  if tree_rect.width == 0 || viewport.width <= 24 {
+    return;
+  }
+
+  let max_sidebar = viewport.width.saturating_sub(20);
+  let desired_width = ((viewport.width.saturating_mul(28)) / 100)
+    .clamp(24, 36)
+    .min(max_sidebar.max(12));
+  if tree_rect.width.abs_diff(desired_width) <= 1 {
+    return;
+  }
+
+  let tree_mid_y = tree_rect.y.saturating_add(tree_rect.height / 2);
+  let target_line = tree_rect.x.saturating_add(desired_width.saturating_sub(1));
+  let Some(separator) = ctx
+    .editor
+    .pane_separators(viewport)
+    .into_iter()
+    .filter(|separator| separator.axis == the_lib::split_tree::SplitAxis::Vertical)
+    .filter(|separator| tree_mid_y >= separator.span_start && tree_mid_y < separator.span_end)
+    .min_by_key(|separator| {
+      separator.line.abs_diff(
+        tree_rect
+          .x
+          .saturating_add(tree_rect.width.saturating_sub(1)),
+      )
+    })
+  else {
+    return;
+  };
+
+  let _ = ctx
+    .editor
+    .resize_split(separator.split_id, target_line, tree_mid_y);
+}
+
 fn render_panel_block(
   buf: &mut Buffer,
   rect: Rect,
@@ -4933,6 +5013,7 @@ fn draw_pane_content(
   plan: &RenderPlan,
   base_text_style: Style,
   draw_active_annotations: bool,
+  draw_inactive_cursors: bool,
 ) -> Option<(u16, u16)> {
   let content_x = pane_area.x.saturating_add(plan.content_offset_x);
   let editor_cursor = plan.cursors.first().map(|cursor| {
@@ -5087,6 +5168,9 @@ fn draw_pane_content(
   }
 
   for (index, cursor) in plan.cursors.iter().enumerate() {
+    if !draw_active_annotations && !draw_inactive_cursors {
+      continue;
+    }
     let x = content_x + cursor.pos.col as u16;
     let y = pane_area.y + cursor.pos.row as u16;
     if x < pane_area.x + pane_area.width && y < pane_area.y + pane_area.height {
@@ -5123,34 +5207,41 @@ fn draw_pane_separators(buf: &mut Buffer, area: Rect, frame: &FrameRenderPlan, c
       .unwrap_or_default(),
   );
 
-  let x_max = area.x.saturating_add(area.width);
-  let y_max = area.y.saturating_add(area.height);
   let mut vertical_cells: BTreeMap<(u16, u16), bool> = BTreeMap::new();
   let mut horizontal_cells: BTreeMap<(u16, u16), bool> = BTreeMap::new();
+  let Some(active_pane) = frame
+    .panes
+    .iter()
+    .find(|pane| pane.pane_id == frame.active_pane)
+  else {
+    return;
+  };
+  let active_rect = active_pane.rect;
 
-  for pane in &frame.panes {
-    let rect = pane_screen_rect(area, pane.rect);
-    let is_active = pane.pane_id == frame.active_pane;
-    let right = rect.x.saturating_add(rect.width);
-    if rect.width > 0 && right < x_max {
-      let x = right.saturating_sub(1);
-      for y in rect.y..rect.y.saturating_add(rect.height) {
-        vertical_cells
-          .entry((x, y))
-          .and_modify(|active| *active |= is_active)
-          .or_insert(is_active);
-      }
-    }
-
-    let bottom = rect.y.saturating_add(rect.height);
-    if rect.height > 0 && bottom < y_max {
-      let y = bottom.saturating_sub(1);
-      for x in rect.x..rect.x.saturating_add(rect.width) {
-        horizontal_cells
-          .entry((x, y))
-          .and_modify(|active| *active |= is_active)
-          .or_insert(is_active);
-      }
+  for separator in ctx.editor.pane_separators(ctx.editor.layout_viewport()) {
+    match separator.axis {
+      SplitAxis::Vertical => {
+        let x = area.x.saturating_add(separator.line.saturating_sub(1));
+        let is_active = active_rect.x == separator.line
+          || active_rect.x.saturating_add(active_rect.width) == separator.line;
+        for y in separator.span_start..separator.span_end {
+          vertical_cells
+            .entry((x, area.y.saturating_add(y)))
+            .and_modify(|active| *active |= is_active)
+            .or_insert(is_active);
+        }
+      },
+      SplitAxis::Horizontal => {
+        let y = area.y.saturating_add(separator.line.saturating_sub(1));
+        let is_active = active_rect.y == separator.line
+          || active_rect.y.saturating_add(active_rect.height) == separator.line;
+        for x in separator.span_start..separator.span_end {
+          horizontal_cells
+            .entry((area.x.saturating_add(x), y))
+            .and_modify(|active| *active |= is_active)
+            .or_insert(is_active);
+        }
+      },
     }
   }
 
@@ -5176,6 +5267,141 @@ fn draw_pane_separators(buf: &mut Buffer, area: Rect, frame: &FrameRenderPlan, c
     cell.set_symbol("│");
     cell.set_style(cell.style().patch(style));
   }
+}
+
+fn draw_file_tree_pane(buf: &mut Buffer, pane_area: Rect, ctx: &Ctx, snapshot: &FileTreeSnapshot) {
+  if pane_area.width == 0 || pane_area.height == 0 {
+    return;
+  }
+
+  let panel = file_picker_panel_styles(ctx);
+  let selected_style = theme_style_or(
+    ctx,
+    "ui.file_picker.list.selected",
+    theme_style_or(
+      ctx,
+      "ui.menu.selected",
+      theme_style_or(
+        ctx,
+        "ui.selection",
+        panel.fill.add_modifier(Modifier::REVERSED),
+      ),
+    ),
+  );
+  let current_style = panel.text.add_modifier(Modifier::BOLD);
+  let guide_style = panel.text.add_modifier(Modifier::DIM);
+  let header_style = panel.text.add_modifier(Modifier::BOLD);
+
+  fill_rect(buf, pane_area, panel.fill);
+
+  let header = snapshot.root.display().to_string();
+  buf.set_stringn(
+    pane_area.x,
+    pane_area.y,
+    header,
+    pane_area.width as usize,
+    header_style,
+  );
+
+  if pane_area.height <= 1 {
+    return;
+  }
+
+  let visible_rows = pane_area.height.saturating_sub(1) as usize;
+  let max_offset = snapshot.rows.len().saturating_sub(visible_rows);
+  let offset = snapshot.scroll_offset.min(max_offset);
+
+  for (visible_index, row) in snapshot
+    .rows
+    .iter()
+    .skip(offset)
+    .take(visible_rows)
+    .enumerate()
+  {
+    let y = pane_area.y.saturating_add(1 + visible_index as u16);
+    let is_selected = snapshot.selected == Some(offset + visible_index);
+    let content_style = if is_selected {
+      selected_style
+    } else if row.is_current_file {
+      current_style
+    } else {
+      panel.text
+    };
+    let mut x = pane_area.x;
+    let mut guide_prefix = String::new();
+    for continues in &row.ancestor_branches {
+      guide_prefix.push_str(if *continues { "│ " } else { "  " });
+    }
+    if row.depth > 0 {
+      guide_prefix.push_str(if row.is_last_sibling { "└ " } else { "├ " });
+    }
+    let remaining = pane_area
+      .x
+      .saturating_add(pane_area.width)
+      .saturating_sub(x) as usize;
+    if remaining == 0 {
+      continue;
+    }
+    if !guide_prefix.is_empty() {
+      buf.set_stringn(x, y, guide_prefix.as_str(), remaining, guide_style);
+      x = x.saturating_add(guide_prefix.chars().count() as u16);
+    }
+
+    let remaining = pane_area
+      .x
+      .saturating_add(pane_area.width)
+      .saturating_sub(x) as usize;
+    if remaining == 0 {
+      continue;
+    }
+    let icon = format!("{} ", row.icon_glyph);
+    buf.set_stringn(x, y, icon.as_str(), remaining, content_style);
+    x = x.saturating_add(icon.chars().count() as u16);
+
+    let remaining = pane_area
+      .x
+      .saturating_add(pane_area.width)
+      .saturating_sub(x) as usize;
+    if remaining == 0 {
+      continue;
+    }
+    buf.set_stringn(x, y, row.display_name.as_str(), remaining, content_style);
+  }
+}
+
+fn sync_file_tree_layout(ctx: &mut Ctx, area: Rect) {
+  ctx.file_tree_layout = None;
+
+  let Some(snapshot) = file_tree_snapshot(ctx) else {
+    return;
+  };
+  let Some(pane_id) = snapshot.attached_pane else {
+    return;
+  };
+  let Some(pane_rect) = ctx.editor.pane_rect(pane_id) else {
+    return;
+  };
+
+  let pane = pane_screen_rect(area, pane_rect);
+  let header_height = pane.height.min(1);
+  let header = Rect::new(pane.x, pane.y, pane.width, header_height);
+  let list = Rect::new(
+    pane.x,
+    pane.y.saturating_add(header_height),
+    pane.width,
+    pane.height.saturating_sub(header_height),
+  );
+
+  set_file_tree_visible_rows(ctx, list.height as usize);
+  let scroll_offset = ctx.file_tree.scroll_offset;
+  ctx.file_tree_layout = Some(FileTreeLayout {
+    pane_id,
+    pane,
+    header,
+    list,
+    visible_rows: list.height as usize,
+    scroll_offset,
+  });
 }
 
 fn draw_buffer_tabs_row(buf: &mut Buffer, area: Rect, ctx: &Ctx) {
@@ -5425,6 +5651,8 @@ pub fn render(f: &mut Frame, ctx: &mut Ctx) {
   sync_file_picker_viewport(ctx, area);
   let perf_after_picker = perf_enabled.then(Instant::now);
   apply_editor_viewport(ctx, f.size());
+  ensure_file_tree_sidebar_width(ctx);
+  sync_file_tree_layout(ctx, area);
   let perf_after_ui = perf_enabled.then(Instant::now);
   if !ctx.mouse_selection_drag_active && !ctx.mouse_viewport_detached {
     ensure_cursor_visible(ctx);
@@ -5463,23 +5691,47 @@ pub fn render(f: &mut Frame, ctx: &mut Ctx) {
     draw_buffer_tabs_row(buf, area, ctx);
 
     let pane_draw_start = perf_enabled.then(Instant::now);
+    let active_pane_is_client_surface = frame_plan
+      .panes
+      .iter()
+      .find(|pane| pane.pane_id == frame_plan.active_pane)
+      .is_some_and(|pane| {
+        matches!(
+          pane.pane_kind,
+          the_lib::editor::PaneContentKind::ClientSurface
+        )
+      });
     for pane in &frame_plan.panes {
       let pane_area = pane_screen_rect(area, pane.rect);
       let is_active = pane.pane_id == frame_plan.active_pane;
-      let pane_cursor = draw_pane_content(
-        buf,
-        ctx,
-        pane.pane_id,
-        pane_area,
-        &pane.plan,
-        base_text_style,
-        is_active,
-      );
-      if is_active {
-        editor_cursor = pane_cursor;
-        editor_cursor_kind = pane.plan.cursors.first().map(|cursor| cursor.kind);
-        active_line_count = pane.plan.lines.len();
-        active_span_count = pane.plan.lines.iter().map(|line| line.spans.len()).sum();
+      if let Some(surface_id) = pane.client_surface_id
+        && let Some(snapshot) = file_tree_snapshot(ctx)
+        && snapshot.surface_id == surface_id
+      {
+        draw_file_tree_pane(buf, pane_area, ctx, &snapshot);
+        if is_active {
+          editor_cursor = None;
+          editor_cursor_kind = None;
+          active_line_count = 0;
+          active_span_count = 0;
+        }
+      } else {
+        let pane_cursor = draw_pane_content(
+          buf,
+          ctx,
+          pane.pane_id,
+          pane_area,
+          &pane.plan,
+          base_text_style,
+          is_active,
+          !active_pane_is_client_surface,
+        );
+        if is_active {
+          editor_cursor = pane_cursor;
+          editor_cursor_kind = pane.plan.cursors.first().map(|cursor| cursor.kind);
+          active_line_count = pane.plan.lines.len();
+          active_span_count = pane.plan.lines.iter().map(|line| line.spans.len()).sum();
+        }
       }
     }
     let pane_draw_ms = pane_draw_start.map_or(0.0, |start| start.elapsed().as_secs_f64() * 1000.0);
@@ -5501,14 +5753,14 @@ pub fn render(f: &mut Frame, ctx: &mut Ctx) {
     )
   };
 
-  ctx.term_hardware_cursor = if ui_cursor.is_none()
-    && let (Some((x, y)), Some(kind)) = (active_editor_cursor, active_editor_cursor_kind)
-    && matches!(kind, LibCursorKind::Bar | LibCursorKind::Underline)
-  {
-    Some(TermHardwareCursor { x, y, kind })
-  } else {
-    None
-  };
+  let active_pane_is_file_tree = file_tree_snapshot(ctx)
+    .is_some_and(|snapshot| snapshot.attached_pane == Some(frame_plan.active_pane));
+  ctx.term_cursor_mode = resolve_term_cursor_mode(
+    active_pane_is_file_tree,
+    ui_cursor,
+    active_editor_cursor,
+    active_editor_cursor_kind,
+  );
 
   if let Some(perf_start) = perf_start {
     let total_ms = perf_start.elapsed().as_secs_f64() * 1000.0;
@@ -5584,6 +5836,9 @@ fn sync_file_picker_viewport(ctx: &mut Ctx, area: Rect) {
 
 /// Ensure cursor is visible by adjusting scroll if needed.
 pub fn ensure_cursor_visible(ctx: &mut Ctx) {
+  let Some(viewport_pane) = ctx.visible_editor_pane_for_viewport() else {
+    return;
+  };
   let (cursor_pos, cursor_line, cursor_col) = {
     let doc = ctx.editor.document();
     let text = doc.text();
@@ -5591,7 +5846,10 @@ pub fn ensure_cursor_visible(ctx: &mut Ctx) {
 
     // Get the selected cursor position (active cursor if available).
     let selection = doc.selection();
-    let range = if let Some(active_cursor) = ctx.editor.view().active_cursor {
+    let Some(active_view) = ctx.editor.pane_view(viewport_pane) else {
+      return;
+    };
+    let range = if let Some(active_cursor) = active_view.active_cursor {
       selection.range_by_id(active_cursor).copied()
     } else {
       selection.ranges().first().copied()
@@ -5606,7 +5864,9 @@ pub fn ensure_cursor_visible(ctx: &mut Ctx) {
     (cursor_pos, cursor_line, cursor_col)
   };
 
-  let view = ctx.editor.view();
+  let Some(view) = ctx.editor.pane_view(viewport_pane) else {
+    return;
+  };
   let doc = ctx.editor.document();
   let viewport_height = view.viewport.height as usize;
   let gutter_width = gutter_width_for_document(doc, view.viewport.width, &ctx.gutter_config);
@@ -5645,7 +5905,9 @@ pub fn ensure_cursor_visible(ctx: &mut Ctx) {
     }
 
     if changed {
-      ctx.editor.view_mut().scroll = new_scroll;
+      if let Some(view) = ctx.editor.pane_view_mut(viewport_pane) {
+        view.scroll = new_scroll;
+      }
     }
     return;
   }
@@ -5658,6 +5920,120 @@ pub fn ensure_cursor_visible(ctx: &mut Ctx) {
     viewport_width,
     ctx.scrolloff,
   ) {
-    ctx.editor.view_mut().scroll = new_scroll;
+    if let Some(view) = ctx.editor.pane_view_mut(viewport_pane) {
+      view.scroll = new_scroll;
+    }
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn file_tree_active_forces_hidden_term_cursor() {
+    let mode = resolve_term_cursor_mode(true, None, Some((12, 4)), Some(LibCursorKind::Underline));
+
+    assert!(matches!(mode, TermCursorMode::Hidden));
+  }
+
+  #[test]
+  fn editor_cursor_keeps_hardware_bar_and_underline_modes() {
+    let mode = resolve_term_cursor_mode(false, None, Some((7, 3)), Some(LibCursorKind::Bar));
+
+    assert!(matches!(
+      mode,
+      TermCursorMode::Hardware(TermHardwareCursor {
+        x:    7,
+        y:    3,
+        kind: LibCursorKind::Bar,
+      })
+    ));
+  }
+
+  #[test]
+  fn file_tree_rows_render_soft_selection_and_icon_prefix() {
+    use std::num::NonZeroUsize;
+
+    use the_default::FileTreeRow;
+    use the_lib::editor::ClientSurfaceId;
+
+    let ctx = Ctx::new(None).expect("ctx");
+    let pane = Rect::new(0, 0, 24, 3);
+    let mut buf = Buffer::empty(pane);
+    let snapshot = FileTreeSnapshot {
+      surface_id:     ClientSurfaceId::new(NonZeroUsize::new(1).expect("surface id")),
+      root:           "/tmp".into(),
+      rows:           vec![FileTreeRow {
+        path:              "/tmp/the-core".into(),
+        display_name:      "the-core".to_string(),
+        depth:             0,
+        ancestor_branches: Vec::new(),
+        is_last_sibling:   true,
+        has_children:      true,
+        is_dir:            true,
+        is_expanded:       false,
+        is_current_file:   false,
+        icon_name:         "folder".to_string(),
+        icon_glyph:        "",
+      }],
+      selected:       Some(0),
+      scroll_offset:  0,
+      show_hidden:    false,
+      follow_current: false,
+      attached_pane:  None,
+      active:         true,
+    };
+
+    draw_file_tree_pane(&mut buf, pane, &ctx, &snapshot);
+
+    let panel = file_picker_panel_styles(&ctx);
+
+    assert_eq!(buf.get(0, 1).symbol(), "");
+    assert_eq!(buf.get(1, 1).symbol(), " ");
+    assert_eq!(buf.get(2, 1).symbol(), "t");
+    assert_eq!(buf.get(23, 1).bg, panel.fill.bg.unwrap_or(Color::Reset));
+  }
+
+  #[test]
+  fn nested_file_tree_rows_render_unicode_guides_and_file_icons() {
+    use std::num::NonZeroUsize;
+
+    use the_default::FileTreeRow;
+    use the_lib::editor::ClientSurfaceId;
+
+    let ctx = Ctx::new(None).expect("ctx");
+    let pane = Rect::new(0, 0, 24, 3);
+    let mut buf = Buffer::empty(pane);
+    let snapshot = FileTreeSnapshot {
+      surface_id:     ClientSurfaceId::new(NonZeroUsize::new(1).expect("surface id")),
+      root:           "/tmp".into(),
+      rows:           vec![FileTreeRow {
+        path:              "/tmp/src/the-core".into(),
+        display_name:      "the-core".to_string(),
+        depth:             1,
+        ancestor_branches: vec![true],
+        is_last_sibling:   true,
+        has_children:      false,
+        is_dir:            false,
+        is_expanded:       false,
+        is_current_file:   false,
+        icon_name:         "file".to_string(),
+        icon_glyph:        "f",
+      }],
+      selected:       Some(0),
+      scroll_offset:  0,
+      show_hidden:    false,
+      follow_current: false,
+      attached_pane:  None,
+      active:         true,
+    };
+
+    draw_file_tree_pane(&mut buf, pane, &ctx, &snapshot);
+
+    assert_eq!(buf.get(0, 1).symbol(), "│");
+    assert_eq!(buf.get(2, 1).symbol(), "└");
+    assert_eq!(buf.get(4, 1).symbol(), "f");
+    assert_eq!(buf.get(6, 1).symbol(), "t");
   }
 }

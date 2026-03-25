@@ -17,13 +17,17 @@ use the_default::{
   PointerEvent,
   PointerEventOutcome,
   PointerKind,
+  activate_file_tree_index,
   close_signature_help,
   completion_docs_scroll,
   handle_command_prompt_key,
+  handle_file_tree_key,
   handle_pointer_event as dispatch_pointer_event,
   open_file_picker_index,
   scroll_file_picker_list,
   scroll_file_picker_preview,
+  scroll_file_tree,
+  select_file_tree_index,
   set_completion_docs_scroll,
   set_file_picker_list_offset,
   set_file_picker_preview_offset,
@@ -39,6 +43,7 @@ use crate::{
   ctx::{
     CompletionDocsDragState,
     FilePickerDragState,
+    FileTreeLayout,
     PaneResizeDragState,
   },
   dispatch::{
@@ -138,6 +143,10 @@ pub fn handle_key(ctx: &mut Ctx, event: CrosstermKeyEvent) {
     } else if handle_command_prompt_key(ctx, key_event) {
       return;
     }
+  }
+
+  if handle_file_tree_key(ctx, key_event) {
+    return;
   }
 
   the_default::handle_key(ctx, key_event);
@@ -255,6 +264,8 @@ pub(crate) fn handle_pointer_event(ctx: &mut Ctx, event: PointerEvent) -> Pointe
       ctx.completion_menu.active || ctx.hover_docs.is_some() || ctx.signature_help.active;
     return if overlay_active {
       PointerEventOutcome::Handled
+    } else if let Some(outcome) = handle_file_tree_pointer(ctx, event, x, y) {
+      outcome
     } else {
       PointerEventOutcome::Continue
     };
@@ -284,6 +295,65 @@ pub(crate) fn handle_pointer_event(ctx: &mut Ctx, event: PointerEvent) -> Pointe
     _ => {},
   }
   PointerEventOutcome::Handled
+}
+
+fn handle_file_tree_pointer(
+  ctx: &mut Ctx,
+  event: PointerEvent,
+  x: u16,
+  y: u16,
+) -> Option<PointerEventOutcome> {
+  let layout = ctx.file_tree_layout?;
+  if !point_in_rect(x, y, layout.pane) {
+    return None;
+  }
+
+  let previous_buffer_id = ctx.editor.active_buffer_id();
+  let pane_changed = if ctx.editor.active_pane_id() != layout.pane_id {
+    let changed = ctx.editor.set_active_pane(layout.pane_id);
+    if changed {
+      ctx.did_change_active_pane(previous_buffer_id);
+    }
+    changed
+  } else {
+    false
+  };
+
+  let mut should_render = pane_changed;
+  match event.kind {
+    PointerKind::Down(SharedPointerButton::Left) => {
+      if let Some(index) = file_tree_index_at(layout, x, y, ctx.file_tree.rows.len()) {
+        should_render |= select_file_tree_index(ctx, index);
+        if event.click_count >= 2 {
+          should_render |= activate_file_tree_index(ctx, index, None);
+        }
+      }
+    },
+    PointerKind::Scroll => {
+      let delta = pointer_scroll_delta_lines(event);
+      if delta != 0 {
+        should_render |= scroll_file_tree(ctx, delta, layout.visible_rows);
+      }
+    },
+    PointerKind::Move
+    | PointerKind::Up(SharedPointerButton::Left)
+    | PointerKind::Drag(SharedPointerButton::Left) => {},
+    _ => {},
+  }
+
+  if should_render {
+    ctx.request_render();
+  }
+  Some(PointerEventOutcome::Handled)
+}
+
+fn file_tree_index_at(layout: FileTreeLayout, x: u16, y: u16, row_count: usize) -> Option<usize> {
+  if !point_in_rect(x, y, layout.list) {
+    return None;
+  }
+  let row = usize::from(y.saturating_sub(layout.list.y));
+  let index = layout.scroll_offset.saturating_add(row);
+  (index < row_count).then_some(index)
 }
 
 fn handle_pane_resize_mouse(ctx: &mut Ctx, kind: MouseEventKind, x: u16, y: u16) -> bool {
@@ -900,6 +970,8 @@ mod tests {
     CommandPaletteSource,
     CompletionMenuItem,
     DefaultContext,
+    is_active_file_tree,
+    set_file_tree_visible_rows,
     show_completion_menu,
   };
   use the_lib::{
@@ -927,6 +999,28 @@ mod tests {
     let mut event = key_event(code);
     event.kind = kind;
     event
+  }
+
+  fn install_file_tree_layout(ctx: &mut Ctx, visible_rows: usize) -> crate::ctx::FileTreeLayout {
+    let surface_id = ctx.file_tree.surface_id.expect("tree surface");
+    let pane_id = ctx
+      .editor
+      .client_surface_snapshots()
+      .into_iter()
+      .find(|surface| surface.client_surface_id == surface_id)
+      .and_then(|surface| surface.attached_pane)
+      .expect("tree pane");
+    set_file_tree_visible_rows(ctx, visible_rows);
+    let layout = crate::ctx::FileTreeLayout {
+      pane_id,
+      pane: Rect::new(0, 1, 24, visible_rows as u16 + 1),
+      header: Rect::new(0, 1, 24, 1),
+      list: Rect::new(0, 2, 24, visible_rows as u16),
+      visible_rows,
+      scroll_offset: ctx.file_tree.scroll_offset,
+    };
+    ctx.file_tree_layout = Some(layout);
+    layout
   }
 
   #[test]
@@ -1158,6 +1252,95 @@ mod tests {
       key_event_with_kind(KeyCode::Down, KeyEventKind::Repeat),
     );
     assert_eq!(cursor_line(&ctx), 2);
+  }
+
+  #[test]
+  fn file_tree_navigation_still_works_after_focus_reset() {
+    let mut ctx = Ctx::new(None).expect("ctx");
+
+    handle_key(&mut ctx, key_event(KeyCode::Char(' ')));
+    handle_key(&mut ctx, key_event(KeyCode::Char('e')));
+
+    assert!(is_active_file_tree(&ctx));
+    let before = ctx.file_tree.selected.expect("tree selection");
+
+    ctx.handle_terminal_focus_lost();
+    ctx.handle_terminal_focus_gained();
+
+    handle_key(&mut ctx, key_event(KeyCode::Char('j')));
+
+    assert!(is_active_file_tree(&ctx));
+    assert!(ctx.file_tree.selected.expect("tree selection after move") > before);
+  }
+
+  #[test]
+  fn clicking_file_tree_row_focuses_tree_and_selects_row() {
+    let mut ctx = Ctx::new(None).expect("ctx");
+    handle_key(&mut ctx, key_event(KeyCode::Char(' ')));
+    handle_key(&mut ctx, key_event(KeyCode::Char('e')));
+
+    let editor_pane = ctx.file_tree.last_editor_pane.expect("editor pane");
+    assert!(ctx.editor.set_active_pane(editor_pane));
+    let layout = install_file_tree_layout(&mut ctx, 8);
+
+    handle_mouse(
+      &mut ctx,
+      mouse_event(
+        MouseEventKind::Down(MouseButton::Left),
+        3,
+        layout.list.y + 2,
+      ),
+    );
+
+    assert!(is_active_file_tree(&ctx));
+    assert_eq!(ctx.file_tree.selected, Some(2));
+  }
+
+  #[test]
+  fn double_clicking_file_tree_file_opens_it() {
+    let mut ctx = Ctx::new(None).expect("ctx");
+    handle_key(&mut ctx, key_event(KeyCode::Char(' ')));
+    handle_key(&mut ctx, key_event(KeyCode::Char('e')));
+    let file_index = ctx
+      .file_tree
+      .rows
+      .iter()
+      .position(|row| !row.is_dir)
+      .expect("file row");
+    let visible_rows = file_index.saturating_add(2).max(8);
+    let layout = install_file_tree_layout(&mut ctx, visible_rows);
+    let row_y = layout
+      .list
+      .y
+      .saturating_add((file_index - layout.scroll_offset) as u16);
+    let file_path = ctx.file_tree.rows[file_index].path.clone();
+
+    handle_mouse(
+      &mut ctx,
+      mouse_event(MouseEventKind::Down(MouseButton::Left), 3, row_y),
+    );
+    handle_mouse(
+      &mut ctx,
+      mouse_event(MouseEventKind::Down(MouseButton::Left), 3, row_y),
+    );
+
+    assert_eq!(ctx.file_path.as_deref(), Some(file_path.as_path()));
+    assert!(!is_active_file_tree(&ctx));
+  }
+
+  #[test]
+  fn mouse_wheel_scrolls_file_tree_list() {
+    let mut ctx = Ctx::new(None).expect("ctx");
+    handle_key(&mut ctx, key_event(KeyCode::Char(' ')));
+    handle_key(&mut ctx, key_event(KeyCode::Char('e')));
+    let layout = install_file_tree_layout(&mut ctx, 4);
+
+    handle_mouse(
+      &mut ctx,
+      mouse_event(MouseEventKind::ScrollDown, 3, layout.list.y + 1),
+    );
+
+    assert!(ctx.file_tree.scroll_offset > 0);
   }
 
   #[test]

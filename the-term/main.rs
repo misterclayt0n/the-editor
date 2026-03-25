@@ -52,11 +52,7 @@ fn main() -> Result<()> {
   let initial_render_start = Instant::now();
   terminal.draw(|f| render::render(f, &mut ctx))?;
   let initial_after_draw = Instant::now();
-  terminal.apply_editor_cursor(
-    ctx
-      .term_hardware_cursor
-      .map(|cursor| (cursor.x, cursor.y, cursor.kind)),
-  )?;
+  terminal.apply_editor_cursor(ctx.term_cursor_mode)?;
   let initial_total_ms = initial_render_start.elapsed().as_secs_f64() * 1000.0;
   let initial_draw_ms = initial_after_draw
     .duration_since(initial_render_start)
@@ -89,6 +85,12 @@ fn main() -> Result<()> {
           ctx.resize(w, h);
           terminal.resize(w, h)?;
           ctx.needs_render = true;
+        },
+        Event::FocusGained => {
+          ctx.handle_terminal_focus_gained();
+        },
+        Event::FocusLost => {
+          ctx.handle_terminal_focus_lost();
         },
         _ => {},
       }
@@ -138,11 +140,7 @@ fn main() -> Result<()> {
       let render_start = Instant::now();
       terminal.draw(|f| render::render(f, &mut ctx))?;
       let after_draw = Instant::now();
-      terminal.apply_editor_cursor(
-        ctx
-          .term_hardware_cursor
-          .map(|cursor| (cursor.x, cursor.y, cursor.kind)),
-      )?;
+      terminal.apply_editor_cursor(ctx.term_cursor_mode)?;
       let total_ms = render_start.elapsed().as_secs_f64() * 1000.0;
       let draw_ms = after_draw.duration_since(render_start).as_secs_f64() * 1000.0;
       let cursor_ms = total_ms - draw_ms;

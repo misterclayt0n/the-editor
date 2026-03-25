@@ -14,6 +14,7 @@ mod completion_menu;
 mod context_menu;
 mod defaults;
 mod file_picker;
+mod file_tree;
 mod global_search;
 mod increment;
 mod input;
@@ -194,6 +195,28 @@ pub use file_picker::{
   set_picker_visible_rows,
   submit_file_picker,
   workspace_root,
+};
+pub use file_tree::{
+  FileTreeRow,
+  FileTreeSnapshot,
+  FileTreeState,
+  activate_file_tree_index,
+  close_file_tree,
+  file_tree_snapshot,
+  file_tree_surface_id,
+  handle_file_tree_key,
+  install_builtin_file_tree_commands,
+  is_active_file_tree,
+  is_file_tree_surface,
+  refresh_file_tree,
+  remember_active_editor_pane,
+  reveal_current_file,
+  scroll_file_tree,
+  select_file_tree_index,
+  set_file_tree_visible_rows,
+  sync_file_tree_to_active_file,
+  toggle_file_tree,
+  toggle_file_tree_in_current_buffer_directory,
 };
 pub use global_search::{
   GlobalSearchDocumentSnapshot,

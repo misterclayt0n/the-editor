@@ -34,7 +34,10 @@ use ratatui::{
 };
 use the_lib::render::graphics::CursorKind as LibCursorKind;
 
-use crate::undercurl_backend::UndercurlCrosstermBackend;
+use crate::{
+  ctx::TermCursorMode,
+  undercurl_backend::UndercurlCrosstermBackend,
+};
 
 pub struct Terminal {
   terminal:                      RatatuiTerminal<UndercurlCrosstermBackend<Stdout>>,
@@ -101,9 +104,10 @@ impl Terminal {
     Ok(())
   }
 
-  pub fn apply_editor_cursor(&mut self, cursor: Option<(u16, u16, LibCursorKind)>) -> Result<()> {
+  pub fn apply_editor_cursor(&mut self, cursor: TermCursorMode) -> Result<()> {
     match cursor {
-      Some((x, y, kind)) => {
+      TermCursorMode::Hardware(cursor) => {
+        let (x, y, kind) = (cursor.x, cursor.y, cursor.kind);
         let shape = match kind {
           LibCursorKind::Bar => SetCursorStyle::SteadyBar,
           LibCursorKind::Underline => SetCursorStyle::SteadyUnderScore,
@@ -112,7 +116,7 @@ impl Terminal {
         };
         execute!(self.terminal.backend_mut(), shape, MoveTo(x, y), Show)?;
       },
-      None => {
+      TermCursorMode::Hidden => {
         execute!(self.terminal.backend_mut(), Hide)?;
       },
     }

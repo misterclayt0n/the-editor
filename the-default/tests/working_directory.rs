@@ -19,6 +19,7 @@ use the_default::{
   DefaultContext,
   DispatchRef,
   FilePickerState,
+  FileTreeState,
   KeyBinding,
   KeyEvent,
   Keymaps,
@@ -65,6 +66,7 @@ struct TestCtx {
   workspace_root:    PathBuf,
   working_directory: WorkingDirectoryState,
   file_picker:       FilePickerState,
+  file_tree:         FileTreeState,
   picker_runtime:    the_default::PickerRuntimeStore<TestCtx>,
   opened_paths:      Vec<PathBuf>,
 }
@@ -83,6 +85,7 @@ impl TestCtx {
       },
       workspace_root,
       file_picker: FilePickerState::default(),
+      file_tree: FileTreeState::default(),
       picker_runtime: the_default::PickerRuntimeStore::default(),
       opened_paths: Vec::new(),
     }
@@ -203,6 +206,14 @@ impl DefaultContext for TestCtx {
 
   fn file_picker_mut(&mut self) -> &mut FilePickerState {
     &mut self.file_picker
+  }
+
+  fn file_tree(&self) -> &FileTreeState {
+    &self.file_tree
+  }
+
+  fn file_tree_mut(&mut self) -> &mut FileTreeState {
+    &mut self.file_tree
   }
 
   fn picker_runtime_store(&self) -> &the_default::PickerRuntimeStore<Self> {

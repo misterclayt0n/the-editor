@@ -1,8 +1,5 @@
 use std::{
-  collections::{
-    HashMap,
-    HashSet,
-  },
+  collections::HashMap,
   fmt,
   str::FromStr,
 };
@@ -23,7 +20,6 @@ use crate::{
   KeyEvent,
   KeyOutcome,
   Modifiers,
-  NamedActionHandle,
   command_from_name,
 };
 
@@ -314,13 +310,6 @@ pub enum KeyAction {
   Command(Command),
   Mode(Mode),
   Named(&'static str),
-  NamedHandle(NamedActionHandle),
-}
-
-impl KeyAction {
-  pub const fn named(handle: NamedActionHandle) -> Self {
-    Self::NamedHandle(handle)
-  }
 }
 
 #[derive(Debug, Clone)]
@@ -704,12 +693,7 @@ fn apply_actions<Ctx: DefaultContext>(ctx: &mut Ctx, actions: &[KeyAction]) -> K
           commands.push(apply_count_prefix(command, count));
         } else if let Some(mode) = mode_from_name(name) {
           apply_mode(ctx, mode);
-        } else {
-          let _ = ctx.execute_named_action(name);
         }
-      },
-      KeyAction::NamedHandle(handle) => {
-        let _ = ctx.execute_named_action(handle.name());
       },
     }
   }
@@ -740,12 +724,7 @@ fn apply_actions_with_keymaps<Ctx: DefaultContext>(
           commands.push(apply_count_prefix(command, count));
         } else if let Some(mode) = mode_from_name(name) {
           apply_mode(ctx, mode);
-        } else {
-          let _ = ctx.execute_named_action(name);
         }
-      },
-      KeyAction::NamedHandle(handle) => {
-        let _ = ctx.execute_named_action(handle.name());
       },
     }
   }
@@ -920,7 +899,7 @@ pub fn open_command_palette_with_input<Ctx: DefaultContext>(ctx: &mut Ctx, input
 pub(crate) fn build_action_palette_items<Ctx: DefaultContext>(
   ctx: &mut Ctx,
   mode: Mode,
-  query: &str,
+  _query: &str,
 ) -> Vec<CommandPaletteItem> {
   let keymap = {
     let keymaps = ctx.keymaps();
@@ -934,8 +913,6 @@ pub(crate) fn build_action_palette_items<Ctx: DefaultContext>(
   collect_action_bindings(&keymap, &mut Vec::new(), &mut bindings_by_name);
 
   let mut items = Vec::new();
-  let mut seen_named_actions = HashSet::new();
-
   let mut static_names: Vec<_> = bindings_by_name.keys().cloned().collect();
   static_names.sort();
   for name in static_names {
@@ -944,31 +921,7 @@ pub(crate) fn build_action_palette_items<Ctx: DefaultContext>(
         .description(command_hint_label(command))
         .on_static_command(command);
       items.push(with_shortcut(item, bindings_by_name.get(&name)));
-      continue;
     }
-
-    let Some(doc) = ctx.named_action_doc(&name) else {
-      continue;
-    };
-
-    seen_named_actions.insert(name.clone());
-    let item = CommandPaletteItem::new(name.clone())
-      .description(doc)
-      .on_named_action(name.clone());
-    items.push(with_shortcut(item, bindings_by_name.get(&name)));
-  }
-
-  let mut named_actions = ctx.named_action_names();
-  named_actions.sort();
-  for name in named_actions {
-    if seen_named_actions.contains(name) {
-      continue;
-    }
-    let mut item = CommandPaletteItem::new(name.to_string()).on_named_action(name.to_string());
-    if let Some(doc) = ctx.named_action_doc(name) {
-      item = item.description(doc);
-    }
-    items.push(with_shortcut(item, bindings_by_name.get(name)));
   }
 
   for cmd in ctx.command_registry_ref().all_commands() {
@@ -989,8 +942,6 @@ pub(crate) fn build_action_palette_items<Ctx: DefaultContext>(
     }
     items.push(with_shortcut(item, Some(&bindings)));
   }
-
-  items.extend(ctx.command_palette_items(CommandPaletteSource::ActionPalette, mode, query));
   items.sort_by(|left, right| left.title.cmp(&right.title));
   items
 }
@@ -1047,7 +998,6 @@ fn collect_action_binding(
 fn action_name(action: KeyAction) -> Option<String> {
   match action {
     KeyAction::Named(name) => Some(name.to_string()),
-    KeyAction::NamedHandle(handle) => Some(handle.name().to_string()),
     KeyAction::Mode(Mode::Normal) => Some("normal_mode".to_string()),
     KeyAction::Mode(Mode::Insert) => Some("insert_mode".to_string()),
     KeyAction::Mode(Mode::Select) => Some("select_mode".to_string()),
@@ -1170,7 +1120,6 @@ fn key_action_hint_label(action: KeyAction) -> String {
       }
     },
     KeyAction::Named(name) => humanize_identifier(name),
-    KeyAction::NamedHandle(handle) => humanize_identifier(handle.name()),
   }
 }
 

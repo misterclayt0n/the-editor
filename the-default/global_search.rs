@@ -30,9 +30,9 @@ use grep_searcher::{
 use regex::RegexBuilder;
 
 use crate::{
-  FilePickerConfig,
   FilePickerItem,
   FilePickerItemAction,
+  FilePickerOptions,
   file_picker::build_file_walk_builder,
 };
 
@@ -47,16 +47,16 @@ pub struct GlobalSearchDocumentSnapshot {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GlobalSearchConfig {
+pub struct GlobalSearchOptions {
   pub smart_case:  bool,
-  pub file_picker: FilePickerConfig,
+  pub file_picker: FilePickerOptions,
 }
 
-impl Default for GlobalSearchConfig {
+impl Default for GlobalSearchOptions {
   fn default() -> Self {
     Self {
       smart_case:  true,
-      file_picker: FilePickerConfig::default(),
+      file_picker: FilePickerOptions::default(),
     }
   }
 }
@@ -74,7 +74,7 @@ pub struct GlobalSearchResponse {
 pub struct GlobalSearchState {
   active:             bool,
   root:               PathBuf,
-  config:             GlobalSearchConfig,
+  options:            GlobalSearchOptions,
   generation:         u64,
   pending_generation: Option<u64>,
   cancel:             Option<Arc<AtomicBool>>,
@@ -87,12 +87,12 @@ impl GlobalSearchState {
     self.active
   }
 
-  pub fn activate(&mut self, root: &Path, config: GlobalSearchConfig) -> Result<(), String> {
+  pub fn activate(&mut self, root: &Path, options: GlobalSearchOptions) -> Result<(), String> {
     self.cancel_active_worker();
     let (tx, rx) = channel();
     self.active = true;
     self.root = root.to_path_buf();
-    self.config = config;
+    self.options = options;
     self.generation = 0;
     self.pending_generation = None;
     self.result_tx = Some(tx);
@@ -134,9 +134,9 @@ impl GlobalSearchState {
     self.cancel = Some(cancel.clone());
 
     let root = self.root.clone();
-    let config = self.config.clone();
+    let options = self.options.clone();
     thread::spawn(move || {
-      let result = run_global_search_request(generation, root, query, config, documents, cancel);
+      let result = run_global_search_request(generation, root, query, options, documents, cancel);
       let _ = response_tx.send(result);
     });
   }
@@ -425,7 +425,7 @@ fn run_global_search_request(
   generation: u64,
   root: PathBuf,
   query: String,
-  config: GlobalSearchConfig,
+  options: GlobalSearchOptions,
   documents: Vec<GlobalSearchDocumentSnapshot>,
   cancel: Arc<AtomicBool>,
 ) -> GlobalSearchResponse {
@@ -440,7 +440,7 @@ fn run_global_search_request(
   }
 
   let matcher = match RegexMatcherBuilder::new()
-    .case_smart(config.smart_case)
+    .case_smart(options.smart_case)
     .build(&query)
   {
     Ok(matcher) => matcher,
@@ -454,7 +454,7 @@ fn run_global_search_request(
       };
     },
   };
-  let display_regex = build_display_regex(&query, config.smart_case);
+  let display_regex = build_display_regex(&query, options.smart_case);
   let mut documents_by_path: HashMap<PathBuf, GlobalSearchDocumentSnapshot> = documents
     .into_iter()
     .filter(|document| !document.path.as_os_str().is_empty())
@@ -462,7 +462,7 @@ fn run_global_search_request(
     .collect();
 
   let mut items = Vec::new();
-  let mut walker = build_file_walk_builder(&root, &config.file_picker).build();
+  let mut walker = build_file_walk_builder(&root, &options.file_picker).build();
   for entry in &mut walker {
     if cancel.load(Ordering::Relaxed) || items.len() >= GLOBAL_SEARCH_MAX_RESULTS {
       break;
@@ -554,7 +554,7 @@ mod tests {
       1,
       root.to_path_buf(),
       "needle".to_string(),
-      GlobalSearchConfig::default(),
+      GlobalSearchOptions::default(),
       Vec::new(),
       Arc::new(AtomicBool::new(false)),
     );
@@ -584,7 +584,7 @@ mod tests {
       1,
       root.to_path_buf(),
       "buffer".to_string(),
-      GlobalSearchConfig::default(),
+      GlobalSearchOptions::default(),
       vec![GlobalSearchDocumentSnapshot {
         path: path.clone(),
         text: "buffer match\n".to_string(),

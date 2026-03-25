@@ -5,7 +5,6 @@
 //! This crate provides a reusable, policy-level layer that sits on top of
 //! `the-lib`.
 
-mod assembly;
 mod buffer_tabs;
 mod command;
 mod command_palette;
@@ -13,8 +12,7 @@ mod command_registry;
 mod command_types;
 mod completion_menu;
 mod context_menu;
-mod extension_state;
-mod extensions;
+mod defaults;
 mod file_picker;
 mod global_search;
 mod increment;
@@ -29,24 +27,6 @@ mod signature_help;
 mod statusline;
 mod theme_catalog;
 
-pub use assembly::{
-  BuiltEditorPreset,
-  BuiltinCompletionMenuKind,
-  CommandRegistryInstaller,
-  CompletionMenuProviderBuilder,
-  ConfigDefaults,
-  CursorShapes,
-  DefaultPresetHandles,
-  EditorDefaults,
-  EditorPreset,
-  SignatureHelpProviderBuilder,
-  StartupHook,
-  TermDefaults,
-  default_editor_preset,
-  default_preset_handles,
-  show_builtin_completion_menu,
-  show_builtin_signature_help,
-};
 pub use buffer_tabs::{
   BufferTabItemSnapshot,
   BufferTabsOrder,
@@ -127,8 +107,8 @@ pub use completion_menu::{
   completion_next,
   completion_prev,
   set_completion_docs_scroll,
+  show_builtin_completion_menu,
   show_completion_menu,
-  show_completion_menu_provider,
 };
 pub use context_menu::{
   ContextMenuActionId,
@@ -138,44 +118,25 @@ pub use context_menu::{
   EditorContextMenuOptions,
   EditorContextMenuRequest,
   build_editor_context_menu,
-  build_editor_context_menu_with_providers,
 };
-pub use extension_state::ExtensionStateStore;
-pub use extensions::{
-  CommandPaletteItemProvider,
-  CompletionMenuAcceptHandler,
-  CompletionMenuItemsProvider,
-  CompletionMenuProviderEntry,
-  CompletionMenuProviderId,
-  CompletionMenuSelectionHandler,
-  EditorContextMenuProvider,
-  NamedAction,
-  NamedActionFn,
-  NamedActionHandle,
-  NamedActionInfo,
-  OwnedTextAnnotationsProvider,
-  PickerQueryHandler,
-  PickerQueryHandlerEntry,
-  PickerQueryHandlerId,
-  PickerSubmitHandler,
-  PickerSubmitHandlerEntry,
-  PickerSubmitHandlerId,
-  PickerSubmitResult,
-  RenderPlanPostProcessor,
-  SignatureHelpProviderEntry,
-  SignatureHelpProviderFn,
-  SignatureHelpProviderId,
-  TextAnnotationsProvider,
+pub use defaults::{
+  BuiltinCompletionMenuKind,
+  CursorShapes,
+  Defaults,
+  EditorDefaults,
+  TermDefaults,
+  default_defaults,
+  install_default_wiring,
 };
 pub use file_picker::{
   FilePickerChangedFileItem,
   FilePickerChangedKind,
-  FilePickerConfig,
   FilePickerDiagnosticItem,
   FilePickerItem,
   FilePickerItemAction,
   FilePickerItemPayload,
   FilePickerKind,
+  FilePickerOptions,
   FilePickerPreview,
   FilePickerPreviewLineKind,
   FilePickerPreviewNavigationMode,
@@ -190,7 +151,11 @@ pub use file_picker::{
   PickerItemSpec,
   PickerItemSpecAction,
   PickerRoot,
+  PickerRuntimeSession,
+  PickerRuntimeSessionId,
+  PickerRuntimeStore,
   PickerSubmitHandlerRef,
+  PickerSubmitResult,
   close_file_picker,
   file_picker_icon_glyph,
   file_picker_icon_name_for_path,
@@ -220,8 +185,8 @@ pub use file_picker::{
   scroll_file_picker_list,
   scroll_file_picker_preview,
   select_file_picker_index,
-  set_file_picker_config,
   set_file_picker_list_offset,
+  set_file_picker_options,
   set_file_picker_preview_offset,
   set_file_picker_query_text,
   set_file_picker_syntax_loader,
@@ -231,8 +196,8 @@ pub use file_picker::{
   workspace_root,
 };
 pub use global_search::{
-  GlobalSearchConfig,
   GlobalSearchDocumentSnapshot,
+  GlobalSearchOptions,
   GlobalSearchResponse,
   GlobalSearchState,
 };
@@ -302,8 +267,8 @@ pub use signature_help::{
   SignatureHelpPresentation,
   SignatureHelpState,
   close_signature_help,
+  show_builtin_signature_help,
   show_signature_help,
-  show_signature_help_provider,
   signature_help_docs_scroll,
   signature_help_markdown,
   signature_help_next,

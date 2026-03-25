@@ -2019,23 +2019,6 @@ fn submit_action_palette<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool {
       ctx.dispatch().post_on_keypress(ctx, command);
       true
     },
-    CommandPaletteAction::NamedAction(name) => {
-      close_command_prompt_and_palette(ctx);
-      if !ctx.execute_named_action(&name) {
-        ctx.push_error("command_palette", format!("named action not found: {name}"));
-      }
-      true
-    },
-    CommandPaletteAction::NamedActionHandle(handle) => {
-      close_command_prompt_and_palette(ctx);
-      if !ctx.execute_named_action(handle.name()) {
-        ctx.push_error(
-          "command_palette",
-          format!("named action not found: {}", handle.name()),
-        );
-      }
-      true
-    },
     CommandPaletteAction::TypableCommand { name, args } => {
       close_command_prompt_and_palette(ctx);
       let registry = ctx.command_registry_ref() as *const CommandRegistry<Ctx>;
@@ -2148,8 +2131,8 @@ fn close_command_prompt_and_palette<Ctx: DefaultContext>(ctx: &mut Ctx) {
 
 pub(crate) fn command_palette_command_items<Ctx: DefaultContext>(
   ctx: &mut Ctx,
-  source_mode: Mode,
-  query: &str,
+  _source_mode: Mode,
+  _query: &str,
 ) -> Vec<crate::CommandPaletteItem> {
   let mut items = ctx
     .command_registry_ref()
@@ -2163,7 +2146,6 @@ pub(crate) fn command_palette_command_items<Ctx: DefaultContext>(
       item
     })
     .collect::<Vec<_>>();
-  items.extend(ctx.command_palette_items(CommandPaletteSource::CommandLine, source_mode, query));
   items.sort_by(|left, right| left.title.cmp(&right.title));
   items
 }

@@ -151,16 +151,6 @@ pub fn repo_root_dir() -> PathBuf {
   PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..")
 }
 
-/// Template used to create a user config crate.
-pub fn config_template_dir() -> PathBuf {
-  repo_root_dir().join("the-config").join("template")
-}
-
-/// Workspace config crate path.
-pub fn repo_config_dir() -> PathBuf {
-  repo_root_dir().join("the-config")
-}
-
 pub fn cache_dir() -> PathBuf {
   if let Ok(dir) = std::env::var("THE_EDITOR_CACHE_DIR") {
     return path::expand_tilde(Cow::Borrowed(Path::new(&dir))).into_owned();

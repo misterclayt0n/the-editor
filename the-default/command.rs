@@ -624,45 +624,6 @@ pub trait DefaultContext: Sized + 'static {
   }
   fn set_append_restore_cursor_pending(&mut self, _pending: bool) {}
   fn keymaps(&mut self) -> &mut Keymaps;
-  fn extension_states(&self) -> &crate::ExtensionStateStore;
-  fn extension_states_mut(&mut self) -> &mut crate::ExtensionStateStore;
-  fn extension_state<T>(&self) -> Option<&T>
-  where
-    T: 'static,
-  {
-    self.extension_states().get::<T>()
-  }
-  fn extension_state_mut<T>(&mut self) -> Option<&mut T>
-  where
-    T: 'static,
-  {
-    self.extension_states_mut().get_mut::<T>()
-  }
-  fn extension_state_or_insert_with<T, F>(&mut self, init: F) -> &mut T
-  where
-    T: 'static,
-    F: FnOnce() -> T,
-  {
-    self.extension_states_mut().get_or_insert_with(init)
-  }
-  fn extension_state_or_default<T>(&mut self) -> &mut T
-  where
-    T: Default + 'static,
-  {
-    self.extension_states_mut().get_or_default::<T>()
-  }
-  fn insert_extension_state<T>(&mut self, state: T) -> Option<T>
-  where
-    T: 'static,
-  {
-    self.extension_states_mut().insert(state)
-  }
-  fn remove_extension_state<T>(&mut self) -> Option<T>
-  where
-    T: 'static,
-  {
-    self.extension_states_mut().remove::<T>()
-  }
   fn command_prompt_mut(&mut self) -> &mut CommandPromptState;
   fn command_prompt_ref(&self) -> &CommandPromptState;
   fn command_registry_mut(&mut self) -> &mut CommandRegistry<Self>;
@@ -694,6 +655,8 @@ pub trait DefaultContext: Sized + 'static {
   }
   fn file_picker(&self) -> &crate::file_picker::FilePickerState;
   fn file_picker_mut(&mut self) -> &mut crate::file_picker::FilePickerState;
+  fn picker_runtime_store(&self) -> &crate::PickerRuntimeStore<Self>;
+  fn picker_runtime_store_mut(&mut self) -> &mut crate::PickerRuntimeStore<Self>;
   fn search_prompt_ref(&self) -> &crate::SearchPromptState;
   fn search_prompt_mut(&mut self) -> &mut crate::SearchPromptState;
   fn pointer_event(&mut self, _event: PointerEvent) -> PointerEventOutcome {
@@ -704,11 +667,6 @@ pub trait DefaultContext: Sized + 'static {
   fn set_pending_input(&mut self, pending: Option<PendingInput>);
   fn set_word_jump_annotations(&mut self, _inline: Vec<InlineAnnotation>, _overlay: Vec<Overlay>) {}
   fn clear_word_jump_annotations(&mut self) {}
-  fn extend_owned_text_annotations(
-    &self,
-    _annotations: &mut the_lib::render::OwnedTextAnnotations,
-  ) {
-  }
   fn active_diagnostic_ranges(&self) -> Vec<Range> {
     Vec::new()
   }
@@ -1012,23 +970,6 @@ pub trait DefaultContext: Sized + 'static {
   }
   fn global_search(&mut self) {}
   fn file_picker_query_changed(&mut self, _query: &str) {}
-  fn named_action_names(&self) -> Vec<&'static str> {
-    Vec::new()
-  }
-  fn named_action_doc(&self, _name: &str) -> Option<&'static str> {
-    None
-  }
-  fn execute_named_action(&mut self, _name: &str) -> bool {
-    false
-  }
-  fn command_palette_items(
-    &mut self,
-    _source: CommandPaletteSource,
-    _source_mode: Mode,
-    _query: &str,
-  ) -> Vec<crate::CommandPaletteItem> {
-    Vec::new()
-  }
   fn builtin_completion_menu_items(
     &mut self,
     _kind: crate::BuiltinCompletionMenuKind,
@@ -1038,59 +979,6 @@ pub trait DefaultContext: Sized + 'static {
   fn builtin_signature_help_presentation(&mut self) -> Option<crate::SignatureHelpPresentation> {
     None
   }
-  fn completion_menu_provider_items(
-    &mut self,
-    _provider: crate::CompletionMenuProviderId,
-  ) -> Option<Vec<crate::CompletionMenuItem>> {
-    None
-  }
-  fn completion_menu_provider_selection_changed(
-    &mut self,
-    _provider: crate::CompletionMenuProviderId,
-    _index: usize,
-  ) {
-  }
-  fn completion_menu_provider_accept_selected(
-    &mut self,
-    _provider: crate::CompletionMenuProviderId,
-    _index: usize,
-  ) -> bool {
-    false
-  }
-  fn signature_help_presentation(
-    &mut self,
-    _provider: crate::SignatureHelpProviderId,
-  ) -> Option<crate::SignatureHelpPresentation> {
-    None
-  }
-  fn postprocess_editor_context_menu(
-    &mut self,
-    _request: &crate::EditorContextMenuRequest,
-    _snapshot: &mut crate::ContextMenuSnapshot,
-  ) {
-  }
-  fn picker_query_handler_id(&self, _name: &str) -> Option<crate::PickerQueryHandlerId> {
-    None
-  }
-  fn picker_submit_handler_id(&self, _name: &str) -> Option<crate::PickerSubmitHandlerId> {
-    None
-  }
-  fn handle_picker_query_action(
-    &mut self,
-    _handler: crate::PickerQueryHandlerId,
-    _query: &str,
-  ) -> bool {
-    false
-  }
-  fn submit_picker_item_action(
-    &mut self,
-    _handler: crate::PickerSubmitHandlerId,
-    _item: &crate::file_picker::FilePickerItem,
-  ) -> crate::extensions::PickerSubmitResult {
-    crate::extensions::PickerSubmitResult::Unhandled
-  }
-  fn extend_text_annotations<'a>(&'a self, _annotations: &mut TextAnnotations<'a>) {}
-  fn postprocess_render_plan(&mut self, _plan: &mut RenderPlan) {}
   fn file_picker_closed(&mut self) {}
   fn on_file_saved(&mut self, _path: &Path, _text: &str) {}
   fn on_before_quit(&mut self) {}
@@ -1945,7 +1833,6 @@ fn post_render<Ctx: DefaultContext>(ctx: &mut Ctx, plan: RenderPlan) -> RenderPl
   plan.cursor_blink_interval_ms = ctx.cursor_blink_interval_ms();
   plan.cursor_blink_delay_ms = ctx.cursor_blink_delay_ms();
   plan.cursor_blink_generation = ctx.cursor_blink_generation();
-  ctx.postprocess_render_plan(&mut plan);
   plan
 }
 
@@ -1975,22 +1862,6 @@ fn pre_render_with_styles<Ctx: DefaultContext>(
   }
 
   styles
-}
-
-fn close_command_palette<Ctx: DefaultContext>(ctx: &mut Ctx) {
-  ctx.set_mode(Mode::Normal);
-  ctx.command_prompt_mut().clear();
-  let palette = ctx.command_palette_mut();
-  palette.is_open = false;
-  palette.source = CommandPaletteSource::CommandLine;
-  palette.query.clear();
-  palette.items.clear();
-  palette.selected = None;
-  palette.prefiltered = false;
-  palette.max_results = usize::MAX;
-  palette.scroll_offset = 0;
-  palette.prompt_text = None;
-  ctx.request_render();
 }
 
 fn on_render_with_styles<Ctx: DefaultContext>(ctx: &mut Ctx, styles: RenderStyles) -> RenderPlan {

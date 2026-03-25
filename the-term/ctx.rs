@@ -45,25 +45,23 @@ use serde_json::{
 use smallvec::SmallVec;
 use the_default::{
   BufferTabsSnapshot,
-  BuiltEditorPreset,
   Command,
   CommandPaletteState,
   CommandPaletteStyle,
   CommandPromptState,
   CommandRegistry,
-  ConfigDefaults,
   CursorShapes,
   DefaultApi,
   DefaultContext,
+  Defaults,
   DispatchRef,
-  ExtensionStateStore,
   FilePickerChangedFileItem,
   FilePickerChangedKind,
   FilePickerDiagnosticItem,
   FilePickerItem,
   FilePickerItemAction,
   FilePickerState,
-  GlobalSearchConfig,
+  GlobalSearchOptions,
   GlobalSearchState,
   KeyBinding,
   KeyEvent,
@@ -71,7 +69,6 @@ use the_default::{
   MessagePresentation,
   Mode,
   Motion,
-  PickerSubmitResult,
   PointerButton,
   PointerEvent,
   PointerEventOutcome,
@@ -79,6 +76,10 @@ use the_default::{
   ThemeCatalog,
   WorkingDirectoryState,
   buffer_tabs_snapshot,
+  builtin_completion_menu_keymaps,
+  builtin_keymaps,
+  default_defaults,
+  install_default_wiring,
   open_dynamic_picker,
   replace_file_picker_items,
 };
@@ -585,7 +586,11 @@ pub struct Ctx {
   render_wake_tx:                    Sender<()>,
   pub render_wake_rx:                Receiver<()>,
   pub mode:                          Mode,
-  pub preset:                        BuiltEditorPreset<Ctx, Box<dyn DefaultApi<Ctx>>>,
+  pub defaults:                      Defaults,
+  pub dispatch:                      Box<dyn DefaultApi<Ctx>>,
+  pub keymaps:                       Keymaps,
+  pub completion_menu_keymaps:       Keymaps,
+  pub command_registry:              CommandRegistry<Ctx>,
   pub command_prompt:                CommandPromptState,
   pub command_palette:               CommandPaletteState,
   pub command_palette_style:         CommandPaletteStyle,
@@ -594,6 +599,7 @@ pub struct Ctx {
   pub hover_docs:                    Option<String>,
   pub hover_docs_scroll:             usize,
   pub file_picker:                   FilePickerState,
+  pub picker_runtime_store:          the_default::PickerRuntimeStore<Ctx>,
   pub lsp_runtime:                   LspRuntime,
   pub lsp_ready:                     bool,
   pub lsp_document:                  Option<LspDocumentSyncState>,
@@ -898,10 +904,10 @@ fn build_lsp_document_state(path: &Path, loader: Option<&Loader>) -> Option<LspD
 
 impl Ctx {
   pub fn new(file_path: Option<&str>) -> Result<Self> {
-    Self::new_with_defaults(file_path, &ConfigDefaults::default())
+    Self::new_with_defaults(file_path, &default_defaults())
   }
 
-  pub fn new_with_defaults(file_path: Option<&str>, defaults: &ConfigDefaults) -> Result<Self> {
+  pub fn new_with_defaults(file_path: Option<&str>, defaults: &Defaults) -> Result<Self> {
     // Load text from file or create empty document
     let text = if let Some(path) = file_path {
       Rope::from(std::fs::read_to_string(path).unwrap_or_default())
@@ -968,7 +974,7 @@ impl Ctx {
 
     let (render_wake_tx, render_wake_rx) = std::sync::mpsc::channel();
     let mut file_picker = FilePickerState::default();
-    the_default::set_file_picker_config(
+    the_default::set_file_picker_options(
       &mut file_picker,
       defaults.editor.file_picker.clone().unwrap_or_default(),
     );
@@ -993,11 +999,8 @@ impl Ctx {
       gutter_config.line_numbers.mode = mode;
     }
     let cursor_shapes = defaults.editor.cursor_shapes.unwrap_or_default();
-
-    let preset = the_default::default_editor_preset::<Self>()
-      .with_defaults(defaults.clone())
-      .build()
-      .box_dispatch();
+    let mut command_registry = CommandRegistry::new();
+    install_default_wiring(&mut command_registry);
     let mut ctx = Self {
       editor,
       file_path: file_path.map(PathBuf::from),
@@ -1015,7 +1018,11 @@ impl Ctx {
       render_wake_tx,
       render_wake_rx,
       mode: Mode::Normal,
-      preset,
+      defaults: defaults.clone(),
+      dispatch: Box::new(crate::dispatch::build_dispatch::<Self>()),
+      keymaps: builtin_keymaps(),
+      completion_menu_keymaps: builtin_completion_menu_keymaps(),
+      command_registry,
       command_prompt: CommandPromptState::new(),
       command_palette: CommandPaletteState::default(),
       command_palette_style: CommandPaletteStyle::helix_bottom(),
@@ -1024,6 +1031,7 @@ impl Ctx {
       hover_docs: None,
       hover_docs_scroll: 0,
       file_picker,
+      picker_runtime_store: the_default::PickerRuntimeStore::default(),
       lsp_runtime,
       lsp_ready: false,
       lsp_document,
@@ -1116,15 +1124,6 @@ impl Ctx {
     D: DefaultApi<Ctx> + 'static,
   {
     self.dispatch_override = Some(NonNull::from(dispatch as &dyn DefaultApi<Ctx>));
-  }
-
-  pub fn install_preset(&mut self, mut preset: BuiltEditorPreset<Ctx, Box<dyn DefaultApi<Ctx>>>) {
-    let hooks = preset.take_startup_hooks();
-    self.preset = preset;
-    self.dispatch_override = None;
-    for hook in hooks {
-      hook.run(self);
-    }
   }
 
   fn apply_effective_theme(&mut self, theme: Theme) {
@@ -1297,11 +1296,11 @@ impl Ctx {
       return;
     }
 
-    let config = GlobalSearchConfig {
+    let options = GlobalSearchOptions {
       smart_case:  true,
-      file_picker: self.file_picker.config.clone(),
+      file_picker: self.file_picker.options.clone(),
     };
-    if let Err(err) = self.global_search.activate(root.as_path(), config) {
+    if let Err(err) = self.global_search.activate(root.as_path(), options) {
       let _ = <Self as the_default::DefaultContext>::push_error(
         self,
         "global_search",
@@ -1424,7 +1423,7 @@ impl Ctx {
     }));
     self.lsp_watched_file = None;
     self.syntax_parse_highlight_state.mark_cleared();
-    if let Err(err) = self.lsp_runtime.shutdown() {
+    if let Err(err) = self.lsp_runtime.shutdown_detached() {
       eprintln!("Warning: failed to stop LSP runtime: {err}");
     }
   }
@@ -4843,7 +4842,7 @@ impl Ctx {
     self.clear_signature_help_state();
     self.cancel_auto_signature_help();
 
-    if was_running && let Err(err) = self.lsp_runtime.shutdown() {
+    if was_running && let Err(err) = self.lsp_runtime.shutdown_detached() {
       eprintln!("Warning: failed to stop LSP runtime while reconfiguring: {err}");
     }
 
@@ -5820,15 +5819,7 @@ impl the_default::DefaultContext for Ctx {
   }
 
   fn keymaps(&mut self) -> &mut Keymaps {
-    self.preset.keymaps_mut()
-  }
-
-  fn extension_states(&self) -> &ExtensionStateStore {
-    self.preset.extension_state()
-  }
-
-  fn extension_states_mut(&mut self) -> &mut ExtensionStateStore {
-    self.preset.extension_state_mut()
+    &mut self.keymaps
   }
 
   fn command_prompt_mut(&mut self) -> &mut CommandPromptState {
@@ -5840,11 +5831,11 @@ impl the_default::DefaultContext for Ctx {
   }
 
   fn command_registry_mut(&mut self) -> &mut CommandRegistry<Self> {
-    self.preset.command_registry_mut()
+    &mut self.command_registry
   }
 
   fn command_registry_ref(&self) -> &CommandRegistry<Self> {
-    self.preset.command_registry()
+    &self.command_registry
   }
 
   fn command_palette(&self) -> &CommandPaletteState {
@@ -5872,11 +5863,11 @@ impl the_default::DefaultContext for Ctx {
   }
 
   fn completion_menu_keymaps(&self) -> &the_default::Keymaps {
-    self.preset.completion_menu_keymaps()
+    &self.completion_menu_keymaps
   }
 
   fn completion_menu_keymaps_mut(&mut self) -> &mut the_default::Keymaps {
-    self.preset.completion_menu_keymaps_mut()
+    &mut self.completion_menu_keymaps
   }
 
   fn signature_help(&self) -> Option<&the_default::SignatureHelpState> {
@@ -5998,6 +5989,14 @@ impl the_default::DefaultContext for Ctx {
     &mut self.file_picker
   }
 
+  fn picker_runtime_store(&self) -> &the_default::PickerRuntimeStore<Self> {
+    &self.picker_runtime_store
+  }
+
+  fn picker_runtime_store_mut(&mut self) -> &mut the_default::PickerRuntimeStore<Self> {
+    &mut self.picker_runtime_store
+  }
+
   fn global_search(&mut self) {
     self.start_global_search();
   }
@@ -6017,29 +6016,6 @@ impl the_default::DefaultContext for Ctx {
         self.schedule_global_search(query.to_string());
       }
     }
-  }
-
-  fn named_action_names(&self) -> Vec<&'static str> {
-    self.preset.named_action_names()
-  }
-
-  fn named_action_doc(&self, name: &str) -> Option<&'static str> {
-    self.preset.named_action_doc(name)
-  }
-
-  fn execute_named_action(&mut self, name: &str) -> bool {
-    let preset = &self.preset as *const BuiltEditorPreset<Self, Box<dyn DefaultApi<Self>>>;
-    unsafe { (&*preset).execute_named_action(self, name) }
-  }
-
-  fn command_palette_items(
-    &mut self,
-    source: the_default::CommandPaletteSource,
-    source_mode: Mode,
-    query: &str,
-  ) -> Vec<the_default::CommandPaletteItem> {
-    let preset = &self.preset as *const BuiltEditorPreset<Self, Box<dyn DefaultApi<Self>>>;
-    unsafe { (&*preset).command_palette_items(self, source, source_mode, query) }
   }
 
   fn builtin_completion_menu_items(
@@ -6071,88 +6047,6 @@ impl the_default::DefaultContext for Ctx {
     self.lsp_signature_help_presentation.clone()
   }
 
-  fn completion_menu_provider_items(
-    &mut self,
-    provider: the_default::CompletionMenuProviderId,
-  ) -> Option<Vec<the_default::CompletionMenuItem>> {
-    let preset = &self.preset as *const BuiltEditorPreset<Self, Box<dyn DefaultApi<Self>>>;
-    unsafe { (&*preset).completion_menu_items(self, provider) }
-  }
-
-  fn completion_menu_provider_selection_changed(
-    &mut self,
-    provider: the_default::CompletionMenuProviderId,
-    index: usize,
-  ) {
-    let preset = &self.preset as *const BuiltEditorPreset<Self, Box<dyn DefaultApi<Self>>>;
-    unsafe { (&*preset).completion_menu_selection_changed(self, provider, index) };
-  }
-
-  fn completion_menu_provider_accept_selected(
-    &mut self,
-    provider: the_default::CompletionMenuProviderId,
-    index: usize,
-  ) -> bool {
-    let preset = &self.preset as *const BuiltEditorPreset<Self, Box<dyn DefaultApi<Self>>>;
-    unsafe { (&*preset).completion_menu_accept_selected(self, provider, index) }
-  }
-
-  fn signature_help_presentation(
-    &mut self,
-    provider: the_default::SignatureHelpProviderId,
-  ) -> Option<the_default::SignatureHelpPresentation> {
-    let preset = &self.preset as *const BuiltEditorPreset<Self, Box<dyn DefaultApi<Self>>>;
-    unsafe { (&*preset).signature_help_presentation(self, provider) }
-  }
-
-  fn postprocess_editor_context_menu(
-    &mut self,
-    request: &the_default::EditorContextMenuRequest,
-    snapshot: &mut the_default::ContextMenuSnapshot,
-  ) {
-    let preset = &self.preset as *const BuiltEditorPreset<Self, Box<dyn DefaultApi<Self>>>;
-    unsafe { (&*preset).postprocess_editor_context_menu(self, request, snapshot) };
-  }
-
-  fn picker_query_handler_id(&self, name: &str) -> Option<the_default::PickerQueryHandlerId> {
-    self.preset.picker_query_handler_id(name)
-  }
-
-  fn picker_submit_handler_id(&self, name: &str) -> Option<the_default::PickerSubmitHandlerId> {
-    self.preset.picker_submit_handler_id(name)
-  }
-
-  fn handle_picker_query_action(
-    &mut self,
-    handler: the_default::PickerQueryHandlerId,
-    query: &str,
-  ) -> bool {
-    let preset = &self.preset as *const BuiltEditorPreset<Self, Box<dyn DefaultApi<Self>>>;
-    unsafe { (&*preset).handle_picker_query(self, handler, query) }
-  }
-
-  fn submit_picker_item_action(
-    &mut self,
-    handler: the_default::PickerSubmitHandlerId,
-    item: &FilePickerItem,
-  ) -> PickerSubmitResult {
-    let preset = &self.preset as *const BuiltEditorPreset<Self, Box<dyn DefaultApi<Self>>>;
-    unsafe { (&*preset).submit_picker_item(self, handler, item) }
-  }
-
-  fn extend_text_annotations<'a>(&'a self, annotations: &mut TextAnnotations<'a>) {
-    self.preset.extend_text_annotations(self, annotations);
-  }
-
-  fn extend_owned_text_annotations(&self, annotations: &mut the_lib::render::OwnedTextAnnotations) {
-    self.preset.extend_owned_text_annotations(self, annotations);
-  }
-
-  fn postprocess_render_plan(&mut self, plan: &mut RenderPlan) {
-    let preset = &self.preset as *const BuiltEditorPreset<Self, Box<dyn DefaultApi<Self>>>;
-    unsafe { (&*preset).postprocess_render_plan(self, plan) };
-  }
-
   fn file_picker_closed(&mut self) {
     self.global_search.deactivate();
   }
@@ -6181,7 +6075,7 @@ impl the_default::DefaultContext for Ctx {
     if let Some(ptr) = self.dispatch_override {
       return DispatchRef::from_ptr(ptr.as_ptr());
     }
-    DispatchRef::from_ptr(self.preset.dispatch().as_ref() as *const dyn DefaultApi<Self>)
+    DispatchRef::from_ptr(self.dispatch.as_ref() as *const dyn DefaultApi<Self>)
   }
 
   fn pending_input(&self) -> Option<&the_default::PendingInput> {
@@ -6462,15 +6356,6 @@ impl the_default::DefaultContext for Ctx {
       let jump_label_style = self.ui_theme.find_highlight("ui.virtual.jump-label");
       let _ = annotations.add_overlay(&self.word_jump_overlay_annotations, jump_label_style);
     }
-    let mut owned = the_lib::render::OwnedTextAnnotations::default();
-    self.extend_owned_text_annotations(&mut owned);
-    if !owned.is_empty() {
-      let viewport_width = self.text_format.viewport_width.max(1);
-      let horizontal_offset = self.editor.view().scroll.col;
-      let text = self.editor.document().text().slice(..);
-      let _ = owned.extend_into(&mut annotations, text, viewport_width, horizontal_offset);
-    }
-    self.extend_text_annotations(&mut annotations);
     annotations
   }
 
@@ -7921,7 +7806,7 @@ pkgs.mkShell {
 
   #[test]
   fn bootstrap_defaults_apply_theme_picker_line_numbers_and_cursor_shapes() {
-    let defaults = the_default::ConfigDefaults::new()
+    let defaults = the_default::Defaults::new()
       .theme("base16_default")
       .line_numbers(the_lib::render::LineNumberMode::Relative)
       .cursor_shapes(the_default::CursorShapes::new(
@@ -7929,7 +7814,7 @@ pkgs.mkShell {
         the_default::CursorKind::Bar,
         the_default::CursorKind::Block,
       ))
-      .file_picker(the_default::FilePickerConfig {
+      .file_picker(the_default::FilePickerOptions {
         hidden: false,
         ..Default::default()
       });
@@ -7948,7 +7833,7 @@ pkgs.mkShell {
         the_default::CursorKind::Block,
       )
     );
-    assert!(!ctx.file_picker.config.hidden);
+    assert!(!ctx.file_picker.options.hidden);
   }
 
   #[test]

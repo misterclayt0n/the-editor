@@ -75,9 +75,6 @@ use crate::{
   DefaultContext,
   Key,
   KeyEvent,
-  PickerQueryHandlerId,
-  PickerSubmitHandlerId,
-  PickerSubmitResult,
   command_registry::{
     CommandEvent,
     TypableCommand,
@@ -154,9 +151,15 @@ pub enum FilePickerItemAction {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PickerSubmitHandlerRef {
-  Extension(PickerSubmitHandlerId),
+  Missing,
   Runtime(PickerRuntimeSessionId),
-  Named(&'static str),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PickerSubmitResult {
+  Unhandled,
+  KeepOpen,
+  Close,
 }
 
 impl FilePickerItemAction {
@@ -217,17 +220,12 @@ impl FilePickerItemAction {
       } => {
         5_u8.hash(&mut hasher);
         match handler {
-          PickerSubmitHandlerRef::Extension(id) => {
+          PickerSubmitHandlerRef::Missing => {
             0_u8.hash(&mut hasher);
-            id.hash(&mut hasher);
           },
           PickerSubmitHandlerRef::Runtime(id) => {
             1_u8.hash(&mut hasher);
             id.hash(&mut hasher);
-          },
-          PickerSubmitHandlerRef::Named(name) => {
-            2_u8.hash(&mut hasher);
-            name.hash(&mut hasher);
           },
         }
         selectable.hash(&mut hasher);
@@ -439,7 +437,7 @@ pub struct FilePickerChangedFileItem {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FilePickerConfig {
+pub struct FilePickerOptions {
   pub hidden:            bool,
   pub follow_symlinks:   bool,
   pub deduplicate_links: bool,
@@ -451,7 +449,7 @@ pub struct FilePickerConfig {
   pub max_depth:         Option<usize>,
 }
 
-impl Default for FilePickerConfig {
+impl Default for FilePickerOptions {
   fn default() -> Self {
     Self {
       hidden:            true,
@@ -480,25 +478,25 @@ pub struct PickerRuntimeSessionId(u64);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum PickerQueryHandlerRef {
-  Extension(PickerQueryHandlerId),
   Runtime(PickerRuntimeSessionId),
 }
 
-type PickerQuerySource<Ctx> = dyn Fn(&mut Ctx, &str) -> Vec<PickerItemSpec> + 'static;
-type PickerRuntimeSubmit<Ctx> = dyn Fn(&mut Ctx, &FilePickerItem) -> PickerSubmitResult + 'static;
+pub type PickerQuerySource<Ctx> = dyn Fn(&mut Ctx, &str) -> Vec<PickerItemSpec> + 'static;
+pub type PickerRuntimeSubmit<Ctx> =
+  dyn Fn(&mut Ctx, &FilePickerItem) -> PickerSubmitResult + 'static;
 type PickerPathFilter = dyn Fn(&Path, &Path) -> bool + Send + Sync + 'static;
 
-struct PickerRuntimeSession<Ctx> {
+pub struct PickerRuntimeSession<Ctx> {
   query:  Option<Box<PickerQuerySource<Ctx>>>,
   submit: Option<Box<PickerRuntimeSubmit<Ctx>>>,
 }
 
-struct PickerRuntimeRegistry<Ctx> {
+pub struct PickerRuntimeStore<Ctx> {
   next_id:  u64,
   sessions: HashMap<PickerRuntimeSessionId, PickerRuntimeSession<Ctx>>,
 }
 
-impl<Ctx> Default for PickerRuntimeRegistry<Ctx> {
+impl<Ctx> Default for PickerRuntimeStore<Ctx> {
   fn default() -> Self {
     Self {
       next_id:  0,
@@ -507,8 +505,8 @@ impl<Ctx> Default for PickerRuntimeRegistry<Ctx> {
   }
 }
 
-impl<Ctx> PickerRuntimeRegistry<Ctx> {
-  fn register(&mut self, session: PickerRuntimeSession<Ctx>) -> PickerRuntimeSessionId {
+impl<Ctx> PickerRuntimeStore<Ctx> {
+  pub fn register(&mut self, session: PickerRuntimeSession<Ctx>) -> PickerRuntimeSessionId {
     let next = self.next_id.wrapping_add(1).max(1);
     self.next_id = next;
     let id = PickerRuntimeSessionId(next);
@@ -516,7 +514,7 @@ impl<Ctx> PickerRuntimeRegistry<Ctx> {
     id
   }
 
-  fn remove(&mut self, id: PickerRuntimeSessionId) {
+  pub fn remove(&mut self, id: PickerRuntimeSessionId) {
     self.sessions.remove(&id);
   }
 }
@@ -640,7 +638,7 @@ impl PreviewCache {
 
 #[derive(Clone)]
 struct FilePickerScanSource {
-  config:         FilePickerConfig,
+  options:        FilePickerOptions,
   max_results:    usize,
   extensions:     Option<Arc<[String]>>,
   path_filter:    Option<Arc<PickerPathFilter>>,
@@ -652,7 +650,7 @@ pub struct FilePickerState {
   pub active:             bool,
   pub root:               PathBuf,
   pub title:              String,
-  pub config:             FilePickerConfig,
+  pub options:            FilePickerOptions,
   pub query:              String,
   pub cursor:             usize,
   pub selected:           Option<usize>,
@@ -699,7 +697,7 @@ impl Default for FilePickerState {
       active: false,
       root: PathBuf::new(),
       title: "File Picker".to_string(),
-      config: FilePickerConfig::default(),
+      options: FilePickerOptions::default(),
       query: String::new(),
       cursor: 0,
       selected: None,
@@ -740,8 +738,8 @@ pub fn set_file_picker_wake_sender(state: &mut FilePickerState, wake_tx: Option<
   state.wake_tx = wake_tx;
 }
 
-pub fn set_file_picker_config(state: &mut FilePickerState, config: FilePickerConfig) {
-  state.config = config;
+pub fn set_file_picker_options(state: &mut FilePickerState, options: FilePickerOptions) {
+  state.options = options;
 }
 
 pub fn set_file_picker_syntax_loader(state: &mut FilePickerState, loader: Option<Arc<Loader>>) {
@@ -1038,7 +1036,7 @@ impl PickerItemSpec {
       },
       PickerItemSpecAction::Custom { selectable } => {
         FilePickerItemAction::Custom {
-          handler:    submit_handler.unwrap_or(PickerSubmitHandlerRef::Named("")),
+          handler:    submit_handler.unwrap_or(PickerSubmitHandlerRef::Missing),
           selectable: selectable && submit_handler.is_some(),
         }
       },
@@ -1142,7 +1140,7 @@ where
       initial_query: String::new(),
       source:        PickerSource::Files {
         scan_source:    FilePickerScanSource {
-          config:         FilePickerConfig::default(),
+          options:        FilePickerOptions::default(),
           max_results:    MAX_SCAN_ITEMS,
           extensions:     None,
           path_filter:    None,
@@ -1232,7 +1230,7 @@ where
 
   pub fn max_depth(mut self, max_depth: Option<usize>) -> Self {
     if let PickerSource::Files { scan_source, .. } = &mut self.source {
-      scan_source.config.max_depth = max_depth;
+      scan_source.options.max_depth = max_depth;
     }
     self
   }
@@ -1317,26 +1315,6 @@ where
         );
       },
     }
-  }
-
-  pub fn named_action(self, name: &'static str, doc: &'static str) -> crate::NamedAction<Ctx> {
-    crate::NamedAction::new(name, doc, move |ctx| self.open(ctx))
-  }
-
-  pub fn install<Dispatch, I, L>(
-    self,
-    preset: crate::EditorPreset<Ctx, Dispatch>,
-    name: &'static str,
-    doc: &'static str,
-    mode: crate::Mode,
-    bindings: I,
-  ) -> Result<crate::EditorPreset<Ctx, Dispatch>, crate::ParseKeyBindingError>
-  where
-    I: IntoIterator<Item = L>,
-    L: crate::IntoKeyBinding,
-  {
-    let action = self.named_action(name, doc);
-    preset.install_named_action_with_binding(action, mode, bindings)
   }
 
   pub fn command(self, name: &'static str, doc: &'static str) -> TypableCommand<Ctx> {
@@ -1745,24 +1723,9 @@ pub fn open_dynamic_picker<Ctx: DefaultContext>(
   open_split: Option<SplitAxis>,
   initial_query: String,
 ) {
-  open_dynamic_picker_with_handler(ctx, title, root, open_split, initial_query, "");
-}
-
-pub fn open_dynamic_picker_with_handler<Ctx: DefaultContext>(
-  ctx: &mut Ctx,
-  title: &str,
-  root: PathBuf,
-  open_split: Option<SplitAxis>,
-  initial_query: String,
-  query_handler: &'static str,
-) {
   let mut state = base_picker_state(ctx, title, open_split);
   state.root = root;
   state.query_mode = FilePickerQueryMode::Dynamic;
-  state.custom_query_handler = (!query_handler.is_empty())
-    .then(|| ctx.picker_query_handler_id(query_handler))
-    .flatten()
-    .map(PickerQueryHandlerRef::Extension);
   state.query = initial_query;
   state.cursor = state.query.len();
   prepare_dynamic_query_change(&mut state);
@@ -1772,22 +1735,29 @@ pub fn open_dynamic_picker_with_handler<Ctx: DefaultContext>(
   ctx.request_render();
 }
 
+pub fn open_dynamic_picker_with_handler<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  title: &str,
+  root: PathBuf,
+  open_split: Option<SplitAxis>,
+  initial_query: String,
+  _query_handler: &'static str,
+) {
+  open_dynamic_picker(ctx, title, root, open_split, initial_query);
+}
+
 fn register_picker_runtime_session<Ctx: DefaultContext>(
   ctx: &mut Ctx,
   session: PickerRuntimeSession<Ctx>,
 ) -> PickerRuntimeSessionId {
-  ctx
-    .extension_state_or_default::<PickerRuntimeRegistry<Ctx>>()
-    .register(session)
+  ctx.picker_runtime_store_mut().register(session)
 }
 
 fn drop_picker_runtime_session<Ctx: DefaultContext>(
   ctx: &mut Ctx,
   session_id: PickerRuntimeSessionId,
 ) {
-  if let Some(registry) = ctx.extension_state_mut::<PickerRuntimeRegistry<Ctx>>() {
-    registry.remove(session_id);
-  }
+  ctx.picker_runtime_store_mut().remove(session_id);
 }
 
 fn run_picker_runtime_query<Ctx: DefaultContext>(
@@ -1795,8 +1765,7 @@ fn run_picker_runtime_query<Ctx: DefaultContext>(
   session_id: PickerRuntimeSessionId,
   query: &str,
 ) -> Option<Vec<PickerItemSpec>> {
-  let registry =
-    ctx.extension_state::<PickerRuntimeRegistry<Ctx>>()? as *const PickerRuntimeRegistry<Ctx>;
+  let registry = ctx.picker_runtime_store() as *const PickerRuntimeStore<Ctx>;
   let handler = unsafe {
     let session = (&*registry).sessions.get(&session_id)?;
     session
@@ -1812,10 +1781,7 @@ fn run_picker_runtime_submit<Ctx: DefaultContext>(
   session_id: PickerRuntimeSessionId,
   item: &FilePickerItem,
 ) -> PickerSubmitResult {
-  let Some(registry) = ctx.extension_state::<PickerRuntimeRegistry<Ctx>>() else {
-    return PickerSubmitResult::Unhandled;
-  };
-  let registry = registry as *const PickerRuntimeRegistry<Ctx>;
+  let registry = ctx.picker_runtime_store() as *const PickerRuntimeStore<Ctx>;
   let Some(handler) = (unsafe { (&*registry).sessions.get(&session_id) }).and_then(|session| {
     session
       .submit
@@ -1972,11 +1938,6 @@ pub fn notify_file_picker_query_changed<Ctx: DefaultContext>(ctx: &mut Ctx, quer
   let handler = ctx.file_picker().custom_query_handler;
   if let Some(handler) = handler {
     match handler {
-      PickerQueryHandlerRef::Extension(handler) => {
-        if ctx.handle_picker_query_action(handler, query) {
-          return;
-        }
-      },
       PickerQueryHandlerRef::Runtime(session_id) => {
         if let Some(items) = run_picker_runtime_query(ctx, session_id, query) {
           replace_file_picker_items(
@@ -2060,7 +2021,7 @@ fn base_picker_state<Ctx: DefaultContext>(
     drop_picker_runtime_session(ctx, runtime_session);
   }
   let show_preview = ctx.file_picker().show_preview;
-  let config = ctx.file_picker().config.clone();
+  let options = ctx.file_picker().options.clone();
   let wake_tx = ctx.file_picker().wake_tx.clone();
   let syntax_loader = ctx.file_picker().syntax_loader.clone();
   if let Some(cancel) = ctx.file_picker().scan_cancel.as_ref() {
@@ -2072,7 +2033,7 @@ fn base_picker_state<Ctx: DefaultContext>(
   state.title = title.to_string();
   state.show_preview = show_preview;
   state.open_split = open_split;
-  state.config = config;
+  state.options = options;
   state.wake_tx = wake_tx.clone();
   state.syntax_loader = syntax_loader;
   state.matcher = new_matcher(wake_tx);
@@ -2494,17 +2455,9 @@ pub fn submit_file_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
     },
     FilePickerItemAction::Custom { handler, .. } => {
       let result = match handler {
-        PickerSubmitHandlerRef::Extension(handler) => {
-          ctx.submit_picker_item_action(*handler, &item)
-        },
+        PickerSubmitHandlerRef::Missing => PickerSubmitResult::Unhandled,
         PickerSubmitHandlerRef::Runtime(session_id) => {
           run_picker_runtime_submit(ctx, *session_id, &item)
-        },
-        PickerSubmitHandlerRef::Named(name) => {
-          ctx
-            .picker_submit_handler_id(name)
-            .map(|handler| ctx.submit_picker_item_action(handler, &item))
-            .unwrap_or(PickerSubmitResult::Unhandled)
         },
       };
 
@@ -2963,8 +2916,8 @@ fn start_scan(state: &mut FilePickerState, root: PathBuf) {
   let scan_source = state.scan_source.clone();
   let walk_config = scan_source
     .as_ref()
-    .map(|source| &source.config)
-    .unwrap_or(&state.config);
+    .map(|source| &source.options)
+    .unwrap_or(&state.options);
   let mut walker = build_file_walk_builder(&root, walk_config).build();
   let timeout = Instant::now() + Duration::from_millis(WARMUP_SCAN_BUDGET_MS);
   let mut scanned = 0usize;
@@ -3023,21 +2976,21 @@ fn start_scan(state: &mut FilePickerState, root: PathBuf) {
 
 pub(crate) fn build_file_walk_builder(
   root: &Path,
-  config: &FilePickerConfig,
+  options: &FilePickerOptions,
 ) -> ignore::WalkBuilder {
   let absolute_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
-  let deduplicate_links = config.deduplicate_links;
+  let deduplicate_links = options.deduplicate_links;
   let mut walk_builder = ignore::WalkBuilder::new(root);
   walk_builder
-    .hidden(config.hidden)
-    .parents(config.parents)
-    .ignore(config.ignore)
-    .follow_links(config.follow_symlinks)
-    .git_ignore(config.git_ignore)
-    .git_global(config.git_global)
-    .git_exclude(config.git_exclude)
+    .hidden(options.hidden)
+    .parents(options.parents)
+    .ignore(options.ignore)
+    .follow_links(options.follow_symlinks)
+    .git_ignore(options.git_ignore)
+    .git_global(options.git_global)
+    .git_exclude(options.git_exclude)
     .sort_by_file_name(|name1, name2| name1.cmp(name2))
-    .max_depth(config.max_depth)
+    .max_depth(options.max_depth)
     .filter_entry(move |entry| filter_picker_entry(entry, &absolute_root, deduplicate_links))
     .add_custom_ignore_filename(the_loader::config_dir().join("ignore"))
     .add_custom_ignore_filename(".helix/ignore")

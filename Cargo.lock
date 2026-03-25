@@ -1499,22 +1499,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "the-config"
-version = "0.1.0"
-dependencies = [
- "the-config-fallback",
- "the-default",
-]
-
-[[package]]
-name = "the-config-fallback"
-version = "0.1.0"
-dependencies = [
- "the-default",
- "the-lib",
-]
-
-[[package]]
 name = "the-core"
 version = "0.1.0"
 dependencies = [
@@ -1662,7 +1646,6 @@ dependencies = [
  "serde_json",
  "smallvec",
  "tempfile",
- "the-config",
  "the-default",
  "the-lib",
  "the-loader",

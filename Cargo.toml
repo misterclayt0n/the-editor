@@ -1,6 +1,5 @@
 [workspace]
 members = [
-  "the-config",
   "the-core",
   "the-default",
   "the-dispatch",

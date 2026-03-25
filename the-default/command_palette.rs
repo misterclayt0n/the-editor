@@ -13,14 +13,11 @@ use crate::{
   Command,
   DefaultContext,
   Mode,
-  NamedActionHandle,
 };
 
 #[derive(Debug, Clone)]
 pub enum CommandPaletteAction {
   StaticCommand(Command),
-  NamedAction(String),
-  NamedActionHandle(NamedActionHandle),
   TypableCommand { name: String, args: String },
 }
 
@@ -122,16 +119,6 @@ impl CommandPaletteItem {
 
   pub fn on_static_command(mut self, command: Command) -> Self {
     self.action = Some(CommandPaletteAction::StaticCommand(command));
-    self
-  }
-
-  pub fn on_named_action(mut self, name: impl Into<String>) -> Self {
-    self.action = Some(CommandPaletteAction::NamedAction(name.into()));
-    self
-  }
-
-  pub fn on_named_action_handle(mut self, handle: NamedActionHandle) -> Self {
-    self.action = Some(CommandPaletteAction::NamedActionHandle(handle));
     self
   }
 
@@ -358,10 +345,7 @@ mod tests {
     command_palette_default_selected,
     command_palette_filtered_indices,
   };
-  use crate::{
-    Mode,
-    NamedActionHandle,
-  };
+  use crate::Mode;
 
   #[test]
   fn alias_exact_match_is_ranked_above_title_fuzzy_match() {
@@ -414,7 +398,7 @@ mod tests {
       .badge("custom")
       .leading_icon("sparkles")
       .emphasize()
-      .on_named_action("demo.open");
+      .on_typable_command("open-demo", "");
 
     assert_eq!(item.subtitle.as_deref(), Some("Demo"));
     assert_eq!(item.description.as_deref(), Some("Open the demo surface"));
@@ -425,18 +409,8 @@ mod tests {
     assert!(item.emphasis);
     assert!(matches!(
       item.action,
-      Some(super::CommandPaletteAction::NamedAction(ref name)) if name == "demo.open"
-    ));
-  }
-
-  #[test]
-  fn item_builder_supports_named_action_handles() {
-    let handle = NamedActionHandle::new("demo.handle");
-    let item = CommandPaletteItem::new("Handle Demo").on_named_action_handle(handle);
-
-    assert!(matches!(
-      item.action,
-      Some(super::CommandPaletteAction::NamedActionHandle(bound)) if bound == handle
+      Some(super::CommandPaletteAction::TypableCommand { ref name, ref args })
+        if name == "open-demo" && args.is_empty()
     ));
   }
 }

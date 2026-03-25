@@ -14,5 +14,5 @@ pub fn build_dispatch<Ctx>() -> impl DefaultApi<Ctx>
 where
   Ctx: DefaultContext,
 {
-  the_config::build_dispatch::<Ctx>()
+  the_default::build_dispatch::<Ctx>()
 }

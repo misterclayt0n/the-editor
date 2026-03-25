@@ -18,7 +18,6 @@ use the_default::{
   CompletionMenuState,
   DefaultContext,
   DispatchRef,
-  ExtensionStateStore,
   FilePickerState,
   KeyBinding,
   KeyEvent,
@@ -66,7 +65,7 @@ struct TestCtx {
   workspace_root:    PathBuf,
   working_directory: WorkingDirectoryState,
   file_picker:       FilePickerState,
-  extension_state:   ExtensionStateStore,
+  picker_runtime:    the_default::PickerRuntimeStore<TestCtx>,
   opened_paths:      Vec<PathBuf>,
 }
 
@@ -84,7 +83,7 @@ impl TestCtx {
       },
       workspace_root,
       file_picker: FilePickerState::default(),
-      extension_state: ExtensionStateStore::default(),
+      picker_runtime: the_default::PickerRuntimeStore::default(),
       opened_paths: Vec::new(),
     }
   }
@@ -150,14 +149,6 @@ impl DefaultContext for TestCtx {
     todo!()
   }
 
-  fn extension_states(&self) -> &ExtensionStateStore {
-    &self.extension_state
-  }
-
-  fn extension_states_mut(&mut self) -> &mut ExtensionStateStore {
-    &mut self.extension_state
-  }
-
   fn command_prompt_mut(&mut self) -> &mut CommandPromptState {
     todo!()
   }
@@ -212,6 +203,14 @@ impl DefaultContext for TestCtx {
 
   fn file_picker_mut(&mut self) -> &mut FilePickerState {
     &mut self.file_picker
+  }
+
+  fn picker_runtime_store(&self) -> &the_default::PickerRuntimeStore<Self> {
+    &self.picker_runtime
+  }
+
+  fn picker_runtime_store_mut(&mut self) -> &mut the_default::PickerRuntimeStore<Self> {
+    &mut self.picker_runtime
   }
 
   fn search_prompt_ref(&self) -> &SearchPromptState {
@@ -365,33 +364,6 @@ fn change_current_directory_is_isolated_per_context() {
   assert_eq!(effective_working_directory(&ctx_a), nested_a);
   assert_eq!(ctx_a.opened_paths.last(), Some(&nested_a.join("file.txt")));
   assert_eq!(effective_working_directory(&ctx_b), workspace_b.path());
-}
-
-#[derive(Debug, PartialEq, Eq)]
-struct TestExtensionState {
-  counter: usize,
-}
-
-#[test]
-fn default_context_extension_state_helpers_round_trip_typed_state() {
-  let workspace = tempdir().unwrap();
-  let mut ctx = TestCtx::new(workspace.path().to_path_buf());
-
-  assert!(ctx.extension_state::<TestExtensionState>().is_none());
-
-  let state = ctx.extension_state_or_insert_with(|| TestExtensionState { counter: 4 });
-  assert_eq!(state.counter, 4);
-  state.counter += 3;
-
-  assert_eq!(
-    ctx.extension_state::<TestExtensionState>(),
-    Some(&TestExtensionState { counter: 7 })
-  );
-  assert_eq!(
-    ctx.remove_extension_state::<TestExtensionState>(),
-    Some(TestExtensionState { counter: 7 })
-  );
-  assert!(ctx.extension_state::<TestExtensionState>().is_none());
 }
 
 #[test]

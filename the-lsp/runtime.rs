@@ -205,6 +205,42 @@ pub struct LspRuntime {
   capabilities:    Arc<Mutex<CapabilityRegistry>>,
 }
 
+struct RuntimeWorkerState {
+  command_tx: Option<Sender<LspCommand>>,
+  worker:     JoinHandle<()>,
+}
+
+impl RuntimeWorkerState {
+  fn request_shutdown(&mut self) -> Result<(), LspRuntimeError> {
+    if let Some(tx) = self.command_tx.take() {
+      tx.send(LspCommand::Shutdown)
+        .map_err(|_| LspRuntimeError::CommandChannelClosed)?;
+    }
+    Ok(())
+  }
+
+  fn join(self) -> Result<(), LspRuntimeError> {
+    self.worker
+      .join()
+      .map_err(|_| LspRuntimeError::WorkerPanicked)
+  }
+
+  fn detach(self) {
+    let worker = self.worker;
+    if thread::Builder::new()
+      .name("the-lsp-shutdown".into())
+      .spawn(move || {
+        if worker.join().is_err() {
+          warn!("lsp runtime worker panicked during detached shutdown");
+        }
+      })
+      .is_err()
+    {
+      warn!("failed to spawn detached lsp shutdown reaper; worker handle detached");
+    }
+  }
+}
+
 impl LspRuntime {
   pub fn new(config: LspRuntimeConfig) -> Self {
     Self {
@@ -270,6 +306,15 @@ impl LspRuntime {
     Ok(())
   }
 
+  fn take_worker_state(&mut self) -> Option<RuntimeWorkerState> {
+    let worker = self.worker.take()?;
+    self.event_rx = None;
+    Some(RuntimeWorkerState {
+      command_tx: self.command_tx.take(),
+      worker,
+    })
+  }
+
   pub fn send(&self, command: LspCommand) -> Result<(), LspRuntimeError> {
     let Some(tx) = &self.command_tx else {
       return Err(LspRuntimeError::NotRunning);
@@ -321,26 +366,28 @@ impl LspRuntime {
   }
 
   pub fn shutdown(&mut self) -> Result<(), LspRuntimeError> {
-    if !self.is_running() {
+    let Some(mut state) = self.take_worker_state() else {
       return Ok(());
-    }
+    };
+    state.request_shutdown()?;
+    state.join()?;
+    Ok(())
+  }
 
-    if let Some(tx) = self.command_tx.take() {
-      let _ = tx.send(LspCommand::Shutdown);
-    }
-
-    if let Some(worker) = self.worker.take() {
-      worker.join().map_err(|_| LspRuntimeError::WorkerPanicked)?;
-    }
-
-    self.event_rx = None;
+  pub fn shutdown_detached(&mut self) -> Result<(), LspRuntimeError> {
+    let Some(mut state) = self.take_worker_state() else {
+      return Ok(());
+    };
+    let shutdown_result = state.request_shutdown();
+    state.detach();
+    shutdown_result?;
     Ok(())
   }
 }
 
 impl Drop for LspRuntime {
   fn drop(&mut self) {
-    let _ = self.shutdown();
+    let _ = self.shutdown_detached();
   }
 }
 
@@ -1093,4 +1140,60 @@ fn clamp_for_log(value: &str, max_chars: usize) -> String {
   }
   out.push('…');
   out
+}
+
+#[cfg(test)]
+mod tests {
+  use std::{
+    sync::mpsc::channel,
+    time::{
+      Duration,
+      Instant,
+    },
+  };
+
+  use super::{
+    LspCommand,
+    LspRuntime,
+    LspRuntimeConfig,
+  };
+
+  #[test]
+  fn shutdown_detached_returns_without_waiting_for_worker_exit() {
+    let (command_tx, command_rx) = channel();
+    let (_event_tx, event_rx) = channel();
+    let (entered_shutdown_tx, entered_shutdown_rx) = channel();
+    let (release_tx, release_rx) = channel();
+    let worker = std::thread::spawn(move || {
+      let Ok(LspCommand::Shutdown) = command_rx.recv() else {
+        return;
+      };
+      let _ = entered_shutdown_tx.send(());
+      let _ = release_rx.recv();
+    });
+
+    let mut runtime = LspRuntime::new(LspRuntimeConfig::new(std::env::temp_dir()));
+    runtime.command_tx = Some(command_tx);
+    runtime.event_rx = Some(event_rx);
+    runtime.worker = Some(worker);
+
+    let start = Instant::now();
+    runtime
+      .shutdown_detached()
+      .expect("detached shutdown should succeed");
+    let elapsed = start.elapsed();
+
+    assert!(
+      elapsed < Duration::from_millis(50),
+      "shutdown_detached blocked for {:?}",
+      elapsed
+    );
+    assert!(!runtime.is_running());
+    assert!(runtime.try_recv_event().is_none());
+    entered_shutdown_rx
+      .recv_timeout(Duration::from_millis(250))
+      .expect("worker should observe shutdown");
+
+    let _ = release_tx.send(());
+  }
 }

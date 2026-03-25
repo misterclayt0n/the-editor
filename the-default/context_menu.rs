@@ -3,8 +3,6 @@ use std::{
   str::FromStr,
 };
 
-use crate::DefaultContext;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ContextMenuActionId {
   EditorGotoDefinition,
@@ -222,14 +220,4 @@ pub fn build_editor_context_menu(options: EditorContextMenuOptions) -> ContextMe
   }
 
   ContextMenuSnapshot { sections }
-}
-
-#[must_use]
-pub fn build_editor_context_menu_with_providers<Ctx: DefaultContext>(
-  ctx: &mut Ctx,
-  request: &EditorContextMenuRequest,
-) -> ContextMenuSnapshot {
-  let mut snapshot = ContextMenuSnapshot::new();
-  ctx.postprocess_editor_context_menu(request, &mut snapshot);
-  snapshot
 }

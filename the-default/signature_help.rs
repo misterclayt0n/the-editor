@@ -1,7 +1,4 @@
-use crate::{
-  DefaultContext,
-  extensions::SignatureHelpProviderId,
-};
+use crate::DefaultContext;
 
 pub const SIGNATURE_HELP_ACTIVE_PARAM_START_MARKER: &str = "<<the-editor-active-param>>";
 pub const SIGNATURE_HELP_ACTIVE_PARAM_END_MARKER: &str = "<</the-editor-active-param>>";
@@ -196,11 +193,8 @@ pub fn show_signature_help<Ctx: DefaultContext>(
   }
 }
 
-pub fn show_signature_help_provider<Ctx: DefaultContext>(
-  ctx: &mut Ctx,
-  provider: SignatureHelpProviderId,
-) {
-  let Some(presentation) = ctx.signature_help_presentation(provider) else {
+pub fn show_builtin_signature_help<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  let Some(presentation) = ctx.builtin_signature_help_presentation() else {
     close_signature_help(ctx);
     return;
   };

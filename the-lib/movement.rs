@@ -384,15 +384,12 @@ pub fn move_vertically_visual<'a>(
     && new_pos < slice.len_chars()
     && slice.line(slice.char_to_line(new_pos)).len_chars() == 0
   {
-    return VerticalMoveResult {
-      range,
-      visual_goal,
-    };
+    return VerticalMoveResult { range, visual_goal };
   }
 
   let new_range = range.put_cursor(slice, new_pos, behavior == Movement::Extend);
   VerticalMoveResult {
-    range: new_range,
+    range:       new_range,
     visual_goal: Some((0, new_col)),
   }
 }
@@ -456,15 +453,12 @@ pub fn move_vertically<'a>(
 
   // Special-case to avoid moving to the end of the last non-empty line.
   if behavior == Movement::Extend && slice.line(new_line_idx).len_chars() == 0 {
-    return VerticalMoveResult {
-      range,
-      visual_goal,
-    };
+    return VerticalMoveResult { range, visual_goal };
   }
 
   let new_range = range.put_cursor(slice, new_pos, behavior == Movement::Extend);
   VerticalMoveResult {
-    range: new_range,
+    range:       new_range,
     visual_goal: Some((new_row, new_col)),
   }
 }

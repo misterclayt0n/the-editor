@@ -2,7 +2,6 @@ use the_lib::render::{
   LineNumberMode,
   OwnedTextAnnotations,
   RenderPlan,
-  UiTree,
   graphics::CursorKind,
   text_annotations::TextAnnotations,
 };
@@ -36,7 +35,6 @@ use crate::{
   SignatureHelpProviderId,
   TextAnnotationsProvider,
   TypableCommand,
-  UiTreePostProcessor,
   extensions::{
     CompletionMenuProviderRegistry,
     EditorContextMenuProviderRegistry,
@@ -323,7 +321,6 @@ pub struct EditorPreset<Ctx: 'static, Dispatch> {
   text_annotations_providers:       Vec<Box<TextAnnotationsProvider<Ctx>>>,
   owned_text_annotations_providers: Vec<Box<OwnedTextAnnotationsProvider<Ctx>>>,
   render_plan_post_processors:      Vec<Box<RenderPlanPostProcessor<Ctx>>>,
-  ui_tree_post_processors:          Vec<Box<UiTreePostProcessor<Ctx>>>,
   extension_state:                  ExtensionStateStore,
   command_registry_installers:      Vec<CommandRegistryInstaller<Ctx>>,
   startup_hooks:                    Vec<StartupHook<Ctx>>,
@@ -347,7 +344,6 @@ impl<Ctx: 'static, Dispatch> EditorPreset<Ctx, Dispatch> {
       text_annotations_providers: Vec::new(),
       owned_text_annotations_providers: Vec::new(),
       render_plan_post_processors: Vec::new(),
-      ui_tree_post_processors: Vec::new(),
       extension_state: ExtensionStateStore::default(),
       command_registry_installers: Vec::new(),
       startup_hooks: Vec::new(),
@@ -407,7 +403,6 @@ impl<Ctx: 'static, Dispatch> EditorPreset<Ctx, Dispatch> {
       text_annotations_providers: self.text_annotations_providers,
       owned_text_annotations_providers: self.owned_text_annotations_providers,
       render_plan_post_processors: self.render_plan_post_processors,
-      ui_tree_post_processors: self.ui_tree_post_processors,
       extension_state: self.extension_state,
       command_registry_installers: self.command_registry_installers,
       startup_hooks: self.startup_hooks,
@@ -639,7 +634,9 @@ impl<Ctx: 'static, Dispatch> EditorPreset<Ctx, Dispatch> {
   where
     F: Fn(&Ctx, &mut OwnedTextAnnotations) + 'static,
   {
-    self.owned_text_annotations_providers.push(Box::new(provider));
+    self
+      .owned_text_annotations_providers
+      .push(Box::new(provider));
     self
   }
 
@@ -648,14 +645,6 @@ impl<Ctx: 'static, Dispatch> EditorPreset<Ctx, Dispatch> {
     F: Fn(&mut Ctx, &mut RenderPlan) + 'static,
   {
     self.render_plan_post_processors.push(Box::new(processor));
-    self
-  }
-
-  pub fn install_ui_tree_post_processor<F>(mut self, processor: F) -> Self
-  where
-    F: Fn(&mut Ctx, &mut UiTree) + 'static,
-  {
-    self.ui_tree_post_processors.push(Box::new(processor));
     self
   }
 
@@ -705,7 +694,6 @@ impl<Ctx: 'static, Dispatch> EditorPreset<Ctx, Dispatch> {
       text_annotations_providers: self.text_annotations_providers,
       owned_text_annotations_providers: self.owned_text_annotations_providers,
       render_plan_post_processors: self.render_plan_post_processors,
-      ui_tree_post_processors: self.ui_tree_post_processors,
       extension_state: self.extension_state,
       startup_hooks: self.startup_hooks,
     }
@@ -728,7 +716,6 @@ pub struct BuiltEditorPreset<Ctx: 'static, Dispatch> {
   text_annotations_providers:       Vec<Box<TextAnnotationsProvider<Ctx>>>,
   owned_text_annotations_providers: Vec<Box<OwnedTextAnnotationsProvider<Ctx>>>,
   render_plan_post_processors:      Vec<Box<RenderPlanPostProcessor<Ctx>>>,
-  ui_tree_post_processors:          Vec<Box<UiTreePostProcessor<Ctx>>>,
   extension_state:                  ExtensionStateStore,
   startup_hooks:                    Vec<StartupHook<Ctx>>,
 }
@@ -929,12 +916,6 @@ impl<Ctx: 'static, Dispatch> BuiltEditorPreset<Ctx, Dispatch> {
       processor(ctx, plan);
     }
   }
-
-  pub fn postprocess_ui_tree(&self, ctx: &mut Ctx, tree: &mut UiTree) {
-    for processor in &self.ui_tree_post_processors {
-      processor(ctx, tree);
-    }
-  }
 }
 
 impl<Ctx: 'static, Dispatch> BuiltEditorPreset<Ctx, Dispatch>
@@ -958,7 +939,6 @@ where
       text_annotations_providers:       self.text_annotations_providers,
       owned_text_annotations_providers: self.owned_text_annotations_providers,
       render_plan_post_processors:      self.render_plan_post_processors,
-      ui_tree_post_processors:          self.ui_tree_post_processors,
       extension_state:                  self.extension_state,
       startup_hooks:                    self.startup_hooks,
     }
@@ -1042,6 +1022,8 @@ where
 
 #[cfg(test)]
 mod tests {
+  use the_lib::render::LineNumberMode;
+
   use super::{
     ConfigDefaults,
     CursorShapes,
@@ -1057,9 +1039,6 @@ mod tests {
     Mode,
     NamedAction,
     SignatureHelpPresentation,
-  };
-  use the_lib::render::{
-    LineNumberMode,
   };
 
   struct TestCtx;

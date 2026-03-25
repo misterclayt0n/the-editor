@@ -1962,8 +1962,9 @@ fn submit_command_line_palette<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool {
   };
 
   if palette.prefiltered {
-    let prefiltered_selection =
-      selected.and_then(|item_idx| command_palette_completion_action(ctx, item_idx).map(|action| (item_idx, action)));
+    let prefiltered_selection = selected.and_then(|item_idx| {
+      command_palette_completion_action(ctx, item_idx).map(|action| (item_idx, action))
+    });
 
     if let Some((item_idx, DirectoryCompletionAction::Expand)) = prefiltered_selection {
       if apply_command_palette_completion(ctx, item_idx) {

@@ -1,13 +1,3 @@
-use the_lib::render::{
-  LayoutIntent,
-  UiConstraints,
-  UiContainer,
-  UiInsets,
-  UiNode,
-  UiPanel,
-  UiText,
-};
-
 use crate::{
   DefaultContext,
   extensions::SignatureHelpProviderId,
@@ -290,49 +280,6 @@ pub fn signature_help_docs_scroll<Ctx: DefaultContext>(ctx: &mut Ctx, delta: isi
   if changed {
     ctx.request_render();
   }
-}
-
-pub fn build_signature_help_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNode> {
-  let Some(state) = ctx.signature_help_mut() else {
-    return Vec::new();
-  };
-  state.clamp();
-  if !state.active || state.signatures.is_empty() {
-    return Vec::new();
-  }
-
-  let Some(content) = signature_help_markdown(state) else {
-    return Vec::new();
-  };
-
-  let mut text = UiText::new("signature_help_text", content);
-  text.source = Some("signature".to_string());
-  text.style = text.style.with_role("completion_docs");
-  text.clip = true;
-
-  let mut container = UiContainer::column("signature_help_container", 0, vec![UiNode::Text(text)]);
-  container.style = container.style.with_role("completion_docs");
-
-  let mut panel = UiPanel::new(
-    "signature_help",
-    LayoutIntent::Custom("signature_help".to_string()),
-    UiNode::Container(container),
-  );
-  panel.source = Some("signature".to_string());
-  panel.style = panel.style.with_role("completion_docs");
-  panel.style.border = None;
-  panel.constraints = UiConstraints::panel();
-  panel.constraints.padding = UiInsets {
-    left:   1,
-    right:  1,
-    top:    1,
-    bottom: 1,
-  };
-  panel.constraints.min_width = Some(12);
-  panel.constraints.max_width = Some(72);
-  panel.constraints.max_height = Some(16);
-
-  vec![UiNode::Panel(panel)]
 }
 
 #[cfg(test)]

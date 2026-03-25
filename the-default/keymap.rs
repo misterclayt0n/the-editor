@@ -683,9 +683,7 @@ pub fn handle_key_with_keymaps<Ctx: DefaultContext>(
 
   match result {
     KeymapResult::Matched(action) => apply_actions_with_keymaps(ctx, keymaps, &[action]),
-    KeymapResult::MatchedSequence(actions) => {
-      apply_actions_with_keymaps(ctx, keymaps, &actions)
-    },
+    KeymapResult::MatchedSequence(actions) => apply_actions_with_keymaps(ctx, keymaps, &actions),
     KeymapResult::Pending(_) | KeymapResult::Cancelled(_) => KeyOutcome::Handled,
     KeymapResult::NotFound => fallback_key(ctx, key),
   }
@@ -1721,10 +1719,18 @@ pub fn builtin_completion_menu_keymaps() -> Keymaps {
 
   for mode in [Mode::Insert, Mode::Normal] {
     keymaps
-      .bind(mode, KeyBinding::new(Key::Up), KeyAction::Command(Command::CompletionPrev))
+      .bind(
+        mode,
+        KeyBinding::new(Key::Up),
+        KeyAction::Command(Command::CompletionPrev),
+      )
       .expect("valid completion menu key");
     keymaps
-      .bind(mode, KeyBinding::new(Key::Down), KeyAction::Command(Command::CompletionNext))
+      .bind(
+        mode,
+        KeyBinding::new(Key::Down),
+        KeyAction::Command(Command::CompletionNext),
+      )
       .expect("valid completion menu key");
     keymaps
       .bind(
@@ -1734,7 +1740,11 @@ pub fn builtin_completion_menu_keymaps() -> Keymaps {
       )
       .expect("valid completion menu key");
     keymaps
-      .bind(mode, KeyBinding::new(Key::Tab), KeyAction::Command(Command::CompletionNext))
+      .bind(
+        mode,
+        KeyBinding::new(Key::Tab),
+        KeyAction::Command(Command::CompletionNext),
+      )
       .expect("valid completion menu key");
     keymaps
       .bind(

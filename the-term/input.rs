@@ -19,6 +19,7 @@ use the_default::{
   PointerKind,
   close_signature_help,
   completion_docs_scroll,
+  handle_command_prompt_key,
   handle_pointer_event as dispatch_pointer_event,
   open_file_picker_index,
   scroll_file_picker_list,
@@ -27,20 +28,10 @@ use the_default::{
   set_file_picker_list_offset,
   set_file_picker_preview_offset,
   signature_help_docs_scroll,
-  ui_event as dispatch_ui_event,
 };
-use the_lib::{
-  render::{
-    UiEvent,
-    UiEventKind,
-    UiKey,
-    UiKeyEvent,
-    UiModifiers,
-  },
-  split_tree::{
-    SplitAxis,
-    SplitNodeId,
-  },
+use the_lib::split_tree::{
+  SplitAxis,
+  SplitNodeId,
 };
 
 use crate::{
@@ -116,29 +107,6 @@ pub fn handle_key(ctx: &mut Ctx, event: CrosstermKeyEvent) {
     }
   }
 
-  if ctx.mode() == Mode::Command {
-    let normalized_code = normalize_shifted_key_code(event.code, event.modifiers);
-    if let Some(mut key) = to_ui_key(normalized_code) {
-      if matches!(normalized_code, KeyCode::Tab | KeyCode::BackTab) {
-        key = if event.modifiers.contains(KeyModifiers::SHIFT) || event.code == KeyCode::BackTab {
-          UiKey::Up
-        } else {
-          UiKey::Down
-        };
-      }
-
-      let ui_event = UiEvent {
-        target: None,
-        kind:   UiEventKind::Key(UiKeyEvent {
-          key,
-          modifiers: to_ui_modifiers(event.modifiers),
-        }),
-      };
-      let _ = dispatch_ui_event(ctx, ui_event);
-      return;
-    }
-  }
-
   let normalized_code = normalize_shifted_key_code(event.code, event.modifiers);
   let modifiers = to_modifiers(event.modifiers, normalized_code);
   let Some(key) = to_key(normalized_code) else {
@@ -146,6 +114,31 @@ pub fn handle_key(ctx: &mut Ctx, event: CrosstermKeyEvent) {
   };
 
   let key_event = KeyEvent { key, modifiers };
+
+  if ctx.mode() == Mode::Command {
+    let command_key = match event.code {
+      KeyCode::Tab => {
+        Some(KeyEvent {
+          key:       Key::Down,
+          modifiers: Modifiers::empty(),
+        })
+      },
+      KeyCode::BackTab => {
+        Some(KeyEvent {
+          key:       Key::Up,
+          modifiers: Modifiers::empty(),
+        })
+      },
+      _ => None,
+    };
+    if let Some(command_key) = command_key {
+      if handle_command_prompt_key(ctx, command_key) {
+        return;
+      }
+    } else if handle_command_prompt_key(ctx, key_event) {
+      return;
+    }
+  }
 
   ctx.dispatch().pre_on_keypress(ctx, key_event);
 }
@@ -804,27 +797,6 @@ fn normalize_shifted_key_code(code: KeyCode, modifiers: KeyModifiers) -> KeyCode
   }
 }
 
-fn to_ui_key(code: KeyCode) -> Option<UiKey> {
-  match code {
-    KeyCode::Char(c) => Some(UiKey::Char(c)),
-    KeyCode::Enter => Some(UiKey::Enter),
-    KeyCode::Tab => Some(UiKey::Tab),
-    KeyCode::BackTab => Some(UiKey::Tab),
-    KeyCode::Esc => Some(UiKey::Escape),
-    KeyCode::Backspace => Some(UiKey::Backspace),
-    KeyCode::Delete => Some(UiKey::Delete),
-    KeyCode::Home => Some(UiKey::Home),
-    KeyCode::End => Some(UiKey::End),
-    KeyCode::PageUp => Some(UiKey::PageUp),
-    KeyCode::PageDown => Some(UiKey::PageDown),
-    KeyCode::Left => Some(UiKey::Left),
-    KeyCode::Right => Some(UiKey::Right),
-    KeyCode::Up => Some(UiKey::Up),
-    KeyCode::Down => Some(UiKey::Down),
-    _ => None,
-  }
-}
-
 fn to_modifiers(modifiers: KeyModifiers, code: KeyCode) -> Modifiers {
   let mut out = Modifiers::empty();
   if modifiers.contains(KeyModifiers::CONTROL) {
@@ -844,15 +816,6 @@ fn to_modifiers(modifiers: KeyModifiers, code: KeyCode) -> Modifiers {
     }
   }
   out
-}
-
-fn to_ui_modifiers(modifiers: KeyModifiers) -> UiModifiers {
-  UiModifiers {
-    ctrl:  modifiers.contains(KeyModifiers::CONTROL),
-    alt:   modifiers.contains(KeyModifiers::ALT),
-    shift: modifiers.contains(KeyModifiers::SHIFT),
-    meta:  modifiers.contains(KeyModifiers::SUPER),
-  }
 }
 
 fn to_pointer_modifiers(modifiers: KeyModifiers) -> Modifiers {

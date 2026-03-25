@@ -114,8 +114,6 @@ use the_lib::{
     RenderGutterDiffKind,
     RenderPlan,
     RenderStyles,
-    UiState,
-    UiTree,
     char_at_visual_pos,
     graphics::Rect,
     gutter_width_for_document,
@@ -309,11 +307,11 @@ pub(crate) struct BufferTabHoverState {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct BufferTabLayoutSlot {
-  pub tab_index:  usize,
-  pub buffer_id:  BufferId,
-  pub x:          u16,
-  pub width:      u16,
-  pub close_x:    Option<u16>,
+  pub tab_index: usize,
+  pub buffer_id: BufferId,
+  pub x:         u16,
+  pub width:     u16,
+  pub close_x:   Option<u16>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -636,7 +634,6 @@ pub struct Ctx {
   pub ui_theme_base:                 Theme,
   pub ui_theme_preview_name:         Option<String>,
   pub ui_theme:                      Theme,
-  pub ui_state:                      UiState,
   pub pending_input:                 Option<the_default::PendingInput>,
   pub dispatch_override:             Option<NonNull<dyn DefaultApi<Ctx>>>,
   /// Syntax loader for language detection and highlighting.
@@ -717,7 +714,12 @@ fn select_ui_theme(catalog: &ThemeCatalog, configured_theme: Option<&str>) -> (S
     .ok()
     .map(|theme| theme.trim().to_string())
     .filter(|theme| !theme.is_empty())
-    .or_else(|| configured_theme.map(str::trim).map(str::to_string).filter(|theme| !theme.is_empty()));
+    .or_else(|| {
+      configured_theme
+        .map(str::trim)
+        .map(str::to_string)
+        .filter(|theme| !theme.is_empty())
+    });
 
   if let Some(theme_name) = requested_theme {
     if let Some(theme) = catalog.load_theme(&theme_name) {
@@ -1069,7 +1071,6 @@ impl Ctx {
       ui_theme_base: ui_theme.clone(),
       ui_theme_preview_name: None,
       ui_theme,
-      ui_state: UiState::default(),
       pending_input: None,
       dispatch_override: None,
       loader,
@@ -2231,13 +2232,13 @@ impl Ctx {
         announce_empty,
         ..
       } => {
-      self.handle_completion_response(
-        response.result.as_ref(),
-        generation,
-        cursor,
-        replace_start,
-        announce_empty,
-      )
+        self.handle_completion_response(
+          response.result.as_ref(),
+          generation,
+          cursor,
+          replace_start,
+          announce_empty,
+        )
       },
       PendingLspRequestKind::CompletionResolve { index, .. } => {
         self.handle_completion_resolve_response(index, &response)
@@ -6152,11 +6153,6 @@ impl the_default::DefaultContext for Ctx {
     unsafe { (&*preset).postprocess_render_plan(self, plan) };
   }
 
-  fn postprocess_ui_tree(&mut self, tree: &mut UiTree) {
-    let preset = &self.preset as *const BuiltEditorPreset<Self, Box<dyn DefaultApi<Self>>>;
-    unsafe { (&*preset).postprocess_ui_tree(self, tree) };
-  }
-
   fn file_picker_closed(&mut self) {
     self.global_search.deactivate();
   }
@@ -6167,14 +6163,6 @@ impl the_default::DefaultContext for Ctx {
 
   fn search_prompt_mut(&mut self) -> &mut the_default::SearchPromptState {
     &mut self.search_prompt
-  }
-
-  fn ui_state(&self) -> &UiState {
-    &self.ui_state
-  }
-
-  fn ui_state_mut(&mut self) -> &mut UiState {
-    &mut self.ui_state
   }
 
   fn pointer_event(
@@ -7206,7 +7194,6 @@ mod tests {
     SearchPromptKind,
     handle_key,
     show_completion_menu,
-    ui_event,
   };
   use the_lib::{
     clipboard::NoClipboard,
@@ -7216,13 +7203,6 @@ mod tests {
       Position,
       char_idx_at_coords,
       coords_at_pos,
-    },
-    render::{
-      UiEvent,
-      UiEventKind,
-      UiKey,
-      UiKeyEvent,
-      UiModifiers,
     },
     selection::{
       Range,
@@ -10100,27 +10080,6 @@ pkgs.mkShell {
       modifiers: Modifiers::empty(),
     });
 
-    assert_eq!(ctx.mode(), Mode::Normal);
-    assert!(!ctx.completion_menu.active);
-  }
-
-  #[test]
-  fn ui_escape_with_completion_active_returns_to_normal_mode() {
-    let dispatch = build_dispatch::<Ctx>();
-    let mut ctx = Ctx::new(None).expect("ctx");
-    ctx.set_dispatch(&dispatch);
-    ctx.set_mode(Mode::Insert);
-    show_completion_menu(&mut ctx, vec![CompletionMenuItem::new("item")]);
-
-    let outcome = ui_event(&mut ctx, UiEvent {
-      target: Some("completion_list".to_string()),
-      kind:   UiEventKind::Key(UiKeyEvent {
-        key:       UiKey::Escape,
-        modifiers: UiModifiers::default(),
-      }),
-    });
-
-    assert!(outcome.handled);
     assert_eq!(ctx.mode(), Mode::Normal);
     assert!(!ctx.completion_menu.active);
   }

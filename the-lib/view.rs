@@ -59,12 +59,12 @@ impl CursorVisualGoal {
 /// (if any) is "active" for viewport following or collapse actions.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ViewState {
-  pub viewport:             Rect,
+  pub viewport:        Rect,
   /// Visual scroll offset (row/col) in rendered space.
-  pub scroll:               Position,
+  pub scroll:          Position,
   /// Optional active cursor selected by the client.
-  pub active_cursor:        Option<CursorId>,
-  cursor_visual_goals:      BTreeMap<CursorId, CursorVisualGoal>,
+  pub active_cursor:   Option<CursorId>,
+  cursor_visual_goals: BTreeMap<CursorId, CursorVisualGoal>,
 }
 
 impl ViewState {
@@ -82,11 +82,7 @@ impl ViewState {
     self
   }
 
-  pub fn cursor_visual_goal(
-    &self,
-    cursor_id: CursorId,
-    range: Range,
-  ) -> Option<(u32, u32)> {
+  pub fn cursor_visual_goal(&self, cursor_id: CursorId, range: Range) -> Option<(u32, u32)> {
     self
       .cursor_visual_goals
       .get(&cursor_id)
@@ -95,13 +91,7 @@ impl ViewState {
       .map(|goal| (goal.row, goal.col))
   }
 
-  pub fn set_cursor_visual_goal(
-    &mut self,
-    cursor_id: CursorId,
-    range: Range,
-    row: u32,
-    col: u32,
-  ) {
+  pub fn set_cursor_visual_goal(&mut self, cursor_id: CursorId, range: Range, row: u32, col: u32) {
     self
       .cursor_visual_goals
       .insert(cursor_id, CursorVisualGoal::for_range(range, row, col));

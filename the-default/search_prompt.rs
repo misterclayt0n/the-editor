@@ -1,5 +1,4 @@
 use the_core::chars::{
-  byte_to_char_idx,
   next_char_boundary,
   prev_char_boundary,
 };
@@ -7,23 +6,6 @@ use the_lib::{
   movement::{
     Direction as LibDirection,
     Movement,
-  },
-  render::{
-    UiAlign,
-    UiAlignPair,
-    UiColor,
-    UiColorToken,
-    UiConstraints,
-    UiContainer,
-    UiDivider,
-    UiEmphasis,
-    UiInput,
-    UiInsets,
-    UiList,
-    UiListItem,
-    UiNode,
-    UiPanel,
-    UiStyle,
   },
   search::{
     build_regex,
@@ -909,91 +891,4 @@ fn apply_completion(prompt: &mut SearchPromptState, completion: &str) {
   prompt.query.clear();
   prompt.query.push_str(completion);
   prompt.cursor = completion.len();
-}
-
-pub fn build_search_prompt_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNode> {
-  let prompt = ctx.search_prompt_ref();
-  if !prompt.active {
-    return Vec::new();
-  }
-
-  let mut input = UiInput::new("search_prompt_input", prompt.query.clone());
-  input.placeholder = Some(
-    match prompt.kind {
-      SearchPromptKind::Search => "search",
-      SearchPromptKind::SelectRegex => "select",
-      SearchPromptKind::SplitSelection => "split",
-      SearchPromptKind::KeepSelections => "keep",
-      SearchPromptKind::RemoveSelections => "remove",
-      SearchPromptKind::RenameSymbol => "rename-to",
-      SearchPromptKind::ShellPipe => "pipe",
-      SearchPromptKind::ShellPipeTo => "pipe-to",
-      SearchPromptKind::ShellInsertOutput => "insert-output",
-      SearchPromptKind::ShellAppendOutput => "append-output",
-      SearchPromptKind::ShellKeepPipe => "keep-pipe",
-    }
-    .to_string(),
-  );
-  input.cursor = byte_to_char_idx(&prompt.query, prompt.cursor);
-  input.style = input.style.with_role("search_prompt");
-  input.style.accent = Some(UiColor::Token(UiColorToken::Placeholder));
-
-  let mut filtered = filtered_completions(prompt);
-  filtered.truncate(6);
-
-  let mut children = vec![UiNode::Input(input)];
-
-  if !filtered.is_empty() {
-    let filtered_len = filtered.len();
-    let items = filtered
-      .into_iter()
-      .map(|item| UiListItem::new(item.clone()))
-      .collect();
-    let mut list = UiList::new("search_prompt_list", items);
-    if let Some(selected) = prompt.selected {
-      list.selected = Some(selected.min(filtered_len.saturating_sub(1)));
-    }
-    list.style = list.style.with_role("search_prompt");
-    list.style.accent = Some(UiColor::Token(UiColorToken::SelectedBg));
-    list.style.border = Some(UiColor::Token(UiColorToken::SelectedText));
-    children.push(UiNode::Divider(UiDivider { id: None }));
-    children.push(UiNode::List(list));
-  }
-
-  if let Some(error) = prompt.error.as_ref().filter(|e| !e.is_empty()) {
-    let mut error_text = UiNode::text("search_prompt_error", error.clone());
-    if let UiNode::Text(text) = &mut error_text {
-      text.style = UiStyle::default().with_role("search_prompt");
-      text.style.emphasis = UiEmphasis::Strong;
-    }
-    children.push(UiNode::Divider(UiDivider { id: None }));
-    children.push(error_text);
-  }
-
-  let mut container = UiContainer::column("search_prompt_container", 0, children);
-  container.style = container.style.with_role("search_prompt");
-  container.constraints.align.horizontal = UiAlign::Stretch;
-  let container = UiNode::Container(container);
-
-  let mut panel = UiPanel::floating("search_prompt", container);
-  panel.style = panel.style.with_role("search_prompt");
-  panel.style.border = None;
-  panel.constraints = UiConstraints {
-    min_width:  Some(50),
-    max_width:  Some(65),
-    min_height: None,
-    max_height: None,
-    padding:    UiInsets {
-      left:   1,
-      right:  1,
-      top:    0,
-      bottom: 0,
-    },
-    align:      UiAlignPair {
-      horizontal: UiAlign::Center,
-      vertical:   UiAlign::Center,
-    },
-  };
-
-  vec![UiNode::Panel(panel)]
 }

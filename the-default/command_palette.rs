@@ -1,25 +1,12 @@
 use std::collections::HashMap;
 
-use the_core::chars::byte_to_char_idx;
 use the_lib::{
   command_line::split,
   fuzzy::{
     MatchMode,
     fuzzy_match,
   },
-  render::{
-    LayoutIntent,
-    UiColor,
-    UiConstraints,
-    UiContainer,
-    UiDivider,
-    UiInput,
-    UiList,
-    UiListItem,
-    UiNode,
-    UiPanel,
-    graphics::Color,
-  },
+  render::graphics::Color,
 };
 
 use crate::{
@@ -245,155 +232,6 @@ pub fn command_palette_placeholder_text<Ctx: DefaultContext>(ctx: &Ctx) -> Strin
         .unwrap_or_else(|| format!("{}…", humanize_command_name(command_name)))
     },
   }
-}
-
-impl From<CommandPaletteLayout> for LayoutIntent {
-  fn from(layout: CommandPaletteLayout) -> Self {
-    match layout {
-      CommandPaletteLayout::Floating => LayoutIntent::Floating,
-      CommandPaletteLayout::Bottom => LayoutIntent::Bottom,
-      CommandPaletteLayout::Top => LayoutIntent::Top,
-      CommandPaletteLayout::Custom => LayoutIntent::Custom("command_palette".to_string()),
-    }
-  }
-}
-
-pub fn build_command_palette_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNode> {
-  let placeholder = command_palette_placeholder_text(ctx);
-  let state = ctx.command_palette();
-  if !state.is_open {
-    return Vec::new();
-  }
-
-  let palette_style = ctx.command_palette_style();
-  let layout = palette_style.layout;
-  let theme = palette_style.theme;
-  let ui_theme = ctx.ui_theme();
-  let selected_scope = ui_theme
-    .try_get("ui.command_palette.list.selected")
-    .or_else(|| ui_theme.try_get("ui.menu.selected"));
-  let selected_bg = selected_scope
-    .and_then(|style| style.bg)
-    .unwrap_or(theme.selected_bg);
-  let selected_text = selected_scope
-    .and_then(|style| style.fg)
-    .unwrap_or(theme.selected_text);
-  let placeholder_color = ui_theme
-    .try_get("ui.text.inactive")
-    .and_then(|style| style.fg)
-    .or_else(|| ui_theme.try_get("ui.virtual").and_then(|style| style.fg))
-    .or_else(|| ui_theme.try_get("ui.linenr").and_then(|style| style.fg))
-    .unwrap_or(theme.placeholder);
-
-  let filtered = command_palette_filtered_indices(state);
-  let selected = command_palette_selected_filtered_index(state);
-
-  let mut items = Vec::with_capacity(filtered.len());
-  for &idx in &filtered {
-    let item = &state.items[idx];
-    let mut description = item.description.clone();
-    if !item.aliases.is_empty() {
-      let aliases = format!("aliases: {}", item.aliases.join(", "));
-      description = match description {
-        Some(desc) if !desc.is_empty() => Some(format!("{desc} ({aliases})")),
-        _ => Some(format!("({aliases})")),
-      };
-    }
-    items.push(UiListItem {
-      title: item.title.clone(),
-      subtitle: item.subtitle.clone(),
-      description,
-      shortcut: item.shortcut.clone(),
-      badge: item.badge.clone(),
-      leading_icon: item.leading_icon.clone(),
-      leading_color: item.leading_color.map(UiColor::Value),
-      symbols: item.symbols.clone(),
-      match_indices: None,
-      emphasis: item.emphasis,
-      action: Some(item.title.clone()),
-    });
-  }
-
-  let display_value = state.prompt_text.clone().unwrap_or_else(|| {
-    match state.source {
-      CommandPaletteSource::CommandLine => {
-        if state.query.is_empty() {
-          String::new()
-        } else {
-          format!(":{}", state.query)
-        }
-      },
-      CommandPaletteSource::ActionPalette => state.query.clone(),
-    }
-  });
-  let mut input = UiInput::new("command_palette_input", display_value.clone());
-  input.style = input.style.with_role("command_palette");
-  input.style.accent = Some(UiColor::Value(placeholder_color));
-  input.placeholder = match state.source {
-    CommandPaletteSource::ActionPalette => Some(placeholder),
-    CommandPaletteSource::CommandLine => {
-      if state.prefiltered {
-        Some(placeholder)
-      } else {
-        Some(format!(":{placeholder}"))
-      }
-    },
-  };
-  input.cursor = match state.source {
-    CommandPaletteSource::CommandLine => {
-      if display_value.is_empty() {
-        1
-      } else {
-        byte_to_char_idx(&display_value, display_value.len()) + 1
-      }
-    },
-    CommandPaletteSource::ActionPalette => {
-      if display_value.is_empty() {
-        0
-      } else {
-        byte_to_char_idx(&display_value, display_value.len())
-      }
-    },
-  };
-  let input = UiNode::Input(input);
-
-  let mut list = UiList::new("command_palette_list", items);
-  list.selected = selected;
-  list.style = list.style.with_role("command_palette");
-  list.style.accent = Some(UiColor::Value(selected_bg));
-  list.style.border = Some(UiColor::Value(selected_text));
-  let list = UiNode::List(list);
-
-  let children = if matches!(layout, CommandPaletteLayout::Bottom) {
-    vec![list, UiNode::Divider(UiDivider { id: None }), input]
-  } else {
-    vec![input, UiNode::Divider(UiDivider { id: None }), list]
-  };
-
-  let mut container = UiContainer::column("command_palette_container", 0, children);
-  container.style = container.style.with_role("command_palette");
-  let container = UiNode::Container(container);
-
-  let intent: LayoutIntent = layout.into();
-
-  let mut overlays = Vec::new();
-  let mut panel = match layout {
-    CommandPaletteLayout::Floating => UiPanel::floating("command_palette", container),
-    CommandPaletteLayout::Bottom => UiPanel::bottom("command_palette", container),
-    CommandPaletteLayout::Top => UiPanel::top("command_palette", container),
-    CommandPaletteLayout::Custom => UiPanel::new("command_palette", intent.clone(), container),
-  };
-  panel.style = panel.style.with_role("command_palette");
-  panel.style.border = None;
-  if matches!(layout, CommandPaletteLayout::Floating) {
-    panel.constraints = UiConstraints::floating_default();
-    panel.constraints.padding.top = 0;
-    panel.constraints.padding.bottom = 0;
-    panel.constraints.min_height = Some(12);
-  }
-  overlays.push(UiNode::Panel(panel));
-
-  overlays
 }
 
 impl Default for CommandPaletteState {

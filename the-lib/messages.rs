@@ -178,18 +178,19 @@ impl MessageCenter {
   }
 
   pub fn info_background(&mut self, source: Option<String>, text: impl Into<String>) -> Message {
-    self.publish_with_disposition(MessageLevel::Info, source, MessageDisposition::Background, text)
+    self.publish_with_disposition(
+      MessageLevel::Info,
+      source,
+      MessageDisposition::Background,
+      text,
+    )
   }
 
   pub fn warning(&mut self, source: Option<String>, text: impl Into<String>) -> Message {
     self.publish(MessageLevel::Warning, source, text)
   }
 
-  pub fn warning_background(
-    &mut self,
-    source: Option<String>,
-    text: impl Into<String>,
-  ) -> Message {
+  pub fn warning_background(&mut self, source: Option<String>, text: impl Into<String>) -> Message {
     self.publish_with_disposition(
       MessageLevel::Warning,
       source,

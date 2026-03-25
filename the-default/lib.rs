@@ -3,7 +3,7 @@
 //! Default dispatch behaviors and keymaps for the editor.
 //!
 //! This crate provides a reusable, policy-level layer that sits on top of
-//! `the-lib` without hard-coding UI event types into `the-dispatch`.
+//! `the-lib`.
 
 mod assembly;
 mod buffer_tabs;
@@ -28,17 +28,6 @@ mod search_prompt;
 mod signature_help;
 mod statusline;
 mod theme_catalog;
-
-pub use the_lib::{
-  editor::OpenTarget,
-  split_tree::{
-    PaneDirection,
-    PaneId,
-    PaneNeighbors,
-    SplitAxis,
-    SplitNodeId,
-  },
-};
 
 pub use assembly::{
   BuiltEditorPreset,
@@ -87,8 +76,6 @@ pub use command::{
   handle_pointer_event,
   render_plan,
   render_plan_with_styles,
-  ui_event,
-  ui_tree,
 };
 pub use command_palette::{
   CommandPaletteAction,
@@ -134,7 +121,6 @@ pub use command_types::{
 pub use completion_menu::{
   CompletionMenuItem,
   CompletionMenuState,
-  build_completion_menu_ui,
   close_completion_menu,
   completion_accept,
   completion_docs_scroll,
@@ -180,7 +166,6 @@ pub use extensions::{
   SignatureHelpProviderFn,
   SignatureHelpProviderId,
   TextAnnotationsProvider,
-  UiTreePostProcessor,
 };
 pub use file_picker::{
   FilePickerChangedFileItem,
@@ -206,7 +191,6 @@ pub use file_picker::{
   PickerItemSpecAction,
   PickerRoot,
   PickerSubmitHandlerRef,
-  build_file_picker_ui,
   close_file_picker,
   file_picker_icon_glyph,
   file_picker_icon_name_for_path,
@@ -280,19 +264,15 @@ pub use keymap::{
   open_command_palette,
   open_command_palette_with_input,
 };
-pub use message_bar::{
-  MessagePresentation,
-  build_message_bar_ui,
-};
-pub use render_waker::RenderWaker;
+pub use message_bar::MessagePresentation;
 pub use overlay_layout::{
   OverlayRect,
   completion_docs_panel_rect,
   completion_panel_rect,
   signature_help_panel_rect,
 };
-pub use the_lib::render::OwnedTextAnnotations;
 pub use pending::PendingInput;
+pub use render_waker::RenderWaker;
 pub use search_prompt::{
   SearchPromptKind,
   SearchPromptState,
@@ -321,7 +301,6 @@ pub use signature_help::{
   SignatureHelpItem,
   SignatureHelpPresentation,
   SignatureHelpState,
-  build_signature_help_ui,
   close_signature_help,
   show_signature_help,
   show_signature_help_provider,
@@ -330,16 +309,33 @@ pub use signature_help::{
   signature_help_next,
   signature_help_prev,
 };
-pub use the_lib::messages::{
-  Message,
-  MessageCenter,
-  MessageEvent,
-  MessageEventKind,
-  MessageLevel,
-  MessageSnapshot,
+pub use statusline::{
+  StatuslineEmphasis,
+  StatuslineSegment,
+  StatuslineSnapshot,
+  build_statusline_snapshot,
 };
-pub use the_lib::render::{
-  LineNumberMode,
+pub use the_lib::{
+  editor::OpenTarget,
+  messages::{
+    Message,
+    MessageCenter,
+    MessageEvent,
+    MessageEventKind,
+    MessageLevel,
+    MessageSnapshot,
+  },
+  render::{
+    LineNumberMode,
+    OwnedTextAnnotations,
+    graphics::CursorKind,
+  },
+  split_tree::{
+    PaneDirection,
+    PaneId,
+    PaneNeighbors,
+    SplitAxis,
+    SplitNodeId,
+  },
 };
-pub use the_lib::render::graphics::CursorKind;
 pub use theme_catalog::ThemeCatalog;

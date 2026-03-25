@@ -51,7 +51,6 @@ use the_lib::{
     FrameRenderPlan,
     GutterConfig,
     RenderPlan,
-    UiState,
     graphics::Rect,
     text_annotations::TextAnnotations,
     text_format::TextFormat,
@@ -220,14 +219,6 @@ impl DefaultContext for TestCtx {
   }
 
   fn search_prompt_mut(&mut self) -> &mut SearchPromptState {
-    todo!()
-  }
-
-  fn ui_state(&self) -> &UiState {
-    todo!()
-  }
-
-  fn ui_state_mut(&mut self) -> &mut UiState {
     todo!()
   }
 

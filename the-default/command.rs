@@ -84,16 +84,6 @@ use the_lib::{
     LineNumberMode,
     RenderPlan,
     RenderStyles,
-    UiEvent,
-    UiEventKind,
-    UiEventOutcome,
-    UiFocus,
-    UiFocusKind,
-    UiKey,
-    UiKeyEvent,
-    UiModifiers,
-    UiState,
-    UiTree,
     char_at_visual_pos,
     graphics::CursorKind,
     gutter_width_for_document,
@@ -104,7 +94,6 @@ use the_lib::{
     },
     text_format::TextFormat,
     theme::Theme,
-    ui_theme::resolve_ui_tree,
     visual_pos_at_char,
   },
   search::{
@@ -193,12 +182,6 @@ define! {
     post_render: RenderPlan => RenderPlan,
     pre_render_with_styles: RenderStyles => RenderStyles,
     on_render_with_styles: RenderStyles => RenderPlan,
-    pre_ui: () => (),
-    on_ui: () => UiTree,
-    post_ui: UiTree => UiTree,
-    pre_ui_event: UiEvent => UiEventOutcome,
-    on_ui_event: UiEvent => UiEventOutcome,
-    post_ui_event: UiEventOutcome => UiEventOutcome,
 
     insert_char: char,
     insert_newline: (),
@@ -327,16 +310,6 @@ default_dispatch_handler!(
   RenderStyles => RenderPlan,
   on_render_with_styles
 );
-default_dispatch_handler!(PreUiHandler, (), pre_ui);
-default_dispatch_handler!(OnUiHandler, () => UiTree, on_ui);
-default_dispatch_handler!(PostUiHandler, UiTree => UiTree, post_ui);
-default_dispatch_handler!(PreUiEventHandler, UiEvent => UiEventOutcome, pre_ui_event);
-default_dispatch_handler!(OnUiEventHandler, UiEvent => UiEventOutcome, on_ui_event);
-default_dispatch_handler!(
-  PostUiEventHandler,
-  UiEventOutcome => UiEventOutcome,
-  post_ui_event
-);
 default_dispatch_handler!(InsertCharHandler, char, insert_char);
 default_dispatch_handler!(InsertNewlineHandler, (), insert_newline);
 default_dispatch_handler!(DeleteCharHandler, (), delete_char);
@@ -435,12 +408,6 @@ pub type DefaultDispatchBuiltin<Ctx> = DefaultDispatch<
   PostRenderHandler<Ctx>,
   PreRenderWithStylesHandler<Ctx>,
   OnRenderWithStylesHandler<Ctx>,
-  PreUiHandler<Ctx>,
-  OnUiHandler<Ctx>,
-  PostUiHandler<Ctx>,
-  PreUiEventHandler<Ctx>,
-  OnUiEventHandler<Ctx>,
-  PostUiEventHandler<Ctx>,
   InsertCharHandler<Ctx>,
   InsertNewlineHandler<Ctx>,
   DeleteCharHandler<Ctx>,
@@ -631,10 +598,7 @@ pub trait DefaultContext: Sized + 'static {
     let loader_ptr = self.syntax_loader().map(|loader| loader as *const Loader);
     self
       .editor()
-      .apply_transaction_to_active_buffer(
-        transaction,
-        loader_ptr.map(|ptr| unsafe { &*ptr }),
-      )
+      .apply_transaction_to_active_buffer(transaction, loader_ptr.map(|ptr| unsafe { &*ptr }))
       .is_ok()
   }
   fn build_render_plan(&mut self) -> RenderPlan;
@@ -732,8 +696,6 @@ pub trait DefaultContext: Sized + 'static {
   fn file_picker_mut(&mut self) -> &mut crate::file_picker::FilePickerState;
   fn search_prompt_ref(&self) -> &crate::SearchPromptState;
   fn search_prompt_mut(&mut self) -> &mut crate::SearchPromptState;
-  fn ui_state(&self) -> &UiState;
-  fn ui_state_mut(&mut self) -> &mut UiState;
   fn pointer_event(&mut self, _event: PointerEvent) -> PointerEventOutcome {
     PointerEventOutcome::Continue
   }
@@ -1129,7 +1091,6 @@ pub trait DefaultContext: Sized + 'static {
   }
   fn extend_text_annotations<'a>(&'a self, _annotations: &mut TextAnnotations<'a>) {}
   fn postprocess_render_plan(&mut self, _plan: &mut RenderPlan) {}
-  fn postprocess_ui_tree(&mut self, _tree: &mut UiTree) {}
   fn file_picker_closed(&mut self) {}
   fn on_file_saved(&mut self, _path: &Path, _text: &str) {}
   fn on_before_quit(&mut self) {}
@@ -1158,12 +1119,6 @@ where
     .with_post_render(PostRenderHandler::<Ctx>::default())
     .with_pre_render_with_styles(PreRenderWithStylesHandler::<Ctx>::default())
     .with_on_render_with_styles(OnRenderWithStylesHandler::<Ctx>::default())
-    .with_pre_ui(PreUiHandler::<Ctx>::default())
-    .with_on_ui(OnUiHandler::<Ctx>::default())
-    .with_post_ui(PostUiHandler::<Ctx>::default())
-    .with_pre_ui_event(PreUiEventHandler::<Ctx>::default())
-    .with_on_ui_event(OnUiEventHandler::<Ctx>::default())
-    .with_post_ui_event(PostUiEventHandler::<Ctx>::default())
     .with_insert_char(InsertCharHandler::<Ctx>::default())
     .with_insert_newline(InsertNewlineHandler::<Ctx>::default())
     .with_delete_char(DeleteCharHandler::<Ctx>::default())
@@ -1297,42 +1252,6 @@ pub fn frame_render_plan_with_styles<Ctx: DefaultContext>(
       .post_render(ctx, std::mem::take(&mut pane.plan));
   }
   frame
-}
-
-pub fn ui_tree<Ctx: DefaultContext>(ctx: &mut Ctx) -> UiTree {
-  ctx.dispatch().pre_ui(ctx, ());
-  let tree = ctx.dispatch().on_ui(ctx, ());
-  let mut tree = ctx.dispatch().post_ui(ctx, tree);
-  if !crate::statusline::statusline_present(&tree) {
-    let statusline = crate::statusline::build_statusline_ui(ctx);
-    tree.overlays.insert(0, statusline);
-  }
-  if let Some(message_bar) = crate::message_bar::build_message_bar_ui(ctx) {
-    tree.overlays.insert(1, message_bar);
-  }
-  resolve_ui_tree(&mut tree, ctx.ui_theme());
-  tree
-}
-
-pub fn ui_event<Ctx: DefaultContext>(ctx: &mut Ctx, event: UiEvent) -> UiEventOutcome {
-  let mut event = event;
-  if event.target.is_none() {
-    if let Some(focus) = ctx.ui_state().focus() {
-      event.target = Some(focus.id.clone());
-    }
-  }
-
-  let outcome = ctx.dispatch().pre_ui_event(ctx, event.clone());
-  let outcome = if outcome.handled {
-    outcome
-  } else {
-    ctx.dispatch().on_ui_event(ctx, event)
-  };
-  let outcome = ctx.dispatch().post_ui_event(ctx, outcome);
-  if let Some(focus) = outcome.focus.clone() {
-    ctx.ui_state_mut().set_focus(Some(focus));
-  }
-  outcome
 }
 
 pub fn default_pre_on_keypress<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent) {
@@ -2056,350 +1975,6 @@ fn pre_render_with_styles<Ctx: DefaultContext>(
   }
 
   styles
-}
-
-fn pre_ui<Ctx: DefaultContext>(_ctx: &mut Ctx, _unit: ()) {}
-
-fn on_ui<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) -> UiTree {
-  let mut tree = UiTree::new();
-  let overlays = crate::command_palette::build_command_palette_ui(ctx);
-  tree.overlays.extend(overlays);
-  let overlays = crate::completion_menu::build_completion_menu_ui(ctx);
-  tree.overlays.extend(overlays);
-  let overlays = crate::signature_help::build_signature_help_ui(ctx);
-  tree.overlays.extend(overlays);
-  let overlays = crate::search_prompt::build_search_prompt_ui(ctx);
-  tree.overlays.extend(overlays);
-  let overlays = crate::file_picker::build_file_picker_ui(ctx);
-  tree.overlays.extend(overlays);
-  if ctx.file_picker().active {
-    let cursor = byte_to_char_idx(&ctx.file_picker().query, ctx.file_picker().cursor);
-    let focus = UiFocus {
-      id:     "file_picker_input".to_string(),
-      kind:   UiFocusKind::Input,
-      cursor: Some(cursor),
-    };
-    tree.focus = Some(focus.clone());
-    ctx.ui_state_mut().set_focus(Some(focus));
-  } else if ctx.search_prompt_ref().active {
-    let cursor = byte_to_char_idx(
-      &ctx.search_prompt_ref().query,
-      ctx.search_prompt_ref().cursor,
-    );
-    let focus = UiFocus {
-      id:     "search_prompt_input".to_string(),
-      kind:   UiFocusKind::Input,
-      cursor: Some(cursor),
-    };
-    tree.focus = Some(focus.clone());
-    ctx.ui_state_mut().set_focus(Some(focus));
-  } else if ctx.command_palette().is_open {
-    let cursor = match ctx.command_palette().source {
-      CommandPaletteSource::CommandLine => {
-        if ctx.command_palette().query.is_empty() {
-          1
-        } else {
-          byte_to_char_idx(
-            &ctx.command_palette().query,
-            ctx.command_palette().query.len(),
-          ) + 1
-        }
-      },
-      CommandPaletteSource::ActionPalette => {
-        if ctx.command_palette().query.is_empty() {
-          0
-        } else {
-          byte_to_char_idx(
-            &ctx.command_palette().query,
-            ctx.command_palette().query.len(),
-          )
-        }
-      },
-    };
-    let focus = UiFocus {
-      id:     "command_palette_input".to_string(),
-      kind:   UiFocusKind::Input,
-      cursor: Some(cursor),
-    };
-    tree.focus = Some(focus.clone());
-    ctx.ui_state_mut().set_focus(Some(focus));
-  } else if ctx.completion_menu().active {
-    let focus = UiFocus::list("completion_list");
-    tree.focus = Some(focus.clone());
-    ctx.ui_state_mut().set_focus(Some(focus));
-  } else {
-    tree.focus = ctx.ui_state().focus().cloned();
-  }
-  tree
-}
-
-fn post_ui<Ctx: DefaultContext>(ctx: &mut Ctx, tree: UiTree) -> UiTree {
-  let mut tree = tree;
-  ctx.postprocess_ui_tree(&mut tree);
-  tree
-}
-
-fn pre_ui_event<Ctx: DefaultContext>(_ctx: &mut Ctx, _event: UiEvent) -> UiEventOutcome {
-  UiEventOutcome::r#continue()
-}
-
-fn on_ui_event<Ctx: DefaultContext>(ctx: &mut Ctx, event: UiEvent) -> UiEventOutcome {
-  let focus = ctx.ui_state().focus().cloned();
-  let target = event.target.as_deref();
-  let focus_id = focus.as_ref().map(|f| f.id.as_str());
-  let target_id = target.or(focus_id);
-
-  let is_command_palette = target_id
-    .map(|id| id.starts_with("command_palette"))
-    .unwrap_or(false);
-
-  let is_completion_menu = target_id
-    .map(|id| id.starts_with("completion"))
-    .unwrap_or(false);
-
-  let is_search_prompt = target_id
-    .map(|id| id.starts_with("search_prompt"))
-    .unwrap_or(false);
-
-  let is_file_picker = target_id
-    .map(|id| id.starts_with("file_picker"))
-    .unwrap_or(false);
-
-  let is_signature_help = target_id
-    .map(|id| id.starts_with("signature_help"))
-    .unwrap_or(false);
-
-  if is_file_picker {
-    match &event.kind {
-      UiEventKind::Key(key_event) => {
-        if let Some(key_event) = ui_key_event_to_key_event(key_event.clone()) {
-          if crate::file_picker::handle_file_picker_key(ctx, key_event) {
-            return UiEventOutcome::handled();
-          }
-        }
-      },
-      UiEventKind::Activate => {
-        crate::file_picker::submit_file_picker(ctx);
-        return UiEventOutcome::handled();
-      },
-      UiEventKind::Dismiss => {
-        crate::file_picker::close_file_picker(ctx);
-        return UiEventOutcome::handled();
-      },
-      UiEventKind::Command(_) => {},
-    }
-  }
-
-  if is_search_prompt {
-    match &event.kind {
-      UiEventKind::Key(key_event) => {
-        if let Some(key_event) = ui_key_event_to_key_event(key_event.clone()) {
-          if crate::search_prompt::handle_search_prompt_key(ctx, key_event) {
-            return UiEventOutcome::handled();
-          }
-        }
-      },
-      UiEventKind::Activate => {
-        if crate::search_prompt::handle_search_prompt_key(ctx, KeyEvent {
-          key:       Key::Enter,
-          modifiers: Modifiers::empty(),
-        }) {
-          return UiEventOutcome::handled();
-        }
-      },
-      UiEventKind::Dismiss => {
-        ctx.search_prompt_mut().clear();
-        ctx.request_render();
-        return UiEventOutcome::handled();
-      },
-      _ => {},
-    }
-  }
-
-  if is_command_palette {
-    match &event.kind {
-      UiEventKind::Key(key_event) => {
-        if let Some(key_event) = ui_key_event_to_key_event(key_event.clone()) {
-          if handle_command_prompt_key(ctx, key_event) {
-            return UiEventOutcome::handled();
-          }
-        }
-      },
-      UiEventKind::Activate => {
-        if crate::submit_command_palette(ctx) {
-          return UiEventOutcome::handled();
-        }
-      },
-      UiEventKind::Dismiss => {
-        close_command_palette(ctx);
-        return UiEventOutcome::handled();
-      },
-      UiEventKind::Command(command_line) => {
-        let line = command_line.trim().trim_start_matches(':');
-        if !line.is_empty() {
-          let (command, args) = line
-            .split_once(char::is_whitespace)
-            .map(|(cmd, rest)| (cmd, rest.trim()))
-            .unwrap_or((line, ""));
-          let registry = ctx.command_registry_ref() as *const CommandRegistry<Ctx>;
-          let result = unsafe { (&*registry).execute(ctx, command, args, CommandEvent::Validate) };
-          if let Err(err) = result {
-            let message = err.to_string();
-            ctx.command_prompt_mut().error = Some(message.clone());
-            ctx.push_error("command", message);
-          }
-          close_command_palette(ctx);
-        }
-        return UiEventOutcome::handled();
-      },
-    }
-  }
-
-  if is_completion_menu {
-    match &event.kind {
-      UiEventKind::Key(key_event) => {
-        if let Some(key_event) = ui_key_event_to_key_event(key_event.clone()) {
-          match key_event.key {
-            Key::Up => {
-              crate::completion_menu::completion_prev(ctx);
-              return UiEventOutcome::handled();
-            },
-            Key::Down => {
-              crate::completion_menu::completion_next(ctx);
-              return UiEventOutcome::handled();
-            },
-            Key::Tab if key_event.modifiers.shift() => {
-              crate::completion_menu::completion_prev(ctx);
-              return UiEventOutcome::handled();
-            },
-            Key::Tab => {
-              crate::completion_menu::completion_next(ctx);
-              return UiEventOutcome::handled();
-            },
-            Key::Enter | Key::NumpadEnter => {
-              crate::completion_menu::completion_accept(ctx);
-              return UiEventOutcome::handled();
-            },
-            Key::PageUp | Key::PageDown => {
-              let outcome = keymap_handle_key(ctx, key_event);
-              if handle_key_outcome(ctx, outcome) {
-                return UiEventOutcome::handled();
-              }
-            },
-            Key::Char('u') if key_event.modifiers.ctrl() => {
-              let outcome = keymap_handle_key(ctx, key_event);
-              if handle_key_outcome(ctx, outcome) {
-                return UiEventOutcome::handled();
-              }
-            },
-            Key::Char('d') if key_event.modifiers.ctrl() => {
-              let outcome = keymap_handle_key(ctx, key_event);
-              if handle_key_outcome(ctx, outcome) {
-                return UiEventOutcome::handled();
-              }
-            },
-            Key::Escape => {
-              // Route through keymaps so escape mirrors keyboard behavior.
-              let outcome = keymap_handle_key(ctx, key_event);
-              if !handle_key_outcome(ctx, outcome) {
-                crate::completion_menu::close_completion_menu(ctx);
-              }
-              return UiEventOutcome::handled();
-            },
-            _ => {},
-          }
-        }
-      },
-      UiEventKind::Activate => {
-        crate::completion_menu::completion_accept(ctx);
-        return UiEventOutcome::handled();
-      },
-      UiEventKind::Dismiss => {
-        crate::completion_menu::close_completion_menu(ctx);
-        return UiEventOutcome::handled();
-      },
-      UiEventKind::Command(_) => {},
-    }
-  }
-
-  if is_signature_help {
-    match &event.kind {
-      UiEventKind::Key(key_event) => {
-        if let Some(key_event) = ui_key_event_to_key_event(key_event.clone()) {
-          match key_event.key {
-            Key::Escape => {
-              // Route through keymaps so escape mirrors keyboard behavior.
-              let outcome = keymap_handle_key(ctx, key_event);
-              if !handle_key_outcome(ctx, outcome) {
-                crate::signature_help::close_signature_help(ctx);
-              }
-              return UiEventOutcome::handled();
-            },
-            Key::PageUp => {
-              crate::signature_help::signature_help_docs_scroll(ctx, -6);
-              return UiEventOutcome::handled();
-            },
-            Key::PageDown => {
-              crate::signature_help::signature_help_docs_scroll(ctx, 6);
-              return UiEventOutcome::handled();
-            },
-            _ => {},
-          }
-        }
-      },
-      UiEventKind::Dismiss => {
-        crate::signature_help::close_signature_help(ctx);
-        return UiEventOutcome::handled();
-      },
-      _ => {},
-    }
-  }
-
-  UiEventOutcome::r#continue()
-}
-
-fn post_ui_event<Ctx: DefaultContext>(_ctx: &mut Ctx, outcome: UiEventOutcome) -> UiEventOutcome {
-  outcome
-}
-
-fn ui_key_event_to_key_event(event: UiKeyEvent) -> Option<KeyEvent> {
-  let key = match event.key {
-    UiKey::Char(ch) => Key::Char(ch),
-    UiKey::Enter => Key::Enter,
-    UiKey::Escape => Key::Escape,
-    UiKey::Tab => Key::Tab,
-    UiKey::Backspace => Key::Backspace,
-    UiKey::Delete => Key::Delete,
-    UiKey::Up => Key::Up,
-    UiKey::Down => Key::Down,
-    UiKey::Left => Key::Left,
-    UiKey::Right => Key::Right,
-    UiKey::Home => Key::Home,
-    UiKey::End => Key::End,
-    UiKey::PageUp => Key::PageUp,
-    UiKey::PageDown => Key::PageDown,
-    UiKey::Unknown(_) => return None,
-  };
-
-  let mut modifiers = Modifiers::empty();
-  let UiModifiers {
-    ctrl,
-    alt,
-    shift,
-    meta,
-  } = event.modifiers;
-  if ctrl {
-    modifiers.insert(Modifiers::CTRL);
-  }
-  if alt {
-    modifiers.insert(Modifiers::ALT);
-  }
-  if shift {
-    modifiers.insert(Modifiers::SHIFT);
-  }
-  let _ = meta;
-
-  Some(KeyEvent { key, modifiers })
 }
 
 fn close_command_palette<Ctx: DefaultContext>(ctx: &mut Ctx) {
@@ -4603,10 +4178,8 @@ fn scroll_cursor_by_rows<Ctx: DefaultContext>(
     };
 
     let mut view_state = view.clone();
-    let Some(new_selection) = map_selection_with_vertical_motion(
-      &mut view_state,
-      &selection,
-      |range, visual_goal| {
+    let Some(new_selection) =
+      map_selection_with_vertical_motion(&mut view_state, &selection, |range, visual_goal| {
         move_vertically_visual(
           text,
           range,
@@ -4617,8 +4190,8 @@ fn scroll_cursor_by_rows<Ctx: DefaultContext>(
           &text_fmt,
           &mut annotations,
         )
-      },
-    ) else {
+      })
+    else {
       return;
     };
 
@@ -5061,10 +4634,8 @@ fn move_cursor<Ctx: DefaultContext>(ctx: &mut Ctx, direction: Direction) {
 
     if vertical {
       let mut view = editor.view();
-      let next_selection = map_selection_with_vertical_motion(
-        &mut view,
-        &selection,
-        |range, visual_goal| {
+      let next_selection =
+        map_selection_with_vertical_motion(&mut view, &selection, |range, visual_goal| {
           move_vertically(
             slice,
             range,
@@ -5075,8 +4646,7 @@ fn move_cursor<Ctx: DefaultContext>(ctx: &mut Ctx, direction: Direction) {
             &text_fmt,
             &mut annotations,
           )
-        },
-      );
+        });
       (next_selection, Some(view))
     } else {
       let mut ranges: SmallVec<_> = SmallVec::with_capacity(selection.ranges().len());
@@ -5213,10 +4783,8 @@ fn motion<Ctx: DefaultContext>(ctx: &mut Ctx, motion: Motion) {
           Movement::Move
         };
         let count = count.max(1);
-        let Some(next) = map_selection_with_vertical_motion(
-          &mut view,
-          &selection,
-          |range, visual_goal| {
+        let Some(next) =
+          map_selection_with_vertical_motion(&mut view, &selection, |range, visual_goal| {
             move_vertically(
               slice,
               range,
@@ -5227,8 +4795,8 @@ fn motion<Ctx: DefaultContext>(ctx: &mut Ctx, motion: Motion) {
               &text_fmt,
               &mut annotations,
             )
-          },
-        ) else {
+          })
+        else {
           return;
         };
         (next, Some(view))
@@ -5245,10 +4813,8 @@ fn motion<Ctx: DefaultContext>(ctx: &mut Ctx, motion: Motion) {
           Movement::Move
         };
         let count = count.max(1);
-        let Some(next) = map_selection_with_vertical_motion(
-          &mut view,
-          &selection,
-          |range, visual_goal| {
+        let Some(next) =
+          map_selection_with_vertical_motion(&mut view, &selection, |range, visual_goal| {
             move_vertically_visual(
               slice,
               range,
@@ -5259,8 +4825,8 @@ fn motion<Ctx: DefaultContext>(ctx: &mut Ctx, motion: Motion) {
               &text_fmt,
               &mut annotations,
             )
-          },
-        ) else {
+          })
+        else {
           return;
         };
         (next, Some(view))

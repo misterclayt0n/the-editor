@@ -1,40 +1,62 @@
 use std::path::Path;
 
-use the_lib::render::{
-  LayoutIntent,
-  UiConstraints,
-  UiEmphasis,
-  UiInsets,
-  UiLayer,
-  UiNode,
-  UiPanel,
-  UiStatusBar,
-  UiStyle,
-  UiStyledSpan,
-};
-
 use crate::{
   DefaultContext,
   Mode,
   PendingInput,
+  SearchPromptKind,
   file_picker_icon_glyph,
   file_picker_icon_name_for_path,
   message_bar::inline_statusline_message,
 };
 
-pub const STATUSLINE_ID: &str = "statusline";
-
-pub fn statusline_present(tree: &the_lib::render::UiTree) -> bool {
-  tree.overlays.iter().any(|node| {
-    match node {
-      UiNode::Panel(panel) => panel.id == STATUSLINE_ID,
-      UiNode::StatusBar(status) => status.id.as_deref() == Some(STATUSLINE_ID),
-      _ => false,
-    }
-  })
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StatuslineEmphasis {
+  Normal,
+  Muted,
+  Strong,
 }
 
-pub fn build_statusline_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> UiNode {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StatuslineSegment {
+  pub text:     String,
+  pub emphasis: StatuslineEmphasis,
+}
+
+impl StatuslineSegment {
+  pub fn new(text: impl Into<String>) -> Self {
+    Self {
+      text:     text.into(),
+      emphasis: StatuslineEmphasis::Normal,
+    }
+  }
+
+  pub fn muted(mut self) -> Self {
+    self.emphasis = StatuslineEmphasis::Muted;
+    self
+  }
+
+  pub fn strong(mut self) -> Self {
+    self.emphasis = StatuslineEmphasis::Strong;
+    self
+  }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StatuslineSnapshot {
+  pub left:           String,
+  pub left_icon:      Option<String>,
+  pub right_segments: Vec<StatuslineSegment>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CursorPickStatus {
+  remove:  bool,
+  current: usize,
+  total:   usize,
+}
+
+pub fn build_statusline_snapshot<Ctx: DefaultContext>(ctx: &mut Ctx) -> StatuslineSnapshot {
   let viewport_width = ctx.editor_ref().view().viewport.width as usize;
   let cursor_pick = cursor_pick_status(ctx);
   let cursor_pick_part = cursor_pick.map(|status| {
@@ -71,7 +93,7 @@ pub fn build_statusline_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> UiNode {
     .and_then(|name| name.to_str())
     .map(str::to_string)
     .unwrap_or_else(|| doc.display_name().to_string());
-  let left_icon = ctx
+  let default_left_icon = ctx
     .file_path()
     .map(file_picker_icon_name_for_path)
     .or_else(|| {
@@ -127,103 +149,52 @@ pub fn build_statusline_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> UiNode {
       }
     });
 
-  let mut right_parts = Vec::new();
   let mut right_segments = Vec::new();
   if let Some(cursor_pick) = cursor_pick_part {
-    let mut pick_style = UiStyle::default();
-    pick_style.emphasis = UiEmphasis::Strong;
-    right_segments.push(UiStyledSpan {
-      text:  cursor_pick.clone(),
-      style: Some(pick_style),
-    });
-    right_parts.push(cursor_pick);
+    right_segments.push(StatuslineSegment::new(cursor_pick).strong());
   }
   if let Some(pending) = pending_part {
-    right_segments.push(UiStyledSpan {
-      text:  pending.clone(),
-      style: None,
-    });
-    right_parts.push(pending);
+    right_segments.push(StatuslineSegment::new(pending));
   }
   if let Some(lsp) = lsp_part {
-    let mut lsp_style = UiStyle::default();
-    lsp_style.emphasis = UiEmphasis::Muted;
-    right_segments.push(UiStyledSpan {
-      text:  lsp.clone(),
-      style: Some(lsp_style),
-    });
-    right_parts.push(lsp);
+    right_segments.push(StatuslineSegment::new(lsp).muted());
   }
   if let Some(watch) = watch_part {
-    let mut watch_style = UiStyle::default();
-    watch_style.emphasis = UiEmphasis::Strong;
-    right_segments.push(UiStyledSpan {
-      text:  watch.clone(),
-      style: Some(watch_style),
-    });
-    right_parts.push(watch);
+    right_segments.push(StatuslineSegment::new(watch).strong());
   }
   if let Some(vcs) = vcs_part {
-    let mut vcs_style = UiStyle::default();
-    vcs_style.emphasis = UiEmphasis::Muted;
-    right_segments.push(UiStyledSpan {
-      text:  vcs.clone(),
-      style: Some(vcs_style),
-    });
-    right_parts.push(vcs);
+    right_segments.push(StatuslineSegment::new(vcs).muted());
   }
   if let Some(message) = message_part {
-    right_segments.push(UiStyledSpan {
-      text:  message.clone(),
-      style: None,
-    });
-    right_parts.push(message);
+    right_segments.push(StatuslineSegment::new(message));
   }
-  right_segments.push(UiStyledSpan {
-    text:  cursor_text.clone(),
-    style: None,
-  });
-  right_parts.push(cursor_text);
-  let right = right_parts.join("  ");
+  right_segments.push(StatuslineSegment::new(cursor_text));
 
-  let status = UiStatusBar {
-    id: Some(STATUSLINE_ID.to_string()),
+  if ctx.command_palette().is_open {
+    let (query, cursor) = command_palette_prompt_query_and_cursor(ctx);
+    left = command_palette_statusline_text(query, cursor);
+    return StatuslineSnapshot {
+      left,
+      left_icon: None,
+      right_segments,
+    };
+  }
+
+  if ctx.search_prompt_ref().active {
+    let prompt = ctx.search_prompt_ref();
+    left = search_statusline_text(prompt.kind, prompt.query.as_str(), prompt.cursor);
+    return StatuslineSnapshot {
+      left,
+      left_icon: None,
+      right_segments,
+    };
+  }
+
+  StatuslineSnapshot {
     left,
-    center: String::new(),
-    right,
-    style: UiStyle::default().with_role("statusline"),
-    left_icon,
+    left_icon: default_left_icon,
     right_segments,
-  };
-
-  let mut panel = UiPanel::new(
-    STATUSLINE_ID,
-    LayoutIntent::Bottom,
-    UiNode::StatusBar(status),
-  );
-  panel.style = UiStyle::default().with_role("statusline");
-  panel.style.border = None;
-  panel.layer = UiLayer::Background;
-  panel.constraints = UiConstraints {
-    min_height: Some(1),
-    max_height: Some(1),
-    padding: UiInsets {
-      left:   1,
-      right:  1,
-      top:    0,
-      bottom: 0,
-    },
-    ..UiConstraints::default()
-  };
-
-  UiNode::Panel(panel)
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct CursorPickStatus {
-  remove:  bool,
-  current: usize,
-  total:   usize,
+  }
 }
 
 fn cursor_pick_status<Ctx: DefaultContext>(ctx: &Ctx) -> Option<CursorPickStatus> {
@@ -291,4 +262,50 @@ fn clamp_with_ellipsis(text: &str, max_chars: usize) -> String {
   }
   out.push('…');
   out
+}
+
+fn command_palette_prompt_query_and_cursor<Ctx: DefaultContext>(ctx: &Ctx) -> (&str, usize) {
+  let raw = ctx.command_prompt_ref().input.as_str();
+  if let Some(stripped) = raw.strip_prefix(':') {
+    (stripped, ctx.command_prompt_ref().cursor.saturating_sub(1))
+  } else {
+    (raw, ctx.command_prompt_ref().cursor)
+  }
+}
+
+fn command_palette_statusline_text(query: &str, cursor: usize) -> String {
+  let mut cursor = cursor.min(query.len());
+  while cursor > 0 && !query.is_char_boundary(cursor) {
+    cursor -= 1;
+  }
+  if !query.is_char_boundary(cursor) {
+    cursor = 0;
+  }
+  let (before, after) = query.split_at(cursor);
+  format!("CMD {before}█{after}")
+}
+
+fn search_statusline_text(kind: SearchPromptKind, query: &str, cursor: usize) -> String {
+  let mut cursor = cursor.min(query.len());
+  while cursor > 0 && !query.is_char_boundary(cursor) {
+    cursor -= 1;
+  }
+  if !query.is_char_boundary(cursor) {
+    cursor = 0;
+  }
+  let (before, after) = query.split_at(cursor);
+  let prefix = match kind {
+    SearchPromptKind::Search => "FIND",
+    SearchPromptKind::SelectRegex => "SELECT",
+    SearchPromptKind::SplitSelection => "SPLIT",
+    SearchPromptKind::KeepSelections => "KEEP",
+    SearchPromptKind::RemoveSelections => "REMOVE",
+    SearchPromptKind::RenameSymbol => "RENAME",
+    SearchPromptKind::ShellPipe => "PIPE",
+    SearchPromptKind::ShellPipeTo => "PIPE-TO",
+    SearchPromptKind::ShellInsertOutput => "INSERT-OUTPUT",
+    SearchPromptKind::ShellAppendOutput => "APPEND-OUTPUT",
+    SearchPromptKind::ShellKeepPipe => "KEEP-PIPE",
+  };
+  format!("{prefix} {before}█{after}")
 }

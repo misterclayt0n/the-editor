@@ -55,6 +55,8 @@ use the_default::{
   PendingInput,
   SIGNATURE_HELP_ACTIVE_PARAM_END_MARKER,
   SIGNATURE_HELP_ACTIVE_PARAM_START_MARKER,
+  StatuslineEmphasis,
+  build_statusline_snapshot,
   command_palette_filtered_indices,
   completion_docs_panel_rect as default_completion_docs_panel_rect,
   completion_panel_rect as default_completion_panel_rect,
@@ -65,7 +67,6 @@ use the_default::{
   set_picker_visible_rows,
   signature_help_markdown,
   signature_help_panel_rect as default_signature_help_panel_rect,
-  ui_tree,
 };
 use the_lib::{
   diagnostics::{
@@ -93,7 +94,6 @@ use the_lib::{
     InlineDiagnosticRenderLine,
     InlineDiagnosticsConfig,
     InlineDiagnosticsViewportLayout,
-    LayoutIntent,
     NoHighlights,
     PaneRenderPlan,
     RenderDiagnosticGutterStyles,
@@ -104,28 +104,6 @@ use the_lib::{
     RenderStyles,
     SelectionMatchHighlightOptions,
     SyntaxHighlightAdapter,
-    UiAlign,
-    UiAlignPair,
-    UiAxis,
-    UiColor,
-    UiColorToken,
-    UiConstraints,
-    UiContainer,
-    UiEmphasis,
-    UiInput,
-    UiInsets,
-    UiLayer,
-    UiLayout,
-    UiList,
-    UiListItem,
-    UiNode,
-    UiPanel,
-    UiStatusBar,
-    UiStyle,
-    UiStyledSpan,
-    UiText,
-    UiTooltip,
-    UiTree,
     add_selection_match_highlights,
     apply_diagnostic_gutter_markers,
     apply_diff_gutter_markers,
@@ -146,7 +124,6 @@ use the_lib::{
     render_inline_diagnostics_for_viewport,
     render_virtual_lines_for_viewport,
     text_annotations::TextAnnotations,
-    ui_theme::resolve_ui_tree,
     visual_pos_at_char,
   },
   selection::Range,
@@ -167,13 +144,7 @@ use crate::{
     DiagnosticUnderlineRenderSpan,
     TermHardwareCursor,
   },
-  docs_panel::{
-    DocsPanelConfig,
-    DocsPanelSource,
-    build_docs_panel,
-    docs_panel_source_from_panel,
-    docs_panel_source_from_text,
-  },
+  docs_panel::DocsPanelSource,
   picker_layout::{
     CompletionDocsLayout,
     FilePickerLayout,
@@ -1316,76 +1287,37 @@ fn inner_rect(rect: Rect) -> Rect {
   Rect::new(rect.x + 1, rect.y + 1, rect.width - 2, rect.height - 2)
 }
 
-fn inset_rect(rect: Rect, insets: the_lib::render::UiInsets) -> Rect {
-  let x = rect.x.saturating_add(insets.left);
-  let y = rect.y.saturating_add(insets.top);
-  let width = rect
-    .width
-    .saturating_sub(insets.left.saturating_add(insets.right));
-  let height = rect
-    .height
-    .saturating_sub(insets.top.saturating_add(insets.bottom));
-  Rect::new(x, y, width, height)
+#[derive(Clone, Copy)]
+struct PanelStyles {
+  text:   Style,
+  fill:   Style,
+  border: Style,
 }
 
-fn align_horizontal(rect: Rect, child_width: u16, align: the_lib::render::UiAlign) -> (u16, u16) {
-  let width = match align {
-    the_lib::render::UiAlign::Stretch => rect.width,
-    _ => child_width.min(rect.width).max(1),
-  };
-  let x = match align {
-    the_lib::render::UiAlign::Center => rect.x + (rect.width.saturating_sub(width)) / 2,
-    the_lib::render::UiAlign::End => rect.x + rect.width.saturating_sub(width),
-    _ => rect.x,
-  };
-  (x, width)
+fn theme_scope_color(
+  ctx: &Ctx,
+  scope: &str,
+  kind: fn(LibStyle) -> Option<LibColor>,
+) -> Option<Color> {
+  ctx
+    .ui_theme
+    .try_get(scope)
+    .and_then(kind)
+    .map(lib_color_to_ratatui)
 }
 
-fn align_vertical(rect: Rect, child_height: u16, align: the_lib::render::UiAlign) -> (u16, u16) {
-  let height = match align {
-    the_lib::render::UiAlign::Stretch => rect.height,
-    _ => child_height.min(rect.height).max(1),
-  };
-  let y = match align {
-    the_lib::render::UiAlign::Center => rect.y + (rect.height.saturating_sub(height)) / 2,
-    the_lib::render::UiAlign::End => rect.y + rect.height.saturating_sub(height),
-    _ => rect.y,
-  };
-  (y, height)
+fn theme_scope_any_color(ctx: &Ctx, scope: &str) -> Option<Color> {
+  ctx
+    .ui_theme
+    .try_get(scope)
+    .and_then(|style| style.fg.or(style.bg))
+    .map(lib_color_to_ratatui)
 }
 
-fn resolve_ui_color(color: &the_lib::render::UiColor) -> Option<Color> {
-  match color {
-    the_lib::render::UiColor::Value(value) => Some(lib_color_to_ratatui(*value)),
-    the_lib::render::UiColor::Token(_) => None,
-  }
-}
-
-fn ui_style_colors(style: &UiStyle) -> (Style, Style, Style) {
-  let text_color = style.fg.as_ref().and_then(resolve_ui_color);
-  let bg_color = style.bg.as_ref().and_then(resolve_ui_color);
-  let border_color = style.border.as_ref().and_then(resolve_ui_color);
-
+fn file_picker_panel_styles(ctx: &Ctx) -> PanelStyles {
   let mut text_style = Style::default();
-  if let Some(color) = text_color {
-    text_style = text_style.fg(color);
-  }
-
   let mut fill_style = Style::default();
-  if let Some(color) = bg_color {
-    fill_style = fill_style.bg(color);
-  }
-
   let mut border_style = Style::default();
-  if let Some(color) = border_color {
-    border_style = border_style.fg(color);
-  }
-
-  (text_style, fill_style, border_style)
-}
-
-fn file_picker_panel_styles(ctx: &Ctx, panel: &UiPanel) -> (Style, Style, Style) {
-  let (mut text_style, mut fill_style, mut border_style) = ui_style_colors(&panel.style);
 
   let picker_scope = ctx.ui_theme.try_get("ui.file_picker");
   let text_scope = ctx.ui_theme.try_get("ui.text");
@@ -1449,7 +1381,54 @@ fn file_picker_panel_styles(ctx: &Ctx, panel: &UiPanel) -> (Style, Style, Style)
     border_style = border_style.bg(bg);
   }
 
-  (text_style, fill_style, border_style)
+  PanelStyles {
+    text:   text_style,
+    fill:   fill_style,
+    border: border_style,
+  }
+}
+
+fn overlay_panel_styles(ctx: &Ctx, role: &str) -> PanelStyles {
+  let text = theme_scope_color(ctx, role, |style| style.fg)
+    .or_else(|| theme_scope_color(ctx, "ui.text", |style| style.fg))
+    .unwrap_or(Color::Reset);
+  let fill = theme_scope_color(ctx, role, |style| style.bg)
+    .or_else(|| theme_scope_color(ctx, "ui.window", |style| style.bg))
+    .or_else(|| theme_scope_color(ctx, "ui.background", |style| style.bg))
+    .unwrap_or(Color::Black);
+  let role_border_scope = format!("{role}.border");
+  let border = theme_scope_any_color(ctx, role_border_scope.as_str())
+    .or_else(|| theme_scope_any_color(ctx, "ui.popup.border"))
+    .or_else(|| theme_scope_any_color(ctx, "ui.window"))
+    .or_else(|| theme_scope_any_color(ctx, "ui.background.separator"))
+    .unwrap_or(text);
+
+  PanelStyles {
+    text:   Style::default().fg(text).bg(fill),
+    fill:   Style::default().fg(text).bg(fill),
+    border: Style::default().fg(border).bg(fill),
+  }
+}
+
+fn statusline_panel_styles(ctx: &Ctx) -> PanelStyles {
+  overlay_panel_styles(ctx, "ui.statusline")
+}
+
+fn docs_panel_styles(ctx: &Ctx) -> PanelStyles {
+  let text = theme_scope_color(ctx, "ui.text", |style| style.fg).unwrap_or(Color::Reset);
+  let fill = theme_scope_color(ctx, "ui.popup", |style| style.bg)
+    .or_else(|| theme_scope_color(ctx, "ui.background", |style| style.bg))
+    .unwrap_or(Color::Black);
+  let border = theme_scope_any_color(ctx, "ui.popup.border")
+    .or_else(|| theme_scope_any_color(ctx, "ui.window"))
+    .or_else(|| theme_scope_any_color(ctx, "ui.background.separator"))
+    .unwrap_or(text);
+
+  PanelStyles {
+    text:   Style::default().fg(text).bg(fill),
+    fill:   Style::default().fg(text).bg(fill),
+    border: Style::default().fg(border).bg(fill),
+  }
 }
 
 fn file_picker_is_diagnostics(picker: &the_default::FilePickerState) -> bool {
@@ -2425,322 +2404,6 @@ fn draw_buffer_cursor_cell(
   }
 }
 
-fn apply_ui_emphasis(style: Style, emphasis: UiEmphasis) -> Style {
-  match emphasis {
-    UiEmphasis::Muted => style.add_modifier(Modifier::DIM),
-    UiEmphasis::Strong => style.add_modifier(Modifier::BOLD),
-    UiEmphasis::Normal => style,
-  }
-}
-
-fn apply_constraints(
-  mut width: u16,
-  mut height: u16,
-  constraints: &the_lib::render::UiConstraints,
-  max_width: u16,
-  max_height: u16,
-) -> (u16, u16) {
-  if let Some(min_w) = constraints.min_width {
-    width = width.max(min_w);
-  }
-  if let Some(max_w) = constraints.max_width {
-    width = width.min(max_w);
-  }
-  width = width.min(max_width).max(1);
-
-  if let Some(min_h) = constraints.min_height {
-    height = height.max(min_h);
-  }
-  if let Some(max_h) = constraints.max_height {
-    height = height.min(max_h);
-  }
-  height = height.min(max_height).max(1);
-
-  (width, height)
-}
-
-fn measure_node(node: &UiNode, max_width: u16) -> (u16, u16) {
-  match node {
-    UiNode::Text(text) => {
-      let mut width = 0u16;
-      let mut height = 0u16;
-      let max_lines = text.max_lines.unwrap_or(u16::MAX) as usize;
-      for line in text.content.lines() {
-        let line_len = line.chars().count() as u16;
-        if text.clip {
-          width = width.max(line_len);
-          height = height.saturating_add(1);
-        } else if max_width > 0 {
-          width = width.max(max_width);
-          let wrapped = ((line_len as usize + max_width as usize - 1) / max_width as usize).max(1);
-          height = height.saturating_add(wrapped as u16);
-        } else {
-          width = width.max(line_len);
-          height = height.saturating_add(1);
-        }
-        if height as usize >= max_lines {
-          height = max_lines as u16;
-          break;
-        }
-      }
-      (width.min(max_width), height.max(1))
-    },
-    UiNode::Input(input) => {
-      let mut width = input.value.chars().count();
-      if let Some(placeholder) = input.placeholder.as_ref() {
-        width = width.max(placeholder.chars().count());
-      }
-      (width.min(max_width as usize) as u16, 1)
-    },
-    UiNode::Divider(_) => (max_width, 1),
-    UiNode::Spacer(spacer) => (max_width, spacer.size.max(1)),
-    UiNode::List(list) => {
-      let mut width: usize = 0;
-      let is_completion_list = list.style.role.as_deref() == Some("completion");
-      let has_icons =
-        is_completion_list && list.items.iter().any(|item| item.leading_icon.is_some());
-      let icon_width: usize = if has_icons { 2 } else { 0 };
-      let mut has_detail = false;
-      for item in &list.items {
-        let mut w = item.title.chars().count() + icon_width;
-        if let Some(shortcut) = item.shortcut.as_ref() {
-          w = w.saturating_add(shortcut.chars().count() + 3);
-        }
-        if let Some(detail) = item
-          .subtitle
-          .as_deref()
-          .filter(|s| !s.is_empty())
-          .or_else(|| item.description.as_deref().filter(|s| !s.is_empty()))
-        {
-          if is_completion_list {
-            w = w.saturating_add(detail.chars().count() + 2);
-          } else {
-            has_detail = true;
-            w = w.max(detail.chars().count());
-          }
-        }
-        width = width.max(w);
-      }
-      let width = if list.fill_width {
-        max_width
-      } else {
-        width.min(max_width as usize).max(1) as u16
-      };
-      let base_height = if is_completion_list {
-        1
-      } else if has_detail {
-        2
-      } else {
-        1
-      };
-      let row_height = base_height;
-      let mut count = list.items.len().max(1);
-      if let Some(max_visible) = list.max_visible {
-        count = count.min(max_visible.max(1));
-      }
-      let count = count as u16;
-      let total_height = count.saturating_mul(row_height as u16);
-      (width, total_height)
-    },
-    UiNode::Container(container) => {
-      match &container.layout {
-        UiLayout::Stack { axis, gap } => {
-          match axis {
-            UiAxis::Vertical => {
-              let mut height = 0u16;
-              let mut width = 0u16;
-              for (idx, child) in container.children.iter().enumerate() {
-                let (cw, ch) = measure_node(child, max_width);
-                width = width.max(cw);
-                height = height.saturating_add(ch);
-                if idx + 1 < container.children.len() {
-                  height = height.saturating_add(*gap);
-                }
-              }
-              let width = width.saturating_add(container.constraints.padding.horizontal());
-              let height = height.saturating_add(container.constraints.padding.vertical());
-              apply_constraints(
-                width,
-                height.max(1),
-                &container.constraints,
-                max_width,
-                u16::MAX,
-              )
-            },
-            UiAxis::Horizontal => {
-              let mut width = 0u16;
-              let mut height = 0u16;
-              for (idx, child) in container.children.iter().enumerate() {
-                let (cw, ch) = measure_node(child, max_width);
-                width = width.saturating_add(cw);
-                height = height.max(ch);
-                if idx + 1 < container.children.len() {
-                  width = width.saturating_add(*gap);
-                }
-              }
-              let width = width.saturating_add(container.constraints.padding.horizontal());
-              let height = height.saturating_add(container.constraints.padding.vertical());
-              apply_constraints(
-                width.max(1),
-                height.max(1),
-                &container.constraints,
-                max_width,
-                u16::MAX,
-              )
-            },
-          }
-        },
-        UiLayout::Split { axis, .. } => {
-          match axis {
-            UiAxis::Vertical => {
-              let width = max_width.saturating_add(container.constraints.padding.horizontal());
-              let height =
-                container.children.len().max(1) as u16 + container.constraints.padding.vertical();
-              apply_constraints(
-                width.max(1),
-                height.max(1),
-                &container.constraints,
-                max_width,
-                u16::MAX,
-              )
-            },
-            UiAxis::Horizontal => {
-              let width = max_width.saturating_add(container.constraints.padding.horizontal());
-              let height = 1 + container.constraints.padding.vertical();
-              apply_constraints(
-                width.max(1),
-                height.max(1),
-                &container.constraints,
-                max_width,
-                u16::MAX,
-              )
-            },
-          }
-        },
-      }
-    },
-    UiNode::Panel(panel) => {
-      let max_width =
-        max_content_width_for_intent(panel.intent.clone(), Rect::new(0, 0, max_width, 1), 0, 0);
-      let (child_w, child_h) = measure_node(&panel.child, max_width);
-      let width = child_w.saturating_add(panel.constraints.padding.horizontal());
-      let height = child_h.saturating_add(panel.constraints.padding.vertical());
-      apply_constraints(
-        width.max(1),
-        height.max(1),
-        &panel.constraints,
-        max_width,
-        u16::MAX,
-      )
-    },
-    UiNode::Tooltip(tooltip) => {
-      let width = tooltip
-        .content
-        .chars()
-        .count()
-        .saturating_add(2)
-        .min(max_width as usize) as u16;
-      (width.max(2), 3)
-    },
-    UiNode::StatusBar(_) => (max_width, 1),
-  }
-}
-
-fn layout_children<'a>(container: &'a UiContainer, rect: Rect) -> Vec<(Rect, &'a UiNode)> {
-  let mut placements = Vec::new();
-  let rect = inset_rect(rect, container.constraints.padding);
-
-  match &container.layout {
-    UiLayout::Stack { axis, gap } => {
-      match axis {
-        UiAxis::Vertical => {
-          let mut y = rect.y;
-          for child in &container.children {
-            let (child_w, h) = measure_node(child, rect.width);
-            let height = h
-              .min(rect.height.saturating_sub(y.saturating_sub(rect.y)))
-              .max(1);
-            if height == 0 {
-              break;
-            }
-            let (x, width) =
-              align_horizontal(rect, child_w, container.constraints.align.horizontal);
-            let child_rect = Rect::new(x, y, width, height);
-            placements.push((child_rect, child));
-            y = y.saturating_add(height).saturating_add(*gap);
-            if y >= rect.y + rect.height {
-              break;
-            }
-          }
-        },
-        UiAxis::Horizontal => {
-          let mut x = rect.x;
-          for child in &container.children {
-            let (w, child_h) = measure_node(child, rect.width);
-            let width = w
-              .min(rect.width.saturating_sub(x.saturating_sub(rect.x)))
-              .max(1);
-            if width == 0 {
-              break;
-            }
-            let (y, height) = align_vertical(rect, child_h, container.constraints.align.vertical);
-            let child_rect = Rect::new(x, y, width, height);
-            placements.push((child_rect, child));
-            x = x.saturating_add(width).saturating_add(*gap);
-            if x >= rect.x + rect.width {
-              break;
-            }
-          }
-        },
-      }
-    },
-    UiLayout::Split { axis, ratios } => {
-      let count = container.children.len().max(1);
-      let mut ratios = ratios.clone();
-      if ratios.len() < count {
-        ratios.resize(count, 1);
-      }
-      let total: u16 = ratios.iter().sum();
-      let total = if total == 0 { count as u16 } else { total };
-
-      match axis {
-        UiAxis::Vertical => {
-          let mut y = rect.y;
-          for (child, ratio) in container.children.iter().zip(ratios.iter()) {
-            let height = rect
-              .height
-              .saturating_mul(*ratio)
-              .saturating_div(total)
-              .max(1);
-            let (x, width) =
-              align_horizontal(rect, rect.width, container.constraints.align.horizontal);
-            let child_rect = Rect::new(x, y, width, height);
-            placements.push((child_rect, child));
-            y = y.saturating_add(height);
-          }
-        },
-        UiAxis::Horizontal => {
-          let mut x = rect.x;
-          for (child, ratio) in container.children.iter().zip(ratios.iter()) {
-            let width = rect
-              .width
-              .saturating_mul(*ratio)
-              .saturating_div(total)
-              .max(1);
-            let (y, height) =
-              align_vertical(rect, rect.height, container.constraints.align.vertical);
-            let child_rect = Rect::new(x, y, width, height);
-            placements.push((child_rect, child));
-            x = x.saturating_add(width);
-          }
-        },
-      }
-    },
-  }
-
-  placements
-}
-
 #[derive(Clone)]
 struct StyledTextRun {
   text:  String,
@@ -3346,262 +3009,167 @@ fn draw_styled_row(
   }
 }
 
-fn draw_completion_docs_text(buf: &mut Buffer, rect: Rect, ctx: &Ctx, text: &UiText) {
-  if rect.width == 0 || rect.height == 0 {
-    return;
-  }
-
-  let (text_style, ..) = ui_style_colors(&text.style);
-  let base_style = apply_ui_emphasis(text_style, text.style.emphasis);
-  let styles = completion_docs_styles(ctx, base_style);
-  let metrics = completion_docs_render_metrics(&text.content, &styles, rect);
-  let content_width = metrics.content_width;
-  let rows = completion_docs_rows_with_context(&text.content, &styles, content_width, Some(ctx));
-  let total_rows = metrics.total_rows;
-  let visible_rows = metrics.visible_rows;
-  let max_scroll = total_rows.saturating_sub(visible_rows);
-  let docs_scroll = match docs_panel_source_from_text(text).unwrap_or(DocsPanelSource::Completion) {
+fn docs_scroll_for_source(ctx: &Ctx, source: DocsPanelSource) -> usize {
+  match source {
     DocsPanelSource::Completion => ctx.completion_menu.docs_scroll,
     DocsPanelSource::Hover => ctx.hover_docs_scroll,
     DocsPanelSource::Signature => ctx.signature_help.docs_scroll,
     DocsPanelSource::CommandPalette => 0,
-  };
-  let scroll = docs_scroll.min(max_scroll);
-
-  for row_idx in 0..visible_rows {
-    let y = rect.y + row_idx as u16;
-    if let Some(row) = rows.get(scroll + row_idx) {
-      draw_styled_row(buf, rect.x, y, content_width, row, base_style);
-    } else {
-      draw_styled_row(buf, rect.x, y, content_width, &[], base_style);
-    }
-  }
-
-  if metrics.show_scrollbar {
-    let track_x = rect.x + rect.width - 1;
-    let track_height = rect.height;
-    let thumb_height = ((visible_rows as f32 / total_rows as f32) * track_height as f32)
-      .round()
-      .clamp(1.0, track_height as f32) as u16;
-    let max_thumb_offset = track_height.saturating_sub(thumb_height);
-    let thumb_offset = if max_scroll == 0 || max_thumb_offset == 0 {
-      0
-    } else {
-      ((scroll as f32 / max_scroll as f32) * max_thumb_offset as f32).round() as u16
-    };
-    let scroll_color = text
-      .style
-      .border
-      .as_ref()
-      .and_then(resolve_ui_color)
-      .or_else(|| text.style.accent.as_ref().and_then(resolve_ui_color))
-      .or(base_style.fg);
-
-    for row in 0..track_height {
-      let is_thumb = row >= thumb_offset && row < thumb_offset + thumb_height;
-      if !is_thumb {
-        continue;
-      }
-      let mut style = Style::default();
-      if let Some(color) = scroll_color {
-        style = style.fg(color);
-      }
-      buf.set_string(track_x, rect.y + row, "█", style);
-    }
   }
 }
 
-fn draw_ui_text(buf: &mut Buffer, rect: Rect, ctx: &Ctx, text: &UiText) {
-  if rect.width == 0 || rect.height == 0 {
-    return;
-  }
-  if docs_panel_source_from_text(text).is_some()
-    || text.style.role.as_deref() == Some("completion_docs")
-  {
-    draw_completion_docs_text(buf, rect, ctx, text);
-    return;
-  }
-  let (text_style, ..) = ui_style_colors(&text.style);
-  let style = apply_ui_emphasis(text_style, text.style.emphasis);
-  let max_lines = text.max_lines.unwrap_or(u16::MAX) as usize;
-  let mut drawn = 0usize;
-
-  for line in text.content.lines() {
-    if drawn >= max_lines {
-      break;
-    }
-
-    if text.clip || rect.width == 0 {
-      let y = rect.y + drawn as u16;
-      if y >= rect.y + rect.height {
-        break;
-      }
-      let mut truncated = line.to_string();
-      truncate_in_place(&mut truncated, rect.width as usize);
-      buf.set_string(rect.x, y, truncated, style);
-      drawn += 1;
-    } else {
-      let mut chunk = String::new();
-      for ch in line.chars() {
-        if chunk.chars().count() >= rect.width as usize {
-          let y = rect.y + drawn as u16;
-          if y >= rect.y + rect.height {
-            break;
-          }
-          buf.set_string(rect.x, y, chunk.clone(), style);
-          drawn += 1;
-          chunk.clear();
-          if drawn >= max_lines {
-            break;
-          }
-        }
-        chunk.push(ch);
-      }
-      if !chunk.is_empty() && drawn < max_lines {
-        let y = rect.y + drawn as u16;
-        if y >= rect.y + rect.height {
-          break;
-        }
-        buf.set_string(rect.x, y, chunk, style);
-        drawn += 1;
-      }
-    }
-  }
-}
-
-fn draw_ui_input(
+fn draw_markdown_docs(
   buf: &mut Buffer,
   rect: Rect,
   ctx: &Ctx,
-  input: &UiInput,
-  focus: Option<&the_lib::render::UiFocus>,
-  cursor_out: &mut Option<(u16, u16)>,
-) {
+  markdown: &str,
+  source: DocsPanelSource,
+  base_style: Style,
+  scrollbar_style: Style,
+) -> Option<CompletionDocsLayout> {
   if rect.width == 0 || rect.height == 0 {
-    return;
+    return None;
   }
-  let (text_style, ..) = ui_style_colors(&input.style);
-  let placeholder_color = input
-    .style
-    .accent
-    .as_ref()
-    .and_then(resolve_ui_color)
-    .or(text_style.fg);
-  let (value, style) = if input.value.is_empty() {
-    let placeholder = input.placeholder.as_deref().unwrap_or("...");
-    let mut style = Style::default();
-    if let Some(color) = placeholder_color {
-      style = style.fg(color);
-    }
-    (placeholder.to_string(), style)
-  } else {
-    (input.value.clone(), text_style)
-  };
-  let mut truncated = value;
-  truncate_in_place(&mut truncated, rect.width as usize);
-  buf.set_string(rect.x, rect.y, truncated, style);
 
-  let is_focused = focus.map(|f| f.id == input.id).unwrap_or(focus.is_none());
-  if is_focused && cursor_out.is_none() {
-    let cursor_pos = focus.and_then(|f| f.cursor).unwrap_or(input.cursor);
-    let cursor_x = rect
-      .x
-      .saturating_add(cursor_pos as u16)
-      .min(rect.x + rect.width - 1);
-    let cursor_style = software_cursor_style(&ctx.ui_theme);
-    draw_software_cursor_cell(buf, cursor_x, rect.y, cursor_style);
-    *cursor_out = Some((cursor_x, rect.y));
+  let styles = completion_docs_styles(ctx, base_style);
+  let metrics = completion_docs_render_metrics(markdown, &styles, rect);
+  let content_width = metrics.content_width;
+  let rows = completion_docs_rows_with_context(markdown, &styles, content_width, Some(ctx));
+  let total_rows = metrics.total_rows;
+  let visible_rows = metrics.visible_rows;
+  let max_scroll = total_rows.saturating_sub(visible_rows);
+  let scroll = docs_scroll_for_source(ctx, source).min(max_scroll);
+  let scrollbar_track = metrics.show_scrollbar.then(|| {
+    Rect::new(
+      rect.x + rect.width.saturating_sub(1),
+      rect.y,
+      1,
+      rect.height,
+    )
+  });
+  let content = if scrollbar_track.is_some() {
+    Rect::new(rect.x, rect.y, rect.width.saturating_sub(1), rect.height)
+  } else {
+    rect
+  };
+
+  for row_idx in 0..visible_rows {
+    let y = content.y + row_idx as u16;
+    if let Some(row) = rows.get(scroll + row_idx) {
+      draw_styled_row(buf, content.x, y, content_width, row, base_style);
+    } else {
+      draw_styled_row(buf, content.x, y, content_width, &[], base_style);
+    }
   }
+
+  if let Some(track) = scrollbar_track
+    && let Some(metrics) = compute_scrollbar_metrics(track, total_rows, visible_rows, scroll)
+  {
+    for row in 0..track.height {
+      let is_thumb = row >= metrics.thumb_offset
+        && row < metrics.thumb_offset.saturating_add(metrics.thumb_height);
+      if is_thumb {
+        buf.set_string(track.x, track.y + row, "█", scrollbar_style);
+      }
+    }
+  }
+
+  Some(CompletionDocsLayout {
+    panel: rect,
+    content,
+    scrollbar_track,
+    visible_rows,
+    total_rows,
+    source,
+  })
 }
 
-fn draw_ui_list(
+fn completion_list_styles(ctx: &Ctx) -> (Style, Style, Style) {
+  let menu = overlay_panel_styles(ctx, "ui.menu");
+  let selected_fg = theme_scope_color(ctx, "ui.menu.selected", |style| style.fg)
+    .or_else(|| theme_scope_color(ctx, "ui.text.focus", |style| style.fg))
+    .or_else(|| theme_scope_color(ctx, "ui.text", |style| style.fg))
+    .or(menu.text.fg);
+  let selected_bg = theme_scope_color(ctx, "ui.menu.selected", |style| style.bg)
+    .or_else(|| theme_scope_color(ctx, "ui.selection", |style| style.bg))
+    .or_else(|| theme_scope_color(ctx, "ui.menu", |style| style.bg))
+    .or(menu.fill.bg);
+  let mut selected_style = menu.fill;
+  if let Some(fg) = selected_fg {
+    selected_style = selected_style.fg(fg);
+  }
+  if let Some(bg) = selected_bg {
+    selected_style = selected_style.bg(bg);
+  }
+  (menu.text, menu.fill, selected_style)
+}
+
+#[derive(Debug, Clone)]
+struct OverlayListItem {
+  title:         String,
+  subtitle:      Option<String>,
+  description:   Option<String>,
+  badge:         Option<String>,
+  leading_icon:  Option<String>,
+  leading_color: Option<Color>,
+  emphasis:      bool,
+}
+
+fn draw_completion_style_list(
   buf: &mut Buffer,
   rect: Rect,
-  list: &UiList,
-  badge_color: Option<Color>,
-  _cursor_out: &mut Option<(u16, u16)>,
+  items: &[OverlayListItem],
+  selected: Option<usize>,
+  mut scroll: usize,
+  max_visible: Option<usize>,
+  text_style: Style,
+  fill_style: Style,
+  selected_style: Style,
+  scroll_style: Style,
 ) {
-  if rect.width == 0 || rect.height == 0 {
+  if rect.width == 0 || rect.height == 0 || items.is_empty() {
     return;
   }
-  let (text_style, ..) = ui_style_colors(&list.style);
+
   let base_text_color = text_style.fg;
-  let selected_text_color = list
-    .style
-    .border
-    .as_ref()
-    .and_then(resolve_ui_color)
-    .or(base_text_color);
-  let selected_bg_color = list.style.accent.as_ref().and_then(resolve_ui_color);
-  let scroll_color = list
-    .style
-    .border
-    .as_ref()
-    .and_then(resolve_ui_color)
-    .or(base_text_color);
-  let is_completion_list = list.style.role.as_deref() == Some("completion");
-  let has_icons = is_completion_list && list.items.iter().any(|item| item.leading_icon.is_some());
+  let selected_text_color = selected_style.fg.or(base_text_color);
+  let selected_bg_color = selected_style.bg;
+  let has_icons = items.iter().any(|item| item.leading_icon.is_some());
   let icon_col_width: u16 = if has_icons { 2 } else { 0 };
-  // Keep completion labels legible even when detail/signature text is very long.
-  // This mirrors column-based completion UIs (e.g. blink.cmp): label gets
-  // priority, detail only uses remaining space.
   const COMPLETION_MIN_LABEL_WIDTH: usize = 18;
-  const COMPLETION_LABEL_TARGET_NUM: usize = 3; // 60%
+  const COMPLETION_LABEL_TARGET_NUM: usize = 3;
   const COMPLETION_LABEL_TARGET_DEN: usize = 5;
   const COMPLETION_MIN_DETAIL_WIDTH: usize = 12;
-  let has_detail = list.items.iter().any(|item| {
-    item.subtitle.as_ref().map_or(false, |s| !s.is_empty())
-      || item.description.as_ref().map_or(false, |s| !s.is_empty())
-  });
-  let base_height: usize = if is_completion_list {
-    1
-  } else if has_detail {
-    2
-  } else {
-    1
-  };
-  let row_gap: usize = 0;
-  let row_height: usize = base_height + row_gap;
   let visible_rows = rect.height as usize;
-  let mut visible_items = visible_rows / row_height;
-  if let Some(max_visible) = list.max_visible {
-    visible_items = visible_items.min(max_visible.max(1));
-  }
+  let visible_items = max_visible
+    .map(|max_visible| visible_rows.min(max_visible.max(1)))
+    .unwrap_or(visible_rows);
   if visible_items == 0 {
     return;
   }
-  let total_items = list.virtual_total.unwrap_or(list.items.len());
-  let virtual_mode = list.virtual_total.is_some();
-  let mut scroll_offset = if virtual_mode {
-    list
-      .virtual_start
-      .min(total_items.saturating_sub(visible_items))
-  } else {
-    list.scroll.min(total_items.saturating_sub(visible_items))
-  };
-  let selected = list.selected;
-  if !virtual_mode {
-    if let Some(sel) = selected {
-      if sel < scroll_offset {
-        scroll_offset = sel;
-      } else if sel >= scroll_offset + visible_items {
-        scroll_offset = sel + 1 - visible_items;
-      }
+
+  scroll = scroll.min(items.len().saturating_sub(visible_items));
+  if let Some(sel) = selected {
+    if sel < scroll {
+      scroll = sel;
+    } else if sel >= scroll + visible_items {
+      scroll = sel + 1 - visible_items;
     }
   }
-  let mut draw_item = |row_idx: usize, absolute_idx: usize, item: &the_lib::render::UiListItem| {
-    let y = rect.y + (row_idx * row_height) as u16;
-    let is_selected = selected == Some(absolute_idx);
-    let row_right_padding = if total_items > visible_items { 2 } else { 1 };
 
-    if is_selected {
-      if let Some(bg_color) = selected_bg_color {
-        fill_rect(
-          buf,
-          Rect::new(rect.x, y, rect.width, base_height as u16),
-          Style::default().bg(bg_color),
-        );
-      }
+  for (row_idx, item) in items.iter().enumerate().skip(scroll).take(visible_items) {
+    let y = rect.y + (row_idx - scroll) as u16;
+    let is_selected = selected == Some(row_idx);
+    let row_right_padding = if items.len() > visible_items { 2 } else { 1 };
+
+    if is_selected && let Some(bg_color) = selected_bg_color {
+      fill_rect(
+        buf,
+        Rect::new(rect.x, y, rect.width, 1),
+        Style::default().bg(bg_color),
+      );
+    } else {
+      fill_rect(buf, Rect::new(rect.x, y, rect.width, 1), fill_style);
     }
 
     let mut row_style = Style::default();
@@ -3613,286 +3181,180 @@ fn draw_ui_list(
     if let Some(color) = row_color {
       row_style = row_style.fg(color);
     }
+    if let Some(bg) = fill_style.bg {
+      row_style = row_style.bg(bg);
+    }
+    if is_selected && let Some(bg) = selected_bg_color {
+      row_style = row_style.bg(bg);
+    }
     if item.emphasis {
       row_style = row_style.add_modifier(Modifier::BOLD);
     }
 
-    let mut title = item.title.clone();
-    let shortcut = item.shortcut.clone().unwrap_or_default();
-    let leading_pad = if is_completion_list { 0 } else { 1 };
-    let base_content_x = rect.x + leading_pad;
-    let available_width = rect.width.saturating_sub(leading_pad + row_right_padding) as usize;
-    if !shortcut.is_empty() && shortcut.len() + 2 < available_width {
-      let shortcut_width = shortcut.len() + 1;
-      truncate_in_place(&mut title, available_width.saturating_sub(shortcut_width));
-      let shortcut_x = rect.x
-        + rect
-          .width
-          .saturating_sub(shortcut.len() as u16 + row_right_padding);
-      buf.set_string(shortcut_x, y, shortcut, row_style);
-    } else {
-      truncate_in_place(&mut title, available_width);
+    let base_content_x = rect.x;
+    let label_x = base_content_x + icon_col_width;
+    let label_available = rect
+      .width
+      .saturating_sub(icon_col_width + row_right_padding) as usize;
+
+    if has_icons && let Some(icon) = item.leading_icon.as_deref() {
+      let icon_style = if is_selected {
+        row_style
+      } else if let Some(color) = item.leading_color {
+        row_style.fg(color)
+      } else {
+        row_style
+      };
+      buf.set_string(base_content_x, y, icon, icon_style);
     }
-    if is_completion_list {
-      if has_icons {
-        if let Some(icon) = item.leading_icon.as_deref() {
-          let icon_style = if is_selected {
-            row_style
-          } else if let Some(ref color) = item.leading_color {
-            resolve_ui_color(color)
-              .map(|c| Style::default().fg(c))
-              .unwrap_or(row_style)
-          } else {
-            row_style
-          };
-          buf.set_string(base_content_x, y, icon, icon_style);
-        }
-      }
 
-      let label_x = base_content_x + icon_col_width;
-      let label_available = rect
-        .width
-        .saturating_sub(leading_pad + icon_col_width + row_right_padding)
-        as usize;
+    let mut title = item.title.clone();
+    let detail = item
+      .subtitle
+      .as_deref()
+      .filter(|detail| !detail.is_empty())
+      .or_else(|| {
+        item
+          .description
+          .as_deref()
+          .filter(|detail| !detail.is_empty())
+      });
+    let badge_text = item.badge.as_deref().filter(|badge| !badge.is_empty());
+    let has_right_content = detail.is_some() || badge_text.is_some();
 
-      let detail = item
-        .subtitle
-        .as_deref()
-        .filter(|detail| !detail.is_empty())
-        .or_else(|| {
-          item
-            .description
-            .as_deref()
-            .filter(|detail| !detail.is_empty())
-        });
-      let badge_text = item.badge.as_deref().filter(|b| !b.is_empty());
-      let has_right_content = detail.is_some() || badge_text.is_some();
-      if has_right_content {
-        let content_right = rect.x + rect.width.saturating_sub(row_right_padding);
-        let reserved_label = ((label_available * COMPLETION_LABEL_TARGET_NUM)
-          / COMPLETION_LABEL_TARGET_DEN)
-          .max(COMPLETION_MIN_LABEL_WIDTH.min(label_available));
-        let max_detail_width = label_available.saturating_sub(reserved_label.saturating_add(1));
+    if has_right_content {
+      let content_right = rect.x + rect.width.saturating_sub(row_right_padding);
+      let reserved_label = ((label_available * COMPLETION_LABEL_TARGET_NUM)
+        / COMPLETION_LABEL_TARGET_DEN)
+        .max(COMPLETION_MIN_LABEL_WIDTH.min(label_available));
+      let max_detail_width = label_available.saturating_sub(reserved_label.saturating_add(1));
 
-        if max_detail_width >= COMPLETION_MIN_DETAIL_WIDTH {
-          // Compute badge portion first so we can reserve space for it.
-          let badge_chars = badge_text.map(|b| b.chars().count()).unwrap_or(0);
-          let badge_gap = if badge_chars > 0 && detail.is_some() {
-            1
-          } else {
-            0
-          };
-          let badge_total = badge_chars + badge_gap;
-          let detail_max = max_detail_width.saturating_sub(badge_total);
-
-          // Build detail text.
-          let (detail_str, detail_char_count) = if let Some(d) = detail {
-            let mut dt = d.to_string();
-            truncate_in_place(&mut dt, detail_max);
-            let count = dt.chars().count();
-            (Some(dt), count)
-          } else {
-            (None, 0)
-          };
-
-          let right_total = detail_char_count + badge_total;
-          let right_x = content_right.saturating_sub(right_total as u16);
-          let mut title_width = right_x.saturating_sub(label_x).saturating_sub(1) as usize;
-          if title_width == 0 {
-            title_width = 1;
-          }
-          truncate_in_place(&mut title, title_width);
-          buf.set_string(label_x, y, title, row_style);
-
-          let detail_style = if is_selected {
-            row_style
-          } else {
-            row_style.add_modifier(Modifier::DIM)
-          };
-
-          let mut cursor_x = right_x;
-          if let Some(dt) = detail_str {
-            if cursor_x > label_x {
-              buf.set_string(cursor_x, y, &dt, detail_style);
-              cursor_x = cursor_x.saturating_add(dt.chars().count() as u16 + badge_gap as u16);
-            }
-          }
-          if let Some(bt) = badge_text {
-            let badge_style = if let Some(bc) = badge_color {
-              Style::default().fg(bc)
-            } else {
-              detail_style
-            };
-            if cursor_x > label_x {
-              buf.set_string(cursor_x, y, bt, badge_style);
-            }
-          }
+      if max_detail_width >= COMPLETION_MIN_DETAIL_WIDTH {
+        let badge_chars = badge_text.map(|text| text.chars().count()).unwrap_or(0);
+        let badge_gap = if badge_chars > 0 && detail.is_some() {
+          1
         } else {
-          truncate_in_place(&mut title, label_available);
-          buf.set_string(label_x, y, title, row_style);
+          0
+        };
+        let badge_total = badge_chars + badge_gap;
+        let detail_max = max_detail_width.saturating_sub(badge_total);
+
+        let (detail_text, detail_char_count) = if let Some(detail) = detail {
+          let mut detail_text = detail.to_string();
+          truncate_in_place(&mut detail_text, detail_max);
+          let count = detail_text.chars().count();
+          (Some(detail_text), count)
+        } else {
+          (None, 0)
+        };
+
+        let right_total = detail_char_count + badge_total;
+        let right_x = content_right.saturating_sub(right_total as u16);
+        let mut title_width = right_x.saturating_sub(label_x).saturating_sub(1) as usize;
+        if title_width == 0 {
+          title_width = 1;
+        }
+        truncate_in_place(&mut title, title_width);
+        buf.set_string(label_x, y, title, row_style);
+
+        let detail_style = if is_selected {
+          row_style
+        } else {
+          row_style.add_modifier(Modifier::DIM)
+        };
+
+        let mut cursor_x = right_x;
+        if let Some(detail_text) = detail_text {
+          if cursor_x > label_x {
+            buf.set_string(cursor_x, y, detail_text.as_str(), detail_style);
+            cursor_x = cursor_x.saturating_add(detail_char_count as u16);
+          }
+        }
+        if let Some(badge_text) = badge_text {
+          if cursor_x > label_x && detail_char_count > 0 {
+            buf.set_string(cursor_x, y, " ", row_style);
+            cursor_x = cursor_x.saturating_add(1);
+          }
+          if cursor_x > label_x {
+            buf.set_string(cursor_x, y, badge_text, row_style);
+          }
         }
       } else {
         truncate_in_place(&mut title, label_available);
         buf.set_string(label_x, y, title, row_style);
       }
     } else {
-      buf.set_string(base_content_x, y, title, row_style);
-    }
-
-    if !is_completion_list && base_height > 1 {
-      let detail = item
-        .subtitle
-        .as_deref()
-        .filter(|detail: &&str| !detail.is_empty())
-        .or_else(|| {
-          item
-            .description
-            .as_deref()
-            .filter(|detail: &&str| !detail.is_empty())
-        });
-      if let Some(detail) = detail {
-        let mut detail_text = detail.to_string();
-        truncate_in_place(&mut detail_text, available_width);
-        let mut detail_style = row_style;
-        if !is_selected {
-          detail_style = detail_style.add_modifier(Modifier::DIM);
-        }
-        buf.set_string(rect.x + 1, y + 1, detail_text, detail_style);
-      }
-    }
-  };
-
-  if virtual_mode {
-    for (row_idx, item) in list.items.iter().take(visible_items).enumerate() {
-      draw_item(row_idx, scroll_offset + row_idx, item);
-    }
-  } else {
-    for (row_idx, item) in list
-      .items
-      .iter()
-      .skip(scroll_offset)
-      .take(visible_items)
-      .enumerate()
-    {
-      draw_item(row_idx, row_idx + scroll_offset, item);
+      truncate_in_place(&mut title, label_available);
+      buf.set_string(label_x, y, title, row_style);
     }
   }
 
-  let selected_track_row = selected.and_then(|sel| {
-    if sel < scroll_offset || sel >= scroll_offset + visible_items {
-      return None;
-    }
-    let visible_row = sel - scroll_offset;
-    let row_start = (visible_row * row_height) as u16;
-    let row_end = row_start.saturating_add(base_height as u16);
-    Some((row_start, row_end))
-  });
-
-  if total_items > visible_items {
-    let track_x = rect.x + rect.width - 1;
-    let track_height = rect.height;
-    let thumb_height = ((visible_items as f32 / total_items as f32) * track_height as f32)
-      .ceil()
-      .max(1.0) as u16;
-    let max_scroll = total_items.saturating_sub(visible_items);
-    let mut thumb_offset = if max_scroll == 0 {
-      0
-    } else {
-      ((scroll_offset as f32 / max_scroll as f32) * (track_height - thumb_height) as f32).round()
-        as u16
-    };
-    if let Some((selected_start, selected_end)) = selected_track_row {
-      let max_thumb_offset = track_height.saturating_sub(thumb_height);
-      let overlaps_selected = |offset: u16| {
-        let thumb_end = offset.saturating_add(thumb_height);
-        offset < selected_end && thumb_end > selected_start
-      };
-      if overlaps_selected(thumb_offset) && thumb_height < track_height {
-        let mut moved = false;
-        for candidate in (thumb_offset + 1)..=max_thumb_offset {
-          if !overlaps_selected(candidate) {
-            thumb_offset = candidate;
-            moved = true;
-            break;
-          }
-        }
-        if !moved && thumb_offset > 0 {
-          for candidate in (0..thumb_offset).rev() {
-            if !overlaps_selected(candidate) {
-              thumb_offset = candidate;
-              break;
-            }
-          }
-        }
+  if items.len() > visible_items
+    && let Some(metrics) = compute_scrollbar_metrics(
+      Rect::new(
+        rect.x + rect.width.saturating_sub(1),
+        rect.y,
+        1,
+        visible_items as u16,
+      ),
+      items.len(),
+      visible_items,
+      scroll,
+    )
+  {
+    for row in 0..metrics.track.height {
+      let is_thumb = row >= metrics.thumb_offset
+        && row < metrics.thumb_offset.saturating_add(metrics.thumb_height);
+      if is_thumb {
+        buf.set_string(metrics.track.x, metrics.track.y + row, "█", scroll_style);
       }
-    }
-    for i in 0..track_height {
-      let y = rect.y + i;
-      let is_thumb = i >= thumb_offset && i < thumb_offset + thumb_height;
-      if !is_thumb {
-        continue;
-      }
-      let mut style = Style::default();
-      if let Some(color) = scroll_color {
-        style = style.fg(color);
-      }
-      buf.set_string(track_x, y, "█", style);
     }
   }
 }
 
-fn draw_ui_node(
-  buf: &mut Buffer,
-  rect: Rect,
-  ctx: &Ctx,
-  node: &UiNode,
-  focus: Option<&the_lib::render::UiFocus>,
-  editor_cursor: Option<(u16, u16)>,
-  cursor_out: &mut Option<(u16, u16)>,
-) {
-  if rect.width == 0 || rect.height == 0 {
-    return;
-  }
-  match node {
-    UiNode::Text(text) => draw_ui_text(buf, rect, ctx, text),
-    UiNode::Input(input) => draw_ui_input(buf, rect, ctx, input, focus, cursor_out),
-    UiNode::List(list) => {
-      let badge_color = ctx
-        .ui_theme
-        .try_get("special")
-        .and_then(|s| s.fg)
-        .map(lib_color_to_ratatui);
-      draw_ui_list(buf, rect, list, badge_color, cursor_out);
-    },
-    UiNode::Divider(_) => {
-      let line = "─".repeat(rect.width as usize);
-      let style = Style::default().add_modifier(Modifier::DIM);
-      buf.set_string(rect.x, rect.y, line, style);
-    },
-    UiNode::Spacer(_) => {},
-    UiNode::Container(container) => {
-      let placements = layout_children(container, rect);
-      for (child_rect, child) in placements {
-        draw_ui_node(
-          buf,
-          child_rect,
-          ctx,
-          child,
-          focus,
-          editor_cursor,
-          cursor_out,
-        );
+fn completion_overlay_items(ctx: &Ctx) -> Vec<OverlayListItem> {
+  ctx
+    .completion_menu
+    .items
+    .iter()
+    .map(|item| {
+      OverlayListItem {
+        title:         item.label.clone(),
+        subtitle:      item.detail.clone(),
+        description:   None,
+        badge:         None,
+        leading_icon:  item.kind_icon.clone(),
+        leading_color: item.kind_color.map(lib_color_to_ratatui),
+        emphasis:      false,
       }
-    },
-    UiNode::Panel(panel) => {
-      draw_ui_panel(buf, rect, ctx, panel, focus, editor_cursor, cursor_out);
-    },
-    UiNode::Tooltip(tooltip) => {
-      draw_ui_tooltip(buf, rect, ctx, tooltip);
-    },
-    UiNode::StatusBar(status) => {
-      draw_ui_status_bar(buf, rect, ctx, status);
-    },
+    })
+    .collect()
+}
+
+fn command_palette_overlay_items(ctx: &Ctx, indices: &[usize]) -> Vec<OverlayListItem> {
+  indices
+    .iter()
+    .filter_map(|index| ctx.command_palette.items.get(*index))
+    .map(|item| {
+      OverlayListItem {
+        title:         item.title.clone(),
+        subtitle:      item.subtitle.clone().or_else(|| item.shortcut.clone()),
+        description:   item.description.clone(),
+        badge:         (!item.aliases.is_empty())
+          .then(|| format!("(aliases: {})", item.aliases.join(", "))),
+        leading_icon:  item.leading_icon.clone(),
+        leading_color: item.leading_color.map(lib_color_to_ratatui),
+        emphasis:      item.emphasis,
+      }
+    })
+    .collect()
+}
+
+fn statusline_segment_style(base: Style, emphasis: StatuslineEmphasis) -> Style {
+  match emphasis {
+    StatuslineEmphasis::Normal => base,
+    StatuslineEmphasis::Muted => base.add_modifier(Modifier::DIM),
+    StatuslineEmphasis::Strong => base.add_modifier(Modifier::BOLD),
   }
 }
 
@@ -3900,8 +3362,6 @@ fn draw_file_picker_panel(
   buf: &mut Buffer,
   area: Rect,
   ctx: &Ctx,
-  panel: &UiPanel,
-  focus: Option<&the_lib::render::UiFocus>,
   cursor_out: &mut Option<(u16, u16)>,
 ) {
   let picker = &ctx.file_picker;
@@ -3922,9 +3382,9 @@ fn draw_file_picker_panel(
   let diagnostics_picker = file_picker_is_diagnostics(picker);
   let symbols_picker = file_picker_is_symbols(picker);
   let live_grep_picker = file_picker_is_live_grep(picker);
-  let (text_style, fill_style, border_style) = file_picker_panel_styles(ctx, panel);
+  let styles = file_picker_panel_styles(ctx);
 
-  fill_rect(buf, layout.panel, fill_style);
+  fill_rect(buf, layout.panel, styles.fill);
 
   if layout.panel_inner.width < 3 || layout.panel_inner.height < 3 {
     return;
@@ -3934,11 +3394,10 @@ fn draw_file_picker_panel(
     buf,
     &layout,
     picker,
-    text_style,
-    fill_style,
-    border_style,
+    styles.text,
+    styles.fill,
+    styles.border,
     &ctx.ui_theme,
-    focus,
     cursor_out,
     diagnostics_picker,
     symbols_picker,
@@ -3950,9 +3409,9 @@ fn draw_file_picker_panel(
       buf,
       &layout,
       picker,
-      text_style,
-      fill_style,
-      border_style,
+      styles.text,
+      styles.fill,
+      styles.border,
       &ctx.ui_theme,
       diagnostics_picker,
       symbols_picker,
@@ -3969,7 +3428,6 @@ fn draw_file_picker_list_pane(
   fill_style: Style,
   border_style: Style,
   theme: &the_lib::render::theme::Theme,
-  focus: Option<&the_lib::render::UiFocus>,
   cursor_out: &mut Option<(u16, u16)>,
   diagnostics_picker: bool,
   symbols_picker: bool,
@@ -4014,10 +3472,7 @@ fn draw_file_picker_list_pane(
     buf.set_string(count_x, prompt_area.y, &count, count_style);
   }
 
-  let is_focused = focus
-    .map(|focus| focus.id == "file_picker_input")
-    .unwrap_or(true);
-  if is_focused && cursor_out.is_none() {
+  if cursor_out.is_none() {
     let cursor_col = picker.query[..picker.cursor.min(picker.query.len())]
       .chars()
       .count() as u16;
@@ -4523,57 +3978,174 @@ fn preview_highlight_at(
   active
 }
 
-fn max_content_width_for_intent(
-  intent: LayoutIntent,
-  area: Rect,
-  border: u16,
-  padding_h: u16,
-) -> u16 {
-  let full = area.width.saturating_sub(border * 2 + padding_h).max(1);
-  match intent {
-    LayoutIntent::Floating | LayoutIntent::Custom(_) => {
-      let cap = area.width.saturating_mul(2) / 3;
-      full.min(cap.max(20))
-    },
-    _ => full,
+fn selected_completion_docs_text(ctx: &Ctx) -> Option<&str> {
+  ctx
+    .completion_menu
+    .selected
+    .and_then(|idx| ctx.completion_menu.items.get(idx))
+    .and_then(|item| item.documentation.as_deref())
+    .map(str::trim)
+    .filter(|docs| !docs.is_empty())
+}
+
+fn signature_help_panel_text(ctx: &Ctx) -> Option<String> {
+  signature_help_markdown(&ctx.signature_help)
+}
+
+fn command_palette_prompt_query_and_cursor(ctx: &Ctx) -> (&str, usize) {
+  let raw = ctx.command_prompt.input.as_str();
+  if let Some(stripped) = raw.strip_prefix(':') {
+    (stripped, ctx.command_prompt.cursor.saturating_sub(1))
+  } else {
+    (raw, ctx.command_prompt.cursor)
   }
 }
 
-fn panel_is_completion(panel: &UiPanel) -> bool {
-  panel.id == "completion" || panel.style.role.as_deref() == Some("completion")
+fn term_command_palette_filtered_selection(
+  state: &the_default::CommandPaletteState,
+) -> Option<(Vec<usize>, Option<usize>)> {
+  let filtered = command_palette_filtered_indices(state);
+  if filtered.is_empty() {
+    return None;
+  }
+  let selected = state
+    .selected
+    .and_then(|current| filtered.iter().position(|&idx| idx == current));
+  Some((filtered, selected))
+}
+fn draw_statusline(buf: &mut Buffer, area: Rect, ctx: &mut Ctx) {
+  if area.width == 0 || area.height == 0 {
+    return;
+  }
+  let rect = Rect::new(
+    area.x,
+    area.y + area.height.saturating_sub(1),
+    area.width,
+    1,
+  );
+  let styles = statusline_panel_styles(ctx);
+  fill_rect(buf, rect, styles.fill);
+  let snapshot = build_statusline_snapshot(ctx);
+  let mut left = snapshot.left;
+  if let Some(icon_token) = snapshot.left_icon.as_deref() {
+    let glyph = file_picker_icon_glyph(icon_token, false);
+    left = match left.split_once("  ") {
+      Some((mode, file)) if !file.is_empty() => format!("{mode}  {glyph}  {file}"),
+      _ if left.is_empty() => glyph.to_string(),
+      _ => format!("{glyph} {left}"),
+    };
+  }
+  truncate_in_place(&mut left, rect.width as usize);
+  let mut left_width = left.chars().count() as u16;
+
+  let separator = "  ";
+  let separator_width = separator.chars().count() as u16;
+  let mut total_right = 0u16;
+  for (index, segment) in snapshot.right_segments.iter().enumerate() {
+    total_right = total_right.saturating_add(segment.text.chars().count() as u16);
+    if index > 0 {
+      total_right = total_right.saturating_add(separator_width);
+    }
+  }
+
+  if left_width.saturating_add(total_right) >= rect.width {
+    let available = rect.width.saturating_sub(total_right.saturating_add(1));
+    truncate_in_place(&mut left, available as usize);
+    left_width = left.chars().count() as u16;
+  }
+
+  buf.set_string(rect.x, rect.y, left, styles.text);
+
+  let mut rx = rect.x.saturating_add(rect.width);
+  for (index, segment) in snapshot.right_segments.iter().enumerate().rev() {
+    let segment_style = statusline_segment_style(styles.text, segment.emphasis);
+    let text_width = segment.text.chars().count() as u16;
+    rx = rx.saturating_sub(text_width);
+    if rx >= rect.x.saturating_add(left_width) {
+      buf.set_string(rx, rect.y, segment.text.as_str(), segment_style);
+    }
+    if index > 0 {
+      rx = rx.saturating_sub(separator_width);
+      if rx >= rect.x.saturating_add(left_width) {
+        buf.set_string(rx, rect.y, separator, styles.text);
+      }
+    }
+  }
 }
 
-fn panel_is_completion_docs(panel: &UiPanel) -> bool {
-  matches!(
-    docs_panel_source_from_panel(panel),
-    Some(DocsPanelSource::Completion)
+fn editor_top_chrome_rows(ctx: &Ctx, area: Rect) -> u16 {
+  ctx
+    .buffer_tabs_top_chrome_rows()
+    .min(area.height.saturating_sub(1))
+}
+
+fn editor_bottom_chrome_rows(area: Rect) -> u16 {
+  area.height.min(1)
+}
+
+fn overlay_area(area: Rect, ctx: &Ctx) -> Rect {
+  let top = editor_top_chrome_rows(ctx, area);
+  let bottom = editor_bottom_chrome_rows(area);
+  Rect::new(
+    area.x,
+    area.y.saturating_add(top),
+    area.width,
+    area.height.saturating_sub(top.saturating_add(bottom)),
   )
 }
 
-fn panel_is_hover(panel: &UiPanel) -> bool {
-  matches!(
-    docs_panel_source_from_panel(panel),
-    Some(DocsPanelSource::Hover)
+fn apply_editor_viewport(ctx: &mut Ctx, area: Rect) {
+  let top = editor_top_chrome_rows(ctx, area);
+  let bottom = editor_bottom_chrome_rows(area);
+  let viewport = the_lib::render::graphics::Rect::new(
+    0,
+    top,
+    area.width.max(1),
+    area
+      .height
+      .saturating_sub(top.saturating_add(bottom))
+      .max(1),
+  );
+  if ctx.editor.layout_viewport() != viewport {
+    ctx.editor.set_layout_viewport(viewport);
+  }
+}
+
+fn render_panel_block(
+  buf: &mut Buffer,
+  rect: Rect,
+  title: Option<String>,
+  styles: PanelStyles,
+) -> Rect {
+  let mut block = Block::default()
+    .borders(Borders::ALL)
+    .border_type(BorderType::Rounded)
+    .border_style(styles.border)
+    .style(styles.fill);
+  if let Some(title) = title {
+    block = block.title(Title::from(Span::styled(
+      title,
+      styles.text.add_modifier(Modifier::BOLD),
+    )));
+  }
+  let inner = block.inner(rect);
+  block.render(rect, buf);
+  inner
+}
+
+fn draw_flat_overlay_panel(
+  buf: &mut Buffer,
+  rect: Rect,
+  styles: PanelStyles,
+  padding: u16,
+) -> Rect {
+  fill_rect(buf, rect, styles.fill);
+  Rect::new(
+    rect.x.saturating_add(padding),
+    rect.y.saturating_add(padding),
+    rect.width.saturating_sub(padding.saturating_mul(2)),
+    rect.height.saturating_sub(padding.saturating_mul(2)),
   )
-}
-
-fn panel_is_signature_help(panel: &UiPanel) -> bool {
-  matches!(
-    docs_panel_source_from_panel(panel),
-    Some(DocsPanelSource::Signature)
-  ) || panel.id == "signature_help"
-}
-
-fn panel_is_term_command_palette_list(panel: &UiPanel) -> bool {
-  panel.id == "term_command_palette_list"
-}
-
-fn term_command_palette_panel_rect(area: Rect, panel_width: u16, panel_height: u16) -> Rect {
-  let width = panel_width.min(area.width).max(1);
-  let height = panel_height.min(area.height).max(1);
-  let max_y = area.y.saturating_add(area.height.saturating_sub(height));
-  let y = max_y;
-  Rect::new(area.x, y, width, height)
 }
 
 fn completion_panel_rect(
@@ -4626,1135 +4198,223 @@ fn completion_docs_panel_rect(
   Some(Rect::new(rect.x, rect.y, rect.width, rect.height))
 }
 
-fn panel_box_size(panel: &UiPanel, area: Rect) -> (u16, u16) {
-  let boxed = panel.style.border.is_some();
-  let border: u16 = if boxed { 1 } else { 0 };
-  let padding = panel.constraints.padding;
-  let padding_h = padding.horizontal();
-  let padding_v = padding.vertical();
-  let title_height = panel.title.is_some() as u16;
-
-  let (min_panel_width, min_panel_height) = if panel_is_completion(panel) {
-    (1, 1)
-  } else {
-    (10, 3)
-  };
-
-  let max_content_width =
-    max_content_width_for_intent(panel.intent.clone(), area, border, padding_h);
-  let (child_w, child_h) = measure_node(&panel.child, max_content_width);
-  let panel_width = child_w
-    .saturating_add(border * 2 + padding_h)
-    .min(area.width)
-    .max(min_panel_width);
-  let panel_height = child_h
-    .saturating_add(border * 2 + padding_v + title_height)
-    .min(area.height)
-    .max(min_panel_height);
-
-  apply_constraints(
-    panel_width,
-    panel_height,
-    &panel.constraints,
-    area.width,
-    area.height,
-  )
-}
-
-fn panel_content_rect(rect: Rect, panel: &UiPanel) -> Rect {
-  let mut content = inner_rect(rect);
-  if panel.title.is_some() {
-    content = Rect::new(
-      content.x,
-      content.y.saturating_add(1),
-      content.width,
-      content.height.saturating_sub(1),
-    );
-  }
-  inset_rect(content, panel.constraints.padding)
-}
-
-fn selected_completion_docs_text(ctx: &Ctx) -> Option<&str> {
-  ctx
-    .completion_menu
-    .selected
-    .and_then(|idx| ctx.completion_menu.items.get(idx))
-    .and_then(|item| item.documentation.as_deref())
-    .map(str::trim)
-    .filter(|docs| !docs.is_empty())
-}
-
-fn signature_help_panel_text(ctx: &Ctx) -> Option<String> {
-  signature_help_markdown(&ctx.signature_help)
-}
-
-fn completion_docs_layout_for_panel(
-  ctx: &Ctx,
-  panel: &UiPanel,
-  panel_rect: Rect,
-  docs: &str,
-  source: DocsPanelSource,
-) -> Option<CompletionDocsLayout> {
-  let content = panel_content_rect(panel_rect, panel);
-  if content.width == 0 || content.height == 0 {
-    return None;
-  }
-
-  let base_style = ui_style_colors(&panel.style).0;
-  let styles = completion_docs_styles(ctx, base_style);
-  let metrics = completion_docs_render_metrics(docs, &styles, content);
-  let scrollbar_track = metrics.show_scrollbar.then(|| {
-    Rect::new(
-      content.x + content.width.saturating_sub(1),
-      content.y,
-      1,
-      content.height,
-    )
-  });
-
-  Some(CompletionDocsLayout {
-    panel: panel_rect,
-    content: if scrollbar_track.is_some() {
-      Rect::new(
-        content.x,
-        content.y,
-        content.width.saturating_sub(1),
-        content.height,
-      )
-    } else {
-      content
-    },
-    scrollbar_track,
-    visible_rows: metrics.visible_rows,
-    total_rows: metrics.total_rows,
-    source,
-  })
-}
-
-fn draw_ui_panel(
-  buf: &mut Buffer,
-  area: Rect,
-  ctx: &Ctx,
-  panel: &UiPanel,
-  focus: Option<&the_lib::render::UiFocus>,
-  editor_cursor: Option<(u16, u16)>,
-  cursor_out: &mut Option<(u16, u16)>,
-) {
-  if panel.id == "file_picker" || panel.style.role.as_deref() == Some("file_picker") {
-    draw_file_picker_panel(buf, area, ctx, panel, focus, cursor_out);
-    return;
-  }
-
-  let boxed = panel.style.border.is_some();
-  let border: u16 = if boxed { 1 } else { 0 };
-  let padding_h = panel.constraints.padding.horizontal();
-  let padding_v = panel.constraints.padding.vertical();
-  let max_content_width =
-    max_content_width_for_intent(panel.intent.clone(), area, border, padding_h);
-  let (_, child_h) = measure_node(&panel.child, max_content_width);
-  let (mut panel_width, panel_height) = panel_box_size(panel, area);
-
-  if panel_is_completion(panel)
-    && matches!(
-      panel.intent,
-      LayoutIntent::Custom(_) | LayoutIntent::Floating
-    )
-  {
-    let rect = completion_panel_rect(area, panel_width, panel_height, editor_cursor);
-    draw_panel_in_rect(
-      buf,
-      rect,
-      ctx,
-      panel,
-      BorderEdge::Top,
-      false,
-      focus,
-      cursor_out,
-    );
-    return;
-  }
-
-  match panel.intent.clone() {
-    LayoutIntent::Bottom => {
-      let mut height = if boxed {
-        panel_height.min(area.height).max(4)
-      } else {
-        let divider = flat_panel_divider(panel);
-        let mut height = child_h.saturating_add(padding_v + divider).min(area.height);
-        if panel_is_statusline(panel) {
-          height = height.max(1);
-        } else {
-          height = height.max(3);
-        }
-        height
-      };
-      if panel_is_statusline(panel) {
-        height = height.min(area.height).max(1);
-      } else {
-        height = height.min(area.height).max(2);
-      }
-      let rect = Rect::new(area.x, area.y + area.height - height, area.width, height);
-      draw_panel_in_rect(
-        buf,
-        rect,
-        ctx,
-        panel,
-        BorderEdge::Top,
-        !panel_is_statusline(panel),
-        focus,
-        cursor_out,
-      );
-    },
-    LayoutIntent::Top => {
-      let mut height = if boxed {
-        panel_height.min(area.height).max(4)
-      } else {
-        let divider = flat_panel_divider(panel);
-        let mut height = child_h.saturating_add(padding_v + divider).min(area.height);
-        if panel_is_statusline(panel) {
-          height = height.max(1);
-        } else {
-          height = height.max(3);
-        }
-        height
-      };
-      if panel_is_statusline(panel) {
-        height = height.min(area.height).max(1);
-      } else {
-        height = height.min(area.height).max(2);
-      }
-      let rect = Rect::new(area.x, area.y, area.width, height);
-      draw_panel_in_rect(
-        buf,
-        rect,
-        ctx,
-        panel,
-        BorderEdge::Bottom,
-        !panel_is_statusline(panel),
-        focus,
-        cursor_out,
-      );
-    },
-    LayoutIntent::SidebarLeft => {
-      panel_width = (area.width / 3).max(panel_width.min(area.width));
-      let rect = Rect::new(area.x, area.y, panel_width, area.height);
-      draw_panel_in_rect(
-        buf,
-        rect,
-        ctx,
-        panel,
-        BorderEdge::Top,
-        false,
-        focus,
-        cursor_out,
-      );
-    },
-    LayoutIntent::SidebarRight => {
-      panel_width = (area.width / 3).max(panel_width.min(area.width));
-      let rect = Rect::new(
-        area.x + area.width - panel_width,
-        area.y,
-        panel_width,
-        area.height,
-      );
-      draw_panel_in_rect(
-        buf,
-        rect,
-        ctx,
-        panel,
-        BorderEdge::Top,
-        false,
-        focus,
-        cursor_out,
-      );
-    },
-    LayoutIntent::Fullscreen => {
-      let rect = area;
-      draw_panel_in_rect(
-        buf,
-        rect,
-        ctx,
-        panel,
-        BorderEdge::Top,
-        false,
-        focus,
-        cursor_out,
-      );
-    },
-    LayoutIntent::Custom(_) | LayoutIntent::Floating => {
-      let (x, width) = align_horizontal(area, panel_width, panel.constraints.align.horizontal);
-      let (y, height) = align_vertical(area, panel_height, panel.constraints.align.vertical);
-      let rect = Rect::new(x, y, width, height);
-      draw_panel_in_rect(
-        buf,
-        rect,
-        ctx,
-        panel,
-        BorderEdge::Top,
-        false,
-        focus,
-        cursor_out,
-      );
-    },
-  }
-}
-
-fn draw_box_with_title(
-  buf: &mut Buffer,
-  rect: Rect,
-  ctx: &Ctx,
-  panel: &UiPanel,
-  focus: Option<&the_lib::render::UiFocus>,
-  cursor_out: &mut Option<(u16, u16)>,
-) {
-  let (text_style, fill_style, border_style) = ui_style_colors(&panel.style);
-  draw_box(buf, rect, border_style, fill_style);
-
-  let mut content = inner_rect(rect);
-  if let Some(title) = panel.title.as_ref() {
-    let mut truncated = title.clone();
-    truncate_in_place(&mut truncated, content.width as usize);
-    buf.set_string(content.x, content.y, truncated, text_style);
-    content = Rect::new(
-      content.x,
-      content.y + 1,
-      content.width,
-      content.height.saturating_sub(1),
-    );
-  }
-
-  let content = inset_rect(content, panel.constraints.padding);
-  draw_ui_node(buf, content, ctx, &panel.child, focus, None, cursor_out);
-}
-
-#[derive(Clone, Copy)]
-enum BorderEdge {
-  Top,
-  Bottom,
-}
-
-fn panel_is_statusline(panel: &UiPanel) -> bool {
-  panel.id == "statusline" || panel.style.role.as_deref() == Some("statusline")
-}
-
-fn flat_panel_divider(panel: &UiPanel) -> u16 {
-  if panel_is_statusline(panel) {
-    return 0;
-  }
-  match panel.intent {
-    LayoutIntent::Top | LayoutIntent::Bottom => 1,
-    _ => 0,
-  }
-}
-
-fn draw_flat_panel(
-  buf: &mut Buffer,
-  rect: Rect,
-  _ctx: &Ctx,
-  panel: &UiPanel,
-  edge: BorderEdge,
-  draw_divider: bool,
-) -> Rect {
-  let (_, fill_style, border_style) = ui_style_colors(&panel.style);
-  fill_rect(buf, rect, fill_style);
-
-  let content = if draw_divider {
-    let line = "─".repeat(rect.width as usize);
-    let border_y = match edge {
-      BorderEdge::Top => rect.y,
-      BorderEdge::Bottom => rect.y + rect.height.saturating_sub(1),
-    };
-    buf.set_string(rect.x, border_y, &line, border_style);
-    match edge {
-      BorderEdge::Top => {
-        Rect::new(
-          rect.x,
-          rect.y + 1,
-          rect.width,
-          rect.height.saturating_sub(1),
-        )
-      },
-      BorderEdge::Bottom => Rect::new(rect.x, rect.y, rect.width, rect.height.saturating_sub(1)),
-    }
-  } else {
-    rect
-  };
-  inset_rect(content, panel.constraints.padding)
-}
-
-fn node_layer(node: &UiNode) -> UiLayer {
-  match node {
-    UiNode::Panel(panel) => panel.layer,
-    UiNode::Tooltip(_) => UiLayer::Tooltip,
-    _ => UiLayer::Overlay,
-  }
-}
-
-fn editor_top_chrome_rows(_ctx: &Ctx, _area: Rect) -> u16 {
-  _ctx
-    .buffer_tabs_top_chrome_rows()
-    .min(_area.height.saturating_sub(1))
-}
-
-fn apply_ui_viewport(ctx: &mut Ctx, ui: &UiTree, area: Rect) {
-  let reserved_top = editor_top_chrome_rows(ctx, area).min(area.height.saturating_sub(1));
-  let mut reserved_bottom: u16 = 0;
-  for node in &ui.overlays {
-    let UiNode::Panel(panel) = node else {
-      continue;
-    };
-    if panel.intent != LayoutIntent::Bottom || panel.layer == UiLayer::Tooltip {
-      continue;
-    }
-    let available = area
-      .height
-      .saturating_sub(reserved_top)
-      .saturating_sub(reserved_bottom);
-    if available == 0 {
-      break;
-    }
-    let rect_area = Rect::new(
-      area.x,
-      area.y.saturating_add(reserved_top),
-      area.width,
-      available,
-    );
-    let height = panel_height_for_area(panel, rect_area);
-    reserved_bottom = reserved_bottom.saturating_add(height);
-  }
-
-  let height = area
-    .height
-    .saturating_sub(reserved_top)
-    .saturating_sub(reserved_bottom)
-    .max(1);
-  let width = area.width.max(1);
-  let layout_viewport = the_lib::render::graphics::Rect::new(0, reserved_top, width, height);
-  if ctx.editor.layout_viewport() != layout_viewport {
-    ctx.editor.set_layout_viewport(layout_viewport);
-  }
-}
-
-fn draw_ui_tooltip(buf: &mut Buffer, area: Rect, _ctx: &Ctx, tooltip: &UiTooltip) {
-  if area.width == 0 || area.height == 0 {
-    return;
-  }
-  let (text_style, fill_style, border_style) = ui_style_colors(&tooltip.style);
-  let mut text = tooltip.content.clone();
-  let max_width = area.width.saturating_sub(2).max(1) as usize;
-  truncate_in_place(&mut text, max_width);
-  let width = (text.chars().count() as u16)
-    .saturating_add(2)
-    .min(area.width)
-    .max(2);
-  let height = 3u16.min(area.height).max(1);
-
-  let rect = match tooltip.placement.clone() {
-    LayoutIntent::Bottom => Rect::new(area.x, area.y + area.height - height, width, height),
-    LayoutIntent::Top => Rect::new(area.x, area.y, width, height),
-    LayoutIntent::SidebarLeft => Rect::new(area.x, area.y, width, height),
-    LayoutIntent::SidebarRight => Rect::new(area.x + area.width - width, area.y, width, height),
-    LayoutIntent::Fullscreen => Rect::new(area.x, area.y, width, height),
-    LayoutIntent::Custom(_) | LayoutIntent::Floating => {
-      Rect::new(
-        area.x + (area.width.saturating_sub(width)) / 2,
-        area.y + (area.height.saturating_sub(height)) / 2,
-        width,
-        height,
-      )
-    },
-  };
-
-  draw_box(buf, rect, border_style, fill_style);
-  let inner = inner_rect(rect);
-  buf.set_string(inner.x, inner.y, text, text_style);
-}
-
-fn draw_ui_status_bar(buf: &mut Buffer, rect: Rect, _ctx: &Ctx, status: &UiStatusBar) {
-  if rect.width == 0 || rect.height == 0 {
-    return;
-  }
-  let (text_style, fill_style, _) = ui_style_colors(&status.style);
-  fill_rect(buf, Rect::new(rect.x, rect.y, rect.width, 1), fill_style);
-
-  let mut left = status.left.clone();
-  if let Some(icon_token) = status.left_icon.as_deref() {
-    let glyph = file_picker_icon_glyph(icon_token, false);
-    left = match left.split_once("  ") {
-      Some((mode, file)) if !file.is_empty() => format!("{mode}  {glyph}  {file}"),
-      _ if left.is_empty() => glyph.to_string(),
-      _ => format!("{glyph} {left}"),
-    };
-  }
-  truncate_in_place(&mut left, rect.width as usize);
-  let left_width = left.chars().count() as u16;
-
-  if !status.right_segments.is_empty() {
-    // Styled segments path: render each segment with its own style.
-    let separator = "  ";
-    let sep_len = separator.chars().count() as u16;
-
-    // Compute total right width.
-    let mut total_right: u16 = 0;
-    for (i, seg) in status.right_segments.iter().enumerate() {
-      total_right = total_right.saturating_add(seg.text.chars().count() as u16);
-      if i > 0 {
-        total_right = total_right.saturating_add(sep_len);
-      }
-    }
-
-    // Collision: if left + right >= width, cap left.
-    let left_width = if left_width.saturating_add(total_right) >= rect.width {
-      let available = rect.width.saturating_sub(total_right.saturating_add(1));
-      truncate_in_place(&mut left, available as usize);
-      left.chars().count() as u16
-    } else {
-      left_width
-    };
-
-    buf.set_string(rect.x, rect.y, &left, text_style);
-
-    // Render segments right-to-left.
-    let mut rx = rect.x.saturating_add(rect.width);
-    for (i, seg) in status.right_segments.iter().enumerate().rev() {
-      let seg_style = styled_span_style(seg, text_style);
-      let text_w = seg.text.chars().count() as u16;
-      rx = rx.saturating_sub(text_w);
-      if rx >= rect.x.saturating_add(left_width) {
-        buf.set_string(rx, rect.y, &seg.text, seg_style);
-      }
-      if i > 0 {
-        rx = rx.saturating_sub(sep_len);
-        if rx >= rect.x.saturating_add(left_width) {
-          buf.set_string(rx, rect.y, separator, text_style);
-        }
-      }
-    }
-  } else {
-    // Fallback: plain text path (backward compat).
-    let mut center = status.center.clone();
-    let mut right = status.right.clone();
-    truncate_in_place(&mut right, rect.width as usize);
-    truncate_in_place(&mut center, rect.width as usize);
-
-    let mut left_width = left_width;
-    let mut right_width = right.chars().count() as u16;
-    if left_width.saturating_add(right_width) >= rect.width {
-      let available_right = rect.width.saturating_sub(left_width.saturating_add(1));
-      truncate_in_place(&mut right, available_right as usize);
-      right_width = right.chars().count() as u16;
-    }
-    if left_width.saturating_add(right_width) >= rect.width {
-      let available_left = rect.width.saturating_sub(right_width.saturating_add(1));
-      truncate_in_place(&mut left, available_left as usize);
-      left_width = left.chars().count() as u16;
-    }
-
-    buf.set_string(rect.x, rect.y, &left, text_style);
-    if !right.is_empty() {
-      let rx = rect.x + rect.width.saturating_sub(right_width);
-      buf.set_string(rx, rect.y, right, text_style);
-    }
-    if !center.is_empty() {
-      let center_start = rect.x + left_width.saturating_add(1);
-      let center_end = rect
-        .x
-        .saturating_add(rect.width)
-        .saturating_sub(right_width.saturating_add(1));
-      if center_end > center_start {
-        let center_width = center_end.saturating_sub(center_start);
-        truncate_in_place(&mut center, center_width as usize);
-        let center_text_width = center.chars().count() as u16;
-        let cx = center_start + center_width.saturating_sub(center_text_width) / 2;
-        buf.set_string(cx, rect.y, center, text_style);
-      }
-    }
-  }
-}
-
-fn styled_span_style(span: &UiStyledSpan, base: Style) -> Style {
-  match &span.style {
-    None => base,
-    Some(s) => {
-      let mut style = base;
-      if let Some(ref fg) = s.fg {
-        if let Some(color) = resolve_ui_color(fg) {
-          style = style.fg(color);
-        }
-      }
-      apply_ui_emphasis(style, s.emphasis)
-    },
-  }
-}
-
-fn panel_height_for_area(panel: &UiPanel, area: Rect) -> u16 {
-  let boxed = panel.style.border.is_some();
-  if boxed {
-    let border: u16 = 1;
-    let padding = panel.constraints.padding;
-    let padding_h = padding.horizontal();
-    let padding_v = padding.vertical();
-    let title_height = panel.title.is_some() as u16;
-    let max_content_width =
-      max_content_width_for_intent(panel.intent.clone(), area, border, padding_h);
-    let (_, child_h) = measure_node(&panel.child, max_content_width);
-    child_h
-      .saturating_add(border * 2 + padding_v + title_height)
-      .min(area.height)
-      .max(4)
-  } else {
-    let padding_v = panel.constraints.padding.vertical();
-    let max_content_width = max_content_width_for_intent(panel.intent.clone(), area, 0, 0);
-    let (_, child_h) = measure_node(&panel.child, max_content_width);
-    let divider = flat_panel_divider(panel);
-    let height = child_h.saturating_add(divider + padding_v).min(area.height);
-    if panel_is_statusline(panel) {
-      height.max(1)
-    } else {
-      height.max(2)
-    }
-  }
-}
-
-fn draw_panel_in_rect(
-  buf: &mut Buffer,
-  rect: Rect,
-  ctx: &Ctx,
-  panel: &UiPanel,
-  edge: BorderEdge,
-  draw_divider: bool,
-  focus: Option<&the_lib::render::UiFocus>,
-  cursor_out: &mut Option<(u16, u16)>,
-) {
-  if rect.width == 0 || rect.height == 0 {
-    return;
-  }
-  if panel.style.border.is_some() {
-    draw_box_with_title(buf, rect, ctx, panel, focus, cursor_out);
-  } else {
-    let content = draw_flat_panel(buf, rect, ctx, panel, edge, draw_divider);
-    draw_ui_node(buf, content, ctx, &panel.child, focus, None, cursor_out);
-  }
-}
-
-fn draw_ui_overlays(
+fn draw_completion_overlay(
   buf: &mut Buffer,
   area: Rect,
   ctx: &mut Ctx,
-  ui: &UiTree,
   editor_cursor: Option<(u16, u16)>,
-  cursor_out: &mut Option<(u16, u16)>,
 ) {
-  ctx.completion_docs_layout = None;
-  let mut top_offset: u16 = 0;
-  let mut bottom_offset: u16 = 0;
-  let focus = ui.focus.as_ref();
-  let layers = [
-    the_lib::render::UiLayer::Background,
-    the_lib::render::UiLayer::Overlay,
-    the_lib::render::UiLayer::Tooltip,
-  ];
-  for layer in layers {
-    let layer_nodes: Vec<&UiNode> = ui
-      .overlays
-      .iter()
-      .filter(|node| node_layer(node) == layer)
-      .collect();
-    let mut index = 0usize;
-    while index < layer_nodes.len() {
-      let node = layer_nodes[index];
-      match node {
-        UiNode::Panel(panel) => {
-          let completion_docs_pair = layer_nodes.get(index + 1).and_then(|next| {
-            match *next {
-              UiNode::Panel(next_panel) if panel_is_completion_docs(next_panel) => Some(next_panel),
-              _ => None,
-            }
-          });
-          if panel_is_term_command_palette_list(panel) {
-            let available_height = area.height.saturating_sub(top_offset + bottom_offset);
-            if available_height > 0 {
-              let overlay_area =
-                Rect::new(area.x, area.y + top_offset, area.width, available_height);
-              let (_, list_height) = panel_box_size(panel, overlay_area);
-              let list_rect =
-                term_command_palette_panel_rect(overlay_area, overlay_area.width, list_height);
-              draw_panel_in_rect(
-                buf,
-                list_rect,
-                ctx,
-                panel,
-                BorderEdge::Top,
-                false,
-                focus,
-                cursor_out,
-              );
-            }
-            index += 1;
-            continue;
-          }
-          if panel_is_completion(panel)
-            && matches!(
-              panel.intent,
-              LayoutIntent::Custom(_) | LayoutIntent::Floating
-            )
-            && completion_docs_pair.is_some()
-          {
-            let available_height = area.height.saturating_sub(top_offset + bottom_offset);
-            if available_height > 0 {
-              let overlay_area =
-                Rect::new(area.x, area.y + top_offset, area.width, available_height);
-              let (completion_width, completion_height) = panel_box_size(panel, overlay_area);
-              let completion_rect = completion_panel_rect(
-                overlay_area,
-                completion_width,
-                completion_height,
-                editor_cursor,
-              );
-              draw_panel_in_rect(
-                buf,
-                completion_rect,
-                ctx,
-                panel,
-                BorderEdge::Top,
-                false,
-                focus,
-                cursor_out,
-              );
+  if !ctx.completion_menu.active || ctx.file_picker.active || ctx.command_palette.is_open {
+    return;
+  }
+  let overlay = overlay_area(area, ctx);
+  if overlay.width < 8 || overlay.height < 3 {
+    return;
+  }
+  let items = &ctx.completion_menu.items;
+  if items.is_empty() {
+    return;
+  }
+  let overlay_items = completion_overlay_items(ctx);
 
-              if let Some(docs_panel) = completion_docs_pair {
-                let (docs_width, docs_height) = panel_box_size(docs_panel, overlay_area);
-                let docs_rect = completion_docs_panel_rect(
-                  overlay_area,
-                  docs_width,
-                  docs_height,
-                  completion_rect,
-                );
-                if let Some(docs_rect) = docs_rect {
-                  draw_panel_in_rect(
-                    buf,
-                    docs_rect,
-                    ctx,
-                    docs_panel,
-                    BorderEdge::Top,
-                    false,
-                    focus,
-                    cursor_out,
-                  );
-                  if let (Some(docs), Some(source)) = (
-                    selected_completion_docs_text(ctx),
-                    docs_panel_source_from_panel(docs_panel),
-                  ) {
-                    ctx.completion_docs_layout =
-                      completion_docs_layout_for_panel(ctx, docs_panel, docs_rect, docs, source);
-                  }
-                }
-              }
-            }
-            index += 2;
-            continue;
-          }
-          if panel_is_hover(panel)
-            && matches!(
-              panel.intent,
-              LayoutIntent::Custom(_) | LayoutIntent::Floating
-            )
-          {
-            let available_height = area.height.saturating_sub(top_offset + bottom_offset);
-            if available_height > 0 {
-              let overlay_area =
-                Rect::new(area.x, area.y + top_offset, area.width, available_height);
-              let (hover_width, hover_height) = panel_box_size(panel, overlay_area);
-              let hover_rect =
-                completion_panel_rect(overlay_area, hover_width, hover_height, editor_cursor);
-              draw_panel_in_rect(
-                buf,
-                hover_rect,
-                ctx,
-                panel,
-                BorderEdge::Top,
-                false,
-                focus,
-                cursor_out,
-              );
-              if let (Some(docs), Some(source)) = (
-                ctx
-                  .hover_docs
-                  .as_deref()
-                  .map(str::trim)
-                  .filter(|text| !text.is_empty()),
-                docs_panel_source_from_panel(panel),
-              ) {
-                ctx.completion_docs_layout =
-                  completion_docs_layout_for_panel(ctx, panel, hover_rect, docs, source);
-              }
-            }
-            index += 1;
-            continue;
-          }
-          if panel_is_signature_help(panel)
-            && matches!(
-              panel.intent,
-              LayoutIntent::Custom(_) | LayoutIntent::Floating
-            )
-          {
-            let available_height = area.height.saturating_sub(top_offset + bottom_offset);
-            if available_height > 0 {
-              let overlay_area =
-                Rect::new(area.x, area.y + top_offset, area.width, available_height);
-              let (popup_width, popup_height) = panel_box_size(panel, overlay_area);
-              let popup_rect =
-                signature_help_panel_rect(overlay_area, popup_width, popup_height, editor_cursor);
-              draw_panel_in_rect(
-                buf,
-                popup_rect,
-                ctx,
-                panel,
-                BorderEdge::Top,
-                false,
-                focus,
-                cursor_out,
-              );
-              if let (Some(text), Some(source)) = (
-                signature_help_panel_text(ctx),
-                docs_panel_source_from_panel(panel),
-              ) {
-                ctx.completion_docs_layout =
-                  completion_docs_layout_for_panel(ctx, panel, popup_rect, &text, source);
-              }
-            }
-            index += 1;
-            continue;
-          }
+  let visible = items.len().min(10);
+  let panel_height = visible as u16;
+  let panel_width = overlay
+    .width
+    .saturating_mul(2)
+    .saturating_div(3)
+    .min(64)
+    .max(1);
+  let panel_rect = completion_panel_rect(overlay, panel_width, panel_height, editor_cursor);
+  let panel_styles = overlay_panel_styles(ctx, "ui.menu");
+  let inner = draw_flat_overlay_panel(buf, panel_rect, panel_styles, 0);
+  let (text_style, fill_style, selected_style) = completion_list_styles(ctx);
+  draw_completion_style_list(
+    buf,
+    inner,
+    overlay_items.as_slice(),
+    ctx.completion_menu.selected,
+    ctx.completion_menu.scroll,
+    Some(10),
+    text_style,
+    fill_style,
+    selected_style,
+    panel_styles.border,
+  );
 
-          match panel.intent.clone() {
-            LayoutIntent::Bottom => {
-              if matches!(layer, the_lib::render::UiLayer::Tooltip) {
-                draw_ui_panel(buf, area, ctx, panel, focus, editor_cursor, cursor_out);
-                index += 1;
-                continue;
-              }
-              let available_height = area.height.saturating_sub(top_offset + bottom_offset);
-              if available_height == 0 {
-                index += 1;
-                continue;
-              }
-              let rect_area = Rect::new(area.x, area.y + top_offset, area.width, available_height);
-              let panel_height = panel_height_for_area(panel, rect_area);
-              let rect = Rect::new(
-                area.x,
-                area.y + area.height - bottom_offset - panel_height,
-                area.width,
-                panel_height,
-              );
-              bottom_offset = bottom_offset.saturating_add(panel_height);
-              draw_panel_in_rect(
-                buf,
-                rect,
-                ctx,
-                panel,
-                BorderEdge::Top,
-                !panel_is_statusline(panel),
-                focus,
-                cursor_out,
-              );
-            },
-            LayoutIntent::Top => {
-              if matches!(layer, the_lib::render::UiLayer::Tooltip) {
-                draw_ui_panel(buf, area, ctx, panel, focus, editor_cursor, cursor_out);
-                index += 1;
-                continue;
-              }
-              let available_height = area.height.saturating_sub(top_offset + bottom_offset);
-              if available_height == 0 {
-                index += 1;
-                continue;
-              }
-              let rect_area = Rect::new(area.x, area.y + top_offset, area.width, available_height);
-              let panel_height = panel_height_for_area(panel, rect_area);
-              let rect = Rect::new(area.x, area.y + top_offset, area.width, panel_height);
-              top_offset = top_offset.saturating_add(panel_height);
-              draw_panel_in_rect(
-                buf,
-                rect,
-                ctx,
-                panel,
-                BorderEdge::Bottom,
-                !panel_is_statusline(panel),
-                focus,
-                cursor_out,
-              );
-            },
-            _ => {
-              let available_height = area.height.saturating_sub(top_offset + bottom_offset);
-              if available_height == 0 {
-                continue;
-              }
-              let overlay_area =
-                Rect::new(area.x, area.y + top_offset, area.width, available_height);
-              draw_ui_panel(
-                buf,
-                overlay_area,
-                ctx,
-                panel,
-                focus,
-                editor_cursor,
-                cursor_out,
-              )
-            },
-          }
-        },
-        _ => draw_ui_node(buf, area, ctx, node, focus, editor_cursor, cursor_out),
-      }
-      index += 1;
+  if let Some(docs) = selected_completion_docs_text(ctx) {
+    let docs_width = overlay
+      .width
+      .saturating_mul(2)
+      .saturating_div(3)
+      .min(84)
+      .max(28);
+    if let Some(docs_rect) =
+      completion_docs_panel_rect(overlay, docs_width, panel_rect.height, panel_rect)
+    {
+      let docs_styles = docs_panel_styles(ctx);
+      let docs_inner = draw_flat_overlay_panel(buf, docs_rect, docs_styles, 1);
+      ctx.completion_docs_layout = draw_markdown_docs(
+        buf,
+        docs_inner,
+        ctx,
+        docs,
+        DocsPanelSource::Completion,
+        docs_styles.text,
+        docs_styles.border,
+      );
     }
   }
-  if ctx.completion_docs_layout.is_none() {
-    ctx.completion_docs_drag = None;
-  }
 }
 
-fn is_search_prompt_overlay(node: &UiNode) -> bool {
-  matches!(node, UiNode::Panel(panel) if panel.id.starts_with("search_prompt"))
-}
-
-fn is_command_palette_overlay(node: &UiNode) -> bool {
-  matches!(node, UiNode::Panel(panel) if panel.id.starts_with("command_palette"))
-}
-
-fn is_hover_overlay(node: &UiNode) -> bool {
-  matches!(
-    node,
-    UiNode::Panel(panel) if matches!(docs_panel_source_from_panel(panel), Some(DocsPanelSource::Hover))
-  )
-}
-
-fn status_bar_from_overlay_mut(node: &mut UiNode) -> Option<&mut UiStatusBar> {
-  match node {
-    UiNode::Panel(panel) if panel.id == "statusline" => {
-      if let UiNode::StatusBar(status) = panel.child.as_mut() {
-        Some(status)
-      } else {
-        None
-      }
-    },
-    UiNode::StatusBar(status) if status.id.as_deref() == Some("statusline") => Some(status),
-    _ => None,
+fn draw_signature_help_overlay(
+  buf: &mut Buffer,
+  area: Rect,
+  ctx: &mut Ctx,
+  editor_cursor: Option<(u16, u16)>,
+) {
+  if !ctx.signature_help.active
+    || ctx.file_picker.active
+    || ctx.command_palette.is_open
+    || ctx.completion_menu.active
+  {
+    return;
   }
-}
-
-fn command_palette_prompt_query_and_cursor(ctx: &Ctx) -> (&str, usize) {
-  let raw = ctx.command_prompt.input.as_str();
-  if let Some(stripped) = raw.strip_prefix(':') {
-    (stripped, ctx.command_prompt.cursor.saturating_sub(1))
-  } else {
-    (raw, ctx.command_prompt.cursor)
-  }
-}
-
-fn command_palette_statusline_text(query: &str, cursor: usize) -> String {
-  let mut cursor = cursor.min(query.len());
-  while cursor > 0 && !query.is_char_boundary(cursor) {
-    cursor -= 1;
-  }
-  if !query.is_char_boundary(cursor) {
-    cursor = 0;
-  }
-  let (before, after) = query.split_at(cursor);
-  format!("CMD {before}█{after}")
-}
-
-fn term_command_palette_filtered_selection(
-  state: &the_default::CommandPaletteState,
-) -> Option<(Vec<usize>, Option<usize>)> {
-  let filtered = command_palette_filtered_indices(state);
-  if filtered.is_empty() {
-    return None;
-  }
-  let selected = state
-    .selected
-    .and_then(|current| filtered.iter().position(|&idx| idx == current));
-  Some((filtered, selected))
-}
-
-fn search_statusline_text(
-  kind: the_default::SearchPromptKind,
-  query: &str,
-  cursor: usize,
-) -> String {
-  let mut cursor = cursor.min(query.len());
-  while cursor > 0 && !query.is_char_boundary(cursor) {
-    cursor -= 1;
-  }
-  if !query.is_char_boundary(cursor) {
-    cursor = 0;
-  }
-  let (before, after) = query.split_at(cursor);
-  let prefix = match kind {
-    the_default::SearchPromptKind::Search => "FIND",
-    the_default::SearchPromptKind::SelectRegex => "SELECT",
-    the_default::SearchPromptKind::SplitSelection => "SPLIT",
-    the_default::SearchPromptKind::KeepSelections => "KEEP",
-    the_default::SearchPromptKind::RemoveSelections => "REMOVE",
-    the_default::SearchPromptKind::RenameSymbol => "RENAME",
-    the_default::SearchPromptKind::ShellPipe => "PIPE",
-    the_default::SearchPromptKind::ShellPipeTo => "PIPE-TO",
-    the_default::SearchPromptKind::ShellInsertOutput => "INSERT-OUTPUT",
-    the_default::SearchPromptKind::ShellAppendOutput => "APPEND-OUTPUT",
-    the_default::SearchPromptKind::ShellKeepPipe => "KEEP-PIPE",
+  let Some(text) = signature_help_panel_text(ctx) else {
+    return;
   };
-  format!("{prefix} {before}█{after}")
+  let overlay = overlay_area(area, ctx);
+  let panel_styles = docs_panel_styles(ctx);
+  let rect = signature_help_panel_rect(
+    overlay,
+    overlay
+      .width
+      .saturating_mul(2)
+      .saturating_div(3)
+      .min(72)
+      .max(12),
+    16,
+    editor_cursor,
+  );
+  let inner = draw_flat_overlay_panel(buf, rect, panel_styles, 1);
+  ctx.completion_docs_layout = draw_markdown_docs(
+    buf,
+    inner,
+    ctx,
+    text.as_str(),
+    DocsPanelSource::Signature,
+    panel_styles.text,
+    panel_styles.border,
+  );
 }
 
-fn build_term_command_palette_list_overlay(ctx: &Ctx) -> Option<UiNode> {
-  let state = &ctx.command_palette;
-  if !state.is_open {
-    return None;
+fn draw_hover_overlay(
+  buf: &mut Buffer,
+  area: Rect,
+  ctx: &mut Ctx,
+  editor_cursor: Option<(u16, u16)>,
+) {
+  if ctx.file_picker.active
+    || ctx.command_palette.is_open
+    || ctx.search_prompt.active
+    || ctx.completion_menu.active
+  {
+    return;
   }
+  let Some(docs) = ctx
+    .hover_docs
+    .as_deref()
+    .map(str::trim)
+    .filter(|docs| !docs.is_empty())
+  else {
+    return;
+  };
+  let overlay = overlay_area(area, ctx);
+  let panel_styles = docs_panel_styles(ctx);
+  let rect = completion_panel_rect(
+    overlay,
+    overlay
+      .width
+      .saturating_mul(2)
+      .saturating_div(3)
+      .min(84)
+      .max(28),
+    18,
+    editor_cursor,
+  );
+  let inner = draw_flat_overlay_panel(buf, rect, panel_styles, 1);
+  ctx.completion_docs_layout = draw_markdown_docs(
+    buf,
+    inner,
+    ctx,
+    docs,
+    DocsPanelSource::Hover,
+    panel_styles.text,
+    panel_styles.border,
+  );
+}
 
+fn draw_command_palette_overlay(buf: &mut Buffer, area: Rect, ctx: &mut Ctx) {
+  if !ctx.command_palette.is_open {
+    return;
+  }
+  let overlay = overlay_area(area, ctx);
+  let state = &ctx.command_palette;
   let mut filtered_state = state.clone();
   if !state.prefiltered {
     let (query, _) = command_palette_prompt_query_and_cursor(ctx);
     filtered_state.query = query.to_string();
   }
-  let (filtered, selected) = term_command_palette_filtered_selection(&filtered_state)?;
-  const MAX_VISIBLE_ITEMS: usize = 10;
-  let items: Vec<UiListItem> = filtered
-    .iter()
-    .filter_map(|index| state.items.get(*index))
-    .map(|item| {
-      let aliases_text = if !item.aliases.is_empty() {
-        Some(format!("(aliases: {})", item.aliases.join(", ")))
-      } else {
-        None
-      };
-      UiListItem {
-        title:         item.title.clone(),
-        subtitle:      item.subtitle.clone().or_else(|| item.shortcut.clone()),
-        description:   item.description.clone(),
-        shortcut:      None,
-        badge:         aliases_text,
-        leading_icon:  item.leading_icon.clone(),
-        leading_color: item.leading_color.map(UiColor::Value),
-        symbols:       item.symbols.clone(),
-        match_indices: None,
-        emphasis:      item.emphasis,
-        action:        None,
-      }
-    })
-    .collect();
-  if items.is_empty() {
-    return None;
-  }
-
-  let mut list = UiList::new("command_palette_list", items);
-  list.fill_width = true;
-  list.selected = selected;
-  list.scroll = state.scroll_offset;
-  list.max_visible = Some(MAX_VISIBLE_ITEMS);
-  list.style = list.style.with_role("completion");
-  list.style.accent = Some(UiColor::Token(UiColorToken::SelectedBg));
-  list.style.border = Some(UiColor::Token(UiColorToken::SelectedText));
-
-  let mut container = UiContainer::column("term_command_palette_container", 0, vec![UiNode::List(
-    list,
-  )]);
-  container.style = container.style.with_role("completion");
-
-  let mut panel = UiPanel::new(
-    "term_command_palette_list",
-    LayoutIntent::Custom("term_command_palette_list".to_string()),
-    UiNode::Container(container),
-  );
-  panel.style = panel.style.with_role("completion");
-  panel.style.border = None;
-  panel.layer = UiLayer::Overlay;
-  panel.constraints = UiConstraints {
-    min_width: None,
-    max_width: None,
-    min_height: Some(1),
-    max_height: Some((MAX_VISIBLE_ITEMS as u16).saturating_add(4)),
-    padding: UiInsets {
-      left:   0,
-      right:  0,
-      top:    0,
-      bottom: 0,
-    },
-    align: UiAlignPair {
-      horizontal: UiAlign::Start,
-      vertical:   UiAlign::End,
-    },
-    ..UiConstraints::default()
+  let Some((filtered, selected)) = term_command_palette_filtered_selection(&filtered_state) else {
+    return;
   };
-
-  Some(UiNode::Panel(panel))
-}
-
-fn build_lsp_hover_overlay(ctx: &Ctx) -> Option<UiNode> {
-  let docs = ctx
-    .hover_docs
-    .as_deref()
-    .map(str::trim)
-    .filter(|text| !text.is_empty())?;
-  let config = DocsPanelConfig::hover_docs(
-    "lsp_hover",
-    "lsp_hover_text",
-    LayoutIntent::Custom("lsp_hover".to_string()),
+  let overlay_items = command_palette_overlay_items(ctx, filtered.as_slice());
+  let visible = filtered.len().min(10);
+  let height = visible as u16;
+  let rect = Rect::new(
+    overlay.x,
+    overlay.y + overlay.height.saturating_sub(height),
+    overlay.width,
+    height,
   );
-  Some(build_docs_panel(config, docs.to_string()))
+  let styles = overlay_panel_styles(ctx, "ui.menu");
+  let inner = draw_flat_overlay_panel(buf, rect, styles, 0);
+  let (text_style, fill_style, selected_style) = completion_list_styles(ctx);
+  draw_completion_style_list(
+    buf,
+    inner,
+    overlay_items.as_slice(),
+    selected,
+    filtered_state.scroll_offset,
+    Some(10),
+    text_style,
+    fill_style,
+    selected_style,
+    styles.border,
+  );
 }
 
-fn adapt_ui_tree_for_term(ctx: &Ctx, ui: &mut UiTree) {
-  ui.overlays.retain(|node| !is_hover_overlay(node));
-  if ctx.command_palette.is_open {
-    ui.overlays.retain(|node| !is_command_palette_overlay(node));
-    let (query, cursor) = command_palette_prompt_query_and_cursor(ctx);
-    if let Some(status) = ui.overlays.iter_mut().find_map(status_bar_from_overlay_mut) {
-      status.left = command_palette_statusline_text(query, cursor);
-      status.left_icon = None;
-    }
-    if let Some(list_overlay) = build_term_command_palette_list_overlay(ctx) {
-      ui.overlays.push(list_overlay);
-    }
-    return;
+fn draw_overlays(
+  buf: &mut Buffer,
+  area: Rect,
+  ctx: &mut Ctx,
+  editor_cursor: Option<(u16, u16)>,
+  cursor_out: &mut Option<(u16, u16)>,
+) {
+  ctx.completion_docs_layout = None;
+  draw_command_palette_overlay(buf, area, ctx);
+  draw_completion_overlay(buf, area, ctx, editor_cursor);
+  if ctx.completion_docs_layout.is_none() {
+    draw_signature_help_overlay(buf, area, ctx, editor_cursor);
   }
-
-  // The file picker is modal; keep hover/tooltip overlays out so they cannot
-  // bleed into picker content.
+  if ctx.completion_docs_layout.is_none() {
+    draw_hover_overlay(buf, area, ctx, editor_cursor);
+  }
   if ctx.file_picker.active {
-    return;
+    draw_file_picker_panel(buf, overlay_area(area, ctx), ctx, cursor_out);
   }
-
-  if !ctx.search_prompt.active {
-    if ctx.completion_menu.active {
-      return;
-    }
-    if let Some(hover_overlay) = build_lsp_hover_overlay(ctx) {
-      ui.overlays.push(hover_overlay);
-    }
-    return;
-  }
-
-  ui.overlays.retain(|node| !is_search_prompt_overlay(node));
-  if ui
-    .focus
-    .as_ref()
-    .is_some_and(|focus| focus.id.starts_with("search_prompt"))
-  {
-    ui.focus = None;
-  }
-
-  if let Some(status) = ui.overlays.iter_mut().find_map(status_bar_from_overlay_mut) {
-    status.left = search_statusline_text(
-      ctx.search_prompt.kind,
-      ctx.search_prompt.query.as_str(),
-      ctx.search_prompt.cursor,
-    );
-    status.left_icon = None;
-  }
-
-  if let Some(hover_overlay) = build_lsp_hover_overlay(ctx) {
-    ui.overlays.push(hover_overlay);
+  if ctx.completion_docs_layout.is_none() {
+    ctx.completion_docs_drag = None;
   }
 }
 
@@ -6412,7 +5072,13 @@ fn draw_pane_content(
         if max_width == 0 {
           continue;
         }
-        buf.set_stringn(x, y, text.text.as_str(), max_width, lib_style_to_ratatui(text.style));
+        buf.set_stringn(
+          x,
+          y,
+          text.text.as_str(),
+          max_width,
+          lib_style_to_ratatui(text.style),
+        );
       },
     }
   }
@@ -6641,9 +5307,7 @@ fn draw_buffer_tabs_row(buf: &mut Buffer, area: Rect, ctx: &Ctx) {
   }
 
   if let Some(drag) = ctx.buffer_tab_drag
-    && let Some(slot) = slots
-      .iter()
-      .find(|slot| slot.buffer_id == drag.buffer_id)
+    && let Some(slot) = slots.iter().find(|slot| slot.buffer_id == drag.buffer_id)
     && let Some(tab) = snapshot.tabs.get(slot.tab_index)
   {
     let ghost_width = slot.width.min(area.width).max(1);
@@ -6761,10 +5425,7 @@ pub fn render(f: &mut Frame, ctx: &mut Ctx) {
   let area = f.size();
   sync_file_picker_viewport(ctx, area);
   let perf_after_picker = perf_enabled.then(Instant::now);
-  let mut ui = ui_tree(ctx);
-  adapt_ui_tree_for_term(ctx, &mut ui);
-  resolve_ui_tree(&mut ui, &ctx.ui_theme);
-  apply_ui_viewport(ctx, &ui, f.size());
+  apply_editor_viewport(ctx, f.size());
   let perf_after_ui = perf_enabled.then(Instant::now);
   if !ctx.mouse_selection_drag_active && !ctx.mouse_viewport_detached {
     ensure_cursor_visible(ctx);
@@ -6827,16 +5488,8 @@ pub fn render(f: &mut Frame, ctx: &mut Ctx) {
     draw_pane_separators(buf, area, &frame_plan, ctx);
 
     let ui_draw_start = perf_enabled.then(Instant::now);
-    draw_ui_node(
-      buf,
-      area,
-      ctx,
-      &ui.root,
-      ui.focus.as_ref(),
-      editor_cursor,
-      &mut cursor_out,
-    );
-    draw_ui_overlays(buf, area, ctx, &ui, editor_cursor, &mut cursor_out);
+    draw_overlays(buf, area, ctx, editor_cursor, &mut cursor_out);
+    draw_statusline(buf, area, ctx);
     let ui_draw_ms = ui_draw_start.map_or(0.0, |start| start.elapsed().as_secs_f64() * 1000.0);
     (
       cursor_out,
@@ -7007,731 +5660,5 @@ pub fn ensure_cursor_visible(ctx: &mut Ctx) {
     ctx.scrolloff,
   ) {
     ctx.editor.view_mut().scroll = new_scroll;
-  }
-}
-
-#[cfg(test)]
-mod tests {
-  use std::{
-    fs,
-    path::{
-      Path,
-      PathBuf,
-    },
-    time::SystemTime,
-  };
-
-  use ratatui::{
-    buffer::Buffer,
-    layout::Rect,
-    style::Style,
-  };
-  use ropey::Rope;
-  use the_default::{
-    CommandPaletteItem,
-    CommandPaletteState,
-  };
-  use the_lib::{
-    diagnostics::{
-      Diagnostic,
-      DiagnosticPosition,
-      DiagnosticRange,
-      DiagnosticSeverity,
-      DocumentDiagnostics,
-    },
-    editor::PaneContent,
-    position::Position,
-    render::{
-      InlineDiagnosticFilter,
-      LayoutIntent,
-      UiConstraints,
-      UiContainer,
-      UiInsets,
-      UiList,
-      UiListItem,
-      UiNode,
-      UiPanel,
-      UiText,
-      UiTree,
-    },
-    split_tree::SplitAxis,
-    view::ViewState,
-  };
-
-  use super::{
-    CompletionDocsStyles,
-    DocsBlock,
-    StyledTextRun,
-    adapt_ui_tree_for_term,
-    build_frame_render_plan,
-    build_lsp_hover_overlay,
-    completion_docs_panel_rect,
-    completion_docs_rows,
-    completion_panel_rect,
-    draw_ui_list,
-    draw_ui_text,
-    file_picker_panel_styles,
-    inline_diagnostics_from_document,
-    language_filename_hints,
-    live_grep_display_path,
-    max_content_width_for_intent,
-    panel_box_size,
-    parse_inline_diagnostic_filter,
-    parse_live_grep_picker_display,
-    parse_markdown_blocks,
-    parse_symbols_picker_display,
-    select_end_of_line_diagnostic,
-    symbol_picker_tree_prefix,
-    term_command_palette_filtered_selection,
-  };
-  use crate::Ctx;
-
-  struct TempRenderFile {
-    path: PathBuf,
-  }
-
-  impl TempRenderFile {
-    fn with_extension(prefix: &str, extension: &str, content: &str) -> Self {
-      let nonce = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or(0);
-      let path = std::env::temp_dir().join(format!(
-        "the-editor-render-{prefix}-{}-{nonce}.{extension}",
-        std::process::id()
-      ));
-      fs::write(&path, content).expect("write temp render file");
-      Self { path }
-    }
-
-    fn as_path(&self) -> &Path {
-      &self.path
-    }
-  }
-
-  impl Drop for TempRenderFile {
-    fn drop(&mut self) {
-      let _ = fs::remove_file(&self.path);
-    }
-  }
-
-  fn flatten_rows(rows: &[Vec<StyledTextRun>]) -> Vec<String> {
-    rows
-      .iter()
-      .map(|row| {
-        row
-          .iter()
-          .map(|run| run.text.as_str())
-          .collect::<Vec<_>>()
-          .join("")
-      })
-      .collect()
-  }
-
-  fn buffer_row_text(buf: &Buffer, rect: Rect, row: u16) -> String {
-    (rect.x..rect.x + rect.width)
-      .map(|x| buf.get(x, row).symbol())
-      .collect::<String>()
-  }
-
-  #[test]
-  fn completion_panel_rect_places_below_cursor_when_space_exists() {
-    let area = Rect::new(0, 0, 100, 30);
-    let rect = completion_panel_rect(area, 32, 8, Some((40, 10)));
-    assert_eq!(rect.y, 11);
-    assert_eq!(rect.width, 32);
-    assert_eq!(rect.height, 8);
-  }
-
-  #[test]
-  fn completion_panel_rect_flips_above_when_below_is_tight() {
-    let area = Rect::new(0, 0, 80, 12);
-    let rect = completion_panel_rect(area, 30, 8, Some((20, 10)));
-    assert!(rect.y < 10);
-    assert_eq!(rect.height, 8);
-  }
-
-  #[test]
-  fn completion_panel_rect_clamps_to_viewport_bounds() {
-    let area = Rect::new(5, 3, 20, 10);
-    let rect = completion_panel_rect(area, 18, 9, Some((500, 500)));
-    assert!(rect.x >= area.x);
-    assert!(rect.y >= area.y);
-    assert!(rect.x + rect.width <= area.x + area.width);
-    assert!(rect.y + rect.height <= area.y + area.height);
-  }
-
-  #[test]
-  fn parse_inline_diagnostic_filter_parses_expected_values() {
-    assert_eq!(
-      parse_inline_diagnostic_filter("warning"),
-      Some(the_lib::render::InlineDiagnosticFilter::Enable(
-        DiagnosticSeverity::Warning
-      ))
-    );
-    assert_eq!(
-      parse_inline_diagnostic_filter("disable"),
-      Some(the_lib::render::InlineDiagnosticFilter::Disable)
-    );
-    assert_eq!(parse_inline_diagnostic_filter("unknown"), None);
-  }
-
-  #[test]
-  fn inline_diagnostics_from_document_maps_utf16_positions() {
-    let text = Rope::from("a🧪b\\n");
-    let diagnostics = vec![Diagnostic {
-      range:    DiagnosticRange {
-        start: DiagnosticPosition {
-          line:      0,
-          character: 3,
-        },
-        end:   DiagnosticPosition {
-          line:      0,
-          character: 4,
-        },
-      },
-      severity: Some(DiagnosticSeverity::Warning),
-      code:     None,
-      source:   None,
-      message:  "mapped".to_string(),
-    }];
-
-    let mapped = inline_diagnostics_from_document(&text, &diagnostics);
-    assert_eq!(mapped.len(), 1);
-    assert_eq!(mapped[0].start_char_idx, 2);
-  }
-
-  #[test]
-  fn frame_render_plan_keeps_diagnostics_for_inactive_split_panes() {
-    let mut ctx = Ctx::new(None).expect("ctx");
-    let rust = TempRenderFile::with_extension("split-diag", "rs", "fn main() { let x = ; }\n");
-    let toml = TempRenderFile::with_extension(
-      "split-diag",
-      "toml",
-      "[package]\nname = 7\nversion = \"0.1.0\"\n",
-    );
-
-    assert!(ctx.editor.replace_active_buffer(
-      Rope::from_str("fn main() { let x = ; }\n"),
-      Some(rust.as_path().to_path_buf()),
-    ));
-    let rust_buffer = ctx.editor.active_buffer_id();
-    assert!(ctx.editor.split_active_pane(SplitAxis::Vertical));
-    let view = ViewState::new(ctx.editor.view().viewport, Position::new(0, 0));
-    let toml_buffer = ctx.editor.open_buffer(
-      Rope::from_str("[package]\nname = 7\nversion = \"0.1.0\"\n"),
-      view,
-      Some(toml.as_path().to_path_buf()),
-    );
-
-    let rust_uri = the_lsp::text_sync::file_uri_for_path(rust.as_path()).expect("rust uri");
-    let toml_uri = the_lsp::text_sync::file_uri_for_path(toml.as_path()).expect("toml uri");
-    ctx.diagnostics.apply_document(DocumentDiagnostics {
-      uri:         rust_uri,
-      version:     Some(1),
-      diagnostics: vec![Diagnostic {
-        range:    DiagnosticRange {
-          start: DiagnosticPosition {
-            line:      0,
-            character: 16,
-          },
-          end:   DiagnosticPosition {
-            line:      0,
-            character: 17,
-          },
-        },
-        severity: Some(DiagnosticSeverity::Error),
-        code:     None,
-        source:   Some("rust-analyzer".into()),
-        message:  "expected expression".into(),
-      }],
-    });
-    ctx.diagnostics.apply_document(DocumentDiagnostics {
-      uri:         toml_uri,
-      version:     Some(1),
-      diagnostics: vec![Diagnostic {
-        range:    DiagnosticRange {
-          start: DiagnosticPosition {
-            line:      1,
-            character: 7,
-          },
-          end:   DiagnosticPosition {
-            line:      1,
-            character: 8,
-          },
-        },
-        severity: Some(DiagnosticSeverity::Error),
-        code:     None,
-        source:   Some("taplo".into()),
-        message:  "expected string".into(),
-      }],
-    });
-
-    let frame = build_frame_render_plan(&mut ctx);
-    assert_eq!(frame.panes.len(), 2);
-
-    let mut rust_pane = None;
-    let mut toml_pane = None;
-    for pane in ctx
-      .editor
-      .frame_pane_snapshots(ctx.editor.layout_viewport())
-    {
-      let PaneContent::EditorBuffer { buffer_id } = pane.content else {
-        continue;
-      };
-      if buffer_id == rust_buffer {
-        rust_pane = Some(pane.pane_id);
-      } else if buffer_id == toml_buffer {
-        toml_pane = Some(pane.pane_id);
-      }
-    }
-
-    let rust_pane = rust_pane.expect("rust pane");
-    let toml_pane = toml_pane.expect("toml pane");
-    assert_eq!(ctx.frame_diagnostics.get(&rust_pane).map(Vec::len), Some(1));
-    assert_eq!(ctx.frame_diagnostics.get(&toml_pane).map(Vec::len), Some(1));
-    assert!(
-      !ctx
-        .frame_diagnostic_underlines
-        .get(&rust_pane)
-        .expect("rust underlines")
-        .is_empty()
-    );
-    assert!(
-      !ctx
-        .frame_diagnostic_underlines
-        .get(&toml_pane)
-        .expect("toml underlines")
-        .is_empty()
-    );
-  }
-
-  #[test]
-  fn frame_render_plan_uses_inactive_split_highlight_cache() {
-    let mut ctx = Ctx::new(None).expect("ctx");
-    if ctx.loader.is_none() {
-      return;
-    }
-
-    let rust = TempRenderFile::with_extension("split-highlight", "rs", "fn main() {}\n");
-    let toml = TempRenderFile::with_extension(
-      "split-highlight",
-      "toml",
-      "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n",
-    );
-
-    assert!(ctx.editor.replace_active_buffer(
-      Rope::from_str("fn main() {}\n"),
-      Some(rust.as_path().to_path_buf()),
-    ));
-    let rust_buffer = ctx.editor.active_buffer_id();
-    assert!(ctx.editor.split_active_pane(SplitAxis::Vertical));
-    let view = ViewState::new(ctx.editor.view().viewport, Position::new(0, 0));
-    let _ = ctx.editor.open_buffer(
-      Rope::from_str("[package]\nname = \"demo\"\nversion = \"0.1.0\"\n"),
-      view,
-      Some(toml.as_path().to_path_buf()),
-    );
-
-    let frame = build_frame_render_plan(&mut ctx);
-    assert_eq!(frame.panes.len(), 2);
-    assert!(ctx.inactive_highlight_caches.contains_key(&rust_buffer));
-  }
-
-  fn diagnostic_with_severity(severity: DiagnosticSeverity) -> Diagnostic {
-    Diagnostic {
-      range:    DiagnosticRange {
-        start: DiagnosticPosition {
-          line:      0,
-          character: 0,
-        },
-        end:   DiagnosticPosition {
-          line:      0,
-          character: 1,
-        },
-      },
-      severity: Some(severity),
-      code:     None,
-      source:   None,
-      message:  format!("{severity:?}"),
-    }
-  }
-
-  #[test]
-  fn end_of_line_diagnostic_selects_hidden_diagnostic_when_inline_filters_it_out() {
-    let diagnostics = vec![
-      diagnostic_with_severity(DiagnosticSeverity::Error),
-      diagnostic_with_severity(DiagnosticSeverity::Hint),
-    ];
-
-    let selected = select_end_of_line_diagnostic(
-      diagnostics.iter(),
-      InlineDiagnosticFilter::Enable(DiagnosticSeverity::Warning),
-      InlineDiagnosticFilter::Enable(DiagnosticSeverity::Hint),
-    )
-    .expect("expected hidden diagnostic");
-
-    assert_eq!(selected.severity, Some(DiagnosticSeverity::Hint));
-  }
-
-  #[test]
-  fn end_of_line_diagnostic_uses_highest_severity_when_inline_disabled() {
-    let diagnostics = vec![
-      diagnostic_with_severity(DiagnosticSeverity::Information),
-      diagnostic_with_severity(DiagnosticSeverity::Error),
-      diagnostic_with_severity(DiagnosticSeverity::Warning),
-    ];
-
-    let selected = select_end_of_line_diagnostic(
-      diagnostics.iter(),
-      InlineDiagnosticFilter::Disable,
-      InlineDiagnosticFilter::Enable(DiagnosticSeverity::Hint),
-    )
-    .expect("expected diagnostic");
-
-    assert_eq!(selected.severity, Some(DiagnosticSeverity::Error));
-  }
-
-  #[test]
-  fn completion_docs_panel_rect_prefers_right_side() {
-    let area = Rect::new(0, 0, 100, 30);
-    let completion_rect = Rect::new(20, 9, 30, 8);
-    let docs_rect = completion_docs_panel_rect(area, 24, 10, completion_rect).expect("docs rect");
-    assert_eq!(docs_rect.x, 51);
-    assert_eq!(docs_rect.y, completion_rect.y);
-  }
-
-  #[test]
-  fn completion_docs_panel_rect_flips_left_when_right_is_tight() {
-    let area = Rect::new(0, 0, 70, 20);
-    let completion_rect = Rect::new(45, 4, 24, 8);
-    let docs_rect = completion_docs_panel_rect(area, 20, 8, completion_rect).expect("docs rect");
-    assert_eq!(docs_rect.x, 24);
-    assert_eq!(docs_rect.y, completion_rect.y);
-  }
-
-  #[test]
-  fn completion_docs_panel_rect_hides_when_viewport_is_narrow() {
-    let area = Rect::new(0, 0, 72, 22);
-    let completion_rect = Rect::new(4, 5, 46, 10);
-    let docs_rect = completion_docs_panel_rect(area, 40, 9, completion_rect);
-    assert!(docs_rect.is_none());
-  }
-
-  #[test]
-  fn completion_docs_panel_rect_hides_when_side_space_is_unavailable() {
-    let area = Rect::new(0, 0, 80, 24);
-    let completion_rect = Rect::new(2, 6, 76, 10);
-    let docs_rect = completion_docs_panel_rect(area, 36, 9, completion_rect);
-    assert!(docs_rect.is_none());
-  }
-
-  #[test]
-  fn frame_render_plan_keeps_per_pane_viewports_for_shared_buffers() {
-    let mut ctx = Ctx::new(None).expect("ctx");
-    assert!(ctx.editor.split_active_pane(SplitAxis::Vertical));
-    assert!(ctx.editor.split_active_pane(SplitAxis::Horizontal));
-
-    let frame = super::build_frame_render_plan(&mut ctx);
-    assert_eq!(frame.panes.len(), 3);
-
-    for pane in frame.panes {
-      if pane.pane_kind != the_lib::editor::PaneContentKind::EditorBuffer {
-        continue;
-      }
-      assert_eq!(pane.plan.viewport, pane.rect);
-    }
-  }
-
-  #[test]
-  fn lsp_hover_overlay_builds_completion_docs_panel() {
-    let mut ctx = Ctx::new(None).expect("ctx");
-    ctx.hover_docs = Some("```rust\nfn hover() {}\n```\n\nhover docs".to_string());
-
-    let Some(UiNode::Panel(panel)) = build_lsp_hover_overlay(&ctx) else {
-      panic!("expected hover panel overlay");
-    };
-    assert_eq!(panel.id, "lsp_hover");
-    assert_eq!(panel.style.role.as_deref(), Some("completion_docs"));
-    assert_eq!(panel.source.as_deref(), Some("hover"));
-    assert_eq!(panel.layer, the_lib::render::UiLayer::Tooltip);
-  }
-
-  #[test]
-  fn hover_docs_text_uses_hover_scroll_source_without_canonical_text_id() {
-    let mut ctx = Ctx::new(None).expect("ctx");
-    ctx.hover_docs_scroll = 1;
-    ctx.completion_menu.docs_scroll = 0;
-
-    let mut text = UiText::new("shared_docs_text", "a0\nb1\nc2");
-    text.source = Some("hover".to_string());
-    text.style = text.style.with_role("completion_docs");
-    text.clip = false;
-
-    let rect = Rect::new(0, 0, 8, 1);
-    let mut buf = Buffer::empty(rect);
-    draw_ui_text(&mut buf, rect, &ctx, &text);
-    assert_eq!(buf.get(0, 0).symbol(), "b");
-  }
-
-  #[test]
-  fn lsp_hover_overlay_omits_empty_docs() {
-    let mut ctx = Ctx::new(None).expect("ctx");
-    ctx.hover_docs = Some("   ".to_string());
-    assert!(build_lsp_hover_overlay(&ctx).is_none());
-  }
-
-  #[test]
-  fn adapt_ui_tree_omits_hover_overlay_when_file_picker_is_active() {
-    let mut ctx = Ctx::new(None).expect("ctx");
-    ctx.file_picker.active = true;
-    ctx.hover_docs = Some("hover docs".to_string());
-
-    let mut ui = UiTree::new();
-    ui.overlays.push(UiNode::Panel(UiPanel::floating(
-      "file_picker",
-      UiNode::Container(UiContainer::default()),
-    )));
-    if let Some(hover_overlay) = build_lsp_hover_overlay(&ctx) {
-      ui.overlays.push(hover_overlay);
-    }
-
-    adapt_ui_tree_for_term(&ctx, &mut ui);
-
-    assert!(
-      ui.overlays
-        .iter()
-        .all(|node| !super::is_hover_overlay(node))
-    );
-  }
-
-  #[test]
-  fn term_command_palette_selection_stays_empty_without_explicit_selection() {
-    let state = CommandPaletteState {
-      is_open:       true,
-      source:        the_default::CommandPaletteSource::CommandLine,
-      source_mode:   the_default::Mode::Command,
-      query:         String::new(),
-      selected:      None,
-      items:         vec![
-        CommandPaletteItem::new("help"),
-        CommandPaletteItem::new("quit"),
-      ],
-      max_results:   10,
-      prefiltered:   false,
-      scroll_offset: 0,
-      prompt_text:   None,
-    };
-
-    let (filtered, selected) =
-      term_command_palette_filtered_selection(&state).expect("filtered selection");
-    assert_eq!(filtered, vec![0, 1]);
-    assert_eq!(selected, None);
-  }
-
-  #[test]
-  fn completion_list_scrollbar_preserves_selected_row_fill() {
-    let items = (0..10)
-      .map(|idx| UiListItem::new(format!("item-{idx}")))
-      .collect();
-    let mut list = UiList::new("completion_list", items);
-    list.style = list.style.with_role("completion");
-    list.selected = Some(0);
-    list.scroll = 0;
-    list.max_visible = Some(3);
-
-    let rect = Rect::new(0, 0, 24, 3);
-    let mut buf = Buffer::empty(rect);
-    let mut cursor = None;
-    draw_ui_list(&mut buf, rect, &list, None, &mut cursor);
-
-    let track_x = rect.x + rect.width - 1;
-    let selected_row_cell = buf.get(track_x, rect.y);
-    assert_eq!(selected_row_cell.symbol(), " ");
-
-    let next_row_cell = buf.get(track_x, rect.y + 1);
-    assert_eq!(next_row_cell.symbol(), "█");
-  }
-
-  #[test]
-  fn completion_list_keeps_function_label_visible_with_long_signature_detail() {
-    let mut item = UiListItem::new("install_test_watch_state");
-    item.leading_icon = Some("f".to_string());
-    item.subtitle =
-      Some("fn(&mut App, EditorId, &Path) -> Sender<Vec<PathEvent, Global>>".to_string());
-    let mut list = UiList::new("completion_list", vec![item]);
-    list.style = list.style.with_role("completion");
-    list.selected = Some(0);
-
-    let rect = Rect::new(0, 0, 64, 1);
-    let mut buf = Buffer::empty(rect);
-    let mut cursor = None;
-    draw_ui_list(&mut buf, rect, &list, None, &mut cursor);
-
-    let row = buffer_row_text(&buf, rect, rect.y);
-    assert!(
-      row.contains("install_test_watch_state"),
-      "completion row should preserve the label text, got: {row:?}"
-    );
-  }
-
-  #[test]
-  fn file_picker_panel_styles_resolve_explicit_fill_and_border_colors() {
-    let ctx = Ctx::new(None).expect("ctx");
-    let mut panel = UiPanel::floating("file_picker", UiNode::Container(UiContainer::default()));
-    panel.style = panel.style.with_role("file_picker");
-    panel.style.border = None;
-
-    let (_text_style, fill_style, border_style) = file_picker_panel_styles(&ctx, &panel);
-    assert!(fill_style.bg.is_some());
-    assert!(fill_style.fg.is_some());
-    assert!(border_style.fg.is_some());
-    assert_eq!(border_style.bg, fill_style.bg);
-  }
-
-  #[test]
-  fn parse_symbols_picker_display_reads_tab_fields() {
-    let row = parse_symbols_picker_display(
-      "render\tCtx\tfn render()\tFUNCTION\tthe-term/render.rs\t120\t8\t2",
-    );
-    assert_eq!(row.name, "render");
-    assert_eq!(row.container, "Ctx");
-    assert_eq!(row.detail, "fn render()");
-    assert_eq!(row.kind, "FUNCTION");
-    assert_eq!(row.path, "the-term/render.rs");
-    assert_eq!(row.line, 120);
-    assert_eq!(row.column, 8);
-    assert_eq!(row.depth, 2);
-  }
-
-  #[test]
-  fn parse_live_grep_picker_display_reads_tab_fields() {
-    let row = parse_live_grep_picker_display("src/main.rs\t42\t7\tfn global_search(cx: &mut Ctx)");
-    assert_eq!(row.path, "src/main.rs");
-    assert_eq!(row.line, 42);
-    assert_eq!(row.column, 7);
-    assert_eq!(row.snippet, "fn global_search(cx: &mut Ctx)");
-  }
-
-  #[test]
-  fn parse_live_grep_picker_display_falls_back_to_raw_text() {
-    let row = parse_live_grep_picker_display("raw display line");
-    assert!(row.path.is_empty());
-    assert_eq!(row.line, 1);
-    assert_eq!(row.column, 1);
-    assert_eq!(row.snippet, "raw display line");
-  }
-
-  #[test]
-  fn live_grep_display_path_reads_first_tab_field() {
-    assert_eq!(
-      live_grep_display_path("src/main.rs\t42\t7\tfn main()"),
-      "src/main.rs"
-    );
-  }
-
-  #[test]
-  fn live_grep_display_path_returns_empty_for_non_tab_rows() {
-    assert_eq!(live_grep_display_path("raw display line"), "");
-  }
-
-  #[test]
-  fn symbol_picker_tree_prefix_marks_expandable_nodes() {
-    assert_eq!(symbol_picker_tree_prefix(0, 0), "");
-    assert_eq!(symbol_picker_tree_prefix(1, 2), "├ ");
-    assert_eq!(symbol_picker_tree_prefix(1, 1), "└ ");
-    assert_eq!(symbol_picker_tree_prefix(2, 2), "│ └ ");
-  }
-
-  #[test]
-  fn completion_panel_size_uses_fixed_viewport_width_and_single_row_height() {
-    let mut list = UiList::new("completion_list", vec![UiListItem::new("std")]);
-    list.style = list.style.with_role("completion");
-
-    let mut container = UiContainer::column("completion_container", 0, vec![UiNode::List(list)]);
-    container.style = container.style.with_role("completion");
-
-    let mut panel = UiPanel::new(
-      "completion",
-      LayoutIntent::Custom("completion".to_string()),
-      UiNode::Container(container),
-    );
-    panel.style = panel.style.with_role("completion");
-    panel.style.border = None;
-    panel.constraints = UiConstraints::panel();
-    panel.constraints.padding = UiInsets {
-      left:   0,
-      right:  0,
-      top:    0,
-      bottom: 0,
-    };
-    panel.constraints.min_width = None;
-
-    let area = Rect::new(0, 0, 80, 20);
-    let (width, height) = panel_box_size(&panel, area);
-    let expected_width = max_content_width_for_intent(panel.intent.clone(), area, 0, 0)
-      .min(panel.constraints.max_width.unwrap_or(u16::MAX));
-
-    assert_eq!(width, expected_width);
-    assert_eq!(height, 1);
-  }
-
-  #[test]
-  fn completion_docs_rows_parse_markdown_basics() {
-    let styles = CompletionDocsStyles::default(Style::default());
-    let rows = completion_docs_rows(
-      "# Title\n- item\n[Result](https://example.com)\n```rs\nfn test() {}\n```",
-      &styles,
-      80,
-    );
-    let non_empty: Vec<_> = flatten_rows(&rows)
-      .into_iter()
-      .filter(|line| !line.trim().is_empty())
-      .collect();
-    assert_eq!(non_empty, vec![
-      "Title".to_string(),
-      "• item Result".to_string(),
-      "fn test() {}".to_string(),
-    ]);
-  }
-
-  #[test]
-  fn completion_docs_rows_strip_signature_active_parameter_markers() {
-    let styles = CompletionDocsStyles::default(Style::default());
-    let markdown = format!(
-      "```c\nadd(int x, {}int y{}) -> int\n```",
-      the_default::SIGNATURE_HELP_ACTIVE_PARAM_START_MARKER,
-      the_default::SIGNATURE_HELP_ACTIVE_PARAM_END_MARKER
-    );
-    let rows = completion_docs_rows(&markdown, &styles, 120);
-    let non_empty: Vec<_> = flatten_rows(&rows)
-      .into_iter()
-      .filter(|line| !line.trim().is_empty())
-      .collect();
-    assert_eq!(non_empty, vec!["add(int x, int y) -> int".to_string()]);
-  }
-
-  #[test]
-  fn completion_docs_rows_wrap_long_lines() {
-    let styles = CompletionDocsStyles::default(Style::default());
-    let rows = completion_docs_rows("abcdef", &styles, 3);
-    assert_eq!(flatten_rows(&rows), vec![
-      "abc".to_string(),
-      "def".to_string()
-    ]);
-  }
-
-  #[test]
-  fn markdown_fence_language_normalizes_case() {
-    let blocks = parse_markdown_blocks("```Rust\nfn main() {}\n```");
-    assert!(blocks
-      .iter()
-      .any(|block| matches!(block, DocsBlock::CodeFence { language: Some(language), .. } if language == "rust")));
-  }
-
-  #[test]
-  fn language_hints_include_rust_extension_alias() {
-    let hints = language_filename_hints("rust");
-    assert!(hints.iter().any(|hint| hint == "rs"));
   }
 }

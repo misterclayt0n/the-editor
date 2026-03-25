@@ -220,7 +220,8 @@ impl RuntimeWorkerState {
   }
 
   fn join(self) -> Result<(), LspRuntimeError> {
-    self.worker
+    self
+      .worker
       .join()
       .map_err(|_| LspRuntimeError::WorkerPanicked)
   }

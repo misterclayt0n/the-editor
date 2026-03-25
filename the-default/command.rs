@@ -182,71 +182,6 @@ define! {
     post_render: RenderPlan => RenderPlan,
     pre_render_with_styles: RenderStyles => RenderStyles,
     on_render_with_styles: RenderStyles => RenderPlan,
-
-    insert_char: char,
-    insert_newline: (),
-    delete_char: (),
-    delete_char_forward: usize,
-    delete_word_backward: usize,
-    delete_word_forward: usize,
-    kill_to_line_start: (),
-    kill_to_line_end: (),
-    insert_tab: (),
-    goto_line_start: bool,
-    goto_first_nonwhitespace: bool,
-    goto_line_end: bool,
-    page_up: bool,
-    page_down: bool,
-    move_cursor: Direction,
-    add_cursor: Direction,
-    motion: Motion,
-    delete_selection: bool,
-    change_selection: bool,
-    replace_selection: char,
-    replace_with_yanked: (),
-    yank: (),
-    paste: bool,
-    switch_case: (),
-    save: (),
-    quit: (),
-    find_char: (Direction, bool, bool),
-    search: (),
-    rsearch: (),
-    select_regex: (),
-    search_next_or_prev: (Direction, bool, usize),
-    parent_node_end: bool,
-    parent_node_start: bool,
-    repeat_last_motion: (),
-    switch_to_uppercase: (),
-    switch_to_lowercase: (),
-    insert_at_line_start: (),
-    insert_at_line_end: (),
-    append_mode: (),
-    open_below: (),
-    open_above: (),
-    commit_undo_checkpoint: (),
-    copy_selection_on_next_line: (),
-    copy_selection_on_prev_line: (),
-    select_all: (),
-    extend_line_below: usize,
-    extend_line_above: usize,
-    extend_to_line_bounds: (),
-    shrink_to_line_bounds: (),
-    undo: usize,
-    redo: usize,
-    earlier: usize,
-    later: usize,
-    indent: usize,
-    unindent: usize,
-    replace: (),
-    record_macro: (),
-    replay_macro: (),
-    match_brackets: (),
-    surround_add: (),
-    surround_delete: usize,
-    surround_replace: usize,
-    select_textobject_around: (),
-    select_textobject_inner: (),
   }
 }
 
@@ -310,86 +245,6 @@ default_dispatch_handler!(
   RenderStyles => RenderPlan,
   on_render_with_styles
 );
-default_dispatch_handler!(InsertCharHandler, char, insert_char);
-default_dispatch_handler!(InsertNewlineHandler, (), insert_newline);
-default_dispatch_handler!(DeleteCharHandler, (), delete_char);
-default_dispatch_handler!(DeleteCharForwardHandler, usize, delete_char_forward);
-default_dispatch_handler!(DeleteWordBackwardHandler, usize, delete_word_backward);
-default_dispatch_handler!(DeleteWordForwardHandler, usize, delete_word_forward);
-default_dispatch_handler!(KillToLineStartHandler, (), kill_to_line_start);
-default_dispatch_handler!(KillToLineEndHandler, (), kill_to_line_end);
-default_dispatch_handler!(InsertTabHandler, (), insert_tab);
-default_dispatch_handler!(GotoLineStartHandler, bool, goto_line_start);
-default_dispatch_handler!(
-  GotoFirstNonwhitespaceHandler,
-  bool,
-  goto_first_nonwhitespace
-);
-default_dispatch_handler!(GotoLineEndHandler, bool, goto_line_end);
-default_dispatch_handler!(PageUpHandler, bool, page_up);
-default_dispatch_handler!(PageDownHandler, bool, page_down);
-default_dispatch_handler!(MoveCursorHandler, Direction, move_cursor);
-default_dispatch_handler!(AddCursorHandler, Direction, add_cursor);
-default_dispatch_handler!(MotionHandler, Motion, motion);
-default_dispatch_handler!(DeleteSelectionHandler, bool, delete_selection);
-default_dispatch_handler!(ChangeSelectionHandler, bool, change_selection);
-default_dispatch_handler!(ReplaceSelectionHandler, char, replace_selection);
-default_dispatch_handler!(ReplaceWithYankedHandler, (), replace_with_yanked);
-default_dispatch_handler!(YankHandler, (), yank);
-default_dispatch_handler!(PasteHandler, bool, paste);
-default_dispatch_handler!(SwitchCaseHandler, (), switch_case);
-default_dispatch_handler!(SaveHandler, (), save);
-default_dispatch_handler!(QuitHandler, (), quit);
-default_dispatch_handler!(FindCharHandler, (Direction, bool, bool), find_char);
-default_dispatch_handler!(SearchHandler, (), search);
-default_dispatch_handler!(RsearchHandler, (), rsearch);
-default_dispatch_handler!(SelectRegexHandler, (), select_regex);
-default_dispatch_handler!(
-  SearchNextOrPrevHandler,
-  (Direction, bool, usize),
-  search_next_or_prev
-);
-default_dispatch_handler!(ParentNodeEndHandler, bool, parent_node_end);
-default_dispatch_handler!(ParentNodeStartHandler, bool, parent_node_start);
-default_dispatch_handler!(RepeatLastMotionHandler, (), repeat_last_motion);
-default_dispatch_handler!(SwitchToUppercaseHandler, (), switch_to_uppercase);
-default_dispatch_handler!(SwitchToLowercaseHandler, (), switch_to_lowercase);
-default_dispatch_handler!(InsertAtLineStartHandler, (), insert_at_line_start);
-default_dispatch_handler!(InsertAtLineEndHandler, (), insert_at_line_end);
-default_dispatch_handler!(AppendModeHandler, (), append_mode);
-default_dispatch_handler!(OpenBelowHandler, (), open_below);
-default_dispatch_handler!(OpenAboveHandler, (), open_above);
-default_dispatch_handler!(CommitUndoCheckpointHandler, (), commit_undo_checkpoint);
-default_dispatch_handler!(
-  CopySelectionOnNextLineHandler,
-  (),
-  copy_selection_on_next_line
-);
-default_dispatch_handler!(
-  CopySelectionOnPrevLineHandler,
-  (),
-  copy_selection_on_prev_line
-);
-default_dispatch_handler!(SelectAllHandler, (), select_all);
-default_dispatch_handler!(ExtendLineBelowHandler, usize, extend_line_below);
-default_dispatch_handler!(ExtendLineAboveHandler, usize, extend_line_above);
-default_dispatch_handler!(ExtendToLineBoundsHandler, (), extend_to_line_bounds);
-default_dispatch_handler!(ShrinkToLineBoundsHandler, (), shrink_to_line_bounds);
-default_dispatch_handler!(UndoHandler, usize, undo);
-default_dispatch_handler!(RedoHandler, usize, redo);
-default_dispatch_handler!(EarlierHandler, usize, earlier);
-default_dispatch_handler!(LaterHandler, usize, later);
-default_dispatch_handler!(IndentHandler, usize, indent);
-default_dispatch_handler!(UnindentHandler, usize, unindent);
-default_dispatch_handler!(ReplaceHandler, (), replace);
-default_dispatch_handler!(RecordMacroHandler, (), record_macro);
-default_dispatch_handler!(ReplayMacroHandler, (), replay_macro);
-default_dispatch_handler!(MatchBracketsHandler, (), match_brackets);
-default_dispatch_handler!(SurroundAddHandler, (), surround_add);
-default_dispatch_handler!(SurroundDeleteHandler, usize, surround_delete);
-default_dispatch_handler!(SurroundReplaceHandler, usize, surround_replace);
-default_dispatch_handler!(SelectTextobjectAroundHandler, (), select_textobject_around);
-default_dispatch_handler!(SelectTextobjectInnerHandler, (), select_textobject_inner);
 
 pub type DefaultDispatchBuiltin<Ctx> = DefaultDispatch<
   Ctx,
@@ -408,70 +263,6 @@ pub type DefaultDispatchBuiltin<Ctx> = DefaultDispatch<
   PostRenderHandler<Ctx>,
   PreRenderWithStylesHandler<Ctx>,
   OnRenderWithStylesHandler<Ctx>,
-  InsertCharHandler<Ctx>,
-  InsertNewlineHandler<Ctx>,
-  DeleteCharHandler<Ctx>,
-  DeleteCharForwardHandler<Ctx>,
-  DeleteWordBackwardHandler<Ctx>,
-  DeleteWordForwardHandler<Ctx>,
-  KillToLineStartHandler<Ctx>,
-  KillToLineEndHandler<Ctx>,
-  InsertTabHandler<Ctx>,
-  GotoLineStartHandler<Ctx>,
-  GotoFirstNonwhitespaceHandler<Ctx>,
-  GotoLineEndHandler<Ctx>,
-  PageUpHandler<Ctx>,
-  PageDownHandler<Ctx>,
-  MoveCursorHandler<Ctx>,
-  AddCursorHandler<Ctx>,
-  MotionHandler<Ctx>,
-  DeleteSelectionHandler<Ctx>,
-  ChangeSelectionHandler<Ctx>,
-  ReplaceSelectionHandler<Ctx>,
-  ReplaceWithYankedHandler<Ctx>,
-  YankHandler<Ctx>,
-  PasteHandler<Ctx>,
-  SwitchCaseHandler<Ctx>,
-  SaveHandler<Ctx>,
-  QuitHandler<Ctx>,
-  FindCharHandler<Ctx>,
-  SearchHandler<Ctx>,
-  RsearchHandler<Ctx>,
-  SelectRegexHandler<Ctx>,
-  SearchNextOrPrevHandler<Ctx>,
-  ParentNodeEndHandler<Ctx>,
-  ParentNodeStartHandler<Ctx>,
-  RepeatLastMotionHandler<Ctx>,
-  SwitchToUppercaseHandler<Ctx>,
-  SwitchToLowercaseHandler<Ctx>,
-  InsertAtLineStartHandler<Ctx>,
-  InsertAtLineEndHandler<Ctx>,
-  AppendModeHandler<Ctx>,
-  OpenBelowHandler<Ctx>,
-  OpenAboveHandler<Ctx>,
-  CommitUndoCheckpointHandler<Ctx>,
-  CopySelectionOnNextLineHandler<Ctx>,
-  CopySelectionOnPrevLineHandler<Ctx>,
-  SelectAllHandler<Ctx>,
-  ExtendLineBelowHandler<Ctx>,
-  ExtendLineAboveHandler<Ctx>,
-  ExtendToLineBoundsHandler<Ctx>,
-  ShrinkToLineBoundsHandler<Ctx>,
-  UndoHandler<Ctx>,
-  RedoHandler<Ctx>,
-  EarlierHandler<Ctx>,
-  LaterHandler<Ctx>,
-  IndentHandler<Ctx>,
-  UnindentHandler<Ctx>,
-  ReplaceHandler<Ctx>,
-  RecordMacroHandler<Ctx>,
-  ReplayMacroHandler<Ctx>,
-  MatchBracketsHandler<Ctx>,
-  SurroundAddHandler<Ctx>,
-  SurroundDeleteHandler<Ctx>,
-  SurroundReplaceHandler<Ctx>,
-  SelectTextobjectAroundHandler<Ctx>,
-  SelectTextobjectInnerHandler<Ctx>,
 >;
 
 #[derive(Clone, Copy)]
@@ -1007,98 +798,21 @@ where
     .with_post_render(PostRenderHandler::<Ctx>::default())
     .with_pre_render_with_styles(PreRenderWithStylesHandler::<Ctx>::default())
     .with_on_render_with_styles(OnRenderWithStylesHandler::<Ctx>::default())
-    .with_insert_char(InsertCharHandler::<Ctx>::default())
-    .with_insert_newline(InsertNewlineHandler::<Ctx>::default())
-    .with_delete_char(DeleteCharHandler::<Ctx>::default())
-    .with_delete_char_forward(DeleteCharForwardHandler::<Ctx>::default())
-    .with_delete_word_backward(DeleteWordBackwardHandler::<Ctx>::default())
-    .with_delete_word_forward(DeleteWordForwardHandler::<Ctx>::default())
-    .with_kill_to_line_start(KillToLineStartHandler::<Ctx>::default())
-    .with_kill_to_line_end(KillToLineEndHandler::<Ctx>::default())
-    .with_insert_tab(InsertTabHandler::<Ctx>::default())
-    .with_goto_line_start(GotoLineStartHandler::<Ctx>::default())
-    .with_goto_first_nonwhitespace(GotoFirstNonwhitespaceHandler::<Ctx>::default())
-    .with_goto_line_end(GotoLineEndHandler::<Ctx>::default())
-    .with_page_up(PageUpHandler::<Ctx>::default())
-    .with_page_down(PageDownHandler::<Ctx>::default())
-    .with_move_cursor(MoveCursorHandler::<Ctx>::default())
-    .with_add_cursor(AddCursorHandler::<Ctx>::default())
-    .with_motion(MotionHandler::<Ctx>::default())
-    .with_delete_selection(DeleteSelectionHandler::<Ctx>::default())
-    .with_change_selection(ChangeSelectionHandler::<Ctx>::default())
-    .with_replace_selection(ReplaceSelectionHandler::<Ctx>::default())
-    .with_replace_with_yanked(ReplaceWithYankedHandler::<Ctx>::default())
-    .with_yank(YankHandler::<Ctx>::default())
-    .with_paste(PasteHandler::<Ctx>::default())
-    .with_switch_case(SwitchCaseHandler::<Ctx>::default())
-    .with_save(SaveHandler::<Ctx>::default())
-    .with_quit(QuitHandler::<Ctx>::default())
-    .with_find_char(FindCharHandler::<Ctx>::default())
-    .with_search(SearchHandler::<Ctx>::default())
-    .with_rsearch(RsearchHandler::<Ctx>::default())
-    .with_select_regex(SelectRegexHandler::<Ctx>::default())
-    .with_search_next_or_prev(SearchNextOrPrevHandler::<Ctx>::default())
-    .with_parent_node_end(ParentNodeEndHandler::<Ctx>::default())
-    .with_parent_node_start(ParentNodeStartHandler::<Ctx>::default())
-    .with_repeat_last_motion(RepeatLastMotionHandler::<Ctx>::default())
-    .with_switch_to_uppercase(SwitchToUppercaseHandler::<Ctx>::default())
-    .with_switch_to_lowercase(SwitchToLowercaseHandler::<Ctx>::default())
-    .with_insert_at_line_start(InsertAtLineStartHandler::<Ctx>::default())
-    .with_insert_at_line_end(InsertAtLineEndHandler::<Ctx>::default())
-    .with_append_mode(AppendModeHandler::<Ctx>::default())
-    .with_open_below(OpenBelowHandler::<Ctx>::default())
-    .with_open_above(OpenAboveHandler::<Ctx>::default())
-    .with_commit_undo_checkpoint(CommitUndoCheckpointHandler::<Ctx>::default())
-    .with_copy_selection_on_next_line(CopySelectionOnNextLineHandler::<Ctx>::default())
-    .with_copy_selection_on_prev_line(CopySelectionOnPrevLineHandler::<Ctx>::default())
-    .with_select_all(SelectAllHandler::<Ctx>::default())
-    .with_extend_line_below(ExtendLineBelowHandler::<Ctx>::default())
-    .with_extend_line_above(ExtendLineAboveHandler::<Ctx>::default())
-    .with_extend_to_line_bounds(ExtendToLineBoundsHandler::<Ctx>::default())
-    .with_shrink_to_line_bounds(ShrinkToLineBoundsHandler::<Ctx>::default())
-    .with_undo(UndoHandler::<Ctx>::default())
-    .with_redo(RedoHandler::<Ctx>::default())
-    .with_earlier(EarlierHandler::<Ctx>::default())
-    .with_later(LaterHandler::<Ctx>::default())
-    .with_indent(IndentHandler::<Ctx>::default())
-    .with_unindent(UnindentHandler::<Ctx>::default())
-    .with_replace(ReplaceHandler::<Ctx>::default())
-    .with_record_macro(RecordMacroHandler::<Ctx>::default())
-    .with_replay_macro(ReplayMacroHandler::<Ctx>::default())
-    .with_match_brackets(MatchBracketsHandler::<Ctx>::default())
-    .with_surround_add(SurroundAddHandler::<Ctx>::default())
-    .with_surround_delete(SurroundDeleteHandler::<Ctx>::default())
-    .with_surround_replace(SurroundReplaceHandler::<Ctx>::default())
-    .with_select_textobject_around(SelectTextobjectAroundHandler::<Ctx>::default())
-    .with_select_textobject_inner(SelectTextobjectInnerHandler::<Ctx>::default())
 }
 
-pub fn handle_command<Ctx, D>(dispatch: &D, ctx: &mut Ctx, command: Command)
-where
-  Ctx: DefaultContext,
-  D: DefaultApi<Ctx> + ?Sized,
-{
-  dispatch.pre_on_action(ctx, command);
+pub fn handle_command<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
+  ctx.dispatch().pre_on_action(ctx, command);
 }
 
-pub fn handle_key<Ctx, D>(dispatch: &D, ctx: &mut Ctx, key: KeyEvent)
-where
-  Ctx: DefaultContext,
-  D: DefaultApi<Ctx> + ?Sized,
-{
-  dispatch.pre_on_keypress(ctx, key);
+pub fn handle_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent) {
+  ctx.dispatch().pre_on_keypress(ctx, key);
 }
 
-pub fn handle_pointer_event<Ctx, D>(
-  dispatch: &D,
+pub fn handle_pointer_event<Ctx: DefaultContext>(
   ctx: &mut Ctx,
   event: PointerEvent,
-) -> PointerEventOutcome
-where
-  Ctx: DefaultContext,
-  D: DefaultApi<Ctx> + ?Sized,
-{
-  dispatch.pre_on_pointer_event(ctx, event)
+) -> PointerEventOutcome {
+  ctx.dispatch().pre_on_pointer_event(ctx, event)
 }
 
 pub fn render_plan<Ctx: DefaultContext>(ctx: &mut Ctx) -> RenderPlan {
@@ -1144,7 +858,7 @@ pub fn frame_render_plan_with_styles<Ctx: DefaultContext>(
 
 pub fn default_pre_on_keypress<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent) {
   if let Some(next) = ctx.macro_queue_mut().pop_front() {
-    ctx.dispatch().on_keypress(ctx, next);
+    on_keypress(ctx, next);
     if ctx.macro_queue().is_empty() {
       ctx.macro_replaying_mut().pop();
     }
@@ -1158,7 +872,7 @@ pub fn default_pre_on_keypress<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent
     }
   }
 
-  ctx.dispatch().on_keypress(ctx, key);
+  on_keypress(ctx, key);
 }
 
 fn pre_on_keypress<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent) {
@@ -1198,7 +912,7 @@ fn handle_pending_input<Ctx: DefaultContext>(
     PendingInput::Placeholder => true,
     PendingInput::ReplaceSelection => {
       match key.key {
-        Key::Char(ch) => ctx.dispatch().replace_selection(ctx, ch),
+        Key::Char(ch) => replace_selection(ctx, ch),
         Key::Enter | Key::NumpadEnter => {
           let line_ending = ctx.editor_ref().document().line_ending().as_str();
           replace_selection_with_str(ctx, line_ending);
@@ -1363,7 +1077,7 @@ fn on_keypress<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent) {
   if let Some(pending) = ctx.pending_input().cloned() {
     ctx.set_pending_input(None);
     if handle_pending_input(ctx, pending, key) {
-      ctx.dispatch().render_request(ctx, ());
+      render_request(ctx, ());
       return;
     }
   }
@@ -1385,19 +1099,19 @@ fn on_keypress<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent) {
 fn handle_key_outcome<Ctx: DefaultContext>(ctx: &mut Ctx, outcome: KeyOutcome) -> bool {
   match outcome {
     KeyOutcome::Command(command) => {
-      ctx.dispatch().post_on_keypress(ctx, command);
+      post_on_keypress(ctx, command);
       true
     },
     KeyOutcome::Commands(commands) => {
       for command in commands {
-        ctx.dispatch().post_on_keypress(ctx, command);
+        post_on_keypress(ctx, command);
       }
       true
     },
     KeyOutcome::Handled => {
       // Pending/cancelled keymap states must trigger a redraw so statusline
       // indicators (e.g. pending keys) are visible immediately.
-      ctx.dispatch().render_request(ctx, ());
+      render_request(ctx, ());
       true
     },
     KeyOutcome::Continue => false,
@@ -1416,7 +1130,7 @@ fn handle_completion_menu_keymap<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEve
 }
 
 fn post_on_keypress<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
-  ctx.dispatch().pre_on_action(ctx, command);
+  pre_on_action(ctx, command);
 }
 
 fn pre_on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
@@ -1426,7 +1140,7 @@ fn pre_on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
   {
     ctx.set_insert_mouse_selection_edit_armed(false);
   }
-  ctx.dispatch().on_action(ctx, command);
+  on_action(ctx, command);
 }
 
 fn insert_mouse_selection_edit_arm_is_consumed_by(command: Command) -> bool {
@@ -1448,7 +1162,7 @@ fn pre_on_pointer_event<Ctx: DefaultContext>(
   ctx: &mut Ctx,
   event: PointerEvent,
 ) -> PointerEventOutcome {
-  ctx.dispatch().on_pointer_event(ctx, event)
+  on_pointer_event(ctx, event)
 }
 
 fn on_pointer_event<Ctx: DefaultContext>(
@@ -1456,7 +1170,7 @@ fn on_pointer_event<Ctx: DefaultContext>(
   event: PointerEvent,
 ) -> PointerEventOutcome {
   let outcome = ctx.pointer_event(event);
-  ctx.dispatch().post_on_pointer_event(ctx, outcome)
+  post_on_pointer_event(ctx, outcome)
 }
 
 fn post_on_pointer_event<Ctx: DefaultContext>(
@@ -1475,24 +1189,24 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
       if ctx.completion_menu().active {
         let _ = ctx.completion_accept_on_commit_char(ch);
       }
-      ctx.dispatch().insert_char(ctx, ch);
+      insert_char(ctx, ch);
     },
-    Command::InsertNewline => ctx.dispatch().insert_newline(ctx, ()),
-    Command::DeleteChar => ctx.dispatch().delete_char(ctx, ()),
-    Command::DeleteCharForward { count } => ctx.dispatch().delete_char_forward(ctx, count),
-    Command::DeleteWordBackward { count } => ctx.dispatch().delete_word_backward(ctx, count),
-    Command::DeleteWordForward { count } => ctx.dispatch().delete_word_forward(ctx, count),
-    Command::KillToLineStart => ctx.dispatch().kill_to_line_start(ctx, ()),
-    Command::KillToLineEnd => ctx.dispatch().kill_to_line_end(ctx, ()),
-    Command::InsertTab => ctx.dispatch().insert_tab(ctx, ()),
-    Command::GotoLineStart { extend } => ctx.dispatch().goto_line_start(ctx, extend),
+    Command::InsertNewline => insert_newline(ctx, ()),
+    Command::DeleteChar => delete_char(ctx, ()),
+    Command::DeleteCharForward { count } => delete_char_forward(ctx, count),
+    Command::DeleteWordBackward { count } => delete_word_backward(ctx, count),
+    Command::DeleteWordForward { count } => delete_word_forward(ctx, count),
+    Command::KillToLineStart => kill_to_line_start(ctx, ()),
+    Command::KillToLineEnd => kill_to_line_end(ctx, ()),
+    Command::InsertTab => insert_tab(ctx, ()),
+    Command::GotoLineStart { extend } => goto_line_start(ctx, extend),
     Command::GotoFirstNonWhitespace { extend } => {
-      ctx.dispatch().goto_first_nonwhitespace(ctx, extend);
+      goto_first_nonwhitespace(ctx, extend);
     },
-    Command::GotoLineEnd { extend } => ctx.dispatch().goto_line_end(ctx, extend),
+    Command::GotoLineEnd { extend } => goto_line_end(ctx, extend),
     Command::GotoLineEndNewline => goto_line_end_newline(ctx),
-    Command::PageUp { extend } => ctx.dispatch().page_up(ctx, extend),
-    Command::PageDown { extend } => ctx.dispatch().page_down(ctx, extend),
+    Command::PageUp { extend } => page_up(ctx, extend),
+    Command::PageDown { extend } => page_down(ctx, extend),
     Command::PageCursorHalfUp => page_cursor_half_up(ctx),
     Command::PageCursorHalfDown => page_cursor_half_down(ctx),
     Command::AlignViewTop => align_view(ctx, WindowAlign::Top),
@@ -1506,17 +1220,15 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
       inclusive,
       extend,
     } => {
-      ctx
-        .dispatch()
-        .find_char(ctx, (direction, inclusive, extend));
+      find_char(ctx, (direction, inclusive, extend));
     },
-    Command::ParentNodeEnd { extend } => ctx.dispatch().parent_node_end(ctx, extend),
-    Command::ParentNodeStart { extend } => ctx.dispatch().parent_node_start(ctx, extend),
-    Command::Move(dir) => ctx.dispatch().move_cursor(ctx, dir),
-    Command::AddCursor(dir) => ctx.dispatch().add_cursor(ctx, dir),
-    Command::Motion(motion) => {
-      ctx.set_last_motion(Some(motion));
-      ctx.dispatch().motion(ctx, motion);
+    Command::ParentNodeEnd { extend } => parent_node_end(ctx, extend),
+    Command::ParentNodeStart { extend } => parent_node_start(ctx, extend),
+    Command::Move(dir) => move_cursor(ctx, dir),
+    Command::AddCursor(dir) => add_cursor(ctx, dir),
+    Command::Motion(command_motion) => {
+      ctx.set_last_motion(Some(command_motion));
+      motion(ctx, command_motion);
     },
     Command::GotoNextBuffer { count } => {
       if !ctx.goto_buffer(Direction::Forward, count.max(1)) {
@@ -1612,48 +1324,48 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::SelectAllSiblings => select_all_siblings(ctx),
     Command::SelectPrevSibling => select_prev_sibling(ctx),
     Command::SelectNextSibling => select_next_sibling(ctx),
-    Command::DeleteSelection { yank } => ctx.dispatch().delete_selection(ctx, yank),
-    Command::ChangeSelection { yank } => ctx.dispatch().change_selection(ctx, yank),
-    Command::Replace => ctx.dispatch().replace(ctx, ()),
-    Command::ReplaceWithYanked => ctx.dispatch().replace_with_yanked(ctx, ()),
+    Command::DeleteSelection { yank } => delete_selection(ctx, yank),
+    Command::ChangeSelection { yank } => change_selection(ctx, yank),
+    Command::Replace => replace(ctx, ()),
+    Command::ReplaceWithYanked => replace_with_yanked(ctx, ()),
     Command::ReplaceSelectionsWithClipboard => replace_selections_with_clipboard(ctx),
-    Command::Yank => ctx.dispatch().yank(ctx, ()),
+    Command::Yank => yank(ctx, ()),
     Command::YankToClipboard => yank_to_clipboard(ctx),
     Command::YankMainSelectionToClipboard => yank_main_selection_to_clipboard(ctx),
-    Command::Paste { after } => ctx.dispatch().paste(ctx, after),
+    Command::Paste { after } => paste(ctx, after),
     Command::PasteClipboardAfter => paste_clipboard(ctx, true),
     Command::PasteClipboardBefore => paste_clipboard(ctx, false),
-    Command::RecordMacro => ctx.dispatch().record_macro(ctx, ()),
-    Command::ReplayMacro => ctx.dispatch().replay_macro(ctx, ()),
-    Command::RepeatLastMotion => ctx.dispatch().repeat_last_motion(ctx, ()),
-    Command::SwitchCase => ctx.dispatch().switch_case(ctx, ()),
-    Command::SwitchToUppercase => ctx.dispatch().switch_to_uppercase(ctx, ()),
-    Command::SwitchToLowercase => ctx.dispatch().switch_to_lowercase(ctx, ()),
-    Command::InsertAtLineStart => ctx.dispatch().insert_at_line_start(ctx, ()),
-    Command::InsertAtLineEnd => ctx.dispatch().insert_at_line_end(ctx, ()),
-    Command::AppendMode => ctx.dispatch().append_mode(ctx, ()),
-    Command::OpenBelow => ctx.dispatch().open_below(ctx, ()),
-    Command::OpenAbove => ctx.dispatch().open_above(ctx, ()),
-    Command::CommitUndoCheckpoint => ctx.dispatch().commit_undo_checkpoint(ctx, ()),
-    Command::CopySelectionOnNextLine => ctx.dispatch().copy_selection_on_next_line(ctx, ()),
-    Command::CopySelectionOnPrevLine => ctx.dispatch().copy_selection_on_prev_line(ctx, ()),
-    Command::SelectAll => ctx.dispatch().select_all(ctx, ()),
-    Command::ExtendLineBelow { count } => ctx.dispatch().extend_line_below(ctx, count),
-    Command::ExtendLineAbove { count } => ctx.dispatch().extend_line_above(ctx, count),
-    Command::ExtendToLineBounds => ctx.dispatch().extend_to_line_bounds(ctx, ()),
-    Command::ShrinkToLineBounds => ctx.dispatch().shrink_to_line_bounds(ctx, ()),
-    Command::Undo { count } => ctx.dispatch().undo(ctx, count),
-    Command::Redo { count } => ctx.dispatch().redo(ctx, count),
-    Command::Earlier { count } => ctx.dispatch().earlier(ctx, count),
-    Command::Later { count } => ctx.dispatch().later(ctx, count),
-    Command::Indent { count } => ctx.dispatch().indent(ctx, count),
-    Command::Unindent { count } => ctx.dispatch().unindent(ctx, count),
-    Command::MatchBrackets => ctx.dispatch().match_brackets(ctx, ()),
-    Command::SurroundAdd => ctx.dispatch().surround_add(ctx, ()),
-    Command::SurroundDelete { count } => ctx.dispatch().surround_delete(ctx, count),
-    Command::SurroundReplace { count } => ctx.dispatch().surround_replace(ctx, count),
-    Command::SelectTextobjectAround => ctx.dispatch().select_textobject_around(ctx, ()),
-    Command::SelectTextobjectInner => ctx.dispatch().select_textobject_inner(ctx, ()),
+    Command::RecordMacro => record_macro(ctx, ()),
+    Command::ReplayMacro => replay_macro(ctx, ()),
+    Command::RepeatLastMotion => repeat_last_motion(ctx, ()),
+    Command::SwitchCase => switch_case(ctx, ()),
+    Command::SwitchToUppercase => switch_to_uppercase(ctx, ()),
+    Command::SwitchToLowercase => switch_to_lowercase(ctx, ()),
+    Command::InsertAtLineStart => insert_at_line_start(ctx, ()),
+    Command::InsertAtLineEnd => insert_at_line_end(ctx, ()),
+    Command::AppendMode => append_mode(ctx, ()),
+    Command::OpenBelow => open_below(ctx, ()),
+    Command::OpenAbove => open_above(ctx, ()),
+    Command::CommitUndoCheckpoint => commit_undo_checkpoint(ctx, ()),
+    Command::CopySelectionOnNextLine => copy_selection_on_next_line(ctx, ()),
+    Command::CopySelectionOnPrevLine => copy_selection_on_prev_line(ctx, ()),
+    Command::SelectAll => select_all(ctx, ()),
+    Command::ExtendLineBelow { count } => extend_line_below(ctx, count),
+    Command::ExtendLineAbove { count } => extend_line_above(ctx, count),
+    Command::ExtendToLineBounds => extend_to_line_bounds(ctx, ()),
+    Command::ShrinkToLineBounds => shrink_to_line_bounds(ctx, ()),
+    Command::Undo { count } => undo(ctx, count),
+    Command::Redo { count } => redo(ctx, count),
+    Command::Earlier { count } => earlier(ctx, count),
+    Command::Later { count } => later(ctx, count),
+    Command::Indent { count } => indent(ctx, count),
+    Command::Unindent { count } => unindent(ctx, count),
+    Command::MatchBrackets => match_brackets(ctx, ()),
+    Command::SurroundAdd => surround_add(ctx, ()),
+    Command::SurroundDelete { count } => surround_delete(ctx, count),
+    Command::SurroundReplace { count } => surround_replace(ctx, count),
+    Command::SelectTextobjectAround => select_textobject_around(ctx, ()),
+    Command::SelectTextobjectInner => select_textobject_inner(ctx, ()),
     Command::GotoPrevDiag => goto_prev_diag(ctx),
     Command::GotoFirstDiag => goto_first_diag(ctx),
     Command::GotoNextDiag => goto_next_diag(ctx),
@@ -1682,9 +1394,9 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::AddNewlineBelow => add_newline(ctx, OpenDirection::Below),
     Command::SearchSelectionDetectWordBoundaries => search_selection(ctx, true),
     Command::SearchSelection => search_selection(ctx, false),
-    Command::Search => ctx.dispatch().search(ctx, ()),
-    Command::RSearch => ctx.dispatch().rsearch(ctx, ()),
-    Command::SelectRegex => ctx.dispatch().select_regex(ctx, ()),
+    Command::Search => search(ctx, ()),
+    Command::RSearch => rsearch(ctx, ()),
+    Command::SelectRegex => select_regex(ctx, ()),
     Command::GlobalSearch => ctx.global_search(),
     Command::FilePicker => crate::file_picker::open_file_picker(ctx),
     Command::FilePickerInCurrentDirectory => {
@@ -1727,14 +1439,14 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
       if ctx.completion_menu().active {
         crate::completion_menu::completion_docs_scroll(ctx, -6);
       } else {
-        ctx.dispatch().page_up(ctx, false);
+        page_up(ctx, false);
       }
     },
     Command::CompletionDocsScrollDown => {
       if ctx.completion_menu().active {
         crate::completion_menu::completion_docs_scroll(ctx, 6);
       } else {
-        ctx.dispatch().page_down(ctx, false);
+        page_down(ctx, false);
       }
     },
     Command::LspSignatureHelp => ctx.lsp_signature_help(),
@@ -1745,12 +1457,10 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
       extend,
       count,
     } => {
-      ctx
-        .dispatch()
-        .search_next_or_prev(ctx, (direction, extend, count));
+      search_next_or_prev(ctx, (direction, extend, count));
     },
-    Command::Save => ctx.dispatch().save(ctx, ()),
-    Command::Quit => ctx.dispatch().quit(ctx, ()),
+    Command::Save => save(ctx, ()),
+    Command::Quit => quit(ctx, ()),
   }
 
   let preserve_completion_menu =
@@ -1759,7 +1469,7 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     ctx.completion_menu_mut().clear();
   }
 
-  ctx.dispatch().post_on_action(ctx, ());
+  post_on_action(ctx, ());
 }
 
 fn command_preserves_completion_menu(command: Command) -> bool {
@@ -1776,8 +1486,8 @@ fn command_preserves_completion_menu(command: Command) -> bool {
 }
 
 fn repeat_last_motion<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
-  if let Some(motion) = ctx.last_motion() {
-    ctx.dispatch().motion(ctx, motion);
+  if let Some(last_motion) = ctx.last_motion() {
+    motion(ctx, last_motion);
   }
 }
 
@@ -1814,7 +1524,7 @@ fn post_on_action<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
     let _ = ctx.editor().document_mut().commit();
   }
   ctx.bump_cursor_blink_generation();
-  ctx.dispatch().render_request(ctx, ());
+  render_request(ctx, ());
 }
 
 fn render_request<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
@@ -4941,7 +4651,7 @@ fn consume_mouse_selection_before_insert<Ctx: DefaultContext>(ctx: &mut Ctx) {
   }
   ctx.set_insert_mouse_selection_edit_armed(false);
   if selection_has_nonempty_ranges(ctx.editor_ref().document().selection()) {
-    ctx.dispatch().delete_selection(ctx, false);
+    delete_selection(ctx, false);
   }
 }
 
@@ -4951,7 +4661,7 @@ fn consume_mouse_selection_for_delete<Ctx: DefaultContext>(ctx: &mut Ctx, yank: 
   }
   ctx.set_insert_mouse_selection_edit_armed(false);
   if selection_has_nonempty_ranges(ctx.editor_ref().document().selection()) {
-    ctx.dispatch().delete_selection(ctx, yank);
+    delete_selection(ctx, yank);
     true
   } else {
     false
@@ -5341,7 +5051,7 @@ fn replay_macro<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
     .macro_queue_mut()
     .extend(keys.iter().map(|key| key.to_key_event()));
   while let Some(next) = ctx.macro_queue_mut().pop_front() {
-    ctx.dispatch().on_keypress(ctx, next);
+    on_keypress(ctx, next);
   }
   ctx.macro_replaying_mut().pop();
 }

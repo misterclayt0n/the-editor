@@ -1024,7 +1024,7 @@ fn cmd_quit<Ctx: DefaultContext>(ctx: &mut Ctx, _args: Args, event: CommandEvent
     )));
   }
 
-  ctx.dispatch().pre_on_action(ctx, Command::Quit);
+  crate::handle_command(ctx, Command::Quit);
   Ok(())
 }
 
@@ -1037,7 +1037,7 @@ fn cmd_quit_force<Ctx: DefaultContext>(
     return Ok(());
   }
 
-  ctx.dispatch().pre_on_action(ctx, Command::Quit);
+  crate::handle_command(ctx, Command::Quit);
   Ok(())
 }
 
@@ -1230,7 +1230,7 @@ fn cmd_write_quit<Ctx: DefaultContext>(
   }
 
   ctx.save_current_buffer(false).map_err(CommandError::new)?;
-  ctx.dispatch().pre_on_action(ctx, Command::Quit);
+  crate::handle_command(ctx, Command::Quit);
   Ok(())
 }
 
@@ -1439,7 +1439,7 @@ fn cmd_lsp_format<Ctx: DefaultContext>(
   if event != CommandEvent::Validate {
     return Ok(());
   }
-  ctx.dispatch().pre_on_action(ctx, Command::LspFormat);
+  crate::handle_command(ctx, Command::LspFormat);
   Ok(())
 }
 
@@ -2016,7 +2016,7 @@ fn submit_action_palette<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool {
   match action {
     CommandPaletteAction::StaticCommand(command) => {
       close_command_prompt_and_palette(ctx);
-      ctx.dispatch().post_on_keypress(ctx, command);
+      crate::handle_command(ctx, command);
       true
     },
     CommandPaletteAction::TypableCommand { name, args } => {

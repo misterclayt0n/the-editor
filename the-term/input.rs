@@ -140,7 +140,7 @@ pub fn handle_key(ctx: &mut Ctx, event: CrosstermKeyEvent) {
     }
   }
 
-  ctx.dispatch().pre_on_keypress(ctx, key_event);
+  the_default::handle_key(ctx, key_event);
 }
 
 pub fn handle_mouse(ctx: &mut Ctx, event: CrosstermMouseEvent) {
@@ -156,8 +156,7 @@ pub fn handle_mouse(ctx: &mut Ctx, event: CrosstermMouseEvent) {
   if click_count != 0 {
     pointer_event = pointer_event.with_click_count(click_count);
   }
-  let dispatch = ctx.dispatch();
-  let _ = dispatch_pointer_event(&*dispatch, ctx, pointer_event);
+  let _ = dispatch_pointer_event(ctx, pointer_event);
 }
 
 pub(crate) fn handle_pointer_event(ctx: &mut Ctx, event: PointerEvent) -> PointerEventOutcome {
@@ -910,7 +909,6 @@ mod tests {
   };
 
   use super::*;
-  use crate::dispatch::build_dispatch;
 
   fn mouse_event(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
     MouseEvent {
@@ -933,9 +931,7 @@ mod tests {
 
   #[test]
   fn space_shift_slash_opens_action_palette() {
-    let dispatch = build_dispatch::<Ctx>();
     let mut ctx = Ctx::new(None).expect("ctx");
-    ctx.set_dispatch(&dispatch);
 
     handle_key(&mut ctx, key_event(KeyCode::Char(' ')));
 
@@ -1103,9 +1099,7 @@ mod tests {
 
   #[test]
   fn escape_clears_hover_docs_overlay() {
-    let dispatch = build_dispatch::<Ctx>();
     let mut ctx = Ctx::new(None).expect("ctx");
-    ctx.set_dispatch(&dispatch);
     ctx.mode = Mode::Command;
     ctx.hover_docs = Some("hover docs".to_string());
     ctx.hover_docs_scroll = 5;
@@ -1136,9 +1130,7 @@ mod tests {
 
   #[test]
   fn repeat_down_event_repeats_normal_mode_movement() {
-    let dispatch = build_dispatch::<Ctx>();
     let mut ctx = Ctx::new(None).expect("ctx");
-    ctx.set_dispatch(&dispatch);
 
     let tx = Transaction::change(
       ctx.editor.document().text(),

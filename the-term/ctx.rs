@@ -7069,7 +7069,6 @@ mod tests {
     Command,
     CommandEvent,
     CompletionMenuItem,
-    DefaultApi,
     DefaultContext,
     Key,
     KeyEvent,
@@ -7077,6 +7076,7 @@ mod tests {
     Modifiers,
     PendingInput,
     SearchPromptKind,
+    handle_command,
     handle_key,
     show_completion_menu,
   };
@@ -7127,12 +7127,9 @@ mod tests {
     merge_resolved_completion_item,
     normalize_completion_item_for_apply,
   };
-  use crate::{
-    dispatch::build_dispatch,
-    render::{
-      build_render_plan,
-      ensure_cursor_visible,
-    },
+  use crate::render::{
+    build_render_plan,
+    ensure_cursor_visible,
   };
 
   struct TempTestFile {
@@ -7402,7 +7399,6 @@ mod tests {
   fn completion_accept_undo_redo_keeps_syntax_and_render_stable() {
     let fixture =
       TempTestFile::with_extension("completion-undo-redo", "rs", "fn main() {\n  le\n}\n");
-    let dispatch = build_dispatch::<Ctx>();
     let mut ctx = Ctx::new(Some(
       fixture
         .as_path()
@@ -7410,7 +7406,6 @@ mod tests {
         .expect("temp test path should be utf-8"),
     ))
     .expect("ctx");
-    ctx.set_dispatch(&dispatch);
     assert!(ctx.editor.document().syntax().is_some());
 
     let (cursor, replace_start) = {
@@ -7442,15 +7437,13 @@ mod tests {
     let accept_plan = build_render_plan(&mut ctx);
     assert!(!accept_plan.lines.is_empty());
 
-    let dispatch_ref = ctx.dispatch();
-    dispatch_ref.undo(&mut ctx, 1);
+    handle_command(&mut ctx, Command::Undo { count: 1 });
     assert_eq!(ctx.editor.document().text().to_string(), before_text);
     assert!(ctx.editor.document().syntax().is_some());
     let undo_plan = build_render_plan(&mut ctx);
     assert!(!undo_plan.lines.is_empty());
 
-    let dispatch_ref = ctx.dispatch();
-    dispatch_ref.redo(&mut ctx, 1);
+    handle_command(&mut ctx, Command::Redo { count: 1 });
     assert_eq!(ctx.editor.document().text().to_string(), after_accept_text);
     assert!(ctx.editor.document().syntax().is_some());
     let redo_plan = build_render_plan(&mut ctx);
@@ -7618,11 +7611,8 @@ pkgs.mkShell {
 
   #[test]
   fn headless_client_stress_fixture_matrix() {
-    let dispatch = build_dispatch::<Ctx>();
-
     for (fixture_index, (fixture_name, fixture_text)) in fixture_matrix().into_iter().enumerate() {
       let mut ctx = Ctx::new(None).expect("ctx");
-      ctx.set_dispatch(&dispatch);
 
       let initial = Transaction::change(
         ctx.editor.document().text(),
@@ -7728,9 +7718,7 @@ pkgs.mkShell {
 
   #[test]
   fn wrap_command_toggles_soft_wrap_and_changes_render_lines() {
-    let dispatch = build_dispatch::<Ctx>();
     let mut ctx = Ctx::new(None).expect("ctx");
-    ctx.set_dispatch(&dispatch);
     ctx.resize(24, 12);
 
     let long_line = "wrap-me-".repeat(40);
@@ -7767,9 +7755,7 @@ pkgs.mkShell {
 
   #[test]
   fn gutter_and_line_number_commands_update_config() {
-    let dispatch = build_dispatch::<Ctx>();
     let mut ctx = Ctx::new(None).expect("ctx");
-    ctx.set_dispatch(&dispatch);
 
     let registry = ctx.command_registry_ref() as *const the_default::CommandRegistry<Ctx>;
 
@@ -8027,25 +8013,22 @@ pkgs.mkShell {
     .expect("ctx");
     <Ctx as DefaultContext>::open_file(&mut ctx, second.as_path()).expect("open second buffer");
 
-    let dispatch = build_dispatch::<Ctx>();
-    ctx.set_dispatch(&dispatch);
-
-    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Char('g'),
       modifiers: Modifiers::empty(),
     });
-    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Char('n'),
       modifiers: Modifiers::empty(),
     });
     assert_eq!(ctx.file_path.as_deref(), Some(first.as_path()));
     assert_eq!(ctx.editor.document().text().to_string(), "one\n");
 
-    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Char('g'),
       modifiers: Modifiers::empty(),
     });
-    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Char('p'),
       modifiers: Modifiers::empty(),
     });
@@ -8055,9 +8038,7 @@ pkgs.mkShell {
 
   #[test]
   fn lsp_goto_variant_keymaps_emit_errors_when_unavailable() {
-    let dispatch = build_dispatch::<Ctx>();
     let mut ctx = Ctx::new(None).expect("ctx");
-    ctx.set_dispatch(&dispatch);
 
     for (suffix, expected) in [
       ('D', "No declaration found."),
@@ -8065,11 +8046,11 @@ pkgs.mkShell {
       ('i', "No implementation found."),
     ] {
       let before_seq = ctx.messages.latest_seq();
-      dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+      handle_key(&mut ctx, KeyEvent {
         key:       Key::Char('g'),
         modifiers: Modifiers::empty(),
       });
-      dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+      handle_key(&mut ctx, KeyEvent {
         key:       Key::Char(suffix),
         modifiers: Modifiers::empty(),
       });
@@ -8105,25 +8086,22 @@ pkgs.mkShell {
     .expect("ctx");
     <Ctx as DefaultContext>::open_file(&mut ctx, second.as_path()).expect("open second buffer");
 
-    let dispatch = build_dispatch::<Ctx>();
-    ctx.set_dispatch(&dispatch);
-
-    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Char('g'),
       modifiers: Modifiers::empty(),
     });
-    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Char('a'),
       modifiers: Modifiers::empty(),
     });
     assert_eq!(ctx.file_path.as_deref(), Some(first.as_path()));
     assert_eq!(ctx.editor.document().text().to_string(), "one\n");
 
-    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Char('g'),
       modifiers: Modifiers::empty(),
     });
-    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Char('a'),
       modifiers: Modifiers::empty(),
     });
@@ -8158,14 +8136,11 @@ pkgs.mkShell {
     .expect("second edit transaction");
     assert!(DefaultContext::apply_transaction(&mut ctx, &second_edit));
 
-    let dispatch = build_dispatch::<Ctx>();
-    ctx.set_dispatch(&dispatch);
-
-    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Char('g'),
       modifiers: Modifiers::empty(),
     });
-    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Char('m'),
       modifiers: Modifiers::empty(),
     });
@@ -8179,11 +8154,11 @@ pkgs.mkShell {
         .starts_with("first-edit ")
     );
 
-    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Char('g'),
       modifiers: Modifiers::empty(),
     });
-    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Char('m'),
       modifiers: Modifiers::empty(),
     });
@@ -8200,24 +8175,22 @@ pkgs.mkShell {
 
   #[test]
   fn jumplist_keymap_sequence_saves_and_navigates_selections() {
-    let dispatch = build_dispatch::<Ctx>();
     let mut ctx = Ctx::new(None).expect("ctx");
-    ctx.set_dispatch(&dispatch);
 
     let _ = ctx.editor.document_mut().set_selection(Selection::point(0));
-    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Char('s'),
       modifiers: ctrl_modifiers(),
     });
 
     let _ = ctx.editor.document_mut().set_selection(Selection::point(3));
-    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Char('s'),
       modifiers: ctrl_modifiers(),
     });
 
     let _ = ctx.editor.document_mut().set_selection(Selection::point(6));
-    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Char('o'),
       modifiers: ctrl_modifiers(),
     });
@@ -8226,7 +8199,7 @@ pkgs.mkShell {
       Range::point(3)
     );
 
-    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Char('o'),
       modifiers: ctrl_modifiers(),
     });
@@ -8235,7 +8208,7 @@ pkgs.mkShell {
       Range::point(0)
     );
 
-    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Char('i'),
       modifiers: ctrl_modifiers(),
     });
@@ -8244,7 +8217,7 @@ pkgs.mkShell {
       Range::point(3)
     );
 
-    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Char('i'),
       modifiers: ctrl_modifiers(),
     });
@@ -8256,9 +8229,7 @@ pkgs.mkShell {
 
   #[test]
   fn goto_motion_keymaps_save_jumps_for_file_edges_and_column() {
-    let dispatch = build_dispatch::<Ctx>();
     let mut ctx = Ctx::new(None).expect("ctx");
-    ctx.set_dispatch(&dispatch);
 
     let tx = Transaction::change(
       ctx.editor.document().text(),
@@ -8280,14 +8251,14 @@ pkgs.mkShell {
     };
 
     let go_back = |ctx: &mut Ctx| {
-      dispatch.pre_on_keypress(ctx, KeyEvent {
+      handle_key(ctx, KeyEvent {
         key:       Key::Char('o'),
         modifiers: ctrl_modifiers(),
       });
     };
 
     let press = |ctx: &mut Ctx, ch: char| {
-      dispatch.pre_on_keypress(ctx, KeyEvent {
+      handle_key(ctx, KeyEvent {
         key:       Key::Char(ch),
         modifiers: Modifiers::empty(),
       });
@@ -8423,11 +8394,8 @@ pkgs.mkShell {
     ))
     .expect("ctx");
 
-    let dispatch = build_dispatch::<Ctx>();
-    ctx.set_dispatch(&dispatch);
-
     let _ = ctx.editor.document_mut().set_selection(Selection::point(0));
-    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Char('c'),
       modifiers: ctrl_modifiers(),
     });
@@ -8436,7 +8404,7 @@ pkgs.mkShell {
       "// fn main() {}\n"
     );
 
-    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Char('c'),
       modifiers: ctrl_modifiers(),
     });
@@ -8445,9 +8413,7 @@ pkgs.mkShell {
 
   #[test]
   fn goto_window_keymap_sequence_moves_cursor_to_window_alignments() {
-    let dispatch = build_dispatch::<Ctx>();
     let mut ctx = Ctx::new(None).expect("ctx");
-    ctx.set_dispatch(&dispatch);
     ctx.resize(80, 24);
 
     let mut content = String::new();
@@ -8466,11 +8432,11 @@ pkgs.mkShell {
     assert!(DefaultContext::apply_transaction(&mut ctx, &tx));
     ctx.editor.view_mut().scroll = Position::new(10, 0);
 
-    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Char('g'),
       modifiers: Modifiers::empty(),
     });
-    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Char('t'),
       modifiers: Modifiers::empty(),
     });
@@ -8481,11 +8447,11 @@ pkgs.mkShell {
     };
     assert_eq!(top_row, 15);
 
-    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Char('g'),
       modifiers: Modifiers::empty(),
     });
-    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Char('c'),
       modifiers: Modifiers::empty(),
     });
@@ -8496,11 +8462,11 @@ pkgs.mkShell {
     };
     assert_eq!(center_row, 21);
 
-    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Char('g'),
       modifiers: Modifiers::empty(),
     });
-    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Char('b'),
       modifiers: Modifiers::empty(),
     });
@@ -8514,9 +8480,7 @@ pkgs.mkShell {
 
   #[test]
   fn goto_last_modification_keymap_sequence_moves_cursor_to_last_edit() {
-    let dispatch = build_dispatch::<Ctx>();
     let mut ctx = Ctx::new(None).expect("ctx");
-    ctx.set_dispatch(&dispatch);
     ctx.resize(80, 24);
 
     let tx = Transaction::change(
@@ -8537,11 +8501,11 @@ pkgs.mkShell {
       .last_modification_position()
       .expect("last modification position");
 
-    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Char('g'),
       modifiers: Modifiers::empty(),
     });
-    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Char('.'),
       modifiers: Modifiers::empty(),
     });
@@ -8552,9 +8516,7 @@ pkgs.mkShell {
 
   #[test]
   fn copy_selection_on_next_line_keeps_single_line_height_at_line_start() {
-    let dispatch = build_dispatch::<Ctx>();
     let mut ctx = Ctx::new(None).expect("ctx");
-    ctx.set_dispatch(&dispatch);
 
     let content = "zero\none\ntwo\nthree\n";
     let tx = Transaction::change(
@@ -8574,7 +8536,7 @@ pkgs.mkShell {
       .document_mut()
       .set_selection(Selection::point(line_start));
 
-    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Char('C'),
       modifiers: Modifiers::empty(),
     });
@@ -8593,9 +8555,7 @@ pkgs.mkShell {
 
   #[test]
   fn goto_word_keymap_sequence_moves_cursor_using_jump_labels() {
-    let dispatch = build_dispatch::<Ctx>();
     let mut ctx = Ctx::new(None).expect("ctx");
-    ctx.set_dispatch(&dispatch);
     ctx.resize(80, 24);
 
     let tx = Transaction::change(
@@ -8610,11 +8570,11 @@ pkgs.mkShell {
     assert!(DefaultContext::apply_transaction(&mut ctx, &tx));
     let _ = ctx.editor.document_mut().set_selection(Selection::point(0));
 
-    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Char('g'),
       modifiers: Modifiers::empty(),
     });
-    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Char('w'),
       modifiers: Modifiers::empty(),
     });
@@ -8633,7 +8593,7 @@ pkgs.mkShell {
     assert!(ctx.word_jump_inline_annotations.is_empty());
     assert!(!ctx.word_jump_overlay_annotations.is_empty());
 
-    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Char('a'),
       modifiers: Modifiers::empty(),
     });
@@ -8648,7 +8608,7 @@ pkgs.mkShell {
     assert!(ctx.word_jump_inline_annotations.is_empty());
     assert!(!ctx.word_jump_overlay_annotations.is_empty());
 
-    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Char('b'),
       modifiers: Modifiers::empty(),
     });
@@ -8666,9 +8626,7 @@ pkgs.mkShell {
 
   #[test]
   fn extend_to_word_keymap_sequence_extends_selection_using_jump_labels() {
-    let dispatch = build_dispatch::<Ctx>();
     let mut ctx = Ctx::new(None).expect("ctx");
-    ctx.set_dispatch(&dispatch);
     ctx.resize(80, 24);
 
     let tx = Transaction::change(
@@ -8684,11 +8642,11 @@ pkgs.mkShell {
     let _ = ctx.editor.document_mut().set_selection(Selection::point(0));
     ctx.set_mode(Mode::Select);
 
-    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Char('g'),
       modifiers: Modifiers::empty(),
     });
-    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Char('w'),
       modifiers: Modifiers::empty(),
     });
@@ -8696,11 +8654,11 @@ pkgs.mkShell {
       Some(PendingInput::WordJump { targets, .. }) => targets,
       _ => panic!("expected word jump pending input"),
     };
-    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Char('a'),
       modifiers: Modifiers::empty(),
     });
-    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Char('b'),
       modifiers: Modifiers::empty(),
     });
@@ -8719,9 +8677,7 @@ pkgs.mkShell {
 
   #[test]
   fn split_selection_keymap_sequence_uses_split_prompt_and_partitions_selection() {
-    let dispatch = build_dispatch::<Ctx>();
     let mut ctx = Ctx::new(None).expect("ctx");
-    ctx.set_dispatch(&dispatch);
 
     let content = "alpha,beta,gamma\n";
     let tx = Transaction::change(
@@ -8740,20 +8696,20 @@ pkgs.mkShell {
       .document_mut()
       .set_selection(Selection::single(0, split_end));
 
-    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Char('S'),
       modifiers: Modifiers::empty(),
     });
     assert!(ctx.search_prompt.active);
     assert_eq!(ctx.search_prompt.kind, SearchPromptKind::SplitSelection);
 
-    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Char(','),
       modifiers: Modifiers::empty(),
     });
     assert_eq!(ctx.editor.document().selection().ranges().len(), 3);
 
-    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Enter,
       modifiers: Modifiers::empty(),
     });
@@ -8763,9 +8719,7 @@ pkgs.mkShell {
 
   #[test]
   fn join_selections_keymap_sequence_joins_lines() {
-    let dispatch = build_dispatch::<Ctx>();
     let mut ctx = Ctx::new(None).expect("ctx");
-    ctx.set_dispatch(&dispatch);
 
     let content = "alpha\nbeta\ngamma\n";
     let tx = Transaction::change(
@@ -8784,7 +8738,7 @@ pkgs.mkShell {
       .document_mut()
       .set_selection(Selection::single(0, join_end));
 
-    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Char('J'),
       modifiers: Modifiers::empty(),
     });
@@ -8797,9 +8751,7 @@ pkgs.mkShell {
 
   #[test]
   fn join_selections_space_keymap_sequence_selects_inserted_space() {
-    let dispatch = build_dispatch::<Ctx>();
     let mut ctx = Ctx::new(None).expect("ctx");
-    ctx.set_dispatch(&dispatch);
 
     let content = "alpha\nbeta\n";
     let tx = Transaction::change(
@@ -8821,7 +8773,7 @@ pkgs.mkShell {
     let mut alt = Modifiers::empty();
     alt.insert(Modifiers::ALT);
 
-    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Char('J'),
       modifiers: alt,
     });
@@ -8834,9 +8786,7 @@ pkgs.mkShell {
 
   #[test]
   fn keep_selections_keymap_sequence_filters_selection_with_prompt() {
-    let dispatch = build_dispatch::<Ctx>();
     let mut ctx = Ctx::new(None).expect("ctx");
-    ctx.set_dispatch(&dispatch);
 
     let content = "one two three\n";
     let tx = Transaction::change(
@@ -8854,28 +8804,28 @@ pkgs.mkShell {
       .editor
       .document_mut()
       .set_selection(Selection::single(0, select_end));
-    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Char('S'),
       modifiers: Modifiers::empty(),
     });
-    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Char(' '),
       modifiers: Modifiers::empty(),
     });
-    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Enter,
       modifiers: Modifiers::empty(),
     });
     assert_eq!(ctx.editor.document().selection().ranges().len(), 3);
 
-    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Char('K'),
       modifiers: Modifiers::empty(),
     });
     assert!(ctx.search_prompt.active);
     assert_eq!(ctx.search_prompt.kind, SearchPromptKind::KeepSelections);
 
-    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Char('o'),
       modifiers: Modifiers::empty(),
     });
@@ -8890,7 +8840,7 @@ pkgs.mkShell {
       .collect();
     assert_eq!(fragments, vec!["one".to_string(), "two".to_string()]);
 
-    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Enter,
       modifiers: Modifiers::empty(),
     });
@@ -8900,9 +8850,7 @@ pkgs.mkShell {
 
   #[test]
   fn remove_selections_keymap_sequence_filters_selection_with_prompt() {
-    let dispatch = build_dispatch::<Ctx>();
     let mut ctx = Ctx::new(None).expect("ctx");
-    ctx.set_dispatch(&dispatch);
 
     let content = "one two three\n";
     let tx = Transaction::change(
@@ -8920,15 +8868,15 @@ pkgs.mkShell {
       .editor
       .document_mut()
       .set_selection(Selection::single(0, select_end));
-    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Char('S'),
       modifiers: Modifiers::empty(),
     });
-    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Char(' '),
       modifiers: Modifiers::empty(),
     });
-    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Enter,
       modifiers: Modifiers::empty(),
     });
@@ -8937,14 +8885,14 @@ pkgs.mkShell {
     let mut alt = Modifiers::empty();
     alt.insert(Modifiers::ALT);
 
-    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Char('K'),
       modifiers: alt,
     });
     assert!(ctx.search_prompt.active);
     assert_eq!(ctx.search_prompt.kind, SearchPromptKind::RemoveSelections);
 
-    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Char('o'),
       modifiers: Modifiers::empty(),
     });
@@ -8959,7 +8907,7 @@ pkgs.mkShell {
       .collect();
     assert_eq!(fragments, vec!["three".to_string()]);
 
-    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Enter,
       modifiers: Modifiers::empty(),
     });
@@ -8969,9 +8917,7 @@ pkgs.mkShell {
 
   #[test]
   fn clipboard_yank_keymaps_write_to_system_register() {
-    let dispatch = build_dispatch::<Ctx>();
     let mut ctx = Ctx::new(None).expect("ctx");
-    ctx.set_dispatch(&dispatch);
     ctx
       .registers
       .set_clipboard_provider(std::sync::Arc::new(NoClipboard));
@@ -8990,11 +8936,11 @@ pkgs.mkShell {
     let selection = Selection::single(0, 5).push(Range::new(6, 10));
     let _ = ctx.editor.document_mut().set_selection(selection);
 
-    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Char(' '),
       modifiers: Modifiers::empty(),
     });
-    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Char('y'),
       modifiers: Modifiers::empty(),
     });
@@ -9012,11 +8958,11 @@ pkgs.mkShell {
     let second = ctx.editor.document().selection().cursor_ids()[1];
     ctx.editor.view_mut().active_cursor = Some(second);
 
-    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Char(' '),
       modifiers: Modifiers::empty(),
     });
-    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Char('Y'),
       modifiers: Modifiers::empty(),
     });
@@ -9032,9 +8978,7 @@ pkgs.mkShell {
 
   #[test]
   fn clipboard_paste_and_replace_keymaps_use_system_register() {
-    let dispatch = build_dispatch::<Ctx>();
     let mut ctx = Ctx::new(None).expect("ctx");
-    ctx.set_dispatch(&dispatch);
     ctx
       .registers
       .set_clipboard_provider(std::sync::Arc::new(NoClipboard));
@@ -9053,11 +8997,11 @@ pkgs.mkShell {
       assert!(DefaultContext::apply_transaction(ctx, &tx));
     };
     let press = |ctx: &mut Ctx, ch: char| {
-      dispatch.pre_on_keypress(ctx, KeyEvent {
+      handle_key(ctx, KeyEvent {
         key:       Key::Char(' '),
         modifiers: Modifiers::empty(),
       });
-      dispatch.pre_on_keypress(ctx, KeyEvent {
+      handle_key(ctx, KeyEvent {
         key:       Key::Char(ch),
         modifiers: Modifiers::empty(),
       });
@@ -9090,9 +9034,7 @@ pkgs.mkShell {
 
   #[test]
   fn keep_active_selection_keymap_sequence_collapses_to_picked_cursor() {
-    let dispatch = build_dispatch::<Ctx>();
     let mut ctx = Ctx::new(None).expect("ctx");
-    ctx.set_dispatch(&dispatch);
 
     let content = "a\nb\nc\n";
     let tx = Transaction::change(
@@ -9112,7 +9054,7 @@ pkgs.mkShell {
       .push(Range::point(text.line_to_char(2)));
     let _ = ctx.editor.document_mut().set_selection(selection);
 
-    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Char(','),
       modifiers: Modifiers::empty(),
     });
@@ -9130,7 +9072,7 @@ pkgs.mkShell {
       _ => panic!("expected cursor-pick pending input"),
     };
 
-    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Down,
       modifiers: Modifiers::empty(),
     });
@@ -9144,7 +9086,7 @@ pkgs.mkShell {
     ));
     assert_eq!(ctx.editor.view().active_cursor, Some(candidates[1]));
 
-    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Enter,
       modifiers: Modifiers::empty(),
     });
@@ -9160,9 +9102,7 @@ pkgs.mkShell {
 
   #[test]
   fn cursor_pick_mode_uses_match_cursor_style_for_selected_cursor() {
-    let dispatch = build_dispatch::<Ctx>();
     let mut ctx = Ctx::new(None).expect("ctx");
-    ctx.set_dispatch(&dispatch);
 
     let content = "a\nb\nc\n";
     let tx = Transaction::change(
@@ -9182,7 +9122,7 @@ pkgs.mkShell {
       .push(Range::point(text.line_to_char(2)));
     let _ = ctx.editor.document_mut().set_selection(selection);
 
-    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Char(','),
       modifiers: Modifiers::empty(),
     });
@@ -9216,9 +9156,7 @@ pkgs.mkShell {
 
   #[test]
   fn remove_active_selection_keymap_sequence_removes_picked_cursor() {
-    let dispatch = build_dispatch::<Ctx>();
     let mut ctx = Ctx::new(None).expect("ctx");
-    ctx.set_dispatch(&dispatch);
 
     let content = "a\nb\nc\n";
     let tx = Transaction::change(
@@ -9241,7 +9179,7 @@ pkgs.mkShell {
     let mut alt = Modifiers::empty();
     alt.insert(Modifiers::ALT);
 
-    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Char(','),
       modifiers: alt,
     });
@@ -9259,11 +9197,11 @@ pkgs.mkShell {
       _ => panic!("expected cursor-pick pending input"),
     };
 
-    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Down,
       modifiers: Modifiers::empty(),
     });
-    dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Enter,
       modifiers: Modifiers::empty(),
     });
@@ -9698,9 +9636,7 @@ pkgs.mkShell {
 
   #[test]
   fn normal_x_then_c_performs_linewise_change() {
-    let dispatch = build_dispatch::<Ctx>();
     let mut ctx = Ctx::new(None).expect("ctx");
-    ctx.set_dispatch(&dispatch);
 
     let tx = Transaction::change(
       ctx.editor.document().text(),
@@ -9715,7 +9651,7 @@ pkgs.mkShell {
       .document_mut()
       .set_selection(Selection::single(line_two_start, line_two_start));
 
-    handle_key(&dispatch, &mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Char('x'),
       modifiers: Modifiers::empty(),
     });
@@ -9724,7 +9660,7 @@ pkgs.mkShell {
     assert_eq!(selected.from(), line_two_start);
     assert_eq!(selected.to(), ctx.editor.document().text().line_to_char(2));
 
-    handle_key(&dispatch, &mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Char('c'),
       modifiers: Modifiers::empty(),
     });
@@ -9735,17 +9671,15 @@ pkgs.mkShell {
 
   #[test]
   fn command_palette_query_input_does_not_auto_select_item() {
-    let dispatch = build_dispatch::<Ctx>();
     let mut ctx = Ctx::new(None).expect("ctx");
-    ctx.set_dispatch(&dispatch);
 
-    handle_key(&dispatch, &mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Char(':'),
       modifiers: Modifiers::empty(),
     });
     assert_eq!(ctx.mode(), Mode::Command);
 
-    handle_key(&dispatch, &mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Char('w'),
       modifiers: Modifiers::empty(),
     });
@@ -9756,16 +9690,14 @@ pkgs.mkShell {
 
   #[test]
   fn command_palette_keeps_argument_mode_when_open_has_no_matches() {
-    let dispatch = build_dispatch::<Ctx>();
     let mut ctx = Ctx::new(None).expect("ctx");
-    ctx.set_dispatch(&dispatch);
 
-    handle_key(&dispatch, &mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Char(':'),
       modifiers: Modifiers::empty(),
     });
     for ch in "e definitely_missing_file_name_12345.c".chars() {
-      handle_key(&dispatch, &mut ctx, KeyEvent {
+      handle_key(&mut ctx, KeyEvent {
         key:       Key::Char(ch),
         modifiers: Modifiers::empty(),
       });
@@ -9782,21 +9714,19 @@ pkgs.mkShell {
 
   #[test]
   fn command_palette_explicit_navigation_sets_selection() {
-    let dispatch = build_dispatch::<Ctx>();
     let mut ctx = Ctx::new(None).expect("ctx");
-    ctx.set_dispatch(&dispatch);
 
-    handle_key(&dispatch, &mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Char(':'),
       modifiers: Modifiers::empty(),
     });
-    handle_key(&dispatch, &mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Char('w'),
       modifiers: Modifiers::empty(),
     });
     assert_eq!(ctx.command_palette.selected, None);
 
-    handle_key(&dispatch, &mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Down,
       modifiers: Modifiers::empty(),
     });
@@ -9806,7 +9736,6 @@ pkgs.mkShell {
 
   #[test]
   fn command_palette_enter_submits_typed_alias_without_selection() {
-    let dispatch = build_dispatch::<Ctx>();
     let fixture = TempTestFile::new("command-palette-enter", "alpha\n");
     let mut ctx = Ctx::new(Some(
       fixture
@@ -9815,13 +9744,12 @@ pkgs.mkShell {
         .expect("temp test path should be utf-8"),
     ))
     .expect("ctx");
-    ctx.set_dispatch(&dispatch);
 
-    handle_key(&dispatch, &mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Char(':'),
       modifiers: Modifiers::empty(),
     });
-    handle_key(&dispatch, &mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Char('w'),
       modifiers: Modifiers::empty(),
     });
@@ -9829,7 +9757,7 @@ pkgs.mkShell {
     assert_eq!(ctx.mode(), Mode::Command);
     assert_eq!(ctx.command_palette.selected, None);
 
-    handle_key(&dispatch, &mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Enter,
       modifiers: Modifiers::empty(),
     });
@@ -9840,10 +9768,8 @@ pkgs.mkShell {
 
   #[test]
   fn command_palette_enter_submits_selected_open_completion() {
-    let dispatch = build_dispatch::<Ctx>();
     let fixture = TempTestFile::with_extension("command-open-completion", "toml", "toolchain\n");
     let mut ctx = Ctx::new(None).expect("ctx");
-    ctx.set_dispatch(&dispatch);
 
     let parent = fixture
       .as_path()
@@ -9857,12 +9783,12 @@ pkgs.mkShell {
     let partial_len = file_name.len().saturating_sub(5).max(1);
     let partial = &file_name[..partial_len];
 
-    handle_key(&dispatch, &mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Char(':'),
       modifiers: Modifiers::empty(),
     });
     for ch in format!("e {}/{}", parent.display(), partial).chars() {
-      handle_key(&dispatch, &mut ctx, KeyEvent {
+      handle_key(&mut ctx, KeyEvent {
         key:       Key::Char(ch),
         modifiers: Modifiers::empty(),
       });
@@ -9871,7 +9797,7 @@ pkgs.mkShell {
     assert!(ctx.command_palette.prefiltered);
     assert!(!ctx.command_palette.items.is_empty());
 
-    handle_key(&dispatch, &mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Enter,
       modifiers: Modifiers::empty(),
     });
@@ -9883,16 +9809,14 @@ pkgs.mkShell {
 
   #[test]
   fn command_palette_enter_submits_selected_theme_completion() {
-    let dispatch = build_dispatch::<Ctx>();
     let mut ctx = Ctx::new(None).expect("ctx");
-    ctx.set_dispatch(&dispatch);
 
-    handle_key(&dispatch, &mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Char(':'),
       modifiers: Modifiers::empty(),
     });
     for ch in "theme base16".chars() {
-      handle_key(&dispatch, &mut ctx, KeyEvent {
+      handle_key(&mut ctx, KeyEvent {
         key:       Key::Char(ch),
         modifiers: Modifiers::empty(),
       });
@@ -9902,7 +9826,7 @@ pkgs.mkShell {
     assert!(!ctx.command_palette.items.is_empty());
     assert_eq!(ctx.ui_theme_preview_name.as_deref(), Some("base16_default"));
 
-    handle_key(&dispatch, &mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Enter,
       modifiers: Modifiers::empty(),
     });
@@ -9914,9 +9838,7 @@ pkgs.mkShell {
 
   #[test]
   fn command_open_creates_missing_file() {
-    let dispatch = build_dispatch::<Ctx>();
     let mut ctx = Ctx::new(None).expect("ctx");
-    ctx.set_dispatch(&dispatch);
 
     let nonce = SystemTime::now()
       .duration_since(SystemTime::UNIX_EPOCH)
@@ -9929,17 +9851,17 @@ pkgs.mkShell {
     let _ = fs::remove_file(&path);
     assert!(!path.exists());
 
-    handle_key(&dispatch, &mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Char(':'),
       modifiers: Modifiers::empty(),
     });
     for ch in format!("open {}", path.display()).chars() {
-      handle_key(&dispatch, &mut ctx, KeyEvent {
+      handle_key(&mut ctx, KeyEvent {
         key:       Key::Char(ch),
         modifiers: Modifiers::empty(),
       });
     }
-    handle_key(&dispatch, &mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Enter,
       modifiers: Modifiers::empty(),
     });
@@ -9954,13 +9876,11 @@ pkgs.mkShell {
 
   #[test]
   fn escape_with_completion_active_returns_to_normal_mode() {
-    let dispatch = build_dispatch::<Ctx>();
     let mut ctx = Ctx::new(None).expect("ctx");
-    ctx.set_dispatch(&dispatch);
     ctx.set_mode(Mode::Insert);
     show_completion_menu(&mut ctx, vec![CompletionMenuItem::new("item")]);
 
-    handle_key(&dispatch, &mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::Escape,
       modifiers: Modifiers::empty(),
     });
@@ -9971,9 +9891,7 @@ pkgs.mkShell {
 
   #[test]
   fn page_down_scrolls_completion_docs_when_menu_is_active() {
-    let dispatch = build_dispatch::<Ctx>();
     let mut ctx = Ctx::new(None).expect("ctx");
-    ctx.set_dispatch(&dispatch);
     ctx.set_mode(Mode::Insert);
 
     let mut item = CompletionMenuItem::new("item");
@@ -9981,7 +9899,7 @@ pkgs.mkShell {
     show_completion_menu(&mut ctx, vec![item]);
     assert_eq!(ctx.completion_menu.docs_scroll, 0);
 
-    handle_key(&dispatch, &mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::PageDown,
       modifiers: Modifiers::empty(),
     });
@@ -9993,9 +9911,7 @@ pkgs.mkShell {
 
   #[test]
   fn page_down_falls_back_to_editor_scroll_when_completion_is_inactive() {
-    let dispatch = build_dispatch::<Ctx>();
     let mut ctx = Ctx::new(None).expect("ctx");
-    ctx.set_dispatch(&dispatch);
     ctx.set_mode(Mode::Insert);
 
     let mut source = String::new();
@@ -10021,7 +9937,7 @@ pkgs.mkShell {
       text.char_to_line(cursor)
     };
 
-    handle_key(&dispatch, &mut ctx, KeyEvent {
+    handle_key(&mut ctx, KeyEvent {
       key:       Key::PageDown,
       modifiers: Modifiers::empty(),
     });

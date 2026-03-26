@@ -232,6 +232,10 @@ pub use global_search::{
 pub use inline_completion::{
   InlineCompletionBackendStatus,
   InlineCompletionDefaults,
+  InlineCompletionPresentation,
+  InlineCompletionPresentationKind,
+  InlineCompletionPresentationLine,
+  InlineCompletionPresentationLineKind,
   InlineCompletionProvider,
   InlineCompletionState,
 };

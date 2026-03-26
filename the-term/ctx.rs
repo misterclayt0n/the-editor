@@ -8356,6 +8356,7 @@ pkgs.mkShell {
     assert!(registry.get("inline-status").is_some());
     assert!(registry.get("inline-accept").is_some());
     assert!(registry.get("inline-accept-word").is_some());
+    assert!(registry.get("inline-accept-line").is_some());
     assert!(registry.get("inline-dismiss").is_some());
     assert!(registry.get("inline-retry").is_some());
     assert!(registry.get("copilot-status").is_some());

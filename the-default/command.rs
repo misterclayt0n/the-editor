@@ -1450,6 +1450,9 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::InlineAcceptWord => {
       crate::inline_completion::accept_inline_completion_word(ctx);
     },
+    Command::InlineAcceptLine => {
+      crate::inline_completion::accept_inline_completion_line(ctx);
+    },
     Command::InlineDismiss => {
       crate::inline_completion::dismiss_inline_completion(ctx);
     },
@@ -1507,6 +1510,11 @@ fn command_preserves_completion_menu(command: Command) -> bool {
       | Command::CompletionCancel
       | Command::CompletionDocsScrollUp
       | Command::CompletionDocsScrollDown
+      | Command::InlineAccept
+      | Command::InlineAcceptWord
+      | Command::InlineAcceptLine
+      | Command::InlineDismiss
+      | Command::InlineRetry
   )
 }
 
@@ -6279,6 +6287,7 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "completion" => Some(Command::lsp_completion()),
     "inline_accept" => Some(Command::inline_accept()),
     "inline_accept_word" => Some(Command::inline_accept_word()),
+    "inline_accept_line" => Some(Command::inline_accept_line()),
     "inline_dismiss" => Some(Command::inline_dismiss()),
     "inline_retry" => Some(Command::inline_retry()),
     "completion_next" => Some(Command::completion_next()),
@@ -6412,6 +6421,10 @@ mod tests {
     assert_eq!(
       command_from_name("inline_accept_word"),
       Some(Command::inline_accept_word())
+    );
+    assert_eq!(
+      command_from_name("inline_accept_line"),
+      Some(Command::inline_accept_line())
     );
     assert_eq!(
       command_from_name("inline_dismiss"),

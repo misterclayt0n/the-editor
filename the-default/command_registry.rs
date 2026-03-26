@@ -774,6 +774,16 @@ impl<Ctx: DefaultContext + 'static> CommandRegistry<Ctx> {
 
     self.register(
       CommandBuilder::new(
+        "inline-accept-line",
+        "Accept the next line from the active inline suggestion",
+        cmd_inline_accept_line::<Ctx>,
+      )
+      .aliases(&["copilot-accept-line", "supermaven-accept-line"])
+      .build(),
+    );
+
+    self.register(
+      CommandBuilder::new(
         "inline-dismiss",
         "Dismiss the active inline suggestion",
         cmd_inline_dismiss::<Ctx>,
@@ -1656,6 +1666,18 @@ fn cmd_inline_accept_word<Ctx: DefaultContext>(
     return Ok(());
   }
   crate::inline_completion::accept_inline_completion_word(ctx);
+  Ok(())
+}
+
+fn cmd_inline_accept_line<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  _args: Args,
+  event: CommandEvent,
+) -> CommandResult {
+  if event != CommandEvent::Validate {
+    return Ok(());
+  }
+  crate::inline_completion::accept_inline_completion_line(ctx);
   Ok(())
 }
 

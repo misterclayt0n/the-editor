@@ -4243,6 +4243,160 @@ fn completion_docs_panel_rect(
   Some(Rect::new(rect.x, rect.y, rect.width, rect.height))
 }
 
+fn inline_completion_presentation_width(
+  presentation: &the_default::InlineCompletionPresentation,
+) -> u16 {
+  let title_width = presentation.title.chars().count().saturating_add(4) as u16;
+  let content_width = presentation
+    .lines
+    .iter()
+    .map(|line| line.text.chars().count())
+    .max()
+    .unwrap_or(0)
+    .saturating_add(2) as u16;
+  title_width.max(content_width).clamp(22, 64)
+}
+
+fn inline_completion_presentation_height(
+  presentation: &the_default::InlineCompletionPresentation,
+) -> u16 {
+  presentation.lines.len().saturating_add(2).clamp(3, 10) as u16
+}
+
+fn inline_completion_menu_popover_rect(
+  overlay: Rect,
+  anchor: Rect,
+  width: u16,
+  height: u16,
+) -> Rect {
+  let x = anchor.x.min(
+    overlay
+      .x
+      .saturating_add(overlay.width.saturating_sub(width)),
+  );
+  let below_y = anchor.y.saturating_add(anchor.height).saturating_add(1);
+  let y = if anchor.y >= overlay.y.saturating_add(height).saturating_add(1) {
+    anchor.y.saturating_sub(height).saturating_sub(1)
+  } else if below_y.saturating_add(height) <= overlay.y.saturating_add(overlay.height) {
+    below_y
+  } else {
+    overlay
+      .y
+      .saturating_add(overlay.height.saturating_sub(height))
+  };
+  Rect::new(x, y, width.min(overlay.width), height.min(overlay.height))
+}
+
+fn inline_completion_presentation_styles(ctx: &Ctx) -> PanelStyles {
+  overlay_panel_styles(ctx, "ui.menu")
+}
+
+fn inline_completion_line_style(
+  ctx: &Ctx,
+  styles: PanelStyles,
+  kind: the_default::InlineCompletionPresentationLineKind,
+) -> Style {
+  match kind {
+    the_default::InlineCompletionPresentationLineKind::Plain => styles.text,
+    the_default::InlineCompletionPresentationLineKind::Dim => {
+      styles.text.add_modifier(Modifier::DIM)
+    },
+    the_default::InlineCompletionPresentationLineKind::Addition => {
+      styles
+        .text
+        .patch(lib_style_to_ratatui(
+          render_diff_styles_from_theme(&ctx.ui_theme).added,
+        ))
+        .add_modifier(Modifier::BOLD)
+    },
+    the_default::InlineCompletionPresentationLineKind::Removal => {
+      styles.text.patch(lib_style_to_ratatui(
+        render_diff_styles_from_theme(&ctx.ui_theme).removed,
+      ))
+    },
+  }
+}
+
+fn draw_inline_completion_presentation_lines(
+  buf: &mut Buffer,
+  rect: Rect,
+  ctx: &Ctx,
+  styles: PanelStyles,
+  presentation: &the_default::InlineCompletionPresentation,
+) {
+  if rect.width == 0 || rect.height == 0 {
+    return;
+  }
+
+  for (row_idx, line) in presentation
+    .lines
+    .iter()
+    .take(rect.height as usize)
+    .enumerate()
+  {
+    let y = rect.y + row_idx as u16;
+    fill_rect(buf, Rect::new(rect.x, y, rect.width, 1), styles.fill);
+    buf.set_stringn(
+      rect.x,
+      y,
+      line.text.as_str(),
+      rect.width as usize,
+      inline_completion_line_style(ctx, styles, line.kind),
+    );
+  }
+}
+
+fn draw_inline_completion_overlay(
+  buf: &mut Buffer,
+  area: Rect,
+  ctx: &mut Ctx,
+  editor_cursor: Option<(u16, u16)>,
+) {
+  let Some(presentation) = ctx.inline_completion.presentation.clone() else {
+    return;
+  };
+  if ctx.file_picker.active || ctx.command_palette.is_open || ctx.search_prompt.active {
+    return;
+  }
+  if !ctx.completion_menu.active && (ctx.hover_docs.is_some() || ctx.signature_help.active) {
+    return;
+  }
+
+  let overlay = overlay_area(area, ctx);
+  if overlay.width < 12 || overlay.height < 4 {
+    return;
+  }
+
+  let width = inline_completion_presentation_width(&presentation)
+    .min(overlay.width)
+    .max(1);
+  let height = inline_completion_presentation_height(&presentation)
+    .min(overlay.height)
+    .max(1);
+  let rect = if ctx.completion_menu.active
+    && presentation.kind == the_default::InlineCompletionPresentationKind::Menu
+  {
+    let visible = ctx.completion_menu.items.len().min(10);
+    let panel_height = visible as u16;
+    let panel_width = overlay
+      .width
+      .saturating_mul(2)
+      .saturating_div(3)
+      .min(64)
+      .max(1);
+    let completion_rect = completion_panel_rect(overlay, panel_width, panel_height, editor_cursor);
+    inline_completion_menu_popover_rect(overlay, completion_rect, width, height)
+  } else if presentation.kind == the_default::InlineCompletionPresentationKind::Menu {
+    return;
+  } else {
+    completion_panel_rect(overlay, width, height, editor_cursor)
+  };
+
+  let styles = inline_completion_presentation_styles(ctx);
+  let inner = render_panel_block(buf, rect, Some(presentation.title.clone()), styles);
+  draw_inline_completion_presentation_lines(buf, inner, ctx, styles, &presentation);
+}
+
 fn draw_completion_overlay(
   buf: &mut Buffer,
   area: Rect,
@@ -4449,6 +4603,7 @@ fn draw_overlays(
   ctx.completion_docs_layout = None;
   draw_command_palette_overlay(buf, area, ctx);
   draw_completion_overlay(buf, area, ctx, editor_cursor);
+  draw_inline_completion_overlay(buf, area, ctx, editor_cursor);
   if ctx.completion_docs_layout.is_none() {
     draw_signature_help_overlay(buf, area, ctx, editor_cursor);
   }
@@ -6020,6 +6175,15 @@ mod tests {
     })
   }
 
+  fn buffer_contains_text(buf: &Buffer, rect: Rect, needle: &str) -> bool {
+    (rect.y..rect.y.saturating_add(rect.height)).any(|y| {
+      (rect.x..rect.x.saturating_add(rect.width))
+        .map(|x| buf.get(x, y).symbol())
+        .collect::<String>()
+        .contains(needle)
+    })
+  }
+
   #[test]
   fn file_tree_active_forces_hidden_term_cursor() {
     let mode = resolve_term_cursor_mode(true, None, Some((12, 4)), Some(LibCursorKind::Underline));
@@ -6319,5 +6483,58 @@ mod tests {
         .collect::<String>()
         .contains("ghost-line")
     }));
+  }
+
+  #[test]
+  fn completion_menu_renders_inline_prediction_popover() {
+    let mut ctx = Ctx::new(None).expect("ctx");
+    ctx.completion_menu.active = true;
+    ctx.completion_menu.items = vec![the_default::CompletionMenuItem::new("printf")];
+    ctx.completion_menu.selected = Some(0);
+    ctx.inline_completion.presentation = Some(the_default::InlineCompletionPresentation {
+      kind:        the_default::InlineCompletionPresentationKind::Menu,
+      title:       "Copilot Prediction".to_string(),
+      lines:       vec![the_default::InlineCompletionPresentationLine {
+        kind: the_default::InlineCompletionPresentationLineKind::Plain,
+        text: "printf(\"hello world\");".to_string(),
+      }],
+      target_line: Some(4),
+    });
+
+    let area = Rect::new(0, 0, 100, 24);
+    let mut buf = Buffer::empty(area);
+
+    draw_inline_completion_overlay(&mut buf, area, &mut ctx, Some((12, 12)));
+
+    assert!(buffer_contains_text(&buf, area, "Copilot Prediction"));
+    assert!(buffer_contains_text(&buf, area, "printf(\"hello world\");"));
+  }
+
+  #[test]
+  fn inline_jump_prediction_renders_outside_completion_menu() {
+    let mut ctx = Ctx::new(None).expect("ctx");
+    ctx.inline_completion.presentation = Some(the_default::InlineCompletionPresentation {
+      kind:        the_default::InlineCompletionPresentationKind::JumpWithin,
+      title:       "Jump to Edit".to_string(),
+      lines:       vec![
+        the_default::InlineCompletionPresentationLine {
+          kind: the_default::InlineCompletionPresentationLineKind::Plain,
+          text: "Jump to line 12".to_string(),
+        },
+        the_default::InlineCompletionPresentationLine {
+          kind: the_default::InlineCompletionPresentationLineKind::Dim,
+          text: "return factorial(5);".to_string(),
+        },
+      ],
+      target_line: Some(11),
+    });
+
+    let area = Rect::new(0, 0, 100, 24);
+    let mut buf = Buffer::empty(area);
+
+    draw_inline_completion_overlay(&mut buf, area, &mut ctx, Some((18, 8)));
+
+    assert!(buffer_contains_text(&buf, area, "Jump to Edit"));
+    assert!(buffer_contains_text(&buf, area, "Jump to line 12"));
   }
 }

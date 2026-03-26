@@ -692,6 +692,7 @@ pub enum Command {
   LspCompletion,
   InlineAccept,
   InlineAcceptWord,
+  InlineAcceptLine,
   InlineDismiss,
   InlineRetry,
   CompletionNext,
@@ -2019,6 +2020,11 @@ impl Command {
   #[must_use]
   pub const fn inline_accept_word() -> Self {
     Self::InlineAcceptWord
+  }
+
+  #[must_use]
+  pub const fn inline_accept_line() -> Self {
+    Self::InlineAcceptLine
   }
 
   #[must_use]

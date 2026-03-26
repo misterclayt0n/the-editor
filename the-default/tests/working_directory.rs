@@ -61,14 +61,16 @@ use the_lib::{
 };
 
 struct TestCtx {
-  editor:            Editor,
-  messages:          MessageCenter,
-  workspace_root:    PathBuf,
-  working_directory: WorkingDirectoryState,
-  file_picker:       FilePickerState,
-  file_tree:         FileTreeState,
-  picker_runtime:    the_default::PickerRuntimeStore<TestCtx>,
-  opened_paths:      Vec<PathBuf>,
+  editor:                        Editor,
+  messages:                      MessageCenter,
+  workspace_root:                PathBuf,
+  working_directory:             WorkingDirectoryState,
+  inline_completion:             the_default::InlineCompletionState,
+  inline_completion_annotations: the_default::OwnedTextAnnotations,
+  file_picker:                   FilePickerState,
+  file_tree:                     FileTreeState,
+  picker_runtime:                the_default::PickerRuntimeStore<TestCtx>,
+  opened_paths:                  Vec<PathBuf>,
 }
 
 impl TestCtx {
@@ -84,6 +86,8 @@ impl TestCtx {
         previous: None,
       },
       workspace_root,
+      inline_completion: the_default::InlineCompletionState::default(),
+      inline_completion_annotations: the_default::OwnedTextAnnotations::default(),
       file_picker: FilePickerState::default(),
       file_tree: FileTreeState::default(),
       picker_runtime: the_default::PickerRuntimeStore::default(),
@@ -200,6 +204,14 @@ impl DefaultContext for TestCtx {
     todo!()
   }
 
+  fn inline_completion(&self) -> &the_default::InlineCompletionState {
+    &self.inline_completion
+  }
+
+  fn inline_completion_mut(&mut self) -> &mut the_default::InlineCompletionState {
+    &mut self.inline_completion
+  }
+
   fn file_picker(&self) -> &FilePickerState {
     &self.file_picker
   }
@@ -241,6 +253,14 @@ impl DefaultContext for TestCtx {
   }
 
   fn set_pending_input(&mut self, _pending: Option<PendingInput>) {}
+
+  fn set_inline_completion_annotations(&mut self, annotations: the_default::OwnedTextAnnotations) {
+    self.inline_completion_annotations = annotations;
+  }
+
+  fn clear_inline_completion_annotations(&mut self) {
+    self.inline_completion_annotations = the_default::OwnedTextAnnotations::default();
+  }
 
   fn registers(&self) -> &Registers {
     todo!()

@@ -686,6 +686,114 @@ impl<Ctx: DefaultContext + 'static> CommandRegistry<Ctx> {
 
     self.register(
       CommandBuilder::new(
+        "inline-provider",
+        "Select the inline completion provider",
+        cmd_inline_provider::<Ctx>,
+      )
+      .required_arg()
+      .complete_with(completers::inline_provider)
+      .palette_placeholder("none | copilot | supermaven")
+      .build(),
+    );
+
+    self.register(
+      CommandBuilder::new(
+        "inline-toggle",
+        "Toggle inline completions",
+        cmd_inline_toggle::<Ctx>,
+      )
+      .aliases(&["copilot-toggle", "supermaven-toggle"])
+      .build(),
+    );
+
+    self.register(
+      CommandBuilder::new(
+        "copilot-sign-in",
+        "Start GitHub Copilot device sign-in",
+        cmd_copilot_sign_in::<Ctx>,
+      )
+      .build(),
+    );
+
+    self.register(
+      CommandBuilder::new(
+        "supermaven-use-free",
+        "Enable the Supermaven free tier for inline completions",
+        cmd_supermaven_use_free::<Ctx>,
+      )
+      .build(),
+    );
+
+    self.register(
+      CommandBuilder::new(
+        "supermaven-use-pro",
+        "Show the Supermaven Pro activation link",
+        cmd_supermaven_use_pro::<Ctx>,
+      )
+      .build(),
+    );
+
+    self.register(
+      CommandBuilder::new(
+        "supermaven-logout",
+        "Log out of Supermaven",
+        cmd_supermaven_logout::<Ctx>,
+      )
+      .build(),
+    );
+
+    self.register(
+      CommandBuilder::new(
+        "inline-status",
+        "Show inline completion backend status",
+        cmd_inline_status::<Ctx>,
+      )
+      .aliases(&["copilot-status", "supermaven-status"])
+      .build(),
+    );
+
+    self.register(
+      CommandBuilder::new(
+        "inline-accept",
+        "Accept the active inline suggestion",
+        cmd_inline_accept::<Ctx>,
+      )
+      .aliases(&["copilot-accept", "supermaven-accept"])
+      .build(),
+    );
+
+    self.register(
+      CommandBuilder::new(
+        "inline-accept-word",
+        "Accept the next word from the active inline suggestion",
+        cmd_inline_accept_word::<Ctx>,
+      )
+      .aliases(&["copilot-accept-word", "supermaven-accept-word"])
+      .build(),
+    );
+
+    self.register(
+      CommandBuilder::new(
+        "inline-dismiss",
+        "Dismiss the active inline suggestion",
+        cmd_inline_dismiss::<Ctx>,
+      )
+      .aliases(&["copilot-dismiss", "supermaven-dismiss"])
+      .build(),
+    );
+
+    self.register(
+      CommandBuilder::new(
+        "inline-retry",
+        "Retry the active inline backend immediately",
+        cmd_inline_retry::<Ctx>,
+      )
+      .aliases(&["copilot-retry", "supermaven-retry"])
+      .build(),
+    );
+
+    self.register(
+      CommandBuilder::new(
         "lsp-workspace-command",
         "Execute an LSP workspace command (shows available commands when no name is given)",
         cmd_lsp_workspace_command::<Ctx>,
@@ -1440,6 +1548,138 @@ fn cmd_lsp_format<Ctx: DefaultContext>(
     return Ok(());
   }
   crate::handle_command(ctx, Command::LspFormat);
+  Ok(())
+}
+
+fn cmd_inline_provider<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  args: Args,
+  event: CommandEvent,
+) -> CommandResult {
+  if event != CommandEvent::Validate {
+    return Ok(());
+  }
+  crate::inline_completion::set_inline_provider_command(ctx, args.first());
+  Ok(())
+}
+
+fn cmd_inline_toggle<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  _args: Args,
+  event: CommandEvent,
+) -> CommandResult {
+  if event != CommandEvent::Validate {
+    return Ok(());
+  }
+  crate::inline_completion::toggle_inline(ctx);
+  Ok(())
+}
+
+fn cmd_copilot_sign_in<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  _args: Args,
+  event: CommandEvent,
+) -> CommandResult {
+  if event != CommandEvent::Validate {
+    return Ok(());
+  }
+  crate::inline_completion::start_copilot_sign_in(ctx);
+  Ok(())
+}
+
+fn cmd_supermaven_use_free<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  _args: Args,
+  event: CommandEvent,
+) -> CommandResult {
+  if event != CommandEvent::Validate {
+    return Ok(());
+  }
+  crate::inline_completion::supermaven_use_free(ctx);
+  Ok(())
+}
+
+fn cmd_supermaven_use_pro<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  _args: Args,
+  event: CommandEvent,
+) -> CommandResult {
+  if event != CommandEvent::Validate {
+    return Ok(());
+  }
+  crate::inline_completion::supermaven_use_pro(ctx);
+  Ok(())
+}
+
+fn cmd_supermaven_logout<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  _args: Args,
+  event: CommandEvent,
+) -> CommandResult {
+  if event != CommandEvent::Validate {
+    return Ok(());
+  }
+  crate::inline_completion::supermaven_logout(ctx);
+  Ok(())
+}
+
+fn cmd_inline_status<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  _args: Args,
+  event: CommandEvent,
+) -> CommandResult {
+  if event != CommandEvent::Validate {
+    return Ok(());
+  }
+  crate::inline_completion::show_inline_status(ctx);
+  Ok(())
+}
+
+fn cmd_inline_accept<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  _args: Args,
+  event: CommandEvent,
+) -> CommandResult {
+  if event != CommandEvent::Validate {
+    return Ok(());
+  }
+  crate::inline_completion::accept_inline_completion(ctx);
+  Ok(())
+}
+
+fn cmd_inline_accept_word<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  _args: Args,
+  event: CommandEvent,
+) -> CommandResult {
+  if event != CommandEvent::Validate {
+    return Ok(());
+  }
+  crate::inline_completion::accept_inline_completion_word(ctx);
+  Ok(())
+}
+
+fn cmd_inline_dismiss<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  _args: Args,
+  event: CommandEvent,
+) -> CommandResult {
+  if event != CommandEvent::Validate {
+    return Ok(());
+  }
+  crate::inline_completion::dismiss_inline_completion(ctx);
+  Ok(())
+}
+
+fn cmd_inline_retry<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  _args: Args,
+  event: CommandEvent,
+) -> CommandResult {
+  if event != CommandEvent::Validate {
+    return Ok(());
+  }
+  crate::inline_completion::retry_inline_completion(ctx);
   Ok(())
 }
 
@@ -2385,6 +2625,10 @@ pub mod completers {
         }
       })
       .collect()
+  }
+
+  pub fn inline_provider<Ctx>(_ctx: &Ctx, input: &str) -> Vec<Completion> {
+    crate::inline_completion::complete_inline_provider(input)
   }
 
   pub fn log_target<Ctx: DefaultContext>(ctx: &Ctx, input: &str) -> Vec<Completion> {

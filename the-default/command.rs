@@ -44,8 +44,8 @@ use the_lib::{
     AutoPairs,
   },
   comment,
-  diff::compare_ropes,
   diagnostics::DiagnosticCounts,
+  diff::compare_ropes,
   editor::{
     BufferId,
     Editor,
@@ -83,6 +83,7 @@ use the_lib::{
     GutterConfig,
     GutterType,
     LineNumberMode,
+    OwnedTextAnnotations,
     RenderPlan,
     RenderStyles,
     char_at_visual_pos,
@@ -431,6 +432,10 @@ pub trait DefaultContext: Sized + 'static {
   fn completion_menu_mut(&mut self) -> &mut CompletionMenuState;
   fn completion_menu_keymaps(&self) -> &Keymaps;
   fn completion_menu_keymaps_mut(&mut self) -> &mut Keymaps;
+  fn inline_completion(&self) -> &crate::InlineCompletionState;
+  fn inline_completion_mut(&mut self) -> &mut crate::InlineCompletionState;
+  fn set_inline_completion_annotations(&mut self, _annotations: OwnedTextAnnotations) {}
+  fn clear_inline_completion_annotations(&mut self) {}
   fn completion_selection_changed(&mut self, _index: usize) {}
   fn completion_accept_selected(&mut self, _index: usize) -> bool {
     false
@@ -864,7 +869,9 @@ pub fn frame_render_plan_with_styles<Ctx: DefaultContext>(
 
 pub fn default_pre_on_keypress<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent) {
   if let Some(next) = ctx.macro_queue_mut().pop_front() {
-    on_keypress(ctx, next);
+    if !crate::inline_completion::handle_pre_on_keypress(ctx, next) {
+      on_keypress(ctx, next);
+    }
     if ctx.macro_queue().is_empty() {
       ctx.macro_replaying_mut().pop();
     }
@@ -876,6 +883,10 @@ pub fn default_pre_on_keypress<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent
       keys.push(KeyBinding::from_key_event(&key));
       ctx.set_macro_recording(Some((reg, keys)));
     }
+  }
+
+  if crate::inline_completion::handle_pre_on_keypress(ctx, key) {
+    return;
   }
 
   on_keypress(ctx, key);
@@ -1433,6 +1444,18 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::LspDocumentSymbols => ctx.lsp_document_symbols(),
     Command::LspWorkspaceSymbols => ctx.lsp_workspace_symbols(),
     Command::LspCompletion => ctx.lsp_completion(),
+    Command::InlineAccept => {
+      crate::inline_completion::accept_inline_completion(ctx);
+    },
+    Command::InlineAcceptWord => {
+      crate::inline_completion::accept_inline_completion_word(ctx);
+    },
+    Command::InlineDismiss => {
+      crate::inline_completion::dismiss_inline_completion(ctx);
+    },
+    Command::InlineRetry => {
+      crate::inline_completion::retry_inline_completion(ctx);
+    },
     Command::CompletionNext => crate::completion_menu::completion_next(ctx),
     Command::CompletionPrev => crate::completion_menu::completion_prev(ctx),
     Command::CompletionAccept => crate::completion_menu::completion_accept(ctx),
@@ -1533,7 +1556,9 @@ fn render_request<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
   ctx.request_render();
 }
 
-fn pre_render<Ctx: DefaultContext>(_ctx: &mut Ctx, _unit: ()) {}
+fn pre_render<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
+  crate::inline_completion::pre_render(ctx);
+}
 
 fn on_render<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) -> RenderPlan {
   ctx.build_render_plan()
@@ -6252,6 +6277,10 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "workspace_symbols" => Some(Command::lsp_workspace_symbols()),
     "lsp_completion" => Some(Command::lsp_completion()),
     "completion" => Some(Command::lsp_completion()),
+    "inline_accept" => Some(Command::inline_accept()),
+    "inline_accept_word" => Some(Command::inline_accept_word()),
+    "inline_dismiss" => Some(Command::inline_dismiss()),
+    "inline_retry" => Some(Command::inline_retry()),
     "completion_next" => Some(Command::completion_next()),
     "completion_prev" => Some(Command::completion_prev()),
     "completion_accept" => Some(Command::completion_accept()),
@@ -6375,6 +6404,22 @@ mod tests {
     assert_eq!(
       command_from_name("edit_current_file_path"),
       Some(Command::edit_current_file_path())
+    );
+    assert_eq!(
+      command_from_name("inline_accept"),
+      Some(Command::inline_accept())
+    );
+    assert_eq!(
+      command_from_name("inline_accept_word"),
+      Some(Command::inline_accept_word())
+    );
+    assert_eq!(
+      command_from_name("inline_dismiss"),
+      Some(Command::inline_dismiss())
+    );
+    assert_eq!(
+      command_from_name("inline_retry"),
+      Some(Command::inline_retry())
     );
   }
 

@@ -4498,6 +4498,15 @@ pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> Ren
   if !ctx.overlay_annotations.is_empty() {
     let _ = annotations.add_overlay(&ctx.overlay_annotations, None);
   }
+  let inline_completion_virtual_lines = ctx.inline_completion_annotations.virtual_lines().to_vec();
+  if !ctx.inline_completion_annotations.is_empty() {
+    let _ = ctx.inline_completion_annotations.clone().extend_into(
+      &mut annotations,
+      ctx.editor.document().text().slice(..),
+      text_fmt.viewport_width.max(1),
+      view.scroll.col,
+    );
+  }
   if !ctx.word_jump_inline_annotations.is_empty() {
     let _ = annotations.add_inline_annotations(&ctx.word_jump_inline_annotations, None);
   }
@@ -4505,7 +4514,6 @@ pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> Ren
     let jump_label_style = ctx.ui_theme.find_highlight("ui.virtual.jump-label");
     let _ = annotations.add_overlay(&ctx.word_jump_overlay_annotations, jump_label_style);
   }
-  let owned_annotations = the_lib::render::OwnedTextAnnotations::default();
   ctx.inline_diagnostic_lines.clear();
   let inline_diagnostics = active_inline_diagnostics(ctx);
   let inline_diag_count = inline_diagnostics.len();
@@ -4542,10 +4550,6 @@ pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> Ren
   // Build the render plan (with or without syntax highlighting).
   let (mut plan, diagnostic_underlines, inline_lines, inline_render_trace) = {
     let (doc, render_cache) = ctx.editor.document_and_cache();
-    let owned_virtual_lines = owned_annotations.virtual_lines().to_vec();
-    if !owned_annotations.is_empty() {
-      let _ = owned_annotations.extend_inline_and_overlays_into(&mut annotations);
-    }
     let mut plan = if let (Some(loader), Some(syntax)) = (&ctx.loader, doc.syntax()) {
       // Calculate line range for highlighting
       let line_range = view.scroll.row..(view.scroll.row + view.viewport.height as usize);
@@ -4586,12 +4590,12 @@ pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> Ren
         styles,
       )
     };
-    if !owned_virtual_lines.is_empty() {
+    if !inline_completion_virtual_lines.is_empty() {
       let layout = render_virtual_lines_for_viewport(
         &plan,
         text_fmt.viewport_width.max(1),
         view.scroll.col,
-        &owned_virtual_lines,
+        &inline_completion_virtual_lines,
       );
       apply_virtual_lines_layout(&mut plan, &layout);
     }
@@ -5981,6 +5985,10 @@ pub fn ensure_cursor_visible(ctx: &mut Ctx) {
 #[cfg(test)]
 mod tests {
   use ratatui::buffer::Cell;
+  use the_lib::{
+    render::VirtualLineSpec,
+    transaction::Transaction,
+  };
 
   use super::*;
 
@@ -6000,6 +6008,16 @@ mod tests {
   fn assert_cell_has_no_inherited_underline(cell: &Cell) {
     assert!(!cell.modifier.contains(Modifier::UNDERLINED));
     assert_eq!(cell.underline_color, Color::Reset);
+  }
+
+  fn render_line_text(plan: &RenderPlan, row: u16) -> Option<String> {
+    plan.lines.iter().find(|line| line.row == row).map(|line| {
+      line
+        .spans
+        .iter()
+        .map(|span| span.text.to_string())
+        .collect()
+    })
   }
 
   #[test]
@@ -6267,5 +6285,39 @@ mod tests {
     assert_cell_has_no_inherited_underline(
       buf.get(rect.x.saturating_add(1), rect.y.saturating_add(1)),
     );
+  }
+
+  #[test]
+  fn active_render_plan_includes_inline_completion_annotations() {
+    let mut ctx = Ctx::new(None).expect("ctx");
+    ctx.resize(40, 8);
+    let tx = Transaction::change(
+      ctx.editor.document().text(),
+      std::iter::once((0, 0, Some("abc\n".into()))),
+    )
+    .expect("seed text");
+    assert!(<Ctx as DefaultContext>::apply_transaction(&mut ctx, &tx));
+
+    let highlight = ctx.ui_theme.find_highlight("ui.virtual.inline");
+    let mut owned = the_default::OwnedTextAnnotations::default();
+    let _ = owned.add_inline_text(3, " ghost-inline", highlight);
+    let _ = owned.add_virtual_line(VirtualLineSpec::after(0).text("ghost-line").single_line());
+    ctx.inline_completion_annotations = owned;
+
+    let plan = build_render_plan(&mut ctx);
+
+    assert!(
+      render_line_text(&plan, 0)
+        .as_deref()
+        .is_some_and(|text| text.contains("ghost-inline"))
+    );
+    assert!(plan.lines.iter().any(|line| {
+      line
+        .spans
+        .iter()
+        .map(|span| span.text.to_string())
+        .collect::<String>()
+        .contains("ghost-line")
+    }));
   }
 }

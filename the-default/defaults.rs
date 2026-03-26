@@ -7,6 +7,7 @@ use crate::{
   CommandRegistry,
   DefaultContext,
   FilePickerOptions,
+  InlineCompletionDefaults,
   install_builtin_commands,
   install_builtin_file_tree_commands,
 };
@@ -42,9 +43,10 @@ impl Default for CursorShapes {
 
 #[derive(Debug, Clone, Default)]
 pub struct EditorDefaults {
-  pub line_numbers:  Option<LineNumberMode>,
-  pub cursor_shapes: Option<CursorShapes>,
-  pub file_picker:   Option<FilePickerOptions>,
+  pub line_numbers:      Option<LineNumberMode>,
+  pub cursor_shapes:     Option<CursorShapes>,
+  pub file_picker:       Option<FilePickerOptions>,
+  pub inline_completion: Option<InlineCompletionDefaults>,
 }
 
 impl EditorDefaults {
@@ -63,6 +65,11 @@ impl EditorDefaults {
     self
   }
 
+  pub fn inline_completion(mut self, defaults: InlineCompletionDefaults) -> Self {
+    self.inline_completion = Some(defaults);
+    self
+  }
+
   fn merge(&mut self, other: Self) {
     if other.line_numbers.is_some() {
       self.line_numbers = other.line_numbers;
@@ -72,6 +79,9 @@ impl EditorDefaults {
     }
     if other.file_picker.is_some() {
       self.file_picker = other.file_picker;
+    }
+    if other.inline_completion.is_some() {
+      self.inline_completion = other.inline_completion;
     }
   }
 }
@@ -127,6 +137,11 @@ impl Defaults {
 
   pub fn file_picker(mut self, options: FilePickerOptions) -> Self {
     self.editor = self.editor.file_picker(options);
+    self
+  }
+
+  pub fn inline_completion(mut self, defaults: InlineCompletionDefaults) -> Self {
+    self.editor = self.editor.inline_completion(defaults);
     self
   }
 

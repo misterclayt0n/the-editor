@@ -265,8 +265,12 @@ fn diagnostic_statusline_segments(counts: DiagnosticCounts) -> Vec<StatuslineSeg
   let mut segments = Vec::new();
   if counts.errors > 0 {
     segments.push(
-      StatuslineSegment::new(format!("{} {}", file_picker_icon_glyph("diagnostic_error", false), counts.errors))
-        .strong(),
+      StatuslineSegment::new(format!(
+        "{} {}",
+        file_picker_icon_glyph("diagnostic_error", false),
+        counts.errors
+      ))
+      .strong(),
     );
   }
   if counts.warnings > 0 {
@@ -291,8 +295,12 @@ fn diagnostic_statusline_segments(counts: DiagnosticCounts) -> Vec<StatuslineSeg
   }
   if counts.hints > 0 {
     segments.push(
-      StatuslineSegment::new(format!("{} {}", file_picker_icon_glyph("diagnostic_hint", false), counts.hints))
-        .muted(),
+      StatuslineSegment::new(format!(
+        "{} {}",
+        file_picker_icon_glyph("diagnostic_hint", false),
+        counts.hints
+      ))
+      .muted(),
     );
   }
   segments
@@ -373,14 +381,17 @@ mod tests {
   #[test]
   fn diagnostic_statusline_segments_only_emit_non_zero_counts() {
     let segments = diagnostic_statusline_segments(DiagnosticCounts {
-      total: 2,
-      errors: 1,
-      warnings: 0,
+      total:       2,
+      errors:      1,
+      warnings:    0,
       information: 1,
-      hints: 0,
+      hints:       0,
     });
 
-    let texts = segments.into_iter().map(|segment| segment.text).collect::<Vec<_>>();
+    let texts = segments
+      .into_iter()
+      .map(|segment| segment.text)
+      .collect::<Vec<_>>();
     assert_eq!(texts, vec![" 1".to_string(), " 1".to_string()]);
   }
 }

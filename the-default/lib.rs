@@ -17,6 +17,7 @@ mod file_picker;
 mod file_tree;
 mod global_search;
 mod increment;
+mod inline_completion;
 mod input;
 mod keymap;
 mod message_bar;
@@ -227,6 +228,12 @@ pub use global_search::{
   GlobalSearchOptions,
   GlobalSearchResponse,
   GlobalSearchState,
+};
+pub use inline_completion::{
+  InlineCompletionBackendStatus,
+  InlineCompletionDefaults,
+  InlineCompletionProvider,
+  InlineCompletionState,
 };
 pub use input::{
   Key,

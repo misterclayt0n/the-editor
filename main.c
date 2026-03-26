@@ -1,9 +1,6 @@
-int factorial(int x) {
-	return 0;
-}
+#include <stdio.h>
 
 int main() {
-	int r = factorial(5);
-	return 0;
+    printf("hello world");
+    return 0;
 }
-

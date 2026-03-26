@@ -15,10 +15,13 @@ ignore       = { workspace = true }
 nucleo       = { workspace = true }
 regex        = { workspace = true }
 ropey        = { workspace = true }
+serde        = { workspace = true }
+serde_json   = { workspace = true }
 smallvec     = "1.13.2"
 the-core     = { path = "../the-core" }
 the-dispatch = { path = "../the-dispatch" }
 the-lib      = { path = "../the-lib" }
+the-lsp      = { path = "../the-lsp" }
 the-loader   = { path = "../the-loader" }
 the-stdx     = { path = "../the-stdx" }
 toml         = { workspace = true }

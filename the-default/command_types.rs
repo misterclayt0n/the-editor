@@ -690,6 +690,10 @@ pub enum Command {
   LspDocumentSymbols,
   LspWorkspaceSymbols,
   LspCompletion,
+  InlineAccept,
+  InlineAcceptWord,
+  InlineDismiss,
+  InlineRetry,
   CompletionNext,
   CompletionPrev,
   CompletionAccept,
@@ -2005,6 +2009,26 @@ impl Command {
   #[must_use]
   pub const fn lsp_completion() -> Self {
     Self::LspCompletion
+  }
+
+  #[must_use]
+  pub const fn inline_accept() -> Self {
+    Self::InlineAccept
+  }
+
+  #[must_use]
+  pub const fn inline_accept_word() -> Self {
+    Self::InlineAcceptWord
+  }
+
+  #[must_use]
+  pub const fn inline_dismiss() -> Self {
+    Self::InlineDismiss
+  }
+
+  #[must_use]
+  pub const fn inline_retry() -> Self {
+    Self::InlineRetry
   }
 
   #[must_use]

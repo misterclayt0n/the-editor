@@ -627,6 +627,7 @@ pub struct Ctx {
   pub command_palette:               CommandPaletteState,
   pub command_palette_style:         CommandPaletteStyle,
   pub completion_menu:               the_default::CompletionMenuState,
+  pub inline_completion:             the_default::InlineCompletionState,
   pub signature_help:                the_default::SignatureHelpState,
   pub hover_docs:                    Option<String>,
   pub hover_docs_scroll:             usize,
@@ -726,6 +727,8 @@ pub struct Ctx {
   pub inline_annotations:            Vec<InlineAnnotation>,
   /// Overlay annotations (virtual text) for rendering.
   pub overlay_annotations:           Vec<Overlay>,
+  /// Built-in inline completion ghost text annotations.
+  pub inline_completion_annotations: the_default::OwnedTextAnnotations,
   /// Transient inline jump labels for word-jump navigation.
   pub word_jump_inline_annotations:  Vec<InlineAnnotation>,
   /// Transient overlay jump labels for word-jump navigation.
@@ -1075,6 +1078,13 @@ impl Ctx {
       command_palette: CommandPaletteState::default(),
       command_palette_style: CommandPaletteStyle::helix_bottom(),
       completion_menu: the_default::CompletionMenuState::default(),
+      inline_completion: the_default::InlineCompletionState::from_defaults(
+        defaults
+          .editor
+          .inline_completion
+          .clone()
+          .unwrap_or_default(),
+      ),
       signature_help: the_default::SignatureHelpState::default(),
       hover_docs: None,
       hover_docs_scroll: 0,
@@ -1160,6 +1170,7 @@ impl Ctx {
       vcs_diff: None,
       inline_annotations: Vec::new(),
       overlay_annotations: Vec::new(),
+      inline_completion_annotations: the_default::OwnedTextAnnotations::default(),
       word_jump_inline_annotations: Vec::new(),
       word_jump_overlay_annotations: Vec::new(),
       inline_diagnostic_lines: Vec::new(),
@@ -5094,9 +5105,12 @@ impl Ctx {
     } else {
       MessageLevel::Info
     };
-    self
-      .messages
-      .publish_with_disposition(level, Some("lsp".into()), MessageDisposition::Background, text);
+    self.messages.publish_with_disposition(
+      level,
+      Some("lsp".into()),
+      MessageDisposition::Background,
+      text,
+    );
   }
 }
 
@@ -6100,7 +6114,10 @@ impl the_default::DefaultContext for Ctx {
 
   fn diagnostic_statusline_counts(&self) -> Option<DiagnosticCounts> {
     let state = self.lsp_document.as_ref().filter(|state| state.opened)?;
-    self.diagnostics.document(&state.uri).map(|document| document.counts())
+    self
+      .diagnostics
+      .document(&state.uri)
+      .map(|document| document.counts())
   }
 
   fn watch_conflict_active(&self) -> bool {
@@ -6241,6 +6258,14 @@ impl the_default::DefaultContext for Ctx {
 
   fn completion_menu_keymaps_mut(&mut self) -> &mut the_default::Keymaps {
     &mut self.completion_menu_keymaps
+  }
+
+  fn inline_completion(&self) -> &the_default::InlineCompletionState {
+    &self.inline_completion
+  }
+
+  fn inline_completion_mut(&mut self) -> &mut the_default::InlineCompletionState {
+    &mut self.inline_completion
   }
 
   fn signature_help(&self) -> Option<&the_default::SignatureHelpState> {
@@ -6470,6 +6495,14 @@ impl the_default::DefaultContext for Ctx {
   fn set_word_jump_annotations(&mut self, inline: Vec<InlineAnnotation>, overlay: Vec<Overlay>) {
     self.word_jump_inline_annotations = inline;
     self.word_jump_overlay_annotations = overlay;
+  }
+
+  fn set_inline_completion_annotations(&mut self, annotations: the_default::OwnedTextAnnotations) {
+    self.inline_completion_annotations = annotations;
+  }
+
+  fn clear_inline_completion_annotations(&mut self) {
+    self.inline_completion_annotations = the_default::OwnedTextAnnotations::default();
   }
 
   fn clear_word_jump_annotations(&mut self) {
@@ -6729,6 +6762,14 @@ impl the_default::DefaultContext for Ctx {
     }
     if !self.overlay_annotations.is_empty() {
       let _ = annotations.add_overlay(&self.overlay_annotations, None);
+    }
+    if !self.inline_completion_annotations.is_empty() {
+      let _ = self.inline_completion_annotations.clone().extend_into(
+        &mut annotations,
+        self.editor.document().text().slice(..),
+        self.text_format.viewport_width.max(1),
+        self.editor.view().scroll.col,
+      );
     }
     if !self.word_jump_inline_annotations.is_empty() {
       let _ = annotations.add_inline_annotations(&self.word_jump_inline_annotations, None);
@@ -7452,6 +7493,9 @@ mod tests {
     CommandEvent,
     CompletionMenuItem,
     DefaultContext,
+    InlineCompletionBackendStatus,
+    InlineCompletionDefaults,
+    InlineCompletionProvider,
     Key,
     KeyEvent,
     Mode,
@@ -7478,11 +7522,13 @@ mod tests {
       char_idx_at_coords,
       coords_at_pos,
     },
+    render::VirtualLineSpec,
     selection::{
       Range,
       Selection,
     },
     split_tree::SplitAxis,
+    syntax::OverlayHighlights,
     transaction::Transaction,
     view::ViewState,
   };
@@ -8274,6 +8320,75 @@ pkgs.mkShell {
       )
     );
     assert!(!ctx.file_picker.options.hidden);
+  }
+
+  #[test]
+  fn bootstrap_defaults_apply_inline_completion_defaults() {
+    let defaults = the_default::Defaults::new().inline_completion(
+      InlineCompletionDefaults::new()
+        .enabled(false)
+        .provider(InlineCompletionProvider::Supermaven),
+    );
+    let ctx = Ctx::new_with_defaults(None, &defaults).expect("ctx");
+
+    assert!(!ctx.inline_completion.enabled);
+    assert_eq!(
+      ctx.inline_completion.provider,
+      InlineCompletionProvider::Supermaven
+    );
+    assert_eq!(
+      ctx.inline_completion.status,
+      InlineCompletionBackendStatus::Idle
+    );
+  }
+
+  #[test]
+  fn default_wiring_registers_inline_completion_commands_and_completions() {
+    let ctx = Ctx::new(None).expect("ctx");
+    let registry = ctx.command_registry_ref();
+
+    assert!(registry.get("inline-provider").is_some());
+    assert!(registry.get("inline-toggle").is_some());
+    assert!(registry.get("copilot-sign-in").is_some());
+    assert!(registry.get("supermaven-use-free").is_some());
+    assert!(registry.get("supermaven-use-pro").is_some());
+    assert!(registry.get("supermaven-logout").is_some());
+    assert!(registry.get("inline-status").is_some());
+    assert!(registry.get("inline-accept").is_some());
+    assert!(registry.get("inline-accept-word").is_some());
+    assert!(registry.get("inline-dismiss").is_some());
+    assert!(registry.get("inline-retry").is_some());
+    assert!(registry.get("copilot-status").is_some());
+    assert!(registry.get("supermaven-accept").is_some());
+
+    let completions = registry.complete_command_line(&ctx, "inline-provider s");
+    assert!(
+      completions
+        .iter()
+        .any(|completion| completion.text == "supermaven"),
+      "expected supermaven completion, got {:?}",
+      completions
+        .iter()
+        .map(|completion| &completion.text)
+        .collect::<Vec<_>>()
+    );
+  }
+
+  #[test]
+  fn text_annotations_merge_inline_completion_annotations() {
+    let mut ctx = Ctx::new(None).expect("ctx");
+    let highlight = ctx.ui_theme.find_highlight("ui.virtual.inline");
+    let mut owned = the_default::OwnedTextAnnotations::default();
+    let _ = owned.add_overlay_grapheme(0, "x", highlight);
+    let _ = owned.add_virtual_line(VirtualLineSpec::after(0).text("ghost line").single_line());
+    <Ctx as DefaultContext>::set_inline_completion_annotations(&mut ctx, owned);
+
+    let annotations = <Ctx as DefaultContext>::text_annotations(&ctx);
+    assert!(annotations.has_line_annotations());
+    assert!(matches!(
+      annotations.collect_overlay_highlights(0..1),
+      OverlayHighlights::Homogeneous { ranges, .. } if ranges == vec![0..1]
+    ));
   }
 
   #[test]

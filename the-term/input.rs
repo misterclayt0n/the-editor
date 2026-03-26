@@ -145,6 +145,10 @@ pub fn handle_key(ctx: &mut Ctx, event: CrosstermKeyEvent) {
     }
   }
 
+  if handle_file_tree_term_key(ctx, key_event) {
+    return;
+  }
+
   if handle_file_tree_key(ctx, key_event) {
     return;
   }
@@ -345,6 +349,90 @@ fn handle_file_tree_pointer(
     ctx.request_render();
   }
   Some(PointerEventOutcome::Handled)
+}
+
+fn handle_file_tree_term_key(ctx: &mut Ctx, key: KeyEvent) -> bool {
+  if !the_default::is_active_file_tree(ctx) || ctx.mode() == Mode::Command || ctx.file_picker.active
+  {
+    return false;
+  }
+
+  let outcome = match key.key {
+    Key::Char(']') => {
+      select_next_file_tree_row(ctx, |ctx, path| {
+        ctx
+          .file_tree_decorations
+          .get(path)
+          .is_some_and(|decorations| decorations.vcs.is_some())
+      })
+    },
+    Key::Char('[') => {
+      select_prev_file_tree_row(ctx, |ctx, path| {
+        ctx
+          .file_tree_decorations
+          .get(path)
+          .is_some_and(|decorations| decorations.vcs.is_some())
+      })
+    },
+    Key::Char('}') => {
+      select_next_file_tree_row(ctx, |ctx, path| {
+        ctx
+          .file_tree_decorations
+          .get(path)
+          .is_some_and(|decorations| decorations.diagnostic.is_some())
+      })
+    },
+    Key::Char('{') => {
+      select_prev_file_tree_row(ctx, |ctx, path| {
+        ctx
+          .file_tree_decorations
+          .get(path)
+          .is_some_and(|decorations| decorations.diagnostic.is_some())
+      })
+    },
+    _ => false,
+  };
+
+  if outcome {
+    ctx.request_render();
+  }
+  outcome
+}
+
+fn select_next_file_tree_row(
+  ctx: &mut Ctx,
+  predicate: impl Fn(&Ctx, &std::path::Path) -> bool,
+) -> bool {
+  let len = ctx.file_tree.rows.len();
+  if len == 0 {
+    return false;
+  }
+  let start = ctx.file_tree.selected.unwrap_or(0);
+  for step in 1..=len {
+    let index = (start + step) % len;
+    if predicate(ctx, &ctx.file_tree.rows[index].path) {
+      return select_file_tree_index(ctx, index);
+    }
+  }
+  false
+}
+
+fn select_prev_file_tree_row(
+  ctx: &mut Ctx,
+  predicate: impl Fn(&Ctx, &std::path::Path) -> bool,
+) -> bool {
+  let len = ctx.file_tree.rows.len();
+  if len == 0 {
+    return false;
+  }
+  let start = ctx.file_tree.selected.unwrap_or(0);
+  for step in 1..=len {
+    let index = (start + len - (step % len)) % len;
+    if predicate(ctx, &ctx.file_tree.rows[index].path) {
+      return select_file_tree_index(ctx, index);
+    }
+  }
+  false
 }
 
 fn file_tree_index_at(layout: FileTreeLayout, x: u16, y: u16, row_count: usize) -> Option<usize> {
@@ -1341,6 +1429,48 @@ mod tests {
     );
 
     assert!(ctx.file_tree.scroll_offset > 0);
+  }
+
+  #[test]
+  fn file_tree_git_navigation_jumps_to_next_changed_row() {
+    let mut ctx = Ctx::new(None).expect("ctx");
+    handle_key(&mut ctx, key_event(KeyCode::Char(' ')));
+    handle_key(&mut ctx, key_event(KeyCode::Char('e')));
+
+    let target = 3usize.min(ctx.file_tree.rows.len().saturating_sub(1));
+    let path = ctx.file_tree.rows[target].path.clone();
+    ctx
+      .file_tree_decorations
+      .insert(path, crate::ctx::FileTreeDecorations {
+        vcs:        Some(crate::ctx::FileTreeVcsKind::Modified),
+        diagnostic: None,
+      });
+    ctx.file_tree.selected = Some(0);
+
+    handle_key(&mut ctx, key_event(KeyCode::Char(']')));
+
+    assert_eq!(ctx.file_tree.selected, Some(target));
+  }
+
+  #[test]
+  fn file_tree_diagnostic_navigation_jumps_to_next_diagnostic_row() {
+    let mut ctx = Ctx::new(None).expect("ctx");
+    handle_key(&mut ctx, key_event(KeyCode::Char(' ')));
+    handle_key(&mut ctx, key_event(KeyCode::Char('e')));
+
+    let target = 4usize.min(ctx.file_tree.rows.len().saturating_sub(1));
+    let path = ctx.file_tree.rows[target].path.clone();
+    ctx
+      .file_tree_decorations
+      .insert(path, crate::ctx::FileTreeDecorations {
+        vcs:        None,
+        diagnostic: Some(the_lib::diagnostics::DiagnosticSeverity::Warning),
+      });
+    ctx.file_tree.selected = Some(0);
+
+    handle_key(&mut ctx, key_event(KeyCode::Char('}')));
+
+    assert_eq!(ctx.file_tree.selected, Some(target));
   }
 
   #[test]

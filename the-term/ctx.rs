@@ -372,6 +372,26 @@ struct LspWatchedFileState {
   _watch_handle: WatchHandle,
 }
 
+struct FileTreeWatchState {
+  stream:        WatchedFileEventsState,
+  _watch_handle: WatchHandle,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum FileTreeVcsKind {
+  Conflict,
+  Deleted,
+  Modified,
+  Renamed,
+  Untracked,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct FileTreeDecorations {
+  pub vcs:        Option<FileTreeVcsKind>,
+  pub diagnostic: Option<DiagnosticSeverity>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LspStatusPhase {
   Off,
@@ -635,6 +655,13 @@ pub struct Ctx {
   lsp_pending_auto_signature_help:   Option<PendingAutoSignatureHelp>,
   lsp_signature_help_presentation:   Option<the_default::SignatureHelpPresentation>,
   pub diagnostics:                   DiagnosticsState,
+  file_tree_watch:                   Option<FileTreeWatchState>,
+  file_tree_vcs_statuses:            BTreeMap<PathBuf, FileTreeVcsKind>,
+  file_tree_diagnostic_statuses:     BTreeMap<PathBuf, DiagnosticSeverity>,
+  pub file_tree_decorations:         BTreeMap<PathBuf, FileTreeDecorations>,
+  file_tree_decoration_root:         Option<PathBuf>,
+  file_tree_diagnostics_seq:         u64,
+  file_tree_vcs_dirty:               bool,
   pub file_tree_layout:              Option<FileTreeLayout>,
   pub file_picker_layout:            Option<FilePickerLayout>,
   pub file_picker_drag:              Option<FilePickerDragState>,
@@ -1083,6 +1110,13 @@ impl Ctx {
       lsp_pending_auto_signature_help: None,
       lsp_signature_help_presentation: None,
       diagnostics: DiagnosticsState::default(),
+      file_tree_watch: None,
+      file_tree_vcs_statuses: BTreeMap::new(),
+      file_tree_diagnostic_statuses: BTreeMap::new(),
+      file_tree_decorations: BTreeMap::new(),
+      file_tree_decoration_root: None,
+      file_tree_diagnostics_seq: 0,
+      file_tree_vcs_dirty: true,
       file_tree_layout: None,
       file_picker_layout: None,
       file_picker_drag: None,
@@ -2071,6 +2105,132 @@ impl Ctx {
         }
       },
     }
+  }
+
+  pub fn poll_file_tree_watch(&mut self) -> bool {
+    let mut needs_render = self.sync_file_tree_watch_state();
+    needs_render |= self.refresh_file_tree_decorations_if_needed();
+
+    let outcome = match poll_watch_events(
+      self.file_tree_watch.as_mut().map(|watch| &mut watch.stream),
+      Instant::now(),
+      "tree",
+      |event, message| trace_file_watch_event(event, message),
+    ) {
+      WatchPollOutcome::NoChanges => return needs_render,
+      WatchPollOutcome::Disconnected { .. } => {
+        self.file_tree_watch = None;
+        self.file_tree_vcs_dirty = true;
+        return true;
+      },
+      WatchPollOutcome::Changes { .. } => true,
+    };
+
+    if outcome {
+      the_default::refresh_file_tree(self);
+      self.file_tree_vcs_dirty = true;
+      let _ = self.refresh_file_tree_decorations_if_needed();
+      return true;
+    }
+
+    needs_render
+  }
+
+  fn sync_file_tree_watch_state(&mut self) -> bool {
+    let snapshot = the_default::file_tree_snapshot(self);
+    let root = snapshot
+      .as_ref()
+      .filter(|snapshot| snapshot.attached_pane.is_some())
+      .map(|snapshot| snapshot.root.clone());
+
+    let mut changed = false;
+
+    match root {
+      Some(root) => {
+        let current = self
+          .file_tree_watch
+          .as_ref()
+          .map(|watch| watch.stream.path.as_path());
+        if current != Some(root.as_path()) {
+          let (events_rx, watch_handle) = watch_path(&root, file_tree_watch_latency());
+          let uri =
+            file_uri_for_path(&root).unwrap_or_else(|| format!("file://{}", root.display()));
+          self.file_tree_watch = Some(FileTreeWatchState {
+            stream:        WatchedFileEventsState {
+              path: root.clone(),
+              uri,
+              events_rx,
+              suppress_until: None,
+              reload_state: FileWatchReloadState::Clean,
+              reload_io: FileWatchReloadIoState::default(),
+            },
+            _watch_handle: watch_handle,
+          });
+          self.file_tree_vcs_dirty = true;
+          changed = true;
+        }
+
+        if self.file_tree_decoration_root.as_deref() != Some(root.as_path()) {
+          self.file_tree_decoration_root = Some(root);
+          self.file_tree_diagnostics_seq = 0;
+          self.file_tree_vcs_dirty = true;
+          changed = true;
+        }
+      },
+      None => {
+        if self.file_tree_watch.take().is_some() {
+          changed = true;
+        }
+        if self.file_tree_decoration_root.take().is_some()
+          || !self.file_tree_vcs_statuses.is_empty()
+          || !self.file_tree_diagnostic_statuses.is_empty()
+          || !self.file_tree_decorations.is_empty()
+        {
+          self.file_tree_vcs_statuses.clear();
+          self.file_tree_diagnostic_statuses.clear();
+          self.file_tree_decorations.clear();
+          self.file_tree_diagnostics_seq = 0;
+          changed = true;
+        }
+      },
+    }
+
+    changed
+  }
+
+  fn refresh_file_tree_decorations_if_needed(&mut self) -> bool {
+    let Some(root) = self.file_tree_decoration_root.clone() else {
+      return false;
+    };
+
+    let diagnostics_seq = self.diagnostics.latest_seq();
+    let mut changed = false;
+
+    if self.file_tree_vcs_dirty {
+      self.file_tree_vcs_statuses = rebuild_file_tree_vcs_statuses(&self.vcs_provider, &root);
+      self.file_tree_vcs_dirty = false;
+      changed = true;
+    }
+
+    if self.file_tree_diagnostics_seq != diagnostics_seq {
+      self.file_tree_diagnostic_statuses =
+        rebuild_file_tree_diagnostic_statuses(&self.diagnostics, &root);
+      self.file_tree_diagnostics_seq = diagnostics_seq;
+      changed = true;
+    }
+
+    if changed {
+      let next = combine_file_tree_decorations(
+        &self.file_tree_vcs_statuses,
+        &self.file_tree_diagnostic_statuses,
+      );
+      if next != self.file_tree_decorations {
+        self.file_tree_decorations = next;
+        return true;
+      }
+    }
+
+    false
   }
 
   fn handle_lsp_rpc_message(&mut self, message: jsonrpc::Message) -> bool {
@@ -4934,14 +5094,9 @@ impl Ctx {
     } else {
       MessageLevel::Info
     };
-    let disposition = if level == MessageLevel::Info {
-      MessageDisposition::Background
-    } else {
-      MessageDisposition::Foreground
-    };
     self
       .messages
-      .publish_with_disposition(level, Some("lsp".into()), disposition, text);
+      .publish_with_disposition(level, Some("lsp".into()), MessageDisposition::Background, text);
   }
 }
 
@@ -5747,6 +5902,142 @@ impl Ctx {
   }
 }
 
+fn file_tree_watch_latency() -> Duration {
+  Duration::from_millis(75)
+}
+
+fn rebuild_file_tree_vcs_statuses(
+  vcs_provider: &DiffProviderRegistry,
+  root: &Path,
+) -> BTreeMap<PathBuf, FileTreeVcsKind> {
+  let Ok(changes) = vcs_provider.collect_changed_files(root) else {
+    return BTreeMap::new();
+  };
+
+  let mut statuses = BTreeMap::new();
+  for change in changes {
+    let (path, kind) = match change {
+      the_vcs::FileChange::Untracked { path } => (path, FileTreeVcsKind::Untracked),
+      the_vcs::FileChange::Modified { path } => (path, FileTreeVcsKind::Modified),
+      the_vcs::FileChange::Conflict { path } => (path, FileTreeVcsKind::Conflict),
+      the_vcs::FileChange::Deleted { path } => (path, FileTreeVcsKind::Deleted),
+      the_vcs::FileChange::Renamed { to_path, .. } => (to_path, FileTreeVcsKind::Renamed),
+    };
+    if !path.starts_with(root) {
+      continue;
+    }
+    apply_tree_hierarchy_status(&mut statuses, &path, root, kind, choose_vcs_status);
+  }
+
+  statuses
+}
+
+fn rebuild_file_tree_diagnostic_statuses(
+  diagnostics: &DiagnosticsState,
+  root: &Path,
+) -> BTreeMap<PathBuf, DiagnosticSeverity> {
+  let mut statuses = BTreeMap::new();
+  for document in diagnostics.documents() {
+    let Some(path) = path_for_file_uri(&document.uri) else {
+      continue;
+    };
+    if !path.starts_with(root) {
+      continue;
+    }
+    let Some(severity) = document
+      .diagnostics
+      .iter()
+      .filter_map(|diagnostic| diagnostic.severity)
+      .max_by_key(|severity| file_tree_diagnostic_rank(*severity))
+    else {
+      continue;
+    };
+    apply_tree_hierarchy_status(
+      &mut statuses,
+      &path,
+      root,
+      severity,
+      choose_diagnostic_severity,
+    );
+  }
+  statuses
+}
+
+fn apply_tree_hierarchy_status<T: Copy>(
+  statuses: &mut BTreeMap<PathBuf, T>,
+  path: &Path,
+  root: &Path,
+  value: T,
+  choose: fn(T, T) -> T,
+) {
+  let mut current = Some(path.to_path_buf());
+  while let Some(candidate) = current {
+    if !candidate.starts_with(root) {
+      break;
+    }
+    statuses
+      .entry(candidate.clone())
+      .and_modify(|existing| *existing = choose(*existing, value))
+      .or_insert(value);
+    if candidate == root {
+      break;
+    }
+    current = candidate.parent().map(Path::to_path_buf);
+  }
+}
+
+fn combine_file_tree_decorations(
+  vcs_statuses: &BTreeMap<PathBuf, FileTreeVcsKind>,
+  diagnostic_statuses: &BTreeMap<PathBuf, DiagnosticSeverity>,
+) -> BTreeMap<PathBuf, FileTreeDecorations> {
+  let mut decorations: BTreeMap<PathBuf, FileTreeDecorations> = BTreeMap::new();
+  for (path, &vcs) in vcs_statuses {
+    decorations.entry(path.clone()).or_default().vcs = Some(vcs);
+  }
+  for (path, &diagnostic) in diagnostic_statuses {
+    decorations.entry(path.clone()).or_default().diagnostic = Some(diagnostic);
+  }
+  decorations
+}
+
+fn choose_vcs_status(left: FileTreeVcsKind, right: FileTreeVcsKind) -> FileTreeVcsKind {
+  if file_tree_vcs_rank(left) >= file_tree_vcs_rank(right) {
+    left
+  } else {
+    right
+  }
+}
+
+fn choose_diagnostic_severity(
+  left: DiagnosticSeverity,
+  right: DiagnosticSeverity,
+) -> DiagnosticSeverity {
+  if file_tree_diagnostic_rank(left) >= file_tree_diagnostic_rank(right) {
+    left
+  } else {
+    right
+  }
+}
+
+fn file_tree_vcs_rank(kind: FileTreeVcsKind) -> u8 {
+  match kind {
+    FileTreeVcsKind::Conflict => 5,
+    FileTreeVcsKind::Deleted => 4,
+    FileTreeVcsKind::Modified => 3,
+    FileTreeVcsKind::Renamed => 2,
+    FileTreeVcsKind::Untracked => 1,
+  }
+}
+
+fn file_tree_diagnostic_rank(severity: DiagnosticSeverity) -> u8 {
+  match severity {
+    DiagnosticSeverity::Error => 4,
+    DiagnosticSeverity::Warning => 3,
+    DiagnosticSeverity::Information => 2,
+    DiagnosticSeverity::Hint => 1,
+  }
+}
+
 impl the_default::DefaultContext for Ctx {
   fn editor(&mut self) -> &mut Editor {
     &mut self.editor
@@ -5805,6 +6096,11 @@ impl the_default::DefaultContext for Ctx {
       .lsp_watched_file
       .as_ref()
       .and_then(|watch| watch_statusline_text_for_state(watch.stream.reload_state))
+  }
+
+  fn diagnostic_statusline_counts(&self) -> Option<DiagnosticCounts> {
+    let state = self.lsp_document.as_ref().filter(|state| state.opened)?;
+    self.diagnostics.document(&state.uri).map(|document| document.counts())
   }
 
   fn watch_conflict_active(&self) -> bool {
@@ -7171,6 +7467,10 @@ mod tests {
   };
   use the_lib::{
     clipboard::NoClipboard,
+    diagnostics::{
+      DiagnosticSeverity,
+      DiagnosticsState,
+    },
     messages::MessageEventKind,
     movement::Direction as SelectionDirection,
     position::{
@@ -7225,6 +7525,10 @@ mod tests {
   };
 
   struct TempTestFile {
+    path: PathBuf,
+  }
+
+  struct TempTestDir {
     path: PathBuf,
   }
 
@@ -7572,11 +7876,69 @@ mod tests {
     }
   }
 
+  impl TempTestDir {
+    fn new(prefix: &str) -> Self {
+      let nonce = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+      let path = std::env::temp_dir().join(format!(
+        "the-editor-{prefix}-{}-{nonce}",
+        std::process::id(),
+      ));
+      fs::create_dir_all(&path).expect("create temp dir");
+      Self { path }
+    }
+
+    fn as_path(&self) -> &Path {
+      &self.path
+    }
+
+    fn write_file(&self, relative: &str, content: &str) -> PathBuf {
+      let path = self.path.join(relative);
+      if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).expect("create temp file parent");
+      }
+      fs::write(&path, content).expect("write temp file");
+      path
+    }
+
+    fn mkdir(&self, relative: &str) -> PathBuf {
+      let path = self.path.join(relative);
+      fs::create_dir_all(&path).expect("create temp subdir");
+      path
+    }
+  }
+
+  impl Drop for TempTestDir {
+    fn drop(&mut self) {
+      let _ = fs::remove_dir_all(&self.path);
+    }
+  }
+
   fn install_test_watch_state(ctx: &mut Ctx, path: &Path) -> Sender<Vec<PathEvent>> {
     let (events_tx, events_rx) = channel();
     let (_unused_rx, watch_handle) = super::watch_path(path, Duration::from_millis(0));
     let uri = the_lsp::text_sync::file_uri_for_path(path).expect("file uri");
     ctx.lsp_watched_file = Some(super::LspWatchedFileState {
+      stream:        WatchedFileEventsState {
+        path: path.to_path_buf(),
+        uri,
+        events_rx,
+        suppress_until: None,
+        reload_state: super::FileWatchReloadState::Clean,
+        reload_io: super::FileWatchReloadIoState::default(),
+      },
+      _watch_handle: watch_handle,
+    });
+    events_tx
+  }
+
+  fn install_test_file_tree_watch_state(ctx: &mut Ctx, path: &Path) -> Sender<Vec<PathEvent>> {
+    let (events_tx, events_rx) = channel();
+    let (_unused_rx, watch_handle) = super::watch_path(path, Duration::from_millis(0));
+    let uri = the_lsp::text_sync::file_uri_for_path(path).expect("file uri");
+    ctx.file_tree_watch = Some(super::FileTreeWatchState {
       stream:        WatchedFileEventsState {
         path: path.to_path_buf(),
         uri,
@@ -10180,5 +10542,63 @@ pkgs.mkShell {
     assert!(!ctx.handle_signature_help_action(Command::Search));
     assert!(!ctx.signature_help.active);
     assert!(ctx.lsp_pending_auto_signature_help.is_none());
+  }
+
+  #[test]
+  fn file_tree_diagnostics_aggregate_to_parent_directories() {
+    let dir = TempTestDir::new("file-tree-diagnostics");
+    let file = dir.write_file("src/main.rs", "fn main() {}\n");
+    let uri = the_lsp::text_sync::file_uri_for_path(&file).expect("file uri");
+    let mut diagnostics = DiagnosticsState::default();
+    diagnostics.apply_document(the_lib::diagnostics::DocumentDiagnostics {
+      uri,
+      version: None,
+      diagnostics: vec![the_lib::diagnostics::Diagnostic {
+        range:    the_lib::diagnostics::DiagnosticRange {
+          start: the_lib::diagnostics::DiagnosticPosition {
+            line:      0,
+            character: 0,
+          },
+          end:   the_lib::diagnostics::DiagnosticPosition {
+            line:      0,
+            character: 2,
+          },
+        },
+        severity: Some(DiagnosticSeverity::Error),
+        code:     None,
+        source:   None,
+        message:  "boom".to_string(),
+      }],
+    });
+
+    let statuses = super::rebuild_file_tree_diagnostic_statuses(&diagnostics, dir.as_path());
+
+    assert_eq!(statuses.get(&file), Some(&DiagnosticSeverity::Error));
+    assert_eq!(
+      statuses.get(&dir.as_path().join("src")),
+      Some(&DiagnosticSeverity::Error)
+    );
+  }
+
+  #[test]
+  fn file_tree_watch_refreshes_rows_for_new_files() {
+    let dir = TempTestDir::new("file-tree-watch");
+    dir.mkdir(".git");
+    let opened = dir.write_file("main.txt", "main\n");
+    let opened_str = opened.to_str().expect("path string").to_string();
+    let mut ctx = Ctx::new(Some(opened_str.as_str())).expect("ctx");
+    toggle_file_tree(&mut ctx);
+
+    let events_tx = install_test_file_tree_watch_state(&mut ctx, dir.as_path());
+    let new_file = dir.write_file("fresh.txt", "fresh\n");
+    events_tx
+      .send(vec![PathEvent {
+        path: new_file.clone(),
+        kind: PathEventKind::Created,
+      }])
+      .expect("send watch event");
+
+    assert!(ctx.poll_file_tree_watch());
+    assert!(ctx.file_tree.rows.iter().any(|row| row.path == new_file));
   }
 }

@@ -45,6 +45,7 @@ use the_lib::{
   },
   comment,
   diff::compare_ropes,
+  diagnostics::DiagnosticCounts,
   editor::{
     BufferId,
     Editor,
@@ -376,6 +377,9 @@ pub trait DefaultContext: Sized + 'static {
     None
   }
   fn watch_statusline_text(&self) -> Option<String> {
+    None
+  }
+  fn diagnostic_statusline_counts(&self) -> Option<DiagnosticCounts> {
     None
   }
   fn watch_conflict_active(&self) -> bool {

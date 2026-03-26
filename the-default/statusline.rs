@@ -1,5 +1,7 @@
 use std::path::Path;
 
+use the_lib::diagnostics::DiagnosticCounts;
+
 use crate::{
   DefaultContext,
   Mode,
@@ -66,6 +68,7 @@ pub fn build_statusline_snapshot<Ctx: DefaultContext>(ctx: &mut Ctx) -> Statusli
   let pending_keys = pending_keys_text(ctx);
   let watch_part = ctx.watch_statusline_text().filter(|text| !text.is_empty());
   let lsp_part = ctx.lsp_statusline_text().filter(|text| !text.is_empty());
+  let diagnostic_counts = ctx.diagnostic_statusline_counts();
   let vcs_part = ctx
     .vcs_statusline_text()
     .filter(|text| !text.is_empty())
@@ -141,6 +144,13 @@ pub fn build_statusline_snapshot<Ctx: DefaultContext>(ctx: &mut Ctx) -> Statusli
       if let Some(vcs) = vcs_part.as_ref() {
         budget = budget.saturating_sub(vcs.chars().count() + 2);
       }
+      if let Some(counts) = diagnostic_counts {
+        let diagnostics_width = diagnostic_statusline_segments(counts)
+          .iter()
+          .map(|segment| segment.text.chars().count() + 2)
+          .sum::<usize>();
+        budget = budget.saturating_sub(diagnostics_width);
+      }
       let clamped = clamp_with_ellipsis(&message, budget.min(96));
       if clamped.is_empty() {
         None
@@ -164,6 +174,9 @@ pub fn build_statusline_snapshot<Ctx: DefaultContext>(ctx: &mut Ctx) -> Statusli
   }
   if let Some(vcs) = vcs_part {
     right_segments.push(StatuslineSegment::new(vcs).muted());
+  }
+  if let Some(counts) = diagnostic_counts {
+    right_segments.extend(diagnostic_statusline_segments(counts));
   }
   if let Some(message) = message_part {
     right_segments.push(StatuslineSegment::new(message));
@@ -244,6 +257,47 @@ fn pending_keys_text<Ctx: DefaultContext>(ctx: &mut Ctx) -> Option<String> {
   )
 }
 
+fn diagnostic_statusline_segments(counts: DiagnosticCounts) -> Vec<StatuslineSegment> {
+  if counts.total == 0 {
+    return Vec::new();
+  }
+
+  let mut segments = Vec::new();
+  if counts.errors > 0 {
+    segments.push(
+      StatuslineSegment::new(format!("{} {}", file_picker_icon_glyph("diagnostic_error", false), counts.errors))
+        .strong(),
+    );
+  }
+  if counts.warnings > 0 {
+    segments.push(
+      StatuslineSegment::new(format!(
+        "{} {}",
+        file_picker_icon_glyph("diagnostic_warning", false),
+        counts.warnings
+      ))
+      .strong(),
+    );
+  }
+  if counts.information > 0 {
+    segments.push(
+      StatuslineSegment::new(format!(
+        "{} {}",
+        file_picker_icon_glyph("diagnostic_info", false),
+        counts.information
+      ))
+      .muted(),
+    );
+  }
+  if counts.hints > 0 {
+    segments.push(
+      StatuslineSegment::new(format!("{} {}", file_picker_icon_glyph("diagnostic_hint", false), counts.hints))
+        .muted(),
+    );
+  }
+  segments
+}
+
 fn clamp_with_ellipsis(text: &str, max_chars: usize) -> String {
   if max_chars == 0 {
     return String::new();
@@ -308,4 +362,25 @@ fn search_statusline_text(kind: SearchPromptKind, query: &str, cursor: usize) ->
     SearchPromptKind::ShellKeepPipe => "KEEP-PIPE",
   };
   format!("{prefix} {before}█{after}")
+}
+
+#[cfg(test)]
+mod tests {
+  use the_lib::diagnostics::DiagnosticCounts;
+
+  use super::diagnostic_statusline_segments;
+
+  #[test]
+  fn diagnostic_statusline_segments_only_emit_non_zero_counts() {
+    let segments = diagnostic_statusline_segments(DiagnosticCounts {
+      total: 2,
+      errors: 1,
+      warnings: 0,
+      information: 1,
+      hints: 0,
+    });
+
+    let texts = segments.into_iter().map(|segment| segment.text).collect::<Vec<_>>();
+    assert_eq!(texts, vec![" 1".to_string(), " 1".to_string()]);
+  }
 }

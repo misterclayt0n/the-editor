@@ -148,7 +148,9 @@ use crate::{
   Ctx,
   ctx::{
     DiagnosticUnderlineRenderSpan,
+    FileTreeDecorations,
     FileTreeLayout,
+    FileTreeVcsKind,
     TermCursorMode,
     TermHardwareCursor,
   },
@@ -5320,6 +5322,11 @@ fn draw_file_tree_pane(buf: &mut Buffer, pane_area: Rect, ctx: &Ctx, snapshot: &
   {
     let y = pane_area.y.saturating_add(1 + visible_index as u16);
     let is_selected = snapshot.selected == Some(offset + visible_index);
+    let decorations = ctx
+      .file_tree_decorations
+      .get(&row.path)
+      .copied()
+      .unwrap_or_default();
     let content_style = if is_selected {
       selected_style
     } else if row.is_current_file {
@@ -5358,14 +5365,96 @@ fn draw_file_tree_pane(buf: &mut Buffer, pane_area: Rect, ctx: &Ctx, snapshot: &
     buf.set_stringn(x, y, icon.as_str(), remaining, content_style);
     x = x.saturating_add(icon.chars().count() as u16);
 
-    let remaining = pane_area
+    let badge_span = file_tree_badge_span(ctx, decorations, panel.fill);
+    let badge_width = badge_span
+      .iter()
+      .map(|(text, _)| text.chars().count())
+      .sum::<usize>();
+    let gap_width = badge_span.len().saturating_sub(1);
+    let badges_total_width = badge_width.saturating_add(gap_width);
+    let badge_right_padding = if badge_span.is_empty() { 0 } else { 2 };
+    let badge_left_padding = usize::from(!badge_span.is_empty());
+
+    let mut badge_x = pane_area
       .x
       .saturating_add(pane_area.width)
-      .saturating_sub(x) as usize;
+      .saturating_sub(badge_right_padding as u16);
+    for (index, (badge_text, badge_style)) in badge_span.iter().enumerate().rev() {
+      let width = badge_text.chars().count() as u16;
+      badge_x = badge_x.saturating_sub(width);
+      buf.set_stringn(
+        badge_x,
+        y,
+        badge_text.as_str(),
+        width as usize,
+        *badge_style,
+      );
+      if index > 0 {
+        badge_x = badge_x.saturating_sub(1);
+      }
+    }
+
+    let available_right = pane_area
+      .x
+      .saturating_add(pane_area.width)
+      .saturating_sub((badges_total_width + badge_left_padding + badge_right_padding) as u16);
+    let remaining = available_right.saturating_sub(x) as usize;
     if remaining == 0 {
       continue;
     }
     buf.set_stringn(x, y, row.display_name.as_str(), remaining, content_style);
+  }
+}
+
+fn file_tree_badge_span(
+  ctx: &Ctx,
+  decorations: FileTreeDecorations,
+  base_style: Style,
+) -> Vec<(String, Style)> {
+  let mut out = Vec::new();
+  if let Some(vcs) = decorations.vcs {
+    let glyph = file_picker_icon_glyph(file_tree_vcs_icon_name(vcs), false).to_string();
+    out.push((glyph, base_style.patch(file_tree_vcs_style(ctx, vcs))));
+  }
+  if let Some(severity) = decorations.diagnostic {
+    let glyph = file_picker_icon_glyph(file_tree_diagnostic_icon_name(severity), false).to_string();
+    out.push((
+      glyph,
+      base_style.patch(lib_style_to_ratatui(diagnostic_theme_style(
+        &ctx.ui_theme,
+        severity,
+      ))),
+    ));
+  }
+  out
+}
+
+fn file_tree_vcs_icon_name(kind: FileTreeVcsKind) -> &'static str {
+  match kind {
+    FileTreeVcsKind::Conflict => "git_conflict",
+    FileTreeVcsKind::Deleted => "git_deleted",
+    FileTreeVcsKind::Modified => "git_modified",
+    FileTreeVcsKind::Renamed => "git_renamed",
+    FileTreeVcsKind::Untracked => "git_untracked",
+  }
+}
+
+fn file_tree_vcs_style(ctx: &Ctx, kind: FileTreeVcsKind) -> Style {
+  let severity = match kind {
+    FileTreeVcsKind::Conflict | FileTreeVcsKind::Deleted => DiagnosticSeverity::Error,
+    FileTreeVcsKind::Modified => DiagnosticSeverity::Warning,
+    FileTreeVcsKind::Renamed => DiagnosticSeverity::Information,
+    FileTreeVcsKind::Untracked => DiagnosticSeverity::Hint,
+  };
+  lib_style_to_ratatui(diagnostic_theme_style(&ctx.ui_theme, severity))
+}
+
+fn file_tree_diagnostic_icon_name(severity: DiagnosticSeverity) -> &'static str {
+  match severity {
+    DiagnosticSeverity::Error => "diagnostic_error",
+    DiagnosticSeverity::Warning => "diagnostic_warning",
+    DiagnosticSeverity::Information => "diagnostic_info",
+    DiagnosticSeverity::Hint => "diagnostic_hint",
   }
 }
 
@@ -6035,5 +6124,55 @@ mod tests {
     assert_eq!(buf.get(2, 1).symbol(), "└");
     assert_eq!(buf.get(4, 1).symbol(), "f");
     assert_eq!(buf.get(6, 1).symbol(), "t");
+  }
+
+  #[test]
+  fn file_tree_rows_render_right_aligned_vcs_and_diagnostic_badges() {
+    use std::num::NonZeroUsize;
+
+    use the_default::FileTreeRow;
+    use the_lib::editor::ClientSurfaceId;
+
+    let mut ctx = Ctx::new(None).expect("ctx");
+    let path: std::path::PathBuf = "/tmp/the-core".into();
+    ctx
+      .file_tree_decorations
+      .insert(path.clone(), crate::ctx::FileTreeDecorations {
+        vcs:        Some(crate::ctx::FileTreeVcsKind::Modified),
+        diagnostic: Some(DiagnosticSeverity::Warning),
+      });
+    let pane = Rect::new(0, 0, 24, 3);
+    let mut buf = Buffer::empty(pane);
+    let snapshot = FileTreeSnapshot {
+      surface_id:     ClientSurfaceId::new(NonZeroUsize::new(1).expect("surface id")),
+      root:           "/tmp".into(),
+      rows:           vec![FileTreeRow {
+        path,
+        display_name: "the-core".to_string(),
+        depth: 0,
+        ancestor_branches: Vec::new(),
+        is_last_sibling: true,
+        has_children: true,
+        is_dir: true,
+        is_expanded: false,
+        is_current_file: false,
+        icon_name: "folder".to_string(),
+        icon_glyph: "",
+      }],
+      selected:       Some(0),
+      scroll_offset:  0,
+      show_hidden:    false,
+      follow_current: false,
+      attached_pane:  None,
+      active:         true,
+    };
+
+    draw_file_tree_pane(&mut buf, pane, &ctx, &snapshot);
+
+    let row_symbols = (0..pane.width)
+      .map(|x| buf.get(x, 1).symbol().to_string())
+      .collect::<Vec<_>>();
+    assert!(row_symbols.iter().any(|symbol| symbol == ""));
+    assert!(row_symbols.iter().any(|symbol| symbol == ""));
   }
 }

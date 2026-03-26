@@ -129,6 +129,9 @@ fn main() -> Result<()> {
     if ctx.poll_lsp_file_watch() {
       ctx.needs_render = true;
     }
+    if ctx.poll_file_tree_watch() {
+      ctx.needs_render = true;
+    }
     if ctx.tick_lsp_statusline() {
       ctx.needs_render = true;
     }

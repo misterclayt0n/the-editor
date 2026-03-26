@@ -197,13 +197,17 @@ pub use file_picker::{
   workspace_root,
 };
 pub use file_tree::{
+  FileTreeClipboard,
+  FileTreeClipboardMode,
   FileTreeRow,
   FileTreeSnapshot,
   FileTreeState,
   activate_file_tree_index,
+  close_all_file_tree,
   close_file_tree,
   file_tree_snapshot,
   file_tree_surface_id,
+  focus_file_tree,
   handle_file_tree_key,
   install_builtin_file_tree_commands,
   is_active_file_tree,

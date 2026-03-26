@@ -1,6 +1,10 @@
 use std::{
   collections::BTreeSet,
-  fs::OpenOptions,
+  ffi::OsString,
+  fs::{
+    OpenOptions,
+    read_dir,
+  },
   path::{
     Path,
     PathBuf,
@@ -74,6 +78,19 @@ pub struct FileTreeState {
   pub show_hidden:      bool,
   pub follow_current:   bool,
   pub last_editor_pane: Option<PaneId>,
+  pub clipboard:        Option<FileTreeClipboard>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileTreeClipboardMode {
+  Copy,
+  Move,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileTreeClipboard {
+  pub path: PathBuf,
+  pub mode: FileTreeClipboardMode,
 }
 
 impl FileTreeState {
@@ -114,6 +131,81 @@ where
       cmd_delete::<Ctx>,
     )
     .optional_arg()
+    .build(),
+  );
+  registry.register(
+    CommandBuilder::new(
+      "file-tree-yank",
+      "Copy the selected file-tree entry into the tree clipboard",
+      cmd_yank::<Ctx>,
+    )
+    .build(),
+  );
+  registry.register(
+    CommandBuilder::new(
+      "file-tree-cut",
+      "Move the selected file-tree entry into the tree clipboard",
+      cmd_cut::<Ctx>,
+    )
+    .build(),
+  );
+  registry.register(
+    CommandBuilder::new(
+      "file-tree-paste",
+      "Paste the tree clipboard into the selected directory",
+      cmd_paste::<Ctx>,
+    )
+    .build(),
+  );
+  registry.register(
+    CommandBuilder::new(
+      "file-tree-copy",
+      "Copy the selected file-tree entry to a target path",
+      cmd_copy::<Ctx>,
+    )
+    .required_arg()
+    .build(),
+  );
+  registry.register(
+    CommandBuilder::new(
+      "file-tree-move",
+      "Move the selected file-tree entry to a target path",
+      cmd_move::<Ctx>,
+    )
+    .required_arg()
+    .build(),
+  );
+  registry.register(
+    CommandBuilder::new(
+      "file-tree-trash",
+      "Move the selected file-tree entry to trash (use :file-tree-trash yes to confirm)",
+      cmd_trash::<Ctx>,
+    )
+    .optional_arg()
+    .build(),
+  );
+  registry.register(
+    CommandBuilder::new(
+      "file-tree-up",
+      "Retarget the file-tree root to the parent directory",
+      cmd_up::<Ctx>,
+    )
+    .build(),
+  );
+  registry.register(
+    CommandBuilder::new(
+      "file-tree-focus",
+      "Reveal the current buffer file in the file tree and focus the tree pane",
+      cmd_focus::<Ctx>,
+    )
+    .build(),
+  );
+  registry.register(
+    CommandBuilder::new(
+      "file-tree-close-all",
+      "Collapse all directories in the file tree",
+      cmd_close_all::<Ctx>,
+    )
     .build(),
   );
 }
@@ -203,12 +295,14 @@ pub fn handle_file_tree_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent) -
     Key::Right | Key::Enter | Key::NumpadEnter => expand_or_open_selected(ctx, None),
     Key::Backspace => root_to_parent(ctx),
     Key::Escape => close_file_tree(ctx),
+    Key::Char('-') => root_to_parent(ctx),
     Key::Char('j') => move_selection(ctx, 1),
     Key::Char('k') => move_selection(ctx, -1),
     Key::Char('h') => collapse_selected_or_select_parent(ctx),
     Key::Char('l') => expand_or_open_selected(ctx, None),
     Key::Char('s') => expand_or_open_selected(ctx, Some(SplitAxis::Horizontal)),
     Key::Char('v') => expand_or_open_selected(ctx, Some(SplitAxis::Vertical)),
+    Key::Char('f') => focus_file_tree(ctx),
     Key::Char('q') => close_file_tree(ctx),
     Key::Char('.') => reveal_current_file(ctx),
     Key::Char('u') => refresh_file_tree(ctx),
@@ -216,6 +310,13 @@ pub fn handle_file_tree_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent) -
     Key::Char('a') => open_command_palette_with_input(ctx, "file-tree-add "),
     Key::Char('r') => open_command_palette_with_input(ctx, "file-tree-rename "),
     Key::Char('d') => open_command_palette_with_input(ctx, "file-tree-delete yes"),
+    Key::Char('y') => yank_selected(ctx, FileTreeClipboardMode::Copy),
+    Key::Char('x') => yank_selected(ctx, FileTreeClipboardMode::Move),
+    Key::Char('p') => paste_into_selected_directory(ctx),
+    Key::Char('c') => open_command_palette_with_input(ctx, "file-tree-copy "),
+    Key::Char('m') => open_command_palette_with_input(ctx, "file-tree-move "),
+    Key::Char('t') => open_command_palette_with_input(ctx, "file-tree-trash yes"),
+    Key::Char('z') => close_all_file_tree(ctx),
     _ => return false,
   }
 
@@ -307,6 +408,30 @@ pub fn close_file_tree<Ctx: DefaultContext>(ctx: &mut Ctx) {
     ctx.did_change_active_pane(previous_buffer_id);
     ctx.request_render();
   }
+}
+
+pub fn focus_file_tree<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  if attached_tree_pane(ctx).is_none() {
+    toggle_file_tree_with_root(ctx, false);
+  }
+  reveal_current_file(ctx);
+  if let Some(tree_pane) = attached_tree_pane(ctx) {
+    let previous_buffer_id = ctx.editor_ref().active_buffer_id();
+    if ctx.editor().set_active_pane(tree_pane) {
+      ctx.did_change_active_pane(previous_buffer_id);
+    }
+  }
+  ctx.request_render();
+}
+
+pub fn close_all_file_tree<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  let Some(root) = ctx.file_tree().root.clone() else {
+    return;
+  };
+  let state = ctx.file_tree_mut();
+  state.expanded_dirs.retain(|path| path == &root);
+  rebuild_rows(ctx);
+  ctx.request_render();
 }
 
 fn toggle_file_tree_with_root<Ctx: DefaultContext>(ctx: &mut Ctx, current_buffer_directory: bool) {
@@ -465,6 +590,31 @@ fn toggle_hidden<Ctx: DefaultContext>(ctx: &mut Ctx) {
   ctx.request_render();
 }
 
+fn yank_selected<Ctx: DefaultContext>(ctx: &mut Ctx, mode: FileTreeClipboardMode) {
+  let Some(path) = selected_path(ctx) else {
+    ctx.push_warning("file_tree", "no file-tree entry selected");
+    return;
+  };
+  ctx.file_tree_mut().clipboard = Some(FileTreeClipboard {
+    path: path.clone(),
+    mode,
+  });
+  let verb = match mode {
+    FileTreeClipboardMode::Copy => "copied",
+    FileTreeClipboardMode::Move => "cut",
+  };
+  ctx.push_info("file_tree", format!("{verb}: {}", path.display()));
+  ctx.request_render();
+}
+
+fn paste_into_selected_directory<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  if let Err(err) = paste_clipboard(ctx) {
+    ctx.push_error("file_tree", err);
+  } else {
+    ctx.request_render();
+  }
+}
+
 fn cmd_add<Ctx: DefaultContext>(
   ctx: &mut Ctx,
   args: the_lib::command_line::Args,
@@ -520,6 +670,89 @@ fn cmd_add<Ctx: DefaultContext>(
   rebuild_rows(ctx);
   reveal_path(ctx, &target);
   Ok(())
+}
+
+fn cmd_yank<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  _args: the_lib::command_line::Args,
+  event: CommandEvent,
+) -> crate::CommandResult {
+  if event != CommandEvent::Validate {
+    return Ok(());
+  }
+  yank_selected(ctx, FileTreeClipboardMode::Copy);
+  Ok(())
+}
+
+fn cmd_cut<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  _args: the_lib::command_line::Args,
+  event: CommandEvent,
+) -> crate::CommandResult {
+  if event != CommandEvent::Validate {
+    return Ok(());
+  }
+  yank_selected(ctx, FileTreeClipboardMode::Move);
+  Ok(())
+}
+
+fn cmd_paste<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  _args: the_lib::command_line::Args,
+  event: CommandEvent,
+) -> crate::CommandResult {
+  if event != CommandEvent::Validate {
+    return Ok(());
+  }
+  paste_clipboard(ctx).map_err(crate::CommandError::new)
+}
+
+fn cmd_copy<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  args: the_lib::command_line::Args,
+  event: CommandEvent,
+) -> crate::CommandResult {
+  if event != CommandEvent::Validate {
+    return Ok(());
+  }
+  let source =
+    selected_path(ctx).ok_or_else(|| crate::CommandError::new("no file-tree entry selected"))?;
+  let input = args
+    .first()
+    .map(str::trim)
+    .filter(|value| !value.is_empty())
+    .ok_or_else(|| crate::CommandError::new("usage: :file-tree-copy <target>"))?;
+  let base = source
+    .parent()
+    .map(Path::to_path_buf)
+    .or_else(|| ctx.file_tree().root.clone())
+    .ok_or_else(|| crate::CommandError::new("file tree is not available"))?;
+  let target = resolve_tree_input_path(&base, input);
+  copy_selected_entry(ctx, &source, &target).map_err(crate::CommandError::new)
+}
+
+fn cmd_move<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  args: the_lib::command_line::Args,
+  event: CommandEvent,
+) -> crate::CommandResult {
+  if event != CommandEvent::Validate {
+    return Ok(());
+  }
+  let source =
+    selected_path(ctx).ok_or_else(|| crate::CommandError::new("no file-tree entry selected"))?;
+  let input = args
+    .first()
+    .map(str::trim)
+    .filter(|value| !value.is_empty())
+    .ok_or_else(|| crate::CommandError::new("usage: :file-tree-move <target>"))?;
+  let base = source
+    .parent()
+    .map(Path::to_path_buf)
+    .or_else(|| ctx.file_tree().root.clone())
+    .ok_or_else(|| crate::CommandError::new("file tree is not available"))?;
+  let target = resolve_tree_input_path(&base, input);
+  move_selected_entry(ctx, &source, &target).map_err(crate::CommandError::new)
 }
 
 fn cmd_rename<Ctx: DefaultContext>(
@@ -612,6 +845,62 @@ fn cmd_delete<Ctx: DefaultContext>(
   Ok(())
 }
 
+fn cmd_trash<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  args: the_lib::command_line::Args,
+  event: CommandEvent,
+) -> crate::CommandResult {
+  if event != CommandEvent::Validate {
+    return Ok(());
+  }
+
+  if args.first().map(str::trim) != Some("yes") {
+    return Err(crate::CommandError::new(
+      "trash moves the entry out of the workspace; use :file-tree-trash yes to confirm",
+    ));
+  }
+
+  let target =
+    selected_path(ctx).ok_or_else(|| crate::CommandError::new("no file-tree entry selected"))?;
+  trash_selected_entry(ctx, &target).map_err(crate::CommandError::new)
+}
+
+fn cmd_up<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  _args: the_lib::command_line::Args,
+  event: CommandEvent,
+) -> crate::CommandResult {
+  if event != CommandEvent::Validate {
+    return Ok(());
+  }
+  root_to_parent(ctx);
+  Ok(())
+}
+
+fn cmd_focus<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  _args: the_lib::command_line::Args,
+  event: CommandEvent,
+) -> crate::CommandResult {
+  if event != CommandEvent::Validate {
+    return Ok(());
+  }
+  focus_file_tree(ctx);
+  Ok(())
+}
+
+fn cmd_close_all<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  _args: the_lib::command_line::Args,
+  event: CommandEvent,
+) -> crate::CommandResult {
+  if event != CommandEvent::Validate {
+    return Ok(());
+  }
+  close_all_file_tree(ctx);
+  Ok(())
+}
+
 fn ensure_surface<Ctx: DefaultContext>(ctx: &mut Ctx) -> ClientSurfaceId {
   if let Some(surface_id) = ctx.file_tree().surface_id {
     return surface_id;
@@ -660,6 +949,14 @@ fn selected_path<Ctx: DefaultContext>(ctx: &Ctx) -> Option<PathBuf> {
     .map(|row| row.path.clone())
 }
 
+fn selected_directory<Ctx: DefaultContext>(ctx: &Ctx) -> Option<PathBuf> {
+  match selected_path(ctx) {
+    Some(path) if path.is_dir() => Some(path),
+    Some(path) => path.parent().map(Path::to_path_buf),
+    None => ctx.file_tree().root.clone(),
+  }
+}
+
 fn resolve_tree_input_path(base: &Path, input: &str) -> PathBuf {
   let path = Path::new(input.trim_end_matches('/'));
   if path.is_absolute() {
@@ -667,6 +964,54 @@ fn resolve_tree_input_path(base: &Path, input: &str) -> PathBuf {
   } else {
     base.join(path)
   }
+}
+
+fn copy_selected_entry<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  source: &Path,
+  target: &Path,
+) -> Result<(), String> {
+  ensure_target_available(source, target)?;
+  copy_path_recursively(source, target)?;
+  rebuild_rows(ctx);
+  reveal_path(ctx, target);
+  ctx.push_info("file_tree", format!("copied to {}", target.display()));
+  Ok(())
+}
+
+fn move_selected_entry<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  source: &Path,
+  target: &Path,
+) -> Result<(), String> {
+  ensure_target_available(source, target)?;
+  move_path(source, target)?;
+  retarget_expanded_dirs(ctx.file_tree_mut(), source, target);
+  rebuild_rows(ctx);
+  reveal_path(ctx, target);
+  ctx.push_info("file_tree", format!("moved to {}", target.display()));
+  Ok(())
+}
+
+fn trash_selected_entry<Ctx: DefaultContext>(ctx: &mut Ctx, source: &Path) -> Result<(), String> {
+  let trash_dir = trash_directory().ok_or_else(|| {
+    "trash is not available on this platform; use :file-tree-delete yes instead".to_string()
+  })?;
+  std::fs::create_dir_all(&trash_dir).map_err(|err| {
+    format!(
+      "failed to create trash directory '{}': {err}",
+      trash_dir.display()
+    )
+  })?;
+  let target = unique_destination_in_dir(&trash_dir, file_name_for_path(source)?)?;
+  move_path(source, &target)?;
+  ctx
+    .file_tree_mut()
+    .expanded_dirs
+    .retain(|path| !path.starts_with(source));
+  rebuild_rows(ctx);
+  ctx.push_info("file_tree", format!("trashed {}", source.display()));
+  Ok(())
 }
 
 fn rebuild_rows<Ctx: DefaultContext>(ctx: &mut Ctx) {
@@ -716,6 +1061,41 @@ fn rebuild_rows<Ctx: DefaultContext>(ctx: &mut Ctx) {
   clamp_tree_state(state);
   state.selection_follow = true;
   sync_tree_scroll(state, scrolloff);
+}
+
+fn paste_clipboard<Ctx: DefaultContext>(ctx: &mut Ctx) -> Result<(), String> {
+  let clipboard = ctx
+    .file_tree()
+    .clipboard
+    .clone()
+    .ok_or_else(|| "file-tree clipboard is empty".to_string())?;
+  if !clipboard.path.exists() {
+    ctx.file_tree_mut().clipboard = None;
+    return Err(format!(
+      "clipboard entry no longer exists: {}",
+      clipboard.path.display()
+    ));
+  }
+
+  let destination_dir = selected_directory(ctx)
+    .ok_or_else(|| "no destination directory available in the file tree".to_string())?;
+  let source_name = file_name_for_path(&clipboard.path)?;
+  let target = unique_destination_in_dir(&destination_dir, source_name)?;
+  match clipboard.mode {
+    FileTreeClipboardMode::Copy => {
+      copy_path_recursively(&clipboard.path, &target)?;
+      ctx.push_info("file_tree", format!("pasted to {}", target.display()));
+    },
+    FileTreeClipboardMode::Move => {
+      move_path(&clipboard.path, &target)?;
+      retarget_expanded_dirs(ctx.file_tree_mut(), &clipboard.path, &target);
+      ctx.file_tree_mut().clipboard = None;
+      ctx.push_info("file_tree", format!("moved to {}", target.display()));
+    },
+  }
+  rebuild_rows(ctx);
+  reveal_path(ctx, &target);
+  Ok(())
 }
 
 fn append_rows(
@@ -881,6 +1261,152 @@ fn retarget_expanded_dirs(state: &mut FileTreeState, source: &Path, target: &Pat
     })
     .collect::<BTreeSet<_>>();
   state.expanded_dirs = replacement;
+}
+
+fn ensure_target_available(source: &Path, target: &Path) -> Result<(), String> {
+  if source == target {
+    return Ok(());
+  }
+  if target.starts_with(source) {
+    return Err(format!(
+      "cannot move '{}' into its own descendant '{}'",
+      source.display(),
+      target.display()
+    ));
+  }
+  if target.exists() {
+    return Err(format!("'{}' already exists", target.display()));
+  }
+  if let Some(parent) = target.parent()
+    && !parent.as_os_str().is_empty()
+  {
+    std::fs::create_dir_all(parent)
+      .map_err(|err| format!("failed to create directory '{}': {err}", parent.display()))?;
+  }
+  Ok(())
+}
+
+fn copy_path_recursively(source: &Path, target: &Path) -> Result<(), String> {
+  if source.is_dir() {
+    std::fs::create_dir_all(target)
+      .map_err(|err| format!("failed to create directory '{}': {err}", target.display()))?;
+    for entry in read_dir(source)
+      .map_err(|err| format!("failed to read directory '{}': {err}", source.display()))?
+    {
+      let entry = entry.map_err(|err| {
+        format!(
+          "failed to read directory entry '{}': {err}",
+          source.display()
+        )
+      })?;
+      let child_source = entry.path();
+      let child_target = target.join(entry.file_name());
+      copy_path_recursively(&child_source, &child_target)?;
+    }
+    return Ok(());
+  }
+
+  std::fs::copy(source, target).map_err(|err| {
+    format!(
+      "failed to copy '{}' to '{}': {err}",
+      source.display(),
+      target.display()
+    )
+  })?;
+  Ok(())
+}
+
+fn move_path(source: &Path, target: &Path) -> Result<(), String> {
+  match std::fs::rename(source, target) {
+    Ok(()) => Ok(()),
+    Err(err) if err.raw_os_error() == Some(18) => {
+      copy_path_recursively(source, target)?;
+      remove_path_recursively(source)?;
+      Ok(())
+    },
+    Err(err) => {
+      Err(format!(
+        "failed to move '{}' to '{}': {err}",
+        source.display(),
+        target.display()
+      ))
+    },
+  }
+}
+
+fn remove_path_recursively(path: &Path) -> Result<(), String> {
+  if path.is_dir() {
+    std::fs::remove_dir_all(path)
+      .map_err(|err| format!("failed to delete directory '{}': {err}", path.display()))
+  } else {
+    std::fs::remove_file(path)
+      .map_err(|err| format!("failed to delete file '{}': {err}", path.display()))
+  }
+}
+
+fn file_name_for_path(path: &Path) -> Result<OsString, String> {
+  path
+    .file_name()
+    .map(OsString::from)
+    .ok_or_else(|| format!("'{}' has no file name", path.display()))
+}
+
+fn unique_destination_in_dir(dir: &Path, file_name: OsString) -> Result<PathBuf, String> {
+  let candidate = dir.join(&file_name);
+  if !candidate.exists() {
+    return Ok(candidate);
+  }
+
+  let path = PathBuf::from(&file_name);
+  let stem = path
+    .file_stem()
+    .map(OsString::from)
+    .unwrap_or_else(|| file_name.clone());
+  let extension = path.extension().map(OsString::from);
+
+  for index in 1.. {
+    let mut candidate_name = stem.clone();
+    if index == 1 {
+      candidate_name.push(" copy");
+    } else {
+      candidate_name.push(format!(" copy {index}"));
+    }
+    if let Some(ext) = &extension {
+      candidate_name.push(".");
+      candidate_name.push(ext);
+    }
+    let candidate = dir.join(&candidate_name);
+    if !candidate.exists() {
+      return Ok(candidate);
+    }
+  }
+
+  Err(format!(
+    "failed to derive unique destination under '{}'",
+    dir.display()
+  ))
+}
+
+fn trash_directory() -> Option<PathBuf> {
+  #[cfg(target_os = "macos")]
+  {
+    let home = std::env::var_os("HOME")?;
+    return Some(PathBuf::from(home).join(".Trash"));
+  }
+
+  #[cfg(all(unix, not(target_os = "macos")))]
+  {
+    if let Some(data_home) = std::env::var_os("XDG_DATA_HOME") {
+      return Some(PathBuf::from(data_home).join("Trash/files"));
+    }
+    let home = std::env::var_os("HOME")?;
+    return Some(PathBuf::from(home).join(".local/share/Trash/files"));
+  }
+
+  #[cfg(not(unix))]
+  {
+    None
+  }
 }
 
 fn open_file_from_tree<Ctx: DefaultContext>(
@@ -1061,5 +1587,51 @@ mod tests {
     assert!(beta.is_last_sibling);
 
     fs::remove_dir_all(&root).expect("cleanup tree");
+  }
+
+  #[test]
+  fn unique_destination_in_dir_appends_copy_suffix() {
+    let unique = SystemTime::now()
+      .duration_since(UNIX_EPOCH)
+      .expect("system time")
+      .as_nanos();
+    let root = std::env::temp_dir().join(format!("the-editor-file-tree-copy-{unique}"));
+    fs::create_dir_all(&root).expect("create root");
+    let original = root.join("file.txt");
+    fs::write(&original, "one").expect("write original");
+
+    let target = unique_destination_in_dir(&root, OsString::from("file.txt")).expect("target");
+
+    assert_eq!(
+      target.file_name().and_then(|name| name.to_str()),
+      Some("file copy.txt")
+    );
+
+    fs::remove_dir_all(&root).expect("cleanup");
+  }
+
+  #[test]
+  fn copy_path_recursively_copies_directory_tree() {
+    let unique = SystemTime::now()
+      .duration_since(UNIX_EPOCH)
+      .expect("system time")
+      .as_nanos();
+    let root = std::env::temp_dir().join(format!("the-editor-file-tree-recursive-{unique}"));
+    let source = root.join("src");
+    let nested_dir = source.join("nested");
+    let nested_file = nested_dir.join("child.txt");
+    let target = root.join("dst");
+
+    fs::create_dir_all(&nested_dir).expect("create nested source");
+    fs::write(&nested_file, "hello").expect("write nested file");
+
+    copy_path_recursively(&source, &target).expect("copy tree");
+
+    assert_eq!(
+      fs::read_to_string(target.join("nested/child.txt")).expect("copied child"),
+      "hello"
+    );
+
+    fs::remove_dir_all(&root).expect("cleanup");
   }
 }

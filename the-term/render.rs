@@ -1325,6 +1325,14 @@ struct PanelStyles {
   border: Style,
 }
 
+fn reset_style() -> Style {
+  Style::reset()
+}
+
+fn reset_style_with_colors(fg: Color, bg: Color) -> Style {
+  reset_style().fg(fg).bg(bg)
+}
+
 fn theme_scope_color(
   ctx: &Ctx,
   scope: &str,
@@ -1346,76 +1354,31 @@ fn theme_scope_any_color(ctx: &Ctx, scope: &str) -> Option<Color> {
 }
 
 fn file_picker_panel_styles(ctx: &Ctx) -> PanelStyles {
-  let mut text_style = Style::default();
-  let mut fill_style = Style::default();
-  let mut border_style = Style::default();
-
   let picker_scope = ctx.ui_theme.try_get("ui.file_picker");
   let text_scope = ctx.ui_theme.try_get("ui.text");
   let background_scope = ctx.ui_theme.try_get("ui.background");
   let window_scope = ctx.ui_theme.try_get("ui.window");
-
-  if text_style.fg.is_none() {
-    if let Some(fg) = picker_scope
-      .and_then(|style| style.fg)
-      .or_else(|| text_scope.and_then(|style| style.fg))
-      .map(lib_color_to_ratatui)
-    {
-      text_style = text_style.fg(fg);
-    }
-  }
-
-  if fill_style.bg.is_none() {
-    let bg = picker_scope
-      .and_then(|style| style.bg)
-      .or_else(|| background_scope.and_then(|style| style.bg))
-      .map(lib_color_to_ratatui)
-      .unwrap_or(Color::Black);
-    fill_style = fill_style.bg(bg);
-  }
-
-  // Explicitly pin foreground too so style patching cannot inherit stale cell
-  // colors from previously rendered editor content.
-  if fill_style.fg.is_none() {
-    let fg = text_style
-      .fg
-      .or_else(|| {
-        text_scope
-          .and_then(|style| style.fg)
-          .map(lib_color_to_ratatui)
-      })
-      .unwrap_or(Color::Reset);
-    fill_style = fill_style.fg(fg);
-  }
-
-  if border_style.fg.is_none() {
-    if let Some(border_fg) = text_style
-      .fg
-      .or_else(|| {
-        picker_scope
-          .and_then(|style| style.fg)
-          .map(lib_color_to_ratatui)
-      })
-      .or_else(|| {
-        window_scope
-          .and_then(|style| style.fg)
-          .map(lib_color_to_ratatui)
-      })
-    {
-      border_style = border_style.fg(border_fg);
-    }
-  }
-
-  if border_style.bg.is_none()
-    && let Some(bg) = fill_style.bg
-  {
-    border_style = border_style.bg(bg);
-  }
+  let text_fg = picker_scope
+    .and_then(|style| style.fg)
+    .or_else(|| text_scope.and_then(|style| style.fg))
+    .map(lib_color_to_ratatui)
+    .unwrap_or(Color::Reset);
+  let fill_bg = picker_scope
+    .and_then(|style| style.bg)
+    .or_else(|| background_scope.and_then(|style| style.bg))
+    .map(lib_color_to_ratatui)
+    .unwrap_or(Color::Black);
+  let border_fg = picker_scope
+    .and_then(|style| style.fg)
+    .or_else(|| text_scope.and_then(|style| style.fg))
+    .or_else(|| window_scope.and_then(|style| style.fg))
+    .map(lib_color_to_ratatui)
+    .unwrap_or(text_fg);
 
   PanelStyles {
-    text:   text_style,
-    fill:   fill_style,
-    border: border_style,
+    text:   Style::default().fg(text_fg),
+    fill:   reset_style_with_colors(text_fg, fill_bg),
+    border: reset_style_with_colors(border_fg, fill_bg),
   }
 }
 
@@ -1435,9 +1398,9 @@ fn overlay_panel_styles(ctx: &Ctx, role: &str) -> PanelStyles {
     .unwrap_or(text);
 
   PanelStyles {
-    text:   Style::default().fg(text).bg(fill),
-    fill:   Style::default().fg(text).bg(fill),
-    border: Style::default().fg(border).bg(fill),
+    text:   Style::default().fg(text),
+    fill:   reset_style_with_colors(text, fill),
+    border: reset_style_with_colors(border, fill),
   }
 }
 
@@ -1456,9 +1419,9 @@ fn docs_panel_styles(ctx: &Ctx) -> PanelStyles {
     .unwrap_or(text);
 
   PanelStyles {
-    text:   Style::default().fg(text).bg(fill),
-    fill:   Style::default().fg(text).bg(fill),
-    border: Style::default().fg(border).bg(fill),
+    text:   Style::default().fg(text),
+    fill:   reset_style_with_colors(text, fill),
+    border: reset_style_with_colors(border, fill),
   }
 }
 
@@ -1726,7 +1689,7 @@ fn file_picker_preview_focus_styles(
   text_style: Style,
   accent_color: Option<Color>,
 ) -> (Style, Style) {
-  let mut row_style = Style::default();
+  let mut row_style = reset_style();
   if let Some(bg) = theme
     .try_get("ui.cursorline.active")
     .and_then(|style| style.bg)
@@ -3197,7 +3160,7 @@ fn draw_completion_style_list(
       fill_rect(
         buf,
         Rect::new(rect.x, y, rect.width, 1),
-        Style::default().bg(bg_color),
+        reset_style().bg(bg_color),
       );
     } else {
       fill_rect(buf, Rect::new(rect.x, y, rect.width, 1), fill_style);
@@ -3593,7 +3556,7 @@ fn draw_file_picker_list_pane(
       fill_rect(
         buf,
         Rect::new(list_area.x, y, list_area.width, 1),
-        Style::default().bg(bg),
+        reset_style().bg(bg),
       );
     }
     if is_selected && let Some(fg) = selected_fg {
@@ -6017,7 +5980,27 @@ pub fn ensure_cursor_visible(ctx: &mut Ctx) {
 
 #[cfg(test)]
 mod tests {
+  use ratatui::buffer::Cell;
+
   use super::*;
+
+  fn seed_underlined_cells(buf: &mut Buffer, rect: Rect) {
+    let style = Style::reset()
+      .fg(Color::Gray)
+      .bg(Color::Black)
+      .underline_color(Color::LightRed)
+      .add_modifier(Modifier::UNDERLINED);
+    for y in rect.y..rect.y.saturating_add(rect.height) {
+      for x in rect.x..rect.x.saturating_add(rect.width) {
+        buf.get_mut(x, y).set_symbol("~").set_style(style);
+      }
+    }
+  }
+
+  fn assert_cell_has_no_inherited_underline(cell: &Cell) {
+    assert!(!cell.modifier.contains(Modifier::UNDERLINED));
+    assert_eq!(cell.underline_color, Color::Reset);
+  }
 
   #[test]
   fn file_tree_active_forces_hidden_term_cursor() {
@@ -6174,5 +6157,115 @@ mod tests {
       .collect::<Vec<_>>();
     assert!(row_symbols.iter().any(|symbol| symbol == ""));
     assert!(row_symbols.iter().any(|symbol| symbol == ""));
+  }
+
+  #[test]
+  fn file_picker_overlay_clears_inherited_underlines_without_reflowing_layout() {
+    use the_default::{
+      FilePickerItem,
+      FilePickerItemAction,
+      open_custom_picker,
+    };
+
+    let mut ctx = Ctx::new(None).expect("ctx");
+    let item = FilePickerItem {
+      absolute:     "/tmp/demo.rs".into(),
+      display:      "demo.rs".to_string(),
+      icon:         "file_rust".to_string(),
+      is_dir:       false,
+      display_path: false,
+      action:       FilePickerItemAction::OpenFile("/tmp/demo.rs".into()),
+      preview_path: Some("/tmp/demo.rs".into()),
+      preview_line: None,
+      preview_col:  None,
+      row_data:     None,
+      preview:      None,
+      payload:      None,
+    };
+    open_custom_picker(&mut ctx, "File Picker", "/tmp".into(), None, vec![item], 0);
+
+    let area = Rect::new(0, 0, 100, 24);
+    let layout = compute_file_picker_layout(area, &ctx.file_picker).expect("layout");
+    assert!(layout.show_preview);
+
+    let mut buf = Buffer::empty(area);
+    seed_underlined_cells(&mut buf, area);
+
+    let mut cursor_out = None;
+    draw_file_picker_panel(&mut buf, area, &ctx, &mut cursor_out);
+
+    assert_cell_has_no_inherited_underline(buf.get(layout.list_prompt.x, layout.list_prompt.y));
+    assert_cell_has_no_inherited_underline(buf.get(
+      layout.list_content.x.saturating_add(1),
+      layout.list_content.y,
+    ));
+
+    let preview = layout.preview_content.expect("preview content");
+    assert_cell_has_no_inherited_underline(buf.get(preview.x, preview.y));
+  }
+
+  #[test]
+  fn command_palette_overlay_clears_inherited_underlines() {
+    use the_default::{
+      CommandPaletteItem,
+      CommandPaletteSource,
+      CommandPaletteState,
+    };
+
+    let mut ctx = Ctx::new(None).expect("ctx");
+    ctx.command_palette = CommandPaletteState {
+      is_open:       true,
+      source:        CommandPaletteSource::ActionPalette,
+      source_mode:   Mode::Normal,
+      query:         String::new(),
+      selected:      Some(0),
+      items:         vec![CommandPaletteItem::new("file-tree-move")],
+      max_results:   usize::MAX,
+      prefiltered:   true,
+      scroll_offset: 0,
+      prompt_text:   None,
+    };
+
+    let area = Rect::new(0, 0, 80, 12);
+    let overlay = overlay_area(area, &ctx);
+    let row_y = overlay.y.saturating_add(overlay.height.saturating_sub(1));
+    let mut buf = Buffer::empty(area);
+    seed_underlined_cells(&mut buf, area);
+
+    draw_command_palette_overlay(&mut buf, area, &mut ctx);
+
+    assert_cell_has_no_inherited_underline(buf.get(overlay.x, row_y));
+    assert_cell_has_no_inherited_underline(
+      buf.get(overlay.x + overlay.width.saturating_sub(1), row_y),
+    );
+  }
+
+  #[test]
+  fn hover_docs_overlay_clears_inherited_underlines() {
+    let mut ctx = Ctx::new(None).expect("ctx");
+    ctx.hover_docs = Some("hover docs".to_string());
+
+    let area = Rect::new(0, 0, 100, 24);
+    let overlay = overlay_area(area, &ctx);
+    let rect = completion_panel_rect(
+      overlay,
+      overlay
+        .width
+        .saturating_mul(2)
+        .saturating_div(3)
+        .min(84)
+        .max(28),
+      18,
+      None,
+    );
+    let mut buf = Buffer::empty(area);
+    seed_underlined_cells(&mut buf, area);
+
+    draw_hover_overlay(&mut buf, area, &mut ctx, None);
+
+    assert_cell_has_no_inherited_underline(buf.get(rect.x, rect.y));
+    assert_cell_has_no_inherited_underline(
+      buf.get(rect.x.saturating_add(1), rect.y.saturating_add(1)),
+    );
   }
 }

@@ -647,6 +647,7 @@ pub struct Ctx {
   lsp_completion_raw_items:          Vec<Value>,
   lsp_completion_resolved_indices:   HashSet<usize>,
   lsp_completion_resolve_supported:  bool,
+  lsp_completion_inline_item_active: bool,
   lsp_completion_visible_indices:    Vec<usize>,
   lsp_completion_fallback_start:     Option<usize>,
   lsp_code_action_items:             Vec<LspCodeAction>,
@@ -1111,6 +1112,7 @@ impl Ctx {
       lsp_completion_raw_items: Vec::new(),
       lsp_completion_resolved_indices: HashSet::new(),
       lsp_completion_resolve_supported: true,
+      lsp_completion_inline_item_active: false,
       lsp_completion_visible_indices: Vec::new(),
       lsp_completion_fallback_start: None,
       lsp_code_action_items: Vec::new(),
@@ -2659,10 +2661,20 @@ impl Ctx {
       self.lsp_completion_raw_items.clear();
       self.lsp_completion_resolved_indices.clear();
       self.lsp_completion_resolve_supported = self.lsp_completion_server_supports_resolve();
+      self.lsp_completion_inline_item_active = false;
       self.lsp_completion_visible_indices.clear();
       self.lsp_completion_fallback_start = None;
-      self.completion_menu.clear();
-      if announce_empty {
+      let keep_inline_item =
+        self.completion_menu.active && self.lsp_completion_inline_menu_item().is_some();
+      if keep_inline_item {
+        the_default::show_builtin_completion_menu(
+          self,
+          the_default::BuiltinCompletionMenuKind::LspCompletion,
+        );
+      } else {
+        self.completion_menu.clear();
+      }
+      if announce_empty && !keep_inline_item {
         self.messages.publish(
           MessageLevel::Info,
           Some("lsp".into()),
@@ -2717,15 +2729,13 @@ impl Ctx {
     let Some(resolved) = resolved else {
       return true;
     };
+    let visible_index = self.completion_visible_index_for_source_index(index);
     let Some(item) = self.lsp_completion_items.get_mut(index) else {
       return true;
     };
     merge_resolved_completion_item(item, resolved);
 
-    if let Some(visible_index) = self
-      .lsp_completion_visible_indices
-      .iter()
-      .position(|candidate| *candidate == index)
+    if let Some(visible_index) = visible_index
       && let Some(ui_item) = self.completion_menu.items.get_mut(visible_index)
     {
       *ui_item = completion_menu_item_for_lsp_item(item);
@@ -4237,8 +4247,63 @@ impl Ctx {
     self.lsp_provider_supports_single_char("signatureHelpProvider", "retriggerCharacters", ch)
   }
 
+  fn lsp_completion_inline_menu_item(&self) -> Option<the_default::CompletionMenuItem> {
+    if self.mode != Mode::Insert || self.code_action_menu_is_active() {
+      return None;
+    }
+    the_default::completion_menu_inline_item(self)
+  }
+
+  fn completion_visible_index_is_inline_item(&self, index: usize) -> bool {
+    self.lsp_completion_inline_item_active && index == 0
+  }
+
   fn completion_source_index_for_visible_index(&self, index: usize) -> Option<usize> {
-    self.lsp_completion_visible_indices.get(index).copied()
+    let visible_index = if self.lsp_completion_inline_item_active {
+      index.checked_sub(1)?
+    } else {
+      index
+    };
+    self
+      .lsp_completion_visible_indices
+      .get(visible_index)
+      .copied()
+  }
+
+  fn completion_visible_index_for_source_index(&self, index: usize) -> Option<usize> {
+    self
+      .lsp_completion_visible_indices
+      .iter()
+      .position(|candidate| *candidate == index)
+      .map(|visible_index| {
+        if self.lsp_completion_inline_item_active {
+          visible_index + 1
+        } else {
+          visible_index
+        }
+      })
+  }
+
+  fn sync_completion_menu_inline_item(&mut self) {
+    if !self.completion_menu.active || self.code_action_menu_is_active() {
+      self.lsp_completion_inline_item_active = false;
+      return;
+    }
+
+    let next_inline_item = self.lsp_completion_inline_menu_item();
+    let current_inline_item = if self.lsp_completion_inline_item_active {
+      self.completion_menu.items.first()
+    } else {
+      None
+    };
+    let needs_rebuild = self.lsp_completion_inline_item_active != next_inline_item.is_some()
+      || match (current_inline_item, next_inline_item.as_ref()) {
+        (Some(current), Some(next)) => current != next,
+        _ => false,
+      };
+    if needs_rebuild {
+      self.rebuild_completion_menu();
+    }
   }
 
   fn completion_filter_fragment(&self) -> Option<String> {
@@ -4255,12 +4320,6 @@ impl Ctx {
 
   fn rebuild_completion_menu(&mut self) {
     self.clear_code_action_menu_state();
-    if self.lsp_completion_items.is_empty() {
-      self.lsp_completion_visible_indices.clear();
-      self.completion_menu.clear();
-      return;
-    }
-
     let fragment = self.completion_filter_fragment().unwrap_or_default();
     let mut visible: Vec<(usize, u32)> = self
       .lsp_completion_items
@@ -4294,11 +4353,6 @@ impl Ctx {
     });
 
     self.lsp_completion_visible_indices = visible.into_iter().map(|(index, _)| index).collect();
-    if self.lsp_completion_visible_indices.is_empty() {
-      self.completion_menu.clear();
-      return;
-    }
-
     the_default::show_builtin_completion_menu(
       self,
       the_default::BuiltinCompletionMenuKind::LspCompletion,
@@ -4310,6 +4364,7 @@ impl Ctx {
     self.lsp_completion_raw_items.clear();
     self.lsp_completion_resolved_indices.clear();
     self.lsp_completion_visible_indices.clear();
+    self.lsp_completion_inline_item_active = false;
     self.lsp_completion_fallback_start = None;
     self.clear_code_action_menu_state();
     self.completion_menu.clear();
@@ -6169,18 +6224,22 @@ impl the_default::DefaultContext for Ctx {
   }
 
   fn build_render_plan(&mut self) -> RenderPlan {
+    self.sync_completion_menu_inline_item();
     crate::render::build_render_plan(self)
   }
 
   fn build_render_plan_with_styles(&mut self, styles: RenderStyles) -> RenderPlan {
+    self.sync_completion_menu_inline_item();
     crate::render::build_render_plan_with_styles(self, styles)
   }
 
   fn build_frame_render_plan(&mut self) -> FrameRenderPlan {
+    self.sync_completion_menu_inline_item();
     crate::render::build_frame_render_plan(self)
   }
 
   fn build_frame_render_plan_with_styles(&mut self, styles: RenderStyles) -> FrameRenderPlan {
+    self.sync_completion_menu_inline_item();
     crate::render::build_frame_render_plan_with_styles(self, styles)
   }
 
@@ -6285,7 +6344,7 @@ impl the_default::DefaultContext for Ctx {
   }
 
   fn completion_selection_changed(&mut self, index: usize) {
-    if self.code_action_menu_is_active() {
+    if self.code_action_menu_is_active() || self.completion_visible_index_is_inline_item(index) {
       return;
     }
     let source_index = self
@@ -6301,6 +6360,9 @@ impl the_default::DefaultContext for Ctx {
     let Some(selected) = self.completion_menu.selected else {
       return false;
     };
+    if self.completion_visible_index_is_inline_item(selected) {
+      return false;
+    }
     let source_index = self
       .completion_source_index_for_visible_index(selected)
       .unwrap_or(selected);
@@ -6356,6 +6418,10 @@ impl the_default::DefaultContext for Ctx {
       return applied;
     }
 
+    if self.completion_visible_index_is_inline_item(index) {
+      return the_default::accept_inline_completion(self);
+    }
+
     let source_index = self
       .completion_source_index_for_visible_index(index)
       .unwrap_or(index);
@@ -6384,6 +6450,7 @@ impl the_default::DefaultContext for Ctx {
   }
 
   fn completion_menu_closed(&mut self) {
+    self.lsp_completion_inline_item_active = false;
     self.clear_code_action_menu_state();
   }
 
@@ -6430,14 +6497,23 @@ impl the_default::DefaultContext for Ctx {
   ) -> Vec<the_default::CompletionMenuItem> {
     match kind {
       the_default::BuiltinCompletionMenuKind::LspCompletion => {
-        self
-          .lsp_completion_visible_indices
-          .iter()
-          .filter_map(|index| self.lsp_completion_items.get(*index))
-          .map(completion_menu_item_for_lsp_item)
-          .collect()
+        let inline_item = self.lsp_completion_inline_menu_item();
+        self.lsp_completion_inline_item_active = inline_item.is_some();
+        let mut items = Vec::new();
+        if let Some(item) = inline_item {
+          items.push(item);
+        }
+        items.extend(
+          self
+            .lsp_completion_visible_indices
+            .iter()
+            .filter_map(|index| self.lsp_completion_items.get(*index))
+            .map(completion_menu_item_for_lsp_item),
+        );
+        items
       },
       the_default::BuiltinCompletionMenuKind::CodeActions => {
+        self.lsp_completion_inline_item_active = false;
         self
           .lsp_code_action_items
           .iter()
@@ -7006,7 +7082,7 @@ impl the_default::DefaultContext for Ctx {
   }
 
   fn log_target_names(&self) -> &'static [&'static str] {
-    &["messages", "lsp", "watch"]
+    &["messages", "lsp", "watch", "inline"]
   }
 
   fn log_path_for_target(&self, target: &str) -> Option<PathBuf> {
@@ -7014,6 +7090,7 @@ impl the_default::DefaultContext for Ctx {
       "messages" => resolve_message_log_path(),
       "lsp" => resolve_lsp_trace_log_path(),
       "watch" => resolve_file_watch_trace_log_path(),
+      "inline" => the_default::resolve_inline_completion_trace_log_path(),
       _ => None,
     }
   }
@@ -7811,6 +7888,50 @@ mod tests {
   }
 
   #[test]
+  fn completion_visible_index_maps_past_inline_provider_item() {
+    let mut ctx = Ctx::new(None).expect("ctx");
+    ctx.lsp_completion_inline_item_active = true;
+    ctx.lsp_completion_visible_indices = vec![3, 7];
+
+    assert_eq!(ctx.completion_source_index_for_visible_index(0), None);
+    assert_eq!(ctx.completion_source_index_for_visible_index(1), Some(3));
+    assert_eq!(ctx.completion_source_index_for_visible_index(2), Some(7));
+  }
+
+  #[test]
+  fn completion_accept_selected_uses_shifted_lsp_index_with_inline_item() {
+    let mut ctx = Ctx::new(None).expect("ctx");
+    let tx = Transaction::change(
+      ctx.editor.document().text(),
+      std::iter::once((0, 0, Some("say he".into()))),
+    )
+    .expect("seed transaction");
+    assert!(DefaultContext::apply_transaction(&mut ctx, &tx));
+
+    let cursor = ctx.editor.document().text().len_chars();
+    let _ = ctx
+      .editor
+      .document_mut()
+      .set_selection(Selection::point(cursor));
+
+    let mut item = empty_completion_item();
+    item.insert_text = Some("hello".to_string());
+    ctx.lsp_completion_items = vec![item];
+    ctx.lsp_completion_visible_indices = vec![0];
+    ctx.lsp_completion_inline_item_active = true;
+    ctx.completion_menu.items = vec![
+      the_default::CompletionMenuItem::new("printf(\"hello world\");").detail("Copilot"),
+      the_default::CompletionMenuItem::new("hello"),
+    ];
+    ctx.lsp_completion_fallback_start = Some("say ".chars().count());
+
+    assert!(<Ctx as DefaultContext>::completion_accept_selected(
+      &mut ctx, 1
+    ));
+    assert_eq!(ctx.editor.document().text().to_string(), "say hello");
+  }
+
+  #[test]
   fn completion_accept_selected_replaces_request_prefix_range() {
     let mut ctx = Ctx::new(None).expect("ctx");
     let tx = Transaction::change(
@@ -8372,6 +8493,17 @@ pkgs.mkShell {
         .iter()
         .map(|completion| &completion.text)
         .collect::<Vec<_>>()
+    );
+  }
+
+  #[test]
+  fn inline_debug_log_target_is_exposed() {
+    let ctx = Ctx::new(None).expect("ctx");
+
+    assert!(ctx.log_target_names().contains(&"inline"));
+    assert_eq!(
+      ctx.log_path_for_target("inline"),
+      the_default::resolve_inline_completion_trace_log_path()
     );
   }
 

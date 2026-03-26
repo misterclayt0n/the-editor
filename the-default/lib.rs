@@ -238,6 +238,9 @@ pub use inline_completion::{
   InlineCompletionPresentationLineKind,
   InlineCompletionProvider,
   InlineCompletionState,
+  accept_inline_completion,
+  completion_menu_inline_item,
+  resolve_inline_completion_trace_log_path,
 };
 pub use input::{
   Key,

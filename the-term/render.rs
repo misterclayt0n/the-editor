@@ -1,6 +1,7 @@
 //! Rendering - converts RenderPlan to ratatui draw calls.
 
 use std::{
+  borrow::Cow,
   collections::BTreeMap,
   env,
   fs::OpenOptions,
@@ -3098,6 +3099,14 @@ fn completion_list_styles(ctx: &Ctx) -> (Style, Style, Style) {
   (menu.text, menu.fill, selected_style)
 }
 
+fn completion_item_icon_text(icon: &str) -> Cow<'_, str> {
+  if icon.chars().count() == 1 {
+    Cow::Borrowed(icon)
+  } else {
+    Cow::Borrowed(file_picker_icon_glyph(icon, false))
+  }
+}
+
 #[derive(Debug, Clone)]
 struct OverlayListItem {
   title:         String,
@@ -3192,6 +3201,7 @@ fn draw_completion_style_list(
       .saturating_sub(icon_col_width + row_right_padding) as usize;
 
     if has_icons && let Some(icon) = item.leading_icon.as_deref() {
+      let icon = completion_item_icon_text(icon);
       let icon_style = if is_selected {
         row_style
       } else if let Some(color) = item.leading_color {
@@ -3199,7 +3209,7 @@ fn draw_completion_style_list(
       } else {
         row_style
       };
-      buf.set_string(base_content_x, y, icon, icon_style);
+      buf.set_string(base_content_x, y, icon.as_ref(), icon_style);
     }
 
     let mut title = item.title.clone();
@@ -4351,6 +4361,8 @@ fn draw_inline_completion_overlay(
   area: Rect,
   ctx: &mut Ctx,
   editor_cursor: Option<(u16, u16)>,
+  _active_plan: Option<&RenderPlan>,
+  _active_pane_area: Option<Rect>,
 ) {
   let Some(presentation) = ctx.inline_completion.presentation.clone() else {
     return;
@@ -4598,12 +4610,14 @@ fn draw_overlays(
   area: Rect,
   ctx: &mut Ctx,
   editor_cursor: Option<(u16, u16)>,
+  active_plan: Option<&RenderPlan>,
+  active_pane_area: Option<Rect>,
   cursor_out: &mut Option<(u16, u16)>,
 ) {
   ctx.completion_docs_layout = None;
   draw_command_palette_overlay(buf, area, ctx);
   draw_completion_overlay(buf, area, ctx, editor_cursor);
-  draw_inline_completion_overlay(buf, area, ctx, editor_cursor);
+  draw_inline_completion_overlay(buf, area, ctx, editor_cursor, active_plan, active_pane_area);
   if ctx.completion_docs_layout.is_none() {
     draw_signature_help_overlay(buf, area, ctx, editor_cursor);
   }
@@ -5912,6 +5926,7 @@ pub fn render(f: &mut Frame, ctx: &mut Ctx) {
           the_lib::editor::PaneContentKind::ClientSurface
         )
       });
+    let mut active_pane_area = None;
     for pane in &frame_plan.panes {
       let pane_area = pane_screen_rect(area, pane.rect);
       let is_active = pane.pane_id == frame_plan.active_pane;
@@ -5925,6 +5940,7 @@ pub fn render(f: &mut Frame, ctx: &mut Ctx) {
           editor_cursor_kind = None;
           active_line_count = 0;
           active_span_count = 0;
+          active_pane_area = Some(pane_area);
         }
       } else {
         let pane_cursor = draw_pane_content(
@@ -5942,6 +5958,7 @@ pub fn render(f: &mut Frame, ctx: &mut Ctx) {
           editor_cursor_kind = pane.plan.cursors.first().map(|cursor| cursor.kind);
           active_line_count = pane.plan.lines.len();
           active_span_count = pane.plan.lines.iter().map(|line| line.spans.len()).sum();
+          active_pane_area = Some(pane_area);
         }
       }
     }
@@ -5950,7 +5967,15 @@ pub fn render(f: &mut Frame, ctx: &mut Ctx) {
     draw_pane_separators(buf, area, &frame_plan, ctx);
 
     let ui_draw_start = perf_enabled.then(Instant::now);
-    draw_overlays(buf, area, ctx, editor_cursor, &mut cursor_out);
+    draw_overlays(
+      buf,
+      area,
+      ctx,
+      editor_cursor,
+      frame_plan.active_plan(),
+      active_pane_area,
+      &mut cursor_out,
+    );
     draw_statusline(buf, area, ctx);
     let ui_draw_ms = ui_draw_start.map_or(0.0, |start| start.elapsed().as_secs_f64() * 1000.0);
     (
@@ -6486,55 +6511,56 @@ mod tests {
   }
 
   #[test]
-  fn completion_menu_renders_inline_prediction_popover() {
+  fn completion_menu_renders_inline_provider_item() {
     let mut ctx = Ctx::new(None).expect("ctx");
     ctx.completion_menu.active = true;
-    ctx.completion_menu.items = vec![the_default::CompletionMenuItem::new("printf")];
+    ctx.completion_menu.items = vec![
+      the_default::CompletionMenuItem::new("printf(\"hello world\");")
+        .detail("Copilot")
+        .documentation("printf(\"hello world\");")
+        .kind(
+          "copilot",
+          the_lib::render::graphics::Color::Rgb(0x8B, 0xB6, 0xFF),
+        ),
+    ];
     ctx.completion_menu.selected = Some(0);
-    ctx.inline_completion.presentation = Some(the_default::InlineCompletionPresentation {
-      kind:        the_default::InlineCompletionPresentationKind::Menu,
-      title:       "Copilot Prediction".to_string(),
-      lines:       vec![the_default::InlineCompletionPresentationLine {
-        kind: the_default::InlineCompletionPresentationLineKind::Plain,
-        text: "printf(\"hello world\");".to_string(),
-      }],
-      target_line: Some(4),
-    });
 
     let area = Rect::new(0, 0, 100, 24);
     let mut buf = Buffer::empty(area);
 
-    draw_inline_completion_overlay(&mut buf, area, &mut ctx, Some((12, 12)));
+    draw_completion_overlay(&mut buf, area, &mut ctx, Some((12, 12)));
 
-    assert!(buffer_contains_text(&buf, area, "Copilot Prediction"));
+    assert!(buffer_contains_text(
+      &buf,
+      area,
+      file_picker_icon_glyph("copilot", false)
+    ));
     assert!(buffer_contains_text(&buf, area, "printf(\"hello world\");"));
+    assert!(!buffer_contains_text(&buf, area, "Copilot Prediction"));
   }
 
   #[test]
-  fn inline_jump_prediction_renders_outside_completion_menu() {
+  fn nearby_remote_inline_completion_ghost_text_renders_at_target_line() {
     let mut ctx = Ctx::new(None).expect("ctx");
-    ctx.inline_completion.presentation = Some(the_default::InlineCompletionPresentation {
-      kind:        the_default::InlineCompletionPresentationKind::JumpWithin,
-      title:       "Jump to Edit".to_string(),
-      lines:       vec![
-        the_default::InlineCompletionPresentationLine {
-          kind: the_default::InlineCompletionPresentationLineKind::Plain,
-          text: "Jump to line 12".to_string(),
-        },
-        the_default::InlineCompletionPresentationLine {
-          kind: the_default::InlineCompletionPresentationLineKind::Dim,
-          text: "return factorial(5);".to_string(),
-        },
-      ],
-      target_line: Some(11),
-    });
+    ctx.resize(60, 8);
+    let tx = Transaction::change(
+      ctx.editor.document().text(),
+      std::iter::once((0, 0, Some("line 1\nline 2\nline 3\n".into()))),
+    )
+    .expect("seed text");
+    assert!(<Ctx as DefaultContext>::apply_transaction(&mut ctx, &tx));
 
-    let area = Rect::new(0, 0, 100, 24);
-    let mut buf = Buffer::empty(area);
+    let highlight = ctx.ui_theme.find_highlight("ui.virtual.inline");
+    let mut owned = the_default::OwnedTextAnnotations::default();
+    let insertion = ctx.editor.document().text().line_to_char(1);
+    let _ = owned.add_inline_text(insertion, "printf(\"hello world\");", highlight);
+    ctx.inline_completion_annotations = owned;
 
-    draw_inline_completion_overlay(&mut buf, area, &mut ctx, Some((18, 8)));
-
-    assert!(buffer_contains_text(&buf, area, "Jump to Edit"));
-    assert!(buffer_contains_text(&buf, area, "Jump to line 12"));
+    let plan = build_render_plan(&mut ctx);
+    assert!(
+      render_line_text(&plan, 1)
+        .as_deref()
+        .is_some_and(|text| text.contains("printf(\"hello world\");line 2"))
+    );
   }
 }

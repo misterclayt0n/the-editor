@@ -1,6 +1,11 @@
 use std::{
+  collections::{
+    HashMap,
+    HashSet,
+  },
   env,
   ffi::OsString,
+  fs::OpenOptions,
   io::{
     BufRead,
     BufReader,
@@ -19,22 +24,30 @@ use std::{
     Command as ProcessCommand,
     Stdio,
   },
-  sync::mpsc::{
-    self,
-    Receiver,
-    RecvTimeoutError,
-    Sender,
-    TryRecvError,
+  sync::{
+    Mutex,
+    OnceLock,
+    mpsc::{
+      self,
+      Receiver,
+      RecvTimeoutError,
+      Sender,
+      TryRecvError,
+    },
   },
   thread,
   time::{
     Duration,
     Instant,
+    SystemTime,
   },
 };
 
 use ropey::Rope;
-use serde::Deserialize;
+use serde::{
+  Deserialize,
+  Serialize,
+};
 use serde_json::{
   Value,
   json,
@@ -45,6 +58,7 @@ use the_lib::{
   render::{
     OwnedTextAnnotations,
     VirtualLineSpec,
+    graphics::Color,
   },
   selection::{
     CursorId,
@@ -60,6 +74,7 @@ use the_lsp::text_sync::{
 
 use crate::{
   Completion,
+  CompletionMenuItem,
   DefaultContext,
   Key,
   KeyEvent,
@@ -73,6 +88,178 @@ const RETRY_AFTER_ERROR: Duration = Duration::from_secs(10);
 const EDITOR_NAME: &str = "the-editor";
 const EDITOR_PLUGIN_NAME: &str = "the-editor-inline-completion";
 const SUPERMAVEN_QUERY_TIMEOUT: Duration = Duration::from_millis(350);
+const INLINE_COMPLETION_TRACE_ENV: &str = "THE_EDITOR_INLINE_COMPLETION_TRACE_LOG";
+const INLINE_COMPLETION_TRACE_DEFAULT: &str = "/tmp/the-editor-inline-completion.log";
+static INLINE_COMPLETION_TRACE_WRITER: OnceLock<Option<Mutex<BufWriter<std::fs::File>>>> =
+  OnceLock::new();
+
+pub fn resolve_inline_completion_trace_log_path() -> Option<PathBuf> {
+  match env::var(INLINE_COMPLETION_TRACE_ENV) {
+    Ok(path) => {
+      let path = path.trim();
+      if path.is_empty() || path.eq_ignore_ascii_case("off") || path.eq_ignore_ascii_case("none") {
+        None
+      } else {
+        Some(PathBuf::from(path))
+      }
+    },
+    Err(_) => Some(PathBuf::from(INLINE_COMPLETION_TRACE_DEFAULT)),
+  }
+}
+
+fn inline_completion_trace_writer() -> Option<&'static Mutex<BufWriter<std::fs::File>>> {
+  INLINE_COMPLETION_TRACE_WRITER
+    .get_or_init(|| {
+      let path = resolve_inline_completion_trace_log_path()?;
+      if let Some(parent) = path.parent()
+        && let Err(err) = std::fs::create_dir_all(parent)
+      {
+        eprintln!(
+          "Warning: failed to create inline completion trace directory '{}': {err}",
+          parent.display()
+        );
+        return None;
+      }
+
+      match OpenOptions::new().create(true).append(true).open(&path) {
+        Ok(file) => Some(Mutex::new(BufWriter::new(file))),
+        Err(err) => {
+          eprintln!(
+            "Warning: failed to open inline completion trace log '{}': {err}",
+            path.display()
+          );
+          None
+        },
+      }
+    })
+    .as_ref()
+}
+
+fn inline_completion_trace(event: &str, data: Value) {
+  tracing::trace!(target: "the_default::inline_completion", event = event, data = %data);
+
+  let Some(writer) = inline_completion_trace_writer() else {
+    return;
+  };
+
+  let ts_ms = SystemTime::now()
+    .duration_since(SystemTime::UNIX_EPOCH)
+    .map(|duration| duration.as_millis() as u64)
+    .unwrap_or(0);
+  let line = match serde_json::to_string(&json!({
+    "ts_ms": ts_ms,
+    "event": event,
+    "data": data,
+  })) {
+    Ok(line) => line,
+    Err(_) => return,
+  };
+
+  let mut writer = match writer.lock() {
+    Ok(writer) => writer,
+    Err(poisoned) => poisoned.into_inner(),
+  };
+  let _ = writeln!(writer, "{line}");
+  let _ = writer.flush();
+}
+
+fn inline_completion_trace_text_preview(text: &str) -> String {
+  let mut preview = text.replace('\n', "\\n").replace('\r', "\\r");
+  if preview.chars().count() > 80 {
+    preview = preview.chars().take(77).collect::<String>();
+    preview.push_str("...");
+  }
+  preview
+}
+
+fn inline_completion_trace_query_key(key: &QueryKey) -> Value {
+  json!({
+    "buffer_id": format!("{:?}", key.buffer_id),
+    "doc_version": key.doc_version,
+    "cursor_char": key.cursor_char,
+    "file_path": key.file_path,
+  })
+}
+
+fn inline_completion_trace_request(request: &ProviderQuery) -> Value {
+  match request {
+    ProviderQuery::Copilot(request) => {
+      json!({
+        "provider": "copilot",
+        "uri": request.uri.as_str(),
+        "language_id": request.language_id.as_str(),
+        "version": request.version,
+        "line": request.line,
+        "character": request.character,
+        "workspace_root": request.workspace_root.display().to_string(),
+      })
+    },
+    ProviderQuery::Supermaven(request) => {
+      json!({
+        "provider": "supermaven",
+        "file_path": request.file_path.display().to_string(),
+        "cursor_char": request.cursor_char,
+        "line_before": inline_completion_trace_text_preview(&request.line_before),
+        "line_after": inline_completion_trace_text_preview(&request.line_after),
+      })
+    },
+  }
+}
+
+fn inline_completion_trace_range(range: Option<&JsonRange>) -> Value {
+  match range {
+    Some(range) => {
+      json!({
+        "start": {
+          "line": range.start.line,
+          "character": range.start.character,
+        },
+        "end": {
+          "line": range.end.line,
+          "character": range.end.character,
+        },
+      })
+    },
+    None => Value::Null,
+  }
+}
+
+fn inline_completion_trace_worker_suggestion(suggestion: &WorkerSuggestion) -> Value {
+  json!({
+    "from": suggestion.from,
+    "to": suggestion.to,
+    "text_chars": suggestion.text.chars().count(),
+    "text_preview": inline_completion_trace_text_preview(&suggestion.text),
+    "source": suggestion.source.label(),
+    "has_command": suggestion.command.is_some(),
+    "display_range": inline_completion_trace_range(suggestion.display_range.as_ref()),
+  })
+}
+
+fn inline_completion_trace_suggestion(suggestion: &InlineSuggestion) -> Value {
+  json!({
+    "key": inline_completion_trace_query_key(&suggestion.key),
+    "from": suggestion.from,
+    "to": suggestion.to,
+    "text_chars": suggestion.text.chars().count(),
+    "text_preview": inline_completion_trace_text_preview(&suggestion.text),
+    "source": suggestion.source.label(),
+    "has_command": suggestion.command.is_some(),
+    "display_range": inline_completion_trace_range(suggestion.display_range.as_ref()),
+    "reported_to_provider": suggestion.reported_to_provider,
+  })
+}
+
+fn inline_completion_trace_display_kind(kind: SuggestionDisplayKind) -> Value {
+  match kind {
+    SuggestionDisplayKind::Ghost { anchor_char } => {
+      json!({
+        "kind": "ghost",
+        "anchor_char": anchor_char,
+      })
+    },
+  }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InlineCompletionProvider {
@@ -149,8 +336,6 @@ enum AcceptKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InlineCompletionPresentationKind {
   Menu,
-  DiffPopover,
-  JumpWithin,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -169,10 +354,12 @@ pub struct InlineCompletionPresentationLine {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InlineCompletionPresentation {
-  pub kind:        InlineCompletionPresentationKind,
-  pub title:       String,
-  pub lines:       Vec<InlineCompletionPresentationLine>,
-  pub target_line: Option<usize>,
+  pub kind:         InlineCompletionPresentationKind,
+  pub title:        String,
+  pub lines:        Vec<InlineCompletionPresentationLine>,
+  pub target_char:  Option<usize>,
+  pub target_line:  Option<usize>,
+  pub accept_label: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -189,6 +376,27 @@ struct PreparedQuery {
   request: ProviderQuery,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PreparedQueryIneligibility {
+  NotInsertMode,
+  NoProvider,
+  NoFilePath,
+  InvalidSelection,
+  NonEmptySelection,
+}
+
+impl PreparedQueryIneligibility {
+  const fn label(self) -> &'static str {
+    match self {
+      Self::NotInsertMode => "not_insert_mode",
+      Self::NoProvider => "no_provider",
+      Self::NoFilePath => "no_file_path",
+      Self::InvalidSelection => "invalid_selection",
+      Self::NonEmptySelection => "non_empty_selection",
+    }
+  }
+}
+
 #[derive(Debug, Clone)]
 struct ScheduledQuery {
   prepared: PreparedQuery,
@@ -201,12 +409,35 @@ struct InFlightQuery {
   key:        QueryKey,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InlineSuggestionSource {
+  CopilotInlineCompletion,
+  Supermaven,
+}
+
+impl InlineSuggestionSource {
+  const fn is_copilot(self) -> bool {
+    matches!(self, Self::CopilotInlineCompletion)
+  }
+
+  const fn label(self) -> &'static str {
+    match self {
+      Self::CopilotInlineCompletion => "copilot_inline_completion",
+      Self::Supermaven => "supermaven",
+    }
+  }
+}
+
+#[derive(Debug, Clone)]
 struct InlineSuggestion {
-  key:  QueryKey,
-  from: usize,
-  to:   usize,
-  text: String,
+  key:                  QueryKey,
+  from:                 usize,
+  to:                   usize,
+  text:                 String,
+  source:               InlineSuggestionSource,
+  command:              Option<JsonCommand>,
+  display_range:        Option<JsonRange>,
+  reported_to_provider: bool,
 }
 
 #[derive(Debug)]
@@ -559,40 +790,80 @@ pub fn accept_inline_completion_line<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool
   accept_inline_completion_kind(ctx, AcceptKind::Line)
 }
 
+fn maybe_report_copilot_display<Ctx: DefaultContext>(ctx: &mut Ctx, suggestion: &InlineSuggestion) {
+  if !suggestion.source.is_copilot() || suggestion.reported_to_provider {
+    return;
+  }
+  let Some(range) = suggestion.display_range.clone() else {
+    return;
+  };
+
+  let send_result = {
+    let state = ctx.inline_completion_mut();
+    let Some(transport) = state.transport.as_ref() else {
+      return;
+    };
+    transport
+      .tx
+      .send(WorkerCommand::CopilotDidShow {
+        source: suggestion.source,
+        text: suggestion.text.clone(),
+        range,
+        command: suggestion.command.clone(),
+      })
+      .map_err(|error| format!("failed to send Copilot display notification: {error}"))
+  };
+
+  match send_result {
+    Ok(()) => {
+      inline_completion_trace(
+        "copilot_did_show_sent",
+        json!({
+          "suggestion": inline_completion_trace_suggestion(suggestion),
+        }),
+      );
+      if let Some(active) = ctx.inline_completion_mut().suggestion.as_mut()
+        && suggestions_match_identity(active, suggestion)
+      {
+        active.reported_to_provider = true;
+      }
+    },
+    Err(error) => apply_worker_event(ctx, WorkerEvent::Error(error)),
+  }
+}
+
+fn maybe_report_copilot_accept<Ctx: DefaultContext>(ctx: &mut Ctx, suggestion: &InlineSuggestion) {
+  if !suggestion.source.is_copilot() {
+    return;
+  }
+  let Some(command) = suggestion.command.clone() else {
+    return;
+  };
+
+  let send_result = {
+    let state = ctx.inline_completion_mut();
+    let Some(transport) = state.transport.as_ref() else {
+      return;
+    };
+    transport
+      .tx
+      .send(WorkerCommand::CopilotAccept { command })
+      .map_err(|error| format!("failed to send Copilot accept notification: {error}"))
+  };
+
+  if let Err(error) = send_result {
+    apply_worker_event(ctx, WorkerEvent::Error(error));
+  }
+}
+
 fn accept_inline_completion_kind<Ctx: DefaultContext>(ctx: &mut Ctx, kind: AcceptKind) -> bool {
   let suggestion = ctx.inline_completion().suggestion.clone();
   let Some(suggestion) = suggestion else {
     return false;
   };
 
-  let classification = classify_suggestion(ctx, &suggestion);
-  if matches!(classification, Some(SuggestionDisplayKind::Jump { .. })) && kind != AcceptKind::Full
-  {
-    return false;
-  }
-  if matches!(classification, Some(SuggestionDisplayKind::Diff { .. })) && kind != AcceptKind::Full
-  {
-    return false;
-  }
-
   if ctx.completion_menu().active {
     crate::close_completion_menu(ctx);
-  }
-
-  if let Some(SuggestionDisplayKind::Jump { target_char, .. }) = classification {
-    let _ = ctx
-      .editor()
-      .document_mut()
-      .set_selection(Selection::point(target_char));
-    {
-      let state = ctx.inline_completion_mut();
-      state.suggestion = None;
-      state.presentation = None;
-      state.last_completed_key = None;
-    }
-    clear_inline_completion_surface(ctx);
-    ctx.request_render();
-    return true;
   }
 
   let accepted = match kind {
@@ -626,6 +897,9 @@ fn accept_inline_completion_kind<Ctx: DefaultContext>(ctx: &mut Ctx, kind: Accep
   }
 
   let _ = ctx.editor().document_mut().commit();
+  if kind == AcceptKind::Full {
+    maybe_report_copilot_accept(ctx, &suggestion);
+  }
   {
     let state = ctx.inline_completion_mut();
     state.suggestion = None;
@@ -751,12 +1025,19 @@ fn drain_worker_events<Ctx: DefaultContext>(ctx: &mut Ctx) {
 fn apply_worker_event<Ctx: DefaultContext>(ctx: &mut Ctx, event: WorkerEvent) {
   match event {
     WorkerEvent::Ready => {
+      inline_completion_trace("worker_ready", json!({}));
       let state = ctx.inline_completion_mut();
       state.status = InlineCompletionBackendStatus::Ready;
       state.last_error = None;
       state.retry_at = None;
     },
     WorkerEvent::AuthPrompt { message } => {
+      inline_completion_trace(
+        "worker_auth_prompt",
+        json!({
+          "message": &message,
+        }),
+      );
       {
         let state = ctx.inline_completion_mut();
         state.status = InlineCompletionBackendStatus::Starting;
@@ -767,11 +1048,23 @@ fn apply_worker_event<Ctx: DefaultContext>(ctx: &mut Ctx, event: WorkerEvent) {
       ctx.push_info(SOURCE, message);
     },
     WorkerEvent::ActivationUrl(url) => {
+      inline_completion_trace(
+        "worker_activation_url",
+        json!({
+          "url": &url,
+        }),
+      );
       let state = ctx.inline_completion_mut();
       state.activation_url = Some(url.clone());
       ctx.push_info(SOURCE, format!("Supermaven activation URL: {url}"));
     },
     WorkerEvent::Authenticated { user } => {
+      inline_completion_trace(
+        "worker_authenticated",
+        json!({
+          "user": user.as_ref(),
+        }),
+      );
       {
         let state = ctx.inline_completion_mut();
         state.status = InlineCompletionBackendStatus::Ready;
@@ -787,12 +1080,24 @@ fn apply_worker_event<Ctx: DefaultContext>(ctx: &mut Ctx, event: WorkerEvent) {
       };
     },
     WorkerEvent::Status(message) => {
+      inline_completion_trace(
+        "worker_status",
+        json!({
+          "message": &message,
+        }),
+      );
       let state = ctx.inline_completion_mut();
       state.service_tier = Some(message.clone());
       state.activation_url = None;
       ctx.push_info(SOURCE, message);
     },
     WorkerEvent::Error(error) => {
+      inline_completion_trace(
+        "worker_error",
+        json!({
+          "error": &error,
+        }),
+      );
       let mut report = None;
       {
         let state = ctx.inline_completion_mut();
@@ -829,21 +1134,76 @@ fn apply_worker_event<Ctx: DefaultContext>(ctx: &mut Ctx, event: WorkerEvent) {
         }
       };
       let Some(ticket) = ticket else {
+        inline_completion_trace(
+          "query_result_ignored_no_ticket",
+          json!({
+            "request_id": request_id,
+          }),
+        );
         return;
       };
 
       match result {
         Ok(worker_suggestion) => {
+          inline_completion_trace(
+            "query_result_received",
+            json!({
+              "request_id": request_id,
+              "ticket": inline_completion_trace_query_key(&ticket.key),
+              "suggestion": worker_suggestion
+                .as_ref()
+                .map(inline_completion_trace_worker_suggestion)
+                .unwrap_or(Value::Null),
+            }),
+          );
           let next = worker_suggestion.and_then(|raw| {
-            let prepared = current_prepared_query(ctx)?;
+            let prepared = match current_prepared_query_result(ctx) {
+              Ok(prepared) => prepared,
+              Err(reason) => {
+                inline_completion_trace(
+                  "query_result_dropped_ineligible",
+                  json!({
+                    "request_id": request_id,
+                    "ticket": inline_completion_trace_query_key(&ticket.key),
+                    "reason": reason.label(),
+                    "suggestion": inline_completion_trace_worker_suggestion(&raw),
+                  }),
+                );
+                return None;
+              },
+            };
             if prepared.key != ticket.key {
+              inline_completion_trace(
+                "query_result_dropped_stale",
+                json!({
+                  "request_id": request_id,
+                  "ticket": inline_completion_trace_query_key(&ticket.key),
+                  "current": inline_completion_trace_query_key(&prepared.key),
+                  "suggestion": inline_completion_trace_worker_suggestion(&raw),
+                }),
+              );
+              return None;
+            }
+            if !suggestion_is_cursor_local(ticket.key.cursor_char, raw.from, raw.to) {
+              inline_completion_trace(
+                "query_result_dropped_non_local_inline_completion",
+                json!({
+                  "request_id": request_id,
+                  "ticket": inline_completion_trace_query_key(&ticket.key),
+                  "suggestion": inline_completion_trace_worker_suggestion(&raw),
+                }),
+              );
               return None;
             }
             Some(InlineSuggestion {
-              key:  ticket.key.clone(),
-              from: raw.from,
-              to:   raw.to,
-              text: raw.text,
+              key:                  ticket.key.clone(),
+              from:                 raw.from,
+              to:                   raw.to,
+              text:                 raw.text,
+              source:               raw.source,
+              command:              raw.command,
+              display_range:        raw.display_range,
+              reported_to_provider: false,
             })
           });
           let state = ctx.inline_completion_mut();
@@ -852,6 +1212,18 @@ fn apply_worker_event<Ctx: DefaultContext>(ctx: &mut Ctx, event: WorkerEvent) {
           if state.suggestion.is_none() {
             state.presentation = None;
           }
+          inline_completion_trace(
+            "query_result_applied",
+            json!({
+              "request_id": request_id,
+              "ticket": inline_completion_trace_query_key(&ticket.key),
+              "suggestion": state
+                .suggestion
+                .as_ref()
+                .map(inline_completion_trace_suggestion)
+                .unwrap_or(Value::Null),
+            }),
+          );
         },
         Err(error) => apply_worker_event(ctx, WorkerEvent::Error(error)),
       }
@@ -978,6 +1350,15 @@ fn send_query<Ctx: DefaultContext>(ctx: &mut Ctx, prepared: PreparedQuery) {
     request_id
   };
 
+  inline_completion_trace(
+    "query_send",
+    json!({
+      "request_id": request_id,
+      "key": inline_completion_trace_query_key(&prepared.key),
+      "request": inline_completion_trace_request(&prepared.request),
+    }),
+  );
+
   let send_result = {
     let state = ctx.inline_completion_mut();
     match state.transport.as_ref() {
@@ -1058,22 +1439,32 @@ fn ensure_transport<Ctx: DefaultContext>(ctx: &mut Ctx) -> Result<(), ()> {
 }
 
 fn current_prepared_query<Ctx: DefaultContext>(ctx: &Ctx) -> Option<PreparedQuery> {
+  current_prepared_query_result(ctx).ok()
+}
+
+fn current_prepared_query_result<Ctx: DefaultContext>(
+  ctx: &Ctx,
+) -> Result<PreparedQuery, PreparedQueryIneligibility> {
   if ctx.mode() != Mode::Insert {
-    return None;
+    return Err(PreparedQueryIneligibility::NotInsertMode);
   }
 
   let selected_provider = ctx.inline_completion().provider;
   if selected_provider == InlineCompletionProvider::None {
-    return None;
+    return Err(PreparedQueryIneligibility::NoProvider);
   }
 
-  let path = ctx.file_path()?.to_path_buf();
+  let path = ctx
+    .file_path()
+    .map(Path::to_path_buf)
+    .ok_or(PreparedQueryIneligibility::NoFilePath)?;
   let editor = ctx.editor_ref();
   let document = editor.document();
   let selection = document.selection();
-  let range = single_active_range(selection, editor.view().active_cursor)?;
+  let range = single_active_range(selection, editor.view().active_cursor)
+    .ok_or(PreparedQueryIneligibility::InvalidSelection)?;
   if !range.is_empty() {
-    return None;
+    return Err(PreparedQueryIneligibility::NonEmptySelection);
   }
 
   let cursor_char = range.head;
@@ -1086,9 +1477,9 @@ fn current_prepared_query<Ctx: DefaultContext>(ctx: &Ctx) -> Option<PreparedQuer
   };
 
   let request = match selected_provider {
-    InlineCompletionProvider::None => return None,
+    InlineCompletionProvider::None => return Err(PreparedQueryIneligibility::NoProvider),
     InlineCompletionProvider::Copilot => {
-      let uri = file_uri_for_path(&path)?;
+      let uri = file_uri_for_path(&path).ok_or(PreparedQueryIneligibility::NoFilePath)?;
       let (line, character) = char_idx_to_utf16_position(text, cursor_char);
       let (tab_size, insert_spaces) = formatting_options(document.indent_style());
       let language_id = language_id_for_path(ctx, &path);
@@ -1143,24 +1534,29 @@ fn current_prepared_query<Ctx: DefaultContext>(ctx: &Ctx) -> Option<PreparedQuer
     },
   };
 
-  Some(PreparedQuery { key, request })
+  Ok(PreparedQuery { key, request })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SuggestionDisplayKind {
-  Ghost,
-  Diff {
-    target_line: usize,
-  },
-  Jump {
-    target_char: usize,
-    target_line: usize,
-  },
+  Ghost { anchor_char: usize },
 }
 
 fn clear_inline_completion_surface<Ctx: DefaultContext>(ctx: &mut Ctx) {
   ctx.clear_inline_completion_annotations();
   ctx.inline_completion_mut().presentation = None;
+}
+
+fn suggestions_match_identity(left: &InlineSuggestion, right: &InlineSuggestion) -> bool {
+  left.key == right.key
+    && left.from == right.from
+    && left.to == right.to
+    && left.text == right.text
+    && left.source == right.source
+}
+
+fn suggestion_is_cursor_local(cursor_char: usize, from: usize, to: usize) -> bool {
+  cursor_char >= from && cursor_char <= to.max(from)
 }
 
 fn classify_suggestion<Ctx: DefaultContext>(
@@ -1176,192 +1572,66 @@ fn classify_suggestion<Ctx: DefaultContext>(
   }
 
   let cursor_char = range.head;
-  let text = document.text();
-  let max_char = text.len_chars();
+  let max_char = document.text().len_chars();
   let from = suggestion.from.min(max_char);
   let to = suggestion.to.min(max_char);
-  let edit_start_line = text.char_to_line(from);
-  let edit_end_line = text.char_to_line(to.min(max_char.saturating_sub(1)));
-  let cursor_line = text.char_to_line(cursor_char.min(max_char));
-  let jump_start = edit_start_line.saturating_sub(2);
-  let jump_end = edit_end_line.saturating_add(2);
-  let supports_jump = ctx.inline_completion().provider == InlineCompletionProvider::Copilot;
-  if supports_jump && (cursor_line < jump_start || cursor_line > jump_end) {
-    return Some(SuggestionDisplayKind::Jump {
-      target_char: from,
-      target_line: edit_start_line,
-    });
-  }
-
-  if cursor_char >= from && cursor_char <= to.max(from) {
-    Some(SuggestionDisplayKind::Ghost)
-  } else {
-    Some(SuggestionDisplayKind::Diff {
-      target_line: edit_start_line,
+  if suggestion_is_cursor_local(cursor_char, from, to) {
+    Some(SuggestionDisplayKind::Ghost {
+      anchor_char: cursor_char,
     })
+  } else {
+    None
   }
 }
 
-fn provider_prediction_title(provider: InlineCompletionProvider) -> String {
-  match provider {
-    InlineCompletionProvider::None => "Prediction".to_string(),
-    InlineCompletionProvider::Copilot => "Copilot Prediction".to_string(),
-    InlineCompletionProvider::Supermaven => "Supermaven Prediction".to_string(),
+fn inline_completion_provider_display_name(source: InlineSuggestionSource) -> &'static str {
+  match source {
+    InlineSuggestionSource::CopilotInlineCompletion => "Copilot",
+    InlineSuggestionSource::Supermaven => "Supermaven",
   }
 }
 
-fn menu_presentation_for_suggestion<Ctx: DefaultContext>(
-  ctx: &Ctx,
-  suggestion: &InlineSuggestion,
-  display_kind: SuggestionDisplayKind,
-) -> InlineCompletionPresentation {
-  let mut lines = Vec::new();
-  match display_kind {
-    SuggestionDisplayKind::Jump { target_line, .. } => {
-      lines.push(InlineCompletionPresentationLine {
-        kind: InlineCompletionPresentationLineKind::Plain,
-        text: format!("Jump to line {}", target_line.saturating_add(1)),
-      });
-      if let Some(line) = suggestion
-        .text
-        .lines()
-        .find(|line| !line.trim().is_empty())
-        .map(truncate_presentation_line)
-      {
-        lines.push(InlineCompletionPresentationLine {
-          kind: InlineCompletionPresentationLineKind::Dim,
-          text: line,
-        });
-      }
-      InlineCompletionPresentation {
-        kind: InlineCompletionPresentationKind::Menu,
-        title: provider_prediction_title(ctx.inline_completion().provider),
-        lines,
-        target_line: Some(target_line),
-      }
-    },
-    SuggestionDisplayKind::Ghost | SuggestionDisplayKind::Diff { .. } => {
-      append_summary_lines(&mut lines, &suggestion.text);
-      InlineCompletionPresentation {
-        kind: InlineCompletionPresentationKind::Menu,
-        title: provider_prediction_title(ctx.inline_completion().provider),
-        lines,
-        target_line: Some(
-          ctx.editor_ref().document().text().char_to_line(
-            suggestion
-              .from
-              .min(ctx.editor_ref().document().text().len_chars()),
-          ),
-        ),
-      }
-    },
+fn inline_completion_provider_icon(source: InlineSuggestionSource) -> &'static str {
+  match source {
+    InlineSuggestionSource::CopilotInlineCompletion => "copilot",
+    InlineSuggestionSource::Supermaven => "supermaven",
   }
 }
 
-fn diff_presentation_for_suggestion<Ctx: DefaultContext>(
-  ctx: &Ctx,
-  suggestion: &InlineSuggestion,
-) -> Option<InlineCompletionPresentation> {
-  let SuggestionDisplayKind::Diff { target_line } = classify_suggestion(ctx, suggestion)? else {
-    return None;
-  };
-  let text = ctx.editor_ref().document().text();
-  let max_char = text.len_chars();
-  let before = text
-    .slice(suggestion.from.min(max_char)..suggestion.to.min(max_char))
-    .to_string();
-  let mut lines = Vec::new();
-  append_diff_lines(
-    &mut lines,
-    InlineCompletionPresentationLineKind::Removal,
-    before.as_str(),
-  );
-  append_diff_lines(
-    &mut lines,
-    InlineCompletionPresentationLineKind::Addition,
-    suggestion.text.as_str(),
-  );
-  if lines.is_empty() {
-    return None;
-  }
-  Some(InlineCompletionPresentation {
-    kind: InlineCompletionPresentationKind::DiffPopover,
-    title: format!("Edit at line {}", target_line.saturating_add(1)),
-    lines,
-    target_line: Some(target_line),
-  })
-}
-
-fn jump_presentation_for_suggestion<Ctx: DefaultContext>(
-  ctx: &Ctx,
-  suggestion: &InlineSuggestion,
-) -> Option<InlineCompletionPresentation> {
-  let SuggestionDisplayKind::Jump { target_line, .. } = classify_suggestion(ctx, suggestion)?
-  else {
-    return None;
-  };
-  let mut lines = vec![InlineCompletionPresentationLine {
-    kind: InlineCompletionPresentationLineKind::Plain,
-    text: format!("Jump to line {}", target_line.saturating_add(1)),
-  }];
-  append_summary_lines(&mut lines, &suggestion.text);
-  Some(InlineCompletionPresentation {
-    kind: InlineCompletionPresentationKind::JumpWithin,
-    title: "Jump to Edit".to_string(),
-    lines,
-    target_line: Some(target_line),
-  })
-}
-
-fn append_summary_lines(lines: &mut Vec<InlineCompletionPresentationLine>, text: &str) {
-  let mut preview_lines = text.lines().filter(|line| !line.trim().is_empty());
-  if let Some(first) = preview_lines.next() {
-    lines.push(InlineCompletionPresentationLine {
-      kind: InlineCompletionPresentationLineKind::Plain,
-      text: truncate_presentation_line(first),
-    });
-  }
-  if preview_lines.next().is_some() {
-    lines.push(InlineCompletionPresentationLine {
-      kind: InlineCompletionPresentationLineKind::Dim,
-      text: "...".to_string(),
-    });
+fn inline_completion_provider_color(source: InlineSuggestionSource) -> Color {
+  match source {
+    InlineSuggestionSource::CopilotInlineCompletion => Color::Rgb(0x8B, 0xB6, 0xFF),
+    InlineSuggestionSource::Supermaven => Color::Rgb(0xF2, 0xC1, 0x63),
   }
 }
 
-fn append_diff_lines(
-  lines: &mut Vec<InlineCompletionPresentationLine>,
-  kind: InlineCompletionPresentationLineKind,
-  text: &str,
-) {
-  for line in text.lines().take(3) {
-    let prefix = match kind {
-      InlineCompletionPresentationLineKind::Addition => "+ ",
-      InlineCompletionPresentationLineKind::Removal => "- ",
-      InlineCompletionPresentationLineKind::Plain | InlineCompletionPresentationLineKind::Dim => {
-        ""
-      },
-    };
-    lines.push(InlineCompletionPresentationLine {
-      kind,
-      text: format!("{prefix}{}", truncate_presentation_line(line)),
-    });
-  }
-  if text.lines().count() > 3 {
-    lines.push(InlineCompletionPresentationLine {
-      kind: InlineCompletionPresentationLineKind::Dim,
-      text: "...".to_string(),
-    });
-  }
+fn completion_menu_summary_label(text: &str) -> Option<String> {
+  let first = text.lines().find(|line| !line.trim().is_empty())?;
+  Some(truncate_completion_menu_label(first))
 }
 
-fn truncate_presentation_line(text: &str) -> String {
+fn truncate_completion_menu_label(text: &str) -> String {
   let mut out = text.trim().to_string();
   if out.chars().count() > 52 {
     out = out.chars().take(49).collect::<String>();
     out.push_str("...");
   }
   out
+}
+
+pub fn completion_menu_inline_item<Ctx: DefaultContext>(ctx: &Ctx) -> Option<CompletionMenuItem> {
+  let suggestion = ctx.inline_completion().suggestion.as_ref()?;
+  classify_suggestion(ctx, suggestion)?;
+  let label = completion_menu_summary_label(&suggestion.text)?;
+  Some(
+    CompletionMenuItem::new(label)
+      .detail(inline_completion_provider_display_name(suggestion.source))
+      .documentation(suggestion.text.clone())
+      .kind(
+        inline_completion_provider_icon(suggestion.source),
+        inline_completion_provider_color(suggestion.source),
+      ),
+  )
 }
 
 fn sync_inline_completion_annotations<Ctx: DefaultContext>(ctx: &mut Ctx) {
@@ -1377,71 +1647,104 @@ fn sync_inline_completion_annotations<Ctx: DefaultContext>(ctx: &mut Ctx) {
   };
 
   let Some(display_kind) = classify_suggestion(ctx, &suggestion) else {
+    inline_completion_trace(
+      "surface_clear_no_display_kind",
+      json!({
+        "suggestion": inline_completion_trace_suggestion(&suggestion),
+      }),
+    );
     clear_inline_completion_surface(ctx);
     return;
   };
+  maybe_report_copilot_display(ctx, &suggestion);
 
-  if ctx.completion_menu().active {
-    let presentation = menu_presentation_for_suggestion(ctx, &suggestion, display_kind);
-    ctx.clear_inline_completion_annotations();
-    ctx.inline_completion_mut().presentation = Some(presentation);
+  let SuggestionDisplayKind::Ghost { anchor_char } = display_kind;
+  let Some(mut annotations) = preview_annotations_for_suggestion(ctx, &suggestion, anchor_char)
+  else {
+    inline_completion_trace(
+      "surface_ghost_skipped",
+      json!({
+        "display": inline_completion_trace_display_kind(display_kind),
+        "suggestion": inline_completion_trace_suggestion(&suggestion),
+        "reason": "preview_annotations_none",
+      }),
+    );
+    clear_inline_completion_surface(ctx);
     return;
-  }
-
-  match display_kind {
-    SuggestionDisplayKind::Ghost => {
-      let Some(mut annotations) = preview_annotations_for_suggestion(ctx, &suggestion) else {
-        clear_inline_completion_surface(ctx);
-        return;
-      };
-      if annotations.is_empty() {
-        clear_inline_completion_surface(ctx);
-      } else {
-        ctx.inline_completion_mut().presentation = None;
-        ctx.set_inline_completion_annotations(std::mem::take(&mut annotations));
-      }
-    },
-    SuggestionDisplayKind::Diff { .. } => {
-      ctx.clear_inline_completion_annotations();
-      ctx.inline_completion_mut().presentation = diff_presentation_for_suggestion(ctx, &suggestion);
-    },
-    SuggestionDisplayKind::Jump { .. } => {
-      ctx.clear_inline_completion_annotations();
-      ctx.inline_completion_mut().presentation = jump_presentation_for_suggestion(ctx, &suggestion);
-    },
+  };
+  if annotations.is_empty() {
+    inline_completion_trace(
+      "surface_ghost_skipped",
+      json!({
+        "display": inline_completion_trace_display_kind(display_kind),
+        "suggestion": inline_completion_trace_suggestion(&suggestion),
+        "reason": "annotations_empty",
+      }),
+    );
+    clear_inline_completion_surface(ctx);
+  } else {
+    let virtual_line_count = annotations.virtual_lines().len();
+    ctx.inline_completion_mut().presentation = None;
+    ctx.set_inline_completion_annotations(std::mem::take(&mut annotations));
+    inline_completion_trace(
+      "surface_ghost_annotations",
+      json!({
+        "display": inline_completion_trace_display_kind(display_kind),
+        "suggestion": inline_completion_trace_suggestion(&suggestion),
+        "virtual_lines": virtual_line_count,
+      }),
+    );
   }
 }
 
 fn preview_annotations_for_suggestion<Ctx: DefaultContext>(
   ctx: &Ctx,
   suggestion: &InlineSuggestion,
+  anchor_char: usize,
 ) -> Option<OwnedTextAnnotations> {
   let editor = ctx.editor_ref();
   let document = editor.document();
   let range = single_active_range(document.selection(), editor.view().active_cursor)?;
   if !range.is_empty() || range.head != suggestion.key.cursor_char {
+    inline_completion_trace(
+      "preview_annotations_skip_active_range",
+      json!({
+        "suggestion": inline_completion_trace_suggestion(suggestion),
+        "selection_head": range.head,
+        "selection_empty": range.is_empty(),
+        "anchor_char": anchor_char,
+      }),
+    );
     return None;
   }
 
-  let cursor_char = range.head;
+  let preview_char = anchor_char.min(document.text().len_chars());
   let text = document.text().slice(..);
-  let existing_prefix = if cursor_char > suggestion.from {
+  let existing_prefix = if preview_char > suggestion.from {
     text
-      .slice(suggestion.from..cursor_char.min(text.len_chars()))
+      .slice(suggestion.from..preview_char.min(text.len_chars()))
       .to_string()
   } else {
     String::new()
   };
-  let preview_text = preview_text_for_cursor(existing_prefix, cursor_char, suggestion);
+  let preview_text = preview_text_for_cursor(existing_prefix, preview_char, suggestion);
   if preview_text.is_empty() {
+    inline_completion_trace(
+      "preview_annotations_skip_empty_text",
+      json!({
+        "suggestion": inline_completion_trace_suggestion(suggestion),
+        "anchor_char": anchor_char,
+        "preview_char": preview_char,
+      }),
+    );
     return None;
   }
 
   let highlight = ctx.ui_theme().find_highlight("ui.virtual.inline");
-  let cursor_line = text.char_to_line(cursor_char);
+  let preview_line = text.char_to_line(preview_char);
   let (first_line, remaining) = split_preview_lines(&preview_text);
   let replacement_text = text
-    .slice(cursor_char..suggestion.to.min(text.len_chars()))
+    .slice(preview_char..suggestion.to.min(text.len_chars()))
     .to_string();
   let replacement_first_line_len = replacement_first_line_len(replacement_text.as_str());
   let mut annotations = OwnedTextAnnotations::default();
@@ -1449,21 +1752,34 @@ fn preview_annotations_for_suggestion<Ctx: DefaultContext>(
   if !first_line.is_empty() {
     render_first_line_preview(
       &mut annotations,
-      cursor_char,
+      preview_char,
       replacement_first_line_len,
       &first_line,
       highlight,
     );
   }
 
-  if !remaining.is_empty() {
+  let has_remaining_lines = !remaining.is_empty();
+  if has_remaining_lines {
     let _ = annotations.add_virtual_line(
-      VirtualLineSpec::after(cursor_line)
-        .text(remaining)
+      VirtualLineSpec::after(preview_line)
+        .text(&remaining)
         .highlight(highlight)
         .wrap_to_viewport(),
     );
   }
+
+  inline_completion_trace(
+    "preview_annotations_built",
+    json!({
+      "suggestion": inline_completion_trace_suggestion(suggestion),
+      "anchor_char": anchor_char,
+      "preview_char": preview_char,
+      "preview_line": preview_line,
+      "first_line_preview": inline_completion_trace_text_preview(&first_line),
+      "has_remaining_lines": has_remaining_lines,
+    }),
+  );
 
   Some(annotations)
 }
@@ -1605,6 +1921,15 @@ enum WorkerCommand {
     request_id: u64,
     request:    ProviderQuery,
   },
+  CopilotDidShow {
+    source:  InlineSuggestionSource,
+    text:    String,
+    range:   JsonRange,
+    command: Option<JsonCommand>,
+  },
+  CopilotAccept {
+    command: JsonCommand,
+  },
   CopilotSignIn {
     workspace_root: PathBuf,
   },
@@ -1639,9 +1964,12 @@ enum WorkerEvent {
 
 #[derive(Debug, Clone)]
 struct WorkerSuggestion {
-  from: usize,
-  to:   usize,
-  text: String,
+  from:          usize,
+  to:            usize,
+  text:          String,
+  source:        InlineSuggestionSource,
+  command:       Option<JsonCommand>,
+  display_range: Option<JsonRange>,
 }
 
 fn emit_worker_event(event_tx: &Sender<WorkerEvent>, waker: &RenderWaker, event: WorkerEvent) {
@@ -1701,6 +2029,27 @@ fn copilot_worker_main(
           request_id,
           result,
         });
+      },
+      WorkerCommand::CopilotDidShow {
+        source,
+        text,
+        range,
+        command,
+      } => {
+        if let Some(active_server) = server.as_mut()
+          && let Err(error) = active_server.report_shown_completion(source, &text, &range, command)
+        {
+          server = None;
+          emit_worker_event(&event_tx, &waker, WorkerEvent::Error(error));
+        }
+      },
+      WorkerCommand::CopilotAccept { command } => {
+        if let Some(active_server) = server.as_mut()
+          && let Err(error) = active_server.execute_command(command)
+        {
+          server = None;
+          emit_worker_event(&event_tx, &waker, WorkerEvent::Error(error));
+        }
       },
       WorkerCommand::CopilotSignIn { workspace_root } => {
         if server.is_none() {
@@ -1873,7 +2222,9 @@ fn supermaven_worker_main(
           server = None;
         }
       },
-      WorkerCommand::CopilotSignIn { .. } => {},
+      WorkerCommand::CopilotDidShow { .. }
+      | WorkerCommand::CopilotAccept { .. }
+      | WorkerCommand::CopilotSignIn { .. } => {},
     }
   }
 }
@@ -1990,11 +2341,14 @@ impl SupermavenServer {
 
     Ok(best.map(|derived| {
       WorkerSuggestion {
-        from: request
+        from:          request
           .cursor_char
           .saturating_sub(derived.prior_delete_chars),
-        to:   request.line_end_char,
-        text: derived.text,
+        to:            request.line_end_char,
+        text:          derived.text,
+        source:        InlineSuggestionSource::Supermaven,
+        command:       None,
+        display_range: None,
       }
     }))
   }
@@ -2344,12 +2698,62 @@ fn trim_end_whitespace(text: &str) -> &str {
   text.trim_end_matches(char::is_whitespace)
 }
 
+struct CopilotContentChange {
+  range:      JsonRange,
+  text:       String,
+  start_char: usize,
+  end_char:   usize,
+}
+
+fn copilot_incremental_change(old_text: &str, new_text: &str) -> Option<CopilotContentChange> {
+  if old_text == new_text {
+    return None;
+  }
+
+  let old_rope = Rope::from_str(old_text);
+  let old_total_chars = old_text.chars().count();
+  let (prefix_chars, prefix_bytes) = shared_prefix(old_text, new_text);
+  let old_remaining = &old_text[prefix_bytes..];
+  let new_remaining = &new_text[prefix_bytes..];
+  let (suffix_chars, suffix_bytes) = shared_suffix(old_remaining, new_remaining);
+  let end_char = old_total_chars.saturating_sub(suffix_chars);
+  let new_end_byte = new_text.len().saturating_sub(suffix_bytes);
+  let replacement = new_text[prefix_bytes..new_end_byte].to_string();
+  let (start_line, start_character) = char_idx_to_utf16_position(&old_rope, prefix_chars);
+  let (end_line, end_character) = char_idx_to_utf16_position(&old_rope, end_char);
+
+  Some(CopilotContentChange {
+    range: JsonRange {
+      start: JsonPosition {
+        line:      start_line,
+        character: start_character,
+      },
+      end:   JsonPosition {
+        line:      end_line,
+        character: end_character,
+      },
+    },
+    text: replacement,
+    start_char: prefix_chars,
+    end_char,
+  })
+}
+
+struct CopilotDocumentState {
+  uri:         String,
+  language_id: String,
+  text:        String,
+  version:     i32,
+}
+
 struct CopilotServer {
-  child:      Child,
-  stdin:      BufWriter<ChildStdin>,
-  stdout:     BufReader<ChildStdout>,
-  next_id:    u64,
-  opened_uri: Option<String>,
+  child:                Child,
+  stdin:                BufWriter<ChildStdin>,
+  stdout:               BufReader<ChildStdout>,
+  next_id:              u64,
+  document:             Option<CopilotDocumentState>,
+  pending_responses:    HashMap<u64, Value>,
+  ignored_response_ids: HashSet<u64>,
 }
 
 impl CopilotServer {
@@ -2377,7 +2781,9 @@ impl CopilotServer {
       stdin: BufWriter::new(stdin),
       stdout: BufReader::new(stdout),
       next_id: 1,
-      opened_uri: None,
+      document: None,
+      pending_responses: HashMap::new(),
+      ignored_response_ids: HashSet::new(),
     };
     server.initialize(workspace_root)?;
     Ok(server)
@@ -2401,7 +2807,13 @@ impl CopilotServer {
       "params": {
         "processId": Value::Null,
         "rootUri": root_uri,
-        "capabilities": {},
+        "capabilities": {
+          "window": {
+            "showDocument": {
+              "support": true,
+            },
+          },
+        },
         "clientInfo": {
           "name": EDITOR_NAME,
           "version": env!("CARGO_PKG_VERSION"),
@@ -2419,12 +2831,28 @@ impl CopilotServer {
         "workspaceFolders": workspace_folders,
       }
     }))?;
+    inline_completion_trace(
+      "copilot_initialize_sent",
+      json!({
+        "workspace_root": workspace_root.display().to_string(),
+        "root_uri": root_uri,
+        "workspace_folder_count": workspace_folders.len(),
+      }),
+    );
     self.read_response(initialize_id)?;
     self.write_message(&json!({
       "jsonrpc": "2.0",
       "method": "initialized",
       "params": {}
     }))?;
+    self.write_message(&json!({
+      "jsonrpc": "2.0",
+      "method": "workspace/didChangeConfiguration",
+      "params": {
+        "settings": {},
+      }
+    }))?;
+    inline_completion_trace("copilot_initialized", json!({}));
     Ok(())
   }
 
@@ -2433,49 +2861,53 @@ impl CopilotServer {
     request: &CopilotQuery,
   ) -> Result<Option<WorkerSuggestion>, String> {
     self.ensure_signed_in_for_queries()?;
-    self.reopen_document(request)?;
-    if let Some(suggestion) = self.next_edit_suggestion(request)? {
-      return Ok(Some(suggestion));
+    let synced_version = self.sync_document(request)?;
+    let inline_request_id = self.request_inline_completion(request, synced_version)?;
+    let (_, message) = self.read_any_response(&[inline_request_id])?;
+    match self.parse_inline_completion_response(request, message) {
+      Ok(Some(suggestion)) => {
+        inline_completion_trace(
+          "copilot_query_selected_inline_completion",
+          json!({
+            "uri": request.uri.as_str(),
+            "editor_version": request.version,
+            "provider_version": synced_version,
+            "suggestion": inline_completion_trace_worker_suggestion(&suggestion),
+          }),
+        );
+        Ok(Some(suggestion))
+      },
+      Ok(None) => {
+        inline_completion_trace(
+          "copilot_query_no_suggestion",
+          json!({
+            "uri": request.uri.as_str(),
+            "editor_version": request.version,
+            "provider_version": synced_version,
+          }),
+        );
+        Ok(None)
+      },
+      Err(error) => {
+        inline_completion_trace(
+          "copilot_query_error",
+          json!({
+            "uri": request.uri.as_str(),
+            "editor_version": request.version,
+            "provider_version": synced_version,
+            "error": &error,
+          }),
+        );
+        Err(error)
+      },
     }
-    self.inline_completion_fallback(request)
   }
 
-  fn next_edit_suggestion(
+  fn request_inline_completion(
     &mut self,
     request: &CopilotQuery,
-  ) -> Result<Option<WorkerSuggestion>, String> {
-    let request_id = self.next_request_id();
-    self.write_message(&json!({
-      "jsonrpc": "2.0",
-      "id": request_id,
-      "method": "textDocument/copilotInlineEdit",
-      "params": {
-        "textDocument": {
-          "uri": request.uri,
-          "version": request.version,
-        },
-        "position": {
-          "line": request.line,
-          "character": request.character,
-        }
-      }
-    }))?;
-
-    let value = self.read_response(request_id)?;
-    let result: NextEditSuggestionsResult = serde_json::from_value(value)
-      .map_err(|error| format!("failed to parse Copilot next edit response: {error}"))?;
-    Ok(
-      result
-        .edits
-        .into_iter()
-        .find_map(|item| normalize_copilot_next_edit_suggestion(request, item)),
-    )
-  }
-
-  fn inline_completion_fallback(
-    &mut self,
-    request: &CopilotQuery,
-  ) -> Result<Option<WorkerSuggestion>, String> {
+    version: i32,
+  ) -> Result<u64, String> {
     let request_id = self.next_request_id();
     self.write_message(&json!({
       "jsonrpc": "2.0",
@@ -2484,7 +2916,7 @@ impl CopilotServer {
       "params": {
         "textDocument": {
           "uri": request.uri,
-          "version": request.version,
+          "version": version,
         },
         "position": {
           "line": request.line,
@@ -2499,17 +2931,36 @@ impl CopilotServer {
         }
       }
     }))?;
+    Ok(request_id)
+  }
 
-    let value = self.read_response(request_id)?;
+  fn parse_inline_completion_response(
+    &mut self,
+    request: &CopilotQuery,
+    message: Value,
+  ) -> Result<Option<WorkerSuggestion>, String> {
+    let value = self.parse_response_message(message)?;
     let result: InlineCompletionResult = serde_json::from_value(value)
       .map_err(|error| format!("failed to parse Copilot inline completion response: {error}"))?;
-    Ok(
-      result
-        .items
-        .into_iter()
-        .next()
-        .and_then(|item| normalize_copilot_suggestion(request, item)),
-    )
+    let item_count = result.items.len();
+    let suggestion = result
+      .items
+      .into_iter()
+      .next()
+      .and_then(|item| normalize_copilot_suggestion(request, item));
+    inline_completion_trace(
+      "copilot_inline_completion_response",
+      json!({
+        "uri": request.uri.as_str(),
+        "version": request.version,
+        "item_count": item_count,
+        "suggestion": suggestion
+          .as_ref()
+          .map(inline_completion_trace_worker_suggestion)
+          .unwrap_or(Value::Null),
+      }),
+    );
+    Ok(suggestion)
   }
 
   fn sign_in(
@@ -2570,17 +3021,7 @@ impl CopilotServer {
   }
 
   fn finish_device_flow(&mut self, command: JsonCommand) -> Result<SignInStatus, String> {
-    let request_id = self.next_request_id();
-    self.write_message(&json!({
-      "jsonrpc": "2.0",
-      "id": request_id,
-      "method": "workspace/executeCommand",
-      "params": {
-        "command": command.command,
-        "arguments": command.arguments.unwrap_or_default(),
-      }
-    }))?;
-    let result = self.read_response(request_id)?;
+    let result = self.execute_command(command)?;
     if let Ok(status) = serde_json::from_value::<SignInStatus>(result.clone()) {
       return Ok(status);
     }
@@ -2603,40 +3044,153 @@ impl CopilotServer {
     )
   }
 
-  fn reopen_document(&mut self, request: &CopilotQuery) -> Result<(), String> {
-    if let Some(opened_uri) = self.opened_uri.take() {
+  fn execute_command(&mut self, command: JsonCommand) -> Result<Value, String> {
+    let request_id = self.next_request_id();
+    self.write_message(&json!({
+      "jsonrpc": "2.0",
+      "id": request_id,
+      "method": "workspace/executeCommand",
+      "params": {
+        "command": command.command,
+        "arguments": command.arguments.unwrap_or_default(),
+      }
+    }))?;
+    self.read_response(request_id)
+  }
+
+  fn report_shown_completion(
+    &mut self,
+    source: InlineSuggestionSource,
+    text: &str,
+    range: &JsonRange,
+    command: Option<JsonCommand>,
+  ) -> Result<(), String> {
+    match source {
+      InlineSuggestionSource::CopilotInlineCompletion => {
+        self.write_message(&json!({
+          "jsonrpc": "2.0",
+          "method": "textDocument/didShowCompletion",
+          "params": {
+            "item": {
+              "insertText": text,
+              "range": range,
+              "command": command,
+            }
+          }
+        }))
+      },
+      InlineSuggestionSource::Supermaven => Ok(()),
+    }
+  }
+
+  fn sync_document(&mut self, request: &CopilotQuery) -> Result<i32, String> {
+    let needs_reopen = self.document.as_ref().is_none_or(|document| {
+      document.uri != request.uri || document.language_id != request.language_id
+    });
+    if needs_reopen {
+      if let Some(document) = self.document.take() {
+        self.write_message(&json!({
+          "jsonrpc": "2.0",
+          "method": "textDocument/didClose",
+          "params": {
+            "textDocument": {
+              "uri": document.uri,
+            }
+          }
+        }))?;
+        inline_completion_trace(
+          "copilot_document_close",
+          json!({
+            "uri": document.uri,
+            "version": document.version,
+          }),
+        );
+      }
+
       self.write_message(&json!({
         "jsonrpc": "2.0",
-        "method": "textDocument/didClose",
+        "method": "textDocument/didOpen",
         "params": {
           "textDocument": {
-            "uri": opened_uri,
+            "uri": request.uri,
+            "languageId": request.language_id,
+            "version": 0,
+            "text": request.text,
           }
         }
       }))?;
+      self.write_message(&json!({
+        "jsonrpc": "2.0",
+        "method": "textDocument/didFocus",
+        "params": {
+          "uri": request.uri,
+        }
+      }))?;
+      inline_completion_trace(
+        "copilot_document_open",
+        json!({
+          "uri": request.uri.as_str(),
+          "language_id": request.language_id.as_str(),
+          "version": 0,
+          "text_chars": request.text.chars().count(),
+        }),
+      );
+      inline_completion_trace(
+        "copilot_document_focus",
+        json!({
+          "uri": request.uri.as_str(),
+        }),
+      );
+      self.document = Some(CopilotDocumentState {
+        uri:         request.uri.clone(),
+        language_id: request.language_id.clone(),
+        text:        request.text.clone(),
+        version:     0,
+      });
+      return Ok(0);
     }
 
-    self.write_message(&json!({
-      "jsonrpc": "2.0",
-      "method": "textDocument/didOpen",
-      "params": {
-        "textDocument": {
-          "uri": request.uri,
-          "languageId": request.language_id,
-          "version": request.version,
-          "text": request.text,
+    let (document_text, document_version) = {
+      let document = self.document.as_ref().expect("document is open");
+      (document.text.clone(), document.version)
+    };
+    if let Some(change) = copilot_incremental_change(&document_text, &request.text) {
+      let next_version = document_version.saturating_add(1);
+      self.write_message(&json!({
+        "jsonrpc": "2.0",
+        "method": "textDocument/didChange",
+        "params": {
+          "textDocument": {
+            "uri": request.uri,
+            "version": next_version,
+          },
+          "contentChanges": [
+            {
+              "range": change.range,
+              "text": change.text,
+            }
+          ]
         }
+      }))?;
+      inline_completion_trace(
+        "copilot_document_change",
+        json!({
+          "uri": request.uri.as_str(),
+          "version": next_version,
+          "start_char": change.start_char,
+          "end_char": change.end_char,
+          "text_chars": change.text.chars().count(),
+          "text_preview": inline_completion_trace_text_preview(&change.text),
+        }),
+      );
+      if let Some(document) = self.document.as_mut() {
+        document.text = request.text.clone();
+        document.version = next_version;
       }
-    }))?;
-    self.write_message(&json!({
-      "jsonrpc": "2.0",
-      "method": "textDocument/didFocus",
-      "params": {
-        "uri": request.uri,
-      }
-    }))?;
-    self.opened_uri = Some(request.uri.clone());
-    Ok(())
+      return Ok(next_version);
+    }
+
+    Ok(document_version)
   }
 
   fn next_request_id(&mut self) -> u64 {
@@ -2661,25 +3215,57 @@ impl CopilotServer {
   }
 
   fn read_response(&mut self, expected_id: u64) -> Result<Value, String> {
+    if let Some(message) = self.pending_responses.remove(&expected_id) {
+      return self.parse_response_message(message);
+    }
+
     loop {
       let message = read_jsonrpc_message(&mut self.stdout)?;
       let Some(id) = message.get("id").and_then(|id| id.as_u64()) else {
         continue;
       };
-      if id != expected_id {
+      if self.ignored_response_ids.remove(&id) {
         continue;
       }
-
-      if let Some(error) = message.get("error") {
-        let message = error
-          .get("message")
-          .and_then(Value::as_str)
-          .unwrap_or("Copilot JSON-RPC request failed");
-        return Err(message.to_string());
+      if id == expected_id {
+        return self.parse_response_message(message);
       }
-
-      return Ok(message.get("result").cloned().unwrap_or(Value::Null));
+      self.pending_responses.insert(id, message);
     }
+  }
+
+  fn read_any_response(&mut self, expected_ids: &[u64]) -> Result<(u64, Value), String> {
+    for expected_id in expected_ids {
+      if let Some(message) = self.pending_responses.remove(expected_id) {
+        return Ok((*expected_id, message));
+      }
+    }
+
+    loop {
+      let message = read_jsonrpc_message(&mut self.stdout)?;
+      let Some(id) = message.get("id").and_then(|id| id.as_u64()) else {
+        continue;
+      };
+      if self.ignored_response_ids.remove(&id) {
+        continue;
+      }
+      if expected_ids.contains(&id) {
+        return Ok((id, message));
+      }
+      self.pending_responses.insert(id, message);
+    }
+  }
+
+  fn parse_response_message(&self, message: Value) -> Result<Value, String> {
+    if let Some(error) = message.get("error") {
+      let message = error
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or("Copilot JSON-RPC request failed");
+      return Err(message.to_string());
+    }
+
+    Ok(message.get("result").cloned().unwrap_or(Value::Null))
   }
 }
 
@@ -2852,49 +3438,45 @@ fn normalize_copilot_suggestion(
   let trimmed_bytes_end = raw.insert_text.len().saturating_sub(suffix_bytes);
   let trimmed = raw.insert_text[prefix_bytes..trimmed_bytes_end].to_string();
   if trimmed.trim().is_empty() {
+    inline_completion_trace(
+      "copilot_inline_completion_skip_empty_after_trim",
+      json!({
+        "uri": request.uri.as_str(),
+        "version": request.version,
+        "range": inline_completion_trace_range(Some(&raw.range)),
+      }),
+    );
     return None;
   }
+
+  let display_range = json_range_for_char_range(&text, from, to);
 
   Some(WorkerSuggestion {
     from,
     to,
     text: trimmed,
+    source: InlineSuggestionSource::CopilotInlineCompletion,
+    command: raw.command,
+    display_range,
   })
 }
 
-fn normalize_copilot_next_edit_suggestion(
-  request: &CopilotQuery,
-  raw: NextEditSuggestionJson,
-) -> Option<WorkerSuggestion> {
-  if raw.text_document.uri != request.uri {
+fn json_range_for_char_range(text: &Rope, from: usize, to: usize) -> Option<JsonRange> {
+  let max_char = text.len_chars();
+  if from > max_char || to > max_char {
     return None;
   }
-
-  let text = Rope::from(request.text.as_str());
-  let mut from = utf16_position_to_char_idx(&text, raw.range.start.line, raw.range.start.character);
-  let mut to = utf16_position_to_char_idx(&text, raw.range.end.line, raw.range.end.character);
-  if from > to {
-    std::mem::swap(&mut from, &mut to);
-  }
-
-  let existing = text.slice(from..to).to_string();
-  let (prefix_chars, prefix_bytes) = shared_prefix(&existing, &raw.text);
-  let (suffix_chars, suffix_bytes) =
-    shared_suffix(&existing[prefix_bytes..], &raw.text[prefix_bytes..]);
-
-  from = from.saturating_add(prefix_chars);
-  to = to.saturating_sub(suffix_chars);
-
-  let trimmed_bytes_end = raw.text.len().saturating_sub(suffix_bytes);
-  let trimmed = raw.text[prefix_bytes..trimmed_bytes_end].to_string();
-  if trimmed.trim().is_empty() {
-    return None;
-  }
-
-  Some(WorkerSuggestion {
-    from,
-    to,
-    text: trimmed,
+  let (start_line, start_character) = char_idx_to_utf16_position(text, from);
+  let (end_line, end_character) = char_idx_to_utf16_position(text, to);
+  Some(JsonRange {
+    start: JsonPosition {
+      line:      start_line,
+      character: start_character,
+    },
+    end:   JsonPosition {
+      line:      end_line,
+      character: end_character,
+    },
   })
 }
 
@@ -2983,19 +3565,13 @@ struct InlineCompletionResult {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct NextEditSuggestionsResult {
-  edits: Vec<NextEditSuggestionJson>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
 struct PromptUserDeviceFlow {
   user_code: String,
   command:   JsonCommand,
 }
 
 #[allow(dead_code)]
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct JsonCommand {
   title:     String,
   command:   String,
@@ -3007,31 +3583,16 @@ struct JsonCommand {
 struct WorkerSuggestionJson {
   insert_text: String,
   range:       JsonRange,
+  command:     Option<JsonCommand>,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct NextEditSuggestionJson {
-  text:          String,
-  text_document: VersionedTextDocumentJson,
-  range:         JsonRange,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct VersionedTextDocumentJson {
-  uri:      String,
-  #[serde(rename = "version")]
-  _version: i32,
-}
-
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct JsonRange {
   start: JsonPosition,
   end:   JsonPosition,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct JsonPosition {
   line:      u32,
   character: u32,
@@ -3125,17 +3686,28 @@ mod tests {
       graphics::Rect,
       text_annotations::TextAnnotations,
       text_format::TextFormat,
-      theme::Theme,
+      theme::{
+        Theme,
+        default_theme,
+      },
     },
+    selection::Selection,
     view::ViewState,
   };
 
   use super::{
+    InFlightQuery,
     InlineCompletionProvider,
     InlineCompletionState,
     InlineSuggestion,
+    InlineSuggestionSource,
     QueryKey,
+    WorkerEvent,
+    WorkerSuggestion,
     accept_inline_completion_line,
+    apply_worker_event,
+    completion_menu_inline_item,
+    copilot_incremental_change,
     handle_pre_on_keypress,
     next_line_fragment,
     next_word_fragment,
@@ -3144,6 +3716,7 @@ mod tests {
     shared_prefix,
     shared_suffix,
     split_preview_lines,
+    sync_inline_completion_annotations,
   };
   use crate::{
     CommandPaletteState,
@@ -3172,6 +3745,7 @@ mod tests {
     editor:                        Editor,
     messages:                      MessageCenter,
     workspace_root:                PathBuf,
+    file_path:                     Option<PathBuf>,
     working_directory:             WorkingDirectoryState,
     mode:                          Mode,
     render_requested:              bool,
@@ -3185,17 +3759,28 @@ mod tests {
 
   impl TestCtx {
     fn new() -> Self {
-      let doc = Document::new(DocumentId::new(NonZeroUsize::new(1).unwrap()), Rope::new());
+      Self::with_text("")
+    }
+
+    fn with_text(text: &str) -> Self {
       let view = ViewState::new(
         Rect::new(0, 0, 80, 24),
         the_lib::position::Position::new(0, 0),
       );
-      let editor = Editor::new(EditorId::new(NonZeroUsize::new(1).unwrap()), doc, view);
+      let editor = Editor::new(
+        EditorId::new(NonZeroUsize::new(1).unwrap()),
+        Document::new(
+          DocumentId::new(NonZeroUsize::new(1).unwrap()),
+          Rope::from_str(text),
+        ),
+        view,
+      );
       let workspace_root = PathBuf::from("/tmp");
       Self {
         editor,
         messages: MessageCenter::default(),
         workspace_root: workspace_root.clone(),
+        file_path: Some(PathBuf::from("/tmp/demo.rs")),
         working_directory: WorkingDirectoryState {
           current:  Some(workspace_root),
           previous: None,
@@ -3222,7 +3807,7 @@ mod tests {
     }
 
     fn file_path(&self) -> Option<&Path> {
-      None
+      self.file_path.as_deref()
     }
 
     fn workspace_root(&self) -> PathBuf {
@@ -3451,7 +4036,7 @@ mod tests {
     }
 
     fn ui_theme(&self) -> &Theme {
-      todo!()
+      default_theme()
     }
 
     fn ui_theme_name(&self) -> &str {
@@ -3472,10 +4057,34 @@ mod tests {
 
     fn clear_ui_theme_preview(&mut self) {}
 
-    fn set_file_path(&mut self, _path: Option<PathBuf>) {}
+    fn set_file_path(&mut self, path: Option<PathBuf>) {
+      self.file_path = path;
+    }
 
     fn open_file(&mut self, _path: &Path) -> std::io::Result<()> {
       Ok(())
+    }
+  }
+
+  fn test_inline_suggestion(key: QueryKey, from: usize, to: usize, text: &str) -> InlineSuggestion {
+    InlineSuggestion {
+      key,
+      from,
+      to,
+      text: text.to_string(),
+      source: InlineSuggestionSource::CopilotInlineCompletion,
+      command: None,
+      display_range: None,
+      reported_to_provider: false,
+    }
+  }
+
+  fn test_query_key(ctx: &TestCtx, cursor_char: usize) -> QueryKey {
+    QueryKey {
+      buffer_id: ctx.editor.active_buffer_id(),
+      doc_version: ctx.editor.document().version(),
+      cursor_char,
+      file_path: "/tmp/demo.rs".into(),
     }
   }
 
@@ -3511,17 +4120,17 @@ mod tests {
 
   #[test]
   fn preview_text_skips_existing_prefix() {
-    let suggestion = InlineSuggestion {
-      key:  QueryKey {
+    let suggestion = test_inline_suggestion(
+      QueryKey {
         buffer_id:   super::BufferId::new(std::num::NonZeroUsize::new(1).unwrap()),
         doc_version: 1,
         cursor_char: 4,
         file_path:   "/tmp/demo.rs".into(),
       },
-      from: 0,
-      to:   0,
-      text: "hello world".to_string(),
-    };
+      0,
+      0,
+      "hello world",
+    );
 
     assert_eq!(
       preview_text_for_cursor("hell".to_string(), 4, &suggestion),
@@ -3535,17 +4144,17 @@ mod tests {
     let _ = ctx
       .inline_completion_annotations
       .add_inline_text(0, "ghost", None);
-    ctx.inline_completion.suggestion = Some(InlineSuggestion {
-      key:  QueryKey {
+    ctx.inline_completion.suggestion = Some(test_inline_suggestion(
+      QueryKey {
         buffer_id:   ctx.editor.active_buffer_id(),
         doc_version: ctx.editor.document().version(),
         cursor_char: 0,
         file_path:   "/tmp/demo.rs".into(),
       },
-      from: 0,
-      to:   0,
-      text: "ghost".to_string(),
-    });
+      0,
+      0,
+      "ghost",
+    ));
 
     let handled = handle_pre_on_keypress(&mut ctx, KeyEvent {
       key:       Key::Escape,
@@ -3562,17 +4171,17 @@ mod tests {
   fn escape_preserves_inline_completion_when_completion_menu_is_active() {
     let mut ctx = TestCtx::new();
     ctx.completion_menu.active = true;
-    ctx.inline_completion.suggestion = Some(InlineSuggestion {
-      key:  QueryKey {
+    ctx.inline_completion.suggestion = Some(test_inline_suggestion(
+      QueryKey {
         buffer_id:   ctx.editor.active_buffer_id(),
         doc_version: ctx.editor.document().version(),
         cursor_char: 0,
         file_path:   "/tmp/demo.rs".into(),
       },
-      from: 0,
-      to:   0,
-      text: "ghost".to_string(),
-    });
+      0,
+      0,
+      "ghost",
+    ));
 
     let handled = handle_pre_on_keypress(&mut ctx, KeyEvent {
       key:       Key::Escape,
@@ -3586,20 +4195,160 @@ mod tests {
   #[test]
   fn line_accept_inserts_only_the_next_line() {
     let mut ctx = TestCtx::new();
-    ctx.inline_completion.suggestion = Some(InlineSuggestion {
-      key:  QueryKey {
+    ctx.inline_completion.suggestion = Some(test_inline_suggestion(
+      QueryKey {
         buffer_id:   ctx.editor.active_buffer_id(),
         doc_version: ctx.editor.document().version(),
         cursor_char: 0,
         file_path:   "/tmp/demo.rs".into(),
       },
-      from: 0,
-      to:   0,
-      text: "hello\nworld".to_string(),
-    });
+      0,
+      0,
+      "hello\nworld",
+    ));
 
     assert!(accept_inline_completion_line(&mut ctx));
     assert_eq!(ctx.editor.document().text().to_string(), "hello\n");
+  }
+
+  #[test]
+  fn copilot_ghost_text_keeps_annotations_without_popover() {
+    let mut ctx = TestCtx::new();
+    ctx.inline_completion.provider = InlineCompletionProvider::Copilot;
+    ctx.inline_completion.suggestion = Some(test_inline_suggestion(
+      test_query_key(&ctx, 0),
+      0,
+      0,
+      "printf(\"hello world\");",
+    ));
+
+    sync_inline_completion_annotations(&mut ctx);
+
+    assert!(ctx.inline_completion.presentation.is_none());
+    assert!(!ctx.inline_completion_annotations.is_empty());
+  }
+
+  #[test]
+  fn non_local_inline_completion_does_not_render_prediction() {
+    let mut ctx = TestCtx::with_text("line 1\nline 2\nline 3\n");
+    ctx.inline_completion.provider = InlineCompletionProvider::Copilot;
+    let cursor_char = ctx.editor.document().text().line_to_char(0);
+    let target_char = ctx.editor.document().text().line_to_char(1);
+    let _ = ctx
+      .editor
+      .document_mut()
+      .set_selection(Selection::point(cursor_char));
+    ctx.inline_completion.suggestion = Some(test_inline_suggestion(
+      test_query_key(&ctx, cursor_char),
+      target_char,
+      target_char,
+      "printf(\"hello world\");",
+    ));
+
+    sync_inline_completion_annotations(&mut ctx);
+
+    assert!(ctx.inline_completion.presentation.is_none());
+    assert!(ctx.inline_completion_annotations.is_empty());
+  }
+
+  #[test]
+  fn completion_menu_keeps_ghost_text_without_prediction_popover() {
+    let mut ctx = TestCtx::new();
+    ctx.inline_completion.provider = InlineCompletionProvider::Copilot;
+    ctx.completion_menu.active = true;
+    ctx.inline_completion.suggestion = Some(test_inline_suggestion(
+      test_query_key(&ctx, 0),
+      0,
+      0,
+      "printf(\"hello world\");",
+    ));
+
+    sync_inline_completion_annotations(&mut ctx);
+
+    assert!(ctx.inline_completion.presentation.is_none());
+    assert!(!ctx.inline_completion_annotations.is_empty());
+  }
+
+  #[test]
+  fn completion_menu_inline_item_uses_provider_metadata() {
+    let mut ctx = TestCtx::new();
+    ctx.inline_completion.provider = InlineCompletionProvider::Supermaven;
+    let mut suggestion = test_inline_suggestion(
+      test_query_key(&ctx, 0),
+      0,
+      0,
+      "printf(\"hello world\");\nreturn 0;",
+    );
+    suggestion.source = InlineSuggestionSource::Supermaven;
+    ctx.inline_completion.suggestion = Some(suggestion);
+
+    let item = completion_menu_inline_item(&ctx).expect("completion item");
+
+    assert_eq!(item.label, "printf(\"hello world\");");
+    assert_eq!(item.detail.as_deref(), Some("Supermaven"));
+    assert_eq!(
+      item.documentation.as_deref(),
+      Some("printf(\"hello world\");\nreturn 0;")
+    );
+    assert_eq!(item.kind_icon.as_deref(), Some("supermaven"));
+    assert_eq!(
+      item.kind_color,
+      Some(the_lib::render::graphics::Color::Rgb(0xF2, 0xC1, 0x63))
+    );
+  }
+
+  #[test]
+  fn query_result_drops_non_local_inline_completion() {
+    let mut ctx = TestCtx::with_text("line 1\nline 2\nline 3\n");
+    ctx.inline_completion.provider = InlineCompletionProvider::Copilot;
+    let cursor_char = ctx.editor.document().text().line_to_char(0);
+    let target_char = ctx.editor.document().text().line_to_char(1);
+    let _ = ctx
+      .editor
+      .document_mut()
+      .set_selection(Selection::point(cursor_char));
+    ctx.inline_completion.in_flight = Some(InFlightQuery {
+      request_id: 7,
+      key:        test_query_key(&ctx, cursor_char),
+    });
+
+    apply_worker_event(&mut ctx, WorkerEvent::QueryResult {
+      request_id: 7,
+      result:     Ok(Some(WorkerSuggestion {
+        from:          target_char,
+        to:            target_char,
+        text:          "printf(\"hello world\");".to_string(),
+        source:        InlineSuggestionSource::CopilotInlineCompletion,
+        command:       None,
+        display_range: None,
+      })),
+    });
+
+    assert!(ctx.inline_completion.suggestion.is_none());
+  }
+
+  #[test]
+  fn copilot_incremental_change_tracks_single_insert() {
+    let change = copilot_incremental_change("abc\n", "abxc\n").expect("change");
+
+    assert_eq!(change.start_char, 2);
+    assert_eq!(change.end_char, 2);
+    assert_eq!(change.text, "x");
+    assert_eq!(change.range.start.line, 0);
+    assert_eq!(change.range.start.character, 2);
+    assert_eq!(change.range.end.line, 0);
+    assert_eq!(change.range.end.character, 2);
+  }
+
+  #[test]
+  fn copilot_incremental_change_tracks_multiline_replacement() {
+    let change = copilot_incremental_change("a\nold\nc\n", "a\nnew value\nc\n").expect("change");
+
+    assert_eq!(change.text, "new value");
+    assert_eq!(change.range.start.line, 1);
+    assert_eq!(change.range.start.character, 0);
+    assert_eq!(change.range.end.line, 1);
+    assert_eq!(change.range.end.character, 3);
   }
 
   #[test]

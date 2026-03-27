@@ -4,6 +4,9 @@ use the_lib::diagnostics::DiagnosticCounts;
 
 use crate::{
   DefaultContext,
+  InlineCompletionBackendStatus,
+  InlineCompletionProvider,
+  InlineCompletionState,
   Mode,
   PendingInput,
   SearchPromptKind,
@@ -21,6 +24,7 @@ pub enum StatuslineEmphasis {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StatuslineSegment {
+  pub icon:     Option<String>,
   pub text:     String,
   pub emphasis: StatuslineEmphasis,
 }
@@ -28,9 +32,15 @@ pub struct StatuslineSegment {
 impl StatuslineSegment {
   pub fn new(text: impl Into<String>) -> Self {
     Self {
+      icon:     None,
       text:     text.into(),
       emphasis: StatuslineEmphasis::Normal,
     }
+  }
+
+  pub fn icon(mut self, icon: impl Into<String>) -> Self {
+    self.icon = Some(icon.into());
+    self
   }
 
   pub fn muted(mut self) -> Self {
@@ -41,6 +51,12 @@ impl StatuslineSegment {
   pub fn strong(mut self) -> Self {
     self.emphasis = StatuslineEmphasis::Strong;
     self
+  }
+
+  pub fn display_width(&self) -> usize {
+    let icon_width = usize::from(self.icon.is_some());
+    let gap_width = usize::from(self.icon.is_some() && !self.text.is_empty());
+    icon_width + gap_width + self.text.chars().count()
   }
 }
 
@@ -66,13 +82,14 @@ pub fn build_statusline_snapshot<Ctx: DefaultContext>(ctx: &mut Ctx) -> Statusli
     format!("{action} {}/{}", status.current, status.total)
   });
   let pending_keys = pending_keys_text(ctx);
+  let inline_completion_segment = inline_completion_statusline_segment(ctx);
   let watch_part = ctx.watch_statusline_text().filter(|text| !text.is_empty());
   let lsp_part = ctx.lsp_statusline_text().filter(|text| !text.is_empty());
   let diagnostic_counts = ctx.diagnostic_statusline_counts();
   let vcs_part = ctx
     .vcs_statusline_text()
     .filter(|text| !text.is_empty())
-    .map(|text| format!("{} {text}", file_picker_icon_glyph("git_branch", false)));
+    .map(|text| StatuslineSegment::new(text).icon("git_branch").muted());
   let doc = ctx.editor_ref().document();
   let slice = doc.text().slice(..);
   let selection = doc.selection();
@@ -135,6 +152,9 @@ pub fn build_statusline_snapshot<Ctx: DefaultContext>(ctx: &mut Ctx) -> Statusli
       if let Some(cursor_pick) = cursor_pick_part.as_ref() {
         budget = budget.saturating_sub(cursor_pick.chars().count() + 2);
       }
+      if let Some(inline_completion) = inline_completion_segment.as_ref() {
+        budget = budget.saturating_sub(inline_completion.display_width() + 2);
+      }
       if let Some(lsp) = lsp_part.as_ref() {
         budget = budget.saturating_sub(lsp.chars().count() + 2);
       }
@@ -142,7 +162,7 @@ pub fn build_statusline_snapshot<Ctx: DefaultContext>(ctx: &mut Ctx) -> Statusli
         budget = budget.saturating_sub(watch.chars().count() + 2);
       }
       if let Some(vcs) = vcs_part.as_ref() {
-        budget = budget.saturating_sub(vcs.chars().count() + 2);
+        budget = budget.saturating_sub(vcs.display_width() + 2);
       }
       if let Some(counts) = diagnostic_counts {
         let diagnostics_width = diagnostic_statusline_segments(counts)
@@ -166,6 +186,9 @@ pub fn build_statusline_snapshot<Ctx: DefaultContext>(ctx: &mut Ctx) -> Statusli
   if let Some(pending) = pending_part {
     right_segments.push(StatuslineSegment::new(pending));
   }
+  if let Some(inline_completion) = inline_completion_segment {
+    right_segments.push(inline_completion);
+  }
   if let Some(lsp) = lsp_part {
     right_segments.push(StatuslineSegment::new(lsp).muted());
   }
@@ -173,7 +196,7 @@ pub fn build_statusline_snapshot<Ctx: DefaultContext>(ctx: &mut Ctx) -> Statusli
     right_segments.push(StatuslineSegment::new(watch).strong());
   }
   if let Some(vcs) = vcs_part {
-    right_segments.push(StatuslineSegment::new(vcs).muted());
+    right_segments.push(vcs);
   }
   if let Some(counts) = diagnostic_counts {
     right_segments.extend(diagnostic_statusline_segments(counts));
@@ -208,6 +231,52 @@ pub fn build_statusline_snapshot<Ctx: DefaultContext>(ctx: &mut Ctx) -> Statusli
     left_icon: default_left_icon,
     right_segments,
   }
+}
+
+fn inline_completion_statusline_segment<Ctx: DefaultContext>(
+  ctx: &Ctx,
+) -> Option<StatuslineSegment> {
+  inline_completion_statusline_segment_for_state(ctx.inline_completion())
+}
+
+fn inline_completion_statusline_segment_for_state(
+  state: &InlineCompletionState,
+) -> Option<StatuslineSegment> {
+  let provider_prefix = match state.provider {
+    InlineCompletionProvider::None => return None,
+    InlineCompletionProvider::Copilot => "copilot",
+    InlineCompletionProvider::Supermaven => "supermaven",
+  };
+
+  let (icon, text, emphasis) = if !state.enabled {
+    (
+      format!("{provider_prefix}_disabled"),
+      "off",
+      StatuslineEmphasis::Muted,
+    )
+  } else if state.last_error.is_some()
+    || matches!(state.status, InlineCompletionBackendStatus::Error)
+  {
+    (
+      format!("{provider_prefix}_error"),
+      "err",
+      StatuslineEmphasis::Strong,
+    )
+  } else if state.auth_prompt.is_some()
+    || matches!(state.status, InlineCompletionBackendStatus::Starting)
+  {
+    (
+      format!("{provider_prefix}_init"),
+      "init",
+      StatuslineEmphasis::Strong,
+    )
+  } else {
+    (provider_prefix.to_string(), "", StatuslineEmphasis::Normal)
+  };
+
+  let mut segment = StatuslineSegment::new(text).icon(icon);
+  segment.emphasis = emphasis;
+  Some(segment)
 }
 
 fn cursor_pick_status<Ctx: DefaultContext>(ctx: &Ctx) -> Option<CursorPickStatus> {
@@ -376,7 +445,17 @@ fn search_statusline_text(kind: SearchPromptKind, query: &str, cursor: usize) ->
 mod tests {
   use the_lib::diagnostics::DiagnosticCounts;
 
-  use super::diagnostic_statusline_segments;
+  use super::{
+    StatuslineEmphasis,
+    diagnostic_statusline_segments,
+    inline_completion_statusline_segment_for_state,
+  };
+  use crate::{
+    InlineCompletionBackendStatus,
+    InlineCompletionDefaults,
+    InlineCompletionProvider,
+    InlineCompletionState,
+  };
 
   #[test]
   fn diagnostic_statusline_segments_only_emit_non_zero_counts() {
@@ -393,5 +472,46 @@ mod tests {
       .map(|segment| segment.text)
       .collect::<Vec<_>>();
     assert_eq!(texts, vec![" 1".to_string(), " 1".to_string()]);
+  }
+
+  #[test]
+  fn inline_completion_statusline_segment_tracks_provider_state() {
+    let mut copilot = InlineCompletionState::from_defaults(
+      InlineCompletionDefaults::new().provider(InlineCompletionProvider::Copilot),
+    );
+
+    let ready = inline_completion_statusline_segment_for_state(&copilot).expect("ready segment");
+    assert_eq!(ready.icon.as_deref(), Some("copilot"));
+    assert!(ready.text.is_empty());
+    assert_eq!(ready.emphasis, StatuslineEmphasis::Normal);
+
+    copilot.enabled = false;
+    let disabled =
+      inline_completion_statusline_segment_for_state(&copilot).expect("disabled segment");
+    assert_eq!(disabled.icon.as_deref(), Some("copilot_disabled"));
+    assert_eq!(disabled.text, "off");
+    assert_eq!(disabled.emphasis, StatuslineEmphasis::Muted);
+
+    copilot.enabled = true;
+    copilot.status = InlineCompletionBackendStatus::Starting;
+    let init = inline_completion_statusline_segment_for_state(&copilot).expect("init segment");
+    assert_eq!(init.icon.as_deref(), Some("copilot_init"));
+    assert_eq!(init.text, "init");
+    assert_eq!(init.emphasis, StatuslineEmphasis::Strong);
+
+    copilot.status = InlineCompletionBackendStatus::Error;
+    copilot.last_error = Some("boom".to_string());
+    let error = inline_completion_statusline_segment_for_state(&copilot).expect("error segment");
+    assert_eq!(error.icon.as_deref(), Some("copilot_error"));
+    assert_eq!(error.text, "err");
+    assert_eq!(error.emphasis, StatuslineEmphasis::Strong);
+  }
+
+  #[test]
+  fn inline_completion_statusline_segment_is_absent_without_provider() {
+    let state = InlineCompletionState::from_defaults(
+      InlineCompletionDefaults::new().provider(InlineCompletionProvider::None),
+    );
+    assert!(inline_completion_statusline_segment_for_state(&state).is_none());
   }
 }

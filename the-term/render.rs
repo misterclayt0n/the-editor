@@ -3099,6 +3099,20 @@ fn completion_list_styles(ctx: &Ctx) -> (Style, Style, Style) {
   (menu.text, menu.fill, selected_style)
 }
 
+fn statusline_segment_display_text(segment: &the_default::StatuslineSegment) -> String {
+  match segment.icon.as_deref() {
+    Some(icon_token) => {
+      let glyph = file_picker_icon_glyph(icon_token, false);
+      if segment.text.is_empty() {
+        glyph.to_string()
+      } else {
+        format!("{glyph} {}", segment.text)
+      }
+    },
+    None => segment.text.clone(),
+  }
+}
+
 fn completion_item_icon_text(icon: &str) -> Cow<'_, str> {
   if icon.chars().count() == 1 {
     Cow::Borrowed(icon)
@@ -4044,9 +4058,14 @@ fn draw_statusline(buf: &mut Buffer, area: Rect, ctx: &mut Ctx) {
 
   let separator = "  ";
   let separator_width = separator.chars().count() as u16;
+  let right_segment_text = snapshot
+    .right_segments
+    .iter()
+    .map(statusline_segment_display_text)
+    .collect::<Vec<_>>();
   let mut total_right = 0u16;
-  for (index, segment) in snapshot.right_segments.iter().enumerate() {
-    total_right = total_right.saturating_add(segment.text.chars().count() as u16);
+  for (index, segment_text) in right_segment_text.iter().enumerate() {
+    total_right = total_right.saturating_add(segment_text.chars().count() as u16);
     if index > 0 {
       total_right = total_right.saturating_add(separator_width);
     }
@@ -4061,12 +4080,18 @@ fn draw_statusline(buf: &mut Buffer, area: Rect, ctx: &mut Ctx) {
   buf.set_string(rect.x, rect.y, left, styles.text);
 
   let mut rx = rect.x.saturating_add(rect.width);
-  for (index, segment) in snapshot.right_segments.iter().enumerate().rev() {
+  for (index, (segment, segment_text)) in snapshot
+    .right_segments
+    .iter()
+    .zip(right_segment_text.iter())
+    .enumerate()
+    .rev()
+  {
     let segment_style = statusline_segment_style(styles.text, segment.emphasis);
-    let text_width = segment.text.chars().count() as u16;
+    let text_width = segment_text.chars().count() as u16;
     rx = rx.saturating_sub(text_width);
     if rx >= rect.x.saturating_add(left_width) {
-      buf.set_string(rx, rect.y, segment.text.as_str(), segment_style);
+      buf.set_string(rx, rect.y, segment_text.as_str(), segment_style);
     }
     if index > 0 {
       rx = rx.saturating_sub(separator_width);
@@ -6537,6 +6562,25 @@ mod tests {
     ));
     assert!(buffer_contains_text(&buf, area, "printf(\"hello world\");"));
     assert!(!buffer_contains_text(&buf, area, "Copilot Prediction"));
+  }
+
+  #[test]
+  fn statusline_renders_inline_provider_state_icon() {
+    let mut ctx = Ctx::new(None).expect("ctx");
+    ctx.inline_completion.provider = the_default::InlineCompletionProvider::Copilot;
+    ctx.inline_completion.status = the_default::InlineCompletionBackendStatus::Starting;
+
+    let area = Rect::new(0, 0, 80, 4);
+    let mut buf = Buffer::empty(area);
+
+    draw_statusline(&mut buf, area, &mut ctx);
+
+    assert!(buffer_contains_text(
+      &buf,
+      area,
+      file_picker_icon_glyph("copilot_init", false)
+    ));
+    assert!(buffer_contains_text(&buf, area, "init"));
   }
 
   #[test]

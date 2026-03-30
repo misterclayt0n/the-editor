@@ -3,12 +3,16 @@
 
 use std::{
   cell::RefCell,
+  env,
+  fs::OpenOptions,
+  io::Write,
   path::{
     Path,
     PathBuf,
   },
   sync::Arc,
   thread,
+  time::Instant,
 };
 
 use arc_swap::ArcSwap;
@@ -142,6 +146,7 @@ impl DiffProviderRegistry {
   pub fn collect_changed_files(&self, cwd: &Path) -> Result<Vec<FileChange>> {
     for provider in &self.providers {
       let changes = RefCell::new(Vec::new());
+      let collect_start = Instant::now();
       let provider_result = provider.for_each_changed_file(cwd, |entry| {
         match entry {
           Ok(change) => {
@@ -156,7 +161,16 @@ impl DiffProviderRegistry {
       });
 
       match provider_result {
-        Ok(()) => return Ok(changes.into_inner()),
+        Ok(()) => {
+          let changes = changes.into_inner();
+          log_vcs_collect_event(
+            provider.label(),
+            cwd,
+            collect_start.elapsed().as_secs_f64() * 1000.0,
+            changes.len(),
+          );
+          return Ok(changes);
+        },
         Err(err) => {
           log::debug!("{err:#?}");
         },
@@ -197,6 +211,16 @@ enum DiffProvider {
 }
 
 impl DiffProvider {
+  const fn label(self) -> &'static str {
+    match self {
+      #[cfg(feature = "git")]
+      Self::Git => "git",
+      #[cfg(feature = "jj")]
+      Self::Jj => "jj",
+      Self::None => "none",
+    }
+  }
+
   fn get_diff_base(&self, _file: &Path) -> Result<Vec<u8>> {
     match self {
       #[cfg(feature = "git")]
@@ -239,5 +263,32 @@ impl DiffProvider {
       Self::Jj => jj::for_each_changed_file(_cwd, _f),
       Self::None => bail!("No diff support compiled in"),
     }
+  }
+}
+
+fn log_vcs_collect_event(provider: &str, cwd: &Path, command_ms: f64, change_count: usize) {
+  if env::var("THE_TERM_DEBUG_RENDER_PERF").ok().as_deref() != Some("1") {
+    return;
+  }
+  let Some(path) = env::var("THE_TERM_DEBUG_RENDER_PERF_FILE")
+    .ok()
+    .map(|raw| raw.trim().to_string())
+    .filter(|raw| !raw.is_empty())
+    .map(PathBuf::from)
+  else {
+    return;
+  };
+  if let Some(parent) = path.parent() {
+    let _ = std::fs::create_dir_all(parent);
+  }
+  let line = format!(
+    "kind=vcs_collect provider={} cwd={} command={:.2}ms changes={}\n",
+    provider,
+    cwd.display(),
+    command_ms,
+    change_count,
+  );
+  if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
+    let _ = file.write_all(line.as_bytes());
   }
 }

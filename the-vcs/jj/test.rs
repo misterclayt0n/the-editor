@@ -271,3 +271,26 @@ fn for_each_changed_file_reports_working_tree_changes() {
     )
   }));
 }
+
+#[test]
+fn for_each_changed_file_ignores_parent_commit_when_working_copy_is_clean() {
+  if !require_jj() {
+    return;
+  }
+  let temp_jj = empty_jj_repo();
+  let file = temp_jj.path().join("file.txt");
+  File::create(&file).unwrap().write_all(b"tracked").unwrap();
+  create_base_commit(temp_jj.path());
+
+  let changes = std::cell::RefCell::new(Vec::new());
+  jj::for_each_changed_file(temp_jj.path(), |entry| {
+    changes.borrow_mut().push(entry.expect("file change entry"));
+    true
+  })
+  .expect("collect changed files");
+
+  assert!(
+    changes.borrow().is_empty(),
+    "expected no changes in clean working copy"
+  );
+}

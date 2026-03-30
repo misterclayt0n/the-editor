@@ -1,13 +1,20 @@
 use std::{
   collections::BTreeSet,
+  env,
   ffi::OsString,
   fs::{
     OpenOptions,
     read_dir,
   },
+  io::Write,
   path::{
     Path,
     PathBuf,
+  },
+  time::{
+    Instant,
+    SystemTime,
+    UNIX_EPOCH,
   },
 };
 
@@ -68,6 +75,7 @@ pub struct FileTreeSnapshot {
 #[derive(Debug, Clone, Default)]
 pub struct FileTreeState {
   pub surface_id:       Option<ClientSurfaceId>,
+  pub sidebar_pane:     Option<PaneId>,
   pub root:             Option<PathBuf>,
   pub rows:             Vec<FileTreeRow>,
   pub selected:         Option<usize>,
@@ -100,6 +108,39 @@ impl FileTreeState {
     self.scroll_offset = 0;
     self.selection_follow = false;
   }
+}
+
+fn file_tree_perf_enabled() -> bool {
+  env::var("THE_TERM_DEBUG_RENDER_PERF").ok().as_deref() == Some("1")
+}
+
+fn append_file_tree_perf_line(data: &[u8]) {
+  let Some(path) = env::var("THE_TERM_DEBUG_RENDER_PERF_FILE")
+    .ok()
+    .map(|raw| raw.trim().to_string())
+    .filter(|raw| !raw.is_empty())
+    .map(PathBuf::from)
+  else {
+    return;
+  };
+  if let Some(parent) = path.parent() {
+    let _ = std::fs::create_dir_all(parent);
+  }
+  if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
+    let _ = file.write_all(data);
+  }
+}
+
+fn file_tree_perf_log(message: String) {
+  if !file_tree_perf_enabled() {
+    return;
+  }
+  let ts_ms = SystemTime::now()
+    .duration_since(UNIX_EPOCH)
+    .map(|duration| duration.as_millis())
+    .unwrap_or(0);
+  let line = format!("[filetree {ts_ms}] {message}\n");
+  append_file_tree_perf_line(line.as_bytes());
 }
 
 pub fn install_builtin_file_tree_commands<Ctx>(registry: &mut CommandRegistry<Ctx>)
@@ -390,13 +431,18 @@ pub fn close_file_tree<Ctx: DefaultContext>(ctx: &mut Ctx) {
   let Some(surface_id) = ctx.file_tree().surface_id else {
     return;
   };
-  let Some(tree_pane) = attached_tree_pane(ctx) else {
+  let tree_pane = attached_tree_pane(ctx);
+  if tree_pane.is_none() {
+    ctx.file_tree_mut().sidebar_pane = None;
     return;
-  };
+  }
+  let tree_pane = tree_pane.expect("checked above");
+  let sidebar_pane = ctx.file_tree().sidebar_pane;
 
   let previous_buffer_id = ctx.editor_ref().active_buffer_id();
   let _ = ctx.editor().set_active_pane(tree_pane);
-  let closed = if ctx.editor_ref().pane_count() > 1 {
+  let close_sidebar_pane = sidebar_pane == Some(tree_pane) && ctx.editor_ref().pane_count() > 1;
+  let closed = if close_sidebar_pane {
     ctx.editor().close_active_pane()
   } else if ctx.editor_ref().active_client_surface_id() == Some(surface_id) {
     ctx.editor().hide_active_client_surface()
@@ -405,6 +451,7 @@ pub fn close_file_tree<Ctx: DefaultContext>(ctx: &mut Ctx) {
   };
 
   if closed {
+    ctx.file_tree_mut().sidebar_pane = None;
     ctx.did_change_active_pane(previous_buffer_id);
     ctx.request_render();
   }
@@ -466,16 +513,27 @@ fn toggle_file_tree_with_root<Ctx: DefaultContext>(ctx: &mut Ctx, current_buffer
 
 fn open_tree_in_sidebar<Ctx: DefaultContext>(ctx: &mut Ctx, surface_id: ClientSurfaceId) {
   let previous_pane = ctx.editor_ref().active_pane_id();
+  let viewport = ctx.editor_ref().layout_viewport();
+  let leftmost_pane = ctx
+    .editor_ref()
+    .frame_pane_snapshots(viewport)
+    .into_iter()
+    .min_by_key(|pane| (pane.rect.x, pane.rect.y))
+    .map(|pane| pane.pane_id)
+    .unwrap_or(previous_pane);
   remember_active_editor_pane(ctx);
-  let _ = ctx.editor().open_client_surface(
-    OpenTarget::Neighbor {
-      direction:         PaneDirection::Left,
-      create_if_missing: true,
-    },
-    surface_id,
-  );
-  if let Some(tree_pane) = attached_tree_pane(ctx) {
-    let _ = ctx.editor().set_active_pane(tree_pane);
+  let target = ctx.editor().resolve_open_target(OpenTarget::Split {
+    axis:      SplitAxis::Vertical,
+    focus_new: true,
+  });
+  if let Some(target) = target {
+    let _ = ctx
+      .editor()
+      .move_pane(target.pane, leftmost_pane, PaneDirection::Left);
+    let _ = ctx.editor().set_active_pane(target.pane);
+    if ctx.editor().open_client_surface_in_active_pane(surface_id) {
+      ctx.file_tree_mut().sidebar_pane = Some(target.pane);
+    }
   }
   if matches!(
     ctx.editor_ref().pane_content_kind(previous_pane),
@@ -1015,6 +1073,7 @@ fn trash_selected_entry<Ctx: DefaultContext>(ctx: &mut Ctx, source: &Path) -> Re
 }
 
 fn rebuild_rows<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  let perf_start = file_tree_perf_enabled().then(Instant::now);
   let current_file = ctx.file_path().map(PathBuf::from);
   let Some(root) = ctx.file_tree().root.clone() else {
     ctx.file_tree_mut().clear_rows();
@@ -1061,6 +1120,25 @@ fn rebuild_rows<Ctx: DefaultContext>(ctx: &mut Ctx) {
   clamp_tree_state(state);
   state.selection_follow = true;
   sync_tree_scroll(state, scrolloff);
+
+  if let Some(perf_start) = perf_start {
+    let rebuild_ms = perf_start.elapsed().as_secs_f64() * 1000.0;
+    file_tree_perf_log(format!(
+      "kind=file_tree_refresh total={rebuild_ms:.2}ms root={} rows={} expanded={} selected={} \
+       scroll={} visible_rows={} show_hidden={} follow_current={}",
+      root.display(),
+      state.rows.len(),
+      state.expanded_dirs.len(),
+      state
+        .selected
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "none".to_string()),
+      state.scroll_offset,
+      state.visible_rows,
+      if state.show_hidden { 1 } else { 0 },
+      if state.follow_current { 1 } else { 0 },
+    ));
+  }
 }
 
 fn paste_clipboard<Ctx: DefaultContext>(ctx: &mut Ctx) -> Result<(), String> {

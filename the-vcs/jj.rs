@@ -229,13 +229,6 @@ pub fn for_each_changed_file(cwd: &Path, f: impl Fn(Result<FileChange>) -> bool)
 }
 
 fn jj_changed_files_text(repo_root: &Path) -> Result<String> {
-  for rev in ["@", "@-"] {
-    let output = run_jj(repo_root, &["diff", "-r", rev, "-T", DIFF_LINE_TEMPLATE])?;
-    let text = String::from_utf8(output.stdout).wrap_err("invalid jj diff output")?;
-    if text.lines().any(|line| !line.trim().is_empty()) {
-      return Ok(text);
-    }
-  }
-
-  Ok(String::new())
+  let output = run_jj(repo_root, &["diff", "-r", "@", "-T", DIFF_LINE_TEMPLATE])?;
+  String::from_utf8(output.stdout).wrap_err("invalid jj diff output")
 }

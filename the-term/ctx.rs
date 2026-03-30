@@ -377,6 +377,11 @@ struct FileTreeWatchState {
   _watch_handle: WatchHandle,
 }
 
+struct VcsWatchState {
+  stream:        WatchedFileEventsState,
+  _watch_handle: WatchHandle,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum FileTreeVcsKind {
   Conflict,
@@ -390,6 +395,103 @@ pub(crate) enum FileTreeVcsKind {
 pub(crate) struct FileTreeDecorations {
   pub vcs:        Option<FileTreeVcsKind>,
   pub diagnostic: Option<DiagnosticSeverity>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FileTreeVcsRefreshReason {
+  TreeOpen,
+  TreeRootChange,
+  VcsWatch,
+  FileTreeCreatedRemoved,
+  FileTreeChangedDebounce,
+  WatchRebind,
+}
+
+impl FileTreeVcsRefreshReason {
+  const fn log_label(self) -> &'static str {
+    match self {
+      Self::TreeOpen => "tree_open",
+      Self::TreeRootChange => "tree_root_change",
+      Self::VcsWatch => "vcs_watch",
+      Self::FileTreeCreatedRemoved => "file_tree_created_removed",
+      Self::FileTreeChangedDebounce => "file_tree_changed_debounce",
+      Self::WatchRebind => "watch_rebind",
+    }
+  }
+
+  const fn priority(self) -> u8 {
+    match self {
+      Self::TreeOpen => 6,
+      Self::TreeRootChange => 5,
+      Self::WatchRebind => 4,
+      Self::VcsWatch => 3,
+      Self::FileTreeCreatedRemoved => 2,
+      Self::FileTreeChangedDebounce => 1,
+    }
+  }
+
+  const fn combine(self, other: Self) -> Self {
+    if self.priority() >= other.priority() {
+      self
+    } else {
+      other
+    }
+  }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ActiveFileVcsRefreshReason {
+  Startup,
+  PathChange,
+  VcsWatch,
+}
+
+impl ActiveFileVcsRefreshReason {
+  const fn log_label(self) -> &'static str {
+    match self {
+      Self::Startup => "startup",
+      Self::PathChange => "path_change",
+      Self::VcsWatch => "vcs_watch",
+    }
+  }
+
+  const fn priority(self) -> u8 {
+    match self {
+      Self::PathChange => 3,
+      Self::Startup => 2,
+      Self::VcsWatch => 1,
+    }
+  }
+
+  const fn combine(self, other: Self) -> Self {
+    if self.priority() >= other.priority() {
+      self
+    } else {
+      other
+    }
+  }
+}
+
+#[derive(Debug)]
+struct ActiveFileVcsRefreshResult {
+  generation: u64,
+  path:       PathBuf,
+  reason:     ActiveFileVcsRefreshReason,
+  statusline: Option<String>,
+  diff_base:  Option<Vec<u8>>,
+  collect_ms: f64,
+}
+
+#[derive(Debug)]
+struct FileTreeVcsRefreshResult {
+  generation:     u64,
+  root:           PathBuf,
+  reason:         FileTreeVcsRefreshReason,
+  statuses:       BTreeMap<PathBuf, FileTreeVcsKind>,
+  change_count:   usize,
+  status_entries: usize,
+  collect_ms:     f64,
+  collapse_ms:    f64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -605,152 +707,167 @@ impl PendingLspRequestKind {
 
 /// Application state passed to all handlers.
 pub struct Ctx {
-  pub editor:                        Editor,
-  pub file_path:                     Option<PathBuf>,
-  pub working_directory:             WorkingDirectoryState,
-  pub should_quit:                   bool,
-  pub needs_render:                  bool,
-  cursor_blink_generation:           u64,
-  pub messages:                      MessageCenter,
-  message_log:                       Option<BufWriter<std::fs::File>>,
-  message_log_seq:                   u64,
-  lsp_trace_log:                     Option<BufWriter<std::fs::File>>,
-  render_wake_tx:                    Sender<()>,
-  pub render_wake_rx:                Receiver<()>,
-  pub mode:                          Mode,
-  pub defaults:                      Defaults,
-  pub dispatch:                      Box<dyn DefaultApi<Ctx>>,
-  pub keymaps:                       Keymaps,
-  pub completion_menu_keymaps:       Keymaps,
-  pub command_registry:              CommandRegistry<Ctx>,
-  pub command_prompt:                CommandPromptState,
-  pub command_palette:               CommandPaletteState,
-  pub command_palette_style:         CommandPaletteStyle,
-  pub completion_menu:               the_default::CompletionMenuState,
-  pub inline_completion:             the_default::InlineCompletionState,
-  pub signature_help:                the_default::SignatureHelpState,
-  pub hover_docs:                    Option<String>,
-  pub hover_docs_scroll:             usize,
-  pub file_tree:                     FileTreeState,
-  pub file_picker:                   FilePickerState,
-  pub picker_runtime_store:          the_default::PickerRuntimeStore<Ctx>,
-  pub lsp_runtime:                   LspRuntime,
-  pub lsp_ready:                     bool,
-  pub lsp_document:                  Option<LspDocumentSyncState>,
-  lsp_statusline:                    LspStatuslineState,
-  lsp_spinner_index:                 usize,
-  lsp_spinner_last_tick:             Instant,
-  lsp_active_progress_tokens:        HashSet<String>,
-  lsp_watched_file:                  Option<LspWatchedFileState>,
-  lsp_pending_requests:              HashMap<u64, PendingLspRequestKind>,
-  lsp_completion_items:              Vec<LspCompletionItem>,
-  lsp_completion_raw_items:          Vec<Value>,
-  lsp_completion_resolved_indices:   HashSet<usize>,
-  lsp_completion_resolve_supported:  bool,
-  lsp_completion_inline_item_active: bool,
-  lsp_completion_visible_indices:    Vec<usize>,
-  lsp_completion_fallback_start:     Option<usize>,
-  lsp_code_action_items:             Vec<LspCodeAction>,
-  lsp_code_action_menu_active:       bool,
-  lsp_completion_generation:         u64,
-  lsp_pending_auto_completion:       Option<PendingAutoCompletion>,
-  lsp_pending_auto_signature_help:   Option<PendingAutoSignatureHelp>,
-  lsp_signature_help_presentation:   Option<the_default::SignatureHelpPresentation>,
-  pub diagnostics:                   DiagnosticsState,
-  file_tree_watch:                   Option<FileTreeWatchState>,
-  file_tree_vcs_statuses:            BTreeMap<PathBuf, FileTreeVcsKind>,
-  file_tree_diagnostic_statuses:     BTreeMap<PathBuf, DiagnosticSeverity>,
-  pub file_tree_decorations:         BTreeMap<PathBuf, FileTreeDecorations>,
-  file_tree_decoration_root:         Option<PathBuf>,
-  file_tree_diagnostics_seq:         u64,
-  file_tree_vcs_dirty:               bool,
-  pub file_tree_layout:              Option<FileTreeLayout>,
-  pub file_picker_layout:            Option<FilePickerLayout>,
-  pub file_picker_drag:              Option<FilePickerDragState>,
-  pub completion_docs_layout:        Option<CompletionDocsLayout>,
-  pub completion_docs_drag:          Option<CompletionDocsDragState>,
-  pub pane_resize_drag:              Option<PaneResizeDragState>,
-  pub buffer_tab_drag:               Option<BufferTabPointerDragState>,
-  pub buffer_tab_hover:              Option<BufferTabHoverState>,
-  pub mouse_selection_drag_active:   bool,
-  pub mouse_viewport_detached:       bool,
-  pointer_drag_selection:            Option<PointerSelectionDragState>,
-  mouse_last_primary_click:          Option<PointerClickTracker>,
-  pub search_prompt:                 the_default::SearchPromptState,
-  global_search:                     GlobalSearchState,
-  pub ui_theme_catalog:              ThemeCatalog,
-  pub ui_theme_name:                 String,
-  pub ui_theme_base:                 Theme,
-  pub ui_theme_preview_name:         Option<String>,
-  pub ui_theme:                      Theme,
-  pub pending_input:                 Option<the_default::PendingInput>,
-  pub dispatch_override:             Option<NonNull<dyn DefaultApi<Ctx>>>,
+  pub editor:                         Editor,
+  pub file_path:                      Option<PathBuf>,
+  pub working_directory:              WorkingDirectoryState,
+  pub should_quit:                    bool,
+  pub needs_render:                   bool,
+  cursor_blink_generation:            u64,
+  pub messages:                       MessageCenter,
+  message_log:                        Option<BufWriter<std::fs::File>>,
+  message_log_seq:                    u64,
+  lsp_trace_log:                      Option<BufWriter<std::fs::File>>,
+  render_wake_tx:                     Sender<()>,
+  pub render_wake_rx:                 Receiver<()>,
+  pub mode:                           Mode,
+  pub defaults:                       Defaults,
+  pub dispatch:                       Box<dyn DefaultApi<Ctx>>,
+  pub keymaps:                        Keymaps,
+  pub completion_menu_keymaps:        Keymaps,
+  pub command_registry:               CommandRegistry<Ctx>,
+  pub command_prompt:                 CommandPromptState,
+  pub command_palette:                CommandPaletteState,
+  pub command_palette_style:          CommandPaletteStyle,
+  pub completion_menu:                the_default::CompletionMenuState,
+  pub inline_completion:              the_default::InlineCompletionState,
+  pub signature_help:                 the_default::SignatureHelpState,
+  pub hover_docs:                     Option<String>,
+  pub hover_docs_scroll:              usize,
+  pub file_tree:                      FileTreeState,
+  pub file_picker:                    FilePickerState,
+  pub picker_runtime_store:           the_default::PickerRuntimeStore<Ctx>,
+  pub lsp_runtime:                    LspRuntime,
+  pub lsp_ready:                      bool,
+  pub lsp_document:                   Option<LspDocumentSyncState>,
+  lsp_statusline:                     LspStatuslineState,
+  lsp_spinner_index:                  usize,
+  lsp_spinner_last_tick:              Instant,
+  lsp_active_progress_tokens:         HashSet<String>,
+  lsp_watched_file:                   Option<LspWatchedFileState>,
+  lsp_pending_requests:               HashMap<u64, PendingLspRequestKind>,
+  lsp_completion_items:               Vec<LspCompletionItem>,
+  lsp_completion_raw_items:           Vec<Value>,
+  lsp_completion_resolved_indices:    HashSet<usize>,
+  lsp_completion_resolve_supported:   bool,
+  lsp_completion_inline_item_active:  bool,
+  lsp_completion_visible_indices:     Vec<usize>,
+  lsp_completion_fallback_start:      Option<usize>,
+  lsp_code_action_items:              Vec<LspCodeAction>,
+  lsp_code_action_menu_active:        bool,
+  lsp_completion_generation:          u64,
+  lsp_pending_auto_completion:        Option<PendingAutoCompletion>,
+  lsp_pending_auto_signature_help:    Option<PendingAutoSignatureHelp>,
+  lsp_signature_help_presentation:    Option<the_default::SignatureHelpPresentation>,
+  pub diagnostics:                    DiagnosticsState,
+  vcs_watch:                          Option<VcsWatchState>,
+  active_file_vcs_refresh_due_at:     Option<Instant>,
+  active_file_vcs_refresh_reason:     Option<ActiveFileVcsRefreshReason>,
+  active_file_vcs_refresh_in_flight:  bool,
+  active_file_vcs_refresh_generation: u64,
+  active_file_vcs_refresh_rerun:      bool,
+  active_file_vcs_refresh_tx:         Sender<ActiveFileVcsRefreshResult>,
+  active_file_vcs_refresh_rx:         Receiver<ActiveFileVcsRefreshResult>,
+  file_tree_watch:                    Option<FileTreeWatchState>,
+  file_tree_refresh_due_at:           Option<Instant>,
+  file_tree_vcs_refresh_due_at:       Option<Instant>,
+  file_tree_vcs_refresh_reason:       Option<FileTreeVcsRefreshReason>,
+  file_tree_vcs_refresh_in_flight:    bool,
+  file_tree_vcs_refresh_generation:   u64,
+  file_tree_vcs_refresh_rerun:        bool,
+  file_tree_vcs_statuses:             BTreeMap<PathBuf, FileTreeVcsKind>,
+  file_tree_diagnostic_statuses:      BTreeMap<PathBuf, DiagnosticSeverity>,
+  pub file_tree_decorations:          BTreeMap<PathBuf, FileTreeDecorations>,
+  file_tree_decoration_root:          Option<PathBuf>,
+  file_tree_diagnostics_seq:          u64,
+  file_tree_vcs_refresh_tx:           Sender<FileTreeVcsRefreshResult>,
+  file_tree_vcs_refresh_rx:           Receiver<FileTreeVcsRefreshResult>,
+  pub file_tree_layout:               Option<FileTreeLayout>,
+  pub file_picker_layout:             Option<FilePickerLayout>,
+  pub file_picker_drag:               Option<FilePickerDragState>,
+  pub completion_docs_layout:         Option<CompletionDocsLayout>,
+  pub completion_docs_drag:           Option<CompletionDocsDragState>,
+  pub pane_resize_drag:               Option<PaneResizeDragState>,
+  pub buffer_tab_drag:                Option<BufferTabPointerDragState>,
+  pub buffer_tab_hover:               Option<BufferTabHoverState>,
+  pub mouse_selection_drag_active:    bool,
+  pub mouse_viewport_detached:        bool,
+  pointer_drag_selection:             Option<PointerSelectionDragState>,
+  mouse_last_primary_click:           Option<PointerClickTracker>,
+  pub search_prompt:                  the_default::SearchPromptState,
+  global_search:                      GlobalSearchState,
+  pub ui_theme_catalog:               ThemeCatalog,
+  pub ui_theme_name:                  String,
+  pub ui_theme_base:                  Theme,
+  pub ui_theme_preview_name:          Option<String>,
+  pub ui_theme:                       Theme,
+  pub pending_input:                  Option<the_default::PendingInput>,
+  pub dispatch_override:              Option<NonNull<dyn DefaultApi<Ctx>>>,
   /// Syntax loader for language detection and highlighting.
-  pub loader:                        Option<Arc<Loader>>,
+  pub loader:                         Option<Arc<Loader>>,
   /// Cache for syntax highlights (reused across renders).
-  pub highlight_cache:               HighlightCache,
+  pub highlight_cache:                HighlightCache,
   /// Per-buffer caches for inactive split panes.
-  pub inactive_highlight_caches:     BTreeMap<BufferId, HighlightCache>,
+  pub inactive_highlight_caches:      BTreeMap<BufferId, HighlightCache>,
   /// Background parse result channel (async syntax fallback).
-  pub syntax_parse_tx:               Sender<SyntaxParseResult>,
+  pub syntax_parse_tx:                Sender<SyntaxParseResult>,
   /// Background parse result receiver (async syntax fallback).
-  pub syntax_parse_rx:               Receiver<SyntaxParseResult>,
+  pub syntax_parse_rx:                Receiver<SyntaxParseResult>,
   /// Async parse lifecycle (single in-flight + one queued replacement).
-  pub syntax_parse_lifecycle:        ParseLifecycle<SyntaxParseJob>,
+  pub syntax_parse_lifecycle:         ParseLifecycle<SyntaxParseJob>,
   /// Syntax parse/highlight gate state (parsed vs interpolated).
-  pub syntax_parse_highlight_state:  ParseHighlightState,
+  pub syntax_parse_highlight_state:   ParseHighlightState,
   /// Registers for yanking/pasting.
-  pub registers:                     Registers,
+  pub registers:                      Registers,
   /// Active register target (for macros/register operations).
-  pub register:                      Option<char>,
+  pub register:                       Option<char>,
   /// Macro recording state.
-  pub macro_recording:               Option<(char, Vec<KeyBinding>)>,
+  pub macro_recording:                Option<(char, Vec<KeyBinding>)>,
   /// Macro replay stack for recursion guard.
-  pub macro_replaying:               Vec<char>,
+  pub macro_replaying:                Vec<char>,
   /// Pending macro key events to replay.
-  pub macro_queue:                   VecDeque<KeyEvent>,
+  pub macro_queue:                    VecDeque<KeyEvent>,
   /// Last executed motion for repeat.
-  pub last_motion:                   Option<Motion>,
+  pub last_motion:                    Option<Motion>,
   /// Render formatting used for visual position mapping.
-  pub text_format:                   TextFormat,
-  pub cursor_shapes:                 CursorShapes,
+  pub text_format:                    TextFormat,
+  pub cursor_shapes:                  CursorShapes,
   /// Gutter layout and line-number rendering config.
-  pub gutter_config:                 GutterConfig,
+  pub gutter_config:                  GutterConfig,
   /// VCS-like gutter signs keyed by document line.
-  pub gutter_diff_signs:             BTreeMap<usize, RenderGutterDiffKind>,
+  pub gutter_diff_signs:              BTreeMap<usize, RenderGutterDiffKind>,
   /// Active VCS provider registry for diff base resolution.
-  pub vcs_provider:                  DiffProviderRegistry,
+  pub vcs_provider:                   DiffProviderRegistry,
   /// Cached VCS statusline text for the active file.
-  pub vcs_statusline:                Option<String>,
+  pub vcs_statusline:                 Option<String>,
   /// Incremental VCS diff state for the active file.
-  pub vcs_diff:                      Option<DiffHandle>,
+  pub vcs_diff:                       Option<DiffHandle>,
   /// Inline annotations (virtual text) for rendering.
-  pub inline_annotations:            Vec<InlineAnnotation>,
+  pub inline_annotations:             Vec<InlineAnnotation>,
   /// Overlay annotations (virtual text) for rendering.
-  pub overlay_annotations:           Vec<Overlay>,
+  pub overlay_annotations:            Vec<Overlay>,
   /// Built-in inline completion ghost text annotations.
-  pub inline_completion_annotations: the_default::OwnedTextAnnotations,
+  pub inline_completion_annotations:  the_default::OwnedTextAnnotations,
   /// Transient inline jump labels for word-jump navigation.
-  pub word_jump_inline_annotations:  Vec<InlineAnnotation>,
+  pub word_jump_inline_annotations:   Vec<InlineAnnotation>,
   /// Transient overlay jump labels for word-jump navigation.
-  pub word_jump_overlay_annotations: Vec<Overlay>,
+  pub word_jump_overlay_annotations:  Vec<Overlay>,
   /// Inline diagnostic ghost lines collected during render-plan construction.
-  pub inline_diagnostic_lines:       Vec<InlineDiagnosticRenderLine>,
+  pub inline_diagnostic_lines:        Vec<InlineDiagnosticRenderLine>,
   /// Underline spans for diagnostic ranges in the current viewport.
-  pub diagnostic_underlines:         Vec<DiagnosticUnderlineRenderSpan>,
+  pub diagnostic_underlines:          Vec<DiagnosticUnderlineRenderSpan>,
   /// Per-pane inline diagnostic state for frame rendering.
-  pub frame_inline_diagnostic_lines: BTreeMap<PaneId, Vec<InlineDiagnosticRenderLine>>,
+  pub frame_inline_diagnostic_lines:  BTreeMap<PaneId, Vec<InlineDiagnosticRenderLine>>,
   /// Per-pane diagnostic underlines for frame rendering.
-  pub frame_diagnostic_underlines:   BTreeMap<PaneId, Vec<DiagnosticUnderlineRenderSpan>>,
+  pub frame_diagnostic_underlines:    BTreeMap<PaneId, Vec<DiagnosticUnderlineRenderSpan>>,
   /// Per-pane raw diagnostics used by split-pane end-of-line rendering.
-  pub frame_diagnostics:             BTreeMap<PaneId, Vec<Diagnostic>>,
+  pub frame_diagnostics:              BTreeMap<PaneId, Vec<Diagnostic>>,
   /// Last emitted render generations and row hashes per pane.
-  pub frame_generation_state:        the_lib::render::FrameGenerationState,
+  pub frame_generation_state:         the_lib::render::FrameGenerationState,
   /// Theme generation token for render metadata consumers.
-  pub render_theme_generation:       u64,
+  pub render_theme_generation:        u64,
   /// Lines to keep above/below cursor when scrolling.
-  pub scrolloff:                     usize,
-  pub term_cursor_mode:              TermCursorMode,
+  pub scrolloff:                      usize,
+  pub term_cursor_mode:               TermCursorMode,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1025,6 +1142,8 @@ impl Ctx {
     let lsp_trace_log = open_lsp_trace_log();
 
     let (render_wake_tx, render_wake_rx) = std::sync::mpsc::channel();
+    let (active_file_vcs_refresh_tx, active_file_vcs_refresh_rx) = channel();
+    let (file_tree_vcs_refresh_tx, file_tree_vcs_refresh_rx) = channel();
     let mut file_picker = FilePickerState::default();
     the_default::set_file_picker_options(
       &mut file_picker,
@@ -1122,13 +1241,28 @@ impl Ctx {
       lsp_pending_auto_signature_help: None,
       lsp_signature_help_presentation: None,
       diagnostics: DiagnosticsState::default(),
+      vcs_watch: None,
+      active_file_vcs_refresh_due_at: None,
+      active_file_vcs_refresh_reason: None,
+      active_file_vcs_refresh_in_flight: false,
+      active_file_vcs_refresh_generation: 0,
+      active_file_vcs_refresh_rerun: false,
+      active_file_vcs_refresh_tx,
+      active_file_vcs_refresh_rx,
       file_tree_watch: None,
+      file_tree_refresh_due_at: None,
+      file_tree_vcs_refresh_due_at: None,
+      file_tree_vcs_refresh_reason: None,
+      file_tree_vcs_refresh_in_flight: false,
+      file_tree_vcs_refresh_generation: 0,
+      file_tree_vcs_refresh_rerun: false,
       file_tree_vcs_statuses: BTreeMap::new(),
       file_tree_diagnostic_statuses: BTreeMap::new(),
       file_tree_decorations: BTreeMap::new(),
       file_tree_decoration_root: None,
       file_tree_diagnostics_seq: 0,
-      file_tree_vcs_dirty: true,
+      file_tree_vcs_refresh_tx,
+      file_tree_vcs_refresh_rx,
       file_tree_layout: None,
       file_picker_layout: None,
       file_picker_drag: None,
@@ -1185,7 +1319,7 @@ impl Ctx {
       scrolloff: 5,
       term_cursor_mode: TermCursorMode::Hidden,
     };
-    ctx.refresh_vcs_diff_base();
+    ctx.schedule_active_file_vcs_refresh(ActiveFileVcsRefreshReason::Startup, None);
     Ok(ctx)
   }
 
@@ -1277,25 +1411,37 @@ impl Ctx {
     changed
   }
 
-  fn refresh_vcs_diff_base(&mut self) -> bool {
+  fn clear_active_file_vcs_state(&mut self) -> bool {
     let mut changed = false;
-    let statusline = self
-      .file_path
-      .as_deref()
-      .and_then(|path| self.vcs_provider.get_statusline_info(path))
-      .map(|info| info.statusline_text());
+    if self.vcs_statusline.take().is_some() {
+      changed = true;
+    }
+    changed | self.clear_vcs_diff()
+  }
+
+  fn refresh_active_file_vcs_after_path_change(
+    &mut self,
+    previous_path: Option<PathBuf>,
+    reason: ActiveFileVcsRefreshReason,
+  ) {
+    if previous_path != self.file_path {
+      self.clear_active_file_vcs_state();
+    }
+    self.schedule_active_file_vcs_refresh(reason, None);
+  }
+
+  fn apply_active_file_vcs_refresh_result(
+    &mut self,
+    statusline: Option<String>,
+    diff_base: Option<Vec<u8>>,
+  ) -> bool {
+    let mut changed = false;
     if self.vcs_statusline != statusline {
       self.vcs_statusline = statusline;
       changed = true;
     }
-
-    let Some(path) = self.file_path.clone() else {
-      changed |= self.clear_vcs_diff();
-      return changed;
-    };
-    let Some(diff_base) = self.vcs_provider.get_diff_base(&path) else {
-      changed |= self.clear_vcs_diff();
-      return changed;
+    let Some(diff_base) = diff_base else {
+      return changed | self.clear_vcs_diff();
     };
 
     let diff_base = Rope::from_str(String::from_utf8_lossy(&diff_base).as_ref());
@@ -1308,6 +1454,152 @@ impl Ctx {
     }
     self.vcs_diff = Some(handle);
     changed
+  }
+
+  fn schedule_active_file_vcs_refresh(
+    &mut self,
+    reason: ActiveFileVcsRefreshReason,
+    due_at: Option<Instant>,
+  ) {
+    let Some(path) = self.file_path.clone() else {
+      self.active_file_vcs_refresh_due_at = None;
+      self.active_file_vcs_refresh_reason = None;
+      self.active_file_vcs_refresh_rerun = false;
+      return;
+    };
+    let due_at = due_at.unwrap_or_else(Instant::now);
+    self.active_file_vcs_refresh_due_at = Some(
+      self
+        .active_file_vcs_refresh_due_at
+        .map_or(due_at, |current| current.min(due_at)),
+    );
+    self.active_file_vcs_refresh_reason = Some(
+      self
+        .active_file_vcs_refresh_reason
+        .map_or(reason, |current| current.combine(reason)),
+    );
+    if self.active_file_vcs_refresh_in_flight {
+      self.active_file_vcs_refresh_rerun = true;
+    }
+    log_active_file_vcs_refresh_event(
+      "scheduled",
+      self.active_file_vcs_refresh_generation + u64::from(self.active_file_vcs_refresh_in_flight),
+      &path,
+      reason,
+      None,
+      None,
+      None,
+      None,
+    );
+  }
+
+  pub fn poll_active_file_vcs_refresh_dispatch(&mut self, now: Instant) -> bool {
+    if self.active_file_vcs_refresh_in_flight {
+      return false;
+    }
+    let Some(due_at) = self.active_file_vcs_refresh_due_at else {
+      return false;
+    };
+    if now < due_at {
+      return false;
+    }
+    let Some(path) = self.file_path.clone() else {
+      self.active_file_vcs_refresh_due_at = None;
+      self.active_file_vcs_refresh_reason = None;
+      self.active_file_vcs_refresh_rerun = false;
+      return false;
+    };
+    let reason = self
+      .active_file_vcs_refresh_reason
+      .take()
+      .unwrap_or(ActiveFileVcsRefreshReason::VcsWatch);
+    self.active_file_vcs_refresh_due_at = None;
+    self.active_file_vcs_refresh_in_flight = true;
+    self.active_file_vcs_refresh_rerun = false;
+    self.active_file_vcs_refresh_generation += 1;
+    let generation = self.active_file_vcs_refresh_generation;
+    let vcs_provider = self.vcs_provider.clone();
+    let tx = self.active_file_vcs_refresh_tx.clone();
+    let wake_tx = self.render_wake_tx.clone();
+    log_active_file_vcs_refresh_event("started", generation, &path, reason, None, None, None, None);
+    thread::spawn(move || {
+      let collect_start = Instant::now();
+      let statusline = vcs_provider
+        .get_statusline_info(&path)
+        .map(|info| info.statusline_text());
+      let diff_base = vcs_provider.get_diff_base(&path);
+      let collect_ms = collect_start.elapsed().as_secs_f64() * 1000.0;
+      log_active_file_vcs_refresh_event(
+        "finished",
+        generation,
+        &path,
+        reason,
+        Some(statusline.is_some()),
+        Some(diff_base.is_some()),
+        Some(collect_ms),
+        None,
+      );
+      let _ = tx.send(ActiveFileVcsRefreshResult {
+        generation,
+        path,
+        reason,
+        statusline,
+        diff_base,
+        collect_ms,
+      });
+      let _ = wake_tx.send(());
+    });
+    false
+  }
+
+  pub fn poll_active_file_vcs_refresh_results(&mut self) -> bool {
+    let mut needs_render = false;
+    loop {
+      let result = match self.active_file_vcs_refresh_rx.try_recv() {
+        Ok(result) => result,
+        Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => break,
+      };
+      if result.generation == self.active_file_vcs_refresh_generation {
+        self.active_file_vcs_refresh_in_flight = false;
+      }
+      let stale = self.file_path.as_deref() != Some(result.path.as_path())
+        || result.generation != self.active_file_vcs_refresh_generation;
+      if stale {
+        log_active_file_vcs_refresh_event(
+          "discarded",
+          result.generation,
+          &result.path,
+          result.reason,
+          Some(result.statusline.is_some()),
+          Some(result.diff_base.is_some()),
+          Some(result.collect_ms),
+          None,
+        );
+      } else {
+        let apply_start = Instant::now();
+        let changed =
+          self.apply_active_file_vcs_refresh_result(result.statusline, result.diff_base);
+        let apply_ms = apply_start.elapsed().as_secs_f64() * 1000.0;
+        log_active_file_vcs_refresh_event(
+          "applied",
+          result.generation,
+          &result.path,
+          result.reason,
+          Some(self.vcs_statusline.is_some()),
+          Some(self.vcs_diff.is_some()),
+          Some(result.collect_ms),
+          Some(apply_ms),
+        );
+        needs_render |= changed;
+      }
+      if self.active_file_vcs_refresh_rerun {
+        self.active_file_vcs_refresh_rerun = false;
+        if self.active_file_vcs_refresh_due_at.is_none() {
+          self.active_file_vcs_refresh_due_at = Some(Instant::now());
+        }
+      }
+    }
+    needs_render
   }
 
   fn refresh_vcs_diff_document(&mut self) {
@@ -2120,42 +2412,303 @@ impl Ctx {
     }
   }
 
-  pub fn poll_file_tree_watch(&mut self) -> bool {
-    let mut needs_render = self.sync_file_tree_watch_state();
-    needs_render |= self.refresh_file_tree_decorations_if_needed();
+  pub fn poll_vcs_watch(&mut self) -> bool {
+    let mut needs_render = self.sync_vcs_watch_state();
 
     let outcome = match poll_watch_events(
-      self.file_tree_watch.as_mut().map(|watch| &mut watch.stream),
+      self.vcs_watch.as_mut().map(|watch| &mut watch.stream),
       Instant::now(),
-      "tree",
+      "vcs",
       |event, message| trace_file_watch_event(event, message),
     ) {
       WatchPollOutcome::NoChanges => return needs_render,
       WatchPollOutcome::Disconnected { .. } => {
-        self.file_tree_watch = None;
-        self.file_tree_vcs_dirty = true;
-        return true;
+        self.vcs_watch = None;
+        self.schedule_file_tree_vcs_refresh(
+          FileTreeVcsRefreshReason::VcsWatch,
+          Some(Instant::now() + file_tree_changed_refresh_latency()),
+        );
+        needs_render = true;
+        true
       },
       WatchPollOutcome::Changes { .. } => true,
     };
 
     if outcome {
-      the_default::refresh_file_tree(self);
-      self.file_tree_vcs_dirty = true;
-      let _ = self.refresh_file_tree_decorations_if_needed();
-      return true;
+      needs_render |= self.handle_vcs_watch_change();
     }
 
     needs_render
   }
 
-  fn sync_file_tree_watch_state(&mut self) -> bool {
-    let snapshot = the_default::file_tree_snapshot(self);
-    let root = snapshot
-      .as_ref()
-      .filter(|snapshot| snapshot.attached_pane.is_some())
-      .map(|snapshot| snapshot.root.clone());
+  pub fn poll_file_tree_watch(&mut self) -> bool {
+    let now = Instant::now();
+    let mut needs_render = self.sync_file_tree_watch_state();
+    needs_render |= self.refresh_file_tree_diagnostics_if_needed();
 
+    let outcome = match poll_watch_events(
+      self.file_tree_watch.as_mut().map(|watch| &mut watch.stream),
+      now,
+      "tree",
+      |event, message| trace_file_watch_event(event, message),
+    ) {
+      WatchPollOutcome::NoChanges => {
+        needs_render |= self.poll_pending_file_tree_refresh(now);
+        return needs_render;
+      },
+      WatchPollOutcome::Disconnected { .. } => {
+        self.file_tree_watch = None;
+        self.file_tree_refresh_due_at = None;
+        self.schedule_file_tree_vcs_refresh(FileTreeVcsRefreshReason::WatchRebind, None);
+        return true;
+      },
+      WatchPollOutcome::Changes { kinds, .. } => kinds,
+    };
+
+    needs_render | self.handle_file_tree_watch_kinds(outcome.as_slice(), now)
+  }
+
+  fn handle_vcs_watch_change(&mut self) -> bool {
+    self.schedule_active_file_vcs_refresh(
+      ActiveFileVcsRefreshReason::VcsWatch,
+      Some(Instant::now() + vcs_watch_latency()),
+    );
+    self.schedule_file_tree_vcs_refresh(
+      FileTreeVcsRefreshReason::VcsWatch,
+      Some(Instant::now() + file_tree_changed_refresh_latency()),
+    );
+    false
+  }
+
+  fn handle_file_tree_watch_kinds(&mut self, kinds: &[PathEventKind], now: Instant) -> bool {
+    if kinds
+      .iter()
+      .any(|kind| matches!(kind, PathEventKind::Created | PathEventKind::Removed))
+    {
+      self.file_tree_refresh_due_at = None;
+      the_default::refresh_file_tree(self);
+      self.schedule_file_tree_vcs_refresh(
+        FileTreeVcsRefreshReason::FileTreeCreatedRemoved,
+        Some(now + file_tree_changed_refresh_latency()),
+      );
+      return true;
+    }
+
+    if kinds
+      .iter()
+      .any(|kind| matches!(kind, PathEventKind::Changed))
+    {
+      self.file_tree_refresh_due_at = Some(now + file_tree_changed_refresh_latency());
+    }
+
+    false
+  }
+
+  fn poll_pending_file_tree_refresh(&mut self, now: Instant) -> bool {
+    let Some(due_at) = self.file_tree_refresh_due_at else {
+      return false;
+    };
+    if now < due_at {
+      return false;
+    }
+
+    self.file_tree_refresh_due_at = None;
+    the_default::refresh_file_tree(self);
+    self
+      .schedule_file_tree_vcs_refresh(FileTreeVcsRefreshReason::FileTreeChangedDebounce, Some(now));
+    true
+  }
+
+  pub fn poll_file_tree_vcs_refresh_dispatch(&mut self, now: Instant) -> bool {
+    if self.file_tree_vcs_refresh_in_flight {
+      return false;
+    }
+    let Some(due_at) = self.file_tree_vcs_refresh_due_at else {
+      return false;
+    };
+    if now < due_at {
+      return false;
+    }
+    let Some(root) = self.file_tree_decoration_root.clone() else {
+      self.clear_pending_file_tree_vcs_refresh();
+      return false;
+    };
+    let reason = self
+      .file_tree_vcs_refresh_reason
+      .take()
+      .unwrap_or(FileTreeVcsRefreshReason::VcsWatch);
+    self.file_tree_vcs_refresh_due_at = None;
+    self.file_tree_vcs_refresh_in_flight = true;
+    self.file_tree_vcs_refresh_rerun = false;
+    self.file_tree_vcs_refresh_generation += 1;
+    let generation = self.file_tree_vcs_refresh_generation;
+    let vcs_provider = self.vcs_provider.clone();
+    let tx = self.file_tree_vcs_refresh_tx.clone();
+    let wake_tx = self.render_wake_tx.clone();
+    log_file_tree_vcs_refresh_event(
+      "started", generation, &root, reason, None, None, None, None, None, None,
+    );
+    thread::spawn(move || {
+      let collect_start = Instant::now();
+      let (change_count, statuses) = match vcs_provider.collect_changed_files(&root) {
+        Ok(changes) => {
+          let collect_ms = collect_start.elapsed().as_secs_f64() * 1000.0;
+          let collapse_start = Instant::now();
+          let statuses = collapse_file_tree_vcs_statuses(&changes, &root);
+          let collapse_ms = collapse_start.elapsed().as_secs_f64() * 1000.0;
+          log_file_tree_vcs_refresh_event(
+            "finished",
+            generation,
+            &root,
+            reason,
+            Some(changes.len()),
+            Some(statuses.len()),
+            Some(collect_ms),
+            Some(collapse_ms),
+            None,
+            None,
+          );
+          let _ = tx.send(FileTreeVcsRefreshResult {
+            generation,
+            root,
+            reason,
+            status_entries: statuses.len(),
+            statuses,
+            change_count: changes.len(),
+            collect_ms,
+            collapse_ms,
+          });
+          let _ = wake_tx.send(());
+          return;
+        },
+        Err(err) => {
+          let _ = err;
+          (0, BTreeMap::new())
+        },
+      };
+      let collect_ms = collect_start.elapsed().as_secs_f64() * 1000.0;
+      log_file_tree_vcs_refresh_event(
+        "finished",
+        generation,
+        &root,
+        reason,
+        Some(change_count),
+        Some(statuses.len()),
+        Some(collect_ms),
+        Some(0.0),
+        None,
+        None,
+      );
+      let _ = tx.send(FileTreeVcsRefreshResult {
+        generation,
+        root,
+        reason,
+        status_entries: statuses.len(),
+        statuses,
+        change_count,
+        collect_ms,
+        collapse_ms: 0.0,
+      });
+      let _ = wake_tx.send(());
+    });
+    false
+  }
+
+  pub fn poll_file_tree_vcs_refresh_results(&mut self) -> bool {
+    let mut needs_render = false;
+    loop {
+      let result = match self.file_tree_vcs_refresh_rx.try_recv() {
+        Ok(result) => result,
+        Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => break,
+      };
+      if result.generation == self.file_tree_vcs_refresh_generation {
+        self.file_tree_vcs_refresh_in_flight = false;
+      }
+      let current_root = self.file_tree_decoration_root.as_deref();
+      let stale = current_root != Some(result.root.as_path())
+        || result.generation != self.file_tree_vcs_refresh_generation;
+      if stale {
+        log_file_tree_vcs_refresh_event(
+          "discarded",
+          result.generation,
+          &result.root,
+          result.reason,
+          Some(result.change_count),
+          Some(result.status_entries),
+          Some(result.collect_ms),
+          Some(result.collapse_ms),
+          None,
+          None,
+        );
+      } else {
+        let apply_start = Instant::now();
+        self.file_tree_vcs_statuses = result.statuses;
+        let decorations_changed = self.recombine_file_tree_decorations();
+        let apply_ms = apply_start.elapsed().as_secs_f64() * 1000.0;
+        log_file_tree_vcs_refresh_event(
+          "applied",
+          result.generation,
+          &result.root,
+          result.reason,
+          Some(result.change_count),
+          Some(self.file_tree_vcs_statuses.len()),
+          Some(result.collect_ms),
+          Some(result.collapse_ms),
+          Some(apply_ms),
+          Some(decorations_changed),
+        );
+        needs_render |= decorations_changed;
+      }
+      if self.file_tree_vcs_refresh_rerun {
+        self.file_tree_vcs_refresh_rerun = false;
+        if self.file_tree_vcs_refresh_due_at.is_none() {
+          self.file_tree_vcs_refresh_due_at = Some(Instant::now());
+        }
+      }
+    }
+    needs_render
+  }
+
+  fn sync_vcs_watch_state(&mut self) -> bool {
+    let root = self.vcs_watch_root();
+    let mut changed = false;
+
+    match root {
+      Some(root) => {
+        let current = self
+          .vcs_watch
+          .as_ref()
+          .map(|watch| watch.stream.path.as_path());
+        if current != Some(root.as_path()) {
+          let (events_rx, watch_handle) = watch_path(&root, vcs_watch_latency());
+          let uri =
+            file_uri_for_path(&root).unwrap_or_else(|| format!("file://{}", root.display()));
+          self.vcs_watch = Some(VcsWatchState {
+            stream:        WatchedFileEventsState {
+              path: root,
+              uri,
+              events_rx,
+              suppress_until: None,
+              reload_state: FileWatchReloadState::Clean,
+              reload_io: FileWatchReloadIoState::default(),
+            },
+            _watch_handle: watch_handle,
+          });
+          changed = true;
+        }
+      },
+      None => {
+        if self.vcs_watch.take().is_some() {
+          changed = true;
+        }
+      },
+    }
+
+    changed
+  }
+
+  fn sync_file_tree_watch_state(&mut self) -> bool {
+    let root = self.file_tree_watch_root();
     let mut changed = false;
 
     match root {
@@ -2179,21 +2732,34 @@ impl Ctx {
             },
             _watch_handle: watch_handle,
           });
-          self.file_tree_vcs_dirty = true;
+          self.file_tree_refresh_due_at = None;
+          let reason = if self.file_tree_decoration_root.is_none() {
+            FileTreeVcsRefreshReason::TreeOpen
+          } else {
+            FileTreeVcsRefreshReason::WatchRebind
+          };
+          self.schedule_file_tree_vcs_refresh(reason, Some(Instant::now()));
           changed = true;
         }
 
         if self.file_tree_decoration_root.as_deref() != Some(root.as_path()) {
+          let reason = if self.file_tree_decoration_root.is_none() {
+            FileTreeVcsRefreshReason::TreeOpen
+          } else {
+            FileTreeVcsRefreshReason::TreeRootChange
+          };
           self.file_tree_decoration_root = Some(root);
           self.file_tree_diagnostics_seq = 0;
-          self.file_tree_vcs_dirty = true;
+          self.schedule_file_tree_vcs_refresh(reason, Some(Instant::now()));
           changed = true;
         }
       },
       None => {
         if self.file_tree_watch.take().is_some() {
+          self.file_tree_refresh_due_at = None;
           changed = true;
         }
+        self.clear_pending_file_tree_vcs_refresh();
         if self.file_tree_decoration_root.take().is_some()
           || !self.file_tree_vcs_statuses.is_empty()
           || !self.file_tree_diagnostic_statuses.is_empty()
@@ -2211,39 +2777,98 @@ impl Ctx {
     changed
   }
 
-  fn refresh_file_tree_decorations_if_needed(&mut self) -> bool {
+  fn vcs_watch_root(&self) -> Option<PathBuf> {
+    let cwd = self.effective_working_directory();
+    if !cwd.exists() {
+      return None;
+    }
+    let root = the_default::workspace_root(cwd.as_path());
+    root.exists().then_some(root)
+  }
+
+  fn file_tree_watch_root(&self) -> Option<PathBuf> {
+    let surface_id = self.file_tree.surface_id?;
+    let attached = self
+      .editor
+      .client_surface_snapshots()
+      .into_iter()
+      .find(|surface| surface.client_surface_id == surface_id)
+      .and_then(|surface| surface.attached_pane)
+      .is_some();
+    if !attached {
+      return None;
+    }
+    self.file_tree.root.clone()
+  }
+
+  fn refresh_file_tree_diagnostics_if_needed(&mut self) -> bool {
     let Some(root) = self.file_tree_decoration_root.clone() else {
       return false;
     };
 
     let diagnostics_seq = self.diagnostics.latest_seq();
-    let mut changed = false;
-
-    if self.file_tree_vcs_dirty {
-      self.file_tree_vcs_statuses = rebuild_file_tree_vcs_statuses(&self.vcs_provider, &root);
-      self.file_tree_vcs_dirty = false;
-      changed = true;
+    if self.file_tree_diagnostics_seq == diagnostics_seq {
+      return false;
     }
+    self.file_tree_diagnostic_statuses =
+      rebuild_file_tree_diagnostic_statuses(&self.diagnostics, &root);
+    self.file_tree_diagnostics_seq = diagnostics_seq;
+    self.recombine_file_tree_decorations()
+  }
 
-    if self.file_tree_diagnostics_seq != diagnostics_seq {
-      self.file_tree_diagnostic_statuses =
-        rebuild_file_tree_diagnostic_statuses(&self.diagnostics, &root);
-      self.file_tree_diagnostics_seq = diagnostics_seq;
-      changed = true;
+  fn recombine_file_tree_decorations(&mut self) -> bool {
+    let next = combine_file_tree_decorations(
+      &self.file_tree_vcs_statuses,
+      &self.file_tree_diagnostic_statuses,
+    );
+    if next != self.file_tree_decorations {
+      self.file_tree_decorations = next;
+      return true;
     }
-
-    if changed {
-      let next = combine_file_tree_decorations(
-        &self.file_tree_vcs_statuses,
-        &self.file_tree_diagnostic_statuses,
-      );
-      if next != self.file_tree_decorations {
-        self.file_tree_decorations = next;
-        return true;
-      }
-    }
-
     false
+  }
+
+  fn schedule_file_tree_vcs_refresh(
+    &mut self,
+    reason: FileTreeVcsRefreshReason,
+    due_at: Option<Instant>,
+  ) {
+    let Some(root) = self.file_tree_decoration_root.clone() else {
+      return;
+    };
+    let due_at = due_at.unwrap_or_else(|| Instant::now());
+    self.file_tree_vcs_refresh_due_at = Some(
+      self
+        .file_tree_vcs_refresh_due_at
+        .map_or(due_at, |current| current.min(due_at)),
+    );
+    self.file_tree_vcs_refresh_reason = Some(
+      self
+        .file_tree_vcs_refresh_reason
+        .map_or(reason, |current| current.combine(reason)),
+    );
+    if self.file_tree_vcs_refresh_in_flight {
+      self.file_tree_vcs_refresh_rerun = true;
+    }
+    log_file_tree_vcs_refresh_event(
+      "scheduled",
+      self.file_tree_vcs_refresh_generation + u64::from(self.file_tree_vcs_refresh_in_flight),
+      &root,
+      reason,
+      None,
+      None,
+      None,
+      None,
+      None,
+      None,
+    );
+  }
+
+  fn clear_pending_file_tree_vcs_refresh(&mut self) {
+    self.file_tree_vcs_refresh_due_at = None;
+    self.file_tree_vcs_refresh_reason = None;
+    self.file_tree_vcs_refresh_in_flight = false;
+    self.file_tree_vcs_refresh_rerun = false;
   }
 
   fn handle_lsp_rpc_message(&mut self, message: jsonrpc::Message) -> bool {
@@ -3551,11 +4176,15 @@ impl Ctx {
       }
 
       let active_path = self.editor.active_file_path().map(Path::to_path_buf);
+      let previous_path = self.file_path.clone();
       self.file_path = active_path.clone();
       self.lsp_refresh_document_state(active_path.as_deref());
       self.lsp_open_current_document();
       self.clear_hover_state();
-      self.refresh_vcs_diff_base();
+      self.refresh_active_file_vcs_after_path_change(
+        previous_path,
+        ActiveFileVcsRefreshReason::PathChange,
+      );
     }
 
     self.request_render();
@@ -5963,10 +6592,14 @@ impl Ctx {
     }
 
     let active_path = self.editor.active_file_path().map(Path::to_path_buf);
+    let previous_path = self.file_path.clone();
     self.file_path = active_path.clone();
     self.lsp_refresh_document_state(active_path.as_deref());
     self.lsp_open_current_document();
-    self.refresh_vcs_diff_base();
+    self.refresh_active_file_vcs_after_path_change(
+      previous_path,
+      ActiveFileVcsRefreshReason::PathChange,
+    );
     the_default::sync_file_tree_to_active_file(self);
   }
 }
@@ -5975,22 +6608,112 @@ fn file_tree_watch_latency() -> Duration {
   Duration::from_millis(75)
 }
 
-fn rebuild_file_tree_vcs_statuses(
-  vcs_provider: &DiffProviderRegistry,
+fn file_tree_changed_refresh_latency() -> Duration {
+  Duration::from_millis(200)
+}
+
+fn vcs_watch_latency() -> Duration {
+  Duration::from_millis(75)
+}
+
+fn term_render_perf_enabled() -> bool {
+  env::var("THE_TERM_DEBUG_RENDER_PERF").ok().as_deref() == Some("1")
+}
+
+fn append_perf_line(data: &[u8]) {
+  let Some(path) = env::var("THE_TERM_DEBUG_RENDER_PERF_FILE")
+    .ok()
+    .map(|raw| raw.trim().to_string())
+    .filter(|raw| !raw.is_empty())
+    .map(PathBuf::from)
+  else {
+    return;
+  };
+  if let Some(parent) = path.parent() {
+    let _ = std::fs::create_dir_all(parent);
+  }
+  if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
+    let _ = file.write_all(data);
+  }
+}
+
+fn log_file_tree_vcs_refresh_event(
+  phase: &str,
+  generation: u64,
+  root: &Path,
+  reason: FileTreeVcsRefreshReason,
+  change_count: Option<usize>,
+  status_entries: Option<usize>,
+  collect_ms: Option<f64>,
+  collapse_ms: Option<f64>,
+  apply_ms: Option<f64>,
+  decorations_changed: Option<bool>,
+) {
+  if !term_render_perf_enabled() {
+    return;
+  }
+  let ts_ms = SystemTime::now()
+    .duration_since(SystemTime::UNIX_EPOCH)
+    .map(|duration| duration.as_millis())
+    .unwrap_or(0);
+  let line = format!(
+    "[filetreevcs {ts_ms}] kind=file_tree_vcs_refresh phase={phase} generation={generation} \
+     root={} reason={} changes={} status_entries={} collect={:.2}ms collapse={:.2}ms \
+     apply={:.2}ms decorations_changed={}\n",
+    root.display(),
+    reason.log_label(),
+    change_count.map_or(String::from("-"), |value| value.to_string()),
+    status_entries.map_or(String::from("-"), |value| value.to_string()),
+    collect_ms.unwrap_or(0.0),
+    collapse_ms.unwrap_or(0.0),
+    apply_ms.unwrap_or(0.0),
+    decorations_changed.map_or("-", |value| if value { "1" } else { "0" }),
+  );
+  append_perf_line(line.as_bytes());
+}
+
+fn log_active_file_vcs_refresh_event(
+  phase: &str,
+  generation: u64,
+  path: &Path,
+  reason: ActiveFileVcsRefreshReason,
+  statusline_present: Option<bool>,
+  diff_base_present: Option<bool>,
+  collect_ms: Option<f64>,
+  apply_ms: Option<f64>,
+) {
+  if !term_render_perf_enabled() {
+    return;
+  }
+  let ts_ms = SystemTime::now()
+    .duration_since(SystemTime::UNIX_EPOCH)
+    .map(|duration| duration.as_millis())
+    .unwrap_or(0);
+  let line = format!(
+    "[activefilevcs {ts_ms}] kind=active_file_vcs_refresh phase={phase} generation={generation} \
+     path={} reason={} statusline={} diff_base={} collect={:.2}ms apply={:.2}ms\n",
+    path.display(),
+    reason.log_label(),
+    statusline_present.map_or("-", |value| if value { "1" } else { "0" }),
+    diff_base_present.map_or("-", |value| if value { "1" } else { "0" }),
+    collect_ms.unwrap_or(0.0),
+    apply_ms.unwrap_or(0.0),
+  );
+  append_perf_line(line.as_bytes());
+}
+
+fn collapse_file_tree_vcs_statuses(
+  changes: &[the_vcs::FileChange],
   root: &Path,
 ) -> BTreeMap<PathBuf, FileTreeVcsKind> {
-  let Ok(changes) = vcs_provider.collect_changed_files(root) else {
-    return BTreeMap::new();
-  };
-
   let mut statuses = BTreeMap::new();
   for change in changes {
     let (path, kind) = match change {
-      the_vcs::FileChange::Untracked { path } => (path, FileTreeVcsKind::Untracked),
-      the_vcs::FileChange::Modified { path } => (path, FileTreeVcsKind::Modified),
-      the_vcs::FileChange::Conflict { path } => (path, FileTreeVcsKind::Conflict),
-      the_vcs::FileChange::Deleted { path } => (path, FileTreeVcsKind::Deleted),
-      the_vcs::FileChange::Renamed { to_path, .. } => (to_path, FileTreeVcsKind::Renamed),
+      the_vcs::FileChange::Untracked { path } => (path.as_path(), FileTreeVcsKind::Untracked),
+      the_vcs::FileChange::Modified { path } => (path.as_path(), FileTreeVcsKind::Modified),
+      the_vcs::FileChange::Conflict { path } => (path.as_path(), FileTreeVcsKind::Conflict),
+      the_vcs::FileChange::Deleted { path } => (path.as_path(), FileTreeVcsKind::Deleted),
+      the_vcs::FileChange::Renamed { to_path, .. } => (to_path.as_path(), FileTreeVcsKind::Renamed),
     };
     if !path.starts_with(root) {
       continue;
@@ -6888,9 +7611,13 @@ impl the_default::DefaultContext for Ctx {
   fn set_file_path(&mut self, path: Option<PathBuf>) {
     self.clear_hover_state();
     self.lsp_refresh_document_state(path.as_deref());
+    let previous_path = self.file_path.clone();
     self.file_path = path.clone();
     self.editor.set_active_file_path(path);
-    self.refresh_vcs_diff_base();
+    self.refresh_active_file_vcs_after_path_change(
+      previous_path,
+      ActiveFileVcsRefreshReason::PathChange,
+    );
     the_default::sync_file_tree_to_active_file(self);
   }
 
@@ -6922,11 +7649,15 @@ impl the_default::DefaultContext for Ctx {
       .editor
       .active_file_path()
       .map(|path| path.to_path_buf());
+    let previous_path = self.file_path.clone();
     self.file_path = active_path.clone();
     self.lsp_refresh_document_state(active_path.as_deref());
     self.lsp_open_current_document();
     self.clear_hover_state();
-    self.refresh_vcs_diff_base();
+    self.refresh_active_file_vcs_after_path_change(
+      previous_path,
+      ActiveFileVcsRefreshReason::PathChange,
+    );
     self.needs_render = true;
     true
   }
@@ -6952,11 +7683,15 @@ impl the_default::DefaultContext for Ctx {
     }
 
     let active_path = self.editor.active_file_path().map(Path::to_path_buf);
+    let previous_path = self.file_path.clone();
     self.file_path = active_path.clone();
     self.lsp_refresh_document_state(active_path.as_deref());
     self.lsp_open_current_document();
     self.clear_hover_state();
-    self.refresh_vcs_diff_base();
+    self.refresh_active_file_vcs_after_path_change(
+      previous_path,
+      ActiveFileVcsRefreshReason::PathChange,
+    );
     self.needs_render = true;
     true
   }
@@ -6980,11 +7715,15 @@ impl the_default::DefaultContext for Ctx {
       .editor
       .active_file_path()
       .map(|path| path.to_path_buf());
+    let previous_path = self.file_path.clone();
     self.file_path = active_path.clone();
     self.lsp_refresh_document_state(active_path.as_deref());
     self.lsp_open_current_document();
     self.clear_hover_state();
-    self.refresh_vcs_diff_base();
+    self.refresh_active_file_vcs_after_path_change(
+      previous_path,
+      ActiveFileVcsRefreshReason::PathChange,
+    );
     self.needs_render = true;
     true
   }
@@ -7008,11 +7747,15 @@ impl the_default::DefaultContext for Ctx {
       .editor
       .active_file_path()
       .map(|path| path.to_path_buf());
+    let previous_path = self.file_path.clone();
     self.file_path = active_path.clone();
     self.lsp_refresh_document_state(active_path.as_deref());
     self.lsp_open_current_document();
     self.clear_hover_state();
-    self.refresh_vcs_diff_base();
+    self.refresh_active_file_vcs_after_path_change(
+      previous_path,
+      ActiveFileVcsRefreshReason::PathChange,
+    );
     self.needs_render = true;
     true
   }
@@ -7038,11 +7781,15 @@ impl the_default::DefaultContext for Ctx {
         .editor
         .active_file_path()
         .map(|path| path.to_path_buf());
+      let previous_path = self.file_path.clone();
       self.file_path = active_path.clone();
       self.lsp_refresh_document_state(active_path.as_deref());
       self.lsp_open_current_document();
       self.clear_hover_state();
-      self.refresh_vcs_diff_base();
+      self.refresh_active_file_vcs_after_path_change(
+        previous_path,
+        ActiveFileVcsRefreshReason::PathChange,
+      );
     }
 
     self.needs_render = true;
@@ -7070,11 +7817,15 @@ impl the_default::DefaultContext for Ctx {
         .editor
         .active_file_path()
         .map(|path| path.to_path_buf());
+      let previous_path = self.file_path.clone();
       self.file_path = active_path.clone();
       self.lsp_refresh_document_state(active_path.as_deref());
       self.lsp_open_current_document();
       self.clear_hover_state();
-      self.refresh_vcs_diff_base();
+      self.refresh_active_file_vcs_after_path_change(
+        previous_path,
+        ActiveFileVcsRefreshReason::PathChange,
+      );
     }
 
     self.needs_render = true;
@@ -7546,6 +8297,7 @@ fn lsp_method_is_unsupported(error: &jsonrpc::ResponseError) -> bool {
 #[cfg(test)]
 mod tests {
   use std::{
+    collections::BTreeMap,
     fs,
     path::{
       Path,
@@ -7599,7 +8351,10 @@ mod tests {
       char_idx_at_coords,
       coords_at_pos,
     },
-    render::VirtualLineSpec,
+    render::{
+      RenderGutterDiffKind,
+      VirtualLineSpec,
+    },
     selection::{
       Range,
       Selection,
@@ -7625,8 +8380,14 @@ mod tests {
   };
 
   use super::{
+    ActiveFileVcsRefreshReason,
+    ActiveFileVcsRefreshResult,
     CompletionSnippetCursorOrigin,
     Ctx,
+    DiffHandle,
+    FileTreeVcsKind,
+    FileTreeVcsRefreshReason,
+    FileTreeVcsRefreshResult,
     PendingAutoSignatureHelp,
     SignatureHelpTriggerSource,
     WatchedFileEventsState,
@@ -8101,22 +8862,17 @@ mod tests {
     events_tx
   }
 
-  fn install_test_file_tree_watch_state(ctx: &mut Ctx, path: &Path) -> Sender<Vec<PathEvent>> {
-    let (events_tx, events_rx) = channel();
-    let (_unused_rx, watch_handle) = super::watch_path(path, Duration::from_millis(0));
-    let uri = the_lsp::text_sync::file_uri_for_path(path).expect("file uri");
-    ctx.file_tree_watch = Some(super::FileTreeWatchState {
-      stream:        WatchedFileEventsState {
-        path: path.to_path_buf(),
-        uri,
-        events_rx,
-        suppress_until: None,
-        reload_state: super::FileWatchReloadState::Clean,
-        reload_io: super::FileWatchReloadIoState::default(),
-      },
-      _watch_handle: watch_handle,
-    });
-    events_tx
+  fn attach_test_file_tree(ctx: &mut Ctx, root: &Path) {
+    let surface_id = ctx.editor.create_client_surface();
+    ctx.file_tree.surface_id = Some(surface_id);
+    ctx.file_tree.sidebar_pane = Some(ctx.editor.active_pane_id());
+    ctx.file_tree.root = Some(root.to_path_buf());
+    ctx.file_tree.expanded_dirs.clear();
+    ctx.file_tree.expanded_dirs.insert(root.to_path_buf());
+    assert!(ctx.editor.open_client_surface_in_active_pane(surface_id));
+    the_default::refresh_file_tree(ctx);
+    ctx.file_tree_decoration_root = Some(root.to_path_buf());
+    ctx.clear_pending_file_tree_vcs_refresh();
   }
 
   #[derive(Debug, Clone, Copy)]
@@ -8633,6 +9389,74 @@ pkgs.mkShell {
       .row;
 
     assert!(after > before);
+  }
+
+  #[test]
+  fn toggle_file_tree_adds_left_edge_sidebar_without_replacing_existing_splits() {
+    let mut ctx = Ctx::new(None).expect("ctx");
+    let view = ctx.editor.view();
+    ctx.editor.open_buffer(Rope::from("two\n"), view, None);
+    assert!(ctx.editor.split_active_pane(SplitAxis::Vertical));
+
+    let right_pane = ctx.editor.active_pane_id();
+    let left_pane = ctx
+      .editor
+      .pane_in_direction(right_pane, the_lib::split_tree::PaneDirection::Left)
+      .expect("left pane");
+    let pane_count_before = ctx.editor.pane_count();
+
+    assert_eq!(
+      ctx.editor.pane_content_kind(left_pane),
+      Some(the_lib::editor::PaneContentKind::EditorBuffer)
+    );
+    assert_eq!(
+      ctx.editor.pane_content_kind(right_pane),
+      Some(the_lib::editor::PaneContentKind::EditorBuffer)
+    );
+
+    toggle_file_tree(&mut ctx);
+
+    assert_eq!(ctx.editor.pane_count(), pane_count_before + 1);
+    assert_eq!(
+      ctx.editor.pane_content_kind(left_pane),
+      Some(the_lib::editor::PaneContentKind::EditorBuffer)
+    );
+    assert_eq!(
+      ctx.editor.pane_content_kind(right_pane),
+      Some(the_lib::editor::PaneContentKind::EditorBuffer)
+    );
+
+    let tree_pane = ctx.file_tree.sidebar_pane.expect("tree sidebar pane");
+    assert_ne!(tree_pane, left_pane);
+    assert_ne!(tree_pane, right_pane);
+    assert_eq!(
+      ctx
+        .editor
+        .pane_in_direction(tree_pane, the_lib::split_tree::PaneDirection::Left),
+      None
+    );
+    assert_eq!(
+      ctx
+        .editor
+        .pane_in_direction(tree_pane, the_lib::split_tree::PaneDirection::Right),
+      Some(left_pane)
+    );
+    assert_eq!(
+      ctx.editor.pane_content_kind(tree_pane),
+      Some(the_lib::editor::PaneContentKind::ClientSurface)
+    );
+
+    toggle_file_tree(&mut ctx);
+
+    assert_eq!(ctx.editor.pane_count(), pane_count_before);
+    assert_eq!(
+      ctx.editor.pane_content_kind(left_pane),
+      Some(the_lib::editor::PaneContentKind::EditorBuffer)
+    );
+    assert_eq!(
+      ctx.editor.pane_content_kind(right_pane),
+      Some(the_lib::editor::PaneContentKind::EditorBuffer)
+    );
   }
 
   #[test]
@@ -10831,22 +11655,215 @@ pkgs.mkShell {
   #[test]
   fn file_tree_watch_refreshes_rows_for_new_files() {
     let dir = TempTestDir::new("file-tree-watch");
-    dir.mkdir(".git");
-    let opened = dir.write_file("main.txt", "main\n");
-    let opened_str = opened.to_str().expect("path string").to_string();
-    let mut ctx = Ctx::new(Some(opened_str.as_str())).expect("ctx");
-    toggle_file_tree(&mut ctx);
+    dir.write_file("main.txt", "main\n");
+    let mut ctx = Ctx::new(None).expect("ctx");
+    attach_test_file_tree(&mut ctx, dir.as_path());
 
-    let events_tx = install_test_file_tree_watch_state(&mut ctx, dir.as_path());
     let new_file = dir.write_file("fresh.txt", "fresh\n");
-    events_tx
-      .send(vec![PathEvent {
-        path: new_file.clone(),
-        kind: PathEventKind::Created,
-      }])
-      .expect("send watch event");
 
-    assert!(ctx.poll_file_tree_watch());
+    assert!(ctx.handle_file_tree_watch_kinds(&[PathEventKind::Created], Instant::now()));
     assert!(ctx.file_tree.rows.iter().any(|row| row.path == new_file));
+  }
+
+  #[test]
+  fn file_tree_watch_debounces_changed_only_events() {
+    let dir = TempTestDir::new("file-tree-watch-debounce");
+    let opened = dir.write_file("main.txt", "main\n");
+    let mut ctx = Ctx::new(None).expect("ctx");
+    attach_test_file_tree(&mut ctx, dir.as_path());
+
+    let now = Instant::now();
+    assert!(!ctx.handle_file_tree_watch_kinds(&[PathEventKind::Changed], now));
+    assert!(ctx.file_tree_refresh_due_at.is_some());
+
+    let _ = opened;
+    assert!(ctx.poll_pending_file_tree_refresh(now + Duration::from_millis(201)));
+    assert_eq!(ctx.file_tree_refresh_due_at, None);
+    assert_eq!(
+      ctx.file_tree_vcs_refresh_reason,
+      Some(FileTreeVcsRefreshReason::FileTreeChangedDebounce)
+    );
+  }
+
+  #[test]
+  fn vcs_watch_events_schedule_file_tree_vcs_refresh() {
+    let mut ctx = Ctx::new(None).expect("ctx");
+    let dir = TempTestDir::new("vcs-watch-schedule");
+    attach_test_file_tree(&mut ctx, dir.as_path());
+
+    ctx.clear_pending_file_tree_vcs_refresh();
+    let _ = ctx.handle_vcs_watch_change();
+    assert!(ctx.file_tree_vcs_refresh_due_at.is_some());
+    assert_eq!(
+      ctx.file_tree_vcs_refresh_reason,
+      Some(FileTreeVcsRefreshReason::VcsWatch)
+    );
+  }
+
+  #[test]
+  fn vcs_watch_events_schedule_active_file_vcs_refresh() {
+    let dir = TempTestDir::new("active-file-vcs-watch-schedule");
+    let file = dir.write_file("main.txt", "main\n");
+    let mut ctx = Ctx::new(None).expect("ctx");
+    ctx.file_path = Some(file);
+
+    let _ = ctx.handle_vcs_watch_change();
+
+    assert!(ctx.active_file_vcs_refresh_due_at.is_some());
+    assert_eq!(
+      ctx.active_file_vcs_refresh_reason,
+      Some(ActiveFileVcsRefreshReason::VcsWatch)
+    );
+  }
+
+  #[test]
+  fn active_file_vcs_result_applies_diff_state() {
+    let dir = TempTestDir::new("active-file-vcs-result-apply");
+    let file = dir.write_file("main.txt", "current\n");
+    let mut ctx = Ctx::new(None).expect("ctx");
+    ctx.file_path = Some(file.clone());
+    ctx.active_file_vcs_refresh_generation = 1;
+    ctx.active_file_vcs_refresh_in_flight = true;
+
+    ctx
+      .active_file_vcs_refresh_tx
+      .send(ActiveFileVcsRefreshResult {
+        generation: 1,
+        path:       file,
+        reason:     ActiveFileVcsRefreshReason::VcsWatch,
+        statusline: Some("status".to_string()),
+        diff_base:  Some(b"base\n".to_vec()),
+        collect_ms: 1.0,
+      })
+      .expect("send active file vcs result");
+
+    assert!(ctx.poll_active_file_vcs_refresh_results());
+    assert_eq!(ctx.vcs_statusline.as_deref(), Some("status"));
+    assert!(ctx.vcs_diff.is_some());
+    assert!(!ctx.active_file_vcs_refresh_in_flight);
+  }
+
+  #[test]
+  fn stale_active_file_vcs_result_is_discarded() {
+    let dir = TempTestDir::new("active-file-vcs-result-stale");
+    let other_dir = TempTestDir::new("active-file-vcs-result-other");
+    let file = dir.write_file("main.txt", "current\n");
+    let other_file = other_dir.write_file("other.txt", "other\n");
+    let mut ctx = Ctx::new(None).expect("ctx");
+    ctx.file_path = Some(file);
+    ctx.active_file_vcs_refresh_generation = 2;
+    ctx.active_file_vcs_refresh_in_flight = true;
+
+    ctx
+      .active_file_vcs_refresh_tx
+      .send(ActiveFileVcsRefreshResult {
+        generation: 1,
+        path:       other_file,
+        reason:     ActiveFileVcsRefreshReason::VcsWatch,
+        statusline: Some("stale".to_string()),
+        diff_base:  Some(b"base\n".to_vec()),
+        collect_ms: 1.0,
+      })
+      .expect("send stale active file vcs result");
+
+    assert!(!ctx.poll_active_file_vcs_refresh_results());
+    assert!(ctx.vcs_statusline.is_none());
+    assert!(ctx.vcs_diff.is_none());
+    assert!(ctx.active_file_vcs_refresh_in_flight);
+  }
+
+  #[test]
+  fn active_file_path_change_clears_previous_vcs_state() {
+    let dir = TempTestDir::new("active-file-vcs-path-change");
+    let old_file = dir.write_file("old.txt", "old\n");
+    let new_file = dir.write_file("new.txt", "new\n");
+    let mut ctx = Ctx::new(None).expect("ctx");
+    ctx.file_path = Some(old_file);
+    ctx.vcs_statusline = Some("old-status".to_string());
+    ctx.vcs_diff = Some(DiffHandle::new(
+      Rope::from_str("base\n"),
+      Rope::from_str("current\n"),
+    ));
+    ctx
+      .gutter_diff_signs
+      .insert(0, RenderGutterDiffKind::Modified);
+
+    let previous_path = ctx.file_path.clone();
+    ctx.file_path = Some(new_file);
+    ctx.refresh_active_file_vcs_after_path_change(
+      previous_path,
+      ActiveFileVcsRefreshReason::PathChange,
+    );
+
+    assert!(ctx.vcs_statusline.is_none());
+    assert!(ctx.vcs_diff.is_none());
+    assert!(ctx.gutter_diff_signs.is_empty());
+    assert!(ctx.active_file_vcs_refresh_due_at.is_some());
+  }
+
+  #[test]
+  fn file_tree_vcs_result_applies_decorations() {
+    let dir = TempTestDir::new("file-tree-vcs-result-apply");
+    let changed = dir.write_file("changed.txt", "changed\n");
+    let mut ctx = Ctx::new(None).expect("ctx");
+    attach_test_file_tree(&mut ctx, dir.as_path());
+    ctx.file_tree_vcs_refresh_generation = 1;
+    ctx.file_tree_vcs_refresh_in_flight = true;
+
+    let mut statuses = BTreeMap::new();
+    statuses.insert(changed.clone(), FileTreeVcsKind::Modified);
+    ctx
+      .file_tree_vcs_refresh_tx
+      .send(FileTreeVcsRefreshResult {
+        generation: 1,
+        root: dir.as_path().to_path_buf(),
+        reason: FileTreeVcsRefreshReason::VcsWatch,
+        statuses,
+        change_count: 1,
+        status_entries: 1,
+        collect_ms: 1.0,
+        collapse_ms: 0.5,
+      })
+      .expect("send vcs result");
+
+    assert!(ctx.poll_file_tree_vcs_refresh_results());
+    assert_eq!(
+      ctx
+        .file_tree_decorations
+        .get(&changed)
+        .and_then(|value| value.vcs),
+      Some(FileTreeVcsKind::Modified)
+    );
+  }
+
+  #[test]
+  fn stale_file_tree_vcs_result_is_discarded() {
+    let dir = TempTestDir::new("file-tree-vcs-result-stale");
+    let other_dir = TempTestDir::new("file-tree-vcs-result-other");
+    let changed = dir.write_file("changed.txt", "changed\n");
+    let mut ctx = Ctx::new(None).expect("ctx");
+    attach_test_file_tree(&mut ctx, dir.as_path());
+    ctx.file_tree_vcs_refresh_generation = 2;
+    ctx.file_tree_vcs_refresh_in_flight = true;
+
+    let mut statuses = BTreeMap::new();
+    statuses.insert(changed, FileTreeVcsKind::Modified);
+    ctx
+      .file_tree_vcs_refresh_tx
+      .send(FileTreeVcsRefreshResult {
+        generation: 1,
+        root: other_dir.as_path().to_path_buf(),
+        reason: FileTreeVcsRefreshReason::VcsWatch,
+        statuses,
+        change_count: 1,
+        status_entries: 1,
+        collect_ms: 1.0,
+        collapse_ms: 0.5,
+      })
+      .expect("send stale vcs result");
+
+    assert!(!ctx.poll_file_tree_vcs_refresh_results());
+    assert!(ctx.file_tree_decorations.is_empty());
+    assert!(ctx.file_tree_vcs_refresh_in_flight);
   }
 }

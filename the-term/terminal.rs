@@ -36,7 +36,10 @@ use the_lib::render::graphics::CursorKind as LibCursorKind;
 
 use crate::{
   ctx::TermCursorMode,
-  undercurl_backend::UndercurlCrosstermBackend,
+  undercurl_backend::{
+    TerminalIoPerfStats,
+    UndercurlCrosstermBackend,
+  },
 };
 
 pub struct Terminal {
@@ -96,15 +99,17 @@ impl Terminal {
     Ok(())
   }
 
-  pub fn draw<F>(&mut self, f: F) -> Result<()>
+  pub fn draw<F>(&mut self, f: F) -> Result<TerminalIoPerfStats>
   where
     F: for<'a> FnOnce(&mut ratatui::Frame<'a>),
   {
+    self.terminal.backend_mut().reset_perf_stats();
     self.terminal.draw(f)?;
-    Ok(())
+    Ok(self.terminal.backend_mut().take_perf_stats())
   }
 
-  pub fn apply_editor_cursor(&mut self, cursor: TermCursorMode) -> Result<()> {
+  pub fn apply_editor_cursor(&mut self, cursor: TermCursorMode) -> Result<TerminalIoPerfStats> {
+    self.terminal.backend_mut().reset_perf_stats();
     match cursor {
       TermCursorMode::Hardware(cursor) => {
         let (x, y, kind) = (cursor.x, cursor.y, cursor.kind);
@@ -120,7 +125,7 @@ impl Terminal {
         execute!(self.terminal.backend_mut(), Hide)?;
       },
     }
-    Ok(())
+    Ok(self.terminal.backend_mut().take_perf_stats())
   }
 
   pub fn resize(&mut self, width: u16, height: u16) -> Result<()> {

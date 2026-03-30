@@ -4823,8 +4823,9 @@ fn draw_completion_overlay(
       .saturating_div(3)
       .min(84)
       .max(28);
+    let docs_height = completion_docs_target_height(overlay.height, panel_rect.height);
     if let Some(docs_rect) =
-      completion_docs_panel_rect(overlay, docs_width, panel_rect.height, panel_rect)
+      completion_docs_panel_rect(overlay, docs_width, docs_height, panel_rect)
     {
       let docs_styles = docs_panel_styles(ctx);
       let docs_inner = draw_flat_overlay_panel(buf, docs_rect, docs_styles, 1);
@@ -4839,6 +4840,10 @@ fn draw_completion_overlay(
       );
     }
   }
+}
+
+fn completion_docs_target_height(overlay_height: u16, completion_panel_height: u16) -> u16 {
+  overlay_height.min(completion_panel_height.max(8)).max(1)
 }
 
 fn draw_signature_help_overlay(
@@ -6664,6 +6669,13 @@ mod tests {
         .collect::<String>()
         .contains(needle)
     })
+  }
+
+  #[test]
+  fn completion_docs_target_height_has_readable_minimum() {
+    assert_eq!(completion_docs_target_height(24, 1), 8);
+    assert_eq!(completion_docs_target_height(6, 1), 6);
+    assert_eq!(completion_docs_target_height(24, 12), 12);
   }
 
   #[test]

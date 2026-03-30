@@ -8070,6 +8070,11 @@ impl the_default::DefaultContext for Ctx {
     let _ = self.dispatch_signature_help_request(SignatureHelpTriggerSource::Manual, true);
   }
 
+  fn lsp_signature_help_on_insert_mode_entry(&mut self) {
+    self.cancel_auto_signature_help();
+    let _ = self.dispatch_signature_help_request(SignatureHelpTriggerSource::Manual, false);
+  }
+
   fn lsp_code_actions(&mut self) {
     if !self.lsp_supports(LspCapability::CodeAction) {
       self.messages.publish(
@@ -11516,6 +11521,32 @@ pkgs.mkShell {
   }
 
   #[test]
+  fn ctrl_w_deletes_word_when_completion_menu_is_active() {
+    let mut ctx = Ctx::new(None).expect("ctx");
+    let tx = Transaction::change(
+      ctx.editor.document().text(),
+      std::iter::once((0, 0, Some("hello world".into()))),
+    )
+    .expect("seed text");
+    assert!(DefaultContext::apply_transaction(&mut ctx, &tx));
+
+    let cursor = ctx.editor.document().text().len_chars();
+    let _ = ctx
+      .editor
+      .document_mut()
+      .set_selection(Selection::single(cursor, cursor));
+    ctx.set_mode(Mode::Insert);
+    show_completion_menu(&mut ctx, vec![CompletionMenuItem::new("world")]);
+
+    handle_key(&mut ctx, KeyEvent {
+      key:       Key::Char('w'),
+      modifiers: ctrl_modifiers(),
+    });
+
+    assert_eq!(ctx.editor.document().text().to_string(), "hello ");
+  }
+
+  #[test]
   fn page_down_falls_back_to_editor_scroll_when_completion_is_inactive() {
     let mut ctx = Ctx::new(None).expect("ctx");
     ctx.set_mode(Mode::Insert);
@@ -11614,6 +11645,58 @@ pkgs.mkShell {
     assert!(!ctx.handle_signature_help_action(Command::Search));
     assert!(!ctx.signature_help.active);
     assert!(ctx.lsp_pending_auto_signature_help.is_none());
+  }
+
+  #[test]
+  fn entering_insert_mode_does_not_warn_when_signature_help_is_unavailable() {
+    let mut ctx = Ctx::new(None).expect("ctx");
+    let before_seq = ctx.messages.latest_seq();
+
+    handle_key(&mut ctx, KeyEvent {
+      key:       Key::Char('i'),
+      modifiers: Modifiers::empty(),
+    });
+
+    assert_eq!(ctx.mode(), Mode::Insert);
+    let published_lsp_messages = ctx
+      .messages
+      .events_since(before_seq)
+      .into_iter()
+      .any(|event| {
+        match event.kind {
+          MessageEventKind::Published { message } => message.source.as_deref() == Some("lsp"),
+          _ => false,
+        }
+      });
+    assert!(!published_lsp_messages);
+  }
+
+  #[test]
+  fn manual_signature_help_still_warns_when_unavailable() {
+    let mut ctx = Ctx::new(None).expect("ctx");
+    let before_seq = ctx.messages.latest_seq();
+
+    ctx.lsp_signature_help();
+
+    let warning = ctx
+      .messages
+      .events_since(before_seq)
+      .into_iter()
+      .find_map(|event| {
+        match event.kind {
+          MessageEventKind::Published { message } => {
+            (message.level == the_lib::messages::MessageLevel::Warning
+              && message.source.as_deref() == Some("lsp"))
+            .then_some(message.text)
+          },
+          _ => None,
+        }
+      })
+      .expect("signature help warning");
+    assert_eq!(
+      warning,
+      "signature help is not supported by the active server"
+    );
   }
 
   #[test]

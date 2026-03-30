@@ -668,10 +668,28 @@ pub fn handle_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent) -> KeyOutco
   }
 }
 
+#[allow(dead_code)]
 pub fn handle_key_with_keymaps<Ctx: DefaultContext>(
   ctx: &mut Ctx,
   keymaps: &mut Keymaps,
   key: KeyEvent,
+) -> KeyOutcome {
+  handle_key_with_keymaps_inner(ctx, keymaps, key, true)
+}
+
+pub fn handle_key_with_keymaps_no_fallback<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  keymaps: &mut Keymaps,
+  key: KeyEvent,
+) -> KeyOutcome {
+  handle_key_with_keymaps_inner(ctx, keymaps, key, false)
+}
+
+fn handle_key_with_keymaps_inner<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  keymaps: &mut Keymaps,
+  key: KeyEvent,
+  use_fallback: bool,
 ) -> KeyOutcome {
   let mode = ctx.mode();
   let result = keymaps.get(mode, &key);
@@ -680,7 +698,13 @@ pub fn handle_key_with_keymaps<Ctx: DefaultContext>(
     KeymapResult::Matched(action) => apply_actions_with_keymaps(ctx, keymaps, &[action]),
     KeymapResult::MatchedSequence(actions) => apply_actions_with_keymaps(ctx, keymaps, &actions),
     KeymapResult::Pending(_) | KeymapResult::Cancelled(_) => KeyOutcome::Handled,
-    KeymapResult::NotFound => fallback_key(ctx, key),
+    KeymapResult::NotFound => {
+      if use_fallback {
+        fallback_key(ctx, key)
+      } else {
+        KeyOutcome::Continue
+      }
+    },
   }
 }
 
@@ -847,7 +871,7 @@ fn apply_mode<Ctx: DefaultContext>(ctx: &mut Ctx, mode: Mode) {
 
   ctx.set_mode(mode);
   if mode == Mode::Insert {
-    ctx.lsp_signature_help();
+    ctx.lsp_signature_help_on_insert_mode_entry();
   }
   ctx.request_render();
 }

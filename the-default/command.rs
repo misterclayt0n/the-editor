@@ -655,6 +655,9 @@ pub trait DefaultContext: Sized + 'static {
   fn lsp_workspace_symbols(&mut self) {}
   fn lsp_completion(&mut self) {}
   fn lsp_signature_help(&mut self) {}
+  fn lsp_signature_help_on_insert_mode_entry(&mut self) {
+    self.lsp_signature_help();
+  }
   fn lsp_code_actions(&mut self) {}
   fn lsp_rename(&mut self, _new_name: &str) {}
   fn lsp_format(&mut self) {}
@@ -1141,7 +1144,7 @@ fn handle_completion_menu_keymap<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEve
   }
 
   let mut keymaps = std::mem::take(ctx.completion_menu_keymaps_mut());
-  let outcome = crate::keymap::handle_key_with_keymaps(ctx, &mut keymaps, key);
+  let outcome = crate::keymap::handle_key_with_keymaps_no_fallback(ctx, &mut keymaps, key);
   *ctx.completion_menu_keymaps_mut() = keymaps;
   handle_key_outcome(ctx, outcome)
 }

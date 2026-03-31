@@ -11,6 +11,7 @@ use ratatui::{
   },
 };
 use the_default::{
+  FilePickerKind,
   FilePickerPreviewNavigationMode,
   FilePickerState,
 };
@@ -103,11 +104,17 @@ pub fn compute_file_picker_layout(
     });
   }
 
-  let show_preview = picker.show_preview && panel_inner.width >= 72;
+  let vcs_diff_picker = picker.kind == FilePickerKind::VcsDiff;
+  let preview_threshold = if vcs_diff_picker { 96 } else { 72 };
+  let show_preview = picker.show_preview && panel_inner.width >= preview_threshold;
   let panes = if show_preview {
     Layout::default()
       .direction(Direction::Horizontal)
-      .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+      .constraints(if vcs_diff_picker {
+        [Constraint::Percentage(45), Constraint::Percentage(55)]
+      } else {
+        [Constraint::Percentage(50), Constraint::Percentage(50)]
+      })
       .split(panel_inner)
   } else {
     Layout::default()

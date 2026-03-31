@@ -676,6 +676,7 @@ pub enum Command {
   JumplistPicker,
   DiagnosticsPicker,
   WorkspaceDiagnosticsPicker,
+  VcsDiffPicker,
   ChangedFilePicker,
   TerminalOpen,
   TerminalClose,
@@ -690,6 +691,8 @@ pub enum Command {
   LspDocumentSymbols,
   LspWorkspaceSymbols,
   LspCompletion,
+  PiPrefillSelection,
+  PiSendSelection,
   InlineAccept,
   InlineAcceptWord,
   InlineAcceptLine,
@@ -1943,8 +1946,13 @@ impl Command {
   }
 
   #[must_use]
+  pub const fn vcs_diff_picker() -> Self {
+    Self::VcsDiffPicker
+  }
+
+  #[must_use]
   pub const fn changed_file_picker() -> Self {
-    Self::ChangedFilePicker
+    Self::VcsDiffPicker
   }
 
   #[must_use]
@@ -2010,6 +2018,16 @@ impl Command {
   #[must_use]
   pub const fn lsp_completion() -> Self {
     Self::LspCompletion
+  }
+
+  #[must_use]
+  pub const fn pi_prefill_selection() -> Self {
+    Self::PiPrefillSelection
+  }
+
+  #[must_use]
+  pub const fn pi_send_selection() -> Self {
+    Self::PiSendSelection
   }
 
   #[must_use]

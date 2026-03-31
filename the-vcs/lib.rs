@@ -40,6 +40,15 @@ mod status;
 pub use status::FileChange;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VcsWorkspaceScan {
+  pub provider_label:  String,
+  pub repo_root:       PathBuf,
+  pub statusline_info: Option<VcsStatuslineInfo>,
+  pub head_revision:   Option<String>,
+  pub changes:         Vec<FileChange>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VcsStatuslineInfo {
   Jj {
     description: String,
@@ -86,6 +95,20 @@ impl DiffProviderRegistry {
         Err(err) => {
           log::debug!("{err:#?}");
           log::debug!("failed to open diff base for {}", file.display());
+          None
+        },
+      }
+    })
+  }
+
+  pub fn get_diff_base_for_change(&self, change: &FileChange) -> Option<Vec<u8>> {
+    self.providers.iter().find_map(|provider| {
+      match provider.get_diff_base_for_change(change) {
+        Ok(Some(res)) => Some(res),
+        Ok(None) => None,
+        Err(err) => {
+          log::debug!("{err:#?}");
+          log::debug!("failed to open diff base for change {:?}", change);
           None
         },
       }
@@ -179,6 +202,19 @@ impl DiffProviderRegistry {
 
     bail!("no diff provider returns success")
   }
+
+  pub fn scan_workspace(&self, cwd: &Path) -> Result<VcsWorkspaceScan> {
+    for provider in &self.providers {
+      match provider.scan_workspace(cwd) {
+        Ok(scan) => return Ok(scan),
+        Err(err) => {
+          log::debug!("{err:#?}");
+        },
+      }
+    }
+
+    bail!("no diff provider returns success")
+  }
 }
 
 impl Default for DiffProviderRegistry {
@@ -231,12 +267,32 @@ impl DiffProvider {
     }
   }
 
+  fn get_diff_base_for_change(&self, _change: &FileChange) -> Result<Option<Vec<u8>>> {
+    match self {
+      #[cfg(feature = "git")]
+      Self::Git => git::get_diff_base_for_change(_change),
+      #[cfg(feature = "jj")]
+      Self::Jj => jj::get_diff_base_for_change(_change),
+      Self::None => bail!("No diff support compiled in"),
+    }
+  }
+
   fn get_current_head_name(&self, _file: &Path) -> Result<Arc<ArcSwap<Box<str>>>> {
     match self {
       #[cfg(feature = "git")]
       Self::Git => git::get_current_head_name(_file),
       #[cfg(feature = "jj")]
       Self::Jj => jj::get_current_head_name(_file),
+      Self::None => bail!("No diff support compiled in"),
+    }
+  }
+
+  fn scan_workspace(&self, cwd: &Path) -> Result<VcsWorkspaceScan> {
+    match self {
+      #[cfg(feature = "git")]
+      Self::Git => git::scan_workspace(cwd),
+      #[cfg(feature = "jj")]
+      Self::Jj => jj::scan_workspace(cwd),
       Self::None => bail!("No diff support compiled in"),
     }
   }

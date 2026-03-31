@@ -2,7 +2,10 @@
 
 use std::{
   borrow::Cow,
-  collections::BTreeMap,
+  collections::{
+    BTreeMap,
+    BTreeSet,
+  },
   env,
   fs::OpenOptions,
   hash::{
@@ -50,7 +53,10 @@ use serde_json::{
 };
 use the_default::{
   DefaultContext,
+  FilePickerKind,
   FilePickerPreviewLineKind,
+  FilePickerPreviewWindowKind,
+  FilePickerVcsDiffPreviewRowKind,
   FileTreeState,
   Mode,
   OverlayRect as DefaultOverlayRect,
@@ -128,9 +134,13 @@ use the_lib::{
     render_inline_diagnostics_for_viewport,
     render_virtual_lines_for_viewport,
     text_annotations::TextAnnotations,
+    text_format::TextFormat,
     visual_pos_at_char,
   },
-  selection::Range,
+  selection::{
+    CursorId,
+    Range,
+  },
   split_tree::{
     PaneId,
     SplitAxis,
@@ -770,6 +780,174 @@ fn render_diff_styles_from_theme(theme: &the_lib::render::theme::Theme) -> Rende
       .try_get("diff.minus")
       .or_else(|| theme.try_get("ui.linenr"))
       .unwrap_or_default(),
+  }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct VcsPreviewLineStyles {
+  text:   Style,
+  gutter: Style,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct VcsPreviewRenderStyles {
+  context:  VcsPreviewLineStyles,
+  added:    VcsPreviewLineStyles,
+  modified: VcsPreviewLineStyles,
+  removed:  VcsPreviewLineStyles,
+  meta:     Style,
+  section:  Style,
+}
+
+fn theme_style_color(
+  theme: &the_lib::render::theme::Theme,
+  scope: &str,
+  kind: fn(LibStyle) -> Option<LibColor>,
+) -> Option<Color> {
+  theme
+    .try_get(scope)
+    .and_then(kind)
+    .map(lib_color_to_ratatui)
+}
+
+fn rgb_channels(color: Color) -> Option<(u8, u8, u8)> {
+  match color {
+    Color::Reset => None,
+    Color::Black => Some((0x00, 0x00, 0x00)),
+    Color::Red => Some((0x80, 0x00, 0x00)),
+    Color::Green => Some((0x00, 0x80, 0x00)),
+    Color::Yellow => Some((0x80, 0x80, 0x00)),
+    Color::Blue => Some((0x00, 0x00, 0x80)),
+    Color::Magenta => Some((0x80, 0x00, 0x80)),
+    Color::Cyan => Some((0x00, 0x80, 0x80)),
+    Color::Gray => Some((0xC0, 0xC0, 0xC0)),
+    Color::DarkGray => Some((0x80, 0x80, 0x80)),
+    Color::LightRed => Some((0xFF, 0x00, 0x00)),
+    Color::LightGreen => Some((0x00, 0xFF, 0x00)),
+    Color::LightYellow => Some((0xFF, 0xFF, 0x00)),
+    Color::LightBlue => Some((0x00, 0x00, 0xFF)),
+    Color::LightMagenta => Some((0xFF, 0x00, 0xFF)),
+    Color::LightCyan => Some((0x00, 0xFF, 0xFF)),
+    Color::White => Some((0xFF, 0xFF, 0xFF)),
+    Color::Rgb(r, g, b) => Some((r, g, b)),
+    Color::Indexed(idx) => ansi_256_to_rgb(idx),
+  }
+}
+
+fn ansi_256_to_rgb(idx: u8) -> Option<(u8, u8, u8)> {
+  const ANSI_16: [(u8, u8, u8); 16] = [
+    (0x00, 0x00, 0x00),
+    (0x80, 0x00, 0x00),
+    (0x00, 0x80, 0x00),
+    (0x80, 0x80, 0x00),
+    (0x00, 0x00, 0x80),
+    (0x80, 0x00, 0x80),
+    (0x00, 0x80, 0x80),
+    (0xC0, 0xC0, 0xC0),
+    (0x80, 0x80, 0x80),
+    (0xFF, 0x00, 0x00),
+    (0x00, 0xFF, 0x00),
+    (0xFF, 0xFF, 0x00),
+    (0x00, 0x00, 0xFF),
+    (0xFF, 0x00, 0xFF),
+    (0x00, 0xFF, 0xFF),
+    (0xFF, 0xFF, 0xFF),
+  ];
+
+  match idx {
+    0..=15 => Some(ANSI_16[idx as usize]),
+    16..=231 => {
+      let cube = idx - 16;
+      let r = cube / 36;
+      let g = (cube % 36) / 6;
+      let b = cube % 6;
+      let to_channel = |value: u8| if value == 0 { 0 } else { 55 + value * 40 };
+      Some((to_channel(r), to_channel(g), to_channel(b)))
+    },
+    232..=255 => {
+      let gray = 8 + (idx - 232) * 10;
+      Some((gray, gray, gray))
+    },
+  }
+}
+
+fn blend_color(base: Color, accent: Color, accent_weight_percent: u16) -> Color {
+  let Some((base_r, base_g, base_b)) = rgb_channels(base) else {
+    return accent;
+  };
+  let Some((accent_r, accent_g, accent_b)) = rgb_channels(accent) else {
+    return accent;
+  };
+  let blend_channel = |base: u8, accent: u8| -> u8 {
+    let keep = 100_u16.saturating_sub(accent_weight_percent);
+    (((base as u16 * keep) + (accent as u16 * accent_weight_percent)) / 100) as u8
+  };
+  Color::Rgb(
+    blend_channel(base_r, accent_r),
+    blend_channel(base_g, accent_g),
+    blend_channel(base_b, accent_b),
+  )
+}
+
+fn vcs_preview_panel_bg(theme: &the_lib::render::theme::Theme) -> Color {
+  theme_style_color(theme, "ui.file_picker", |style| style.bg)
+    .or_else(|| theme_style_color(theme, "ui.background", |style| style.bg))
+    .unwrap_or(Color::Black)
+}
+
+fn vcs_preview_row_bg(
+  theme: &the_lib::render::theme::Theme,
+  diff_scope: &str,
+  panel_bg: Color,
+  fallback_accent: Color,
+) -> Color {
+  let accent = theme
+    .try_get(diff_scope)
+    .and_then(|style| style.fg.or(style.bg))
+    .map(lib_color_to_ratatui)
+    .unwrap_or(fallback_accent);
+  blend_color(panel_bg, accent, 36)
+}
+
+fn vcs_preview_line_styles(
+  text_style: Style,
+  panel_bg: Color,
+  row_bg: Color,
+) -> VcsPreviewLineStyles {
+  VcsPreviewLineStyles {
+    text:   text_style.bg(row_bg),
+    gutter: text_style
+      .add_modifier(Modifier::DIM)
+      .bg(blend_color(row_bg, panel_bg, 18)),
+  }
+}
+
+fn vcs_preview_styles_from_theme(
+  text_style: Style,
+  theme: &the_lib::render::theme::Theme,
+) -> VcsPreviewRenderStyles {
+  let panel_bg = vcs_preview_panel_bg(theme);
+  VcsPreviewRenderStyles {
+    context:  vcs_preview_line_styles(text_style, panel_bg, panel_bg),
+    added:    vcs_preview_line_styles(
+      text_style,
+      panel_bg,
+      vcs_preview_row_bg(theme, "diff.plus", panel_bg, Color::Rgb(0x3D, 0x6D, 0x87)),
+    ),
+    modified: vcs_preview_line_styles(
+      text_style,
+      panel_bg,
+      vcs_preview_row_bg(theme, "diff.delta", panel_bg, Color::Rgb(0x9A, 0x72, 0x26)),
+    ),
+    removed:  vcs_preview_line_styles(
+      text_style,
+      panel_bg,
+      vcs_preview_row_bg(theme, "diff.minus", panel_bg, Color::Rgb(0x8A, 0x3D, 0x45)),
+    ),
+    meta:     text_style.bg(panel_bg).add_modifier(Modifier::DIM),
+    section:  text_style
+      .bg(panel_bg)
+      .add_modifier(Modifier::DIM | Modifier::BOLD),
   }
 }
 
@@ -1748,17 +1926,19 @@ fn docs_panel_styles(ctx: &Ctx) -> PanelStyles {
 }
 
 fn file_picker_is_diagnostics(picker: &the_default::FilePickerState) -> bool {
-  picker.title.starts_with("Diagnostics ·") || picker.title.starts_with("Workspace Diagnostics ·")
+  picker.kind == FilePickerKind::Diagnostics
 }
 
 fn file_picker_is_symbols(picker: &the_default::FilePickerState) -> bool {
-  picker.title.starts_with("Lsp Symbols")
-    || picker.title.starts_with("Document Symbols")
-    || picker.title.starts_with("Workspace Symbols")
+  picker.kind == FilePickerKind::Symbols
 }
 
 fn file_picker_is_live_grep(picker: &the_default::FilePickerState) -> bool {
-  picker.title.starts_with("Live Grep") || picker.title.starts_with("Global Search")
+  picker.kind == FilePickerKind::LiveGrep
+}
+
+fn file_picker_is_vcs_diff(picker: &the_default::FilePickerState) -> bool {
+  picker.kind == FilePickerKind::VcsDiff
 }
 
 fn split_prefix_chars(text: &str, max_chars: usize) -> (&str, &str) {
@@ -2653,6 +2833,203 @@ fn draw_live_grep_picker_row(
         match_style,
       );
     }
+  }
+}
+
+fn draw_vcs_diff_picker_row(
+  buf: &mut Buffer,
+  row_rect: Rect,
+  y: u16,
+  item: &the_default::FilePickerItem,
+  previous_item: Option<&the_default::FilePickerItem>,
+  text_style: Style,
+  selected_fg: Option<Color>,
+  is_selected: bool,
+  is_hovered: bool,
+  match_indices: &[usize],
+) {
+  if row_rect.width == 0 {
+    return;
+  }
+
+  let row = item
+    .row_data
+    .clone()
+    .unwrap_or_else(|| the_default::file_picker_row_data("VCS Diff Picker", item));
+  let previous_row = previous_item.and_then(|item| item.row_data.clone());
+  let mut base_style = text_style;
+  if is_selected && let Some(fg) = selected_fg {
+    base_style = base_style.fg(fg);
+  }
+  if is_hovered {
+    base_style = base_style.add_modifier(Modifier::UNDERLINED);
+  }
+  let row_end_x = row_rect.x.saturating_add(row_rect.width);
+  let marker_style = if is_selected {
+    base_style.add_modifier(Modifier::BOLD)
+  } else {
+    base_style.add_modifier(Modifier::DIM)
+  };
+  let guide_style = base_style.add_modifier(Modifier::DIM);
+  let marker_symbol = if is_selected { "▌" } else { "▏" };
+  buf.set_stringn(row_rect.x, y, marker_symbol, 1, marker_style);
+  let guide_x = row_rect.x.saturating_add(1);
+  if guide_x < row_end_x {
+    let guide_symbol = match row.kind {
+      the_default::FilePickerRowKind::VcsDiffHeader => " ",
+      the_default::FilePickerRowKind::VcsDiffHunk => "│",
+      _ => " ",
+    };
+    buf.set_stringn(guide_x, y, guide_symbol, 1, guide_style);
+  }
+
+  let icon_x = row_rect.x.saturating_add(2);
+  let mut cursor_x = icon_x;
+  if cursor_x >= row_end_x {
+    return;
+  }
+
+  match row.kind {
+    the_default::FilePickerRowKind::VcsDiffHeader => {
+      let icon = file_picker_icon_glyph(item.icon.as_str(), false);
+      buf.set_stringn(icon_x, y, icon, 2, base_style);
+      cursor_x = icon_x.saturating_add(2);
+      let content_width = row_end_x.saturating_sub(cursor_x) as usize;
+      if content_width == 0 {
+        return;
+      }
+      let (dir_part, file_part) = match row.primary.rsplit_once('/') {
+        Some((dir, file)) => (dir, file),
+        None => ("", row.primary.as_str()),
+      };
+      let file_name = if file_part.is_empty() {
+        row.primary.as_str()
+      } else {
+        file_part
+      };
+      let mut suffix = row.secondary.clone();
+      if !row.tertiary.is_empty() {
+        if !suffix.is_empty() {
+          suffix.push_str("  ");
+        }
+        suffix.push_str(row.tertiary.as_str());
+      }
+      let mut suffix_width = suffix.chars().count().min(content_width);
+      let suffix_x = if suffix_width > 0 {
+        let min_left_gap = 2_u16;
+        let proposed = row_end_x.saturating_sub(suffix_width as u16);
+        if proposed > cursor_x.saturating_add(min_left_gap) {
+          proposed
+        } else {
+          suffix_width = 0;
+          row_end_x
+        }
+      } else {
+        row_end_x
+      };
+      let left_limit = suffix_x.saturating_sub(2).max(cursor_x);
+      let mut remaining = left_limit.saturating_sub(cursor_x) as usize;
+      let mut primary = file_name.to_string();
+      truncate_in_place(&mut primary, remaining);
+      let primary_width = primary.chars().count();
+      buf.set_stringn(
+        cursor_x,
+        y,
+        primary.as_str(),
+        primary_width,
+        base_style.add_modifier(Modifier::BOLD),
+      );
+      cursor_x = cursor_x.saturating_add(primary_width as u16);
+      remaining = remaining.saturating_sub(primary_width);
+
+      if !dir_part.is_empty() && remaining > 3 {
+        buf.set_stringn(cursor_x, y, "  ", 2, guide_style);
+        cursor_x = cursor_x.saturating_add(2);
+        remaining = remaining.saturating_sub(2);
+        let mut dir_label = dir_part.to_string();
+        truncate_in_place(&mut dir_label, remaining);
+        let dir_width = dir_label.chars().count();
+        if dir_width > 0 {
+          buf.set_stringn(cursor_x, y, dir_label.as_str(), dir_width, guide_style);
+        }
+      }
+
+      if suffix_width > 0 && suffix_x < row_end_x {
+        truncate_in_place(&mut suffix, suffix_width);
+        buf.set_stringn(suffix_x, y, suffix.as_str(), suffix_width, guide_style);
+      }
+    },
+    the_default::FilePickerRowKind::VcsDiffHunk => {
+      buf.set_stringn(icon_x, y, " ", 1, base_style);
+      cursor_x = icon_x.saturating_add(1);
+      let repeated_header = previous_row.as_ref().is_none_or(|prev| {
+        match prev.kind {
+          the_default::FilePickerRowKind::VcsDiffHeader => prev.primary != row.secondary,
+          the_default::FilePickerRowKind::VcsDiffHunk => prev.secondary != row.secondary,
+          _ => true,
+        }
+      });
+
+      let mut content_width = row_end_x.saturating_sub(cursor_x) as usize;
+      if content_width == 0 {
+        return;
+      }
+
+      if repeated_header && !row.secondary.is_empty() {
+        let mut path_label = format!("{}  ", row.secondary);
+        truncate_in_place(&mut path_label, content_width.min(32));
+        let label_width = path_label.chars().count();
+        if label_width > 0 {
+          buf.set_stringn(
+            cursor_x,
+            y,
+            path_label.as_str(),
+            label_width,
+            guide_style.add_modifier(Modifier::BOLD),
+          );
+          cursor_x = cursor_x.saturating_add(label_width as u16);
+          content_width = content_width.saturating_sub(label_width);
+        }
+      }
+
+      if content_width == 0 {
+        return;
+      }
+
+      let location_style = guide_style;
+      let location_label = if row.line > 0 {
+        format!(":{} ", row.line)
+      } else {
+        "    ".to_string()
+      };
+      let location_width = location_label.chars().count().min(content_width);
+      if location_width > 0 {
+        buf.set_stringn(
+          cursor_x,
+          y,
+          location_label.as_str(),
+          location_width,
+          location_style,
+        );
+        cursor_x = cursor_x.saturating_add(location_width as u16);
+        content_width = content_width.saturating_sub(location_width);
+      }
+
+      if content_width == 0 {
+        return;
+      }
+      draw_fuzzy_match_line(
+        buf,
+        cursor_x,
+        y,
+        row.primary.as_str(),
+        content_width,
+        base_style,
+        base_style.add_modifier(Modifier::BOLD),
+        match_indices,
+      );
+    },
+    _ => {},
   }
 }
 
@@ -3721,6 +4098,7 @@ fn draw_file_picker_panel(
   let diagnostics_picker = file_picker_is_diagnostics(picker);
   let symbols_picker = file_picker_is_symbols(picker);
   let live_grep_picker = file_picker_is_live_grep(picker);
+  let vcs_diff_picker = file_picker_is_vcs_diff(picker);
   let styles = file_picker_panel_styles(ctx);
 
   fill_rect(buf, layout.panel, styles.fill);
@@ -3741,6 +4119,7 @@ fn draw_file_picker_panel(
     diagnostics_picker,
     symbols_picker,
     live_grep_picker,
+    vcs_diff_picker,
   );
 
   if layout.show_preview {
@@ -3755,6 +4134,7 @@ fn draw_file_picker_panel(
       diagnostics_picker,
       symbols_picker,
       live_grep_picker,
+      vcs_diff_picker,
     );
   }
 }
@@ -3771,6 +4151,7 @@ fn draw_file_picker_list_pane(
   diagnostics_picker: bool,
   symbols_picker: bool,
   live_grep_picker: bool,
+  vcs_diff_picker: bool,
 ) {
   let rect = layout.list_pane;
   let title_style = text_style.add_modifier(Modifier::BOLD);
@@ -3970,6 +4351,26 @@ fn draw_file_picker_list_pane(
       );
       continue;
     }
+    if vcs_diff_picker {
+      let previous_item = if row_idx > 0 {
+        picker.matched_item(row_idx - 1)
+      } else {
+        None
+      };
+      draw_vcs_diff_picker_row(
+        buf,
+        Rect::new(list_area.x, y, list_area.width, 1),
+        y,
+        item.as_ref(),
+        previous_item.as_deref(),
+        style,
+        selected_fg,
+        is_selected,
+        is_hovered,
+        &match_indices,
+      );
+      continue;
+    }
 
     let icon = file_picker_icon_glyph(item.icon.as_str(), item.is_dir);
     let icon_x = list_area.x.saturating_add(1);
@@ -4074,6 +4475,7 @@ fn draw_file_picker_preview_pane(
   diagnostics_picker: bool,
   symbols_picker: bool,
   live_grep_picker: bool,
+  vcs_diff_picker: bool,
 ) {
   let Some(rect) = layout.preview_pane else {
     return;
@@ -4103,7 +4505,7 @@ fn draw_file_picker_preview_pane(
     .or(focus_kind_color)
     .or(focus_search_color);
   let mut preview_border_style = border_style;
-  if (diagnostics_picker || symbols_picker)
+  if (diagnostics_picker || symbols_picker || vcs_diff_picker)
     && let Some(accent) = focus_accent
   {
     preview_border_style = preview_border_style.fg(accent);
@@ -4114,17 +4516,27 @@ fn draw_file_picker_preview_pane(
     .border_type(BorderType::Rounded)
     .border_style(preview_border_style)
     .style(fill_style);
-  if let Some(preview_path) = &picker.preview_path {
+  let preview_title = if let the_default::FilePickerPreview::VcsDiff(preview) = &picker.preview {
+    if let Some(from_title) = preview.from_title.as_ref() {
+      Some(format!(" {} → {} ", from_title, preview.title))
+    } else {
+      Some(format!(" {} ", preview.title))
+    }
+  } else if let Some(preview_path) = &picker.preview_path {
     let path_display = preview_path
       .strip_prefix(&picker.root)
       .unwrap_or(preview_path)
       .display()
       .to_string();
-    let title = if let Some(focus_line) = focus_line {
+    Some(if let Some(focus_line) = focus_line {
       format!(" {}  Ln {} ", path_display, focus_line.saturating_add(1))
     } else {
       format!(" {} ", path_display)
-    };
+    })
+  } else {
+    None
+  };
+  if let Some(title) = preview_title {
     block = block.title(Title::from(Span::styled(
       title,
       text_style.add_modifier(Modifier::DIM),
@@ -4164,6 +4576,7 @@ fn draw_file_picker_preview_pane(
     text_style,
     theme,
     focus_accent,
+    vcs_diff_picker,
   );
 
   if let Some(track) = layout.preview_scrollbar
@@ -4190,18 +4603,28 @@ fn draw_file_picker_preview_window(
   text_style: Style,
   theme: &the_lib::render::theme::Theme,
   focus_accent: Option<Color>,
+  vcs_diff_picker: bool,
 ) {
   if area.width == 0 || area.height == 0 {
     return;
   }
-  if window.kind == 0 {
+  if window.kind == FilePickerPreviewWindowKind::Empty {
+    return;
+  }
+  if window.kind == FilePickerPreviewWindowKind::VcsDiff {
+    if let Some(vcs_window) = &window.vcs_diff {
+      draw_file_picker_vcs_diff_preview_window(buf, area, vcs_window, text_style, theme);
+    }
     return;
   }
 
-  let show_line_numbers = window.kind == 1;
+  let show_line_numbers = window.kind == FilePickerPreviewWindowKind::Source;
   let line_number_width = window.total_virtual_rows.max(1).to_string().len();
-  let (focus_fill_style, focus_marker_style) =
-    file_picker_preview_focus_styles(theme, text_style, focus_accent);
+  let (focus_fill_style, focus_marker_style) = file_picker_preview_focus_styles(
+    theme,
+    text_style,
+    if vcs_diff_picker { None } else { focus_accent },
+  );
   let gutter_style = text_style.add_modifier(Modifier::DIM);
   let match_style = file_picker_match_highlight_style(theme, text_style, focus_accent);
 
@@ -4275,6 +4698,7 @@ fn preview_window_line_spans<'a>(
   }
 
   let mut spans = Vec::with_capacity(line.segments.len());
+  let mut visual_col = 0usize;
   let base_text_style = if line.focused {
     text_style.add_modifier(Modifier::BOLD)
   } else {
@@ -4295,9 +4719,305 @@ fn preview_window_line_spans<'a>(
     if segment.is_match {
       style = style.patch(match_style);
     }
-    spans.push(Span::styled(segment.text.as_str(), style));
+    let expanded = expand_preview_tabs(segment.text.as_str(), &mut visual_col);
+    if expanded.is_empty() {
+      continue;
+    }
+    spans.push(Span::styled(expanded, style));
   }
 
+  spans
+}
+
+fn expand_preview_tabs(text: &str, visual_col: &mut usize) -> String {
+  const TAB_WIDTH: usize = 4;
+
+  if !text.contains('\t') {
+    *visual_col = visual_col.saturating_add(text.chars().count());
+    return text.to_string();
+  }
+
+  let mut expanded = String::with_capacity(text.len());
+  for ch in text.chars() {
+    if ch == '\t' {
+      let spaces = TAB_WIDTH - (*visual_col % TAB_WIDTH);
+      expanded.extend(std::iter::repeat_n(' ', spaces));
+      *visual_col = visual_col.saturating_add(spaces);
+    } else {
+      expanded.push(ch);
+      *visual_col = visual_col.saturating_add(1);
+    }
+  }
+  expanded
+}
+
+fn clamp_plan_position(
+  plan: &RenderPlan,
+  pos: the_lib::position::Position,
+) -> Option<the_lib::position::Position> {
+  let row_start = plan.scroll.row;
+  let row_end = row_start + plan.viewport.height as usize;
+  let col_start = plan.scroll.col;
+  let col_end = col_start + plan.content_width();
+
+  if pos.row < row_start || pos.row >= row_end {
+    return None;
+  }
+  if pos.col < col_start || pos.col >= col_end {
+    return None;
+  }
+
+  Some(the_lib::position::Position::new(
+    pos.row - row_start,
+    pos.col - col_start,
+  ))
+}
+
+fn agent_follow_cursor_id() -> CursorId {
+  CursorId::new(std::num::NonZeroU64::new(u64::MAX).expect("non-zero agent cursor id"))
+}
+
+fn agent_follow_cursor_style(ctx: &Ctx) -> LibStyle {
+  let style = ctx
+    .ui_theme
+    .try_get("ui.cursor.agent")
+    .or_else(|| ctx.ui_theme.try_get("ui.cursor.match"))
+    .or_else(|| ctx.ui_theme.try_get("ui.cursor.active"))
+    .or_else(|| ctx.ui_theme.try_get("ui.cursor"))
+    .unwrap_or_default();
+
+  style.patch(LibStyle::default().fg(LibColor::Rgb(0x7D, 0xD3, 0xFC)))
+}
+
+fn agent_follow_selection_style(ctx: &Ctx) -> LibStyle {
+  let style = ctx
+    .ui_theme
+    .try_get("ui.selection.agent")
+    .or_else(|| ctx.ui_theme.try_get("ui.cursor.match"))
+    .or_else(|| ctx.ui_theme.try_get("ui.selection"))
+    .unwrap_or_default();
+
+  style.patch(LibStyle::default().bg(LibColor::Rgb(0x1E, 0x3A, 0x5F)))
+}
+
+fn apply_agent_follow_visuals(
+  ctx: &Ctx,
+  plan: &mut RenderPlan,
+  text_fmt: &TextFormat,
+  buffer_id: BufferId,
+  text: &Rope,
+  use_ctx_annotations: bool,
+) {
+  let Some(snapshot) = ctx.agent_follow_render_snapshot() else {
+    return;
+  };
+  if snapshot.buffer_id != buffer_id {
+    return;
+  }
+
+  let text_slice = text.slice(..);
+  let text_len = text.len_chars();
+  let mut annotations = if use_ctx_annotations {
+    ctx.text_annotations()
+  } else {
+    TextAnnotations::default()
+  };
+  let mut resolve_pos = |char_idx: usize| {
+    let char_idx = char_idx.min(text_len);
+    visual_pos_at_char(text_slice, text_fmt, &mut annotations, char_idx).or_else(|| {
+      if char_idx == 0 {
+        None
+      } else {
+        visual_pos_at_char(text_slice, text_fmt, &mut annotations, char_idx - 1).map(|mut pos| {
+          pos.col = pos.col.saturating_add(1);
+          pos
+        })
+      }
+    })
+  };
+
+  if let Some(pos) =
+    resolve_pos(snapshot.cursor_char).and_then(|pos| clamp_plan_position(plan, pos))
+  {
+    plan.cursors.push(the_lib::render::RenderCursor {
+      id: agent_follow_cursor_id(),
+      pos,
+      kind: LibCursorKind::Bar,
+      style: agent_follow_cursor_style(ctx),
+    });
+  }
+
+  if !snapshot.flashing {
+    return;
+  }
+
+  let selection_style = agent_follow_selection_style(ctx);
+  let mut cells = BTreeSet::new();
+  let end = if snapshot.flash_end > snapshot.flash_start {
+    snapshot
+      .flash_end
+      .min(snapshot.flash_start.saturating_add(24))
+  } else {
+    snapshot.flash_start.saturating_add(1)
+  };
+  for char_idx in snapshot.flash_start..end {
+    if let Some(pos) = resolve_pos(char_idx).and_then(|pos| clamp_plan_position(plan, pos)) {
+      cells.insert((pos.row, pos.col));
+    }
+  }
+
+  if cells.is_empty()
+    && let Some(pos) =
+      resolve_pos(snapshot.cursor_char).and_then(|pos| clamp_plan_position(plan, pos))
+  {
+    cells.insert((pos.row, pos.col));
+  }
+
+  for (row, col) in cells {
+    plan.selections.push(the_lib::render::RenderSelection {
+      rect:  the_lib::render::graphics::Rect::new(col as u16, row as u16, 1, 1),
+      style: selection_style,
+      kind:  the_lib::render::RenderSelectionKind::Hover,
+    });
+  }
+}
+
+fn draw_file_picker_vcs_diff_preview_window(
+  buf: &mut Buffer,
+  area: Rect,
+  window: &the_default::FilePickerVcsDiffPreviewWindow,
+  text_style: Style,
+  theme: &the_lib::render::theme::Theme,
+) {
+  if area.width < 8 || area.height == 0 {
+    return;
+  }
+
+  let gutter_width = window
+    .lines
+    .iter()
+    .filter_map(|line| line.line_number)
+    .max()
+    .unwrap_or(1)
+    .to_string()
+    .len() as u16;
+  let styles = vcs_preview_styles_from_theme(text_style, theme);
+
+  for (row_idx, line) in window.lines.iter().take(area.height as usize).enumerate() {
+    let y = area.y + row_idx as u16;
+    match line.kind {
+      FilePickerVcsDiffPreviewRowKind::CollapsedAbove
+      | FilePickerVcsDiffPreviewRowKind::CollapsedBelow
+      | FilePickerVcsDiffPreviewRowKind::Info => {
+        fill_rect(buf, Rect::new(area.x, y, area.width, 1), styles.meta);
+        buf.set_stringn(
+          area.x,
+          y,
+          line.message.as_str(),
+          area.width as usize,
+          styles.meta,
+        );
+      },
+      FilePickerVcsDiffPreviewRowKind::SectionHeader => {
+        fill_rect(buf, Rect::new(area.x, y, area.width, 1), styles.section);
+        buf.set_stringn(
+          area.x,
+          y,
+          line.message.as_str(),
+          area.width as usize,
+          styles.section,
+        );
+      },
+      FilePickerVcsDiffPreviewRowKind::Context
+      | FilePickerVcsDiffPreviewRowKind::Added
+      | FilePickerVcsDiffPreviewRowKind::Removed
+      | FilePickerVcsDiffPreviewRowKind::Modified => {
+        let line_styles = match line.kind {
+          FilePickerVcsDiffPreviewRowKind::Added => styles.added,
+          FilePickerVcsDiffPreviewRowKind::Removed => styles.removed,
+          FilePickerVcsDiffPreviewRowKind::Modified => styles.modified,
+          _ => styles.context,
+        };
+        fill_rect(buf, Rect::new(area.x, y, area.width, 1), line_styles.text);
+        draw_file_picker_vcs_diff_line(
+          buf,
+          Rect::new(area.x, y, area.width, 1),
+          line.line_number,
+          &line.segments,
+          gutter_width,
+          line_styles,
+          theme,
+        );
+      },
+    }
+  }
+}
+
+fn draw_file_picker_vcs_diff_line(
+  buf: &mut Buffer,
+  area: Rect,
+  line_number: Option<usize>,
+  segments: &[the_default::FilePickerPreviewSegment],
+  line_width: u16,
+  line_styles: VcsPreviewLineStyles,
+  theme: &the_lib::render::theme::Theme,
+) {
+  if area.width == 0 {
+    return;
+  }
+  let text_x = if line_width > 0 {
+    let label = line_number
+      .map(|line| format!("{line:>width$} ", width = line_width as usize))
+      .unwrap_or_else(|| format!("{:>width$} ", "", width = line_width as usize));
+    let gutter_width = label.chars().count().min(area.width as usize);
+    buf.set_stringn(
+      area.x,
+      area.y,
+      label.as_str(),
+      gutter_width,
+      line_styles.gutter,
+    );
+    area.x.saturating_add(gutter_width as u16)
+  } else {
+    area.x
+  };
+  let text_width = area.x.saturating_add(area.width).saturating_sub(text_x);
+  if text_width == 0 {
+    return;
+  }
+  let spans = preview_segments_spans(segments, line_styles.text, theme);
+  if spans.is_empty() {
+    return;
+  }
+  Paragraph::new(Line::from(spans)).render(Rect::new(text_x, area.y, text_width, 1), buf);
+}
+
+fn preview_segments_spans<'a>(
+  segments: &'a [the_default::FilePickerPreviewSegment],
+  text_style: Style,
+  theme: &the_lib::render::theme::Theme,
+) -> Vec<Span<'a>> {
+  let mut spans = Vec::with_capacity(segments.len());
+  let mut visual_col = 0usize;
+  for segment in segments {
+    if segment.text.is_empty() {
+      continue;
+    }
+    let mut style = text_style;
+    if let Some(highlight_id) = segment.highlight_id {
+      style = style.patch(lib_style_to_ratatui(
+        theme.highlight(Highlight::new(highlight_id)),
+      ));
+    }
+    if segment.is_match {
+      style = style.add_modifier(Modifier::UNDERLINED);
+    }
+    let expanded = expand_preview_tabs(segment.text.as_str(), &mut visual_col);
+    if expanded.is_empty() {
+      continue;
+    }
+    spans.push(Span::styled(expanded, style));
+  }
   spans
 }
 
@@ -5025,7 +5745,7 @@ pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> Ren
 
   // Set up text formatting
   ctx.text_format.viewport_width = view.viewport.width.saturating_sub(gutter_width).max(1);
-  let text_fmt = &ctx.text_format;
+  let text_fmt = ctx.text_format.clone();
 
   // Set up annotations
   let mut annotations = TextAnnotations::default();
@@ -5106,7 +5826,7 @@ pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> Ren
       build_plan(
         doc,
         view.clone(),
-        text_fmt,
+        &text_fmt,
         &ctx.gutter_config,
         &mut annotations,
         &mut adapter,
@@ -5119,7 +5839,7 @@ pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> Ren
       build_plan(
         doc,
         view.clone(),
-        text_fmt,
+        &text_fmt,
         &ctx.gutter_config,
         &mut annotations,
         &mut highlights,
@@ -5139,7 +5859,7 @@ pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> Ren
     add_selection_match_highlights(
       &mut plan,
       doc,
-      text_fmt,
+      &text_fmt,
       &mut annotations,
       view.clone(),
       selection_match_style,
@@ -5153,14 +5873,14 @@ pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> Ren
       doc.text(),
       &diagnostics_for_underlines,
       &plan,
-      text_fmt,
+      &text_fmt,
       &mut annotations,
     );
     let inline_layout = if let Some(inline_config) = inline_config_snapshot.as_ref() {
       render_inline_diagnostics_for_viewport(
         doc.text().slice(..),
         &plan,
-        text_fmt,
+        &text_fmt,
         &mut annotations,
         &inline_diagnostics,
         cursor_line_idx,
@@ -5261,6 +5981,14 @@ pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> Ren
 
   apply_diagnostic_gutter_markers(&mut plan, &diagnostics_by_line, diagnostic_styles);
   apply_diff_gutter_markers(&mut plan, &diff_signs, diff_styles);
+  apply_agent_follow_visuals(
+    ctx,
+    &mut plan,
+    &text_fmt,
+    ctx.editor.active_buffer_id(),
+    ctx.editor.document().text(),
+    true,
+  );
   plan
 }
 
@@ -5295,82 +6023,92 @@ fn build_inactive_pane_plan_with_styles(
   let diff_styles = render_diff_styles_from_theme(&ctx.ui_theme);
   let diff_signs = ctx.gutter_diff_signs.clone();
 
-  let Some((doc, render_cache)) = ctx.editor.document_and_cache_at_mut(buffer_id) else {
-    return (RenderPlan::default(), PaneDiagnosticRenderData::default());
-  };
-  let gutter_width = gutter_width_for_document(doc, view.viewport.width, &ctx.gutter_config);
-  text_fmt.viewport_width = view.viewport.width.saturating_sub(gutter_width).max(1);
+  let (mut plan, inline_diagnostic_lines, diagnostic_underlines, inactive_text) = {
+    let Some((doc, render_cache)) = ctx.editor.document_and_cache_at_mut(buffer_id) else {
+      return (RenderPlan::default(), PaneDiagnosticRenderData::default());
+    };
+    let gutter_width = gutter_width_for_document(doc, view.viewport.width, &ctx.gutter_config);
+    text_fmt.viewport_width = view.viewport.width.saturating_sub(gutter_width).max(1);
 
-  let mut plan = if let (Some(loader), Some(syntax)) = (&ctx.loader, doc.syntax()) {
-    let line_range = view.scroll.row..(view.scroll.row + view.viewport.height as usize);
-    let mut adapter = SyntaxHighlightAdapter::new(
-      doc.text().slice(..),
-      syntax,
-      loader.as_ref(),
-      &mut local_highlight_cache,
-      line_range,
-      doc.version(),
-      doc.syntax_version(),
-      allow_cache_refresh,
+    let mut plan = if let (Some(loader), Some(syntax)) = (&ctx.loader, doc.syntax()) {
+      let line_range = view.scroll.row..(view.scroll.row + view.viewport.height as usize);
+      let mut adapter = SyntaxHighlightAdapter::new(
+        doc.text().slice(..),
+        syntax,
+        loader.as_ref(),
+        &mut local_highlight_cache,
+        line_range,
+        doc.version(),
+        doc.syntax_version(),
+        allow_cache_refresh,
+      );
+      build_plan(
+        doc,
+        view,
+        &text_fmt,
+        &ctx.gutter_config,
+        &mut annotations,
+        &mut adapter,
+        render_cache,
+        styles,
+      )
+    } else {
+      let mut highlights = NoHighlights;
+      build_plan(
+        doc,
+        view,
+        &text_fmt,
+        &ctx.gutter_config,
+        &mut annotations,
+        &mut highlights,
+        render_cache,
+        styles,
+      )
+    };
+
+    let inline_diagnostics = inline_diagnostics_from_document(doc.text(), &raw_diagnostics);
+    let inline_config =
+      InlineDiagnosticsConfig::default().prepare(text_fmt.viewport_width.max(1) as u16, false);
+    let mut diagnostic_underlines = diagnostic_underlines_for_document(
+      doc.text(),
+      &raw_diagnostics,
+      &plan,
+      &text_fmt,
+      &mut annotations,
     );
-    build_plan(
-      doc,
-      view,
+    let inline_layout = render_inline_diagnostics_for_viewport(
+      doc.text().slice(..),
+      &plan,
       &text_fmt,
-      &ctx.gutter_config,
       &mut annotations,
-      &mut adapter,
-      render_cache,
-      styles,
-    )
-  } else {
-    let mut highlights = NoHighlights;
-    build_plan(
-      doc,
-      view,
-      &text_fmt,
-      &ctx.gutter_config,
-      &mut annotations,
-      &mut highlights,
-      render_cache,
-      styles,
+      &inline_diagnostics,
+      None,
+      &inline_config,
+    );
+    apply_row_insertions_to_underlines(
+      &mut diagnostic_underlines,
+      &plan,
+      &inline_layout.row_insertions,
+    );
+    apply_row_insertions(&mut plan, &inline_layout.row_insertions);
+    apply_diagnostic_gutter_markers(&mut plan, &diagnostics_by_line, diagnostic_styles);
+    apply_diff_gutter_markers(&mut plan, &diff_signs, diff_styles);
+    (
+      plan,
+      inline_layout.lines,
+      diagnostic_underlines,
+      doc.text().clone(),
     )
   };
-
-  let inline_diagnostics = inline_diagnostics_from_document(doc.text(), &raw_diagnostics);
-  let inline_config =
-    InlineDiagnosticsConfig::default().prepare(text_fmt.viewport_width.max(1) as u16, false);
-  let mut diagnostic_underlines = diagnostic_underlines_for_document(
-    doc.text(),
-    &raw_diagnostics,
-    &plan,
-    &text_fmt,
-    &mut annotations,
-  );
-  let inline_layout = render_inline_diagnostics_for_viewport(
-    doc.text().slice(..),
-    &plan,
-    &text_fmt,
-    &mut annotations,
-    &inline_diagnostics,
-    None,
-    &inline_config,
-  );
-  apply_row_insertions_to_underlines(
-    &mut diagnostic_underlines,
-    &plan,
-    &inline_layout.row_insertions,
-  );
-  apply_row_insertions(&mut plan, &inline_layout.row_insertions);
-  apply_diagnostic_gutter_markers(&mut plan, &diagnostics_by_line, diagnostic_styles);
-  apply_diff_gutter_markers(&mut plan, &diff_signs, diff_styles);
+  drop(annotations);
+  apply_agent_follow_visuals(ctx, &mut plan, &text_fmt, buffer_id, &inactive_text, false);
 
   ctx
     .inactive_highlight_caches
     .insert(buffer_id, local_highlight_cache);
   (plan, PaneDiagnosticRenderData {
     raw_diagnostics,
-    inline_diagnostic_lines: inline_layout.lines,
+    inline_diagnostic_lines,
     diagnostic_underlines,
   })
 }
@@ -5692,7 +6430,7 @@ fn draw_pane_content(
       if use_terminal_hardware_cursor {
         continue;
       }
-      let style = if draw_active_annotations {
+      let style = if draw_active_annotations || cursor.id == agent_follow_cursor_id() {
         lib_style_to_ratatui(cursor.style)
       } else {
         unfocused_pane_cursor_style(&ctx.ui_theme)
@@ -7030,5 +7768,87 @@ mod tests {
         .as_deref()
         .is_some_and(|text| text.contains("printf(\"hello world\");line 2"))
     );
+  }
+
+  #[test]
+  fn vcs_diff_preview_changed_rows_use_derived_backgrounds() {
+    let ctx = Ctx::new(None).expect("ctx");
+    let area = Rect::new(0, 0, 32, 3);
+    let mut buf = Buffer::empty(area);
+    let panel = file_picker_panel_styles(&ctx);
+    let styles = vcs_preview_styles_from_theme(panel.text, &ctx.ui_theme);
+    let window = the_default::FilePickerVcsDiffPreviewWindow {
+      total_virtual_rows: 3,
+      lines:              vec![
+        the_default::FilePickerVcsDiffPreviewWindowLine {
+          virtual_row: 0,
+          kind:        the_default::FilePickerVcsDiffPreviewRowKind::Removed,
+          source:      the_default::FilePickerVcsDiffPreviewLineSource::Base,
+          line_number: Some(4),
+          segments:    vec![the_default::FilePickerPreviewSegment {
+            text:         "return x - y;".to_string(),
+            highlight_id: None,
+            is_match:     false,
+            change_kind:  None,
+          }],
+          message:     String::new(),
+        },
+        the_default::FilePickerVcsDiffPreviewWindowLine {
+          virtual_row: 1,
+          kind:        the_default::FilePickerVcsDiffPreviewRowKind::Added,
+          source:      the_default::FilePickerVcsDiffPreviewLineSource::Worktree,
+          line_number: Some(4),
+          segments:    vec![the_default::FilePickerPreviewSegment {
+            text:         "return x + y;".to_string(),
+            highlight_id: None,
+            is_match:     false,
+            change_kind:  None,
+          }],
+          message:     String::new(),
+        },
+        the_default::FilePickerVcsDiffPreviewWindowLine {
+          virtual_row: 2,
+          kind:        the_default::FilePickerVcsDiffPreviewRowKind::Context,
+          source:      the_default::FilePickerVcsDiffPreviewLineSource::Worktree,
+          line_number: Some(5),
+          segments:    vec![the_default::FilePickerPreviewSegment {
+            text:         "}".to_string(),
+            highlight_id: None,
+            is_match:     false,
+            change_kind:  None,
+          }],
+          message:     String::new(),
+        },
+      ],
+    };
+
+    draw_file_picker_vcs_diff_preview_window(&mut buf, area, &window, panel.text, &ctx.ui_theme);
+
+    assert_eq!(
+      buf.get(0, 0).bg,
+      styles.removed.gutter.bg.unwrap_or(Color::Reset)
+    );
+    assert_eq!(
+      buf.get(4, 0).bg,
+      styles.removed.text.bg.unwrap_or(Color::Reset)
+    );
+    assert_eq!(
+      buf.get(0, 1).bg,
+      styles.added.gutter.bg.unwrap_or(Color::Reset)
+    );
+    assert_eq!(
+      buf.get(4, 1).bg,
+      styles.added.text.bg.unwrap_or(Color::Reset)
+    );
+    assert_eq!(
+      buf.get(0, 2).bg,
+      styles.context.gutter.bg.unwrap_or(Color::Reset)
+    );
+    assert_eq!(
+      buf.get(4, 2).bg,
+      styles.context.text.bg.unwrap_or(Color::Reset)
+    );
+    assert_ne!(buf.get(4, 0).bg, panel.fill.bg.unwrap_or(Color::Reset));
+    assert_ne!(buf.get(4, 1).bg, panel.fill.bg.unwrap_or(Color::Reset));
   }
 }

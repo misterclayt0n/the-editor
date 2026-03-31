@@ -150,6 +150,98 @@ fn tokenize_words<I: Iterator<Item = char>>(iter: I) -> TokenizedSeq {
   TokenizedSeq::new(tokens)
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ChangedCharRanges {
+  pub before: Vec<Range<usize>>,
+  pub after:  Vec<Range<usize>>,
+}
+
+fn push_merged_range(ranges: &mut Vec<Range<usize>>, next: Range<usize>) {
+  if next.start >= next.end {
+    return;
+  }
+
+  if let Some(last) = ranges.last_mut()
+    && last.end >= next.start
+  {
+    last.end = last.end.max(next.end);
+    return;
+  }
+
+  ranges.push(next);
+}
+
+pub fn line_change_spans(before: &str, after: &str) -> ChangedCharRanges {
+  const MAX_LINE_DIFF_CHARS: usize = 4096;
+
+  if before == after {
+    return ChangedCharRanges::default();
+  }
+  if before.is_empty() {
+    return ChangedCharRanges {
+      before: Vec::new(),
+      after:  vec![0..after.chars().count()],
+    };
+  }
+  if after.is_empty() {
+    return ChangedCharRanges {
+      before: vec![0..before.chars().count()],
+      after:  Vec::new(),
+    };
+  }
+
+  let before_len = before.chars().count();
+  let after_len = after.chars().count();
+  if before_len.saturating_add(after_len) > MAX_LINE_DIFF_CHARS {
+    return ChangedCharRanges {
+      before: vec![0..before_len],
+      after:  vec![0..after_len],
+    };
+  }
+
+  let before_tokens = tokenize_words(before.chars());
+  let after_tokens = tokenize_words(after.chars());
+
+  let mut input = InternedInput::default();
+  input.update_before(before_tokens.tokens.iter().cloned());
+  input.update_after(after_tokens.tokens.iter().cloned());
+
+  let mut diff = Diff::default();
+  diff.compute_with(
+    Algorithm::Myers,
+    &input.before,
+    &input.after,
+    input.interner.num_tokens(),
+  );
+
+  let mut before_ranges = Vec::new();
+  let mut after_ranges = Vec::new();
+  for Hunk { before, after } in diff.hunks() {
+    let before_start = before_tokens.char_len(0..before.start);
+    let before_end = before_tokens.char_len(0..before.end);
+    let after_start = after_tokens.char_len(0..after.start);
+    let after_end = after_tokens.char_len(0..after.end);
+    if before_end > before_start {
+      push_merged_range(&mut before_ranges, before_start..before_end);
+    }
+    if after_end > after_start {
+      push_merged_range(&mut after_ranges, after_start..after_end);
+    }
+  }
+
+  if before_ranges.is_empty() && after_ranges.is_empty() {
+    ChangedCharRanges {
+      before: vec![0..before_len],
+      after:  vec![0..after_len],
+    }
+  } else {
+    ChangedCharRanges {
+      before: before_ranges,
+      after:  after_ranges,
+    }
+  }
+}
+
 struct ChangeSetBuilder<'a> {
   res:        ChangeSet,
   after:      RopeSlice<'a>,

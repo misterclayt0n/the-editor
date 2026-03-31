@@ -9,14 +9,16 @@ name = "the-editor"
 path = "main.rs"
 
 [dependencies]
-clap.workspace      = true
-crossterm.workspace = true
-eyre.workspace      = true
-ratatui.workspace   = true
-ropey.workspace     = true
+clap.workspace       = true
+crossterm.workspace  = true
+eyre.workspace       = true
+git2.workspace       = true
+ratatui.workspace    = true
+ropey.workspace      = true
+serde.workspace      = true
 serde_json.workspace = true
-smallvec.workspace  = true
-the-default         = { path = "../the-default" }
+smallvec.workspace   = true
+the-default          = { path = "../the-default" }
 the-lib             = { features = [ "runtime-loader" ], path = "../the-lib" }
 the-lsp             = { path = "../the-lsp" }
 the-loader          = { path = "../the-loader" }

@@ -553,9 +553,19 @@ impl Editor {
     &self.buffers[self.active_buffer_index_internal()].document
   }
 
+  pub fn document_for_buffer(&self, buffer_id: BufferId) -> Option<&Document> {
+    let index = self.index_of_buffer_id(buffer_id)?;
+    Some(&self.buffers[index].document)
+  }
+
   pub fn document_mut(&mut self) -> &mut Document {
     let index = self.active_buffer_index_internal();
     &mut self.buffers[index].document
+  }
+
+  pub fn document_mut_for_buffer(&mut self, buffer_id: BufferId) -> Option<&mut Document> {
+    let index = self.index_of_buffer_id(buffer_id)?;
+    Some(&mut self.buffers[index].document)
   }
 
   pub fn view(&self) -> ViewState {
@@ -1600,6 +1610,30 @@ impl Editor {
       buffer_id,
       changed,
       syntax_attached: self.document().syntax().is_some(),
+    })
+  }
+
+  pub fn apply_transaction_to_buffer(
+    &mut self,
+    buffer_id: BufferId,
+    transaction: &Transaction,
+    syntax_loader: Option<&Loader>,
+  ) -> std::result::Result<ApplyTransactionResult, String> {
+    let Some(index) = self.index_of_buffer_id(buffer_id) else {
+      return Err("buffer not found for transaction".to_string());
+    };
+    let changed = !transaction.changes().is_empty();
+    self.buffers[index]
+      .document
+      .apply_transaction_with_syntax(transaction, syntax_loader)
+      .map_err(|err| err.to_string())?;
+    if changed {
+      self.touch_modified_history(buffer_id);
+    }
+    Ok(ApplyTransactionResult {
+      buffer_id,
+      changed,
+      syntax_attached: self.buffers[index].document.syntax().is_some(),
     })
   }
 

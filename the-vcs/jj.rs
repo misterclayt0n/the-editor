@@ -17,6 +17,7 @@ use eyre::{
 use crate::{
   FileChange,
   VcsStatuslineInfo,
+  VcsWorkspaceScan,
 };
 
 #[cfg(test)] mod test;
@@ -134,11 +135,15 @@ fn parse_jj_diff_entry(repo_root: &Path, line: &str) -> Option<FileChange> {
 
 pub fn get_diff_base(file: &Path) -> Result<Vec<u8>> {
   let file = canonical_file_path(file)?;
+  get_diff_base_for_repo_path(&file)?.ok_or_else(|| eyre!("missing jj blob for {}", file.display()))
+}
+
+fn get_diff_base_for_repo_path(file: &Path) -> Result<Option<Vec<u8>>> {
   let repo_root = jj_repo_root(&file)?;
   let relative = repo_relative_jj_path(&file, &repo_root)?;
   let fileset = format!("root:{relative}");
 
-  let output = run_jj(&repo_root, &[
+  let output = match run_jj(&repo_root, &[
     "--ignore-working-copy",
     "--config",
     "templates.file_show=\"\"",
@@ -147,9 +152,23 @@ pub fn get_diff_base(file: &Path) -> Result<Vec<u8>> {
     "-r",
     "@-",
     &fileset,
-  ])?;
+  ]) {
+    Ok(output) => output,
+    Err(_) => return Ok(None),
+  };
 
-  Ok(output.stdout)
+  Ok(Some(output.stdout))
+}
+
+pub fn get_diff_base_for_change(change: &FileChange) -> Result<Option<Vec<u8>>> {
+  let path = match change {
+    FileChange::Untracked { .. } => return Ok(None),
+    FileChange::Modified { path }
+    | FileChange::Conflict { path }
+    | FileChange::Deleted { path } => path,
+    FileChange::Renamed { from_path, .. } => from_path,
+  };
+  get_diff_base_for_repo_path(path)
 }
 
 pub fn get_current_head_name(file: &Path) -> Result<Arc<ArcSwap<Box<str>>>> {
@@ -231,4 +250,39 @@ pub fn for_each_changed_file(cwd: &Path, f: impl Fn(Result<FileChange>) -> bool)
 fn jj_changed_files_text(repo_root: &Path) -> Result<String> {
   let output = run_jj(repo_root, &["diff", "-r", "@", "-T", DIFF_LINE_TEMPLATE])?;
   String::from_utf8(output.stdout).wrap_err("invalid jj diff output")
+}
+
+fn jj_head_revision(repo_root: &Path) -> Result<Option<String>> {
+  let output = run_jj(repo_root, &[
+    "--ignore-working-copy",
+    "log",
+    "-r",
+    "@",
+    "--no-graph",
+    "-T",
+    "self.commit_id().shortest(12)",
+  ])?;
+  let revision = String::from_utf8(output.stdout).wrap_err("invalid jj revision output")?;
+  let revision = revision.trim();
+  if revision.is_empty() {
+    Ok(None)
+  } else {
+    Ok(Some(revision.to_string()))
+  }
+}
+
+pub fn scan_workspace(cwd: &Path) -> Result<VcsWorkspaceScan> {
+  let repo_root = jj_repo_root(cwd)?;
+  let text = jj_changed_files_text(&repo_root)?;
+  let changes = text
+    .lines()
+    .filter_map(|line| parse_jj_diff_entry(&repo_root, line))
+    .collect();
+  Ok(VcsWorkspaceScan {
+    provider_label: "jj".to_string(),
+    repo_root: repo_root.clone(),
+    statusline_info: get_statusline_info(&repo_root).ok(),
+    head_revision: jj_head_revision(&repo_root)?,
+    changes,
+  })
 }

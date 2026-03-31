@@ -17,6 +17,7 @@ use eyre::{
 use crate::{
   FileChange,
   VcsStatuslineInfo,
+  VcsWorkspaceScan,
 };
 
 #[cfg(test)] mod test;
@@ -127,17 +128,39 @@ fn parse_git_status_line(repo_root: &Path, line: &str) -> Option<FileChange> {
 
 pub fn get_diff_base(file: &Path) -> Result<Vec<u8>> {
   let file = canonical_file_path(file)?;
+  get_diff_base_for_repo_path(&file)?
+    .ok_or_else(|| eyre!("missing git blob for {}", file.display()))
+}
+
+fn get_diff_base_for_repo_path(file: &Path) -> Result<Option<Vec<u8>>> {
   let repo_root = git_repo_root(&file)?;
   let relative = repo_relative_git_path(&file, &repo_root)?;
   let spec = format!("HEAD:{relative}");
-  let kind_output = run_git(&repo_root, &["cat-file", "-t", &spec])?;
+  let kind_output = match run_git(&repo_root, &["cat-file", "-t", &spec]) {
+    Ok(output) => output,
+    Err(_) => return Ok(None),
+  };
   let kind = String::from_utf8(kind_output.stdout).wrap_err("invalid git object kind output")?;
   let kind = kind.trim();
   if kind != "blob" {
-    return Err(eyre!("git object for {relative} is {kind}, expected blob"));
+    return Ok(None);
   }
-  let output = run_git(&repo_root, &["show", &spec])?;
-  Ok(output.stdout)
+  let output = match run_git(&repo_root, &["show", &spec]) {
+    Ok(output) => output,
+    Err(_) => return Ok(None),
+  };
+  Ok(Some(output.stdout))
+}
+
+pub fn get_diff_base_for_change(change: &FileChange) -> Result<Option<Vec<u8>>> {
+  let path = match change {
+    FileChange::Untracked { .. } => return Ok(None),
+    FileChange::Modified { path }
+    | FileChange::Conflict { path }
+    | FileChange::Deleted { path } => path,
+    FileChange::Renamed { from_path, .. } => from_path,
+  };
+  get_diff_base_for_repo_path(path)
 }
 
 pub fn get_current_head_name(file: &Path) -> Result<Arc<ArcSwap<Box<str>>>> {
@@ -195,4 +218,36 @@ pub fn for_each_changed_file(cwd: &Path, f: impl Fn(Result<FileChange>) -> bool)
     }
   }
   Ok(())
+}
+
+fn git_head_revision(repo_root: &Path) -> Result<Option<String>> {
+  let output = run_git(repo_root, &["rev-parse", "HEAD"])?;
+  let revision = String::from_utf8(output.stdout).wrap_err("invalid git revision output")?;
+  let revision = revision.trim();
+  if revision.is_empty() {
+    Ok(None)
+  } else {
+    Ok(Some(revision.to_string()))
+  }
+}
+
+pub fn scan_workspace(cwd: &Path) -> Result<VcsWorkspaceScan> {
+  let repo_root = git_repo_root(cwd)?;
+  let output = run_git(&repo_root, &[
+    "status",
+    "--porcelain=1",
+    "--untracked-files=all",
+  ])?;
+  let text = String::from_utf8(output.stdout).wrap_err("invalid git status output")?;
+  let changes = text
+    .lines()
+    .filter_map(|line| parse_git_status_line(&repo_root, line))
+    .collect();
+  Ok(VcsWorkspaceScan {
+    provider_label: "git".to_string(),
+    repo_root: repo_root.clone(),
+    statusline_info: get_statusline_info(&repo_root).ok(),
+    head_revision: git_head_revision(&repo_root)?,
+    changes,
+  })
 }

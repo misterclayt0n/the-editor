@@ -1,0 +1,11 @@
+{
+  "name": "the-editor-pi-extension",
+  "version": "0.1.0",
+  "keywords": ["pi-package"],
+  "peerDependencies": {
+    "@mariozechner/pi-coding-agent": "*"
+  },
+  "pi": {
+    "extensions": ["./index.ts"]
+  }
+}

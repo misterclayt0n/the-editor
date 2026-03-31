@@ -380,6 +380,13 @@ pub trait DefaultContext: Sized + 'static {
   fn watch_statusline_text(&self) -> Option<String> {
     None
   }
+  fn pi_statusline_text(&self) -> Option<String> {
+    None
+  }
+  fn agent_follow_enabled(&self) -> bool {
+    false
+  }
+  fn set_agent_follow_enabled(&mut self, _enabled: bool) {}
   fn diagnostic_statusline_counts(&self) -> Option<DiagnosticCounts> {
     None
   }
@@ -486,6 +493,20 @@ pub trait DefaultContext: Sized + 'static {
   ) -> Result<Vec<crate::file_picker::FilePickerChangedFileItem>, String> {
     Ok(Vec::new())
   }
+  fn file_picker_vcs_diff_bootstrap(
+    &mut self,
+  ) -> Result<crate::file_picker::FilePickerVcsDiffBootstrap, String> {
+    let root = crate::workspace_root(self.effective_working_directory().as_path());
+    let changed = self.file_picker_changed_files()?;
+    Ok(crate::file_picker::FilePickerVcsDiffBootstrap::Ready { root, changed })
+  }
+  fn file_picker_vcs_diff_entries(
+    &self,
+  ) -> Result<Vec<crate::file_picker::FilePickerVcsDiffEntry>, String> {
+    Ok(Vec::new())
+  }
+  fn file_picker_vcs_diff_did_open(&mut self) {}
+  fn file_picker_selection_changed(&mut self) {}
   fn supports_native_file_explorer(&self) -> bool {
     false
   }
@@ -598,6 +619,9 @@ pub trait DefaultContext: Sized + 'static {
       format!("'{path_text}' written, {line_count}L {size_text}{forced_suffix}"),
     );
     Ok(())
+  }
+  fn pi_bridge_send_active_selection(&mut self, _submit: bool) -> Result<(), String> {
+    Err("pi bridge is not available in this editor client".to_string())
   }
   fn reload_file_preserving_view(&mut self, path: &Path) -> std::io::Result<()> {
     let disk_text = std::fs::read_to_string(path)?;
@@ -1433,6 +1457,7 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::JumplistPicker => crate::file_picker::open_jumplist_picker(ctx),
     Command::DiagnosticsPicker => crate::file_picker::open_diagnostics_picker(ctx, false),
     Command::WorkspaceDiagnosticsPicker => crate::file_picker::open_diagnostics_picker(ctx, true),
+    Command::VcsDiffPicker => crate::file_picker::open_vcs_diff_picker(ctx),
     Command::ChangedFilePicker => crate::file_picker::open_changed_file_picker(ctx),
     Command::TerminalOpen => terminal_open(ctx),
     Command::TerminalClose => terminal_close(ctx),
@@ -1447,6 +1472,12 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::LspDocumentSymbols => ctx.lsp_document_symbols(),
     Command::LspWorkspaceSymbols => ctx.lsp_workspace_symbols(),
     Command::LspCompletion => ctx.lsp_completion(),
+    Command::PiPrefillSelection => {
+      let _ = ctx.pi_bridge_send_active_selection(false);
+    },
+    Command::PiSendSelection => {
+      let _ = ctx.pi_bridge_send_active_selection(true);
+    },
     Command::InlineAccept => {
       crate::inline_completion::accept_inline_completion(ctx);
     },
@@ -1513,6 +1544,8 @@ fn command_preserves_completion_menu(command: Command) -> bool {
       | Command::CompletionCancel
       | Command::CompletionDocsScrollUp
       | Command::CompletionDocsScrollDown
+      | Command::PiPrefillSelection
+      | Command::PiSendSelection
       | Command::InlineAccept
       | Command::InlineAcceptWord
       | Command::InlineAcceptLine
@@ -6263,6 +6296,7 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "jumplist_picker" => Some(Command::jumplist_picker()),
     "diagnostics_picker" => Some(Command::diagnostics_picker()),
     "workspace_diagnostics_picker" => Some(Command::workspace_diagnostics_picker()),
+    "vcs_diff_picker" => Some(Command::vcs_diff_picker()),
     "changed_file_picker" => Some(Command::changed_file_picker()),
     "terminal_open" => Some(Command::terminal_open()),
     "terminal_close" => Some(Command::terminal_close()),
@@ -6288,6 +6322,8 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "workspace_symbols" => Some(Command::lsp_workspace_symbols()),
     "lsp_completion" => Some(Command::lsp_completion()),
     "completion" => Some(Command::lsp_completion()),
+    "pi_prefill_selection" => Some(Command::pi_prefill_selection()),
+    "pi_send_selection" => Some(Command::pi_send_selection()),
     "inline_accept" => Some(Command::inline_accept()),
     "inline_accept_word" => Some(Command::inline_accept_word()),
     "inline_accept_line" => Some(Command::inline_accept_line()),

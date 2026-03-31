@@ -276,6 +276,14 @@ impl FilePickerItem {
 
   pub fn stable_id(&self) -> u64 {
     let mut hasher = DefaultHasher::new();
+    if let Some(payload) = self.payload::<FilePickerVcsDiffPayload>() {
+      255_u8.hash(&mut hasher);
+      payload.path.hash(&mut hasher);
+      payload.entry_index.hash(&mut hasher);
+      payload.hunk_index.hash(&mut hasher);
+      let id = hasher.finish();
+      return if id == 0 { 1 } else { id };
+    }
     self.action.stable_id().hash(&mut hasher);
     self.absolute.hash(&mut hasher);
     self.display.hash(&mut hasher);
@@ -324,6 +332,7 @@ pub enum FilePickerKind {
   Diagnostics,
   Symbols,
   LiveGrep,
+  VcsDiff,
 }
 
 impl Default for FilePickerKind {
@@ -339,6 +348,8 @@ pub enum FilePickerRowKind {
   Symbols,
   LiveGrepHeader,
   LiveGrepMatch,
+  VcsDiffHeader,
+  VcsDiffHunk,
 }
 
 impl Default for FilePickerRowKind {
@@ -378,6 +389,14 @@ pub struct FilePickerPreviewSegment {
   pub text:         String,
   pub highlight_id: Option<u32>,
   pub is_match:     bool,
+  pub change_kind:  Option<FilePickerPreviewChangeKind>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FilePickerPreviewChangeKind {
+  Added,
+  Removed,
+  Modified,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -390,14 +409,84 @@ pub struct FilePickerPreviewWindowLine {
   pub segments:    Vec<FilePickerPreviewSegment>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FilePickerPreviewWindowKind {
+  #[default]
+  Empty,
+  Source,
+  Text,
+  Message,
+  VcsDiff,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FilePickerVcsDiffPreviewRowKind {
+  #[default]
+  Context,
+  Added,
+  Removed,
+  Modified,
+  SectionHeader,
+  Info,
+  CollapsedAbove,
+  CollapsedBelow,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FilePickerVcsDiffPreviewRow {
+  pub kind:              FilePickerVcsDiffPreviewRowKind,
+  pub left_line_index:   Option<usize>,
+  pub right_line_index:  Option<usize>,
+  pub left_line_number:  Option<usize>,
+  pub right_line_number: Option<usize>,
+  pub message:           String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FilePickerVcsDiffPreview {
+  pub title:        String,
+  pub from_title:   Option<String>,
+  pub left_label:   String,
+  pub right_label:  String,
+  pub left:         FilePickerSourcePreview,
+  pub right:        FilePickerSourcePreview,
+  pub rows:         Vec<FilePickerVcsDiffPreviewRow>,
+  pub cached_lines: Arc<[FilePickerVcsDiffPreviewWindowLine]>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FilePickerVcsDiffPreviewWindowLine {
+  pub virtual_row: usize,
+  pub kind:        FilePickerVcsDiffPreviewRowKind,
+  pub source:      FilePickerVcsDiffPreviewLineSource,
+  pub line_number: Option<usize>,
+  pub segments:    Vec<FilePickerPreviewSegment>,
+  pub message:     String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FilePickerVcsDiffPreviewWindow {
+  pub total_virtual_rows: usize,
+  pub lines:              Vec<FilePickerVcsDiffPreviewWindowLine>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FilePickerVcsDiffPreviewLineSource {
+  Base,
+  Worktree,
+  #[default]
+  Meta,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct FilePickerPreviewWindow {
   pub navigation_mode:    FilePickerPreviewNavigationMode,
-  pub kind:               u8, // 0=empty, 1=source, 2=text, 3=message
+  pub kind:               FilePickerPreviewWindowKind,
   pub total_virtual_rows: usize,
   pub offset:             usize,
   pub window_start:       usize,
   pub lines:              Vec<FilePickerPreviewWindowLine>,
+  pub vcs_diff:           Option<FilePickerVcsDiffPreviewWindow>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -434,6 +523,14 @@ pub struct FilePickerChangedFileItem {
   pub kind:      FilePickerChangedKind,
   pub path:      PathBuf,
   pub from_path: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone)]
+pub enum FilePickerVcsDiffBootstrap {
+  Ready {
+    root:    PathBuf,
+    changed: Vec<FilePickerChangedFileItem>,
+  },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -525,9 +622,37 @@ pub enum FilePickerPreview {
   Source(FilePickerSourcePreview),
   Text(String),
   Message(String),
+  VcsDiff(FilePickerVcsDiffPreview),
 }
 
 #[derive(Debug, Clone)]
+pub struct FilePickerVcsDiffHunk {
+  pub summary:            String,
+  pub target_line:        Option<usize>,
+  pub target_cursor_char: Option<usize>,
+  pub before_start:       usize,
+  pub before_end:         usize,
+  pub after_start:        usize,
+  pub after_end:          usize,
+  pub preview:            FilePickerPreview,
+}
+
+#[derive(Debug, Clone)]
+pub struct FilePickerVcsDiffEntry {
+  pub kind:      FilePickerChangedKind,
+  pub path:      PathBuf,
+  pub from_path: Option<PathBuf>,
+  pub hunks:     Vec<FilePickerVcsDiffHunk>,
+}
+
+#[derive(Debug, Clone)]
+pub struct FilePickerVcsDiffPayload {
+  pub path:        PathBuf,
+  pub entry_index: usize,
+  pub hunk_index:  Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FilePickerSourcePreview {
   pub text:               Arc<str>,
   pub line_starts:        Arc<[usize]>,
@@ -648,6 +773,7 @@ struct FilePickerScanSource {
 
 pub struct FilePickerState {
   pub active:             bool,
+  pub kind:               FilePickerKind,
   pub root:               PathBuf,
   pub title:              String,
   pub options:            FilePickerOptions,
@@ -695,6 +821,7 @@ impl Default for FilePickerState {
     let matcher = new_matcher(None);
     Self {
       active: false,
+      kind: FilePickerKind::Generic,
       root: PathBuf::new(),
       title: "File Picker".to_string(),
       options: FilePickerOptions::default(),
@@ -827,11 +954,16 @@ impl FilePickerState {
     self.preview_pending_id.is_some()
   }
 
+  pub fn runtime_session(&self) -> Option<PickerRuntimeSessionId> {
+    self.runtime_session
+  }
+
   pub fn preview_navigation_mode(&self) -> FilePickerPreviewNavigationMode {
     match &self.preview {
       FilePickerPreview::Empty | FilePickerPreview::Message(_) => {
         FilePickerPreviewNavigationMode::Static
       },
+      FilePickerPreview::VcsDiff(_) => FilePickerPreviewNavigationMode::Scrollable,
       FilePickerPreview::Source(_) | FilePickerPreview::Text(_) => {
         if self.preview_focus_line.is_some() {
           FilePickerPreviewNavigationMode::Anchored
@@ -848,6 +980,7 @@ impl FilePickerState {
       FilePickerPreview::Source(source) => source.total_lines(),
       FilePickerPreview::Text(text) => text.lines().count().max(1),
       FilePickerPreview::Message(message) => message.lines().count().max(1),
+      FilePickerPreview::VcsDiff(preview) => vcs_diff_preview_line_count(preview),
     }
   }
 
@@ -1005,6 +1138,16 @@ impl PickerItemSpec {
     self
   }
 
+  pub fn with_selectable(mut self, selectable: bool) -> Self {
+    if let PickerItemSpecAction::Custom {
+      selectable: spec_selectable,
+    } = &mut self.action
+    {
+      *spec_selectable = selectable;
+    }
+    self
+  }
+
   pub fn with_row_data(mut self, row_data: FilePickerRowData) -> Self {
     self.row_data = Some(row_data);
     self
@@ -1075,6 +1218,7 @@ enum PickerSource<Ctx> {
 }
 
 pub struct PickerBuilder<Ctx> {
+  kind:          FilePickerKind,
   title:         String,
   root:          PickerRoot,
   open_split:    Option<SplitAxis>,
@@ -1119,6 +1263,7 @@ impl<Ctx> Clone for PickerSource<Ctx> {
 impl<Ctx> Clone for PickerBuilder<Ctx> {
   fn clone(&self) -> Self {
     Self {
+      kind:          self.kind,
       title:         self.title.clone(),
       root:          self.root.clone(),
       open_split:    self.open_split,
@@ -1134,6 +1279,7 @@ where
 {
   pub fn files(title: impl Into<String>) -> Self {
     Self {
+      kind:          FilePickerKind::Generic,
       title:         title.into(),
       root:          PickerRoot::EffectiveWorkingDirectory,
       open_split:    None,
@@ -1157,6 +1303,7 @@ where
     I: IntoIterator<Item = PickerItemSpec>,
   {
     Self {
+      kind:          FilePickerKind::Generic,
       title:         title.into(),
       root:          PickerRoot::EffectiveWorkingDirectory,
       open_split:    None,
@@ -1173,6 +1320,7 @@ where
     F: Fn(&mut Ctx, &str) -> Vec<PickerItemSpec> + 'static,
   {
     Self {
+      kind:          FilePickerKind::Generic,
       title:         title.into(),
       root:          PickerRoot::EffectiveWorkingDirectory,
       open_split:    None,
@@ -1186,6 +1334,11 @@ where
 
   pub fn root(mut self, root: PickerRoot) -> Self {
     self.root = root;
+    self
+  }
+
+  pub fn kind(mut self, kind: FilePickerKind) -> Self {
+    self.kind = kind;
     self
   }
 
@@ -1280,6 +1433,7 @@ where
       } => {
         open_picker_from_builder_files(
           ctx,
+          self.kind,
           &self.title,
           root,
           self.open_split,
@@ -1293,6 +1447,7 @@ where
       } => {
         open_picker_from_builder_items(
           ctx,
+          self.kind,
           &self.title,
           root,
           self.open_split,
@@ -1306,6 +1461,7 @@ where
       } => {
         open_picker_from_builder_query(
           ctx,
+          self.kind,
           &self.title,
           root,
           self.open_split,
@@ -1613,69 +1769,152 @@ pub fn open_diagnostics_picker<Ctx: DefaultContext>(ctx: &mut Ctx, workspace: bo
   );
 }
 
-pub fn open_changed_file_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
-  let cwd = ctx.effective_working_directory();
-  if !cwd.exists() {
-    ctx.push_error(
-      "changed_file_picker",
-      "current working directory does not exist",
-    );
-    return;
-  }
-
-  let changed = match ctx.file_picker_changed_files() {
-    Ok(changed) => changed,
+pub fn open_vcs_diff_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  let (root, changed) = match ctx.file_picker_vcs_diff_bootstrap() {
+    Ok(FilePickerVcsDiffBootstrap::Ready { root, changed }) => (root, changed),
     Err(err) => {
-      ctx.push_warning("changed_file_picker", err);
+      ctx.push_warning("vcs_diff_picker", err);
       return;
     },
   };
   if changed.is_empty() {
-    ctx.push_warning("changed_file_picker", "no changed files");
+    ctx.push_warning("vcs_diff_picker", "no changed files");
     return;
   }
 
-  let root = picker_root(ctx);
-  let items = changed
-    .into_iter()
-    .map(|entry| {
-      let (prefix, icon) = match entry.kind {
-        FilePickerChangedKind::Untracked => ("+ untracked", "git_untracked"),
-        FilePickerChangedKind::Modified => ("~ modified", "git_modified"),
-        FilePickerChangedKind::Conflict => ("x conflict", "git_conflict"),
-        FilePickerChangedKind::Deleted => ("- deleted", "git_deleted"),
-        FilePickerChangedKind::Renamed => ("> renamed", "git_renamed"),
-      };
-      let display_path = display_relative_path(&entry.path, &cwd);
-      let display = if entry.kind == FilePickerChangedKind::Renamed {
-        let from_display = entry
-          .from_path
-          .as_ref()
-          .map(|path| display_relative_path(path, &cwd))
-          .unwrap_or_else(|| "<unknown>".to_string());
-        format!("{prefix} {from_display} -> {display_path}")
-      } else {
-        format!("{prefix} {display_path}")
-      };
-
-      FilePickerItem {
-        absolute: entry.path.clone(),
-        display,
-        icon: icon.to_string(),
-        is_dir: false,
-        display_path: false,
-        action: FilePickerItemAction::OpenFile(entry.path.clone()),
-        preview_path: Some(entry.path),
-        preview_line: None,
-        preview_col: None,
-        row_data: None,
-        preview: None,
-        payload: None,
-      }
-    })
+  let entries: Vec<_> = changed
+    .iter()
+    .map(file_picker_vcs_diff_placeholder_entry)
     .collect();
+  let items = file_picker_vcs_diff_specs(&root, &entries);
 
-  open_static_picker(ctx, "Changed Files", root, None, items, 0);
+  PickerBuilder::static_items("VCS Diff Picker", items)
+    .root(PickerRoot::Fixed(root))
+    .kind(FilePickerKind::VcsDiff)
+    .open(ctx);
+  ctx.file_picker_vcs_diff_did_open();
+  ctx.file_picker_selection_changed();
+}
+
+pub fn open_changed_file_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  open_vcs_diff_picker(ctx);
+}
+
+fn vcs_diff_icon_name(kind: FilePickerChangedKind) -> &'static str {
+  match kind {
+    FilePickerChangedKind::Untracked => "git_untracked",
+    FilePickerChangedKind::Modified => "git_modified",
+    FilePickerChangedKind::Conflict => "git_conflict",
+    FilePickerChangedKind::Deleted => "git_deleted",
+    FilePickerChangedKind::Renamed => "git_renamed",
+  }
+}
+
+fn vcs_diff_status_label(kind: FilePickerChangedKind) -> &'static str {
+  match kind {
+    FilePickerChangedKind::Untracked => "untracked",
+    FilePickerChangedKind::Modified => "modified",
+    FilePickerChangedKind::Conflict => "conflict",
+    FilePickerChangedKind::Deleted => "deleted",
+    FilePickerChangedKind::Renamed => "renamed",
+  }
+}
+
+pub fn file_picker_vcs_diff_placeholder_entry(
+  item: &FilePickerChangedFileItem,
+) -> FilePickerVcsDiffEntry {
+  FilePickerVcsDiffEntry {
+    kind:      item.kind,
+    path:      item.path.clone(),
+    from_path: item.from_path.clone(),
+    hunks:     vec![FilePickerVcsDiffHunk {
+      summary:            "loading diff…".to_string(),
+      target_line:        None,
+      target_cursor_char: None,
+      before_start:       0,
+      before_end:         0,
+      after_start:        0,
+      after_end:          0,
+      preview:            FilePickerPreview::Message("Loading diff…".to_string()),
+    }],
+  }
+}
+
+pub fn file_picker_vcs_diff_specs(
+  root: &Path,
+  entries: &[FilePickerVcsDiffEntry],
+) -> Vec<PickerItemSpec> {
+  let mut items = Vec::new();
+  for (entry_index, entry) in entries.iter().enumerate() {
+    let display_path = display_relative_path(&entry.path, root);
+    let from_display = entry
+      .from_path
+      .as_ref()
+      .map(|path| display_relative_path(path, root));
+
+    items.push(
+      PickerItemSpec::custom(display_path.clone())
+        .with_selectable(false)
+        .with_icon(vcs_diff_icon_name(entry.kind))
+        .with_row_data(FilePickerRowData {
+          kind:       FilePickerRowKind::VcsDiffHeader,
+          severity:   None,
+          primary:    display_path,
+          secondary:  vcs_diff_status_label(entry.kind).to_string(),
+          tertiary:   from_display.clone().unwrap_or_default(),
+          quaternary: String::new(),
+          line:       0,
+          column:     0,
+          depth:      0,
+        }),
+    );
+
+    for (hunk_index, hunk) in entry.hunks.iter().enumerate() {
+      let row_data = FilePickerRowData {
+        kind:       FilePickerRowKind::VcsDiffHunk,
+        severity:   None,
+        primary:    hunk.summary.clone(),
+        secondary:  display_relative_path(&entry.path, root),
+        tertiary:   vcs_diff_status_label(entry.kind).to_string(),
+        quaternary: from_display.clone().unwrap_or_default(),
+        line:       hunk.target_line.unwrap_or(0).saturating_add(1),
+        column:     1,
+        depth:      1,
+      };
+
+      let item = if let (Some(target_line), Some(cursor_char)) =
+        (hunk.target_line, hunk.target_cursor_char)
+      {
+        PickerItemSpec::location(
+          hunk.summary.clone(),
+          entry.path.clone(),
+          cursor_char,
+          target_line,
+          None,
+        )
+        .with_icon(vcs_diff_icon_name(entry.kind))
+        .with_preview(FilePickerPreview::Message("Loading diff…".to_string()))
+        .with_row_data(row_data)
+        .with_payload(FilePickerVcsDiffPayload {
+          path: entry.path.clone(),
+          entry_index,
+          hunk_index: Some(hunk_index),
+        })
+      } else {
+        PickerItemSpec::custom(hunk.summary.clone())
+          .with_icon(vcs_diff_icon_name(entry.kind))
+          .with_preview(hunk.preview.clone())
+          .with_row_data(row_data)
+          .with_payload(FilePickerVcsDiffPayload {
+            path: entry.path.clone(),
+            entry_index,
+            hunk_index: Some(hunk_index),
+          })
+      };
+      items.push(item);
+    }
+  }
+  items
 }
 
 fn open_static_picker<Ctx: DefaultContext>(
@@ -1686,11 +1925,12 @@ fn open_static_picker<Ctx: DefaultContext>(
   items: Vec<FilePickerItem>,
   initial_cursor: usize,
 ) {
-  let mut state = base_picker_state(ctx, title, open_split);
+  let mut state = base_picker_state(ctx, file_picker_kind_from_title(title), title, open_split);
   state.root = root;
   replace_picker_items(&mut state, items, initial_cursor);
 
   *ctx.file_picker_mut() = state;
+  ctx.file_picker_selection_changed();
   ctx.request_render();
 }
 
@@ -1723,7 +1963,7 @@ pub fn open_dynamic_picker<Ctx: DefaultContext>(
   open_split: Option<SplitAxis>,
   initial_query: String,
 ) {
-  let mut state = base_picker_state(ctx, title, open_split);
+  let mut state = base_picker_state(ctx, file_picker_kind_from_title(title), title, open_split);
   state.root = root;
   state.query_mode = FilePickerQueryMode::Dynamic;
   state.query = initial_query;
@@ -1793,7 +2033,7 @@ fn run_picker_runtime_submit<Ctx: DefaultContext>(
   unsafe { (&*handler)(ctx, item) }
 }
 
-fn picker_items_from_specs(
+pub fn file_picker_items_from_specs(
   specs: Vec<PickerItemSpec>,
   submit_handler: Option<PickerSubmitHandlerRef>,
 ) -> Vec<FilePickerItem> {
@@ -1805,6 +2045,7 @@ fn picker_items_from_specs(
 
 fn open_picker_from_builder_items<Ctx: DefaultContext>(
   ctx: &mut Ctx,
+  kind: FilePickerKind,
   title: &str,
   root: PathBuf,
   open_split: Option<SplitAxis>,
@@ -1819,12 +2060,12 @@ fn open_picker_from_builder_items<Ctx: DefaultContext>(
       })),
     })
   });
-  let mut state = base_picker_state(ctx, title, open_split);
+  let mut state = base_picker_state(ctx, kind, title, open_split);
   state.root = root;
   state.runtime_session = runtime_session;
   replace_picker_items(
     &mut state,
-    picker_items_from_specs(items, runtime_session.map(PickerSubmitHandlerRef::Runtime)),
+    file_picker_items_from_specs(items, runtime_session.map(PickerSubmitHandlerRef::Runtime)),
     0,
   );
 
@@ -1834,6 +2075,7 @@ fn open_picker_from_builder_items<Ctx: DefaultContext>(
 
 fn open_picker_from_builder_query<Ctx: DefaultContext>(
   ctx: &mut Ctx,
+  kind: FilePickerKind,
   title: &str,
   root: PathBuf,
   open_split: Option<SplitAxis>,
@@ -1851,7 +2093,7 @@ fn open_picker_from_builder_query<Ctx: DefaultContext>(
     }),
   });
 
-  let mut state = base_picker_state(ctx, title, open_split);
+  let mut state = base_picker_state(ctx, kind, title, open_split);
   state.root = root;
   state.query_mode = FilePickerQueryMode::Dynamic;
   state.custom_query_handler = Some(PickerQueryHandlerRef::Runtime(runtime_session));
@@ -1863,11 +2105,13 @@ fn open_picker_from_builder_query<Ctx: DefaultContext>(
 
   *ctx.file_picker_mut() = state;
   notify_file_picker_query_changed(ctx, &initial_query);
+  ctx.file_picker_selection_changed();
   ctx.request_render();
 }
 
 fn open_picker_from_builder_files<Ctx: DefaultContext>(
   ctx: &mut Ctx,
+  kind: FilePickerKind,
   title: &str,
   root: PathBuf,
   open_split: Option<SplitAxis>,
@@ -1884,7 +2128,7 @@ fn open_picker_from_builder_files<Ctx: DefaultContext>(
   });
   scan_source.submit_handler = runtime_session.map(PickerSubmitHandlerRef::Runtime);
 
-  let mut state = base_picker_state(ctx, title, open_split);
+  let mut state = base_picker_state(ctx, kind, title, open_split);
   state.preview = FilePickerPreview::Message("Scanning files…".to_string());
   state.runtime_session = runtime_session;
   state.scan_source = Some(scan_source);
@@ -1893,6 +2137,7 @@ fn open_picker_from_builder_files<Ctx: DefaultContext>(
   poll_scan_results(&mut state);
 
   *ctx.file_picker_mut() = state;
+  ctx.file_picker_selection_changed();
   ctx.request_render();
 }
 
@@ -1942,7 +2187,7 @@ pub fn notify_file_picker_query_changed<Ctx: DefaultContext>(ctx: &mut Ctx, quer
         if let Some(items) = run_picker_runtime_query(ctx, session_id, query) {
           replace_file_picker_items(
             ctx,
-            picker_items_from_specs(items, Some(PickerSubmitHandlerRef::Runtime(session_id))),
+            file_picker_items_from_specs(items, Some(PickerSubmitHandlerRef::Runtime(session_id))),
             0,
           );
           return;
@@ -1965,6 +2210,7 @@ fn finalize_query_edit<Ctx: DefaultContext>(ctx: &mut Ctx, old_query: &str) {
       refresh_preview(picker);
     }
   }
+  ctx.file_picker_selection_changed();
   if let Some(query) = changed_query {
     notify_file_picker_query_changed(ctx, &query);
   }
@@ -1977,6 +2223,7 @@ pub fn replace_file_picker_items<Ctx: DefaultContext>(
 ) {
   let picker = ctx.file_picker_mut();
   replace_picker_items(picker, items, initial_cursor);
+  ctx.file_picker_selection_changed();
   ctx.request_render();
 }
 
@@ -1991,10 +2238,13 @@ fn replace_picker_items(
     start_preview_worker(state);
   }
   state.matcher.restart(true);
-  state
-    .matcher
-    .pattern
-    .reparse(0, "", CaseMatching::Smart, Normalization::Smart, false);
+  state.matcher.pattern.reparse(
+    0,
+    state.query.as_str(),
+    CaseMatching::Smart,
+    Normalization::Smart,
+    false,
+  );
   let injector = state.matcher.injector();
   for item in items {
     inject_item(&injector, item);
@@ -2012,8 +2262,55 @@ fn replace_picker_items(
   }
 }
 
+pub fn replace_file_picker_items_preserving_selection<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  items: Vec<FilePickerItem>,
+  initial_cursor: usize,
+) {
+  let selected_item_stable_id = ctx.file_picker().selected_item_stable_id();
+  let picker = ctx.file_picker_mut();
+  replace_picker_items(picker, items, initial_cursor);
+  let _ = restore_selection_by_stable_id(picker, selected_item_stable_id);
+  refresh_preview(picker);
+  ctx.file_picker_selection_changed();
+  ctx.request_render();
+}
+
+pub fn replace_file_picker_items_preserving_selection_and_viewport<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  items: Vec<FilePickerItem>,
+  initial_cursor: usize,
+) {
+  let selected_item_stable_id = ctx.file_picker().selected_item_stable_id();
+  let list_offset = ctx.file_picker().list_offset;
+  let preview_scroll = ctx.file_picker().preview_scroll;
+  {
+    let picker = ctx.file_picker_mut();
+    replace_picker_items(picker, items, initial_cursor);
+    let _ = restore_selection_by_stable_id(picker, selected_item_stable_id);
+
+    let visible = picker.list_visible.max(1);
+    let max_offset = picker.matched_count().saturating_sub(visible);
+    picker.list_offset = list_offset.min(max_offset);
+
+    refresh_preview(picker);
+  }
+
+  ctx.file_picker_selection_changed();
+
+  let picker = ctx.file_picker_mut();
+  picker.preview_scroll = match picker.preview_navigation_mode() {
+    FilePickerPreviewNavigationMode::Scrollable => {
+      preview_scroll.min(picker.preview_line_count().saturating_sub(1))
+    },
+    _ => 0,
+  };
+  ctx.request_render();
+}
+
 fn base_picker_state<Ctx: DefaultContext>(
   ctx: &mut Ctx,
+  kind: FilePickerKind,
   title: &str,
   open_split: Option<SplitAxis>,
 ) -> FilePickerState {
@@ -2030,6 +2327,7 @@ fn base_picker_state<Ctx: DefaultContext>(
 
   let mut state = FilePickerState::default();
   state.active = true;
+  state.kind = kind;
   state.title = title.to_string();
   state.show_preview = show_preview;
   state.open_split = open_split;
@@ -2145,6 +2443,7 @@ pub fn move_selection<Ctx: DefaultContext>(ctx: &mut Ctx, amount: isize) {
   picker.selected = Some(selected);
   normalize_selection_and_scroll(picker);
   refresh_preview(picker);
+  ctx.file_picker_selection_changed();
 }
 
 pub fn move_page<Ctx: DefaultContext>(ctx: &mut Ctx, down: bool) {
@@ -2207,6 +2506,7 @@ pub fn handle_file_picker_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent)
       snap_selection_to_selectable(picker, 1);
       normalize_selection_and_scroll(picker);
       refresh_preview(picker);
+      ctx.file_picker_selection_changed();
       ctx.request_render();
       true
     },
@@ -2216,6 +2516,7 @@ pub fn handle_file_picker_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent)
       snap_selection_to_selectable(picker, -1);
       normalize_selection_and_scroll(picker);
       refresh_preview(picker);
+      ctx.file_picker_selection_changed();
       ctx.request_render();
       true
     },
@@ -2685,6 +2986,9 @@ pub fn file_picker_kind_from_title(title: &str) -> FilePickerKind {
   if title.starts_with("Live Grep") || title.starts_with("Global Search") {
     return FilePickerKind::LiveGrep;
   }
+  if title.starts_with("VCS Diff Picker") {
+    return FilePickerKind::VcsDiff;
+  }
   FilePickerKind::Generic
 }
 
@@ -2838,6 +3142,19 @@ pub fn file_picker_row_data(title: &str, item: &FilePickerItem) -> FilePickerRow
     FilePickerKind::Diagnostics => parse_diagnostics_row(item.display.as_str(), item.icon.as_str()),
     FilePickerKind::Symbols => parse_symbols_row(item.display.as_str()),
     FilePickerKind::LiveGrep => parse_live_grep_row(item),
+    FilePickerKind::VcsDiff => {
+      FilePickerRowData {
+        kind:       FilePickerRowKind::VcsDiffHunk,
+        severity:   None,
+        primary:    item.display.clone(),
+        secondary:  String::new(),
+        tertiary:   String::new(),
+        quaternary: String::new(),
+        line:       0,
+        column:     0,
+        depth:      0,
+      }
+    },
     FilePickerKind::Generic => {
       FilePickerRowData {
         kind:       FilePickerRowKind::Generic,
@@ -3249,6 +3566,7 @@ pub fn file_picker_icon_glyph(icon: &str, is_dir: bool) -> &'static str {
     "json" => "",
     "kotlin" => "",
     "nix" => "",
+    "pi" => "π",
     "python" => "",
     "sass" => "",
     "settings" => "",
@@ -3854,6 +4172,7 @@ fn preview_focus_row(preview: &FilePickerPreview, focus_line: Option<usize>) -> 
   match preview {
     FilePickerPreview::Source(source) => (focus_line < source.total_lines()).then_some(focus_line),
     FilePickerPreview::Text(_) | FilePickerPreview::Message(_) => Some(focus_line),
+    FilePickerPreview::VcsDiff(_) => Some(focus_line),
     FilePickerPreview::Empty => None,
   }
 }
@@ -3866,6 +4185,7 @@ fn preview_contains_focus_line(preview: &FilePickerPreview, focus_line: Option<u
     FilePickerPreview::Source(source) => focus_line < source.total_lines(),
     FilePickerPreview::Text(text) => focus_line < text.lines().count().max(1),
     FilePickerPreview::Message(message) => focus_line < message.lines().count().max(1),
+    FilePickerPreview::VcsDiff(preview) => focus_line < preview.rows.len().max(1),
     FilePickerPreview::Empty => false,
   }
 }
@@ -3915,7 +4235,7 @@ fn preview_char_to_byte_idx(text: &str, char_idx: usize) -> usize {
     .unwrap_or(text.len())
 }
 
-fn preview_line_segments(
+pub fn file_picker_preview_line_segments(
   line: &str,
   line_start: usize,
   highlights: &[(Highlight, Range<usize>)],
@@ -3925,6 +4245,7 @@ fn preview_line_segments(
       text:         String::new(),
       highlight_id: None,
       is_match:     false,
+      change_kind:  None,
     }];
   }
 
@@ -3933,6 +4254,7 @@ fn preview_line_segments(
       text:         line.to_string(),
       highlight_id: None,
       is_match:     false,
+      change_kind:  None,
     }];
   }
 
@@ -3968,6 +4290,7 @@ fn preview_line_segments(
       text: line[local_start..local_end].to_string(),
       highlight_id,
       is_match: false,
+      change_kind: None,
     });
   }
 
@@ -3976,6 +4299,7 @@ fn preview_line_segments(
       text:         line.to_string(),
       highlight_id: None,
       is_match:     false,
+      change_kind:  None,
     });
   }
 
@@ -4019,6 +4343,7 @@ fn apply_match_to_preview_segments(
         text:         segment.text[..prefix_end].to_string(),
         highlight_id: segment.highlight_id,
         is_match:     false,
+        change_kind:  segment.change_kind,
       });
     }
 
@@ -4028,6 +4353,7 @@ fn apply_match_to_preview_segments(
       text:         segment.text[overlap_start_byte..overlap_end_byte].to_string(),
       highlight_id: segment.highlight_id,
       is_match:     true,
+      change_kind:  segment.change_kind,
     });
 
     if local_overlap_end < segment_char_len {
@@ -4035,6 +4361,7 @@ fn apply_match_to_preview_segments(
         text:         segment.text[overlap_end_byte..].to_string(),
         highlight_id: segment.highlight_id,
         is_match:     false,
+        change_kind:  segment.change_kind,
       });
     }
 
@@ -4051,6 +4378,7 @@ pub fn file_picker_preview_window(
   overscan: usize,
 ) -> FilePickerPreviewWindow {
   let visible_rows = visible_rows.max(1);
+  let raw_overscan = overscan;
   let overscan = overscan.max(1);
   let focus_line = state.preview_focus_line;
   let focus_col = state.current_item().and_then(|item| item.preview_col);
@@ -4060,11 +4388,12 @@ pub fn file_picker_preview_window(
     FilePickerPreview::Empty => {
       FilePickerPreviewWindow {
         navigation_mode,
-        kind: 0,
+        kind: FilePickerPreviewWindowKind::Empty,
         total_virtual_rows: 0,
         offset: 0,
         window_start: 0,
         lines: Vec::new(),
+        vcs_diff: None,
       }
     },
     FilePickerPreview::Source(source) => {
@@ -4081,7 +4410,7 @@ pub fn file_picker_preview_window(
     FilePickerPreview::Text(text) => {
       build_plain_preview_window(
         text,
-        2,
+        FilePickerPreviewWindowKind::Text,
         navigation_mode,
         focus_line,
         focus_col,
@@ -4093,7 +4422,7 @@ pub fn file_picker_preview_window(
     FilePickerPreview::Message(text) => {
       build_plain_preview_window(
         text,
-        3,
+        FilePickerPreviewWindowKind::Message,
         FilePickerPreviewNavigationMode::Static,
         focus_line,
         focus_col,
@@ -4101,6 +4430,9 @@ pub fn file_picker_preview_window(
         visible_rows,
         overscan,
       )
+    },
+    FilePickerPreview::VcsDiff(preview) => {
+      build_vcs_diff_preview_window(preview, navigation_mode, offset, visible_rows, raw_overscan)
     },
   }
 }
@@ -4118,11 +4450,12 @@ fn build_source_preview_window(
   if total_virtual_rows == 0 {
     return FilePickerPreviewWindow {
       navigation_mode,
-      kind: 1,
+      kind: FilePickerPreviewWindowKind::Source,
       total_virtual_rows: 0,
       offset: 0,
       window_start: 0,
       lines: Vec::new(),
+      vcs_diff: None,
     };
   }
 
@@ -4141,7 +4474,7 @@ fn build_source_preview_window(
           continue;
         };
         let line_start = source.line_start(line_index).unwrap_or(0);
-        let mut segments = preview_line_segments(line, line_start, &source.highlights);
+        let mut segments = file_picker_preview_line_segments(line, line_start, &source.highlights);
         let focused = focus_line.is_some_and(|focus| focus == line_index);
         if focused {
           segments = apply_match_to_preview_segments(segments, focus_col);
@@ -4158,11 +4491,12 @@ fn build_source_preview_window(
 
       FilePickerPreviewWindow {
         navigation_mode,
-        kind: 1,
+        kind: FilePickerPreviewWindowKind::Source,
         total_virtual_rows,
         offset,
         window_start,
         lines,
+        vcs_diff: None,
       }
     },
     FilePickerPreviewNavigationMode::Anchored | FilePickerPreviewNavigationMode::Static => {
@@ -4199,7 +4533,7 @@ fn build_source_preview_window(
           continue;
         };
         let line_start = source.line_start(line_index).unwrap_or(0);
-        let mut segments = preview_line_segments(line, line_start, &source.highlights);
+        let mut segments = file_picker_preview_line_segments(line, line_start, &source.highlights);
         let focused = focus_line.is_some_and(|focus| focus == line_index);
         if focused {
           segments = apply_match_to_preview_segments(segments, focus_col);
@@ -4227,11 +4561,12 @@ fn build_source_preview_window(
 
       FilePickerPreviewWindow {
         navigation_mode,
-        kind: 1,
+        kind: FilePickerPreviewWindowKind::Source,
         total_virtual_rows,
         offset: window_start,
         window_start,
         lines,
+        vcs_diff: None,
       }
     },
   }
@@ -4239,7 +4574,7 @@ fn build_source_preview_window(
 
 fn build_plain_preview_window(
   text: &str,
-  kind: u8,
+  kind: FilePickerPreviewWindowKind,
   navigation_mode: FilePickerPreviewNavigationMode,
   focus_line: Option<usize>,
   focus_col: Option<(usize, usize)>,
@@ -4269,6 +4604,7 @@ fn build_plain_preview_window(
           text:         plain_lines[virtual_row].to_string(),
           highlight_id: None,
           is_match:     false,
+          change_kind:  None,
         }];
         if focused {
           segments = apply_match_to_preview_segments(segments, focus_col);
@@ -4290,6 +4626,7 @@ fn build_plain_preview_window(
         offset,
         window_start,
         lines,
+        vcs_diff: None,
       }
     },
     FilePickerPreviewNavigationMode::Anchored => {
@@ -4327,6 +4664,7 @@ fn build_plain_preview_window(
           text:         plain_lines[virtual_row].to_string(),
           highlight_id: None,
           is_match:     false,
+          change_kind:  None,
         }];
         if focused {
           segments = apply_match_to_preview_segments(segments, focus_col);
@@ -4359,6 +4697,7 @@ fn build_plain_preview_window(
         offset: window_start,
         window_start,
         lines,
+        vcs_diff: None,
       }
     },
     FilePickerPreviewNavigationMode::Static => {
@@ -4376,6 +4715,7 @@ fn build_plain_preview_window(
               text:         line.to_string(),
               highlight_id: None,
               is_match:     false,
+              change_kind:  None,
             }],
           }
         })
@@ -4388,8 +4728,259 @@ fn build_plain_preview_window(
         offset: 0,
         window_start: 0,
         lines,
+        vcs_diff: None,
       }
     },
+  }
+}
+
+pub fn finalize_vcs_diff_preview(
+  mut preview: FilePickerVcsDiffPreview,
+) -> FilePickerVcsDiffPreview {
+  preview.cached_lines = compute_vcs_diff_preview_window_lines(&preview).into();
+  preview
+}
+
+fn vcs_diff_preview_window_lines(
+  preview: &FilePickerVcsDiffPreview,
+) -> Cow<'_, [FilePickerVcsDiffPreviewWindowLine]> {
+  if preview.cached_lines.is_empty() {
+    Cow::Owned(compute_vcs_diff_preview_window_lines(preview))
+  } else {
+    Cow::Borrowed(&preview.cached_lines)
+  }
+}
+
+fn compute_vcs_diff_preview_window_lines(
+  preview: &FilePickerVcsDiffPreview,
+) -> Vec<FilePickerVcsDiffPreviewWindowLine> {
+  let mut lines = Vec::new();
+  let mut changed_rows = Vec::new();
+  let mut trailing_rows = Vec::new();
+  let mut in_changed_block = false;
+
+  for row in &preview.rows {
+    match row.kind {
+      FilePickerVcsDiffPreviewRowKind::CollapsedAbove
+      | FilePickerVcsDiffPreviewRowKind::CollapsedBelow
+      | FilePickerVcsDiffPreviewRowKind::Info => {
+        let target = if in_changed_block {
+          &mut trailing_rows
+        } else {
+          &mut lines
+        };
+        target.push(FilePickerVcsDiffPreviewWindowLine {
+          virtual_row: 0,
+          kind:        row.kind,
+          source:      FilePickerVcsDiffPreviewLineSource::Meta,
+          line_number: None,
+          segments:    Vec::new(),
+          message:     row.message.clone(),
+        });
+      },
+      FilePickerVcsDiffPreviewRowKind::Context => {
+        let (source, line_number, segments) = if let Some(line_index) = row.right_line_index {
+          (
+            FilePickerVcsDiffPreviewLineSource::Worktree,
+            row.right_line_number,
+            preview.right.line_text(line_index).map(|line| {
+              let line_start = preview.right.line_start(line_index).unwrap_or(0);
+              file_picker_preview_line_segments(line, line_start, &preview.right.highlights)
+            }),
+          )
+        } else if let Some(line_index) = row.left_line_index {
+          (
+            FilePickerVcsDiffPreviewLineSource::Base,
+            row.left_line_number,
+            preview.left.line_text(line_index).map(|line| {
+              let line_start = preview.left.line_start(line_index).unwrap_or(0);
+              file_picker_preview_line_segments(line, line_start, &preview.left.highlights)
+            }),
+          )
+        } else {
+          (
+            FilePickerVcsDiffPreviewLineSource::Meta,
+            None,
+            Some(Vec::new()),
+          )
+        };
+        let target = if in_changed_block {
+          &mut trailing_rows
+        } else {
+          &mut lines
+        };
+        target.push(FilePickerVcsDiffPreviewWindowLine {
+          virtual_row: 0,
+          kind: FilePickerVcsDiffPreviewRowKind::Context,
+          source,
+          line_number,
+          segments: segments.unwrap_or_default(),
+          message: String::new(),
+        });
+      },
+      FilePickerVcsDiffPreviewRowKind::Added
+      | FilePickerVcsDiffPreviewRowKind::Removed
+      | FilePickerVcsDiffPreviewRowKind::Modified => {
+        in_changed_block = true;
+        changed_rows.push(row.clone());
+      },
+      FilePickerVcsDiffPreviewRowKind::SectionHeader => {},
+    }
+  }
+
+  if !changed_rows.is_empty() {
+    let has_base = changed_rows.iter().any(|row| row.left_line_index.is_some());
+    let has_worktree = changed_rows
+      .iter()
+      .any(|row| row.right_line_index.is_some());
+
+    if has_base {
+      lines.push(FilePickerVcsDiffPreviewWindowLine {
+        virtual_row: 0,
+        kind:        FilePickerVcsDiffPreviewRowKind::SectionHeader,
+        source:      FilePickerVcsDiffPreviewLineSource::Base,
+        line_number: None,
+        segments:    Vec::new(),
+        message:     preview.left_label.clone(),
+      });
+      for row in &changed_rows {
+        let Some(line_index) = row.left_line_index else {
+          continue;
+        };
+        let line = preview.left.line_text(line_index).unwrap_or_default();
+        let line_start = preview.left.line_start(line_index).unwrap_or(0);
+        lines.push(FilePickerVcsDiffPreviewWindowLine {
+          virtual_row: 0,
+          kind:        match row.kind {
+            FilePickerVcsDiffPreviewRowKind::Removed
+            | FilePickerVcsDiffPreviewRowKind::Modified => FilePickerVcsDiffPreviewRowKind::Removed,
+            other => other,
+          },
+          source:      FilePickerVcsDiffPreviewLineSource::Base,
+          line_number: row.left_line_number,
+          segments:    file_picker_preview_line_segments(
+            line,
+            line_start,
+            &preview.left.highlights,
+          ),
+          message:     String::new(),
+        });
+      }
+    }
+
+    if has_base && has_worktree {
+      lines.push(FilePickerVcsDiffPreviewWindowLine {
+        virtual_row: 0,
+        kind:        FilePickerVcsDiffPreviewRowKind::Info,
+        source:      FilePickerVcsDiffPreviewLineSource::Meta,
+        line_number: None,
+        segments:    Vec::new(),
+        message:     String::new(),
+      });
+    }
+
+    if has_worktree {
+      lines.push(FilePickerVcsDiffPreviewWindowLine {
+        virtual_row: 0,
+        kind:        FilePickerVcsDiffPreviewRowKind::SectionHeader,
+        source:      FilePickerVcsDiffPreviewLineSource::Worktree,
+        line_number: None,
+        segments:    Vec::new(),
+        message:     preview.right_label.clone(),
+      });
+      for row in &changed_rows {
+        let Some(line_index) = row.right_line_index else {
+          continue;
+        };
+        let line = preview.right.line_text(line_index).unwrap_or_default();
+        let line_start = preview.right.line_start(line_index).unwrap_or(0);
+        lines.push(FilePickerVcsDiffPreviewWindowLine {
+          virtual_row: 0,
+          kind:        match row.kind {
+            FilePickerVcsDiffPreviewRowKind::Added | FilePickerVcsDiffPreviewRowKind::Modified => {
+              FilePickerVcsDiffPreviewRowKind::Added
+            },
+            other => other,
+          },
+          source:      FilePickerVcsDiffPreviewLineSource::Worktree,
+          line_number: row.right_line_number,
+          segments:    file_picker_preview_line_segments(
+            line,
+            line_start,
+            &preview.right.highlights,
+          ),
+          message:     String::new(),
+        });
+      }
+    }
+  }
+
+  lines.extend(trailing_rows);
+
+  if lines.is_empty() {
+    lines.push(FilePickerVcsDiffPreviewWindowLine {
+      virtual_row: 0,
+      kind:        FilePickerVcsDiffPreviewRowKind::Info,
+      source:      FilePickerVcsDiffPreviewLineSource::Meta,
+      line_number: None,
+      segments:    Vec::new(),
+      message:     "No diff available".to_string(),
+    });
+  }
+
+  for (virtual_row, line) in lines.iter_mut().enumerate() {
+    line.virtual_row = virtual_row;
+  }
+
+  lines
+}
+
+fn vcs_diff_preview_line_count(preview: &FilePickerVcsDiffPreview) -> usize {
+  vcs_diff_preview_window_lines(preview).len().max(1)
+}
+
+fn build_vcs_diff_preview_window(
+  preview: &FilePickerVcsDiffPreview,
+  navigation_mode: FilePickerPreviewNavigationMode,
+  offset: usize,
+  visible_rows: usize,
+  overscan: usize,
+) -> FilePickerPreviewWindow {
+  let visible_rows = visible_rows.max(1);
+  let lines = vcs_diff_preview_window_lines(preview);
+  let total_virtual_rows = lines.len().max(1);
+  let (offset, window_start, lines) = match navigation_mode {
+    FilePickerPreviewNavigationMode::Scrollable => {
+      let max_offset = total_virtual_rows.saturating_sub(visible_rows);
+      let offset = offset.min(max_offset);
+      let window_start = offset.saturating_sub(overscan);
+      let window_end = offset
+        .saturating_add(visible_rows)
+        .saturating_add(overscan)
+        .min(total_virtual_rows);
+      (
+        offset,
+        window_start,
+        lines[window_start..window_end].to_vec(),
+      )
+    },
+    FilePickerPreviewNavigationMode::Anchored | FilePickerPreviewNavigationMode::Static => {
+      let window_end = visible_rows.min(total_virtual_rows);
+      (0, 0, lines[..window_end].to_vec())
+    },
+  };
+
+  FilePickerPreviewWindow {
+    navigation_mode,
+    kind: FilePickerPreviewWindowKind::VcsDiff,
+    total_virtual_rows,
+    offset,
+    window_start,
+    lines: Vec::new(),
+    vcs_diff: Some(FilePickerVcsDiffPreviewWindow {
+      total_virtual_rows,
+      lines,
+    }),
   }
 }
 
@@ -4552,6 +5143,20 @@ fn line_start_index_for_path(path: &Path, metadata: &fs::Metadata, text: &str) -
   line_starts
 }
 
+fn line_start_index_for_text(text: &str) -> Arc<[usize]> {
+  if text.is_empty() {
+    return Arc::from([]);
+  }
+  let mut line_starts = Vec::new();
+  line_starts.push(0);
+  for (idx, ch) in text.char_indices() {
+    if ch == '\n' && idx + 1 < text.len() {
+      line_starts.push(idx + 1);
+    }
+  }
+  line_starts.into()
+}
+
 fn source_preview(
   path: &Path,
   metadata: &fs::Metadata,
@@ -4579,6 +5184,27 @@ fn source_preview(
     owned_text.len(),
     owned_text,
   ))
+}
+
+pub fn file_picker_source_preview_from_text(
+  path: &Path,
+  text: &str,
+  loader: Option<&Loader>,
+) -> FilePickerSourcePreview {
+  let owned_text = text.to_string();
+  let mut preview = FilePickerSourcePreview {
+    text:               Arc::<str>::from(owned_text.clone()),
+    line_starts:        line_start_index_for_text(&owned_text),
+    highlights:         Vec::<(Highlight, Range<usize>)>::new().into(),
+    truncated_by_bytes: false,
+  };
+  if let Some(loader) = loader {
+    let highlights = collect_source_highlights(path, &owned_text, owned_text.len(), loader);
+    if !highlights.is_empty() {
+      preview.highlights = highlights.into();
+    }
+  }
+  preview
 }
 
 fn collect_source_highlights(
@@ -4610,31 +5236,6 @@ fn collect_source_highlights(
   highlights.retain(|(_highlight, range)| range.start < range.end && range.end <= end_byte);
   highlights.sort_by_key(|(_highlight, range)| (range.start, Reverse(range.end)));
   highlights
-}
-
-fn source_preview_text(source: &FilePickerSourcePreview) -> String {
-  let total_lines = source.total_lines().max(1);
-  let width = total_lines.to_string().len();
-  let mut output = String::new();
-  for line_idx in 0..source.total_lines().min(240) {
-    let absolute_line = line_idx.saturating_add(1);
-    let line = source.line_text(line_idx).unwrap_or_default();
-    let _ = std::fmt::Write::write_fmt(
-      &mut output,
-      format_args!("{:>width$} {}\n", absolute_line, line, width = width),
-    );
-  }
-  if source.truncated_by_bytes || source.total_lines() > 240 {
-    let remaining = source.total_lines().saturating_sub(240);
-    let _ = std::fmt::Write::write_fmt(
-      &mut output,
-      format_args!(
-        "… {} lines below",
-        remaining.max(source.truncated_by_bytes as usize)
-      ),
-    );
-  }
-  output
 }
 
 #[cfg(test)]
@@ -5034,5 +5635,227 @@ mod tests {
     assert_eq!(window.lines.last().map(|line| line.virtual_row), Some(76));
 
     let _ = std::fs::remove_file(path);
+  }
+
+  #[test]
+  fn vcs_diff_preview_window_builds_stacked_rows() {
+    let preview = finalize_vcs_diff_preview(FilePickerVcsDiffPreview {
+      title:        "main.c".to_string(),
+      from_title:   Some("old-main.c".to_string()),
+      left_label:   "BASE".to_string(),
+      right_label:  "WORKTREE".to_string(),
+      left:         file_picker_source_preview_from_text(
+        Path::new("main.c"),
+        "int main() {\n  return 0;\n}\n",
+        None,
+      ),
+      right:        file_picker_source_preview_from_text(
+        Path::new("main.c"),
+        "int main() {\n  puts(\"hi\");\n  return 0;\n}\n",
+        None,
+      ),
+      rows:         vec![
+        FilePickerVcsDiffPreviewRow {
+          kind:              FilePickerVcsDiffPreviewRowKind::Context,
+          left_line_index:   Some(0),
+          right_line_index:  Some(0),
+          left_line_number:  Some(1),
+          right_line_number: Some(1),
+          message:           String::new(),
+        },
+        FilePickerVcsDiffPreviewRow {
+          kind:              FilePickerVcsDiffPreviewRowKind::Added,
+          left_line_index:   None,
+          right_line_index:  Some(1),
+          left_line_number:  None,
+          right_line_number: Some(2),
+          message:           String::new(),
+        },
+      ],
+      cached_lines: Arc::new([]),
+    });
+    let mut state = FilePickerState::default();
+    state.preview = FilePickerPreview::VcsDiff(preview);
+
+    let window = file_picker_preview_window(&state, 0, 4, 0);
+    let vcs_window = window.vcs_diff.expect("vcs diff preview window");
+
+    assert_eq!(window.kind, FilePickerPreviewWindowKind::VcsDiff);
+    assert_eq!(
+      window.navigation_mode,
+      FilePickerPreviewNavigationMode::Scrollable
+    );
+    assert_eq!(vcs_window.lines.len(), 3);
+    assert_eq!(
+      vcs_window.lines[0].kind,
+      FilePickerVcsDiffPreviewRowKind::Context
+    );
+    assert_eq!(
+      vcs_window.lines[0].source,
+      FilePickerVcsDiffPreviewLineSource::Worktree
+    );
+    assert_eq!(vcs_window.lines[0].line_number, Some(1));
+    assert_eq!(vcs_window.lines[0].segments[0].text, "int main() {");
+    assert_eq!(
+      vcs_window.lines[1].kind,
+      FilePickerVcsDiffPreviewRowKind::SectionHeader
+    );
+    assert_eq!(
+      vcs_window.lines[1].source,
+      FilePickerVcsDiffPreviewLineSource::Worktree
+    );
+    assert_eq!(vcs_window.lines[1].message, "WORKTREE");
+    assert_eq!(
+      vcs_window.lines[2].kind,
+      FilePickerVcsDiffPreviewRowKind::Added
+    );
+    assert_eq!(
+      vcs_window.lines[2].source,
+      FilePickerVcsDiffPreviewLineSource::Worktree
+    );
+    assert_eq!(vcs_window.lines[2].line_number, Some(2));
+    assert_eq!(vcs_window.lines[2].segments[0].text, "  puts(\"hi\");");
+  }
+
+  #[test]
+  fn vcs_diff_preview_window_collapses_overflow_rows() {
+    let preview = finalize_vcs_diff_preview(FilePickerVcsDiffPreview {
+      title:        "main.c".to_string(),
+      from_title:   None,
+      left_label:   "BASE".to_string(),
+      right_label:  "WORKTREE".to_string(),
+      left:         file_picker_source_preview_from_text(Path::new("main.c"), "a\nb\nc\nd\n", None),
+      right:        file_picker_source_preview_from_text(Path::new("main.c"), "a\nb\nc\nd\n", None),
+      rows:         vec![
+        FilePickerVcsDiffPreviewRow {
+          kind:              FilePickerVcsDiffPreviewRowKind::Context,
+          left_line_index:   Some(0),
+          right_line_index:  Some(0),
+          left_line_number:  Some(1),
+          right_line_number: Some(1),
+          message:           String::new(),
+        },
+        FilePickerVcsDiffPreviewRow {
+          kind:              FilePickerVcsDiffPreviewRowKind::Context,
+          left_line_index:   Some(1),
+          right_line_index:  Some(1),
+          left_line_number:  Some(2),
+          right_line_number: Some(2),
+          message:           String::new(),
+        },
+        FilePickerVcsDiffPreviewRow {
+          kind:              FilePickerVcsDiffPreviewRowKind::Context,
+          left_line_index:   Some(2),
+          right_line_index:  Some(2),
+          left_line_number:  Some(3),
+          right_line_number: Some(3),
+          message:           String::new(),
+        },
+      ],
+      cached_lines: Arc::new([]),
+    });
+    let mut state = FilePickerState::default();
+    state.preview = FilePickerPreview::VcsDiff(preview);
+
+    let window = file_picker_preview_window(&state, 0, 2, 0);
+    let vcs_window = window.vcs_diff.expect("vcs diff preview window");
+
+    assert_eq!(window.kind, FilePickerPreviewWindowKind::VcsDiff);
+    assert_eq!(
+      window.navigation_mode,
+      FilePickerPreviewNavigationMode::Scrollable
+    );
+    assert_eq!(window.total_virtual_rows, 3);
+    assert_eq!(vcs_window.lines.len(), 2);
+    assert_eq!(
+      vcs_window.lines[0].kind,
+      FilePickerVcsDiffPreviewRowKind::Context
+    );
+    assert_eq!(
+      vcs_window.lines[1].kind,
+      FilePickerVcsDiffPreviewRowKind::Context
+    );
+    assert_eq!(vcs_window.lines[1].line_number, Some(2));
+  }
+
+  #[test]
+  fn vcs_diff_preview_window_scrolls_large_hunks() {
+    let preview = finalize_vcs_diff_preview(FilePickerVcsDiffPreview {
+      title:        "main.c".to_string(),
+      from_title:   None,
+      left_label:   "BASE".to_string(),
+      right_label:  "WORKTREE".to_string(),
+      left:         file_picker_source_preview_from_text(
+        Path::new("main.c"),
+        "old1\nold2\nold3\n",
+        None,
+      ),
+      right:        file_picker_source_preview_from_text(
+        Path::new("main.c"),
+        "new1\nnew2\nnew3\n",
+        None,
+      ),
+      rows:         vec![
+        FilePickerVcsDiffPreviewRow {
+          kind:              FilePickerVcsDiffPreviewRowKind::Removed,
+          left_line_index:   Some(0),
+          right_line_index:  None,
+          left_line_number:  Some(1),
+          right_line_number: None,
+          message:           String::new(),
+        },
+        FilePickerVcsDiffPreviewRow {
+          kind:              FilePickerVcsDiffPreviewRowKind::Removed,
+          left_line_index:   Some(1),
+          right_line_index:  None,
+          left_line_number:  Some(2),
+          right_line_number: None,
+          message:           String::new(),
+        },
+        FilePickerVcsDiffPreviewRow {
+          kind:              FilePickerVcsDiffPreviewRowKind::Added,
+          left_line_index:   None,
+          right_line_index:  Some(0),
+          left_line_number:  None,
+          right_line_number: Some(1),
+          message:           String::new(),
+        },
+        FilePickerVcsDiffPreviewRow {
+          kind:              FilePickerVcsDiffPreviewRowKind::Added,
+          left_line_index:   None,
+          right_line_index:  Some(1),
+          left_line_number:  None,
+          right_line_number: Some(2),
+          message:           String::new(),
+        },
+      ],
+      cached_lines: Arc::new([]),
+    });
+    let mut state = FilePickerState::default();
+    state.preview = FilePickerPreview::VcsDiff(preview);
+
+    let top = file_picker_preview_window(&state, 0, 3, 0);
+    let top_window = top.vcs_diff.expect("top vcs diff preview");
+    assert_eq!(top.total_virtual_rows, 7);
+    assert_eq!(top_window.lines.len(), 3);
+    assert_eq!(
+      top_window.lines[0].kind,
+      FilePickerVcsDiffPreviewRowKind::SectionHeader
+    );
+    assert_eq!(top_window.lines[0].message, "BASE");
+    assert_eq!(top_window.lines[1].line_number, Some(1));
+    assert_eq!(top_window.lines[2].line_number, Some(2));
+
+    let scrolled = file_picker_preview_window(&state, 4, 3, 0);
+    let scrolled_window = scrolled.vcs_diff.expect("scrolled vcs diff preview");
+    assert_eq!(scrolled.offset, 4);
+    assert_eq!(scrolled_window.lines.len(), 3);
+    assert_eq!(
+      scrolled_window.lines[0].kind,
+      FilePickerVcsDiffPreviewRowKind::SectionHeader
+    );
+    assert_eq!(scrolled_window.lines[0].message, "WORKTREE");
+    assert_eq!(scrolled_window.lines[1].line_number, Some(1));
+    assert_eq!(scrolled_window.lines[2].line_number, Some(2));
   }
 }

@@ -8,19 +8,27 @@ use std::{
     VecDeque,
   },
   env,
-  fs::OpenOptions,
+  fs::{
+    self,
+    OpenOptions,
+  },
   io::{
     BufWriter,
     Write,
   },
   num::NonZeroUsize,
   path::{
+    Component,
     Path,
     PathBuf,
   },
   ptr::NonNull,
   sync::{
     Arc,
+    atomic::{
+      AtomicBool,
+      Ordering,
+    },
     mpsc::{
       Receiver,
       Sender,
@@ -37,7 +45,15 @@ use std::{
 };
 
 use eyre::Result;
+use git2::{
+  ObjectType,
+  Repository,
+};
 use ropey::Rope;
+use serde::{
+  Deserialize,
+  Serialize,
+};
 use serde_json::{
   Value,
   json,
@@ -60,7 +76,14 @@ use the_default::{
   FilePickerDiagnosticItem,
   FilePickerItem,
   FilePickerItemAction,
+  FilePickerPreview,
   FilePickerState,
+  FilePickerVcsDiffEntry,
+  FilePickerVcsDiffHunk,
+  FilePickerVcsDiffPayload,
+  FilePickerVcsDiffPreview,
+  FilePickerVcsDiffPreviewRow,
+  FilePickerVcsDiffPreviewRowKind,
   FileTreeState,
   GlobalSearchOptions,
   GlobalSearchState,
@@ -80,11 +103,19 @@ use the_default::{
   builtin_completion_menu_keymaps,
   builtin_keymaps,
   default_defaults,
+  file_picker_items_from_specs,
+  file_picker_source_preview_from_text,
+  file_picker_vcs_diff_placeholder_entry,
+  file_picker_vcs_diff_specs,
+  finalize_vcs_diff_preview,
   install_default_wiring,
   open_dynamic_picker,
   replace_file_picker_items,
+  replace_file_picker_items_preserving_selection,
+  replace_file_picker_items_preserving_selection_and_viewport,
 };
 use the_lib::{
+  self,
   diagnostics::{
     Diagnostic,
     DiagnosticCounts,
@@ -248,11 +279,21 @@ use the_vcs::{
   DiffHandle,
   DiffProviderRegistry,
   DiffSignKind,
+  FileChange,
+  VcsWorkspaceScan,
 };
 
-use crate::picker_layout::{
-  CompletionDocsLayout,
-  FilePickerLayout,
+use crate::{
+  pi_bridge::{
+    PiBridgeEnvelope,
+    PiBridgeEvent,
+    PiBridgeHandle,
+    SelectionPayload,
+  },
+  picker_layout::{
+    CompletionDocsLayout,
+    FilePickerLayout,
+  },
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -317,6 +358,74 @@ pub(crate) struct BufferTabPointerDragState {
 pub(crate) struct BufferTabHoverState {
   pub buffer_id:  BufferId,
   pub over_close: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct PiBridgeReadFileParams {
+  path: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct PiBridgeEdit {
+  #[serde(rename = "oldText")]
+  old_text: String,
+  #[serde(rename = "newText")]
+  new_text: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct PiBridgeApplyEditsParams {
+  path:  String,
+  edits: Vec<PiBridgeEdit>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PiBridgeWriteFileParams {
+  path:    String,
+  content: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PiBridgeReplaceRangeParams {
+  path:       String,
+  start_char: usize,
+  end_char:   usize,
+  content:    String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PiBridgeReadFileResult {
+  path:             String,
+  content:          String,
+  from_live_buffer: bool,
+  opened_buffer:    bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PiBridgeApplyEditsResult {
+  path:          String,
+  edit_count:    usize,
+  saved:         bool,
+  opened_buffer: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PiBridgeWriteFileResult {
+  path:          String,
+  saved:         bool,
+  opened_buffer: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PiBridgeReplaceRangeResult {
+  path:          String,
+  saved:         bool,
+  opened_buffer: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -406,6 +515,127 @@ struct FileTreeWatchState {
 struct VcsWatchState {
   stream:        WatchedFileEventsState,
   _watch_handle: WatchHandle,
+}
+
+#[derive(Debug)]
+enum VcsDiffPickerFileResult {
+  Entry {
+    generation: u64,
+    index:      usize,
+    entry:      FilePickerVcsDiffEntry,
+  },
+  Complete {
+    generation: u64,
+  },
+}
+
+#[derive(Debug, Clone)]
+struct OpenBufferVcsSnapshot {
+  text:     String,
+  modified: bool,
+}
+
+#[derive(Debug, Default)]
+struct VcsDiffPickerState {
+  generation:           u64,
+  scan_generation:      u64,
+  live_refresh_pending: bool,
+  root:                 PathBuf,
+  entries:              Vec<FilePickerVcsDiffEntry>,
+  cancel:               Option<Arc<AtomicBool>>,
+  result_rx:            Option<Receiver<VcsDiffPickerFileResult>>,
+}
+
+enum PickerDiffBaseLoader {
+  GitRevision {
+    repo:      Repository,
+    repo_root: PathBuf,
+    revision:  String,
+  },
+  Provider(DiffProviderRegistry),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct AgentFollowStep {
+  cursor_char: usize,
+  flash_start: usize,
+  flash_end:   usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct AgentFollowRenderSnapshot {
+  pub buffer_id:   BufferId,
+  pub cursor_char: usize,
+  pub flash_start: usize,
+  pub flash_end:   usize,
+  pub flashing:    bool,
+}
+
+#[derive(Debug, Clone)]
+struct AgentFollowState {
+  enabled:      bool,
+  buffer_id:    Option<BufferId>,
+  steps:        Vec<AgentFollowStep>,
+  step_index:   usize,
+  flash_until:  Option<Instant>,
+  next_step_at: Option<Instant>,
+  cursor_until: Option<Instant>,
+}
+
+impl Default for AgentFollowState {
+  fn default() -> Self {
+    Self {
+      enabled:      true,
+      buffer_id:    None,
+      steps:        Vec::new(),
+      step_index:   0,
+      flash_until:  None,
+      next_step_at: None,
+      cursor_until: None,
+    }
+  }
+}
+
+impl AgentFollowState {
+  fn clear(&mut self) {
+    self.buffer_id = None;
+    self.steps.clear();
+    self.step_index = 0;
+    self.flash_until = None;
+    self.next_step_at = None;
+    self.cursor_until = None;
+  }
+
+  fn current_step(&self) -> Option<AgentFollowStep> {
+    self.steps.get(self.step_index).copied()
+  }
+
+  fn extend_same_buffer(&mut self, steps: Vec<AgentFollowStep>) {
+    self.steps.extend(steps);
+  }
+
+  fn render_snapshot(&self) -> Option<AgentFollowRenderSnapshot> {
+    let step = self.current_step()?;
+    Some(AgentFollowRenderSnapshot {
+      buffer_id:   self.buffer_id?,
+      cursor_char: step.cursor_char,
+      flash_start: step.flash_start,
+      flash_end:   step.flash_end,
+      flashing:    self.flash_until.is_some(),
+    })
+  }
+}
+
+fn agent_follow_flash_duration() -> Duration {
+  Duration::from_millis(90)
+}
+
+fn agent_follow_step_delay() -> Duration {
+  Duration::from_millis(20)
+}
+
+fn agent_follow_cursor_linger_duration() -> Duration {
+  Duration::from_millis(140)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -505,6 +735,7 @@ struct ActiveFileVcsRefreshResult {
   reason:     ActiveFileVcsRefreshReason,
   statusline: Option<String>,
   diff_base:  Option<Vec<u8>>,
+  scan:       Option<VcsWorkspaceScan>,
   collect_ms: f64,
 }
 
@@ -518,6 +749,21 @@ struct FileTreeVcsRefreshResult {
   status_entries: usize,
   collect_ms:     f64,
   collapse_ms:    f64,
+  scan:           Option<VcsWorkspaceScan>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct VcsBaseCacheKey {
+  repo_root:     PathBuf,
+  head_revision: Option<String>,
+  path:          PathBuf,
+}
+
+#[derive(Debug, Default, Clone)]
+struct SharedVcsState {
+  scan:       Option<Arc<VcsWorkspaceScan>>,
+  generation: u64,
+  base_cache: HashMap<VcsBaseCacheKey, Option<Vec<u8>>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -762,6 +1008,7 @@ pub struct Ctx {
   pub file_tree:                      FileTreeState,
   pub file_picker:                    FilePickerState,
   pub picker_runtime_store:           the_default::PickerRuntimeStore<Ctx>,
+  pi_bridge:                          Option<PiBridgeHandle>,
   lsp_services_started:               bool,
   next_lsp_runtime_id:                LspRuntimeId,
   lsp_runtimes:                       BTreeMap<LspRuntimeId, ManagedLspRuntime>,
@@ -790,6 +1037,7 @@ pub struct Ctx {
   lsp_signature_help_presentation:    Option<the_default::SignatureHelpPresentation>,
   pub diagnostics:                    DiagnosticsState,
   vcs_watch:                          Option<VcsWatchState>,
+  shared_vcs:                         SharedVcsState,
   active_file_vcs_refresh_due_at:     Option<Instant>,
   active_file_vcs_refresh_reason:     Option<ActiveFileVcsRefreshReason>,
   active_file_vcs_refresh_in_flight:  bool,
@@ -825,6 +1073,8 @@ pub struct Ctx {
   mouse_last_primary_click:           Option<PointerClickTracker>,
   pub search_prompt:                  the_default::SearchPromptState,
   global_search:                      GlobalSearchState,
+  vcs_diff_picker:                    VcsDiffPickerState,
+  agent_follow:                       AgentFollowState,
   pub ui_theme_catalog:               ThemeCatalog,
   pub ui_theme_name:                  String,
   pub ui_theme_base:                  Theme,
@@ -1102,6 +1352,14 @@ fn workspace_root_for_path(path: &Path) -> PathBuf {
     .unwrap_or_else(|| the_loader::find_workspace().0)
 }
 
+fn vcs_repo_absolute_path(path: &Path, repo_root: &Path) -> PathBuf {
+  if path.is_absolute() {
+    path.to_path_buf()
+  } else {
+    repo_root.join(path)
+  }
+}
+
 fn lsp_language_id_for_path(loader: Option<&Loader>, path: &Path) -> Option<String> {
   let loader = loader?;
   let language = loader.language_for_filename(path)?;
@@ -1258,6 +1516,7 @@ impl Ctx {
       file_tree: FileTreeState::default(),
       file_picker,
       picker_runtime_store: the_default::PickerRuntimeStore::default(),
+      pi_bridge: None,
       lsp_services_started: false,
       next_lsp_runtime_id: 1,
       lsp_runtimes: BTreeMap::new(),
@@ -1286,6 +1545,7 @@ impl Ctx {
       lsp_signature_help_presentation: None,
       diagnostics: DiagnosticsState::default(),
       vcs_watch: None,
+      shared_vcs: SharedVcsState::default(),
       active_file_vcs_refresh_due_at: None,
       active_file_vcs_refresh_reason: None,
       active_file_vcs_refresh_in_flight: false,
@@ -1321,6 +1581,8 @@ impl Ctx {
       mouse_last_primary_click: None,
       search_prompt: the_default::SearchPromptState::new(),
       global_search: GlobalSearchState::default(),
+      vcs_diff_picker: VcsDiffPickerState::default(),
+      agent_follow: AgentFollowState::default(),
       ui_theme_catalog,
       ui_theme_name,
       ui_theme_base: ui_theme.clone(),
@@ -1374,6 +1636,616 @@ impl Ctx {
     D: DefaultApi<Ctx> + 'static,
   {
     self.dispatch_override = Some(NonNull::from(dispatch as &dyn DefaultApi<Ctx>));
+  }
+
+  fn ensure_pi_bridge_started(&mut self) {
+    if self.pi_bridge.is_some() {
+      return;
+    }
+    let workspace_root = self.workspace_root();
+    match PiBridgeHandle::start(&workspace_root) {
+      Ok(handle) => {
+        self.pi_bridge = Some(handle);
+      },
+      Err(err) => {
+        self.push_warning("pi-bridge", err);
+      },
+    }
+  }
+
+  fn shutdown_pi_bridge(&mut self) {
+    if let Some(mut bridge) = self.pi_bridge.take() {
+      bridge.shutdown();
+    }
+  }
+
+  pub fn poll_pi_bridge(&mut self) -> bool {
+    let Some(mut bridge) = self.pi_bridge.take() else {
+      return false;
+    };
+
+    let mut needs_render = false;
+    for event in bridge.drain_events() {
+      match event {
+        PiBridgeEvent::Attached => {
+          self.push_info("pi-bridge", "attached live pi session");
+          needs_render = true;
+        },
+        PiBridgeEvent::Detached => {
+          self.push_warning("pi-bridge", "detached live pi session");
+          needs_render = true;
+        },
+        PiBridgeEvent::InvalidMessage(message) => {
+          self.push_warning("pi-bridge", message);
+          needs_render = true;
+        },
+        PiBridgeEvent::Notification { .. } => {},
+        PiBridgeEvent::Request { id, method, params } => {
+          let response = match self.handle_pi_bridge_request(&method, params) {
+            Ok(response) => {
+              PiBridgeEnvelope::ok(id.clone(), response)
+                .unwrap_or_else(|err| PiBridgeEnvelope::err(id, err))
+            },
+            Err(err) => PiBridgeEnvelope::err(id, err),
+          };
+          if let Err(err) = bridge.send(response) {
+            self.push_warning("pi-bridge", err);
+            needs_render = true;
+          }
+        },
+      }
+    }
+
+    self.pi_bridge = Some(bridge);
+    needs_render
+  }
+
+  fn handle_pi_bridge_request(&mut self, method: &str, params: Value) -> Result<Value, String> {
+    match method {
+      "ping" => {
+        Ok(json!({
+          "version": crate::pi_bridge::PI_BRIDGE_PROTOCOL_VERSION,
+          "workspaceRoot": self.workspace_root().display().to_string(),
+        }))
+      },
+      "read_file" => {
+        let params: PiBridgeReadFileParams = serde_json::from_value(params)
+          .map_err(|err| format!("invalid read_file params: {err}"))?;
+        let result = self.pi_bridge_read_workspace_file(&params.path)?;
+        serde_json::to_value(result).map_err(|err| format!("failed to encode read result: {err}"))
+      },
+      "apply_edits" => {
+        let params: PiBridgeApplyEditsParams = serde_json::from_value(params)
+          .map_err(|err| format!("invalid apply_edits params: {err}"))?;
+        let result = self.pi_bridge_apply_workspace_edits(&params.path, &params.edits)?;
+        serde_json::to_value(result).map_err(|err| format!("failed to encode edit result: {err}"))
+      },
+      "write_file" => {
+        let params: PiBridgeWriteFileParams = serde_json::from_value(params)
+          .map_err(|err| format!("invalid write_file params: {err}"))?;
+        let result = self.pi_bridge_write_workspace_file(&params.path, &params.content)?;
+        serde_json::to_value(result).map_err(|err| format!("failed to encode write result: {err}"))
+      },
+      "replace_range" => {
+        let params: PiBridgeReplaceRangeParams = serde_json::from_value(params)
+          .map_err(|err| format!("invalid replace_range params: {err}"))?;
+        let result = self.pi_bridge_replace_workspace_range(
+          &params.path,
+          params.start_char,
+          params.end_char,
+          &params.content,
+        )?;
+        serde_json::to_value(result)
+          .map_err(|err| format!("failed to encode replace_range result: {err}"))
+      },
+      _ => Err(format!("unsupported pi bridge method '{method}'")),
+    }
+  }
+
+  fn resolve_pi_bridge_path(&self, raw_path: &str) -> Result<PathBuf, String> {
+    let workspace_root = lexical_normalize_path(&self.workspace_root());
+    let input = Path::new(raw_path);
+    let candidate = if input.is_absolute() {
+      lexical_normalize_path(input)
+    } else {
+      lexical_normalize_path(&workspace_root.join(input))
+    };
+    if !candidate.starts_with(&workspace_root) {
+      return Err(format!(
+        "path '{}' is outside workspace '{}'",
+        candidate.display(),
+        workspace_root.display()
+      ));
+    }
+    Ok(candidate)
+  }
+
+  fn ensure_workspace_buffer_loaded(
+    &mut self,
+    path: &Path,
+    create_missing: bool,
+  ) -> Result<(BufferId, bool), String> {
+    if let Some(buffer_id) = self.editor.find_buffer_by_path(path) {
+      return Ok((buffer_id, false));
+    }
+    if !path.exists() && !create_missing {
+      return Err(format!("file not found: {}", path.display()));
+    }
+
+    let content = if path.exists() {
+      fs::read_to_string(path)
+        .map_err(|err| format!("failed to read '{}': {err}", path.display()))?
+    } else {
+      String::new()
+    };
+    let viewport = self.editor.view().viewport;
+    let view = ViewState::new(viewport, Position::new(0, 0));
+    let buffer_id = self.editor.open_buffer_without_activation(
+      Rope::from_str(&content),
+      view,
+      Some(path.to_path_buf()),
+    );
+
+    if let Some(doc) = self.editor.document_mut_for_buffer(buffer_id) {
+      if let Some(loader) = &self.loader {
+        let _ = setup_syntax(doc, path, loader);
+      }
+      doc.set_display_name(
+        path
+          .file_name()
+          .map(|name| name.to_string_lossy().to_string())
+          .unwrap_or_else(|| path.display().to_string()),
+      );
+      if path.exists() {
+        let _ = doc.mark_saved();
+      }
+    }
+    self.refresh_buffer_lsp_state(buffer_id, Some(path));
+    Ok((buffer_id, true))
+  }
+
+  fn persist_buffer_to_disk(&mut self, buffer_id: BufferId, path: &Path) -> Result<(), String> {
+    let text = self
+      .editor
+      .document_for_buffer(buffer_id)
+      .ok_or_else(|| format!("buffer missing for '{}'", path.display()))?
+      .text()
+      .to_string();
+    if let Some(parent) = path.parent() {
+      fs::create_dir_all(parent).map_err(|err| {
+        format!(
+          "failed to create parent directories for '{}': {err}",
+          path.display()
+        )
+      })?;
+    }
+    fs::write(path, &text).map_err(|err| format!("failed to write '{}': {err}", path.display()))?;
+    if let Some(doc) = self.editor.document_mut_for_buffer(buffer_id) {
+      let _ = doc.mark_saved();
+    }
+    self.on_buffer_saved(buffer_id, path, &text);
+    Ok(())
+  }
+
+  fn on_buffer_saved(&mut self, buffer_id: BufferId, _path: &Path, text: &str) {
+    if self.editor.active_buffer_id() == buffer_id
+      && let Some(watch) = self.lsp_watched_file.as_mut()
+    {
+      watch.stream.suppress_until = Some(Instant::now() + lsp_self_save_suppress_window());
+      clear_reload_state(&mut watch.stream.reload_state);
+    }
+    self.lsp_send_did_save_for_buffer(buffer_id, Some(text));
+    self.schedule_active_file_vcs_refresh(ActiveFileVcsRefreshReason::VcsWatch, None);
+    self.schedule_file_tree_vcs_refresh(FileTreeVcsRefreshReason::VcsWatch, None);
+    self.queue_open_vcs_diff_picker_refresh();
+    self.request_render();
+  }
+
+  fn pi_bridge_read_workspace_file(
+    &mut self,
+    raw_path: &str,
+  ) -> Result<PiBridgeReadFileResult, String> {
+    let path = self.resolve_pi_bridge_path(raw_path)?;
+    let was_open = self.editor.find_buffer_by_path(&path).is_some();
+    let (buffer_id, opened_buffer) = self.ensure_workspace_buffer_loaded(&path, false)?;
+    let content = self
+      .editor
+      .document_for_buffer(buffer_id)
+      .ok_or_else(|| format!("buffer missing for '{}'", path.display()))?
+      .text()
+      .to_string();
+    Ok(PiBridgeReadFileResult {
+      path: path.display().to_string(),
+      content,
+      from_live_buffer: was_open,
+      opened_buffer,
+    })
+  }
+
+  fn pi_bridge_apply_workspace_edits(
+    &mut self,
+    raw_path: &str,
+    edits: &[PiBridgeEdit],
+  ) -> Result<PiBridgeApplyEditsResult, String> {
+    if edits.is_empty() {
+      return Err("apply_edits requires at least one edit".to_string());
+    }
+    let path = self.resolve_pi_bridge_path(raw_path)?;
+    let (buffer_id, opened_buffer) = self.ensure_workspace_buffer_loaded(&path, false)?;
+    let (old_text, transaction) = {
+      let document = self
+        .editor
+        .document_for_buffer(buffer_id)
+        .ok_or_else(|| format!("buffer missing for '{}'", path.display()))?;
+      let old_text = document.text().clone();
+      let transaction = build_exact_edit_transaction(document.text(), edits)?;
+      (old_text, transaction)
+    };
+    let loader = self.loader.as_deref();
+    self
+      .editor
+      .apply_transaction_to_buffer(buffer_id, &transaction, loader)
+      .map_err(|err| format!("failed to apply edits to '{}': {err}", path.display()))?;
+    self.lsp_send_did_change_for_buffer(buffer_id, &old_text, transaction.changes());
+    self.persist_buffer_to_disk(buffer_id, &path)?;
+    self.start_agent_follow_for_transaction(buffer_id, &transaction);
+    if self.editor.active_buffer_id() == buffer_id {
+      self.needs_render = true;
+    }
+    Ok(PiBridgeApplyEditsResult {
+      path: path.display().to_string(),
+      edit_count: edits.len(),
+      saved: true,
+      opened_buffer,
+    })
+  }
+
+  fn pi_bridge_write_workspace_file(
+    &mut self,
+    raw_path: &str,
+    content: &str,
+  ) -> Result<PiBridgeWriteFileResult, String> {
+    let path = self.resolve_pi_bridge_path(raw_path)?;
+    let (buffer_id, opened_buffer) = self.ensure_workspace_buffer_loaded(&path, true)?;
+    let (old_text, transaction) = {
+      let document = self
+        .editor
+        .document_for_buffer(buffer_id)
+        .ok_or_else(|| format!("buffer missing for '{}'", path.display()))?;
+      let old_text = document.text().clone();
+      let transaction = Transaction::change(document.text(), vec![(
+        0,
+        document.text().len_chars(),
+        Some(content.into()),
+      )])
+      .map_err(|err| format!("failed to build write transaction: {err}"))?;
+      (old_text, transaction)
+    };
+    let loader = self.loader.as_deref();
+    self
+      .editor
+      .apply_transaction_to_buffer(buffer_id, &transaction, loader)
+      .map_err(|err| format!("failed to apply write to '{}': {err}", path.display()))?;
+    self.lsp_send_did_change_for_buffer(buffer_id, &old_text, transaction.changes());
+    self.persist_buffer_to_disk(buffer_id, &path)?;
+    self.start_agent_follow_for_transaction(buffer_id, &transaction);
+    if self.editor.active_buffer_id() == buffer_id {
+      self.needs_render = true;
+    }
+    Ok(PiBridgeWriteFileResult {
+      path: path.display().to_string(),
+      saved: true,
+      opened_buffer,
+    })
+  }
+
+  fn pi_bridge_replace_workspace_range(
+    &mut self,
+    raw_path: &str,
+    start_char: usize,
+    end_char: usize,
+    content: &str,
+  ) -> Result<PiBridgeReplaceRangeResult, String> {
+    let path = self.resolve_pi_bridge_path(raw_path)?;
+    let (buffer_id, opened_buffer) = self.ensure_workspace_buffer_loaded(&path, true)?;
+    let (old_text, transaction) = {
+      let document = self
+        .editor
+        .document_for_buffer(buffer_id)
+        .ok_or_else(|| format!("buffer missing for '{}'", path.display()))?;
+      if start_char > end_char {
+        return Err(format!(
+          "invalid replace_range for '{}': start_char {start_char} is greater than end_char \
+           {end_char}",
+          path.display()
+        ));
+      }
+      if end_char > document.text().len_chars() {
+        return Err(format!(
+          "invalid replace_range for '{}': end_char {end_char} exceeds document length {}",
+          path.display(),
+          document.text().len_chars()
+        ));
+      }
+      let old_text = document.text().clone();
+      let transaction = Transaction::change(document.text(), vec![(
+        start_char,
+        end_char,
+        Some(content.into()),
+      )])
+      .map_err(|err| format!("failed to build replace_range transaction: {err}"))?;
+      (old_text, transaction)
+    };
+    let loader = self.loader.as_deref();
+    self
+      .editor
+      .apply_transaction_to_buffer(buffer_id, &transaction, loader)
+      .map_err(|err| {
+        format!(
+          "failed to apply replace_range to '{}': {err}",
+          path.display()
+        )
+      })?;
+    self.lsp_send_did_change_for_buffer(buffer_id, &old_text, transaction.changes());
+    self.persist_buffer_to_disk(buffer_id, &path)?;
+    self.start_agent_follow_for_transaction(buffer_id, &transaction);
+    if self.editor.active_buffer_id() == buffer_id {
+      self.needs_render = true;
+    }
+    Ok(PiBridgeReplaceRangeResult {
+      path: path.display().to_string(),
+      saved: true,
+      opened_buffer,
+    })
+  }
+
+  fn agent_follow_steps_for_transaction(transaction: &Transaction) -> Vec<AgentFollowStep> {
+    transaction
+      .changes_iter()
+      .map(|(from, _to, inserted)| {
+        let inserted_len = inserted
+          .as_ref()
+          .map(|text| text.chars().count())
+          .unwrap_or(0);
+        let flash_start = transaction
+          .changes()
+          .map_pos(from, Assoc::Before)
+          .unwrap_or(from);
+        let flash_end = flash_start.saturating_add(inserted_len);
+        let cursor_char = if inserted_len > 0 && inserted_len <= 64 {
+          transaction
+            .changes()
+            .map_pos(from, Assoc::After)
+            .unwrap_or(flash_end)
+        } else {
+          flash_start
+        };
+        AgentFollowStep {
+          cursor_char,
+          flash_start,
+          flash_end,
+        }
+      })
+      .collect()
+  }
+
+  fn ensure_agent_follow_visible(&mut self) {
+    let Some(snapshot) = self.agent_follow.render_snapshot() else {
+      return;
+    };
+
+    let following_active_pane = if self.agent_follow.enabled {
+      if self.editor.active_buffer_id() != snapshot.buffer_id
+        && !self.activate_buffer_by_id(snapshot.buffer_id)
+      {
+        return;
+      }
+      true
+    } else {
+      false
+    };
+
+    let viewport_pane = if following_active_pane {
+      self.editor.active_pane_id()
+    } else if self.editor.active_buffer_id() == snapshot.buffer_id {
+      self
+        .visible_editor_pane_for_viewport()
+        .unwrap_or_else(|| self.editor.active_pane_id())
+    } else {
+      self
+        .editor
+        .pane_snapshots(self.editor.layout_viewport())
+        .into_iter()
+        .find(|pane| pane.buffer_id == snapshot.buffer_id)
+        .map(|pane| pane.pane_id)
+        .unwrap_or_else(|| self.editor.active_pane_id())
+    };
+
+    let Some(view) = self.editor.pane_view(viewport_pane) else {
+      return;
+    };
+    let Some(doc) = self.editor.document_for_buffer(snapshot.buffer_id) else {
+      return;
+    };
+    let text = doc.text();
+    let cursor_pos = snapshot.cursor_char.min(text.len_chars());
+    let cursor_line = text.char_to_line(cursor_pos);
+    let cursor_col = cursor_pos.saturating_sub(text.line_to_char(cursor_line));
+    let viewport_height = view.viewport.height as usize;
+    let gutter_width = gutter_width_for_document(doc, view.viewport.width, &self.gutter_config);
+    let viewport_width = view.viewport.width.saturating_sub(gutter_width).max(1) as usize;
+
+    let new_scroll = if self.text_format.soft_wrap {
+      let cursor_visual_row = {
+        let mut text_format = self.text_format.clone();
+        text_format.viewport_width = view.viewport.width.saturating_sub(gutter_width).max(1);
+        let mut annotations = <Self as DefaultContext>::text_annotations(self);
+        visual_pos_at_char(text.slice(..), &text_format, &mut annotations, cursor_pos)
+          .map(|pos| pos.row)
+          .unwrap_or(cursor_line)
+      };
+
+      let mut new_scroll = view.scroll;
+      if let Some(new_row) = the_lib::view::scroll_row_to_keep_visible(
+        cursor_visual_row,
+        view.scroll.row,
+        viewport_height,
+        self.scrolloff,
+      ) {
+        new_scroll.row = new_row;
+      }
+      new_scroll.col = 0;
+      Some(new_scroll)
+    } else {
+      the_lib::view::scroll_to_keep_visible(
+        cursor_line,
+        cursor_col,
+        view.scroll,
+        viewport_height,
+        viewport_width,
+        self.scrolloff,
+      )
+    };
+
+    let Some(new_scroll) = new_scroll else {
+      return;
+    };
+
+    if following_active_pane || viewport_pane == self.editor.active_pane_id() {
+      self.editor.view_mut().scroll = new_scroll;
+    } else if let Some(view) = self.editor.pane_view_mut(viewport_pane) {
+      view.scroll = new_scroll;
+    }
+  }
+
+  fn start_agent_follow_for_transaction(&mut self, buffer_id: BufferId, transaction: &Transaction) {
+    let steps = Self::agent_follow_steps_for_transaction(transaction);
+    if steps.is_empty() {
+      self.agent_follow.clear();
+      return;
+    }
+
+    let now = Instant::now();
+    let same_buffer =
+      self.agent_follow.buffer_id == Some(buffer_id) && self.agent_follow.current_step().is_some();
+
+    if same_buffer {
+      self.agent_follow.extend_same_buffer(steps);
+      self.agent_follow.cursor_until = Some(now + agent_follow_cursor_linger_duration());
+      if self.agent_follow.next_step_at.is_none() {
+        self.agent_follow.next_step_at = Some(now + agent_follow_step_delay());
+      }
+    } else {
+      self.agent_follow.buffer_id = Some(buffer_id);
+      self.agent_follow.steps = steps;
+      self.agent_follow.step_index = 0;
+      self.agent_follow.flash_until = Some(now + agent_follow_flash_duration());
+      self.agent_follow.next_step_at =
+        (self.agent_follow.steps.len() > 1).then_some(now + agent_follow_step_delay());
+      self.agent_follow.cursor_until = Some(now + agent_follow_cursor_linger_duration());
+    }
+
+    self.ensure_agent_follow_visible();
+    self.request_render();
+  }
+
+  pub fn poll_agent_follow(&mut self) -> bool {
+    if self.agent_follow.current_step().is_none() {
+      return false;
+    }
+
+    let now = Instant::now();
+    let mut changed = false;
+
+    if let Some(next_step_at) = self.agent_follow.next_step_at
+      && now >= next_step_at
+    {
+      if self.agent_follow.step_index + 1 < self.agent_follow.steps.len() {
+        self.agent_follow.step_index += 1;
+        self.agent_follow.flash_until = Some(now + agent_follow_flash_duration());
+        self.agent_follow.next_step_at = (self.agent_follow.step_index + 1
+          < self.agent_follow.steps.len())
+        .then_some(now + agent_follow_step_delay());
+        self.agent_follow.cursor_until = Some(now + agent_follow_cursor_linger_duration());
+        self.ensure_agent_follow_visible();
+        changed = true;
+      } else {
+        self.agent_follow.next_step_at = None;
+      }
+    }
+
+    if let Some(flash_until) = self.agent_follow.flash_until
+      && now >= flash_until
+    {
+      self.agent_follow.flash_until = None;
+      changed = true;
+    }
+
+    if let Some(cursor_until) = self.agent_follow.cursor_until
+      && now >= cursor_until
+      && self.agent_follow.flash_until.is_none()
+      && self.agent_follow.next_step_at.is_none()
+    {
+      self.agent_follow.clear();
+      changed = true;
+    }
+
+    changed
+  }
+
+  fn pi_bridge_active_selection_payload(&self) -> Result<SelectionPayload, String> {
+    let range = self
+      .active_or_first_selection_range()
+      .ok_or_else(|| "no active selection".to_string())?;
+    if range.is_empty() {
+      return Err("active selection is empty".to_string());
+    }
+
+    let document = self.editor.document();
+    let selected_text = document.text().slice(range.from()..range.to()).to_string();
+    let end_line_char = range.to().saturating_sub(1);
+    let (absolute_path, workspace_relative_path, language) =
+      if let Some(path) = self.file_path.as_ref() {
+        let workspace_root = lexical_normalize_path(&self.workspace_root());
+        let normalized_path = lexical_normalize_path(path);
+        if !normalized_path.starts_with(&workspace_root) {
+          return Err(format!(
+            "active buffer path '{}' is outside workspace '{}'",
+            normalized_path.display(),
+            workspace_root.display()
+          ));
+        }
+        let workspace_relative_path = normalized_path
+          .strip_prefix(&workspace_root)
+          .unwrap_or(&normalized_path)
+          .display()
+          .to_string();
+        let language = normalized_path
+          .extension()
+          .and_then(|ext| ext.to_str())
+          .map(str::to_string);
+        (
+          normalized_path.display().to_string(),
+          workspace_relative_path,
+          language,
+        )
+      } else {
+        ("".to_string(), "untitled".to_string(), None)
+      };
+
+    Ok(SelectionPayload {
+      absolute_path,
+      workspace_relative_path,
+      language,
+      selected_text,
+      start_char: range.from(),
+      end_char: range.to(),
+      start_line: document.text().char_to_line(range.from()).saturating_add(1),
+      end_line: document
+        .text()
+        .char_to_line(end_line_char)
+        .saturating_add(1),
+    })
   }
 
   fn reset_transient_input_state(&mut self) {
@@ -1502,6 +2374,180 @@ impl Ctx {
     changed
   }
 
+  fn store_shared_vcs_scan(&mut self, scan: VcsWorkspaceScan) -> bool {
+    let head_changed = self.shared_vcs.scan.as_ref().is_none_or(|current| {
+      current.repo_root != scan.repo_root || current.head_revision != scan.head_revision
+    });
+    let changed = self
+      .shared_vcs
+      .scan
+      .as_ref()
+      .is_none_or(|current| **current != scan);
+    if head_changed {
+      self
+        .shared_vcs
+        .base_cache
+        .retain(|key, _| key.repo_root != scan.repo_root);
+    }
+    self.shared_vcs.scan = Some(Arc::new(scan));
+    if changed {
+      self.shared_vcs.generation = self.shared_vcs.generation.wrapping_add(1);
+    }
+    changed
+  }
+
+  fn shared_vcs_scan_for_path(&self, path: &Path) -> Option<Arc<VcsWorkspaceScan>> {
+    let scan = self.shared_vcs.scan.as_ref()?;
+    if path.starts_with(&scan.repo_root) {
+      Some(scan.clone())
+    } else {
+      None
+    }
+  }
+
+  fn shared_vcs_scan_for_cwd(&self, cwd: &Path) -> Option<Arc<VcsWorkspaceScan>> {
+    let scan = self.shared_vcs.scan.as_ref()?;
+    if cwd.starts_with(&scan.repo_root) || scan.repo_root.starts_with(cwd) {
+      Some(scan.clone())
+    } else {
+      None
+    }
+  }
+
+  fn cached_vcs_base_for_path(&mut self, scan: &VcsWorkspaceScan, path: &Path) -> Option<Vec<u8>> {
+    let key = VcsBaseCacheKey {
+      repo_root:     scan.repo_root.clone(),
+      head_revision: scan.head_revision.clone(),
+      path:          path.to_path_buf(),
+    };
+    if let Some(bytes) = self.shared_vcs.base_cache.get(&key) {
+      return bytes.clone();
+    }
+    let bytes = self.vcs_provider.get_diff_base(path);
+    self.shared_vcs.base_cache.insert(key, bytes.clone());
+    bytes
+  }
+
+  fn cached_vcs_base_for_change(
+    &mut self,
+    scan: &VcsWorkspaceScan,
+    change: &FileChange,
+  ) -> Option<Vec<u8>> {
+    let base_path = match change {
+      FileChange::Untracked { .. } => return None,
+      FileChange::Modified { path }
+      | FileChange::Conflict { path }
+      | FileChange::Deleted { path } => path.clone(),
+      FileChange::Renamed { from_path, .. } => from_path.clone(),
+    };
+    let key = VcsBaseCacheKey {
+      repo_root:     scan.repo_root.clone(),
+      head_revision: scan.head_revision.clone(),
+      path:          base_path.clone(),
+    };
+    if let Some(bytes) = self.shared_vcs.base_cache.get(&key) {
+      return bytes.clone();
+    }
+    let bytes = self.vcs_provider.get_diff_base_for_change(change);
+    self.shared_vcs.base_cache.insert(key, bytes.clone());
+    bytes
+  }
+
+  fn shared_vcs_changed_file_items(
+    &self,
+    scan: &VcsWorkspaceScan,
+  ) -> Vec<FilePickerChangedFileItem> {
+    scan
+      .changes
+      .iter()
+      .map(|change| {
+        match change {
+          FileChange::Untracked { path } => {
+            FilePickerChangedFileItem {
+              kind:      FilePickerChangedKind::Untracked,
+              path:      path.clone(),
+              from_path: None,
+            }
+          },
+          FileChange::Modified { path } => {
+            FilePickerChangedFileItem {
+              kind:      FilePickerChangedKind::Modified,
+              path:      path.clone(),
+              from_path: None,
+            }
+          },
+          FileChange::Conflict { path } => {
+            FilePickerChangedFileItem {
+              kind:      FilePickerChangedKind::Conflict,
+              path:      path.clone(),
+              from_path: None,
+            }
+          },
+          FileChange::Deleted { path } => {
+            FilePickerChangedFileItem {
+              kind:      FilePickerChangedKind::Deleted,
+              path:      path.clone(),
+              from_path: None,
+            }
+          },
+          FileChange::Renamed { from_path, to_path } => {
+            FilePickerChangedFileItem {
+              kind:      FilePickerChangedKind::Renamed,
+              path:      to_path.clone(),
+              from_path: Some(from_path.clone()),
+            }
+          },
+        }
+      })
+      .collect()
+  }
+
+  fn merged_vcs_changed_file_items(
+    &self,
+    scan: &VcsWorkspaceScan,
+  ) -> Vec<FilePickerChangedFileItem> {
+    let mut items = self.shared_vcs_changed_file_items(scan);
+    let mut seen = items
+      .iter()
+      .map(|item| item.path.clone())
+      .collect::<std::collections::HashSet<_>>();
+
+    for snapshot in self.editor.buffer_snapshots_mru() {
+      if !snapshot.modified {
+        continue;
+      }
+      let Some(path) = snapshot.file_path else {
+        continue;
+      };
+      let path = vcs_repo_absolute_path(&path, &scan.repo_root);
+      if !path.starts_with(&scan.repo_root) {
+        continue;
+      }
+      if seen.contains(&path) {
+        continue;
+      }
+      seen.insert(path.clone());
+      items.push(FilePickerChangedFileItem {
+        kind: FilePickerChangedKind::Modified,
+        path,
+        from_path: None,
+      });
+    }
+
+    items.sort_by(|left, right| left.path.cmp(&right.path));
+    items
+  }
+
+  fn refresh_shared_vcs_scan_for_cwd(&mut self, cwd: &Path) -> Option<Arc<VcsWorkspaceScan>> {
+    match self.vcs_provider.scan_workspace(cwd) {
+      Ok(scan) => {
+        let _ = self.store_shared_vcs_scan(scan);
+        self.shared_vcs_scan_for_cwd(cwd)
+      },
+      Err(_) => self.shared_vcs_scan_for_cwd(cwd),
+    }
+  }
+
   fn schedule_active_file_vcs_refresh(
     &mut self,
     reason: ActiveFileVcsRefreshReason,
@@ -1565,15 +2611,24 @@ impl Ctx {
     self.active_file_vcs_refresh_generation += 1;
     let generation = self.active_file_vcs_refresh_generation;
     let vcs_provider = self.vcs_provider.clone();
+    let shared_scan = self.shared_vcs_scan_for_path(&path);
     let tx = self.active_file_vcs_refresh_tx.clone();
     let wake_tx = self.render_wake_tx.clone();
     log_active_file_vcs_refresh_event("started", generation, &path, reason, None, None, None, None);
     thread::spawn(move || {
       let collect_start = Instant::now();
-      let statusline = vcs_provider
-        .get_statusline_info(&path)
-        .map(|info| info.statusline_text());
-      let diff_base = vcs_provider.get_diff_base(&path);
+      let scan = shared_scan
+        .map(|scan| (*scan).clone())
+        .or_else(|| vcs_provider.scan_workspace(&path).ok());
+      let statusline = scan
+        .as_ref()
+        .and_then(|scan| scan.statusline_info.as_ref())
+        .map(|info| info.statusline_text())
+        .or_else(|| {
+          vcs_provider
+            .get_statusline_info(&path)
+            .map(|info| info.statusline_text())
+        });
       let collect_ms = collect_start.elapsed().as_secs_f64() * 1000.0;
       log_active_file_vcs_refresh_event(
         "finished",
@@ -1581,7 +2636,7 @@ impl Ctx {
         &path,
         reason,
         Some(statusline.is_some()),
-        Some(diff_base.is_some()),
+        None,
         Some(collect_ms),
         None,
       );
@@ -1590,7 +2645,8 @@ impl Ctx {
         path,
         reason,
         statusline,
-        diff_base,
+        diff_base: None,
+        scan,
         collect_ms,
       });
       let _ = wake_tx.send(());
@@ -1623,8 +2679,14 @@ impl Ctx {
         );
       } else {
         let apply_start = Instant::now();
-        let changed =
-          self.apply_active_file_vcs_refresh_result(result.statusline, result.diff_base);
+        if let Some(scan) = result.scan {
+          let _ = self.store_shared_vcs_scan(scan);
+        }
+        let diff_base = result.diff_base.or_else(|| {
+          let scan = self.shared_vcs_scan_for_path(&result.path)?;
+          self.cached_vcs_base_for_path(&scan, &result.path)
+        });
+        let changed = self.apply_active_file_vcs_refresh_result(result.statusline, diff_base);
         let apply_ms = apply_start.elapsed().as_secs_f64() * 1000.0;
         log_active_file_vcs_refresh_event(
           "applied",
@@ -1654,6 +2716,12 @@ impl Ctx {
     };
     let _ = handle.update_document(self.editor.document().text().clone(), true);
     self.gutter_diff_signs = vcs_gutter_signs(handle);
+  }
+
+  fn queue_open_vcs_diff_picker_refresh(&mut self) {
+    if self.file_picker.active && self.file_picker.kind == the_default::FilePickerKind::VcsDiff {
+      self.vcs_diff_picker.live_refresh_pending = true;
+    }
   }
 
   /// Handle terminal resize.
@@ -1799,6 +2867,7 @@ impl Ctx {
   }
 
   pub fn start_background_services(&mut self) {
+    self.ensure_pi_bridge_started();
     self.lsp_services_started = true;
     self.lsp_ready = false;
     self.lsp_active_progress_tokens.clear();
@@ -1820,6 +2889,7 @@ impl Ctx {
   }
 
   pub fn shutdown_background_services(&mut self) {
+    self.shutdown_pi_bridge();
     self.lsp_services_started = false;
     let buffer_ids = self.buffer_lsp_states.keys().copied().collect::<Vec<_>>();
     for buffer_id in buffer_ids {
@@ -2603,6 +3673,7 @@ impl Ctx {
       FileTreeVcsRefreshReason::VcsWatch,
       Some(Instant::now() + file_tree_changed_refresh_latency()),
     );
+    self.queue_open_vcs_diff_picker_refresh();
     false
   }
 
@@ -2676,18 +3747,18 @@ impl Ctx {
     );
     thread::spawn(move || {
       let collect_start = Instant::now();
-      let (change_count, statuses) = match vcs_provider.collect_changed_files(&root) {
-        Ok(changes) => {
+      let (change_count, statuses, scan) = match vcs_provider.scan_workspace(&root) {
+        Ok(scan) => {
           let collect_ms = collect_start.elapsed().as_secs_f64() * 1000.0;
           let collapse_start = Instant::now();
-          let statuses = collapse_file_tree_vcs_statuses(&changes, &root);
+          let statuses = collapse_file_tree_vcs_statuses(&scan.changes, &root);
           let collapse_ms = collapse_start.elapsed().as_secs_f64() * 1000.0;
           log_file_tree_vcs_refresh_event(
             "finished",
             generation,
             &root,
             reason,
-            Some(changes.len()),
+            Some(scan.changes.len()),
             Some(statuses.len()),
             Some(collect_ms),
             Some(collapse_ms),
@@ -2700,16 +3771,17 @@ impl Ctx {
             reason,
             status_entries: statuses.len(),
             statuses,
-            change_count: changes.len(),
+            change_count: scan.changes.len(),
             collect_ms,
             collapse_ms,
+            scan: Some(scan),
           });
           let _ = wake_tx.send(());
           return;
         },
         Err(err) => {
           let _ = err;
-          (0, BTreeMap::new())
+          (0, BTreeMap::new(), None)
         },
       };
       let collect_ms = collect_start.elapsed().as_secs_f64() * 1000.0;
@@ -2734,6 +3806,7 @@ impl Ctx {
         change_count,
         collect_ms,
         collapse_ms: 0.0,
+        scan,
       });
       let _ = wake_tx.send(());
     });
@@ -2768,6 +3841,9 @@ impl Ctx {
         );
       } else {
         let apply_start = Instant::now();
+        if let Some(scan) = result.scan {
+          let _ = self.store_shared_vcs_scan(scan);
+        }
         self.file_tree_vcs_statuses = result.statuses;
         let decorations_changed = self.recombine_file_tree_decorations();
         let apply_ms = apply_start.elapsed().as_secs_f64() * 1000.0;
@@ -3504,6 +4580,84 @@ impl Ctx {
       *ui_item = completion_menu_item_for_lsp_item(item);
       self.needs_render = true;
     }
+    true
+  }
+
+  pub fn poll_vcs_diff_picker(&mut self) -> bool {
+    if !self.file_picker.active || self.file_picker.kind != the_default::FilePickerKind::VcsDiff {
+      if let Some(cancel) = self.vcs_diff_picker.cancel.take() {
+        cancel.store(true, Ordering::Relaxed);
+      }
+      self.vcs_diff_picker.result_rx = None;
+      self.vcs_diff_picker.live_refresh_pending = false;
+      return false;
+    }
+
+    let cwd = self.effective_working_directory();
+    let scan = if self.vcs_diff_picker.live_refresh_pending {
+      self.refresh_shared_vcs_scan_for_cwd(&cwd)
+    } else {
+      self.shared_vcs_scan_for_cwd(&cwd)
+    };
+    let needs_restart = scan.as_ref().is_some_and(|_| {
+      self.vcs_diff_picker.scan_generation != self.shared_vcs.generation
+        || self.vcs_diff_picker.live_refresh_pending
+    });
+
+    let mut changed = false;
+    let mut clear_receiver = false;
+    if let Some(result_rx) = self.vcs_diff_picker.result_rx.as_ref() {
+      loop {
+        match result_rx.try_recv() {
+          Ok(VcsDiffPickerFileResult::Entry {
+            generation,
+            index,
+            entry,
+          }) => {
+            if generation == self.vcs_diff_picker.generation
+              && let Some(slot) = self.vcs_diff_picker.entries.get_mut(index)
+            {
+              *slot = entry;
+              changed = true;
+            }
+          },
+          Ok(VcsDiffPickerFileResult::Complete { generation }) => {
+            if generation == self.vcs_diff_picker.generation {
+              clear_receiver = true;
+            }
+          },
+          Err(TryRecvError::Empty) => break,
+          Err(TryRecvError::Disconnected) => {
+            clear_receiver = true;
+            break;
+          },
+        }
+      }
+    }
+    if clear_receiver {
+      self.vcs_diff_picker.result_rx = None;
+      self.vcs_diff_picker.cancel = None;
+    }
+
+    if needs_restart
+      && self.vcs_diff_picker.result_rx.is_none()
+      && let Some(scan) = scan
+    {
+      return restart_open_vcs_diff_picker_from_scan(self, scan);
+    }
+
+    if !changed {
+      return false;
+    }
+
+    let submit_handler = self
+      .file_picker
+      .runtime_session()
+      .map(the_default::PickerSubmitHandlerRef::Runtime);
+    let specs =
+      file_picker_vcs_diff_specs(&self.vcs_diff_picker.root, &self.vcs_diff_picker.entries);
+    let items = file_picker_items_from_specs(specs, submit_handler);
+    replace_file_picker_items_preserving_selection_and_viewport(self, items, 0);
     true
   }
 
@@ -6357,13 +7511,22 @@ impl Ctx {
   }
 
   fn lsp_send_did_change(&mut self, old_text: &Rope, changes: &ChangeSet) {
-    let Some(state) = self.active_buffer_lsp_state().cloned() else {
+    let buffer_id = self.editor.active_buffer_id();
+    self.lsp_send_did_change_for_buffer(buffer_id, old_text, changes);
+  }
+
+  fn lsp_send_did_change_for_buffer(
+    &mut self,
+    buffer_id: BufferId,
+    old_text: &Rope,
+    changes: &ChangeSet,
+  ) {
+    let Some(state) = self.buffer_lsp_states.get(&buffer_id).cloned() else {
       return;
     };
     let Some(document_state) = state.document else {
       return;
     };
-    let buffer_id = self.editor.active_buffer_id();
     let Some(document) = self.editor.buffer_document(buffer_id) else {
       return;
     };
@@ -6393,7 +7556,7 @@ impl Ctx {
           .send_notification("textDocument/didChange", Some(params));
       }
     }
-    if let Some(state) = self.active_buffer_lsp_state_mut()
+    if let Some(state) = self.buffer_lsp_states.get_mut(&buffer_id)
       && let Some(document_state) = state.document.as_mut()
     {
       document_state.version = next_version;
@@ -6402,11 +7565,18 @@ impl Ctx {
         .first()
         .is_some_and(|runtime_id| state.opened_runtime_ids.contains(runtime_id));
     }
-    self.sync_active_lsp_mirror_state();
+    if self.editor.active_buffer_id() == buffer_id {
+      self.sync_active_lsp_mirror_state();
+    }
   }
 
   fn lsp_send_did_save(&mut self, text: Option<&str>) {
-    let Some(state) = self.active_buffer_lsp_state().cloned() else {
+    let buffer_id = self.editor.active_buffer_id();
+    self.lsp_send_did_save_for_buffer(buffer_id, text);
+  }
+
+  fn lsp_send_did_save_for_buffer(&mut self, buffer_id: BufferId, text: Option<&str>) {
+    let Some(state) = self.buffer_lsp_states.get(&buffer_id).cloned() else {
       return;
     };
     let Some(document_state) = state.document else {
@@ -7249,6 +8419,10 @@ impl Ctx {
       .map(|pane| pane.pane_id)
   }
 
+  pub(crate) fn agent_follow_render_snapshot(&self) -> Option<AgentFollowRenderSnapshot> {
+    self.agent_follow.render_snapshot()
+  }
+
   fn sync_state_after_active_pane_change(&mut self, previous_buffer_id: BufferId) {
     the_default::remember_active_editor_pane(self);
     self.clear_hover_state();
@@ -7403,6 +8577,732 @@ fn collapse_file_tree_vcs_statuses(
   statuses
 }
 
+fn build_file_picker_vcs_diff_entry(
+  ctx: &Ctx,
+  change: &FileChange,
+) -> Result<FilePickerVcsDiffEntry, String> {
+  let current_text = vcs_worktree_text(ctx, change)?;
+  let base_text = vcs_base_text_for_change(&ctx.vcs_provider, change)?;
+  build_file_picker_vcs_diff_entry_with_text(
+    change,
+    &ctx.workspace_root(),
+    &base_text,
+    &current_text,
+  )
+}
+
+fn vcs_diff_entries_match_changed_items(
+  entries: &[FilePickerVcsDiffEntry],
+  changed: &[FilePickerChangedFileItem],
+) -> bool {
+  entries.len() == changed.len()
+    && entries.iter().zip(changed.iter()).all(|(entry, item)| {
+      entry.kind == item.kind && entry.path == item.path && entry.from_path == item.from_path
+    })
+}
+
+fn restart_open_vcs_diff_picker_from_scan(ctx: &mut Ctx, scan: Arc<VcsWorkspaceScan>) -> bool {
+  if let Some(cancel) = ctx.vcs_diff_picker.cancel.take() {
+    cancel.store(true, Ordering::Relaxed);
+  }
+
+  let changed = ctx.merged_vcs_changed_file_items(&scan);
+  let root = scan.repo_root.clone();
+  let open_buffers = ctx
+    .editor
+    .buffer_snapshots_mru()
+    .iter()
+    .filter_map(|buffer| {
+      let path = vcs_repo_absolute_path(
+        ctx.editor.buffer_file_path(buffer.buffer_id)?,
+        &scan.repo_root,
+      );
+      let document = ctx.editor.document_for_buffer(buffer.buffer_id)?;
+      Some((path, OpenBufferVcsSnapshot {
+        text:     document.text().to_string(),
+        modified: buffer.modified,
+      }))
+    })
+    .collect::<HashMap<_, _>>();
+
+  ctx.vcs_diff_picker.generation = ctx.vcs_diff_picker.generation.wrapping_add(1);
+  ctx.vcs_diff_picker.scan_generation = ctx.shared_vcs.generation;
+  ctx.vcs_diff_picker.live_refresh_pending = false;
+  ctx.vcs_diff_picker.root = root.clone();
+
+  let mut updated_ui = false;
+  if ctx.vcs_diff_picker.entries.is_empty()
+    || !vcs_diff_entries_match_changed_items(&ctx.vcs_diff_picker.entries, &changed)
+  {
+    ctx.vcs_diff_picker.entries = changed
+      .iter()
+      .map(file_picker_vcs_diff_placeholder_entry)
+      .collect();
+
+    let submit_handler = ctx
+      .file_picker
+      .runtime_session()
+      .map(the_default::PickerSubmitHandlerRef::Runtime);
+    let specs = file_picker_vcs_diff_specs(&root, &ctx.vcs_diff_picker.entries);
+    let items = file_picker_items_from_specs(specs, submit_handler);
+    replace_file_picker_items_preserving_selection(ctx, items, 0);
+    updated_ui = true;
+  }
+
+  let generation = ctx.vcs_diff_picker.generation;
+  let shared_scan = (*scan).clone();
+  let vcs_provider = ctx.vcs_provider.clone();
+  let wake_tx = ctx.render_wake_tx.clone();
+  let cancel = Arc::new(AtomicBool::new(false));
+  let (result_tx, result_rx) = channel();
+  ctx.vcs_diff_picker.cancel = Some(cancel.clone());
+  ctx.vcs_diff_picker.result_rx = Some(result_rx);
+
+  thread::spawn(move || {
+    const WAKE_BATCH_SIZE: usize = 8;
+
+    let base_loader = picker_diff_base_loader_for_scan(&shared_scan, vcs_provider);
+    let mut pending_since_wake = 0usize;
+    for (index, item) in changed.iter().enumerate() {
+      if cancel.load(Ordering::Relaxed) {
+        return;
+      }
+      let entry = build_file_picker_vcs_diff_entry_from_snapshot(
+        item,
+        &shared_scan,
+        &base_loader,
+        &open_buffers,
+      )
+      .unwrap_or_else(|err| {
+        FilePickerVcsDiffEntry {
+          kind:      item.kind,
+          path:      item.path.clone(),
+          from_path: item.from_path.clone(),
+          hunks:     vec![FilePickerVcsDiffHunk {
+            summary:            err.clone(),
+            target_line:        None,
+            target_cursor_char: None,
+            before_start:       0,
+            before_end:         0,
+            after_start:        0,
+            after_end:          0,
+            preview:            the_default::FilePickerPreview::Message(err),
+          }],
+        }
+      });
+      if result_tx
+        .send(VcsDiffPickerFileResult::Entry {
+          generation,
+          index,
+          entry,
+        })
+        .is_err()
+      {
+        return;
+      }
+      pending_since_wake = pending_since_wake.saturating_add(1);
+      if pending_since_wake >= WAKE_BATCH_SIZE {
+        pending_since_wake = 0;
+        let _ = wake_tx.send(());
+      }
+    }
+    if result_tx
+      .send(VcsDiffPickerFileResult::Complete { generation })
+      .is_ok()
+    {
+      let _ = wake_tx.send(());
+    }
+  });
+
+  updated_ui
+}
+
+fn build_file_picker_vcs_diff_entry_from_snapshot(
+  item: &FilePickerChangedFileItem,
+  scan: &VcsWorkspaceScan,
+  base_loader: &PickerDiffBaseLoader,
+  open_buffers: &HashMap<PathBuf, OpenBufferVcsSnapshot>,
+) -> Result<FilePickerVcsDiffEntry, String> {
+  let change = file_picker_changed_file_to_vcs_change(item);
+  let current_text = vcs_worktree_text_from_snapshot(open_buffers, &change)?;
+  let base_text = base_loader.load_text_for_change(&change)?;
+  build_file_picker_vcs_diff_entry_with_text(&change, &scan.repo_root, &base_text, &current_text)
+}
+
+fn build_file_picker_vcs_diff_entry_with_text(
+  change: &FileChange,
+  workspace_root: &Path,
+  base_text: &str,
+  current_text: &str,
+) -> Result<FilePickerVcsDiffEntry, String> {
+  let path = change.path().to_path_buf();
+  let from_path = match change {
+    FileChange::Renamed { from_path, .. } => Some(from_path.clone()),
+    _ => None,
+  };
+  let kind = file_picker_changed_kind_for_vcs(change);
+  let display_path = display_vcs_picker_path(&path, workspace_root);
+  let from_display = from_path
+    .as_ref()
+    .map(|from_path| display_vcs_picker_path(from_path, workspace_root));
+  let current_rope = Rope::from_str(current_text);
+  let base_rope = Rope::from_str(base_text);
+  let handle = DiffHandle::new(base_rope.clone(), current_rope.clone());
+  let diff = handle.load();
+  if diff.is_empty() {
+    return Ok(FilePickerVcsDiffEntry {
+      kind,
+      path: path.clone(),
+      from_path,
+      hunks: vec![vcs_info_hunk(
+        &display_path,
+        from_display.as_deref(),
+        &path,
+        current_text,
+        "No textual diff available",
+      )],
+    });
+  }
+
+  let mut hunks = Vec::with_capacity(diff.len() as usize);
+  for index in 0..diff.len() {
+    let hunk = diff.nth_hunk(index);
+    let target_line = vcs_hunk_target_line(change, &current_rope, &hunk);
+    let target_cursor_char = target_line.map(|line| current_rope.line_to_char(line));
+    hunks.push(FilePickerVcsDiffHunk {
+      summary: vcs_hunk_summary(&base_rope, &current_rope, &hunk),
+      target_line,
+      target_cursor_char,
+      before_start: hunk.before.start as usize,
+      before_end: hunk.before.end as usize,
+      after_start: hunk.after.start as usize,
+      after_end: hunk.after.end as usize,
+      preview: FilePickerPreview::Message("Loading diff…".to_string()),
+    });
+  }
+
+  Ok(FilePickerVcsDiffEntry {
+    kind,
+    path,
+    from_path,
+    hunks,
+  })
+}
+
+impl PickerDiffBaseLoader {
+  fn load_text_for_change(&self, change: &FileChange) -> Result<String, String> {
+    match self {
+      Self::GitRevision {
+        repo,
+        repo_root,
+        revision,
+      } => git_revision_text_for_change(repo, repo_root, revision, change),
+      Self::Provider(vcs_provider) => vcs_base_text_for_change(vcs_provider, change),
+    }
+  }
+}
+
+fn picker_diff_base_loader_for_scan(
+  scan: &VcsWorkspaceScan,
+  vcs_provider: DiffProviderRegistry,
+) -> PickerDiffBaseLoader {
+  let git_loader = |revision: String| {
+    Repository::open(&scan.repo_root).ok().map(|repo| {
+      PickerDiffBaseLoader::GitRevision {
+        repo,
+        repo_root: scan.repo_root.clone(),
+        revision,
+      }
+    })
+  };
+
+  match scan.provider_label.as_str() {
+    "git" => {
+      git_loader("HEAD".to_string()).unwrap_or_else(|| PickerDiffBaseLoader::Provider(vcs_provider))
+    },
+    "jj" => {
+      jj_colocated_git_base_revision(&scan.repo_root)
+        .ok()
+        .flatten()
+        .and_then(git_loader)
+        .unwrap_or_else(|| PickerDiffBaseLoader::Provider(vcs_provider))
+    },
+    _ => PickerDiffBaseLoader::Provider(vcs_provider),
+  }
+}
+
+fn jj_colocated_git_base_revision(repo_root: &Path) -> Result<Option<String>, String> {
+  let output = std::process::Command::new("jj")
+    .arg("-R")
+    .arg(repo_root)
+    .arg("log")
+    .arg("-r")
+    .arg("@-")
+    .arg("--no-graph")
+    .arg("-T")
+    .arg("commit_id ++ \"\\n\"")
+    .env_remove("GIT_DIR")
+    .env_remove("GIT_WORK_TREE")
+    .output()
+    .map_err(|err| format!("failed to run jj in '{}': {err}", repo_root.display()))?;
+  if !output.status.success() {
+    return Ok(None);
+  }
+  let revision = String::from_utf8(output.stdout).map_err(|_| {
+    format!(
+      "jj returned non-utf8 revision for '{}'",
+      repo_root.display()
+    )
+  })?;
+  let revision = revision.trim();
+  if revision.is_empty() {
+    Ok(None)
+  } else {
+    Ok(Some(revision.to_string()))
+  }
+}
+
+fn git_revision_text_for_change(
+  repo: &Repository,
+  repo_root: &Path,
+  revision: &str,
+  change: &FileChange,
+) -> Result<String, String> {
+  let base_path = match change {
+    FileChange::Untracked { .. } => return Ok(String::new()),
+    FileChange::Modified { path }
+    | FileChange::Conflict { path }
+    | FileChange::Deleted { path } => path,
+    FileChange::Renamed { from_path, .. } => from_path,
+  };
+
+  match git_revision_blob_text(repo, repo_root, revision, base_path)? {
+    Some(text) => Ok(text),
+    None => Ok(String::new()),
+  }
+}
+
+fn git_revision_blob_text(
+  repo: &Repository,
+  repo_root: &Path,
+  revision: &str,
+  path: &Path,
+) -> Result<Option<String>, String> {
+  let relative = path.strip_prefix(repo_root).map_err(|_| {
+    format!(
+      "{} is not under repo root {}",
+      path.display(),
+      repo_root.display()
+    )
+  })?;
+  let object = repo
+    .revparse_single(revision)
+    .map_err(|err| format!("failed to resolve git revision '{revision}': {err}"))?;
+  let tree = object
+    .peel_to_tree()
+    .map_err(|err| format!("failed to peel git revision '{revision}' to tree: {err}"))?;
+  let entry = match tree.get_path(relative) {
+    Ok(entry) => entry,
+    Err(_) => return Ok(None),
+  };
+  if entry.kind() != Some(ObjectType::Blob) {
+    return Ok(None);
+  }
+  let blob = repo
+    .find_blob(entry.id())
+    .map_err(|err| format!("failed to load git blob for '{}': {err}", path.display()))?;
+  String::from_utf8(blob.content().to_vec())
+    .map(Some)
+    .map_err(|_| format!("base revision is not UTF-8 text for '{}'", path.display()))
+}
+
+fn vcs_base_text_for_change(
+  vcs_provider: &DiffProviderRegistry,
+  change: &FileChange,
+) -> Result<String, String> {
+  match vcs_provider.get_diff_base_for_change(change) {
+    Some(bytes) => {
+      String::from_utf8(bytes).map_err(|_| "Base revision is not UTF-8 text".to_string())
+    },
+    None => Ok(String::new()),
+  }
+}
+
+fn file_picker_changed_kind_for_vcs(change: &FileChange) -> FilePickerChangedKind {
+  match change {
+    FileChange::Untracked { .. } => FilePickerChangedKind::Untracked,
+    FileChange::Modified { .. } => FilePickerChangedKind::Modified,
+    FileChange::Conflict { .. } => FilePickerChangedKind::Conflict,
+    FileChange::Deleted { .. } => FilePickerChangedKind::Deleted,
+    FileChange::Renamed { .. } => FilePickerChangedKind::Renamed,
+  }
+}
+
+fn display_vcs_picker_path(path: &Path, root: &Path) -> String {
+  path
+    .strip_prefix(root)
+    .unwrap_or(path)
+    .display()
+    .to_string()
+}
+
+fn vcs_worktree_text(ctx: &Ctx, change: &FileChange) -> Result<String, String> {
+  match change {
+    FileChange::Deleted { .. } => Ok(String::new()),
+    FileChange::Untracked { path }
+    | FileChange::Modified { path }
+    | FileChange::Conflict { path }
+    | FileChange::Renamed { to_path: path, .. } => {
+      if let Some(buffer_id) = ctx.editor.find_buffer_by_path(path)
+        && let Some(document) = ctx.editor.document_for_buffer(buffer_id)
+      {
+        return Ok(document.text().to_string());
+      }
+      std::fs::read_to_string(path)
+        .map_err(|err| format!("failed to read '{}': {err}", path.display()))
+    },
+  }
+}
+
+fn vcs_worktree_text_from_snapshot(
+  open_buffers: &HashMap<PathBuf, OpenBufferVcsSnapshot>,
+  change: &FileChange,
+) -> Result<String, String> {
+  match change {
+    FileChange::Deleted { .. } => Ok(String::new()),
+    FileChange::Untracked { path }
+    | FileChange::Modified { path }
+    | FileChange::Conflict { path }
+    | FileChange::Renamed { to_path: path, .. } => {
+      if let Some(snapshot) = open_buffers.get(path)
+        && snapshot.modified
+      {
+        return Ok(snapshot.text.clone());
+      }
+      std::fs::read_to_string(path)
+        .map_err(|err| format!("failed to read '{}': {err}", path.display()))
+    },
+  }
+}
+
+fn file_picker_changed_file_to_vcs_change(item: &FilePickerChangedFileItem) -> FileChange {
+  match item.kind {
+    FilePickerChangedKind::Untracked => {
+      FileChange::Untracked {
+        path: item.path.clone(),
+      }
+    },
+    FilePickerChangedKind::Modified => {
+      FileChange::Modified {
+        path: item.path.clone(),
+      }
+    },
+    FilePickerChangedKind::Conflict => {
+      FileChange::Conflict {
+        path: item.path.clone(),
+      }
+    },
+    FilePickerChangedKind::Deleted => {
+      FileChange::Deleted {
+        path: item.path.clone(),
+      }
+    },
+    FilePickerChangedKind::Renamed => {
+      FileChange::Renamed {
+        from_path: item.from_path.clone().unwrap_or_else(|| item.path.clone()),
+        to_path:   item.path.clone(),
+      }
+    },
+  }
+}
+
+fn vcs_change_for_entry(entry: &FilePickerVcsDiffEntry) -> FileChange {
+  match entry.kind {
+    FilePickerChangedKind::Untracked => {
+      FileChange::Untracked {
+        path: entry.path.clone(),
+      }
+    },
+    FilePickerChangedKind::Modified => {
+      FileChange::Modified {
+        path: entry.path.clone(),
+      }
+    },
+    FilePickerChangedKind::Conflict => {
+      FileChange::Conflict {
+        path: entry.path.clone(),
+      }
+    },
+    FilePickerChangedKind::Deleted => {
+      FileChange::Deleted {
+        path: entry.path.clone(),
+      }
+    },
+    FilePickerChangedKind::Renamed => {
+      FileChange::Renamed {
+        from_path: entry
+          .from_path
+          .clone()
+          .unwrap_or_else(|| entry.path.clone()),
+        to_path:   entry.path.clone(),
+      }
+    },
+  }
+}
+
+fn vcs_info_hunk(
+  display_path: &str,
+  from_display: Option<&str>,
+  path: &Path,
+  current_text: &str,
+  message: &str,
+) -> FilePickerVcsDiffHunk {
+  FilePickerVcsDiffHunk {
+    summary:            message.to_string(),
+    target_line:        None,
+    target_cursor_char: None,
+    before_start:       0,
+    before_end:         0,
+    after_start:        0,
+    after_end:          0,
+    preview:            FilePickerPreview::VcsDiff(finalize_vcs_diff_preview(
+      FilePickerVcsDiffPreview {
+        title:        display_path.to_string(),
+        from_title:   from_display.map(ToOwned::to_owned),
+        left_label:   "BASE".to_string(),
+        right_label:  "WORKTREE".to_string(),
+        left:         file_picker_source_preview_from_text(path, "", None),
+        right:        file_picker_source_preview_from_text(path, current_text, None),
+        rows:         vec![FilePickerVcsDiffPreviewRow {
+          kind:              FilePickerVcsDiffPreviewRowKind::Info,
+          left_line_index:   None,
+          right_line_index:  None,
+          left_line_number:  None,
+          right_line_number: None,
+          message:           message.to_string(),
+        }],
+        cached_lines: Arc::new([]),
+      },
+    )),
+  }
+}
+
+fn vcs_hunk_summary(base_rope: &Rope, current_rope: &Rope, hunk: &the_vcs::Hunk) -> String {
+  let right_start = hunk.after.start as usize;
+  let right_end = hunk.after.end as usize;
+  let left_start = hunk.before.start as usize;
+  let left_end = hunk.before.end as usize;
+
+  let text = if let Some(text) = first_nonempty_rope_line(current_rope, right_start, right_end) {
+    text
+  } else if let Some(text) = first_nonempty_rope_line(base_rope, left_start, left_end) {
+    text
+  } else {
+    "changed lines".to_string()
+  };
+
+  truncate_vcs_summary(&text, 84)
+}
+
+fn first_nonempty_rope_line(rope: &Rope, start: usize, end: usize) -> Option<String> {
+  for line_index in start..end {
+    let line = rope.line(line_index).to_string();
+    let line = line.trim();
+    if !line.is_empty() {
+      return Some(line.to_string());
+    }
+  }
+  None
+}
+
+fn truncate_vcs_summary(text: &str, max_chars: usize) -> String {
+  let mut out = String::new();
+  for ch in text.chars().take(max_chars) {
+    out.push(ch);
+  }
+  if text.chars().count() > max_chars {
+    out.push('…');
+  }
+  out
+}
+
+fn vcs_hunk_target_line(
+  change: &FileChange,
+  current_rope: &Rope,
+  hunk: &the_vcs::Hunk,
+) -> Option<usize> {
+  if matches!(change, FileChange::Deleted { .. }) {
+    return None;
+  }
+  let total_lines = current_rope.len_lines();
+  if total_lines == 0 {
+    return None;
+  }
+  let after_start = hunk.after.start as usize;
+  if after_start < total_lines {
+    Some(after_start)
+  } else {
+    Some(total_lines.saturating_sub(1))
+  }
+}
+
+fn build_vcs_hunk_preview_from_bounds(
+  path: &Path,
+  display_path: &str,
+  from_display: Option<&str>,
+  base_rope: &Rope,
+  current_rope: &Rope,
+  before_start: usize,
+  before_end: usize,
+  after_start: usize,
+  after_end: usize,
+  loader: Option<&Loader>,
+) -> FilePickerVcsDiffPreview {
+  build_vcs_hunk_preview(
+    path,
+    display_path,
+    from_display,
+    base_rope,
+    current_rope,
+    &the_vcs::Hunk {
+      before: before_start as u32..before_end as u32,
+      after:  after_start as u32..after_end as u32,
+    },
+    loader,
+  )
+}
+
+fn build_vcs_hunk_preview(
+  path: &Path,
+  display_path: &str,
+  from_display: Option<&str>,
+  base_rope: &Rope,
+  current_rope: &Rope,
+  hunk: &the_vcs::Hunk,
+  _loader: Option<&Loader>,
+) -> FilePickerVcsDiffPreview {
+  const CONTEXT: usize = 3;
+
+  let before_start = hunk.before.start as usize;
+  let before_end = hunk.before.end as usize;
+  let after_start = hunk.after.start as usize;
+  let after_end = hunk.after.end as usize;
+
+  let context_above = before_start.min(after_start).min(CONTEXT);
+  let hidden_above = before_start.min(after_start).saturating_sub(context_above);
+  let before_snippet_start = before_start.saturating_sub(context_above);
+  let after_snippet_start = after_start.saturating_sub(context_above);
+  let base_remaining = base_rope.len_lines().saturating_sub(before_end);
+  let current_remaining = current_rope.len_lines().saturating_sub(after_end);
+  let context_below = base_remaining.min(current_remaining).min(CONTEXT);
+  let before_snippet_end = before_end.saturating_add(context_below);
+  let after_snippet_end = after_end.saturating_add(context_below);
+
+  let left = file_picker_source_preview_from_text(
+    path,
+    &rope_line_range_to_string(base_rope, before_snippet_start, before_snippet_end),
+    None,
+  );
+  let right = file_picker_source_preview_from_text(
+    path,
+    &rope_line_range_to_string(current_rope, after_snippet_start, after_snippet_end),
+    None,
+  );
+
+  let mut rows = Vec::new();
+  if hidden_above > 0 {
+    rows.push(FilePickerVcsDiffPreviewRow {
+      kind:              FilePickerVcsDiffPreviewRowKind::CollapsedAbove,
+      left_line_index:   None,
+      right_line_index:  None,
+      left_line_number:  None,
+      right_line_number: None,
+      message:           format!("… {} lines above", hidden_above),
+    });
+  }
+
+  for offset in 0..context_above {
+    rows.push(FilePickerVcsDiffPreviewRow {
+      kind:              FilePickerVcsDiffPreviewRowKind::Context,
+      left_line_index:   Some(offset),
+      right_line_index:  Some(offset),
+      left_line_number:  Some(before_snippet_start + offset + 1),
+      right_line_number: Some(after_snippet_start + offset + 1),
+      message:           String::new(),
+    });
+  }
+
+  let before_len = before_end.saturating_sub(before_start);
+  let after_len = after_end.saturating_sub(after_start);
+  let changed_len = before_len.max(after_len).max(1);
+  for offset in 0..changed_len {
+    let left_line = (offset < before_len).then_some(before_start + offset);
+    let right_line = (offset < after_len).then_some(after_start + offset);
+    let kind = match (left_line, right_line) {
+      (Some(_), Some(_)) if hunk.is_pure_insertion() => FilePickerVcsDiffPreviewRowKind::Added,
+      (Some(_), Some(_)) if hunk.is_pure_removal() => FilePickerVcsDiffPreviewRowKind::Removed,
+      (Some(_), Some(_)) => FilePickerVcsDiffPreviewRowKind::Modified,
+      (Some(_), None) => FilePickerVcsDiffPreviewRowKind::Removed,
+      (None, Some(_)) => FilePickerVcsDiffPreviewRowKind::Added,
+      (None, None) => FilePickerVcsDiffPreviewRowKind::Info,
+    };
+    rows.push(FilePickerVcsDiffPreviewRow {
+      kind,
+      left_line_index: left_line.map(|line| line.saturating_sub(before_snippet_start)),
+      right_line_index: right_line.map(|line| line.saturating_sub(after_snippet_start)),
+      left_line_number: left_line.map(|line| line + 1),
+      right_line_number: right_line.map(|line| line + 1),
+      message: String::new(),
+    });
+  }
+
+  for offset in 0..context_below {
+    rows.push(FilePickerVcsDiffPreviewRow {
+      kind:              FilePickerVcsDiffPreviewRowKind::Context,
+      left_line_index:   Some(before_end + offset - before_snippet_start),
+      right_line_index:  Some(after_end + offset - after_snippet_start),
+      left_line_number:  Some(before_end + offset + 1),
+      right_line_number: Some(after_end + offset + 1),
+      message:           String::new(),
+    });
+  }
+
+  let hidden_below = base_remaining
+    .min(current_remaining)
+    .saturating_sub(context_below);
+  if hidden_below > 0 {
+    rows.push(FilePickerVcsDiffPreviewRow {
+      kind:              FilePickerVcsDiffPreviewRowKind::CollapsedBelow,
+      left_line_index:   None,
+      right_line_index:  None,
+      left_line_number:  None,
+      right_line_number: None,
+      message:           format!("… {} lines below", hidden_below),
+    });
+  }
+
+  finalize_vcs_diff_preview(FilePickerVcsDiffPreview {
+    title: display_path.to_string(),
+    from_title: from_display.map(ToOwned::to_owned),
+    left_label: "BASE".to_string(),
+    right_label: "WORKTREE".to_string(),
+    left,
+    right,
+    rows,
+    cached_lines: Arc::new([]),
+  })
+}
+
+fn rope_line_range_to_string(rope: &Rope, start_line: usize, end_line: usize) -> String {
+  if start_line >= end_line {
+    return String::new();
+  }
+
+  let start_char = rope.line_to_char(start_line);
+  let end_char = rope.line_to_char(end_line);
+  rope.slice(start_char..end_char).to_string()
+}
+
 fn rebuild_file_tree_diagnostic_statuses(
   diagnostics: &DiagnosticsState,
   root: &Path,
@@ -7509,6 +9409,67 @@ fn file_tree_diagnostic_rank(severity: DiagnosticSeverity) -> u8 {
   }
 }
 
+fn lexical_normalize_path(path: &Path) -> PathBuf {
+  let mut normalized = PathBuf::new();
+  for component in path.components() {
+    match component {
+      Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
+      Component::RootDir => normalized.push(Path::new(std::path::MAIN_SEPARATOR_STR)),
+      Component::CurDir => {},
+      Component::ParentDir => {
+        normalized.pop();
+      },
+      Component::Normal(part) => normalized.push(part),
+    }
+  }
+  normalized
+}
+
+fn find_exact_match_span(haystack: &str, needle: &str) -> Result<(usize, usize), String> {
+  if needle.is_empty() {
+    return Err("edit oldText must not be empty".to_string());
+  }
+
+  let mut matches = haystack.match_indices(needle);
+  let Some((byte_start, _)) = matches.next() else {
+    return Err("edit oldText did not match the current buffer contents".to_string());
+  };
+  if matches.next().is_some() {
+    return Err("edit oldText matched multiple locations in the current buffer".to_string());
+  }
+
+  let byte_end = byte_start + needle.len();
+  let start_char = haystack[..byte_start].chars().count();
+  let end_char = start_char + needle.chars().count();
+  debug_assert_eq!(&haystack[byte_start..byte_end], needle);
+  Ok((start_char, end_char))
+}
+
+fn build_exact_edit_transaction(
+  text: &Rope,
+  edits: &[PiBridgeEdit],
+) -> Result<Transaction, String> {
+  let original = text.to_string();
+  let mut changes = Vec::with_capacity(edits.len());
+
+  for edit in edits {
+    let (from, to) = find_exact_match_span(&original, &edit.old_text)?;
+    changes.push((from, to, Some(edit.new_text.clone().into())));
+  }
+
+  changes.sort_by_key(|(from, ..)| *from);
+  for pair in changes.windows(2) {
+    let (_, left_to, _) = pair[0];
+    let (right_from, ..) = pair[1];
+    if left_to > right_from {
+      return Err("edit ranges overlap in the current buffer".to_string());
+    }
+  }
+
+  Transaction::change(text, changes)
+    .map_err(|err| format!("failed to build exact edit transaction: {err}"))
+}
+
 impl the_default::DefaultContext for Ctx {
   fn editor(&mut self) -> &mut Editor {
     &mut self.editor
@@ -7546,6 +9507,27 @@ impl the_default::DefaultContext for Ctx {
     the_default::RenderWaker::new(self.render_wake_tx.clone())
   }
 
+  fn pi_bridge_send_active_selection(&mut self, submit: bool) -> Result<(), String> {
+    let payload = self.pi_bridge_active_selection_payload()?;
+    let bridge = self
+      .pi_bridge
+      .as_ref()
+      .ok_or_else(|| "pi bridge is not running".to_string())?;
+    if !bridge.is_attached() {
+      return Err("no live pi session is attached to this workspace".to_string());
+    }
+    let method = if submit {
+      "selection_send"
+    } else {
+      "selection_prefill"
+    };
+    let envelope = PiBridgeEnvelope::notification(method, payload)?;
+    bridge.send(envelope)?;
+    let action = if submit { "sent" } else { "prefilled" };
+    self.push_info("pi-bridge", format!("{action} selection to pi"));
+    Ok(())
+  }
+
   fn messages(&self) -> &MessageCenter {
     &self.messages
   }
@@ -7564,6 +9546,22 @@ impl the_default::DefaultContext for Ctx {
 
   fn vcs_statusline_text(&self) -> Option<String> {
     self.vcs_statusline.clone()
+  }
+
+  fn pi_statusline_text(&self) -> Option<String> {
+    self
+      .pi_bridge
+      .as_ref()
+      .filter(|bridge| bridge.is_attached())
+      .map(|_| String::new())
+  }
+
+  fn agent_follow_enabled(&self) -> bool {
+    self.agent_follow.enabled
+  }
+
+  fn set_agent_follow_enabled(&mut self, enabled: bool) {
+    self.agent_follow.enabled = enabled;
   }
 
   fn watch_statusline_text(&self) -> Option<String> {
@@ -7629,6 +9627,7 @@ impl the_default::DefaultContext for Ctx {
 
     self.lsp_send_did_change(&old_text_for_lsp, transaction.changes());
     self.refresh_vcs_diff_document();
+    self.queue_open_vcs_diff_picker_refresh();
 
     true
   }
@@ -8119,55 +10118,143 @@ impl the_default::DefaultContext for Ctx {
     if !cwd.exists() {
       return Err("current working directory does not exist".to_string());
     }
+    let scan = self
+      .shared_vcs_scan_for_cwd(&cwd)
+      .ok_or_else(|| "no shared vcs snapshot available".to_string())?;
+    Ok(self.merged_vcs_changed_file_items(&scan))
+  }
 
-    let changes = self
-      .vcs_provider
-      .collect_changed_files(&cwd)
-      .map_err(|err| err.to_string())?;
+  fn file_picker_vcs_diff_bootstrap(
+    &mut self,
+  ) -> std::result::Result<the_default::FilePickerVcsDiffBootstrap, String> {
+    let cwd = self.effective_working_directory();
+    if !cwd.exists() {
+      return Err("current working directory does not exist".to_string());
+    }
+    let scan = self
+      .refresh_shared_vcs_scan_for_cwd(&cwd)
+      .ok_or_else(|| "failed to load shared vcs snapshot".to_string())?;
+    Ok(the_default::FilePickerVcsDiffBootstrap::Ready {
+      root:    scan.repo_root.clone(),
+      changed: self.merged_vcs_changed_file_items(&scan),
+    })
+  }
 
-    let mut items = Vec::with_capacity(changes.len());
-    for change in changes {
-      match change {
-        the_vcs::FileChange::Untracked { path } => {
-          items.push(FilePickerChangedFileItem {
-            kind: FilePickerChangedKind::Untracked,
-            path,
-            from_path: None,
-          });
-        },
-        the_vcs::FileChange::Modified { path } => {
-          items.push(FilePickerChangedFileItem {
-            kind: FilePickerChangedKind::Modified,
-            path,
-            from_path: None,
-          });
-        },
-        the_vcs::FileChange::Conflict { path } => {
-          items.push(FilePickerChangedFileItem {
-            kind: FilePickerChangedKind::Conflict,
-            path,
-            from_path: None,
-          });
-        },
-        the_vcs::FileChange::Deleted { path } => {
-          items.push(FilePickerChangedFileItem {
-            kind: FilePickerChangedKind::Deleted,
-            path,
-            from_path: None,
-          });
-        },
-        the_vcs::FileChange::Renamed { from_path, to_path } => {
-          items.push(FilePickerChangedFileItem {
-            kind:      FilePickerChangedKind::Renamed,
-            path:      to_path,
-            from_path: Some(from_path),
-          });
-        },
-      }
+  fn file_picker_vcs_diff_did_open(&mut self) {
+    let cwd = self.effective_working_directory();
+    let Some(scan) = self.refresh_shared_vcs_scan_for_cwd(&cwd) else {
+      return;
+    };
+    let _ = restart_open_vcs_diff_picker_from_scan(self, scan);
+  }
+
+  fn file_picker_vcs_diff_entries(
+    &self,
+  ) -> std::result::Result<Vec<FilePickerVcsDiffEntry>, String> {
+    let cwd = self.effective_working_directory();
+    if !cwd.exists() {
+      return Err("current working directory does not exist".to_string());
     }
 
-    items.sort_by(|left, right| left.path.cmp(&right.path));
-    Ok(items)
+    let scan = self
+      .shared_vcs_scan_for_cwd(&cwd)
+      .ok_or_else(|| "no shared vcs snapshot available".to_string())?;
+
+    let mut entries = Vec::with_capacity(scan.changes.len());
+    for change in &scan.changes {
+      entries.push(build_file_picker_vcs_diff_entry(self, change)?);
+    }
+
+    entries.sort_by(|left, right| left.path.cmp(&right.path));
+    Ok(entries)
+  }
+
+  fn file_picker_selection_changed(&mut self) {
+    if !self.file_picker.active || self.file_picker.kind != the_default::FilePickerKind::VcsDiff {
+      return;
+    }
+
+    let Some(item) = self.file_picker.current_item() else {
+      return;
+    };
+    let Some(payload) = item.payload::<FilePickerVcsDiffPayload>() else {
+      return;
+    };
+    let Some(hunk_index) = payload.hunk_index else {
+      return;
+    };
+    let Some(entry) = self
+      .vcs_diff_picker
+      .entries
+      .get(payload.entry_index)
+      .cloned()
+    else {
+      return;
+    };
+    let Some(hunk) = entry.hunks.get(hunk_index).cloned() else {
+      return;
+    };
+
+    if matches!(hunk.preview, FilePickerPreview::VcsDiff(_)) {
+      self.file_picker.preview = hunk.preview.clone();
+      self.request_render();
+      return;
+    }
+
+    let Some(scan) = self.shared_vcs_scan_for_path(&payload.path) else {
+      self.file_picker.preview = item
+        .preview
+        .clone()
+        .unwrap_or_else(|| FilePickerPreview::Message("No VCS snapshot available".to_string()));
+      self.request_render();
+      return;
+    };
+
+    let change = vcs_change_for_entry(&entry);
+    let current_text = match vcs_worktree_text(self, &change) {
+      Ok(text) => text,
+      Err(err) => {
+        self.file_picker.preview = FilePickerPreview::Message(err);
+        self.request_render();
+        return;
+      },
+    };
+    let base_loader = picker_diff_base_loader_for_scan(&scan, self.vcs_provider.clone());
+    let base_text = match base_loader.load_text_for_change(&change) {
+      Ok(text) => text,
+      Err(err) => {
+        self.file_picker.preview = FilePickerPreview::Message(err);
+        self.request_render();
+        return;
+      },
+    };
+
+    let display_path = display_vcs_picker_path(&entry.path, &scan.repo_root);
+    let from_display = entry
+      .from_path
+      .as_ref()
+      .map(|path| display_vcs_picker_path(path, &scan.repo_root));
+    let base_rope = Rope::from_str(&base_text);
+    let current_rope = Rope::from_str(&current_text);
+    let preview = FilePickerPreview::VcsDiff(build_vcs_hunk_preview_from_bounds(
+      &entry.path,
+      &display_path,
+      from_display.as_deref(),
+      &base_rope,
+      &current_rope,
+      hunk.before_start,
+      hunk.before_end,
+      hunk.after_start,
+      hunk.after_end,
+      self.loader.as_deref(),
+    ));
+    if let Some(entry) = self.vcs_diff_picker.entries.get_mut(payload.entry_index)
+      && let Some(hunk) = entry.hunks.get_mut(hunk_index)
+    {
+      hunk.preview = preview.clone();
+    }
+    self.file_picker.preview = preview;
+    self.request_render();
   }
 
   fn registers(&self) -> &Registers {
@@ -8873,12 +10960,9 @@ impl the_default::DefaultContext for Ctx {
     }
   }
 
-  fn on_file_saved(&mut self, _path: &Path, text: &str) {
-    if let Some(watch) = self.lsp_watched_file.as_mut() {
-      watch.stream.suppress_until = Some(Instant::now() + lsp_self_save_suppress_window());
-      clear_reload_state(&mut watch.stream.reload_state);
-    }
-    self.lsp_send_did_save(Some(text));
+  fn on_file_saved(&mut self, path: &Path, text: &str) {
+    let buffer_id = self.editor.active_buffer_id();
+    self.on_buffer_saved(buffer_id, path, text);
   }
 
   fn on_before_quit(&mut self) {
@@ -8982,7 +11066,10 @@ fn lsp_method_is_unsupported(error: &jsonrpc::ResponseError) -> bool {
 #[cfg(test)]
 mod tests {
   use std::{
-    collections::BTreeMap,
+    collections::{
+      BTreeMap,
+      HashMap,
+    },
     fs,
     path::{
       Path,
@@ -9007,6 +11094,8 @@ mod tests {
     CommandEvent,
     CompletionMenuItem,
     DefaultContext,
+    FilePickerChangedFileItem,
+    FilePickerChangedKind,
     InlineCompletionBackendStatus,
     InlineCompletionDefaults,
     InlineCompletionProvider,
@@ -9063,6 +11152,10 @@ mod tests {
     PathEvent,
     PathEventKind,
   };
+  use the_vcs::{
+    FileChange,
+    VcsWorkspaceScan,
+  };
 
   use super::{
     ActiveFileVcsRefreshReason,
@@ -9073,6 +11166,7 @@ mod tests {
     FileTreeVcsKind,
     FileTreeVcsRefreshReason,
     FileTreeVcsRefreshResult,
+    OpenBufferVcsSnapshot,
     PendingAutoSignatureHelp,
     SignatureHelpTriggerSource,
     WatchedFileEventsState,
@@ -9082,8 +11176,11 @@ mod tests {
     completion_match_score,
     completion_menu_detail_text,
     completion_menu_documentation_text,
+    file_picker_vcs_diff_placeholder_entry,
     merge_resolved_completion_item,
     normalize_completion_item_for_apply,
+    vcs_diff_entries_match_changed_items,
+    vcs_worktree_text_from_snapshot,
   };
   use crate::{
     ctx::TermCursorMode,
@@ -12646,6 +14743,7 @@ pkgs.mkShell {
         reason:     ActiveFileVcsRefreshReason::VcsWatch,
         statusline: Some("status".to_string()),
         diff_base:  Some(b"base\n".to_vec()),
+        scan:       None,
         collect_ms: 1.0,
       })
       .expect("send active file vcs result");
@@ -12675,6 +14773,7 @@ pkgs.mkShell {
         reason:     ActiveFileVcsRefreshReason::VcsWatch,
         statusline: Some("stale".to_string()),
         diff_base:  Some(b"base\n".to_vec()),
+        scan:       None,
         collect_ms: 1.0,
       })
       .expect("send stale active file vcs result");
@@ -12715,6 +14814,190 @@ pkgs.mkShell {
   }
 
   #[test]
+  fn merged_vcs_changed_file_items_include_unsaved_modified_buffers() {
+    let dir = TempTestDir::new("vcs-diff-picker-dirty-buffer");
+    let file = dir.write_file("main.rs", "fn main() {}\n");
+    let mut ctx = Ctx::new(None).expect("ctx");
+    assert!(
+      ctx
+        .editor
+        .replace_active_buffer(Rope::from_str("fn main() {}\n"), Some(file.clone()))
+    );
+    ctx.file_path = Some(file.clone());
+    let _ = ctx.editor.document_mut().mark_saved();
+
+    let tx = Transaction::change(
+      ctx.editor.document().text(),
+      std::iter::once((0, 0, Some("// dirty\n".into()))),
+    )
+    .expect("edit transaction");
+    assert!(DefaultContext::apply_transaction(&mut ctx, &tx));
+
+    let scan = VcsWorkspaceScan {
+      provider_label:  "jj".to_string(),
+      repo_root:       dir.as_path().to_path_buf(),
+      statusline_info: None,
+      head_revision:   Some("abc123".to_string()),
+      changes:         Vec::new(),
+    };
+
+    let items = ctx.merged_vcs_changed_file_items(&scan);
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].path, file);
+    assert_eq!(items[0].kind, FilePickerChangedKind::Modified);
+    ctx.shutdown_background_services();
+  }
+
+  #[test]
+  fn merged_vcs_changed_file_items_normalize_relative_buffer_paths() {
+    let dir = TempTestDir::new("vcs-diff-picker-relative-buffer");
+    let file = dir.write_file("main.rs", "fn main() {}\n");
+    let mut ctx = Ctx::new(None).expect("ctx");
+    assert!(
+      ctx
+        .editor
+        .replace_active_buffer(Rope::from_str("fn main() {}\n"), Some(file.clone()))
+    );
+    ctx.file_path = Some(file.clone());
+    let _ = ctx.editor.document_mut().mark_saved();
+
+    let tx = Transaction::change(
+      ctx.editor.document().text(),
+      std::iter::once((0, 0, Some("// dirty\n".into()))),
+    )
+    .expect("edit transaction");
+    assert!(DefaultContext::apply_transaction(&mut ctx, &tx));
+
+    ctx
+      .editor
+      .set_active_file_path(Some(PathBuf::from("main.rs")));
+    ctx.file_path = Some(PathBuf::from("main.rs"));
+
+    let scan = VcsWorkspaceScan {
+      provider_label:  "jj".to_string(),
+      repo_root:       dir.as_path().to_path_buf(),
+      statusline_info: None,
+      head_revision:   Some("abc123".to_string()),
+      changes:         Vec::new(),
+    };
+
+    let items = ctx.merged_vcs_changed_file_items(&scan);
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].path, file);
+    assert_eq!(items[0].kind, FilePickerChangedKind::Modified);
+    ctx.shutdown_background_services();
+  }
+
+  #[test]
+  fn merged_vcs_changed_file_items_do_not_duplicate_existing_scan_entries() {
+    let dir = TempTestDir::new("vcs-diff-picker-no-duplicate");
+    let file = dir.write_file("main.rs", "fn main() {}\n");
+    let mut ctx = Ctx::new(None).expect("ctx");
+    assert!(
+      ctx
+        .editor
+        .replace_active_buffer(Rope::from_str("fn main() {}\n"), Some(file.clone()))
+    );
+    ctx.file_path = Some(file.clone());
+    let _ = ctx.editor.document_mut().mark_saved();
+
+    let tx = Transaction::change(
+      ctx.editor.document().text(),
+      std::iter::once((0, 0, Some("// dirty\n".into()))),
+    )
+    .expect("edit transaction");
+    assert!(DefaultContext::apply_transaction(&mut ctx, &tx));
+
+    let scan = VcsWorkspaceScan {
+      provider_label:  "jj".to_string(),
+      repo_root:       dir.as_path().to_path_buf(),
+      statusline_info: None,
+      head_revision:   Some("abc123".to_string()),
+      changes:         vec![FileChange::Modified { path: file.clone() }],
+    };
+
+    let items = ctx.merged_vcs_changed_file_items(&scan);
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].path, file);
+    assert_eq!(items[0].kind, FilePickerChangedKind::Modified);
+    ctx.shutdown_background_services();
+  }
+
+  #[test]
+  fn vcs_diff_entries_match_changed_items_requires_same_identity_and_order() {
+    let changed = vec![
+      FilePickerChangedFileItem {
+        kind:      FilePickerChangedKind::Modified,
+        path:      PathBuf::from("a.rs"),
+        from_path: None,
+      },
+      FilePickerChangedFileItem {
+        kind:      FilePickerChangedKind::Renamed,
+        path:      PathBuf::from("b.rs"),
+        from_path: Some(PathBuf::from("old-b.rs")),
+      },
+    ];
+    let entries = changed
+      .iter()
+      .map(file_picker_vcs_diff_placeholder_entry)
+      .collect::<Vec<_>>();
+
+    assert!(vcs_diff_entries_match_changed_items(&entries, &changed));
+
+    let reordered = vec![changed[1].clone(), changed[0].clone()];
+    assert!(!vcs_diff_entries_match_changed_items(&entries, &reordered));
+  }
+
+  #[test]
+  fn saving_with_open_vcs_picker_schedules_refreshes() {
+    let dir = TempTestDir::new("vcs-diff-picker-save-refresh");
+    let file = dir.write_file("main.rs", "fn main() {}\n");
+    let mut ctx = Ctx::new(None).expect("ctx");
+    assert!(
+      ctx
+        .editor
+        .replace_active_buffer(Rope::from_str("fn main() {}\n"), Some(file.clone()))
+    );
+    ctx.file_path = Some(file.clone());
+    let _ = ctx.editor.document_mut().mark_saved();
+    ctx.file_picker.active = true;
+    ctx.file_picker.kind = the_default::FilePickerKind::VcsDiff;
+    attach_test_file_tree(&mut ctx, dir.as_path());
+
+    assert!(ctx.file_tree_vcs_refresh_due_at.is_none());
+    assert!(ctx.active_file_vcs_refresh_due_at.is_none());
+    ctx.active_file_vcs_refresh_due_at = None;
+
+    let buffer_id = ctx.editor.active_buffer_id();
+    ctx.on_buffer_saved(buffer_id, &file, "fn main() {}\n");
+
+    assert!(ctx.vcs_diff_picker.live_refresh_pending);
+    assert!(ctx.file_tree_vcs_refresh_due_at.is_some());
+    assert!(ctx.active_file_vcs_refresh_due_at.is_some());
+    ctx.shutdown_background_services();
+  }
+
+  #[test]
+  fn vcs_diff_snapshot_prefers_disk_for_clean_open_buffers() {
+    let dir = TempTestDir::new("vcs-diff-picker-clean-buffer-disk");
+    let file = dir.write_file("main.rs", "fn main() {}\n");
+
+    let mut open_buffers = HashMap::new();
+    open_buffers.insert(file.clone(), OpenBufferVcsSnapshot {
+      text:     "fn main() {}\n".to_string(),
+      modified: false,
+    });
+
+    fs::write(&file, "// disk change\nfn main() {}\n").expect("write file");
+
+    let text =
+      vcs_worktree_text_from_snapshot(&open_buffers, &FileChange::Modified { path: file.clone() })
+        .expect("worktree text");
+
+    assert_eq!(text, "// disk change\nfn main() {}\n");
+  }
+
+  #[test]
   fn file_tree_vcs_result_applies_decorations() {
     let dir = TempTestDir::new("file-tree-vcs-result-apply");
     let changed = dir.write_file("changed.txt", "changed\n");
@@ -12736,6 +15019,7 @@ pkgs.mkShell {
         status_entries: 1,
         collect_ms: 1.0,
         collapse_ms: 0.5,
+        scan: None,
       })
       .expect("send vcs result");
 
@@ -12772,6 +15056,7 @@ pkgs.mkShell {
         status_entries: 1,
         collect_ms: 1.0,
         collapse_ms: 0.5,
+        scan: None,
       })
       .expect("send stale vcs result");
 

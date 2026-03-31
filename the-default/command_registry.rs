@@ -686,6 +686,37 @@ impl<Ctx: DefaultContext + 'static> CommandRegistry<Ctx> {
 
     self.register(
       CommandBuilder::new(
+        "pi-prefill-selection",
+        "Prefill the attached pi session with the active selection",
+        cmd_pi_prefill_selection::<Ctx>,
+      )
+      .aliases(&["pi-prefill"])
+      .build(),
+    );
+
+    self.register(
+      CommandBuilder::new(
+        "pi-send-selection",
+        "Send the active selection to the attached pi session immediately",
+        cmd_pi_send_selection::<Ctx>,
+      )
+      .aliases(&["pi-send"])
+      .build(),
+    );
+
+    self.register(
+      CommandBuilder::new(
+        "agent-follow",
+        "Configure cinematic agent-follow cursor playback (on/off/toggle/status)",
+        cmd_agent_follow::<Ctx>,
+      )
+      .optional_arg()
+      .complete_with(completers::agent_follow_mode)
+      .build(),
+    );
+
+    self.register(
+      CommandBuilder::new(
         "inline-provider",
         "Select the inline completion provider",
         cmd_inline_provider::<Ctx>,
@@ -1558,6 +1589,64 @@ fn cmd_lsp_format<Ctx: DefaultContext>(
     return Ok(());
   }
   crate::handle_command(ctx, Command::LspFormat);
+  Ok(())
+}
+
+fn cmd_pi_prefill_selection<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  _args: Args,
+  event: CommandEvent,
+) -> CommandResult {
+  if event != CommandEvent::Validate {
+    return Ok(());
+  }
+  ctx
+    .pi_bridge_send_active_selection(false)
+    .map_err(CommandError::new)
+}
+
+fn cmd_pi_send_selection<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  _args: Args,
+  event: CommandEvent,
+) -> CommandResult {
+  if event != CommandEvent::Validate {
+    return Ok(());
+  }
+  ctx
+    .pi_bridge_send_active_selection(true)
+    .map_err(CommandError::new)
+}
+
+fn cmd_agent_follow<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  args: Args,
+  event: CommandEvent,
+) -> CommandResult {
+  if event != CommandEvent::Validate {
+    return Ok(());
+  }
+
+  let mode = args.first().unwrap_or("toggle");
+  let enabled = match mode {
+    "on" => true,
+    "off" => false,
+    "toggle" => !ctx.agent_follow_enabled(),
+    "status" => ctx.agent_follow_enabled(),
+    other => {
+      return Err(CommandError::new(format!(
+        "invalid agent-follow mode '{other}' (expected on/off/toggle/status)"
+      )));
+    },
+  };
+
+  if mode != "status" {
+    ctx.set_agent_follow_enabled(enabled);
+    ctx.request_render();
+  }
+
+  let state = if enabled { "on" } else { "off" };
+  ctx.push_info("agent-follow", format!("agent-follow: {state}"));
   Ok(())
 }
 
@@ -2741,6 +2830,21 @@ pub mod completers {
 
   pub fn line_number_mode<Ctx>(_ctx: &Ctx, input: &str) -> Vec<Completion> {
     const MODES: &[&str] = &["absolute", "relative", "off", "status"];
+    MODES
+      .iter()
+      .filter(|mode| mode.starts_with(input))
+      .map(|mode| {
+        Completion {
+          range: 0..,
+          text:  (*mode).to_string(),
+          doc:   None,
+        }
+      })
+      .collect()
+  }
+
+  pub fn agent_follow_mode<Ctx>(_ctx: &Ctx, input: &str) -> Vec<Completion> {
+    const MODES: &[&str] = &["toggle", "on", "off", "status"];
     MODES
       .iter()
       .filter(|mode| mode.starts_with(input))

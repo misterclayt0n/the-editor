@@ -6869,16 +6869,17 @@ mod tests {
 
     let mut ctx = Ctx::new(None).expect("ctx");
     ctx.command_palette = CommandPaletteState {
-      is_open:       true,
-      source:        CommandPaletteSource::ActionPalette,
-      source_mode:   Mode::Normal,
-      query:         String::new(),
-      selected:      Some(0),
-      items:         vec![CommandPaletteItem::new("file-tree-move")],
-      max_results:   usize::MAX,
-      prefiltered:   true,
-      scroll_offset: 0,
-      prompt_text:   None,
+      is_open:                true,
+      source:                 CommandPaletteSource::ActionPalette,
+      source_mode:            Mode::Normal,
+      query:                  String::new(),
+      selected:               Some(0),
+      items:                  vec![CommandPaletteItem::new("file-tree-move")],
+      max_results:            usize::MAX,
+      prefiltered:            true,
+      scroll_offset:          0,
+      prompt_text:            None,
+      active_preview_command: None,
     };
 
     let area = Rect::new(0, 0, 80, 12);

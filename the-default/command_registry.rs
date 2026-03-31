@@ -2158,6 +2158,103 @@ fn command_palette_filtered_selection(
   (filtered, selected)
 }
 
+fn command_accepts_additional_input<Ctx>(command: &TypableCommand<Ctx>) -> bool
+where
+  Ctx: 'static,
+{
+  let (min, max) = command.signature.positionals;
+  min > 0
+    || max != Some(0)
+    || command.signature.raw_after.is_some()
+    || !command.signature.flags.is_empty()
+}
+
+fn clear_command_palette_preview_owner<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  ctx.command_palette_mut().active_preview_command = None;
+}
+
+fn revert_owned_command_palette_preview<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  let preview_command = ctx.command_palette_mut().active_preview_command.take();
+  if preview_command.as_deref() == Some("theme") {
+    ctx.clear_ui_theme_preview();
+  }
+}
+
+fn clear_command_palette_selection<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  ctx.command_palette_mut().selected = None;
+}
+
+fn apply_selected_command_name_completion<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  item_idx: usize,
+) -> bool {
+  let prompt_input = ctx.command_prompt_ref().input.trim();
+  if prompt_input.is_empty() {
+    return false;
+  }
+
+  let command_name = ctx
+    .command_palette()
+    .items
+    .get(item_idx)
+    .map(|item| item.title.clone());
+  let Some(command_name) = command_name else {
+    return false;
+  };
+
+  let should_insert = ctx
+    .command_registry_ref()
+    .get(&command_name)
+    .is_some_and(command_accepts_additional_input);
+  if !should_insert {
+    return false;
+  }
+
+  let suffix = " ";
+  let input = format!("{command_name}{suffix}");
+  update_command_palette_for_input(ctx, &input);
+  clear_command_palette_selection(ctx);
+  true
+}
+
+fn apply_selected_command_palette_completion<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  item_idx: usize,
+) -> bool {
+  let is_command_name_completion = {
+    let palette = ctx.command_palette();
+    let input = ctx.command_prompt_ref().input.trim_start_matches(':');
+    let (_, _, complete_command_name) = split(input);
+    !palette.prefiltered && complete_command_name
+  };
+
+  if is_command_name_completion {
+    return apply_selected_command_name_completion(ctx, item_idx);
+  }
+
+  if !apply_command_palette_completion(ctx, item_idx) {
+    return false;
+  }
+
+  let input = ctx.command_prompt_ref().input.clone();
+  update_command_palette_for_input(ctx, &input);
+  clear_command_palette_selection(ctx);
+  true
+}
+
+fn submit_selected_prefiltered_completion<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  item_idx: usize,
+) -> bool {
+  if !apply_command_palette_completion(ctx, item_idx) {
+    return false;
+  }
+
+  let input = ctx.command_prompt_ref().input.clone();
+  update_command_palette_for_input(ctx, &input);
+  execute_command_line_submission(ctx, None)
+}
+
 fn execute_command_line_submission<Ctx: DefaultContext>(
   ctx: &mut Ctx,
   selected: Option<usize>,
@@ -2196,13 +2293,14 @@ fn execute_command_line_submission<Ctx: DefaultContext>(
 
   match result {
     Ok(()) => {
+      clear_command_palette_preview_owner(ctx);
       close_command_prompt_and_palette(ctx);
     },
     Err(err) => {
       let message = err.to_string();
       ctx.command_prompt_mut().error = Some(message.clone());
       ctx.push_error("command", message);
-      ctx.clear_ui_theme_preview();
+      revert_owned_command_palette_preview(ctx);
       close_command_prompt_and_palette(ctx);
     },
   }
@@ -2216,12 +2314,7 @@ fn submit_command_line_palette<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool {
     return false;
   }
 
-  let (filtered, selected) = command_palette_filtered_selection(palette);
-  let selected = if palette.prefiltered {
-    selected.or_else(|| filtered.first().copied())
-  } else {
-    selected
-  };
+  let (_filtered, selected) = command_palette_filtered_selection(palette);
 
   if palette.prefiltered {
     let prefiltered_selection = selected.and_then(|item_idx| {
@@ -2229,13 +2322,19 @@ fn submit_command_line_palette<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool {
     });
 
     if let Some((item_idx, DirectoryCompletionAction::Expand)) = prefiltered_selection {
-      if apply_command_palette_completion(ctx, item_idx) {
-        let input = ctx.command_prompt_ref().input.clone();
-        update_command_palette_for_input(ctx, &input);
+      return apply_selected_command_palette_completion(ctx, item_idx);
+    } else if let Some((item_idx, _)) = prefiltered_selection {
+      return submit_selected_prefiltered_completion(ctx, item_idx);
+    }
+  }
+
+  if let Some(item_idx) = selected {
+    let input = ctx.command_prompt_ref().input.trim_start_matches(':');
+    let (_, _, complete_command_name) = split(input);
+    if complete_command_name {
+      if apply_selected_command_palette_completion(ctx, item_idx) {
         return true;
       }
-    } else if let Some((item_idx, _)) = prefiltered_selection {
-      let _ = apply_command_palette_completion(ctx, item_idx);
     }
   }
 
@@ -2355,23 +2454,27 @@ pub fn command_palette_completion_action<Ctx: DefaultContext>(
 
 pub fn sync_command_palette_preview<Ctx: DefaultContext>(ctx: &mut Ctx) {
   let Some(line) = preview_command_line(ctx) else {
-    ctx.clear_ui_theme_preview();
+    revert_owned_command_palette_preview(ctx);
     return;
   };
 
   let (command, args, complete_command_name) = split(&line);
   if complete_command_name || command != "theme" {
-    ctx.clear_ui_theme_preview();
+    revert_owned_command_palette_preview(ctx);
     return;
   }
 
   let registry = ctx.command_registry_ref() as *const CommandRegistry<Ctx>;
   let _ = unsafe { (&*registry).execute(ctx, command, args, CommandEvent::Preview) };
+  ctx.command_palette_mut().active_preview_command = Some(command.to_string());
 }
 
 fn cancel_command_palette_preview<Ctx: DefaultContext>(ctx: &mut Ctx) {
-  let registry = ctx.command_registry_ref() as *const CommandRegistry<Ctx>;
-  let _ = unsafe { (&*registry).execute(ctx, "theme", "", CommandEvent::Cancel) };
+  if ctx.command_palette().active_preview_command.as_deref() == Some("theme") {
+    let registry = ctx.command_registry_ref() as *const CommandRegistry<Ctx>;
+    let _ = unsafe { (&*registry).execute(ctx, "theme", "", CommandEvent::Cancel) };
+  }
+  clear_command_palette_preview_owner(ctx);
 }
 
 fn close_command_prompt_and_palette<Ctx: DefaultContext>(ctx: &mut Ctx) {
@@ -2388,6 +2491,7 @@ fn close_command_prompt_and_palette<Ctx: DefaultContext>(ctx: &mut Ctx) {
     palette.max_results = usize::MAX;
     palette.scroll_offset = 0;
     palette.prompt_text = None;
+    palette.active_preview_command = None;
   }
 }
 
@@ -2514,6 +2618,7 @@ pub fn update_action_palette_for_input<Ctx: DefaultContext>(ctx: &mut Ctx, input
     palette.max_results = usize::MAX;
     palette.scroll_offset = 0;
     palette.prompt_text = None;
+    palette.active_preview_command = None;
     if let Some(sel) = palette.selected {
       let filtered = command_palette_filtered_indices(palette);
       if !filtered.contains(&sel) {
@@ -2522,7 +2627,7 @@ pub fn update_action_palette_for_input<Ctx: DefaultContext>(ctx: &mut Ctx, input
     }
   }
 
-  ctx.clear_ui_theme_preview();
+  revert_owned_command_palette_preview(ctx);
   ctx.request_render();
 }
 

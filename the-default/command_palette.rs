@@ -133,20 +133,22 @@ impl CommandPaletteItem {
 
 #[derive(Debug, Clone)]
 pub struct CommandPaletteState {
-  pub is_open:       bool,
-  pub source:        CommandPaletteSource,
-  pub source_mode:   Mode,
-  pub query:         String,
-  pub selected:      Option<usize>,
-  pub items:         Vec<CommandPaletteItem>,
-  pub max_results:   usize,
+  pub is_open:                bool,
+  pub source:                 CommandPaletteSource,
+  pub source_mode:            Mode,
+  pub query:                  String,
+  pub selected:               Option<usize>,
+  pub items:                  Vec<CommandPaletteItem>,
+  pub max_results:            usize,
   /// When true, items are already filtered (e.g. argument completions).
   /// Renderers should use `query` as-is instead of overriding from the prompt.
-  pub prefiltered:   bool,
-  pub scroll_offset: usize,
+  pub prefiltered:            bool,
+  pub scroll_offset:          usize,
   /// Display text for the prompt in prefiltered mode (e.g. ":open src/").
   /// When set, `build_command_palette_ui` uses this as the input value.
-  pub prompt_text:   Option<String>,
+  pub prompt_text:            Option<String>,
+  /// Command currently owning a transient preview within this palette session.
+  pub active_preview_command: Option<String>,
 }
 
 fn active_command_line(state: &CommandPaletteState) -> Option<&str> {
@@ -224,16 +226,17 @@ pub fn command_palette_placeholder_text<Ctx: DefaultContext>(ctx: &Ctx) -> Strin
 impl Default for CommandPaletteState {
   fn default() -> Self {
     Self {
-      is_open:       false,
-      source:        CommandPaletteSource::CommandLine,
-      source_mode:   Mode::Command,
-      query:         String::new(),
-      selected:      None,
-      items:         Vec::new(),
-      max_results:   usize::MAX,
-      prefiltered:   false,
-      scroll_offset: 0,
-      prompt_text:   None,
+      is_open:                false,
+      source:                 CommandPaletteSource::CommandLine,
+      source_mode:            Mode::Command,
+      query:                  String::new(),
+      selected:               None,
+      items:                  Vec::new(),
+      max_results:            usize::MAX,
+      prefiltered:            false,
+      scroll_offset:          0,
+      prompt_text:            None,
+      active_preview_command: None,
     }
   }
 }
@@ -354,16 +357,17 @@ mod tests {
     write.aliases = vec!["w".to_string()];
 
     let state = CommandPaletteState {
-      is_open:       true,
-      source:        CommandPaletteSource::CommandLine,
-      source_mode:   Mode::Command,
-      query:         "w".to_string(),
-      selected:      None,
-      items:         vec![watch, write],
-      max_results:   10,
-      prefiltered:   false,
-      scroll_offset: 0,
-      prompt_text:   None,
+      is_open:                true,
+      source:                 CommandPaletteSource::CommandLine,
+      source_mode:            Mode::Command,
+      query:                  "w".to_string(),
+      selected:               None,
+      items:                  vec![watch, write],
+      max_results:            10,
+      prefiltered:            false,
+      scroll_offset:          0,
+      prompt_text:            None,
+      active_preview_command: None,
     };
 
     let filtered = command_palette_filtered_indices(&state);
@@ -373,16 +377,17 @@ mod tests {
   #[test]
   fn default_selected_is_none_even_with_query_matches() {
     let state = CommandPaletteState {
-      is_open:       true,
-      source:        CommandPaletteSource::CommandLine,
-      source_mode:   Mode::Command,
-      query:         "w".to_string(),
-      selected:      None,
-      items:         vec![CommandPaletteItem::new("write")],
-      max_results:   10,
-      prefiltered:   false,
-      scroll_offset: 0,
-      prompt_text:   None,
+      is_open:                true,
+      source:                 CommandPaletteSource::CommandLine,
+      source_mode:            Mode::Command,
+      query:                  "w".to_string(),
+      selected:               None,
+      items:                  vec![CommandPaletteItem::new("write")],
+      max_results:            10,
+      prefiltered:            false,
+      scroll_offset:          0,
+      prompt_text:            None,
+      active_preview_command: None,
     };
 
     assert_eq!(command_palette_default_selected(&state), None);

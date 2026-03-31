@@ -12165,6 +12165,119 @@ pkgs.mkShell {
   }
 
   #[test]
+  fn command_palette_enter_inserts_selected_command_name_for_arg_commands() {
+    let mut ctx = Ctx::new(None).expect("ctx");
+
+    handle_key(&mut ctx, KeyEvent {
+      key:       Key::Char(':'),
+      modifiers: Modifiers::empty(),
+    });
+    for ch in "theme".chars() {
+      handle_key(&mut ctx, KeyEvent {
+        key:       Key::Char(ch),
+        modifiers: Modifiers::empty(),
+      });
+    }
+    handle_key(&mut ctx, KeyEvent {
+      key:       Key::Down,
+      modifiers: Modifiers::empty(),
+    });
+
+    handle_key(&mut ctx, KeyEvent {
+      key:       Key::Enter,
+      modifiers: Modifiers::empty(),
+    });
+
+    assert_eq!(ctx.mode(), Mode::Command);
+    assert!(ctx.command_palette.is_open);
+    assert_eq!(ctx.command_prompt.input, "theme ");
+    assert!(ctx.command_palette.prefiltered);
+    assert_eq!(ctx.command_palette.selected, None);
+    assert!(!ctx.command_palette.items.is_empty());
+  }
+
+  #[test]
+  fn command_palette_unrelated_input_does_not_revert_committed_theme() {
+    let mut ctx = Ctx::new(None).expect("ctx");
+
+    handle_key(&mut ctx, KeyEvent {
+      key:       Key::Char(':'),
+      modifiers: Modifiers::empty(),
+    });
+    for ch in "theme base16".chars() {
+      handle_key(&mut ctx, KeyEvent {
+        key:       Key::Char(ch),
+        modifiers: Modifiers::empty(),
+      });
+    }
+    handle_key(&mut ctx, KeyEvent {
+      key:       Key::Enter,
+      modifiers: Modifiers::empty(),
+    });
+    handle_key(&mut ctx, KeyEvent {
+      key:       Key::Enter,
+      modifiers: Modifiers::empty(),
+    });
+
+    assert_eq!(ctx.ui_theme_name(), "base16_default");
+    assert_eq!(ctx.ui_theme_preview_name.as_deref(), None);
+
+    handle_key(&mut ctx, KeyEvent {
+      key:       Key::Char(':'),
+      modifiers: Modifiers::empty(),
+    });
+    handle_key(&mut ctx, KeyEvent {
+      key:       Key::Char('w'),
+      modifiers: Modifiers::empty(),
+    });
+
+    assert_eq!(ctx.ui_theme_name(), "base16_default");
+    assert_eq!(ctx.ui_theme_preview_name.as_deref(), None);
+  }
+
+  #[test]
+  fn command_palette_enter_executes_selected_zero_arg_command() {
+    let fixture = TempTestFile::new("command-palette-write", "alpha\n");
+    let mut ctx = Ctx::new(Some(
+      fixture
+        .as_path()
+        .to_str()
+        .expect("temp test path should be utf-8"),
+    ))
+    .expect("ctx");
+
+    handle_key(&mut ctx, KeyEvent {
+      key:       Key::Char(':'),
+      modifiers: Modifiers::empty(),
+    });
+    handle_key(&mut ctx, KeyEvent {
+      key:       Key::Down,
+      modifiers: Modifiers::empty(),
+    });
+
+    while ctx
+      .command_palette
+      .selected
+      .and_then(|index| ctx.command_palette.items.get(index))
+      .map(|item| item.title.as_str())
+      != Some("write")
+    {
+      handle_key(&mut ctx, KeyEvent {
+        key:       Key::Down,
+        modifiers: Modifiers::empty(),
+      });
+    }
+
+    handle_key(&mut ctx, KeyEvent {
+      key:       Key::Enter,
+      modifiers: Modifiers::empty(),
+    });
+
+    assert_eq!(ctx.mode(), Mode::Normal);
+    assert!(!ctx.command_palette.is_open);
+  }
+
+  #[test]
   fn command_open_creates_missing_file() {
     let mut ctx = Ctx::new(None).expect("ctx");
 

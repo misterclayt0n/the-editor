@@ -354,6 +354,28 @@ impl LspRuntime {
     self.send(LspCommand::RestartServer)
   }
 
+  pub fn add_workspace_folder(
+    &self,
+    uri: impl Into<String>,
+    name: impl Into<String>,
+  ) -> Result<(), LspRuntimeError> {
+    self.send(LspCommand::AddWorkspaceFolder {
+      uri:  uri.into(),
+      name: name.into(),
+    })
+  }
+
+  pub fn remove_workspace_folder(
+    &self,
+    uri: impl Into<String>,
+    name: impl Into<String>,
+  ) -> Result<(), LspRuntimeError> {
+    self.send(LspCommand::RemoveWorkspaceFolder {
+      uri:  uri.into(),
+      name: name.into(),
+    })
+  }
+
   pub fn cancel_request(&self, id: u64) -> Result<(), LspRuntimeError> {
     self.send(LspCommand::CancelRequest { id })
   }
@@ -589,6 +611,19 @@ fn run_worker(
           &mut pending_requests,
           &mut restart_tracker,
         );
+      },
+      Ok(LspCommand::AddWorkspaceFolder { uri, name }) => {
+        send_workspace_folder_change(
+          transport.as_ref(),
+          &event_tx,
+          vec![json!({ "uri": uri, "name": name })],
+          Vec::new(),
+        );
+      },
+      Ok(LspCommand::RemoveWorkspaceFolder { uri, name }) => {
+        send_workspace_folder_change(transport.as_ref(), &event_tx, Vec::new(), vec![
+          json!({ "uri": uri, "name": name }),
+        ]);
       },
       Ok(LspCommand::CancelRequest { id }) => {
         let pending = pending_requests.remove(&id);
@@ -1018,6 +1053,35 @@ fn default_client_capabilities() -> Value {
       "workDoneProgress": true
     }
   })
+}
+
+fn send_workspace_folder_change(
+  transport: Option<&StdioTransport>,
+  event_tx: &Sender<LspEvent>,
+  added: Vec<Value>,
+  removed: Vec<Value>,
+) {
+  let Some(current_transport) = transport else {
+    let _ = event_tx.send(LspEvent::Error(
+      "no active lsp transport to send workspace folder change".into(),
+    ));
+    return;
+  };
+
+  let params = json!({
+    "event": {
+      "added": added,
+      "removed": removed,
+    }
+  });
+  if let Err(err) = current_transport.send(jsonrpc::Message::notification(
+    "workspace/didChangeWorkspaceFolders",
+    Some(params),
+  )) {
+    let _ = event_tx.send(LspEvent::Error(format!(
+      "failed to send workspace folder change: {err}"
+    )));
+  }
 }
 
 fn extract_server_capabilities(response: &jsonrpc::Response) -> Option<Value> {

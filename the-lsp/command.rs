@@ -4,6 +4,14 @@ use serde_json::Value;
 pub enum LspCommand {
   Shutdown,
   RestartServer,
+  AddWorkspaceFolder {
+    uri:  String,
+    name: String,
+  },
+  RemoveWorkspaceFolder {
+    uri:  String,
+    name: String,
+  },
   CancelRequest {
     id: u64,
   },

@@ -132,6 +132,7 @@ pub struct DiagnosticsSnapshot {
 #[derive(Debug, Clone)]
 pub struct DiagnosticsState {
   documents:      BTreeMap<String, DocumentDiagnostics>,
+  providers:      BTreeMap<String, BTreeMap<String, DocumentDiagnostics>>,
   events:         VecDeque<DiagnosticsEvent>,
   next_event_seq: u64,
   event_limit:    usize,
@@ -147,6 +148,7 @@ impl DiagnosticsState {
   pub fn with_event_limit(event_limit: usize) -> Self {
     Self {
       documents:      BTreeMap::new(),
+      providers:      BTreeMap::new(),
       events:         VecDeque::new(),
       next_event_seq: 1,
       event_limit:    event_limit.max(1),
@@ -205,32 +207,56 @@ impl DiagnosticsState {
   }
 
   pub fn apply_document(&mut self, document: DocumentDiagnostics) -> DiagnosticCounts {
+    self.apply_document_for_provider("__default", document)
+  }
+
+  pub fn apply_document_for_provider(
+    &mut self,
+    provider: &str,
+    document: DocumentDiagnostics,
+  ) -> DiagnosticCounts {
     let uri = document.uri.clone();
     let counts = document.counts();
+
+    let provider_documents = self.providers.entry(provider.to_string()).or_default();
     if counts.is_empty() {
-      self.documents.remove(&uri);
-      self.push_event(DiagnosticsEventKind::Cleared { uri });
-      return counts;
+      provider_documents.remove(&uri);
+      if provider_documents.is_empty() {
+        self.providers.remove(provider);
+      }
+    } else {
+      provider_documents.insert(uri.clone(), document);
     }
 
-    let version = document.version;
-    self.documents.insert(uri.clone(), document);
-    self.push_event(DiagnosticsEventKind::Published {
-      uri,
-      version,
-      counts,
-    });
-    counts
+    self.refresh_merged_document(&uri)
   }
 
   pub fn remove_document(&mut self, uri: &str) -> bool {
-    if self.documents.remove(uri).is_some() {
-      self.push_event(DiagnosticsEventKind::Cleared {
-        uri: uri.to_string(),
-      });
-      return true;
+    self.remove_document_for_provider("__default", uri)
+  }
+
+  pub fn remove_document_for_provider(&mut self, provider: &str, uri: &str) -> bool {
+    let Some(provider_documents) = self.providers.get_mut(provider) else {
+      return false;
+    };
+    if provider_documents.remove(uri).is_none() {
+      return false;
     }
-    false
+    if provider_documents.is_empty() {
+      self.providers.remove(provider);
+    }
+    let _ = self.refresh_merged_document(uri);
+    true
+  }
+
+  pub fn clear_provider(&mut self, provider: &str) {
+    let Some(documents) = self.providers.remove(provider) else {
+      return;
+    };
+    let affected_uris = documents.into_keys().collect::<Vec<_>>();
+    for uri in affected_uris {
+      let _ = self.refresh_merged_document(&uri);
+    }
   }
 
   pub fn clear(&mut self) {
@@ -238,9 +264,45 @@ impl DiagnosticsState {
       return;
     }
     self.documents.clear();
+    self.providers.clear();
     self.events.clear();
     self.next_event_seq = 1;
     self.push_event(DiagnosticsEventKind::ClearedAll);
+  }
+
+  fn refresh_merged_document(&mut self, uri: &str) -> DiagnosticCounts {
+    let mut diagnostics = Vec::new();
+    let mut version = None;
+    for provider_documents in self.providers.values() {
+      let Some(document) = provider_documents.get(uri) else {
+        continue;
+      };
+      version = version.max(document.version);
+      diagnostics.extend(document.diagnostics.iter().cloned());
+    }
+
+    diagnostics.sort_by(|lhs, rhs| diagnostic_sort_key(lhs).cmp(&diagnostic_sort_key(rhs)));
+
+    let counts = DiagnosticCounts::from_diagnostics(&diagnostics);
+    if counts.is_empty() {
+      self.documents.remove(uri);
+      self.push_event(DiagnosticsEventKind::Cleared {
+        uri: uri.to_string(),
+      });
+      return counts;
+    }
+
+    self.documents.insert(uri.to_string(), DocumentDiagnostics {
+      uri: uri.to_string(),
+      version,
+      diagnostics,
+    });
+    self.push_event(DiagnosticsEventKind::Published {
+      uri: uri.to_string(),
+      version,
+      counts,
+    });
+    counts
   }
 
   fn push_event(&mut self, kind: DiagnosticsEventKind) {
@@ -253,6 +315,28 @@ impl DiagnosticsState {
     while self.events.len() > self.event_limit {
       self.events.pop_front();
     }
+  }
+}
+
+fn diagnostic_sort_key(diagnostic: &Diagnostic) -> (u32, u32, u32, u32, u8, &str, Option<&str>) {
+  (
+    diagnostic.range.start.line,
+    diagnostic.range.start.character,
+    diagnostic.range.end.line,
+    diagnostic.range.end.character,
+    severity_rank(diagnostic.severity),
+    diagnostic.message.as_str(),
+    diagnostic.source.as_deref(),
+  )
+}
+
+fn severity_rank(severity: Option<DiagnosticSeverity>) -> u8 {
+  match severity {
+    Some(DiagnosticSeverity::Error) => 0,
+    Some(DiagnosticSeverity::Warning) => 1,
+    Some(DiagnosticSeverity::Information) => 2,
+    Some(DiagnosticSeverity::Hint) => 3,
+    None => 4,
   }
 }
 
@@ -340,5 +424,33 @@ mod tests {
       events.last().map(|event| &event.kind),
       Some(DiagnosticsEventKind::Cleared { .. })
     ));
+  }
+
+  #[test]
+  fn provider_documents_merge_without_replacing_each_other() {
+    let uri = "file:///tmp/a.rs";
+    let mut state = DiagnosticsState::default();
+
+    state.apply_document_for_provider("rust-analyzer", DocumentDiagnostics {
+      uri:         uri.into(),
+      version:     Some(1),
+      diagnostics: vec![diagnostic(Some(DiagnosticSeverity::Error))],
+    });
+    state.apply_document_for_provider("clippy", DocumentDiagnostics {
+      uri:         uri.into(),
+      version:     Some(1),
+      diagnostics: vec![diagnostic(Some(DiagnosticSeverity::Warning))],
+    });
+
+    let merged = state.document(uri).expect("merged diagnostics");
+    assert_eq!(merged.diagnostics.len(), 2);
+    assert_eq!(merged.counts().errors, 1);
+    assert_eq!(merged.counts().warnings, 1);
+
+    assert!(state.remove_document_for_provider("rust-analyzer", uri));
+    let merged = state.document(uri).expect("remaining provider diagnostics");
+    assert_eq!(merged.diagnostics.len(), 1);
+    assert_eq!(merged.counts().errors, 0);
+    assert_eq!(merged.counts().warnings, 1);
   }
 }

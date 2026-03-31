@@ -171,6 +171,16 @@ impl ServerCapabilitiesSnapshot {
       .unwrap_or(false)
   }
 
+  pub fn supports_workspace_folders(&self) -> bool {
+    self
+      .raw
+      .get("workspace")
+      .and_then(|workspace| workspace.get("workspaceFolders"))
+      .and_then(|folders| folders.get("supported"))
+      .and_then(Value::as_bool)
+      .unwrap_or(false)
+  }
+
   pub fn workspace_commands(&self) -> Vec<String> {
     let Some(commands) = self
       .raw

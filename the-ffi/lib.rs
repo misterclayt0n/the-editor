@@ -64,6 +64,7 @@ use the_lib::{
     RenderSelectionKind,
     RenderStyles,
     build_plan,
+    gutter_width_for_document,
     graphics::{
       Color,
       CursorKind,
@@ -606,6 +607,7 @@ impl SwiftEditor {
       return false;
     };
     handle_key(self, event);
+    self.ensure_cursor_visible();
     true
   }
 
@@ -619,6 +621,9 @@ impl SwiftEditor {
       };
       handle_key(self, event);
       changed = true;
+    }
+    if changed {
+      self.ensure_cursor_visible();
     }
     changed
   }
@@ -643,6 +648,37 @@ impl SwiftEditor {
     );
     if self.editor.view().scroll.row > max_row {
       self.editor.view_mut().scroll.row = max_row;
+    }
+  }
+
+  fn ensure_cursor_visible(&mut self) {
+    let text = self.editor.document().text();
+    let selection = self.editor.document().selection();
+    let cursor_pos = self
+      .editor
+      .view()
+      .active_cursor
+      .and_then(|cursor_id| selection.range_by_id(cursor_id).copied())
+      .or_else(|| selection.ranges().first().copied())
+      .map(|range| range.cursor(text.slice(..)));
+    let Some(cursor_pos) = cursor_pos else {
+      return;
+    };
+
+    let cursor_line = text.char_to_line(cursor_pos);
+    let cursor_col = cursor_pos.saturating_sub(text.line_to_char(cursor_line));
+    let viewport_height = self.editor.view().viewport.height as usize;
+    let gutter_width = gutter_width_for_document(self.editor.document(), self.editor.view().viewport.width, &self.gutter_config) as usize;
+    let viewport_width = self.editor.view().viewport.width.saturating_sub(gutter_width as u16).max(1) as usize;
+    if let Some(new_scroll) = the_lib::view::scroll_to_keep_visible(
+      cursor_line,
+      cursor_col,
+      self.editor.view().scroll,
+      viewport_height,
+      viewport_width,
+      5,
+    ) {
+      self.editor.view_mut().scroll = new_scroll;
     }
   }
 

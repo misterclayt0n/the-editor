@@ -82,6 +82,7 @@ final class EditorSurfaceController: ObservableObject {
     }
 
     func toggleCommandPalette() {
+        commandPaletteDebugLog("toggle before isOpen=\(commandPalette.isOpen) query=\(String(reflecting: commandPalette.query))")
         guard EditorFFIBridge.toggleCommandPalette(handle?.raw) else { return }
         refreshSnapshot()
     }
@@ -92,6 +93,7 @@ final class EditorSurfaceController: ObservableObject {
     }
 
     func setCommandPaletteQuery(_ query: String) {
+        commandPaletteDebugLog("setQuery incoming=\(String(reflecting: query)) current=\(String(reflecting: commandPalette.query))")
         guard query != commandPalette.query else { return }
         guard EditorFFIBridge.setCommandPaletteQuery(handle?.raw, query: query) else { return }
         refreshSnapshot()
@@ -114,6 +116,7 @@ final class EditorSurfaceController: ObservableObject {
     }
 
     func submitCommandPalette() {
+        commandPaletteDebugLog("submit query=\(String(reflecting: commandPalette.query)) selected=\(String(describing: commandPalette.selectedIndex)) items=\(commandPalette.items.count)")
         guard EditorFFIBridge.submitCommandPalette(handle?.raw) else { return }
         refreshSnapshot()
     }
@@ -161,6 +164,7 @@ final class EditorSurfaceController: ObservableObject {
         let snapshotMs = (CFAbsoluteTimeGetCurrent() - started) * 1000
         currentMode = snapshot.info.mode
         commandPalette = snapshot.commandPalette
+        commandPaletteDebugLog("refresh query=\(String(reflecting: snapshot.commandPalette.query)) selected=\(String(describing: snapshot.commandPalette.selectedIndex)) items=\(snapshot.commandPalette.items.count) isOpen=\(snapshot.commandPalette.isOpen)")
         let sceneStarted = CFAbsoluteTimeGetCurrent()
         let marked = markedTextOverlay(from: snapshot)
         let scene = EditorRenderScene.from(snapshot: snapshot, markedText: marked)

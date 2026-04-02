@@ -22,15 +22,27 @@ struct EditorCommandPaletteView: View {
                             ),
                             query: Binding(
                                 get: { controller.commandPalette.query },
-                                set: { controller.setCommandPaletteQuery($0) }
+                                set: {
+                                    commandPaletteDebugLog("binding.set query=\(String(reflecting: $0))")
+                                    controller.setCommandPaletteQuery($0)
+                                }
                             ),
                             placeholder: controller.commandPalette.placeholder,
                             backgroundColor: Color(nsColor: controller.scene?.backgroundColor ?? .windowBackgroundColor),
                             options: commandOptions,
                             selectedIndex: controller.commandPalette.selectedIndex.map(UInt.init),
-                            onQueryChange: { controller.setCommandPaletteQuery($0) },
-                            onMove: { controller.moveCommandPaletteSelection($0) },
-                            onSubmit: { controller.submitCommandPalette() }
+                            onQueryChange: {
+                                commandPaletteDebugLog("onQueryChange query=\(String(reflecting: $0))")
+                                controller.setCommandPaletteQuery($0)
+                            },
+                            onMove: {
+                                commandPaletteDebugLog("onMove direction=\(String(describing: $0))")
+                                controller.moveCommandPaletteSelection($0)
+                            },
+                            onSubmit: {
+                                commandPaletteDebugLog("onSubmit query=\(String(reflecting: controller.commandPalette.query)) selected=\(String(describing: controller.commandPalette.selectedIndex))")
+                                controller.submitCommandPalette()
+                            }
                         )
                         .zIndex(1)
 

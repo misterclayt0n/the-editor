@@ -4,6 +4,7 @@ use std::{
     HashMap,
     HashSet,
   },
+  env,
   fmt,
   fs::OpenOptions,
   ops::RangeFrom,
@@ -45,6 +46,16 @@ use crate::{
   Mode,
   command_palette_filtered_indices,
 };
+
+fn command_palette_debug_enabled() -> bool {
+  env::var("THE_EDITOR_COMMAND_PALETTE_DEBUG").ok().as_deref() == Some("1")
+}
+
+fn command_palette_debug_log(message: impl AsRef<str>) {
+  if command_palette_debug_enabled() {
+    eprintln!("[the-default:command-palette] {}", message.as_ref());
+  }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommandEvent {
@@ -2403,12 +2414,26 @@ fn submit_command_line_palette<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool {
     return false;
   }
 
-  let (_filtered, selected) = command_palette_filtered_selection(palette);
+  let (filtered, selected) = command_palette_filtered_selection(palette);
+  command_palette_debug_log(format!(
+    "submit_command_line palette.query={:?} prompt.input={:?} prompt_text={:?} prefiltered={} selected={:?} filtered_len={} completions_len={}",
+    palette.query,
+    ctx.command_prompt_ref().input,
+    palette.prompt_text,
+    palette.prefiltered,
+    selected,
+    filtered.len(),
+    ctx.command_prompt_ref().completions.len(),
+  ));
 
   if palette.prefiltered {
     if let Some(item_idx) = selected {
       let action = command_palette_completion_action(ctx, item_idx)
         .unwrap_or(DirectoryCompletionAction::Submit);
+      command_palette_debug_log(format!(
+        "submit_command_line prefiltered item_idx={} action={:?}",
+        item_idx, action,
+      ));
       if action == DirectoryCompletionAction::Expand {
         return apply_selected_command_palette_completion(ctx, item_idx);
       }
@@ -2649,6 +2674,7 @@ pub fn update_command_palette_for_input<Ctx: DefaultContext>(ctx: &mut Ctx, inpu
   prompt.cursor = prompt.input.len();
   prompt.completions = completions;
   prompt.error = None;
+  let completions_len = prompt.completions.len();
 
   {
     let palette = ctx.command_palette_mut();
@@ -2681,6 +2707,19 @@ pub fn update_command_palette_for_input<Ctx: DefaultContext>(ctx: &mut Ctx, inpu
         }
       }
     }
+    command_palette_debug_log(format!(
+      "update_input input={:?} stripped={:?} complete_command_name={} has_command={} completions_len={} items_len={} prefiltered={} palette.query={:?} prompt_text={:?} selected={:?}",
+      input,
+      stripped,
+      complete_command_name,
+      has_command,
+      completions_len,
+      palette.items.len(),
+      palette.prefiltered,
+      palette.query,
+      palette.prompt_text,
+      palette.selected,
+    ));
   }
   sync_command_palette_preview(ctx);
   ctx.request_render();

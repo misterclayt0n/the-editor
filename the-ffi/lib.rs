@@ -381,6 +381,16 @@ fn theme_perf_log(message: impl AsRef<str>) {
   }
 }
 
+fn command_palette_debug_enabled() -> bool {
+  env::var("THE_EDITOR_COMMAND_PALETTE_DEBUG").ok().as_deref() == Some("1")
+}
+
+fn command_palette_debug_log(message: impl AsRef<str>) {
+  if command_palette_debug_enabled() {
+    eprintln!("[the-ffi:command-palette] {}", message.as_ref());
+  }
+}
+
 #[derive(Default)]
 struct OwnedSnapshot {
   info:                  the_editor_snapshot_info_t,
@@ -763,7 +773,22 @@ impl SwiftEditor {
     if !self.command_palette.is_open {
       open_command_palette(self);
     }
+    command_palette_debug_log(format!(
+      "set_query incoming={:?} prompt_before={:?} palette_query_before={:?} prompt_text_before={:?}",
+      query,
+      self.command_prompt.input,
+      self.command_palette.query,
+      self.command_palette.prompt_text,
+    ));
     update_command_palette_for_input(self, query);
+    command_palette_debug_log(format!(
+      "set_query applied prompt_after={:?} palette_query_after={:?} prompt_text_after={:?} prefiltered={} selected={:?}",
+      self.command_prompt.input,
+      self.command_palette.query,
+      self.command_palette.prompt_text,
+      self.command_palette.prefiltered,
+      self.command_palette.selected,
+    ));
     true
   }
 
@@ -797,7 +822,26 @@ impl SwiftEditor {
     if !self.command_palette.is_open {
       return false;
     }
-    submit_command_palette_action(self)
+    command_palette_debug_log(format!(
+      "submit prompt={:?} palette_query={:?} prompt_text={:?} prefiltered={} selected={:?} items_len={}",
+      self.command_prompt.input,
+      self.command_palette.query,
+      self.command_palette.prompt_text,
+      self.command_palette.prefiltered,
+      self.command_palette.selected,
+      self.command_palette.items.len(),
+    ));
+    let submitted = submit_command_palette_action(self);
+    command_palette_debug_log(format!(
+      "submit result={} mode={:?} prompt_after={:?} palette_open={} palette_query_after={:?} prompt_text_after={:?}",
+      submitted,
+      self.mode,
+      self.command_prompt.input,
+      self.command_palette.is_open,
+      self.command_palette.query,
+      self.command_palette.prompt_text,
+    ));
+    submitted
   }
 
   fn apply_effective_theme(&mut self, theme: Theme) {
@@ -1167,6 +1211,16 @@ impl OwnedSnapshot {
       query_idx: Some(palette_query_idx),
       placeholder_idx: Some(palette_placeholder_idx),
     };
+    command_palette_debug_log(format!(
+      "snapshot_export prompt_input={:?} palette.query={:?} prompt_text={:?} exported_query={:?} prefiltered={} selected_filtered={:?} items_len={}",
+      editor.command_prompt.input,
+      palette.query,
+      palette.prompt_text,
+      palette_query,
+      palette.prefiltered,
+      command_palette_selected_filtered_index(palette),
+      palette.items.len(),
+    ));
 
     for item_index in command_palette_filtered_indices(palette) {
       let Some(item) = palette.items.get(item_index) else {

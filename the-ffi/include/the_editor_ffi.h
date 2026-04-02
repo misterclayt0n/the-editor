@@ -244,6 +244,7 @@ bool the_editor_open(the_editor_handle_t *handle, const char *path);
 bool the_editor_configure_surface(the_editor_handle_t *handle, struct the_editor_surface_config_t config);
 void the_editor_set_viewport(the_editor_handle_t *handle, uint16_t cols, uint16_t rows);
 bool the_editor_set_scroll_row(the_editor_handle_t *handle, uint32_t row);
+bool the_editor_set_scroll_col(the_editor_handle_t *handle, uint32_t col);
 bool the_editor_handle_key(the_editor_handle_t *handle, the_editor_key_event_t event);
 bool the_editor_insert_text(the_editor_handle_t *handle, const char *text);
 uint32_t the_editor_primary_selection_utf16_location(the_editor_handle_t *handle);

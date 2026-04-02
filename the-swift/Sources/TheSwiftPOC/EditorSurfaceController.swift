@@ -44,9 +44,29 @@ final class EditorSurfaceController {
         refreshSnapshot()
     }
 
+    func setScrollCol(_ col: Int) {
+        guard EditorFFIBridge.setScrollCol(handle?.raw, col: UInt32(max(col, 0))) else { return }
+        refreshSnapshot()
+    }
+
+    func scroll(byRows rowDelta: Int, cols colDelta: Int) {
+        guard (rowDelta != 0 || colDelta != 0), let scene else { return }
+        let targetRow = UInt32(max(scene.info.scrollRow + rowDelta, 0))
+        let targetCol = UInt32(max(scene.info.scrollCol + colDelta, 0))
+        var changed = false
+        if rowDelta != 0 {
+            changed = EditorFFIBridge.setScrollRow(handle?.raw, row: targetRow) || changed
+        }
+        if colDelta != 0 {
+            changed = EditorFFIBridge.setScrollCol(handle?.raw, col: targetCol) || changed
+        }
+        if changed {
+            refreshSnapshot()
+        }
+    }
+
     func scrollRows(by delta: Int) {
-        guard delta != 0, let scene else { return }
-        setScrollRow(scene.info.scrollRow + delta)
+        scroll(byRows: delta, cols: 0)
     }
 
     func handleKey(_ event: the_editor_key_event_t) {

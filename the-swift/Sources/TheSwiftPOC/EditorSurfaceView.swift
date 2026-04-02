@@ -17,6 +17,7 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
     }
     private var markedText = NSMutableAttributedString()
     private var pendingScrollRows: CGFloat = 0
+    private var pendingScrollCols: CGFloat = 0
 
     override var acceptsFirstResponder: Bool { true }
     override var isFlipped: Bool { true }
@@ -95,21 +96,44 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
             return
         }
 
+        let direction: CGFloat = event.isDirectionInvertedFromDevice ? -1 : 1
+        var deltaX = direction * event.scrollingDeltaX
+        var deltaY = direction * event.scrollingDeltaY
+
+        if event.hasPreciseScrollingDeltas {
+            deltaX *= 2
+            deltaY *= 2
+
+            let absX = abs(deltaX)
+            let absY = abs(deltaY)
+            if absX > absY * 1.25 {
+                deltaY = 0
+            } else if absY > absX * 1.25 {
+                deltaX = 0
+            }
+        }
+
+        let cellWidth = max(cellSize.width, 1)
         let cellHeight = max(cellSize.height, 1)
-        let contentDeltaY = (event.isDirectionInvertedFromDevice ? -1 : 1) * event.scrollingDeltaY
-        let deltaY = event.hasPreciseScrollingDeltas ? contentDeltaY * 2 : contentDeltaY
         let rowDelta: Int
+        let colDelta: Int
         if event.hasPreciseScrollingDeltas {
             pendingScrollRows += deltaY / cellHeight
             rowDelta = Int(pendingScrollRows.rounded(.towardZero))
             pendingScrollRows -= CGFloat(rowDelta)
+
+            pendingScrollCols += deltaX / cellWidth
+            colDelta = Int(pendingScrollCols.rounded(.towardZero))
+            pendingScrollCols -= CGFloat(colDelta)
         } else {
             rowDelta = Int(deltaY.rounded(.towardZero))
+            colDelta = Int(deltaX.rounded(.towardZero))
             pendingScrollRows = 0
+            pendingScrollCols = 0
         }
 
-        guard rowDelta != 0 else { return }
-        controller.scrollRows(by: rowDelta)
+        guard rowDelta != 0 || colDelta != 0 else { return }
+        controller.scroll(byRows: rowDelta, cols: colDelta)
     }
 
     override func keyDown(with event: NSEvent) {

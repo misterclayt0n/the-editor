@@ -618,6 +618,15 @@ impl SwiftEditor {
     true
   }
 
+  fn set_scroll_col(&mut self, col: u32) -> bool {
+    let next = col as usize;
+    if next == self.editor.view().scroll.col {
+      return false;
+    }
+    self.editor.view_mut().scroll.col = next;
+    true
+  }
+
   fn handle_key_event(&mut self, raw: the_editor_key_event_t) -> bool {
     let Some(event) = translate_key_event(raw) else {
       return false;
@@ -1353,6 +1362,12 @@ pub unsafe extern "C" fn the_editor_set_viewport(handle: *mut the_editor_handle_
 pub unsafe extern "C" fn the_editor_set_scroll_row(handle: *mut the_editor_handle_t, row: u32) -> bool {
   let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
   handle.editor.set_scroll_row(row)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_set_scroll_col(handle: *mut the_editor_handle_t, col: u32) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+  handle.editor.set_scroll_col(col)
 }
 
 #[unsafe(no_mangle)]

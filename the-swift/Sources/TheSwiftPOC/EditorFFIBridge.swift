@@ -212,6 +212,12 @@ enum EditorFFIBridge {
     }
 
     @discardableResult
+    static func setScrollCol(_ handle: OpaquePointer?, col: UInt32) -> Bool {
+        guard let handle else { return false }
+        return the_editor_set_scroll_col(handle, col)
+    }
+
+    @discardableResult
     static func sendKey(_ handle: OpaquePointer?, event: the_editor_key_event_t) -> Bool {
         guard let handle else { return false }
         return the_editor_handle_key(handle, event)

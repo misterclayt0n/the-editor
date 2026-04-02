@@ -8,6 +8,7 @@ HEADERS_PATH="$ROOT/the-ffi/include"
 OUTPUT_PATH="$ROOT/the-swift/RustBridge/TheEditorFFI.xcframework"
 
 pushd "$ROOT" >/dev/null
+export MACOSX_DEPLOYMENT_TARGET="14.0"
 cargo build -p the-ffi --release
 rm -rf "$OUTPUT_PATH"
 xcodebuild -create-xcframework \

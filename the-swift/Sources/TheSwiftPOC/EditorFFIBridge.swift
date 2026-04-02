@@ -84,6 +84,8 @@ struct EditorSnapshotInfo {
     let surfaceWidthPx: Int
     let surfaceHeightPx: Int
     let surfaceMetrics: EditorSurfaceMetrics
+    let backgroundColor: EditorRGBA?
+    let gutterBackgroundColor: EditorRGBA?
     let viewportWidth: Int
     let viewportHeight: Int
     let contentOffsetX: Int
@@ -325,6 +327,8 @@ enum EditorFFIBridge {
             surfaceWidthPx: Int(infoValue.surface_width_px),
             surfaceHeightPx: Int(infoValue.surface_height_px),
             surfaceMetrics: surfaceMetrics(from: infoValue.surface_metrics),
+            backgroundColor: rgba(from: infoValue.background_color),
+            gutterBackgroundColor: rgba(from: infoValue.gutter_background_color),
             viewportWidth: Int(infoValue.viewport_width),
             viewportHeight: Int(infoValue.viewport_height),
             contentOffsetX: Int(infoValue.content_offset_x),

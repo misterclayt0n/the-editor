@@ -25,7 +25,7 @@ struct EditorCommandPaletteView: View {
                                 set: { controller.setCommandPaletteQuery($0) }
                             ),
                             placeholder: controller.commandPalette.placeholder,
-                            backgroundColor: Color(nsColor: .windowBackgroundColor),
+                            backgroundColor: Color(nsColor: controller.scene?.backgroundColor ?? .windowBackgroundColor),
                             options: commandOptions,
                             selectedIndex: controller.commandPalette.selectedIndex.map(UInt.init),
                             onQueryChange: { controller.setCommandPaletteQuery($0) },

@@ -158,6 +158,8 @@ typedef struct the_editor_snapshot_info_t {
   uint32_t surface_width_px;
   uint32_t surface_height_px;
   struct the_editor_surface_metrics_t surface_metrics;
+  struct the_editor_rgba_t background_color;
+  struct the_editor_rgba_t gutter_background_color;
   uint16_t viewport_width;
   uint16_t viewport_height;
   uint16_t content_offset_x;

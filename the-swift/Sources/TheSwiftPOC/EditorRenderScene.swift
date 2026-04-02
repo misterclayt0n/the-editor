@@ -34,11 +34,11 @@ struct EditorRenderScene {
     let markedText: EditorMarkedText?
 
     var backgroundColor: NSColor {
-        NSColor.textBackgroundColor
+        info.backgroundColor?.color ?? NSColor.textBackgroundColor
     }
 
     var gutterBackgroundColor: NSColor {
-        NSColor.controlBackgroundColor
+        info.gutterBackgroundColor?.color ?? backgroundColor
     }
 
     var visibleLineKeys: Set<EditorLineCacheKey> {

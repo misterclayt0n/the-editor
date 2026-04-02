@@ -37,6 +37,7 @@ use the_default::{
   PendingInput,
   PickerRuntimeStore,
   SearchPromptState,
+  ThemeCatalog,
   WorkingDirectoryState,
   build_dispatch,
   builtin_completion_menu_keymaps,
@@ -161,6 +162,8 @@ pub struct the_editor_snapshot_info_t {
   pub surface_width_px:        u32,
   pub surface_height_px:       u32,
   pub surface_metrics:         the_editor_surface_metrics_t,
+  pub background_color:        the_editor_rgba_t,
+  pub gutter_background_color: the_editor_rgba_t,
   pub viewport_width:          u16,
   pub viewport_height:         u16,
   pub content_offset_x:        u16,
@@ -509,7 +512,10 @@ struct SwiftEditor {
   text_format:                   TextFormat,
   soft_wrap_enabled:             bool,
   gutter_config:                 the_lib::render::GutterConfig,
+  ui_theme_catalog:              ThemeCatalog,
   ui_theme_name:                 String,
+  ui_theme_base:                 Theme,
+  ui_theme_preview_name:         Option<String>,
   ui_theme:                      Theme,
   surface:                       SurfaceConfig,
 }
@@ -554,6 +560,8 @@ impl SwiftEditor {
 
     let mut text_format = TextFormat::default();
     text_format.viewport_width = viewport.width;
+    let ui_theme_catalog = ThemeCatalog::load(Some(&workspace_root));
+    let (ui_theme_name, ui_theme) = select_ui_theme(&ui_theme_catalog);
 
     Self {
       editor,
@@ -589,8 +597,11 @@ impl SwiftEditor {
       text_format,
       soft_wrap_enabled: false,
       gutter_config: the_lib::render::GutterConfig::default(),
-      ui_theme_name: default_theme().name().to_string(),
-      ui_theme: default_theme().clone(),
+      ui_theme_catalog,
+      ui_theme_name: ui_theme_name.clone(),
+      ui_theme_base: ui_theme.clone(),
+      ui_theme_preview_name: None,
+      ui_theme,
       surface,
     }
   }
@@ -611,6 +622,7 @@ impl SwiftEditor {
           .map(Path::to_path_buf)
           .unwrap_or_else(default_workspace_root);
         self.working_directory.current = Some(self.workspace_root.clone());
+        self.reload_theme_catalog();
         replaced
       },
       Err(err) => {
@@ -766,16 +778,73 @@ impl SwiftEditor {
     submit_command_palette_action(self)
   }
 
+  fn apply_effective_theme(&mut self, theme: Theme) {
+    self.ui_theme = theme;
+  }
+
+  fn set_ui_theme_named(&mut self, theme_name: &str) -> Result<(), String> {
+    let theme = self
+      .ui_theme_catalog
+      .load_theme(theme_name)
+      .ok_or_else(|| format!("Could not load theme: {theme_name}"))?;
+    self.ui_theme_name = theme_name.to_string();
+    self.ui_theme_base = theme.clone();
+    self.ui_theme_preview_name = None;
+    self.apply_effective_theme(theme);
+    Ok(())
+  }
+
+  fn set_ui_theme_preview_named(&mut self, theme_name: &str) -> Result<(), String> {
+    let theme = self
+      .ui_theme_catalog
+      .load_theme(theme_name)
+      .ok_or_else(|| format!("Could not load theme: {theme_name}"))?;
+    self.ui_theme_preview_name = Some(theme_name.to_string());
+    self.apply_effective_theme(theme);
+    Ok(())
+  }
+
+  fn clear_ui_theme_preview_state(&mut self) {
+    if self.ui_theme_preview_name.take().is_some() {
+      self.apply_effective_theme(self.ui_theme_base.clone());
+    }
+  }
+
+  fn reload_theme_catalog(&mut self) {
+    self.ui_theme_catalog = ThemeCatalog::load(Some(&self.workspace_root));
+    let current_name = self.ui_theme_name.clone();
+    let preview_name = self.ui_theme_preview_name.clone();
+    if self.set_ui_theme_named(&current_name).is_err() {
+      let default_name = default_theme().name().to_string();
+      if let Some(theme) = self.ui_theme_catalog.load_theme(&default_name) {
+        self.ui_theme_name = default_name;
+        self.ui_theme_base = theme.clone();
+        self.ui_theme_preview_name = None;
+        self.apply_effective_theme(theme);
+      }
+    }
+    if let Some(preview_name) = preview_name {
+      let _ = self.set_ui_theme_preview_named(&preview_name);
+    }
+  }
+
   fn render_styles(&self) -> RenderStyles {
+    let theme = &self.ui_theme;
     RenderStyles {
-      selection:                  Style::default().bg(Color::Rgb(46, 89, 160)),
-      cursor:                     Style::default().bg(Color::Rgb(224, 224, 224)).fg(Color::Rgb(24, 24, 24)),
-      active_cursor:              Style::default().bg(Color::Rgb(255, 255, 255)).fg(Color::Rgb(24, 24, 24)),
+      selection:                  theme.try_get("ui.selection").unwrap_or_default(),
+      cursor:                     theme.try_get("ui.cursor").unwrap_or_default(),
+      active_cursor:              theme
+        .try_get("ui.cursor.active")
+        .or_else(|| theme.try_get("ui.cursor"))
+        .unwrap_or_default(),
       cursor_kind:                CursorKind::Bar,
       active_cursor_kind:         CursorKind::Block,
       non_block_cursor_uses_head: true,
-      gutter:                     Style::default().fg(Color::Rgb(110, 110, 110)),
-      gutter_active:              Style::default().fg(Color::Rgb(180, 180, 180)),
+      gutter:                     theme.try_get("ui.linenr").unwrap_or_default(),
+      gutter_active:              theme
+        .try_get("ui.linenr.selected")
+        .or_else(|| theme.try_get("ui.linenr"))
+        .unwrap_or_default(),
     }
   }
 
@@ -947,17 +1016,28 @@ impl DefaultContext for SwiftEditor {
   fn scrolloff(&self) -> usize { SWIFT_SCROLLOFF }
   fn ui_theme(&self) -> &Theme { &self.ui_theme }
   fn ui_theme_name(&self) -> &str { &self.ui_theme_name }
-  fn available_theme_names(&self) -> Vec<String> { vec![self.ui_theme_name.clone()] }
-  fn set_ui_theme(&mut self, _theme_name: &str) -> Result<(), String> { Err("theme switching is not implemented in the swift POC".to_string()) }
-  fn set_ui_theme_preview(&mut self, _theme_name: &str) -> Result<(), String> { Err("theme preview is not implemented in the swift POC".to_string()) }
-  fn clear_ui_theme_preview(&mut self) {}
-  fn set_file_path(&mut self, path: Option<PathBuf>) { self.file_path = path.clone(); self.editor.set_active_file_path(path); }
+  fn available_theme_names(&self) -> Vec<String> { self.ui_theme_catalog.names() }
+  fn set_ui_theme(&mut self, theme_name: &str) -> Result<(), String> { self.set_ui_theme_named(theme_name) }
+  fn set_ui_theme_preview(&mut self, theme_name: &str) -> Result<(), String> { self.set_ui_theme_preview_named(theme_name) }
+  fn clear_ui_theme_preview(&mut self) { self.clear_ui_theme_preview_state(); }
+  fn set_file_path(&mut self, path: Option<PathBuf>) {
+    self.file_path = path.clone();
+    self.editor.set_active_file_path(path.clone());
+    if let Some(path) = path {
+      self.workspace_root = path.parent().map(Path::to_path_buf).unwrap_or_else(default_workspace_root);
+      self.working_directory.current = Some(self.workspace_root.clone());
+      self.reload_theme_catalog();
+    }
+  }
   fn open_file(&mut self, path: &Path) -> std::io::Result<()> {
     let contents = fs::read_to_string(path)?;
     let _ = self.editor.replace_active_buffer(Rope::from_str(&contents), Some(path.to_path_buf()));
     self.file_path = Some(path.to_path_buf());
     self.editor.set_active_file_path(Some(path.to_path_buf()));
     self.editor.document_mut().set_display_name(display_name_for_path(path));
+    self.workspace_root = path.parent().map(Path::to_path_buf).unwrap_or_else(default_workspace_root);
+    self.working_directory.current = Some(self.workspace_root.clone());
+    self.reload_theme_catalog();
     Ok(())
   }
 }
@@ -974,6 +1054,8 @@ impl OwnedSnapshot {
         surface_width_px: editor.surface.width_px,
         surface_height_px: editor.surface.height_px,
         surface_metrics: editor.surface.metrics,
+        background_color: theme_background_rgba(&editor.ui_theme),
+        gutter_background_color: theme_gutter_background_rgba(&editor.ui_theme),
         viewport_width: viewport.width,
         viewport_height: viewport.height,
         content_offset_x: plan.map(|plan| plan.content_offset_x).unwrap_or(0),
@@ -1493,6 +1575,46 @@ fn indexed_color(index: u8) -> (u8, u8, u8) {
     if r == 0 { 0 } else { r * 40 + 55 },
     if g == 0 { 0 } else { g * 40 + 55 },
     if b == 0 { 0 } else { b * 40 + 55 },
+  )
+}
+
+fn theme_background_rgba(theme: &Theme) -> the_editor_rgba_t {
+  color_to_rgba(
+    theme
+      .ghostty()
+      .background()
+      .or_else(|| theme.try_get("ui.background").and_then(|style| style.bg)),
+    theme,
+  )
+}
+
+fn theme_gutter_background_rgba(theme: &Theme) -> the_editor_rgba_t {
+  let gutter_background = theme
+    .try_get("ui.linenr")
+    .and_then(|style| style.bg)
+    .or_else(|| theme.try_get("ui.gutter").and_then(|style| style.bg))
+    .or_else(|| theme.try_get("ui.background").and_then(|style| style.bg))
+    .or_else(|| theme.ghostty().background());
+  color_to_rgba(gutter_background, theme)
+}
+
+fn select_ui_theme(catalog: &ThemeCatalog) -> (String, Theme) {
+  if let Ok(theme_name) = std::env::var("THE_EDITOR_THEME") {
+    let theme_name = theme_name.trim();
+    if !theme_name.is_empty() {
+      if let Some(theme) = catalog.load_theme(theme_name) {
+        return (theme_name.to_string(), theme);
+      }
+      eprintln!("Unknown theme '{theme_name}', falling back to default theme.");
+    }
+  }
+
+  let default_name = default_theme().name().to_string();
+  (
+    default_name.clone(),
+    catalog
+      .load_theme(&default_name)
+      .unwrap_or_else(|| default_theme().clone()),
   )
 }
 

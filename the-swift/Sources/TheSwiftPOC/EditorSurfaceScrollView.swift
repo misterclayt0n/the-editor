@@ -17,7 +17,13 @@ final class EditorSurfaceScrollView: NSView, EditorSurfaceControllerDelegate {
     let surfaceView: EditorSurfaceView
 
     private var boundsObserver: ObserverTokenBox?
+    private var liveScrollStartObserver: ObserverTokenBox?
+    private var liveScrollEndObserver: ObserverTokenBox?
+    private var liveScrollObserver: ObserverTokenBox?
+    private var preferredScrollerStyleObserver: ObserverTokenBox?
     private var isSyncingScroll = false
+    private var isLiveScrolling = false
+    private var lastSentRow: Int?
 
     init(initialPath: String?) {
         self.controller = EditorSurfaceController(initialPath: initialPath)
@@ -36,6 +42,8 @@ final class EditorSurfaceScrollView: NSView, EditorSurfaceControllerDelegate {
         scrollView.hasHorizontalScroller = false
         scrollView.autohidesScrollers = false
         scrollView.usesPredominantAxisScrolling = true
+        scrollView.scrollerStyle = .overlay
+        scrollView.contentView.clipsToBounds = false
         scrollView.contentView.postsBoundsChangedNotifications = true
         scrollView.documentView = documentView
         documentView.addSubview(surfaceView)
@@ -51,6 +59,47 @@ final class EditorSurfaceScrollView: NSView, EditorSurfaceControllerDelegate {
                 self.handleScrollChange()
             }
         })
+        liveScrollStartObserver = ObserverTokenBox(raw: NotificationCenter.default.addObserver(
+            forName: NSScrollView.willStartLiveScrollNotification,
+            object: scrollView,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            Task { @MainActor in
+                self.isLiveScrolling = true
+            }
+        })
+        liveScrollEndObserver = ObserverTokenBox(raw: NotificationCenter.default.addObserver(
+            forName: NSScrollView.didEndLiveScrollNotification,
+            object: scrollView,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            Task { @MainActor in
+                self.isLiveScrolling = false
+                self.sendScrollRowIfNeeded()
+            }
+        })
+        liveScrollObserver = ObserverTokenBox(raw: NotificationCenter.default.addObserver(
+            forName: NSScrollView.didLiveScrollNotification,
+            object: scrollView,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            Task { @MainActor in
+                self.sendScrollRowIfNeeded()
+            }
+        })
+        preferredScrollerStyleObserver = ObserverTokenBox(raw: NotificationCenter.default.addObserver(
+            forName: NSScroller.preferredScrollerStyleDidChangeNotification,
+            object: nil,
+            queue: nil
+        ) { [weak self] _ in
+            guard let self else { return }
+            Task { @MainActor in
+                self.handleScrollerStyleChange()
+            }
+        })
 
         controller.refreshSnapshot()
     }
@@ -64,12 +113,25 @@ final class EditorSurfaceScrollView: NSView, EditorSurfaceControllerDelegate {
         if let boundsObserver {
             NotificationCenter.default.removeObserver(boundsObserver.raw)
         }
+        if let liveScrollStartObserver {
+            NotificationCenter.default.removeObserver(liveScrollStartObserver.raw)
+        }
+        if let liveScrollEndObserver {
+            NotificationCenter.default.removeObserver(liveScrollEndObserver.raw)
+        }
+        if let liveScrollObserver {
+            NotificationCenter.default.removeObserver(liveScrollObserver.raw)
+        }
+        if let preferredScrollerStyleObserver {
+            NotificationCenter.default.removeObserver(preferredScrollerStyleObserver.raw)
+        }
     }
 
     override func layout() {
         super.layout()
         scrollView.frame = bounds
         surfaceView.frame.size = scrollView.contentView.bounds.size
+        documentView.frame.size.width = scrollView.bounds.width
         synchronizeSurfaceFrame()
     }
 
@@ -92,7 +154,7 @@ final class EditorSurfaceScrollView: NSView, EditorSurfaceControllerDelegate {
     }
 
     private func synchronizeScrollPosition(_ scene: EditorRenderScene) {
-        guard !isSyncingScroll else { return }
+        guard !isSyncingScroll, !isLiveScrolling else { return }
         let cellHeight = scene.info.surfaceMetrics.cellSizePoints.height
         let targetOrigin = CGPoint(x: 0, y: CGFloat(scene.info.scrollRow) * cellHeight)
         if scrollView.contentView.bounds.origin.y != targetOrigin.y {
@@ -101,13 +163,43 @@ final class EditorSurfaceScrollView: NSView, EditorSurfaceControllerDelegate {
             scrollView.reflectScrolledClipView(scrollView.contentView)
             isSyncingScroll = false
         }
+        lastSentRow = scene.info.scrollRow
     }
 
     private func handleScrollChange() {
         synchronizeSurfaceFrame()
-        guard !isSyncingScroll else { return }
+        guard !isSyncingScroll, !isLiveScrolling else { return }
+        sendScrollRowIfNeeded()
+    }
+
+    private func handleScrollerStyleChange() {
+        scrollView.scrollerStyle = .overlay
+        updateTrackingAreas()
+    }
+
+    private func sendScrollRowIfNeeded() {
         let cellHeight = controller.scene?.info.surfaceMetrics.cellSizePoints.height ?? surfaceView.cellSize.height
-        let row = Int((scrollView.contentView.bounds.origin.y / max(cellHeight, 1)).rounded(.down))
+        guard cellHeight > 0 else { return }
+        let row = Int((scrollView.contentView.documentVisibleRect.origin.y / cellHeight).rounded(.down))
+        guard row != lastSentRow else { return }
+        lastSentRow = row
         controller.setScrollRow(row)
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        guard NSScroller.preferredScrollerStyle == .legacy else { return }
+        scrollView.flashScrollers()
+    }
+
+    override func updateTrackingAreas() {
+        trackingAreas.forEach(removeTrackingArea)
+        super.updateTrackingAreas()
+        guard let scroller = scrollView.verticalScroller else { return }
+        addTrackingArea(NSTrackingArea(
+            rect: convert(scroller.bounds, from: scroller),
+            options: [.mouseMoved, .activeInKeyWindow],
+            owner: self,
+            userInfo: nil
+        ))
     }
 }

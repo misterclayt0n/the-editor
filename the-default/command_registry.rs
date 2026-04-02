@@ -2406,13 +2406,12 @@ fn submit_command_line_palette<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool {
   let (_filtered, selected) = command_palette_filtered_selection(palette);
 
   if palette.prefiltered {
-    let prefiltered_selection = selected.and_then(|item_idx| {
-      command_palette_completion_action(ctx, item_idx).map(|action| (item_idx, action))
-    });
-
-    if let Some((item_idx, DirectoryCompletionAction::Expand)) = prefiltered_selection {
-      return apply_selected_command_palette_completion(ctx, item_idx);
-    } else if let Some((item_idx, _)) = prefiltered_selection {
+    if let Some(item_idx) = selected {
+      let action = command_palette_completion_action(ctx, item_idx)
+        .unwrap_or(DirectoryCompletionAction::Submit);
+      if action == DirectoryCompletionAction::Expand {
+        return apply_selected_command_palette_completion(ctx, item_idx);
+      }
       return submit_selected_prefiltered_completion(ctx, item_idx);
     }
   }

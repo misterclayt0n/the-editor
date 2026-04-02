@@ -1149,6 +1149,7 @@ impl OwnedSnapshot {
       .prompt_text
       .as_deref()
       .unwrap_or(palette.query.as_str())
+      .trim_start_matches(':')
       .to_string();
     let palette_placeholder = command_palette_placeholder_text(editor);
     let palette_query_idx = snapshot.push_string(&palette_query);

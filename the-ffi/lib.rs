@@ -330,6 +330,8 @@ const STYLE_REVERSED: u16 = 1 << 5;
 const STYLE_HIDDEN: u16 = 1 << 6;
 const STYLE_CROSSED_OUT: u16 = 1 << 7;
 
+const SWIFT_SCROLLOFF: usize = 0;
+
 #[derive(Default)]
 struct OwnedSnapshot {
   info:             the_editor_snapshot_info_t,
@@ -686,7 +688,7 @@ impl SwiftEditor {
       self.editor.view().scroll,
       viewport_height,
       viewport_width,
-      5,
+      SWIFT_SCROLLOFF,
     ) {
       self.editor.view_mut().scroll = new_scroll;
     }
@@ -812,6 +814,7 @@ impl DefaultContext for SwiftEditor {
   fn gutter_config_mut(&mut self) -> &mut the_lib::render::GutterConfig { &mut self.gutter_config }
   fn text_annotations(&self) -> TextAnnotations<'_> { TextAnnotations::default() }
   fn syntax_loader(&self) -> Option<&the_lib::syntax::Loader> { None }
+  fn scrolloff(&self) -> usize { SWIFT_SCROLLOFF }
   fn ui_theme(&self) -> &Theme { &self.ui_theme }
   fn ui_theme_name(&self) -> &str { &self.ui_theme_name }
   fn available_theme_names(&self) -> Vec<String> { vec![self.ui_theme_name.clone()] }

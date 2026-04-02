@@ -16,6 +16,7 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
         controller?.scene?.info.surfaceMetrics.cellSizePoints ?? fallbackCellSize
     }
     private var markedText = NSMutableAttributedString()
+    private var pendingScrollRows: CGFloat = 0
 
     override var acceptsFirstResponder: Bool { true }
     override var isFlipped: Bool { true }
@@ -86,6 +87,28 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
         super.mouseDown(with: event)
+    }
+
+    override func scrollWheel(with event: NSEvent) {
+        guard let controller else {
+            super.scrollWheel(with: event)
+            return
+        }
+
+        let cellHeight = max(cellSize.height, 1)
+        let deltaY = event.hasPreciseScrollingDeltas ? event.scrollingDeltaY * 2 : event.scrollingDeltaY
+        let rowDelta: Int
+        if event.hasPreciseScrollingDeltas {
+            pendingScrollRows += deltaY / cellHeight
+            rowDelta = Int(pendingScrollRows.rounded(.towardZero))
+            pendingScrollRows -= CGFloat(rowDelta)
+        } else {
+            rowDelta = Int(deltaY.rounded(.towardZero))
+            pendingScrollRows = 0
+        }
+
+        guard rowDelta != 0 else { return }
+        controller.scrollRows(by: rowDelta)
     }
 
     override func keyDown(with event: NSEvent) {

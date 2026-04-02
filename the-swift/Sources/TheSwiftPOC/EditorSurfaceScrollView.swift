@@ -168,8 +168,6 @@ final class EditorSurfaceScrollView: NSView, EditorSurfaceControllerDelegate {
 
     private func handleScrollChange() {
         synchronizeSurfaceFrame()
-        guard !isSyncingScroll, !isLiveScrolling else { return }
-        sendScrollRowIfNeeded()
     }
 
     private func handleScrollerStyleChange() {

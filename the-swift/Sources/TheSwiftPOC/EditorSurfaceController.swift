@@ -44,6 +44,11 @@ final class EditorSurfaceController {
         refreshSnapshot()
     }
 
+    func scrollRows(by delta: Int) {
+        guard delta != 0, let scene else { return }
+        setScrollRow(scene.info.scrollRow + delta)
+    }
+
     func handleKey(_ event: the_editor_key_event_t) {
         guard EditorFFIBridge.sendKey(handle?.raw, event: event) else { return }
         if event.kind == THE_EDITOR_KEY_ESCAPE.rawValue {

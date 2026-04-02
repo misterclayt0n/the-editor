@@ -9,6 +9,7 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
 
     private let renderer: MetalEditorRenderer
     private let font: NSFont
+    private let fontMetrics: EditorFontMetrics
     let cellSize: CGSize
     private var markedText = NSMutableAttributedString()
 
@@ -18,10 +19,9 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
     init?(controller: EditorSurfaceController) {
         self.controller = controller
         self.font = NSFont.monospacedSystemFont(ofSize: 14, weight: .regular)
-        let sample = "W" as NSString
-        let size = sample.size(withAttributes: [.font: font])
-        self.cellSize = CGSize(width: ceil(size.width), height: ceil(size.height + 4))
-        guard let renderer = MetalEditorRenderer(font: font, cellSize: cellSize, scaleProvider: {
+        self.fontMetrics = EditorFontMetrics(font: font)
+        self.cellSize = fontMetrics.cellSize
+        guard let renderer = MetalEditorRenderer(fontMetrics: fontMetrics, scaleProvider: {
             NSScreen.main?.backingScaleFactor ?? 2
         }) else {
             return nil

@@ -2120,14 +2120,17 @@ pub fn handle_command_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEve
       let filtered = command_palette_filtered_indices(ctx.command_palette());
       if !filtered.is_empty() {
         let palette = ctx.command_palette_mut();
-        let current = palette
+        let next = if let Some(current) = palette
           .selected
           .and_then(|sel| filtered.iter().position(|&idx| idx == sel))
-          .unwrap_or(0);
-        let next = if current == 0 {
-          filtered.len() - 1
+        {
+          if current == 0 {
+            filtered.len() - 1
+          } else {
+            current - 1
+          }
         } else {
-          current - 1
+          filtered.len() - 1
         };
         palette.selected = Some(filtered[next]);
         if next < palette.scroll_offset {
@@ -2136,6 +2139,7 @@ pub fn handle_command_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEve
           // Wrapped to bottom.
           palette.scroll_offset = next.saturating_sub(VISIBLE_ITEMS - 1);
         }
+        command_palette_debug_log(format!("move_up selected={:?} next_filtered_index={}", palette.selected, next));
         sync_command_palette_preview(ctx);
         ctx.request_render();
       }
@@ -2146,14 +2150,17 @@ pub fn handle_command_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEve
       let filtered = command_palette_filtered_indices(ctx.command_palette());
       if !filtered.is_empty() {
         let palette = ctx.command_palette_mut();
-        let current = palette
+        let next = if let Some(current) = palette
           .selected
           .and_then(|sel| filtered.iter().position(|&idx| idx == sel))
-          .unwrap_or(filtered.len() - 1);
-        let next = if current >= filtered.len() - 1 {
-          0
+        {
+          if current >= filtered.len() - 1 {
+            0
+          } else {
+            current + 1
+          }
         } else {
-          current + 1
+          0
         };
         palette.selected = Some(filtered[next]);
         if next >= palette.scroll_offset + VISIBLE_ITEMS {
@@ -2162,6 +2169,7 @@ pub fn handle_command_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEve
           // Wrapped to top.
           palette.scroll_offset = 0;
         }
+        command_palette_debug_log(format!("move_down selected={:?} next_filtered_index={}", palette.selected, next));
         sync_command_palette_preview(ctx);
         ctx.request_render();
       }
@@ -2440,10 +2448,19 @@ fn submit_command_line_palette<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool {
     let input = ctx.command_prompt_ref().input.trim_start_matches(':');
     let input_is_empty = input.trim().is_empty();
     let (_, _, complete_command_name) = split(input);
-    if input_is_empty || complete_command_name {
+    if input_is_empty {
       command_palette_debug_log(format!(
-        "submit_command_line attempting command-name completion item_idx={} input_is_empty={} complete_command_name={}",
-        item_idx, input_is_empty, complete_command_name,
+        "submit_command_line empty-input command completion item_idx={}",
+        item_idx,
+      ));
+      if apply_selected_command_name_completion(ctx, item_idx) {
+        return true;
+      }
+    }
+    if complete_command_name {
+      command_palette_debug_log(format!(
+        "submit_command_line command-name completion item_idx={} complete_command_name={}",
+        item_idx, complete_command_name,
       ));
       if apply_selected_command_palette_completion(ctx, item_idx) {
         return true;

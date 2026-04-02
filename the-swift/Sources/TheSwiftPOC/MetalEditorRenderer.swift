@@ -15,6 +15,15 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
 
     private var scene: EditorRenderScene?
     private var lineCache: [EditorLineCacheKey: CGImage] = [:]
+    private var lastThemeGeneration: UInt64?
+
+    private struct DrawPerfStats {
+        var cacheHits = 0
+        var cacheMisses = 0
+        var rasterizedLines = 0
+        var rasterizedCells = 0
+        var rasterMs: Double = 0
+    }
 
     let view: MTKView
 
@@ -43,19 +52,31 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
     }
 
     func update(scene: EditorRenderScene) {
+        let previousThemeGeneration = lastThemeGeneration
+        let cacheCountBefore = lineCache.count
         self.scene = scene
         pruneCache(for: scene)
+        let cacheCountAfter = lineCache.count
+        if previousThemeGeneration != scene.info.themeGeneration {
+            themePerfLog(
+                "renderer.update themeGen=\(scene.info.themeGeneration) previousThemeGen=\(previousThemeGeneration.map(String.init) ?? "nil") visibleLines=\(scene.lines.count) cacheBefore=\(cacheCountBefore) cacheAfter=\(cacheCountAfter)"
+            )
+        }
+        lastThemeGeneration = scene.info.themeGeneration
         view.setNeedsDisplay(view.bounds)
     }
 
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
 
     func draw(in view: MTKView) {
+        let drawStarted = CFAbsoluteTimeGetCurrent()
         guard let scene,
               let drawable = view.currentDrawable,
               let commandBuffer = queue.makeCommandBuffer() else {
             return
         }
+
+        var perf = DrawPerfStats()
 
         let scale = max(scaleProvider(), 1)
         let cellSize = scene.info.surfaceMetrics.cellSizePoints
@@ -112,7 +133,8 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
                 viewportWidth: view.bounds.width,
                 scale: scale,
                 cellSize: cellSize,
-                baselineFromBottom: baselineFromBottom
+                baselineFromBottom: baselineFromBottom,
+                perf: &perf
             ) {
                 let rect = CGRect(
                     x: 0,
@@ -165,6 +187,10 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
         )
         commandBuffer.present(drawable)
         commandBuffer.commit()
+        let totalMs = (CFAbsoluteTimeGetCurrent() - drawStarted) * 1000
+        themePerfLog(
+            "renderer.draw themeGen=\(scene.info.themeGeneration) totalMs=\(String(format: "%.2f", totalMs)) cacheHits=\(perf.cacheHits) cacheMisses=\(perf.cacheMisses) rasterizedLines=\(perf.rasterizedLines) rasterizedCells=\(perf.rasterizedCells) rasterMs=\(String(format: "%.2f", perf.rasterMs))"
+        )
     }
 
     private func pruneCache(for scene: EditorRenderScene) {
@@ -178,11 +204,18 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
         viewportWidth: CGFloat,
         scale: CGFloat,
         cellSize: CGSize,
-        baselineFromBottom: CGFloat
+        baselineFromBottom: CGFloat,
+        perf: inout DrawPerfStats
     ) -> CGImage? {
         if let cached = lineCache[key] {
+            perf.cacheHits += 1
             return cached
         }
+
+        let rasterStarted = CFAbsoluteTimeGetCurrent()
+        perf.cacheMisses += 1
+        perf.rasterizedLines += 1
+        perf.rasterizedCells += line.textCells.count
 
         let pixelWidth = max(Int(ceil(viewportWidth * scale)), 1)
         let pixelHeight = max(Int(ceil((cellSize.height + rowRenderPadding * 2) * scale)), 1)
@@ -227,6 +260,7 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
         }
 
         NSGraphicsContext.restoreGraphicsState()
+        perf.rasterMs += (CFAbsoluteTimeGetCurrent() - rasterStarted) * 1000
         let image = rep.cgImage
         if let image {
             lineCache[key] = image

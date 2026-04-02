@@ -156,13 +156,21 @@ final class EditorSurfaceController: ObservableObject {
     }
 
     func refreshSnapshot() {
+        let started = CFAbsoluteTimeGetCurrent()
         guard let snapshot = EditorFFIBridge.makeSnapshot(handle?.raw) else { return }
+        let snapshotMs = (CFAbsoluteTimeGetCurrent() - started) * 1000
         currentMode = snapshot.info.mode
         commandPalette = snapshot.commandPalette
+        let sceneStarted = CFAbsoluteTimeGetCurrent()
         let marked = markedTextOverlay(from: snapshot)
         let scene = EditorRenderScene.from(snapshot: snapshot, markedText: marked)
+        let sceneMs = (CFAbsoluteTimeGetCurrent() - sceneStarted) * 1000
         self.scene = scene
         delegate?.editorController(self, didUpdateScene: scene)
+        let totalMs = (CFAbsoluteTimeGetCurrent() - started) * 1000
+        themePerfLog(
+            "controller.refresh themeGen=\(snapshot.info.themeGeneration) snapshotMs=\(String(format: "%.2f", snapshotMs)) sceneMs=\(String(format: "%.2f", sceneMs)) totalMs=\(String(format: "%.2f", totalMs))"
+        )
     }
 
     private func markedTextOverlay(from snapshot: EditorSnapshot) -> EditorMarkedText? {

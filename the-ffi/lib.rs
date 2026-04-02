@@ -1,5 +1,6 @@
 use std::{
   collections::VecDeque,
+  env,
   ffi::{
     CStr,
     CString,
@@ -13,6 +14,7 @@ use std::{
   },
   ptr,
   sync::mpsc,
+  time::Instant,
 };
 
 use ropey::Rope;
@@ -364,6 +366,16 @@ const STYLE_HIDDEN: u16 = 1 << 6;
 const STYLE_CROSSED_OUT: u16 = 1 << 7;
 
 const SWIFT_SCROLLOFF: usize = 0;
+
+fn theme_perf_enabled() -> bool {
+  env::var("THE_EDITOR_THEME_PROFILE").ok().as_deref() == Some("1")
+}
+
+fn theme_perf_log(message: impl AsRef<str>) {
+  if theme_perf_enabled() {
+    eprintln!("[the-ffi:perf] {}", message.as_ref());
+  }
+}
 
 #[derive(Default)]
 struct OwnedSnapshot {
@@ -783,24 +795,38 @@ impl SwiftEditor {
   }
 
   fn set_ui_theme_named(&mut self, theme_name: &str) -> Result<(), String> {
+    let started = Instant::now();
     let theme = self
       .ui_theme_catalog
       .load_theme(theme_name)
       .ok_or_else(|| format!("Could not load theme: {theme_name}"))?;
+    let load_elapsed = started.elapsed();
     self.ui_theme_name = theme_name.to_string();
     self.ui_theme_base = theme.clone();
     self.ui_theme_preview_name = None;
     self.apply_effective_theme(theme);
+    theme_perf_log(format!(
+      "set_ui_theme name={} load_ms={:.2}",
+      theme_name,
+      load_elapsed.as_secs_f64() * 1000.0,
+    ));
     Ok(())
   }
 
   fn set_ui_theme_preview_named(&mut self, theme_name: &str) -> Result<(), String> {
+    let started = Instant::now();
     let theme = self
       .ui_theme_catalog
       .load_theme(theme_name)
       .ok_or_else(|| format!("Could not load theme: {theme_name}"))?;
+    let load_elapsed = started.elapsed();
     self.ui_theme_preview_name = Some(theme_name.to_string());
     self.apply_effective_theme(theme);
+    theme_perf_log(format!(
+      "set_ui_theme_preview name={} load_ms={:.2}",
+      theme_name,
+      load_elapsed.as_secs_f64() * 1000.0,
+    ));
     Ok(())
   }
 
@@ -811,6 +837,7 @@ impl SwiftEditor {
   }
 
   fn reload_theme_catalog(&mut self) {
+    let started = Instant::now();
     self.ui_theme_catalog = ThemeCatalog::load(Some(&self.workspace_root));
     let current_name = self.ui_theme_name.clone();
     let preview_name = self.ui_theme_preview_name.clone();
@@ -826,6 +853,12 @@ impl SwiftEditor {
     if let Some(preview_name) = preview_name {
       let _ = self.set_ui_theme_preview_named(&preview_name);
     }
+    theme_perf_log(format!(
+      "reload_theme_catalog root={} names={} total_ms={:.2}",
+      self.workspace_root.display(),
+      self.ui_theme_catalog.names().len(),
+      started.elapsed().as_secs_f64() * 1000.0,
+    ));
   }
 
   fn render_styles(&self) -> RenderStyles {
@@ -1802,7 +1835,18 @@ pub unsafe extern "C" fn the_editor_primary_selection_text(handle: *mut the_edit
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn the_editor_snapshot_create(handle: *mut the_editor_handle_t) -> *mut the_editor_snapshot_t {
   let Some(handle) = (unsafe { handle.as_mut() }) else { return ptr::null_mut(); };
-  Box::into_raw(Box::new(the_editor_snapshot_t { snapshot: handle.editor.build_snapshot() }))
+  let started = Instant::now();
+  let snapshot = handle.editor.build_snapshot();
+  theme_perf_log(format!(
+    "snapshot_create theme_gen={} lines={} spans={} cells={} palette_items={} total_ms={:.2}",
+    snapshot.info.theme_generation,
+    snapshot.lines.len(),
+    snapshot.spans.len(),
+    snapshot.text_cells.len(),
+    snapshot.command_palette_items.len(),
+    started.elapsed().as_secs_f64() * 1000.0,
+  ));
+  Box::into_raw(Box::new(the_editor_snapshot_t { snapshot }))
 }
 
 #[unsafe(no_mangle)]

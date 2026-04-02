@@ -317,11 +317,15 @@ enum EditorFFIBridge {
     }
 
     static func makeSnapshot(_ handle: OpaquePointer?) -> EditorSnapshot? {
-        guard let handle, let rawSnapshot = the_editor_snapshot_create(handle) else {
+        guard let handle else { return nil }
+        let createStarted = CFAbsoluteTimeGetCurrent()
+        guard let rawSnapshot = the_editor_snapshot_create(handle) else {
             return nil
         }
+        let createMs = (CFAbsoluteTimeGetCurrent() - createStarted) * 1000
         defer { the_editor_snapshot_free(rawSnapshot) }
 
+        let decodeStarted = CFAbsoluteTimeGetCurrent()
         let infoValue = the_editor_snapshot_info(rawSnapshot)
         let info = EditorSnapshotInfo(
             surfaceWidthPx: Int(infoValue.surface_width_px),
@@ -442,7 +446,7 @@ enum EditorFFIBridge {
             )
         }
 
-        return EditorSnapshot(
+        let snapshot = EditorSnapshot(
             info: info,
             lines: lines,
             cursors: cursors,
@@ -450,6 +454,13 @@ enum EditorFFIBridge {
             overlays: overlays,
             commandPalette: commandPalette
         )
+        let decodeMs = (CFAbsoluteTimeGetCurrent() - decodeStarted) * 1000
+        let spanCount = lines.reduce(into: 0) { $0 += $1.spans.count }
+        let textCellCount = lines.reduce(into: 0) { $0 += $1.textCells.count }
+        themePerfLog(
+            "snapshot_decode themeGen=\(info.themeGeneration) createMs=\(String(format: "%.2f", createMs)) decodeMs=\(String(format: "%.2f", decodeMs)) lines=\(lines.count) spans=\(spanCount) cells=\(textCellCount) paletteItems=\(commandPalette.items.count)"
+        )
+        return snapshot
     }
 
     private static func style(from style: the_editor_style_t) -> EditorResolvedStyle {

@@ -1,0 +1,4 @@
+module TheEditorFFI {
+    header "the_editor_ffi.h"
+    export *
+}

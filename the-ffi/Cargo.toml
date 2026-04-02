@@ -1,0 +1,20 @@
+[package]
+name = "the-ffi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "the_editor_ffi"
+path = "lib.rs"
+crate-type = ["staticlib"]
+
+[dependencies]
+ropey.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+the-default = { path = "../the-default" }
+the-lib = { path = "../the-lib" }
+
+[lints]
+workspace = true

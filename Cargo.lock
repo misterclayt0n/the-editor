@@ -1603,6 +1603,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "the-ffi"
+version = "0.1.0"
+dependencies = [
+ "ropey",
+ "serde",
+ "serde_json",
+ "the-default",
+ "the-lib",
+]
+
+[[package]]
 name = "the-lib"
 version = "0.1.0"
 dependencies = [

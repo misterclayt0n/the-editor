@@ -3,6 +3,7 @@ members = [
   "the-core",
   "the-default",
   "the-dispatch",
+  "the-ffi",
   "the-lib",
   "the-lsp",
   "the-loader",

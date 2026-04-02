@@ -587,7 +587,9 @@ impl SwiftEditor {
       || self.editor.view().viewport.width != cols
       || self.editor.view().viewport.height != rows;
     self.surface = surface;
-    self.editor.view_mut().viewport = Rect::new(0, 0, cols, rows);
+    let viewport = Rect::new(0, 0, cols, rows);
+    self.editor.set_layout_viewport(viewport);
+    self.editor.view_mut().viewport = viewport;
     self.sync_text_viewport_width();
     self.clamp_scroll();
     changed
@@ -596,7 +598,9 @@ impl SwiftEditor {
   fn set_viewport(&mut self, cols: u16, rows: u16) {
     let cols = cols.max(1);
     let rows = rows.max(1);
-    self.editor.view_mut().viewport = Rect::new(0, 0, cols, rows);
+    let viewport = Rect::new(0, 0, cols, rows);
+    self.editor.set_layout_viewport(viewport);
+    self.editor.view_mut().viewport = viewport;
     self.sync_text_viewport_width();
     self.clamp_scroll();
   }

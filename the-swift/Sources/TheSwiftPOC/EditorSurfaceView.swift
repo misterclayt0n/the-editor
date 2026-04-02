@@ -120,7 +120,7 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
     }
 
     private func translateRawEvent(_ event: NSEvent) -> the_editor_key_event_t? {
-        var keyEvent = the_editor_key_event_t(kind: THE_EDITOR_KEY_OTHER.rawValue, codepoint: 0, modifiers: modifierBits(for: event))
+        var keyEvent = the_editor_key_event_t(kind: THE_EDITOR_KEY_OTHER.rawValue, codepoint: 0, modifiers: modifierBits(for: event, includeShift: true))
         switch Int(event.keyCode) {
         case 53: keyEvent.kind = THE_EDITOR_KEY_ESCAPE.rawValue
         case 36: keyEvent.kind = THE_EDITOR_KEY_ENTER.rawValue
@@ -153,11 +153,12 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
             guard let scalar = event.characters?.unicodeScalars.first else { return nil }
             keyEvent.kind = THE_EDITOR_KEY_CHAR.rawValue
             keyEvent.codepoint = scalar.value
+            keyEvent.modifiers = modifierBits(for: event, includeShift: false)
         }
         return keyEvent
     }
 
-    private func modifierBits(for event: NSEvent) -> UInt8 {
+    private func modifierBits(for event: NSEvent, includeShift: Bool) -> UInt8 {
         var bits: UInt8 = 0
         if event.modifierFlags.contains(.control) {
             bits |= UInt8(THE_EDITOR_MODIFIER_CTRL)
@@ -165,7 +166,7 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
         if event.modifierFlags.contains(.option) {
             bits |= UInt8(THE_EDITOR_MODIFIER_ALT)
         }
-        if event.modifierFlags.contains(.shift) {
+        if includeShift && event.modifierFlags.contains(.shift) {
             bits |= UInt8(THE_EDITOR_MODIFIER_SHIFT)
         }
         return bits

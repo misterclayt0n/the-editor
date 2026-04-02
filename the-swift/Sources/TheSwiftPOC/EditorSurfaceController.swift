@@ -21,7 +21,6 @@ final class EditorSurfaceController {
 
     private var surfaceConfiguration: EditorSurfaceConfiguration?
     private var markedText: String = ""
-    private var lastLoggedSnapshotSignature: String?
 
     init(initialPath: String?) {
         self.handle = EditorFFIBridge.createHandle(initialPath: initialPath).map(EditorHandleBox.init(raw:))
@@ -34,7 +33,6 @@ final class EditorSurfaceController {
 
     func configureSurface(size: CGSize, backingScale: CGFloat, fontMetrics: EditorFontMetrics) {
         let configuration = fontMetrics.surfaceConfiguration(viewSize: size, backingScale: backingScale)
-        editorDebugLog("configureSurface size=\(editorDebugDescribe(size)) scale=\(String(format: "%.2f", backingScale)) widthPx=\(configuration.widthPx) heightPx=\(configuration.heightPx) cellPx=(\(configuration.metrics.cellWidthPx),\(configuration.metrics.cellHeightPx))")
         guard configuration != surfaceConfiguration else { return }
         surfaceConfiguration = configuration
         guard EditorFFIBridge.configureSurface(handle?.raw, configuration: configuration) else { return }
@@ -88,11 +86,6 @@ final class EditorSurfaceController {
     func refreshSnapshot() {
         guard let snapshot = EditorFFIBridge.makeSnapshot(handle?.raw) else { return }
         currentMode = snapshot.info.mode
-        let signature = "surface=(\(snapshot.info.surfaceWidthPx),\(snapshot.info.surfaceHeightPx)) viewport=(\(snapshot.info.viewportWidth),\(snapshot.info.viewportHeight)) contentOffsetX=\(snapshot.info.contentOffsetX) scroll=(\(snapshot.info.scrollRow),\(snapshot.info.scrollCol)) docLines=\(snapshot.info.documentLineCount)"
-        if signature != lastLoggedSnapshotSignature {
-            editorDebugLog("snapshot \(signature)")
-            lastLoggedSnapshotSignature = signature
-        }
         let marked = markedTextOverlay(from: snapshot)
         let scene = EditorRenderScene.from(snapshot: snapshot, markedText: marked)
         self.scene = scene

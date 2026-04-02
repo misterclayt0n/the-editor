@@ -1,6 +1,5 @@
 use std::{
   collections::VecDeque,
-  env,
   ffi::{
     CStr,
     CString,
@@ -333,12 +332,6 @@ const STYLE_CROSSED_OUT: u16 = 1 << 7;
 
 const SWIFT_SCROLLOFF: usize = 0;
 
-fn ffi_debug_log(message: impl AsRef<str>) {
-  if env::var("THE_EDITOR_FFI_DEBUG_VIEWPORT").ok().as_deref() == Some("1") {
-    eprintln!("[the-ffi] {}", message.as_ref());
-  }
-}
-
 #[derive(Default)]
 struct OwnedSnapshot {
   info:             the_editor_snapshot_info_t,
@@ -599,17 +592,6 @@ impl SwiftEditor {
     self.editor.view_mut().viewport = viewport;
     self.sync_text_viewport_width();
     self.clamp_scroll();
-    ffi_debug_log(format!(
-      "configure_surface surface_px=({}, {}) cell_px=({}, {}) viewport=({}, {}) content_width={} changed={}",
-      self.surface.width_px,
-      self.surface.height_px,
-      self.surface.metrics.cell_width_px,
-      self.surface.metrics.cell_height_px,
-      viewport.width,
-      viewport.height,
-      self.content_viewport_width(),
-      changed,
-    ));
     changed
   }
 
@@ -720,20 +702,6 @@ impl SwiftEditor {
     let styles = self.render_styles();
     let frame = the_default::frame_render_plan_with_styles(self, styles);
     let plan = frame.active_plan();
-    if let Some(plan) = plan {
-      ffi_debug_log(format!(
-        "snapshot layout_viewport=({}, {}) view_viewport=({}, {}) plan_viewport=({}, {}) content_offset_x={} scroll=({}, {})",
-        self.editor.layout_viewport().width,
-        self.editor.layout_viewport().height,
-        self.editor.view().viewport.width,
-        self.editor.view().viewport.height,
-        plan.viewport.width,
-        plan.viewport.height,
-        plan.content_offset_x,
-        self.editor.view().scroll.row,
-        self.editor.view().scroll.col,
-      ));
-    }
     OwnedSnapshot::from_editor(self, plan)
   }
 

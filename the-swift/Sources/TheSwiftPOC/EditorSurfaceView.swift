@@ -65,6 +65,22 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
 
     func update(scene: EditorRenderScene) {
         renderer.update(scene: scene)
+        window?.invalidateCursorRects(for: self)
+    }
+
+    override func resetCursorRects() {
+        discardCursorRects()
+        let gutterWidth: CGFloat
+        if let scene = controller?.scene {
+            gutterWidth = CGFloat(scene.info.contentOffsetX) * scene.info.surfaceMetrics.cellSizePoints.width
+        } else {
+            gutterWidth = 0
+        }
+        if gutterWidth > 0 {
+            addCursorRect(NSRect(x: 0, y: 0, width: gutterWidth, height: bounds.height), cursor: .arrow)
+        }
+        let textRect = NSRect(x: gutterWidth, y: 0, width: max(bounds.width - gutterWidth, 0), height: bounds.height)
+        addCursorRect(textRect, cursor: .iBeam)
     }
 
     override func mouseDown(with event: NSEvent) {

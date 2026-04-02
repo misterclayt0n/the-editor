@@ -8,7 +8,9 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
     private let device: MTLDevice
     private let queue: MTLCommandQueue
     private let ciContext: CIContext
+    private let fontMetrics: EditorFontMetrics
     private let font: NSFont
+    private let rowRenderPadding: CGFloat
     private let scaleProvider: () -> CGFloat
 
     private var scene: EditorRenderScene?
@@ -24,7 +26,9 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
         self.device = device
         self.queue = queue
         self.ciContext = CIContext(mtlDevice: device)
+        self.fontMetrics = fontMetrics
         self.font = fontMetrics.font
+        self.rowRenderPadding = max(ceil((font.boundingRectForFont.height - fontMetrics.cellSize.height) / 2), 1)
         self.scaleProvider = scaleProvider
 
         let view = MTKView(frame: .zero, device: device)
@@ -112,7 +116,7 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
             ) {
                 let rect = CGRect(
                     x: 0,
-                    y: topY(forRow: line.row, rowSpan: 1, viewportHeight: view.bounds.height, cellHeight: cellSize.height),
+                    y: topY(forRow: line.row, rowSpan: 1, viewportHeight: view.bounds.height, cellHeight: cellSize.height) - rowRenderPadding,
                     width: CGFloat(image.width) / scale,
                     height: CGFloat(image.height) / scale
                 )
@@ -181,7 +185,7 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
         }
 
         let pixelWidth = max(Int(ceil(viewportWidth * scale)), 1)
-        let pixelHeight = max(Int(ceil(cellSize.height * scale)), 1)
+        let pixelHeight = max(Int(ceil((cellSize.height + rowRenderPadding * 2) * scale)), 1)
         guard let rep = NSBitmapImageRep(
             bitmapDataPlanes: nil,
             pixelsWide: pixelWidth,
@@ -197,7 +201,7 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
             return nil
         }
 
-        rep.size = CGSize(width: viewportWidth, height: cellSize.height)
+        rep.size = CGSize(width: viewportWidth, height: cellSize.height + rowRenderPadding * 2)
         NSGraphicsContext.saveGraphicsState()
         let graphicsContext = NSGraphicsContext(bitmapImageRep: rep)
         NSGraphicsContext.current = graphicsContext
@@ -207,7 +211,7 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
             return nil
         }
 
-        cgContext.clear(CGRect(x: 0, y: 0, width: viewportWidth, height: cellSize.height))
+        cgContext.clear(CGRect(x: 0, y: 0, width: viewportWidth, height: cellSize.height + rowRenderPadding * 2))
 
         for textCell in line.textCells {
             drawText(
@@ -217,7 +221,7 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
                 row: 0,
                 in: cgContext,
                 cellSize: cellSize,
-                baselineFromBottom: baselineFromBottom,
+                baselineFromBottom: baselineFromBottom + rowRenderPadding,
                 viewportHeight: nil
             )
         }

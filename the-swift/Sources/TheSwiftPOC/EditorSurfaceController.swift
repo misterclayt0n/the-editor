@@ -1,5 +1,7 @@
 import AppKit
+import Combine
 import Foundation
+import SwiftUI
 import TheEditorFFI
 
 @MainActor
@@ -12,12 +14,14 @@ private struct EditorHandleBox: @unchecked Sendable {
 }
 
 @MainActor
-final class EditorSurfaceController {
+final class EditorSurfaceController: ObservableObject {
     weak var delegate: EditorSurfaceControllerDelegate?
+    weak var editorFirstResponder: NSView?
 
     fileprivate var handle: EditorHandleBox?
-    private(set) var scene: EditorRenderScene?
-    private(set) var currentMode: EditorMode = .normal
+    @Published private(set) var scene: EditorRenderScene?
+    @Published private(set) var currentMode: EditorMode = .normal
+    @Published private(set) var commandPalette: EditorCommandPaletteState = .empty
 
     private var surfaceConfiguration: EditorSurfaceConfiguration?
     private var markedText: String = ""
@@ -77,6 +81,54 @@ final class EditorSurfaceController {
         refreshSnapshot()
     }
 
+    func toggleCommandPalette() {
+        guard EditorFFIBridge.toggleCommandPalette(handle?.raw) else { return }
+        refreshSnapshot()
+    }
+
+    func closeCommandPalette() {
+        guard EditorFFIBridge.closeCommandPalette(handle?.raw) else { return }
+        refreshSnapshot()
+    }
+
+    func setCommandPaletteQuery(_ query: String) {
+        guard query != commandPalette.query else { return }
+        guard EditorFFIBridge.setCommandPaletteQuery(handle?.raw, query: query) else { return }
+        refreshSnapshot()
+    }
+
+    func moveCommandPaletteSelection(_ direction: MoveCommandDirection) {
+        let changed: Bool
+        switch direction {
+        case .up:
+            changed = EditorFFIBridge.selectPreviousCommandPaletteItem(handle?.raw)
+        case .down:
+            changed = EditorFFIBridge.selectNextCommandPaletteItem(handle?.raw)
+        case .left, .right:
+            changed = false
+        @unknown default:
+            changed = false
+        }
+        guard changed else { return }
+        refreshSnapshot()
+    }
+
+    func submitCommandPalette() {
+        guard EditorFFIBridge.submitCommandPalette(handle?.raw) else { return }
+        refreshSnapshot()
+    }
+
+    func submitCommandPalette(visibleIndex: Int) {
+        guard EditorFFIBridge.selectCommandPaletteVisibleIndex(handle?.raw, index: visibleIndex) else { return }
+        guard EditorFFIBridge.submitCommandPalette(handle?.raw) else { return }
+        refreshSnapshot()
+    }
+
+    func focusEditor() {
+        guard let editorFirstResponder else { return }
+        editorFirstResponder.window?.makeFirstResponder(editorFirstResponder)
+    }
+
     func insertText(_ text: String) {
         guard !text.isEmpty else { return }
         guard EditorFFIBridge.insertText(handle?.raw, text: text) else { return }
@@ -106,6 +158,7 @@ final class EditorSurfaceController {
     func refreshSnapshot() {
         guard let snapshot = EditorFFIBridge.makeSnapshot(handle?.raw) else { return }
         currentMode = snapshot.info.mode
+        commandPalette = snapshot.commandPalette
         let marked = markedTextOverlay(from: snapshot)
         let scene = EditorRenderScene.from(snapshot: snapshot, markedText: marked)
         self.scene = scene

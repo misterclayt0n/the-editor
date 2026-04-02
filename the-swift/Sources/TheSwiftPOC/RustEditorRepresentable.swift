@@ -1,10 +1,10 @@
 import SwiftUI
 
 struct EditorSurfaceRepresentable: NSViewRepresentable {
-    let initialPath: String?
+    @ObservedObject var controller: EditorSurfaceController
 
     func makeNSView(context: Context) -> EditorSurfaceScrollView {
-        EditorSurfaceScrollView(initialPath: initialPath)
+        EditorSurfaceScrollView(controller: controller)
     }
 
     func updateNSView(_ nsView: EditorSurfaceScrollView, context: Context) {}

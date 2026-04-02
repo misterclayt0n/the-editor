@@ -9,27 +9,60 @@ final class TheSwiftPOCAppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
+@MainActor
+final class EditorAppModel: ObservableObject {
+    let controller: EditorSurfaceController
+
+    init(initialPath: String?) {
+        self.controller = EditorSurfaceController(initialPath: initialPath)
+    }
+}
+
+struct EditorCommandMenu: Commands {
+    let controller: EditorSurfaceController
+
+    var body: some Commands {
+        CommandGroup(after: .toolbar) {
+            Button("Command Palette") {
+                controller.toggleCommandPalette()
+            }
+            .keyboardShortcut("p", modifiers: [.command, .shift])
+        }
+    }
+}
+
 @main
 struct TheSwiftPOCApp: App {
     @NSApplicationDelegateAdaptor(TheSwiftPOCAppDelegate.self) private var appDelegate
-    private let initialPath = ProcessInfo.processInfo.arguments
-        .dropFirst()
-        .first(where: { $0 != "--" })
+    @StateObject private var model: EditorAppModel
+
+    init() {
+        let initialPath = ProcessInfo.processInfo.arguments
+            .dropFirst()
+            .first(where: { $0 != "--" })
+        _model = StateObject(wrappedValue: EditorAppModel(initialPath: initialPath))
+    }
 
     var body: some Scene {
         WindowGroup {
-            EditorContainerView(initialPath: initialPath)
+            EditorContainerView(controller: model.controller)
                 .frame(minWidth: 900, minHeight: 600)
         }
         .defaultSize(width: 900, height: 600)
         .windowResizability(.contentSize)
+        .commands {
+            EditorCommandMenu(controller: model.controller)
+        }
     }
 }
 
 private struct EditorContainerView: View {
-    let initialPath: String?
+    @ObservedObject var controller: EditorSurfaceController
 
     var body: some View {
-        RustEditorRepresentable(initialPath: initialPath)
+        ZStack {
+            RustEditorRepresentable(controller: controller)
+            EditorCommandPaletteView(controller: controller)
+        }
     }
 }

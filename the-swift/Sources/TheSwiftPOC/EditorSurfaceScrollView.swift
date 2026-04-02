@@ -25,8 +25,8 @@ final class EditorSurfaceScrollView: NSView, EditorSurfaceControllerDelegate {
     private var isLiveScrolling = false
     private var lastSentRow: Int?
 
-    init(initialPath: String?) {
-        self.controller = EditorSurfaceController(initialPath: initialPath)
+    init(controller: EditorSurfaceController) {
+        self.controller = controller
         self.scrollView = NSScrollView(frame: .zero)
         self.documentView = FlippedDocumentView(frame: .zero)
         guard let surfaceView = EditorSurfaceView(controller: controller) else {
@@ -36,6 +36,7 @@ final class EditorSurfaceScrollView: NSView, EditorSurfaceControllerDelegate {
         super.init(frame: .zero)
 
         controller.delegate = self
+        controller.editorFirstResponder = surfaceView
 
         scrollView.drawsBackground = false
         scrollView.hasVerticalScroller = true

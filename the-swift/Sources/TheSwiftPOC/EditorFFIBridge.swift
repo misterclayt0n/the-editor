@@ -159,12 +159,39 @@ struct EditorSnapshotOverlay: Hashable {
     let style: EditorResolvedStyle
 }
 
+struct EditorCommandPaletteItem: Hashable {
+    let title: String
+    let subtitle: String?
+    let description: String?
+    let badge: String?
+    let leadingIcon: String?
+    let leadingColor: EditorRGBA?
+    let emphasis: Bool
+}
+
+struct EditorCommandPaletteState: Hashable {
+    let isOpen: Bool
+    let selectedIndex: Int?
+    let query: String
+    let placeholder: String
+    let items: [EditorCommandPaletteItem]
+
+    static let empty = EditorCommandPaletteState(
+        isOpen: false,
+        selectedIndex: nil,
+        query: "",
+        placeholder: "Execute a command…",
+        items: []
+    )
+}
+
 struct EditorSnapshot {
     let info: EditorSnapshotInfo
     let lines: [EditorSnapshotLine]
     let cursors: [EditorSnapshotCursor]
     let selections: [EditorSnapshotSelection]
     let overlays: [EditorSnapshotOverlay]
+    let commandPalette: EditorCommandPaletteState
 }
 
 enum EditorFFIBridge {
@@ -224,6 +251,48 @@ enum EditorFFIBridge {
     }
 
     @discardableResult
+    static func toggleCommandPalette(_ handle: OpaquePointer?) -> Bool {
+        guard let handle else { return false }
+        return the_editor_toggle_command_palette(handle)
+    }
+
+    @discardableResult
+    static func closeCommandPalette(_ handle: OpaquePointer?) -> Bool {
+        guard let handle else { return false }
+        return the_editor_close_command_palette(handle)
+    }
+
+    @discardableResult
+    static func setCommandPaletteQuery(_ handle: OpaquePointer?, query: String) -> Bool {
+        guard let handle else { return false }
+        return query.withCString { the_editor_command_palette_set_query(handle, $0) }
+    }
+
+    @discardableResult
+    static func selectNextCommandPaletteItem(_ handle: OpaquePointer?) -> Bool {
+        guard let handle else { return false }
+        return the_editor_command_palette_select_next(handle)
+    }
+
+    @discardableResult
+    static func selectPreviousCommandPaletteItem(_ handle: OpaquePointer?) -> Bool {
+        guard let handle else { return false }
+        return the_editor_command_palette_select_previous(handle)
+    }
+
+    @discardableResult
+    static func selectCommandPaletteVisibleIndex(_ handle: OpaquePointer?, index: Int) -> Bool {
+        guard let handle else { return false }
+        return the_editor_command_palette_select_visible_index(handle, UInt(index))
+    }
+
+    @discardableResult
+    static func submitCommandPalette(_ handle: OpaquePointer?) -> Bool {
+        guard let handle else { return false }
+        return the_editor_command_palette_submit(handle)
+    }
+
+    @discardableResult
     static func insertText(_ handle: OpaquePointer?, text: String) -> Bool {
         guard let handle else { return false }
         return text.withCString { the_editor_insert_text(handle, $0) }
@@ -274,6 +343,26 @@ enum EditorFFIBridge {
             scrollRow: Int(infoValue.scroll_row),
             scrollCol: Int(infoValue.scroll_col),
             documentLineCount: Int(infoValue.document_line_count)
+        )
+
+        let paletteValue = the_editor_snapshot_command_palette(rawSnapshot)
+        let commandPalette = EditorCommandPaletteState(
+            isOpen: paletteValue.is_open,
+            selectedIndex: paletteValue.selected_index >= 0 ? Int(paletteValue.selected_index) : nil,
+            query: paletteValue.query.map { String(cString: $0) } ?? "",
+            placeholder: paletteValue.placeholder.map { String(cString: $0) } ?? "Execute a command…",
+            items: (0..<Int(paletteValue.item_count)).map { itemIndex in
+                let itemValue = the_editor_snapshot_command_palette_item_at(rawSnapshot, UInt(itemIndex))
+                return EditorCommandPaletteItem(
+                    title: itemValue.title.map { String(cString: $0) } ?? "",
+                    subtitle: itemValue.subtitle.map { String(cString: $0) },
+                    description: itemValue.description.map { String(cString: $0) },
+                    badge: itemValue.badge.map { String(cString: $0) },
+                    leadingIcon: itemValue.leading_icon.map { String(cString: $0) },
+                    leadingColor: rgba(from: itemValue.leading_color),
+                    emphasis: itemValue.emphasis
+                )
+            }
         )
 
         let lines: [EditorSnapshotLine] = (0..<Int(infoValue.line_count)).map { lineIndex in
@@ -354,7 +443,8 @@ enum EditorFFIBridge {
             lines: lines,
             cursors: cursors,
             selections: selections,
-            overlays: overlays
+            overlays: overlays,
+            commandPalette: commandPalette
         )
     }
 

@@ -41,8 +41,16 @@ use the_default::{
   build_dispatch,
   builtin_completion_menu_keymaps,
   builtin_keymaps,
+  command_palette_filtered_indices,
+  command_palette_placeholder_text,
+  command_palette_selected_filtered_index,
+  handle_command_prompt_key,
   handle_key,
   install_default_wiring,
+  open_command_palette,
+  submit_command_palette as submit_command_palette_action,
+  sync_command_palette_preview,
+  update_command_palette_for_input,
 };
 use the_lib::{
   document::{
@@ -235,6 +243,28 @@ impl Default for the_editor_snapshot_text_cell_t {
 
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
+pub struct the_editor_snapshot_command_palette_t {
+  pub is_open:        bool,
+  pub selected_index: i32,
+  pub item_count:     usize,
+  pub query:          *const c_char,
+  pub placeholder:    *const c_char,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct the_editor_snapshot_command_palette_item_t {
+  pub title:         *const c_char,
+  pub subtitle:      *const c_char,
+  pub description:   *const c_char,
+  pub badge:         *const c_char,
+  pub leading_icon:  *const c_char,
+  pub leading_color: the_editor_rgba_t,
+  pub emphasis:      bool,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
 pub struct the_editor_snapshot_cursor_t {
   pub row:   u32,
   pub col:   u32,
@@ -334,14 +364,33 @@ const SWIFT_SCROLLOFF: usize = 0;
 
 #[derive(Default)]
 struct OwnedSnapshot {
-  info:             the_editor_snapshot_info_t,
-  lines:            Vec<LineRecord>,
-  spans:            Vec<SpanRecord>,
-  text_cells:       Vec<TextCellRecord>,
-  cursors:          Vec<the_editor_snapshot_cursor_t>,
-  selections:       Vec<the_editor_snapshot_selection_t>,
-  overlays:         Vec<OverlayRecord>,
-  strings:          Vec<CString>,
+  info:                  the_editor_snapshot_info_t,
+  command_palette:       CommandPaletteRecord,
+  command_palette_items: Vec<CommandPaletteItemRecord>,
+  lines:                 Vec<LineRecord>,
+  spans:                 Vec<SpanRecord>,
+  text_cells:            Vec<TextCellRecord>,
+  cursors:               Vec<the_editor_snapshot_cursor_t>,
+  selections:            Vec<the_editor_snapshot_selection_t>,
+  overlays:              Vec<OverlayRecord>,
+  strings:               Vec<CString>,
+}
+
+#[derive(Clone, Copy, Default)]
+struct CommandPaletteRecord {
+  palette:         the_editor_snapshot_command_palette_t,
+  query_idx:       Option<usize>,
+  placeholder_idx: Option<usize>,
+}
+
+#[derive(Clone, Copy, Default)]
+struct CommandPaletteItemRecord {
+  item:            the_editor_snapshot_command_palette_item_t,
+  title_idx:       usize,
+  subtitle_idx:    Option<usize>,
+  description_idx: Option<usize>,
+  badge_idx:       Option<usize>,
+  leading_icon_idx: Option<usize>,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -654,6 +703,69 @@ impl SwiftEditor {
     changed
   }
 
+  fn toggle_command_palette(&mut self) -> bool {
+    if self.command_palette.is_open {
+      self.close_command_palette()
+    } else {
+      open_command_palette(self);
+      true
+    }
+  }
+
+  fn close_command_palette(&mut self) -> bool {
+    if !self.command_palette.is_open {
+      return false;
+    }
+    handle_command_prompt_key(
+      self,
+      KeyEvent {
+        key: Key::Escape,
+        modifiers: the_default::Modifiers::empty(),
+      },
+    )
+  }
+
+  fn set_command_palette_query(&mut self, query: &str) -> bool {
+    if !self.command_palette.is_open {
+      open_command_palette(self);
+    }
+    update_command_palette_for_input(self, query);
+    true
+  }
+
+  fn move_command_palette_selection(&mut self, next: bool) -> bool {
+    if !self.command_palette.is_open {
+      return false;
+    }
+    handle_command_prompt_key(
+      self,
+      KeyEvent {
+        key: if next { Key::Down } else { Key::Up },
+        modifiers: the_default::Modifiers::empty(),
+      },
+    )
+  }
+
+  fn select_command_palette_visible_index(&mut self, visible_index: usize) -> bool {
+    if !self.command_palette.is_open {
+      return false;
+    }
+    let filtered = command_palette_filtered_indices(&self.command_palette);
+    let Some(item_index) = filtered.get(visible_index).copied() else {
+      return false;
+    };
+    self.command_palette.selected = Some(item_index);
+    sync_command_palette_preview(self);
+    true
+  }
+
+  fn submit_command_palette(&mut self) -> bool {
+    if !self.command_palette.is_open {
+      return false;
+    }
+    submit_command_palette_action(self)
+  }
+
   fn render_styles(&self) -> RenderStyles {
     RenderStyles {
       selection:                  Style::default().bg(Color::Rgb(46, 89, 160)),
@@ -888,7 +1000,75 @@ impl OwnedSnapshot {
       ..Default::default()
     };
 
+    let palette = editor.command_palette();
+    let palette_query = palette
+      .prompt_text
+      .as_deref()
+      .unwrap_or(palette.query.as_str())
+      .to_string();
+    let palette_placeholder = command_palette_placeholder_text(editor);
+    let palette_query_idx = snapshot.push_string(&palette_query);
+    let palette_placeholder_idx = snapshot.push_string(&palette_placeholder);
+    snapshot.command_palette = CommandPaletteRecord {
+      palette: the_editor_snapshot_command_palette_t {
+        is_open: palette.is_open,
+        selected_index: command_palette_selected_filtered_index(palette)
+          .map(|index| index as i32)
+          .unwrap_or(-1),
+        item_count: 0,
+        query: ptr::null(),
+        placeholder: ptr::null(),
+      },
+      query_idx: Some(palette_query_idx),
+      placeholder_idx: Some(palette_placeholder_idx),
+    };
+
+    for item_index in command_palette_filtered_indices(palette) {
+      let Some(item) = palette.items.get(item_index) else {
+        continue;
+      };
+      let title_idx = snapshot.push_string(item.title.as_str());
+      let subtitle_idx = snapshot.push_optional_string(item.subtitle.as_deref());
+      let description_idx = snapshot.push_optional_string(item.description.as_deref());
+      let badge_idx = snapshot.push_optional_string(item.badge.as_deref());
+      let leading_icon_idx = snapshot.push_optional_string(item.leading_icon.as_deref());
+      snapshot.command_palette_items.push(CommandPaletteItemRecord {
+        item: the_editor_snapshot_command_palette_item_t {
+          title: ptr::null(),
+          subtitle: ptr::null(),
+          description: ptr::null(),
+          badge: ptr::null(),
+          leading_icon: ptr::null(),
+          leading_color: color_to_rgba(item.leading_color, &editor.ui_theme),
+          emphasis: item.emphasis,
+        },
+        title_idx,
+        subtitle_idx,
+        description_idx,
+        badge_idx,
+        leading_icon_idx,
+      });
+    }
+    snapshot.command_palette.palette.item_count = snapshot.command_palette_items.len();
+
     let Some(plan) = plan else {
+      snapshot.command_palette.palette.query = snapshot.strings[palette_query_idx].as_ptr();
+      snapshot.command_palette.palette.placeholder = snapshot.strings[palette_placeholder_idx].as_ptr();
+      for item in &mut snapshot.command_palette_items {
+        item.item.title = snapshot.strings[item.title_idx].as_ptr();
+        if let Some(idx) = item.subtitle_idx {
+          item.item.subtitle = snapshot.strings[idx].as_ptr();
+        }
+        if let Some(idx) = item.description_idx {
+          item.item.description = snapshot.strings[idx].as_ptr();
+        }
+        if let Some(idx) = item.badge_idx {
+          item.item.badge = snapshot.strings[idx].as_ptr();
+        }
+        if let Some(idx) = item.leading_icon_idx {
+          item.item.leading_icon = snapshot.strings[idx].as_ptr();
+        }
+      }
       return snapshot;
     };
 
@@ -1030,6 +1210,27 @@ impl OwnedSnapshot {
       }
     }
 
+    if let Some(query_idx) = snapshot.command_palette.query_idx {
+      snapshot.command_palette.palette.query = snapshot.strings[query_idx].as_ptr();
+    }
+    if let Some(placeholder_idx) = snapshot.command_palette.placeholder_idx {
+      snapshot.command_palette.palette.placeholder = snapshot.strings[placeholder_idx].as_ptr();
+    }
+    for item in &mut snapshot.command_palette_items {
+      item.item.title = snapshot.strings[item.title_idx].as_ptr();
+      if let Some(idx) = item.subtitle_idx {
+        item.item.subtitle = snapshot.strings[idx].as_ptr();
+      }
+      if let Some(idx) = item.description_idx {
+        item.item.description = snapshot.strings[idx].as_ptr();
+      }
+      if let Some(idx) = item.badge_idx {
+        item.item.badge = snapshot.strings[idx].as_ptr();
+      }
+      if let Some(idx) = item.leading_icon_idx {
+        item.item.leading_icon = snapshot.strings[idx].as_ptr();
+      }
+    }
     for span in &mut snapshot.spans {
       span.span.text = snapshot.strings[span.text_idx].as_ptr();
     }
@@ -1053,6 +1254,10 @@ impl OwnedSnapshot {
     let c_string = CString::new(text).unwrap_or_else(|_| CString::new(text.replace('\0', "")).expect("cstring"));
     self.strings.push(c_string);
     self.strings.len() - 1
+  }
+
+  fn push_optional_string(&mut self, text: Option<&str>) -> Option<usize> {
+    text.map(|text| self.push_string(text))
   }
 
   fn push_text_cells(&mut self, row: u16, col: u16, text: &str, is_virtual: bool, style: the_editor_style_t) {
@@ -1402,6 +1607,49 @@ pub unsafe extern "C" fn the_editor_handle_key(handle: *mut the_editor_handle_t,
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_toggle_command_palette(handle: *mut the_editor_handle_t) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+  handle.editor.toggle_command_palette()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_close_command_palette(handle: *mut the_editor_handle_t) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+  handle.editor.close_command_palette()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_command_palette_set_query(handle: *mut the_editor_handle_t, query: *const c_char) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+  let Some(query) = (unsafe { string_from_c(query) }) else { return false; };
+  handle.editor.set_command_palette_query(&query)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_command_palette_select_next(handle: *mut the_editor_handle_t) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+  handle.editor.move_command_palette_selection(true)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_command_palette_select_previous(handle: *mut the_editor_handle_t) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+  handle.editor.move_command_palette_selection(false)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_command_palette_select_visible_index(handle: *mut the_editor_handle_t, visible_index: usize) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+  handle.editor.select_command_palette_visible_index(visible_index)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_command_palette_submit(handle: *mut the_editor_handle_t) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+  handle.editor.submit_command_palette()
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn the_editor_insert_text(handle: *mut the_editor_handle_t, text: *const c_char) -> bool {
   let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
   let Some(text) = (unsafe { string_from_c(text) }) else { return false; };
@@ -1445,6 +1693,18 @@ pub unsafe extern "C" fn the_editor_snapshot_free(snapshot: *mut the_editor_snap
 pub unsafe extern "C" fn the_editor_snapshot_info(snapshot: *const the_editor_snapshot_t) -> the_editor_snapshot_info_t {
   let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_info_t::default(); };
   snapshot.snapshot.info
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_snapshot_command_palette(snapshot: *const the_editor_snapshot_t) -> the_editor_snapshot_command_palette_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_command_palette_t::default(); };
+  snapshot.snapshot.command_palette.palette
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_snapshot_command_palette_item_at(snapshot: *const the_editor_snapshot_t, item_index: usize) -> the_editor_snapshot_command_palette_item_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_command_palette_item_t::default(); };
+  snapshot.snapshot.command_palette_items.get(item_index).map(|record| record.item).unwrap_or_default()
 }
 
 #[unsafe(no_mangle)]

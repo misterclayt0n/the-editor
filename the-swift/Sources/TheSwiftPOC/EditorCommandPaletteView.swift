@@ -20,13 +20,7 @@ struct EditorCommandPaletteView: View {
                                     }
                                 }
                             ),
-                            query: Binding(
-                                get: { controller.commandPalette.query },
-                                set: {
-                                    commandPaletteDebugLog("binding.set query=\(String(reflecting: $0))")
-                                    controller.setCommandPaletteQuery($0)
-                                }
-                            ),
+                            query: controller.commandPalette.query,
                             placeholder: controller.commandPalette.placeholder,
                             backgroundColor: Color(nsColor: controller.scene?.backgroundColor ?? .windowBackgroundColor),
                             options: commandOptions,

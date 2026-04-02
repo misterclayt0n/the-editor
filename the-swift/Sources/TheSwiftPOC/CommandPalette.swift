@@ -46,7 +46,7 @@ struct CommandOption: Identifiable, Hashable {
 
 struct CommandPaletteView: View {
     @Binding var isPresented: Bool
-    @Binding var query: String
+    let query: String
     var placeholder: String = "Execute a command…"
     var backgroundColor: Color = Color(nsColor: .windowBackgroundColor)
     var options: [CommandOption]
@@ -55,12 +55,14 @@ struct CommandPaletteView: View {
     var onMove: (MoveCommandDirection) -> Void
     var onSubmit: () -> Void
     @State private var hoveredOptionID: UUID?
+    @State private var localQuery: String = ""
+    @State private var suppressQueryCallback = false
 
     var body: some View {
         let scheme: ColorScheme = NSColor(backgroundColor).isLightColor ? .light : .dark
 
         VStack(alignment: .leading, spacing: 0) {
-            CommandPaletteQuery(query: $query, placeholder: placeholder) { event in
+            CommandPaletteQuery(query: $localQuery, placeholder: placeholder) { event in
                 switch event {
                 case .exit:
                     isPresented = false
@@ -82,8 +84,20 @@ struct CommandPaletteView: View {
                     break
                 }
             }
-            .onChange(of: query) { _, newValue in
+            .onChange(of: localQuery) { _, newValue in
+                guard !suppressQueryCallback else { return }
                 onQueryChange(newValue)
+            }
+            .onChange(of: query) { _, newValue in
+                guard localQuery != newValue else { return }
+                suppressQueryCallback = true
+                localQuery = newValue
+                DispatchQueue.main.async {
+                    suppressQueryCallback = false
+                }
+            }
+            .onAppear {
+                localQuery = query
             }
 
             Divider()

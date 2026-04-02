@@ -96,6 +96,9 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
 
         if controller.currentMode == .insert {
             if let special = translateSpecialEvent(event) {
+                if special.kind == THE_EDITOR_KEY_ESCAPE.rawValue {
+                    cancelMarkedTextComposition()
+                }
                 controller.handleKey(special)
                 return
             }
@@ -206,6 +209,11 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
         }
     }
 
+    private func cancelMarkedTextComposition() {
+        inputContext?.discardMarkedText()
+        unmarkText()
+    }
+
     func validAttributesForMarkedText() -> [NSAttributedString.Key] {
         []
     }
@@ -270,6 +278,7 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
         case #selector(insertTab(_:)):
             event = the_editor_key_event_t(kind: THE_EDITOR_KEY_TAB.rawValue, codepoint: 0, modifiers: 0)
         case #selector(cancelOperation(_:)):
+            cancelMarkedTextComposition()
             event = the_editor_key_event_t(kind: THE_EDITOR_KEY_ESCAPE.rawValue, codepoint: 0, modifiers: 0)
         default:
             event = nil

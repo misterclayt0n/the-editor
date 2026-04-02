@@ -2438,8 +2438,13 @@ fn submit_command_line_palette<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool {
 
   if let Some(item_idx) = selected {
     let input = ctx.command_prompt_ref().input.trim_start_matches(':');
+    let input_is_empty = input.trim().is_empty();
     let (_, _, complete_command_name) = split(input);
-    if complete_command_name {
+    if input_is_empty || complete_command_name {
+      command_palette_debug_log(format!(
+        "submit_command_line attempting command-name completion item_idx={} input_is_empty={} complete_command_name={}",
+        item_idx, input_is_empty, complete_command_name,
+      ));
       if apply_selected_command_palette_completion(ctx, item_idx) {
         return true;
       }

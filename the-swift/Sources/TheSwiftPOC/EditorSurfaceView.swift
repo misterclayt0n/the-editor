@@ -106,9 +106,9 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
 
             let absX = abs(deltaX)
             let absY = abs(deltaY)
-            if absX > absY * 1.25 {
+            if absX > absY {
                 deltaY = 0
-            } else if absY > absX * 1.25 {
+            } else if absY > absX {
                 deltaX = 0
             }
         }

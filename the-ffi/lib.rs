@@ -619,7 +619,8 @@ impl SwiftEditor {
   }
 
   fn set_scroll_col(&mut self, col: u32) -> bool {
-    let next = col as usize;
+    let max_col = max_scroll_col(self.editor.document(), &self.text_format, self.content_viewport_width() as usize) as u32;
+    let next = col.min(max_col) as usize;
     if next == self.editor.view().scroll.col {
       return false;
     }
@@ -671,8 +672,12 @@ impl SwiftEditor {
       self.editor.document().text().len_lines(),
       self.editor.view().viewport.height as usize,
     );
-    if self.editor.view().scroll.row > max_row {
-      self.editor.view_mut().scroll.row = max_row;
+    let max_col = max_scroll_col(self.editor.document(), &self.text_format, self.content_viewport_width() as usize);
+    let scroll = self.editor.view().scroll;
+    if scroll.row > max_row || scroll.col > max_col {
+      let view = self.editor.view_mut();
+      view.scroll.row = view.scroll.row.min(max_row);
+      view.scroll.col = view.scroll.col.min(max_col);
     }
   }
 
@@ -1288,6 +1293,26 @@ fn indexed_color(index: u8) -> (u8, u8, u8) {
 
 fn max_scroll_row(line_count: usize, viewport_height: usize) -> usize {
   line_count.saturating_sub(viewport_height.max(1))
+}
+
+fn max_scroll_col(doc: &Document, text_format: &TextFormat, viewport_width: usize) -> usize {
+  if text_format.soft_wrap {
+    return 0;
+  }
+
+  let viewport_width = viewport_width.max(1);
+  let mut longest_visual_col = 1usize;
+  for line in doc.text().slice(..).lines() {
+    let line = line.to_string();
+    let mut visual_col = 0usize;
+    for grapheme in UnicodeSegmentation::graphemes(line.as_str(), true) {
+      visual_col = visual_col.saturating_add(grapheme_width(grapheme));
+    }
+    visual_col = visual_col.saturating_add(1);
+    longest_visual_col = longest_visual_col.max(visual_col);
+  }
+
+  longest_visual_col.saturating_sub(viewport_width.saturating_sub(1))
 }
 
 fn default_workspace_root() -> PathBuf {

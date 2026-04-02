@@ -464,6 +464,16 @@ struct SwiftEditor {
 }
 
 impl SwiftEditor {
+  fn content_viewport_width(&self) -> u16 {
+    let view = self.editor.view();
+    let gutter_width = gutter_width_for_document(self.editor.document(), view.viewport.width, &self.gutter_config);
+    view.viewport.width.saturating_sub(gutter_width).max(1)
+  }
+
+  fn sync_text_viewport_width(&mut self) {
+    self.text_format.viewport_width = self.content_viewport_width();
+  }
+
   fn new(path: Option<&Path>) -> Self {
     let workspace_root = path
       .and_then(Path::parent)
@@ -576,7 +586,7 @@ impl SwiftEditor {
       || self.editor.view().viewport.height != rows;
     self.surface = surface;
     self.editor.view_mut().viewport = Rect::new(0, 0, cols, rows);
-    self.text_format.viewport_width = cols;
+    self.sync_text_viewport_width();
     self.clamp_scroll();
     changed
   }
@@ -585,7 +595,7 @@ impl SwiftEditor {
     let cols = cols.max(1);
     let rows = rows.max(1);
     self.editor.view_mut().viewport = Rect::new(0, 0, cols, rows);
-    self.text_format.viewport_width = cols;
+    self.sync_text_viewport_width();
     self.clamp_scroll();
   }
 
@@ -730,13 +740,15 @@ impl DefaultContext for SwiftEditor {
   }
   fn build_render_plan_with_styles(&mut self, styles: RenderStyles) -> RenderPlan {
     let view = self.editor.view();
+    let mut text_format = self.text_format.clone();
+    text_format.viewport_width = self.content_viewport_width();
     let mut annotations = TextAnnotations::default();
     let mut highlights = NoHighlights;
     let (document, cache) = self.editor.document_and_cache();
     build_plan(
       document,
       view,
-      &self.text_format,
+      &text_format,
       &self.gutter_config,
       &mut annotations,
       &mut highlights,

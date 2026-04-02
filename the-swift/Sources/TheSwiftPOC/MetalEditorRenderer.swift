@@ -191,6 +191,8 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
         var attrs: [NSAttributedString.Key: Any] = [
             .font: font,
             .foregroundColor: style.foregroundColor,
+            .ligature: 0,
+            .kern: 0,
         ]
         if (style.addModifiers & UInt16(1 << 0)) != 0 {
             attrs[.font] = NSFont.monospacedSystemFont(ofSize: font.pointSize, weight: .bold)

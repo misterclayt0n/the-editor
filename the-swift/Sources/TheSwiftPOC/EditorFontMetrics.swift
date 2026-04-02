@@ -13,9 +13,9 @@ struct EditorFontMetrics {
         self.font = font
 
         let ctFont = font as CTFont
-        let ascent = ceil(CTFontGetAscent(ctFont))
-        let descent = ceil(CTFontGetDescent(ctFont))
-        let leading = ceil(max(CTFontGetLeading(ctFont), 0))
+        let rawAscent = CTFontGetAscent(ctFont)
+        let rawDescent = CTFontGetDescent(ctFont)
+        let rawLeading = max(CTFontGetLeading(ctFont), 0)
 
         var scalar = UniChar("M".utf16.first ?? 77)
         var glyph = CGGlyph()
@@ -26,15 +26,18 @@ struct EditorFontMetrics {
             CTFontGetAdvancesForGlyphs(ctFont, .horizontal, &glyph, &advance, 1)
         }
 
-        let cellWidth = ceil(max(advance.width, font.maximumAdvancement.width, 1))
-        let glyphHeight = ascent + descent
-        let cellHeight = ceil(max(glyphHeight + leading, font.boundingRectForFont.height, 1))
-        let verticalPadding = max((cellHeight - glyphHeight) / 2, 0)
+        let faceWidth = max(advance.width, font.maximumAdvancement.width, 1)
+        let faceHeight = rawAscent + rawDescent + rawLeading
+        let cellWidth = max(round(faceWidth), 1)
+        let cellHeight = max(round(faceHeight), 1)
+        let halfLineGap = rawLeading / 2
+        let faceBaselineFromBottom = halfLineGap + rawDescent
+        let baselineFromBottom = round(faceBaselineFromBottom - (cellHeight - faceHeight) / 2)
 
         self.cellSize = CGSize(width: cellWidth, height: cellHeight)
-        self.ascent = ascent
-        self.descent = descent
-        self.leading = leading
-        self.baselineFromBottom = floor(verticalPadding + descent)
+        self.ascent = rawAscent
+        self.descent = rawDescent
+        self.leading = rawLeading
+        self.baselineFromBottom = baselineFromBottom
     }
 }

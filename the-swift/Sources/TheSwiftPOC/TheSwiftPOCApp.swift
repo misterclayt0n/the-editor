@@ -31,6 +31,5 @@ private struct EditorContainerView: View {
 
     var body: some View {
         RustEditorRepresentable(initialPath: initialPath)
-            .ignoresSafeArea()
     }
 }

@@ -2149,7 +2149,7 @@ pub fn handle_command_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEve
         let current = palette
           .selected
           .and_then(|sel| filtered.iter().position(|&idx| idx == sel))
-          .unwrap_or(0);
+          .unwrap_or(filtered.len() - 1);
         let next = if current >= filtered.len() - 1 {
           0
         } else {
@@ -2288,11 +2288,6 @@ fn apply_selected_command_name_completion<Ctx: DefaultContext>(
   ctx: &mut Ctx,
   item_idx: usize,
 ) -> bool {
-  let prompt_input = ctx.command_prompt_ref().input.trim();
-  if prompt_input.is_empty() {
-    return false;
-  }
-
   let command_name = ctx
     .command_palette()
     .items

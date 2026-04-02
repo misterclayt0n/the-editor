@@ -12,6 +12,7 @@ struct EditorSceneLine: Hashable {
     let docLine: Int?
     let firstVisualLine: Bool
     let spans: [EditorSnapshotSpan]
+    let textCells: [EditorSnapshotTextCell]
 
     var cacheSignature: Int {
         var hasher = Hasher()
@@ -19,6 +20,7 @@ struct EditorSceneLine: Hashable {
         hasher.combine(docLine)
         hasher.combine(firstVisualLine)
         hasher.combine(spans)
+        hasher.combine(textCells)
         return hasher.finalize()
     }
 }
@@ -64,7 +66,8 @@ struct EditorRenderScene {
                     row: $0.row,
                     docLine: $0.docLine,
                     firstVisualLine: $0.firstVisualLine,
-                    spans: $0.spans
+                    spans: $0.spans,
+                    textCells: $0.textCells
                 )
             },
             cursors: snapshot.cursors,

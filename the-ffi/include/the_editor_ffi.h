@@ -187,6 +187,7 @@ typedef struct the_editor_snapshot_line_t {
   int32_t doc_line;
   bool first_visual_line;
   uintptr_t span_count;
+  uintptr_t text_cell_count;
 } the_editor_snapshot_line_t;
 
 typedef struct the_editor_snapshot_span_t {
@@ -196,6 +197,15 @@ typedef struct the_editor_snapshot_span_t {
   bool is_virtual;
   struct the_editor_style_t style;
 } the_editor_snapshot_span_t;
+
+typedef struct the_editor_snapshot_text_cell_t {
+  uint16_t row;
+  uint16_t col;
+  uint16_t cols;
+  const char *text;
+  bool is_virtual;
+  struct the_editor_style_t style;
+} the_editor_snapshot_text_cell_t;
 
 typedef struct the_editor_snapshot_cursor_t {
   uint32_t row;
@@ -245,6 +255,7 @@ void the_editor_snapshot_free(the_editor_snapshot_t *snapshot);
 struct the_editor_snapshot_info_t the_editor_snapshot_info(const the_editor_snapshot_t *snapshot);
 struct the_editor_snapshot_line_t the_editor_snapshot_line_at(const the_editor_snapshot_t *snapshot, uintptr_t line_index);
 struct the_editor_snapshot_span_t the_editor_snapshot_span_at(const the_editor_snapshot_t *snapshot, uintptr_t line_index, uintptr_t span_index);
+struct the_editor_snapshot_text_cell_t the_editor_snapshot_text_cell_at(const the_editor_snapshot_t *snapshot, uintptr_t line_index, uintptr_t text_cell_index);
 struct the_editor_snapshot_cursor_t the_editor_snapshot_cursor_at(const the_editor_snapshot_t *snapshot, uintptr_t cursor_index);
 struct the_editor_snapshot_selection_t the_editor_snapshot_selection_at(const the_editor_snapshot_t *snapshot, uintptr_t selection_index);
 struct the_editor_snapshot_overlay_t the_editor_snapshot_overlay_at(const the_editor_snapshot_t *snapshot, uintptr_t overlay_index);

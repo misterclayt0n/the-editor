@@ -1609,8 +1609,10 @@ dependencies = [
  "ropey",
  "serde",
  "serde_json",
+ "the-core",
  "the-default",
  "the-lib",
+ "unicode-segmentation",
 ]
 
 [[package]]

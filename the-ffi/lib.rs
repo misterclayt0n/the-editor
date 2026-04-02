@@ -16,6 +16,7 @@ use std::{
 };
 
 use ropey::Rope;
+use the_core::grapheme::grapheme_width;
 use the_default::{
   CommandPaletteState,
   CommandPaletteStyle,
@@ -85,6 +86,7 @@ use the_lib::{
   selection::CursorPick,
   view::ViewState,
 };
+use unicode_segmentation::UnicodeSegmentation;
 
 #[repr(C)]
 pub struct the_editor_handle_t {
@@ -181,6 +183,7 @@ pub struct the_editor_snapshot_line_t {
   pub doc_line:          i32,
   pub first_visual_line: bool,
   pub span_count:        usize,
+  pub text_cell_count:   usize,
 }
 
 #[repr(C)]
@@ -196,6 +199,30 @@ pub struct the_editor_snapshot_span_t {
 impl Default for the_editor_snapshot_span_t {
   fn default() -> Self {
     Self {
+      col: 0,
+      cols: 0,
+      text: ptr::null(),
+      is_virtual: false,
+      style: the_editor_style_t::default(),
+    }
+  }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct the_editor_snapshot_text_cell_t {
+  pub row:        u16,
+  pub col:        u16,
+  pub cols:       u16,
+  pub text:       *const c_char,
+  pub is_virtual: bool,
+  pub style:      the_editor_style_t,
+}
+
+impl Default for the_editor_snapshot_text_cell_t {
+  fn default() -> Self {
+    Self {
+      row: 0,
       col: 0,
       cols: 0,
       text: ptr::null(),
@@ -307,6 +334,7 @@ struct OwnedSnapshot {
   info:             the_editor_snapshot_info_t,
   lines:            Vec<LineRecord>,
   spans:            Vec<SpanRecord>,
+  text_cells:       Vec<TextCellRecord>,
   cursors:          Vec<the_editor_snapshot_cursor_t>,
   selections:       Vec<the_editor_snapshot_selection_t>,
   overlays:         Vec<OverlayRecord>,
@@ -315,13 +343,20 @@ struct OwnedSnapshot {
 
 #[derive(Clone, Copy, Default)]
 struct LineRecord {
-  line:       the_editor_snapshot_line_t,
-  span_start: usize,
+  line:            the_editor_snapshot_line_t,
+  span_start:      usize,
+  text_cell_start: usize,
 }
 
 #[derive(Clone, Copy, Default)]
 struct SpanRecord {
   span:     the_editor_snapshot_span_t,
+  text_idx: usize,
+}
+
+#[derive(Clone, Copy, Default)]
+struct TextCellRecord {
+  cell:     the_editor_snapshot_text_cell_t,
   text_idx: usize,
 }
 
@@ -799,9 +834,11 @@ impl OwnedSnapshot {
         .unwrap_or(false);
 
       let span_start = snapshot.spans.len();
+      let text_cell_start = snapshot.text_cells.len();
 
       if let Some(gutter) = plan.gutter_lines.iter().find(|line| line.row == row) {
         for span in &gutter.spans {
+          let style = style_to_ffi(span.style, &editor.ui_theme);
           let text_idx = snapshot.push_string(span.text.as_str());
           snapshot.spans.push(SpanRecord {
             span: the_editor_snapshot_span_t {
@@ -809,10 +846,11 @@ impl OwnedSnapshot {
               cols: span.text.chars().count() as u16,
               text: ptr::null(),
               is_virtual: false,
-              style: style_to_ffi(span.style, &editor.ui_theme),
+              style,
             },
             text_idx,
           });
+          snapshot.push_text_cells(row, span.col, span.text.as_str(), false, style);
         }
       }
 
@@ -820,28 +858,34 @@ impl OwnedSnapshot {
         for span in &line.spans {
           let text_idx = snapshot.push_string(span.text.as_str());
           let highlight_style = span.highlight.map(|highlight| editor.ui_theme.highlight(highlight)).unwrap_or_default();
+          let style = style_to_ffi(base_text_style.patch(highlight_style), &editor.ui_theme);
+          let col = plan.content_offset_x.saturating_add(span.col);
           snapshot.spans.push(SpanRecord {
             span: the_editor_snapshot_span_t {
-              col: plan.content_offset_x.saturating_add(span.col),
+              col,
               cols: span.cols,
               text: ptr::null(),
               is_virtual: span.is_virtual,
-              style: style_to_ffi(base_text_style.patch(highlight_style), &editor.ui_theme),
+              style,
             },
             text_idx,
           });
+          snapshot.push_text_cells(row, col, span.text.as_str(), span.is_virtual, style);
         }
       }
 
       let span_count = snapshot.spans.len().saturating_sub(span_start);
+      let text_cell_count = snapshot.text_cells.len().saturating_sub(text_cell_start);
       snapshot.lines.push(LineRecord {
         line: the_editor_snapshot_line_t {
           row,
           doc_line,
           first_visual_line,
           span_count,
+          text_cell_count,
         },
         span_start,
+        text_cell_start,
       });
     }
 
@@ -914,6 +958,9 @@ impl OwnedSnapshot {
     for span in &mut snapshot.spans {
       span.span.text = snapshot.strings[span.text_idx].as_ptr();
     }
+    for text_cell in &mut snapshot.text_cells {
+      text_cell.cell.text = snapshot.strings[text_cell.text_idx].as_ptr();
+    }
     for overlay in &mut snapshot.overlays {
       if let Some(text_idx) = overlay.text_idx {
         overlay.overlay.text = snapshot.strings[text_idx].as_ptr();
@@ -931,6 +978,29 @@ impl OwnedSnapshot {
     let c_string = CString::new(text).unwrap_or_else(|_| CString::new(text.replace('\0', "")).expect("cstring"));
     self.strings.push(c_string);
     self.strings.len() - 1
+  }
+
+  fn push_text_cells(&mut self, row: u16, col: u16, text: &str, is_virtual: bool, style: the_editor_style_t) {
+    let mut next_col = col;
+    for grapheme in text.graphemes(true) {
+      if grapheme.is_empty() {
+        continue;
+      }
+      let cols = grapheme_width(grapheme).min(u16::MAX as usize) as u16;
+      let text_idx = self.push_string(grapheme);
+      self.text_cells.push(TextCellRecord {
+        cell: the_editor_snapshot_text_cell_t {
+          row,
+          col: next_col,
+          cols,
+          text: ptr::null(),
+          is_virtual,
+          style,
+        },
+        text_idx,
+      });
+      next_col = next_col.saturating_add(cols);
+    }
   }
 }
 
@@ -1288,6 +1358,14 @@ pub unsafe extern "C" fn the_editor_snapshot_span_at(snapshot: *const the_editor
   let Some(line) = snapshot.snapshot.lines.get(line_index) else { return the_editor_snapshot_span_t::default(); };
   if span_index >= line.line.span_count { return the_editor_snapshot_span_t::default(); }
   snapshot.snapshot.spans.get(line.span_start + span_index).map(|record| record.span).unwrap_or_default()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_snapshot_text_cell_at(snapshot: *const the_editor_snapshot_t, line_index: usize, text_cell_index: usize) -> the_editor_snapshot_text_cell_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_text_cell_t::default(); };
+  let Some(line) = snapshot.snapshot.lines.get(line_index) else { return the_editor_snapshot_text_cell_t::default(); };
+  if text_cell_index >= line.line.text_cell_count { return the_editor_snapshot_text_cell_t::default(); }
+  snapshot.snapshot.text_cells.get(line.text_cell_start + text_cell_index).map(|record| record.cell).unwrap_or_default()
 }
 
 #[unsafe(no_mangle)]

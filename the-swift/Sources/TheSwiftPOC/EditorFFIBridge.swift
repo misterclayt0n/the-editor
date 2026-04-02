@@ -112,11 +112,21 @@ struct EditorSnapshotSpan: Hashable {
     let style: EditorResolvedStyle
 }
 
+struct EditorSnapshotTextCell: Hashable {
+    let row: Int
+    let col: Int
+    let cols: Int
+    let text: String
+    let isVirtual: Bool
+    let style: EditorResolvedStyle
+}
+
 struct EditorSnapshotLine: Hashable {
     let row: Int
     let docLine: Int?
     let firstVisualLine: Bool
     let spans: [EditorSnapshotSpan]
+    let textCells: [EditorSnapshotTextCell]
 }
 
 struct EditorSnapshotCursor: Hashable {
@@ -272,11 +282,23 @@ enum EditorFFIBridge {
                     style: style(from: spanValue.style)
                 )
             }
+            let textCells: [EditorSnapshotTextCell] = (0..<Int(lineValue.text_cell_count)).map { cellIndex in
+                let cellValue = the_editor_snapshot_text_cell_at(rawSnapshot, UInt(lineIndex), UInt(cellIndex))
+                return EditorSnapshotTextCell(
+                    row: Int(cellValue.row),
+                    col: Int(cellValue.col),
+                    cols: Int(cellValue.cols),
+                    text: cellValue.text.map { String(cString: $0) } ?? "",
+                    isVirtual: cellValue.is_virtual,
+                    style: style(from: cellValue.style)
+                )
+            }
             return EditorSnapshotLine(
                 row: Int(lineValue.row),
                 docLine: lineValue.doc_line >= 0 ? Int(lineValue.doc_line) : nil,
                 firstVisualLine: lineValue.first_visual_line,
-                spans: spans
+                spans: spans,
+                textCells: textCells
             )
         }
 

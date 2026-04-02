@@ -175,8 +175,8 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
 
         cgContext.clear(CGRect(x: 0, y: 0, width: viewportWidth, height: cellSize.height))
 
-        for span in line.spans {
-            drawText(span.text, style: span.style, atCol: span.col, row: 0, in: cgContext, usesViewportCoordinates: false)
+        for textCell in line.textCells {
+            drawText(textCell.text, style: textCell.style, atCol: textCell.col, row: 0, in: cgContext, usesViewportCoordinates: false)
         }
 
         NSGraphicsContext.restoreGraphicsState()

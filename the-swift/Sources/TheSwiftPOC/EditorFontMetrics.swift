@@ -41,6 +41,8 @@ struct EditorSurfaceConfiguration: Hashable {
 }
 
 struct EditorFontMetrics {
+    private static let zedStandardLineHeight: CGFloat = 1.3
+
     let font: NSFont
     let cellSize: CGSize
     let ascent: CGFloat
@@ -68,12 +70,12 @@ struct EditorFontMetrics {
         }
 
         let faceWidth = max(advance.width, font.maximumAdvancement.width, 1)
-        let faceHeight = rawAscent + rawDescent + rawLeading
+        let textHeight = rawAscent + rawDescent
+        let preferredLineHeight = max(font.pointSize * Self.zedStandardLineHeight, textHeight + rawLeading)
         let cellWidth = max(round(faceWidth), 1)
-        let cellHeight = max(round(faceHeight), 1)
-        let halfLineGap = rawLeading / 2
-        let faceBaselineFromBottom = halfLineGap + rawDescent
-        let baselineFromBottom = round(faceBaselineFromBottom - (cellHeight - faceHeight) / 2)
+        let cellHeight = max(round(preferredLineHeight), 1)
+        let paddingTop = max((cellHeight - textHeight) / 2, 0)
+        let baselineFromBottom = round(rawDescent + paddingTop)
 
         let rawUnderlinePosition = CTFontGetUnderlinePosition(ctFont)
         let rawUnderlineThickness = max(CTFontGetUnderlineThickness(ctFont), 1)

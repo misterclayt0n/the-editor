@@ -147,6 +147,9 @@ pub struct the_editor_surface_config_t {
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 pub struct the_editor_snapshot_info_t {
+  pub surface_width_px:        u32,
+  pub surface_height_px:       u32,
+  pub surface_metrics:         the_editor_surface_metrics_t,
   pub viewport_width:          u16,
   pub viewport_height:         u16,
   pub content_offset_x:        u16,
@@ -746,6 +749,9 @@ impl OwnedSnapshot {
 
     let mut snapshot = Self {
       info: the_editor_snapshot_info_t {
+        surface_width_px: editor.surface.width_px,
+        surface_height_px: editor.surface.height_px,
+        surface_metrics: editor.surface.metrics,
         viewport_width: viewport.width,
         viewport_height: viewport.height,
         content_offset_x: plan.map(|plan| plan.content_offset_x).unwrap_or(0),

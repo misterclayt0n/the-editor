@@ -81,6 +81,9 @@ enum EditorOverlayRectKind: UInt8 {
 }
 
 struct EditorSnapshotInfo {
+    let surfaceWidthPx: Int
+    let surfaceHeightPx: Int
+    let surfaceMetrics: EditorSurfaceMetrics
     let viewportWidth: Int
     let viewportHeight: Int
     let contentOffsetX: Int
@@ -234,6 +237,9 @@ enum EditorFFIBridge {
 
         let infoValue = the_editor_snapshot_info(rawSnapshot)
         let info = EditorSnapshotInfo(
+            surfaceWidthPx: Int(infoValue.surface_width_px),
+            surfaceHeightPx: Int(infoValue.surface_height_px),
+            surfaceMetrics: surfaceMetrics(from: infoValue.surface_metrics),
             viewportWidth: Int(infoValue.viewport_width),
             viewportHeight: Int(infoValue.viewport_height),
             contentOffsetX: Int(infoValue.content_offset_x),
@@ -332,6 +338,18 @@ enum EditorFFIBridge {
             addModifiers: style.add_modifiers,
             removeModifiers: style.remove_modifiers,
             underlineStyle: style.underline_style
+        )
+    }
+
+    private static func surfaceMetrics(from metrics: the_editor_surface_metrics_t) -> EditorSurfaceMetrics {
+        EditorSurfaceMetrics(
+            backingScale: CGFloat(metrics.backing_scale),
+            cellWidthPx: Int(metrics.cell_width_px),
+            cellHeightPx: Int(metrics.cell_height_px),
+            cellBaselinePx: Int(metrics.cell_baseline_px),
+            underlinePositionPx: Int(metrics.underline_position_px),
+            underlineThicknessPx: Int(metrics.underline_thickness_px),
+            cursorThicknessPx: Int(metrics.cursor_thickness_px)
         )
     }
 

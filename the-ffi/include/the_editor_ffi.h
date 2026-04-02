@@ -138,6 +138,22 @@ typedef struct the_editor_style_t {
   uint8_t underline_style;
 } the_editor_style_t;
 
+typedef struct the_editor_surface_metrics_t {
+  float backing_scale;
+  uint16_t cell_width_px;
+  uint16_t cell_height_px;
+  uint16_t cell_baseline_px;
+  uint16_t underline_position_px;
+  uint16_t underline_thickness_px;
+  uint16_t cursor_thickness_px;
+} the_editor_surface_metrics_t;
+
+typedef struct the_editor_surface_config_t {
+  uint32_t width_px;
+  uint32_t height_px;
+  struct the_editor_surface_metrics_t metrics;
+} the_editor_surface_config_t;
+
 typedef struct the_editor_snapshot_info_t {
   uint16_t viewport_width;
   uint16_t viewport_height;
@@ -212,6 +228,7 @@ the_editor_handle_t *the_editor_new(const char *path);
 void the_editor_free(the_editor_handle_t *handle);
 
 bool the_editor_open(the_editor_handle_t *handle, const char *path);
+bool the_editor_configure_surface(the_editor_handle_t *handle, struct the_editor_surface_config_t config);
 void the_editor_set_viewport(the_editor_handle_t *handle, uint16_t cols, uint16_t rows);
 bool the_editor_set_scroll_row(the_editor_handle_t *handle, uint32_t row);
 bool the_editor_handle_key(the_editor_handle_t *handle, the_editor_key_event_t event);

@@ -19,8 +19,7 @@ final class EditorSurfaceController {
     private(set) var scene: EditorRenderScene?
     private(set) var currentMode: EditorMode = .normal
 
-    private var viewportCols: UInt16 = 1
-    private var viewportRows: UInt16 = 1
+    private var surfaceConfiguration: EditorSurfaceConfiguration?
     private var markedText: String = ""
 
     init(initialPath: String?) {
@@ -32,13 +31,11 @@ final class EditorSurfaceController {
         EditorFFIBridge.destroyHandle(handle?.raw)
     }
 
-    func setViewport(size: CGSize, cellSize: CGSize) {
-        let cols = UInt16(max(Int(size.width / max(cellSize.width, 1)), 1))
-        let rows = UInt16(max(Int(size.height / max(cellSize.height, 1)), 1))
-        guard cols != viewportCols || rows != viewportRows else { return }
-        viewportCols = cols
-        viewportRows = rows
-        EditorFFIBridge.setViewport(handle?.raw, cols: cols, rows: rows)
+    func configureSurface(size: CGSize, backingScale: CGFloat, fontMetrics: EditorFontMetrics) {
+        let configuration = fontMetrics.surfaceConfiguration(viewSize: size, backingScale: backingScale)
+        guard configuration != surfaceConfiguration else { return }
+        surfaceConfiguration = configuration
+        guard EditorFFIBridge.configureSurface(handle?.raw, configuration: configuration) else { return }
         refreshSnapshot()
     }
 

@@ -126,6 +126,26 @@ pub struct the_editor_style_t {
 
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
+pub struct the_editor_surface_metrics_t {
+  pub backing_scale:          f32,
+  pub cell_width_px:          u16,
+  pub cell_height_px:         u16,
+  pub cell_baseline_px:       u16,
+  pub underline_position_px:  u16,
+  pub underline_thickness_px: u16,
+  pub cursor_thickness_px:    u16,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct the_editor_surface_config_t {
+  pub width_px:  u32,
+  pub height_px: u32,
+  pub metrics:   the_editor_surface_metrics_t,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
 pub struct the_editor_snapshot_info_t {
   pub viewport_width:          u16,
   pub viewport_height:         u16,
@@ -308,6 +328,66 @@ struct OverlayRecord {
   text_idx: Option<usize>,
 }
 
+#[derive(Clone, Copy)]
+struct SurfaceConfig {
+  width_px:  u32,
+  height_px: u32,
+  metrics:   the_editor_surface_metrics_t,
+}
+
+impl Default for SurfaceConfig {
+  fn default() -> Self {
+    let metrics = the_editor_surface_metrics_t {
+      backing_scale: 2.0,
+      cell_width_px: 18,
+      cell_height_px: 34,
+      cell_baseline_px: 6,
+      underline_position_px: 4,
+      underline_thickness_px: 2,
+      cursor_thickness_px: 4,
+    };
+    Self {
+      width_px: 80 * metrics.cell_width_px as u32,
+      height_px: 24 * metrics.cell_height_px as u32,
+      metrics,
+    }
+  }
+}
+
+impl SurfaceConfig {
+  fn from_ffi(config: the_editor_surface_config_t) -> Self {
+    let backing_scale = if config.metrics.backing_scale.is_finite() && config.metrics.backing_scale > 0.0 {
+      config.metrics.backing_scale
+    } else {
+      1.0
+    };
+    let metrics = the_editor_surface_metrics_t {
+      backing_scale,
+      cell_width_px: config.metrics.cell_width_px.max(1),
+      cell_height_px: config.metrics.cell_height_px.max(1),
+      cell_baseline_px: config.metrics.cell_baseline_px.max(1),
+      underline_position_px: config.metrics.underline_position_px,
+      underline_thickness_px: config.metrics.underline_thickness_px.max(1),
+      cursor_thickness_px: config.metrics.cursor_thickness_px.max(1),
+    };
+    Self {
+      width_px: config.width_px.max(metrics.cell_width_px as u32),
+      height_px: config.height_px.max(metrics.cell_height_px as u32),
+      metrics,
+    }
+  }
+
+  fn viewport_cols(self) -> u16 {
+    let cols = (self.width_px / self.metrics.cell_width_px as u32).max(1);
+    cols.min(u16::MAX as u32) as u16
+  }
+
+  fn viewport_rows(self) -> u16 {
+    let rows = (self.height_px / self.metrics.cell_height_px as u32).max(1);
+    rows.min(u16::MAX as u32) as u16
+  }
+}
+
 struct SwiftEditor {
   editor:                        Editor,
   file_path:                     Option<PathBuf>,
@@ -341,6 +421,7 @@ struct SwiftEditor {
   gutter_config:                 the_lib::render::GutterConfig,
   ui_theme_name:                 String,
   ui_theme:                      Theme,
+  surface:                       SurfaceConfig,
 }
 
 impl SwiftEditor {
@@ -349,6 +430,7 @@ impl SwiftEditor {
       .and_then(Path::parent)
       .map(Path::to_path_buf)
       .unwrap_or_else(default_workspace_root);
+    let surface = SurfaceConfig::default();
 
     let mut document = Document::new(
       DocumentId::new(NonZeroUsize::new(1).expect("nonzero")),
@@ -358,7 +440,7 @@ impl SwiftEditor {
       document.set_display_name(display_name_for_path(path));
     }
 
-    let viewport = Rect::new(0, 0, 80, 24);
+    let viewport = Rect::new(0, 0, surface.viewport_cols(), surface.viewport_rows());
     let view = ViewState::new(viewport, Position::new(0, 0));
     let mut editor = Editor::new(
       EditorId::new(NonZeroUsize::new(1).expect("nonzero")),
@@ -409,6 +491,7 @@ impl SwiftEditor {
       gutter_config: the_lib::render::GutterConfig::default(),
       ui_theme_name: default_theme().name().to_string(),
       ui_theme: default_theme().clone(),
+      surface,
     }
   }
 
@@ -435,6 +518,28 @@ impl SwiftEditor {
         false
       },
     }
+  }
+
+  fn configure_surface(&mut self, config: the_editor_surface_config_t) -> bool {
+    let surface = SurfaceConfig::from_ffi(config);
+    let cols = surface.viewport_cols();
+    let rows = surface.viewport_rows();
+    let changed = self.surface.width_px != surface.width_px
+      || self.surface.height_px != surface.height_px
+      || self.surface.metrics.backing_scale != surface.metrics.backing_scale
+      || self.surface.metrics.cell_width_px != surface.metrics.cell_width_px
+      || self.surface.metrics.cell_height_px != surface.metrics.cell_height_px
+      || self.surface.metrics.cell_baseline_px != surface.metrics.cell_baseline_px
+      || self.surface.metrics.underline_position_px != surface.metrics.underline_position_px
+      || self.surface.metrics.underline_thickness_px != surface.metrics.underline_thickness_px
+      || self.surface.metrics.cursor_thickness_px != surface.metrics.cursor_thickness_px
+      || self.editor.view().viewport.width != cols
+      || self.editor.view().viewport.height != rows;
+    self.surface = surface;
+    self.editor.view_mut().viewport = Rect::new(0, 0, cols, rows);
+    self.text_format.viewport_width = cols;
+    self.clamp_scroll();
+    changed
   }
 
   fn set_viewport(&mut self, cols: u16, rows: u16) {
@@ -1093,6 +1198,12 @@ pub unsafe extern "C" fn the_editor_open(handle: *mut the_editor_handle_t, path:
   let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
   let Some(path) = (unsafe { path_from_c(path) }) else { return false; };
   handle.editor.open_path(&path)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_configure_surface(handle: *mut the_editor_handle_t, config: the_editor_surface_config_t) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+  handle.editor.configure_surface(config)
 }
 
 #[unsafe(no_mangle)]

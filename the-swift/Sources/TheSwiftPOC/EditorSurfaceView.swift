@@ -40,13 +40,23 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
     override func layout() {
         super.layout()
         renderer.view.frame = bounds
-        renderer.view.drawableSize = CGSize(
-            width: bounds.width * (window?.backingScaleFactor ?? 1),
-            height: bounds.height * (window?.backingScaleFactor ?? 1)
+        let backingBounds = convertToBacking(bounds)
+        renderer.view.drawableSize = backingBounds.size
+        synchronizeSurfaceConfiguration()
+    }
+
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        synchronizeSurfaceConfiguration()
+    }
+
+    private func synchronizeSurfaceConfiguration() {
+        guard let controller else { return }
+        controller.configureSurface(
+            size: bounds.size,
+            backingScale: window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1,
+            fontMetrics: fontMetrics
         )
-        if let controller {
-            controller.setViewport(size: bounds.size, cellSize: cellSize)
-        }
     }
 
     func update(scene: EditorRenderScene) {

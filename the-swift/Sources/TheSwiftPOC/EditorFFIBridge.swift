@@ -167,6 +167,26 @@ enum EditorFFIBridge {
         the_editor_free(handle)
     }
 
+    @discardableResult
+    static func configureSurface(_ handle: OpaquePointer?, configuration: EditorSurfaceConfiguration) -> Bool {
+        guard let handle else { return false }
+        let metrics = the_editor_surface_metrics_t(
+            backing_scale: Float(configuration.metrics.backingScale),
+            cell_width_px: UInt16(clamping: configuration.metrics.cellWidthPx),
+            cell_height_px: UInt16(clamping: configuration.metrics.cellHeightPx),
+            cell_baseline_px: UInt16(clamping: configuration.metrics.cellBaselinePx),
+            underline_position_px: UInt16(clamping: configuration.metrics.underlinePositionPx),
+            underline_thickness_px: UInt16(clamping: configuration.metrics.underlineThicknessPx),
+            cursor_thickness_px: UInt16(clamping: configuration.metrics.cursorThicknessPx)
+        )
+        let config = the_editor_surface_config_t(
+            width_px: UInt32(clamping: configuration.widthPx),
+            height_px: UInt32(clamping: configuration.heightPx),
+            metrics: metrics
+        )
+        return the_editor_configure_surface(handle, config)
+    }
+
     static func setViewport(_ handle: OpaquePointer?, cols: UInt16, rows: UInt16) {
         guard let handle else { return }
         the_editor_set_viewport(handle, cols, rows)

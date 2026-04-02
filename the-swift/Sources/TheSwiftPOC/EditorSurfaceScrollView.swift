@@ -70,7 +70,6 @@ final class EditorSurfaceScrollView: NSView, EditorSurfaceControllerDelegate {
         super.layout()
         scrollView.frame = bounds
         surfaceView.frame.size = scrollView.contentView.bounds.size
-        controller.setViewport(size: scrollView.contentView.bounds.size, cellSize: surfaceView.cellSize)
         synchronizeSurfaceFrame()
     }
 

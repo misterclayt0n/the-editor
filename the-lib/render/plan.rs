@@ -1163,8 +1163,18 @@ pub fn build_plan<'a, 't, H: HighlightProvider>(
   let has_line_annotations = annotations.has_line_annotations();
   let use_fast_start = !text_fmt.soft_wrap && !has_line_annotations;
   let (block_char_idx, origin) = if use_fast_start {
-    let start_char =
-      visual_position::char_at_visual_pos(text, text_fmt, annotations, view.scroll).unwrap_or(0);
+    // Fast-start from the beginning of the first visible row, not the full
+    // horizontal scroll position. If we start at (row, col) and the line is
+    // shorter than `scroll.col`, the lookup can jump to a later line and cause
+    // the skipped row's gutter to disappear even though the row is still
+    // vertically visible.
+    let start_char = visual_position::char_at_visual_pos(
+      text,
+      text_fmt,
+      annotations,
+      Position::new(view.scroll.row, 0),
+    )
+    .unwrap_or(0);
     let (block_char_idx, _) = prev_checkpoint(text, start_char);
     let origin = if start_char == 0 {
       Position::new(0, 0)
@@ -2331,6 +2341,46 @@ mod tests {
       .join("");
     assert!(line0_text.contains('1'));
     assert!(line1_text.contains('2'));
+  }
+
+  #[test]
+  fn build_plan_keeps_first_visible_gutter_when_horizontal_scroll_hides_text() {
+    let id = DocumentId::new(std::num::NonZeroUsize::new(1).unwrap());
+    let doc = Document::new(id, Rope::from("a\nthis line is very long and stays visible\n"));
+    let view = ViewState::new(Rect::new(0, 0, 20, 2), Position::new(0, 8));
+    let mut text_fmt = TextFormat::default();
+    text_fmt.soft_wrap = false;
+    text_fmt.viewport_width = 16;
+    let mut annotations = TextAnnotations::default();
+    let mut highlights = NoHighlights;
+    let mut cache = RenderCache::default();
+    let styles = RenderStyles::default();
+    let gutter = GutterConfig::default();
+
+    let plan = build_plan(
+      &doc,
+      view,
+      &text_fmt,
+      &gutter,
+      &mut annotations,
+      &mut highlights,
+      &mut cache,
+      styles,
+    );
+
+    assert_eq!(plan.visible_rows.first().map(|row| row.doc_line), Some(0));
+    let row0 = plan
+      .gutter_lines
+      .iter()
+      .find(|line| line.row == 0)
+      .expect("row 0 gutter exists");
+    let row0_text = row0
+      .spans
+      .iter()
+      .map(|span| span.text.as_str())
+      .collect::<Vec<_>>()
+      .join("");
+    assert!(row0_text.contains('1'));
   }
 
   #[test]

@@ -11,11 +11,11 @@ use std::{
     Path,
     PathBuf,
   },
+  ptr,
   sync::mpsc,
 };
 
 use ropey::Rope;
-use serde::Serialize;
 use the_default::{
   CommandPaletteState,
   CommandPaletteStyle,
@@ -57,16 +57,23 @@ use the_lib::{
   registers::Registers,
   render::{
     FrameRenderPlan,
-    GutterConfig,
     NoHighlights,
+    RenderDamageReason,
     RenderPlan,
+    RenderSelectionKind,
     RenderStyles,
     build_plan,
     graphics::{
       Color,
       CursorKind,
+      Modifier,
       Rect,
       Style,
+      UnderlineStyle,
+    },
+    overlay::{
+      OverlayNode,
+      OverlayRectKind,
     },
     text_annotations::TextAnnotations,
     text_format::TextFormat,
@@ -75,6 +82,7 @@ use the_lib::{
       default_theme,
     },
   },
+  selection::CursorPick,
   view::ViewState,
 };
 
@@ -83,12 +91,149 @@ pub struct the_editor_handle_t {
   editor: SwiftEditor,
 }
 
+pub struct the_editor_snapshot_t {
+  snapshot: OwnedSnapshot,
+}
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct the_editor_key_event_t {
   pub kind:      u32,
   pub codepoint: u32,
   pub modifiers: u8,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct the_editor_rgba_t {
+  pub present: bool,
+  pub r:       u8,
+  pub g:       u8,
+  pub b:       u8,
+  pub a:       u8,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct the_editor_style_t {
+  pub fg:              the_editor_rgba_t,
+  pub bg:              the_editor_rgba_t,
+  pub underline_color: the_editor_rgba_t,
+  pub add_modifiers:   u16,
+  pub remove_modifiers:u16,
+  pub underline_style: u8,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct the_editor_snapshot_info_t {
+  pub viewport_width:          u16,
+  pub viewport_height:         u16,
+  pub content_offset_x:        u16,
+  pub damage_start_row:        u16,
+  pub damage_end_row:          u16,
+  pub damage_is_full:          bool,
+  pub damage_reason:           u8,
+  pub mode:                    u8,
+  pub layout_generation:       u64,
+  pub text_generation:         u64,
+  pub decoration_generation:   u64,
+  pub cursor_generation:       u64,
+  pub scroll_generation:       u64,
+  pub theme_generation:        u64,
+  pub cursor_blink_generation: u64,
+  pub scroll_row:              u32,
+  pub scroll_col:              u32,
+  pub document_line_count:     u32,
+  pub line_count:              usize,
+  pub cursor_count:            usize,
+  pub selection_count:         usize,
+  pub overlay_count:           usize,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct the_editor_snapshot_line_t {
+  pub row:               u16,
+  pub doc_line:          i32,
+  pub first_visual_line: bool,
+  pub span_count:        usize,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct the_editor_snapshot_span_t {
+  pub col:        u16,
+  pub cols:       u16,
+  pub text:       *const c_char,
+  pub is_virtual: bool,
+  pub style:      the_editor_style_t,
+}
+
+impl Default for the_editor_snapshot_span_t {
+  fn default() -> Self {
+    Self {
+      col: 0,
+      cols: 0,
+      text: ptr::null(),
+      is_virtual: false,
+      style: the_editor_style_t::default(),
+    }
+  }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct the_editor_snapshot_cursor_t {
+  pub row:   u32,
+  pub col:   u32,
+  pub kind:  u8,
+  pub style: the_editor_style_t,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct the_editor_snapshot_selection_t {
+  pub x:      u16,
+  pub y:      u16,
+  pub width:  u16,
+  pub height: u16,
+  pub kind:   u8,
+  pub style:  the_editor_style_t,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct the_editor_snapshot_overlay_t {
+  pub kind:      u8,
+  pub rect_kind: u8,
+  pub x:         u16,
+  pub y:         u16,
+  pub width:     u16,
+  pub height:    u16,
+  pub radius:    u16,
+  pub row:       u32,
+  pub col:       u32,
+  pub text:      *const c_char,
+  pub style:     the_editor_style_t,
+}
+
+impl Default for the_editor_snapshot_overlay_t {
+  fn default() -> Self {
+    Self {
+      kind: 0,
+      rect_kind: 0,
+      x: 0,
+      y: 0,
+      width: 0,
+      height: 0,
+      radius: 0,
+      row: 0,
+      col: 0,
+      text: ptr::null(),
+      style: the_editor_style_t::default(),
+    }
+  }
 }
 
 const THE_EDITOR_KEY_CHAR: u32 = 0;
@@ -125,6 +270,44 @@ const MOD_CTRL: u8 = 1 << 0;
 const MOD_ALT: u8 = 1 << 1;
 const MOD_SHIFT: u8 = 1 << 2;
 
+const STYLE_BOLD: u16 = 1 << 0;
+const STYLE_DIM: u16 = 1 << 1;
+const STYLE_ITALIC: u16 = 1 << 2;
+const STYLE_SLOW_BLINK: u16 = 1 << 3;
+const STYLE_RAPID_BLINK: u16 = 1 << 4;
+const STYLE_REVERSED: u16 = 1 << 5;
+const STYLE_HIDDEN: u16 = 1 << 6;
+const STYLE_CROSSED_OUT: u16 = 1 << 7;
+
+#[derive(Default)]
+struct OwnedSnapshot {
+  info:             the_editor_snapshot_info_t,
+  lines:            Vec<LineRecord>,
+  spans:            Vec<SpanRecord>,
+  cursors:          Vec<the_editor_snapshot_cursor_t>,
+  selections:       Vec<the_editor_snapshot_selection_t>,
+  overlays:         Vec<OverlayRecord>,
+  strings:          Vec<CString>,
+}
+
+#[derive(Clone, Copy, Default)]
+struct LineRecord {
+  line:       the_editor_snapshot_line_t,
+  span_start: usize,
+}
+
+#[derive(Clone, Copy, Default)]
+struct SpanRecord {
+  span:     the_editor_snapshot_span_t,
+  text_idx: usize,
+}
+
+#[derive(Clone, Copy, Default)]
+struct OverlayRecord {
+  overlay:  the_editor_snapshot_overlay_t,
+  text_idx: Option<usize>,
+}
+
 struct SwiftEditor {
   editor:                        Editor,
   file_path:                     Option<PathBuf>,
@@ -155,7 +338,7 @@ struct SwiftEditor {
   last_motion:                   Option<Motion>,
   text_format:                   TextFormat,
   soft_wrap_enabled:             bool,
-  gutter_config:                 GutterConfig,
+  gutter_config:                 the_lib::render::GutterConfig,
   ui_theme_name:                 String,
   ui_theme:                      Theme,
 }
@@ -223,7 +406,7 @@ impl SwiftEditor {
       last_motion: None,
       text_format,
       soft_wrap_enabled: false,
-      gutter_config: GutterConfig::default(),
+      gutter_config: the_lib::render::GutterConfig::default(),
       ui_theme_name: default_theme().name().to_string(),
       ui_theme: default_theme().clone(),
     }
@@ -262,6 +445,19 @@ impl SwiftEditor {
     self.clamp_scroll();
   }
 
+  fn set_scroll_row(&mut self, row: u32) -> bool {
+    let max_row = max_scroll_row(
+      self.editor.document().text().len_lines(),
+      self.editor.view().viewport.height as usize,
+    ) as u32;
+    let next = row.min(max_row) as usize;
+    if next == self.editor.view().scroll.row {
+      return false;
+    }
+    self.editor.view_mut().scroll.row = next;
+    true
+  }
+
   fn handle_key_event(&mut self, raw: the_editor_key_event_t) -> bool {
     let Some(event) = translate_key_event(raw) else {
       return false;
@@ -270,30 +466,18 @@ impl SwiftEditor {
     true
   }
 
-  fn scroll_lines(&mut self, delta_lines: i32) -> bool {
-    if delta_lines == 0 {
-      return false;
+  fn insert_text(&mut self, text: &str) -> bool {
+    let mut changed = false;
+    for ch in text.chars() {
+      let event = match ch {
+        '\n' => KeyEvent { key: Key::Enter, modifiers: the_default::Modifiers::empty() },
+        '\t' => KeyEvent { key: Key::Tab, modifiers: the_default::Modifiers::empty() },
+        _ => KeyEvent { key: Key::Char(ch), modifiers: the_default::Modifiers::empty() },
+      };
+      handle_key(self, event);
+      changed = true;
     }
-
-    let current = self.editor.view().scroll.row as i32;
-    let max_row = max_scroll_row(
-      self.editor.document().text().len_lines(),
-      self.editor.view().viewport.height as usize,
-    ) as i32;
-    let next = (current + delta_lines).clamp(0, max_row) as usize;
-    if next == self.editor.view().scroll.row {
-      return false;
-    }
-
-    self.editor.view_mut().scroll.row = next;
-    true
-  }
-
-  fn snapshot_json(&mut self) -> String {
-    let frame = the_default::frame_render_plan(self);
-    let active_plan = frame.active_plan();
-    let snapshot = EditorSnapshot::from_editor(self, active_plan);
-    serde_json::to_string(&snapshot).unwrap_or_else(|_| "{}".to_string())
+    changed
   }
 
   fn render_styles(&self) -> RenderStyles {
@@ -318,48 +502,49 @@ impl SwiftEditor {
       self.editor.view_mut().scroll.row = max_row;
     }
   }
+
+  fn build_snapshot(&mut self) -> OwnedSnapshot {
+    let frame = the_default::frame_render_plan(self);
+    let plan = frame.active_plan();
+    OwnedSnapshot::from_editor(self, plan)
+  }
+
+  fn primary_selection_utf16(&self) -> (u32, u32) {
+    let selection = self.editor.document().selection();
+    let Ok((_, range)) = selection.pick(CursorPick::First) else {
+      return (0, 0);
+    };
+    let prefix = self.editor.document().text().slice(..range.from()).to_string();
+    let selected = self.editor.document().text().slice(range.from()..range.to()).to_string();
+    (
+      prefix.encode_utf16().count() as u32,
+      selected.encode_utf16().count() as u32,
+    )
+  }
+
+  fn primary_selection_text(&self) -> String {
+    let selection = self.editor.document().selection();
+    let Ok((_, range)) = selection.pick(CursorPick::First) else {
+      return String::new();
+    };
+    self.editor.document().text().slice(range.from()..range.to()).to_string()
+  }
 }
 
 impl DefaultContext for SwiftEditor {
-  fn editor(&mut self) -> &mut Editor {
-    &mut self.editor
-  }
-
-  fn editor_ref(&self) -> &Editor {
-    &self.editor
-  }
-
-  fn file_path(&self) -> Option<&Path> {
-    self.file_path.as_deref()
-  }
-
-  fn workspace_root(&self) -> PathBuf {
-    self.workspace_root.clone()
-  }
-
-  fn working_directory_state(&self) -> &WorkingDirectoryState {
-    &self.working_directory
-  }
-
-  fn working_directory_state_mut(&mut self) -> &mut WorkingDirectoryState {
-    &mut self.working_directory
-  }
-
+  fn editor(&mut self) -> &mut Editor { &mut self.editor }
+  fn editor_ref(&self) -> &Editor { &self.editor }
+  fn file_path(&self) -> Option<&Path> { self.file_path.as_deref() }
+  fn workspace_root(&self) -> PathBuf { self.workspace_root.clone() }
+  fn working_directory_state(&self) -> &WorkingDirectoryState { &self.working_directory }
+  fn working_directory_state_mut(&mut self) -> &mut WorkingDirectoryState { &mut self.working_directory }
   fn request_render(&mut self) {}
-
   fn render_waker(&self) -> the_default::RenderWaker {
     let (tx, _rx) = mpsc::channel();
     the_default::RenderWaker::new(tx)
   }
-
-  fn messages(&self) -> &MessageCenter {
-    &self.messages
-  }
-
-  fn messages_mut(&mut self) -> &mut MessageCenter {
-    &mut self.messages
-  }
-
+  fn messages(&self) -> &MessageCenter { &self.messages }
+  fn messages_mut(&mut self) -> &mut MessageCenter { &mut self.messages }
   fn build_render_plan(&mut self) -> RenderPlan {
     let view = self.editor.view();
     let styles = self.render_styles();
@@ -377,399 +562,265 @@ impl DefaultContext for SwiftEditor {
       styles,
     )
   }
-
   fn build_frame_render_plan(&mut self) -> FrameRenderPlan {
     FrameRenderPlan::from_active_plan(self.build_render_plan())
   }
-
   fn request_quit(&mut self) {}
-
-  fn mode(&self) -> Mode {
-    self.mode
-  }
-
-  fn set_mode(&mut self, mode: Mode) {
-    self.mode = mode;
-  }
-
-  fn keymaps(&mut self) -> &mut Keymaps {
-    &mut self.keymaps
-  }
-
-  fn command_prompt_mut(&mut self) -> &mut CommandPromptState {
-    &mut self.command_prompt
-  }
-
-  fn command_prompt_ref(&self) -> &CommandPromptState {
-    &self.command_prompt
-  }
-
-  fn command_registry_mut(&mut self) -> &mut CommandRegistry<Self> {
-    &mut self.command_registry
-  }
-
-  fn command_registry_ref(&self) -> &CommandRegistry<Self> {
-    &self.command_registry
-  }
-
-  fn command_palette(&self) -> &CommandPaletteState {
-    &self.command_palette
-  }
-
-  fn command_palette_mut(&mut self) -> &mut CommandPaletteState {
-    &mut self.command_palette
-  }
-
-  fn command_palette_style(&self) -> &CommandPaletteStyle {
-    &self.command_palette_style
-  }
-
-  fn command_palette_style_mut(&mut self) -> &mut CommandPaletteStyle {
-    &mut self.command_palette_style
-  }
-
-  fn completion_menu(&self) -> &CompletionMenuState {
-    &self.completion_menu
-  }
-
-  fn completion_menu_mut(&mut self) -> &mut CompletionMenuState {
-    &mut self.completion_menu
-  }
-
-  fn completion_menu_keymaps(&self) -> &Keymaps {
-    &self.completion_menu_keymaps
-  }
-
-  fn completion_menu_keymaps_mut(&mut self) -> &mut Keymaps {
-    &mut self.completion_menu_keymaps
-  }
-
-  fn inline_completion(&self) -> &the_default::InlineCompletionState {
-    &self.inline_completion
-  }
-
-  fn inline_completion_mut(&mut self) -> &mut the_default::InlineCompletionState {
-    &mut self.inline_completion
-  }
-
-  fn set_inline_completion_annotations(&mut self, annotations: the_default::OwnedTextAnnotations) {
-    self.inline_completion_annotations = annotations;
-  }
-
-  fn clear_inline_completion_annotations(&mut self) {
-    self.inline_completion_annotations = the_default::OwnedTextAnnotations::default();
-  }
-
-  fn file_tree(&self) -> &FileTreeState {
-    &self.file_tree
-  }
-
-  fn file_tree_mut(&mut self) -> &mut FileTreeState {
-    &mut self.file_tree
-  }
-
-  fn file_picker(&self) -> &FilePickerState {
-    &self.file_picker
-  }
-
-  fn file_picker_mut(&mut self) -> &mut FilePickerState {
-    &mut self.file_picker
-  }
-
-  fn picker_runtime_store(&self) -> &PickerRuntimeStore<Self> {
-    &self.picker_runtime_store
-  }
-
-  fn picker_runtime_store_mut(&mut self) -> &mut PickerRuntimeStore<Self> {
-    &mut self.picker_runtime_store
-  }
-
-  fn search_prompt_ref(&self) -> &SearchPromptState {
-    &self.search_prompt
-  }
-
-  fn search_prompt_mut(&mut self) -> &mut SearchPromptState {
-    &mut self.search_prompt
-  }
-
-  fn dispatch(&self) -> DispatchRef<Self> {
-    DispatchRef::from_ptr(self.dispatch.as_ref() as *const dyn DefaultApi<Self>)
-  }
-
-  fn pending_input(&self) -> Option<&PendingInput> {
-    self.pending_input.as_ref()
-  }
-
-  fn set_pending_input(&mut self, pending: Option<PendingInput>) {
-    self.pending_input = pending;
-  }
-
-  fn registers(&self) -> &Registers {
-    &self.registers
-  }
-
-  fn registers_mut(&mut self) -> &mut Registers {
-    &mut self.registers
-  }
-
-  fn register(&self) -> Option<char> {
-    self.register
-  }
-
-  fn set_register(&mut self, register: Option<char>) {
-    self.register = register;
-  }
-
-  fn macro_recording(&self) -> &Option<(char, Vec<KeyBinding>)> {
-    &self.macro_recording
-  }
-
-  fn set_macro_recording(&mut self, recording: Option<(char, Vec<KeyBinding>)>) {
-    self.macro_recording = recording;
-  }
-
-  fn macro_replaying(&self) -> &Vec<char> {
-    &self.macro_replaying
-  }
-
-  fn macro_replaying_mut(&mut self) -> &mut Vec<char> {
-    &mut self.macro_replaying
-  }
-
-  fn macro_queue(&self) -> &VecDeque<KeyEvent> {
-    &self.macro_queue
-  }
-
-  fn macro_queue_mut(&mut self) -> &mut VecDeque<KeyEvent> {
-    &mut self.macro_queue
-  }
-
-  fn last_motion(&self) -> Option<Motion> {
-    self.last_motion
-  }
-
-  fn set_last_motion(&mut self, motion: Option<Motion>) {
-    self.last_motion = motion;
-  }
-
-  fn text_format(&self) -> TextFormat {
-    self.text_format.clone()
-  }
-
-  fn soft_wrap_enabled(&self) -> bool {
-    self.soft_wrap_enabled
-  }
-
-  fn set_soft_wrap_enabled(&mut self, enabled: bool) {
-    self.soft_wrap_enabled = enabled;
-    self.text_format.soft_wrap = enabled;
-  }
-
-  fn gutter_config(&self) -> &GutterConfig {
-    &self.gutter_config
-  }
-
-  fn gutter_config_mut(&mut self) -> &mut GutterConfig {
-    &mut self.gutter_config
-  }
-
-  fn text_annotations(&self) -> TextAnnotations<'_> {
-    TextAnnotations::default()
-  }
-
-  fn syntax_loader(&self) -> Option<&the_lib::syntax::Loader> {
-    None
-  }
-
-  fn ui_theme(&self) -> &Theme {
-    &self.ui_theme
-  }
-
-  fn ui_theme_name(&self) -> &str {
-    &self.ui_theme_name
-  }
-
-  fn available_theme_names(&self) -> Vec<String> {
-    vec![self.ui_theme_name.clone()]
-  }
-
-  fn set_ui_theme(&mut self, _theme_name: &str) -> Result<(), String> {
-    Err("theme switching is not implemented in the swift POC".to_string())
-  }
-
-  fn set_ui_theme_preview(&mut self, _theme_name: &str) -> Result<(), String> {
-    Err("theme preview is not implemented in the swift POC".to_string())
-  }
-
+  fn mode(&self) -> Mode { self.mode }
+  fn set_mode(&mut self, mode: Mode) { self.mode = mode; }
+  fn keymaps(&mut self) -> &mut Keymaps { &mut self.keymaps }
+  fn command_prompt_mut(&mut self) -> &mut CommandPromptState { &mut self.command_prompt }
+  fn command_prompt_ref(&self) -> &CommandPromptState { &self.command_prompt }
+  fn command_registry_mut(&mut self) -> &mut CommandRegistry<Self> { &mut self.command_registry }
+  fn command_registry_ref(&self) -> &CommandRegistry<Self> { &self.command_registry }
+  fn command_palette(&self) -> &CommandPaletteState { &self.command_palette }
+  fn command_palette_mut(&mut self) -> &mut CommandPaletteState { &mut self.command_palette }
+  fn command_palette_style(&self) -> &CommandPaletteStyle { &self.command_palette_style }
+  fn command_palette_style_mut(&mut self) -> &mut CommandPaletteStyle { &mut self.command_palette_style }
+  fn completion_menu(&self) -> &CompletionMenuState { &self.completion_menu }
+  fn completion_menu_mut(&mut self) -> &mut CompletionMenuState { &mut self.completion_menu }
+  fn completion_menu_keymaps(&self) -> &Keymaps { &self.completion_menu_keymaps }
+  fn completion_menu_keymaps_mut(&mut self) -> &mut Keymaps { &mut self.completion_menu_keymaps }
+  fn inline_completion(&self) -> &the_default::InlineCompletionState { &self.inline_completion }
+  fn inline_completion_mut(&mut self) -> &mut the_default::InlineCompletionState { &mut self.inline_completion }
+  fn set_inline_completion_annotations(&mut self, annotations: the_default::OwnedTextAnnotations) { self.inline_completion_annotations = annotations; }
+  fn clear_inline_completion_annotations(&mut self) { self.inline_completion_annotations = the_default::OwnedTextAnnotations::default(); }
+  fn file_tree(&self) -> &FileTreeState { &self.file_tree }
+  fn file_tree_mut(&mut self) -> &mut FileTreeState { &mut self.file_tree }
+  fn file_picker(&self) -> &FilePickerState { &self.file_picker }
+  fn file_picker_mut(&mut self) -> &mut FilePickerState { &mut self.file_picker }
+  fn picker_runtime_store(&self) -> &PickerRuntimeStore<Self> { &self.picker_runtime_store }
+  fn picker_runtime_store_mut(&mut self) -> &mut PickerRuntimeStore<Self> { &mut self.picker_runtime_store }
+  fn search_prompt_ref(&self) -> &SearchPromptState { &self.search_prompt }
+  fn search_prompt_mut(&mut self) -> &mut SearchPromptState { &mut self.search_prompt }
+  fn dispatch(&self) -> DispatchRef<Self> { DispatchRef::from_ptr(self.dispatch.as_ref() as *const dyn DefaultApi<Self>) }
+  fn pending_input(&self) -> Option<&PendingInput> { self.pending_input.as_ref() }
+  fn set_pending_input(&mut self, pending: Option<PendingInput>) { self.pending_input = pending; }
+  fn registers(&self) -> &Registers { &self.registers }
+  fn registers_mut(&mut self) -> &mut Registers { &mut self.registers }
+  fn register(&self) -> Option<char> { self.register }
+  fn set_register(&mut self, register: Option<char>) { self.register = register; }
+  fn macro_recording(&self) -> &Option<(char, Vec<KeyBinding>)> { &self.macro_recording }
+  fn set_macro_recording(&mut self, recording: Option<(char, Vec<KeyBinding>)>) { self.macro_recording = recording; }
+  fn macro_replaying(&self) -> &Vec<char> { &self.macro_replaying }
+  fn macro_replaying_mut(&mut self) -> &mut Vec<char> { &mut self.macro_replaying }
+  fn macro_queue(&self) -> &VecDeque<KeyEvent> { &self.macro_queue }
+  fn macro_queue_mut(&mut self) -> &mut VecDeque<KeyEvent> { &mut self.macro_queue }
+  fn last_motion(&self) -> Option<Motion> { self.last_motion }
+  fn set_last_motion(&mut self, motion: Option<Motion>) { self.last_motion = motion; }
+  fn text_format(&self) -> TextFormat { self.text_format.clone() }
+  fn soft_wrap_enabled(&self) -> bool { self.soft_wrap_enabled }
+  fn set_soft_wrap_enabled(&mut self, enabled: bool) { self.soft_wrap_enabled = enabled; self.text_format.soft_wrap = enabled; }
+  fn gutter_config(&self) -> &the_lib::render::GutterConfig { &self.gutter_config }
+  fn gutter_config_mut(&mut self) -> &mut the_lib::render::GutterConfig { &mut self.gutter_config }
+  fn text_annotations(&self) -> TextAnnotations<'_> { TextAnnotations::default() }
+  fn syntax_loader(&self) -> Option<&the_lib::syntax::Loader> { None }
+  fn ui_theme(&self) -> &Theme { &self.ui_theme }
+  fn ui_theme_name(&self) -> &str { &self.ui_theme_name }
+  fn available_theme_names(&self) -> Vec<String> { vec![self.ui_theme_name.clone()] }
+  fn set_ui_theme(&mut self, _theme_name: &str) -> Result<(), String> { Err("theme switching is not implemented in the swift POC".to_string()) }
+  fn set_ui_theme_preview(&mut self, _theme_name: &str) -> Result<(), String> { Err("theme preview is not implemented in the swift POC".to_string()) }
   fn clear_ui_theme_preview(&mut self) {}
-
-  fn set_file_path(&mut self, path: Option<PathBuf>) {
-    self.file_path = path.clone();
-    self.editor.set_active_file_path(path);
-  }
-
+  fn set_file_path(&mut self, path: Option<PathBuf>) { self.file_path = path.clone(); self.editor.set_active_file_path(path); }
   fn open_file(&mut self, path: &Path) -> std::io::Result<()> {
-    match fs::read_to_string(path) {
-      Ok(contents) => {
-        let _ = self
-          .editor
-          .replace_active_buffer(Rope::from_str(&contents), Some(path.to_path_buf()));
-        self.file_path = Some(path.to_path_buf());
-        self.editor.set_active_file_path(Some(path.to_path_buf()));
-        self.editor
-          .document_mut()
-          .set_display_name(display_name_for_path(path));
-        Ok(())
-      },
-      Err(err) => Err(err),
-    }
+    let contents = fs::read_to_string(path)?;
+    let _ = self.editor.replace_active_buffer(Rope::from_str(&contents), Some(path.to_path_buf()));
+    self.file_path = Some(path.to_path_buf());
+    self.editor.set_active_file_path(Some(path.to_path_buf()));
+    self.editor.document_mut().set_display_name(display_name_for_path(path));
+    Ok(())
   }
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct EditorSnapshot {
-  display_name:    String,
-  file_path:       Option<String>,
-  mode:            String,
-  viewport_width:  u16,
-  viewport_height: u16,
-  scroll_row:      usize,
-  scroll_col:      usize,
-  content_offset_x: u16,
-  line_count:      usize,
-  message:         Option<String>,
-  damage_reason:   String,
-  lines:           Vec<EditorSnapshotLine>,
-  cursors:         Vec<EditorSnapshotCursor>,
-  selections:      Vec<EditorSnapshotSelection>,
-}
-
-impl EditorSnapshot {
+impl OwnedSnapshot {
   fn from_editor(editor: &SwiftEditor, plan: Option<&RenderPlan>) -> Self {
     let viewport = editor.editor.view().viewport;
     let scroll = editor.editor.view().scroll;
-    let line_count = editor.editor.document().text().len_lines();
-    let message = editor.messages.active().map(|message| message.text.clone());
+    let mode = mode_code(editor.mode);
+    let document_line_count = editor.editor.document().text().len_lines() as u32;
 
-    if let Some(plan) = plan {
-      let lines = (0..plan.viewport.height)
-        .map(|row| {
-          let gutter = plan
-            .gutter_lines
-            .iter()
-            .find(|line| line.row == row)
-            .map(concat_gutter)
-            .unwrap_or_default();
-          let spans = plan
-            .lines
-            .iter()
-            .find(|line| line.row == row)
-            .map(snapshot_spans)
-            .unwrap_or_default();
-          let doc_line = plan
-            .visible_rows
-            .iter()
-            .find(|visible| visible.row == row)
-            .map(|visible| visible.doc_line);
-          EditorSnapshotLine {
-            row,
-            doc_line,
-            gutter,
-            spans,
-          }
-        })
-        .collect();
-      let cursors = plan
-        .cursors
-        .iter()
-        .map(|cursor| EditorSnapshotCursor {
-          row: cursor.pos.row,
-          col: cursor.pos.col,
-          kind: cursor_kind_name(cursor.kind).to_string(),
-        })
-        .collect();
-      let selections = plan
-        .selections
-        .iter()
-        .map(|selection| EditorSnapshotSelection {
-          x:      selection.rect.x,
-          y:      selection.rect.y,
-          width:  selection.rect.width,
-          height: selection.rect.height,
-        })
-        .collect();
-
-      Self {
-        display_name: editor.editor.document().display_name().into_owned(),
-        file_path: editor.file_path.as_ref().map(|path| path.display().to_string()),
-        mode: mode_name(editor.mode).to_string(),
+    let mut snapshot = Self {
+      info: the_editor_snapshot_info_t {
         viewport_width: viewport.width,
         viewport_height: viewport.height,
-        scroll_row: scroll.row,
-        scroll_col: scroll.col,
-        content_offset_x: plan.content_offset_x,
-        line_count,
-        message,
-        damage_reason: damage_reason_name(plan.damage_reason).to_string(),
-        lines,
-        cursors,
-        selections,
+        content_offset_x: plan.map(|plan| plan.content_offset_x).unwrap_or(0),
+        damage_start_row: plan.map(|plan| plan.damage_start_row).unwrap_or(0),
+        damage_end_row: plan.map(|plan| plan.damage_end_row).unwrap_or(0),
+        damage_is_full: plan.map(|plan| plan.damage_is_full).unwrap_or(false),
+        damage_reason: plan.map(|plan| damage_reason_code(plan.damage_reason)).unwrap_or(damage_reason_code(RenderDamageReason::None)),
+        mode,
+        layout_generation: plan.map(|plan| plan.layout_generation).unwrap_or(0),
+        text_generation: plan.map(|plan| plan.text_generation).unwrap_or(0),
+        decoration_generation: plan.map(|plan| plan.decoration_generation).unwrap_or(0),
+        cursor_generation: plan.map(|plan| plan.cursor_generation).unwrap_or(0),
+        scroll_generation: plan.map(|plan| plan.scroll_generation).unwrap_or(0),
+        theme_generation: plan.map(|plan| plan.theme_generation).unwrap_or(0),
+        cursor_blink_generation: plan.map(|plan| plan.cursor_blink_generation).unwrap_or(0),
+        scroll_row: scroll.row as u32,
+        scroll_col: scroll.col as u32,
+        document_line_count,
+        line_count: 0,
+        cursor_count: 0,
+        selection_count: 0,
+        overlay_count: 0,
+      },
+      ..Default::default()
+    };
+
+    let Some(plan) = plan else {
+      return snapshot;
+    };
+
+    let base_text_style = editor.ui_theme.try_get("ui.text").unwrap_or_default();
+
+    for row in 0..plan.viewport.height {
+      let doc_line = plan
+        .visible_rows
+        .iter()
+        .find(|visible| visible.row == row)
+        .map(|visible| visible.doc_line as i32)
+        .unwrap_or(-1);
+      let first_visual_line = plan
+        .visible_rows
+        .iter()
+        .find(|visible| visible.row == row)
+        .map(|visible| visible.first_visual_line)
+        .unwrap_or(false);
+
+      let span_start = snapshot.spans.len();
+
+      if let Some(gutter) = plan.gutter_lines.iter().find(|line| line.row == row) {
+        for span in &gutter.spans {
+          let text_idx = snapshot.push_string(span.text.as_str());
+          snapshot.spans.push(SpanRecord {
+            span: the_editor_snapshot_span_t {
+              col: span.col,
+              cols: span.text.chars().count() as u16,
+              text: ptr::null(),
+              is_virtual: false,
+              style: style_to_ffi(span.style, &editor.ui_theme),
+            },
+            text_idx,
+          });
+        }
       }
-    } else {
-      Self {
-        display_name: editor.editor.document().display_name().into_owned(),
-        file_path: editor.file_path.as_ref().map(|path| path.display().to_string()),
-        mode: mode_name(editor.mode).to_string(),
-        viewport_width: viewport.width,
-        viewport_height: viewport.height,
-        scroll_row: scroll.row,
-        scroll_col: scroll.col,
-        content_offset_x: 0,
-        line_count,
-        message,
-        damage_reason: "none".to_string(),
-        lines: Vec::new(),
-        cursors: Vec::new(),
-        selections: Vec::new(),
+
+      if let Some(line) = plan.lines.iter().find(|line| line.row == row) {
+        for span in &line.spans {
+          let text_idx = snapshot.push_string(span.text.as_str());
+          let highlight_style = span.highlight.map(|highlight| editor.ui_theme.highlight(highlight)).unwrap_or_default();
+          snapshot.spans.push(SpanRecord {
+            span: the_editor_snapshot_span_t {
+              col: plan.content_offset_x.saturating_add(span.col),
+              cols: span.cols,
+              text: ptr::null(),
+              is_virtual: span.is_virtual,
+              style: style_to_ffi(base_text_style.patch(highlight_style), &editor.ui_theme),
+            },
+            text_idx,
+          });
+        }
+      }
+
+      let span_count = snapshot.spans.len().saturating_sub(span_start);
+      snapshot.lines.push(LineRecord {
+        line: the_editor_snapshot_line_t {
+          row,
+          doc_line,
+          first_visual_line,
+          span_count,
+        },
+        span_start,
+      });
+    }
+
+    snapshot.cursors = plan
+      .cursors
+      .iter()
+      .map(|cursor| the_editor_snapshot_cursor_t {
+        row: cursor.pos.row as u32,
+        col: (plan.content_offset_x as usize + cursor.pos.col) as u32,
+        kind: cursor_kind_code(cursor.kind),
+        style: style_to_ffi(cursor.style, &editor.ui_theme),
+      })
+      .collect();
+
+    snapshot.selections = plan
+      .selections
+      .iter()
+      .map(|selection| the_editor_snapshot_selection_t {
+        x: plan.content_offset_x.saturating_add(selection.rect.x),
+        y: selection.rect.y,
+        width: selection.rect.width,
+        height: selection.rect.height,
+        kind: selection_kind_code(selection.kind),
+        style: style_to_ffi(selection.style, &editor.ui_theme),
+      })
+      .collect();
+
+    for overlay in &plan.overlays {
+      match overlay {
+        OverlayNode::Rect(rect) => {
+          snapshot.overlays.push(OverlayRecord {
+            overlay: the_editor_snapshot_overlay_t {
+              kind: 0,
+              rect_kind: overlay_rect_kind_code(rect.kind),
+              x: rect.rect.x,
+              y: rect.rect.y,
+              width: rect.rect.width,
+              height: rect.rect.height,
+              radius: rect.radius,
+              row: 0,
+              col: 0,
+              text: ptr::null(),
+              style: style_to_ffi(rect.style, &editor.ui_theme),
+            },
+            text_idx: None,
+          });
+        },
+        OverlayNode::Text(text) => {
+          let text_idx = snapshot.push_string(text.text.as_str());
+          snapshot.overlays.push(OverlayRecord {
+            overlay: the_editor_snapshot_overlay_t {
+              kind: 1,
+              rect_kind: 0,
+              x: 0,
+              y: 0,
+              width: 0,
+              height: 0,
+              radius: 0,
+              row: text.pos.row as u32,
+              col: text.pos.col as u32,
+              text: ptr::null(),
+              style: style_to_ffi(text.style, &editor.ui_theme),
+            },
+            text_idx: Some(text_idx),
+          });
+        },
       }
     }
+
+    for span in &mut snapshot.spans {
+      span.span.text = snapshot.strings[span.text_idx].as_ptr();
+    }
+    for overlay in &mut snapshot.overlays {
+      if let Some(text_idx) = overlay.text_idx {
+        overlay.overlay.text = snapshot.strings[text_idx].as_ptr();
+      }
+    }
+
+    snapshot.info.line_count = snapshot.lines.len();
+    snapshot.info.cursor_count = snapshot.cursors.len();
+    snapshot.info.selection_count = snapshot.selections.len();
+    snapshot.info.overlay_count = snapshot.overlays.len();
+    snapshot
   }
-}
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct EditorSnapshotLine {
-  row:      u16,
-  doc_line: Option<usize>,
-  gutter:   String,
-  spans:    Vec<EditorSnapshotSpan>,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct EditorSnapshotSpan {
-  col:        u16,
-  cols:       u16,
-  text:       String,
-  is_virtual: bool,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct EditorSnapshotCursor {
-  row:  usize,
-  col:  usize,
-  kind: String,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct EditorSnapshotSelection {
-  x:      u16,
-  y:      u16,
-  width:  u16,
-  height: u16,
+  fn push_string(&mut self, text: &str) -> usize {
+    let c_string = CString::new(text).unwrap_or_else(|_| CString::new(text.replace('\0', "")).expect("cstring"));
+    self.strings.push(c_string);
+    self.strings.len() - 1
+  }
 }
 
 fn translate_key_event(raw: the_editor_key_event_t) -> Option<KeyEvent> {
@@ -811,74 +862,181 @@ fn translate_key_event(raw: the_editor_key_event_t) -> Option<KeyEvent> {
 
 fn translate_modifiers(raw: u8) -> the_default::Modifiers {
   let mut modifiers = the_default::Modifiers::empty();
-  if (raw & MOD_CTRL) != 0 {
-    modifiers.insert(the_default::Modifiers::CTRL);
-  }
-  if (raw & MOD_ALT) != 0 {
-    modifiers.insert(the_default::Modifiers::ALT);
-  }
-  if (raw & MOD_SHIFT) != 0 {
-    modifiers.insert(the_default::Modifiers::SHIFT);
-  }
+  if (raw & MOD_CTRL) != 0 { modifiers.insert(the_default::Modifiers::CTRL); }
+  if (raw & MOD_ALT) != 0 { modifiers.insert(the_default::Modifiers::ALT); }
+  if (raw & MOD_SHIFT) != 0 { modifiers.insert(the_default::Modifiers::SHIFT); }
   modifiers
+}
+
+fn mode_code(mode: Mode) -> u8 {
+  match mode {
+    Mode::Normal => 0,
+    Mode::Insert => 1,
+    Mode::Select => 2,
+    Mode::Command => 3,
+  }
+}
+
+fn damage_reason_code(reason: RenderDamageReason) -> u8 {
+  match reason {
+    RenderDamageReason::None => 0,
+    RenderDamageReason::Full => 1,
+    RenderDamageReason::Layout => 2,
+    RenderDamageReason::Text => 3,
+    RenderDamageReason::Decoration => 4,
+    RenderDamageReason::Cursor => 5,
+    RenderDamageReason::Scroll => 6,
+    RenderDamageReason::Theme => 7,
+    RenderDamageReason::PaneStructure => 8,
+  }
+}
+
+fn cursor_kind_code(kind: CursorKind) -> u8 {
+  match kind {
+    CursorKind::Block => 0,
+    CursorKind::Bar => 1,
+    CursorKind::Underline => 2,
+    CursorKind::Hollow => 3,
+    CursorKind::Hidden => 4,
+  }
+}
+
+fn selection_kind_code(kind: RenderSelectionKind) -> u8 {
+  match kind {
+    RenderSelectionKind::Primary => 0,
+    RenderSelectionKind::Match => 1,
+    RenderSelectionKind::Hover => 2,
+  }
+}
+
+fn overlay_rect_kind_code(kind: OverlayRectKind) -> u8 {
+  match kind {
+    OverlayRectKind::Panel => 0,
+    OverlayRectKind::Divider => 1,
+    OverlayRectKind::Highlight => 2,
+    OverlayRectKind::Backdrop => 3,
+  }
+}
+
+fn style_to_ffi(style: Style, theme: &Theme) -> the_editor_style_t {
+  the_editor_style_t {
+    fg: color_to_rgba(style.fg, theme),
+    bg: color_to_rgba(style.bg, theme),
+    underline_color: color_to_rgba(style.underline_color, theme),
+    add_modifiers: modifier_bits(style.add_modifier),
+    remove_modifiers: modifier_bits(style.sub_modifier),
+    underline_style: underline_style_code(style.underline_style),
+  }
+}
+
+fn underline_style_code(style: Option<UnderlineStyle>) -> u8 {
+  match style {
+    None | Some(UnderlineStyle::Reset) => 0,
+    Some(UnderlineStyle::Line) => 1,
+    Some(UnderlineStyle::Curl) => 2,
+    Some(UnderlineStyle::Dotted) => 3,
+    Some(UnderlineStyle::Dashed) => 4,
+    Some(UnderlineStyle::DoubleLine) => 5,
+  }
+}
+
+fn modifier_bits(modifier: Modifier) -> u16 {
+  let mut bits = 0;
+  if modifier.contains(Modifier::BOLD) { bits |= STYLE_BOLD; }
+  if modifier.contains(Modifier::DIM) { bits |= STYLE_DIM; }
+  if modifier.contains(Modifier::ITALIC) { bits |= STYLE_ITALIC; }
+  if modifier.contains(Modifier::SLOW_BLINK) { bits |= STYLE_SLOW_BLINK; }
+  if modifier.contains(Modifier::RAPID_BLINK) { bits |= STYLE_RAPID_BLINK; }
+  if modifier.contains(Modifier::REVERSED) { bits |= STYLE_REVERSED; }
+  if modifier.contains(Modifier::HIDDEN) { bits |= STYLE_HIDDEN; }
+  if modifier.contains(Modifier::CROSSED_OUT) { bits |= STYLE_CROSSED_OUT; }
+  bits
+}
+
+fn color_to_rgba(color: Option<Color>, theme: &Theme) -> the_editor_rgba_t {
+  let Some(color) = color else {
+    return the_editor_rgba_t::default();
+  };
+  let (r, g, b) = resolve_color(color, theme);
+  the_editor_rgba_t {
+    present: true,
+    r,
+    g,
+    b,
+    a: 255,
+  }
+}
+
+fn resolve_color(color: Color, theme: &Theme) -> (u8, u8, u8) {
+  match color {
+    Color::Reset => (0, 0, 0),
+    Color::Black => ansi_color(0, theme),
+    Color::Red => ansi_color(1, theme),
+    Color::Green => ansi_color(2, theme),
+    Color::Yellow => ansi_color(3, theme),
+    Color::Blue => ansi_color(4, theme),
+    Color::Magenta => ansi_color(5, theme),
+    Color::Cyan => ansi_color(6, theme),
+    Color::Gray => ansi_color(7, theme),
+    Color::LightRed => ansi_color(8, theme),
+    Color::LightGreen => ansi_color(9, theme),
+    Color::LightYellow => ansi_color(10, theme),
+    Color::LightBlue => ansi_color(11, theme),
+    Color::LightMagenta => ansi_color(12, theme),
+    Color::LightCyan => ansi_color(13, theme),
+    Color::LightGray => ansi_color(14, theme),
+    Color::White => ansi_color(15, theme),
+    Color::Rgb(r, g, b) => (r, g, b),
+    Color::Indexed(index) => indexed_color(index),
+  }
+}
+
+fn ansi_color(index: usize, theme: &Theme) -> (u8, u8, u8) {
+  if let Some(color) = theme.ghostty().palette_color(index) {
+    return resolve_color(color, theme);
+  }
+  const ANSI: [(u8, u8, u8); 16] = [
+    (0, 0, 0),
+    (205, 49, 49),
+    (13, 188, 121),
+    (229, 229, 16),
+    (36, 114, 200),
+    (188, 63, 188),
+    (17, 168, 205),
+    (229, 229, 229),
+    (102, 102, 102),
+    (241, 76, 76),
+    (35, 209, 139),
+    (245, 245, 67),
+    (59, 142, 234),
+    (214, 112, 214),
+    (41, 184, 219),
+    (255, 255, 255),
+  ];
+  ANSI[index.min(15)]
+}
+
+fn indexed_color(index: u8) -> (u8, u8, u8) {
+  if index < 16 {
+    return ansi_color(index as usize, default_theme());
+  }
+  if index >= 232 {
+    let gray = 8 + (index - 232) * 10;
+    return (gray, gray, gray);
+  }
+  let index = index - 16;
+  let r = index / 36;
+  let g = (index % 36) / 6;
+  let b = index % 6;
+  (
+    if r == 0 { 0 } else { r * 40 + 55 },
+    if g == 0 { 0 } else { g * 40 + 55 },
+    if b == 0 { 0 } else { b * 40 + 55 },
+  )
 }
 
 fn max_scroll_row(line_count: usize, viewport_height: usize) -> usize {
   line_count.saturating_sub(viewport_height.max(1))
-}
-
-fn snapshot_spans(line: &the_lib::render::RenderLine) -> Vec<EditorSnapshotSpan> {
-  line
-    .spans
-    .iter()
-    .map(|span| EditorSnapshotSpan {
-      col: span.col,
-      cols: span.cols,
-      text: span.text.to_string(),
-      is_virtual: span.is_virtual,
-    })
-    .collect()
-}
-
-fn concat_gutter(line: &the_lib::render::RenderGutterLine) -> String {
-  let mut text = String::new();
-  for span in &line.spans {
-    text.push_str(span.text.as_str());
-  }
-  text
-}
-
-fn cursor_kind_name(kind: CursorKind) -> &'static str {
-  match kind {
-    CursorKind::Block => "block",
-    CursorKind::Bar => "bar",
-    CursorKind::Underline => "underline",
-    CursorKind::Hollow => "hollow",
-    CursorKind::Hidden => "hidden",
-  }
-}
-
-fn damage_reason_name(reason: the_lib::render::RenderDamageReason) -> &'static str {
-  match reason {
-    the_lib::render::RenderDamageReason::None => "none",
-    the_lib::render::RenderDamageReason::Full => "full",
-    the_lib::render::RenderDamageReason::Layout => "layout",
-    the_lib::render::RenderDamageReason::Text => "text",
-    the_lib::render::RenderDamageReason::Decoration => "decoration",
-    the_lib::render::RenderDamageReason::Cursor => "cursor",
-    the_lib::render::RenderDamageReason::Scroll => "scroll",
-    the_lib::render::RenderDamageReason::Theme => "theme",
-    the_lib::render::RenderDamageReason::PaneStructure => "paneStructure",
-  }
-}
-
-fn mode_name(mode: Mode) -> &'static str {
-  match mode {
-    Mode::Normal => "normal",
-    Mode::Insert => "insert",
-    Mode::Select => "select",
-    Mode::Command => "command",
-  }
 }
 
 fn default_workspace_root() -> PathBuf {
@@ -886,10 +1044,7 @@ fn default_workspace_root() -> PathBuf {
 }
 
 fn display_name_for_path(path: &Path) -> String {
-  path
-    .file_name()
-    .map(|name| name.to_string_lossy().to_string())
-    .unwrap_or_else(|| path.display().to_string())
+  path.file_name().map(|name| name.to_string_lossy().to_string()).unwrap_or_else(|| path.display().to_string())
 }
 
 fn read_rope(path: Option<&Path>) -> Rope {
@@ -911,6 +1066,13 @@ unsafe fn path_from_c(path: *const c_char) -> Option<PathBuf> {
   }
 }
 
+unsafe fn string_from_c(ptr: *const c_char) -> Option<String> {
+  if ptr.is_null() {
+    return None;
+  }
+  Some(unsafe { CStr::from_ptr(ptr) }.to_string_lossy().to_string())
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn the_editor_new(path: *const c_char) -> *mut the_editor_handle_t {
   let path = unsafe { path_from_c(path) };
@@ -922,77 +1084,115 @@ pub unsafe extern "C" fn the_editor_new(path: *const c_char) -> *mut the_editor_
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn the_editor_free(handle: *mut the_editor_handle_t) {
-  if handle.is_null() {
-    return;
-  }
+  if handle.is_null() { return; }
   drop(unsafe { Box::from_raw(handle) });
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_open(
-  handle: *mut the_editor_handle_t,
-  path: *const c_char,
-) -> bool {
-  let Some(handle) = (unsafe { handle.as_mut() }) else {
-    return false;
-  };
-  let Some(path) = (unsafe { path_from_c(path) }) else {
-    return false;
-  };
+pub unsafe extern "C" fn the_editor_open(handle: *mut the_editor_handle_t, path: *const c_char) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+  let Some(path) = (unsafe { path_from_c(path) }) else { return false; };
   handle.editor.open_path(&path)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_set_viewport(
-  handle: *mut the_editor_handle_t,
-  cols: u16,
-  rows: u16,
-) {
-  let Some(handle) = (unsafe { handle.as_mut() }) else {
-    return;
-  };
+pub unsafe extern "C" fn the_editor_set_viewport(handle: *mut the_editor_handle_t, cols: u16, rows: u16) {
+  let Some(handle) = (unsafe { handle.as_mut() }) else { return; };
   handle.editor.set_viewport(cols, rows);
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_handle_key(
-  handle: *mut the_editor_handle_t,
-  event: the_editor_key_event_t,
-) -> bool {
-  let Some(handle) = (unsafe { handle.as_mut() }) else {
-    return false;
-  };
+pub unsafe extern "C" fn the_editor_set_scroll_row(handle: *mut the_editor_handle_t, row: u32) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+  handle.editor.set_scroll_row(row)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_handle_key(handle: *mut the_editor_handle_t, event: the_editor_key_event_t) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
   handle.editor.handle_key_event(event)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_scroll_lines(
-  handle: *mut the_editor_handle_t,
-  delta_lines: i32,
-) -> bool {
-  let Some(handle) = (unsafe { handle.as_mut() }) else {
-    return false;
-  };
-  handle.editor.scroll_lines(delta_lines)
+pub unsafe extern "C" fn the_editor_insert_text(handle: *mut the_editor_handle_t, text: *const c_char) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+  let Some(text) = (unsafe { string_from_c(text) }) else { return false; };
+  handle.editor.insert_text(&text)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_snapshot_json(
-  handle: *mut the_editor_handle_t,
-) -> *mut c_char {
-  let Some(handle) = (unsafe { handle.as_mut() }) else {
-    return std::ptr::null_mut();
-  };
-  match CString::new(handle.editor.snapshot_json()) {
+pub unsafe extern "C" fn the_editor_primary_selection_utf16_location(handle: *mut the_editor_handle_t) -> u32 {
+  let Some(handle) = (unsafe { handle.as_mut() }) else { return 0; };
+  handle.editor.primary_selection_utf16().0
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_primary_selection_utf16_length(handle: *mut the_editor_handle_t) -> u32 {
+  let Some(handle) = (unsafe { handle.as_mut() }) else { return 0; };
+  handle.editor.primary_selection_utf16().1
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_primary_selection_text(handle: *mut the_editor_handle_t) -> *mut c_char {
+  let Some(handle) = (unsafe { handle.as_mut() }) else { return ptr::null_mut(); };
+  match CString::new(handle.editor.primary_selection_text()) {
     Ok(value) => value.into_raw(),
-    Err(_) => std::ptr::null_mut(),
+    Err(_) => ptr::null_mut(),
   }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_snapshot_create(handle: *mut the_editor_handle_t) -> *mut the_editor_snapshot_t {
+  let Some(handle) = (unsafe { handle.as_mut() }) else { return ptr::null_mut(); };
+  Box::into_raw(Box::new(the_editor_snapshot_t { snapshot: handle.editor.build_snapshot() }))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_snapshot_free(snapshot: *mut the_editor_snapshot_t) {
+  if snapshot.is_null() { return; }
+  drop(unsafe { Box::from_raw(snapshot) });
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_snapshot_info(snapshot: *const the_editor_snapshot_t) -> the_editor_snapshot_info_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_info_t::default(); };
+  snapshot.snapshot.info
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_snapshot_line_at(snapshot: *const the_editor_snapshot_t, line_index: usize) -> the_editor_snapshot_line_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_line_t::default(); };
+  snapshot.snapshot.lines.get(line_index).map(|record| record.line).unwrap_or_default()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_snapshot_span_at(snapshot: *const the_editor_snapshot_t, line_index: usize, span_index: usize) -> the_editor_snapshot_span_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_span_t::default(); };
+  let Some(line) = snapshot.snapshot.lines.get(line_index) else { return the_editor_snapshot_span_t::default(); };
+  if span_index >= line.line.span_count { return the_editor_snapshot_span_t::default(); }
+  snapshot.snapshot.spans.get(line.span_start + span_index).map(|record| record.span).unwrap_or_default()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_snapshot_cursor_at(snapshot: *const the_editor_snapshot_t, cursor_index: usize) -> the_editor_snapshot_cursor_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_cursor_t::default(); };
+  snapshot.snapshot.cursors.get(cursor_index).copied().unwrap_or_default()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_snapshot_selection_at(snapshot: *const the_editor_snapshot_t, selection_index: usize) -> the_editor_snapshot_selection_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_selection_t::default(); };
+  snapshot.snapshot.selections.get(selection_index).copied().unwrap_or_default()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_snapshot_overlay_at(snapshot: *const the_editor_snapshot_t, overlay_index: usize) -> the_editor_snapshot_overlay_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_overlay_t::default(); };
+  snapshot.snapshot.overlays.get(overlay_index).map(|record| record.overlay).unwrap_or_default()
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn the_editor_string_free(value: *mut c_char) {
-  if value.is_null() {
-    return;
-  }
+  if value.is_null() { return; }
   drop(unsafe { CString::from_raw(value) });
 }

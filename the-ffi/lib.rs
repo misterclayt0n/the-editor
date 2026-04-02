@@ -68,13 +68,17 @@ use the_lib::{
   position::Position,
   registers::Registers,
   render::{
+    FrameGenerationState,
     FrameRenderPlan,
     NoHighlights,
     RenderDamageReason,
+    RenderGenerationState,
     RenderPlan,
     RenderSelectionKind,
     RenderStyles,
+    base_render_layer_row_hashes,
     build_plan,
+    finish_render_generations,
     gutter_width_for_document,
     graphics::{
       Color,
@@ -529,6 +533,9 @@ struct SwiftEditor {
   ui_theme_base:                 Theme,
   ui_theme_preview_name:         Option<String>,
   ui_theme:                      Theme,
+  render_generation_state:       Option<RenderGenerationState>,
+  frame_generation_state:        FrameGenerationState,
+  render_theme_generation:       u64,
   surface:                       SurfaceConfig,
 }
 
@@ -614,6 +621,9 @@ impl SwiftEditor {
       ui_theme_base: ui_theme.clone(),
       ui_theme_preview_name: None,
       ui_theme,
+      render_generation_state: None,
+      frame_generation_state: FrameGenerationState::default(),
+      render_theme_generation: 0,
       surface,
     }
   }
@@ -792,6 +802,7 @@ impl SwiftEditor {
 
   fn apply_effective_theme(&mut self, theme: Theme) {
     self.ui_theme = theme;
+    self.render_theme_generation = self.render_theme_generation.wrapping_add(1);
   }
 
   fn set_ui_theme_named(&mut self, theme_name: &str) -> Result<(), String> {
@@ -979,7 +990,7 @@ impl DefaultContext for SwiftEditor {
     let mut annotations = TextAnnotations::default();
     let mut highlights = NoHighlights;
     let (document, cache) = self.editor.document_and_cache();
-    build_plan(
+    let mut plan = build_plan(
       document,
       view,
       &text_format,
@@ -988,13 +999,31 @@ impl DefaultContext for SwiftEditor {
       &mut highlights,
       cache,
       styles,
-    )
+    );
+    let row_hashes = base_render_layer_row_hashes(&plan);
+    let generation_state = finish_render_generations(
+      &mut plan,
+      self.render_generation_state.as_ref(),
+      self.render_theme_generation,
+      row_hashes,
+    );
+    self.render_generation_state = Some(generation_state);
+    plan
   }
   fn build_frame_render_plan(&mut self) -> FrameRenderPlan {
-    FrameRenderPlan::from_active_plan(self.build_render_plan())
+    self.build_frame_render_plan_with_styles(self.render_styles())
   }
   fn build_frame_render_plan_with_styles(&mut self, styles: RenderStyles) -> FrameRenderPlan {
-    FrameRenderPlan::from_active_plan(self.build_render_plan_with_styles(styles))
+    let mut frame = FrameRenderPlan::from_active_plan(self.build_render_plan_with_styles(styles));
+    let pane_state = self.render_generation_state.clone().unwrap_or_default();
+    let pane_id = frame.active_pane;
+    let pane_states = std::iter::once((pane_id, pane_state)).collect();
+    self.frame_generation_state = the_lib::render::finish_frame_generations(
+      &mut frame,
+      Some(&self.frame_generation_state),
+      pane_states,
+    );
+    frame
   }
   fn request_quit(&mut self) {}
   fn mode(&self) -> Mode { self.mode }

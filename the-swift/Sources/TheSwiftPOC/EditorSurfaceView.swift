@@ -47,11 +47,13 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
         renderer.view.frame = bounds
         let backingBounds = convertToBacking(bounds)
         renderer.view.drawableSize = backingBounds.size
+        editorDebugLog("surfaceView.layout bounds=\(editorDebugDescribe(bounds)) backing=\(editorDebugDescribe(backingBounds))")
         synchronizeSurfaceConfiguration()
     }
 
     override func viewDidChangeBackingProperties() {
         super.viewDidChangeBackingProperties()
+        editorDebugLog("surfaceView.backing scale=\(String(format: "%.2f", window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1))")
         synchronizeSurfaceConfiguration()
     }
 

@@ -132,10 +132,12 @@ final class EditorSurfaceScrollView: NSView, EditorSurfaceControllerDelegate {
         scrollView.frame = bounds
         surfaceView.frame.size = scrollView.contentView.bounds.size
         documentView.frame.size.width = scrollView.bounds.width
+        editorDebugLog("scrollView.layout bounds=\(editorDebugDescribe(bounds)) contentBounds=\(editorDebugDescribe(scrollView.contentView.bounds)) visible=\(editorDebugDescribe(scrollView.contentView.documentVisibleRect))")
         synchronizeSurfaceFrame()
     }
 
     func editorController(_ controller: EditorSurfaceController, didUpdateScene scene: EditorRenderScene) {
+        editorDebugLog("didUpdateScene viewport=(\(scene.info.viewportWidth),\(scene.info.viewportHeight)) scroll=(\(scene.info.scrollRow),\(scene.info.scrollCol)) contentOffsetX=\(scene.info.contentOffsetX) visible=\(editorDebugDescribe(scrollView.contentView.documentVisibleRect))")
         updateDocumentMetrics(scene)
         synchronizeScrollPosition(scene)
         surfaceView.update(scene: scene)

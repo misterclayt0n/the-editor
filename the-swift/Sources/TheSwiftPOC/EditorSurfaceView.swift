@@ -10,7 +10,11 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
     private let renderer: MetalEditorRenderer
     private let font: NSFont
     private let fontMetrics: EditorFontMetrics
-    let cellSize: CGSize
+    private let fallbackCellSize: CGSize
+
+    var cellSize: CGSize {
+        controller?.scene?.info.surfaceMetrics.cellSizePoints ?? fallbackCellSize
+    }
     private var markedText = NSMutableAttributedString()
 
     override var acceptsFirstResponder: Bool { true }
@@ -20,7 +24,7 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
         self.controller = controller
         self.font = NSFont.monospacedSystemFont(ofSize: 14, weight: .regular)
         self.fontMetrics = EditorFontMetrics(font: font)
-        self.cellSize = fontMetrics.cellSize
+        self.fallbackCellSize = fontMetrics.cellSize
         guard let renderer = MetalEditorRenderer(fontMetrics: fontMetrics, scaleProvider: {
             NSScreen.main?.backingScaleFactor ?? 2
         }) else {
@@ -204,6 +208,8 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
         guard let scene = controller?.scene, let cursor = scene.primaryCursor else {
             return convert(NSRect(x: 0, y: 0, width: 0, height: cellSize.height), to: nil)
         }
+        let metrics = scene.info.surfaceMetrics
+        let cellSize = metrics.cellSizePoints
         let local = NSRect(
             x: CGFloat(cursor.col) * cellSize.width,
             y: CGFloat(cursor.row) * cellSize.height,

@@ -8,9 +8,7 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
     private let device: MTLDevice
     private let queue: MTLCommandQueue
     private let ciContext: CIContext
-    private let fontMetrics: EditorFontMetrics
     private let font: NSFont
-    private let cellSize: CGSize
     private let scaleProvider: () -> CGFloat
 
     private var scene: EditorRenderScene?
@@ -26,9 +24,7 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
         self.device = device
         self.queue = queue
         self.ciContext = CIContext(mtlDevice: device)
-        self.fontMetrics = fontMetrics
         self.font = fontMetrics.font
-        self.cellSize = fontMetrics.cellSize
         self.scaleProvider = scaleProvider
 
         let view = MTKView(frame: .zero, device: device)
@@ -58,6 +54,9 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
         }
 
         let scale = max(scaleProvider(), 1)
+        let cellSize = scene.info.surfaceMetrics.cellSizePoints
+        let baselineFromBottom = scene.info.surfaceMetrics.baselineFromBottomPoints
+        let cursorThickness = max(scene.info.surfaceMetrics.cursorThicknessPoints, 1)
         let pixelWidth = max(Int(view.drawableSize.width), 1)
         let pixelHeight = max(Int(view.drawableSize.height), 1)
         guard let context = makeBitmapContext(width: pixelWidth, height: pixelHeight) else {
@@ -77,7 +76,7 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
         for selection in scene.selections {
             let color = selection.style.backgroundColor ?? NSColor.selectedTextBackgroundColor.withAlphaComponent(0.35)
             context.setFillColor(color.cgColor)
-            context.fill(selectionRect(selection, viewportHeight: view.bounds.height))
+            context.fill(selectionRect(selection, cellSize: cellSize, viewportHeight: view.bounds.height))
         }
 
         for overlay in scene.overlays where overlay.kind == .rect {
@@ -85,7 +84,7 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
             context.setFillColor(color.cgColor)
             context.fill(CGRect(
                 x: CGFloat(overlay.x) * cellSize.width,
-                y: topY(forRow: overlay.y, rowSpan: max(overlay.height, 1), viewportHeight: view.bounds.height),
+                y: topY(forRow: overlay.y, rowSpan: max(overlay.height, 1), viewportHeight: view.bounds.height, cellHeight: cellSize.height),
                 width: CGFloat(overlay.width) * cellSize.width,
                 height: CGFloat(max(overlay.height, 1)) * cellSize.height
             ))
@@ -98,12 +97,22 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
                 textGeneration: scene.info.textGeneration,
                 scrollGeneration: scene.info.scrollGeneration,
                 themeGeneration: scene.info.themeGeneration,
+                cellWidthPx: scene.info.surfaceMetrics.cellWidthPx,
+                cellHeightPx: scene.info.surfaceMetrics.cellHeightPx,
+                cellBaselinePx: scene.info.surfaceMetrics.cellBaselinePx,
                 signature: line.cacheSignature
             )
-            if let image = lineImage(for: line, key: key, viewportWidth: view.bounds.width, scale: scale) {
+            if let image = lineImage(
+                for: line,
+                key: key,
+                viewportWidth: view.bounds.width,
+                scale: scale,
+                cellSize: cellSize,
+                baselineFromBottom: baselineFromBottom
+            ) {
                 let rect = CGRect(
                     x: 0,
-                    y: topY(forRow: line.row, rowSpan: 1, viewportHeight: view.bounds.height),
+                    y: topY(forRow: line.row, rowSpan: 1, viewportHeight: view.bounds.height, cellHeight: cellSize.height),
                     width: CGFloat(image.width) / scale,
                     height: CGFloat(image.height) / scale
                 )
@@ -112,15 +121,33 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
         }
 
         if let markedText = scene.markedText {
-            drawMarkedText(markedText, in: context)
+            drawMarkedText(
+                markedText,
+                in: context,
+                cellSize: cellSize,
+                baselineFromBottom: baselineFromBottom,
+                viewportHeight: view.bounds.height
+            )
         }
 
         for overlay in scene.overlays where overlay.kind == .text {
-            drawOverlayText(overlay, in: context)
+            drawOverlayText(
+                overlay,
+                in: context,
+                cellSize: cellSize,
+                baselineFromBottom: baselineFromBottom,
+                viewportHeight: view.bounds.height
+            )
         }
 
         for cursor in scene.cursors {
-            drawCursor(cursor, in: context, viewportHeight: view.bounds.height)
+            drawCursor(
+                cursor,
+                in: context,
+                cellSize: cellSize,
+                cursorThickness: cursorThickness,
+                viewportHeight: view.bounds.height
+            )
         }
 
         guard let frameImage = context.makeImage() else { return }
@@ -141,7 +168,14 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
         lineCache = lineCache.filter { validKeys.contains($0.key) }
     }
 
-    private func lineImage(for line: EditorSceneLine, key: EditorLineCacheKey, viewportWidth: CGFloat, scale: CGFloat) -> CGImage? {
+    private func lineImage(
+        for line: EditorSceneLine,
+        key: EditorLineCacheKey,
+        viewportWidth: CGFloat,
+        scale: CGFloat,
+        cellSize: CGSize,
+        baselineFromBottom: CGFloat
+    ) -> CGImage? {
         if let cached = lineCache[key] {
             return cached
         }
@@ -176,7 +210,16 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
         cgContext.clear(CGRect(x: 0, y: 0, width: viewportWidth, height: cellSize.height))
 
         for textCell in line.textCells {
-            drawText(textCell.text, style: textCell.style, atCol: textCell.col, row: 0, in: cgContext, usesViewportCoordinates: false)
+            drawText(
+                textCell.text,
+                style: textCell.style,
+                atCol: textCell.col,
+                row: 0,
+                in: cgContext,
+                cellSize: cellSize,
+                baselineFromBottom: baselineFromBottom,
+                viewportHeight: nil
+            )
         }
 
         NSGraphicsContext.restoreGraphicsState()
@@ -206,45 +249,72 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
         return attrs
     }
 
-    private func selectionRect(_ selection: EditorSnapshotSelection, viewportHeight: CGFloat) -> CGRect {
+    private func selectionRect(_ selection: EditorSnapshotSelection, cellSize: CGSize, viewportHeight: CGFloat) -> CGRect {
         CGRect(
             x: CGFloat(selection.x) * cellSize.width,
-            y: topY(forRow: selection.y, rowSpan: max(selection.height, 1), viewportHeight: viewportHeight),
+            y: topY(forRow: selection.y, rowSpan: max(selection.height, 1), viewportHeight: viewportHeight, cellHeight: cellSize.height),
             width: max(CGFloat(selection.width) * cellSize.width, 2),
             height: max(CGFloat(selection.height) * cellSize.height, cellSize.height)
         )
     }
 
-    private func drawCursor(_ cursor: EditorSnapshotCursor, in context: CGContext, viewportHeight: CGFloat) {
+    private func drawCursor(
+        _ cursor: EditorSnapshotCursor,
+        in context: CGContext,
+        cellSize: CGSize,
+        cursorThickness: CGFloat,
+        viewportHeight: CGFloat
+    ) {
         let x = CGFloat(cursor.col) * cellSize.width
-        let y = topY(forRow: cursor.row, rowSpan: 1, viewportHeight: viewportHeight)
+        let y = topY(forRow: cursor.row, rowSpan: 1, viewportHeight: viewportHeight, cellHeight: cellSize.height)
         let color = cursor.style.backgroundColor ?? cursor.style.foregroundColor
         context.setFillColor(color.cgColor)
         context.setStrokeColor(color.cgColor)
         let rect: CGRect
         switch cursor.kind {
         case .bar:
-            rect = CGRect(x: x, y: y, width: 2, height: cellSize.height)
+            rect = CGRect(x: x, y: y, width: cursorThickness, height: cellSize.height)
         case .underline:
-            rect = CGRect(x: x, y: y + cellSize.height - 2, width: cellSize.width, height: 2)
+            rect = CGRect(x: x, y: y + cellSize.height - cursorThickness, width: cellSize.width, height: cursorThickness)
         case .hidden:
             return
         case .hollow:
-            rect = CGRect(x: x, y: y, width: max(cellSize.width, 2), height: cellSize.height)
+            rect = CGRect(x: x, y: y, width: max(cellSize.width, cursorThickness), height: cellSize.height)
             context.stroke(rect)
             return
         case .block:
-            rect = CGRect(x: x, y: y, width: max(cellSize.width, 2), height: cellSize.height)
+            rect = CGRect(x: x, y: y, width: max(cellSize.width, cursorThickness), height: cellSize.height)
         }
         context.fill(rect)
     }
 
-    private func drawOverlayText(_ overlay: EditorSnapshotOverlay, in context: CGContext) {
+    private func drawOverlayText(
+        _ overlay: EditorSnapshotOverlay,
+        in context: CGContext,
+        cellSize: CGSize,
+        baselineFromBottom: CGFloat,
+        viewportHeight: CGFloat
+    ) {
         guard let text = overlay.text else { return }
-        drawText(text, style: overlay.style, atCol: overlay.col, row: overlay.row, in: context, usesViewportCoordinates: true)
+        drawText(
+            text,
+            style: overlay.style,
+            atCol: overlay.col,
+            row: overlay.row,
+            in: context,
+            cellSize: cellSize,
+            baselineFromBottom: baselineFromBottom,
+            viewportHeight: viewportHeight
+        )
     }
 
-    private func drawMarkedText(_ markedText: EditorMarkedText, in context: CGContext) {
+    private func drawMarkedText(
+        _ markedText: EditorMarkedText,
+        in context: CGContext,
+        cellSize: CGSize,
+        baselineFromBottom: CGFloat,
+        viewportHeight: CGFloat
+    ) {
         let style = EditorResolvedStyle(
             fg: nil,
             bg: nil,
@@ -253,32 +323,49 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
             removeModifiers: 0,
             underlineStyle: UInt8(NSUnderlineStyle.single.rawValue)
         )
-        drawText(markedText.text, style: style, atCol: markedText.col, row: markedText.row, in: context, usesViewportCoordinates: true)
+        drawText(
+            markedText.text,
+            style: style,
+            atCol: markedText.col,
+            row: markedText.row,
+            in: context,
+            cellSize: cellSize,
+            baselineFromBottom: baselineFromBottom,
+            viewportHeight: viewportHeight
+        )
     }
 
-    private func drawText(_ text: String, style: EditorResolvedStyle, atCol col: Int, row: Int, in context: CGContext, usesViewportCoordinates: Bool) {
+    private func drawText(
+        _ text: String,
+        style: EditorResolvedStyle,
+        atCol col: Int,
+        row: Int,
+        in context: CGContext,
+        cellSize: CGSize,
+        baselineFromBottom: CGFloat,
+        viewportHeight: CGFloat?
+    ) {
         guard !text.isEmpty else { return }
         let attributed = NSAttributedString(string: text, attributes: attributes(for: style))
         let line = CTLineCreateWithAttributedString(attributed)
         context.saveGState()
         context.textMatrix = .identity
-        if usesViewportCoordinates {
-            context.textPosition = CGPoint(
-                x: CGFloat(col) * cellSize.width,
-                y: topY(forRow: row, rowSpan: 1, viewportHeight: view.bounds.height) + fontMetrics.baselineFromBottom
-            )
+        let y: CGFloat
+        if let viewportHeight {
+            y = topY(forRow: row, rowSpan: 1, viewportHeight: viewportHeight, cellHeight: cellSize.height) + baselineFromBottom
         } else {
-            context.textPosition = CGPoint(
-                x: CGFloat(col) * cellSize.width,
-                y: fontMetrics.baselineFromBottom
-            )
+            y = baselineFromBottom
         }
+        context.textPosition = CGPoint(
+            x: CGFloat(col) * cellSize.width,
+            y: y
+        )
         CTLineDraw(line, context)
         context.restoreGState()
     }
 
-    private func topY(forRow row: Int, rowSpan: Int, viewportHeight: CGFloat) -> CGFloat {
-        viewportHeight - CGFloat(row + rowSpan) * cellSize.height
+    private func topY(forRow row: Int, rowSpan: Int, viewportHeight: CGFloat, cellHeight: CGFloat) -> CGFloat {
+        viewportHeight - CGFloat(row + rowSpan) * cellHeight
     }
 
     private func makeBitmapContext(width: Int, height: Int) -> CGContext? {

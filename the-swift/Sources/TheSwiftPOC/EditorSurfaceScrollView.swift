@@ -81,7 +81,8 @@ final class EditorSurfaceScrollView: NSView, EditorSurfaceControllerDelegate {
     }
 
     private func updateDocumentMetrics(_ scene: EditorRenderScene) {
-        let contentHeight = max(CGFloat(max(scene.info.documentLineCount, scene.info.viewportHeight)) * surfaceView.cellSize.height, scrollView.contentView.bounds.height)
+        let cellSize = scene.info.surfaceMetrics.cellSizePoints
+        let contentHeight = max(CGFloat(max(scene.info.documentLineCount, scene.info.viewportHeight)) * cellSize.height, scrollView.contentView.bounds.height)
         documentView.frame.size = CGSize(width: scrollView.contentView.bounds.width, height: contentHeight)
     }
 
@@ -92,7 +93,8 @@ final class EditorSurfaceScrollView: NSView, EditorSurfaceControllerDelegate {
 
     private func synchronizeScrollPosition(_ scene: EditorRenderScene) {
         guard !isSyncingScroll else { return }
-        let targetOrigin = CGPoint(x: 0, y: CGFloat(scene.info.scrollRow) * surfaceView.cellSize.height)
+        let cellHeight = scene.info.surfaceMetrics.cellSizePoints.height
+        let targetOrigin = CGPoint(x: 0, y: CGFloat(scene.info.scrollRow) * cellHeight)
         if scrollView.contentView.bounds.origin.y != targetOrigin.y {
             isSyncingScroll = true
             scrollView.contentView.scroll(to: targetOrigin)
@@ -104,7 +106,8 @@ final class EditorSurfaceScrollView: NSView, EditorSurfaceControllerDelegate {
     private func handleScrollChange() {
         synchronizeSurfaceFrame()
         guard !isSyncingScroll else { return }
-        let row = Int((scrollView.contentView.bounds.origin.y / max(surfaceView.cellSize.height, 1)).rounded(.down))
+        let cellHeight = controller.scene?.info.surfaceMetrics.cellSizePoints.height ?? surfaceView.cellSize.height
+        let row = Int((scrollView.contentView.bounds.origin.y / max(cellHeight, 1)).rounded(.down))
         controller.setScrollRow(row)
     }
 }

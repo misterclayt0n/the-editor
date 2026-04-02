@@ -49,6 +49,9 @@ struct EditorRenderScene {
                 textGeneration: info.textGeneration,
                 scrollGeneration: info.scrollGeneration,
                 themeGeneration: info.themeGeneration,
+                cellWidthPx: info.surfaceMetrics.cellWidthPx,
+                cellHeightPx: info.surfaceMetrics.cellHeightPx,
+                cellBaselinePx: info.surfaceMetrics.cellBaselinePx,
                 signature: line.cacheSignature
             )
         })
@@ -84,5 +87,8 @@ struct EditorLineCacheKey: Hashable {
     let textGeneration: UInt64
     let scrollGeneration: UInt64
     let themeGeneration: UInt64
+    let cellWidthPx: Int
+    let cellHeightPx: Int
+    let cellBaselinePx: Int
     let signature: Int
 }

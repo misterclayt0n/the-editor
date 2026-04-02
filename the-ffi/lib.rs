@@ -1,5 +1,6 @@
 use std::{
   collections::VecDeque,
+  env,
   ffi::{
     CStr,
     CString,
@@ -331,6 +332,16 @@ const STYLE_HIDDEN: u16 = 1 << 6;
 const STYLE_CROSSED_OUT: u16 = 1 << 7;
 
 const SWIFT_SCROLLOFF: usize = 0;
+
+fn gutter_debug_enabled() -> bool {
+  env::var("THE_EDITOR_GUTTER_DEBUG").ok().as_deref() == Some("1")
+}
+
+fn gutter_debug_log(message: impl AsRef<str>) {
+  if gutter_debug_enabled() {
+    eprintln!("[the-ffi:gutter] {}", message.as_ref());
+  }
+}
 
 #[derive(Default)]
 struct OwnedSnapshot {
@@ -716,6 +727,36 @@ impl SwiftEditor {
     let styles = self.render_styles();
     let frame = the_default::frame_render_plan_with_styles(self, styles);
     let plan = frame.active_plan();
+    if gutter_debug_enabled() {
+      if let Some(plan) = plan {
+        let first_visible = plan.visible_rows.first().map(|row| format!("doc_line={} first_visual={} row={}", row.doc_line, row.first_visual_line, row.row)).unwrap_or_else(|| "none".to_string());
+        let row0_gutter = plan
+          .gutter_lines
+          .iter()
+          .find(|line| line.row == 0)
+          .map(|line| line.spans.iter().map(|span| format!("{}@{}", span.text, span.col)).collect::<Vec<_>>().join("|"))
+          .unwrap_or_else(|| "none".to_string());
+        let row0_line = plan
+          .lines
+          .iter()
+          .find(|line| line.row == 0)
+          .map(|line| line.spans.iter().map(|span| format!("{}:{}:{}", span.col, span.cols, span.text)).collect::<Vec<_>>().join("|"))
+          .unwrap_or_else(|| "none".to_string());
+        gutter_debug_log(format!(
+          "scroll=({}, {}) viewport=({}, {}) content_offset_x={} first_visible={} row0_gutter=[{}] row0_line=[{}]",
+          plan.scroll.row,
+          plan.scroll.col,
+          plan.viewport.width,
+          plan.viewport.height,
+          plan.content_offset_x,
+          first_visible,
+          row0_gutter,
+          row0_line,
+        ));
+      } else {
+        gutter_debug_log("no active plan".to_string());
+      }
+    }
     OwnedSnapshot::from_editor(self, plan)
   }
 

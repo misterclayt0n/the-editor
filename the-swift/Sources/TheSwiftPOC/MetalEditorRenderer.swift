@@ -43,6 +43,10 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
     }
 
     func update(scene: EditorRenderScene) {
+        if gutterDebugEnabled(), let row0 = scene.lines.first {
+            let cells = row0.textCells.map { "\($0.text)@\($0.col)" }.joined(separator: "|")
+            gutterDebugLog("renderer.update scroll=(\(scene.info.scrollRow),\(scene.info.scrollCol)) row0.docLine=\(row0.docLine.map(String.init) ?? "nil") cells=[\(cells)]")
+        }
         self.scene = scene
         pruneCache(for: scene)
         view.setNeedsDisplay(view.bounds)

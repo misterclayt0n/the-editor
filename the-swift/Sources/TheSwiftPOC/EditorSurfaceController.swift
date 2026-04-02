@@ -105,6 +105,11 @@ final class EditorSurfaceController {
 
     func refreshSnapshot() {
         guard let snapshot = EditorFFIBridge.makeSnapshot(handle?.raw) else { return }
+        if gutterDebugEnabled(), let row0 = snapshot.lines.first {
+            let spans = row0.spans.map { "\($0.text)@\($0.col)" }.joined(separator: "|")
+            let cells = row0.textCells.map { "\($0.text)@\($0.col)" }.joined(separator: "|")
+            gutterDebugLog("snapshot scroll=(\(snapshot.info.scrollRow),\(snapshot.info.scrollCol)) viewport=(\(snapshot.info.viewportWidth),\(snapshot.info.viewportHeight)) row0.docLine=\(row0.docLine.map(String.init) ?? "nil") spans=[\(spans)] cells=[\(cells)]")
+        }
         currentMode = snapshot.info.mode
         let marked = markedTextOverlay(from: snapshot)
         let scene = EditorRenderScene.from(snapshot: snapshot, markedText: marked)

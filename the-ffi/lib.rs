@@ -647,7 +647,8 @@ impl SwiftEditor {
   }
 
   fn build_snapshot(&mut self) -> OwnedSnapshot {
-    let frame = the_default::frame_render_plan(self);
+    let styles = self.render_styles();
+    let frame = the_default::frame_render_plan_with_styles(self, styles);
     let plan = frame.active_plan();
     OwnedSnapshot::from_editor(self, plan)
   }
@@ -689,8 +690,10 @@ impl DefaultContext for SwiftEditor {
   fn messages(&self) -> &MessageCenter { &self.messages }
   fn messages_mut(&mut self) -> &mut MessageCenter { &mut self.messages }
   fn build_render_plan(&mut self) -> RenderPlan {
+    self.build_render_plan_with_styles(self.render_styles())
+  }
+  fn build_render_plan_with_styles(&mut self, styles: RenderStyles) -> RenderPlan {
     let view = self.editor.view();
-    let styles = self.render_styles();
     let mut annotations = TextAnnotations::default();
     let mut highlights = NoHighlights;
     let (document, cache) = self.editor.document_and_cache();
@@ -707,6 +710,9 @@ impl DefaultContext for SwiftEditor {
   }
   fn build_frame_render_plan(&mut self) -> FrameRenderPlan {
     FrameRenderPlan::from_active_plan(self.build_render_plan())
+  }
+  fn build_frame_render_plan_with_styles(&mut self, styles: RenderStyles) -> FrameRenderPlan {
+    FrameRenderPlan::from_active_plan(self.build_render_plan_with_styles(styles))
   }
   fn request_quit(&mut self) {}
   fn mode(&self) -> Mode { self.mode }

@@ -57,13 +57,18 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
         self.scene = scene
         pruneCache(for: scene)
         let cacheCountAfter = lineCache.count
+        let themeChanged = previousThemeGeneration != nil && previousThemeGeneration != scene.info.themeGeneration
         if previousThemeGeneration != scene.info.themeGeneration {
             themePerfLog(
                 "renderer.update themeGen=\(scene.info.themeGeneration) previousThemeGen=\(previousThemeGeneration.map(String.init) ?? "nil") visibleLines=\(scene.lines.count) cacheBefore=\(cacheCountBefore) cacheAfter=\(cacheCountAfter)"
             )
         }
         lastThemeGeneration = scene.info.themeGeneration
-        view.setNeedsDisplay(view.bounds)
+        if themeChanged {
+            view.draw()
+        } else {
+            view.setNeedsDisplay(view.bounds)
+        }
     }
 
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}

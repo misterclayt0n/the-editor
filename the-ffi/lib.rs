@@ -796,13 +796,37 @@ impl SwiftEditor {
     if !self.command_palette.is_open {
       return false;
     }
-    handle_command_prompt_key(
-      self,
-      KeyEvent {
-        key: if next { Key::Down } else { Key::Up },
-        modifiers: the_default::Modifiers::empty(),
-      },
-    )
+    let filtered = command_palette_filtered_indices(&self.command_palette);
+    let Some(next_index) = (if filtered.is_empty() {
+      None
+    } else {
+      let current = self
+        .command_palette
+        .selected
+        .and_then(|sel| filtered.iter().position(|&idx| idx == sel));
+      Some(match (next, current) {
+        (true, Some(current)) => {
+          if current >= filtered.len() - 1 { 0 } else { current + 1 }
+        },
+        (true, None) => 0,
+        (false, Some(current)) => {
+          if current == 0 { filtered.len() - 1 } else { current - 1 }
+        },
+        (false, None) => filtered.len() - 1,
+      })
+    }) else {
+      return false;
+    };
+    self.command_palette.selected = Some(filtered[next_index]);
+    command_palette_debug_log(format!(
+      "ffi_move_selection next={} selected={:?} next_index={} filtered_len={}",
+      next,
+      self.command_palette.selected,
+      next_index,
+      filtered.len(),
+    ));
+    sync_command_palette_preview(self);
+    true
   }
 
   fn select_command_palette_visible_index(&mut self, visible_index: usize) -> bool {
@@ -831,6 +855,30 @@ impl SwiftEditor {
       self.command_palette.selected,
       self.command_palette.items.len(),
     ));
+
+    if matches!(self.command_palette.source, the_default::CommandPaletteSource::CommandLine)
+      && !self.command_palette.prefiltered
+      && self.command_prompt.input.trim().trim_start_matches(':').is_empty()
+      && let Some(item_idx) = self.command_palette.selected
+      && let Some(command_name) = self.command_palette.items.get(item_idx).map(|item| item.title.clone())
+      && self
+        .command_registry_ref()
+        .get(&command_name)
+        .is_some_and(|command| {
+          let (min, max) = command.signature.positionals;
+          min > 0
+            || max != Some(0)
+            || command.signature.raw_after.is_some()
+            || !command.signature.flags.is_empty()
+        })
+    {
+      let input = format!("{command_name} ");
+      command_palette_debug_log(format!("ffi_submit expanding empty prompt to {:?}", input));
+      update_command_palette_for_input(self, &input);
+      self.command_palette.selected = None;
+      return true;
+    }
+
     let submitted = submit_command_palette_action(self);
     command_palette_debug_log(format!(
       "submit result={} mode={:?} prompt_after={:?} palette_open={} palette_query_after={:?} prompt_text_after={:?}",

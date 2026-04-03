@@ -703,8 +703,7 @@ impl SwiftEditor {
 
   fn new(path: Option<&Path>) -> Self {
     let workspace_root = path
-      .and_then(Path::parent)
-      .map(Path::to_path_buf)
+      .map(resolved_workspace_root_for_path)
       .unwrap_or_else(default_workspace_root);
     let surface = SurfaceConfig::default();
 
@@ -801,11 +800,7 @@ impl SwiftEditor {
         self.editor
           .document_mut()
           .set_display_name(display_name_for_path(path));
-        self.workspace_root = path
-          .parent()
-          .map(Path::to_path_buf)
-          .unwrap_or_else(default_workspace_root);
-        self.working_directory.current = Some(self.workspace_root.clone());
+        self.update_workspace_for_path(path);
         self.reload_theme_catalog();
         self.refresh_active_document_syntax();
         replaced
@@ -1043,6 +1038,19 @@ impl SwiftEditor {
       self.command_palette.prompt_text,
     ));
     submitted
+  }
+
+  fn update_workspace_for_path(&mut self, path: &Path) {
+    let previous_workspace_root = self.workspace_root.clone();
+    let follow_workspace_root = self
+      .working_directory
+      .current
+      .as_ref()
+      .is_none_or(|current| current == &previous_workspace_root);
+    self.workspace_root = resolved_workspace_root_for_path(path);
+    if follow_workspace_root {
+      self.working_directory.current = Some(self.workspace_root.clone());
+    }
   }
 
   fn configure_file_picker_layout(&mut self, list_visible_rows: usize, preview_visible_rows: usize) -> bool {
@@ -1452,8 +1460,7 @@ impl DefaultContext for SwiftEditor {
     self.file_path = path.clone();
     self.editor.set_active_file_path(path.clone());
     if let Some(path) = path {
-      self.workspace_root = path.parent().map(Path::to_path_buf).unwrap_or_else(default_workspace_root);
-      self.working_directory.current = Some(self.workspace_root.clone());
+      self.update_workspace_for_path(&path);
       self.reload_theme_catalog();
     }
     self.refresh_active_document_syntax();
@@ -1464,8 +1471,7 @@ impl DefaultContext for SwiftEditor {
     self.file_path = Some(path.to_path_buf());
     self.editor.set_active_file_path(Some(path.to_path_buf()));
     self.editor.document_mut().set_display_name(display_name_for_path(path));
-    self.workspace_root = path.parent().map(Path::to_path_buf).unwrap_or_else(default_workspace_root);
-    self.working_directory.current = Some(self.workspace_root.clone());
+    self.update_workspace_for_path(path);
     self.reload_theme_catalog();
     self.refresh_active_document_syntax();
     Ok(())
@@ -2376,6 +2382,11 @@ fn max_scroll_col(doc: &Document, text_format: &TextFormat, viewport_width: usiz
 
 fn default_workspace_root() -> PathBuf {
   std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+}
+
+fn resolved_workspace_root_for_path(path: &Path) -> PathBuf {
+  let base = path.parent().unwrap_or(path);
+  the_default::workspace_root(base)
 }
 
 fn display_name_for_path(path: &Path) -> String {

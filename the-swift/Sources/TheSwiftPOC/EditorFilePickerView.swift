@@ -7,10 +7,10 @@ struct EditorFilePickerView: View {
     @State private var suppressQueryCallback = false
     @FocusState private var isQueryFocused: Bool
 
-    private let listRowHeight: CGFloat = 44
-    private let previewRowHeight: CGFloat = 19
-    private let panelWidth: CGFloat = 980
-    private let panelHeight: CGFloat = 620
+    private let listRowHeight: CGFloat = 34
+    private let previewRowHeight: CGFloat = 16
+    private let panelWidth: CGFloat = 880
+    private let panelHeight: CGFloat = 520
 
     var body: some View {
         ZStack {
@@ -80,7 +80,7 @@ struct EditorFilePickerView: View {
 
             HStack(spacing: 0) {
                 resultsPane
-                    .frame(width: min(frame.width * 0.38, 360))
+                    .frame(width: min(frame.width * 0.36, 320))
 
                 Divider()
 
@@ -118,7 +118,7 @@ struct EditorFilePickerView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     TextField(controller.filePicker.title, text: $localQuery)
                         .textFieldStyle(.plain)
-                        .font(.system(size: 20, weight: .regular))
+                        .font(.system(size: 16, weight: .regular))
                         .focused($isQueryFocused)
                         .onSubmit {
                             controller.submitFilePicker()
@@ -160,8 +160,8 @@ struct EditorFilePickerView: View {
                         .controlSize(.small)
                 }
             }
-            .padding(.horizontal, 18)
-            .padding(.vertical, 14)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
         }
     }
 
@@ -179,32 +179,45 @@ struct EditorFilePickerView: View {
     }
 
     private var resultsPane: some View {
-        ScrollView {
-            if controller.filePicker.items.isEmpty {
-                Text(controller.filePicker.isLoading ? "Searching…" : "No matches")
-                    .font(.system(size: 13))
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(16)
-            } else {
-                LazyVStack(alignment: .leading, spacing: 4) {
-                    ForEach(controller.filePicker.items) { item in
-                        EditorFilePickerRow(
-                            item: item,
-                            isSelected: controller.filePicker.selectedIndex == item.globalIndex,
-                            onSelect: {
-                                controller.selectFilePickerIndex(item.globalIndex)
-                            },
-                            onOpen: {
-                                controller.submitFilePicker(index: item.globalIndex)
-                            }
-                        )
+        VStack(spacing: 0) {
+            ScrollView {
+                if controller.filePicker.items.isEmpty {
+                    Text(controller.filePicker.isLoading ? "Searching…" : "No matches")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(14)
+                } else {
+                    LazyVStack(alignment: .leading, spacing: 4) {
+                        ForEach(controller.filePicker.items) { item in
+                            EditorFilePickerRow(
+                                item: item,
+                                isSelected: controller.filePicker.selectedIndex == item.globalIndex,
+                                onSelect: {
+                                    controller.selectFilePickerIndex(item.globalIndex)
+                                },
+                                onOpen: {
+                                    controller.submitFilePicker(index: item.globalIndex)
+                                }
+                            )
+                        }
                     }
+                    .padding(8)
                 }
-                .padding(10)
             }
+            .scrollIndicators(.never)
+
+            Divider()
+
+            HStack {
+                Text(resultsVisibleSummary)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
         }
-        .scrollIndicators(.never)
         .background(Color.clear)
     }
 
@@ -222,8 +235,8 @@ struct EditorFilePickerView: View {
                 }
                 Spacer(minLength: 0)
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
 
             Divider()
 
@@ -233,10 +246,21 @@ struct EditorFilePickerView: View {
                         EditorFilePickerPreviewLineView(line: line)
                     }
                 }
-                .padding(.vertical, 10)
-                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .padding(.horizontal, 10)
             }
             .scrollIndicators(.never)
+
+            Divider()
+
+            HStack {
+                Text(previewVisibleSummary)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
             .background(Color.clear)
         }
     }
@@ -262,6 +286,22 @@ struct EditorFilePickerView: View {
         case .static:
             return "Preview"
         }
+    }
+
+    private var resultsVisibleSummary: String {
+        let state = controller.filePicker
+        guard state.matchedCount > 0 else { return resultSummary }
+        let start = state.visibleItemStart + 1
+        let end = state.visibleItemStart + state.items.count
+        return "Showing \(start)–\(end) of \(state.matchedCount)"
+    }
+
+    private var previewVisibleSummary: String {
+        let state = controller.filePicker
+        guard state.previewTotalRows > 0 else { return previewSummary }
+        let start = state.previewWindowStart + 1
+        let end = state.previewWindowStart + state.previewLines.count
+        return "Lines \(start)–\(end) of \(state.previewTotalRows)"
     }
 
     private func pickerUsesLightScheme(_ color: NSColor) -> Bool {
@@ -297,13 +337,13 @@ private struct EditorFilePickerRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 8) {
                     Text(item.primary)
-                        .font(.system(size: 13, weight: isSelected ? .semibold : .regular))
+                        .font(.system(size: 13, weight: .regular))
                         .foregroundStyle(item.selectable ? Color.primary : .secondary)
                         .lineLimit(1)
 
                     if let tertiary = item.tertiary, !tertiary.isEmpty {
                         Text(tertiary)
-                            .font(.caption)
+                            .font(.caption2)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                     }
@@ -312,7 +352,7 @@ private struct EditorFilePickerRow: View {
                 HStack(spacing: 8) {
                     if let secondary = item.secondary, !secondary.isEmpty {
                         Text(secondary)
-                            .font(.caption)
+                            .font(.caption2)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                     }
@@ -333,11 +373,11 @@ private struct EditorFilePickerRow: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
         .background(rowBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .contentShape(RoundedRectangle(cornerRadius: 8))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .contentShape(RoundedRectangle(cornerRadius: 6))
         .onTapGesture {
             guard item.selectable else { return }
             onSelect()
@@ -352,10 +392,10 @@ private struct EditorFilePickerRow: View {
 
     private var rowBackground: some ShapeStyle {
         if isSelected {
-            return AnyShapeStyle(Color.accentColor.opacity(0.18))
+            return AnyShapeStyle(Color.accentColor.opacity(0.2))
         }
         if isHovered {
-            return AnyShapeStyle(Color.primary.opacity(0.06))
+            return AnyShapeStyle(Color.secondary.opacity(0.14))
         }
         return AnyShapeStyle(Color.clear)
     }
@@ -418,22 +458,29 @@ private struct EditorFilePickerPreviewLineView: View {
                     .frame(width: 58)
             }
 
-            HStack(spacing: 0) {
-                if let marker = line.marker, !marker.isEmpty {
-                    Text(marker)
-                        .font(.system(size: 12, weight: .medium, design: .monospaced))
-                        .foregroundStyle(.secondary)
+            ZStack(alignment: .leading) {
+                HStack(spacing: 0) {
+                    if let marker = line.marker, !marker.isEmpty {
+                        Text(marker)
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: true, vertical: false)
+                    }
+                    ForEach(Array(line.segments.enumerated()), id: \.offset) { _, segment in
+                        Text(segment.text)
+                            .font(.system(size: 11, weight: .regular, design: .monospaced))
+                            .foregroundStyle(Color(nsColor: segment.style.foregroundColor))
+                            .background(segmentBackground(for: segment))
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+                    }
                 }
-                ForEach(Array(line.segments.enumerated()), id: \.offset) { _, segment in
-                    Text(segment.text)
-                        .font(.system(size: 12, weight: .regular, design: .monospaced))
-                        .foregroundStyle(Color(nsColor: segment.style.foregroundColor))
-                        .background(segmentBackground(for: segment))
-                }
+                .fixedSize(horizontal: true, vertical: false)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            .clipped()
         }
-        .padding(.horizontal, 8)
+        .padding(.horizontal, 6)
         .padding(.vertical, 1)
         .background(lineBackground)
     }

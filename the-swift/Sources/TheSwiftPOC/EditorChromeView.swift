@@ -197,6 +197,10 @@ private struct ModePill: View {
 private struct EditorWindowChromeAccessor: NSViewRepresentable {
     let chrome: EditorChromeModel
 
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
     func makeNSView(context: Context) -> NSView {
         let view = NSView(frame: .zero)
         view.isHidden = true
@@ -206,31 +210,111 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
     func updateNSView(_ nsView: NSView, context: Context) {
         DispatchQueue.main.async {
             guard let window = nsView.window else { return }
-            configure(window: window)
+            context.coordinator.configure(window: window, chrome: chrome)
         }
     }
 
-    private func configure(window: NSWindow) {
-        window.titleVisibility = .visible
-        window.isDocumentEdited = chrome.document.isModified
+    @MainActor
+    final class Coordinator {
+        private let accessoryController = NSTitlebarAccessoryViewController()
+        private let accessoryHostingView = NSHostingView(rootView: AnyView(EmptyView()))
+        private let accessoryIdentifier = NSUserInterfaceItemIdentifier("TheSwiftPOC.VCSAccessory")
 
-        let title = windowTitle
-        if window.title != title {
-            window.title = title
+        init() {
+            accessoryController.layoutAttribute = .right
+            accessoryController.identifier = accessoryIdentifier
+            accessoryController.view = accessoryHostingView
+            accessoryHostingView.translatesAutoresizingMaskIntoConstraints = false
         }
 
-        if let absolutePath = chrome.document.absolutePath, !absolutePath.isEmpty {
-            window.representedURL = URL(fileURLWithPath: absolutePath)
-        } else {
-            window.representedURL = nil
+        func configure(window: NSWindow, chrome: EditorChromeModel) {
+            applyWindowChrome(window: window, chrome: chrome)
+            applyVCSAccessory(window: window, chrome: chrome)
+        }
+
+        private func applyWindowChrome(window: NSWindow, chrome: EditorChromeModel) {
+            let backgroundColor = chrome.backgroundColor
+            window.titleVisibility = .visible
+            window.titlebarAppearsTransparent = true
+            window.titlebarSeparatorStyle = .none
+            window.toolbarStyle = .unifiedCompact
+            window.backgroundColor = backgroundColor
+            window.isDocumentEdited = chrome.document.isModified
+            window.appearance = backgroundColor.isLightColor
+                ? NSAppearance(named: .aqua)
+                : NSAppearance(named: .darkAqua)
+
+            let title = windowTitle(for: chrome)
+            if window.title != title {
+                window.title = title
+            }
+
+            if let absolutePath = chrome.document.absolutePath, !absolutePath.isEmpty {
+                window.representedURL = URL(fileURLWithPath: absolutePath)
+            } else {
+                window.representedURL = nil
+            }
+
+            if let titlebarView = titlebarView(for: window) {
+                titlebarView.wantsLayer = true
+                titlebarView.layer?.backgroundColor = backgroundColor.cgColor
+            }
+        }
+
+        private func applyVCSAccessory(window: NSWindow, chrome: EditorChromeModel) {
+            accessoryHostingView.rootView = AnyView(EditorTitlebarVCSView(chrome: chrome))
+            accessoryHostingView.layoutSubtreeIfNeeded()
+
+            let shouldShow = !(chrome.document.vcsText?.isEmpty ?? true)
+            let existingIndex = window.titlebarAccessoryViewControllers.firstIndex(where: {
+                $0.identifier == accessoryIdentifier
+            })
+
+            if shouldShow {
+                if existingIndex == nil {
+                    window.addTitlebarAccessoryViewController(accessoryController)
+                }
+            } else if let existingIndex {
+                window.removeTitlebarAccessoryViewController(at: existingIndex)
+            }
+        }
+
+        private func windowTitle(for chrome: EditorChromeModel) -> String {
+            if let relativePath = chrome.document.relativePath, !relativePath.isEmpty {
+                return "\(relativePath)/\(chrome.document.name)"
+            }
+            return chrome.document.name
+        }
+
+        private func titlebarView(for window: NSWindow) -> NSView? {
+            guard let themeFrame = window.contentView?.superview else { return nil }
+            if themeFrame.responds(to: Selector(("titlebarView"))) {
+                return themeFrame.value(forKey: "titlebarView") as? NSView
+            }
+            return themeFrame.subviews.first(where: { NSStringFromClass(type(of: $0)).contains("Titlebar") })
         }
     }
+}
 
-    private var windowTitle: String {
-        if let relativePath = chrome.document.relativePath, !relativePath.isEmpty {
-            return "\(relativePath)/\(chrome.document.name)"
+private struct EditorTitlebarVCSView: View {
+    let chrome: EditorChromeModel
+
+    var body: some View {
+        Group {
+            if let vcsText = chrome.document.vcsText, !vcsText.isEmpty {
+                HStack(spacing: 6) {
+                    Image(systemName: symbolName(for: "git_branch", isDirectory: false))
+                        .font(.system(size: 11, weight: .semibold))
+                    Text(vcsText)
+                        .font(.system(size: 12, weight: .medium))
+                        .lineLimit(1)
+                }
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+            }
         }
-        return chrome.document.name
+        .fixedSize()
     }
 }
 
@@ -238,6 +322,14 @@ private func chromeBackgroundColor(base: NSColor) -> NSColor {
     let window = NSColor.windowBackgroundColor.usingColorSpace(.sRGB) ?? .windowBackgroundColor
     let editor = base.usingColorSpace(.sRGB) ?? base
     return window.blended(withFraction: 0.72, of: editor) ?? editor
+}
+
+private extension NSColor {
+    var isLightColor: Bool {
+        guard let color = usingColorSpace(.sRGB) else { return false }
+        let luminance = (0.299 * color.redComponent) + (0.587 * color.greenComponent) + (0.114 * color.blueComponent)
+        return luminance > 0.7
+    }
 }
 
 private func symbolName(for icon: String, isDirectory: Bool) -> String {

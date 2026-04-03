@@ -217,14 +217,35 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
     @MainActor
     final class Coordinator {
         private let accessoryController = NSTitlebarAccessoryViewController()
-        private let accessoryHostingView = NSHostingView(rootView: AnyView(EmptyView()))
         private let accessoryIdentifier = NSUserInterfaceItemIdentifier("TheSwiftPOC.VCSAccessory")
+        private let accessoryView = NSStackView()
+        private let accessoryIconView = NSImageView()
+        private let accessoryLabel = NSTextField(labelWithString: "")
 
         init() {
             accessoryController.layoutAttribute = .right
             accessoryController.identifier = accessoryIdentifier
-            accessoryController.view = accessoryHostingView
-            accessoryHostingView.translatesAutoresizingMaskIntoConstraints = false
+
+            accessoryView.orientation = .horizontal
+            accessoryView.alignment = .centerY
+            accessoryView.spacing = 6
+            accessoryView.edgeInsets = NSEdgeInsets(top: 0, left: 10, bottom: 0, right: 10)
+            accessoryView.setHuggingPriority(.required, for: .horizontal)
+            accessoryView.setContentHuggingPriority(.required, for: .horizontal)
+
+            accessoryIconView.image = NSImage(systemSymbolName: symbolName(for: "git_branch", isDirectory: false), accessibilityDescription: nil)
+            accessoryIconView.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 11, weight: .semibold)
+            accessoryIconView.contentTintColor = .secondaryLabelColor
+            accessoryIconView.setContentHuggingPriority(.required, for: .horizontal)
+
+            accessoryLabel.font = .systemFont(ofSize: 12, weight: .medium)
+            accessoryLabel.textColor = .secondaryLabelColor
+            accessoryLabel.lineBreakMode = .byTruncatingMiddle
+            accessoryLabel.setContentHuggingPriority(.required, for: .horizontal)
+
+            accessoryView.addArrangedSubview(accessoryIconView)
+            accessoryView.addArrangedSubview(accessoryLabel)
+            accessoryController.view = accessoryView
         }
 
         func configure(window: NSWindow, chrome: EditorChromeModel) {
@@ -237,7 +258,6 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
             window.titleVisibility = .visible
             window.titlebarAppearsTransparent = true
             window.titlebarSeparatorStyle = .none
-            window.toolbarStyle = .unifiedCompact
             window.backgroundColor = backgroundColor
             window.isDocumentEdited = chrome.document.isModified
             window.appearance = backgroundColor.isLightColor
@@ -255,17 +275,13 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
                 window.representedURL = nil
             }
 
-            if let titlebarView = titlebarView(for: window) {
-                titlebarView.wantsLayer = true
-                titlebarView.layer?.backgroundColor = backgroundColor.cgColor
-            }
+            reapplyTitlebarBackground(window: window)
         }
 
         private func applyVCSAccessory(window: NSWindow, chrome: EditorChromeModel) {
-            accessoryHostingView.rootView = AnyView(EditorTitlebarVCSView(chrome: chrome))
-            accessoryHostingView.layoutSubtreeIfNeeded()
-
-            let shouldShow = !(chrome.document.vcsText?.isEmpty ?? true)
+            let vcsText = chrome.document.vcsText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let shouldShow = !vcsText.isEmpty
+            accessoryLabel.stringValue = vcsText
             let existingIndex = window.titlebarAccessoryViewControllers.firstIndex(where: {
                 $0.identifier == accessoryIdentifier
             })
@@ -279,6 +295,13 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
             }
         }
 
+        private func reapplyTitlebarBackground(window: NSWindow) {
+            guard let titlebarContainer = titlebarContainer(for: window) else { return }
+            titlebarContainer.wantsLayer = true
+            titlebarContainer.layer?.backgroundColor = window.backgroundColor.cgColor
+            hideEffectViews(in: titlebarContainer)
+        }
+
         private func windowTitle(for chrome: EditorChromeModel) -> String {
             if let relativePath = chrome.document.relativePath, !relativePath.isEmpty {
                 return "\(relativePath)/\(chrome.document.name)"
@@ -286,42 +309,36 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
             return chrome.document.name
         }
 
-        private func titlebarView(for window: NSWindow) -> NSView? {
-            guard let themeFrame = window.contentView?.superview else { return nil }
-            if themeFrame.responds(to: Selector(("titlebarView"))) {
-                return themeFrame.value(forKey: "titlebarView") as? NSView
-            }
-            return themeFrame.subviews.first(where: { NSStringFromClass(type(of: $0)).contains("Titlebar") })
+        private func titlebarContainer(for window: NSWindow) -> NSView? {
+            guard let root = window.contentView?.superview else { return nil }
+            return firstView(from: root, classNameContains: "NSTitlebarContainerView")
         }
-    }
-}
 
-private struct EditorTitlebarVCSView: View {
-    let chrome: EditorChromeModel
-
-    var body: some View {
-        Group {
-            if let vcsText = chrome.document.vcsText, !vcsText.isEmpty {
-                HStack(spacing: 6) {
-                    Image(systemName: symbolName(for: "git_branch", isDirectory: false))
-                        .font(.system(size: 11, weight: .semibold))
-                    Text(vcsText)
-                        .font(.system(size: 12, weight: .medium))
-                        .lineLimit(1)
+        private func firstView(from root: NSView, classNameContains needle: String) -> NSView? {
+            if NSStringFromClass(type(of: root)).contains(needle) {
+                return root
+            }
+            for subview in root.subviews {
+                if let match = firstView(from: subview, classNameContains: needle) {
+                    return match
                 }
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 4)
+            }
+            return nil
+        }
+
+        private func hideEffectViews(in root: NSView) {
+            for subview in root.subviews {
+                if subview is NSVisualEffectView {
+                    subview.isHidden = true
+                }
+                hideEffectViews(in: subview)
             }
         }
-        .fixedSize()
     }
 }
 
 private func chromeBackgroundColor(base: NSColor) -> NSColor {
-    let window = NSColor.windowBackgroundColor.usingColorSpace(.sRGB) ?? .windowBackgroundColor
-    let editor = base.usingColorSpace(.sRGB) ?? base
-    return window.blended(withFraction: 0.72, of: editor) ?? editor
+    base.usingColorSpace(.sRGB) ?? base
 }
 
 private extension NSColor {

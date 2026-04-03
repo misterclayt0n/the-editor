@@ -141,6 +141,7 @@ use the_lib::{
   view::ViewState,
 };
 use unicode_segmentation::UnicodeSegmentation;
+use the_vcs::DiffProviderRegistry;
 
 #[repr(C)]
 pub struct the_editor_handle_t {
@@ -758,6 +759,7 @@ struct SwiftEditor {
   frame_generation_state:        FrameGenerationState,
   render_theme_generation:       u64,
   surface:                       SurfaceConfig,
+  vcs_provider:                  DiffProviderRegistry,
 }
 
 impl SwiftEditor {
@@ -852,6 +854,7 @@ impl SwiftEditor {
       frame_generation_state: FrameGenerationState::default(),
       render_theme_generation: 0,
       surface,
+      vcs_provider: DiffProviderRegistry::default(),
     };
 
     set_file_picker_syntax_loader(&mut this.file_picker, this.loader.clone());
@@ -1538,6 +1541,10 @@ impl DefaultContext for SwiftEditor {
   fn scrolloff(&self) -> usize { SWIFT_SCROLLOFF }
   fn ui_theme(&self) -> &Theme { &self.ui_theme }
   fn ui_theme_name(&self) -> &str { &self.ui_theme_name }
+  fn vcs_statusline_text(&self) -> Option<String> {
+    let path = self.file_path.as_deref()?;
+    self.vcs_provider.get_statusline_info(path).map(|info| info.statusline_text())
+  }
   fn available_theme_names(&self) -> Vec<String> { self.ui_theme_catalog.names() }
   fn set_ui_theme(&mut self, theme_name: &str) -> Result<(), String> { self.set_ui_theme_named(theme_name) }
   fn set_ui_theme_preview(&mut self, theme_name: &str) -> Result<(), String> { self.set_ui_theme_preview_named(theme_name) }

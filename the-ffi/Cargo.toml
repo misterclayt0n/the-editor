@@ -18,6 +18,7 @@ the-core = { path = "../the-core" }
 the-default = { path = "../the-default" }
 the-lib = { path = "../the-lib", features = [ "runtime-loader" ] }
 the-loader = { path = "../the-loader" }
+the-vcs = { path = "../the-vcs", features = ["git", "jj"] }
 
 [lints]
 workspace = true

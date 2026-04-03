@@ -1613,6 +1613,7 @@ dependencies = [
  "the-default",
  "the-lib",
  "the-loader",
+ "the-vcs",
  "unicode-segmentation",
 ]
 

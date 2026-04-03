@@ -20,7 +20,10 @@ use std::{
     Arc,
     mpsc,
   },
-  time::Instant,
+  time::{
+    Duration,
+    Instant,
+  },
 };
 
 use ropey::Rope;
@@ -157,6 +160,27 @@ use the_lib::{
   view::ViewState,
 };
 use unicode_segmentation::UnicodeSegmentation;
+use the_runtime::{
+  file_watch::{
+    PathEventKind,
+    WatchHandle,
+    watch as watch_path,
+  },
+  file_watch_consumer::{
+    WatchPollOutcome,
+    WatchedFileEventsState,
+    poll_watch_events,
+  },
+  file_watch_reload::{
+    FileWatchReloadDecision,
+    FileWatchReloadError,
+    FileWatchReloadIoState,
+    FileWatchReloadState,
+    clear_reload_state,
+    evaluate_external_reload_from_disk,
+    mark_reload_applied,
+  },
+};
 use the_vcs::{
   DiffHandle,
   DiffProviderRegistry,
@@ -764,6 +788,11 @@ struct VcsStatuslineRefreshResult {
   diff_base:  Option<Vec<u8>>,
 }
 
+struct ActiveFileWatchState {
+  stream:        WatchedFileEventsState,
+  _watch_handle: WatchHandle,
+}
+
 struct SwiftEditor {
   editor:                        Editor,
   file_path:                     Option<PathBuf>,
@@ -811,6 +840,7 @@ struct SwiftEditor {
   vcs_statusline:                Option<String>,
   gutter_diff_signs:             BTreeMap<usize, RenderGutterDiffKind>,
   vcs_diff:                      Option<DiffHandle>,
+  active_file_watch:             Option<ActiveFileWatchState>,
   vcs_statusline_refresh_in_flight: bool,
   vcs_statusline_refresh_generation: u64,
   vcs_statusline_refresh_tx:     mpsc::Sender<VcsStatuslineRefreshResult>,
@@ -841,11 +871,15 @@ impl SwiftEditor {
     self.gutter_diff_signs = vcs_gutter_signs(handle);
   }
 
-  fn apply_vcs_refresh_result(&mut self, statusline: Option<String>, diff_base: Option<Vec<u8>>) {
+  fn apply_vcs_refresh_result(&mut self, statusline: Option<String>, diff_base: Option<Vec<u8>>) -> bool {
+    let previous_statusline = self.vcs_statusline.clone();
+    let previous_signs = self.gutter_diff_signs.clone();
+    let previous_has_diff = self.vcs_diff.is_some();
+
     self.vcs_statusline = statusline;
     let Some(diff_base) = diff_base else {
       self.clear_vcs_diff();
-      return;
+      return self.vcs_statusline != previous_statusline || !previous_signs.is_empty() || previous_has_diff;
     };
 
     let diff_base = Rope::from_str(String::from_utf8_lossy(&diff_base).as_ref());
@@ -853,6 +887,7 @@ impl SwiftEditor {
     let handle = DiffHandle::new(diff_base, doc);
     self.gutter_diff_signs = vcs_gutter_signs(&handle);
     self.vcs_diff = Some(handle);
+    self.vcs_statusline != previous_statusline || self.gutter_diff_signs != previous_signs || !previous_has_diff
   }
 
   fn schedule_vcs_statusline_refresh(&mut self) {
@@ -885,7 +920,8 @@ impl SwiftEditor {
     });
   }
 
-  fn poll_vcs_statusline_refresh_results(&mut self) {
+  fn poll_vcs_statusline_refresh_results(&mut self) -> bool {
+    let mut changed = false;
     loop {
       let result = match self.vcs_statusline_refresh_rx.try_recv() {
         Ok(result) => result,
@@ -902,8 +938,138 @@ impl SwiftEditor {
         continue;
       }
 
-      self.apply_vcs_refresh_result(result.statusline, result.diff_base);
+      changed |= self.apply_vcs_refresh_result(result.statusline, result.diff_base);
     }
+    changed
+  }
+
+  fn sync_active_file_watch_state(&mut self) -> bool {
+    let Some(path) = self.file_path.clone() else {
+      return self.active_file_watch.take().is_some();
+    };
+
+    let current = self
+      .active_file_watch
+      .as_ref()
+      .map(|watch| watch.stream.path.as_path());
+    if current == Some(path.as_path()) {
+      return false;
+    }
+
+    let (events_rx, watch_handle) = watch_path(&path, active_file_watch_latency());
+    self.active_file_watch = Some(ActiveFileWatchState {
+      stream: WatchedFileEventsState {
+        path: path.clone(),
+        uri: format!("file://{}", path.display()),
+        events_rx,
+        suppress_until: None,
+        reload_state: FileWatchReloadState::Clean,
+        reload_io: FileWatchReloadIoState::default(),
+      },
+      _watch_handle: watch_handle,
+    });
+    true
+  }
+
+  fn handle_active_file_watch_change(&mut self, watched_path: &Path, change_kind: PathEventKind) -> bool {
+    let label = watched_path
+      .file_name()
+      .map(|name| name.to_string_lossy().to_string())
+      .unwrap_or_else(|| watched_path.display().to_string());
+
+    match change_kind {
+      PathEventKind::Removed => {
+        if let Some(watch) = self.active_file_watch.as_mut() {
+          clear_reload_state(&mut watch.stream.reload_state);
+        }
+        self.push_warning("watch", format!("file deleted on disk: {label}"));
+        true
+      },
+      PathEventKind::Created | PathEventKind::Changed => {
+        let current = self.editor.document().text().clone();
+        let buffer_modified = self.editor.document().flags().modified;
+        let decision = match self.active_file_watch.as_mut() {
+          Some(watch) => match evaluate_external_reload_from_disk(
+            &mut watch.stream.reload_state,
+            &mut watch.stream.reload_io,
+            watched_path,
+            &current,
+            buffer_modified,
+          ) {
+            Ok(decision) => decision,
+            Err(FileWatchReloadError::BackoffActive { .. }) => return false,
+            Err(FileWatchReloadError::ReadFailed { error, retry_after, .. }) => {
+              let retry_in_ms = retry_after.saturating_duration_since(Instant::now()).as_millis();
+              self.push_warning(
+                "watch",
+                format!(
+                  "failed to read '{label}' from disk: {error} (retrying in {retry_in_ms}ms)"
+                ),
+              );
+              return true;
+            },
+          },
+          None => return false,
+        };
+
+        match decision {
+          FileWatchReloadDecision::Noop => false,
+          FileWatchReloadDecision::ConflictEntered => {
+            self.push_warning(
+              "watch",
+              format!(
+                "file changed on disk: {label} (buffer has unsaved changes; run :rl to reload disk or :w! to overwrite disk)"
+              ),
+            );
+            true
+          },
+          FileWatchReloadDecision::ConflictOngoing => false,
+          FileWatchReloadDecision::ReloadNeeded => match <Self as DefaultContext>::reload_file_preserving_view(self, watched_path) {
+            Ok(()) => {
+              if let Some(watch) = self.active_file_watch.as_mut() {
+                mark_reload_applied(&mut watch.stream.reload_state);
+              }
+              self.push_info("watch", format!("reloaded from disk: {label}"));
+              true
+            },
+            Err(err) => {
+              self.push_error("watch", format!("failed to reload '{label}': {err}"));
+              true
+            },
+          },
+        }
+      },
+    }
+  }
+
+  fn poll_active_file_watch(&mut self) -> bool {
+    let mut changed = self.sync_active_file_watch_state();
+    let outcome = match poll_watch_events(
+      self.active_file_watch.as_mut().map(|watch| &mut watch.stream),
+      Instant::now(),
+      "swift",
+      |_, _| {},
+    ) {
+      WatchPollOutcome::NoChanges => return changed,
+      WatchPollOutcome::Disconnected { .. } => {
+        self.active_file_watch = None;
+        return self.sync_active_file_watch_state() || changed;
+      },
+      WatchPollOutcome::Changes { path, kinds, .. } => (path, kinds),
+    };
+
+    if let Some(change_kind) = outcome.1.last().copied() {
+      changed |= self.handle_active_file_watch_change(&outcome.0, change_kind);
+    }
+    changed
+  }
+
+  fn poll_background_tasks(&mut self) -> bool {
+    let mut changed = false;
+    changed |= self.poll_active_file_watch();
+    changed |= self.poll_vcs_statusline_refresh_results();
+    changed |= self.refresh_picker_state();
+    changed
   }
 
   fn new(path: Option<&Path>) -> Self {
@@ -993,6 +1159,7 @@ impl SwiftEditor {
       vcs_statusline: None,
       gutter_diff_signs: BTreeMap::new(),
       vcs_diff: None,
+      active_file_watch: None,
       vcs_statusline_refresh_in_flight: false,
       vcs_statusline_refresh_generation: 0,
       vcs_statusline_refresh_tx,
@@ -1001,6 +1168,7 @@ impl SwiftEditor {
 
     set_file_picker_syntax_loader(&mut this.file_picker, this.loader.clone());
     this.refresh_active_document_syntax();
+    this.sync_active_file_watch_state();
     this.schedule_vcs_statusline_refresh();
     this
   }
@@ -1019,6 +1187,7 @@ impl SwiftEditor {
         self.update_workspace_for_path(path);
         self.reload_theme_catalog();
         self.refresh_active_document_syntax();
+        self.sync_active_file_watch_state();
         self.schedule_vcs_statusline_refresh();
         replaced
       },
@@ -1735,6 +1904,23 @@ impl DefaultContext for SwiftEditor {
   fn ui_theme(&self) -> &Theme { &self.ui_theme }
   fn ui_theme_name(&self) -> &str { &self.ui_theme_name }
   fn vcs_statusline_text(&self) -> Option<String> { self.vcs_statusline.clone() }
+  fn watch_statusline_text(&self) -> Option<String> {
+    self
+      .active_file_watch
+      .as_ref()
+      .and_then(|watch| watch_statusline_text_for_state(watch.stream.reload_state))
+  }
+  fn watch_conflict_active(&self) -> bool {
+    self
+      .active_file_watch
+      .as_ref()
+      .is_some_and(|watch| watch.stream.reload_state == FileWatchReloadState::Conflict)
+  }
+  fn clear_watch_conflict(&mut self) {
+    if let Some(watch) = self.active_file_watch.as_mut() {
+      clear_reload_state(&mut watch.stream.reload_state);
+    }
+  }
   fn available_theme_names(&self) -> Vec<String> { self.ui_theme_catalog.names() }
   fn set_ui_theme(&mut self, theme_name: &str) -> Result<(), String> { self.set_ui_theme_named(theme_name) }
   fn set_ui_theme_preview(&mut self, theme_name: &str) -> Result<(), String> { self.set_ui_theme_preview_named(theme_name) }
@@ -1747,6 +1933,7 @@ impl DefaultContext for SwiftEditor {
       self.reload_theme_catalog();
     }
     self.refresh_active_document_syntax();
+    self.sync_active_file_watch_state();
     self.schedule_vcs_statusline_refresh();
   }
   fn open_file(&mut self, path: &Path) -> std::io::Result<()> {
@@ -1758,8 +1945,16 @@ impl DefaultContext for SwiftEditor {
     self.update_workspace_for_path(path);
     self.reload_theme_catalog();
     self.refresh_active_document_syntax();
+    self.sync_active_file_watch_state();
     self.schedule_vcs_statusline_refresh();
     Ok(())
+  }
+  fn on_file_saved(&mut self, _path: &Path, _text: &str) {
+    if let Some(watch) = self.active_file_watch.as_mut() {
+      watch.stream.suppress_until = Some(Instant::now() + active_file_self_save_suppress_window());
+      clear_reload_state(&mut watch.stream.reload_state);
+    }
+    self.schedule_vcs_statusline_refresh();
   }
 }
 
@@ -2543,6 +2738,22 @@ fn input_prompt_placeholder(kind: SearchPromptKind) -> &'static str {
   }
 }
 
+fn active_file_watch_latency() -> Duration {
+  Duration::from_millis(120)
+}
+
+fn active_file_self_save_suppress_window() -> Duration {
+  Duration::from_millis(500)
+}
+
+fn watch_statusline_text_for_state(state: FileWatchReloadState) -> Option<String> {
+  match state {
+    FileWatchReloadState::Conflict => Some("watch: conflict".to_string()),
+    FileWatchReloadState::ReloadNeeded => Some("watch: reload pending".to_string()),
+    FileWatchReloadState::Clean => None,
+  }
+}
+
 fn damage_reason_code(reason: RenderDamageReason) -> u8 {
   match reason {
     RenderDamageReason::None => 0,
@@ -3123,6 +3334,12 @@ pub unsafe extern "C" fn the_editor_command_palette_select_visible_index(handle:
 pub unsafe extern "C" fn the_editor_command_palette_submit(handle: *mut the_editor_handle_t) -> bool {
   let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
   handle.editor.submit_command_palette()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_poll_background_tasks(handle: *mut the_editor_handle_t) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+  handle.editor.poll_background_tasks()
 }
 
 #[unsafe(no_mangle)]

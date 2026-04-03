@@ -524,6 +524,12 @@ enum EditorFFIBridge {
     }
 
     @discardableResult
+    static func pollBackgroundTasks(_ handle: OpaquePointer?) -> Bool {
+        guard let handle else { return false }
+        return the_editor_poll_background_tasks(handle)
+    }
+
+    @discardableResult
     static func openSearchPrompt(_ handle: OpaquePointer?) -> Bool {
         guard let handle else { return false }
         return the_editor_open_search_prompt(handle)

@@ -375,6 +375,7 @@ bool the_editor_command_palette_select_next(the_editor_handle_t *handle);
 bool the_editor_command_palette_select_previous(the_editor_handle_t *handle);
 bool the_editor_command_palette_select_visible_index(the_editor_handle_t *handle, uintptr_t visible_index);
 bool the_editor_command_palette_submit(the_editor_handle_t *handle);
+bool the_editor_poll_background_tasks(the_editor_handle_t *handle);
 bool the_editor_open_search_prompt(the_editor_handle_t *handle);
 bool the_editor_close_input_prompt(the_editor_handle_t *handle);
 bool the_editor_input_prompt_set_query(the_editor_handle_t *handle, const char *query);

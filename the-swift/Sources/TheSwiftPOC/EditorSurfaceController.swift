@@ -29,13 +29,14 @@ final class EditorSurfaceController: ObservableObject {
 
     private var surfaceConfiguration: EditorSurfaceConfiguration?
     private var markedText: String = ""
-    private var pickerPollCancellable: AnyCancellable?
+    private var backgroundPollCancellable: AnyCancellable?
     private var filePickerListVisibleRows: Int = 1
     private var filePickerPreviewVisibleRows: Int = 1
     private var resizeOverlayHideTask: Task<Void, Never>?
 
     init(initialPath: String?) {
         self.handle = EditorFFIBridge.createHandle(initialPath: initialPath).map(EditorHandleBox.init(raw:))
+        startBackgroundPolling()
         refreshSnapshot()
     }
 
@@ -301,7 +302,6 @@ final class EditorSurfaceController: ObservableObject {
         commandPalette = snapshot.commandPalette
         inputPrompt = snapshot.inputPrompt
         filePicker = snapshot.filePicker
-        updatePickerPolling(isNeeded: snapshot.filePicker.isOpen && snapshot.filePicker.isLoading)
         commandPaletteDebugLog("refresh query=\(String(reflecting: snapshot.commandPalette.query)) selected=\(String(describing: snapshot.commandPalette.selectedIndex)) items=\(snapshot.commandPalette.items.count) isOpen=\(snapshot.commandPalette.isOpen)")
         let sceneStarted = CFAbsoluteTimeGetCurrent()
         let marked = markedTextOverlay(from: snapshot)
@@ -320,18 +320,15 @@ final class EditorSurfaceController: ObservableObject {
         )
     }
 
-    private func updatePickerPolling(isNeeded: Bool) {
-        if isNeeded {
-            guard pickerPollCancellable == nil else { return }
-            pickerPollCancellable = Timer.publish(every: 0.05, on: .main, in: .common)
-                .autoconnect()
-                .sink { [weak self] _ in
-                    self?.refreshSnapshot()
-                }
-        } else {
-            pickerPollCancellable?.cancel()
-            pickerPollCancellable = nil
-        }
+    private func startBackgroundPolling() {
+        guard backgroundPollCancellable == nil else { return }
+        backgroundPollCancellable = Timer.publish(every: 0.05, on: .main, in: .common)
+            .autoconnect()
+            .sink { [weak self] _ in
+                guard let self else { return }
+                guard EditorFFIBridge.pollBackgroundTasks(self.handle?.raw) else { return }
+                self.refreshSnapshot()
+            }
     }
 
     private func markedTextOverlay(from snapshot: EditorSnapshot) -> EditorMarkedText? {

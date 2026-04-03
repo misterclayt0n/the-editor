@@ -62,6 +62,8 @@ use the_default::{
   open_command_palette,
   poll_scan_results,
   select_file_picker_index,
+  set_file_picker_list_offset,
+  set_file_picker_preview_offset,
   set_file_picker_query_text,
   set_file_picker_syntax_loader,
   set_picker_visible_rows,
@@ -1088,6 +1090,22 @@ impl SwiftEditor {
       return false;
     }
     move_selection(self, if next { 1 } else { -1 });
+    true
+  }
+
+  fn set_file_picker_list_offset(&mut self, offset: usize) -> bool {
+    if !self.file_picker.active {
+      return false;
+    }
+    set_file_picker_list_offset(self, offset);
+    true
+  }
+
+  fn set_file_picker_preview_offset(&mut self, offset: usize) -> bool {
+    if !self.file_picker.active {
+      return false;
+    }
+    set_file_picker_preview_offset(self, offset, self.file_picker_preview_visible_rows);
     true
   }
 
@@ -2543,6 +2561,18 @@ pub unsafe extern "C" fn the_editor_file_picker_select_next(handle: *mut the_edi
 pub unsafe extern "C" fn the_editor_file_picker_select_previous(handle: *mut the_editor_handle_t) -> bool {
   let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
   handle.editor.move_file_picker_selection(false)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_file_picker_set_list_offset(handle: *mut the_editor_handle_t, offset: usize) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+  handle.editor.set_file_picker_list_offset(offset)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_file_picker_set_preview_offset(handle: *mut the_editor_handle_t, offset: usize, _visible_rows: usize) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+  handle.editor.set_file_picker_preview_offset(offset)
 }
 
 #[unsafe(no_mangle)]

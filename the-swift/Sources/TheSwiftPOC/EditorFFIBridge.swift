@@ -459,6 +459,18 @@ enum EditorFFIBridge {
     }
 
     @discardableResult
+    static func setFilePickerListOffset(_ handle: OpaquePointer?, offset: Int) -> Bool {
+        guard let handle else { return false }
+        return the_editor_file_picker_set_list_offset(handle, UInt(offset))
+    }
+
+    @discardableResult
+    static func setFilePickerPreviewOffset(_ handle: OpaquePointer?, offset: Int, visibleRows: Int) -> Bool {
+        guard let handle else { return false }
+        return the_editor_file_picker_set_preview_offset(handle, UInt(offset), UInt(visibleRows))
+    }
+
+    @discardableResult
     static func selectFilePickerIndex(_ handle: OpaquePointer?, index: Int) -> Bool {
         guard let handle else { return false }
         return the_editor_file_picker_select_index(handle, UInt(index))

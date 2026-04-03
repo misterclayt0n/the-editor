@@ -27,6 +27,8 @@ final class EditorSurfaceController: ObservableObject {
     private var surfaceConfiguration: EditorSurfaceConfiguration?
     private var markedText: String = ""
     private var pickerPollCancellable: AnyCancellable?
+    private var filePickerListVisibleRows: Int = 1
+    private var filePickerPreviewVisibleRows: Int = 1
 
     init(initialPath: String?) {
         self.handle = EditorFFIBridge.createHandle(initialPath: initialPath).map(EditorHandleBox.init(raw:))
@@ -95,7 +97,9 @@ final class EditorSurfaceController: ObservableObject {
     }
 
     func configureFilePicker(listVisibleRows: Int, previewVisibleRows: Int) {
-        guard EditorFFIBridge.configureFilePicker(handle?.raw, listVisibleRows: listVisibleRows, previewVisibleRows: previewVisibleRows) else {
+        filePickerListVisibleRows = max(listVisibleRows, 1)
+        filePickerPreviewVisibleRows = max(previewVisibleRows, 1)
+        guard EditorFFIBridge.configureFilePicker(handle?.raw, listVisibleRows: filePickerListVisibleRows, previewVisibleRows: filePickerPreviewVisibleRows) else {
             return
         }
         refreshSnapshot()
@@ -125,6 +129,20 @@ final class EditorSurfaceController: ObservableObject {
             changed = false
         }
         guard changed else { return }
+        refreshSnapshot()
+    }
+
+    func setFilePickerListOffset(_ offset: Int) {
+        let normalized = max(offset, 0)
+        guard normalized != filePicker.visibleItemStart else { return }
+        guard EditorFFIBridge.setFilePickerListOffset(handle?.raw, offset: normalized) else { return }
+        refreshSnapshot()
+    }
+
+    func setFilePickerPreviewOffset(_ offset: Int) {
+        let normalized = max(offset, 0)
+        guard normalized != filePicker.previewWindowStart else { return }
+        guard EditorFFIBridge.setFilePickerPreviewOffset(handle?.raw, offset: normalized, visibleRows: filePickerPreviewVisibleRows) else { return }
         refreshSnapshot()
     }
 

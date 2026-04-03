@@ -180,32 +180,44 @@ struct EditorFilePickerView: View {
 
     private var resultsPane: some View {
         VStack(spacing: 0) {
-            ScrollView {
-                if controller.filePicker.items.isEmpty {
-                    Text(controller.filePicker.isLoading ? "Searching…" : "No matches")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(14)
-                } else {
-                    LazyVStack(alignment: .leading, spacing: 4) {
-                        ForEach(controller.filePicker.items) { item in
-                            EditorFilePickerRow(
-                                item: item,
-                                isSelected: controller.filePicker.selectedIndex == item.globalIndex,
-                                onSelect: {
-                                    controller.selectFilePickerIndex(item.globalIndex)
-                                },
-                                onOpen: {
-                                    controller.submitFilePicker(index: item.globalIndex)
-                                }
-                            )
+            NativeVerticalOffsetScrollView(
+                rowHeight: listRowHeight,
+                offset: controller.filePicker.visibleItemStart,
+                onOffsetChange: controller.setFilePickerListOffset
+            ) {
+                VStack(alignment: .leading, spacing: 0) {
+                    Color.clear.frame(height: CGFloat(controller.filePicker.visibleItemStart) * listRowHeight)
+
+                    if controller.filePicker.items.isEmpty {
+                        Text(controller.filePicker.isLoading ? "Searching…" : "No matches")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                            .padding(14)
+                            .frame(height: listRowHeight * 3, alignment: .topLeading)
+                    } else {
+                        VStack(alignment: .leading, spacing: 0) {
+                            ForEach(controller.filePicker.items) { item in
+                                EditorFilePickerRow(
+                                    item: item,
+                                    isSelected: controller.filePicker.selectedIndex == item.globalIndex,
+                                    onSelect: {
+                                        controller.selectFilePickerIndex(item.globalIndex)
+                                    },
+                                    onOpen: {
+                                        controller.submitFilePicker(index: item.globalIndex)
+                                    }
+                                )
+                                .frame(height: listRowHeight)
+                            }
                         }
                     }
-                    .padding(8)
+
+                    Color.clear.frame(height: CGFloat(max(controller.filePicker.matchedCount - controller.filePicker.visibleItemStart - controller.filePicker.items.count, 0)) * listRowHeight)
                 }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
             }
-            .scrollIndicators(.never)
 
             Divider()
 
@@ -240,16 +252,26 @@ struct EditorFilePickerView: View {
 
             Divider()
 
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    ForEach(controller.filePicker.previewLines) { line in
-                        EditorFilePickerPreviewLineView(line: line)
+            NativeVerticalOffsetScrollView(
+                rowHeight: previewRowHeight,
+                offset: controller.filePicker.previewWindowStart,
+                onOffsetChange: controller.setFilePickerPreviewOffset
+            ) {
+                VStack(alignment: .leading, spacing: 0) {
+                    Color.clear.frame(height: CGFloat(controller.filePicker.previewWindowStart) * previewRowHeight)
+
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(controller.filePicker.previewLines) { line in
+                            EditorFilePickerPreviewLineView(line: line)
+                                .frame(height: previewRowHeight, alignment: .center)
+                        }
                     }
+
+                    Color.clear.frame(height: CGFloat(max(controller.filePicker.previewTotalRows - controller.filePicker.previewWindowStart - controller.filePicker.previewLines.count, 0)) * previewRowHeight)
                 }
-                .padding(.vertical, 8)
                 .padding(.horizontal, 10)
+                .padding(.vertical, 8)
             }
-            .scrollIndicators(.never)
 
             Divider()
 
@@ -512,4 +534,135 @@ private struct EditorFilePickerPreviewLineView: View {
             Color.clear
         }
     }
+}
+
+private struct NativeVerticalOffsetScrollView<Content: View>: NSViewRepresentable {
+    let rowHeight: CGFloat
+    let offset: Int
+    let onOffsetChange: (Int) -> Void
+    let content: Content
+
+    init(
+        rowHeight: CGFloat,
+        offset: Int,
+        onOffsetChange: @escaping (Int) -> Void,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.rowHeight = rowHeight
+        self.offset = offset
+        self.onOffsetChange = onOffsetChange
+        self.content = content()
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(rowHeight: rowHeight, onOffsetChange: onOffsetChange)
+    }
+
+    func makeNSView(context: Context) -> PickerHostingScrollView {
+        let scrollView = PickerHostingScrollView()
+        context.coordinator.attach(to: scrollView)
+        return scrollView
+    }
+
+    func updateNSView(_ nsView: PickerHostingScrollView, context: Context) {
+        context.coordinator.rowHeight = rowHeight
+        context.coordinator.onOffsetChange = onOffsetChange
+        nsView.update(rootView: AnyView(content))
+        nsView.layoutDocumentView()
+        context.coordinator.applyExternalOffset(offset, in: nsView)
+    }
+
+    @MainActor
+    final class Coordinator: NSObject {
+        var rowHeight: CGFloat
+        var onOffsetChange: (Int) -> Void
+        private weak var scrollView: PickerHostingScrollView?
+        private var isApplyingExternalOffset = false
+
+        init(rowHeight: CGFloat, onOffsetChange: @escaping (Int) -> Void) {
+            self.rowHeight = rowHeight
+            self.onOffsetChange = onOffsetChange
+        }
+
+        deinit {
+            NotificationCenter.default.removeObserver(self)
+        }
+
+        func attach(to scrollView: PickerHostingScrollView) {
+            self.scrollView = scrollView
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(handleBoundsDidChangeNotification(_:)),
+                name: NSView.boundsDidChangeNotification,
+                object: scrollView.contentView
+            )
+        }
+
+        func applyExternalOffset(_ offset: Int, in scrollView: PickerHostingScrollView) {
+            let targetY = max(CGFloat(offset) * rowHeight, 0)
+            let currentY = scrollView.contentView.bounds.origin.y
+            guard abs(currentY - targetY) > max(rowHeight * 0.5, 1) else { return }
+            isApplyingExternalOffset = true
+            scrollView.contentView.scroll(to: NSPoint(x: 0, y: targetY))
+            scrollView.reflectScrolledClipView(scrollView.contentView)
+            isApplyingExternalOffset = false
+        }
+
+        @objc private func handleBoundsDidChangeNotification(_ notification: Notification) {
+            boundsDidChange()
+        }
+
+        private func boundsDidChange() {
+            guard !isApplyingExternalOffset, let scrollView else { return }
+            let y = max(scrollView.contentView.bounds.origin.y, 0)
+            let offset = Int((y / max(rowHeight, 1)).rounded())
+            onOffsetChange(offset)
+        }
+    }
+}
+
+@MainActor
+private final class PickerHostingScrollView: NSScrollView {
+    private let documentContainer = FlippedDocumentContainerView()
+    private let hostingView = NSHostingView(rootView: AnyView(EmptyView()))
+
+    init() {
+        super.init(frame: .zero)
+        drawsBackground = false
+        borderType = .noBorder
+        hasVerticalScroller = true
+        hasHorizontalScroller = false
+        autohidesScrollers = true
+        scrollerStyle = .overlay
+        contentView.postsBoundsChangedNotifications = true
+        documentView = documentContainer
+        documentContainer.addSubview(hostingView)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func update(rootView: AnyView) {
+        hostingView.rootView = rootView
+    }
+
+    func layoutDocumentView() {
+        let width = max(contentSize.width, 1)
+        let fittingSize = hostingView.fittingSize
+        let height = max(fittingSize.height, contentSize.height)
+        documentContainer.frame = NSRect(x: 0, y: 0, width: width, height: height)
+        hostingView.frame = NSRect(x: 0, y: 0, width: width, height: fittingSize.height)
+    }
+
+    override func layout() {
+        super.layout()
+        layoutDocumentView()
+    }
+}
+
+@MainActor
+private final class FlippedDocumentContainerView: NSView {
+    override var isFlipped: Bool { true }
 }

@@ -29,6 +29,7 @@ use the_core::{
   line_ending::LineEnding,
 };
 use the_default::{
+  Command,
   CommandPaletteState,
   CommandPaletteStyle,
   CommandPromptState,
@@ -45,6 +46,7 @@ use the_default::{
   Keymaps,
   Mode,
   Motion,
+  SearchPromptKind,
   PendingInput,
   PickerRuntimeStore,
   SearchPromptState,
@@ -62,8 +64,10 @@ use the_default::{
   file_picker_item_selectable,
   file_picker_preview_window,
   file_picker_row_data_for_kind,
+  handle_command,
   handle_command_prompt_key,
   handle_key,
+  handle_search_prompt_key,
   install_default_wiring,
   move_selection,
   notify_file_picker_query_changed,
@@ -78,8 +82,10 @@ use the_default::{
   set_picker_visible_rows,
   submit_command_palette as submit_command_palette_action,
   submit_file_picker,
+  step_search_prompt,
   sync_command_palette_preview,
   update_command_palette_for_input,
+  update_search_prompt_preview,
   FilePickerKind,
   FilePickerPreviewChangeKind,
   FilePickerPreviewLineKind,
@@ -358,6 +364,17 @@ pub struct the_editor_snapshot_command_palette_item_t {
 
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
+pub struct the_editor_snapshot_input_prompt_t {
+  pub is_open:     bool,
+  pub kind:        u8,
+  pub title:       *const c_char,
+  pub placeholder: *const c_char,
+  pub query:       *const c_char,
+  pub error:       *const c_char,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
 pub struct the_editor_snapshot_file_picker_t {
   pub is_open:                 bool,
   pub kind:                    u8,
@@ -556,6 +573,7 @@ struct OwnedSnapshot {
   status_items:          Vec<StatusItemRecord>,
   command_palette:       CommandPaletteRecord,
   command_palette_items: Vec<CommandPaletteItemRecord>,
+  input_prompt:          InputPromptRecord,
   file_picker:           FilePickerRecord,
   file_picker_items:     Vec<FilePickerItemRecord>,
   file_picker_preview_lines: Vec<FilePickerPreviewLineRecord>,
@@ -611,6 +629,15 @@ struct CommandPaletteItemRecord {
   description_idx: Option<usize>,
   badge_idx:       Option<usize>,
   leading_icon_idx: Option<usize>,
+}
+
+#[derive(Clone, Copy, Default)]
+struct InputPromptRecord {
+  prompt:          the_editor_snapshot_input_prompt_t,
+  title_idx:       Option<usize>,
+  placeholder_idx: Option<usize>,
+  query_idx:       Option<usize>,
+  error_idx:       Option<usize>,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -1487,6 +1514,50 @@ impl SwiftEditor {
     OwnedSnapshot::from_editor(self, plan)
   }
 
+  fn open_search_prompt(&mut self) -> bool {
+    handle_command(self, Command::Search);
+    self.search_prompt.active
+  }
+
+  fn close_input_prompt(&mut self) -> bool {
+    if !self.search_prompt.active {
+      return false;
+    }
+    handle_search_prompt_key(self, KeyEvent {
+      key: Key::Escape,
+      modifiers: the_default::Modifiers::empty(),
+    })
+  }
+
+  fn set_input_prompt_query(&mut self, query: &str) -> bool {
+    if !self.search_prompt.active || self.search_prompt.query == query {
+      return false;
+    }
+    self.search_prompt.query = query.to_string();
+    self.search_prompt.cursor = self.search_prompt.query.len();
+    self.search_prompt.selected = None;
+    update_search_prompt_preview(self);
+    true
+  }
+
+  fn submit_input_prompt(&mut self) -> bool {
+    if !self.search_prompt.active {
+      return false;
+    }
+    handle_search_prompt_key(self, KeyEvent {
+      key: Key::Enter,
+      modifiers: the_default::Modifiers::empty(),
+    })
+  }
+
+  fn step_input_prompt(&mut self, direction: the_default::Direction) -> bool {
+    if !self.search_prompt.active || self.search_prompt.kind != SearchPromptKind::Search {
+      return false;
+    }
+    step_search_prompt(self, direction);
+    true
+  }
+
   fn primary_selection_utf16(&self) -> (u32, u32) {
     let selection = self.editor.document().selection();
     let Ok((_, range)) = selection.pick(CursorPick::First) else {
@@ -1867,6 +1938,25 @@ impl OwnedSnapshot {
       });
     }
     snapshot.command_palette.palette.item_count = snapshot.command_palette_items.len();
+
+    let input_prompt = editor.search_prompt_ref();
+    let input_prompt_title = input_prompt_title(input_prompt.kind).to_string();
+    let input_prompt_placeholder = input_prompt_placeholder(input_prompt.kind).to_string();
+    snapshot.input_prompt = InputPromptRecord {
+      prompt: the_editor_snapshot_input_prompt_t {
+        is_open: input_prompt.active,
+        kind: input_prompt_kind_code(input_prompt.kind),
+        title: ptr::null(),
+        placeholder: ptr::null(),
+        query: ptr::null(),
+        error: ptr::null(),
+      },
+      title_idx: Some(snapshot.push_string(&input_prompt_title)),
+      placeholder_idx: Some(snapshot.push_string(&input_prompt_placeholder)),
+      query_idx: Some(snapshot.push_string(&input_prompt.query)),
+      error_idx: snapshot.push_optional_string(input_prompt.error.as_deref()),
+    };
+
     snapshot.populate_file_picker(editor);
 
     let Some(plan) = plan else {
@@ -1888,6 +1978,7 @@ impl OwnedSnapshot {
         }
       }
       snapshot.finalize_document_and_status_strings();
+      snapshot.finalize_input_prompt_strings();
       snapshot.finalize_file_picker_strings();
       return snapshot;
     };
@@ -2063,6 +2154,7 @@ impl OwnedSnapshot {
       }
     }
     snapshot.finalize_document_and_status_strings();
+    snapshot.finalize_input_prompt_strings();
     snapshot.finalize_file_picker_strings();
 
     snapshot.info.line_count = snapshot.lines.len();
@@ -2297,6 +2389,21 @@ impl OwnedSnapshot {
     }
   }
 
+  fn finalize_input_prompt_strings(&mut self) {
+    if let Some(title_idx) = self.input_prompt.title_idx {
+      self.input_prompt.prompt.title = self.strings[title_idx].as_ptr();
+    }
+    if let Some(placeholder_idx) = self.input_prompt.placeholder_idx {
+      self.input_prompt.prompt.placeholder = self.strings[placeholder_idx].as_ptr();
+    }
+    if let Some(query_idx) = self.input_prompt.query_idx {
+      self.input_prompt.prompt.query = self.strings[query_idx].as_ptr();
+    }
+    if let Some(error_idx) = self.input_prompt.error_idx {
+      self.input_prompt.prompt.error = self.strings[error_idx].as_ptr();
+    }
+  }
+
   fn finalize_file_picker_strings(&mut self) {
     if let Some(title_idx) = self.file_picker.title_idx {
       self.file_picker.picker.title = self.strings[title_idx].as_ptr();
@@ -2385,6 +2492,54 @@ fn mode_code(mode: Mode) -> u8 {
     Mode::Insert => 1,
     Mode::Select => 2,
     Mode::Command => 3,
+  }
+}
+
+fn input_prompt_kind_code(kind: SearchPromptKind) -> u8 {
+  match kind {
+    SearchPromptKind::Search => 0,
+    SearchPromptKind::SelectRegex => 1,
+    SearchPromptKind::SplitSelection => 2,
+    SearchPromptKind::KeepSelections => 3,
+    SearchPromptKind::RemoveSelections => 4,
+    SearchPromptKind::RenameSymbol => 5,
+    SearchPromptKind::ShellPipe => 6,
+    SearchPromptKind::ShellPipeTo => 7,
+    SearchPromptKind::ShellInsertOutput => 8,
+    SearchPromptKind::ShellAppendOutput => 9,
+    SearchPromptKind::ShellKeepPipe => 10,
+  }
+}
+
+fn input_prompt_title(kind: SearchPromptKind) -> &'static str {
+  match kind {
+    SearchPromptKind::Search => "Search",
+    SearchPromptKind::SelectRegex => "Select",
+    SearchPromptKind::SplitSelection => "Split",
+    SearchPromptKind::KeepSelections => "Keep",
+    SearchPromptKind::RemoveSelections => "Remove",
+    SearchPromptKind::RenameSymbol => "Rename",
+    SearchPromptKind::ShellPipe => "Pipe",
+    SearchPromptKind::ShellPipeTo => "Pipe To",
+    SearchPromptKind::ShellInsertOutput => "Insert Output",
+    SearchPromptKind::ShellAppendOutput => "Append Output",
+    SearchPromptKind::ShellKeepPipe => "Keep Pipe",
+  }
+}
+
+fn input_prompt_placeholder(kind: SearchPromptKind) -> &'static str {
+  match kind {
+    SearchPromptKind::Search => "Search",
+    SearchPromptKind::SelectRegex => "Regular expression",
+    SearchPromptKind::SplitSelection => "Regular expression",
+    SearchPromptKind::KeepSelections => "Regular expression",
+    SearchPromptKind::RemoveSelections => "Regular expression",
+    SearchPromptKind::RenameSymbol => "Rename symbol",
+    SearchPromptKind::ShellPipe => "Shell command",
+    SearchPromptKind::ShellPipeTo => "Shell command",
+    SearchPromptKind::ShellInsertOutput => "Shell command",
+    SearchPromptKind::ShellAppendOutput => "Shell command",
+    SearchPromptKind::ShellKeepPipe => "Shell command",
   }
 }
 
@@ -2971,6 +3126,43 @@ pub unsafe extern "C" fn the_editor_command_palette_submit(handle: *mut the_edit
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_open_search_prompt(handle: *mut the_editor_handle_t) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+  handle.editor.open_search_prompt()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_close_input_prompt(handle: *mut the_editor_handle_t) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+  handle.editor.close_input_prompt()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_input_prompt_set_query(handle: *mut the_editor_handle_t, query: *const c_char) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+  let Some(query) = (unsafe { string_from_c(query) }) else { return false; };
+  handle.editor.set_input_prompt_query(&query)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_input_prompt_submit(handle: *mut the_editor_handle_t) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+  handle.editor.submit_input_prompt()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_input_prompt_step_next(handle: *mut the_editor_handle_t) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+  handle.editor.step_input_prompt(the_default::Direction::Forward)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_input_prompt_step_previous(handle: *mut the_editor_handle_t) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+  handle.editor.step_input_prompt(the_default::Direction::Backward)
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn the_editor_configure_file_picker(handle: *mut the_editor_handle_t, list_visible_rows: usize, preview_visible_rows: usize) -> bool {
   let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
   handle.editor.configure_file_picker_layout(list_visible_rows, preview_visible_rows)
@@ -3110,6 +3302,12 @@ pub unsafe extern "C" fn the_editor_snapshot_command_palette(snapshot: *const th
 pub unsafe extern "C" fn the_editor_snapshot_command_palette_item_at(snapshot: *const the_editor_snapshot_t, item_index: usize) -> the_editor_snapshot_command_palette_item_t {
   let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_command_palette_item_t::default(); };
   snapshot.snapshot.command_palette_items.get(item_index).map(|record| record.item).unwrap_or_default()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_snapshot_input_prompt(snapshot: *const the_editor_snapshot_t) -> the_editor_snapshot_input_prompt_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_input_prompt_t::default(); };
+  snapshot.snapshot.input_prompt.prompt
 }
 
 #[unsafe(no_mangle)]

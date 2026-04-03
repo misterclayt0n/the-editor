@@ -252,6 +252,29 @@ typedef struct the_editor_snapshot_command_palette_item_t {
   bool emphasis;
 } the_editor_snapshot_command_palette_item_t;
 
+typedef enum the_editor_input_prompt_kind_t {
+  THE_EDITOR_INPUT_PROMPT_SEARCH = 0,
+  THE_EDITOR_INPUT_PROMPT_SELECT_REGEX = 1,
+  THE_EDITOR_INPUT_PROMPT_SPLIT_SELECTION = 2,
+  THE_EDITOR_INPUT_PROMPT_KEEP_SELECTIONS = 3,
+  THE_EDITOR_INPUT_PROMPT_REMOVE_SELECTIONS = 4,
+  THE_EDITOR_INPUT_PROMPT_RENAME_SYMBOL = 5,
+  THE_EDITOR_INPUT_PROMPT_SHELL_PIPE = 6,
+  THE_EDITOR_INPUT_PROMPT_SHELL_PIPE_TO = 7,
+  THE_EDITOR_INPUT_PROMPT_SHELL_INSERT_OUTPUT = 8,
+  THE_EDITOR_INPUT_PROMPT_SHELL_APPEND_OUTPUT = 9,
+  THE_EDITOR_INPUT_PROMPT_SHELL_KEEP_PIPE = 10,
+} the_editor_input_prompt_kind_t;
+
+typedef struct the_editor_snapshot_input_prompt_t {
+  bool is_open;
+  uint8_t kind;
+  const char *title;
+  const char *placeholder;
+  const char *query;
+  const char *error;
+} the_editor_snapshot_input_prompt_t;
+
 typedef struct the_editor_snapshot_file_picker_t {
   bool is_open;
   uint8_t kind;
@@ -352,6 +375,12 @@ bool the_editor_command_palette_select_next(the_editor_handle_t *handle);
 bool the_editor_command_palette_select_previous(the_editor_handle_t *handle);
 bool the_editor_command_palette_select_visible_index(the_editor_handle_t *handle, uintptr_t visible_index);
 bool the_editor_command_palette_submit(the_editor_handle_t *handle);
+bool the_editor_open_search_prompt(the_editor_handle_t *handle);
+bool the_editor_close_input_prompt(the_editor_handle_t *handle);
+bool the_editor_input_prompt_set_query(the_editor_handle_t *handle, const char *query);
+bool the_editor_input_prompt_submit(the_editor_handle_t *handle);
+bool the_editor_input_prompt_step_next(the_editor_handle_t *handle);
+bool the_editor_input_prompt_step_previous(the_editor_handle_t *handle);
 bool the_editor_configure_file_picker(the_editor_handle_t *handle, uintptr_t list_visible_rows, uintptr_t preview_visible_rows);
 bool the_editor_close_file_picker(the_editor_handle_t *handle);
 bool the_editor_file_picker_set_query(the_editor_handle_t *handle, const char *query);
@@ -374,6 +403,7 @@ struct the_editor_snapshot_status_t the_editor_snapshot_status(const the_editor_
 struct the_editor_snapshot_status_item_t the_editor_snapshot_status_item_at(const the_editor_snapshot_t *snapshot, uintptr_t item_index);
 struct the_editor_snapshot_command_palette_t the_editor_snapshot_command_palette(const the_editor_snapshot_t *snapshot);
 struct the_editor_snapshot_command_palette_item_t the_editor_snapshot_command_palette_item_at(const the_editor_snapshot_t *snapshot, uintptr_t item_index);
+struct the_editor_snapshot_input_prompt_t the_editor_snapshot_input_prompt(const the_editor_snapshot_t *snapshot);
 struct the_editor_snapshot_file_picker_t the_editor_snapshot_file_picker(const the_editor_snapshot_t *snapshot);
 struct the_editor_snapshot_file_picker_item_t the_editor_snapshot_file_picker_item_at(const the_editor_snapshot_t *snapshot, uintptr_t item_index);
 struct the_editor_snapshot_file_picker_preview_line_t the_editor_snapshot_file_picker_preview_line_at(const the_editor_snapshot_t *snapshot, uintptr_t line_index);

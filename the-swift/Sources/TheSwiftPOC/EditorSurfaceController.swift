@@ -23,6 +23,7 @@ final class EditorSurfaceController: ObservableObject {
     @Published private(set) var chrome = EditorChromeModel.empty
     @Published private(set) var currentMode: EditorMode = .normal
     @Published private(set) var commandPalette: EditorCommandPaletteState = .empty
+    @Published private(set) var inputPrompt: EditorInputPromptState = .empty
     @Published private(set) var filePicker: EditorFilePickerState = .empty
     @Published private(set) var showsResizeOverlay = false
 
@@ -99,6 +100,42 @@ final class EditorSurfaceController: ObservableObject {
 
     func closeCommandPalette() {
         guard EditorFFIBridge.closeCommandPalette(handle?.raw) else { return }
+        refreshSnapshot()
+    }
+
+    func openSearchPrompt() {
+        guard !inputPrompt.isOpen || inputPrompt.kind != .search else { return }
+        guard EditorFFIBridge.openSearchPrompt(handle?.raw) else { return }
+        refreshSnapshot()
+    }
+
+    func closeInputPrompt() {
+        guard EditorFFIBridge.closeInputPrompt(handle?.raw) else { return }
+        refreshSnapshot()
+        focusEditor()
+    }
+
+    func setInputPromptQuery(_ query: String) {
+        guard query != inputPrompt.query else { return }
+        guard EditorFFIBridge.setInputPromptQuery(handle?.raw, query: query) else { return }
+        refreshSnapshot()
+    }
+
+    func submitInputPrompt() {
+        guard EditorFFIBridge.submitInputPrompt(handle?.raw) else { return }
+        refreshSnapshot()
+        if !inputPrompt.isOpen {
+            focusEditor()
+        }
+    }
+
+    func stepInputPromptNext() {
+        guard EditorFFIBridge.stepNextInputPrompt(handle?.raw) else { return }
+        refreshSnapshot()
+    }
+
+    func stepInputPromptPrevious() {
+        guard EditorFFIBridge.stepPreviousInputPrompt(handle?.raw) else { return }
         refreshSnapshot()
     }
 
@@ -251,6 +288,7 @@ final class EditorSurfaceController: ObservableObject {
     }
 
     func refreshSnapshot() {
+        let wasInputPromptOpen = inputPrompt.isOpen
         let started = CFAbsoluteTimeGetCurrent()
         guard let snapshot = EditorFFIBridge.makeSnapshot(handle?.raw) else { return }
         let snapshotMs = (CFAbsoluteTimeGetCurrent() - started) * 1000
@@ -261,6 +299,7 @@ final class EditorSurfaceController: ObservableObject {
             backgroundColor: snapshot.info.backgroundColor?.color ?? .windowBackgroundColor
         )
         commandPalette = snapshot.commandPalette
+        inputPrompt = snapshot.inputPrompt
         filePicker = snapshot.filePicker
         updatePickerPolling(isNeeded: snapshot.filePicker.isOpen && snapshot.filePicker.isLoading)
         commandPaletteDebugLog("refresh query=\(String(reflecting: snapshot.commandPalette.query)) selected=\(String(describing: snapshot.commandPalette.selectedIndex)) items=\(snapshot.commandPalette.items.count) isOpen=\(snapshot.commandPalette.isOpen)")
@@ -270,6 +309,11 @@ final class EditorSurfaceController: ObservableObject {
         let sceneMs = (CFAbsoluteTimeGetCurrent() - sceneStarted) * 1000
         self.scene = scene
         delegate?.editorController(self, didUpdateScene: scene)
+        if wasInputPromptOpen && !snapshot.inputPrompt.isOpen {
+            DispatchQueue.main.async { [weak self] in
+                self?.focusEditor()
+            }
+        }
         let totalMs = (CFAbsoluteTimeGetCurrent() - started) * 1000
         themePerfLog(
             "controller.refresh themeGen=\(snapshot.info.themeGeneration) snapshotMs=\(String(format: "%.2f", snapshotMs)) sceneMs=\(String(format: "%.2f", sceneMs)) totalMs=\(String(format: "%.2f", totalMs))"

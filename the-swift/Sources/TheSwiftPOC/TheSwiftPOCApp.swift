@@ -22,6 +22,28 @@ struct EditorCommandMenu: Commands {
     let controller: EditorSurfaceController
 
     var body: some Commands {
+        CommandGroup(after: .textEditing) {
+            Button("Find") {
+                controller.openSearchPrompt()
+            }
+            .keyboardShortcut("f", modifiers: [.command])
+
+            Button("Find Next") {
+                controller.stepInputPromptNext()
+            }
+            .keyboardShortcut("g", modifiers: [.command])
+
+            Button("Find Previous") {
+                controller.stepInputPromptPrevious()
+            }
+            .keyboardShortcut("g", modifiers: [.command, .shift])
+
+            Button("Close Find") {
+                controller.closeInputPrompt()
+            }
+            .keyboardShortcut(.escape, modifiers: [])
+        }
+
         CommandGroup(after: .toolbar) {
             Button("Command Palette") {
                 controller.toggleCommandPalette()
@@ -62,6 +84,7 @@ private struct EditorContainerView: View {
         ZStack {
             EditorChromeView(controller: controller)
             EditorResizeOverlayView(controller: controller)
+            EditorInputPromptView(controller: controller)
             EditorCommandPaletteView(controller: controller)
             EditorFilePickerView(controller: controller)
         }

@@ -241,6 +241,42 @@ struct EditorCommandPaletteState: Hashable {
     )
 }
 
+enum EditorInputPromptKind: UInt8 {
+    case search = 0
+    case selectRegex = 1
+    case splitSelection = 2
+    case keepSelections = 3
+    case removeSelections = 4
+    case renameSymbol = 5
+    case shellPipe = 6
+    case shellPipeTo = 7
+    case shellInsertOutput = 8
+    case shellAppendOutput = 9
+    case shellKeepPipe = 10
+}
+
+struct EditorInputPromptState: Hashable {
+    let isOpen: Bool
+    let kind: EditorInputPromptKind
+    let title: String
+    let placeholder: String
+    let query: String
+    let error: String?
+
+    var canNavigate: Bool {
+        kind == .search
+    }
+
+    static let empty = EditorInputPromptState(
+        isOpen: false,
+        kind: .search,
+        title: "Search",
+        placeholder: "Search",
+        query: "",
+        error: nil
+    )
+}
+
 enum EditorFilePickerKind: UInt8 {
     case generic = 0
     case diagnostics = 1
@@ -385,6 +421,7 @@ struct EditorSnapshot {
     let selections: [EditorSnapshotSelection]
     let overlays: [EditorSnapshotOverlay]
     let commandPalette: EditorCommandPaletteState
+    let inputPrompt: EditorInputPromptState
     let filePicker: EditorFilePickerState
 }
 
@@ -484,6 +521,42 @@ enum EditorFFIBridge {
     static func submitCommandPalette(_ handle: OpaquePointer?) -> Bool {
         guard let handle else { return false }
         return the_editor_command_palette_submit(handle)
+    }
+
+    @discardableResult
+    static func openSearchPrompt(_ handle: OpaquePointer?) -> Bool {
+        guard let handle else { return false }
+        return the_editor_open_search_prompt(handle)
+    }
+
+    @discardableResult
+    static func closeInputPrompt(_ handle: OpaquePointer?) -> Bool {
+        guard let handle else { return false }
+        return the_editor_close_input_prompt(handle)
+    }
+
+    @discardableResult
+    static func setInputPromptQuery(_ handle: OpaquePointer?, query: String) -> Bool {
+        guard let handle else { return false }
+        return query.withCString { the_editor_input_prompt_set_query(handle, $0) }
+    }
+
+    @discardableResult
+    static func submitInputPrompt(_ handle: OpaquePointer?) -> Bool {
+        guard let handle else { return false }
+        return the_editor_input_prompt_submit(handle)
+    }
+
+    @discardableResult
+    static func stepNextInputPrompt(_ handle: OpaquePointer?) -> Bool {
+        guard let handle else { return false }
+        return the_editor_input_prompt_step_next(handle)
+    }
+
+    @discardableResult
+    static func stepPreviousInputPrompt(_ handle: OpaquePointer?) -> Bool {
+        guard let handle else { return false }
+        return the_editor_input_prompt_step_previous(handle)
     }
 
     @discardableResult
@@ -647,6 +720,16 @@ enum EditorFFIBridge {
             }
         )
 
+        let inputPromptValue = the_editor_snapshot_input_prompt(rawSnapshot)
+        let inputPrompt = EditorInputPromptState(
+            isOpen: inputPromptValue.is_open,
+            kind: EditorInputPromptKind(rawValue: inputPromptValue.kind) ?? .search,
+            title: inputPromptValue.title.map { String(cString: $0) } ?? "Search",
+            placeholder: inputPromptValue.placeholder.map { String(cString: $0) } ?? "Search",
+            query: inputPromptValue.query.map { String(cString: $0) } ?? "",
+            error: inputPromptValue.error.map { String(cString: $0) }
+        )
+
         let filePickerValue = the_editor_snapshot_file_picker(rawSnapshot)
         let filePickerItems: [EditorFilePickerItem] = (0..<Int(filePickerValue.visible_item_count)).map { itemIndex in
             let itemValue = the_editor_snapshot_file_picker_item_at(rawSnapshot, UInt(itemIndex))
@@ -790,6 +873,7 @@ enum EditorFFIBridge {
             selections: selections,
             overlays: overlays,
             commandPalette: commandPalette,
+            inputPrompt: inputPrompt,
             filePicker: filePicker
         )
         let decodeMs = (CFAbsoluteTimeGetCurrent() - decodeStarted) * 1000

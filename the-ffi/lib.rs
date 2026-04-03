@@ -113,10 +113,14 @@ use the_lib::{
     RenderSelectionKind,
     RenderStyles,
     SyntaxHighlightAdapter,
-    apply_diff_gutter_markers,
     base_render_layer_row_hashes,
     build_plan,
     finish_render_generations,
+    gutter::{
+      GutterConfig,
+      GutterSlot,
+      GutterType,
+    },
     gutter_width_for_document,
     graphics::{
       Color,
@@ -945,7 +949,7 @@ impl SwiftEditor {
       last_motion: None,
       text_format,
       soft_wrap_enabled: false,
-      gutter_config: the_lib::render::GutterConfig::default(),
+      gutter_config: swift_gutter_config(),
       loader,
       highlight_cache: HighlightCache::default(),
       file_picker_preview_visible_rows: 20,
@@ -1580,7 +1584,7 @@ impl DefaultContext for SwiftEditor {
     };
     let diff_styles = render_diff_styles_from_theme(&self.ui_theme);
     let diff_signs = self.gutter_diff_signs.clone();
-    apply_diff_gutter_markers(&mut plan, &diff_signs, diff_styles);
+    apply_swift_diff_gutter_markers(&mut plan, &diff_signs, diff_styles);
     let row_hashes = base_render_layer_row_hashes(&plan);
     let generation_state = finish_render_generations(
       &mut plan,
@@ -1652,8 +1656,8 @@ impl DefaultContext for SwiftEditor {
   fn text_format(&self) -> TextFormat { self.text_format.clone() }
   fn soft_wrap_enabled(&self) -> bool { self.soft_wrap_enabled }
   fn set_soft_wrap_enabled(&mut self, enabled: bool) { self.soft_wrap_enabled = enabled; self.text_format.soft_wrap = enabled; }
-  fn gutter_config(&self) -> &the_lib::render::GutterConfig { &self.gutter_config }
-  fn gutter_config_mut(&mut self) -> &mut the_lib::render::GutterConfig { &mut self.gutter_config }
+  fn gutter_config(&self) -> &GutterConfig { &self.gutter_config }
+  fn gutter_config_mut(&mut self) -> &mut GutterConfig { &mut self.gutter_config }
   fn text_annotations(&self) -> TextAnnotations<'_> { TextAnnotations::default() }
   fn syntax_loader(&self) -> Option<&the_lib::syntax::Loader> { self.loader.as_deref() }
   fn scrolloff(&self) -> usize { SWIFT_SCROLLOFF }
@@ -2663,6 +2667,19 @@ fn theme_gutter_background_rgba(theme: &Theme) -> the_editor_rgba_t {
   color_to_rgba(gutter_background, theme)
 }
 
+fn swift_gutter_config() -> GutterConfig {
+  GutterConfig {
+    layout: vec![
+      GutterSlot::builtin(GutterType::Diff),
+      GutterSlot::builtin(GutterType::Spacer),
+      GutterSlot::builtin(GutterType::LineNumbers),
+      GutterSlot::builtin(GutterType::Spacer),
+      GutterSlot::builtin(GutterType::Diagnostics),
+    ],
+    ..GutterConfig::default()
+  }
+}
+
 fn render_diff_styles_from_theme(theme: &Theme) -> RenderDiffGutterStyles {
   RenderDiffGutterStyles {
     added: theme
@@ -2677,6 +2694,26 @@ fn render_diff_styles_from_theme(theme: &Theme) -> RenderDiffGutterStyles {
       .try_get("diff.minus")
       .or_else(|| theme.try_get("ui.linenr"))
       .unwrap_or_default(),
+  }
+}
+
+fn apply_swift_diff_gutter_markers(
+  plan: &mut RenderPlan,
+  diff_by_line: &BTreeMap<usize, RenderGutterDiffKind>,
+  styles: RenderDiffGutterStyles,
+) {
+  if plan.gutter_column(GutterType::Diff).is_none() {
+    return;
+  }
+  plan.clear_builtin_gutter_slot(GutterType::Diff);
+
+  for (&doc_line, kind) in diff_by_line {
+    let style = match kind {
+      RenderGutterDiffKind::Added => styles.added,
+      RenderGutterDiffKind::Modified => styles.modified,
+      RenderGutterDiffKind::Removed => styles.removed,
+    };
+    let _ = plan.set_builtin_gutter_text(GutterType::Diff, doc_line, "▎", style);
   }
 }
 

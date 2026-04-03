@@ -1,5 +1,8 @@
 use std::{
-  collections::VecDeque,
+  collections::{
+    BTreeMap,
+    VecDeque,
+  },
   env,
   ffi::{
     CStr,
@@ -103,11 +106,14 @@ use the_lib::{
     FrameRenderPlan,
     NoHighlights,
     RenderDamageReason,
+    RenderDiffGutterStyles,
     RenderGenerationState,
+    RenderGutterDiffKind,
     RenderPlan,
     RenderSelectionKind,
     RenderStyles,
     SyntaxHighlightAdapter,
+    apply_diff_gutter_markers,
     base_render_layer_row_hashes,
     build_plan,
     finish_render_generations,
@@ -141,7 +147,11 @@ use the_lib::{
   view::ViewState,
 };
 use unicode_segmentation::UnicodeSegmentation;
-use the_vcs::DiffProviderRegistry;
+use the_vcs::{
+  DiffHandle,
+  DiffProviderRegistry,
+  DiffSignKind,
+};
 
 #[repr(C)]
 pub struct the_editor_handle_t {
@@ -720,6 +730,7 @@ struct VcsStatuslineRefreshResult {
   generation: u64,
   path:       PathBuf,
   statusline: Option<String>,
+  diff_base:  Option<Vec<u8>>,
 }
 
 struct SwiftEditor {
@@ -767,6 +778,8 @@ struct SwiftEditor {
   surface:                       SurfaceConfig,
   vcs_provider:                  DiffProviderRegistry,
   vcs_statusline:                Option<String>,
+  gutter_diff_signs:             BTreeMap<usize, RenderGutterDiffKind>,
+  vcs_diff:                      Option<DiffHandle>,
   vcs_statusline_refresh_in_flight: bool,
   vcs_statusline_refresh_generation: u64,
   vcs_statusline_refresh_tx:     mpsc::Sender<VcsStatuslineRefreshResult>,
@@ -784,14 +797,43 @@ impl SwiftEditor {
     self.text_format.viewport_width = self.content_viewport_width();
   }
 
+  fn clear_vcs_diff(&mut self) {
+    self.vcs_diff = None;
+    self.gutter_diff_signs.clear();
+  }
+
+  fn refresh_vcs_diff_document(&mut self) {
+    let Some(handle) = self.vcs_diff.as_ref() else {
+      return;
+    };
+    let _ = handle.update_document(self.editor.document().text().clone(), true);
+    self.gutter_diff_signs = vcs_gutter_signs(handle);
+  }
+
+  fn apply_vcs_refresh_result(&mut self, statusline: Option<String>, diff_base: Option<Vec<u8>>) {
+    self.vcs_statusline = statusline;
+    let Some(diff_base) = diff_base else {
+      self.clear_vcs_diff();
+      return;
+    };
+
+    let diff_base = Rope::from_str(String::from_utf8_lossy(&diff_base).as_ref());
+    let doc = self.editor.document().text().clone();
+    let handle = DiffHandle::new(diff_base, doc);
+    self.gutter_diff_signs = vcs_gutter_signs(&handle);
+    self.vcs_diff = Some(handle);
+  }
+
   fn schedule_vcs_statusline_refresh(&mut self) {
     let Some(path) = self.file_path.clone() else {
       self.vcs_statusline = None;
+      self.clear_vcs_diff();
       self.vcs_statusline_refresh_in_flight = false;
       return;
     };
 
     self.vcs_statusline = None;
+    self.clear_vcs_diff();
     self.vcs_statusline_refresh_generation = self.vcs_statusline_refresh_generation.wrapping_add(1);
     self.vcs_statusline_refresh_in_flight = true;
     let generation = self.vcs_statusline_refresh_generation;
@@ -802,10 +844,12 @@ impl SwiftEditor {
       let statusline = vcs_provider
         .get_statusline_info(&path)
         .map(|info| info.statusline_text());
+      let diff_base = vcs_provider.get_diff_base(&path);
       let _ = tx.send(VcsStatuslineRefreshResult {
         generation,
         path,
         statusline,
+        diff_base,
       });
     });
   }
@@ -827,7 +871,7 @@ impl SwiftEditor {
         continue;
       }
 
-      self.vcs_statusline = result.statusline;
+      self.apply_vcs_refresh_result(result.statusline, result.diff_base);
     }
   }
 
@@ -916,6 +960,8 @@ impl SwiftEditor {
       surface,
       vcs_provider: DiffProviderRegistry::default(),
       vcs_statusline: None,
+      gutter_diff_signs: BTreeMap::new(),
+      vcs_diff: None,
       vcs_statusline_refresh_in_flight: false,
       vcs_statusline_refresh_generation: 0,
       vcs_statusline_refresh_tx,
@@ -1481,6 +1527,7 @@ impl DefaultContext for SwiftEditor {
     }
     if !transaction.changes().is_empty() {
       self.highlight_cache.clear();
+      self.refresh_vcs_diff_document();
     }
     true
   }
@@ -1531,6 +1578,9 @@ impl DefaultContext for SwiftEditor {
         styles,
       )
     };
+    let diff_styles = render_diff_styles_from_theme(&self.ui_theme);
+    let diff_signs = self.gutter_diff_signs.clone();
+    apply_diff_gutter_markers(&mut plan, &diff_signs, diff_styles);
     let row_hashes = base_render_layer_row_hashes(&plan);
     let generation_state = finish_render_generations(
       &mut plan,
@@ -2611,6 +2661,39 @@ fn theme_gutter_background_rgba(theme: &Theme) -> the_editor_rgba_t {
     .or_else(|| theme.try_get("ui.background").and_then(|style| style.bg))
     .or_else(|| theme.ghostty().background());
   color_to_rgba(gutter_background, theme)
+}
+
+fn render_diff_styles_from_theme(theme: &Theme) -> RenderDiffGutterStyles {
+  RenderDiffGutterStyles {
+    added: theme
+      .try_get("diff.plus")
+      .or_else(|| theme.try_get("ui.linenr"))
+      .unwrap_or_default(),
+    modified: theme
+      .try_get("diff.delta")
+      .or_else(|| theme.try_get("ui.linenr"))
+      .unwrap_or_default(),
+    removed: theme
+      .try_get("diff.minus")
+      .or_else(|| theme.try_get("ui.linenr"))
+      .unwrap_or_default(),
+  }
+}
+
+fn vcs_gutter_signs(handle: &DiffHandle) -> BTreeMap<usize, RenderGutterDiffKind> {
+  handle
+    .load()
+    .line_signs()
+    .into_iter()
+    .map(|(line, kind)| {
+      let marker = match kind {
+        DiffSignKind::Added => RenderGutterDiffKind::Added,
+        DiffSignKind::Modified => RenderGutterDiffKind::Modified,
+        DiffSignKind::Removed => RenderGutterDiffKind::Removed,
+      };
+      (line, marker)
+    })
+    .collect()
 }
 
 fn select_ui_theme(catalog: &ThemeCatalog) -> (String, Theme) {

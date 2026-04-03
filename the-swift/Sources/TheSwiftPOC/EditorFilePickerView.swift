@@ -586,6 +586,8 @@ private struct NativeVerticalOffsetScrollView<Content: View>: NSViewRepresentabl
         var onOffsetChange: (Int) -> Void
         private weak var scrollView: PickerHostingScrollView?
         private var isApplyingExternalOffset = false
+        private var isLiveScrolling = false
+        private var lastSentOffset: Int?
 
         init(rowHeight: CGFloat, totalRows: Int, visibleRows: Int, onOffsetChange: @escaping (Int) -> Void) {
             self.rowHeight = rowHeight
@@ -606,9 +608,29 @@ private struct NativeVerticalOffsetScrollView<Content: View>: NSViewRepresentabl
                 name: NSView.boundsDidChangeNotification,
                 object: scrollView.contentView
             )
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(handleWillStartLiveScroll(_:)),
+                name: NSScrollView.willStartLiveScrollNotification,
+                object: scrollView
+            )
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(handleDidLiveScroll(_:)),
+                name: NSScrollView.didLiveScrollNotification,
+                object: scrollView
+            )
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(handleDidEndLiveScroll(_:)),
+                name: NSScrollView.didEndLiveScrollNotification,
+                object: scrollView
+            )
         }
 
         func applyExternalOffset(_ offset: Int, in scrollView: PickerHostingScrollView) {
+            lastSentOffset = clampedOffset(offset)
+            guard !isLiveScrolling else { return }
             let targetY = CGFloat(clampedOffset(offset)) * rowHeight
             let currentY = clampY(scrollView.contentView.bounds.origin.y)
             guard abs(currentY - targetY) > max(rowHeight * 0.25, 0.5) else { return }
@@ -622,10 +644,28 @@ private struct NativeVerticalOffsetScrollView<Content: View>: NSViewRepresentabl
             boundsDidChange()
         }
 
+        @objc private func handleWillStartLiveScroll(_ notification: Notification) {
+            isLiveScrolling = true
+        }
+
+        @objc private func handleDidLiveScroll(_ notification: Notification) {
+            boundsDidChange()
+        }
+
+        @objc private func handleDidEndLiveScroll(_ notification: Notification) {
+            isLiveScrolling = false
+            boundsDidChange()
+            if let scrollView, let lastSentOffset {
+                applyExternalOffset(lastSentOffset, in: scrollView)
+            }
+        }
+
         private func boundsDidChange() {
             guard !isApplyingExternalOffset, let scrollView else { return }
             let y = clampY(scrollView.contentView.bounds.origin.y)
             let offset = clampedOffset(Int(floor(y / max(rowHeight, 1))))
+            guard offset != lastSentOffset else { return }
+            lastSentOffset = offset
             onOffsetChange(offset)
         }
 
@@ -655,9 +695,10 @@ private final class PickerHostingScrollView: NSScrollView {
         hasVerticalScroller = true
         hasHorizontalScroller = false
         autohidesScrollers = true
+        usesPredominantAxisScrolling = true
         scrollerStyle = .overlay
-        verticalScrollElasticity = .none
-        horizontalScrollElasticity = .none
+        verticalScrollElasticity = .automatic
+        horizontalScrollElasticity = .automatic
         contentView.postsBoundsChangedNotifications = true
         documentView = documentContainer
         documentContainer.addSubview(hostingView)

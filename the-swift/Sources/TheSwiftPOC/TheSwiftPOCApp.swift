@@ -63,6 +63,7 @@ private struct EditorContainerView: View {
         ZStack {
             RustEditorRepresentable(controller: controller)
             EditorCommandPaletteView(controller: controller)
+            EditorFilePickerView(controller: controller)
         }
     }
 }

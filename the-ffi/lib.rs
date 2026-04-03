@@ -47,16 +47,36 @@ use the_default::{
   build_dispatch,
   builtin_completion_menu_keymaps,
   builtin_keymaps,
+  close_file_picker,
   command_palette_filtered_indices,
   command_palette_placeholder_text,
   command_palette_selected_filtered_index,
+  file_picker_item_selectable,
+  file_picker_preview_window,
+  file_picker_row_data_for_kind,
   handle_command_prompt_key,
   handle_key,
   install_default_wiring,
+  move_selection,
+  notify_file_picker_query_changed,
   open_command_palette,
+  poll_scan_results,
+  select_file_picker_index,
+  set_file_picker_query_text,
+  set_file_picker_syntax_loader,
+  set_picker_visible_rows,
   submit_command_palette as submit_command_palette_action,
+  submit_file_picker,
   sync_command_palette_preview,
   update_command_palette_for_input,
+  FilePickerKind,
+  FilePickerPreviewChangeKind,
+  FilePickerPreviewLineKind,
+  FilePickerPreviewNavigationMode,
+  FilePickerPreviewWindowKind,
+  FilePickerRowKind,
+  FilePickerVcsDiffPreviewLineSource,
+  FilePickerVcsDiffPreviewRowKind,
 };
 use the_lib::{
   document::{
@@ -105,6 +125,7 @@ use the_lib::{
   },
   selection::CursorPick,
   syntax::{
+    Highlight,
     HighlightCache,
     Loader,
     Syntax,
@@ -283,6 +304,78 @@ pub struct the_editor_snapshot_command_palette_item_t {
 
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
+pub struct the_editor_snapshot_file_picker_t {
+  pub is_open:                 bool,
+  pub kind:                    u8,
+  pub selected_index:          i32,
+  pub matched_count:           usize,
+  pub visible_item_start:      usize,
+  pub visible_item_count:      usize,
+  pub title:                   *const c_char,
+  pub query:                   *const c_char,
+  pub show_preview:            bool,
+  pub loading:                 bool,
+  pub error:                   *const c_char,
+  pub preview_path:            *const c_char,
+  pub preview_navigation_mode: u8,
+  pub preview_kind:            u8,
+  pub preview_total_rows:      usize,
+  pub preview_window_start:    usize,
+  pub preview_window_count:    usize,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct the_editor_snapshot_file_picker_item_t {
+  pub stable_id:    u64,
+  pub global_index: usize,
+  pub row_kind:     u8,
+  pub selectable:   bool,
+  pub is_dir:       bool,
+  pub icon:         *const c_char,
+  pub primary:      *const c_char,
+  pub secondary:    *const c_char,
+  pub tertiary:     *const c_char,
+  pub quaternary:   *const c_char,
+  pub line:         u32,
+  pub column:       u32,
+  pub depth:        u16,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct the_editor_snapshot_file_picker_preview_line_t {
+  pub virtual_row:  usize,
+  pub kind:         u8,
+  pub source:       u8,
+  pub line_number:  i32,
+  pub focused:      bool,
+  pub marker:       *const c_char,
+  pub segment_count: usize,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct the_editor_snapshot_file_picker_preview_segment_t {
+  pub text:        *const c_char,
+  pub style:       the_editor_style_t,
+  pub is_match:    bool,
+  pub change_kind: i8,
+}
+
+impl Default for the_editor_snapshot_file_picker_preview_segment_t {
+  fn default() -> Self {
+    Self {
+      text: ptr::null(),
+      style: the_editor_style_t::default(),
+      is_match: false,
+      change_kind: -1,
+    }
+  }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
 pub struct the_editor_snapshot_cursor_t {
   pub row:   u32,
   pub col:   u32,
@@ -405,6 +498,10 @@ struct OwnedSnapshot {
   info:                  the_editor_snapshot_info_t,
   command_palette:       CommandPaletteRecord,
   command_palette_items: Vec<CommandPaletteItemRecord>,
+  file_picker:           FilePickerRecord,
+  file_picker_items:     Vec<FilePickerItemRecord>,
+  file_picker_preview_lines: Vec<FilePickerPreviewLineRecord>,
+  file_picker_preview_segments: Vec<FilePickerPreviewSegmentRecord>,
   lines:                 Vec<LineRecord>,
   spans:                 Vec<SpanRecord>,
   text_cells:            Vec<TextCellRecord>,
@@ -429,6 +526,38 @@ struct CommandPaletteItemRecord {
   description_idx: Option<usize>,
   badge_idx:       Option<usize>,
   leading_icon_idx: Option<usize>,
+}
+
+#[derive(Clone, Copy, Default)]
+struct FilePickerRecord {
+  picker:                      the_editor_snapshot_file_picker_t,
+  title_idx:                   Option<usize>,
+  query_idx:                   Option<usize>,
+  error_idx:                   Option<usize>,
+  preview_path_idx:            Option<usize>,
+}
+
+#[derive(Clone, Copy, Default)]
+struct FilePickerItemRecord {
+  item:            the_editor_snapshot_file_picker_item_t,
+  icon_idx:        usize,
+  primary_idx:     usize,
+  secondary_idx:   Option<usize>,
+  tertiary_idx:    Option<usize>,
+  quaternary_idx:  Option<usize>,
+}
+
+#[derive(Clone, Copy, Default)]
+struct FilePickerPreviewLineRecord {
+  line:            the_editor_snapshot_file_picker_preview_line_t,
+  marker_idx:      Option<usize>,
+  segment_start:   usize,
+}
+
+#[derive(Clone, Copy, Default)]
+struct FilePickerPreviewSegmentRecord {
+  segment:         the_editor_snapshot_file_picker_preview_segment_t,
+  text_idx:        usize,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -549,6 +678,7 @@ struct SwiftEditor {
   gutter_config:                 the_lib::render::GutterConfig,
   loader:                        Option<Arc<Loader>>,
   highlight_cache:               HighlightCache,
+  file_picker_preview_visible_rows: usize,
   ui_theme_catalog:              ThemeCatalog,
   ui_theme_name:                 String,
   ui_theme_base:                 Theme,
@@ -643,6 +773,7 @@ impl SwiftEditor {
       gutter_config: the_lib::render::GutterConfig::default(),
       loader,
       highlight_cache: HighlightCache::default(),
+      file_picker_preview_visible_rows: 20,
       ui_theme_catalog,
       ui_theme_name: ui_theme_name.clone(),
       ui_theme_base: ui_theme.clone(),
@@ -654,6 +785,7 @@ impl SwiftEditor {
       surface,
     };
 
+    set_file_picker_syntax_loader(&mut this.file_picker, this.loader.clone());
     this.refresh_active_document_syntax();
     this
   }
@@ -913,6 +1045,67 @@ impl SwiftEditor {
     submitted
   }
 
+  fn configure_file_picker_layout(&mut self, list_visible_rows: usize, preview_visible_rows: usize) -> bool {
+    let list_visible_rows = list_visible_rows.max(1);
+    let preview_visible_rows = preview_visible_rows.max(1);
+    let changed = self.file_picker.list_visible != list_visible_rows
+      || self.file_picker_preview_visible_rows != preview_visible_rows;
+    set_picker_visible_rows(&mut self.file_picker, list_visible_rows);
+    self.file_picker_preview_visible_rows = preview_visible_rows;
+    changed
+  }
+
+  fn close_file_picker(&mut self) -> bool {
+    if !self.file_picker.active {
+      return false;
+    }
+    close_file_picker(self);
+    true
+  }
+
+  fn set_file_picker_query(&mut self, query: &str) -> bool {
+    if !self.file_picker.active {
+      return false;
+    }
+    let dynamic = set_file_picker_query_text(&mut self.file_picker, query);
+    self.file_picker_selection_changed();
+    if dynamic {
+      notify_file_picker_query_changed(self, query);
+    }
+    true
+  }
+
+  fn move_file_picker_selection(&mut self, next: bool) -> bool {
+    if !self.file_picker.active {
+      return false;
+    }
+    move_selection(self, if next { 1 } else { -1 });
+    true
+  }
+
+  fn select_file_picker_index(&mut self, index: usize) -> bool {
+    if !self.file_picker.active || index >= self.file_picker.matched_count() {
+      return false;
+    }
+    select_file_picker_index(self, index);
+    true
+  }
+
+  fn submit_file_picker(&mut self) -> bool {
+    if !self.file_picker.active {
+      return false;
+    }
+    submit_file_picker(self);
+    true
+  }
+
+  fn refresh_picker_state(&mut self) -> bool {
+    if !self.file_picker.active {
+      return false;
+    }
+    poll_scan_results(&mut self.file_picker)
+  }
+
   fn refresh_active_document_syntax(&mut self) {
     self.highlight_cache.clear();
     let Some(loader) = self.loader.clone() else {
@@ -1072,6 +1265,7 @@ impl SwiftEditor {
   }
 
   fn build_snapshot(&mut self) -> OwnedSnapshot {
+    let _ = self.refresh_picker_state();
     let styles = self.render_styles();
     let frame = the_default::frame_render_plan_with_styles(self, styles);
     let plan = frame.active_plan();
@@ -1379,6 +1573,7 @@ impl OwnedSnapshot {
       });
     }
     snapshot.command_palette.palette.item_count = snapshot.command_palette_items.len();
+    snapshot.populate_file_picker(editor);
 
     let Some(plan) = plan else {
       snapshot.command_palette.palette.query = snapshot.strings[palette_query_idx].as_ptr();
@@ -1398,6 +1593,7 @@ impl OwnedSnapshot {
           item.item.leading_icon = snapshot.strings[idx].as_ptr();
         }
       }
+      snapshot.finalize_file_picker_strings();
       return snapshot;
     };
 
@@ -1571,6 +1767,7 @@ impl OwnedSnapshot {
         overlay.overlay.text = snapshot.strings[text_idx].as_ptr();
       }
     }
+    snapshot.finalize_file_picker_strings();
 
     snapshot.info.line_count = snapshot.lines.len();
     snapshot.info.cursor_count = snapshot.cursors.len();
@@ -1609,6 +1806,193 @@ impl OwnedSnapshot {
         text_idx,
       });
       next_col = next_col.saturating_add(cols);
+    }
+  }
+
+  fn populate_file_picker(&mut self, editor: &SwiftEditor) {
+    let picker = &editor.file_picker;
+    let matched_count = if picker.active { picker.matched_count() } else { 0 };
+    let visible_item_start = picker.list_offset.min(matched_count);
+    let visible_item_count = matched_count
+      .saturating_sub(visible_item_start)
+      .min(picker.list_visible.max(1));
+    let preview_window = if picker.active && picker.show_preview {
+      file_picker_preview_window(picker, picker.preview_scroll, editor.file_picker_preview_visible_rows, 2)
+    } else {
+      file_picker_preview_window(picker, 0, 1, 0)
+    };
+
+    self.file_picker = FilePickerRecord {
+      picker: the_editor_snapshot_file_picker_t {
+        is_open: picker.active,
+        kind: file_picker_kind_code(picker.kind),
+        selected_index: picker.selected.map(|index| index as i32).unwrap_or(-1),
+        matched_count,
+        visible_item_start,
+        visible_item_count,
+        title: ptr::null(),
+        query: ptr::null(),
+        show_preview: picker.show_preview,
+        loading: picker.scanning || picker.matcher_running || picker.dynamic_running || picker.preview_loading(),
+        error: ptr::null(),
+        preview_path: ptr::null(),
+        preview_navigation_mode: file_picker_preview_navigation_code(preview_window.navigation_mode),
+        preview_kind: file_picker_preview_kind_code(preview_window.kind),
+        preview_total_rows: preview_window.total_virtual_rows,
+        preview_window_start: preview_window.window_start,
+        preview_window_count: if let Some(vcs_diff) = &preview_window.vcs_diff {
+          vcs_diff.lines.len()
+        } else {
+          preview_window.lines.len()
+        },
+      },
+      title_idx: Some(self.push_string(&picker.title)),
+      query_idx: Some(self.push_string(&picker.query)),
+      error_idx: self.push_optional_string(picker.error.as_deref()),
+      preview_path_idx: picker
+        .preview_path
+        .as_ref()
+        .map(|path| self.push_string(path.to_string_lossy().as_ref())),
+    };
+
+    for global_index in visible_item_start..visible_item_start.saturating_add(visible_item_count) {
+      let Some(item) = picker.matched_item(global_index) else {
+        continue;
+      };
+      let row_data = file_picker_row_data_for_kind(picker.kind, &item);
+      let icon_idx = self.push_string(&item.icon);
+      let primary_idx = self.push_string(&row_data.primary);
+      let secondary_idx = self.push_optional_string((!row_data.secondary.is_empty()).then_some(row_data.secondary.as_str()));
+      let tertiary_idx = self.push_optional_string((!row_data.tertiary.is_empty()).then_some(row_data.tertiary.as_str()));
+      let quaternary_idx = self.push_optional_string((!row_data.quaternary.is_empty()).then_some(row_data.quaternary.as_str()));
+      self.file_picker_items.push(FilePickerItemRecord {
+        item: the_editor_snapshot_file_picker_item_t {
+          stable_id: item.stable_id(),
+          global_index,
+          row_kind: file_picker_row_kind_code(row_data.kind),
+          selectable: file_picker_item_selectable(&item),
+          is_dir: item.is_dir,
+          icon: ptr::null(),
+          primary: ptr::null(),
+          secondary: ptr::null(),
+          tertiary: ptr::null(),
+          quaternary: ptr::null(),
+          line: row_data.line as u32,
+          column: row_data.column as u32,
+          depth: row_data.depth.min(u16::MAX as usize) as u16,
+        },
+        icon_idx,
+        primary_idx,
+        secondary_idx,
+        tertiary_idx,
+        quaternary_idx,
+      });
+    }
+
+    let base_text_style = editor.ui_theme.try_get("ui.text").unwrap_or_default();
+    if let Some(vcs_diff) = preview_window.vcs_diff {
+      for line in vcs_diff.lines {
+        let segment_start = self.file_picker_preview_segments.len();
+        for segment in line.segments {
+          self.push_file_picker_preview_segment(editor, base_text_style, segment);
+        }
+        let marker_idx = (!line.message.is_empty()).then(|| self.push_string(&line.message));
+        self.file_picker_preview_lines.push(FilePickerPreviewLineRecord {
+          line: the_editor_snapshot_file_picker_preview_line_t {
+            virtual_row: line.virtual_row,
+            kind: file_picker_preview_line_code_for_vcs(line.kind),
+            source: file_picker_preview_source_code(line.source),
+            line_number: line.line_number.map(|value| value as i32).unwrap_or(-1),
+            focused: false,
+            marker: ptr::null(),
+            segment_count: self.file_picker_preview_segments.len().saturating_sub(segment_start),
+          },
+          marker_idx,
+          segment_start,
+        });
+      }
+      return;
+    }
+
+    for line in preview_window.lines {
+      let segment_start = self.file_picker_preview_segments.len();
+      for segment in line.segments {
+        self.push_file_picker_preview_segment(editor, base_text_style, segment);
+      }
+      let marker_idx = (!line.marker.is_empty()).then(|| self.push_string(&line.marker));
+      self.file_picker_preview_lines.push(FilePickerPreviewLineRecord {
+        line: the_editor_snapshot_file_picker_preview_line_t {
+          virtual_row: line.virtual_row,
+          kind: file_picker_preview_line_code(line.kind),
+          source: 0,
+          line_number: line.line_number.map(|value| value as i32).unwrap_or(-1),
+          focused: line.focused,
+          marker: ptr::null(),
+          segment_count: self.file_picker_preview_segments.len().saturating_sub(segment_start),
+        },
+        marker_idx,
+        segment_start,
+      });
+    }
+  }
+
+  fn push_file_picker_preview_segment(
+    &mut self,
+    editor: &SwiftEditor,
+    base_text_style: Style,
+    segment: the_default::FilePickerPreviewSegment,
+  ) {
+    let highlight_style = segment
+      .highlight_id
+      .map(Highlight::new)
+      .map(|highlight| editor.ui_theme.highlight(highlight))
+      .unwrap_or_default();
+    let style = style_to_ffi(base_text_style.patch(highlight_style), &editor.ui_theme);
+    let text_idx = self.push_string(&segment.text);
+    self.file_picker_preview_segments.push(FilePickerPreviewSegmentRecord {
+      segment: the_editor_snapshot_file_picker_preview_segment_t {
+        text: ptr::null(),
+        style,
+        is_match: segment.is_match,
+        change_kind: file_picker_preview_change_kind_code(segment.change_kind),
+      },
+      text_idx,
+    });
+  }
+
+  fn finalize_file_picker_strings(&mut self) {
+    if let Some(title_idx) = self.file_picker.title_idx {
+      self.file_picker.picker.title = self.strings[title_idx].as_ptr();
+    }
+    if let Some(query_idx) = self.file_picker.query_idx {
+      self.file_picker.picker.query = self.strings[query_idx].as_ptr();
+    }
+    if let Some(error_idx) = self.file_picker.error_idx {
+      self.file_picker.picker.error = self.strings[error_idx].as_ptr();
+    }
+    if let Some(preview_path_idx) = self.file_picker.preview_path_idx {
+      self.file_picker.picker.preview_path = self.strings[preview_path_idx].as_ptr();
+    }
+    for item in &mut self.file_picker_items {
+      item.item.icon = self.strings[item.icon_idx].as_ptr();
+      item.item.primary = self.strings[item.primary_idx].as_ptr();
+      if let Some(idx) = item.secondary_idx {
+        item.item.secondary = self.strings[idx].as_ptr();
+      }
+      if let Some(idx) = item.tertiary_idx {
+        item.item.tertiary = self.strings[idx].as_ptr();
+      }
+      if let Some(idx) = item.quaternary_idx {
+        item.item.quaternary = self.strings[idx].as_ptr();
+      }
+    }
+    for line in &mut self.file_picker_preview_lines {
+      if let Some(marker_idx) = line.marker_idx {
+        line.line.marker = self.strings[marker_idx].as_ptr();
+      }
+    }
+    for segment in &mut self.file_picker_preview_segments {
+      segment.segment.text = self.strings[segment.text_idx].as_ptr();
     }
   }
 }
@@ -1705,6 +2089,84 @@ fn overlay_rect_kind_code(kind: OverlayRectKind) -> u8 {
     OverlayRectKind::Divider => 1,
     OverlayRectKind::Highlight => 2,
     OverlayRectKind::Backdrop => 3,
+  }
+}
+
+fn file_picker_kind_code(kind: FilePickerKind) -> u8 {
+  match kind {
+    FilePickerKind::Generic => 0,
+    FilePickerKind::Diagnostics => 1,
+    FilePickerKind::Symbols => 2,
+    FilePickerKind::LiveGrep => 3,
+    FilePickerKind::VcsDiff => 4,
+  }
+}
+
+fn file_picker_row_kind_code(kind: FilePickerRowKind) -> u8 {
+  match kind {
+    FilePickerRowKind::Generic => 0,
+    FilePickerRowKind::Diagnostics => 1,
+    FilePickerRowKind::Symbols => 2,
+    FilePickerRowKind::LiveGrepHeader => 3,
+    FilePickerRowKind::LiveGrepMatch => 4,
+    FilePickerRowKind::VcsDiffHeader => 5,
+    FilePickerRowKind::VcsDiffHunk => 6,
+  }
+}
+
+fn file_picker_preview_navigation_code(mode: FilePickerPreviewNavigationMode) -> u8 {
+  match mode {
+    FilePickerPreviewNavigationMode::Static => 0,
+    FilePickerPreviewNavigationMode::Scrollable => 1,
+    FilePickerPreviewNavigationMode::Anchored => 2,
+  }
+}
+
+fn file_picker_preview_kind_code(kind: FilePickerPreviewWindowKind) -> u8 {
+  match kind {
+    FilePickerPreviewWindowKind::Empty => 0,
+    FilePickerPreviewWindowKind::Source => 1,
+    FilePickerPreviewWindowKind::Text => 2,
+    FilePickerPreviewWindowKind::Message => 3,
+    FilePickerPreviewWindowKind::VcsDiff => 4,
+  }
+}
+
+fn file_picker_preview_line_code(kind: FilePickerPreviewLineKind) -> u8 {
+  match kind {
+    FilePickerPreviewLineKind::Content => 0,
+    FilePickerPreviewLineKind::TruncatedAbove => 1,
+    FilePickerPreviewLineKind::TruncatedBelow => 2,
+  }
+}
+
+fn file_picker_preview_line_code_for_vcs(kind: FilePickerVcsDiffPreviewRowKind) -> u8 {
+  match kind {
+    FilePickerVcsDiffPreviewRowKind::Context => 0,
+    FilePickerVcsDiffPreviewRowKind::SectionHeader => 3,
+    FilePickerVcsDiffPreviewRowKind::Info => 4,
+    FilePickerVcsDiffPreviewRowKind::Added => 5,
+    FilePickerVcsDiffPreviewRowKind::Removed => 6,
+    FilePickerVcsDiffPreviewRowKind::Modified => 7,
+    FilePickerVcsDiffPreviewRowKind::CollapsedAbove => 1,
+    FilePickerVcsDiffPreviewRowKind::CollapsedBelow => 2,
+  }
+}
+
+fn file_picker_preview_source_code(source: FilePickerVcsDiffPreviewLineSource) -> u8 {
+  match source {
+    FilePickerVcsDiffPreviewLineSource::Base => 1,
+    FilePickerVcsDiffPreviewLineSource::Worktree => 2,
+    FilePickerVcsDiffPreviewLineSource::Meta => 3,
+  }
+}
+
+fn file_picker_preview_change_kind_code(kind: Option<FilePickerPreviewChangeKind>) -> i8 {
+  match kind {
+    None => -1,
+    Some(FilePickerPreviewChangeKind::Added) => 0,
+    Some(FilePickerPreviewChangeKind::Removed) => 1,
+    Some(FilePickerPreviewChangeKind::Modified) => 2,
   }
 }
 
@@ -2042,6 +2504,49 @@ pub unsafe extern "C" fn the_editor_command_palette_submit(handle: *mut the_edit
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_configure_file_picker(handle: *mut the_editor_handle_t, list_visible_rows: usize, preview_visible_rows: usize) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+  handle.editor.configure_file_picker_layout(list_visible_rows, preview_visible_rows)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_close_file_picker(handle: *mut the_editor_handle_t) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+  handle.editor.close_file_picker()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_file_picker_set_query(handle: *mut the_editor_handle_t, query: *const c_char) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+  let Some(query) = (unsafe { string_from_c(query) }) else { return false; };
+  handle.editor.set_file_picker_query(&query)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_file_picker_select_next(handle: *mut the_editor_handle_t) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+  handle.editor.move_file_picker_selection(true)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_file_picker_select_previous(handle: *mut the_editor_handle_t) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+  handle.editor.move_file_picker_selection(false)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_file_picker_select_index(handle: *mut the_editor_handle_t, index: usize) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+  handle.editor.select_file_picker_index(index)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_file_picker_submit(handle: *mut the_editor_handle_t) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+  handle.editor.submit_file_picker()
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn the_editor_insert_text(handle: *mut the_editor_handle_t, text: *const c_char) -> bool {
   let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
   let Some(text) = (unsafe { string_from_c(text) }) else { return false; };
@@ -2108,6 +2613,32 @@ pub unsafe extern "C" fn the_editor_snapshot_command_palette(snapshot: *const th
 pub unsafe extern "C" fn the_editor_snapshot_command_palette_item_at(snapshot: *const the_editor_snapshot_t, item_index: usize) -> the_editor_snapshot_command_palette_item_t {
   let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_command_palette_item_t::default(); };
   snapshot.snapshot.command_palette_items.get(item_index).map(|record| record.item).unwrap_or_default()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_snapshot_file_picker(snapshot: *const the_editor_snapshot_t) -> the_editor_snapshot_file_picker_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_file_picker_t::default(); };
+  snapshot.snapshot.file_picker.picker
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_snapshot_file_picker_item_at(snapshot: *const the_editor_snapshot_t, item_index: usize) -> the_editor_snapshot_file_picker_item_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_file_picker_item_t::default(); };
+  snapshot.snapshot.file_picker_items.get(item_index).map(|record| record.item).unwrap_or_default()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_snapshot_file_picker_preview_line_at(snapshot: *const the_editor_snapshot_t, line_index: usize) -> the_editor_snapshot_file_picker_preview_line_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_file_picker_preview_line_t::default(); };
+  snapshot.snapshot.file_picker_preview_lines.get(line_index).map(|record| record.line).unwrap_or_default()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_snapshot_file_picker_preview_segment_at(snapshot: *const the_editor_snapshot_t, line_index: usize, segment_index: usize) -> the_editor_snapshot_file_picker_preview_segment_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_file_picker_preview_segment_t::default(); };
+  let Some(line) = snapshot.snapshot.file_picker_preview_lines.get(line_index) else { return the_editor_snapshot_file_picker_preview_segment_t::default(); };
+  if segment_index >= line.line.segment_count { return the_editor_snapshot_file_picker_preview_segment_t::default(); }
+  snapshot.snapshot.file_picker_preview_segments.get(line.segment_start + segment_index).map(|record| record.segment).unwrap_or_default()
 }
 
 #[unsafe(no_mangle)]

@@ -3133,12 +3133,16 @@ fn parse_live_grep_row(item: &FilePickerItem) -> FilePickerRowData {
   }
 }
 
-pub fn file_picker_row_data(title: &str, item: &FilePickerItem) -> FilePickerRowData {
+pub fn file_picker_item_selectable(item: &FilePickerItem) -> bool {
+  item.is_selectable()
+}
+
+pub fn file_picker_row_data_for_kind(kind: FilePickerKind, item: &FilePickerItem) -> FilePickerRowData {
   if let Some(row_data) = &item.row_data {
     return row_data.clone();
   }
 
-  match file_picker_kind_from_title(title) {
+  match kind {
     FilePickerKind::Diagnostics => parse_diagnostics_row(item.display.as_str(), item.icon.as_str()),
     FilePickerKind::Symbols => parse_symbols_row(item.display.as_str()),
     FilePickerKind::LiveGrep => parse_live_grep_row(item),
@@ -3169,6 +3173,10 @@ pub fn file_picker_row_data(title: &str, item: &FilePickerItem) -> FilePickerRow
       }
     },
   }
+}
+
+pub fn file_picker_row_data(title: &str, item: &FilePickerItem) -> FilePickerRowData {
+  file_picker_row_data_for_kind(file_picker_kind_from_title(title), item)
 }
 
 fn picker_root<Ctx: DefaultContext>(_ctx: &Ctx) -> PathBuf {

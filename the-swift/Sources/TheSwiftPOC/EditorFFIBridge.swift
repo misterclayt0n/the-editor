@@ -187,6 +187,139 @@ struct EditorCommandPaletteState: Hashable {
     )
 }
 
+enum EditorFilePickerKind: UInt8 {
+    case generic = 0
+    case diagnostics = 1
+    case symbols = 2
+    case liveGrep = 3
+    case vcsDiff = 4
+}
+
+enum EditorFilePickerRowKind: UInt8 {
+    case generic = 0
+    case diagnostics = 1
+    case symbols = 2
+    case liveGrepHeader = 3
+    case liveGrepMatch = 4
+    case vcsDiffHeader = 5
+    case vcsDiffHunk = 6
+}
+
+enum EditorFilePickerPreviewKind: UInt8 {
+    case empty = 0
+    case source = 1
+    case text = 2
+    case message = 3
+    case vcsDiff = 4
+}
+
+enum EditorFilePickerPreviewNavigationMode: UInt8 {
+    case `static` = 0
+    case scrollable = 1
+    case anchored = 2
+}
+
+enum EditorFilePickerPreviewLineKind: UInt8 {
+    case content = 0
+    case truncatedAbove = 1
+    case truncatedBelow = 2
+    case sectionHeader = 3
+    case info = 4
+    case added = 5
+    case removed = 6
+    case modified = 7
+}
+
+enum EditorFilePickerPreviewSource: UInt8 {
+    case none = 0
+    case base = 1
+    case worktree = 2
+    case meta = 3
+}
+
+enum EditorFilePickerPreviewChangeKind: Int8 {
+    case added = 0
+    case removed = 1
+    case modified = 2
+}
+
+struct EditorFilePickerItem: Hashable, Identifiable {
+    let stableID: UInt64
+    let globalIndex: Int
+    let rowKind: EditorFilePickerRowKind
+    let selectable: Bool
+    let isDirectory: Bool
+    let icon: String
+    let primary: String
+    let secondary: String?
+    let tertiary: String?
+    let quaternary: String?
+    let line: Int
+    let column: Int
+    let depth: Int
+
+    var id: UInt64 { stableID }
+}
+
+struct EditorFilePickerPreviewSegment: Hashable {
+    let text: String
+    let style: EditorResolvedStyle
+    let isMatch: Bool
+    let changeKind: EditorFilePickerPreviewChangeKind?
+}
+
+struct EditorFilePickerPreviewLine: Hashable, Identifiable {
+    let virtualRow: Int
+    let kind: EditorFilePickerPreviewLineKind
+    let source: EditorFilePickerPreviewSource
+    let lineNumber: Int?
+    let focused: Bool
+    let marker: String?
+    let segments: [EditorFilePickerPreviewSegment]
+
+    var id: Int { virtualRow }
+}
+
+struct EditorFilePickerState: Hashable {
+    let isOpen: Bool
+    let kind: EditorFilePickerKind
+    let selectedIndex: Int?
+    let matchedCount: Int
+    let visibleItemStart: Int
+    let title: String
+    let query: String
+    let showPreview: Bool
+    let isLoading: Bool
+    let error: String?
+    let previewPath: String?
+    let previewNavigationMode: EditorFilePickerPreviewNavigationMode
+    let previewKind: EditorFilePickerPreviewKind
+    let previewTotalRows: Int
+    let previewWindowStart: Int
+    let items: [EditorFilePickerItem]
+    let previewLines: [EditorFilePickerPreviewLine]
+
+    static let empty = EditorFilePickerState(
+        isOpen: false,
+        kind: .generic,
+        selectedIndex: nil,
+        matchedCount: 0,
+        visibleItemStart: 0,
+        title: "File Picker",
+        query: "",
+        showPreview: true,
+        isLoading: false,
+        error: nil,
+        previewPath: nil,
+        previewNavigationMode: .static,
+        previewKind: .empty,
+        previewTotalRows: 0,
+        previewWindowStart: 0,
+        items: [],
+        previewLines: []
+    )
+}
+
 struct EditorSnapshot {
     let info: EditorSnapshotInfo
     let lines: [EditorSnapshotLine]
@@ -194,6 +327,7 @@ struct EditorSnapshot {
     let selections: [EditorSnapshotSelection]
     let overlays: [EditorSnapshotOverlay]
     let commandPalette: EditorCommandPaletteState
+    let filePicker: EditorFilePickerState
 }
 
 enum EditorFFIBridge {
@@ -295,6 +429,48 @@ enum EditorFFIBridge {
     }
 
     @discardableResult
+    static func configureFilePicker(_ handle: OpaquePointer?, listVisibleRows: Int, previewVisibleRows: Int) -> Bool {
+        guard let handle else { return false }
+        return the_editor_configure_file_picker(handle, UInt(listVisibleRows), UInt(previewVisibleRows))
+    }
+
+    @discardableResult
+    static func closeFilePicker(_ handle: OpaquePointer?) -> Bool {
+        guard let handle else { return false }
+        return the_editor_close_file_picker(handle)
+    }
+
+    @discardableResult
+    static func setFilePickerQuery(_ handle: OpaquePointer?, query: String) -> Bool {
+        guard let handle else { return false }
+        return query.withCString { the_editor_file_picker_set_query(handle, $0) }
+    }
+
+    @discardableResult
+    static func selectNextFilePickerItem(_ handle: OpaquePointer?) -> Bool {
+        guard let handle else { return false }
+        return the_editor_file_picker_select_next(handle)
+    }
+
+    @discardableResult
+    static func selectPreviousFilePickerItem(_ handle: OpaquePointer?) -> Bool {
+        guard let handle else { return false }
+        return the_editor_file_picker_select_previous(handle)
+    }
+
+    @discardableResult
+    static func selectFilePickerIndex(_ handle: OpaquePointer?, index: Int) -> Bool {
+        guard let handle else { return false }
+        return the_editor_file_picker_select_index(handle, UInt(index))
+    }
+
+    @discardableResult
+    static func submitFilePicker(_ handle: OpaquePointer?) -> Bool {
+        guard let handle else { return false }
+        return the_editor_file_picker_submit(handle)
+    }
+
+    @discardableResult
     static func insertText(_ handle: OpaquePointer?, text: String) -> Bool {
         guard let handle else { return false }
         return text.withCString { the_editor_insert_text(handle, $0) }
@@ -371,6 +547,66 @@ enum EditorFFIBridge {
                     emphasis: itemValue.emphasis
                 )
             }
+        )
+
+        let filePickerValue = the_editor_snapshot_file_picker(rawSnapshot)
+        let filePickerItems: [EditorFilePickerItem] = (0..<Int(filePickerValue.visible_item_count)).map { itemIndex in
+            let itemValue = the_editor_snapshot_file_picker_item_at(rawSnapshot, UInt(itemIndex))
+            return EditorFilePickerItem(
+                stableID: itemValue.stable_id,
+                globalIndex: Int(itemValue.global_index),
+                rowKind: EditorFilePickerRowKind(rawValue: itemValue.row_kind) ?? .generic,
+                selectable: itemValue.selectable,
+                isDirectory: itemValue.is_dir,
+                icon: itemValue.icon.map { String(cString: $0) } ?? "",
+                primary: itemValue.primary.map { String(cString: $0) } ?? "",
+                secondary: itemValue.secondary.map { String(cString: $0) },
+                tertiary: itemValue.tertiary.map { String(cString: $0) },
+                quaternary: itemValue.quaternary.map { String(cString: $0) },
+                line: Int(itemValue.line),
+                column: Int(itemValue.column),
+                depth: Int(itemValue.depth)
+            )
+        }
+        let filePickerPreviewLines: [EditorFilePickerPreviewLine] = (0..<Int(filePickerValue.preview_window_count)).map { lineIndex in
+            let lineValue = the_editor_snapshot_file_picker_preview_line_at(rawSnapshot, UInt(lineIndex))
+            let segments: [EditorFilePickerPreviewSegment] = (0..<Int(lineValue.segment_count)).map { segmentIndex in
+                let segmentValue = the_editor_snapshot_file_picker_preview_segment_at(rawSnapshot, UInt(lineIndex), UInt(segmentIndex))
+                return EditorFilePickerPreviewSegment(
+                    text: segmentValue.text.map { String(cString: $0) } ?? "",
+                    style: style(from: segmentValue.style),
+                    isMatch: segmentValue.is_match,
+                    changeKind: EditorFilePickerPreviewChangeKind(rawValue: segmentValue.change_kind)
+                )
+            }
+            return EditorFilePickerPreviewLine(
+                virtualRow: Int(lineValue.virtual_row),
+                kind: EditorFilePickerPreviewLineKind(rawValue: lineValue.kind) ?? .content,
+                source: EditorFilePickerPreviewSource(rawValue: lineValue.source) ?? .none,
+                lineNumber: lineValue.line_number >= 0 ? Int(lineValue.line_number) : nil,
+                focused: lineValue.focused,
+                marker: lineValue.marker.map { String(cString: $0) },
+                segments: segments
+            )
+        }
+        let filePicker = EditorFilePickerState(
+            isOpen: filePickerValue.is_open,
+            kind: EditorFilePickerKind(rawValue: filePickerValue.kind) ?? .generic,
+            selectedIndex: filePickerValue.selected_index >= 0 ? Int(filePickerValue.selected_index) : nil,
+            matchedCount: Int(filePickerValue.matched_count),
+            visibleItemStart: Int(filePickerValue.visible_item_start),
+            title: filePickerValue.title.map { String(cString: $0) } ?? "File Picker",
+            query: filePickerValue.query.map { String(cString: $0) } ?? "",
+            showPreview: filePickerValue.show_preview,
+            isLoading: filePickerValue.loading,
+            error: filePickerValue.error.map { String(cString: $0) },
+            previewPath: filePickerValue.preview_path.map { String(cString: $0) },
+            previewNavigationMode: EditorFilePickerPreviewNavigationMode(rawValue: filePickerValue.preview_navigation_mode) ?? .static,
+            previewKind: EditorFilePickerPreviewKind(rawValue: filePickerValue.preview_kind) ?? .empty,
+            previewTotalRows: Int(filePickerValue.preview_total_rows),
+            previewWindowStart: Int(filePickerValue.preview_window_start),
+            items: filePickerItems,
+            previewLines: filePickerPreviewLines
         )
 
         let lines: [EditorSnapshotLine] = (0..<Int(infoValue.line_count)).map { lineIndex in
@@ -452,7 +688,8 @@ enum EditorFFIBridge {
             cursors: cursors,
             selections: selections,
             overlays: overlays,
-            commandPalette: commandPalette
+            commandPalette: commandPalette,
+            filePicker: filePicker
         )
         let decodeMs = (CFAbsoluteTimeGetCurrent() - decodeStarted) * 1000
         let spanCount = lines.reduce(into: 0) { $0 += $1.spans.count }

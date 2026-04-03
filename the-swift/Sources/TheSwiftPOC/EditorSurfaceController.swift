@@ -22,9 +22,11 @@ final class EditorSurfaceController: ObservableObject {
     @Published private(set) var scene: EditorRenderScene?
     @Published private(set) var currentMode: EditorMode = .normal
     @Published private(set) var commandPalette: EditorCommandPaletteState = .empty
+    @Published private(set) var filePicker: EditorFilePickerState = .empty
 
     private var surfaceConfiguration: EditorSurfaceConfiguration?
     private var markedText: String = ""
+    private var pickerPollCancellable: AnyCancellable?
 
     init(initialPath: String?) {
         self.handle = EditorFFIBridge.createHandle(initialPath: initialPath).map(EditorHandleBox.init(raw:))
@@ -89,6 +91,56 @@ final class EditorSurfaceController: ObservableObject {
 
     func closeCommandPalette() {
         guard EditorFFIBridge.closeCommandPalette(handle?.raw) else { return }
+        refreshSnapshot()
+    }
+
+    func configureFilePicker(listVisibleRows: Int, previewVisibleRows: Int) {
+        guard EditorFFIBridge.configureFilePicker(handle?.raw, listVisibleRows: listVisibleRows, previewVisibleRows: previewVisibleRows) else {
+            return
+        }
+        refreshSnapshot()
+    }
+
+    func closeFilePicker() {
+        guard EditorFFIBridge.closeFilePicker(handle?.raw) else { return }
+        refreshSnapshot()
+    }
+
+    func setFilePickerQuery(_ query: String) {
+        guard query != filePicker.query else { return }
+        guard EditorFFIBridge.setFilePickerQuery(handle?.raw, query: query) else { return }
+        refreshSnapshot()
+    }
+
+    func moveFilePickerSelection(_ direction: MoveCommandDirection) {
+        let changed: Bool
+        switch direction {
+        case .up:
+            changed = EditorFFIBridge.selectPreviousFilePickerItem(handle?.raw)
+        case .down:
+            changed = EditorFFIBridge.selectNextFilePickerItem(handle?.raw)
+        case .left, .right:
+            changed = false
+        @unknown default:
+            changed = false
+        }
+        guard changed else { return }
+        refreshSnapshot()
+    }
+
+    func selectFilePickerIndex(_ index: Int) {
+        guard EditorFFIBridge.selectFilePickerIndex(handle?.raw, index: index) else { return }
+        refreshSnapshot()
+    }
+
+    func submitFilePicker() {
+        guard EditorFFIBridge.submitFilePicker(handle?.raw) else { return }
+        refreshSnapshot()
+    }
+
+    func submitFilePicker(index: Int) {
+        guard EditorFFIBridge.selectFilePickerIndex(handle?.raw, index: index) else { return }
+        guard EditorFFIBridge.submitFilePicker(handle?.raw) else { return }
         refreshSnapshot()
     }
 
@@ -164,6 +216,8 @@ final class EditorSurfaceController: ObservableObject {
         let snapshotMs = (CFAbsoluteTimeGetCurrent() - started) * 1000
         currentMode = snapshot.info.mode
         commandPalette = snapshot.commandPalette
+        filePicker = snapshot.filePicker
+        updatePickerPolling(isNeeded: snapshot.filePicker.isOpen && snapshot.filePicker.isLoading)
         commandPaletteDebugLog("refresh query=\(String(reflecting: snapshot.commandPalette.query)) selected=\(String(describing: snapshot.commandPalette.selectedIndex)) items=\(snapshot.commandPalette.items.count) isOpen=\(snapshot.commandPalette.isOpen)")
         let sceneStarted = CFAbsoluteTimeGetCurrent()
         let marked = markedTextOverlay(from: snapshot)
@@ -175,6 +229,20 @@ final class EditorSurfaceController: ObservableObject {
         themePerfLog(
             "controller.refresh themeGen=\(snapshot.info.themeGeneration) snapshotMs=\(String(format: "%.2f", snapshotMs)) sceneMs=\(String(format: "%.2f", sceneMs)) totalMs=\(String(format: "%.2f", totalMs))"
         )
+    }
+
+    private func updatePickerPolling(isNeeded: Bool) {
+        if isNeeded {
+            guard pickerPollCancellable == nil else { return }
+            pickerPollCancellable = Timer.publish(every: 0.05, on: .main, in: .common)
+                .autoconnect()
+                .sink { [weak self] _ in
+                    self?.refreshSnapshot()
+                }
+        } else {
+            pickerPollCancellable?.cancel()
+            pickerPollCancellable = nil
+        }
     }
 
     private func markedTextOverlay(from snapshot: EditorSnapshot) -> EditorMarkedText? {

@@ -142,6 +142,7 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
                 for: line,
                 key: key,
                 viewportWidth: view.bounds.width,
+                gutterColumnCount: scene.info.contentOffsetX,
                 scale: scale,
                 cellSize: cellSize,
                 baselineFromBottom: baselineFromBottom,
@@ -213,6 +214,7 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
         for line: EditorSceneLine,
         key: EditorLineCacheKey,
         viewportWidth: CGFloat,
+        gutterColumnCount: Int,
         scale: CGFloat,
         cellSize: CGSize,
         baselineFromBottom: CGFloat,
@@ -258,6 +260,17 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
         cgContext.clear(CGRect(x: 0, y: 0, width: viewportWidth, height: cellSize.height + rowRenderPadding * 2))
 
         for textCell in line.textCells {
+            if isGutterDiffBarCell(textCell, gutterColumnCount: gutterColumnCount) {
+                drawGutterDiffBar(
+                    style: textCell.style,
+                    atCol: textCell.col,
+                    in: cgContext,
+                    cellSize: cellSize,
+                    rowHeight: cellSize.height + rowRenderPadding * 2
+                )
+                continue
+            }
+
             drawText(
                 textCell.text,
                 style: textCell.style,
@@ -382,6 +395,29 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
             baselineFromBottom: baselineFromBottom,
             viewportHeight: viewportHeight
         )
+    }
+
+    private func drawGutterDiffBar(
+        style: EditorResolvedStyle,
+        atCol col: Int,
+        in context: CGContext,
+        cellSize: CGSize,
+        rowHeight: CGFloat
+    ) {
+        let barWidth = max(2, floor(cellSize.width * 0.18))
+        let insetX = max(1, floor((cellSize.width - barWidth) * 0.5))
+        let rect = CGRect(
+            x: CGFloat(col) * cellSize.width + insetX,
+            y: 0,
+            width: barWidth,
+            height: rowHeight
+        )
+        context.setFillColor(style.foregroundColor.cgColor)
+        context.fill(rect)
+    }
+
+    private func isGutterDiffBarCell(_ textCell: EditorSnapshotTextCell, gutterColumnCount: Int) -> Bool {
+        textCell.col < gutterColumnCount && textCell.text == "▎"
     }
 
     private func drawText(

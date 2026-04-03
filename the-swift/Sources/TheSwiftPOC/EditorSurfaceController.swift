@@ -20,6 +20,7 @@ final class EditorSurfaceController: ObservableObject {
 
     fileprivate var handle: EditorHandleBox?
     @Published private(set) var scene: EditorRenderScene?
+    @Published private(set) var chrome = EditorChromeModel.empty
     @Published private(set) var currentMode: EditorMode = .normal
     @Published private(set) var commandPalette: EditorCommandPaletteState = .empty
     @Published private(set) var filePicker: EditorFilePickerState = .empty
@@ -254,6 +255,11 @@ final class EditorSurfaceController: ObservableObject {
         guard let snapshot = EditorFFIBridge.makeSnapshot(handle?.raw) else { return }
         let snapshotMs = (CFAbsoluteTimeGetCurrent() - started) * 1000
         currentMode = snapshot.info.mode
+        chrome = EditorChromeModel(
+            document: snapshot.document,
+            statusBar: snapshot.statusBar,
+            backgroundColor: snapshot.info.backgroundColor?.color ?? .windowBackgroundColor
+        )
         commandPalette = snapshot.commandPalette
         filePicker = snapshot.filePicker
         updatePickerPolling(isNeeded: snapshot.filePicker.isOpen && snapshot.filePicker.isLoading)

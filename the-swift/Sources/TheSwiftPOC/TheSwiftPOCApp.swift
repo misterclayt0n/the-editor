@@ -60,7 +60,7 @@ private struct EditorContainerView: View {
 
     var body: some View {
         ZStack {
-            RustEditorRepresentable(controller: controller)
+            EditorChromeView(controller: controller)
             EditorResizeOverlayView(controller: controller)
             EditorCommandPaletteView(controller: controller)
             EditorFilePickerView(controller: controller)

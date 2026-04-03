@@ -209,6 +209,31 @@ typedef struct the_editor_snapshot_text_cell_t {
   struct the_editor_style_t style;
 } the_editor_snapshot_text_cell_t;
 
+typedef struct the_editor_snapshot_document_t {
+  const char *name;
+  const char *icon;
+  const char *relative_path;
+  const char *absolute_path;
+  const char *vcs_text;
+  const char *language_name;
+  const char *encoding_name;
+  const char *line_ending_name;
+  bool is_modified;
+  bool is_readonly;
+} the_editor_snapshot_document_t;
+
+typedef struct the_editor_snapshot_status_t {
+  const char *leading_text;
+  uintptr_t item_count;
+  const char *cursor_text;
+} the_editor_snapshot_status_t;
+
+typedef struct the_editor_snapshot_status_item_t {
+  const char *icon;
+  const char *text;
+  uint8_t emphasis;
+} the_editor_snapshot_status_item_t;
+
 typedef struct the_editor_snapshot_command_palette_t {
   bool is_open;
   int32_t selected_index;
@@ -344,6 +369,9 @@ char *the_editor_primary_selection_text(the_editor_handle_t *handle);
 the_editor_snapshot_t *the_editor_snapshot_create(the_editor_handle_t *handle);
 void the_editor_snapshot_free(the_editor_snapshot_t *snapshot);
 struct the_editor_snapshot_info_t the_editor_snapshot_info(const the_editor_snapshot_t *snapshot);
+struct the_editor_snapshot_document_t the_editor_snapshot_document(const the_editor_snapshot_t *snapshot);
+struct the_editor_snapshot_status_t the_editor_snapshot_status(const the_editor_snapshot_t *snapshot);
+struct the_editor_snapshot_status_item_t the_editor_snapshot_status_item_at(const the_editor_snapshot_t *snapshot, uintptr_t item_index);
 struct the_editor_snapshot_command_palette_t the_editor_snapshot_command_palette(const the_editor_snapshot_t *snapshot);
 struct the_editor_snapshot_command_palette_item_t the_editor_snapshot_command_palette_item_at(const the_editor_snapshot_t *snapshot, uintptr_t item_index);
 struct the_editor_snapshot_file_picker_t the_editor_snapshot_file_picker(const the_editor_snapshot_t *snapshot);

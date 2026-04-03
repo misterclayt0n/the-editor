@@ -21,7 +21,10 @@ use std::{
 };
 
 use ropey::Rope;
-use the_core::grapheme::grapheme_width;
+use the_core::{
+  grapheme::grapheme_width,
+  line_ending::LineEnding,
+};
 use the_default::{
   CommandPaletteState,
   CommandPaletteStyle,
@@ -45,9 +48,11 @@ use the_default::{
   ThemeCatalog,
   WorkingDirectoryState,
   build_dispatch,
+  build_statusline_snapshot,
   builtin_completion_menu_keymaps,
   builtin_keymaps,
   close_file_picker,
+  file_picker_icon_name_for_path,
   command_palette_filtered_indices,
   command_palette_placeholder_text,
   command_palette_selected_filtered_index,
@@ -61,6 +66,7 @@ use the_default::{
   notify_file_picker_query_changed,
   open_command_palette,
   poll_scan_results,
+  StatuslineEmphasis,
   select_file_picker_index,
   set_file_picker_list_offset,
   set_file_picker_preview_offset,
@@ -284,6 +290,37 @@ impl Default for the_editor_snapshot_text_cell_t {
 
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
+pub struct the_editor_snapshot_document_t {
+  pub name:             *const c_char,
+  pub icon:             *const c_char,
+  pub relative_path:    *const c_char,
+  pub absolute_path:    *const c_char,
+  pub vcs_text:         *const c_char,
+  pub language_name:    *const c_char,
+  pub encoding_name:    *const c_char,
+  pub line_ending_name: *const c_char,
+  pub is_modified:      bool,
+  pub is_readonly:      bool,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct the_editor_snapshot_status_t {
+  pub leading_text: *const c_char,
+  pub item_count:    usize,
+  pub cursor_text:   *const c_char,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct the_editor_snapshot_status_item_t {
+  pub icon:      *const c_char,
+  pub text:      *const c_char,
+  pub emphasis:  u8,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
 pub struct the_editor_snapshot_command_palette_t {
   pub is_open:        bool,
   pub selected_index: i32,
@@ -499,6 +536,9 @@ fn command_palette_debug_log(message: impl AsRef<str>) {
 #[derive(Default)]
 struct OwnedSnapshot {
   info:                  the_editor_snapshot_info_t,
+  document:              DocumentRecord,
+  status:                StatusRecord,
+  status_items:          Vec<StatusItemRecord>,
   command_palette:       CommandPaletteRecord,
   command_palette_items: Vec<CommandPaletteItemRecord>,
   file_picker:           FilePickerRecord,
@@ -512,6 +552,33 @@ struct OwnedSnapshot {
   selections:            Vec<the_editor_snapshot_selection_t>,
   overlays:              Vec<OverlayRecord>,
   strings:               Vec<CString>,
+}
+
+#[derive(Clone, Copy, Default)]
+struct DocumentRecord {
+  document:               the_editor_snapshot_document_t,
+  name_idx:               Option<usize>,
+  icon_idx:               Option<usize>,
+  relative_path_idx:      Option<usize>,
+  absolute_path_idx:      Option<usize>,
+  vcs_text_idx:           Option<usize>,
+  language_name_idx:      Option<usize>,
+  encoding_name_idx:      Option<usize>,
+  line_ending_name_idx:   Option<usize>,
+}
+
+#[derive(Clone, Copy, Default)]
+struct StatusRecord {
+  status:             the_editor_snapshot_status_t,
+  leading_text_idx:   Option<usize>,
+  cursor_text_idx:    Option<usize>,
+}
+
+#[derive(Clone, Copy, Default)]
+struct StatusItemRecord {
+  item:               the_editor_snapshot_status_item_t,
+  icon_idx:           Option<usize>,
+  text_idx:           usize,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -1498,7 +1565,7 @@ impl DefaultContext for SwiftEditor {
 }
 
 impl OwnedSnapshot {
-  fn from_editor(editor: &SwiftEditor, plan: Option<&RenderPlan>) -> Self {
+  fn from_editor(editor: &mut SwiftEditor, plan: Option<&RenderPlan>) -> Self {
     let viewport = editor.editor.view().viewport;
     let scroll = editor.editor.view().scroll;
     let mode = mode_code(editor.mode);
@@ -1536,6 +1603,80 @@ impl OwnedSnapshot {
       },
       ..Default::default()
     };
+
+    let document_flags = editor.editor.document().flags();
+    let document_name = editor.editor.document().display_name().to_string();
+    let line_ending_name = line_ending_label(editor.editor.document().line_ending()).to_string();
+    let absolute_path = editor.file_path().map(|path| path.display().to_string());
+    let relative_path = editor
+      .file_path()
+      .map(|path| relative_document_path(path, &editor.workspace_root));
+    let document_icon = editor
+      .file_path()
+      .map(file_picker_icon_name_for_path)
+      .unwrap_or("doc")
+      .to_string();
+    let language_name = document_language_name(editor);
+    let encoding_name = Some("UTF-8".to_string());
+    let vcs_text = editor.vcs_statusline_text();
+
+    snapshot.document = DocumentRecord {
+      document: the_editor_snapshot_document_t {
+        name: ptr::null(),
+        icon: ptr::null(),
+        relative_path: ptr::null(),
+        absolute_path: ptr::null(),
+        vcs_text: ptr::null(),
+        language_name: ptr::null(),
+        encoding_name: ptr::null(),
+        line_ending_name: ptr::null(),
+        is_modified: document_flags.modified,
+        is_readonly: document_flags.readonly,
+      },
+      name_idx: Some(snapshot.push_string(&document_name)),
+      icon_idx: Some(snapshot.push_string(&document_icon)),
+      relative_path_idx: snapshot.push_optional_string(relative_path.as_deref()),
+      absolute_path_idx: snapshot.push_optional_string(absolute_path.as_deref()),
+      vcs_text_idx: snapshot.push_optional_string(vcs_text.as_deref()),
+      language_name_idx: snapshot.push_optional_string(language_name.as_deref()),
+      encoding_name_idx: snapshot.push_optional_string(encoding_name.as_deref()),
+      line_ending_name_idx: snapshot.push_optional_string(Some(line_ending_name.as_str())),
+    };
+
+    let statusline = build_statusline_snapshot(editor);
+    let leading_text = if editor.command_palette().is_open || editor.search_prompt_ref().active {
+      Some(statusline.left)
+    } else {
+      None
+    };
+    let mut status_segments = statusline.right_segments;
+    let cursor_text = status_segments.pop().map(|segment| segment.text).unwrap_or_default();
+    snapshot.status = StatusRecord {
+      status: the_editor_snapshot_status_t {
+        leading_text: ptr::null(),
+        item_count: 0,
+        cursor_text: ptr::null(),
+      },
+      leading_text_idx: snapshot.push_optional_string(leading_text.as_deref()),
+      cursor_text_idx: Some(snapshot.push_string(&cursor_text)),
+    };
+    for segment in status_segments {
+      if matches!(segment.icon.as_deref(), Some("git_branch")) {
+        continue;
+      }
+      let text_idx = snapshot.push_string(segment.text.as_str());
+      let icon_idx = snapshot.push_optional_string(segment.icon.as_deref());
+      snapshot.status_items.push(StatusItemRecord {
+        item: the_editor_snapshot_status_item_t {
+          icon: ptr::null(),
+          text: ptr::null(),
+          emphasis: statusline_emphasis_code(segment.emphasis),
+        },
+        icon_idx,
+        text_idx,
+      });
+    }
+    snapshot.status.status.item_count = snapshot.status_items.len();
 
     let palette = editor.command_palette();
     let palette_query = palette
@@ -1618,6 +1759,7 @@ impl OwnedSnapshot {
           item.item.leading_icon = snapshot.strings[idx].as_ptr();
         }
       }
+      snapshot.finalize_document_and_status_strings();
       snapshot.finalize_file_picker_strings();
       return snapshot;
     };
@@ -1792,6 +1934,7 @@ impl OwnedSnapshot {
         overlay.overlay.text = snapshot.strings[text_idx].as_ptr();
       }
     }
+    snapshot.finalize_document_and_status_strings();
     snapshot.finalize_file_picker_strings();
 
     snapshot.info.line_count = snapshot.lines.len();
@@ -1984,6 +2127,46 @@ impl OwnedSnapshot {
       },
       text_idx,
     });
+  }
+
+  fn finalize_document_and_status_strings(&mut self) {
+    if let Some(name_idx) = self.document.name_idx {
+      self.document.document.name = self.strings[name_idx].as_ptr();
+    }
+    if let Some(icon_idx) = self.document.icon_idx {
+      self.document.document.icon = self.strings[icon_idx].as_ptr();
+    }
+    if let Some(relative_path_idx) = self.document.relative_path_idx {
+      self.document.document.relative_path = self.strings[relative_path_idx].as_ptr();
+    }
+    if let Some(absolute_path_idx) = self.document.absolute_path_idx {
+      self.document.document.absolute_path = self.strings[absolute_path_idx].as_ptr();
+    }
+    if let Some(vcs_text_idx) = self.document.vcs_text_idx {
+      self.document.document.vcs_text = self.strings[vcs_text_idx].as_ptr();
+    }
+    if let Some(language_name_idx) = self.document.language_name_idx {
+      self.document.document.language_name = self.strings[language_name_idx].as_ptr();
+    }
+    if let Some(encoding_name_idx) = self.document.encoding_name_idx {
+      self.document.document.encoding_name = self.strings[encoding_name_idx].as_ptr();
+    }
+    if let Some(line_ending_name_idx) = self.document.line_ending_name_idx {
+      self.document.document.line_ending_name = self.strings[line_ending_name_idx].as_ptr();
+    }
+
+    if let Some(leading_text_idx) = self.status.leading_text_idx {
+      self.status.status.leading_text = self.strings[leading_text_idx].as_ptr();
+    }
+    if let Some(cursor_text_idx) = self.status.cursor_text_idx {
+      self.status.status.cursor_text = self.strings[cursor_text_idx].as_ptr();
+    }
+    for item in &mut self.status_items {
+      if let Some(icon_idx) = item.icon_idx {
+        item.item.icon = self.strings[icon_idx].as_ptr();
+      }
+      item.item.text = self.strings[item.text_idx].as_ptr();
+    }
   }
 
   fn finalize_file_picker_strings(&mut self) {
@@ -2413,6 +2596,65 @@ fn display_name_for_path(path: &Path) -> String {
   path.file_name().map(|name| name.to_string_lossy().to_string()).unwrap_or_else(|| path.display().to_string())
 }
 
+fn relative_document_path(path: &Path, workspace_root: &Path) -> String {
+  let parent = path.parent().unwrap_or(path);
+  if let Ok(relative) = parent.strip_prefix(workspace_root) {
+    let relative = relative.display().to_string();
+    if relative.is_empty() {
+      workspace_root.file_name().map(|name| name.to_string_lossy().to_string()).unwrap_or_else(|| workspace_root.display().to_string())
+    } else {
+      relative
+    }
+  } else {
+    parent.display().to_string()
+  }
+}
+
+fn title_case_status_label(text: &str) -> String {
+  text
+    .split(['-', '_', '.'])
+    .filter(|part| !part.is_empty())
+    .map(|part| {
+      let mut chars = part.chars();
+      let Some(first) = chars.next() else { return String::new(); };
+      let mut out = String::new();
+      out.extend(first.to_uppercase());
+      out.push_str(chars.as_str());
+      out
+    })
+    .collect::<Vec<_>>()
+    .join(" ")
+}
+
+fn document_language_name(editor: &SwiftEditor) -> Option<String> {
+  let loader = editor.loader.as_deref()?;
+  let path = editor.file_path()?;
+  let language = loader.language_for_filename(path)?;
+  let language_id = loader.language(language).config().language_id();
+  Some(title_case_status_label(language_id))
+}
+
+fn line_ending_label(line_ending: LineEnding) -> &'static str {
+  match line_ending {
+    LineEnding::Crlf => "CRLF",
+    LineEnding::LF => "LF",
+    LineEnding::VT => "VT",
+    LineEnding::FF => "FF",
+    LineEnding::CR => "CR",
+    LineEnding::Nel => "NEL",
+    LineEnding::LS => "LS",
+    LineEnding::PS => "PS",
+  }
+}
+
+fn statusline_emphasis_code(emphasis: StatuslineEmphasis) -> u8 {
+  match emphasis {
+    StatuslineEmphasis::Normal => 0,
+    StatuslineEmphasis::Muted => 1,
+    StatuslineEmphasis::Strong => 2,
+  }
+}
+
 fn read_rope(path: Option<&Path>) -> Rope {
   path
     .and_then(|path| fs::read_to_string(path).ok())
@@ -2644,6 +2886,24 @@ pub unsafe extern "C" fn the_editor_snapshot_free(snapshot: *mut the_editor_snap
 pub unsafe extern "C" fn the_editor_snapshot_info(snapshot: *const the_editor_snapshot_t) -> the_editor_snapshot_info_t {
   let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_info_t::default(); };
   snapshot.snapshot.info
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_snapshot_document(snapshot: *const the_editor_snapshot_t) -> the_editor_snapshot_document_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_document_t::default(); };
+  snapshot.snapshot.document.document
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_snapshot_status(snapshot: *const the_editor_snapshot_t) -> the_editor_snapshot_status_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_status_t::default(); };
+  snapshot.snapshot.status.status
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_snapshot_status_item_at(snapshot: *const the_editor_snapshot_t, item_index: usize) -> the_editor_snapshot_status_item_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_status_item_t::default(); };
+  snapshot.snapshot.status_items.get(item_index).map(|record| record.item).unwrap_or_default()
 }
 
 #[unsafe(no_mangle)]

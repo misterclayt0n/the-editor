@@ -123,6 +123,60 @@ struct EditorSnapshotTextCell: Hashable {
     let style: EditorResolvedStyle
 }
 
+enum EditorStatusItemEmphasis: UInt8 {
+    case normal = 0
+    case muted = 1
+    case strong = 2
+}
+
+struct EditorDocumentChrome: Hashable {
+    let name: String
+    let icon: String
+    let relativePath: String?
+    let absolutePath: String?
+    let vcsText: String?
+    let languageName: String?
+    let encodingName: String?
+    let lineEndingName: String?
+    let isModified: Bool
+    let isReadonly: Bool
+
+    static let empty = EditorDocumentChrome(
+        name: "Untitled",
+        icon: "doc",
+        relativePath: nil,
+        absolutePath: nil,
+        vcsText: nil,
+        languageName: nil,
+        encodingName: nil,
+        lineEndingName: nil,
+        isModified: false,
+        isReadonly: false
+    )
+}
+
+struct EditorStatusItem: Hashable, Identifiable {
+    let icon: String?
+    let text: String
+    let emphasis: EditorStatusItemEmphasis
+
+    var id: String {
+        "\(icon ?? "")|\(text)|\(emphasis.rawValue)"
+    }
+}
+
+struct EditorStatusBarState: Hashable {
+    let leadingText: String?
+    let items: [EditorStatusItem]
+    let cursorText: String
+
+    static let empty = EditorStatusBarState(
+        leadingText: nil,
+        items: [],
+        cursorText: "1:1"
+    )
+}
+
 struct EditorSnapshotLine: Hashable {
     let row: Int
     let docLine: Int?
@@ -324,6 +378,8 @@ struct EditorFilePickerState: Hashable {
 
 struct EditorSnapshot {
     let info: EditorSnapshotInfo
+    let document: EditorDocumentChrome
+    let statusBar: EditorStatusBarState
     let lines: [EditorSnapshotLine]
     let cursors: [EditorSnapshotCursor]
     let selections: [EditorSnapshotSelection]
@@ -543,6 +599,34 @@ enum EditorFFIBridge {
             documentLineCount: Int(infoValue.document_line_count)
         )
 
+        let documentValue = the_editor_snapshot_document(rawSnapshot)
+        let document = EditorDocumentChrome(
+            name: documentValue.name.map { String(cString: $0) } ?? "Untitled",
+            icon: documentValue.icon.map { String(cString: $0) } ?? "doc",
+            relativePath: documentValue.relative_path.map { String(cString: $0) },
+            absolutePath: documentValue.absolute_path.map { String(cString: $0) },
+            vcsText: documentValue.vcs_text.map { String(cString: $0) },
+            languageName: documentValue.language_name.map { String(cString: $0) },
+            encodingName: documentValue.encoding_name.map { String(cString: $0) },
+            lineEndingName: documentValue.line_ending_name.map { String(cString: $0) },
+            isModified: documentValue.is_modified,
+            isReadonly: documentValue.is_readonly
+        )
+
+        let statusValue = the_editor_snapshot_status(rawSnapshot)
+        let statusBar = EditorStatusBarState(
+            leadingText: statusValue.leading_text.map { String(cString: $0) },
+            items: (0..<Int(statusValue.item_count)).map { itemIndex in
+                let itemValue = the_editor_snapshot_status_item_at(rawSnapshot, UInt(itemIndex))
+                return EditorStatusItem(
+                    icon: itemValue.icon.map { String(cString: $0) },
+                    text: itemValue.text.map { String(cString: $0) } ?? "",
+                    emphasis: EditorStatusItemEmphasis(rawValue: itemValue.emphasis) ?? .normal
+                )
+            },
+            cursorText: statusValue.cursor_text.map { String(cString: $0) } ?? "1:1"
+        )
+
         let paletteValue = the_editor_snapshot_command_palette(rawSnapshot)
         let commandPalette = EditorCommandPaletteState(
             isOpen: paletteValue.is_open,
@@ -699,6 +783,8 @@ enum EditorFFIBridge {
 
         let snapshot = EditorSnapshot(
             info: info,
+            document: document,
+            statusBar: statusBar,
             lines: lines,
             cursors: cursors,
             selections: selections,

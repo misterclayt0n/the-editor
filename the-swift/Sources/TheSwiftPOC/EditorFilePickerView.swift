@@ -27,7 +27,11 @@ struct EditorFilePickerView: View {
                                 controller.closeFilePicker()
                             }
 
-                        browserPanel(in: panelFrame(in: geometry.size))
+                        browserPanel(
+                            in: panelFrame(in: geometry.size),
+                            listVisibleRows: listVisibleRows,
+                            previewVisibleRows: previewVisibleRows
+                        )
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .onAppear {
@@ -68,7 +72,7 @@ struct EditorFilePickerView: View {
         }
     }
 
-    private func browserPanel(in frame: CGRect) -> some View {
+    private func browserPanel(in frame: CGRect, listVisibleRows: Int, previewVisibleRows: Int) -> some View {
         let nsBackgroundColor = controller.scene?.backgroundColor ?? .windowBackgroundColor
         let backgroundColor = Color(nsColor: nsBackgroundColor)
         let scheme: ColorScheme = pickerUsesLightScheme(nsBackgroundColor) ? .light : .dark
@@ -79,13 +83,13 @@ struct EditorFilePickerView: View {
             Divider()
 
             HStack(spacing: 0) {
-                resultsPane
+                resultsPane(listVisibleRows: listVisibleRows)
                     .frame(width: min(frame.width * 0.36, 320))
 
                 Divider()
 
                 if controller.filePicker.showPreview {
-                    previewPane
+                    previewPane(previewVisibleRows: previewVisibleRows)
                 }
             }
         }
@@ -178,11 +182,13 @@ struct EditorFilePickerView: View {
         .accessibilityHidden(true)
     }
 
-    private var resultsPane: some View {
+    private func resultsPane(listVisibleRows: Int) -> some View {
         VStack(spacing: 0) {
             NativeVerticalOffsetScrollView(
                 rowHeight: listRowHeight,
                 offset: controller.filePicker.visibleItemStart,
+                totalRows: controller.filePicker.matchedCount,
+                visibleRows: listVisibleRows,
                 onOffsetChange: controller.setFilePickerListOffset
             ) {
                 VStack(alignment: .leading, spacing: 0) {
@@ -216,7 +222,6 @@ struct EditorFilePickerView: View {
                     Color.clear.frame(height: CGFloat(max(controller.filePicker.matchedCount - controller.filePicker.visibleItemStart - controller.filePicker.items.count, 0)) * listRowHeight)
                 }
                 .padding(.horizontal, 8)
-                .padding(.vertical, 6)
             }
 
             Divider()
@@ -233,7 +238,7 @@ struct EditorFilePickerView: View {
         .background(Color.clear)
     }
 
-    private var previewPane: some View {
+    private func previewPane(previewVisibleRows: Int) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
                 VStack(alignment: .leading, spacing: 2) {
@@ -255,6 +260,8 @@ struct EditorFilePickerView: View {
             NativeVerticalOffsetScrollView(
                 rowHeight: previewRowHeight,
                 offset: controller.filePicker.previewOffset,
+                totalRows: controller.filePicker.previewTotalRows,
+                visibleRows: previewVisibleRows,
                 onOffsetChange: controller.setFilePickerPreviewOffset
             ) {
                 VStack(alignment: .leading, spacing: 0) {
@@ -269,8 +276,7 @@ struct EditorFilePickerView: View {
 
                     Color.clear.frame(height: CGFloat(max(controller.filePicker.previewTotalRows - controller.filePicker.previewWindowStart - controller.filePicker.previewLines.count, 0)) * previewRowHeight)
                 }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
+                .padding(.horizontal, 6)
             }
 
             Divider()
@@ -531,23 +537,29 @@ private struct EditorFilePickerPreviewLineView: View {
 private struct NativeVerticalOffsetScrollView<Content: View>: NSViewRepresentable {
     let rowHeight: CGFloat
     let offset: Int
+    let totalRows: Int
+    let visibleRows: Int
     let onOffsetChange: (Int) -> Void
     let content: Content
 
     init(
         rowHeight: CGFloat,
         offset: Int,
+        totalRows: Int,
+        visibleRows: Int,
         onOffsetChange: @escaping (Int) -> Void,
         @ViewBuilder content: () -> Content
     ) {
         self.rowHeight = rowHeight
         self.offset = offset
+        self.totalRows = totalRows
+        self.visibleRows = visibleRows
         self.onOffsetChange = onOffsetChange
         self.content = content()
     }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(rowHeight: rowHeight, onOffsetChange: onOffsetChange)
+        Coordinator(rowHeight: rowHeight, totalRows: totalRows, visibleRows: visibleRows, onOffsetChange: onOffsetChange)
     }
 
     func makeNSView(context: Context) -> PickerHostingScrollView {
@@ -558,6 +570,8 @@ private struct NativeVerticalOffsetScrollView<Content: View>: NSViewRepresentabl
 
     func updateNSView(_ nsView: PickerHostingScrollView, context: Context) {
         context.coordinator.rowHeight = rowHeight
+        context.coordinator.totalRows = totalRows
+        context.coordinator.visibleRows = visibleRows
         context.coordinator.onOffsetChange = onOffsetChange
         nsView.update(rootView: AnyView(content))
         nsView.layoutDocumentView()
@@ -567,12 +581,16 @@ private struct NativeVerticalOffsetScrollView<Content: View>: NSViewRepresentabl
     @MainActor
     final class Coordinator: NSObject {
         var rowHeight: CGFloat
+        var totalRows: Int
+        var visibleRows: Int
         var onOffsetChange: (Int) -> Void
         private weak var scrollView: PickerHostingScrollView?
         private var isApplyingExternalOffset = false
 
-        init(rowHeight: CGFloat, onOffsetChange: @escaping (Int) -> Void) {
+        init(rowHeight: CGFloat, totalRows: Int, visibleRows: Int, onOffsetChange: @escaping (Int) -> Void) {
             self.rowHeight = rowHeight
+            self.totalRows = totalRows
+            self.visibleRows = visibleRows
             self.onOffsetChange = onOffsetChange
         }
 
@@ -591,9 +609,9 @@ private struct NativeVerticalOffsetScrollView<Content: View>: NSViewRepresentabl
         }
 
         func applyExternalOffset(_ offset: Int, in scrollView: PickerHostingScrollView) {
-            let targetY = max(CGFloat(offset) * rowHeight, 0)
-            let currentY = scrollView.contentView.bounds.origin.y
-            guard abs(currentY - targetY) > max(rowHeight * 0.5, 1) else { return }
+            let targetY = CGFloat(clampedOffset(offset)) * rowHeight
+            let currentY = clampY(scrollView.contentView.bounds.origin.y)
+            guard abs(currentY - targetY) > max(rowHeight * 0.25, 0.5) else { return }
             isApplyingExternalOffset = true
             scrollView.contentView.scroll(to: NSPoint(x: 0, y: targetY))
             scrollView.reflectScrolledClipView(scrollView.contentView)
@@ -606,9 +624,21 @@ private struct NativeVerticalOffsetScrollView<Content: View>: NSViewRepresentabl
 
         private func boundsDidChange() {
             guard !isApplyingExternalOffset, let scrollView else { return }
-            let y = max(scrollView.contentView.bounds.origin.y, 0)
-            let offset = Int((y / max(rowHeight, 1)).rounded())
+            let y = clampY(scrollView.contentView.bounds.origin.y)
+            let offset = clampedOffset(Int(floor(y / max(rowHeight, 1))))
             onOffsetChange(offset)
+        }
+
+        private func maxOffset() -> Int {
+            max(totalRows - max(visibleRows, 1), 0)
+        }
+
+        private func clampedOffset(_ offset: Int) -> Int {
+            min(max(offset, 0), maxOffset())
+        }
+
+        private func clampY(_ y: CGFloat) -> CGFloat {
+            min(max(y, 0), CGFloat(maxOffset()) * rowHeight)
         }
     }
 }
@@ -626,6 +656,8 @@ private final class PickerHostingScrollView: NSScrollView {
         hasHorizontalScroller = false
         autohidesScrollers = true
         scrollerStyle = .overlay
+        verticalScrollElasticity = .none
+        horizontalScrollElasticity = .none
         contentView.postsBoundsChangedNotifications = true
         documentView = documentContainer
         documentContainer.addSubview(hostingView)

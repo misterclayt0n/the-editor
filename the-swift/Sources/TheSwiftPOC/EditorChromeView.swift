@@ -215,50 +215,84 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
     }
 
     @MainActor
-    final class Coordinator {
-        private let accessoryController = NSTitlebarAccessoryViewController()
-        private let accessoryIdentifier = NSUserInterfaceItemIdentifier("TheSwiftPOC.VCSAccessory")
-        private let accessoryView = NSStackView()
-        private let accessoryIconView = NSImageView()
-        private let accessoryLabel = NSTextField(labelWithString: "")
+    final class Coordinator: NSObject, NSToolbarDelegate {
+        private let toolbarIdentifier = NSToolbar.Identifier("TheSwiftPOC.TitlebarToolbar")
+        private let documentItemIdentifier = NSToolbarItem.Identifier("TheSwiftPOC.DocumentInfo")
+        private let vcsItemIdentifier = NSToolbarItem.Identifier("TheSwiftPOC.VCSInfo")
+        private let documentHostingView = NSHostingView(rootView: EditorTitlebarDocumentView(document: .empty))
+        private let vcsHostingView = NSHostingView(rootView: EditorTitlebarVCSView(vcsText: nil))
+        private weak var observedWindow: NSWindow?
+        private var lastChrome: EditorChromeModel = .empty
+        private lazy var toolbar: NSToolbar = {
+            let toolbar = NSToolbar(identifier: toolbarIdentifier)
+            toolbar.delegate = self
+            toolbar.displayMode = .iconOnly
+            toolbar.allowsUserCustomization = false
+            toolbar.autosavesConfiguration = false
+            toolbar.showsBaselineSeparator = false
+            return toolbar
+        }()
 
-        init() {
-            accessoryController.layoutAttribute = .right
-            accessoryController.identifier = accessoryIdentifier
+        override init() {
+            super.init()
+            documentHostingView.translatesAutoresizingMaskIntoConstraints = false
+            documentHostingView.setContentCompressionResistancePriority(.required, for: .horizontal)
+            documentHostingView.setContentHuggingPriority(.required, for: .horizontal)
+            vcsHostingView.translatesAutoresizingMaskIntoConstraints = false
+            vcsHostingView.setContentCompressionResistancePriority(.required, for: .horizontal)
+            vcsHostingView.setContentHuggingPriority(.required, for: .horizontal)
+        }
 
-            accessoryView.orientation = .horizontal
-            accessoryView.alignment = .centerY
-            accessoryView.spacing = 6
-            accessoryView.edgeInsets = NSEdgeInsets(top: 0, left: 10, bottom: 0, right: 10)
-            accessoryView.setHuggingPriority(.required, for: .horizontal)
-            accessoryView.setContentHuggingPriority(.required, for: .horizontal)
-
-            accessoryIconView.image = NSImage(systemSymbolName: symbolName(for: "git_branch", isDirectory: false), accessibilityDescription: nil)
-            accessoryIconView.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 11, weight: .semibold)
-            accessoryIconView.contentTintColor = .secondaryLabelColor
-            accessoryIconView.setContentHuggingPriority(.required, for: .horizontal)
-
-            accessoryLabel.font = .systemFont(ofSize: 12, weight: .medium)
-            accessoryLabel.textColor = .secondaryLabelColor
-            accessoryLabel.lineBreakMode = .byTruncatingMiddle
-            accessoryLabel.setContentHuggingPriority(.required, for: .horizontal)
-
-            accessoryView.addArrangedSubview(accessoryIconView)
-            accessoryView.addArrangedSubview(accessoryLabel)
-            accessoryController.view = accessoryView
+        deinit {
+            NotificationCenter.default.removeObserver(self)
         }
 
         func configure(window: NSWindow, chrome: EditorChromeModel) {
+            attachWindowObserversIfNeeded(window: window)
+            installToolbarIfNeeded(window: window)
+            lastChrome = chrome
             applyWindowChrome(window: window, chrome: chrome)
-            applyVCSAccessory(window: window, chrome: chrome)
+            updateToolbarContent(window: window, chrome: chrome)
+        }
+
+        private func attachWindowObserversIfNeeded(window: NSWindow) {
+            guard observedWindow !== window else { return }
+            NotificationCenter.default.removeObserver(self)
+            observedWindow = window
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(windowDidChangeState(_:)),
+                name: NSWindow.didBecomeMainNotification,
+                object: window
+            )
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(windowDidChangeState(_:)),
+                name: NSWindow.didResignMainNotification,
+                object: window
+            )
+        }
+
+        private func installToolbarIfNeeded(window: NSWindow) {
+            if window.toolbar?.identifier != toolbarIdentifier {
+                window.toolbar = toolbar
+            }
+            window.toolbarStyle = .unifiedCompact
+        }
+
+        @objc private func windowDidChangeState(_ notification: Notification) {
+            guard let window = notification.object as? NSWindow else { return }
+            applyWindowChrome(window: window, chrome: lastChrome)
+            updateToolbarContent(window: window, chrome: lastChrome)
         }
 
         private func applyWindowChrome(window: NSWindow, chrome: EditorChromeModel) {
             let backgroundColor = chrome.backgroundColor
-            window.titleVisibility = .visible
-            window.titlebarAppearsTransparent = true
+            window.titleVisibility = .hidden
+            window.titlebarAppearsTransparent = false
             window.titlebarSeparatorStyle = .none
-            window.backgroundColor = backgroundColor
+            window.toolbarStyle = .unifiedCompact
+            window.backgroundColor = backgroundColor.withAlphaComponent(1)
             window.isDocumentEdited = chrome.document.isModified
             window.appearance = backgroundColor.isLightColor
                 ? NSAppearance(named: .aqua)
@@ -275,31 +309,31 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
                 window.representedURL = nil
             }
 
-            reapplyTitlebarBackground(window: window)
+            applyTitlebarBackground(window: window, color: backgroundColor)
         }
 
-        private func applyVCSAccessory(window: NSWindow, chrome: EditorChromeModel) {
-            let vcsText = chrome.document.vcsText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            let shouldShow = !vcsText.isEmpty
-            accessoryLabel.stringValue = vcsText
-            let existingIndex = window.titlebarAccessoryViewControllers.firstIndex(where: {
-                $0.identifier == accessoryIdentifier
-            })
+        private func updateToolbarContent(window: NSWindow, chrome: EditorChromeModel) {
+            documentHostingView.rootView = EditorTitlebarDocumentView(document: chrome.document)
+            vcsHostingView.rootView = EditorTitlebarVCSView(vcsText: chrome.document.vcsText)
+            documentHostingView.invalidateIntrinsicContentSize()
+            vcsHostingView.invalidateIntrinsicContentSize()
+            window.toolbar?.validateVisibleItems()
+        }
 
-            if shouldShow {
-                if existingIndex == nil {
-                    window.addTitlebarAccessoryViewController(accessoryController)
+        private func applyTitlebarBackground(window: NSWindow, color: NSColor) {
+            if #available(macOS 26.0, *) {
+                if let titlebarView = titlebarView(for: window) {
+                    titlebarView.wantsLayer = true
+                    titlebarView.layer?.backgroundColor = color.cgColor
                 }
-            } else if let existingIndex {
-                window.removeTitlebarAccessoryViewController(at: existingIndex)
+                titlebarBackgroundView(for: window)?.isHidden = true
+            } else {
+                window.titlebarAppearsTransparent = true
+                guard let titlebarContainer = titlebarContainer(for: window) else { return }
+                titlebarContainer.wantsLayer = true
+                titlebarContainer.layer?.backgroundColor = color.cgColor
+                hideFirstEffectView(in: titlebarContainer)
             }
-        }
-
-        private func reapplyTitlebarBackground(window: NSWindow) {
-            guard let titlebarContainer = titlebarContainer(for: window) else { return }
-            titlebarContainer.wantsLayer = true
-            titlebarContainer.layer?.backgroundColor = window.backgroundColor.cgColor
-            hideEffectViews(in: titlebarContainer)
         }
 
         private func windowTitle(for chrome: EditorChromeModel) -> String {
@@ -310,8 +344,34 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
         }
 
         private func titlebarContainer(for window: NSWindow) -> NSView? {
-            guard let root = window.contentView?.superview else { return nil }
-            return firstView(from: root, classNameContains: "NSTitlebarContainerView")
+            if !window.styleMask.contains(.fullScreen) {
+                guard let contentView = window.contentView else { return nil }
+                return firstViewFromRoot(startingAt: contentView, classNameContains: "NSTitlebarContainerView")
+            }
+
+            for appWindow in NSApplication.shared.windows {
+                guard NSStringFromClass(type(of: appWindow)).contains("NSToolbarFullScreenWindow") else { continue }
+                guard appWindow.parent == window else { continue }
+                guard let contentView = appWindow.contentView else { continue }
+                return firstViewFromRoot(startingAt: contentView, classNameContains: "NSTitlebarContainerView")
+            }
+            return nil
+        }
+
+        private func titlebarView(for window: NSWindow) -> NSView? {
+            titlebarContainer(for: window).flatMap { firstView(from: $0, classNameContains: "NSTitlebarView") }
+        }
+
+        private func titlebarBackgroundView(for window: NSWindow) -> NSView? {
+            titlebarContainer(for: window).flatMap { firstView(from: $0, classNameContains: "NSTitlebarBackgroundView") }
+        }
+
+        private func firstViewFromRoot(startingAt view: NSView, classNameContains needle: String) -> NSView? {
+            var root = view
+            while let superview = root.superview {
+                root = superview
+            }
+            return firstView(from: root, classNameContains: needle)
         }
 
         private func firstView(from root: NSView, classNameContains needle: String) -> NSView? {
@@ -326,12 +386,104 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
             return nil
         }
 
-        private func hideEffectViews(in root: NSView) {
+        private func hideFirstEffectView(in root: NSView) {
+            if let effectView = firstEffectView(in: root) {
+                effectView.isHidden = true
+            }
+        }
+
+        private func firstEffectView(in root: NSView) -> NSVisualEffectView? {
+            if let effectView = root as? NSVisualEffectView {
+                return effectView
+            }
             for subview in root.subviews {
-                if subview is NSVisualEffectView {
-                    subview.isHidden = true
+                if let match = firstEffectView(in: subview) {
+                    return match
                 }
-                hideEffectViews(in: subview)
+            }
+            return nil
+        }
+
+        func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+            [documentItemIdentifier, .flexibleSpace, vcsItemIdentifier]
+        }
+
+        func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+            [documentItemIdentifier, .flexibleSpace, vcsItemIdentifier]
+        }
+
+        func toolbar(
+            _ toolbar: NSToolbar,
+            itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier,
+            willBeInsertedIntoToolbar flag: Bool
+        ) -> NSToolbarItem? {
+            let item = NSToolbarItem(itemIdentifier: itemIdentifier)
+            item.isBordered = false
+
+            switch itemIdentifier {
+            case documentItemIdentifier:
+                item.view = documentHostingView
+                item.visibilityPriority = .high
+                return item
+            case vcsItemIdentifier:
+                item.view = vcsHostingView
+                item.visibilityPriority = .low
+                return item
+            default:
+                return nil
+            }
+        }
+    }
+}
+
+private struct EditorTitlebarDocumentView: View {
+    let document: EditorDocumentChrome
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: symbolName(for: document.icon, isDirectory: false))
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.secondary)
+
+            Text(document.name)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+        }
+        .fixedSize()
+        .allowsHitTesting(false)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+private struct EditorTitlebarVCSView: View {
+    let vcsText: String?
+
+    private var trimmedVCSText: String? {
+        let trimmed = vcsText?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let trimmed, !trimmed.isEmpty else { return nil }
+        return trimmed
+    }
+
+    var body: some View {
+        Group {
+            if let trimmedVCSText {
+                HStack(spacing: 6) {
+                    Image(systemName: symbolName(for: "git_branch", isDirectory: false))
+                        .font(.system(size: 11, weight: .semibold))
+                    Text(trimmedVCSText)
+                        .font(.system(size: 12, weight: .medium))
+                        .lineLimit(1)
+                }
+                .foregroundStyle(.secondary)
+                .fixedSize()
+                .allowsHitTesting(false)
+                .accessibilityElement(children: .combine)
+            } else {
+                Color.clear
+                    .frame(width: 1, height: 1)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
             }
         }
     }

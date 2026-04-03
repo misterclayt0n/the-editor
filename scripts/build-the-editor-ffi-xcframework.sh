@@ -15,6 +15,8 @@ xcodebuild -create-xcframework \
   -library "$LIB_PATH" \
   -headers "$HEADERS_PATH" \
   -output "$OUTPUT_PATH"
+rm -rf "$ROOT/the-swift/.build"
 popd >/dev/null
 
 echo "Built $OUTPUT_PATH"
+echo "Removed $ROOT/the-swift/.build to force SwiftPM to relink updated FFI artifacts"

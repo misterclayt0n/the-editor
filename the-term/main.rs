@@ -11,8 +11,6 @@ mod terminal;
 mod theme;
 mod undercurl_backend;
 
-// hello world
-
 use std::{
   sync::mpsc::TryRecvError,
   time::{

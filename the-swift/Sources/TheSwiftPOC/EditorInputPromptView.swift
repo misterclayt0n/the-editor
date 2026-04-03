@@ -41,18 +41,6 @@ private struct EditorInputPromptPanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
-                if prompt.kind != .search {
-                    Text(prompt.title.uppercased())
-                        .font(.system(size: 10, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(
-                            Capsule(style: .continuous)
-                                .fill(Color.primary.opacity(0.08))
-                        )
-                }
-
                 TextField(prompt.placeholder, text: $query)
                     .textFieldStyle(.plain)
                     .frame(width: prompt.canNavigate ? 220 : 260)

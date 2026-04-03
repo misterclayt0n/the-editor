@@ -275,6 +275,21 @@ typedef struct the_editor_snapshot_input_prompt_t {
   const char *error;
 } the_editor_snapshot_input_prompt_t;
 
+typedef struct the_editor_snapshot_docs_panel_t {
+  bool is_open;
+  uint16_t col;
+  uint16_t row;
+  uint16_t width;
+  uint16_t height;
+  uintptr_t run_count;
+} the_editor_snapshot_docs_panel_t;
+
+typedef struct the_editor_snapshot_docs_run_t {
+  const char *text;
+  struct the_editor_style_t style;
+  uint8_t kind;
+} the_editor_snapshot_docs_run_t;
+
 typedef struct the_editor_snapshot_file_picker_t {
   bool is_open;
   uint8_t kind;
@@ -405,6 +420,10 @@ struct the_editor_snapshot_status_item_t the_editor_snapshot_status_item_at(cons
 struct the_editor_snapshot_command_palette_t the_editor_snapshot_command_palette(const the_editor_snapshot_t *snapshot);
 struct the_editor_snapshot_command_palette_item_t the_editor_snapshot_command_palette_item_at(const the_editor_snapshot_t *snapshot, uintptr_t item_index);
 struct the_editor_snapshot_input_prompt_t the_editor_snapshot_input_prompt(const the_editor_snapshot_t *snapshot);
+struct the_editor_snapshot_docs_panel_t the_editor_snapshot_hover_docs_panel(const the_editor_snapshot_t *snapshot);
+struct the_editor_snapshot_docs_run_t the_editor_snapshot_hover_docs_run_at(const the_editor_snapshot_t *snapshot, uintptr_t run_index);
+struct the_editor_snapshot_docs_panel_t the_editor_snapshot_signature_help_panel(const the_editor_snapshot_t *snapshot);
+struct the_editor_snapshot_docs_run_t the_editor_snapshot_signature_help_run_at(const the_editor_snapshot_t *snapshot, uintptr_t run_index);
 struct the_editor_snapshot_file_picker_t the_editor_snapshot_file_picker(const the_editor_snapshot_t *snapshot);
 struct the_editor_snapshot_file_picker_item_t the_editor_snapshot_file_picker_item_at(const the_editor_snapshot_t *snapshot, uintptr_t item_index);
 struct the_editor_snapshot_file_picker_preview_line_t the_editor_snapshot_file_picker_preview_line_at(const the_editor_snapshot_t *snapshot, uintptr_t line_index);

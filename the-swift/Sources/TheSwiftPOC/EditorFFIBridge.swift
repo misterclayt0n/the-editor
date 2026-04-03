@@ -215,6 +215,48 @@ struct EditorSnapshotOverlay: Hashable {
     let style: EditorResolvedStyle
 }
 
+enum EditorDocsRunKind: UInt8 {
+    case body = 0
+    case heading1 = 1
+    case heading2 = 2
+    case heading3 = 3
+    case heading4 = 4
+    case heading5 = 5
+    case heading6 = 6
+    case listMarker = 7
+    case quoteMarker = 8
+    case quoteText = 9
+    case link = 10
+    case inlineCode = 11
+    case code = 12
+    case activeParameter = 13
+    case rule = 14
+}
+
+struct EditorDocsRun: Hashable {
+    let text: String
+    let style: EditorResolvedStyle
+    let kind: EditorDocsRunKind
+}
+
+struct EditorDocsPanelState: Hashable {
+    let isOpen: Bool
+    let col: Int
+    let row: Int
+    let width: Int
+    let height: Int
+    let runs: [EditorDocsRun]
+
+    static let empty = EditorDocsPanelState(
+        isOpen: false,
+        col: 0,
+        row: 0,
+        width: 0,
+        height: 0,
+        runs: []
+    )
+}
+
 struct EditorCommandPaletteItem: Hashable {
     let title: String
     let subtitle: String?
@@ -422,6 +464,8 @@ struct EditorSnapshot {
     let overlays: [EditorSnapshotOverlay]
     let commandPalette: EditorCommandPaletteState
     let inputPrompt: EditorInputPromptState
+    let hoverDocs: EditorDocsPanelState
+    let signatureHelp: EditorDocsPanelState
     let filePicker: EditorFilePickerState
 }
 
@@ -736,6 +780,42 @@ enum EditorFFIBridge {
             error: inputPromptValue.error.map { String(cString: $0) }
         )
 
+        let hoverDocsValue = the_editor_snapshot_hover_docs_panel(rawSnapshot)
+        let hoverDocsRuns: [EditorDocsRun] = (0..<Int(hoverDocsValue.run_count)).map { runIndex in
+            let runValue = the_editor_snapshot_hover_docs_run_at(rawSnapshot, UInt(runIndex))
+            return EditorDocsRun(
+                text: runValue.text.map { String(cString: $0) } ?? "",
+                style: style(from: runValue.style),
+                kind: EditorDocsRunKind(rawValue: runValue.kind) ?? .body
+            )
+        }
+        let hoverDocs = EditorDocsPanelState(
+            isOpen: hoverDocsValue.is_open,
+            col: Int(hoverDocsValue.col),
+            row: Int(hoverDocsValue.row),
+            width: Int(hoverDocsValue.width),
+            height: Int(hoverDocsValue.height),
+            runs: hoverDocsRuns
+        )
+
+        let signatureHelpValue = the_editor_snapshot_signature_help_panel(rawSnapshot)
+        let signatureHelpRuns: [EditorDocsRun] = (0..<Int(signatureHelpValue.run_count)).map { runIndex in
+            let runValue = the_editor_snapshot_signature_help_run_at(rawSnapshot, UInt(runIndex))
+            return EditorDocsRun(
+                text: runValue.text.map { String(cString: $0) } ?? "",
+                style: style(from: runValue.style),
+                kind: EditorDocsRunKind(rawValue: runValue.kind) ?? .body
+            )
+        }
+        let signatureHelp = EditorDocsPanelState(
+            isOpen: signatureHelpValue.is_open,
+            col: Int(signatureHelpValue.col),
+            row: Int(signatureHelpValue.row),
+            width: Int(signatureHelpValue.width),
+            height: Int(signatureHelpValue.height),
+            runs: signatureHelpRuns
+        )
+
         let filePickerValue = the_editor_snapshot_file_picker(rawSnapshot)
         let filePickerItems: [EditorFilePickerItem] = (0..<Int(filePickerValue.visible_item_count)).map { itemIndex in
             let itemValue = the_editor_snapshot_file_picker_item_at(rawSnapshot, UInt(itemIndex))
@@ -880,6 +960,8 @@ enum EditorFFIBridge {
             overlays: overlays,
             commandPalette: commandPalette,
             inputPrompt: inputPrompt,
+            hoverDocs: hoverDocs,
+            signatureHelp: signatureHelp,
             filePicker: filePicker
         )
         let decodeMs = (CFAbsoluteTimeGetCurrent() - decodeStarted) * 1000

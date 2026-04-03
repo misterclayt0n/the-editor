@@ -24,6 +24,8 @@ final class EditorSurfaceController: ObservableObject {
     @Published private(set) var currentMode: EditorMode = .normal
     @Published private(set) var commandPalette: EditorCommandPaletteState = .empty
     @Published private(set) var inputPrompt: EditorInputPromptState = .empty
+    @Published private(set) var hoverDocs: EditorDocsPanelState = .empty
+    @Published private(set) var signatureHelp: EditorDocsPanelState = .empty
     @Published private(set) var filePicker: EditorFilePickerState = .empty
     @Published private(set) var showsResizeOverlay = false
 
@@ -301,6 +303,8 @@ final class EditorSurfaceController: ObservableObject {
         )
         commandPalette = snapshot.commandPalette
         inputPrompt = snapshot.inputPrompt
+        hoverDocs = snapshot.hoverDocs
+        signatureHelp = snapshot.signatureHelp
         filePicker = snapshot.filePicker
         commandPaletteDebugLog("refresh query=\(String(reflecting: snapshot.commandPalette.query)) selected=\(String(describing: snapshot.commandPalette.selectedIndex)) items=\(snapshot.commandPalette.items.count) isOpen=\(snapshot.commandPalette.isOpen)")
         let sceneStarted = CFAbsoluteTimeGetCurrent()

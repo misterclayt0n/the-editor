@@ -84,6 +84,7 @@ private struct EditorContainerView: View {
         ZStack {
             EditorChromeView(controller: controller)
             EditorResizeOverlayView(controller: controller)
+            EditorDocsPanelsView(controller: controller)
             EditorInputPromptView(controller: controller)
             EditorCommandPaletteView(controller: controller)
             EditorFilePickerView(controller: controller)

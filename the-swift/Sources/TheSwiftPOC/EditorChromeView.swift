@@ -44,14 +44,29 @@ private struct EditorStatusAccessoryView: View {
         ].compactMap { $0 }
     }
 
+    private var lspStatus: EditorLSPStatusPresentation? {
+        chrome.statusBar.items
+            .lazy
+            .compactMap { EditorLSPStatusPresentation(item: $0) }
+            .first
+    }
+
+    private var nonLSPStatusItems: [EditorStatusItem] {
+        chrome.statusBar.items.filter { EditorLSPStatusPresentation(item: $0) == nil }
+    }
+
     var body: some View {
         HStack(spacing: 12) {
             ModePill(mode: mode)
 
+            if let lspStatus {
+                LSPStatusAccessoryView(status: lspStatus)
+            }
+
             Spacer(minLength: 12)
 
             HStack(spacing: 10) {
-                ForEach(chrome.statusBar.items) { item in
+                ForEach(nonLSPStatusItems) { item in
                     StatusAccessoryItemView(item: item)
                 }
 
@@ -135,6 +150,241 @@ private struct StatusAccessoryItemView: View {
         case .strong:
             return .primary
         }
+    }
+}
+
+private struct EditorLSPStatusPresentation: Equatable {
+    enum Phase: Equatable {
+        case unavailable
+        case off(String?)
+        case loading(String)
+        case ready(String?)
+        case error(String?)
+    }
+
+    let phase: Phase
+
+    init?(item: EditorStatusItem) {
+        let raw = item.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard raw.hasPrefix("lsp:") else { return nil }
+        let payload = raw.dropFirst(4).trimmingCharacters(in: .whitespaces)
+
+        if payload == "unavailable" {
+            phase = .unavailable
+            return
+        }
+
+        if payload.hasPrefix("ready") {
+            phase = .ready(Self.extractParentheticalDetail(from: String(payload)))
+            return
+        }
+
+        if payload.hasPrefix("error") {
+            phase = .error(Self.extractParentheticalDetail(from: String(payload)))
+            return
+        }
+
+        if payload.hasPrefix("off") {
+            let detail = payload.dropFirst(3).trimmingCharacters(in: .whitespacesAndNewlines)
+            phase = .off(detail.isEmpty ? nil : detail)
+            return
+        }
+
+        let cleaned = String(payload).trimmingCharacters(in: CharacterSet(charactersIn: "⣾⣽⣻⢿⡿⣟⣯⣷ "))
+        phase = .loading(cleaned.isEmpty ? "Language Server" : cleaned)
+    }
+
+    private static func extractParentheticalDetail(from text: String) -> String? {
+        guard let open = text.firstIndex(of: "("), let close = text.lastIndex(of: ")"), open < close else {
+            return nil
+        }
+        let detail = text[text.index(after: open)..<close].trimmingCharacters(in: .whitespacesAndNewlines)
+        return detail.isEmpty ? nil : detail
+    }
+}
+
+private struct LSPStatusAccessoryView: View {
+    let status: EditorLSPStatusPresentation
+
+    @State private var isExpanded = true
+
+    var body: some View {
+        Button(action: toggleExpanded) {
+            Group {
+                if isExpanded {
+                    expandedBody
+                        .transition(.asymmetric(insertion: .opacity.combined(with: .scale(scale: 0.96)), removal: .opacity))
+                } else {
+                    collapsedBody
+                        .transition(.asymmetric(insertion: .opacity.combined(with: .scale(scale: 0.92)), removal: .opacity))
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .animation(.spring(response: 0.24, dampingFraction: 0.88), value: isExpanded)
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityHint(isExpanded ? "Collapse language server status" : "Expand language server status")
+    }
+
+    private var expandedBody: some View {
+        HStack(spacing: 8) {
+            statusDot
+
+            Text(title)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+
+            if case .loading = status.phase {
+                LSPIndeterminateBar()
+                    .frame(width: 112, height: 4)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(
+            Capsule(style: .continuous)
+                .fill(backgroundColor)
+        )
+        .overlay {
+            Capsule(style: .continuous)
+                .strokeBorder(borderColor, lineWidth: 1)
+        }
+    }
+
+    private var collapsedBody: some View {
+        ZStack {
+            Circle()
+                .fill(backgroundColor)
+            Circle()
+                .strokeBorder(borderColor, lineWidth: 1)
+            statusDot
+        }
+        .frame(width: 18, height: 18)
+    }
+
+    @ViewBuilder
+    private var statusDot: some View {
+        Circle()
+            .fill(dotColor)
+            .frame(width: 7, height: 7)
+            .overlay {
+                if case .loading = status.phase {
+                    Circle()
+                        .stroke(dotColor.opacity(0.24), lineWidth: 4)
+                        .scaleEffect(1.55)
+                }
+            }
+    }
+
+    private var title: String {
+        switch status.phase {
+        case .unavailable:
+            return "Language Server Unavailable"
+        case .off(let detail):
+            return detail ?? "Language Server Off"
+        case .loading(let detail):
+            return detail
+        case .ready(let detail):
+            return detail ?? "Language Server Ready"
+        case .error(let detail):
+            return detail ?? "Language Server Error"
+        }
+    }
+
+    private var accessibilityLabel: String {
+        switch status.phase {
+        case .unavailable:
+            return "Language server unavailable"
+        case .off(let detail):
+            return detail.map { "Language server \($0)" } ?? "Language server off"
+        case .loading(let detail):
+            return "Language server loading: \(detail)"
+        case .ready(let detail):
+            return detail.map { "Language server ready: \($0)" } ?? "Language server ready"
+        case .error(let detail):
+            return detail.map { "Language server error: \($0)" } ?? "Language server error"
+        }
+    }
+
+    private var dotColor: Color {
+        switch status.phase {
+        case .unavailable, .off:
+            return .secondary
+        case .loading:
+            return .accentColor
+        case .ready:
+            return .green
+        case .error:
+            return .red
+        }
+    }
+
+    private var backgroundColor: Color {
+        switch status.phase {
+        case .unavailable, .off:
+            return Color.primary.opacity(0.05)
+        case .loading:
+            return Color.accentColor.opacity(0.10)
+        case .ready:
+            return Color.green.opacity(0.10)
+        case .error:
+            return Color.red.opacity(0.10)
+        }
+    }
+
+    private var borderColor: Color {
+        switch status.phase {
+        case .unavailable, .off:
+            return Color.primary.opacity(0.06)
+        case .loading:
+            return Color.accentColor.opacity(0.18)
+        case .ready:
+            return Color.green.opacity(0.18)
+        case .error:
+            return Color.red.opacity(0.18)
+        }
+    }
+
+    private func toggleExpanded() {
+        isExpanded.toggle()
+    }
+}
+
+private struct LSPIndeterminateBar: View {
+    @State private var phase: CGFloat = -0.55
+
+    var body: some View {
+        GeometryReader { proxy in
+            let width = proxy.size.width
+            let fillWidth = max(width * 0.38, 28)
+
+            Capsule(style: .continuous)
+                .fill(Color.accentColor.opacity(0.16))
+                .overlay(alignment: .leading) {
+                    Capsule(style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    Color.accentColor.opacity(0.55),
+                                    Color.accentColor.opacity(0.95)
+                                ],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                        )
+                        .frame(width: fillWidth)
+                        .offset(x: phase * max(width - fillWidth, 1))
+                }
+                .clipShape(Capsule(style: .continuous))
+                .onAppear {
+                    phase = -0.55
+                    withAnimation(.linear(duration: 1.05).repeatForever(autoreverses: false)) {
+                        phase = 1.0
+                    }
+                }
+        }
+        .accessibilityHidden(true)
     }
 }
 

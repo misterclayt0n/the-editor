@@ -54,10 +54,12 @@ use the_default::{
   PendingInput,
   PickerRuntimeStore,
   SearchPromptState,
+  SignatureHelpState,
   ThemeCatalog,
   WorkingDirectoryState,
   build_dispatch,
   build_statusline_snapshot,
+  completion_panel_rect,
   builtin_completion_menu_keymaps,
   builtin_keymaps,
   close_file_picker,
@@ -87,6 +89,8 @@ use the_default::{
   submit_command_palette as submit_command_palette_action,
   submit_file_picker,
   step_search_prompt,
+  signature_help_markdown,
+  signature_help_panel_rect,
   sync_command_palette_preview,
   update_command_palette_for_input,
   update_search_prompt_preview,
@@ -103,6 +107,15 @@ use the_lib::{
   document::{
     Document,
     DocumentId,
+  },
+  docs_markdown::{
+    DocsBlock,
+    DocsInlineKind,
+    DocsInlineRun,
+    DocsListMarker,
+    DocsSemanticKind,
+    language_filename_hints,
+    parse_markdown_blocks,
   },
   editor::{
     Editor,
@@ -163,12 +176,20 @@ use the_lib::{
 use unicode_segmentation::UnicodeSegmentation;
 use the_lsp::{
   LspEvent,
+  LspPosition,
   LspProgressKind,
   LspRuntime,
   LspRuntimeConfig,
   LspServerConfig,
+  LspSignatureHelpContext,
   TextDocumentSyncKind,
+  hover_params,
+  jsonrpc,
+  parse_hover_response,
+  parse_signature_help_response,
+  signature_help_params,
   text_sync::{
+    char_idx_to_utf16_position,
     did_change_params,
     did_open_params,
     did_save_params,
@@ -414,6 +435,25 @@ pub struct the_editor_snapshot_input_prompt_t {
 
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
+pub struct the_editor_snapshot_docs_panel_t {
+  pub is_open:    bool,
+  pub col:        u16,
+  pub row:        u16,
+  pub width:      u16,
+  pub height:     u16,
+  pub run_count:  usize,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct the_editor_snapshot_docs_run_t {
+  pub text:  *const c_char,
+  pub style: the_editor_style_t,
+  pub kind:  u8,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
 pub struct the_editor_snapshot_file_picker_t {
   pub is_open:                 bool,
   pub kind:                    u8,
@@ -613,6 +653,10 @@ struct OwnedSnapshot {
   command_palette:       CommandPaletteRecord,
   command_palette_items: Vec<CommandPaletteItemRecord>,
   input_prompt:          InputPromptRecord,
+  hover_docs:            DocsPanelRecord,
+  hover_docs_runs:       Vec<DocsRunRecord>,
+  signature_help:        DocsPanelRecord,
+  signature_help_runs:   Vec<DocsRunRecord>,
   file_picker:           FilePickerRecord,
   file_picker_items:     Vec<FilePickerItemRecord>,
   file_picker_preview_lines: Vec<FilePickerPreviewLineRecord>,
@@ -677,6 +721,17 @@ struct InputPromptRecord {
   placeholder_idx: Option<usize>,
   query_idx:       Option<usize>,
   error_idx:       Option<usize>,
+}
+
+#[derive(Clone, Copy, Default)]
+struct DocsPanelRecord {
+  panel: the_editor_snapshot_docs_panel_t,
+}
+
+#[derive(Clone, Copy, Default)]
+struct DocsRunRecord {
+  run:      the_editor_snapshot_docs_run_t,
+  text_idx: usize,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -843,12 +898,41 @@ impl LspStatuslineState {
   }
 }
 
+#[derive(Debug, Clone)]
+enum PendingLspRequestKind {
+  Hover { uri: String },
+  SignatureHelp { uri: String },
+}
+
+impl PendingLspRequestKind {
+  fn uri(&self) -> &str {
+    match self {
+      Self::Hover { uri } | Self::SignatureHelp { uri } => uri,
+    }
+  }
+
+  fn label(&self) -> &'static str {
+    match self {
+      Self::Hover { .. } => "hover",
+      Self::SignatureHelp { .. } => "signature-help",
+    }
+  }
+
+  fn cancellation_key(&self) -> &'static str {
+    match self {
+      Self::Hover { .. } => "hover",
+      Self::SignatureHelp { .. } => "signature-help",
+    }
+  }
+}
+
 struct ManagedLspRuntime {
-  runtime:                LspRuntime,
-  ready:                  bool,
+  runtime:                 LspRuntime,
+  ready:                   bool,
   opened_current_document: bool,
-  statusline:             LspStatuslineState,
-  active_progress_tokens: HashSet<String>,
+  statusline:              LspStatuslineState,
+  active_progress_tokens:  HashSet<String>,
+  pending_requests:        BTreeMap<u64, PendingLspRequestKind>,
 }
 
 impl ManagedLspRuntime {
@@ -883,6 +967,8 @@ struct SwiftEditor {
   file_picker:                   FilePickerState,
   picker_runtime_store:          PickerRuntimeStore<SwiftEditor>,
   search_prompt:                 SearchPromptState,
+  signature_help:                SignatureHelpState,
+  hover_docs:                    Option<String>,
   pending_input:                 Option<PendingInput>,
   registers:                     Registers,
   register:                      Option<char>,
@@ -937,6 +1023,8 @@ impl SwiftEditor {
       let _ = runtime.runtime.shutdown_detached();
     }
     self.lsp_runtimes.clear();
+    self.signature_help.clear();
+    self.clear_hover_state();
     self.lsp_document = self
       .file_path
       .as_deref()
@@ -973,6 +1061,7 @@ impl SwiftEditor {
           detail: Some(clamp_status_text(&server_name, 28)),
         },
         active_progress_tokens: HashSet::new(),
+        pending_requests: BTreeMap::new(),
       };
       if let Err(err) = start_result {
         managed.statusline = LspStatuslineState {
@@ -1100,6 +1189,145 @@ impl SwiftEditor {
     }
   }
 
+  fn current_lsp_position(&self) -> Option<(String, LspPosition)> {
+    let document = self.lsp_document.as_ref()?.clone();
+    if !self.lsp_runtimes.iter().any(|runtime| runtime.opened_current_document) {
+      return None;
+    }
+
+    let selection = self.editor.document().selection();
+    let Ok((_, range)) = selection.pick(CursorPick::First) else {
+      return None;
+    };
+    let cursor = range.cursor(self.editor.document().text().slice(..));
+    let (line, character) = char_idx_to_utf16_position(self.editor.document().text(), cursor);
+    Some((document.uri, LspPosition { line, character }))
+  }
+
+  fn clear_hover_state(&mut self) {
+    self.hover_docs = None;
+  }
+
+  fn cancel_pending_lsp_requests_for(&mut self, target: &'static str) {
+    for runtime in &mut self.lsp_runtimes {
+      let ids = runtime
+        .pending_requests
+        .iter()
+        .filter_map(|(id, pending)| (pending.cancellation_key() == target).then_some(*id))
+        .collect::<Vec<_>>();
+      for id in ids {
+        runtime.pending_requests.remove(&id);
+        let _ = runtime.runtime.cancel_request(id);
+      }
+    }
+  }
+
+  fn dispatch_lsp_request(&mut self, method: &'static str, params: serde_json::Value, pending: PendingLspRequestKind) {
+    let Some((runtime_index, _)) = self
+      .lsp_runtimes
+      .iter()
+      .enumerate()
+      .find(|(_, runtime)| runtime.ready)
+    else {
+      self.push_error("lsp", format!("failed to dispatch {method}: no active language server"));
+      return;
+    };
+    self.cancel_pending_lsp_requests_for(pending.cancellation_key());
+    match self.lsp_runtimes[runtime_index].runtime.send_request(method, Some(params)) {
+      Ok(request_id) => {
+        self.lsp_runtimes[runtime_index]
+          .pending_requests
+          .insert(request_id, pending);
+      },
+      Err(err) => {
+        self.push_error("lsp", format!("failed to dispatch {method}: {err}"));
+      },
+    }
+  }
+
+  fn handle_signature_help_response(&mut self, result: Option<&serde_json::Value>) -> bool {
+    let signature = match parse_signature_help_response(result) {
+      Ok(signature) => signature,
+      Err(err) => {
+        self.push_error("lsp", format!("failed to parse signature help response: {err}"));
+        return true;
+      },
+    };
+
+    let Some(signature) = signature else {
+      self.signature_help.clear();
+      return true;
+    };
+
+    if signature.signatures.is_empty() {
+      self.signature_help.clear();
+      return true;
+    }
+
+    let signatures = signature
+      .signatures
+      .into_iter()
+      .map(|item| the_default::SignatureHelpItem {
+        label: item.label,
+        documentation: item.documentation,
+        active_parameter: item.active_parameter,
+        active_parameter_range: item.active_parameter_range,
+      })
+      .collect::<Vec<_>>();
+    self.signature_help.set_signatures(signatures, signature.active_signature);
+    true
+  }
+
+  fn handle_lsp_rpc_message(&mut self, runtime_index: usize, message: jsonrpc::Message) -> bool {
+    let jsonrpc::Message::Response(response) = message else {
+      return false;
+    };
+    let jsonrpc::Id::Number(id) = response.id else {
+      return false;
+    };
+    let Some(kind) = self
+      .lsp_runtimes
+      .get_mut(runtime_index)
+      .and_then(|runtime| runtime.pending_requests.remove(&id))
+    else {
+      return false;
+    };
+
+    if self.lsp_document.as_ref().map(|state| state.uri.as_str()) != Some(kind.uri()) {
+      return false;
+    }
+
+    if let Some(error) = response.error {
+      self.push_error("lsp", format!("lsp {} failed: {}", kind.label(), error.message));
+      return true;
+    }
+
+    match kind {
+      PendingLspRequestKind::Hover { .. } => {
+        let hover = match parse_hover_response(response.result.as_ref()) {
+          Ok(hover) => hover,
+          Err(err) => {
+            self.push_error("lsp", format!("failed to parse hover response: {err}"));
+            return true;
+          },
+        };
+        match hover {
+          Some(text) => {
+            let trimmed = text.trim();
+            if trimmed.is_empty() {
+              self.clear_hover_state();
+            } else {
+              self.hover_docs = Some(trimmed.to_string());
+            }
+          },
+          None => self.clear_hover_state(),
+        }
+        true
+      },
+      PendingLspRequestKind::SignatureHelp { .. } => self.handle_signature_help_response(response.result.as_ref()),
+    }
+  }
+
   fn lsp_statusline_text_value(&self) -> Option<String> {
     let has_server = !self.lsp_runtimes.is_empty();
     if !has_server && matches!(self.lsp_statusline.phase, LspStatusPhase::Off) {
@@ -1188,6 +1416,7 @@ impl SwiftEditor {
               runtime.ready = false;
               runtime.opened_current_document = false;
               runtime.active_progress_tokens.clear();
+              runtime.pending_requests.clear();
             }
             self.set_lsp_status_for_runtime(runtime_index, LspStatusPhase::Starting, Some(server_name));
             changed = true;
@@ -1202,6 +1431,7 @@ impl SwiftEditor {
             if let Some(runtime) = self.lsp_runtimes.get_mut(runtime_index) {
               runtime.ready = true;
               runtime.active_progress_tokens.clear();
+              runtime.pending_requests.clear();
             }
             self.open_current_document_for_runtime(runtime_index);
             self.set_lsp_status_for_runtime(runtime_index, LspStatusPhase::Ready, Some(server_name));
@@ -1244,6 +1474,7 @@ impl SwiftEditor {
               runtime.ready = false;
               runtime.opened_current_document = false;
               runtime.active_progress_tokens.clear();
+              runtime.pending_requests.clear();
             }
             self.set_lsp_status_for_runtime(runtime_index, LspStatusPhase::Starting, Some("restarting".into()));
             changed = true;
@@ -1253,10 +1484,14 @@ impl SwiftEditor {
               runtime.ready = false;
               runtime.opened_current_document = false;
               runtime.active_progress_tokens.clear();
+              runtime.pending_requests.clear();
             }
             self.set_lsp_status_for_runtime(runtime_index, LspStatusPhase::Error, Some(summarize_lsp_error(&message)));
             self.push_error("lsp", message);
             changed = true;
+          },
+          LspEvent::RpcMessage { message } => {
+            changed |= self.handle_lsp_rpc_message(runtime_index, message);
           },
           _ => {},
         }
@@ -1542,6 +1777,8 @@ impl SwiftEditor {
       file_picker: FilePickerState::default(),
       picker_runtime_store: PickerRuntimeStore::default(),
       search_prompt: SearchPromptState::new(),
+      signature_help: SignatureHelpState::default(),
+      hover_docs: None,
       pending_input: None,
       registers: Registers::new(),
       register: None,
@@ -1675,7 +1912,14 @@ impl SwiftEditor {
     let Some(event) = translate_key_event(raw) else {
       return false;
     };
+    let should_refresh_signature = matches!(
+      event.key,
+      Key::Char(_) | Key::Backspace | Key::Delete | Key::Enter | Key::NumpadEnter
+    );
     handle_key(self, event);
+    if self.mode == Mode::Insert && should_refresh_signature {
+      self.lsp_signature_help_on_insert_mode_entry();
+    }
     self.ensure_cursor_visible();
     true
   }
@@ -1692,6 +1936,9 @@ impl SwiftEditor {
       changed = true;
     }
     if changed {
+      if self.mode == Mode::Insert {
+        self.lsp_signature_help_on_insert_mode_entry();
+      }
       self.ensure_cursor_visible();
     }
     changed
@@ -2296,6 +2543,8 @@ impl DefaultContext for SwiftEditor {
   fn picker_runtime_store_mut(&mut self) -> &mut PickerRuntimeStore<Self> { &mut self.picker_runtime_store }
   fn search_prompt_ref(&self) -> &SearchPromptState { &self.search_prompt }
   fn search_prompt_mut(&mut self) -> &mut SearchPromptState { &mut self.search_prompt }
+  fn signature_help(&self) -> Option<&SignatureHelpState> { Some(&self.signature_help) }
+  fn signature_help_mut(&mut self) -> Option<&mut SignatureHelpState> { Some(&mut self.signature_help) }
   fn dispatch(&self) -> DispatchRef<Self> { DispatchRef::from_ptr(self.dispatch.as_ref() as *const dyn DefaultApi<Self>) }
   fn pending_input(&self) -> Option<&PendingInput> { self.pending_input.as_ref() }
   fn set_pending_input(&mut self, pending: Option<PendingInput>) { self.pending_input = pending; }
@@ -2339,6 +2588,35 @@ impl DefaultContext for SwiftEditor {
     if let Some(watch) = self.active_file_watch.as_mut() {
       clear_reload_state(&mut watch.stream.reload_state);
     }
+  }
+  fn lsp_hover(&mut self) {
+    let Some((uri, position)) = self.current_lsp_position() else {
+      self.push_warning("lsp", "hover unavailable: no active LSP document");
+      return;
+    };
+    self.clear_hover_state();
+    self.dispatch_lsp_request(
+      "textDocument/hover",
+      hover_params(&uri, position),
+      PendingLspRequestKind::Hover { uri },
+    );
+  }
+  fn lsp_signature_help(&mut self) {
+    let Some((uri, position)) = self.current_lsp_position() else {
+      self.push_warning("lsp", "signature help unavailable: no active LSP document");
+      return;
+    };
+    self.dispatch_lsp_request(
+      "textDocument/signatureHelp",
+      signature_help_params(&uri, position, &LspSignatureHelpContext::invoked()),
+      PendingLspRequestKind::SignatureHelp { uri },
+    );
+  }
+  fn lsp_signature_help_on_insert_mode_entry(&mut self) {
+    if self.lsp_document.is_none() || !self.lsp_runtimes.iter().any(|runtime| runtime.ready) {
+      return;
+    }
+    self.lsp_signature_help();
   }
   fn available_theme_names(&self) -> Vec<String> { self.ui_theme_catalog.names() }
   fn set_ui_theme(&mut self, theme_name: &str) -> Result<(), String> { self.set_ui_theme_named(theme_name) }
@@ -2574,6 +2852,63 @@ impl OwnedSnapshot {
       error_idx: snapshot.push_optional_string(input_prompt.error.as_deref()),
     };
 
+    if let Some(plan) = plan {
+      if let Some(markdown) = editor
+        .hover_docs
+        .as_deref()
+        .map(str::trim)
+        .filter(|docs| !docs.is_empty())
+      {
+        let cursor = active_docs_cursor_position(plan);
+        let width = plan.viewport.width.saturating_mul(2).saturating_div(3).min(84).max(28);
+        snapshot.hover_docs.panel = docs_panel_record(
+          plan.viewport.width,
+          plan.viewport.height,
+          cursor,
+          width,
+          18,
+          false,
+        );
+        for run in flatten_docs_runs(markdown, editor) {
+          let text_idx = snapshot.push_string(&run.text);
+          snapshot.hover_docs_runs.push(DocsRunRecord {
+            run: the_editor_snapshot_docs_run_t {
+              text: ptr::null(),
+              style: style_to_ffi(run.style, &editor.ui_theme),
+              kind: docs_run_kind_code(run.kind),
+            },
+            text_idx,
+          });
+        }
+        snapshot.hover_docs.panel.run_count = snapshot.hover_docs_runs.len();
+      }
+
+      if let Some(markdown) = signature_help_markdown(&editor.signature_help) {
+        let cursor = active_docs_cursor_position(plan);
+        let width = plan.viewport.width.saturating_mul(2).saturating_div(3).min(72).max(12);
+        snapshot.signature_help.panel = docs_panel_record(
+          plan.viewport.width,
+          plan.viewport.height,
+          cursor,
+          width,
+          16,
+          true,
+        );
+        for run in flatten_docs_runs(markdown.as_str(), editor) {
+          let text_idx = snapshot.push_string(&run.text);
+          snapshot.signature_help_runs.push(DocsRunRecord {
+            run: the_editor_snapshot_docs_run_t {
+              text: ptr::null(),
+              style: style_to_ffi(run.style, &editor.ui_theme),
+              kind: docs_run_kind_code(run.kind),
+            },
+            text_idx,
+          });
+        }
+        snapshot.signature_help.panel.run_count = snapshot.signature_help_runs.len();
+      }
+    }
+
     snapshot.populate_file_picker(editor);
 
     let Some(plan) = plan else {
@@ -2596,6 +2931,7 @@ impl OwnedSnapshot {
       }
       snapshot.finalize_document_and_status_strings();
       snapshot.finalize_input_prompt_strings();
+      snapshot.finalize_docs_panel_strings();
       snapshot.finalize_file_picker_strings();
       return snapshot;
     };
@@ -2772,6 +3108,7 @@ impl OwnedSnapshot {
     }
     snapshot.finalize_document_and_status_strings();
     snapshot.finalize_input_prompt_strings();
+    snapshot.finalize_docs_panel_strings();
     snapshot.finalize_file_picker_strings();
 
     snapshot.info.line_count = snapshot.lines.len();
@@ -3018,6 +3355,15 @@ impl OwnedSnapshot {
     }
     if let Some(error_idx) = self.input_prompt.error_idx {
       self.input_prompt.prompt.error = self.strings[error_idx].as_ptr();
+    }
+  }
+
+  fn finalize_docs_panel_strings(&mut self) {
+    for run in &mut self.hover_docs_runs {
+      run.run.text = self.strings[run.text_idx].as_ptr();
+    }
+    for run in &mut self.signature_help_runs {
+      run.run.text = self.strings[run.text_idx].as_ptr();
     }
   }
 
@@ -3301,6 +3647,481 @@ fn summarize_lsp_error(message: &str) -> String {
     return "initialize timeout".to_string();
   }
   clamp_status_text(message, 24)
+}
+
+#[derive(Clone)]
+struct DocsStyledRun {
+  text:  String,
+  style: Style,
+  kind:  DocsSemanticKind,
+}
+
+#[derive(Clone, Copy)]
+struct DocsPanelStyles {
+  base:             Style,
+  heading:          [Style; 6],
+  bullet:           Style,
+  quote:            Style,
+  code:             Style,
+  active_parameter: Style,
+  link:             Style,
+  rule:             Style,
+}
+
+impl DocsPanelStyles {
+  fn default(base: Style) -> Self {
+    let heading = [
+      base.add_modifier(Modifier::BOLD),
+      base.add_modifier(Modifier::BOLD),
+      base.add_modifier(Modifier::BOLD),
+      base.add_modifier(Modifier::BOLD),
+      base.add_modifier(Modifier::BOLD),
+      base.add_modifier(Modifier::BOLD),
+    ];
+    Self {
+      base,
+      heading,
+      bullet: base.add_modifier(Modifier::BOLD),
+      quote: base.add_modifier(Modifier::DIM),
+      code: base.add_modifier(Modifier::DIM),
+      active_parameter: base.add_modifier(Modifier::BOLD),
+      link: base.underline_style(UnderlineStyle::Line),
+      rule: base.add_modifier(Modifier::DIM),
+    }
+  }
+}
+
+fn docs_theme_style_or(theme: &Theme, scope: &str, fallback: Style) -> Style {
+  theme
+    .try_get(scope)
+    .map(|style| fallback.patch(style))
+    .unwrap_or(fallback)
+}
+
+fn docs_panel_styles(theme: &Theme, base: Style) -> DocsPanelStyles {
+  let mut styles = DocsPanelStyles::default(base);
+  styles.heading = [
+    docs_theme_style_or(theme, "markup.heading.1", styles.heading[0]),
+    docs_theme_style_or(theme, "markup.heading.2", styles.heading[1]),
+    docs_theme_style_or(theme, "markup.heading.3", styles.heading[2]),
+    docs_theme_style_or(theme, "markup.heading.4", styles.heading[3]),
+    docs_theme_style_or(theme, "markup.heading.5", styles.heading[4]),
+    docs_theme_style_or(theme, "markup.heading.6", styles.heading[5]),
+  ];
+  styles.bullet = docs_theme_style_or(theme, "markup.list.unnumbered", styles.bullet);
+  styles.quote = docs_theme_style_or(theme, "markup.quote", styles.quote);
+  styles.code = docs_theme_style_or(theme, "markup.raw.inline", styles.code);
+  styles.active_parameter = docs_theme_style_or(
+    theme,
+    "ui.selection.active",
+    docs_theme_style_or(theme, "ui.selection", styles.active_parameter),
+  );
+  styles.link = docs_theme_style_or(theme, "markup.link.text", styles.link);
+  styles.rule = docs_theme_style_or(theme, "punctuation.special", styles.rule);
+  styles
+}
+
+fn push_docs_run(runs: &mut Vec<DocsStyledRun>, text: String, style: Style, kind: DocsSemanticKind) {
+  if text.is_empty() {
+    return;
+  }
+  if let Some(last) = runs.last_mut()
+    && last.style == style
+    && last.kind == kind
+  {
+    last.text.push_str(&text);
+    return;
+  }
+  runs.push(DocsStyledRun { text, style, kind });
+}
+
+fn docs_runs_from_inline(
+  inline_runs: &[DocsInlineRun],
+  styles: &DocsPanelStyles,
+  base_style: Style,
+  default_kind: DocsSemanticKind,
+) -> Vec<DocsStyledRun> {
+  let mut runs = Vec::new();
+  for inline in inline_runs {
+    let (kind, mut style) = match inline.kind {
+      DocsInlineKind::Text => (default_kind, base_style),
+      DocsInlineKind::Link => (DocsSemanticKind::Link, base_style.patch(styles.link)),
+      DocsInlineKind::InlineCode => (DocsSemanticKind::InlineCode, base_style.patch(styles.code)),
+    };
+    if inline.strong {
+      style = style.add_modifier(Modifier::BOLD);
+    }
+    if inline.emphasis {
+      style = style.add_modifier(Modifier::ITALIC);
+    }
+    push_docs_run(&mut runs, inline.text.clone(), style, kind);
+  }
+  runs
+}
+
+fn strip_signature_active_markers_from_line(line: &str) -> (String, Option<std::ops::Range<usize>>) {
+  let mut cleaned = String::with_capacity(line.len());
+  let mut idx = 0usize;
+  let mut start = None;
+  let mut end = None;
+
+  while idx < line.len() {
+    if line[idx..].starts_with(the_default::SIGNATURE_HELP_ACTIVE_PARAM_START_MARKER) {
+      if start.is_none() {
+        start = Some(cleaned.len());
+      }
+      idx += the_default::SIGNATURE_HELP_ACTIVE_PARAM_START_MARKER.len();
+      continue;
+    }
+    if line[idx..].starts_with(the_default::SIGNATURE_HELP_ACTIVE_PARAM_END_MARKER) {
+      if start.is_some() && end.is_none() {
+        end = Some(cleaned.len());
+      }
+      idx += the_default::SIGNATURE_HELP_ACTIVE_PARAM_END_MARKER.len();
+      continue;
+    }
+    let mut chars = line[idx..].chars();
+    let Some(ch) = chars.next() else { break; };
+    cleaned.push(ch);
+    idx += ch.len_utf8();
+  }
+
+  let range = match (start, end) {
+    (Some(start), Some(end)) if start < end => Some(start..end),
+    (Some(start), None) if start < cleaned.len() => Some(start..cleaned.len()),
+    _ => None,
+  };
+  (cleaned, range)
+}
+
+fn strip_signature_active_markers_from_lines(code_lines: &[String]) -> (Vec<String>, Option<std::ops::Range<usize>>) {
+  let mut cleaned_lines = Vec::with_capacity(code_lines.len());
+  let mut active_range = None;
+  let mut line_start = 0usize;
+
+  for (idx, line) in code_lines.iter().enumerate() {
+    let (cleaned, line_range) = strip_signature_active_markers_from_line(line);
+    if active_range.is_none()
+      && let Some(range) = line_range
+    {
+      active_range = Some((line_start + range.start)..(line_start + range.end));
+    }
+    line_start += cleaned.len();
+    if idx + 1 < code_lines.len() {
+      line_start += 1;
+    }
+    cleaned_lines.push(cleaned);
+  }
+
+  (cleaned_lines, active_range)
+}
+
+fn byte_range_overlaps_active(
+  byte_start: usize,
+  byte_end: usize,
+  active_range: Option<&std::ops::Range<usize>>,
+) -> bool {
+  active_range.is_some_and(|active| byte_start < active.end && byte_end > active.start)
+}
+
+fn preview_highlight_at(
+  highlights: &[(Highlight, std::ops::Range<usize>)],
+  byte_idx: usize,
+) -> Option<Highlight> {
+  let mut active = None;
+  for (highlight, range) in highlights {
+    if byte_idx < range.start {
+      break;
+    }
+    if byte_idx < range.end {
+      active = Some(*highlight);
+    }
+  }
+  active
+}
+
+fn render_code_lines_with_active_style(
+  code_lines: &[String],
+  base_style: Style,
+  active_parameter_style: Style,
+  active_range: Option<&std::ops::Range<usize>>,
+) -> Vec<Vec<DocsStyledRun>> {
+  let mut rendered = Vec::with_capacity(code_lines.len());
+  let mut line_start_byte = 0usize;
+
+  for (idx, line) in code_lines.iter().enumerate() {
+    let mut runs = Vec::new();
+    let mut piece = String::new();
+    let mut run_style = base_style;
+    let mut run_kind = DocsSemanticKind::Code;
+    let mut byte_idx = line_start_byte;
+
+    for ch in line.chars() {
+      let byte_end = byte_idx.saturating_add(ch.len_utf8());
+      let mut style = base_style;
+      let mut kind = DocsSemanticKind::Code;
+      if byte_range_overlaps_active(byte_idx, byte_end, active_range) {
+        style = style.patch(active_parameter_style);
+        kind = DocsSemanticKind::ActiveParameter;
+      }
+      if (style != run_style || kind != run_kind) && !piece.is_empty() {
+        push_docs_run(&mut runs, std::mem::take(&mut piece), run_style, run_kind);
+      }
+      run_style = style;
+      run_kind = kind;
+      piece.push(ch);
+      byte_idx = byte_end;
+    }
+
+    push_docs_run(&mut runs, piece, run_style, run_kind);
+    if runs.is_empty() {
+      runs.push(DocsStyledRun {
+        text: String::new(),
+        style: base_style,
+        kind: DocsSemanticKind::Code,
+      });
+    }
+    rendered.push(runs);
+
+    line_start_byte += line.len();
+    if idx + 1 < code_lines.len() {
+      line_start_byte += 1;
+    }
+  }
+
+  rendered
+}
+
+fn highlighted_code_block_lines(
+  code_lines: &[String],
+  styles: &DocsPanelStyles,
+  editor: &SwiftEditor,
+  language: Option<&str>,
+) -> Vec<Vec<DocsStyledRun>> {
+  if code_lines.is_empty() {
+    return vec![Vec::new()];
+  }
+  let (code_lines, active_range) = strip_signature_active_markers_from_lines(code_lines);
+  if code_lines.is_empty() {
+    return vec![Vec::new()];
+  }
+
+  let Some(loader) = editor.loader.as_deref() else {
+    return render_code_lines_with_active_style(
+      &code_lines,
+      styles.code,
+      styles.active_parameter,
+      active_range.as_ref(),
+    );
+  };
+
+  let resolved_language = language.and_then(|marker| {
+    let marker = marker.trim();
+    let marker_lower = marker.to_ascii_lowercase();
+    loader
+      .language_for_name(marker)
+      .or_else(|| loader.language_for_name(marker_lower.as_str()))
+      .or_else(|| loader.language_for_scope(marker))
+      .or_else(|| loader.language_for_scope(marker_lower.as_str()))
+      .or_else(|| {
+        language_filename_hints(marker)
+          .into_iter()
+          .find_map(|hint| loader.language_for_filename(Path::new(format!("tmp.{hint}").as_str())))
+      })
+  });
+  let current_buffer_language = editor
+    .file_path
+    .as_deref()
+    .and_then(|path| loader.language_for_filename(path))
+    .or_else(|| {
+      editor
+        .lsp_document
+        .as_ref()
+        .and_then(|state| loader.language_for_name(state.language_id.as_str()))
+    });
+  let Some(language) = resolved_language.or(current_buffer_language) else {
+    return render_code_lines_with_active_style(
+      &code_lines,
+      styles.code,
+      styles.active_parameter,
+      active_range.as_ref(),
+    );
+  };
+
+  let joined = code_lines.join("\n");
+  let rope = Rope::from_str(&joined);
+  let Ok(syntax) = Syntax::new(rope.slice(..), language, loader) else {
+    return render_code_lines_with_active_style(
+      &code_lines,
+      styles.code,
+      styles.active_parameter,
+      active_range.as_ref(),
+    );
+  };
+
+  let mut highlights = syntax.collect_highlights(rope.slice(..), loader, 0..rope.len_bytes());
+  highlights.sort_by_key(|(_highlight, range)| (range.start, std::cmp::Reverse(range.end)));
+
+  let mut rendered = Vec::with_capacity(code_lines.len());
+  let mut line_start_byte = 0usize;
+
+  for (idx, line) in code_lines.iter().enumerate() {
+    let mut runs = Vec::new();
+    let mut piece = String::new();
+    let mut active_style = styles.code;
+    let mut active_kind = DocsSemanticKind::Code;
+    let mut byte_idx = line_start_byte;
+
+    for ch in line.chars() {
+      let byte_end = byte_idx.saturating_add(ch.len_utf8());
+      let mut style = preview_highlight_at(&highlights, byte_idx)
+        .map(|highlight| styles.code.patch(editor.ui_theme.highlight(highlight)))
+        .unwrap_or(styles.code);
+      let mut kind = DocsSemanticKind::Code;
+      if byte_range_overlaps_active(byte_idx, byte_end, active_range.as_ref()) {
+        style = style.patch(styles.active_parameter);
+        kind = DocsSemanticKind::ActiveParameter;
+      }
+      if (style != active_style || kind != active_kind) && !piece.is_empty() {
+        push_docs_run(&mut runs, std::mem::take(&mut piece), active_style, active_kind);
+      }
+      active_style = style;
+      active_kind = kind;
+      piece.push(ch);
+      byte_idx = byte_end;
+    }
+
+    push_docs_run(&mut runs, piece, active_style, active_kind);
+    if runs.is_empty() {
+      runs.push(DocsStyledRun {
+        text: String::new(),
+        style: styles.code,
+        kind: DocsSemanticKind::Code,
+      });
+    }
+    rendered.push(runs);
+
+    line_start_byte = line_start_byte.saturating_add(line.len());
+    if idx + 1 < code_lines.len() {
+      line_start_byte = line_start_byte.saturating_add(1);
+    }
+  }
+
+  rendered
+}
+
+fn docs_markdown_lines(markdown: &str, styles: &DocsPanelStyles, editor: &SwiftEditor) -> Vec<Vec<DocsStyledRun>> {
+  let mut lines = Vec::new();
+  for block in parse_markdown_blocks(markdown) {
+    match block {
+      DocsBlock::Paragraph(inline_runs) => {
+        lines.push(docs_runs_from_inline(&inline_runs, styles, styles.base, DocsSemanticKind::Body));
+      },
+      DocsBlock::Heading { level, runs } => {
+        let level_idx = level.saturating_sub(1).min(5) as usize;
+        lines.push(docs_runs_from_inline(&runs, styles, styles.heading[level_idx], DocsSemanticKind::from_heading_level(level)));
+      },
+      DocsBlock::ListItem { marker, runs: inline_runs } => {
+        let marker_text = match marker {
+          DocsListMarker::Bullet => "• ".to_string(),
+          DocsListMarker::Ordered(marker) => format!("{marker} "),
+        };
+        let mut runs = Vec::new();
+        push_docs_run(&mut runs, marker_text, styles.bullet, DocsSemanticKind::ListMarker);
+        runs.extend(docs_runs_from_inline(&inline_runs, styles, styles.base, DocsSemanticKind::Body));
+        lines.push(runs);
+      },
+      DocsBlock::Quote(inline_runs) => {
+        let mut runs = Vec::new();
+        push_docs_run(&mut runs, "│ ".to_string(), styles.quote, DocsSemanticKind::QuoteMarker);
+        runs.extend(docs_runs_from_inline(&inline_runs, styles, styles.quote, DocsSemanticKind::QuoteText));
+        lines.push(runs);
+      },
+      DocsBlock::CodeFence { language, lines: code_lines } => {
+        lines.extend(highlighted_code_block_lines(&code_lines, styles, editor, language.as_deref()));
+      },
+      DocsBlock::Rule => {
+        lines.push(vec![DocsStyledRun {
+          text: "───".to_string(),
+          style: styles.rule,
+          kind: DocsSemanticKind::Rule,
+        }]);
+      },
+      DocsBlock::BlankLine => lines.push(Vec::new()),
+    }
+  }
+  if lines.is_empty() {
+    lines.push(Vec::new());
+  }
+  lines
+}
+
+fn flatten_docs_runs(markdown: &str, editor: &SwiftEditor) -> Vec<DocsStyledRun> {
+  let base_style = editor.ui_theme.try_get("ui.text").unwrap_or_default();
+  let styles = docs_panel_styles(&editor.ui_theme, base_style);
+  let lines = docs_markdown_lines(markdown, &styles, editor);
+  let total_lines = lines.len();
+  let mut runs = Vec::new();
+  for (index, line) in lines.into_iter().enumerate() {
+    runs.extend(line);
+    if index + 1 < total_lines {
+      push_docs_run(&mut runs, "\n".to_string(), styles.base, DocsSemanticKind::Body);
+    }
+  }
+  runs
+}
+
+fn docs_run_kind_code(kind: DocsSemanticKind) -> u8 {
+  match kind {
+    DocsSemanticKind::Body => 0,
+    DocsSemanticKind::Heading1 => 1,
+    DocsSemanticKind::Heading2 => 2,
+    DocsSemanticKind::Heading3 => 3,
+    DocsSemanticKind::Heading4 => 4,
+    DocsSemanticKind::Heading5 => 5,
+    DocsSemanticKind::Heading6 => 6,
+    DocsSemanticKind::ListMarker => 7,
+    DocsSemanticKind::QuoteMarker => 8,
+    DocsSemanticKind::QuoteText => 9,
+    DocsSemanticKind::Link => 10,
+    DocsSemanticKind::InlineCode => 11,
+    DocsSemanticKind::Code => 12,
+    DocsSemanticKind::ActiveParameter => 13,
+    DocsSemanticKind::Rule => 14,
+  }
+}
+
+fn active_docs_cursor_position(plan: &RenderPlan) -> Option<(u16, u16)> {
+  plan.cursors.first().map(|cursor| {
+    (
+      plan.content_offset_x.saturating_add(cursor.pos.col as u16),
+      cursor.pos.row as u16,
+    )
+  })
+}
+
+fn docs_panel_record(
+  viewport_width: u16,
+  viewport_height: u16,
+  cursor: Option<(u16, u16)>,
+  panel_width: u16,
+  panel_height: u16,
+  signature: bool,
+) -> the_editor_snapshot_docs_panel_t {
+  let area = the_default::OverlayRect::new(0, 0, viewport_width, viewport_height);
+  let rect = if signature {
+    signature_help_panel_rect(area, panel_width, panel_height, cursor)
+  } else {
+    completion_panel_rect(area, panel_width, panel_height, cursor)
+  };
+  the_editor_snapshot_docs_panel_t {
+    is_open: true,
+    col: rect.x,
+    row: rect.y,
+    width: rect.width,
+    height: rect.height,
+    run_count: 0,
+  }
 }
 
 fn active_file_watch_latency() -> Duration {
@@ -4090,6 +4911,30 @@ pub unsafe extern "C" fn the_editor_snapshot_command_palette_item_at(snapshot: *
 pub unsafe extern "C" fn the_editor_snapshot_input_prompt(snapshot: *const the_editor_snapshot_t) -> the_editor_snapshot_input_prompt_t {
   let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_input_prompt_t::default(); };
   snapshot.snapshot.input_prompt.prompt
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_snapshot_hover_docs_panel(snapshot: *const the_editor_snapshot_t) -> the_editor_snapshot_docs_panel_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_docs_panel_t::default(); };
+  snapshot.snapshot.hover_docs.panel
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_snapshot_hover_docs_run_at(snapshot: *const the_editor_snapshot_t, run_index: usize) -> the_editor_snapshot_docs_run_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_docs_run_t::default(); };
+  snapshot.snapshot.hover_docs_runs.get(run_index).map(|record| record.run).unwrap_or_default()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_snapshot_signature_help_panel(snapshot: *const the_editor_snapshot_t) -> the_editor_snapshot_docs_panel_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_docs_panel_t::default(); };
+  snapshot.snapshot.signature_help.panel
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_snapshot_signature_help_run_at(snapshot: *const the_editor_snapshot_t, run_index: usize) -> the_editor_snapshot_docs_run_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_docs_run_t::default(); };
+  snapshot.snapshot.signature_help_runs.get(run_index).map(|record| record.run).unwrap_or_default()
 }
 
 #[unsafe(no_mangle)]

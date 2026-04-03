@@ -243,6 +243,7 @@ typedef struct the_editor_snapshot_file_picker_t {
   uint8_t preview_navigation_mode;
   uint8_t preview_kind;
   uintptr_t preview_total_rows;
+  uintptr_t preview_offset;
   uintptr_t preview_window_start;
   uintptr_t preview_window_count;
 } the_editor_snapshot_file_picker_t;

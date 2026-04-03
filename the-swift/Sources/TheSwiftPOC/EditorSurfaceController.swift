@@ -141,7 +141,7 @@ final class EditorSurfaceController: ObservableObject {
 
     func setFilePickerPreviewOffset(_ offset: Int) {
         let normalized = max(offset, 0)
-        guard normalized != filePicker.previewWindowStart else { return }
+        guard normalized != filePicker.previewOffset else { return }
         guard EditorFFIBridge.setFilePickerPreviewOffset(handle?.raw, offset: normalized, visibleRows: filePickerPreviewVisibleRows) else { return }
         refreshSnapshot()
     }

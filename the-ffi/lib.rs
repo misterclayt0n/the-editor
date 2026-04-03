@@ -322,6 +322,7 @@ pub struct the_editor_snapshot_file_picker_t {
   pub preview_navigation_mode: u8,
   pub preview_kind:            u8,
   pub preview_total_rows:      usize,
+  pub preview_offset:          usize,
   pub preview_window_start:    usize,
   pub preview_window_count:    usize,
 }
@@ -1863,6 +1864,7 @@ impl OwnedSnapshot {
         preview_navigation_mode: file_picker_preview_navigation_code(preview_window.navigation_mode),
         preview_kind: file_picker_preview_kind_code(preview_window.kind),
         preview_total_rows: preview_window.total_virtual_rows,
+        preview_offset: picker.preview_scroll,
         preview_window_start: preview_window.window_start,
         preview_window_count: if let Some(vcs_diff) = &preview_window.vcs_diff {
           vcs_diff.lines.len()

@@ -254,7 +254,7 @@ struct EditorFilePickerView: View {
 
             NativeVerticalOffsetScrollView(
                 rowHeight: previewRowHeight,
-                offset: controller.filePicker.previewWindowStart,
+                offset: controller.filePicker.previewOffset,
                 onOffsetChange: controller.setFilePickerPreviewOffset
             ) {
                 VStack(alignment: .leading, spacing: 0) {
@@ -321,8 +321,8 @@ struct EditorFilePickerView: View {
     private var previewVisibleSummary: String {
         let state = controller.filePicker
         guard state.previewTotalRows > 0 else { return previewSummary }
-        let start = state.previewWindowStart + 1
-        let end = state.previewWindowStart + state.previewLines.count
+        let start = state.previewOffset + 1
+        let end = min(state.previewOffset + state.previewLines.count, state.previewTotalRows)
         return "Lines \(start)–\(end) of \(state.previewTotalRows)"
     }
 
@@ -472,39 +472,44 @@ private struct EditorFilePickerPreviewLineView: View {
                 Text("\(lineNumber)")
                     .font(.system(size: 11, weight: .regular, design: .monospaced))
                     .foregroundStyle(.secondary)
-                    .frame(width: 46, alignment: .trailing)
-                    .padding(.trailing, 12)
+                    .frame(width: 32, alignment: .trailing)
+                    .padding(.trailing, 8)
                     .textSelection(.disabled)
             } else {
-                Text(" ")
-                    .frame(width: 58)
+                Color.clear
+                    .frame(width: 40)
             }
 
-            ZStack(alignment: .leading) {
-                HStack(spacing: 0) {
-                    if let marker = line.marker, !marker.isEmpty {
-                        Text(marker)
-                            .font(.system(size: 11, weight: .medium, design: .monospaced))
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: true, vertical: false)
-                    }
-                    ForEach(Array(line.segments.enumerated()), id: \.offset) { _, segment in
-                        Text(segment.text)
-                            .font(.system(size: 11, weight: .regular, design: .monospaced))
-                            .foregroundStyle(Color(nsColor: segment.style.foregroundColor))
-                            .background(segmentBackground(for: segment))
-                            .lineLimit(1)
-                            .fixedSize(horizontal: true, vertical: false)
-                    }
-                }
-                .fixedSize(horizontal: true, vertical: false)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .clipped()
+            Text(attributedContent)
+                .font(.system(size: 11, weight: .regular, design: .monospaced))
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.horizontal, 6)
+        .padding(.horizontal, 4)
         .padding(.vertical, 1)
         .background(lineBackground)
+        .clipped()
+    }
+
+    private var attributedContent: AttributedString {
+        var attributed = AttributedString(line.marker ?? "")
+        if !attributed.characters.isEmpty {
+            attributed.foregroundColor = .secondary
+        }
+
+        for segment in line.segments {
+            var piece = AttributedString(segment.text)
+            piece.foregroundColor = Color(nsColor: segment.style.foregroundColor)
+            if segment.isMatch {
+                piece.backgroundColor = Color.accentColor.opacity(0.22)
+            } else if let background = segment.style.backgroundColor {
+                piece.backgroundColor = Color(nsColor: background).opacity(0.7)
+            }
+            attributed.append(piece)
+        }
+
+        return attributed
     }
 
     private var lineBackground: some View {
@@ -519,19 +524,6 @@ private struct EditorFilePickerPreviewLineView: View {
             default:
                 line.focused ? Color.accentColor.opacity(0.12) : Color.clear
             }
-        }
-    }
-
-    @ViewBuilder
-    private func segmentBackground(for segment: EditorFilePickerPreviewSegment) -> some View {
-        if segment.isMatch {
-            RoundedRectangle(cornerRadius: 3)
-                .fill(Color.accentColor.opacity(0.22))
-        } else if let background = segment.style.backgroundColor {
-            RoundedRectangle(cornerRadius: 3)
-                .fill(Color(nsColor: background).opacity(0.7))
-        } else {
-            Color.clear
         }
     }
 }

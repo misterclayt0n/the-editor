@@ -295,6 +295,7 @@ struct EditorFilePickerState: Hashable {
     let previewNavigationMode: EditorFilePickerPreviewNavigationMode
     let previewKind: EditorFilePickerPreviewKind
     let previewTotalRows: Int
+    let previewOffset: Int
     let previewWindowStart: Int
     let items: [EditorFilePickerItem]
     let previewLines: [EditorFilePickerPreviewLine]
@@ -314,6 +315,7 @@ struct EditorFilePickerState: Hashable {
         previewNavigationMode: .static,
         previewKind: .empty,
         previewTotalRows: 0,
+        previewOffset: 0,
         previewWindowStart: 0,
         items: [],
         previewLines: []
@@ -616,6 +618,7 @@ enum EditorFFIBridge {
             previewNavigationMode: EditorFilePickerPreviewNavigationMode(rawValue: filePickerValue.preview_navigation_mode) ?? .static,
             previewKind: EditorFilePickerPreviewKind(rawValue: filePickerValue.preview_kind) ?? .empty,
             previewTotalRows: Int(filePickerValue.preview_total_rows),
+            previewOffset: Int(filePickerValue.preview_offset),
             previewWindowStart: Int(filePickerValue.preview_window_start),
             items: filePickerItems,
             previewLines: filePickerPreviewLines

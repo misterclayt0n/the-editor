@@ -716,6 +716,12 @@ impl SurfaceConfig {
   }
 }
 
+struct VcsStatuslineRefreshResult {
+  generation: u64,
+  path:       PathBuf,
+  statusline: Option<String>,
+}
+
 struct SwiftEditor {
   editor:                        Editor,
   file_path:                     Option<PathBuf>,
@@ -760,6 +766,11 @@ struct SwiftEditor {
   render_theme_generation:       u64,
   surface:                       SurfaceConfig,
   vcs_provider:                  DiffProviderRegistry,
+  vcs_statusline:                Option<String>,
+  vcs_statusline_refresh_in_flight: bool,
+  vcs_statusline_refresh_generation: u64,
+  vcs_statusline_refresh_tx:     mpsc::Sender<VcsStatuslineRefreshResult>,
+  vcs_statusline_refresh_rx:     mpsc::Receiver<VcsStatuslineRefreshResult>,
 }
 
 impl SwiftEditor {
@@ -771,6 +782,53 @@ impl SwiftEditor {
 
   fn sync_text_viewport_width(&mut self) {
     self.text_format.viewport_width = self.content_viewport_width();
+  }
+
+  fn schedule_vcs_statusline_refresh(&mut self) {
+    let Some(path) = self.file_path.clone() else {
+      self.vcs_statusline = None;
+      self.vcs_statusline_refresh_in_flight = false;
+      return;
+    };
+
+    self.vcs_statusline = None;
+    self.vcs_statusline_refresh_generation = self.vcs_statusline_refresh_generation.wrapping_add(1);
+    self.vcs_statusline_refresh_in_flight = true;
+    let generation = self.vcs_statusline_refresh_generation;
+    let vcs_provider = self.vcs_provider.clone();
+    let tx = self.vcs_statusline_refresh_tx.clone();
+
+    std::thread::spawn(move || {
+      let statusline = vcs_provider
+        .get_statusline_info(&path)
+        .map(|info| info.statusline_text());
+      let _ = tx.send(VcsStatuslineRefreshResult {
+        generation,
+        path,
+        statusline,
+      });
+    });
+  }
+
+  fn poll_vcs_statusline_refresh_results(&mut self) {
+    loop {
+      let result = match self.vcs_statusline_refresh_rx.try_recv() {
+        Ok(result) => result,
+        Err(mpsc::TryRecvError::Empty) | Err(mpsc::TryRecvError::Disconnected) => break,
+      };
+
+      if result.generation == self.vcs_statusline_refresh_generation {
+        self.vcs_statusline_refresh_in_flight = false;
+      }
+
+      if self.file_path.as_deref() != Some(result.path.as_path())
+        || result.generation != self.vcs_statusline_refresh_generation
+      {
+        continue;
+      }
+
+      self.vcs_statusline = result.statusline;
+    }
   }
 
   fn new(path: Option<&Path>) -> Self {
@@ -807,6 +865,8 @@ impl SwiftEditor {
       eprintln!("Warning: syntax highlighting unavailable: {err}");
       err
     }).ok();
+
+    let (vcs_statusline_refresh_tx, vcs_statusline_refresh_rx) = mpsc::channel();
 
     let mut this = Self {
       editor,
@@ -855,10 +915,16 @@ impl SwiftEditor {
       render_theme_generation: 0,
       surface,
       vcs_provider: DiffProviderRegistry::default(),
+      vcs_statusline: None,
+      vcs_statusline_refresh_in_flight: false,
+      vcs_statusline_refresh_generation: 0,
+      vcs_statusline_refresh_tx,
+      vcs_statusline_refresh_rx,
     };
 
     set_file_picker_syntax_loader(&mut this.file_picker, this.loader.clone());
     this.refresh_active_document_syntax();
+    this.schedule_vcs_statusline_refresh();
     this
   }
 
@@ -876,6 +942,7 @@ impl SwiftEditor {
         self.update_workspace_for_path(path);
         self.reload_theme_catalog();
         self.refresh_active_document_syntax();
+        self.schedule_vcs_statusline_refresh();
         replaced
       },
       Err(err) => {
@@ -1362,6 +1429,7 @@ impl SwiftEditor {
   }
 
   fn build_snapshot(&mut self) -> OwnedSnapshot {
+    self.poll_vcs_statusline_refresh_results();
     let _ = self.refresh_picker_state();
     let styles = self.render_styles();
     let frame = the_default::frame_render_plan_with_styles(self, styles);
@@ -1541,10 +1609,7 @@ impl DefaultContext for SwiftEditor {
   fn scrolloff(&self) -> usize { SWIFT_SCROLLOFF }
   fn ui_theme(&self) -> &Theme { &self.ui_theme }
   fn ui_theme_name(&self) -> &str { &self.ui_theme_name }
-  fn vcs_statusline_text(&self) -> Option<String> {
-    let path = self.file_path.as_deref()?;
-    self.vcs_provider.get_statusline_info(path).map(|info| info.statusline_text())
-  }
+  fn vcs_statusline_text(&self) -> Option<String> { self.vcs_statusline.clone() }
   fn available_theme_names(&self) -> Vec<String> { self.ui_theme_catalog.names() }
   fn set_ui_theme(&mut self, theme_name: &str) -> Result<(), String> { self.set_ui_theme_named(theme_name) }
   fn set_ui_theme_preview(&mut self, theme_name: &str) -> Result<(), String> { self.set_ui_theme_preview_named(theme_name) }
@@ -1557,6 +1622,7 @@ impl DefaultContext for SwiftEditor {
       self.reload_theme_catalog();
     }
     self.refresh_active_document_syntax();
+    self.schedule_vcs_statusline_refresh();
   }
   fn open_file(&mut self, path: &Path) -> std::io::Result<()> {
     let contents = fs::read_to_string(path)?;
@@ -1567,6 +1633,7 @@ impl DefaultContext for SwiftEditor {
     self.update_workspace_for_path(path);
     self.reload_theme_catalog();
     self.refresh_active_document_syntax();
+    self.schedule_vcs_statusline_refresh();
     Ok(())
   }
 }

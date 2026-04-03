@@ -18,90 +18,11 @@ struct EditorChromeView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            EditorDocumentHeaderView(chrome: controller.chrome)
             EditorSurfaceRepresentable(controller: controller)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             EditorStatusAccessoryView(chrome: controller.chrome, mode: controller.currentMode)
         }
-    }
-}
-
-private struct EditorDocumentHeaderView: View {
-    let chrome: EditorChromeModel
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: symbolName(for: chrome.document.icon, isDirectory: false))
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(.secondary)
-                .frame(width: 18)
-
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 7) {
-                    Text(chrome.document.name)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.primary)
-                        .lineLimit(1)
-
-                    if chrome.document.isModified {
-                        Circle()
-                            .fill(Color.orange)
-                            .frame(width: 7, height: 7)
-                            .accessibilityLabel("Modified")
-                    }
-
-                    if chrome.document.isReadonly {
-                        Image(systemName: "lock.fill")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                            .accessibilityLabel("Read only")
-                    }
-                }
-
-                HStack(spacing: 8) {
-                    if let pathText = pathText {
-                        Text(pathText)
-                            .font(.system(size: 11, weight: .regular))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    } else {
-                        Text("Unsaved buffer")
-                            .font(.system(size: 11, weight: .regular))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-                }
-            }
-
-            Spacer(minLength: 12)
-
-            HStack(spacing: 8) {
-                if let vcsText = chrome.document.vcsText, !vcsText.isEmpty {
-                    HeaderCapsuleLabel(text: vcsText, systemImage: "point.topleft.down.curvedto.point.bottomright.up")
-                }
-                if chrome.document.isReadonly {
-                    HeaderCapsuleLabel(text: "Read Only", systemImage: "lock.fill")
-                }
-            }
-        }
-        .padding(.horizontal, 14)
-        .frame(height: 38)
-        .background(Color(nsColor: chromeBackgroundColor(base: chrome.backgroundColor)))
-        .overlay(alignment: .bottom) {
-            Divider()
-        }
-        .accessibilityElement(children: .combine)
-    }
-
-    private var pathText: String? {
-        if let relativePath = chrome.document.relativePath, !relativePath.isEmpty {
-            return relativePath
-        }
-        if let absolutePath = chrome.document.absolutePath, !absolutePath.isEmpty {
-            return absolutePath
-        }
-        return nil
+        .background(EditorWindowChromeAccessor(chrome: controller.chrome))
     }
 }
 
@@ -126,13 +47,6 @@ private struct EditorStatusAccessoryView: View {
     var body: some View {
         HStack(spacing: 12) {
             ModePill(mode: mode)
-
-            if let leadingText = chrome.statusBar.leadingText, !leadingText.isEmpty {
-                Text(leadingText)
-                    .font(.system(size: 11, weight: .regular))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
 
             Spacer(minLength: 12)
 
@@ -280,20 +194,43 @@ private struct ModePill: View {
     }
 }
 
-private struct HeaderCapsuleLabel: View {
-    let text: String
-    let systemImage: String
+private struct EditorWindowChromeAccessor: NSViewRepresentable {
+    let chrome: EditorChromeModel
 
-    var body: some View {
-        Label(text, systemImage: systemImage)
-            .font(.system(size: 11, weight: .medium))
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(
-                Capsule(style: .continuous)
-                    .fill(Color.secondary.opacity(0.10))
-            )
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        view.isHidden = true
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        DispatchQueue.main.async {
+            guard let window = nsView.window else { return }
+            configure(window: window)
+        }
+    }
+
+    private func configure(window: NSWindow) {
+        window.titleVisibility = .visible
+        window.isDocumentEdited = chrome.document.isModified
+
+        let title = windowTitle
+        if window.title != title {
+            window.title = title
+        }
+
+        if let absolutePath = chrome.document.absolutePath, !absolutePath.isEmpty {
+            window.representedURL = URL(fileURLWithPath: absolutePath)
+        } else {
+            window.representedURL = nil
+        }
+    }
+
+    private var windowTitle: String {
+        if let relativePath = chrome.document.relativePath, !relativePath.isEmpty {
+            return "\(relativePath)/\(chrome.document.name)"
+        }
+        return chrome.document.name
     }
 }
 

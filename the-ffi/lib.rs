@@ -1661,9 +1661,6 @@ impl OwnedSnapshot {
       cursor_text_idx: Some(snapshot.push_string(&cursor_text)),
     };
     for segment in status_segments {
-      if matches!(segment.icon.as_deref(), Some("git_branch")) {
-        continue;
-      }
       let text_idx = snapshot.push_string(segment.text.as_str());
       let icon_idx = snapshot.push_optional_string(segment.icon.as_deref());
       snapshot.status_items.push(StatusItemRecord {

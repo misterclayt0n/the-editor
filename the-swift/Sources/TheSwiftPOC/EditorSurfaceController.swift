@@ -23,12 +23,14 @@ final class EditorSurfaceController: ObservableObject {
     @Published private(set) var currentMode: EditorMode = .normal
     @Published private(set) var commandPalette: EditorCommandPaletteState = .empty
     @Published private(set) var filePicker: EditorFilePickerState = .empty
+    @Published private(set) var showsResizeOverlay = false
 
     private var surfaceConfiguration: EditorSurfaceConfiguration?
     private var markedText: String = ""
     private var pickerPollCancellable: AnyCancellable?
     private var filePickerListVisibleRows: Int = 1
     private var filePickerPreviewVisibleRows: Int = 1
+    private var resizeOverlayHideTask: Task<Void, Never>?
 
     init(initialPath: String?) {
         self.handle = EditorFFIBridge.createHandle(initialPath: initialPath).map(EditorHandleBox.init(raw:))
@@ -36,15 +38,18 @@ final class EditorSurfaceController: ObservableObject {
     }
 
     deinit {
+        resizeOverlayHideTask?.cancel()
         EditorFFIBridge.destroyHandle(handle?.raw)
     }
 
-    func configureSurface(size: CGSize, backingScale: CGFloat, fontMetrics: EditorFontMetrics) {
+    @discardableResult
+    func configureSurface(size: CGSize, backingScale: CGFloat, fontMetrics: EditorFontMetrics) -> Bool {
         let configuration = fontMetrics.surfaceConfiguration(viewSize: size, backingScale: backingScale)
-        guard configuration != surfaceConfiguration else { return }
+        guard configuration != surfaceConfiguration else { return false }
         surfaceConfiguration = configuration
-        guard EditorFFIBridge.configureSurface(handle?.raw, configuration: configuration) else { return }
+        guard EditorFFIBridge.configureSurface(handle?.raw, configuration: configuration) else { return false }
         refreshSnapshot()
+        return true
     }
 
     func setScrollRow(_ row: Int) {
@@ -226,6 +231,22 @@ final class EditorSurfaceController: ObservableObject {
 
     func primarySelectionText() -> String {
         EditorFFIBridge.primarySelectionText(handle?.raw)
+    }
+
+    func beginLiveResize() {
+        resizeOverlayHideTask?.cancel()
+        if !showsResizeOverlay {
+            showsResizeOverlay = true
+        }
+    }
+
+    func endLiveResize() {
+        resizeOverlayHideTask?.cancel()
+        resizeOverlayHideTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(650))
+            guard let self else { return }
+            self.showsResizeOverlay = false
+        }
     }
 
     func refreshSnapshot() {

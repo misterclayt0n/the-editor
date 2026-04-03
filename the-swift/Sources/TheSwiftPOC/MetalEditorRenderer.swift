@@ -44,8 +44,10 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
         view.enableSetNeedsDisplay = true
         view.isPaused = true
         view.framebufferOnly = false
+        view.autoResizeDrawable = false
         view.colorPixelFormat = .bgra8Unorm
         view.clearColor = MTLClearColorMake(0.12, 0.12, 0.12, 1)
+        view.layerContentsRedrawPolicy = .duringViewResize
         self.view = view
         super.init()
         view.delegate = self
@@ -69,6 +71,10 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
         } else {
             view.setNeedsDisplay(view.bounds)
         }
+    }
+
+    func drawImmediately() {
+        view.draw()
     }
 
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}

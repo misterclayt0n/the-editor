@@ -136,11 +136,29 @@ final class EditorSurfaceScrollView: NSView, EditorSurfaceControllerDelegate {
         synchronizeSurfaceFrame()
     }
 
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if let scene = controller.scene {
+            updateWindowResizeIncrements(scene)
+        }
+    }
+
+    override func viewWillStartLiveResize() {
+        super.viewWillStartLiveResize()
+        controller.beginLiveResize()
+    }
+
+    override func viewDidEndLiveResize() {
+        super.viewDidEndLiveResize()
+        controller.endLiveResize()
+    }
+
     func editorController(_ controller: EditorSurfaceController, didUpdateScene scene: EditorRenderScene) {
         updateDocumentMetrics(scene)
         synchronizeScrollPosition(scene)
         surfaceView.update(scene: scene)
         synchronizeSurfaceFrame()
+        updateWindowResizeIncrements(scene)
     }
 
     private func updateDocumentMetrics(_ scene: EditorRenderScene) {
@@ -174,6 +192,15 @@ final class EditorSurfaceScrollView: NSView, EditorSurfaceControllerDelegate {
     private func handleScrollerStyleChange() {
         scrollView.scrollerStyle = .overlay
         updateTrackingAreas()
+    }
+
+    private func updateWindowResizeIncrements(_ scene: EditorRenderScene) {
+        guard let window else { return }
+        let cellSize = scene.info.surfaceMetrics.cellSizePoints
+        guard cellSize.width > 0, cellSize.height > 0 else { return }
+        if window.contentResizeIncrements != cellSize {
+            window.contentResizeIncrements = cellSize
+        }
     }
 
     private func sendScrollRowIfNeeded() {

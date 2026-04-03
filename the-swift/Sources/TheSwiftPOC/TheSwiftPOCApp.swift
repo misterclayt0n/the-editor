@@ -49,7 +49,6 @@ struct TheSwiftPOCApp: App {
                 .frame(minWidth: 900, minHeight: 600)
         }
         .defaultSize(width: 900, height: 600)
-        .windowResizability(.contentSize)
         .commands {
             EditorCommandMenu(controller: model.controller)
         }
@@ -62,8 +61,39 @@ private struct EditorContainerView: View {
     var body: some View {
         ZStack {
             RustEditorRepresentable(controller: controller)
+            EditorResizeOverlayView(controller: controller)
             EditorCommandPaletteView(controller: controller)
             EditorFilePickerView(controller: controller)
         }
+    }
+}
+
+private struct EditorResizeOverlayView: View {
+    @ObservedObject var controller: EditorSurfaceController
+
+    private var sizeLabel: String? {
+        guard controller.showsResizeOverlay, let scene = controller.scene else { return nil }
+        return "\(scene.info.viewportWidth) × \(scene.info.viewportHeight)"
+    }
+
+    var body: some View {
+        Group {
+            if let sizeLabel {
+                Text(sizeLabel)
+                    .font(.system(size: 13, weight: .medium, design: .rounded))
+                    .foregroundStyle(.primary)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(.regularMaterial)
+                            .shadow(color: .black.opacity(0.18), radius: 10, y: 4)
+                    )
+                    .allowsHitTesting(false)
+                    .transition(.opacity)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+        .animation(.easeOut(duration: 0.15), value: sizeLabel)
     }
 }

@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import MetalKit
+import QuartzCore
 import TheEditorFFI
 
 @MainActor
@@ -45,24 +46,41 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
 
     override func layout() {
         super.layout()
-        renderer.view.frame = bounds
-        let backingBounds = convertToBacking(bounds)
-        renderer.view.drawableSize = backingBounds.size
+        applyRendererGeometry()
         synchronizeSurfaceConfiguration()
     }
 
     override func viewDidChangeBackingProperties() {
         super.viewDidChangeBackingProperties()
-        synchronizeSurfaceConfiguration()
+        applyRendererGeometry()
+        synchronizeSurfaceConfiguration(forceDraw: true)
     }
 
-    private func synchronizeSurfaceConfiguration() {
+    private func applyRendererGeometry() {
+        let backingScale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1
+        let backingBounds = convertToBacking(bounds)
+
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        renderer.view.frame = bounds
+        renderer.view.drawableSize = backingBounds.size
+        layer?.contentsScale = backingScale
+        renderer.view.layer?.contentsScale = backingScale
+        renderer.view.layer?.contentsGravity = .topLeft
+        CATransaction.commit()
+    }
+
+    private func synchronizeSurfaceConfiguration(forceDraw: Bool = false) {
         guard let controller else { return }
-        controller.configureSurface(
+        let backingScale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1
+        let changed = controller.configureSurface(
             size: bounds.size,
-            backingScale: window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1,
+            backingScale: backingScale,
             fontMetrics: fontMetrics
         )
+        if changed || forceDraw || window?.inLiveResize == true {
+            renderer.drawImmediately()
+        }
     }
 
     func update(scene: EditorRenderScene) {

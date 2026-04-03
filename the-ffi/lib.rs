@@ -13,7 +13,10 @@ use std::{
     PathBuf,
   },
   ptr,
-  sync::mpsc,
+  sync::{
+    Arc,
+    mpsc,
+  },
   time::Instant,
 };
 
@@ -76,6 +79,7 @@ use the_lib::{
     RenderPlan,
     RenderSelectionKind,
     RenderStyles,
+    SyntaxHighlightAdapter,
     base_render_layer_row_hashes,
     build_plan,
     finish_render_generations,
@@ -100,6 +104,11 @@ use the_lib::{
     },
   },
   selection::CursorPick,
+  syntax::{
+    HighlightCache,
+    Loader,
+    Syntax,
+  },
   view::ViewState,
 };
 use unicode_segmentation::UnicodeSegmentation;
@@ -538,6 +547,8 @@ struct SwiftEditor {
   text_format:                   TextFormat,
   soft_wrap_enabled:             bool,
   gutter_config:                 the_lib::render::GutterConfig,
+  loader:                        Option<Arc<Loader>>,
+  highlight_cache:               HighlightCache,
   ui_theme_catalog:              ThemeCatalog,
   ui_theme_name:                 String,
   ui_theme_base:                 Theme,
@@ -591,8 +602,12 @@ impl SwiftEditor {
     text_format.viewport_width = viewport.width;
     let ui_theme_catalog = ThemeCatalog::load(Some(&workspace_root));
     let (ui_theme_name, ui_theme) = select_ui_theme(&ui_theme_catalog);
+    let loader = init_loader(&ui_theme).map(Arc::new).map_err(|err| {
+      eprintln!("Warning: syntax highlighting unavailable: {err}");
+      err
+    }).ok();
 
-    Self {
+    let mut this = Self {
       editor,
       file_path: path.map(Path::to_path_buf),
       workspace_root: workspace_root.clone(),
@@ -626,6 +641,8 @@ impl SwiftEditor {
       text_format,
       soft_wrap_enabled: false,
       gutter_config: the_lib::render::GutterConfig::default(),
+      loader,
+      highlight_cache: HighlightCache::default(),
       ui_theme_catalog,
       ui_theme_name: ui_theme_name.clone(),
       ui_theme_base: ui_theme.clone(),
@@ -635,7 +652,10 @@ impl SwiftEditor {
       frame_generation_state: FrameGenerationState::default(),
       render_theme_generation: 0,
       surface,
-    }
+    };
+
+    this.refresh_active_document_syntax();
+    this
   }
 
   fn open_path(&mut self, path: &Path) -> bool {
@@ -655,6 +675,7 @@ impl SwiftEditor {
           .unwrap_or_else(default_workspace_root);
         self.working_directory.current = Some(self.workspace_root.clone());
         self.reload_theme_catalog();
+        self.refresh_active_document_syntax();
         replaced
       },
       Err(err) => {
@@ -892,8 +913,29 @@ impl SwiftEditor {
     submitted
   }
 
+  fn refresh_active_document_syntax(&mut self) {
+    self.highlight_cache.clear();
+    let Some(loader) = self.loader.clone() else {
+      self.editor.document_mut().clear_syntax();
+      return;
+    };
+    let Some(path) = self.file_path.clone() else {
+      self.editor.document_mut().clear_syntax();
+      return;
+    };
+    let doc = self.editor.document_mut();
+    if let Err(err) = setup_syntax(doc, &path, &loader) {
+      command_palette_debug_log(format!("syntax setup skipped for {}: {}", path.display(), err));
+      doc.clear_syntax();
+    }
+  }
+
   fn apply_effective_theme(&mut self, theme: Theme) {
     self.ui_theme = theme;
+    if let Some(loader) = &self.loader {
+      loader.set_scopes(self.ui_theme.scopes().to_vec());
+    }
+    self.highlight_cache.clear();
     self.render_theme_generation = self.render_theme_generation.wrapping_add(1);
   }
 
@@ -1070,6 +1112,19 @@ impl DefaultContext for SwiftEditor {
     let (tx, _rx) = mpsc::channel();
     the_default::RenderWaker::new(tx)
   }
+  fn apply_transaction(&mut self, transaction: &the_lib::transaction::Transaction) -> bool {
+    if self
+      .editor
+      .apply_transaction_to_active_buffer(transaction, self.loader.as_deref())
+      .is_err()
+    {
+      return false;
+    }
+    if !transaction.changes().is_empty() {
+      self.highlight_cache.clear();
+    }
+    true
+  }
   fn messages(&self) -> &MessageCenter { &self.messages }
   fn messages_mut(&mut self) -> &mut MessageCenter { &mut self.messages }
   fn build_render_plan(&mut self) -> RenderPlan {
@@ -1080,18 +1135,43 @@ impl DefaultContext for SwiftEditor {
     let mut text_format = self.text_format.clone();
     text_format.viewport_width = self.content_viewport_width();
     let mut annotations = TextAnnotations::default();
-    let mut highlights = NoHighlights;
+    let loader = self.loader.clone();
+    let line_range = view.scroll.row..(view.scroll.row + view.viewport.height as usize);
     let (document, cache) = self.editor.document_and_cache();
-    let mut plan = build_plan(
-      document,
-      view,
-      &text_format,
-      &self.gutter_config,
-      &mut annotations,
-      &mut highlights,
-      cache,
-      styles,
-    );
+    let mut plan = if let (Some(loader), Some(syntax)) = (loader.as_deref(), document.syntax()) {
+      let mut adapter = SyntaxHighlightAdapter::new(
+        document.text().slice(..),
+        syntax,
+        loader,
+        &mut self.highlight_cache,
+        line_range,
+        document.version(),
+        document.syntax_version(),
+        true,
+      );
+      build_plan(
+        document,
+        view,
+        &text_format,
+        &self.gutter_config,
+        &mut annotations,
+        &mut adapter,
+        cache,
+        styles,
+      )
+    } else {
+      let mut highlights = NoHighlights;
+      build_plan(
+        document,
+        view,
+        &text_format,
+        &self.gutter_config,
+        &mut annotations,
+        &mut highlights,
+        cache,
+        styles,
+      )
+    };
     let row_hashes = base_render_layer_row_hashes(&plan);
     let generation_state = finish_render_generations(
       &mut plan,
@@ -1166,7 +1246,7 @@ impl DefaultContext for SwiftEditor {
   fn gutter_config(&self) -> &the_lib::render::GutterConfig { &self.gutter_config }
   fn gutter_config_mut(&mut self) -> &mut the_lib::render::GutterConfig { &mut self.gutter_config }
   fn text_annotations(&self) -> TextAnnotations<'_> { TextAnnotations::default() }
-  fn syntax_loader(&self) -> Option<&the_lib::syntax::Loader> { None }
+  fn syntax_loader(&self) -> Option<&the_lib::syntax::Loader> { self.loader.as_deref() }
   fn scrolloff(&self) -> usize { SWIFT_SCROLLOFF }
   fn ui_theme(&self) -> &Theme { &self.ui_theme }
   fn ui_theme_name(&self) -> &str { &self.ui_theme_name }
@@ -1182,6 +1262,7 @@ impl DefaultContext for SwiftEditor {
       self.working_directory.current = Some(self.workspace_root.clone());
       self.reload_theme_catalog();
     }
+    self.refresh_active_document_syntax();
   }
   fn open_file(&mut self, path: &Path) -> std::io::Result<()> {
     let contents = fs::read_to_string(path)?;
@@ -1192,6 +1273,7 @@ impl DefaultContext for SwiftEditor {
     self.workspace_root = path.parent().map(Path::to_path_buf).unwrap_or_else(default_workspace_root);
     self.working_directory.current = Some(self.workspace_root.clone());
     self.reload_theme_catalog();
+    self.refresh_active_document_syntax();
     Ok(())
   }
 }
@@ -1741,6 +1823,29 @@ fn indexed_color(index: u8) -> (u8, u8, u8) {
     if g == 0 { 0 } else { g * 40 + 55 },
     if b == 0 { 0 } else { b * 40 + 55 },
   )
+}
+
+fn init_loader(theme: &Theme) -> Result<Loader, String> {
+  use the_lib::syntax::{
+    config::Configuration,
+    runtime_loader::RuntimeLoader,
+  };
+  use the_loader::config::user_lang_config;
+
+  let config_value = user_lang_config().map_err(|err| err.to_string())?;
+  let config: Configuration = config_value.try_into().map_err(|err| err.to_string())?;
+  let loader = Loader::new(config, RuntimeLoader::new()).map_err(|err| err.to_string())?;
+  loader.set_scopes(theme.scopes().iter().cloned().collect());
+  Ok(loader)
+}
+
+fn setup_syntax(doc: &mut Document, path: &Path, loader: &Arc<Loader>) -> Result<(), String> {
+  let lang = loader
+    .language_for_filename(path)
+    .ok_or_else(|| format!("unknown language for {}", path.display()))?;
+  let syntax = Syntax::new(doc.text().slice(..), lang, loader.as_ref()).map_err(|err| err.to_string())?;
+  doc.set_syntax_with_loader(syntax, loader.clone());
+  Ok(())
 }
 
 fn theme_background_rgba(theme: &Theme) -> the_editor_rgba_t {

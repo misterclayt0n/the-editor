@@ -6,6 +6,7 @@ private let docsStyleItalic: UInt16 = 1 << 2
 private let docsPanelHorizontalInset: CGFloat = 20
 private let docsPanelVerticalInset: CGFloat = 16
 private let docsPanelEdgePadding: CGFloat = 8
+private let signaturePanelCursorGap: CGFloat = 6
 
 private enum EditorDocsPanelKind {
     case hover
@@ -233,13 +234,14 @@ private struct EditorDocsPanelOverlay: View {
         }
 
         let cellHeight = scene.info.surfaceMetrics.cellSizePoints.height
-        let cursorY = CGFloat(cursor.row) * cellHeight
+        let cursorTopY = CGFloat(cursor.row) * cellHeight
+        let cursorBottomY = cursorTopY + cellHeight
         let exportedBottom = baseOriginY + exportedHeight
-        let isAboveCursor = exportedBottom <= cursorY + cellHeight
+        let isAboveCursor = exportedBottom <= cursorBottomY
         if isAboveCursor {
-            return baseOriginY + exportedHeight - fittedHeight
+            return baseOriginY + exportedHeight - fittedHeight - signaturePanelCursorGap
         }
-        return baseOriginY
+        return baseOriginY + signaturePanelCursorGap
     }
 
     private func clamp(_ value: CGFloat, lower: CGFloat, upper: CGFloat) -> CGFloat {

@@ -8,14 +8,17 @@ private let docsPanelVerticalInset: CGFloat = 16
 private let docsPanelEdgePadding: CGFloat = 8
 private let signaturePanelCursorGap: CGFloat = 6
 
-private enum EditorDocsPanelKind {
+enum EditorDocsPanelKind {
     case hover
+    case completionDocs
     case signatureHelp
 
     var accessibilityLabel: String {
         switch self {
         case .hover:
             return "Hover"
+        case .completionDocs:
+            return "Completion Documentation"
         case .signatureHelp:
             return "Signature Help"
         }
@@ -23,7 +26,7 @@ private enum EditorDocsPanelKind {
 
     var minimumSize: CGSize {
         switch self {
-        case .hover:
+        case .hover, .completionDocs:
             return CGSize(width: 240, height: 84)
         case .signatureHelp:
             return CGSize(width: 220, height: 54)
@@ -32,7 +35,7 @@ private enum EditorDocsPanelKind {
 
     var maximumSize: CGSize {
         switch self {
-        case .hover:
+        case .hover, .completionDocs:
             return CGSize(width: 460, height: 280)
         case .signatureHelp:
             return CGSize(width: 400, height: 180)
@@ -46,7 +49,7 @@ struct EditorDocsPanelsView: View {
     var body: some View {
         GeometryReader { geometry in
             ZStack(alignment: .topLeading) {
-                if let scene = controller.scene {
+                if let scene = controller.scene, !controller.completionMenu.isOpen {
                     if controller.signatureHelp.isOpen {
                         EditorDocsPanelOverlay(
                             kind: .signatureHelp,
@@ -76,7 +79,7 @@ struct EditorDocsPanelsView: View {
     }
 }
 
-private struct EditorDocsPanelOverlay: View {
+struct EditorDocsPanelOverlay: View {
     let kind: EditorDocsPanelKind
     let panel: EditorDocsPanelState
     let scene: EditorRenderScene
@@ -85,22 +88,13 @@ private struct EditorDocsPanelOverlay: View {
 
     var body: some View {
         if panel.isOpen, panel.width > 0, panel.height > 0 {
-            EditorSelectableDocsTextView(
-                attributedText: attributedText,
-                backgroundColor: backgroundColor,
-                onEscape: onEscape
-            )
-            .frame(width: fittedFrame.width, height: fittedFrame.height)
-            .background(
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .fill(Color(nsColor: backgroundColor))
-            )
-            .overlay {
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .strokeBorder(Color.primary.opacity(0.10), lineWidth: 1)
+            EditorPopoverPanel(frame: fittedFrame, backgroundColor: backgroundColor) {
+                EditorSelectableDocsTextView(
+                    attributedText: attributedText,
+                    backgroundColor: backgroundColor,
+                    onEscape: onEscape
+                )
             }
-            .shadow(color: .black.opacity(0.14), radius: 8, y: 3)
-            .offset(x: fittedFrame.minX, y: fittedFrame.minY)
             .transition(.opacity)
             .accessibilityLabel(kind.accessibilityLabel)
         }

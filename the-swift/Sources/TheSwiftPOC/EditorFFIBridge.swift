@@ -257,6 +257,38 @@ struct EditorDocsPanelState: Hashable {
     )
 }
 
+struct EditorCompletionMenuItem: Hashable, Identifiable {
+    let index: Int
+    let title: String
+    let subtitle: String?
+    let leadingIcon: String?
+    let leadingColor: EditorRGBA?
+
+    var id: Int { index }
+}
+
+struct EditorCompletionMenuState: Hashable {
+    let isOpen: Bool
+    let col: Int
+    let row: Int
+    let width: Int
+    let height: Int
+    let selectedIndex: Int?
+    let scrollOffset: Int
+    let items: [EditorCompletionMenuItem]
+
+    static let empty = EditorCompletionMenuState(
+        isOpen: false,
+        col: 0,
+        row: 0,
+        width: 0,
+        height: 0,
+        selectedIndex: nil,
+        scrollOffset: 0,
+        items: []
+    )
+}
+
 struct EditorCommandPaletteItem: Hashable {
     let title: String
     let subtitle: String?
@@ -463,8 +495,10 @@ struct EditorSnapshot {
     let selections: [EditorSnapshotSelection]
     let overlays: [EditorSnapshotOverlay]
     let commandPalette: EditorCommandPaletteState
+    let completionMenu: EditorCompletionMenuState
     let inputPrompt: EditorInputPromptState
     let hoverDocs: EditorDocsPanelState
+    let completionDocs: EditorDocsPanelState
     let signatureHelp: EditorDocsPanelState
     let filePicker: EditorFilePickerState
 }
@@ -535,6 +569,24 @@ enum EditorFFIBridge {
     static func closeCommandPalette(_ handle: OpaquePointer?) -> Bool {
         guard let handle else { return false }
         return the_editor_close_command_palette(handle)
+    }
+
+    @discardableResult
+    static func closeCompletionMenu(_ handle: OpaquePointer?) -> Bool {
+        guard let handle else { return false }
+        return the_editor_close_completion_menu(handle)
+    }
+
+    @discardableResult
+    static func selectCompletionMenuIndex(_ handle: OpaquePointer?, index: Int) -> Bool {
+        guard let handle else { return false }
+        return the_editor_completion_menu_select_index(handle, UInt(index))
+    }
+
+    @discardableResult
+    static func submitCompletionMenu(_ handle: OpaquePointer?) -> Bool {
+        guard let handle else { return false }
+        return the_editor_completion_menu_submit(handle)
     }
 
     @discardableResult
@@ -776,6 +828,28 @@ enum EditorFFIBridge {
             }
         )
 
+        let completionMenuValue = the_editor_snapshot_completion_menu(rawSnapshot)
+        let completionMenuItems: [EditorCompletionMenuItem] = (0..<Int(completionMenuValue.item_count)).map { itemIndex in
+            let itemValue = the_editor_snapshot_completion_menu_item_at(rawSnapshot, UInt(itemIndex))
+            return EditorCompletionMenuItem(
+                index: itemIndex,
+                title: itemValue.title.map { String(cString: $0) } ?? "",
+                subtitle: itemValue.subtitle.map { String(cString: $0) },
+                leadingIcon: itemValue.leading_icon.map { String(cString: $0) },
+                leadingColor: rgba(from: itemValue.leading_color)
+            )
+        }
+        let completionMenu = EditorCompletionMenuState(
+            isOpen: completionMenuValue.is_open,
+            col: Int(completionMenuValue.col),
+            row: Int(completionMenuValue.row),
+            width: Int(completionMenuValue.width),
+            height: Int(completionMenuValue.height),
+            selectedIndex: completionMenuValue.selected_index >= 0 ? Int(completionMenuValue.selected_index) : nil,
+            scrollOffset: Int(completionMenuValue.scroll_offset),
+            items: completionMenuItems
+        )
+
         let inputPromptValue = the_editor_snapshot_input_prompt(rawSnapshot)
         let inputPrompt = EditorInputPromptState(
             isOpen: inputPromptValue.is_open,
@@ -802,6 +876,24 @@ enum EditorFFIBridge {
             width: Int(hoverDocsValue.width),
             height: Int(hoverDocsValue.height),
             runs: hoverDocsRuns
+        )
+
+        let completionDocsValue = the_editor_snapshot_completion_docs_panel(rawSnapshot)
+        let completionDocsRuns: [EditorDocsRun] = (0..<Int(completionDocsValue.run_count)).map { runIndex in
+            let runValue = the_editor_snapshot_completion_docs_run_at(rawSnapshot, UInt(runIndex))
+            return EditorDocsRun(
+                text: runValue.text.map { String(cString: $0) } ?? "",
+                style: style(from: runValue.style),
+                kind: EditorDocsRunKind(rawValue: runValue.kind) ?? .body
+            )
+        }
+        let completionDocs = EditorDocsPanelState(
+            isOpen: completionDocsValue.is_open,
+            col: Int(completionDocsValue.col),
+            row: Int(completionDocsValue.row),
+            width: Int(completionDocsValue.width),
+            height: Int(completionDocsValue.height),
+            runs: completionDocsRuns
         )
 
         let signatureHelpValue = the_editor_snapshot_signature_help_panel(rawSnapshot)
@@ -965,8 +1057,10 @@ enum EditorFFIBridge {
             selections: selections,
             overlays: overlays,
             commandPalette: commandPalette,
+            completionMenu: completionMenu,
             inputPrompt: inputPrompt,
             hoverDocs: hoverDocs,
+            completionDocs: completionDocs,
             signatureHelp: signatureHelp,
             filePicker: filePicker
         )

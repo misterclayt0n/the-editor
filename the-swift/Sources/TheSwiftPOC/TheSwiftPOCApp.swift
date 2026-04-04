@@ -85,6 +85,7 @@ private struct EditorContainerView: View {
             EditorChromeView(controller: controller)
             EditorResizeOverlayView(controller: controller)
             EditorDocsPanelsView(controller: controller)
+            EditorCompletionMenuView(controller: controller)
             EditorInputPromptView(controller: controller)
             EditorCommandPaletteView(controller: controller)
             EditorFilePickerView(controller: controller)

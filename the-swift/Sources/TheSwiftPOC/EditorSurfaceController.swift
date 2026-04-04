@@ -23,8 +23,10 @@ final class EditorSurfaceController: ObservableObject {
     @Published private(set) var chrome = EditorChromeModel.empty
     @Published private(set) var currentMode: EditorMode = .normal
     @Published private(set) var commandPalette: EditorCommandPaletteState = .empty
+    @Published private(set) var completionMenu: EditorCompletionMenuState = .empty
     @Published private(set) var inputPrompt: EditorInputPromptState = .empty
     @Published private(set) var hoverDocs: EditorDocsPanelState = .empty
+    @Published private(set) var completionDocs: EditorDocsPanelState = .empty
     @Published private(set) var signatureHelp: EditorDocsPanelState = .empty
     @Published private(set) var filePicker: EditorFilePickerState = .empty
     @Published private(set) var showsResizeOverlay = false
@@ -119,6 +121,23 @@ final class EditorSurfaceController: ObservableObject {
 
     func closeInputPrompt() {
         guard EditorFFIBridge.closeInputPrompt(handle?.raw) else { return }
+        refreshSnapshot()
+        focusEditor()
+    }
+
+    func closeCompletionMenu() {
+        guard EditorFFIBridge.closeCompletionMenu(handle?.raw) else { return }
+        refreshSnapshot()
+        focusEditor()
+    }
+
+    func selectCompletionMenuIndex(_ index: Int) {
+        guard EditorFFIBridge.selectCompletionMenuIndex(handle?.raw, index: index) else { return }
+        refreshSnapshot()
+    }
+
+    func submitCompletionMenu() {
+        guard EditorFFIBridge.submitCompletionMenu(handle?.raw) else { return }
         refreshSnapshot()
         focusEditor()
     }
@@ -313,8 +332,10 @@ final class EditorSurfaceController: ObservableObject {
             backgroundColor: snapshot.info.backgroundColor?.color ?? .windowBackgroundColor
         )
         commandPalette = snapshot.commandPalette
+        completionMenu = snapshot.completionMenu
         inputPrompt = snapshot.inputPrompt
         hoverDocs = snapshot.hoverDocs
+        completionDocs = snapshot.completionDocs
         signatureHelp = snapshot.signatureHelp
         filePicker = snapshot.filePicker
         commandPaletteDebugLog("refresh query=\(String(reflecting: snapshot.commandPalette.query)) selected=\(String(describing: snapshot.commandPalette.selectedIndex)) items=\(snapshot.commandPalette.items.count) isOpen=\(snapshot.commandPalette.isOpen)")

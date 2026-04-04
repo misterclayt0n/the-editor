@@ -59,9 +59,12 @@ use the_default::{
   WorkingDirectoryState,
   build_dispatch,
   build_statusline_snapshot,
+  completion_accept,
+  completion_docs_panel_rect,
   completion_panel_rect,
   builtin_completion_menu_keymaps,
   builtin_keymaps,
+  close_completion_menu,
   close_file_picker,
   file_picker_icon_name_for_path,
   command_palette_filtered_indices,
@@ -424,6 +427,28 @@ pub struct the_editor_snapshot_command_palette_item_t {
 
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
+pub struct the_editor_snapshot_completion_menu_t {
+  pub is_open:        bool,
+  pub col:            u16,
+  pub row:            u16,
+  pub width:          u16,
+  pub height:         u16,
+  pub selected_index: i32,
+  pub item_count:     usize,
+  pub scroll_offset:  usize,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct the_editor_snapshot_completion_menu_item_t {
+  pub title:         *const c_char,
+  pub subtitle:      *const c_char,
+  pub leading_icon:  *const c_char,
+  pub leading_color: the_editor_rgba_t,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
 pub struct the_editor_snapshot_input_prompt_t {
   pub is_open:     bool,
   pub kind:        u8,
@@ -652,9 +677,13 @@ struct OwnedSnapshot {
   status_items:          Vec<StatusItemRecord>,
   command_palette:       CommandPaletteRecord,
   command_palette_items: Vec<CommandPaletteItemRecord>,
+  completion_menu:       CompletionMenuRecord,
+  completion_menu_items: Vec<CompletionMenuItemRecord>,
   input_prompt:          InputPromptRecord,
   hover_docs:            DocsPanelRecord,
   hover_docs_runs:       Vec<DocsRunRecord>,
+  completion_docs:       DocsPanelRecord,
+  completion_docs_runs:  Vec<DocsRunRecord>,
   signature_help:        DocsPanelRecord,
   signature_help_runs:   Vec<DocsRunRecord>,
   file_picker:           FilePickerRecord,
@@ -711,6 +740,19 @@ struct CommandPaletteItemRecord {
   subtitle_idx:    Option<usize>,
   description_idx: Option<usize>,
   badge_idx:       Option<usize>,
+  leading_icon_idx: Option<usize>,
+}
+
+#[derive(Clone, Copy, Default)]
+struct CompletionMenuRecord {
+  menu: the_editor_snapshot_completion_menu_t,
+}
+
+#[derive(Clone, Copy, Default)]
+struct CompletionMenuItemRecord {
+  item:             the_editor_snapshot_completion_menu_item_t,
+  title_idx:        usize,
+  subtitle_idx:     Option<usize>,
   leading_icon_idx: Option<usize>,
 }
 
@@ -1016,6 +1058,44 @@ impl SwiftEditor {
 
   fn sync_text_viewport_width(&mut self) {
     self.text_format.viewport_width = self.content_viewport_width();
+  }
+
+  fn close_completion_menu_ui(&mut self) -> bool {
+    if !self.completion_menu.active {
+      return false;
+    }
+    close_completion_menu(self);
+    true
+  }
+
+  fn select_completion_menu_index(&mut self, index: usize) -> bool {
+    if !self.completion_menu.active || index >= self.completion_menu.items.len() {
+      return false;
+    }
+    if self.completion_menu.selected == Some(index) {
+      return false;
+    }
+    self.completion_menu.selected = Some(index);
+    self.completion_menu.docs_scroll = 0;
+    let visible_rows = completion_menu_visible_rows();
+    if index < self.completion_menu.scroll {
+      self.completion_menu.scroll = index;
+    } else if index >= self.completion_menu.scroll.saturating_add(visible_rows) {
+      self.completion_menu.scroll = index + 1 - visible_rows;
+    }
+    let max_scroll = self.completion_menu.items.len().saturating_sub(visible_rows);
+    self.completion_menu.scroll = self.completion_menu.scroll.min(max_scroll);
+    self.completion_selection_changed(index);
+    self.request_render();
+    true
+  }
+
+  fn submit_completion_menu_selection(&mut self) -> bool {
+    if !self.completion_menu.active || self.completion_menu.items.is_empty() {
+      return false;
+    }
+    completion_accept(self);
+    true
   }
 
   fn refresh_lsp_runtime_state(&mut self) {
@@ -2860,6 +2940,36 @@ impl OwnedSnapshot {
     }
     snapshot.command_palette.palette.item_count = snapshot.command_palette_items.len();
 
+    let completion_menu = editor.completion_menu();
+    snapshot.completion_menu = CompletionMenuRecord {
+      menu: the_editor_snapshot_completion_menu_t {
+        is_open: completion_menu.active,
+        col: 0,
+        row: 0,
+        width: 0,
+        height: 0,
+        selected_index: completion_menu.selected.map(|index| index as i32).unwrap_or(-1),
+        item_count: completion_menu.items.len(),
+        scroll_offset: completion_menu.scroll,
+      },
+    };
+    for item in &completion_menu.items {
+      let title_idx = snapshot.push_string(item.label.as_str());
+      let subtitle_idx = snapshot.push_optional_string(item.detail.as_deref());
+      let leading_icon_idx = snapshot.push_optional_string(item.kind_icon.as_deref());
+      snapshot.completion_menu_items.push(CompletionMenuItemRecord {
+        item: the_editor_snapshot_completion_menu_item_t {
+          title: ptr::null(),
+          subtitle: ptr::null(),
+          leading_icon: ptr::null(),
+          leading_color: color_to_rgba(item.kind_color, &editor.ui_theme),
+        },
+        title_idx,
+        subtitle_idx,
+        leading_icon_idx,
+      });
+    }
+
     let input_prompt = editor.search_prompt_ref();
     let input_prompt_title = input_prompt_title(input_prompt.kind).to_string();
     let input_prompt_placeholder = input_prompt_placeholder(input_prompt.kind).to_string();
@@ -2879,6 +2989,44 @@ impl OwnedSnapshot {
     };
 
     if let Some(plan) = plan {
+      if editor.completion_menu.active && !editor.completion_menu.items.is_empty() {
+        let cursor = active_docs_cursor_position(plan);
+        let visible = editor.completion_menu.items.len().min(completion_menu_visible_rows());
+        let panel_width = plan.viewport.width.saturating_mul(2).saturating_div(3).min(64).max(18);
+        let panel_height = (visible as u16).max(1);
+        let panel = completion_menu_panel_record(plan.viewport.width, plan.viewport.height, cursor, panel_width, panel_height);
+        snapshot.completion_menu.menu.col = panel.col;
+        snapshot.completion_menu.menu.row = panel.row;
+        snapshot.completion_menu.menu.width = panel.width;
+        snapshot.completion_menu.menu.height = panel.height;
+
+        if let Some(markdown) = selected_completion_docs_text(editor) {
+          let docs_width = plan.viewport.width.saturating_mul(2).saturating_div(3).min(84).max(28);
+          let docs_height = completion_docs_target_height(plan.viewport.height, panel.height);
+          if let Some(docs_panel) = completion_docs_panel_record(
+            plan.viewport.width,
+            plan.viewport.height,
+            docs_width,
+            docs_height,
+            panel,
+          ) {
+            snapshot.completion_docs.panel = docs_panel;
+            for run in flatten_docs_runs(markdown, editor) {
+              let text_idx = snapshot.push_string(&run.text);
+              snapshot.completion_docs_runs.push(DocsRunRecord {
+                run: the_editor_snapshot_docs_run_t {
+                  text: ptr::null(),
+                  style: style_to_ffi(run.style, &editor.ui_theme),
+                  kind: docs_run_kind_code(run.kind),
+                },
+                text_idx,
+              });
+            }
+            snapshot.completion_docs.panel.run_count = snapshot.completion_docs_runs.len();
+          }
+        }
+      }
+
       if let Some(markdown) = editor
         .hover_docs
         .as_deref()
@@ -2956,6 +3104,7 @@ impl OwnedSnapshot {
         }
       }
       snapshot.finalize_document_and_status_strings();
+      snapshot.finalize_completion_menu_strings();
       snapshot.finalize_input_prompt_strings();
       snapshot.finalize_docs_panel_strings();
       snapshot.finalize_file_picker_strings();
@@ -3133,6 +3282,7 @@ impl OwnedSnapshot {
       }
     }
     snapshot.finalize_document_and_status_strings();
+    snapshot.finalize_completion_menu_strings();
     snapshot.finalize_input_prompt_strings();
     snapshot.finalize_docs_panel_strings();
     snapshot.finalize_file_picker_strings();
@@ -3369,6 +3519,18 @@ impl OwnedSnapshot {
     }
   }
 
+  fn finalize_completion_menu_strings(&mut self) {
+    for item in &mut self.completion_menu_items {
+      item.item.title = self.strings[item.title_idx].as_ptr();
+      if let Some(idx) = item.subtitle_idx {
+        item.item.subtitle = self.strings[idx].as_ptr();
+      }
+      if let Some(idx) = item.leading_icon_idx {
+        item.item.leading_icon = self.strings[idx].as_ptr();
+      }
+    }
+  }
+
   fn finalize_input_prompt_strings(&mut self) {
     if let Some(title_idx) = self.input_prompt.title_idx {
       self.input_prompt.prompt.title = self.strings[title_idx].as_ptr();
@@ -3386,6 +3548,9 @@ impl OwnedSnapshot {
 
   fn finalize_docs_panel_strings(&mut self) {
     for run in &mut self.hover_docs_runs {
+      run.run.text = self.strings[run.text_idx].as_ptr();
+    }
+    for run in &mut self.completion_docs_runs {
       run.run.text = self.strings[run.text_idx].as_ptr();
     }
     for run in &mut self.signature_help_runs {
@@ -4126,6 +4291,22 @@ fn active_docs_cursor_position(plan: &RenderPlan) -> Option<(u16, u16)> {
   })
 }
 
+fn selected_completion_docs_text(editor: &SwiftEditor) -> Option<&str> {
+  editor
+    .completion_menu
+    .selected
+    .and_then(|idx| editor.completion_menu.items.get(idx))
+    .and_then(|item| item.documentation.as_deref())
+    .map(str::trim)
+    .filter(|docs| !docs.is_empty())
+}
+
+const fn completion_menu_visible_rows() -> usize { 10 }
+
+fn completion_docs_target_height(viewport_height: u16, completion_panel_height: u16) -> u16 {
+  viewport_height.min(completion_panel_height.max(8)).max(1)
+}
+
 fn docs_panel_line_width(line: &[DocsStyledRun]) -> u16 {
   line
     .iter()
@@ -4151,6 +4332,52 @@ fn docs_panel_dimensions(
   let width = widest_line.saturating_add(4).clamp(min_width, max_width);
   let height = line_count.saturating_add(2).clamp(min_height, max_height);
   (width, height)
+}
+
+fn completion_menu_panel_record(
+  viewport_width: u16,
+  viewport_height: u16,
+  cursor: Option<(u16, u16)>,
+  panel_width: u16,
+  panel_height: u16,
+) -> the_editor_snapshot_completion_menu_t {
+  let area = the_default::OverlayRect::new(0, 0, viewport_width, viewport_height);
+  let rect = completion_panel_rect(area, panel_width, panel_height, cursor);
+  the_editor_snapshot_completion_menu_t {
+    is_open: true,
+    col: rect.x,
+    row: rect.y,
+    width: rect.width,
+    height: rect.height,
+    selected_index: -1,
+    item_count: 0,
+    scroll_offset: 0,
+  }
+}
+
+fn completion_docs_panel_record(
+  viewport_width: u16,
+  viewport_height: u16,
+  panel_width: u16,
+  panel_height: u16,
+  completion_panel: the_editor_snapshot_completion_menu_t,
+) -> Option<the_editor_snapshot_docs_panel_t> {
+  let area = the_default::OverlayRect::new(0, 0, viewport_width, viewport_height);
+  let completion_rect = the_default::OverlayRect::new(
+    completion_panel.col,
+    completion_panel.row,
+    completion_panel.width,
+    completion_panel.height,
+  );
+  let rect = completion_docs_panel_rect(area, panel_width, panel_height, completion_rect)?;
+  Some(the_editor_snapshot_docs_panel_t {
+    is_open: true,
+    col: rect.x,
+    row: rect.y,
+    width: rect.width,
+    height: rect.height,
+    run_count: 0,
+  })
 }
 
 fn docs_panel_record(
@@ -4776,6 +5003,24 @@ pub unsafe extern "C" fn the_editor_command_palette_submit(handle: *mut the_edit
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_close_completion_menu(handle: *mut the_editor_handle_t) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+  handle.editor.close_completion_menu_ui()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_completion_menu_select_index(handle: *mut the_editor_handle_t, index: usize) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+  handle.editor.select_completion_menu_index(index)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_completion_menu_submit(handle: *mut the_editor_handle_t) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+  handle.editor.submit_completion_menu_selection()
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn the_editor_poll_background_tasks(handle: *mut the_editor_handle_t) -> bool {
   let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
   handle.editor.poll_background_tasks()
@@ -4967,6 +5212,18 @@ pub unsafe extern "C" fn the_editor_snapshot_command_palette_item_at(snapshot: *
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_snapshot_completion_menu(snapshot: *const the_editor_snapshot_t) -> the_editor_snapshot_completion_menu_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_completion_menu_t::default(); };
+  snapshot.snapshot.completion_menu.menu
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_snapshot_completion_menu_item_at(snapshot: *const the_editor_snapshot_t, item_index: usize) -> the_editor_snapshot_completion_menu_item_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_completion_menu_item_t::default(); };
+  snapshot.snapshot.completion_menu_items.get(item_index).map(|record| record.item).unwrap_or_default()
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn the_editor_snapshot_input_prompt(snapshot: *const the_editor_snapshot_t) -> the_editor_snapshot_input_prompt_t {
   let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_input_prompt_t::default(); };
   snapshot.snapshot.input_prompt.prompt
@@ -4982,6 +5239,18 @@ pub unsafe extern "C" fn the_editor_snapshot_hover_docs_panel(snapshot: *const t
 pub unsafe extern "C" fn the_editor_snapshot_hover_docs_run_at(snapshot: *const the_editor_snapshot_t, run_index: usize) -> the_editor_snapshot_docs_run_t {
   let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_docs_run_t::default(); };
   snapshot.snapshot.hover_docs_runs.get(run_index).map(|record| record.run).unwrap_or_default()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_snapshot_completion_docs_panel(snapshot: *const the_editor_snapshot_t) -> the_editor_snapshot_docs_panel_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_docs_panel_t::default(); };
+  snapshot.snapshot.completion_docs.panel
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_snapshot_completion_docs_run_at(snapshot: *const the_editor_snapshot_t, run_index: usize) -> the_editor_snapshot_docs_run_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_docs_run_t::default(); };
+  snapshot.snapshot.completion_docs_runs.get(run_index).map(|record| record.run).unwrap_or_default()
 }
 
 #[unsafe(no_mangle)]

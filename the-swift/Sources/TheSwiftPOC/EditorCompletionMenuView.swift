@@ -101,19 +101,20 @@ private struct EditorCompletionListPanel: View {
                 .padding(.vertical, 4)
             }
             .onAppear {
-                scrollSelection(into: proxy)
+                syncScroll(into: proxy)
             }
-            .onChange(of: completion.selectedIndex) { _, _ in
-                scrollSelection(into: proxy)
+            .onChange(of: completion.scrollOffset) { _, _ in
+                syncScroll(into: proxy)
             }
         }
         .frame(width: frameWidth)
     }
 
-    private func scrollSelection(into proxy: ScrollViewProxy) {
-        guard let selectedIndex = completion.selectedIndex else { return }
+    private func syncScroll(into proxy: ScrollViewProxy) {
+        guard !completion.items.isEmpty else { return }
+        let target = min(max(completion.scrollOffset, 0), completion.items.count - 1)
         withAnimation(.easeInOut(duration: 0.12)) {
-            proxy.scrollTo(selectedIndex, anchor: .center)
+            proxy.scrollTo(target, anchor: .top)
         }
     }
 }

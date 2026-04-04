@@ -181,6 +181,7 @@ use the_lib::{
 };
 use unicode_segmentation::UnicodeSegmentation;
 use the_lsp::{
+  LspCapability,
   LspCompletionContext,
   LspCompletionItem,
   LspCompletionItemKind,
@@ -919,6 +920,12 @@ struct LspDocumentSyncState {
   version:     i32,
 }
 
+#[derive(Debug, Clone)]
+struct PendingAutoCompletion {
+  due_at:  Instant,
+  trigger: LspCompletionContext,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LspStatusPhase {
   Off,
@@ -1034,6 +1041,7 @@ struct SwiftEditor {
   lsp_completion_items:          Vec<LspCompletionItem>,
   lsp_completion_generation:     u64,
   lsp_completion_fallback_start: Option<usize>,
+  lsp_pending_auto_completion:   Option<PendingAutoCompletion>,
   pending_input:                 Option<PendingInput>,
   registers:                     Registers,
   register:                      Option<char>,
@@ -1337,7 +1345,50 @@ impl SwiftEditor {
     start
   }
 
+  fn lsp_supports_completion(&self) -> bool {
+    self.lsp_runtimes.iter().any(|runtime| {
+      runtime.ready
+        && runtime
+          .configured_server_name()
+          .and_then(|server_name| runtime.runtime.server_capabilities(server_name))
+          .is_some_and(|capabilities| capabilities.supports(LspCapability::Completion))
+    })
+  }
+
+  fn schedule_auto_completion(&mut self, trigger: LspCompletionContext, delay: Duration) -> bool {
+    if self.mode != Mode::Insert || !self.lsp_supports_completion() {
+      self.lsp_pending_auto_completion = None;
+      return false;
+    }
+    self.lsp_pending_auto_completion = Some(PendingAutoCompletion {
+      due_at: Instant::now() + delay,
+      trigger,
+    });
+    true
+  }
+
+  fn cancel_auto_completion(&mut self) {
+    self.lsp_pending_auto_completion = None;
+  }
+
+  fn poll_lsp_completion_auto_trigger(&mut self) -> bool {
+    let Some(pending) = self.lsp_pending_auto_completion.clone() else {
+      return false;
+    };
+    if self.mode != Mode::Insert {
+      self.lsp_pending_auto_completion = None;
+      return false;
+    }
+    if Instant::now() < pending.due_at {
+      return false;
+    }
+    self.lsp_pending_auto_completion = None;
+    let _ = self.dispatch_completion_request(pending.trigger, false);
+    false
+  }
+
   fn clear_completion_state(&mut self) {
+    self.cancel_auto_completion();
     self.lsp_completion_items.clear();
     self.lsp_completion_fallback_start = None;
     self.completion_menu.clear();
@@ -1994,6 +2045,7 @@ impl SwiftEditor {
     let mut changed = false;
     changed |= self.poll_active_file_watch();
     changed |= self.poll_lsp_events();
+    changed |= self.poll_lsp_completion_auto_trigger();
     changed |= self.tick_lsp_statusline();
     changed |= self.poll_vcs_statusline_refresh_results();
     changed |= self.refresh_picker_state();
@@ -2066,6 +2118,7 @@ impl SwiftEditor {
       lsp_completion_items: Vec::new(),
       lsp_completion_generation: 0,
       lsp_completion_fallback_start: None,
+      lsp_pending_auto_completion: None,
       pending_input: None,
       registers: Registers::new(),
       register: None,
@@ -2209,11 +2262,17 @@ impl SwiftEditor {
       self.lsp_signature_help_on_insert_mode_entry();
       match completion_key {
         Key::Char(ch) if is_symbol_word_char(ch) => {
-          let _ = self.dispatch_completion_request(LspCompletionContext::invoked(), false);
+          let _ = self.schedule_auto_completion(
+            LspCompletionContext::invoked(),
+            Duration::from_millis(80),
+          );
         },
         Key::Backspace | Key::Delete => {
           if self.completion_menu.active || self.cursor_prev_char_is_word() {
-            let _ = self.dispatch_completion_request(LspCompletionContext::trigger_for_incomplete(), false);
+            let _ = self.schedule_auto_completion(
+              LspCompletionContext::trigger_for_incomplete(),
+              Duration::from_millis(80),
+            );
           } else {
             self.clear_completion_state();
           }
@@ -2246,7 +2305,10 @@ impl SwiftEditor {
       if self.mode == Mode::Insert {
         self.lsp_signature_help_on_insert_mode_entry();
         if last_char.is_some_and(is_symbol_word_char) {
-          let _ = self.dispatch_completion_request(LspCompletionContext::invoked(), false);
+          let _ = self.schedule_auto_completion(
+            LspCompletionContext::invoked(),
+            Duration::from_millis(80),
+          );
         } else {
           self.clear_completion_state();
         }
@@ -2919,6 +2981,7 @@ impl DefaultContext for SwiftEditor {
     );
   }
   fn lsp_completion(&mut self) {
+    self.cancel_auto_completion();
     let _ = self.dispatch_completion_request(LspCompletionContext::invoked(), true);
   }
   fn lsp_signature_help(&mut self) {

@@ -3,6 +3,41 @@ import SwiftUI
 
 private let docsStyleBold: UInt16 = 1 << 0
 private let docsStyleItalic: UInt16 = 1 << 2
+private let docsPanelHorizontalInset: CGFloat = 20
+private let docsPanelVerticalInset: CGFloat = 16
+private let docsPanelEdgePadding: CGFloat = 8
+
+private enum EditorDocsPanelKind {
+    case hover
+    case signatureHelp
+
+    var accessibilityLabel: String {
+        switch self {
+        case .hover:
+            return "Hover"
+        case .signatureHelp:
+            return "Signature Help"
+        }
+    }
+
+    var minimumSize: CGSize {
+        switch self {
+        case .hover:
+            return CGSize(width: 240, height: 84)
+        case .signatureHelp:
+            return CGSize(width: 220, height: 54)
+        }
+    }
+
+    var maximumSize: CGSize {
+        switch self {
+        case .hover:
+            return CGSize(width: 460, height: 280)
+        case .signatureHelp:
+            return CGSize(width: 400, height: 180)
+        }
+    }
+}
 
 struct EditorDocsPanelsView: View {
     @ObservedObject var controller: EditorSurfaceController
@@ -13,20 +48,22 @@ struct EditorDocsPanelsView: View {
                 if let scene = controller.scene {
                     if controller.signatureHelp.isOpen {
                         EditorDocsPanelOverlay(
-                            title: "Signature Help",
+                            kind: .signatureHelp,
                             panel: controller.signatureHelp,
                             scene: scene,
-                            backgroundColor: controller.chrome.backgroundColor
+                            backgroundColor: controller.chrome.backgroundColor,
+                            onEscape: controller.closeDocsPanels
                         )
                         .zIndex(1)
                     }
 
                     if controller.hoverDocs.isOpen {
                         EditorDocsPanelOverlay(
-                            title: "Hover",
+                            kind: .hover,
                             panel: controller.hoverDocs,
                             scene: scene,
-                            backgroundColor: controller.chrome.backgroundColor
+                            backgroundColor: controller.chrome.backgroundColor,
+                            onEscape: controller.closeDocsPanels
                         )
                         .zIndex(2)
                     }
@@ -39,18 +76,20 @@ struct EditorDocsPanelsView: View {
 }
 
 private struct EditorDocsPanelOverlay: View {
-    let title: String
+    let kind: EditorDocsPanelKind
     let panel: EditorDocsPanelState
     let scene: EditorRenderScene
     let backgroundColor: NSColor
+    let onEscape: () -> Void
 
     var body: some View {
         if panel.isOpen, panel.width > 0, panel.height > 0 {
             EditorSelectableDocsTextView(
                 attributedText: attributedText,
-                backgroundColor: backgroundColor
+                backgroundColor: backgroundColor,
+                onEscape: onEscape
             )
-            .frame(width: panelSize.width, height: panelSize.height)
+            .frame(width: fittedFrame.width, height: fittedFrame.height)
             .background(
                 RoundedRectangle(cornerRadius: 9, style: .continuous)
                     .fill(Color(nsColor: backgroundColor))
@@ -59,27 +98,46 @@ private struct EditorDocsPanelOverlay: View {
                 RoundedRectangle(cornerRadius: 9, style: .continuous)
                     .strokeBorder(Color.primary.opacity(0.10), lineWidth: 1)
             }
-            .shadow(color: .black.opacity(0.16), radius: 10, y: 4)
-            .offset(x: panelOrigin.x, y: panelOrigin.y)
+            .shadow(color: .black.opacity(0.14), radius: 8, y: 3)
+            .offset(x: fittedFrame.minX, y: fittedFrame.minY)
             .transition(.opacity)
-            .accessibilityLabel(title)
+            .accessibilityLabel(kind.accessibilityLabel)
         }
     }
 
-    private var panelOrigin: CGPoint {
+    private var fittedFrame: CGRect {
         let metrics = scene.info.surfaceMetrics
-        return CGPoint(
+        let viewportSize = CGSize(
+            width: CGFloat(scene.info.viewportWidth) * metrics.cellSizePoints.width,
+            height: CGFloat(scene.info.viewportHeight) * metrics.cellSizePoints.height
+        )
+        let baseOrigin = CGPoint(
             x: CGFloat(panel.col) * metrics.cellSizePoints.width,
             y: CGFloat(panel.row) * metrics.cellSizePoints.height
         )
-    }
-
-    private var panelSize: CGSize {
-        let metrics = scene.info.surfaceMetrics
-        return CGSize(
+        let exportedSize = CGSize(
             width: CGFloat(panel.width) * metrics.cellSizePoints.width,
             height: CGFloat(panel.height) * metrics.cellSizePoints.height
         )
+
+        let maxWidth = max(
+            min(exportedSize.width, kind.maximumSize.width, max(viewportSize.width - docsPanelEdgePadding * 2, 0)),
+            min(kind.minimumSize.width, max(viewportSize.width - docsPanelEdgePadding * 2, 0))
+        )
+        let maxHeight = max(
+            min(exportedSize.height, kind.maximumSize.height, max(viewportSize.height - docsPanelEdgePadding * 2, 0)),
+            min(kind.minimumSize.height, max(viewportSize.height - docsPanelEdgePadding * 2, 0))
+        )
+
+        let unconstrainedWidth = ceil(textBounds(forWidth: CGFloat.greatestFiniteMagnitude).width) + docsPanelHorizontalInset
+        let width = min(maxWidth, max(kind.minimumSize.width, unconstrainedWidth))
+        let contentWidth = max(width - docsPanelHorizontalInset, 1)
+        let contentHeight = ceil(textBounds(forWidth: contentWidth).height) + docsPanelVerticalInset
+        let height = min(maxHeight, max(kind.minimumSize.height, contentHeight))
+
+        let clampedX = clamp(baseOrigin.x, lower: docsPanelEdgePadding, upper: max(viewportSize.width - width - docsPanelEdgePadding, docsPanelEdgePadding))
+        let clampedY = clamp(baseOrigin.y, lower: docsPanelEdgePadding, upper: max(viewportSize.height - height - docsPanelEdgePadding, docsPanelEdgePadding))
+        return CGRect(x: clampedX, y: clampedY, width: width, height: height)
     }
 
     private var attributedText: NSAttributedString {
@@ -90,20 +148,37 @@ private struct EditorDocsPanelOverlay: View {
         return storage
     }
 
+    private func textBounds(forWidth width: CGFloat) -> CGRect {
+        attributedText.boundingRect(
+            with: CGSize(width: width, height: CGFloat.greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading]
+        )
+    }
+
     private func attributes(for run: EditorDocsRun) -> [NSAttributedString.Key: Any] {
         let font = font(for: run)
+        var foregroundColor = run.style.foregroundColor
+        var underlineStyle = run.style.underlineStyle != 0 ? NSUnderlineStyle.single.rawValue : 0
+        var underlineColor = run.style.underlineColor?.color ?? run.style.foregroundColor
         var attributes: [NSAttributedString.Key: Any] = [
             .font: font,
-            .foregroundColor: run.style.foregroundColor
+            .foregroundColor: foregroundColor
         ]
 
-        if let backgroundColor = run.style.backgroundColor {
+        if run.kind != .activeParameter, let backgroundColor = run.style.backgroundColor {
             attributes[.backgroundColor] = backgroundColor
         }
 
-        if run.style.underlineStyle != 0 {
-            attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue
-            attributes[.underlineColor] = run.style.underlineColor?.color ?? run.style.foregroundColor
+        if run.kind == .activeParameter {
+            foregroundColor = .controlAccentColor
+            underlineStyle = NSUnderlineStyle.single.rawValue
+            underlineColor = NSColor.controlAccentColor.withAlphaComponent(0.8)
+            attributes[.foregroundColor] = foregroundColor
+        }
+
+        if underlineStyle != 0 {
+            attributes[.underlineStyle] = underlineStyle
+            attributes[.underlineColor] = underlineColor
         }
 
         if case .link = run.kind {
@@ -112,23 +187,24 @@ private struct EditorDocsPanelOverlay: View {
 
         let paragraphStyle = NSMutableParagraphStyle()
         paragraphStyle.lineBreakMode = .byWordWrapping
+        paragraphStyle.lineSpacing = 1
         attributes[.paragraphStyle] = paragraphStyle
         return attributes
     }
 
     private func font(for run: EditorDocsRun) -> NSFont {
-        let isBold = run.style.addModifiers & docsStyleBold != 0
+        let isBold = run.style.addModifiers & docsStyleBold != 0 || run.kind == .activeParameter
         let isItalic = run.style.addModifiers & docsStyleItalic != 0
 
         switch run.kind {
         case .heading1:
-            return NSFont.systemFont(ofSize: 16, weight: .semibold)
-        case .heading2:
             return NSFont.systemFont(ofSize: 15, weight: .semibold)
-        case .heading3:
+        case .heading2:
             return NSFont.systemFont(ofSize: 14, weight: .semibold)
-        case .heading4, .heading5, .heading6:
+        case .heading3:
             return NSFont.systemFont(ofSize: 13, weight: .semibold)
+        case .heading4, .heading5, .heading6:
+            return NSFont.systemFont(ofSize: 12, weight: .semibold)
         case .inlineCode, .code, .activeParameter:
             return monospacedFont(size: 12, weight: isBold ? .semibold : .regular, italic: isItalic)
         default:
@@ -147,14 +223,19 @@ private struct EditorDocsPanelOverlay: View {
         guard italic else { return base }
         return NSFontManager.shared.convert(base, toHaveTrait: .italicFontMask)
     }
+
+    private func clamp(_ value: CGFloat, lower: CGFloat, upper: CGFloat) -> CGFloat {
+        min(max(value, lower), upper)
+    }
 }
 
 private struct EditorSelectableDocsTextView: NSViewRepresentable {
     let attributedText: NSAttributedString
     let backgroundColor: NSColor
+    let onEscape: () -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator()
+        Coordinator(onEscape: onEscape)
     }
 
     func makeNSView(context: Context) -> NSScrollView {
@@ -168,7 +249,8 @@ private struct EditorSelectableDocsTextView: NSViewRepresentable {
         scrollView.automaticallyAdjustsContentInsets = false
         scrollView.contentInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
 
-        let textView = NSTextView(frame: .zero)
+        let textView = EditorDocsTextView(frame: .zero)
+        textView.onEscape = context.coordinator.onEscape
         textView.isEditable = false
         textView.isSelectable = true
         textView.isRichText = true
@@ -196,10 +278,40 @@ private struct EditorSelectableDocsTextView: NSViewRepresentable {
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         guard let textView = context.coordinator.textView else { return }
+        textView.onEscape = context.coordinator.onEscape
         textView.textStorage?.setAttributedString(attributedText)
     }
 
     final class Coordinator {
-        weak var textView: NSTextView?
+        let onEscape: () -> Void
+        weak var textView: EditorDocsTextView?
+
+        init(onEscape: @escaping () -> Void) {
+            self.onEscape = onEscape
+        }
+    }
+}
+
+private final class EditorDocsTextView: NSTextView {
+    var onEscape: (() -> Void)?
+
+    override func cancelOperation(_ sender: Any?) {
+        onEscape?()
+    }
+
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == 53 || event.charactersIgnoringModifiers == "\u{1b}" {
+            onEscape?()
+            return
+        }
+        super.keyDown(with: event)
+    }
+
+    override func doCommand(by selector: Selector) {
+        if selector == #selector(NSResponder.cancelOperation(_:)) {
+            onEscape?()
+            return
+        }
+        super.doCommand(by: selector)
     }
 }

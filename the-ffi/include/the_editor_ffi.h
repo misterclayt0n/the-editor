@@ -397,6 +397,7 @@ bool the_editor_input_prompt_set_query(the_editor_handle_t *handle, const char *
 bool the_editor_input_prompt_submit(the_editor_handle_t *handle);
 bool the_editor_input_prompt_step_next(the_editor_handle_t *handle);
 bool the_editor_input_prompt_step_previous(the_editor_handle_t *handle);
+bool the_editor_close_docs_panels(the_editor_handle_t *handle);
 bool the_editor_configure_file_picker(the_editor_handle_t *handle, uintptr_t list_visible_rows, uintptr_t preview_visible_rows);
 bool the_editor_close_file_picker(the_editor_handle_t *handle);
 bool the_editor_file_picker_set_query(the_editor_handle_t *handle, const char *query);

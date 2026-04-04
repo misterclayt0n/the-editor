@@ -118,6 +118,12 @@ final class EditorSurfaceController: ObservableObject {
         focusEditor()
     }
 
+    func closeDocsPanels() {
+        guard EditorFFIBridge.closeDocsPanels(handle?.raw) else { return }
+        refreshSnapshot()
+        focusEditor()
+    }
+
     func setInputPromptQuery(_ query: String) {
         guard query != inputPrompt.query else { return }
         guard EditorFFIBridge.setInputPromptQuery(handle?.raw, query: query) else { return }

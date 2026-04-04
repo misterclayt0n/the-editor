@@ -610,6 +610,12 @@ enum EditorFFIBridge {
     }
 
     @discardableResult
+    static func closeDocsPanels(_ handle: OpaquePointer?) -> Bool {
+        guard let handle else { return false }
+        return the_editor_close_docs_panels(handle)
+    }
+
+    @discardableResult
     static func configureFilePicker(_ handle: OpaquePointer?, listVisibleRows: Int, previewVisibleRows: Int) -> Bool {
         guard let handle else { return false }
         return the_editor_configure_file_picker(handle, UInt(listVisibleRows), UInt(previewVisibleRows))

@@ -1208,6 +1208,31 @@ impl SwiftEditor {
     self.hover_docs = None;
   }
 
+  fn close_docs_panels(&mut self) -> bool {
+    let had_hover = self.hover_docs.is_some();
+    let had_signature_help = self.signature_help.active;
+    self.cancel_pending_lsp_requests_for("hover");
+    self.cancel_pending_lsp_requests_for("signature-help");
+    self.clear_hover_state();
+    self.signature_help.clear();
+
+    if self.mode == Mode::Insert {
+      handle_key(
+        self,
+        KeyEvent {
+          key: Key::Escape,
+          modifiers: the_default::Modifiers::empty(),
+        },
+      );
+      return true;
+    }
+
+    if had_hover || had_signature_help {
+      self.request_render();
+    }
+    had_hover || had_signature_help
+  }
+
   fn cancel_pending_lsp_requests_for(&mut self, target: &'static str) {
     for runtime in &mut self.lsp_runtimes {
       let ids = runtime
@@ -2618,6 +2643,7 @@ impl DefaultContext for SwiftEditor {
     }
     self.lsp_signature_help();
   }
+
   fn available_theme_names(&self) -> Vec<String> { self.ui_theme_catalog.names() }
   fn set_ui_theme(&mut self, theme_name: &str) -> Result<(), String> { self.set_ui_theme_named(theme_name) }
   fn set_ui_theme_preview(&mut self, theme_name: &str) -> Result<(), String> { self.set_ui_theme_preview_named(theme_name) }
@@ -2860,13 +2886,13 @@ impl OwnedSnapshot {
         .filter(|docs| !docs.is_empty())
       {
         let cursor = active_docs_cursor_position(plan);
-        let width = plan.viewport.width.saturating_mul(2).saturating_div(3).min(84).max(28);
+        let (width, height) = docs_panel_dimensions(markdown, editor, 24, 56, 5, 12);
         snapshot.hover_docs.panel = docs_panel_record(
           plan.viewport.width,
           plan.viewport.height,
           cursor,
           width,
-          18,
+          height,
           false,
         );
         for run in flatten_docs_runs(markdown, editor) {
@@ -2885,13 +2911,13 @@ impl OwnedSnapshot {
 
       if let Some(markdown) = signature_help_markdown(&editor.signature_help) {
         let cursor = active_docs_cursor_position(plan);
-        let width = plan.viewport.width.saturating_mul(2).saturating_div(3).min(72).max(12);
+        let (width, height) = docs_panel_dimensions(markdown.as_str(), editor, 18, 44, 3, 8);
         snapshot.signature_help.panel = docs_panel_record(
           plan.viewport.width,
           plan.viewport.height,
           cursor,
           width,
-          16,
+          height,
           true,
         );
         for run in flatten_docs_runs(markdown.as_str(), editor) {
@@ -4100,6 +4126,33 @@ fn active_docs_cursor_position(plan: &RenderPlan) -> Option<(u16, u16)> {
   })
 }
 
+fn docs_panel_line_width(line: &[DocsStyledRun]) -> u16 {
+  line
+    .iter()
+    .flat_map(|run| run.text.graphemes(true))
+    .map(|grapheme| grapheme_width(grapheme))
+    .sum::<usize>()
+    .min(u16::MAX as usize) as u16
+}
+
+fn docs_panel_dimensions(
+  markdown: &str,
+  editor: &SwiftEditor,
+  min_width: u16,
+  max_width: u16,
+  min_height: u16,
+  max_height: u16,
+) -> (u16, u16) {
+  let base_style = editor.ui_theme.try_get("ui.text").unwrap_or_default();
+  let styles = docs_panel_styles(&editor.ui_theme, base_style);
+  let lines = docs_markdown_lines(markdown, &styles, editor);
+  let line_count = lines.len().max(1).min(u16::MAX as usize) as u16;
+  let widest_line = lines.iter().map(|line| docs_panel_line_width(line)).max().unwrap_or(0);
+  let width = widest_line.saturating_add(4).clamp(min_width, max_width);
+  let height = line_count.saturating_add(2).clamp(min_height, max_height);
+  (width, height)
+}
+
 fn docs_panel_record(
   viewport_width: u16,
   viewport_height: u16,
@@ -4763,6 +4816,12 @@ pub unsafe extern "C" fn the_editor_input_prompt_step_next(handle: *mut the_edit
 pub unsafe extern "C" fn the_editor_input_prompt_step_previous(handle: *mut the_editor_handle_t) -> bool {
   let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
   handle.editor.step_input_prompt(the_default::Direction::Backward)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_close_docs_panels(handle: *mut the_editor_handle_t) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+  handle.editor.close_docs_panels()
 }
 
 #[unsafe(no_mangle)]

@@ -136,7 +136,8 @@ private struct EditorDocsPanelOverlay: View {
         let height = min(maxHeight, max(kind.minimumSize.height, contentHeight))
 
         let clampedX = clamp(baseOrigin.x, lower: docsPanelEdgePadding, upper: max(viewportSize.width - width - docsPanelEdgePadding, docsPanelEdgePadding))
-        let clampedY = clamp(baseOrigin.y, lower: docsPanelEdgePadding, upper: max(viewportSize.height - height - docsPanelEdgePadding, docsPanelEdgePadding))
+        let anchoredY = anchoredOriginY(baseOriginY: baseOrigin.y, exportedHeight: exportedSize.height, fittedHeight: height)
+        let clampedY = clamp(anchoredY, lower: docsPanelEdgePadding, upper: max(viewportSize.height - height - docsPanelEdgePadding, docsPanelEdgePadding))
         return CGRect(x: clampedX, y: clampedY, width: width, height: height)
     }
 
@@ -222,6 +223,23 @@ private struct EditorDocsPanelOverlay: View {
         let base = NSFont.monospacedSystemFont(ofSize: size, weight: weight)
         guard italic else { return base }
         return NSFontManager.shared.convert(base, toHaveTrait: .italicFontMask)
+    }
+
+    private func anchoredOriginY(baseOriginY: CGFloat, exportedHeight: CGFloat, fittedHeight: CGFloat) -> CGFloat {
+        guard kind == .signatureHelp,
+              let cursor = scene.primaryCursor
+        else {
+            return baseOriginY
+        }
+
+        let cellHeight = scene.info.surfaceMetrics.cellSizePoints.height
+        let cursorY = CGFloat(cursor.row) * cellHeight
+        let exportedBottom = baseOriginY + exportedHeight
+        let isAboveCursor = exportedBottom <= cursorY + cellHeight
+        if isAboveCursor {
+            return baseOriginY + exportedHeight - fittedHeight
+        }
+        return baseOriginY
     }
 
     private func clamp(_ value: CGFloat, lower: CGFloat, upper: CGFloat) -> CGFloat {

@@ -88,6 +88,11 @@ final class EditorSurfaceController: ObservableObject {
     }
 
     func handleKey(_ event: the_editor_key_event_t) {
+        if event.kind == THE_EDITOR_KEY_ESCAPE.rawValue, hoverDocs.isOpen || signatureHelp.isOpen {
+            closeDocsPanels()
+            markedText = ""
+            return
+        }
         guard EditorFFIBridge.sendKey(handle?.raw, event: event) else { return }
         if event.kind == THE_EDITOR_KEY_ESCAPE.rawValue {
             markedText = ""

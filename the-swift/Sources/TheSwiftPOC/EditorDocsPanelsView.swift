@@ -132,7 +132,8 @@ struct EditorDocsPanelOverlay: View {
 
         let clampedX = clamp(baseOrigin.x, lower: docsPanelEdgePadding, upper: max(viewportSize.width - width - docsPanelEdgePadding, docsPanelEdgePadding))
         let anchoredY = anchoredOriginY(baseOriginY: baseOrigin.y, exportedHeight: exportedSize.height, fittedHeight: height)
-        let clampedY = clamp(anchoredY, lower: docsPanelEdgePadding, upper: max(viewportSize.height - height - docsPanelEdgePadding, docsPanelEdgePadding))
+        let lowerBoundY: CGFloat = kind == .signatureHelp ? 0 : docsPanelEdgePadding
+        let clampedY = clamp(anchoredY, lower: lowerBoundY, upper: max(viewportSize.height - height - docsPanelEdgePadding, lowerBoundY))
         return CGRect(x: clampedX, y: clampedY, width: width, height: height)
     }
 
@@ -233,7 +234,7 @@ struct EditorDocsPanelOverlay: View {
         let exportedBottom = baseOriginY + exportedHeight
         let isAboveCursor = exportedBottom <= cursorBottomY
         if isAboveCursor {
-            return baseOriginY + exportedHeight - fittedHeight - signaturePanelCursorGap
+            return max(0, baseOriginY + exportedHeight - fittedHeight - signaturePanelCursorGap)
         }
         return baseOriginY + signaturePanelCursorGap
     }

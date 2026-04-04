@@ -167,7 +167,10 @@ use the_lib::{
       default_theme,
     },
   },
-  selection::CursorPick,
+  selection::{
+    CursorPick,
+    Selection,
+  },
   syntax::{
     Highlight,
     HighlightCache,
@@ -178,7 +181,11 @@ use the_lib::{
 };
 use unicode_segmentation::UnicodeSegmentation;
 use the_lsp::{
+  LspCompletionContext,
+  LspCompletionItem,
+  LspCompletionItemKind,
   LspEvent,
+  LspInsertTextFormat,
   LspPosition,
   LspProgressKind,
   LspRuntime,
@@ -186,10 +193,13 @@ use the_lsp::{
   LspServerConfig,
   LspSignatureHelpContext,
   TextDocumentSyncKind,
+  completion_params,
   hover_params,
   jsonrpc,
+  parse_completion_response,
   parse_hover_response,
   parse_signature_help_response,
+  render_lsp_snippet,
   signature_help_params,
   text_sync::{
     char_idx_to_utf16_position,
@@ -197,6 +207,7 @@ use the_lsp::{
     did_open_params,
     did_save_params,
     file_uri_for_path,
+    utf16_position_to_char_idx,
   },
 };
 use the_runtime::{
@@ -943,19 +954,27 @@ impl LspStatuslineState {
 #[derive(Debug, Clone)]
 enum PendingLspRequestKind {
   Hover { uri: String },
+  Completion {
+    uri:            String,
+    generation:     u64,
+    cursor:         usize,
+    replace_start:  usize,
+    announce_empty: bool,
+  },
   SignatureHelp { uri: String },
 }
 
 impl PendingLspRequestKind {
   fn uri(&self) -> &str {
     match self {
-      Self::Hover { uri } | Self::SignatureHelp { uri } => uri,
+      Self::Hover { uri } | Self::Completion { uri, .. } | Self::SignatureHelp { uri } => uri,
     }
   }
 
   fn label(&self) -> &'static str {
     match self {
       Self::Hover { .. } => "hover",
+      Self::Completion { .. } => "completion",
       Self::SignatureHelp { .. } => "signature-help",
     }
   }
@@ -963,6 +982,7 @@ impl PendingLspRequestKind {
   fn cancellation_key(&self) -> &'static str {
     match self {
       Self::Hover { .. } => "hover",
+      Self::Completion { .. } => "completion",
       Self::SignatureHelp { .. } => "signature-help",
     }
   }
@@ -1011,6 +1031,9 @@ struct SwiftEditor {
   search_prompt:                 SearchPromptState,
   signature_help:                SignatureHelpState,
   hover_docs:                    Option<String>,
+  lsp_completion_items:          Vec<LspCompletionItem>,
+  lsp_completion_generation:     u64,
+  lsp_completion_fallback_start: Option<usize>,
   pending_input:                 Option<PendingInput>,
   registers:                     Registers,
   register:                      Option<char>,
@@ -1105,6 +1128,7 @@ impl SwiftEditor {
     self.lsp_runtimes.clear();
     self.signature_help.clear();
     self.clear_hover_state();
+    self.clear_completion_state();
     self.lsp_document = self
       .file_path
       .as_deref()
@@ -1284,6 +1308,148 @@ impl SwiftEditor {
     Some((document.uri, LspPosition { line, character }))
   }
 
+  fn active_cursor_char_idx(&self) -> Option<usize> {
+    let selection = self.editor.document().selection();
+    let Ok((_, range)) = selection.pick(CursorPick::First) else {
+      return None;
+    };
+    Some(range.cursor(self.editor.document().text().slice(..)))
+  }
+
+  fn cursor_prev_char_is_word(&self) -> bool {
+    let Some(cursor) = self.active_cursor_char_idx() else {
+      return false;
+    };
+    self
+      .editor
+      .document()
+      .text()
+      .get_char(cursor.saturating_sub(1))
+      .is_some_and(is_symbol_word_char)
+  }
+
+  fn completion_replace_start_at_cursor(&self, cursor: usize) -> usize {
+    let text = self.editor.document().text();
+    let mut start = cursor.min(text.len_chars());
+    while start > 0 && text.get_char(start - 1).is_some_and(is_completion_replace_char) {
+      start -= 1;
+    }
+    start
+  }
+
+  fn clear_completion_state(&mut self) {
+    self.lsp_completion_items.clear();
+    self.lsp_completion_fallback_start = None;
+    self.completion_menu.clear();
+  }
+
+  fn rebuild_completion_menu(&mut self) {
+    if self.lsp_completion_items.is_empty() {
+      self.completion_menu.clear();
+      return;
+    }
+    let items = self
+      .lsp_completion_items
+      .iter()
+      .map(completion_menu_item_for_lsp_item)
+      .collect::<Vec<_>>();
+    the_default::show_completion_menu(self, items);
+  }
+
+  fn dispatch_completion_request(&mut self, trigger: LspCompletionContext, announce_empty: bool) -> bool {
+    let Some((uri, position)) = self.current_lsp_position() else {
+      return false;
+    };
+    let Some(cursor) = self.active_cursor_char_idx() else {
+      return false;
+    };
+    let replace_start = self.completion_replace_start_at_cursor(cursor);
+    self.lsp_completion_generation = self.lsp_completion_generation.wrapping_add(1);
+    let generation = self.lsp_completion_generation;
+    self.dispatch_lsp_request(
+      "textDocument/completion",
+      completion_params(&uri, position, &trigger),
+      PendingLspRequestKind::Completion {
+        uri,
+        generation,
+        cursor,
+        replace_start,
+        announce_empty,
+      },
+    );
+    true
+  }
+
+  fn handle_completion_response(
+    &mut self,
+    result: Option<&serde_json::Value>,
+    generation: u64,
+    request_cursor: usize,
+    replace_start: usize,
+    announce_empty: bool,
+  ) -> bool {
+    if generation != self.lsp_completion_generation || self.mode != Mode::Insert {
+      return false;
+    }
+    let Some(current_cursor) = self.active_cursor_char_idx() else {
+      return false;
+    };
+    if current_cursor != request_cursor {
+      return false;
+    }
+
+    let items = match parse_completion_response(result) {
+      Ok(items) => items,
+      Err(err) => {
+        self.push_error("lsp", format!("failed to parse completion response: {err}"));
+        return true;
+      },
+    };
+
+    if items.is_empty() {
+      self.clear_completion_state();
+      if announce_empty {
+        self.push_info("lsp", "no completion candidates");
+      }
+      return true;
+    }
+
+    self.lsp_completion_items = items;
+    self.lsp_completion_fallback_start = Some(replace_start.min(request_cursor));
+    self.rebuild_completion_menu();
+    true
+  }
+
+  fn apply_selected_completion(&mut self, index: usize) -> bool {
+    let Some(item) = self.lsp_completion_items.get(index).cloned() else {
+      return false;
+    };
+    let doc = self.editor.document();
+    let text = doc.text();
+    let cursor = self.active_cursor_char_idx().unwrap_or(text.len_chars());
+    let fallback_start = self.lsp_completion_fallback_start.unwrap_or(cursor).min(cursor);
+
+    let (from, to, inserted_text) = if let Some(edit) = item.primary_edit.as_ref() {
+      let from = utf16_position_to_char_idx(text, edit.range.start.line, edit.range.start.character);
+      let to = utf16_position_to_char_idx(text, edit.range.end.line, edit.range.end.character);
+      (from, to, completion_insert_text(&item, Some(&edit.new_text)))
+    } else {
+      (fallback_start, cursor, completion_insert_text(&item, None))
+    };
+
+    let selection = Selection::point(from.saturating_add(inserted_text.chars().count()));
+    let Ok(transaction) = the_lib::transaction::Transaction::change(text, vec![(from, to, Some(inserted_text.clone().into()))])
+      .map(|transaction| transaction.with_selection(selection))
+    else {
+      return false;
+    };
+    if !self.apply_transaction(&transaction) {
+      return false;
+    }
+    self.clear_completion_state();
+    true
+  }
+
   fn clear_hover_state(&mut self) {
     self.hover_docs = None;
   }
@@ -1429,6 +1595,19 @@ impl SwiftEditor {
         }
         true
       },
+      PendingLspRequestKind::Completion {
+        generation,
+        cursor,
+        replace_start,
+        announce_empty,
+        ..
+      } => self.handle_completion_response(
+        response.result.as_ref(),
+        generation,
+        cursor,
+        replace_start,
+        announce_empty,
+      ),
       PendingLspRequestKind::SignatureHelp { .. } => self.handle_signature_help_response(response.result.as_ref()),
     }
   }
@@ -1884,6 +2063,9 @@ impl SwiftEditor {
       search_prompt: SearchPromptState::new(),
       signature_help: SignatureHelpState::default(),
       hover_docs: None,
+      lsp_completion_items: Vec::new(),
+      lsp_completion_generation: 0,
+      lsp_completion_fallback_start: None,
       pending_input: None,
       registers: Registers::new(),
       register: None,
@@ -2021,9 +2203,27 @@ impl SwiftEditor {
       event.key,
       Key::Char(_) | Key::Backspace | Key::Delete | Key::Enter | Key::NumpadEnter
     );
+    let completion_key = event.key;
     handle_key(self, event);
     if self.mode == Mode::Insert && should_refresh_signature {
       self.lsp_signature_help_on_insert_mode_entry();
+      match completion_key {
+        Key::Char(ch) if is_symbol_word_char(ch) => {
+          let _ = self.dispatch_completion_request(LspCompletionContext::invoked(), false);
+        },
+        Key::Backspace | Key::Delete => {
+          if self.completion_menu.active || self.cursor_prev_char_is_word() {
+            let _ = self.dispatch_completion_request(LspCompletionContext::trigger_for_incomplete(), false);
+          } else {
+            self.clear_completion_state();
+          }
+        },
+        _ => {
+          self.clear_completion_state();
+        },
+      }
+    } else if self.mode != Mode::Insert {
+      self.clear_completion_state();
     }
     self.ensure_cursor_visible();
     true
@@ -2031,6 +2231,7 @@ impl SwiftEditor {
 
   fn insert_text(&mut self, text: &str) -> bool {
     let mut changed = false;
+    let mut last_char = None;
     for ch in text.chars() {
       let event = match ch {
         '\n' => KeyEvent { key: Key::Enter, modifiers: the_default::Modifiers::empty() },
@@ -2039,10 +2240,16 @@ impl SwiftEditor {
       };
       handle_key(self, event);
       changed = true;
+      last_char = Some(ch);
     }
     if changed {
       if self.mode == Mode::Insert {
         self.lsp_signature_help_on_insert_mode_entry();
+        if last_char.is_some_and(is_symbol_word_char) {
+          let _ = self.dispatch_completion_request(LspCompletionContext::invoked(), false);
+        } else {
+          self.clear_completion_state();
+        }
       }
       self.ensure_cursor_visible();
     }
@@ -2636,6 +2843,11 @@ impl DefaultContext for SwiftEditor {
   fn completion_menu_mut(&mut self) -> &mut CompletionMenuState { &mut self.completion_menu }
   fn completion_menu_keymaps(&self) -> &Keymaps { &self.completion_menu_keymaps }
   fn completion_menu_keymaps_mut(&mut self) -> &mut Keymaps { &mut self.completion_menu_keymaps }
+  fn completion_accept_selected(&mut self, index: usize) -> bool { self.apply_selected_completion(index) }
+  fn completion_menu_closed(&mut self) {
+    self.lsp_completion_items.clear();
+    self.lsp_completion_fallback_start = None;
+  }
   fn inline_completion(&self) -> &the_default::InlineCompletionState { &self.inline_completion }
   fn inline_completion_mut(&mut self) -> &mut the_default::InlineCompletionState { &mut self.inline_completion }
   fn set_inline_completion_annotations(&mut self, annotations: the_default::OwnedTextAnnotations) { self.inline_completion_annotations = annotations; }
@@ -2705,6 +2917,9 @@ impl DefaultContext for SwiftEditor {
       hover_params(&uri, position),
       PendingLspRequestKind::Hover { uri },
     );
+  }
+  fn lsp_completion(&mut self) {
+    let _ = self.dispatch_completion_request(LspCompletionContext::invoked(), true);
   }
   fn lsp_signature_help(&mut self) {
     let Some((uri, position)) = self.current_lsp_position() else {
@@ -4291,6 +4506,95 @@ fn active_docs_cursor_position(plan: &RenderPlan) -> Option<(u16, u16)> {
   })
 }
 
+fn normalize_completion_documentation(value: &str) -> Option<String> {
+  let normalized = value.replace("\r\n", "\n").replace('\r', "\n");
+  let trimmed = normalized.trim();
+  if trimmed.is_empty() {
+    None
+  } else {
+    Some(trimmed.to_string())
+  }
+}
+
+fn completion_menu_detail_text(item: &LspCompletionItem) -> Option<String> {
+  item
+    .detail
+    .as_ref()
+    .map(|value| value.trim())
+    .filter(|value| !value.is_empty())
+    .map(ToOwned::to_owned)
+}
+
+fn completion_menu_documentation_text(item: &LspCompletionItem) -> Option<String> {
+  item
+    .documentation
+    .as_deref()
+    .and_then(normalize_completion_documentation)
+}
+
+fn completion_kind_icon(kind: LspCompletionItemKind) -> &'static str {
+  use LspCompletionItemKind::*;
+  match kind {
+    Text => "w",
+    Method | Function | Constructor => "f",
+    Field | Property => "m",
+    Variable | Value => "v",
+    Class => "c",
+    Interface => "i",
+    Module => "M",
+    Unit => "u",
+    Enum => "e",
+    Keyword => "k",
+    Snippet => "S",
+    Color => "v",
+    File => "F",
+    Reference => "r",
+    Folder => "D",
+    EnumMember => "e",
+    Constant => "C",
+    Struct => "s",
+    Event => "E",
+    Operator => "o",
+    TypeParameter => "t",
+  }
+}
+
+fn completion_kind_color(kind: LspCompletionItemKind) -> Color {
+  use LspCompletionItemKind::*;
+  match kind {
+    Method | Function | Constructor | Operator => the_lib::render::graphics::Color::Rgb(0xDB, 0xBF, 0xEF),
+    Field | Variable | Property | Value | Reference => the_lib::render::graphics::Color::Rgb(0xA4, 0xA0, 0xE8),
+    Class | Interface | Enum | Struct | TypeParameter => the_lib::render::graphics::Color::Rgb(0xEF, 0xBA, 0x5D),
+    Module | Folder | EnumMember | Constant => the_lib::render::graphics::Color::Rgb(0xE8, 0xDC, 0xA0),
+    Keyword => the_lib::render::graphics::Color::Rgb(0xEC, 0xCD, 0xBA),
+    Snippet => the_lib::render::graphics::Color::Rgb(0x9F, 0xF2, 0x8F),
+    Event => the_lib::render::graphics::Color::Rgb(0xF4, 0x78, 0x68),
+    Text | Unit | Color | File => the_lib::render::graphics::Color::Rgb(0xCC, 0xCC, 0xCC),
+  }
+}
+
+fn completion_menu_item_for_lsp_item(item: &LspCompletionItem) -> the_default::CompletionMenuItem {
+  let mut menu_item = the_default::CompletionMenuItem::new(item.label.clone());
+  menu_item.detail = completion_menu_detail_text(item);
+  menu_item.documentation = completion_menu_documentation_text(item);
+  if let Some(kind) = item.kind {
+    menu_item.kind_icon = Some(completion_kind_icon(kind).to_string());
+    menu_item.kind_color = Some(completion_kind_color(kind));
+  }
+  menu_item
+}
+
+fn completion_insert_text(item: &LspCompletionItem, preferred_text: Option<&str>) -> String {
+  let mut text = preferred_text
+    .map(ToOwned::to_owned)
+    .or_else(|| item.insert_text.clone())
+    .unwrap_or_else(|| item.label.clone());
+  if item.insert_text_format == Some(LspInsertTextFormat::Snippet) {
+    text = render_lsp_snippet(&text).text;
+  }
+  text
+}
+
 fn selected_completion_docs_text(editor: &SwiftEditor) -> Option<&str> {
   editor
     .completion_menu
@@ -4403,6 +4707,12 @@ fn docs_panel_record(
     run_count: 0,
   }
 }
+
+fn is_symbol_word_char(ch: char) -> bool {
+  ch == '_' || ch.is_alphanumeric()
+}
+
+fn is_completion_replace_char(ch: char) -> bool { is_symbol_word_char(ch) }
 
 fn active_file_watch_latency() -> Duration {
   Duration::from_millis(120)

@@ -584,6 +584,12 @@ enum EditorFFIBridge {
     }
 
     @discardableResult
+    static func setCompletionMenuScroll(_ handle: OpaquePointer?, offset: Int) -> Bool {
+        guard let handle else { return false }
+        return the_editor_set_completion_menu_scroll(handle, UInt(offset))
+    }
+
+    @discardableResult
     static func submitCompletionMenu(_ handle: OpaquePointer?) -> Bool {
         guard let handle else { return false }
         return the_editor_completion_menu_submit(handle)

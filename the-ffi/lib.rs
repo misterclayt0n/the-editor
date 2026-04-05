@@ -197,7 +197,8 @@ use the_lsp::{
   completion_params,
   hover_params,
   jsonrpc,
-  parse_completion_response,
+  parse_completion_item_response,
+  parse_completion_response_with_raw,
   parse_hover_response,
   parse_signature_help_response,
   render_lsp_snippet,
@@ -205,6 +206,7 @@ use the_lsp::{
   text_sync::{
     char_idx_to_utf16_position,
     did_change_params,
+    did_close_params,
     did_open_params,
     did_save_params,
     file_uri_for_path,
@@ -926,6 +928,12 @@ struct PendingAutoCompletion {
   trigger: LspCompletionContext,
 }
 
+#[derive(Debug, Clone)]
+struct PendingAutoSignatureHelp {
+  due_at:  Instant,
+  trigger: LspSignatureHelpContext,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LspStatusPhase {
   Off,
@@ -968,13 +976,17 @@ enum PendingLspRequestKind {
     replace_start:  usize,
     announce_empty: bool,
   },
+  CompletionResolve { uri: String, index: usize },
   SignatureHelp { uri: String },
 }
 
 impl PendingLspRequestKind {
   fn uri(&self) -> &str {
     match self {
-      Self::Hover { uri } | Self::Completion { uri, .. } | Self::SignatureHelp { uri } => uri,
+      Self::Hover { uri }
+      | Self::Completion { uri, .. }
+      | Self::CompletionResolve { uri, .. }
+      | Self::SignatureHelp { uri } => uri,
     }
   }
 
@@ -982,6 +994,7 @@ impl PendingLspRequestKind {
     match self {
       Self::Hover { .. } => "hover",
       Self::Completion { .. } => "completion",
+      Self::CompletionResolve { .. } => "completion-resolve",
       Self::SignatureHelp { .. } => "signature-help",
     }
   }
@@ -990,6 +1003,7 @@ impl PendingLspRequestKind {
     match self {
       Self::Hover { .. } => "hover",
       Self::Completion { .. } => "completion",
+      Self::CompletionResolve { .. } => "completion-resolve",
       Self::SignatureHelp { .. } => "signature-help",
     }
   }
@@ -1039,9 +1053,13 @@ struct SwiftEditor {
   signature_help:                SignatureHelpState,
   hover_docs:                    Option<String>,
   lsp_completion_items:          Vec<LspCompletionItem>,
+  lsp_completion_raw_items:      Vec<serde_json::Value>,
+  lsp_completion_resolved:       HashSet<usize>,
+  lsp_completion_resolve_supported: bool,
   lsp_completion_generation:     u64,
   lsp_completion_fallback_start: Option<usize>,
   lsp_pending_auto_completion:   Option<PendingAutoCompletion>,
+  lsp_pending_auto_signature_help: Option<PendingAutoSignatureHelp>,
   pending_input:                 Option<PendingInput>,
   registers:                     Registers,
   register:                      Option<char>,
@@ -1129,11 +1147,24 @@ impl SwiftEditor {
     true
   }
 
-  fn refresh_lsp_runtime_state(&mut self) {
-    for runtime in &mut self.lsp_runtimes {
-      let _ = runtime.runtime.shutdown_detached();
+  fn set_completion_menu_scroll(&mut self, offset: usize) -> bool {
+    if !self.completion_menu.active || self.completion_menu.items.is_empty() {
+      return false;
     }
-    self.lsp_runtimes.clear();
+    let max_scroll = self.completion_menu.items.len().saturating_sub(completion_menu_visible_rows());
+    let next = offset.min(max_scroll);
+    if self.completion_menu.scroll == next {
+      return false;
+    }
+    self.completion_menu.scroll = next;
+    self.request_render();
+    true
+  }
+
+  fn refresh_lsp_runtime_state(&mut self) {
+    let old_document = self.lsp_document.clone();
+    let mut old_runtimes = std::mem::take(&mut self.lsp_runtimes);
+
     self.signature_help.clear();
     self.clear_hover_state();
     self.clear_completion_state();
@@ -1143,6 +1174,10 @@ impl SwiftEditor {
       .and_then(|path| build_lsp_document_state(path, self.loader.as_deref()));
 
     let Some(document) = self.lsp_document.as_ref() else {
+      for runtime in &mut old_runtimes {
+        close_lsp_document_for_runtime(runtime, old_document.as_ref());
+        let _ = runtime.runtime.shutdown_detached();
+      }
       self.lsp_statusline = LspStatuslineState::off(Some("unavailable".into()));
       self.lsp_spinner_index = 0;
       return;
@@ -1150,13 +1185,34 @@ impl SwiftEditor {
 
     let servers = resolve_lsp_servers(self.loader.as_deref(), Some(document.path.as_path()));
     if servers.is_empty() {
+      for runtime in &mut old_runtimes {
+        close_lsp_document_for_runtime(runtime, old_document.as_ref());
+        let _ = runtime.runtime.shutdown_detached();
+      }
       self.lsp_statusline = LspStatuslineState::off(Some("unavailable".into()));
       self.lsp_spinner_index = 0;
       return;
     }
 
     let workspace_root = resolved_workspace_root_for_path(&document.path);
+    let document_changed = old_document
+      .as_ref()
+      .is_none_or(|old| old.uri != document.uri || old.language_id != document.language_id);
+
+    let mut new_runtimes = Vec::new();
     for server in servers {
+      if let Some(index) = old_runtimes.iter().position(|runtime| {
+        lsp_server_configs_equal(runtime.runtime.config().server(), Some(&server))
+          && runtime.runtime.config().workspace_root() == workspace_root.as_path()
+      }) {
+        let mut runtime = old_runtimes.remove(index);
+        if document_changed {
+          close_lsp_document_for_runtime(&mut runtime, old_document.as_ref());
+        }
+        new_runtimes.push(runtime);
+        continue;
+      }
+
       let runtime_config = lsp_runtime_config_for(server, workspace_root.clone());
       let server_name = runtime_config
         .server()
@@ -1181,9 +1237,18 @@ impl SwiftEditor {
           detail: Some(summarize_lsp_error(&err.to_string())),
         };
       }
-      self.lsp_runtimes.push(managed);
+      new_runtimes.push(managed);
     }
 
+    for runtime in &mut old_runtimes {
+      close_lsp_document_for_runtime(runtime, old_document.as_ref());
+      let _ = runtime.runtime.shutdown_detached();
+    }
+
+    self.lsp_runtimes = new_runtimes;
+    for runtime_index in 0..self.lsp_runtimes.len() {
+      self.open_current_document_for_runtime(runtime_index);
+    }
     self.sync_lsp_statusline();
   }
 
@@ -1345,6 +1410,73 @@ impl SwiftEditor {
     start
   }
 
+  fn handle_insert_mode_char_post_edit(&mut self, ch: char) {
+    if self.lsp_signature_help_supports_trigger_char(ch) {
+      self.clear_completion_state();
+      let trigger = if self.signature_help.active {
+        LspSignatureHelpContext::trigger_character_retrigger(ch)
+      } else {
+        LspSignatureHelpContext::trigger_character(ch)
+      };
+      let _ = self.schedule_auto_signature_help(trigger, Duration::from_millis(20));
+      return;
+    }
+
+    if self.signature_help.active {
+      let trigger = if self.lsp_signature_help_supports_retrigger_char(ch) {
+        LspSignatureHelpContext::trigger_character_retrigger(ch)
+      } else {
+        LspSignatureHelpContext::content_change_retrigger()
+      };
+      let _ = self.schedule_auto_signature_help(trigger, Duration::from_millis(80));
+    } else {
+      self.cancel_auto_signature_help();
+      if !is_symbol_word_char(ch) {
+        self.signature_help.clear();
+      }
+    }
+
+    if self.lsp_completion_supports_trigger_char(ch) {
+      let _ = self.schedule_auto_completion(
+        LspCompletionContext::trigger_character(ch),
+        Duration::from_millis(20),
+      );
+    } else if is_symbol_word_char(ch) {
+      let _ = self.schedule_auto_completion(
+        LspCompletionContext::invoked(),
+        Duration::from_millis(80),
+      );
+    } else {
+      self.clear_completion_state();
+    }
+  }
+
+  fn handle_insert_mode_delete_post_edit(&mut self) {
+    if self.signature_help.active {
+      let _ = self.schedule_auto_signature_help(
+        LspSignatureHelpContext::content_change_retrigger(),
+        Duration::from_millis(80),
+      );
+    } else {
+      self.cancel_auto_signature_help();
+    }
+
+    if self.completion_menu.active || self.cursor_prev_char_is_word() {
+      let _ = self.schedule_auto_completion(
+        LspCompletionContext::trigger_for_incomplete(),
+        Duration::from_millis(80),
+      );
+    } else {
+      self.clear_completion_state();
+    }
+  }
+
+  fn handle_insert_mode_other_post_edit(&mut self) {
+    self.cancel_auto_signature_help();
+    self.signature_help.clear();
+    self.clear_completion_state();
+  }
+
   fn lsp_supports_completion(&self) -> bool {
     self.lsp_runtimes.iter().any(|runtime| {
       runtime.ready
@@ -1352,6 +1484,48 @@ impl SwiftEditor {
           .configured_server_name()
           .and_then(|server_name| runtime.runtime.server_capabilities(server_name))
           .is_some_and(|capabilities| capabilities.supports(LspCapability::Completion))
+    })
+  }
+
+  fn lsp_supports_signature_help(&self) -> bool {
+    self.lsp_runtimes.iter().any(|runtime| {
+      runtime.ready
+        && runtime
+          .configured_server_name()
+          .and_then(|server_name| runtime.runtime.server_capabilities(server_name))
+          .is_some_and(|capabilities| capabilities.supports(LspCapability::SignatureHelp))
+    })
+  }
+
+  fn lsp_provider_supports_single_char(&self, provider_key: &str, characters_key: &str, ch: char) -> bool {
+    self.lsp_runtimes.iter().any(|runtime| {
+      runtime.ready
+        && runtime
+          .configured_server_name()
+          .and_then(|server_name| runtime.runtime.server_capabilities(server_name))
+          .is_some_and(|capabilities| capabilities_support_single_char(capabilities.raw(), provider_key, characters_key, ch))
+    })
+  }
+
+  fn lsp_completion_supports_trigger_char(&self, ch: char) -> bool {
+    self.lsp_provider_supports_single_char("completionProvider", "triggerCharacters", ch)
+  }
+
+  fn lsp_signature_help_supports_trigger_char(&self, ch: char) -> bool {
+    self.lsp_provider_supports_single_char("signatureHelpProvider", "triggerCharacters", ch)
+  }
+
+  fn lsp_signature_help_supports_retrigger_char(&self, ch: char) -> bool {
+    self.lsp_provider_supports_single_char("signatureHelpProvider", "retriggerCharacters", ch)
+  }
+
+  fn lsp_completion_server_supports_resolve(&self) -> bool {
+    self.lsp_runtimes.iter().any(|runtime| {
+      runtime.ready
+        && runtime
+          .configured_server_name()
+          .and_then(|server_name| runtime.runtime.server_capabilities(server_name))
+          .is_some_and(|capabilities| capabilities.supports_completion_item_resolve())
     })
   }
 
@@ -1371,6 +1545,22 @@ impl SwiftEditor {
     self.lsp_pending_auto_completion = None;
   }
 
+  fn schedule_auto_signature_help(&mut self, trigger: LspSignatureHelpContext, delay: Duration) -> bool {
+    if self.mode != Mode::Insert || !self.lsp_supports_signature_help() {
+      self.lsp_pending_auto_signature_help = None;
+      return false;
+    }
+    self.lsp_pending_auto_signature_help = Some(PendingAutoSignatureHelp {
+      due_at: Instant::now() + delay,
+      trigger,
+    });
+    true
+  }
+
+  fn cancel_auto_signature_help(&mut self) {
+    self.lsp_pending_auto_signature_help = None;
+  }
+
   fn poll_lsp_completion_auto_trigger(&mut self) -> bool {
     let Some(pending) = self.lsp_pending_auto_completion.clone() else {
       return false;
@@ -1387,9 +1577,28 @@ impl SwiftEditor {
     false
   }
 
+  fn poll_lsp_signature_help_auto_trigger(&mut self) -> bool {
+    let Some(pending) = self.lsp_pending_auto_signature_help.clone() else {
+      return false;
+    };
+    if self.mode != Mode::Insert {
+      self.lsp_pending_auto_signature_help = None;
+      return false;
+    }
+    if Instant::now() < pending.due_at {
+      return false;
+    }
+    self.lsp_pending_auto_signature_help = None;
+    let _ = self.dispatch_signature_help_request(pending.trigger, false);
+    false
+  }
+
   fn clear_completion_state(&mut self) {
     self.cancel_auto_completion();
     self.lsp_completion_items.clear();
+    self.lsp_completion_raw_items.clear();
+    self.lsp_completion_resolved.clear();
+    self.lsp_completion_resolve_supported = false;
     self.lsp_completion_fallback_start = None;
     self.completion_menu.clear();
   }
@@ -1431,6 +1640,27 @@ impl SwiftEditor {
     true
   }
 
+  fn dispatch_signature_help_request(&mut self, context: LspSignatureHelpContext, announce_failures: bool) -> bool {
+    if !self.lsp_supports_signature_help() {
+      if announce_failures {
+        self.push_warning("lsp", "signature help is not supported by the active server");
+      }
+      return false;
+    }
+    let Some((uri, position)) = self.current_lsp_position() else {
+      if announce_failures {
+        self.push_warning("lsp", "signature help unavailable: no active LSP document");
+      }
+      return false;
+    };
+    self.dispatch_lsp_request(
+      "textDocument/signatureHelp",
+      signature_help_params(&uri, position, &context),
+      PendingLspRequestKind::SignatureHelp { uri },
+    );
+    true
+  }
+
   fn handle_completion_response(
     &mut self,
     result: Option<&serde_json::Value>,
@@ -1449,15 +1679,15 @@ impl SwiftEditor {
       return false;
     }
 
-    let items = match parse_completion_response(result) {
-      Ok(items) => items,
+    let completion = match parse_completion_response_with_raw(result) {
+      Ok(completion) => completion,
       Err(err) => {
         self.push_error("lsp", format!("failed to parse completion response: {err}"));
         return true;
       },
     };
 
-    if items.is_empty() {
+    if completion.items.is_empty() {
       self.clear_completion_state();
       if announce_empty {
         self.push_info("lsp", "no completion candidates");
@@ -1465,9 +1695,72 @@ impl SwiftEditor {
       return true;
     }
 
-    self.lsp_completion_items = items;
+    self.lsp_completion_items = completion.items;
+    self.lsp_completion_raw_items = completion.raw_items;
+    self.lsp_completion_resolved.clear();
+    self.lsp_completion_resolve_supported = self.lsp_completion_server_supports_resolve();
     self.lsp_completion_fallback_start = Some(replace_start.min(request_cursor));
     self.rebuild_completion_menu();
+    true
+  }
+
+  fn resolve_completion_item_if_needed(&mut self, index: usize) {
+    if !self.completion_menu.active || !self.lsp_completion_resolve_supported {
+      return;
+    }
+    if self.lsp_completion_resolved.contains(&index) {
+      return;
+    }
+    if index >= self.lsp_completion_items.len() || index >= self.lsp_completion_raw_items.len() {
+      return;
+    }
+    let pending = self.lsp_runtimes.iter().any(|runtime| {
+      runtime.pending_requests.values().any(|request| {
+        matches!(request, PendingLspRequestKind::CompletionResolve { index: pending_index, .. } if *pending_index == index)
+      })
+    });
+    if pending {
+      return;
+    }
+
+    let Some(uri) = self.lsp_document.as_ref().map(|state| state.uri.clone()) else {
+      return;
+    };
+    let params = self.lsp_completion_raw_items[index].clone();
+    self.dispatch_lsp_request(
+      "completionItem/resolve",
+      params,
+      PendingLspRequestKind::CompletionResolve { uri, index },
+    );
+  }
+
+  fn handle_completion_resolve_response(&mut self, index: usize, response: &jsonrpc::Response) -> bool {
+    if let Some(error) = response.error.as_ref() {
+      self.lsp_completion_resolved.insert(index);
+      self.push_warning("lsp", format!("completion resolve failed: {}", error.message));
+      return true;
+    }
+
+    let resolved = match parse_completion_item_response(response.result.as_ref()) {
+      Ok(item) => item,
+      Err(err) => {
+        self.push_warning("lsp", format!("failed to parse completion resolve response: {err}"));
+        return true;
+      },
+    };
+
+    self.lsp_completion_resolved.insert(index);
+    let Some(resolved) = resolved else {
+      return true;
+    };
+    let Some(item) = self.lsp_completion_items.get_mut(index) else {
+      return true;
+    };
+    merge_resolved_completion_item(item, resolved);
+    if let Some(ui_item) = self.completion_menu.items.get_mut(index) {
+      *ui_item = completion_menu_item_for_lsp_item(item);
+    }
+    self.request_render();
     true
   }
 
@@ -1475,6 +1768,8 @@ impl SwiftEditor {
     let Some(item) = self.lsp_completion_items.get(index).cloned() else {
       return false;
     };
+    let prepared = normalize_completion_item_for_apply(item);
+    let item = prepared.item;
     let doc = self.editor.document();
     let text = doc.text();
     let cursor = self.active_cursor_char_idx().unwrap_or(text.len_chars());
@@ -1488,15 +1783,21 @@ impl SwiftEditor {
       (fallback_start, cursor, completion_insert_text(&item, None))
     };
 
-    let selection = Selection::point(from.saturating_add(inserted_text.chars().count()));
     let Ok(transaction) = the_lib::transaction::Transaction::change(text, vec![(from, to, Some(inserted_text.clone().into()))])
-      .map(|transaction| transaction.with_selection(selection))
     else {
       return false;
     };
     if !self.apply_transaction(&transaction) {
       return false;
     }
+
+    let mapped_base = transaction.changes().map_pos(from, the_lib::transaction::Assoc::Before).ok();
+    if let (Some(base), Some(range)) = (mapped_base, prepared.cursor_range.as_ref()) {
+      set_completion_snippet_selection(self.editor.document_mut(), base, range);
+    } else if let Some(base) = mapped_base {
+      let _ = self.editor.document_mut().set_selection(Selection::point(base.saturating_add(inserted_text.chars().count())));
+    }
+    let _ = self.editor.document_mut().commit();
     self.clear_completion_state();
     true
   }
@@ -1659,6 +1960,9 @@ impl SwiftEditor {
         replace_start,
         announce_empty,
       ),
+      PendingLspRequestKind::CompletionResolve { index, .. } => {
+        self.handle_completion_resolve_response(index, &response)
+      },
       PendingLspRequestKind::SignatureHelp { .. } => self.handle_signature_help_response(response.result.as_ref()),
     }
   }
@@ -2046,6 +2350,7 @@ impl SwiftEditor {
     changed |= self.poll_active_file_watch();
     changed |= self.poll_lsp_events();
     changed |= self.poll_lsp_completion_auto_trigger();
+    changed |= self.poll_lsp_signature_help_auto_trigger();
     changed |= self.tick_lsp_statusline();
     changed |= self.poll_vcs_statusline_refresh_results();
     changed |= self.refresh_picker_state();
@@ -2116,9 +2421,13 @@ impl SwiftEditor {
       signature_help: SignatureHelpState::default(),
       hover_docs: None,
       lsp_completion_items: Vec::new(),
+      lsp_completion_raw_items: Vec::new(),
+      lsp_completion_resolved: HashSet::new(),
+      lsp_completion_resolve_supported: false,
       lsp_completion_generation: 0,
       lsp_completion_fallback_start: None,
       lsp_pending_auto_completion: None,
+      lsp_pending_auto_signature_help: None,
       pending_input: None,
       registers: Registers::new(),
       register: None,
@@ -2252,36 +2561,21 @@ impl SwiftEditor {
     let Some(event) = translate_key_event(raw) else {
       return false;
     };
-    let should_refresh_signature = matches!(
-      event.key,
-      Key::Char(_) | Key::Backspace | Key::Delete | Key::Enter | Key::NumpadEnter
-    );
     let completion_key = event.key;
+    let was_insert_mode = self.mode == Mode::Insert;
     handle_key(self, event);
-    if self.mode == Mode::Insert && should_refresh_signature {
-      self.lsp_signature_help_on_insert_mode_entry();
-      match completion_key {
-        Key::Char(ch) if is_symbol_word_char(ch) => {
-          let _ = self.schedule_auto_completion(
-            LspCompletionContext::invoked(),
-            Duration::from_millis(80),
-          );
-        },
-        Key::Backspace | Key::Delete => {
-          if self.completion_menu.active || self.cursor_prev_char_is_word() {
-            let _ = self.schedule_auto_completion(
-              LspCompletionContext::trigger_for_incomplete(),
-              Duration::from_millis(80),
-            );
-          } else {
-            self.clear_completion_state();
-          }
-        },
-        _ => {
-          self.clear_completion_state();
-        },
+    if self.mode == Mode::Insert {
+      if was_insert_mode {
+        match completion_key {
+          Key::Char(ch) => self.handle_insert_mode_char_post_edit(ch),
+          Key::Backspace | Key::Delete => self.handle_insert_mode_delete_post_edit(),
+          Key::Enter | Key::NumpadEnter => self.handle_insert_mode_other_post_edit(),
+          _ => {},
+        }
       }
-    } else if self.mode != Mode::Insert {
+    } else {
+      self.cancel_auto_signature_help();
+      self.signature_help.clear();
       self.clear_completion_state();
     }
     self.ensure_cursor_visible();
@@ -2290,28 +2584,33 @@ impl SwiftEditor {
 
   fn insert_text(&mut self, text: &str) -> bool {
     let mut changed = false;
-    let mut last_char = None;
+    let mut last_key = None;
     for ch in text.chars() {
-      let event = match ch {
-        '\n' => KeyEvent { key: Key::Enter, modifiers: the_default::Modifiers::empty() },
-        '\t' => KeyEvent { key: Key::Tab, modifiers: the_default::Modifiers::empty() },
-        _ => KeyEvent { key: Key::Char(ch), modifiers: the_default::Modifiers::empty() },
+      let key = match ch {
+        '\n' => Key::Enter,
+        '\t' => Key::Tab,
+        _ => Key::Char(ch),
+      };
+      let event = KeyEvent {
+        key,
+        modifiers: the_default::Modifiers::empty(),
       };
       handle_key(self, event);
       changed = true;
-      last_char = Some(ch);
+      last_key = Some(key);
     }
     if changed {
       if self.mode == Mode::Insert {
-        self.lsp_signature_help_on_insert_mode_entry();
-        if last_char.is_some_and(is_symbol_word_char) {
-          let _ = self.schedule_auto_completion(
-            LspCompletionContext::invoked(),
-            Duration::from_millis(80),
-          );
-        } else {
-          self.clear_completion_state();
+        match last_key {
+          Some(Key::Char(ch)) => self.handle_insert_mode_char_post_edit(ch),
+          Some(Key::Backspace | Key::Delete) => self.handle_insert_mode_delete_post_edit(),
+          Some(Key::Enter | Key::NumpadEnter | Key::Tab) | None => self.handle_insert_mode_other_post_edit(),
+          _ => {},
         }
+      } else {
+        self.cancel_auto_signature_help();
+        self.signature_help.clear();
+        self.clear_completion_state();
       }
       self.ensure_cursor_visible();
     }
@@ -2906,8 +3205,14 @@ impl DefaultContext for SwiftEditor {
   fn completion_menu_keymaps(&self) -> &Keymaps { &self.completion_menu_keymaps }
   fn completion_menu_keymaps_mut(&mut self) -> &mut Keymaps { &mut self.completion_menu_keymaps }
   fn completion_accept_selected(&mut self, index: usize) -> bool { self.apply_selected_completion(index) }
+  fn completion_selection_changed(&mut self, index: usize) {
+    self.resolve_completion_item_if_needed(index);
+  }
   fn completion_menu_closed(&mut self) {
     self.lsp_completion_items.clear();
+    self.lsp_completion_raw_items.clear();
+    self.lsp_completion_resolved.clear();
+    self.lsp_completion_resolve_supported = false;
     self.lsp_completion_fallback_start = None;
   }
   fn inline_completion(&self) -> &the_default::InlineCompletionState { &self.inline_completion }
@@ -2985,21 +3290,7 @@ impl DefaultContext for SwiftEditor {
     let _ = self.dispatch_completion_request(LspCompletionContext::invoked(), true);
   }
   fn lsp_signature_help(&mut self) {
-    let Some((uri, position)) = self.current_lsp_position() else {
-      self.push_warning("lsp", "signature help unavailable: no active LSP document");
-      return;
-    };
-    self.dispatch_lsp_request(
-      "textDocument/signatureHelp",
-      signature_help_params(&uri, position, &LspSignatureHelpContext::invoked()),
-      PendingLspRequestKind::SignatureHelp { uri },
-    );
-  }
-  fn lsp_signature_help_on_insert_mode_entry(&mut self) {
-    if self.lsp_document.is_none() || !self.lsp_runtimes.iter().any(|runtime| runtime.ready) {
-      return;
-    }
-    self.lsp_signature_help();
+    let _ = self.dispatch_signature_help_request(LspSignatureHelpContext::invoked(), true);
   }
 
   fn available_theme_names(&self) -> Vec<String> { self.ui_theme_catalog.names() }
@@ -4039,6 +4330,34 @@ fn lsp_runtime_config_for(server: LspServerConfig, workspace_root: PathBuf) -> L
     .with_request_policy(Duration::from_secs(8), 1)
 }
 
+fn lsp_server_configs_equal(lhs: Option<&LspServerConfig>, rhs: Option<&LspServerConfig>) -> bool {
+  match (lhs, rhs) {
+    (None, None) => true,
+    (Some(lhs), Some(rhs)) => {
+      lhs.name() == rhs.name()
+        && lhs.command() == rhs.command()
+        && lhs.args() == rhs.args()
+        && lhs.env() == rhs.env()
+        && lhs.initialize_options() == rhs.initialize_options()
+        && lhs.initialize_timeout() == rhs.initialize_timeout()
+    },
+    _ => false,
+  }
+}
+
+fn close_lsp_document_for_runtime(runtime: &mut ManagedLspRuntime, document: Option<&LspDocumentSyncState>) {
+  if runtime.opened_current_document && let Some(document) = document {
+    let params = did_close_params(&document.uri);
+    let _ = runtime.runtime.send_notification("textDocument/didClose", Some(params));
+  }
+  let pending_ids = runtime.pending_requests.keys().copied().collect::<Vec<_>>();
+  for request_id in pending_ids {
+    let _ = runtime.runtime.cancel_request(request_id);
+  }
+  runtime.pending_requests.clear();
+  runtime.opened_current_document = false;
+}
+
 fn lsp_language_id_for_path(loader: Option<&Loader>, path: &Path) -> Option<String> {
   let loader = loader?;
   let language = loader.language_for_filename(path)?;
@@ -4569,6 +4888,26 @@ fn active_docs_cursor_position(plan: &RenderPlan) -> Option<(u16, u16)> {
   })
 }
 
+fn capabilities_support_single_char(
+  raw_capabilities: &serde_json::Value,
+  provider_key: &str,
+  characters_key: &str,
+  ch: char,
+) -> bool {
+  let Some(values) = raw_capabilities
+    .get(provider_key)
+    .and_then(|provider| provider.get(characters_key))
+    .and_then(serde_json::Value::as_array)
+  else {
+    return false;
+  };
+
+  values.iter().filter_map(serde_json::Value::as_str).any(|value| {
+    let mut chars = value.chars();
+    matches!(chars.next(), Some(first) if first == ch && chars.next().is_none())
+  })
+}
+
 fn normalize_completion_documentation(value: &str) -> Option<String> {
   let normalized = value.replace("\r\n", "\n").replace('\r', "\n");
   let trimmed = normalized.trim();
@@ -4656,6 +4995,134 @@ fn completion_insert_text(item: &LspCompletionItem, preferred_text: Option<&str>
     text = render_lsp_snippet(&text).text;
   }
   text
+}
+
+fn merge_resolved_completion_item(current: &mut LspCompletionItem, resolved: LspCompletionItem) {
+  if current.filter_text.is_none() {
+    current.filter_text = resolved.filter_text;
+  }
+  if current.sort_text.is_none() {
+    current.sort_text = resolved.sort_text;
+  }
+  if !current.preselect {
+    current.preselect = resolved.preselect;
+  }
+  if current.detail.is_none() {
+    current.detail = resolved.detail;
+  }
+  if current.documentation.is_none() {
+    current.documentation = resolved.documentation;
+  }
+  if current.kind.is_none() {
+    current.kind = resolved.kind;
+  }
+  if current.primary_edit.is_none() {
+    current.primary_edit = resolved.primary_edit;
+  }
+  if current.additional_edits.is_empty() {
+    current.additional_edits = resolved.additional_edits;
+  }
+  if current.insert_text.is_none() {
+    current.insert_text = resolved.insert_text;
+  }
+  if current.insert_text_format.is_none() {
+    current.insert_text_format = resolved.insert_text_format;
+  }
+  if current.commit_characters.is_empty() {
+    current.commit_characters = resolved.commit_characters;
+  }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CompletionSnippetCursorOrigin {
+  InsertText,
+  PrimaryEdit,
+}
+
+#[derive(Clone, Debug)]
+struct CompletionApplyItem {
+  item:         LspCompletionItem,
+  cursor_range: Option<std::ops::Range<usize>>,
+}
+
+fn normalize_completion_item_for_apply(mut item: LspCompletionItem) -> CompletionApplyItem {
+  let mut cursor_range = None;
+  if item.insert_text_format == Some(LspInsertTextFormat::Snippet) {
+    if let Some(insert_text) = item.insert_text.as_mut() {
+      let rendered = render_lsp_snippet(insert_text);
+      if item.primary_edit.is_none() {
+        cursor_range = rendered.cursor_char_range.clone();
+      }
+      *insert_text = rendered.text;
+    }
+    if let Some(primary_edit) = item.primary_edit.as_mut() {
+      let rendered = render_lsp_snippet(&primary_edit.new_text);
+      cursor_range = rendered.cursor_char_range.clone();
+      primary_edit.new_text = rendered.text;
+    }
+    for additional in &mut item.additional_edits {
+      additional.new_text = render_lsp_snippet(&additional.new_text).text;
+    }
+  }
+  if cursor_range.is_none()
+    && let Some((_origin, range)) = promote_callable_completion_fallback(&mut item)
+  {
+    cursor_range = Some(range);
+  }
+  CompletionApplyItem { item, cursor_range }
+}
+
+fn promote_callable_completion_fallback(
+  item: &mut LspCompletionItem,
+) -> Option<(CompletionSnippetCursorOrigin, std::ops::Range<usize>)> {
+  if !matches!(
+    item.kind,
+    Some(
+      LspCompletionItemKind::Function
+        | LspCompletionItemKind::Method
+        | LspCompletionItemKind::Constructor
+    )
+  ) {
+    return None;
+  }
+
+  let (text, origin) = if let Some(primary) = item.primary_edit.as_mut() {
+    (&mut primary.new_text, CompletionSnippetCursorOrigin::PrimaryEdit)
+  } else {
+    if item.insert_text.is_none() {
+      item.insert_text = Some(item.label.clone());
+    }
+    (
+      item.insert_text.as_mut()?,
+      CompletionSnippetCursorOrigin::InsertText,
+    )
+  };
+
+  let trimmed = text.trim();
+  if trimmed.is_empty() || trimmed.contains('(') || trimmed.ends_with('!') {
+    return None;
+  }
+  if !trimmed
+    .chars()
+    .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | ':' | '.'))
+  {
+    return None;
+  }
+
+  let cursor = text.chars().count().saturating_add(1);
+  text.push_str("()");
+  Some((origin, cursor..cursor))
+}
+
+fn set_completion_snippet_selection(
+  doc: &mut Document,
+  mapped_base: usize,
+  cursor_range: &std::ops::Range<usize>,
+) {
+  let max = doc.text().len_chars();
+  let anchor = mapped_base.saturating_add(cursor_range.start).min(max);
+  let head = mapped_base.saturating_add(cursor_range.end).min(max);
+  let _ = doc.set_selection(Selection::single(anchor, head));
 }
 
 fn selected_completion_docs_text(editor: &SwiftEditor) -> Option<&str> {
@@ -5385,6 +5852,12 @@ pub unsafe extern "C" fn the_editor_close_completion_menu(handle: *mut the_edito
 pub unsafe extern "C" fn the_editor_completion_menu_select_index(handle: *mut the_editor_handle_t, index: usize) -> bool {
   let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
   handle.editor.select_completion_menu_index(index)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_set_completion_menu_scroll(handle: *mut the_editor_handle_t, offset: usize) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+  handle.editor.set_completion_menu_scroll(offset)
 }
 
 #[unsafe(no_mangle)]

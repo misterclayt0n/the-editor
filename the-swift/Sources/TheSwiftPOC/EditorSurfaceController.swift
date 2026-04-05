@@ -136,6 +136,11 @@ final class EditorSurfaceController: ObservableObject {
         refreshSnapshot()
     }
 
+    func setCompletionMenuScroll(_ offset: Int) {
+        guard EditorFFIBridge.setCompletionMenuScroll(handle?.raw, offset: offset) else { return }
+        refreshSnapshot()
+    }
+
     func submitCompletionMenu() {
         guard EditorFFIBridge.submitCompletionMenu(handle?.raw) else { return }
         refreshSnapshot()

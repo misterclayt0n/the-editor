@@ -410,6 +410,7 @@ bool the_editor_command_palette_select_visible_index(the_editor_handle_t *handle
 bool the_editor_command_palette_submit(the_editor_handle_t *handle);
 bool the_editor_close_completion_menu(the_editor_handle_t *handle);
 bool the_editor_completion_menu_select_index(the_editor_handle_t *handle, uintptr_t index);
+bool the_editor_set_completion_menu_scroll(the_editor_handle_t *handle, uintptr_t offset);
 bool the_editor_completion_menu_submit(the_editor_handle_t *handle);
 bool the_editor_poll_background_tasks(the_editor_handle_t *handle);
 bool the_editor_open_search_prompt(the_editor_handle_t *handle);

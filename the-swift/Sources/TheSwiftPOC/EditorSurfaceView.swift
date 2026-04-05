@@ -161,6 +161,11 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
         }
 
         if controller.currentMode == .insert {
+            if event.modifierFlags.intersection([.control, .option]).isEmpty == false,
+               let keyEvent = translateRawEvent(event) {
+                controller.handleKey(keyEvent)
+                return
+            }
             if let special = translateSpecialEvent(event) {
                 if special.kind == THE_EDITOR_KEY_ESCAPE.rawValue {
                     cancelMarkedTextComposition()

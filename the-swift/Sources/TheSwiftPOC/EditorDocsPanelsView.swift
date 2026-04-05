@@ -193,9 +193,8 @@ struct EditorDocsPanelOverlay: View {
             if availableWidth > 0 {
                 let anchoredWidth = min(kind.maximumSize.width, availableWidth)
                 let width = max(anchoredWidth, min(kind.minimumSize.width, availableWidth))
-                let contentWidth = max(width - docsPanelHorizontalInset, 1)
-                let contentHeight = ceil(textBounds(forWidth: contentWidth).height) + docsPanelVerticalInset
-                let height = min(maxHeight, max(kind.minimumSize.height, contentHeight))
+                let preferredHeight = min(anchorFrame.height, kind.maximumSize.height)
+                let height = max(min(preferredHeight, maxHeight), min(kind.minimumSize.height, maxHeight))
                 let x = placeRight
                     ? min(anchorFrame.maxX + gap, viewportSize.width - width - docsPanelEdgePadding)
                     : max(anchorFrame.minX - gap - width, docsPanelEdgePadding)
@@ -384,6 +383,8 @@ private struct EditorSelectableDocsTextView: NSViewRepresentable {
             measureCompletionPerf("docs.textView.setAttributedText signature=\(contentSignature)") {
                 textView.textStorage?.setAttributedString(attributedText)
             }
+            scrollView.contentView.scroll(to: .zero)
+            scrollView.reflectScrolledClipView(scrollView.contentView)
             context.coordinator.lastContentSignature = contentSignature
         }
     }

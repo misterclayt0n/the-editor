@@ -184,12 +184,6 @@ struct EditorDocsPanelOverlay: View {
             min(kind.minimumSize.height, max(viewportSize.height - docsPanelEdgePadding * 2, 0))
         )
 
-        let unconstrainedWidth = ceil(textBounds(forWidth: CGFloat.greatestFiniteMagnitude).width) + docsPanelHorizontalInset
-        let width = min(maxWidth, max(kind.minimumSize.width, unconstrainedWidth))
-        let contentWidth = max(width - docsPanelHorizontalInset, 1)
-        let contentHeight = ceil(textBounds(forWidth: contentWidth).height) + docsPanelVerticalInset
-        let height = min(maxHeight, max(kind.minimumSize.height, contentHeight))
-
         if kind == .completionDocs, let anchorFrame {
             let gap: CGFloat = 8
             let rightAvailable = viewportSize.width - docsPanelEdgePadding - (anchorFrame.maxX + gap)
@@ -197,14 +191,24 @@ struct EditorDocsPanelOverlay: View {
             let placeRight = rightAvailable >= leftAvailable
             let availableWidth = max(placeRight ? rightAvailable : leftAvailable, 0)
             if availableWidth > 0 {
-                let anchoredWidth = max(min(width, availableWidth), min(kind.minimumSize.width, availableWidth))
+                let anchoredWidth = min(kind.maximumSize.width, availableWidth)
+                let width = max(anchoredWidth, min(kind.minimumSize.width, availableWidth))
+                let contentWidth = max(width - docsPanelHorizontalInset, 1)
+                let contentHeight = ceil(textBounds(forWidth: contentWidth).height) + docsPanelVerticalInset
+                let height = min(maxHeight, max(kind.minimumSize.height, contentHeight))
                 let x = placeRight
-                    ? min(anchorFrame.maxX + gap, viewportSize.width - anchoredWidth - docsPanelEdgePadding)
-                    : max(anchorFrame.minX - gap - anchoredWidth, docsPanelEdgePadding)
+                    ? min(anchorFrame.maxX + gap, viewportSize.width - width - docsPanelEdgePadding)
+                    : max(anchorFrame.minX - gap - width, docsPanelEdgePadding)
                 let y = clamp(anchorFrame.minY, lower: docsPanelEdgePadding, upper: max(viewportSize.height - height - docsPanelEdgePadding, docsPanelEdgePadding))
-                return CGRect(x: x, y: y, width: anchoredWidth, height: height)
+                return CGRect(x: x, y: y, width: width, height: height)
             }
         }
+
+        let unconstrainedWidth = ceil(textBounds(forWidth: CGFloat.greatestFiniteMagnitude).width) + docsPanelHorizontalInset
+        let width = min(maxWidth, max(kind.minimumSize.width, unconstrainedWidth))
+        let contentWidth = max(width - docsPanelHorizontalInset, 1)
+        let contentHeight = ceil(textBounds(forWidth: contentWidth).height) + docsPanelVerticalInset
+        let height = min(maxHeight, max(kind.minimumSize.height, contentHeight))
 
         let clampedX = clamp(baseOrigin.x, lower: docsPanelEdgePadding, upper: max(viewportSize.width - width - docsPanelEdgePadding, docsPanelEdgePadding))
         let anchoredY = anchoredOriginY(baseOriginY: baseOrigin.y, exportedHeight: exportedSize.height, fittedHeight: height)

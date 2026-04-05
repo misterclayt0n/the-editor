@@ -29,20 +29,26 @@ private final class EditorDocsRenderCache {
         if let cached = attributedTexts[key] {
             return cached
         }
-        let value = build()
+        let value = measureCompletionPerf("docs.attributedText.build runs=\(key.runs.count) kind=\(String(describing: key.kind))") {
+            build()
+        }
         attributedTexts[key] = value
         return value
     }
 
     func bounds(for key: EditorDocsContentKey, width: CGFloat, build: () -> CGRect) -> CGRect {
         guard width.isFinite, width < CGFloat(Int.max) else {
-            return build()
+            return measureCompletionPerf("docs.bounds.probe runs=\(key.runs.count) kind=\(String(describing: key.kind))") {
+                build()
+            }
         }
         let widthKey = EditorDocsBoundsKey(content: key, width: Int(width.rounded(.toNearestOrEven)))
         if let cached = bounds[widthKey] {
             return cached
         }
-        let value = build()
+        let value = measureCompletionPerf("docs.bounds.build width=\(widthKey.width) runs=\(key.runs.count) kind=\(String(describing: key.kind))") {
+            build()
+        }
         bounds[widthKey] = value
         return value
     }
@@ -371,7 +377,9 @@ private struct EditorSelectableDocsTextView: NSViewRepresentable {
         guard let textView = context.coordinator.textView else { return }
         textView.onEscape = context.coordinator.onEscape
         if context.coordinator.lastContentSignature != contentSignature {
-            textView.textStorage?.setAttributedString(attributedText)
+            measureCompletionPerf("docs.textView.setAttributedText signature=\(contentSignature)") {
+                textView.textStorage?.setAttributedString(attributedText)
+            }
             context.coordinator.lastContentSignature = contentSignature
         }
     }

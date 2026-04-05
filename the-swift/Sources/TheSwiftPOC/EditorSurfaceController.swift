@@ -359,6 +359,11 @@ final class EditorSurfaceController: ObservableObject {
         themePerfLog(
             "controller.refresh themeGen=\(snapshot.info.themeGeneration) snapshotMs=\(String(format: "%.2f", snapshotMs)) sceneMs=\(String(format: "%.2f", sceneMs)) totalMs=\(String(format: "%.2f", totalMs))"
         )
+        if snapshot.completionMenu.isOpen || snapshot.completionDocs.isOpen {
+            completionPerfLog(
+                "controller.refresh menuOpen=\(snapshot.completionMenu.isOpen) docsOpen=\(snapshot.completionDocs.isOpen) items=\(snapshot.completionMenu.items.count) selected=\(String(describing: snapshot.completionMenu.selectedIndex)) scroll=\(snapshot.completionMenu.scrollOffset) snapshotMs=\(String(format: "%.2f", snapshotMs)) sceneMs=\(String(format: "%.2f", sceneMs)) totalMs=\(String(format: "%.2f", totalMs))"
+            )
+        }
     }
 
     private func startBackgroundPolling() {

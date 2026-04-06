@@ -704,6 +704,16 @@ fn completion_trace_log(message: impl AsRef<str>) {
   }
 }
 
+fn code_action_trace_enabled() -> bool {
+  env::var("THE_EDITOR_CODE_ACTION_TRACE").ok().as_deref() == Some("1")
+}
+
+fn code_action_trace_log(message: impl AsRef<str>) {
+  if code_action_trace_enabled() {
+    eprintln!("[the-ffi:code-actions] {}", message.as_ref());
+  }
+}
+
 #[derive(Default)]
 struct OwnedSnapshot {
   info:                  the_editor_snapshot_info_t,
@@ -2153,6 +2163,15 @@ impl SwiftEditor {
 
   fn show_code_action_menu(&mut self, mut actions: Vec<LspCodeAction>) {
     actions.sort_by_key(|action| !action.is_preferred);
+    code_action_trace_log(format!(
+      "show_menu count={} titles=[{}]",
+      actions.len(),
+      actions
+        .iter()
+        .map(|action| action.title.as_str())
+        .collect::<Vec<_>>()
+        .join(" | "),
+    ));
     self.clear_completion_state();
     self.lsp_code_action_items = actions;
     self.lsp_code_action_menu_active = !self.lsp_code_action_items.is_empty();
@@ -2165,7 +2184,17 @@ impl SwiftEditor {
   }
 
   fn apply_code_action(&mut self, action: LspCodeAction) -> bool {
+    code_action_trace_log(format!(
+      "apply title={:?} preferred={} needs_resolve={} has_edit={} has_command={} raw={}",
+      action.title,
+      action.is_preferred,
+      action.needs_resolve(),
+      action.edit.is_some(),
+      action.command.is_some(),
+      action.raw.is_some(),
+    ));
     if self.resolve_code_action(action.clone()) {
+      code_action_trace_log("apply dispatched resolve");
       return true;
     }
     self.apply_code_action_now(action)
@@ -2174,6 +2203,23 @@ impl SwiftEditor {
   fn apply_code_action_now(&mut self, action: LspCodeAction) -> bool {
     let title = action.title.clone();
     let mut handled = false;
+
+    code_action_trace_log(format!(
+      "apply_now title={:?} has_edit={} edit_docs={} edit_edits={} has_command={} command={}",
+      title,
+      action.edit.is_some(),
+      action.edit.as_ref().map_or(0, |edit| edit.documents.len()),
+      action
+        .edit
+        .as_ref()
+        .map_or(0, |edit| edit.documents.iter().map(|document| document.edits.len()).sum::<usize>()),
+      action.command.is_some(),
+      action
+        .command
+        .as_ref()
+        .map(|command| command.command.as_str())
+        .unwrap_or("-"),
+    ));
 
     if let Some(edit) = action.edit.as_ref() {
       let _ = self.apply_workspace_edit(edit, "code action");
@@ -2186,22 +2232,41 @@ impl SwiftEditor {
     }
 
     if !handled {
+      code_action_trace_log(format!("apply_now title={:?} had_no_effect_payload", title));
       self.push_info("lsp", format!("code action '{title}' had no edits"));
     }
     true
   }
 
   fn execute_lsp_command_action(&mut self, command: LspExecuteCommand, title: String) -> bool {
+    let command_name = command.command.clone();
+    let args_len = command.arguments.as_ref().map_or(0, Vec::len);
     let params = execute_command_params(&command.command, command.arguments);
     let Some(runtime_index) = self.lsp_runtime_index_for_capability(LspCapability::WorkspaceCommand)
     else {
+      code_action_trace_log(format!(
+        "execute_command title={:?} command={:?} runtime=none",
+        title, command_name,
+      ));
       return false;
     };
+    code_action_trace_log(format!(
+      "execute_command title={:?} command={:?} runtime_index={} args_len={}",
+      title, command_name, runtime_index, args_len,
+    ));
     match self.lsp_runtimes[runtime_index].runtime.send_request("workspace/executeCommand", Some(params)) {
-      Ok(_) => {
+      Ok(request_id) => {
+        code_action_trace_log(format!(
+          "execute_command dispatched title={:?} command={:?} request_id={}",
+          title, command_name, request_id,
+        ));
         self.push_info("lsp", format!("executed code action: {title}"));
       },
       Err(err) => {
+        code_action_trace_log(format!(
+          "execute_command failed title={:?} command={:?} err={}",
+          title, command_name, err,
+        ));
         self.push_error("lsp", format!("failed to execute code action '{title}': {err}"));
       },
     }
@@ -2210,27 +2275,45 @@ impl SwiftEditor {
 
   fn resolve_code_action(&mut self, action: LspCodeAction) -> bool {
     if !self.lsp_supports_code_action_resolve() || !action.needs_resolve() {
+      code_action_trace_log(format!(
+        "resolve skip title={:?} supports_resolve={} needs_resolve={}",
+        action.title,
+        self.lsp_supports_code_action_resolve(),
+        action.needs_resolve(),
+      ));
       return false;
     }
 
     let Some(uri) = self.current_lsp_uri() else {
+      code_action_trace_log(format!("resolve skip title={:?} reason=no-uri", action.title));
       return false;
     };
     let Some(params) = action.raw.clone() else {
+      code_action_trace_log(format!("resolve skip title={:?} reason=no-raw", action.title));
       return false;
     };
     let Some(runtime_index) = self.lsp_runtime_index_for_capability(LspCapability::CodeAction) else {
+      code_action_trace_log(format!("resolve skip title={:?} reason=no-runtime", action.title));
       return false;
     };
 
+    code_action_trace_log(format!(
+      "resolve dispatch title={:?} runtime_index={} uri={}",
+      action.title, runtime_index, uri,
+    ));
     match self.lsp_runtimes[runtime_index].runtime.send_request("codeAction/resolve", Some(params)) {
       Ok(request_id) => {
+        code_action_trace_log(format!(
+          "resolve dispatched title={:?} request_id={}",
+          action.title, request_id,
+        ));
         self.lsp_runtimes[runtime_index]
           .pending_requests
           .insert(request_id, PendingLspRequestKind::CodeActionResolve { uri, action });
         true
       },
       Err(err) => {
+        code_action_trace_log(format!("resolve failed title={:?} err={}", action.title, err));
         self.push_warning("lsp", format!("failed to dispatch codeAction/resolve: {err}"));
         false
       },
@@ -2238,6 +2321,16 @@ impl SwiftEditor {
   }
 
   fn apply_workspace_edit(&mut self, workspace_edit: &LspWorkspaceEdit, source: &str) -> bool {
+    code_action_trace_log(format!(
+      "workspace_edit source={:?} documents={} total_edits={}",
+      source,
+      workspace_edit.documents.len(),
+      workspace_edit
+        .documents
+        .iter()
+        .map(|document| document.edits.len())
+        .sum::<usize>(),
+    ));
     if workspace_edit.documents.is_empty() {
       self.push_info("lsp", format!("{source}: no edits"));
       return true;
@@ -2249,13 +2342,25 @@ impl SwiftEditor {
 
     for document in &workspace_edit.documents {
       if document.edits.is_empty() {
+        code_action_trace_log(format!("workspace_edit skip_empty_document uri={}", document.uri));
         continue;
       }
-      let applied = if current_uri.as_ref() == Some(&document.uri) {
+      let is_current = current_uri.as_ref() == Some(&document.uri);
+      code_action_trace_log(format!(
+        "workspace_edit apply_document uri={} edits={} current={}",
+        document.uri,
+        document.edits.len(),
+        is_current,
+      ));
+      let applied = if is_current {
         self.apply_text_edits_to_current_document(&document.edits)
       } else {
         self.apply_text_edits_to_file_uri(&document.uri, &document.edits)
       };
+      code_action_trace_log(format!(
+        "workspace_edit apply_document_result uri={} applied={}",
+        document.uri, applied,
+      ));
       if applied {
         applied_documents = applied_documents.saturating_add(1);
         applied_edits = applied_edits.saturating_add(document.edits.len());
@@ -2263,11 +2368,16 @@ impl SwiftEditor {
     }
 
     if applied_documents > 0 {
+      code_action_trace_log(format!(
+        "workspace_edit applied source={:?} documents={} edits={}",
+        source, applied_documents, applied_edits,
+      ));
       self.push_info(
         "lsp",
         format!("{source}: applied {applied_edits} edit(s) across {applied_documents} file(s)"),
       );
     } else {
+      code_action_trace_log(format!("workspace_edit applied_none source={:?}", source));
       self.push_warning("lsp", format!("{source}: no edits were applied"));
     }
     true
@@ -2428,12 +2538,30 @@ impl SwiftEditor {
     let actions = match parse_code_actions_response(result) {
       Ok(actions) => actions,
       Err(err) => {
+        code_action_trace_log(format!("response parse_error err={}", err));
         self.clear_code_action_menu_state();
         self.completion_menu.clear();
         self.push_error("lsp", format!("failed to parse code actions response: {err}"));
         return true;
       },
     };
+
+    code_action_trace_log(format!(
+      "response parsed count={} titles=[{}]",
+      actions.len(),
+      actions
+        .iter()
+        .map(|action| format!(
+          "{}{{preferred={}, resolve={}, edit={}, command={}}}",
+          action.title,
+          action.is_preferred,
+          action.needs_resolve(),
+          action.edit.is_some(),
+          action.command.is_some(),
+        ))
+        .collect::<Vec<_>>()
+        .join(" | "),
+    ));
 
     if actions.is_empty() {
       self.clear_code_action_menu_state();
@@ -2451,9 +2579,11 @@ impl SwiftEditor {
     action: LspCodeAction,
     result: Option<&serde_json::Value>,
   ) -> bool {
+    let original_title = action.title.clone();
     let resolved = match parse_code_action_response(result) {
       Ok(action) => action,
       Err(err) => {
+        code_action_trace_log(format!("resolve_response parse_error title={:?} err={}", original_title, err));
         self.push_warning("lsp", format!("failed to parse code action resolve response: {err}"));
         return true;
       },
@@ -2463,6 +2593,22 @@ impl SwiftEditor {
       Some(resolved) => action.merge_resolved(resolved),
       None => action,
     };
+    code_action_trace_log(format!(
+      "resolve_response title={:?} has_edit={} edit_docs={} edit_edits={} has_command={} command={}",
+      action.title,
+      action.edit.is_some(),
+      action.edit.as_ref().map_or(0, |edit| edit.documents.len()),
+      action
+        .edit
+        .as_ref()
+        .map_or(0, |edit| edit.documents.iter().map(|document| document.edits.len()).sum::<usize>()),
+      action.command.is_some(),
+      action
+        .command
+        .as_ref()
+        .map(|command| command.command.as_str())
+        .unwrap_or("-"),
+    ));
     self.apply_code_action_now(action)
   }
 
@@ -2499,10 +2645,34 @@ impl SwiftEditor {
     };
 
     if self.lsp_document.as_ref().map(|state| state.uri.as_str()) != Some(kind.uri()) {
+      if matches!(
+        kind,
+        PendingLspRequestKind::CodeActions { .. } | PendingLspRequestKind::CodeActionResolve { .. }
+      ) {
+        code_action_trace_log(format!(
+          "response ignored kind={} pending_uri={} active_uri={:?}",
+          kind.label(),
+          kind.uri(),
+          self.lsp_document.as_ref().map(|state| state.uri.as_str()),
+        ));
+      }
       return false;
     }
 
+    if matches!(
+      kind,
+      PendingLspRequestKind::CodeActions { .. } | PendingLspRequestKind::CodeActionResolve { .. }
+    ) {
+      code_action_trace_log(format!("response received kind={} uri={}", kind.label(), kind.uri()));
+    }
+
     if let Some(error) = response.error {
+      if matches!(
+        kind,
+        PendingLspRequestKind::CodeActions { .. } | PendingLspRequestKind::CodeActionResolve { .. }
+      ) {
+        code_action_trace_log(format!("response error kind={} message={}", kind.label(), error.message));
+      }
       self.push_error("lsp", format!("lsp {} failed: {}", kind.label(), error.message));
       return true;
     }
@@ -2697,6 +2867,12 @@ impl SwiftEditor {
           },
           LspEvent::WorkspaceApplyEdit { label, edit } => {
             let source = label.as_deref().unwrap_or("code action");
+            code_action_trace_log(format!(
+              "event workspace/applyEdit source={:?} documents={} total_edits={}",
+              source,
+              edit.documents.len(),
+              edit.documents.iter().map(|document| document.edits.len()).sum::<usize>(),
+            ));
             let _ = self.apply_workspace_edit(&edit, source);
             changed = true;
           },
@@ -3846,9 +4022,11 @@ impl DefaultContext for SwiftEditor {
   fn completion_accept_selected(&mut self, index: usize) -> bool {
     if self.lsp_code_action_menu_active {
       let Some(action) = self.lsp_code_action_items.get(index).cloned() else {
+        code_action_trace_log(format!("accept index={} action=missing", index));
         self.clear_code_action_menu_state();
         return false;
       };
+      code_action_trace_log(format!("accept index={} title={:?}", index, action.title));
       return self.apply_code_action(action);
     }
     self.apply_selected_completion(index)
@@ -3949,6 +4127,15 @@ impl DefaultContext for SwiftEditor {
       self.push_warning("lsp", "code actions unavailable: no active LSP document");
       return;
     };
+
+    code_action_trace_log(format!(
+      "request uri={} range=({}:{})-({}:{}) diagnostics_payload=empty",
+      uri,
+      range.start.line,
+      range.start.character,
+      range.end.line,
+      range.end.character,
+    ));
 
     self.clear_completion_state();
     self.dispatch_lsp_request(

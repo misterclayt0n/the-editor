@@ -3114,7 +3114,9 @@ impl SwiftEditor {
     } else {
       self.cancel_auto_signature_help();
       self.signature_help.clear();
-      self.clear_completion_state_with_reason("left-insert-mode-key-event");
+      if !self.completion_menu.active {
+        self.clear_completion_state_with_reason("left-insert-mode-key-event");
+      }
     }
     self.ensure_cursor_visible();
     true

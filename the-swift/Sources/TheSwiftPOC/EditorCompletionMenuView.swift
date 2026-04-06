@@ -60,24 +60,51 @@ struct EditorCompletionMenuView: View {
             max(viewportSize.height - completionPanelEdgePadding * 2, completionRowHeight)
         )
         let x = min(max(baseOrigin.x, completionPanelEdgePadding), max(viewportSize.width - fittedWidth - completionPanelEdgePadding, completionPanelEdgePadding))
-        let anchoredY = completionAnchoredOriginY(scene: scene, baseOriginY: baseOrigin.y, exportedHeight: exportedSize.height, fittedHeight: fittedHeight)
-        let y = min(max(anchoredY, completionPanelEdgePadding), max(viewportSize.height - fittedHeight - completionPanelEdgePadding, completionPanelEdgePadding))
+        let y = completionAnchoredOriginY(
+            scene: scene,
+            viewportHeight: viewportSize.height,
+            baseOriginY: baseOrigin.y,
+            exportedHeight: exportedSize.height,
+            fittedHeight: fittedHeight
+        )
         return CGRect(x: x, y: y, width: fittedWidth, height: fittedHeight)
     }
 
-    private func completionAnchoredOriginY(scene: EditorRenderScene, baseOriginY: CGFloat, exportedHeight: CGFloat, fittedHeight: CGFloat) -> CGFloat {
-        guard let cursor = scene.primaryCursor else { return baseOriginY }
+    private func completionAnchoredOriginY(
+        scene: EditorRenderScene,
+        viewportHeight: CGFloat,
+        baseOriginY: CGFloat,
+        exportedHeight: CGFloat,
+        fittedHeight: CGFloat
+    ) -> CGFloat {
+        let lowerBound = completionPanelEdgePadding
+        let upperBound = max(viewportHeight - fittedHeight - completionPanelEdgePadding, completionPanelEdgePadding)
+        guard let cursor = scene.primaryCursor else {
+            return min(max(baseOriginY, lowerBound), upperBound)
+        }
+
+        let gap: CGFloat = 6
         let cellHeight = scene.info.surfaceMetrics.cellSizePoints.height
         let cursorTopY = CGFloat(cursor.row) * cellHeight
         let cursorBottomY = cursorTopY + cellHeight
-        if baseOriginY >= cursorBottomY {
-            return baseOriginY
-        }
         let exportedBottom = baseOriginY + exportedHeight
-        if exportedBottom <= cursorTopY {
-            return baseOriginY + exportedHeight - fittedHeight
+
+        let belowY = cursorBottomY + gap
+        let aboveY = cursorTopY - gap - fittedHeight
+        let prefersBelow = baseOriginY >= cursorBottomY
+        let prefersAbove = exportedBottom <= cursorTopY
+
+        if prefersBelow, belowY <= upperBound {
+            return min(max(belowY, lowerBound), upperBound)
         }
-        return baseOriginY
+        if prefersAbove, aboveY >= lowerBound {
+            return min(max(aboveY, lowerBound), upperBound)
+        }
+
+        let roomBelow = viewportHeight - completionPanelEdgePadding - (cursorBottomY + gap)
+        let roomAbove = cursorTopY - gap - completionPanelEdgePadding
+        let fallbackY = roomBelow >= roomAbove ? belowY : aboveY
+        return min(max(fallbackY, lowerBound), upperBound)
     }
 
     private func contentWidth(for state: EditorCompletionMenuState) -> CGFloat {

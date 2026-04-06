@@ -1667,6 +1667,9 @@ impl SwiftEditor {
 
     self.lsp_completion_visible_indices = visible.iter().map(|(index, _)| *index).collect();
     if self.lsp_completion_visible_indices.is_empty() {
+      if self.completion_menu.active {
+        return;
+      }
       self.completion_menu.clear();
       return;
     }
@@ -1751,6 +1754,9 @@ impl SwiftEditor {
     };
 
     if completion.items.is_empty() {
+      if !announce_empty && self.completion_menu.active {
+        return true;
+      }
       self.clear_completion_state();
       if announce_empty {
         self.push_info("lsp", "no completion candidates");

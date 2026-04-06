@@ -1058,6 +1058,7 @@ struct SwiftEditor {
   lsp_completion_resolve_supported: bool,
   lsp_completion_generation:     u64,
   lsp_completion_fallback_start: Option<usize>,
+  lsp_completion_visible_indices: Vec<usize>,
   lsp_pending_auto_completion:   Option<PendingAutoCompletion>,
   lsp_pending_auto_signature_help: Option<PendingAutoSignatureHelp>,
   pending_input:                 Option<PendingInput>,
@@ -1436,6 +1437,9 @@ impl SwiftEditor {
       }
     }
 
+    if self.completion_menu.active {
+      self.rebuild_completion_menu();
+    }
     if self.lsp_completion_supports_trigger_char(ch) {
       let _ = self.schedule_auto_completion(
         LspCompletionContext::trigger_character(ch),
@@ -1461,6 +1465,9 @@ impl SwiftEditor {
       self.cancel_auto_signature_help();
     }
 
+    if self.completion_menu.active {
+      self.rebuild_completion_menu();
+    }
     if self.completion_menu.active || self.cursor_prev_char_is_word() {
       let _ = self.schedule_auto_completion(
         LspCompletionContext::trigger_for_incomplete(),
@@ -1600,17 +1607,73 @@ impl SwiftEditor {
     self.lsp_completion_resolved.clear();
     self.lsp_completion_resolve_supported = false;
     self.lsp_completion_fallback_start = None;
+    self.lsp_completion_visible_indices.clear();
     self.completion_menu.clear();
+  }
+
+  fn completion_filter_fragment(&self) -> Option<String> {
+    let cursor = self.active_cursor_char_idx()?;
+    let start = self.lsp_completion_fallback_start.unwrap_or(cursor).min(cursor);
+    let text = self.editor.document().text();
+    Some(text.slice(start..cursor).to_string())
+  }
+
+  fn completion_source_index_for_visible_index(&self, index: usize) -> Option<usize> {
+    self.lsp_completion_visible_indices.get(index).copied()
+  }
+
+  fn completion_visible_index_for_source_index(&self, index: usize) -> Option<usize> {
+    self.lsp_completion_visible_indices.iter().position(|visible| *visible == index)
   }
 
   fn rebuild_completion_menu(&mut self) {
     if self.lsp_completion_items.is_empty() {
+      self.lsp_completion_visible_indices.clear();
+      self.completion_menu.clear();
+      return;
+    }
+
+    let fragment = self.completion_filter_fragment().unwrap_or_default();
+    let mut visible: Vec<(usize, u32)> = self
+      .lsp_completion_items
+      .iter()
+      .enumerate()
+      .filter_map(|(index, item)| {
+        let candidate = completion_item_filter_text(item);
+        completion_match_score(&fragment, candidate).map(|score| (index, score))
+      })
+      .collect();
+
+    visible.sort_by(|(left_index, left_score), (right_index, right_score)| {
+      right_score
+        .cmp(left_score)
+        .then_with(|| {
+          self.lsp_completion_items[*right_index]
+            .preselect
+            .cmp(&self.lsp_completion_items[*left_index].preselect)
+        })
+        .then_with(|| {
+          let left_key = completion_item_sort_key(&self.lsp_completion_items[*left_index]);
+          let right_key = completion_item_sort_key(&self.lsp_completion_items[*right_index]);
+          left_key.cmp(&right_key)
+        })
+        .then_with(|| {
+          self.lsp_completion_items[*left_index]
+            .label
+            .cmp(&self.lsp_completion_items[*right_index].label)
+        })
+        .then_with(|| left_index.cmp(right_index))
+    });
+
+    self.lsp_completion_visible_indices = visible.iter().map(|(index, _)| *index).collect();
+    if self.lsp_completion_visible_indices.is_empty() {
       self.completion_menu.clear();
       return;
     }
     let items = self
-      .lsp_completion_items
+      .lsp_completion_visible_indices
       .iter()
+      .filter_map(|index| self.lsp_completion_items.get(*index))
       .map(completion_menu_item_for_lsp_item)
       .collect::<Vec<_>>();
     the_default::show_completion_menu(self, items);
@@ -1708,6 +1771,9 @@ impl SwiftEditor {
     if !self.completion_menu.active || !self.lsp_completion_resolve_supported {
       return;
     }
+    let Some(index) = self.completion_source_index_for_visible_index(index) else {
+      return;
+    };
     if self.lsp_completion_resolved.contains(&index) {
       return;
     }
@@ -1753,19 +1819,26 @@ impl SwiftEditor {
     let Some(resolved) = resolved else {
       return true;
     };
+    let visible_index = self.completion_visible_index_for_source_index(index);
     let Some(item) = self.lsp_completion_items.get_mut(index) else {
       return true;
     };
     merge_resolved_completion_item(item, resolved);
-    if let Some(ui_item) = self.completion_menu.items.get_mut(index) {
-      *ui_item = completion_menu_item_for_lsp_item(item);
+    let updated_ui_item = completion_menu_item_for_lsp_item(item);
+    if let Some(visible_index) = visible_index
+      && let Some(ui_item) = self.completion_menu.items.get_mut(visible_index)
+    {
+      *ui_item = updated_ui_item;
     }
     self.request_render();
     true
   }
 
   fn apply_selected_completion(&mut self, index: usize) -> bool {
-    let Some(item) = self.lsp_completion_items.get(index).cloned() else {
+    let Some(source_index) = self.completion_source_index_for_visible_index(index) else {
+      return false;
+    };
+    let Some(item) = self.lsp_completion_items.get(source_index).cloned() else {
       return false;
     };
     let prepared = normalize_completion_item_for_apply(item);
@@ -2426,6 +2499,7 @@ impl SwiftEditor {
       lsp_completion_resolve_supported: false,
       lsp_completion_generation: 0,
       lsp_completion_fallback_start: None,
+      lsp_completion_visible_indices: Vec::new(),
       lsp_pending_auto_completion: None,
       lsp_pending_auto_signature_help: None,
       pending_input: None,
@@ -3214,6 +3288,7 @@ impl DefaultContext for SwiftEditor {
     self.lsp_completion_resolved.clear();
     self.lsp_completion_resolve_supported = false;
     self.lsp_completion_fallback_start = None;
+    self.lsp_completion_visible_indices.clear();
   }
   fn inline_completion(&self) -> &the_default::InlineCompletionState { &self.inline_completion }
   fn inline_completion_mut(&mut self) -> &mut the_default::InlineCompletionState { &mut self.inline_completion }
@@ -4932,6 +5007,61 @@ fn completion_menu_documentation_text(item: &LspCompletionItem) -> Option<String
     .documentation
     .as_deref()
     .and_then(normalize_completion_documentation)
+}
+
+fn completion_item_filter_text(item: &LspCompletionItem) -> &str {
+  item.filter_text.as_deref().unwrap_or(&item.label)
+}
+
+fn completion_item_sort_key(item: &LspCompletionItem) -> String {
+  item
+    .sort_text
+    .as_deref()
+    .unwrap_or(completion_item_filter_text(item))
+    .to_ascii_lowercase()
+}
+
+fn completion_match_score(filter: &str, candidate: &str) -> Option<u32> {
+  if filter.is_empty() {
+    return Some(0);
+  }
+
+  let filter = filter.to_ascii_lowercase();
+  let candidate = candidate.to_ascii_lowercase();
+  if candidate.is_empty() {
+    return None;
+  }
+
+  if candidate.starts_with(&filter) {
+    let extra = candidate.len().saturating_sub(filter.len()) as u32;
+    return Some(10_000u32.saturating_sub(extra.min(2_000)));
+  }
+
+  if let Some(pos) = candidate.find(&filter) {
+    return Some(6_000u32.saturating_sub((pos as u32).saturating_mul(16)));
+  }
+
+  let mut candidate_chars = candidate.chars().enumerate();
+  let mut last = 0usize;
+  let mut gaps = 0usize;
+  let mut matched = false;
+  for needle in filter.chars() {
+    let mut found = None;
+    for (idx, hay) in candidate_chars.by_ref() {
+      if hay == needle {
+        found = Some(idx);
+        break;
+      }
+    }
+    let idx = found?;
+    if matched {
+      gaps += idx.saturating_sub(last + 1);
+    }
+    last = idx;
+    matched = true;
+  }
+
+  Some(2_000u32.saturating_sub((gaps as u32).saturating_mul(8)))
 }
 
 fn completion_kind_icon(kind: LspCompletionItemKind) -> &'static str {

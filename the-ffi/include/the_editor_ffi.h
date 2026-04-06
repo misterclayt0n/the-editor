@@ -308,6 +308,24 @@ typedef struct the_editor_snapshot_docs_run_t {
   uint8_t kind;
 } the_editor_snapshot_docs_run_t;
 
+typedef struct the_editor_snapshot_diagnostic_t {
+  uint32_t start_line;
+  uint32_t start_character;
+  uint32_t end_line;
+  uint32_t end_character;
+  uint8_t severity;
+  const char *message;
+  const char *source;
+  const char *code;
+} the_editor_snapshot_diagnostic_t;
+
+typedef struct the_editor_snapshot_diagnostic_underline_t {
+  uint16_t row;
+  uint16_t start_col;
+  uint16_t end_col;
+  uintptr_t diagnostic_index;
+} the_editor_snapshot_diagnostic_underline_t;
+
 typedef struct the_editor_snapshot_file_picker_t {
   bool is_open;
   uint8_t kind;
@@ -451,6 +469,10 @@ struct the_editor_snapshot_docs_panel_t the_editor_snapshot_completion_docs_pane
 struct the_editor_snapshot_docs_run_t the_editor_snapshot_completion_docs_run_at(const the_editor_snapshot_t *snapshot, uintptr_t run_index);
 struct the_editor_snapshot_docs_panel_t the_editor_snapshot_signature_help_panel(const the_editor_snapshot_t *snapshot);
 struct the_editor_snapshot_docs_run_t the_editor_snapshot_signature_help_run_at(const the_editor_snapshot_t *snapshot, uintptr_t run_index);
+uintptr_t the_editor_snapshot_diagnostic_count(const the_editor_snapshot_t *snapshot);
+struct the_editor_snapshot_diagnostic_t the_editor_snapshot_diagnostic_at(const the_editor_snapshot_t *snapshot, uintptr_t diagnostic_index);
+uintptr_t the_editor_snapshot_diagnostic_underline_count(const the_editor_snapshot_t *snapshot);
+struct the_editor_snapshot_diagnostic_underline_t the_editor_snapshot_diagnostic_underline_at(const the_editor_snapshot_t *snapshot, uintptr_t underline_index);
 struct the_editor_snapshot_file_picker_t the_editor_snapshot_file_picker(const the_editor_snapshot_t *snapshot);
 struct the_editor_snapshot_file_picker_item_t the_editor_snapshot_file_picker_item_at(const the_editor_snapshot_t *snapshot, uintptr_t item_index);
 struct the_editor_snapshot_file_picker_preview_line_t the_editor_snapshot_file_picker_preview_line_at(const the_editor_snapshot_t *snapshot, uintptr_t line_index);

@@ -125,6 +125,12 @@ use the_lib::{
     Editor,
     EditorId,
   },
+  diagnostics::{
+    Diagnostic,
+    DiagnosticCounts,
+    DiagnosticSeverity,
+    DiagnosticsState,
+  },
   messages::MessageCenter,
   position::Position,
   registers::Registers,
@@ -140,6 +146,7 @@ use the_lib::{
     RenderSelectionKind,
     RenderStyles,
     SyntaxHighlightAdapter,
+    apply_diagnostic_gutter_markers,
     base_render_layer_row_hashes,
     build_plan,
     finish_render_generations,
@@ -167,6 +174,7 @@ use the_lib::{
       Theme,
       default_theme,
     },
+    visual_pos_at_char,
   },
   selection::{
     CursorPick,
@@ -505,6 +513,28 @@ pub struct the_editor_snapshot_docs_run_t {
 
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
+pub struct the_editor_snapshot_diagnostic_t {
+  pub start_line:      u32,
+  pub start_character: u32,
+  pub end_line:        u32,
+  pub end_character:   u32,
+  pub severity:        u8,
+  pub message:         *const c_char,
+  pub source:          *const c_char,
+  pub code:            *const c_char,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct the_editor_snapshot_diagnostic_underline_t {
+  pub row:              u16,
+  pub start_col:        u16,
+  pub end_col:          u16,
+  pub diagnostic_index: usize,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
 pub struct the_editor_snapshot_file_picker_t {
   pub is_open:                 bool,
   pub kind:                    u8,
@@ -732,6 +762,8 @@ struct OwnedSnapshot {
   completion_docs_runs:  Vec<DocsRunRecord>,
   signature_help:        DocsPanelRecord,
   signature_help_runs:   Vec<DocsRunRecord>,
+  diagnostics:           Vec<DiagnosticRecord>,
+  diagnostic_underlines: Vec<the_editor_snapshot_diagnostic_underline_t>,
   file_picker:           FilePickerRecord,
   file_picker_items:     Vec<FilePickerItemRecord>,
   file_picker_preview_lines: Vec<FilePickerPreviewLineRecord>,
@@ -820,6 +852,14 @@ struct DocsPanelRecord {
 struct DocsRunRecord {
   run:      the_editor_snapshot_docs_run_t,
   text_idx: usize,
+}
+
+#[derive(Clone, Copy, Default)]
+struct DiagnosticRecord {
+  diagnostic:  the_editor_snapshot_diagnostic_t,
+  message_idx: usize,
+  source_idx:  Option<usize>,
+  code_idx:    Option<usize>,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -1118,6 +1158,7 @@ struct SwiftEditor {
   soft_wrap_enabled:             bool,
   gutter_config:                 the_lib::render::GutterConfig,
   loader:                        Option<Arc<Loader>>,
+  diagnostics:                   DiagnosticsState,
   lsp_document:                  Option<LspDocumentSyncState>,
   lsp_runtimes:                  Vec<ManagedLspRuntime>,
   lsp_statusline:                LspStatuslineState,
@@ -2636,6 +2677,23 @@ impl SwiftEditor {
     self.apply_workspace_edit(&workspace_edit, "rename")
   }
 
+  fn publish_lsp_diagnostic_message(&mut self, counts: DiagnosticCounts) {
+    let text = if counts.total == 0 {
+      "diagnostics cleared".to_string()
+    } else {
+      format!(
+        "diagnostics: {} error(s), {} warning(s), {} info, {} hint(s)",
+        counts.errors, counts.warnings, counts.information, counts.hints
+      )
+    };
+    self.push_info("lsp", text);
+  }
+
+  fn current_document_diagnostics(&self) -> Option<&[Diagnostic]> {
+    let uri = self.current_lsp_uri()?;
+    Some(&self.diagnostics.document(&uri)?.diagnostics)
+  }
+
   fn handle_lsp_rpc_message(&mut self, runtime_index: usize, message: jsonrpc::Message) -> bool {
     let jsonrpc::Message::Response(response) = message else {
       return false;
@@ -2903,6 +2961,23 @@ impl SwiftEditor {
             self.set_lsp_status_for_runtime(runtime_index, LspStatusPhase::Error, Some(summarize_lsp_error(&message)));
             self.push_error("lsp", message);
             changed = true;
+          },
+          LspEvent::DiagnosticsPublished { diagnostics } => {
+            let diagnostic_uri = diagnostics.uri.clone();
+            let active_uri = self.lsp_document.as_ref().map(|state| state.uri.as_str());
+            let previous_counts = self
+              .diagnostics
+              .document(&diagnostic_uri)
+              .map(|document| document.counts())
+              .unwrap_or_default();
+            let next_counts = self.diagnostics.apply_document_for_provider(
+              &format!("swift-runtime-{runtime_index}"),
+              diagnostics,
+            );
+            if active_uri.is_some_and(|uri| uri == diagnostic_uri) && previous_counts != next_counts {
+              self.publish_lsp_diagnostic_message(next_counts);
+              changed = true;
+            }
           },
           LspEvent::RpcMessage { message } => {
             changed |= self.handle_lsp_rpc_message(runtime_index, message);
@@ -3217,6 +3292,7 @@ impl SwiftEditor {
       soft_wrap_enabled: false,
       gutter_config: swift_gutter_config(),
       loader,
+      diagnostics: DiagnosticsState::default(),
       lsp_document: None,
       lsp_runtimes: Vec::new(),
       lsp_statusline: LspStatuslineState::off(Some("unavailable".into())),
@@ -3902,6 +3978,7 @@ impl DefaultContext for SwiftEditor {
     let view = self.editor.view();
     let mut text_format = self.text_format.clone();
     text_format.viewport_width = self.content_viewport_width();
+    let diagnostics = self.current_document_diagnostics().map(<[Diagnostic]>::to_vec).unwrap_or_default();
     let mut annotations = TextAnnotations::default();
     let loader = self.loader.clone();
     let line_range = view.scroll.row..(view.scroll.row + view.viewport.height as usize);
@@ -3943,6 +4020,9 @@ impl DefaultContext for SwiftEditor {
     let diff_styles = render_diff_styles_from_theme(&self.ui_theme);
     let diff_signs = self.gutter_diff_signs.clone();
     apply_swift_diff_gutter_markers(&mut plan, &diff_signs, diff_styles);
+    let diagnostics_by_line = diagnostics_by_line(&diagnostics);
+    let diagnostic_styles = render_diagnostic_styles_from_theme(&self.ui_theme);
+    apply_diagnostic_gutter_markers(&mut plan, &diagnostics_by_line, diagnostic_styles);
     let row_hashes = base_render_layer_row_hashes(&plan);
     let generation_state = finish_render_generations(
       &mut plan,
@@ -4100,6 +4180,11 @@ impl DefaultContext for SwiftEditor {
       .active_file_watch
       .as_ref()
       .and_then(|watch| watch_statusline_text_for_state(watch.stream.reload_state))
+  }
+  fn diagnostic_statusline_counts(&self) -> Option<DiagnosticCounts> {
+    self
+      .current_lsp_uri()
+      .and_then(|uri| self.diagnostics.document(&uri).map(|document| document.counts()))
   }
   fn watch_conflict_active(&self) -> bool {
     self
@@ -4541,6 +4626,39 @@ impl OwnedSnapshot {
       }
     }
 
+    if let Some(diagnostics) = editor.current_document_diagnostics() {
+      for diagnostic in diagnostics {
+        let message_idx = snapshot.push_string(diagnostic.message.as_str());
+        let source_idx = snapshot.push_optional_string(diagnostic.source.as_deref());
+        let code_idx = snapshot.push_optional_string(diagnostic.code.as_deref());
+        snapshot.diagnostics.push(DiagnosticRecord {
+          diagnostic: the_editor_snapshot_diagnostic_t {
+            start_line: diagnostic.range.start.line,
+            start_character: diagnostic.range.start.character,
+            end_line: diagnostic.range.end.line,
+            end_character: diagnostic.range.end.character,
+            severity: diagnostic_severity_code(diagnostic.severity),
+            message: ptr::null(),
+            source: ptr::null(),
+            code: ptr::null(),
+          },
+          message_idx,
+          source_idx,
+          code_idx,
+        });
+      }
+      if let Some(plan) = plan {
+        let mut diagnostic_text_format = editor.text_format.clone();
+        diagnostic_text_format.viewport_width = editor.content_viewport_width();
+        snapshot.diagnostic_underlines = visible_diagnostic_underlines_for_document(
+          editor.editor.document().text(),
+          diagnostics,
+          plan,
+          &diagnostic_text_format,
+        );
+      }
+    }
+
     snapshot.populate_file_picker(editor);
 
     let Some(plan) = plan else {
@@ -4565,6 +4683,7 @@ impl OwnedSnapshot {
       snapshot.finalize_completion_menu_strings();
       snapshot.finalize_input_prompt_strings();
       snapshot.finalize_docs_panel_strings();
+      snapshot.finalize_diagnostic_strings();
       snapshot.finalize_file_picker_strings();
       return snapshot;
     };
@@ -4743,6 +4862,7 @@ impl OwnedSnapshot {
     snapshot.finalize_completion_menu_strings();
     snapshot.finalize_input_prompt_strings();
     snapshot.finalize_docs_panel_strings();
+    snapshot.finalize_diagnostic_strings();
     snapshot.finalize_file_picker_strings();
 
     snapshot.info.line_count = snapshot.lines.len();
@@ -5013,6 +5133,18 @@ impl OwnedSnapshot {
     }
     for run in &mut self.signature_help_runs {
       run.run.text = self.strings[run.text_idx].as_ptr();
+    }
+  }
+
+  fn finalize_diagnostic_strings(&mut self) {
+    for record in &mut self.diagnostics {
+      record.diagnostic.message = self.strings[record.message_idx].as_ptr();
+      if let Some(idx) = record.source_idx {
+        record.diagnostic.source = self.strings[idx].as_ptr();
+      }
+      if let Some(idx) = record.code_idx {
+        record.diagnostic.code = self.strings[idx].as_ptr();
+      }
     }
   }
 
@@ -6557,6 +6689,180 @@ fn swift_gutter_config() -> GutterConfig {
   }
 }
 
+fn diagnostic_severity_code(severity: Option<DiagnosticSeverity>) -> u8 {
+  match severity.unwrap_or(DiagnosticSeverity::Warning) {
+    DiagnosticSeverity::Error => 1,
+    DiagnosticSeverity::Warning => 2,
+    DiagnosticSeverity::Information => 3,
+    DiagnosticSeverity::Hint => 4,
+  }
+}
+
+fn diagnostic_severity_rank(severity: DiagnosticSeverity) -> u8 {
+  match severity {
+    DiagnosticSeverity::Hint => 0,
+    DiagnosticSeverity::Information => 1,
+    DiagnosticSeverity::Warning => 2,
+    DiagnosticSeverity::Error => 3,
+  }
+}
+
+fn diagnostics_by_line(diagnostics: &[Diagnostic]) -> BTreeMap<usize, DiagnosticSeverity> {
+  let mut out = BTreeMap::new();
+  for diagnostic in diagnostics {
+    let line = diagnostic.range.start.line as usize;
+    let severity = diagnostic.severity.unwrap_or(DiagnosticSeverity::Warning);
+    match out.get(&line).copied() {
+      Some(prev) if diagnostic_severity_rank(prev) >= diagnostic_severity_rank(severity) => {},
+      _ => {
+        out.insert(line, severity);
+      },
+    }
+  }
+  out
+}
+
+fn render_diagnostic_styles_from_theme(theme: &Theme) -> the_lib::render::RenderDiagnosticGutterStyles {
+  the_lib::render::RenderDiagnosticGutterStyles {
+    error: theme
+      .try_get("error")
+      .or_else(|| theme.try_get("diagnostic.error"))
+      .or_else(|| theme.try_get("ui.linenr"))
+      .unwrap_or_default(),
+    warning: theme
+      .try_get("warning")
+      .or_else(|| theme.try_get("diagnostic.warning"))
+      .or_else(|| theme.try_get("ui.linenr"))
+      .unwrap_or_default(),
+    info: theme
+      .try_get("info")
+      .or_else(|| theme.try_get("diagnostic.info"))
+      .or_else(|| theme.try_get("ui.linenr"))
+      .unwrap_or_default(),
+    hint: theme
+      .try_get("hint")
+      .or_else(|| theme.try_get("diagnostic.hint"))
+      .or_else(|| theme.try_get("ui.linenr"))
+      .unwrap_or_default(),
+  }
+}
+
+fn diagnostic_visible_row_end_cols(plan: &RenderPlan) -> Vec<usize> {
+  let mut row_end_cols = vec![plan.scroll.col; plan.viewport.height as usize];
+  for line in &plan.lines {
+    let row = line.row as usize;
+    if row >= row_end_cols.len() {
+      continue;
+    }
+    let end_col = line
+      .spans
+      .iter()
+      .map(|span| plan.scroll.col + span.col.saturating_add(span.cols) as usize)
+      .max()
+      .unwrap_or(plan.scroll.col);
+    row_end_cols[row] = row_end_cols[row].max(end_col);
+  }
+  row_end_cols
+}
+
+fn diagnostic_row_visible_end_col(plan: &RenderPlan, row: usize, row_visible_end_cols: &[usize]) -> usize {
+  let relative = row.saturating_sub(plan.scroll.row);
+  row_visible_end_cols.get(relative).copied().unwrap_or(plan.scroll.col)
+}
+
+fn visible_diagnostic_underlines_for_document(
+  text: &Rope,
+  diagnostics: &[Diagnostic],
+  plan: &RenderPlan,
+  text_fmt: &TextFormat,
+) -> Vec<the_editor_snapshot_diagnostic_underline_t> {
+  if diagnostics.is_empty() {
+    return Vec::new();
+  }
+
+  let row_start = plan.scroll.row;
+  let row_end = row_start.saturating_add(plan.viewport.height as usize);
+  let col_start = plan.scroll.col;
+  let col_end = col_start.saturating_add(plan.content_width());
+  if row_start >= row_end || col_start >= col_end {
+    return Vec::new();
+  }
+
+  let row_visible_end_cols = diagnostic_visible_row_end_cols(plan);
+  let text_slice = text.slice(..);
+  let text_len = text.len_chars();
+  let mut annotations = TextAnnotations::default();
+  let mut out = Vec::new();
+
+  for (diagnostic_index, diagnostic) in diagnostics.iter().enumerate() {
+    let mut start_char_idx = utf16_position_to_char_idx(
+      text,
+      diagnostic.range.start.line,
+      diagnostic.range.start.character,
+    )
+    .min(text_len);
+    let mut end_char_idx = utf16_position_to_char_idx(
+      text,
+      diagnostic.range.end.line,
+      diagnostic.range.end.character,
+    )
+    .min(text_len);
+
+    if end_char_idx < start_char_idx {
+      std::mem::swap(&mut start_char_idx, &mut end_char_idx);
+    }
+    if end_char_idx == start_char_idx {
+      if start_char_idx >= text_len {
+        continue;
+      }
+      end_char_idx = start_char_idx.saturating_add(1).min(text_len);
+    }
+
+    let Some(mut start_pos) = visual_pos_at_char(text_slice, text_fmt, &mut annotations, start_char_idx) else {
+      continue;
+    };
+    let Some(mut end_pos) = visual_pos_at_char(text_slice, text_fmt, &mut annotations, end_char_idx) else {
+      continue;
+    };
+
+    if (end_pos.row, end_pos.col) < (start_pos.row, start_pos.col) {
+      std::mem::swap(&mut start_pos, &mut end_pos);
+    }
+
+    for row in start_pos.row..=end_pos.row {
+      if row < row_start || row >= row_end {
+        continue;
+      }
+
+      let row_end_col = diagnostic_row_visible_end_col(plan, row, &row_visible_end_cols);
+      let (mut from, mut to) = if row == start_pos.row && row == end_pos.row {
+        (start_pos.col, end_pos.col)
+      } else if row == start_pos.row {
+        (start_pos.col, row_end_col)
+      } else if row == end_pos.row {
+        (col_start, end_pos.col)
+      } else {
+        (col_start, row_end_col)
+      };
+
+      from = from.max(col_start);
+      to = to.min(row_end_col).min(col_end);
+      if to <= from {
+        continue;
+      }
+
+      out.push(the_editor_snapshot_diagnostic_underline_t {
+        row: (row - row_start) as u16,
+        start_col: (from - col_start) as u16,
+        end_col: (to - col_start) as u16,
+        diagnostic_index,
+      });
+    }
+  }
+
+  out
+}
+
 fn render_diff_styles_from_theme(theme: &Theme) -> RenderDiffGutterStyles {
   RenderDiffGutterStyles {
     added: theme
@@ -7114,6 +7420,30 @@ pub unsafe extern "C" fn the_editor_snapshot_signature_help_panel(snapshot: *con
 pub unsafe extern "C" fn the_editor_snapshot_signature_help_run_at(snapshot: *const the_editor_snapshot_t, run_index: usize) -> the_editor_snapshot_docs_run_t {
   let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_docs_run_t::default(); };
   snapshot.snapshot.signature_help_runs.get(run_index).map(|record| record.run).unwrap_or_default()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_snapshot_diagnostic_count(snapshot: *const the_editor_snapshot_t) -> usize {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return 0; };
+  snapshot.snapshot.diagnostics.len()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_snapshot_diagnostic_at(snapshot: *const the_editor_snapshot_t, diagnostic_index: usize) -> the_editor_snapshot_diagnostic_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_diagnostic_t::default(); };
+  snapshot.snapshot.diagnostics.get(diagnostic_index).map(|record| record.diagnostic).unwrap_or_default()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_snapshot_diagnostic_underline_count(snapshot: *const the_editor_snapshot_t) -> usize {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return 0; };
+  snapshot.snapshot.diagnostic_underlines.len()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_snapshot_diagnostic_underline_at(snapshot: *const the_editor_snapshot_t, underline_index: usize) -> the_editor_snapshot_diagnostic_underline_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_diagnostic_underline_t::default(); };
+  snapshot.snapshot.diagnostic_underlines.get(underline_index).copied().unwrap_or_default()
 }
 
 #[unsafe(no_mangle)]

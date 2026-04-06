@@ -77,7 +77,7 @@ fn is_in_jj_workspace(path: &Path) -> bool {
     .any(|ancestor| ancestor.join(".jj").is_dir())
 }
 
-fn jj_repo_root(path: &Path) -> Result<PathBuf> {
+pub fn repo_root(path: &Path) -> Result<PathBuf> {
   let dir = if path.is_dir() {
     path
   } else {
@@ -139,7 +139,7 @@ pub fn get_diff_base(file: &Path) -> Result<Vec<u8>> {
 }
 
 fn get_diff_base_for_repo_path(file: &Path) -> Result<Option<Vec<u8>>> {
-  let repo_root = jj_repo_root(&file)?;
+  let repo_root = repo_root(&file)?;
   let relative = repo_relative_jj_path(&file, &repo_root)?;
   let fileset = format!("root:{relative}");
 
@@ -173,7 +173,7 @@ pub fn get_diff_base_for_change(change: &FileChange) -> Result<Option<Vec<u8>>> 
 
 pub fn get_current_head_name(file: &Path) -> Result<Arc<ArcSwap<Box<str>>>> {
   let file = canonical_file_path(file)?;
-  let repo_root = jj_repo_root(&file)?;
+  let repo_root = repo_root(&file)?;
   let output = run_jj(&repo_root, &[
     "--ignore-working-copy",
     "log",
@@ -197,7 +197,7 @@ pub fn get_current_head_name(file: &Path) -> Result<Arc<ArcSwap<Box<str>>>> {
 
 pub fn get_statusline_info(file: &Path) -> Result<VcsStatuslineInfo> {
   let file = canonical_file_path(file)?;
-  let repo_root = jj_repo_root(&file)?;
+  let repo_root = repo_root(&file)?;
   let output = run_jj(&repo_root, &[
     "--ignore-working-copy",
     "log",
@@ -232,7 +232,7 @@ pub fn get_statusline_info(file: &Path) -> Result<VcsStatuslineInfo> {
 }
 
 pub fn for_each_changed_file(cwd: &Path, f: impl Fn(Result<FileChange>) -> bool) -> Result<()> {
-  let repo_root = jj_repo_root(cwd)?;
+  let repo_root = repo_root(cwd)?;
   let text = jj_changed_files_text(&repo_root)?;
 
   for line in text.lines() {
@@ -272,7 +272,7 @@ fn jj_head_revision(repo_root: &Path) -> Result<Option<String>> {
 }
 
 pub fn scan_workspace(cwd: &Path) -> Result<VcsWorkspaceScan> {
-  let repo_root = jj_repo_root(cwd)?;
+  let repo_root = repo_root(cwd)?;
   let text = jj_changed_files_text(&repo_root)?;
   let changes = text
     .lines()

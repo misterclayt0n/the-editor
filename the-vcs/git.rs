@@ -49,7 +49,7 @@ fn canonical_file_path(path: &Path) -> Result<PathBuf> {
   }
 }
 
-fn git_repo_root(path: &Path) -> Result<PathBuf> {
+pub fn repo_root(path: &Path) -> Result<PathBuf> {
   let dir = if path.is_dir() {
     path
   } else {
@@ -133,7 +133,7 @@ pub fn get_diff_base(file: &Path) -> Result<Vec<u8>> {
 }
 
 fn get_diff_base_for_repo_path(file: &Path) -> Result<Option<Vec<u8>>> {
-  let repo_root = git_repo_root(&file)?;
+  let repo_root = repo_root(&file)?;
   let relative = repo_relative_git_path(&file, &repo_root)?;
   let spec = format!("HEAD:{relative}");
   let kind_output = match run_git(&repo_root, &["cat-file", "-t", &spec]) {
@@ -165,7 +165,7 @@ pub fn get_diff_base_for_change(change: &FileChange) -> Result<Option<Vec<u8>>> 
 
 pub fn get_current_head_name(file: &Path) -> Result<Arc<ArcSwap<Box<str>>>> {
   let file = canonical_file_path(file)?;
-  let repo_root = git_repo_root(&file)?;
+  let repo_root = repo_root(&file)?;
 
   let branch = run_git(&repo_root, &["symbolic-ref", "--quiet", "--short", "HEAD"])
     .ok()
@@ -191,7 +191,7 @@ pub fn get_current_head_name(file: &Path) -> Result<Arc<ArcSwap<Box<str>>>> {
 
 pub fn get_statusline_info(file: &Path) -> Result<VcsStatuslineInfo> {
   let file = canonical_file_path(file)?;
-  let repo_root = git_repo_root(&file)?;
+  let repo_root = repo_root(&file)?;
   let branch = run_git(&repo_root, &["symbolic-ref", "--quiet", "--short", "HEAD"])
     .ok()
     .and_then(|output| String::from_utf8(output.stdout).ok())
@@ -202,7 +202,7 @@ pub fn get_statusline_info(file: &Path) -> Result<VcsStatuslineInfo> {
 }
 
 pub fn for_each_changed_file(cwd: &Path, f: impl Fn(Result<FileChange>) -> bool) -> Result<()> {
-  let repo_root = git_repo_root(cwd)?;
+  let repo_root = repo_root(cwd)?;
   let output = run_git(&repo_root, &[
     "status",
     "--porcelain=1",
@@ -232,7 +232,7 @@ fn git_head_revision(repo_root: &Path) -> Result<Option<String>> {
 }
 
 pub fn scan_workspace(cwd: &Path) -> Result<VcsWorkspaceScan> {
-  let repo_root = git_repo_root(cwd)?;
+  let repo_root = repo_root(cwd)?;
   let output = run_git(&repo_root, &[
     "status",
     "--porcelain=1",

@@ -258,6 +258,7 @@ use the_vcs::{
   DiffHandle,
   DiffProviderRegistry,
   DiffSignKind,
+  VcsWorkspaceScan,
 };
 
 #[repr(C)]
@@ -983,7 +984,7 @@ struct VcsStatuslineRefreshResult {
   generation: u64,
   path:       PathBuf,
   statusline: Option<String>,
-  diff_base:  Option<Vec<u8>>,
+  scan:       Option<VcsWorkspaceScan>,
 }
 
 #[derive(Debug, Clone)]
@@ -1113,6 +1114,18 @@ struct ActiveFileWatchState {
   _watch_handle: WatchHandle,
 }
 
+struct VcsWatchState {
+  stream:        WatchedFileEventsState,
+  _watch_handle: WatchHandle,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct VcsBaseCacheKey {
+  repo_root:     PathBuf,
+  head_revision: Option<String>,
+  path:          PathBuf,
+}
+
 struct SwiftEditor {
   editor:                        Editor,
   file_path:                     Option<PathBuf>,
@@ -1181,10 +1194,15 @@ struct SwiftEditor {
   gutter_diff_signs:             BTreeMap<usize, RenderGutterDiffKind>,
   vcs_diff:                      Option<DiffHandle>,
   active_file_watch:             Option<ActiveFileWatchState>,
+  vcs_watch:                     Option<VcsWatchState>,
+  vcs_statusline_refresh_due_at: Option<Instant>,
   vcs_statusline_refresh_in_flight: bool,
   vcs_statusline_refresh_generation: u64,
+  vcs_statusline_refresh_rerun:  bool,
   vcs_statusline_refresh_tx:     mpsc::Sender<VcsStatuslineRefreshResult>,
   vcs_statusline_refresh_rx:     mpsc::Receiver<VcsStatuslineRefreshResult>,
+  vcs_scan:                      Option<Arc<VcsWorkspaceScan>>,
+  vcs_base_cache:                BTreeMap<VcsBaseCacheKey, Option<Vec<u8>>>,
 }
 
 impl SwiftEditor {
@@ -3060,6 +3078,19 @@ impl SwiftEditor {
     self.gutter_diff_signs.clear();
   }
 
+  fn clear_active_file_vcs_state(&mut self) {
+    self.vcs_statusline = None;
+    self.clear_vcs_diff();
+  }
+
+  fn refresh_vcs_after_path_change(&mut self, previous_path: Option<PathBuf>) {
+    if previous_path != self.file_path {
+      self.clear_active_file_vcs_state();
+    }
+    self.sync_vcs_watch_state();
+    self.schedule_vcs_statusline_refresh(None);
+  }
+
   fn refresh_vcs_diff_document(&mut self) {
     let Some(handle) = self.vcs_diff.as_ref() else {
       return;
@@ -3087,34 +3118,105 @@ impl SwiftEditor {
     self.vcs_statusline != previous_statusline || self.gutter_diff_signs != previous_signs || !previous_has_diff
   }
 
-  fn schedule_vcs_statusline_refresh(&mut self) {
-    let Some(path) = self.file_path.clone() else {
+  fn store_vcs_scan(&mut self, scan: VcsWorkspaceScan) {
+    let head_changed = self.vcs_scan.as_ref().is_none_or(|current| {
+      current.repo_root != scan.repo_root || current.head_revision != scan.head_revision
+    });
+    if head_changed {
+      self.vcs_base_cache.retain(|key, _| key.repo_root != scan.repo_root);
+    }
+    self.vcs_scan = Some(Arc::new(scan));
+  }
+
+  fn shared_vcs_scan_for_path(&self, path: &Path) -> Option<Arc<VcsWorkspaceScan>> {
+    let scan = self.vcs_scan.as_ref()?;
+    if path.starts_with(&scan.repo_root) {
+      Some(scan.clone())
+    } else {
+      None
+    }
+  }
+
+  fn cached_vcs_base_for_path(&mut self, scan: &VcsWorkspaceScan, path: &Path) -> Option<Vec<u8>> {
+    let key = VcsBaseCacheKey {
+      repo_root: scan.repo_root.clone(),
+      head_revision: scan.head_revision.clone(),
+      path: path.to_path_buf(),
+    };
+    if let Some(bytes) = self.vcs_base_cache.get(&key) {
+      return bytes.clone();
+    }
+    let bytes = self.vcs_provider.get_diff_base(path);
+    self.vcs_base_cache.insert(key, bytes.clone());
+    bytes
+  }
+
+  fn schedule_vcs_statusline_refresh(&mut self, due_at: Option<Instant>) {
+    let Some(_path) = self.file_path.clone() else {
       self.vcs_statusline = None;
       self.clear_vcs_diff();
+      self.vcs_watch = None;
+      self.vcs_scan = None;
+      self.vcs_base_cache.clear();
+      self.vcs_statusline_refresh_due_at = None;
       self.vcs_statusline_refresh_in_flight = false;
+      self.vcs_statusline_refresh_rerun = false;
       return;
     };
 
-    self.vcs_statusline = None;
-    self.clear_vcs_diff();
-    self.vcs_statusline_refresh_generation = self.vcs_statusline_refresh_generation.wrapping_add(1);
+    let due_at = due_at.unwrap_or_else(Instant::now);
+    self.vcs_statusline_refresh_due_at = Some(
+      self
+        .vcs_statusline_refresh_due_at
+        .map_or(due_at, |current| current.min(due_at)),
+    );
+    if self.vcs_statusline_refresh_in_flight {
+      self.vcs_statusline_refresh_rerun = true;
+    }
+  }
+
+  fn poll_vcs_statusline_refresh_dispatch(&mut self, now: Instant) -> bool {
+    if self.vcs_statusline_refresh_in_flight {
+      return false;
+    }
+    let Some(due_at) = self.vcs_statusline_refresh_due_at else {
+      return false;
+    };
+    if now < due_at {
+      return false;
+    }
+    let Some(path) = self.file_path.clone() else {
+      self.vcs_statusline_refresh_due_at = None;
+      self.vcs_statusline_refresh_rerun = false;
+      return false;
+    };
+
+    self.vcs_statusline_refresh_due_at = None;
     self.vcs_statusline_refresh_in_flight = true;
+    self.vcs_statusline_refresh_rerun = false;
+    self.vcs_statusline_refresh_generation = self.vcs_statusline_refresh_generation.wrapping_add(1);
     let generation = self.vcs_statusline_refresh_generation;
     let vcs_provider = self.vcs_provider.clone();
+    let shared_scan = self.shared_vcs_scan_for_path(&path);
     let tx = self.vcs_statusline_refresh_tx.clone();
 
     std::thread::spawn(move || {
-      let statusline = vcs_provider
-        .get_statusline_info(&path)
-        .map(|info| info.statusline_text());
-      let diff_base = vcs_provider.get_diff_base(&path);
+      let scan = shared_scan
+        .map(|scan| (*scan).clone())
+        .or_else(|| vcs_provider.scan_workspace(&path).ok());
+      let statusline = scan
+        .as_ref()
+        .and_then(|scan| scan.statusline_info.as_ref())
+        .map(|info| info.statusline_text())
+        .or_else(|| vcs_provider.get_statusline_info(&path).map(|info| info.statusline_text()));
       let _ = tx.send(VcsStatuslineRefreshResult {
         generation,
         path,
         statusline,
-        diff_base,
+        scan,
       });
     });
+    false
   }
 
   fn poll_vcs_statusline_refresh_results(&mut self) -> bool {
@@ -3135,7 +3237,81 @@ impl SwiftEditor {
         continue;
       }
 
-      changed |= self.apply_vcs_refresh_result(result.statusline, result.diff_base);
+      if let Some(scan) = result.scan {
+        self.store_vcs_scan(scan);
+      }
+      let diff_base = if let Some(scan) = self.shared_vcs_scan_for_path(&result.path) {
+        self.cached_vcs_base_for_path(&scan, &result.path)
+      } else {
+        self.vcs_provider.get_diff_base(&result.path)
+      };
+      changed |= self.apply_vcs_refresh_result(result.statusline, diff_base);
+
+      if self.vcs_statusline_refresh_rerun {
+        self.vcs_statusline_refresh_rerun = false;
+        if self.vcs_statusline_refresh_due_at.is_none() {
+          self.vcs_statusline_refresh_due_at = Some(Instant::now());
+        }
+      }
+    }
+    changed
+  }
+
+  fn sync_vcs_watch_state(&mut self) -> bool {
+    let Some(path) = self.file_path.clone() else {
+      let changed = self.vcs_watch.take().is_some();
+      self.vcs_scan = None;
+      self.vcs_base_cache.clear();
+      return changed;
+    };
+    let Some(root) = self.vcs_provider.watch_root(&path) else {
+      let changed = self.vcs_watch.take().is_some();
+      self.vcs_scan = None;
+      self.vcs_base_cache.clear();
+      return changed;
+    };
+
+    let current = self.vcs_watch.as_ref().map(|watch| watch.stream.path.as_path());
+    if current == Some(root.as_path()) {
+      return false;
+    }
+
+    let (events_rx, watch_handle) = watch_path(&root, vcs_watch_latency());
+    let uri = file_uri_for_path(&root).unwrap_or_else(|| format!("file://{}", root.display()));
+    self.vcs_watch = Some(VcsWatchState {
+      stream: WatchedFileEventsState {
+        path: root,
+        uri,
+        events_rx,
+        suppress_until: None,
+        reload_state: FileWatchReloadState::Clean,
+        reload_io: FileWatchReloadIoState::default(),
+      },
+      _watch_handle: watch_handle,
+    });
+    true
+  }
+
+  fn poll_vcs_watch(&mut self) -> bool {
+    let changed = self.sync_vcs_watch_state();
+    let now = Instant::now();
+    let outcome = match poll_watch_events(
+      self.vcs_watch.as_mut().map(|watch| &mut watch.stream),
+      now,
+      "vcs",
+      |event, message| the_runtime::file_watch::trace_event(event, message),
+    ) {
+      WatchPollOutcome::NoChanges => return changed,
+      WatchPollOutcome::Disconnected { .. } => {
+        self.vcs_watch = None;
+        self.schedule_vcs_statusline_refresh(Some(now + vcs_watch_latency()));
+        return true;
+      },
+      WatchPollOutcome::Changes { .. } => true,
+    };
+
+    if outcome {
+      self.schedule_vcs_statusline_refresh(Some(now + vcs_watch_latency()));
     }
     changed
   }
@@ -3264,10 +3440,12 @@ impl SwiftEditor {
   fn poll_background_tasks(&mut self) -> bool {
     let mut changed = false;
     changed |= self.poll_active_file_watch();
+    changed |= self.poll_vcs_watch();
     changed |= self.poll_lsp_events();
     changed |= self.poll_lsp_completion_auto_trigger();
     changed |= self.poll_lsp_signature_help_auto_trigger();
     changed |= self.tick_lsp_statusline();
+    let _ = self.poll_vcs_statusline_refresh_dispatch(Instant::now());
     changed |= self.poll_vcs_statusline_refresh_results();
     changed |= self.refresh_picker_state();
     changed
@@ -3381,23 +3559,29 @@ impl SwiftEditor {
       gutter_diff_signs: BTreeMap::new(),
       vcs_diff: None,
       active_file_watch: None,
+      vcs_watch: None,
+      vcs_statusline_refresh_due_at: None,
       vcs_statusline_refresh_in_flight: false,
       vcs_statusline_refresh_generation: 0,
+      vcs_statusline_refresh_rerun: false,
       vcs_statusline_refresh_tx,
       vcs_statusline_refresh_rx,
+      vcs_scan: None,
+      vcs_base_cache: BTreeMap::new(),
     };
 
     set_file_picker_syntax_loader(&mut this.file_picker, this.loader.clone());
     this.refresh_active_document_syntax();
     this.refresh_lsp_runtime_state();
     this.sync_active_file_watch_state();
-    this.schedule_vcs_statusline_refresh();
+    this.refresh_vcs_after_path_change(None);
     this
   }
 
   fn open_path(&mut self, path: &Path) -> bool {
     match fs::read_to_string(path) {
       Ok(contents) => {
+        let previous_path = self.file_path.clone();
         let replaced = self
           .editor
           .replace_active_buffer(Rope::from_str(&contents), Some(path.to_path_buf()));
@@ -3411,7 +3595,7 @@ impl SwiftEditor {
         self.refresh_active_document_syntax();
         self.refresh_lsp_runtime_state();
         self.sync_active_file_watch_state();
-        self.schedule_vcs_statusline_refresh();
+        self.refresh_vcs_after_path_change(previous_path);
         replaced
       },
       Err(err) => {
@@ -4353,6 +4537,7 @@ impl DefaultContext for SwiftEditor {
   fn set_ui_theme_preview(&mut self, theme_name: &str) -> Result<(), String> { self.set_ui_theme_preview_named(theme_name) }
   fn clear_ui_theme_preview(&mut self) { self.clear_ui_theme_preview_state(); }
   fn set_file_path(&mut self, path: Option<PathBuf>) {
+    let previous_path = self.file_path.clone();
     self.file_path = path.clone();
     self.editor.set_active_file_path(path.clone());
     if let Some(path) = path {
@@ -4362,9 +4547,10 @@ impl DefaultContext for SwiftEditor {
     self.refresh_active_document_syntax();
     self.refresh_lsp_runtime_state();
     self.sync_active_file_watch_state();
-    self.schedule_vcs_statusline_refresh();
+    self.refresh_vcs_after_path_change(previous_path);
   }
   fn open_file(&mut self, path: &Path) -> std::io::Result<()> {
+    let previous_path = self.file_path.clone();
     let contents = fs::read_to_string(path)?;
     let _ = self.editor.replace_active_buffer(Rope::from_str(&contents), Some(path.to_path_buf()));
     self.file_path = Some(path.to_path_buf());
@@ -4375,7 +4561,7 @@ impl DefaultContext for SwiftEditor {
     self.refresh_active_document_syntax();
     self.refresh_lsp_runtime_state();
     self.sync_active_file_watch_state();
-    self.schedule_vcs_statusline_refresh();
+    self.refresh_vcs_after_path_change(previous_path);
     Ok(())
   }
   fn on_file_saved(&mut self, _path: &Path, text: &str) {
@@ -4384,7 +4570,7 @@ impl DefaultContext for SwiftEditor {
       clear_reload_state(&mut watch.stream.reload_state);
     }
     self.lsp_send_did_save(Some(text));
-    self.schedule_vcs_statusline_refresh();
+    self.schedule_vcs_statusline_refresh(None);
   }
 }
 
@@ -6444,6 +6630,10 @@ fn is_completion_replace_char(ch: char) -> bool { is_symbol_word_char(ch) }
 
 fn active_file_watch_latency() -> Duration {
   Duration::from_millis(120)
+}
+
+fn vcs_watch_latency() -> Duration {
+  Duration::from_millis(75)
 }
 
 fn active_file_self_save_suppress_window() -> Duration {

@@ -3984,8 +3984,7 @@ impl Ctx {
     if !cwd.exists() {
       return None;
     }
-    let root = the_default::workspace_root(cwd.as_path());
-    root.exists().then_some(root)
+    self.vcs_provider.watch_root(cwd.as_path()).filter(|root| root.exists())
   }
 
   fn file_tree_watch_root(&self) -> Option<PathBuf> {

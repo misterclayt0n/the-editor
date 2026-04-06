@@ -146,6 +146,20 @@ impl DiffProviderRegistry {
     })
   }
 
+  /// Resolve the repository root to watch for VCS metadata changes.
+  pub fn watch_root(&self, path: &Path) -> Option<PathBuf> {
+    self.providers.iter().find_map(|provider| {
+      match provider.watch_root(path) {
+        Ok(root) => Some(root),
+        Err(err) => {
+          log::debug!("{err:#?}");
+          log::debug!("failed to obtain vcs watch root for {}", path.display());
+          None
+        },
+      }
+    })
+  }
+
   /// Fire-and-forget changed file iteration. Runs everything in a background
   /// task. Keeps iteration until `on_change` returns `false`.
   pub fn for_each_changed_file(
@@ -287,12 +301,12 @@ impl DiffProvider {
     }
   }
 
-  fn scan_workspace(&self, cwd: &Path) -> Result<VcsWorkspaceScan> {
+  fn scan_workspace(&self, _cwd: &Path) -> Result<VcsWorkspaceScan> {
     match self {
       #[cfg(feature = "git")]
-      Self::Git => git::scan_workspace(cwd),
+      Self::Git => git::scan_workspace(_cwd),
       #[cfg(feature = "jj")]
-      Self::Jj => jj::scan_workspace(cwd),
+      Self::Jj => jj::scan_workspace(_cwd),
       Self::None => bail!("No diff support compiled in"),
     }
   }
@@ -303,6 +317,16 @@ impl DiffProvider {
       Self::Git => git::get_statusline_info(_file),
       #[cfg(feature = "jj")]
       Self::Jj => jj::get_statusline_info(_file),
+      Self::None => bail!("No diff support compiled in"),
+    }
+  }
+
+  fn watch_root(&self, _path: &Path) -> Result<PathBuf> {
+    match self {
+      #[cfg(feature = "git")]
+      Self::Git => git::repo_root(_path),
+      #[cfg(feature = "jj")]
+      Self::Jj => jj::repo_root(_path),
       Self::None => bail!("No diff support compiled in"),
     }
   }

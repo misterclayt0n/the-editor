@@ -337,8 +337,8 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
         for underline in scene.diagnosticUnderlines {
             guard let diagnostic = scene.diagnostic(index: underline.diagnosticIndex) else { continue }
             let color = diagnosticColor(for: diagnostic.severity)
-            let rowTop = topY(forRow: underline.row, rowSpan: 1, viewportHeight: viewportHeight, cellHeight: cellSize.height)
-            let baselineY = rowTop + cellSize.height - max(lineWidth * 2, 4)
+            let rowBottom = topY(forRow: underline.row, rowSpan: 1, viewportHeight: viewportHeight, cellHeight: cellSize.height)
+            let baselineY = rowBottom + max(lineWidth * 2, 3)
             let startX = CGFloat(scene.info.contentOffsetX + underline.startCol) * cellSize.width
             let endX = CGFloat(scene.info.contentOffsetX + underline.endCol) * cellSize.width
             drawDiagnosticSquiggle(
@@ -371,7 +371,7 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
         case .bar:
             rect = CGRect(x: x, y: y, width: cursorThickness, height: cellSize.height)
         case .underline:
-            rect = CGRect(x: x, y: y + cellSize.height - cursorThickness, width: cellSize.width, height: cursorThickness)
+            rect = CGRect(x: x, y: y, width: cellSize.width, height: cursorThickness)
         case .hidden:
             return
         case .hollow:

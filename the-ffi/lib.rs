@@ -6681,9 +6681,9 @@ fn swift_gutter_config() -> GutterConfig {
     layout: vec![
       GutterSlot::builtin(GutterType::Diff),
       GutterSlot::builtin(GutterType::Spacer),
-      GutterSlot::builtin(GutterType::LineNumbers),
-      GutterSlot::builtin(GutterType::Spacer),
       GutterSlot::builtin(GutterType::Diagnostics),
+      GutterSlot::builtin(GutterType::Spacer),
+      GutterSlot::builtin(GutterType::LineNumbers),
     ],
     ..GutterConfig::default()
   }

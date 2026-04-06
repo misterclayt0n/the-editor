@@ -13,6 +13,7 @@ use std::{
   num::NonZeroUsize,
   os::raw::c_char,
   path::{
+    Component,
     Path,
     PathBuf,
   },
@@ -2337,6 +2338,7 @@ impl SwiftEditor {
     }
 
     let current_uri = self.current_lsp_uri();
+    let current_path = current_uri.as_deref().and_then(normalized_file_uri_path);
     let mut applied_documents = 0usize;
     let mut applied_edits = 0usize;
 
@@ -2345,12 +2347,16 @@ impl SwiftEditor {
         code_action_trace_log(format!("workspace_edit skip_empty_document uri={}", document.uri));
         continue;
       }
-      let is_current = current_uri.as_ref() == Some(&document.uri);
+      let document_path = normalized_file_uri_path(&document.uri);
+      let is_current = current_uri.as_ref() == Some(&document.uri)
+        || (current_path.is_some() && current_path == document_path);
       code_action_trace_log(format!(
-        "workspace_edit apply_document uri={} edits={} current={}",
+        "workspace_edit apply_document uri={} edits={} current={} current_path={:?} document_path={:?}",
         document.uri,
         document.edits.len(),
         is_current,
+        current_path,
+        document_path,
       ));
       let applied = if is_current {
         self.apply_text_edits_to_current_document(&document.edits)
@@ -2393,6 +2399,7 @@ impl SwiftEditor {
     };
 
     if self.apply_transaction(&tx) {
+      self.request_render();
       true
     } else {
       self.push_error("lsp", "failed to apply edit transaction");
@@ -6453,6 +6460,26 @@ fn ansi_color(index: usize, theme: &Theme) -> (u8, u8, u8) {
     (255, 255, 255),
   ];
   ANSI[index.min(15)]
+}
+
+fn lexical_normalize_path(path: &Path) -> PathBuf {
+  let mut normalized = PathBuf::new();
+  for component in path.components() {
+    match component {
+      Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
+      Component::RootDir => normalized.push(Path::new(std::path::MAIN_SEPARATOR_STR)),
+      Component::CurDir => {},
+      Component::ParentDir => {
+        normalized.pop();
+      },
+      Component::Normal(part) => normalized.push(part),
+    }
+  }
+  normalized
+}
+
+fn normalized_file_uri_path(uri: &str) -> Option<PathBuf> {
+  path_for_file_uri(uri).map(|path| lexical_normalize_path(&path))
 }
 
 fn indexed_color(index: u8) -> (u8, u8, u8) {

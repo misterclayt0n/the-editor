@@ -69,6 +69,16 @@ final class EditorSurfaceController: ObservableObject {
         refreshSnapshot()
     }
 
+    func setActivePane(_ paneID: UInt) {
+        guard EditorFFIBridge.setActivePane(handle?.raw, paneID: paneID) else { return }
+        refreshSnapshot()
+    }
+
+    func resizeSplit(_ splitID: UInt, x: Int, y: Int) {
+        guard EditorFFIBridge.resizeSplit(handle?.raw, splitID: splitID, x: x, y: y) else { return }
+        refreshSnapshot()
+    }
+
     func scroll(byRows rowDelta: Int, cols colDelta: Int) {
         guard (rowDelta != 0 || colDelta != 0), let scene else { return }
         let targetRow = UInt32(max(scene.info.scrollRow + rowDelta, 0))

@@ -13,12 +13,17 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
     private let fontMetrics: EditorFontMetrics
     private let fallbackCellSize: CGSize
 
+    private struct SplitDragState {
+        let splitID: UInt
+    }
+
     var cellSize: CGSize {
         controller?.scene?.info.surfaceMetrics.cellSizePoints ?? fallbackCellSize
     }
     private var markedText = NSMutableAttributedString()
     private var pendingScrollRows: CGFloat = 0
     private var pendingScrollCols: CGFloat = 0
+    private var splitDrag: SplitDragState?
 
     override var acceptsFirstResponder: Bool { true }
     override var isFlipped: Bool { true }
@@ -90,22 +95,51 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
 
     override func resetCursorRects() {
         discardCursorRects()
-        let gutterWidth: CGFloat
-        if let scene = controller?.scene {
-            gutterWidth = CGFloat(scene.info.contentOffsetX) * scene.info.surfaceMetrics.cellSizePoints.width
-        } else {
-            gutterWidth = 0
+        guard let scene = controller?.scene else {
+            addCursorRect(bounds, cursor: .iBeam)
+            return
         }
-        if gutterWidth > 0 {
-            addCursorRect(NSRect(x: 0, y: 0, width: gutterWidth, height: bounds.height), cursor: .arrow)
+
+        for pane in scene.panes {
+            let paneRect = rect(for: pane, cellSize: scene.info.surfaceMetrics.cellSizePoints)
+            guard paneRect.width > 0, paneRect.height > 0 else { continue }
+            if pane.kind != .editorBuffer {
+                addCursorRect(paneRect, cursor: .arrow)
+                continue
+            }
+            let gutterWidth = CGFloat(pane.contentOffsetX) * scene.info.surfaceMetrics.cellSizePoints.width
+            if gutterWidth > 0 {
+                addCursorRect(
+                    NSRect(x: paneRect.minX, y: paneRect.minY, width: min(gutterWidth, paneRect.width), height: paneRect.height),
+                    cursor: .arrow
+                )
+            }
+            let textRect = NSRect(
+                x: paneRect.minX + min(gutterWidth, paneRect.width),
+                y: paneRect.minY,
+                width: max(paneRect.width - gutterWidth, 0),
+                height: paneRect.height
+            )
+            if textRect.width > 0 {
+                addCursorRect(textRect, cursor: .iBeam)
+            }
         }
-        let textRect = NSRect(x: gutterWidth, y: 0, width: max(bounds.width - gutterWidth, 0), height: bounds.height)
-        addCursorRect(textRect, cursor: .iBeam)
+
+        for separator in scene.separators {
+            let rect = separatorHitRect(separator, cellSize: scene.info.surfaceMetrics.cellSizePoints)
+            let cursor: NSCursor = separator.axis == .vertical ? .resizeLeftRight : .resizeUpDown
+            addCursorRect(rect, cursor: cursor)
+        }
     }
 
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
-        super.mouseDown(with: event)
+        let point = convert(event.locationInWindow, from: nil)
+        if let separator = separator(at: point) {
+            splitDrag = SplitDragState(splitID: separator.splitID)
+            return
+        }
+        activatePaneIfNeeded(at: point)
     }
 
     override func scrollWheel(with event: NSEvent) {
@@ -113,6 +147,11 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
             super.scrollWheel(with: event)
             return
         }
+
+        let point = convert(event.locationInWindow, from: nil)
+        let hoveredPane = pane(at: point)
+        activatePaneIfNeeded(at: point)
+        guard hoveredPane?.kind == .editorBuffer else { return }
 
         let direction: CGFloat = event.isDirectionInvertedFromDevice ? -1 : 1
         var deltaX = direction * event.scrollingDeltaX
@@ -152,6 +191,21 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
 
         guard rowDelta != 0 || colDelta != 0 else { return }
         controller.scroll(byRows: rowDelta, cols: colDelta)
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let drag = splitDrag, let controller, let scene = controller.scene else {
+            super.mouseDragged(with: event)
+            return
+        }
+        let point = convert(event.locationInWindow, from: nil)
+        let coords = clampedCellCoordinates(for: point, scene: scene)
+        controller.resizeSplit(drag.splitID, x: coords.x, y: coords.y)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        splitDrag = nil
+        super.mouseUp(with: event)
     }
 
     override func keyDown(with event: NSEvent) {
@@ -250,6 +304,63 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
             bits |= UInt8(THE_EDITOR_MODIFIER_SHIFT)
         }
         return bits
+    }
+
+    private func rect(for pane: EditorSnapshotPane, cellSize: CGSize) -> CGRect {
+        CGRect(
+            x: CGFloat(pane.x) * cellSize.width,
+            y: CGFloat(pane.y) * cellSize.height,
+            width: CGFloat(pane.width) * cellSize.width,
+            height: CGFloat(pane.height) * cellSize.height
+        )
+    }
+
+    private func separatorHitRect(_ separator: EditorSnapshotSeparator, cellSize: CGSize) -> CGRect {
+        let hitThickness: CGFloat = 8
+        switch separator.axis {
+        case .vertical:
+            return CGRect(
+                x: CGFloat(separator.line) * cellSize.width - hitThickness / 2,
+                y: CGFloat(separator.spanStart) * cellSize.height,
+                width: hitThickness,
+                height: CGFloat(max(separator.spanEnd - separator.spanStart, 1)) * cellSize.height
+            )
+        case .horizontal:
+            return CGRect(
+                x: CGFloat(separator.spanStart) * cellSize.width,
+                y: CGFloat(separator.line) * cellSize.height - hitThickness / 2,
+                width: CGFloat(max(separator.spanEnd - separator.spanStart, 1)) * cellSize.width,
+                height: hitThickness
+            )
+        }
+    }
+
+    private func pane(at point: CGPoint) -> EditorSnapshotPane? {
+        guard let scene = controller?.scene else { return nil }
+        let metrics = scene.info.surfaceMetrics.cellSizePoints
+        return scene.panes.first(where: { rect(for: $0, cellSize: metrics).contains(point) })
+    }
+
+    private func separator(at point: CGPoint) -> EditorSnapshotSeparator? {
+        guard let scene = controller?.scene else { return nil }
+        let metrics = scene.info.surfaceMetrics.cellSizePoints
+        return scene.separators.first(where: { separatorHitRect($0, cellSize: metrics).contains(point) })
+    }
+
+    private func activatePaneIfNeeded(at point: CGPoint) {
+        guard let controller, let pane = pane(at: point), !pane.isActive else { return }
+        controller.setActivePane(pane.paneID)
+    }
+
+    private func clampedCellCoordinates(for point: CGPoint, scene: EditorRenderScene) -> (x: Int, y: Int) {
+        let metrics = scene.info.surfaceMetrics.cellSizePoints
+        let cellWidth = max(metrics.width, 1)
+        let cellHeight = max(metrics.height, 1)
+        let maxX = max(scene.info.viewportWidth - 1, 0)
+        let maxY = max(scene.info.viewportHeight - 1, 0)
+        let x = min(max(Int(floor(point.x / cellWidth)), 0), maxX)
+        let y = min(max(Int(floor(point.y / cellHeight)), 0), maxY)
+        return (x, y)
     }
 
     // MARK: NSTextInputClient

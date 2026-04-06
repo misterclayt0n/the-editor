@@ -8,7 +8,10 @@ struct EditorMarkedText {
 }
 
 struct EditorSceneLine: Hashable {
+    let paneID: UInt
+    let x: Int
     let row: Int
+    let width: Int
     let docLine: Int?
     let firstVisualLine: Bool
     let spans: [EditorSnapshotSpan]
@@ -16,7 +19,10 @@ struct EditorSceneLine: Hashable {
 
     var cacheSignature: Int {
         var hasher = Hasher()
+        hasher.combine(paneID)
+        hasher.combine(x)
         hasher.combine(row)
+        hasher.combine(width)
         hasher.combine(docLine)
         hasher.combine(firstVisualLine)
         hasher.combine(spans)
@@ -27,6 +33,8 @@ struct EditorSceneLine: Hashable {
 
 struct EditorRenderScene {
     let info: EditorSnapshotInfo
+    let panes: [EditorSnapshotPane]
+    let separators: [EditorSnapshotSeparator]
     let lines: [EditorSceneLine]
     let cursors: [EditorSnapshotCursor]
     let selections: [EditorSnapshotSelection]
@@ -46,7 +54,10 @@ struct EditorRenderScene {
     var visibleLineKeys: Set<EditorLineCacheKey> {
         Set(lines.map { line in
             EditorLineCacheKey(
+                paneID: line.paneID,
                 row: line.row,
+                x: line.x,
+                width: line.width,
                 layoutGeneration: info.layoutGeneration,
                 textGeneration: info.textGeneration,
                 scrollGeneration: info.scrollGeneration,
@@ -63,8 +74,18 @@ struct EditorRenderScene {
         cursors.first
     }
 
-    func line(atRow row: Int) -> EditorSceneLine? {
-        lines.first(where: { $0.row == row })
+    var activePane: EditorSnapshotPane? {
+        panes.first(where: { $0.isActive })
+    }
+
+    func pane(id: UInt) -> EditorSnapshotPane? {
+        panes.first(where: { $0.paneID == id })
+    }
+
+    func line(atRow row: Int, paneID: UInt? = nil) -> EditorSceneLine? {
+        lines.first(where: { line in
+            line.row == row && (paneID == nil || line.paneID == paneID)
+        })
     }
 
     func diagnostic(index: Int) -> EditorSnapshotDiagnostic? {
@@ -91,9 +112,14 @@ struct EditorRenderScene {
     static func from(snapshot: EditorSnapshot, markedText: EditorMarkedText?) -> EditorRenderScene {
         EditorRenderScene(
             info: snapshot.info,
+            panes: snapshot.panes,
+            separators: snapshot.separators,
             lines: snapshot.lines.map {
                 EditorSceneLine(
+                    paneID: $0.paneID,
+                    x: $0.x,
                     row: $0.row,
+                    width: $0.width,
                     docLine: $0.docLine,
                     firstVisualLine: $0.firstVisualLine,
                     spans: $0.spans,
@@ -111,7 +137,10 @@ struct EditorRenderScene {
 }
 
 struct EditorLineCacheKey: Hashable {
+    let paneID: UInt
     let row: Int
+    let x: Int
+    let width: Int
     let layoutGeneration: UInt64
     let textGeneration: UInt64
     let scrollGeneration: UInt64

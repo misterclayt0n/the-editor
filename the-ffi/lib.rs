@@ -145,8 +145,11 @@ use the_lib::{
     parse_markdown_blocks,
   },
   editor::{
+    BufferId,
     Editor,
     EditorId,
+    PaneContent,
+    PaneContentKind,
   },
   diagnostics::{
     Diagnostic,
@@ -162,6 +165,7 @@ use the_lib::{
     FrameGenerationState,
     FrameRenderPlan,
     NoHighlights,
+    PaneRenderPlan,
     RenderDamageReason,
     RenderDiffGutterStyles,
     RenderGenerationState,
@@ -204,6 +208,11 @@ use the_lib::{
     CursorPick,
     Range,
     Selection,
+  },
+  split_tree::{
+    PaneId,
+    SplitAxis,
+    SplitNodeId,
   },
   syntax::{
     Highlight,
@@ -373,6 +382,9 @@ pub struct the_editor_snapshot_info_t {
   pub viewport_width:          u16,
   pub viewport_height:         u16,
   pub content_offset_x:        u16,
+  pub active_pane_id:          usize,
+  pub pane_count:              usize,
+  pub separator_count:         usize,
   pub damage_start_row:        u16,
   pub damage_end_row:          u16,
   pub damage_is_full:          bool,
@@ -396,8 +408,34 @@ pub struct the_editor_snapshot_info_t {
 
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
+pub struct the_editor_snapshot_pane_t {
+  pub pane_id:          usize,
+  pub kind:             u8,
+  pub x:                u16,
+  pub y:                u16,
+  pub width:            u16,
+  pub height:           u16,
+  pub content_offset_x: u16,
+  pub is_active:        bool,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct the_editor_snapshot_separator_t {
+  pub split_id:   usize,
+  pub axis:       u8,
+  pub line:       u16,
+  pub span_start: u16,
+  pub span_end:   u16,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
 pub struct the_editor_snapshot_line_t {
+  pub pane_id:           usize,
+  pub x:                 u16,
   pub row:               u16,
+  pub width:             u16,
   pub doc_line:          i32,
   pub first_visual_line: bool,
   pub span_count:        usize,
@@ -571,10 +609,10 @@ pub struct the_editor_snapshot_diagnostic_t {
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 pub struct the_editor_snapshot_diagnostic_underline_t {
-  pub row:              u16,
-  pub start_col:        u16,
-  pub end_col:          u16,
-  pub diagnostic_index: usize,
+  pub row:       u16,
+  pub start_col: u16,
+  pub end_col:   u16,
+  pub severity:  u8,
 }
 
 #[repr(C)]
@@ -812,6 +850,8 @@ struct OwnedSnapshot {
   file_picker_items:     Vec<FilePickerItemRecord>,
   file_picker_preview_lines: Vec<FilePickerPreviewLineRecord>,
   file_picker_preview_segments: Vec<FilePickerPreviewSegmentRecord>,
+  panes:                 Vec<the_editor_snapshot_pane_t>,
+  separators:            Vec<the_editor_snapshot_separator_t>,
   lines:                 Vec<LineRecord>,
   spans:                 Vec<SpanRecord>,
   text_cells:            Vec<TextCellRecord>,
@@ -1259,6 +1299,7 @@ struct SwiftEditor {
   lsp_spinner_index:             usize,
   lsp_spinner_last_tick:         Instant,
   highlight_cache:               HighlightCache,
+  inactive_highlight_caches:     BTreeMap<BufferId, HighlightCache>,
   file_picker_preview_visible_rows: usize,
   ui_theme_catalog:              ThemeCatalog,
   ui_theme_name:                 String,
@@ -3135,6 +3176,12 @@ impl SwiftEditor {
     Some(&self.diagnostics.document(&uri)?.diagnostics)
   }
 
+  fn current_document_diagnostics_for_buffer(&self, buffer_id: BufferId) -> Option<Vec<Diagnostic>> {
+    let path = self.editor.buffer_file_path(buffer_id)?;
+    let uri = file_uri_for_path(path)?;
+    Some(self.diagnostics.document(&uri)?.diagnostics.clone())
+  }
+
   fn handle_lsp_rpc_message(&mut self, runtime_index: usize, message: jsonrpc::Message) -> bool {
     let jsonrpc::Message::Response(response) = message else {
       return false;
@@ -4182,6 +4229,7 @@ impl SwiftEditor {
       lsp_spinner_index: 0,
       lsp_spinner_last_tick: Instant::now(),
       highlight_cache: HighlightCache::default(),
+      inactive_highlight_caches: BTreeMap::new(),
       file_picker_preview_visible_rows: 20,
       ui_theme_catalog,
       ui_theme_name: ui_theme_name.clone(),
@@ -4217,25 +4265,8 @@ impl SwiftEditor {
   }
 
   fn open_path(&mut self, path: &Path) -> bool {
-    match fs::read_to_string(path) {
-      Ok(contents) => {
-        let previous_path = self.file_path.clone();
-        let replaced = self
-          .editor
-          .replace_active_buffer(Rope::from_str(&contents), Some(path.to_path_buf()));
-        self.file_path = Some(path.to_path_buf());
-        self.editor.set_active_file_path(Some(path.to_path_buf()));
-        self.editor
-          .document_mut()
-          .set_display_name(display_name_for_path(path));
-        self.update_workspace_for_path(path);
-        self.reload_theme_catalog();
-        self.refresh_active_document_syntax();
-        self.refresh_lsp_runtime_state();
-        self.sync_active_file_watch_state();
-        self.refresh_vcs_after_path_change(previous_path);
-        replaced
-      },
+    match <Self as DefaultContext>::open_file(self, path) {
+      Ok(()) => true,
       Err(err) => {
         self.push_error("open", format!("failed to open {}: {err}", path.display()));
         false
@@ -4298,6 +4329,28 @@ impl SwiftEditor {
     }
     self.editor.view_mut().scroll.col = next;
     true
+  }
+
+  fn set_active_pane_raw(&mut self, pane_raw: usize) -> bool {
+    let Some(pane) = pane_id_from_raw(pane_raw) else {
+      return false;
+    };
+    if self.editor.active_pane_id() == pane {
+      return false;
+    }
+    let previous_buffer_id = self.editor.active_buffer_id();
+    if !self.editor.set_active_pane(pane) {
+      return false;
+    }
+    self.sync_state_after_active_pane_change(previous_buffer_id);
+    true
+  }
+
+  fn resize_split_raw(&mut self, split_raw: usize, x: u16, y: u16) -> bool {
+    let Some(split_id) = split_id_from_raw(split_raw) else {
+      return false;
+    };
+    self.editor.resize_split(split_id, x, y)
   }
 
   fn handle_key_event(&mut self, raw: the_editor_key_event_t) -> bool {
@@ -4620,6 +4673,9 @@ impl SwiftEditor {
       loader.set_scopes(self.ui_theme.scopes().to_vec());
     }
     self.highlight_cache.clear();
+    self.inactive_highlight_caches.clear();
+    self.render_generation_state = None;
+    self.frame_generation_state = FrameGenerationState::default();
     self.render_theme_generation = self.render_theme_generation.wrapping_add(1);
   }
 
@@ -4755,13 +4811,40 @@ impl SwiftEditor {
     }
   }
 
+  fn sync_state_after_active_pane_change(&mut self, previous_buffer_id: BufferId) {
+    self.clear_hover_state();
+    self.clear_completion_state();
+    self.cancel_auto_completion();
+    self.signature_help.clear();
+    self.cancel_auto_signature_help();
+
+    if self.editor.active_buffer_id() == previous_buffer_id {
+      return;
+    }
+
+    self.highlight_cache.clear();
+    self.inactive_highlight_caches.clear();
+    self.render_generation_state = None;
+
+    let active_path = self.editor.active_file_path().map(Path::to_path_buf);
+    let previous_path = self.file_path.clone();
+    self.file_path = active_path.clone();
+    if let Some(path) = active_path.as_deref() {
+      self.update_workspace_for_path(path);
+      self.reload_theme_catalog();
+    }
+    self.refresh_active_document_syntax();
+    self.refresh_lsp_runtime_state();
+    self.sync_active_file_watch_state();
+    self.refresh_vcs_after_path_change(previous_path);
+  }
+
   fn build_snapshot(&mut self) -> OwnedSnapshot {
     self.poll_vcs_statusline_refresh_results();
     let _ = self.refresh_picker_state();
     let styles = self.render_styles();
     let frame = the_default::frame_render_plan_with_styles(self, styles);
-    let plan = frame.active_plan();
-    OwnedSnapshot::from_editor(self, plan)
+    OwnedSnapshot::from_editor(self, &frame)
   }
 
   fn open_search_prompt(&mut self) -> bool {
@@ -4828,6 +4911,166 @@ impl SwiftEditor {
     };
     self.editor.document().text().slice(range.from()..range.to()).to_string()
   }
+}
+
+fn build_inactive_pane_plan_with_styles(
+  editor: &mut SwiftEditor,
+  pane_id: PaneId,
+  buffer_id: BufferId,
+  styles: RenderStyles,
+) -> (RenderPlan, RenderGenerationState) {
+  let Some(view) = editor.editor.pane_view(pane_id) else {
+    return (RenderPlan::default(), RenderGenerationState::default());
+  };
+
+  let mut text_format = editor.text_format.clone();
+  let mut annotations = TextAnnotations::default();
+  let mut local_highlight_cache = editor
+    .inactive_highlight_caches
+    .remove(&buffer_id)
+    .unwrap_or_default();
+  let diagnostics = editor
+    .current_document_diagnostics_for_buffer(buffer_id)
+    .unwrap_or_default();
+  let diagnostics_by_line = diagnostics_by_line(&diagnostics);
+  let diagnostic_styles = render_diagnostic_styles_from_theme(&editor.ui_theme);
+  let diff_styles = render_diff_styles_from_theme(&editor.ui_theme);
+  let diff_signs = editor.gutter_diff_signs.clone();
+
+  let mut plan = {
+    let Some((document, cache)) = editor.editor.document_and_cache_at_mut(buffer_id) else {
+      return (RenderPlan::default(), RenderGenerationState::default());
+    };
+    let gutter_width = gutter_width_for_document(document, view.viewport.width, &editor.gutter_config);
+    text_format.viewport_width = view.viewport.width.saturating_sub(gutter_width).max(1);
+
+    if let (Some(loader), Some(syntax)) = (editor.loader.as_deref(), document.syntax()) {
+      let line_range = view.scroll.row..(view.scroll.row + view.viewport.height as usize);
+      let mut adapter = SyntaxHighlightAdapter::new(
+        document.text().slice(..),
+        syntax,
+        loader,
+        &mut local_highlight_cache,
+        line_range,
+        document.version(),
+        document.syntax_version(),
+        true,
+      );
+      build_plan(
+        document,
+        view,
+        &text_format,
+        &editor.gutter_config,
+        &mut annotations,
+        &mut adapter,
+        cache,
+        styles,
+      )
+    } else {
+      let mut highlights = NoHighlights;
+      build_plan(
+        document,
+        view,
+        &text_format,
+        &editor.gutter_config,
+        &mut annotations,
+        &mut highlights,
+        cache,
+        styles,
+      )
+    }
+  };
+
+  apply_swift_diff_gutter_markers(&mut plan, &diff_signs, diff_styles);
+  apply_diagnostic_gutter_markers(&mut plan, &diagnostics_by_line, diagnostic_styles);
+  let row_hashes = base_render_layer_row_hashes(&plan);
+  let generation_state = finish_render_generations(
+    &mut plan,
+    editor.frame_generation_state.pane_states.get(&pane_id),
+    editor.render_theme_generation,
+    row_hashes,
+  );
+  editor
+    .inactive_highlight_caches
+    .insert(buffer_id, local_highlight_cache);
+  (plan, generation_state)
+}
+
+fn build_frame_render_plan_with_styles_for_swift(
+  editor: &mut SwiftEditor,
+  styles: RenderStyles,
+) -> FrameRenderPlan {
+  let previous_frame_generation_state = editor.frame_generation_state.clone();
+  let viewport = editor.editor.layout_viewport();
+  let pane_snapshots = editor.editor.frame_pane_snapshots(viewport);
+  if pane_snapshots.is_empty() {
+    editor.frame_generation_state = FrameGenerationState::default();
+    return FrameRenderPlan::empty();
+  }
+
+  for pane in &pane_snapshots {
+    if let PaneContent::EditorBuffer { .. } = pane.content {
+      let _ = editor.editor.set_pane_viewport(pane.pane_id, pane.rect);
+    }
+  }
+
+  let active_pane = editor.editor.active_pane_id();
+  let mut pane_generation_states = BTreeMap::new();
+  let panes = pane_snapshots
+    .into_iter()
+    .map(|pane| {
+      let (pane_kind, client_surface_id, plan) = match pane.content {
+        PaneContent::EditorBuffer { buffer_id } => {
+          let plan = if pane.is_active_pane {
+            editor.build_render_plan_with_styles(styles)
+          } else {
+            let (plan, generation_state) =
+              build_inactive_pane_plan_with_styles(editor, pane.pane_id, buffer_id, styles);
+            pane_generation_states.insert(pane.pane_id, generation_state);
+            plan
+          };
+          if pane.is_active_pane {
+            pane_generation_states.insert(
+              pane.pane_id,
+              editor.render_generation_state.clone().unwrap_or_default(),
+            );
+          }
+          (PaneContentKind::EditorBuffer, None, plan)
+        },
+        PaneContent::ClientSurface { surface_id } => {
+          pane_generation_states.insert(pane.pane_id, RenderGenerationState::default());
+          (
+            PaneContentKind::ClientSurface,
+            Some(surface_id),
+            RenderPlan::default(),
+          )
+        },
+      };
+      PaneRenderPlan {
+        pane_id: pane.pane_id,
+        rect: pane.rect,
+        pane_kind,
+        client_surface_id,
+        plan,
+      }
+    })
+    .collect();
+
+  let mut frame = FrameRenderPlan {
+    active_pane,
+    panes,
+    frame_generation: 0,
+    pane_structure_generation: 0,
+    changed_pane_ids: Vec::new(),
+    damage_is_full: false,
+    damage_reason: RenderDamageReason::None,
+  };
+  editor.frame_generation_state = the_lib::render::finish_frame_generations(
+    &mut frame,
+    Some(&previous_frame_generation_state),
+    pane_generation_states,
+  );
+  frame
 }
 
 impl DefaultContext for SwiftEditor {
@@ -4926,16 +5169,10 @@ impl DefaultContext for SwiftEditor {
     self.build_frame_render_plan_with_styles(self.render_styles())
   }
   fn build_frame_render_plan_with_styles(&mut self, styles: RenderStyles) -> FrameRenderPlan {
-    let mut frame = FrameRenderPlan::from_active_plan(self.build_render_plan_with_styles(styles));
-    let pane_state = self.render_generation_state.clone().unwrap_or_default();
-    let pane_id = frame.active_pane;
-    let pane_states = std::iter::once((pane_id, pane_state)).collect();
-    self.frame_generation_state = the_lib::render::finish_frame_generations(
-      &mut frame,
-      Some(&self.frame_generation_state),
-      pane_states,
-    );
-    frame
+    build_frame_render_plan_with_styles_for_swift(self, styles)
+  }
+  fn did_change_active_pane(&mut self, previous_buffer_id: BufferId) {
+    self.sync_state_after_active_pane_change(previous_buffer_id);
   }
   fn request_quit(&mut self) {}
   fn mode(&self) -> Mode { self.mode }
@@ -5529,18 +5766,42 @@ impl DefaultContext for SwiftEditor {
     self.refresh_vcs_after_path_change(previous_path);
   }
   fn open_file(&mut self, path: &Path) -> std::io::Result<()> {
-    let previous_path = self.file_path.clone();
-    let contents = fs::read_to_string(path)?;
-    let _ = self.editor.replace_active_buffer(Rope::from_str(&contents), Some(path.to_path_buf()));
-    self.file_path = Some(path.to_path_buf());
-    self.editor.set_active_file_path(Some(path.to_path_buf()));
-    self.editor.document_mut().set_display_name(display_name_for_path(path));
-    self.update_workspace_for_path(path);
-    self.reload_theme_catalog();
-    self.refresh_active_document_syntax();
-    self.refresh_lsp_runtime_state();
-    self.sync_active_file_watch_state();
-    self.refresh_vcs_after_path_change(previous_path);
+    self.clear_hover_state();
+    if let Some(buffer_id) = self.editor.find_buffer_by_path(path) {
+      let previous_buffer_id = self.editor.active_buffer_id();
+      let _ = self.editor.set_active_buffer(buffer_id);
+      self.sync_state_after_active_pane_change(previous_buffer_id);
+    } else {
+      let contents = fs::read_to_string(path)?;
+      let viewport = self.editor.view().viewport;
+      let reused_untitled = self.editor.should_reuse_active_untitled_buffer_for_open();
+      if reused_untitled {
+        let _ = self
+          .editor
+          .replace_active_buffer(Rope::from_str(&contents), Some(path.to_path_buf()));
+      } else {
+        let view = ViewState::new(viewport, Position::new(0, 0));
+        let _ = self
+          .editor
+          .open_buffer(Rope::from_str(&contents), view, Some(path.to_path_buf()));
+      }
+
+      {
+        let doc = self.editor.document_mut();
+        if let Some(loader) = &self.loader {
+          let _ = setup_syntax(doc, path, loader);
+        }
+        doc.set_display_name(display_name_for_path(path));
+        let _ = doc.mark_saved();
+      }
+
+      self.highlight_cache.clear();
+      self.inactive_highlight_caches.clear();
+      self.render_generation_state = None;
+      self.frame_generation_state = FrameGenerationState::default();
+    }
+
+    self.set_file_path(Some(path.to_path_buf()));
     Ok(())
   }
   fn on_file_saved(&mut self, _path: &Path, text: &str) {
@@ -5554,11 +5815,18 @@ impl DefaultContext for SwiftEditor {
 }
 
 impl OwnedSnapshot {
-  fn from_editor(editor: &mut SwiftEditor, plan: Option<&RenderPlan>) -> Self {
-    let viewport = editor.editor.view().viewport;
+  fn from_editor(editor: &mut SwiftEditor, frame: &FrameRenderPlan) -> Self {
+    let viewport = editor.editor.layout_viewport();
     let scroll = editor.editor.view().scroll;
     let mode = mode_code(editor.mode);
     let document_line_count = editor.editor.document().text().len_lines() as u32;
+    let active_plan = frame.active_plan();
+    let active_pane_rect = frame
+      .panes
+      .iter()
+      .find(|pane| pane.pane_id == frame.active_pane)
+      .map(|pane| pane.rect)
+      .unwrap_or(viewport);
 
     let mut snapshot = Self {
       info: the_editor_snapshot_info_t {
@@ -5569,19 +5837,22 @@ impl OwnedSnapshot {
         gutter_background_color: theme_gutter_background_rgba(&editor.ui_theme),
         viewport_width: viewport.width,
         viewport_height: viewport.height,
-        content_offset_x: plan.map(|plan| plan.content_offset_x).unwrap_or(0),
-        damage_start_row: plan.map(|plan| plan.damage_start_row).unwrap_or(0),
-        damage_end_row: plan.map(|plan| plan.damage_end_row).unwrap_or(0),
-        damage_is_full: plan.map(|plan| plan.damage_is_full).unwrap_or(false),
-        damage_reason: plan.map(|plan| damage_reason_code(plan.damage_reason)).unwrap_or(damage_reason_code(RenderDamageReason::None)),
+        content_offset_x: active_plan.map(|plan| plan.content_offset_x).unwrap_or(0),
+        active_pane_id: frame.active_pane.get().get(),
+        pane_count: frame.panes.len(),
+        separator_count: 0,
+        damage_start_row: active_plan.map(|plan| plan.damage_start_row).unwrap_or(0),
+        damage_end_row: active_plan.map(|plan| plan.damage_end_row).unwrap_or(0),
+        damage_is_full: frame.damage_is_full,
+        damage_reason: damage_reason_code(frame.damage_reason),
         mode,
-        layout_generation: plan.map(|plan| plan.layout_generation).unwrap_or(0),
-        text_generation: plan.map(|plan| plan.text_generation).unwrap_or(0),
-        decoration_generation: plan.map(|plan| plan.decoration_generation).unwrap_or(0),
-        cursor_generation: plan.map(|plan| plan.cursor_generation).unwrap_or(0),
-        scroll_generation: plan.map(|plan| plan.scroll_generation).unwrap_or(0),
-        theme_generation: plan.map(|plan| plan.theme_generation).unwrap_or(0),
-        cursor_blink_generation: plan.map(|plan| plan.cursor_blink_generation).unwrap_or(0),
+        layout_generation: active_plan.map(|plan| plan.layout_generation).unwrap_or(0),
+        text_generation: active_plan.map(|plan| plan.text_generation).unwrap_or(0),
+        decoration_generation: active_plan.map(|plan| plan.decoration_generation).unwrap_or(0),
+        cursor_generation: active_plan.map(|plan| plan.cursor_generation).unwrap_or(0),
+        scroll_generation: active_plan.map(|plan| plan.scroll_generation).unwrap_or(0),
+        theme_generation: active_plan.map(|plan| plan.theme_generation).unwrap_or(0),
+        cursor_blink_generation: active_plan.map(|plan| plan.cursor_blink_generation).unwrap_or(0),
         scroll_row: scroll.row as u32,
         scroll_col: scroll.col as u32,
         document_line_count,
@@ -5777,15 +6048,43 @@ impl OwnedSnapshot {
       error_idx: snapshot.push_optional_string(input_prompt.error.as_deref()),
     };
 
-    if let Some(plan) = plan {
+    snapshot.panes = frame
+      .panes
+      .iter()
+      .map(|pane| the_editor_snapshot_pane_t {
+        pane_id: pane.pane_id.get().get(),
+        kind: pane_content_kind_code(pane.pane_kind),
+        x: pane.rect.x,
+        y: pane.rect.y,
+        width: pane.rect.width,
+        height: pane.rect.height,
+        content_offset_x: pane.plan.content_offset_x,
+        is_active: pane.pane_id == frame.active_pane,
+      })
+      .collect();
+    snapshot.separators = editor
+      .editor
+      .pane_separators(viewport)
+      .into_iter()
+      .map(|separator| the_editor_snapshot_separator_t {
+        split_id: separator.split_id.get().get(),
+        axis: split_axis_code(separator.axis),
+        line: separator.line,
+        span_start: separator.span_start,
+        span_end: separator.span_end,
+      })
+      .collect();
+    snapshot.info.separator_count = snapshot.separators.len();
+
+    if let Some(plan) = active_plan {
       if editor.completion_menu.active && !editor.completion_menu.items.is_empty() {
         let cursor = active_docs_cursor_position(plan);
         let visible = editor.completion_menu.items.len().min(completion_menu_visible_rows());
         let panel_width = plan.viewport.width.saturating_mul(2).saturating_div(3).min(64).max(18);
         let panel_height = (visible as u16).max(1);
         let panel = completion_menu_panel_record(plan.viewport.width, plan.viewport.height, cursor, panel_width, panel_height);
-        snapshot.completion_menu.menu.col = panel.col;
-        snapshot.completion_menu.menu.row = panel.row;
+        snapshot.completion_menu.menu.col = active_pane_rect.x.saturating_add(panel.col);
+        snapshot.completion_menu.menu.row = active_pane_rect.y.saturating_add(panel.row);
         snapshot.completion_menu.menu.width = panel.width;
         snapshot.completion_menu.menu.height = panel.height;
 
@@ -5799,7 +6098,14 @@ impl OwnedSnapshot {
             docs_height,
             panel,
           ) {
-            snapshot.completion_docs.panel = docs_panel;
+            snapshot.completion_docs.panel = the_editor_snapshot_docs_panel_t {
+              is_open: docs_panel.is_open,
+              col: active_pane_rect.x.saturating_add(docs_panel.col),
+              row: active_pane_rect.y.saturating_add(docs_panel.row),
+              width: docs_panel.width,
+              height: docs_panel.height,
+              run_count: docs_panel.run_count,
+            };
             for run in flatten_docs_runs(markdown, editor) {
               let text_idx = snapshot.push_string(&run.text);
               snapshot.completion_docs_runs.push(DocsRunRecord {
@@ -5824,7 +6130,7 @@ impl OwnedSnapshot {
       {
         let cursor = active_docs_cursor_position(plan);
         let (width, height) = docs_panel_dimensions(markdown, editor, 24, 56, 5, 12);
-        snapshot.hover_docs.panel = docs_panel_record(
+        let hover_panel = docs_panel_record(
           plan.viewport.width,
           plan.viewport.height,
           cursor,
@@ -5832,6 +6138,14 @@ impl OwnedSnapshot {
           height,
           false,
         );
+        snapshot.hover_docs.panel = the_editor_snapshot_docs_panel_t {
+          is_open: hover_panel.is_open,
+          col: active_pane_rect.x.saturating_add(hover_panel.col),
+          row: active_pane_rect.y.saturating_add(hover_panel.row),
+          width: hover_panel.width,
+          height: hover_panel.height,
+          run_count: hover_panel.run_count,
+        };
         for run in flatten_docs_runs(markdown, editor) {
           let text_idx = snapshot.push_string(&run.text);
           snapshot.hover_docs_runs.push(DocsRunRecord {
@@ -5849,7 +6163,7 @@ impl OwnedSnapshot {
       if let Some(markdown) = signature_help_markdown(&editor.signature_help) {
         let cursor = active_docs_cursor_position(plan);
         let (width, height) = docs_panel_dimensions(markdown.as_str(), editor, 18, 44, 3, 8);
-        snapshot.signature_help.panel = docs_panel_record(
+        let signature_panel = docs_panel_record(
           plan.viewport.width,
           plan.viewport.height,
           cursor,
@@ -5857,6 +6171,14 @@ impl OwnedSnapshot {
           height,
           true,
         );
+        snapshot.signature_help.panel = the_editor_snapshot_docs_panel_t {
+          is_open: signature_panel.is_open,
+          col: active_pane_rect.x.saturating_add(signature_panel.col),
+          row: active_pane_rect.y.saturating_add(signature_panel.row),
+          width: signature_panel.width,
+          height: signature_panel.height,
+          run_count: signature_panel.run_count,
+        };
         for run in flatten_docs_runs(markdown.as_str(), editor) {
           let text_idx = snapshot.push_string(&run.text);
           snapshot.signature_help_runs.push(DocsRunRecord {
@@ -5893,182 +6215,192 @@ impl OwnedSnapshot {
           code_idx,
         });
       }
-      if let Some(plan) = plan {
-        let mut diagnostic_text_format = editor.text_format.clone();
-        diagnostic_text_format.viewport_width = editor.content_viewport_width();
-        snapshot.diagnostic_underlines = visible_diagnostic_underlines_for_document(
-          editor.editor.document().text(),
-          diagnostics,
-          plan,
-          &diagnostic_text_format,
-        );
+    }
+    for pane in &frame.panes {
+      let Some(buffer_id) = editor.editor.pane_buffer_id(pane.pane_id) else {
+        continue;
+      };
+      let Some(document) = editor.editor.buffer_document(buffer_id) else {
+        continue;
+      };
+      let Some(diagnostics) = editor.current_document_diagnostics_for_buffer(buffer_id) else {
+        continue;
+      };
+      let mut diagnostic_text_format = editor.text_format.clone();
+      diagnostic_text_format.viewport_width = pane
+        .plan
+        .viewport
+        .width
+        .saturating_sub(pane.plan.content_offset_x)
+        .max(1);
+      for underline in visible_diagnostic_underlines_for_document(
+        document.text(),
+        &diagnostics,
+        &pane.plan,
+        &diagnostic_text_format,
+      ) {
+        snapshot
+          .diagnostic_underlines
+          .push(the_editor_snapshot_diagnostic_underline_t {
+            row: pane.rect.y.saturating_add(underline.row),
+            start_col: pane.rect.x.saturating_add(pane.plan.content_offset_x).saturating_add(underline.start_col),
+            end_col: pane.rect.x.saturating_add(pane.plan.content_offset_x).saturating_add(underline.end_col),
+            severity: underline.severity,
+          });
       }
     }
 
     snapshot.populate_file_picker(editor);
 
-    let Some(plan) = plan else {
-      snapshot.command_palette.palette.query = snapshot.strings[palette_query_idx].as_ptr();
-      snapshot.command_palette.palette.placeholder = snapshot.strings[palette_placeholder_idx].as_ptr();
-      for item in &mut snapshot.command_palette_items {
-        item.item.title = snapshot.strings[item.title_idx].as_ptr();
-        if let Some(idx) = item.subtitle_idx {
-          item.item.subtitle = snapshot.strings[idx].as_ptr();
-        }
-        if let Some(idx) = item.description_idx {
-          item.item.description = snapshot.strings[idx].as_ptr();
-        }
-        if let Some(idx) = item.badge_idx {
-          item.item.badge = snapshot.strings[idx].as_ptr();
-        }
-        if let Some(idx) = item.leading_icon_idx {
-          item.item.leading_icon = snapshot.strings[idx].as_ptr();
-        }
-      }
-      snapshot.finalize_document_and_status_strings();
-      snapshot.finalize_completion_menu_strings();
-      snapshot.finalize_input_prompt_strings();
-      snapshot.finalize_docs_panel_strings();
-      snapshot.finalize_diagnostic_strings();
-      snapshot.finalize_file_picker_strings();
-      return snapshot;
-    };
-
     let base_text_style = editor.ui_theme.try_get("ui.text").unwrap_or_default();
 
-    for row in 0..plan.viewport.height {
-      let doc_line = plan
-        .visible_rows
-        .iter()
-        .find(|visible| visible.row == row)
-        .map(|visible| visible.doc_line as i32)
-        .unwrap_or(-1);
-      let first_visual_line = plan
-        .visible_rows
-        .iter()
-        .find(|visible| visible.row == row)
-        .map(|visible| visible.first_visual_line)
-        .unwrap_or(false);
+    for pane in frame
+      .panes
+      .iter()
+      .filter(|pane| pane.pane_id == frame.active_pane)
+      .chain(frame.panes.iter().filter(|pane| pane.pane_id != frame.active_pane))
+    {
+      let plan = &pane.plan;
 
-      let span_start = snapshot.spans.len();
-      let text_cell_start = snapshot.text_cells.len();
+      for row in 0..plan.viewport.height {
+        let doc_line = plan
+          .visible_rows
+          .iter()
+          .find(|visible| visible.row == row)
+          .map(|visible| visible.doc_line as i32)
+          .unwrap_or(-1);
+        let first_visual_line = plan
+          .visible_rows
+          .iter()
+          .find(|visible| visible.row == row)
+          .map(|visible| visible.first_visual_line)
+          .unwrap_or(false);
 
-      if let Some(gutter) = plan.gutter_lines.iter().find(|line| line.row == row) {
-        for span in &gutter.spans {
-          let style = style_to_ffi(span.style, &editor.ui_theme);
-          let text_idx = snapshot.push_string(span.text.as_str());
-          snapshot.spans.push(SpanRecord {
-            span: the_editor_snapshot_span_t {
-              col: span.col,
-              cols: span.text.chars().count() as u16,
-              text: ptr::null(),
-              is_virtual: false,
-              style,
-            },
-            text_idx,
-          });
-          snapshot.push_text_cells(row, span.col, span.text.as_str(), false, style);
+        let global_row = pane.rect.y.saturating_add(row);
+        let span_start = snapshot.spans.len();
+        let text_cell_start = snapshot.text_cells.len();
+
+        if let Some(gutter) = plan.gutter_lines.iter().find(|line| line.row == row) {
+          for span in &gutter.spans {
+            let style = style_to_ffi(span.style, &editor.ui_theme);
+            let text_idx = snapshot.push_string(span.text.as_str());
+            let col = pane.rect.x.saturating_add(span.col);
+            snapshot.spans.push(SpanRecord {
+              span: the_editor_snapshot_span_t {
+                col,
+                cols: span.text.chars().count() as u16,
+                text: ptr::null(),
+                is_virtual: false,
+                style,
+              },
+              text_idx,
+            });
+            snapshot.push_text_cells(global_row, col, span.text.as_str(), false, style);
+          }
         }
+
+        if let Some(line) = plan.lines.iter().find(|line| line.row == row) {
+          for span in &line.spans {
+            let text_idx = snapshot.push_string(span.text.as_str());
+            let highlight_style = span.highlight.map(|highlight| editor.ui_theme.highlight(highlight)).unwrap_or_default();
+            let style = style_to_ffi(base_text_style.patch(highlight_style), &editor.ui_theme);
+            let col = pane
+              .rect
+              .x
+              .saturating_add(plan.content_offset_x)
+              .saturating_add(span.col);
+            snapshot.spans.push(SpanRecord {
+              span: the_editor_snapshot_span_t {
+                col,
+                cols: span.cols,
+                text: ptr::null(),
+                is_virtual: span.is_virtual,
+                style,
+              },
+              text_idx,
+            });
+            snapshot.push_text_cells(global_row, col, span.text.as_str(), span.is_virtual, style);
+          }
+        }
+
+        let span_count = snapshot.spans.len().saturating_sub(span_start);
+        let text_cell_count = snapshot.text_cells.len().saturating_sub(text_cell_start);
+        snapshot.lines.push(LineRecord {
+          line: the_editor_snapshot_line_t {
+            pane_id: pane.pane_id.get().get(),
+            x: pane.rect.x,
+            row: global_row,
+            width: pane.rect.width,
+            doc_line,
+            first_visual_line,
+            span_count,
+            text_cell_count,
+          },
+          span_start,
+          text_cell_start,
+        });
       }
 
-      if let Some(line) = plan.lines.iter().find(|line| line.row == row) {
-        for span in &line.spans {
-          let text_idx = snapshot.push_string(span.text.as_str());
-          let highlight_style = span.highlight.map(|highlight| editor.ui_theme.highlight(highlight)).unwrap_or_default();
-          let style = style_to_ffi(base_text_style.patch(highlight_style), &editor.ui_theme);
-          let col = plan.content_offset_x.saturating_add(span.col);
-          snapshot.spans.push(SpanRecord {
-            span: the_editor_snapshot_span_t {
-              col,
-              cols: span.cols,
-              text: ptr::null(),
-              is_virtual: span.is_virtual,
-              style,
-            },
-            text_idx,
-          });
-          snapshot.push_text_cells(row, col, span.text.as_str(), span.is_virtual, style);
+      snapshot.cursors.extend(plan.cursors.iter().map(|cursor| {
+        the_editor_snapshot_cursor_t {
+          row: pane.rect.y as u32 + cursor.pos.row as u32,
+          col: pane.rect.x as u32 + plan.content_offset_x as u32 + cursor.pos.col as u32,
+          kind: cursor_kind_code(cursor.kind),
+          style: style_to_ffi(cursor.style, &editor.ui_theme),
         }
-      }
+      }));
 
-      let span_count = snapshot.spans.len().saturating_sub(span_start);
-      let text_cell_count = snapshot.text_cells.len().saturating_sub(text_cell_start);
-      snapshot.lines.push(LineRecord {
-        line: the_editor_snapshot_line_t {
-          row,
-          doc_line,
-          first_visual_line,
-          span_count,
-          text_cell_count,
-        },
-        span_start,
-        text_cell_start,
-      });
-    }
+      snapshot.selections.extend(plan.selections.iter().map(|selection| {
+        the_editor_snapshot_selection_t {
+          x: pane.rect.x.saturating_add(plan.content_offset_x).saturating_add(selection.rect.x),
+          y: pane.rect.y.saturating_add(selection.rect.y),
+          width: selection.rect.width,
+          height: selection.rect.height,
+          kind: selection_kind_code(selection.kind),
+          style: style_to_ffi(selection.style, &editor.ui_theme),
+        }
+      }));
 
-    snapshot.cursors = plan
-      .cursors
-      .iter()
-      .map(|cursor| the_editor_snapshot_cursor_t {
-        row: cursor.pos.row as u32,
-        col: (plan.content_offset_x as usize + cursor.pos.col) as u32,
-        kind: cursor_kind_code(cursor.kind),
-        style: style_to_ffi(cursor.style, &editor.ui_theme),
-      })
-      .collect();
-
-    snapshot.selections = plan
-      .selections
-      .iter()
-      .map(|selection| the_editor_snapshot_selection_t {
-        x: plan.content_offset_x.saturating_add(selection.rect.x),
-        y: selection.rect.y,
-        width: selection.rect.width,
-        height: selection.rect.height,
-        kind: selection_kind_code(selection.kind),
-        style: style_to_ffi(selection.style, &editor.ui_theme),
-      })
-      .collect();
-
-    for overlay in &plan.overlays {
-      match overlay {
-        OverlayNode::Rect(rect) => {
-          snapshot.overlays.push(OverlayRecord {
-            overlay: the_editor_snapshot_overlay_t {
-              kind: 0,
-              rect_kind: overlay_rect_kind_code(rect.kind),
-              x: rect.rect.x,
-              y: rect.rect.y,
-              width: rect.rect.width,
-              height: rect.rect.height,
-              radius: rect.radius,
-              row: 0,
-              col: 0,
-              text: ptr::null(),
-              style: style_to_ffi(rect.style, &editor.ui_theme),
-            },
-            text_idx: None,
-          });
-        },
-        OverlayNode::Text(text) => {
-          let text_idx = snapshot.push_string(text.text.as_str());
-          snapshot.overlays.push(OverlayRecord {
-            overlay: the_editor_snapshot_overlay_t {
-              kind: 1,
-              rect_kind: 0,
-              x: 0,
-              y: 0,
-              width: 0,
-              height: 0,
-              radius: 0,
-              row: text.pos.row as u32,
-              col: text.pos.col as u32,
-              text: ptr::null(),
-              style: style_to_ffi(text.style, &editor.ui_theme),
-            },
-            text_idx: Some(text_idx),
-          });
-        },
+      for overlay in &plan.overlays {
+        match overlay {
+          OverlayNode::Rect(rect) => {
+            snapshot.overlays.push(OverlayRecord {
+              overlay: the_editor_snapshot_overlay_t {
+                kind: 0,
+                rect_kind: overlay_rect_kind_code(rect.kind),
+                x: pane.rect.x.saturating_add(rect.rect.x),
+                y: pane.rect.y.saturating_add(rect.rect.y),
+                width: rect.rect.width,
+                height: rect.rect.height,
+                radius: rect.radius,
+                row: 0,
+                col: 0,
+                text: ptr::null(),
+                style: style_to_ffi(rect.style, &editor.ui_theme),
+              },
+              text_idx: None,
+            });
+          },
+          OverlayNode::Text(text) => {
+            let text_idx = snapshot.push_string(text.text.as_str());
+            snapshot.overlays.push(OverlayRecord {
+              overlay: the_editor_snapshot_overlay_t {
+                kind: 1,
+                rect_kind: 0,
+                x: 0,
+                y: 0,
+                width: 0,
+                height: 0,
+                radius: 0,
+                row: pane.rect.y as u32 + text.pos.row as u32,
+                col: pane.rect.x as u32 + text.pos.col as u32,
+                text: ptr::null(),
+                style: style_to_ffi(text.style, &editor.ui_theme),
+              },
+              text_idx: Some(text_idx),
+            });
+          },
+        }
       }
     }
 
@@ -8115,6 +8447,28 @@ fn overlay_rect_kind_code(kind: OverlayRectKind) -> u8 {
   }
 }
 
+fn pane_content_kind_code(kind: PaneContentKind) -> u8 {
+  match kind {
+    PaneContentKind::EditorBuffer => 0,
+    PaneContentKind::ClientSurface => 1,
+  }
+}
+
+fn split_axis_code(axis: SplitAxis) -> u8 {
+  match axis {
+    SplitAxis::Horizontal => 0,
+    SplitAxis::Vertical => 1,
+  }
+}
+
+fn pane_id_from_raw(raw: usize) -> Option<PaneId> {
+  NonZeroUsize::new(raw).map(PaneId::new)
+}
+
+fn split_id_from_raw(raw: usize) -> Option<SplitNodeId> {
+  NonZeroUsize::new(raw).map(SplitNodeId::new)
+}
+
 fn file_picker_kind_code(kind: FilePickerKind) -> u8 {
   match kind {
     FilePickerKind::Generic => 0,
@@ -8515,7 +8869,7 @@ fn visible_diagnostic_underlines_for_document(
   let mut annotations = TextAnnotations::default();
   let mut out = Vec::new();
 
-  for (diagnostic_index, diagnostic) in diagnostics.iter().enumerate() {
+  for diagnostic in diagnostics {
     let mut start_char_idx = utf16_position_to_char_idx(
       text,
       diagnostic.range.start.line,
@@ -8576,7 +8930,7 @@ fn visible_diagnostic_underlines_for_document(
         row: (row - row_start) as u16,
         start_col: (from - col_start) as u16,
         end_col: (to - col_start) as u16,
-        diagnostic_index,
+        severity: diagnostic_severity_code(diagnostic.severity),
       });
     }
   }
@@ -8826,6 +9180,18 @@ pub unsafe extern "C" fn the_editor_set_scroll_col(handle: *mut the_editor_handl
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_set_active_pane(handle: *mut the_editor_handle_t, pane_id: usize) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+  handle.editor.set_active_pane_raw(pane_id)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_resize_split(handle: *mut the_editor_handle_t, split_id: usize, x: u16, y: u16) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+  handle.editor.resize_split_raw(split_id, x, y)
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn the_editor_handle_key(handle: *mut the_editor_handle_t, event: the_editor_key_event_t) -> bool {
   let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
   handle.editor.handle_key_event(event)
@@ -9057,6 +9423,18 @@ pub unsafe extern "C" fn the_editor_snapshot_free(snapshot: *mut the_editor_snap
 pub unsafe extern "C" fn the_editor_snapshot_info(snapshot: *const the_editor_snapshot_t) -> the_editor_snapshot_info_t {
   let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_info_t::default(); };
   snapshot.snapshot.info
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_snapshot_pane_at(snapshot: *const the_editor_snapshot_t, pane_index: usize) -> the_editor_snapshot_pane_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_pane_t::default(); };
+  snapshot.snapshot.panes.get(pane_index).copied().unwrap_or_default()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_snapshot_separator_at(snapshot: *const the_editor_snapshot_t, separator_index: usize) -> the_editor_snapshot_separator_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_separator_t::default(); };
+  snapshot.snapshot.separators.get(separator_index).copied().unwrap_or_default()
 }
 
 #[unsafe(no_mangle)]

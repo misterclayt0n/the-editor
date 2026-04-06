@@ -89,6 +89,9 @@ struct EditorSnapshotInfo {
     let viewportWidth: Int
     let viewportHeight: Int
     let contentOffsetX: Int
+    let activePaneID: UInt
+    let paneCount: Int
+    let separatorCount: Int
     let damageStartRow: Int
     let damageEndRow: Int
     let damageIsFull: Bool
@@ -177,8 +180,34 @@ struct EditorStatusBarState: Hashable {
     )
 }
 
+struct EditorSnapshotPane: Hashable, Identifiable {
+    let paneID: UInt
+    let kind: EditorPaneKind
+    let x: Int
+    let y: Int
+    let width: Int
+    let height: Int
+    let contentOffsetX: Int
+    let isActive: Bool
+
+    var id: UInt { paneID }
+}
+
+struct EditorSnapshotSeparator: Hashable, Identifiable {
+    let splitID: UInt
+    let axis: EditorSplitAxis
+    let line: Int
+    let spanStart: Int
+    let spanEnd: Int
+
+    var id: UInt { splitID }
+}
+
 struct EditorSnapshotLine: Hashable {
+    let paneID: UInt
+    let x: Int
     let row: Int
+    let width: Int
     let docLine: Int?
     let firstVisualLine: Bool
     let spans: [EditorSnapshotSpan]
@@ -321,7 +350,7 @@ struct EditorSnapshotDiagnosticUnderline: Hashable {
     let row: Int
     let startCol: Int
     let endCol: Int
-    let diagnosticIndex: Int
+    let severity: EditorDiagnosticSeverity
 }
 
 struct EditorCompletionMenuItem: Hashable, Identifiable {
@@ -553,10 +582,22 @@ struct EditorFilePickerState: Hashable {
     )
 }
 
+enum EditorPaneKind: UInt8 {
+    case editorBuffer = 0
+    case clientSurface = 1
+}
+
+enum EditorSplitAxis: UInt8 {
+    case horizontal = 0
+    case vertical = 1
+}
+
 struct EditorSnapshot {
     let info: EditorSnapshotInfo
     let document: EditorDocumentChrome
     let statusBar: EditorStatusBarState
+    let panes: [EditorSnapshotPane]
+    let separators: [EditorSnapshotSeparator]
     let lines: [EditorSnapshotLine]
     let cursors: [EditorSnapshotCursor]
     let selections: [EditorSnapshotSelection]
@@ -620,6 +661,18 @@ enum EditorFFIBridge {
     static func setScrollCol(_ handle: OpaquePointer?, col: UInt32) -> Bool {
         guard let handle else { return false }
         return the_editor_set_scroll_col(handle, col)
+    }
+
+    @discardableResult
+    static func setActivePane(_ handle: OpaquePointer?, paneID: UInt) -> Bool {
+        guard let handle else { return false }
+        return the_editor_set_active_pane(handle, paneID)
+    }
+
+    @discardableResult
+    static func resizeSplit(_ handle: OpaquePointer?, splitID: UInt, x: Int, y: Int) -> Bool {
+        guard let handle else { return false }
+        return the_editor_resize_split(handle, splitID, UInt16(clamping: x), UInt16(clamping: y))
     }
 
     @discardableResult
@@ -838,6 +891,9 @@ enum EditorFFIBridge {
             viewportWidth: Int(infoValue.viewport_width),
             viewportHeight: Int(infoValue.viewport_height),
             contentOffsetX: Int(infoValue.content_offset_x),
+            activePaneID: UInt(infoValue.active_pane_id),
+            paneCount: Int(infoValue.pane_count),
+            separatorCount: Int(infoValue.separator_count),
             damageStartRow: Int(infoValue.damage_start_row),
             damageEndRow: Int(infoValue.damage_end_row),
             damageIsFull: infoValue.damage_is_full,
@@ -854,6 +910,31 @@ enum EditorFFIBridge {
             scrollCol: Int(infoValue.scroll_col),
             documentLineCount: Int(infoValue.document_line_count)
         )
+
+        let panes: [EditorSnapshotPane] = (0..<info.paneCount).map { paneIndex in
+            let paneValue = the_editor_snapshot_pane_at(rawSnapshot, UInt(paneIndex))
+            return EditorSnapshotPane(
+                paneID: UInt(paneValue.pane_id),
+                kind: EditorPaneKind(rawValue: paneValue.kind) ?? .editorBuffer,
+                x: Int(paneValue.x),
+                y: Int(paneValue.y),
+                width: Int(paneValue.width),
+                height: Int(paneValue.height),
+                contentOffsetX: Int(paneValue.content_offset_x),
+                isActive: paneValue.is_active
+            )
+        }
+
+        let separators: [EditorSnapshotSeparator] = (0..<info.separatorCount).map { separatorIndex in
+            let separatorValue = the_editor_snapshot_separator_at(rawSnapshot, UInt(separatorIndex))
+            return EditorSnapshotSeparator(
+                splitID: UInt(separatorValue.split_id),
+                axis: EditorSplitAxis(rawValue: separatorValue.axis) ?? .horizontal,
+                line: Int(separatorValue.line),
+                spanStart: Int(separatorValue.span_start),
+                spanEnd: Int(separatorValue.span_end)
+            )
+        }
 
         let documentValue = the_editor_snapshot_document(rawSnapshot)
         let document = EditorDocumentChrome(
@@ -1011,7 +1092,7 @@ enum EditorFFIBridge {
                 row: Int(underlineValue.row),
                 startCol: Int(underlineValue.start_col),
                 endCol: Int(underlineValue.end_col),
-                diagnosticIndex: Int(underlineValue.diagnostic_index)
+                severity: EditorDiagnosticSeverity(rawValue: underlineValue.severity) ?? .information
             )
         }
 
@@ -1100,7 +1181,10 @@ enum EditorFFIBridge {
                 )
             }
             return EditorSnapshotLine(
+                paneID: UInt(lineValue.pane_id),
+                x: Int(lineValue.x),
                 row: Int(lineValue.row),
+                width: Int(lineValue.width),
                 docLine: lineValue.doc_line >= 0 ? Int(lineValue.doc_line) : nil,
                 firstVisualLine: lineValue.first_visual_line,
                 spans: spans,
@@ -1153,6 +1237,8 @@ enum EditorFFIBridge {
             info: info,
             document: document,
             statusBar: statusBar,
+            panes: panes,
+            separators: separators,
             lines: lines,
             cursors: cursors,
             selections: selections,

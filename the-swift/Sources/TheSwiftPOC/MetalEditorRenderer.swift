@@ -103,10 +103,16 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
         context.setFillColor(scene.backgroundColor.cgColor)
         context.fill(CGRect(x: 0, y: 0, width: view.bounds.width, height: view.bounds.height))
 
-        let gutterWidth = CGFloat(scene.info.contentOffsetX) * cellSize.width
-        if gutterWidth > 0 {
+        for pane in scene.panes where pane.kind == .editorBuffer {
+            let gutterWidth = CGFloat(pane.contentOffsetX) * cellSize.width
+            guard gutterWidth > 0 else { continue }
             context.setFillColor(scene.gutterBackgroundColor.cgColor)
-            context.fill(CGRect(x: 0, y: 0, width: gutterWidth, height: view.bounds.height))
+            context.fill(CGRect(
+                x: CGFloat(pane.x) * cellSize.width,
+                y: topY(forRow: pane.y, rowSpan: max(pane.height, 1), viewportHeight: view.bounds.height, cellHeight: cellSize.height),
+                width: gutterWidth,
+                height: CGFloat(pane.height) * cellSize.height
+            ))
         }
 
         for selection in scene.selections {
@@ -128,7 +134,10 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
 
         for line in scene.lines {
             let key = EditorLineCacheKey(
+                paneID: line.paneID,
                 row: line.row,
+                x: line.x,
+                width: line.width,
                 layoutGeneration: scene.info.layoutGeneration,
                 textGeneration: scene.info.textGeneration,
                 scrollGeneration: scene.info.scrollGeneration,
@@ -141,15 +150,15 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
             if let image = lineImage(
                 for: line,
                 key: key,
-                viewportWidth: view.bounds.width,
-                gutterColumnCount: scene.info.contentOffsetX,
+                viewportWidth: CGFloat(line.width) * cellSize.width,
+                gutterColumnCount: scene.pane(id: line.paneID)?.contentOffsetX ?? scene.info.contentOffsetX,
                 scale: scale,
                 cellSize: cellSize,
                 baselineFromBottom: baselineFromBottom,
                 perf: &perf
             ) {
                 let rect = CGRect(
-                    x: 0,
+                    x: CGFloat(line.x) * cellSize.width,
                     y: topY(forRow: line.row, rowSpan: 1, viewportHeight: view.bounds.height, cellHeight: cellSize.height) - rowRenderPadding,
                     width: CGFloat(image.width) / scale,
                     height: CGFloat(image.height) / scale
@@ -159,6 +168,8 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
         }
 
         drawDiagnosticUnderlines(scene, in: context, cellSize: cellSize, viewportHeight: view.bounds.height)
+        drawInactivePaneOverlays(scene, in: context, cellSize: cellSize, viewportHeight: view.bounds.height)
+        drawPaneSeparators(scene, in: context, cellSize: cellSize, viewportHeight: view.bounds.height)
 
         if let markedText = scene.markedText {
             drawMarkedText(
@@ -262,10 +273,11 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
         cgContext.clear(CGRect(x: 0, y: 0, width: viewportWidth, height: cellSize.height + rowRenderPadding * 2))
 
         for textCell in line.textCells {
-            if isGutterDiffBarCell(textCell, gutterColumnCount: gutterColumnCount) {
+            let localCol = max(textCell.col - line.x, 0)
+            if isGutterDiffBarCell(textCell, lineX: line.x, gutterColumnCount: gutterColumnCount) {
                 drawGutterDiffBar(
                     style: textCell.style,
-                    atCol: textCell.col,
+                    atCol: localCol,
                     in: cgContext,
                     cellSize: cellSize,
                     rowHeight: cellSize.height + rowRenderPadding * 2
@@ -276,7 +288,7 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
             drawText(
                 textCell.text,
                 style: textCell.style,
-                atCol: textCell.col,
+                atCol: localCol,
                 row: 0,
                 in: cgContext,
                 cellSize: cellSize,
@@ -335,12 +347,11 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
         context.setLineCap(.round)
         context.setLineJoin(.round)
         for underline in scene.diagnosticUnderlines {
-            guard let diagnostic = scene.diagnostic(index: underline.diagnosticIndex) else { continue }
-            let color = diagnosticColor(for: diagnostic.severity)
+            let color = diagnosticColor(for: underline.severity)
             let rowBottom = topY(forRow: underline.row, rowSpan: 1, viewportHeight: viewportHeight, cellHeight: cellSize.height)
             let baselineY = rowBottom + max(lineWidth * 2, 3)
-            let startX = CGFloat(scene.info.contentOffsetX + underline.startCol) * cellSize.width
-            let endX = CGFloat(scene.info.contentOffsetX + underline.endCol) * cellSize.width
+            let startX = CGFloat(underline.startCol) * cellSize.width
+            let endX = CGFloat(underline.endCol) * cellSize.width
             drawDiagnosticSquiggle(
                 in: context,
                 color: color,
@@ -350,6 +361,56 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
                 amplitude: max(min(cellSize.height * 0.08, 3), 1.5),
                 step: max(cellSize.width * 0.22, 3)
             )
+        }
+        context.restoreGState()
+    }
+
+    private func drawInactivePaneOverlays(
+        _ scene: EditorRenderScene,
+        in context: CGContext,
+        cellSize: CGSize,
+        viewportHeight: CGFloat
+    ) {
+        context.saveGState()
+        for pane in scene.panes where !pane.isActive {
+            let rect = CGRect(
+                x: CGFloat(pane.x) * cellSize.width,
+                y: topY(forRow: pane.y, rowSpan: max(pane.height, 1), viewportHeight: viewportHeight, cellHeight: cellSize.height),
+                width: CGFloat(pane.width) * cellSize.width,
+                height: CGFloat(pane.height) * cellSize.height
+            )
+            context.setFillColor(NSColor.black.withAlphaComponent(0.06).cgColor)
+            context.fill(rect)
+        }
+        context.restoreGState()
+    }
+
+    private func drawPaneSeparators(
+        _ scene: EditorRenderScene,
+        in context: CGContext,
+        cellSize: CGSize,
+        viewportHeight: CGFloat
+    ) {
+        guard !scene.separators.isEmpty else { return }
+        context.saveGState()
+        context.setStrokeColor(NSColor.separatorColor.withAlphaComponent(0.9).cgColor)
+        context.setLineWidth(1)
+        for separator in scene.separators {
+            switch separator.axis {
+            case .vertical:
+                let x = CGFloat(separator.line) * cellSize.width + 0.5
+                let startY = viewportHeight - CGFloat(separator.spanEnd) * cellSize.height
+                let endY = viewportHeight - CGFloat(separator.spanStart) * cellSize.height
+                context.move(to: CGPoint(x: x, y: startY))
+                context.addLine(to: CGPoint(x: x, y: endY))
+            case .horizontal:
+                let y = viewportHeight - CGFloat(separator.line) * cellSize.height + 0.5
+                let startX = CGFloat(separator.spanStart) * cellSize.width
+                let endX = CGFloat(separator.spanEnd) * cellSize.width
+                context.move(to: CGPoint(x: startX, y: y))
+                context.addLine(to: CGPoint(x: endX, y: y))
+            }
+            context.strokePath()
         }
         context.restoreGState()
     }
@@ -492,8 +553,8 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
         context.fill(rect)
     }
 
-    private func isGutterDiffBarCell(_ textCell: EditorSnapshotTextCell, gutterColumnCount: Int) -> Bool {
-        textCell.col < gutterColumnCount && textCell.text == "▎"
+    private func isGutterDiffBarCell(_ textCell: EditorSnapshotTextCell, lineX: Int, gutterColumnCount: Int) -> Bool {
+        (textCell.col - lineX) < gutterColumnCount && textCell.text == "▎"
     }
 
     private func drawText(

@@ -31,7 +31,8 @@ struct EditorDiagnosticsOverlayView: View {
 
     private func currentLinePill(scene: EditorRenderScene, viewportSize: CGSize) -> (diagnostic: EditorSnapshotDiagnostic, extraCount: Int, frame: CGRect)? {
         guard let cursor = scene.primaryCursor,
-              let line = scene.line(atRow: cursor.row),
+              let activePane = scene.activePane,
+              let line = scene.line(atRow: cursor.row, paneID: activePane.paneID),
               let docLine = line.docLine else {
             return nil
         }
@@ -42,10 +43,11 @@ struct EditorDiagnosticsOverlayView: View {
         let pillText = diagnosticInlineSummary(for: diagnostic, extraCount: max(diagnostics.count - 1, 0))
         let measuredTextWidth = diagnosticInlineTextWidth(for: pillText)
         let width = min(max(measuredTextWidth + diagnosticInlineHorizontalPadding * 2 + 8, 160), 420)
+        let paneTextStartCol = activePane.x + activePane.contentOffsetX
         let textEndCol = line.textCells
-            .filter { $0.col >= scene.info.contentOffsetX && !$0.text.isEmpty }
+            .filter { $0.col >= paneTextStartCol && !$0.text.isEmpty }
             .map { $0.col + max($0.cols, 1) }
-            .max() ?? max(scene.info.contentOffsetX + 1, cursor.col + 1)
+            .max() ?? max(paneTextStartCol + 1, cursor.col + 1)
         let x = min(
             CGFloat(textEndCol) * cellSize.width + 4,
             max(viewportSize.width - width - diagnosticOverlayEdgePadding, diagnosticOverlayEdgePadding)

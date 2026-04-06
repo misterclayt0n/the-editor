@@ -163,6 +163,9 @@ typedef struct the_editor_snapshot_info_t {
   uint16_t viewport_width;
   uint16_t viewport_height;
   uint16_t content_offset_x;
+  uintptr_t active_pane_id;
+  uintptr_t pane_count;
+  uintptr_t separator_count;
   uint16_t damage_start_row;
   uint16_t damage_end_row;
   bool damage_is_full;
@@ -184,8 +187,30 @@ typedef struct the_editor_snapshot_info_t {
   uintptr_t overlay_count;
 } the_editor_snapshot_info_t;
 
+typedef struct the_editor_snapshot_pane_t {
+  uintptr_t pane_id;
+  uint8_t kind;
+  uint16_t x;
+  uint16_t y;
+  uint16_t width;
+  uint16_t height;
+  uint16_t content_offset_x;
+  bool is_active;
+} the_editor_snapshot_pane_t;
+
+typedef struct the_editor_snapshot_separator_t {
+  uintptr_t split_id;
+  uint8_t axis;
+  uint16_t line;
+  uint16_t span_start;
+  uint16_t span_end;
+} the_editor_snapshot_separator_t;
+
 typedef struct the_editor_snapshot_line_t {
+  uintptr_t pane_id;
+  uint16_t x;
   uint16_t row;
+  uint16_t width;
   int32_t doc_line;
   bool first_visual_line;
   uintptr_t span_count;
@@ -323,7 +348,7 @@ typedef struct the_editor_snapshot_diagnostic_underline_t {
   uint16_t row;
   uint16_t start_col;
   uint16_t end_col;
-  uintptr_t diagnostic_index;
+  uint8_t severity;
 } the_editor_snapshot_diagnostic_underline_t;
 
 typedef struct the_editor_snapshot_file_picker_t {
@@ -418,6 +443,8 @@ bool the_editor_configure_surface(the_editor_handle_t *handle, struct the_editor
 void the_editor_set_viewport(the_editor_handle_t *handle, uint16_t cols, uint16_t rows);
 bool the_editor_set_scroll_row(the_editor_handle_t *handle, uint32_t row);
 bool the_editor_set_scroll_col(the_editor_handle_t *handle, uint32_t col);
+bool the_editor_set_active_pane(the_editor_handle_t *handle, uintptr_t pane_id);
+bool the_editor_resize_split(the_editor_handle_t *handle, uintptr_t split_id, uint16_t x, uint16_t y);
 bool the_editor_handle_key(the_editor_handle_t *handle, the_editor_key_event_t event);
 bool the_editor_toggle_command_palette(the_editor_handle_t *handle);
 bool the_editor_close_command_palette(the_editor_handle_t *handle);
@@ -455,6 +482,8 @@ char *the_editor_primary_selection_text(the_editor_handle_t *handle);
 the_editor_snapshot_t *the_editor_snapshot_create(the_editor_handle_t *handle);
 void the_editor_snapshot_free(the_editor_snapshot_t *snapshot);
 struct the_editor_snapshot_info_t the_editor_snapshot_info(const the_editor_snapshot_t *snapshot);
+struct the_editor_snapshot_pane_t the_editor_snapshot_pane_at(const the_editor_snapshot_t *snapshot, uintptr_t pane_index);
+struct the_editor_snapshot_separator_t the_editor_snapshot_separator_at(const the_editor_snapshot_t *snapshot, uintptr_t separator_index);
 struct the_editor_snapshot_document_t the_editor_snapshot_document(const the_editor_snapshot_t *snapshot);
 struct the_editor_snapshot_status_t the_editor_snapshot_status(const the_editor_snapshot_t *snapshot);
 struct the_editor_snapshot_status_item_t the_editor_snapshot_status_item_at(const the_editor_snapshot_t *snapshot, uintptr_t item_index);

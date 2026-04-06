@@ -182,10 +182,12 @@ use the_lib::{
 use unicode_segmentation::UnicodeSegmentation;
 use the_lsp::{
   LspCapability,
+  LspCodeAction,
   LspCompletionContext,
   LspCompletionItem,
   LspCompletionItemKind,
   LspEvent,
+  LspExecuteCommand,
   LspInsertTextFormat,
   LspPosition,
   LspProgressKind,
@@ -196,9 +198,13 @@ use the_lsp::{
   LspTextEdit,
   LspWorkspaceEdit,
   TextDocumentSyncKind,
+  code_action_params,
   completion_params,
+  execute_command_params,
   hover_params,
   jsonrpc,
+  parse_code_action_response,
+  parse_code_actions_response,
   parse_completion_item_response,
   parse_completion_response_with_raw,
   parse_hover_response,
@@ -993,6 +999,8 @@ enum PendingLspRequestKind {
   },
   CompletionResolve { uri: String, index: usize },
   SignatureHelp { uri: String },
+  CodeActions { uri: String },
+  CodeActionResolve { uri: String, action: LspCodeAction },
   Rename { uri: String },
 }
 
@@ -1003,6 +1011,8 @@ impl PendingLspRequestKind {
       | Self::Completion { uri, .. }
       | Self::CompletionResolve { uri, .. }
       | Self::SignatureHelp { uri }
+      | Self::CodeActions { uri }
+      | Self::CodeActionResolve { uri, .. }
       | Self::Rename { uri } => uri,
     }
   }
@@ -1013,6 +1023,8 @@ impl PendingLspRequestKind {
       Self::Completion { .. } => "completion",
       Self::CompletionResolve { .. } => "completion-resolve",
       Self::SignatureHelp { .. } => "signature-help",
+      Self::CodeActions { .. } => "code-actions",
+      Self::CodeActionResolve { .. } => "code-action-resolve",
       Self::Rename { .. } => "rename",
     }
   }
@@ -1023,6 +1035,8 @@ impl PendingLspRequestKind {
       Self::Completion { .. } => "completion",
       Self::CompletionResolve { .. } => "completion-resolve",
       Self::SignatureHelp { .. } => "signature-help",
+      Self::CodeActions { .. } => "code-actions",
+      Self::CodeActionResolve { .. } => "code-action-resolve",
       Self::Rename { .. } => "rename",
     }
   }
@@ -1071,6 +1085,8 @@ struct SwiftEditor {
   search_prompt:                 SearchPromptState,
   signature_help:                SignatureHelpState,
   hover_docs:                    Option<String>,
+  lsp_code_action_items:         Vec<LspCodeAction>,
+  lsp_code_action_menu_active:   bool,
   lsp_completion_items:          Vec<LspCompletionItem>,
   lsp_completion_raw_items:      Vec<serde_json::Value>,
   lsp_completion_resolved:       HashSet<usize>,
@@ -1409,6 +1425,42 @@ impl SwiftEditor {
       .map(|state| state.uri.clone())
   }
 
+  fn current_lsp_code_action_range(&self) -> Option<(String, the_lsp::LspRange)> {
+    let state = self.lsp_document.as_ref()?.clone();
+    if !self.lsp_runtimes.iter().any(|runtime| runtime.opened_current_document) {
+      return None;
+    }
+
+    let selection = self.editor.document().selection();
+    let Ok((_, range)) = selection.pick(CursorPick::First) else {
+      return None;
+    };
+    let mut start = range.anchor.min(range.head);
+    let mut end = range.anchor.max(range.head);
+
+    if start == end {
+      let len = self.editor.document().text().len_chars();
+      if end < len {
+        end = end.saturating_add(1);
+      } else if start > 0 {
+        start = start.saturating_sub(1);
+      }
+    }
+
+    let (start_line, start_character) = char_idx_to_utf16_position(self.editor.document().text(), start);
+    let (end_line, end_character) = char_idx_to_utf16_position(self.editor.document().text(), end);
+    Some((state.uri, the_lsp::LspRange {
+      start: LspPosition {
+        line: start_line,
+        character: start_character,
+      },
+      end: the_lsp::LspPosition {
+        line: end_line,
+        character: end_character,
+      },
+    }))
+  }
+
   fn active_cursor_char_idx(&self) -> Option<usize> {
     let selection = self.editor.document().selection();
     let Ok((_, range)) = selection.pick(CursorPick::First) else {
@@ -1553,9 +1605,30 @@ impl SwiftEditor {
     })
   }
 
+  fn lsp_runtime_index_for_capability(&self, capability: LspCapability) -> Option<usize> {
+    self.lsp_runtimes.iter().enumerate().find_map(|(index, runtime)| {
+      (runtime.ready
+        && runtime
+          .configured_server_name()
+          .and_then(|server_name| runtime.runtime.server_capabilities(server_name))
+          .is_some_and(|capabilities| capabilities.supports(capability)))
+      .then_some(index)
+    })
+  }
+
   fn lsp_supports_completion(&self) -> bool { self.lsp_supports(LspCapability::Completion) }
 
   fn lsp_supports_signature_help(&self) -> bool { self.lsp_supports(LspCapability::SignatureHelp) }
+
+  fn lsp_supports_code_action_resolve(&self) -> bool {
+    self.lsp_runtimes.iter().any(|runtime| {
+      runtime.ready
+        && runtime
+          .configured_server_name()
+          .and_then(|server_name| runtime.runtime.server_capabilities(server_name))
+          .is_some_and(|capabilities| capabilities.supports_code_action_resolve())
+    })
+  }
 
   fn lsp_provider_supports_single_char(&self, provider_key: &str, characters_key: &str, ch: char) -> bool {
     self.lsp_runtimes.iter().any(|runtime| {
@@ -1680,6 +1753,7 @@ impl SwiftEditor {
   fn clear_completion_state(&mut self) {
     completion_trace_log(format!("clear.execute {}", self.completion_trace_state()));
     self.cancel_auto_completion();
+    self.clear_code_action_menu_state();
     self.lsp_completion_items.clear();
     self.lsp_completion_raw_items.clear();
     self.lsp_completion_resolved.clear();
@@ -2020,6 +2094,97 @@ impl SwiftEditor {
     true
   }
 
+  fn clear_code_action_menu_state(&mut self) {
+    self.lsp_code_action_menu_active = false;
+    self.lsp_code_action_items.clear();
+  }
+
+  fn show_code_action_menu(&mut self, mut actions: Vec<LspCodeAction>) {
+    actions.sort_by_key(|action| !action.is_preferred);
+    self.clear_completion_state();
+    self.lsp_code_action_items = actions;
+    self.lsp_code_action_menu_active = !self.lsp_code_action_items.is_empty();
+    let items = self
+      .lsp_code_action_items
+      .iter()
+      .map(completion_menu_item_for_code_action)
+      .collect::<Vec<_>>();
+    the_default::show_completion_menu(self, items);
+  }
+
+  fn apply_code_action(&mut self, action: LspCodeAction) -> bool {
+    if self.resolve_code_action(action.clone()) {
+      return true;
+    }
+    self.apply_code_action_now(action)
+  }
+
+  fn apply_code_action_now(&mut self, action: LspCodeAction) -> bool {
+    let title = action.title.clone();
+    let mut handled = false;
+
+    if let Some(edit) = action.edit.as_ref() {
+      let _ = self.apply_workspace_edit(edit, "code action");
+      handled = true;
+    }
+
+    if let Some(command) = action.command {
+      let _ = self.execute_lsp_command_action(command, title.clone());
+      handled = true;
+    }
+
+    if !handled {
+      self.push_info("lsp", format!("code action '{title}' had no edits"));
+    }
+    true
+  }
+
+  fn execute_lsp_command_action(&mut self, command: LspExecuteCommand, title: String) -> bool {
+    let params = execute_command_params(&command.command, command.arguments);
+    let Some(runtime_index) = self.lsp_runtime_index_for_capability(LspCapability::WorkspaceCommand)
+    else {
+      return false;
+    };
+    match self.lsp_runtimes[runtime_index].runtime.send_request("workspace/executeCommand", Some(params)) {
+      Ok(_) => {
+        self.push_info("lsp", format!("executed code action: {title}"));
+      },
+      Err(err) => {
+        self.push_error("lsp", format!("failed to execute code action '{title}': {err}"));
+      },
+    }
+    true
+  }
+
+  fn resolve_code_action(&mut self, action: LspCodeAction) -> bool {
+    if !self.lsp_supports_code_action_resolve() || !action.needs_resolve() {
+      return false;
+    }
+
+    let Some(uri) = self.current_lsp_uri() else {
+      return false;
+    };
+    let Some(params) = action.raw.clone() else {
+      return false;
+    };
+    let Some(runtime_index) = self.lsp_runtime_index_for_capability(LspCapability::CodeAction) else {
+      return false;
+    };
+
+    match self.lsp_runtimes[runtime_index].runtime.send_request("codeAction/resolve", Some(params)) {
+      Ok(request_id) => {
+        self.lsp_runtimes[runtime_index]
+          .pending_requests
+          .insert(request_id, PendingLspRequestKind::CodeActionResolve { uri, action });
+        true
+      },
+      Err(err) => {
+        self.push_warning("lsp", format!("failed to dispatch codeAction/resolve: {err}"));
+        false
+      },
+    }
+  }
+
   fn apply_workspace_edit(&mut self, workspace_edit: &LspWorkspaceEdit, source: &str) -> bool {
     if workspace_edit.documents.is_empty() {
       self.push_info("lsp", format!("{source}: no edits"));
@@ -2207,6 +2372,48 @@ impl SwiftEditor {
     true
   }
 
+  fn handle_code_actions_response(&mut self, result: Option<&serde_json::Value>) -> bool {
+    let actions = match parse_code_actions_response(result) {
+      Ok(actions) => actions,
+      Err(err) => {
+        self.clear_code_action_menu_state();
+        self.completion_menu.clear();
+        self.push_error("lsp", format!("failed to parse code actions response: {err}"));
+        return true;
+      },
+    };
+
+    if actions.is_empty() {
+      self.clear_code_action_menu_state();
+      self.completion_menu.clear();
+      self.push_error("code actions", "No code actions available");
+      return true;
+    }
+
+    self.show_code_action_menu(actions);
+    true
+  }
+
+  fn handle_code_action_resolve_response(
+    &mut self,
+    action: LspCodeAction,
+    result: Option<&serde_json::Value>,
+  ) -> bool {
+    let resolved = match parse_code_action_response(result) {
+      Ok(action) => action,
+      Err(err) => {
+        self.push_warning("lsp", format!("failed to parse code action resolve response: {err}"));
+        return true;
+      },
+    };
+
+    let action = match resolved {
+      Some(resolved) => action.merge_resolved(resolved),
+      None => action,
+    };
+    self.apply_code_action_now(action)
+  }
+
   fn handle_rename_response(&mut self, result: Option<&serde_json::Value>) -> bool {
     let workspace_edit = match parse_workspace_edit_response(result) {
       Ok(edit) => edit,
@@ -2287,6 +2494,10 @@ impl SwiftEditor {
         self.handle_completion_resolve_response(index, &response)
       },
       PendingLspRequestKind::SignatureHelp { .. } => self.handle_signature_help_response(response.result.as_ref()),
+      PendingLspRequestKind::CodeActions { .. } => self.handle_code_actions_response(response.result.as_ref()),
+      PendingLspRequestKind::CodeActionResolve { action, .. } => {
+        self.handle_code_action_resolve_response(action, response.result.as_ref())
+      },
       PendingLspRequestKind::Rename { .. } => self.handle_rename_response(response.result.as_ref()),
     }
   }
@@ -2744,6 +2955,8 @@ impl SwiftEditor {
       search_prompt: SearchPromptState::new(),
       signature_help: SignatureHelpState::default(),
       hover_docs: None,
+      lsp_code_action_items: Vec::new(),
+      lsp_code_action_menu_active: false,
       lsp_completion_items: Vec::new(),
       lsp_completion_raw_items: Vec::new(),
       lsp_completion_resolved: HashSet::new(),
@@ -3530,6 +3743,25 @@ impl DefaultContext for SwiftEditor {
   fn completion_menu_keymaps(&self) -> &Keymaps { &self.completion_menu_keymaps }
   fn completion_menu_keymaps_mut(&mut self) -> &mut Keymaps { &mut self.completion_menu_keymaps }
   fn completion_on_action(&mut self, command: Command) -> bool {
+    if self.lsp_code_action_menu_active {
+      return match command {
+        Command::LspCodeActions
+        | Command::CompletionNext
+        | Command::CompletionPrev
+        | Command::CompletionAccept
+        | Command::CompletionDocsScrollUp
+        | Command::CompletionDocsScrollDown => true,
+        Command::CompletionCancel => {
+          self.clear_code_action_menu_state();
+          true
+        },
+        _ => {
+          self.clear_code_action_menu_state();
+          false
+        },
+      };
+    }
+
     if self.mode != Mode::Insert {
       return false;
     }
@@ -3552,12 +3784,25 @@ impl DefaultContext for SwiftEditor {
         | Command::CompletionDocsScrollDown
     )
   }
-  fn completion_accept_selected(&mut self, index: usize) -> bool { self.apply_selected_completion(index) }
+  fn completion_accept_selected(&mut self, index: usize) -> bool {
+    if self.lsp_code_action_menu_active {
+      let Some(action) = self.lsp_code_action_items.get(index).cloned() else {
+        self.clear_code_action_menu_state();
+        return false;
+      };
+      return self.apply_code_action(action);
+    }
+    self.apply_selected_completion(index)
+  }
   fn completion_selection_changed(&mut self, index: usize) {
+    if self.lsp_code_action_menu_active {
+      return;
+    }
     self.resolve_completion_item_if_needed(index);
   }
   fn completion_menu_closed(&mut self) {
     completion_trace_log(format!("menu_closed {}", self.completion_trace_state()));
+    self.clear_code_action_menu_state();
     self.lsp_completion_items.clear();
     self.lsp_completion_raw_items.clear();
     self.lsp_completion_resolved.clear();
@@ -3633,6 +3878,24 @@ impl DefaultContext for SwiftEditor {
       "textDocument/hover",
       hover_params(&uri, position),
       PendingLspRequestKind::Hover { uri },
+    );
+  }
+  fn lsp_code_actions(&mut self) {
+    if !self.lsp_supports(LspCapability::CodeAction) {
+      self.push_warning("lsp", "code actions are not supported by the active server");
+      return;
+    }
+
+    let Some((uri, range)) = self.current_lsp_code_action_range() else {
+      self.push_warning("lsp", "code actions unavailable: no active LSP document");
+      return;
+    };
+
+    self.clear_completion_state();
+    self.dispatch_lsp_request(
+      "textDocument/codeAction",
+      code_action_params(&uri, range, serde_json::Value::Array(Vec::new()), None),
+      PendingLspRequestKind::CodeActions { uri },
     );
   }
   fn lsp_rename(&mut self, new_name: &str) {
@@ -5424,6 +5687,24 @@ fn completion_menu_item_for_lsp_item(item: &LspCompletionItem) -> the_default::C
   if let Some(kind) = item.kind {
     menu_item.kind_icon = Some(completion_kind_icon(kind).to_string());
     menu_item.kind_color = Some(completion_kind_color(kind));
+  }
+  menu_item
+}
+
+fn completion_menu_item_for_code_action(action: &LspCodeAction) -> the_default::CompletionMenuItem {
+  let mut menu_item = the_default::CompletionMenuItem::new(action.title.clone());
+  let mut tags: Vec<&str> = Vec::new();
+  if action.is_preferred {
+    tags.push("preferred");
+  }
+  if action.edit.is_some() {
+    tags.push("edit");
+  }
+  if action.command.is_some() {
+    tags.push("command");
+  }
+  if !tags.is_empty() {
+    menu_item.detail = Some(tags.join(" | "));
   }
   menu_item
 }

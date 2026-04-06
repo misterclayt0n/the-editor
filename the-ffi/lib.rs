@@ -683,6 +683,16 @@ fn command_palette_debug_log(message: impl AsRef<str>) {
   }
 }
 
+fn completion_trace_enabled() -> bool {
+  env::var("THE_EDITOR_COMPLETION_TRACE").ok().as_deref() == Some("1")
+}
+
+fn completion_trace_log(message: impl AsRef<str>) {
+  if completion_trace_enabled() {
+    eprintln!("[the-ffi:completion] {}", message.as_ref());
+  }
+}
+
 #[derive(Default)]
 struct OwnedSnapshot {
   info:                  the_editor_snapshot_info_t,
@@ -1168,7 +1178,7 @@ impl SwiftEditor {
 
     self.signature_help.clear();
     self.clear_hover_state();
-    self.clear_completion_state();
+    self.clear_completion_state_with_reason("refresh-lsp-runtime-state");
     self.lsp_document = self
       .file_path
       .as_deref()
@@ -1402,6 +1412,25 @@ impl SwiftEditor {
       .is_some_and(is_symbol_word_char)
   }
 
+  fn completion_trace_state(&self) -> String {
+    format!(
+      "menu_active={} menu_items={} selected={:?} raw_items={} visible_items={} generation={} fallback_start={:?} cursor={:?}",
+      self.completion_menu.active,
+      self.completion_menu.items.len(),
+      self.completion_menu.selected,
+      self.lsp_completion_items.len(),
+      self.lsp_completion_visible_indices.len(),
+      self.lsp_completion_generation,
+      self.lsp_completion_fallback_start,
+      self.active_cursor_char_idx(),
+    )
+  }
+
+  fn clear_completion_state_with_reason(&mut self, reason: &str) {
+    completion_trace_log(format!("clear reason={} {}", reason, self.completion_trace_state()));
+    self.clear_completion_state();
+  }
+
   fn completion_replace_start_at_cursor(&self, cursor: usize) -> usize {
     let text = self.editor.document().text();
     let mut start = cursor.min(text.len_chars());
@@ -1412,8 +1441,15 @@ impl SwiftEditor {
   }
 
   fn handle_insert_mode_char_post_edit(&mut self, ch: char) {
+    completion_trace_log(format!(
+      "post_edit.char ch={:?} trigger_char_supported={} symbol_word={} {}",
+      ch,
+      self.lsp_completion_supports_trigger_char(ch),
+      is_symbol_word_char(ch),
+      self.completion_trace_state(),
+    ));
     if self.lsp_signature_help_supports_trigger_char(ch) {
-      self.clear_completion_state();
+      self.clear_completion_state_with_reason("signature-trigger-char");
       let trigger = if self.signature_help.active {
         LspSignatureHelpContext::trigger_character_retrigger(ch)
       } else {
@@ -1451,11 +1487,16 @@ impl SwiftEditor {
         Duration::from_millis(80),
       );
     } else {
-      self.clear_completion_state();
+      self.clear_completion_state_with_reason("post-edit-non-word-char");
     }
   }
 
   fn handle_insert_mode_delete_post_edit(&mut self) {
+    completion_trace_log(format!(
+      "post_edit.delete prev_char_is_word={} {}",
+      self.cursor_prev_char_is_word(),
+      self.completion_trace_state(),
+    ));
     if self.signature_help.active {
       let _ = self.schedule_auto_signature_help(
         LspSignatureHelpContext::content_change_retrigger(),
@@ -1474,14 +1515,15 @@ impl SwiftEditor {
         Duration::from_millis(80),
       );
     } else {
-      self.clear_completion_state();
+      self.clear_completion_state_with_reason("post-delete-no-word-context");
     }
   }
 
   fn handle_insert_mode_other_post_edit(&mut self) {
+    completion_trace_log(format!("post_edit.other {}", self.completion_trace_state()));
     self.cancel_auto_signature_help();
     self.signature_help.clear();
-    self.clear_completion_state();
+    self.clear_completion_state_with_reason("post-edit-other");
   }
 
   fn lsp_supports_completion(&self) -> bool {
@@ -1538,9 +1580,23 @@ impl SwiftEditor {
 
   fn schedule_auto_completion(&mut self, trigger: LspCompletionContext, delay: Duration) -> bool {
     if self.mode != Mode::Insert || !self.lsp_supports_completion() {
+      completion_trace_log(format!(
+        "schedule skip mode={:?} supports_completion={} trigger_kind={:?} trigger_char={:?}",
+        self.mode,
+        self.lsp_supports_completion(),
+        trigger.trigger_kind,
+        trigger.trigger_character,
+      ));
       self.lsp_pending_auto_completion = None;
       return false;
     }
+    completion_trace_log(format!(
+      "schedule delay_ms={} trigger_kind={:?} trigger_char={:?} {}",
+      delay.as_millis(),
+      trigger.trigger_kind,
+      trigger.trigger_character,
+      self.completion_trace_state(),
+    ));
     self.lsp_pending_auto_completion = Some(PendingAutoCompletion {
       due_at: Instant::now() + delay,
       trigger,
@@ -1549,6 +1605,9 @@ impl SwiftEditor {
   }
 
   fn cancel_auto_completion(&mut self) {
+    if self.lsp_pending_auto_completion.is_some() {
+      completion_trace_log(format!("cancel_auto {}", self.completion_trace_state()));
+    }
     self.lsp_pending_auto_completion = None;
   }
 
@@ -1573,12 +1632,19 @@ impl SwiftEditor {
       return false;
     };
     if self.mode != Mode::Insert {
+      completion_trace_log(format!("poll_auto drop-not-insert {}", self.completion_trace_state()));
       self.lsp_pending_auto_completion = None;
       return false;
     }
     if Instant::now() < pending.due_at {
       return false;
     }
+    completion_trace_log(format!(
+      "poll_auto fire trigger_kind={:?} trigger_char={:?} {}",
+      pending.trigger.trigger_kind,
+      pending.trigger.trigger_character,
+      self.completion_trace_state(),
+    ));
     self.lsp_pending_auto_completion = None;
     let _ = self.dispatch_completion_request(pending.trigger, false);
     false
@@ -1601,6 +1667,7 @@ impl SwiftEditor {
   }
 
   fn clear_completion_state(&mut self) {
+    completion_trace_log(format!("clear.execute {}", self.completion_trace_state()));
     self.cancel_auto_completion();
     self.lsp_completion_items.clear();
     self.lsp_completion_raw_items.clear();
@@ -1628,6 +1695,7 @@ impl SwiftEditor {
 
   fn rebuild_completion_menu(&mut self) {
     if self.lsp_completion_items.is_empty() {
+      completion_trace_log(format!("rebuild raw_items=0 close {}", self.completion_trace_state()));
       self.lsp_completion_visible_indices.clear();
       self.completion_menu.clear();
       return;
@@ -1666,10 +1734,20 @@ impl SwiftEditor {
     });
 
     self.lsp_completion_visible_indices = visible.iter().map(|(index, _)| *index).collect();
+    completion_trace_log(format!(
+      "rebuild fragment={:?} raw_items={} visible_items={} menu_active_before={} selected_before={:?}",
+      fragment,
+      self.lsp_completion_items.len(),
+      self.lsp_completion_visible_indices.len(),
+      self.completion_menu.active,
+      self.completion_menu.selected,
+    ));
     if self.lsp_completion_visible_indices.is_empty() {
       if self.completion_menu.active {
+        completion_trace_log(format!("rebuild preserve-empty-visible {}", self.completion_trace_state()));
         return;
       }
+      completion_trace_log(format!("rebuild close-empty-visible {}", self.completion_trace_state()));
       self.completion_menu.clear();
       return;
     }
@@ -1680,18 +1758,33 @@ impl SwiftEditor {
       .map(completion_menu_item_for_lsp_item)
       .collect::<Vec<_>>();
     the_default::show_completion_menu(self, items);
+    completion_trace_log(format!("rebuild show {}", self.completion_trace_state()));
   }
 
   fn dispatch_completion_request(&mut self, trigger: LspCompletionContext, announce_empty: bool) -> bool {
     let Some((uri, position)) = self.current_lsp_position() else {
+      completion_trace_log("dispatch skip=no-lsp-position");
       return false;
     };
     let Some(cursor) = self.active_cursor_char_idx() else {
+      completion_trace_log("dispatch skip=no-active-cursor");
       return false;
     };
     let replace_start = self.completion_replace_start_at_cursor(cursor);
     self.lsp_completion_generation = self.lsp_completion_generation.wrapping_add(1);
     let generation = self.lsp_completion_generation;
+    completion_trace_log(format!(
+      "dispatch generation={} trigger_kind={:?} trigger_char={:?} cursor={} replace_start={} announce_empty={} menu_active={} raw_items={} visible_items={}",
+      generation,
+      trigger.trigger_kind,
+      trigger.trigger_character,
+      cursor,
+      replace_start,
+      announce_empty,
+      self.completion_menu.active,
+      self.lsp_completion_items.len(),
+      self.lsp_completion_visible_indices.len(),
+    ));
     self.dispatch_lsp_request(
       "textDocument/completion",
       completion_params(&uri, position, &trigger),
@@ -1735,29 +1828,58 @@ impl SwiftEditor {
     replace_start: usize,
     announce_empty: bool,
   ) -> bool {
+    completion_trace_log(format!(
+      "response generation={} current_generation={} request_cursor={} announce_empty={} mode={:?} {}",
+      generation,
+      self.lsp_completion_generation,
+      request_cursor,
+      announce_empty,
+      self.mode,
+      self.completion_trace_state(),
+    ));
     if generation != self.lsp_completion_generation || self.mode != Mode::Insert {
+      completion_trace_log(format!(
+        "response ignore reason=stale-or-not-insert generation={} current_generation={} mode={:?}",
+        generation,
+        self.lsp_completion_generation,
+        self.mode,
+      ));
       return false;
     }
     let Some(current_cursor) = self.active_cursor_char_idx() else {
+      completion_trace_log("response ignore reason=no-active-cursor");
       return false;
     };
     if current_cursor != request_cursor {
+      completion_trace_log(format!(
+        "response ignore reason=cursor-moved request_cursor={} current_cursor={}",
+        request_cursor,
+        current_cursor,
+      ));
       return false;
     }
 
     let completion = match parse_completion_response_with_raw(result) {
       Ok(completion) => completion,
       Err(err) => {
+        completion_trace_log(format!("response parse-error err={err}"));
         self.push_error("lsp", format!("failed to parse completion response: {err}"));
         return true;
       },
     };
 
+    completion_trace_log(format!(
+      "response parsed raw_items={} announce_empty={} menu_active_before={}",
+      completion.items.len(),
+      announce_empty,
+      self.completion_menu.active,
+    ));
     if completion.items.is_empty() {
       if !announce_empty && self.completion_menu.active {
+        completion_trace_log(format!("response preserve-empty-auto {}", self.completion_trace_state()));
         return true;
       }
-      self.clear_completion_state();
+      self.clear_completion_state_with_reason("response-empty");
       if announce_empty {
         self.push_info("lsp", "no completion candidates");
       }
@@ -1769,6 +1891,12 @@ impl SwiftEditor {
     self.lsp_completion_resolved.clear();
     self.lsp_completion_resolve_supported = self.lsp_completion_server_supports_resolve();
     self.lsp_completion_fallback_start = Some(replace_start.min(request_cursor));
+    completion_trace_log(format!(
+      "response apply raw_items={} fallback_start={:?} resolve_supported={}",
+      self.lsp_completion_items.len(),
+      self.lsp_completion_fallback_start,
+      self.lsp_completion_resolve_supported,
+    ));
     self.rebuild_completion_menu();
     true
   }
@@ -1877,7 +2005,7 @@ impl SwiftEditor {
       let _ = self.editor.document_mut().set_selection(Selection::point(base.saturating_add(inserted_text.chars().count())));
     }
     let _ = self.editor.document_mut().commit();
-    self.clear_completion_state();
+    self.clear_completion_state_with_reason("completion-applied");
     true
   }
 
@@ -2656,7 +2784,7 @@ impl SwiftEditor {
     } else {
       self.cancel_auto_signature_help();
       self.signature_help.clear();
-      self.clear_completion_state();
+      self.clear_completion_state_with_reason("left-insert-mode-key-event");
     }
     self.ensure_cursor_visible();
     true
@@ -2690,7 +2818,7 @@ impl SwiftEditor {
       } else {
         self.cancel_auto_signature_help();
         self.signature_help.clear();
-        self.clear_completion_state();
+        self.clear_completion_state_with_reason("left-insert-mode-insert-text");
       }
       self.ensure_cursor_visible();
     }
@@ -3289,6 +3417,7 @@ impl DefaultContext for SwiftEditor {
     self.resolve_completion_item_if_needed(index);
   }
   fn completion_menu_closed(&mut self) {
+    completion_trace_log(format!("menu_closed {}", self.completion_trace_state()));
     self.lsp_completion_items.clear();
     self.lsp_completion_raw_items.clear();
     self.lsp_completion_resolved.clear();

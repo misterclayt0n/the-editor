@@ -2062,36 +2062,88 @@ impl SwiftEditor {
     };
     let prepared = normalize_completion_item_for_apply(item);
     let item = prepared.item;
-    let doc = self.editor.document();
-    let text = doc.text();
-    let cursor = self.active_cursor_char_idx().unwrap_or(text.len_chars());
+    let has_text_edits = item.primary_edit.is_some() || !item.additional_edits.is_empty();
+    if has_text_edits {
+      let Some(_uri) = self.current_lsp_uri() else {
+        self.push_warning("lsp", "completion unavailable: no active LSP document");
+        return false;
+      };
+
+      let snippet_base = if prepared.cursor_origin == Some(CompletionSnippetCursorOrigin::PrimaryEdit) {
+        item.primary_edit.as_ref().map(|edit| {
+          utf16_position_to_char_idx(
+            self.editor.document().text(),
+            edit.range.start.line,
+            edit.range.start.character,
+          )
+        })
+      } else {
+        None
+      };
+
+      let mut edits = Vec::with_capacity(1 + item.additional_edits.len());
+      if let Some(primary) = item.primary_edit {
+        edits.push(primary);
+      }
+      edits.extend(item.additional_edits);
+      let tx = match build_transaction_from_lsp_text_edits(self.editor.document().text(), &edits) {
+        Ok(tx) => tx,
+        Err(err) => {
+          self.push_error("lsp", format!("failed to build completion transaction: {err}"));
+          return false;
+        },
+      };
+
+      if self.apply_transaction(&tx) {
+        if let (Some(base), Some(range)) = (snippet_base, prepared.cursor_range.as_ref())
+          && let Ok(mapped_base) = tx.changes().map_pos(base, the_lib::transaction::Assoc::Before)
+        {
+          set_completion_snippet_selection(self.editor.document_mut(), mapped_base, range);
+        }
+        let _ = self.editor.document_mut().commit();
+        self.clear_completion_state_with_reason("completion-applied");
+        return true;
+      }
+
+      self.push_error("lsp", "failed to apply completion");
+      return false;
+    }
+
+    let insert_text = item.insert_text.unwrap_or(item.label);
+    if insert_text.is_empty() {
+      return false;
+    }
+
+    let text_len = self.editor.document().text().len_chars();
+    let cursor = self.active_cursor_char_idx().unwrap_or(text_len);
     let fallback_start = self.lsp_completion_fallback_start.unwrap_or(cursor).min(cursor);
-
-    let (from, to, inserted_text) = if let Some(edit) = item.primary_edit.as_ref() {
-      let from = utf16_position_to_char_idx(text, edit.range.start.line, edit.range.start.character);
-      let to = utf16_position_to_char_idx(text, edit.range.end.line, edit.range.end.character);
-      (from, to, completion_insert_text(&item, Some(&edit.new_text)))
-    } else {
-      (fallback_start, cursor, completion_insert_text(&item, None))
+    let from = fallback_start.min(text_len);
+    let to = cursor.min(text_len).max(from);
+    let tx = match the_lib::transaction::Transaction::change(
+      self.editor.document().text(),
+      vec![(from, to, Some(insert_text.clone().into()))],
+    ) {
+      Ok(tx) => tx,
+      Err(err) => {
+        self.push_error("lsp", format!("failed to build completion transaction: {err}"));
+        return false;
+      },
     };
 
-    let Ok(transaction) = the_lib::transaction::Transaction::change(text, vec![(from, to, Some(inserted_text.clone().into()))])
-    else {
-      return false;
-    };
-    if !self.apply_transaction(&transaction) {
-      return false;
+    if self.apply_transaction(&tx) {
+      if prepared.cursor_origin == Some(CompletionSnippetCursorOrigin::InsertText)
+        && let Some(range) = prepared.cursor_range.as_ref()
+        && let Ok(mapped_base) = tx.changes().map_pos(from, the_lib::transaction::Assoc::Before)
+      {
+        set_completion_snippet_selection(self.editor.document_mut(), mapped_base, range);
+      }
+      let _ = self.editor.document_mut().commit();
+      self.clear_completion_state_with_reason("completion-applied");
+      return true;
     }
 
-    let mapped_base = transaction.changes().map_pos(from, the_lib::transaction::Assoc::Before).ok();
-    if let (Some(base), Some(range)) = (mapped_base, prepared.cursor_range.as_ref()) {
-      set_completion_snippet_selection(self.editor.document_mut(), base, range);
-    } else if let Some(base) = mapped_base {
-      let _ = self.editor.document_mut().set_selection(Selection::point(base.saturating_add(inserted_text.chars().count())));
-    }
-    let _ = self.editor.document_mut().commit();
-    self.clear_completion_state_with_reason("completion-applied");
-    true
+    self.push_error("lsp", "failed to apply completion");
+    false
   }
 
   fn clear_code_action_menu_state(&mut self) {
@@ -2642,6 +2694,11 @@ impl SwiftEditor {
                 }
               },
             }
+          },
+          LspEvent::WorkspaceApplyEdit { label, edit } => {
+            let source = label.as_deref().unwrap_or("code action");
+            let _ = self.apply_workspace_edit(&edit, source);
+            changed = true;
           },
           LspEvent::ServerStopped { .. } | LspEvent::Stopped => {
             if let Some(runtime) = self.lsp_runtimes.get_mut(runtime_index) {
@@ -5766,22 +5823,26 @@ enum CompletionSnippetCursorOrigin {
 
 #[derive(Clone, Debug)]
 struct CompletionApplyItem {
-  item:         LspCompletionItem,
-  cursor_range: Option<std::ops::Range<usize>>,
+  item:          LspCompletionItem,
+  cursor_origin: Option<CompletionSnippetCursorOrigin>,
+  cursor_range:  Option<std::ops::Range<usize>>,
 }
 
 fn normalize_completion_item_for_apply(mut item: LspCompletionItem) -> CompletionApplyItem {
+  let mut cursor_origin = None;
   let mut cursor_range = None;
   if item.insert_text_format == Some(LspInsertTextFormat::Snippet) {
     if let Some(insert_text) = item.insert_text.as_mut() {
       let rendered = render_lsp_snippet(insert_text);
       if item.primary_edit.is_none() {
+        cursor_origin = Some(CompletionSnippetCursorOrigin::InsertText);
         cursor_range = rendered.cursor_char_range.clone();
       }
       *insert_text = rendered.text;
     }
     if let Some(primary_edit) = item.primary_edit.as_mut() {
       let rendered = render_lsp_snippet(&primary_edit.new_text);
+      cursor_origin = Some(CompletionSnippetCursorOrigin::PrimaryEdit);
       cursor_range = rendered.cursor_char_range.clone();
       primary_edit.new_text = rendered.text;
     }
@@ -5790,11 +5851,16 @@ fn normalize_completion_item_for_apply(mut item: LspCompletionItem) -> Completio
     }
   }
   if cursor_range.is_none()
-    && let Some((_origin, range)) = promote_callable_completion_fallback(&mut item)
+    && let Some((origin, range)) = promote_callable_completion_fallback(&mut item)
   {
+    cursor_origin = Some(origin);
     cursor_range = Some(range);
   }
-  CompletionApplyItem { item, cursor_range }
+  CompletionApplyItem {
+    item,
+    cursor_origin,
+    cursor_range,
+  }
 }
 
 fn promote_callable_completion_fallback(

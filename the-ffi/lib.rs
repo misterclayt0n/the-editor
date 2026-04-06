@@ -193,6 +193,8 @@ use the_lsp::{
   LspRuntimeConfig,
   LspServerConfig,
   LspSignatureHelpContext,
+  LspTextEdit,
+  LspWorkspaceEdit,
   TextDocumentSyncKind,
   completion_params,
   hover_params,
@@ -201,6 +203,8 @@ use the_lsp::{
   parse_completion_response_with_raw,
   parse_hover_response,
   parse_signature_help_response,
+  parse_workspace_edit_response,
+  rename_params,
   render_lsp_snippet,
   signature_help_params,
   text_sync::{
@@ -210,6 +214,7 @@ use the_lsp::{
     did_open_params,
     did_save_params,
     file_uri_for_path,
+    path_for_file_uri,
     utf16_position_to_char_idx,
   },
 };
@@ -988,6 +993,7 @@ enum PendingLspRequestKind {
   },
   CompletionResolve { uri: String, index: usize },
   SignatureHelp { uri: String },
+  Rename { uri: String },
 }
 
 impl PendingLspRequestKind {
@@ -996,7 +1002,8 @@ impl PendingLspRequestKind {
       Self::Hover { uri }
       | Self::Completion { uri, .. }
       | Self::CompletionResolve { uri, .. }
-      | Self::SignatureHelp { uri } => uri,
+      | Self::SignatureHelp { uri }
+      | Self::Rename { uri } => uri,
     }
   }
 
@@ -1006,6 +1013,7 @@ impl PendingLspRequestKind {
       Self::Completion { .. } => "completion",
       Self::CompletionResolve { .. } => "completion-resolve",
       Self::SignatureHelp { .. } => "signature-help",
+      Self::Rename { .. } => "rename",
     }
   }
 
@@ -1015,6 +1023,7 @@ impl PendingLspRequestKind {
       Self::Completion { .. } => "completion",
       Self::CompletionResolve { .. } => "completion-resolve",
       Self::SignatureHelp { .. } => "signature-help",
+      Self::Rename { .. } => "rename",
     }
   }
 }
@@ -1392,6 +1401,14 @@ impl SwiftEditor {
     Some((document.uri, LspPosition { line, character }))
   }
 
+  fn current_lsp_uri(&self) -> Option<String> {
+    self
+      .lsp_document
+      .as_ref()
+      .filter(|_| self.lsp_runtimes.iter().any(|runtime| runtime.opened_current_document))
+      .map(|state| state.uri.clone())
+  }
+
   fn active_cursor_char_idx(&self) -> Option<usize> {
     let selection = self.editor.document().selection();
     let Ok((_, range)) = selection.pick(CursorPick::First) else {
@@ -1526,25 +1543,19 @@ impl SwiftEditor {
     self.clear_completion_state_with_reason("post-edit-other");
   }
 
-  fn lsp_supports_completion(&self) -> bool {
+  fn lsp_supports(&self, capability: LspCapability) -> bool {
     self.lsp_runtimes.iter().any(|runtime| {
       runtime.ready
         && runtime
           .configured_server_name()
           .and_then(|server_name| runtime.runtime.server_capabilities(server_name))
-          .is_some_and(|capabilities| capabilities.supports(LspCapability::Completion))
+          .is_some_and(|capabilities| capabilities.supports(capability))
     })
   }
 
-  fn lsp_supports_signature_help(&self) -> bool {
-    self.lsp_runtimes.iter().any(|runtime| {
-      runtime.ready
-        && runtime
-          .configured_server_name()
-          .and_then(|server_name| runtime.runtime.server_capabilities(server_name))
-          .is_some_and(|capabilities| capabilities.supports(LspCapability::SignatureHelp))
-    })
-  }
+  fn lsp_supports_completion(&self) -> bool { self.lsp_supports(LspCapability::Completion) }
+
+  fn lsp_supports_signature_help(&self) -> bool { self.lsp_supports(LspCapability::SignatureHelp) }
 
   fn lsp_provider_supports_single_char(&self, provider_key: &str, characters_key: &str, ch: char) -> bool {
     self.lsp_runtimes.iter().any(|runtime| {
@@ -2009,6 +2020,94 @@ impl SwiftEditor {
     true
   }
 
+  fn apply_workspace_edit(&mut self, workspace_edit: &LspWorkspaceEdit, source: &str) -> bool {
+    if workspace_edit.documents.is_empty() {
+      self.push_info("lsp", format!("{source}: no edits"));
+      return true;
+    }
+
+    let current_uri = self.current_lsp_uri();
+    let mut applied_documents = 0usize;
+    let mut applied_edits = 0usize;
+
+    for document in &workspace_edit.documents {
+      if document.edits.is_empty() {
+        continue;
+      }
+      let applied = if current_uri.as_ref() == Some(&document.uri) {
+        self.apply_text_edits_to_current_document(&document.edits)
+      } else {
+        self.apply_text_edits_to_file_uri(&document.uri, &document.edits)
+      };
+      if applied {
+        applied_documents = applied_documents.saturating_add(1);
+        applied_edits = applied_edits.saturating_add(document.edits.len());
+      }
+    }
+
+    if applied_documents > 0 {
+      self.push_info(
+        "lsp",
+        format!("{source}: applied {applied_edits} edit(s) across {applied_documents} file(s)"),
+      );
+    } else {
+      self.push_warning("lsp", format!("{source}: no edits were applied"));
+    }
+    true
+  }
+
+  fn apply_text_edits_to_current_document(&mut self, edits: &[LspTextEdit]) -> bool {
+    let tx = match build_transaction_from_lsp_text_edits(self.editor.document().text(), edits) {
+      Ok(tx) => tx,
+      Err(err) => {
+        self.push_error("lsp", format!("failed to build edit transaction: {err}"));
+        return false;
+      },
+    };
+
+    if self.apply_transaction(&tx) {
+      true
+    } else {
+      self.push_error("lsp", "failed to apply edit transaction");
+      false
+    }
+  }
+
+  fn apply_text_edits_to_file_uri(&mut self, uri: &str, edits: &[LspTextEdit]) -> bool {
+    let Some(path) = path_for_file_uri(uri) else {
+      self.push_warning("lsp", format!("unsupported file URI in workspace edit: {uri}"));
+      return false;
+    };
+
+    let content = match std::fs::read_to_string(&path) {
+      Ok(content) => content,
+      Err(err) => {
+        self.push_error("lsp", format!("failed to read '{}': {err}", path.display()));
+        return false;
+      },
+    };
+    let mut rope = Rope::from(content);
+
+    let tx = match build_transaction_from_lsp_text_edits(&rope, edits) {
+      Ok(tx) => tx,
+      Err(err) => {
+        self.push_error("lsp", format!("failed to build workspace edit transaction: {err}"));
+        return false;
+      },
+    };
+
+    if let Err(err) = tx.apply(&mut rope) {
+      self.push_error("lsp", format!("failed to apply edits to '{}': {err}", path.display()));
+      return false;
+    }
+
+    if let Err(err) = std::fs::write(&path, rope.to_string()) {
+      self.push_error("lsp", format!("failed to write '{}': {err}", path.display()));
+      return false;
+    }
+    true
+  }
+
   fn clear_hover_state(&mut self) {
     self.hover_docs = None;
   }
@@ -2108,6 +2207,23 @@ impl SwiftEditor {
     true
   }
 
+  fn handle_rename_response(&mut self, result: Option<&serde_json::Value>) -> bool {
+    let workspace_edit = match parse_workspace_edit_response(result) {
+      Ok(edit) => edit,
+      Err(err) => {
+        self.push_error("lsp", format!("failed to parse rename response: {err}"));
+        return true;
+      },
+    };
+
+    let Some(workspace_edit) = workspace_edit else {
+      self.push_warning("lsp", "rename returned no edits");
+      return true;
+    };
+
+    self.apply_workspace_edit(&workspace_edit, "rename")
+  }
+
   fn handle_lsp_rpc_message(&mut self, runtime_index: usize, message: jsonrpc::Message) -> bool {
     let jsonrpc::Message::Response(response) = message else {
       return false;
@@ -2171,6 +2287,7 @@ impl SwiftEditor {
         self.handle_completion_resolve_response(index, &response)
       },
       PendingLspRequestKind::SignatureHelp { .. } => self.handle_signature_help_response(response.result.as_ref()),
+      PendingLspRequestKind::Rename { .. } => self.handle_rename_response(response.result.as_ref()),
     }
   }
 
@@ -3516,6 +3633,29 @@ impl DefaultContext for SwiftEditor {
       "textDocument/hover",
       hover_params(&uri, position),
       PendingLspRequestKind::Hover { uri },
+    );
+  }
+  fn lsp_rename(&mut self, new_name: &str) {
+    if !self.lsp_supports(LspCapability::RenameSymbol) {
+      self.push_warning("lsp", "rename is not supported by the active server");
+      return;
+    }
+
+    let new_name = new_name.trim();
+    if new_name.is_empty() {
+      self.push_warning("lsp", "rename requires a non-empty name");
+      return;
+    }
+
+    let Some((uri, position)) = self.current_lsp_position() else {
+      self.push_warning("lsp", "rename unavailable: no active LSP document");
+      return;
+    };
+
+    self.dispatch_lsp_request(
+      "textDocument/rename",
+      rename_params(&uri, position, new_name),
+      PendingLspRequestKind::Rename { uri },
     );
   }
   fn lsp_completion(&mut self) {
@@ -5220,6 +5360,20 @@ fn completion_match_score(filter: &str, candidate: &str) -> Option<u32> {
   }
 
   Some(2_000u32.saturating_sub((gaps as u32).saturating_mul(8)))
+}
+
+fn build_transaction_from_lsp_text_edits(
+  text: &Rope,
+  edits: &[LspTextEdit],
+) -> Result<the_lib::transaction::Transaction, String> {
+  let mut changes = Vec::with_capacity(edits.len());
+  for edit in edits {
+    let from = utf16_position_to_char_idx(text, edit.range.start.line, edit.range.start.character);
+    let to = utf16_position_to_char_idx(text, edit.range.end.line, edit.range.end.character);
+    changes.push((from, to, Some(edit.new_text.clone().into())));
+  }
+  changes.sort_by_key(|(from, to, _)| (*from, *to));
+  the_lib::transaction::Transaction::change(text, changes).map_err(|err| err.to_string())
 }
 
 fn completion_kind_icon(kind: LspCompletionItemKind) -> &'static str {

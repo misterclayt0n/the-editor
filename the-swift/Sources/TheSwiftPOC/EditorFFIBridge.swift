@@ -257,6 +257,73 @@ struct EditorDocsPanelState: Hashable {
     )
 }
 
+enum EditorDiagnosticSeverity: UInt8, Hashable {
+    case error = 1
+    case warning = 2
+    case information = 3
+    case hint = 4
+
+    var symbolName: String {
+        switch self {
+        case .error:
+            return "xmark.octagon.fill"
+        case .warning:
+            return "exclamationmark.triangle.fill"
+        case .information:
+            return "info.circle.fill"
+        case .hint:
+            return "lightbulb.fill"
+        }
+    }
+
+    var statusIconName: String {
+        switch self {
+        case .error:
+            return "diagnostic_error"
+        case .warning:
+            return "diagnostic_warning"
+        case .information:
+            return "diagnostic_info"
+        case .hint:
+            return "diagnostic_hint"
+        }
+    }
+
+    var sortRank: Int {
+        switch self {
+        case .error:
+            return 3
+        case .warning:
+            return 2
+        case .information:
+            return 1
+        case .hint:
+            return 0
+        }
+    }
+}
+
+struct EditorSnapshotDiagnostic: Hashable, Identifiable {
+    let index: Int
+    let startLine: Int
+    let startCharacter: Int
+    let endLine: Int
+    let endCharacter: Int
+    let severity: EditorDiagnosticSeverity
+    let message: String
+    let source: String?
+    let code: String?
+
+    var id: Int { index }
+}
+
+struct EditorSnapshotDiagnosticUnderline: Hashable {
+    let row: Int
+    let startCol: Int
+    let endCol: Int
+    let diagnosticIndex: Int
+}
+
 struct EditorCompletionMenuItem: Hashable, Identifiable {
     let index: Int
     let title: String
@@ -494,6 +561,8 @@ struct EditorSnapshot {
     let cursors: [EditorSnapshotCursor]
     let selections: [EditorSnapshotSelection]
     let overlays: [EditorSnapshotOverlay]
+    let diagnostics: [EditorSnapshotDiagnostic]
+    let diagnosticUnderlines: [EditorSnapshotDiagnosticUnderline]
     let commandPalette: EditorCommandPaletteState
     let completionMenu: EditorCompletionMenuState
     let inputPrompt: EditorInputPromptState
@@ -920,6 +989,32 @@ enum EditorFFIBridge {
             runs: signatureHelpRuns
         )
 
+        let diagnosticCount = Int(the_editor_snapshot_diagnostic_count(rawSnapshot))
+        let diagnostics: [EditorSnapshotDiagnostic] = (0..<diagnosticCount).map { diagnosticIndex in
+            let diagnosticValue = the_editor_snapshot_diagnostic_at(rawSnapshot, UInt(diagnosticIndex))
+            return EditorSnapshotDiagnostic(
+                index: diagnosticIndex,
+                startLine: Int(diagnosticValue.start_line),
+                startCharacter: Int(diagnosticValue.start_character),
+                endLine: Int(diagnosticValue.end_line),
+                endCharacter: Int(diagnosticValue.end_character),
+                severity: EditorDiagnosticSeverity(rawValue: diagnosticValue.severity) ?? .warning,
+                message: diagnosticValue.message.map { String(cString: $0) } ?? "",
+                source: diagnosticValue.source.map { String(cString: $0) },
+                code: diagnosticValue.code.map { String(cString: $0) }
+            )
+        }
+        let diagnosticUnderlineCount = Int(the_editor_snapshot_diagnostic_underline_count(rawSnapshot))
+        let diagnosticUnderlines: [EditorSnapshotDiagnosticUnderline] = (0..<diagnosticUnderlineCount).map { underlineIndex in
+            let underlineValue = the_editor_snapshot_diagnostic_underline_at(rawSnapshot, UInt(underlineIndex))
+            return EditorSnapshotDiagnosticUnderline(
+                row: Int(underlineValue.row),
+                startCol: Int(underlineValue.start_col),
+                endCol: Int(underlineValue.end_col),
+                diagnosticIndex: Int(underlineValue.diagnostic_index)
+            )
+        }
+
         let filePickerValue = the_editor_snapshot_file_picker(rawSnapshot)
         let filePickerItems: [EditorFilePickerItem] = (0..<Int(filePickerValue.visible_item_count)).map { itemIndex in
             let itemValue = the_editor_snapshot_file_picker_item_at(rawSnapshot, UInt(itemIndex))
@@ -1062,6 +1157,8 @@ enum EditorFFIBridge {
             cursors: cursors,
             selections: selections,
             overlays: overlays,
+            diagnostics: diagnostics,
+            diagnosticUnderlines: diagnosticUnderlines,
             commandPalette: commandPalette,
             completionMenu: completionMenu,
             inputPrompt: inputPrompt,
@@ -1074,7 +1171,7 @@ enum EditorFFIBridge {
         let spanCount = lines.reduce(into: 0) { $0 += $1.spans.count }
         let textCellCount = lines.reduce(into: 0) { $0 += $1.textCells.count }
         themePerfLog(
-            "snapshot_decode themeGen=\(info.themeGeneration) createMs=\(String(format: "%.2f", createMs)) decodeMs=\(String(format: "%.2f", decodeMs)) lines=\(lines.count) spans=\(spanCount) cells=\(textCellCount) paletteItems=\(commandPalette.items.count)"
+            "snapshot_decode themeGen=\(info.themeGeneration) createMs=\(String(format: "%.2f", createMs)) decodeMs=\(String(format: "%.2f", decodeMs)) lines=\(lines.count) spans=\(spanCount) cells=\(textCellCount) diagnostics=\(diagnostics.count) underlines=\(diagnosticUnderlines.count) paletteItems=\(commandPalette.items.count)"
         )
         return snapshot
     }

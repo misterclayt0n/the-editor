@@ -29,6 +29,8 @@ final class EditorSurfaceController: ObservableObject {
     @Published private(set) var completionDocs: EditorDocsPanelState = .empty
     @Published private(set) var signatureHelp: EditorDocsPanelState = .empty
     @Published private(set) var filePicker: EditorFilePickerState = .empty
+    @Published private(set) var hoveredDiagnosticIndices: [Int] = []
+    @Published private(set) var hoveredDiagnosticAnchorFrame: CGRect?
     @Published private(set) var showsResizeOverlay = false
 
     private var surfaceConfiguration: EditorSurfaceConfiguration?
@@ -37,6 +39,7 @@ final class EditorSurfaceController: ObservableObject {
     private var filePickerListVisibleRows: Int = 1
     private var filePickerPreviewVisibleRows: Int = 1
     private var resizeOverlayHideTask: Task<Void, Never>?
+    private var lastHoveredDiagnosticCell: (row: Int, col: Int)?
 
     init(initialPath: String?) {
         self.handle = EditorFFIBridge.createHandle(initialPath: initialPath).map(EditorHandleBox.init(raw:))
@@ -309,6 +312,21 @@ final class EditorSurfaceController: ObservableObject {
         EditorFFIBridge.primarySelectionText(handle?.raw)
     }
 
+    func updateDiagnosticHover(row: Int, col: Int) {
+        lastHoveredDiagnosticCell = (row: row, col: col)
+        refreshDiagnosticHoverState()
+    }
+
+    func clearDiagnosticHover() {
+        lastHoveredDiagnosticCell = nil
+        if !hoveredDiagnosticIndices.isEmpty {
+            hoveredDiagnosticIndices = []
+        }
+        if hoveredDiagnosticAnchorFrame != nil {
+            hoveredDiagnosticAnchorFrame = nil
+        }
+    }
+
     func beginLiveResize() {
         resizeOverlayHideTask?.cancel()
         if !showsResizeOverlay {
@@ -349,6 +367,7 @@ final class EditorSurfaceController: ObservableObject {
         let scene = EditorRenderScene.from(snapshot: snapshot, markedText: marked)
         let sceneMs = (CFAbsoluteTimeGetCurrent() - sceneStarted) * 1000
         self.scene = scene
+        refreshDiagnosticHoverState()
         delegate?.editorController(self, didUpdateScene: scene)
         if wasInputPromptOpen && !snapshot.inputPrompt.isOpen {
             DispatchQueue.main.async { [weak self] in
@@ -381,5 +400,78 @@ final class EditorSurfaceController: ObservableObject {
         guard !markedText.isEmpty else { return nil }
         guard let cursor = snapshot.cursors.first else { return nil }
         return EditorMarkedText(text: markedText, row: cursor.row, col: cursor.col)
+    }
+
+    private func refreshDiagnosticHoverState() {
+        guard let scene, let hoveredCell = lastHoveredDiagnosticCell else {
+            if !hoveredDiagnosticIndices.isEmpty {
+                hoveredDiagnosticIndices = []
+            }
+            if hoveredDiagnosticAnchorFrame != nil {
+                hoveredDiagnosticAnchorFrame = nil
+            }
+            return
+        }
+
+        let gutterColumns = scene.info.contentOffsetX
+        let contentCol = hoveredCell.col - gutterColumns
+        let matchedUnderlineIndices = scene.diagnosticUnderlines
+            .filter { underline in
+                underline.row == hoveredCell.row && contentCol >= underline.startCol && contentCol < underline.endCol
+            }
+            .map(\.diagnosticIndex)
+
+        let diagnosticIndices: [Int]
+        let anchorFrame: CGRect?
+        if !matchedUnderlineIndices.isEmpty {
+            diagnosticIndices = matchedUnderlineIndices.uniquedPreservingOrder()
+            let matchingUnderlines = scene.diagnosticUnderlines.filter {
+                diagnosticIndices.contains($0.diagnosticIndex) && $0.row == hoveredCell.row
+            }
+            if let minStart = matchingUnderlines.map(\.startCol).min(),
+               let maxEnd = matchingUnderlines.map(\.endCol).max() {
+                let cellSize = scene.info.surfaceMetrics.cellSizePoints
+                anchorFrame = CGRect(
+                    x: CGFloat(gutterColumns + minStart) * cellSize.width,
+                    y: CGFloat(hoveredCell.row) * cellSize.height,
+                    width: CGFloat(max(maxEnd - minStart, 1)) * cellSize.width,
+                    height: cellSize.height
+                )
+            } else {
+                anchorFrame = nil
+            }
+        } else if hoveredCell.col < gutterColumns,
+                  let docLine = scene.line(atRow: hoveredCell.row)?.docLine {
+            diagnosticIndices = scene.diagnostics(onDocumentLine: docLine).map(\.index)
+            let cellSize = scene.info.surfaceMetrics.cellSizePoints
+            anchorFrame = diagnosticIndices.isEmpty ? nil : CGRect(
+                x: 0,
+                y: CGFloat(hoveredCell.row) * cellSize.height,
+                width: CGFloat(gutterColumns) * cellSize.width,
+                height: cellSize.height
+            )
+        } else {
+            diagnosticIndices = []
+            anchorFrame = nil
+        }
+
+        if hoveredDiagnosticIndices != diagnosticIndices {
+            hoveredDiagnosticIndices = diagnosticIndices
+        }
+        if hoveredDiagnosticAnchorFrame != anchorFrame {
+            hoveredDiagnosticAnchorFrame = anchorFrame
+        }
+    }
+}
+
+private extension Array where Element == Int {
+    func uniquedPreservingOrder() -> [Int] {
+        var seen = Set<Int>()
+        var result: [Int] = []
+        result.reserveCapacity(count)
+        for value in self where seen.insert(value).inserted {
+            result.append(value)
+        }
+        return result
     }
 }

@@ -158,6 +158,8 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
             }
         }
 
+        drawDiagnosticUnderlines(scene, in: context, cellSize: cellSize, viewportHeight: view.bounds.height)
+
         if let markedText = scene.markedText {
             drawMarkedText(
                 markedText,
@@ -320,6 +322,38 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
         )
     }
 
+    private func drawDiagnosticUnderlines(
+        _ scene: EditorRenderScene,
+        in context: CGContext,
+        cellSize: CGSize,
+        viewportHeight: CGFloat
+    ) {
+        guard !scene.diagnosticUnderlines.isEmpty else { return }
+        let lineWidth = max(scene.info.surfaceMetrics.underlineThicknessPoints, 1)
+        context.saveGState()
+        context.setLineWidth(lineWidth)
+        context.setLineCap(.round)
+        context.setLineJoin(.round)
+        for underline in scene.diagnosticUnderlines {
+            guard let diagnostic = scene.diagnostic(index: underline.diagnosticIndex) else { continue }
+            let color = diagnosticColor(for: diagnostic.severity)
+            let rowTop = topY(forRow: underline.row, rowSpan: 1, viewportHeight: viewportHeight, cellHeight: cellSize.height)
+            let baselineY = rowTop + cellSize.height - max(lineWidth * 2, 4)
+            let startX = CGFloat(scene.info.contentOffsetX + underline.startCol) * cellSize.width
+            let endX = CGFloat(scene.info.contentOffsetX + underline.endCol) * cellSize.width
+            drawDiagnosticSquiggle(
+                in: context,
+                color: color,
+                fromX: startX,
+                toX: endX,
+                baselineY: baselineY,
+                amplitude: max(min(cellSize.height * 0.08, 3), 1.5),
+                step: max(cellSize.width * 0.22, 3)
+            )
+        }
+        context.restoreGState()
+    }
+
     private func drawCursor(
         _ cursor: EditorSnapshotCursor,
         in context: CGContext,
@@ -395,6 +429,48 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
             baselineFromBottom: baselineFromBottom,
             viewportHeight: viewportHeight
         )
+    }
+
+    private func diagnosticColor(for severity: EditorDiagnosticSeverity) -> NSColor {
+        switch severity {
+        case .error:
+            return .systemRed
+        case .warning:
+            return .systemOrange
+        case .information:
+            return .systemBlue
+        case .hint:
+            return .systemTeal
+        }
+    }
+
+    private func drawDiagnosticSquiggle(
+        in context: CGContext,
+        color: NSColor,
+        fromX: CGFloat,
+        toX: CGFloat,
+        baselineY: CGFloat,
+        amplitude: CGFloat,
+        step: CGFloat
+    ) {
+        guard toX > fromX else { return }
+        let path = CGMutablePath()
+        path.move(to: CGPoint(x: fromX, y: baselineY))
+        var x = fromX
+        var direction: CGFloat = 1
+        while x < toX {
+            let nextX = min(x + step, toX)
+            let midX = (x + nextX) * 0.5
+            path.addQuadCurve(
+                to: CGPoint(x: nextX, y: baselineY),
+                control: CGPoint(x: midX, y: baselineY + amplitude * direction)
+            )
+            x = nextX
+            direction *= -1
+        }
+        context.setStrokeColor(color.withAlphaComponent(0.9).cgColor)
+        context.addPath(path)
+        context.strokePath()
     }
 
     private func drawGutterDiffBar(

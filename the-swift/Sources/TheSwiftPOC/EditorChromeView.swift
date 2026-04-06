@@ -20,13 +20,14 @@ struct EditorChromeView: View {
         VStack(spacing: 0) {
             EditorSurfaceRepresentable(controller: controller)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-            EditorStatusAccessoryView(chrome: controller.chrome, mode: controller.currentMode)
+            EditorStatusAccessoryView(controller: controller, chrome: controller.chrome, mode: controller.currentMode)
         }
         .background(EditorWindowChromeAccessor(chrome: controller.chrome))
     }
 }
 
 private struct EditorStatusAccessoryView: View {
+    @ObservedObject var controller: EditorSurfaceController
     let chrome: EditorChromeModel
     let mode: EditorMode
 
@@ -55,12 +56,20 @@ private struct EditorStatusAccessoryView: View {
         chrome.statusBar.items.filter { EditorLSPStatusPresentation(item: $0) == nil }
     }
 
+    private var focusedDiagnostics: [EditorSnapshotDiagnostic] {
+        controller.focusedDiagnostics
+    }
+
     var body: some View {
         HStack(spacing: 12) {
             ModePill(mode: mode)
 
             if let lspStatus {
                 LSPStatusAccessoryView(status: lspStatus)
+            }
+
+            if !focusedDiagnostics.isEmpty {
+                DiagnosticStatusAccessoryView(diagnostics: focusedDiagnostics)
             }
 
             Spacer(minLength: 12)

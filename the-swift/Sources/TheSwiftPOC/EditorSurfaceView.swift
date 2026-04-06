@@ -88,6 +88,17 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
         window?.invalidateCursorRects(for: self)
     }
 
+    override func updateTrackingAreas() {
+        trackingAreas.forEach(removeTrackingArea)
+        super.updateTrackingAreas()
+        addTrackingArea(NSTrackingArea(
+            rect: bounds,
+            options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        ))
+    }
+
     override func resetCursorRects() {
         discardCursorRects()
         let gutterWidth: CGFloat
@@ -105,7 +116,18 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
 
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
+        updateDiagnosticHover(with: event)
         super.mouseDown(with: event)
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        updateDiagnosticHover(with: event)
+        super.mouseMoved(with: event)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        controller?.clearDiagnosticHover()
+        super.mouseExited(with: event)
     }
 
     override func scrollWheel(with event: NSEvent) {
@@ -230,6 +252,20 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
             keyEvent.modifiers = modifierBits(for: event, includeShift: false)
         }
         return keyEvent
+    }
+
+    private func updateDiagnosticHover(with event: NSEvent) {
+        guard let controller, let scene = controller.scene else { return }
+        let point = convert(event.locationInWindow, from: nil)
+        guard bounds.contains(point) else {
+            controller.clearDiagnosticHover()
+            return
+        }
+        let cellWidth = max(scene.info.surfaceMetrics.cellSizePoints.width, 1)
+        let cellHeight = max(scene.info.surfaceMetrics.cellSizePoints.height, 1)
+        let row = max(Int((point.y / cellHeight).rounded(.down)), 0)
+        let col = max(Int((point.x / cellWidth).rounded(.down)), 0)
+        controller.updateDiagnosticHover(row: row, col: col)
     }
 
     private func modifierBits(for event: NSEvent, includeShift: Bool) -> UInt8 {

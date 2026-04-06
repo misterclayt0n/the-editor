@@ -31,6 +31,8 @@ struct EditorRenderScene {
     let cursors: [EditorSnapshotCursor]
     let selections: [EditorSnapshotSelection]
     let overlays: [EditorSnapshotOverlay]
+    let diagnostics: [EditorSnapshotDiagnostic]
+    let diagnosticUnderlines: [EditorSnapshotDiagnosticUnderline]
     let markedText: EditorMarkedText?
 
     var backgroundColor: NSColor {
@@ -61,6 +63,31 @@ struct EditorRenderScene {
         cursors.first
     }
 
+    func line(atRow row: Int) -> EditorSceneLine? {
+        lines.first(where: { $0.row == row })
+    }
+
+    func diagnostic(index: Int) -> EditorSnapshotDiagnostic? {
+        diagnostics.first(where: { $0.index == index })
+    }
+
+    func diagnostics(onDocumentLine docLine: Int) -> [EditorSnapshotDiagnostic] {
+        diagnostics.filter { $0.startLine == docLine }
+            .sorted { lhs, rhs in
+                if lhs.severity.sortRank != rhs.severity.sortRank {
+                    return lhs.severity.sortRank > rhs.severity.sortRank
+                }
+                if lhs.startCharacter != rhs.startCharacter {
+                    return lhs.startCharacter < rhs.startCharacter
+                }
+                return lhs.index < rhs.index
+            }
+    }
+
+    func highestSeverityDiagnostic(onDocumentLine docLine: Int) -> EditorSnapshotDiagnostic? {
+        diagnostics(onDocumentLine: docLine).first
+    }
+
     static func from(snapshot: EditorSnapshot, markedText: EditorMarkedText?) -> EditorRenderScene {
         EditorRenderScene(
             info: snapshot.info,
@@ -76,6 +103,8 @@ struct EditorRenderScene {
             cursors: snapshot.cursors,
             selections: snapshot.selections,
             overlays: snapshot.overlays,
+            diagnostics: snapshot.diagnostics,
+            diagnosticUnderlines: snapshot.diagnosticUnderlines,
             markedText: markedText
         )
     }

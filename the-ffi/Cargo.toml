@@ -13,6 +13,7 @@ crate-type = ["staticlib"]
 ropey.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+smallvec.workspace = true
 unicode-segmentation.workspace = true
 the-core = { path = "../the-core" }
 the-default = { path = "../the-default" }

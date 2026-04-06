@@ -1,6 +1,7 @@
 use std::{
   collections::{
     BTreeMap,
+    HashMap,
     HashSet,
     VecDeque,
   },
@@ -29,6 +30,7 @@ use std::{
 };
 
 use ropey::Rope;
+use smallvec::SmallVec;
 use the_core::{
   grapheme::grapheme_width,
   line_ending::LineEnding,
@@ -36,6 +38,19 @@ use the_core::{
 use the_default::{
   Command,
   CommandPaletteState,
+  FilePickerChangedFileItem,
+  FilePickerChangedKind,
+  FilePickerDiagnosticItem,
+  FilePickerItem,
+  FilePickerItemAction,
+  FilePickerPreview,
+  FilePickerVcsDiffBootstrap,
+  FilePickerVcsDiffEntry,
+  FilePickerVcsDiffHunk,
+  FilePickerVcsDiffPreview,
+  FilePickerVcsDiffPreviewRow,
+  GlobalSearchOptions,
+  GlobalSearchState,
   CommandPaletteStyle,
   CommandPromptState,
   CommandRegistry,
@@ -68,11 +83,15 @@ use the_default::{
   close_completion_menu,
   close_file_picker,
   file_picker_icon_name_for_path,
+  file_picker_items_from_specs,
   command_palette_filtered_indices,
   command_palette_placeholder_text,
   command_palette_selected_filtered_index,
   file_picker_item_selectable,
   file_picker_preview_window,
+  file_picker_source_preview_from_text,
+  file_picker_vcs_diff_specs,
+  finalize_vcs_diff_preview,
   file_picker_row_data_for_kind,
   handle_command,
   handle_command_prompt_key,
@@ -82,8 +101,12 @@ use the_default::{
   move_selection,
   notify_file_picker_query_changed,
   open_command_palette,
+  open_custom_picker,
+  open_dynamic_picker,
   poll_scan_results,
   StatuslineEmphasis,
+  replace_file_picker_items,
+  replace_file_picker_items_preserving_selection,
   select_file_picker_index,
   set_file_picker_list_offset,
   set_file_picker_preview_offset,
@@ -131,6 +154,7 @@ use the_lib::{
     DiagnosticSeverity,
     DiagnosticsState,
   },
+  indent::IndentStyle,
   messages::MessageCenter,
   position::Position,
   registers::Registers,
@@ -178,6 +202,7 @@ use the_lib::{
   },
   selection::{
     CursorPick,
+    Range,
     Selection,
   },
   syntax::{
@@ -192,6 +217,8 @@ use unicode_segmentation::UnicodeSegmentation;
 use the_lsp::{
   LspCapability,
   LspCodeAction,
+  LspLocation,
+  LspSymbol,
   LspCompletionContext,
   LspCompletionItem,
   LspCompletionItemKind,
@@ -209,19 +236,33 @@ use the_lsp::{
   TextDocumentSyncKind,
   code_action_params,
   completion_params,
+  document_highlight_params,
+  document_symbols_params,
   execute_command_params,
+  formatting_params,
+  goto_declaration_params,
+  goto_definition_params,
+  goto_implementation_params,
+  goto_type_definition_params,
   hover_params,
   jsonrpc,
   parse_code_action_response,
   parse_code_actions_response,
   parse_completion_item_response,
   parse_completion_response_with_raw,
+  parse_document_highlights_response,
+  parse_document_symbols_response,
+  parse_formatting_response,
   parse_hover_response,
+  parse_locations_response,
   parse_signature_help_response,
   parse_workspace_edit_response,
+  parse_workspace_symbols_response,
+  references_params,
   rename_params,
   render_lsp_snippet,
   signature_help_params,
+  workspace_symbols_params,
   text_sync::{
     char_idx_to_utf16_position,
     did_change_params,
@@ -258,6 +299,8 @@ use the_vcs::{
   DiffHandle,
   DiffProviderRegistry,
   DiffSignKind,
+  FileChange,
+  Hunk,
   VcsWorkspaceScan,
 };
 
@@ -1041,7 +1084,15 @@ impl LspStatuslineState {
 
 #[derive(Debug, Clone)]
 enum PendingLspRequestKind {
+  GotoDeclaration { uri: String },
+  GotoDefinition { uri: String },
+  GotoTypeDefinition { uri: String },
+  GotoImplementation { uri: String },
   Hover { uri: String },
+  DocumentHighlightSelect { uri: String },
+  References { uri: String },
+  DocumentSymbols { uri: String },
+  WorkspaceSymbols { query: String },
   Completion {
     uri:            String,
     generation:     u64,
@@ -1054,42 +1105,70 @@ enum PendingLspRequestKind {
   CodeActions { uri: String },
   CodeActionResolve { uri: String, action: LspCodeAction },
   Rename { uri: String },
+  Format { uri: String },
 }
 
 impl PendingLspRequestKind {
   fn uri(&self) -> &str {
     match self {
-      Self::Hover { uri }
+      Self::GotoDeclaration { uri }
+      | Self::GotoDefinition { uri }
+      | Self::GotoTypeDefinition { uri }
+      | Self::GotoImplementation { uri }
+      | Self::Hover { uri }
+      | Self::DocumentHighlightSelect { uri }
+      | Self::References { uri }
+      | Self::DocumentSymbols { uri }
       | Self::Completion { uri, .. }
       | Self::CompletionResolve { uri, .. }
       | Self::SignatureHelp { uri }
       | Self::CodeActions { uri }
       | Self::CodeActionResolve { uri, .. }
-      | Self::Rename { uri } => uri,
+      | Self::Rename { uri }
+      | Self::Format { uri } => uri,
+      Self::WorkspaceSymbols { .. } => "",
     }
   }
 
   fn label(&self) -> &'static str {
     match self {
+      Self::GotoDeclaration { .. } => "goto-declaration",
+      Self::GotoDefinition { .. } => "goto-definition",
+      Self::GotoTypeDefinition { .. } => "goto-type-definition",
+      Self::GotoImplementation { .. } => "goto-implementation",
       Self::Hover { .. } => "hover",
+      Self::DocumentHighlightSelect { .. } => "document-highlight-select",
+      Self::References { .. } => "references",
+      Self::DocumentSymbols { .. } => "document-symbols",
+      Self::WorkspaceSymbols { .. } => "workspace-symbols",
       Self::Completion { .. } => "completion",
       Self::CompletionResolve { .. } => "completion-resolve",
       Self::SignatureHelp { .. } => "signature-help",
       Self::CodeActions { .. } => "code-actions",
       Self::CodeActionResolve { .. } => "code-action-resolve",
       Self::Rename { .. } => "rename",
+      Self::Format { .. } => "format",
     }
   }
 
   fn cancellation_key(&self) -> &'static str {
     match self {
+      Self::GotoDeclaration { .. } => "goto-declaration",
+      Self::GotoDefinition { .. } => "goto-definition",
+      Self::GotoTypeDefinition { .. } => "goto-type-definition",
+      Self::GotoImplementation { .. } => "goto-implementation",
       Self::Hover { .. } => "hover",
+      Self::DocumentHighlightSelect { .. } => "document-highlight-select",
+      Self::References { .. } => "references",
+      Self::DocumentSymbols { .. } => "document-symbols",
+      Self::WorkspaceSymbols { .. } => "workspace-symbols",
       Self::Completion { .. } => "completion",
       Self::CompletionResolve { .. } => "completion-resolve",
       Self::SignatureHelp { .. } => "signature-help",
       Self::CodeActions { .. } => "code-actions",
       Self::CodeActionResolve { .. } => "code-action-resolve",
       Self::Rename { .. } => "rename",
+      Self::Format { .. } => "format",
     }
   }
 }
@@ -1146,6 +1225,7 @@ struct SwiftEditor {
   file_tree:                     FileTreeState,
   file_picker:                   FilePickerState,
   picker_runtime_store:          PickerRuntimeStore<SwiftEditor>,
+  global_search:                 GlobalSearchState,
   search_prompt:                 SearchPromptState,
   signature_help:                SignatureHelpState,
   hover_docs:                    Option<String>,
@@ -1532,12 +1612,208 @@ impl SwiftEditor {
     }))
   }
 
+  fn active_or_first_selection_range(&self) -> Option<Range> {
+    let doc = self.editor.document();
+    let selection = doc.selection();
+    if let Some(active_cursor) = self.editor.view().active_cursor
+      && let Some(range) = selection.range_by_id(active_cursor)
+    {
+      return Some(*range);
+    }
+    selection.ranges().first().copied()
+  }
+
   fn active_cursor_char_idx(&self) -> Option<usize> {
     let selection = self.editor.document().selection();
     let Ok((_, range)) = selection.pick(CursorPick::First) else {
       return None;
     };
     Some(range.cursor(self.editor.document().text().slice(..)))
+  }
+
+  fn workspace_symbol_query_from_cursor(&self) -> String {
+    let doc = self.editor.document();
+    let text = doc.text();
+    let Some(range) = self.active_or_first_selection_range() else {
+      return String::new();
+    };
+    let cursor = range.cursor(text.slice(..));
+    let line_idx = text.char_to_line(cursor);
+    let line_start = text.line_to_char(line_idx);
+    let line_end = if line_idx + 1 < text.len_lines() {
+      text.line_to_char(line_idx + 1)
+    } else {
+      text.len_chars()
+    };
+
+    let line: Vec<char> = text.slice(line_start..line_end).chars().collect();
+    let local_cursor = cursor.saturating_sub(line_start);
+    let mut start = local_cursor.min(line.len());
+    while start > 0 && is_symbol_word_char(line[start - 1]) {
+      start -= 1;
+    }
+    let mut end = local_cursor.min(line.len());
+    while end < line.len() && is_symbol_word_char(line[end]) {
+      end += 1;
+    }
+
+    line[start..end].iter().collect()
+  }
+
+  fn jump_to_location(&mut self, location: &LspLocation) -> bool {
+    let Some(path) = path_for_file_uri(&location.uri) else {
+      self.push_warning("lsp", format!("unsupported location URI: {}", location.uri));
+      return true;
+    };
+
+    let _ = <Self as DefaultContext>::save_selection_to_jumplist(self);
+
+    if self.file_path.as_ref().is_none_or(|current| current != &path)
+      && let Err(err) = <Self as DefaultContext>::open_file(self, &path)
+    {
+      self.push_error("lsp", format!("failed to open location '{}': {err}", path.display()));
+      return true;
+    }
+
+    let cursor = {
+      let doc = self.editor.document();
+      utf16_position_to_char_idx(
+        doc.text(),
+        location.range.start.line,
+        location.range.start.character,
+      )
+    };
+
+    let _ = self.editor.document_mut().set_selection(Selection::point(cursor));
+    self.editor.view_mut().scroll = Position::new(
+      (location.range.start.line as usize).saturating_sub(self.scrolloff()),
+      0,
+    );
+    self.request_render();
+    true
+  }
+
+  fn apply_locations_result(&mut self, label: &str, locations: Vec<LspLocation>) -> bool {
+    if locations.is_empty() {
+      self.push_info("lsp", format!("no {label} found"));
+      return true;
+    }
+
+    let jumped = self.jump_to_location(&locations[0]);
+    if jumped {
+      let total = locations.len();
+      let text = if total == 1 {
+        format!("{label}: 1 result")
+      } else {
+        format!("{label}: {total} results (jumped to first)")
+      };
+      self.push_info("lsp", text);
+    }
+    jumped
+  }
+
+  fn apply_symbols_result(&mut self, label: &str, symbols: Vec<LspSymbol>) -> bool {
+    if symbols.is_empty() {
+      self.push_info("lsp", format!("no {label} found"));
+      return true;
+    }
+
+    let root = the_default::workspace_root(self.effective_working_directory().as_path());
+    let active_uri = self.current_lsp_uri();
+    let mut external_rope_cache: HashMap<PathBuf, Rope> = HashMap::new();
+    let mut items = Vec::with_capacity(symbols.len());
+    let mut symbol_stack: Vec<String> = Vec::new();
+    let mut previous_path: Option<PathBuf> = None;
+
+    for symbol in symbols {
+      let Some(location) = symbol.location.as_ref() else {
+        continue;
+      };
+      let Some(path) = path_for_file_uri(&location.uri) else {
+        continue;
+      };
+
+      let line = location.range.start.line as usize;
+      let character = location.range.start.character as usize;
+      let cursor_char = if active_uri.as_deref() == Some(location.uri.as_str()) {
+        utf16_position_to_char_idx(
+          self.editor.document().text(),
+          location.range.start.line,
+          location.range.start.character,
+        )
+      } else {
+        let rope = external_rope_cache.entry(path.clone()).or_insert_with(|| {
+          std::fs::read_to_string(&path)
+            .map(|content| Rope::from(content.as_str()))
+            .unwrap_or_else(|_| Rope::from(""))
+        });
+        utf16_position_to_char_idx(
+          rope,
+          location.range.start.line,
+          location.range.start.character,
+        )
+      };
+
+      let path_display = path.strip_prefix(&root).unwrap_or(&path).display().to_string();
+      if previous_path.as_ref().is_none_or(|prev| prev != &path) {
+        symbol_stack.clear();
+        previous_path = Some(path.clone());
+      }
+      let kind_label = lsp_symbol_kind_label(symbol.kind);
+      let name = sanitize_picker_field(symbol.name.trim());
+      let name = if name.is_empty() { "<unnamed>".to_string() } else { name };
+      let container = sanitize_picker_field(symbol.container_name.as_deref().unwrap_or_default());
+      let detail = sanitize_picker_field(symbol.detail.as_deref().unwrap_or_default());
+      let path_field = sanitize_picker_field(path_display.as_str());
+      let depth = lsp_symbol_tree_depth(container.as_str(), &mut symbol_stack);
+      symbol_stack.truncate(depth);
+      symbol_stack.push(name.clone());
+      let display = format!(
+        "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+        name,
+        container,
+        detail,
+        kind_label,
+        path_field,
+        line.saturating_add(1),
+        character.saturating_add(1),
+        depth
+      );
+      let icon = lsp_symbol_icon_name(symbol.kind).to_string();
+
+      items.push(FilePickerItem {
+        absolute: path.clone(),
+        display,
+        icon,
+        is_dir: false,
+        display_path: false,
+        action: FilePickerItemAction::OpenLocation {
+          path: path.clone(),
+          cursor_char,
+          line,
+          column: None,
+        },
+        preview_path: Some(path),
+        preview_line: Some(line),
+        preview_col: None,
+        row_data: None,
+        preview: None,
+        payload: None,
+      });
+    }
+
+    if items.is_empty() {
+      self.push_warning("lsp", format!("{label}: results had no navigable locations"));
+      return true;
+    }
+
+    let title = if label.contains("workspace") {
+      "Workspace Symbols"
+    } else {
+      "Lsp Symbols"
+    };
+    open_custom_picker(self, title, root, None, items, 0);
+    true
   }
 
   fn cursor_prev_char_is_word(&self) -> bool {
@@ -2736,6 +3012,66 @@ impl SwiftEditor {
     self.apply_code_action_now(action)
   }
 
+  fn handle_document_highlight_selection_response(
+    &mut self,
+    result: Option<&serde_json::Value>,
+  ) -> bool {
+    let highlights = match parse_document_highlights_response(result) {
+      Ok(highlights) => highlights,
+      Err(err) => {
+        self.push_error("lsp", format!("failed to parse document-highlight response: {err}"));
+        return true;
+      },
+    };
+
+    if highlights.is_empty() {
+      self.push_info("lsp", "no references under cursor");
+      return true;
+    }
+
+    let doc = self.editor.document();
+    let text = doc.text();
+    let text_slice = text.slice(..);
+    let cursor_pos = self
+      .active_or_first_selection_range()
+      .map(|range| range.cursor(text_slice))
+      .unwrap_or(0);
+
+    let mut ranges: SmallVec<[Range; 1]> = SmallVec::new();
+    let mut primary_index = 0usize;
+    for highlight in highlights {
+      let start = utf16_position_to_char_idx(text, highlight.start.line, highlight.start.character);
+      let end = utf16_position_to_char_idx(text, highlight.end.line, highlight.end.character);
+      let range = Range::new(start.min(end), start.max(end));
+      if range.contains(cursor_pos) {
+        primary_index = ranges.len();
+      }
+      ranges.push(range);
+    }
+
+    if ranges.is_empty() {
+      self.push_info("lsp", "no references under cursor");
+      return true;
+    }
+
+    let next_selection = match Selection::new(ranges) {
+      Ok(selection) => selection,
+      Err(err) => {
+        self.push_error("lsp", format!("failed to apply document highlights: {err}"));
+        return true;
+      },
+    };
+
+    let next_active_cursor = next_selection
+      .cursor_id_at(primary_index.min(next_selection.len().saturating_sub(1)))
+      .ok();
+
+    let _ = self.editor.document_mut().set_selection(next_selection);
+    self.editor.view_mut().active_cursor = next_active_cursor;
+    self.request_render();
+    true
+  }
+
   fn handle_rename_response(&mut self, result: Option<&serde_json::Value>) -> bool {
     let workspace_edit = match parse_workspace_edit_response(result) {
       Ok(edit) => edit,
@@ -2751,6 +3087,35 @@ impl SwiftEditor {
     };
 
     self.apply_workspace_edit(&workspace_edit, "rename")
+  }
+
+  fn handle_format_response(&mut self, result: Option<&serde_json::Value>) -> bool {
+    let edits = match parse_formatting_response(result) {
+      Ok(edits) => edits,
+      Err(err) => {
+        self.push_error("lsp", format!("failed to parse formatting response: {err}"));
+        return true;
+      },
+    };
+
+    if edits.is_empty() {
+      self.push_info("lsp", "already formatted");
+      return true;
+    }
+
+    let Some(uri) = self.current_lsp_uri() else {
+      self.push_warning("lsp", "format unavailable: no active LSP document");
+      return true;
+    };
+
+    let workspace_edit = LspWorkspaceEdit {
+      documents: vec![the_lsp::LspDocumentEdit {
+        uri,
+        version: None,
+        edits,
+      }],
+    };
+    self.apply_workspace_edit(&workspace_edit, "format")
   }
 
   fn publish_lsp_diagnostic_message(&mut self, counts: DiagnosticCounts) {
@@ -2785,7 +3150,9 @@ impl SwiftEditor {
       return false;
     };
 
-    if self.lsp_document.as_ref().map(|state| state.uri.as_str()) != Some(kind.uri()) {
+    if !matches!(kind, PendingLspRequestKind::WorkspaceSymbols { .. })
+      && self.lsp_document.as_ref().map(|state| state.uri.as_str()) != Some(kind.uri())
+    {
       if matches!(
         kind,
         PendingLspRequestKind::CodeActions { .. } | PendingLspRequestKind::CodeActionResolve { .. }
@@ -2819,6 +3186,62 @@ impl SwiftEditor {
     }
 
     match kind {
+      PendingLspRequestKind::GotoDeclaration { .. } => {
+        let locations = match parse_locations_response(response.result.as_ref()) {
+          Ok(locations) => locations,
+          Err(err) => {
+            self.push_error("lsp", format!("failed to parse goto-declaration response: {err}"));
+            return true;
+          },
+        };
+        if locations.is_empty() {
+          self.push_error("goto", "No declaration found.");
+          return true;
+        }
+        self.apply_locations_result("declaration", locations)
+      },
+      PendingLspRequestKind::GotoDefinition { .. } => {
+        let locations = match parse_locations_response(response.result.as_ref()) {
+          Ok(locations) => locations,
+          Err(err) => {
+            self.push_error("lsp", format!("failed to parse goto-definition response: {err}"));
+            return true;
+          },
+        };
+        if locations.is_empty() {
+          self.push_error("goto", "No definition found.");
+          return true;
+        }
+        self.apply_locations_result("definition", locations)
+      },
+      PendingLspRequestKind::GotoTypeDefinition { .. } => {
+        let locations = match parse_locations_response(response.result.as_ref()) {
+          Ok(locations) => locations,
+          Err(err) => {
+            self.push_error("lsp", format!("failed to parse goto-type-definition response: {err}"));
+            return true;
+          },
+        };
+        if locations.is_empty() {
+          self.push_error("goto", "No type definition found.");
+          return true;
+        }
+        self.apply_locations_result("type definition", locations)
+      },
+      PendingLspRequestKind::GotoImplementation { .. } => {
+        let locations = match parse_locations_response(response.result.as_ref()) {
+          Ok(locations) => locations,
+          Err(err) => {
+            self.push_error("lsp", format!("failed to parse goto-implementation response: {err}"));
+            return true;
+          },
+        };
+        if locations.is_empty() {
+          self.push_error("goto", "No implementation found.");
+          return true;
+        }
+        self.apply_locations_result("implementation", locations)
+      },
       PendingLspRequestKind::Hover { .. } => {
         let hover = match parse_hover_response(response.result.as_ref()) {
           Ok(hover) => hover,
@@ -2848,6 +3271,39 @@ impl SwiftEditor {
         }
         true
       },
+      PendingLspRequestKind::DocumentHighlightSelect { .. } => {
+        self.handle_document_highlight_selection_response(response.result.as_ref())
+      },
+      PendingLspRequestKind::References { .. } => {
+        let locations = match parse_locations_response(response.result.as_ref()) {
+          Ok(locations) => locations,
+          Err(err) => {
+            self.push_error("lsp", format!("failed to parse references response: {err}"));
+            return true;
+          },
+        };
+        self.apply_locations_result("references", locations)
+      },
+      PendingLspRequestKind::DocumentSymbols { uri } => {
+        let symbols = match parse_document_symbols_response(&uri, response.result.as_ref()) {
+          Ok(symbols) => symbols,
+          Err(err) => {
+            self.push_error("lsp", format!("failed to parse document-symbols response: {err}"));
+            return true;
+          },
+        };
+        self.apply_symbols_result("document symbols", symbols)
+      },
+      PendingLspRequestKind::WorkspaceSymbols { query: _query } => {
+        let symbols = match parse_workspace_symbols_response(response.result.as_ref()) {
+          Ok(symbols) => symbols,
+          Err(err) => {
+            self.push_error("lsp", format!("failed to parse workspace-symbols response: {err}"));
+            return true;
+          },
+        };
+        self.apply_symbols_result("workspace symbols", symbols)
+      },
       PendingLspRequestKind::Completion {
         generation,
         cursor,
@@ -2870,6 +3326,7 @@ impl SwiftEditor {
         self.handle_code_action_resolve_response(action, response.result.as_ref())
       },
       PendingLspRequestKind::Rename { .. } => self.handle_rename_response(response.result.as_ref()),
+      PendingLspRequestKind::Format { .. } => self.handle_format_response(response.result.as_ref()),
     }
   }
 
@@ -3137,6 +3594,15 @@ impl SwiftEditor {
     }
   }
 
+  fn shared_vcs_scan_for_cwd(&self, cwd: &Path) -> Option<Arc<VcsWorkspaceScan>> {
+    let scan = self.vcs_scan.as_ref()?;
+    if cwd.starts_with(&scan.repo_root) || scan.repo_root.starts_with(cwd) {
+      Some(scan.clone())
+    } else {
+      None
+    }
+  }
+
   fn cached_vcs_base_for_path(&mut self, scan: &VcsWorkspaceScan, path: &Path) -> Option<Vec<u8>> {
     let key = VcsBaseCacheKey {
       repo_root: scan.repo_root.clone(),
@@ -3149,6 +3615,104 @@ impl SwiftEditor {
     let bytes = self.vcs_provider.get_diff_base(path);
     self.vcs_base_cache.insert(key, bytes.clone());
     bytes
+  }
+
+  fn cached_vcs_base_for_change(
+    &mut self,
+    scan: &VcsWorkspaceScan,
+    change: &FileChange,
+  ) -> Option<Vec<u8>> {
+    let base_path = match change {
+      FileChange::Untracked { .. } => return None,
+      FileChange::Modified { path }
+      | FileChange::Conflict { path }
+      | FileChange::Deleted { path } => path.clone(),
+      FileChange::Renamed { from_path, .. } => from_path.clone(),
+    };
+    let key = VcsBaseCacheKey {
+      repo_root: scan.repo_root.clone(),
+      head_revision: scan.head_revision.clone(),
+      path: base_path,
+    };
+    if let Some(bytes) = self.vcs_base_cache.get(&key) {
+      return bytes.clone();
+    }
+    let bytes = self.vcs_provider.get_diff_base_for_change(change);
+    self.vcs_base_cache.insert(key, bytes.clone());
+    bytes
+  }
+
+  fn shared_vcs_changed_file_items(&self, scan: &VcsWorkspaceScan) -> Vec<FilePickerChangedFileItem> {
+    scan
+      .changes
+      .iter()
+      .map(|change| match change {
+        FileChange::Untracked { path } => FilePickerChangedFileItem {
+          kind: FilePickerChangedKind::Untracked,
+          path: path.clone(),
+          from_path: None,
+        },
+        FileChange::Modified { path } => FilePickerChangedFileItem {
+          kind: FilePickerChangedKind::Modified,
+          path: path.clone(),
+          from_path: None,
+        },
+        FileChange::Conflict { path } => FilePickerChangedFileItem {
+          kind: FilePickerChangedKind::Conflict,
+          path: path.clone(),
+          from_path: None,
+        },
+        FileChange::Deleted { path } => FilePickerChangedFileItem {
+          kind: FilePickerChangedKind::Deleted,
+          path: path.clone(),
+          from_path: None,
+        },
+        FileChange::Renamed { from_path, to_path } => FilePickerChangedFileItem {
+          kind: FilePickerChangedKind::Renamed,
+          path: to_path.clone(),
+          from_path: Some(from_path.clone()),
+        },
+      })
+      .collect()
+  }
+
+  fn merged_vcs_changed_file_items(&self, scan: &VcsWorkspaceScan) -> Vec<FilePickerChangedFileItem> {
+    let mut items = self.shared_vcs_changed_file_items(scan);
+    let mut seen = items.iter().map(|item| item.path.clone()).collect::<HashSet<_>>();
+
+    for snapshot in self.editor.buffer_snapshots_mru() {
+      if !snapshot.modified {
+        continue;
+      }
+      let Some(path) = snapshot.file_path else {
+        continue;
+      };
+      if !path.starts_with(&scan.repo_root) {
+        continue;
+      }
+      if seen.contains(&path) {
+        continue;
+      }
+      seen.insert(path.clone());
+      items.push(FilePickerChangedFileItem {
+        kind: FilePickerChangedKind::Modified,
+        path,
+        from_path: None,
+      });
+    }
+
+    items.sort_by(|left, right| left.path.cmp(&right.path));
+    items
+  }
+
+  fn refresh_shared_vcs_scan_for_cwd(&mut self, cwd: &Path) -> Option<Arc<VcsWorkspaceScan>> {
+    match self.vcs_provider.scan_workspace(cwd) {
+      Ok(scan) => {
+        self.store_vcs_scan(scan);
+        self.shared_vcs_scan_for_cwd(cwd)
+      },
+      Err(_) => self.shared_vcs_scan_for_cwd(cwd),
+    }
   }
 
   fn schedule_vcs_statusline_refresh(&mut self, due_at: Option<Instant>) {
@@ -3437,6 +4001,78 @@ impl SwiftEditor {
     changed
   }
 
+  fn start_global_search(&mut self) {
+    let root = the_default::workspace_root(self.effective_working_directory().as_path());
+    if !root.exists() {
+      self.push_error("global_search", "Current working directory does not exist");
+      return;
+    }
+
+    let options = GlobalSearchOptions {
+      smart_case: true,
+      file_picker: self.file_picker.options.clone(),
+    };
+    if let Err(err) = self.global_search.activate(root.as_path(), options) {
+      self.push_error(
+        "global_search",
+        format!("Failed to initialize global search: {err}"),
+      );
+      return;
+    }
+
+    let initial_query = self.workspace_symbol_query_from_cursor();
+    open_dynamic_picker(self, "Live Grep", root, None, initial_query.clone());
+
+    if !initial_query.trim().is_empty() {
+      self.schedule_global_search(initial_query);
+    } else {
+      self.request_render();
+    }
+  }
+
+  fn schedule_global_search(&mut self, query: String) {
+    if !self.global_search.is_active() {
+      return;
+    }
+    self.global_search.schedule(query, self.global_search_documents());
+  }
+
+  fn poll_global_search(&mut self) -> bool {
+    if !self.global_search.is_active() {
+      return false;
+    }
+    if !self.file_picker.active {
+      self.global_search.deactivate();
+      return false;
+    }
+
+    let Some(response) = self.global_search.poll_latest() else {
+      return false;
+    };
+
+    let has_items = !response.items.is_empty();
+    replace_file_picker_items(self, response.items, 0);
+    {
+      let picker = &mut self.file_picker;
+      picker.query = response.query.clone();
+      picker.cursor = response.query.len();
+      if let Some(error) = response.error {
+        picker.error = Some(error.clone());
+        picker.preview = FilePickerPreview::Message(error);
+      } else if response.indexing && !has_items {
+        picker.error = None;
+        picker.preview = FilePickerPreview::Message("Indexing files…".to_string());
+      } else {
+        picker.error = None;
+        if picker.query.trim().is_empty() {
+          picker.preview = FilePickerPreview::Message("Type to search".to_string());
+        }
+      }
+    }
+    self.request_render();
+    true
+  }
+
   fn poll_background_tasks(&mut self) -> bool {
     let mut changed = false;
     changed |= self.poll_active_file_watch();
@@ -3447,6 +4083,7 @@ impl SwiftEditor {
     changed |= self.tick_lsp_statusline();
     let _ = self.poll_vcs_statusline_refresh_dispatch(Instant::now());
     changed |= self.poll_vcs_statusline_refresh_results();
+    changed |= self.poll_global_search();
     changed |= self.refresh_picker_state();
     changed
   }
@@ -3511,6 +4148,7 @@ impl SwiftEditor {
       file_tree: FileTreeState::default(),
       file_picker: FilePickerState::default(),
       picker_runtime_store: PickerRuntimeStore::default(),
+      global_search: GlobalSearchState::default(),
       search_prompt: SearchPromptState::new(),
       signature_help: SignatureHelpState::default(),
       hover_docs: None,
@@ -4437,6 +5075,194 @@ impl DefaultContext for SwiftEditor {
       .current_lsp_uri()
       .and_then(|uri| self.diagnostics.document(&uri).map(|document| document.counts()))
   }
+  fn active_diagnostic_ranges(&self) -> Vec<Range> {
+    let Some(state) = self.lsp_document.as_ref().filter(|_| {
+      self.lsp_runtimes.iter().any(|runtime| runtime.opened_current_document)
+    }) else {
+      return Vec::new();
+    };
+    let Some(document) = self.diagnostics.document(&state.uri) else {
+      return Vec::new();
+    };
+
+    let text = self.editor.document().text();
+    let mut ranges = Vec::with_capacity(document.diagnostics.len());
+    for diagnostic in &document.diagnostics {
+      let start = utf16_position_to_char_idx(
+        text,
+        diagnostic.range.start.line,
+        diagnostic.range.start.character,
+      );
+      let end = utf16_position_to_char_idx(
+        text,
+        diagnostic.range.end.line,
+        diagnostic.range.end.character,
+      );
+      ranges.push(Range::new(start, end));
+    }
+    ranges.sort_by_key(|range| (range.from(), range.to()));
+    ranges
+  }
+  fn change_hunk_ranges(&self) -> Option<Vec<Range>> {
+    let handle = self.vcs_diff.as_ref()?;
+    let diff = handle.load();
+    let text = self.editor.document().text();
+    let len_lines = text.len_lines();
+    if len_lines == 0 {
+      return Some(Vec::new());
+    }
+
+    let mut ranges = Vec::with_capacity(diff.len() as usize);
+    for idx in 0..diff.len() {
+      let hunk = diff.nth_hunk(idx);
+      let start_line = (hunk.after.start as usize).min(len_lines.saturating_sub(1));
+      let start = text.line_to_char(start_line);
+      let end = if hunk.after.is_empty() {
+        text.line_to_char((start_line + 1).min(len_lines))
+      } else {
+        text.line_to_char((hunk.after.end as usize).min(len_lines))
+      };
+      ranges.push(Range::new(start, end));
+    }
+    Some(ranges)
+  }
+  fn file_picker_diagnostics(&self, workspace: bool) -> Vec<FilePickerDiagnosticItem> {
+    let mut items = Vec::new();
+    let mut rope_cache: HashMap<PathBuf, Rope> = HashMap::new();
+    let active_uri = self.lsp_document.as_ref().map(|state| state.uri.as_str());
+
+    let mut collect_document = |uri: &str, diagnostics: &[Diagnostic]| {
+      let Some(path) = path_for_file_uri(uri) else {
+        return;
+      };
+
+      for diagnostic in diagnostics {
+        let line = diagnostic.range.start.line as usize;
+        let character = diagnostic.range.start.character as usize;
+        let cursor_char = if active_uri == Some(uri) {
+          utf16_position_to_char_idx(
+            self.editor.document().text(),
+            diagnostic.range.start.line,
+            diagnostic.range.start.character,
+          )
+        } else {
+          let rope = rope_cache.entry(path.clone()).or_insert_with(|| {
+            std::fs::read_to_string(&path)
+              .map(|text| Rope::from_str(&text))
+              .unwrap_or_else(|_| Rope::new())
+          });
+          utf16_position_to_char_idx(
+            rope,
+            diagnostic.range.start.line,
+            diagnostic.range.start.character,
+          )
+        };
+
+        items.push(FilePickerDiagnosticItem {
+          path: path.clone(),
+          line,
+          character,
+          cursor_char,
+          severity: diagnostic.severity,
+          code: diagnostic.code.clone(),
+          source: diagnostic.source.clone(),
+          message: diagnostic.message.clone(),
+        });
+      }
+    };
+
+    if workspace {
+      for document in self.diagnostics.documents() {
+        collect_document(&document.uri, &document.diagnostics);
+      }
+    } else if let Some(state) = self.lsp_document.as_ref().filter(|_| {
+      self.lsp_runtimes.iter().any(|runtime| runtime.opened_current_document)
+    }) && let Some(document) = self.diagnostics.document(&state.uri) {
+      collect_document(&document.uri, &document.diagnostics);
+    }
+
+    items.sort_by(|left, right| {
+      left
+        .path
+        .cmp(&right.path)
+        .then_with(|| left.line.cmp(&right.line))
+        .then_with(|| left.character.cmp(&right.character))
+    });
+    items
+  }
+  fn file_picker_changed_files(&self) -> Result<Vec<FilePickerChangedFileItem>, String> {
+    let cwd = self.effective_working_directory();
+    if !cwd.exists() {
+      return Err("current working directory does not exist".to_string());
+    }
+    let scan = self
+      .shared_vcs_scan_for_cwd(&cwd)
+      .ok_or_else(|| "no shared vcs snapshot available".to_string())?;
+    Ok(self.merged_vcs_changed_file_items(&scan))
+  }
+  fn file_picker_vcs_diff_bootstrap(&mut self) -> Result<FilePickerVcsDiffBootstrap, String> {
+    let cwd = self.effective_working_directory();
+    if !cwd.exists() {
+      return Err("current working directory does not exist".to_string());
+    }
+    let scan = self
+      .refresh_shared_vcs_scan_for_cwd(&cwd)
+      .ok_or_else(|| "failed to load shared vcs snapshot".to_string())?;
+    Ok(FilePickerVcsDiffBootstrap::Ready {
+      root: scan.repo_root.clone(),
+      changed: self.merged_vcs_changed_file_items(&scan),
+    })
+  }
+  fn file_picker_vcs_diff_entries(&self) -> Result<Vec<FilePickerVcsDiffEntry>, String> {
+    let cwd = self.effective_working_directory();
+    if !cwd.exists() {
+      return Err("current working directory does not exist".to_string());
+    }
+    let scan = self
+      .shared_vcs_scan_for_cwd(&cwd)
+      .ok_or_else(|| "no shared vcs snapshot available".to_string())?;
+    let changed = self.merged_vcs_changed_file_items(&scan);
+
+    changed
+      .iter()
+      .map(|item| build_file_picker_vcs_diff_entry(self, &scan, &file_picker_changed_file_to_vcs_change(item)))
+      .collect()
+  }
+  fn file_picker_vcs_diff_did_open(&mut self) {
+    let cwd = self.effective_working_directory();
+    let Some(scan) = self.refresh_shared_vcs_scan_for_cwd(&cwd) else {
+      return;
+    };
+    let changed = self.merged_vcs_changed_file_items(&scan);
+    let entries: Vec<_> = changed
+      .iter()
+      .filter_map(|item| {
+        build_file_picker_vcs_diff_entry(self, &scan, &file_picker_changed_file_to_vcs_change(item)).ok()
+      })
+      .collect();
+    let specs = file_picker_vcs_diff_specs(&scan.repo_root, &entries);
+    let submit_handler = self.file_picker.runtime_session().map(the_default::PickerSubmitHandlerRef::Runtime);
+    let items = file_picker_items_from_specs(specs, submit_handler);
+    replace_file_picker_items_preserving_selection(self, items, 0);
+  }
+  fn file_picker_query_changed(&mut self, query: &str) {
+    if self.global_search.is_active() {
+      if query.trim().is_empty() {
+        self.global_search.cancel_pending();
+        replace_file_picker_items(self, Vec::new(), 0);
+        self.file_picker.query = query.to_string();
+        self.file_picker.cursor = query.len();
+        self.file_picker.error = None;
+        self.file_picker.preview = FilePickerPreview::Message("Type to search".to_string());
+        self.request_render();
+      } else {
+        self.schedule_global_search(query.to_string());
+      }
+    }
+  }
+  fn file_picker_closed(&mut self) {
+    self.global_search.deactivate();
+  }
   fn watch_conflict_active(&self) -> bool {
     self
       .active_file_watch
@@ -4447,6 +5273,69 @@ impl DefaultContext for SwiftEditor {
     if let Some(watch) = self.active_file_watch.as_mut() {
       clear_reload_state(&mut watch.stream.reload_state);
     }
+  }
+  fn global_search(&mut self) {
+    self.start_global_search();
+  }
+  fn lsp_goto_definition(&mut self) {
+    if !self.lsp_supports(LspCapability::GotoDefinition) {
+      self.push_error("goto", "No definition found.");
+      return;
+    }
+    let Some((uri, position)) = self.current_lsp_position() else {
+      self.push_error("goto", "No definition found.");
+      return;
+    };
+    self.dispatch_lsp_request(
+      "textDocument/definition",
+      goto_definition_params(&uri, position),
+      PendingLspRequestKind::GotoDefinition { uri },
+    );
+  }
+  fn lsp_goto_declaration(&mut self) {
+    if !self.lsp_supports(LspCapability::GotoDeclaration) {
+      self.push_error("goto", "No declaration found.");
+      return;
+    }
+    let Some((uri, position)) = self.current_lsp_position() else {
+      self.push_error("goto", "No declaration found.");
+      return;
+    };
+    self.dispatch_lsp_request(
+      "textDocument/declaration",
+      goto_declaration_params(&uri, position),
+      PendingLspRequestKind::GotoDeclaration { uri },
+    );
+  }
+  fn lsp_goto_type_definition(&mut self) {
+    if !self.lsp_supports(LspCapability::GotoTypeDefinition) {
+      self.push_error("goto", "No type definition found.");
+      return;
+    }
+    let Some((uri, position)) = self.current_lsp_position() else {
+      self.push_error("goto", "No type definition found.");
+      return;
+    };
+    self.dispatch_lsp_request(
+      "textDocument/typeDefinition",
+      goto_type_definition_params(&uri, position),
+      PendingLspRequestKind::GotoTypeDefinition { uri },
+    );
+  }
+  fn lsp_goto_implementation(&mut self) {
+    if !self.lsp_supports(LspCapability::GotoImplementation) {
+      self.push_error("goto", "No implementation found.");
+      return;
+    }
+    let Some((uri, position)) = self.current_lsp_position() else {
+      self.push_error("goto", "No implementation found.");
+      return;
+    };
+    self.dispatch_lsp_request(
+      "textDocument/implementation",
+      goto_implementation_params(&uri, position),
+      PendingLspRequestKind::GotoImplementation { uri },
+    );
   }
   fn lsp_hover(&mut self) {
     let diagnostic_fallback = self.current_diagnostic_hover_docs();
@@ -4472,6 +5361,70 @@ impl DefaultContext for SwiftEditor {
       "textDocument/hover",
       hover_params(&uri, position),
       PendingLspRequestKind::Hover { uri },
+    );
+  }
+  fn lsp_select_references_to_symbol_under_cursor(&mut self) {
+    if !self.lsp_supports(LspCapability::DocumentHighlight) {
+      self.push_warning("lsp", "document highlights are not supported by the active server");
+      return;
+    }
+
+    let Some((uri, position)) = self.current_lsp_position() else {
+      self.push_warning("lsp", "document highlights unavailable: no active LSP document");
+      return;
+    };
+
+    self.dispatch_lsp_request(
+      "textDocument/documentHighlight",
+      document_highlight_params(&uri, position),
+      PendingLspRequestKind::DocumentHighlightSelect { uri },
+    );
+  }
+  fn lsp_references(&mut self) {
+    if !self.lsp_supports(LspCapability::GotoReference) {
+      self.push_warning("lsp", "references are not supported by the active server");
+      return;
+    }
+
+    let Some((uri, position)) = self.current_lsp_position() else {
+      self.push_warning("lsp", "references unavailable: no active LSP document");
+      return;
+    };
+
+    self.dispatch_lsp_request(
+      "textDocument/references",
+      references_params(&uri, position, false),
+      PendingLspRequestKind::References { uri },
+    );
+  }
+  fn lsp_document_symbols(&mut self) {
+    if !self.lsp_supports(LspCapability::DocumentSymbols) {
+      self.push_warning("lsp", "document symbols are not supported by the active server");
+      return;
+    }
+
+    let Some(uri) = self.current_lsp_uri() else {
+      self.push_warning("lsp", "document symbols unavailable: no active LSP document");
+      return;
+    };
+
+    self.dispatch_lsp_request(
+      "textDocument/documentSymbol",
+      document_symbols_params(&uri),
+      PendingLspRequestKind::DocumentSymbols { uri },
+    );
+  }
+  fn lsp_workspace_symbols(&mut self) {
+    if !self.lsp_supports(LspCapability::WorkspaceSymbols) {
+      self.push_warning("lsp", "workspace symbols are not supported by the active server");
+      return;
+    }
+
+    let query = self.workspace_symbol_query_from_cursor();
+    self.dispatch_lsp_request(
+      "workspace/symbol",
+      workspace_symbols_params(&query),
+      PendingLspRequestKind::WorkspaceSymbols { query },
     );
   }
   fn lsp_code_actions(&mut self) {
@@ -4530,6 +5483,32 @@ impl DefaultContext for SwiftEditor {
   }
   fn lsp_signature_help(&mut self) {
     let _ = self.dispatch_signature_help_request(LspSignatureHelpContext::invoked(), true);
+  }
+  fn lsp_signature_help_on_insert_mode_entry(&mut self) {
+    self.cancel_auto_signature_help();
+    let _ = self.dispatch_signature_help_request(LspSignatureHelpContext::invoked(), false);
+  }
+  fn lsp_format(&mut self) {
+    if !self.lsp_supports(LspCapability::Format) {
+      self.push_warning("lsp", "format is not supported by the active server");
+      return;
+    }
+
+    let Some(uri) = self.current_lsp_uri() else {
+      self.push_warning("lsp", "format unavailable: no active LSP document");
+      return;
+    };
+
+    let (tab_size, insert_spaces) = match self.editor.document().indent_style() {
+      IndentStyle::Tabs => (4, false),
+      IndentStyle::Spaces(width) => (width as u32, true),
+    };
+
+    self.dispatch_lsp_request(
+      "textDocument/formatting",
+      formatting_params(&uri, tab_size, insert_spaces),
+      PendingLspRequestKind::Format { uri },
+    );
   }
 
   fn available_theme_names(&self) -> Vec<String> { self.ui_theme_catalog.names() }
@@ -6627,6 +7606,453 @@ fn is_symbol_word_char(ch: char) -> bool {
 }
 
 fn is_completion_replace_char(ch: char) -> bool { is_symbol_word_char(ch) }
+
+fn sanitize_picker_field(value: &str) -> String {
+  value
+    .replace('\t', " ")
+    .replace(['\r', '\n'], " ")
+    .split_whitespace()
+    .collect::<Vec<_>>()
+    .join(" ")
+}
+
+fn lsp_symbol_tree_depth(container: &str, stack: &mut Vec<String>) -> usize {
+  if container.is_empty() {
+    return 0;
+  }
+
+  while let Some(last) = stack.last() {
+    if last == container {
+      return stack.len();
+    }
+    stack.pop();
+  }
+
+  0
+}
+
+fn lsp_symbol_kind_label(kind: u32) -> &'static str {
+  match kind {
+    1 => "FILE",
+    2 => "MODULE",
+    3 => "NAMESPACE",
+    4 => "PACKAGE",
+    5 => "CLASS",
+    6 => "METHOD",
+    7 => "PROPERTY",
+    8 => "FIELD",
+    9 => "CONSTRUCTOR",
+    10 => "ENUM",
+    11 => "INTERFACE",
+    12 => "FUNCTION",
+    13 => "VARIABLE",
+    14 => "CONSTANT",
+    15 => "STRING",
+    16 => "NUMBER",
+    17 => "BOOLEAN",
+    18 => "ARRAY",
+    19 => "OBJECT",
+    20 => "KEY",
+    21 => "NULL",
+    22 => "ENUM_MEMBER",
+    23 => "STRUCT",
+    24 => "EVENT",
+    25 => "OPERATOR",
+    26 => "TYPE_PARAM",
+    _ => "SYMBOL",
+  }
+}
+
+fn lsp_symbol_icon_name(kind: u32) -> &'static str {
+  match kind {
+    2 | 3 | 4 | 5 | 10 | 11 | 19 | 23 => "folder",
+    6 | 9 | 12 | 25 => "file_code",
+    7 | 8 | 13 | 14 | 18 | 20 | 22 | 24 | 26 => "file_generic",
+    15 | 16 | 17 | 21 => "file_doc",
+    1 => "file_doc",
+    _ => "file_generic",
+  }
+}
+
+fn display_vcs_picker_path(path: &Path, root: &Path) -> String {
+  path.strip_prefix(root).unwrap_or(path).display().to_string()
+}
+
+fn file_picker_changed_kind_for_vcs(change: &FileChange) -> FilePickerChangedKind {
+  match change {
+    FileChange::Untracked { .. } => FilePickerChangedKind::Untracked,
+    FileChange::Modified { .. } => FilePickerChangedKind::Modified,
+    FileChange::Conflict { .. } => FilePickerChangedKind::Conflict,
+    FileChange::Deleted { .. } => FilePickerChangedKind::Deleted,
+    FileChange::Renamed { .. } => FilePickerChangedKind::Renamed,
+  }
+}
+
+fn file_picker_changed_file_to_vcs_change(item: &FilePickerChangedFileItem) -> FileChange {
+  match item.kind {
+    FilePickerChangedKind::Untracked => FileChange::Untracked {
+      path: item.path.clone(),
+    },
+    FilePickerChangedKind::Modified => FileChange::Modified {
+      path: item.path.clone(),
+    },
+    FilePickerChangedKind::Conflict => FileChange::Conflict {
+      path: item.path.clone(),
+    },
+    FilePickerChangedKind::Deleted => FileChange::Deleted {
+      path: item.path.clone(),
+    },
+    FilePickerChangedKind::Renamed => FileChange::Renamed {
+      from_path: item.from_path.clone().unwrap_or_else(|| item.path.clone()),
+      to_path: item.path.clone(),
+    },
+  }
+}
+
+fn vcs_base_text_for_change(vcs_provider: &DiffProviderRegistry, change: &FileChange) -> Result<String, String> {
+  match vcs_provider.get_diff_base_for_change(change) {
+    Some(bytes) => String::from_utf8(bytes).map_err(|_| "Base revision is not UTF-8 text".to_string()),
+    None => Ok(String::new()),
+  }
+}
+
+fn vcs_worktree_text(ctx: &SwiftEditor, change: &FileChange) -> Result<String, String> {
+  match change {
+    FileChange::Deleted { .. } => Ok(String::new()),
+    FileChange::Untracked { path }
+    | FileChange::Modified { path }
+    | FileChange::Conflict { path }
+    | FileChange::Renamed { to_path: path, .. } => {
+      if let Some(buffer_id) = ctx.editor.find_buffer_by_path(path)
+        && let Some(document) = ctx.editor.document_for_buffer(buffer_id)
+      {
+        return Ok(document.text().to_string());
+      }
+      std::fs::read_to_string(path)
+        .map_err(|err| format!("failed to read '{}': {err}", path.display()))
+    },
+  }
+}
+
+fn build_file_picker_vcs_diff_entry(
+  ctx: &SwiftEditor,
+  scan: &VcsWorkspaceScan,
+  change: &FileChange,
+) -> Result<FilePickerVcsDiffEntry, String> {
+  let current_text = vcs_worktree_text(ctx, change)?;
+  let base_text = vcs_base_text_for_change(&ctx.vcs_provider, change)?;
+  build_file_picker_vcs_diff_entry_with_text(change, &scan.repo_root, &base_text, &current_text)
+}
+
+fn build_file_picker_vcs_diff_entry_with_text(
+  change: &FileChange,
+  workspace_root: &Path,
+  base_text: &str,
+  current_text: &str,
+) -> Result<FilePickerVcsDiffEntry, String> {
+  let path = change.path().to_path_buf();
+  let from_path = match change {
+    FileChange::Renamed { from_path, .. } => Some(from_path.clone()),
+    _ => None,
+  };
+  let kind = file_picker_changed_kind_for_vcs(change);
+  let display_path = display_vcs_picker_path(&path, workspace_root);
+  let from_display = from_path.as_ref().map(|from_path| display_vcs_picker_path(from_path, workspace_root));
+  let current_rope = Rope::from_str(current_text);
+  let base_rope = Rope::from_str(base_text);
+  let handle = DiffHandle::new(base_rope.clone(), current_rope.clone());
+  let diff = handle.load();
+  if diff.is_empty() {
+    return Ok(FilePickerVcsDiffEntry {
+      kind,
+      path: path.clone(),
+      from_path,
+      hunks: vec![vcs_info_hunk(
+        &display_path,
+        from_display.as_deref(),
+        &path,
+        current_text,
+        "No textual diff available",
+      )],
+    });
+  }
+
+  let mut hunks = Vec::with_capacity(diff.len() as usize);
+  for index in 0..diff.len() {
+    let hunk = diff.nth_hunk(index);
+    let target_line = vcs_hunk_target_line(change, &current_rope, &hunk);
+    let target_cursor_char = target_line.map(|line| current_rope.line_to_char(line));
+    hunks.push(FilePickerVcsDiffHunk {
+      summary: vcs_hunk_summary(&base_rope, &current_rope, &hunk),
+      target_line,
+      target_cursor_char,
+      before_start: hunk.before.start as usize,
+      before_end: hunk.before.end as usize,
+      after_start: hunk.after.start as usize,
+      after_end: hunk.after.end as usize,
+      preview: FilePickerPreview::VcsDiff(build_vcs_hunk_preview_from_bounds(
+        &path,
+        &display_path,
+        from_display.as_deref(),
+        &base_rope,
+        &current_rope,
+        hunk.before.start as usize,
+        hunk.before.end as usize,
+        hunk.after.start as usize,
+        hunk.after.end as usize,
+      )),
+    });
+  }
+
+  Ok(FilePickerVcsDiffEntry {
+    kind,
+    path,
+    from_path,
+    hunks,
+  })
+}
+
+fn vcs_info_hunk(
+  display_path: &str,
+  from_display: Option<&str>,
+  path: &Path,
+  current_text: &str,
+  message: &str,
+) -> FilePickerVcsDiffHunk {
+  FilePickerVcsDiffHunk {
+    summary: message.to_string(),
+    target_line: None,
+    target_cursor_char: None,
+    before_start: 0,
+    before_end: 0,
+    after_start: 0,
+    after_end: 0,
+    preview: FilePickerPreview::VcsDiff(finalize_vcs_diff_preview(FilePickerVcsDiffPreview {
+      title: display_path.to_string(),
+      from_title: from_display.map(ToOwned::to_owned),
+      left_label: "BASE".to_string(),
+      right_label: "WORKTREE".to_string(),
+      left: file_picker_source_preview_from_text(path, "", None),
+      right: file_picker_source_preview_from_text(path, current_text, None),
+      rows: vec![FilePickerVcsDiffPreviewRow {
+        kind: FilePickerVcsDiffPreviewRowKind::Info,
+        left_line_index: None,
+        right_line_index: None,
+        left_line_number: None,
+        right_line_number: None,
+        message: message.to_string(),
+      }],
+      cached_lines: Arc::new([]),
+    })),
+  }
+}
+
+fn vcs_hunk_summary(base_rope: &Rope, current_rope: &Rope, hunk: &Hunk) -> String {
+  let right_start = hunk.after.start as usize;
+  let right_end = hunk.after.end as usize;
+  let left_start = hunk.before.start as usize;
+  let left_end = hunk.before.end as usize;
+
+  let text = if let Some(text) = first_nonempty_rope_line(current_rope, right_start, right_end) {
+    text
+  } else if let Some(text) = first_nonempty_rope_line(base_rope, left_start, left_end) {
+    text
+  } else {
+    "changed lines".to_string()
+  };
+
+  truncate_vcs_summary(&text, 84)
+}
+
+fn first_nonempty_rope_line(rope: &Rope, start: usize, end: usize) -> Option<String> {
+  for line_index in start..end {
+    let line = rope.line(line_index).to_string();
+    let line = line.trim();
+    if !line.is_empty() {
+      return Some(line.to_string());
+    }
+  }
+  None
+}
+
+fn truncate_vcs_summary(text: &str, max_chars: usize) -> String {
+  let mut out = String::new();
+  for ch in text.chars().take(max_chars) {
+    out.push(ch);
+  }
+  if text.chars().count() > max_chars {
+    out.push('…');
+  }
+  out
+}
+
+fn vcs_hunk_target_line(change: &FileChange, current_rope: &Rope, hunk: &Hunk) -> Option<usize> {
+  if matches!(change, FileChange::Deleted { .. }) {
+    return None;
+  }
+  let total_lines = current_rope.len_lines();
+  if total_lines == 0 {
+    return None;
+  }
+  let after_start = hunk.after.start as usize;
+  if after_start < total_lines {
+    Some(after_start)
+  } else {
+    Some(total_lines.saturating_sub(1))
+  }
+}
+
+fn build_vcs_hunk_preview_from_bounds(
+  path: &Path,
+  display_path: &str,
+  from_display: Option<&str>,
+  base_rope: &Rope,
+  current_rope: &Rope,
+  before_start: usize,
+  before_end: usize,
+  after_start: usize,
+  after_end: usize,
+) -> FilePickerVcsDiffPreview {
+  build_vcs_hunk_preview(
+    path,
+    display_path,
+    from_display,
+    base_rope,
+    current_rope,
+    &Hunk {
+      before: before_start as u32..before_end as u32,
+      after: after_start as u32..after_end as u32,
+    },
+  )
+}
+
+fn build_vcs_hunk_preview(
+  path: &Path,
+  display_path: &str,
+  from_display: Option<&str>,
+  base_rope: &Rope,
+  current_rope: &Rope,
+  hunk: &Hunk,
+) -> FilePickerVcsDiffPreview {
+  const CONTEXT: usize = 3;
+
+  let before_start = hunk.before.start as usize;
+  let before_end = hunk.before.end as usize;
+  let after_start = hunk.after.start as usize;
+  let after_end = hunk.after.end as usize;
+
+  let context_above = before_start.min(after_start).min(CONTEXT);
+  let hidden_above = before_start.min(after_start).saturating_sub(context_above);
+  let before_snippet_start = before_start.saturating_sub(context_above);
+  let after_snippet_start = after_start.saturating_sub(context_above);
+  let base_remaining = base_rope.len_lines().saturating_sub(before_end);
+  let current_remaining = current_rope.len_lines().saturating_sub(after_end);
+  let context_below = base_remaining.min(current_remaining).min(CONTEXT);
+  let before_snippet_end = before_end.saturating_add(context_below);
+  let after_snippet_end = after_end.saturating_add(context_below);
+
+  let left = file_picker_source_preview_from_text(
+    path,
+    &rope_line_range_to_string(base_rope, before_snippet_start, before_snippet_end),
+    None,
+  );
+  let right = file_picker_source_preview_from_text(
+    path,
+    &rope_line_range_to_string(current_rope, after_snippet_start, after_snippet_end),
+    None,
+  );
+
+  let mut rows = Vec::new();
+  if hidden_above > 0 {
+    rows.push(FilePickerVcsDiffPreviewRow {
+      kind: FilePickerVcsDiffPreviewRowKind::CollapsedAbove,
+      left_line_index: None,
+      right_line_index: None,
+      left_line_number: None,
+      right_line_number: None,
+      message: format!("… {} lines above", hidden_above),
+    });
+  }
+
+  for offset in 0..context_above {
+    rows.push(FilePickerVcsDiffPreviewRow {
+      kind: FilePickerVcsDiffPreviewRowKind::Context,
+      left_line_index: Some(offset),
+      right_line_index: Some(offset),
+      left_line_number: Some(before_snippet_start + offset + 1),
+      right_line_number: Some(after_snippet_start + offset + 1),
+      message: String::new(),
+    });
+  }
+
+  let before_len = before_end.saturating_sub(before_start);
+  let after_len = after_end.saturating_sub(after_start);
+  let changed_len = before_len.max(after_len).max(1);
+  for offset in 0..changed_len {
+    let left_line = (offset < before_len).then_some(before_start + offset);
+    let right_line = (offset < after_len).then_some(after_start + offset);
+    let kind = match (left_line, right_line) {
+      (Some(_), Some(_)) if hunk.is_pure_insertion() => FilePickerVcsDiffPreviewRowKind::Added,
+      (Some(_), Some(_)) if hunk.is_pure_removal() => FilePickerVcsDiffPreviewRowKind::Removed,
+      (Some(_), Some(_)) => FilePickerVcsDiffPreviewRowKind::Modified,
+      (Some(_), None) => FilePickerVcsDiffPreviewRowKind::Removed,
+      (None, Some(_)) => FilePickerVcsDiffPreviewRowKind::Added,
+      (None, None) => FilePickerVcsDiffPreviewRowKind::Info,
+    };
+    rows.push(FilePickerVcsDiffPreviewRow {
+      kind,
+      left_line_index: left_line.map(|line| line.saturating_sub(before_snippet_start)),
+      right_line_index: right_line.map(|line| line.saturating_sub(after_snippet_start)),
+      left_line_number: left_line.map(|line| line + 1),
+      right_line_number: right_line.map(|line| line + 1),
+      message: String::new(),
+    });
+  }
+
+  for offset in 0..context_below {
+    rows.push(FilePickerVcsDiffPreviewRow {
+      kind: FilePickerVcsDiffPreviewRowKind::Context,
+      left_line_index: Some(before_end + offset - before_snippet_start),
+      right_line_index: Some(after_end + offset - after_snippet_start),
+      left_line_number: Some(before_end + offset + 1),
+      right_line_number: Some(after_end + offset + 1),
+      message: String::new(),
+    });
+  }
+
+  let hidden_below = base_remaining.min(current_remaining).saturating_sub(context_below);
+  if hidden_below > 0 {
+    rows.push(FilePickerVcsDiffPreviewRow {
+      kind: FilePickerVcsDiffPreviewRowKind::CollapsedBelow,
+      left_line_index: None,
+      right_line_index: None,
+      left_line_number: None,
+      right_line_number: None,
+      message: format!("… {} lines below", hidden_below),
+    });
+  }
+
+  finalize_vcs_diff_preview(FilePickerVcsDiffPreview {
+    title: display_path.to_string(),
+    from_title: from_display.map(ToOwned::to_owned),
+    left_label: "BASE".to_string(),
+    right_label: "WORKTREE".to_string(),
+    left,
+    right,
+    rows,
+    cached_lines: Arc::new([]),
+  })
+}
+
+fn rope_line_range_to_string(rope: &Rope, start_line: usize, end_line: usize) -> String {
+  if start_line >= end_line {
+    return String::new();
+  }
+
+  let start_char = rope.line_to_char(start_line);
+  let end_char = rope.line_to_char(end_line);
+  rope.slice(start_char..end_char).to_string()
+}
 
 fn active_file_watch_latency() -> Duration {
   Duration::from_millis(120)

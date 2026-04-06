@@ -224,7 +224,13 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
         case 103: keyEvent.kind = THE_EDITOR_KEY_F11.rawValue
         case 111: keyEvent.kind = THE_EDITOR_KEY_F12.rawValue
         default:
-            guard let scalar = event.characters?.unicodeScalars.first else { return nil }
+            let scalarSource: String?
+            if event.modifierFlags.intersection([.control, .option]).isEmpty {
+                scalarSource = event.characters
+            } else {
+                scalarSource = event.charactersIgnoringModifiers
+            }
+            guard let scalar = scalarSource?.unicodeScalars.first else { return nil }
             keyEvent.kind = THE_EDITOR_KEY_CHAR.rawValue
             keyEvent.codepoint = scalar.value
             keyEvent.modifiers = modifierBits(for: event, includeShift: false)

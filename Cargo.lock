@@ -1609,6 +1609,7 @@ dependencies = [
  "ropey",
  "serde",
  "serde_json",
+ "smallvec",
  "the-core",
  "the-default",
  "the-lib",

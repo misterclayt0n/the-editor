@@ -94,15 +94,19 @@ private struct EditorStatusAccessoryView: View {
 private struct StatusAccessoryItemView: View {
     let item: EditorStatusItem
 
+    private var normalized: (icon: String?, text: String) {
+        normalizedStatusItemDisplay(icon: item.icon, text: item.text)
+    }
+
     var body: some View {
         HStack(spacing: 5) {
-            if let icon = item.icon {
+            if let icon = normalized.icon {
                 Image(systemName: symbolName(for: icon, isDirectory: false))
                     .font(.system(size: 10, weight: .semibold))
             }
 
-            if !item.text.isEmpty {
-                Text(item.text)
+            if !normalized.text.isEmpty {
+                Text(normalized.text)
                     .font(textFont)
                     .lineLimit(1)
             }
@@ -123,7 +127,7 @@ private struct StatusAccessoryItemView: View {
     }
 
     private var foregroundStyle: Color {
-        if let icon = item.icon {
+        if let icon = normalized.icon {
             switch icon {
             case "diagnostic_error":
                 return .red
@@ -749,6 +753,25 @@ private extension NSColor {
         let luminance = (0.299 * color.redComponent) + (0.587 * color.greenComponent) + (0.114 * color.blueComponent)
         return luminance > 0.7
     }
+}
+
+private func normalizedStatusItemDisplay(icon: String?, text: String) -> (icon: String?, text: String) {
+    if let icon {
+        return (icon, text)
+    }
+
+    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    let glyphMappings: [(String, String)] = [
+        ("", "diagnostic_error"),
+        ("", "diagnostic_warning"),
+        ("", "diagnostic_info"),
+        ("󰌵", "diagnostic_hint"),
+    ]
+    for (glyph, iconName) in glyphMappings where trimmed.hasPrefix(glyph) {
+        let remainder = trimmed.dropFirst(glyph.count).trimmingCharacters(in: .whitespacesAndNewlines)
+        return (iconName, remainder)
+    }
+    return (nil, text)
 }
 
 private func symbolName(for icon: String, isDirectory: Bool) -> String {

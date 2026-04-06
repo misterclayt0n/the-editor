@@ -1136,6 +1136,7 @@ struct SwiftEditor {
   search_prompt:                 SearchPromptState,
   signature_help:                SignatureHelpState,
   hover_docs:                    Option<String>,
+  hover_diagnostic_fallback:     Option<String>,
   lsp_code_action_items:         Vec<LspCodeAction>,
   lsp_code_action_menu_active:   bool,
   lsp_completion_items:          Vec<LspCompletionItem>,
@@ -2485,6 +2486,63 @@ impl SwiftEditor {
 
   fn clear_hover_state(&mut self) {
     self.hover_docs = None;
+    self.hover_diagnostic_fallback = None;
+  }
+
+  fn current_position_diagnostics(&self) -> Vec<Diagnostic> {
+    let Some((_, position)) = self.current_lsp_position() else {
+      return Vec::new();
+    };
+    let Some(diagnostics) = self.current_document_diagnostics() else {
+      return Vec::new();
+    };
+
+    let mut exact = diagnostics
+      .iter()
+      .filter(|diagnostic| diagnostic_contains_position(diagnostic, position.line, position.character))
+      .cloned()
+      .collect::<Vec<_>>();
+    if exact.is_empty() {
+      exact = diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.range.start.line == position.line)
+        .cloned()
+        .collect::<Vec<_>>();
+    }
+    exact.sort_by(|lhs, rhs| diagnostic_sort_key(lhs).cmp(&diagnostic_sort_key(rhs)));
+    exact
+  }
+
+  fn current_diagnostic_hover_docs(&self) -> Option<String> {
+    let diagnostics = self.current_position_diagnostics();
+    if diagnostics.is_empty() {
+      return None;
+    }
+
+    let mut sections = Vec::with_capacity(diagnostics.len());
+    for diagnostic in diagnostics {
+      let severity = match diagnostic.severity.unwrap_or(DiagnosticSeverity::Warning) {
+        DiagnosticSeverity::Error => "Error",
+        DiagnosticSeverity::Warning => "Warning",
+        DiagnosticSeverity::Information => "Info",
+        DiagnosticSeverity::Hint => "Hint",
+      };
+      let mut section = format!("### {severity}\n\n{}", diagnostic.message.trim());
+      let mut meta = Vec::new();
+      if let Some(source) = diagnostic.source.as_deref().filter(|value| !value.trim().is_empty()) {
+        meta.push(format!("`{source}`"));
+      }
+      if let Some(code) = diagnostic.code.as_deref().filter(|value| !value.trim().is_empty()) {
+        meta.push(format!("`{code}`"));
+      }
+      if !meta.is_empty() {
+        section.push_str("\n\n");
+        section.push_str(&meta.join(" "));
+      }
+      sections.push(section);
+    }
+
+    Some(sections.join("\n\n---\n\n"))
   }
 
   fn close_docs_panels(&mut self) -> bool {
@@ -2751,16 +2809,24 @@ impl SwiftEditor {
             return true;
           },
         };
-        match hover {
+        let fallback = self.hover_diagnostic_fallback.take();
+        let merged = match hover {
           Some(text) => {
             let trimmed = text.trim();
             if trimmed.is_empty() {
-              self.clear_hover_state();
+              fallback
+            } else if let Some(fallback) = fallback {
+              Some(format!("{}\n\n---\n\n{}", fallback.trim(), trimmed))
             } else {
-              self.hover_docs = Some(trimmed.to_string());
+              Some(trimmed.to_string())
             }
           },
-          None => self.clear_hover_state(),
+          None => fallback,
+        };
+        if let Some(text) = merged.filter(|text| !text.trim().is_empty()) {
+          self.hover_docs = Some(text);
+        } else {
+          self.clear_hover_state();
         }
         true
       },
@@ -3270,6 +3336,7 @@ impl SwiftEditor {
       search_prompt: SearchPromptState::new(),
       signature_help: SignatureHelpState::default(),
       hover_docs: None,
+      hover_diagnostic_fallback: None,
       lsp_code_action_items: Vec::new(),
       lsp_code_action_menu_active: false,
       lsp_completion_items: Vec::new(),
@@ -4198,11 +4265,25 @@ impl DefaultContext for SwiftEditor {
     }
   }
   fn lsp_hover(&mut self) {
+    let diagnostic_fallback = self.current_diagnostic_hover_docs();
     let Some((uri, position)) = self.current_lsp_position() else {
+      if let Some(fallback) = diagnostic_fallback.filter(|text| !text.trim().is_empty()) {
+        self.hover_docs = Some(fallback);
+        return;
+      }
       self.push_warning("lsp", "hover unavailable: no active LSP document");
       return;
     };
     self.clear_hover_state();
+    self.hover_diagnostic_fallback = diagnostic_fallback;
+    if !self.lsp_supports(LspCapability::Hover) {
+      if let Some(fallback) = self.hover_diagnostic_fallback.take() {
+        self.hover_docs = Some(fallback);
+      } else {
+        self.push_warning("lsp", "hover is not supported by the active server");
+      }
+      return;
+    }
     self.dispatch_lsp_request(
       "textDocument/hover",
       hover_params(&uri, position),
@@ -6681,12 +6762,35 @@ fn swift_gutter_config() -> GutterConfig {
     layout: vec![
       GutterSlot::builtin(GutterType::Diff),
       GutterSlot::builtin(GutterType::Spacer),
-      GutterSlot::builtin(GutterType::Diagnostics),
-      GutterSlot::builtin(GutterType::Spacer),
       GutterSlot::builtin(GutterType::LineNumbers),
     ],
     ..GutterConfig::default()
   }
+}
+
+fn diagnostic_sort_key(diagnostic: &Diagnostic) -> (u32, u32, u32, u32, u8, &str, Option<&str>) {
+  (
+    diagnostic.range.start.line,
+    diagnostic.range.start.character,
+    diagnostic.range.end.line,
+    diagnostic.range.end.character,
+    diagnostic_severity_rank(diagnostic.severity.unwrap_or(DiagnosticSeverity::Warning)),
+    diagnostic.message.as_str(),
+    diagnostic.source.as_deref(),
+  )
+}
+
+fn diagnostic_contains_position(diagnostic: &Diagnostic, line: u32, character: u32) -> bool {
+  let start = (diagnostic.range.start.line, diagnostic.range.start.character);
+  let end = (diagnostic.range.end.line, diagnostic.range.end.character);
+  let position = (line, character);
+  if end < start {
+    return position >= end && position <= start;
+  }
+  if start == end {
+    return position.0 == start.0;
+  }
+  position >= start && position < end
 }
 
 fn diagnostic_severity_code(severity: Option<DiagnosticSeverity>) -> u8 {

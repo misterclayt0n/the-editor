@@ -6763,6 +6763,7 @@ fn swift_gutter_config() -> GutterConfig {
       GutterSlot::builtin(GutterType::Diff),
       GutterSlot::builtin(GutterType::Spacer),
       GutterSlot::builtin(GutterType::LineNumbers),
+      GutterSlot::builtin(GutterType::Spacer),
     ],
     ..GutterConfig::default()
   }

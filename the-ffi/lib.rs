@@ -3412,6 +3412,29 @@ impl DefaultContext for SwiftEditor {
   fn completion_menu_mut(&mut self) -> &mut CompletionMenuState { &mut self.completion_menu }
   fn completion_menu_keymaps(&self) -> &Keymaps { &self.completion_menu_keymaps }
   fn completion_menu_keymaps_mut(&mut self) -> &mut Keymaps { &mut self.completion_menu_keymaps }
+  fn completion_on_action(&mut self, command: Command) -> bool {
+    if self.mode != Mode::Insert {
+      return false;
+    }
+
+    matches!(
+      command,
+      Command::InsertChar(_)
+        | Command::DeleteChar
+        | Command::DeleteCharForward { .. }
+        | Command::DeleteWordBackward { .. }
+        | Command::DeleteWordForward { .. }
+        | Command::KillToLineStart
+        | Command::KillToLineEnd
+        | Command::LspCompletion
+        | Command::CompletionNext
+        | Command::CompletionPrev
+        | Command::CompletionAccept
+        | Command::CompletionCancel
+        | Command::CompletionDocsScrollUp
+        | Command::CompletionDocsScrollDown
+    )
+  }
   fn completion_accept_selected(&mut self, index: usize) -> bool { self.apply_selected_completion(index) }
   fn completion_selection_changed(&mut self, index: usize) {
     self.resolve_completion_item_if_needed(index);

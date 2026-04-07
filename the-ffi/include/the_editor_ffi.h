@@ -195,6 +195,9 @@ typedef struct the_editor_snapshot_pane_t {
   uint16_t width;
   uint16_t height;
   uint16_t content_offset_x;
+  uint32_t scroll_row;
+  uint16_t viewport_rows;
+  uint32_t document_line_count;
   bool is_active;
 } the_editor_snapshot_pane_t;
 

@@ -188,6 +188,9 @@ struct EditorSnapshotPane: Hashable, Identifiable {
     let width: Int
     let height: Int
     let contentOffsetX: Int
+    let scrollRow: Int
+    let viewportRows: Int
+    let documentLineCount: Int
     let isActive: Bool
 
     var id: UInt { paneID }
@@ -921,6 +924,9 @@ enum EditorFFIBridge {
                 width: Int(paneValue.width),
                 height: Int(paneValue.height),
                 contentOffsetX: Int(paneValue.content_offset_x),
+                scrollRow: Int(paneValue.scroll_row),
+                viewportRows: Int(paneValue.viewport_rows),
+                documentLineCount: Int(paneValue.document_line_count),
                 isActive: paneValue.is_active
             )
         }

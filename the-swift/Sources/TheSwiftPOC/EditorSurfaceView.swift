@@ -17,6 +17,11 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
         let splitID: UInt
     }
 
+    private struct ScrollbarDragState {
+        let paneID: UInt
+        let thumbOffsetY: CGFloat
+    }
+
     var cellSize: CGSize {
         controller?.scene?.info.surfaceMetrics.cellSizePoints ?? fallbackCellSize
     }
@@ -24,6 +29,7 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
     private var pendingScrollRows: CGFloat = 0
     private var pendingScrollCols: CGFloat = 0
     private var splitDrag: SplitDragState?
+    private var scrollbarDrag: ScrollbarDragState?
 
     override var acceptsFirstResponder: Bool { true }
     override var isFlipped: Bool { true }
@@ -130,6 +136,11 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
             let cursor: NSCursor = separator.axis == .vertical ? .resizeLeftRight : .resizeUpDown
             addCursorRect(rect, cursor: cursor)
         }
+
+        for pane in scene.panes {
+            guard let geometry = scrollbarGeometry(for: pane, cellSize: scene.info.surfaceMetrics.cellSizePoints) else { continue }
+            addCursorRect(geometry.trackRect.insetBy(dx: -2, dy: 0), cursor: .arrow)
+        }
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -137,6 +148,17 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
         let point = convert(event.locationInWindow, from: nil)
         if let separator = separator(at: point) {
             splitDrag = SplitDragState(splitID: separator.splitID)
+            return
+        }
+        if let geometry = scrollbarGeometry(at: point) {
+            if !geometry.pane.isActive {
+                controller?.setActivePane(geometry.pane.paneID)
+            }
+            let thumbOffsetY = geometry.thumbRect.contains(point)
+                ? point.y - geometry.thumbRect.minY
+                : geometry.thumbRect.height * 0.5
+            scrollbarDrag = ScrollbarDragState(paneID: geometry.pane.paneID, thumbOffsetY: thumbOffsetY)
+            updateScrollPosition(for: geometry.pane.paneID, pointerY: point.y, thumbOffsetY: thumbOffsetY)
             return
         }
         activatePaneIfNeeded(at: point)
@@ -206,17 +228,23 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
     }
 
     override func mouseDragged(with event: NSEvent) {
-        guard let drag = splitDrag, let controller, let scene = controller.scene else {
-            super.mouseDragged(with: event)
+        if let drag = splitDrag, let controller, let scene = controller.scene {
+            let point = convert(event.locationInWindow, from: nil)
+            let coords = clampedCellCoordinates(for: point, scene: scene)
+            controller.resizeSplit(drag.splitID, x: coords.x, y: coords.y)
             return
         }
-        let point = convert(event.locationInWindow, from: nil)
-        let coords = clampedCellCoordinates(for: point, scene: scene)
-        controller.resizeSplit(drag.splitID, x: coords.x, y: coords.y)
+        if let drag = scrollbarDrag {
+            let point = convert(event.locationInWindow, from: nil)
+            updateScrollPosition(for: drag.paneID, pointerY: point.y, thumbOffsetY: drag.thumbOffsetY)
+            return
+        }
+        super.mouseDragged(with: event)
     }
 
     override func mouseUp(with event: NSEvent) {
         splitDrag = nil
+        scrollbarDrag = nil
         super.mouseUp(with: event)
     }
 
@@ -353,6 +381,45 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
         return scene.panes.first(where: { rect(for: $0, cellSize: metrics).contains(point) })
     }
 
+    private func scrollbarGeometry(
+        for pane: EditorSnapshotPane,
+        cellSize: CGSize
+    ) -> (pane: EditorSnapshotPane, trackRect: CGRect, thumbRect: CGRect, maxScrollRow: Int)? {
+        guard pane.kind == .editorBuffer else { return nil }
+        let visibleRows = max(pane.viewportRows, 1)
+        let totalRows = max(pane.documentLineCount, visibleRows)
+        let maxScrollRow = max(totalRows - visibleRows, 0)
+        guard maxScrollRow > 0 else { return nil }
+
+        let paneRect = rect(for: pane, cellSize: cellSize)
+        let trackWidth = min(max(floor(cellSize.width * 0.55), 6), 8)
+        let inset = max(2, floor(cellSize.width * 0.18))
+        let trackRect = CGRect(
+            x: paneRect.maxX - inset - trackWidth,
+            y: paneRect.minY + inset,
+            width: trackWidth,
+            height: max(paneRect.height - inset * 2, trackWidth)
+        )
+        let thumbHeight = max(trackWidth * 2, floor(trackRect.height * (CGFloat(visibleRows) / CGFloat(totalRows))))
+        let travel = max(trackRect.height - thumbHeight, 0)
+        let progress = CGFloat(min(max(pane.scrollRow, 0), maxScrollRow)) / CGFloat(maxScrollRow)
+        let thumbRect = CGRect(
+            x: trackRect.minX,
+            y: trackRect.minY + progress * travel,
+            width: trackRect.width,
+            height: thumbHeight
+        )
+        return (pane, trackRect, thumbRect, maxScrollRow)
+    }
+
+    private func scrollbarGeometry(at point: CGPoint) -> (pane: EditorSnapshotPane, trackRect: CGRect, thumbRect: CGRect, maxScrollRow: Int)? {
+        guard let scene = controller?.scene else { return nil }
+        let metrics = scene.info.surfaceMetrics.cellSizePoints
+        return scene.panes.compactMap { scrollbarGeometry(for: $0, cellSize: metrics) }.first(where: {
+            $0.thumbRect.insetBy(dx: -3, dy: 0).contains(point) || $0.trackRect.contains(point)
+        })
+    }
+
     private func separator(at point: CGPoint) -> EditorSnapshotSeparator? {
         guard let scene = controller?.scene else { return nil }
         let metrics = scene.info.surfaceMetrics.cellSizePoints
@@ -362,6 +429,28 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
     private func activatePaneIfNeeded(at point: CGPoint) {
         guard let controller, let pane = pane(at: point), !pane.isActive else { return }
         controller.setActivePane(pane.paneID)
+    }
+
+    private func updateScrollPosition(for paneID: UInt, pointerY: CGFloat, thumbOffsetY: CGFloat) {
+        guard let controller, let scene = controller.scene else { return }
+        let metrics = scene.info.surfaceMetrics.cellSizePoints
+        guard let geometry = scene.panes.compactMap({ scrollbarGeometry(for: $0, cellSize: metrics) }).first(where: { $0.pane.paneID == paneID }) else {
+            return
+        }
+        if !geometry.pane.isActive {
+            controller.setActivePane(paneID)
+        }
+        let availableTravel = max(geometry.trackRect.height - geometry.thumbRect.height, 0)
+        guard availableTravel > 0 else {
+            controller.setScrollRow(0)
+            return
+        }
+        let thumbMinY = geometry.trackRect.minY
+        let thumbMaxY = geometry.trackRect.maxY - geometry.thumbRect.height
+        let thumbY = min(max(pointerY - thumbOffsetY, thumbMinY), thumbMaxY)
+        let progress = (thumbY - thumbMinY) / availableTravel
+        let row = Int((progress * CGFloat(geometry.maxScrollRow)).rounded())
+        controller.setScrollRow(row)
     }
 
     private func clampedCellCoordinates(for point: CGPoint, scene: EditorRenderScene) -> (x: Int, y: Int) {

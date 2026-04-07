@@ -171,6 +171,7 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
         drawDiagnosticUnderlines(scene, in: context, cellSize: cellSize, viewportHeight: view.bounds.height)
         drawInactivePaneOverlays(scene, in: context, cellSize: cellSize, viewportHeight: view.bounds.height)
         drawPaneSeparators(scene, in: context, cellSize: cellSize, viewportHeight: view.bounds.height)
+        drawPaneScrollbars(scene, in: context, cellSize: cellSize, viewportHeight: view.bounds.height)
 
         if let markedText = scene.markedText {
             drawMarkedText(
@@ -417,6 +418,66 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
             context.strokePath()
         }
         context.restoreGState()
+    }
+
+    private func drawPaneScrollbars(
+        _ scene: EditorRenderScene,
+        in context: CGContext,
+        cellSize: CGSize,
+        viewportHeight: CGFloat
+    ) {
+        context.saveGState()
+        for pane in scene.panes {
+            guard let geometry = paneScrollbarGeometry(for: pane, cellSize: cellSize) else { continue }
+            let thumbRect = contextRect(fromTopLeftRect: geometry.thumbRect, viewportHeight: viewportHeight)
+            let thumbPath = CGPath(
+                roundedRect: thumbRect,
+                cornerWidth: thumbRect.width * 0.5,
+                cornerHeight: thumbRect.width * 0.5,
+                transform: nil
+            )
+            context.addPath(thumbPath)
+            context.setFillColor(NSColor.labelColor.withAlphaComponent(pane.isActive ? 0.42 : 0.26).cgColor)
+            context.fillPath()
+        }
+        context.restoreGState()
+    }
+
+    private func paneScrollbarGeometry(for pane: EditorSnapshotPane, cellSize: CGSize) -> (trackRect: CGRect, thumbRect: CGRect)? {
+        guard pane.kind == .editorBuffer else { return nil }
+        let visibleRows = max(pane.viewportRows, 1)
+        let totalRows = max(pane.documentLineCount, visibleRows)
+        let maxScrollRow = max(totalRows - visibleRows, 0)
+        guard maxScrollRow > 0 else { return nil }
+
+        let paneRect = CGRect(
+            x: CGFloat(pane.x) * cellSize.width,
+            y: CGFloat(pane.y) * cellSize.height,
+            width: CGFloat(pane.width) * cellSize.width,
+            height: CGFloat(pane.height) * cellSize.height
+        )
+        let trackWidth = min(max(floor(cellSize.width * 0.55), 6), 8)
+        let inset = max(2, floor(cellSize.width * 0.18))
+        let trackRect = CGRect(
+            x: paneRect.maxX - inset - trackWidth,
+            y: paneRect.minY + inset,
+            width: trackWidth,
+            height: max(paneRect.height - inset * 2, trackWidth)
+        )
+        let thumbHeight = max(trackWidth * 2, floor(trackRect.height * (CGFloat(visibleRows) / CGFloat(totalRows))))
+        let travel = max(trackRect.height - thumbHeight, 0)
+        let progress = CGFloat(min(max(pane.scrollRow, 0), maxScrollRow)) / CGFloat(maxScrollRow)
+        let thumbRect = CGRect(
+            x: trackRect.minX,
+            y: trackRect.minY + progress * travel,
+            width: trackRect.width,
+            height: thumbHeight
+        )
+        return (trackRect, thumbRect)
+    }
+
+    private func contextRect(fromTopLeftRect rect: CGRect, viewportHeight: CGFloat) -> CGRect {
+        CGRect(x: rect.minX, y: viewportHeight - rect.maxY, width: rect.width, height: rect.height)
     }
 
     private func drawCursor(

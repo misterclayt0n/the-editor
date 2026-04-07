@@ -409,14 +409,17 @@ pub struct the_editor_snapshot_info_t {
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 pub struct the_editor_snapshot_pane_t {
-  pub pane_id:          usize,
-  pub kind:             u8,
-  pub x:                u16,
-  pub y:                u16,
-  pub width:            u16,
-  pub height:           u16,
-  pub content_offset_x: u16,
-  pub is_active:        bool,
+  pub pane_id:             usize,
+  pub kind:                u8,
+  pub x:                   u16,
+  pub y:                   u16,
+  pub width:               u16,
+  pub height:              u16,
+  pub content_offset_x:    u16,
+  pub scroll_row:          u32,
+  pub viewport_rows:       u16,
+  pub document_line_count: u32,
+  pub is_active:           bool,
 }
 
 #[repr(C)]
@@ -4406,9 +4409,7 @@ impl SwiftEditor {
     let surface = SurfaceConfig::from_ffi(config);
     let cols = surface.viewport_cols();
     let rows = surface.viewport_rows();
-    let changed = self.surface.width_px != surface.width_px
-      || self.surface.height_px != surface.height_px
-      || self.surface.metrics.backing_scale != surface.metrics.backing_scale
+    let changed = self.surface.metrics.backing_scale != surface.metrics.backing_scale
       || self.surface.metrics.cell_width_px != surface.metrics.cell_width_px
       || self.surface.metrics.cell_height_px != surface.metrics.cell_height_px
       || self.surface.metrics.cell_baseline_px != surface.metrics.cell_baseline_px
@@ -4418,11 +4419,13 @@ impl SwiftEditor {
       || self.editor.view().viewport.width != cols
       || self.editor.view().viewport.height != rows;
     self.surface = surface;
-    let viewport = Rect::new(0, 0, cols, rows);
-    self.editor.set_layout_viewport(viewport);
-    self.editor.view_mut().viewport = viewport;
-    self.sync_text_viewport_width();
-    self.clamp_scroll();
+    if changed {
+      let viewport = Rect::new(0, 0, cols, rows);
+      self.editor.set_layout_viewport(viewport);
+      self.editor.view_mut().viewport = viewport;
+      self.sync_text_viewport_width();
+      self.clamp_scroll();
+    }
     changed
   }
 
@@ -6181,15 +6184,26 @@ impl OwnedSnapshot {
     snapshot.panes = frame
       .panes
       .iter()
-      .map(|pane| the_editor_snapshot_pane_t {
-        pane_id: pane.pane_id.get().get(),
-        kind: pane_content_kind_code(pane.pane_kind),
-        x: pane.rect.x,
-        y: pane.rect.y,
-        width: pane.rect.width,
-        height: pane.rect.height,
-        content_offset_x: pane.plan.content_offset_x,
-        is_active: pane.pane_id == frame.active_pane,
+      .map(|pane| {
+        let document_line_count = editor
+          .editor
+          .pane_buffer_id(pane.pane_id)
+          .and_then(|buffer_id| editor.editor.document_for_buffer(buffer_id))
+          .map(|document| document.text().len_lines() as u32)
+          .unwrap_or(0);
+        the_editor_snapshot_pane_t {
+          pane_id: pane.pane_id.get().get(),
+          kind: pane_content_kind_code(pane.pane_kind),
+          x: pane.rect.x,
+          y: pane.rect.y,
+          width: pane.rect.width,
+          height: pane.rect.height,
+          content_offset_x: pane.plan.content_offset_x,
+          scroll_row: pane.plan.scroll.row as u32,
+          viewport_rows: pane.plan.viewport.height,
+          document_line_count,
+          is_active: pane.pane_id == frame.active_pane,
+        }
       })
       .collect();
     snapshot.separators = editor

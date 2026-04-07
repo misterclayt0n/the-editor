@@ -1,5 +1,8 @@
 use std::{
-  collections::BTreeSet,
+  collections::{
+    BTreeMap,
+    BTreeSet,
+  },
   env,
   ffi::OsString,
   fs::{
@@ -19,6 +22,10 @@ use std::{
 };
 
 use the_lib::{
+  diagnostics::{
+    DiagnosticSeverity,
+    DiagnosticsState,
+  },
   editor::{
     ClientSurfaceId,
     OpenTarget,
@@ -30,6 +37,8 @@ use the_lib::{
   },
   view::scroll_row_to_keep_visible,
 };
+use the_lsp::text_sync::path_for_file_uri;
+use the_vcs::FileChange;
 
 use crate::{
   CommandBuilder,
@@ -43,6 +52,21 @@ use crate::{
   file_picker_icon_name_for_path,
   open_command_palette_with_input,
 };
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum FileTreeVcsKind {
+  Conflict,
+  Deleted,
+  Modified,
+  Renamed,
+  Untracked,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct FileTreeDecorations {
+  pub vcs:        Option<FileTreeVcsKind>,
+  pub diagnostic: Option<DiagnosticSeverity>,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileTreeRow {
@@ -1222,6 +1246,134 @@ fn rebuild_rows<Ctx: DefaultContext>(ctx: &mut Ctx) {
   }
 }
 
+pub fn collapse_file_tree_vcs_statuses(
+  changes: &[FileChange],
+  root: &Path,
+) -> BTreeMap<PathBuf, FileTreeVcsKind> {
+  let mut statuses = BTreeMap::new();
+  for change in changes {
+    let (path, kind) = match change {
+      FileChange::Untracked { path } => (path.as_path(), FileTreeVcsKind::Untracked),
+      FileChange::Modified { path } => (path.as_path(), FileTreeVcsKind::Modified),
+      FileChange::Conflict { path } => (path.as_path(), FileTreeVcsKind::Conflict),
+      FileChange::Deleted { path } => (path.as_path(), FileTreeVcsKind::Deleted),
+      FileChange::Renamed { to_path, .. } => (to_path.as_path(), FileTreeVcsKind::Renamed),
+    };
+    if !path.starts_with(root) {
+      continue;
+    }
+    apply_tree_hierarchy_status(&mut statuses, path, root, kind, choose_vcs_status);
+  }
+
+  statuses
+}
+
+pub fn rebuild_file_tree_diagnostic_statuses(
+  diagnostics: &DiagnosticsState,
+  root: &Path,
+) -> BTreeMap<PathBuf, DiagnosticSeverity> {
+  let mut statuses = BTreeMap::new();
+  for document in diagnostics.documents() {
+    let Some(path) = path_for_file_uri(&document.uri) else {
+      continue;
+    };
+    if !path.starts_with(root) {
+      continue;
+    }
+    let Some(severity) = document
+      .diagnostics
+      .iter()
+      .filter_map(|diagnostic| diagnostic.severity)
+      .max_by_key(|severity| file_tree_diagnostic_rank(*severity))
+    else {
+      continue;
+    };
+    apply_tree_hierarchy_status(
+      &mut statuses,
+      &path,
+      root,
+      severity,
+      choose_diagnostic_severity,
+    );
+  }
+  statuses
+}
+
+pub fn combine_file_tree_decorations(
+  vcs_statuses: &BTreeMap<PathBuf, FileTreeVcsKind>,
+  diagnostic_statuses: &BTreeMap<PathBuf, DiagnosticSeverity>,
+) -> BTreeMap<PathBuf, FileTreeDecorations> {
+  let mut decorations: BTreeMap<PathBuf, FileTreeDecorations> = BTreeMap::new();
+  for (path, &vcs) in vcs_statuses {
+    decorations.entry(path.clone()).or_default().vcs = Some(vcs);
+  }
+  for (path, &diagnostic) in diagnostic_statuses {
+    decorations.entry(path.clone()).or_default().diagnostic = Some(diagnostic);
+  }
+  decorations
+}
+
+fn apply_tree_hierarchy_status<T: Copy>(
+  statuses: &mut BTreeMap<PathBuf, T>,
+  path: &Path,
+  root: &Path,
+  value: T,
+  choose: fn(T, T) -> T,
+) {
+  let mut current = Some(path.to_path_buf());
+  while let Some(candidate) = current {
+    if !candidate.starts_with(root) {
+      break;
+    }
+    statuses
+      .entry(candidate.clone())
+      .and_modify(|existing| *existing = choose(*existing, value))
+      .or_insert(value);
+    if candidate == root {
+      break;
+    }
+    current = candidate.parent().map(Path::to_path_buf);
+  }
+}
+
+fn choose_vcs_status(left: FileTreeVcsKind, right: FileTreeVcsKind) -> FileTreeVcsKind {
+  if file_tree_vcs_rank(left) >= file_tree_vcs_rank(right) {
+    left
+  } else {
+    right
+  }
+}
+
+fn choose_diagnostic_severity(
+  left: DiagnosticSeverity,
+  right: DiagnosticSeverity,
+) -> DiagnosticSeverity {
+  if file_tree_diagnostic_rank(left) >= file_tree_diagnostic_rank(right) {
+    left
+  } else {
+    right
+  }
+}
+
+fn file_tree_vcs_rank(kind: FileTreeVcsKind) -> u8 {
+  match kind {
+    FileTreeVcsKind::Conflict => 5,
+    FileTreeVcsKind::Deleted => 4,
+    FileTreeVcsKind::Modified => 3,
+    FileTreeVcsKind::Renamed => 2,
+    FileTreeVcsKind::Untracked => 1,
+  }
+}
+
+fn file_tree_diagnostic_rank(severity: DiagnosticSeverity) -> u8 {
+  match severity {
+    DiagnosticSeverity::Error => 4,
+    DiagnosticSeverity::Warning => 3,
+    DiagnosticSeverity::Information => 2,
+    DiagnosticSeverity::Hint => 1,
+  }
+}
+
 fn paste_clipboard<Ctx: DefaultContext>(ctx: &mut Ctx) -> Result<(), String> {
   let clipboard = ctx
     .file_tree()
@@ -1647,6 +1799,13 @@ mod tests {
     },
   };
 
+  use the_lib::diagnostics::{
+    Diagnostic,
+    DiagnosticPosition,
+    DiagnosticRange,
+    DocumentDiagnostics,
+  };
+
   use super::*;
 
   fn row(name: &str) -> FileTreeRow {
@@ -1765,6 +1924,88 @@ mod tests {
       target.file_name().and_then(|name| name.to_str()),
       Some("file copy.txt")
     );
+
+    fs::remove_dir_all(&root).expect("cleanup");
+  }
+
+  #[test]
+  fn collapse_file_tree_vcs_statuses_aggregate_to_parent_directories() {
+    let root = PathBuf::from("/workspace");
+    let nested = root.join("src/lib.rs");
+    let statuses = collapse_file_tree_vcs_statuses(
+      &[FileChange::Modified {
+        path: nested.clone(),
+      }],
+      &root,
+    );
+
+    assert_eq!(statuses.get(&nested), Some(&FileTreeVcsKind::Modified));
+    assert_eq!(statuses.get(&root.join("src")), Some(&FileTreeVcsKind::Modified));
+    assert_eq!(statuses.get(&root), Some(&FileTreeVcsKind::Modified));
+  }
+
+  #[test]
+  fn combine_file_tree_decorations_keeps_vcs_and_diagnostics() {
+    let root = PathBuf::from("/workspace");
+    let path = root.join("src/lib.rs");
+    let mut vcs = BTreeMap::new();
+    vcs.insert(path.clone(), FileTreeVcsKind::Renamed);
+    let mut diagnostics = BTreeMap::new();
+    diagnostics.insert(path.clone(), DiagnosticSeverity::Warning);
+
+    let decorations = combine_file_tree_decorations(&vcs, &diagnostics);
+
+    assert_eq!(
+      decorations.get(&path),
+      Some(&FileTreeDecorations {
+        vcs: Some(FileTreeVcsKind::Renamed),
+        diagnostic: Some(DiagnosticSeverity::Warning),
+      })
+    );
+  }
+
+  #[test]
+  fn rebuild_file_tree_diagnostic_statuses_aggregate_to_parent_directories() {
+    let unique = SystemTime::now()
+      .duration_since(UNIX_EPOCH)
+      .expect("system time")
+      .as_nanos();
+    let root = std::env::temp_dir().join(format!("the-editor-file-tree-diagnostics-{unique}"));
+    let file = root.join("src/main.rs");
+    fs::create_dir_all(file.parent().expect("parent dir")).expect("create root");
+    fs::write(&file, "fn main() {}\n").expect("write file");
+
+    let uri = the_lsp::text_sync::file_uri_for_path(&file).expect("file uri");
+    let mut diagnostics = DiagnosticsState::default();
+    diagnostics.apply_document(DocumentDiagnostics {
+      uri,
+      version: None,
+      diagnostics: vec![Diagnostic {
+        range: DiagnosticRange {
+          start: DiagnosticPosition {
+            line: 0,
+            character: 0,
+          },
+          end: DiagnosticPosition {
+            line: 0,
+            character: 2,
+          },
+        },
+        severity: Some(DiagnosticSeverity::Error),
+        code: None,
+        source: Some("test".to_string()),
+        message: "boom".to_string(),
+      }],
+    });
+
+    let statuses = rebuild_file_tree_diagnostic_statuses(&diagnostics, &root);
+
+    assert_eq!(statuses.get(&file), Some(&DiagnosticSeverity::Error));
+    assert_eq!(
+      statuses.get(&root.join("src")),
+      Some(&DiagnosticSeverity::Error)
+    );
+    assert_eq!(statuses.get(&root), Some(&DiagnosticSeverity::Error));
 
     fs::remove_dir_all(&root).expect("cleanup");
   }

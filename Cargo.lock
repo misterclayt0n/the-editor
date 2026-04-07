@@ -1591,6 +1591,7 @@ dependencies = [
  "the-loader",
  "the-lsp",
  "the-stdx",
+ "the-vcs",
  "toml",
  "tracing",
 ]

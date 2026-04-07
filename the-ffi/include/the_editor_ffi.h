@@ -160,6 +160,7 @@ typedef struct the_editor_snapshot_info_t {
   struct the_editor_surface_metrics_t surface_metrics;
   struct the_editor_rgba_t background_color;
   struct the_editor_rgba_t gutter_background_color;
+  struct the_editor_rgba_t selection_color;
   uint16_t viewport_width;
   uint16_t viewport_height;
   uint16_t content_offset_x;
@@ -401,6 +402,28 @@ typedef struct the_editor_snapshot_file_picker_preview_line_t {
   uintptr_t segment_count;
 } the_editor_snapshot_file_picker_preview_line_t;
 
+typedef struct the_editor_snapshot_file_tree_t {
+  bool visible;
+  uintptr_t pane_id;
+  const char *root;
+  int32_t selected_index;
+  uintptr_t scroll_offset;
+  uintptr_t row_count;
+} the_editor_snapshot_file_tree_t;
+
+typedef struct the_editor_snapshot_file_tree_row_t {
+  const char *path;
+  const char *display_name;
+  const char *icon_name;
+  const char *icon_glyph;
+  uint16_t depth;
+  bool has_children;
+  bool is_dir;
+  bool is_expanded;
+  bool is_current_file;
+  bool is_selected;
+} the_editor_snapshot_file_tree_row_t;
+
 typedef struct the_editor_snapshot_file_picker_preview_segment_t {
   const char *text;
   struct the_editor_style_t style;
@@ -477,6 +500,12 @@ bool the_editor_file_picker_set_list_offset(the_editor_handle_t *handle, uintptr
 bool the_editor_file_picker_set_preview_offset(the_editor_handle_t *handle, uintptr_t offset, uintptr_t visible_rows);
 bool the_editor_file_picker_select_index(the_editor_handle_t *handle, uintptr_t index);
 bool the_editor_file_picker_submit(the_editor_handle_t *handle);
+bool the_editor_file_tree_select_index(the_editor_handle_t *handle, uintptr_t index);
+bool the_editor_file_tree_click_index(the_editor_handle_t *handle, uintptr_t index);
+bool the_editor_file_tree_activate_index(the_editor_handle_t *handle, uintptr_t index);
+bool the_editor_file_tree_set_visible_rows(the_editor_handle_t *handle, uintptr_t visible_rows);
+bool the_editor_file_tree_set_active(the_editor_handle_t *handle, bool active);
+bool the_editor_toggle_file_tree(the_editor_handle_t *handle);
 bool the_editor_insert_text(the_editor_handle_t *handle, const char *text);
 uint32_t the_editor_primary_selection_utf16_location(the_editor_handle_t *handle);
 uint32_t the_editor_primary_selection_utf16_length(the_editor_handle_t *handle);
@@ -506,6 +535,8 @@ struct the_editor_snapshot_diagnostic_t the_editor_snapshot_diagnostic_at(const 
 uintptr_t the_editor_snapshot_diagnostic_underline_count(const the_editor_snapshot_t *snapshot);
 struct the_editor_snapshot_diagnostic_underline_t the_editor_snapshot_diagnostic_underline_at(const the_editor_snapshot_t *snapshot, uintptr_t underline_index);
 struct the_editor_snapshot_file_picker_t the_editor_snapshot_file_picker(const the_editor_snapshot_t *snapshot);
+struct the_editor_snapshot_file_tree_t the_editor_snapshot_file_tree(const the_editor_snapshot_t *snapshot);
+struct the_editor_snapshot_file_tree_row_t the_editor_snapshot_file_tree_row_at(const the_editor_snapshot_t *snapshot, uintptr_t row_index);
 struct the_editor_snapshot_file_picker_item_t the_editor_snapshot_file_picker_item_at(const the_editor_snapshot_t *snapshot, uintptr_t item_index);
 struct the_editor_snapshot_file_picker_preview_line_t the_editor_snapshot_file_picker_preview_line_at(const the_editor_snapshot_t *snapshot, uintptr_t line_index);
 struct the_editor_snapshot_file_picker_preview_segment_t the_editor_snapshot_file_picker_preview_segment_at(const the_editor_snapshot_t *snapshot, uintptr_t line_index, uintptr_t segment_index);

@@ -29,6 +29,7 @@ final class EditorSurfaceController: ObservableObject {
     private(set) var completionDocs: EditorDocsPanelState = .empty
     private(set) var signatureHelp: EditorDocsPanelState = .empty
     private(set) var filePicker: EditorFilePickerState = .empty
+    private(set) var fileTree: EditorFileTreeState = .empty
     @Published private(set) var showsResizeOverlay = false
 
     private var surfaceConfiguration: EditorSurfaceConfiguration?
@@ -36,7 +37,14 @@ final class EditorSurfaceController: ObservableObject {
     private var backgroundPollCancellable: AnyCancellable?
     private var filePickerListVisibleRows: Int = 1
     private var filePickerPreviewVisibleRows: Int = 1
+    private var fileTreeVisibleRows: Int = 1
     private var resizeOverlayHideTask: Task<Void, Never>?
+    private var interactiveResizeReasons: Set<String> = []
+    private var pendingSurfaceConfiguration: EditorSurfaceConfiguration?
+    private var surfaceConfigureFlushTask: Task<Void, Never>?
+    private var lastSurfaceConfigureAt: CFAbsoluteTime = 0
+
+    private let interactiveResizeMinInterval: CFTimeInterval = 1.0 / 30.0
 
     init(initialPath: String?) {
         self.handle = EditorFFIBridge.createHandle(initialPath: initialPath).map(EditorHandleBox.init(raw:))
@@ -46,17 +54,133 @@ final class EditorSurfaceController: ObservableObject {
 
     deinit {
         resizeOverlayHideTask?.cancel()
+        surfaceConfigureFlushTask?.cancel()
         EditorFFIBridge.destroyHandle(handle?.raw)
+    }
+
+    var isInteractiveResizeActive: Bool {
+        !interactiveResizeReasons.isEmpty
     }
 
     @discardableResult
     func configureSurface(size: CGSize, backingScale: CGFloat, fontMetrics: EditorFontMetrics) -> Bool {
+        let previousConfiguration = surfaceConfiguration
         let configuration = fontMetrics.surfaceConfiguration(viewSize: size, backingScale: backingScale)
         guard configuration != surfaceConfiguration else { return false }
+        let sizeText = String(format: "%.1fx%.1f", size.width, size.height)
+        let scaleText = String(format: "%.2f", backingScale)
+        let oldPxText = previousConfiguration.map { "\($0.widthPx)x\($0.heightPx)" } ?? "nil"
+        let newPxText = "\(configuration.widthPx)x\(configuration.heightPx)"
+        let cellPxText = "\(configuration.metrics.cellWidthPx)x\(configuration.metrics.cellHeightPx)"
+        let reasons = interactiveResizeReasons.sorted()
+        let reasonText = reasons.joined(separator: ",")
+        let now = CFAbsoluteTimeGetCurrent()
+        let elapsed = now - lastSurfaceConfigureAt
+        let sidebarResizeActive = interactiveResizeReasons.contains("sidebar")
+
+        if sidebarResizeActive {
+            pendingSurfaceConfiguration = configuration
+            surfaceConfigureFlushTask?.cancel()
+            surfaceConfigureFlushTask = nil
+            let elapsedMsText = String(format: "%.2f", elapsed * 1000)
+            scrollPerfLog(
+                "controller.configureSurface deferred-sidebar reasons=\(reasonText) size=\(sizeText) backingScale=\(scaleText) oldPx=\(oldPxText) newPx=\(newPxText) cellPx=\(cellPxText) elapsedMs=\(elapsedMsText)"
+            )
+            return false
+        }
+
+        if isInteractiveResizeActive && elapsed < interactiveResizeMinInterval {
+            pendingSurfaceConfiguration = configuration
+            schedulePendingSurfaceConfigurationFlush(after: interactiveResizeMinInterval - elapsed)
+            let elapsedMsText = String(format: "%.2f", elapsed * 1000)
+            scrollPerfLog(
+                "controller.configureSurface deferred reasons=\(reasonText) size=\(sizeText) backingScale=\(scaleText) oldPx=\(oldPxText) newPx=\(newPxText) cellPx=\(cellPxText) elapsedMs=\(elapsedMsText)"
+            )
+            return false
+        }
+
+        return applySurfaceConfiguration(
+            configuration,
+            sizeText: sizeText,
+            scaleText: scaleText,
+            oldPxText: oldPxText,
+            newPxText: newPxText,
+            cellPxText: cellPxText,
+            reasonText: reasonText,
+            source: "immediate"
+        )
+    }
+
+    func beginInteractiveResize(reason: String) {
+        let inserted = interactiveResizeReasons.insert(reason).inserted
+        guard inserted else { return }
+        scrollPerfLog("controller.interactiveResize begin reason=\(reason) active=\(interactiveResizeReasons.sorted())")
+    }
+
+    func endInteractiveResize(reason: String) {
+        let removed = interactiveResizeReasons.remove(reason) != nil
+        guard removed else { return }
+        scrollPerfLog("controller.interactiveResize end reason=\(reason) active=\(interactiveResizeReasons.sorted())")
+        if !isInteractiveResizeActive {
+            flushPendingSurfaceConfiguration(source: "interactive-end")
+        }
+    }
+
+    @discardableResult
+    private func applySurfaceConfiguration(
+        _ configuration: EditorSurfaceConfiguration,
+        sizeText: String,
+        scaleText: String,
+        oldPxText: String,
+        newPxText: String,
+        cellPxText: String,
+        reasonText: String,
+        source: String
+    ) -> Bool {
+        pendingSurfaceConfiguration = nil
+        surfaceConfigureFlushTask?.cancel()
+        surfaceConfigureFlushTask = nil
         surfaceConfiguration = configuration
+        lastSurfaceConfigureAt = CFAbsoluteTimeGetCurrent()
+        scrollPerfLog(
+            "controller.configureSurface apply source=\(source) reasons=\(reasonText) size=\(sizeText) backingScale=\(scaleText) oldPx=\(oldPxText) newPx=\(newPxText) cellPx=\(cellPxText)"
+        )
         guard EditorFFIBridge.configureSurface(handle?.raw, configuration: configuration) else { return false }
         refreshSnapshot()
         return true
+    }
+
+    private func schedulePendingSurfaceConfigurationFlush(after delay: CFTimeInterval) {
+        guard delay.isFinite, delay > 0 else {
+            flushPendingSurfaceConfiguration(source: "scheduled-immediate")
+            return
+        }
+        surfaceConfigureFlushTask?.cancel()
+        surfaceConfigureFlushTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(delay))
+            guard let self else { return }
+            self.flushPendingSurfaceConfiguration(source: "scheduled")
+        }
+    }
+
+    private func flushPendingSurfaceConfiguration(source: String) {
+        guard let configuration = pendingSurfaceConfiguration else { return }
+        let oldPxText = surfaceConfiguration.map { "\($0.widthPx)x\($0.heightPx)" } ?? "nil"
+        let newPxText = "\(configuration.widthPx)x\(configuration.heightPx)"
+        let cellPxText = "\(configuration.metrics.cellWidthPx)x\(configuration.metrics.cellHeightPx)"
+        let reasonText = interactiveResizeReasons.sorted().joined(separator: ",")
+        let sizeText = "deferred"
+        let scaleText = "deferred"
+        _ = applySurfaceConfiguration(
+            configuration,
+            sizeText: sizeText,
+            scaleText: scaleText,
+            oldPxText: oldPxText,
+            newPxText: newPxText,
+            cellPxText: cellPxText,
+            reasonText: reasonText,
+            source: source
+        )
     }
 
     func setScrollRow(_ row: Int) {
@@ -70,7 +194,9 @@ final class EditorSurfaceController: ObservableObject {
     }
 
     func setActivePane(_ paneID: UInt) {
-        guard EditorFFIBridge.setActivePane(handle?.raw, paneID: paneID) else { return }
+        var changed = EditorFFIBridge.setFileTreeActive(handle?.raw, active: false)
+        changed = EditorFFIBridge.setActivePane(handle?.raw, paneID: paneID) || changed
+        guard changed else { return }
         refreshSnapshot()
     }
 
@@ -258,6 +384,39 @@ final class EditorSurfaceController: ObservableObject {
         refreshSnapshot()
     }
 
+    func selectFileTreeIndex(_ index: Int) {
+        guard EditorFFIBridge.selectFileTreeIndex(handle?.raw, index: index) else { return }
+        refreshSnapshot()
+    }
+
+    func clickFileTreeIndex(_ index: Int) {
+        guard EditorFFIBridge.clickFileTreeIndex(handle?.raw, index: index) else { return }
+        refreshSnapshot()
+    }
+
+    func activateFileTreeIndex(_ index: Int) {
+        guard EditorFFIBridge.activateFileTreeIndex(handle?.raw, index: index) else { return }
+        refreshSnapshot()
+    }
+
+    func setFileTreeVisibleRows(_ rows: Int) {
+        let clampedRows = max(rows, 1)
+        guard clampedRows != fileTreeVisibleRows else { return }
+        guard EditorFFIBridge.setFileTreeVisibleRows(handle?.raw, visibleRows: clampedRows) else { return }
+        fileTreeVisibleRows = clampedRows
+        refreshSnapshot()
+    }
+
+    func setFileTreeActive(_ active: Bool) {
+        guard EditorFFIBridge.setFileTreeActive(handle?.raw, active: active) else { return }
+        refreshSnapshot()
+    }
+
+    func toggleFileTree() {
+        guard EditorFFIBridge.toggleFileTree(handle?.raw) else { return }
+        refreshSnapshot()
+    }
+
     func setCommandPaletteQuery(_ query: String) {
         commandPaletteDebugLog("setQuery incoming=\(String(reflecting: query)) current=\(String(reflecting: commandPalette.query))")
         guard query != commandPalette.query else { return }
@@ -325,6 +484,7 @@ final class EditorSurfaceController: ObservableObject {
     }
 
     func beginLiveResize() {
+        beginInteractiveResize(reason: "window")
         resizeOverlayHideTask?.cancel()
         if !showsResizeOverlay {
             showsResizeOverlay = true
@@ -332,6 +492,7 @@ final class EditorSurfaceController: ObservableObject {
     }
 
     func endLiveResize() {
+        endInteractiveResize(reason: "window")
         resizeOverlayHideTask?.cancel()
         resizeOverlayHideTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .milliseconds(650))
@@ -367,6 +528,7 @@ final class EditorSurfaceController: ObservableObject {
         completionDocs = snapshot.completionDocs
         signatureHelp = snapshot.signatureHelp
         filePicker = snapshot.filePicker
+        fileTree = snapshot.fileTree
         scene = nextScene
         let publishMs = (CFAbsoluteTimeGetCurrent() - publishStarted) * 1000
 

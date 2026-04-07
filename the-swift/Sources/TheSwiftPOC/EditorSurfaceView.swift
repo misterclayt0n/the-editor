@@ -89,7 +89,7 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
             backingScale: backingScale,
             fontMetrics: fontMetrics
         )
-        if changed || forceDraw || window?.inLiveResize == true {
+        if changed || forceDraw || window?.inLiveResize == true || controller.isInteractiveResizeActive {
             renderer.drawImmediately()
         }
     }

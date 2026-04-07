@@ -128,13 +128,20 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
 
         for overlay in scene.overlays where overlay.kind == .rect {
             let color = overlay.style.backgroundColor ?? overlay.style.foregroundColor.withAlphaComponent(0.3)
-            context.setFillColor(color.cgColor)
-            context.fill(CGRect(
+            let rect = CGRect(
                 x: CGFloat(overlay.x) * cellSize.width,
                 y: topY(forRow: overlay.y, rowSpan: max(overlay.height, 1), viewportHeight: view.bounds.height, cellHeight: cellSize.height),
                 width: CGFloat(overlay.width) * cellSize.width,
                 height: CGFloat(max(overlay.height, 1)) * cellSize.height
-            ))
+            )
+            context.setFillColor(color.cgColor)
+            let radius = min(CGFloat(overlay.radius), min(rect.width, rect.height) * 0.5)
+            if radius > 0 {
+                context.addPath(CGPath(roundedRect: rect, cornerWidth: radius, cornerHeight: radius, transform: nil))
+                context.fillPath()
+            } else {
+                context.fill(rect)
+            }
         }
 
         for line in scene.lines {

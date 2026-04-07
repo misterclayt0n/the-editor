@@ -22,13 +22,401 @@ struct EditorChromeModel {
 struct EditorChromeView: View {
     @ObservedObject var controller: EditorSurfaceController
 
+    @AppStorage("swift.fileTreeSidebarWidth") private var storedFileTreeWidth: Double = 280
+    @GestureState private var fileTreeDragTranslation: CGFloat = 0
+    @State private var isFileTreeResizeActive = false
+
+    private let minimumFileTreeWidth: CGFloat = 180
+    private let maximumFileTreeWidth: CGFloat = 460
+
     var body: some View {
         VStack(spacing: 0) {
-            EditorSurfaceRepresentable(controller: controller)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            HStack(spacing: 0) {
+                if controller.fileTree.isVisible {
+                    EditorFileTreeSidebarView(
+                        tree: controller.fileTree,
+                        theme: fileTreeTheme,
+                        onSelectIndex: controller.clickFileTreeIndex,
+                        onActivateIndex: controller.activateFileTreeIndex,
+                        onVisibleRowsChanged: controller.setFileTreeVisibleRows,
+                        onFocusSidebar: { controller.setFileTreeActive(true) }
+                    )
+                    .frame(width: fileTreeWidth)
+
+                    EditorSidebarResizeHandle(
+                        color: fileTreeTheme.separatorColor,
+                        gesture: fileTreeResizeGesture
+                    )
+                }
+
+                EditorSurfaceRepresentable(controller: controller)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
             EditorStatusAccessoryView(chrome: controller.chrome, mode: controller.currentMode)
         }
-        .background(EditorWindowChromeAccessor(chrome: controller.chrome))
+        .background(
+            EditorWindowChromeAccessor(
+                chrome: controller.chrome,
+                fileTreeVisible: controller.fileTree.isVisible,
+                onToggleFileTree: controller.toggleFileTree
+            )
+        )
+    }
+
+    private var fileTreeTheme: EditorFileTreeSidebarTheme {
+        EditorFileTreeSidebarTheme.resolve(scene: controller.scene, chrome: controller.chrome)
+    }
+
+    private var fileTreeWidth: CGFloat {
+        clampFileTreeWidth(CGFloat(storedFileTreeWidth) + fileTreeDragTranslation)
+    }
+
+    private var fileTreeResizeGesture: some Gesture {
+        DragGesture(minimumDistance: 0, coordinateSpace: .global)
+            .updating($fileTreeDragTranslation) { value, state, _ in
+                let translation = value.location.x - value.startLocation.x
+                state = translation
+                let startWidth = CGFloat(storedFileTreeWidth)
+                let proposedWidth = startWidth + translation
+                let startText = String(format: "%.1f", startWidth)
+                let translationText = String(format: "%.1f", translation)
+                let proposedText = String(format: "%.1f", proposedWidth)
+                let clampedText = String(format: "%.1f", clampFileTreeWidth(proposedWidth))
+                let startXText = String(format: "%.1f", value.startLocation.x)
+                let locationXText = String(format: "%.1f", value.location.x)
+                scrollPerfLog(
+                    "fileTree.resize updating start=\(startText) translation=\(translationText) proposed=\(proposedText) clamped=\(clampedText) startX=\(startXText) currentX=\(locationXText)"
+                )
+            }
+            .onChanged { _ in
+                guard !isFileTreeResizeActive else { return }
+                isFileTreeResizeActive = true
+                controller.beginInteractiveResize(reason: "sidebar")
+            }
+            .onEnded { value in
+                let translation = value.location.x - value.startLocation.x
+                let committedWidth = clampFileTreeWidth(CGFloat(storedFileTreeWidth) + translation)
+                let storedText = String(format: "%.1f", storedFileTreeWidth)
+                let translationText = String(format: "%.1f", translation)
+                let committedText = String(format: "%.1f", committedWidth)
+                let startXText = String(format: "%.1f", value.startLocation.x)
+                let locationXText = String(format: "%.1f", value.location.x)
+                scrollPerfLog(
+                    "fileTree.resize ended stored=\(storedText) translation=\(translationText) committed=\(committedText) startX=\(startXText) currentX=\(locationXText)"
+                )
+                storedFileTreeWidth = committedWidth
+                if isFileTreeResizeActive {
+                    isFileTreeResizeActive = false
+                    controller.endInteractiveResize(reason: "sidebar")
+                }
+            }
+    }
+
+    private func clampFileTreeWidth(_ width: CGFloat) -> CGFloat {
+        min(max(width, minimumFileTreeWidth), maximumFileTreeWidth)
+    }
+}
+
+private struct EditorFileTreeSidebarTheme {
+    let backgroundColor: NSColor
+    let headerColor: NSColor
+    let separatorColor: NSColor
+    let selectionColor: NSColor
+    let hoverColor: NSColor
+
+    static func resolve(scene: EditorRenderScene?, chrome: EditorChromeModel) -> Self {
+        let editorBackground = chromeBackgroundColor(base: scene?.backgroundColor ?? chrome.backgroundColor)
+        let sidebarBackground = chromeBackgroundColor(base: scene?.gutterBackgroundColor ?? editorBackground)
+        let selectionColor = chromeBackgroundColor(
+            base: scene?.info.selectionColor?.color
+                ?? sidebarBackground.blended(withFraction: 0.28, of: .systemBlue)
+                ?? .systemBlue
+        )
+        let headerColor = sidebarBackground.adjustedBrightness(by: sidebarBackground.isLightColor ? -0.035 : 0.05)
+        let separatorColor = sidebarBackground.adjustedBrightness(by: sidebarBackground.isLightColor ? -0.18 : 0.22)
+            .withAlphaComponent(0.95)
+        let hoverColor = selectionColor.withAlphaComponent(max(selectionColor.alphaComponent * 0.32, 0.08))
+        return Self(
+            backgroundColor: sidebarBackground,
+            headerColor: headerColor,
+            separatorColor: separatorColor,
+            selectionColor: selectionColor,
+            hoverColor: hoverColor
+        )
+    }
+}
+
+private struct EditorFileTreeSidebarView: View {
+    let tree: EditorFileTreeState
+    let theme: EditorFileTreeSidebarTheme
+    let onSelectIndex: (Int) -> Void
+    let onActivateIndex: (Int) -> Void
+    let onVisibleRowsChanged: (Int) -> Void
+    let onFocusSidebar: () -> Void
+
+    @State private var hoveredRowID: String?
+    @State private var reportedVisibleRows: Int = 1
+
+    private let headerHeight: CGFloat = 30
+    private let rowHeight: CGFloat = 24
+
+    @State private var scrollViewportHeight: CGFloat = 1
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+
+            ScrollViewReader { proxy in
+                ScrollView(.vertical, showsIndicators: true) {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        if tree.rows.isEmpty {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("Empty Folder")
+                                    .font(.system(size: 12, weight: .semibold))
+                                Text("Create a file or open another project folder.")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.secondary)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 16)
+                        } else {
+                            ForEach(Array(tree.rows.enumerated()), id: \.element.id) { index, row in
+                                EditorFileTreeRowView(
+                                    row: row,
+                                    theme: theme,
+                                    isHovered: hoveredRowID == row.id,
+                                    onSelect: { onSelectIndex(index) },
+                                    onActivate: { onActivateIndex(index) }
+                                )
+                                .id(row.id)
+                                .onHover { isHovering in
+                                    hoveredRowID = isHovering ? row.id : (hoveredRowID == row.id ? nil : hoveredRowID)
+                                }
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 6)
+                }
+                .scrollContentBackground(.hidden)
+                .scrollIndicators(.visible)
+                .background(Color.clear)
+                .simultaneousGesture(TapGesture().onEnded {
+                    onFocusSidebar()
+                })
+                .background {
+                    GeometryReader { proxy in
+                        Color.clear
+                            .onChange(of: proxy.size.height, initial: true) { _, newHeight in
+                                scrollViewportHeight = newHeight
+                                updateVisibleRows(for: newHeight)
+                            }
+                    }
+                }
+                .overlay(alignment: .trailing) {
+                    fileTreeScrollbarThumb
+                        .padding(.trailing, 2)
+                }
+                .onChange(of: tree.scrollOffset, initial: true) {
+                    guard tree.rows.indices.contains(tree.scrollOffset) else { return }
+                    proxy.scrollTo(tree.rows[tree.scrollOffset].id, anchor: .top)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(Color(nsColor: theme.backgroundColor))
+        .environment(\.colorScheme, theme.backgroundColor.isLightColor ? .light : .dark)
+    }
+
+    private var header: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "folder.fill")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(Color(nsColor: theme.selectionColor).opacity(0.85))
+            Text(rootTitle)
+                .font(.system(size: 12, weight: .semibold))
+                .lineLimit(1)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .frame(height: headerHeight)
+        .background(Color(nsColor: theme.headerColor))
+        .contentShape(Rectangle())
+        .onTapGesture {
+            onFocusSidebar()
+        }
+        .help(tree.root ?? rootTitle)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(Color(nsColor: theme.separatorColor))
+                .frame(height: 1)
+        }
+    }
+
+    private var rootTitle: String {
+        guard let root = tree.root, !root.isEmpty else { return "Workspace" }
+        let url = URL(fileURLWithPath: root)
+        let name = url.lastPathComponent
+        return name.isEmpty ? root : name
+    }
+
+    @ViewBuilder
+    private var fileTreeScrollbarThumb: some View {
+        let totalRows = max(tree.rows.count, reportedVisibleRows)
+        let visibleRows = max(reportedVisibleRows, 1)
+        if totalRows > visibleRows {
+            let trackHeight = max(scrollViewportHeight - 8, 1)
+            let thumbHeight = max(26, trackHeight * (CGFloat(visibleRows) / CGFloat(totalRows)))
+            let maxOffset = max(totalRows - visibleRows, 1)
+            let progress = CGFloat(min(max(tree.scrollOffset, 0), maxOffset)) / CGFloat(maxOffset)
+            let travel = max(trackHeight - thumbHeight, 0)
+            RoundedRectangle(cornerRadius: 2.5, style: .continuous)
+                .fill(Color(nsColor: theme.separatorColor).opacity(0.92))
+                .frame(width: 4, height: thumbHeight)
+                .frame(maxHeight: .infinity, alignment: .top)
+                .offset(y: 4 + (travel * progress))
+                .allowsHitTesting(false)
+        }
+    }
+
+    private func updateVisibleRows(for height: CGFloat) {
+        let contentHeight = max(height - 12, 1)
+        let rows = max(Int(floor(contentHeight / rowHeight)), 1)
+        guard rows != reportedVisibleRows else { return }
+        let heightText = String(format: "%.1f", height)
+        scrollPerfLog(
+            "fileTree.visibleRows height=\(heightText) rows=\(rows) previous=\(reportedVisibleRows) scrollOffset=\(tree.scrollOffset) totalRows=\(tree.rows.count)"
+        )
+        reportedVisibleRows = rows
+        onVisibleRowsChanged(rows)
+    }
+}
+
+private struct EditorFileTreeRowView: View {
+    let row: EditorFileTreeRow
+    let theme: EditorFileTreeSidebarTheme
+    let isHovered: Bool
+    let onSelect: () -> Void
+    let onActivate: () -> Void
+
+    var body: some View {
+        Button(action: onSelect) {
+            HStack(spacing: 0) {
+                Rectangle()
+                    .fill(Color(nsColor: leadingRailColor))
+                    .frame(width: 2)
+                    .opacity(row.isSelected || row.isCurrentFile ? 1 : 0)
+
+                HStack(spacing: 6) {
+                    if row.hasChildren || row.isDirectory {
+                        Button(action: onActivate) {
+                            Image(systemName: row.isExpanded ? "chevron.down" : "chevron.right")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                                .frame(width: 10, height: 10)
+                        }
+                        .buttonStyle(.plain)
+                    } else {
+                        Color.clear
+                            .frame(width: 10, height: 10)
+                    }
+
+                    Image(systemName: symbolName(for: row.iconName, isDirectory: row.isDirectory))
+                        .font(.system(size: 11, weight: row.isDirectory ? .medium : .regular))
+                        .foregroundStyle(Color(nsColor: iconColor))
+                        .frame(width: 12)
+
+                    Text(row.displayName)
+                        .font(.system(size: 12, weight: row.isDirectory ? .medium : .regular))
+                        .foregroundStyle(rowTextColor)
+                        .lineLimit(1)
+
+                    Spacer(minLength: 6)
+
+                    if row.isCurrentFile {
+                        Circle()
+                            .fill(Color(nsColor: theme.selectionColor).opacity(row.isSelected ? 0.95 : 0.82))
+                            .frame(width: 5, height: 5)
+                    }
+                }
+                .padding(.leading, CGFloat(row.depth) * 11)
+                .padding(.trailing, 8)
+                .padding(.vertical, 4)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(selectionBackground)
+            .clipShape(.rect(cornerRadius: 6))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .simultaneousGesture(TapGesture(count: 2).onEnded {
+            onActivate()
+        })
+        .accessibilityAddTraits(row.isSelected ? [.isSelected] : [])
+    }
+
+    @ViewBuilder
+    private var selectionBackground: some View {
+        RoundedRectangle(cornerRadius: 6, style: .continuous)
+            .fill(backgroundColor)
+    }
+
+    private var backgroundColor: Color {
+        if row.isSelected {
+            return Color(nsColor: theme.selectionColor).opacity(0.24)
+        }
+        if isHovered {
+            return Color(nsColor: theme.hoverColor)
+        }
+        return .clear
+    }
+
+    private var leadingRailColor: NSColor {
+        row.isSelected ? theme.selectionColor : theme.selectionColor.withAlphaComponent(0.78)
+    }
+
+    private var iconColor: NSColor {
+        if row.isSelected {
+            return .labelColor
+        }
+        if row.isCurrentFile {
+            return theme.selectionColor
+        }
+        return row.isDirectory ? .secondaryLabelColor : .tertiaryLabelColor
+    }
+
+    private var rowTextColor: Color {
+        if row.isSelected || row.isCurrentFile {
+            return .primary
+        }
+        return .primary.opacity(0.88)
+    }
+}
+
+private struct EditorSidebarResizeHandle<ResizeGesture: Gesture>: View {
+    let color: NSColor
+    let gesture: ResizeGesture
+
+    @State private var isHovering = false
+
+    var body: some View {
+        Rectangle()
+            .fill(Color.clear)
+            .frame(width: 8)
+            .overlay(alignment: .trailing) {
+                Rectangle()
+                    .fill(Color(nsColor: color).opacity(isHovering ? 1.0 : 0.9))
+                    .frame(width: isHovering ? 2 : 1)
+            }
+            .contentShape(Rectangle())
+            .onHover { hovering in
+                isHovering = hovering
+                if hovering {
+                    NSCursor.resizeLeftRight.set()
+                }
+            }
+            .gesture(gesture)
     }
 }
 
@@ -456,6 +844,8 @@ private struct ModePill: View {
 
 private struct EditorWindowChromeAccessor: NSViewRepresentable {
     let chrome: EditorChromeModel
+    let fileTreeVisible: Bool
+    let onToggleFileTree: () -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -469,25 +859,29 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
 
     func updateNSView(_ nsView: NSView, context: Context) {
         if let window = nsView.window {
-            context.coordinator.configure(window: window, chrome: chrome)
+            context.coordinator.configure(window: window, chrome: chrome, fileTreeVisible: fileTreeVisible, onToggleFileTree: onToggleFileTree)
             return
         }
 
         DispatchQueue.main.async { [weak nsView] in
             guard let nsView, let window = nsView.window else { return }
-            context.coordinator.configure(window: window, chrome: chrome)
+            context.coordinator.configure(window: window, chrome: chrome, fileTreeVisible: fileTreeVisible, onToggleFileTree: onToggleFileTree)
         }
     }
 
     @MainActor
     final class Coordinator: NSObject, NSToolbarDelegate {
         private let toolbarIdentifier = NSToolbar.Identifier("TheSwiftPOC.TitlebarToolbar")
+        private let fileTreeItemIdentifier = NSToolbarItem.Identifier("TheSwiftPOC.FileTreeToggle")
         private let documentItemIdentifier = NSToolbarItem.Identifier("TheSwiftPOC.DocumentInfo")
         private let vcsItemIdentifier = NSToolbarItem.Identifier("TheSwiftPOC.VCSInfo")
+        private let fileTreeHostingView = NSHostingView(rootView: EditorTitlebarSidebarToggleButton(isActive: false, onToggle: {}))
         private let documentHostingView = NSHostingView(rootView: EditorTitlebarDocumentView(document: .empty))
         private let vcsHostingView = NSHostingView(rootView: EditorTitlebarVCSView(vcsText: nil))
         private weak var observedWindow: NSWindow?
         private var lastChrome: EditorChromeModel = .empty
+        private var lastFileTreeVisible = false
+        private var toggleFileTreeAction: (() -> Void)?
         private lazy var toolbar: NSToolbar = {
             let toolbar = NSToolbar(identifier: toolbarIdentifier)
             toolbar.delegate = self
@@ -500,6 +894,9 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
 
         override init() {
             super.init()
+            fileTreeHostingView.translatesAutoresizingMaskIntoConstraints = false
+            fileTreeHostingView.setContentCompressionResistancePriority(.required, for: .horizontal)
+            fileTreeHostingView.setContentHuggingPriority(.required, for: .horizontal)
             documentHostingView.translatesAutoresizingMaskIntoConstraints = false
             documentHostingView.setContentCompressionResistancePriority(.required, for: .horizontal)
             documentHostingView.setContentHuggingPriority(.required, for: .horizontal)
@@ -512,22 +909,25 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
             NotificationCenter.default.removeObserver(self)
         }
 
-        func configure(window: NSWindow, chrome: EditorChromeModel) {
+        func configure(window: NSWindow, chrome: EditorChromeModel, fileTreeVisible: Bool, onToggleFileTree: @escaping () -> Void) {
             let started = CFAbsoluteTimeGetCurrent()
             let windowChanged = observedWindow !== window
             let chromeChanged = !chrome.matches(lastChrome)
+            let fileTreeChanged = fileTreeVisible != lastFileTreeVisible
+            toggleFileTreeAction = onToggleFileTree
             attachWindowObserversIfNeeded(window: window)
             installToolbarIfNeeded(window: window)
-            guard windowChanged || chromeChanged else {
-                scrollPerfLog("chrome.configure skipped windowChanged=\(windowChanged) chromeChanged=\(chromeChanged)")
+            guard windowChanged || chromeChanged || fileTreeChanged else {
+                scrollPerfLog("chrome.configure skipped windowChanged=\(windowChanged) chromeChanged=\(chromeChanged) fileTreeChanged=\(fileTreeChanged)")
                 return
             }
             lastChrome = chrome
+            lastFileTreeVisible = fileTreeVisible
             let applyStarted = CFAbsoluteTimeGetCurrent()
             applyWindowChrome(window: window, chrome: chrome)
             let applyMs = (CFAbsoluteTimeGetCurrent() - applyStarted) * 1000
             let toolbarStarted = CFAbsoluteTimeGetCurrent()
-            updateToolbarContent(window: window, chrome: chrome)
+            updateToolbarContent(window: window, chrome: chrome, fileTreeVisible: fileTreeVisible)
             let toolbarMs = (CFAbsoluteTimeGetCurrent() - toolbarStarted) * 1000
             let totalMs = (CFAbsoluteTimeGetCurrent() - started) * 1000
             scrollPerfLog(
@@ -563,7 +963,7 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
         @objc private func windowDidChangeState(_ notification: Notification) {
             guard let window = notification.object as? NSWindow else { return }
             applyWindowChrome(window: window, chrome: lastChrome)
-            updateToolbarContent(window: window, chrome: lastChrome)
+            updateToolbarContent(window: window, chrome: lastChrome, fileTreeVisible: lastFileTreeVisible)
         }
 
         private func applyWindowChrome(window: NSWindow, chrome: EditorChromeModel) {
@@ -592,9 +992,13 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
             applyTitlebarBackground(window: window, color: backgroundColor)
         }
 
-        private func updateToolbarContent(window: NSWindow, chrome: EditorChromeModel) {
+        private func updateToolbarContent(window: NSWindow, chrome: EditorChromeModel, fileTreeVisible: Bool) {
+            fileTreeHostingView.rootView = EditorTitlebarSidebarToggleButton(isActive: fileTreeVisible) {
+                self.toggleFileTreeAction?()
+            }
             documentHostingView.rootView = EditorTitlebarDocumentView(document: chrome.document)
             vcsHostingView.rootView = EditorTitlebarVCSView(vcsText: chrome.document.vcsText)
+            fileTreeHostingView.invalidateIntrinsicContentSize()
             documentHostingView.invalidateIntrinsicContentSize()
             vcsHostingView.invalidateIntrinsicContentSize()
             window.toolbar?.validateVisibleItems()
@@ -685,11 +1089,11 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
         }
 
         func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-            [documentItemIdentifier, .flexibleSpace, vcsItemIdentifier]
+            [fileTreeItemIdentifier, documentItemIdentifier, .flexibleSpace, vcsItemIdentifier]
         }
 
         func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-            [documentItemIdentifier, .flexibleSpace, vcsItemIdentifier]
+            [fileTreeItemIdentifier, documentItemIdentifier, .flexibleSpace, vcsItemIdentifier]
         }
 
         func toolbar(
@@ -701,6 +1105,10 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
             item.isBordered = false
 
             switch itemIdentifier {
+            case fileTreeItemIdentifier:
+                item.view = fileTreeHostingView
+                item.visibilityPriority = .high
+                return item
             case documentItemIdentifier:
                 item.view = documentHostingView
                 item.visibilityPriority = .high
@@ -713,6 +1121,27 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
                 return nil
             }
         }
+    }
+}
+
+private struct EditorTitlebarSidebarToggleButton: View {
+    let isActive: Bool
+    let onToggle: () -> Void
+
+    var body: some View {
+        Button(action: onToggle) {
+            Image(systemName: "sidebar.left")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(isActive ? .primary : .secondary)
+                .frame(width: 28, height: 24)
+                .background {
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(isActive ? Color.primary.opacity(0.10) : Color.clear)
+                }
+        }
+        .buttonStyle(.plain)
+        .help("Toggle Sidebar")
+        .accessibilityLabel("Toggle Sidebar")
     }
 }
 
@@ -778,6 +1207,16 @@ private extension NSColor {
         guard let color = usingColorSpace(.sRGB) else { return false }
         let luminance = (0.299 * color.redComponent) + (0.587 * color.greenComponent) + (0.114 * color.blueComponent)
         return luminance > 0.7
+    }
+
+    func adjustedBrightness(by amount: CGFloat) -> NSColor {
+        guard let color = usingColorSpace(.sRGB) else { return self }
+        return NSColor(
+            calibratedRed: min(max(color.redComponent + amount, 0), 1),
+            green: min(max(color.greenComponent + amount, 0), 1),
+            blue: min(max(color.blueComponent + amount, 0), 1),
+            alpha: color.alphaComponent
+        )
     }
 }
 

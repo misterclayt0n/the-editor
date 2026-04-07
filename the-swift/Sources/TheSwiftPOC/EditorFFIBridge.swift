@@ -86,6 +86,7 @@ struct EditorSnapshotInfo {
     let surfaceMetrics: EditorSurfaceMetrics
     let backgroundColor: EditorRGBA?
     let gutterBackgroundColor: EditorRGBA?
+    let selectionColor: EditorRGBA?
     let viewportWidth: Int
     let viewportHeight: Int
     let contentOffsetX: Int
@@ -585,6 +586,39 @@ struct EditorFilePickerState: Hashable {
     )
 }
 
+struct EditorFileTreeRow: Hashable, Identifiable {
+    let path: String
+    let displayName: String
+    let iconName: String
+    let iconGlyph: String
+    let depth: Int
+    let hasChildren: Bool
+    let isDirectory: Bool
+    let isExpanded: Bool
+    let isCurrentFile: Bool
+    let isSelected: Bool
+
+    var id: String { path }
+}
+
+struct EditorFileTreeState: Hashable {
+    let isVisible: Bool
+    let paneID: UInt?
+    let root: String?
+    let selectedIndex: Int?
+    let scrollOffset: Int
+    let rows: [EditorFileTreeRow]
+
+    static let empty = EditorFileTreeState(
+        isVisible: false,
+        paneID: nil,
+        root: nil,
+        selectedIndex: nil,
+        scrollOffset: 0,
+        rows: []
+    )
+}
+
 enum EditorPaneKind: UInt8 {
     case editorBuffer = 0
     case clientSurface = 1
@@ -614,6 +648,7 @@ struct EditorSnapshot {
     let completionDocs: EditorDocsPanelState
     let signatureHelp: EditorDocsPanelState
     let filePicker: EditorFilePickerState
+    let fileTree: EditorFileTreeState
 }
 
 enum EditorFFIBridge {
@@ -841,6 +876,42 @@ enum EditorFFIBridge {
     }
 
     @discardableResult
+    static func selectFileTreeIndex(_ handle: OpaquePointer?, index: Int) -> Bool {
+        guard let handle else { return false }
+        return the_editor_file_tree_select_index(handle, UInt(max(index, 0)))
+    }
+
+    @discardableResult
+    static func clickFileTreeIndex(_ handle: OpaquePointer?, index: Int) -> Bool {
+        guard let handle else { return false }
+        return the_editor_file_tree_click_index(handle, UInt(max(index, 0)))
+    }
+
+    @discardableResult
+    static func activateFileTreeIndex(_ handle: OpaquePointer?, index: Int) -> Bool {
+        guard let handle else { return false }
+        return the_editor_file_tree_activate_index(handle, UInt(max(index, 0)))
+    }
+
+    @discardableResult
+    static func setFileTreeVisibleRows(_ handle: OpaquePointer?, visibleRows: Int) -> Bool {
+        guard let handle else { return false }
+        return the_editor_file_tree_set_visible_rows(handle, UInt(max(visibleRows, 1)))
+    }
+
+    @discardableResult
+    static func setFileTreeActive(_ handle: OpaquePointer?, active: Bool) -> Bool {
+        guard let handle else { return false }
+        return the_editor_file_tree_set_active(handle, active)
+    }
+
+    @discardableResult
+    static func toggleFileTree(_ handle: OpaquePointer?) -> Bool {
+        guard let handle else { return false }
+        return the_editor_toggle_file_tree(handle)
+    }
+
+    @discardableResult
     static func selectFilePickerIndex(_ handle: OpaquePointer?, index: Int) -> Bool {
         guard let handle else { return false }
         return the_editor_file_picker_select_index(handle, UInt(index))
@@ -891,6 +962,7 @@ enum EditorFFIBridge {
             surfaceMetrics: surfaceMetrics(from: infoValue.surface_metrics),
             backgroundColor: rgba(from: infoValue.background_color),
             gutterBackgroundColor: rgba(from: infoValue.gutter_background_color),
+            selectionColor: rgba(from: infoValue.selection_color),
             viewportWidth: Int(infoValue.viewport_width),
             viewportHeight: Int(infoValue.viewport_height),
             contentOffsetX: Int(infoValue.content_offset_x),
@@ -1239,6 +1311,31 @@ enum EditorFFIBridge {
             )
         }
 
+        let fileTreeValue = the_editor_snapshot_file_tree(rawSnapshot)
+        let fileTreeRows: [EditorFileTreeRow] = (0..<Int(fileTreeValue.row_count)).map { index in
+            let rowValue = the_editor_snapshot_file_tree_row_at(rawSnapshot, UInt(index))
+            return EditorFileTreeRow(
+                path: rowValue.path.map { String(cString: $0) } ?? "",
+                displayName: rowValue.display_name.map { String(cString: $0) } ?? "",
+                iconName: rowValue.icon_name.map { String(cString: $0) } ?? "",
+                iconGlyph: rowValue.icon_glyph.map { String(cString: $0) } ?? "",
+                depth: Int(rowValue.depth),
+                hasChildren: rowValue.has_children,
+                isDirectory: rowValue.is_dir,
+                isExpanded: rowValue.is_expanded,
+                isCurrentFile: rowValue.is_current_file,
+                isSelected: rowValue.is_selected
+            )
+        }
+        let fileTree = EditorFileTreeState(
+            isVisible: fileTreeValue.visible,
+            paneID: fileTreeValue.pane_id == 0 ? nil : UInt(fileTreeValue.pane_id),
+            root: fileTreeValue.root.map { String(cString: $0) },
+            selectedIndex: fileTreeValue.selected_index >= 0 ? Int(fileTreeValue.selected_index) : nil,
+            scrollOffset: Int(fileTreeValue.scroll_offset),
+            rows: fileTreeRows
+        )
+
         let snapshot = EditorSnapshot(
             info: info,
             document: document,
@@ -1257,7 +1354,8 @@ enum EditorFFIBridge {
             hoverDocs: hoverDocs,
             completionDocs: completionDocs,
             signatureHelp: signatureHelp,
-            filePicker: filePicker
+            filePicker: filePicker,
+            fileTree: fileTree
         )
         let decodeMs = (CFAbsoluteTimeGetCurrent() - decodeStarted) * 1000
         let spanCount = lines.reduce(into: 0) { $0 += $1.spans.count }

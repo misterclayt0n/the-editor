@@ -241,6 +241,8 @@ pub use file_tree::{
   reveal_current_file,
   scroll_file_tree,
   select_file_tree_index,
+  select_file_tree_index_without_follow,
+  set_file_tree_active,
   set_file_tree_visible_rows,
   sync_file_tree_to_active_file,
   toggle_file_tree,

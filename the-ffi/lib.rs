@@ -84,6 +84,7 @@ use the_default::{
   close_file_picker,
   file_picker_icon_name_for_path,
   file_picker_items_from_specs,
+  file_tree_surface_id,
   command_palette_filtered_indices,
   command_palette_placeholder_text,
   command_palette_selected_filtered_index,
@@ -108,6 +109,12 @@ use the_default::{
   replace_file_picker_items,
   replace_file_picker_items_preserving_selection,
   select_file_picker_index,
+  select_file_tree_index,
+  select_file_tree_index_without_follow,
+  activate_file_tree_index,
+  toggle_file_tree,
+  set_file_tree_active,
+  set_file_tree_visible_rows,
   set_file_picker_list_offset,
   set_file_picker_preview_offset,
   set_file_picker_query_text,
@@ -379,6 +386,7 @@ pub struct the_editor_snapshot_info_t {
   pub surface_metrics:         the_editor_surface_metrics_t,
   pub background_color:        the_editor_rgba_t,
   pub gutter_background_color: the_editor_rgba_t,
+  pub selection_color:         the_editor_rgba_t,
   pub viewport_width:          u16,
   pub viewport_height:         u16,
   pub content_offset_x:        u16,
@@ -672,6 +680,32 @@ pub struct the_editor_snapshot_file_picker_preview_line_t {
 }
 
 #[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct the_editor_snapshot_file_tree_t {
+  pub visible:        bool,
+  pub pane_id:        usize,
+  pub root:           *const c_char,
+  pub selected_index: i32,
+  pub scroll_offset:  usize,
+  pub row_count:      usize,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct the_editor_snapshot_file_tree_row_t {
+  pub path:              *const c_char,
+  pub display_name:      *const c_char,
+  pub icon_name:         *const c_char,
+  pub icon_glyph:        *const c_char,
+  pub depth:             u16,
+  pub has_children:      bool,
+  pub is_dir:            bool,
+  pub is_expanded:       bool,
+  pub is_current_file:   bool,
+  pub is_selected:       bool,
+}
+
+#[repr(C)]
 #[derive(Clone, Copy)]
 pub struct the_editor_snapshot_file_picker_preview_segment_t {
   pub text:        *const c_char,
@@ -863,6 +897,8 @@ struct OwnedSnapshot {
   file_picker_items:     Vec<FilePickerItemRecord>,
   file_picker_preview_lines: Vec<FilePickerPreviewLineRecord>,
   file_picker_preview_segments: Vec<FilePickerPreviewSegmentRecord>,
+  file_tree:             FileTreeRecord,
+  file_tree_rows:        Vec<FileTreeRowRecord>,
   panes:                 Vec<the_editor_snapshot_pane_t>,
   separators:            Vec<the_editor_snapshot_separator_t>,
   lines:                 Vec<LineRecord>,
@@ -989,6 +1025,21 @@ struct FilePickerPreviewLineRecord {
 struct FilePickerPreviewSegmentRecord {
   segment:         the_editor_snapshot_file_picker_preview_segment_t,
   text_idx:        usize,
+}
+
+#[derive(Clone, Copy, Default)]
+struct FileTreeRecord {
+  tree:            the_editor_snapshot_file_tree_t,
+  root_idx:        Option<usize>,
+}
+
+#[derive(Clone, Copy, Default)]
+struct FileTreeRowRecord {
+  row:             the_editor_snapshot_file_tree_row_t,
+  path_idx:        usize,
+  display_name_idx: usize,
+  icon_name_idx:   usize,
+  icon_glyph_idx:  usize,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -4774,6 +4825,47 @@ impl SwiftEditor {
     true
   }
 
+  fn select_file_tree_index(&mut self, index: usize) -> bool {
+    if self.file_tree.surface_id.is_none() {
+      return false;
+    }
+    select_file_tree_index(self, index)
+  }
+
+  fn click_file_tree_index(&mut self, index: usize) -> bool {
+    if self.file_tree.surface_id.is_none() {
+      return false;
+    }
+    select_file_tree_index_without_follow(self, index)
+  }
+
+  fn activate_file_tree_index(&mut self, index: usize) -> bool {
+    if self.file_tree.surface_id.is_none() {
+      return false;
+    }
+    activate_file_tree_index(self, index, None)
+  }
+
+  fn set_file_tree_visible_rows(&mut self, visible_rows: usize) -> bool {
+    if self.file_tree.surface_id.is_none() {
+      return false;
+    }
+    set_file_tree_visible_rows(self, visible_rows);
+    true
+  }
+
+  fn set_file_tree_active(&mut self, active: bool) -> bool {
+    if self.file_tree.surface_id.is_none() {
+      return false;
+    }
+    set_file_tree_active(self, active)
+  }
+
+  fn toggle_file_tree(&mut self) -> bool {
+    toggle_file_tree(self);
+    true
+  }
+
   fn refresh_picker_state(&mut self) -> bool {
     if !self.file_picker.active {
       return false;
@@ -5309,6 +5401,7 @@ impl DefaultContext for SwiftEditor {
   fn request_quit(&mut self) {}
   fn mode(&self) -> Mode { self.mode }
   fn set_mode(&mut self, mode: Mode) { self.mode = mode; }
+  fn file_tree_uses_split_pane(&self) -> bool { false }
   fn keymaps(&mut self) -> &mut Keymaps { &mut self.keymaps }
   fn command_prompt_mut(&mut self) -> &mut CommandPromptState { &mut self.command_prompt }
   fn command_prompt_ref(&self) -> &CommandPromptState { &self.command_prompt }
@@ -5947,8 +6040,28 @@ impl DefaultContext for SwiftEditor {
   }
 }
 
+fn file_tree_header_rows(pane_height: u16) -> u16 {
+  if pane_height == 0 { 0 } else { 1 }
+}
+
+fn sync_swift_file_tree_visible_rows(editor: &mut SwiftEditor, frame: &FrameRenderPlan) {
+  if !editor.file_tree_uses_split_pane() {
+    return;
+  }
+  let Some(surface_id) = file_tree_surface_id(editor) else {
+    return;
+  };
+  let Some(pane) = frame.panes.iter().find(|pane| pane.client_surface_id == Some(surface_id)) else {
+    return;
+  };
+  let header_rows = file_tree_header_rows(pane.rect.height);
+  let visible_rows = pane.rect.height.saturating_sub(header_rows) as usize;
+  set_file_tree_visible_rows(editor, visible_rows);
+}
+
 impl OwnedSnapshot {
   fn from_editor(editor: &mut SwiftEditor, frame: &FrameRenderPlan) -> Self {
+    sync_swift_file_tree_visible_rows(editor, frame);
     let viewport = editor.editor.layout_viewport();
     let scroll = editor.editor.view().scroll;
     let mode = mode_code(editor.mode);
@@ -5968,6 +6081,7 @@ impl OwnedSnapshot {
         surface_metrics: editor.surface.metrics,
         background_color: theme_background_rgba(&editor.ui_theme),
         gutter_background_color: theme_gutter_background_rgba(&editor.ui_theme),
+        selection_color: theme_selection_rgba(&editor.ui_theme),
         viewport_width: viewport.width,
         viewport_height: viewport.height,
         content_offset_x: active_plan.map(|plan| plan.content_offset_x).unwrap_or(0),
@@ -6395,6 +6509,7 @@ impl OwnedSnapshot {
     }
 
     snapshot.populate_file_picker(editor);
+    snapshot.populate_file_tree(editor, frame);
 
     let base_text_style = editor.ui_theme.try_get("ui.text").unwrap_or_default();
 
@@ -6586,6 +6701,7 @@ impl OwnedSnapshot {
     snapshot.finalize_docs_panel_strings();
     snapshot.finalize_diagnostic_strings();
     snapshot.finalize_file_picker_strings();
+    snapshot.finalize_file_tree_strings();
 
     snapshot.info.line_count = snapshot.lines.len();
     snapshot.info.cursor_count = snapshot.cursors.len();
@@ -6755,6 +6871,49 @@ impl OwnedSnapshot {
     }
   }
 
+  fn populate_file_tree(&mut self, editor: &SwiftEditor, _frame: &FrameRenderPlan) {
+    self.file_tree = FileTreeRecord {
+      tree: the_editor_snapshot_file_tree_t {
+        visible: editor.file_tree.visible && editor.file_tree.root.is_some(),
+        pane_id: 0,
+        root: ptr::null(),
+        selected_index: editor.file_tree.selected.map(|index| index as i32).unwrap_or(-1),
+        scroll_offset: editor.file_tree.scroll_offset,
+        row_count: editor.file_tree.rows.len(),
+      },
+      root_idx: editor
+        .file_tree
+        .root
+        .as_ref()
+        .map(|path| self.push_string(path.to_string_lossy().as_ref())),
+    };
+
+    for (index, row) in editor.file_tree.rows.iter().enumerate() {
+      let path_idx = self.push_string(row.path.to_string_lossy().as_ref());
+      let display_name_idx = self.push_string(&row.display_name);
+      let icon_name_idx = self.push_string(&row.icon_name);
+      let icon_glyph_idx = self.push_string(row.icon_glyph);
+      self.file_tree_rows.push(FileTreeRowRecord {
+        row: the_editor_snapshot_file_tree_row_t {
+          path: ptr::null(),
+          display_name: ptr::null(),
+          icon_name: ptr::null(),
+          icon_glyph: ptr::null(),
+          depth: row.depth.min(u16::MAX as usize) as u16,
+          has_children: row.has_children,
+          is_dir: row.is_dir,
+          is_expanded: row.is_expanded,
+          is_current_file: row.is_current_file,
+          is_selected: editor.file_tree.selected == Some(index),
+        },
+        path_idx,
+        display_name_idx,
+        icon_name_idx,
+        icon_glyph_idx,
+      });
+    }
+  }
+
   fn push_file_picker_preview_segment(
     &mut self,
     editor: &SwiftEditor,
@@ -6903,6 +7062,18 @@ impl OwnedSnapshot {
     }
     for segment in &mut self.file_picker_preview_segments {
       segment.segment.text = self.strings[segment.text_idx].as_ptr();
+    }
+  }
+
+  fn finalize_file_tree_strings(&mut self) {
+    if let Some(root_idx) = self.file_tree.root_idx {
+      self.file_tree.tree.root = self.strings[root_idx].as_ptr();
+    }
+    for row in &mut self.file_tree_rows {
+      row.row.path = self.strings[row.path_idx].as_ptr();
+      row.row.display_name = self.strings[row.display_name_idx].as_ptr();
+      row.row.icon_name = self.strings[row.icon_name_idx].as_ptr();
+      row.row.icon_glyph = self.strings[row.icon_glyph_idx].as_ptr();
     }
   }
 }
@@ -8871,6 +9042,16 @@ fn theme_gutter_background_rgba(theme: &Theme) -> the_editor_rgba_t {
   color_to_rgba(gutter_background, theme)
 }
 
+fn theme_selection_rgba(theme: &Theme) -> the_editor_rgba_t {
+  let selection = theme
+    .try_get("ui.selection")
+    .and_then(|style| style.bg)
+    .or_else(|| theme.try_get("ui.selection").and_then(|style| style.fg))
+    .or_else(|| theme.try_get("ui.cursor").and_then(|style| style.bg))
+    .or_else(|| theme.try_get("ui.cursor").and_then(|style| style.fg));
+  color_to_rgba(selection, theme)
+}
+
 fn swift_gutter_config() -> GutterConfig {
   GutterConfig {
     layout: vec![
@@ -9513,6 +9694,42 @@ pub unsafe extern "C" fn the_editor_file_picker_submit(handle: *mut the_editor_h
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_file_tree_select_index(handle: *mut the_editor_handle_t, index: usize) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+  handle.editor.select_file_tree_index(index)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_file_tree_click_index(handle: *mut the_editor_handle_t, index: usize) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+  handle.editor.click_file_tree_index(index)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_file_tree_activate_index(handle: *mut the_editor_handle_t, index: usize) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+  handle.editor.activate_file_tree_index(index)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_file_tree_set_visible_rows(handle: *mut the_editor_handle_t, visible_rows: usize) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+  handle.editor.set_file_tree_visible_rows(visible_rows)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_file_tree_set_active(handle: *mut the_editor_handle_t, active: bool) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+  handle.editor.set_file_tree_active(active)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_toggle_file_tree(handle: *mut the_editor_handle_t) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+  handle.editor.toggle_file_tree()
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn the_editor_insert_text(handle: *mut the_editor_handle_t, text: *const c_char) -> bool {
   let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
   let Some(text) = (unsafe { string_from_c(text) }) else { return false; };
@@ -9693,6 +9910,18 @@ pub unsafe extern "C" fn the_editor_snapshot_diagnostic_underline_at(snapshot: *
 pub unsafe extern "C" fn the_editor_snapshot_file_picker(snapshot: *const the_editor_snapshot_t) -> the_editor_snapshot_file_picker_t {
   let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_file_picker_t::default(); };
   snapshot.snapshot.file_picker.picker
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_snapshot_file_tree(snapshot: *const the_editor_snapshot_t) -> the_editor_snapshot_file_tree_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_file_tree_t::default(); };
+  snapshot.snapshot.file_tree.tree
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_snapshot_file_tree_row_at(snapshot: *const the_editor_snapshot_t, row_index: usize) -> the_editor_snapshot_file_tree_row_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_file_tree_row_t::default(); };
+  snapshot.snapshot.file_tree_rows.get(row_index).map(|record| record.row).unwrap_or_default()
 }
 
 #[unsafe(no_mangle)]

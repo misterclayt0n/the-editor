@@ -330,6 +330,9 @@ pub trait DefaultContext: Sized + 'static {
   fn cursor_blink_generation(&self) -> u64 {
     0
   }
+  fn file_tree_uses_split_pane(&self) -> bool {
+    true
+  }
   fn cursor_shapes(&self) -> crate::CursorShapes {
     crate::CursorShapes::default()
   }

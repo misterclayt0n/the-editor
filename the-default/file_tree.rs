@@ -76,6 +76,8 @@ pub struct FileTreeSnapshot {
 pub struct FileTreeState {
   pub surface_id:       Option<ClientSurfaceId>,
   pub sidebar_pane:     Option<PaneId>,
+  pub visible:          bool,
+  pub active:           bool,
   pub root:             Option<PathBuf>,
   pub rows:             Vec<FileTreeRow>,
   pub selected:         Option<usize>,
@@ -255,6 +257,11 @@ pub fn file_tree_snapshot<Ctx: DefaultContext>(ctx: &Ctx) -> Option<FileTreeSnap
   let state = ctx.file_tree();
   let surface_id = state.surface_id?;
   let root = state.root.clone()?;
+  let attached_pane = if ctx.file_tree_uses_split_pane() {
+    attached_tree_pane(ctx)
+  } else {
+    None
+  };
   Some(FileTreeSnapshot {
     surface_id,
     root,
@@ -263,8 +270,8 @@ pub fn file_tree_snapshot<Ctx: DefaultContext>(ctx: &Ctx) -> Option<FileTreeSnap
     scroll_offset: state.scroll_offset,
     show_hidden: state.show_hidden,
     follow_current: state.follow_current,
-    attached_pane: attached_tree_pane(ctx),
-    active: ctx.editor_ref().active_client_surface_id() == Some(surface_id),
+    attached_pane,
+    active: is_active_file_tree(ctx),
   })
 }
 
@@ -277,10 +284,15 @@ pub fn is_file_tree_surface<Ctx: DefaultContext>(ctx: &Ctx, surface_id: ClientSu
 }
 
 pub fn is_active_file_tree<Ctx: DefaultContext>(ctx: &Ctx) -> bool {
-  let Some(surface_id) = ctx.file_tree().surface_id else {
-    return false;
-  };
-  ctx.editor_ref().active_client_surface_id() == Some(surface_id)
+  if ctx.file_tree_uses_split_pane() {
+    let Some(surface_id) = ctx.file_tree().surface_id else {
+      return false;
+    };
+    return ctx.editor_ref().active_client_surface_id() == Some(surface_id);
+  }
+
+  let state = ctx.file_tree();
+  state.visible && state.active
 }
 
 pub fn remember_active_editor_pane<Ctx: DefaultContext>(ctx: &mut Ctx) {
@@ -322,6 +334,23 @@ pub fn set_file_tree_visible_rows<Ctx: DefaultContext>(ctx: &mut Ctx, visible_ro
   let state = ctx.file_tree_mut();
   state.visible_rows = visible_rows;
   sync_tree_scroll(state, scrolloff);
+}
+
+pub fn set_file_tree_active<Ctx: DefaultContext>(ctx: &mut Ctx, active: bool) -> bool {
+  if ctx.file_tree_uses_split_pane() {
+    if active {
+      focus_file_tree(ctx);
+      return true;
+    }
+    return false;
+  }
+
+  let state = ctx.file_tree_mut();
+  if state.active == active {
+    return false;
+  }
+  state.active = active;
+  true
 }
 
 pub fn handle_file_tree_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent) -> bool {
@@ -369,20 +398,37 @@ pub fn refresh_file_tree<Ctx: DefaultContext>(ctx: &mut Ctx) {
   ctx.request_render();
 }
 
-pub fn select_file_tree_index<Ctx: DefaultContext>(ctx: &mut Ctx, index: usize) -> bool {
+fn select_file_tree_index_with_behavior<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  index: usize,
+  follow_selection: bool,
+) -> bool {
   let len = ctx.file_tree().rows.len();
   if len == 0 {
     return false;
   }
 
+  let uses_split_pane = ctx.file_tree_uses_split_pane();
   let next = index.min(len.saturating_sub(1));
   let scrolloff = ctx.scrolloff();
   let state = ctx.file_tree_mut();
-  let changed = state.selected != Some(next);
+  let changed = state.selected != Some(next) || (!uses_split_pane && !state.active);
   state.selected = Some(next);
-  state.selection_follow = true;
+  state.selection_follow = follow_selection;
+  if !uses_split_pane {
+    state.visible = true;
+    state.active = true;
+  }
   sync_tree_scroll(state, scrolloff);
   changed
+}
+
+pub fn select_file_tree_index<Ctx: DefaultContext>(ctx: &mut Ctx, index: usize) -> bool {
+  select_file_tree_index_with_behavior(ctx, index, true)
+}
+
+pub fn select_file_tree_index_without_follow<Ctx: DefaultContext>(ctx: &mut Ctx, index: usize) -> bool {
+  select_file_tree_index_with_behavior(ctx, index, false)
 }
 
 pub fn activate_file_tree_index<Ctx: DefaultContext>(
@@ -428,6 +474,17 @@ pub fn reveal_current_file<Ctx: DefaultContext>(ctx: &mut Ctx) {
 }
 
 pub fn close_file_tree<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  if !ctx.file_tree_uses_split_pane() {
+    let state = ctx.file_tree_mut();
+    let changed = state.visible || state.active;
+    state.visible = false;
+    state.active = false;
+    if changed {
+      ctx.request_render();
+    }
+    return;
+  }
+
   let Some(surface_id) = ctx.file_tree().surface_id else {
     return;
   };
@@ -458,6 +515,17 @@ pub fn close_file_tree<Ctx: DefaultContext>(ctx: &mut Ctx) {
 }
 
 pub fn focus_file_tree<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  if !ctx.file_tree_uses_split_pane() {
+    if !ctx.file_tree().visible {
+      toggle_file_tree_with_root(ctx, false);
+      return;
+    }
+    reveal_current_file(ctx);
+    ctx.file_tree_mut().active = true;
+    ctx.request_render();
+    return;
+  }
+
   if attached_tree_pane(ctx).is_none() {
     toggle_file_tree_with_root(ctx, false);
   }
@@ -482,14 +550,21 @@ pub fn close_all_file_tree<Ctx: DefaultContext>(ctx: &mut Ctx) {
 }
 
 fn toggle_file_tree_with_root<Ctx: DefaultContext>(ctx: &mut Ctx, current_buffer_directory: bool) {
-  if attached_tree_pane(ctx).is_some() {
+  let tree_is_open = if ctx.file_tree_uses_split_pane() {
+    attached_tree_pane(ctx).is_some()
+  } else {
+    ctx.file_tree().visible
+  };
+  if tree_is_open {
     close_file_tree(ctx);
     return;
   }
 
+  remember_active_editor_pane(ctx);
   let root = desired_root(ctx, current_buffer_directory);
   let surface_id = ensure_surface(ctx);
 
+  let uses_split_pane = ctx.file_tree_uses_split_pane();
   {
     let state = ctx.file_tree_mut();
     let root_changed = state.root.as_deref() != Some(root.as_path());
@@ -503,9 +578,15 @@ fn toggle_file_tree_with_root<Ctx: DefaultContext>(ctx: &mut Ctx, current_buffer
     if !state.follow_current {
       state.follow_current = true;
     }
+    if !uses_split_pane {
+      state.visible = true;
+      state.active = true;
+    }
   }
 
-  open_tree_in_sidebar(ctx, surface_id);
+  if uses_split_pane {
+    open_tree_in_sidebar(ctx, surface_id);
+  }
   rebuild_rows(ctx);
   reveal_current_file(ctx);
   ctx.request_render();

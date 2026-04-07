@@ -148,6 +148,7 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
             return
         }
 
+        let started = CFAbsoluteTimeGetCurrent()
         let point = convert(event.locationInWindow, from: nil)
         let hoveredPane = pane(at: point)
         activatePaneIfNeeded(at: point)
@@ -189,8 +190,19 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
             pendingScrollCols = 0
         }
 
-        guard rowDelta != 0 || colDelta != 0 else { return }
+        let totalMs: () -> String = {
+            String(format: "%.2f", (CFAbsoluteTimeGetCurrent() - started) * 1000)
+        }
+        guard rowDelta != 0 || colDelta != 0 else {
+            scrollPerfLog(
+                "surface.scroll precise=\(event.hasPreciseScrollingDeltas) phase=\(event.phase.rawValue) momentum=\(event.momentumPhase.rawValue) deltaX=\(String(format: "%.2f", deltaX)) deltaY=\(String(format: "%.2f", deltaY)) rowDelta=0 colDelta=0 totalMs=\(totalMs())"
+            )
+            return
+        }
         controller.scroll(byRows: rowDelta, cols: colDelta)
+        scrollPerfLog(
+            "surface.scroll precise=\(event.hasPreciseScrollingDeltas) phase=\(event.phase.rawValue) momentum=\(event.momentumPhase.rawValue) deltaX=\(String(format: "%.2f", deltaX)) deltaY=\(String(format: "%.2f", deltaY)) rowDelta=\(rowDelta) colDelta=\(colDelta) totalMs=\(totalMs())"
+        )
     }
 
     override func mouseDragged(with event: NSEvent) {

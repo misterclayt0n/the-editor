@@ -19,16 +19,16 @@ final class EditorSurfaceController: ObservableObject {
     weak var editorFirstResponder: NSView?
 
     fileprivate var handle: EditorHandleBox?
-    @Published private(set) var scene: EditorRenderScene?
-    @Published private(set) var chrome = EditorChromeModel.empty
-    @Published private(set) var currentMode: EditorMode = .normal
-    @Published private(set) var commandPalette: EditorCommandPaletteState = .empty
-    @Published private(set) var completionMenu: EditorCompletionMenuState = .empty
-    @Published private(set) var inputPrompt: EditorInputPromptState = .empty
-    @Published private(set) var hoverDocs: EditorDocsPanelState = .empty
-    @Published private(set) var completionDocs: EditorDocsPanelState = .empty
-    @Published private(set) var signatureHelp: EditorDocsPanelState = .empty
-    @Published private(set) var filePicker: EditorFilePickerState = .empty
+    private(set) var scene: EditorRenderScene?
+    private(set) var chrome = EditorChromeModel.empty
+    private(set) var currentMode: EditorMode = .normal
+    private(set) var commandPalette: EditorCommandPaletteState = .empty
+    private(set) var completionMenu: EditorCompletionMenuState = .empty
+    private(set) var inputPrompt: EditorInputPromptState = .empty
+    private(set) var hoverDocs: EditorDocsPanelState = .empty
+    private(set) var completionDocs: EditorDocsPanelState = .empty
+    private(set) var signatureHelp: EditorDocsPanelState = .empty
+    private(set) var filePicker: EditorFilePickerState = .empty
     @Published private(set) var showsResizeOverlay = false
 
     private var surfaceConfiguration: EditorSurfaceConfiguration?
@@ -81,6 +81,7 @@ final class EditorSurfaceController: ObservableObject {
 
     func scroll(byRows rowDelta: Int, cols colDelta: Int) {
         guard (rowDelta != 0 || colDelta != 0), let scene else { return }
+        let started = CFAbsoluteTimeGetCurrent()
         let targetRow = UInt32(max(scene.info.scrollRow + rowDelta, 0))
         let targetCol = UInt32(max(scene.info.scrollCol + colDelta, 0))
         var changed = false
@@ -93,6 +94,10 @@ final class EditorSurfaceController: ObservableObject {
         if changed {
             refreshSnapshot()
         }
+        let totalMs = (CFAbsoluteTimeGetCurrent() - started) * 1000
+        scrollPerfLog(
+            "controller.scroll rowDelta=\(rowDelta) colDelta=\(colDelta) targetRow=\(targetRow) targetCol=\(targetCol) changed=\(changed) totalMs=\(String(format: "%.2f", totalMs))"
+        )
     }
 
     func scrollRows(by delta: Int) {
@@ -340,12 +345,21 @@ final class EditorSurfaceController: ObservableObject {
         let started = CFAbsoluteTimeGetCurrent()
         guard let snapshot = EditorFFIBridge.makeSnapshot(handle?.raw) else { return }
         let snapshotMs = (CFAbsoluteTimeGetCurrent() - started) * 1000
-        currentMode = snapshot.info.mode
-        chrome = EditorChromeModel(
+        let nextChrome = EditorChromeModel(
             document: snapshot.document,
             statusBar: snapshot.statusBar,
             backgroundColor: snapshot.info.backgroundColor?.color ?? .windowBackgroundColor
         )
+        commandPaletteDebugLog("refresh query=\(String(reflecting: snapshot.commandPalette.query)) selected=\(String(describing: snapshot.commandPalette.selectedIndex)) items=\(snapshot.commandPalette.items.count) isOpen=\(snapshot.commandPalette.isOpen)")
+        let sceneStarted = CFAbsoluteTimeGetCurrent()
+        let marked = markedTextOverlay(from: snapshot)
+        let nextScene = EditorRenderScene.from(snapshot: snapshot, markedText: marked)
+        let sceneMs = (CFAbsoluteTimeGetCurrent() - sceneStarted) * 1000
+
+        let publishStarted = CFAbsoluteTimeGetCurrent()
+        objectWillChange.send()
+        currentMode = snapshot.info.mode
+        chrome = nextChrome
         commandPalette = snapshot.commandPalette
         completionMenu = snapshot.completionMenu
         inputPrompt = snapshot.inputPrompt
@@ -353,13 +367,12 @@ final class EditorSurfaceController: ObservableObject {
         completionDocs = snapshot.completionDocs
         signatureHelp = snapshot.signatureHelp
         filePicker = snapshot.filePicker
-        commandPaletteDebugLog("refresh query=\(String(reflecting: snapshot.commandPalette.query)) selected=\(String(describing: snapshot.commandPalette.selectedIndex)) items=\(snapshot.commandPalette.items.count) isOpen=\(snapshot.commandPalette.isOpen)")
-        let sceneStarted = CFAbsoluteTimeGetCurrent()
-        let marked = markedTextOverlay(from: snapshot)
-        let scene = EditorRenderScene.from(snapshot: snapshot, markedText: marked)
-        let sceneMs = (CFAbsoluteTimeGetCurrent() - sceneStarted) * 1000
-        self.scene = scene
-        delegate?.editorController(self, didUpdateScene: scene)
+        scene = nextScene
+        let publishMs = (CFAbsoluteTimeGetCurrent() - publishStarted) * 1000
+
+        let delegateStarted = CFAbsoluteTimeGetCurrent()
+        delegate?.editorController(self, didUpdateScene: nextScene)
+        let delegateMs = (CFAbsoluteTimeGetCurrent() - delegateStarted) * 1000
         if wasInputPromptOpen && !snapshot.inputPrompt.isOpen {
             DispatchQueue.main.async { [weak self] in
                 self?.focusEditor()
@@ -368,6 +381,9 @@ final class EditorSurfaceController: ObservableObject {
         let totalMs = (CFAbsoluteTimeGetCurrent() - started) * 1000
         themePerfLog(
             "controller.refresh themeGen=\(snapshot.info.themeGeneration) snapshotMs=\(String(format: "%.2f", snapshotMs)) sceneMs=\(String(format: "%.2f", sceneMs)) totalMs=\(String(format: "%.2f", totalMs))"
+        )
+        scrollPerfLog(
+            "controller.refresh damage=\(snapshot.info.damageReason) full=\(snapshot.info.damageIsFull) scrollGen=\(snapshot.info.scrollGeneration) textGen=\(snapshot.info.textGeneration) decoGen=\(snapshot.info.decorationGeneration) themeGen=\(snapshot.info.themeGeneration) lines=\(snapshot.lines.count) cursors=\(snapshot.cursors.count) overlays=\(snapshot.overlays.count) snapshotMs=\(String(format: "%.2f", snapshotMs)) sceneMs=\(String(format: "%.2f", sceneMs)) publishMs=\(String(format: "%.2f", publishMs)) delegateMs=\(String(format: "%.2f", delegateMs)) totalMs=\(String(format: "%.2f", totalMs))"
         )
         if snapshot.completionMenu.isOpen || snapshot.completionDocs.isOpen {
             completionPerfLog(
@@ -382,8 +398,15 @@ final class EditorSurfaceController: ObservableObject {
             .autoconnect()
             .sink { [weak self] _ in
                 guard let self else { return }
-                guard EditorFFIBridge.pollBackgroundTasks(self.handle?.raw) else { return }
+                let pollStarted = CFAbsoluteTimeGetCurrent()
+                let changed = EditorFFIBridge.pollBackgroundTasks(self.handle?.raw)
+                let pollMs = (CFAbsoluteTimeGetCurrent() - pollStarted) * 1000
+                scrollPerfLog("controller.pollBackground changed=\(changed) pollMs=\(String(format: "%.2f", pollMs))")
+                guard changed else { return }
+                let refreshStarted = CFAbsoluteTimeGetCurrent()
                 self.refreshSnapshot()
+                let refreshMs = (CFAbsoluteTimeGetCurrent() - refreshStarted) * 1000
+                scrollPerfLog("controller.pollBackground refreshMs=\(String(format: "%.2f", refreshMs))")
             }
     }
 

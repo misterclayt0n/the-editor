@@ -11,6 +11,12 @@ struct EditorChromeModel {
         statusBar: .empty,
         backgroundColor: .windowBackgroundColor
     )
+
+    func matches(_ other: EditorChromeModel) -> Bool {
+        document == other.document
+            && statusBar == other.statusBar
+            && backgroundColor.isEqual(other.backgroundColor)
+    }
 }
 
 struct EditorChromeView: View {
@@ -462,8 +468,13 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {
-        DispatchQueue.main.async {
-            guard let window = nsView.window else { return }
+        if let window = nsView.window {
+            context.coordinator.configure(window: window, chrome: chrome)
+            return
+        }
+
+        DispatchQueue.main.async { [weak nsView] in
+            guard let nsView, let window = nsView.window else { return }
             context.coordinator.configure(window: window, chrome: chrome)
         }
     }
@@ -502,11 +513,26 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
         }
 
         func configure(window: NSWindow, chrome: EditorChromeModel) {
+            let started = CFAbsoluteTimeGetCurrent()
+            let windowChanged = observedWindow !== window
+            let chromeChanged = !chrome.matches(lastChrome)
             attachWindowObserversIfNeeded(window: window)
             installToolbarIfNeeded(window: window)
+            guard windowChanged || chromeChanged else {
+                scrollPerfLog("chrome.configure skipped windowChanged=\(windowChanged) chromeChanged=\(chromeChanged)")
+                return
+            }
             lastChrome = chrome
+            let applyStarted = CFAbsoluteTimeGetCurrent()
             applyWindowChrome(window: window, chrome: chrome)
+            let applyMs = (CFAbsoluteTimeGetCurrent() - applyStarted) * 1000
+            let toolbarStarted = CFAbsoluteTimeGetCurrent()
             updateToolbarContent(window: window, chrome: chrome)
+            let toolbarMs = (CFAbsoluteTimeGetCurrent() - toolbarStarted) * 1000
+            let totalMs = (CFAbsoluteTimeGetCurrent() - started) * 1000
+            scrollPerfLog(
+                "chrome.configure windowChanged=\(windowChanged) chromeChanged=\(chromeChanged) applyMs=\(String(format: "%.2f", applyMs)) toolbarMs=\(String(format: "%.2f", toolbarMs)) totalMs=\(String(format: "%.2f", totalMs))"
+            )
         }
 
         private func attachWindowObserversIfNeeded(window: NSWindow) {

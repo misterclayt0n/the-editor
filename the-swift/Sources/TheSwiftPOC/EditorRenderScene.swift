@@ -19,14 +19,17 @@ struct EditorSceneLine: Hashable {
 
     var cacheSignature: Int {
         var hasher = Hasher()
-        hasher.combine(paneID)
-        hasher.combine(x)
-        hasher.combine(row)
         hasher.combine(width)
         hasher.combine(docLine)
         hasher.combine(firstVisualLine)
-        hasher.combine(spans)
-        hasher.combine(textCells)
+        hasher.combine(textCells.count)
+        for cell in textCells {
+            hasher.combine(max(cell.col - x, 0))
+            hasher.combine(cell.cols)
+            hasher.combine(cell.text)
+            hasher.combine(cell.isVirtual)
+            hasher.combine(cell.style)
+        }
         return hasher.finalize()
     }
 }
@@ -55,12 +58,8 @@ struct EditorRenderScene {
         Set(lines.map { line in
             EditorLineCacheKey(
                 paneID: line.paneID,
-                row: line.row,
                 x: line.x,
                 width: line.width,
-                layoutGeneration: info.layoutGeneration,
-                textGeneration: info.textGeneration,
-                scrollGeneration: info.scrollGeneration,
                 themeGeneration: info.themeGeneration,
                 cellWidthPx: info.surfaceMetrics.cellWidthPx,
                 cellHeightPx: info.surfaceMetrics.cellHeightPx,
@@ -138,12 +137,8 @@ struct EditorRenderScene {
 
 struct EditorLineCacheKey: Hashable {
     let paneID: UInt
-    let row: Int
     let x: Int
     let width: Int
-    let layoutGeneration: UInt64
-    let textGeneration: UInt64
-    let scrollGeneration: UInt64
     let themeGeneration: UInt64
     let cellWidthPx: Int
     let cellHeightPx: Int

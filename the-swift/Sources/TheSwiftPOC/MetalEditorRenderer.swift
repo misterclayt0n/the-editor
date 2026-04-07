@@ -54,6 +54,7 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
     }
 
     func update(scene: EditorRenderScene) {
+        let started = CFAbsoluteTimeGetCurrent()
         let previousThemeGeneration = lastThemeGeneration
         let cacheCountBefore = lineCache.count
         self.scene = scene
@@ -71,6 +72,10 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
         } else {
             view.setNeedsDisplay(view.bounds)
         }
+        let totalMs = (CFAbsoluteTimeGetCurrent() - started) * 1000
+        scrollPerfLog(
+            "renderer.update damage=\(scene.info.damageReason) full=\(scene.info.damageIsFull) visibleLines=\(scene.lines.count) cacheBefore=\(cacheCountBefore) cacheAfter=\(cacheCountAfter) themeChanged=\(themeChanged) totalMs=\(String(format: "%.2f", totalMs))"
+        )
     }
 
     func drawImmediately() {
@@ -135,12 +140,8 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
         for line in scene.lines {
             let key = EditorLineCacheKey(
                 paneID: line.paneID,
-                row: line.row,
                 x: line.x,
                 width: line.width,
-                layoutGeneration: scene.info.layoutGeneration,
-                textGeneration: scene.info.textGeneration,
-                scrollGeneration: scene.info.scrollGeneration,
                 themeGeneration: scene.info.themeGeneration,
                 cellWidthPx: scene.info.surfaceMetrics.cellWidthPx,
                 cellHeightPx: scene.info.surfaceMetrics.cellHeightPx,
@@ -215,6 +216,9 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
         let totalMs = (CFAbsoluteTimeGetCurrent() - drawStarted) * 1000
         themePerfLog(
             "renderer.draw themeGen=\(scene.info.themeGeneration) totalMs=\(String(format: "%.2f", totalMs)) cacheHits=\(perf.cacheHits) cacheMisses=\(perf.cacheMisses) rasterizedLines=\(perf.rasterizedLines) rasterizedCells=\(perf.rasterizedCells) rasterMs=\(String(format: "%.2f", perf.rasterMs))"
+        )
+        scrollPerfLog(
+            "renderer.draw damage=\(scene.info.damageReason) full=\(scene.info.damageIsFull) totalMs=\(String(format: "%.2f", totalMs)) cacheHits=\(perf.cacheHits) cacheMisses=\(perf.cacheMisses) rasterizedLines=\(perf.rasterizedLines) rasterizedCells=\(perf.rasterizedCells) rasterMs=\(String(format: "%.2f", perf.rasterMs))"
         )
     }
 

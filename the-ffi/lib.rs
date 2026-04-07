@@ -797,6 +797,16 @@ fn theme_perf_log(message: impl AsRef<str>) {
   }
 }
 
+fn scroll_perf_enabled() -> bool {
+  env::var("THE_EDITOR_SCROLL_PERF").ok().as_deref() == Some("1")
+}
+
+fn scroll_perf_log(message: impl AsRef<str>) {
+  if scroll_perf_enabled() {
+    eprintln!("[the-ffi:scroll-perf] {}", message.as_ref());
+  }
+}
+
 fn command_palette_debug_enabled() -> bool {
   env::var("THE_EDITOR_COMMAND_PALETTE_DEBUG").ok().as_deref() == Some("1")
 }
@@ -1245,6 +1255,14 @@ struct VcsBaseCacheKey {
   path:          PathBuf,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AppliedVcsRefreshState {
+  path:                PathBuf,
+  head_revision:       Option<String>,
+  statusline:          Option<String>,
+  document_generation: u64,
+}
+
 struct SwiftEditor {
   editor:                        Editor,
   file_path:                     Option<PathBuf>,
@@ -1314,8 +1332,11 @@ struct SwiftEditor {
   vcs_statusline:                Option<String>,
   gutter_diff_signs:             BTreeMap<usize, RenderGutterDiffKind>,
   vcs_diff:                      Option<DiffHandle>,
+  vcs_document_generation:       u64,
+  applied_vcs_refresh_state:     Option<AppliedVcsRefreshState>,
   active_file_watch:             Option<ActiveFileWatchState>,
   vcs_watch:                     Option<VcsWatchState>,
+  vcs_watch_root:                Option<PathBuf>,
   vcs_statusline_refresh_due_at: Option<Instant>,
   vcs_statusline_refresh_in_flight: bool,
   vcs_statusline_refresh_generation: u64,
@@ -3584,13 +3605,22 @@ impl SwiftEditor {
 
   fn clear_active_file_vcs_state(&mut self) {
     self.vcs_statusline = None;
+    self.applied_vcs_refresh_state = None;
     self.clear_vcs_diff();
+  }
+
+  fn refresh_vcs_watch_root(&mut self) {
+    self.vcs_watch_root = self
+      .file_path
+      .as_ref()
+      .and_then(|path| self.vcs_provider.watch_root(path));
   }
 
   fn refresh_vcs_after_path_change(&mut self, previous_path: Option<PathBuf>) {
     if previous_path != self.file_path {
       self.clear_active_file_vcs_state();
     }
+    self.refresh_vcs_watch_root();
     self.sync_vcs_watch_state();
     self.schedule_vcs_statusline_refresh(None);
   }
@@ -3601,6 +3631,9 @@ impl SwiftEditor {
     };
     let _ = handle.update_document(self.editor.document().text().clone(), true);
     self.gutter_diff_signs = vcs_gutter_signs(handle);
+    if let Some(state) = self.applied_vcs_refresh_state.as_mut() {
+      state.document_generation = self.vcs_document_generation;
+    }
   }
 
   fn apply_vcs_refresh_result(&mut self, statusline: Option<String>, diff_base: Option<Vec<u8>>) -> bool {
@@ -3767,6 +3800,7 @@ impl SwiftEditor {
       self.vcs_statusline = None;
       self.clear_vcs_diff();
       self.vcs_watch = None;
+      self.vcs_watch_root = None;
       self.vcs_scan = None;
       self.vcs_base_cache.clear();
       self.vcs_statusline_refresh_due_at = None;
@@ -3851,12 +3885,25 @@ impl SwiftEditor {
       if let Some(scan) = result.scan {
         self.store_vcs_scan(scan);
       }
+      let head_revision = self
+        .shared_vcs_scan_for_path(&result.path)
+        .and_then(|scan| scan.head_revision.clone());
+      let next_state = AppliedVcsRefreshState {
+        path: result.path.clone(),
+        head_revision,
+        statusline: result.statusline.clone(),
+        document_generation: self.vcs_document_generation,
+      };
+      if self.applied_vcs_refresh_state.as_ref() == Some(&next_state) {
+        continue;
+      }
       let diff_base = if let Some(scan) = self.shared_vcs_scan_for_path(&result.path) {
         self.cached_vcs_base_for_path(&scan, &result.path)
       } else {
         self.vcs_provider.get_diff_base(&result.path)
       };
       changed |= self.apply_vcs_refresh_result(result.statusline, diff_base);
+      self.applied_vcs_refresh_state = Some(next_state);
 
       if self.vcs_statusline_refresh_rerun {
         self.vcs_statusline_refresh_rerun = false;
@@ -3869,13 +3916,7 @@ impl SwiftEditor {
   }
 
   fn sync_vcs_watch_state(&mut self) -> bool {
-    let Some(path) = self.file_path.clone() else {
-      let changed = self.vcs_watch.take().is_some();
-      self.vcs_scan = None;
-      self.vcs_base_cache.clear();
-      return changed;
-    };
-    let Some(root) = self.vcs_provider.watch_root(&path) else {
+    let Some(root) = self.vcs_watch_root.clone() else {
       let changed = self.vcs_watch.take().is_some();
       self.vcs_scan = None;
       self.vcs_base_cache.clear();
@@ -4121,17 +4162,101 @@ impl SwiftEditor {
   }
 
   fn poll_background_tasks(&mut self) -> bool {
+    let total_start = Instant::now();
     let mut changed = false;
-    changed |= self.poll_active_file_watch();
-    changed |= self.poll_vcs_watch();
-    changed |= self.poll_lsp_events();
-    changed |= self.poll_lsp_completion_auto_trigger();
-    changed |= self.poll_lsp_signature_help_auto_trigger();
-    changed |= self.tick_lsp_statusline();
-    let _ = self.poll_vcs_statusline_refresh_dispatch(Instant::now());
-    changed |= self.poll_vcs_statusline_refresh_results();
-    changed |= self.poll_global_search();
-    changed |= self.refresh_picker_state();
+    let mut parts = Vec::new();
+
+    let step_start = Instant::now();
+    let active_file_watch_changed = self.poll_active_file_watch();
+    let active_file_watch_ms = step_start.elapsed().as_secs_f64() * 1000.0;
+    changed |= active_file_watch_changed;
+    parts.push(format!(
+      "active_file_watch={:.2}ms/{}",
+      active_file_watch_ms,
+      u8::from(active_file_watch_changed)
+    ));
+
+    let step_start = Instant::now();
+    let vcs_watch_changed = self.poll_vcs_watch();
+    let vcs_watch_ms = step_start.elapsed().as_secs_f64() * 1000.0;
+    changed |= vcs_watch_changed;
+    parts.push(format!("vcs_watch={:.2}ms/{}", vcs_watch_ms, u8::from(vcs_watch_changed)));
+
+    let step_start = Instant::now();
+    let lsp_events_changed = self.poll_lsp_events();
+    let lsp_events_ms = step_start.elapsed().as_secs_f64() * 1000.0;
+    changed |= lsp_events_changed;
+    parts.push(format!("lsp_events={:.2}ms/{}", lsp_events_ms, u8::from(lsp_events_changed)));
+
+    let step_start = Instant::now();
+    let completion_auto_changed = self.poll_lsp_completion_auto_trigger();
+    let completion_auto_ms = step_start.elapsed().as_secs_f64() * 1000.0;
+    changed |= completion_auto_changed;
+    parts.push(format!(
+      "completion_auto={:.2}ms/{}",
+      completion_auto_ms,
+      u8::from(completion_auto_changed)
+    ));
+
+    let step_start = Instant::now();
+    let signature_auto_changed = self.poll_lsp_signature_help_auto_trigger();
+    let signature_auto_ms = step_start.elapsed().as_secs_f64() * 1000.0;
+    changed |= signature_auto_changed;
+    parts.push(format!(
+      "signature_auto={:.2}ms/{}",
+      signature_auto_ms,
+      u8::from(signature_auto_changed)
+    ));
+
+    let step_start = Instant::now();
+    let lsp_status_changed = self.tick_lsp_statusline();
+    let lsp_status_ms = step_start.elapsed().as_secs_f64() * 1000.0;
+    changed |= lsp_status_changed;
+    parts.push(format!("lsp_status={:.2}ms/{}", lsp_status_ms, u8::from(lsp_status_changed)));
+
+    let step_start = Instant::now();
+    let vcs_dispatch_scheduled = self.poll_vcs_statusline_refresh_dispatch(Instant::now());
+    let vcs_dispatch_ms = step_start.elapsed().as_secs_f64() * 1000.0;
+    parts.push(format!(
+      "vcs_dispatch={:.2}ms/{}",
+      vcs_dispatch_ms,
+      u8::from(vcs_dispatch_scheduled)
+    ));
+
+    let step_start = Instant::now();
+    let vcs_results_changed = self.poll_vcs_statusline_refresh_results();
+    let vcs_results_ms = step_start.elapsed().as_secs_f64() * 1000.0;
+    changed |= vcs_results_changed;
+    parts.push(format!(
+      "vcs_results={:.2}ms/{}",
+      vcs_results_ms,
+      u8::from(vcs_results_changed)
+    ));
+
+    let step_start = Instant::now();
+    let global_search_changed = self.poll_global_search();
+    let global_search_ms = step_start.elapsed().as_secs_f64() * 1000.0;
+    changed |= global_search_changed;
+    parts.push(format!(
+      "global_search={:.2}ms/{}",
+      global_search_ms,
+      u8::from(global_search_changed)
+    ));
+
+    let step_start = Instant::now();
+    let picker_changed = self.refresh_picker_state();
+    let picker_ms = step_start.elapsed().as_secs_f64() * 1000.0;
+    changed |= picker_changed;
+    parts.push(format!("picker={:.2}ms/{}", picker_ms, u8::from(picker_changed)));
+
+    let total_ms = total_start.elapsed().as_secs_f64() * 1000.0;
+    scroll_perf_log(format!(
+      "poll_background total={:.2}ms changed={} {}",
+      total_ms,
+      u8::from(changed),
+      parts.join(" ")
+    ));
+
     changed
   }
 
@@ -4244,8 +4369,11 @@ impl SwiftEditor {
       vcs_statusline: None,
       gutter_diff_signs: BTreeMap::new(),
       vcs_diff: None,
+      vcs_document_generation: 0,
+      applied_vcs_refresh_state: None,
       active_file_watch: None,
       vcs_watch: None,
+      vcs_watch_root: None,
       vcs_statusline_refresh_due_at: None,
       vcs_statusline_refresh_in_flight: false,
       vcs_statusline_refresh_generation: 0,
@@ -5095,6 +5223,7 @@ impl DefaultContext for SwiftEditor {
       return false;
     }
     if !transaction.changes().is_empty() {
+      self.vcs_document_generation = self.vcs_document_generation.wrapping_add(1);
       self.highlight_cache.clear();
       self.lsp_send_did_change(&old_text_for_lsp, transaction.changes());
       self.refresh_vcs_diff_document();
@@ -5795,6 +5924,7 @@ impl DefaultContext for SwiftEditor {
         let _ = doc.mark_saved();
       }
 
+      self.vcs_document_generation = self.vcs_document_generation.wrapping_add(1);
       self.highlight_cache.clear();
       self.inactive_highlight_caches.clear();
       self.render_generation_state = None;

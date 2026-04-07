@@ -871,11 +871,6 @@ pub fn hash_render_plan_layout(plan: &RenderPlan) -> u64 {
     .iter()
     .map(|column| (column.slot.clone(), column.col, column.width))
     .collect::<Vec<_>>();
-  let visible_rows = plan
-    .visible_rows
-    .iter()
-    .map(|row| (row.row, row.doc_line, row.first_visual_line))
-    .collect::<Vec<_>>();
   hash_value(&(
     plan.viewport.x,
     plan.viewport.y,
@@ -883,7 +878,6 @@ pub fn hash_render_plan_layout(plan: &RenderPlan) -> u64 {
     plan.viewport.height,
     plan.content_offset_x,
     gutter_columns,
-    visible_rows,
   ))
 }
 
@@ -917,7 +911,7 @@ pub fn finish_render_generations(
     } else if previous.scroll_generation != scroll_generation {
       row_damage(
         RenderDamageReason::Scroll,
-        true,
+        false,
         0,
         full_damage_end_row(plan),
       )

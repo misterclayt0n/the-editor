@@ -79,6 +79,7 @@ pub struct FileTreeRow {
   pub is_dir:            bool,
   pub is_expanded:       bool,
   pub is_current_file:   bool,
+  pub decorations:       FileTreeDecorations,
   pub icon_name:         String,
   pub icon_glyph:        &'static str,
 }
@@ -98,21 +99,23 @@ pub struct FileTreeSnapshot {
 
 #[derive(Debug, Clone, Default)]
 pub struct FileTreeState {
-  pub surface_id:       Option<ClientSurfaceId>,
-  pub sidebar_pane:     Option<PaneId>,
-  pub visible:          bool,
-  pub active:           bool,
-  pub root:             Option<PathBuf>,
-  pub rows:             Vec<FileTreeRow>,
-  pub selected:         Option<usize>,
-  pub scroll_offset:    usize,
-  pub visible_rows:     usize,
-  pub selection_follow: bool,
-  pub expanded_dirs:    BTreeSet<PathBuf>,
-  pub show_hidden:      bool,
-  pub follow_current:   bool,
-  pub last_editor_pane: Option<PaneId>,
-  pub clipboard:        Option<FileTreeClipboard>,
+  pub surface_id:          Option<ClientSurfaceId>,
+  pub sidebar_pane:        Option<PaneId>,
+  pub visible:             bool,
+  pub active:              bool,
+  pub root:                Option<PathBuf>,
+  pub rows:                Vec<FileTreeRow>,
+  pub selected:            Option<usize>,
+  pub scroll_offset:       usize,
+  pub visible_rows:        usize,
+  pub selection_follow:    bool,
+  pub expanded_dirs:       BTreeSet<PathBuf>,
+  pub show_hidden:         bool,
+  pub follow_current:      bool,
+  pub last_editor_pane:    Option<PaneId>,
+  pub clipboard:           Option<FileTreeClipboard>,
+  pub vcs_statuses:        BTreeMap<PathBuf, FileTreeVcsKind>,
+  pub diagnostic_statuses: BTreeMap<PathBuf, DiagnosticSeverity>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -133,6 +136,10 @@ impl FileTreeState {
     self.selected = None;
     self.scroll_offset = 0;
     self.selection_follow = false;
+  }
+
+  fn combined_decorations(&self) -> BTreeMap<PathBuf, FileTreeDecorations> {
+    combine_file_tree_decorations(&self.vcs_statuses, &self.diagnostic_statuses)
   }
 }
 
@@ -1184,7 +1191,7 @@ fn rebuild_rows<Ctx: DefaultContext>(ctx: &mut Ctx) {
     ctx.file_tree_mut().clear_rows();
     return;
   };
-  let (selected_path, root, show_hidden, mut expanded_dirs) = {
+  let (selected_path, root, show_hidden, mut expanded_dirs, decorations) = {
     let state = ctx.file_tree();
     let selected_path = state
       .selected
@@ -1195,6 +1202,7 @@ fn rebuild_rows<Ctx: DefaultContext>(ctx: &mut Ctx) {
       root.clone(),
       state.show_hidden,
       state.expanded_dirs.clone(),
+      state.combined_decorations(),
     )
   };
 
@@ -1207,6 +1215,7 @@ fn rebuild_rows<Ctx: DefaultContext>(ctx: &mut Ctx) {
     show_hidden,
     &expanded_dirs,
     current_file.as_deref(),
+    &decorations,
     &mut rows,
   );
   let scrolloff = ctx.scrolloff();
@@ -1313,6 +1322,51 @@ pub fn combine_file_tree_decorations(
   decorations
 }
 
+pub fn set_file_tree_vcs_statuses<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  statuses: BTreeMap<PathBuf, FileTreeVcsKind>,
+) -> bool {
+  let state = ctx.file_tree_mut();
+  if state.vcs_statuses == statuses {
+    return false;
+  }
+  state.vcs_statuses = statuses;
+  apply_file_tree_row_decorations(state)
+}
+
+pub fn set_file_tree_diagnostic_statuses<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  statuses: BTreeMap<PathBuf, DiagnosticSeverity>,
+) -> bool {
+  let state = ctx.file_tree_mut();
+  if state.diagnostic_statuses == statuses {
+    return false;
+  }
+  state.diagnostic_statuses = statuses;
+  apply_file_tree_row_decorations(state)
+}
+
+pub fn clear_file_tree_decorations<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool {
+  let state = ctx.file_tree_mut();
+  let had_decorations = !state.vcs_statuses.is_empty() || !state.diagnostic_statuses.is_empty();
+  state.vcs_statuses.clear();
+  state.diagnostic_statuses.clear();
+  apply_file_tree_row_decorations(state) || had_decorations
+}
+
+fn apply_file_tree_row_decorations(state: &mut FileTreeState) -> bool {
+  let decorations = state.combined_decorations();
+  let mut changed = false;
+  for row in &mut state.rows {
+    let next = decorations.get(&row.path).copied().unwrap_or_default();
+    if row.decorations != next {
+      row.decorations = next;
+      changed = true;
+    }
+  }
+  changed
+}
+
 fn apply_tree_hierarchy_status<T: Copy>(
   statuses: &mut BTreeMap<PathBuf, T>,
   path: &Path,
@@ -1415,6 +1469,7 @@ fn append_rows(
   show_hidden: bool,
   expanded_dirs: &BTreeSet<PathBuf>,
   current_file: Option<&Path>,
+  decorations: &BTreeMap<PathBuf, FileTreeDecorations>,
   rows: &mut Vec<FileTreeRow>,
 ) {
   let entries = visible_directory_entries(directory, show_hidden);
@@ -1442,6 +1497,7 @@ fn append_rows(
       is_dir: *is_dir,
       is_expanded: expanded,
       is_current_file: current_file.is_some_and(|current| current == path.as_path()),
+      decorations: decorations.get(path).copied().unwrap_or_default(),
       icon_glyph: file_picker_icon_glyph(&icon_name, *is_dir),
       icon_name,
     });
@@ -1455,6 +1511,7 @@ fn append_rows(
         show_hidden,
         expanded_dirs,
         current_file,
+        decorations,
         rows,
       );
     }
@@ -1819,6 +1876,7 @@ mod tests {
       is_dir:            false,
       is_expanded:       false,
       is_current_file:   false,
+      decorations:       FileTreeDecorations::default(),
       icon_name:         "file".to_string(),
       icon_glyph:        "f",
     }
@@ -1877,7 +1935,15 @@ mod tests {
     expanded_dirs.insert(first.clone());
 
     let mut rows = Vec::new();
-    append_rows(&root, &[], false, &expanded_dirs, None, &mut rows);
+    append_rows(
+      &root,
+      &[],
+      false,
+      &expanded_dirs,
+      None,
+      &BTreeMap::new(),
+      &mut rows,
+    );
 
     let alpha = rows
       .iter()

@@ -7467,6 +7467,7 @@ mod tests {
       is_dir:            true,
       is_expanded:       false,
       is_current_file:   false,
+      decorations:       the_default::FileTreeDecorations::default(),
       icon_name:         "folder".to_string(),
       icon_glyph:        "",
     }];
@@ -7500,6 +7501,7 @@ mod tests {
       is_dir:            false,
       is_expanded:       false,
       is_current_file:   false,
+      decorations:       the_default::FileTreeDecorations::default(),
       icon_name:         "file".to_string(),
       icon_glyph:        "f",
     }];
@@ -7538,6 +7540,10 @@ mod tests {
       is_dir: true,
       is_expanded: false,
       is_current_file: false,
+      decorations: the_default::FileTreeDecorations {
+        vcs: Some(the_default::FileTreeVcsKind::Modified),
+        diagnostic: Some(DiagnosticSeverity::Warning),
+      },
       icon_name: "folder".to_string(),
       icon_glyph: "",
     }];

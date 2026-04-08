@@ -561,6 +561,9 @@ private struct EditorFileTreeSidebarView: View {
                     logScrollObservation(source: "rows-change", requestedTopRow: tree.scrollOffset)
                     scheduleProgrammaticScroll(proxy: proxy, reason: "rows-change")
                 }
+                .onChange(of: reportedVisibleRows, initial: true) { _, _ in
+                    scheduleProgrammaticScroll(proxy: proxy, reason: "visibleRows-change")
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -601,6 +604,12 @@ private struct EditorFileTreeSidebarView: View {
         guard tree.rows.indices.contains(targetIndex) else {
             scrollPerfLog(
                 "fileTree.scrollTo skipped reason=\(reason) target=\(targetIndex) rows=\(tree.rows.count) selected=\(String(describing: tree.selectedIndex))"
+            )
+            return
+        }
+        if tree.rows.count > 1, reportedVisibleRows <= 1 {
+            scrollPerfLog(
+                "fileTree.scrollTo deferred reason=\(reason) target=\(targetIndex) reportedVisibleRows=\(reportedVisibleRows) rows=\(tree.rows.count)"
             )
             return
         }

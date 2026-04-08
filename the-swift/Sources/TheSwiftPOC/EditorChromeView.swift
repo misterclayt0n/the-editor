@@ -19,22 +19,32 @@ struct EditorChromeModel {
     }
 }
 
+private enum EditorSidebarMode: String {
+    case files
+    case buffers
+}
+
 struct EditorChromeView: View {
     @ObservedObject var controller: EditorSurfaceController
 
     @AppStorage("swift.fileTreeSidebarWidth") private var storedFileTreeWidth: Double = 280
+    @AppStorage("swift.sidebar.mode") private var storedSidebarModeRaw: String = EditorSidebarMode.files.rawValue
     @GestureState private var fileTreeDragTranslation: CGFloat = 0
     @State private var isFileTreeResizeActive = false
 
     private let minimumFileTreeWidth: CGFloat = 180
     private let maximumFileTreeWidth: CGFloat = 460
 
+    private var sidebarMode: EditorSidebarMode {
+        EditorSidebarMode(rawValue: storedSidebarModeRaw) ?? .files
+    }
+
     var body: some View {
         HStack(spacing: 0) {
             if controller.fileTree.isVisible {
                 sidebarColumn
                 EditorSidebarResizeHandle(
-                    color: fileTreeTheme.separatorColor,
+                    color: sidebarTheme.separatorColor,
                     gesture: fileTreeResizeGesture
                 )
             }
@@ -46,8 +56,8 @@ struct EditorChromeView: View {
                 chrome: controller.chrome,
                 fileTreeVisible: controller.fileTree.isVisible,
                 fileTreeWidth: titlebarSidebarRegionWidth,
-                fileTreeBackgroundColor: fileTreeTheme.backgroundColor,
-                fileTreeSeparatorColor: fileTreeTheme.separatorColor,
+                fileTreeBackgroundColor: sidebarTheme.backgroundColor,
+                fileTreeSeparatorColor: sidebarTheme.separatorColor,
                 onToggleFileTree: controller.toggleFileTree
             )
         )
@@ -62,26 +72,46 @@ struct EditorChromeView: View {
     }
 
     private var sidebarColumn: some View {
-        EditorFileTreeSidebarView(
-            tree: controller.fileTree,
-            theme: fileTreeTheme,
-            onSelectIndex: controller.clickFileTreeIndex,
-            onActivateIndex: controller.activateFileTreeIndex,
-            onVisibleRowsChanged: controller.setFileTreeVisibleRows,
-            onScrollOffsetChanged: controller.syncFileTreeScrollOffset,
-            onFocusSidebar: { controller.setFileTreeActive(true) }
-        )
+        Group {
+            switch sidebarMode {
+            case .files:
+                EditorFileTreeSidebarView(
+                    tree: controller.fileTree,
+                    theme: sidebarTheme,
+                    sidebarMode: sidebarMode,
+                    onSelectSidebarMode: selectSidebarMode,
+                    onSelectIndex: controller.clickFileTreeIndex,
+                    onActivateIndex: controller.activateFileTreeIndex,
+                    onVisibleRowsChanged: controller.setFileTreeVisibleRows,
+                    onScrollOffsetChanged: controller.syncFileTreeScrollOffset,
+                    onFocusSidebar: { controller.setFileTreeActive(true) }
+                )
+                .onAppear {
+                    controller.setFileTreeActive(true)
+                    let widthText = String(format: "%.1f", fileTreeWidth)
+                    scrollPerfLog("fileTree.sidebar appear rows=\(controller.fileTree.rows.count) width=\(widthText)")
+                }
+                .onDisappear {
+                    scrollPerfLog("fileTree.sidebar disappear")
+                }
+            case .buffers:
+                EditorBufferTabsSidebarView(
+                    bufferTabs: controller.bufferTabs,
+                    theme: sidebarTheme,
+                    sidebarMode: sidebarMode,
+                    onSelectSidebarMode: selectSidebarMode,
+                    onActivateBuffer: controller.activateBufferTab,
+                    onFocusSidebar: { controller.setFileTreeActive(false) }
+                )
+                .onAppear {
+                    controller.setFileTreeActive(false)
+                }
+            }
+        }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .onAppear {
-            let widthText = String(format: "%.1f", fileTreeWidth)
-            scrollPerfLog("fileTree.sidebar appear rows=\(controller.fileTree.rows.count) width=\(widthText)")
-        }
-        .onDisappear {
-            scrollPerfLog("fileTree.sidebar disappear")
-        }
-        .background(Color(nsColor: fileTreeTheme.backgroundColor))
+        .background(Color(nsColor: sidebarTheme.backgroundColor))
         .frame(width: fileTreeWidth)
-        .background(Color(nsColor: fileTreeTheme.backgroundColor))
+        .background(Color(nsColor: sidebarTheme.backgroundColor))
     }
 
     private var mainColumn: some View {
@@ -101,7 +131,7 @@ struct EditorChromeView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private var fileTreeTheme: EditorFileTreeSidebarTheme {
+    private var sidebarTheme: EditorFileTreeSidebarTheme {
         EditorFileTreeSidebarTheme.resolve(scene: controller.scene, chrome: controller.chrome)
     }
 
@@ -156,6 +186,17 @@ struct EditorChromeView: View {
 
     private func clampFileTreeWidth(_ width: CGFloat) -> CGFloat {
         min(max(width, minimumFileTreeWidth), maximumFileTreeWidth)
+    }
+
+    private func selectSidebarMode(_ mode: EditorSidebarMode) {
+        guard sidebarMode != mode else {
+            controller.setFileTreeActive(mode == .files)
+            return
+        }
+        withAnimation(.easeInOut(duration: 0.14)) {
+            storedSidebarModeRaw = mode.rawValue
+        }
+        controller.setFileTreeActive(mode == .files)
     }
 }
 
@@ -359,20 +400,115 @@ private struct PendingIndicator: View {
     }
 }
 
+private struct EditorSidebarHeaderView: View {
+    let systemImage: String
+    let title: String
+    let helpText: String?
+    let theme: EditorFileTreeSidebarTheme
+    let sidebarMode: EditorSidebarMode
+    let onSelectSidebarMode: (EditorSidebarMode) -> Void
+    let onActivate: () -> Void
+
+    private let headerHeight: CGFloat = 30
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Button(action: onActivate) {
+                HStack(spacing: 8) {
+                    Image(systemName: systemImage)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(Color(nsColor: theme.selectionColor).opacity(0.85))
+                    Text(title)
+                        .font(.system(size: 12, weight: .semibold))
+                        .lineLimit(1)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(helpText ?? title)
+
+            EditorSidebarModeSwitcher(
+                mode: sidebarMode,
+                theme: theme,
+                onSelect: onSelectSidebarMode
+            )
+        }
+        .padding(.horizontal, 12)
+        .frame(maxWidth: .infinity, minHeight: headerHeight, maxHeight: headerHeight, alignment: .leading)
+        .background(Color(nsColor: theme.headerColor))
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(Color(nsColor: theme.separatorColor))
+                .frame(height: 1)
+        }
+    }
+}
+
+private struct EditorSidebarModeSwitcher: View {
+    let mode: EditorSidebarMode
+    let theme: EditorFileTreeSidebarTheme
+    let onSelect: (EditorSidebarMode) -> Void
+
+    var body: some View {
+        HStack(spacing: 3) {
+            modeButton(.files, icon: "folder.fill", label: "Files")
+            modeButton(.buffers, icon: "square.stack.3d.up.fill", label: "Buffers")
+        }
+        .padding(3)
+        .background(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(Color(nsColor: theme.backgroundColor).opacity(0.9))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .stroke(Color(nsColor: theme.separatorColor).opacity(0.65), lineWidth: 1)
+        )
+    }
+
+    private func modeButton(_ target: EditorSidebarMode, icon: String, label: String) -> some View {
+        let isSelected = mode == target
+        return Button {
+            onSelect(target)
+        } label: {
+            Image(systemName: icon)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(isSelected ? Color.primary : Color.secondary)
+                .frame(width: 20, height: 20)
+                .background(
+                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        .fill(isSelected ? Color(nsColor: theme.selectionColor).opacity(0.28) : .clear)
+                )
+                .contentShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .help(label)
+        .accessibilityLabel(label)
+    }
+}
+
 private struct EditorFileTreeSidebarView: View {
     let tree: EditorFileTreeState
     let theme: EditorFileTreeSidebarTheme
+    let sidebarMode: EditorSidebarMode
+    let onSelectSidebarMode: (EditorSidebarMode) -> Void
     let onSelectIndex: (Int) -> Void
     let onActivateIndex: (Int) -> Void
     let onVisibleRowsChanged: (Int) -> Void
     let onScrollOffsetChanged: (Int) -> Void
     let onFocusSidebar: () -> Void
 
-    private let headerHeight: CGFloat = 30
-
     var body: some View {
         VStack(spacing: 0) {
-            header
+            EditorSidebarHeaderView(
+                systemImage: "folder.fill",
+                title: rootTitle,
+                helpText: tree.root ?? rootTitle,
+                theme: theme,
+                sidebarMode: sidebarMode,
+                onSelectSidebarMode: onSelectSidebarMode,
+                onActivate: onFocusSidebar
+            )
 
             EditorFileTreeListRepresentable(
                 tree: tree,
@@ -390,36 +526,190 @@ private struct EditorFileTreeSidebarView: View {
         .environment(\.colorScheme, theme.backgroundColor.isLightColor ? .light : .dark)
     }
 
-    private var header: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "folder.fill")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(Color(nsColor: theme.selectionColor).opacity(0.85))
-            Text(rootTitle)
-                .font(.system(size: 12, weight: .semibold))
-                .lineLimit(1)
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 12)
-        .frame(maxWidth: .infinity, minHeight: headerHeight, maxHeight: headerHeight, alignment: .leading)
-        .background(Color(nsColor: theme.headerColor))
-        .contentShape(Rectangle())
-        .onTapGesture {
-            onFocusSidebar()
-        }
-        .help(tree.root ?? rootTitle)
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(Color(nsColor: theme.separatorColor))
-                .frame(height: 1)
-        }
-    }
-
     private var rootTitle: String {
         guard let root = tree.root, !root.isEmpty else { return "Workspace" }
         let url = URL(fileURLWithPath: root)
         let name = url.lastPathComponent
         return name.isEmpty ? root : name
+    }
+}
+
+private struct EditorBufferTabsSidebarView: View {
+    let bufferTabs: EditorBufferTabsState
+    let theme: EditorFileTreeSidebarTheme
+    let sidebarMode: EditorSidebarMode
+    let onSelectSidebarMode: (EditorSidebarMode) -> Void
+    let onActivateBuffer: (UInt) -> Void
+    let onFocusSidebar: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            EditorSidebarHeaderView(
+                systemImage: "square.stack.3d.up.fill",
+                title: "Open Items",
+                helpText: "Open items",
+                theme: theme,
+                sidebarMode: sidebarMode,
+                onSelectSidebarMode: onSelectSidebarMode,
+                onActivate: onFocusSidebar
+            )
+
+            ScrollView(.vertical, showsIndicators: true) {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    EditorSidebarSectionHeaderView(title: "Buffers", count: bufferTabs.tabs.count)
+
+                    if bufferTabs.tabs.isEmpty {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("No Open Buffers")
+                                .font(.system(size: 12, weight: .semibold))
+                            Text("Open files will appear here.")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 16)
+                    } else {
+                        ForEach(bufferTabs.tabs) { tab in
+                            EditorBufferTabSidebarRowView(
+                                tab: tab,
+                                theme: theme,
+                                onActivate: {
+                                    onFocusSidebar()
+                                    onActivateBuffer(tab.bufferID)
+                                }
+                            )
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 1)
+                        }
+                    }
+                }
+                .padding(.vertical, 6)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(Color(nsColor: theme.backgroundColor))
+        .environment(\.colorScheme, theme.backgroundColor.isLightColor ? .light : .dark)
+    }
+}
+
+private struct EditorSidebarSectionHeaderView: View {
+    let title: String
+    let count: Int?
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Text(title.uppercased())
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(.secondary)
+                .tracking(0.5)
+            if let count {
+                Text("\(count)")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.secondary.opacity(0.85))
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 4)
+        .padding(.bottom, 6)
+    }
+}
+
+private struct EditorBufferTabSidebarRowView: View {
+    let tab: EditorBufferTabRow
+    let theme: EditorFileTreeSidebarTheme
+    let onActivate: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: onActivate) {
+            HStack(spacing: 0) {
+                Rectangle()
+                    .fill(Color(nsColor: leadingRailColor))
+                    .frame(width: 2)
+                    .opacity(tab.isActive ? 1 : 0)
+
+                HStack(spacing: 8) {
+                    Image(systemName: symbolName(for: tab.iconName, isDirectory: false))
+                        .font(.system(size: 11, weight: .regular))
+                        .foregroundStyle(Color(nsColor: iconColor))
+                        .frame(width: 12)
+
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(tab.title)
+                            .font(.system(size: 12, weight: tab.isActive ? .semibold : .regular))
+                            .foregroundStyle(rowTextColor)
+                            .lineLimit(1)
+                        if let directoryHint = tab.directoryHint, !directoryHint.isEmpty {
+                            Text(directoryHint)
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                    }
+
+                    Spacer(minLength: 8)
+
+                    EditorSidebarRowDecorationsView(
+                        vcsKind: tab.vcsKind,
+                        diagnosticSeverity: tab.diagnosticSeverity
+                    )
+
+                    if tab.isModified {
+                        Circle()
+                            .fill(Color(nsColor: tab.isActive ? theme.selectionColor : .secondaryLabelColor).opacity(tab.isActive ? 0.95 : 0.82))
+                            .frame(width: 5, height: 5)
+                    }
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(selectionBackground)
+            .clipShape(.rect(cornerRadius: 6))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            isHovered = hovering
+        }
+        .help(tab.filePath ?? tab.title)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(tab.isActive ? [.isSelected] : [.isButton])
+    }
+
+    @ViewBuilder
+    private var selectionBackground: some View {
+        RoundedRectangle(cornerRadius: 6, style: .continuous)
+            .fill(backgroundColor)
+    }
+
+    private var backgroundColor: Color {
+        if tab.isActive {
+            return Color(nsColor: theme.selectionColor).opacity(0.24)
+        }
+        if isHovered {
+            return Color(nsColor: theme.hoverColor)
+        }
+        return .clear
+    }
+
+    private var leadingRailColor: NSColor {
+        theme.selectionColor
+    }
+
+    private var iconColor: NSColor {
+        if tab.isActive {
+            return .labelColor
+        }
+        return .tertiaryLabelColor
+    }
+
+    private var rowTextColor: Color {
+        tab.isActive ? .primary : .primary.opacity(0.88)
     }
 }
 
@@ -928,7 +1218,10 @@ private struct EditorFileTreeRowView: View {
 
                 Spacer(minLength: 6)
 
-                EditorFileTreeRowDecorationsView(row: row)
+                EditorSidebarRowDecorationsView(
+                    vcsKind: row.vcsKind,
+                    diagnosticSeverity: row.diagnosticSeverity
+                )
 
                 if row.isCurrentFile {
                     Circle()
@@ -986,18 +1279,19 @@ private struct EditorFileTreeRowView: View {
     }
 }
 
-private struct EditorFileTreeRowDecorationsView: View {
-    let row: EditorFileTreeRow
+private struct EditorSidebarRowDecorationsView: View {
+    let vcsKind: EditorFileTreeVcsKind?
+    let diagnosticSeverity: EditorDiagnosticSeverity?
 
     var body: some View {
         HStack(spacing: 6) {
-            if let vcsKind = row.vcsKind {
+            if let vcsKind {
                 Image(systemName: symbolName(for: fileTreeVcsIconName(vcsKind), isDirectory: false))
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(fileTreeBadgeColor(for: fileTreeVcsSeverity(vcsKind)))
                     .accessibilityLabel(Text(fileTreeVcsAccessibilityLabel(vcsKind)))
             }
-            if let diagnosticSeverity = row.diagnosticSeverity {
+            if let diagnosticSeverity {
                 Image(systemName: diagnosticSeverity.symbolName)
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(fileTreeBadgeColor(for: diagnosticSeverity))

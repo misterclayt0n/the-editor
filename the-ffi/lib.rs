@@ -401,37 +401,40 @@ pub struct the_editor_surface_config_t {
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 pub struct the_editor_snapshot_info_t {
-  pub surface_width_px:        u32,
-  pub surface_height_px:       u32,
-  pub surface_metrics:         the_editor_surface_metrics_t,
-  pub background_color:        the_editor_rgba_t,
-  pub gutter_background_color: the_editor_rgba_t,
-  pub selection_color:         the_editor_rgba_t,
-  pub viewport_width:          u16,
-  pub viewport_height:         u16,
-  pub content_offset_x:        u16,
-  pub active_pane_id:          usize,
-  pub pane_count:              usize,
-  pub separator_count:         usize,
-  pub damage_start_row:        u16,
-  pub damage_end_row:          u16,
-  pub damage_is_full:          bool,
-  pub damage_reason:           u8,
-  pub mode:                    u8,
-  pub layout_generation:       u64,
-  pub text_generation:         u64,
-  pub decoration_generation:   u64,
-  pub cursor_generation:       u64,
-  pub scroll_generation:       u64,
-  pub theme_generation:        u64,
-  pub cursor_blink_generation: u64,
-  pub scroll_row:              u32,
-  pub scroll_col:              u32,
-  pub document_line_count:     u32,
-  pub line_count:              usize,
-  pub cursor_count:            usize,
-  pub selection_count:         usize,
-  pub overlay_count:           usize,
+  pub surface_width_px:          u32,
+  pub surface_height_px:         u32,
+  pub surface_metrics:           the_editor_surface_metrics_t,
+  pub background_color:          the_editor_rgba_t,
+  pub gutter_background_color:   the_editor_rgba_t,
+  pub selection_color:           the_editor_rgba_t,
+  pub viewport_width:            u16,
+  pub viewport_height:           u16,
+  pub content_offset_x:          u16,
+  pub active_pane_id:            usize,
+  pub pane_count:                usize,
+  pub separator_count:           usize,
+  pub damage_start_row:          u16,
+  pub damage_end_row:            u16,
+  pub damage_is_full:            bool,
+  pub damage_reason:             u8,
+  pub mode:                      u8,
+  pub layout_generation:         u64,
+  pub text_generation:           u64,
+  pub decoration_generation:     u64,
+  pub cursor_generation:         u64,
+  pub scroll_generation:         u64,
+  pub theme_generation:          u64,
+  pub cursor_blink_enabled:      bool,
+  pub cursor_blink_interval_ms:  u16,
+  pub cursor_blink_delay_ms:     u16,
+  pub cursor_blink_generation:   u64,
+  pub scroll_row:                u32,
+  pub scroll_col:                u32,
+  pub document_line_count:       u32,
+  pub line_count:                usize,
+  pub cursor_count:              usize,
+  pub selection_count:           usize,
+  pub overlay_count:             usize,
 }
 
 #[repr(C)]
@@ -1474,6 +1477,7 @@ struct SwiftEditor {
   surface:                             SurfaceConfig,
   vcs_provider:                        DiffProviderRegistry,
   vcs_statusline:                      Option<String>,
+  cursor_blink_generation:             u64,
   gutter_diff_signs:                   BTreeMap<usize, RenderGutterDiffKind>,
   vcs_diff:                            Option<DiffHandle>,
   vcs_document_generation:             u64,
@@ -5036,6 +5040,7 @@ impl SwiftEditor {
       surface,
       vcs_provider: DiffProviderRegistry::default(),
       vcs_statusline: None,
+      cursor_blink_generation: 0,
       gutter_diff_signs: BTreeMap::new(),
       vcs_diff: None,
       vcs_document_generation: 0,
@@ -5145,6 +5150,7 @@ impl SwiftEditor {
       return false;
     }
     self.sync_state_after_active_pane_change(previous_buffer_id);
+    self.bump_cursor_blink_generation();
     true
   }
 
@@ -5234,6 +5240,7 @@ impl SwiftEditor {
       return pane_changed;
     }
     self.editor.view_mut().active_cursor = next_selection.cursor_ids().first().copied();
+    self.bump_cursor_blink_generation();
     self.ensure_cursor_visible();
     true
   }
@@ -5314,6 +5321,7 @@ impl SwiftEditor {
       return false;
     }
     self.editor.view_mut().active_cursor = next_selection.cursor_ids().first().copied();
+    self.bump_cursor_blink_generation();
     self.ensure_cursor_visible();
     true
   }
@@ -6442,6 +6450,12 @@ impl DefaultContext for SwiftEditor {
   fn mode(&self) -> Mode {
     self.mode
   }
+  fn cursor_blink_generation(&self) -> u64 {
+    self.cursor_blink_generation
+  }
+  fn bump_cursor_blink_generation(&mut self) {
+    self.cursor_blink_generation = self.cursor_blink_generation.wrapping_add(1);
+  }
   fn set_mode(&mut self, mode: Mode) {
     self.mode = mode;
   }
@@ -7301,6 +7315,13 @@ impl OwnedSnapshot {
         cursor_generation: active_plan.map(|plan| plan.cursor_generation).unwrap_or(0),
         scroll_generation: active_plan.map(|plan| plan.scroll_generation).unwrap_or(0),
         theme_generation: active_plan.map(|plan| plan.theme_generation).unwrap_or(0),
+        cursor_blink_enabled: active_plan.map(|plan| plan.cursor_blink_enabled).unwrap_or(false),
+        cursor_blink_interval_ms: active_plan
+          .map(|plan| plan.cursor_blink_interval_ms)
+          .unwrap_or(0),
+        cursor_blink_delay_ms: active_plan
+          .map(|plan| plan.cursor_blink_delay_ms)
+          .unwrap_or(0),
         cursor_blink_generation: active_plan
           .map(|plan| plan.cursor_blink_generation)
           .unwrap_or(0),

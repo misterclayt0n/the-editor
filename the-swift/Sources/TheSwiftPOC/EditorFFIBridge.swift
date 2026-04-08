@@ -104,6 +104,9 @@ struct EditorSnapshotInfo {
     let cursorGeneration: UInt64
     let scrollGeneration: UInt64
     let themeGeneration: UInt64
+    let cursorBlinkEnabled: Bool
+    let cursorBlinkIntervalMs: Int
+    let cursorBlinkDelayMs: Int
     let cursorBlinkGeneration: UInt64
     let scrollRow: Int
     let scrollCol: Int
@@ -1059,6 +1062,9 @@ enum EditorFFIBridge {
             cursorGeneration: infoValue.cursor_generation,
             scrollGeneration: infoValue.scroll_generation,
             themeGeneration: infoValue.theme_generation,
+            cursorBlinkEnabled: infoValue.cursor_blink_enabled,
+            cursorBlinkIntervalMs: Int(infoValue.cursor_blink_interval_ms),
+            cursorBlinkDelayMs: Int(infoValue.cursor_blink_delay_ms),
             cursorBlinkGeneration: infoValue.cursor_blink_generation,
             scrollRow: Int(infoValue.scroll_row),
             scrollCol: Int(infoValue.scroll_col),

@@ -16,6 +16,7 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
     private var scene: EditorRenderScene?
     private var lineCache: [EditorLineCacheKey: CGImage] = [:]
     private var lastThemeGeneration: UInt64?
+    private var activeCursorBlinkVisible = true
 
     private struct DrawPerfStats {
         var cacheHits = 0
@@ -80,6 +81,10 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
 
     func drawImmediately() {
         view.draw()
+    }
+
+    func setActiveCursorBlinkVisible(_ visible: Bool) {
+        activeCursorBlinkVisible = visible
     }
 
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
@@ -200,9 +205,10 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
             )
         }
 
-        for cursor in scene.cursors {
+        for (index, cursor) in scene.cursors.enumerated() {
             drawCursor(
                 cursor,
+                at: index,
                 in: context,
                 scene: scene,
                 cellSize: cellSize,
@@ -491,6 +497,7 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
 
     private func drawCursor(
         _ cursor: EditorSnapshotCursor,
+        at index: Int,
         in context: CGContext,
         scene: EditorRenderScene,
         cellSize: CGSize,
@@ -503,6 +510,9 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
         let baseRect = CGRect(x: x, y: y, width: max(cellSize.width, cursorThickness), height: cellSize.height)
         let pane = paneContaining(cursor: cursor, in: scene)
         let isFocusedCursor = pane?.isActive ?? (cursor.kind == .block)
+        if shouldBlinkCursor(cursor, at: index, in: scene, isFocusedCursor: isFocusedCursor), !activeCursorBlinkVisible {
+            return
+        }
         let fillColor = cursor.style.backgroundColor ?? cursor.style.foregroundColor
         let strokeColor = fillColor.withAlphaComponent(isFocusedCursor ? 1 : 0.9)
 
@@ -566,6 +576,15 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
             context.restoreGState()
             return
         }
+    }
+
+    private func shouldBlinkCursor(
+        _ cursor: EditorSnapshotCursor,
+        at index: Int,
+        in scene: EditorRenderScene,
+        isFocusedCursor: Bool
+    ) -> Bool {
+        scene.info.cursorBlinkEnabled && index == 0 && isFocusedCursor && cursor.kind != .hidden
     }
 
     private func drawHollowCursor(in context: CGContext, rect: CGRect, color: NSColor) {

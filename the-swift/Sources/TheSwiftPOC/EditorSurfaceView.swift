@@ -9,6 +9,7 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
     weak var controller: EditorSurfaceController?
 
     private let renderer: MetalEditorRenderer
+    private let cursorBlinkController: EditorCursorBlinkController
     private let font: NSFont
     private let fontMetrics: EditorFontMetrics
     private let fallbackCellSize: CGSize
@@ -39,6 +40,7 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
     private var splitDrag: SplitDragState?
     private var scrollbarDrag: ScrollbarDragState?
     private var bufferSelectionDrag: BufferSelectionDragState?
+    private var notificationObservers: [NSObjectProtocol] = []
 
     override var acceptsFirstResponder: Bool { true }
     override var isFlipped: Bool { true }
@@ -54,6 +56,10 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
             return nil
         }
         self.renderer = renderer
+        self.cursorBlinkController = EditorCursorBlinkController { [weak renderer] visible in
+            renderer?.setActiveCursorBlinkVisible(visible)
+            renderer?.drawImmediately()
+        }
         super.init(frame: .zero)
         wantsLayer = true
         addSubview(renderer.view)
@@ -70,10 +76,100 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
         synchronizeSurfaceConfiguration()
     }
 
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        if newWindow == nil || newWindow != window {
+            removeBlinkObservers()
+        }
+        super.viewWillMove(toWindow: newWindow)
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        installBlinkObservers()
+        refreshCursorBlinkState()
+    }
+
+    override func becomeFirstResponder() -> Bool {
+        let accepted = super.becomeFirstResponder()
+        refreshCursorBlinkState(reset: true)
+        return accepted
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let accepted = super.resignFirstResponder()
+        refreshCursorBlinkState()
+        return accepted
+    }
+
     override func viewDidChangeBackingProperties() {
         super.viewDidChangeBackingProperties()
         applyRendererGeometry()
         synchronizeSurfaceConfiguration(forceDraw: true)
+    }
+
+    private func installBlinkObservers() {
+        removeBlinkObservers()
+        let center = NotificationCenter.default
+        if let window {
+            notificationObservers.append(center.addObserver(
+                forName: NSWindow.didBecomeKeyNotification,
+                object: window,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    self?.refreshCursorBlinkState(reset: true)
+                }
+            })
+            notificationObservers.append(center.addObserver(
+                forName: NSWindow.didResignKeyNotification,
+                object: window,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    self?.refreshCursorBlinkState()
+                }
+            })
+        }
+        notificationObservers.append(center.addObserver(
+            forName: NSApplication.didBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.refreshCursorBlinkState(reset: true)
+            }
+        })
+        notificationObservers.append(center.addObserver(
+            forName: NSApplication.didResignActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.refreshCursorBlinkState()
+            }
+        })
+    }
+
+    private func removeBlinkObservers() {
+        let center = NotificationCenter.default
+        for observer in notificationObservers {
+            center.removeObserver(observer)
+        }
+        notificationObservers.removeAll()
+    }
+
+    private func refreshCursorBlinkState(reset: Bool = false) {
+        let isTracking = splitDrag != nil || scrollbarDrag != nil || bufferSelectionDrag != nil
+        cursorBlinkController.update(
+            scene: controller?.scene,
+            isFirstResponder: window?.firstResponder === self,
+            windowIsKey: window?.isKeyWindow == true,
+            appIsActive: NSApp.isActive,
+            isTracking: isTracking
+        )
+        if reset {
+            cursorBlinkController.reset()
+        }
     }
 
     private func applyRendererGeometry() {
@@ -105,6 +201,7 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
 
     func update(scene: EditorRenderScene) {
         renderer.update(scene: scene)
+        refreshCursorBlinkState()
         window?.invalidateCursorRects(for: self)
     }
 
@@ -158,6 +255,7 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
         let point = convert(event.locationInWindow, from: nil)
         if let separator = separator(at: point) {
             splitDrag = SplitDragState(splitID: separator.splitID)
+            refreshCursorBlinkState(reset: true)
             return
         }
         if let geometry = scrollbarGeometry(at: point) {
@@ -168,11 +266,13 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
                 ? point.y - geometry.thumbRect.minY
                 : geometry.thumbRect.height * 0.5
             scrollbarDrag = ScrollbarDragState(paneID: geometry.pane.paneID, thumbOffsetY: thumbOffsetY)
+            refreshCursorBlinkState(reset: true)
             updateScrollPosition(for: geometry.pane.paneID, pointerY: point.y, thumbOffsetY: thumbOffsetY)
             return
         }
         if let hit = bufferTextHit(at: point) {
             let modifiers = pointerModifiers(from: event.modifierFlags)
+            cursorBlinkController.reset()
             controller?.clickBufferPosition(
                 paneID: hit.paneID,
                 logicalCol: hit.logicalCol,
@@ -187,6 +287,7 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
                 modifiers: modifiers,
                 clickCount: event.clickCount
             )
+            refreshCursorBlinkState(reset: true)
             return
         }
         activatePaneIfNeeded(at: point)
@@ -257,6 +358,7 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
 
     override func mouseDragged(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
+        refreshCursorBlinkState()
         if let drag = splitDrag, let controller, let scene = controller.scene {
             let coords = clampedCellCoordinates(for: point, scene: scene)
             controller.resizeSplit(drag.splitID, x: coords.x, y: coords.y)
@@ -286,6 +388,7 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
         splitDrag = nil
         scrollbarDrag = nil
         bufferSelectionDrag = nil
+        refreshCursorBlinkState(reset: true)
         super.mouseUp(with: event)
     }
 
@@ -295,6 +398,7 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
             return
         }
 
+        cursorBlinkController.reset()
         if controller.currentMode == .insert {
             if event.modifierFlags.intersection([.control, .option]).isEmpty == false,
                let keyEvent = translateRawEvent(event) {
@@ -648,6 +752,7 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
             return
         }
         unmarkText()
+        cursorBlinkController.reset()
         controller?.insertText(text)
     }
 
@@ -677,6 +782,7 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
         }
 
         if let event {
+            cursorBlinkController.reset()
             controller.handleKey(event)
         }
     }

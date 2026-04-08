@@ -178,6 +178,9 @@ typedef struct the_editor_snapshot_info_t {
   uint64_t cursor_generation;
   uint64_t scroll_generation;
   uint64_t theme_generation;
+  bool cursor_blink_enabled;
+  uint16_t cursor_blink_interval_ms;
+  uint16_t cursor_blink_delay_ms;
   uint64_t cursor_blink_generation;
   uint32_t scroll_row;
   uint32_t scroll_col;

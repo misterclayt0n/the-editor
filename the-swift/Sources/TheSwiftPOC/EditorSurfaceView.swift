@@ -56,8 +56,8 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
             return nil
         }
         self.renderer = renderer
-        self.cursorBlinkController = EditorCursorBlinkController { [weak renderer] visible in
-            renderer?.setActiveCursorBlinkVisible(visible)
+        self.cursorBlinkController = EditorCursorBlinkController { [weak renderer] opacity in
+            renderer?.setActiveCursorBlinkOpacity(opacity)
             renderer?.drawImmediately()
         }
         super.init(frame: .zero)
@@ -79,6 +79,7 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
     override func viewWillMove(toWindow newWindow: NSWindow?) {
         if newWindow == nil || newWindow != window {
             removeBlinkObservers()
+            cursorBlinkController.stop()
         }
         super.viewWillMove(toWindow: newWindow)
     }

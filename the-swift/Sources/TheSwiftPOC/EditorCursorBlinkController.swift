@@ -3,7 +3,10 @@ import Foundation
 
 @MainActor
 final class EditorCursorBlinkController {
-    private var timer: Timer?
+    private let fadeDuration: TimeInterval = 0.14
+
+    private var phaseTimer: Timer?
+    private var animationTimer: Timer?
     private var lastBlinkGeneration: UInt64?
     private var blinkEnabled = false
     private var blinkInterval: TimeInterval = 0.5
@@ -11,13 +14,17 @@ final class EditorCursorBlinkController {
     private var canBlink = false
     private var hasBlinkTarget = false
     private var isTracking = false
+    private var targetVisible = true
+    private var transitionStartedAt: CFTimeInterval?
+    private var transitionFromOpacity: CGFloat = 1
+    private var transitionToOpacity: CGFloat = 1
 
-    private(set) var isCursorVisible = true
+    private(set) var opacity: CGFloat = 1
 
-    private let onVisibilityChanged: (Bool) -> Void
+    private let onOpacityChanged: (CGFloat) -> Void
 
-    init(onVisibilityChanged: @escaping (Bool) -> Void) {
-        self.onVisibilityChanged = onVisibilityChanged
+    init(onOpacityChanged: @escaping (CGFloat) -> Void) {
+        self.onOpacityChanged = onOpacityChanged
     }
 
     func update(
@@ -68,46 +75,100 @@ final class EditorCursorBlinkController {
         restartBlinkCycle()
     }
 
+    func stop() {
+        stopBlinking(forceVisible: true)
+    }
+
     private func restartBlinkCycle() {
-        timer?.invalidate()
-        timer = nil
-        setCursorVisible(true)
-        scheduleTimer(after: blinkDelay)
+        invalidateTimers()
+        targetVisible = true
+        setOpacity(1)
+        schedulePhaseTimer(after: blinkDelay)
     }
 
     private func stopBlinking(forceVisible: Bool) {
-        timer?.invalidate()
-        timer = nil
+        invalidateTimers()
+        transitionStartedAt = nil
         if forceVisible {
-            setCursorVisible(true)
+            targetVisible = true
+            setOpacity(1)
         }
     }
 
-    private func scheduleTimer(after delay: TimeInterval) {
-        timer?.invalidate()
+    private func invalidateTimers() {
+        phaseTimer?.invalidate()
+        phaseTimer = nil
+        animationTimer?.invalidate()
+        animationTimer = nil
+    }
+
+    private func schedulePhaseTimer(after delay: TimeInterval) {
+        phaseTimer?.invalidate()
         let nextDelay = max(delay, 0.016)
         let timer = Timer(timeInterval: nextDelay, repeats: false) { [weak self] _ in
             Task { @MainActor [weak self] in
-                self?.handleTimerFire()
+                self?.handlePhaseTimerFire()
             }
         }
         timer.tolerance = min(max(nextDelay * 0.1, 0.01), 0.05)
         RunLoop.main.add(timer, forMode: .common)
-        self.timer = timer
+        phaseTimer = timer
     }
 
-    private func handleTimerFire() {
+    private func handlePhaseTimerFire() {
         guard canBlink, hasBlinkTarget, blinkEnabled else {
             stopBlinking(forceVisible: true)
             return
         }
-        setCursorVisible(!isCursorVisible)
-        scheduleTimer(after: blinkInterval)
+        targetVisible.toggle()
+        startOpacityTransition(to: targetVisible ? 1 : 0)
+        schedulePhaseTimer(after: blinkInterval)
     }
 
-    private func setCursorVisible(_ visible: Bool) {
-        guard isCursorVisible != visible else { return }
-        isCursorVisible = visible
-        onVisibilityChanged(visible)
+    private func startOpacityTransition(to targetOpacity: CGFloat) {
+        animationTimer?.invalidate()
+        transitionStartedAt = CACurrentMediaTime()
+        transitionFromOpacity = opacity
+        transitionToOpacity = targetOpacity
+
+        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.stepOpacityTransition()
+            }
+        }
+        timer.tolerance = 1.0 / 120.0
+        RunLoop.main.add(timer, forMode: .common)
+        animationTimer = timer
+        stepOpacityTransition()
+    }
+
+    private func stepOpacityTransition() {
+        guard let transitionStartedAt else {
+            animationTimer?.invalidate()
+            animationTimer = nil
+            return
+        }
+        let elapsed = CACurrentMediaTime() - transitionStartedAt
+        let progress = min(max(elapsed / fadeDuration, 0), 1)
+        let eased = easeInOut(progress)
+        let nextOpacity = transitionFromOpacity + CGFloat(eased) * (transitionToOpacity - transitionFromOpacity)
+        setOpacity(nextOpacity)
+        if progress >= 1 {
+            self.transitionStartedAt = nil
+            animationTimer?.invalidate()
+            animationTimer = nil
+            setOpacity(transitionToOpacity)
+        }
+    }
+
+    private func setOpacity(_ nextOpacity: CGFloat) {
+        let clamped = min(max(nextOpacity, 0), 1)
+        guard abs(opacity - clamped) > 0.001 else { return }
+        opacity = clamped
+        onOpacityChanged(clamped)
+    }
+
+    private func easeInOut(_ value: Double) -> Double {
+        value * value * (3 - (2 * value))
     }
 }

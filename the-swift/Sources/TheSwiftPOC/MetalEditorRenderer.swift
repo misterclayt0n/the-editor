@@ -16,7 +16,7 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
     private var scene: EditorRenderScene?
     private var lineCache: [EditorLineCacheKey: CGImage] = [:]
     private var lastThemeGeneration: UInt64?
-    private var activeCursorBlinkVisible = true
+    private var activeCursorBlinkOpacity: CGFloat = 1
 
     private struct DrawPerfStats {
         var cacheHits = 0
@@ -83,8 +83,8 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
         view.draw()
     }
 
-    func setActiveCursorBlinkVisible(_ visible: Bool) {
-        activeCursorBlinkVisible = visible
+    func setActiveCursorBlinkOpacity(_ opacity: CGFloat) {
+        activeCursorBlinkOpacity = min(max(opacity, 0), 1)
     }
 
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
@@ -510,11 +510,15 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
         let baseRect = CGRect(x: x, y: y, width: max(cellSize.width, cursorThickness), height: cellSize.height)
         let pane = paneContaining(cursor: cursor, in: scene)
         let isFocusedCursor = pane?.isActive ?? (cursor.kind == .block)
-        if shouldBlinkCursor(cursor, at: index, in: scene, isFocusedCursor: isFocusedCursor), !activeCursorBlinkVisible {
+        let blinkOpacity = shouldBlinkCursor(cursor, at: index, in: scene, isFocusedCursor: isFocusedCursor)
+            ? activeCursorBlinkOpacity
+            : 1
+        if blinkOpacity <= 0.001 {
             return
         }
-        let fillColor = cursor.style.backgroundColor ?? cursor.style.foregroundColor
-        let strokeColor = fillColor.withAlphaComponent(isFocusedCursor ? 1 : 0.9)
+        let fillColor = (cursor.style.backgroundColor ?? cursor.style.foregroundColor)
+            .withAlphaComponent((cursor.style.backgroundColor ?? cursor.style.foregroundColor).alphaComponent * blinkOpacity)
+        let strokeColor = fillColor.withAlphaComponent((isFocusedCursor ? 1 : 0.9) * blinkOpacity)
 
         context.saveGState()
         context.setFillColor(fillColor.cgColor)
@@ -552,7 +556,7 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
 
             if let textCell = textCell(under: cursor, in: scene) {
                 let cursorTextStyle = EditorResolvedStyle(
-                    fg: EditorRGBA(color: readableCursorTextColor(fillColor: fillColor, preferred: cursor.style.foregroundColor)),
+                    fg: EditorRGBA(color: readableCursorTextColor(fillColor: fillColor, preferred: cursor.style.foregroundColor).withAlphaComponent(blinkOpacity)),
                     bg: nil,
                     underlineColor: textCell.style.underlineColor,
                     addModifiers: textCell.style.addModifiers,

@@ -4436,16 +4436,18 @@ impl SwiftEditor {
   }
 
   fn new(path: Option<&Path>) -> Self {
-    let workspace_root = path
+    let normalized_path = path.map(resolve_session_path);
+    let workspace_root = normalized_path
+      .as_deref()
       .map(resolved_workspace_root_for_path)
       .unwrap_or_else(default_workspace_root);
     let surface = SurfaceConfig::default();
 
     let mut document = Document::new(
       DocumentId::new(NonZeroUsize::new(1).expect("nonzero")),
-      read_rope(path),
+      read_rope(normalized_path.as_deref()),
     );
-    if let Some(path) = path {
+    if let Some(path) = normalized_path.as_deref() {
       document.set_display_name(display_name_for_path(path));
     }
 
@@ -4456,7 +4458,7 @@ impl SwiftEditor {
       document,
       view,
     );
-    editor.set_active_file_path(path.map(Path::to_path_buf));
+    editor.set_active_file_path(normalized_path.clone());
 
     let mut command_registry = CommandRegistry::new();
     install_default_wiring(&mut command_registry);
@@ -4474,7 +4476,7 @@ impl SwiftEditor {
 
     let mut this = Self {
       editor,
-      file_path: path.map(Path::to_path_buf),
+      file_path: normalized_path,
       workspace_root: workspace_root.clone(),
       working_directory: WorkingDirectoryState {
         current:  Some(workspace_root),
@@ -6115,10 +6117,11 @@ impl DefaultContext for SwiftEditor {
   fn set_ui_theme_preview(&mut self, theme_name: &str) -> Result<(), String> { self.set_ui_theme_preview_named(theme_name) }
   fn clear_ui_theme_preview(&mut self) { self.clear_ui_theme_preview_state(); }
   fn set_file_path(&mut self, path: Option<PathBuf>) {
+    let normalized_path = path.as_deref().map(resolve_session_path);
     let previous_path = self.file_path.clone();
-    self.file_path = path.clone();
-    self.editor.set_active_file_path(path.clone());
-    if let Some(path) = path {
+    self.file_path = normalized_path.clone();
+    self.editor.set_active_file_path(normalized_path.clone());
+    if let Some(path) = normalized_path {
       self.update_workspace_for_path(&path);
       self.reload_theme_catalog();
     }
@@ -6129,32 +6132,33 @@ impl DefaultContext for SwiftEditor {
     let _ = self.refresh_file_tree_decorations();
   }
   fn open_file(&mut self, path: &Path) -> std::io::Result<()> {
+    let path = resolve_session_path(path);
     self.clear_hover_state();
-    if let Some(buffer_id) = self.editor.find_buffer_by_path(path) {
+    if let Some(buffer_id) = self.editor.find_buffer_by_path(&path) {
       let previous_buffer_id = self.editor.active_buffer_id();
       let _ = self.editor.set_active_buffer(buffer_id);
       self.sync_state_after_active_pane_change(previous_buffer_id);
     } else {
-      let contents = fs::read_to_string(path)?;
+      let contents = fs::read_to_string(&path)?;
       let viewport = self.editor.view().viewport;
       let reused_untitled = self.editor.should_reuse_active_untitled_buffer_for_open();
       if reused_untitled {
         let _ = self
           .editor
-          .replace_active_buffer(Rope::from_str(&contents), Some(path.to_path_buf()));
+          .replace_active_buffer(Rope::from_str(&contents), Some(path.clone()));
       } else {
         let view = ViewState::new(viewport, Position::new(0, 0));
         let _ = self
           .editor
-          .open_buffer(Rope::from_str(&contents), view, Some(path.to_path_buf()));
+          .open_buffer(Rope::from_str(&contents), view, Some(path.clone()));
       }
 
       {
         let doc = self.editor.document_mut();
         if let Some(loader) = &self.loader {
-          let _ = setup_syntax(doc, path, loader);
+          let _ = setup_syntax(doc, &path, loader);
         }
-        doc.set_display_name(display_name_for_path(path));
+        doc.set_display_name(display_name_for_path(&path));
         let _ = doc.mark_saved();
       }
 
@@ -6165,7 +6169,7 @@ impl DefaultContext for SwiftEditor {
       self.frame_generation_state = FrameGenerationState::default();
     }
 
-    self.set_file_path(Some(path.to_path_buf()));
+    self.set_file_path(Some(path));
     Ok(())
   }
   fn on_file_saved(&mut self, path: &Path, text: &str) {
@@ -9544,13 +9548,23 @@ fn max_scroll_col(doc: &Document, text_format: &TextFormat, viewport_width: usiz
   longest_visual_col.saturating_sub(viewport_width.saturating_sub(1))
 }
 
+fn resolve_session_path(path: &Path) -> PathBuf {
+  let absolute = if path.is_absolute() {
+    path.to_path_buf()
+  } else {
+    default_workspace_root().join(path)
+  };
+  lexical_normalize_path(&absolute)
+}
+
 fn default_workspace_root() -> PathBuf {
-  std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+  std::env::current_dir().map(|path| lexical_normalize_path(&path)).unwrap_or_else(|_| PathBuf::from("."))
 }
 
 fn resolved_workspace_root_for_path(path: &Path) -> PathBuf {
-  let base = path.parent().unwrap_or(path);
-  the_default::workspace_root(base)
+  let absolute = resolve_session_path(path);
+  let base = absolute.parent().unwrap_or(&absolute);
+  lexical_normalize_path(&the_default::workspace_root(base))
 }
 
 fn display_name_for_path(path: &Path) -> String {

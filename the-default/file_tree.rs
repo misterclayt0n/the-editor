@@ -15,6 +15,7 @@ use std::{
     PathBuf,
   },
   time::{
+    Duration,
     Instant,
     SystemTime,
     UNIX_EPOCH,
@@ -37,7 +38,26 @@ use the_lib::{
   },
   view::scroll_row_to_keep_visible,
 };
-use the_lsp::text_sync::path_for_file_uri;
+use the_lsp::text_sync::{
+  file_uri_for_path,
+  path_for_file_uri,
+};
+use the_runtime::{
+  file_watch::{
+    PathEventKind,
+    WatchHandle,
+    watch as watch_path,
+  },
+  file_watch_consumer::{
+    WatchPollOutcome,
+    WatchedFileEventsState,
+    poll_watch_events,
+  },
+  file_watch_reload::{
+    FileWatchReloadIoState,
+    FileWatchReloadState,
+  },
+};
 use the_vcs::FileChange;
 
 use crate::{
@@ -97,7 +117,12 @@ pub struct FileTreeSnapshot {
   pub active:         bool,
 }
 
-#[derive(Debug, Clone, Default)]
+pub struct FileTreeWatchState {
+  pub stream:        WatchedFileEventsState,
+  pub _watch_handle: WatchHandle,
+}
+
+#[derive(Default)]
 pub struct FileTreeState {
   pub surface_id:          Option<ClientSurfaceId>,
   pub sidebar_pane:        Option<PaneId>,
@@ -116,6 +141,8 @@ pub struct FileTreeState {
   pub clipboard:           Option<FileTreeClipboard>,
   pub vcs_statuses:        BTreeMap<PathBuf, FileTreeVcsKind>,
   pub diagnostic_statuses: BTreeMap<PathBuf, DiagnosticSeverity>,
+  pub watch:               Option<FileTreeWatchState>,
+  pub refresh_due_at:      Option<Instant>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -427,6 +454,128 @@ pub fn handle_file_tree_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent) -
 pub fn refresh_file_tree<Ctx: DefaultContext>(ctx: &mut Ctx) {
   rebuild_rows(ctx);
   ctx.request_render();
+}
+
+pub fn poll_file_tree_watch<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool {
+  let now = Instant::now();
+  let mut changed = sync_file_tree_watch_state(ctx);
+  let outcome = {
+    let state = ctx.file_tree_mut();
+    poll_watch_events(
+      state.watch.as_mut().map(|watch| &mut watch.stream),
+      now,
+      "tree",
+      |_, _| {},
+    )
+  };
+
+  match outcome {
+    WatchPollOutcome::NoChanges => {
+      changed |= poll_pending_file_tree_refresh(ctx, now);
+      changed
+    },
+    WatchPollOutcome::Disconnected { .. } => {
+      let state = ctx.file_tree_mut();
+      state.watch = None;
+      state.refresh_due_at = None;
+      true
+    },
+    WatchPollOutcome::Changes { kinds, .. } => changed | handle_file_tree_watch_kinds(ctx, kinds.as_slice(), now),
+  }
+}
+
+fn sync_file_tree_watch_state<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool {
+  let root = file_tree_watch_root(ctx);
+  let mut changed = false;
+
+  match root {
+    Some(root) => {
+      let current = ctx.file_tree().watch.as_ref().map(|watch| watch.stream.path.as_path());
+      if current != Some(root.as_path()) {
+        let (events_rx, watch_handle) = watch_path(&root, file_tree_watch_latency());
+        let uri = file_uri_for_path(&root).unwrap_or_else(|| format!("file://{}", root.display()));
+        let state = ctx.file_tree_mut();
+        state.watch = Some(FileTreeWatchState {
+          stream: WatchedFileEventsState {
+            path: root,
+            uri,
+            events_rx,
+            suppress_until: None,
+            reload_state: FileWatchReloadState::Clean,
+            reload_io: FileWatchReloadIoState::default(),
+          },
+          _watch_handle: watch_handle,
+        });
+        state.refresh_due_at = None;
+        changed = true;
+      }
+    },
+    None => {
+      let state = ctx.file_tree_mut();
+      if state.watch.take().is_some() {
+        state.refresh_due_at = None;
+        changed = true;
+      }
+    },
+  }
+
+  changed
+}
+
+fn file_tree_watch_root<Ctx: DefaultContext>(ctx: &Ctx) -> Option<PathBuf> {
+  let root = ctx.file_tree().root.clone()?;
+  if !root.exists() {
+    return None;
+  }
+  if ctx.file_tree_uses_split_pane() {
+    attached_tree_pane(ctx).map(|_| root)
+  } else if ctx.file_tree().visible {
+    Some(root)
+  } else {
+    None
+  }
+}
+
+fn handle_file_tree_watch_kinds<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  kinds: &[PathEventKind],
+  now: Instant,
+) -> bool {
+  if kinds
+    .iter()
+    .any(|kind| matches!(kind, PathEventKind::Created | PathEventKind::Removed))
+  {
+    ctx.file_tree_mut().refresh_due_at = None;
+    refresh_file_tree(ctx);
+    return true;
+  }
+
+  if kinds.iter().any(|kind| matches!(kind, PathEventKind::Changed)) {
+    ctx.file_tree_mut().refresh_due_at = Some(now + file_tree_changed_refresh_latency());
+  }
+
+  false
+}
+
+fn poll_pending_file_tree_refresh<Ctx: DefaultContext>(ctx: &mut Ctx, now: Instant) -> bool {
+  let Some(due_at) = ctx.file_tree().refresh_due_at else {
+    return false;
+  };
+  if now < due_at {
+    return false;
+  }
+
+  ctx.file_tree_mut().refresh_due_at = None;
+  refresh_file_tree(ctx);
+  true
+}
+
+fn file_tree_watch_latency() -> Duration {
+  Duration::from_millis(75)
+}
+
+fn file_tree_changed_refresh_latency() -> Duration {
+  Duration::from_millis(200)
 }
 
 fn select_file_tree_index_with_behavior<Ctx: DefaultContext>(

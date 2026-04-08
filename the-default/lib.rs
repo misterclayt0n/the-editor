@@ -241,6 +241,7 @@ pub use file_tree::{
   install_builtin_file_tree_commands,
   is_active_file_tree,
   is_file_tree_surface,
+  poll_file_tree_watch,
   rebuild_file_tree_diagnostic_statuses,
   refresh_file_tree,
   set_file_tree_diagnostic_statuses,

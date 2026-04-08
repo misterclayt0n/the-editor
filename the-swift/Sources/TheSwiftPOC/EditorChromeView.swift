@@ -85,8 +85,15 @@ struct EditorChromeView: View {
 
     private var mainColumn: some View {
         VStack(spacing: 0) {
-            EditorSurfaceRepresentable(controller: controller)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            ZStack {
+                EditorSurfaceRepresentable(controller: controller)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                EditorDiagnosticsOverlayView(controller: controller)
+                EditorDocsPanelsView(controller: controller)
+                EditorCompletionMenuView(controller: controller)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             EditorStatusAccessoryView(chrome: controller.chrome, mode: controller.currentMode)
         }

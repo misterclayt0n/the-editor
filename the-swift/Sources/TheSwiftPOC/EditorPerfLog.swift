@@ -1,5 +1,24 @@
 import Foundation
 
+private func appendPerfLineToSharedLogFile(_ line: String) {
+    guard let rawPath = ProcessInfo.processInfo.environment["THE_TERM_DEBUG_RENDER_PERF_FILE"]?.trimmingCharacters(in: .whitespacesAndNewlines),
+          !rawPath.isEmpty else {
+        return
+    }
+    let url = URL(fileURLWithPath: rawPath)
+    let directory = url.deletingLastPathComponent()
+    try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let data = Data(line.utf8)
+    if FileManager.default.fileExists(atPath: url.path),
+       let handle = try? FileHandle(forWritingTo: url) {
+        defer { try? handle.close() }
+        try? handle.seekToEnd()
+        try? handle.write(contentsOf: data)
+    } else {
+        try? data.write(to: url)
+    }
+}
+
 func themePerfEnabled() -> Bool {
     ProcessInfo.processInfo.environment["THE_EDITOR_THEME_PROFILE"] == "1"
 }
@@ -14,18 +33,24 @@ func scrollPerfEnabled() -> Bool {
 
 func themePerfLog(_ message: @autoclosure () -> String) {
     guard themePerfEnabled() else { return }
-    fputs("[TheSwiftPOC:perf] \(message())\n", stderr)
+    let line = "[TheSwiftPOC:perf] \(message())\n"
+    fputs(line, stderr)
+    appendPerfLineToSharedLogFile(line)
 }
 
 func completionPerfLog(_ message: @autoclosure () -> String) {
     guard completionPerfEnabled() else { return }
-    fputs("[TheSwiftPOC:completion-perf] \(message())\n", stderr)
+    let line = "[TheSwiftPOC:completion-perf] \(message())\n"
+    fputs(line, stderr)
+    appendPerfLineToSharedLogFile(line)
 }
 
 func scrollPerfLog(_ message: @autoclosure () -> String) {
     guard scrollPerfEnabled() else { return }
     let tsMs = Int((CFAbsoluteTimeGetCurrent() * 1000).rounded())
-    fputs("[TheSwiftPOC:scroll-perf \(tsMs)] \(message())\n", stderr)
+    let line = "[TheSwiftPOC:scroll-perf \(tsMs)] \(message())\n"
+    fputs(line, stderr)
+    appendPerfLineToSharedLogFile(line)
 }
 
 @discardableResult

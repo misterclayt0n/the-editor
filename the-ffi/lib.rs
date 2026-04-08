@@ -3731,26 +3731,90 @@ impl SwiftEditor {
 
   fn refresh_file_tree_decorations(&mut self) -> bool {
     let Some(root) = self.file_tree.root.clone() else {
-      return clear_file_tree_decorations(self);
+      let cleared = clear_file_tree_decorations(self);
+      scroll_perf_log(format!(
+        "file_tree.decorations cleared reason=no-root changed={}",
+        u8::from(cleared)
+      ));
+      return cleared;
     };
 
     let diagnostic_statuses = rebuild_file_tree_diagnostic_statuses(&self.diagnostics, &root);
+    let diagnostic_count = diagnostic_statuses.len();
     let mut changed = set_file_tree_diagnostic_statuses(self, diagnostic_statuses);
     changed |= self.refresh_file_tree_vcs_decorations_for_root(&root);
+
+    let row_vcs_count = self
+      .file_tree
+      .rows
+      .iter()
+      .filter(|row| row.decorations.vcs.is_some())
+      .count();
+    let row_diagnostic_count = self
+      .file_tree
+      .rows
+      .iter()
+      .filter(|row| row.decorations.diagnostic.is_some())
+      .count();
+    let current_file_summary = self
+      .file_tree
+      .rows
+      .iter()
+      .find(|row| row.is_current_file)
+      .map(|row| {
+        format!(
+          "current={} vcs={} diag={}",
+          row.path.display(),
+          file_tree_vcs_kind_code(row.decorations.vcs),
+          file_tree_diagnostic_severity_code(row.decorations)
+        )
+      })
+      .unwrap_or_else(|| "current=-".to_string());
+    scroll_perf_log(format!(
+      "file_tree.decorations root={} rows={} diag_statuses={} row_vcs={} row_diag={} changed={} {}",
+      root.display(),
+      self.file_tree.rows.len(),
+      diagnostic_count,
+      row_vcs_count,
+      row_diagnostic_count,
+      u8::from(changed),
+      current_file_summary,
+    ));
     changed
   }
 
   fn refresh_file_tree_vcs_decorations_for_root(&mut self, root: &Path) -> bool {
     let vcs_statuses = self.current_file_tree_vcs_statuses(root);
-    set_file_tree_vcs_statuses(self, vcs_statuses)
+    let status_count = vcs_statuses.len();
+    let changed = set_file_tree_vcs_statuses(self, vcs_statuses);
+    scroll_perf_log(format!(
+      "file_tree.vcs root={} statuses={} changed={}",
+      root.display(),
+      status_count,
+      u8::from(changed)
+    ));
+    changed
   }
 
   fn current_file_tree_vcs_statuses(&self, root: &Path) -> BTreeMap<PathBuf, FileTreeVcsKind> {
     let Some(scan) = self.shared_vcs_scan_for_cwd(root) else {
+      scroll_perf_log(format!(
+        "file_tree.vcs source=no-scan root={} file_path={}",
+        root.display(),
+        self
+          .file_path
+          .as_ref()
+          .map(|path| path.display().to_string())
+          .unwrap_or_else(|| "-".to_string())
+      ));
       return BTreeMap::new();
     };
-    let changes = self
-      .merged_vcs_changed_file_items(&scan)
+    let merged = self.merged_vcs_changed_file_items(&scan);
+    let merged_count = merged.len();
+    let current_file_changed = self.file_path.as_ref().is_some_and(|path| {
+      merged.iter().any(|item| item.path == *path || item.from_path.as_ref() == Some(path))
+    });
+    let changes = merged
       .into_iter()
       .map(|item| match item.kind {
         FilePickerChangedKind::Untracked => FileChange::Untracked { path: item.path },
@@ -3763,7 +3827,16 @@ impl SwiftEditor {
         },
       })
       .collect::<Vec<_>>();
-    collapse_file_tree_vcs_statuses(&changes, root)
+    let collapsed = collapse_file_tree_vcs_statuses(&changes, root);
+    scroll_perf_log(format!(
+      "file_tree.vcs source=scan repo_root={} root={} merged={} collapsed={} current_changed={}",
+      scan.repo_root.display(),
+      root.display(),
+      merged_count,
+      collapsed.len(),
+      u8::from(current_file_changed)
+    ));
+    collapsed
   }
 
   fn shared_vcs_scan_for_path(&self, path: &Path) -> Option<Arc<VcsWorkspaceScan>> {
@@ -6939,6 +7012,33 @@ impl OwnedSnapshot {
   }
 
   fn populate_file_tree(&mut self, editor: &SwiftEditor, _frame: &FrameRenderPlan) {
+    let decorated_row_count = editor
+      .file_tree
+      .rows
+      .iter()
+      .filter(|row| row.decorations.vcs.is_some() || row.decorations.diagnostic.is_some())
+      .count();
+    let current_file_summary = editor
+      .file_tree
+      .rows
+      .iter()
+      .find(|row| row.is_current_file)
+      .map(|row| {
+        format!(
+          "current={} vcs={} diag={}",
+          row.path.display(),
+          file_tree_vcs_kind_code(row.decorations.vcs),
+          file_tree_diagnostic_severity_code(row.decorations)
+        )
+      })
+      .unwrap_or_else(|| "current=-".to_string());
+    scroll_perf_log(format!(
+      "snapshot.file_tree visible={} rows={} decorated_rows={} {}",
+      u8::from(editor.file_tree.visible && editor.file_tree.root.is_some()),
+      editor.file_tree.rows.len(),
+      decorated_row_count,
+      current_file_summary,
+    ));
     self.file_tree = FileTreeRecord {
       tree: the_editor_snapshot_file_tree_t {
         visible: editor.file_tree.visible && editor.file_tree.root.is_some(),

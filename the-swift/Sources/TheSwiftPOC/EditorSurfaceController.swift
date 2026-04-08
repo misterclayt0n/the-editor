@@ -529,6 +529,13 @@ final class EditorSurfaceController: ObservableObject {
         signatureHelp = snapshot.signatureHelp
         filePicker = snapshot.filePicker
         fileTree = snapshot.fileTree
+        let decoratedFileTreeRows = snapshot.fileTree.rows.filter { $0.vcsKind != nil || $0.diagnosticSeverity != nil }.count
+        let currentFileTreeSummary = snapshot.fileTree.rows.first(where: { $0.isCurrentFile }).map {
+            "current=\($0.path) vcs=\($0.vcsKind?.rawValue ?? 0) diag=\($0.diagnosticSeverity?.rawValue ?? 0)"
+        } ?? "current=-"
+        scrollPerfLog(
+            "controller.fileTree visible=\(snapshot.fileTree.isVisible) rows=\(snapshot.fileTree.rows.count) decoratedRows=\(decoratedFileTreeRows) \(currentFileTreeSummary)"
+        )
         scene = nextScene
         let publishMs = (CFAbsoluteTimeGetCurrent() - publishStarted) * 1000
 

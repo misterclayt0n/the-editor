@@ -763,6 +763,30 @@ enum EditorFFIBridge {
     }
 
     @discardableResult
+    static func dragBufferSelection(
+        _ handle: OpaquePointer?,
+        paneID: UInt,
+        dragOriginCol: Int,
+        dragOriginRow: Int,
+        logicalCol: Int,
+        logicalRow: Int,
+        modifiers: UInt8,
+        clickCount: Int
+    ) -> Bool {
+        guard let handle else { return false }
+        return the_editor_drag_buffer_selection(
+            handle,
+            paneID,
+            UInt16(clamping: dragOriginCol),
+            UInt16(clamping: dragOriginRow),
+            UInt16(clamping: logicalCol),
+            UInt16(clamping: logicalRow),
+            modifiers,
+            UInt8(clamping: clickCount)
+        )
+    }
+
+    @discardableResult
     static func sendKey(_ handle: OpaquePointer?, event: the_editor_key_event_t) -> Bool {
         guard let handle else { return false }
         return the_editor_handle_key(handle, event)

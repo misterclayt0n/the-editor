@@ -29,7 +29,10 @@ use std::{
   },
 };
 
-use ropey::Rope;
+use ropey::{
+  Rope,
+  RopeSlice,
+};
 use smallvec::SmallVec;
 use the_core::{
   grapheme::grapheme_width,
@@ -5190,46 +5193,27 @@ impl SwiftEditor {
       text_format.viewport_width = view.viewport.width.saturating_sub(gutter_width).max(1);
     }
 
+    let target_char = visual_char_at_pointer(
+      self.editor.document(),
+      &view,
+      &text_format,
+      logical_col,
+      logical_row,
+    );
     let next_selection = {
       let text = self.editor.document().text();
       let text_slice = text.slice(..);
-      let target_visual = Position::new(
-        view.scroll.row.saturating_add(logical_row as usize),
-        view.scroll.col.saturating_add(logical_col as usize),
-      );
-      let mut annotations = TextAnnotations::default();
-      let target_char = char_at_visual_pos(text_slice, &text_format, &mut annotations, target_visual)
-        .unwrap_or_else(|| text_slice.len_chars())
-        .min(text_slice.len_chars());
-
       match click_count {
         3.. => {
-          let line_char = target_char.min(text_slice.len_chars().saturating_sub(1));
-          let line = text_slice.char_to_line(line_char);
-          let start = text_slice.line_to_char(line);
-          let end = if line + 1 < text_slice.len_lines() {
-            text_slice.line_to_char(line + 1)
-          } else {
-            text_slice.len_chars()
-          };
+          let (start, end) = line_bounds_at(text_slice, target_char);
           Selection::single(start, end)
         },
         2 => {
-          if text_slice.len_chars() == 0 {
-            Selection::point(0)
+          let (start, end) = word_bounds_at(text_slice, target_char);
+          if end > start {
+            Selection::single(start, end)
           } else {
-            let seed = target_char.min(text_slice.len_chars().saturating_sub(1));
-            let start = move_prev_word_start(text_slice, Range::point(seed), 1)
-              .head
-              .min(text_slice.len_chars());
-            let end = move_next_word_end(text_slice, Range::point(start), 1)
-              .head
-              .min(text_slice.len_chars());
-            if end > start {
-              Selection::single(start, end)
-            } else {
-              Selection::point(seed)
-            }
+            Selection::point(target_char)
           }
         },
         _ if (modifiers & 0b0000_0100) != 0 => {
@@ -5254,7 +5238,88 @@ impl SwiftEditor {
     true
   }
 
+  fn drag_buffer_selection(
+    &mut self,
+    pane_raw: usize,
+    drag_origin_col: u16,
+    drag_origin_row: u16,
+    logical_col: u16,
+    logical_row: u16,
+    modifiers: u8,
+    click_count: u8,
+  ) -> bool {
+    let Some(pane_id) = pane_id_from_raw(pane_raw) else {
+      return false;
+    };
+    if !matches!(
+      self.editor.pane_content_kind(pane_id),
+      Some(PaneContentKind::EditorBuffer)
+    ) {
+      return false;
+    }
+
+    let previous_buffer_id = self.editor.active_buffer_id();
+    if self.editor.active_pane_id() != pane_id {
+      if !self.editor.set_active_pane(pane_id) {
+        return false;
+      }
+      self.sync_state_after_active_pane_change(previous_buffer_id);
+    }
+    self.file_tree.active = false;
+
+    let view = self.editor.view();
+    let mut text_format = self.text_format.clone();
+    {
+      let document = self.editor.document();
+      let gutter_width = gutter_width_for_document(document, view.viewport.width, &self.gutter_config);
+      text_format.viewport_width = view.viewport.width.saturating_sub(gutter_width).max(1);
+    }
+
+    let drag_origin_char = visual_char_at_pointer(
+      self.editor.document(),
+      &view,
+      &text_format,
+      drag_origin_col,
+      drag_origin_row,
+    );
+    let current_char = visual_char_at_pointer(
+      self.editor.document(),
+      &view,
+      &text_format,
+      logical_col,
+      logical_row,
+    );
+    let next_selection = {
+      let text = self.editor.document().text();
+      let existing_anchor = if click_count <= 1 && (modifiers & 0b0000_0100) != 0 {
+        self
+          .editor
+          .view()
+          .active_cursor
+          .and_then(|cursor_id| self.editor.document().selection().range_by_id(cursor_id).copied())
+          .map(|range| range.anchor)
+      } else {
+        None
+      };
+      selection_for_buffer_drag(
+        text.slice(..),
+        drag_origin_char,
+        current_char,
+        click_count,
+        existing_anchor,
+      )
+    };
+
+    if self.editor.document_mut().set_selection(next_selection.clone()).is_err() {
+      return false;
+    }
+    self.editor.view_mut().active_cursor = next_selection.cursor_ids().first().copied();
+    self.ensure_cursor_visible();
+    true
+  }
+
   fn handle_key_event(&mut self, raw: the_editor_key_event_t) -> bool {
+
     let Some(event) = translate_key_event(raw) else {
       return false;
     };
@@ -5985,6 +6050,88 @@ fn apply_swift_selection_match_highlights<'a>(
       ..SelectionMatchHighlightOptions::default()
     },
   );
+}
+
+fn visual_char_at_pointer(
+  document: &Document,
+  view: &ViewState,
+  text_format: &TextFormat,
+  logical_col: u16,
+  logical_row: u16,
+) -> usize {
+  let text = document.text();
+  let text_slice = text.slice(..);
+  let target_visual = Position::new(
+    view.scroll.row.saturating_add(logical_row as usize),
+    view.scroll.col.saturating_add(logical_col as usize),
+  );
+  let mut annotations = TextAnnotations::default();
+  char_at_visual_pos(text_slice, text_format, &mut annotations, target_visual)
+    .unwrap_or_else(|| text_slice.len_chars())
+    .min(text_slice.len_chars())
+}
+
+fn word_bounds_at(text: RopeSlice<'_>, char_idx: usize) -> (usize, usize) {
+  if text.len_chars() == 0 {
+    return (0, 0);
+  }
+  let seed = char_idx.min(text.len_chars().saturating_sub(1));
+  let start = move_prev_word_start(text, Range::point(seed), 1)
+    .head
+    .min(text.len_chars());
+  let end = move_next_word_end(text, Range::point(start), 1)
+    .head
+    .min(text.len_chars());
+  if end > start {
+    (start, end)
+  } else {
+    (seed, seed)
+  }
+}
+
+fn line_bounds_at(text: RopeSlice<'_>, char_idx: usize) -> (usize, usize) {
+  if text.len_chars() == 0 {
+    return (0, 0);
+  }
+  let seed = char_idx.min(text.len_chars().saturating_sub(1));
+  let line = text.char_to_line(seed);
+  let start = text.line_to_char(line);
+  let end = if line + 1 < text.len_lines() {
+    text.line_to_char(line + 1)
+  } else {
+    text.len_chars()
+  };
+  (start, end)
+}
+
+fn selection_for_buffer_drag(
+  text: RopeSlice<'_>,
+  drag_origin_char: usize,
+  current_char: usize,
+  click_count: u8,
+  existing_anchor: Option<usize>,
+) -> Selection {
+  match click_count {
+    3.. => {
+      let (origin_start, origin_end) = line_bounds_at(text, drag_origin_char);
+      let (current_start, current_end) = line_bounds_at(text, current_char);
+      if current_char >= drag_origin_char {
+        Selection::single(origin_start, current_end)
+      } else {
+        Selection::single(origin_end, current_start)
+      }
+    },
+    2 => {
+      let (origin_start, origin_end) = word_bounds_at(text, drag_origin_char);
+      let (current_start, current_end) = word_bounds_at(text, current_char);
+      if current_char >= drag_origin_char {
+        Selection::single(origin_start, current_end)
+      } else {
+        Selection::single(origin_end, current_start)
+      }
+    },
+    _ => Selection::single(existing_anchor.unwrap_or(drag_origin_char), current_char),
+  }
 }
 
 fn build_inactive_pane_plan_with_styles(
@@ -11032,6 +11179,31 @@ pub unsafe extern "C" fn the_editor_click_buffer_position(
   };
   handle.editor.click_buffer_position(
     pane_id,
+    logical_col,
+    logical_row,
+    modifiers,
+    click_count,
+  )
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_drag_buffer_selection(
+  handle: *mut the_editor_handle_t,
+  pane_id: usize,
+  drag_origin_col: u16,
+  drag_origin_row: u16,
+  logical_col: u16,
+  logical_row: u16,
+  modifiers: u8,
+  click_count: u8,
+) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return false;
+  };
+  handle.editor.drag_buffer_selection(
+    pane_id,
+    drag_origin_col,
+    drag_origin_row,
     logical_col,
     logical_row,
     modifiers,

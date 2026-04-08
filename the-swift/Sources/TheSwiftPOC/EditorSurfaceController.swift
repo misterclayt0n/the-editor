@@ -230,6 +230,28 @@ final class EditorSurfaceController: ObservableObject {
         refreshSnapshot()
     }
 
+    func dragBufferSelection(
+        paneID: UInt,
+        dragOriginCol: Int,
+        dragOriginRow: Int,
+        logicalCol: Int,
+        logicalRow: Int,
+        modifiers: UInt8,
+        clickCount: Int
+    ) {
+        guard EditorFFIBridge.dragBufferSelection(
+            handle?.raw,
+            paneID: paneID,
+            dragOriginCol: dragOriginCol,
+            dragOriginRow: dragOriginRow,
+            logicalCol: logicalCol,
+            logicalRow: logicalRow,
+            modifiers: modifiers,
+            clickCount: clickCount
+        ) else { return }
+        refreshSnapshot()
+    }
+
     func scroll(byRows rowDelta: Int, cols colDelta: Int) {
         guard (rowDelta != 0 || colDelta != 0), let scene else { return }
         let started = CFAbsoluteTimeGetCurrent()

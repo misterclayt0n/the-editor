@@ -22,6 +22,14 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
         let thumbOffsetY: CGFloat
     }
 
+    private struct BufferSelectionDragState {
+        let paneID: UInt
+        let originLogicalCol: Int
+        let originLogicalRow: Int
+        let modifiers: UInt8
+        let clickCount: Int
+    }
+
     var cellSize: CGSize {
         controller?.scene?.info.surfaceMetrics.cellSizePoints ?? fallbackCellSize
     }
@@ -30,6 +38,7 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
     private var pendingScrollCols: CGFloat = 0
     private var splitDrag: SplitDragState?
     private var scrollbarDrag: ScrollbarDragState?
+    private var bufferSelectionDrag: BufferSelectionDragState?
 
     override var acceptsFirstResponder: Bool { true }
     override var isFlipped: Bool { true }
@@ -145,6 +154,7 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
 
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
+        bufferSelectionDrag = nil
         let point = convert(event.locationInWindow, from: nil)
         if let separator = separator(at: point) {
             splitDrag = SplitDragState(splitID: separator.splitID)
@@ -162,11 +172,19 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
             return
         }
         if let hit = bufferTextHit(at: point) {
+            let modifiers = pointerModifiers(from: event.modifierFlags)
             controller?.clickBufferPosition(
                 paneID: hit.paneID,
                 logicalCol: hit.logicalCol,
                 logicalRow: hit.logicalRow,
-                modifiers: pointerModifiers(from: event.modifierFlags),
+                modifiers: modifiers,
+                clickCount: event.clickCount
+            )
+            bufferSelectionDrag = BufferSelectionDragState(
+                paneID: hit.paneID,
+                originLogicalCol: hit.logicalCol,
+                originLogicalRow: hit.logicalRow,
+                modifiers: modifiers,
                 clickCount: event.clickCount
             )
             return
@@ -238,15 +256,27 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
     }
 
     override func mouseDragged(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
         if let drag = splitDrag, let controller, let scene = controller.scene {
-            let point = convert(event.locationInWindow, from: nil)
             let coords = clampedCellCoordinates(for: point, scene: scene)
             controller.resizeSplit(drag.splitID, x: coords.x, y: coords.y)
             return
         }
         if let drag = scrollbarDrag {
-            let point = convert(event.locationInWindow, from: nil)
             updateScrollPosition(for: drag.paneID, pointerY: point.y, thumbOffsetY: drag.thumbOffsetY)
+            return
+        }
+        if let drag = bufferSelectionDrag,
+           let hit = bufferTextHit(at: point, preferredPaneID: drag.paneID, clampToTextRect: true) {
+            controller?.dragBufferSelection(
+                paneID: drag.paneID,
+                dragOriginCol: drag.originLogicalCol,
+                dragOriginRow: drag.originLogicalRow,
+                logicalCol: hit.logicalCol,
+                logicalRow: hit.logicalRow,
+                modifiers: drag.modifiers,
+                clickCount: drag.clickCount
+            )
             return
         }
         super.mouseDragged(with: event)
@@ -255,6 +285,7 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
     override func mouseUp(with event: NSEvent) {
         splitDrag = nil
         scrollbarDrag = nil
+        bufferSelectionDrag = nil
         super.mouseUp(with: event)
     }
 
@@ -441,11 +472,21 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
         controller.setActivePane(pane.paneID)
     }
 
-    private func bufferTextHit(at point: CGPoint) -> (paneID: UInt, logicalCol: Int, logicalRow: Int)? {
-        guard let scene = controller?.scene,
-              let pane = pane(at: point),
-              pane.kind == .editorBuffer
-        else {
+    private func bufferTextHit(
+        at point: CGPoint,
+        preferredPaneID: UInt? = nil,
+        clampToTextRect: Bool = false
+    ) -> (paneID: UInt, logicalCol: Int, logicalRow: Int)? {
+        guard let scene = controller?.scene else {
+            return nil
+        }
+        let selectedPane: EditorSnapshotPane?
+        if let preferredPaneID {
+            selectedPane = scene.panes.first(where: { $0.paneID == preferredPaneID && $0.kind == .editorBuffer })
+        } else {
+            selectedPane = pane(at: point)
+        }
+        guard let pane = selectedPane, pane.kind == .editorBuffer else {
             return nil
         }
         let metrics = scene.info.surfaceMetrics.cellSizePoints
@@ -457,11 +498,25 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
             width: max(paneRect.width - gutterWidth, 0),
             height: paneRect.height
         )
-        guard textRect.contains(point), metrics.width > 0, metrics.height > 0 else {
+        guard metrics.width > 0, metrics.height > 0, textRect.width > 0, textRect.height > 0 else {
             return nil
         }
-        let logicalCol = max(Int(floor((point.x - textRect.minX) / metrics.width)), 0)
-        let logicalRow = max(Int(floor((point.y - paneRect.minY) / metrics.height)), 0)
+        let samplePoint: CGPoint
+        if clampToTextRect {
+            let maxX = textRect.maxX - 0.001
+            let maxY = textRect.maxY - 0.001
+            samplePoint = CGPoint(
+                x: min(max(point.x, textRect.minX), maxX),
+                y: min(max(point.y, textRect.minY), maxY)
+            )
+        } else {
+            guard textRect.contains(point) else {
+                return nil
+            }
+            samplePoint = point
+        }
+        let logicalCol = max(Int(floor((samplePoint.x - textRect.minX) / metrics.width)), 0)
+        let logicalRow = max(Int(floor((samplePoint.y - paneRect.minY) / metrics.height)), 0)
         return (pane.paneID, logicalCol, logicalRow)
     }
 

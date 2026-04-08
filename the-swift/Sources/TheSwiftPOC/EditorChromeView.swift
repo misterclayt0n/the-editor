@@ -441,12 +441,48 @@ private struct EditorFileTreeListRepresentable: NSViewRepresentable {
     }
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
-        context.coordinator.parent = self
-        context.coordinator.applySnapshot()
+        context.coordinator.update(parent: self)
     }
 
     @MainActor
     final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate {
+        private struct RenderState: Equatable {
+            let isVisible: Bool
+            let root: String?
+            let rows: [EditorFileTreeRow]
+
+            init(tree: EditorFileTreeState) {
+                isVisible = tree.isVisible
+                root = tree.root
+                rows = tree.rows
+            }
+        }
+
+        private struct ThemeSignature: Equatable {
+            let backgroundColor: UInt32
+            let headerColor: UInt32
+            let separatorColor: UInt32
+            let selectionColor: UInt32
+            let hoverColor: UInt32
+
+            init(theme: EditorFileTreeSidebarTheme) {
+                backgroundColor = Self.signature(theme.backgroundColor)
+                headerColor = Self.signature(theme.headerColor)
+                separatorColor = Self.signature(theme.separatorColor)
+                selectionColor = Self.signature(theme.selectionColor)
+                hoverColor = Self.signature(theme.hoverColor)
+            }
+
+            private static func signature(_ color: NSColor) -> UInt32 {
+                let resolved = color.usingColorSpace(.deviceRGB) ?? color
+                let red = UInt32((resolved.redComponent * 255).rounded())
+                let green = UInt32((resolved.greenComponent * 255).rounded())
+                let blue = UInt32((resolved.blueComponent * 255).rounded())
+                let alpha = UInt32((resolved.alphaComponent * 255).rounded())
+                return (red << 24) | (green << 16) | (blue << 8) | alpha
+            }
+        }
+
         var parent: EditorFileTreeListRepresentable
 
         private weak var scrollView: NSScrollView?
@@ -455,6 +491,9 @@ private struct EditorFileTreeListRepresentable: NSViewRepresentable {
         private var suppressScrollSync = false
         private var lastReportedVisibleRows: Int = 1
         private var lastReportedTopRow: Int = 0
+        private var lastRenderState: RenderState?
+        private var lastThemeSignature: ThemeSignature?
+        private var lastRequestedScrollOffset: Int?
 
         init(parent: EditorFileTreeListRepresentable) {
             self.parent = parent
@@ -494,8 +533,13 @@ private struct EditorFileTreeListRepresentable: NSViewRepresentable {
 
             self.scrollView = scrollView
             self.tableView = tableView
-            applySnapshot()
+            update(parent: parent)
             return scrollView
+        }
+
+        func update(parent: EditorFileTreeListRepresentable) {
+            self.parent = parent
+            applySnapshotIfNeeded()
         }
 
         func numberOfRows(in tableView: NSTableView) -> Int {
@@ -511,56 +555,45 @@ private struct EditorFileTreeListRepresentable: NSViewRepresentable {
             let cell = (tableView.makeView(withIdentifier: identifier, owner: nil) as? EditorFileTreeTableCellView)
                 ?? EditorFileTreeTableCellView(identifier: identifier)
             if parent.tree.rows.isEmpty {
-                cell.setRootView(
-                    AnyView(
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("Empty Folder")
-                                .font(.system(size: 12, weight: .semibold))
-                            Text("Create a file or open another project folder.")
-                                .font(.system(size: 11))
-                                .foregroundStyle(.secondary)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 16)
-                    )
-                )
+                cell.configureEmpty(theme: parent.theme)
                 return cell
             }
             let rowValue = parent.tree.rows[row]
-            cell.setRootView(
-                AnyView(
-                    EditorFileTreeRowView(
-                        row: rowValue,
-                        theme: parent.theme,
-                        isHovered: false,
-                        onSelect: { [weak self] in
-                            self?.parent.onFocusSidebar()
-                            self?.parent.onSelectIndex(row)
-                        },
-                        onActivate: { [weak self] in
-                            self?.parent.onFocusSidebar()
-                            self?.parent.onActivateIndex(row)
-                        }
-                    )
-                )
+            cell.configure(
+                row: rowValue,
+                index: row,
+                theme: parent.theme,
+                onFocusSidebar: parent.onFocusSidebar,
+                onSelectIndex: parent.onSelectIndex,
+                onActivateIndex: parent.onActivateIndex
             )
             return cell
         }
 
-        func applySnapshot() {
+        private func applySnapshotIfNeeded() {
             guard let tableView, let scrollView else { return }
-            isApplyingSnapshot = true
-            if let column = tableView.tableColumns.first {
-                column.width = max(scrollView.contentSize.width, 1)
+            let renderState = RenderState(tree: parent.tree)
+            let themeSignature = ThemeSignature(theme: parent.theme)
+            let width = max(scrollView.contentSize.width, 1)
+            if let column = tableView.tableColumns.first, abs(column.width - width) > 0.5 {
+                column.width = width
             }
-            tableView.reloadData()
-            DispatchQueue.main.async { [weak self] in
-                guard let self else { return }
-                self.isApplyingSnapshot = false
-                self.syncVisibleGeometry(reason: "snapshot")
-                self.applyProgrammaticScrollIfNeeded(reason: "snapshot")
+            let needsReload = renderState != lastRenderState || themeSignature != lastThemeSignature
+            if needsReload {
+                isApplyingSnapshot = true
+                lastRenderState = renderState
+                lastThemeSignature = themeSignature
+                tableView.reloadData()
+                DispatchQueue.main.async { [weak self] in
+                    guard let self else { return }
+                    self.isApplyingSnapshot = false
+                    self.syncVisibleGeometry(reason: "snapshot")
+                    self.applyProgrammaticScrollIfNeeded(reason: "snapshot")
+                }
+                return
             }
+            syncVisibleGeometry(reason: "update")
+            applyProgrammaticScrollIfNeeded(reason: "update")
         }
 
         @objc
@@ -572,13 +605,13 @@ private struct EditorFileTreeListRepresentable: NSViewRepresentable {
             guard let tableView, let scrollView, !parent.tree.rows.isEmpty else { return }
             let targetIndex = min(parent.tree.scrollOffset, parent.tree.rows.count - 1)
             let currentTopRow = visibleTopRow(in: tableView, scrollView: scrollView)
-            guard currentTopRow != targetIndex else {
-                scrollPerfLog(
-                    "fileTree.appkitScroll already-settled reason=\(reason) target=\(targetIndex) top=\(currentTopRow) rows=\(parent.tree.rows.count)"
-                )
+            if currentTopRow == targetIndex {
+                lastRequestedScrollOffset = targetIndex
                 return
             }
+            guard lastRequestedScrollOffset != targetIndex else { return }
             suppressScrollSync = true
+            lastRequestedScrollOffset = targetIndex
             let targetRect = tableView.rect(ofRow: targetIndex)
             scrollView.contentView.scroll(to: NSPoint(x: 0, y: targetRect.minY))
             scrollView.reflectScrolledClipView(scrollView.contentView)
@@ -610,6 +643,9 @@ private struct EditorFileTreeListRepresentable: NSViewRepresentable {
                 lastReportedTopRow = topRow
                 parent.onScrollOffsetChanged(topRow)
             }
+            if topRow == parent.tree.scrollOffset {
+                lastRequestedScrollOffset = topRow
+            }
         }
 
         private func visibleTopRow(in tableView: NSTableView, scrollView: NSScrollView) -> Int {
@@ -620,7 +656,15 @@ private struct EditorFileTreeListRepresentable: NSViewRepresentable {
 }
 
 private final class EditorFileTreeTableCellView: NSTableCellView {
-    private var hostingView: NSHostingView<AnyView>?
+    private var hostingView: NSHostingView<EditorFileTreeCellContentView>?
+    private var trackingArea: NSTrackingArea?
+    private var row: EditorFileTreeRow?
+    private var rowIndex: Int?
+    private var theme: EditorFileTreeSidebarTheme?
+    private var isHovered = false
+    private var onFocusSidebar: (() -> Void)?
+    private var onSelectIndex: ((Int) -> Void)?
+    private var onActivateIndex: ((Int) -> Void)?
 
     init(identifier: NSUserInterfaceItemIdentifier) {
         super.init(frame: .zero)
@@ -632,7 +676,79 @@ private final class EditorFileTreeTableCellView: NSTableCellView {
         fatalError("init(coder:) has not been implemented")
     }
 
-    func setRootView(_ rootView: AnyView) {
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let trackingArea {
+            removeTrackingArea(trackingArea)
+        }
+        let trackingArea = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(trackingArea)
+        self.trackingArea = trackingArea
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        guard row != nil else { return }
+        updateHoverState(true)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        updateHoverState(false)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard let rowIndex else {
+            super.mouseDown(with: event)
+            return
+        }
+        onFocusSidebar?()
+        let location = convert(event.locationInWindow, from: nil)
+        if isChevronHit(location) {
+            onActivateIndex?(rowIndex)
+            return
+        }
+        if event.clickCount >= 2 {
+            onActivateIndex?(rowIndex)
+        } else {
+            onSelectIndex?(rowIndex)
+        }
+    }
+
+    func configure(
+        row: EditorFileTreeRow,
+        index: Int,
+        theme: EditorFileTreeSidebarTheme,
+        onFocusSidebar: @escaping () -> Void,
+        onSelectIndex: @escaping (Int) -> Void,
+        onActivateIndex: @escaping (Int) -> Void
+    ) {
+        self.row = row
+        rowIndex = index
+        self.theme = theme
+        self.onFocusSidebar = onFocusSidebar
+        self.onSelectIndex = onSelectIndex
+        self.onActivateIndex = onActivateIndex
+        refreshRootView()
+    }
+
+    func configureEmpty(theme: EditorFileTreeSidebarTheme) {
+        row = nil
+        rowIndex = nil
+        self.theme = theme
+        onFocusSidebar = nil
+        onSelectIndex = nil
+        onActivateIndex = nil
+        updateHoverState(false)
+        refreshRootView()
+    }
+
+    private func refreshRootView() {
+        guard let theme else { return }
+        let rootView = EditorFileTreeCellContentView(row: row, theme: theme, isHovered: isHovered)
         if let hostingView {
             hostingView.rootView = rootView
             return
@@ -649,71 +765,109 @@ private final class EditorFileTreeTableCellView: NSTableCellView {
         ])
         self.hostingView = hostingView
     }
+
+    private func updateHoverState(_ hovered: Bool) {
+        guard hovered != isHovered else { return }
+        isHovered = hovered
+        refreshRootView()
+    }
+
+    private func isChevronHit(_ location: NSPoint) -> Bool {
+        guard let row, row.hasChildren || row.isDirectory else { return false }
+        let chevronSize: CGFloat = 18
+        let leadingPadding = 2 + (CGFloat(row.depth) * 11)
+        let chevronRect = NSRect(
+            x: max(leadingPadding - 4, 0),
+            y: floor((bounds.height - chevronSize) / 2),
+            width: chevronSize,
+            height: chevronSize
+        )
+        return chevronRect.contains(location)
+    }
+}
+
+private struct EditorFileTreeCellContentView: View {
+    let row: EditorFileTreeRow?
+    let theme: EditorFileTreeSidebarTheme
+    let isHovered: Bool
+
+    var body: some View {
+        Group {
+            if let row {
+                EditorFileTreeRowView(
+                    row: row,
+                    theme: theme,
+                    isHovered: isHovered
+                )
+            } else {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Empty Folder")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text("Create a file or open another project folder.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 16)
+            }
+        }
+    }
 }
 
 private struct EditorFileTreeRowView: View {
     let row: EditorFileTreeRow
     let theme: EditorFileTreeSidebarTheme
     let isHovered: Bool
-    let onSelect: () -> Void
-    let onActivate: () -> Void
 
     var body: some View {
-        Button(action: onSelect) {
-            HStack(spacing: 0) {
-                Rectangle()
-                    .fill(Color(nsColor: leadingRailColor))
-                    .frame(width: 2)
-                    .opacity(row.isSelected || row.isCurrentFile ? 1 : 0)
+        HStack(spacing: 0) {
+            Rectangle()
+                .fill(Color(nsColor: leadingRailColor))
+                .frame(width: 2)
+                .opacity(row.isSelected || row.isCurrentFile ? 1 : 0)
 
-                HStack(spacing: 6) {
-                    if row.hasChildren || row.isDirectory {
-                        Button(action: onActivate) {
-                            Image(systemName: row.isExpanded ? "chevron.down" : "chevron.right")
-                                .font(.system(size: 9, weight: .semibold))
-                                .foregroundStyle(.secondary)
-                                .frame(width: 10, height: 10)
-                        }
-                        .buttonStyle(.plain)
-                    } else {
-                        Color.clear
-                            .frame(width: 10, height: 10)
-                    }
-
-                    Image(systemName: symbolName(for: row.iconName, isDirectory: row.isDirectory))
-                        .font(.system(size: 11, weight: row.isDirectory ? .medium : .regular))
-                        .foregroundStyle(Color(nsColor: iconColor))
-                        .frame(width: 12)
-
-                    Text(row.displayName)
-                        .font(.system(size: 12, weight: row.isDirectory ? .medium : .regular))
-                        .foregroundStyle(rowTextColor)
-                        .lineLimit(1)
-
-                    Spacer(minLength: 6)
-
-                    EditorFileTreeRowDecorationsView(row: row)
-
-                    if row.isCurrentFile {
-                        Circle()
-                            .fill(Color(nsColor: theme.selectionColor).opacity(row.isSelected ? 0.95 : 0.82))
-                            .frame(width: 5, height: 5)
-                    }
+            HStack(spacing: 6) {
+                if row.hasChildren || row.isDirectory {
+                    Image(systemName: row.isExpanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 10, height: 10)
+                } else {
+                    Color.clear
+                        .frame(width: 10, height: 10)
                 }
-                .padding(.leading, CGFloat(row.depth) * 11)
-                .padding(.trailing, 8)
-                .padding(.vertical, 4)
+
+                Image(systemName: symbolName(for: row.iconName, isDirectory: row.isDirectory))
+                    .font(.system(size: 11, weight: row.isDirectory ? .medium : .regular))
+                    .foregroundStyle(Color(nsColor: iconColor))
+                    .frame(width: 12)
+
+                Text(row.displayName)
+                    .font(.system(size: 12, weight: row.isDirectory ? .medium : .regular))
+                    .foregroundStyle(rowTextColor)
+                    .lineLimit(1)
+
+                Spacer(minLength: 6)
+
+                EditorFileTreeRowDecorationsView(row: row)
+
+                if row.isCurrentFile {
+                    Circle()
+                        .fill(Color(nsColor: theme.selectionColor).opacity(row.isSelected ? 0.95 : 0.82))
+                        .frame(width: 5, height: 5)
+                }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(selectionBackground)
-            .clipShape(.rect(cornerRadius: 6))
-            .contentShape(Rectangle())
+            .padding(.leading, CGFloat(row.depth) * 11)
+            .padding(.trailing, 8)
+            .padding(.vertical, 4)
         }
-        .buttonStyle(.plain)
-        .simultaneousGesture(TapGesture(count: 2).onEnded {
-            onActivate()
-        })
-        .accessibilityAddTraits(row.isSelected ? [.isSelected] : [])
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(selectionBackground)
+        .clipShape(.rect(cornerRadius: 6))
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(row.isSelected ? [.isSelected] : [.isButton])
     }
 
     @ViewBuilder

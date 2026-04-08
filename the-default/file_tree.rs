@@ -228,6 +228,28 @@ impl FileTreeState {
     true
   }
 
+  fn schedule_directory_rescan(&mut self, directory: &Path) -> bool {
+    if self
+      .pending_scan_dirs
+      .iter()
+      .any(|candidate| candidate.as_path() == directory)
+    {
+      return false;
+    }
+    match self
+      .directory_states
+      .get(directory)
+      .map(|state| state.load_state)
+    {
+      Some(FileTreeDirectoryLoadState::Loaded) => {
+        self.pending_scan_dirs.push_back(directory.to_path_buf());
+        true
+      },
+      Some(FileTreeDirectoryLoadState::Queued) => false,
+      _ => self.queue_directory_scan(directory),
+    }
+  }
+
   fn finish_directory_scan(
     &mut self,
     directory: &Path,
@@ -605,6 +627,37 @@ pub fn refresh_file_tree<Ctx: DefaultContext>(ctx: &mut Ctx) {
   ctx.request_render();
 }
 
+fn schedule_file_tree_rescan<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  let Some(root) = ctx.file_tree().root.clone() else {
+    return;
+  };
+  let selected_path = ctx.file_tree().selected_path();
+  let pending_selected_path = ctx.file_tree().pending_selected_path.clone();
+  let mut directories = BTreeSet::from([root.clone()]);
+  for directory in ctx.file_tree().expanded_dirs.iter() {
+    if directory.starts_with(&root) {
+      directories.insert(directory.clone());
+    }
+  }
+  if let Some(path) = pending_selected_path.as_ref().or(selected_path.as_ref()) {
+    let mut current = Some(path.as_path());
+    while let Some(candidate) = current {
+      if candidate.starts_with(&root) && candidate.is_dir() {
+        directories.insert(candidate.to_path_buf());
+      }
+      if candidate == root {
+        break;
+      }
+      current = candidate.parent();
+    }
+  }
+
+  let state = ctx.file_tree_mut();
+  for directory in directories {
+    state.schedule_directory_rescan(&directory);
+  }
+}
+
 pub fn poll_file_tree_watch<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool {
   let now = Instant::now();
   let mut changed = sync_file_tree_watch_state(ctx);
@@ -700,8 +753,8 @@ fn handle_file_tree_watch_kinds<Ctx: DefaultContext>(
     .any(|kind| matches!(kind, PathEventKind::Created | PathEventKind::Removed))
   {
     ctx.file_tree_mut().refresh_due_at = None;
-    refresh_file_tree(ctx);
-    return true;
+    schedule_file_tree_rescan(ctx);
+    return false;
   }
 
   if kinds
@@ -789,8 +842,8 @@ fn poll_pending_file_tree_refresh<Ctx: DefaultContext>(ctx: &mut Ctx, now: Insta
   }
 
   ctx.file_tree_mut().refresh_due_at = None;
-  refresh_file_tree(ctx);
-  true
+  schedule_file_tree_rescan(ctx);
+  false
 }
 
 fn file_tree_watch_latency() -> Duration {

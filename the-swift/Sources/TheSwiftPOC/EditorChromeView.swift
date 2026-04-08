@@ -1112,7 +1112,7 @@ private struct StatusAccessoryItemView: View {
                     .font(.system(size: 10, weight: .semibold))
             }
 
-            if !normalized.text.isEmpty {
+            if showsText, !normalized.text.isEmpty {
                 Text(normalized.text)
                     .font(textFont)
                     .lineLimit(1)
@@ -1120,6 +1120,7 @@ private struct StatusAccessoryItemView: View {
         }
         .foregroundStyle(foregroundStyle)
         .accessibilityElement(children: .combine)
+        .accessibilityLabel(accessibilityLabel)
     }
 
     private var textFont: Font {
@@ -1131,6 +1132,20 @@ private struct StatusAccessoryItemView: View {
         case .strong:
             return .system(size: 11, weight: .semibold)
         }
+    }
+
+    private var showsText: Bool {
+        guard let icon = normalized.icon else { return true }
+        switch icon {
+        case "diagnostic_error", "diagnostic_warning", "diagnostic_info", "diagnostic_hint":
+            return false
+        default:
+            return true
+        }
+    }
+
+    private var accessibilityLabel: Text {
+        Text(normalized.text.isEmpty ? item.text : normalized.text)
     }
 
     private var foregroundStyle: Color {

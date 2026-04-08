@@ -488,6 +488,7 @@ bool the_editor_set_scroll_row(the_editor_handle_t *handle, uint32_t row);
 bool the_editor_set_scroll_col(the_editor_handle_t *handle, uint32_t col);
 bool the_editor_set_active_pane(the_editor_handle_t *handle, uintptr_t pane_id);
 bool the_editor_resize_split(the_editor_handle_t *handle, uintptr_t split_id, uint16_t x, uint16_t y);
+bool the_editor_click_buffer_position(the_editor_handle_t *handle, uintptr_t pane_id, uint16_t logical_col, uint16_t logical_row, uint8_t modifiers, uint8_t click_count);
 bool the_editor_handle_key(the_editor_handle_t *handle, the_editor_key_event_t event);
 bool the_editor_toggle_command_palette(the_editor_handle_t *handle);
 bool the_editor_close_command_palette(the_editor_handle_t *handle);

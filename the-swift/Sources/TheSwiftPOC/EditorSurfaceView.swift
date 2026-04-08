@@ -161,6 +161,16 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
             updateScrollPosition(for: geometry.pane.paneID, pointerY: point.y, thumbOffsetY: thumbOffsetY)
             return
         }
+        if let hit = bufferTextHit(at: point) {
+            controller?.clickBufferPosition(
+                paneID: hit.paneID,
+                logicalCol: hit.logicalCol,
+                logicalRow: hit.logicalRow,
+                modifiers: pointerModifiers(from: event.modifierFlags),
+                clickCount: event.clickCount
+            )
+            return
+        }
         activatePaneIfNeeded(at: point)
     }
 
@@ -429,6 +439,44 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
     private func activatePaneIfNeeded(at point: CGPoint) {
         guard let controller, let pane = pane(at: point), !pane.isActive else { return }
         controller.setActivePane(pane.paneID)
+    }
+
+    private func bufferTextHit(at point: CGPoint) -> (paneID: UInt, logicalCol: Int, logicalRow: Int)? {
+        guard let scene = controller?.scene,
+              let pane = pane(at: point),
+              pane.kind == .editorBuffer
+        else {
+            return nil
+        }
+        let metrics = scene.info.surfaceMetrics.cellSizePoints
+        let paneRect = rect(for: pane, cellSize: metrics)
+        let gutterWidth = CGFloat(pane.contentOffsetX) * metrics.width
+        let textRect = CGRect(
+            x: paneRect.minX + gutterWidth,
+            y: paneRect.minY,
+            width: max(paneRect.width - gutterWidth, 0),
+            height: paneRect.height
+        )
+        guard textRect.contains(point), metrics.width > 0, metrics.height > 0 else {
+            return nil
+        }
+        let logicalCol = max(Int(floor((point.x - textRect.minX) / metrics.width)), 0)
+        let logicalRow = max(Int(floor((point.y - paneRect.minY) / metrics.height)), 0)
+        return (pane.paneID, logicalCol, logicalRow)
+    }
+
+    private func pointerModifiers(from flags: NSEvent.ModifierFlags) -> UInt8 {
+        var modifiers: UInt8 = 0
+        if flags.contains(.control) {
+            modifiers |= 0b0000_0001
+        }
+        if flags.contains(.option) {
+            modifiers |= 0b0000_0010
+        }
+        if flags.contains(.shift) {
+            modifiers |= 0b0000_0100
+        }
+        return modifiers
     }
 
     private func updateScrollPosition(for paneID: UInt, pointerY: CGFloat, thumbOffsetY: CGFloat) {

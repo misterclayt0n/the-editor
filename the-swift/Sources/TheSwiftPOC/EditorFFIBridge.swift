@@ -743,6 +743,26 @@ enum EditorFFIBridge {
     }
 
     @discardableResult
+    static func clickBufferPosition(
+        _ handle: OpaquePointer?,
+        paneID: UInt,
+        logicalCol: Int,
+        logicalRow: Int,
+        modifiers: UInt8,
+        clickCount: Int
+    ) -> Bool {
+        guard let handle else { return false }
+        return the_editor_click_buffer_position(
+            handle,
+            paneID,
+            UInt16(clamping: logicalCol),
+            UInt16(clamping: logicalRow),
+            modifiers,
+            UInt8(clamping: clickCount)
+        )
+    }
+
+    @discardableResult
     static func sendKey(_ handle: OpaquePointer?, event: the_editor_key_event_t) -> Bool {
         guard let handle else { return false }
         return the_editor_handle_key(handle, event)

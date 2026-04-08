@@ -212,6 +212,24 @@ final class EditorSurfaceController: ObservableObject {
         refreshSnapshot()
     }
 
+    func clickBufferPosition(
+        paneID: UInt,
+        logicalCol: Int,
+        logicalRow: Int,
+        modifiers: UInt8,
+        clickCount: Int
+    ) {
+        guard EditorFFIBridge.clickBufferPosition(
+            handle?.raw,
+            paneID: paneID,
+            logicalCol: logicalCol,
+            logicalRow: logicalRow,
+            modifiers: modifiers,
+            clickCount: clickCount
+        ) else { return }
+        refreshSnapshot()
+    }
+
     func scroll(byRows rowDelta: Int, cols colDelta: Int) {
         guard (rowDelta != 0 || colDelta != 0), let scene else { return }
         let started = CFAbsoluteTimeGetCurrent()

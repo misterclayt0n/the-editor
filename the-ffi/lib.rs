@@ -176,6 +176,10 @@ use the_lib::{
   },
   indent::IndentStyle,
   messages::MessageCenter,
+  movement::{
+    move_next_word_end,
+    move_prev_word_start,
+  },
   position::Position,
   registers::Registers,
   view::ViewState,
@@ -222,6 +226,7 @@ use the_lib::{
       Theme,
       default_theme,
     },
+    char_at_visual_pos,
     visual_pos_at_char,
   },
   selection::{
@@ -5145,6 +5150,108 @@ impl SwiftEditor {
       return false;
     };
     self.editor.resize_split(split_id, x, y)
+  }
+
+  fn click_buffer_position(
+    &mut self,
+    pane_raw: usize,
+    logical_col: u16,
+    logical_row: u16,
+    modifiers: u8,
+    click_count: u8,
+  ) -> bool {
+    let Some(pane_id) = pane_id_from_raw(pane_raw) else {
+      return false;
+    };
+    if !matches!(
+      self.editor.pane_content_kind(pane_id),
+      Some(PaneContentKind::EditorBuffer)
+    ) {
+      return false;
+    }
+
+    let previous_buffer_id = self.editor.active_buffer_id();
+    let pane_changed = if self.editor.active_pane_id() != pane_id {
+      if !self.editor.set_active_pane(pane_id) {
+        return false;
+      }
+      self.sync_state_after_active_pane_change(previous_buffer_id);
+      true
+    } else {
+      false
+    };
+    self.file_tree.active = false;
+
+    let view = self.editor.view();
+    let mut text_format = self.text_format.clone();
+    {
+      let document = self.editor.document();
+      let gutter_width = gutter_width_for_document(document, view.viewport.width, &self.gutter_config);
+      text_format.viewport_width = view.viewport.width.saturating_sub(gutter_width).max(1);
+    }
+
+    let next_selection = {
+      let text = self.editor.document().text();
+      let text_slice = text.slice(..);
+      let target_visual = Position::new(
+        view.scroll.row.saturating_add(logical_row as usize),
+        view.scroll.col.saturating_add(logical_col as usize),
+      );
+      let mut annotations = TextAnnotations::default();
+      let target_char = char_at_visual_pos(text_slice, &text_format, &mut annotations, target_visual)
+        .unwrap_or_else(|| text_slice.len_chars())
+        .min(text_slice.len_chars());
+
+      match click_count {
+        3.. => {
+          let line_char = target_char.min(text_slice.len_chars().saturating_sub(1));
+          let line = text_slice.char_to_line(line_char);
+          let start = text_slice.line_to_char(line);
+          let end = if line + 1 < text_slice.len_lines() {
+            text_slice.line_to_char(line + 1)
+          } else {
+            text_slice.len_chars()
+          };
+          Selection::single(start, end)
+        },
+        2 => {
+          if text_slice.len_chars() == 0 {
+            Selection::point(0)
+          } else {
+            let seed = target_char.min(text_slice.len_chars().saturating_sub(1));
+            let start = move_prev_word_start(text_slice, Range::point(seed), 1)
+              .head
+              .min(text_slice.len_chars());
+            let end = move_next_word_end(text_slice, Range::point(start), 1)
+              .head
+              .min(text_slice.len_chars());
+            if end > start {
+              Selection::single(start, end)
+            } else {
+              Selection::point(seed)
+            }
+          }
+        },
+        _ if (modifiers & 0b0000_0100) != 0 => {
+          let anchor = self
+            .editor
+            .view()
+            .active_cursor
+            .and_then(|cursor_id| self.editor.document().selection().range_by_id(cursor_id).copied())
+            .map(|range| range.anchor)
+            .unwrap_or(target_char);
+          Selection::single(anchor, target_char)
+        },
+        _ => Selection::point(target_char),
+      }
+    };
+
+    if self.editor.document_mut().set_selection(next_selection.clone()).is_err() {
+      return pane_changed;
+    }
+    self.editor.view_mut().active_cursor = next_selection.cursor_ids().first().copied();
+    self.ensure_cursor_visible();
+    true
   }
 
   fn handle_key_event(&mut self, raw: the_editor_key_event_t) -> bool {
@@ -10909,6 +11016,27 @@ pub unsafe extern "C" fn the_editor_resize_split(
     return false;
   };
   handle.editor.resize_split_raw(split_id, x, y)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_click_buffer_position(
+  handle: *mut the_editor_handle_t,
+  pane_id: usize,
+  logical_col: u16,
+  logical_row: u16,
+  modifiers: u8,
+  click_count: u8,
+) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return false;
+  };
+  handle.editor.click_buffer_position(
+    pane_id,
+    logical_col,
+    logical_row,
+    modifiers,
+    click_count,
+  )
 }
 
 #[unsafe(no_mangle)]

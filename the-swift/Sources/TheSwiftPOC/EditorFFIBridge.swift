@@ -615,6 +615,34 @@ enum EditorFileTreeVcsKind: UInt8, Hashable {
     case untracked = 5
 }
 
+struct EditorBufferTabRow: Hashable, Identifiable {
+    let bufferID: UInt
+    let title: String
+    let directoryHint: String?
+    let filePath: String?
+    let iconName: String
+    let isActive: Bool
+    let isModified: Bool
+    let vcsKind: EditorFileTreeVcsKind?
+    let diagnosticSeverity: EditorDiagnosticSeverity?
+
+    var id: UInt { bufferID }
+}
+
+struct EditorBufferTabsState: Hashable {
+    let isVisible: Bool
+    let activeIndex: Int?
+    let activeBufferID: UInt?
+    let tabs: [EditorBufferTabRow]
+
+    static let empty = EditorBufferTabsState(
+        isVisible: false,
+        activeIndex: nil,
+        activeBufferID: nil,
+        tabs: []
+    )
+}
+
 struct EditorFileTreeRow: Hashable, Identifiable {
     let path: String
     let displayName: String
@@ -680,6 +708,7 @@ struct EditorSnapshot {
     let completionDocs: EditorDocsPanelState
     let signatureHelp: EditorDocsPanelState
     let filePicker: EditorFilePickerState
+    let bufferTabs: EditorBufferTabsState
     let fileTree: EditorFileTreeState
 }
 
@@ -949,6 +978,12 @@ enum EditorFFIBridge {
     static func setFilePickerPreviewOffset(_ handle: OpaquePointer?, offset: Int, visibleRows: Int) -> Bool {
         guard let handle else { return false }
         return the_editor_file_picker_set_preview_offset(handle, UInt(offset), UInt(visibleRows))
+    }
+
+    @discardableResult
+    static func activateBufferTab(_ handle: OpaquePointer?, bufferID: UInt) -> Bool {
+        guard let handle else { return false }
+        return the_editor_activate_buffer_tab(handle, bufferID)
     }
 
     @discardableResult
@@ -1413,6 +1448,30 @@ enum EditorFFIBridge {
             )
         }
 
+        let bufferTabsValue = the_editor_snapshot_buffer_tabs(rawSnapshot)
+        let bufferTabRows: [EditorBufferTabRow] = (0..<Int(bufferTabsValue.row_count)).map { index in
+            let rowValue = the_editor_snapshot_buffer_tab_at(rawSnapshot, UInt(index))
+            return EditorBufferTabRow(
+                bufferID: UInt(rowValue.buffer_id),
+                title: rowValue.title.map { String(cString: $0) } ?? "",
+                directoryHint: rowValue.directory_hint.map { String(cString: $0) },
+                filePath: rowValue.file_path.map { String(cString: $0) },
+                iconName: rowValue.icon_name.map { String(cString: $0) } ?? "doc",
+                isActive: rowValue.is_active,
+                isModified: rowValue.is_modified,
+                vcsKind: rowValue.vcs_kind == 0 ? nil : EditorFileTreeVcsKind(rawValue: rowValue.vcs_kind),
+                diagnosticSeverity: rowValue.diagnostic_severity == 0
+                    ? nil
+                    : EditorDiagnosticSeverity(rawValue: rowValue.diagnostic_severity)
+            )
+        }
+        let bufferTabs = EditorBufferTabsState(
+            isVisible: bufferTabsValue.visible,
+            activeIndex: bufferTabsValue.active_index >= 0 ? Int(bufferTabsValue.active_index) : nil,
+            activeBufferID: bufferTabsValue.active_buffer_id == 0 ? nil : UInt(bufferTabsValue.active_buffer_id),
+            tabs: bufferTabRows
+        )
+
         let fileTreeValue = the_editor_snapshot_file_tree(rawSnapshot)
         let fileTreeRows: [EditorFileTreeRow] = (0..<Int(fileTreeValue.row_count)).map { index in
             let rowValue = the_editor_snapshot_file_tree_row_at(rawSnapshot, UInt(index))
@@ -1462,6 +1521,7 @@ enum EditorFFIBridge {
             completionDocs: completionDocs,
             signatureHelp: signatureHelp,
             filePicker: filePicker,
+            bufferTabs: bufferTabs,
             fileTree: fileTree
         )
         let decodeMs = (CFAbsoluteTimeGetCurrent() - decodeStarted) * 1000

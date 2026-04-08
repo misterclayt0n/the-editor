@@ -444,6 +444,25 @@ typedef struct the_editor_snapshot_file_tree_row_t {
   uint8_t diagnostic_severity;
 } the_editor_snapshot_file_tree_row_t;
 
+typedef struct the_editor_snapshot_buffer_tabs_t {
+  bool visible;
+  int32_t active_index;
+  uintptr_t active_buffer_id;
+  uintptr_t row_count;
+} the_editor_snapshot_buffer_tabs_t;
+
+typedef struct the_editor_snapshot_buffer_tab_t {
+  uintptr_t buffer_id;
+  const char *title;
+  const char *directory_hint;
+  const char *file_path;
+  const char *icon_name;
+  bool is_active;
+  bool is_modified;
+  uint8_t vcs_kind;
+  uint8_t diagnostic_severity;
+} the_editor_snapshot_buffer_tab_t;
+
 typedef struct the_editor_snapshot_file_picker_preview_segment_t {
   const char *text;
   struct the_editor_style_t style;
@@ -522,6 +541,7 @@ bool the_editor_file_picker_set_list_offset(the_editor_handle_t *handle, uintptr
 bool the_editor_file_picker_set_preview_offset(the_editor_handle_t *handle, uintptr_t offset, uintptr_t visible_rows);
 bool the_editor_file_picker_select_index(the_editor_handle_t *handle, uintptr_t index);
 bool the_editor_file_picker_submit(the_editor_handle_t *handle);
+bool the_editor_activate_buffer_tab(the_editor_handle_t *handle, uintptr_t buffer_id);
 bool the_editor_file_tree_select_index(the_editor_handle_t *handle, uintptr_t index);
 bool the_editor_file_tree_click_index(the_editor_handle_t *handle, uintptr_t index);
 bool the_editor_file_tree_activate_index(the_editor_handle_t *handle, uintptr_t index);
@@ -562,6 +582,8 @@ struct the_editor_snapshot_diagnostic_underline_t the_editor_snapshot_diagnostic
 struct the_editor_snapshot_file_picker_t the_editor_snapshot_file_picker(const the_editor_snapshot_t *snapshot);
 struct the_editor_snapshot_file_tree_t the_editor_snapshot_file_tree(const the_editor_snapshot_t *snapshot);
 struct the_editor_snapshot_file_tree_row_t the_editor_snapshot_file_tree_row_at(const the_editor_snapshot_t *snapshot, uintptr_t row_index);
+struct the_editor_snapshot_buffer_tabs_t the_editor_snapshot_buffer_tabs(const the_editor_snapshot_t *snapshot);
+struct the_editor_snapshot_buffer_tab_t the_editor_snapshot_buffer_tab_at(const the_editor_snapshot_t *snapshot, uintptr_t row_index);
 struct the_editor_snapshot_file_picker_item_t the_editor_snapshot_file_picker_item_at(const the_editor_snapshot_t *snapshot, uintptr_t item_index);
 struct the_editor_snapshot_file_picker_preview_line_t the_editor_snapshot_file_picker_preview_line_at(const the_editor_snapshot_t *snapshot, uintptr_t line_index);
 struct the_editor_snapshot_file_picker_preview_segment_t the_editor_snapshot_file_picker_preview_segment_at(const the_editor_snapshot_t *snapshot, uintptr_t line_index, uintptr_t segment_index);

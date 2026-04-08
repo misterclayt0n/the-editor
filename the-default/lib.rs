@@ -40,6 +40,7 @@ pub use buffer_tabs::{
   buffer_tabs_snapshot_for_editor_with_options,
   buffer_tabs_snapshot_with_options,
   close_buffer_tab,
+  decorate_buffer_tabs_snapshot,
 };
 pub use command::{
   DefaultApi,

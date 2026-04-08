@@ -1,6 +1,9 @@
-use std::path::{
-  Path,
-  PathBuf,
+use std::{
+  collections::BTreeMap,
+  path::{
+    Path,
+    PathBuf,
+  },
 };
 
 use the_lib::editor::{
@@ -9,7 +12,10 @@ use the_lib::editor::{
   Editor,
 };
 
-use crate::command::DefaultContext;
+use crate::{
+  command::DefaultContext,
+  file_tree::FileTreeDecorations,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum BufferTabsOrder {
@@ -43,6 +49,7 @@ pub struct BufferTabItemSnapshot {
   pub is_active:      bool,
   pub file_path:      Option<PathBuf>,
   pub directory_hint: Option<String>,
+  pub decorations:    FileTreeDecorations,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -76,6 +83,19 @@ pub fn buffer_tabs_snapshot_with_options<Ctx: DefaultContext>(
   options: BufferTabsSnapshotOptions,
 ) -> BufferTabsSnapshot {
   buffer_tabs_snapshot_for_editor_with_options(ctx.editor_ref(), options)
+}
+
+pub fn decorate_buffer_tabs_snapshot(
+  snapshot: &mut BufferTabsSnapshot,
+  decorations: &BTreeMap<PathBuf, FileTreeDecorations>,
+) {
+  for tab in &mut snapshot.tabs {
+    tab.decorations = tab
+      .file_path
+      .as_ref()
+      .and_then(|path| decorations.get(path).copied())
+      .unwrap_or_default();
+  }
 }
 
 pub fn buffer_tabs_snapshot_for_editor(editor: &Editor) -> BufferTabsSnapshot {
@@ -131,6 +151,7 @@ fn map_buffer_snapshot(
     is_active: snapshot.is_active,
     file_path: snapshot.file_path.clone(),
     directory_hint,
+    decorations: FileTreeDecorations::default(),
   }
 }
 
@@ -145,6 +166,7 @@ fn directory_hint_for_path(path: &Path) -> Option<String> {
 #[cfg(test)]
 mod tests {
   use std::{
+    collections::BTreeMap,
     num::NonZeroUsize,
     path::PathBuf,
   };
@@ -165,10 +187,13 @@ mod tests {
     view::ViewState,
   };
 
+  use crate::file_tree::FileTreeDecorations;
+
   use super::{
     BufferTabsOrder,
     BufferTabsSnapshotOptions,
     buffer_tabs_snapshot_for_editor_with_options,
+    decorate_buffer_tabs_snapshot,
   };
 
   fn test_view() -> ViewState {
@@ -275,5 +300,33 @@ mod tests {
       });
 
     assert!(snapshot.tabs.iter().all(|tab| tab.directory_hint.is_none()));
+  }
+
+  #[test]
+  fn decorate_buffer_tabs_snapshot_applies_path_decorations() {
+    let mut editor = test_editor();
+    editor.document_mut().set_display_name("a.rs");
+    let path = PathBuf::from("/tmp/proj/src/b.rs");
+    let _ = open_named_buffer(&mut editor, "b.rs", Some(path.to_str().unwrap()));
+
+    let mut snapshot =
+      buffer_tabs_snapshot_for_editor_with_options(&editor, BufferTabsSnapshotOptions::default());
+    let mut decorations = BTreeMap::new();
+    decorations.insert(path.clone(), FileTreeDecorations {
+      vcs:        Some(crate::FileTreeVcsKind::Modified),
+      diagnostic: Some(the_lib::diagnostics::DiagnosticSeverity::Warning),
+    });
+
+    decorate_buffer_tabs_snapshot(&mut snapshot, &decorations);
+
+    let decorated = snapshot
+      .tabs
+      .iter()
+      .find(|tab| tab.file_path.as_ref() == Some(&path))
+      .expect("decorated buffer exists");
+    assert_eq!(decorated.decorations, FileTreeDecorations {
+      vcs:        Some(crate::FileTreeVcsKind::Modified),
+      diagnostic: Some(the_lib::diagnostics::DiagnosticSeverity::Warning),
+    });
   }
 }

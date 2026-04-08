@@ -39,6 +39,7 @@ use the_core::{
   line_ending::LineEnding,
 };
 use the_default::{
+  BufferTabsSnapshotOptions,
   Command,
   CommandPaletteState,
   CommandPaletteStyle,
@@ -88,9 +89,11 @@ use the_default::{
   StatuslineEmphasis,
   ThemeCatalog,
   WorkingDirectoryState,
+  activate_buffer_tab,
   activate_file_tree_index,
   build_dispatch,
   build_statusline_snapshot,
+  buffer_tabs_snapshot_with_options,
   builtin_completion_menu_keymaps,
   builtin_keymaps,
   clear_file_tree_decorations,
@@ -100,6 +103,7 @@ use the_default::{
   command_palette_filtered_indices,
   command_palette_placeholder_text,
   command_palette_selected_filtered_index,
+  decorate_buffer_tabs_snapshot,
   completion_accept,
   completion_docs_panel_rect,
   completion_panel_rect,
@@ -750,6 +754,29 @@ pub struct the_editor_snapshot_file_tree_row_t {
 }
 
 #[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct the_editor_snapshot_buffer_tabs_t {
+  pub visible:          bool,
+  pub active_index:     i32,
+  pub active_buffer_id: usize,
+  pub row_count:        usize,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct the_editor_snapshot_buffer_tab_t {
+  pub buffer_id:           usize,
+  pub title:               *const c_char,
+  pub directory_hint:      *const c_char,
+  pub file_path:           *const c_char,
+  pub icon_name:           *const c_char,
+  pub is_active:           bool,
+  pub is_modified:         bool,
+  pub vcs_kind:            u8,
+  pub diagnostic_severity: u8,
+}
+
+#[repr(C)]
 #[derive(Clone, Copy)]
 pub struct the_editor_snapshot_file_picker_preview_segment_t {
   pub text:        *const c_char,
@@ -945,6 +972,8 @@ struct OwnedSnapshot {
   file_picker_preview_segments: Vec<FilePickerPreviewSegmentRecord>,
   file_tree:                    FileTreeRecord,
   file_tree_rows:               Vec<FileTreeRowRecord>,
+  buffer_tabs:                  BufferTabsRecord,
+  buffer_tab_rows:              Vec<BufferTabRowRecord>,
   panes:                        Vec<the_editor_snapshot_pane_t>,
   separators:                   Vec<the_editor_snapshot_separator_t>,
   lines:                        Vec<LineRecord>,
@@ -1100,6 +1129,20 @@ struct FileTreeRowRecord {
   display_name_idx: usize,
   icon_name_idx:    usize,
   icon_glyph_idx:   usize,
+}
+
+#[derive(Clone, Copy, Default)]
+struct BufferTabsRecord {
+  tabs: the_editor_snapshot_buffer_tabs_t,
+}
+
+#[derive(Clone, Copy, Default)]
+struct BufferTabRowRecord {
+  row:                the_editor_snapshot_buffer_tab_t,
+  title_idx:          usize,
+  directory_hint_idx: Option<usize>,
+  file_path_idx:      Option<usize>,
+  icon_name_idx:      usize,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -4246,6 +4289,45 @@ impl SwiftEditor {
       u8::from(current_file_changed)
     ));
     collapsed
+  }
+
+  fn current_buffer_tab_vcs_statuses(&self) -> BTreeMap<PathBuf, FileTreeVcsKind> {
+    let Some(scan) = self.vcs_scan.as_ref() else {
+      return BTreeMap::new();
+    };
+
+    self
+      .merged_vcs_changed_file_items(scan)
+      .into_iter()
+      .map(|item| {
+        let kind = match item.kind {
+          FilePickerChangedKind::Untracked => FileTreeVcsKind::Untracked,
+          FilePickerChangedKind::Modified => FileTreeVcsKind::Modified,
+          FilePickerChangedKind::Conflict => FileTreeVcsKind::Conflict,
+          FilePickerChangedKind::Deleted => FileTreeVcsKind::Deleted,
+          FilePickerChangedKind::Renamed => FileTreeVcsKind::Renamed,
+        };
+        (item.path, kind)
+      })
+      .collect()
+  }
+
+  fn current_buffer_tab_diagnostic_statuses(&self) -> BTreeMap<PathBuf, DiagnosticSeverity> {
+    let mut statuses = BTreeMap::new();
+    for document in self.diagnostics.documents() {
+      let Some(path) = normalized_file_uri_path(&document.uri) else {
+        continue;
+      };
+      let severity = document
+        .diagnostics
+        .iter()
+        .filter_map(|diagnostic| diagnostic.severity)
+        .max_by_key(|severity| diagnostic_severity_rank(*severity));
+      if let Some(severity) = severity {
+        statuses.insert(path, severity);
+      }
+    }
+    statuses
   }
 
   fn shared_vcs_scan_for_path(&self, path: &Path) -> Option<Arc<VcsWorkspaceScan>> {
@@ -7822,6 +7904,7 @@ impl OwnedSnapshot {
 
     snapshot.populate_file_picker(editor);
     snapshot.populate_file_tree(editor, frame);
+    snapshot.populate_buffer_tabs(editor);
 
     let base_text_style = editor.ui_theme.try_get("ui.text").unwrap_or_default();
 
@@ -8029,6 +8112,7 @@ impl OwnedSnapshot {
     snapshot.finalize_diagnostic_strings();
     snapshot.finalize_file_picker_strings();
     snapshot.finalize_file_tree_strings();
+    snapshot.finalize_buffer_tab_strings();
 
     snapshot.info.line_count = snapshot.lines.len();
     snapshot.info.cursor_count = snapshot.cursors.len();
@@ -8355,6 +8439,59 @@ impl OwnedSnapshot {
     }
   }
 
+  fn populate_buffer_tabs(&mut self, editor: &SwiftEditor) {
+    let mut snapshot = buffer_tabs_snapshot_with_options(editor, BufferTabsSnapshotOptions {
+      min_tabs_to_show: 1,
+      ..BufferTabsSnapshotOptions::default()
+    });
+    let decorations = the_default::combine_file_tree_decorations(
+      &editor.current_buffer_tab_vcs_statuses(),
+      &editor.current_buffer_tab_diagnostic_statuses(),
+    );
+    decorate_buffer_tabs_snapshot(&mut snapshot, &decorations);
+
+    self.buffer_tabs = BufferTabsRecord {
+      tabs: the_editor_snapshot_buffer_tabs_t {
+        visible:          snapshot.visible,
+        active_index:     snapshot.active_tab.map(|index| index as i32).unwrap_or(-1),
+        active_buffer_id: snapshot.active_buffer_id.map(|id| id.get().get()).unwrap_or(0),
+        row_count:        snapshot.tabs.len(),
+      },
+    };
+
+    for tab in snapshot.tabs {
+      let title_idx = self.push_string(&tab.title);
+      let directory_hint_idx = self.push_optional_string(tab.directory_hint.as_deref());
+      let file_path_idx = tab
+        .file_path
+        .as_ref()
+        .map(|path| self.push_string(path.to_string_lossy().as_ref()));
+      let icon_name = tab
+        .file_path
+        .as_deref()
+        .map(file_picker_icon_name_for_path)
+        .unwrap_or("doc");
+      let icon_name_idx = self.push_string(icon_name);
+      self.buffer_tab_rows.push(BufferTabRowRecord {
+        row: the_editor_snapshot_buffer_tab_t {
+          buffer_id:           tab.buffer_id.get().get(),
+          title:               ptr::null(),
+          directory_hint:      ptr::null(),
+          file_path:           ptr::null(),
+          icon_name:           ptr::null(),
+          is_active:           tab.is_active,
+          is_modified:         tab.modified,
+          vcs_kind:            file_tree_vcs_kind_code(tab.decorations.vcs),
+          diagnostic_severity: file_tree_diagnostic_severity_code(tab.decorations),
+        },
+        title_idx,
+        directory_hint_idx,
+        file_path_idx,
+        icon_name_idx,
+      });
+    }
+  }
+
   fn push_file_picker_preview_segment(
     &mut self,
     editor: &SwiftEditor,
@@ -8530,6 +8667,19 @@ impl OwnedSnapshot {
       row.row.display_name = self.strings[row.display_name_idx].as_ptr();
       row.row.icon_name = self.strings[row.icon_name_idx].as_ptr();
       row.row.icon_glyph = self.strings[row.icon_glyph_idx].as_ptr();
+    }
+  }
+
+  fn finalize_buffer_tab_strings(&mut self) {
+    for row in &mut self.buffer_tab_rows {
+      row.row.title = self.strings[row.title_idx].as_ptr();
+      row.row.icon_name = self.strings[row.icon_name_idx].as_ptr();
+      if let Some(idx) = row.directory_hint_idx {
+        row.row.directory_hint = self.strings[idx].as_ptr();
+      }
+      if let Some(idx) = row.file_path_idx {
+        row.row.file_path = self.strings[idx].as_ptr();
+      }
     }
   }
 }
@@ -10378,6 +10528,10 @@ fn pane_id_from_raw(raw: usize) -> Option<PaneId> {
   NonZeroUsize::new(raw).map(PaneId::new)
 }
 
+fn buffer_id_from_raw(raw: usize) -> Option<BufferId> {
+  NonZeroUsize::new(raw).map(BufferId::new)
+}
+
 fn split_id_from_raw(raw: usize) -> Option<SplitNodeId> {
   NonZeroUsize::new(raw).map(SplitNodeId::new)
 }
@@ -11583,6 +11737,20 @@ pub unsafe extern "C" fn the_editor_file_picker_submit(handle: *mut the_editor_h
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_activate_buffer_tab(
+  handle: *mut the_editor_handle_t,
+  buffer_id: usize,
+) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return false;
+  };
+  let Some(buffer_id) = buffer_id_from_raw(buffer_id) else {
+    return false;
+  };
+  activate_buffer_tab(&mut handle.editor, buffer_id)
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn the_editor_file_tree_select_index(
   handle: *mut the_editor_handle_t,
   index: usize,
@@ -12059,6 +12227,32 @@ pub unsafe extern "C" fn the_editor_snapshot_file_tree_row_at(
   snapshot
     .snapshot
     .file_tree_rows
+    .get(row_index)
+    .map(|record| record.row)
+    .unwrap_or_default()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_snapshot_buffer_tabs(
+  snapshot: *const the_editor_snapshot_t,
+) -> the_editor_snapshot_buffer_tabs_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else {
+    return the_editor_snapshot_buffer_tabs_t::default();
+  };
+  snapshot.snapshot.buffer_tabs.tabs
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_snapshot_buffer_tab_at(
+  snapshot: *const the_editor_snapshot_t,
+  row_index: usize,
+) -> the_editor_snapshot_buffer_tab_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else {
+    return the_editor_snapshot_buffer_tab_t::default();
+  };
+  snapshot
+    .snapshot
+    .buffer_tab_rows
     .get(row_index)
     .map(|record| record.row)
     .unwrap_or_default()

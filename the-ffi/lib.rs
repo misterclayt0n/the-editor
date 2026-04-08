@@ -5918,6 +5918,7 @@ impl SwiftEditor {
   }
 
   fn sync_state_after_active_pane_change(&mut self, previous_buffer_id: BufferId) {
+    the_default::remember_active_editor_pane(self);
     self.clear_hover_state();
     self.clear_completion_state();
     self.cancel_auto_completion();
@@ -5943,6 +5944,7 @@ impl SwiftEditor {
     self.refresh_lsp_runtime_state();
     self.sync_active_file_watch_state();
     self.refresh_vcs_after_path_change(previous_path);
+    the_default::sync_file_tree_to_active_file(self);
   }
 
   fn build_snapshot(&mut self) -> OwnedSnapshot {
@@ -6445,6 +6447,46 @@ impl DefaultContext for SwiftEditor {
   }
   fn did_change_active_pane(&mut self, previous_buffer_id: BufferId) {
     self.sync_state_after_active_pane_change(previous_buffer_id);
+  }
+  fn goto_buffer(&mut self, direction: the_default::Direction, count: usize) -> bool {
+    let previous_buffer_id = self.editor.active_buffer_id();
+    let switched = match direction {
+      the_default::Direction::Forward => self.editor.switch_buffer_forward(count),
+      the_default::Direction::Backward => self.editor.switch_buffer_backward(count),
+      _ => false,
+    };
+    if !switched {
+      return false;
+    }
+    self.sync_state_after_active_pane_change(previous_buffer_id);
+    true
+  }
+  fn activate_buffer_by_id(&mut self, buffer_id: BufferId) -> bool {
+    let previous_buffer_id = self.editor.active_buffer_id();
+    if self.editor.active_buffer_id() == buffer_id {
+      return true;
+    }
+    if !self.editor.set_active_buffer(buffer_id) {
+      return false;
+    }
+    self.sync_state_after_active_pane_change(previous_buffer_id);
+    true
+  }
+  fn goto_last_accessed_buffer(&mut self) -> bool {
+    let previous_buffer_id = self.editor.active_buffer_id();
+    if !self.editor.goto_last_accessed_buffer() {
+      return false;
+    }
+    self.sync_state_after_active_pane_change(previous_buffer_id);
+    true
+  }
+  fn goto_last_modified_buffer(&mut self) -> bool {
+    let previous_buffer_id = self.editor.active_buffer_id();
+    if !self.editor.goto_last_modified_buffer() {
+      return false;
+    }
+    self.sync_state_after_active_pane_change(previous_buffer_id);
+    true
   }
   fn request_quit(&mut self) {}
   fn mode(&self) -> Mode {

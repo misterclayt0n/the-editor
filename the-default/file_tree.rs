@@ -2,6 +2,7 @@ use std::{
   collections::{
     BTreeMap,
     BTreeSet,
+    VecDeque,
   },
   env,
   ffi::OsString,
@@ -89,6 +90,27 @@ pub struct FileTreeDecorations {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+struct FileTreeDirectoryEntry {
+  path:   PathBuf,
+  name:   String,
+  is_dir: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+enum FileTreeDirectoryLoadState {
+  #[default]
+  Unloaded,
+  Queued,
+  Loaded,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct FileTreeDirectoryState {
+  load_state: FileTreeDirectoryLoadState,
+  entries:    Vec<FileTreeDirectoryEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileTreeRow {
   pub path:              PathBuf,
   pub display_name:      String,
@@ -143,6 +165,9 @@ pub struct FileTreeState {
   pub diagnostic_statuses: BTreeMap<PathBuf, DiagnosticSeverity>,
   pub watch:               Option<FileTreeWatchState>,
   pub refresh_due_at:      Option<Instant>,
+  directory_states:        BTreeMap<PathBuf, FileTreeDirectoryState>,
+  pending_scan_dirs:       VecDeque<PathBuf>,
+  pending_selected_path:   Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -163,10 +188,67 @@ impl FileTreeState {
     self.selected = None;
     self.scroll_offset = 0;
     self.selection_follow = false;
+    self.pending_selected_path = None;
   }
 
   fn combined_decorations(&self) -> BTreeMap<PathBuf, FileTreeDecorations> {
     combine_file_tree_decorations(&self.vcs_statuses, &self.diagnostic_statuses)
+  }
+
+  fn selected_path(&self) -> Option<PathBuf> {
+    self
+      .selected
+      .and_then(|index| self.rows.get(index))
+      .map(|row| row.path.clone())
+  }
+
+  fn clear_directory_model(&mut self) {
+    self.directory_states.clear();
+    self.pending_scan_dirs.clear();
+  }
+
+  fn invalidate_directory_model(&mut self, preferred_path: Option<PathBuf>) {
+    self.clear_directory_model();
+    self.pending_selected_path = preferred_path.or_else(|| self.selected_path());
+  }
+
+  fn queue_directory_scan(&mut self, directory: &Path) -> bool {
+    let state = self
+      .directory_states
+      .entry(directory.to_path_buf())
+      .or_default();
+    if matches!(
+      state.load_state,
+      FileTreeDirectoryLoadState::Queued | FileTreeDirectoryLoadState::Loaded
+    ) {
+      return false;
+    }
+    state.load_state = FileTreeDirectoryLoadState::Queued;
+    self.pending_scan_dirs.push_back(directory.to_path_buf());
+    true
+  }
+
+  fn finish_directory_scan(
+    &mut self,
+    directory: &Path,
+    entries: Vec<FileTreeDirectoryEntry>,
+  ) -> bool {
+    let state = self
+      .directory_states
+      .entry(directory.to_path_buf())
+      .or_default();
+    let changed =
+      state.load_state != FileTreeDirectoryLoadState::Loaded || state.entries != entries;
+    state.load_state = FileTreeDirectoryLoadState::Loaded;
+    state.entries = entries;
+    changed
+  }
+
+  fn mark_directory_unloaded(&mut self, directory: &Path) {
+    self.directory_states.remove(directory);
+    self
+      .pending_scan_dirs
+      .retain(|candidate| candidate != directory);
   }
 }
 
@@ -453,6 +535,7 @@ pub fn handle_file_tree_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent) -
 }
 
 pub fn refresh_file_tree<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  ctx.file_tree_mut().invalidate_directory_model(None);
   rebuild_rows(ctx);
   ctx.request_render();
 }
@@ -470,11 +553,8 @@ pub fn poll_file_tree_watch<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool {
     )
   };
 
-  match outcome {
-    WatchPollOutcome::NoChanges => {
-      changed |= poll_pending_file_tree_refresh(ctx, now);
-      changed
-    },
+  changed |= match outcome {
+    WatchPollOutcome::NoChanges => poll_pending_file_tree_refresh(ctx, now),
     WatchPollOutcome::Disconnected { .. } => {
       let state = ctx.file_tree_mut();
       state.watch = None;
@@ -482,9 +562,11 @@ pub fn poll_file_tree_watch<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool {
       true
     },
     WatchPollOutcome::Changes { kinds, .. } => {
-      changed | handle_file_tree_watch_kinds(ctx, kinds.as_slice(), now)
+      handle_file_tree_watch_kinds(ctx, kinds.as_slice(), now)
     },
-  }
+  };
+  changed |= poll_pending_file_tree_scans(ctx);
+  changed
 }
 
 fn sync_file_tree_watch_state<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool {
@@ -565,6 +647,72 @@ fn handle_file_tree_watch_kinds<Ctx: DefaultContext>(
   }
 
   false
+}
+
+fn poll_pending_file_tree_scans<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool {
+  const MAX_SCANS_PER_POLL: usize = 8;
+  const MAX_SCAN_BUDGET: Duration = Duration::from_millis(4);
+
+  let Some(root) = file_tree_watch_root(ctx) else {
+    return false;
+  };
+  let show_hidden = ctx.file_tree().show_hidden;
+  let perf_start = file_tree_perf_enabled().then(Instant::now);
+  let start = Instant::now();
+  let mut changed = false;
+  let mut scanned = 0usize;
+
+  loop {
+    if scanned >= MAX_SCANS_PER_POLL || start.elapsed() >= MAX_SCAN_BUDGET {
+      break;
+    }
+    let next = {
+      let state = ctx.file_tree_mut();
+      state.pending_scan_dirs.pop_front()
+    };
+    let Some(directory) = next else {
+      break;
+    };
+
+    let should_scan = {
+      let state = ctx.file_tree();
+      directory == root
+        || state.expanded_dirs.contains(&directory)
+        || state
+          .pending_selected_path
+          .as_ref()
+          .is_some_and(|path| path.starts_with(&directory))
+    };
+    if !should_scan || !directory.starts_with(&root) {
+      ctx.file_tree_mut().mark_directory_unloaded(&directory);
+      continue;
+    }
+
+    let entries = scan_directory_entries(&directory, show_hidden);
+    changed |= ctx
+      .file_tree_mut()
+      .finish_directory_scan(&directory, entries);
+    scanned += 1;
+  }
+
+  if changed {
+    rebuild_rows(ctx);
+    ctx.request_render();
+  }
+
+  if let Some(perf_start) = perf_start
+    && scanned > 0
+  {
+    file_tree_perf_log(format!(
+      "kind=file_tree_scan_batch total={:.2}ms scanned={} pending={} root={}",
+      perf_start.elapsed().as_secs_f64() * 1000.0,
+      scanned,
+      ctx.file_tree().pending_scan_dirs.len(),
+      root.display(),
+    ));
+  }
+
+  changed
 }
 
 fn poll_pending_file_tree_refresh<Ctx: DefaultContext>(ctx: &mut Ctx, now: Instant) -> bool {
@@ -790,6 +938,7 @@ fn toggle_file_tree_with_root<Ctx: DefaultContext>(ctx: &mut Ctx, current_buffer
       state.expanded_dirs.insert(root.clone());
       state.selected = None;
       state.scroll_offset = 0;
+      state.invalidate_directory_model(None);
     }
     if !state.follow_current {
       state.follow_current = true;
@@ -922,10 +1071,13 @@ fn expand_or_open_selected<Ctx: DefaultContext>(ctx: &mut Ctx, split: Option<Spl
   };
 
   if row.is_dir {
+    let show_hidden = ctx.file_tree().show_hidden;
     if row.is_expanded {
       ctx.file_tree_mut().expanded_dirs.remove(&row.path);
     } else {
-      ctx.file_tree_mut().expanded_dirs.insert(row.path);
+      let state = ctx.file_tree_mut();
+      state.expanded_dirs.insert(row.path.clone());
+      ensure_directory_loaded_sync(state, &row.path, show_hidden);
     }
     rebuild_rows(ctx);
     ctx.request_render();
@@ -954,13 +1106,16 @@ fn root_to_parent<Ctx: DefaultContext>(ctx: &mut Ctx) {
   state.selected = None;
   state.scroll_offset = 0;
   state.selection_follow = true;
+  state.invalidate_directory_model(None);
   rebuild_rows(ctx);
   ctx.request_render();
 }
 
 fn toggle_hidden<Ctx: DefaultContext>(ctx: &mut Ctx) {
   let show_hidden = !ctx.file_tree().show_hidden;
-  ctx.file_tree_mut().show_hidden = show_hidden;
+  let state = ctx.file_tree_mut();
+  state.show_hidden = show_hidden;
+  state.invalidate_directory_model(None);
   rebuild_rows(ctx);
   ctx.request_render();
 }
@@ -1042,7 +1197,9 @@ fn cmd_add<Ctx: DefaultContext>(
       })?;
   }
 
-  rebuild_rows(ctx);
+  ctx
+    .file_tree_mut()
+    .invalidate_directory_model(Some(target.clone()));
   reveal_path(ctx, &target);
   Ok(())
 }
@@ -1168,8 +1325,11 @@ fn cmd_rename<Ctx: DefaultContext>(
     ))
   })?;
 
-  retarget_expanded_dirs(ctx.file_tree_mut(), &source, &target);
-  rebuild_rows(ctx);
+  {
+    let state = ctx.file_tree_mut();
+    retarget_expanded_dirs(state, &source, &target);
+    state.invalidate_directory_model(Some(target.clone()));
+  }
   reveal_path(ctx, &target);
   Ok(())
 }
@@ -1213,9 +1373,10 @@ fn cmd_delete<Ctx: DefaultContext>(
   state
     .expanded_dirs
     .retain(|path| !path.starts_with(&target));
-  if let Some(parent) = parent {
+  if let Some(parent) = parent.clone() {
     state.expanded_dirs.insert(parent);
   }
+  state.invalidate_directory_model(parent);
   rebuild_rows(ctx);
   Ok(())
 }
@@ -1348,7 +1509,9 @@ fn copy_selected_entry<Ctx: DefaultContext>(
 ) -> Result<(), String> {
   ensure_target_available(source, target)?;
   copy_path_recursively(source, target)?;
-  rebuild_rows(ctx);
+  ctx
+    .file_tree_mut()
+    .invalidate_directory_model(Some(target.to_path_buf()));
   reveal_path(ctx, target);
   ctx.push_info("file_tree", format!("copied to {}", target.display()));
   Ok(())
@@ -1361,8 +1524,11 @@ fn move_selected_entry<Ctx: DefaultContext>(
 ) -> Result<(), String> {
   ensure_target_available(source, target)?;
   move_path(source, target)?;
-  retarget_expanded_dirs(ctx.file_tree_mut(), source, target);
-  rebuild_rows(ctx);
+  {
+    let state = ctx.file_tree_mut();
+    retarget_expanded_dirs(state, source, target);
+    state.invalidate_directory_model(Some(target.to_path_buf()));
+  }
   reveal_path(ctx, target);
   ctx.push_info("file_tree", format!("moved to {}", target.display()));
   Ok(())
@@ -1380,10 +1546,10 @@ fn trash_selected_entry<Ctx: DefaultContext>(ctx: &mut Ctx, source: &Path) -> Re
   })?;
   let target = unique_destination_in_dir(&trash_dir, file_name_for_path(source)?)?;
   move_path(source, &target)?;
-  ctx
-    .file_tree_mut()
-    .expanded_dirs
-    .retain(|path| !path.starts_with(source));
+  let parent = source.parent().map(Path::to_path_buf);
+  let state = ctx.file_tree_mut();
+  state.expanded_dirs.retain(|path| !path.starts_with(source));
+  state.invalidate_directory_model(parent);
   rebuild_rows(ctx);
   ctx.push_info("file_tree", format!("trashed {}", source.display()));
   Ok(())
@@ -1396,46 +1562,44 @@ fn rebuild_rows<Ctx: DefaultContext>(ctx: &mut Ctx) {
     ctx.file_tree_mut().clear_rows();
     return;
   };
-  let (selected_path, root, show_hidden, mut expanded_dirs, decorations) = {
-    let state = ctx.file_tree();
-    let selected_path = state
-      .selected
-      .and_then(|index| state.rows.get(index))
-      .map(|row| row.path.clone());
-    (
-      selected_path,
-      root.clone(),
-      state.show_hidden,
-      state.expanded_dirs.clone(),
-      state.combined_decorations(),
-    )
-  };
+  let show_hidden = ctx.file_tree().show_hidden;
+  let decorations = ctx.file_tree().combined_decorations();
+  let scrolloff = ctx.scrolloff();
 
-  expanded_dirs.retain(|path| path == &root || path.starts_with(&root));
-  expanded_dirs.insert(root.clone());
+  let state = ctx.file_tree_mut();
+  let selected_path = state.selected_path();
+  let pending_selected_path = state.pending_selected_path.clone();
+  state
+    .expanded_dirs
+    .retain(|path| path == &root || path.starts_with(&root));
+  state.expanded_dirs.insert(root.clone());
+  ensure_directory_loaded_sync(state, &root, show_hidden);
+
   let mut rows = Vec::new();
-  append_rows(
+  append_rows_from_directory_model(
+    state,
     &root,
     &[],
-    show_hidden,
-    &expanded_dirs,
     current_file.as_deref(),
     &decorations,
     &mut rows,
   );
-  let scrolloff = ctx.scrolloff();
-  let state = ctx.file_tree_mut();
-  state.expanded_dirs = expanded_dirs;
-  state.rows = rows;
-  state.selected = selected_path
+
+  let selected = resolve_tree_selection(
+    &rows,
+    selected_path.as_deref(),
+    pending_selected_path.as_deref(),
+    current_file.as_deref(),
+  );
+  let pending_selected_visible = pending_selected_path
     .as_ref()
-    .and_then(|path| state.rows.iter().position(|row| &row.path == path))
-    .or_else(|| {
-      current_file
-        .as_ref()
-        .and_then(|path| state.rows.iter().position(|row| row.path == *path))
-    })
-    .or_else(|| (!state.rows.is_empty()).then_some(0));
+    .is_some_and(|path| rows.iter().any(|row| row.path == *path));
+
+  state.rows = rows;
+  state.selected = selected;
+  if pending_selected_visible {
+    state.pending_selected_path = None;
+  }
   clamp_tree_state(state);
   state.selection_follow = true;
   sync_tree_scroll(state, scrolloff);
@@ -1444,7 +1608,7 @@ fn rebuild_rows<Ctx: DefaultContext>(ctx: &mut Ctx) {
     let rebuild_ms = perf_start.elapsed().as_secs_f64() * 1000.0;
     file_tree_perf_log(format!(
       "kind=file_tree_refresh total={rebuild_ms:.2}ms root={} rows={} expanded={} selected={} \
-       scroll={} visible_rows={} show_hidden={} follow_current={}",
+       scroll={} visible_rows={} show_hidden={} follow_current={} loaded_dirs={} pending_scans={}",
       root.display(),
       state.rows.len(),
       state.expanded_dirs.len(),
@@ -1456,8 +1620,220 @@ fn rebuild_rows<Ctx: DefaultContext>(ctx: &mut Ctx) {
       state.visible_rows,
       if state.show_hidden { 1 } else { 0 },
       if state.follow_current { 1 } else { 0 },
+      state
+        .directory_states
+        .values()
+        .filter(|directory| directory.load_state == FileTreeDirectoryLoadState::Loaded)
+        .count(),
+      state.pending_scan_dirs.len(),
     ));
   }
+}
+
+fn resolve_tree_selection(
+  rows: &[FileTreeRow],
+  selected_path: Option<&Path>,
+  pending_selected_path: Option<&Path>,
+  current_file: Option<&Path>,
+) -> Option<usize> {
+  selected_path
+    .and_then(|path| rows.iter().position(|row| row.path == path))
+    .or_else(|| pending_selected_path.and_then(|path| rows.iter().position(|row| row.path == path)))
+    .or_else(|| current_file.and_then(|path| rows.iter().position(|row| row.path == path)))
+    .or_else(|| pending_selected_path.and_then(|path| deepest_visible_ancestor_index(rows, path)))
+    .or_else(|| selected_path.and_then(|path| deepest_visible_ancestor_index(rows, path)))
+    .or_else(|| current_file.and_then(|path| deepest_visible_ancestor_index(rows, path)))
+    .or_else(|| (!rows.is_empty()).then_some(0))
+}
+
+fn deepest_visible_ancestor_index(rows: &[FileTreeRow], path: &Path) -> Option<usize> {
+  rows
+    .iter()
+    .enumerate()
+    .rev()
+    .find(|(_, row)| path.starts_with(&row.path))
+    .map(|(index, _)| index)
+}
+
+fn append_rows_from_directory_model(
+  state: &mut FileTreeState,
+  directory: &Path,
+  ancestor_branches: &[bool],
+  current_file: Option<&Path>,
+  decorations: &BTreeMap<PathBuf, FileTreeDecorations>,
+  rows: &mut Vec<FileTreeRow>,
+) {
+  let entries = match state.directory_states.get(directory) {
+    Some(directory_state) if directory_state.load_state == FileTreeDirectoryLoadState::Loaded => {
+      directory_state.entries.clone()
+    },
+    _ => {
+      state.queue_directory_scan(directory);
+      return;
+    },
+  };
+
+  for (index, entry) in entries.iter().enumerate() {
+    let is_last_sibling = index + 1 == entries.len();
+    let expanded = entry.is_dir && state.expanded_dirs.contains(&entry.path);
+    let icon_name = if entry.is_dir {
+      if expanded {
+        "folder_open".to_string()
+      } else {
+        "folder".to_string()
+      }
+    } else {
+      file_picker_icon_name_for_path(entry.path.as_path()).to_string()
+    };
+    let has_children = if entry.is_dir {
+      match state.directory_states.get(&entry.path) {
+        Some(directory_state)
+          if directory_state.load_state == FileTreeDirectoryLoadState::Loaded =>
+        {
+          !directory_state.entries.is_empty()
+        },
+        _ => true,
+      }
+    } else {
+      false
+    };
+    rows.push(FileTreeRow {
+      path: entry.path.clone(),
+      display_name: entry.name.clone(),
+      depth: ancestor_branches.len(),
+      ancestor_branches: ancestor_branches.to_vec(),
+      is_last_sibling,
+      has_children,
+      is_dir: entry.is_dir,
+      is_expanded: expanded,
+      is_current_file: current_file.is_some_and(|current| current == entry.path.as_path()),
+      decorations: decorations.get(&entry.path).copied().unwrap_or_default(),
+      icon_glyph: file_picker_icon_glyph(&icon_name, entry.is_dir),
+      icon_name,
+    });
+
+    if entry.is_dir && expanded {
+      let mut next_ancestor_branches = ancestor_branches.to_vec();
+      next_ancestor_branches.push(!is_last_sibling);
+      if !matches!(
+        state
+          .directory_states
+          .get(&entry.path)
+          .map(|directory| directory.load_state),
+        Some(FileTreeDirectoryLoadState::Loaded)
+      ) {
+        state.queue_directory_scan(&entry.path);
+        continue;
+      }
+      append_rows_from_directory_model(
+        state,
+        &entry.path,
+        &next_ancestor_branches,
+        current_file,
+        decorations,
+        rows,
+      );
+    }
+  }
+}
+
+fn expand_dirs_to_path(state: &mut FileTreeState, root: &Path, path: &Path) {
+  let mut current = path.parent();
+  while let Some(dir) = current {
+    if dir.starts_with(root) {
+      state.expanded_dirs.insert(dir.to_path_buf());
+    }
+    if dir == root {
+      break;
+    }
+    current = dir.parent();
+  }
+}
+
+fn ensure_directory_loaded_sync(
+  state: &mut FileTreeState,
+  directory: &Path,
+  show_hidden: bool,
+) -> bool {
+  if matches!(
+    state
+      .directory_states
+      .get(directory)
+      .map(|entry| entry.load_state),
+    Some(FileTreeDirectoryLoadState::Loaded)
+  ) {
+    return false;
+  }
+  let entries = scan_directory_entries(directory, show_hidden);
+  state.finish_directory_scan(directory, entries)
+}
+
+fn load_directory_chain_sync(
+  state: &mut FileTreeState,
+  root: &Path,
+  path: &Path,
+  show_hidden: bool,
+) {
+  let target_directory = if path.is_dir() {
+    Some(path)
+  } else {
+    path.parent()
+  };
+  let Some(target_directory) = target_directory else {
+    return;
+  };
+  if !target_directory.starts_with(root) {
+    return;
+  }
+
+  let mut directories = Vec::new();
+  let mut current = Some(target_directory);
+  while let Some(directory) = current {
+    if directory.starts_with(root) {
+      directories.push(directory.to_path_buf());
+    }
+    if directory == root {
+      break;
+    }
+    current = directory.parent();
+  }
+  directories.reverse();
+
+  for directory in directories {
+    ensure_directory_loaded_sync(state, &directory, show_hidden);
+  }
+}
+
+fn scan_directory_entries(directory: &Path, show_hidden: bool) -> Vec<FileTreeDirectoryEntry> {
+  let Ok(read_dir) = std::fs::read_dir(directory) else {
+    return Vec::new();
+  };
+
+  let mut entries = read_dir
+    .flatten()
+    .filter_map(|entry| {
+      let file_type = entry.file_type().ok()?;
+      let name = entry.file_name();
+      let name = name.to_str()?.to_string();
+      if !show_hidden && name.starts_with('.') {
+        return None;
+      }
+      Some(FileTreeDirectoryEntry {
+        path: entry.path(),
+        name,
+        is_dir: file_type.is_dir(),
+      })
+    })
+    .collect::<Vec<_>>();
+
+  entries.sort_by(|left, right| {
+    right
+      .is_dir
+      .cmp(&left.is_dir)
+      .then_with(|| left.name.to_lowercase().cmp(&right.name.to_lowercase()))
+  });
+
+  entries
 }
 
 pub fn collapse_file_tree_vcs_statuses(
@@ -1658,100 +2034,17 @@ fn paste_clipboard<Ctx: DefaultContext>(ctx: &mut Ctx) -> Result<(), String> {
     },
     FileTreeClipboardMode::Move => {
       move_path(&clipboard.path, &target)?;
-      retarget_expanded_dirs(ctx.file_tree_mut(), &clipboard.path, &target);
-      ctx.file_tree_mut().clipboard = None;
+      let state = ctx.file_tree_mut();
+      retarget_expanded_dirs(state, &clipboard.path, &target);
+      state.clipboard = None;
       ctx.push_info("file_tree", format!("moved to {}", target.display()));
     },
   }
-  rebuild_rows(ctx);
+  ctx
+    .file_tree_mut()
+    .invalidate_directory_model(Some(target.clone()));
   reveal_path(ctx, &target);
   Ok(())
-}
-
-fn append_rows(
-  directory: &Path,
-  ancestor_branches: &[bool],
-  show_hidden: bool,
-  expanded_dirs: &BTreeSet<PathBuf>,
-  current_file: Option<&Path>,
-  decorations: &BTreeMap<PathBuf, FileTreeDecorations>,
-  rows: &mut Vec<FileTreeRow>,
-) {
-  let entries = visible_directory_entries(directory, show_hidden);
-
-  for (index, (path, name, is_dir)) in entries.iter().enumerate() {
-    let is_last_sibling = index + 1 == entries.len();
-    let expanded = *is_dir && expanded_dirs.contains(path.as_path());
-    let icon_name = if *is_dir {
-      if expanded {
-        "folder_open".to_string()
-      } else {
-        "folder".to_string()
-      }
-    } else {
-      file_picker_icon_name_for_path(path.as_path()).to_string()
-    };
-    let has_children = *is_dir && directory_has_visible_entries(path, show_hidden);
-    rows.push(FileTreeRow {
-      path: path.clone(),
-      display_name: name.clone(),
-      depth: ancestor_branches.len(),
-      ancestor_branches: ancestor_branches.to_vec(),
-      is_last_sibling,
-      has_children,
-      is_dir: *is_dir,
-      is_expanded: expanded,
-      is_current_file: current_file.is_some_and(|current| current == path.as_path()),
-      decorations: decorations.get(path).copied().unwrap_or_default(),
-      icon_glyph: file_picker_icon_glyph(&icon_name, *is_dir),
-      icon_name,
-    });
-
-    if *is_dir && expanded {
-      let mut next_ancestor_branches = ancestor_branches.to_vec();
-      next_ancestor_branches.push(!is_last_sibling);
-      append_rows(
-        path,
-        &next_ancestor_branches,
-        show_hidden,
-        expanded_dirs,
-        current_file,
-        decorations,
-        rows,
-      );
-    }
-  }
-}
-
-fn visible_directory_entries(directory: &Path, show_hidden: bool) -> Vec<(PathBuf, String, bool)> {
-  let Ok(read_dir) = std::fs::read_dir(directory) else {
-    return Vec::new();
-  };
-
-  let mut entries = read_dir
-    .flatten()
-    .filter_map(|entry| {
-      let file_type = entry.file_type().ok()?;
-      let name = entry.file_name();
-      let name = name.to_str()?.to_string();
-      if !show_hidden && name.starts_with('.') {
-        return None;
-      }
-      Some((entry.path(), name, file_type.is_dir()))
-    })
-    .collect::<Vec<_>>();
-
-  entries.sort_by(|a, b| {
-    b.2
-      .cmp(&a.2)
-      .then_with(|| a.1.to_lowercase().cmp(&b.1.to_lowercase()))
-  });
-
-  entries
-}
-
-fn directory_has_visible_entries(directory: &Path, show_hidden: bool) -> bool {
-  !visible_directory_entries(directory, show_hidden).is_empty()
 }
 
 fn reveal_path<Ctx: DefaultContext>(ctx: &mut Ctx, path: &Path) {
@@ -1762,25 +2055,13 @@ fn reveal_path<Ctx: DefaultContext>(ctx: &mut Ctx, path: &Path) {
     return;
   }
 
-  let mut current = path.parent();
-  while let Some(dir) = current {
-    if dir.starts_with(&root) {
-      ctx.file_tree_mut().expanded_dirs.insert(dir.to_path_buf());
-    }
-    if dir == root.as_path() {
-      break;
-    }
-    current = dir.parent();
-  }
-
+  let show_hidden = ctx.file_tree().show_hidden;
+  let state = ctx.file_tree_mut();
+  expand_dirs_to_path(state, &root, path);
+  state.pending_selected_path = Some(path.to_path_buf());
+  state.selection_follow = true;
+  load_directory_chain_sync(state, &root, path, show_hidden);
   rebuild_rows(ctx);
-  if let Some(index) = ctx.file_tree().rows.iter().position(|row| row.path == path) {
-    let scrolloff = ctx.scrolloff();
-    let state = ctx.file_tree_mut();
-    state.selected = Some(index);
-    state.selection_follow = true;
-    sync_tree_scroll(state, scrolloff);
-  }
 }
 
 fn clamp_tree_state(state: &mut FileTreeState) {
@@ -2135,20 +2416,14 @@ mod tests {
     fs::create_dir_all(&second).expect("create beta");
     fs::write(&nested, "child").expect("create child");
 
-    let mut expanded_dirs = BTreeSet::new();
-    expanded_dirs.insert(root.clone());
-    expanded_dirs.insert(first.clone());
+    let mut state = FileTreeState::default();
+    state.expanded_dirs.insert(root.clone());
+    state.expanded_dirs.insert(first.clone());
+    ensure_directory_loaded_sync(&mut state, &root, false);
+    ensure_directory_loaded_sync(&mut state, &first, false);
 
     let mut rows = Vec::new();
-    append_rows(
-      &root,
-      &[],
-      false,
-      &expanded_dirs,
-      None,
-      &BTreeMap::new(),
-      &mut rows,
-    );
+    append_rows_from_directory_model(&mut state, &root, &[], None, &BTreeMap::new(), &mut rows);
 
     let alpha = rows
       .iter()
@@ -2176,6 +2451,30 @@ mod tests {
     assert!(beta.is_last_sibling);
 
     fs::remove_dir_all(&root).expect("cleanup tree");
+  }
+
+  #[test]
+  fn append_rows_queues_unloaded_expanded_directories() {
+    let root = PathBuf::from("/workspace");
+    let child = root.join("src");
+
+    let mut state = FileTreeState::default();
+    state.expanded_dirs.insert(root.clone());
+    state.expanded_dirs.insert(child.clone());
+    state.finish_directory_scan(&root, vec![FileTreeDirectoryEntry {
+      path:   child.clone(),
+      name:   "src".to_string(),
+      is_dir: true,
+    }]);
+
+    let mut rows = Vec::new();
+    append_rows_from_directory_model(&mut state, &root, &[], None, &BTreeMap::new(), &mut rows);
+
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].path, child);
+    assert!(rows[0].is_expanded);
+    assert_eq!(state.pending_scan_dirs.len(), 1);
+    assert_eq!(state.pending_scan_dirs.front(), Some(&rows[0].path));
   }
 
   #[test]

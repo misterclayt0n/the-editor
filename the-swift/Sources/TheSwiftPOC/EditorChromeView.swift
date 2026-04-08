@@ -334,6 +334,8 @@ private struct EditorFileTreeRowView: View {
 
                     Spacer(minLength: 6)
 
+                    EditorFileTreeRowDecorationsView(row: row)
+
                     if row.isCurrentFile {
                         Circle()
                             .fill(Color(nsColor: theme.selectionColor).opacity(row.isSelected ? 0.95 : 0.82))
@@ -391,6 +393,27 @@ private struct EditorFileTreeRowView: View {
             return .primary
         }
         return .primary.opacity(0.88)
+    }
+}
+
+private struct EditorFileTreeRowDecorationsView: View {
+    let row: EditorFileTreeRow
+
+    var body: some View {
+        HStack(spacing: 6) {
+            if let vcsKind = row.vcsKind {
+                Image(systemName: symbolName(for: fileTreeVcsIconName(vcsKind), isDirectory: false))
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(fileTreeBadgeColor(for: fileTreeVcsSeverity(vcsKind)))
+                    .accessibilityLabel(Text(fileTreeVcsAccessibilityLabel(vcsKind)))
+            }
+            if let diagnosticSeverity = row.diagnosticSeverity {
+                Image(systemName: diagnosticSeverity.symbolName)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(fileTreeBadgeColor(for: diagnosticSeverity))
+                    .accessibilityLabel(Text(fileTreeDiagnosticAccessibilityLabel(diagnosticSeverity)))
+            }
+        }
     }
 }
 
@@ -1220,6 +1243,75 @@ private extension NSColor {
     }
 }
 
+private func fileTreeVcsIconName(_ kind: EditorFileTreeVcsKind) -> String {
+    switch kind {
+    case .conflict:
+        return "git_conflict"
+    case .deleted:
+        return "git_deleted"
+    case .modified:
+        return "git_modified"
+    case .renamed:
+        return "git_renamed"
+    case .untracked:
+        return "git_untracked"
+    }
+}
+
+private func fileTreeVcsSeverity(_ kind: EditorFileTreeVcsKind) -> EditorDiagnosticSeverity {
+    switch kind {
+    case .conflict, .deleted:
+        return .error
+    case .modified:
+        return .warning
+    case .renamed:
+        return .information
+    case .untracked:
+        return .hint
+    }
+}
+
+private func fileTreeVcsAccessibilityLabel(_ kind: EditorFileTreeVcsKind) -> String {
+    switch kind {
+    case .conflict:
+        return "conflict"
+    case .deleted:
+        return "deleted"
+    case .modified:
+        return "modified"
+    case .renamed:
+        return "renamed"
+    case .untracked:
+        return "untracked"
+    }
+}
+
+private func fileTreeDiagnosticAccessibilityLabel(_ severity: EditorDiagnosticSeverity) -> String {
+    switch severity {
+    case .error:
+        return "error"
+    case .warning:
+        return "warning"
+    case .information:
+        return "information"
+    case .hint:
+        return "hint"
+    }
+}
+
+private func fileTreeBadgeColor(for severity: EditorDiagnosticSeverity) -> Color {
+    switch severity {
+    case .error:
+        return .red
+    case .warning:
+        return .orange
+    case .information:
+        return .blue
+    case .hint:
+        return .teal
+    }
+}
+
 private func normalizedStatusItemDisplay(icon: String?, text: String) -> (icon: String?, text: String) {
     if let icon {
         return (icon, text)
@@ -1259,6 +1351,16 @@ private func symbolName(for icon: String, isDirectory: Bool) -> String {
         return "doc.badge.gearshape"
     case "git_branch":
         return "point.topleft.down.curvedto.point.bottomright.up"
+    case "git_conflict":
+        return "exclamationmark.octagon.fill"
+    case "git_deleted":
+        return "trash.fill"
+    case "git_modified":
+        return "circle.fill"
+    case "git_renamed":
+        return "arrow.left.arrow.right"
+    case "git_untracked":
+        return "plus.circle.fill"
     case "diagnostic_error":
         return "xmark.circle.fill"
     case "diagnostic_warning":

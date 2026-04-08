@@ -103,11 +103,81 @@ impl Default for OpenBufferPolicy {
   }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PaneItemsState {
+  items:  Vec<PaneContent>,
+  active: usize,
+}
+
+impl PaneItemsState {
+  fn new(initial: PaneContent) -> Self {
+    Self {
+      items:  vec![initial],
+      active: 0,
+    }
+  }
+
+  fn active_content(&self) -> Option<PaneContent> {
+    self.items.get(self.active).copied()
+  }
+
+  fn activate(&mut self, content: PaneContent) {
+    if let Some(index) = self.items.iter().position(|item| *item == content) {
+      self.active = index;
+    } else {
+      self.items.push(content);
+      self.active = self.items.len().saturating_sub(1);
+    }
+  }
+
+  fn remove(&mut self, content: PaneContent) -> bool {
+    let Some(index) = self.items.iter().position(|item| *item == content) else {
+      return false;
+    };
+    self.items.remove(index);
+    if self.items.is_empty() {
+      self.active = 0;
+    } else if self.active > index {
+      self.active -= 1;
+    } else if self.active >= self.items.len() {
+      self.active = self.items.len() - 1;
+    }
+    true
+  }
+
+  fn merge_in<I>(&mut self, items: I)
+  where
+    I: IntoIterator<Item = PaneContent>,
+  {
+    for item in items {
+      if !self.items.contains(&item) {
+        self.items.push(item);
+      }
+    }
+    if !self.items.is_empty() {
+      self.active = self.active.min(self.items.len() - 1);
+    }
+  }
+
+  fn preferred_buffer_id(&self) -> Option<BufferId> {
+    match self.active_content() {
+      Some(PaneContent::EditorBuffer { buffer_id }) => Some(buffer_id),
+      _ => self.items.iter().rev().find_map(|item| {
+        match item {
+          PaneContent::EditorBuffer { buffer_id } => Some(*buffer_id),
+          PaneContent::ClientSurface { .. } => None,
+        }
+      }),
+    }
+  }
+}
+
 #[derive(Debug)]
 struct EditorSurfaceState {
   layout_viewport:        Rect,
   split_tree:             SplitTree,
   pane_content:           BTreeMap<PaneId, PaneContent>,
+  pane_items:             BTreeMap<PaneId, PaneItemsState>,
   pane_views:             BTreeMap<PaneId, ViewState>,
   client_surfaces:        BTreeMap<ClientSurfaceId, ClientSurfaceAttachment>,
   next_client_surface_id: NonZeroUsize,
@@ -116,10 +186,13 @@ struct EditorSurfaceState {
 impl EditorSurfaceState {
   fn new(view: &ViewState, first_buffer_id: BufferId) -> Self {
     let split_tree = SplitTree::new();
-    let mut pane_content = BTreeMap::new();
-    pane_content.insert(split_tree.active_pane(), PaneContent::EditorBuffer {
+    let initial_content = PaneContent::EditorBuffer {
       buffer_id: first_buffer_id,
-    });
+    };
+    let mut pane_content = BTreeMap::new();
+    pane_content.insert(split_tree.active_pane(), initial_content);
+    let mut pane_items = BTreeMap::new();
+    pane_items.insert(split_tree.active_pane(), PaneItemsState::new(initial_content));
     let mut pane_views = BTreeMap::new();
     pane_views.insert(split_tree.active_pane(), view.clone());
 
@@ -127,6 +200,7 @@ impl EditorSurfaceState {
       layout_viewport: view.viewport,
       split_tree,
       pane_content,
+      pane_items,
       pane_views,
       client_surfaces: BTreeMap::new(),
       next_client_surface_id: NonZeroUsize::new(1).expect("nonzero"),
@@ -317,6 +391,19 @@ pub struct EditorSurfaceSnapshot {
   pub is_active:    bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PaneItemSnapshot {
+  pub content:   PaneContent,
+  pub is_active: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PaneItemGroupSnapshot {
+  pub pane_id:        PaneId,
+  pub is_active_pane: bool,
+  pub items:          Vec<PaneItemSnapshot>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JumpSnapshot {
   pub buffer_id:     BufferId,
@@ -405,18 +492,67 @@ impl Editor {
     }
   }
 
-  fn restore_editor_buffer_in_pane(&mut self, pane: PaneId) {
-    let fallback = self.active_buffer;
+  fn pane_items_state_mut(&mut self, pane: PaneId, fallback: PaneContent) -> &mut PaneItemsState {
     self
       .surface
+      .pane_items
+      .entry(pane)
+      .or_insert_with(|| PaneItemsState::new(fallback))
+  }
+
+  fn activate_pane_item(&mut self, pane: PaneId, content: PaneContent) {
+    self.pane_items_state_mut(pane, content).activate(content);
+  }
+
+  fn remove_pane_item(&mut self, pane: PaneId, content: PaneContent) -> bool {
+    self
+      .surface
+      .pane_items
+      .get_mut(&pane)
+      .is_some_and(|state| state.remove(content))
+  }
+
+  fn remove_pane_item_from_all(&mut self, content: PaneContent) {
+    for state in self.surface.pane_items.values_mut() {
+      let _ = state.remove(content);
+    }
+  }
+
+  fn merge_pane_items(&mut self, pane: PaneId, items: Vec<PaneContent>) {
+    if items.is_empty() {
+      return;
+    }
+    let fallback = self
+      .surface
       .pane_content
-      .insert(pane, PaneContent::EditorBuffer {
-        buffer_id: fallback,
+      .get(&pane)
+      .copied()
+      .or_else(|| items.first().copied())
+      .unwrap_or(PaneContent::EditorBuffer {
+        buffer_id: self.active_buffer,
       });
+    self.pane_items_state_mut(pane, fallback).merge_in(items);
+  }
+
+  fn restore_editor_buffer_in_pane(&mut self, pane: PaneId) {
+    let fallback = self
+      .surface
+      .pane_items
+      .get(&pane)
+      .and_then(PaneItemsState::preferred_buffer_id)
+      .unwrap_or(self.active_buffer);
+    let content = PaneContent::EditorBuffer {
+      buffer_id: fallback,
+    };
+    self.surface.pane_content.insert(pane, content);
+    self.activate_pane_item(pane, content);
     let fallback_view = self
       .buffer_view(fallback)
       .expect("active buffer must provide fallback view");
     self.surface.pane_views.entry(pane).or_insert(fallback_view);
+    if pane == self.active_pane_id() {
+      self.active_buffer = fallback;
+    }
   }
 
   fn alloc_client_surface_id(&mut self) -> ClientSurfaceId {
@@ -444,6 +580,8 @@ impl Editor {
       return false;
     };
 
+    self.remove_pane_item_from_all(PaneContent::ClientSurface { surface_id });
+
     if let Some(pane) = surface.attached_pane
       && matches!(
         self.surface.pane_content.get(&pane),
@@ -470,13 +608,13 @@ impl Editor {
         Some(PaneContent::ClientSurface { surface_id: attached }) if *attached == surface_id
       )
     {
+      let _ = self.remove_pane_item(attached_pane, PaneContent::ClientSurface { surface_id });
       self.restore_editor_buffer_in_pane(attached_pane);
     }
 
-    self
-      .surface
-      .pane_content
-      .insert(pane, PaneContent::ClientSurface { surface_id });
+    let content = PaneContent::ClientSurface { surface_id };
+    self.surface.pane_content.insert(pane, content);
+    self.activate_pane_item(pane, content);
     if let Some(surface) = self.surface.client_surfaces.get_mut(&surface_id) {
       surface.attached_pane = Some(pane);
     }
@@ -523,10 +661,9 @@ impl Editor {
       self.access_history.push(self.active_buffer);
       self.active_buffer = buffer_id;
     }
-    self
-      .surface
-      .pane_content
-      .insert(target_pane, PaneContent::EditorBuffer { buffer_id });
+    let content = PaneContent::EditorBuffer { buffer_id };
+    self.surface.pane_content.insert(target_pane, content);
+    self.activate_pane_item(target_pane, content);
     self
       .surface
       .pane_views
@@ -656,6 +793,42 @@ impl Editor {
     order
       .into_iter()
       .filter_map(|buffer_id| self.buffer_snapshot(buffer_id))
+      .collect()
+  }
+
+  pub fn pane_item_snapshots(&self) -> Vec<PaneItemGroupSnapshot> {
+    let active_pane = self.active_pane_id();
+    self
+      .surface
+      .split_tree
+      .pane_order()
+      .into_iter()
+      .filter_map(|pane_id| {
+        let items = if let Some(state) = self.surface.pane_items.get(&pane_id) {
+          state
+            .items
+            .iter()
+            .enumerate()
+            .map(|(index, content)| {
+              PaneItemSnapshot {
+                content:   *content,
+                is_active: index == state.active,
+              }
+            })
+            .collect::<Vec<_>>()
+        } else {
+          let content = self.surface.pane_content.get(&pane_id).copied()?;
+          vec![PaneItemSnapshot {
+            content,
+            is_active: true,
+          }]
+        };
+        Some(PaneItemGroupSnapshot {
+          pane_id,
+          is_active_pane: pane_id == active_pane,
+          items,
+        })
+      })
       .collect()
   }
 
@@ -936,10 +1109,9 @@ impl Editor {
     let was_active = pane == self.active_pane_id();
     self.sync_pane_view_to_buffer(pane);
     let _ = self.detach_client_surface_in_pane(pane);
-    self
-      .surface
-      .pane_content
-      .insert(pane, PaneContent::EditorBuffer { buffer_id });
+    let content = PaneContent::EditorBuffer { buffer_id };
+    self.surface.pane_content.insert(pane, content);
+    self.activate_pane_item(pane, content);
     self
       .surface
       .pane_views
@@ -1060,6 +1232,7 @@ impl Editor {
       },
     };
     self.surface.pane_content.insert(pane, content);
+    self.surface.pane_items.insert(pane, PaneItemsState::new(content));
     self.surface.pane_views.insert(pane, current_view);
     if let PaneContent::EditorBuffer { buffer_id } = content {
       self.active_buffer = buffer_id;
@@ -1070,13 +1243,21 @@ impl Editor {
   pub fn close_active_pane(&mut self) -> bool {
     let closing = self.surface.split_tree.active_pane();
     self.sync_pane_view_to_buffer(closing);
+    let closing_items = self
+      .surface
+      .pane_items
+      .get(&closing)
+      .map(|state| state.items.clone())
+      .unwrap_or_default();
     let Ok(next_active) = self.surface.split_tree.close_active() else {
       return false;
     };
 
     let _ = self.detach_client_surface_in_pane(closing);
     self.surface.pane_content.remove(&closing);
+    self.surface.pane_items.remove(&closing);
     self.surface.pane_views.remove(&closing);
+    self.merge_pane_items(next_active, closing_items);
     let Some(next_content) = self.surface.pane_content.get(&next_active).copied() else {
       return false;
     };
@@ -1114,12 +1295,25 @@ impl Editor {
       .copied()
       .filter(|pane| *pane != active)
       .collect();
-    for pane in removed_panes {
-      let _ = self.detach_client_surface_in_pane(pane);
+    let removed_items = removed_panes
+      .iter()
+      .flat_map(|pane| {
+        self
+          .surface
+          .pane_items
+          .get(pane)
+          .map(|state| state.items.clone())
+          .unwrap_or_default()
+      })
+      .collect::<Vec<_>>();
+    for pane in &removed_panes {
+      let _ = self.detach_client_surface_in_pane(*pane);
     }
 
     self.surface.split_tree.only_active();
     self.surface.pane_content.retain(|pane, _| *pane == active);
+    self.surface.pane_items.retain(|pane, _| *pane == active);
+    self.merge_pane_items(active, removed_items);
     self.surface.pane_views.retain(|pane, _| *pane == active);
     if let PaneContent::EditorBuffer { buffer_id } = active_content {
       self.active_buffer = buffer_id;
@@ -1492,14 +1686,50 @@ impl Editor {
     let Some(replacement_before) = self.buffer_id_at_index(replacement_before_index) else {
       return false;
     };
+    let closing_content = PaneContent::EditorBuffer { buffer_id };
+    let panes_showing_buffer = self
+      .surface
+      .pane_content
+      .iter()
+      .filter_map(|(pane, content)| {
+        matches!(content, PaneContent::EditorBuffer { buffer_id: pane_buffer_id } if *pane_buffer_id == buffer_id)
+          .then_some(*pane)
+      })
+      .collect::<Vec<_>>();
 
-    for content in self.surface.pane_content.values_mut() {
-      if let PaneContent::EditorBuffer {
-        buffer_id: pane_buffer_id,
-      } = content
-        && *pane_buffer_id == buffer_id
-      {
-        *pane_buffer_id = replacement_before;
+    for state in self.surface.pane_items.values_mut() {
+      if state.remove(closing_content) && state.items.is_empty() {
+        state.activate(PaneContent::EditorBuffer {
+          buffer_id: replacement_before,
+        });
+      }
+    }
+
+    for pane in panes_showing_buffer {
+      let next_content = self
+        .surface
+        .pane_items
+        .get(&pane)
+        .and_then(PaneItemsState::active_content)
+        .unwrap_or(PaneContent::EditorBuffer {
+          buffer_id: replacement_before,
+        });
+      match next_content {
+        PaneContent::EditorBuffer { buffer_id: next_buffer_id } => {
+          self.surface.pane_content.insert(pane, next_content);
+          if let Some(next_index) = self.index_of_buffer_id(next_buffer_id) {
+            self
+              .surface
+              .pane_views
+              .insert(pane, self.buffers[next_index].view.clone());
+          }
+        },
+        PaneContent::ClientSurface { surface_id } => {
+          self.surface.pane_content.insert(pane, next_content);
+          if let Some(surface) = self.surface.client_surfaces.get_mut(&surface_id) {
+            surface.attached_pane = Some(pane);
+          }
+        },
       }
     }
 
@@ -2095,6 +2325,70 @@ mod tests {
     );
     assert!(!editor.is_active_pane_terminal());
     assert!(!editor.close_terminal_in_active_pane());
+  }
+
+  #[test]
+  fn editor_pane_item_snapshots_track_local_buffers_and_hidden_terminal() {
+    let doc_id = DocumentId::new(NonZeroUsize::new(1).unwrap());
+    let doc = Document::new(doc_id, Rope::from("one"));
+    let view = ViewState::new(Rect::new(0, 0, 80, 24), Position::new(0, 0));
+    let editor_id = EditorId::new(NonZeroUsize::new(1).unwrap());
+    let mut editor = Editor::new(editor_id, doc, view.clone());
+
+    let first = first_buffer_id(&editor);
+    let second = editor.open_buffer(Rope::from("two"), view, Some(PathBuf::from("/tmp/two.txt")));
+    let terminal = editor.open_terminal_in_active_pane();
+    assert!(editor.hide_active_terminal_surface());
+
+    let snapshots = editor.pane_item_snapshots();
+    assert_eq!(snapshots.len(), 1);
+    assert_eq!(snapshots[0].items, vec![
+      PaneItemSnapshot {
+        content:   PaneContent::EditorBuffer { buffer_id: first },
+        is_active: false,
+      },
+      PaneItemSnapshot {
+        content:   PaneContent::EditorBuffer { buffer_id: second },
+        is_active: true,
+      },
+      PaneItemSnapshot {
+        content:   PaneContent::ClientSurface { surface_id: terminal },
+        is_active: false,
+      },
+    ]);
+  }
+
+  #[test]
+  fn editor_close_active_pane_merges_local_items_into_survivor() {
+    let doc_id = DocumentId::new(NonZeroUsize::new(1).unwrap());
+    let doc = Document::new(doc_id, Rope::from("one"));
+    let view = ViewState::new(Rect::new(0, 0, 80, 24), Position::new(0, 0));
+    let editor_id = EditorId::new(NonZeroUsize::new(1).unwrap());
+    let mut editor = Editor::new(editor_id, doc, view.clone());
+
+    let first = first_buffer_id(&editor);
+    let second = editor.open_buffer(Rope::from("two"), view.clone(), Some(PathBuf::from("/tmp/two.txt")));
+    assert!(editor.split_active_pane(SplitAxis::Vertical));
+    let third = editor.open_buffer(Rope::from("three"), view, Some(PathBuf::from("/tmp/three.txt")));
+
+    assert!(editor.close_active_pane());
+
+    let snapshots = editor.pane_item_snapshots();
+    assert_eq!(snapshots.len(), 1);
+    assert_eq!(snapshots[0].items, vec![
+      PaneItemSnapshot {
+        content:   PaneContent::EditorBuffer { buffer_id: first },
+        is_active: false,
+      },
+      PaneItemSnapshot {
+        content:   PaneContent::EditorBuffer { buffer_id: second },
+        is_active: true,
+      },
+      PaneItemSnapshot {
+        content:   PaneContent::EditorBuffer { buffer_id: third },
+        is_active: false,
+      },
+    ]);
   }
 
   #[test]

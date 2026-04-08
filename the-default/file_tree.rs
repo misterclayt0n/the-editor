@@ -2208,14 +2208,30 @@ fn sync_tree_scroll(state: &mut FileTreeState, scrolloff: usize) {
   let previous_scroll = state.scroll_offset;
   let previous_follow = state.selection_follow;
   let selected = state.selected;
+
+  if state.visible_rows == 0 {
+    if previous_follow {
+      file_tree_scroll_log(
+        state,
+        format!(
+          "reason=sync_tree_scroll deferred previous_scroll={} selected={} scrolloff={} \
+           follow_before={} follow_after={} visible_rows=0 ",
+          previous_scroll,
+          selected
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "none".to_string()),
+          scrolloff,
+          u8::from(previous_follow),
+          u8::from(state.selection_follow),
+        ),
+      );
+    }
+    return;
+  }
+
   let next_scroll = if state.selection_follow {
     selected.and_then(|selected| {
-      scroll_row_to_keep_visible(
-        selected,
-        state.scroll_offset,
-        state.visible_rows.max(1),
-        scrolloff,
-      )
+      scroll_row_to_keep_visible(selected, state.scroll_offset, state.visible_rows, scrolloff)
     })
   } else {
     None
@@ -2548,6 +2564,28 @@ mod tests {
     sync_tree_scroll(&mut state, 2);
 
     assert_eq!(state.scroll_offset, 15);
+    assert!(!state.selection_follow);
+  }
+
+  #[test]
+  fn selection_follow_defers_until_visible_rows_known() {
+    let mut state = FileTreeState {
+      rows: (0..40).map(|idx| row(&format!("row-{idx}"))).collect(),
+      selected: Some(32),
+      visible_rows: 0,
+      selection_follow: true,
+      ..FileTreeState::default()
+    };
+
+    sync_tree_scroll(&mut state, 0);
+
+    assert_eq!(state.scroll_offset, 0);
+    assert!(state.selection_follow);
+
+    state.visible_rows = 23;
+    sync_tree_scroll(&mut state, 0);
+
+    assert_eq!(state.scroll_offset, 10);
     assert!(!state.selection_follow);
   }
 

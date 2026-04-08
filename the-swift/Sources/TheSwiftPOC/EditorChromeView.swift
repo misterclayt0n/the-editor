@@ -762,6 +762,7 @@ private final class EditorFileTreeTableCellView: NSTableCellView {
         self.onFocusSidebar = onFocusSidebar
         self.onSelectIndex = onSelectIndex
         self.onActivateIndex = onActivateIndex
+        isHovered = isMouseCurrentlyInsideCell
         refreshRootView()
     }
 
@@ -772,7 +773,7 @@ private final class EditorFileTreeTableCellView: NSTableCellView {
         onFocusSidebar = nil
         onSelectIndex = nil
         onActivateIndex = nil
-        updateHoverState(false)
+        isHovered = false
         refreshRootView()
     }
 
@@ -800,6 +801,12 @@ private final class EditorFileTreeTableCellView: NSTableCellView {
         guard hovered != isHovered else { return }
         isHovered = hovered
         refreshRootView()
+    }
+
+    private var isMouseCurrentlyInsideCell: Bool {
+        guard row != nil, let window else { return false }
+        let location = convert(window.mouseLocationOutsideOfEventStream, from: nil)
+        return bounds.contains(location)
     }
 
     private func isChevronHit(_ location: NSPoint) -> Bool {

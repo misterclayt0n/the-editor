@@ -513,11 +513,6 @@ struct LspWatchedFileState {
   _watch_handle: WatchHandle,
 }
 
-struct FileTreeWatchState {
-  stream:        WatchedFileEventsState,
-  _watch_handle: WatchHandle,
-}
-
 struct VcsWatchState {
   stream:        WatchedFileEventsState,
   _watch_handle: WatchHandle,
@@ -1036,8 +1031,6 @@ pub struct Ctx {
   active_file_vcs_refresh_rerun:      bool,
   active_file_vcs_refresh_tx:         Sender<ActiveFileVcsRefreshResult>,
   active_file_vcs_refresh_rx:         Receiver<ActiveFileVcsRefreshResult>,
-  file_tree_watch:                    Option<FileTreeWatchState>,
-  file_tree_refresh_due_at:           Option<Instant>,
   file_tree_vcs_refresh_due_at:       Option<Instant>,
   file_tree_vcs_refresh_reason:       Option<FileTreeVcsRefreshReason>,
   file_tree_vcs_refresh_in_flight:    bool,
@@ -1541,8 +1534,6 @@ impl Ctx {
       active_file_vcs_refresh_rerun: false,
       active_file_vcs_refresh_tx,
       active_file_vcs_refresh_rx,
-      file_tree_watch: None,
-      file_tree_refresh_due_at: None,
       file_tree_vcs_refresh_due_at: None,
       file_tree_vcs_refresh_reason: None,
       file_tree_vcs_refresh_in_flight: false,
@@ -3623,30 +3614,35 @@ impl Ctx {
   }
 
   pub fn poll_file_tree_watch(&mut self) -> bool {
-    let now = Instant::now();
-    let mut needs_render = self.sync_file_tree_watch_state();
-    needs_render |= self.refresh_file_tree_diagnostics_if_needed();
+    let root_before = self.file_tree_decoration_root.clone();
+    let mut needs_render = the_default::poll_file_tree_watch(self);
+    let root_after = self.file_tree_watch_root();
 
-    let outcome = match poll_watch_events(
-      self.file_tree_watch.as_mut().map(|watch| &mut watch.stream),
-      now,
-      "tree",
-      |event, message| trace_file_watch_event(event, message),
-    ) {
-      WatchPollOutcome::NoChanges => {
-        needs_render |= self.poll_pending_file_tree_refresh(now);
-        return needs_render;
+    match root_after.as_deref() {
+      Some(root) => {
+        if root_before.as_deref() != Some(root) {
+          let reason = if root_before.is_none() {
+            FileTreeVcsRefreshReason::TreeOpen
+          } else {
+            FileTreeVcsRefreshReason::TreeRootChange
+          };
+          self.file_tree_decoration_root = Some(root.to_path_buf());
+          self.file_tree_diagnostics_seq = 0;
+          self.schedule_file_tree_vcs_refresh(reason, Some(Instant::now()));
+          needs_render = true;
+        }
       },
-      WatchPollOutcome::Disconnected { .. } => {
-        self.file_tree_watch = None;
-        self.file_tree_refresh_due_at = None;
-        self.schedule_file_tree_vcs_refresh(FileTreeVcsRefreshReason::WatchRebind, None);
-        return true;
+      None => {
+        self.clear_pending_file_tree_vcs_refresh();
+        let cleared_decorations = clear_file_tree_decorations(self);
+        if self.file_tree_decoration_root.take().is_some() || cleared_decorations {
+          self.file_tree_diagnostics_seq = 0;
+          needs_render = true;
+        }
       },
-      WatchPollOutcome::Changes { kinds, .. } => kinds,
-    };
+    }
 
-    needs_render | self.handle_file_tree_watch_kinds(outcome.as_slice(), now)
+    needs_render | self.refresh_file_tree_diagnostics_if_needed()
   }
 
   fn handle_vcs_watch_change(&mut self) -> bool {
@@ -3660,45 +3656,6 @@ impl Ctx {
     );
     self.queue_open_vcs_diff_picker_refresh();
     false
-  }
-
-  fn handle_file_tree_watch_kinds(&mut self, kinds: &[PathEventKind], now: Instant) -> bool {
-    if kinds
-      .iter()
-      .any(|kind| matches!(kind, PathEventKind::Created | PathEventKind::Removed))
-    {
-      self.file_tree_refresh_due_at = None;
-      the_default::refresh_file_tree(self);
-      self.schedule_file_tree_vcs_refresh(
-        FileTreeVcsRefreshReason::FileTreeCreatedRemoved,
-        Some(now + file_tree_changed_refresh_latency()),
-      );
-      return true;
-    }
-
-    if kinds
-      .iter()
-      .any(|kind| matches!(kind, PathEventKind::Changed))
-    {
-      self.file_tree_refresh_due_at = Some(now + file_tree_changed_refresh_latency());
-    }
-
-    false
-  }
-
-  fn poll_pending_file_tree_refresh(&mut self, now: Instant) -> bool {
-    let Some(due_at) = self.file_tree_refresh_due_at else {
-      return false;
-    };
-    if now < due_at {
-      return false;
-    }
-
-    self.file_tree_refresh_due_at = None;
-    the_default::refresh_file_tree(self);
-    self
-      .schedule_file_tree_vcs_refresh(FileTreeVcsRefreshReason::FileTreeChangedDebounce, Some(now));
-    true
   }
 
   pub fn poll_file_tree_vcs_refresh_dispatch(&mut self, now: Instant) -> bool {
@@ -3886,70 +3843,6 @@ impl Ctx {
       },
       None => {
         if self.vcs_watch.take().is_some() {
-          changed = true;
-        }
-      },
-    }
-
-    changed
-  }
-
-  fn sync_file_tree_watch_state(&mut self) -> bool {
-    let root = self.file_tree_watch_root();
-    let mut changed = false;
-
-    match root {
-      Some(root) => {
-        let current = self
-          .file_tree_watch
-          .as_ref()
-          .map(|watch| watch.stream.path.as_path());
-        if current != Some(root.as_path()) {
-          let (events_rx, watch_handle) = watch_path(&root, file_tree_watch_latency());
-          let uri =
-            file_uri_for_path(&root).unwrap_or_else(|| format!("file://{}", root.display()));
-          self.file_tree_watch = Some(FileTreeWatchState {
-            stream:        WatchedFileEventsState {
-              path: root.clone(),
-              uri,
-              events_rx,
-              suppress_until: None,
-              reload_state: FileWatchReloadState::Clean,
-              reload_io: FileWatchReloadIoState::default(),
-            },
-            _watch_handle: watch_handle,
-          });
-          self.file_tree_refresh_due_at = None;
-          let reason = if self.file_tree_decoration_root.is_none() {
-            FileTreeVcsRefreshReason::TreeOpen
-          } else {
-            FileTreeVcsRefreshReason::WatchRebind
-          };
-          self.schedule_file_tree_vcs_refresh(reason, Some(Instant::now()));
-          changed = true;
-        }
-
-        if self.file_tree_decoration_root.as_deref() != Some(root.as_path()) {
-          let reason = if self.file_tree_decoration_root.is_none() {
-            FileTreeVcsRefreshReason::TreeOpen
-          } else {
-            FileTreeVcsRefreshReason::TreeRootChange
-          };
-          self.file_tree_decoration_root = Some(root);
-          self.file_tree_diagnostics_seq = 0;
-          self.schedule_file_tree_vcs_refresh(reason, Some(Instant::now()));
-          changed = true;
-        }
-      },
-      None => {
-        if self.file_tree_watch.take().is_some() {
-          self.file_tree_refresh_due_at = None;
-          changed = true;
-        }
-        self.clear_pending_file_tree_vcs_refresh();
-        let cleared_decorations = clear_file_tree_decorations(self);
-        if self.file_tree_decoration_root.take().is_some() || cleared_decorations {
-          self.file_tree_diagnostics_seq = 0;
           changed = true;
         }
       },
@@ -8420,10 +8313,6 @@ impl Ctx {
     );
     the_default::sync_file_tree_to_active_file(self);
   }
-}
-
-fn file_tree_watch_latency() -> Duration {
-  Duration::from_millis(75)
 }
 
 fn file_tree_changed_refresh_latency() -> Duration {
@@ -14495,39 +14384,6 @@ pkgs.mkShell {
     assert_eq!(
       statuses.get(&dir.as_path().join("src")),
       Some(&DiagnosticSeverity::Error)
-    );
-  }
-
-  #[test]
-  fn file_tree_watch_refreshes_rows_for_new_files() {
-    let dir = TempTestDir::new("file-tree-watch");
-    dir.write_file("main.txt", "main\n");
-    let mut ctx = Ctx::new(None).expect("ctx");
-    attach_test_file_tree(&mut ctx, dir.as_path());
-
-    let new_file = dir.write_file("fresh.txt", "fresh\n");
-
-    assert!(ctx.handle_file_tree_watch_kinds(&[PathEventKind::Created], Instant::now()));
-    assert!(ctx.file_tree.rows.iter().any(|row| row.path == new_file));
-  }
-
-  #[test]
-  fn file_tree_watch_debounces_changed_only_events() {
-    let dir = TempTestDir::new("file-tree-watch-debounce");
-    let opened = dir.write_file("main.txt", "main\n");
-    let mut ctx = Ctx::new(None).expect("ctx");
-    attach_test_file_tree(&mut ctx, dir.as_path());
-
-    let now = Instant::now();
-    assert!(!ctx.handle_file_tree_watch_kinds(&[PathEventKind::Changed], now));
-    assert!(ctx.file_tree_refresh_due_at.is_some());
-
-    let _ = opened;
-    assert!(ctx.poll_pending_file_tree_refresh(now + Duration::from_millis(201)));
-    assert_eq!(ctx.file_tree_refresh_due_at, None);
-    assert_eq!(
-      ctx.file_tree_vcs_refresh_reason,
-      Some(FileTreeVcsRefreshReason::FileTreeChangedDebounce)
     );
   }
 

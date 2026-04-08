@@ -88,6 +88,7 @@ use the_default::{
   close_file_picker,
   file_picker_icon_name_for_path,
   file_picker_items_from_specs,
+  poll_file_tree_watch,
   file_tree_surface_id,
   command_palette_filtered_indices,
   command_palette_placeholder_text,
@@ -4349,6 +4350,16 @@ impl SwiftEditor {
       "active_file_watch={:.2}ms/{}",
       active_file_watch_ms,
       u8::from(active_file_watch_changed)
+    ));
+
+    let step_start = Instant::now();
+    let file_tree_watch_changed = poll_file_tree_watch(self);
+    let file_tree_watch_ms = step_start.elapsed().as_secs_f64() * 1000.0;
+    changed |= file_tree_watch_changed;
+    parts.push(format!(
+      "file_tree_watch={:.2}ms/{}",
+      file_tree_watch_ms,
+      u8::from(file_tree_watch_changed)
     ));
 
     let step_start = Instant::now();

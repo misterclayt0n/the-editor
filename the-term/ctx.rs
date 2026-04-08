@@ -2593,9 +2593,16 @@ impl Ctx {
     log_active_file_vcs_refresh_event("started", generation, &path, reason, None, None, None, None);
     thread::spawn(move || {
       let collect_start = Instant::now();
-      let scan = shared_scan
-        .map(|scan| (*scan).clone())
-        .or_else(|| vcs_provider.scan_workspace(&path).ok());
+      let scan = if matches!(reason, ActiveFileVcsRefreshReason::VcsWatch) {
+        vcs_provider
+          .scan_workspace(&path)
+          .ok()
+          .or_else(|| shared_scan.map(|scan| (*scan).clone()))
+      } else {
+        shared_scan
+          .map(|scan| (*scan).clone())
+          .or_else(|| vcs_provider.scan_workspace(&path).ok())
+      };
       let statusline = scan
         .as_ref()
         .and_then(|scan| scan.statusline_info.as_ref())

@@ -1401,6 +1401,7 @@ struct SwiftEditor {
   active_file_watch:             Option<ActiveFileWatchState>,
   vcs_watch:                     Option<VcsWatchState>,
   vcs_watch_root:                Option<PathBuf>,
+  vcs_statusline_refresh_force_rescan: bool,
   vcs_statusline_refresh_due_at: Option<Instant>,
   vcs_statusline_refresh_in_flight: bool,
   vcs_statusline_refresh_generation: u64,
@@ -3978,6 +3979,7 @@ impl SwiftEditor {
       self.vcs_watch_root = None;
       self.vcs_scan = None;
       self.vcs_base_cache.clear();
+      self.vcs_statusline_refresh_force_rescan = false;
       self.vcs_statusline_refresh_due_at = None;
       self.vcs_statusline_refresh_in_flight = false;
       self.vcs_statusline_refresh_rerun = false;
@@ -4018,12 +4020,20 @@ impl SwiftEditor {
     let generation = self.vcs_statusline_refresh_generation;
     let vcs_provider = self.vcs_provider.clone();
     let shared_scan = self.shared_vcs_scan_for_path(&path);
+    let force_rescan = self.vcs_statusline_refresh_force_rescan;
     let tx = self.vcs_statusline_refresh_tx.clone();
 
     std::thread::spawn(move || {
-      let scan = shared_scan
-        .map(|scan| (*scan).clone())
-        .or_else(|| vcs_provider.scan_workspace(&path).ok());
+      let scan = if force_rescan {
+        vcs_provider
+          .scan_workspace(&path)
+          .ok()
+          .or_else(|| shared_scan.map(|scan| (*scan).clone()))
+      } else {
+        shared_scan
+          .map(|scan| (*scan).clone())
+          .or_else(|| vcs_provider.scan_workspace(&path).ok())
+      };
       let statusline = scan
         .as_ref()
         .and_then(|scan| scan.statusline_info.as_ref())
@@ -4059,6 +4069,7 @@ impl SwiftEditor {
 
       if let Some(scan) = result.scan {
         self.store_vcs_scan(scan);
+        self.vcs_statusline_refresh_force_rescan = false;
         changed |= self.refresh_file_tree_decorations();
       }
       let head_revision = self
@@ -4132,6 +4143,7 @@ impl SwiftEditor {
       WatchPollOutcome::NoChanges => return changed,
       WatchPollOutcome::Disconnected { .. } => {
         self.vcs_watch = None;
+        self.vcs_statusline_refresh_force_rescan = true;
         self.schedule_vcs_statusline_refresh(Some(now + vcs_watch_latency()));
         return true;
       },
@@ -4139,6 +4151,7 @@ impl SwiftEditor {
     };
 
     if outcome {
+      self.vcs_statusline_refresh_force_rescan = true;
       self.schedule_vcs_statusline_refresh(Some(now + vcs_watch_latency()));
     }
     changed
@@ -4562,6 +4575,7 @@ impl SwiftEditor {
       active_file_watch: None,
       vcs_watch: None,
       vcs_watch_root: None,
+      vcs_statusline_refresh_force_rescan: false,
       vcs_statusline_refresh_due_at: None,
       vcs_statusline_refresh_in_flight: false,
       vcs_statusline_refresh_generation: 0,
@@ -6191,6 +6205,7 @@ impl DefaultContext for SwiftEditor {
     self.lsp_send_did_save(Some(text));
     let _ = self.refresh_shared_vcs_scan_for_cwd(path);
     let _ = self.refresh_file_tree_decorations();
+    self.vcs_statusline_refresh_force_rescan = true;
     self.schedule_vcs_statusline_refresh(None);
   }
 }

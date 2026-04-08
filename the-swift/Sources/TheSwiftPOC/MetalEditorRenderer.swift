@@ -204,7 +204,9 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
             drawCursor(
                 cursor,
                 in: context,
+                scene: scene,
                 cellSize: cellSize,
+                baselineFromBottom: baselineFromBottom,
                 cursorThickness: cursorThickness,
                 viewportHeight: view.bounds.height
             )
@@ -490,31 +492,121 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
     private func drawCursor(
         _ cursor: EditorSnapshotCursor,
         in context: CGContext,
+        scene: EditorRenderScene,
         cellSize: CGSize,
+        baselineFromBottom: CGFloat,
         cursorThickness: CGFloat,
         viewportHeight: CGFloat
     ) {
         let x = CGFloat(cursor.col) * cellSize.width
         let y = topY(forRow: cursor.row, rowSpan: 1, viewportHeight: viewportHeight, cellHeight: cellSize.height)
-        let color = cursor.style.backgroundColor ?? cursor.style.foregroundColor
-        context.setFillColor(color.cgColor)
-        context.setStrokeColor(color.cgColor)
-        let rect: CGRect
+        let baseRect = CGRect(x: x, y: y, width: max(cellSize.width, cursorThickness), height: cellSize.height)
+        let pane = paneContaining(cursor: cursor, in: scene)
+        let isFocusedCursor = pane?.isActive ?? (cursor.kind == .block)
+        let fillColor = cursor.style.backgroundColor ?? cursor.style.foregroundColor
+        let strokeColor = fillColor.withAlphaComponent(isFocusedCursor ? 1 : 0.9)
+
+        context.saveGState()
+        context.setFillColor(fillColor.cgColor)
+        context.setStrokeColor(strokeColor.cgColor)
+
         switch cursor.kind {
-        case .bar:
-            rect = CGRect(x: x, y: y, width: cursorThickness, height: cellSize.height)
-        case .underline:
-            rect = CGRect(x: x, y: y, width: cellSize.width, height: cursorThickness)
         case .hidden:
+            context.restoreGState()
             return
         case .hollow:
-            rect = CGRect(x: x, y: y, width: max(cellSize.width, cursorThickness), height: cellSize.height)
-            context.stroke(rect)
+            drawHollowCursor(in: context, rect: baseRect, color: strokeColor)
+            context.restoreGState()
+            return
+        case .bar where !isFocusedCursor:
+            drawHollowCursor(in: context, rect: baseRect, color: strokeColor)
+            context.restoreGState()
+            return
+        case .bar:
+            let rect = CGRect(x: x, y: y, width: max(cursorThickness, 2), height: cellSize.height)
+            let path = CGPath(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5), cornerWidth: 1.5, cornerHeight: 1.5, transform: nil)
+            context.addPath(path)
+            context.fillPath()
+            context.restoreGState()
+            return
+        case .underline:
+            let rect = CGRect(x: x + 1, y: y, width: max(cellSize.width - 2, 2), height: max(cursorThickness, 2))
+            let path = CGPath(roundedRect: rect, cornerWidth: rect.height * 0.5, cornerHeight: rect.height * 0.5, transform: nil)
+            context.addPath(path)
+            context.fillPath()
+            context.restoreGState()
             return
         case .block:
-            rect = CGRect(x: x, y: y, width: max(cellSize.width, cursorThickness), height: cellSize.height)
+            let blockRect = baseRect.insetBy(dx: 0.5, dy: 0.5)
+            let path = CGPath(roundedRect: blockRect, cornerWidth: 2.5, cornerHeight: 2.5, transform: nil)
+            context.addPath(path)
+            context.fillPath()
+
+            if let textCell = textCell(under: cursor, in: scene) {
+                let cursorTextStyle = EditorResolvedStyle(
+                    fg: EditorRGBA(color: readableCursorTextColor(fillColor: fillColor, preferred: cursor.style.foregroundColor)),
+                    bg: nil,
+                    underlineColor: textCell.style.underlineColor,
+                    addModifiers: textCell.style.addModifiers,
+                    removeModifiers: textCell.style.removeModifiers,
+                    underlineStyle: textCell.style.underlineStyle
+                )
+                context.saveGState()
+                context.clip(to: blockRect)
+                drawText(
+                    textCell.text,
+                    style: cursorTextStyle,
+                    atCol: textCell.col,
+                    row: textCell.row,
+                    in: context,
+                    cellSize: cellSize,
+                    baselineFromBottom: baselineFromBottom,
+                    viewportHeight: viewportHeight
+                )
+                context.restoreGState()
+            }
+            context.restoreGState()
+            return
         }
-        context.fill(rect)
+    }
+
+    private func drawHollowCursor(in context: CGContext, rect: CGRect, color: NSColor) {
+        let insetRect = rect.insetBy(dx: 1, dy: 1)
+        let path = CGPath(roundedRect: insetRect, cornerWidth: 2.5, cornerHeight: 2.5, transform: nil)
+        context.addPath(path)
+        context.setLineWidth(1.5)
+        context.strokePath()
+    }
+
+    private func paneContaining(cursor: EditorSnapshotCursor, in scene: EditorRenderScene) -> EditorSnapshotPane? {
+        scene.panes.first { pane in
+            cursor.col >= pane.x
+                && cursor.col < (pane.x + pane.width)
+                && cursor.row >= pane.y
+                && cursor.row < (pane.y + pane.height)
+        }
+    }
+
+    private func textCell(under cursor: EditorSnapshotCursor, in scene: EditorRenderScene) -> EditorSnapshotTextCell? {
+        guard let line = scene.lines.first(where: { line in
+            line.row == cursor.row && cursor.col >= line.x && cursor.col < (line.x + line.width)
+        }) else {
+            return nil
+        }
+        return line.textCells.first(where: { cell in
+            cursor.col >= cell.col && cursor.col < (cell.col + max(cell.cols, 1)) && !cell.text.isEmpty
+        })
+    }
+
+    private func readableCursorTextColor(fillColor: NSColor, preferred: NSColor) -> NSColor {
+        let fill = fillColor.usingColorSpace(.deviceRGB) ?? fillColor
+        let candidate = preferred.usingColorSpace(.deviceRGB) ?? preferred
+        let fillLuminance = (0.299 * fill.redComponent) + (0.587 * fill.greenComponent) + (0.114 * fill.blueComponent)
+        let candidateLuminance = (0.299 * candidate.redComponent) + (0.587 * candidate.greenComponent) + (0.114 * candidate.blueComponent)
+        if abs(fillLuminance - candidateLuminance) >= 0.35 {
+            return candidate
+        }
+        return fillLuminance > 0.6 ? .black : .white
     }
 
     private func drawOverlayText(
@@ -671,6 +763,18 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
             bytesPerRow: 0,
             space: CGColorSpaceCreateDeviceRGB(),
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )
+    }
+}
+
+private extension EditorRGBA {
+    init(color: NSColor) {
+        let resolved = color.usingColorSpace(.deviceRGB) ?? color
+        self.init(
+            r: UInt8((resolved.redComponent * 255).rounded()),
+            g: UInt8((resolved.greenComponent * 255).rounded()),
+            b: UInt8((resolved.blueComponent * 255).rounded()),
+            a: UInt8((resolved.alphaComponent * 255).rounded())
         )
     }
 }

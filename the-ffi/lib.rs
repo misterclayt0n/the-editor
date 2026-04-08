@@ -45,10 +45,12 @@ use the_default::{
   FilePickerItemAction,
   FilePickerPreview,
   FilePickerVcsDiffBootstrap,
+  FileTreeDecorations,
   FilePickerVcsDiffEntry,
   FilePickerVcsDiffHunk,
   FilePickerVcsDiffPreview,
   FilePickerVcsDiffPreviewRow,
+  FileTreeVcsKind,
   GlobalSearchOptions,
   GlobalSearchState,
   CommandPaletteStyle,
@@ -75,6 +77,8 @@ use the_default::{
   WorkingDirectoryState,
   build_dispatch,
   build_statusline_snapshot,
+  clear_file_tree_decorations,
+  collapse_file_tree_vcs_statuses,
   completion_accept,
   completion_docs_panel_rect,
   completion_panel_rect,
@@ -100,6 +104,7 @@ use the_default::{
   handle_search_prompt_key,
   install_default_wiring,
   move_selection,
+  rebuild_file_tree_diagnostic_statuses,
   notify_file_picker_query_changed,
   open_command_palette,
   open_custom_picker,
@@ -122,6 +127,8 @@ use the_default::{
   set_picker_visible_rows,
   submit_command_palette as submit_command_palette_action,
   submit_file_picker,
+  set_file_tree_diagnostic_statuses,
+  set_file_tree_vcs_statuses,
   step_search_prompt,
   signature_help_markdown,
   signature_help_panel_rect,
@@ -693,16 +700,18 @@ pub struct the_editor_snapshot_file_tree_t {
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 pub struct the_editor_snapshot_file_tree_row_t {
-  pub path:              *const c_char,
-  pub display_name:      *const c_char,
-  pub icon_name:         *const c_char,
-  pub icon_glyph:        *const c_char,
-  pub depth:             u16,
-  pub has_children:      bool,
-  pub is_dir:            bool,
-  pub is_expanded:       bool,
-  pub is_current_file:   bool,
-  pub is_selected:       bool,
+  pub path:                *const c_char,
+  pub display_name:        *const c_char,
+  pub icon_name:           *const c_char,
+  pub icon_glyph:          *const c_char,
+  pub depth:               u16,
+  pub has_children:        bool,
+  pub is_dir:              bool,
+  pub is_expanded:         bool,
+  pub is_current_file:     bool,
+  pub is_selected:         bool,
+  pub vcs_kind:            u8,
+  pub diagnostic_severity: u8,
 }
 
 #[repr(C)]
@@ -3641,6 +3650,7 @@ impl SwiftEditor {
               self.publish_lsp_diagnostic_message(next_counts);
               changed = true;
             }
+            changed |= self.refresh_file_tree_decorations();
           },
           LspEvent::RpcMessage { message } => {
             changed |= self.handle_lsp_rpc_message(runtime_index, message);
@@ -3717,6 +3727,23 @@ impl SwiftEditor {
       self.vcs_base_cache.retain(|key, _| key.repo_root != scan.repo_root);
     }
     self.vcs_scan = Some(Arc::new(scan));
+  }
+
+  fn refresh_file_tree_decorations(&mut self) -> bool {
+    let Some(root) = self.file_tree.root.clone() else {
+      return clear_file_tree_decorations(self);
+    };
+
+    let diagnostic_statuses = rebuild_file_tree_diagnostic_statuses(&self.diagnostics, &root);
+    let mut changed = set_file_tree_diagnostic_statuses(self, diagnostic_statuses);
+
+    let vcs_statuses = self
+      .vcs_scan
+      .as_ref()
+      .map(|scan| collapse_file_tree_vcs_statuses(&scan.changes, &root))
+      .unwrap_or_default();
+    changed |= set_file_tree_vcs_statuses(self, vcs_statuses);
+    changed
   }
 
   fn shared_vcs_scan_for_path(&self, path: &Path) -> Option<Arc<VcsWorkspaceScan>> {
@@ -3938,6 +3965,7 @@ impl SwiftEditor {
 
       if let Some(scan) = result.scan {
         self.store_vcs_scan(scan);
+        changed |= self.refresh_file_tree_decorations();
       }
       let head_revision = self
         .shared_vcs_scan_for_path(&result.path)
@@ -4843,7 +4871,15 @@ impl SwiftEditor {
     if self.file_tree.surface_id.is_none() {
       return false;
     }
-    activate_file_tree_index(self, index, None)
+    let changed = activate_file_tree_index(self, index, None);
+    if changed {
+      let root = self.file_tree.root.clone();
+      if let Some(root) = root {
+        let _ = self.refresh_shared_vcs_scan_for_cwd(&root);
+      }
+      let _ = self.refresh_file_tree_decorations();
+    }
+    changed
   }
 
   fn set_file_tree_visible_rows(&mut self, visible_rows: usize) -> bool {
@@ -4863,6 +4899,11 @@ impl SwiftEditor {
 
   fn toggle_file_tree(&mut self) -> bool {
     toggle_file_tree(self);
+    let root = self.file_tree.root.clone();
+    if let Some(root) = root {
+      let _ = self.refresh_shared_vcs_scan_for_cwd(&root);
+    }
+    let _ = self.refresh_file_tree_decorations();
     true
   }
 
@@ -6905,6 +6946,8 @@ impl OwnedSnapshot {
           is_expanded: row.is_expanded,
           is_current_file: row.is_current_file,
           is_selected: editor.file_tree.selected == Some(index),
+          vcs_kind: file_tree_vcs_kind_code(row.decorations.vcs),
+          diagnostic_severity: file_tree_diagnostic_severity_code(row.decorations),
         },
         path_idx,
         display_name_idx,
@@ -9096,6 +9139,21 @@ fn diagnostic_severity_code(severity: Option<DiagnosticSeverity>) -> u8 {
     DiagnosticSeverity::Information => 3,
     DiagnosticSeverity::Hint => 4,
   }
+}
+
+fn file_tree_vcs_kind_code(kind: Option<FileTreeVcsKind>) -> u8 {
+  match kind {
+    None => 0,
+    Some(FileTreeVcsKind::Conflict) => 1,
+    Some(FileTreeVcsKind::Deleted) => 2,
+    Some(FileTreeVcsKind::Modified) => 3,
+    Some(FileTreeVcsKind::Renamed) => 4,
+    Some(FileTreeVcsKind::Untracked) => 5,
+  }
+}
+
+fn file_tree_diagnostic_severity_code(decorations: FileTreeDecorations) -> u8 {
+  decorations.diagnostic.map_or(0, |severity| diagnostic_severity_code(Some(severity)))
 }
 
 fn diagnostic_severity_rank(severity: DiagnosticSeverity) -> u8 {

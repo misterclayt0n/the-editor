@@ -586,6 +586,14 @@ struct EditorFilePickerState: Hashable {
     )
 }
 
+enum EditorFileTreeVcsKind: UInt8, Hashable {
+    case conflict = 1
+    case deleted = 2
+    case modified = 3
+    case renamed = 4
+    case untracked = 5
+}
+
 struct EditorFileTreeRow: Hashable, Identifiable {
     let path: String
     let displayName: String
@@ -597,6 +605,8 @@ struct EditorFileTreeRow: Hashable, Identifiable {
     let isExpanded: Bool
     let isCurrentFile: Bool
     let isSelected: Bool
+    let vcsKind: EditorFileTreeVcsKind?
+    let diagnosticSeverity: EditorDiagnosticSeverity?
 
     var id: String { path }
 }
@@ -1324,7 +1334,11 @@ enum EditorFFIBridge {
                 isDirectory: rowValue.is_dir,
                 isExpanded: rowValue.is_expanded,
                 isCurrentFile: rowValue.is_current_file,
-                isSelected: rowValue.is_selected
+                isSelected: rowValue.is_selected,
+                vcsKind: rowValue.vcs_kind == 0 ? nil : EditorFileTreeVcsKind(rawValue: rowValue.vcs_kind),
+                diagnosticSeverity: rowValue.diagnostic_severity == 0
+                    ? nil
+                    : EditorDiagnosticSeverity(rawValue: rowValue.diagnostic_severity)
             )
         }
         let fileTree = EditorFileTreeState(

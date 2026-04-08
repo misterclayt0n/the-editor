@@ -422,6 +422,8 @@ typedef struct the_editor_snapshot_file_tree_row_t {
   bool is_expanded;
   bool is_current_file;
   bool is_selected;
+  uint8_t vcs_kind;
+  uint8_t diagnostic_severity;
 } the_editor_snapshot_file_tree_row_t;
 
 typedef struct the_editor_snapshot_file_picker_preview_segment_t {

@@ -358,6 +358,107 @@ private struct PendingIndicator: View {
     }
 }
 
+@MainActor
+private final class EditorFileTreeScrollCoordinator: ObservableObject {
+    private let maxAttempts = 6
+    private let retryDelay: TimeInterval = 1.0 / 60.0
+
+    private var sessionID: Int = 0
+    private var pendingTarget: Int?
+    private var observedTopRow: Int = 0
+    private var attempts: Int = 0
+
+    func updateObservedTopRow(_ topRow: Int) {
+        observedTopRow = topRow
+        if pendingTarget == topRow {
+            pendingTarget = nil
+            attempts = 0
+            scrollPerfLog("fileTree.scrollTo settled target=\(topRow) observedTop=\(topRow)")
+        }
+    }
+
+    func requestScroll(
+        proxy: ScrollViewProxy,
+        targetIndex: Int,
+        rowID: String,
+        reason: String,
+        selectedIndex: Int?,
+        rows: Int
+    ) {
+        sessionID += 1
+        pendingTarget = targetIndex
+        attempts = 0
+        performScroll(
+            proxy: proxy,
+            targetIndex: targetIndex,
+            rowID: rowID,
+            reason: reason,
+            selectedIndex: selectedIndex,
+            rows: rows,
+            sessionID: sessionID
+        )
+    }
+
+    private func performScroll(
+        proxy: ScrollViewProxy,
+        targetIndex: Int,
+        rowID: String,
+        reason: String,
+        selectedIndex: Int?,
+        rows: Int,
+        sessionID: Int
+    ) {
+        guard self.sessionID == sessionID else { return }
+        if self.observedTopRow == targetIndex {
+            pendingTarget = nil
+            attempts = 0
+            scrollPerfLog(
+                "fileTree.scrollTo already-settled reason=\(reason) target=\(targetIndex) observedTop=\(self.observedTopRow) rows=\(rows)"
+            )
+            return
+        }
+        attempts += 1
+        let attempt = attempts
+        scrollPerfLog(
+            "fileTree.scrollTo scheduled reason=\(reason) attempt=\(attempt) target=\(targetIndex) rowID=\(rowID) selected=\(String(describing: selectedIndex)) observedTop=\(self.observedTopRow) rows=\(rows)"
+        )
+        DispatchQueue.main.async {
+            proxy.scrollTo(rowID, anchor: .top)
+            scrollPerfLog(
+                "fileTree.scrollTo executed reason=\(reason) attempt=\(attempt) target=\(targetIndex) rowID=\(rowID) rows=\(rows)"
+            )
+            DispatchQueue.main.asyncAfter(deadline: .now() + self.retryDelay) {
+                guard self.sessionID == sessionID else { return }
+                if self.observedTopRow == targetIndex {
+                    self.pendingTarget = nil
+                    self.attempts = 0
+                    scrollPerfLog(
+                        "fileTree.scrollTo verified reason=\(reason) target=\(targetIndex) attempt=\(attempt) observedTop=\(self.observedTopRow)"
+                    )
+                    return
+                }
+                if self.attempts >= self.maxAttempts {
+                    scrollPerfLog(
+                        "fileTree.scrollTo gave-up reason=\(reason) target=\(targetIndex) attempts=\(self.attempts) observedTop=\(self.observedTopRow) rows=\(rows)"
+                    )
+                    self.pendingTarget = nil
+                    self.attempts = 0
+                    return
+                }
+                self.performScroll(
+                    proxy: proxy,
+                    targetIndex: targetIndex,
+                    rowID: rowID,
+                    reason: reason,
+                    selectedIndex: selectedIndex,
+                    rows: rows,
+                    sessionID: sessionID
+                )
+            }
+        }
+    }
+}
+
 private struct EditorFileTreeSidebarView: View {
     let tree: EditorFileTreeState
     let theme: EditorFileTreeSidebarTheme
@@ -366,13 +467,13 @@ private struct EditorFileTreeSidebarView: View {
     let onVisibleRowsChanged: (Int) -> Void
     let onFocusSidebar: () -> Void
 
+    @StateObject private var scrollCoordinator = EditorFileTreeScrollCoordinator()
     @State private var hoveredRowID: String?
     @State private var reportedVisibleRows: Int = 1
     @State private var scrollViewportHeight: CGFloat = 1
     @State private var observedContentMinY: CGFloat = 0
     @State private var observedTopRow: Int = 0
     @State private var lastScrollLogSignature: String?
-    @State private var lastProgrammaticScrollSignature: String?
 
     private let headerHeight: CGFloat = 30
     private let rowHeight: CGFloat = 24
@@ -491,14 +592,12 @@ private struct EditorFileTreeSidebarView: View {
         let topRow = min(max(Int(floor(contentOffset / rowHeight)), 0), max(tree.rows.count - 1, 0))
         guard topRow != observedTopRow || source != "geometry" else { return }
         observedTopRow = topRow
+        scrollCoordinator.updateObservedTopRow(topRow)
         logScrollObservation(source: source, requestedTopRow: tree.scrollOffset)
     }
 
     private func scheduleProgrammaticScroll(proxy: ScrollViewProxy, reason: String) {
         let targetIndex = tree.scrollOffset
-        let signature = [reason, String(targetIndex), String(tree.rows.count), String(tree.selectedIndex ?? -1)].joined(separator: ":")
-        guard signature != lastProgrammaticScrollSignature else { return }
-        lastProgrammaticScrollSignature = signature
         guard tree.rows.indices.contains(targetIndex) else {
             scrollPerfLog(
                 "fileTree.scrollTo skipped reason=\(reason) target=\(targetIndex) rows=\(tree.rows.count) selected=\(String(describing: tree.selectedIndex))"
@@ -506,15 +605,14 @@ private struct EditorFileTreeSidebarView: View {
             return
         }
         let rowID = tree.rows[targetIndex].id
-        scrollPerfLog(
-            "fileTree.scrollTo scheduled reason=\(reason) target=\(targetIndex) rowID=\(rowID) selected=\(String(describing: tree.selectedIndex)) observedTop=\(observedTopRow) rows=\(tree.rows.count)"
+        scrollCoordinator.requestScroll(
+            proxy: proxy,
+            targetIndex: targetIndex,
+            rowID: rowID,
+            reason: reason,
+            selectedIndex: tree.selectedIndex,
+            rows: tree.rows.count
         )
-        DispatchQueue.main.async {
-            proxy.scrollTo(rowID, anchor: .top)
-            scrollPerfLog(
-                "fileTree.scrollTo executed reason=\(reason) target=\(targetIndex) rowID=\(rowID) rows=\(tree.rows.count)"
-            )
-        }
     }
 
     private func logScrollObservation(source: String, requestedTopRow: Int) {

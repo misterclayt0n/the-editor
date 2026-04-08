@@ -538,9 +538,7 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
             return
         case .block:
             let blockRect = baseRect.insetBy(dx: 0.5, dy: 0.5)
-            let path = CGPath(roundedRect: blockRect, cornerWidth: 2.5, cornerHeight: 2.5, transform: nil)
-            context.addPath(path)
-            context.fillPath()
+            context.fill(blockRect)
 
             if let textCell = textCell(under: cursor, in: scene) {
                 let cursorTextStyle = EditorResolvedStyle(
@@ -572,10 +570,8 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
 
     private func drawHollowCursor(in context: CGContext, rect: CGRect, color: NSColor) {
         let insetRect = rect.insetBy(dx: 1, dy: 1)
-        let path = CGPath(roundedRect: insetRect, cornerWidth: 2.5, cornerHeight: 2.5, transform: nil)
-        context.addPath(path)
         context.setLineWidth(1.5)
-        context.strokePath()
+        context.stroke(insetRect)
     }
 
     private func paneContaining(cursor: EditorSnapshotCursor, in scene: EditorRenderScene) -> EditorSnapshotPane? {

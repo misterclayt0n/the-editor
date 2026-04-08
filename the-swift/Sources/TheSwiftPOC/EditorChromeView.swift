@@ -496,6 +496,7 @@ private struct EditorFileTreeListRepresentable: NSViewRepresentable {
         private var lastRequestedScrollOffset: Int?
         private var pendingUserScrollOffset: Int?
         private var recentUserScrollDeadline: CFAbsoluteTime = 0
+        private var hoveredRowIndex: Int?
 
         init(parent: EditorFileTreeListRepresentable) {
             self.parent = parent
@@ -564,10 +565,14 @@ private struct EditorFileTreeListRepresentable: NSViewRepresentable {
             cell.configure(
                 row: rowValue,
                 index: row,
+                isHovered: hoveredRowIndex == row,
                 theme: parent.theme,
                 onFocusSidebar: parent.onFocusSidebar,
                 onSelectIndex: parent.onSelectIndex,
-                onActivateIndex: parent.onActivateIndex
+                onActivateIndex: parent.onActivateIndex,
+                onHoverRowChanged: { [weak self] hoveredRow in
+                    self?.setHoveredRow(hoveredRow)
+                }
             )
             return cell
         }
@@ -590,17 +595,20 @@ private struct EditorFileTreeListRepresentable: NSViewRepresentable {
                     guard let self else { return }
                     self.isApplyingSnapshot = false
                     self.syncVisibleGeometry(reason: "snapshot")
+                    self.reconcileHoveredRowWithPointer()
                     self.applyProgrammaticScrollIfNeeded(reason: "snapshot")
                 }
                 return
             }
             syncVisibleGeometry(reason: "update")
+            reconcileHoveredRowWithPointer()
             applyProgrammaticScrollIfNeeded(reason: "update")
         }
 
         @objc
         private func boundsDidChange() {
             syncVisibleGeometry(reason: suppressScrollSync ? "programmatic-scroll" : "user-scroll")
+            reconcileHoveredRowWithPointer()
         }
 
         private func applyProgrammaticScrollIfNeeded(reason: String) {
@@ -676,6 +684,40 @@ private struct EditorFileTreeListRepresentable: NSViewRepresentable {
             }
             return min(pendingUserScrollOffset, max(parent.tree.rows.count - 1, 0))
         }
+
+        private func reconcileHoveredRowWithPointer() {
+            guard let tableView, let scrollView, let window = scrollView.window else {
+                setHoveredRow(nil)
+                return
+            }
+            let pointInClipView = scrollView.contentView.convert(window.mouseLocationOutsideOfEventStream, from: nil)
+            guard scrollView.contentView.bounds.contains(pointInClipView) else {
+                setHoveredRow(nil)
+                return
+            }
+            let pointInTable = tableView.convert(window.mouseLocationOutsideOfEventStream, from: nil)
+            let row = tableView.row(at: pointInTable)
+            setHoveredRow(row >= 0 ? row : nil)
+        }
+
+        private func setHoveredRow(_ row: Int?) {
+            let normalizedRow = row.flatMap { index in
+                parent.tree.rows.indices.contains(index) ? index : nil
+            }
+            guard normalizedRow != hoveredRowIndex else { return }
+            let previousRow = hoveredRowIndex
+            hoveredRowIndex = normalizedRow
+            updateHoverAppearance(for: previousRow)
+            updateHoverAppearance(for: normalizedRow)
+        }
+
+        private func updateHoverAppearance(for row: Int?) {
+            guard let row, let tableView, row < tableView.numberOfRows else { return }
+            guard let cell = tableView.view(atColumn: 0, row: row, makeIfNecessary: false) as? EditorFileTreeTableCellView else {
+                return
+            }
+            cell.setHovered(hoveredRowIndex == row)
+        }
     }
 }
 
@@ -695,6 +737,7 @@ private final class EditorFileTreeTableCellView: NSTableCellView {
     private var onFocusSidebar: (() -> Void)?
     private var onSelectIndex: ((Int) -> Void)?
     private var onActivateIndex: ((Int) -> Void)?
+    private var onHoverRowChanged: ((Int?) -> Void)?
 
     init(identifier: NSUserInterfaceItemIdentifier) {
         super.init(frame: .zero)
@@ -722,12 +765,12 @@ private final class EditorFileTreeTableCellView: NSTableCellView {
     }
 
     override func mouseEntered(with event: NSEvent) {
-        guard row != nil else { return }
-        updateHoverState(true)
+        guard let rowIndex else { return }
+        onHoverRowChanged?(rowIndex)
     }
 
     override func mouseExited(with event: NSEvent) {
-        updateHoverState(false)
+        onHoverRowChanged?(nil)
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -751,10 +794,12 @@ private final class EditorFileTreeTableCellView: NSTableCellView {
     func configure(
         row: EditorFileTreeRow,
         index: Int,
+        isHovered: Bool,
         theme: EditorFileTreeSidebarTheme,
         onFocusSidebar: @escaping () -> Void,
         onSelectIndex: @escaping (Int) -> Void,
-        onActivateIndex: @escaping (Int) -> Void
+        onActivateIndex: @escaping (Int) -> Void,
+        onHoverRowChanged: @escaping (Int?) -> Void
     ) {
         self.row = row
         rowIndex = index
@@ -762,7 +807,8 @@ private final class EditorFileTreeTableCellView: NSTableCellView {
         self.onFocusSidebar = onFocusSidebar
         self.onSelectIndex = onSelectIndex
         self.onActivateIndex = onActivateIndex
-        isHovered = isMouseCurrentlyInsideCell
+        self.onHoverRowChanged = onHoverRowChanged
+        self.isHovered = isHovered
         refreshRootView()
     }
 
@@ -773,6 +819,7 @@ private final class EditorFileTreeTableCellView: NSTableCellView {
         onFocusSidebar = nil
         onSelectIndex = nil
         onActivateIndex = nil
+        onHoverRowChanged = nil
         isHovered = false
         refreshRootView()
     }
@@ -797,16 +844,10 @@ private final class EditorFileTreeTableCellView: NSTableCellView {
         self.hostingView = hostingView
     }
 
-    private func updateHoverState(_ hovered: Bool) {
+    func setHovered(_ hovered: Bool) {
         guard hovered != isHovered else { return }
         isHovered = hovered
         refreshRootView()
-    }
-
-    private var isMouseCurrentlyInsideCell: Bool {
-        guard row != nil, let window else { return false }
-        let location = convert(window.mouseLocationOutsideOfEventStream, from: nil)
-        return bounds.contains(location)
     }
 
     private func isChevronHit(_ location: NSPoint) -> Bool {

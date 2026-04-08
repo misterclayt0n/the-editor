@@ -178,6 +178,7 @@ use the_lib::{
   messages::MessageCenter,
   position::Position,
   registers::Registers,
+  view::ViewState,
   render::{
     FrameGenerationState,
     FrameRenderPlan,
@@ -190,7 +191,9 @@ use the_lib::{
     RenderPlan,
     RenderSelectionKind,
     RenderStyles,
+    SelectionMatchHighlightOptions,
     SyntaxHighlightAdapter,
+    add_selection_match_highlights,
     apply_diagnostic_gutter_markers,
     base_render_layer_row_hashes,
     build_plan,
@@ -237,7 +240,6 @@ use the_lib::{
     Loader,
     Syntax,
   },
-  view::ViewState,
 };
 use the_lsp::{
   LspCapability,
@@ -5852,6 +5854,32 @@ impl SwiftEditor {
   }
 }
 
+fn apply_swift_selection_match_highlights<'a>(
+  plan: &mut RenderPlan,
+  document: &'a Document,
+  text_format: &'a TextFormat,
+  annotations: &mut TextAnnotations<'a>,
+  view: ViewState,
+  theme: &Theme,
+  mode: Mode,
+) {
+  let selection_match_style = theme
+    .try_get("ui.selection.match")
+    .unwrap_or_else(|| Style::default().bg(Color::Rgb(47, 63, 116)));
+  add_selection_match_highlights(
+    plan,
+    document,
+    text_format,
+    annotations,
+    view,
+    selection_match_style,
+    SelectionMatchHighlightOptions {
+      enable_point_cursor_match: mode == Mode::Select,
+      ..SelectionMatchHighlightOptions::default()
+    },
+  );
+}
+
 fn build_inactive_pane_plan_with_styles(
   editor: &mut SwiftEditor,
   pane_id: PaneId,
@@ -5884,7 +5912,7 @@ fn build_inactive_pane_plan_with_styles(
       gutter_width_for_document(document, view.viewport.width, &editor.gutter_config);
     text_format.viewport_width = view.viewport.width.saturating_sub(gutter_width).max(1);
 
-    if let (Some(loader), Some(syntax)) = (editor.loader.as_deref(), document.syntax()) {
+    let mut plan = if let (Some(loader), Some(syntax)) = (editor.loader.as_deref(), document.syntax()) {
       let line_range = view.scroll.row..(view.scroll.row + view.viewport.height as usize);
       let mut adapter = SyntaxHighlightAdapter::new(
         document.text().slice(..),
@@ -5898,7 +5926,7 @@ fn build_inactive_pane_plan_with_styles(
       );
       build_plan(
         document,
-        view,
+        view.clone(),
         &text_format,
         &editor.gutter_config,
         &mut annotations,
@@ -5910,7 +5938,7 @@ fn build_inactive_pane_plan_with_styles(
       let mut highlights = NoHighlights;
       build_plan(
         document,
-        view,
+        view.clone(),
         &text_format,
         &editor.gutter_config,
         &mut annotations,
@@ -5918,7 +5946,17 @@ fn build_inactive_pane_plan_with_styles(
         cache,
         styles,
       )
-    }
+    };
+    apply_swift_selection_match_highlights(
+      &mut plan,
+      document,
+      &text_format,
+      &mut annotations,
+      view,
+      &editor.ui_theme,
+      editor.mode,
+    );
+    plan
   };
 
   apply_swift_diff_gutter_markers(&mut plan, &diff_signs, diff_styles);
@@ -6091,7 +6129,7 @@ impl DefaultContext for SwiftEditor {
       );
       build_plan(
         document,
-        view,
+        view.clone(),
         &text_format,
         &self.gutter_config,
         &mut annotations,
@@ -6103,7 +6141,7 @@ impl DefaultContext for SwiftEditor {
       let mut highlights = NoHighlights;
       build_plan(
         document,
-        view,
+        view.clone(),
         &text_format,
         &self.gutter_config,
         &mut annotations,
@@ -6112,6 +6150,15 @@ impl DefaultContext for SwiftEditor {
         styles,
       )
     };
+    apply_swift_selection_match_highlights(
+      &mut plan,
+      document,
+      &text_format,
+      &mut annotations,
+      view,
+      &self.ui_theme,
+      self.mode,
+    );
     let diff_styles = render_diff_styles_from_theme(&self.ui_theme);
     let diff_signs = self.gutter_diff_signs.clone();
     apply_swift_diff_gutter_markers(&mut plan, &diff_signs, diff_styles);

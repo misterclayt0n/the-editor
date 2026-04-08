@@ -3542,16 +3542,14 @@ impl SwiftEditor {
     self.apply_workspace_edit(&workspace_edit, "format")
   }
 
-  fn publish_lsp_diagnostic_message(&mut self, counts: DiagnosticCounts) {
-    let text = if counts.total == 0 {
-      "diagnostics cleared".to_string()
-    } else {
-      format!(
-        "diagnostics: {} error(s), {} warning(s), {} info, {} hint(s)",
-        counts.errors, counts.warnings, counts.information, counts.hints
-      )
-    };
-    self.push_info("lsp", text);
+  fn publish_lsp_diagnostic_message(&mut self, _counts: DiagnosticCounts) {
+    let should_dismiss = self.messages().active().is_some_and(|message| {
+      message.source.as_deref() == Some("lsp")
+        && (message.text == "diagnostics cleared" || message.text.starts_with("diagnostics:"))
+    });
+    if should_dismiss {
+      let _ = self.dismiss_active_message();
+    }
   }
 
   fn current_document_diagnostics(&self) -> Option<&[Diagnostic]> {

@@ -519,6 +519,29 @@ pub fn set_file_tree_visible_rows<Ctx: DefaultContext>(ctx: &mut Ctx, visible_ro
   }
 }
 
+pub fn set_file_tree_scroll_offset<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  scroll_offset: usize,
+) -> bool {
+  let state = ctx.file_tree_mut();
+  let previous_scroll = state.scroll_offset;
+  clamp_tree_state(state);
+  state.selection_follow = false;
+  let next = scroll_offset.min(tree_max_scroll_offset(state));
+  if previous_scroll == next {
+    return false;
+  }
+  state.scroll_offset = next;
+  file_tree_scroll_log(
+    state,
+    format!(
+      "reason=set_scroll_offset previous_scroll={} next_scroll={} requested={} ",
+      previous_scroll, state.scroll_offset, scroll_offset,
+    ),
+  );
+  true
+}
+
 pub fn set_file_tree_active<Ctx: DefaultContext>(ctx: &mut Ctx, active: bool) -> bool {
   if ctx.file_tree_uses_split_pane() {
     if active {

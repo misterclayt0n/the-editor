@@ -426,6 +426,15 @@ final class EditorSurfaceController: ObservableObject {
         refreshSnapshot()
     }
 
+    func syncFileTreeScrollOffset(_ offset: Int) {
+        let clampedOffset = max(offset, 0)
+        guard clampedOffset != fileTree.scrollOffset else { return }
+        scrollPerfLog(
+            "controller.fileTreeScrollSync requested previous=\(fileTree.scrollOffset) next=\(clampedOffset) selected=\(String(describing: fileTree.selectedIndex)) rows=\(fileTree.rows.count)"
+        )
+        _ = EditorFFIBridge.setFileTreeScrollOffset(handle?.raw, scrollOffset: clampedOffset)
+    }
+
     func setFileTreeActive(_ active: Bool) {
         scrollPerfLog(
             "controller.fileTreeActive requested next=\(active) selected=\(String(describing: fileTree.selectedIndex)) scroll=\(fileTree.scrollOffset) rows=\(fileTree.rows.count)"

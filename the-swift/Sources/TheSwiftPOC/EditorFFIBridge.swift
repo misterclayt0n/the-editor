@@ -929,6 +929,12 @@ enum EditorFFIBridge {
     }
 
     @discardableResult
+    static func setFileTreeScrollOffset(_ handle: OpaquePointer?, scrollOffset: Int) -> Bool {
+        guard let handle else { return false }
+        return the_editor_file_tree_set_scroll_offset(handle, UInt(max(scrollOffset, 0)))
+    }
+
+    @discardableResult
     static func setFileTreeActive(_ handle: OpaquePointer?, active: Bool) -> Bool {
         guard let handle else { return false }
         return the_editor_file_tree_set_active(handle, active)

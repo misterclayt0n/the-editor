@@ -68,6 +68,7 @@ struct EditorChromeView: View {
             onSelectIndex: controller.clickFileTreeIndex,
             onActivateIndex: controller.activateFileTreeIndex,
             onVisibleRowsChanged: controller.setFileTreeVisibleRows,
+            onScrollOffsetChanged: controller.syncFileTreeScrollOffset,
             onFocusSidebar: { controller.setFileTreeActive(true) }
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -358,294 +359,35 @@ private struct PendingIndicator: View {
     }
 }
 
-@MainActor
-private final class EditorFileTreeScrollCoordinator: ObservableObject {
-    private let maxAttempts = 6
-    private let retryDelay: TimeInterval = 1.0 / 60.0
-
-    private var sessionID: Int = 0
-    private var pendingTarget: Int?
-    private var observedTopRow: Int = 0
-    private var attempts: Int = 0
-
-    func updateObservedTopRow(_ topRow: Int) {
-        observedTopRow = topRow
-        if pendingTarget == topRow {
-            pendingTarget = nil
-            attempts = 0
-            scrollPerfLog("fileTree.scrollTo settled target=\(topRow) observedTop=\(topRow)")
-        }
-    }
-
-    func requestScroll(
-        proxy: ScrollViewProxy,
-        targetIndex: Int,
-        rowID: String,
-        reason: String,
-        selectedIndex: Int?,
-        rows: Int
-    ) {
-        sessionID += 1
-        pendingTarget = targetIndex
-        attempts = 0
-        performScroll(
-            proxy: proxy,
-            targetIndex: targetIndex,
-            rowID: rowID,
-            reason: reason,
-            selectedIndex: selectedIndex,
-            rows: rows,
-            sessionID: sessionID
-        )
-    }
-
-    private func performScroll(
-        proxy: ScrollViewProxy,
-        targetIndex: Int,
-        rowID: String,
-        reason: String,
-        selectedIndex: Int?,
-        rows: Int,
-        sessionID: Int
-    ) {
-        guard self.sessionID == sessionID else { return }
-        if self.observedTopRow == targetIndex {
-            pendingTarget = nil
-            attempts = 0
-            scrollPerfLog(
-                "fileTree.scrollTo already-settled reason=\(reason) target=\(targetIndex) observedTop=\(self.observedTopRow) rows=\(rows)"
-            )
-            return
-        }
-        attempts += 1
-        let attempt = attempts
-        scrollPerfLog(
-            "fileTree.scrollTo scheduled reason=\(reason) attempt=\(attempt) target=\(targetIndex) rowID=\(rowID) selected=\(String(describing: selectedIndex)) observedTop=\(self.observedTopRow) rows=\(rows)"
-        )
-        DispatchQueue.main.async {
-            proxy.scrollTo(rowID, anchor: .top)
-            scrollPerfLog(
-                "fileTree.scrollTo executed reason=\(reason) attempt=\(attempt) target=\(targetIndex) rowID=\(rowID) rows=\(rows)"
-            )
-            DispatchQueue.main.asyncAfter(deadline: .now() + self.retryDelay) {
-                guard self.sessionID == sessionID else { return }
-                if self.observedTopRow == targetIndex {
-                    self.pendingTarget = nil
-                    self.attempts = 0
-                    scrollPerfLog(
-                        "fileTree.scrollTo verified reason=\(reason) target=\(targetIndex) attempt=\(attempt) observedTop=\(self.observedTopRow)"
-                    )
-                    return
-                }
-                if self.attempts >= self.maxAttempts {
-                    scrollPerfLog(
-                        "fileTree.scrollTo gave-up reason=\(reason) target=\(targetIndex) attempts=\(self.attempts) observedTop=\(self.observedTopRow) rows=\(rows)"
-                    )
-                    self.pendingTarget = nil
-                    self.attempts = 0
-                    return
-                }
-                self.performScroll(
-                    proxy: proxy,
-                    targetIndex: targetIndex,
-                    rowID: rowID,
-                    reason: reason,
-                    selectedIndex: selectedIndex,
-                    rows: rows,
-                    sessionID: sessionID
-                )
-            }
-        }
-    }
-}
-
 private struct EditorFileTreeSidebarView: View {
     let tree: EditorFileTreeState
     let theme: EditorFileTreeSidebarTheme
     let onSelectIndex: (Int) -> Void
     let onActivateIndex: (Int) -> Void
     let onVisibleRowsChanged: (Int) -> Void
+    let onScrollOffsetChanged: (Int) -> Void
     let onFocusSidebar: () -> Void
 
-    @StateObject private var scrollCoordinator = EditorFileTreeScrollCoordinator()
-    @State private var hoveredRowID: String?
-    @State private var reportedVisibleRows: Int = 1
-    @State private var scrollViewportHeight: CGFloat = 1
-    @State private var observedContentMinY: CGFloat = 0
-    @State private var observedTopRow: Int = 0
-    @State private var lastScrollLogSignature: String?
-
     private let headerHeight: CGFloat = 30
-    private let rowHeight: CGFloat = 24
-    private let scrollContentVerticalPadding: CGFloat = 6
-    private let scrollCoordinateSpaceName = "EditorFileTreeScrollView"
 
     var body: some View {
         VStack(spacing: 0) {
             header
 
-            ScrollViewReader { proxy in
-                ScrollView(.vertical, showsIndicators: true) {
-                    LazyVStack(alignment: .leading, spacing: 0) {
-                        fileTreeScrollSentinel
-
-                        if !tree.rows.isEmpty {
-                            fileTreeScrollObservationSentinel
-                        }
-
-                        if tree.rows.isEmpty {
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text("Empty Folder")
-                                    .font(.system(size: 12, weight: .semibold))
-                                Text("Create a file or open another project folder.")
-                                    .font(.system(size: 11))
-                                    .foregroundStyle(.secondary)
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 16)
-                        } else {
-                            ForEach(Array(tree.rows.enumerated()), id: \.element.id) { index, row in
-                                EditorFileTreeRowView(
-                                    row: row,
-                                    theme: theme,
-                                    isHovered: hoveredRowID == row.id,
-                                    onSelect: { onSelectIndex(index) },
-                                    onActivate: { onActivateIndex(index) }
-                                )
-                                .id(row.id)
-                                .onHover { isHovering in
-                                    hoveredRowID = isHovering ? row.id : (hoveredRowID == row.id ? nil : hoveredRowID)
-                                }
-                            }
-                        }
-                    }
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, scrollContentVerticalPadding)
-                }
-                .coordinateSpace(name: scrollCoordinateSpaceName)
-                .onPreferenceChange(EditorFileTreeContentMinYPreferenceKey.self) { minY in
-                    updateObservedScrollPosition(contentMinY: minY, source: "geometry")
-                }
-                .scrollContentBackground(.hidden)
-                .scrollIndicators(.visible)
-                .background(Color.clear)
-                .simultaneousGesture(TapGesture().onEnded {
-                    onFocusSidebar()
-                })
-                .background {
-                    GeometryReader { proxy in
-                        Color.clear
-                            .onChange(of: proxy.size.height, initial: true) { _, newHeight in
-                                scrollViewportHeight = newHeight
-                                updateVisibleRows(for: newHeight)
-                            }
-                    }
-                }
-                .overlay(alignment: .trailing) {
-                    fileTreeScrollbarThumb
-                        .padding(.trailing, 2)
-                }
-                .onAppear {
-                    scheduleProgrammaticScroll(proxy: proxy, reason: "appear")
-                }
-                .onChange(of: tree.scrollOffset, initial: true) { _, _ in
-                    logScrollObservation(source: "snapshot", requestedTopRow: tree.scrollOffset)
-                    scheduleProgrammaticScroll(proxy: proxy, reason: "scrollOffset-change")
-                }
-                .onChange(of: tree.selectedIndex, initial: true) { _, _ in
-                    logScrollObservation(source: "selected-change", requestedTopRow: tree.scrollOffset)
-                    scheduleProgrammaticScroll(proxy: proxy, reason: "selected-change")
-                }
-                .onChange(of: tree.rows.count, initial: true) { _, _ in
-                    logScrollObservation(source: "rows-change", requestedTopRow: tree.scrollOffset)
-                    scheduleProgrammaticScroll(proxy: proxy, reason: "rows-change")
-                }
-                .onChange(of: reportedVisibleRows, initial: true) { _, _ in
-                    scheduleProgrammaticScroll(proxy: proxy, reason: "visibleRows-change")
-                }
-            }
+            EditorFileTreeListRepresentable(
+                tree: tree,
+                theme: theme,
+                onSelectIndex: onSelectIndex,
+                onActivateIndex: onActivateIndex,
+                onVisibleRowsChanged: onVisibleRowsChanged,
+                onScrollOffsetChanged: onScrollOffsetChanged,
+                onFocusSidebar: onFocusSidebar
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Color(nsColor: theme.backgroundColor))
         .environment(\.colorScheme, theme.backgroundColor.isLightColor ? .light : .dark)
-    }
-
-    private var fileTreeScrollSentinel: some View {
-        Color.clear
-            .frame(height: 0)
-            .background {
-                GeometryReader { proxy in
-                    Color.clear.preference(
-                        key: EditorFileTreeContentMinYPreferenceKey.self,
-                        value: proxy.frame(in: .named(scrollCoordinateSpaceName)).minY
-                    )
-                }
-            }
-    }
-
-    private var fileTreeScrollObservationSentinel: some View {
-        Color.clear
-            .frame(height: 0)
-    }
-
-    private func updateObservedScrollPosition(contentMinY: CGFloat, source: String) {
-        observedContentMinY = contentMinY
-        let contentOffset = max(-(contentMinY - scrollContentVerticalPadding), 0)
-        let topRow = min(max(Int(floor(contentOffset / rowHeight)), 0), max(tree.rows.count - 1, 0))
-        guard topRow != observedTopRow || source != "geometry" else { return }
-        observedTopRow = topRow
-        scrollCoordinator.updateObservedTopRow(topRow)
-        logScrollObservation(source: source, requestedTopRow: tree.scrollOffset)
-    }
-
-    private func scheduleProgrammaticScroll(proxy: ScrollViewProxy, reason: String) {
-        let targetIndex = tree.scrollOffset
-        guard tree.rows.indices.contains(targetIndex) else {
-            scrollPerfLog(
-                "fileTree.scrollTo skipped reason=\(reason) target=\(targetIndex) rows=\(tree.rows.count) selected=\(String(describing: tree.selectedIndex))"
-            )
-            return
-        }
-        if tree.rows.count > 1, reportedVisibleRows <= 1 {
-            scrollPerfLog(
-                "fileTree.scrollTo deferred reason=\(reason) target=\(targetIndex) reportedVisibleRows=\(reportedVisibleRows) rows=\(tree.rows.count)"
-            )
-            return
-        }
-        let rowID = tree.rows[targetIndex].id
-        scrollCoordinator.requestScroll(
-            proxy: proxy,
-            targetIndex: targetIndex,
-            rowID: rowID,
-            reason: reason,
-            selectedIndex: tree.selectedIndex,
-            rows: tree.rows.count
-        )
-    }
-
-    private func logScrollObservation(source: String, requestedTopRow: Int) {
-        let topRow = min(max(observedTopRow, 0), max(tree.rows.count - 1, 0))
-        let visibleRows = max(reportedVisibleRows, 1)
-        let bottomRow = tree.rows.isEmpty ? 0 : min(topRow + visibleRows - 1, tree.rows.count - 1)
-        let contentOffset = max(-(observedContentMinY - scrollContentVerticalPadding), 0)
-        let offsetText = String(format: "%.1f", contentOffset)
-        let drift = topRow - requestedTopRow
-        let signature = [
-            source,
-            String(topRow),
-            String(bottomRow),
-            String(requestedTopRow),
-            String(tree.selectedIndex ?? -1),
-            String(tree.rows.count),
-            String(visibleRows),
-            String(drift),
-        ].joined(separator: ":")
-        guard signature != lastScrollLogSignature else { return }
-        lastScrollLogSignature = signature
-        scrollPerfLog(
-            "fileTree.scrollObserved source=\(source) offsetY=\(offsetText) top=\(topRow) bottom=\(bottomRow) rustScroll=\(requestedTopRow) drift=\(drift) selected=\(String(describing: tree.selectedIndex)) visibleRows=\(visibleRows) rows=\(tree.rows.count)"
-        )
     }
 
     private var header: some View {
@@ -679,44 +421,233 @@ private struct EditorFileTreeSidebarView: View {
         let name = url.lastPathComponent
         return name.isEmpty ? root : name
     }
+}
 
-    @ViewBuilder
-    private var fileTreeScrollbarThumb: some View {
-        let totalRows = max(tree.rows.count, reportedVisibleRows)
-        let visibleRows = max(reportedVisibleRows, 1)
-        if totalRows > visibleRows {
-            let trackHeight = max(scrollViewportHeight - 8, 1)
-            let thumbHeight = max(26, trackHeight * (CGFloat(visibleRows) / CGFloat(totalRows)))
-            let maxOffset = max(totalRows - visibleRows, 1)
-            let progress = CGFloat(min(max(tree.scrollOffset, 0), maxOffset)) / CGFloat(maxOffset)
-            let travel = max(trackHeight - thumbHeight, 0)
-            RoundedRectangle(cornerRadius: 2.5, style: .continuous)
-                .fill(Color(nsColor: theme.separatorColor).opacity(0.92))
-                .frame(width: 4, height: thumbHeight)
-                .frame(maxHeight: .infinity, alignment: .top)
-                .offset(y: 4 + (travel * progress))
-                .allowsHitTesting(false)
-        }
+private struct EditorFileTreeListRepresentable: NSViewRepresentable {
+    let tree: EditorFileTreeState
+    let theme: EditorFileTreeSidebarTheme
+    let onSelectIndex: (Int) -> Void
+    let onActivateIndex: (Int) -> Void
+    let onVisibleRowsChanged: (Int) -> Void
+    let onScrollOffsetChanged: (Int) -> Void
+    let onFocusSidebar: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(parent: self)
     }
 
-    private func updateVisibleRows(for height: CGFloat) {
-        let contentHeight = max(height - 12, 1)
-        let rows = max(Int(floor(contentHeight / rowHeight)), 1)
-        guard rows != reportedVisibleRows else { return }
-        let heightText = String(format: "%.1f", height)
-        scrollPerfLog(
-            "fileTree.visibleRows height=\(heightText) rows=\(rows) previous=\(reportedVisibleRows) scrollOffset=\(tree.scrollOffset) totalRows=\(tree.rows.count)"
-        )
-        reportedVisibleRows = rows
-        onVisibleRowsChanged(rows)
+    func makeNSView(context: Context) -> NSScrollView {
+        context.coordinator.makeScrollView()
+    }
+
+    func updateNSView(_ scrollView: NSScrollView, context: Context) {
+        context.coordinator.parent = self
+        context.coordinator.applySnapshot()
+    }
+
+    @MainActor
+    final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate {
+        var parent: EditorFileTreeListRepresentable
+
+        private weak var scrollView: NSScrollView?
+        private weak var tableView: NSTableView?
+        private var isApplyingSnapshot = false
+        private var suppressScrollSync = false
+        private var lastReportedVisibleRows: Int = 1
+        private var lastReportedTopRow: Int = 0
+
+        init(parent: EditorFileTreeListRepresentable) {
+            self.parent = parent
+        }
+
+        func makeScrollView() -> NSScrollView {
+            let scrollView = NSScrollView()
+            scrollView.drawsBackground = false
+            scrollView.borderType = .noBorder
+            scrollView.hasVerticalScroller = true
+            scrollView.hasHorizontalScroller = false
+            scrollView.autohidesScrollers = true
+
+            let tableView = NSTableView()
+            tableView.headerView = nil
+            tableView.backgroundColor = .clear
+            tableView.focusRingType = .none
+            tableView.selectionHighlightStyle = .none
+            tableView.intercellSpacing = .zero
+            tableView.allowsEmptySelection = true
+            tableView.rowHeight = 24
+            tableView.delegate = self
+            tableView.dataSource = self
+
+            let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("fileTree"))
+            column.resizingMask = .autoresizingMask
+            tableView.addTableColumn(column)
+
+            scrollView.documentView = tableView
+            scrollView.contentView.postsBoundsChangedNotifications = true
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(boundsDidChange),
+                name: NSView.boundsDidChangeNotification,
+                object: scrollView.contentView
+            )
+
+            self.scrollView = scrollView
+            self.tableView = tableView
+            applySnapshot()
+            return scrollView
+        }
+
+        func numberOfRows(in tableView: NSTableView) -> Int {
+            max(parent.tree.rows.count, parent.tree.rows.isEmpty ? 1 : 0)
+        }
+
+        func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
+            parent.tree.rows.isEmpty ? 56 : 24
+        }
+
+        func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+            let identifier = NSUserInterfaceItemIdentifier("EditorFileTreeCell")
+            let cell = (tableView.makeView(withIdentifier: identifier, owner: nil) as? EditorFileTreeTableCellView)
+                ?? EditorFileTreeTableCellView(identifier: identifier)
+            if parent.tree.rows.isEmpty {
+                cell.setRootView(
+                    AnyView(
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Empty Folder")
+                                .font(.system(size: 12, weight: .semibold))
+                            Text("Create a file or open another project folder.")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 16)
+                    )
+                )
+                return cell
+            }
+            let rowValue = parent.tree.rows[row]
+            cell.setRootView(
+                AnyView(
+                    EditorFileTreeRowView(
+                        row: rowValue,
+                        theme: parent.theme,
+                        isHovered: false,
+                        onSelect: { [weak self] in
+                            self?.parent.onFocusSidebar()
+                            self?.parent.onSelectIndex(row)
+                        },
+                        onActivate: { [weak self] in
+                            self?.parent.onFocusSidebar()
+                            self?.parent.onActivateIndex(row)
+                        }
+                    )
+                )
+            )
+            return cell
+        }
+
+        func applySnapshot() {
+            guard let tableView, let scrollView else { return }
+            isApplyingSnapshot = true
+            if let column = tableView.tableColumns.first {
+                column.width = max(scrollView.contentSize.width, 1)
+            }
+            tableView.reloadData()
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.isApplyingSnapshot = false
+                self.syncVisibleGeometry(reason: "snapshot")
+                self.applyProgrammaticScrollIfNeeded(reason: "snapshot")
+            }
+        }
+
+        @objc
+        private func boundsDidChange() {
+            syncVisibleGeometry(reason: suppressScrollSync ? "programmatic-scroll" : "user-scroll")
+        }
+
+        private func applyProgrammaticScrollIfNeeded(reason: String) {
+            guard let tableView, let scrollView, !parent.tree.rows.isEmpty else { return }
+            let targetIndex = min(parent.tree.scrollOffset, parent.tree.rows.count - 1)
+            let currentTopRow = visibleTopRow(in: tableView, scrollView: scrollView)
+            guard currentTopRow != targetIndex else {
+                scrollPerfLog(
+                    "fileTree.appkitScroll already-settled reason=\(reason) target=\(targetIndex) top=\(currentTopRow) rows=\(parent.tree.rows.count)"
+                )
+                return
+            }
+            suppressScrollSync = true
+            let targetRect = tableView.rect(ofRow: targetIndex)
+            scrollView.contentView.scroll(to: NSPoint(x: 0, y: targetRect.minY))
+            scrollView.reflectScrolledClipView(scrollView.contentView)
+            scrollPerfLog(
+                "fileTree.appkitScroll applied reason=\(reason) target=\(targetIndex) previousTop=\(currentTopRow) rows=\(parent.tree.rows.count)"
+            )
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.suppressScrollSync = false
+                self.syncVisibleGeometry(reason: "programmatic-scroll-verify")
+            }
+        }
+
+        private func syncVisibleGeometry(reason: String) {
+            guard let tableView, let scrollView else { return }
+            let visibleRect = scrollView.contentView.documentVisibleRect
+            let visibleRange = tableView.rows(in: visibleRect)
+            let topRow = max(visibleRange.location, 0)
+            let visibleRows = max(visibleRange.length, 1)
+            scrollPerfLog(
+                "fileTree.appkitVisible reason=\(reason) top=\(topRow) visibleRows=\(visibleRows) rustScroll=\(parent.tree.scrollOffset) rows=\(parent.tree.rows.count)"
+            )
+            if lastReportedVisibleRows != visibleRows {
+                lastReportedVisibleRows = visibleRows
+                parent.onVisibleRowsChanged(visibleRows)
+            }
+            guard !isApplyingSnapshot else { return }
+            if !suppressScrollSync, lastReportedTopRow != topRow {
+                lastReportedTopRow = topRow
+                parent.onScrollOffsetChanged(topRow)
+            }
+        }
+
+        private func visibleTopRow(in tableView: NSTableView, scrollView: NSScrollView) -> Int {
+            let range = tableView.rows(in: scrollView.contentView.documentVisibleRect)
+            return max(range.location, 0)
+        }
     }
 }
 
-private struct EditorFileTreeContentMinYPreferenceKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
+private final class EditorFileTreeTableCellView: NSTableCellView {
+    private var hostingView: NSHostingView<AnyView>?
 
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
+    init(identifier: NSUserInterfaceItemIdentifier) {
+        super.init(frame: .zero)
+        self.identifier = identifier
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func setRootView(_ rootView: AnyView) {
+        if let hostingView {
+            hostingView.rootView = rootView
+            return
+        }
+        let hostingView = NSHostingView(rootView: rootView)
+        hostingView.translatesAutoresizingMaskIntoConstraints = false
+        hostingView.sizingOptions = [.minSize, .preferredContentSize]
+        addSubview(hostingView)
+        NSLayoutConstraint.activate([
+            hostingView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            hostingView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            hostingView.topAnchor.constraint(equalTo: topAnchor),
+            hostingView.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+        self.hostingView = hostingView
     }
 }
 

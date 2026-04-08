@@ -251,6 +251,7 @@ pub use file_tree::{
   select_file_tree_index_without_follow,
   set_file_tree_active,
   set_file_tree_diagnostic_statuses,
+  set_file_tree_scroll_offset,
   set_file_tree_vcs_statuses,
   set_file_tree_visible_rows,
   sync_file_tree_to_active_file,

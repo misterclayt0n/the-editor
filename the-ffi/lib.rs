@@ -133,6 +133,7 @@ use the_default::{
   set_file_picker_syntax_loader,
   set_file_tree_active,
   set_file_tree_diagnostic_statuses,
+  set_file_tree_scroll_offset,
   set_file_tree_vcs_statuses,
   set_file_tree_visible_rows,
   set_picker_visible_rows,
@@ -5497,6 +5498,13 @@ impl SwiftEditor {
     }
     set_file_tree_visible_rows(self, visible_rows);
     true
+  }
+
+  fn set_file_tree_scroll_offset(&mut self, scroll_offset: usize) -> bool {
+    if self.file_tree.surface_id.is_none() {
+      return false;
+    }
+    set_file_tree_scroll_offset(self, scroll_offset)
   }
 
   fn set_file_tree_active(&mut self, active: bool) -> bool {
@@ -11208,6 +11216,17 @@ pub unsafe extern "C" fn the_editor_file_tree_set_visible_rows(
     return false;
   };
   handle.editor.set_file_tree_visible_rows(visible_rows)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_file_tree_set_scroll_offset(
+  handle: *mut the_editor_handle_t,
+  scroll_offset: usize,
+) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return false;
+  };
+  handle.editor.set_file_tree_scroll_offset(scroll_offset)
 }
 
 #[unsafe(no_mangle)]

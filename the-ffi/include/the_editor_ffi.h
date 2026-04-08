@@ -521,6 +521,7 @@ bool the_editor_file_tree_select_index(the_editor_handle_t *handle, uintptr_t in
 bool the_editor_file_tree_click_index(the_editor_handle_t *handle, uintptr_t index);
 bool the_editor_file_tree_activate_index(the_editor_handle_t *handle, uintptr_t index);
 bool the_editor_file_tree_set_visible_rows(the_editor_handle_t *handle, uintptr_t visible_rows);
+bool the_editor_file_tree_set_scroll_offset(the_editor_handle_t *handle, uintptr_t scroll_offset);
 bool the_editor_file_tree_set_active(the_editor_handle_t *handle, bool active);
 bool the_editor_toggle_file_tree(the_editor_handle_t *handle);
 bool the_editor_insert_text(the_editor_handle_t *handle, const char *text);

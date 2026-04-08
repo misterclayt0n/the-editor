@@ -4255,36 +4255,25 @@ impl SwiftEditor {
       ));
       return BTreeMap::new();
     };
-    let merged = self.merged_vcs_changed_file_items(&scan);
-    let merged_count = merged.len();
+    let changes = self.shared_vcs_changed_file_items(&scan);
+    let change_count = changes.len();
     let current_file_changed = self.file_path.as_ref().is_some_and(|path| {
-      merged
+      changes
         .iter()
         .any(|item| item.path == *path || item.from_path.as_ref() == Some(path))
     });
-    let changes = merged
-      .into_iter()
-      .map(|item| {
-        match item.kind {
-          FilePickerChangedKind::Untracked => FileChange::Untracked { path: item.path },
-          FilePickerChangedKind::Modified => FileChange::Modified { path: item.path },
-          FilePickerChangedKind::Conflict => FileChange::Conflict { path: item.path },
-          FilePickerChangedKind::Deleted => FileChange::Deleted { path: item.path },
-          FilePickerChangedKind::Renamed => {
-            FileChange::Renamed {
-              from_path: item.from_path.unwrap_or_else(|| item.path.clone()),
-              to_path:   item.path,
-            }
-          },
-        }
-      })
-      .collect::<Vec<_>>();
-    let collapsed = collapse_file_tree_vcs_statuses(&changes, root);
+    let collapsed = collapse_file_tree_vcs_statuses(
+      &changes
+        .iter()
+        .map(file_picker_changed_file_to_vcs_change)
+        .collect::<Vec<_>>(),
+      root,
+    );
     scroll_perf_log(format!(
-      "file_tree.vcs source=scan repo_root={} root={} merged={} collapsed={} current_changed={}",
+      "file_tree.vcs source=scan repo_root={} root={} changes={} collapsed={} current_changed={}",
       scan.repo_root.display(),
       root.display(),
-      merged_count,
+      change_count,
       collapsed.len(),
       u8::from(current_file_changed)
     ));
@@ -4297,7 +4286,7 @@ impl SwiftEditor {
     };
 
     self
-      .merged_vcs_changed_file_items(scan)
+      .shared_vcs_changed_file_items(scan)
       .into_iter()
       .map(|item| {
         let kind = match item.kind {

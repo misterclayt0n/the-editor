@@ -38,21 +38,6 @@ use the_core::{
 use the_default::{
   Command,
   CommandPaletteState,
-  FilePickerChangedFileItem,
-  FilePickerChangedKind,
-  FilePickerDiagnosticItem,
-  FilePickerItem,
-  FilePickerItemAction,
-  FilePickerPreview,
-  FilePickerVcsDiffBootstrap,
-  FileTreeDecorations,
-  FilePickerVcsDiffEntry,
-  FilePickerVcsDiffHunk,
-  FilePickerVcsDiffPreview,
-  FilePickerVcsDiffPreviewRow,
-  FileTreeVcsKind,
-  GlobalSearchOptions,
-  GlobalSearchState,
   CommandPaletteStyle,
   CommandPromptState,
   CommandRegistry,
@@ -60,95 +45,113 @@ use the_default::{
   DefaultApi,
   DefaultContext,
   DispatchRef,
+  FilePickerChangedFileItem,
+  FilePickerChangedKind,
+  FilePickerDiagnosticItem,
+  FilePickerItem,
+  FilePickerItemAction,
+  FilePickerKind,
+  FilePickerPreview,
+  FilePickerPreviewChangeKind,
+  FilePickerPreviewLineKind,
+  FilePickerPreviewNavigationMode,
+  FilePickerPreviewWindowKind,
+  FilePickerRowKind,
   FilePickerState,
+  FilePickerVcsDiffBootstrap,
+  FilePickerVcsDiffEntry,
+  FilePickerVcsDiffHunk,
+  FilePickerVcsDiffPreview,
+  FilePickerVcsDiffPreviewLineSource,
+  FilePickerVcsDiffPreviewRow,
+  FilePickerVcsDiffPreviewRowKind,
+  FileTreeDecorations,
   FileTreeState,
+  FileTreeVcsKind,
+  GlobalSearchOptions,
+  GlobalSearchState,
   Key,
   KeyBinding,
   KeyEvent,
   Keymaps,
   Mode,
   Motion,
-  SearchPromptKind,
   PendingInput,
+  PendingKeyState,
   PickerRuntimeStore,
+  SearchPromptKind,
   SearchPromptState,
   SignatureHelpState,
+  StatuslineEmphasis,
   ThemeCatalog,
   WorkingDirectoryState,
+  activate_file_tree_index,
   build_dispatch,
   build_statusline_snapshot,
-  clear_file_tree_decorations,
-  collapse_file_tree_vcs_statuses,
-  completion_accept,
-  completion_docs_panel_rect,
-  completion_panel_rect,
   builtin_completion_menu_keymaps,
   builtin_keymaps,
+  clear_file_tree_decorations,
   close_completion_menu,
   close_file_picker,
-  file_picker_icon_name_for_path,
-  file_picker_items_from_specs,
-  poll_file_tree_watch,
-  file_tree_surface_id,
+  collapse_file_tree_vcs_statuses,
   command_palette_filtered_indices,
   command_palette_placeholder_text,
   command_palette_selected_filtered_index,
+  completion_accept,
+  completion_docs_panel_rect,
+  completion_panel_rect,
+  file_picker_icon_name_for_path,
   file_picker_item_selectable,
+  file_picker_items_from_specs,
   file_picker_preview_window,
+  file_picker_row_data_for_kind,
   file_picker_source_preview_from_text,
   file_picker_vcs_diff_specs,
+  file_tree_surface_id,
   finalize_vcs_diff_preview,
-  file_picker_row_data_for_kind,
   handle_command,
   handle_command_prompt_key,
   handle_key,
   handle_search_prompt_key,
   install_default_wiring,
   move_selection,
-  rebuild_file_tree_diagnostic_statuses,
   notify_file_picker_query_changed,
   open_command_palette,
   open_custom_picker,
   open_dynamic_picker,
+  poll_file_tree_watch,
   poll_scan_results,
-  StatuslineEmphasis,
+  rebuild_file_tree_diagnostic_statuses,
   replace_file_picker_items,
   replace_file_picker_items_preserving_selection,
   select_file_picker_index,
   select_file_tree_index,
   select_file_tree_index_without_follow,
-  activate_file_tree_index,
-  toggle_file_tree,
-  set_file_tree_active,
-  set_file_tree_visible_rows,
   set_file_picker_list_offset,
   set_file_picker_preview_offset,
   set_file_picker_query_text,
   set_file_picker_syntax_loader,
-  set_picker_visible_rows,
-  submit_command_palette as submit_command_palette_action,
-  submit_file_picker,
+  set_file_tree_active,
   set_file_tree_diagnostic_statuses,
   set_file_tree_vcs_statuses,
-  step_search_prompt,
+  set_file_tree_visible_rows,
+  set_picker_visible_rows,
   signature_help_markdown,
   signature_help_panel_rect,
+  step_search_prompt,
+  submit_command_palette as submit_command_palette_action,
+  submit_file_picker,
   sync_command_palette_preview,
+  toggle_file_tree,
   update_command_palette_for_input,
   update_search_prompt_preview,
-  FilePickerKind,
-  FilePickerPreviewChangeKind,
-  FilePickerPreviewLineKind,
-  FilePickerPreviewNavigationMode,
-  FilePickerPreviewWindowKind,
-  FilePickerRowKind,
-  FilePickerVcsDiffPreviewLineSource,
-  FilePickerVcsDiffPreviewRowKind,
 };
 use the_lib::{
-  document::{
-    Document,
-    DocumentId,
+  diagnostics::{
+    Diagnostic,
+    DiagnosticCounts,
+    DiagnosticSeverity,
+    DiagnosticsState,
   },
   docs_markdown::{
     DocsBlock,
@@ -159,18 +162,16 @@ use the_lib::{
     language_filename_hints,
     parse_markdown_blocks,
   },
+  document::{
+    Document,
+    DocumentId,
+  },
   editor::{
     BufferId,
     Editor,
     EditorId,
     PaneContent,
     PaneContentKind,
-  },
-  diagnostics::{
-    Diagnostic,
-    DiagnosticCounts,
-    DiagnosticSeverity,
-    DiagnosticsState,
   },
   indent::IndentStyle,
   messages::MessageCenter,
@@ -193,12 +194,6 @@ use the_lib::{
     base_render_layer_row_hashes,
     build_plan,
     finish_render_generations,
-    gutter::{
-      GutterConfig,
-      GutterSlot,
-      GutterType,
-    },
-    gutter_width_for_document,
     graphics::{
       Color,
       CursorKind,
@@ -207,6 +202,12 @@ use the_lib::{
       Style,
       UnderlineStyle,
     },
+    gutter::{
+      GutterConfig,
+      GutterSlot,
+      GutterType,
+    },
+    gutter_width_for_document,
     overlay::{
       OverlayNode,
       OverlayRectKind,
@@ -237,24 +238,23 @@ use the_lib::{
   },
   view::ViewState,
 };
-use unicode_segmentation::UnicodeSegmentation;
 use the_lsp::{
   LspCapability,
   LspCodeAction,
-  LspLocation,
-  LspSymbol,
   LspCompletionContext,
   LspCompletionItem,
   LspCompletionItemKind,
   LspEvent,
   LspExecuteCommand,
   LspInsertTextFormat,
+  LspLocation,
   LspPosition,
   LspProgressKind,
   LspRuntime,
   LspRuntimeConfig,
   LspServerConfig,
   LspSignatureHelpContext,
+  LspSymbol,
   LspTextEdit,
   LspWorkspaceEdit,
   TextDocumentSyncKind,
@@ -286,7 +286,6 @@ use the_lsp::{
   rename_params,
   render_lsp_snippet,
   signature_help_params,
-  workspace_symbols_params,
   text_sync::{
     char_idx_to_utf16_position,
     did_change_params,
@@ -297,6 +296,7 @@ use the_lsp::{
     path_for_file_uri,
     utf16_position_to_char_idx,
   },
+  workspace_symbols_params,
 };
 use the_runtime::{
   file_watch::{
@@ -327,6 +327,7 @@ use the_vcs::{
   Hunk,
   VcsWorkspaceScan,
 };
+use unicode_segmentation::UnicodeSegmentation;
 
 #[repr(C)]
 pub struct the_editor_handle_t {
@@ -358,12 +359,12 @@ pub struct the_editor_rgba_t {
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 pub struct the_editor_style_t {
-  pub fg:              the_editor_rgba_t,
-  pub bg:              the_editor_rgba_t,
-  pub underline_color: the_editor_rgba_t,
-  pub add_modifiers:   u16,
-  pub remove_modifiers:u16,
-  pub underline_style: u8,
+  pub fg:               the_editor_rgba_t,
+  pub bg:               the_editor_rgba_t,
+  pub underline_color:  the_editor_rgba_t,
+  pub add_modifiers:    u16,
+  pub remove_modifiers: u16,
+  pub underline_style:  u8,
 }
 
 #[repr(C)]
@@ -474,11 +475,11 @@ pub struct the_editor_snapshot_span_t {
 impl Default for the_editor_snapshot_span_t {
   fn default() -> Self {
     Self {
-      col: 0,
-      cols: 0,
-      text: ptr::null(),
+      col:        0,
+      cols:       0,
+      text:       ptr::null(),
       is_virtual: false,
-      style: the_editor_style_t::default(),
+      style:      the_editor_style_t::default(),
     }
   }
 }
@@ -497,12 +498,12 @@ pub struct the_editor_snapshot_text_cell_t {
 impl Default for the_editor_snapshot_text_cell_t {
   fn default() -> Self {
     Self {
-      row: 0,
-      col: 0,
-      cols: 0,
-      text: ptr::null(),
+      row:        0,
+      col:        0,
+      cols:       0,
+      text:       ptr::null(),
       is_virtual: false,
-      style: the_editor_style_t::default(),
+      style:      the_editor_style_t::default(),
     }
   }
 }
@@ -526,16 +527,35 @@ pub struct the_editor_snapshot_document_t {
 #[derive(Clone, Copy, Default)]
 pub struct the_editor_snapshot_status_t {
   pub leading_text: *const c_char,
-  pub item_count:    usize,
-  pub cursor_text:   *const c_char,
+  pub item_count:   usize,
+  pub cursor_text:  *const c_char,
 }
 
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 pub struct the_editor_snapshot_status_item_t {
-  pub icon:      *const c_char,
-  pub text:      *const c_char,
-  pub emphasis:  u8,
+  pub icon:     *const c_char,
+  pub text:     *const c_char,
+  pub emphasis: u8,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct the_editor_snapshot_pending_keys_t {
+  pub visible:         bool,
+  pub scope:           *const c_char,
+  pub pending_display: *const c_char,
+  pub immediate_count: usize,
+  pub outcome_count:   usize,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct the_editor_snapshot_pending_key_outcome_t {
+  pub path_display: *const c_char,
+  pub label:        *const c_char,
+  pub depth:        u16,
+  pub immediate:    bool,
 }
 
 #[repr(C)]
@@ -596,12 +616,12 @@ pub struct the_editor_snapshot_input_prompt_t {
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 pub struct the_editor_snapshot_docs_panel_t {
-  pub is_open:    bool,
-  pub col:        u16,
-  pub row:        u16,
-  pub width:      u16,
-  pub height:     u16,
-  pub run_count:  usize,
+  pub is_open:   bool,
+  pub col:       u16,
+  pub row:       u16,
+  pub width:     u16,
+  pub height:    u16,
+  pub run_count: usize,
 }
 
 #[repr(C)]
@@ -678,12 +698,12 @@ pub struct the_editor_snapshot_file_picker_item_t {
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 pub struct the_editor_snapshot_file_picker_preview_line_t {
-  pub virtual_row:  usize,
-  pub kind:         u8,
-  pub source:       u8,
-  pub line_number:  i32,
-  pub focused:      bool,
-  pub marker:       *const c_char,
+  pub virtual_row:   usize,
+  pub kind:          u8,
+  pub source:        u8,
+  pub line_number:   i32,
+  pub focused:       bool,
+  pub marker:        *const c_char,
   pub segment_count: usize,
 }
 
@@ -727,9 +747,9 @@ pub struct the_editor_snapshot_file_picker_preview_segment_t {
 impl Default for the_editor_snapshot_file_picker_preview_segment_t {
   fn default() -> Self {
     Self {
-      text: ptr::null(),
-      style: the_editor_style_t::default(),
-      is_match: false,
+      text:        ptr::null(),
+      style:       the_editor_style_t::default(),
+      is_match:    false,
       change_kind: -1,
     }
   }
@@ -774,17 +794,17 @@ pub struct the_editor_snapshot_overlay_t {
 impl Default for the_editor_snapshot_overlay_t {
   fn default() -> Self {
     Self {
-      kind: 0,
+      kind:      0,
       rect_kind: 0,
-      x: 0,
-      y: 0,
-      width: 0,
-      height: 0,
-      radius: 0,
-      row: 0,
-      col: 0,
-      text: ptr::null(),
-      style: the_editor_style_t::default(),
+      x:         0,
+      y:         0,
+      width:     0,
+      height:    0,
+      radius:    0,
+      row:       0,
+      col:       0,
+      text:      ptr::null(),
+      style:     the_editor_style_t::default(),
     }
   }
 }
@@ -886,65 +906,81 @@ fn code_action_trace_log(message: impl AsRef<str>) {
 
 #[derive(Default)]
 struct OwnedSnapshot {
-  info:                  the_editor_snapshot_info_t,
-  document:              DocumentRecord,
-  status:                StatusRecord,
-  status_items:          Vec<StatusItemRecord>,
-  command_palette:       CommandPaletteRecord,
-  command_palette_items: Vec<CommandPaletteItemRecord>,
-  completion_menu:       CompletionMenuRecord,
-  completion_menu_items: Vec<CompletionMenuItemRecord>,
-  input_prompt:          InputPromptRecord,
-  hover_docs:            DocsPanelRecord,
-  hover_docs_runs:       Vec<DocsRunRecord>,
-  completion_docs:       DocsPanelRecord,
-  completion_docs_runs:  Vec<DocsRunRecord>,
-  signature_help:        DocsPanelRecord,
-  signature_help_runs:   Vec<DocsRunRecord>,
-  diagnostics:           Vec<DiagnosticRecord>,
-  diagnostic_underlines: Vec<the_editor_snapshot_diagnostic_underline_t>,
-  file_picker:           FilePickerRecord,
-  file_picker_items:     Vec<FilePickerItemRecord>,
-  file_picker_preview_lines: Vec<FilePickerPreviewLineRecord>,
+  info:                         the_editor_snapshot_info_t,
+  document:                     DocumentRecord,
+  status:                       StatusRecord,
+  status_items:                 Vec<StatusItemRecord>,
+  pending_keys:                 PendingKeysRecord,
+  pending_key_outcomes:         Vec<PendingKeyOutcomeRecord>,
+  command_palette:              CommandPaletteRecord,
+  command_palette_items:        Vec<CommandPaletteItemRecord>,
+  completion_menu:              CompletionMenuRecord,
+  completion_menu_items:        Vec<CompletionMenuItemRecord>,
+  input_prompt:                 InputPromptRecord,
+  hover_docs:                   DocsPanelRecord,
+  hover_docs_runs:              Vec<DocsRunRecord>,
+  completion_docs:              DocsPanelRecord,
+  completion_docs_runs:         Vec<DocsRunRecord>,
+  signature_help:               DocsPanelRecord,
+  signature_help_runs:          Vec<DocsRunRecord>,
+  diagnostics:                  Vec<DiagnosticRecord>,
+  diagnostic_underlines:        Vec<the_editor_snapshot_diagnostic_underline_t>,
+  file_picker:                  FilePickerRecord,
+  file_picker_items:            Vec<FilePickerItemRecord>,
+  file_picker_preview_lines:    Vec<FilePickerPreviewLineRecord>,
   file_picker_preview_segments: Vec<FilePickerPreviewSegmentRecord>,
-  file_tree:             FileTreeRecord,
-  file_tree_rows:        Vec<FileTreeRowRecord>,
-  panes:                 Vec<the_editor_snapshot_pane_t>,
-  separators:            Vec<the_editor_snapshot_separator_t>,
-  lines:                 Vec<LineRecord>,
-  spans:                 Vec<SpanRecord>,
-  text_cells:            Vec<TextCellRecord>,
-  cursors:               Vec<the_editor_snapshot_cursor_t>,
-  selections:            Vec<the_editor_snapshot_selection_t>,
-  overlays:              Vec<OverlayRecord>,
-  strings:               Vec<CString>,
+  file_tree:                    FileTreeRecord,
+  file_tree_rows:               Vec<FileTreeRowRecord>,
+  panes:                        Vec<the_editor_snapshot_pane_t>,
+  separators:                   Vec<the_editor_snapshot_separator_t>,
+  lines:                        Vec<LineRecord>,
+  spans:                        Vec<SpanRecord>,
+  text_cells:                   Vec<TextCellRecord>,
+  cursors:                      Vec<the_editor_snapshot_cursor_t>,
+  selections:                   Vec<the_editor_snapshot_selection_t>,
+  overlays:                     Vec<OverlayRecord>,
+  strings:                      Vec<CString>,
 }
 
 #[derive(Clone, Copy, Default)]
 struct DocumentRecord {
-  document:               the_editor_snapshot_document_t,
-  name_idx:               Option<usize>,
-  icon_idx:               Option<usize>,
-  relative_path_idx:      Option<usize>,
-  absolute_path_idx:      Option<usize>,
-  vcs_text_idx:           Option<usize>,
-  language_name_idx:      Option<usize>,
-  encoding_name_idx:      Option<usize>,
-  line_ending_name_idx:   Option<usize>,
+  document:             the_editor_snapshot_document_t,
+  name_idx:             Option<usize>,
+  icon_idx:             Option<usize>,
+  relative_path_idx:    Option<usize>,
+  absolute_path_idx:    Option<usize>,
+  vcs_text_idx:         Option<usize>,
+  language_name_idx:    Option<usize>,
+  encoding_name_idx:    Option<usize>,
+  line_ending_name_idx: Option<usize>,
 }
 
 #[derive(Clone, Copy, Default)]
 struct StatusRecord {
-  status:             the_editor_snapshot_status_t,
-  leading_text_idx:   Option<usize>,
-  cursor_text_idx:    Option<usize>,
+  status:           the_editor_snapshot_status_t,
+  leading_text_idx: Option<usize>,
+  cursor_text_idx:  Option<usize>,
 }
 
 #[derive(Clone, Copy, Default)]
 struct StatusItemRecord {
-  item:               the_editor_snapshot_status_item_t,
-  icon_idx:           Option<usize>,
-  text_idx:           usize,
+  item:     the_editor_snapshot_status_item_t,
+  icon_idx: Option<usize>,
+  text_idx: usize,
+}
+
+#[derive(Clone, Copy, Default)]
+struct PendingKeysRecord {
+  pending:             the_editor_snapshot_pending_keys_t,
+  scope_idx:           Option<usize>,
+  pending_display_idx: Option<usize>,
+}
+
+#[derive(Clone, Copy, Default)]
+struct PendingKeyOutcomeRecord {
+  outcome:          the_editor_snapshot_pending_key_outcome_t,
+  path_display_idx: usize,
+  label_idx:        usize,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -956,11 +992,11 @@ struct CommandPaletteRecord {
 
 #[derive(Clone, Copy, Default)]
 struct CommandPaletteItemRecord {
-  item:            the_editor_snapshot_command_palette_item_t,
-  title_idx:       usize,
-  subtitle_idx:    Option<usize>,
-  description_idx: Option<usize>,
-  badge_idx:       Option<usize>,
+  item:             the_editor_snapshot_command_palette_item_t,
+  title_idx:        usize,
+  subtitle_idx:     Option<usize>,
+  description_idx:  Option<usize>,
+  badge_idx:        Option<usize>,
   leading_icon_idx: Option<usize>,
 }
 
@@ -1007,49 +1043,49 @@ struct DiagnosticRecord {
 
 #[derive(Clone, Copy, Default)]
 struct FilePickerRecord {
-  picker:                      the_editor_snapshot_file_picker_t,
-  title_idx:                   Option<usize>,
-  query_idx:                   Option<usize>,
-  error_idx:                   Option<usize>,
-  preview_path_idx:            Option<usize>,
+  picker:           the_editor_snapshot_file_picker_t,
+  title_idx:        Option<usize>,
+  query_idx:        Option<usize>,
+  error_idx:        Option<usize>,
+  preview_path_idx: Option<usize>,
 }
 
 #[derive(Clone, Copy, Default)]
 struct FilePickerItemRecord {
-  item:            the_editor_snapshot_file_picker_item_t,
-  icon_idx:        usize,
-  primary_idx:     usize,
-  secondary_idx:   Option<usize>,
-  tertiary_idx:    Option<usize>,
-  quaternary_idx:  Option<usize>,
+  item:           the_editor_snapshot_file_picker_item_t,
+  icon_idx:       usize,
+  primary_idx:    usize,
+  secondary_idx:  Option<usize>,
+  tertiary_idx:   Option<usize>,
+  quaternary_idx: Option<usize>,
 }
 
 #[derive(Clone, Copy, Default)]
 struct FilePickerPreviewLineRecord {
-  line:            the_editor_snapshot_file_picker_preview_line_t,
-  marker_idx:      Option<usize>,
-  segment_start:   usize,
+  line:          the_editor_snapshot_file_picker_preview_line_t,
+  marker_idx:    Option<usize>,
+  segment_start: usize,
 }
 
 #[derive(Clone, Copy, Default)]
 struct FilePickerPreviewSegmentRecord {
-  segment:         the_editor_snapshot_file_picker_preview_segment_t,
-  text_idx:        usize,
+  segment:  the_editor_snapshot_file_picker_preview_segment_t,
+  text_idx: usize,
 }
 
 #[derive(Clone, Copy, Default)]
 struct FileTreeRecord {
-  tree:            the_editor_snapshot_file_tree_t,
-  root_idx:        Option<usize>,
+  tree:     the_editor_snapshot_file_tree_t,
+  root_idx: Option<usize>,
 }
 
 #[derive(Clone, Copy, Default)]
 struct FileTreeRowRecord {
-  row:             the_editor_snapshot_file_tree_row_t,
-  path_idx:        usize,
+  row:              the_editor_snapshot_file_tree_row_t,
+  path_idx:         usize,
   display_name_idx: usize,
-  icon_name_idx:   usize,
-  icon_glyph_idx:  usize,
+  icon_name_idx:    usize,
+  icon_glyph_idx:   usize,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -1087,13 +1123,13 @@ struct SurfaceConfig {
 impl Default for SurfaceConfig {
   fn default() -> Self {
     let metrics = the_editor_surface_metrics_t {
-      backing_scale: 2.0,
-      cell_width_px: 18,
-      cell_height_px: 34,
-      cell_baseline_px: 6,
-      underline_position_px: 4,
+      backing_scale:          2.0,
+      cell_width_px:          18,
+      cell_height_px:         34,
+      cell_baseline_px:       6,
+      underline_position_px:  4,
       underline_thickness_px: 2,
-      cursor_thickness_px: 4,
+      cursor_thickness_px:    4,
     };
     Self {
       width_px: 80 * metrics.cell_width_px as u32,
@@ -1105,11 +1141,12 @@ impl Default for SurfaceConfig {
 
 impl SurfaceConfig {
   fn from_ffi(config: the_editor_surface_config_t) -> Self {
-    let backing_scale = if config.metrics.backing_scale.is_finite() && config.metrics.backing_scale > 0.0 {
-      config.metrics.backing_scale
-    } else {
-      1.0
-    };
+    let backing_scale =
+      if config.metrics.backing_scale.is_finite() && config.metrics.backing_scale > 0.0 {
+        config.metrics.backing_scale
+      } else {
+        1.0
+      };
     let metrics = the_editor_surface_metrics_t {
       backing_scale,
       cell_width_px: config.metrics.cell_width_px.max(1),
@@ -1198,15 +1235,33 @@ impl LspStatuslineState {
 
 #[derive(Debug, Clone)]
 enum PendingLspRequestKind {
-  GotoDeclaration { uri: String },
-  GotoDefinition { uri: String },
-  GotoTypeDefinition { uri: String },
-  GotoImplementation { uri: String },
-  Hover { uri: String },
-  DocumentHighlightSelect { uri: String },
-  References { uri: String },
-  DocumentSymbols { uri: String },
-  WorkspaceSymbols { query: String },
+  GotoDeclaration {
+    uri: String,
+  },
+  GotoDefinition {
+    uri: String,
+  },
+  GotoTypeDefinition {
+    uri: String,
+  },
+  GotoImplementation {
+    uri: String,
+  },
+  Hover {
+    uri: String,
+  },
+  DocumentHighlightSelect {
+    uri: String,
+  },
+  References {
+    uri: String,
+  },
+  DocumentSymbols {
+    uri: String,
+  },
+  WorkspaceSymbols {
+    query: String,
+  },
   Completion {
     uri:            String,
     generation:     u64,
@@ -1214,12 +1269,26 @@ enum PendingLspRequestKind {
     replace_start:  usize,
     announce_empty: bool,
   },
-  CompletionResolve { uri: String, index: usize },
-  SignatureHelp { uri: String },
-  CodeActions { uri: String },
-  CodeActionResolve { uri: String, action: LspCodeAction },
-  Rename { uri: String },
-  Format { uri: String },
+  CompletionResolve {
+    uri:   String,
+    index: usize,
+  },
+  SignatureHelp {
+    uri: String,
+  },
+  CodeActions {
+    uri: String,
+  },
+  CodeActionResolve {
+    uri:    String,
+    action: LspCodeAction,
+  },
+  Rename {
+    uri: String,
+  },
+  Format {
+    uri: String,
+  },
 }
 
 impl PendingLspRequestKind {
@@ -1328,94 +1397,98 @@ struct AppliedVcsRefreshState {
 }
 
 struct SwiftEditor {
-  editor:                        Editor,
-  file_path:                     Option<PathBuf>,
-  workspace_root:                PathBuf,
-  working_directory:             WorkingDirectoryState,
-  messages:                      MessageCenter,
-  mode:                          Mode,
-  dispatch:                      Box<dyn DefaultApi<SwiftEditor>>,
-  keymaps:                       Keymaps,
-  completion_menu_keymaps:       Keymaps,
-  command_registry:              CommandRegistry<SwiftEditor>,
-  command_prompt:                CommandPromptState,
-  command_palette:               CommandPaletteState,
-  command_palette_style:         CommandPaletteStyle,
-  completion_menu:               CompletionMenuState,
-  inline_completion:             the_default::InlineCompletionState,
-  inline_completion_annotations: the_default::OwnedTextAnnotations,
-  file_tree:                     FileTreeState,
-  file_picker:                   FilePickerState,
-  picker_runtime_store:          PickerRuntimeStore<SwiftEditor>,
-  global_search:                 GlobalSearchState,
-  search_prompt:                 SearchPromptState,
-  signature_help:                SignatureHelpState,
-  hover_docs:                    Option<String>,
-  hover_diagnostic_fallback:     Option<String>,
-  lsp_code_action_items:         Vec<LspCodeAction>,
-  lsp_code_action_menu_active:   bool,
-  lsp_completion_items:          Vec<LspCompletionItem>,
-  lsp_completion_raw_items:      Vec<serde_json::Value>,
-  lsp_completion_resolved:       HashSet<usize>,
-  lsp_completion_resolve_supported: bool,
-  lsp_completion_generation:     u64,
-  lsp_completion_fallback_start: Option<usize>,
-  lsp_completion_visible_indices: Vec<usize>,
-  lsp_pending_auto_completion:   Option<PendingAutoCompletion>,
-  lsp_pending_auto_signature_help: Option<PendingAutoSignatureHelp>,
-  pending_input:                 Option<PendingInput>,
-  registers:                     Registers,
-  register:                      Option<char>,
-  macro_recording:               Option<(char, Vec<KeyBinding>)>,
-  macro_replaying:               Vec<char>,
-  macro_queue:                   VecDeque<KeyEvent>,
-  last_motion:                   Option<Motion>,
-  text_format:                   TextFormat,
-  soft_wrap_enabled:             bool,
-  gutter_config:                 the_lib::render::GutterConfig,
-  loader:                        Option<Arc<Loader>>,
-  diagnostics:                   DiagnosticsState,
-  lsp_document:                  Option<LspDocumentSyncState>,
-  lsp_runtimes:                  Vec<ManagedLspRuntime>,
-  lsp_statusline:                LspStatuslineState,
-  lsp_spinner_index:             usize,
-  lsp_spinner_last_tick:         Instant,
-  highlight_cache:               HighlightCache,
-  inactive_highlight_caches:     BTreeMap<BufferId, HighlightCache>,
-  file_picker_preview_visible_rows: usize,
-  ui_theme_catalog:              ThemeCatalog,
-  ui_theme_name:                 String,
-  ui_theme_base:                 Theme,
-  ui_theme_preview_name:         Option<String>,
-  ui_theme:                      Theme,
-  render_generation_state:       Option<RenderGenerationState>,
-  frame_generation_state:        FrameGenerationState,
-  render_theme_generation:       u64,
-  surface:                       SurfaceConfig,
-  vcs_provider:                  DiffProviderRegistry,
-  vcs_statusline:                Option<String>,
-  gutter_diff_signs:             BTreeMap<usize, RenderGutterDiffKind>,
-  vcs_diff:                      Option<DiffHandle>,
-  vcs_document_generation:       u64,
-  applied_vcs_refresh_state:     Option<AppliedVcsRefreshState>,
-  active_file_watch:             Option<ActiveFileWatchState>,
-  vcs_watch:                     Option<VcsWatchState>,
-  vcs_watch_root:                Option<PathBuf>,
+  editor:                              Editor,
+  file_path:                           Option<PathBuf>,
+  workspace_root:                      PathBuf,
+  working_directory:                   WorkingDirectoryState,
+  messages:                            MessageCenter,
+  mode:                                Mode,
+  dispatch:                            Box<dyn DefaultApi<SwiftEditor>>,
+  keymaps:                             Keymaps,
+  completion_menu_keymaps:             Keymaps,
+  command_registry:                    CommandRegistry<SwiftEditor>,
+  command_prompt:                      CommandPromptState,
+  command_palette:                     CommandPaletteState,
+  command_palette_style:               CommandPaletteStyle,
+  completion_menu:                     CompletionMenuState,
+  inline_completion:                   the_default::InlineCompletionState,
+  inline_completion_annotations:       the_default::OwnedTextAnnotations,
+  file_tree:                           FileTreeState,
+  file_picker:                         FilePickerState,
+  picker_runtime_store:                PickerRuntimeStore<SwiftEditor>,
+  global_search:                       GlobalSearchState,
+  search_prompt:                       SearchPromptState,
+  signature_help:                      SignatureHelpState,
+  hover_docs:                          Option<String>,
+  hover_diagnostic_fallback:           Option<String>,
+  lsp_code_action_items:               Vec<LspCodeAction>,
+  lsp_code_action_menu_active:         bool,
+  lsp_completion_items:                Vec<LspCompletionItem>,
+  lsp_completion_raw_items:            Vec<serde_json::Value>,
+  lsp_completion_resolved:             HashSet<usize>,
+  lsp_completion_resolve_supported:    bool,
+  lsp_completion_generation:           u64,
+  lsp_completion_fallback_start:       Option<usize>,
+  lsp_completion_visible_indices:      Vec<usize>,
+  lsp_pending_auto_completion:         Option<PendingAutoCompletion>,
+  lsp_pending_auto_signature_help:     Option<PendingAutoSignatureHelp>,
+  pending_input:                       Option<PendingInput>,
+  registers:                           Registers,
+  register:                            Option<char>,
+  macro_recording:                     Option<(char, Vec<KeyBinding>)>,
+  macro_replaying:                     Vec<char>,
+  macro_queue:                         VecDeque<KeyEvent>,
+  last_motion:                         Option<Motion>,
+  text_format:                         TextFormat,
+  soft_wrap_enabled:                   bool,
+  gutter_config:                       the_lib::render::GutterConfig,
+  loader:                              Option<Arc<Loader>>,
+  diagnostics:                         DiagnosticsState,
+  lsp_document:                        Option<LspDocumentSyncState>,
+  lsp_runtimes:                        Vec<ManagedLspRuntime>,
+  lsp_statusline:                      LspStatuslineState,
+  lsp_spinner_index:                   usize,
+  lsp_spinner_last_tick:               Instant,
+  highlight_cache:                     HighlightCache,
+  inactive_highlight_caches:           BTreeMap<BufferId, HighlightCache>,
+  file_picker_preview_visible_rows:    usize,
+  ui_theme_catalog:                    ThemeCatalog,
+  ui_theme_name:                       String,
+  ui_theme_base:                       Theme,
+  ui_theme_preview_name:               Option<String>,
+  ui_theme:                            Theme,
+  render_generation_state:             Option<RenderGenerationState>,
+  frame_generation_state:              FrameGenerationState,
+  render_theme_generation:             u64,
+  surface:                             SurfaceConfig,
+  vcs_provider:                        DiffProviderRegistry,
+  vcs_statusline:                      Option<String>,
+  gutter_diff_signs:                   BTreeMap<usize, RenderGutterDiffKind>,
+  vcs_diff:                            Option<DiffHandle>,
+  vcs_document_generation:             u64,
+  applied_vcs_refresh_state:           Option<AppliedVcsRefreshState>,
+  active_file_watch:                   Option<ActiveFileWatchState>,
+  vcs_watch:                           Option<VcsWatchState>,
+  vcs_watch_root:                      Option<PathBuf>,
   vcs_statusline_refresh_force_rescan: bool,
-  vcs_statusline_refresh_due_at: Option<Instant>,
-  vcs_statusline_refresh_in_flight: bool,
-  vcs_statusline_refresh_generation: u64,
-  vcs_statusline_refresh_rerun:  bool,
-  vcs_statusline_refresh_tx:     mpsc::Sender<VcsStatuslineRefreshResult>,
-  vcs_statusline_refresh_rx:     mpsc::Receiver<VcsStatuslineRefreshResult>,
-  vcs_scan:                      Option<Arc<VcsWorkspaceScan>>,
-  vcs_base_cache:                BTreeMap<VcsBaseCacheKey, Option<Vec<u8>>>,
+  vcs_statusline_refresh_due_at:       Option<Instant>,
+  vcs_statusline_refresh_in_flight:    bool,
+  vcs_statusline_refresh_generation:   u64,
+  vcs_statusline_refresh_rerun:        bool,
+  vcs_statusline_refresh_tx:           mpsc::Sender<VcsStatuslineRefreshResult>,
+  vcs_statusline_refresh_rx:           mpsc::Receiver<VcsStatuslineRefreshResult>,
+  vcs_scan:                            Option<Arc<VcsWorkspaceScan>>,
+  vcs_base_cache:                      BTreeMap<VcsBaseCacheKey, Option<Vec<u8>>>,
 }
 
 impl SwiftEditor {
   fn content_viewport_width(&self) -> u16 {
     let view = self.editor.view();
-    let gutter_width = gutter_width_for_document(self.editor.document(), view.viewport.width, &self.gutter_config);
+    let gutter_width = gutter_width_for_document(
+      self.editor.document(),
+      view.viewport.width,
+      &self.gutter_config,
+    );
     view.viewport.width.saturating_sub(gutter_width).max(1)
   }
 
@@ -1446,7 +1519,11 @@ impl SwiftEditor {
     } else if index >= self.completion_menu.scroll.saturating_add(visible_rows) {
       self.completion_menu.scroll = index + 1 - visible_rows;
     }
-    let max_scroll = self.completion_menu.items.len().saturating_sub(visible_rows);
+    let max_scroll = self
+      .completion_menu
+      .items
+      .len()
+      .saturating_sub(visible_rows);
     self.completion_menu.scroll = self.completion_menu.scroll.min(max_scroll);
     self.completion_selection_changed(index);
     self.request_render();
@@ -1465,7 +1542,11 @@ impl SwiftEditor {
     if !self.completion_menu.active || self.completion_menu.items.is_empty() {
       return false;
     }
-    let max_scroll = self.completion_menu.items.len().saturating_sub(completion_menu_visible_rows());
+    let max_scroll = self
+      .completion_menu
+      .items
+      .len()
+      .saturating_sub(completion_menu_visible_rows());
     let next = offset.min(max_scroll);
     if self.completion_menu.scroll == next {
       return false;
@@ -1539,7 +1620,7 @@ impl SwiftEditor {
         ready: false,
         opened_current_document: false,
         statusline: LspStatuslineState {
-          phase: LspStatusPhase::Starting,
+          phase:  LspStatusPhase::Starting,
           detail: Some(clamp_status_text(&server_name, 28)),
         },
         active_progress_tokens: HashSet::new(),
@@ -1547,7 +1628,7 @@ impl SwiftEditor {
       };
       if let Err(err) = start_result {
         managed.statusline = LspStatuslineState {
-          phase: LspStatusPhase::Error,
+          phase:  LspStatusPhase::Error,
           detail: Some(summarize_lsp_error(&err.to_string())),
         };
       }
@@ -1577,7 +1658,12 @@ impl SwiftEditor {
     }
   }
 
-  fn set_lsp_status_for_runtime(&mut self, runtime_index: usize, phase: LspStatusPhase, detail: Option<String>) {
+  fn set_lsp_status_for_runtime(
+    &mut self,
+    runtime_index: usize,
+    phase: LspStatusPhase,
+    detail: Option<String>,
+  ) {
     if let Some(runtime) = self.lsp_runtimes.get_mut(runtime_index) {
       runtime.statusline = LspStatuslineState {
         phase,
@@ -1655,7 +1741,9 @@ impl SwiftEditor {
       ) else {
         continue;
       };
-      let _ = runtime.runtime.send_notification("textDocument/didChange", Some(params));
+      let _ = runtime
+        .runtime
+        .send_notification("textDocument/didChange", Some(params));
     }
     if let Some(document_state) = self.lsp_document.as_mut() {
       document_state.version = next_version;
@@ -1676,13 +1764,19 @@ impl SwiftEditor {
         None
       };
       let params = did_save_params(&document_state.uri, payload_text);
-      let _ = runtime.runtime.send_notification("textDocument/didSave", Some(params));
+      let _ = runtime
+        .runtime
+        .send_notification("textDocument/didSave", Some(params));
     }
   }
 
   fn current_lsp_position(&self) -> Option<(String, LspPosition)> {
     let document = self.lsp_document.as_ref()?.clone();
-    if !self.lsp_runtimes.iter().any(|runtime| runtime.opened_current_document) {
+    if !self
+      .lsp_runtimes
+      .iter()
+      .any(|runtime| runtime.opened_current_document)
+    {
       return None;
     }
 
@@ -1699,13 +1793,22 @@ impl SwiftEditor {
     self
       .lsp_document
       .as_ref()
-      .filter(|_| self.lsp_runtimes.iter().any(|runtime| runtime.opened_current_document))
+      .filter(|_| {
+        self
+          .lsp_runtimes
+          .iter()
+          .any(|runtime| runtime.opened_current_document)
+      })
       .map(|state| state.uri.clone())
   }
 
   fn current_lsp_code_action_range(&self) -> Option<(String, the_lsp::LspRange)> {
     let state = self.lsp_document.as_ref()?.clone();
-    if !self.lsp_runtimes.iter().any(|runtime| runtime.opened_current_document) {
+    if !self
+      .lsp_runtimes
+      .iter()
+      .any(|runtime| runtime.opened_current_document)
+    {
       return None;
     }
 
@@ -1725,15 +1828,16 @@ impl SwiftEditor {
       }
     }
 
-    let (start_line, start_character) = char_idx_to_utf16_position(self.editor.document().text(), start);
+    let (start_line, start_character) =
+      char_idx_to_utf16_position(self.editor.document().text(), start);
     let (end_line, end_character) = char_idx_to_utf16_position(self.editor.document().text(), end);
     Some((state.uri, the_lsp::LspRange {
       start: LspPosition {
-        line: start_line,
+        line:      start_line,
         character: start_character,
       },
-      end: the_lsp::LspPosition {
-        line: end_line,
+      end:   the_lsp::LspPosition {
+        line:      end_line,
         character: end_character,
       },
     }))
@@ -1795,10 +1899,16 @@ impl SwiftEditor {
 
     let _ = <Self as DefaultContext>::save_selection_to_jumplist(self);
 
-    if self.file_path.as_ref().is_none_or(|current| current != &path)
+    if self
+      .file_path
+      .as_ref()
+      .is_none_or(|current| current != &path)
       && let Err(err) = <Self as DefaultContext>::open_file(self, &path)
     {
-      self.push_error("lsp", format!("failed to open location '{}': {err}", path.display()));
+      self.push_error(
+        "lsp",
+        format!("failed to open location '{}': {err}", path.display()),
+      );
       return true;
     }
 
@@ -1811,7 +1921,10 @@ impl SwiftEditor {
       )
     };
 
-    let _ = self.editor.document_mut().set_selection(Selection::point(cursor));
+    let _ = self
+      .editor
+      .document_mut()
+      .set_selection(Selection::point(cursor));
     self.editor.view_mut().scroll = Position::new(
       (location.range.start.line as usize).saturating_sub(self.scrolloff()),
       0,
@@ -1881,14 +1994,22 @@ impl SwiftEditor {
         )
       };
 
-      let path_display = path.strip_prefix(&root).unwrap_or(&path).display().to_string();
+      let path_display = path
+        .strip_prefix(&root)
+        .unwrap_or(&path)
+        .display()
+        .to_string();
       if previous_path.as_ref().is_none_or(|prev| prev != &path) {
         symbol_stack.clear();
         previous_path = Some(path.clone());
       }
       let kind_label = lsp_symbol_kind_label(symbol.kind);
       let name = sanitize_picker_field(symbol.name.trim());
-      let name = if name.is_empty() { "<unnamed>".to_string() } else { name };
+      let name = if name.is_empty() {
+        "<unnamed>".to_string()
+      } else {
+        name
+      };
       let container = sanitize_picker_field(symbol.container_name.as_deref().unwrap_or_default());
       let detail = sanitize_picker_field(symbol.detail.as_deref().unwrap_or_default());
       let path_field = sanitize_picker_field(path_display.as_str());
@@ -1930,7 +2051,10 @@ impl SwiftEditor {
     }
 
     if items.is_empty() {
-      self.push_warning("lsp", format!("{label}: results had no navigable locations"));
+      self.push_warning(
+        "lsp",
+        format!("{label}: results had no navigable locations"),
+      );
       return true;
     }
 
@@ -1957,7 +2081,8 @@ impl SwiftEditor {
 
   fn completion_trace_state(&self) -> String {
     format!(
-      "menu_active={} menu_items={} selected={:?} raw_items={} visible_items={} generation={} fallback_start={:?} cursor={:?}",
+      "menu_active={} menu_items={} selected={:?} raw_items={} visible_items={} generation={} \
+       fallback_start={:?} cursor={:?}",
       self.completion_menu.active,
       self.completion_menu.items.len(),
       self.completion_menu.selected,
@@ -1970,14 +2095,22 @@ impl SwiftEditor {
   }
 
   fn clear_completion_state_with_reason(&mut self, reason: &str) {
-    completion_trace_log(format!("clear reason={} {}", reason, self.completion_trace_state()));
+    completion_trace_log(format!(
+      "clear reason={} {}",
+      reason,
+      self.completion_trace_state()
+    ));
     self.clear_completion_state();
   }
 
   fn completion_replace_start_at_cursor(&self, cursor: usize) -> usize {
     let text = self.editor.document().text();
     let mut start = cursor.min(text.len_chars());
-    while start > 0 && text.get_char(start - 1).is_some_and(is_completion_replace_char) {
+    while start > 0
+      && text
+        .get_char(start - 1)
+        .is_some_and(is_completion_replace_char)
+    {
       start -= 1;
     }
     start
@@ -2025,10 +2158,8 @@ impl SwiftEditor {
         Duration::from_millis(20),
       );
     } else if is_symbol_word_char(ch) {
-      let _ = self.schedule_auto_completion(
-        LspCompletionContext::invoked(),
-        Duration::from_millis(80),
-      );
+      let _ =
+        self.schedule_auto_completion(LspCompletionContext::invoked(), Duration::from_millis(80));
     } else {
       self.clear_completion_state_with_reason("post-edit-non-word-char");
     }
@@ -2080,19 +2211,27 @@ impl SwiftEditor {
   }
 
   fn lsp_runtime_index_for_capability(&self, capability: LspCapability) -> Option<usize> {
-    self.lsp_runtimes.iter().enumerate().find_map(|(index, runtime)| {
-      (runtime.ready
-        && runtime
-          .configured_server_name()
-          .and_then(|server_name| runtime.runtime.server_capabilities(server_name))
-          .is_some_and(|capabilities| capabilities.supports(capability)))
-      .then_some(index)
-    })
+    self
+      .lsp_runtimes
+      .iter()
+      .enumerate()
+      .find_map(|(index, runtime)| {
+        (runtime.ready
+          && runtime
+            .configured_server_name()
+            .and_then(|server_name| runtime.runtime.server_capabilities(server_name))
+            .is_some_and(|capabilities| capabilities.supports(capability)))
+        .then_some(index)
+      })
   }
 
-  fn lsp_supports_completion(&self) -> bool { self.lsp_supports(LspCapability::Completion) }
+  fn lsp_supports_completion(&self) -> bool {
+    self.lsp_supports(LspCapability::Completion)
+  }
 
-  fn lsp_supports_signature_help(&self) -> bool { self.lsp_supports(LspCapability::SignatureHelp) }
+  fn lsp_supports_signature_help(&self) -> bool {
+    self.lsp_supports(LspCapability::SignatureHelp)
+  }
 
   fn lsp_supports_code_action_resolve(&self) -> bool {
     self.lsp_runtimes.iter().any(|runtime| {
@@ -2104,13 +2243,20 @@ impl SwiftEditor {
     })
   }
 
-  fn lsp_provider_supports_single_char(&self, provider_key: &str, characters_key: &str, ch: char) -> bool {
+  fn lsp_provider_supports_single_char(
+    &self,
+    provider_key: &str,
+    characters_key: &str,
+    ch: char,
+  ) -> bool {
     self.lsp_runtimes.iter().any(|runtime| {
       runtime.ready
         && runtime
           .configured_server_name()
           .and_then(|server_name| runtime.runtime.server_capabilities(server_name))
-          .is_some_and(|capabilities| capabilities_support_single_char(capabilities.raw(), provider_key, characters_key, ch))
+          .is_some_and(|capabilities| {
+            capabilities_support_single_char(capabilities.raw(), provider_key, characters_key, ch)
+          })
     })
   }
 
@@ -2169,7 +2315,11 @@ impl SwiftEditor {
     self.lsp_pending_auto_completion = None;
   }
 
-  fn schedule_auto_signature_help(&mut self, trigger: LspSignatureHelpContext, delay: Duration) -> bool {
+  fn schedule_auto_signature_help(
+    &mut self,
+    trigger: LspSignatureHelpContext,
+    delay: Duration,
+  ) -> bool {
     if self.mode != Mode::Insert || !self.lsp_supports_signature_help() {
       self.lsp_pending_auto_signature_help = None;
       return false;
@@ -2190,7 +2340,10 @@ impl SwiftEditor {
       return false;
     };
     if self.mode != Mode::Insert {
-      completion_trace_log(format!("poll_auto drop-not-insert {}", self.completion_trace_state()));
+      completion_trace_log(format!(
+        "poll_auto drop-not-insert {}",
+        self.completion_trace_state()
+      ));
       self.lsp_pending_auto_completion = None;
       return false;
     }
@@ -2239,7 +2392,10 @@ impl SwiftEditor {
 
   fn completion_filter_fragment(&self) -> Option<String> {
     let cursor = self.active_cursor_char_idx()?;
-    let start = self.lsp_completion_fallback_start.unwrap_or(cursor).min(cursor);
+    let start = self
+      .lsp_completion_fallback_start
+      .unwrap_or(cursor)
+      .min(cursor);
     let text = self.editor.document().text();
     Some(text.slice(start..cursor).to_string())
   }
@@ -2249,12 +2405,18 @@ impl SwiftEditor {
   }
 
   fn completion_visible_index_for_source_index(&self, index: usize) -> Option<usize> {
-    self.lsp_completion_visible_indices.iter().position(|visible| *visible == index)
+    self
+      .lsp_completion_visible_indices
+      .iter()
+      .position(|visible| *visible == index)
   }
 
   fn rebuild_completion_menu(&mut self) {
     if self.lsp_completion_items.is_empty() {
-      completion_trace_log(format!("rebuild raw_items=0 close {}", self.completion_trace_state()));
+      completion_trace_log(format!(
+        "rebuild raw_items=0 close {}",
+        self.completion_trace_state()
+      ));
       self.lsp_completion_visible_indices.clear();
       self.completion_menu.clear();
       return;
@@ -2294,7 +2456,8 @@ impl SwiftEditor {
 
     self.lsp_completion_visible_indices = visible.iter().map(|(index, _)| *index).collect();
     completion_trace_log(format!(
-      "rebuild fragment={:?} raw_items={} visible_items={} menu_active_before={} selected_before={:?}",
+      "rebuild fragment={:?} raw_items={} visible_items={} menu_active_before={} \
+       selected_before={:?}",
       fragment,
       self.lsp_completion_items.len(),
       self.lsp_completion_visible_indices.len(),
@@ -2303,10 +2466,16 @@ impl SwiftEditor {
     ));
     if self.lsp_completion_visible_indices.is_empty() {
       if self.completion_menu.active {
-        completion_trace_log(format!("rebuild preserve-empty-visible {}", self.completion_trace_state()));
+        completion_trace_log(format!(
+          "rebuild preserve-empty-visible {}",
+          self.completion_trace_state()
+        ));
         return;
       }
-      completion_trace_log(format!("rebuild close-empty-visible {}", self.completion_trace_state()));
+      completion_trace_log(format!(
+        "rebuild close-empty-visible {}",
+        self.completion_trace_state()
+      ));
       self.completion_menu.clear();
       return;
     }
@@ -2320,7 +2489,11 @@ impl SwiftEditor {
     completion_trace_log(format!("rebuild show {}", self.completion_trace_state()));
   }
 
-  fn dispatch_completion_request(&mut self, trigger: LspCompletionContext, announce_empty: bool) -> bool {
+  fn dispatch_completion_request(
+    &mut self,
+    trigger: LspCompletionContext,
+    announce_empty: bool,
+  ) -> bool {
     let Some((uri, position)) = self.current_lsp_position() else {
       completion_trace_log("dispatch skip=no-lsp-position");
       return false;
@@ -2333,7 +2506,8 @@ impl SwiftEditor {
     self.lsp_completion_generation = self.lsp_completion_generation.wrapping_add(1);
     let generation = self.lsp_completion_generation;
     completion_trace_log(format!(
-      "dispatch generation={} trigger_kind={:?} trigger_char={:?} cursor={} replace_start={} announce_empty={} menu_active={} raw_items={} visible_items={}",
+      "dispatch generation={} trigger_kind={:?} trigger_char={:?} cursor={} replace_start={} \
+       announce_empty={} menu_active={} raw_items={} visible_items={}",
       generation,
       trigger.trigger_kind,
       trigger.trigger_character,
@@ -2358,10 +2532,17 @@ impl SwiftEditor {
     true
   }
 
-  fn dispatch_signature_help_request(&mut self, context: LspSignatureHelpContext, announce_failures: bool) -> bool {
+  fn dispatch_signature_help_request(
+    &mut self,
+    context: LspSignatureHelpContext,
+    announce_failures: bool,
+  ) -> bool {
     if !self.lsp_supports_signature_help() {
       if announce_failures {
-        self.push_warning("lsp", "signature help is not supported by the active server");
+        self.push_warning(
+          "lsp",
+          "signature help is not supported by the active server",
+        );
       }
       return false;
     }
@@ -2388,7 +2569,8 @@ impl SwiftEditor {
     announce_empty: bool,
   ) -> bool {
     completion_trace_log(format!(
-      "response generation={} current_generation={} request_cursor={} announce_empty={} mode={:?} {}",
+      "response generation={} current_generation={} request_cursor={} announce_empty={} mode={:?} \
+       {}",
       generation,
       self.lsp_completion_generation,
       request_cursor,
@@ -2399,9 +2581,7 @@ impl SwiftEditor {
     if generation != self.lsp_completion_generation || self.mode != Mode::Insert {
       completion_trace_log(format!(
         "response ignore reason=stale-or-not-insert generation={} current_generation={} mode={:?}",
-        generation,
-        self.lsp_completion_generation,
-        self.mode,
+        generation, self.lsp_completion_generation, self.mode,
       ));
       return false;
     }
@@ -2412,8 +2592,7 @@ impl SwiftEditor {
     if current_cursor != request_cursor {
       completion_trace_log(format!(
         "response ignore reason=cursor-moved request_cursor={} current_cursor={}",
-        request_cursor,
-        current_cursor,
+        request_cursor, current_cursor,
       ));
       return false;
     }
@@ -2435,7 +2614,10 @@ impl SwiftEditor {
     ));
     if completion.items.is_empty() {
       if !announce_empty && self.completion_menu.active {
-        completion_trace_log(format!("response preserve-empty-auto {}", self.completion_trace_state()));
+        completion_trace_log(format!(
+          "response preserve-empty-auto {}",
+          self.completion_trace_state()
+        ));
         return true;
       }
       self.clear_completion_state_with_reason("response-empty");
@@ -2493,17 +2675,27 @@ impl SwiftEditor {
     );
   }
 
-  fn handle_completion_resolve_response(&mut self, index: usize, response: &jsonrpc::Response) -> bool {
+  fn handle_completion_resolve_response(
+    &mut self,
+    index: usize,
+    response: &jsonrpc::Response,
+  ) -> bool {
     if let Some(error) = response.error.as_ref() {
       self.lsp_completion_resolved.insert(index);
-      self.push_warning("lsp", format!("completion resolve failed: {}", error.message));
+      self.push_warning(
+        "lsp",
+        format!("completion resolve failed: {}", error.message),
+      );
       return true;
     }
 
     let resolved = match parse_completion_item_response(response.result.as_ref()) {
       Ok(item) => item,
       Err(err) => {
-        self.push_warning("lsp", format!("failed to parse completion resolve response: {err}"));
+        self.push_warning(
+          "lsp",
+          format!("failed to parse completion resolve response: {err}"),
+        );
         return true;
       },
     };
@@ -2543,17 +2735,18 @@ impl SwiftEditor {
         return false;
       };
 
-      let snippet_base = if prepared.cursor_origin == Some(CompletionSnippetCursorOrigin::PrimaryEdit) {
-        item.primary_edit.as_ref().map(|edit| {
-          utf16_position_to_char_idx(
-            self.editor.document().text(),
-            edit.range.start.line,
-            edit.range.start.character,
-          )
-        })
-      } else {
-        None
-      };
+      let snippet_base =
+        if prepared.cursor_origin == Some(CompletionSnippetCursorOrigin::PrimaryEdit) {
+          item.primary_edit.as_ref().map(|edit| {
+            utf16_position_to_char_idx(
+              self.editor.document().text(),
+              edit.range.start.line,
+              edit.range.start.character,
+            )
+          })
+        } else {
+          None
+        };
 
       let mut edits = Vec::with_capacity(1 + item.additional_edits.len());
       if let Some(primary) = item.primary_edit {
@@ -2563,14 +2756,19 @@ impl SwiftEditor {
       let tx = match build_transaction_from_lsp_text_edits(self.editor.document().text(), &edits) {
         Ok(tx) => tx,
         Err(err) => {
-          self.push_error("lsp", format!("failed to build completion transaction: {err}"));
+          self.push_error(
+            "lsp",
+            format!("failed to build completion transaction: {err}"),
+          );
           return false;
         },
       };
 
       if self.apply_transaction(&tx) {
         if let (Some(base), Some(range)) = (snippet_base, prepared.cursor_range.as_ref())
-          && let Ok(mapped_base) = tx.changes().map_pos(base, the_lib::transaction::Assoc::Before)
+          && let Ok(mapped_base) = tx
+            .changes()
+            .map_pos(base, the_lib::transaction::Assoc::Before)
         {
           set_completion_snippet_selection(self.editor.document_mut(), mapped_base, range);
         }
@@ -2590,16 +2788,23 @@ impl SwiftEditor {
 
     let text_len = self.editor.document().text().len_chars();
     let cursor = self.active_cursor_char_idx().unwrap_or(text_len);
-    let fallback_start = self.lsp_completion_fallback_start.unwrap_or(cursor).min(cursor);
+    let fallback_start = self
+      .lsp_completion_fallback_start
+      .unwrap_or(cursor)
+      .min(cursor);
     let from = fallback_start.min(text_len);
     let to = cursor.min(text_len).max(from);
-    let tx = match the_lib::transaction::Transaction::change(
-      self.editor.document().text(),
-      vec![(from, to, Some(insert_text.clone().into()))],
-    ) {
+    let tx = match the_lib::transaction::Transaction::change(self.editor.document().text(), vec![(
+      from,
+      to,
+      Some(insert_text.clone().into()),
+    )]) {
       Ok(tx) => tx,
       Err(err) => {
-        self.push_error("lsp", format!("failed to build completion transaction: {err}"));
+        self.push_error(
+          "lsp",
+          format!("failed to build completion transaction: {err}"),
+        );
         return false;
       },
     };
@@ -2607,7 +2812,9 @@ impl SwiftEditor {
     if self.apply_transaction(&tx) {
       if prepared.cursor_origin == Some(CompletionSnippetCursorOrigin::InsertText)
         && let Some(range) = prepared.cursor_range.as_ref()
-        && let Ok(mapped_base) = tx.changes().map_pos(from, the_lib::transaction::Assoc::Before)
+        && let Ok(mapped_base) = tx
+          .changes()
+          .map_pos(from, the_lib::transaction::Assoc::Before)
       {
         set_completion_snippet_selection(self.editor.document_mut(), mapped_base, range);
       }
@@ -2673,10 +2880,13 @@ impl SwiftEditor {
       title,
       action.edit.is_some(),
       action.edit.as_ref().map_or(0, |edit| edit.documents.len()),
-      action
-        .edit
-        .as_ref()
-        .map_or(0, |edit| edit.documents.iter().map(|document| document.edits.len()).sum::<usize>()),
+      action.edit.as_ref().map_or(0, |edit| {
+        edit
+          .documents
+          .iter()
+          .map(|document| document.edits.len())
+          .sum::<usize>()
+      }),
       action.command.is_some(),
       action
         .command
@@ -2706,7 +2916,8 @@ impl SwiftEditor {
     let command_name = command.command.clone();
     let args_len = command.arguments.as_ref().map_or(0, Vec::len);
     let params = execute_command_params(&command.command, command.arguments);
-    let Some(runtime_index) = self.lsp_runtime_index_for_capability(LspCapability::WorkspaceCommand)
+    let Some(runtime_index) =
+      self.lsp_runtime_index_for_capability(LspCapability::WorkspaceCommand)
     else {
       code_action_trace_log(format!(
         "execute_command title={:?} command={:?} runtime=none",
@@ -2718,7 +2929,10 @@ impl SwiftEditor {
       "execute_command title={:?} command={:?} runtime_index={} args_len={}",
       title, command_name, runtime_index, args_len,
     ));
-    match self.lsp_runtimes[runtime_index].runtime.send_request("workspace/executeCommand", Some(params)) {
+    match self.lsp_runtimes[runtime_index]
+      .runtime
+      .send_request("workspace/executeCommand", Some(params))
+    {
       Ok(request_id) => {
         code_action_trace_log(format!(
           "execute_command dispatched title={:?} command={:?} request_id={}",
@@ -2731,7 +2945,10 @@ impl SwiftEditor {
           "execute_command failed title={:?} command={:?} err={}",
           title, command_name, err,
         ));
-        self.push_error("lsp", format!("failed to execute code action '{title}': {err}"));
+        self.push_error(
+          "lsp",
+          format!("failed to execute code action '{title}': {err}"),
+        );
       },
     }
     true
@@ -2749,15 +2966,25 @@ impl SwiftEditor {
     }
 
     let Some(uri) = self.current_lsp_uri() else {
-      code_action_trace_log(format!("resolve skip title={:?} reason=no-uri", action.title));
+      code_action_trace_log(format!(
+        "resolve skip title={:?} reason=no-uri",
+        action.title
+      ));
       return false;
     };
     let Some(params) = action.raw.clone() else {
-      code_action_trace_log(format!("resolve skip title={:?} reason=no-raw", action.title));
+      code_action_trace_log(format!(
+        "resolve skip title={:?} reason=no-raw",
+        action.title
+      ));
       return false;
     };
-    let Some(runtime_index) = self.lsp_runtime_index_for_capability(LspCapability::CodeAction) else {
-      code_action_trace_log(format!("resolve skip title={:?} reason=no-runtime", action.title));
+    let Some(runtime_index) = self.lsp_runtime_index_for_capability(LspCapability::CodeAction)
+    else {
+      code_action_trace_log(format!(
+        "resolve skip title={:?} reason=no-runtime",
+        action.title
+      ));
       return false;
     };
 
@@ -2765,20 +2992,30 @@ impl SwiftEditor {
       "resolve dispatch title={:?} runtime_index={} uri={}",
       action.title, runtime_index, uri,
     ));
-    match self.lsp_runtimes[runtime_index].runtime.send_request("codeAction/resolve", Some(params)) {
+    match self.lsp_runtimes[runtime_index]
+      .runtime
+      .send_request("codeAction/resolve", Some(params))
+    {
       Ok(request_id) => {
         code_action_trace_log(format!(
           "resolve dispatched title={:?} request_id={}",
           action.title, request_id,
         ));
-        self.lsp_runtimes[runtime_index]
-          .pending_requests
-          .insert(request_id, PendingLspRequestKind::CodeActionResolve { uri, action });
+        self.lsp_runtimes[runtime_index].pending_requests.insert(
+          request_id,
+          PendingLspRequestKind::CodeActionResolve { uri, action },
+        );
         true
       },
       Err(err) => {
-        code_action_trace_log(format!("resolve failed title={:?} err={}", action.title, err));
-        self.push_warning("lsp", format!("failed to dispatch codeAction/resolve: {err}"));
+        code_action_trace_log(format!(
+          "resolve failed title={:?} err={}",
+          action.title, err
+        ));
+        self.push_warning(
+          "lsp",
+          format!("failed to dispatch codeAction/resolve: {err}"),
+        );
         false
       },
     }
@@ -2807,14 +3044,18 @@ impl SwiftEditor {
 
     for document in &workspace_edit.documents {
       if document.edits.is_empty() {
-        code_action_trace_log(format!("workspace_edit skip_empty_document uri={}", document.uri));
+        code_action_trace_log(format!(
+          "workspace_edit skip_empty_document uri={}",
+          document.uri
+        ));
         continue;
       }
       let document_path = normalized_file_uri_path(&document.uri);
       let is_current = current_uri.as_ref() == Some(&document.uri)
         || (current_path.is_some() && current_path == document_path);
       code_action_trace_log(format!(
-        "workspace_edit apply_document uri={} edits={} current={} current_path={:?} document_path={:?}",
+        "workspace_edit apply_document uri={} edits={} current={} current_path={:?} \
+         document_path={:?}",
         document.uri,
         document.edits.len(),
         is_current,
@@ -2872,7 +3113,10 @@ impl SwiftEditor {
 
   fn apply_text_edits_to_file_uri(&mut self, uri: &str, edits: &[LspTextEdit]) -> bool {
     let Some(path) = path_for_file_uri(uri) else {
-      self.push_warning("lsp", format!("unsupported file URI in workspace edit: {uri}"));
+      self.push_warning(
+        "lsp",
+        format!("unsupported file URI in workspace edit: {uri}"),
+      );
       return false;
     };
 
@@ -2888,18 +3132,27 @@ impl SwiftEditor {
     let tx = match build_transaction_from_lsp_text_edits(&rope, edits) {
       Ok(tx) => tx,
       Err(err) => {
-        self.push_error("lsp", format!("failed to build workspace edit transaction: {err}"));
+        self.push_error(
+          "lsp",
+          format!("failed to build workspace edit transaction: {err}"),
+        );
         return false;
       },
     };
 
     if let Err(err) = tx.apply(&mut rope) {
-      self.push_error("lsp", format!("failed to apply edits to '{}': {err}", path.display()));
+      self.push_error(
+        "lsp",
+        format!("failed to apply edits to '{}': {err}", path.display()),
+      );
       return false;
     }
 
     if let Err(err) = std::fs::write(&path, rope.to_string()) {
-      self.push_error("lsp", format!("failed to write '{}': {err}", path.display()));
+      self.push_error(
+        "lsp",
+        format!("failed to write '{}': {err}", path.display()),
+      );
       return false;
     }
     true
@@ -2920,7 +3173,9 @@ impl SwiftEditor {
 
     let mut exact = diagnostics
       .iter()
-      .filter(|diagnostic| diagnostic_contains_position(diagnostic, position.line, position.character))
+      .filter(|diagnostic| {
+        diagnostic_contains_position(diagnostic, position.line, position.character)
+      })
       .cloned()
       .collect::<Vec<_>>();
     if exact.is_empty() {
@@ -2950,10 +3205,18 @@ impl SwiftEditor {
       };
       let mut section = format!("### {severity}\n\n{}", diagnostic.message.trim());
       let mut meta = Vec::new();
-      if let Some(source) = diagnostic.source.as_deref().filter(|value| !value.trim().is_empty()) {
+      if let Some(source) = diagnostic
+        .source
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+      {
         meta.push(format!("`{source}`"));
       }
-      if let Some(code) = diagnostic.code.as_deref().filter(|value| !value.trim().is_empty()) {
+      if let Some(code) = diagnostic
+        .code
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+      {
         meta.push(format!("`{code}`"));
       }
       if !meta.is_empty() {
@@ -2975,13 +3238,10 @@ impl SwiftEditor {
     self.signature_help.clear();
 
     if self.mode == Mode::Insert {
-      handle_key(
-        self,
-        KeyEvent {
-          key: Key::Escape,
-          modifiers: the_default::Modifiers::empty(),
-        },
-      );
+      handle_key(self, KeyEvent {
+        key:       Key::Escape,
+        modifiers: the_default::Modifiers::empty(),
+      });
       return true;
     }
 
@@ -3005,18 +3265,29 @@ impl SwiftEditor {
     }
   }
 
-  fn dispatch_lsp_request(&mut self, method: &'static str, params: serde_json::Value, pending: PendingLspRequestKind) {
+  fn dispatch_lsp_request(
+    &mut self,
+    method: &'static str,
+    params: serde_json::Value,
+    pending: PendingLspRequestKind,
+  ) {
     let Some((runtime_index, _)) = self
       .lsp_runtimes
       .iter()
       .enumerate()
       .find(|(_, runtime)| runtime.ready)
     else {
-      self.push_error("lsp", format!("failed to dispatch {method}: no active language server"));
+      self.push_error(
+        "lsp",
+        format!("failed to dispatch {method}: no active language server"),
+      );
       return;
     };
     self.cancel_pending_lsp_requests_for(pending.cancellation_key());
-    match self.lsp_runtimes[runtime_index].runtime.send_request(method, Some(params)) {
+    match self.lsp_runtimes[runtime_index]
+      .runtime
+      .send_request(method, Some(params))
+    {
       Ok(request_id) => {
         self.lsp_runtimes[runtime_index]
           .pending_requests
@@ -3032,7 +3303,10 @@ impl SwiftEditor {
     let signature = match parse_signature_help_response(result) {
       Ok(signature) => signature,
       Err(err) => {
-        self.push_error("lsp", format!("failed to parse signature help response: {err}"));
+        self.push_error(
+          "lsp",
+          format!("failed to parse signature help response: {err}"),
+        );
         return true;
       },
     };
@@ -3050,14 +3324,18 @@ impl SwiftEditor {
     let signatures = signature
       .signatures
       .into_iter()
-      .map(|item| the_default::SignatureHelpItem {
-        label: item.label,
-        documentation: item.documentation,
-        active_parameter: item.active_parameter,
-        active_parameter_range: item.active_parameter_range,
+      .map(|item| {
+        the_default::SignatureHelpItem {
+          label:                  item.label,
+          documentation:          item.documentation,
+          active_parameter:       item.active_parameter,
+          active_parameter_range: item.active_parameter_range,
+        }
       })
       .collect::<Vec<_>>();
-    self.signature_help.set_signatures(signatures, signature.active_signature);
+    self
+      .signature_help
+      .set_signatures(signatures, signature.active_signature);
     true
   }
 
@@ -3068,7 +3346,10 @@ impl SwiftEditor {
         code_action_trace_log(format!("response parse_error err={}", err));
         self.clear_code_action_menu_state();
         self.completion_menu.clear();
-        self.push_error("lsp", format!("failed to parse code actions response: {err}"));
+        self.push_error(
+          "lsp",
+          format!("failed to parse code actions response: {err}"),
+        );
         return true;
       },
     };
@@ -3078,14 +3359,16 @@ impl SwiftEditor {
       actions.len(),
       actions
         .iter()
-        .map(|action| format!(
-          "{}{{preferred={}, resolve={}, edit={}, command={}}}",
-          action.title,
-          action.is_preferred,
-          action.needs_resolve(),
-          action.edit.is_some(),
-          action.command.is_some(),
-        ))
+        .map(|action| {
+          format!(
+            "{}{{preferred={}, resolve={}, edit={}, command={}}}",
+            action.title,
+            action.is_preferred,
+            action.needs_resolve(),
+            action.edit.is_some(),
+            action.command.is_some(),
+          )
+        })
         .collect::<Vec<_>>()
         .join(" | "),
     ));
@@ -3110,8 +3393,14 @@ impl SwiftEditor {
     let resolved = match parse_code_action_response(result) {
       Ok(action) => action,
       Err(err) => {
-        code_action_trace_log(format!("resolve_response parse_error title={:?} err={}", original_title, err));
-        self.push_warning("lsp", format!("failed to parse code action resolve response: {err}"));
+        code_action_trace_log(format!(
+          "resolve_response parse_error title={:?} err={}",
+          original_title, err
+        ));
+        self.push_warning(
+          "lsp",
+          format!("failed to parse code action resolve response: {err}"),
+        );
         return true;
       },
     };
@@ -3121,14 +3410,18 @@ impl SwiftEditor {
       None => action,
     };
     code_action_trace_log(format!(
-      "resolve_response title={:?} has_edit={} edit_docs={} edit_edits={} has_command={} command={}",
+      "resolve_response title={:?} has_edit={} edit_docs={} edit_edits={} has_command={} \
+       command={}",
       action.title,
       action.edit.is_some(),
       action.edit.as_ref().map_or(0, |edit| edit.documents.len()),
-      action
-        .edit
-        .as_ref()
-        .map_or(0, |edit| edit.documents.iter().map(|document| document.edits.len()).sum::<usize>()),
+      action.edit.as_ref().map_or(0, |edit| {
+        edit
+          .documents
+          .iter()
+          .map(|document| document.edits.len())
+          .sum::<usize>()
+      }),
       action.command.is_some(),
       action
         .command
@@ -3146,7 +3439,10 @@ impl SwiftEditor {
     let highlights = match parse_document_highlights_response(result) {
       Ok(highlights) => highlights,
       Err(err) => {
-        self.push_error("lsp", format!("failed to parse document-highlight response: {err}"));
+        self.push_error(
+          "lsp",
+          format!("failed to parse document-highlight response: {err}"),
+        );
         return true;
       },
     };
@@ -3262,7 +3558,10 @@ impl SwiftEditor {
     Some(&self.diagnostics.document(&uri)?.diagnostics)
   }
 
-  fn current_document_diagnostics_for_buffer(&self, buffer_id: BufferId) -> Option<Vec<Diagnostic>> {
+  fn current_document_diagnostics_for_buffer(
+    &self,
+    buffer_id: BufferId,
+  ) -> Option<Vec<Diagnostic>> {
     let path = self.editor.buffer_file_path(buffer_id)?;
     let uri = file_uri_for_path(path)?;
     Some(self.diagnostics.document(&uri)?.diagnostics.clone())
@@ -3304,7 +3603,11 @@ impl SwiftEditor {
       kind,
       PendingLspRequestKind::CodeActions { .. } | PendingLspRequestKind::CodeActionResolve { .. }
     ) {
-      code_action_trace_log(format!("response received kind={} uri={}", kind.label(), kind.uri()));
+      code_action_trace_log(format!(
+        "response received kind={} uri={}",
+        kind.label(),
+        kind.uri()
+      ));
     }
 
     if let Some(error) = response.error {
@@ -3312,9 +3615,16 @@ impl SwiftEditor {
         kind,
         PendingLspRequestKind::CodeActions { .. } | PendingLspRequestKind::CodeActionResolve { .. }
       ) {
-        code_action_trace_log(format!("response error kind={} message={}", kind.label(), error.message));
+        code_action_trace_log(format!(
+          "response error kind={} message={}",
+          kind.label(),
+          error.message
+        ));
       }
-      self.push_error("lsp", format!("lsp {} failed: {}", kind.label(), error.message));
+      self.push_error(
+        "lsp",
+        format!("lsp {} failed: {}", kind.label(), error.message),
+      );
       return true;
     }
 
@@ -3323,7 +3633,10 @@ impl SwiftEditor {
         let locations = match parse_locations_response(response.result.as_ref()) {
           Ok(locations) => locations,
           Err(err) => {
-            self.push_error("lsp", format!("failed to parse goto-declaration response: {err}"));
+            self.push_error(
+              "lsp",
+              format!("failed to parse goto-declaration response: {err}"),
+            );
             return true;
           },
         };
@@ -3337,7 +3650,10 @@ impl SwiftEditor {
         let locations = match parse_locations_response(response.result.as_ref()) {
           Ok(locations) => locations,
           Err(err) => {
-            self.push_error("lsp", format!("failed to parse goto-definition response: {err}"));
+            self.push_error(
+              "lsp",
+              format!("failed to parse goto-definition response: {err}"),
+            );
             return true;
           },
         };
@@ -3351,7 +3667,10 @@ impl SwiftEditor {
         let locations = match parse_locations_response(response.result.as_ref()) {
           Ok(locations) => locations,
           Err(err) => {
-            self.push_error("lsp", format!("failed to parse goto-type-definition response: {err}"));
+            self.push_error(
+              "lsp",
+              format!("failed to parse goto-type-definition response: {err}"),
+            );
             return true;
           },
         };
@@ -3365,7 +3684,10 @@ impl SwiftEditor {
         let locations = match parse_locations_response(response.result.as_ref()) {
           Ok(locations) => locations,
           Err(err) => {
-            self.push_error("lsp", format!("failed to parse goto-implementation response: {err}"));
+            self.push_error(
+              "lsp",
+              format!("failed to parse goto-implementation response: {err}"),
+            );
             return true;
           },
         };
@@ -3421,7 +3743,10 @@ impl SwiftEditor {
         let symbols = match parse_document_symbols_response(&uri, response.result.as_ref()) {
           Ok(symbols) => symbols,
           Err(err) => {
-            self.push_error("lsp", format!("failed to parse document-symbols response: {err}"));
+            self.push_error(
+              "lsp",
+              format!("failed to parse document-symbols response: {err}"),
+            );
             return true;
           },
         };
@@ -3431,7 +3756,10 @@ impl SwiftEditor {
         let symbols = match parse_workspace_symbols_response(response.result.as_ref()) {
           Ok(symbols) => symbols,
           Err(err) => {
-            self.push_error("lsp", format!("failed to parse workspace-symbols response: {err}"));
+            self.push_error(
+              "lsp",
+              format!("failed to parse workspace-symbols response: {err}"),
+            );
             return true;
           },
         };
@@ -3443,18 +3771,24 @@ impl SwiftEditor {
         replace_start,
         announce_empty,
         ..
-      } => self.handle_completion_response(
-        response.result.as_ref(),
-        generation,
-        cursor,
-        replace_start,
-        announce_empty,
-      ),
+      } => {
+        self.handle_completion_response(
+          response.result.as_ref(),
+          generation,
+          cursor,
+          replace_start,
+          announce_empty,
+        )
+      },
       PendingLspRequestKind::CompletionResolve { index, .. } => {
         self.handle_completion_resolve_response(index, &response)
       },
-      PendingLspRequestKind::SignatureHelp { .. } => self.handle_signature_help_response(response.result.as_ref()),
-      PendingLspRequestKind::CodeActions { .. } => self.handle_code_actions_response(response.result.as_ref()),
+      PendingLspRequestKind::SignatureHelp { .. } => {
+        self.handle_signature_help_response(response.result.as_ref())
+      },
+      PendingLspRequestKind::CodeActions { .. } => {
+        self.handle_code_actions_response(response.result.as_ref())
+      },
       PendingLspRequestKind::CodeActionResolve { action, .. } => {
         self.handle_code_action_resolve_response(action, response.result.as_ref())
       },
@@ -3479,10 +3813,18 @@ impl SwiftEditor {
         }
       },
       LspStatusPhase::Starting => {
-        format!("lsp: {} {}", spinner_frame(self.lsp_spinner_index), detail_if_empty(detail, "starting"))
+        format!(
+          "lsp: {} {}",
+          spinner_frame(self.lsp_spinner_index),
+          detail_if_empty(detail, "starting")
+        )
       },
       LspStatusPhase::Initializing => {
-        format!("lsp: {} {}", spinner_frame(self.lsp_spinner_index), detail_if_empty(detail, "initializing"))
+        format!(
+          "lsp: {} {}",
+          spinner_frame(self.lsp_spinner_index),
+          detail_if_empty(detail, "initializing")
+        )
       },
       LspStatusPhase::Ready => {
         if detail.is_empty() {
@@ -3492,7 +3834,11 @@ impl SwiftEditor {
         }
       },
       LspStatusPhase::Busy => {
-        format!("lsp: {} {}", spinner_frame(self.lsp_spinner_index), detail_if_empty(detail, "working"))
+        format!(
+          "lsp: {} {}",
+          spinner_frame(self.lsp_spinner_index),
+          detail_if_empty(detail, "working")
+        )
       },
       LspStatusPhase::Error => {
         if detail.is_empty() {
@@ -3543,7 +3889,11 @@ impl SwiftEditor {
         };
         match event {
           LspEvent::Started { .. } => {
-            self.set_lsp_status_for_runtime(runtime_index, LspStatusPhase::Starting, Some("starting".into()));
+            self.set_lsp_status_for_runtime(
+              runtime_index,
+              LspStatusPhase::Starting,
+              Some("starting".into()),
+            );
             changed = true;
           },
           LspEvent::ServerStarted { server_name, .. } => {
@@ -3553,12 +3903,20 @@ impl SwiftEditor {
               runtime.active_progress_tokens.clear();
               runtime.pending_requests.clear();
             }
-            self.set_lsp_status_for_runtime(runtime_index, LspStatusPhase::Starting, Some(server_name));
+            self.set_lsp_status_for_runtime(
+              runtime_index,
+              LspStatusPhase::Starting,
+              Some(server_name),
+            );
             changed = true;
           },
           LspEvent::RequestDispatched { method, .. } => {
             if method == "initialize" {
-              self.set_lsp_status_for_runtime(runtime_index, LspStatusPhase::Initializing, Some("initializing".into()));
+              self.set_lsp_status_for_runtime(
+                runtime_index,
+                LspStatusPhase::Initializing,
+                Some("initializing".into()),
+              );
               changed = true;
             }
           },
@@ -3569,13 +3927,18 @@ impl SwiftEditor {
               runtime.pending_requests.clear();
             }
             self.open_current_document_for_runtime(runtime_index);
-            self.set_lsp_status_for_runtime(runtime_index, LspStatusPhase::Ready, Some(server_name));
+            self.set_lsp_status_for_runtime(
+              runtime_index,
+              LspStatusPhase::Ready,
+              Some(server_name),
+            );
             changed = true;
           },
           LspEvent::Progress { progress } => {
             match progress.kind {
               LspProgressKind::Begin => {
-                let text = format_lsp_progress_text(progress.title.as_deref(), progress.message.as_deref());
+                let text =
+                  format_lsp_progress_text(progress.title.as_deref(), progress.message.as_deref());
                 if let Some(runtime) = self.lsp_runtimes.get_mut(runtime_index) {
                   runtime.active_progress_tokens.insert(progress.token);
                 }
@@ -3588,7 +3951,10 @@ impl SwiftEditor {
                   .get(runtime_index)
                   .is_some_and(|runtime| runtime.active_progress_tokens.contains(&progress.token));
                 if active {
-                  let text = format_lsp_progress_text(progress.title.as_deref(), progress.message.as_deref());
+                  let text = format_lsp_progress_text(
+                    progress.title.as_deref(),
+                    progress.message.as_deref(),
+                  );
                   self.set_lsp_status_for_runtime(runtime_index, LspStatusPhase::Busy, Some(text));
                   changed = true;
                 }
@@ -3610,7 +3976,11 @@ impl SwiftEditor {
               "event workspace/applyEdit source={:?} documents={} total_edits={}",
               source,
               edit.documents.len(),
-              edit.documents.iter().map(|document| document.edits.len()).sum::<usize>(),
+              edit
+                .documents
+                .iter()
+                .map(|document| document.edits.len())
+                .sum::<usize>(),
             ));
             let _ = self.apply_workspace_edit(&edit, source);
             changed = true;
@@ -3622,7 +3992,11 @@ impl SwiftEditor {
               runtime.active_progress_tokens.clear();
               runtime.pending_requests.clear();
             }
-            self.set_lsp_status_for_runtime(runtime_index, LspStatusPhase::Starting, Some("restarting".into()));
+            self.set_lsp_status_for_runtime(
+              runtime_index,
+              LspStatusPhase::Starting,
+              Some("restarting".into()),
+            );
             changed = true;
           },
           LspEvent::Error(message) => {
@@ -3632,7 +4006,11 @@ impl SwiftEditor {
               runtime.active_progress_tokens.clear();
               runtime.pending_requests.clear();
             }
-            self.set_lsp_status_for_runtime(runtime_index, LspStatusPhase::Error, Some(summarize_lsp_error(&message)));
+            self.set_lsp_status_for_runtime(
+              runtime_index,
+              LspStatusPhase::Error,
+              Some(summarize_lsp_error(&message)),
+            );
             self.push_error("lsp", message);
             changed = true;
           },
@@ -3644,11 +4022,11 @@ impl SwiftEditor {
               .document(&diagnostic_uri)
               .map(|document| document.counts())
               .unwrap_or_default();
-            let next_counts = self.diagnostics.apply_document_for_provider(
-              &format!("swift-runtime-{runtime_index}"),
-              diagnostics,
-            );
-            if active_uri.is_some_and(|uri| uri == diagnostic_uri) && previous_counts != next_counts {
+            let next_counts = self
+              .diagnostics
+              .apply_document_for_provider(&format!("swift-runtime-{runtime_index}"), diagnostics);
+            if active_uri.is_some_and(|uri| uri == diagnostic_uri) && previous_counts != next_counts
+            {
               self.publish_lsp_diagnostic_message(next_counts);
               changed = true;
             }
@@ -3702,7 +4080,11 @@ impl SwiftEditor {
     }
   }
 
-  fn apply_vcs_refresh_result(&mut self, statusline: Option<String>, diff_base: Option<Vec<u8>>) -> bool {
+  fn apply_vcs_refresh_result(
+    &mut self,
+    statusline: Option<String>,
+    diff_base: Option<Vec<u8>>,
+  ) -> bool {
     let previous_statusline = self.vcs_statusline.clone();
     let previous_signs = self.gutter_diff_signs.clone();
     let previous_has_diff = self.vcs_diff.is_some();
@@ -3710,7 +4092,9 @@ impl SwiftEditor {
     self.vcs_statusline = statusline;
     let Some(diff_base) = diff_base else {
       self.clear_vcs_diff();
-      return self.vcs_statusline != previous_statusline || !previous_signs.is_empty() || previous_has_diff;
+      return self.vcs_statusline != previous_statusline
+        || !previous_signs.is_empty()
+        || previous_has_diff;
     };
 
     let diff_base = Rope::from_str(String::from_utf8_lossy(&diff_base).as_ref());
@@ -3718,7 +4102,9 @@ impl SwiftEditor {
     let handle = DiffHandle::new(diff_base, doc);
     self.gutter_diff_signs = vcs_gutter_signs(&handle);
     self.vcs_diff = Some(handle);
-    self.vcs_statusline != previous_statusline || self.gutter_diff_signs != previous_signs || !previous_has_diff
+    self.vcs_statusline != previous_statusline
+      || self.gutter_diff_signs != previous_signs
+      || !previous_has_diff
   }
 
   fn store_vcs_scan(&mut self, scan: VcsWorkspaceScan) {
@@ -3726,7 +4112,9 @@ impl SwiftEditor {
       current.repo_root != scan.repo_root || current.head_revision != scan.head_revision
     });
     if head_changed {
-      self.vcs_base_cache.retain(|key, _| key.repo_root != scan.repo_root);
+      self
+        .vcs_base_cache
+        .retain(|key, _| key.repo_root != scan.repo_root);
     }
     self.vcs_scan = Some(Arc::new(scan));
   }
@@ -3814,19 +4202,25 @@ impl SwiftEditor {
     let merged = self.merged_vcs_changed_file_items(&scan);
     let merged_count = merged.len();
     let current_file_changed = self.file_path.as_ref().is_some_and(|path| {
-      merged.iter().any(|item| item.path == *path || item.from_path.as_ref() == Some(path))
+      merged
+        .iter()
+        .any(|item| item.path == *path || item.from_path.as_ref() == Some(path))
     });
     let changes = merged
       .into_iter()
-      .map(|item| match item.kind {
-        FilePickerChangedKind::Untracked => FileChange::Untracked { path: item.path },
-        FilePickerChangedKind::Modified => FileChange::Modified { path: item.path },
-        FilePickerChangedKind::Conflict => FileChange::Conflict { path: item.path },
-        FilePickerChangedKind::Deleted => FileChange::Deleted { path: item.path },
-        FilePickerChangedKind::Renamed => FileChange::Renamed {
-          from_path: item.from_path.unwrap_or_else(|| item.path.clone()),
-          to_path: item.path,
-        },
+      .map(|item| {
+        match item.kind {
+          FilePickerChangedKind::Untracked => FileChange::Untracked { path: item.path },
+          FilePickerChangedKind::Modified => FileChange::Modified { path: item.path },
+          FilePickerChangedKind::Conflict => FileChange::Conflict { path: item.path },
+          FilePickerChangedKind::Deleted => FileChange::Deleted { path: item.path },
+          FilePickerChangedKind::Renamed => {
+            FileChange::Renamed {
+              from_path: item.from_path.unwrap_or_else(|| item.path.clone()),
+              to_path:   item.path,
+            }
+          },
+        }
       })
       .collect::<Vec<_>>();
     let collapsed = collapse_file_tree_vcs_statuses(&changes, root);
@@ -3861,9 +4255,9 @@ impl SwiftEditor {
 
   fn cached_vcs_base_for_path(&mut self, scan: &VcsWorkspaceScan, path: &Path) -> Option<Vec<u8>> {
     let key = VcsBaseCacheKey {
-      repo_root: scan.repo_root.clone(),
+      repo_root:     scan.repo_root.clone(),
       head_revision: scan.head_revision.clone(),
-      path: path.to_path_buf(),
+      path:          path.to_path_buf(),
     };
     if let Some(bytes) = self.vcs_base_cache.get(&key) {
       return bytes.clone();
@@ -3886,9 +4280,9 @@ impl SwiftEditor {
       FileChange::Renamed { from_path, .. } => from_path.clone(),
     };
     let key = VcsBaseCacheKey {
-      repo_root: scan.repo_root.clone(),
+      repo_root:     scan.repo_root.clone(),
       head_revision: scan.head_revision.clone(),
-      path: base_path,
+      path:          base_path,
     };
     if let Some(bytes) = self.vcs_base_cache.get(&key) {
       return bytes.clone();
@@ -3898,43 +4292,64 @@ impl SwiftEditor {
     bytes
   }
 
-  fn shared_vcs_changed_file_items(&self, scan: &VcsWorkspaceScan) -> Vec<FilePickerChangedFileItem> {
+  fn shared_vcs_changed_file_items(
+    &self,
+    scan: &VcsWorkspaceScan,
+  ) -> Vec<FilePickerChangedFileItem> {
     scan
       .changes
       .iter()
-      .map(|change| match change {
-        FileChange::Untracked { path } => FilePickerChangedFileItem {
-          kind: FilePickerChangedKind::Untracked,
-          path: path.clone(),
-          from_path: None,
-        },
-        FileChange::Modified { path } => FilePickerChangedFileItem {
-          kind: FilePickerChangedKind::Modified,
-          path: path.clone(),
-          from_path: None,
-        },
-        FileChange::Conflict { path } => FilePickerChangedFileItem {
-          kind: FilePickerChangedKind::Conflict,
-          path: path.clone(),
-          from_path: None,
-        },
-        FileChange::Deleted { path } => FilePickerChangedFileItem {
-          kind: FilePickerChangedKind::Deleted,
-          path: path.clone(),
-          from_path: None,
-        },
-        FileChange::Renamed { from_path, to_path } => FilePickerChangedFileItem {
-          kind: FilePickerChangedKind::Renamed,
-          path: to_path.clone(),
-          from_path: Some(from_path.clone()),
-        },
+      .map(|change| {
+        match change {
+          FileChange::Untracked { path } => {
+            FilePickerChangedFileItem {
+              kind:      FilePickerChangedKind::Untracked,
+              path:      path.clone(),
+              from_path: None,
+            }
+          },
+          FileChange::Modified { path } => {
+            FilePickerChangedFileItem {
+              kind:      FilePickerChangedKind::Modified,
+              path:      path.clone(),
+              from_path: None,
+            }
+          },
+          FileChange::Conflict { path } => {
+            FilePickerChangedFileItem {
+              kind:      FilePickerChangedKind::Conflict,
+              path:      path.clone(),
+              from_path: None,
+            }
+          },
+          FileChange::Deleted { path } => {
+            FilePickerChangedFileItem {
+              kind:      FilePickerChangedKind::Deleted,
+              path:      path.clone(),
+              from_path: None,
+            }
+          },
+          FileChange::Renamed { from_path, to_path } => {
+            FilePickerChangedFileItem {
+              kind:      FilePickerChangedKind::Renamed,
+              path:      to_path.clone(),
+              from_path: Some(from_path.clone()),
+            }
+          },
+        }
       })
       .collect()
   }
 
-  fn merged_vcs_changed_file_items(&self, scan: &VcsWorkspaceScan) -> Vec<FilePickerChangedFileItem> {
+  fn merged_vcs_changed_file_items(
+    &self,
+    scan: &VcsWorkspaceScan,
+  ) -> Vec<FilePickerChangedFileItem> {
     let mut items = self.shared_vcs_changed_file_items(scan);
-    let mut seen = items.iter().map(|item| item.path.clone()).collect::<HashSet<_>>();
+    let mut seen = items
+      .iter()
+      .map(|item| item.path.clone())
+      .collect::<HashSet<_>>();
 
     for snapshot in self.editor.buffer_snapshots_mru() {
       if !snapshot.modified {
@@ -4038,7 +4453,11 @@ impl SwiftEditor {
         .as_ref()
         .and_then(|scan| scan.statusline_info.as_ref())
         .map(|info| info.statusline_text())
-        .or_else(|| vcs_provider.get_statusline_info(&path).map(|info| info.statusline_text()));
+        .or_else(|| {
+          vcs_provider
+            .get_statusline_info(&path)
+            .map(|info| info.statusline_text())
+        });
       let _ = tx.send(VcsStatuslineRefreshResult {
         generation,
         path,
@@ -4110,7 +4529,10 @@ impl SwiftEditor {
       return changed;
     };
 
-    let current = self.vcs_watch.as_ref().map(|watch| watch.stream.path.as_path());
+    let current = self
+      .vcs_watch
+      .as_ref()
+      .map(|watch| watch.stream.path.as_path());
     if current == Some(root.as_path()) {
       return false;
     }
@@ -4118,7 +4540,7 @@ impl SwiftEditor {
     let (events_rx, watch_handle) = watch_path(&root, vcs_watch_latency());
     let uri = file_uri_for_path(&root).unwrap_or_else(|| format!("file://{}", root.display()));
     self.vcs_watch = Some(VcsWatchState {
-      stream: WatchedFileEventsState {
+      stream:        WatchedFileEventsState {
         path: root,
         uri,
         events_rx,
@@ -4172,7 +4594,7 @@ impl SwiftEditor {
 
     let (events_rx, watch_handle) = watch_path(&path, active_file_watch_latency());
     self.active_file_watch = Some(ActiveFileWatchState {
-      stream: WatchedFileEventsState {
+      stream:        WatchedFileEventsState {
         path: path.clone(),
         uri: format!("file://{}", path.display()),
         events_rx,
@@ -4185,7 +4607,11 @@ impl SwiftEditor {
     true
   }
 
-  fn handle_active_file_watch_change(&mut self, watched_path: &Path, change_kind: PathEventKind) -> bool {
+  fn handle_active_file_watch_change(
+    &mut self,
+    watched_path: &Path,
+    change_kind: PathEventKind,
+  ) -> bool {
     let label = watched_path
       .file_name()
       .map(|name| name.to_string_lossy().to_string())
@@ -4203,25 +4629,31 @@ impl SwiftEditor {
         let current = self.editor.document().text().clone();
         let buffer_modified = self.editor.document().flags().modified;
         let decision = match self.active_file_watch.as_mut() {
-          Some(watch) => match evaluate_external_reload_from_disk(
-            &mut watch.stream.reload_state,
-            &mut watch.stream.reload_io,
-            watched_path,
-            &current,
-            buffer_modified,
-          ) {
-            Ok(decision) => decision,
-            Err(FileWatchReloadError::BackoffActive { .. }) => return false,
-            Err(FileWatchReloadError::ReadFailed { error, retry_after, .. }) => {
-              let retry_in_ms = retry_after.saturating_duration_since(Instant::now()).as_millis();
-              self.push_warning(
-                "watch",
-                format!(
-                  "failed to read '{label}' from disk: {error} (retrying in {retry_in_ms}ms)"
-                ),
-              );
-              return true;
-            },
+          Some(watch) => {
+            match evaluate_external_reload_from_disk(
+              &mut watch.stream.reload_state,
+              &mut watch.stream.reload_io,
+              watched_path,
+              &current,
+              buffer_modified,
+            ) {
+              Ok(decision) => decision,
+              Err(FileWatchReloadError::BackoffActive { .. }) => return false,
+              Err(FileWatchReloadError::ReadFailed {
+                error, retry_after, ..
+              }) => {
+                let retry_in_ms = retry_after
+                  .saturating_duration_since(Instant::now())
+                  .as_millis();
+                self.push_warning(
+                  "watch",
+                  format!(
+                    "failed to read '{label}' from disk: {error} (retrying in {retry_in_ms}ms)"
+                  ),
+                );
+                return true;
+              },
+            }
           },
           None => return false,
         };
@@ -4232,24 +4664,27 @@ impl SwiftEditor {
             self.push_warning(
               "watch",
               format!(
-                "file changed on disk: {label} (buffer has unsaved changes; run :rl to reload disk or :w! to overwrite disk)"
+                "file changed on disk: {label} (buffer has unsaved changes; run :rl to reload \
+                 disk or :w! to overwrite disk)"
               ),
             );
             true
           },
           FileWatchReloadDecision::ConflictOngoing => false,
-          FileWatchReloadDecision::ReloadNeeded => match <Self as DefaultContext>::reload_file_preserving_view(self, watched_path) {
-            Ok(()) => {
-              if let Some(watch) = self.active_file_watch.as_mut() {
-                mark_reload_applied(&mut watch.stream.reload_state);
-              }
-              self.push_info("watch", format!("reloaded from disk: {label}"));
-              true
-            },
-            Err(err) => {
-              self.push_error("watch", format!("failed to reload '{label}': {err}"));
-              true
-            },
+          FileWatchReloadDecision::ReloadNeeded => {
+            match <Self as DefaultContext>::reload_file_preserving_view(self, watched_path) {
+              Ok(()) => {
+                if let Some(watch) = self.active_file_watch.as_mut() {
+                  mark_reload_applied(&mut watch.stream.reload_state);
+                }
+                self.push_info("watch", format!("reloaded from disk: {label}"));
+                true
+              },
+              Err(err) => {
+                self.push_error("watch", format!("failed to reload '{label}': {err}"));
+                true
+              },
+            }
           },
         }
       },
@@ -4259,7 +4694,10 @@ impl SwiftEditor {
   fn poll_active_file_watch(&mut self) -> bool {
     let mut changed = self.sync_active_file_watch_state();
     let outcome = match poll_watch_events(
-      self.active_file_watch.as_mut().map(|watch| &mut watch.stream),
+      self
+        .active_file_watch
+        .as_mut()
+        .map(|watch| &mut watch.stream),
       Instant::now(),
       "swift",
       |_, _| {},
@@ -4286,7 +4724,7 @@ impl SwiftEditor {
     }
 
     let options = GlobalSearchOptions {
-      smart_case: true,
+      smart_case:  true,
       file_picker: self.file_picker.options.clone(),
     };
     if let Err(err) = self.global_search.activate(root.as_path(), options) {
@@ -4311,7 +4749,9 @@ impl SwiftEditor {
     if !self.global_search.is_active() {
       return;
     }
-    self.global_search.schedule(query, self.global_search_documents());
+    self
+      .global_search
+      .schedule(query, self.global_search_documents());
   }
 
   fn poll_global_search(&mut self) -> bool {
@@ -4379,13 +4819,21 @@ impl SwiftEditor {
     let vcs_watch_changed = self.poll_vcs_watch();
     let vcs_watch_ms = step_start.elapsed().as_secs_f64() * 1000.0;
     changed |= vcs_watch_changed;
-    parts.push(format!("vcs_watch={:.2}ms/{}", vcs_watch_ms, u8::from(vcs_watch_changed)));
+    parts.push(format!(
+      "vcs_watch={:.2}ms/{}",
+      vcs_watch_ms,
+      u8::from(vcs_watch_changed)
+    ));
 
     let step_start = Instant::now();
     let lsp_events_changed = self.poll_lsp_events();
     let lsp_events_ms = step_start.elapsed().as_secs_f64() * 1000.0;
     changed |= lsp_events_changed;
-    parts.push(format!("lsp_events={:.2}ms/{}", lsp_events_ms, u8::from(lsp_events_changed)));
+    parts.push(format!(
+      "lsp_events={:.2}ms/{}",
+      lsp_events_ms,
+      u8::from(lsp_events_changed)
+    ));
 
     let step_start = Instant::now();
     let completion_auto_changed = self.poll_lsp_completion_auto_trigger();
@@ -4411,7 +4859,11 @@ impl SwiftEditor {
     let lsp_status_changed = self.tick_lsp_statusline();
     let lsp_status_ms = step_start.elapsed().as_secs_f64() * 1000.0;
     changed |= lsp_status_changed;
-    parts.push(format!("lsp_status={:.2}ms/{}", lsp_status_ms, u8::from(lsp_status_changed)));
+    parts.push(format!(
+      "lsp_status={:.2}ms/{}",
+      lsp_status_ms,
+      u8::from(lsp_status_changed)
+    ));
 
     let step_start = Instant::now();
     let vcs_dispatch_scheduled = self.poll_vcs_statusline_refresh_dispatch(Instant::now());
@@ -4446,7 +4898,11 @@ impl SwiftEditor {
     let picker_changed = self.refresh_picker_state();
     let picker_ms = step_start.elapsed().as_secs_f64() * 1000.0;
     changed |= picker_changed;
-    parts.push(format!("picker={:.2}ms/{}", picker_ms, u8::from(picker_changed)));
+    parts.push(format!(
+      "picker={:.2}ms/{}",
+      picker_ms,
+      u8::from(picker_changed)
+    ));
 
     let total_ms = total_start.elapsed().as_secs_f64() * 1000.0;
     scroll_perf_log(format!(
@@ -4491,10 +4947,13 @@ impl SwiftEditor {
     text_format.viewport_width = viewport.width;
     let ui_theme_catalog = ThemeCatalog::load(Some(&workspace_root));
     let (ui_theme_name, ui_theme) = select_ui_theme(&ui_theme_catalog);
-    let loader = init_loader(&ui_theme).map(Arc::new).map_err(|err| {
-      eprintln!("Warning: syntax highlighting unavailable: {err}");
-      err
-    }).ok();
+    let loader = init_loader(&ui_theme)
+      .map(Arc::new)
+      .map_err(|err| {
+        eprintln!("Warning: syntax highlighting unavailable: {err}");
+        err
+      })
+      .ok();
 
     let (vcs_statusline_refresh_tx, vcs_statusline_refresh_rx) = mpsc::channel();
 
@@ -4652,7 +5111,11 @@ impl SwiftEditor {
   }
 
   fn set_scroll_col(&mut self, col: u32) -> bool {
-    let max_col = max_scroll_col(self.editor.document(), &self.text_format, self.content_viewport_width() as usize) as u32;
+    let max_col = max_scroll_col(
+      self.editor.document(),
+      &self.text_format,
+      self.content_viewport_width() as usize,
+    ) as u32;
     let next = col.min(max_col) as usize;
     if next == self.editor.view().scroll.col {
       return false;
@@ -4732,7 +5195,9 @@ impl SwiftEditor {
         match last_key {
           Some(Key::Char(ch)) => self.handle_insert_mode_char_post_edit(ch),
           Some(Key::Backspace | Key::Delete) => self.handle_insert_mode_delete_post_edit(),
-          Some(Key::Enter | Key::NumpadEnter | Key::Tab) | None => self.handle_insert_mode_other_post_edit(),
+          Some(Key::Enter | Key::NumpadEnter | Key::Tab) | None => {
+            self.handle_insert_mode_other_post_edit()
+          },
           _ => {},
         }
       } else {
@@ -4758,13 +5223,10 @@ impl SwiftEditor {
     if !self.command_palette.is_open {
       return false;
     }
-    handle_command_prompt_key(
-      self,
-      KeyEvent {
-        key: Key::Escape,
-        modifiers: the_default::Modifiers::empty(),
-      },
-    )
+    handle_command_prompt_key(self, KeyEvent {
+      key:       Key::Escape,
+      modifiers: the_default::Modifiers::empty(),
+    })
   }
 
   fn set_command_palette_query(&mut self, query: &str) -> bool {
@@ -4772,7 +5234,8 @@ impl SwiftEditor {
       open_command_palette(self);
     }
     command_palette_debug_log(format!(
-      "set_query incoming={:?} prompt_before={:?} palette_query_before={:?} prompt_text_before={:?}",
+      "set_query incoming={:?} prompt_before={:?} palette_query_before={:?} \
+       prompt_text_before={:?}",
       query,
       self.command_prompt.input,
       self.command_palette.query,
@@ -4780,7 +5243,8 @@ impl SwiftEditor {
     ));
     update_command_palette_for_input(self, query);
     command_palette_debug_log(format!(
-      "set_query applied prompt_after={:?} palette_query_after={:?} prompt_text_after={:?} prefiltered={} selected={:?}",
+      "set_query applied prompt_after={:?} palette_query_after={:?} prompt_text_after={:?} \
+       prefiltered={} selected={:?}",
       self.command_prompt.input,
       self.command_palette.query,
       self.command_palette.prompt_text,
@@ -4804,11 +5268,19 @@ impl SwiftEditor {
         .and_then(|sel| filtered.iter().position(|&idx| idx == sel));
       Some(match (next, current) {
         (true, Some(current)) => {
-          if current >= filtered.len() - 1 { 0 } else { current + 1 }
+          if current >= filtered.len() - 1 {
+            0
+          } else {
+            current + 1
+          }
         },
         (true, None) => 0,
         (false, Some(current)) => {
-          if current == 0 { filtered.len() - 1 } else { current - 1 }
+          if current == 0 {
+            filtered.len() - 1
+          } else {
+            current - 1
+          }
         },
         (false, None) => filtered.len() - 1,
       })
@@ -4845,7 +5317,8 @@ impl SwiftEditor {
       return false;
     }
     command_palette_debug_log(format!(
-      "submit prompt={:?} palette_query={:?} prompt_text={:?} prefiltered={} selected={:?} items_len={}",
+      "submit prompt={:?} palette_query={:?} prompt_text={:?} prefiltered={} selected={:?} \
+       items_len={}",
       self.command_prompt.input,
       self.command_palette.query,
       self.command_palette.prompt_text,
@@ -4854,11 +5327,22 @@ impl SwiftEditor {
       self.command_palette.items.len(),
     ));
 
-    if matches!(self.command_palette.source, the_default::CommandPaletteSource::CommandLine)
-      && !self.command_palette.prefiltered
-      && self.command_prompt.input.trim().trim_start_matches(':').is_empty()
+    if matches!(
+      self.command_palette.source,
+      the_default::CommandPaletteSource::CommandLine
+    ) && !self.command_palette.prefiltered
+      && self
+        .command_prompt
+        .input
+        .trim()
+        .trim_start_matches(':')
+        .is_empty()
       && let Some(item_idx) = self.command_palette.selected
-      && let Some(command_name) = self.command_palette.items.get(item_idx).map(|item| item.title.clone())
+      && let Some(command_name) = self
+        .command_palette
+        .items
+        .get(item_idx)
+        .map(|item| item.title.clone())
       && self
         .command_registry_ref()
         .get(&command_name)
@@ -4879,7 +5363,8 @@ impl SwiftEditor {
 
     let submitted = submit_command_palette_action(self);
     command_palette_debug_log(format!(
-      "submit result={} mode={:?} prompt_after={:?} palette_open={} palette_query_after={:?} prompt_text_after={:?}",
+      "submit result={} mode={:?} prompt_after={:?} palette_open={} palette_query_after={:?} \
+       prompt_text_after={:?}",
       submitted,
       self.mode,
       self.command_prompt.input,
@@ -4903,7 +5388,11 @@ impl SwiftEditor {
     }
   }
 
-  fn configure_file_picker_layout(&mut self, list_visible_rows: usize, preview_visible_rows: usize) -> bool {
+  fn configure_file_picker_layout(
+    &mut self,
+    list_visible_rows: usize,
+    preview_visible_rows: usize,
+  ) -> bool {
     let list_visible_rows = list_visible_rows.max(1);
     let preview_visible_rows = preview_visible_rows.max(1);
     let changed = self.file_picker.list_visible != list_visible_rows
@@ -5018,12 +5507,39 @@ impl SwiftEditor {
   }
 
   fn toggle_file_tree(&mut self) -> bool {
+    let start = Instant::now();
+    let was_visible = self.file_tree.visible;
+    let was_active = self.file_tree.active;
+    let previous_rows = self.file_tree.rows.len();
     toggle_file_tree(self);
     let root = self.file_tree.root.clone();
     if let Some(root) = root {
       let _ = self.refresh_shared_vcs_scan_for_cwd(&root);
     }
     let _ = self.refresh_file_tree_decorations();
+    scroll_perf_log(format!(
+      "file_tree.toggle ffiMs={:.2} visible={}→{} active={}→{} rows={}→{} root={} selected={} \
+       scroll={}",
+      start.elapsed().as_secs_f64() * 1000.0,
+      u8::from(was_visible),
+      u8::from(self.file_tree.visible),
+      u8::from(was_active),
+      u8::from(self.file_tree.active),
+      previous_rows,
+      self.file_tree.rows.len(),
+      self
+        .file_tree
+        .root
+        .as_ref()
+        .map(|root| root.display().to_string())
+        .unwrap_or_else(|| "none".to_string()),
+      self
+        .file_tree
+        .selected
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "none".to_string()),
+      self.file_tree.scroll_offset,
+    ));
     true
   }
 
@@ -5046,7 +5562,11 @@ impl SwiftEditor {
     };
     let doc = self.editor.document_mut();
     if let Err(err) = setup_syntax(doc, &path, &loader) {
-      command_palette_debug_log(format!("syntax setup skipped for {}: {}", path.display(), err));
+      command_palette_debug_log(format!(
+        "syntax setup skipped for {}: {}",
+        path.display(),
+        err
+      ));
       doc.clear_syntax();
     }
   }
@@ -5155,7 +5675,11 @@ impl SwiftEditor {
       self.editor.document().text().len_lines(),
       self.editor.view().viewport.height as usize,
     );
-    let max_col = max_scroll_col(self.editor.document(), &self.text_format, self.content_viewport_width() as usize);
+    let max_col = max_scroll_col(
+      self.editor.document(),
+      &self.text_format,
+      self.content_viewport_width() as usize,
+    );
     let scroll = self.editor.view().scroll;
     if scroll.row > max_row || scroll.col > max_col {
       let view = self.editor.view_mut();
@@ -5181,8 +5705,18 @@ impl SwiftEditor {
     let cursor_line = text.char_to_line(cursor_pos);
     let cursor_col = cursor_pos.saturating_sub(text.line_to_char(cursor_line));
     let viewport_height = self.editor.view().viewport.height as usize;
-    let gutter_width = gutter_width_for_document(self.editor.document(), self.editor.view().viewport.width, &self.gutter_config) as usize;
-    let viewport_width = self.editor.view().viewport.width.saturating_sub(gutter_width as u16).max(1) as usize;
+    let gutter_width = gutter_width_for_document(
+      self.editor.document(),
+      self.editor.view().viewport.width,
+      &self.gutter_config,
+    ) as usize;
+    let viewport_width = self
+      .editor
+      .view()
+      .viewport
+      .width
+      .saturating_sub(gutter_width as u16)
+      .max(1) as usize;
     if let Some(new_scroll) = the_lib::view::scroll_to_keep_visible(
       cursor_line,
       cursor_col,
@@ -5241,7 +5775,7 @@ impl SwiftEditor {
       return false;
     }
     handle_search_prompt_key(self, KeyEvent {
-      key: Key::Escape,
+      key:       Key::Escape,
       modifiers: the_default::Modifiers::empty(),
     })
   }
@@ -5262,7 +5796,7 @@ impl SwiftEditor {
       return false;
     }
     handle_search_prompt_key(self, KeyEvent {
-      key: Key::Enter,
+      key:       Key::Enter,
       modifiers: the_default::Modifiers::empty(),
     })
   }
@@ -5280,8 +5814,18 @@ impl SwiftEditor {
     let Ok((_, range)) = selection.pick(CursorPick::First) else {
       return (0, 0);
     };
-    let prefix = self.editor.document().text().slice(..range.from()).to_string();
-    let selected = self.editor.document().text().slice(range.from()..range.to()).to_string();
+    let prefix = self
+      .editor
+      .document()
+      .text()
+      .slice(..range.from())
+      .to_string();
+    let selected = self
+      .editor
+      .document()
+      .text()
+      .slice(range.from()..range.to())
+      .to_string();
     (
       prefix.encode_utf16().count() as u32,
       selected.encode_utf16().count() as u32,
@@ -5293,7 +5837,12 @@ impl SwiftEditor {
     let Ok((_, range)) = selection.pick(CursorPick::First) else {
       return String::new();
     };
-    self.editor.document().text().slice(range.from()..range.to()).to_string()
+    self
+      .editor
+      .document()
+      .text()
+      .slice(range.from()..range.to())
+      .to_string()
   }
 }
 
@@ -5325,7 +5874,8 @@ fn build_inactive_pane_plan_with_styles(
     let Some((document, cache)) = editor.editor.document_and_cache_at_mut(buffer_id) else {
       return (RenderPlan::default(), RenderGenerationState::default());
     };
-    let gutter_width = gutter_width_for_document(document, view.viewport.width, &editor.gutter_config);
+    let gutter_width =
+      gutter_width_for_document(document, view.viewport.width, &editor.gutter_config);
     text_format.viewport_width = view.viewport.width.saturating_sub(gutter_width).max(1);
 
     if let (Some(loader), Some(syntax)) = (editor.loader.as_deref(), document.syntax()) {
@@ -5458,12 +6008,24 @@ fn build_frame_render_plan_with_styles_for_swift(
 }
 
 impl DefaultContext for SwiftEditor {
-  fn editor(&mut self) -> &mut Editor { &mut self.editor }
-  fn editor_ref(&self) -> &Editor { &self.editor }
-  fn file_path(&self) -> Option<&Path> { self.file_path.as_deref() }
-  fn workspace_root(&self) -> PathBuf { self.workspace_root.clone() }
-  fn working_directory_state(&self) -> &WorkingDirectoryState { &self.working_directory }
-  fn working_directory_state_mut(&mut self) -> &mut WorkingDirectoryState { &mut self.working_directory }
+  fn editor(&mut self) -> &mut Editor {
+    &mut self.editor
+  }
+  fn editor_ref(&self) -> &Editor {
+    &self.editor
+  }
+  fn file_path(&self) -> Option<&Path> {
+    self.file_path.as_deref()
+  }
+  fn workspace_root(&self) -> PathBuf {
+    self.workspace_root.clone()
+  }
+  fn working_directory_state(&self) -> &WorkingDirectoryState {
+    &self.working_directory
+  }
+  fn working_directory_state_mut(&mut self) -> &mut WorkingDirectoryState {
+    &mut self.working_directory
+  }
   fn request_render(&mut self) {}
   fn render_waker(&self) -> the_default::RenderWaker {
     let (tx, _rx) = mpsc::channel();
@@ -5489,8 +6051,12 @@ impl DefaultContext for SwiftEditor {
     }
     true
   }
-  fn messages(&self) -> &MessageCenter { &self.messages }
-  fn messages_mut(&mut self) -> &mut MessageCenter { &mut self.messages }
+  fn messages(&self) -> &MessageCenter {
+    &self.messages
+  }
+  fn messages_mut(&mut self) -> &mut MessageCenter {
+    &mut self.messages
+  }
   fn build_render_plan(&mut self) -> RenderPlan {
     self.build_render_plan_with_styles(self.render_styles())
   }
@@ -5498,7 +6064,10 @@ impl DefaultContext for SwiftEditor {
     let view = self.editor.view();
     let mut text_format = self.text_format.clone();
     text_format.viewport_width = self.content_viewport_width();
-    let diagnostics = self.current_document_diagnostics().map(<[Diagnostic]>::to_vec).unwrap_or_default();
+    let diagnostics = self
+      .current_document_diagnostics()
+      .map(<[Diagnostic]>::to_vec)
+      .unwrap_or_default();
     let mut annotations = TextAnnotations::default();
     let loader = self.loader.clone();
     let line_range = view.scroll.row..(view.scroll.row + view.viewport.height as usize);
@@ -5563,22 +6132,54 @@ impl DefaultContext for SwiftEditor {
     self.sync_state_after_active_pane_change(previous_buffer_id);
   }
   fn request_quit(&mut self) {}
-  fn mode(&self) -> Mode { self.mode }
-  fn set_mode(&mut self, mode: Mode) { self.mode = mode; }
-  fn file_tree_uses_split_pane(&self) -> bool { false }
-  fn keymaps(&mut self) -> &mut Keymaps { &mut self.keymaps }
-  fn command_prompt_mut(&mut self) -> &mut CommandPromptState { &mut self.command_prompt }
-  fn command_prompt_ref(&self) -> &CommandPromptState { &self.command_prompt }
-  fn command_registry_mut(&mut self) -> &mut CommandRegistry<Self> { &mut self.command_registry }
-  fn command_registry_ref(&self) -> &CommandRegistry<Self> { &self.command_registry }
-  fn command_palette(&self) -> &CommandPaletteState { &self.command_palette }
-  fn command_palette_mut(&mut self) -> &mut CommandPaletteState { &mut self.command_palette }
-  fn command_palette_style(&self) -> &CommandPaletteStyle { &self.command_palette_style }
-  fn command_palette_style_mut(&mut self) -> &mut CommandPaletteStyle { &mut self.command_palette_style }
-  fn completion_menu(&self) -> &CompletionMenuState { &self.completion_menu }
-  fn completion_menu_mut(&mut self) -> &mut CompletionMenuState { &mut self.completion_menu }
-  fn completion_menu_keymaps(&self) -> &Keymaps { &self.completion_menu_keymaps }
-  fn completion_menu_keymaps_mut(&mut self) -> &mut Keymaps { &mut self.completion_menu_keymaps }
+  fn mode(&self) -> Mode {
+    self.mode
+  }
+  fn set_mode(&mut self, mode: Mode) {
+    self.mode = mode;
+  }
+  fn file_tree_uses_split_pane(&self) -> bool {
+    false
+  }
+  fn keymaps(&mut self) -> &mut Keymaps {
+    &mut self.keymaps
+  }
+  fn command_prompt_mut(&mut self) -> &mut CommandPromptState {
+    &mut self.command_prompt
+  }
+  fn command_prompt_ref(&self) -> &CommandPromptState {
+    &self.command_prompt
+  }
+  fn command_registry_mut(&mut self) -> &mut CommandRegistry<Self> {
+    &mut self.command_registry
+  }
+  fn command_registry_ref(&self) -> &CommandRegistry<Self> {
+    &self.command_registry
+  }
+  fn command_palette(&self) -> &CommandPaletteState {
+    &self.command_palette
+  }
+  fn command_palette_mut(&mut self) -> &mut CommandPaletteState {
+    &mut self.command_palette
+  }
+  fn command_palette_style(&self) -> &CommandPaletteStyle {
+    &self.command_palette_style
+  }
+  fn command_palette_style_mut(&mut self) -> &mut CommandPaletteStyle {
+    &mut self.command_palette_style
+  }
+  fn completion_menu(&self) -> &CompletionMenuState {
+    &self.completion_menu
+  }
+  fn completion_menu_mut(&mut self) -> &mut CompletionMenuState {
+    &mut self.completion_menu
+  }
+  fn completion_menu_keymaps(&self) -> &Keymaps {
+    &self.completion_menu_keymaps
+  }
+  fn completion_menu_keymaps_mut(&mut self) -> &mut Keymaps {
+    &mut self.completion_menu_keymaps
+  }
   fn completion_on_action(&mut self, command: Command) -> bool {
     if self.lsp_code_action_menu_active {
       return match command {
@@ -5649,47 +6250,130 @@ impl DefaultContext for SwiftEditor {
     self.lsp_completion_fallback_start = None;
     self.lsp_completion_visible_indices.clear();
   }
-  fn inline_completion(&self) -> &the_default::InlineCompletionState { &self.inline_completion }
-  fn inline_completion_mut(&mut self) -> &mut the_default::InlineCompletionState { &mut self.inline_completion }
-  fn set_inline_completion_annotations(&mut self, annotations: the_default::OwnedTextAnnotations) { self.inline_completion_annotations = annotations; }
-  fn clear_inline_completion_annotations(&mut self) { self.inline_completion_annotations = the_default::OwnedTextAnnotations::default(); }
-  fn file_tree(&self) -> &FileTreeState { &self.file_tree }
-  fn file_tree_mut(&mut self) -> &mut FileTreeState { &mut self.file_tree }
-  fn file_picker(&self) -> &FilePickerState { &self.file_picker }
-  fn file_picker_mut(&mut self) -> &mut FilePickerState { &mut self.file_picker }
-  fn picker_runtime_store(&self) -> &PickerRuntimeStore<Self> { &self.picker_runtime_store }
-  fn picker_runtime_store_mut(&mut self) -> &mut PickerRuntimeStore<Self> { &mut self.picker_runtime_store }
-  fn search_prompt_ref(&self) -> &SearchPromptState { &self.search_prompt }
-  fn search_prompt_mut(&mut self) -> &mut SearchPromptState { &mut self.search_prompt }
-  fn signature_help(&self) -> Option<&SignatureHelpState> { Some(&self.signature_help) }
-  fn signature_help_mut(&mut self) -> Option<&mut SignatureHelpState> { Some(&mut self.signature_help) }
-  fn dispatch(&self) -> DispatchRef<Self> { DispatchRef::from_ptr(self.dispatch.as_ref() as *const dyn DefaultApi<Self>) }
-  fn pending_input(&self) -> Option<&PendingInput> { self.pending_input.as_ref() }
-  fn set_pending_input(&mut self, pending: Option<PendingInput>) { self.pending_input = pending; }
-  fn registers(&self) -> &Registers { &self.registers }
-  fn registers_mut(&mut self) -> &mut Registers { &mut self.registers }
-  fn register(&self) -> Option<char> { self.register }
-  fn set_register(&mut self, register: Option<char>) { self.register = register; }
-  fn macro_recording(&self) -> &Option<(char, Vec<KeyBinding>)> { &self.macro_recording }
-  fn set_macro_recording(&mut self, recording: Option<(char, Vec<KeyBinding>)>) { self.macro_recording = recording; }
-  fn macro_replaying(&self) -> &Vec<char> { &self.macro_replaying }
-  fn macro_replaying_mut(&mut self) -> &mut Vec<char> { &mut self.macro_replaying }
-  fn macro_queue(&self) -> &VecDeque<KeyEvent> { &self.macro_queue }
-  fn macro_queue_mut(&mut self) -> &mut VecDeque<KeyEvent> { &mut self.macro_queue }
-  fn last_motion(&self) -> Option<Motion> { self.last_motion }
-  fn set_last_motion(&mut self, motion: Option<Motion>) { self.last_motion = motion; }
-  fn text_format(&self) -> TextFormat { self.text_format.clone() }
-  fn soft_wrap_enabled(&self) -> bool { self.soft_wrap_enabled }
-  fn set_soft_wrap_enabled(&mut self, enabled: bool) { self.soft_wrap_enabled = enabled; self.text_format.soft_wrap = enabled; }
-  fn gutter_config(&self) -> &GutterConfig { &self.gutter_config }
-  fn gutter_config_mut(&mut self) -> &mut GutterConfig { &mut self.gutter_config }
-  fn text_annotations(&self) -> TextAnnotations<'_> { TextAnnotations::default() }
-  fn syntax_loader(&self) -> Option<&the_lib::syntax::Loader> { self.loader.as_deref() }
-  fn scrolloff(&self) -> usize { SWIFT_SCROLLOFF }
-  fn ui_theme(&self) -> &Theme { &self.ui_theme }
-  fn ui_theme_name(&self) -> &str { &self.ui_theme_name }
-  fn lsp_statusline_text(&self) -> Option<String> { self.lsp_statusline_text_value() }
-  fn vcs_statusline_text(&self) -> Option<String> { self.vcs_statusline.clone() }
+  fn inline_completion(&self) -> &the_default::InlineCompletionState {
+    &self.inline_completion
+  }
+  fn inline_completion_mut(&mut self) -> &mut the_default::InlineCompletionState {
+    &mut self.inline_completion
+  }
+  fn set_inline_completion_annotations(&mut self, annotations: the_default::OwnedTextAnnotations) {
+    self.inline_completion_annotations = annotations;
+  }
+  fn clear_inline_completion_annotations(&mut self) {
+    self.inline_completion_annotations = the_default::OwnedTextAnnotations::default();
+  }
+  fn file_tree(&self) -> &FileTreeState {
+    &self.file_tree
+  }
+  fn file_tree_mut(&mut self) -> &mut FileTreeState {
+    &mut self.file_tree
+  }
+  fn file_picker(&self) -> &FilePickerState {
+    &self.file_picker
+  }
+  fn file_picker_mut(&mut self) -> &mut FilePickerState {
+    &mut self.file_picker
+  }
+  fn picker_runtime_store(&self) -> &PickerRuntimeStore<Self> {
+    &self.picker_runtime_store
+  }
+  fn picker_runtime_store_mut(&mut self) -> &mut PickerRuntimeStore<Self> {
+    &mut self.picker_runtime_store
+  }
+  fn search_prompt_ref(&self) -> &SearchPromptState {
+    &self.search_prompt
+  }
+  fn search_prompt_mut(&mut self) -> &mut SearchPromptState {
+    &mut self.search_prompt
+  }
+  fn signature_help(&self) -> Option<&SignatureHelpState> {
+    Some(&self.signature_help)
+  }
+  fn signature_help_mut(&mut self) -> Option<&mut SignatureHelpState> {
+    Some(&mut self.signature_help)
+  }
+  fn dispatch(&self) -> DispatchRef<Self> {
+    DispatchRef::from_ptr(self.dispatch.as_ref() as *const dyn DefaultApi<Self>)
+  }
+  fn pending_input(&self) -> Option<&PendingInput> {
+    self.pending_input.as_ref()
+  }
+  fn set_pending_input(&mut self, pending: Option<PendingInput>) {
+    self.pending_input = pending;
+  }
+  fn registers(&self) -> &Registers {
+    &self.registers
+  }
+  fn registers_mut(&mut self) -> &mut Registers {
+    &mut self.registers
+  }
+  fn register(&self) -> Option<char> {
+    self.register
+  }
+  fn set_register(&mut self, register: Option<char>) {
+    self.register = register;
+  }
+  fn macro_recording(&self) -> &Option<(char, Vec<KeyBinding>)> {
+    &self.macro_recording
+  }
+  fn set_macro_recording(&mut self, recording: Option<(char, Vec<KeyBinding>)>) {
+    self.macro_recording = recording;
+  }
+  fn macro_replaying(&self) -> &Vec<char> {
+    &self.macro_replaying
+  }
+  fn macro_replaying_mut(&mut self) -> &mut Vec<char> {
+    &mut self.macro_replaying
+  }
+  fn macro_queue(&self) -> &VecDeque<KeyEvent> {
+    &self.macro_queue
+  }
+  fn macro_queue_mut(&mut self) -> &mut VecDeque<KeyEvent> {
+    &mut self.macro_queue
+  }
+  fn last_motion(&self) -> Option<Motion> {
+    self.last_motion
+  }
+  fn set_last_motion(&mut self, motion: Option<Motion>) {
+    self.last_motion = motion;
+  }
+  fn text_format(&self) -> TextFormat {
+    self.text_format.clone()
+  }
+  fn soft_wrap_enabled(&self) -> bool {
+    self.soft_wrap_enabled
+  }
+  fn set_soft_wrap_enabled(&mut self, enabled: bool) {
+    self.soft_wrap_enabled = enabled;
+    self.text_format.soft_wrap = enabled;
+  }
+  fn gutter_config(&self) -> &GutterConfig {
+    &self.gutter_config
+  }
+  fn gutter_config_mut(&mut self) -> &mut GutterConfig {
+    &mut self.gutter_config
+  }
+  fn text_annotations(&self) -> TextAnnotations<'_> {
+    TextAnnotations::default()
+  }
+  fn syntax_loader(&self) -> Option<&the_lib::syntax::Loader> {
+    self.loader.as_deref()
+  }
+  fn scrolloff(&self) -> usize {
+    SWIFT_SCROLLOFF
+  }
+  fn ui_theme(&self) -> &Theme {
+    &self.ui_theme
+  }
+  fn ui_theme_name(&self) -> &str {
+    &self.ui_theme_name
+  }
+  fn lsp_statusline_text(&self) -> Option<String> {
+    self.lsp_statusline_text_value()
+  }
+  fn vcs_statusline_text(&self) -> Option<String> {
+    self.vcs_statusline.clone()
+  }
   fn watch_statusline_text(&self) -> Option<String> {
     self
       .active_file_watch
@@ -5697,13 +6381,19 @@ impl DefaultContext for SwiftEditor {
       .and_then(|watch| watch_statusline_text_for_state(watch.stream.reload_state))
   }
   fn diagnostic_statusline_counts(&self) -> Option<DiagnosticCounts> {
-    self
-      .current_lsp_uri()
-      .and_then(|uri| self.diagnostics.document(&uri).map(|document| document.counts()))
+    self.current_lsp_uri().and_then(|uri| {
+      self
+        .diagnostics
+        .document(&uri)
+        .map(|document| document.counts())
+    })
   }
   fn active_diagnostic_ranges(&self) -> Vec<Range> {
     let Some(state) = self.lsp_document.as_ref().filter(|_| {
-      self.lsp_runtimes.iter().any(|runtime| runtime.opened_current_document)
+      self
+        .lsp_runtimes
+        .iter()
+        .any(|runtime| runtime.opened_current_document)
     }) else {
       return Vec::new();
     };
@@ -5802,8 +6492,12 @@ impl DefaultContext for SwiftEditor {
         collect_document(&document.uri, &document.diagnostics);
       }
     } else if let Some(state) = self.lsp_document.as_ref().filter(|_| {
-      self.lsp_runtimes.iter().any(|runtime| runtime.opened_current_document)
-    }) && let Some(document) = self.diagnostics.document(&state.uri) {
+      self
+        .lsp_runtimes
+        .iter()
+        .any(|runtime| runtime.opened_current_document)
+    }) && let Some(document) = self.diagnostics.document(&state.uri)
+    {
       collect_document(&document.uri, &document.diagnostics);
     }
 
@@ -5835,7 +6529,7 @@ impl DefaultContext for SwiftEditor {
       .refresh_shared_vcs_scan_for_cwd(&cwd)
       .ok_or_else(|| "failed to load shared vcs snapshot".to_string())?;
     Ok(FilePickerVcsDiffBootstrap::Ready {
-      root: scan.repo_root.clone(),
+      root:    scan.repo_root.clone(),
       changed: self.merged_vcs_changed_file_items(&scan),
     })
   }
@@ -5851,7 +6545,9 @@ impl DefaultContext for SwiftEditor {
 
     changed
       .iter()
-      .map(|item| build_file_picker_vcs_diff_entry(self, &scan, &file_picker_changed_file_to_vcs_change(item)))
+      .map(|item| {
+        build_file_picker_vcs_diff_entry(self, &scan, &file_picker_changed_file_to_vcs_change(item))
+      })
       .collect()
   }
   fn file_picker_vcs_diff_did_open(&mut self) {
@@ -5863,11 +6559,15 @@ impl DefaultContext for SwiftEditor {
     let entries: Vec<_> = changed
       .iter()
       .filter_map(|item| {
-        build_file_picker_vcs_diff_entry(self, &scan, &file_picker_changed_file_to_vcs_change(item)).ok()
+        build_file_picker_vcs_diff_entry(self, &scan, &file_picker_changed_file_to_vcs_change(item))
+          .ok()
       })
       .collect();
     let specs = file_picker_vcs_diff_specs(&scan.repo_root, &entries);
-    let submit_handler = self.file_picker.runtime_session().map(the_default::PickerSubmitHandlerRef::Runtime);
+    let submit_handler = self
+      .file_picker
+      .runtime_session()
+      .map(the_default::PickerSubmitHandlerRef::Runtime);
     let items = file_picker_items_from_specs(specs, submit_handler);
     replace_file_picker_items_preserving_selection(self, items, 0);
   }
@@ -5991,12 +6691,18 @@ impl DefaultContext for SwiftEditor {
   }
   fn lsp_select_references_to_symbol_under_cursor(&mut self) {
     if !self.lsp_supports(LspCapability::DocumentHighlight) {
-      self.push_warning("lsp", "document highlights are not supported by the active server");
+      self.push_warning(
+        "lsp",
+        "document highlights are not supported by the active server",
+      );
       return;
     }
 
     let Some((uri, position)) = self.current_lsp_position() else {
-      self.push_warning("lsp", "document highlights unavailable: no active LSP document");
+      self.push_warning(
+        "lsp",
+        "document highlights unavailable: no active LSP document",
+      );
       return;
     };
 
@@ -6025,12 +6731,18 @@ impl DefaultContext for SwiftEditor {
   }
   fn lsp_document_symbols(&mut self) {
     if !self.lsp_supports(LspCapability::DocumentSymbols) {
-      self.push_warning("lsp", "document symbols are not supported by the active server");
+      self.push_warning(
+        "lsp",
+        "document symbols are not supported by the active server",
+      );
       return;
     }
 
     let Some(uri) = self.current_lsp_uri() else {
-      self.push_warning("lsp", "document symbols unavailable: no active LSP document");
+      self.push_warning(
+        "lsp",
+        "document symbols unavailable: no active LSP document",
+      );
       return;
     };
 
@@ -6042,7 +6754,10 @@ impl DefaultContext for SwiftEditor {
   }
   fn lsp_workspace_symbols(&mut self) {
     if !self.lsp_supports(LspCapability::WorkspaceSymbols) {
-      self.push_warning("lsp", "workspace symbols are not supported by the active server");
+      self.push_warning(
+        "lsp",
+        "workspace symbols are not supported by the active server",
+      );
       return;
     }
 
@@ -6066,11 +6781,7 @@ impl DefaultContext for SwiftEditor {
 
     code_action_trace_log(format!(
       "request uri={} range=({}:{})-({}:{}) diagnostics_payload=empty",
-      uri,
-      range.start.line,
-      range.start.character,
-      range.end.line,
-      range.end.character,
+      uri, range.start.line, range.start.character, range.end.line, range.end.character,
     ));
 
     self.clear_completion_state();
@@ -6137,10 +6848,18 @@ impl DefaultContext for SwiftEditor {
     );
   }
 
-  fn available_theme_names(&self) -> Vec<String> { self.ui_theme_catalog.names() }
-  fn set_ui_theme(&mut self, theme_name: &str) -> Result<(), String> { self.set_ui_theme_named(theme_name) }
-  fn set_ui_theme_preview(&mut self, theme_name: &str) -> Result<(), String> { self.set_ui_theme_preview_named(theme_name) }
-  fn clear_ui_theme_preview(&mut self) { self.clear_ui_theme_preview_state(); }
+  fn available_theme_names(&self) -> Vec<String> {
+    self.ui_theme_catalog.names()
+  }
+  fn set_ui_theme(&mut self, theme_name: &str) -> Result<(), String> {
+    self.set_ui_theme_named(theme_name)
+  }
+  fn set_ui_theme_preview(&mut self, theme_name: &str) -> Result<(), String> {
+    self.set_ui_theme_preview_named(theme_name)
+  }
+  fn clear_ui_theme_preview(&mut self) {
+    self.clear_ui_theme_preview_state();
+  }
   fn set_file_path(&mut self, path: Option<PathBuf>) {
     let normalized_path = path.as_deref().map(resolve_session_path);
     let previous_path = self.file_path.clone();
@@ -6221,7 +6940,11 @@ fn sync_swift_file_tree_visible_rows(editor: &mut SwiftEditor, frame: &FrameRend
   let Some(surface_id) = file_tree_surface_id(editor) else {
     return;
   };
-  let Some(pane) = frame.panes.iter().find(|pane| pane.client_surface_id == Some(surface_id)) else {
+  let Some(pane) = frame
+    .panes
+    .iter()
+    .find(|pane| pane.client_surface_id == Some(surface_id))
+  else {
     return;
   };
   let header_rows = file_tree_header_rows(pane.rect.height);
@@ -6265,11 +6988,15 @@ impl OwnedSnapshot {
         mode,
         layout_generation: active_plan.map(|plan| plan.layout_generation).unwrap_or(0),
         text_generation: active_plan.map(|plan| plan.text_generation).unwrap_or(0),
-        decoration_generation: active_plan.map(|plan| plan.decoration_generation).unwrap_or(0),
+        decoration_generation: active_plan
+          .map(|plan| plan.decoration_generation)
+          .unwrap_or(0),
         cursor_generation: active_plan.map(|plan| plan.cursor_generation).unwrap_or(0),
         scroll_generation: active_plan.map(|plan| plan.scroll_generation).unwrap_or(0),
         theme_generation: active_plan.map(|plan| plan.theme_generation).unwrap_or(0),
-        cursor_blink_generation: active_plan.map(|plan| plan.cursor_blink_generation).unwrap_or(0),
+        cursor_blink_generation: active_plan
+          .map(|plan| plan.cursor_blink_generation)
+          .unwrap_or(0),
         scroll_row: scroll.row as u32,
         scroll_col: scroll.col as u32,
         document_line_count,
@@ -6298,25 +7025,25 @@ impl OwnedSnapshot {
     let vcs_text = editor.vcs_statusline_text();
 
     snapshot.document = DocumentRecord {
-      document: the_editor_snapshot_document_t {
-        name: ptr::null(),
-        icon: ptr::null(),
-        relative_path: ptr::null(),
-        absolute_path: ptr::null(),
-        vcs_text: ptr::null(),
-        language_name: ptr::null(),
-        encoding_name: ptr::null(),
+      document:             the_editor_snapshot_document_t {
+        name:             ptr::null(),
+        icon:             ptr::null(),
+        relative_path:    ptr::null(),
+        absolute_path:    ptr::null(),
+        vcs_text:         ptr::null(),
+        language_name:    ptr::null(),
+        encoding_name:    ptr::null(),
         line_ending_name: ptr::null(),
-        is_modified: document_flags.modified,
-        is_readonly: document_flags.readonly,
+        is_modified:      document_flags.modified,
+        is_readonly:      document_flags.readonly,
       },
-      name_idx: Some(snapshot.push_string(&document_name)),
-      icon_idx: Some(snapshot.push_string(&document_icon)),
-      relative_path_idx: snapshot.push_optional_string(relative_path.as_deref()),
-      absolute_path_idx: snapshot.push_optional_string(absolute_path.as_deref()),
-      vcs_text_idx: snapshot.push_optional_string(vcs_text.as_deref()),
-      language_name_idx: snapshot.push_optional_string(language_name.as_deref()),
-      encoding_name_idx: snapshot.push_optional_string(encoding_name.as_deref()),
+      name_idx:             Some(snapshot.push_string(&document_name)),
+      icon_idx:             Some(snapshot.push_string(&document_icon)),
+      relative_path_idx:    snapshot.push_optional_string(relative_path.as_deref()),
+      absolute_path_idx:    snapshot.push_optional_string(absolute_path.as_deref()),
+      vcs_text_idx:         snapshot.push_optional_string(vcs_text.as_deref()),
+      language_name_idx:    snapshot.push_optional_string(language_name.as_deref()),
+      encoding_name_idx:    snapshot.push_optional_string(encoding_name.as_deref()),
       line_ending_name_idx: snapshot.push_optional_string(Some(line_ending_name.as_str())),
     };
 
@@ -6327,15 +7054,18 @@ impl OwnedSnapshot {
       None
     };
     let mut status_segments = statusline.right_segments;
-    let cursor_text = status_segments.pop().map(|segment| segment.text).unwrap_or_default();
+    let cursor_text = status_segments
+      .pop()
+      .map(|segment| segment.text)
+      .unwrap_or_default();
     snapshot.status = StatusRecord {
-      status: the_editor_snapshot_status_t {
+      status:           the_editor_snapshot_status_t {
         leading_text: ptr::null(),
-        item_count: 0,
-        cursor_text: ptr::null(),
+        item_count:   0,
+        cursor_text:  ptr::null(),
       },
       leading_text_idx: snapshot.push_optional_string(leading_text.as_deref()),
-      cursor_text_idx: Some(snapshot.push_string(&cursor_text)),
+      cursor_text_idx:  Some(snapshot.push_string(&cursor_text)),
     };
     for segment in status_segments {
       if matches!(segment.icon.as_deref(), Some("git_branch")) {
@@ -6345,8 +7075,8 @@ impl OwnedSnapshot {
       let icon_idx = snapshot.push_optional_string(segment.icon.as_deref());
       snapshot.status_items.push(StatusItemRecord {
         item: the_editor_snapshot_status_item_t {
-          icon: ptr::null(),
-          text: ptr::null(),
+          icon:     ptr::null(),
+          text:     ptr::null(),
           emphasis: statusline_emphasis_code(segment.emphasis),
         },
         icon_idx,
@@ -6354,6 +7084,8 @@ impl OwnedSnapshot {
       });
     }
     snapshot.status.status.item_count = snapshot.status_items.len();
+
+    snapshot.populate_pending_keys(active_pending_key_state(editor));
 
     let palette = editor.command_palette();
     let palette_query = palette
@@ -6366,20 +7098,21 @@ impl OwnedSnapshot {
     let palette_query_idx = snapshot.push_string(&palette_query);
     let palette_placeholder_idx = snapshot.push_string(&palette_placeholder);
     snapshot.command_palette = CommandPaletteRecord {
-      palette: the_editor_snapshot_command_palette_t {
-        is_open: palette.is_open,
+      palette:         the_editor_snapshot_command_palette_t {
+        is_open:        palette.is_open,
         selected_index: command_palette_selected_filtered_index(palette)
           .map(|index| index as i32)
           .unwrap_or(-1),
-        item_count: 0,
-        query: ptr::null(),
-        placeholder: ptr::null(),
+        item_count:     0,
+        query:          ptr::null(),
+        placeholder:    ptr::null(),
       },
-      query_idx: Some(palette_query_idx),
+      query_idx:       Some(palette_query_idx),
       placeholder_idx: Some(palette_placeholder_idx),
     };
     command_palette_debug_log(format!(
-      "snapshot_export prompt_input={:?} palette.query={:?} prompt_text={:?} exported_query={:?} prefiltered={} selected_filtered={:?} items_len={}",
+      "snapshot_export prompt_input={:?} palette.query={:?} prompt_text={:?} exported_query={:?} \
+       prefiltered={} selected_filtered={:?} items_len={}",
       editor.command_prompt.input,
       palette.query,
       palette.prompt_text,
@@ -6398,71 +7131,78 @@ impl OwnedSnapshot {
       let description_idx = snapshot.push_optional_string(item.description.as_deref());
       let badge_idx = snapshot.push_optional_string(item.badge.as_deref());
       let leading_icon_idx = snapshot.push_optional_string(item.leading_icon.as_deref());
-      snapshot.command_palette_items.push(CommandPaletteItemRecord {
-        item: the_editor_snapshot_command_palette_item_t {
-          title: ptr::null(),
-          subtitle: ptr::null(),
-          description: ptr::null(),
-          badge: ptr::null(),
-          leading_icon: ptr::null(),
-          leading_color: color_to_rgba(item.leading_color, &editor.ui_theme),
-          emphasis: item.emphasis,
-        },
-        title_idx,
-        subtitle_idx,
-        description_idx,
-        badge_idx,
-        leading_icon_idx,
-      });
+      snapshot
+        .command_palette_items
+        .push(CommandPaletteItemRecord {
+          item: the_editor_snapshot_command_palette_item_t {
+            title:         ptr::null(),
+            subtitle:      ptr::null(),
+            description:   ptr::null(),
+            badge:         ptr::null(),
+            leading_icon:  ptr::null(),
+            leading_color: color_to_rgba(item.leading_color, &editor.ui_theme),
+            emphasis:      item.emphasis,
+          },
+          title_idx,
+          subtitle_idx,
+          description_idx,
+          badge_idx,
+          leading_icon_idx,
+        });
     }
     snapshot.command_palette.palette.item_count = snapshot.command_palette_items.len();
 
     let completion_menu = editor.completion_menu();
     snapshot.completion_menu = CompletionMenuRecord {
       menu: the_editor_snapshot_completion_menu_t {
-        is_open: completion_menu.active,
-        col: 0,
-        row: 0,
-        width: 0,
-        height: 0,
-        selected_index: completion_menu.selected.map(|index| index as i32).unwrap_or(-1),
-        item_count: completion_menu.items.len(),
-        scroll_offset: completion_menu.scroll,
+        is_open:        completion_menu.active,
+        col:            0,
+        row:            0,
+        width:          0,
+        height:         0,
+        selected_index: completion_menu
+          .selected
+          .map(|index| index as i32)
+          .unwrap_or(-1),
+        item_count:     completion_menu.items.len(),
+        scroll_offset:  completion_menu.scroll,
       },
     };
     for item in &completion_menu.items {
       let title_idx = snapshot.push_string(item.label.as_str());
       let subtitle_idx = snapshot.push_optional_string(item.detail.as_deref());
       let leading_icon_idx = snapshot.push_optional_string(item.kind_icon.as_deref());
-      snapshot.completion_menu_items.push(CompletionMenuItemRecord {
-        item: the_editor_snapshot_completion_menu_item_t {
-          title: ptr::null(),
-          subtitle: ptr::null(),
-          leading_icon: ptr::null(),
-          leading_color: color_to_rgba(item.kind_color, &editor.ui_theme),
-        },
-        title_idx,
-        subtitle_idx,
-        leading_icon_idx,
-      });
+      snapshot
+        .completion_menu_items
+        .push(CompletionMenuItemRecord {
+          item: the_editor_snapshot_completion_menu_item_t {
+            title:         ptr::null(),
+            subtitle:      ptr::null(),
+            leading_icon:  ptr::null(),
+            leading_color: color_to_rgba(item.kind_color, &editor.ui_theme),
+          },
+          title_idx,
+          subtitle_idx,
+          leading_icon_idx,
+        });
     }
 
     let input_prompt = editor.search_prompt_ref();
     let input_prompt_title = input_prompt_title(input_prompt.kind).to_string();
     let input_prompt_placeholder = input_prompt_placeholder(input_prompt.kind).to_string();
     snapshot.input_prompt = InputPromptRecord {
-      prompt: the_editor_snapshot_input_prompt_t {
-        is_open: input_prompt.active,
-        kind: input_prompt_kind_code(input_prompt.kind),
-        title: ptr::null(),
+      prompt:          the_editor_snapshot_input_prompt_t {
+        is_open:     input_prompt.active,
+        kind:        input_prompt_kind_code(input_prompt.kind),
+        title:       ptr::null(),
         placeholder: ptr::null(),
-        query: ptr::null(),
-        error: ptr::null(),
+        query:       ptr::null(),
+        error:       ptr::null(),
       },
-      title_idx: Some(snapshot.push_string(&input_prompt_title)),
+      title_idx:       Some(snapshot.push_string(&input_prompt_title)),
       placeholder_idx: Some(snapshot.push_string(&input_prompt_placeholder)),
-      query_idx: Some(snapshot.push_string(&input_prompt.query)),
-      error_idx: snapshot.push_optional_string(input_prompt.error.as_deref()),
+      query_idx:       Some(snapshot.push_string(&input_prompt.query)),
+      error_idx:       snapshot.push_optional_string(input_prompt.error.as_deref()),
     };
 
     snapshot.panes = frame
@@ -6494,12 +7234,14 @@ impl OwnedSnapshot {
       .editor
       .pane_separators(viewport)
       .into_iter()
-      .map(|separator| the_editor_snapshot_separator_t {
-        split_id: separator.split_id.get().get(),
-        axis: split_axis_code(separator.axis),
-        line: separator.line,
-        span_start: separator.span_start,
-        span_end: separator.span_end,
+      .map(|separator| {
+        the_editor_snapshot_separator_t {
+          split_id:   separator.split_id.get().get(),
+          axis:       split_axis_code(separator.axis),
+          line:       separator.line,
+          span_start: separator.span_start,
+          span_end:   separator.span_end,
+        }
       })
       .collect();
     snapshot.info.separator_count = snapshot.separators.len();
@@ -6507,17 +7249,39 @@ impl OwnedSnapshot {
     if let Some(plan) = active_plan {
       if editor.completion_menu.active && !editor.completion_menu.items.is_empty() {
         let cursor = active_docs_cursor_position(plan);
-        let visible = editor.completion_menu.items.len().min(completion_menu_visible_rows());
-        let panel_width = plan.viewport.width.saturating_mul(2).saturating_div(3).min(64).max(18);
+        let visible = editor
+          .completion_menu
+          .items
+          .len()
+          .min(completion_menu_visible_rows());
+        let panel_width = plan
+          .viewport
+          .width
+          .saturating_mul(2)
+          .saturating_div(3)
+          .min(64)
+          .max(18);
         let panel_height = (visible as u16).max(1);
-        let panel = completion_menu_panel_record(plan.viewport.width, plan.viewport.height, cursor, panel_width, panel_height);
+        let panel = completion_menu_panel_record(
+          plan.viewport.width,
+          plan.viewport.height,
+          cursor,
+          panel_width,
+          panel_height,
+        );
         snapshot.completion_menu.menu.col = active_pane_rect.x.saturating_add(panel.col);
         snapshot.completion_menu.menu.row = active_pane_rect.y.saturating_add(panel.row);
         snapshot.completion_menu.menu.width = panel.width;
         snapshot.completion_menu.menu.height = panel.height;
 
         if let Some(markdown) = selected_completion_docs_text(editor) {
-          let docs_width = plan.viewport.width.saturating_mul(2).saturating_div(3).min(84).max(28);
+          let docs_width = plan
+            .viewport
+            .width
+            .saturating_mul(2)
+            .saturating_div(3)
+            .min(84)
+            .max(28);
           let docs_height = completion_docs_target_height(plan.viewport.height, panel.height);
           if let Some(docs_panel) = completion_docs_panel_record(
             plan.viewport.width,
@@ -6527,20 +7291,20 @@ impl OwnedSnapshot {
             panel,
           ) {
             snapshot.completion_docs.panel = the_editor_snapshot_docs_panel_t {
-              is_open: docs_panel.is_open,
-              col: active_pane_rect.x.saturating_add(docs_panel.col),
-              row: active_pane_rect.y.saturating_add(docs_panel.row),
-              width: docs_panel.width,
-              height: docs_panel.height,
+              is_open:   docs_panel.is_open,
+              col:       active_pane_rect.x.saturating_add(docs_panel.col),
+              row:       active_pane_rect.y.saturating_add(docs_panel.row),
+              width:     docs_panel.width,
+              height:    docs_panel.height,
               run_count: docs_panel.run_count,
             };
             for run in flatten_docs_runs(markdown, editor) {
               let text_idx = snapshot.push_string(&run.text);
               snapshot.completion_docs_runs.push(DocsRunRecord {
                 run: the_editor_snapshot_docs_run_t {
-                  text: ptr::null(),
+                  text:  ptr::null(),
                   style: style_to_ffi(run.style, &editor.ui_theme),
-                  kind: docs_run_kind_code(run.kind),
+                  kind:  docs_run_kind_code(run.kind),
                 },
                 text_idx,
               });
@@ -6567,20 +7331,20 @@ impl OwnedSnapshot {
           false,
         );
         snapshot.hover_docs.panel = the_editor_snapshot_docs_panel_t {
-          is_open: hover_panel.is_open,
-          col: active_pane_rect.x.saturating_add(hover_panel.col),
-          row: active_pane_rect.y.saturating_add(hover_panel.row),
-          width: hover_panel.width,
-          height: hover_panel.height,
+          is_open:   hover_panel.is_open,
+          col:       active_pane_rect.x.saturating_add(hover_panel.col),
+          row:       active_pane_rect.y.saturating_add(hover_panel.row),
+          width:     hover_panel.width,
+          height:    hover_panel.height,
           run_count: hover_panel.run_count,
         };
         for run in flatten_docs_runs(markdown, editor) {
           let text_idx = snapshot.push_string(&run.text);
           snapshot.hover_docs_runs.push(DocsRunRecord {
             run: the_editor_snapshot_docs_run_t {
-              text: ptr::null(),
+              text:  ptr::null(),
               style: style_to_ffi(run.style, &editor.ui_theme),
-              kind: docs_run_kind_code(run.kind),
+              kind:  docs_run_kind_code(run.kind),
             },
             text_idx,
           });
@@ -6600,20 +7364,20 @@ impl OwnedSnapshot {
           true,
         );
         snapshot.signature_help.panel = the_editor_snapshot_docs_panel_t {
-          is_open: signature_panel.is_open,
-          col: active_pane_rect.x.saturating_add(signature_panel.col),
-          row: active_pane_rect.y.saturating_add(signature_panel.row),
-          width: signature_panel.width,
-          height: signature_panel.height,
+          is_open:   signature_panel.is_open,
+          col:       active_pane_rect.x.saturating_add(signature_panel.col),
+          row:       active_pane_rect.y.saturating_add(signature_panel.row),
+          width:     signature_panel.width,
+          height:    signature_panel.height,
           run_count: signature_panel.run_count,
         };
         for run in flatten_docs_runs(markdown.as_str(), editor) {
           let text_idx = snapshot.push_string(&run.text);
           snapshot.signature_help_runs.push(DocsRunRecord {
             run: the_editor_snapshot_docs_run_t {
-              text: ptr::null(),
+              text:  ptr::null(),
               style: style_to_ffi(run.style, &editor.ui_theme),
-              kind: docs_run_kind_code(run.kind),
+              kind:  docs_run_kind_code(run.kind),
             },
             text_idx,
           });
@@ -6629,14 +7393,14 @@ impl OwnedSnapshot {
         let code_idx = snapshot.push_optional_string(diagnostic.code.as_deref());
         snapshot.diagnostics.push(DiagnosticRecord {
           diagnostic: the_editor_snapshot_diagnostic_t {
-            start_line: diagnostic.range.start.line,
+            start_line:      diagnostic.range.start.line,
             start_character: diagnostic.range.start.character,
-            end_line: diagnostic.range.end.line,
-            end_character: diagnostic.range.end.character,
-            severity: diagnostic_severity_code(diagnostic.severity),
-            message: ptr::null(),
-            source: ptr::null(),
-            code: ptr::null(),
+            end_line:        diagnostic.range.end.line,
+            end_character:   diagnostic.range.end.character,
+            severity:        diagnostic_severity_code(diagnostic.severity),
+            message:         ptr::null(),
+            source:          ptr::null(),
+            code:            ptr::null(),
           },
           message_idx,
           source_idx,
@@ -6670,10 +7434,18 @@ impl OwnedSnapshot {
         snapshot
           .diagnostic_underlines
           .push(the_editor_snapshot_diagnostic_underline_t {
-            row: pane.rect.y.saturating_add(underline.row),
-            start_col: pane.rect.x.saturating_add(pane.plan.content_offset_x).saturating_add(underline.start_col),
-            end_col: pane.rect.x.saturating_add(pane.plan.content_offset_x).saturating_add(underline.end_col),
-            severity: underline.severity,
+            row:       pane.rect.y.saturating_add(underline.row),
+            start_col: pane
+              .rect
+              .x
+              .saturating_add(pane.plan.content_offset_x)
+              .saturating_add(underline.start_col),
+            end_col:   pane
+              .rect
+              .x
+              .saturating_add(pane.plan.content_offset_x)
+              .saturating_add(underline.end_col),
+            severity:  underline.severity,
           });
       }
     }
@@ -6687,7 +7459,12 @@ impl OwnedSnapshot {
       .panes
       .iter()
       .filter(|pane| pane.pane_id == frame.active_pane)
-      .chain(frame.panes.iter().filter(|pane| pane.pane_id != frame.active_pane))
+      .chain(
+        frame
+          .panes
+          .iter()
+          .filter(|pane| pane.pane_id != frame.active_pane),
+      )
     {
       let plan = &pane.plan;
 
@@ -6731,7 +7508,10 @@ impl OwnedSnapshot {
         if let Some(line) = plan.lines.iter().find(|line| line.row == row) {
           for span in &line.spans {
             let text_idx = snapshot.push_string(span.text.as_str());
-            let highlight_style = span.highlight.map(|highlight| editor.ui_theme.highlight(highlight)).unwrap_or_default();
+            let highlight_style = span
+              .highlight
+              .map(|highlight| editor.ui_theme.highlight(highlight))
+              .unwrap_or_default();
             let style = style_to_ffi(base_text_style.patch(highlight_style), &editor.ui_theme);
             let col = pane
               .rect
@@ -6772,40 +7552,46 @@ impl OwnedSnapshot {
 
       snapshot.cursors.extend(plan.cursors.iter().map(|cursor| {
         the_editor_snapshot_cursor_t {
-          row: pane.rect.y as u32 + cursor.pos.row as u32,
-          col: pane.rect.x as u32 + plan.content_offset_x as u32 + cursor.pos.col as u32,
-          kind: cursor_kind_code(cursor.kind),
+          row:   pane.rect.y as u32 + cursor.pos.row as u32,
+          col:   pane.rect.x as u32 + plan.content_offset_x as u32 + cursor.pos.col as u32,
+          kind:  cursor_kind_code(cursor.kind),
           style: style_to_ffi(cursor.style, &editor.ui_theme),
         }
       }));
 
-      snapshot.selections.extend(plan.selections.iter().map(|selection| {
-        the_editor_snapshot_selection_t {
-          x: pane.rect.x.saturating_add(plan.content_offset_x).saturating_add(selection.rect.x),
-          y: pane.rect.y.saturating_add(selection.rect.y),
-          width: selection.rect.width,
-          height: selection.rect.height,
-          kind: selection_kind_code(selection.kind),
-          style: style_to_ffi(selection.style, &editor.ui_theme),
-        }
-      }));
+      snapshot
+        .selections
+        .extend(plan.selections.iter().map(|selection| {
+          the_editor_snapshot_selection_t {
+            x:      pane
+              .rect
+              .x
+              .saturating_add(plan.content_offset_x)
+              .saturating_add(selection.rect.x),
+            y:      pane.rect.y.saturating_add(selection.rect.y),
+            width:  selection.rect.width,
+            height: selection.rect.height,
+            kind:   selection_kind_code(selection.kind),
+            style:  style_to_ffi(selection.style, &editor.ui_theme),
+          }
+        }));
 
       for overlay in &plan.overlays {
         match overlay {
           OverlayNode::Rect(rect) => {
             snapshot.overlays.push(OverlayRecord {
-              overlay: the_editor_snapshot_overlay_t {
-                kind: 0,
+              overlay:  the_editor_snapshot_overlay_t {
+                kind:      0,
                 rect_kind: overlay_rect_kind_code(rect.kind),
-                x: pane.rect.x.saturating_add(rect.rect.x),
-                y: pane.rect.y.saturating_add(rect.rect.y),
-                width: rect.rect.width,
-                height: rect.rect.height,
-                radius: rect.radius,
-                row: 0,
-                col: 0,
-                text: ptr::null(),
-                style: style_to_ffi(rect.style, &editor.ui_theme),
+                x:         pane.rect.x.saturating_add(rect.rect.x),
+                y:         pane.rect.y.saturating_add(rect.rect.y),
+                width:     rect.rect.width,
+                height:    rect.rect.height,
+                radius:    rect.radius,
+                row:       0,
+                col:       0,
+                text:      ptr::null(),
+                style:     style_to_ffi(rect.style, &editor.ui_theme),
               },
               text_idx: None,
             });
@@ -6813,18 +7599,18 @@ impl OwnedSnapshot {
           OverlayNode::Text(text) => {
             let text_idx = snapshot.push_string(text.text.as_str());
             snapshot.overlays.push(OverlayRecord {
-              overlay: the_editor_snapshot_overlay_t {
-                kind: 1,
+              overlay:  the_editor_snapshot_overlay_t {
+                kind:      1,
                 rect_kind: 0,
-                x: 0,
-                y: 0,
-                width: 0,
-                height: 0,
-                radius: 0,
-                row: pane.rect.y as u32 + text.pos.row as u32,
-                col: pane.rect.x as u32 + text.pos.col as u32,
-                text: ptr::null(),
-                style: style_to_ffi(text.style, &editor.ui_theme),
+                x:         0,
+                y:         0,
+                width:     0,
+                height:    0,
+                radius:    0,
+                row:       pane.rect.y as u32 + text.pos.row as u32,
+                col:       pane.rect.x as u32 + text.pos.col as u32,
+                text:      ptr::null(),
+                style:     style_to_ffi(text.style, &editor.ui_theme),
               },
               text_idx: Some(text_idx),
             });
@@ -6866,6 +7652,7 @@ impl OwnedSnapshot {
       }
     }
     snapshot.finalize_document_and_status_strings();
+    snapshot.finalize_pending_key_strings();
     snapshot.finalize_completion_menu_strings();
     snapshot.finalize_input_prompt_strings();
     snapshot.finalize_docs_panel_strings();
@@ -6881,7 +7668,8 @@ impl OwnedSnapshot {
   }
 
   fn push_string(&mut self, text: &str) -> usize {
-    let c_string = CString::new(text).unwrap_or_else(|_| CString::new(text.replace('\0', "")).expect("cstring"));
+    let c_string =
+      CString::new(text).unwrap_or_else(|_| CString::new(text.replace('\0', "")).expect("cstring"));
     self.strings.push(c_string);
     self.strings.len() - 1
   }
@@ -6890,7 +7678,14 @@ impl OwnedSnapshot {
     text.map(|text| self.push_string(text))
   }
 
-  fn push_text_cells(&mut self, row: u16, col: u16, text: &str, is_virtual: bool, style: the_editor_style_t) {
+  fn push_text_cells(
+    &mut self,
+    row: u16,
+    col: u16,
+    text: &str,
+    is_virtual: bool,
+    style: the_editor_style_t,
+  ) {
     let mut next_col = col;
     for grapheme in text.graphemes(true) {
       if grapheme.is_empty() {
@@ -6913,21 +7708,73 @@ impl OwnedSnapshot {
     }
   }
 
+  fn populate_pending_keys(&mut self, pending_keys: Option<PendingKeyState>) {
+    self.pending_keys = PendingKeysRecord {
+      pending:             the_editor_snapshot_pending_keys_t {
+        visible:         pending_keys.is_some(),
+        scope:           ptr::null(),
+        pending_display: ptr::null(),
+        immediate_count: 0,
+        outcome_count:   0,
+      },
+      scope_idx:           None,
+      pending_display_idx: None,
+    };
+    self.pending_key_outcomes.clear();
+
+    let Some(pending_keys) = pending_keys else {
+      return;
+    };
+
+    self.pending_keys.pending.immediate_count = pending_keys.immediate.len();
+    self.pending_keys.pending.outcome_count = pending_keys.outcomes.len();
+    self.pending_keys.scope_idx = pending_keys
+      .scope
+      .as_deref()
+      .map(|scope| self.push_string(scope));
+    self.pending_keys.pending_display_idx =
+      Some(self.push_string(&format_key_binding_sequence(&pending_keys.pending)));
+
+    for outcome in pending_keys.outcomes {
+      let path_display_idx = self.push_string(&format_key_binding_sequence(&outcome.path));
+      let label_idx = self.push_string(&outcome.label);
+      self.pending_key_outcomes.push(PendingKeyOutcomeRecord {
+        outcome: the_editor_snapshot_pending_key_outcome_t {
+          path_display: ptr::null(),
+          label:        ptr::null(),
+          depth:        outcome.path.len().min(u16::MAX as usize) as u16,
+          immediate:    outcome.path.len() == 1,
+        },
+        path_display_idx,
+        label_idx,
+      });
+    }
+  }
+
   fn populate_file_picker(&mut self, editor: &SwiftEditor) {
     let picker = &editor.file_picker;
-    let matched_count = if picker.active { picker.matched_count() } else { 0 };
+    let matched_count = if picker.active {
+      picker.matched_count()
+    } else {
+      0
+    };
     let visible_item_start = picker.list_offset.min(matched_count);
     let visible_item_count = matched_count
       .saturating_sub(visible_item_start)
       .min(picker.list_visible.max(1));
     let preview_window = if picker.active && picker.show_preview {
-      file_picker_preview_window(picker, picker.preview_scroll, editor.file_picker_preview_visible_rows, 2)
+      file_picker_preview_window(
+        picker,
+        picker.preview_scroll,
+        editor.file_picker_preview_visible_rows,
+        2,
+      )
     } else {
       file_picker_preview_window(picker, 0, 1, 0)
     };
 
     self.file_picker = FilePickerRecord {
-      picker: the_editor_snapshot_file_picker_t {
+      picker:           the_editor_snapshot_file_picker_t {
         is_open: picker.active,
         kind: file_picker_kind_code(picker.kind),
         selected_index: picker.selected.map(|index| index as i32).unwrap_or(-1),
@@ -6937,10 +7784,15 @@ impl OwnedSnapshot {
         title: ptr::null(),
         query: ptr::null(),
         show_preview: picker.show_preview,
-        loading: picker.scanning || picker.matcher_running || picker.dynamic_running || picker.preview_loading(),
+        loading: picker.scanning
+          || picker.matcher_running
+          || picker.dynamic_running
+          || picker.preview_loading(),
         error: ptr::null(),
         preview_path: ptr::null(),
-        preview_navigation_mode: file_picker_preview_navigation_code(preview_window.navigation_mode),
+        preview_navigation_mode: file_picker_preview_navigation_code(
+          preview_window.navigation_mode,
+        ),
         preview_kind: file_picker_preview_kind_code(preview_window.kind),
         preview_total_rows: preview_window.total_virtual_rows,
         preview_offset: picker.preview_scroll,
@@ -6951,9 +7803,9 @@ impl OwnedSnapshot {
           preview_window.lines.len()
         },
       },
-      title_idx: Some(self.push_string(&picker.title)),
-      query_idx: Some(self.push_string(&picker.query)),
-      error_idx: self.push_optional_string(picker.error.as_deref()),
+      title_idx:        Some(self.push_string(&picker.title)),
+      query_idx:        Some(self.push_string(&picker.query)),
+      error_idx:        self.push_optional_string(picker.error.as_deref()),
       preview_path_idx: picker
         .preview_path
         .as_ref()
@@ -6967,9 +7819,15 @@ impl OwnedSnapshot {
       let row_data = file_picker_row_data_for_kind(picker.kind, &item);
       let icon_idx = self.push_string(&item.icon);
       let primary_idx = self.push_string(&row_data.primary);
-      let secondary_idx = self.push_optional_string((!row_data.secondary.is_empty()).then_some(row_data.secondary.as_str()));
-      let tertiary_idx = self.push_optional_string((!row_data.tertiary.is_empty()).then_some(row_data.tertiary.as_str()));
-      let quaternary_idx = self.push_optional_string((!row_data.quaternary.is_empty()).then_some(row_data.quaternary.as_str()));
+      let secondary_idx = self.push_optional_string(
+        (!row_data.secondary.is_empty()).then_some(row_data.secondary.as_str()),
+      );
+      let tertiary_idx = self.push_optional_string(
+        (!row_data.tertiary.is_empty()).then_some(row_data.tertiary.as_str()),
+      );
+      let quaternary_idx = self.push_optional_string(
+        (!row_data.quaternary.is_empty()).then_some(row_data.quaternary.as_str()),
+      );
       self.file_picker_items.push(FilePickerItemRecord {
         item: the_editor_snapshot_file_picker_item_t {
           stable_id: item.stable_id(),
@@ -7002,19 +7860,24 @@ impl OwnedSnapshot {
           self.push_file_picker_preview_segment(editor, base_text_style, segment);
         }
         let marker_idx = (!line.message.is_empty()).then(|| self.push_string(&line.message));
-        self.file_picker_preview_lines.push(FilePickerPreviewLineRecord {
-          line: the_editor_snapshot_file_picker_preview_line_t {
-            virtual_row: line.virtual_row,
-            kind: file_picker_preview_line_code_for_vcs(line.kind),
-            source: file_picker_preview_source_code(line.source),
-            line_number: line.line_number.map(|value| value as i32).unwrap_or(-1),
-            focused: false,
-            marker: ptr::null(),
-            segment_count: self.file_picker_preview_segments.len().saturating_sub(segment_start),
-          },
-          marker_idx,
-          segment_start,
-        });
+        self
+          .file_picker_preview_lines
+          .push(FilePickerPreviewLineRecord {
+            line: the_editor_snapshot_file_picker_preview_line_t {
+              virtual_row:   line.virtual_row,
+              kind:          file_picker_preview_line_code_for_vcs(line.kind),
+              source:        file_picker_preview_source_code(line.source),
+              line_number:   line.line_number.map(|value| value as i32).unwrap_or(-1),
+              focused:       false,
+              marker:        ptr::null(),
+              segment_count: self
+                .file_picker_preview_segments
+                .len()
+                .saturating_sub(segment_start),
+            },
+            marker_idx,
+            segment_start,
+          });
       }
       return;
     }
@@ -7025,19 +7888,24 @@ impl OwnedSnapshot {
         self.push_file_picker_preview_segment(editor, base_text_style, segment);
       }
       let marker_idx = (!line.marker.is_empty()).then(|| self.push_string(&line.marker));
-      self.file_picker_preview_lines.push(FilePickerPreviewLineRecord {
-        line: the_editor_snapshot_file_picker_preview_line_t {
-          virtual_row: line.virtual_row,
-          kind: file_picker_preview_line_code(line.kind),
-          source: 0,
-          line_number: line.line_number.map(|value| value as i32).unwrap_or(-1),
-          focused: line.focused,
-          marker: ptr::null(),
-          segment_count: self.file_picker_preview_segments.len().saturating_sub(segment_start),
-        },
-        marker_idx,
-        segment_start,
-      });
+      self
+        .file_picker_preview_lines
+        .push(FilePickerPreviewLineRecord {
+          line: the_editor_snapshot_file_picker_preview_line_t {
+            virtual_row:   line.virtual_row,
+            kind:          file_picker_preview_line_code(line.kind),
+            source:        0,
+            line_number:   line.line_number.map(|value| value as i32).unwrap_or(-1),
+            focused:       line.focused,
+            marker:        ptr::null(),
+            segment_count: self
+              .file_picker_preview_segments
+              .len()
+              .saturating_sub(segment_start),
+          },
+          marker_idx,
+          segment_start,
+        });
     }
   }
 
@@ -7070,13 +7938,17 @@ impl OwnedSnapshot {
       current_file_summary,
     ));
     self.file_tree = FileTreeRecord {
-      tree: the_editor_snapshot_file_tree_t {
-        visible: editor.file_tree.visible && editor.file_tree.root.is_some(),
-        pane_id: 0,
-        root: ptr::null(),
-        selected_index: editor.file_tree.selected.map(|index| index as i32).unwrap_or(-1),
-        scroll_offset: editor.file_tree.scroll_offset,
-        row_count: editor.file_tree.rows.len(),
+      tree:     the_editor_snapshot_file_tree_t {
+        visible:        editor.file_tree.visible && editor.file_tree.root.is_some(),
+        pane_id:        0,
+        root:           ptr::null(),
+        selected_index: editor
+          .file_tree
+          .selected
+          .map(|index| index as i32)
+          .unwrap_or(-1),
+        scroll_offset:  editor.file_tree.scroll_offset,
+        row_count:      editor.file_tree.rows.len(),
       },
       root_idx: editor
         .file_tree
@@ -7092,17 +7964,17 @@ impl OwnedSnapshot {
       let icon_glyph_idx = self.push_string(row.icon_glyph);
       self.file_tree_rows.push(FileTreeRowRecord {
         row: the_editor_snapshot_file_tree_row_t {
-          path: ptr::null(),
-          display_name: ptr::null(),
-          icon_name: ptr::null(),
-          icon_glyph: ptr::null(),
-          depth: row.depth.min(u16::MAX as usize) as u16,
-          has_children: row.has_children,
-          is_dir: row.is_dir,
-          is_expanded: row.is_expanded,
-          is_current_file: row.is_current_file,
-          is_selected: editor.file_tree.selected == Some(index),
-          vcs_kind: file_tree_vcs_kind_code(row.decorations.vcs),
+          path:                ptr::null(),
+          display_name:        ptr::null(),
+          icon_name:           ptr::null(),
+          icon_glyph:          ptr::null(),
+          depth:               row.depth.min(u16::MAX as usize) as u16,
+          has_children:        row.has_children,
+          is_dir:              row.is_dir,
+          is_expanded:         row.is_expanded,
+          is_current_file:     row.is_current_file,
+          is_selected:         editor.file_tree.selected == Some(index),
+          vcs_kind:            file_tree_vcs_kind_code(row.decorations.vcs),
           diagnostic_severity: file_tree_diagnostic_severity_code(row.decorations),
         },
         path_idx,
@@ -7126,15 +7998,17 @@ impl OwnedSnapshot {
       .unwrap_or_default();
     let style = style_to_ffi(base_text_style.patch(highlight_style), &editor.ui_theme);
     let text_idx = self.push_string(&segment.text);
-    self.file_picker_preview_segments.push(FilePickerPreviewSegmentRecord {
-      segment: the_editor_snapshot_file_picker_preview_segment_t {
-        text: ptr::null(),
-        style,
-        is_match: segment.is_match,
-        change_kind: file_picker_preview_change_kind_code(segment.change_kind),
-      },
-      text_idx,
-    });
+    self
+      .file_picker_preview_segments
+      .push(FilePickerPreviewSegmentRecord {
+        segment: the_editor_snapshot_file_picker_preview_segment_t {
+          text: ptr::null(),
+          style,
+          is_match: segment.is_match,
+          change_kind: file_picker_preview_change_kind_code(segment.change_kind),
+        },
+        text_idx,
+      });
   }
 
   fn finalize_document_and_status_strings(&mut self) {
@@ -7174,6 +8048,19 @@ impl OwnedSnapshot {
         item.item.icon = self.strings[icon_idx].as_ptr();
       }
       item.item.text = self.strings[item.text_idx].as_ptr();
+    }
+  }
+
+  fn finalize_pending_key_strings(&mut self) {
+    if let Some(scope_idx) = self.pending_keys.scope_idx {
+      self.pending_keys.pending.scope = self.strings[scope_idx].as_ptr();
+    }
+    if let Some(pending_display_idx) = self.pending_keys.pending_display_idx {
+      self.pending_keys.pending.pending_display = self.strings[pending_display_idx].as_ptr();
+    }
+    for outcome in &mut self.pending_key_outcomes {
+      outcome.outcome.path_display = self.strings[outcome.path_display_idx].as_ptr();
+      outcome.outcome.label = self.strings[outcome.label_idx].as_ptr();
     }
   }
 
@@ -7277,6 +8164,19 @@ impl OwnedSnapshot {
   }
 }
 
+fn format_key_binding_sequence(bindings: &[KeyBinding]) -> String {
+  bindings
+    .iter()
+    .map(ToString::to_string)
+    .collect::<Vec<_>>()
+    .join(" ")
+}
+
+fn active_pending_key_state(editor: &mut SwiftEditor) -> Option<PendingKeyState> {
+  let mode = editor.mode();
+  editor.keymaps().pending_state(mode)
+}
+
 fn translate_key_event(raw: the_editor_key_event_t) -> Option<KeyEvent> {
   let modifiers = translate_modifiers(raw.modifiers);
   let key = match raw.kind {
@@ -7316,9 +8216,15 @@ fn translate_key_event(raw: the_editor_key_event_t) -> Option<KeyEvent> {
 
 fn translate_modifiers(raw: u8) -> the_default::Modifiers {
   let mut modifiers = the_default::Modifiers::empty();
-  if (raw & MOD_CTRL) != 0 { modifiers.insert(the_default::Modifiers::CTRL); }
-  if (raw & MOD_ALT) != 0 { modifiers.insert(the_default::Modifiers::ALT); }
-  if (raw & MOD_SHIFT) != 0 { modifiers.insert(the_default::Modifiers::SHIFT); }
+  if (raw & MOD_CTRL) != 0 {
+    modifiers.insert(the_default::Modifiers::CTRL);
+  }
+  if (raw & MOD_ALT) != 0 {
+    modifiers.insert(the_default::Modifiers::ALT);
+  }
+  if (raw & MOD_SHIFT) != 0 {
+    modifiers.insert(the_default::Modifiers::SHIFT);
+  }
   modifiers
 }
 
@@ -7387,7 +8293,10 @@ fn lsp_server_from_env() -> Option<LspServerConfig> {
 
   let mut server = LspServerConfig::new(command.clone(), command);
   if let Ok(args) = env::var("THE_EDITOR_LSP_ARGS") {
-    let args: Vec<String> = args.split_whitespace().map(|value| value.to_string()).collect();
+    let args: Vec<String> = args
+      .split_whitespace()
+      .map(|value| value.to_string())
+      .collect();
     if !args.is_empty() {
       server = server.with_args(args);
     }
@@ -7458,10 +8367,17 @@ fn lsp_server_configs_equal(lhs: Option<&LspServerConfig>, rhs: Option<&LspServe
   }
 }
 
-fn close_lsp_document_for_runtime(runtime: &mut ManagedLspRuntime, document: Option<&LspDocumentSyncState>) {
-  if runtime.opened_current_document && let Some(document) = document {
+fn close_lsp_document_for_runtime(
+  runtime: &mut ManagedLspRuntime,
+  document: Option<&LspDocumentSyncState>,
+) {
+  if runtime.opened_current_document
+    && let Some(document) = document
+  {
     let params = did_close_params(&document.uri);
-    let _ = runtime.runtime.send_notification("textDocument/didClose", Some(params));
+    let _ = runtime
+      .runtime
+      .send_notification("textDocument/didClose", Some(params));
   }
   let pending_ids = runtime.pending_requests.keys().copied().collect::<Vec<_>>();
   for request_id in pending_ids {
@@ -7622,7 +8538,12 @@ fn docs_panel_styles(theme: &Theme, base: Style) -> DocsPanelStyles {
   styles
 }
 
-fn push_docs_run(runs: &mut Vec<DocsStyledRun>, text: String, style: Style, kind: DocsSemanticKind) {
+fn push_docs_run(
+  runs: &mut Vec<DocsStyledRun>,
+  text: String,
+  style: Style,
+  kind: DocsSemanticKind,
+) {
   if text.is_empty() {
     return;
   }
@@ -7660,7 +8581,9 @@ fn docs_runs_from_inline(
   runs
 }
 
-fn strip_signature_active_markers_from_line(line: &str) -> (String, Option<std::ops::Range<usize>>) {
+fn strip_signature_active_markers_from_line(
+  line: &str,
+) -> (String, Option<std::ops::Range<usize>>) {
   let mut cleaned = String::with_capacity(line.len());
   let mut idx = 0usize;
   let mut start = None;
@@ -7682,7 +8605,9 @@ fn strip_signature_active_markers_from_line(line: &str) -> (String, Option<std::
       continue;
     }
     let mut chars = line[idx..].chars();
-    let Some(ch) = chars.next() else { break; };
+    let Some(ch) = chars.next() else {
+      break;
+    };
     cleaned.push(ch);
     idx += ch.len_utf8();
   }
@@ -7695,7 +8620,9 @@ fn strip_signature_active_markers_from_line(line: &str) -> (String, Option<std::
   (cleaned, range)
 }
 
-fn strip_signature_active_markers_from_lines(code_lines: &[String]) -> (Vec<String>, Option<std::ops::Range<usize>>) {
+fn strip_signature_active_markers_from_lines(
+  code_lines: &[String],
+) -> (Vec<String>, Option<std::ops::Range<usize>>) {
   let mut cleaned_lines = Vec::with_capacity(code_lines.len());
   let mut active_range = None;
   let mut line_start = 0usize;
@@ -7777,9 +8704,9 @@ fn render_code_lines_with_active_style(
     push_docs_run(&mut runs, piece, run_style, run_kind);
     if runs.is_empty() {
       runs.push(DocsStyledRun {
-        text: String::new(),
+        text:  String::new(),
         style: base_style,
-        kind: DocsSemanticKind::Code,
+        kind:  DocsSemanticKind::Code,
       });
     }
     rendered.push(runs);
@@ -7884,7 +8811,12 @@ fn highlighted_code_block_lines(
         kind = DocsSemanticKind::ActiveParameter;
       }
       if (style != active_style || kind != active_kind) && !piece.is_empty() {
-        push_docs_run(&mut runs, std::mem::take(&mut piece), active_style, active_kind);
+        push_docs_run(
+          &mut runs,
+          std::mem::take(&mut piece),
+          active_style,
+          active_kind,
+        );
       }
       active_style = style;
       active_kind = kind;
@@ -7895,9 +8827,9 @@ fn highlighted_code_block_lines(
     push_docs_run(&mut runs, piece, active_style, active_kind);
     if runs.is_empty() {
       runs.push(DocsStyledRun {
-        text: String::new(),
+        text:  String::new(),
         style: styles.code,
-        kind: DocsSemanticKind::Code,
+        kind:  DocsSemanticKind::Code,
       });
     }
     rendered.push(runs);
@@ -7911,41 +8843,86 @@ fn highlighted_code_block_lines(
   rendered
 }
 
-fn docs_markdown_lines(markdown: &str, styles: &DocsPanelStyles, editor: &SwiftEditor) -> Vec<Vec<DocsStyledRun>> {
+fn docs_markdown_lines(
+  markdown: &str,
+  styles: &DocsPanelStyles,
+  editor: &SwiftEditor,
+) -> Vec<Vec<DocsStyledRun>> {
   let mut lines = Vec::new();
   for block in parse_markdown_blocks(markdown) {
     match block {
       DocsBlock::Paragraph(inline_runs) => {
-        lines.push(docs_runs_from_inline(&inline_runs, styles, styles.base, DocsSemanticKind::Body));
+        lines.push(docs_runs_from_inline(
+          &inline_runs,
+          styles,
+          styles.base,
+          DocsSemanticKind::Body,
+        ));
       },
       DocsBlock::Heading { level, runs } => {
         let level_idx = level.saturating_sub(1).min(5) as usize;
-        lines.push(docs_runs_from_inline(&runs, styles, styles.heading[level_idx], DocsSemanticKind::from_heading_level(level)));
+        lines.push(docs_runs_from_inline(
+          &runs,
+          styles,
+          styles.heading[level_idx],
+          DocsSemanticKind::from_heading_level(level),
+        ));
       },
-      DocsBlock::ListItem { marker, runs: inline_runs } => {
+      DocsBlock::ListItem {
+        marker,
+        runs: inline_runs,
+      } => {
         let marker_text = match marker {
           DocsListMarker::Bullet => "• ".to_string(),
           DocsListMarker::Ordered(marker) => format!("{marker} "),
         };
         let mut runs = Vec::new();
-        push_docs_run(&mut runs, marker_text, styles.bullet, DocsSemanticKind::ListMarker);
-        runs.extend(docs_runs_from_inline(&inline_runs, styles, styles.base, DocsSemanticKind::Body));
+        push_docs_run(
+          &mut runs,
+          marker_text,
+          styles.bullet,
+          DocsSemanticKind::ListMarker,
+        );
+        runs.extend(docs_runs_from_inline(
+          &inline_runs,
+          styles,
+          styles.base,
+          DocsSemanticKind::Body,
+        ));
         lines.push(runs);
       },
       DocsBlock::Quote(inline_runs) => {
         let mut runs = Vec::new();
-        push_docs_run(&mut runs, "│ ".to_string(), styles.quote, DocsSemanticKind::QuoteMarker);
-        runs.extend(docs_runs_from_inline(&inline_runs, styles, styles.quote, DocsSemanticKind::QuoteText));
+        push_docs_run(
+          &mut runs,
+          "│ ".to_string(),
+          styles.quote,
+          DocsSemanticKind::QuoteMarker,
+        );
+        runs.extend(docs_runs_from_inline(
+          &inline_runs,
+          styles,
+          styles.quote,
+          DocsSemanticKind::QuoteText,
+        ));
         lines.push(runs);
       },
-      DocsBlock::CodeFence { language, lines: code_lines } => {
-        lines.extend(highlighted_code_block_lines(&code_lines, styles, editor, language.as_deref()));
+      DocsBlock::CodeFence {
+        language,
+        lines: code_lines,
+      } => {
+        lines.extend(highlighted_code_block_lines(
+          &code_lines,
+          styles,
+          editor,
+          language.as_deref(),
+        ));
       },
       DocsBlock::Rule => {
         lines.push(vec![DocsStyledRun {
-          text: "───".to_string(),
+          text:  "───".to_string(),
           style: styles.rule,
-          kind: DocsSemanticKind::Rule,
+          kind:  DocsSemanticKind::Rule,
         }]);
       },
       DocsBlock::BlankLine => lines.push(Vec::new()),
@@ -7966,7 +8943,12 @@ fn flatten_docs_runs(markdown: &str, editor: &SwiftEditor) -> Vec<DocsStyledRun>
   for (index, line) in lines.into_iter().enumerate() {
     runs.extend(line);
     if index + 1 < total_lines {
-      push_docs_run(&mut runs, "\n".to_string(), styles.base, DocsSemanticKind::Body);
+      push_docs_run(
+        &mut runs,
+        "\n".to_string(),
+        styles.base,
+        DocsSemanticKind::Body,
+      );
     }
   }
   runs
@@ -8015,10 +8997,13 @@ fn capabilities_support_single_char(
     return false;
   };
 
-  values.iter().filter_map(serde_json::Value::as_str).any(|value| {
-    let mut chars = value.chars();
-    matches!(chars.next(), Some(first) if first == ch && chars.next().is_none())
-  })
+  values
+    .iter()
+    .filter_map(serde_json::Value::as_str)
+    .any(|value| {
+      let mut chars = value.chars();
+      matches!(chars.next(), Some(first) if first == ch && chars.next().is_none())
+    })
 }
 
 fn normalize_completion_documentation(value: &str) -> Option<String> {
@@ -8146,10 +9131,18 @@ fn completion_kind_icon(kind: LspCompletionItemKind) -> &'static str {
 fn completion_kind_color(kind: LspCompletionItemKind) -> Color {
   use LspCompletionItemKind::*;
   match kind {
-    Method | Function | Constructor | Operator => the_lib::render::graphics::Color::Rgb(0xDB, 0xBF, 0xEF),
-    Field | Variable | Property | Value | Reference => the_lib::render::graphics::Color::Rgb(0xA4, 0xA0, 0xE8),
-    Class | Interface | Enum | Struct | TypeParameter => the_lib::render::graphics::Color::Rgb(0xEF, 0xBA, 0x5D),
-    Module | Folder | EnumMember | Constant => the_lib::render::graphics::Color::Rgb(0xE8, 0xDC, 0xA0),
+    Method | Function | Constructor | Operator => {
+      the_lib::render::graphics::Color::Rgb(0xDB, 0xBF, 0xEF)
+    },
+    Field | Variable | Property | Value | Reference => {
+      the_lib::render::graphics::Color::Rgb(0xA4, 0xA0, 0xE8)
+    },
+    Class | Interface | Enum | Struct | TypeParameter => {
+      the_lib::render::graphics::Color::Rgb(0xEF, 0xBA, 0x5D)
+    },
+    Module | Folder | EnumMember | Constant => {
+      the_lib::render::graphics::Color::Rgb(0xE8, 0xDC, 0xA0)
+    },
     Keyword => the_lib::render::graphics::Color::Rgb(0xEC, 0xCD, 0xBA),
     Snippet => the_lib::render::graphics::Color::Rgb(0x9F, 0xF2, 0x8F),
     Event => the_lib::render::graphics::Color::Rgb(0xF4, 0x78, 0x68),
@@ -8296,7 +9289,10 @@ fn promote_callable_completion_fallback(
   }
 
   let (text, origin) = if let Some(primary) = item.primary_edit.as_mut() {
-    (&mut primary.new_text, CompletionSnippetCursorOrigin::PrimaryEdit)
+    (
+      &mut primary.new_text,
+      CompletionSnippetCursorOrigin::PrimaryEdit,
+    )
   } else {
     if item.insert_text.is_none() {
       item.insert_text = Some(item.label.clone());
@@ -8344,7 +9340,9 @@ fn selected_completion_docs_text(editor: &SwiftEditor) -> Option<&str> {
     .filter(|docs| !docs.is_empty())
 }
 
-const fn completion_menu_visible_rows() -> usize { 10 }
+const fn completion_menu_visible_rows() -> usize {
+  10
+}
 
 fn completion_docs_target_height(viewport_height: u16, completion_panel_height: u16) -> u16 {
   viewport_height.min(completion_panel_height.max(8)).max(1)
@@ -8371,7 +9369,11 @@ fn docs_panel_dimensions(
   let styles = docs_panel_styles(&editor.ui_theme, base_style);
   let lines = docs_markdown_lines(markdown, &styles, editor);
   let line_count = lines.len().max(1).min(u16::MAX as usize) as u16;
-  let widest_line = lines.iter().map(|line| docs_panel_line_width(line)).max().unwrap_or(0);
+  let widest_line = lines
+    .iter()
+    .map(|line| docs_panel_line_width(line))
+    .max()
+    .unwrap_or(0);
   let width = widest_line.saturating_add(4).clamp(min_width, max_width);
   let height = line_count.saturating_add(2).clamp(min_height, max_height);
   (width, height)
@@ -8387,14 +9389,14 @@ fn completion_menu_panel_record(
   let area = the_default::OverlayRect::new(0, 0, viewport_width, viewport_height);
   let rect = completion_panel_rect(area, panel_width, panel_height, cursor);
   the_editor_snapshot_completion_menu_t {
-    is_open: true,
-    col: rect.x,
-    row: rect.y,
-    width: rect.width,
-    height: rect.height,
+    is_open:        true,
+    col:            rect.x,
+    row:            rect.y,
+    width:          rect.width,
+    height:         rect.height,
     selected_index: -1,
-    item_count: 0,
-    scroll_offset: 0,
+    item_count:     0,
+    scroll_offset:  0,
   }
 }
 
@@ -8414,11 +9416,11 @@ fn completion_docs_panel_record(
   );
   let rect = completion_docs_panel_rect(area, panel_width, panel_height, completion_rect)?;
   Some(the_editor_snapshot_docs_panel_t {
-    is_open: true,
-    col: rect.x,
-    row: rect.y,
-    width: rect.width,
-    height: rect.height,
+    is_open:   true,
+    col:       rect.x,
+    row:       rect.y,
+    width:     rect.width,
+    height:    rect.height,
     run_count: 0,
   })
 }
@@ -8438,11 +9440,11 @@ fn docs_panel_record(
     completion_panel_rect(area, panel_width, panel_height, cursor)
   };
   the_editor_snapshot_docs_panel_t {
-    is_open: true,
-    col: rect.x,
-    row: rect.y,
-    width: rect.width,
-    height: rect.height,
+    is_open:   true,
+    col:       rect.x,
+    row:       rect.y,
+    width:     rect.width,
+    height:    rect.height,
     run_count: 0,
   }
 }
@@ -8451,7 +9453,9 @@ fn is_symbol_word_char(ch: char) -> bool {
   ch == '_' || ch.is_alphanumeric()
 }
 
-fn is_completion_replace_char(ch: char) -> bool { is_symbol_word_char(ch) }
+fn is_completion_replace_char(ch: char) -> bool {
+  is_symbol_word_char(ch)
+}
 
 fn sanitize_picker_field(value: &str) -> String {
   value
@@ -8521,7 +9525,11 @@ fn lsp_symbol_icon_name(kind: u32) -> &'static str {
 }
 
 fn display_vcs_picker_path(path: &Path, root: &Path) -> String {
-  path.strip_prefix(root).unwrap_or(path).display().to_string()
+  path
+    .strip_prefix(root)
+    .unwrap_or(path)
+    .display()
+    .to_string()
 }
 
 fn file_picker_changed_kind_for_vcs(change: &FileChange) -> FilePickerChangedKind {
@@ -8536,28 +9544,43 @@ fn file_picker_changed_kind_for_vcs(change: &FileChange) -> FilePickerChangedKin
 
 fn file_picker_changed_file_to_vcs_change(item: &FilePickerChangedFileItem) -> FileChange {
   match item.kind {
-    FilePickerChangedKind::Untracked => FileChange::Untracked {
-      path: item.path.clone(),
+    FilePickerChangedKind::Untracked => {
+      FileChange::Untracked {
+        path: item.path.clone(),
+      }
     },
-    FilePickerChangedKind::Modified => FileChange::Modified {
-      path: item.path.clone(),
+    FilePickerChangedKind::Modified => {
+      FileChange::Modified {
+        path: item.path.clone(),
+      }
     },
-    FilePickerChangedKind::Conflict => FileChange::Conflict {
-      path: item.path.clone(),
+    FilePickerChangedKind::Conflict => {
+      FileChange::Conflict {
+        path: item.path.clone(),
+      }
     },
-    FilePickerChangedKind::Deleted => FileChange::Deleted {
-      path: item.path.clone(),
+    FilePickerChangedKind::Deleted => {
+      FileChange::Deleted {
+        path: item.path.clone(),
+      }
     },
-    FilePickerChangedKind::Renamed => FileChange::Renamed {
-      from_path: item.from_path.clone().unwrap_or_else(|| item.path.clone()),
-      to_path: item.path.clone(),
+    FilePickerChangedKind::Renamed => {
+      FileChange::Renamed {
+        from_path: item.from_path.clone().unwrap_or_else(|| item.path.clone()),
+        to_path:   item.path.clone(),
+      }
     },
   }
 }
 
-fn vcs_base_text_for_change(vcs_provider: &DiffProviderRegistry, change: &FileChange) -> Result<String, String> {
+fn vcs_base_text_for_change(
+  vcs_provider: &DiffProviderRegistry,
+  change: &FileChange,
+) -> Result<String, String> {
   match vcs_provider.get_diff_base_for_change(change) {
-    Some(bytes) => String::from_utf8(bytes).map_err(|_| "Base revision is not UTF-8 text".to_string()),
+    Some(bytes) => {
+      String::from_utf8(bytes).map_err(|_| "Base revision is not UTF-8 text".to_string())
+    },
     None => Ok(String::new()),
   }
 }
@@ -8603,7 +9626,9 @@ fn build_file_picker_vcs_diff_entry_with_text(
   };
   let kind = file_picker_changed_kind_for_vcs(change);
   let display_path = display_vcs_picker_path(&path, workspace_root);
-  let from_display = from_path.as_ref().map(|from_path| display_vcs_picker_path(from_path, workspace_root));
+  let from_display = from_path
+    .as_ref()
+    .map(|from_path| display_vcs_picker_path(from_path, workspace_root));
   let current_rope = Rope::from_str(current_text);
   let base_rope = Rope::from_str(base_text);
   let handle = DiffHandle::new(base_rope.clone(), current_rope.clone());
@@ -8666,30 +9691,32 @@ fn vcs_info_hunk(
   message: &str,
 ) -> FilePickerVcsDiffHunk {
   FilePickerVcsDiffHunk {
-    summary: message.to_string(),
-    target_line: None,
+    summary:            message.to_string(),
+    target_line:        None,
     target_cursor_char: None,
-    before_start: 0,
-    before_end: 0,
-    after_start: 0,
-    after_end: 0,
-    preview: FilePickerPreview::VcsDiff(finalize_vcs_diff_preview(FilePickerVcsDiffPreview {
-      title: display_path.to_string(),
-      from_title: from_display.map(ToOwned::to_owned),
-      left_label: "BASE".to_string(),
-      right_label: "WORKTREE".to_string(),
-      left: file_picker_source_preview_from_text(path, "", None),
-      right: file_picker_source_preview_from_text(path, current_text, None),
-      rows: vec![FilePickerVcsDiffPreviewRow {
-        kind: FilePickerVcsDiffPreviewRowKind::Info,
-        left_line_index: None,
-        right_line_index: None,
-        left_line_number: None,
-        right_line_number: None,
-        message: message.to_string(),
-      }],
-      cached_lines: Arc::new([]),
-    })),
+    before_start:       0,
+    before_end:         0,
+    after_start:        0,
+    after_end:          0,
+    preview:            FilePickerPreview::VcsDiff(finalize_vcs_diff_preview(
+      FilePickerVcsDiffPreview {
+        title:        display_path.to_string(),
+        from_title:   from_display.map(ToOwned::to_owned),
+        left_label:   "BASE".to_string(),
+        right_label:  "WORKTREE".to_string(),
+        left:         file_picker_source_preview_from_text(path, "", None),
+        right:        file_picker_source_preview_from_text(path, current_text, None),
+        rows:         vec![FilePickerVcsDiffPreviewRow {
+          kind:              FilePickerVcsDiffPreviewRowKind::Info,
+          left_line_index:   None,
+          right_line_index:  None,
+          left_line_number:  None,
+          right_line_number: None,
+          message:           message.to_string(),
+        }],
+        cached_lines: Arc::new([]),
+      },
+    )),
   }
 }
 
@@ -8767,7 +9794,7 @@ fn build_vcs_hunk_preview_from_bounds(
     current_rope,
     &Hunk {
       before: before_start as u32..before_end as u32,
-      after: after_start as u32..after_end as u32,
+      after:  after_start as u32..after_end as u32,
     },
   )
 }
@@ -8811,23 +9838,23 @@ fn build_vcs_hunk_preview(
   let mut rows = Vec::new();
   if hidden_above > 0 {
     rows.push(FilePickerVcsDiffPreviewRow {
-      kind: FilePickerVcsDiffPreviewRowKind::CollapsedAbove,
-      left_line_index: None,
-      right_line_index: None,
-      left_line_number: None,
+      kind:              FilePickerVcsDiffPreviewRowKind::CollapsedAbove,
+      left_line_index:   None,
+      right_line_index:  None,
+      left_line_number:  None,
       right_line_number: None,
-      message: format!("… {} lines above", hidden_above),
+      message:           format!("… {} lines above", hidden_above),
     });
   }
 
   for offset in 0..context_above {
     rows.push(FilePickerVcsDiffPreviewRow {
-      kind: FilePickerVcsDiffPreviewRowKind::Context,
-      left_line_index: Some(offset),
-      right_line_index: Some(offset),
-      left_line_number: Some(before_snippet_start + offset + 1),
+      kind:              FilePickerVcsDiffPreviewRowKind::Context,
+      left_line_index:   Some(offset),
+      right_line_index:  Some(offset),
+      left_line_number:  Some(before_snippet_start + offset + 1),
       right_line_number: Some(after_snippet_start + offset + 1),
-      message: String::new(),
+      message:           String::new(),
     });
   }
 
@@ -8857,24 +9884,26 @@ fn build_vcs_hunk_preview(
 
   for offset in 0..context_below {
     rows.push(FilePickerVcsDiffPreviewRow {
-      kind: FilePickerVcsDiffPreviewRowKind::Context,
-      left_line_index: Some(before_end + offset - before_snippet_start),
-      right_line_index: Some(after_end + offset - after_snippet_start),
-      left_line_number: Some(before_end + offset + 1),
+      kind:              FilePickerVcsDiffPreviewRowKind::Context,
+      left_line_index:   Some(before_end + offset - before_snippet_start),
+      right_line_index:  Some(after_end + offset - after_snippet_start),
+      left_line_number:  Some(before_end + offset + 1),
       right_line_number: Some(after_end + offset + 1),
-      message: String::new(),
+      message:           String::new(),
     });
   }
 
-  let hidden_below = base_remaining.min(current_remaining).saturating_sub(context_below);
+  let hidden_below = base_remaining
+    .min(current_remaining)
+    .saturating_sub(context_below);
   if hidden_below > 0 {
     rows.push(FilePickerVcsDiffPreviewRow {
-      kind: FilePickerVcsDiffPreviewRowKind::CollapsedBelow,
-      left_line_index: None,
-      right_line_index: None,
-      left_line_number: None,
+      kind:              FilePickerVcsDiffPreviewRowKind::CollapsedBelow,
+      left_line_index:   None,
+      right_line_index:  None,
+      left_line_number:  None,
       right_line_number: None,
-      message: format!("… {} lines below", hidden_below),
+      message:           format!("… {} lines below", hidden_below),
     });
   }
 
@@ -9063,12 +10092,12 @@ fn file_picker_preview_change_kind_code(kind: Option<FilePickerPreviewChangeKind
 
 fn style_to_ffi(style: Style, theme: &Theme) -> the_editor_style_t {
   the_editor_style_t {
-    fg: color_to_rgba(style.fg, theme),
-    bg: color_to_rgba(style.bg, theme),
-    underline_color: color_to_rgba(style.underline_color, theme),
-    add_modifiers: modifier_bits(style.add_modifier),
+    fg:               color_to_rgba(style.fg, theme),
+    bg:               color_to_rgba(style.bg, theme),
+    underline_color:  color_to_rgba(style.underline_color, theme),
+    add_modifiers:    modifier_bits(style.add_modifier),
     remove_modifiers: modifier_bits(style.sub_modifier),
-    underline_style: underline_style_code(style.underline_style),
+    underline_style:  underline_style_code(style.underline_style),
   }
 }
 
@@ -9085,14 +10114,30 @@ fn underline_style_code(style: Option<UnderlineStyle>) -> u8 {
 
 fn modifier_bits(modifier: Modifier) -> u16 {
   let mut bits = 0;
-  if modifier.contains(Modifier::BOLD) { bits |= STYLE_BOLD; }
-  if modifier.contains(Modifier::DIM) { bits |= STYLE_DIM; }
-  if modifier.contains(Modifier::ITALIC) { bits |= STYLE_ITALIC; }
-  if modifier.contains(Modifier::SLOW_BLINK) { bits |= STYLE_SLOW_BLINK; }
-  if modifier.contains(Modifier::RAPID_BLINK) { bits |= STYLE_RAPID_BLINK; }
-  if modifier.contains(Modifier::REVERSED) { bits |= STYLE_REVERSED; }
-  if modifier.contains(Modifier::HIDDEN) { bits |= STYLE_HIDDEN; }
-  if modifier.contains(Modifier::CROSSED_OUT) { bits |= STYLE_CROSSED_OUT; }
+  if modifier.contains(Modifier::BOLD) {
+    bits |= STYLE_BOLD;
+  }
+  if modifier.contains(Modifier::DIM) {
+    bits |= STYLE_DIM;
+  }
+  if modifier.contains(Modifier::ITALIC) {
+    bits |= STYLE_ITALIC;
+  }
+  if modifier.contains(Modifier::SLOW_BLINK) {
+    bits |= STYLE_SLOW_BLINK;
+  }
+  if modifier.contains(Modifier::RAPID_BLINK) {
+    bits |= STYLE_RAPID_BLINK;
+  }
+  if modifier.contains(Modifier::REVERSED) {
+    bits |= STYLE_REVERSED;
+  }
+  if modifier.contains(Modifier::HIDDEN) {
+    bits |= STYLE_HIDDEN;
+  }
+  if modifier.contains(Modifier::CROSSED_OUT) {
+    bits |= STYLE_CROSSED_OUT;
+  }
   bits
 }
 
@@ -9216,7 +10261,8 @@ fn setup_syntax(doc: &mut Document, path: &Path, loader: &Arc<Loader>) -> Result
   let lang = loader
     .language_for_filename(path)
     .ok_or_else(|| format!("unknown language for {}", path.display()))?;
-  let syntax = Syntax::new(doc.text().slice(..), lang, loader.as_ref()).map_err(|err| err.to_string())?;
+  let syntax =
+    Syntax::new(doc.text().slice(..), lang, loader.as_ref()).map_err(|err| err.to_string())?;
   doc.set_syntax_with_loader(syntax, loader.clone());
   Ok(())
 }
@@ -9276,7 +10322,10 @@ fn diagnostic_sort_key(diagnostic: &Diagnostic) -> (u32, u32, u32, u32, u8, &str
 }
 
 fn diagnostic_contains_position(diagnostic: &Diagnostic, line: u32, character: u32) -> bool {
-  let start = (diagnostic.range.start.line, diagnostic.range.start.character);
+  let start = (
+    diagnostic.range.start.line,
+    diagnostic.range.start.character,
+  );
   let end = (diagnostic.range.end.line, diagnostic.range.end.character);
   let position = (line, character);
   if end < start {
@@ -9309,7 +10358,9 @@ fn file_tree_vcs_kind_code(kind: Option<FileTreeVcsKind>) -> u8 {
 }
 
 fn file_tree_diagnostic_severity_code(decorations: FileTreeDecorations) -> u8 {
-  decorations.diagnostic.map_or(0, |severity| diagnostic_severity_code(Some(severity)))
+  decorations
+    .diagnostic
+    .map_or(0, |severity| diagnostic_severity_code(Some(severity)))
 }
 
 fn diagnostic_severity_rank(severity: DiagnosticSeverity) -> u8 {
@@ -9336,9 +10387,11 @@ fn diagnostics_by_line(diagnostics: &[Diagnostic]) -> BTreeMap<usize, Diagnostic
   out
 }
 
-fn render_diagnostic_styles_from_theme(theme: &Theme) -> the_lib::render::RenderDiagnosticGutterStyles {
+fn render_diagnostic_styles_from_theme(
+  theme: &Theme,
+) -> the_lib::render::RenderDiagnosticGutterStyles {
   the_lib::render::RenderDiagnosticGutterStyles {
-    error: theme
+    error:   theme
       .try_get("error")
       .or_else(|| theme.try_get("diagnostic.error"))
       .or_else(|| theme.try_get("ui.linenr"))
@@ -9348,12 +10401,12 @@ fn render_diagnostic_styles_from_theme(theme: &Theme) -> the_lib::render::Render
       .or_else(|| theme.try_get("diagnostic.warning"))
       .or_else(|| theme.try_get("ui.linenr"))
       .unwrap_or_default(),
-    info: theme
+    info:    theme
       .try_get("info")
       .or_else(|| theme.try_get("diagnostic.info"))
       .or_else(|| theme.try_get("ui.linenr"))
       .unwrap_or_default(),
-    hint: theme
+    hint:    theme
       .try_get("hint")
       .or_else(|| theme.try_get("diagnostic.hint"))
       .or_else(|| theme.try_get("ui.linenr"))
@@ -9379,9 +10432,16 @@ fn diagnostic_visible_row_end_cols(plan: &RenderPlan) -> Vec<usize> {
   row_end_cols
 }
 
-fn diagnostic_row_visible_end_col(plan: &RenderPlan, row: usize, row_visible_end_cols: &[usize]) -> usize {
+fn diagnostic_row_visible_end_col(
+  plan: &RenderPlan,
+  row: usize,
+  row_visible_end_cols: &[usize],
+) -> usize {
   let relative = row.saturating_sub(plan.scroll.row);
-  row_visible_end_cols.get(relative).copied().unwrap_or(plan.scroll.col)
+  row_visible_end_cols
+    .get(relative)
+    .copied()
+    .unwrap_or(plan.scroll.col)
 }
 
 fn visible_diagnostic_underlines_for_document(
@@ -9432,10 +10492,14 @@ fn visible_diagnostic_underlines_for_document(
       end_char_idx = start_char_idx.saturating_add(1).min(text_len);
     }
 
-    let Some(mut start_pos) = visual_pos_at_char(text_slice, text_fmt, &mut annotations, start_char_idx) else {
+    let Some(mut start_pos) =
+      visual_pos_at_char(text_slice, text_fmt, &mut annotations, start_char_idx)
+    else {
       continue;
     };
-    let Some(mut end_pos) = visual_pos_at_char(text_slice, text_fmt, &mut annotations, end_char_idx) else {
+    let Some(mut end_pos) =
+      visual_pos_at_char(text_slice, text_fmt, &mut annotations, end_char_idx)
+    else {
       continue;
     };
 
@@ -9466,10 +10530,10 @@ fn visible_diagnostic_underlines_for_document(
       }
 
       out.push(the_editor_snapshot_diagnostic_underline_t {
-        row: (row - row_start) as u16,
+        row:       (row - row_start) as u16,
         start_col: (from - col_start) as u16,
-        end_col: (to - col_start) as u16,
-        severity: diagnostic_severity_code(diagnostic.severity),
+        end_col:   (to - col_start) as u16,
+        severity:  diagnostic_severity_code(diagnostic.severity),
       });
     }
   }
@@ -9479,7 +10543,7 @@ fn visible_diagnostic_underlines_for_document(
 
 fn render_diff_styles_from_theme(theme: &Theme) -> RenderDiffGutterStyles {
   RenderDiffGutterStyles {
-    added: theme
+    added:    theme
       .try_get("diff.plus")
       .or_else(|| theme.try_get("ui.linenr"))
       .unwrap_or_default(),
@@ -9487,7 +10551,7 @@ fn render_diff_styles_from_theme(theme: &Theme) -> RenderDiffGutterStyles {
       .try_get("diff.delta")
       .or_else(|| theme.try_get("ui.linenr"))
       .unwrap_or_default(),
-    removed: theme
+    removed:  theme
       .try_get("diff.minus")
       .or_else(|| theme.try_get("ui.linenr"))
       .unwrap_or_default(),
@@ -9584,7 +10648,9 @@ fn resolve_session_path(path: &Path) -> PathBuf {
 }
 
 fn default_workspace_root() -> PathBuf {
-  std::env::current_dir().map(|path| lexical_normalize_path(&path)).unwrap_or_else(|_| PathBuf::from("."))
+  std::env::current_dir()
+    .map(|path| lexical_normalize_path(&path))
+    .unwrap_or_else(|_| PathBuf::from("."))
 }
 
 fn resolved_workspace_root_for_path(path: &Path) -> PathBuf {
@@ -9594,7 +10660,10 @@ fn resolved_workspace_root_for_path(path: &Path) -> PathBuf {
 }
 
 fn display_name_for_path(path: &Path) -> String {
-  path.file_name().map(|name| name.to_string_lossy().to_string()).unwrap_or_else(|| path.display().to_string())
+  path
+    .file_name()
+    .map(|name| name.to_string_lossy().to_string())
+    .unwrap_or_else(|| path.display().to_string())
 }
 
 fn relative_document_path(path: &Path, workspace_root: &Path) -> String {
@@ -9602,7 +10671,10 @@ fn relative_document_path(path: &Path, workspace_root: &Path) -> String {
   if let Ok(relative) = parent.strip_prefix(workspace_root) {
     let relative = relative.display().to_string();
     if relative.is_empty() {
-      workspace_root.file_name().map(|name| name.to_string_lossy().to_string()).unwrap_or_else(|| workspace_root.display().to_string())
+      workspace_root
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_else(|| workspace_root.display().to_string())
     } else {
       relative
     }
@@ -9617,7 +10689,9 @@ fn title_case_status_label(text: &str) -> String {
     .filter(|part| !part.is_empty())
     .map(|part| {
       let mut chars = part.chars();
-      let Some(first) = chars.next() else { return String::new(); };
+      let Some(first) = chars.next() else {
+        return String::new();
+      };
       let mut out = String::new();
       out.extend(first.to_uppercase());
       out.push_str(chars.as_str());
@@ -9667,7 +10741,9 @@ unsafe fn path_from_c(path: *const c_char) -> Option<PathBuf> {
   if path.is_null() {
     return None;
   }
-  let path = unsafe { CStr::from_ptr(path) }.to_string_lossy().to_string();
+  let path = unsafe { CStr::from_ptr(path) }
+    .to_string_lossy()
+    .to_string();
   if path.trim().is_empty() {
     None
   } else {
@@ -9693,288 +10769,507 @@ pub unsafe extern "C" fn the_editor_new(path: *const c_char) -> *mut the_editor_
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn the_editor_free(handle: *mut the_editor_handle_t) {
-  if handle.is_null() { return; }
+  if handle.is_null() {
+    return;
+  }
   drop(unsafe { Box::from_raw(handle) });
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_open(handle: *mut the_editor_handle_t, path: *const c_char) -> bool {
-  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
-  let Some(path) = (unsafe { path_from_c(path) }) else { return false; };
+pub unsafe extern "C" fn the_editor_open(
+  handle: *mut the_editor_handle_t,
+  path: *const c_char,
+) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return false;
+  };
+  let Some(path) = (unsafe { path_from_c(path) }) else {
+    return false;
+  };
   handle.editor.open_path(&path)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_configure_surface(handle: *mut the_editor_handle_t, config: the_editor_surface_config_t) -> bool {
-  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+pub unsafe extern "C" fn the_editor_configure_surface(
+  handle: *mut the_editor_handle_t,
+  config: the_editor_surface_config_t,
+) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return false;
+  };
   handle.editor.configure_surface(config)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_set_viewport(handle: *mut the_editor_handle_t, cols: u16, rows: u16) {
-  let Some(handle) = (unsafe { handle.as_mut() }) else { return; };
+pub unsafe extern "C" fn the_editor_set_viewport(
+  handle: *mut the_editor_handle_t,
+  cols: u16,
+  rows: u16,
+) {
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return;
+  };
   handle.editor.set_viewport(cols, rows);
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_set_scroll_row(handle: *mut the_editor_handle_t, row: u32) -> bool {
-  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+pub unsafe extern "C" fn the_editor_set_scroll_row(
+  handle: *mut the_editor_handle_t,
+  row: u32,
+) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return false;
+  };
   handle.editor.set_scroll_row(row)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_set_scroll_col(handle: *mut the_editor_handle_t, col: u32) -> bool {
-  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+pub unsafe extern "C" fn the_editor_set_scroll_col(
+  handle: *mut the_editor_handle_t,
+  col: u32,
+) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return false;
+  };
   handle.editor.set_scroll_col(col)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_set_active_pane(handle: *mut the_editor_handle_t, pane_id: usize) -> bool {
-  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+pub unsafe extern "C" fn the_editor_set_active_pane(
+  handle: *mut the_editor_handle_t,
+  pane_id: usize,
+) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return false;
+  };
   handle.editor.set_active_pane_raw(pane_id)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_resize_split(handle: *mut the_editor_handle_t, split_id: usize, x: u16, y: u16) -> bool {
-  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+pub unsafe extern "C" fn the_editor_resize_split(
+  handle: *mut the_editor_handle_t,
+  split_id: usize,
+  x: u16,
+  y: u16,
+) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return false;
+  };
   handle.editor.resize_split_raw(split_id, x, y)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_handle_key(handle: *mut the_editor_handle_t, event: the_editor_key_event_t) -> bool {
-  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+pub unsafe extern "C" fn the_editor_handle_key(
+  handle: *mut the_editor_handle_t,
+  event: the_editor_key_event_t,
+) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return false;
+  };
   handle.editor.handle_key_event(event)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_toggle_command_palette(handle: *mut the_editor_handle_t) -> bool {
-  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+pub unsafe extern "C" fn the_editor_toggle_command_palette(
+  handle: *mut the_editor_handle_t,
+) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return false;
+  };
   handle.editor.toggle_command_palette()
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_close_command_palette(handle: *mut the_editor_handle_t) -> bool {
-  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+pub unsafe extern "C" fn the_editor_close_command_palette(
+  handle: *mut the_editor_handle_t,
+) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return false;
+  };
   handle.editor.close_command_palette()
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_command_palette_set_query(handle: *mut the_editor_handle_t, query: *const c_char) -> bool {
-  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
-  let Some(query) = (unsafe { string_from_c(query) }) else { return false; };
+pub unsafe extern "C" fn the_editor_command_palette_set_query(
+  handle: *mut the_editor_handle_t,
+  query: *const c_char,
+) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return false;
+  };
+  let Some(query) = (unsafe { string_from_c(query) }) else {
+    return false;
+  };
   handle.editor.set_command_palette_query(&query)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_command_palette_select_next(handle: *mut the_editor_handle_t) -> bool {
-  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+pub unsafe extern "C" fn the_editor_command_palette_select_next(
+  handle: *mut the_editor_handle_t,
+) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return false;
+  };
   handle.editor.move_command_palette_selection(true)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_command_palette_select_previous(handle: *mut the_editor_handle_t) -> bool {
-  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+pub unsafe extern "C" fn the_editor_command_palette_select_previous(
+  handle: *mut the_editor_handle_t,
+) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return false;
+  };
   handle.editor.move_command_palette_selection(false)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_command_palette_select_visible_index(handle: *mut the_editor_handle_t, visible_index: usize) -> bool {
-  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
-  handle.editor.select_command_palette_visible_index(visible_index)
+pub unsafe extern "C" fn the_editor_command_palette_select_visible_index(
+  handle: *mut the_editor_handle_t,
+  visible_index: usize,
+) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return false;
+  };
+  handle
+    .editor
+    .select_command_palette_visible_index(visible_index)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_command_palette_submit(handle: *mut the_editor_handle_t) -> bool {
-  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+pub unsafe extern "C" fn the_editor_command_palette_submit(
+  handle: *mut the_editor_handle_t,
+) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return false;
+  };
   handle.editor.submit_command_palette()
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_close_completion_menu(handle: *mut the_editor_handle_t) -> bool {
-  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+pub unsafe extern "C" fn the_editor_close_completion_menu(
+  handle: *mut the_editor_handle_t,
+) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return false;
+  };
   handle.editor.close_completion_menu_ui()
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_completion_menu_select_index(handle: *mut the_editor_handle_t, index: usize) -> bool {
-  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+pub unsafe extern "C" fn the_editor_completion_menu_select_index(
+  handle: *mut the_editor_handle_t,
+  index: usize,
+) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return false;
+  };
   handle.editor.select_completion_menu_index(index)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_set_completion_menu_scroll(handle: *mut the_editor_handle_t, offset: usize) -> bool {
-  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+pub unsafe extern "C" fn the_editor_set_completion_menu_scroll(
+  handle: *mut the_editor_handle_t,
+  offset: usize,
+) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return false;
+  };
   handle.editor.set_completion_menu_scroll(offset)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_completion_menu_submit(handle: *mut the_editor_handle_t) -> bool {
-  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+pub unsafe extern "C" fn the_editor_completion_menu_submit(
+  handle: *mut the_editor_handle_t,
+) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return false;
+  };
   handle.editor.submit_completion_menu_selection()
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_poll_background_tasks(handle: *mut the_editor_handle_t) -> bool {
-  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+pub unsafe extern "C" fn the_editor_poll_background_tasks(
+  handle: *mut the_editor_handle_t,
+) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return false;
+  };
   handle.editor.poll_background_tasks()
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn the_editor_open_search_prompt(handle: *mut the_editor_handle_t) -> bool {
-  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return false;
+  };
   handle.editor.open_search_prompt()
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn the_editor_close_input_prompt(handle: *mut the_editor_handle_t) -> bool {
-  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return false;
+  };
   handle.editor.close_input_prompt()
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_input_prompt_set_query(handle: *mut the_editor_handle_t, query: *const c_char) -> bool {
-  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
-  let Some(query) = (unsafe { string_from_c(query) }) else { return false; };
+pub unsafe extern "C" fn the_editor_input_prompt_set_query(
+  handle: *mut the_editor_handle_t,
+  query: *const c_char,
+) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return false;
+  };
+  let Some(query) = (unsafe { string_from_c(query) }) else {
+    return false;
+  };
   handle.editor.set_input_prompt_query(&query)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn the_editor_input_prompt_submit(handle: *mut the_editor_handle_t) -> bool {
-  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return false;
+  };
   handle.editor.submit_input_prompt()
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_input_prompt_step_next(handle: *mut the_editor_handle_t) -> bool {
-  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
-  handle.editor.step_input_prompt(the_default::Direction::Forward)
+pub unsafe extern "C" fn the_editor_input_prompt_step_next(
+  handle: *mut the_editor_handle_t,
+) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return false;
+  };
+  handle
+    .editor
+    .step_input_prompt(the_default::Direction::Forward)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_input_prompt_step_previous(handle: *mut the_editor_handle_t) -> bool {
-  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
-  handle.editor.step_input_prompt(the_default::Direction::Backward)
+pub unsafe extern "C" fn the_editor_input_prompt_step_previous(
+  handle: *mut the_editor_handle_t,
+) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return false;
+  };
+  handle
+    .editor
+    .step_input_prompt(the_default::Direction::Backward)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn the_editor_close_docs_panels(handle: *mut the_editor_handle_t) -> bool {
-  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return false;
+  };
   handle.editor.close_docs_panels()
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_configure_file_picker(handle: *mut the_editor_handle_t, list_visible_rows: usize, preview_visible_rows: usize) -> bool {
-  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
-  handle.editor.configure_file_picker_layout(list_visible_rows, preview_visible_rows)
+pub unsafe extern "C" fn the_editor_configure_file_picker(
+  handle: *mut the_editor_handle_t,
+  list_visible_rows: usize,
+  preview_visible_rows: usize,
+) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return false;
+  };
+  handle
+    .editor
+    .configure_file_picker_layout(list_visible_rows, preview_visible_rows)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn the_editor_close_file_picker(handle: *mut the_editor_handle_t) -> bool {
-  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return false;
+  };
   handle.editor.close_file_picker()
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_file_picker_set_query(handle: *mut the_editor_handle_t, query: *const c_char) -> bool {
-  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
-  let Some(query) = (unsafe { string_from_c(query) }) else { return false; };
+pub unsafe extern "C" fn the_editor_file_picker_set_query(
+  handle: *mut the_editor_handle_t,
+  query: *const c_char,
+) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return false;
+  };
+  let Some(query) = (unsafe { string_from_c(query) }) else {
+    return false;
+  };
   handle.editor.set_file_picker_query(&query)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_file_picker_select_next(handle: *mut the_editor_handle_t) -> bool {
-  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+pub unsafe extern "C" fn the_editor_file_picker_select_next(
+  handle: *mut the_editor_handle_t,
+) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return false;
+  };
   handle.editor.move_file_picker_selection(true)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_file_picker_select_previous(handle: *mut the_editor_handle_t) -> bool {
-  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+pub unsafe extern "C" fn the_editor_file_picker_select_previous(
+  handle: *mut the_editor_handle_t,
+) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return false;
+  };
   handle.editor.move_file_picker_selection(false)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_file_picker_set_list_offset(handle: *mut the_editor_handle_t, offset: usize) -> bool {
-  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+pub unsafe extern "C" fn the_editor_file_picker_set_list_offset(
+  handle: *mut the_editor_handle_t,
+  offset: usize,
+) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return false;
+  };
   handle.editor.set_file_picker_list_offset(offset)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_file_picker_set_preview_offset(handle: *mut the_editor_handle_t, offset: usize, _visible_rows: usize) -> bool {
-  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+pub unsafe extern "C" fn the_editor_file_picker_set_preview_offset(
+  handle: *mut the_editor_handle_t,
+  offset: usize,
+  _visible_rows: usize,
+) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return false;
+  };
   handle.editor.set_file_picker_preview_offset(offset)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_file_picker_select_index(handle: *mut the_editor_handle_t, index: usize) -> bool {
-  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+pub unsafe extern "C" fn the_editor_file_picker_select_index(
+  handle: *mut the_editor_handle_t,
+  index: usize,
+) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return false;
+  };
   handle.editor.select_file_picker_index(index)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn the_editor_file_picker_submit(handle: *mut the_editor_handle_t) -> bool {
-  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return false;
+  };
   handle.editor.submit_file_picker()
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_file_tree_select_index(handle: *mut the_editor_handle_t, index: usize) -> bool {
-  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+pub unsafe extern "C" fn the_editor_file_tree_select_index(
+  handle: *mut the_editor_handle_t,
+  index: usize,
+) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return false;
+  };
   handle.editor.select_file_tree_index(index)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_file_tree_click_index(handle: *mut the_editor_handle_t, index: usize) -> bool {
-  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+pub unsafe extern "C" fn the_editor_file_tree_click_index(
+  handle: *mut the_editor_handle_t,
+  index: usize,
+) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return false;
+  };
   handle.editor.click_file_tree_index(index)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_file_tree_activate_index(handle: *mut the_editor_handle_t, index: usize) -> bool {
-  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+pub unsafe extern "C" fn the_editor_file_tree_activate_index(
+  handle: *mut the_editor_handle_t,
+  index: usize,
+) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return false;
+  };
   handle.editor.activate_file_tree_index(index)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_file_tree_set_visible_rows(handle: *mut the_editor_handle_t, visible_rows: usize) -> bool {
-  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+pub unsafe extern "C" fn the_editor_file_tree_set_visible_rows(
+  handle: *mut the_editor_handle_t,
+  visible_rows: usize,
+) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return false;
+  };
   handle.editor.set_file_tree_visible_rows(visible_rows)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_file_tree_set_active(handle: *mut the_editor_handle_t, active: bool) -> bool {
-  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+pub unsafe extern "C" fn the_editor_file_tree_set_active(
+  handle: *mut the_editor_handle_t,
+  active: bool,
+) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return false;
+  };
   handle.editor.set_file_tree_active(active)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn the_editor_toggle_file_tree(handle: *mut the_editor_handle_t) -> bool {
-  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return false;
+  };
   handle.editor.toggle_file_tree()
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_insert_text(handle: *mut the_editor_handle_t, text: *const c_char) -> bool {
-  let Some(handle) = (unsafe { handle.as_mut() }) else { return false; };
-  let Some(text) = (unsafe { string_from_c(text) }) else { return false; };
+pub unsafe extern "C" fn the_editor_insert_text(
+  handle: *mut the_editor_handle_t,
+  text: *const c_char,
+) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return false;
+  };
+  let Some(text) = (unsafe { string_from_c(text) }) else {
+    return false;
+  };
   handle.editor.insert_text(&text)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_primary_selection_utf16_location(handle: *mut the_editor_handle_t) -> u32 {
-  let Some(handle) = (unsafe { handle.as_mut() }) else { return 0; };
+pub unsafe extern "C" fn the_editor_primary_selection_utf16_location(
+  handle: *mut the_editor_handle_t,
+) -> u32 {
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return 0;
+  };
   handle.editor.primary_selection_utf16().0
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_primary_selection_utf16_length(handle: *mut the_editor_handle_t) -> u32 {
-  let Some(handle) = (unsafe { handle.as_mut() }) else { return 0; };
+pub unsafe extern "C" fn the_editor_primary_selection_utf16_length(
+  handle: *mut the_editor_handle_t,
+) -> u32 {
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return 0;
+  };
   handle.editor.primary_selection_utf16().1
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_primary_selection_text(handle: *mut the_editor_handle_t) -> *mut c_char {
-  let Some(handle) = (unsafe { handle.as_mut() }) else { return ptr::null_mut(); };
+pub unsafe extern "C" fn the_editor_primary_selection_text(
+  handle: *mut the_editor_handle_t,
+) -> *mut c_char {
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return ptr::null_mut();
+  };
   match CString::new(handle.editor.primary_selection_text()) {
     Ok(value) => value.into_raw(),
     Err(_) => ptr::null_mut(),
@@ -9982,8 +11277,12 @@ pub unsafe extern "C" fn the_editor_primary_selection_text(handle: *mut the_edit
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_snapshot_create(handle: *mut the_editor_handle_t) -> *mut the_editor_snapshot_t {
-  let Some(handle) = (unsafe { handle.as_mut() }) else { return ptr::null_mut(); };
+pub unsafe extern "C" fn the_editor_snapshot_create(
+  handle: *mut the_editor_handle_t,
+) -> *mut the_editor_snapshot_t {
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return ptr::null_mut();
+  };
   let started = Instant::now();
   let snapshot = handle.editor.build_snapshot();
   theme_perf_log(format!(
@@ -10000,216 +11299,513 @@ pub unsafe extern "C" fn the_editor_snapshot_create(handle: *mut the_editor_hand
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn the_editor_snapshot_free(snapshot: *mut the_editor_snapshot_t) {
-  if snapshot.is_null() { return; }
+  if snapshot.is_null() {
+    return;
+  }
   drop(unsafe { Box::from_raw(snapshot) });
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_snapshot_info(snapshot: *const the_editor_snapshot_t) -> the_editor_snapshot_info_t {
-  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_info_t::default(); };
+pub unsafe extern "C" fn the_editor_snapshot_info(
+  snapshot: *const the_editor_snapshot_t,
+) -> the_editor_snapshot_info_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else {
+    return the_editor_snapshot_info_t::default();
+  };
   snapshot.snapshot.info
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_snapshot_pane_at(snapshot: *const the_editor_snapshot_t, pane_index: usize) -> the_editor_snapshot_pane_t {
-  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_pane_t::default(); };
-  snapshot.snapshot.panes.get(pane_index).copied().unwrap_or_default()
+pub unsafe extern "C" fn the_editor_snapshot_pane_at(
+  snapshot: *const the_editor_snapshot_t,
+  pane_index: usize,
+) -> the_editor_snapshot_pane_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else {
+    return the_editor_snapshot_pane_t::default();
+  };
+  snapshot
+    .snapshot
+    .panes
+    .get(pane_index)
+    .copied()
+    .unwrap_or_default()
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_snapshot_separator_at(snapshot: *const the_editor_snapshot_t, separator_index: usize) -> the_editor_snapshot_separator_t {
-  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_separator_t::default(); };
-  snapshot.snapshot.separators.get(separator_index).copied().unwrap_or_default()
+pub unsafe extern "C" fn the_editor_snapshot_separator_at(
+  snapshot: *const the_editor_snapshot_t,
+  separator_index: usize,
+) -> the_editor_snapshot_separator_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else {
+    return the_editor_snapshot_separator_t::default();
+  };
+  snapshot
+    .snapshot
+    .separators
+    .get(separator_index)
+    .copied()
+    .unwrap_or_default()
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_snapshot_document(snapshot: *const the_editor_snapshot_t) -> the_editor_snapshot_document_t {
-  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_document_t::default(); };
+pub unsafe extern "C" fn the_editor_snapshot_document(
+  snapshot: *const the_editor_snapshot_t,
+) -> the_editor_snapshot_document_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else {
+    return the_editor_snapshot_document_t::default();
+  };
   snapshot.snapshot.document.document
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_snapshot_status(snapshot: *const the_editor_snapshot_t) -> the_editor_snapshot_status_t {
-  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_status_t::default(); };
+pub unsafe extern "C" fn the_editor_snapshot_status(
+  snapshot: *const the_editor_snapshot_t,
+) -> the_editor_snapshot_status_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else {
+    return the_editor_snapshot_status_t::default();
+  };
   snapshot.snapshot.status.status
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_snapshot_status_item_at(snapshot: *const the_editor_snapshot_t, item_index: usize) -> the_editor_snapshot_status_item_t {
-  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_status_item_t::default(); };
-  snapshot.snapshot.status_items.get(item_index).map(|record| record.item).unwrap_or_default()
+pub unsafe extern "C" fn the_editor_snapshot_status_item_at(
+  snapshot: *const the_editor_snapshot_t,
+  item_index: usize,
+) -> the_editor_snapshot_status_item_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else {
+    return the_editor_snapshot_status_item_t::default();
+  };
+  snapshot
+    .snapshot
+    .status_items
+    .get(item_index)
+    .map(|record| record.item)
+    .unwrap_or_default()
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_snapshot_command_palette(snapshot: *const the_editor_snapshot_t) -> the_editor_snapshot_command_palette_t {
-  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_command_palette_t::default(); };
+pub unsafe extern "C" fn the_editor_snapshot_pending_keys(
+  snapshot: *const the_editor_snapshot_t,
+) -> the_editor_snapshot_pending_keys_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else {
+    return the_editor_snapshot_pending_keys_t::default();
+  };
+  snapshot.snapshot.pending_keys.pending
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_snapshot_pending_key_outcome_at(
+  snapshot: *const the_editor_snapshot_t,
+  outcome_index: usize,
+) -> the_editor_snapshot_pending_key_outcome_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else {
+    return the_editor_snapshot_pending_key_outcome_t::default();
+  };
+  snapshot
+    .snapshot
+    .pending_key_outcomes
+    .get(outcome_index)
+    .map(|record| record.outcome)
+    .unwrap_or_default()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_snapshot_command_palette(
+  snapshot: *const the_editor_snapshot_t,
+) -> the_editor_snapshot_command_palette_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else {
+    return the_editor_snapshot_command_palette_t::default();
+  };
   snapshot.snapshot.command_palette.palette
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_snapshot_command_palette_item_at(snapshot: *const the_editor_snapshot_t, item_index: usize) -> the_editor_snapshot_command_palette_item_t {
-  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_command_palette_item_t::default(); };
-  snapshot.snapshot.command_palette_items.get(item_index).map(|record| record.item).unwrap_or_default()
+pub unsafe extern "C" fn the_editor_snapshot_command_palette_item_at(
+  snapshot: *const the_editor_snapshot_t,
+  item_index: usize,
+) -> the_editor_snapshot_command_palette_item_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else {
+    return the_editor_snapshot_command_palette_item_t::default();
+  };
+  snapshot
+    .snapshot
+    .command_palette_items
+    .get(item_index)
+    .map(|record| record.item)
+    .unwrap_or_default()
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_snapshot_completion_menu(snapshot: *const the_editor_snapshot_t) -> the_editor_snapshot_completion_menu_t {
-  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_completion_menu_t::default(); };
+pub unsafe extern "C" fn the_editor_snapshot_completion_menu(
+  snapshot: *const the_editor_snapshot_t,
+) -> the_editor_snapshot_completion_menu_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else {
+    return the_editor_snapshot_completion_menu_t::default();
+  };
   snapshot.snapshot.completion_menu.menu
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_snapshot_completion_menu_item_at(snapshot: *const the_editor_snapshot_t, item_index: usize) -> the_editor_snapshot_completion_menu_item_t {
-  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_completion_menu_item_t::default(); };
-  snapshot.snapshot.completion_menu_items.get(item_index).map(|record| record.item).unwrap_or_default()
+pub unsafe extern "C" fn the_editor_snapshot_completion_menu_item_at(
+  snapshot: *const the_editor_snapshot_t,
+  item_index: usize,
+) -> the_editor_snapshot_completion_menu_item_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else {
+    return the_editor_snapshot_completion_menu_item_t::default();
+  };
+  snapshot
+    .snapshot
+    .completion_menu_items
+    .get(item_index)
+    .map(|record| record.item)
+    .unwrap_or_default()
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_snapshot_input_prompt(snapshot: *const the_editor_snapshot_t) -> the_editor_snapshot_input_prompt_t {
-  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_input_prompt_t::default(); };
+pub unsafe extern "C" fn the_editor_snapshot_input_prompt(
+  snapshot: *const the_editor_snapshot_t,
+) -> the_editor_snapshot_input_prompt_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else {
+    return the_editor_snapshot_input_prompt_t::default();
+  };
   snapshot.snapshot.input_prompt.prompt
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_snapshot_hover_docs_panel(snapshot: *const the_editor_snapshot_t) -> the_editor_snapshot_docs_panel_t {
-  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_docs_panel_t::default(); };
+pub unsafe extern "C" fn the_editor_snapshot_hover_docs_panel(
+  snapshot: *const the_editor_snapshot_t,
+) -> the_editor_snapshot_docs_panel_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else {
+    return the_editor_snapshot_docs_panel_t::default();
+  };
   snapshot.snapshot.hover_docs.panel
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_snapshot_hover_docs_run_at(snapshot: *const the_editor_snapshot_t, run_index: usize) -> the_editor_snapshot_docs_run_t {
-  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_docs_run_t::default(); };
-  snapshot.snapshot.hover_docs_runs.get(run_index).map(|record| record.run).unwrap_or_default()
+pub unsafe extern "C" fn the_editor_snapshot_hover_docs_run_at(
+  snapshot: *const the_editor_snapshot_t,
+  run_index: usize,
+) -> the_editor_snapshot_docs_run_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else {
+    return the_editor_snapshot_docs_run_t::default();
+  };
+  snapshot
+    .snapshot
+    .hover_docs_runs
+    .get(run_index)
+    .map(|record| record.run)
+    .unwrap_or_default()
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_snapshot_completion_docs_panel(snapshot: *const the_editor_snapshot_t) -> the_editor_snapshot_docs_panel_t {
-  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_docs_panel_t::default(); };
+pub unsafe extern "C" fn the_editor_snapshot_completion_docs_panel(
+  snapshot: *const the_editor_snapshot_t,
+) -> the_editor_snapshot_docs_panel_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else {
+    return the_editor_snapshot_docs_panel_t::default();
+  };
   snapshot.snapshot.completion_docs.panel
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_snapshot_completion_docs_run_at(snapshot: *const the_editor_snapshot_t, run_index: usize) -> the_editor_snapshot_docs_run_t {
-  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_docs_run_t::default(); };
-  snapshot.snapshot.completion_docs_runs.get(run_index).map(|record| record.run).unwrap_or_default()
+pub unsafe extern "C" fn the_editor_snapshot_completion_docs_run_at(
+  snapshot: *const the_editor_snapshot_t,
+  run_index: usize,
+) -> the_editor_snapshot_docs_run_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else {
+    return the_editor_snapshot_docs_run_t::default();
+  };
+  snapshot
+    .snapshot
+    .completion_docs_runs
+    .get(run_index)
+    .map(|record| record.run)
+    .unwrap_or_default()
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_snapshot_signature_help_panel(snapshot: *const the_editor_snapshot_t) -> the_editor_snapshot_docs_panel_t {
-  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_docs_panel_t::default(); };
+pub unsafe extern "C" fn the_editor_snapshot_signature_help_panel(
+  snapshot: *const the_editor_snapshot_t,
+) -> the_editor_snapshot_docs_panel_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else {
+    return the_editor_snapshot_docs_panel_t::default();
+  };
   snapshot.snapshot.signature_help.panel
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_snapshot_signature_help_run_at(snapshot: *const the_editor_snapshot_t, run_index: usize) -> the_editor_snapshot_docs_run_t {
-  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_docs_run_t::default(); };
-  snapshot.snapshot.signature_help_runs.get(run_index).map(|record| record.run).unwrap_or_default()
+pub unsafe extern "C" fn the_editor_snapshot_signature_help_run_at(
+  snapshot: *const the_editor_snapshot_t,
+  run_index: usize,
+) -> the_editor_snapshot_docs_run_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else {
+    return the_editor_snapshot_docs_run_t::default();
+  };
+  snapshot
+    .snapshot
+    .signature_help_runs
+    .get(run_index)
+    .map(|record| record.run)
+    .unwrap_or_default()
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_snapshot_diagnostic_count(snapshot: *const the_editor_snapshot_t) -> usize {
-  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return 0; };
+pub unsafe extern "C" fn the_editor_snapshot_diagnostic_count(
+  snapshot: *const the_editor_snapshot_t,
+) -> usize {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else {
+    return 0;
+  };
   snapshot.snapshot.diagnostics.len()
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_snapshot_diagnostic_at(snapshot: *const the_editor_snapshot_t, diagnostic_index: usize) -> the_editor_snapshot_diagnostic_t {
-  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_diagnostic_t::default(); };
-  snapshot.snapshot.diagnostics.get(diagnostic_index).map(|record| record.diagnostic).unwrap_or_default()
+pub unsafe extern "C" fn the_editor_snapshot_diagnostic_at(
+  snapshot: *const the_editor_snapshot_t,
+  diagnostic_index: usize,
+) -> the_editor_snapshot_diagnostic_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else {
+    return the_editor_snapshot_diagnostic_t::default();
+  };
+  snapshot
+    .snapshot
+    .diagnostics
+    .get(diagnostic_index)
+    .map(|record| record.diagnostic)
+    .unwrap_or_default()
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_snapshot_diagnostic_underline_count(snapshot: *const the_editor_snapshot_t) -> usize {
-  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return 0; };
+pub unsafe extern "C" fn the_editor_snapshot_diagnostic_underline_count(
+  snapshot: *const the_editor_snapshot_t,
+) -> usize {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else {
+    return 0;
+  };
   snapshot.snapshot.diagnostic_underlines.len()
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_snapshot_diagnostic_underline_at(snapshot: *const the_editor_snapshot_t, underline_index: usize) -> the_editor_snapshot_diagnostic_underline_t {
-  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_diagnostic_underline_t::default(); };
-  snapshot.snapshot.diagnostic_underlines.get(underline_index).copied().unwrap_or_default()
+pub unsafe extern "C" fn the_editor_snapshot_diagnostic_underline_at(
+  snapshot: *const the_editor_snapshot_t,
+  underline_index: usize,
+) -> the_editor_snapshot_diagnostic_underline_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else {
+    return the_editor_snapshot_diagnostic_underline_t::default();
+  };
+  snapshot
+    .snapshot
+    .diagnostic_underlines
+    .get(underline_index)
+    .copied()
+    .unwrap_or_default()
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_snapshot_file_picker(snapshot: *const the_editor_snapshot_t) -> the_editor_snapshot_file_picker_t {
-  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_file_picker_t::default(); };
+pub unsafe extern "C" fn the_editor_snapshot_file_picker(
+  snapshot: *const the_editor_snapshot_t,
+) -> the_editor_snapshot_file_picker_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else {
+    return the_editor_snapshot_file_picker_t::default();
+  };
   snapshot.snapshot.file_picker.picker
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_snapshot_file_tree(snapshot: *const the_editor_snapshot_t) -> the_editor_snapshot_file_tree_t {
-  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_file_tree_t::default(); };
+pub unsafe extern "C" fn the_editor_snapshot_file_tree(
+  snapshot: *const the_editor_snapshot_t,
+) -> the_editor_snapshot_file_tree_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else {
+    return the_editor_snapshot_file_tree_t::default();
+  };
   snapshot.snapshot.file_tree.tree
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_snapshot_file_tree_row_at(snapshot: *const the_editor_snapshot_t, row_index: usize) -> the_editor_snapshot_file_tree_row_t {
-  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_file_tree_row_t::default(); };
-  snapshot.snapshot.file_tree_rows.get(row_index).map(|record| record.row).unwrap_or_default()
+pub unsafe extern "C" fn the_editor_snapshot_file_tree_row_at(
+  snapshot: *const the_editor_snapshot_t,
+  row_index: usize,
+) -> the_editor_snapshot_file_tree_row_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else {
+    return the_editor_snapshot_file_tree_row_t::default();
+  };
+  snapshot
+    .snapshot
+    .file_tree_rows
+    .get(row_index)
+    .map(|record| record.row)
+    .unwrap_or_default()
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_snapshot_file_picker_item_at(snapshot: *const the_editor_snapshot_t, item_index: usize) -> the_editor_snapshot_file_picker_item_t {
-  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_file_picker_item_t::default(); };
-  snapshot.snapshot.file_picker_items.get(item_index).map(|record| record.item).unwrap_or_default()
+pub unsafe extern "C" fn the_editor_snapshot_file_picker_item_at(
+  snapshot: *const the_editor_snapshot_t,
+  item_index: usize,
+) -> the_editor_snapshot_file_picker_item_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else {
+    return the_editor_snapshot_file_picker_item_t::default();
+  };
+  snapshot
+    .snapshot
+    .file_picker_items
+    .get(item_index)
+    .map(|record| record.item)
+    .unwrap_or_default()
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_snapshot_file_picker_preview_line_at(snapshot: *const the_editor_snapshot_t, line_index: usize) -> the_editor_snapshot_file_picker_preview_line_t {
-  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_file_picker_preview_line_t::default(); };
-  snapshot.snapshot.file_picker_preview_lines.get(line_index).map(|record| record.line).unwrap_or_default()
+pub unsafe extern "C" fn the_editor_snapshot_file_picker_preview_line_at(
+  snapshot: *const the_editor_snapshot_t,
+  line_index: usize,
+) -> the_editor_snapshot_file_picker_preview_line_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else {
+    return the_editor_snapshot_file_picker_preview_line_t::default();
+  };
+  snapshot
+    .snapshot
+    .file_picker_preview_lines
+    .get(line_index)
+    .map(|record| record.line)
+    .unwrap_or_default()
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_snapshot_file_picker_preview_segment_at(snapshot: *const the_editor_snapshot_t, line_index: usize, segment_index: usize) -> the_editor_snapshot_file_picker_preview_segment_t {
-  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_file_picker_preview_segment_t::default(); };
-  let Some(line) = snapshot.snapshot.file_picker_preview_lines.get(line_index) else { return the_editor_snapshot_file_picker_preview_segment_t::default(); };
-  if segment_index >= line.line.segment_count { return the_editor_snapshot_file_picker_preview_segment_t::default(); }
-  snapshot.snapshot.file_picker_preview_segments.get(line.segment_start + segment_index).map(|record| record.segment).unwrap_or_default()
+pub unsafe extern "C" fn the_editor_snapshot_file_picker_preview_segment_at(
+  snapshot: *const the_editor_snapshot_t,
+  line_index: usize,
+  segment_index: usize,
+) -> the_editor_snapshot_file_picker_preview_segment_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else {
+    return the_editor_snapshot_file_picker_preview_segment_t::default();
+  };
+  let Some(line) = snapshot.snapshot.file_picker_preview_lines.get(line_index) else {
+    return the_editor_snapshot_file_picker_preview_segment_t::default();
+  };
+  if segment_index >= line.line.segment_count {
+    return the_editor_snapshot_file_picker_preview_segment_t::default();
+  }
+  snapshot
+    .snapshot
+    .file_picker_preview_segments
+    .get(line.segment_start + segment_index)
+    .map(|record| record.segment)
+    .unwrap_or_default()
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_snapshot_line_at(snapshot: *const the_editor_snapshot_t, line_index: usize) -> the_editor_snapshot_line_t {
-  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_line_t::default(); };
-  snapshot.snapshot.lines.get(line_index).map(|record| record.line).unwrap_or_default()
+pub unsafe extern "C" fn the_editor_snapshot_line_at(
+  snapshot: *const the_editor_snapshot_t,
+  line_index: usize,
+) -> the_editor_snapshot_line_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else {
+    return the_editor_snapshot_line_t::default();
+  };
+  snapshot
+    .snapshot
+    .lines
+    .get(line_index)
+    .map(|record| record.line)
+    .unwrap_or_default()
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_snapshot_span_at(snapshot: *const the_editor_snapshot_t, line_index: usize, span_index: usize) -> the_editor_snapshot_span_t {
-  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_span_t::default(); };
-  let Some(line) = snapshot.snapshot.lines.get(line_index) else { return the_editor_snapshot_span_t::default(); };
-  if span_index >= line.line.span_count { return the_editor_snapshot_span_t::default(); }
-  snapshot.snapshot.spans.get(line.span_start + span_index).map(|record| record.span).unwrap_or_default()
+pub unsafe extern "C" fn the_editor_snapshot_span_at(
+  snapshot: *const the_editor_snapshot_t,
+  line_index: usize,
+  span_index: usize,
+) -> the_editor_snapshot_span_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else {
+    return the_editor_snapshot_span_t::default();
+  };
+  let Some(line) = snapshot.snapshot.lines.get(line_index) else {
+    return the_editor_snapshot_span_t::default();
+  };
+  if span_index >= line.line.span_count {
+    return the_editor_snapshot_span_t::default();
+  }
+  snapshot
+    .snapshot
+    .spans
+    .get(line.span_start + span_index)
+    .map(|record| record.span)
+    .unwrap_or_default()
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_snapshot_text_cell_at(snapshot: *const the_editor_snapshot_t, line_index: usize, text_cell_index: usize) -> the_editor_snapshot_text_cell_t {
-  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_text_cell_t::default(); };
-  let Some(line) = snapshot.snapshot.lines.get(line_index) else { return the_editor_snapshot_text_cell_t::default(); };
-  if text_cell_index >= line.line.text_cell_count { return the_editor_snapshot_text_cell_t::default(); }
-  snapshot.snapshot.text_cells.get(line.text_cell_start + text_cell_index).map(|record| record.cell).unwrap_or_default()
+pub unsafe extern "C" fn the_editor_snapshot_text_cell_at(
+  snapshot: *const the_editor_snapshot_t,
+  line_index: usize,
+  text_cell_index: usize,
+) -> the_editor_snapshot_text_cell_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else {
+    return the_editor_snapshot_text_cell_t::default();
+  };
+  let Some(line) = snapshot.snapshot.lines.get(line_index) else {
+    return the_editor_snapshot_text_cell_t::default();
+  };
+  if text_cell_index >= line.line.text_cell_count {
+    return the_editor_snapshot_text_cell_t::default();
+  }
+  snapshot
+    .snapshot
+    .text_cells
+    .get(line.text_cell_start + text_cell_index)
+    .map(|record| record.cell)
+    .unwrap_or_default()
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_snapshot_cursor_at(snapshot: *const the_editor_snapshot_t, cursor_index: usize) -> the_editor_snapshot_cursor_t {
-  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_cursor_t::default(); };
-  snapshot.snapshot.cursors.get(cursor_index).copied().unwrap_or_default()
+pub unsafe extern "C" fn the_editor_snapshot_cursor_at(
+  snapshot: *const the_editor_snapshot_t,
+  cursor_index: usize,
+) -> the_editor_snapshot_cursor_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else {
+    return the_editor_snapshot_cursor_t::default();
+  };
+  snapshot
+    .snapshot
+    .cursors
+    .get(cursor_index)
+    .copied()
+    .unwrap_or_default()
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_snapshot_selection_at(snapshot: *const the_editor_snapshot_t, selection_index: usize) -> the_editor_snapshot_selection_t {
-  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_selection_t::default(); };
-  snapshot.snapshot.selections.get(selection_index).copied().unwrap_or_default()
+pub unsafe extern "C" fn the_editor_snapshot_selection_at(
+  snapshot: *const the_editor_snapshot_t,
+  selection_index: usize,
+) -> the_editor_snapshot_selection_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else {
+    return the_editor_snapshot_selection_t::default();
+  };
+  snapshot
+    .snapshot
+    .selections
+    .get(selection_index)
+    .copied()
+    .unwrap_or_default()
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_snapshot_overlay_at(snapshot: *const the_editor_snapshot_t, overlay_index: usize) -> the_editor_snapshot_overlay_t {
-  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else { return the_editor_snapshot_overlay_t::default(); };
-  snapshot.snapshot.overlays.get(overlay_index).map(|record| record.overlay).unwrap_or_default()
+pub unsafe extern "C" fn the_editor_snapshot_overlay_at(
+  snapshot: *const the_editor_snapshot_t,
+  overlay_index: usize,
+) -> the_editor_snapshot_overlay_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else {
+    return the_editor_snapshot_overlay_t::default();
+  };
+  snapshot
+    .snapshot
+    .overlays
+    .get(overlay_index)
+    .map(|record| record.overlay)
+    .unwrap_or_default()
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn the_editor_string_free(value: *mut c_char) {
-  if value.is_null() { return; }
+  if value.is_null() {
+    return;
+  }
   drop(unsafe { CString::from_raw(value) });
 }

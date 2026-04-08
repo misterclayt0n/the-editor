@@ -360,12 +360,8 @@ fn handle_file_tree_term_key(ctx: &mut Ctx, key: KeyEvent) -> bool {
   let outcome = match key.key {
     Key::Char(']') => select_next_file_tree_row(ctx, |row| row.decorations.vcs.is_some()),
     Key::Char('[') => select_prev_file_tree_row(ctx, |row| row.decorations.vcs.is_some()),
-    Key::Char('}') => {
-      select_next_file_tree_row(ctx, |row| row.decorations.diagnostic.is_some())
-    },
-    Key::Char('{') => {
-      select_prev_file_tree_row(ctx, |row| row.decorations.diagnostic.is_some())
-    },
+    Key::Char('}') => select_next_file_tree_row(ctx, |row| row.decorations.diagnostic.is_some()),
+    Key::Char('{') => select_prev_file_tree_row(ctx, |row| row.decorations.diagnostic.is_some()),
     _ => false,
   };
 

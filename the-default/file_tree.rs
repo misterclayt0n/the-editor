@@ -172,6 +172,7 @@ impl FileTreeState {
 
 fn file_tree_perf_enabled() -> bool {
   env::var("THE_TERM_DEBUG_RENDER_PERF").ok().as_deref() == Some("1")
+    || env::var("THE_EDITOR_SCROLL_PERF").ok().as_deref() == Some("1")
 }
 
 fn append_file_tree_perf_line(data: &[u8]) {
@@ -480,7 +481,9 @@ pub fn poll_file_tree_watch<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool {
       state.refresh_due_at = None;
       true
     },
-    WatchPollOutcome::Changes { kinds, .. } => changed | handle_file_tree_watch_kinds(ctx, kinds.as_slice(), now),
+    WatchPollOutcome::Changes { kinds, .. } => {
+      changed | handle_file_tree_watch_kinds(ctx, kinds.as_slice(), now)
+    },
   }
 }
 
@@ -490,13 +493,17 @@ fn sync_file_tree_watch_state<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool {
 
   match root {
     Some(root) => {
-      let current = ctx.file_tree().watch.as_ref().map(|watch| watch.stream.path.as_path());
+      let current = ctx
+        .file_tree()
+        .watch
+        .as_ref()
+        .map(|watch| watch.stream.path.as_path());
       if current != Some(root.as_path()) {
         let (events_rx, watch_handle) = watch_path(&root, file_tree_watch_latency());
         let uri = file_uri_for_path(&root).unwrap_or_else(|| format!("file://{}", root.display()));
         let state = ctx.file_tree_mut();
         state.watch = Some(FileTreeWatchState {
-          stream: WatchedFileEventsState {
+          stream:        WatchedFileEventsState {
             path: root,
             uri,
             events_rx,
@@ -550,7 +557,10 @@ fn handle_file_tree_watch_kinds<Ctx: DefaultContext>(
     return true;
   }
 
-  if kinds.iter().any(|kind| matches!(kind, PathEventKind::Changed)) {
+  if kinds
+    .iter()
+    .any(|kind| matches!(kind, PathEventKind::Changed))
+  {
     ctx.file_tree_mut().refresh_due_at = Some(now + file_tree_changed_refresh_latency());
   }
 
@@ -607,7 +617,10 @@ pub fn select_file_tree_index<Ctx: DefaultContext>(ctx: &mut Ctx, index: usize) 
   select_file_tree_index_with_behavior(ctx, index, true)
 }
 
-pub fn select_file_tree_index_without_follow<Ctx: DefaultContext>(ctx: &mut Ctx, index: usize) -> bool {
+pub fn select_file_tree_index_without_follow<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  index: usize,
+) -> bool {
   select_file_tree_index_with_behavior(ctx, index, false)
 }
 
@@ -730,6 +743,7 @@ pub fn close_all_file_tree<Ctx: DefaultContext>(ctx: &mut Ctx) {
 }
 
 fn toggle_file_tree_with_root<Ctx: DefaultContext>(ctx: &mut Ctx, current_buffer_directory: bool) {
+  let perf_start = file_tree_perf_enabled().then(Instant::now);
   let tree_is_open = if ctx.file_tree_uses_split_pane() {
     attached_tree_pane(ctx).is_some()
   } else {
@@ -737,6 +751,27 @@ fn toggle_file_tree_with_root<Ctx: DefaultContext>(ctx: &mut Ctx, current_buffer
   };
   if tree_is_open {
     close_file_tree(ctx);
+    if let Some(perf_start) = perf_start {
+      let state = ctx.file_tree();
+      file_tree_perf_log(format!(
+        "kind=file_tree_toggle action=close total={:.2}ms visible={} active={} rows={} \
+         selected={} scroll={} root={}",
+        perf_start.elapsed().as_secs_f64() * 1000.0,
+        u8::from(state.visible),
+        u8::from(state.active),
+        state.rows.len(),
+        state
+          .selected
+          .map(|value| value.to_string())
+          .unwrap_or_else(|| "none".to_string()),
+        state.scroll_offset,
+        state
+          .root
+          .as_ref()
+          .map(|root| root.display().to_string())
+          .unwrap_or_else(|| "none".to_string()),
+      ));
+    }
     return;
   }
 
@@ -745,9 +780,10 @@ fn toggle_file_tree_with_root<Ctx: DefaultContext>(ctx: &mut Ctx, current_buffer
   let surface_id = ensure_surface(ctx);
 
   let uses_split_pane = ctx.file_tree_uses_split_pane();
+  let root_changed;
   {
     let state = ctx.file_tree_mut();
-    let root_changed = state.root.as_deref() != Some(root.as_path());
+    root_changed = state.root.as_deref() != Some(root.as_path());
     if root_changed {
       state.root = Some(root.clone());
       state.expanded_dirs.clear();
@@ -770,6 +806,26 @@ fn toggle_file_tree_with_root<Ctx: DefaultContext>(ctx: &mut Ctx, current_buffer
   rebuild_rows(ctx);
   reveal_current_file(ctx);
   ctx.request_render();
+
+  if let Some(perf_start) = perf_start {
+    let state = ctx.file_tree();
+    file_tree_perf_log(format!(
+      "kind=file_tree_toggle action=open total={:.2}ms visible={} active={} rows={} selected={} \
+       scroll={} root_changed={} uses_split={} root={}",
+      perf_start.elapsed().as_secs_f64() * 1000.0,
+      u8::from(state.visible),
+      u8::from(state.active),
+      state.rows.len(),
+      state
+        .selected
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "none".to_string()),
+      state.scroll_offset,
+      u8::from(root_changed),
+      u8::from(uses_split_pane),
+      root.display(),
+    ));
+  }
 }
 
 fn open_tree_in_sidebar<Ctx: DefaultContext>(ctx: &mut Ctx, surface_id: ClientSurfaceId) {
@@ -2155,7 +2211,10 @@ mod tests {
     );
 
     assert_eq!(statuses.get(&nested), Some(&FileTreeVcsKind::Modified));
-    assert_eq!(statuses.get(&root.join("src")), Some(&FileTreeVcsKind::Modified));
+    assert_eq!(
+      statuses.get(&root.join("src")),
+      Some(&FileTreeVcsKind::Modified)
+    );
     assert_eq!(statuses.get(&root), Some(&FileTreeVcsKind::Modified));
   }
 
@@ -2173,7 +2232,7 @@ mod tests {
     assert_eq!(
       decorations.get(&path),
       Some(&FileTreeDecorations {
-        vcs: Some(FileTreeVcsKind::Renamed),
+        vcs:        Some(FileTreeVcsKind::Renamed),
         diagnostic: Some(DiagnosticSeverity::Warning),
       })
     );
@@ -2196,20 +2255,20 @@ mod tests {
       uri,
       version: None,
       diagnostics: vec![Diagnostic {
-        range: DiagnosticRange {
+        range:    DiagnosticRange {
           start: DiagnosticPosition {
-            line: 0,
+            line:      0,
             character: 0,
           },
-          end: DiagnosticPosition {
-            line: 0,
+          end:   DiagnosticPosition {
+            line:      0,
             character: 2,
           },
         },
         severity: Some(DiagnosticSeverity::Error),
-        code: None,
-        source: Some("test".to_string()),
-        message: "boom".to_string(),
+        code:     None,
+        source:   Some("test".to_string()),
+        message:  "boom".to_string(),
       }],
     });
 

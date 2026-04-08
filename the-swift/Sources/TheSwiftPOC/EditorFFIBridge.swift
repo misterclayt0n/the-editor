@@ -181,6 +181,24 @@ struct EditorStatusBarState: Hashable {
     )
 }
 
+struct EditorPendingKeyOutcome: Hashable, Identifiable {
+    let pathDisplay: String
+    let label: String
+    let depth: Int
+    let isImmediate: Bool
+
+    var id: String { pathDisplay }
+}
+
+struct EditorPendingKeyState: Hashable {
+    let scope: String?
+    let pendingDisplay: String
+    let immediateCount: Int
+    let outcomes: [EditorPendingKeyOutcome]
+
+    var outcomeCount: Int { outcomes.count }
+}
+
 struct EditorSnapshotPane: Hashable, Identifiable {
     let paneID: UInt
     let kind: EditorPaneKind
@@ -643,6 +661,7 @@ struct EditorSnapshot {
     let info: EditorSnapshotInfo
     let document: EditorDocumentChrome
     let statusBar: EditorStatusBarState
+    let pendingKeys: EditorPendingKeyState?
     let panes: [EditorSnapshotPane]
     let separators: [EditorSnapshotSeparator]
     let lines: [EditorSnapshotLine]
@@ -1052,6 +1071,23 @@ enum EditorFFIBridge {
             cursorText: statusValue.cursor_text.map { String(cString: $0) } ?? "1:1"
         )
 
+        let pendingKeysValue = the_editor_snapshot_pending_keys(rawSnapshot)
+        let pendingKeyOutcomes: [EditorPendingKeyOutcome] = (0..<Int(pendingKeysValue.outcome_count)).map { outcomeIndex in
+            let outcomeValue = the_editor_snapshot_pending_key_outcome_at(rawSnapshot, UInt(outcomeIndex))
+            return EditorPendingKeyOutcome(
+                pathDisplay: outcomeValue.path_display.map { String(cString: $0) } ?? "",
+                label: outcomeValue.label.map { String(cString: $0) } ?? "",
+                depth: Int(outcomeValue.depth),
+                isImmediate: outcomeValue.immediate
+            )
+        }
+        let pendingKeys: EditorPendingKeyState? = pendingKeysValue.visible ? EditorPendingKeyState(
+            scope: pendingKeysValue.scope.map { String(cString: $0) },
+            pendingDisplay: pendingKeysValue.pending_display.map { String(cString: $0) } ?? "",
+            immediateCount: Int(pendingKeysValue.immediate_count),
+            outcomes: pendingKeyOutcomes
+        ) : nil
+
         let paletteValue = the_editor_snapshot_command_palette(rawSnapshot)
         let commandPalette = EditorCommandPaletteState(
             isOpen: paletteValue.is_open,
@@ -1354,6 +1390,7 @@ enum EditorFFIBridge {
             info: info,
             document: document,
             statusBar: statusBar,
+            pendingKeys: pendingKeys,
             panes: panes,
             separators: separators,
             lines: lines,

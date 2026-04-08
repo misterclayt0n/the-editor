@@ -263,6 +263,21 @@ typedef struct the_editor_snapshot_status_item_t {
   uint8_t emphasis;
 } the_editor_snapshot_status_item_t;
 
+typedef struct the_editor_snapshot_pending_keys_t {
+  bool visible;
+  const char *scope;
+  const char *pending_display;
+  uintptr_t immediate_count;
+  uintptr_t outcome_count;
+} the_editor_snapshot_pending_keys_t;
+
+typedef struct the_editor_snapshot_pending_key_outcome_t {
+  const char *path_display;
+  const char *label;
+  uint16_t depth;
+  bool immediate;
+} the_editor_snapshot_pending_key_outcome_t;
+
 typedef struct the_editor_snapshot_command_palette_t {
   bool is_open;
   int32_t selected_index;
@@ -521,6 +536,8 @@ struct the_editor_snapshot_separator_t the_editor_snapshot_separator_at(const th
 struct the_editor_snapshot_document_t the_editor_snapshot_document(const the_editor_snapshot_t *snapshot);
 struct the_editor_snapshot_status_t the_editor_snapshot_status(const the_editor_snapshot_t *snapshot);
 struct the_editor_snapshot_status_item_t the_editor_snapshot_status_item_at(const the_editor_snapshot_t *snapshot, uintptr_t item_index);
+struct the_editor_snapshot_pending_keys_t the_editor_snapshot_pending_keys(const the_editor_snapshot_t *snapshot);
+struct the_editor_snapshot_pending_key_outcome_t the_editor_snapshot_pending_key_outcome_at(const the_editor_snapshot_t *snapshot, uintptr_t outcome_index);
 struct the_editor_snapshot_command_palette_t the_editor_snapshot_command_palette(const the_editor_snapshot_t *snapshot);
 struct the_editor_snapshot_command_palette_item_t the_editor_snapshot_command_palette_item_at(const the_editor_snapshot_t *snapshot, uintptr_t item_index);
 struct the_editor_snapshot_completion_menu_t the_editor_snapshot_completion_menu(const the_editor_snapshot_t *snapshot);

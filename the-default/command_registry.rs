@@ -2139,7 +2139,10 @@ pub fn handle_command_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEve
           // Wrapped to bottom.
           palette.scroll_offset = next.saturating_sub(VISIBLE_ITEMS - 1);
         }
-        command_palette_debug_log(format!("move_up selected={:?} next_filtered_index={}", palette.selected, next));
+        command_palette_debug_log(format!(
+          "move_up selected={:?} next_filtered_index={}",
+          palette.selected, next
+        ));
         sync_command_palette_preview(ctx);
         ctx.request_render();
       }
@@ -2169,7 +2172,10 @@ pub fn handle_command_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEve
           // Wrapped to top.
           palette.scroll_offset = 0;
         }
-        command_palette_debug_log(format!("move_down selected={:?} next_filtered_index={}", palette.selected, next));
+        command_palette_debug_log(format!(
+          "move_down selected={:?} next_filtered_index={}",
+          palette.selected, next
+        ));
         sync_command_palette_preview(ctx);
         ctx.request_render();
       }
@@ -2419,7 +2425,8 @@ fn submit_command_line_palette<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool {
 
   let (filtered, selected) = command_palette_filtered_selection(palette);
   command_palette_debug_log(format!(
-    "submit_command_line palette.query={:?} prompt.input={:?} prompt_text={:?} prefiltered={} selected={:?} filtered_len={} completions_len={}",
+    "submit_command_line palette.query={:?} prompt.input={:?} prompt_text={:?} prefiltered={} \
+     selected={:?} filtered_len={} completions_len={}",
     palette.query,
     ctx.command_prompt_ref().input,
     palette.prompt_text,
@@ -2725,7 +2732,9 @@ pub fn update_command_palette_for_input<Ctx: DefaultContext>(ctx: &mut Ctx, inpu
       }
     }
     command_palette_debug_log(format!(
-      "update_input input={:?} stripped={:?} complete_command_name={} has_command={} completions_len={} items_len={} prefiltered={} palette.query={:?} prompt_text={:?} selected={:?}",
+      "update_input input={:?} stripped={:?} complete_command_name={} has_command={} \
+       completions_len={} items_len={} prefiltered={} palette.query={:?} prompt_text={:?} \
+       selected={:?}",
       input,
       stripped,
       complete_command_name,

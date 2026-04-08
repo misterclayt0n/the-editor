@@ -26,7 +26,6 @@ use crossterm::event::{
 };
 use eyre::Result;
 
-
 use crate::{
   ctx::Ctx,
   render::{

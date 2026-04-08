@@ -425,6 +425,20 @@ pub struct PendingKeyHints {
   pub options: Vec<KeyHintOption>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingKeyOutcome {
+  pub path:  Vec<KeyBinding>,
+  pub label: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingKeyState {
+  pub pending:   Vec<KeyBinding>,
+  pub scope:     Option<String>,
+  pub immediate: Vec<KeyHintOption>,
+  pub outcomes:  Vec<PendingKeyOutcome>,
+}
+
 #[derive(Debug, Clone)]
 pub struct Keymaps {
   pub map:      HashMap<Mode, KeyTrie>,
@@ -466,6 +480,37 @@ impl Keymaps {
   }
 
   pub fn pending_hints(&self, mode: Mode) -> Option<PendingKeyHints> {
+    let node = self.pending_node(mode)?;
+    Some(PendingKeyHints {
+      pending: self.state.clone(),
+      scope:   non_empty_scope_name(&node.name),
+      options: key_hint_options(&node),
+    })
+  }
+
+  pub fn pending_state(&self, mode: Mode) -> Option<PendingKeyState> {
+    let node = self.pending_node(mode)?;
+    let immediate = key_hint_options(&node);
+    let mut outcomes = Vec::new();
+    let mut path = Vec::new();
+    collect_pending_key_outcomes(&node, &mut path, &mut outcomes);
+    Some(PendingKeyState {
+      pending: self.state.clone(),
+      scope: non_empty_scope_name(&node.name),
+      immediate,
+      outcomes,
+    })
+  }
+
+  pub fn contains_key(&self, mode: Mode, binding: KeyBinding) -> bool {
+    let keymap = self.map.get(&mode).expect("mode not in keymap");
+    keymap
+      .search(self.pending())
+      .and_then(KeyTrie::node)
+      .is_some_and(|n| n.map.contains_key(&binding))
+  }
+
+  fn pending_node(&self, mode: Mode) -> Option<KeyTrieNode> {
     if self.state.is_empty() {
       return None;
     }
@@ -477,35 +522,7 @@ impl Keymaps {
       None => keymap.clone(),
     };
     let trie = base.search(&[first])?;
-    let node = trie.search(&self.state[1..])?.node()?;
-
-    let options = node
-      .order
-      .iter()
-      .filter_map(|key| {
-        let entry = node.map.get(key)?;
-        let (label, kind) = key_hint_for_entry(entry);
-        Some(KeyHintOption {
-          key: *key,
-          label,
-          kind,
-        })
-      })
-      .collect();
-
-    Some(PendingKeyHints {
-      pending: self.state.clone(),
-      scope: non_empty_scope_name(&node.name),
-      options,
-    })
-  }
-
-  pub fn contains_key(&self, mode: Mode, binding: KeyBinding) -> bool {
-    let keymap = self.map.get(&mode).expect("mode not in keymap");
-    keymap
-      .search(self.pending())
-      .and_then(KeyTrie::node)
-      .is_some_and(|n| n.map.contains_key(&binding))
+    trie.search(&self.state[1..])?.node().cloned()
   }
 
   pub fn get(&mut self, mode: Mode, key_event: &KeyEvent) -> KeymapResult {
@@ -1104,6 +1121,60 @@ fn non_empty_scope_name(name: &str) -> Option<String> {
     None
   } else {
     Some(trimmed.to_string())
+  }
+}
+
+fn key_hint_options(node: &KeyTrieNode) -> Vec<KeyHintOption> {
+  node
+    .order
+    .iter()
+    .filter_map(|key| {
+      let entry = node.map.get(key)?;
+      let (label, kind) = key_hint_for_entry(entry);
+      Some(KeyHintOption {
+        key: *key,
+        label,
+        kind,
+      })
+    })
+    .collect()
+}
+
+fn collect_pending_key_outcomes(
+  node: &KeyTrieNode,
+  path: &mut Vec<KeyBinding>,
+  outcomes: &mut Vec<PendingKeyOutcome>,
+) {
+  for key in &node.order {
+    let Some(entry) = node.map.get(key) else {
+      continue;
+    };
+    path.push(*key);
+    match entry {
+      KeyTrie::Node(child) => collect_pending_key_outcomes(child, path, outcomes),
+      KeyTrie::Command(action) => {
+        outcomes.push(PendingKeyOutcome {
+          path:  path.clone(),
+          label: key_action_hint_label(*action),
+        })
+      },
+      KeyTrie::Sequence(actions) => {
+        let mut labels = actions
+          .iter()
+          .map(|action| key_action_hint_label(*action))
+          .collect::<Vec<_>>();
+        let label = match labels.len() {
+          0 => "sequence".to_string(),
+          1 => labels.remove(0),
+          n => format!("{} (+{} more)", labels.remove(0), n - 1),
+        };
+        outcomes.push(PendingKeyOutcome {
+          path: path.clone(),
+          label,
+        });
+      },
+    }
+    path.pop();
   }
 }
 
@@ -1776,6 +1847,7 @@ mod tests {
     Keymaps,
     Mode,
     binding_from_literal,
+    builtin_keymaps,
     insert_mode_selection,
   };
 
@@ -1830,6 +1902,44 @@ mod tests {
       bound,
       Some(KeyTrie::Command(KeyAction::Named("override_action")))
     ));
+  }
+
+  #[test]
+  fn pending_state_collects_recursive_outcomes_for_prefix() {
+    let mut keymaps = builtin_keymaps();
+    assert!(matches!(
+      keymaps.get(Mode::Normal, &binding_from_literal("space").to_key_event()),
+      super::KeymapResult::Pending(_)
+    ));
+
+    let pending = keymaps.pending_state(Mode::Normal).expect("pending state");
+    let outcomes: Vec<(Vec<String>, String)> = pending
+      .outcomes
+      .iter()
+      .map(|outcome| {
+        (
+          outcome.path.iter().map(ToString::to_string).collect(),
+          outcome.label.clone(),
+        )
+      })
+      .collect();
+
+    assert_eq!(pending.pending, vec![binding_from_literal("space")]);
+    assert_eq!(pending.scope.as_deref(), Some("Space"));
+    assert!(
+      pending
+        .immediate
+        .iter()
+        .any(|option| option.key == binding_from_literal("f") && option.label == "file picker")
+    );
+    assert!(
+      outcomes
+        .iter()
+        .any(|(path, label)| path == &vec!["f".to_string()] && label == "file picker")
+    );
+    assert!(outcomes.iter().any(|(path, label)| {
+      path == &vec!["w".to_string(), "s".to_string()] && label == "hsplit"
+    }));
   }
 }
 

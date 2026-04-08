@@ -57,7 +57,9 @@ use the_default::{
   FilePickerPreviewLineKind,
   FilePickerPreviewWindowKind,
   FilePickerVcsDiffPreviewRowKind,
+  FileTreeDecorations,
   FileTreeState,
+  FileTreeVcsKind,
   Mode,
   OverlayRect as DefaultOverlayRect,
   PendingInput,
@@ -149,10 +151,6 @@ use the_lib::{
     Highlight,
     Syntax,
   },
-};
-use the_default::{
-  FileTreeDecorations,
-  FileTreeVcsKind,
 };
 use the_lsp::text_sync::{
   file_uri_for_path,
@@ -7538,7 +7536,7 @@ mod tests {
       is_expanded: false,
       is_current_file: false,
       decorations: the_default::FileTreeDecorations {
-        vcs: Some(the_default::FileTreeVcsKind::Modified),
+        vcs:        Some(the_default::FileTreeVcsKind::Modified),
         diagnostic: Some(DiagnosticSeverity::Warning),
       },
       icon_name: "folder".to_string(),

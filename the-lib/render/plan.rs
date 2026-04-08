@@ -2340,7 +2340,10 @@ mod tests {
   #[test]
   fn build_plan_keeps_first_visible_gutter_when_horizontal_scroll_hides_text() {
     let id = DocumentId::new(std::num::NonZeroUsize::new(1).unwrap());
-    let doc = Document::new(id, Rope::from("a\nthis line is very long and stays visible\n"));
+    let doc = Document::new(
+      id,
+      Rope::from("a\nthis line is very long and stays visible\n"),
+    );
     let view = ViewState::new(Rect::new(0, 0, 20, 2), Position::new(0, 8));
     let mut text_fmt = TextFormat::default();
     text_fmt.soft_wrap = false;

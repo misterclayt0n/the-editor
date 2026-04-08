@@ -30,37 +30,67 @@ struct EditorChromeView: View {
     private let maximumFileTreeWidth: CGFloat = 460
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 0) {
-                if controller.fileTree.isVisible {
-                    EditorFileTreeSidebarView(
-                        tree: controller.fileTree,
-                        theme: fileTreeTheme,
-                        onSelectIndex: controller.clickFileTreeIndex,
-                        onActivateIndex: controller.activateFileTreeIndex,
-                        onVisibleRowsChanged: controller.setFileTreeVisibleRows,
-                        onFocusSidebar: { controller.setFileTreeActive(true) }
-                    )
-                    .frame(width: fileTreeWidth)
-
-                    EditorSidebarResizeHandle(
-                        color: fileTreeTheme.separatorColor,
-                        gesture: fileTreeResizeGesture
-                    )
-                }
-
-                EditorSurfaceRepresentable(controller: controller)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+        HStack(spacing: 0) {
+            if controller.fileTree.isVisible {
+                sidebarColumn
+                EditorSidebarResizeHandle(
+                    color: fileTreeTheme.separatorColor,
+                    gesture: fileTreeResizeGesture
+                )
             }
-            EditorStatusAccessoryView(chrome: controller.chrome, mode: controller.currentMode)
+
+            mainColumn
         }
         .background(
             EditorWindowChromeAccessor(
                 chrome: controller.chrome,
                 fileTreeVisible: controller.fileTree.isVisible,
+                fileTreeWidth: titlebarSidebarRegionWidth,
+                fileTreeBackgroundColor: fileTreeTheme.backgroundColor,
+                fileTreeSeparatorColor: fileTreeTheme.separatorColor,
                 onToggleFileTree: controller.toggleFileTree
             )
         )
+        .overlay(alignment: .bottom) {
+            if let pendingKeys = controller.pendingKeys {
+                EditorPendingKeyIndicatorView(pendingKeys: pendingKeys)
+                    .padding(.bottom, 38)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .animation(.spring(response: 0.24, dampingFraction: 0.88), value: controller.pendingKeys?.pendingDisplay)
+    }
+
+    private var sidebarColumn: some View {
+        EditorFileTreeSidebarView(
+            tree: controller.fileTree,
+            theme: fileTreeTheme,
+            onSelectIndex: controller.clickFileTreeIndex,
+            onActivateIndex: controller.activateFileTreeIndex,
+            onVisibleRowsChanged: controller.setFileTreeVisibleRows,
+            onFocusSidebar: { controller.setFileTreeActive(true) }
+        )
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onAppear {
+            let widthText = String(format: "%.1f", fileTreeWidth)
+            scrollPerfLog("fileTree.sidebar appear rows=\(controller.fileTree.rows.count) width=\(widthText)")
+        }
+        .onDisappear {
+            scrollPerfLog("fileTree.sidebar disappear")
+        }
+        .background(Color(nsColor: fileTreeTheme.backgroundColor))
+        .frame(width: fileTreeWidth)
+        .background(Color(nsColor: fileTreeTheme.backgroundColor))
+    }
+
+    private var mainColumn: some View {
+        VStack(spacing: 0) {
+            EditorSurfaceRepresentable(controller: controller)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            EditorStatusAccessoryView(chrome: controller.chrome, mode: controller.currentMode)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var fileTreeTheme: EditorFileTreeSidebarTheme {
@@ -69,6 +99,10 @@ struct EditorChromeView: View {
 
     private var fileTreeWidth: CGFloat {
         clampFileTreeWidth(CGFloat(storedFileTreeWidth) + fileTreeDragTranslation)
+    }
+
+    private var titlebarSidebarRegionWidth: CGFloat {
+        controller.fileTree.isVisible ? fileTreeWidth + 8 : 52
     }
 
     private var fileTreeResizeGesture: some Gesture {
@@ -143,6 +177,177 @@ private struct EditorFileTreeSidebarTheme {
             selectionColor: selectionColor,
             hoverColor: hoverColor
         )
+    }
+}
+
+private struct EditorPendingKeyIndicatorView: View {
+    let pendingKeys: EditorPendingKeyState
+
+    @State private var isShowingPopover = false
+
+    var body: some View {
+        Button(action: togglePopover) {
+            HStack(alignment: .center, spacing: 4) {
+                EditorKeySequenceCapsulesView(sequence: pendingKeys.pendingDisplay)
+                PendingIndicator()
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background {
+                Capsule()
+                    .fill(.regularMaterial)
+                    .overlay {
+                        Capsule()
+                            .strokeBorder(Color.primary.opacity(0.15), lineWidth: 1)
+                    }
+                    .shadow(color: .black.opacity(0.2), radius: 8, y: 2)
+            }
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .popover(isPresented: $isShowingPopover, arrowEdge: .bottom) {
+            EditorPendingKeyPopoverView(pendingKeys: pendingKeys)
+        }
+        .accessibilityLabel("Pending keys")
+        .accessibilityValue(pendingKeys.pendingDisplay)
+        .accessibilityHint("Show possible key combinations")
+    }
+
+    private func togglePopover() {
+        isShowingPopover.toggle()
+    }
+}
+
+private struct EditorPendingKeyPopoverView: View {
+    let pendingKeys: EditorPendingKeyState
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(pendingKeys.scope ?? "Pending keys")
+                .font(.headline)
+
+            HStack(spacing: 8) {
+                EditorKeySequenceCapsulesView(sequence: pendingKeys.pendingDisplay)
+                Text(summaryText)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            Divider()
+
+            ScrollView(.vertical, showsIndicators: true) {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    ForEach(pendingKeys.outcomes) { outcome in
+                        EditorPendingKeyOutcomeRowView(outcome: outcome)
+                    }
+                }
+            }
+            .frame(minWidth: 320, idealWidth: 360, maxWidth: 420, minHeight: 140, idealHeight: 260, maxHeight: 360)
+        }
+        .padding()
+        .frame(maxWidth: 420, alignment: .leading)
+    }
+
+    private var summaryText: String {
+        let immediateCount = pendingKeys.immediateCount
+        let outcomeCount = pendingKeys.outcomeCount
+        let nextKeyNoun = immediateCount == 1 ? "next key" : "next keys"
+        let outcomeNoun = outcomeCount == 1 ? "outcome" : "outcomes"
+        return "\(immediateCount) \(nextKeyNoun) • \(outcomeCount) \(outcomeNoun)"
+    }
+}
+
+private struct EditorPendingKeyOutcomeRowView: View {
+    let outcome: EditorPendingKeyOutcome
+
+    var body: some View {
+        HStack(spacing: 12) {
+            EditorKeySequenceCapsulesView(sequence: outcome.pathDisplay)
+                .frame(minWidth: 84, alignment: .leading)
+
+            Text(outcome.label)
+                .font(.system(size: 12))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 2)
+        .padding(.vertical, 7)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(outcome.pathDisplay), \(outcome.label)")
+    }
+}
+
+private struct EditorKeySequenceCapsulesView: View {
+    let sequence: String
+
+    private var tokens: [String] {
+        sequence
+            .split(separator: " ")
+            .map(String.init)
+            .filter { !$0.isEmpty }
+    }
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(Array(tokens.enumerated()), id: \.offset) { _, token in
+                KeyCap(prettyKeyToken(token))
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
+private struct KeyCap: View {
+    let text: String
+
+    init(_ text: String) {
+        self.text = text
+    }
+
+    var body: some View {
+        Text(verbatim: text)
+            .font(.system(size: 12, weight: .medium, design: .rounded))
+            .padding(.horizontal, 5)
+            .padding(.vertical, 2)
+            .background(
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(Color(NSColor.controlBackgroundColor))
+                    .shadow(color: .black.opacity(0.12), radius: 0.5, y: 0.5)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 4)
+                    .strokeBorder(Color.primary.opacity(0.15), lineWidth: 0.5)
+            )
+    }
+}
+
+private struct PendingIndicator: View {
+    @State private var animationPhase: Double = 0
+
+    var body: some View {
+        TimelineView(.animation) { context in
+            HStack(spacing: 2) {
+                ForEach(0..<3, id: \.self) { index in
+                    Circle()
+                        .fill(Color.secondary)
+                        .frame(width: 4, height: 4)
+                        .opacity(dotOpacity(for: index))
+                }
+            }
+            .onChange(of: context.date.timeIntervalSinceReferenceDate, initial: true) { _, newValue in
+                animationPhase = newValue
+            }
+        }
+    }
+
+    private func dotOpacity(for index: Int) -> Double {
+        let phase = animationPhase
+        let offset = Double(index) / 3.0
+        let wave = sin((phase + offset) * .pi * 2)
+        return 0.3 + 0.7 * ((wave + 1) / 2)
     }
 }
 
@@ -240,7 +445,7 @@ private struct EditorFileTreeSidebarView: View {
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 12)
-        .frame(height: headerHeight)
+        .frame(maxWidth: .infinity, minHeight: headerHeight, maxHeight: headerHeight, alignment: .leading)
         .background(Color(nsColor: theme.headerColor))
         .contentShape(Rectangle())
         .onTapGesture {
@@ -865,9 +1070,88 @@ private struct ModePill: View {
     }
 }
 
+private final class EditorTitlebarLeadingState: ObservableObject {
+    @Published var isSidebarActive: Bool = false
+    @Published var sidebarWidth: CGFloat = 52
+    @Published var document: EditorDocumentChrome = .empty
+}
+
+private final class EditorTitlebarSidebarSeparatorView: NSView {
+    private let lineLayer = CALayer()
+    var separatorColor: NSColor = .separatorColor {
+        didSet { updateAppearance() }
+    }
+    private var isHovering = false {
+        didSet { updateAppearance() }
+    }
+    private var trackingAreaRef: NSTrackingArea?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.clear.cgColor
+        lineLayer.actions = ["bounds": NSNull(), "position": NSNull(), "backgroundColor": NSNull()]
+        layer?.addSublayer(lineLayer)
+        updateAppearance()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func layout() {
+        super.layout()
+        layoutLine()
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let trackingAreaRef {
+            removeTrackingArea(trackingAreaRef)
+        }
+        let trackingArea = NSTrackingArea(
+            rect: bounds,
+            options: [.activeAlways, .mouseEnteredAndExited, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(trackingArea)
+        trackingAreaRef = trackingArea
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        isHovering = true
+        NSCursor.resizeLeftRight.set()
+        super.mouseEntered(with: event)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isHovering = false
+        super.mouseExited(with: event)
+    }
+
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: .resizeLeftRight)
+    }
+
+    private func updateAppearance() {
+        lineLayer.backgroundColor = separatorColor.withAlphaComponent(isHovering ? 1.0 : 0.9).cgColor
+        layoutLine()
+    }
+
+    private func layoutLine() {
+        let lineWidth: CGFloat = isHovering ? 2 : 1
+        lineLayer.frame = NSRect(x: max(bounds.width - lineWidth, 0), y: 0, width: lineWidth, height: bounds.height)
+    }
+}
+
 private struct EditorWindowChromeAccessor: NSViewRepresentable {
     let chrome: EditorChromeModel
     let fileTreeVisible: Bool
+    let fileTreeWidth: CGFloat
+    let fileTreeBackgroundColor: NSColor
+    let fileTreeSeparatorColor: NSColor
     let onToggleFileTree: () -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -882,28 +1166,48 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
 
     func updateNSView(_ nsView: NSView, context: Context) {
         if let window = nsView.window {
-            context.coordinator.configure(window: window, chrome: chrome, fileTreeVisible: fileTreeVisible, onToggleFileTree: onToggleFileTree)
+            context.coordinator.configure(
+                window: window,
+                chrome: chrome,
+                fileTreeVisible: fileTreeVisible,
+                fileTreeWidth: fileTreeWidth,
+                fileTreeBackgroundColor: fileTreeBackgroundColor,
+                fileTreeSeparatorColor: fileTreeSeparatorColor,
+                onToggleFileTree: onToggleFileTree
+            )
             return
         }
 
         DispatchQueue.main.async { [weak nsView] in
             guard let nsView, let window = nsView.window else { return }
-            context.coordinator.configure(window: window, chrome: chrome, fileTreeVisible: fileTreeVisible, onToggleFileTree: onToggleFileTree)
+            context.coordinator.configure(
+                window: window,
+                chrome: chrome,
+                fileTreeVisible: fileTreeVisible,
+                fileTreeWidth: fileTreeWidth,
+                fileTreeBackgroundColor: fileTreeBackgroundColor,
+                fileTreeSeparatorColor: fileTreeSeparatorColor,
+                onToggleFileTree: onToggleFileTree
+            )
         }
     }
 
     @MainActor
     final class Coordinator: NSObject, NSToolbarDelegate {
         private let toolbarIdentifier = NSToolbar.Identifier("TheSwiftPOC.TitlebarToolbar")
-        private let fileTreeItemIdentifier = NSToolbarItem.Identifier("TheSwiftPOC.FileTreeToggle")
-        private let documentItemIdentifier = NSToolbarItem.Identifier("TheSwiftPOC.DocumentInfo")
+        private let leadingItemIdentifier = NSToolbarItem.Identifier("TheSwiftPOC.LeadingRegion")
         private let vcsItemIdentifier = NSToolbarItem.Identifier("TheSwiftPOC.VCSInfo")
-        private let fileTreeHostingView = NSHostingView(rootView: EditorTitlebarSidebarToggleButton(isActive: false, onToggle: {}))
-        private let documentHostingView = NSHostingView(rootView: EditorTitlebarDocumentView(document: .empty))
+        private let leadingState = EditorTitlebarLeadingState()
+        private lazy var fileTreeHostingView = NSHostingView(rootView: EditorTitlebarLeadingRegionView(state: leadingState, onToggle: {}))
         private let vcsHostingView = NSHostingView(rootView: EditorTitlebarVCSView(vcsText: nil))
+        private let sidebarTitlebarBackgroundView = NSView(frame: .zero)
+        private let sidebarTitlebarSeparatorView = EditorTitlebarSidebarSeparatorView(frame: .zero)
         private weak var observedWindow: NSWindow?
         private var lastChrome: EditorChromeModel = .empty
         private var lastFileTreeVisible = false
+        private var lastFileTreeWidth: CGFloat = 52
+        private var lastFileTreeBackgroundColor: NSColor = .windowBackgroundColor
+        private var lastFileTreeSeparatorColor: NSColor = .separatorColor
         private var toggleFileTreeAction: (() -> Void)?
         private lazy var toolbar: NSToolbar = {
             let toolbar = NSToolbar(identifier: toolbarIdentifier)
@@ -920,41 +1224,62 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
             fileTreeHostingView.translatesAutoresizingMaskIntoConstraints = false
             fileTreeHostingView.setContentCompressionResistancePriority(.required, for: .horizontal)
             fileTreeHostingView.setContentHuggingPriority(.required, for: .horizontal)
-            documentHostingView.translatesAutoresizingMaskIntoConstraints = false
-            documentHostingView.setContentCompressionResistancePriority(.required, for: .horizontal)
-            documentHostingView.setContentHuggingPriority(.required, for: .horizontal)
             vcsHostingView.translatesAutoresizingMaskIntoConstraints = false
             vcsHostingView.setContentCompressionResistancePriority(.required, for: .horizontal)
             vcsHostingView.setContentHuggingPriority(.required, for: .horizontal)
+            sidebarTitlebarBackgroundView.wantsLayer = true
+            sidebarTitlebarBackgroundView.autoresizingMask = [.height]
+            sidebarTitlebarSeparatorView.autoresizingMask = [.height]
         }
 
         deinit {
             NotificationCenter.default.removeObserver(self)
         }
 
-        func configure(window: NSWindow, chrome: EditorChromeModel, fileTreeVisible: Bool, onToggleFileTree: @escaping () -> Void) {
+        func configure(
+            window: NSWindow,
+            chrome: EditorChromeModel,
+            fileTreeVisible: Bool,
+            fileTreeWidth: CGFloat,
+            fileTreeBackgroundColor: NSColor,
+            fileTreeSeparatorColor: NSColor,
+            onToggleFileTree: @escaping () -> Void
+        ) {
             let started = CFAbsoluteTimeGetCurrent()
             let windowChanged = observedWindow !== window
             let chromeChanged = !chrome.matches(lastChrome)
             let fileTreeChanged = fileTreeVisible != lastFileTreeVisible
+            let widthChanged = abs(fileTreeWidth - lastFileTreeWidth) > 0.5
+            let sidebarColorChanged = !fileTreeBackgroundColor.isEqual(lastFileTreeBackgroundColor)
+            let separatorColorChanged = !fileTreeSeparatorColor.isEqual(lastFileTreeSeparatorColor)
             toggleFileTreeAction = onToggleFileTree
             attachWindowObserversIfNeeded(window: window)
             installToolbarIfNeeded(window: window)
-            guard windowChanged || chromeChanged || fileTreeChanged else {
-                scrollPerfLog("chrome.configure skipped windowChanged=\(windowChanged) chromeChanged=\(chromeChanged) fileTreeChanged=\(fileTreeChanged)")
+            guard windowChanged || chromeChanged || fileTreeChanged || widthChanged || sidebarColorChanged || separatorColorChanged else {
+                scrollPerfLog("chrome.configure skipped windowChanged=\(windowChanged) chromeChanged=\(chromeChanged) fileTreeChanged=\(fileTreeChanged) widthChanged=\(widthChanged)")
                 return
             }
             lastChrome = chrome
             lastFileTreeVisible = fileTreeVisible
+            lastFileTreeWidth = fileTreeWidth
+            lastFileTreeBackgroundColor = fileTreeBackgroundColor
+            lastFileTreeSeparatorColor = fileTreeSeparatorColor
             let applyStarted = CFAbsoluteTimeGetCurrent()
             applyWindowChrome(window: window, chrome: chrome)
+            layoutSidebarTitlebarBackground(
+                window: window,
+                visible: fileTreeVisible,
+                width: fileTreeWidth,
+                backgroundColor: fileTreeBackgroundColor,
+                separatorColor: fileTreeSeparatorColor
+            )
             let applyMs = (CFAbsoluteTimeGetCurrent() - applyStarted) * 1000
             let toolbarStarted = CFAbsoluteTimeGetCurrent()
-            updateToolbarContent(window: window, chrome: chrome, fileTreeVisible: fileTreeVisible)
+            updateToolbarContent(window: window, chrome: chrome, fileTreeVisible: fileTreeVisible, fileTreeWidth: fileTreeWidth)
             let toolbarMs = (CFAbsoluteTimeGetCurrent() - toolbarStarted) * 1000
             let totalMs = (CFAbsoluteTimeGetCurrent() - started) * 1000
             scrollPerfLog(
-                "chrome.configure windowChanged=\(windowChanged) chromeChanged=\(chromeChanged) applyMs=\(String(format: "%.2f", applyMs)) toolbarMs=\(String(format: "%.2f", toolbarMs)) totalMs=\(String(format: "%.2f", totalMs))"
+                "chrome.configure windowChanged=\(windowChanged) chromeChanged=\(chromeChanged) fileTreeChanged=\(fileTreeChanged) widthChanged=\(widthChanged) applyMs=\(String(format: "%.2f", applyMs)) toolbarMs=\(String(format: "%.2f", toolbarMs)) totalMs=\(String(format: "%.2f", totalMs))"
             )
         }
 
@@ -986,7 +1311,14 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
         @objc private func windowDidChangeState(_ notification: Notification) {
             guard let window = notification.object as? NSWindow else { return }
             applyWindowChrome(window: window, chrome: lastChrome)
-            updateToolbarContent(window: window, chrome: lastChrome, fileTreeVisible: lastFileTreeVisible)
+            layoutSidebarTitlebarBackground(
+                window: window,
+                visible: lastFileTreeVisible,
+                width: lastFileTreeWidth,
+                backgroundColor: lastFileTreeBackgroundColor,
+                separatorColor: lastFileTreeSeparatorColor
+            )
+            updateToolbarContent(window: window, chrome: lastChrome, fileTreeVisible: lastFileTreeVisible, fileTreeWidth: lastFileTreeWidth)
         }
 
         private func applyWindowChrome(window: NSWindow, chrome: EditorChromeModel) {
@@ -1015,16 +1347,51 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
             applyTitlebarBackground(window: window, color: backgroundColor)
         }
 
-        private func updateToolbarContent(window: NSWindow, chrome: EditorChromeModel, fileTreeVisible: Bool) {
-            fileTreeHostingView.rootView = EditorTitlebarSidebarToggleButton(isActive: fileTreeVisible) {
+        private func updateToolbarContent(window: NSWindow, chrome: EditorChromeModel, fileTreeVisible: Bool, fileTreeWidth: CGFloat) {
+            fileTreeHostingView.rootView = EditorTitlebarLeadingRegionView(state: leadingState) {
                 self.toggleFileTreeAction?()
             }
-            documentHostingView.rootView = EditorTitlebarDocumentView(document: chrome.document)
+            withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
+                leadingState.isSidebarActive = fileTreeVisible
+                leadingState.sidebarWidth = fileTreeWidth
+                leadingState.document = chrome.document
+            }
             vcsHostingView.rootView = EditorTitlebarVCSView(vcsText: chrome.document.vcsText)
             fileTreeHostingView.invalidateIntrinsicContentSize()
-            documentHostingView.invalidateIntrinsicContentSize()
             vcsHostingView.invalidateIntrinsicContentSize()
             window.toolbar?.validateVisibleItems()
+        }
+
+        private func layoutSidebarTitlebarBackground(
+            window: NSWindow,
+            visible: Bool,
+            width: CGFloat,
+            backgroundColor: NSColor,
+            separatorColor: NSColor
+        ) {
+            guard let titlebarContainer = titlebarContainer(for: window) else { return }
+            if sidebarTitlebarBackgroundView.superview !== titlebarContainer {
+                sidebarTitlebarBackgroundView.removeFromSuperview()
+                titlebarContainer.addSubview(sidebarTitlebarBackgroundView, positioned: .below, relativeTo: nil)
+            }
+            if sidebarTitlebarSeparatorView.superview !== titlebarContainer {
+                sidebarTitlebarSeparatorView.removeFromSuperview()
+                titlebarContainer.addSubview(sidebarTitlebarSeparatorView)
+            }
+
+            let resolvedWidth = visible ? width : 0
+            let handleWidth: CGFloat = 8
+            let backgroundWidth = max(resolvedWidth - handleWidth, 0)
+            let separatorFrame = NSRect(x: backgroundWidth, y: 0, width: handleWidth, height: titlebarContainer.bounds.height)
+            let backgroundFrame = NSRect(x: 0, y: 0, width: backgroundWidth, height: titlebarContainer.bounds.height)
+
+            sidebarTitlebarBackgroundView.isHidden = backgroundWidth <= 0.5
+            sidebarTitlebarBackgroundView.layer?.backgroundColor = backgroundColor.cgColor
+            sidebarTitlebarBackgroundView.frame = backgroundFrame
+
+            sidebarTitlebarSeparatorView.isHidden = resolvedWidth <= 0.5
+            sidebarTitlebarSeparatorView.separatorColor = separatorColor
+            sidebarTitlebarSeparatorView.frame = separatorFrame
         }
 
         private func applyTitlebarBackground(window: NSWindow, color: NSColor) {
@@ -1112,11 +1479,11 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
         }
 
         func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-            [fileTreeItemIdentifier, documentItemIdentifier, .flexibleSpace, vcsItemIdentifier]
+            [leadingItemIdentifier, .flexibleSpace, vcsItemIdentifier]
         }
 
         func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-            [fileTreeItemIdentifier, documentItemIdentifier, .flexibleSpace, vcsItemIdentifier]
+            [leadingItemIdentifier, .flexibleSpace, vcsItemIdentifier]
         }
 
         func toolbar(
@@ -1128,12 +1495,8 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
             item.isBordered = false
 
             switch itemIdentifier {
-            case fileTreeItemIdentifier:
+            case leadingItemIdentifier:
                 item.view = fileTreeHostingView
-                item.visibilityPriority = .high
-                return item
-            case documentItemIdentifier:
-                item.view = documentHostingView
                 item.visibilityPriority = .high
                 return item
             case vcsItemIdentifier:
@@ -1147,12 +1510,34 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
     }
 }
 
+private struct EditorTitlebarLeadingRegionView: View {
+    @ObservedObject var state: EditorTitlebarLeadingState
+    let onToggle: () -> Void
+
+    var body: some View {
+        HStack(spacing: 0) {
+            HStack(spacing: 0) {
+                EditorTitlebarSidebarToggleButton(isActive: state.isSidebarActive, onToggle: onToggle)
+                    .padding(.leading, 10)
+                Spacer(minLength: 0)
+            }
+            .frame(width: max(state.sidebarWidth, 52), height: 24, alignment: .leading)
+
+            EditorTitlebarDocumentView(document: state.document)
+                .padding(.leading, 8)
+        }
+        .fixedSize(horizontal: true, vertical: true)
+        .animation(.spring(response: 0.24, dampingFraction: 0.88), value: state.sidebarWidth)
+        .animation(.spring(response: 0.24, dampingFraction: 0.88), value: state.document)
+    }
+}
+
 private struct EditorTitlebarSidebarToggleButton: View {
     let isActive: Bool
     let onToggle: () -> Void
 
     var body: some View {
-        Button(action: onToggle) {
+        Button(action: toggle) {
             Image(systemName: "sidebar.left")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(isActive ? .primary : .secondary)
@@ -1165,6 +1550,12 @@ private struct EditorTitlebarSidebarToggleButton: View {
         .buttonStyle(.plain)
         .help("Toggle Sidebar")
         .accessibilityLabel("Toggle Sidebar")
+    }
+
+    private func toggle() {
+        withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
+            onToggle()
+        }
     }
 }
 
@@ -1310,6 +1701,58 @@ private func fileTreeBadgeColor(for severity: EditorDiagnosticSeverity) -> Color
     case .hint:
         return .teal
     }
+}
+
+private func prettyKeyToken(_ token: String) -> String {
+    let parts = token.split(separator: "-").map(String.init)
+    guard let rawKey = parts.last else { return token }
+    let modifiers = parts.dropLast().map { modifier -> String in
+        switch modifier.uppercased() {
+        case "C":
+            return "⌃"
+        case "A":
+            return "⌥"
+        case "S":
+            return "⇧"
+        default:
+            return "\(modifier)-"
+        }
+    }.joined()
+
+    let keyLabel: String = switch rawKey.lowercased() {
+    case "space":
+        "Space"
+    case "ret", "return", "enter":
+        "↩"
+    case "esc":
+        "Esc"
+    case "tab":
+        "Tab"
+    case "bs":
+        "⌫"
+    case "del":
+        "⌦"
+    case "left":
+        "←"
+    case "right":
+        "→"
+    case "up":
+        "↑"
+    case "down":
+        "↓"
+    case "pgup":
+        "PgUp"
+    case "pgdown":
+        "PgDn"
+    case "home":
+        "Home"
+    case "end":
+        "End"
+    default:
+        rawKey.count == 1 ? rawKey.uppercased() : rawKey.uppercased()
+    }
+
+    return modifiers + keyLabel
 }
 
 private func normalizedStatusItemDisplay(icon: String?, text: String) -> (icon: String?, text: String) {

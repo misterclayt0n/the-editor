@@ -22,6 +22,7 @@ final class EditorSurfaceController: ObservableObject {
     private(set) var scene: EditorRenderScene?
     private(set) var chrome = EditorChromeModel.empty
     private(set) var currentMode: EditorMode = .normal
+    private(set) var pendingKeys: EditorPendingKeyState?
     private(set) var commandPalette: EditorCommandPaletteState = .empty
     private(set) var completionMenu: EditorCompletionMenuState = .empty
     private(set) var inputPrompt: EditorInputPromptState = .empty
@@ -38,6 +39,9 @@ final class EditorSurfaceController: ObservableObject {
     private var filePickerListVisibleRows: Int = 1
     private var filePickerPreviewVisibleRows: Int = 1
     private var fileTreeVisibleRows: Int = 1
+    private var pendingFileTreeToggleStartedAt: CFAbsoluteTime?
+    private var pendingFileTreeToggleTargetVisibility: Bool?
+    private var fileTreeToggleResizeTask: Task<Void, Never>?
     private var resizeOverlayHideTask: Task<Void, Never>?
     private var interactiveResizeReasons: Set<String> = []
     private var pendingSurfaceConfiguration: EditorSurfaceConfiguration?
@@ -45,6 +49,7 @@ final class EditorSurfaceController: ObservableObject {
     private var lastSurfaceConfigureAt: CFAbsoluteTime = 0
 
     private let interactiveResizeMinInterval: CFTimeInterval = 1.0 / 30.0
+    private let fileTreeToggleResizeDuration: Duration = .milliseconds(360)
 
     init(initialPath: String?) {
         self.handle = EditorFFIBridge.createHandle(initialPath: initialPath).map(EditorHandleBox.init(raw:))
@@ -55,6 +60,7 @@ final class EditorSurfaceController: ObservableObject {
     deinit {
         resizeOverlayHideTask?.cancel()
         surfaceConfigureFlushTask?.cancel()
+        fileTreeToggleResizeTask?.cancel()
         EditorFFIBridge.destroyHandle(handle?.raw)
     }
 
@@ -76,15 +82,16 @@ final class EditorSurfaceController: ObservableObject {
         let reasonText = reasons.joined(separator: ",")
         let now = CFAbsoluteTimeGetCurrent()
         let elapsed = now - lastSurfaceConfigureAt
-        let sidebarResizeActive = interactiveResizeReasons.contains("sidebar")
+        let deferUntilEndReasons: Set<String> = ["sidebar", "fileTreeToggle"]
+        let deferUntilEndActive = !interactiveResizeReasons.isDisjoint(with: deferUntilEndReasons)
 
-        if sidebarResizeActive {
+        if deferUntilEndActive {
             pendingSurfaceConfiguration = configuration
             surfaceConfigureFlushTask?.cancel()
             surfaceConfigureFlushTask = nil
             let elapsedMsText = String(format: "%.2f", elapsed * 1000)
             scrollPerfLog(
-                "controller.configureSurface deferred-sidebar reasons=\(reasonText) size=\(sizeText) backingScale=\(scaleText) oldPx=\(oldPxText) newPx=\(newPxText) cellPx=\(cellPxText) elapsedMs=\(elapsedMsText)"
+                "controller.configureSurface deferred-until-end reasons=\(reasonText) size=\(sizeText) backingScale=\(scaleText) oldPx=\(oldPxText) newPx=\(newPxText) cellPx=\(cellPxText) elapsedMs=\(elapsedMsText)"
             )
             return false
         }
@@ -413,8 +420,32 @@ final class EditorSurfaceController: ObservableObject {
     }
 
     func toggleFileTree() {
-        guard EditorFFIBridge.toggleFileTree(handle?.raw) else { return }
+        let targetVisibility = !fileTree.isVisible
+        let started = CFAbsoluteTimeGetCurrent()
+        pendingFileTreeToggleStartedAt = started
+        pendingFileTreeToggleTargetVisibility = targetVisibility
+        startFileTreeToggleResizeTracking(targetVisibility: targetVisibility, source: "toggle-request")
+        scrollPerfLog(
+            "fileTree.toggle requested visible=\(fileTree.isVisible)→\(targetVisibility) rows=\(fileTree.rows.count) selected=\(String(describing: fileTree.selectedIndex)) scroll=\(fileTree.scrollOffset)"
+        )
+        let ffiStarted = CFAbsoluteTimeGetCurrent()
+        guard EditorFFIBridge.toggleFileTree(handle?.raw) else {
+            pendingFileTreeToggleStartedAt = nil
+            pendingFileTreeToggleTargetVisibility = nil
+            endInteractiveResize(reason: "fileTreeToggle")
+            return
+        }
+        let ffiMs = (CFAbsoluteTimeGetCurrent() - ffiStarted) * 1000
+        let refreshStarted = CFAbsoluteTimeGetCurrent()
         refreshSnapshot()
+        let refreshMs = (CFAbsoluteTimeGetCurrent() - refreshStarted) * 1000
+        let totalMs = (CFAbsoluteTimeGetCurrent() - started) * 1000
+        let ffiMsText = String(format: "%.2f", ffiMs)
+        let refreshMsText = String(format: "%.2f", refreshMs)
+        let totalMsText = String(format: "%.2f", totalMs)
+        scrollPerfLog(
+            "fileTree.toggle completed ffiMs=\(ffiMsText) refreshMs=\(refreshMsText) totalMs=\(totalMsText) visibleNow=\(fileTree.isVisible) rowsNow=\(fileTree.rows.count)"
+        )
     }
 
     func setCommandPaletteQuery(_ query: String) {
@@ -521,6 +552,7 @@ final class EditorSurfaceController: ObservableObject {
         objectWillChange.send()
         currentMode = snapshot.info.mode
         chrome = nextChrome
+        pendingKeys = snapshot.pendingKeys
         commandPalette = snapshot.commandPalette
         completionMenu = snapshot.completionMenu
         inputPrompt = snapshot.inputPrompt
@@ -528,6 +560,7 @@ final class EditorSurfaceController: ObservableObject {
         completionDocs = snapshot.completionDocs
         signatureHelp = snapshot.signatureHelp
         filePicker = snapshot.filePicker
+        let previousFileTree = fileTree
         fileTree = snapshot.fileTree
         let decoratedFileTreeRows = snapshot.fileTree.rows.filter { $0.vcsKind != nil || $0.diagnosticSeverity != nil }.count
         let currentFileTreeSummary = snapshot.fileTree.rows.first(where: { $0.isCurrentFile }).map {
@@ -536,6 +569,20 @@ final class EditorSurfaceController: ObservableObject {
         scrollPerfLog(
             "controller.fileTree visible=\(snapshot.fileTree.isVisible) rows=\(snapshot.fileTree.rows.count) decoratedRows=\(decoratedFileTreeRows) \(currentFileTreeSummary)"
         )
+        if previousFileTree.isVisible != snapshot.fileTree.isVisible || previousFileTree.rows.count != snapshot.fileTree.rows.count {
+            if previousFileTree.isVisible != snapshot.fileTree.isVisible {
+                if pendingFileTreeToggleStartedAt == nil {
+                    pendingFileTreeToggleStartedAt = CFAbsoluteTimeGetCurrent()
+                }
+                pendingFileTreeToggleTargetVisibility = snapshot.fileTree.isVisible
+                startFileTreeToggleResizeTracking(targetVisibility: snapshot.fileTree.isVisible, source: "snapshot-transition")
+            }
+            let toggleDeltaMs = pendingFileTreeToggleStartedAt.map { (CFAbsoluteTimeGetCurrent() - $0) * 1000 }
+            let deltaText = toggleDeltaMs.map { String(format: "%.2f", $0) } ?? "-"
+            scrollPerfLog(
+                "controller.fileTree transition visible=\(previousFileTree.isVisible)→\(snapshot.fileTree.isVisible) rows=\(previousFileTree.rows.count)→\(snapshot.fileTree.rows.count) selected=\(String(describing: snapshot.fileTree.selectedIndex)) scroll=\(snapshot.fileTree.scrollOffset) toggleDeltaMs=\(deltaText) target=\(String(describing: pendingFileTreeToggleTargetVisibility))"
+            )
+        }
         scene = nextScene
         let publishMs = (CFAbsoluteTimeGetCurrent() - publishStarted) * 1000
 
@@ -577,6 +624,31 @@ final class EditorSurfaceController: ObservableObject {
                 let refreshMs = (CFAbsoluteTimeGetCurrent() - refreshStarted) * 1000
                 scrollPerfLog("controller.pollBackground refreshMs=\(String(format: "%.2f", refreshMs))")
             }
+    }
+
+    private func startFileTreeToggleResizeTracking(targetVisibility: Bool, source: String) {
+        beginInteractiveResize(reason: "fileTreeToggle")
+        fileTreeToggleResizeTask?.cancel()
+        scrollPerfLog(
+            "controller.fileTreeToggleResize begin source=\(source) target=\(targetVisibility) active=\(interactiveResizeReasons.sorted())"
+        )
+        fileTreeToggleResizeTask = Task { @MainActor [weak self] in
+            let duration = self?.fileTreeToggleResizeDuration ?? .milliseconds(360)
+            do {
+                try await Task.sleep(for: duration)
+            } catch {
+                return
+            }
+            guard let self, !Task.isCancelled else { return }
+            let target = self.pendingFileTreeToggleTargetVisibility
+            self.pendingFileTreeToggleStartedAt = nil
+            self.pendingFileTreeToggleTargetVisibility = nil
+            scrollPerfLog(
+                "controller.fileTreeToggleResize end target=\(String(describing: target)) visible=\(self.fileTree.isVisible) active=\(self.interactiveResizeReasons.sorted())"
+            )
+            self.endInteractiveResize(reason: "fileTreeToggle")
+            self.fileTreeToggleResizeTask = nil
+        }
     }
 
     private func markedTextOverlay(from snapshot: EditorSnapshot) -> EditorMarkedText? {

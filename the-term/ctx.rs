@@ -112,13 +112,13 @@ use the_default::{
   file_picker_vcs_diff_specs,
   finalize_vcs_diff_preview,
   install_default_wiring,
-  rebuild_file_tree_diagnostic_statuses,
-  set_file_tree_diagnostic_statuses,
-  set_file_tree_vcs_statuses,
   open_dynamic_picker,
+  rebuild_file_tree_diagnostic_statuses,
   replace_file_picker_items,
   replace_file_picker_items_preserving_selection,
   replace_file_picker_items_preserving_selection_and_viewport,
+  set_file_tree_diagnostic_statuses,
+  set_file_tree_vcs_statuses,
 };
 use the_lib::{
   self,
@@ -3863,7 +3863,10 @@ impl Ctx {
     if !cwd.exists() {
       return None;
     }
-    self.vcs_provider.watch_root(cwd.as_path()).filter(|root| root.exists())
+    self
+      .vcs_provider
+      .watch_root(cwd.as_path())
+      .filter(|root| root.exists())
   }
 
   fn file_tree_watch_root(&self) -> Option<PathBuf> {
@@ -14762,11 +14765,13 @@ pkgs.mkShell {
       .expect("send stale vcs result");
 
     assert!(!ctx.poll_file_tree_vcs_refresh_results());
-    assert!(ctx
-      .file_tree
-      .rows
-      .iter()
-      .all(|row| row.decorations == the_default::FileTreeDecorations::default()));
+    assert!(
+      ctx
+        .file_tree
+        .rows
+        .iter()
+        .all(|row| row.decorations == the_default::FileTreeDecorations::default())
+    );
     assert!(ctx.file_tree_vcs_refresh_in_flight);
   }
 }

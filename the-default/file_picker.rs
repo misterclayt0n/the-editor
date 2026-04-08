@@ -3137,7 +3137,10 @@ pub fn file_picker_item_selectable(item: &FilePickerItem) -> bool {
   item.is_selectable()
 }
 
-pub fn file_picker_row_data_for_kind(kind: FilePickerKind, item: &FilePickerItem) -> FilePickerRowData {
+pub fn file_picker_row_data_for_kind(
+  kind: FilePickerKind,
+  item: &FilePickerItem,
+) -> FilePickerRowData {
   if let Some(row_data) = &item.row_data {
     return row_data.clone();
   }

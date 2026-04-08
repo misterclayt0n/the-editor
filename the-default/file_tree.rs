@@ -286,6 +286,38 @@ fn file_tree_perf_log(message: String) {
   append_file_tree_perf_line(line.as_bytes());
 }
 
+fn file_tree_path_for_log(path: Option<&Path>) -> String {
+  path
+    .map(|path| path.display().to_string())
+    .unwrap_or_else(|| "none".to_string())
+}
+
+fn file_tree_scroll_state_summary(state: &FileTreeState) -> String {
+  format!(
+    "selected={} selected_path={} scroll={} visible_rows={} rows={} max_scroll={} follow={} \
+     pending={} root={}",
+    state
+      .selected
+      .map(|value| value.to_string())
+      .unwrap_or_else(|| "none".to_string()),
+    file_tree_path_for_log(state.selected_path().as_deref()),
+    state.scroll_offset,
+    state.visible_rows,
+    state.rows.len(),
+    tree_max_scroll_offset(state),
+    u8::from(state.selection_follow),
+    file_tree_path_for_log(state.pending_selected_path.as_deref()),
+    file_tree_path_for_log(state.root.as_deref()),
+  )
+}
+
+fn file_tree_scroll_log(state: &FileTreeState, message: String) {
+  file_tree_perf_log(format!(
+    "kind=file_tree_scroll {message} {}",
+    file_tree_scroll_state_summary(state)
+  ));
+}
+
 pub fn install_builtin_file_tree_commands<Ctx>(registry: &mut CommandRegistry<Ctx>)
 where
   Ctx: DefaultContext + 'static,
@@ -473,8 +505,18 @@ pub fn toggle_file_tree_in_current_buffer_directory<Ctx: DefaultContext>(ctx: &m
 pub fn set_file_tree_visible_rows<Ctx: DefaultContext>(ctx: &mut Ctx, visible_rows: usize) {
   let scrolloff = ctx.scrolloff();
   let state = ctx.file_tree_mut();
+  let previous_visible_rows = state.visible_rows;
   state.visible_rows = visible_rows;
   sync_tree_scroll(state, scrolloff);
+  if previous_visible_rows != state.visible_rows {
+    file_tree_scroll_log(
+      state,
+      format!(
+        "reason=set_visible_rows previous_visible_rows={} next_visible_rows={} scrolloff={} ",
+        previous_visible_rows, state.visible_rows, scrolloff,
+      ),
+    );
+  }
 }
 
 pub fn set_file_tree_active<Ctx: DefaultContext>(ctx: &mut Ctx, active: bool) -> bool {
@@ -750,6 +792,9 @@ fn select_file_tree_index_with_behavior<Ctx: DefaultContext>(
   let next = index.min(len.saturating_sub(1));
   let scrolloff = ctx.scrolloff();
   let state = ctx.file_tree_mut();
+  let previous_selected = state.selected;
+  let previous_scroll = state.scroll_offset;
+  let previous_active = state.active;
   let changed = state.selected != Some(next) || (!uses_split_pane && !state.active);
   state.selected = Some(next);
   state.selection_follow = follow_selection;
@@ -758,6 +803,23 @@ fn select_file_tree_index_with_behavior<Ctx: DefaultContext>(
     state.active = true;
   }
   sync_tree_scroll(state, scrolloff);
+  file_tree_scroll_log(
+    state,
+    format!(
+      "reason=select_index requested={} resolved={} previous_selected={} previous_scroll={} \
+       previous_active={} follow_selection={} changed={} uses_split={} ",
+      index,
+      next,
+      previous_selected
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "none".to_string()),
+      previous_scroll,
+      u8::from(previous_active),
+      u8::from(follow_selection),
+      u8::from(changed),
+      u8::from(uses_split_pane),
+    ),
+  );
   changed
 }
 
@@ -792,6 +854,8 @@ pub fn scroll_file_tree<Ctx: DefaultContext>(
   visible_rows: usize,
 ) -> bool {
   let state = ctx.file_tree_mut();
+  let previous_visible_rows = state.visible_rows;
+  let previous_scroll = state.scroll_offset;
   state.visible_rows = visible_rows;
   clamp_tree_state(state);
   state.selection_follow = false;
@@ -801,9 +865,25 @@ pub fn scroll_file_tree<Ctx: DefaultContext>(
     .saturating_add_signed(delta)
     .min(max_offset);
   if next == state.scroll_offset {
+    file_tree_scroll_log(
+      state,
+      format!(
+        "reason=scroll_file_tree delta={} previous_scroll={} next_scroll={} \
+         visible_rows_before={} visible_rows_after={} changed=0 ",
+        delta, previous_scroll, state.scroll_offset, previous_visible_rows, state.visible_rows,
+      ),
+    );
     return false;
   }
   state.scroll_offset = next;
+  file_tree_scroll_log(
+    state,
+    format!(
+      "reason=scroll_file_tree delta={} previous_scroll={} next_scroll={} visible_rows_before={} \
+       visible_rows_after={} changed=1 ",
+      delta, previous_scroll, state.scroll_offset, previous_visible_rows, state.visible_rows,
+    ),
+  );
   true
 }
 
@@ -1021,9 +1101,17 @@ fn move_selection<Ctx: DefaultContext>(ctx: &mut Ctx, amount: isize) {
     .min(len.saturating_sub(1));
   let scrolloff = ctx.scrolloff();
   let state = ctx.file_tree_mut();
+  let previous_scroll = state.scroll_offset;
   state.selected = Some(next);
   state.selection_follow = true;
   sync_tree_scroll(state, scrolloff);
+  file_tree_scroll_log(
+    state,
+    format!(
+      "reason=move_selection amount={} previous_selected={} next_selected={} previous_scroll={} ",
+      amount, current, next, previous_scroll,
+    ),
+  );
   ctx.request_render();
 }
 
@@ -1567,6 +1655,8 @@ fn rebuild_rows<Ctx: DefaultContext>(ctx: &mut Ctx) {
   let scrolloff = ctx.scrolloff();
 
   let state = ctx.file_tree_mut();
+  let selected_before = state.selected;
+  let scroll_before = state.scroll_offset;
   let selected_path = state.selected_path();
   let pending_selected_path = state.pending_selected_path.clone();
   state
@@ -1603,6 +1693,26 @@ fn rebuild_rows<Ctx: DefaultContext>(ctx: &mut Ctx) {
   clamp_tree_state(state);
   state.selection_follow = true;
   sync_tree_scroll(state, scrolloff);
+
+  file_tree_scroll_log(
+    state,
+    format!(
+      "reason=rebuild_rows selected_before={} selected_after={} scroll_before={} scroll_after={} \
+       selected_path_before={} current_file={} pending_visible={} ",
+      selected_before
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "none".to_string()),
+      state
+        .selected
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "none".to_string()),
+      scroll_before,
+      state.scroll_offset,
+      file_tree_path_for_log(selected_path.as_deref()),
+      file_tree_path_for_log(current_file.as_deref()),
+      u8::from(pending_selected_visible),
+    ),
+  );
 
   if let Some(perf_start) = perf_start {
     let rebuild_ms = perf_start.elapsed().as_secs_f64() * 1000.0;
@@ -2057,10 +2167,23 @@ fn reveal_path<Ctx: DefaultContext>(ctx: &mut Ctx, path: &Path) {
 
   let show_hidden = ctx.file_tree().show_hidden;
   let state = ctx.file_tree_mut();
+  let previous_scroll = state.scroll_offset;
+  let previous_selected = state.selected;
   expand_dirs_to_path(state, &root, path);
   state.pending_selected_path = Some(path.to_path_buf());
   state.selection_follow = true;
   load_directory_chain_sync(state, &root, path, show_hidden);
+  file_tree_scroll_log(
+    state,
+    format!(
+      "reason=reveal_path target={} previous_selected={} previous_scroll={} ",
+      path.display(),
+      previous_selected
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "none".to_string()),
+      previous_scroll,
+    ),
+  );
   rebuild_rows(ctx);
 }
 
@@ -2082,19 +2205,46 @@ fn clamp_tree_scroll_offset(state: &mut FileTreeState) {
 
 fn sync_tree_scroll(state: &mut FileTreeState, scrolloff: usize) {
   clamp_tree_state(state);
-  if state.selection_follow
-    && let Some(selected) = state.selected
-    && let Some(next) = scroll_row_to_keep_visible(
-      selected,
-      state.scroll_offset,
-      state.visible_rows.max(1),
-      scrolloff,
-    )
-  {
+  let previous_scroll = state.scroll_offset;
+  let previous_follow = state.selection_follow;
+  let selected = state.selected;
+  let next_scroll = if state.selection_follow {
+    selected.and_then(|selected| {
+      scroll_row_to_keep_visible(
+        selected,
+        state.scroll_offset,
+        state.visible_rows.max(1),
+        scrolloff,
+      )
+    })
+  } else {
+    None
+  };
+  if let Some(next) = next_scroll {
     state.scroll_offset = next;
   }
   state.selection_follow = false;
   clamp_tree_scroll_offset(state);
+  if previous_scroll != state.scroll_offset || previous_follow {
+    file_tree_scroll_log(
+      state,
+      format!(
+        "reason=sync_tree_scroll previous_scroll={} next_scroll={} computed={} selected={} \
+         scrolloff={} follow_before={} follow_after={} ",
+        previous_scroll,
+        state.scroll_offset,
+        next_scroll
+          .map(|value| value.to_string())
+          .unwrap_or_else(|| "none".to_string()),
+        selected
+          .map(|value| value.to_string())
+          .unwrap_or_else(|| "none".to_string()),
+        scrolloff,
+        u8::from(previous_follow),
+        u8::from(state.selection_follow),
+      ),
+    );
+  }
 }
 
 fn tree_max_scroll_offset(state: &FileTreeState) -> usize {

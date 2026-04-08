@@ -392,16 +392,25 @@ final class EditorSurfaceController: ObservableObject {
     }
 
     func selectFileTreeIndex(_ index: Int) {
+        scrollPerfLog(
+            "controller.fileTreeSelect requested index=\(index) selected=\(String(describing: fileTree.selectedIndex)) scroll=\(fileTree.scrollOffset) visibleRows=\(fileTreeVisibleRows) rows=\(fileTree.rows.count)"
+        )
         guard EditorFFIBridge.selectFileTreeIndex(handle?.raw, index: index) else { return }
         refreshSnapshot()
     }
 
     func clickFileTreeIndex(_ index: Int) {
+        scrollPerfLog(
+            "controller.fileTreeClick requested index=\(index) selected=\(String(describing: fileTree.selectedIndex)) scroll=\(fileTree.scrollOffset) visibleRows=\(fileTreeVisibleRows) rows=\(fileTree.rows.count)"
+        )
         guard EditorFFIBridge.clickFileTreeIndex(handle?.raw, index: index) else { return }
         refreshSnapshot()
     }
 
     func activateFileTreeIndex(_ index: Int) {
+        scrollPerfLog(
+            "controller.fileTreeActivate requested index=\(index) selected=\(String(describing: fileTree.selectedIndex)) scroll=\(fileTree.scrollOffset) visibleRows=\(fileTreeVisibleRows) rows=\(fileTree.rows.count)"
+        )
         guard EditorFFIBridge.activateFileTreeIndex(handle?.raw, index: index) else { return }
         refreshSnapshot()
     }
@@ -409,12 +418,18 @@ final class EditorSurfaceController: ObservableObject {
     func setFileTreeVisibleRows(_ rows: Int) {
         let clampedRows = max(rows, 1)
         guard clampedRows != fileTreeVisibleRows else { return }
+        scrollPerfLog(
+            "controller.fileTreeVisibleRows requested previous=\(fileTreeVisibleRows) next=\(clampedRows) selected=\(String(describing: fileTree.selectedIndex)) scroll=\(fileTree.scrollOffset) rows=\(fileTree.rows.count)"
+        )
         guard EditorFFIBridge.setFileTreeVisibleRows(handle?.raw, visibleRows: clampedRows) else { return }
         fileTreeVisibleRows = clampedRows
         refreshSnapshot()
     }
 
     func setFileTreeActive(_ active: Bool) {
+        scrollPerfLog(
+            "controller.fileTreeActive requested next=\(active) selected=\(String(describing: fileTree.selectedIndex)) scroll=\(fileTree.scrollOffset) rows=\(fileTree.rows.count)"
+        )
         guard EditorFFIBridge.setFileTreeActive(handle?.raw, active: active) else { return }
         refreshSnapshot()
     }
@@ -567,7 +582,7 @@ final class EditorSurfaceController: ObservableObject {
             "current=\($0.path) vcs=\($0.vcsKind?.rawValue ?? 0) diag=\($0.diagnosticSeverity?.rawValue ?? 0)"
         } ?? "current=-"
         scrollPerfLog(
-            "controller.fileTree visible=\(snapshot.fileTree.isVisible) rows=\(snapshot.fileTree.rows.count) decoratedRows=\(decoratedFileTreeRows) \(currentFileTreeSummary)"
+            "controller.fileTree visible=\(snapshot.fileTree.isVisible) rows=\(snapshot.fileTree.rows.count) selected=\(String(describing: snapshot.fileTree.selectedIndex)) scroll=\(snapshot.fileTree.scrollOffset) visibleRows=\(fileTreeVisibleRows) decoratedRows=\(decoratedFileTreeRows) \(currentFileTreeSummary)"
         )
         if previousFileTree.isVisible != snapshot.fileTree.isVisible || previousFileTree.rows.count != snapshot.fileTree.rows.count {
             if previousFileTree.isVisible != snapshot.fileTree.isVisible {

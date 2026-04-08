@@ -368,11 +368,15 @@ private struct EditorFileTreeSidebarView: View {
 
     @State private var hoveredRowID: String?
     @State private var reportedVisibleRows: Int = 1
+    @State private var scrollViewportHeight: CGFloat = 1
+    @State private var observedContentMinY: CGFloat = 0
+    @State private var observedTopRow: Int = 0
+    @State private var lastScrollLogSignature: String?
 
     private let headerHeight: CGFloat = 30
     private let rowHeight: CGFloat = 24
-
-    @State private var scrollViewportHeight: CGFloat = 1
+    private let scrollContentVerticalPadding: CGFloat = 6
+    private let scrollCoordinateSpaceName = "EditorFileTreeScrollView"
 
     var body: some View {
         VStack(spacing: 0) {
@@ -381,6 +385,12 @@ private struct EditorFileTreeSidebarView: View {
             ScrollViewReader { proxy in
                 ScrollView(.vertical, showsIndicators: true) {
                     LazyVStack(alignment: .leading, spacing: 0) {
+                        fileTreeScrollSentinel
+
+                        if !tree.rows.isEmpty {
+                            fileTreeScrollObservationSentinel
+                        }
+
                         if tree.rows.isEmpty {
                             VStack(alignment: .leading, spacing: 6) {
                                 Text("Empty Folder")
@@ -409,7 +419,11 @@ private struct EditorFileTreeSidebarView: View {
                         }
                     }
                     .padding(.horizontal, 6)
-                    .padding(.vertical, 6)
+                    .padding(.vertical, scrollContentVerticalPadding)
+                }
+                .coordinateSpace(name: scrollCoordinateSpaceName)
+                .onPreferenceChange(EditorFileTreeContentMinYPreferenceKey.self) { minY in
+                    updateObservedScrollPosition(contentMinY: minY, source: "geometry")
                 }
                 .scrollContentBackground(.hidden)
                 .scrollIndicators(.visible)
@@ -431,14 +445,76 @@ private struct EditorFileTreeSidebarView: View {
                         .padding(.trailing, 2)
                 }
                 .onChange(of: tree.scrollOffset, initial: true) {
-                    guard tree.rows.indices.contains(tree.scrollOffset) else { return }
-                    proxy.scrollTo(tree.rows[tree.scrollOffset].id, anchor: .top)
+                    let targetIndex = tree.scrollOffset
+                    logScrollObservation(source: "snapshot", requestedTopRow: targetIndex)
+                    guard tree.rows.indices.contains(targetIndex) else { return }
+                    scrollPerfLog(
+                        "fileTree.scrollTo source=snapshot target=\(targetIndex) selected=\(String(describing: tree.selectedIndex)) observedTop=\(observedTopRow) rows=\(tree.rows.count)"
+                    )
+                    proxy.scrollTo(tree.rows[targetIndex].id, anchor: .top)
+                }
+                .onChange(of: tree.selectedIndex, initial: true) { _, _ in
+                    logScrollObservation(source: "selected-change", requestedTopRow: tree.scrollOffset)
+                }
+                .onChange(of: tree.rows.count, initial: true) { _, _ in
+                    logScrollObservation(source: "rows-change", requestedTopRow: tree.scrollOffset)
                 }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Color(nsColor: theme.backgroundColor))
         .environment(\.colorScheme, theme.backgroundColor.isLightColor ? .light : .dark)
+    }
+
+    private var fileTreeScrollSentinel: some View {
+        Color.clear
+            .frame(height: 0)
+            .background {
+                GeometryReader { proxy in
+                    Color.clear.preference(
+                        key: EditorFileTreeContentMinYPreferenceKey.self,
+                        value: proxy.frame(in: .named(scrollCoordinateSpaceName)).minY
+                    )
+                }
+            }
+    }
+
+    private var fileTreeScrollObservationSentinel: some View {
+        Color.clear
+            .frame(height: 0)
+    }
+
+    private func updateObservedScrollPosition(contentMinY: CGFloat, source: String) {
+        observedContentMinY = contentMinY
+        let contentOffset = max(-(contentMinY - scrollContentVerticalPadding), 0)
+        let topRow = min(max(Int(floor(contentOffset / rowHeight)), 0), max(tree.rows.count - 1, 0))
+        guard topRow != observedTopRow || source != "geometry" else { return }
+        observedTopRow = topRow
+        logScrollObservation(source: source, requestedTopRow: tree.scrollOffset)
+    }
+
+    private func logScrollObservation(source: String, requestedTopRow: Int) {
+        let topRow = min(max(observedTopRow, 0), max(tree.rows.count - 1, 0))
+        let visibleRows = max(reportedVisibleRows, 1)
+        let bottomRow = tree.rows.isEmpty ? 0 : min(topRow + visibleRows - 1, tree.rows.count - 1)
+        let contentOffset = max(-(observedContentMinY - scrollContentVerticalPadding), 0)
+        let offsetText = String(format: "%.1f", contentOffset)
+        let drift = topRow - requestedTopRow
+        let signature = [
+            source,
+            String(topRow),
+            String(bottomRow),
+            String(requestedTopRow),
+            String(tree.selectedIndex ?? -1),
+            String(tree.rows.count),
+            String(visibleRows),
+            String(drift),
+        ].joined(separator: ":")
+        guard signature != lastScrollLogSignature else { return }
+        lastScrollLogSignature = signature
+        scrollPerfLog(
+            "fileTree.scrollObserved source=\(source) offsetY=\(offsetText) top=\(topRow) bottom=\(bottomRow) rustScroll=\(requestedTopRow) drift=\(drift) selected=\(String(describing: tree.selectedIndex)) visibleRows=\(visibleRows) rows=\(tree.rows.count)"
+        )
     }
 
     private var header: some View {
@@ -502,6 +578,14 @@ private struct EditorFileTreeSidebarView: View {
         )
         reportedVisibleRows = rows
         onVisibleRowsChanged(rows)
+    }
+}
+
+private struct EditorFileTreeContentMinYPreferenceKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
     }
 }
 

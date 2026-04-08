@@ -3736,14 +3736,34 @@ impl SwiftEditor {
 
     let diagnostic_statuses = rebuild_file_tree_diagnostic_statuses(&self.diagnostics, &root);
     let mut changed = set_file_tree_diagnostic_statuses(self, diagnostic_statuses);
-
-    let vcs_statuses = self
-      .vcs_scan
-      .as_ref()
-      .map(|scan| collapse_file_tree_vcs_statuses(&scan.changes, &root))
-      .unwrap_or_default();
-    changed |= set_file_tree_vcs_statuses(self, vcs_statuses);
+    changed |= self.refresh_file_tree_vcs_decorations_for_root(&root);
     changed
+  }
+
+  fn refresh_file_tree_vcs_decorations_for_root(&mut self, root: &Path) -> bool {
+    let vcs_statuses = self.current_file_tree_vcs_statuses(root);
+    set_file_tree_vcs_statuses(self, vcs_statuses)
+  }
+
+  fn current_file_tree_vcs_statuses(&self, root: &Path) -> BTreeMap<PathBuf, FileTreeVcsKind> {
+    let Some(scan) = self.shared_vcs_scan_for_cwd(root) else {
+      return BTreeMap::new();
+    };
+    let changes = self
+      .merged_vcs_changed_file_items(&scan)
+      .into_iter()
+      .map(|item| match item.kind {
+        FilePickerChangedKind::Untracked => FileChange::Untracked { path: item.path },
+        FilePickerChangedKind::Modified => FileChange::Modified { path: item.path },
+        FilePickerChangedKind::Conflict => FileChange::Conflict { path: item.path },
+        FilePickerChangedKind::Deleted => FileChange::Deleted { path: item.path },
+        FilePickerChangedKind::Renamed => FileChange::Renamed {
+          from_path: item.from_path.unwrap_or_else(|| item.path.clone()),
+          to_path: item.path,
+        },
+      })
+      .collect::<Vec<_>>();
+    collapse_file_tree_vcs_statuses(&changes, root)
   }
 
   fn shared_vcs_scan_for_path(&self, path: &Path) -> Option<Arc<VcsWorkspaceScan>> {
@@ -5363,6 +5383,9 @@ impl DefaultContext for SwiftEditor {
       self.highlight_cache.clear();
       self.lsp_send_did_change(&old_text_for_lsp, transaction.changes());
       self.refresh_vcs_diff_document();
+      if let Some(root) = self.file_tree.root.clone() {
+        let _ = self.refresh_file_tree_vcs_decorations_for_root(&root);
+      }
     }
     true
   }
@@ -6030,6 +6053,7 @@ impl DefaultContext for SwiftEditor {
     self.refresh_lsp_runtime_state();
     self.sync_active_file_watch_state();
     self.refresh_vcs_after_path_change(previous_path);
+    let _ = self.refresh_file_tree_decorations();
   }
   fn open_file(&mut self, path: &Path) -> std::io::Result<()> {
     self.clear_hover_state();
@@ -6071,12 +6095,14 @@ impl DefaultContext for SwiftEditor {
     self.set_file_path(Some(path.to_path_buf()));
     Ok(())
   }
-  fn on_file_saved(&mut self, _path: &Path, text: &str) {
+  fn on_file_saved(&mut self, path: &Path, text: &str) {
     if let Some(watch) = self.active_file_watch.as_mut() {
       watch.stream.suppress_until = Some(Instant::now() + active_file_self_save_suppress_window());
       clear_reload_state(&mut watch.stream.reload_state);
     }
     self.lsp_send_did_save(Some(text));
+    let _ = self.refresh_shared_vcs_scan_for_cwd(path);
+    let _ = self.refresh_file_tree_decorations();
     self.schedule_vcs_statusline_refresh(None);
   }
 }

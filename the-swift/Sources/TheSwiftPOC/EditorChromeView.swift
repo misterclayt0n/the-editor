@@ -494,6 +494,8 @@ private struct EditorFileTreeListRepresentable: NSViewRepresentable {
         private var lastRenderState: RenderState?
         private var lastThemeSignature: ThemeSignature?
         private var lastRequestedScrollOffset: Int?
+        private var pendingUserScrollOffset: Int?
+        private var recentUserScrollDeadline: CFAbsoluteTime = 0
 
         init(parent: EditorFileTreeListRepresentable) {
             self.parent = parent
@@ -603,10 +605,13 @@ private struct EditorFileTreeListRepresentable: NSViewRepresentable {
 
         private func applyProgrammaticScrollIfNeeded(reason: String) {
             guard let tableView, let scrollView, !parent.tree.rows.isEmpty else { return }
-            let targetIndex = min(parent.tree.scrollOffset, parent.tree.rows.count - 1)
+            let targetIndex = resolvedProgrammaticTargetIndex()
             let currentTopRow = visibleTopRow(in: tableView, scrollView: scrollView)
             if currentTopRow == targetIndex {
                 lastRequestedScrollOffset = targetIndex
+                if pendingUserScrollOffset == targetIndex {
+                    pendingUserScrollOffset = nil
+                }
                 return
             }
             guard lastRequestedScrollOffset != targetIndex else { return }
@@ -630,7 +635,7 @@ private struct EditorFileTreeListRepresentable: NSViewRepresentable {
             let visibleRect = scrollView.contentView.documentVisibleRect
             let visibleRange = tableView.rows(in: visibleRect)
             let topRow = max(visibleRange.location, 0)
-            let visibleRows = max(visibleRange.length, 1)
+            let visibleRows = stableVisibleRowCount(in: tableView, visibleRect: visibleRect)
             scrollPerfLog(
                 "fileTree.appkitVisible reason=\(reason) top=\(topRow) visibleRows=\(visibleRows) rustScroll=\(parent.tree.scrollOffset) rows=\(parent.tree.rows.count)"
             )
@@ -641,10 +646,13 @@ private struct EditorFileTreeListRepresentable: NSViewRepresentable {
             guard !isApplyingSnapshot else { return }
             if !suppressScrollSync, lastReportedTopRow != topRow {
                 lastReportedTopRow = topRow
+                pendingUserScrollOffset = topRow
+                recentUserScrollDeadline = CFAbsoluteTimeGetCurrent() + 0.20
                 parent.onScrollOffsetChanged(topRow)
             }
             if topRow == parent.tree.scrollOffset {
                 lastRequestedScrollOffset = topRow
+                pendingUserScrollOffset = nil
             }
         }
 
@@ -652,11 +660,33 @@ private struct EditorFileTreeListRepresentable: NSViewRepresentable {
             let range = tableView.rows(in: scrollView.contentView.documentVisibleRect)
             return max(range.location, 0)
         }
+
+        private func stableVisibleRowCount(in tableView: NSTableView, visibleRect: NSRect) -> Int {
+            guard !parent.tree.rows.isEmpty else { return 1 }
+            let rowHeight = max(tableView.rowHeight, 1)
+            return max(Int(floor((visibleRect.height + 0.5) / rowHeight)), 1)
+        }
+
+        private func resolvedProgrammaticTargetIndex() -> Int {
+            let rustTarget = min(parent.tree.scrollOffset, max(parent.tree.rows.count - 1, 0))
+            guard let pendingUserScrollOffset,
+                  CFAbsoluteTimeGetCurrent() <= recentUserScrollDeadline
+            else {
+                return rustTarget
+            }
+            return min(pendingUserScrollOffset, max(parent.tree.rows.count - 1, 0))
+        }
+    }
+}
+
+private final class EditorFileTreeNonInteractiveHostingView<Content: View>: NSHostingView<Content> {
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        nil
     }
 }
 
 private final class EditorFileTreeTableCellView: NSTableCellView {
-    private var hostingView: NSHostingView<EditorFileTreeCellContentView>?
+    private var hostingView: EditorFileTreeNonInteractiveHostingView<EditorFileTreeCellContentView>?
     private var trackingArea: NSTrackingArea?
     private var row: EditorFileTreeRow?
     private var rowIndex: Int?
@@ -753,7 +783,7 @@ private final class EditorFileTreeTableCellView: NSTableCellView {
             hostingView.rootView = rootView
             return
         }
-        let hostingView = NSHostingView(rootView: rootView)
+        let hostingView = EditorFileTreeNonInteractiveHostingView(rootView: rootView)
         hostingView.translatesAutoresizingMaskIntoConstraints = false
         hostingView.sizingOptions = [.minSize, .preferredContentSize]
         addSubview(hostingView)

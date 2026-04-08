@@ -1680,6 +1680,7 @@ fn rebuild_rows<Ctx: DefaultContext>(ctx: &mut Ctx) {
   let state = ctx.file_tree_mut();
   let selected_before = state.selected;
   let scroll_before = state.scroll_offset;
+  let follow_before = state.selection_follow;
   let selected_path = state.selected_path();
   let pending_selected_path = state.pending_selected_path.clone();
   state
@@ -1714,14 +1715,14 @@ fn rebuild_rows<Ctx: DefaultContext>(ctx: &mut Ctx) {
     state.pending_selected_path = None;
   }
   clamp_tree_state(state);
-  state.selection_follow = true;
+  state.selection_follow = follow_before;
   sync_tree_scroll(state, scrolloff);
 
   file_tree_scroll_log(
     state,
     format!(
       "reason=rebuild_rows selected_before={} selected_after={} scroll_before={} scroll_after={} \
-       selected_path_before={} current_file={} pending_visible={} ",
+       selected_path_before={} current_file={} pending_visible={} follow_before={} follow_after={} ",
       selected_before
         .map(|value| value.to_string())
         .unwrap_or_else(|| "none".to_string()),
@@ -1734,6 +1735,8 @@ fn rebuild_rows<Ctx: DefaultContext>(ctx: &mut Ctx) {
       file_tree_path_for_log(selected_path.as_deref()),
       file_tree_path_for_log(current_file.as_deref()),
       u8::from(pending_selected_visible),
+      u8::from(follow_before),
+      u8::from(state.selection_follow),
     ),
   );
 

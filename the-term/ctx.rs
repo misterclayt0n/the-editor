@@ -85,6 +85,7 @@ use the_default::{
   FilePickerVcsDiffPreviewRow,
   FilePickerVcsDiffPreviewRowKind,
   FileTreeState,
+  FileTreeVcsKind,
   GlobalSearchOptions,
   GlobalSearchState,
   KeyBinding,
@@ -102,6 +103,8 @@ use the_default::{
   buffer_tabs_snapshot,
   builtin_completion_menu_keymaps,
   builtin_keymaps,
+  clear_file_tree_decorations,
+  collapse_file_tree_vcs_statuses,
   default_defaults,
   file_picker_items_from_specs,
   file_picker_source_preview_from_text,
@@ -109,6 +112,9 @@ use the_default::{
   file_picker_vcs_diff_specs,
   finalize_vcs_diff_preview,
   install_default_wiring,
+  rebuild_file_tree_diagnostic_statuses,
+  set_file_tree_diagnostic_statuses,
+  set_file_tree_vcs_statuses,
   open_dynamic_picker,
   replace_file_picker_items,
   replace_file_picker_items_preserving_selection,
@@ -638,21 +644,6 @@ fn agent_follow_cursor_linger_duration() -> Duration {
   Duration::from_millis(140)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) enum FileTreeVcsKind {
-  Conflict,
-  Deleted,
-  Modified,
-  Renamed,
-  Untracked,
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) struct FileTreeDecorations {
-  pub vcs:        Option<FileTreeVcsKind>,
-  pub diagnostic: Option<DiagnosticSeverity>,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FileTreeVcsRefreshReason {
   TreeOpen,
@@ -1052,9 +1043,6 @@ pub struct Ctx {
   file_tree_vcs_refresh_in_flight:    bool,
   file_tree_vcs_refresh_generation:   u64,
   file_tree_vcs_refresh_rerun:        bool,
-  file_tree_vcs_statuses:             BTreeMap<PathBuf, FileTreeVcsKind>,
-  file_tree_diagnostic_statuses:      BTreeMap<PathBuf, DiagnosticSeverity>,
-  pub file_tree_decorations:          BTreeMap<PathBuf, FileTreeDecorations>,
   file_tree_decoration_root:          Option<PathBuf>,
   file_tree_diagnostics_seq:          u64,
   file_tree_vcs_refresh_tx:           Sender<FileTreeVcsRefreshResult>,
@@ -1560,9 +1548,6 @@ impl Ctx {
       file_tree_vcs_refresh_in_flight: false,
       file_tree_vcs_refresh_generation: 0,
       file_tree_vcs_refresh_rerun: false,
-      file_tree_vcs_statuses: BTreeMap::new(),
-      file_tree_diagnostic_statuses: BTreeMap::new(),
-      file_tree_decorations: BTreeMap::new(),
       file_tree_decoration_root: None,
       file_tree_diagnostics_seq: 0,
       file_tree_vcs_refresh_tx,
@@ -3844,8 +3829,8 @@ impl Ctx {
         if let Some(scan) = result.scan {
           let _ = self.store_shared_vcs_scan(scan);
         }
-        self.file_tree_vcs_statuses = result.statuses;
-        let decorations_changed = self.recombine_file_tree_decorations();
+        let status_entries = result.statuses.len();
+        let decorations_changed = set_file_tree_vcs_statuses(self, result.statuses);
         let apply_ms = apply_start.elapsed().as_secs_f64() * 1000.0;
         log_file_tree_vcs_refresh_event(
           "applied",
@@ -3853,7 +3838,7 @@ impl Ctx {
           &result.root,
           result.reason,
           Some(result.change_count),
-          Some(self.file_tree_vcs_statuses.len()),
+          Some(status_entries),
           Some(result.collect_ms),
           Some(result.collapse_ms),
           Some(apply_ms),
@@ -3962,14 +3947,8 @@ impl Ctx {
           changed = true;
         }
         self.clear_pending_file_tree_vcs_refresh();
-        if self.file_tree_decoration_root.take().is_some()
-          || !self.file_tree_vcs_statuses.is_empty()
-          || !self.file_tree_diagnostic_statuses.is_empty()
-          || !self.file_tree_decorations.is_empty()
-        {
-          self.file_tree_vcs_statuses.clear();
-          self.file_tree_diagnostic_statuses.clear();
-          self.file_tree_decorations.clear();
+        let cleared_decorations = clear_file_tree_decorations(self);
+        if self.file_tree_decoration_root.take().is_some() || cleared_decorations {
           self.file_tree_diagnostics_seq = 0;
           changed = true;
         }
@@ -4011,22 +3990,9 @@ impl Ctx {
     if self.file_tree_diagnostics_seq == diagnostics_seq {
       return false;
     }
-    self.file_tree_diagnostic_statuses =
-      rebuild_file_tree_diagnostic_statuses(&self.diagnostics, &root);
+    let statuses = rebuild_file_tree_diagnostic_statuses(&self.diagnostics, &root);
     self.file_tree_diagnostics_seq = diagnostics_seq;
-    self.recombine_file_tree_decorations()
-  }
-
-  fn recombine_file_tree_decorations(&mut self) -> bool {
-    let next = combine_file_tree_decorations(
-      &self.file_tree_vcs_statuses,
-      &self.file_tree_diagnostic_statuses,
-    );
-    if next != self.file_tree_decorations {
-      self.file_tree_decorations = next;
-      return true;
-    }
-    false
+    set_file_tree_diagnostic_statuses(self, statuses)
   }
 
   fn schedule_file_tree_vcs_refresh(
@@ -8554,28 +8520,6 @@ fn log_active_file_vcs_refresh_event(
   append_perf_line(line.as_bytes());
 }
 
-fn collapse_file_tree_vcs_statuses(
-  changes: &[the_vcs::FileChange],
-  root: &Path,
-) -> BTreeMap<PathBuf, FileTreeVcsKind> {
-  let mut statuses = BTreeMap::new();
-  for change in changes {
-    let (path, kind) = match change {
-      the_vcs::FileChange::Untracked { path } => (path.as_path(), FileTreeVcsKind::Untracked),
-      the_vcs::FileChange::Modified { path } => (path.as_path(), FileTreeVcsKind::Modified),
-      the_vcs::FileChange::Conflict { path } => (path.as_path(), FileTreeVcsKind::Conflict),
-      the_vcs::FileChange::Deleted { path } => (path.as_path(), FileTreeVcsKind::Deleted),
-      the_vcs::FileChange::Renamed { to_path, .. } => (to_path.as_path(), FileTreeVcsKind::Renamed),
-    };
-    if !path.starts_with(root) {
-      continue;
-    }
-    apply_tree_hierarchy_status(&mut statuses, &path, root, kind, choose_vcs_status);
-  }
-
-  statuses
-}
-
 fn build_file_picker_vcs_diff_entry(
   ctx: &Ctx,
   change: &FileChange,
@@ -9300,112 +9244,6 @@ fn rope_line_range_to_string(rope: &Rope, start_line: usize, end_line: usize) ->
   let start_char = rope.line_to_char(start_line);
   let end_char = rope.line_to_char(end_line);
   rope.slice(start_char..end_char).to_string()
-}
-
-fn rebuild_file_tree_diagnostic_statuses(
-  diagnostics: &DiagnosticsState,
-  root: &Path,
-) -> BTreeMap<PathBuf, DiagnosticSeverity> {
-  let mut statuses = BTreeMap::new();
-  for document in diagnostics.documents() {
-    let Some(path) = path_for_file_uri(&document.uri) else {
-      continue;
-    };
-    if !path.starts_with(root) {
-      continue;
-    }
-    let Some(severity) = document
-      .diagnostics
-      .iter()
-      .filter_map(|diagnostic| diagnostic.severity)
-      .max_by_key(|severity| file_tree_diagnostic_rank(*severity))
-    else {
-      continue;
-    };
-    apply_tree_hierarchy_status(
-      &mut statuses,
-      &path,
-      root,
-      severity,
-      choose_diagnostic_severity,
-    );
-  }
-  statuses
-}
-
-fn apply_tree_hierarchy_status<T: Copy>(
-  statuses: &mut BTreeMap<PathBuf, T>,
-  path: &Path,
-  root: &Path,
-  value: T,
-  choose: fn(T, T) -> T,
-) {
-  let mut current = Some(path.to_path_buf());
-  while let Some(candidate) = current {
-    if !candidate.starts_with(root) {
-      break;
-    }
-    statuses
-      .entry(candidate.clone())
-      .and_modify(|existing| *existing = choose(*existing, value))
-      .or_insert(value);
-    if candidate == root {
-      break;
-    }
-    current = candidate.parent().map(Path::to_path_buf);
-  }
-}
-
-fn combine_file_tree_decorations(
-  vcs_statuses: &BTreeMap<PathBuf, FileTreeVcsKind>,
-  diagnostic_statuses: &BTreeMap<PathBuf, DiagnosticSeverity>,
-) -> BTreeMap<PathBuf, FileTreeDecorations> {
-  let mut decorations: BTreeMap<PathBuf, FileTreeDecorations> = BTreeMap::new();
-  for (path, &vcs) in vcs_statuses {
-    decorations.entry(path.clone()).or_default().vcs = Some(vcs);
-  }
-  for (path, &diagnostic) in diagnostic_statuses {
-    decorations.entry(path.clone()).or_default().diagnostic = Some(diagnostic);
-  }
-  decorations
-}
-
-fn choose_vcs_status(left: FileTreeVcsKind, right: FileTreeVcsKind) -> FileTreeVcsKind {
-  if file_tree_vcs_rank(left) >= file_tree_vcs_rank(right) {
-    left
-  } else {
-    right
-  }
-}
-
-fn choose_diagnostic_severity(
-  left: DiagnosticSeverity,
-  right: DiagnosticSeverity,
-) -> DiagnosticSeverity {
-  if file_tree_diagnostic_rank(left) >= file_tree_diagnostic_rank(right) {
-    left
-  } else {
-    right
-  }
-}
-
-fn file_tree_vcs_rank(kind: FileTreeVcsKind) -> u8 {
-  match kind {
-    FileTreeVcsKind::Conflict => 5,
-    FileTreeVcsKind::Deleted => 4,
-    FileTreeVcsKind::Modified => 3,
-    FileTreeVcsKind::Renamed => 2,
-    FileTreeVcsKind::Untracked => 1,
-  }
-}
-
-fn file_tree_diagnostic_rank(severity: DiagnosticSeverity) -> u8 {
-  match severity {
-    DiagnosticSeverity::Error => 4,
-    DiagnosticSeverity::Warning => 3,
-    DiagnosticSeverity::Information => 2,
-    DiagnosticSeverity::Hint => 1,
-  }
 }
 
 fn lexical_normalize_path(path: &Path) -> PathBuf {
@@ -11162,7 +11000,6 @@ mod tests {
     CompletionSnippetCursorOrigin,
     Ctx,
     DiffHandle,
-    FileTreeVcsKind,
     FileTreeVcsRefreshReason,
     FileTreeVcsRefreshResult,
     OpenBufferVcsSnapshot,
@@ -14652,7 +14489,7 @@ pkgs.mkShell {
       }],
     });
 
-    let statuses = super::rebuild_file_tree_diagnostic_statuses(&diagnostics, dir.as_path());
+    let statuses = the_default::rebuild_file_tree_diagnostic_statuses(&diagnostics, dir.as_path());
 
     assert_eq!(statuses.get(&file), Some(&DiagnosticSeverity::Error));
     assert_eq!(
@@ -15006,7 +14843,7 @@ pkgs.mkShell {
     ctx.file_tree_vcs_refresh_in_flight = true;
 
     let mut statuses = BTreeMap::new();
-    statuses.insert(changed.clone(), FileTreeVcsKind::Modified);
+    statuses.insert(changed.clone(), the_default::FileTreeVcsKind::Modified);
     ctx
       .file_tree_vcs_refresh_tx
       .send(FileTreeVcsRefreshResult {
@@ -15025,10 +14862,12 @@ pkgs.mkShell {
     assert!(ctx.poll_file_tree_vcs_refresh_results());
     assert_eq!(
       ctx
-        .file_tree_decorations
-        .get(&changed)
-        .and_then(|value| value.vcs),
-      Some(FileTreeVcsKind::Modified)
+        .file_tree
+        .rows
+        .iter()
+        .find(|row| row.path == changed)
+        .and_then(|row| row.decorations.vcs),
+      Some(the_default::FileTreeVcsKind::Modified)
     );
   }
 
@@ -15043,7 +14882,7 @@ pkgs.mkShell {
     ctx.file_tree_vcs_refresh_in_flight = true;
 
     let mut statuses = BTreeMap::new();
-    statuses.insert(changed, FileTreeVcsKind::Modified);
+    statuses.insert(changed, the_default::FileTreeVcsKind::Modified);
     ctx
       .file_tree_vcs_refresh_tx
       .send(FileTreeVcsRefreshResult {
@@ -15060,7 +14899,11 @@ pkgs.mkShell {
       .expect("send stale vcs result");
 
     assert!(!ctx.poll_file_tree_vcs_refresh_results());
-    assert!(ctx.file_tree_decorations.is_empty());
+    assert!(ctx
+      .file_tree
+      .rows
+      .iter()
+      .all(|row| row.decorations == the_default::FileTreeDecorations::default()));
     assert!(ctx.file_tree_vcs_refresh_in_flight);
   }
 }

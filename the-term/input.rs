@@ -358,37 +358,13 @@ fn handle_file_tree_term_key(ctx: &mut Ctx, key: KeyEvent) -> bool {
   }
 
   let outcome = match key.key {
-    Key::Char(']') => {
-      select_next_file_tree_row(ctx, |ctx, path| {
-        ctx
-          .file_tree_decorations
-          .get(path)
-          .is_some_and(|decorations| decorations.vcs.is_some())
-      })
-    },
-    Key::Char('[') => {
-      select_prev_file_tree_row(ctx, |ctx, path| {
-        ctx
-          .file_tree_decorations
-          .get(path)
-          .is_some_and(|decorations| decorations.vcs.is_some())
-      })
-    },
+    Key::Char(']') => select_next_file_tree_row(ctx, |row| row.decorations.vcs.is_some()),
+    Key::Char('[') => select_prev_file_tree_row(ctx, |row| row.decorations.vcs.is_some()),
     Key::Char('}') => {
-      select_next_file_tree_row(ctx, |ctx, path| {
-        ctx
-          .file_tree_decorations
-          .get(path)
-          .is_some_and(|decorations| decorations.diagnostic.is_some())
-      })
+      select_next_file_tree_row(ctx, |row| row.decorations.diagnostic.is_some())
     },
     Key::Char('{') => {
-      select_prev_file_tree_row(ctx, |ctx, path| {
-        ctx
-          .file_tree_decorations
-          .get(path)
-          .is_some_and(|decorations| decorations.diagnostic.is_some())
-      })
+      select_prev_file_tree_row(ctx, |row| row.decorations.diagnostic.is_some())
     },
     _ => false,
   };
@@ -401,7 +377,7 @@ fn handle_file_tree_term_key(ctx: &mut Ctx, key: KeyEvent) -> bool {
 
 fn select_next_file_tree_row(
   ctx: &mut Ctx,
-  predicate: impl Fn(&Ctx, &std::path::Path) -> bool,
+  predicate: impl Fn(&the_default::FileTreeRow) -> bool,
 ) -> bool {
   let len = ctx.file_tree.rows.len();
   if len == 0 {
@@ -410,7 +386,7 @@ fn select_next_file_tree_row(
   let start = ctx.file_tree.selected.unwrap_or(0);
   for step in 1..=len {
     let index = (start + step) % len;
-    if predicate(ctx, &ctx.file_tree.rows[index].path) {
+    if predicate(&ctx.file_tree.rows[index]) {
       return select_file_tree_index(ctx, index);
     }
   }
@@ -419,7 +395,7 @@ fn select_next_file_tree_row(
 
 fn select_prev_file_tree_row(
   ctx: &mut Ctx,
-  predicate: impl Fn(&Ctx, &std::path::Path) -> bool,
+  predicate: impl Fn(&the_default::FileTreeRow) -> bool,
 ) -> bool {
   let len = ctx.file_tree.rows.len();
   if len == 0 {
@@ -428,7 +404,7 @@ fn select_prev_file_tree_row(
   let start = ctx.file_tree.selected.unwrap_or(0);
   for step in 1..=len {
     let index = (start + len - (step % len)) % len;
-    if predicate(ctx, &ctx.file_tree.rows[index].path) {
+    if predicate(&ctx.file_tree.rows[index]) {
       return select_file_tree_index(ctx, index);
     }
   }
@@ -1438,13 +1414,10 @@ mod tests {
     handle_key(&mut ctx, key_event(KeyCode::Char('e')));
 
     let target = 3usize.min(ctx.file_tree.rows.len().saturating_sub(1));
-    let path = ctx.file_tree.rows[target].path.clone();
-    ctx
-      .file_tree_decorations
-      .insert(path, crate::ctx::FileTreeDecorations {
-        vcs:        Some(crate::ctx::FileTreeVcsKind::Modified),
-        diagnostic: None,
-      });
+    ctx.file_tree.rows[target].decorations = the_default::FileTreeDecorations {
+      vcs:        Some(the_default::FileTreeVcsKind::Modified),
+      diagnostic: None,
+    };
     ctx.file_tree.selected = Some(0);
 
     handle_key(&mut ctx, key_event(KeyCode::Char(']')));
@@ -1459,13 +1432,10 @@ mod tests {
     handle_key(&mut ctx, key_event(KeyCode::Char('e')));
 
     let target = 4usize.min(ctx.file_tree.rows.len().saturating_sub(1));
-    let path = ctx.file_tree.rows[target].path.clone();
-    ctx
-      .file_tree_decorations
-      .insert(path, crate::ctx::FileTreeDecorations {
-        vcs:        None,
-        diagnostic: Some(the_lib::diagnostics::DiagnosticSeverity::Warning),
-      });
+    ctx.file_tree.rows[target].decorations = the_default::FileTreeDecorations {
+      vcs:        None,
+      diagnostic: Some(the_lib::diagnostics::DiagnosticSeverity::Warning),
+    };
     ctx.file_tree.selected = Some(0);
 
     handle_key(&mut ctx, key_event(KeyCode::Char('}')));

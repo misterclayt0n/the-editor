@@ -150,6 +150,10 @@ use the_lib::{
     Syntax,
   },
 };
+use the_default::{
+  FileTreeDecorations,
+  FileTreeVcsKind,
+};
 use the_lsp::text_sync::{
   file_uri_for_path,
   utf16_position_to_char_idx,
@@ -159,9 +163,7 @@ use crate::{
   Ctx,
   ctx::{
     DiagnosticUnderlineRenderSpan,
-    FileTreeDecorations,
     FileTreeLayout,
-    FileTreeVcsKind,
     TermCursorMode,
     TermHardwareCursor,
   },
@@ -6574,11 +6576,7 @@ fn draw_file_tree_pane(buf: &mut Buffer, pane_area: Rect, ctx: &Ctx, tree: &File
   for (visible_index, row) in tree.rows.iter().skip(offset).take(visible_rows).enumerate() {
     let y = pane_area.y.saturating_add(1 + visible_index as u16);
     let is_selected = tree.selected == Some(offset + visible_index);
-    let decorations = ctx
-      .file_tree_decorations
-      .get(&row.path)
-      .copied()
-      .unwrap_or_default();
+    let decorations = row.decorations;
     let content_style = if is_selected {
       selected_style
     } else if row.is_current_file {
@@ -7021,7 +7019,12 @@ pub fn render(f: &mut Frame, ctx: &mut Ctx, render_reasons: RenderReasonMask) ->
       layout_ms: tree_layout_ms,
       rows: ctx.file_tree.rows.len(),
       visible_rows: ctx.file_tree.visible_rows,
-      decorations: ctx.file_tree_decorations.len(),
+      decorations: ctx
+        .file_tree
+        .rows
+        .iter()
+        .filter(|row| row.decorations != FileTreeDecorations::default())
+        .count(),
       scroll_offset: ctx.file_tree.scroll_offset,
       selected: ctx.file_tree.selected,
       pane_width: pane_rect.map(|rect| rect.width).unwrap_or(0),
@@ -7521,12 +7524,6 @@ mod tests {
 
     let mut ctx = Ctx::new(None).expect("ctx");
     let path: std::path::PathBuf = "/tmp/the-core".into();
-    ctx
-      .file_tree_decorations
-      .insert(path.clone(), crate::ctx::FileTreeDecorations {
-        vcs:        Some(crate::ctx::FileTreeVcsKind::Modified),
-        diagnostic: Some(DiagnosticSeverity::Warning),
-      });
     let pane = Rect::new(0, 0, 24, 3);
     let mut buf = Buffer::empty(pane);
     ctx.file_tree.root = Some("/tmp".into());

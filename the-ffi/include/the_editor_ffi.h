@@ -542,6 +542,7 @@ bool the_editor_file_picker_set_preview_offset(the_editor_handle_t *handle, uint
 bool the_editor_file_picker_select_index(the_editor_handle_t *handle, uintptr_t index);
 bool the_editor_file_picker_submit(the_editor_handle_t *handle);
 bool the_editor_activate_buffer_tab(the_editor_handle_t *handle, uintptr_t buffer_id);
+bool the_editor_close_buffer_tab(the_editor_handle_t *handle, uintptr_t buffer_id);
 bool the_editor_file_tree_select_index(the_editor_handle_t *handle, uintptr_t index);
 bool the_editor_file_tree_click_index(the_editor_handle_t *handle, uintptr_t index);
 bool the_editor_file_tree_activate_index(the_editor_handle_t *handle, uintptr_t index);

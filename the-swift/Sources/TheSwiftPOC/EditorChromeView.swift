@@ -101,6 +101,7 @@ struct EditorChromeView: View {
                     sidebarMode: sidebarMode,
                     onSelectSidebarMode: selectSidebarMode,
                     onActivateBuffer: controller.activateBufferTab,
+                    onCloseBuffer: controller.closeBufferTab,
                     onFocusSidebar: { controller.setFileTreeActive(false) }
                 )
                 .onAppear {
@@ -540,6 +541,7 @@ private struct EditorBufferTabsSidebarView: View {
     let sidebarMode: EditorSidebarMode
     let onSelectSidebarMode: (EditorSidebarMode) -> Void
     let onActivateBuffer: (UInt) -> Void
+    let onCloseBuffer: (UInt) -> Void
     let onFocusSidebar: () -> Void
 
     var body: some View {
@@ -574,9 +576,13 @@ private struct EditorBufferTabsSidebarView: View {
                             EditorBufferTabSidebarRowView(
                                 tab: tab,
                                 theme: theme,
+                                canClose: bufferTabs.tabs.count > 1,
                                 onActivate: {
                                     onFocusSidebar()
                                     onActivateBuffer(tab.bufferID)
+                                },
+                                onClose: {
+                                    onCloseBuffer(tab.bufferID)
                                 }
                             )
                             .padding(.horizontal, 6)
@@ -620,18 +626,20 @@ private struct EditorSidebarSectionHeaderView: View {
 private struct EditorBufferTabSidebarRowView: View {
     let tab: EditorBufferTabRow
     let theme: EditorFileTreeSidebarTheme
+    let canClose: Bool
     let onActivate: () -> Void
+    let onClose: () -> Void
 
     @State private var isHovered = false
 
     var body: some View {
-        Button(action: onActivate) {
-            HStack(spacing: 0) {
-                Rectangle()
-                    .fill(Color(nsColor: leadingRailColor))
-                    .frame(width: 2)
-                    .opacity(tab.isActive ? 1 : 0)
+        HStack(spacing: 0) {
+            Rectangle()
+                .fill(Color(nsColor: leadingRailColor))
+                .frame(width: 2)
+                .opacity(tab.isActive ? 1 : 0)
 
+            Button(action: onActivate) {
                 HStack(spacing: 8) {
                     Image(systemName: symbolName(for: tab.iconName, isDirectory: false))
                         .font(.system(size: 11, weight: .regular))
@@ -664,21 +672,39 @@ private struct EditorBufferTabSidebarRowView: View {
                             .frame(width: 5, height: 5)
                     }
                 }
-                .padding(.horizontal, 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.leading, 8)
+                .padding(.trailing, 6)
                 .padding(.vertical, 5)
+                .contentShape(Rectangle())
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(selectionBackground)
-            .clipShape(.rect(cornerRadius: 6))
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+
+            Button(action: onClose) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(Color(nsColor: closeButtonForegroundColor))
+                    .frame(width: 18, height: 18)
+                    .background(
+                        Circle()
+                            .fill(Color(nsColor: closeButtonBackgroundColor))
+                    )
+            }
+            .buttonStyle(.plain)
+            .disabled(!canClose)
+            .opacity(closeButtonOpacity)
+            .padding(.trailing, 6)
+            .help(canClose ? "Close \(tab.title)" : "Cannot close the last buffer")
+            .accessibilityLabel(canClose ? "Close \(tab.title)" : "Cannot close the last buffer")
         }
-        .buttonStyle(.plain)
+        .background(selectionBackground)
+        .clipShape(.rect(cornerRadius: 6))
+        .contentShape(Rectangle())
         .onHover { hovering in
             isHovered = hovering
         }
         .help(tab.filePath ?? tab.title)
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(tab.isActive ? [.isSelected] : [.isButton])
+        .accessibilityElement(children: .contain)
     }
 
     @ViewBuilder
@@ -706,6 +732,36 @@ private struct EditorBufferTabSidebarRowView: View {
             return .labelColor
         }
         return .tertiaryLabelColor
+    }
+
+    private var closeButtonForegroundColor: NSColor {
+        if !canClose {
+            return .tertiaryLabelColor
+        }
+        if tab.isActive || isHovered {
+            return .labelColor
+        }
+        return .secondaryLabelColor
+    }
+
+    private var closeButtonBackgroundColor: NSColor {
+        if tab.isActive {
+            return theme.selectionColor.withAlphaComponent(0.18)
+        }
+        if isHovered {
+            return theme.hoverColor.withAlphaComponent(0.95)
+        }
+        return NSColor.tertiaryLabelColor.withAlphaComponent(0.08)
+    }
+
+    private var closeButtonOpacity: Double {
+        if !canClose {
+            return 0.3
+        }
+        if tab.isActive || isHovered {
+            return 0.95
+        }
+        return 0.55
     }
 
     private var rowTextColor: Color {

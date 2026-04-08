@@ -236,6 +236,11 @@ final class EditorSurfaceController: ObservableObject {
         refreshSnapshot()
     }
 
+    func closeBufferTab(_ bufferID: UInt) {
+        guard EditorFFIBridge.closeBufferTab(handle?.raw, bufferID: bufferID) else { return }
+        refreshSnapshot()
+    }
+
     func dragBufferSelection(
         paneID: UInt,
         dragOriginCol: Int,

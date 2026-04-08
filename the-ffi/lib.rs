@@ -97,6 +97,7 @@ use the_default::{
   builtin_completion_menu_keymaps,
   builtin_keymaps,
   clear_file_tree_decorations,
+  close_buffer_tab,
   close_completion_menu,
   close_file_picker,
   collapse_file_tree_vcs_statuses,
@@ -11737,6 +11738,20 @@ pub unsafe extern "C" fn the_editor_activate_buffer_tab(
     return false;
   };
   activate_buffer_tab(&mut handle.editor, buffer_id)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_close_buffer_tab(
+  handle: *mut the_editor_handle_t,
+  buffer_id: usize,
+) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return false;
+  };
+  let Some(buffer_id) = buffer_id_from_raw(buffer_id) else {
+    return false;
+  };
+  close_buffer_tab(&mut handle.editor, buffer_id)
 }
 
 #[unsafe(no_mangle)]

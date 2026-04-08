@@ -987,6 +987,12 @@ enum EditorFFIBridge {
     }
 
     @discardableResult
+    static func closeBufferTab(_ handle: OpaquePointer?, bufferID: UInt) -> Bool {
+        guard let handle else { return false }
+        return the_editor_close_buffer_tab(handle, bufferID)
+    }
+
+    @discardableResult
     static func selectFileTreeIndex(_ handle: OpaquePointer?, index: Int) -> Bool {
         guard let handle else { return false }
         return the_editor_file_tree_select_index(handle, UInt(max(index, 0)))

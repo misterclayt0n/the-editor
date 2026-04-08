@@ -372,6 +372,7 @@ private struct EditorFileTreeSidebarView: View {
     @State private var observedContentMinY: CGFloat = 0
     @State private var observedTopRow: Int = 0
     @State private var lastScrollLogSignature: String?
+    @State private var lastProgrammaticScrollSignature: String?
 
     private let headerHeight: CGFloat = 30
     private let rowHeight: CGFloat = 24
@@ -444,20 +445,20 @@ private struct EditorFileTreeSidebarView: View {
                     fileTreeScrollbarThumb
                         .padding(.trailing, 2)
                 }
-                .onChange(of: tree.scrollOffset, initial: true) {
-                    let targetIndex = tree.scrollOffset
-                    logScrollObservation(source: "snapshot", requestedTopRow: targetIndex)
-                    guard tree.rows.indices.contains(targetIndex) else { return }
-                    scrollPerfLog(
-                        "fileTree.scrollTo source=snapshot target=\(targetIndex) selected=\(String(describing: tree.selectedIndex)) observedTop=\(observedTopRow) rows=\(tree.rows.count)"
-                    )
-                    proxy.scrollTo(tree.rows[targetIndex].id, anchor: .top)
+                .onAppear {
+                    scheduleProgrammaticScroll(proxy: proxy, reason: "appear")
+                }
+                .onChange(of: tree.scrollOffset, initial: true) { _, _ in
+                    logScrollObservation(source: "snapshot", requestedTopRow: tree.scrollOffset)
+                    scheduleProgrammaticScroll(proxy: proxy, reason: "scrollOffset-change")
                 }
                 .onChange(of: tree.selectedIndex, initial: true) { _, _ in
                     logScrollObservation(source: "selected-change", requestedTopRow: tree.scrollOffset)
+                    scheduleProgrammaticScroll(proxy: proxy, reason: "selected-change")
                 }
                 .onChange(of: tree.rows.count, initial: true) { _, _ in
                     logScrollObservation(source: "rows-change", requestedTopRow: tree.scrollOffset)
+                    scheduleProgrammaticScroll(proxy: proxy, reason: "rows-change")
                 }
             }
         }
@@ -491,6 +492,29 @@ private struct EditorFileTreeSidebarView: View {
         guard topRow != observedTopRow || source != "geometry" else { return }
         observedTopRow = topRow
         logScrollObservation(source: source, requestedTopRow: tree.scrollOffset)
+    }
+
+    private func scheduleProgrammaticScroll(proxy: ScrollViewProxy, reason: String) {
+        let targetIndex = tree.scrollOffset
+        let signature = [reason, String(targetIndex), String(tree.rows.count), String(tree.selectedIndex ?? -1)].joined(separator: ":")
+        guard signature != lastProgrammaticScrollSignature else { return }
+        lastProgrammaticScrollSignature = signature
+        guard tree.rows.indices.contains(targetIndex) else {
+            scrollPerfLog(
+                "fileTree.scrollTo skipped reason=\(reason) target=\(targetIndex) rows=\(tree.rows.count) selected=\(String(describing: tree.selectedIndex))"
+            )
+            return
+        }
+        let rowID = tree.rows[targetIndex].id
+        scrollPerfLog(
+            "fileTree.scrollTo scheduled reason=\(reason) target=\(targetIndex) rowID=\(rowID) selected=\(String(describing: tree.selectedIndex)) observedTop=\(observedTopRow) rows=\(tree.rows.count)"
+        )
+        DispatchQueue.main.async {
+            proxy.scrollTo(rowID, anchor: .top)
+            scrollPerfLog(
+                "fileTree.scrollTo executed reason=\(reason) target=\(targetIndex) rowID=\(rowID) rows=\(tree.rows.count)"
+            )
+        }
     }
 
     private func logScrollObservation(source: String, requestedTopRow: Int) {

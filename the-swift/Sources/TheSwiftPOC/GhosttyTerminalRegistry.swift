@@ -390,6 +390,8 @@ private final class GhosttyTerminalSurfaceView: NSView {
     private var callbackContext: Unmanaged<GhosttySurfaceCallbackContext>?
     private var isSurfaceVisible = false
     private var pendingWorkingDirectory: String?
+    private var eventMonitor: Any?
+    private var suppressNextLeftMouseUp = false
 
     override var acceptsFirstResponder: Bool { true }
 
@@ -421,6 +423,9 @@ private final class GhosttyTerminalSurfaceView: NSView {
         )
         context.view = self
         callbackContext = Unmanaged.passRetained(context)
+        eventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown]) { [weak self] event in
+            self?.localEventLeftMouseDown(event) ?? event
+        }
         createSurfaceIfNeeded()
     }
 
@@ -431,6 +436,9 @@ private final class GhosttyTerminalSurfaceView: NSView {
 
     deinit {
         MainActor.assumeIsolated {
+            if let eventMonitor {
+                NSEvent.removeMonitor(eventMonitor)
+            }
             if let surface {
                 ghostty_surface_free(surface)
             }
@@ -468,6 +476,17 @@ private final class GhosttyTerminalSurfaceView: NSView {
         return accepted
     }
 
+    override func updateTrackingAreas() {
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .mouseMoved, .inVisibleRect, .activeAlways],
+            owner: self,
+            userInfo: nil
+        ))
+        super.updateTrackingAreas()
+    }
+
     func updateVisibility(_ visible: Bool) {
         isHidden = !visible
         guard isSurfaceVisible != visible else { return }
@@ -495,14 +514,15 @@ private final class GhosttyTerminalSurfaceView: NSView {
 
     override func mouseDown(with event: NSEvent) {
         paneIDOwner?.setActivePane(paneID)
-        window?.makeFirstResponder(self)
-        sendMousePosition(event)
         guard let surface else { return }
         ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_PRESS, GHOSTTY_MOUSE_LEFT, mods(from: event.modifierFlags))
     }
 
     override func mouseUp(with event: NSEvent) {
-        sendMousePosition(event)
+        if suppressNextLeftMouseUp {
+            suppressNextLeftMouseUp = false
+            return
+        }
         guard let surface else { return }
         ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_RELEASE, GHOSTTY_MOUSE_LEFT, mods(from: event.modifierFlags))
     }
@@ -510,15 +530,23 @@ private final class GhosttyTerminalSurfaceView: NSView {
     override func rightMouseDown(with event: NSEvent) {
         paneIDOwner?.setActivePane(paneID)
         window?.makeFirstResponder(self)
-        sendMousePosition(event)
         guard let surface else { return }
         ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_PRESS, GHOSTTY_MOUSE_RIGHT, mods(from: event.modifierFlags))
     }
 
     override func rightMouseUp(with event: NSEvent) {
-        sendMousePosition(event)
         guard let surface else { return }
         ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_RELEASE, GHOSTTY_MOUSE_RIGHT, mods(from: event.modifierFlags))
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        super.mouseEntered(with: event)
+        sendMousePosition(event)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        guard let surface else { return }
+        ghostty_surface_mouse_pos(surface, -1, -1, mods(from: event.modifierFlags))
     }
 
     override func mouseDragged(with event: NSEvent) {
@@ -529,10 +557,20 @@ private final class GhosttyTerminalSurfaceView: NSView {
         sendMousePosition(event)
     }
 
-    override func scrollWheel(with event: NSEvent) {
+    override func rightMouseDragged(with event: NSEvent) {
         sendMousePosition(event)
+    }
+
+    override func scrollWheel(with event: NSEvent) {
         guard let surface else { return }
-        ghostty_surface_mouse_scroll(surface, event.scrollingDeltaX, event.scrollingDeltaY, 0)
+        var x = event.scrollingDeltaX
+        var y = event.scrollingDeltaY
+        let precision = event.hasPreciseScrollingDeltas
+        if precision {
+            x *= 2
+            y *= 2
+        }
+        ghostty_surface_mouse_scroll(surface, x, y, precision ? 1 : 0)
     }
 
     override func keyDown(with event: NSEvent) {
@@ -592,6 +630,36 @@ private final class GhosttyTerminalSurfaceView: NSView {
         text.withCString { pointer in
             ghostty_surface_complete_clipboard_request(surface, pointer, state, confirmed)
         }
+    }
+
+    private func localEventLeftMouseDown(_ event: NSEvent) -> NSEvent? {
+        guard let window,
+              let contentView = window.contentView,
+              event.window === window
+        else {
+            return event
+        }
+
+        let contentPoint = contentView.convert(event.locationInWindow, from: nil)
+        guard contentView.hitTest(contentPoint) === self else {
+            return event
+        }
+
+        suppressNextLeftMouseUp = false
+        paneIDOwner?.setActivePane(paneID)
+
+        guard window.firstResponder !== self else {
+            return event
+        }
+
+        if NSApp.isActive && window.isKeyWindow {
+            window.makeFirstResponder(self)
+            suppressNextLeftMouseUp = true
+            return nil
+        }
+
+        window.makeFirstResponder(self)
+        return event
     }
 
     private func createSurfaceIfNeeded() {

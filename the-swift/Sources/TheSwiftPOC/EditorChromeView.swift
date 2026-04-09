@@ -887,8 +887,16 @@ private struct EditorPaneItemStripsOverlayView: View {
                                 theme: theme,
                                 canCloseItem: canClose,
                                 onActivateItem: { item in
-                                    if item.isActive { return }
+                                    if item.isActive {
+                                        if item.kind == .buffer {
+                                            controller.focusEditor()
+                                        }
+                                        return
+                                    }
                                     controller.activateOpenItem(item)
+                                    if item.kind == .buffer {
+                                        controller.focusEditor()
+                                    }
                                 },
                                 onCloseItem: controller.closeOpenItem
                             )

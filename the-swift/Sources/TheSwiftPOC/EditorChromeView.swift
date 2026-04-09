@@ -910,8 +910,8 @@ private struct EditorPaneItemStripsOverlayView: View {
                 if let scene = controller.scene {
                     let theme = EditorFileTreeSidebarTheme.resolve(scene: scene, chrome: controller.chrome)
                     ForEach(Array(controller.openItems.groups.enumerated()), id: \.element.id) { groupIndex, group in
-                        if shouldShowSwitcher(for: group),
-                           let pane = scene.pane(id: group.paneID) {
+                        if let pane = scene.pane(id: group.paneID),
+                           shouldShowSwitcher(for: group, pane: pane) {
                             let frame = paneFrame(for: pane, in: scene)
                             if frame.height >= switcherHeight + switcherPadding * 2,
                                frame.width >= 64 {
@@ -955,8 +955,9 @@ private struct EditorPaneItemStripsOverlayView: View {
         }
     }
 
-    private func shouldShowSwitcher(for group: EditorPaneOpenItemGroup) -> Bool {
-        group.items.count > 1 || group.items.contains(where: { $0.kind != .buffer })
+    private func shouldShowSwitcher(for group: EditorPaneOpenItemGroup, pane: EditorSnapshotPane) -> Bool {
+        guard pane.kind == .editorBuffer else { return false }
+        return group.items.count > 1 || group.items.contains(where: { $0.kind != .buffer })
     }
 
     private func paneFrame(for pane: EditorSnapshotPane, in scene: EditorRenderScene) -> CGRect {

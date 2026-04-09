@@ -1684,8 +1684,7 @@ impl SwiftEditor {
     self.clear_hover_state();
     self.clear_completion_state_with_reason("refresh-lsp-runtime-state");
     self.lsp_document = self
-      .file_path
-      .as_deref()
+      .current_active_file_path()
       .and_then(|path| build_lsp_document_state(path, self.loader.as_deref()));
 
     let Some(document) = self.lsp_document.as_ref() else {
@@ -4173,8 +4172,7 @@ impl SwiftEditor {
 
   fn refresh_vcs_watch_root(&mut self) {
     self.vcs_watch_root = self
-      .file_path
-      .as_ref()
+      .current_active_file_path()
       .and_then(|path| self.vcs_provider.watch_root(path));
   }
 
@@ -4532,8 +4530,36 @@ impl SwiftEditor {
     }
   }
 
+  fn current_active_file_path(&self) -> Option<&Path> {
+    self.editor.active_file_path().or(self.file_path.as_deref())
+  }
+
+  fn current_active_file_path_buf(&self) -> Option<PathBuf> {
+    self.current_active_file_path().map(Path::to_path_buf)
+  }
+
+  fn reconcile_active_file_state(&mut self) -> bool {
+    let active_path = self.current_active_file_path_buf();
+    if self.file_path == active_path {
+      return false;
+    }
+
+    let previous_path = self.file_path.clone();
+    self.file_path = active_path.clone();
+    if let Some(path) = active_path.as_deref() {
+      self.update_workspace_for_path(path);
+      self.reload_theme_catalog();
+    }
+    self.refresh_active_document_syntax();
+    self.refresh_lsp_runtime_state();
+    self.sync_active_file_watch_state();
+    self.refresh_vcs_after_path_change(previous_path);
+    let _ = self.refresh_file_tree_decorations();
+    true
+  }
+
   fn schedule_vcs_statusline_refresh(&mut self, due_at: Option<Instant>) {
-    let Some(_path) = self.file_path.clone() else {
+    let Some(_path) = self.current_active_file_path_buf() else {
       self.vcs_statusline = None;
       self.clear_vcs_diff();
       self.vcs_watch = None;
@@ -4568,7 +4594,7 @@ impl SwiftEditor {
     if now < due_at {
       return false;
     }
-    let Some(path) = self.file_path.clone() else {
+    let Some(path) = self.current_active_file_path_buf() else {
       self.vcs_statusline_refresh_due_at = None;
       self.vcs_statusline_refresh_rerun = false;
       return false;
@@ -4726,7 +4752,7 @@ impl SwiftEditor {
   }
 
   fn sync_active_file_watch_state(&mut self) -> bool {
-    let Some(path) = self.file_path.clone() else {
+    let Some(path) = self.current_active_file_path_buf() else {
       return self.active_file_watch.take().is_some();
     };
 
@@ -5948,7 +5974,7 @@ impl SwiftEditor {
       self.editor.document_mut().clear_syntax();
       return;
     };
-    let Some(path) = self.file_path.clone() else {
+    let Some(path) = self.current_active_file_path_buf() else {
       self.editor.document_mut().clear_syntax();
       return;
     };
@@ -6129,29 +6155,23 @@ impl SwiftEditor {
     self.signature_help.clear();
     self.cancel_auto_signature_help();
 
-    if self.editor.active_buffer_id() == previous_buffer_id {
+    let buffer_changed = self.editor.active_buffer_id() != previous_buffer_id;
+    if buffer_changed {
+      self.highlight_cache.clear();
+      self.inactive_highlight_caches.clear();
+      self.render_generation_state = None;
+    }
+
+    let file_state_changed = self.reconcile_active_file_state();
+    if !buffer_changed && !file_state_changed {
       return;
     }
 
-    self.highlight_cache.clear();
-    self.inactive_highlight_caches.clear();
-    self.render_generation_state = None;
-
-    let active_path = self.editor.active_file_path().map(Path::to_path_buf);
-    let previous_path = self.file_path.clone();
-    self.file_path = active_path.clone();
-    if let Some(path) = active_path.as_deref() {
-      self.update_workspace_for_path(path);
-      self.reload_theme_catalog();
-    }
-    self.refresh_active_document_syntax();
-    self.refresh_lsp_runtime_state();
-    self.sync_active_file_watch_state();
-    self.refresh_vcs_after_path_change(previous_path);
     the_default::sync_file_tree_to_active_file(self);
   }
 
   fn build_snapshot(&mut self) -> OwnedSnapshot {
+    let _ = self.reconcile_active_file_state();
     self.poll_vcs_statusline_refresh_results();
     let _ = self.refresh_picker_state();
     let styles = self.render_styles();
@@ -6527,7 +6547,7 @@ impl DefaultContext for SwiftEditor {
     &self.editor
   }
   fn file_path(&self) -> Option<&Path> {
-    self.file_path.as_deref()
+    self.current_active_file_path()
   }
   fn workspace_root(&self) -> PathBuf {
     self.workspace_root.clone()
@@ -12746,4 +12766,22 @@ pub unsafe extern "C" fn the_editor_string_free(value: *mut c_char) {
     return;
   }
   drop(unsafe { CString::from_raw(value) });
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use std::path::Path;
+
+  #[test]
+  fn current_active_file_path_prefers_editor_state_over_cached_path() {
+    let mut editor = SwiftEditor::new(None);
+    editor.file_path = Some(PathBuf::from("/tmp/stale.md"));
+    editor
+      .editor
+      .set_active_file_path(Some(PathBuf::from("/tmp/current.c")));
+
+    assert_eq!(editor.current_active_file_path(), Some(Path::new("/tmp/current.c")));
+    assert_eq!(DefaultContext::file_path(&editor), Some(Path::new("/tmp/current.c")));
+  }
 }

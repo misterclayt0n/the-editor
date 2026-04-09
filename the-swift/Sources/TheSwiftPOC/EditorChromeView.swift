@@ -845,27 +845,31 @@ private func paneLocationLabel(for paneID: UInt, groupIndex: Int, scene: EditorR
 private struct EditorPaneItemStripsOverlayView: View {
     @ObservedObject var controller: EditorSurfaceController
 
-    private let stripHeight: CGFloat = 28
-    private let stripPadding: CGFloat = 6
+    private let switcherHeight: CGFloat = 24
+    private let switcherPadding: CGFloat = 6
 
     var body: some View {
         GeometryReader { geometry in
             ZStack(alignment: .topLeading) {
                 if let scene = controller.scene {
                     let theme = EditorFileTreeSidebarTheme.resolve(scene: scene, chrome: controller.chrome)
-                    ForEach(controller.openItems.groups) { group in
-                        if shouldShowStrip(for: group),
+                    ForEach(Array(controller.openItems.groups.enumerated()), id: \.element.id) { groupIndex, group in
+                        if shouldShowSwitcher(for: group),
                            let pane = scene.pane(id: group.paneID) {
                             let frame = paneFrame(for: pane, in: scene)
-                            if frame.height >= stripHeight + stripPadding * 2,
-                               frame.width >= 80 {
-                                EditorPaneItemStripView(
-                                    group: group,
-                                    theme: theme,
-                                    onActivateItem: controller.activateOpenItem
-                                )
-                                .frame(width: max(min(frame.width - stripPadding * 2, geometry.size.width - frame.minX - stripPadding), 80), height: stripHeight)
-                                .offset(x: frame.minX + stripPadding, y: frame.minY + stripPadding)
+                            if frame.height >= switcherHeight + switcherPadding * 2,
+                               frame.width >= 64 {
+                                HStack {
+                                    Spacer(minLength: 0)
+                                    EditorPaneItemSwitcherView(
+                                        group: group,
+                                        paneLabel: paneLocationLabel(for: group.paneID, groupIndex: groupIndex, scene: scene),
+                                        theme: theme,
+                                        onActivateItem: controller.activateOpenItem
+                                    )
+                                }
+                                .frame(width: max(min(frame.width - switcherPadding * 2, geometry.size.width - frame.minX - switcherPadding), 64), height: switcherHeight)
+                                .offset(x: frame.minX + switcherPadding, y: frame.minY + switcherPadding)
                                 .zIndex(group.isActivePane ? 3 : 2)
                             }
                         }
@@ -876,7 +880,7 @@ private struct EditorPaneItemStripsOverlayView: View {
         }
     }
 
-    private func shouldShowStrip(for group: EditorPaneOpenItemGroup) -> Bool {
+    private func shouldShowSwitcher(for group: EditorPaneOpenItemGroup) -> Bool {
         group.items.count > 1 || group.items.contains(where: { $0.kind != .buffer })
     }
 
@@ -891,64 +895,101 @@ private struct EditorPaneItemStripsOverlayView: View {
     }
 }
 
-private struct EditorPaneItemStripView: View {
+private struct EditorPaneItemSwitcherView: View {
     let group: EditorPaneOpenItemGroup
+    let paneLabel: String
     let theme: EditorFileTreeSidebarTheme
     let onActivateItem: (EditorPaneOpenItemRow) -> Void
 
+    private var activeItem: EditorPaneOpenItemRow? {
+        if let active = group.items.first(where: { $0.isActive }) {
+            return active
+        }
+        if let activeIndex = group.activeIndex,
+           group.items.indices.contains(activeIndex) {
+            return group.items[activeIndex]
+        }
+        return group.items.first
+    }
+
     var body: some View {
-        HStack(spacing: 4) {
-            ForEach(group.items.prefix(4)) { item in
-                Button {
-                    onActivateItem(item)
-                } label: {
-                    HStack(spacing: 5) {
-                        Image(systemName: symbolName(for: item.iconName, isDirectory: false))
-                            .font(.system(size: 10, weight: .medium))
-                        Text(item.title)
-                            .font(.system(size: 11, weight: item.isActive ? .semibold : .medium))
-                            .lineLimit(1)
-                        if item.isModified {
-                            Circle()
-                                .fill(Color(nsColor: item.isActive ? theme.selectionColor : .secondaryLabelColor).opacity(0.9))
-                                .frame(width: 4, height: 4)
+        Menu {
+            Section(paneLabel) {
+                ForEach(group.items) { item in
+                    Button {
+                        onActivateItem(item)
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: symbolName(for: item.iconName, isDirectory: false))
+                                .frame(width: 12)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(item.title)
+                                if let subtitle = item.subtitle,
+                                   !subtitle.isEmpty {
+                                    Text(subtitle)
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            Spacer(minLength: 8)
+                            if item.isModified {
+                                Circle()
+                                    .fill(Color(nsColor: theme.selectionColor).opacity(0.95))
+                                    .frame(width: 5, height: 5)
+                            }
+                            if item.isActive {
+                                Image(systemName: "checkmark")
+                            }
                         }
                     }
-                    .foregroundStyle(item.isActive ? Color.primary : Color.primary.opacity(0.82))
-                    .padding(.horizontal, 9)
-                    .frame(height: 22)
-                    .background(
-                        Capsule(style: .continuous)
-                            .fill(item.isActive ? Color(nsColor: theme.selectionColor).opacity(0.24) : Color.clear)
-                    )
-                    .contentShape(Capsule(style: .continuous))
                 }
-                .buttonStyle(.plain)
             }
-
-            if group.items.count > 4 {
-                Text("+\(group.items.count - 4)")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 7)
-                    .frame(height: 22)
-                    .background(
-                        Capsule(style: .continuous)
-                            .fill(Color.secondary.opacity(0.08))
-                    )
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: activeItem.map { symbolName(for: $0.iconName, isDirectory: false) } ?? "square.stack.3d.up.fill")
+                    .font(.system(size: 10, weight: .medium))
+                Text("\(group.items.count)")
+                    .font(.system(size: 10, weight: .bold, design: .rounded))
+                    .monospacedDigit()
             }
+            .foregroundStyle(group.isActivePane ? Color.primary : Color.primary.opacity(0.78))
+            .padding(.horizontal, 8)
+            .frame(height: 22)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(backgroundColor)
+            )
+            .overlay(
+                Capsule(style: .continuous)
+                    .stroke(borderColor, lineWidth: 1)
+            )
+            .shadow(color: .black.opacity(0.10), radius: 4, y: 1)
+            .contentShape(Capsule(style: .continuous))
         }
-        .padding(.horizontal, 4)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .fill(Color(nsColor: theme.backgroundColor).opacity(0.94))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .stroke(Color(nsColor: theme.separatorColor).opacity(0.75), lineWidth: 1)
-        )
-        .shadow(color: .black.opacity(0.12), radius: 6, y: 2)
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help(helpText)
+        .accessibilityLabel(helpText)
+    }
+
+    private var helpText: String {
+        let titles = group.items.map(\.title).joined(separator: ", ")
+        return "\(paneLabel): \(titles)"
+    }
+
+    private var backgroundColor: Color {
+        if group.isActivePane {
+            return Color(nsColor: theme.backgroundColor).opacity(0.96)
+        }
+        return Color(nsColor: theme.backgroundColor).opacity(0.88)
+    }
+
+    private var borderColor: Color {
+        if group.isActivePane {
+            return Color(nsColor: theme.selectionColor).opacity(0.65)
+        }
+        return Color(nsColor: theme.separatorColor).opacity(0.82)
     }
 }
 

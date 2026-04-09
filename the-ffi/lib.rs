@@ -1289,7 +1289,8 @@ impl SurfaceConfig {
   }
 
   fn viewport_rows(self) -> u16 {
-    let rows = (self.height_px / self.metrics.cell_height_px as u32).max(1);
+    let cell_height = self.metrics.cell_height_px as u32;
+    let rows = self.height_px.div_ceil(cell_height).max(1);
     rows.min(u16::MAX as u32) as u16
   }
 }

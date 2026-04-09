@@ -531,7 +531,7 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
     ) -> (pane: EditorSnapshotPane, trackRect: CGRect, thumbRect: CGRect, maxScrollRow: Int)? {
         guard let scene = controller?.scene, pane.kind == .editorBuffer else { return nil }
         let contentRect = scene.paneContentRect(for: pane)
-        let visibleRows = max(Int(floor(contentRect.height / max(cellSize.height, 1))), 1)
+        let visibleRows = max(scene.paneVisibleRowCapacity(for: pane), 1)
         let totalRows = max(pane.documentLineCount, visibleRows)
         let maxScrollRow = max(totalRows - visibleRows, 0)
         guard maxScrollRow > 0, contentRect.height > 0 else { return nil }

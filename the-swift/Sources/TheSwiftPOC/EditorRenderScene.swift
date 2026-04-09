@@ -148,7 +148,7 @@ struct EditorRenderScene {
 
     func paneVisibleRowCapacity(for pane: EditorSnapshotPane) -> Int {
         let cellHeight = max(info.surfaceMetrics.cellSizePoints.height, 1)
-        return max(Int(floor(paneContentRect(for: pane).height / cellHeight)), 0)
+        return max(Int(ceil(paneContentRect(for: pane).height / cellHeight)), 0)
     }
 
     func isContentRowVisible(_ row: Int, in pane: EditorSnapshotPane) -> Bool {

@@ -499,7 +499,7 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
     private func paneScrollbarGeometry(for pane: EditorSnapshotPane, cellSize: CGSize) -> (trackRect: CGRect, thumbRect: CGRect)? {
         guard let scene, pane.kind == .editorBuffer else { return nil }
         let contentRect = scene.paneContentRect(for: pane)
-        let visibleRows = max(Int(floor(contentRect.height / max(cellSize.height, 1))), 1)
+        let visibleRows = max(scene.paneVisibleRowCapacity(for: pane), 1)
         let totalRows = max(pane.documentLineCount, visibleRows)
         let maxScrollRow = max(totalRows - visibleRows, 0)
         guard maxScrollRow > 0, contentRect.height > 0 else { return nil }

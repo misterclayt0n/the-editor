@@ -848,15 +848,16 @@ private struct EditorPaneItemStripsOverlayView: View {
         let groupIndex: Int
         let group: EditorPaneOpenItemGroup
         let frame: CGRect
+        let headerHeight: CGFloat
+        let controlHeight: CGFloat
+        let controlOriginY: CGFloat
 
         var id: UInt { group.id }
     }
 
     @ObservedObject var controller: EditorSurfaceController
 
-    private let stripHeight = EditorPaneItemStripMetrics.height
     private let horizontalInset = EditorPaneItemStripMetrics.horizontalInset
-    private let verticalInset = EditorPaneItemStripMetrics.verticalInset
 
     var body: some View {
         if let scene = controller.scene {
@@ -872,7 +873,7 @@ private struct EditorPaneItemStripsOverlayView: View {
                             )
                             Rectangle()
                                 .fill(Color(nsColor: theme.headerColor))
-                                .frame(width: entry.frame.width, height: stripHeight)
+                                .frame(width: entry.frame.width, height: entry.headerHeight)
                                 .overlay(alignment: .bottom) {
                                     Rectangle()
                                         .fill(Color(nsColor: theme.separatorColor).opacity(0.9))
@@ -885,6 +886,7 @@ private struct EditorPaneItemStripsOverlayView: View {
                                 group: entry.group,
                                 paneLabel: paneLocationLabel(for: entry.group.paneID, groupIndex: entry.groupIndex, scene: scene),
                                 theme: theme,
+                                controlHeight: entry.controlHeight,
                                 canCloseItem: canClose,
                                 onActivateItem: { item in
                                     if item.isActive {
@@ -900,10 +902,10 @@ private struct EditorPaneItemStripsOverlayView: View {
                                 },
                                 onCloseItem: controller.closeOpenItem
                             )
-                            .frame(width: availableWidth, height: stripHeight, alignment: .leading)
+                            .frame(width: availableWidth, height: entry.controlHeight, alignment: .leading)
                             .offset(
                                 x: entry.frame.minX + horizontalInset,
-                                y: entry.frame.minY + verticalInset
+                                y: entry.controlOriginY
                             )
                             .zIndex(entry.group.isActivePane ? 3 : 2)
                         }
@@ -926,7 +928,10 @@ private struct EditorPaneItemStripsOverlayView: View {
             return LayoutEntry(
                 groupIndex: groupIndex,
                 group: group,
-                frame: paneFrame(for: pane, in: scene)
+                frame: paneFrame(for: pane, in: scene),
+                headerHeight: scene.paneHeaderHeight(for: pane),
+                controlHeight: scene.paneTabControlHeight(for: pane),
+                controlOriginY: scene.paneTabControlOriginY(for: pane)
             )
         }
     }
@@ -953,6 +958,7 @@ private struct EditorPaneItemTabStripView: View {
     let group: EditorPaneOpenItemGroup
     let paneLabel: String
     let theme: EditorFileTreeSidebarTheme
+    let controlHeight: CGFloat
     let canCloseItem: (EditorPaneOpenItemRow) -> Bool
     let onActivateItem: (EditorPaneOpenItemRow) -> Void
     let onCloseItem: (EditorPaneOpenItemRow) -> Void
@@ -964,6 +970,7 @@ private struct EditorPaneItemTabStripView: View {
                     item: item,
                     theme: theme,
                     isActivePane: group.isActivePane,
+                    controlHeight: controlHeight,
                     canClose: canCloseItem(item),
                     onActivate: { onActivateItem(item) },
                     onClose: { onCloseItem(item) }
@@ -986,6 +993,7 @@ private struct EditorPaneItemTabView: View {
     let item: EditorPaneOpenItemRow
     let theme: EditorFileTreeSidebarTheme
     let isActivePane: Bool
+    let controlHeight: CGFloat
     let canClose: Bool
     let onActivate: () -> Void
     let onClose: () -> Void
@@ -1009,7 +1017,7 @@ private struct EditorPaneItemTabView: View {
                 }
                 .foregroundStyle(foregroundColor)
                 .padding(.leading, 10)
-                .frame(maxWidth: .infinity, minHeight: 22, maxHeight: 22, alignment: .leading)
+                .frame(maxWidth: .infinity, minHeight: controlHeight, maxHeight: controlHeight, alignment: .leading)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -1031,7 +1039,7 @@ private struct EditorPaneItemTabView: View {
                 .accessibilityLabel("Close \(item.title)")
             }
         }
-        .frame(maxWidth: .infinity, minHeight: 22, maxHeight: 22, alignment: .leading)
+        .frame(maxWidth: .infinity, minHeight: controlHeight, maxHeight: controlHeight, alignment: .leading)
         .background(tabBackground)
         .overlay(tabBorder)
         .contentShape(Rectangle())

@@ -318,10 +318,16 @@ private final class GhosttyEmbeddedRuntime {
 }
 
 private let ghosttyLoggingEnabled = ProcessInfo.processInfo.environment["THE_EDITOR_GHOSTTY_LOG"] == "1"
+private let ghosttySelectionLoggingEnabled = ProcessInfo.processInfo.environment["THE_EDITOR_GHOSTTY_SELECTION_LOG"] == "1"
 
 func ghosttyLog(_ message: String) {
     guard ghosttyLoggingEnabled else { return }
     fputs("[the-swift:ghostty] \(message)\n", stderr)
+}
+
+func ghosttySelectionLog(_ message: String) {
+    guard ghosttySelectionLoggingEnabled else { return }
+    fputs("[the-swift:ghostty:selection] \(message)\n", stderr)
 }
 
 private enum GhosttyPasteboardBridge {
@@ -509,16 +515,25 @@ private final class GhosttyTerminalSurfaceView: NSView {
         paneIDOwner?.setActivePane(paneID)
         window?.makeFirstResponder(self)
         guard let surface else { return }
+        logSelectionState("leftDown.before", event: event, surface: surface, mousePositionSent: false, consumed: nil)
         trackMousePointIfUsable(convert(event.locationInWindow, from: nil))
-        if event.clickCount == 1 {
+        let sentMousePosition = event.clickCount == 1
+        if sentMousePosition {
             sendMousePosition(event)
         }
-        ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_PRESS, GHOSTTY_MOUSE_LEFT, mods(from: event.modifierFlags))
+        let consumed = ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_PRESS, GHOSTTY_MOUSE_LEFT, mods(from: event.modifierFlags))
+        logSelectionState("leftDown.after", event: event, surface: surface, mousePositionSent: sentMousePosition, consumed: consumed)
     }
 
     override func mouseUp(with event: NSEvent) {
         guard let surface else { return }
-        ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_RELEASE, GHOSTTY_MOUSE_LEFT, mods(from: event.modifierFlags))
+        let consumed = ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_RELEASE, GHOSTTY_MOUSE_LEFT, mods(from: event.modifierFlags))
+        logSelectionState("leftUp.after", event: event, surface: surface, mousePositionSent: false, consumed: consumed)
+        guard ghosttySelectionLoggingEnabled else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let surface = self.surface else { return }
+            self.logSelectionState("leftUp.async", event: event, surface: surface, mousePositionSent: false, consumed: consumed)
+        }
     }
 
     override func rightMouseDown(with event: NSEvent) {
@@ -698,6 +713,76 @@ private final class GhosttyTerminalSurfaceView: NSView {
         trackMousePointIfUsable(eventPoint)
         let point = preferredPointerPoint(from: eventPoint) ?? eventPoint
         ghostty_surface_mouse_pos(surface, point.x, bounds.height - point.y, mods(from: event.modifierFlags))
+    }
+
+    private func logSelectionState(
+        _ phase: String,
+        event: NSEvent,
+        surface: ghostty_surface_t,
+        mousePositionSent: Bool,
+        consumed: Bool?
+    ) {
+        guard ghosttySelectionLoggingEnabled, event.clickCount >= 2 else { return }
+        let rawPoint = convert(event.locationInWindow, from: nil)
+        let currentPoint = currentMousePointInView()
+        let cachedPoint = lastKnownMousePointInView
+        let preferredPoint = resolvedPointerPointForLogging(from: rawPoint, currentPoint: currentPoint, cachedPoint: cachedPoint)
+        let selection = selectionDebugText(surface)
+        let quicklook = quicklookDebugText(surface)
+        let consumedText = consumed.map { $0 ? "1" : "0" } ?? "-"
+        ghosttySelectionLog(
+            "surface=\(clientSurfaceID) pane=\(paneID) phase=\(phase) clickCount=\(event.clickCount) sentPos=\(mousePositionSent ? 1 : 0) consumed=\(consumedText) raw=\(debugPoint(rawPoint)) current=\(debugPoint(currentPoint)) cached=\(debugPoint(cachedPoint)) preferred=\(debugPoint(preferredPoint)) hasSelection=\(ghostty_surface_has_selection(surface) ? 1 : 0) selection=\(selection) quicklook=\(quicklook)"
+        )
+    }
+
+    private func resolvedPointerPointForLogging(
+        from eventPoint: NSPoint,
+        currentPoint: NSPoint?,
+        cachedPoint: NSPoint?
+    ) -> NSPoint? {
+        if pointIsUsableForPointer(eventPoint) {
+            return eventPoint
+        }
+        if let currentPoint, pointIsUsableForPointer(currentPoint) {
+            return currentPoint
+        }
+        return cachedPoint
+    }
+
+    private func selectionDebugText(_ surface: ghostty_surface_t) -> String {
+        guard ghostty_surface_has_selection(surface) else { return "-" }
+        var text = ghostty_text_s()
+        guard ghostty_surface_read_selection(surface, &text), let pointer = text.text else {
+            return "<unreadable>"
+        }
+        defer { ghostty_surface_free_text(surface, &text) }
+        return debugText(String(cString: pointer))
+    }
+
+    private func quicklookDebugText(_ surface: ghostty_surface_t) -> String {
+        var text = ghostty_text_s()
+        guard ghostty_surface_quicklook_word(surface, &text), let pointer = text.text else {
+            return "-"
+        }
+        defer { ghostty_surface_free_text(surface, &text) }
+        return debugText(String(cString: pointer))
+    }
+
+    private func debugPoint(_ point: NSPoint?) -> String {
+        guard let point else { return "-" }
+        return String(format: "(%.1f,%.1f)", point.x, point.y)
+    }
+
+    private func debugText(_ text: String, limit: Int = 120) -> String {
+        let compact = text
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\n", with: "\\n")
+            .replacingOccurrences(of: "\r", with: "\\r")
+        if compact.count <= limit {
+            return "\"\(compact)\""
+        }
+        let endIndex = compact.index(compact.startIndex, offsetBy: limit)
+        return "\"\(compact[..<endIndex])…\""
     }
 
     private func pointIsUsableForPointer(_ point: NSPoint) -> Bool {

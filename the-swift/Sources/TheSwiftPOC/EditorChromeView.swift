@@ -120,15 +120,14 @@ struct EditorChromeView: View {
 
     private var mainColumn: some View {
         VStack(spacing: 0) {
-            EditorPaneItemStripsOverlayView(controller: controller)
-
-            ZStack {
+            ZStack(alignment: .topLeading) {
                 EditorSurfaceRepresentable(controller: controller)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
 
                 EditorDiagnosticsOverlayView(controller: controller)
                 EditorDocsPanelsView(controller: controller)
                 EditorCompletionMenuView(controller: controller)
+                EditorPaneItemStripsOverlayView(controller: controller)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
@@ -849,90 +848,66 @@ private struct EditorPaneItemStripsOverlayView: View {
         let groupIndex: Int
         let group: EditorPaneOpenItemGroup
         let frame: CGRect
-        let rowIndex: Int
 
         var id: UInt { group.id }
-    }
-
-    private struct LayoutModel {
-        let entries: [LayoutEntry]
-        let totalHeight: CGFloat
     }
 
     @ObservedObject var controller: EditorSurfaceController
 
     private let stripHeight: CGFloat = 24
     private let horizontalInset: CGFloat = 8
-    private let rowSpacing: CGFloat = 1
     private let verticalInset: CGFloat = 1
 
     var body: some View {
-        if let scene = controller.scene,
-           let layout = layoutModel(for: scene) {
-            let theme = EditorFileTreeSidebarTheme.resolve(scene: scene, chrome: controller.chrome)
-            GeometryReader { geometry in
-                ZStack(alignment: .topLeading) {
-                    Color(nsColor: theme.headerColor)
-
-                    ForEach(layout.entries) { entry in
-                        let availableWidth = max(
-                            min(entry.frame.width - horizontalInset * 2, geometry.size.width - entry.frame.minX - horizontalInset),
-                            80
-                        )
-                        EditorPaneItemTabStripView(
-                            group: entry.group,
-                            paneLabel: paneLocationLabel(for: entry.group.paneID, groupIndex: entry.groupIndex, scene: scene),
-                            theme: theme,
-                            onActivateItem: { item in
-                                if item.isActive { return }
-                                controller.activateOpenItem(item)
-                            }
-                        )
-                        .frame(width: availableWidth, height: stripHeight, alignment: .leading)
-                        .offset(
-                            x: entry.frame.minX + horizontalInset,
-                            y: verticalInset + CGFloat(entry.rowIndex) * (stripHeight + rowSpacing)
-                        )
-                        .zIndex(entry.group.isActivePane ? 3 : 2)
+        if let scene = controller.scene {
+            let entries = layoutEntries(for: scene)
+            if !entries.isEmpty {
+                let theme = EditorFileTreeSidebarTheme.resolve(scene: scene, chrome: controller.chrome)
+                GeometryReader { geometry in
+                    ZStack(alignment: .topLeading) {
+                        ForEach(entries) { entry in
+                            let availableWidth = max(
+                                min(entry.frame.width - horizontalInset * 2, geometry.size.width - entry.frame.minX - horizontalInset),
+                                80
+                            )
+                            EditorPaneItemTabStripView(
+                                group: entry.group,
+                                paneLabel: paneLocationLabel(for: entry.group.paneID, groupIndex: entry.groupIndex, scene: scene),
+                                theme: theme,
+                                onActivateItem: { item in
+                                    if item.isActive { return }
+                                    controller.activateOpenItem(item)
+                                }
+                            )
+                            .frame(width: availableWidth, height: stripHeight, alignment: .leading)
+                            .offset(
+                                x: entry.frame.minX + horizontalInset,
+                                y: entry.frame.minY + verticalInset
+                            )
+                            .zIndex(entry.group.isActivePane ? 3 : 2)
+                        }
                     }
+                    .frame(width: geometry.size.width, height: geometry.size.height, alignment: .topLeading)
                 }
-                .frame(width: geometry.size.width, height: geometry.size.height, alignment: .topLeading)
-            }
-            .frame(height: layout.totalHeight)
-            .overlay(alignment: .bottom) {
-                Rectangle()
-                    .fill(Color(nsColor: theme.separatorColor))
-                    .frame(height: 1)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .allowsHitTesting(true)
             }
         }
     }
 
-    private func layoutModel(for scene: EditorRenderScene) -> LayoutModel? {
-        let rawEntries = Array(controller.openItems.groups.enumerated()).compactMap { groupIndex, group -> (Int, EditorPaneOpenItemGroup, CGRect, Int)? in
+    private func layoutEntries(for scene: EditorRenderScene) -> [LayoutEntry] {
+        Array(controller.openItems.groups.enumerated()).compactMap { groupIndex, group in
             guard let pane = scene.pane(id: group.paneID),
                   shouldShowTabStrip(for: group)
             else {
                 return nil
             }
-            let frame = paneFrame(for: pane, in: scene)
-            return (groupIndex, group, frame, pane.y)
-        }
-
-        guard !rawEntries.isEmpty else { return nil }
-        let rowOrigins = Array(Set(rawEntries.map { $0.3 })).sorted()
-        let entries = rawEntries.map { groupIndex, group, frame, rowOrigin in
-            LayoutEntry(
+            return LayoutEntry(
                 groupIndex: groupIndex,
                 group: group,
-                frame: frame,
-                rowIndex: rowOrigins.firstIndex(of: rowOrigin) ?? 0
+                frame: paneFrame(for: pane, in: scene)
             )
         }
-        let rowCount = max(rowOrigins.count, 1)
-        let totalHeight = (verticalInset * 2)
-            + (CGFloat(rowCount) * stripHeight)
-            + (CGFloat(max(rowCount - 1, 0)) * rowSpacing)
-        return LayoutModel(entries: entries, totalHeight: totalHeight)
     }
 
     private func shouldShowTabStrip(for group: EditorPaneOpenItemGroup) -> Bool {

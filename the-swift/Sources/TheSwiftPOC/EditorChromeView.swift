@@ -845,7 +845,7 @@ private func paneLocationLabel(for paneID: UInt, groupIndex: Int, scene: EditorR
 private struct EditorPaneItemStripsOverlayView: View {
     @ObservedObject var controller: EditorSurfaceController
 
-    private let switcherHeight: CGFloat = 24
+    private let switcherHeight: CGFloat = 30
     private let switcherPadding: CGFloat = 6
 
     var body: some View {
@@ -901,6 +901,8 @@ private struct EditorPaneItemSwitcherView: View {
     let theme: EditorFileTreeSidebarTheme
     let onActivateItem: (EditorPaneOpenItemRow) -> Void
 
+    @State private var isHovered = false
+
     private var activeItem: EditorPaneOpenItemRow? {
         if let active = group.items.first(where: { $0.isActive }) {
             return active
@@ -912,7 +914,115 @@ private struct EditorPaneItemSwitcherView: View {
         return group.items.first
     }
 
+    private var prioritizedItems: [EditorPaneOpenItemRow] {
+        guard let activeItem else { return group.items }
+        return [activeItem] + group.items.filter { $0.id != activeItem.id }
+    }
+
+    private var secondaryItems: [EditorPaneOpenItemRow] {
+        Array(prioritizedItems.dropFirst().prefix(2))
+    }
+
+    private var overflowItems: [EditorPaneOpenItemRow] {
+        Array(prioritizedItems.dropFirst(1 + secondaryItems.count))
+    }
+
+    private var isExpanded: Bool {
+        group.isActivePane || isHovered
+    }
+
     var body: some View {
+        Group {
+            if isExpanded {
+                ViewThatFits(in: .horizontal) {
+                    expandedContent(showsSecondaryTitles: true)
+                    expandedContent(showsSecondaryTitles: false)
+                    compactContent
+                }
+            } else {
+                compactContent
+            }
+        }
+        .animation(.spring(response: 0.22, dampingFraction: 0.9), value: isExpanded)
+        .onHover { hovering in
+            if hovering != isHovered {
+                isHovered = hovering
+            }
+        }
+        .help(helpText)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(helpText)
+    }
+
+    private func expandedContent(showsSecondaryTitles: Bool) -> some View {
+        HStack(spacing: 6) {
+            if let activeItem {
+                EditorPaneItemChipView(
+                    item: activeItem,
+                    theme: theme,
+                    style: .active,
+                    showsTitle: true,
+                    onActivate: { onActivateItem(activeItem) }
+                )
+            }
+
+            ForEach(secondaryItems) { item in
+                EditorPaneItemChipView(
+                    item: item,
+                    theme: theme,
+                    style: .secondary,
+                    showsTitle: showsSecondaryTitles,
+                    onActivate: { onActivateItem(item) }
+                )
+            }
+
+            if !overflowItems.isEmpty {
+                overflowMenu(count: overflowItems.count, includeChevron: true)
+            }
+        }
+        .padding(4)
+        .background(
+            Capsule(style: .continuous)
+                .fill(backgroundColor)
+        )
+        .overlay(
+            Capsule(style: .continuous)
+                .stroke(borderColor, lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.10), radius: 4, y: 1)
+        .fixedSize(horizontal: true, vertical: true)
+    }
+
+    private var compactContent: some View {
+        HStack(spacing: 6) {
+            if let activeItem {
+                EditorPaneItemChipView(
+                    item: activeItem,
+                    theme: theme,
+                    style: group.isActivePane ? .active : .secondary,
+                    showsTitle: false,
+                    onActivate: { onActivateItem(activeItem) }
+                )
+            }
+
+            if group.items.count > 1 {
+                overflowMenu(count: group.items.count - (activeItem == nil ? 0 : 1), includeChevron: false)
+            }
+        }
+        .padding(4)
+        .background(
+            Capsule(style: .continuous)
+                .fill(backgroundColor)
+        )
+        .overlay(
+            Capsule(style: .continuous)
+                .stroke(borderColor, lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.10), radius: 4, y: 1)
+        .fixedSize(horizontal: true, vertical: true)
+    }
+
+    private func overflowMenu(count: Int, includeChevron: Bool) -> some View {
         Menu {
             Section(paneLabel) {
                 ForEach(group.items) { item in
@@ -945,32 +1055,30 @@ private struct EditorPaneItemSwitcherView: View {
                 }
             }
         } label: {
-            HStack(spacing: 5) {
-                Image(systemName: activeItem.map { symbolName(for: $0.iconName, isDirectory: false) } ?? "square.stack.3d.up.fill")
-                    .font(.system(size: 10, weight: .medium))
-                Text("\(group.items.count)")
+            HStack(spacing: 4) {
+                Text("+\(max(count, 1))")
                     .font(.system(size: 10, weight: .bold, design: .rounded))
                     .monospacedDigit()
+                if includeChevron {
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 8, weight: .bold))
+                }
             }
-            .foregroundStyle(group.isActivePane ? Color.primary : Color.primary.opacity(0.78))
+            .foregroundStyle(Color.primary.opacity(group.isActivePane ? 0.9 : 0.76))
             .padding(.horizontal, 8)
             .frame(height: 22)
             .background(
                 Capsule(style: .continuous)
-                    .fill(backgroundColor)
+                    .fill(Color(nsColor: theme.backgroundColor).opacity(0.22))
             )
             .overlay(
                 Capsule(style: .continuous)
-                    .stroke(borderColor, lineWidth: 1)
+                    .stroke(Color(nsColor: theme.separatorColor).opacity(0.45), lineWidth: 1)
             )
-            .shadow(color: .black.opacity(0.10), radius: 4, y: 1)
             .contentShape(Capsule(style: .continuous))
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
-        .fixedSize()
-        .help(helpText)
-        .accessibilityLabel(helpText)
     }
 
     private var helpText: String {
@@ -982,14 +1090,88 @@ private struct EditorPaneItemSwitcherView: View {
         if group.isActivePane {
             return Color(nsColor: theme.backgroundColor).opacity(0.96)
         }
-        return Color(nsColor: theme.backgroundColor).opacity(0.88)
+        return Color(nsColor: theme.backgroundColor).opacity(0.90)
     }
 
     private var borderColor: Color {
         if group.isActivePane {
-            return Color(nsColor: theme.selectionColor).opacity(0.65)
+            return Color(nsColor: theme.selectionColor).opacity(0.58)
         }
-        return Color(nsColor: theme.separatorColor).opacity(0.82)
+        return Color(nsColor: theme.separatorColor).opacity(0.75)
+    }
+}
+
+private struct EditorPaneItemChipView: View {
+    enum Style {
+        case active
+        case secondary
+    }
+
+    let item: EditorPaneOpenItemRow
+    let theme: EditorFileTreeSidebarTheme
+    let style: Style
+    let showsTitle: Bool
+    let onActivate: () -> Void
+
+    var body: some View {
+        Button(action: onActivate) {
+            HStack(spacing: showsTitle ? 5 : 0) {
+                Image(systemName: symbolName(for: item.iconName, isDirectory: false))
+                    .font(.system(size: 10, weight: .medium))
+                if showsTitle {
+                    Text(item.title)
+                        .font(.system(size: 10.5, weight: item.isActive ? .semibold : .medium))
+                        .lineLimit(1)
+                }
+                if item.isModified {
+                    Circle()
+                        .fill(Color(nsColor: item.isActive ? theme.selectionColor : .secondaryLabelColor).opacity(0.9))
+                        .frame(width: 4, height: 4)
+                }
+            }
+            .foregroundStyle(foregroundColor)
+            .padding(.horizontal, showsTitle ? 9 : 7)
+            .frame(height: 22)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(backgroundColor)
+            )
+            .overlay(
+                Capsule(style: .continuous)
+                    .stroke(borderColor, lineWidth: 1)
+            )
+            .contentShape(Capsule(style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .help(item.filePath ?? item.title)
+        .accessibilityLabel(item.title)
+    }
+
+    private var foregroundColor: Color {
+        switch style {
+        case .active:
+            return .primary
+        case .secondary:
+            return .primary.opacity(showsTitle ? 0.88 : 0.78)
+        }
+    }
+
+    private var backgroundColor: Color {
+        switch style {
+        case .active:
+            return Color(nsColor: theme.selectionColor).opacity(0.22)
+        case .secondary:
+            return Color(nsColor: theme.backgroundColor).opacity(0.24)
+        }
+    }
+
+    private var borderColor: Color {
+        switch style {
+        case .active:
+            return Color(nsColor: theme.selectionColor).opacity(0.6)
+        case .secondary:
+            return Color(nsColor: theme.separatorColor).opacity(0.45)
+        }
     }
 }
 

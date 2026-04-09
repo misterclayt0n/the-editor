@@ -120,11 +120,12 @@ struct EditorChromeView: View {
 
     private var mainColumn: some View {
         VStack(spacing: 0) {
+            EditorPaneItemStripsOverlayView(controller: controller)
+
             ZStack {
                 EditorSurfaceRepresentable(controller: controller)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-                EditorPaneItemStripsOverlayView(controller: controller)
                 EditorDiagnosticsOverlayView(controller: controller)
                 EditorDocsPanelsView(controller: controller)
                 EditorCompletionMenuView(controller: controller)
@@ -844,66 +845,115 @@ private func paneLocationLabel(for paneID: UInt, groupIndex: Int, scene: EditorR
 }
 
 private struct EditorPaneItemStripsOverlayView: View {
+    private struct LayoutEntry: Identifiable {
+        let groupIndex: Int
+        let group: EditorPaneOpenItemGroup
+        let pane: EditorSnapshotPane
+        let frame: CGRect
+        let rowIndex: Int
+
+        var id: UInt { group.id }
+    }
+
+    private struct LayoutModel {
+        let entries: [LayoutEntry]
+        let totalHeight: CGFloat
+    }
+
     @ObservedObject var controller: EditorSurfaceController
 
     private let switcherHeight: CGFloat = 30
     private let switcherPadding: CGFloat = 6
+    private let rowSpacing: CGFloat = 4
 
     @State private var expandedPaneID: UInt?
 
     var body: some View {
-        GeometryReader { geometry in
-            ZStack(alignment: .topLeading) {
-                if let scene = controller.scene {
-                    let theme = EditorFileTreeSidebarTheme.resolve(scene: scene, chrome: controller.chrome)
-                    ForEach(Array(controller.openItems.groups.enumerated()), id: \.element.id) { groupIndex, group in
-                        if let pane = scene.pane(id: group.paneID),
-                           shouldShowSwitcher(for: group, pane: pane) {
-                            let frame = paneFrame(for: pane, in: scene)
-                            if frame.height >= switcherHeight + switcherPadding * 2,
-                               frame.width >= 64 {
-                                let availableWidth = max(
-                                    min(frame.width - switcherPadding * 2, geometry.size.width - frame.minX - switcherPadding),
-                                    64
-                                )
-                                HStack {
-                                    Spacer(minLength: 0)
-                                    EditorPaneItemSwitcherView(
-                                        group: group,
-                                        paneLabel: paneLocationLabel(for: group.paneID, groupIndex: groupIndex, scene: scene),
-                                        theme: theme,
-                                        isExpanded: expandedPaneID == group.paneID,
-                                        onToggleExpanded: {
-                                            withAnimation(.spring(response: 0.22, dampingFraction: 0.9)) {
-                                                expandedPaneID = expandedPaneID == group.paneID ? nil : group.paneID
-                                            }
-                                        },
-                                        onActivateItem: { item in
-                                            withAnimation(.spring(response: 0.22, dampingFraction: 0.9)) {
-                                                expandedPaneID = nil
-                                            }
-                                            if item.isActive {
-                                                return
-                                            }
-                                            controller.activateOpenItem(item)
-                                        }
-                                    )
-                                    .frame(maxWidth: availableWidth, alignment: .trailing)
+        if let scene = controller.scene,
+           let layout = layoutModel(for: scene) {
+            let theme = EditorFileTreeSidebarTheme.resolve(scene: scene, chrome: controller.chrome)
+            GeometryReader { geometry in
+                ZStack(alignment: .topLeading) {
+                    Color(nsColor: theme.headerColor)
+
+                    ForEach(layout.entries) { entry in
+                        let availableWidth = max(
+                            min(entry.frame.width - switcherPadding * 2, geometry.size.width - entry.frame.minX - switcherPadding),
+                            64
+                        )
+                        HStack {
+                            Spacer(minLength: 0)
+                            EditorPaneItemSwitcherView(
+                                group: entry.group,
+                                paneLabel: paneLocationLabel(for: entry.group.paneID, groupIndex: entry.groupIndex, scene: scene),
+                                theme: theme,
+                                isExpanded: expandedPaneID == entry.group.paneID,
+                                onToggleExpanded: {
+                                    withAnimation(.spring(response: 0.22, dampingFraction: 0.9)) {
+                                        expandedPaneID = expandedPaneID == entry.group.paneID ? nil : entry.group.paneID
+                                    }
+                                },
+                                onActivateItem: { item in
+                                    withAnimation(.spring(response: 0.22, dampingFraction: 0.9)) {
+                                        expandedPaneID = nil
+                                    }
+                                    if item.isActive {
+                                        return
+                                    }
+                                    controller.activateOpenItem(item)
                                 }
-                                .frame(width: availableWidth, height: switcherHeight)
-                                .offset(x: frame.minX + switcherPadding, y: frame.minY + switcherPadding)
-                                .zIndex(expandedPaneID == group.paneID ? 4 : (group.isActivePane ? 3 : 2))
-                            }
+                            )
+                            .frame(maxWidth: availableWidth, alignment: .trailing)
                         }
+                        .frame(width: availableWidth, height: switcherHeight)
+                        .offset(
+                            x: entry.frame.minX + switcherPadding,
+                            y: switcherPadding + CGFloat(entry.rowIndex) * (switcherHeight + rowSpacing)
+                        )
+                        .zIndex(expandedPaneID == entry.group.paneID ? 4 : (entry.group.isActivePane ? 3 : 2))
                     }
                 }
+                .frame(width: geometry.size.width, height: geometry.size.height, alignment: .topLeading)
             }
-            .frame(width: geometry.size.width, height: geometry.size.height, alignment: .topLeading)
+            .frame(height: layout.totalHeight)
+            .overlay(alignment: .bottom) {
+                Rectangle()
+                    .fill(Color(nsColor: theme.separatorColor))
+                    .frame(height: 1)
+            }
         }
     }
 
+    private func layoutModel(for scene: EditorRenderScene) -> LayoutModel? {
+        let rawEntries = Array(controller.openItems.groups.enumerated()).compactMap { groupIndex, group -> (Int, EditorPaneOpenItemGroup, EditorSnapshotPane, CGRect)? in
+            guard let pane = scene.pane(id: group.paneID),
+                  shouldShowSwitcher(for: group, pane: pane)
+            else {
+                return nil
+            }
+            return (groupIndex, group, pane, paneFrame(for: pane, in: scene))
+        }
+
+        guard !rawEntries.isEmpty else { return nil }
+        let rowOrigins = Array(Set(rawEntries.map { $0.2.y })).sorted()
+        let entries = rawEntries.map { groupIndex, group, pane, frame in
+            LayoutEntry(
+                groupIndex: groupIndex,
+                group: group,
+                pane: pane,
+                frame: frame,
+                rowIndex: rowOrigins.firstIndex(of: pane.y) ?? 0
+            )
+        }
+        let rowCount = max(rowOrigins.count, 1)
+        let totalHeight = (switcherPadding * 2)
+            + (CGFloat(rowCount) * switcherHeight)
+            + (CGFloat(max(rowCount - 1, 0)) * rowSpacing)
+        return LayoutModel(entries: entries, totalHeight: totalHeight)
+    }
+
     private func shouldShowSwitcher(for group: EditorPaneOpenItemGroup, pane: EditorSnapshotPane) -> Bool {
-        guard pane.kind == .editorBuffer else { return false }
+        let _ = pane
         return group.items.count > 1 || group.items.contains(where: { $0.kind != .buffer })
     }
 

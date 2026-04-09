@@ -323,7 +323,10 @@ private final class GhosttyEmbeddedRuntime {
     }
 }
 
+private let ghosttyLoggingEnabled = ProcessInfo.processInfo.environment["THE_EDITOR_GHOSTTY_LOG"] == "1"
+
 func ghosttyLog(_ message: String) {
+    guard ghosttyLoggingEnabled else { return }
     fputs("[the-swift:ghostty] \(message)\n", stderr)
 }
 

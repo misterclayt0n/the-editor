@@ -5389,46 +5389,25 @@ impl SwiftEditor {
 
   fn set_embedded_terminal_enabled(&mut self, enabled: bool) -> bool {
     if self.embedded_terminal_enabled == enabled {
-      eprintln!(
-        "[the-ffi:ghostty] set_embedded_terminal_enabled unchanged enabled={enabled}"
-      );
       return false;
     }
     self.embedded_terminal_enabled = enabled;
-    eprintln!(
-      "[the-ffi:ghostty] set_embedded_terminal_enabled enabled={enabled}"
-    );
     true
   }
 
   fn open_terminal_in_active_pane_ui(&mut self) -> bool {
-    let already_terminal = self.editor.is_active_pane_terminal();
-    eprintln!(
-      "[the-ffi:ghostty] open_terminal_in_active_pane_ui requested enabled={} already_terminal={}",
-      self.embedded_terminal_enabled,
-      already_terminal
-    );
-    if !self.embedded_terminal_enabled || already_terminal {
+    if !self.embedded_terminal_enabled || self.editor.is_active_pane_terminal() {
       return false;
     }
     let previous_buffer_id = self.editor.active_buffer_id();
-    let surface_id = self.editor.open_terminal_in_active_pane();
+    let _surface_id = self.editor.open_terminal_in_active_pane();
     self.file_tree.active = false;
     self.sync_state_after_active_pane_change(previous_buffer_id);
     self.bump_cursor_blink_generation();
-    eprintln!(
-      "[the-ffi:ghostty] open_terminal_in_active_pane_ui opened surface_id={}",
-      surface_id.get().get()
-    );
     true
   }
 
   fn close_terminal_in_active_pane_ui(&mut self) -> bool {
-    eprintln!(
-      "[the-ffi:ghostty] close_terminal_in_active_pane_ui requested enabled={} active_terminal={}",
-      self.embedded_terminal_enabled,
-      self.editor.is_active_pane_terminal()
-    );
     if !self.embedded_terminal_enabled {
       return false;
     }
@@ -5439,7 +5418,6 @@ impl SwiftEditor {
     self.file_tree.active = false;
     self.sync_state_after_active_pane_change(previous_buffer_id);
     self.bump_cursor_blink_generation();
-    eprintln!("[the-ffi:ghostty] close_terminal_in_active_pane_ui closed");
     true
   }
 

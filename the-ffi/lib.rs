@@ -5358,7 +5358,10 @@ impl SwiftEditor {
     true
   }
 
-  fn close_open_item(&mut self, kind_raw: u8, item_raw: usize) -> bool {
+  fn close_open_item(&mut self, pane_raw: usize, kind_raw: u8, item_raw: usize) -> bool {
+    let Some(pane) = pane_id_from_raw(pane_raw) else {
+      return false;
+    };
     let Some(kind) = open_item_kind_from_code(kind_raw) else {
       return false;
     };
@@ -5369,19 +5372,33 @@ impl SwiftEditor {
         let Some(buffer_id) = buffer_id_from_raw(item_raw) else {
           return false;
         };
-        self.editor.close_buffer(buffer_id)
+        self.editor.close_pane_item(pane, PaneContent::EditorBuffer { buffer_id })
       },
       OpenItemKind::Terminal => {
         let Some(surface_id) = client_surface_id_from_raw(item_raw) else {
           return false;
         };
-        self.editor.close_client_surface(surface_id)
+        self.editor.close_pane_item(pane, PaneContent::ClientSurface { surface_id })
       },
     };
     if !changed {
       return false;
     }
 
+    self.file_tree.active = false;
+    self.sync_state_after_active_pane_change(previous_buffer_id);
+    self.bump_cursor_blink_generation();
+    true
+  }
+
+  fn close_buffer_tab(&mut self, buffer_raw: usize) -> bool {
+    let Some(buffer_id) = buffer_id_from_raw(buffer_raw) else {
+      return false;
+    };
+    let previous_buffer_id = self.editor.active_buffer_id();
+    if !self.editor.close_buffer(buffer_id) {
+      return false;
+    }
     self.file_tree.active = false;
     self.sync_state_after_active_pane_change(previous_buffer_id);
     self.bump_cursor_blink_generation();
@@ -12059,9 +12076,7 @@ pub unsafe extern "C" fn the_editor_close_buffer_tab(
   let Some(handle) = (unsafe { handle.as_mut() }) else {
     return false;
   };
-  handle
-    .editor
-    .close_open_item(open_item_kind_code(OpenItemKind::Buffer), buffer_id)
+  handle.editor.close_buffer_tab(buffer_id)
 }
 
 #[unsafe(no_mangle)]
@@ -12080,13 +12095,14 @@ pub unsafe extern "C" fn the_editor_activate_open_item(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn the_editor_close_open_item(
   handle: *mut the_editor_handle_t,
+  pane_id: usize,
   kind: u8,
   item_id: usize,
 ) -> bool {
   let Some(handle) = (unsafe { handle.as_mut() }) else {
     return false;
   };
-  handle.editor.close_open_item(kind, item_id)
+  handle.editor.close_open_item(pane_id, kind, item_id)
 }
 
 #[unsafe(no_mangle)]

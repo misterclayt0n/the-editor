@@ -1047,9 +1047,9 @@ enum EditorFFIBridge {
     }
 
     @discardableResult
-    static func closeOpenItem(_ handle: OpaquePointer?, kind: EditorOpenItemKind, itemID: UInt) -> Bool {
+    static func closeOpenItem(_ handle: OpaquePointer?, paneID: UInt, kind: EditorOpenItemKind, itemID: UInt) -> Bool {
         guard let handle else { return false }
-        return the_editor_close_open_item(handle, kind.rawValue, itemID)
+        return the_editor_close_open_item(handle, paneID, kind.rawValue, itemID)
     }
 
     @discardableResult

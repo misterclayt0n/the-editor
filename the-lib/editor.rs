@@ -518,6 +518,11 @@ impl Editor {
     }
   }
 
+  fn pane_item_exists_anywhere(&self, content: PaneContent) -> bool {
+    self.surface.pane_items.values().any(|state| state.items.contains(&content))
+      || self.surface.pane_content.values().any(|pane_content| *pane_content == content)
+  }
+
   fn merge_pane_items(&mut self, pane: PaneId, items: Vec<PaneContent>) {
     if items.is_empty() {
       return;
@@ -1131,6 +1136,77 @@ impl Editor {
     if was_active {
       self.active_buffer = buffer_id;
     }
+    true
+  }
+
+  pub fn close_pane_item(&mut self, pane: PaneId, content: PaneContent) -> bool {
+    if !self.surface.split_tree.contains_pane(pane) {
+      return false;
+    }
+    let item_count = self
+      .surface
+      .pane_items
+      .get(&pane)
+      .map(|state| state.items.len())
+      .unwrap_or(0);
+    if item_count == 0 || (item_count == 1 && self.surface.split_tree.pane_count() <= 1) {
+      return false;
+    }
+
+    let was_visible = self.surface.pane_content.get(&pane).copied() == Some(content);
+    if was_visible && matches!(content, PaneContent::EditorBuffer { .. }) {
+      self.sync_pane_view_to_buffer(pane);
+    }
+
+    if !self.remove_pane_item(pane, content) {
+      return false;
+    }
+
+    let next_content = self
+      .surface
+      .pane_items
+      .get(&pane)
+      .and_then(PaneItemsState::active_content);
+
+    match next_content {
+      Some(PaneContent::EditorBuffer { buffer_id }) if was_visible => {
+        if !self.set_active_buffer_in_pane(pane, buffer_id) {
+          return false;
+        }
+      },
+      Some(PaneContent::ClientSurface { surface_id }) if was_visible => {
+        if !self.set_active_client_surface_in_pane(pane, surface_id) {
+          return false;
+        }
+      },
+      Some(_) => {},
+      None => {
+        let previous_active = self.active_pane_id();
+        if previous_active != pane {
+          let _ = self.set_active_pane(pane);
+        }
+        if !self.close_active_pane() {
+          return false;
+        }
+        if previous_active != pane && self.surface.split_tree.contains_pane(previous_active) {
+          let _ = self.set_active_pane(previous_active);
+        }
+      },
+    }
+
+    if !self.pane_item_exists_anywhere(content) {
+      match content {
+        PaneContent::EditorBuffer { buffer_id } => {
+          if self.buffer_count() > 1 {
+            let _ = self.close_buffer(buffer_id);
+          }
+        },
+        PaneContent::ClientSurface { surface_id } => {
+          let _ = self.close_client_surface(surface_id);
+        },
+      }
+    }
+
     true
   }
 
@@ -2401,6 +2477,42 @@ mod tests {
         is_active: false,
       },
     ]);
+  }
+
+  #[test]
+  fn editor_close_pane_item_only_removes_it_from_target_pane() {
+    let doc_id = DocumentId::new(NonZeroUsize::new(1).unwrap());
+    let doc = Document::new(doc_id, Rope::from("one"));
+    let view = ViewState::new(Rect::new(0, 0, 80, 24), Position::new(0, 0));
+    let editor_id = EditorId::new(NonZeroUsize::new(1).unwrap());
+    let mut editor = Editor::new(editor_id, doc, view.clone());
+
+    let shared = first_buffer_id(&editor);
+    let second = editor.open_buffer(Rope::from("two"), view.clone(), Some(PathBuf::from("/tmp/two.txt")));
+    let left = editor.active_pane_id();
+    assert!(editor.split_active_pane(SplitAxis::Vertical));
+    let right = editor.active_pane_id();
+    let terminal = editor.open_terminal_in_active_pane();
+
+    assert!(editor.set_active_buffer_in_pane(left, shared));
+    assert!(editor.set_active_buffer_in_pane(right, shared));
+    assert_eq!(editor.pane_content(left), Some(PaneContent::EditorBuffer { buffer_id: shared }));
+    assert_eq!(editor.pane_content(right), Some(PaneContent::EditorBuffer { buffer_id: shared }));
+
+    assert!(editor.close_pane_item(right, PaneContent::EditorBuffer { buffer_id: shared }));
+
+    assert_eq!(editor.pane_content(left), Some(PaneContent::EditorBuffer { buffer_id: shared }));
+    assert_eq!(editor.pane_content(right), Some(PaneContent::ClientSurface { surface_id: terminal }));
+    assert_eq!(editor.buffer_snapshot(shared).map(|snapshot| snapshot.buffer_id), Some(shared));
+
+    let snapshots = editor.pane_item_snapshots();
+    let left_group = snapshots.iter().find(|group| group.pane_id == left).expect("left pane snapshot");
+    let right_group = snapshots.iter().find(|group| group.pane_id == right).expect("right pane snapshot");
+
+    assert!(left_group.items.iter().any(|item| item.content == PaneContent::EditorBuffer { buffer_id: shared }));
+    assert!(right_group.items.iter().all(|item| item.content != PaneContent::EditorBuffer { buffer_id: shared }));
+    assert!(right_group.items.iter().any(|item| item.content == PaneContent::EditorBuffer { buffer_id: second }));
+    assert!(right_group.items.iter().any(|item| item.content == PaneContent::ClientSurface { surface_id: terminal }));
   }
 
   #[test]

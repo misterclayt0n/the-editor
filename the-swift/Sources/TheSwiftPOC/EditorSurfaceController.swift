@@ -249,7 +249,7 @@ final class EditorSurfaceController: ObservableObject {
     }
 
     func closeOpenItem(_ item: EditorPaneOpenItemRow) {
-        guard EditorFFIBridge.closeOpenItem(handle?.raw, kind: item.kind, itemID: item.itemID) else { return }
+        guard EditorFFIBridge.closeOpenItem(handle?.raw, paneID: item.paneID, kind: item.kind, itemID: item.itemID) else { return }
         refreshSnapshot()
         if item.kind == .buffer {
             focusEditor()
@@ -257,7 +257,14 @@ final class EditorSurfaceController: ObservableObject {
     }
 
     func closeTerminalSurface(_ clientSurfaceID: UInt) {
-        guard EditorFFIBridge.closeOpenItem(handle?.raw, kind: .terminal, itemID: clientSurfaceID) else { return }
+        guard let paneID = openItems.groups
+            .flatMap(\.items)
+            .first(where: { $0.kind == .terminal && $0.clientSurfaceID == clientSurfaceID })?
+            .paneID
+        else {
+            return
+        }
+        guard EditorFFIBridge.closeOpenItem(handle?.raw, paneID: paneID, kind: .terminal, itemID: clientSurfaceID) else { return }
         refreshSnapshot()
     }
 

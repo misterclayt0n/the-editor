@@ -900,7 +900,12 @@ private struct EditorPaneItemStripsOverlayView: View {
                                         controller.focusEditor()
                                     }
                                 },
-                                onCloseItem: controller.closeOpenItem
+                                onCloseItem: { item in
+                                    controller.closeOpenItem(item)
+                                    if item.kind == .buffer {
+                                        controller.focusEditor()
+                                    }
+                                }
                             )
                             .frame(width: availableWidth, height: entry.controlHeight, alignment: .leading)
                             .offset(

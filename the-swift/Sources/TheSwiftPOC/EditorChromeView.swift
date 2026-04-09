@@ -885,10 +885,12 @@ private struct EditorPaneItemStripsOverlayView: View {
                                 group: entry.group,
                                 paneLabel: paneLocationLabel(for: entry.group.paneID, groupIndex: entry.groupIndex, scene: scene),
                                 theme: theme,
+                                canCloseItem: canClose,
                                 onActivateItem: { item in
                                     if item.isActive { return }
                                     controller.activateOpenItem(item)
-                                }
+                                },
+                                onCloseItem: controller.closeOpenItem
                             )
                             .frame(width: availableWidth, height: stripHeight, alignment: .leading)
                             .offset(
@@ -925,6 +927,15 @@ private struct EditorPaneItemStripsOverlayView: View {
         group.items.count > 1 || group.items.contains(where: { $0.kind != .buffer })
     }
 
+    private func canClose(_ item: EditorPaneOpenItemRow) -> Bool {
+        switch item.kind {
+        case .buffer:
+            return controller.bufferTabs.tabs.count > 1
+        case .terminal:
+            return true
+        }
+    }
+
     private func paneFrame(for pane: EditorSnapshotPane, in scene: EditorRenderScene) -> CGRect {
         scene.paneRect(for: pane)
     }
@@ -934,7 +945,9 @@ private struct EditorPaneItemTabStripView: View {
     let group: EditorPaneOpenItemGroup
     let paneLabel: String
     let theme: EditorFileTreeSidebarTheme
+    let canCloseItem: (EditorPaneOpenItemRow) -> Bool
     let onActivateItem: (EditorPaneOpenItemRow) -> Void
+    let onCloseItem: (EditorPaneOpenItemRow) -> Void
 
     var body: some View {
         HStack(spacing: 0) {
@@ -943,7 +956,9 @@ private struct EditorPaneItemTabStripView: View {
                     item: item,
                     theme: theme,
                     isActivePane: group.isActivePane,
-                    onActivate: { onActivateItem(item) }
+                    canClose: canCloseItem(item),
+                    onActivate: { onActivateItem(item) },
+                    onClose: { onCloseItem(item) }
                 )
             }
         }
@@ -963,31 +978,60 @@ private struct EditorPaneItemTabView: View {
     let item: EditorPaneOpenItemRow
     let theme: EditorFileTreeSidebarTheme
     let isActivePane: Bool
+    let canClose: Bool
     let onActivate: () -> Void
+    let onClose: () -> Void
+
+    @State private var isHovered = false
 
     var body: some View {
-        Button(action: onActivate) {
-            HStack(spacing: 6) {
-                Image(systemName: symbolName(for: item.iconName, isDirectory: false))
-                    .font(.system(size: 10, weight: .medium))
-                Text(item.title)
-                    .font(.system(size: 10.5, weight: item.isActive ? .semibold : .medium))
-                    .lineLimit(1)
-                if item.isModified {
-                    Circle()
-                        .fill(Color(nsColor: theme.selectionColor).opacity(0.92))
-                        .frame(width: 4, height: 4)
+        HStack(spacing: 4) {
+            Button(action: onActivate) {
+                HStack(spacing: 6) {
+                    Image(systemName: symbolName(for: item.iconName, isDirectory: false))
+                        .font(.system(size: 10, weight: .medium))
+                    Text(item.title)
+                        .font(.system(size: 10.5, weight: item.isActive ? .semibold : .medium))
+                        .lineLimit(1)
+                    if item.isModified {
+                        Circle()
+                            .fill(Color(nsColor: theme.selectionColor).opacity(0.92))
+                            .frame(width: 4, height: 4)
+                    }
                 }
+                .foregroundStyle(foregroundColor)
+                .padding(.leading, 10)
+                .frame(maxWidth: .infinity, minHeight: 22, maxHeight: 22, alignment: .leading)
+                .contentShape(Rectangle())
             }
-            .foregroundStyle(foregroundColor)
-            .padding(.horizontal, 10)
-            .frame(maxWidth: .infinity, minHeight: 22, maxHeight: 22, alignment: .leading)
-            .background(tabBackground)
-            .overlay(tabBorder)
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+
+            if canClose {
+                Button(action: onClose) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(Color(nsColor: closeButtonForegroundColor))
+                        .frame(width: 14, height: 14)
+                        .background(
+                            Circle()
+                                .fill(Color(nsColor: closeButtonBackgroundColor))
+                        )
+                }
+                .buttonStyle(.plain)
+                .padding(.trailing, 6)
+                .help("Close \(item.title)")
+                .accessibilityLabel("Close \(item.title)")
+            }
         }
-        .buttonStyle(.plain)
+        .frame(maxWidth: .infinity, minHeight: 22, maxHeight: 22, alignment: .leading)
+        .background(tabBackground)
+        .overlay(tabBorder)
+        .contentShape(Rectangle())
+        .onHover { hovering in
+            isHovered = hovering
+        }
         .help(item.filePath ?? item.title)
+        .accessibilityElement(children: .contain)
         .accessibilityLabel(item.title)
     }
 
@@ -1037,6 +1081,23 @@ private struct EditorPaneItemTabView: View {
 
     private var inactiveBorderColor: Color {
         Color(nsColor: theme.separatorColor).opacity(0.68)
+    }
+
+    private var closeButtonForegroundColor: NSColor {
+        if item.isActive || isHovered {
+            return .labelColor
+        }
+        return .secondaryLabelColor
+    }
+
+    private var closeButtonBackgroundColor: NSColor {
+        if item.isActive {
+            return theme.selectionColor.withAlphaComponent(0.18)
+        }
+        if isHovered {
+            return theme.hoverColor.withAlphaComponent(0.95)
+        }
+        return NSColor.tertiaryLabelColor.withAlphaComponent(0.08)
     }
 }
 

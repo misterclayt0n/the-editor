@@ -95,13 +95,15 @@ struct EditorChromeView: View {
                     scrollPerfLog("fileTree.sidebar disappear")
                 }
             case .buffers:
-                EditorBufferTabsSidebarView(
-                    bufferTabs: controller.bufferTabs,
+                EditorOpenItemsSidebarView(
+                    openItems: controller.openItems,
+                    scene: controller.scene,
+                    uniqueBufferCount: controller.bufferTabs.tabs.count,
                     theme: sidebarTheme,
                     sidebarMode: sidebarMode,
                     onSelectSidebarMode: selectSidebarMode,
-                    onActivateBuffer: controller.activateBufferTab,
-                    onCloseBuffer: controller.closeBufferTab,
+                    onActivateItem: controller.activateOpenItem,
+                    onCloseItem: controller.closeOpenItem,
                     onFocusSidebar: { controller.setFileTreeActive(false) }
                 )
                 .onAppear {
@@ -535,13 +537,15 @@ private struct EditorFileTreeSidebarView: View {
     }
 }
 
-private struct EditorBufferTabsSidebarView: View {
-    let bufferTabs: EditorBufferTabsState
+private struct EditorOpenItemsSidebarView: View {
+    let openItems: EditorPaneOpenItemsState
+    let scene: EditorRenderScene?
+    let uniqueBufferCount: Int
     let theme: EditorFileTreeSidebarTheme
     let sidebarMode: EditorSidebarMode
     let onSelectSidebarMode: (EditorSidebarMode) -> Void
-    let onActivateBuffer: (UInt) -> Void
-    let onCloseBuffer: (UInt) -> Void
+    let onActivateItem: (EditorPaneOpenItemRow) -> Void
+    let onCloseItem: (EditorPaneOpenItemRow) -> Void
     let onFocusSidebar: () -> Void
 
     var body: some View {
@@ -549,7 +553,7 @@ private struct EditorBufferTabsSidebarView: View {
             EditorSidebarHeaderView(
                 systemImage: "square.stack.3d.up.fill",
                 title: "Open Items",
-                helpText: "Open items",
+                helpText: "Open items grouped by pane",
                 theme: theme,
                 sidebarMode: sidebarMode,
                 onSelectSidebarMode: onSelectSidebarMode,
@@ -557,14 +561,12 @@ private struct EditorBufferTabsSidebarView: View {
             )
 
             ScrollView(.vertical, showsIndicators: true) {
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    EditorSidebarSectionHeaderView(title: "Buffers", count: bufferTabs.tabs.count)
-
-                    if bufferTabs.tabs.isEmpty {
+                LazyVStack(alignment: .leading, spacing: 10) {
+                    if openItems.groups.isEmpty {
                         VStack(alignment: .leading, spacing: 6) {
-                            Text("No Open Buffers")
+                            Text("No Open Items")
                                 .font(.system(size: 12, weight: .semibold))
-                            Text("Open files will appear here.")
+                            Text("Open buffers and pane-local items will appear here.")
                                 .font(.system(size: 11))
                                 .foregroundStyle(.secondary)
                         }
@@ -572,21 +574,32 @@ private struct EditorBufferTabsSidebarView: View {
                         .padding(.horizontal, 14)
                         .padding(.vertical, 16)
                     } else {
-                        ForEach(bufferTabs.tabs) { tab in
-                            EditorBufferTabSidebarRowView(
-                                tab: tab,
-                                theme: theme,
-                                canClose: bufferTabs.tabs.count > 1,
-                                onActivate: {
-                                    onFocusSidebar()
-                                    onActivateBuffer(tab.bufferID)
-                                },
-                                onClose: {
-                                    onCloseBuffer(tab.bufferID)
+                        ForEach(Array(openItems.groups.enumerated()), id: \.element.id) { groupIndex, group in
+                            VStack(alignment: .leading, spacing: 4) {
+                                EditorOpenItemsGroupHeaderView(
+                                    title: paneLocationLabel(for: group.paneID, groupIndex: groupIndex, scene: scene),
+                                    count: group.items.count,
+                                    isActivePane: group.isActivePane,
+                                    theme: theme
+                                )
+
+                                ForEach(group.items) { item in
+                                    EditorOpenItemSidebarRowView(
+                                        item: item,
+                                        theme: theme,
+                                        canClose: canClose(item),
+                                        onActivate: {
+                                            onFocusSidebar()
+                                            onActivateItem(item)
+                                        },
+                                        onClose: {
+                                            onCloseItem(item)
+                                        }
+                                    )
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 1)
                                 }
-                            )
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 1)
+                            }
                         }
                     }
                 }
@@ -598,33 +611,45 @@ private struct EditorBufferTabsSidebarView: View {
         .background(Color(nsColor: theme.backgroundColor))
         .environment(\.colorScheme, theme.backgroundColor.isLightColor ? .light : .dark)
     }
+
+    private func canClose(_ item: EditorPaneOpenItemRow) -> Bool {
+        switch item.kind {
+        case .buffer:
+            return uniqueBufferCount > 1
+        case .terminal:
+            return true
+        }
+    }
 }
 
-private struct EditorSidebarSectionHeaderView: View {
+private struct EditorOpenItemsGroupHeaderView: View {
     let title: String
-    let count: Int?
+    let count: Int
+    let isActivePane: Bool
+    let theme: EditorFileTreeSidebarTheme
 
     var body: some View {
         HStack(spacing: 6) {
-            Text(title.uppercased())
+            Circle()
+                .fill(Color(nsColor: isActivePane ? theme.selectionColor : theme.separatorColor))
+                .frame(width: 5, height: 5)
+            Text(title)
                 .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(.secondary)
-                .tracking(0.5)
-            if let count {
-                Text("\(count)")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(.secondary.opacity(0.85))
-            }
+                .foregroundStyle(isActivePane ? .primary : .secondary)
+                .tracking(0.4)
+            Text("\(count)")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(.secondary.opacity(0.85))
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 12)
         .padding(.top, 4)
-        .padding(.bottom, 6)
+        .padding(.bottom, 4)
     }
 }
 
-private struct EditorBufferTabSidebarRowView: View {
-    let tab: EditorBufferTabRow
+private struct EditorOpenItemSidebarRowView: View {
+    let item: EditorPaneOpenItemRow
     let theme: EditorFileTreeSidebarTheme
     let canClose: Bool
     let onActivate: () -> Void
@@ -637,22 +662,22 @@ private struct EditorBufferTabSidebarRowView: View {
             Rectangle()
                 .fill(Color(nsColor: leadingRailColor))
                 .frame(width: 2)
-                .opacity(tab.isActive ? 1 : 0)
+                .opacity(item.isActive ? 1 : 0)
 
             Button(action: onActivate) {
                 HStack(spacing: 8) {
-                    Image(systemName: symbolName(for: tab.iconName, isDirectory: false))
+                    Image(systemName: symbolName(for: item.iconName, isDirectory: false))
                         .font(.system(size: 11, weight: .regular))
                         .foregroundStyle(Color(nsColor: iconColor))
                         .frame(width: 12)
 
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(tab.title)
-                            .font(.system(size: 12, weight: tab.isActive ? .semibold : .regular))
+                        Text(item.title)
+                            .font(.system(size: 12, weight: item.isActive ? .semibold : .regular))
                             .foregroundStyle(rowTextColor)
                             .lineLimit(1)
-                        if let directoryHint = tab.directoryHint, !directoryHint.isEmpty {
-                            Text(directoryHint)
+                        if let subtitle = item.subtitle, !subtitle.isEmpty {
+                            Text(subtitle)
                                 .font(.system(size: 10, weight: .medium))
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
@@ -662,13 +687,13 @@ private struct EditorBufferTabSidebarRowView: View {
                     Spacer(minLength: 8)
 
                     EditorSidebarRowDecorationsView(
-                        vcsKind: tab.vcsKind,
-                        diagnosticSeverity: tab.diagnosticSeverity
+                        vcsKind: item.vcsKind,
+                        diagnosticSeverity: item.diagnosticSeverity
                     )
 
-                    if tab.isModified {
+                    if item.isModified {
                         Circle()
-                            .fill(Color(nsColor: tab.isActive ? theme.selectionColor : .secondaryLabelColor).opacity(tab.isActive ? 0.95 : 0.82))
+                            .fill(Color(nsColor: item.isActive ? theme.selectionColor : .secondaryLabelColor).opacity(item.isActive ? 0.95 : 0.82))
                             .frame(width: 5, height: 5)
                     }
                 }
@@ -694,8 +719,8 @@ private struct EditorBufferTabSidebarRowView: View {
             .disabled(!canClose)
             .opacity(closeButtonOpacity)
             .padding(.trailing, 6)
-            .help(canClose ? "Close \(tab.title)" : "Cannot close the last buffer")
-            .accessibilityLabel(canClose ? "Close \(tab.title)" : "Cannot close the last buffer")
+            .help(canClose ? "Close \(item.title)" : "Cannot close the last buffer")
+            .accessibilityLabel(canClose ? "Close \(item.title)" : "Cannot close the last buffer")
         }
         .background(selectionBackground)
         .clipShape(.rect(cornerRadius: 6))
@@ -703,7 +728,7 @@ private struct EditorBufferTabSidebarRowView: View {
         .onHover { hovering in
             isHovered = hovering
         }
-        .help(tab.filePath ?? tab.title)
+        .help(item.filePath ?? item.title)
         .accessibilityElement(children: .contain)
     }
 
@@ -714,7 +739,7 @@ private struct EditorBufferTabSidebarRowView: View {
     }
 
     private var backgroundColor: Color {
-        if tab.isActive {
+        if item.isActive {
             return Color(nsColor: theme.selectionColor).opacity(0.24)
         }
         if isHovered {
@@ -728,7 +753,7 @@ private struct EditorBufferTabSidebarRowView: View {
     }
 
     private var iconColor: NSColor {
-        if tab.isActive {
+        if item.isActive {
             return .labelColor
         }
         return .tertiaryLabelColor
@@ -738,14 +763,14 @@ private struct EditorBufferTabSidebarRowView: View {
         if !canClose {
             return .tertiaryLabelColor
         }
-        if tab.isActive || isHovered {
+        if item.isActive || isHovered {
             return .labelColor
         }
         return .secondaryLabelColor
     }
 
     private var closeButtonBackgroundColor: NSColor {
-        if tab.isActive {
+        if item.isActive {
             return theme.selectionColor.withAlphaComponent(0.18)
         }
         if isHovered {
@@ -758,15 +783,62 @@ private struct EditorBufferTabSidebarRowView: View {
         if !canClose {
             return 0.3
         }
-        if tab.isActive || isHovered {
+        if item.isActive || isHovered {
             return 0.95
         }
         return 0.55
     }
 
     private var rowTextColor: Color {
-        tab.isActive ? .primary : .primary.opacity(0.88)
+        item.isActive ? .primary : .primary.opacity(0.88)
     }
+}
+
+private func paneLocationLabel(for paneID: UInt, groupIndex: Int, scene: EditorRenderScene?) -> String {
+    guard let scene,
+          let pane = scene.panes.first(where: { $0.paneID == paneID })
+    else {
+        return "pane \(groupIndex + 1)"
+    }
+
+    let maxX = scene.panes.map { $0.x + $0.width }.max() ?? max(pane.x + pane.width, 1)
+    let maxY = scene.panes.map { $0.y + $0.height }.max() ?? max(pane.y + pane.height, 1)
+    let centerX = Double(pane.x) + Double(pane.width) / 2
+    let centerY = Double(pane.y) + Double(pane.height) / 2
+    let horizontal: String
+    if centerX <= Double(maxX) * 0.35 {
+        horizontal = "left"
+    } else if centerX >= Double(maxX) * 0.65 {
+        horizontal = "right"
+    } else {
+        horizontal = "center"
+    }
+    let vertical: String
+    if centerY <= Double(maxY) * 0.45 {
+        vertical = "top"
+    } else {
+        vertical = "bottom"
+    }
+
+    let arrow: String = switch (vertical, horizontal) {
+    case ("top", "left"):
+        "↖"
+    case ("top", "right"):
+        "↗"
+    case ("bottom", "left"):
+        "↙"
+    case ("bottom", "right"):
+        "↘"
+    case ("top", _):
+        "↑"
+    case (_, "left"):
+        "←"
+    case (_, "right"):
+        "→"
+    default:
+        "↓"
+    }
+    return "pane \(groupIndex + 1) \(arrow)"
 }
 
 private struct EditorFileTreeListRepresentable: NSViewRepresentable {

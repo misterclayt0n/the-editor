@@ -21,6 +21,7 @@ mod inline_completion;
 mod input;
 mod keymap;
 mod message_bar;
+mod open_items;
 mod overlay_layout;
 mod pending;
 mod render_waker;
@@ -59,6 +60,18 @@ pub use command::{
   handle_pointer_event,
   render_plan,
   render_plan_with_styles,
+};
+pub use open_items::{
+  OpenItemKind,
+  PaneOpenItemGroupSnapshot,
+  PaneOpenItemSnapshot,
+  PaneOpenItemsSnapshot,
+  PaneOpenItemsSnapshotOptions,
+  decorate_pane_open_items_snapshot,
+  pane_open_items_snapshot,
+  pane_open_items_snapshot_for_editor,
+  pane_open_items_snapshot_for_editor_with_options,
+  pane_open_items_snapshot_with_options,
 };
 pub use command_palette::{
   CommandPaletteAction,

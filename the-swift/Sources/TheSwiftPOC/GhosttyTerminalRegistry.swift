@@ -449,14 +449,21 @@ private final class GhosttyTerminalSurfaceView: NSView {
             super.keyDown(with: event)
             return
         }
-        var keyEvent = ghostty_input_key_s()
-        keyEvent.action = event.isARepeat ? GHOSTTY_ACTION_REPEAT : GHOSTTY_ACTION_PRESS
-        keyEvent.mods = mods(from: event.modifierFlags)
-        keyEvent.consumed_mods = consumedMods(from: event.modifierFlags)
-        keyEvent.keycode = UInt32(event.keyCode)
-        keyEvent.text = nil
-        keyEvent.unshifted_codepoint = event.charactersIgnoringModifiers?.unicodeScalars.first.map(\.value) ?? 0
-        keyEvent.composing = false
+
+        var keyEvent = ghosttyKeyEvent(
+            action: event.isARepeat ? GHOSTTY_ACTION_REPEAT : GHOSTTY_ACTION_PRESS,
+            for: event
+        )
+        if let text = ghosttyText(for: event),
+           let firstByte = text.utf8.first,
+           firstByte >= 0x20 {
+            text.withCString { pointer in
+                keyEvent.text = pointer
+                _ = ghostty_surface_key(surface, keyEvent)
+            }
+            return
+        }
+
         _ = ghostty_surface_key(surface, keyEvent)
     }
 
@@ -465,14 +472,7 @@ private final class GhosttyTerminalSurfaceView: NSView {
             super.keyUp(with: event)
             return
         }
-        var keyEvent = ghostty_input_key_s()
-        keyEvent.action = GHOSTTY_ACTION_RELEASE
-        keyEvent.mods = mods(from: event.modifierFlags)
-        keyEvent.consumed_mods = consumedMods(from: event.modifierFlags)
-        keyEvent.keycode = UInt32(event.keyCode)
-        keyEvent.text = nil
-        keyEvent.unshifted_codepoint = event.charactersIgnoringModifiers?.unicodeScalars.first.map(\.value) ?? 0
-        keyEvent.composing = false
+        let keyEvent = ghosttyKeyEvent(action: GHOSTTY_ACTION_RELEASE, for: event)
         _ = ghostty_surface_key(surface, keyEvent)
     }
 
@@ -547,6 +547,43 @@ private final class GhosttyTerminalSurfaceView: NSView {
         ghostty_surface_mouse_pos(surface, point.x, bounds.height - point.y, mods(from: event.modifierFlags))
     }
 
+    private func ghosttyKeyEvent(
+        action: ghostty_input_action_e,
+        for event: NSEvent,
+        translationModifiers: NSEvent.ModifierFlags? = nil
+    ) -> ghostty_input_key_s {
+        var keyEvent = ghostty_input_key_s()
+        keyEvent.action = action
+        keyEvent.keycode = UInt32(event.keyCode)
+        keyEvent.mods = mods(from: event.modifierFlags)
+        keyEvent.consumed_mods = consumedMods(from: translationModifiers ?? event.modifierFlags)
+        keyEvent.text = nil
+        keyEvent.composing = false
+        if let chars = event.characters(byApplyingModifiers: []),
+           let codepoint = chars.unicodeScalars.first {
+            keyEvent.unshifted_codepoint = codepoint.value
+        } else {
+            keyEvent.unshifted_codepoint = 0
+        }
+        return keyEvent
+    }
+
+    private func ghosttyText(for event: NSEvent) -> String? {
+        guard let characters = event.characters, !characters.isEmpty else {
+            return nil
+        }
+        if characters.count == 1,
+           let scalar = characters.unicodeScalars.first {
+            if scalar.value < 0x20 {
+                return event.characters(byApplyingModifiers: event.modifierFlags.subtracting(.control))
+            }
+            if scalar.value >= 0xF700 && scalar.value <= 0xF8FF {
+                return nil
+            }
+        }
+        return characters
+    }
+
     private func mods(from flags: NSEvent.ModifierFlags) -> ghostty_input_mods_e {
         let flags = flags.intersection(.deviceIndependentFlagsMask)
         var raw = GHOSTTY_MODS_NONE.rawValue
@@ -554,15 +591,12 @@ private final class GhosttyTerminalSurfaceView: NSView {
         if flags.contains(.control) { raw |= GHOSTTY_MODS_CTRL.rawValue }
         if flags.contains(.option) { raw |= GHOSTTY_MODS_ALT.rawValue }
         if flags.contains(.command) { raw |= GHOSTTY_MODS_SUPER.rawValue }
+        if flags.contains(.capsLock) { raw |= GHOSTTY_MODS_CAPS.rawValue }
         return ghostty_input_mods_e(rawValue: raw)
     }
 
     private func consumedMods(from flags: NSEvent.ModifierFlags) -> ghostty_input_mods_e {
-        let flags = flags.intersection(.deviceIndependentFlagsMask)
-        var raw = GHOSTTY_MODS_NONE.rawValue
-        if flags.contains(.shift) { raw |= GHOSTTY_MODS_SHIFT.rawValue }
-        if flags.contains(.option) { raw |= GHOSTTY_MODS_ALT.rawValue }
-        return ghostty_input_mods_e(rawValue: raw)
+        mods(from: flags.subtracting([.control, .command]))
     }
 }
 #endif

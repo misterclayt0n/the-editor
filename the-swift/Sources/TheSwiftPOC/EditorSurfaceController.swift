@@ -251,6 +251,9 @@ final class EditorSurfaceController: ObservableObject {
     func closeOpenItem(_ item: EditorPaneOpenItemRow) {
         guard EditorFFIBridge.closeOpenItem(handle?.raw, kind: item.kind, itemID: item.itemID) else { return }
         refreshSnapshot()
+        if item.kind == .buffer {
+            focusEditor()
+        }
     }
 
     func closeTerminalSurface(_ clientSurfaceID: UInt) {

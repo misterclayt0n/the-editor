@@ -12853,6 +12853,7 @@ pub unsafe extern "C" fn the_editor_string_free(value: *mut c_char) {
 mod tests {
   use super::*;
   use std::path::Path;
+  use the_lib::editor::PaneContentKind;
 
   #[test]
   fn current_active_file_path_prefers_editor_state_over_cached_path() {
@@ -12864,5 +12865,23 @@ mod tests {
 
     assert_eq!(editor.current_active_file_path(), Some(Path::new("/tmp/current.c")));
     assert_eq!(DefaultContext::file_path(&editor), Some(Path::new("/tmp/current.c")));
+  }
+
+  #[test]
+  fn embedded_terminal_ui_open_and_close_switches_active_pane() {
+    let mut editor = SwiftEditor::new(None);
+    let active_pane = editor.editor.active_pane_id();
+
+    assert_eq!(editor.editor.pane_content_kind(active_pane), Some(PaneContentKind::EditorBuffer));
+    assert!(!editor.open_terminal_in_active_pane_ui());
+
+    assert!(editor.set_embedded_terminal_enabled(true));
+    assert!(editor.open_terminal_in_active_pane_ui());
+    assert_eq!(editor.editor.pane_content_kind(active_pane), Some(PaneContentKind::ClientSurface));
+    assert!(editor.editor.is_active_pane_terminal());
+
+    assert!(editor.close_terminal_in_active_pane_ui());
+    assert_eq!(editor.editor.pane_content_kind(active_pane), Some(PaneContentKind::EditorBuffer));
+    assert!(!editor.editor.is_active_pane_terminal());
   }
 }

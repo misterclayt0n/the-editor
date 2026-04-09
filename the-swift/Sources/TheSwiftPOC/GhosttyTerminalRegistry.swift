@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import QuartzCore
 
 #if canImport(GhosttyKit)
 import GhosttyKit
@@ -28,12 +29,14 @@ final class GhosttyTerminalRegistry {
         in containerView: NSView,
         editorSurfaceView: NSView
     ) {
+        let visibleTerminalPanes = scene?.panes.filter { $0.kind == .clientSurface && $0.clientSurfaceID != nil } ?? []
         let allSurfaceIDs = Set(openItems.groups.flatMap { group in
             group.items.compactMap { item -> UInt? in
                 guard item.kind == .terminal else { return nil }
                 return item.clientSurfaceID
             }
         })
+        .union(visibleTerminalPanes.compactMap(\.clientSurfaceID))
 
         for surfaceID in allSurfaceIDs where viewsBySurfaceID[surfaceID] == nil {
             let view = GhosttyTerminalSurfaceView(
@@ -54,7 +57,6 @@ final class GhosttyTerminalRegistry {
             viewsBySurfaceID.removeValue(forKey: surfaceID)
         }
 
-        let visibleTerminalPanes = scene?.panes.filter { $0.kind == .clientSurface && $0.clientSurfaceID != nil } ?? []
         let visibleSurfaceIDs = Set(visibleTerminalPanes.compactMap(\.clientSurfaceID))
 
         for (surfaceID, view) in viewsBySurfaceID where !visibleSurfaceIDs.contains(surfaceID) {
@@ -184,10 +186,17 @@ private final class GhosttyEmbeddedRuntime {
         guard app == nil else { return }
         if !didInitializeLibrary {
             didInitializeLibrary = true
-            _ = ghostty_init(UInt(CommandLine.argc), CommandLine.unsafeArgv)
+            let result = ghostty_init(UInt(CommandLine.argc), CommandLine.unsafeArgv)
+            if result != GHOSTTY_SUCCESS {
+                ghosttyLog("ghostty_init failed result=\(result)")
+                return
+            }
         }
 
-        guard let primaryConfig = ghostty_config_new() else { return }
+        guard let primaryConfig = ghostty_config_new() else {
+            ghosttyLog("ghostty_config_new failed for primary config")
+            return
+        }
         ghostty_config_load_default_files(primaryConfig)
         ghostty_config_load_recursive_files(primaryConfig)
         ghostty_config_finalize(primaryConfig)
@@ -213,10 +222,17 @@ private final class GhosttyEmbeddedRuntime {
             app = createdApp
             config = primaryConfig
         } else {
+            ghosttyLog("ghostty_app_new failed for primary config")
+            logConfigDiagnostics(primaryConfig, label: "primary")
             ghostty_config_free(primaryConfig)
-            guard let fallbackConfig = ghostty_config_new() else { return }
+            guard let fallbackConfig = ghostty_config_new() else {
+                ghosttyLog("ghostty_config_new failed for fallback config")
+                return
+            }
             ghostty_config_finalize(fallbackConfig)
             guard let createdApp = ghostty_app_new(&runtimeConfig, fallbackConfig) else {
+                ghosttyLog("ghostty_app_new failed for fallback config")
+                logConfigDiagnostics(fallbackConfig, label: "fallback")
                 ghostty_config_free(fallbackConfig)
                 return
             }
@@ -224,7 +240,10 @@ private final class GhosttyEmbeddedRuntime {
             config = fallbackConfig
         }
 
-        guard let app else { return }
+        guard let app else {
+            ghosttyLog("ghostty runtime failed to initialize app")
+            return
+        }
         ghostty_app_set_focus(app, NSApp.isActive)
         let center = NotificationCenter.default
         appObservers.append(center.addObserver(
@@ -244,6 +263,20 @@ private final class GhosttyEmbeddedRuntime {
             ghostty_app_set_focus(app, false)
         })
     }
+
+    private func logConfigDiagnostics(_ config: ghostty_config_t, label: String) {
+        let count = Int(ghostty_config_diagnostics_count(config))
+        guard count > 0 else { return }
+        for index in 0..<count {
+            let diagnostic = ghostty_config_get_diagnostic(config, UInt32(index))
+            let message = diagnostic.message.map { String(cString: $0) } ?? "(null)"
+            ghosttyLog("config[\(label)] diagnostic[\(index)]=\(message)")
+        }
+    }
+}
+
+private func ghosttyLog(_ message: String) {
+    fputs("[the-swift:ghostty] \(message)\n", stderr)
 }
 
 private final class GhosttySurfaceCallbackContext {
@@ -270,6 +303,14 @@ private final class GhosttyTerminalSurfaceView: NSView {
 
     override var acceptsFirstResponder: Bool { true }
 
+    override func makeBackingLayer() -> CALayer {
+        let metalLayer = CAMetalLayer()
+        metalLayer.pixelFormat = .bgra8Unorm
+        metalLayer.isOpaque = false
+        metalLayer.framebufferOnly = false
+        return metalLayer
+    }
+
     init(
         clientSurfaceID: UInt,
         runtime: GhosttyEmbeddedRuntime,
@@ -282,6 +323,8 @@ private final class GhosttyTerminalSurfaceView: NSView {
         super.init(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
         wantsLayer = true
         layer?.backgroundColor = NSColor.clear.cgColor
+        layer?.isOpaque = false
+        layer?.masksToBounds = true
         callbackContext = Unmanaged.passRetained(GhosttySurfaceCallbackContext(
             clientSurfaceID: clientSurfaceID,
             onCloseRequested: onCloseRequested
@@ -303,16 +346,19 @@ private final class GhosttyTerminalSurfaceView: NSView {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        createSurfaceIfNeeded()
         synchronizeSurfaceGeometry()
     }
 
     override func viewDidChangeBackingProperties() {
         super.viewDidChangeBackingProperties()
+        createSurfaceIfNeeded()
         synchronizeSurfaceGeometry()
     }
 
     override func layout() {
         super.layout()
+        createSurfaceIfNeeded()
         synchronizeSurfaceGeometry()
     }
 
@@ -423,9 +469,9 @@ private final class GhosttyTerminalSurfaceView: NSView {
     }
 
     private func createSurfaceIfNeeded() {
-        guard surface == nil,
-              let app = runtime.appHandle()
-        else {
+        guard surface == nil else { return }
+        guard let app = runtime.appHandle() else {
+            ghosttyLog("surface \(clientSurfaceID) waiting for runtime app")
             return
         }
 
@@ -448,11 +494,15 @@ private final class GhosttyTerminalSurfaceView: NSView {
             surface = ghostty_surface_new(app, &surfaceConfig)
         }
 
+        guard let surface else {
+            ghosttyLog("ghostty_surface_new failed for clientSurfaceID=\(clientSurfaceID)")
+            return
+        }
+
+        synchronizeDisplayID()
         synchronizeSurfaceGeometry()
         updateVisibility(isSurfaceVisible)
-        if let surface {
-            ghostty_surface_refresh(surface)
-        }
+        ghostty_surface_refresh(surface)
     }
 
     private func synchronizeSurfaceGeometry() {

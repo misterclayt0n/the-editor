@@ -2,6 +2,23 @@
 import Foundation
 import PackageDescription
 
+func ghosttyKitCandidates(in root: String, fileManager: FileManager) -> [String] {
+    guard fileManager.fileExists(atPath: root),
+          let enumerator = fileManager.enumerator(atPath: root)
+    else {
+        return []
+    }
+
+    var candidates: [String] = []
+    for case let relativePath as String in enumerator {
+        guard relativePath.hasSuffix("/GhosttyKit.xcframework") || relativePath == "GhosttyKit.xcframework" else {
+            continue
+        }
+        candidates.append((root as NSString).appendingPathComponent(relativePath))
+    }
+    return candidates.sorted()
+}
+
 func resolveGhosttyKitSourcePath() -> String? {
     let fileManager = FileManager.default
     let explicitPath = ProcessInfo.processInfo.environment["THE_EDITOR_GHOSTTYKIT_XCFRAMEWORK_PATH"]
@@ -10,21 +27,26 @@ func resolveGhosttyKitSourcePath() -> String? {
         return explicitPath
     }
 
-    let cacheRoot = NSString(string: "~/.cache/the-editor/ghosttykit").expandingTildeInPath
-    guard fileManager.fileExists(atPath: cacheRoot),
-          let enumerator = fileManager.enumerator(atPath: cacheRoot)
-    else {
-        return nil
+    let packageRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent().path
+    let localPaths = [
+        (packageRoot as NSString).appendingPathComponent("GhosttyKit.xcframework"),
+        ((packageRoot as NSString).deletingLastPathComponent as NSString).appendingPathComponent("GhosttyKit.xcframework")
+    ]
+    for path in localPaths where fileManager.fileExists(atPath: path) {
+        return path
     }
 
-    var candidates: [String] = []
-    for case let relativePath as String in enumerator {
-        guard relativePath.hasSuffix("/GhosttyKit.xcframework") || relativePath == "GhosttyKit.xcframework" else {
-            continue
+    let cacheRoots = [
+        NSString(string: "~/.cache/cmux/ghosttykit").expandingTildeInPath,
+        NSString(string: "~/.cache/the-editor/ghosttykit").expandingTildeInPath,
+    ]
+    for cacheRoot in cacheRoots {
+        if let match = ghosttyKitCandidates(in: cacheRoot, fileManager: fileManager).last {
+            return match
         }
-        candidates.append((cacheRoot as NSString).appendingPathComponent(relativePath))
     }
-    return candidates.sorted().last
+
+    return nil
 }
 
 func relativePath(from basePath: String, to destinationPath: String) -> String {

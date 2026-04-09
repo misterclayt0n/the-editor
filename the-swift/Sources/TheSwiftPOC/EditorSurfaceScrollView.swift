@@ -5,9 +5,12 @@ import Foundation
 final class EditorSurfaceScrollView: NSView, EditorSurfaceControllerDelegate {
     let controller: EditorSurfaceController
     let surfaceView: EditorSurfaceView
+    let terminalContainerView = GhosttyTerminalOverlayContainerView()
+    let terminalRegistry: GhosttyTerminalRegistry
 
     init(controller: EditorSurfaceController) {
         self.controller = controller
+        self.terminalRegistry = GhosttyTerminalRegistry(controller: controller)
         guard let surfaceView = EditorSurfaceView(controller: controller) else {
             fatalError("failed to create metal-backed editor surface")
         }
@@ -17,6 +20,7 @@ final class EditorSurfaceScrollView: NSView, EditorSurfaceControllerDelegate {
         controller.delegate = self
         controller.editorFirstResponder = surfaceView
         addSubview(surfaceView)
+        addSubview(terminalContainerView)
         controller.refreshSnapshot()
     }
 
@@ -28,12 +32,19 @@ final class EditorSurfaceScrollView: NSView, EditorSurfaceControllerDelegate {
     override func layout() {
         super.layout()
         surfaceView.frame = bounds
+        terminalContainerView.frame = bounds
     }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         if let scene = controller.scene {
             updateWindowResizeIncrements(scene)
+            terminalRegistry.reconcile(
+                scene: scene,
+                openItems: controller.openItems,
+                in: terminalContainerView,
+                editorSurfaceView: surfaceView
+            )
         }
     }
 
@@ -49,6 +60,12 @@ final class EditorSurfaceScrollView: NSView, EditorSurfaceControllerDelegate {
 
     func editorController(_ controller: EditorSurfaceController, didUpdateScene scene: EditorRenderScene) {
         surfaceView.update(scene: scene)
+        terminalRegistry.reconcile(
+            scene: scene,
+            openItems: controller.openItems,
+            in: terminalContainerView,
+            editorSurfaceView: surfaceView
+        )
         updateWindowResizeIncrements(scene)
     }
 

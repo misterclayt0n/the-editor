@@ -49,6 +49,17 @@ struct EditorCommandMenu: Commands {
                 controller.toggleCommandPalette()
             }
             .keyboardShortcut("p", modifiers: [.command, .shift])
+
+            Divider()
+
+            Button("New Terminal") {
+                controller.openTerminalInActivePane()
+            }
+            .keyboardShortcut("t", modifiers: [.command, .shift])
+
+            Button("Close Active Terminal") {
+                controller.closeTerminalInActivePane()
+            }
         }
     }
 }

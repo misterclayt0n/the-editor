@@ -1063,6 +1063,14 @@ impl Editor {
     self.attach_client_surface_to_pane(self.active_pane_id(), surface_id)
   }
 
+  pub fn set_active_client_surface_in_pane(
+    &mut self,
+    pane: PaneId,
+    surface_id: ClientSurfaceId,
+  ) -> bool {
+    self.attach_client_surface_to_pane(pane, surface_id)
+  }
+
   pub fn replace_active_pane_with_client_surface(&mut self, surface_id: ClientSurfaceId) -> bool {
     self.open_client_surface_in_active_pane(surface_id)
   }
@@ -1087,6 +1095,10 @@ impl Editor {
     else {
       return false;
     };
+    self.remove_client_surface(surface_id)
+  }
+
+  pub fn close_client_surface(&mut self, surface_id: ClientSurfaceId) -> bool {
     self.remove_client_surface(surface_id)
   }
 

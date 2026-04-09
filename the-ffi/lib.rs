@@ -89,6 +89,8 @@ use the_default::{
   StatuslineEmphasis,
   ThemeCatalog,
   WorkingDirectoryState,
+  OpenItemKind,
+  PaneOpenItemsSnapshotOptions,
   activate_buffer_tab,
   activate_file_tree_index,
   build_dispatch,
@@ -97,7 +99,6 @@ use the_default::{
   builtin_completion_menu_keymaps,
   builtin_keymaps,
   clear_file_tree_decorations,
-  close_buffer_tab,
   close_completion_menu,
   close_file_picker,
   collapse_file_tree_vcs_statuses,
@@ -105,6 +106,7 @@ use the_default::{
   command_palette_placeholder_text,
   command_palette_selected_filtered_index,
   decorate_buffer_tabs_snapshot,
+  decorate_pane_open_items_snapshot,
   completion_accept,
   completion_docs_panel_rect,
   completion_panel_rect,
@@ -127,6 +129,7 @@ use the_default::{
   open_command_palette,
   open_custom_picker,
   open_dynamic_picker,
+  pane_open_items_snapshot_with_options,
   poll_file_tree_watch,
   poll_scan_results,
   rebuild_file_tree_diagnostic_statuses,
@@ -177,6 +180,7 @@ use the_lib::{
   },
   editor::{
     BufferId,
+    ClientSurfaceId,
     Editor,
     EditorId,
     PaneContent,
@@ -778,6 +782,40 @@ pub struct the_editor_snapshot_buffer_tab_t {
 }
 
 #[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct the_editor_snapshot_open_items_t {
+  pub visible:          bool,
+  pub group_count:      usize,
+  pub total_item_count: usize,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct the_editor_snapshot_open_item_group_t {
+  pub pane_id:        usize,
+  pub is_active_pane: bool,
+  pub active_index:   i32,
+  pub item_count:     usize,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct the_editor_snapshot_open_item_t {
+  pub kind:                u8,
+  pub item_id:             usize,
+  pub buffer_id:           usize,
+  pub client_surface_id:   usize,
+  pub title:               *const c_char,
+  pub subtitle:            *const c_char,
+  pub file_path:           *const c_char,
+  pub icon_name:           *const c_char,
+  pub is_active:           bool,
+  pub is_modified:         bool,
+  pub vcs_kind:            u8,
+  pub diagnostic_severity: u8,
+}
+
+#[repr(C)]
 #[derive(Clone, Copy)]
 pub struct the_editor_snapshot_file_picker_preview_segment_t {
   pub text:        *const c_char,
@@ -975,6 +1013,9 @@ struct OwnedSnapshot {
   file_tree_rows:               Vec<FileTreeRowRecord>,
   buffer_tabs:                  BufferTabsRecord,
   buffer_tab_rows:              Vec<BufferTabRowRecord>,
+  open_items:                   OpenItemsRecord,
+  open_item_groups:             Vec<OpenItemGroupRecord>,
+  open_item_rows:               Vec<OpenItemRowRecord>,
   panes:                        Vec<the_editor_snapshot_pane_t>,
   separators:                   Vec<the_editor_snapshot_separator_t>,
   lines:                        Vec<LineRecord>,
@@ -1142,6 +1183,26 @@ struct BufferTabRowRecord {
   row:                the_editor_snapshot_buffer_tab_t,
   title_idx:          usize,
   directory_hint_idx: Option<usize>,
+  file_path_idx:      Option<usize>,
+  icon_name_idx:      usize,
+}
+
+#[derive(Clone, Copy, Default)]
+struct OpenItemsRecord {
+  items: the_editor_snapshot_open_items_t,
+}
+
+#[derive(Clone, Copy, Default)]
+struct OpenItemGroupRecord {
+  group:      the_editor_snapshot_open_item_group_t,
+  item_start: usize,
+}
+
+#[derive(Clone, Copy, Default)]
+struct OpenItemRowRecord {
+  row:                the_editor_snapshot_open_item_t,
+  title_idx:          usize,
+  subtitle_idx:       Option<usize>,
   file_path_idx:      Option<usize>,
   icon_name_idx:      usize,
 }
@@ -5226,6 +5287,77 @@ impl SwiftEditor {
     true
   }
 
+  fn activate_open_item(&mut self, pane_raw: usize, kind_raw: u8, item_raw: usize) -> bool {
+    let Some(pane) = pane_id_from_raw(pane_raw) else {
+      return false;
+    };
+    let Some(kind) = open_item_kind_from_code(kind_raw) else {
+      return false;
+    };
+
+    let previous_buffer_id = self.editor.active_buffer_id();
+    let pane_changed = if self.editor.active_pane_id() != pane {
+      if !self.editor.set_active_pane(pane) {
+        return false;
+      }
+      true
+    } else {
+      false
+    };
+    let item_changed = match kind {
+      OpenItemKind::Buffer => {
+        let Some(buffer_id) = buffer_id_from_raw(item_raw) else {
+          return false;
+        };
+        self.editor.set_active_buffer_in_pane(pane, buffer_id)
+      },
+      OpenItemKind::Terminal => {
+        let Some(surface_id) = client_surface_id_from_raw(item_raw) else {
+          return false;
+        };
+        self.editor.set_active_client_surface_in_pane(pane, surface_id)
+      },
+    };
+    if !pane_changed && !item_changed {
+      return false;
+    }
+
+    self.file_tree.active = false;
+    self.sync_state_after_active_pane_change(previous_buffer_id);
+    self.bump_cursor_blink_generation();
+    true
+  }
+
+  fn close_open_item(&mut self, kind_raw: u8, item_raw: usize) -> bool {
+    let Some(kind) = open_item_kind_from_code(kind_raw) else {
+      return false;
+    };
+
+    let previous_buffer_id = self.editor.active_buffer_id();
+    let changed = match kind {
+      OpenItemKind::Buffer => {
+        let Some(buffer_id) = buffer_id_from_raw(item_raw) else {
+          return false;
+        };
+        self.editor.close_buffer(buffer_id)
+      },
+      OpenItemKind::Terminal => {
+        let Some(surface_id) = client_surface_id_from_raw(item_raw) else {
+          return false;
+        };
+        self.editor.close_client_surface(surface_id)
+      },
+    };
+    if !changed {
+      return false;
+    }
+
+    self.file_tree.active = false;
+    self.sync_state_after_active_pane_change(previous_buffer_id);
+    self.bump_cursor_blink_generation();
+    true
+  }
+
   fn resize_split_raw(&mut self, split_raw: usize, x: u16, y: u16) -> bool {
     let Some(split_id) = split_id_from_raw(split_raw) else {
       return false;
@@ -7895,6 +8027,7 @@ impl OwnedSnapshot {
     snapshot.populate_file_picker(editor);
     snapshot.populate_file_tree(editor, frame);
     snapshot.populate_buffer_tabs(editor);
+    snapshot.populate_open_items(editor);
 
     let base_text_style = editor.ui_theme.try_get("ui.text").unwrap_or_default();
 
@@ -8103,6 +8236,7 @@ impl OwnedSnapshot {
     snapshot.finalize_file_picker_strings();
     snapshot.finalize_file_tree_strings();
     snapshot.finalize_buffer_tab_strings();
+    snapshot.finalize_open_item_strings();
 
     snapshot.info.line_count = snapshot.lines.len();
     snapshot.info.cursor_count = snapshot.cursors.len();
@@ -8482,6 +8616,80 @@ impl OwnedSnapshot {
     }
   }
 
+  fn populate_open_items(&mut self, editor: &SwiftEditor) {
+    let mut snapshot = pane_open_items_snapshot_with_options(editor, PaneOpenItemsSnapshotOptions::default());
+    let decorations = the_default::combine_file_tree_decorations(
+      &editor.current_buffer_tab_vcs_statuses(),
+      &editor.current_buffer_tab_diagnostic_statuses(),
+    );
+    decorate_pane_open_items_snapshot(&mut snapshot, &decorations);
+
+    self.open_items = OpenItemsRecord {
+      items: the_editor_snapshot_open_items_t {
+        visible:          snapshot.visible,
+        group_count:      snapshot.groups.len(),
+        total_item_count: snapshot.groups.iter().map(|group| group.items.len()).sum(),
+      },
+    };
+
+    for group in snapshot.groups {
+      let item_start = self.open_item_rows.len();
+      self.open_item_groups.push(OpenItemGroupRecord {
+        group: the_editor_snapshot_open_item_group_t {
+          pane_id:        group.pane_id.get().get(),
+          is_active_pane: group.is_active_pane,
+          active_index:   group.active_index.map(|index| index as i32).unwrap_or(-1),
+          item_count:     group.items.len(),
+        },
+        item_start,
+      });
+
+      for item in group.items {
+        let title_idx = self.push_string(&item.title);
+        let subtitle_idx = self.push_optional_string(item.subtitle.as_deref());
+        let file_path_idx = item
+          .file_path
+          .as_ref()
+          .map(|path| self.push_string(path.to_string_lossy().as_ref()));
+        let icon_name = match item.kind {
+          OpenItemKind::Buffer => item
+            .file_path
+            .as_deref()
+            .map(file_picker_icon_name_for_path)
+            .unwrap_or("doc"),
+          OpenItemKind::Terminal => "terminal",
+        };
+        let icon_name_idx = self.push_string(icon_name);
+        let buffer_id = item.buffer_id.map(|id| id.get().get()).unwrap_or(0);
+        let client_surface_id = item.client_surface_id.map(|id| id.get().get()).unwrap_or(0);
+        let item_id = match item.kind {
+          OpenItemKind::Buffer => buffer_id,
+          OpenItemKind::Terminal => client_surface_id,
+        };
+        self.open_item_rows.push(OpenItemRowRecord {
+          row: the_editor_snapshot_open_item_t {
+            kind:                open_item_kind_code(item.kind),
+            item_id,
+            buffer_id,
+            client_surface_id,
+            title:               ptr::null(),
+            subtitle:            ptr::null(),
+            file_path:           ptr::null(),
+            icon_name:           ptr::null(),
+            is_active:           item.is_active,
+            is_modified:         item.modified,
+            vcs_kind:            file_tree_vcs_kind_code(item.decorations.vcs),
+            diagnostic_severity: file_tree_diagnostic_severity_code(item.decorations),
+          },
+          title_idx,
+          subtitle_idx,
+          file_path_idx,
+          icon_name_idx,
+        });
+      }
+    }
+  }
+
   fn push_file_picker_preview_segment(
     &mut self,
     editor: &SwiftEditor,
@@ -8666,6 +8874,19 @@ impl OwnedSnapshot {
       row.row.icon_name = self.strings[row.icon_name_idx].as_ptr();
       if let Some(idx) = row.directory_hint_idx {
         row.row.directory_hint = self.strings[idx].as_ptr();
+      }
+      if let Some(idx) = row.file_path_idx {
+        row.row.file_path = self.strings[idx].as_ptr();
+      }
+    }
+  }
+
+  fn finalize_open_item_strings(&mut self) {
+    for row in &mut self.open_item_rows {
+      row.row.title = self.strings[row.title_idx].as_ptr();
+      row.row.icon_name = self.strings[row.icon_name_idx].as_ptr();
+      if let Some(idx) = row.subtitle_idx {
+        row.row.subtitle = self.strings[idx].as_ptr();
       }
       if let Some(idx) = row.file_path_idx {
         row.row.file_path = self.strings[idx].as_ptr();
@@ -10507,6 +10728,21 @@ fn pane_content_kind_code(kind: PaneContentKind) -> u8 {
   }
 }
 
+fn open_item_kind_code(kind: OpenItemKind) -> u8 {
+  match kind {
+    OpenItemKind::Buffer => 0,
+    OpenItemKind::Terminal => 1,
+  }
+}
+
+fn open_item_kind_from_code(raw: u8) -> Option<OpenItemKind> {
+  match raw {
+    0 => Some(OpenItemKind::Buffer),
+    1 => Some(OpenItemKind::Terminal),
+    _ => None,
+  }
+}
+
 fn split_axis_code(axis: SplitAxis) -> u8 {
   match axis {
     SplitAxis::Horizontal => 0,
@@ -10520,6 +10756,10 @@ fn pane_id_from_raw(raw: usize) -> Option<PaneId> {
 
 fn buffer_id_from_raw(raw: usize) -> Option<BufferId> {
   NonZeroUsize::new(raw).map(BufferId::new)
+}
+
+fn client_surface_id_from_raw(raw: usize) -> Option<ClientSurfaceId> {
+  NonZeroUsize::new(raw).map(ClientSurfaceId::new)
 }
 
 fn split_id_from_raw(raw: usize) -> Option<SplitNodeId> {
@@ -11748,10 +11988,34 @@ pub unsafe extern "C" fn the_editor_close_buffer_tab(
   let Some(handle) = (unsafe { handle.as_mut() }) else {
     return false;
   };
-  let Some(buffer_id) = buffer_id_from_raw(buffer_id) else {
+  handle
+    .editor
+    .close_open_item(open_item_kind_code(OpenItemKind::Buffer), buffer_id)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_activate_open_item(
+  handle: *mut the_editor_handle_t,
+  pane_id: usize,
+  kind: u8,
+  item_id: usize,
+) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
     return false;
   };
-  close_buffer_tab(&mut handle.editor, buffer_id)
+  handle.editor.activate_open_item(pane_id, kind, item_id)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_close_open_item(
+  handle: *mut the_editor_handle_t,
+  kind: u8,
+  item_id: usize,
+) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return false;
+  };
+  handle.editor.close_open_item(kind, item_id)
 }
 
 #[unsafe(no_mangle)]
@@ -12258,6 +12522,55 @@ pub unsafe extern "C" fn the_editor_snapshot_buffer_tab_at(
     .snapshot
     .buffer_tab_rows
     .get(row_index)
+    .map(|record| record.row)
+    .unwrap_or_default()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_snapshot_open_items(
+  snapshot: *const the_editor_snapshot_t,
+) -> the_editor_snapshot_open_items_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else {
+    return the_editor_snapshot_open_items_t::default();
+  };
+  snapshot.snapshot.open_items.items
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_snapshot_open_item_group_at(
+  snapshot: *const the_editor_snapshot_t,
+  group_index: usize,
+) -> the_editor_snapshot_open_item_group_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else {
+    return the_editor_snapshot_open_item_group_t::default();
+  };
+  snapshot
+    .snapshot
+    .open_item_groups
+    .get(group_index)
+    .map(|record| record.group)
+    .unwrap_or_default()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_snapshot_open_item_at(
+  snapshot: *const the_editor_snapshot_t,
+  group_index: usize,
+  item_index: usize,
+) -> the_editor_snapshot_open_item_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else {
+    return the_editor_snapshot_open_item_t::default();
+  };
+  let Some(group) = snapshot.snapshot.open_item_groups.get(group_index) else {
+    return the_editor_snapshot_open_item_t::default();
+  };
+  if item_index >= group.group.item_count {
+    return the_editor_snapshot_open_item_t::default();
+  }
+  snapshot
+    .snapshot
+    .open_item_rows
+    .get(group.item_start + item_index)
     .map(|record| record.row)
     .unwrap_or_default()
 }

@@ -848,6 +848,8 @@ private struct EditorPaneItemStripsOverlayView: View {
     private let switcherHeight: CGFloat = 30
     private let switcherPadding: CGFloat = 6
 
+    @State private var expandedPaneID: UInt?
+
     var body: some View {
         GeometryReader { geometry in
             ZStack(alignment: .topLeading) {
@@ -859,18 +861,37 @@ private struct EditorPaneItemStripsOverlayView: View {
                             let frame = paneFrame(for: pane, in: scene)
                             if frame.height >= switcherHeight + switcherPadding * 2,
                                frame.width >= 64 {
+                                let availableWidth = max(
+                                    min(frame.width - switcherPadding * 2, geometry.size.width - frame.minX - switcherPadding),
+                                    64
+                                )
                                 HStack {
                                     Spacer(minLength: 0)
                                     EditorPaneItemSwitcherView(
                                         group: group,
                                         paneLabel: paneLocationLabel(for: group.paneID, groupIndex: groupIndex, scene: scene),
                                         theme: theme,
-                                        onActivateItem: controller.activateOpenItem
+                                        isExpanded: expandedPaneID == group.paneID,
+                                        onToggleExpanded: {
+                                            withAnimation(.spring(response: 0.22, dampingFraction: 0.9)) {
+                                                expandedPaneID = expandedPaneID == group.paneID ? nil : group.paneID
+                                            }
+                                        },
+                                        onActivateItem: { item in
+                                            withAnimation(.spring(response: 0.22, dampingFraction: 0.9)) {
+                                                expandedPaneID = nil
+                                            }
+                                            if item.isActive {
+                                                return
+                                            }
+                                            controller.activateOpenItem(item)
+                                        }
                                     )
+                                    .frame(maxWidth: availableWidth, alignment: .trailing)
                                 }
-                                .frame(width: max(min(frame.width - switcherPadding * 2, geometry.size.width - frame.minX - switcherPadding), 64), height: switcherHeight)
+                                .frame(width: availableWidth, height: switcherHeight)
                                 .offset(x: frame.minX + switcherPadding, y: frame.minY + switcherPadding)
-                                .zIndex(group.isActivePane ? 3 : 2)
+                                .zIndex(expandedPaneID == group.paneID ? 4 : (group.isActivePane ? 3 : 2))
                             }
                         }
                     }
@@ -899,9 +920,9 @@ private struct EditorPaneItemSwitcherView: View {
     let group: EditorPaneOpenItemGroup
     let paneLabel: String
     let theme: EditorFileTreeSidebarTheme
+    let isExpanded: Bool
+    let onToggleExpanded: () -> Void
     let onActivateItem: (EditorPaneOpenItemRow) -> Void
-
-    @State private var isHovered = false
 
     private var activeItem: EditorPaneOpenItemRow? {
         if let active = group.items.first(where: { $0.isActive }) {
@@ -914,71 +935,31 @@ private struct EditorPaneItemSwitcherView: View {
         return group.items.first
     }
 
-    private var prioritizedItems: [EditorPaneOpenItemRow] {
-        guard let activeItem else { return group.items }
-        return [activeItem] + group.items.filter { $0.id != activeItem.id }
-    }
-
-    private var secondaryItems: [EditorPaneOpenItemRow] {
-        Array(prioritizedItems.dropFirst().prefix(2))
-    }
-
-    private var overflowItems: [EditorPaneOpenItemRow] {
-        Array(prioritizedItems.dropFirst(1 + secondaryItems.count))
-    }
-
-    private var isExpanded: Bool {
-        group.isActivePane || isHovered
-    }
-
     var body: some View {
         Group {
             if isExpanded {
-                ViewThatFits(in: .horizontal) {
-                    expandedContent(showsSecondaryTitles: true)
-                    expandedContent(showsSecondaryTitles: false)
-                    compactContent
-                }
+                expandedContent
             } else {
-                compactContent
+                collapsedContent
             }
         }
         .animation(.spring(response: 0.22, dampingFraction: 0.9), value: isExpanded)
-        .onHover { hovering in
-            if hovering != isHovered {
-                isHovered = hovering
-            }
-        }
         .help(helpText)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(helpText)
     }
 
-    private func expandedContent(showsSecondaryTitles: Bool) -> some View {
+    private var expandedContent: some View {
         HStack(spacing: 6) {
-            if let activeItem {
-                EditorPaneItemChipView(
-                    item: activeItem,
-                    theme: theme,
-                    style: .active,
-                    showsTitle: true,
-                    onActivate: { onActivateItem(activeItem) }
-                )
-            }
-
-            ForEach(secondaryItems) { item in
+            ForEach(group.items) { item in
                 EditorPaneItemChipView(
                     item: item,
                     theme: theme,
-                    style: .secondary,
-                    showsTitle: showsSecondaryTitles,
+                    style: item.isActive ? .active : .secondary,
+                    showsTitle: true,
                     onActivate: { onActivateItem(item) }
                 )
             }
-
-            if !overflowItems.isEmpty {
-                overflowMenu(count: overflowItems.count, includeChevron: true)
-            }
         }
         .padding(4)
         .background(
@@ -990,95 +971,53 @@ private struct EditorPaneItemSwitcherView: View {
                 .stroke(borderColor, lineWidth: 1)
         )
         .shadow(color: .black.opacity(0.10), radius: 4, y: 1)
-        .fixedSize(horizontal: true, vertical: true)
     }
 
-    private var compactContent: some View {
-        HStack(spacing: 6) {
-            if let activeItem {
-                EditorPaneItemChipView(
-                    item: activeItem,
-                    theme: theme,
-                    style: group.isActivePane ? .active : .secondary,
-                    showsTitle: false,
-                    onActivate: { onActivateItem(activeItem) }
-                )
-            }
-
-            if group.items.count > 1 {
-                overflowMenu(count: group.items.count - (activeItem == nil ? 0 : 1), includeChevron: false)
-            }
-        }
-        .padding(4)
-        .background(
-            Capsule(style: .continuous)
-                .fill(backgroundColor)
-        )
-        .overlay(
-            Capsule(style: .continuous)
-                .stroke(borderColor, lineWidth: 1)
-        )
-        .shadow(color: .black.opacity(0.10), radius: 4, y: 1)
-        .fixedSize(horizontal: true, vertical: true)
-    }
-
-    private func overflowMenu(count: Int, includeChevron: Bool) -> some View {
-        Menu {
-            Section(paneLabel) {
-                ForEach(group.items) { item in
-                    Button {
-                        onActivateItem(item)
-                    } label: {
-                        HStack(spacing: 8) {
-                            Image(systemName: symbolName(for: item.iconName, isDirectory: false))
-                                .frame(width: 12)
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text(item.title)
-                                if let subtitle = item.subtitle,
-                                   !subtitle.isEmpty {
-                                    Text(subtitle)
-                                        .font(.system(size: 10))
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-                            Spacer(minLength: 8)
-                            if item.isModified {
-                                Circle()
-                                    .fill(Color(nsColor: theme.selectionColor).opacity(0.95))
-                                    .frame(width: 5, height: 5)
-                            }
-                            if item.isActive {
-                                Image(systemName: "checkmark")
-                            }
-                        }
+    private var collapsedContent: some View {
+        Button(action: onToggleExpanded) {
+            HStack(spacing: 6) {
+                if let activeItem {
+                    Image(systemName: symbolName(for: activeItem.iconName, isDirectory: false))
+                        .font(.system(size: 10, weight: .medium))
+                    Text(activeItem.title)
+                        .font(.system(size: 10.5, weight: activeItem.isActive ? .semibold : .medium))
+                        .lineLimit(1)
+                    if activeItem.isModified {
+                        Circle()
+                            .fill(Color(nsColor: theme.selectionColor).opacity(0.9))
+                            .frame(width: 4, height: 4)
                     }
+                } else {
+                    Image(systemName: "square.stack.3d.up.fill")
+                        .font(.system(size: 10, weight: .medium))
                 }
-            }
-        } label: {
-            HStack(spacing: 4) {
-                Text("+\(max(count, 1))")
-                    .font(.system(size: 10, weight: .bold, design: .rounded))
-                    .monospacedDigit()
-                if includeChevron {
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 8, weight: .bold))
+
+                if group.items.count > 1 {
+                    Text("+\(group.items.count - 1)")
+                        .font(.system(size: 10, weight: .bold, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
                 }
+
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(.secondary)
             }
-            .foregroundStyle(Color.primary.opacity(group.isActivePane ? 0.9 : 0.76))
-            .padding(.horizontal, 8)
+            .foregroundStyle(group.isActivePane ? Color.primary : Color.primary.opacity(0.88))
+            .padding(.horizontal, 9)
             .frame(height: 22)
             .background(
                 Capsule(style: .continuous)
-                    .fill(Color(nsColor: theme.backgroundColor).opacity(0.22))
+                    .fill(backgroundColor)
             )
             .overlay(
                 Capsule(style: .continuous)
-                    .stroke(Color(nsColor: theme.separatorColor).opacity(0.45), lineWidth: 1)
+                    .stroke(borderColor, lineWidth: 1)
             )
+            .shadow(color: .black.opacity(0.10), radius: 4, y: 1)
             .contentShape(Capsule(style: .continuous))
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
+        .buttonStyle(.plain)
     }
 
     private var helpText: String {

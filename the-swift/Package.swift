@@ -27,29 +27,33 @@ func resolveGhosttyKitSourcePath() -> String? {
     return candidates.sorted().last
 }
 
-func prepareGhosttyKitBinaryTargetPath() -> String? {
+func relativePath(from basePath: String, to destinationPath: String) -> String {
+    let baseComponents = URL(fileURLWithPath: basePath).standardized.pathComponents
+    let destinationComponents = URL(fileURLWithPath: destinationPath).standardized.pathComponents
+
+    var commonCount = 0
+    while commonCount < baseComponents.count,
+          commonCount < destinationComponents.count,
+          baseComponents[commonCount] == destinationComponents[commonCount] {
+        commonCount += 1
+    }
+
+    let upward = Array(repeating: "..", count: max(baseComponents.count - commonCount, 0))
+    let downward = destinationComponents.dropFirst(commonCount)
+    let relativeComponents = upward + downward
+    return relativeComponents.isEmpty ? "." : NSString.path(withComponents: relativeComponents)
+}
+
+func resolveGhosttyKitBinaryTargetPath() -> String? {
     guard let sourcePath = resolveGhosttyKitSourcePath() else {
         return nil
     }
-
-    let fileManager = FileManager.default
-    let packageRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-    let buildSupportDirectory = packageRoot.appendingPathComponent(".build/ghostty", isDirectory: true)
-    let linkPath = buildSupportDirectory.appendingPathComponent("GhosttyKit.xcframework", isDirectory: true)
-
-    try? fileManager.createDirectory(at: buildSupportDirectory, withIntermediateDirectories: true)
-    if fileManager.fileExists(atPath: linkPath.path) {
-        try? fileManager.removeItem(at: linkPath)
-    }
-    do {
-        try fileManager.createSymbolicLink(atPath: linkPath.path, withDestinationPath: sourcePath)
-        return ".build/ghostty/GhosttyKit.xcframework"
-    } catch {
-        return nil
-    }
+    let packageRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent().path
+    return relativePath(from: packageRoot, to: sourcePath)
 }
 
-let ghosttyKitPath = prepareGhosttyKitBinaryTargetPath()
+let ghosttyKitPath = resolveGhosttyKitBinaryTargetPath()
+let hasGhosttyKit = ghosttyKitPath != nil
 
 var executableDependencies: [Target.Dependency] = ["TheEditorFFI"]
 var targets: [Target] = [
@@ -69,11 +73,18 @@ if let ghosttyKitPath {
     executableDependencies.append("GhosttyKit")
 }
 
+var linkerSettings: [LinkerSetting] = []
+if hasGhosttyKit {
+    linkerSettings.append(.linkedLibrary("c++"))
+    linkerSettings.append(.linkedFramework("Carbon"))
+}
+
 targets.append(
     .executableTarget(
         name: "TheSwiftPOC",
         dependencies: executableDependencies,
-        path: "Sources/TheSwiftPOC"
+        path: "Sources/TheSwiftPOC",
+        linkerSettings: linkerSettings
     )
 )
 

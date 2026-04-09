@@ -150,15 +150,17 @@ private final class GhosttyEmbeddedRuntime {
     }
 
     deinit {
-        let center = NotificationCenter.default
-        for observer in appObservers {
-            center.removeObserver(observer)
-        }
-        if let app {
-            ghostty_app_free(app)
-        }
-        if let config {
-            ghostty_config_free(config)
+        MainActor.assumeIsolated {
+            let center = NotificationCenter.default
+            for observer in appObservers {
+                center.removeObserver(observer)
+            }
+            if let app {
+                ghostty_app_free(app)
+            }
+            if let config {
+                ghostty_config_free(config)
+            }
         }
     }
 
@@ -251,16 +253,20 @@ private final class GhosttyEmbeddedRuntime {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            guard let app = self?.app else { return }
-            ghostty_app_set_focus(app, true)
+            MainActor.assumeIsolated {
+                guard let app = self?.app else { return }
+                ghostty_app_set_focus(app, true)
+            }
         })
         appObservers.append(center.addObserver(
             forName: NSApplication.didResignActiveNotification,
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            guard let app = self?.app else { return }
-            ghostty_app_set_focus(app, false)
+            MainActor.assumeIsolated {
+                guard let app = self?.app else { return }
+                ghostty_app_set_focus(app, false)
+            }
         })
     }
 
@@ -338,10 +344,12 @@ private final class GhosttyTerminalSurfaceView: NSView {
     }
 
     deinit {
-        if let surface {
-            ghostty_surface_free(surface)
+        MainActor.assumeIsolated {
+            if let surface {
+                ghostty_surface_free(surface)
+            }
+            callbackContext?.release()
         }
-        callbackContext?.release()
     }
 
     override func viewDidMoveToWindow() {
@@ -481,7 +489,7 @@ private final class GhosttyTerminalSurfaceView: NSView {
             nsview: Unmanaged.passUnretained(self).toOpaque()
         ))
         surfaceConfig.userdata = callbackContext?.toOpaque()
-        surfaceConfig.scale_factor = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
+        surfaceConfig.scale_factor = Double(window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2)
         surfaceConfig.context = GHOSTTY_SURFACE_CONTEXT_SPLIT
         surfaceConfig.wait_after_command = false
 

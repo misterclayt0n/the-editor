@@ -541,11 +541,31 @@ private final class GhosttyTerminalSurfaceView: NSView {
             return
         }
 
+        let translationModifiers = translatedModifierFlags(for: event, surface: surface)
+        let translationEvent: NSEvent
+        if translationModifiers == event.modifierFlags {
+            translationEvent = event
+        } else {
+            translationEvent = NSEvent.keyEvent(
+                with: event.type,
+                location: event.locationInWindow,
+                modifierFlags: translationModifiers,
+                timestamp: event.timestamp,
+                windowNumber: event.windowNumber,
+                context: nil,
+                characters: event.characters(byApplyingModifiers: translationModifiers) ?? "",
+                charactersIgnoringModifiers: event.charactersIgnoringModifiers ?? "",
+                isARepeat: event.isARepeat,
+                keyCode: event.keyCode
+            ) ?? event
+        }
+
         var keyEvent = ghosttyKeyEvent(
             action: event.isARepeat ? GHOSTTY_ACTION_REPEAT : GHOSTTY_ACTION_PRESS,
-            for: event
+            for: event,
+            translationModifiers: translationEvent.modifierFlags
         )
-        if let text = ghosttyText(for: event),
+        if let text = ghosttyText(for: translationEvent),
            let firstByte = text.utf8.first,
            firstByte >= 0x20 {
             text.withCString { pointer in
@@ -681,6 +701,30 @@ private final class GhosttyTerminalSurfaceView: NSView {
             }
         }
         return characters
+    }
+
+    private func translatedModifierFlags(for event: NSEvent, surface: ghostty_surface_t) -> NSEvent.ModifierFlags {
+        let translatedMods = ghostty_surface_key_translation_mods(surface, mods(from: event.modifierFlags))
+        let translatedFlags = modifierFlags(from: translatedMods)
+        var flags = event.modifierFlags
+        for flag in [NSEvent.ModifierFlags.shift, .control, .option, .command] {
+            if translatedFlags.contains(flag) {
+                flags.insert(flag)
+            } else {
+                flags.remove(flag)
+            }
+        }
+        return flags
+    }
+
+    private func modifierFlags(from mods: ghostty_input_mods_e) -> NSEvent.ModifierFlags {
+        var flags = NSEvent.ModifierFlags()
+        if mods.rawValue & GHOSTTY_MODS_SHIFT.rawValue != 0 { flags.insert(.shift) }
+        if mods.rawValue & GHOSTTY_MODS_CTRL.rawValue != 0 { flags.insert(.control) }
+        if mods.rawValue & GHOSTTY_MODS_ALT.rawValue != 0 { flags.insert(.option) }
+        if mods.rawValue & GHOSTTY_MODS_SUPER.rawValue != 0 { flags.insert(.command) }
+        if mods.rawValue & GHOSTTY_MODS_CAPS.rawValue != 0 { flags.insert(.capsLock) }
+        return flags
     }
 
     private func mods(from flags: NSEvent.ModifierFlags) -> ghostty_input_mods_e {

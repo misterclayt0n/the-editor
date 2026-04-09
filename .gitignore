@@ -14,4 +14,5 @@ the-ffi/generated/
 the-swift/.build
 the-swift/Frameworks/
 the-swift/RustBridge/TheEditorFFI.xcframework/
+/GhosttyKit.xcframework
 dist/

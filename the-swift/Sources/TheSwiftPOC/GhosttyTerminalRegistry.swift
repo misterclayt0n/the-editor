@@ -69,19 +69,13 @@ final class GhosttyTerminalRegistry {
         }
 
         if let scene {
-            let cellSize = scene.info.surfaceMetrics.cellSizePoints
             for pane in visibleTerminalPanes {
                 guard let surfaceID = pane.clientSurfaceID,
                       let view = viewsBySurfaceID[surfaceID]
                 else {
                     continue
                 }
-                let frame = CGRect(
-                    x: CGFloat(pane.x) * cellSize.width,
-                    y: CGFloat(pane.y) * cellSize.height,
-                    width: CGFloat(pane.width) * cellSize.width,
-                    height: CGFloat(pane.height) * cellSize.height
-                )
+                let frame = scene.paneContentRect(for: pane)
                 view.paneID = pane.paneID
                 view.frame = frame.integral
                 view.autoresizingMask = []

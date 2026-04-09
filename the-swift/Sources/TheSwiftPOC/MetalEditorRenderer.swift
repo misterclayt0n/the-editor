@@ -115,37 +115,42 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
 
         for pane in scene.panes where pane.kind == .editorBuffer {
             let gutterWidth = CGFloat(pane.contentOffsetX) * cellSize.width
-            guard gutterWidth > 0 else { continue }
+            let contentRect = scene.paneContentRect(for: pane)
+            guard gutterWidth > 0, contentRect.height > 0 else { continue }
             context.setFillColor(scene.gutterBackgroundColor.cgColor)
-            context.fill(CGRect(
-                x: CGFloat(pane.x) * cellSize.width,
-                y: topY(forRow: pane.y, rowSpan: max(pane.height, 1), viewportHeight: view.bounds.height, cellHeight: cellSize.height),
-                width: gutterWidth,
-                height: CGFloat(pane.height) * cellSize.height
+            context.fill(contextRect(
+                fromTopLeftRect: CGRect(
+                    x: contentRect.minX,
+                    y: contentRect.minY,
+                    width: gutterWidth,
+                    height: contentRect.height
+                ),
+                viewportHeight: view.bounds.height
             ))
         }
 
         for selection in scene.selections {
             let color = selection.style.backgroundColor ?? NSColor.selectedTextBackgroundColor.withAlphaComponent(0.35)
-            context.setFillColor(color.cgColor)
-            context.fill(selectionRect(selection, cellSize: cellSize, viewportHeight: view.bounds.height))
+            let pane = scene.paneContainingCell(col: selection.x, row: selection.y)
+            withPaneClip(for: pane, in: scene, context: context, viewportHeight: view.bounds.height) {
+                context.setFillColor(color.cgColor)
+                context.fill(selectionRect(selection, scene: scene, cellSize: cellSize, viewportHeight: view.bounds.height))
+            }
         }
 
         for overlay in scene.overlays where overlay.kind == .rect {
             let color = overlay.style.backgroundColor ?? overlay.style.foregroundColor.withAlphaComponent(0.3)
-            let rect = CGRect(
-                x: CGFloat(overlay.x) * cellSize.width,
-                y: topY(forRow: overlay.y, rowSpan: max(overlay.height, 1), viewportHeight: view.bounds.height, cellHeight: cellSize.height),
-                width: CGFloat(overlay.width) * cellSize.width,
-                height: CGFloat(max(overlay.height, 1)) * cellSize.height
-            )
-            context.setFillColor(color.cgColor)
-            let radius = min(CGFloat(overlay.radius), min(rect.width, rect.height) * 0.5)
-            if radius > 0 {
-                context.addPath(CGPath(roundedRect: rect, cornerWidth: radius, cornerHeight: radius, transform: nil))
-                context.fillPath()
-            } else {
-                context.fill(rect)
+            let pane = scene.paneContainingCell(col: overlay.x, row: overlay.y)
+            let rect = overlayRect(overlay, scene: scene, cellSize: cellSize, viewportHeight: view.bounds.height)
+            withPaneClip(for: pane, in: scene, context: context, viewportHeight: view.bounds.height) {
+                context.setFillColor(color.cgColor)
+                let radius = min(CGFloat(overlay.radius), min(rect.width, rect.height) * 0.5)
+                if radius > 0 {
+                    context.addPath(CGPath(roundedRect: rect, cornerWidth: radius, cornerHeight: radius, transform: nil))
+                    context.fillPath()
+                } else {
+                    context.fill(rect)
+                }
             }
         }
 
@@ -160,11 +165,12 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
                 cellBaselinePx: scene.info.surfaceMetrics.cellBaselinePx,
                 signature: line.cacheSignature
             )
+            let pane = scene.pane(id: line.paneID)
             if let image = lineImage(
                 for: line,
                 key: key,
                 viewportWidth: CGFloat(line.width) * cellSize.width,
-                gutterColumnCount: scene.pane(id: line.paneID)?.contentOffsetX ?? scene.info.contentOffsetX,
+                gutterColumnCount: pane?.contentOffsetX ?? scene.info.contentOffsetX,
                 scale: scale,
                 cellSize: cellSize,
                 baselineFromBottom: baselineFromBottom,
@@ -172,11 +178,20 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
             ) {
                 let rect = CGRect(
                     x: CGFloat(line.x) * cellSize.width,
-                    y: topY(forRow: line.row, rowSpan: 1, viewportHeight: view.bounds.height, cellHeight: cellSize.height) - rowRenderPadding,
+                    y: displayTopY(
+                        forRow: line.row,
+                        rowSpan: 1,
+                        paneID: line.paneID,
+                        in: scene,
+                        viewportHeight: view.bounds.height,
+                        cellHeight: cellSize.height
+                    ) - rowRenderPadding,
                     width: CGFloat(image.width) / scale,
                     height: CGFloat(image.height) / scale
                 )
-                context.draw(image, in: rect)
+                withPaneClip(for: pane, in: scene, context: context, viewportHeight: view.bounds.height) {
+                    context.draw(image, in: rect)
+                }
             }
         }
 
@@ -345,10 +360,22 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
         return attrs
     }
 
-    private func selectionRect(_ selection: EditorSnapshotSelection, cellSize: CGSize, viewportHeight: CGFloat) -> CGRect {
+    private func selectionRect(
+        _ selection: EditorSnapshotSelection,
+        scene: EditorRenderScene,
+        cellSize: CGSize,
+        viewportHeight: CGFloat
+    ) -> CGRect {
         CGRect(
             x: CGFloat(selection.x) * cellSize.width,
-            y: topY(forRow: selection.y, rowSpan: max(selection.height, 1), viewportHeight: viewportHeight, cellHeight: cellSize.height),
+            y: displayTopY(
+                forRow: selection.y,
+                rowSpan: max(selection.height, 1),
+                paneID: scene.paneContainingCell(col: selection.x, row: selection.y)?.paneID,
+                in: scene,
+                viewportHeight: viewportHeight,
+                cellHeight: cellSize.height
+            ),
             width: max(CGFloat(selection.width) * cellSize.width, 2),
             height: max(CGFloat(selection.height) * cellSize.height, cellSize.height)
         )
@@ -367,20 +394,30 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
         context.setLineCap(.round)
         context.setLineJoin(.round)
         for underline in scene.diagnosticUnderlines {
+            let pane = scene.paneContainingCell(col: underline.startCol, row: underline.row)
             let color = diagnosticColor(for: underline.severity)
-            let rowBottom = topY(forRow: underline.row, rowSpan: 1, viewportHeight: viewportHeight, cellHeight: cellSize.height)
+            let rowBottom = displayTopY(
+                forRow: underline.row,
+                rowSpan: 1,
+                paneID: pane?.paneID,
+                in: scene,
+                viewportHeight: viewportHeight,
+                cellHeight: cellSize.height
+            )
             let baselineY = rowBottom + max(lineWidth * 2, 3)
             let startX = CGFloat(underline.startCol) * cellSize.width
             let endX = CGFloat(underline.endCol) * cellSize.width
-            drawDiagnosticSquiggle(
-                in: context,
-                color: color,
-                fromX: startX,
-                toX: endX,
-                baselineY: baselineY,
-                amplitude: max(min(cellSize.height * 0.08, 3), 1.5),
-                step: max(cellSize.width * 0.22, 3)
-            )
+            withPaneClip(for: pane, in: scene, context: context, viewportHeight: viewportHeight) {
+                drawDiagnosticSquiggle(
+                    in: context,
+                    color: color,
+                    fromX: startX,
+                    toX: endX,
+                    baselineY: baselineY,
+                    amplitude: max(min(cellSize.height * 0.08, 3), 1.5),
+                    step: max(cellSize.width * 0.22, 3)
+                )
+            }
         }
         context.restoreGState()
     }
@@ -393,12 +430,7 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
     ) {
         context.saveGState()
         for pane in scene.panes where !pane.isActive {
-            let rect = CGRect(
-                x: CGFloat(pane.x) * cellSize.width,
-                y: topY(forRow: pane.y, rowSpan: max(pane.height, 1), viewportHeight: viewportHeight, cellHeight: cellSize.height),
-                width: CGFloat(pane.width) * cellSize.width,
-                height: CGFloat(pane.height) * cellSize.height
-            )
+            let rect = contextRect(fromTopLeftRect: scene.paneRect(for: pane), viewportHeight: viewportHeight)
             context.setFillColor(NSColor.black.withAlphaComponent(0.06).cgColor)
             context.fill(rect)
         }
@@ -459,25 +491,20 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
     }
 
     private func paneScrollbarGeometry(for pane: EditorSnapshotPane, cellSize: CGSize) -> (trackRect: CGRect, thumbRect: CGRect)? {
-        guard pane.kind == .editorBuffer else { return nil }
-        let visibleRows = max(pane.viewportRows, 1)
+        guard let scene, pane.kind == .editorBuffer else { return nil }
+        let contentRect = scene.paneContentRect(for: pane)
+        let visibleRows = max(Int(floor(contentRect.height / max(cellSize.height, 1))), 1)
         let totalRows = max(pane.documentLineCount, visibleRows)
         let maxScrollRow = max(totalRows - visibleRows, 0)
-        guard maxScrollRow > 0 else { return nil }
+        guard maxScrollRow > 0, contentRect.height > 0 else { return nil }
 
-        let paneRect = CGRect(
-            x: CGFloat(pane.x) * cellSize.width,
-            y: CGFloat(pane.y) * cellSize.height,
-            width: CGFloat(pane.width) * cellSize.width,
-            height: CGFloat(pane.height) * cellSize.height
-        )
         let trackWidth = min(max(floor(cellSize.width * 0.55), 6), 8)
         let inset = max(2, floor(cellSize.width * 0.18))
         let trackRect = CGRect(
-            x: paneRect.maxX - inset - trackWidth,
-            y: paneRect.minY + inset,
+            x: contentRect.maxX - inset - trackWidth,
+            y: contentRect.minY + inset,
             width: trackWidth,
-            height: max(paneRect.height - inset * 2, trackWidth)
+            height: max(contentRect.height - inset * 2, trackWidth)
         )
         let thumbHeight = max(trackWidth * 2, floor(trackRect.height * (CGFloat(visibleRows) / CGFloat(totalRows))))
         let travel = max(trackRect.height - thumbHeight, 0)
@@ -505,10 +532,17 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
         cursorThickness: CGFloat,
         viewportHeight: CGFloat
     ) {
-        let x = CGFloat(cursor.col) * cellSize.width
-        let y = topY(forRow: cursor.row, rowSpan: 1, viewportHeight: viewportHeight, cellHeight: cellSize.height)
-        let baseRect = CGRect(x: x, y: y, width: max(cellSize.width, cursorThickness), height: cellSize.height)
         let pane = paneContaining(cursor: cursor, in: scene)
+        let x = CGFloat(cursor.col) * cellSize.width
+        let y = displayTopY(
+            forRow: cursor.row,
+            rowSpan: 1,
+            paneID: pane?.paneID,
+            in: scene,
+            viewportHeight: viewportHeight,
+            cellHeight: cellSize.height
+        )
+        let baseRect = CGRect(x: x, y: y, width: max(cellSize.width, cursorThickness), height: cellSize.height)
         let isFocusedCursor = pane?.isActive ?? (cursor.kind == .block)
         let blinkOpacity = shouldBlinkCursor(cursor, at: index, in: scene, isFocusedCursor: isFocusedCursor)
             ? activeCursorBlinkOpacity
@@ -521,6 +555,9 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
         let strokeColor = fillColor.withAlphaComponent((isFocusedCursor ? 1 : 0.9) * blinkOpacity)
 
         context.saveGState()
+        if let pane {
+            context.clip(to: contextRect(fromTopLeftRect: scene.paneRect(for: pane), viewportHeight: viewportHeight))
+        }
         context.setFillColor(fillColor.cgColor)
         context.setStrokeColor(strokeColor.cgColor)
 
@@ -570,6 +607,8 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
                     style: cursorTextStyle,
                     atCol: textCell.col,
                     row: textCell.row,
+                    paneID: pane?.paneID,
+                    scene: scene,
                     in: context,
                     cellSize: cellSize,
                     baselineFromBottom: baselineFromBottom,
@@ -598,12 +637,7 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
     }
 
     private func paneContaining(cursor: EditorSnapshotCursor, in scene: EditorRenderScene) -> EditorSnapshotPane? {
-        scene.panes.first { pane in
-            cursor.col >= pane.x
-                && cursor.col < (pane.x + pane.width)
-                && cursor.row >= pane.y
-                && cursor.row < (pane.y + pane.height)
-        }
+        scene.paneContainingCell(col: cursor.col, row: cursor.row)
     }
 
     private func textCell(under cursor: EditorSnapshotCursor, in scene: EditorRenderScene) -> EditorSnapshotTextCell? {
@@ -636,16 +670,21 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
         viewportHeight: CGFloat
     ) {
         guard let text = overlay.text else { return }
-        drawText(
-            text,
-            style: overlay.style,
-            atCol: overlay.col,
-            row: overlay.row,
-            in: context,
-            cellSize: cellSize,
-            baselineFromBottom: baselineFromBottom,
-            viewportHeight: viewportHeight
-        )
+        let pane = scene?.paneContainingCell(col: overlay.col, row: overlay.row)
+        withPaneClip(for: pane, in: scene, context: context, viewportHeight: viewportHeight) {
+            drawText(
+                text,
+                style: overlay.style,
+                atCol: overlay.col,
+                row: overlay.row,
+                paneID: pane?.paneID,
+                scene: scene,
+                in: context,
+                cellSize: cellSize,
+                baselineFromBottom: baselineFromBottom,
+                viewportHeight: viewportHeight
+            )
+        }
     }
 
     private func drawMarkedText(
@@ -663,16 +702,21 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
             removeModifiers: 0,
             underlineStyle: UInt8(NSUnderlineStyle.single.rawValue)
         )
-        drawText(
-            markedText.text,
-            style: style,
-            atCol: markedText.col,
-            row: markedText.row,
-            in: context,
-            cellSize: cellSize,
-            baselineFromBottom: baselineFromBottom,
-            viewportHeight: viewportHeight
-        )
+        let pane = scene?.paneContainingCell(col: markedText.col, row: markedText.row)
+        withPaneClip(for: pane, in: scene, context: context, viewportHeight: viewportHeight) {
+            drawText(
+                markedText.text,
+                style: style,
+                atCol: markedText.col,
+                row: markedText.row,
+                paneID: pane?.paneID,
+                scene: scene,
+                in: context,
+                cellSize: cellSize,
+                baselineFromBottom: baselineFromBottom,
+                viewportHeight: viewportHeight
+            )
+        }
     }
 
     private func diagnosticColor(for severity: EditorDiagnosticSeverity) -> NSColor {
@@ -745,6 +789,8 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
         style: EditorResolvedStyle,
         atCol col: Int,
         row: Int,
+        paneID: UInt? = nil,
+        scene: EditorRenderScene? = nil,
         in context: CGContext,
         cellSize: CGSize,
         baselineFromBottom: CGFloat,
@@ -757,7 +803,18 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
         context.textMatrix = .identity
         let y: CGFloat
         if let viewportHeight {
-            y = topY(forRow: row, rowSpan: 1, viewportHeight: viewportHeight, cellHeight: cellSize.height) + baselineFromBottom
+            if let scene {
+                y = displayTopY(
+                    forRow: row,
+                    rowSpan: 1,
+                    paneID: paneID,
+                    in: scene,
+                    viewportHeight: viewportHeight,
+                    cellHeight: cellSize.height
+                ) + baselineFromBottom
+            } else {
+                y = topY(forRow: row, rowSpan: 1, viewportHeight: viewportHeight, cellHeight: cellSize.height) + baselineFromBottom
+            }
         } else {
             y = baselineFromBottom
         }
@@ -767,6 +824,54 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
         )
         CTLineDraw(line, context)
         context.restoreGState()
+    }
+
+    private func overlayRect(
+        _ overlay: EditorSnapshotOverlay,
+        scene: EditorRenderScene,
+        cellSize: CGSize,
+        viewportHeight: CGFloat
+    ) -> CGRect {
+        let topLeftRect = scene.displayRect(
+            x: overlay.x,
+            y: overlay.y,
+            width: overlay.width,
+            height: max(overlay.height, 1),
+            paneID: scene.paneContainingCell(col: overlay.x, row: overlay.y)?.paneID
+        )
+        return contextRect(fromTopLeftRect: topLeftRect, viewportHeight: viewportHeight)
+    }
+
+    private func withPaneClip(
+        for pane: EditorSnapshotPane?,
+        in scene: EditorRenderScene?,
+        context: CGContext,
+        viewportHeight: CGFloat,
+        _ body: () -> Void
+    ) {
+        guard let scene, let pane else {
+            body()
+            return
+        }
+        context.saveGState()
+        context.clip(to: contextRect(fromTopLeftRect: scene.paneRect(for: pane), viewportHeight: viewportHeight))
+        body()
+        context.restoreGState()
+    }
+
+    private func displayTopY(
+        forRow row: Int,
+        rowSpan: Int,
+        paneID: UInt?,
+        in scene: EditorRenderScene,
+        viewportHeight: CGFloat,
+        cellHeight: CGFloat
+    ) -> CGFloat {
+        let base = topY(forRow: row, rowSpan: rowSpan, viewportHeight: viewportHeight, cellHeight: cellHeight)
+        guard let paneID, let pane = scene.pane(id: paneID) else {
+            return base
+        }
+        return base - scene.paneHeaderHeight(for: pane)
     }
 
     private func topY(forRow row: Int, rowSpan: Int, viewportHeight: CGFloat, cellHeight: CGFloat) -> CGFloat {

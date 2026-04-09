@@ -166,10 +166,7 @@ struct EditorDocsPanelOverlay: View {
             width: CGFloat(scene.info.viewportWidth) * metrics.cellSizePoints.width,
             height: CGFloat(scene.info.viewportHeight) * metrics.cellSizePoints.height
         )
-        let baseOrigin = CGPoint(
-            x: CGFloat(panel.col) * metrics.cellSizePoints.width,
-            y: CGFloat(panel.row) * metrics.cellSizePoints.height
-        )
+        let baseOrigin = scene.displayOrigin(col: panel.col, row: panel.row)
         let exportedSize = CGSize(
             width: CGFloat(panel.width) * metrics.cellSizePoints.width,
             height: CGFloat(panel.height) * metrics.cellSizePoints.height
@@ -312,7 +309,7 @@ struct EditorDocsPanelOverlay: View {
         }
 
         let cellHeight = scene.info.surfaceMetrics.cellSizePoints.height
-        let cursorTopY = CGFloat(cursor.row) * cellHeight
+        let cursorTopY = scene.displayOrigin(col: cursor.col, row: cursor.row).y
         let cursorBottomY = cursorTopY + cellHeight
         let exportedBottom = baseOriginY + exportedHeight
         let isAboveCursor = exportedBottom <= cursorBottomY

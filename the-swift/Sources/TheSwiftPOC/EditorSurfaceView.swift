@@ -214,26 +214,34 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
         }
 
         for pane in scene.panes {
-            let paneRect = rect(for: pane, cellSize: scene.info.surfaceMetrics.cellSizePoints)
+            let paneRect = scene.paneRect(for: pane)
             guard paneRect.width > 0, paneRect.height > 0 else { continue }
             if pane.kind != .editorBuffer {
                 addCursorRect(paneRect, cursor: .arrow)
                 continue
             }
+            let contentRect = scene.paneContentRect(for: pane)
             let gutterWidth = CGFloat(pane.contentOffsetX) * scene.info.surfaceMetrics.cellSizePoints.width
+            let headerHeight = max(contentRect.minY - paneRect.minY, 0)
+            if headerHeight > 0 {
+                addCursorRect(
+                    NSRect(x: paneRect.minX, y: paneRect.minY, width: paneRect.width, height: headerHeight),
+                    cursor: .arrow
+                )
+            }
             if gutterWidth > 0 {
                 addCursorRect(
-                    NSRect(x: paneRect.minX, y: paneRect.minY, width: min(gutterWidth, paneRect.width), height: paneRect.height),
+                    NSRect(x: contentRect.minX, y: contentRect.minY, width: min(gutterWidth, contentRect.width), height: contentRect.height),
                     cursor: .arrow
                 )
             }
             let textRect = NSRect(
-                x: paneRect.minX + min(gutterWidth, paneRect.width),
-                y: paneRect.minY,
-                width: max(paneRect.width - gutterWidth, 0),
-                height: paneRect.height
+                x: contentRect.minX + min(gutterWidth, contentRect.width),
+                y: contentRect.minY,
+                width: max(contentRect.width - gutterWidth, 0),
+                height: contentRect.height
             )
-            if textRect.width > 0 {
+            if textRect.width > 0, textRect.height > 0 {
                 addCursorRect(textRect, cursor: .iBeam)
             }
         }
@@ -492,15 +500,6 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
         return bits
     }
 
-    private func rect(for pane: EditorSnapshotPane, cellSize: CGSize) -> CGRect {
-        CGRect(
-            x: CGFloat(pane.x) * cellSize.width,
-            y: CGFloat(pane.y) * cellSize.height,
-            width: CGFloat(pane.width) * cellSize.width,
-            height: CGFloat(pane.height) * cellSize.height
-        )
-    }
-
     private func separatorHitRect(_ separator: EditorSnapshotSeparator, cellSize: CGSize) -> CGRect {
         let hitThickness: CGFloat = 8
         switch separator.axis {
@@ -523,28 +522,27 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
 
     private func pane(at point: CGPoint) -> EditorSnapshotPane? {
         guard let scene = controller?.scene else { return nil }
-        let metrics = scene.info.surfaceMetrics.cellSizePoints
-        return scene.panes.first(where: { rect(for: $0, cellSize: metrics).contains(point) })
+        return scene.panes.first(where: { scene.paneRect(for: $0).contains(point) })
     }
 
     private func scrollbarGeometry(
         for pane: EditorSnapshotPane,
         cellSize: CGSize
     ) -> (pane: EditorSnapshotPane, trackRect: CGRect, thumbRect: CGRect, maxScrollRow: Int)? {
-        guard pane.kind == .editorBuffer else { return nil }
-        let visibleRows = max(pane.viewportRows, 1)
+        guard let scene = controller?.scene, pane.kind == .editorBuffer else { return nil }
+        let contentRect = scene.paneContentRect(for: pane)
+        let visibleRows = max(Int(floor(contentRect.height / max(cellSize.height, 1))), 1)
         let totalRows = max(pane.documentLineCount, visibleRows)
         let maxScrollRow = max(totalRows - visibleRows, 0)
-        guard maxScrollRow > 0 else { return nil }
+        guard maxScrollRow > 0, contentRect.height > 0 else { return nil }
 
-        let paneRect = rect(for: pane, cellSize: cellSize)
         let trackWidth = min(max(floor(cellSize.width * 0.55), 6), 8)
         let inset = max(2, floor(cellSize.width * 0.18))
         let trackRect = CGRect(
-            x: paneRect.maxX - inset - trackWidth,
-            y: paneRect.minY + inset,
+            x: contentRect.maxX - inset - trackWidth,
+            y: contentRect.minY + inset,
             width: trackWidth,
-            height: max(paneRect.height - inset * 2, trackWidth)
+            height: max(contentRect.height - inset * 2, trackWidth)
         )
         let thumbHeight = max(trackWidth * 2, floor(trackRect.height * (CGFloat(visibleRows) / CGFloat(totalRows))))
         let travel = max(trackRect.height - thumbHeight, 0)
@@ -595,13 +593,13 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
             return nil
         }
         let metrics = scene.info.surfaceMetrics.cellSizePoints
-        let paneRect = rect(for: pane, cellSize: metrics)
+        let contentRect = scene.paneContentRect(for: pane)
         let gutterWidth = CGFloat(pane.contentOffsetX) * metrics.width
         let textRect = CGRect(
-            x: paneRect.minX + gutterWidth,
-            y: paneRect.minY,
-            width: max(paneRect.width - gutterWidth, 0),
-            height: paneRect.height
+            x: contentRect.minX + gutterWidth,
+            y: contentRect.minY,
+            width: max(contentRect.width - gutterWidth, 0),
+            height: contentRect.height
         )
         guard metrics.width > 0, metrics.height > 0, textRect.width > 0, textRect.height > 0 else {
             return nil
@@ -621,7 +619,7 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
             samplePoint = point
         }
         let logicalCol = max(Int(floor((samplePoint.x - textRect.minX) / metrics.width)), 0)
-        let logicalRow = max(Int(floor((samplePoint.y - paneRect.minY) / metrics.height)), 0)
+        let logicalRow = max(Int(floor((samplePoint.y - contentRect.minY) / metrics.height)), 0)
         return (pane.paneID, logicalCol, logicalRow)
     }
 
@@ -732,9 +730,10 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
         }
         let metrics = scene.info.surfaceMetrics
         let cellSize = metrics.cellSizePoints
+        let origin = scene.displayOrigin(col: cursor.col, row: cursor.row)
         let local = NSRect(
-            x: CGFloat(cursor.col) * cellSize.width,
-            y: CGFloat(cursor.row) * cellSize.height,
+            x: origin.x,
+            y: origin.y,
             width: cellSize.width,
             height: cellSize.height
         )

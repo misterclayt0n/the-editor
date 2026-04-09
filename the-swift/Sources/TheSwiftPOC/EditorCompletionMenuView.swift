@@ -46,10 +46,7 @@ struct EditorCompletionMenuView: View {
             width: CGFloat(scene.info.viewportWidth) * metrics.cellSizePoints.width,
             height: CGFloat(scene.info.viewportHeight) * metrics.cellSizePoints.height
         )
-        let baseOrigin = CGPoint(
-            x: CGFloat(state.col) * metrics.cellSizePoints.width,
-            y: CGFloat(state.row) * metrics.cellSizePoints.height
-        )
+        let baseOrigin = scene.displayOrigin(col: state.col, row: state.row)
         let exportedSize = CGSize(
             width: CGFloat(state.width) * metrics.cellSizePoints.width,
             height: CGFloat(state.height) * metrics.cellSizePoints.height
@@ -85,7 +82,7 @@ struct EditorCompletionMenuView: View {
 
         let gap: CGFloat = 6
         let cellHeight = scene.info.surfaceMetrics.cellSizePoints.height
-        let cursorTopY = CGFloat(cursor.row) * cellHeight
+        let cursorTopY = scene.displayOrigin(col: cursor.col, row: cursor.row).y
         let cursorBottomY = cursorTopY + cellHeight
         let exportedBottom = baseOriginY + exportedHeight
 

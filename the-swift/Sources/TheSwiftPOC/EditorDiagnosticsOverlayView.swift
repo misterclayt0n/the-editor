@@ -52,7 +52,7 @@ struct EditorDiagnosticsOverlayView: View {
             CGFloat(textEndCol) * cellSize.width + 4,
             max(viewportSize.width - width - diagnosticOverlayEdgePadding, diagnosticOverlayEdgePadding)
         )
-        let y = CGFloat(cursor.row) * cellSize.height + max(cellSize.height - diagnosticInlinePillHeight - 1, 1)
+        let y = scene.displayOrigin(col: cursor.col, row: cursor.row).y + max(cellSize.height - diagnosticInlinePillHeight - 1, 1)
         return (
             diagnostic,
             max(diagnostics.count - 1, 0),

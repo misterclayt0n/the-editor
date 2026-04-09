@@ -854,9 +854,9 @@ private struct EditorPaneItemStripsOverlayView: View {
 
     @ObservedObject var controller: EditorSurfaceController
 
-    private let stripHeight: CGFloat = 24
-    private let horizontalInset: CGFloat = 8
-    private let verticalInset: CGFloat = 1
+    private let stripHeight = EditorPaneItemStripMetrics.height
+    private let horizontalInset = EditorPaneItemStripMetrics.horizontalInset
+    private let verticalInset = EditorPaneItemStripMetrics.verticalInset
 
     var body: some View {
         if let scene = controller.scene {
@@ -870,6 +870,17 @@ private struct EditorPaneItemStripsOverlayView: View {
                                 min(entry.frame.width - horizontalInset * 2, geometry.size.width - entry.frame.minX - horizontalInset),
                                 80
                             )
+                            Rectangle()
+                                .fill(Color(nsColor: theme.headerColor))
+                                .frame(width: entry.frame.width, height: stripHeight)
+                                .overlay(alignment: .bottom) {
+                                    Rectangle()
+                                        .fill(Color(nsColor: theme.separatorColor).opacity(0.9))
+                                        .frame(height: 1)
+                                }
+                                .offset(x: entry.frame.minX, y: entry.frame.minY)
+                                .zIndex(1)
+
                             EditorPaneItemTabStripView(
                                 group: entry.group,
                                 paneLabel: paneLocationLabel(for: entry.group.paneID, groupIndex: entry.groupIndex, scene: scene),
@@ -915,13 +926,7 @@ private struct EditorPaneItemStripsOverlayView: View {
     }
 
     private func paneFrame(for pane: EditorSnapshotPane, in scene: EditorRenderScene) -> CGRect {
-        let cellSize = scene.info.surfaceMetrics.cellSizePoints
-        return CGRect(
-            x: CGFloat(pane.x) * cellSize.width,
-            y: CGFloat(pane.y) * cellSize.height,
-            width: CGFloat(pane.width) * cellSize.width,
-            height: CGFloat(pane.height) * cellSize.height
-        )
+        scene.paneRect(for: pane)
     }
 }
 

@@ -34,6 +34,12 @@ struct EditorSceneLine: Hashable {
     }
 }
 
+enum EditorPaneItemStripMetrics {
+    static let height: CGFloat = 24
+    static let horizontalInset: CGFloat = 8
+    static let verticalInset: CGFloat = 1
+}
+
 struct EditorRenderScene {
     let info: EditorSnapshotInfo
     let panes: [EditorSnapshotPane]
@@ -45,6 +51,7 @@ struct EditorRenderScene {
     let diagnostics: [EditorSnapshotDiagnostic]
     let diagnosticUnderlines: [EditorSnapshotDiagnosticUnderline]
     let markedText: EditorMarkedText?
+    let paneItemStripPaneIDs: Set<UInt>
 
     var backgroundColor: NSColor {
         info.backgroundColor?.color ?? NSColor.textBackgroundColor
@@ -81,6 +88,66 @@ struct EditorRenderScene {
         panes.first(where: { $0.paneID == id })
     }
 
+    func paneContainingCell(col: Int, row: Int) -> EditorSnapshotPane? {
+        panes.first(where: { pane in
+            col >= pane.x
+                && col < (pane.x + pane.width)
+                && row >= pane.y
+                && row < (pane.y + pane.height)
+        })
+    }
+
+    func showsPaneItemStrip(for paneID: UInt) -> Bool {
+        paneItemStripPaneIDs.contains(paneID)
+    }
+
+    func paneRect(for pane: EditorSnapshotPane) -> CGRect {
+        let cellSize = info.surfaceMetrics.cellSizePoints
+        return CGRect(
+            x: CGFloat(pane.x) * cellSize.width,
+            y: CGFloat(pane.y) * cellSize.height,
+            width: CGFloat(pane.width) * cellSize.width,
+            height: CGFloat(pane.height) * cellSize.height
+        )
+    }
+
+    func paneHeaderHeight(for pane: EditorSnapshotPane) -> CGFloat {
+        showsPaneItemStrip(for: pane.paneID) ? min(EditorPaneItemStripMetrics.height, paneRect(for: pane).height) : 0
+    }
+
+    func paneContentRect(for pane: EditorSnapshotPane) -> CGRect {
+        let rect = paneRect(for: pane)
+        let headerHeight = paneHeaderHeight(for: pane)
+        return CGRect(
+            x: rect.minX,
+            y: rect.minY + headerHeight,
+            width: rect.width,
+            height: max(rect.height - headerHeight, 0)
+        )
+    }
+
+    func displayOrigin(col: Int, row: Int, paneID: UInt? = nil) -> CGPoint {
+        let cellSize = info.surfaceMetrics.cellSizePoints
+        let base = CGPoint(
+            x: CGFloat(col) * cellSize.width,
+            y: CGFloat(row) * cellSize.height
+        )
+        let pane = paneID.flatMap { self.pane(id: $0) } ?? paneContainingCell(col: col, row: row)
+        guard let pane else { return base }
+        return CGPoint(x: base.x, y: base.y + paneHeaderHeight(for: pane))
+    }
+
+    func displayRect(x: Int, y: Int, width: Int, height: Int, paneID: UInt? = nil) -> CGRect {
+        let cellSize = info.surfaceMetrics.cellSizePoints
+        let origin = displayOrigin(col: x, row: y, paneID: paneID)
+        return CGRect(
+            x: origin.x,
+            y: origin.y,
+            width: CGFloat(width) * cellSize.width,
+            height: CGFloat(height) * cellSize.height
+        )
+    }
+
     func line(atRow row: Int, paneID: UInt? = nil) -> EditorSceneLine? {
         lines.first(where: { line in
             line.row == row && (paneID == nil || line.paneID == paneID)
@@ -109,7 +176,11 @@ struct EditorRenderScene {
     }
 
     static func from(snapshot: EditorSnapshot, markedText: EditorMarkedText?) -> EditorRenderScene {
-        EditorRenderScene(
+        let paneItemStripPaneIDs = Set(snapshot.openItems.groups.compactMap { group in
+            let showsStrip = group.items.count > 1 || group.items.contains(where: { $0.kind != .buffer })
+            return showsStrip ? group.paneID : nil
+        })
+        return EditorRenderScene(
             info: snapshot.info,
             panes: snapshot.panes,
             separators: snapshot.separators,
@@ -130,7 +201,8 @@ struct EditorRenderScene {
             overlays: snapshot.overlays,
             diagnostics: snapshot.diagnostics,
             diagnosticUnderlines: snapshot.diagnosticUnderlines,
-            markedText: markedText
+            markedText: markedText,
+            paneItemStripPaneIDs: paneItemStripPaneIDs
         )
     }
 }

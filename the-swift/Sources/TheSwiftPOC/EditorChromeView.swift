@@ -1006,22 +1006,23 @@ private struct EditorPaneItemTabView: View {
     @State private var isHovered = false
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 5) {
             Button(action: onActivate) {
-                HStack(spacing: 6) {
+                HStack(spacing: 7) {
                     Image(systemName: symbolName(for: item.iconName, isDirectory: false))
-                        .font(.system(size: 10, weight: .medium))
+                        .font(.system(size: 11, weight: .medium))
                     Text(item.title)
-                        .font(.system(size: 10.5, weight: item.isActive ? .semibold : .medium))
+                        .font(.system(size: 11.5, weight: item.isActive ? .semibold : .medium))
                         .lineLimit(1)
                     if item.isModified {
                         Circle()
                             .fill(Color(nsColor: theme.selectionColor).opacity(0.92))
-                            .frame(width: 4, height: 4)
+                            .frame(width: 5, height: 5)
                     }
                 }
                 .foregroundStyle(foregroundColor)
-                .padding(.leading, 10)
+                .padding(.leading, 12)
+                .padding(.trailing, canClose ? 0 : 10)
                 .frame(maxWidth: .infinity, minHeight: controlHeight, maxHeight: controlHeight, alignment: .leading)
                 .contentShape(Rectangle())
             }
@@ -1030,16 +1031,16 @@ private struct EditorPaneItemTabView: View {
             if canClose {
                 Button(action: onClose) {
                     Image(systemName: "xmark")
-                        .font(.system(size: 8, weight: .bold))
+                        .font(.system(size: 8.5, weight: .bold))
                         .foregroundStyle(Color(nsColor: closeButtonForegroundColor))
-                        .frame(width: 14, height: 14)
+                        .frame(width: 16, height: 16)
                         .background(
                             Circle()
                                 .fill(Color(nsColor: closeButtonBackgroundColor))
                         )
                 }
                 .buttonStyle(.plain)
-                .padding(.trailing, 6)
+                .padding(.trailing, 8)
                 .help("Close \(item.title)")
                 .accessibilityLabel("Close \(item.title)")
             }
@@ -1066,10 +1067,10 @@ private struct EditorPaneItemTabView: View {
     @ViewBuilder
     private var tabBackground: some View {
         UnevenRoundedRectangle(
-            topLeadingRadius: 7,
+            topLeadingRadius: 8,
             bottomLeadingRadius: 0,
             bottomTrailingRadius: 0,
-            topTrailingRadius: 7,
+            topTrailingRadius: 8,
             style: .continuous
         )
         .fill(item.isActive ? activeBackgroundColor : inactiveBackgroundColor)
@@ -1078,10 +1079,10 @@ private struct EditorPaneItemTabView: View {
     @ViewBuilder
     private var tabBorder: some View {
         UnevenRoundedRectangle(
-            topLeadingRadius: 7,
+            topLeadingRadius: 8,
             bottomLeadingRadius: 0,
             bottomTrailingRadius: 0,
-            topTrailingRadius: 7,
+            topTrailingRadius: 8,
             style: .continuous
         )
         .stroke(item.isActive ? activeBorderColor : inactiveBorderColor, lineWidth: 1)

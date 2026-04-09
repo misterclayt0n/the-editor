@@ -123,6 +123,7 @@ struct EditorChromeView: View {
                 EditorSurfaceRepresentable(controller: controller)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
 
+                EditorPaneItemStripsOverlayView(controller: controller)
                 EditorDiagnosticsOverlayView(controller: controller)
                 EditorDocsPanelsView(controller: controller)
                 EditorCompletionMenuView(controller: controller)
@@ -839,6 +840,116 @@ private func paneLocationLabel(for paneID: UInt, groupIndex: Int, scene: EditorR
         "↓"
     }
     return "pane \(groupIndex + 1) \(arrow)"
+}
+
+private struct EditorPaneItemStripsOverlayView: View {
+    @ObservedObject var controller: EditorSurfaceController
+
+    private let stripHeight: CGFloat = 28
+    private let stripPadding: CGFloat = 6
+
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack(alignment: .topLeading) {
+                if let scene = controller.scene {
+                    let theme = EditorFileTreeSidebarTheme.resolve(scene: scene, chrome: controller.chrome)
+                    ForEach(controller.openItems.groups) { group in
+                        if shouldShowStrip(for: group),
+                           let pane = scene.pane(id: group.paneID) {
+                            let frame = paneFrame(for: pane, in: scene)
+                            if frame.height >= stripHeight + stripPadding * 2,
+                               frame.width >= 80 {
+                                EditorPaneItemStripView(
+                                    group: group,
+                                    theme: theme,
+                                    onActivateItem: controller.activateOpenItem
+                                )
+                                .frame(width: max(min(frame.width - stripPadding * 2, geometry.size.width - frame.minX - stripPadding), 80), height: stripHeight)
+                                .offset(x: frame.minX + stripPadding, y: frame.minY + stripPadding)
+                                .zIndex(group.isActivePane ? 3 : 2)
+                            }
+                        }
+                    }
+                }
+            }
+            .frame(width: geometry.size.width, height: geometry.size.height, alignment: .topLeading)
+        }
+    }
+
+    private func shouldShowStrip(for group: EditorPaneOpenItemGroup) -> Bool {
+        group.items.count > 1 || group.items.contains(where: { $0.kind != .buffer })
+    }
+
+    private func paneFrame(for pane: EditorSnapshotPane, in scene: EditorRenderScene) -> CGRect {
+        let cellSize = scene.info.surfaceMetrics.cellSizePoints
+        return CGRect(
+            x: CGFloat(pane.x) * cellSize.width,
+            y: CGFloat(pane.y) * cellSize.height,
+            width: CGFloat(pane.width) * cellSize.width,
+            height: CGFloat(pane.height) * cellSize.height
+        )
+    }
+}
+
+private struct EditorPaneItemStripView: View {
+    let group: EditorPaneOpenItemGroup
+    let theme: EditorFileTreeSidebarTheme
+    let onActivateItem: (EditorPaneOpenItemRow) -> Void
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(group.items.prefix(4)) { item in
+                Button {
+                    onActivateItem(item)
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: symbolName(for: item.iconName, isDirectory: false))
+                            .font(.system(size: 10, weight: .medium))
+                        Text(item.title)
+                            .font(.system(size: 11, weight: item.isActive ? .semibold : .medium))
+                            .lineLimit(1)
+                        if item.isModified {
+                            Circle()
+                                .fill(Color(nsColor: item.isActive ? theme.selectionColor : .secondaryLabelColor).opacity(0.9))
+                                .frame(width: 4, height: 4)
+                        }
+                    }
+                    .foregroundStyle(item.isActive ? Color.primary : Color.primary.opacity(0.82))
+                    .padding(.horizontal, 9)
+                    .frame(height: 22)
+                    .background(
+                        Capsule(style: .continuous)
+                            .fill(item.isActive ? Color(nsColor: theme.selectionColor).opacity(0.24) : Color.clear)
+                    )
+                    .contentShape(Capsule(style: .continuous))
+                }
+                .buttonStyle(.plain)
+            }
+
+            if group.items.count > 4 {
+                Text("+\(group.items.count - 4)")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 7)
+                    .frame(height: 22)
+                    .background(
+                        Capsule(style: .continuous)
+                            .fill(Color.secondary.opacity(0.08))
+                    )
+            }
+        }
+        .padding(.horizontal, 4)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .fill(Color(nsColor: theme.backgroundColor).opacity(0.94))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .stroke(Color(nsColor: theme.separatorColor).opacity(0.75), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.12), radius: 6, y: 2)
+    }
 }
 
 private struct EditorFileTreeListRepresentable: NSViewRepresentable {

@@ -29,6 +29,10 @@ final class GhosttyTerminalRegistry {
         in containerView: NSView,
         editorSurfaceView: NSView
     ) {
+        let resolvedBackgroundColor = scene?.backgroundColor ?? controller?.chrome.backgroundColor ?? .windowBackgroundColor
+        let colorScheme = ghosttyColorScheme(for: resolvedBackgroundColor)
+        runtime.setColorScheme(colorScheme)
+
         let visibleTerminalPanes = scene?.panes.filter { $0.kind == .clientSurface && $0.clientSurfaceID != nil } ?? []
         let allSurfaceIDs = Set(openItems.groups.flatMap { group in
             group.items.compactMap { item -> UInt? in
@@ -84,6 +88,7 @@ final class GhosttyTerminalRegistry {
                 if view.superview !== containerView {
                     containerView.addSubview(view)
                 }
+                view.updateColorScheme(colorScheme)
                 view.updateVisibility(true)
                 view.updateFocus(pane.isActive && containerView.window?.firstResponder === view)
             }
@@ -121,6 +126,12 @@ final class GhosttyTerminalRegistry {
         }
         return FileManager.default.homeDirectoryForCurrentUser.path
     }
+
+    private func ghosttyColorScheme(for color: NSColor) -> ghostty_color_scheme_e {
+        let resolved = color.usingColorSpace(.sRGB) ?? color
+        let luminance = (0.299 * resolved.redComponent) + (0.587 * resolved.greenComponent) + (0.114 * resolved.blueComponent)
+        return luminance > 0.7 ? GHOSTTY_COLOR_SCHEME_LIGHT : GHOSTTY_COLOR_SCHEME_DARK
+    }
     #else
     init(controller: EditorSurfaceController) {}
     func reconcile(scene: EditorRenderScene?, openItems: EditorPaneOpenItemsState, in containerView: NSView, editorSurfaceView: NSView) {}
@@ -144,6 +155,7 @@ private final class GhosttyEmbeddedRuntime {
     private var tickScheduled = false
     private var didInitializeLibrary = false
     private var appObservers: [NSObjectProtocol] = []
+    private var colorScheme: ghostty_color_scheme_e = GHOSTTY_COLOR_SCHEME_DARK
 
     private init() {
         initializeIfNeeded()
@@ -171,6 +183,16 @@ private final class GhosttyEmbeddedRuntime {
     func appHandle() -> ghostty_app_t? {
         initializeIfNeeded()
         return app
+    }
+
+    var currentColorScheme: ghostty_color_scheme_e {
+        colorScheme
+    }
+
+    func setColorScheme(_ colorScheme: ghostty_color_scheme_e) {
+        self.colorScheme = colorScheme
+        guard let app else { return }
+        ghostty_app_set_color_scheme(app, colorScheme)
     }
 
     func scheduleTick() {
@@ -247,6 +269,7 @@ private final class GhosttyEmbeddedRuntime {
             return
         }
         ghostty_app_set_focus(app, NSApp.isActive)
+        ghostty_app_set_color_scheme(app, colorScheme)
         let center = NotificationCenter.default
         appObservers.append(center.addObserver(
             forName: NSApplication.didBecomeActiveNotification,
@@ -394,6 +417,11 @@ private final class GhosttyTerminalSurfaceView: NSView {
         }
     }
 
+    func updateColorScheme(_ colorScheme: ghostty_color_scheme_e) {
+        guard let surface else { return }
+        ghostty_surface_set_color_scheme(surface, colorScheme)
+    }
+
     func updateFocus(_ focused: Bool) {
         guard let surface else { return }
         ghostty_surface_set_focus(surface, focused)
@@ -507,6 +535,7 @@ private final class GhosttyTerminalSurfaceView: NSView {
             return
         }
 
+        updateColorScheme(runtime.currentColorScheme)
         synchronizeDisplayID()
         synchronizeSurfaceGeometry()
         updateVisibility(isSurfaceVisible)

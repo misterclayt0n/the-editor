@@ -215,9 +215,7 @@ private final class GhosttyEmbeddedRuntime {
             ghosttyLog("ghostty_config_new failed for primary config")
             return
         }
-        ghostty_config_load_default_files(primaryConfig)
-        ghostty_config_load_recursive_files(primaryConfig)
-        ghostty_config_finalize(primaryConfig)
+        loadDefaultConfigFilesWithLegacyFallback(primaryConfig)
 
         var runtimeConfig = ghostty_runtime_config_s()
         runtimeConfig.userdata = Unmanaged.passUnretained(self).toOpaque()
@@ -304,6 +302,16 @@ private final class GhosttyEmbeddedRuntime {
                 ghostty_app_set_focus(app, false)
             }
         })
+    }
+
+    private func loadDefaultConfigFilesWithLegacyFallback(_ config: ghostty_config_t) {
+        // Match cmux's load ordering as closely as this GhosttyKit build allows.
+        // Our current embedded kit exposes default + recursive loading, but not
+        // ghostty_config_load_file, so the legacy single-file compatibility path
+        // used by cmux is not available here yet.
+        ghostty_config_load_default_files(config)
+        ghostty_config_load_recursive_files(config)
+        ghostty_config_finalize(config)
     }
 
     private func logConfigDiagnostics(_ config: ghostty_config_t, label: String) {

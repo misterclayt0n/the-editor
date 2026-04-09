@@ -275,7 +275,7 @@ private final class GhosttyEmbeddedRuntime {
     }
 }
 
-private func ghosttyLog(_ message: String) {
+func ghosttyLog(_ message: String) {
     fputs("[the-swift:ghostty] \(message)\n", stderr)
 }
 

@@ -9,6 +9,10 @@ protocol EditorSurfaceControllerDelegate: AnyObject {
     func editorController(_ controller: EditorSurfaceController, didUpdateScene scene: EditorRenderScene)
 }
 
+private func ghosttyActionLog(_ message: String) {
+    fputs("[the-swift:ghostty] \(message)\n", stderr)
+}
+
 private struct EditorHandleBox: @unchecked Sendable {
     let raw: OpaquePointer
 }
@@ -55,7 +59,8 @@ final class EditorSurfaceController: ObservableObject {
 
     init(initialPath: String?) {
         self.handle = EditorFFIBridge.createHandle(initialPath: initialPath).map(EditorHandleBox.init(raw:))
-        _ = EditorFFIBridge.setEmbeddedTerminalEnabled(handle?.raw, enabled: GhosttyTerminalRegistry.isAvailable)
+        let embeddedEnabled = EditorFFIBridge.setEmbeddedTerminalEnabled(handle?.raw, enabled: GhosttyTerminalRegistry.isAvailable)
+        ghosttyActionLog("controller init handlePresent=\(handle != nil) ghosttyAvailable=\(GhosttyTerminalRegistry.isAvailable) embeddedEnabledCallChanged=\(embeddedEnabled)")
         startBackgroundPolling()
         refreshSnapshot()
     }
@@ -259,12 +264,24 @@ final class EditorSurfaceController: ObservableObject {
     }
 
     func openTerminalInActivePane() {
-        guard EditorFFIBridge.openTerminalInActivePane(handle?.raw) else { return }
+        let activePaneText = scene.map { String($0.info.activePaneID) } ?? "nil"
+        ghosttyActionLog("controller openTerminal requested sceneActivePane=\(activePaneText) openItemGroups=\(openItems.groups.count)")
+        let opened = EditorFFIBridge.openTerminalInActivePane(handle?.raw)
+        ghosttyActionLog("controller openTerminal result=\(opened)")
+        guard opened else { return }
         refreshSnapshot()
+        let terminalCount = openItems.groups.flatMap(\.items).filter { $0.kind == .terminal }.count
+        let activeTerminalPane = scene?.panes.first(where: { $0.isActive && $0.kind == .clientSurface })
+        let activeTerminalPaneText = activeTerminalPane.map { String($0.paneID) } ?? "nil"
+        let clientSurfaceText = activeTerminalPane?.clientSurfaceID.map(String.init) ?? "nil"
+        ghosttyActionLog("controller openTerminal snapshot terminalCount=\(terminalCount) activeTerminalPane=\(activeTerminalPaneText) clientSurfaceID=\(clientSurfaceText)")
     }
 
     func closeTerminalInActivePane() {
-        guard EditorFFIBridge.closeTerminalInActivePane(handle?.raw) else { return }
+        ghosttyActionLog("controller closeTerminal requested")
+        let closed = EditorFFIBridge.closeTerminalInActivePane(handle?.raw)
+        ghosttyActionLog("controller closeTerminal result=\(closed)")
+        guard closed else { return }
         refreshSnapshot()
     }
 

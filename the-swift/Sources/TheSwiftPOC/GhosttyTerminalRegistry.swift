@@ -382,14 +382,6 @@ private struct GhosttyTextSnapshot {
     let text: String
 }
 
-private struct GhosttyDoubleClickSelectionCorrection {
-    let startX: Double
-    let endX: Double
-    let y: Double
-    let quicklookText: String
-    let selectionText: String
-}
-
 private final class GhosttySurfaceCallbackContext {
     let clientSurfaceID: UInt
     let onCloseRequested: (UInt) -> Void
@@ -413,7 +405,6 @@ private final class GhosttyTerminalSurfaceView: NSView {
     private var isSurfaceVisible = false
     private var pendingWorkingDirectory: String?
     private var lastKnownMousePointInView: NSPoint?
-    private var pendingDoubleClickSelectionCorrection: GhosttyDoubleClickSelectionCorrection?
 
     override var acceptsFirstResponder: Bool { true }
 
@@ -539,14 +530,12 @@ private final class GhosttyTerminalSurfaceView: NSView {
             sendMousePosition(event)
         }
         let consumed = ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_PRESS, GHOSTTY_MOUSE_LEFT, mods(from: event.modifierFlags))
-        scheduleDoubleClickSelectionCorrectionIfNeeded(event: event, surface: surface)
         logSelectionState("leftDown.after", event: event, surface: surface, mousePositionSent: sentMousePosition, consumed: consumed)
     }
 
     override func mouseUp(with event: NSEvent) {
         guard let surface else { return }
         let consumed = ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_RELEASE, GHOSTTY_MOUSE_LEFT, mods(from: event.modifierFlags))
-        applyPendingDoubleClickSelectionCorrection(surface)
         logSelectionState("leftUp.after", event: event, surface: surface, mousePositionSent: false, consumed: consumed)
         guard ghosttySelectionLoggingEnabled else { return }
         DispatchQueue.main.async { [weak self] in
@@ -756,74 +745,6 @@ private final class GhosttyTerminalSurfaceView: NSView {
         ghosttySelectionLog(
             "surface=\(clientSurfaceID) pane=\(paneID) phase=\(phase) clickCount=\(event.clickCount) sentPos=\(mousePositionSent ? 1 : 0) consumed=\(consumedText) raw=\(debugPoint(rawPoint)) current=\(debugPoint(currentPoint)) cached=\(debugPoint(cachedPoint)) preferred=\(debugPoint(preferredPoint)) hasSelection=\(ghostty_surface_has_selection(surface) ? 1 : 0) selection=\(selection) selectionMeta=\(selectionMeta) quicklook=\(quicklook) quicklookMeta=\(quicklookMeta)"
         )
-    }
-
-    private func scheduleDoubleClickSelectionCorrectionIfNeeded(event: NSEvent, surface: ghostty_surface_t) {
-        pendingDoubleClickSelectionCorrection = nil
-        guard event.clickCount == 2 else { return }
-        guard let selection = readSelectionSnapshot(surface),
-              let quicklook = readQuicklookSnapshot(surface)
-        else {
-            return
-        }
-        guard quicklook.offsetStart < selection.offsetStart,
-              quicklook.text.count > selection.text.count,
-              quicklook.text.hasSuffix(selection.text)
-        else {
-            return
-        }
-
-        let prefixCellCount = max(Int(selection.offsetStart) - Int(quicklook.offsetStart), 0)
-        let inferredCellWidth: Double
-        if prefixCellCount > 0 {
-            let deltaX = selection.tlPxX - quicklook.tlPxX
-            inferredCellWidth = deltaX > 0 ? deltaX / Double(prefixCellCount) : 0
-        } else {
-            inferredCellWidth = 0
-        }
-        let (fallbackCellWidth, cellHeight) = ghosttyCellSize(surface)
-        let cellWidth = inferredCellWidth > 0 ? inferredCellWidth : fallbackCellWidth
-        let cellInset = max(min(cellWidth * 0.5, cellWidth - 1), 1)
-        let startX = quicklook.tlPxX + cellInset
-        let endCellCount = max(Double(max(Int(quicklook.offsetLen), 1)) - 0.5, 0.5)
-        let endX = min(quicklook.tlPxX + (cellWidth * endCellCount), max(bounds.width - 1, 0))
-        let y = min(quicklook.tlPxY + max(cellHeight * 0.5, 1), max(bounds.height - 1, 0))
-        let clampedEndX = max(endX, startX)
-        pendingDoubleClickSelectionCorrection = GhosttyDoubleClickSelectionCorrection(
-            startX: startX,
-            endX: clampedEndX,
-            y: y,
-            quicklookText: quicklook.text,
-            selectionText: selection.text
-        )
-        ghosttySelectionLog(
-            "surface=\(clientSurfaceID) pane=\(paneID) phase=doubleClick.scheduled start=(\(String(format: "%.1f", startX)),\(String(format: "%.1f", y))) end=(\(String(format: "%.1f", clampedEndX)),\(String(format: "%.1f", y))) selection=\(debugText(selection.text)) quicklook=\(debugText(quicklook.text)) inferredCellWidth=\(String(format: "%.2f", inferredCellWidth)) fallbackCellWidth=\(String(format: "%.2f", fallbackCellWidth)) cellHeight=\(String(format: "%.2f", cellHeight))"
-        )
-    }
-
-    private func applyPendingDoubleClickSelectionCorrection(_ surface: ghostty_surface_t) {
-        guard let correction = pendingDoubleClickSelectionCorrection else { return }
-        pendingDoubleClickSelectionCorrection = nil
-        let mods = ghostty_input_mods_e(rawValue: GHOSTTY_MODS_NONE.rawValue)
-        ghostty_surface_mouse_pos(surface, correction.startX, correction.y, mods)
-        let pressConsumed = ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_PRESS, GHOSTTY_MOUSE_LEFT, mods)
-        ghostty_surface_mouse_pos(surface, correction.endX, correction.y, mods)
-        let releaseConsumed = ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_RELEASE, GHOSTTY_MOUSE_LEFT, mods)
-        ghosttySelectionLog(
-            "surface=\(clientSurfaceID) pane=\(paneID) phase=doubleClick.applied start=(\(String(format: "%.1f", correction.startX)),\(String(format: "%.1f", correction.y))) end=(\(String(format: "%.1f", correction.endX)),\(String(format: "%.1f", correction.y))) pressConsumed=\(pressConsumed ? 1 : 0) releaseConsumed=\(releaseConsumed ? 1 : 0) selection=\(debugText(correction.selectionText)) quicklook=\(debugText(correction.quicklookText))"
-        )
-    }
-
-    private func ghosttyCellSize(_ surface: ghostty_surface_t) -> (width: Double, height: Double) {
-        var imeX: Double = 0
-        var imeY: Double = 0
-        var imeWidth: Double = 0
-        var imeHeight: Double = 0
-        ghostty_surface_ime_point(surface, &imeX, &imeY, &imeWidth, &imeHeight)
-        let size = ghostty_surface_size(surface)
-        let width = imeWidth > 0 ? imeWidth : max(bounds.width / Double(max(Int(size.columns), 1)), 1)
-        let height = imeHeight > 0 ? imeHeight : max(bounds.height / Double(max(Int(size.rows), 1)), 1)
-        return (width, height)
     }
 
     private func readSelectionSnapshot(_ surface: ghostty_surface_t) -> GhosttyTextSnapshot? {

@@ -848,7 +848,6 @@ private struct EditorPaneItemStripsOverlayView: View {
     private struct LayoutEntry: Identifiable {
         let groupIndex: Int
         let group: EditorPaneOpenItemGroup
-        let pane: EditorSnapshotPane
         let frame: CGRect
         let rowIndex: Int
 
@@ -862,11 +861,10 @@ private struct EditorPaneItemStripsOverlayView: View {
 
     @ObservedObject var controller: EditorSurfaceController
 
-    private let switcherHeight: CGFloat = 30
-    private let switcherPadding: CGFloat = 6
-    private let rowSpacing: CGFloat = 4
-
-    @State private var expandedPaneID: UInt?
+    private let stripHeight: CGFloat = 24
+    private let horizontalInset: CGFloat = 8
+    private let rowSpacing: CGFloat = 1
+    private let verticalInset: CGFloat = 1
 
     var body: some View {
         if let scene = controller.scene,
@@ -878,39 +876,24 @@ private struct EditorPaneItemStripsOverlayView: View {
 
                     ForEach(layout.entries) { entry in
                         let availableWidth = max(
-                            min(entry.frame.width - switcherPadding * 2, geometry.size.width - entry.frame.minX - switcherPadding),
-                            64
+                            min(entry.frame.width - horizontalInset * 2, geometry.size.width - entry.frame.minX - horizontalInset),
+                            80
                         )
-                        HStack {
-                            Spacer(minLength: 0)
-                            EditorPaneItemSwitcherView(
-                                group: entry.group,
-                                paneLabel: paneLocationLabel(for: entry.group.paneID, groupIndex: entry.groupIndex, scene: scene),
-                                theme: theme,
-                                isExpanded: expandedPaneID == entry.group.paneID,
-                                onToggleExpanded: {
-                                    withAnimation(.spring(response: 0.22, dampingFraction: 0.9)) {
-                                        expandedPaneID = expandedPaneID == entry.group.paneID ? nil : entry.group.paneID
-                                    }
-                                },
-                                onActivateItem: { item in
-                                    withAnimation(.spring(response: 0.22, dampingFraction: 0.9)) {
-                                        expandedPaneID = nil
-                                    }
-                                    if item.isActive {
-                                        return
-                                    }
-                                    controller.activateOpenItem(item)
-                                }
-                            )
-                            .frame(maxWidth: availableWidth, alignment: .trailing)
-                        }
-                        .frame(width: availableWidth, height: switcherHeight)
+                        EditorPaneItemTabStripView(
+                            group: entry.group,
+                            paneLabel: paneLocationLabel(for: entry.group.paneID, groupIndex: entry.groupIndex, scene: scene),
+                            theme: theme,
+                            onActivateItem: { item in
+                                if item.isActive { return }
+                                controller.activateOpenItem(item)
+                            }
+                        )
+                        .frame(width: availableWidth, height: stripHeight, alignment: .leading)
                         .offset(
-                            x: entry.frame.minX + switcherPadding,
-                            y: switcherPadding + CGFloat(entry.rowIndex) * (switcherHeight + rowSpacing)
+                            x: entry.frame.minX + horizontalInset,
+                            y: verticalInset + CGFloat(entry.rowIndex) * (stripHeight + rowSpacing)
                         )
-                        .zIndex(expandedPaneID == entry.group.paneID ? 4 : (entry.group.isActivePane ? 3 : 2))
+                        .zIndex(entry.group.isActivePane ? 3 : 2)
                     }
                 }
                 .frame(width: geometry.size.width, height: geometry.size.height, alignment: .topLeading)
@@ -925,36 +908,35 @@ private struct EditorPaneItemStripsOverlayView: View {
     }
 
     private func layoutModel(for scene: EditorRenderScene) -> LayoutModel? {
-        let rawEntries = Array(controller.openItems.groups.enumerated()).compactMap { groupIndex, group -> (Int, EditorPaneOpenItemGroup, EditorSnapshotPane, CGRect)? in
+        let rawEntries = Array(controller.openItems.groups.enumerated()).compactMap { groupIndex, group -> (Int, EditorPaneOpenItemGroup, CGRect, Int)? in
             guard let pane = scene.pane(id: group.paneID),
-                  shouldShowSwitcher(for: group, pane: pane)
+                  shouldShowTabStrip(for: group)
             else {
                 return nil
             }
-            return (groupIndex, group, pane, paneFrame(for: pane, in: scene))
+            let frame = paneFrame(for: pane, in: scene)
+            return (groupIndex, group, frame, pane.y)
         }
 
         guard !rawEntries.isEmpty else { return nil }
-        let rowOrigins = Array(Set(rawEntries.map { $0.2.y })).sorted()
-        let entries = rawEntries.map { groupIndex, group, pane, frame in
+        let rowOrigins = Array(Set(rawEntries.map { $0.3 })).sorted()
+        let entries = rawEntries.map { groupIndex, group, frame, rowOrigin in
             LayoutEntry(
                 groupIndex: groupIndex,
                 group: group,
-                pane: pane,
                 frame: frame,
-                rowIndex: rowOrigins.firstIndex(of: pane.y) ?? 0
+                rowIndex: rowOrigins.firstIndex(of: rowOrigin) ?? 0
             )
         }
         let rowCount = max(rowOrigins.count, 1)
-        let totalHeight = (switcherPadding * 2)
-            + (CGFloat(rowCount) * switcherHeight)
+        let totalHeight = (verticalInset * 2)
+            + (CGFloat(rowCount) * stripHeight)
             + (CGFloat(max(rowCount - 1, 0)) * rowSpacing)
         return LayoutModel(entries: entries, totalHeight: totalHeight)
     }
 
-    private func shouldShowSwitcher(for group: EditorPaneOpenItemGroup, pane: EditorSnapshotPane) -> Bool {
-        let _ = pane
-        return group.items.count > 1 || group.items.contains(where: { $0.kind != .buffer })
+    private func shouldShowTabStrip(for group: EditorPaneOpenItemGroup) -> Bool {
+        group.items.count > 1 || group.items.contains(where: { $0.kind != .buffer })
     }
 
     private func paneFrame(for pane: EditorSnapshotPane, in scene: EditorRenderScene) -> CGRect {
@@ -968,170 +950,61 @@ private struct EditorPaneItemStripsOverlayView: View {
     }
 }
 
-private struct EditorPaneItemSwitcherView: View {
+private struct EditorPaneItemTabStripView: View {
     let group: EditorPaneOpenItemGroup
     let paneLabel: String
     let theme: EditorFileTreeSidebarTheme
-    let isExpanded: Bool
-    let onToggleExpanded: () -> Void
     let onActivateItem: (EditorPaneOpenItemRow) -> Void
 
-    private var activeItem: EditorPaneOpenItemRow? {
-        if let active = group.items.first(where: { $0.isActive }) {
-            return active
-        }
-        if let activeIndex = group.activeIndex,
-           group.items.indices.contains(activeIndex) {
-            return group.items[activeIndex]
-        }
-        return group.items.first
-    }
-
     var body: some View {
-        Group {
-            if isExpanded {
-                expandedContent
-            } else {
-                collapsedContent
-            }
-        }
-        .animation(.spring(response: 0.22, dampingFraction: 0.9), value: isExpanded)
-        .help(helpText)
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel(helpText)
-    }
-
-    private var expandedContent: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 0) {
             ForEach(group.items) { item in
-                EditorPaneItemChipView(
+                EditorPaneItemTabView(
                     item: item,
                     theme: theme,
-                    style: item.isActive ? .active : .secondary,
-                    showsTitle: true,
+                    isActivePane: group.isActivePane,
                     onActivate: { onActivateItem(item) }
                 )
             }
         }
-        .padding(4)
-        .background(
-            Capsule(style: .continuous)
-                .fill(backgroundColor)
-        )
-        .overlay(
-            Capsule(style: .continuous)
-                .stroke(borderColor, lineWidth: 1)
-        )
-        .shadow(color: .black.opacity(0.10), radius: 4, y: 1)
-    }
-
-    private var collapsedContent: some View {
-        Button(action: onToggleExpanded) {
-            HStack(spacing: 6) {
-                if let activeItem {
-                    Image(systemName: symbolName(for: activeItem.iconName, isDirectory: false))
-                        .font(.system(size: 10, weight: .medium))
-                    Text(activeItem.title)
-                        .font(.system(size: 10.5, weight: activeItem.isActive ? .semibold : .medium))
-                        .lineLimit(1)
-                    if activeItem.isModified {
-                        Circle()
-                            .fill(Color(nsColor: theme.selectionColor).opacity(0.9))
-                            .frame(width: 4, height: 4)
-                    }
-                } else {
-                    Image(systemName: "square.stack.3d.up.fill")
-                        .font(.system(size: 10, weight: .medium))
-                }
-
-                if group.items.count > 1 {
-                    Text("+\(group.items.count - 1)")
-                        .font(.system(size: 10, weight: .bold, design: .rounded))
-                        .monospacedDigit()
-                        .foregroundStyle(.secondary)
-                }
-
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 8, weight: .bold))
-                    .foregroundStyle(.secondary)
-            }
-            .foregroundStyle(group.isActivePane ? Color.primary : Color.primary.opacity(0.88))
-            .padding(.horizontal, 9)
-            .frame(height: 22)
-            .background(
-                Capsule(style: .continuous)
-                    .fill(backgroundColor)
-            )
-            .overlay(
-                Capsule(style: .continuous)
-                    .stroke(borderColor, lineWidth: 1)
-            )
-            .shadow(color: .black.opacity(0.10), radius: 4, y: 1)
-            .contentShape(Capsule(style: .continuous))
-        }
-        .buttonStyle(.plain)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .help(helpText)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(helpText)
     }
 
     private var helpText: String {
         let titles = group.items.map(\.title).joined(separator: ", ")
         return "\(paneLabel): \(titles)"
     }
-
-    private var backgroundColor: Color {
-        if group.isActivePane {
-            return Color(nsColor: theme.backgroundColor).opacity(0.96)
-        }
-        return Color(nsColor: theme.backgroundColor).opacity(0.90)
-    }
-
-    private var borderColor: Color {
-        if group.isActivePane {
-            return Color(nsColor: theme.selectionColor).opacity(0.58)
-        }
-        return Color(nsColor: theme.separatorColor).opacity(0.75)
-    }
 }
 
-private struct EditorPaneItemChipView: View {
-    enum Style {
-        case active
-        case secondary
-    }
-
+private struct EditorPaneItemTabView: View {
     let item: EditorPaneOpenItemRow
     let theme: EditorFileTreeSidebarTheme
-    let style: Style
-    let showsTitle: Bool
+    let isActivePane: Bool
     let onActivate: () -> Void
 
     var body: some View {
         Button(action: onActivate) {
-            HStack(spacing: showsTitle ? 5 : 0) {
+            HStack(spacing: 6) {
                 Image(systemName: symbolName(for: item.iconName, isDirectory: false))
                     .font(.system(size: 10, weight: .medium))
-                if showsTitle {
-                    Text(item.title)
-                        .font(.system(size: 10.5, weight: item.isActive ? .semibold : .medium))
-                        .lineLimit(1)
-                }
+                Text(item.title)
+                    .font(.system(size: 10.5, weight: item.isActive ? .semibold : .medium))
+                    .lineLimit(1)
                 if item.isModified {
                     Circle()
-                        .fill(Color(nsColor: item.isActive ? theme.selectionColor : .secondaryLabelColor).opacity(0.9))
+                        .fill(Color(nsColor: theme.selectionColor).opacity(0.92))
                         .frame(width: 4, height: 4)
                 }
             }
             .foregroundStyle(foregroundColor)
-            .padding(.horizontal, showsTitle ? 9 : 7)
-            .frame(height: 22)
-            .background(
-                Capsule(style: .continuous)
-                    .fill(backgroundColor)
-            )
-            .overlay(
-                Capsule(style: .continuous)
-                    .stroke(borderColor, lineWidth: 1)
-            )
-            .contentShape(Capsule(style: .continuous))
+            .padding(.horizontal, 10)
+            .frame(maxWidth: .infinity, minHeight: 22, maxHeight: 22, alignment: .leading)
+            .background(tabBackground)
+            .overlay(tabBorder)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .help(item.filePath ?? item.title)
@@ -1139,30 +1012,51 @@ private struct EditorPaneItemChipView: View {
     }
 
     private var foregroundColor: Color {
-        switch style {
-        case .active:
+        if item.isActive {
             return .primary
-        case .secondary:
-            return .primary.opacity(showsTitle ? 0.88 : 0.78)
         }
+        return isActivePane ? .secondary.opacity(0.95) : .secondary.opacity(0.82)
     }
 
-    private var backgroundColor: Color {
-        switch style {
-        case .active:
-            return Color(nsColor: theme.selectionColor).opacity(0.22)
-        case .secondary:
-            return Color(nsColor: theme.backgroundColor).opacity(0.24)
-        }
+    @ViewBuilder
+    private var tabBackground: some View {
+        UnevenRoundedRectangle(
+            topLeadingRadius: 7,
+            bottomLeadingRadius: 0,
+            bottomTrailingRadius: 0,
+            topTrailingRadius: 7,
+            style: .continuous
+        )
+        .fill(item.isActive ? activeBackgroundColor : inactiveBackgroundColor)
     }
 
-    private var borderColor: Color {
-        switch style {
-        case .active:
-            return Color(nsColor: theme.selectionColor).opacity(0.6)
-        case .secondary:
-            return Color(nsColor: theme.separatorColor).opacity(0.45)
-        }
+    @ViewBuilder
+    private var tabBorder: some View {
+        UnevenRoundedRectangle(
+            topLeadingRadius: 7,
+            bottomLeadingRadius: 0,
+            bottomTrailingRadius: 0,
+            topTrailingRadius: 7,
+            style: .continuous
+        )
+        .stroke(item.isActive ? activeBorderColor : inactiveBorderColor, lineWidth: 1)
+    }
+
+    private var activeBackgroundColor: Color {
+        Color(nsColor: theme.backgroundColor)
+    }
+
+    private var inactiveBackgroundColor: Color {
+        Color(nsColor: theme.backgroundColor)
+            .opacity(isActivePane ? 0.72 : 0.58)
+    }
+
+    private var activeBorderColor: Color {
+        Color(nsColor: theme.selectionColor).opacity(0.72)
+    }
+
+    private var inactiveBorderColor: Color {
+        Color(nsColor: theme.separatorColor).opacity(0.68)
     }
 }
 

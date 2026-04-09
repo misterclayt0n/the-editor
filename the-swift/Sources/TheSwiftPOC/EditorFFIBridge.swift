@@ -643,6 +643,52 @@ struct EditorBufferTabsState: Hashable {
     )
 }
 
+enum EditorOpenItemKind: UInt8, Hashable {
+    case buffer = 0
+    case terminal = 1
+}
+
+struct EditorPaneOpenItemRow: Hashable, Identifiable {
+    let paneID: UInt
+    let kind: EditorOpenItemKind
+    let itemID: UInt
+    let bufferID: UInt?
+    let clientSurfaceID: UInt?
+    let title: String
+    let subtitle: String?
+    let filePath: String?
+    let iconName: String
+    let isActive: Bool
+    let isModified: Bool
+    let vcsKind: EditorFileTreeVcsKind?
+    let diagnosticSeverity: EditorDiagnosticSeverity?
+
+    var id: String { "\(paneID):\(kind.rawValue):\(itemID)" }
+}
+
+struct EditorPaneOpenItemGroup: Hashable, Identifiable {
+    let paneID: UInt
+    let isActivePane: Bool
+    let activeIndex: Int?
+    let items: [EditorPaneOpenItemRow]
+
+    var id: UInt { paneID }
+}
+
+struct EditorPaneOpenItemsState: Hashable {
+    let isVisible: Bool
+    let groups: [EditorPaneOpenItemGroup]
+
+    var totalItemCount: Int {
+        groups.reduce(0) { $0 + $1.items.count }
+    }
+
+    static let empty = EditorPaneOpenItemsState(
+        isVisible: false,
+        groups: []
+    )
+}
+
 struct EditorFileTreeRow: Hashable, Identifiable {
     let path: String
     let displayName: String
@@ -709,6 +755,7 @@ struct EditorSnapshot {
     let signatureHelp: EditorDocsPanelState
     let filePicker: EditorFilePickerState
     let bufferTabs: EditorBufferTabsState
+    let openItems: EditorPaneOpenItemsState
     let fileTree: EditorFileTreeState
 }
 
@@ -990,6 +1037,18 @@ enum EditorFFIBridge {
     static func closeBufferTab(_ handle: OpaquePointer?, bufferID: UInt) -> Bool {
         guard let handle else { return false }
         return the_editor_close_buffer_tab(handle, bufferID)
+    }
+
+    @discardableResult
+    static func activateOpenItem(_ handle: OpaquePointer?, paneID: UInt, kind: EditorOpenItemKind, itemID: UInt) -> Bool {
+        guard let handle else { return false }
+        return the_editor_activate_open_item(handle, paneID, kind.rawValue, itemID)
+    }
+
+    @discardableResult
+    static func closeOpenItem(_ handle: OpaquePointer?, kind: EditorOpenItemKind, itemID: UInt) -> Bool {
+        guard let handle else { return false }
+        return the_editor_close_open_item(handle, kind.rawValue, itemID)
     }
 
     @discardableResult
@@ -1478,6 +1537,43 @@ enum EditorFFIBridge {
             tabs: bufferTabRows
         )
 
+        let openItemsValue = the_editor_snapshot_open_items(rawSnapshot)
+        let openItemGroups: [EditorPaneOpenItemGroup] = (0..<Int(openItemsValue.group_count)).map { groupIndex in
+            let groupValue = the_editor_snapshot_open_item_group_at(rawSnapshot, UInt(groupIndex))
+            let paneID = UInt(groupValue.pane_id)
+            let items: [EditorPaneOpenItemRow] = (0..<Int(groupValue.item_count)).map { itemIndex in
+                let itemValue = the_editor_snapshot_open_item_at(rawSnapshot, UInt(groupIndex), UInt(itemIndex))
+                let kind = EditorOpenItemKind(rawValue: itemValue.kind) ?? .buffer
+                return EditorPaneOpenItemRow(
+                    paneID: paneID,
+                    kind: kind,
+                    itemID: UInt(itemValue.item_id),
+                    bufferID: itemValue.buffer_id == 0 ? nil : UInt(itemValue.buffer_id),
+                    clientSurfaceID: itemValue.client_surface_id == 0 ? nil : UInt(itemValue.client_surface_id),
+                    title: itemValue.title.map { String(cString: $0) } ?? "",
+                    subtitle: itemValue.subtitle.map { String(cString: $0) },
+                    filePath: itemValue.file_path.map { String(cString: $0) },
+                    iconName: itemValue.icon_name.map { String(cString: $0) } ?? (kind == .terminal ? "terminal" : "doc"),
+                    isActive: itemValue.is_active,
+                    isModified: itemValue.is_modified,
+                    vcsKind: itemValue.vcs_kind == 0 ? nil : EditorFileTreeVcsKind(rawValue: itemValue.vcs_kind),
+                    diagnosticSeverity: itemValue.diagnostic_severity == 0
+                        ? nil
+                        : EditorDiagnosticSeverity(rawValue: itemValue.diagnostic_severity)
+                )
+            }
+            return EditorPaneOpenItemGroup(
+                paneID: paneID,
+                isActivePane: groupValue.is_active_pane,
+                activeIndex: groupValue.active_index >= 0 ? Int(groupValue.active_index) : nil,
+                items: items
+            )
+        }
+        let openItems = EditorPaneOpenItemsState(
+            isVisible: openItemsValue.visible,
+            groups: openItemGroups
+        )
+
         let fileTreeValue = the_editor_snapshot_file_tree(rawSnapshot)
         let fileTreeRows: [EditorFileTreeRow] = (0..<Int(fileTreeValue.row_count)).map { index in
             let rowValue = the_editor_snapshot_file_tree_row_at(rawSnapshot, UInt(index))
@@ -1528,6 +1624,7 @@ enum EditorFFIBridge {
             signatureHelp: signatureHelp,
             filePicker: filePicker,
             bufferTabs: bufferTabs,
+            openItems: openItems,
             fileTree: fileTree
         )
         let decodeMs = (CFAbsoluteTimeGetCurrent() - decodeStarted) * 1000

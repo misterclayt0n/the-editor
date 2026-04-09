@@ -31,6 +31,7 @@ final class EditorSurfaceController: ObservableObject {
     private(set) var signatureHelp: EditorDocsPanelState = .empty
     private(set) var filePicker: EditorFilePickerState = .empty
     private(set) var bufferTabs: EditorBufferTabsState = .empty
+    private(set) var openItems: EditorPaneOpenItemsState = .empty
     private(set) var fileTree: EditorFileTreeState = .empty
     @Published private(set) var showsResizeOverlay = false
 
@@ -238,6 +239,16 @@ final class EditorSurfaceController: ObservableObject {
 
     func closeBufferTab(_ bufferID: UInt) {
         guard EditorFFIBridge.closeBufferTab(handle?.raw, bufferID: bufferID) else { return }
+        refreshSnapshot()
+    }
+
+    func activateOpenItem(_ item: EditorPaneOpenItemRow) {
+        guard EditorFFIBridge.activateOpenItem(handle?.raw, paneID: item.paneID, kind: item.kind, itemID: item.itemID) else { return }
+        refreshSnapshot()
+    }
+
+    func closeOpenItem(_ item: EditorPaneOpenItemRow) {
+        guard EditorFFIBridge.closeOpenItem(handle?.raw, kind: item.kind, itemID: item.itemID) else { return }
         refreshSnapshot()
     }
 
@@ -636,6 +647,7 @@ final class EditorSurfaceController: ObservableObject {
         signatureHelp = snapshot.signatureHelp
         filePicker = snapshot.filePicker
         bufferTabs = snapshot.bufferTabs
+        openItems = snapshot.openItems
         let previousFileTree = fileTree
         fileTree = snapshot.fileTree
         let decoratedFileTreeRows = snapshot.fileTree.rows.filter { $0.vcsKind != nil || $0.diagnosticSeverity != nil }.count

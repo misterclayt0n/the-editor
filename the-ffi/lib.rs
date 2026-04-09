@@ -451,6 +451,7 @@ pub struct the_editor_snapshot_info_t {
 pub struct the_editor_snapshot_pane_t {
   pub pane_id:             usize,
   pub kind:                u8,
+  pub client_surface_id:   usize,
   pub x:                   u16,
   pub y:                   u16,
   pub width:               u16,
@@ -1599,6 +1600,7 @@ struct SwiftEditor {
   vcs_statusline_refresh_rx:           mpsc::Receiver<VcsStatuslineRefreshResult>,
   vcs_scan:                            Option<Arc<VcsWorkspaceScan>>,
   vcs_base_cache:                      BTreeMap<VcsBaseCacheKey, Option<Vec<u8>>>,
+  embedded_terminal_enabled:           bool,
 }
 
 impl SwiftEditor {
@@ -5216,6 +5218,7 @@ impl SwiftEditor {
       vcs_statusline_refresh_rx,
       vcs_scan: None,
       vcs_base_cache: BTreeMap::new(),
+      embedded_terminal_enabled: false,
     };
 
     set_file_picker_syntax_loader(&mut this.file_picker, this.loader.clone());
@@ -5378,6 +5381,40 @@ impl SwiftEditor {
       return false;
     }
 
+    self.file_tree.active = false;
+    self.sync_state_after_active_pane_change(previous_buffer_id);
+    self.bump_cursor_blink_generation();
+    true
+  }
+
+  fn set_embedded_terminal_enabled(&mut self, enabled: bool) -> bool {
+    if self.embedded_terminal_enabled == enabled {
+      return false;
+    }
+    self.embedded_terminal_enabled = enabled;
+    true
+  }
+
+  fn open_terminal_in_active_pane_ui(&mut self) -> bool {
+    if !self.embedded_terminal_enabled || self.editor.is_active_pane_terminal() {
+      return false;
+    }
+    let previous_buffer_id = self.editor.active_buffer_id();
+    let _ = self.editor.open_terminal_in_active_pane();
+    self.file_tree.active = false;
+    self.sync_state_after_active_pane_change(previous_buffer_id);
+    self.bump_cursor_blink_generation();
+    true
+  }
+
+  fn close_terminal_in_active_pane_ui(&mut self) -> bool {
+    if !self.embedded_terminal_enabled {
+      return false;
+    }
+    let previous_buffer_id = self.editor.active_buffer_id();
+    if !self.editor.close_terminal_in_active_pane() {
+      return false;
+    }
     self.file_tree.active = false;
     self.sync_state_after_active_pane_change(previous_buffer_id);
     self.bump_cursor_blink_generation();
@@ -6712,6 +6749,18 @@ impl DefaultContext for SwiftEditor {
     self.sync_state_after_active_pane_change(previous_buffer_id);
     true
   }
+  fn supports_embedded_terminal(&self) -> bool {
+    self.embedded_terminal_enabled
+  }
+  fn open_terminal_in_active_pane(&mut self) -> bool {
+    self.open_terminal_in_active_pane_ui()
+  }
+  fn close_terminal_in_active_pane(&mut self) -> bool {
+    self.close_terminal_in_active_pane_ui()
+  }
+  fn is_active_pane_terminal(&self) -> bool {
+    self.editor.is_active_pane_terminal()
+  }
   fn request_quit(&mut self) {}
   fn mode(&self) -> Mode {
     self.mode
@@ -7812,6 +7861,7 @@ impl OwnedSnapshot {
         the_editor_snapshot_pane_t {
           pane_id: pane.pane_id.get().get(),
           kind: pane_content_kind_code(pane.pane_kind),
+          client_surface_id: pane.client_surface_id.map(|id| id.get().get()).unwrap_or(0),
           x: pane.rect.x,
           y: pane.rect.y,
           width: pane.rect.width,
@@ -12036,6 +12086,37 @@ pub unsafe extern "C" fn the_editor_close_open_item(
     return false;
   };
   handle.editor.close_open_item(kind, item_id)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_set_embedded_terminal_enabled(
+  handle: *mut the_editor_handle_t,
+  enabled: bool,
+) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return false;
+  };
+  handle.editor.set_embedded_terminal_enabled(enabled)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_open_terminal_in_active_pane(
+  handle: *mut the_editor_handle_t,
+) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return false;
+  };
+  handle.editor.open_terminal_in_active_pane_ui()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_close_terminal_in_active_pane(
+  handle: *mut the_editor_handle_t,
+) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return false;
+  };
+  handle.editor.close_terminal_in_active_pane_ui()
 }
 
 #[unsafe(no_mangle)]

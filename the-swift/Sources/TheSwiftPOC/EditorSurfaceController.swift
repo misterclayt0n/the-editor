@@ -55,6 +55,7 @@ final class EditorSurfaceController: ObservableObject {
 
     init(initialPath: String?) {
         self.handle = EditorFFIBridge.createHandle(initialPath: initialPath).map(EditorHandleBox.init(raw:))
+        _ = EditorFFIBridge.setEmbeddedTerminalEnabled(handle?.raw, enabled: GhosttyTerminalRegistry.isAvailable)
         startBackgroundPolling()
         refreshSnapshot()
     }
@@ -249,6 +250,21 @@ final class EditorSurfaceController: ObservableObject {
 
     func closeOpenItem(_ item: EditorPaneOpenItemRow) {
         guard EditorFFIBridge.closeOpenItem(handle?.raw, kind: item.kind, itemID: item.itemID) else { return }
+        refreshSnapshot()
+    }
+
+    func closeTerminalSurface(_ clientSurfaceID: UInt) {
+        guard EditorFFIBridge.closeOpenItem(handle?.raw, kind: .terminal, itemID: clientSurfaceID) else { return }
+        refreshSnapshot()
+    }
+
+    func openTerminalInActivePane() {
+        guard EditorFFIBridge.openTerminalInActivePane(handle?.raw) else { return }
+        refreshSnapshot()
+    }
+
+    func closeTerminalInActivePane() {
+        guard EditorFFIBridge.closeTerminalInActivePane(handle?.raw) else { return }
         refreshSnapshot()
     }
 

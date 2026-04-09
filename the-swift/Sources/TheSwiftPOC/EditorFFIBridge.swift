@@ -205,6 +205,7 @@ struct EditorPendingKeyState: Hashable {
 struct EditorSnapshotPane: Hashable, Identifiable {
     let paneID: UInt
     let kind: EditorPaneKind
+    let clientSurfaceID: UInt?
     let x: Int
     let y: Int
     let width: Int
@@ -1052,6 +1053,24 @@ enum EditorFFIBridge {
     }
 
     @discardableResult
+    static func setEmbeddedTerminalEnabled(_ handle: OpaquePointer?, enabled: Bool) -> Bool {
+        guard let handle else { return false }
+        return the_editor_set_embedded_terminal_enabled(handle, enabled)
+    }
+
+    @discardableResult
+    static func openTerminalInActivePane(_ handle: OpaquePointer?) -> Bool {
+        guard let handle else { return false }
+        return the_editor_open_terminal_in_active_pane(handle)
+    }
+
+    @discardableResult
+    static func closeTerminalInActivePane(_ handle: OpaquePointer?) -> Bool {
+        guard let handle else { return false }
+        return the_editor_close_terminal_in_active_pane(handle)
+    }
+
+    @discardableResult
     static func selectFileTreeIndex(_ handle: OpaquePointer?, index: Int) -> Bool {
         guard let handle else { return false }
         return the_editor_file_tree_select_index(handle, UInt(max(index, 0)))
@@ -1176,6 +1195,7 @@ enum EditorFFIBridge {
             return EditorSnapshotPane(
                 paneID: UInt(paneValue.pane_id),
                 kind: EditorPaneKind(rawValue: paneValue.kind) ?? .editorBuffer,
+                clientSurfaceID: paneValue.client_surface_id == 0 ? nil : UInt(paneValue.client_surface_id),
                 x: Int(paneValue.x),
                 y: Int(paneValue.y),
                 width: Int(paneValue.width),

@@ -126,6 +126,16 @@ struct EditorRenderScene {
         )
     }
 
+    func paneVisibleRowCapacity(for pane: EditorSnapshotPane) -> Int {
+        let cellHeight = max(info.surfaceMetrics.cellSizePoints.height, 1)
+        return max(Int(floor(paneContentRect(for: pane).height / cellHeight)), 0)
+    }
+
+    func isContentRowVisible(_ row: Int, in pane: EditorSnapshotPane) -> Bool {
+        let localRow = row - pane.y
+        return localRow >= 0 && localRow < paneVisibleRowCapacity(for: pane)
+    }
+
     func displayOrigin(col: Int, row: Int, paneID: UInt? = nil) -> CGPoint {
         let cellSize = info.surfaceMetrics.cellSizePoints
         let base = CGPoint(

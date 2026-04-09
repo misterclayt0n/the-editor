@@ -166,6 +166,9 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
                 signature: line.cacheSignature
             )
             let pane = scene.pane(id: line.paneID)
+            if let pane, !scene.isContentRowVisible(line.row, in: pane) {
+                continue
+            }
             if let image = lineImage(
                 for: line,
                 key: key,
@@ -395,6 +398,9 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
         context.setLineJoin(.round)
         for underline in scene.diagnosticUnderlines {
             let pane = scene.paneContainingCell(col: underline.startCol, row: underline.row)
+            if let pane, !scene.isContentRowVisible(underline.row, in: pane) {
+                continue
+            }
             let color = diagnosticColor(for: underline.severity)
             let rowBottom = displayTopY(
                 forRow: underline.row,
@@ -533,6 +539,9 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
         viewportHeight: CGFloat
     ) {
         let pane = paneContaining(cursor: cursor, in: scene)
+        if let pane, !scene.isContentRowVisible(cursor.row, in: pane) {
+            return
+        }
         let x = CGFloat(cursor.col) * cellSize.width
         let y = displayTopY(
             forRow: cursor.row,
@@ -671,6 +680,9 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
     ) {
         guard let text = overlay.text else { return }
         let pane = scene?.paneContainingCell(col: overlay.col, row: overlay.row)
+        if let scene, let pane, !scene.isContentRowVisible(overlay.row, in: pane) {
+            return
+        }
         withPaneClip(for: pane, in: scene, context: context, viewportHeight: viewportHeight) {
             drawText(
                 text,
@@ -703,6 +715,9 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
             underlineStyle: UInt8(NSUnderlineStyle.single.rawValue)
         )
         let pane = scene?.paneContainingCell(col: markedText.col, row: markedText.row)
+        if let scene, let pane, !scene.isContentRowVisible(markedText.row, in: pane) {
+            return
+        }
         withPaneClip(for: pane, in: scene, context: context, viewportHeight: viewportHeight) {
             drawText(
                 markedText.text,

@@ -393,6 +393,7 @@ private final class GhosttyTerminalSurfaceView: NSView {
     private var eventMonitor: Any?
     private var suppressNextLeftMouseUp = false
     private var needsMousePositionOnNextLeftPress = false
+    private var lastKnownMousePointInView: NSPoint?
 
     override var acceptsFirstResponder: Bool { true }
 
@@ -736,8 +737,36 @@ private final class GhosttyTerminalSurfaceView: NSView {
 
     private func sendMousePosition(_ event: NSEvent) {
         guard let surface else { return }
-        let point = convert(event.locationInWindow, from: nil)
+        let eventPoint = convert(event.locationInWindow, from: nil)
+        trackMousePointIfUsable(eventPoint)
+        let point = preferredPointerPoint(from: eventPoint) ?? eventPoint
         ghostty_surface_mouse_pos(surface, point.x, bounds.height - point.y, mods(from: event.modifierFlags))
+    }
+
+    private func pointIsUsableForPointer(_ point: NSPoint) -> Bool {
+        point.x >= 0 && point.y >= 0 && point.x <= bounds.width && point.y <= bounds.height
+    }
+
+    private func trackMousePointIfUsable(_ point: NSPoint) {
+        guard pointIsUsableForPointer(point) else { return }
+        lastKnownMousePointInView = point
+    }
+
+    private func preferredPointerPoint(from eventPoint: NSPoint? = nil) -> NSPoint? {
+        if let eventPoint, pointIsUsableForPointer(eventPoint) {
+            lastKnownMousePointInView = eventPoint
+            return eventPoint
+        }
+        if let currentPoint = currentMousePointInView(), pointIsUsableForPointer(currentPoint) {
+            lastKnownMousePointInView = currentPoint
+            return currentPoint
+        }
+        return lastKnownMousePointInView ?? eventPoint
+    }
+
+    private func currentMousePointInView() -> NSPoint? {
+        guard let window else { return nil }
+        return convert(window.mouseLocationOutsideOfEventStream, from: nil)
     }
 
     private func ghosttyKeyEvent(

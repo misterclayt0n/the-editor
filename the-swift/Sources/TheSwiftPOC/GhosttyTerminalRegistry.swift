@@ -227,13 +227,32 @@ private final class GhosttyEmbeddedRuntime {
 
         var runtimeConfig = ghostty_runtime_config_s()
         runtimeConfig.userdata = Unmanaged.passUnretained(self).toOpaque()
-        runtimeConfig.supports_selection_clipboard = false
+        runtimeConfig.supports_selection_clipboard = true
         runtimeConfig.wakeup_cb = { userdata in
             guard let userdata else { return }
             let runtime = Unmanaged<GhosttyEmbeddedRuntime>.fromOpaque(userdata).takeUnretainedValue()
             runtime.scheduleTick()
         }
         runtimeConfig.action_cb = { _, _, _ in false }
+        runtimeConfig.read_clipboard_cb = { userdata, location, state in
+            guard let userdata else { return }
+            let context = Unmanaged<GhosttySurfaceCallbackContext>.fromOpaque(userdata).takeUnretainedValue()
+            DispatchQueue.main.async {
+                let text = GhosttyPasteboardBridge.readString(from: location)
+                context.view?.completeClipboardRequest(text: text, state: state, confirmed: false)
+            }
+        }
+        runtimeConfig.confirm_read_clipboard_cb = { userdata, content, state, _ in
+            guard let userdata else { return }
+            let context = Unmanaged<GhosttySurfaceCallbackContext>.fromOpaque(userdata).takeUnretainedValue()
+            let text = content.map { String(cString: $0) } ?? ""
+            DispatchQueue.main.async {
+                context.view?.completeClipboardRequest(text: text, state: state, confirmed: true)
+            }
+        }
+        runtimeConfig.write_clipboard_cb = { _, location, content, len, _ in
+            GhosttyPasteboardBridge.write(contents: content, count: Int(len), to: location)
+        }
         runtimeConfig.close_surface_cb = { userdata, _ in
             guard let userdata else { return }
             let context = Unmanaged<GhosttySurfaceCallbackContext>.fromOpaque(userdata).takeUnretainedValue()
@@ -308,9 +327,54 @@ func ghosttyLog(_ message: String) {
     fputs("[the-swift:ghostty] \(message)\n", stderr)
 }
 
+private enum GhosttyPasteboardBridge {
+    static func pasteboard(for location: ghostty_clipboard_e) -> NSPasteboard? {
+        switch location {
+        case GHOSTTY_CLIPBOARD_STANDARD:
+            return .general
+        case GHOSTTY_CLIPBOARD_SELECTION:
+            return NSPasteboard(name: NSPasteboard.Name("com.mitchellh.ghostty.selection"))
+        default:
+            return nil
+        }
+    }
+
+    static func readString(from location: ghostty_clipboard_e) -> String {
+        guard let pasteboard = pasteboard(for: location) else { return "" }
+        return pasteboard.string(forType: .string) ?? ""
+    }
+
+    static func write(
+        contents: UnsafePointer<ghostty_clipboard_content_s>?,
+        count: Int,
+        to location: ghostty_clipboard_e
+    ) {
+        let values: [(mime: String?, value: String)] = {
+            guard let contents, count > 0 else { return [] }
+            return (0..<count).compactMap { index in
+                let item = contents[index]
+                guard let dataPointer = item.data else { return nil }
+                let mime = item.mime.map { String(cString: $0) }
+                return (mime, String(cString: dataPointer))
+            }
+        }()
+
+        DispatchQueue.main.async {
+            guard let pasteboard = pasteboard(for: location) else { return }
+            pasteboard.clearContents()
+            if let plainText = values.first(where: { ($0.mime ?? "").hasPrefix("text/plain") })?.value {
+                pasteboard.setString(plainText, forType: .string)
+            } else if let fallback = values.first?.value {
+                pasteboard.setString(fallback, forType: .string)
+            }
+        }
+    }
+}
+
 private final class GhosttySurfaceCallbackContext {
     let clientSurfaceID: UInt
     let onCloseRequested: (UInt) -> Void
+    weak var view: GhosttyTerminalSurfaceView?
 
     init(clientSurfaceID: UInt, onCloseRequested: @escaping (UInt) -> Void) {
         self.clientSurfaceID = clientSurfaceID
@@ -354,10 +418,12 @@ private final class GhosttyTerminalSurfaceView: NSView {
         layer?.backgroundColor = NSColor.clear.cgColor
         layer?.isOpaque = false
         layer?.masksToBounds = true
-        callbackContext = Unmanaged.passRetained(GhosttySurfaceCallbackContext(
+        let context = GhosttySurfaceCallbackContext(
             clientSurfaceID: clientSurfaceID,
             onCloseRequested: onCloseRequested
-        ))
+        )
+        context.view = self
+        callbackContext = Unmanaged.passRetained(context)
         createSurfaceIfNeeded()
     }
 
@@ -502,6 +568,13 @@ private final class GhosttyTerminalSurfaceView: NSView {
         }
         let keyEvent = ghosttyKeyEvent(action: GHOSTTY_ACTION_RELEASE, for: event)
         _ = ghostty_surface_key(surface, keyEvent)
+    }
+
+    func completeClipboardRequest(text: String, state: UnsafeMutableRawPointer?, confirmed: Bool) {
+        guard let surface, let state else { return }
+        text.withCString { pointer in
+            ghostty_surface_complete_clipboard_request(surface, pointer, state, confirmed)
+        }
     }
 
     private func createSurfaceIfNeeded() {

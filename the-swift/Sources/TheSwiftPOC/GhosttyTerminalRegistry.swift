@@ -390,9 +390,6 @@ private final class GhosttyTerminalSurfaceView: NSView {
     private var callbackContext: Unmanaged<GhosttySurfaceCallbackContext>?
     private var isSurfaceVisible = false
     private var pendingWorkingDirectory: String?
-    private var eventMonitor: Any?
-    private var suppressNextLeftMouseUp = false
-    private var needsMousePositionOnNextLeftPress = false
     private var lastKnownMousePointInView: NSPoint?
 
     override var acceptsFirstResponder: Bool { true }
@@ -425,9 +422,6 @@ private final class GhosttyTerminalSurfaceView: NSView {
         )
         context.view = self
         callbackContext = Unmanaged.passRetained(context)
-        eventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown]) { [weak self] event in
-            self?.localEventLeftMouseDown(event) ?? event
-        }
         createSurfaceIfNeeded()
     }
 
@@ -438,9 +432,6 @@ private final class GhosttyTerminalSurfaceView: NSView {
 
     deinit {
         MainActor.assumeIsolated {
-            if let eventMonitor {
-                NSEvent.removeMonitor(eventMonitor)
-            }
             if let surface {
                 ghostty_surface_free(surface)
             }
@@ -516,19 +507,16 @@ private final class GhosttyTerminalSurfaceView: NSView {
 
     override func mouseDown(with event: NSEvent) {
         paneIDOwner?.setActivePane(paneID)
+        window?.makeFirstResponder(self)
         guard let surface else { return }
-        if event.clickCount == 1 || needsMousePositionOnNextLeftPress {
+        trackMousePointIfUsable(convert(event.locationInWindow, from: nil))
+        if event.clickCount == 1 {
             sendMousePosition(event)
         }
-        needsMousePositionOnNextLeftPress = false
         ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_PRESS, GHOSTTY_MOUSE_LEFT, mods(from: event.modifierFlags))
     }
 
     override func mouseUp(with event: NSEvent) {
-        if suppressNextLeftMouseUp {
-            suppressNextLeftMouseUp = false
-            return
-        }
         guard let surface else { return }
         ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_RELEASE, GHOSTTY_MOUSE_LEFT, mods(from: event.modifierFlags))
     }
@@ -636,37 +624,6 @@ private final class GhosttyTerminalSurfaceView: NSView {
         text.withCString { pointer in
             ghostty_surface_complete_clipboard_request(surface, pointer, state, confirmed)
         }
-    }
-
-    private func localEventLeftMouseDown(_ event: NSEvent) -> NSEvent? {
-        guard let window,
-              let contentView = window.contentView,
-              event.window === window
-        else {
-            return event
-        }
-
-        let contentPoint = contentView.convert(event.locationInWindow, from: nil)
-        guard contentView.hitTest(contentPoint) === self else {
-            return event
-        }
-
-        suppressNextLeftMouseUp = false
-        paneIDOwner?.setActivePane(paneID)
-
-        guard window.firstResponder !== self else {
-            return event
-        }
-
-        if NSApp.isActive && window.isKeyWindow {
-            window.makeFirstResponder(self)
-            suppressNextLeftMouseUp = true
-            needsMousePositionOnNextLeftPress = true
-            return nil
-        }
-
-        window.makeFirstResponder(self)
-        return event
     }
 
     private func createSurfaceIfNeeded() {

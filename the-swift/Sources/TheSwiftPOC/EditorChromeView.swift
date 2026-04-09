@@ -105,7 +105,6 @@ struct EditorChromeView: View {
                     onSelectSidebarMode: selectSidebarMode,
                     onActivateItem: controller.activateOpenItem,
                     onCloseItem: controller.closeOpenItem,
-                    onOpenTerminal: controller.openTerminalInActivePane,
                     onFocusSidebar: { controller.setFileTreeActive(false) }
                 )
                 .onAppear {
@@ -549,7 +548,6 @@ private struct EditorOpenItemsSidebarView: View {
     let onSelectSidebarMode: (EditorSidebarMode) -> Void
     let onActivateItem: (EditorPaneOpenItemRow) -> Void
     let onCloseItem: (EditorPaneOpenItemRow) -> Void
-    let onOpenTerminal: () -> Void
     let onFocusSidebar: () -> Void
 
     var body: some View {
@@ -563,10 +561,6 @@ private struct EditorOpenItemsSidebarView: View {
                 onSelectSidebarMode: onSelectSidebarMode,
                 onActivate: onFocusSidebar
             )
-
-            if GhosttyTerminalRegistry.isAvailable {
-                EditorOpenItemsSidebarActionBar(theme: theme, onOpenTerminal: onOpenTerminal)
-            }
 
             ScrollView(.vertical, showsIndicators: true) {
                 LazyVStack(alignment: .leading, spacing: 10) {
@@ -626,53 +620,6 @@ private struct EditorOpenItemsSidebarView: View {
             return uniqueBufferCount > 1
         case .terminal:
             return true
-        }
-    }
-}
-
-private struct EditorOpenItemsSidebarActionBar: View {
-    let theme: EditorFileTreeSidebarTheme
-    let onOpenTerminal: () -> Void
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Button(action: onOpenTerminal) {
-                HStack(spacing: 6) {
-                    Image(systemName: "terminal.fill")
-                        .font(.system(size: 11, weight: .semibold))
-                    Text("New Terminal")
-                        .font(.system(size: 11, weight: .semibold))
-                    Spacer(minLength: 6)
-                    Text("⌘⇧T")
-                        .font(.system(size: 10, weight: .medium, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                }
-                .foregroundStyle(.primary)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .fill(Color(nsColor: theme.selectionColor).opacity(0.14))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .stroke(Color(nsColor: theme.separatorColor).opacity(0.45), lineWidth: 1)
-                )
-                .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-            }
-            .buttonStyle(.plain)
-            .help("Open a terminal in the active pane")
-            .accessibilityLabel("New Terminal")
-            .accessibilityHint("Open a terminal in the active pane")
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(Color(nsColor: theme.backgroundColor))
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(Color(nsColor: theme.separatorColor).opacity(0.55))
-                .frame(height: 1)
         }
     }
 }

@@ -374,6 +374,14 @@ private enum GhosttyPasteboardBridge {
     }
 }
 
+private struct GhosttyTextSnapshot {
+    let tlPxX: Double
+    let tlPxY: Double
+    let offsetStart: UInt32
+    let offsetLen: UInt32
+    let text: String
+}
+
 private final class GhosttySurfaceCallbackContext {
     let clientSurfaceID: UInt
     let onCloseRequested: (UInt) -> Void
@@ -522,6 +530,7 @@ private final class GhosttyTerminalSurfaceView: NSView {
             sendMousePosition(event)
         }
         let consumed = ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_PRESS, GHOSTTY_MOUSE_LEFT, mods(from: event.modifierFlags))
+        correctDoubleClickSelectionIfNeeded(event: event, surface: surface)
         logSelectionState("leftDown.after", event: event, surface: surface, mousePositionSent: sentMousePosition, consumed: consumed)
     }
 
@@ -727,11 +736,90 @@ private final class GhosttyTerminalSurfaceView: NSView {
         let currentPoint = currentMousePointInView()
         let cachedPoint = lastKnownMousePointInView
         let preferredPoint = resolvedPointerPointForLogging(from: rawPoint, currentPoint: currentPoint, cachedPoint: cachedPoint)
-        let selection = selectionDebugText(surface)
-        let quicklook = quicklookDebugText(surface)
+        let selectionSnapshot = readSelectionSnapshot(surface)
+        let quicklookSnapshot = readQuicklookSnapshot(surface)
+        let selection = selectionSnapshot.map { debugText($0.text) } ?? "-"
+        let quicklook = quicklookSnapshot.map { debugText($0.text) } ?? "-"
+        let selectionMeta = selectionSnapshot.map { "@x=\(String(format: "%.1f", $0.tlPxX)) y=\(String(format: "%.1f", $0.tlPxY)) start=\($0.offsetStart) len=\($0.offsetLen)" } ?? "-"
+        let quicklookMeta = quicklookSnapshot.map { "@x=\(String(format: "%.1f", $0.tlPxX)) y=\(String(format: "%.1f", $0.tlPxY)) start=\($0.offsetStart) len=\($0.offsetLen)" } ?? "-"
         let consumedText = consumed.map { $0 ? "1" : "0" } ?? "-"
         ghosttySelectionLog(
-            "surface=\(clientSurfaceID) pane=\(paneID) phase=\(phase) clickCount=\(event.clickCount) sentPos=\(mousePositionSent ? 1 : 0) consumed=\(consumedText) raw=\(debugPoint(rawPoint)) current=\(debugPoint(currentPoint)) cached=\(debugPoint(cachedPoint)) preferred=\(debugPoint(preferredPoint)) hasSelection=\(ghostty_surface_has_selection(surface) ? 1 : 0) selection=\(selection) quicklook=\(quicklook)"
+            "surface=\(clientSurfaceID) pane=\(paneID) phase=\(phase) clickCount=\(event.clickCount) sentPos=\(mousePositionSent ? 1 : 0) consumed=\(consumedText) raw=\(debugPoint(rawPoint)) current=\(debugPoint(currentPoint)) cached=\(debugPoint(cachedPoint)) preferred=\(debugPoint(preferredPoint)) hasSelection=\(ghostty_surface_has_selection(surface) ? 1 : 0) selection=\(selection) selectionMeta=\(selectionMeta) quicklook=\(quicklook) quicklookMeta=\(quicklookMeta)"
+        )
+    }
+
+    private func correctDoubleClickSelectionIfNeeded(event: NSEvent, surface: ghostty_surface_t) {
+        guard event.clickCount == 2 else { return }
+        guard let selection = readSelectionSnapshot(surface),
+              let quicklook = readQuicklookSnapshot(surface)
+        else {
+            return
+        }
+        guard quicklook.offsetStart < selection.offsetStart,
+              quicklook.text.count > selection.text.count,
+              quicklook.text.hasSuffix(selection.text)
+        else {
+            return
+        }
+
+        let prefixCellCount = max(Int(selection.offsetStart) - Int(quicklook.offsetStart), 0)
+        let inferredCellWidth: Double
+        if prefixCellCount > 0 {
+            let deltaX = selection.tlPxX - quicklook.tlPxX
+            inferredCellWidth = deltaX > 0 ? deltaX / Double(prefixCellCount) : 0
+        } else {
+            inferredCellWidth = 0
+        }
+        let (fallbackCellWidth, cellHeight) = ghosttyCellSize(surface)
+        let cellWidth = inferredCellWidth > 0 ? inferredCellWidth : fallbackCellWidth
+        let targetX = quicklook.tlPxX + max(min(cellWidth * 0.5, cellWidth - 1), 1)
+        let targetY = quicklook.tlPxY + max(cellHeight * 0.5, 1)
+        ghostty_surface_mouse_pos(surface, targetX, targetY, mods(from: event.modifierFlags))
+        ghosttySelectionLog(
+            "surface=\(clientSurfaceID) pane=\(paneID) phase=doubleClick.corrected target=(\(String(format: "%.1f", targetX)),\(String(format: "%.1f", targetY))) selection=\(debugText(selection.text)) quicklook=\(debugText(quicklook.text)) inferredCellWidth=\(String(format: "%.2f", inferredCellWidth)) fallbackCellWidth=\(String(format: "%.2f", fallbackCellWidth)) cellHeight=\(String(format: "%.2f", cellHeight))"
+        )
+    }
+
+    private func ghosttyCellSize(_ surface: ghostty_surface_t) -> (width: Double, height: Double) {
+        var imeX: Double = 0
+        var imeY: Double = 0
+        var imeWidth: Double = 0
+        var imeHeight: Double = 0
+        ghostty_surface_ime_point(surface, &imeX, &imeY, &imeWidth, &imeHeight)
+        let size = ghostty_surface_size(surface)
+        let width = imeWidth > 0 ? imeWidth : max(bounds.width / Double(max(Int(size.columns), 1)), 1)
+        let height = imeHeight > 0 ? imeHeight : max(bounds.height / Double(max(Int(size.rows), 1)), 1)
+        return (width, height)
+    }
+
+    private func readSelectionSnapshot(_ surface: ghostty_surface_t) -> GhosttyTextSnapshot? {
+        guard ghostty_surface_has_selection(surface) else { return nil }
+        return readTextSnapshot(surface: surface) { text in
+            ghostty_surface_read_selection(surface, text)
+        }
+    }
+
+    private func readQuicklookSnapshot(_ surface: ghostty_surface_t) -> GhosttyTextSnapshot? {
+        readTextSnapshot(surface: surface) { text in
+            ghostty_surface_quicklook_word(surface, text)
+        }
+    }
+
+    private func readTextSnapshot(
+        surface: ghostty_surface_t,
+        reader: (UnsafeMutablePointer<ghostty_text_s>) -> Bool
+    ) -> GhosttyTextSnapshot? {
+        var text = ghostty_text_s()
+        guard reader(&text), let pointer = text.text else {
+            return nil
+        }
+        defer { ghostty_surface_free_text(surface, &text) }
+        return GhosttyTextSnapshot(
+            tlPxX: text.tl_px_x,
+            tlPxY: text.tl_px_y,
+            offsetStart: text.offset_start,
+            offsetLen: text.offset_len,
+            text: String(cString: pointer)
         )
     }
 

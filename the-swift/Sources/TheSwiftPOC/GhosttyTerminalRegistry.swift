@@ -392,6 +392,7 @@ private final class GhosttyTerminalSurfaceView: NSView {
     private var pendingWorkingDirectory: String?
     private var eventMonitor: Any?
     private var suppressNextLeftMouseUp = false
+    private var needsMousePositionOnNextLeftPress = false
 
     override var acceptsFirstResponder: Bool { true }
 
@@ -515,6 +516,10 @@ private final class GhosttyTerminalSurfaceView: NSView {
     override func mouseDown(with event: NSEvent) {
         paneIDOwner?.setActivePane(paneID)
         guard let surface else { return }
+        if event.clickCount == 1 || needsMousePositionOnNextLeftPress {
+            sendMousePosition(event)
+        }
+        needsMousePositionOnNextLeftPress = false
         ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_PRESS, GHOSTTY_MOUSE_LEFT, mods(from: event.modifierFlags))
     }
 
@@ -655,6 +660,7 @@ private final class GhosttyTerminalSurfaceView: NSView {
         if NSApp.isActive && window.isKeyWindow {
             window.makeFirstResponder(self)
             suppressNextLeftMouseUp = true
+            needsMousePositionOnNextLeftPress = true
             return nil
         }
 

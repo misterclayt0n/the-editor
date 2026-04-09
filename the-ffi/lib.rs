@@ -933,7 +933,7 @@ const STYLE_REVERSED: u16 = 1 << 5;
 const STYLE_HIDDEN: u16 = 1 << 6;
 const STYLE_CROSSED_OUT: u16 = 1 << 7;
 
-const SWIFT_SCROLLOFF: usize = 0;
+const SWIFT_SCROLLOFF: usize = 5;
 
 fn theme_perf_enabled() -> bool {
   env::var("THE_EDITOR_THEME_PROFILE").ok().as_deref() == Some("1")

@@ -58,7 +58,8 @@ struct EditorChromeView: View {
                 fileTreeWidth: titlebarSidebarRegionWidth,
                 fileTreeBackgroundColor: sidebarTheme.backgroundColor,
                 fileTreeSeparatorColor: sidebarTheme.separatorColor,
-                onToggleFileTree: controller.toggleFileTree
+                onToggleFileTree: controller.toggleFileTree,
+                onOpenTerminal: controller.openTerminalInActivePane
             )
         )
         .overlay(alignment: .bottom) {
@@ -104,6 +105,7 @@ struct EditorChromeView: View {
                     onSelectSidebarMode: selectSidebarMode,
                     onActivateItem: controller.activateOpenItem,
                     onCloseItem: controller.closeOpenItem,
+                    onOpenTerminal: controller.openTerminalInActivePane,
                     onFocusSidebar: { controller.setFileTreeActive(false) }
                 )
                 .onAppear {
@@ -547,6 +549,7 @@ private struct EditorOpenItemsSidebarView: View {
     let onSelectSidebarMode: (EditorSidebarMode) -> Void
     let onActivateItem: (EditorPaneOpenItemRow) -> Void
     let onCloseItem: (EditorPaneOpenItemRow) -> Void
+    let onOpenTerminal: () -> Void
     let onFocusSidebar: () -> Void
 
     var body: some View {
@@ -560,6 +563,10 @@ private struct EditorOpenItemsSidebarView: View {
                 onSelectSidebarMode: onSelectSidebarMode,
                 onActivate: onFocusSidebar
             )
+
+            if GhosttyTerminalRegistry.isAvailable {
+                EditorOpenItemsSidebarActionBar(theme: theme, onOpenTerminal: onOpenTerminal)
+            }
 
             ScrollView(.vertical, showsIndicators: true) {
                 LazyVStack(alignment: .leading, spacing: 10) {
@@ -619,6 +626,53 @@ private struct EditorOpenItemsSidebarView: View {
             return uniqueBufferCount > 1
         case .terminal:
             return true
+        }
+    }
+}
+
+private struct EditorOpenItemsSidebarActionBar: View {
+    let theme: EditorFileTreeSidebarTheme
+    let onOpenTerminal: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Button(action: onOpenTerminal) {
+                HStack(spacing: 6) {
+                    Image(systemName: "terminal.fill")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text("New Terminal")
+                        .font(.system(size: 11, weight: .semibold))
+                    Spacer(minLength: 6)
+                    Text("⌘⇧T")
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                }
+                .foregroundStyle(.primary)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(Color(nsColor: theme.selectionColor).opacity(0.14))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .stroke(Color(nsColor: theme.separatorColor).opacity(0.45), lineWidth: 1)
+                )
+                .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .help("Open a terminal in the active pane")
+            .accessibilityLabel("New Terminal")
+            .accessibilityHint("Open a terminal in the active pane")
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color(nsColor: theme.backgroundColor))
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(Color(nsColor: theme.separatorColor).opacity(0.55))
+                .frame(height: 1)
         }
     }
 }
@@ -2248,6 +2302,7 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
     let fileTreeBackgroundColor: NSColor
     let fileTreeSeparatorColor: NSColor
     let onToggleFileTree: () -> Void
+    let onOpenTerminal: () -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -2268,7 +2323,8 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
                 fileTreeWidth: fileTreeWidth,
                 fileTreeBackgroundColor: fileTreeBackgroundColor,
                 fileTreeSeparatorColor: fileTreeSeparatorColor,
-                onToggleFileTree: onToggleFileTree
+                onToggleFileTree: onToggleFileTree,
+                onOpenTerminal: onOpenTerminal
             )
             return
         }
@@ -2282,7 +2338,8 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
                 fileTreeWidth: fileTreeWidth,
                 fileTreeBackgroundColor: fileTreeBackgroundColor,
                 fileTreeSeparatorColor: fileTreeSeparatorColor,
-                onToggleFileTree: onToggleFileTree
+                onToggleFileTree: onToggleFileTree,
+                onOpenTerminal: onOpenTerminal
             )
         }
     }
@@ -2293,7 +2350,7 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
         private let leadingItemIdentifier = NSToolbarItem.Identifier("TheSwiftPOC.LeadingRegion")
         private let vcsItemIdentifier = NSToolbarItem.Identifier("TheSwiftPOC.VCSInfo")
         private let leadingState = EditorTitlebarLeadingState()
-        private lazy var fileTreeHostingView = NSHostingView(rootView: EditorTitlebarLeadingRegionView(state: leadingState, onToggle: {}))
+        private lazy var fileTreeHostingView = NSHostingView(rootView: EditorTitlebarLeadingRegionView(state: leadingState, onToggle: {}, onOpenTerminal: {}, showsTerminalButton: GhosttyTerminalRegistry.isAvailable))
         private let vcsHostingView = NSHostingView(rootView: EditorTitlebarVCSView(vcsText: nil))
         private let sidebarTitlebarBackgroundView = NSView(frame: .zero)
         private let sidebarTitlebarSeparatorView = EditorTitlebarSidebarSeparatorView(frame: .zero)
@@ -2304,6 +2361,7 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
         private var lastFileTreeBackgroundColor: NSColor = .windowBackgroundColor
         private var lastFileTreeSeparatorColor: NSColor = .separatorColor
         private var toggleFileTreeAction: (() -> Void)?
+        private var openTerminalAction: (() -> Void)?
         private lazy var toolbar: NSToolbar = {
             let toolbar = NSToolbar(identifier: toolbarIdentifier)
             toolbar.delegate = self
@@ -2338,7 +2396,8 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
             fileTreeWidth: CGFloat,
             fileTreeBackgroundColor: NSColor,
             fileTreeSeparatorColor: NSColor,
-            onToggleFileTree: @escaping () -> Void
+            onToggleFileTree: @escaping () -> Void,
+            onOpenTerminal: @escaping () -> Void
         ) {
             let started = CFAbsoluteTimeGetCurrent()
             let windowChanged = observedWindow !== window
@@ -2348,6 +2407,7 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
             let sidebarColorChanged = !fileTreeBackgroundColor.isEqual(lastFileTreeBackgroundColor)
             let separatorColorChanged = !fileTreeSeparatorColor.isEqual(lastFileTreeSeparatorColor)
             toggleFileTreeAction = onToggleFileTree
+            openTerminalAction = onOpenTerminal
             attachWindowObserversIfNeeded(window: window)
             installToolbarIfNeeded(window: window)
             guard windowChanged || chromeChanged || fileTreeChanged || widthChanged || sidebarColorChanged || separatorColorChanged else {
@@ -2443,9 +2503,12 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
         }
 
         private func updateToolbarContent(window: NSWindow, chrome: EditorChromeModel, fileTreeVisible: Bool, fileTreeWidth: CGFloat) {
-            fileTreeHostingView.rootView = EditorTitlebarLeadingRegionView(state: leadingState) {
-                self.toggleFileTreeAction?()
-            }
+            fileTreeHostingView.rootView = EditorTitlebarLeadingRegionView(
+                state: leadingState,
+                onToggle: { self.toggleFileTreeAction?() },
+                onOpenTerminal: { self.openTerminalAction?() },
+                showsTerminalButton: GhosttyTerminalRegistry.isAvailable
+            )
             withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
                 leadingState.isSidebarActive = fileTreeVisible
                 leadingState.sidebarWidth = fileTreeWidth
@@ -2608,6 +2671,8 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
 private struct EditorTitlebarLeadingRegionView: View {
     @ObservedObject var state: EditorTitlebarLeadingState
     let onToggle: () -> Void
+    let onOpenTerminal: () -> Void
+    let showsTerminalButton: Bool
 
     var body: some View {
         HStack(spacing: 0) {
@@ -2618,8 +2683,13 @@ private struct EditorTitlebarLeadingRegionView: View {
             }
             .frame(width: max(state.sidebarWidth, 52), height: 24, alignment: .leading)
 
-            EditorTitlebarDocumentView(document: state.document)
-                .padding(.leading, 8)
+            HStack(spacing: 8) {
+                EditorTitlebarDocumentView(document: state.document)
+                if showsTerminalButton {
+                    EditorTitlebarOpenTerminalButton(onOpenTerminal: onOpenTerminal)
+                }
+            }
+            .padding(.leading, 8)
         }
         .fixedSize(horizontal: true, vertical: true)
         .animation(.spring(response: 0.24, dampingFraction: 0.88), value: state.sidebarWidth)
@@ -2651,6 +2721,28 @@ private struct EditorTitlebarSidebarToggleButton: View {
         withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
             onToggle()
         }
+    }
+}
+
+private struct EditorTitlebarOpenTerminalButton: View {
+    let onOpenTerminal: () -> Void
+
+    var body: some View {
+        Button(action: onOpenTerminal) {
+            Label("New Terminal", systemImage: "terminal")
+                .labelStyle(.iconOnly)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 28, height: 24)
+                .background {
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(Color.primary.opacity(0.08))
+                }
+        }
+        .buttonStyle(.plain)
+        .help("New Terminal")
+        .accessibilityLabel("New Terminal")
+        .accessibilityHint("Open a terminal in the active pane")
     }
 }
 

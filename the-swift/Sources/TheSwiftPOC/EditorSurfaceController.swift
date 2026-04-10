@@ -35,6 +35,14 @@ final class EditorSurfaceController: ObservableObject {
     private(set) var fileTree: EditorFileTreeState = .empty
     @Published private(set) var showsResizeOverlay = false
 
+    private struct TerminalPresentationState {
+        var title: String?
+        var workingDirectory: String?
+    }
+
+    private var baseOpenItems: EditorPaneOpenItemsState = .empty
+    private var terminalPresentationBySurfaceID: [UInt: TerminalPresentationState] = [:]
+
     private var surfaceConfiguration: EditorSurfaceConfiguration?
     private var markedText: String = ""
     private var backgroundPollCancellable: AnyCancellable?
@@ -276,6 +284,33 @@ final class EditorSurfaceController: ObservableObject {
     func closeTerminalInActivePane() {
         guard EditorFFIBridge.closeTerminalInActivePane(handle?.raw) else { return }
         refreshSnapshot()
+    }
+
+    func registerTerminalSurface(_ clientSurfaceID: UInt, preferredWorkingDirectory: String?) {
+        var state = terminalPresentationBySurfaceID[clientSurfaceID] ?? TerminalPresentationState()
+        if state.workingDirectory?.isEmpty != false,
+           let preferredWorkingDirectory,
+           !preferredWorkingDirectory.isEmpty {
+            state.workingDirectory = preferredWorkingDirectory
+        }
+        terminalPresentationBySurfaceID[clientSurfaceID] = state
+        applyTerminalPresentationIfNeeded()
+    }
+
+    func updateTerminalTitle(_ title: String, for clientSurfaceID: UInt) {
+        var state = terminalPresentationBySurfaceID[clientSurfaceID] ?? TerminalPresentationState()
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        state.title = trimmed.isEmpty ? nil : trimmed
+        terminalPresentationBySurfaceID[clientSurfaceID] = state
+        applyTerminalPresentationIfNeeded()
+    }
+
+    func updateTerminalWorkingDirectory(_ workingDirectory: String, for clientSurfaceID: UInt) {
+        var state = terminalPresentationBySurfaceID[clientSurfaceID] ?? TerminalPresentationState()
+        let trimmed = workingDirectory.trimmingCharacters(in: .whitespacesAndNewlines)
+        state.workingDirectory = trimmed.isEmpty ? nil : trimmed
+        terminalPresentationBySurfaceID[clientSurfaceID] = state
+        applyTerminalPresentationIfNeeded()
     }
 
     func dragBufferSelection(
@@ -673,7 +708,14 @@ final class EditorSurfaceController: ObservableObject {
         signatureHelp = snapshot.signatureHelp
         filePicker = snapshot.filePicker
         bufferTabs = snapshot.bufferTabs
-        openItems = snapshot.openItems
+        baseOpenItems = snapshot.openItems
+        pruneTerminalPresentation(validSurfaceIDs: Set(snapshot.openItems.groups.flatMap { group in
+            group.items.compactMap { item in
+                guard item.kind == .terminal else { return nil }
+                return item.clientSurfaceID
+            }
+        }))
+        openItems = decorateOpenItems(snapshot.openItems)
         let previousFileTree = fileTree
         fileTree = snapshot.fileTree
         let decoratedFileTreeRows = snapshot.fileTree.rows.filter { $0.vcsKind != nil || $0.diagnosticSeverity != nil }.count
@@ -763,6 +805,65 @@ final class EditorSurfaceController: ObservableObject {
             self.endInteractiveResize(reason: "fileTreeToggle")
             self.fileTreeToggleResizeTask = nil
         }
+    }
+
+    private func applyTerminalPresentationIfNeeded() {
+        let decorated = decorateOpenItems(baseOpenItems)
+        guard decorated != openItems else { return }
+        objectWillChange.send()
+        openItems = decorated
+    }
+
+    private func pruneTerminalPresentation(validSurfaceIDs: Set<UInt>) {
+        terminalPresentationBySurfaceID = terminalPresentationBySurfaceID.filter { validSurfaceIDs.contains($0.key) }
+    }
+
+    private func decorateOpenItems(_ state: EditorPaneOpenItemsState) -> EditorPaneOpenItemsState {
+        EditorPaneOpenItemsState(
+            isVisible: state.isVisible,
+            groups: state.groups.map { group in
+                EditorPaneOpenItemGroup(
+                    paneID: group.paneID,
+                    isActivePane: group.isActivePane,
+                    activeIndex: group.activeIndex,
+                    items: group.items.map(decorateOpenItem)
+                )
+            }
+        )
+    }
+
+    private func decorateOpenItem(_ item: EditorPaneOpenItemRow) -> EditorPaneOpenItemRow {
+        guard item.kind == .terminal,
+              let clientSurfaceID = item.clientSurfaceID
+        else {
+            return item
+        }
+        let state = terminalPresentationBySurfaceID[clientSurfaceID]
+        let fallbackTitle = state?.workingDirectory
+            .flatMap(formatTerminalDisplayPath)
+            ?? "Terminal"
+        let title = state?.title ?? fallbackTitle
+        return EditorPaneOpenItemRow(
+            paneID: item.paneID,
+            kind: item.kind,
+            itemID: item.itemID,
+            bufferID: item.bufferID,
+            clientSurfaceID: item.clientSurfaceID,
+            title: title,
+            subtitle: item.subtitle,
+            filePath: item.filePath,
+            iconName: item.iconName,
+            isActive: item.isActive,
+            isModified: item.isModified,
+            vcsKind: item.vcsKind,
+            diagnosticSeverity: item.diagnosticSeverity
+        )
+    }
+
+    private func formatTerminalDisplayPath(_ path: String) -> String {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "Terminal" }
+        return (trimmed as NSString).abbreviatingWithTildeInPath
     }
 
     private func markedTextOverlay(from snapshot: EditorSnapshot) -> EditorMarkedText? {

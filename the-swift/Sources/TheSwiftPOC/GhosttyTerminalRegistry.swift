@@ -43,10 +43,13 @@ final class GhosttyTerminalRegistry {
         .union(visibleTerminalPanes.compactMap(\.clientSurfaceID))
 
         for surfaceID in allSurfaceIDs where viewsBySurfaceID[surfaceID] == nil {
+            let workingDirectory = preferredWorkingDirectory()
+            controller?.registerTerminalSurface(surfaceID, preferredWorkingDirectory: workingDirectory)
             let view = GhosttyTerminalSurfaceView(
                 clientSurfaceID: surfaceID,
                 runtime: runtime,
-                workingDirectory: preferredWorkingDirectory(),
+                controller: controller,
+                workingDirectory: workingDirectory,
                 onCloseRequested: { [weak controller] closingSurfaceID in
                     controller?.closeTerminalSurface(closingSurfaceID)
                 }
@@ -225,7 +228,7 @@ private final class GhosttyEmbeddedRuntime {
             let runtime = Unmanaged<GhosttyEmbeddedRuntime>.fromOpaque(userdata).takeUnretainedValue()
             runtime.scheduleTick()
         }
-        runtimeConfig.action_cb = { _, _, _ in false }
+        runtimeConfig.action_cb = theEditorRuntimeActionCallback
         // Some GhosttyKit builds import this callback as returning `Void` in Swift even
         // though the C ABI returns `bool`. Store the C-compatible shim explicitly so the
         // project compiles against both importer variants.
@@ -411,13 +414,50 @@ private func theEditorRuntimeReadClipboardCallback(
     return true
 }
 
+private func theEditorRuntimeActionCallback(
+    _ app: ghostty_app_t?,
+    _ target: ghostty_target_s,
+    _ action: ghostty_action_s
+) -> Bool {
+    _ = app
+    guard target.tag == GHOSTTY_TARGET_SURFACE,
+          let userdata = ghostty_surface_userdata(target.target.surface)
+    else {
+        return false
+    }
+
+    let userdataBits = UInt(bitPattern: userdata)
+    switch action.tag {
+    case GHOSTTY_ACTION_SET_TITLE:
+        let title = action.action.set_title.title.map { String(cString: $0) } ?? ""
+        DispatchQueue.main.async {
+            guard let userdata = UnsafeMutableRawPointer(bitPattern: userdataBits) else { return }
+            let context = Unmanaged<GhosttySurfaceCallbackContext>.fromOpaque(userdata).takeUnretainedValue()
+            context.controller?.updateTerminalTitle(title, for: context.clientSurfaceID)
+        }
+        return true
+    case GHOSTTY_ACTION_PWD:
+        let workingDirectory = action.action.pwd.pwd.map { String(cString: $0) } ?? ""
+        DispatchQueue.main.async {
+            guard let userdata = UnsafeMutableRawPointer(bitPattern: userdataBits) else { return }
+            let context = Unmanaged<GhosttySurfaceCallbackContext>.fromOpaque(userdata).takeUnretainedValue()
+            context.controller?.updateTerminalWorkingDirectory(workingDirectory, for: context.clientSurfaceID)
+        }
+        return true
+    default:
+        return false
+    }
+}
+
 private final class GhosttySurfaceCallbackContext {
     let clientSurfaceID: UInt
     let onCloseRequested: (UInt) -> Void
+    weak var controller: EditorSurfaceController?
     weak var view: GhosttyTerminalSurfaceView?
 
-    init(clientSurfaceID: UInt, onCloseRequested: @escaping (UInt) -> Void) {
+    init(clientSurfaceID: UInt, controller: EditorSurfaceController?, onCloseRequested: @escaping (UInt) -> Void) {
         self.clientSurfaceID = clientSurfaceID
+        self.controller = controller
         self.onCloseRequested = onCloseRequested
     }
 }
@@ -449,6 +489,7 @@ private final class GhosttyTerminalSurfaceView: NSView {
     init(
         clientSurfaceID: UInt,
         runtime: GhosttyEmbeddedRuntime,
+        controller: EditorSurfaceController?,
         workingDirectory: String?,
         onCloseRequested: @escaping (UInt) -> Void
     ) {
@@ -462,6 +503,7 @@ private final class GhosttyTerminalSurfaceView: NSView {
         layer?.masksToBounds = true
         let context = GhosttySurfaceCallbackContext(
             clientSurfaceID: clientSurfaceID,
+            controller: controller,
             onCloseRequested: onCloseRequested
         )
         context.view = self

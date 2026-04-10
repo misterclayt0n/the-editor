@@ -413,6 +413,7 @@ private final class GhosttyTerminalSurfaceView: NSView {
     private var isSurfaceVisible = false
     private var pendingWorkingDirectory: String?
     private var lastKnownMousePointInView: NSPoint?
+    private var trackingArea: NSTrackingArea?
 
     override var acceptsFirstResponder: Bool { true }
 
@@ -492,14 +493,22 @@ private final class GhosttyTerminalSurfaceView: NSView {
     }
 
     override func updateTrackingAreas() {
-        trackingAreas.forEach(removeTrackingArea)
-        addTrackingArea(NSTrackingArea(
+        super.updateTrackingAreas()
+
+        if let trackingArea {
+            removeTrackingArea(trackingArea)
+        }
+
+        trackingArea = NSTrackingArea(
             rect: bounds,
             options: [.mouseEnteredAndExited, .mouseMoved, .inVisibleRect, .activeAlways],
             owner: self,
             userInfo: nil
-        ))
-        super.updateTrackingAreas()
+        )
+
+        if let trackingArea {
+            addTrackingArea(trackingArea)
+        }
     }
 
     func updateVisibility(_ visible: Bool) {
@@ -527,15 +536,28 @@ private final class GhosttyTerminalSurfaceView: NSView {
         }
     }
 
-    override func mouseDown(with event: NSEvent) {
+    private func requestPointerFocusRecovery() {
         paneIDOwner?.setActivePane(paneID)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        requestPointerFocusRecovery()
         window?.makeFirstResponder(self)
         guard let surface else { return }
-        logSelectionState("leftDown.before", event: event, surface: surface, mousePositionSent: false, consumed: nil)
-        trackMousePointIfUsable(convert(event.locationInWindow, from: nil))
+        let eventPoint = convert(event.locationInWindow, from: nil)
+        trackMousePointIfUsable(eventPoint)
+        let point = preferredPointerPoint(from: eventPoint) ?? eventPoint
+        logSelectionState(
+            "leftDown.before",
+            event: event,
+            surface: surface,
+            mousePositionSent: false,
+            consumed: nil,
+            includeTextSnapshots: false
+        )
         let sentMousePosition = event.clickCount == 1
         if sentMousePosition {
-            sendMousePosition(event)
+            ghostty_surface_mouse_pos(surface, point.x, bounds.height - point.y, mods(from: event.modifierFlags))
         }
         let consumed = ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_PRESS, GHOSTTY_MOUSE_LEFT, mods(from: event.modifierFlags))
         logSelectionState("leftDown.after", event: event, surface: surface, mousePositionSent: sentMousePosition, consumed: consumed)
@@ -553,15 +575,55 @@ private final class GhosttyTerminalSurfaceView: NSView {
     }
 
     override func rightMouseDown(with event: NSEvent) {
-        paneIDOwner?.setActivePane(paneID)
+        requestPointerFocusRecovery()
         window?.makeFirstResponder(self)
         guard let surface else { return }
-        ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_PRESS, GHOSTTY_MOUSE_RIGHT, mods(from: event.modifierFlags))
+        if !ghostty_surface_mouse_captured(surface) {
+            super.rightMouseDown(with: event)
+            return
+        }
+
+        let eventPoint = convert(event.locationInWindow, from: nil)
+        trackMousePointIfUsable(eventPoint)
+        let point = preferredPointerPoint(from: eventPoint) ?? eventPoint
+        ghostty_surface_mouse_pos(surface, point.x, bounds.height - point.y, mods(from: event.modifierFlags))
+        _ = ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_PRESS, GHOSTTY_MOUSE_RIGHT, mods(from: event.modifierFlags))
     }
 
     override func rightMouseUp(with event: NSEvent) {
         guard let surface else { return }
-        ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_RELEASE, GHOSTTY_MOUSE_RIGHT, mods(from: event.modifierFlags))
+        if !ghostty_surface_mouse_captured(surface) {
+            super.rightMouseUp(with: event)
+            return
+        }
+
+        _ = ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_RELEASE, GHOSTTY_MOUSE_RIGHT, mods(from: event.modifierFlags))
+    }
+
+    override func otherMouseDown(with event: NSEvent) {
+        guard event.buttonNumber == 2 else {
+            super.otherMouseDown(with: event)
+            return
+        }
+
+        requestPointerFocusRecovery()
+        window?.makeFirstResponder(self)
+        guard let surface else { return }
+        let eventPoint = convert(event.locationInWindow, from: nil)
+        trackMousePointIfUsable(eventPoint)
+        let point = preferredPointerPoint(from: eventPoint) ?? eventPoint
+        ghostty_surface_mouse_pos(surface, point.x, bounds.height - point.y, mods(from: event.modifierFlags))
+        _ = ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_PRESS, GHOSTTY_MOUSE_MIDDLE, mods(from: event.modifierFlags))
+    }
+
+    override func otherMouseUp(with event: NSEvent) {
+        guard event.buttonNumber == 2 else {
+            super.otherMouseUp(with: event)
+            return
+        }
+
+        guard let surface else { return }
+        _ = ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_RELEASE, GHOSTTY_MOUSE_MIDDLE, mods(from: event.modifierFlags))
     }
 
     override func mouseEntered(with event: NSEvent) {
@@ -571,6 +633,9 @@ private final class GhosttyTerminalSurfaceView: NSView {
 
     override func mouseExited(with event: NSEvent) {
         guard let surface else { return }
+        if NSEvent.pressedMouseButtons != 0 {
+            return
+        }
         ghostty_surface_mouse_pos(surface, -1, -1, mods(from: event.modifierFlags))
     }
 
@@ -595,7 +660,7 @@ private final class GhosttyTerminalSurfaceView: NSView {
             x *= 2
             y *= 2
         }
-        ghostty_surface_mouse_scroll(surface, x, y, precision ? 1 : 0)
+        ghostty_surface_mouse_scroll(surface, x, y, scrollMods(from: event))
     }
 
     override func keyDown(with event: NSEvent) {
@@ -736,22 +801,29 @@ private final class GhosttyTerminalSurfaceView: NSView {
         event: NSEvent,
         surface: ghostty_surface_t,
         mousePositionSent: Bool,
-        consumed: Bool?
+        consumed: Bool?,
+        includeTextSnapshots: Bool = true
     ) {
         guard ghosttySelectionLoggingEnabled, event.clickCount >= 2 else { return }
         let rawPoint = convert(event.locationInWindow, from: nil)
         let currentPoint = currentMousePointInView()
         let cachedPoint = lastKnownMousePointInView
         let preferredPoint = resolvedPointerPointForLogging(from: rawPoint, currentPoint: currentPoint, cachedPoint: cachedPoint)
-        let selectionSnapshot = readSelectionSnapshot(surface)
-        let quicklookSnapshot = readQuicklookSnapshot(surface)
+        let selectionSnapshot = includeTextSnapshots ? readSelectionSnapshot(surface) : nil
+        let quicklookSnapshot = includeTextSnapshots ? readQuicklookSnapshot(surface) : nil
         let selection = selectionSnapshot.map { debugText($0.text) } ?? "-"
         let quicklook = quicklookSnapshot.map { debugText($0.text) } ?? "-"
         let selectionMeta = selectionSnapshot.map { "@x=\(String(format: "%.1f", $0.tlPxX)) y=\(String(format: "%.1f", $0.tlPxY)) start=\($0.offsetStart) len=\($0.offsetLen)" } ?? "-"
         let quicklookMeta = quicklookSnapshot.map { "@x=\(String(format: "%.1f", $0.tlPxX)) y=\(String(format: "%.1f", $0.tlPxY)) start=\($0.offsetStart) len=\($0.offsetLen)" } ?? "-"
+        let hasSelectionText: String
+        if includeTextSnapshots {
+            hasSelectionText = ghostty_surface_has_selection(surface) ? "1" : "0"
+        } else {
+            hasSelectionText = "-"
+        }
         let consumedText = consumed.map { $0 ? "1" : "0" } ?? "-"
         ghosttySelectionLog(
-            "surface=\(clientSurfaceID) pane=\(paneID) phase=\(phase) clickCount=\(event.clickCount) sentPos=\(mousePositionSent ? 1 : 0) consumed=\(consumedText) raw=\(debugPoint(rawPoint)) current=\(debugPoint(currentPoint)) cached=\(debugPoint(cachedPoint)) preferred=\(debugPoint(preferredPoint)) hasSelection=\(ghostty_surface_has_selection(surface) ? 1 : 0) selection=\(selection) selectionMeta=\(selectionMeta) quicklook=\(quicklook) quicklookMeta=\(quicklookMeta)"
+            "surface=\(clientSurfaceID) pane=\(paneID) phase=\(phase) clickCount=\(event.clickCount) sentPos=\(mousePositionSent ? 1 : 0) consumed=\(consumedText) raw=\(debugPoint(rawPoint)) current=\(debugPoint(currentPoint)) cached=\(debugPoint(cachedPoint)) preferred=\(debugPoint(preferredPoint)) hasSelection=\(hasSelectionText) selection=\(selection) selectionMeta=\(selectionMeta) quicklook=\(quicklook) quicklookMeta=\(quicklookMeta)"
         )
     }
 
@@ -777,12 +849,14 @@ private final class GhosttyTerminalSurfaceView: NSView {
             return nil
         }
         defer { ghostty_surface_free_text(surface, &text) }
+        let textData = Data(bytes: pointer, count: Int(text.text_len))
+        let decodedText = String(data: textData, encoding: .utf8) ?? String(cString: pointer)
         return GhosttyTextSnapshot(
             tlPxX: text.tl_px_x,
             tlPxY: text.tl_px_y,
             offsetStart: text.offset_start,
             offsetLen: text.offset_len,
-            text: String(cString: pointer)
+            text: decodedText
         )
     }
 
@@ -860,6 +934,33 @@ private final class GhosttyTerminalSurfaceView: NSView {
     private func currentMousePointInView() -> NSPoint? {
         guard let window else { return nil }
         return convert(window.mouseLocationOutsideOfEventStream, from: nil)
+    }
+
+    private func scrollMods(from event: NSEvent) -> ghostty_input_scroll_mods_t {
+        var mods: ghostty_input_scroll_mods_t = 0
+        if event.hasPreciseScrollingDeltas {
+            mods |= 0b0000_0001
+        }
+
+        let momentum: ghostty_input_scroll_mods_t
+        switch event.momentumPhase {
+        case .began:
+            momentum = ghostty_input_scroll_mods_t(GHOSTTY_MOUSE_MOMENTUM_BEGAN.rawValue)
+        case .stationary:
+            momentum = ghostty_input_scroll_mods_t(GHOSTTY_MOUSE_MOMENTUM_STATIONARY.rawValue)
+        case .changed:
+            momentum = ghostty_input_scroll_mods_t(GHOSTTY_MOUSE_MOMENTUM_CHANGED.rawValue)
+        case .ended:
+            momentum = ghostty_input_scroll_mods_t(GHOSTTY_MOUSE_MOMENTUM_ENDED.rawValue)
+        case .cancelled:
+            momentum = ghostty_input_scroll_mods_t(GHOSTTY_MOUSE_MOMENTUM_CANCELLED.rawValue)
+        case .mayBegin:
+            momentum = ghostty_input_scroll_mods_t(GHOSTTY_MOUSE_MOMENTUM_MAY_BEGIN.rawValue)
+        default:
+            momentum = ghostty_input_scroll_mods_t(GHOSTTY_MOUSE_MOMENTUM_NONE.rawValue)
+        }
+        mods |= momentum << 1
+        return mods
     }
 
     private func ghosttyKeyEvent(

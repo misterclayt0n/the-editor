@@ -226,14 +226,17 @@ private final class GhosttyEmbeddedRuntime {
             runtime.scheduleTick()
         }
         runtimeConfig.action_cb = { _, _, _ in false }
-        runtimeConfig.read_clipboard_cb = { userdata, location, state in
-            guard let userdata else { return }
-            let context = Unmanaged<GhosttySurfaceCallbackContext>.fromOpaque(userdata).takeUnretainedValue()
-            DispatchQueue.main.async {
-                let text = GhosttyPasteboardBridge.readString(from: location)
-                context.view?.completeClipboardRequest(text: text, state: state, confirmed: false)
-            }
-        }
+        // Some GhosttyKit builds import this callback as returning `Void` in Swift even
+        // though the C ABI returns `bool`. Store the C-compatible shim explicitly so the
+        // project compiles against both importer variants.
+        runtimeConfig.read_clipboard_cb = unsafeBitCast(
+            theEditorRuntimeReadClipboardCallback as @convention(c) (
+                UnsafeMutableRawPointer?,
+                ghostty_clipboard_e,
+                UnsafeMutableRawPointer?
+            ) -> Bool,
+            to: ghostty_runtime_read_clipboard_cb.self
+        )
         runtimeConfig.confirm_read_clipboard_cb = { userdata, content, state, _ in
             guard let userdata else { return }
             let context = Unmanaged<GhosttySurfaceCallbackContext>.fromOpaque(userdata).takeUnretainedValue()
@@ -388,6 +391,24 @@ private struct GhosttyTextSnapshot {
     let offsetStart: UInt32
     let offsetLen: UInt32
     let text: String
+}
+
+private func theEditorRuntimeReadClipboardCallback(
+    _ userdata: UnsafeMutableRawPointer?,
+    _ location: ghostty_clipboard_e,
+    _ state: UnsafeMutableRawPointer?
+) -> Bool {
+    guard let userdata else { return false }
+    let userdataBits = UInt(bitPattern: userdata)
+    let stateBits = state.map { UInt(bitPattern: $0) }
+    DispatchQueue.main.async {
+        guard let userdata = UnsafeMutableRawPointer(bitPattern: userdataBits) else { return }
+        let context = Unmanaged<GhosttySurfaceCallbackContext>.fromOpaque(userdata).takeUnretainedValue()
+        let state = stateBits.flatMap(UnsafeMutableRawPointer.init(bitPattern:))
+        let text = GhosttyPasteboardBridge.readString(from: location)
+        context.view?.completeClipboardRequest(text: text, state: state, confirmed: false)
+    }
+    return true
 }
 
 private final class GhosttySurfaceCallbackContext {

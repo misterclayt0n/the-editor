@@ -8177,6 +8177,19 @@ impl OwnedSnapshot {
         text_idx,
       });
     }
+    if editor.pi_bridge.as_ref().is_some_and(|bridge| bridge.is_attached()) {
+      let text_idx = snapshot.push_string("pi bridge active");
+      let icon_idx = snapshot.push_optional_string(Some("pi"));
+      snapshot.status_items.push(StatusItemRecord {
+        item: the_editor_snapshot_status_item_t {
+          icon:     ptr::null(),
+          text:     ptr::null(),
+          emphasis: statusline_emphasis_code(StatuslineEmphasis::Muted),
+        },
+        icon_idx,
+        text_idx,
+      });
+    }
     snapshot.status.status.item_count = snapshot.status_items.len();
 
     snapshot.populate_pending_keys(active_pending_key_state(editor));

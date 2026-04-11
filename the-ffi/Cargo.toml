@@ -25,3 +25,6 @@ the-vcs = { path = "../the-vcs", features = ["git", "jj", "diff"] }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

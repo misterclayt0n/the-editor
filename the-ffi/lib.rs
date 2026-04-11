@@ -33,6 +33,11 @@ use ropey::{
   Rope,
   RopeSlice,
 };
+use serde::{
+  Deserialize,
+  Serialize,
+};
+use serde_json::Value;
 use smallvec::SmallVec;
 use the_core::{
   grapheme::grapheme_width,
@@ -187,6 +192,12 @@ use the_lib::{
     PaneContentKind,
   },
   indent::IndentStyle,
+  pi_bridge::{
+    PiBridgeEnvelope,
+    PiBridgeEvent,
+    PiBridgeHandle,
+    PI_BRIDGE_PROTOCOL_VERSION,
+  },
   messages::MessageCenter,
   movement::{
     move_next_word_end,
@@ -1517,6 +1528,75 @@ struct AppliedVcsRefreshState {
   document_generation: u64,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+struct PiBridgeEdit {
+  #[serde(rename = "oldText")]
+  old_text: String,
+  #[serde(rename = "newText")]
+  new_text: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct PiBridgeReadFileParams {
+  path: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct PiBridgeApplyEditsParams {
+  path:  String,
+  edits: Vec<PiBridgeEdit>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct PiBridgeWriteFileParams {
+  path:    String,
+  content: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct PiBridgeReplaceRangeParams {
+  path:       String,
+  #[serde(rename = "startChar")]
+  start_char: usize,
+  #[serde(rename = "endChar")]
+  end_char:   usize,
+  content:    String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PiBridgeReadFileResult {
+  path:             String,
+  content:          String,
+  from_live_buffer: bool,
+  opened_buffer:    bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PiBridgeApplyEditsResult {
+  path:          String,
+  edit_count:    usize,
+  saved:         bool,
+  opened_buffer: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PiBridgeWriteFileResult {
+  path:          String,
+  saved:         bool,
+  opened_buffer: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PiBridgeReplaceRangeResult {
+  path:          String,
+  saved:         bool,
+  opened_buffer: bool,
+}
+
 struct SwiftEditor {
   editor:                              Editor,
   file_path:                           Option<PathBuf>,
@@ -1602,6 +1682,7 @@ struct SwiftEditor {
   vcs_scan:                            Option<Arc<VcsWorkspaceScan>>,
   vcs_base_cache:                      BTreeMap<VcsBaseCacheKey, Option<Vec<u8>>>,
   embedded_terminal_enabled:           bool,
+  pi_bridge:                           Option<PiBridgeHandle>,
 }
 
 impl SwiftEditor {
@@ -5079,6 +5160,16 @@ impl SwiftEditor {
       u8::from(picker_changed)
     ));
 
+    let step_start = Instant::now();
+    let pi_bridge_changed = self.poll_pi_bridge();
+    let pi_bridge_ms = step_start.elapsed().as_secs_f64() * 1000.0;
+    changed |= pi_bridge_changed;
+    parts.push(format!(
+      "pi_bridge={:.2}ms/{}",
+      pi_bridge_ms,
+      u8::from(pi_bridge_changed)
+    ));
+
     let total_ms = total_start.elapsed().as_secs_f64() * 1000.0;
     scroll_perf_log(format!(
       "poll_background total={:.2}ms changed={} {}",
@@ -5088,6 +5179,344 @@ impl SwiftEditor {
     ));
 
     changed
+  }
+
+  fn ensure_pi_bridge_started(&mut self) {
+    if self.pi_bridge.is_some() {
+      return;
+    }
+    match PiBridgeHandle::start(&self.workspace_root()) {
+      Ok(handle) => {
+        self.pi_bridge = Some(handle);
+      },
+      Err(err) => {
+        if !err.contains("not backed by a git directory") {
+          self.push_warning("pi-bridge", err);
+        }
+      },
+    }
+  }
+
+  fn shutdown_pi_bridge(&mut self) {
+    if let Some(mut bridge) = self.pi_bridge.take() {
+      bridge.shutdown();
+    }
+  }
+
+  fn poll_pi_bridge(&mut self) -> bool {
+    let Some(mut bridge) = self.pi_bridge.take() else {
+      return false;
+    };
+
+    let mut changed = false;
+    for event in bridge.drain_events() {
+      match event {
+        PiBridgeEvent::Attached => changed = true,
+        PiBridgeEvent::Detached => changed = true,
+        PiBridgeEvent::InvalidMessage(message) => {
+          self.push_warning("pi-bridge", message);
+          changed = true;
+        },
+        PiBridgeEvent::Notification { .. } => {},
+        PiBridgeEvent::Request { id, method, params } => {
+          let response = match self.handle_pi_bridge_request(&method, params) {
+            Ok(response) => PiBridgeEnvelope::ok(id.clone(), response)
+              .unwrap_or_else(|err| PiBridgeEnvelope::err(id, err)),
+            Err(err) => PiBridgeEnvelope::err(id, err),
+          };
+          if let Err(err) = bridge.send(response) {
+            self.push_warning("pi-bridge", err);
+            changed = true;
+          } else {
+            changed = true;
+          }
+        },
+      }
+    }
+
+    self.pi_bridge = Some(bridge);
+    changed
+  }
+
+  fn handle_pi_bridge_request(&mut self, method: &str, params: Value) -> Result<Value, String> {
+    match method {
+      "ping" => Ok(serde_json::json!({
+        "version": PI_BRIDGE_PROTOCOL_VERSION,
+        "workspaceRoot": self.workspace_root().display().to_string(),
+      })),
+      "read_file" => {
+        let params: PiBridgeReadFileParams = serde_json::from_value(params)
+          .map_err(|err| format!("invalid read_file params: {err}"))?;
+        let result = self.pi_bridge_read_workspace_file(&params.path)?;
+        serde_json::to_value(result).map_err(|err| format!("failed to encode read result: {err}"))
+      },
+      "apply_edits" => {
+        let params: PiBridgeApplyEditsParams = serde_json::from_value(params)
+          .map_err(|err| format!("invalid apply_edits params: {err}"))?;
+        let result = self.pi_bridge_apply_workspace_edits(&params.path, &params.edits)?;
+        serde_json::to_value(result).map_err(|err| format!("failed to encode edit result: {err}"))
+      },
+      "write_file" => {
+        let params: PiBridgeWriteFileParams = serde_json::from_value(params)
+          .map_err(|err| format!("invalid write_file params: {err}"))?;
+        let result = self.pi_bridge_write_workspace_file(&params.path, &params.content)?;
+        serde_json::to_value(result).map_err(|err| format!("failed to encode write result: {err}"))
+      },
+      "replace_range" => {
+        let params: PiBridgeReplaceRangeParams = serde_json::from_value(params)
+          .map_err(|err| format!("invalid replace_range params: {err}"))?;
+        let result = self.pi_bridge_replace_workspace_range(
+          &params.path,
+          params.start_char,
+          params.end_char,
+          &params.content,
+        )?;
+        serde_json::to_value(result)
+          .map_err(|err| format!("failed to encode replace_range result: {err}"))
+      },
+      _ => Err(format!("unsupported pi bridge method '{method}'")),
+    }
+  }
+
+  fn resolve_pi_bridge_path(&self, raw_path: &str) -> Result<PathBuf, String> {
+    let workspace_root = lexical_normalize_path(&self.workspace_root());
+    let input = Path::new(raw_path);
+    let candidate = if input.is_absolute() {
+      lexical_normalize_path(input)
+    } else {
+      lexical_normalize_path(&workspace_root.join(input))
+    };
+    if !candidate.starts_with(&workspace_root) {
+      return Err(format!(
+        "path '{}' is outside workspace '{}'",
+        candidate.display(),
+        workspace_root.display()
+      ));
+    }
+    Ok(candidate)
+  }
+
+  fn ensure_workspace_buffer_loaded(
+    &mut self,
+    path: &Path,
+    create_missing: bool,
+  ) -> Result<(BufferId, bool), String> {
+    if let Some(buffer_id) = self.editor.find_buffer_by_path(path) {
+      return Ok((buffer_id, false));
+    }
+    if !path.exists() && !create_missing {
+      return Err(format!("file not found: {}", path.display()));
+    }
+
+    let content = if path.exists() {
+      fs::read_to_string(path)
+        .map_err(|err| format!("failed to read '{}': {err}", path.display()))?
+    } else {
+      String::new()
+    };
+    let viewport = self.editor.view().viewport;
+    let view = ViewState::new(viewport, Position::new(0, 0));
+    let buffer_id = self.editor.open_buffer_without_activation(
+      Rope::from_str(&content),
+      view,
+      Some(path.to_path_buf()),
+    );
+
+    if let Some(doc) = self.editor.document_mut_for_buffer(buffer_id) {
+      if let Some(loader) = &self.loader {
+        let _ = setup_syntax(doc, path, loader);
+      }
+      doc.set_display_name(display_name_for_path(path));
+      if path.exists() {
+        let _ = doc.mark_saved();
+      }
+    }
+    Ok((buffer_id, true))
+  }
+
+  fn persist_buffer_to_disk(&mut self, buffer_id: BufferId, path: &Path) -> Result<(), String> {
+    let text = self
+      .editor
+      .document_for_buffer(buffer_id)
+      .ok_or_else(|| format!("buffer missing for '{}'", path.display()))?
+      .text()
+      .to_string();
+    if let Some(parent) = path.parent() {
+      fs::create_dir_all(parent)
+        .map_err(|err| format!("failed to create parent directories for '{}': {err}", path.display()))?;
+    }
+    fs::write(path, &text).map_err(|err| format!("failed to write '{}': {err}", path.display()))?;
+    if let Some(doc) = self.editor.document_mut_for_buffer(buffer_id) {
+      let _ = doc.mark_saved();
+    }
+    if self.editor.active_buffer_id() == buffer_id {
+      self.on_file_saved(path, &text);
+    } else {
+      let _ = self.refresh_shared_vcs_scan_for_cwd(path);
+      let _ = self.refresh_file_tree_decorations();
+      self.vcs_statusline_refresh_force_rescan = true;
+      self.schedule_vcs_statusline_refresh(None);
+    }
+    Ok(())
+  }
+
+  fn pi_bridge_read_workspace_file(
+    &mut self,
+    raw_path: &str,
+  ) -> Result<PiBridgeReadFileResult, String> {
+    let path = self.resolve_pi_bridge_path(raw_path)?;
+    let was_open = self.editor.find_buffer_by_path(&path).is_some();
+    let (buffer_id, opened_buffer) = self.ensure_workspace_buffer_loaded(&path, false)?;
+    let content = self
+      .editor
+      .document_for_buffer(buffer_id)
+      .ok_or_else(|| format!("buffer missing for '{}'", path.display()))?
+      .text()
+      .to_string();
+    Ok(PiBridgeReadFileResult {
+      path: path.display().to_string(),
+      content,
+      from_live_buffer: was_open,
+      opened_buffer,
+    })
+  }
+
+  fn pi_bridge_apply_workspace_edits(
+    &mut self,
+    raw_path: &str,
+    edits: &[PiBridgeEdit],
+  ) -> Result<PiBridgeApplyEditsResult, String> {
+    if edits.is_empty() {
+      return Err("apply_edits requires at least one edit".to_string());
+    }
+    let path = self.resolve_pi_bridge_path(raw_path)?;
+    let (buffer_id, opened_buffer) = self.ensure_workspace_buffer_loaded(&path, false)?;
+    let (old_text, transaction) = {
+      let document = self
+        .editor
+        .document_for_buffer(buffer_id)
+        .ok_or_else(|| format!("buffer missing for '{}'", path.display()))?;
+      let old_text = document.text().clone();
+      let transaction = build_exact_edit_transaction(document.text(), edits)?;
+      (old_text, transaction)
+    };
+    self.editor
+      .apply_transaction_to_buffer(buffer_id, &transaction, self.loader.as_deref())
+      .map_err(|err| format!("failed to apply edits to '{}': {err}", path.display()))?;
+    if self.editor.active_buffer_id() == buffer_id {
+      self.vcs_document_generation = self.vcs_document_generation.wrapping_add(1);
+      self.highlight_cache.clear();
+      self.lsp_send_did_change(&old_text, transaction.changes());
+      self.refresh_vcs_diff_document();
+      if let Some(root) = self.file_tree.root.clone() {
+        let _ = self.refresh_file_tree_vcs_decorations_for_root(&root);
+      }
+    }
+    self.persist_buffer_to_disk(buffer_id, &path)?;
+    Ok(PiBridgeApplyEditsResult {
+      path: path.display().to_string(),
+      edit_count: edits.len(),
+      saved: true,
+      opened_buffer,
+    })
+  }
+
+  fn pi_bridge_write_workspace_file(
+    &mut self,
+    raw_path: &str,
+    content: &str,
+  ) -> Result<PiBridgeWriteFileResult, String> {
+    let path = self.resolve_pi_bridge_path(raw_path)?;
+    let (buffer_id, opened_buffer) = self.ensure_workspace_buffer_loaded(&path, true)?;
+    let (old_text, transaction) = {
+      let document = self
+        .editor
+        .document_for_buffer(buffer_id)
+        .ok_or_else(|| format!("buffer missing for '{}'", path.display()))?;
+      let old_text = document.text().clone();
+      let transaction = the_lib::transaction::Transaction::change(document.text(), vec![(
+        0,
+        document.text().len_chars(),
+        Some(content.into()),
+      )])
+      .map_err(|err| format!("failed to build write transaction: {err}"))?;
+      (old_text, transaction)
+    };
+    self.editor
+      .apply_transaction_to_buffer(buffer_id, &transaction, self.loader.as_deref())
+      .map_err(|err| format!("failed to apply write to '{}': {err}", path.display()))?;
+    if self.editor.active_buffer_id() == buffer_id {
+      self.vcs_document_generation = self.vcs_document_generation.wrapping_add(1);
+      self.highlight_cache.clear();
+      self.lsp_send_did_change(&old_text, transaction.changes());
+      self.refresh_vcs_diff_document();
+      if let Some(root) = self.file_tree.root.clone() {
+        let _ = self.refresh_file_tree_vcs_decorations_for_root(&root);
+      }
+    }
+    self.persist_buffer_to_disk(buffer_id, &path)?;
+    Ok(PiBridgeWriteFileResult {
+      path: path.display().to_string(),
+      saved: true,
+      opened_buffer,
+    })
+  }
+
+  fn pi_bridge_replace_workspace_range(
+    &mut self,
+    raw_path: &str,
+    start_char: usize,
+    end_char: usize,
+    content: &str,
+  ) -> Result<PiBridgeReplaceRangeResult, String> {
+    let path = self.resolve_pi_bridge_path(raw_path)?;
+    let (buffer_id, opened_buffer) = self.ensure_workspace_buffer_loaded(&path, false)?;
+    let (old_text, transaction) = {
+      let document = self
+        .editor
+        .document_for_buffer(buffer_id)
+        .ok_or_else(|| format!("buffer missing for '{}'", path.display()))?;
+      let len_chars = document.text().len_chars();
+      if start_char > end_char {
+        return Err(format!(
+          "invalid replace_range for '{}': start_char {start_char} is greater than end_char {end_char}",
+          path.display()
+        ));
+      }
+      if end_char > len_chars {
+        return Err(format!(
+          "invalid replace_range for '{}': end_char {end_char} exceeds document length {}",
+          path.display(),
+          len_chars
+        ));
+      }
+      let old_text = document.text().clone();
+      let transaction = the_lib::transaction::Transaction::change(document.text(), vec![(
+        start_char,
+        end_char,
+        Some(content.into()),
+      )])
+      .map_err(|err| format!("failed to build replace_range transaction: {err}"))?;
+      (old_text, transaction)
+    };
+    self.editor
+      .apply_transaction_to_buffer(buffer_id, &transaction, self.loader.as_deref())
+      .map_err(|err| format!("failed to apply replace_range to '{}': {err}", path.display()))?;
+    if self.editor.active_buffer_id() == buffer_id {
+      self.vcs_document_generation = self.vcs_document_generation.wrapping_add(1);
+      self.highlight_cache.clear();
+      self.lsp_send_did_change(&old_text, transaction.changes());
+      self.refresh_vcs_diff_document();
+      if let Some(root) = self.file_tree.root.clone() {
+        let _ = self.refresh_file_tree_vcs_decorations_for_root(&root);
+      }
+    }
+    self.persist_buffer_to_disk(buffer_id, &path)?;
+    Ok(PiBridgeReplaceRangeResult {
+      path: path.display().to_string(),
+      saved: true,
+      opened_buffer,
+    })
   }
 
   fn new(path: Option<&Path>) -> Self {
@@ -5220,6 +5649,7 @@ impl SwiftEditor {
       vcs_scan: None,
       vcs_base_cache: BTreeMap::new(),
       embedded_terminal_enabled: false,
+      pi_bridge: None,
     };
 
     set_file_picker_syntax_loader(&mut this.file_picker, this.loader.clone());
@@ -5227,6 +5657,7 @@ impl SwiftEditor {
     this.refresh_lsp_runtime_state();
     this.sync_active_file_watch_state();
     this.refresh_vcs_after_path_change(None);
+    this.ensure_pi_bridge_started();
     this
   }
 
@@ -5852,6 +6283,8 @@ impl SwiftEditor {
     if follow_workspace_root {
       self.working_directory.current = Some(self.workspace_root.clone());
     }
+    self.shutdown_pi_bridge();
+    self.ensure_pi_bridge_started();
   }
 
   fn configure_file_picker_layout(
@@ -9920,6 +10353,51 @@ fn build_transaction_from_lsp_text_edits(
   the_lib::transaction::Transaction::change(text, changes).map_err(|err| err.to_string())
 }
 
+fn find_exact_match_span(haystack: &str, needle: &str) -> Result<(usize, usize), String> {
+  if needle.is_empty() {
+    return Err("edit oldText must not be empty".to_string());
+  }
+
+  let mut matches = haystack.match_indices(needle);
+  let Some((byte_start, _)) = matches.next() else {
+    return Err("edit oldText did not match the current buffer contents".to_string());
+  };
+  if matches.next().is_some() {
+    return Err("edit oldText matched multiple locations in the current buffer".to_string());
+  }
+
+  let byte_end = byte_start + needle.len();
+  let start_char = haystack[..byte_start].chars().count();
+  let end_char = start_char + needle.chars().count();
+  debug_assert_eq!(&haystack[byte_start..byte_end], needle);
+  Ok((start_char, end_char))
+}
+
+fn build_exact_edit_transaction(
+  text: &Rope,
+  edits: &[PiBridgeEdit],
+) -> Result<the_lib::transaction::Transaction, String> {
+  let original = text.to_string();
+  let mut changes = Vec::with_capacity(edits.len());
+
+  for edit in edits {
+    let (from, to) = find_exact_match_span(&original, &edit.old_text)?;
+    changes.push((from, to, Some(edit.new_text.clone().into())));
+  }
+
+  changes.sort_by_key(|(from, ..)| *from);
+  for pair in changes.windows(2) {
+    let (_, left_to, _) = pair[0];
+    let (right_from, ..) = pair[1];
+    if left_to > right_from {
+      return Err("edit ranges overlap in the current buffer".to_string());
+    }
+  }
+
+  the_lib::transaction::Transaction::change(text, changes)
+    .map_err(|err| format!("failed to build exact edit transaction: {err}"))
+}
+
 fn completion_kind_icon(kind: LspCompletionItemKind) -> &'static str {
   use LspCompletionItemKind::*;
   match kind {
@@ -12870,6 +13348,7 @@ pub unsafe extern "C" fn the_editor_string_free(value: *mut c_char) {
 mod tests {
   use super::*;
   use std::path::Path;
+  use tempfile::tempdir;
   use the_lib::editor::PaneContentKind;
 
   #[test]
@@ -12882,6 +13361,22 @@ mod tests {
 
     assert_eq!(editor.current_active_file_path(), Some(Path::new("/tmp/current.c")));
     assert_eq!(DefaultContext::file_path(&editor), Some(Path::new("/tmp/current.c")));
+  }
+
+  #[test]
+  fn swift_editor_starts_pi_bridge_in_git_dir() {
+    let workspace = tempdir().unwrap();
+    fs::create_dir(workspace.path().join(".git")).unwrap();
+    let file = workspace.path().join("src").join("main.rs");
+    fs::create_dir_all(file.parent().unwrap()).unwrap();
+    fs::write(&file, "fn main() {}
+").unwrap();
+
+    let editor = SwiftEditor::new(Some(file.as_path()));
+    let manifest_path = workspace.path().join(".git").join("the-editor").join("pi-bridge.json");
+    assert!(manifest_path.exists());
+    drop(editor);
+    assert!(!manifest_path.exists());
   }
 
   #[test]

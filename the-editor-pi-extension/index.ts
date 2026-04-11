@@ -8,8 +8,9 @@ const STATUS_KEY = "the-editor";
 const GIT_MANIFEST_RELATIVE_PATH = path.join("the-editor", "pi-bridge.json");
 const MAX_BUFFERED_LINES = 1000;
 const EXTENSION_INSTANCE_KEY = "__the_editor_pi_extension_loaded__";
-const STREAM_EDIT_DELAY_MS = 8;
-const STREAM_EDIT_MAX_CHANGED_CODEPOINTS = 5000;
+const STREAM_EDIT_DELAY_MS = 2;
+const STREAM_EDIT_MAX_CHANGED_CODEPOINTS = 1800;
+const STREAM_EDIT_MAX_CHUNKS = 24;
 
 type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 type BridgeState = "detached" | "attached" | "busy";
@@ -311,12 +312,12 @@ function countCodePoints(text: string): number {
 function streamChunkSizeFor(text: string): number {
 	const length = countCodePoints(text);
 	if (length <= 64) {
-		return 6;
+		return 16;
 	}
 	if (length <= 256) {
-		return 12;
+		return 32;
 	}
-	return 24;
+	return 64;
 }
 
 function splitTokenForStreaming(token: string, chunkSize: number): string[] {
@@ -496,6 +497,11 @@ async function streamWriteFileWithBridge(
 
 	if (plan.targetMiddle.length === 0) {
 		const deletionChunks = tokenizeStreamingText(plan.currentMiddle).reverse();
+		if (deletionChunks.length > STREAM_EDIT_MAX_CHUNKS) {
+			bridge.recordDebug(`${source}: too many deletion chunks -> write_file ${formatDebugPath(absolutePath)}`);
+			await bridge.writeFile(absolutePath, content);
+			return;
+		}
 		let currentEndChar = plan.endChar;
 		for (const chunk of deletionChunks) {
 			const chunkLength = countCodePoints(chunk);
@@ -507,6 +513,11 @@ async function streamWriteFileWithBridge(
 	}
 
 	const insertionChunks = tokenizeStreamingText(plan.targetMiddle);
+	if (insertionChunks.length > STREAM_EDIT_MAX_CHUNKS) {
+		bridge.recordDebug(`${source}: too many insertion chunks -> write_file ${formatDebugPath(absolutePath)}`);
+		await bridge.writeFile(absolutePath, content);
+		return;
+	}
 	const [firstChunk, ...remainingChunks] = insertionChunks;
 	if (!firstChunk) {
 		bridge.recordDebug(`${source}: empty first chunk -> write_file ${formatDebugPath(absolutePath)}`);

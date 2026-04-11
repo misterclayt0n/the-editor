@@ -1,6 +1,7 @@
 use std::{
   collections::{
     BTreeMap,
+    BTreeSet,
     HashMap,
     HashSet,
     VecDeque,
@@ -253,6 +254,7 @@ use the_lib::{
     visual_pos_at_char,
   },
   selection::{
+    CursorId,
     CursorPick,
     Range,
     Selection,
@@ -1528,6 +1530,89 @@ struct AppliedVcsRefreshState {
   document_generation: u64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct AgentFollowStep {
+  cursor_char: usize,
+  flash_start: usize,
+  flash_end:   usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct AgentFollowRenderSnapshot {
+  buffer_id:   BufferId,
+  cursor_char: usize,
+  flash_start: usize,
+  flash_end:   usize,
+  flashing:    bool,
+}
+
+#[derive(Debug, Clone)]
+struct AgentFollowState {
+  enabled:      bool,
+  buffer_id:    Option<BufferId>,
+  steps:        Vec<AgentFollowStep>,
+  step_index:   usize,
+  flash_until:  Option<Instant>,
+  next_step_at: Option<Instant>,
+  cursor_until: Option<Instant>,
+}
+
+impl Default for AgentFollowState {
+  fn default() -> Self {
+    Self {
+      enabled:      true,
+      buffer_id:    None,
+      steps:        Vec::new(),
+      step_index:   0,
+      flash_until:  None,
+      next_step_at: None,
+      cursor_until: None,
+    }
+  }
+}
+
+impl AgentFollowState {
+  fn clear(&mut self) {
+    self.buffer_id = None;
+    self.steps.clear();
+    self.step_index = 0;
+    self.flash_until = None;
+    self.next_step_at = None;
+    self.cursor_until = None;
+  }
+
+  fn current_step(&self) -> Option<AgentFollowStep> {
+    self.steps.get(self.step_index).copied()
+  }
+
+  fn extend_same_buffer(&mut self, steps: Vec<AgentFollowStep>) {
+    self.steps.extend(steps);
+  }
+
+  fn render_snapshot(&self) -> Option<AgentFollowRenderSnapshot> {
+    let step = self.current_step()?;
+    Some(AgentFollowRenderSnapshot {
+      buffer_id:   self.buffer_id?,
+      cursor_char: step.cursor_char,
+      flash_start: step.flash_start,
+      flash_end:   step.flash_end,
+      flashing:    self.flash_until.is_some(),
+    })
+  }
+}
+
+fn agent_follow_flash_duration() -> Duration {
+  Duration::from_millis(70)
+}
+
+fn agent_follow_step_delay() -> Duration {
+  Duration::from_millis(12)
+}
+
+fn agent_follow_cursor_linger_duration() -> Duration {
+  Duration::from_millis(110)
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 struct PiBridgeEdit {
   #[serde(rename = "oldText")]
@@ -1683,6 +1768,7 @@ struct SwiftEditor {
   vcs_base_cache:                      BTreeMap<VcsBaseCacheKey, Option<Vec<u8>>>,
   embedded_terminal_enabled:           bool,
   pi_bridge:                           Option<PiBridgeHandle>,
+  agent_follow:                        AgentFollowState,
 }
 
 impl SwiftEditor {
@@ -5170,6 +5256,16 @@ impl SwiftEditor {
       u8::from(pi_bridge_changed)
     ));
 
+    let step_start = Instant::now();
+    let agent_follow_changed = self.poll_agent_follow();
+    let agent_follow_ms = step_start.elapsed().as_secs_f64() * 1000.0;
+    changed |= agent_follow_changed;
+    parts.push(format!(
+      "agent_follow={:.2}ms/{}",
+      agent_follow_ms,
+      u8::from(agent_follow_changed)
+    ));
+
     let total_ms = total_start.elapsed().as_secs_f64() * 1000.0;
     scroll_perf_log(format!(
       "poll_background total={:.2}ms changed={} {}",
@@ -5413,6 +5509,7 @@ impl SwiftEditor {
       }
     }
     self.persist_buffer_to_disk(buffer_id, &path)?;
+    self.start_agent_follow_for_transaction(buffer_id, &transaction);
     Ok(PiBridgeApplyEditsResult {
       path: path.display().to_string(),
       edit_count: edits.len(),
@@ -5455,6 +5552,7 @@ impl SwiftEditor {
       }
     }
     self.persist_buffer_to_disk(buffer_id, &path)?;
+    self.start_agent_follow_for_transaction(buffer_id, &transaction);
     Ok(PiBridgeWriteFileResult {
       path: path.display().to_string(),
       saved: true,
@@ -5512,11 +5610,194 @@ impl SwiftEditor {
       }
     }
     self.persist_buffer_to_disk(buffer_id, &path)?;
+    self.start_agent_follow_for_transaction(buffer_id, &transaction);
     Ok(PiBridgeReplaceRangeResult {
       path: path.display().to_string(),
       saved: true,
       opened_buffer,
     })
+  }
+
+  fn agent_follow_render_snapshot(&self) -> Option<AgentFollowRenderSnapshot> {
+    self.agent_follow.render_snapshot()
+  }
+
+  fn agent_follow_steps_for_transaction(
+    transaction: &the_lib::transaction::Transaction,
+  ) -> Vec<AgentFollowStep> {
+    transaction
+      .changes_iter()
+      .map(|(from, _to, inserted)| {
+        let inserted_len = inserted
+          .as_ref()
+          .map(|text| text.chars().count())
+          .unwrap_or(0);
+        let flash_start = transaction
+          .changes()
+          .map_pos(from, the_lib::transaction::Assoc::Before)
+          .unwrap_or(from);
+        let flash_end = flash_start.saturating_add(inserted_len);
+        let cursor_char = if inserted_len > 0 && inserted_len <= 96 {
+          transaction
+            .changes()
+            .map_pos(from, the_lib::transaction::Assoc::After)
+            .unwrap_or(flash_end)
+        } else {
+          flash_start
+        };
+        AgentFollowStep {
+          cursor_char,
+          flash_start,
+          flash_end,
+        }
+      })
+      .collect()
+  }
+
+  fn keep_agent_follow_visible_in_active_view(&mut self) {
+    if !self.agent_follow.enabled {
+      return;
+    }
+    let Some(snapshot) = self.agent_follow_render_snapshot() else {
+      return;
+    };
+    if self.editor.active_buffer_id() != snapshot.buffer_id {
+      return;
+    }
+    let Some(doc) = self.editor.document_for_buffer(snapshot.buffer_id) else {
+      return;
+    };
+
+    let text = doc.text();
+    let view = self.editor.view().clone();
+    let cursor_pos = snapshot.cursor_char.min(text.len_chars());
+    let cursor_line = text.char_to_line(cursor_pos);
+    let cursor_col = cursor_pos.saturating_sub(text.line_to_char(cursor_line));
+    let viewport_height = view.viewport.height as usize;
+    let gutter_width = gutter_width_for_document(doc, view.viewport.width, &self.gutter_config);
+    let viewport_width = view.viewport.width.saturating_sub(gutter_width).max(1) as usize;
+
+    let new_scroll = if self.text_format.soft_wrap {
+      let cursor_visual_row = {
+        let mut text_format = self.text_format.clone();
+        text_format.viewport_width = view.viewport.width.saturating_sub(gutter_width).max(1);
+        let mut annotations = TextAnnotations::default();
+        visual_pos_at_char(text.slice(..), &text_format, &mut annotations, cursor_pos)
+          .map(|pos| pos.row)
+          .unwrap_or(cursor_line)
+      };
+
+      let mut new_scroll = view.scroll;
+      if let Some(new_row) = the_lib::view::scroll_row_to_keep_visible(
+        cursor_visual_row,
+        view.scroll.row,
+        viewport_height,
+        SWIFT_SCROLLOFF,
+      ) {
+        new_scroll.row = new_row;
+      }
+      new_scroll.col = 0;
+      Some(new_scroll)
+    } else {
+      the_lib::view::scroll_to_keep_visible(
+        cursor_line,
+        cursor_col,
+        view.scroll,
+        viewport_height,
+        viewport_width,
+        SWIFT_SCROLLOFF,
+      )
+    };
+
+    if let Some(new_scroll) = new_scroll {
+      self.editor.view_mut().scroll = new_scroll;
+    }
+  }
+
+  fn start_agent_follow_for_transaction(
+    &mut self,
+    buffer_id: BufferId,
+    transaction: &the_lib::transaction::Transaction,
+  ) {
+    let steps = Self::agent_follow_steps_for_transaction(transaction);
+    if steps.is_empty() {
+      self.agent_follow.clear();
+      return;
+    }
+
+    let now = Instant::now();
+    let same_buffer =
+      self.agent_follow.buffer_id == Some(buffer_id) && self.agent_follow.current_step().is_some();
+
+    if same_buffer {
+      self.agent_follow.extend_same_buffer(steps);
+      self.agent_follow.flash_until = Some(now + agent_follow_flash_duration());
+      self.agent_follow.cursor_until = Some(now + agent_follow_cursor_linger_duration());
+      if self.agent_follow.next_step_at.is_none() {
+        self.agent_follow.next_step_at = Some(now + agent_follow_step_delay());
+      }
+    } else {
+      self.agent_follow.buffer_id = Some(buffer_id);
+      self.agent_follow.steps = steps;
+      self.agent_follow.step_index = 0;
+      self.agent_follow.flash_until = Some(now + agent_follow_flash_duration());
+      self.agent_follow.next_step_at =
+        (self.agent_follow.steps.len() > 1).then_some(now + agent_follow_step_delay());
+      self.agent_follow.cursor_until = Some(now + agent_follow_cursor_linger_duration());
+    }
+
+    self.keep_agent_follow_visible_in_active_view();
+  }
+
+  fn poll_agent_follow(&mut self) -> bool {
+    if self.agent_follow.current_step().is_none() {
+      return false;
+    }
+
+    let now = Instant::now();
+    let mut changed = false;
+    let mut advanced = false;
+
+    while let Some(next_step_at) = self.agent_follow.next_step_at {
+      if now < next_step_at {
+        break;
+      }
+      if self.agent_follow.step_index + 1 < self.agent_follow.steps.len() {
+        self.agent_follow.step_index += 1;
+        self.agent_follow.flash_until = Some(now + agent_follow_flash_duration());
+        self.agent_follow.next_step_at =
+          (self.agent_follow.step_index + 1 < self.agent_follow.steps.len())
+            .then_some(next_step_at + agent_follow_step_delay());
+        self.agent_follow.cursor_until = Some(now + agent_follow_cursor_linger_duration());
+        changed = true;
+        advanced = true;
+      } else {
+        self.agent_follow.next_step_at = None;
+        break;
+      }
+    }
+
+    if advanced {
+      self.keep_agent_follow_visible_in_active_view();
+    }
+
+    if let Some(flash_until) = self.agent_follow.flash_until
+      && now >= flash_until
+    {
+      self.agent_follow.flash_until = None;
+      changed = true;
+    }
+
+    if let Some(cursor_until) = self.agent_follow.cursor_until
+      && now >= cursor_until
+      && self.agent_follow.flash_until.is_none()
+      && self.agent_follow.next_step_at.is_none()
+    {
+      self.agent_follow.clear();
+      changed = true;
+    }
+
+    changed
   }
 
   fn new(path: Option<&Path>) -> Self {
@@ -5650,6 +5931,7 @@ impl SwiftEditor {
       vcs_base_cache: BTreeMap::new(),
       embedded_terminal_enabled: false,
       pi_bridge: None,
+      agent_follow: AgentFollowState::default(),
     };
 
     set_file_picker_syntax_loader(&mut this.file_picker, this.loader.clone());
@@ -6856,6 +7138,128 @@ fn selection_for_buffer_drag(
   }
 }
 
+fn clamp_agent_follow_plan_position(
+  plan: &RenderPlan,
+  pos: Position,
+) -> Option<Position> {
+  let row_start = plan.scroll.row;
+  let row_end = row_start + plan.viewport.height as usize;
+  let col_start = plan.scroll.col;
+  let col_end = col_start + plan.content_width();
+
+  if pos.row < row_start || pos.row >= row_end {
+    return None;
+  }
+  if pos.col < col_start || pos.col >= col_end {
+    return None;
+  }
+
+  Some(Position::new(pos.row - row_start, pos.col - col_start))
+}
+
+fn agent_follow_cursor_id() -> CursorId {
+  CursorId::new(std::num::NonZeroU64::new(u64::MAX).expect("non-zero agent cursor id"))
+}
+
+fn agent_follow_cursor_style(theme: &Theme) -> Style {
+  let style = theme
+    .try_get("ui.cursor.agent")
+    .or_else(|| theme.try_get("ui.cursor.match"))
+    .or_else(|| theme.try_get("ui.cursor.active"))
+    .or_else(|| theme.try_get("ui.cursor"))
+    .unwrap_or_default();
+
+  style.patch(Style::default().fg(Color::Rgb(0x7D, 0xD3, 0xFC)))
+}
+
+fn agent_follow_selection_style(theme: &Theme) -> Style {
+  let style = theme
+    .try_get("ui.selection.agent")
+    .or_else(|| theme.try_get("ui.cursor.match"))
+    .or_else(|| theme.try_get("ui.selection"))
+    .unwrap_or_default();
+
+  style.patch(Style::default().bg(Color::Rgb(0x1E, 0x3A, 0x5F)))
+}
+
+fn apply_agent_follow_visuals<'a>(
+  plan: &mut RenderPlan,
+  text_fmt: &'a TextFormat,
+  annotations: &mut TextAnnotations<'a>,
+  buffer_id: BufferId,
+  text: &'a Rope,
+  snapshot: Option<AgentFollowRenderSnapshot>,
+  cursor_style: Style,
+  selection_style: Style,
+) {
+  let Some(snapshot) = snapshot else {
+    return;
+  };
+  if snapshot.buffer_id != buffer_id {
+    return;
+  }
+
+  let text_slice = text.slice(..);
+  let text_len = text.len_chars();
+  let mut resolve_pos = |char_idx: usize| {
+    let char_idx = char_idx.min(text_len);
+    visual_pos_at_char(text_slice, text_fmt, annotations, char_idx).or_else(|| {
+      if char_idx == 0 {
+        None
+      } else {
+        visual_pos_at_char(text_slice, text_fmt, annotations, char_idx - 1).map(|mut pos| {
+          pos.col = pos.col.saturating_add(1);
+          pos
+        })
+      }
+    })
+  };
+
+  if let Some(pos) =
+    resolve_pos(snapshot.cursor_char).and_then(|pos| clamp_agent_follow_plan_position(plan, pos))
+  {
+    plan.cursors.push(the_lib::render::RenderCursor {
+      id: agent_follow_cursor_id(),
+      pos,
+      kind: CursorKind::Bar,
+      style: cursor_style,
+    });
+  }
+
+  if !snapshot.flashing {
+    return;
+  }
+
+  let mut cells = BTreeSet::new();
+  let end = if snapshot.flash_end > snapshot.flash_start {
+    snapshot.flash_end.min(snapshot.flash_start.saturating_add(24))
+  } else {
+    snapshot.flash_start.saturating_add(1)
+  };
+  for char_idx in snapshot.flash_start..end {
+    if let Some(pos) =
+      resolve_pos(char_idx).and_then(|pos| clamp_agent_follow_plan_position(plan, pos))
+    {
+      cells.insert((pos.row, pos.col));
+    }
+  }
+
+  if cells.is_empty()
+    && let Some(pos) =
+      resolve_pos(snapshot.cursor_char).and_then(|pos| clamp_agent_follow_plan_position(plan, pos))
+  {
+    cells.insert((pos.row, pos.col));
+  }
+
+  for (row, col) in cells {
+    plan.selections.push(the_lib::render::RenderSelection {
+      rect: Rect::new(col as u16, row as u16, 1, 1),
+      style: selection_style,
+      kind: RenderSelectionKind::Hover,
+    });
+  }
+}
+
 fn build_inactive_pane_plan_with_styles(
   editor: &mut SwiftEditor,
   pane_id: PaneId,
@@ -6879,6 +7283,10 @@ fn build_inactive_pane_plan_with_styles(
   let diagnostic_styles = render_diagnostic_styles_from_theme(&editor.ui_theme);
   let diff_styles = render_diff_styles_from_theme(&editor.ui_theme);
   let diff_signs = editor.gutter_diff_signs.clone();
+
+  let agent_follow_snapshot = editor.agent_follow_render_snapshot();
+  let agent_follow_cursor_style = agent_follow_cursor_style(&editor.ui_theme);
+  let agent_follow_selection_style = agent_follow_selection_style(&editor.ui_theme);
 
   let mut plan = {
     let Some((document, cache)) = editor.editor.document_and_cache_at_mut(buffer_id) else {
@@ -6931,6 +7339,16 @@ fn build_inactive_pane_plan_with_styles(
       view,
       &editor.ui_theme,
       editor.mode,
+    );
+    apply_agent_follow_visuals(
+      &mut plan,
+      &text_format,
+      &mut annotations,
+      buffer_id,
+      document.text(),
+      agent_follow_snapshot,
+      agent_follow_cursor_style,
+      agent_follow_selection_style,
     );
     plan
   };
@@ -7091,6 +7509,10 @@ impl DefaultContext for SwiftEditor {
     let mut annotations = TextAnnotations::default();
     let loader = self.loader.clone();
     let line_range = view.scroll.row..(view.scroll.row + view.viewport.height as usize);
+    let agent_follow_snapshot = self.agent_follow_render_snapshot();
+    let agent_follow_cursor_style = agent_follow_cursor_style(&self.ui_theme);
+    let agent_follow_selection_style = agent_follow_selection_style(&self.ui_theme);
+    let active_buffer_id = self.editor.active_buffer_id();
     let (document, cache) = self.editor.document_and_cache();
     let mut plan = if let (Some(loader), Some(syntax)) = (loader.as_deref(), document.syntax()) {
       let mut adapter = SyntaxHighlightAdapter::new(
@@ -7134,6 +7556,16 @@ impl DefaultContext for SwiftEditor {
       view,
       &self.ui_theme,
       self.mode,
+    );
+    apply_agent_follow_visuals(
+      &mut plan,
+      &text_format,
+      &mut annotations,
+      active_buffer_id,
+      document.text(),
+      agent_follow_snapshot,
+      agent_follow_cursor_style,
+      agent_follow_selection_style,
     );
     let diff_styles = render_diff_styles_from_theme(&self.ui_theme);
     let diff_signs = self.gutter_diff_signs.clone();

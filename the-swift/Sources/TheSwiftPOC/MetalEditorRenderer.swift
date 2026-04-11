@@ -130,7 +130,10 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
         }
 
         for selection in scene.selections {
-            let color = selection.style.backgroundColor ?? NSColor.selectedTextBackgroundColor.withAlphaComponent(0.35)
+            let baseColor = selection.style.backgroundColor ?? NSColor.selectedTextBackgroundColor.withAlphaComponent(0.35)
+            let color = selection.kind == .hover
+                ? baseColor.withAlphaComponent(baseColor.alphaComponent * 0.22)
+                : baseColor
             let pane = scene.paneContainingCell(col: selection.x, row: selection.y)
             withPaneClip(for: pane, in: scene, context: context, viewportHeight: view.bounds.height) {
                 context.setFillColor(color.cgColor)
@@ -139,7 +142,10 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
         }
 
         for overlay in scene.overlays where overlay.kind == .rect {
-            let color = overlay.style.backgroundColor ?? overlay.style.foregroundColor.withAlphaComponent(0.3)
+            let baseColor = overlay.style.backgroundColor ?? overlay.style.foregroundColor.withAlphaComponent(0.3)
+            let color = overlay.rectKind == .highlight
+                ? baseColor.withAlphaComponent(baseColor.alphaComponent * 0.18)
+                : baseColor
             let pane = scene.paneContainingCell(col: overlay.x, row: overlay.y)
             let rect = overlayRect(overlay, scene: scene, cellSize: cellSize, viewportHeight: view.bounds.height)
             withPaneClip(for: pane, in: scene, context: context, viewportHeight: view.bounds.height) {
@@ -636,13 +642,30 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
         in scene: EditorRenderScene,
         isFocusedCursor: Bool
     ) -> Bool {
-        scene.info.cursorBlinkEnabled && index == 0 && isFocusedCursor && cursor.kind != .hidden
+        scene.info.cursorBlinkEnabled && index == 0 && isFocusedCursor && cursor.kind != .hidden && cursor.kind != .hollow
     }
 
     private func drawHollowCursor(in context: CGContext, rect: CGRect, color: NSColor) {
-        let insetRect = rect.insetBy(dx: 1, dy: 1)
-        context.setLineWidth(1.5)
-        context.stroke(insetRect)
+        let width = min(max(rect.width * 0.34, 3), 7)
+        let hollowRect = CGRect(
+            x: rect.minX + 1,
+            y: rect.minY + 1,
+            width: width,
+            height: max(rect.height - 2, 2)
+        )
+        let roundedRect = hollowRect.insetBy(dx: 0.5, dy: 0.5)
+        let path = CGPath(
+            roundedRect: roundedRect,
+            cornerWidth: min(2, roundedRect.width * 0.5),
+            cornerHeight: min(2, roundedRect.height * 0.5),
+            transform: nil
+        )
+        context.saveGState()
+        context.setStrokeColor(color.cgColor)
+        context.setLineWidth(2)
+        context.addPath(path)
+        context.strokePath()
+        context.restoreGState()
     }
 
     private func paneContaining(cursor: EditorSnapshotCursor, in scene: EditorRenderScene) -> EditorSnapshotPane? {

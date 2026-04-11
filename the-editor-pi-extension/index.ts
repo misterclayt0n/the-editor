@@ -8,9 +8,12 @@ const STATUS_KEY = "the-editor";
 const GIT_MANIFEST_RELATIVE_PATH = path.join("the-editor", "pi-bridge.json");
 const MAX_BUFFERED_LINES = 1000;
 const EXTENSION_INSTANCE_KEY = "__the_editor_pi_extension_loaded__";
-const STREAM_EDIT_DELAY_MS = 2;
-const STREAM_EDIT_MAX_CHANGED_CODEPOINTS = 1800;
-const STREAM_EDIT_MAX_CHUNKS = 24;
+const STREAM_EDIT_DELAY_MS = 16;
+const STREAM_EDIT_MAX_CHANGED_CODEPOINTS = 12000;
+const STREAM_EDIT_MAX_CHUNKS = 128;
+const STREAM_EDIT_TARGET_CHUNK_CODEPOINTS = 220;
+const STREAM_EDIT_MAX_CHUNK_CODEPOINTS = 320;
+const STREAM_EDIT_TARGET_CHUNK_LINES = 12;
 
 type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 type BridgeState = "detached" | "attached" | "busy";
@@ -309,19 +312,8 @@ function countCodePoints(text: string): number {
 	return Array.from(text).length;
 }
 
-function streamChunkSizeFor(text: string): number {
-	const length = countCodePoints(text);
-	if (length <= 64) {
-		return 16;
-	}
-	if (length <= 256) {
-		return 32;
-	}
-	return 64;
-}
-
-function splitTokenForStreaming(token: string, chunkSize: number): string[] {
-	const chars = Array.from(token);
+function splitTextByCodePoints(text: string, chunkSize: number): string[] {
+	const chars = Array.from(text);
 	const chunks: string[] = [];
 	for (let index = 0; index < chars.length; index += chunkSize) {
 		chunks.push(chars.slice(index, index + chunkSize).join(""));
@@ -329,21 +321,61 @@ function splitTokenForStreaming(token: string, chunkSize: number): string[] {
 	return chunks;
 }
 
+function countLineBreaks(text: string): number {
+	return (text.match(/\r\n|\n/gu) ?? []).length;
+}
+
+function splitLinesPreservingNewlines(text: string): string[] {
+	return (text.match(/[^\r\n]*(?:\r\n|\n|$)/gu) ?? []).filter((part) => part.length > 0);
+}
+
 function tokenizeStreamingText(text: string): string[] {
 	if (text.length === 0) {
 		return [];
 	}
-	const chunkSize = streamChunkSizeFor(text);
-	const rawTokens = text.match(/\r\n|\n|[ \t]+|[A-Za-z0-9_]+|./gu) ?? [];
 	const chunks: string[] = [];
-	for (const token of rawTokens) {
-		if (token === "\n" || token === "\r\n") {
-			chunks.push(token);
-			continue;
+	let currentChunk = "";
+	let currentCodePoints = 0;
+	let currentLineBreaks = 0;
+
+	const pushCurrentChunk = () => {
+		if (currentChunk.length === 0) {
+			return;
 		}
-		chunks.push(...splitTokenForStreaming(token, chunkSize));
+		chunks.push(currentChunk);
+		currentChunk = "";
+		currentCodePoints = 0;
+		currentLineBreaks = 0;
+	};
+
+	for (const line of splitLinesPreservingNewlines(text)) {
+		const lineParts = countCodePoints(line) > STREAM_EDIT_MAX_CHUNK_CODEPOINTS
+			? splitTextByCodePoints(line, STREAM_EDIT_MAX_CHUNK_CODEPOINTS)
+			: [line];
+		for (const part of lineParts) {
+			const partCodePoints = countCodePoints(part);
+			const partLineBreaks = countLineBreaks(part);
+			const wouldOverflowCodePoints = currentCodePoints > 0
+				&& currentCodePoints + partCodePoints > STREAM_EDIT_TARGET_CHUNK_CODEPOINTS;
+			const wouldOverflowLines = currentLineBreaks > 0
+				&& currentLineBreaks + partLineBreaks > STREAM_EDIT_TARGET_CHUNK_LINES;
+			if (wouldOverflowCodePoints || wouldOverflowLines) {
+				pushCurrentChunk();
+			}
+			currentChunk += part;
+			currentCodePoints += partCodePoints;
+			currentLineBreaks += partLineBreaks;
+			if (
+				currentCodePoints >= STREAM_EDIT_TARGET_CHUNK_CODEPOINTS
+				|| currentLineBreaks >= STREAM_EDIT_TARGET_CHUNK_LINES
+			) {
+				pushCurrentChunk();
+			}
+		}
 	}
-	return chunks.filter((chunk) => chunk.length > 0);
+
+	pushCurrentChunk();
+	return chunks;
 }
 
 function sharedPrefixLength(currentChars: string[], targetChars: string[]): number {
@@ -428,8 +460,15 @@ function editorBridgeRequiredMessage(filePath: string): string {
 	return `The editor bridge must be attached for workspace edit/write operations (${formatDebugPath(filePath)}). These tool calls must go through the-editor transactions.`;
 }
 
-function assertWorkspaceMutationBridgeReady(bridge: EditorBridgeClient, filePath: string): void {
-	if (bridge.isWorkspaceTextPath(filePath) && !bridge.isAttached()) {
+async function assertWorkspaceMutationBridgeReady(bridge: EditorBridgeClient, filePath: string): Promise<void> {
+	if (!(await bridge.requiresWorkspaceMutationBridge(filePath))) {
+		return;
+	}
+	if (bridge.isAttached()) {
+		return;
+	}
+	await bridge.tryAutoAttachForMutation();
+	if (!bridge.isAttached()) {
 		throw new Error(editorBridgeRequiredMessage(filePath));
 	}
 }
@@ -454,17 +493,22 @@ async function readFileWithBridgeFallback(
 	);
 }
 
-async function readTextFileForStreaming(bridge: EditorBridgeClient, absolutePath: string, source: string): Promise<string> {
+async function readTextFileForStreaming(
+	bridge: EditorBridgeClient,
+	absolutePath: string,
+	source: string,
+): Promise<{ content: string; openedBuffer: boolean; fromBridge: boolean }> {
 	try {
 		if (bridge.shouldRoutePath(absolutePath)) {
 			bridge.recordDebug(`${source}: stream baseline via bridge ${formatDebugPath(absolutePath)}`);
-			return (await bridge.readFile(absolutePath)).content;
+			const response = await bridge.readFile(absolutePath);
+			return { content: response.content, openedBuffer: response.openedBuffer, fromBridge: true };
 		}
 		bridge.recordDebug(`${source}: stream baseline via fs ${formatDebugPath(absolutePath)}`);
-		return await fsReadFile(absolutePath, "utf8");
+		return { content: await fsReadFile(absolutePath, "utf8"), openedBuffer: false, fromBridge: false };
 	} catch (error) {
 		if (isMissingFileError(error)) {
-			return "";
+			return { content: "", openedBuffer: false, fromBridge: bridge.shouldRoutePath(absolutePath) };
 		}
 		throw error;
 	}
@@ -476,7 +520,15 @@ async function streamWriteFileWithBridge(
 	content: string,
 	source: string,
 ): Promise<void> {
-	const currentContent = await readTextFileForStreaming(bridge, absolutePath, source);
+	const baseline = await readTextFileForStreaming(bridge, absolutePath, source);
+	const currentContent = baseline.content;
+	if (baseline.fromBridge && baseline.openedBuffer) {
+		bridge.recordDebug(
+			`${source}: stream baseline opened hidden buffer for ${formatDebugPath(absolutePath)} -> write_file`,
+		);
+		await bridge.writeFile(absolutePath, content);
+		return;
+	}
 	const plan = buildStreamingReplacePlan(currentContent, content);
 	if (!plan) {
 		return;
@@ -492,7 +544,7 @@ async function streamWriteFileWithBridge(
 	}
 
 	bridge.recordDebug(
-		`${source}: streaming ${formatDebugPath(absolutePath)} (${changedCodePoints} codepoints changed)`,
+		`${source}: streaming ${formatDebugPath(absolutePath)} (${changedCodePoints} codepoints changed start=${plan.startChar} end=${plan.endChar} currentMiddle=${countCodePoints(plan.currentMiddle)} targetMiddle=${countCodePoints(plan.targetMiddle)})`,
 	);
 
 	if (plan.targetMiddle.length === 0) {
@@ -503,8 +555,11 @@ async function streamWriteFileWithBridge(
 			return;
 		}
 		let currentEndChar = plan.endChar;
-		for (const chunk of deletionChunks) {
+		for (const [index, chunk] of deletionChunks.entries()) {
 			const chunkLength = countCodePoints(chunk);
+			bridge.recordDebug(
+				`${source}: deletion chunk ${index + 1}/${deletionChunks.length} ${formatDebugPath(absolutePath)} [${currentEndChar - chunkLength},${currentEndChar}) len=${chunkLength}`,
+			);
 			await bridge.replaceRange(absolutePath, currentEndChar - chunkLength, currentEndChar, "");
 			currentEndChar -= chunkLength;
 			await sleep(STREAM_EDIT_DELAY_MS);
@@ -524,11 +579,17 @@ async function streamWriteFileWithBridge(
 		await bridge.writeFile(absolutePath, content);
 		return;
 	}
+	bridge.recordDebug(
+		`${source}: insertion chunk 1/${insertionChunks.length} ${formatDebugPath(absolutePath)} [${plan.startChar},${plan.endChar}) len=${countCodePoints(firstChunk)}`,
+	);
 	await bridge.replaceRange(absolutePath, plan.startChar, plan.endChar, firstChunk);
 	let insertedChars = countCodePoints(firstChunk);
 	await sleep(STREAM_EDIT_DELAY_MS);
 
-	for (const chunk of remainingChunks) {
+	for (const [index, chunk] of remainingChunks.entries()) {
+		bridge.recordDebug(
+			`${source}: insertion chunk ${index + 2}/${insertionChunks.length} ${formatDebugPath(absolutePath)} [${plan.startChar + insertedChars},${plan.startChar + insertedChars}) len=${countCodePoints(chunk)}`,
+		);
 		await bridge.replaceRange(
 			absolutePath,
 			plan.startChar + insertedChars,
@@ -538,6 +599,14 @@ async function streamWriteFileWithBridge(
 		insertedChars += countCodePoints(chunk);
 		await sleep(STREAM_EDIT_DELAY_MS);
 	}
+
+	const finalContent = (await bridge.readFile(absolutePath)).content;
+	if (finalContent !== content) {
+		bridge.recordDebug(
+			`${source}: post-stream verification mismatch for ${formatDebugPath(absolutePath)} -> write_file`,
+		);
+		await bridge.writeFile(absolutePath, content);
+	}
 }
 
 async function writeFileWithBridgeFallback(
@@ -546,7 +615,7 @@ async function writeFileWithBridgeFallback(
 	content: string,
 	source: string,
 ): Promise<void> {
-	assertWorkspaceMutationBridgeReady(bridge, absolutePath);
+	await assertWorkspaceMutationBridgeReady(bridge, absolutePath);
 	if (bridge.shouldRoutePath(absolutePath)) {
 		bridge.recordDebug(`${source}: write via bridge ${formatDebugPath(absolutePath)}`);
 		try {
@@ -707,6 +776,17 @@ class EditorBridgeClient {
 		return this.manifest?.workspaceRoot ?? this.currentContext?.cwd ?? null;
 	}
 
+	async requiresWorkspaceMutationBridge(filePath: string): Promise<boolean> {
+		if (!isProbablyTextPath(filePath)) {
+			return false;
+		}
+		const manifest = this.manifest ?? (this.currentContext ? await findBridgeManifest(this.currentContext.cwd) : null);
+		if (!manifest) {
+			return false;
+		}
+		return isPathInside(manifest.workspaceRoot, filePath);
+	}
+
 	isWorkspaceTextPath(filePath: string): boolean {
 		const workspaceRoot = this.workspaceRootHint();
 		if (!workspaceRoot) {
@@ -719,7 +799,18 @@ class EditorBridgeClient {
 		if (!this.isAttached() || !this.manifest) {
 			return false;
 		}
-		return this.isWorkspaceTextPath(filePath);
+		return isProbablyTextPath(filePath) && isPathInside(this.manifest.workspaceRoot, filePath);
+	}
+
+	async tryAutoAttachForMutation(): Promise<void> {
+		if (!this.currentContext || !this.currentPi || !this.shouldAutoAttach()) {
+			return;
+		}
+		try {
+			await this.attach(this.currentContext.cwd, this.currentContext, this.currentPi);
+		} catch {
+			// Keep mutation policy logic in the caller.
+		}
 	}
 
 	async readFile(filePath: string): Promise<ReadFileResponse> {
@@ -1000,7 +1091,7 @@ export default function (pi: ExtensionAPI) {
 					throw new Error("Operation aborted");
 				}
 				await fsAccess(absolutePath, constants.R_OK | constants.W_OK);
-				assertWorkspaceMutationBridgeReady(bridge, absolutePath);
+				await assertWorkspaceMutationBridgeReady(bridge, absolutePath);
 				if (bridge.shouldRoutePath(absolutePath)) {
 					bridge.recordDebug(`edit: apply_edits via bridge ${formatDebugPath(absolutePath)}`);
 					try {

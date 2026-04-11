@@ -34,6 +34,7 @@ final class EditorSurfaceController: ObservableObject {
     private(set) var openItems: EditorPaneOpenItemsState = .empty
     private(set) var fileTree: EditorFileTreeState = .empty
     @Published private(set) var showsResizeOverlay = false
+    @Published private(set) var isAgentFollowEnabled = true
 
     private struct TerminalPresentationState {
         var title: String?
@@ -57,6 +58,7 @@ final class EditorSurfaceController: ObservableObject {
     private var pendingSurfaceConfiguration: EditorSurfaceConfiguration?
     private var surfaceConfigureFlushTask: Task<Void, Never>?
     private var lastSurfaceConfigureAt: CFAbsoluteTime = 0
+    private var lastAgentFollowDebugSignature: String?
 
     private let interactiveResizeMinInterval: CFTimeInterval = 1.0 / 30.0
     private let fileTreeToggleResizeDuration: Duration = .milliseconds(360)
@@ -64,6 +66,7 @@ final class EditorSurfaceController: ObservableObject {
     init(initialPath: String?) {
         self.handle = EditorFFIBridge.createHandle(initialPath: initialPath).map(EditorHandleBox.init(raw:))
         _ = EditorFFIBridge.setEmbeddedTerminalEnabled(handle?.raw, enabled: GhosttyTerminalRegistry.isAvailable)
+        isAgentFollowEnabled = EditorFFIBridge.agentFollowEnabled(handle?.raw)
         startBackgroundPolling()
         refreshSnapshot()
     }
@@ -279,6 +282,17 @@ final class EditorSurfaceController: ObservableObject {
     func openTerminalInActivePane() {
         guard EditorFFIBridge.openTerminalInActivePane(handle?.raw) else { return }
         refreshSnapshot()
+    }
+
+    func setAgentFollowEnabled(_ enabled: Bool) {
+        guard enabled != isAgentFollowEnabled else { return }
+        guard EditorFFIBridge.setAgentFollowEnabled(handle?.raw, enabled: enabled) else { return }
+        isAgentFollowEnabled = enabled
+        refreshSnapshot()
+    }
+
+    func toggleAgentFollowEnabled() {
+        setAgentFollowEnabled(!isAgentFollowEnabled)
     }
 
     func closeTerminalInActivePane() {
@@ -689,6 +703,7 @@ final class EditorSurfaceController: ObservableObject {
             statusBar: snapshot.statusBar,
             backgroundColor: snapshot.info.backgroundColor?.color ?? .windowBackgroundColor
         )
+        let nextAgentFollowEnabled = EditorFFIBridge.agentFollowEnabled(handle?.raw)
         commandPaletteDebugLog("refresh query=\(String(reflecting: snapshot.commandPalette.query)) selected=\(String(describing: snapshot.commandPalette.selectedIndex)) items=\(snapshot.commandPalette.items.count) isOpen=\(snapshot.commandPalette.isOpen)")
         let sceneStarted = CFAbsoluteTimeGetCurrent()
         let marked = markedTextOverlay(from: snapshot)
@@ -699,6 +714,7 @@ final class EditorSurfaceController: ObservableObject {
         objectWillChange.send()
         currentMode = snapshot.info.mode
         chrome = nextChrome
+        isAgentFollowEnabled = nextAgentFollowEnabled
         pendingKeys = snapshot.pendingKeys
         commandPalette = snapshot.commandPalette
         completionMenu = snapshot.completionMenu
@@ -757,6 +773,18 @@ final class EditorSurfaceController: ObservableObject {
         scrollPerfLog(
             "controller.refresh damage=\(snapshot.info.damageReason) full=\(snapshot.info.damageIsFull) scrollGen=\(snapshot.info.scrollGeneration) textGen=\(snapshot.info.textGeneration) decoGen=\(snapshot.info.decorationGeneration) themeGen=\(snapshot.info.themeGeneration) lines=\(snapshot.lines.count) cursors=\(snapshot.cursors.count) overlays=\(snapshot.overlays.count) snapshotMs=\(String(format: "%.2f", snapshotMs)) sceneMs=\(String(format: "%.2f", sceneMs)) publishMs=\(String(format: "%.2f", publishMs)) delegateMs=\(String(format: "%.2f", delegateMs)) totalMs=\(String(format: "%.2f", totalMs))"
         )
+        let hollowCursors = snapshot.cursors.filter { $0.kind == .hollow }
+        let hoverSelections = snapshot.selections.filter { $0.kind == .hover }
+        let highlightOverlays = snapshot.overlays.filter { $0.kind == .rect && $0.rectKind == .highlight }
+        let cursorSummary = hollowCursors.prefix(3).map { "(\($0.row),\($0.col))" }.joined(separator: ",")
+        let overlaySummary = highlightOverlays.prefix(3).map { "y=\($0.y) h=\($0.height)" }.joined(separator: ",")
+        let agentFollowSignature = "damage=\(snapshot.info.damageReason.rawValue)|hollow=\(hollowCursors.count)|hover=\(hoverSelections.count)|highlight=\(highlightOverlays.count)|cursor=\(cursorSummary)|overlay=\(overlaySummary)"
+        if agentFollowSignature != lastAgentFollowDebugSignature {
+            lastAgentFollowDebugSignature = agentFollowSignature
+            agentFollowDebugLog(
+                "controller.refresh \(agentFollowSignature) totalCursors=\(snapshot.cursors.count) totalSelections=\(snapshot.selections.count) totalOverlays=\(snapshot.overlays.count)"
+            )
+        }
         if snapshot.completionMenu.isOpen || snapshot.completionDocs.isOpen {
             completionPerfLog(
                 "controller.refresh menuOpen=\(snapshot.completionMenu.isOpen) docsOpen=\(snapshot.completionDocs.isOpen) items=\(snapshot.completionMenu.items.count) selected=\(String(describing: snapshot.completionMenu.selectedIndex)) scroll=\(snapshot.completionMenu.scrollOffset) snapshotMs=\(String(format: "%.2f", snapshotMs)) sceneMs=\(String(format: "%.2f", sceneMs)) totalMs=\(String(format: "%.2f", totalMs))"
@@ -766,7 +794,7 @@ final class EditorSurfaceController: ObservableObject {
 
     private func startBackgroundPolling() {
         guard backgroundPollCancellable == nil else { return }
-        backgroundPollCancellable = Timer.publish(every: 0.05, on: .main, in: .common)
+        backgroundPollCancellable = Timer.publish(every: 1.0 / 60.0, on: .main, in: .common)
             .autoconnect()
             .sink { [weak self] _ in
                 guard let self else { return }

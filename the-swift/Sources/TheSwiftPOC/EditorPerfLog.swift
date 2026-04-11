@@ -31,6 +31,10 @@ func scrollPerfEnabled() -> Bool {
     ProcessInfo.processInfo.environment["THE_EDITOR_SCROLL_PERF"] == "1"
 }
 
+func agentFollowDebugEnabled() -> Bool {
+    ProcessInfo.processInfo.environment["THE_EDITOR_AGENT_FOLLOW_DEBUG"] == "1"
+}
+
 func themePerfLog(_ message: @autoclosure () -> String) {
     guard themePerfEnabled() else { return }
     let line = "[TheSwiftPOC:perf] \(message())\n"
@@ -49,6 +53,14 @@ func scrollPerfLog(_ message: @autoclosure () -> String) {
     guard scrollPerfEnabled() else { return }
     let tsMs = Int((CFAbsoluteTimeGetCurrent() * 1000).rounded())
     let line = "[TheSwiftPOC:scroll-perf \(tsMs)] \(message())\n"
+    fputs(line, stderr)
+    appendPerfLineToSharedLogFile(line)
+}
+
+func agentFollowDebugLog(_ message: @autoclosure () -> String) {
+    guard agentFollowDebugEnabled() else { return }
+    let tsMs = Int((CFAbsoluteTimeGetCurrent() * 1000).rounded())
+    let line = "[TheSwiftPOC:agent-follow \(tsMs)] \(message())\n"
     fputs(line, stderr)
     appendPerfLineToSharedLogFile(line)
 }

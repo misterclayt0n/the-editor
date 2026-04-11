@@ -132,7 +132,7 @@ struct EditorChromeView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            EditorStatusAccessoryView(chrome: controller.chrome, mode: controller.currentMode)
+            EditorStatusAccessoryView(chrome: controller.chrome, mode: controller.currentMode, controller: controller)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -1742,6 +1742,7 @@ private struct EditorSidebarResizeHandle<ResizeGesture: Gesture>: View {
 private struct EditorStatusAccessoryView: View {
     let chrome: EditorChromeModel
     let mode: EditorMode
+    @ObservedObject var controller: EditorSurfaceController
 
     private var metadataItems: [EditorStatusItem] {
         [
@@ -1780,7 +1781,11 @@ private struct EditorStatusAccessoryView: View {
 
             HStack(spacing: 10) {
                 ForEach(nonLSPStatusItems) { item in
-                    StatusAccessoryItemView(item: item)
+                    if normalizedStatusItemDisplay(icon: item.icon, text: item.text).icon == "pi" {
+                        PiStatusAccessoryItemButton(item: item, controller: controller)
+                    } else {
+                        StatusAccessoryItemView(item: item)
+                    }
                 }
 
                 ForEach(metadataItems) { item in
@@ -1801,6 +1806,59 @@ private struct EditorStatusAccessoryView: View {
             Divider()
         }
         .accessibilityElement(children: .contain)
+    }
+}
+
+private struct PiStatusAccessoryItemButton: View {
+    let item: EditorStatusItem
+    @ObservedObject var controller: EditorSurfaceController
+    @State private var isPresented = false
+
+    var body: some View {
+        Button {
+            isPresented.toggle()
+        } label: {
+            StatusAccessoryItemView(item: item)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .popover(isPresented: $isPresented, arrowEdge: .bottom) {
+            PiBridgeStatusPopover(controller: controller)
+        }
+        .help("PI bridge options")
+    }
+}
+
+private struct PiBridgeStatusPopover: View {
+    @ObservedObject var controller: EditorSurfaceController
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("PI bridge")
+                .font(.system(size: 13, weight: .semibold))
+
+            Toggle(isOn: Binding(
+                get: { controller.isAgentFollowEnabled },
+                set: { controller.setAgentFollowEnabled($0) }
+            )) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Follow agent transactions")
+                        .font(.system(size: 12, weight: .medium))
+                    Text("Bridge-backed write/edit transactions switch to the edited buffer and keep the agent overlay visible while the edit is in flight.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .toggleStyle(.checkbox)
+
+            Text("Manual navigation still works — the next followed transaction will pull the view back to the agent.")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(14)
+        .frame(width: 280, alignment: .leading)
     }
 }
 

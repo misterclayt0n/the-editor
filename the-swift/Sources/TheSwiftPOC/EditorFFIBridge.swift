@@ -1058,6 +1058,17 @@ enum EditorFFIBridge {
         return the_editor_set_embedded_terminal_enabled(handle, enabled)
     }
 
+    static func agentFollowEnabled(_ handle: OpaquePointer?) -> Bool {
+        guard let handle else { return false }
+        return the_editor_agent_follow_enabled(handle)
+    }
+
+    @discardableResult
+    static func setAgentFollowEnabled(_ handle: OpaquePointer?, enabled: Bool) -> Bool {
+        guard let handle else { return false }
+        return the_editor_set_agent_follow_enabled(handle, enabled)
+    }
+
     @discardableResult
     static func openTerminalInActivePane(_ handle: OpaquePointer?) -> Bool {
         guard let handle else { return false }

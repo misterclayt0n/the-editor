@@ -428,6 +428,16 @@ async function withBridgeFallback<T>(
 	}
 }
 
+function editorBridgeRequiredMessage(filePath: string): string {
+	return `The editor bridge must be attached for workspace edit/write operations (${formatDebugPath(filePath)}). These tool calls must go through the-editor transactions.`;
+}
+
+function assertWorkspaceMutationBridgeReady(bridge: EditorBridgeClient, filePath: string): void {
+	if (bridge.isWorkspaceTextPath(filePath) && !bridge.isAttached()) {
+		throw new Error(editorBridgeRequiredMessage(filePath));
+	}
+}
+
 async function readFileWithBridgeFallback(
 	bridge: EditorBridgeClient,
 	absolutePath: string,
@@ -530,17 +540,21 @@ async function writeFileWithBridgeFallback(
 	content: string,
 	source: string,
 ): Promise<void> {
-	await withBridgeFallback(
-		bridge,
-		absolutePath,
-		async () => {
+	assertWorkspaceMutationBridgeReady(bridge, absolutePath);
+	if (bridge.shouldRoutePath(absolutePath)) {
+		bridge.recordDebug(`${source}: write via bridge ${formatDebugPath(absolutePath)}`);
+		try {
 			await streamWriteFileWithBridge(bridge, absolutePath, content, source);
-		},
-		async () => {
-			bridge.recordDebug(`${source}: write via fs fallback ${formatDebugPath(absolutePath)}`);
-			await fsWriteFile(absolutePath, content, "utf8");
-		},
-	);
+		} catch (error) {
+			if (isBridgeTransportError(error) && bridge.isWorkspaceTextPath(absolutePath)) {
+				throw new Error(editorBridgeRequiredMessage(absolutePath));
+			}
+			throw error;
+		}
+		return;
+	}
+	bridge.recordDebug(`${source}: write via fs fallback ${formatDebugPath(absolutePath)}`);
+	await fsWriteFile(absolutePath, content, "utf8");
 }
 
 class EditorBridgeClient {
@@ -683,11 +697,23 @@ class EditorBridgeClient {
 		return this.manifest?.workspaceRoot ?? null;
 	}
 
+	workspaceRootHint(): string | null {
+		return this.manifest?.workspaceRoot ?? this.currentContext?.cwd ?? null;
+	}
+
+	isWorkspaceTextPath(filePath: string): boolean {
+		const workspaceRoot = this.workspaceRootHint();
+		if (!workspaceRoot) {
+			return false;
+		}
+		return isProbablyTextPath(filePath) && isPathInside(workspaceRoot, filePath);
+	}
+
 	shouldRoutePath(filePath: string): boolean {
 		if (!this.isAttached() || !this.manifest) {
 			return false;
 		}
-		return isProbablyTextPath(filePath) && isPathInside(this.manifest.workspaceRoot, filePath);
+		return this.isWorkspaceTextPath(filePath);
 	}
 
 	async readFile(filePath: string): Promise<ReadFileResponse> {
@@ -968,20 +994,21 @@ export default function (pi: ExtensionAPI) {
 					throw new Error("Operation aborted");
 				}
 				await fsAccess(absolutePath, constants.R_OK | constants.W_OK);
+				assertWorkspaceMutationBridgeReady(bridge, absolutePath);
 				if (bridge.shouldRoutePath(absolutePath)) {
+					bridge.recordDebug(`edit: apply_edits via bridge ${formatDebugPath(absolutePath)}`);
 					try {
-						bridge.recordDebug(`edit: apply_edits via bridge ${formatDebugPath(absolutePath)}`);
 						await bridge.applyEdits(absolutePath, params.edits);
-						return {
-							content: [{ type: "text", text: `Successfully replaced ${params.edits.length} block(s) in ${params.path}.` }],
-							details: undefined,
-						};
 					} catch (error) {
-						if (!isBridgeTransportError(error)) {
-							throw error;
+						if (isBridgeTransportError(error) && bridge.isWorkspaceTextPath(absolutePath)) {
+							throw new Error(editorBridgeRequiredMessage(absolutePath));
 						}
-						bridge.recordDebug(`edit: apply_edits fallback ${formatDebugPath(absolutePath)}: ${describeError(error)}`);
+						throw error;
 					}
+					return {
+						content: [{ type: "text", text: `Successfully replaced ${params.edits.length} block(s) in ${params.path}.` }],
+						details: undefined,
+					};
 				}
 				const currentContent = await fsReadFile(absolutePath, "utf8");
 				const nextContent = applyExactEditsLocally(currentContent, params.edits, params.path);

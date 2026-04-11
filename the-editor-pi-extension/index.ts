@@ -14,6 +14,8 @@ const STREAM_EDIT_MAX_CHUNKS = 128;
 const STREAM_EDIT_TARGET_CHUNK_CODEPOINTS = 220;
 const STREAM_EDIT_MAX_CHUNK_CODEPOINTS = 320;
 const STREAM_EDIT_TARGET_CHUNK_LINES = 12;
+const BRIDGE_RPC_TIMEOUT_MS = 5000;
+const PI_BRIDGE_DEBUG = process.env.THE_EDITOR_PI_BRIDGE_DEBUG === "1";
 
 type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 type BridgeState = "detached" | "attached" | "busy";
@@ -432,6 +434,7 @@ function isBridgeTransportError(error: unknown): boolean {
 		message.includes("err_stream_destroyed") ||
 		message.includes("econnreset") ||
 		message.includes("econnrefused") ||
+		message.includes("enoent") ||
 		message.includes("epipe")
 	);
 }
@@ -442,7 +445,7 @@ async function withBridgeFallback<T>(
 	bridgeOperation: () => Promise<T>,
 	fallbackOperation: () => Promise<T>,
 ): Promise<T> {
-	if (!bridge.shouldRoutePath(filePath)) {
+	if (!(await bridge.manifestForFilePath(filePath))) {
 		return fallbackOperation();
 	}
 	try {
@@ -464,13 +467,7 @@ async function assertWorkspaceMutationBridgeReady(bridge: EditorBridgeClient, fi
 	if (!(await bridge.requiresWorkspaceMutationBridge(filePath))) {
 		return;
 	}
-	if (bridge.isAttached()) {
-		return;
-	}
 	await bridge.tryAutoAttachForMutation();
-	if (!bridge.isAttached()) {
-		throw new Error(editorBridgeRequiredMessage(filePath));
-	}
 }
 
 async function readFileWithBridgeFallback(
@@ -478,6 +475,11 @@ async function readFileWithBridgeFallback(
 	absolutePath: string,
 	source: string,
 ): Promise<Buffer> {
+	const manifest = await bridge.manifestForFilePath(absolutePath);
+	if (!manifest) {
+		bridge.recordDebug(`${source}: read via fs fallback ${formatDebugPath(absolutePath)}`);
+		return fsReadFile(absolutePath);
+	}
 	return withBridgeFallback(
 		bridge,
 		absolutePath,
@@ -498,8 +500,9 @@ async function readTextFileForStreaming(
 	absolutePath: string,
 	source: string,
 ): Promise<{ content: string; openedBuffer: boolean; fromBridge: boolean }> {
+	const manifest = await bridge.manifestForFilePath(absolutePath);
 	try {
-		if (bridge.shouldRoutePath(absolutePath)) {
+		if (manifest) {
 			bridge.recordDebug(`${source}: stream baseline via bridge ${formatDebugPath(absolutePath)}`);
 			const response = await bridge.readFile(absolutePath);
 			return { content: response.content, openedBuffer: response.openedBuffer, fromBridge: true };
@@ -508,7 +511,7 @@ async function readTextFileForStreaming(
 		return { content: await fsReadFile(absolutePath, "utf8"), openedBuffer: false, fromBridge: false };
 	} catch (error) {
 		if (isMissingFileError(error)) {
-			return { content: "", openedBuffer: false, fromBridge: bridge.shouldRoutePath(absolutePath) };
+			return { content: "", openedBuffer: false, fromBridge: !!manifest };
 		}
 		throw error;
 	}
@@ -616,12 +619,13 @@ async function writeFileWithBridgeFallback(
 	source: string,
 ): Promise<void> {
 	await assertWorkspaceMutationBridgeReady(bridge, absolutePath);
-	if (bridge.shouldRoutePath(absolutePath)) {
+	const manifest = await bridge.manifestForFilePath(absolutePath);
+	if (manifest) {
 		bridge.recordDebug(`${source}: write via bridge ${formatDebugPath(absolutePath)}`);
 		try {
 			await streamWriteFileWithBridge(bridge, absolutePath, content, source);
 		} catch (error) {
-			if (isBridgeTransportError(error) && bridge.isWorkspaceTextPath(absolutePath)) {
+			if (isBridgeTransportError(error) && (await bridge.requiresWorkspaceMutationBridge(absolutePath))) {
 				throw new Error(editorBridgeRequiredMessage(absolutePath));
 			}
 			throw error;
@@ -648,11 +652,17 @@ class EditorBridgeClient {
 	private hasShownBusyWarning = false;
 	private attachPromise: Promise<boolean> | null = null;
 	private debugHistory: BridgeDebugEntry[] = [];
+	private lastSubscriberDisconnectReason: string | null = null;
+	private lastRpcFailure: string | null = null;
+	private lastRpcSuccessAt: string | null = null;
 
 	recordDebug(message: string): void {
 		this.debugHistory.push({ at: new Date().toISOString(), message });
-		if (this.debugHistory.length > 40) {
+		if (this.debugHistory.length > 80) {
 			this.debugHistory.shift();
+		}
+		if (PI_BRIDGE_DEBUG) {
+			console.error(`[the-editor-pi-extension] ${message}`);
 		}
 	}
 
@@ -676,8 +686,11 @@ class EditorBridgeClient {
 	}
 
 	private async attachInternal(cwd: string): Promise<boolean> {
+		this.recordDebug(`events: attach start cwd=${cwd}`);
 		const manifest = await findBridgeManifest(cwd);
 		if (!manifest) {
+			this.manifest = null;
+			this.recordDebug(`events: attach skipped no manifest cwd=${cwd}`);
 			this.disconnect("not found");
 			this.setDetachedStatus("editor");
 			return false;
@@ -687,6 +700,7 @@ class EditorBridgeClient {
 			this.manifest?.socketPath === manifest.socketPath &&
 			this.manifest.workspaceRoot === manifest.workspaceRoot
 		) {
+			this.recordDebug(`events: attach reuse ${manifest.workspaceRoot}`);
 			this.setAttachedStatus(path.basename(manifest.workspaceRoot));
 			return true;
 		}
@@ -695,10 +709,13 @@ class EditorBridgeClient {
 		this.rejectPending(new Error("editor bridge reconnecting"));
 		this.state = "detached";
 		this.manifest = manifest;
+		this.lastSubscriberDisconnectReason = null;
 
 		await new Promise<void>((resolve, reject) => {
+			this.recordDebug(`events: subscriber connect ${manifest.socketPath}`);
 			const socket = net.createConnection(manifest.socketPath, () => {
 				this.socket = socket;
+				this.recordDebug(`events: subscriber connected ${manifest.workspaceRoot}`);
 				resolve();
 			});
 
@@ -709,11 +726,13 @@ class EditorBridgeClient {
 			});
 			socket.on("error", (error) => {
 				if (!this.socket || this.socket === socket) {
+					this.recordDebug(`events: subscriber error ${describeError(error)}`);
 					this.disconnect(error.message);
 				}
 			});
 			socket.on("close", () => {
 				if (!this.socket || this.socket === socket) {
+					this.recordDebug("events: subscriber closed");
 					this.disconnect("closed");
 				}
 			});
@@ -721,23 +740,33 @@ class EditorBridgeClient {
 		});
 
 		try {
-			await this.request("ping", {});
+			this.recordDebug("events: subscribe_events start");
+			await this.sendNotification("subscribe_events", {});
+			this.recordDebug("events: subscribe_events ok");
+			this.recordDebug("rpc ping attach healthcheck start");
+			await this.requestWithManifest(manifest, "ping", {});
+			this.recordDebug("rpc ping attach healthcheck ok");
 		} catch (error) {
 			if (this.isBusy()) {
 				return false;
 			}
-			this.disconnect(error instanceof Error ? error.message : "attach failed");
+			const message = error instanceof Error ? error.message : "attach failed";
+			this.recordDebug(`events: attach failed ${message}`);
+			this.disconnect(message);
 			throw error;
 		}
 		this.setAttachedStatus(path.basename(manifest.workspaceRoot));
 		return true;
 	}
 
-	disconnect(_reason?: string): void {
+	disconnect(reason?: string): void {
+		if (reason) {
+			this.lastSubscriberDisconnectReason = reason;
+			this.recordDebug(`events: subscriber disconnect ${reason}`);
+		}
 		this.closeSocket();
 		this.rejectPending(new Error("editor bridge disconnected"));
 		this.attachPromise = null;
-		this.manifest = null;
 		this.state = "detached";
 		this.hasShownBusyWarning = false;
 		this.setDetachedStatus("editor");
@@ -755,17 +784,33 @@ class EditorBridgeClient {
 		return !this.isAttached() && !this.isBusy() && !this.attachPromise;
 	}
 
-	describe(): string {
+	describeEvents(): string {
 		if (this.attachPromise) {
 			return `attaching to ${this.manifest?.workspaceRoot ?? "<unknown>"}`;
 		}
 		if (this.isBusy()) {
 			return `busy: another pi session owns ${this.manifest?.workspaceRoot ?? "<unknown>"}`;
 		}
-		if (!this.manifest) {
-			return "detached";
+		if (this.isAttached()) {
+			return `attached to ${this.manifest?.workspaceRoot ?? "<unknown>"}`;
 		}
-		return `attached to ${this.manifest.workspaceRoot}`;
+		if (this.manifest) {
+			return `detached from ${this.manifest.workspaceRoot}${this.lastSubscriberDisconnectReason ? ` (${this.lastSubscriberDisconnectReason})` : ""}`;
+		}
+		return this.lastSubscriberDisconnectReason ? `detached (${this.lastSubscriberDisconnectReason})` : "detached";
+	}
+
+	describeRpc(): string {
+		if (!this.manifest) {
+			return "unavailable";
+		}
+		if (this.lastRpcFailure) {
+			return `degraded: ${this.lastRpcFailure}`;
+		}
+		if (this.lastRpcSuccessAt) {
+			return `available (last ok ${this.lastRpcSuccessAt.split("T")[1]?.replace("Z", "") ?? this.lastRpcSuccessAt})`;
+		}
+		return "unknown";
 	}
 
 	workspaceRoot(): string | null {
@@ -776,15 +821,37 @@ class EditorBridgeClient {
 		return this.manifest?.workspaceRoot ?? this.currentContext?.cwd ?? null;
 	}
 
-	async requiresWorkspaceMutationBridge(filePath: string): Promise<boolean> {
+	async manifestForFilePath(filePath: string): Promise<PiBridgeManifest | null> {
 		if (!isProbablyTextPath(filePath)) {
-			return false;
+			return null;
 		}
-		const manifest = this.manifest ?? (this.currentContext ? await findBridgeManifest(this.currentContext.cwd) : null);
-		if (!manifest) {
-			return false;
+		if (this.manifest && isPathInside(this.manifest.workspaceRoot, filePath)) {
+			return this.manifest;
 		}
-		return isPathInside(manifest.workspaceRoot, filePath);
+		if (!this.currentContext) {
+			return null;
+		}
+		const manifest = await findBridgeManifest(this.currentContext.cwd);
+		if (!manifest || !isPathInside(manifest.workspaceRoot, filePath)) {
+			return null;
+		}
+		return manifest;
+	}
+
+	async requiresWorkspaceMutationBridge(filePath: string): Promise<boolean> {
+		return !!(await this.manifestForFilePath(filePath));
+	}
+
+	private markRpcSuccess(label: string): void {
+		this.lastRpcFailure = null;
+		this.lastRpcSuccessAt = new Date().toISOString();
+		this.recordDebug(`rpc ${label} ok`);
+	}
+
+	private markRpcFailure(label: string, error: unknown): void {
+		const detail = `${label}: ${describeError(error)}`;
+		this.lastRpcFailure = detail;
+		this.recordDebug(`rpc ${detail}`);
 	}
 
 	isWorkspaceTextPath(filePath: string): boolean {
@@ -815,13 +882,21 @@ class EditorBridgeClient {
 
 	async readFile(filePath: string): Promise<ReadFileResponse> {
 		this.recordDebug(`rpc read_file ${formatDebugPath(filePath)}`);
-		const response = await this.request("read_file", { path: filePath });
+		const manifest = await this.manifestForFilePath(filePath);
+		if (!manifest) {
+			throw new Error("editor bridge is not available for this path");
+		}
+		const response = await this.requestWithManifest(manifest, "read_file", { path: filePath });
 		return response as ReadFileResponse;
 	}
 
 	async writeFile(filePath: string, content: string): Promise<WriteFileResponse> {
 		this.recordDebug(`rpc write_file ${formatDebugPath(filePath)} (${countCodePoints(content)} chars)`);
-		const response = await this.request("write_file", { path: filePath, content });
+		const manifest = await this.manifestForFilePath(filePath);
+		if (!manifest) {
+			throw new Error("editor bridge is not available for this path");
+		}
+		const response = await this.requestWithManifest(manifest, "write_file", { path: filePath, content });
 		return response as WriteFileResponse;
 	}
 
@@ -830,7 +905,11 @@ class EditorBridgeClient {
 		edits: Array<{ oldText: string; newText: string }>,
 	): Promise<{ path: string; editCount: number; saved: boolean; openedBuffer: boolean }> {
 		this.recordDebug(`rpc apply_edits ${formatDebugPath(filePath)} (${edits.length} edits)`);
-		const response = await this.request("apply_edits", { path: filePath, edits });
+		const manifest = await this.manifestForFilePath(filePath);
+		if (!manifest) {
+			throw new Error("editor bridge is not available for this path");
+		}
+		const response = await this.requestWithManifest(manifest, "apply_edits", { path: filePath, edits });
 		return response as { path: string; editCount: number; saved: boolean; openedBuffer: boolean };
 	}
 
@@ -843,7 +922,11 @@ class EditorBridgeClient {
 		this.recordDebug(
 			`rpc replace_range ${formatDebugPath(filePath)} [${startChar},${endChar}) -> ${countCodePoints(content)} chars`,
 		);
-		const response = await this.request("replace_range", {
+		const manifest = await this.manifestForFilePath(filePath);
+		if (!manifest) {
+			throw new Error("editor bridge is not available for this path");
+		}
+		const response = await this.requestWithManifest(manifest, "replace_range", {
 			path: filePath,
 			startChar,
 			endChar,
@@ -1012,6 +1095,29 @@ class EditorBridgeClient {
 		this.setAttachedStatus(workspaceLabel);
 	}
 
+	private async sendNotification(method: string, params: JsonValue): Promise<void> {
+		const socket = this.socket;
+		if (!socket || socket.destroyed) {
+			throw new Error("editor bridge is not attached");
+		}
+		const envelope: PiBridgeEnvelope = {
+			type: "notification",
+			method,
+			params,
+		};
+		return new Promise<void>((resolve, reject) => {
+			socket.write(`${JSON.stringify(envelope)}
+`, (error) => {
+				if (error) {
+					this.recordDebug(`events: notification ${method} write error ${describeError(error)}`);
+					reject(error);
+					return;
+				}
+				resolve();
+			});
+		});
+	}
+
 	private async request(method: string, params: JsonValue): Promise<JsonValue | undefined> {
 		const socket = this.socket;
 		if (!socket || socket.destroyed) {
@@ -1026,16 +1132,145 @@ class EditorBridgeClient {
 		};
 
 		return new Promise<JsonValue | undefined>((resolve, reject) => {
-			this.pending.set(id, { resolve, reject });
-			socket.write(`${JSON.stringify(envelope)}\n`, (error) => {
+			const timeout = setTimeout(() => {
+				this.pending.delete(id);
+				reject(new Error(`editor bridge request timed out (${method})`));
+			}, BRIDGE_RPC_TIMEOUT_MS);
+			this.pending.set(id, {
+				resolve: (value) => {
+					clearTimeout(timeout);
+					resolve(value);
+				},
+				reject: (error) => {
+					clearTimeout(timeout);
+					reject(error);
+				},
+			});
+			socket.write(`${JSON.stringify(envelope)}
+`, (error) => {
 				if (!error) {
 					return;
 				}
+				clearTimeout(timeout);
 				this.pending.delete(id);
 				reject(error);
 			});
 		});
 	}
+
+	private async requestWithManifest(
+		manifest: PiBridgeManifest,
+		method: string,
+		params: JsonValue,
+	): Promise<JsonValue | undefined> {
+		this.recordDebug(`rpc ${method} socket connect ${manifest.socketPath}`);
+		return new Promise<JsonValue | undefined>((resolve, reject) => {
+			const socket = net.createConnection(manifest.socketPath, () => {
+				this.recordDebug(`rpc ${method} socket connected`);
+				this.requestOnSocket(socket, method, params).then(resolve, reject);
+			});
+			socket.setEncoding("utf8");
+			socket.once("error", (error) => {
+				this.markRpcFailure(method, error);
+				reject(error);
+			});
+		});
+	}
+
+	private async requestOnSocket(
+		socket: net.Socket,
+		method: string,
+		params: JsonValue,
+	): Promise<JsonValue | undefined> {
+		const id = String(this.nextRequestId++);
+		const envelope: PiBridgeEnvelope = {
+			type: "request",
+			id,
+			method,
+			params,
+		};
+
+		return new Promise<JsonValue | undefined>((resolve, reject) => {
+			let settled = false;
+			let buffer = "";
+			const timeout = setTimeout(() => {
+				finish(() => {
+					const error = new Error(`editor bridge request timed out (${method})`);
+					this.markRpcFailure(method, error);
+					reject(error);
+				});
+			}, BRIDGE_RPC_TIMEOUT_MS);
+			const cleanup = () => {
+				clearTimeout(timeout);
+				socket.removeListener("data", onData);
+				socket.removeListener("error", onError);
+				socket.removeListener("close", onClose);
+				socket.end();
+			};
+			const finish = (callback: () => void) => {
+				if (settled) {
+					return;
+				}
+				settled = true;
+				cleanup();
+				callback();
+			};
+			const onError = (error: Error) => finish(() => {
+				this.markRpcFailure(method, error);
+				reject(error);
+			});
+			const onClose = () => finish(() => {
+				const error = new Error("editor bridge disconnected");
+				this.markRpcFailure(method, error);
+				reject(error);
+			});
+			const onData = (chunk: string) => {
+				buffer += chunk;
+				let newlineIndex = buffer.indexOf("\n");
+				while (newlineIndex !== -1) {
+					const line = buffer.slice(0, newlineIndex).trim();
+					buffer = buffer.slice(newlineIndex + 1);
+					if (line.length > 0) {
+						try {
+							const message = JSON.parse(line) as PiBridgeEnvelope;
+							if (message.type === "response" && message.id === id) {
+								finish(() => {
+									if (message.ok) {
+										this.markRpcSuccess(method);
+										resolve(message.result);
+									} else {
+										const error = new Error(message.error || "editor bridge request failed");
+										this.markRpcFailure(method, error);
+										reject(error);
+									}
+								});
+								return;
+							}
+						} catch {
+							// Ignore malformed line noise on one-off request sockets.
+						}
+					}
+					newlineIndex = buffer.indexOf("\n");
+				}
+			};
+
+			socket.on("data", onData);
+			socket.on("error", onError);
+			socket.on("close", onClose);
+			socket.write(`${JSON.stringify(envelope)}
+`, (error) => {
+				if (!error) {
+					this.recordDebug(`rpc ${method} request sent id=${id}`);
+					return;
+				}
+				finish(() => {
+					this.markRpcFailure(method, error);
+					reject(error);
+				});
+			});
+		});
+	}
+
 }
 
 export default function (pi: ExtensionAPI) {
@@ -1058,7 +1293,7 @@ export default function (pi: ExtensionAPI) {
 				return readFileWithBridgeFallback(bridge, absolutePath, "read");
 			},
 			detectImageMimeType: async (absolutePath) => {
-				if (bridge.shouldRoutePath(absolutePath)) {
+				if (await bridge.manifestForFilePath(absolutePath)) {
 					return null;
 				}
 				return detectImageMimeTypeFromPath(absolutePath);
@@ -1092,12 +1327,12 @@ export default function (pi: ExtensionAPI) {
 				}
 				await fsAccess(absolutePath, constants.R_OK | constants.W_OK);
 				await assertWorkspaceMutationBridgeReady(bridge, absolutePath);
-				if (bridge.shouldRoutePath(absolutePath)) {
+				if (await bridge.manifestForFilePath(absolutePath)) {
 					bridge.recordDebug(`edit: apply_edits via bridge ${formatDebugPath(absolutePath)}`);
 					try {
 						await bridge.applyEdits(absolutePath, params.edits);
 					} catch (error) {
-						if (isBridgeTransportError(error) && bridge.isWorkspaceTextPath(absolutePath)) {
+						if (isBridgeTransportError(error) && (await bridge.requiresWorkspaceMutationBridge(absolutePath))) {
 							throw new Error(editorBridgeRequiredMessage(absolutePath));
 						}
 						throw error;
@@ -1167,7 +1402,8 @@ export default function (pi: ExtensionAPI) {
 				.slice(-12)
 				.map((entry) => `${entry.at.split("T")[1]?.replace("Z", "") ?? entry.at} ${entry.message}`);
 			const details = [
-				`bridge: ${bridge.describe()}`,
+				`events: ${bridge.describeEvents()}`,
+				`rpc: ${bridge.describeRpc()}`,
 				`cwd: ${ctx.cwd}`,
 				`workspace: ${root ?? "<none>"}`,
 				"recent:",

@@ -112,9 +112,10 @@ pub enum PiBridgeEvent {
   Attached,
   Detached,
   Request {
-    id:     String,
-    method: String,
-    params: Value,
+    connection_id: u64,
+    id:            String,
+    method:        String,
+    params:        Value,
   },
   Notification {
     method: String,
@@ -125,13 +126,20 @@ pub enum PiBridgeEvent {
 
 #[derive(Debug)]
 enum PiBridgeWorkerCommand {
-  Send(PiBridgeEnvelope),
+  SendTo {
+    connection_id: u64,
+    envelope:      PiBridgeEnvelope,
+  },
+  SendToSubscriber {
+    envelope: PiBridgeEnvelope,
+  },
   Stop,
 }
 
 #[cfg(unix)]
 mod imp {
   use std::{
+    collections::HashMap,
     io::{
       ErrorKind,
       Read,
@@ -145,17 +153,29 @@ mod imp {
 
   use super::*;
 
+  fn pi_bridge_debug_enabled() -> bool {
+    std::env::var("THE_EDITOR_PI_BRIDGE_DEBUG").ok().as_deref() == Some("1")
+  }
+
+  fn pi_bridge_debug_log(message: impl AsRef<str>) {
+    if pi_bridge_debug_enabled() {
+      eprintln!("[the-lib:pi-bridge] {}", message.as_ref());
+    }
+  }
+
   struct WorkerConnection {
+    id:          u64,
     stream:      UnixStream,
     read_buffer: Vec<u8>,
   }
 
   impl WorkerConnection {
-    fn new(stream: UnixStream) -> Result<Self, String> {
+    fn new(id: u64, stream: UnixStream) -> Result<Self, String> {
       stream
         .set_nonblocking(true)
         .map_err(|err| format!("failed to configure bridge stream: {err}"))?;
       Ok(Self {
+        id,
         stream,
         read_buffer: Vec::new(),
       })
@@ -165,10 +185,10 @@ mod imp {
   pub struct PiBridgeHandle {
     manifest_path: PathBuf,
     socket_path:   PathBuf,
-    tx:                   Sender<PiBridgeWorkerCommand>,
-    rx:                   Receiver<PiBridgeEvent>,
-    join_handle:          Option<JoinHandle<()>>,
-    attached:             bool,
+    tx:            Sender<PiBridgeWorkerCommand>,
+    rx:            Receiver<PiBridgeEvent>,
+    join_handle:   Option<JoinHandle<()>>,
+    attached:      bool,
   }
 
   impl PiBridgeHandle {
@@ -244,10 +264,20 @@ mod imp {
       self.attached
     }
 
-    pub fn send(&self, envelope: PiBridgeEnvelope) -> Result<(), String> {
+    pub fn send_to(&self, connection_id: u64, envelope: PiBridgeEnvelope) -> Result<(), String> {
       self
         .tx
-        .send(PiBridgeWorkerCommand::Send(envelope))
+        .send(PiBridgeWorkerCommand::SendTo {
+          connection_id,
+          envelope,
+        })
+        .map_err(|_| "pi bridge worker is not running".to_string())
+    }
+
+    pub fn send_to_subscriber(&self, envelope: PiBridgeEnvelope) -> Result<(), String> {
+      self
+        .tx
+        .send(PiBridgeWorkerCommand::SendToSubscriber { envelope })
         .map_err(|_| "pi bridge worker is not running".to_string())
     }
 
@@ -292,23 +322,49 @@ mod imp {
     tx: Sender<PiBridgeEvent>,
     socket_path: PathBuf,
   ) {
-    let mut active = None::<WorkerConnection>;
-    let mut was_attached = false;
+    pi_bridge_debug_log(format!("worker start socket={}", socket_path.display()));
+    let mut connections = HashMap::<u64, WorkerConnection>::new();
+    let mut next_connection_id = 1_u64;
+    let mut subscriber_id = None::<u64>;
     let mut scratch = [0_u8; 4096];
 
     loop {
       let mut stop = false;
       loop {
         match rx.try_recv() {
-          Ok(PiBridgeWorkerCommand::Send(message)) => {
-            if let Some(connection) = active.as_mut()
-              && let Err(err) = write_envelope(connection, &message)
+          Ok(PiBridgeWorkerCommand::SendTo {
+            connection_id,
+            envelope,
+          }) => {
+            pi_bridge_debug_log(format!("send_to connection_id={} envelope={:?}", connection_id, envelope));
+            if let Some(connection) = connections.get_mut(&connection_id)
+              && let Err(err) = write_envelope(connection, &envelope)
             {
               let _ = tx.send(PiBridgeEvent::InvalidMessage(err));
-              let _ = tx.send(PiBridgeEvent::Detached);
-              let _ = connection.stream.shutdown(Shutdown::Both);
-              active = None;
-              was_attached = false;
+              disconnect_connection(
+                &mut connections,
+                connection_id,
+                &mut subscriber_id,
+                &tx,
+              );
+            }
+          },
+          Ok(PiBridgeWorkerCommand::SendToSubscriber { envelope }) => {
+            let Some(connection_id) = subscriber_id else {
+              pi_bridge_debug_log("send_to_subscriber skipped no subscriber");
+              continue;
+            };
+            pi_bridge_debug_log(format!("send_to_subscriber connection_id={} envelope={:?}", connection_id, envelope));
+            if let Some(connection) = connections.get_mut(&connection_id)
+              && let Err(err) = write_envelope(connection, &envelope)
+            {
+              let _ = tx.send(PiBridgeEvent::InvalidMessage(err));
+              disconnect_connection(
+                &mut connections,
+                connection_id,
+                &mut subscriber_id,
+                &tx,
+              );
             }
           },
           Ok(PiBridgeWorkerCommand::Stop) => {
@@ -326,92 +382,102 @@ mod imp {
         break;
       }
 
-      match listener.accept() {
-        Ok((stream, _)) => {
-          if active.is_some() {
-            reject_connection(stream, &tx);
-            continue;
-          }
-          match WorkerConnection::new(stream) {
+      loop {
+        match listener.accept() {
+          Ok((stream, _)) => match WorkerConnection::new(next_connection_id, stream) {
             Ok(connection) => {
-              active = Some(connection);
-              if !was_attached {
-                let _ = tx.send(PiBridgeEvent::Attached);
-                was_attached = true;
-              }
+              pi_bridge_debug_log(format!("accept connection_id={}", next_connection_id));
+              connections.insert(next_connection_id, connection);
+              next_connection_id = next_connection_id.saturating_add(1);
             },
             Err(err) => {
               let _ = tx.send(PiBridgeEvent::InvalidMessage(err));
             },
-          }
-        },
-        Err(err) if err.kind() == ErrorKind::WouldBlock => {},
-        Err(err) => {
-          let _ = tx.send(PiBridgeEvent::InvalidMessage(format!(
-            "bridge accept failed: {err}"
-          )));
-        },
+          },
+          Err(err) if err.kind() == ErrorKind::WouldBlock => break,
+          Err(err) => {
+            let _ = tx.send(PiBridgeEvent::InvalidMessage(format!(
+              "bridge accept failed: {err}"
+            )));
+            break;
+          },
+        }
       }
 
-      let mut disconnected = false;
-      if let Some(connection) = active.as_mut() {
-        loop {
-          match connection.stream.read(&mut scratch) {
-            Ok(0) => {
-              disconnected = true;
-              break;
-            },
-            Ok(read) => {
-              connection.read_buffer.extend_from_slice(&scratch[..read]);
-              process_lines(connection, &tx);
-            },
-            Err(err) if err.kind() == ErrorKind::WouldBlock => break,
-            Err(err) => {
-              let _ = tx.send(PiBridgeEvent::InvalidMessage(format!(
-                "bridge read failed: {err}"
-              )));
-              disconnected = true;
-              break;
-            },
+      let mut disconnected_ids = Vec::new();
+      let connection_ids = connections.keys().copied().collect::<Vec<_>>();
+      for connection_id in connection_ids {
+        let mut disconnected = false;
+        if let Some(connection) = connections.get_mut(&connection_id) {
+          loop {
+            match connection.stream.read(&mut scratch) {
+              Ok(0) => {
+                disconnected = true;
+                break;
+              },
+              Ok(read) => {
+                connection.read_buffer.extend_from_slice(&scratch[..read]);
+                if process_lines(connection, &tx, &mut subscriber_id) {
+                  disconnected = true;
+                  break;
+                }
+              },
+              Err(err) if err.kind() == ErrorKind::WouldBlock => break,
+              Err(err) => {
+                let _ = tx.send(PiBridgeEvent::InvalidMessage(format!(
+                  "bridge read failed: {err}"
+                )));
+                disconnected = true;
+                break;
+              },
+            }
           }
         }
+        if disconnected {
+          disconnected_ids.push(connection_id);
+        }
       }
-      if disconnected {
-        if let Some(connection) = active.as_mut() {
-          let _ = connection.stream.shutdown(Shutdown::Both);
-        }
-        active = None;
-        if was_attached {
-          let _ = tx.send(PiBridgeEvent::Detached);
-          was_attached = false;
-        }
+
+      for connection_id in disconnected_ids {
+        disconnect_connection(&mut connections, connection_id, &mut subscriber_id, &tx);
       }
 
       thread::sleep(Duration::from_millis(16));
     }
 
-    if let Some(connection) = active.as_mut() {
+    pi_bridge_debug_log("worker stop");
+    for connection in connections.values_mut() {
       let _ = connection.stream.shutdown(Shutdown::Both);
     }
     let _ = fs::remove_file(socket_path);
   }
 
-  fn reject_connection(mut stream: UnixStream, tx: &Sender<PiBridgeEvent>) {
-    match PiBridgeEnvelope::notification("attach_rejected", serde_json::json!({ "reason": "busy" }))
-    {
-      Ok(envelope) => {
-        if let Err(err) = write_envelope_to_stream(&mut stream, &envelope) {
-          let _ = tx.send(PiBridgeEvent::InvalidMessage(err));
-        }
-      },
-      Err(err) => {
-        let _ = tx.send(PiBridgeEvent::InvalidMessage(err));
-      },
+  fn disconnect_connection(
+    connections: &mut HashMap<u64, WorkerConnection>,
+    connection_id: u64,
+    subscriber_id: &mut Option<u64>,
+    tx: &Sender<PiBridgeEvent>,
+  ) {
+    pi_bridge_debug_log(format!(
+      "disconnect connection_id={} was_subscriber={}",
+      connection_id,
+      *subscriber_id == Some(connection_id)
+    ));
+    if let Some(connection) = connections.get_mut(&connection_id) {
+      let _ = connection.stream.shutdown(Shutdown::Both);
     }
-    let _ = stream.shutdown(Shutdown::Both);
+    connections.remove(&connection_id);
+    if *subscriber_id == Some(connection_id) {
+      *subscriber_id = None;
+      let _ = tx.send(PiBridgeEvent::Detached);
+    }
   }
 
-  fn process_lines(connection: &mut WorkerConnection, tx: &Sender<PiBridgeEvent>) {
+  fn process_lines(
+    connection: &mut WorkerConnection,
+    tx: &Sender<PiBridgeEvent>,
+    subscriber_id: &mut Option<u64>,
+  ) -> bool {
     while let Some(pos) = connection
       .read_buffer
       .iter()
@@ -429,18 +495,67 @@ mod imp {
       }
       match serde_json::from_slice::<PiBridgeEnvelope>(&line) {
         Ok(PiBridgeEnvelope::Request { id, method, params }) => {
-          let _ = tx.send(PiBridgeEvent::Request { id, method, params });
+          pi_bridge_debug_log(format!(
+            "request connection_id={} id={} method={}",
+            connection.id,
+            id,
+            method
+          ));
+          let _ = tx.send(PiBridgeEvent::Request {
+            connection_id: connection.id,
+            id,
+            method,
+            params,
+          });
         },
         Ok(PiBridgeEnvelope::Notification { method, params }) => {
+          pi_bridge_debug_log(format!(
+            "notification connection_id={} method={}",
+            connection.id,
+            method
+          ));
+          if method == "subscribe_events" {
+            if subscriber_id.is_some() && *subscriber_id != Some(connection.id) {
+              pi_bridge_debug_log(format!(
+                "subscriber rejected connection_id={} current_subscriber={:?}",
+                connection.id,
+                subscriber_id
+              ));
+              reject_subscriber(connection, tx);
+              return true;
+            }
+            if *subscriber_id != Some(connection.id) {
+              *subscriber_id = Some(connection.id);
+              pi_bridge_debug_log(format!("subscriber attached connection_id={}", connection.id));
+              let _ = tx.send(PiBridgeEvent::Attached);
+            }
+            continue;
+          }
           let _ = tx.send(PiBridgeEvent::Notification { method, params });
         },
         Ok(PiBridgeEnvelope::Response { .. }) => {},
         Err(err) => {
+          pi_bridge_debug_log(format!("decode error connection_id={} err={err}", connection.id));
           let _ = tx.send(PiBridgeEvent::InvalidMessage(format!(
             "failed to decode bridge message: {err}"
           )));
         },
       }
+    }
+    false
+  }
+
+  fn reject_subscriber(connection: &mut WorkerConnection, tx: &Sender<PiBridgeEvent>) {
+    pi_bridge_debug_log(format!("reject_subscriber connection_id={}", connection.id));
+    match PiBridgeEnvelope::notification("attach_rejected", serde_json::json!({ "reason": "busy" })) {
+      Ok(envelope) => {
+        if let Err(err) = write_envelope(connection, &envelope) {
+          let _ = tx.send(PiBridgeEvent::InvalidMessage(err));
+        }
+      },
+      Err(err) => {
+        let _ = tx.send(PiBridgeEvent::InvalidMessage(err));
+      },
     }
   }
 
@@ -448,6 +563,7 @@ mod imp {
     connection: &mut WorkerConnection,
     envelope: &PiBridgeEnvelope,
   ) -> Result<(), String> {
+    pi_bridge_debug_log(format!("write connection_id={} envelope={:?}", connection.id, envelope));
     write_envelope_to_stream(&mut connection.stream, envelope)
   }
 }
@@ -469,7 +585,11 @@ mod imp {
       self.attached
     }
 
-    pub fn send(&self, _envelope: PiBridgeEnvelope) -> Result<(), String> {
+    pub fn send_to(&self, _connection_id: u64, _envelope: PiBridgeEnvelope) -> Result<(), String> {
+      Err("pi bridge is only available on unix-like systems".to_string())
+    }
+
+    pub fn send_to_subscriber(&self, _envelope: PiBridgeEnvelope) -> Result<(), String> {
       Err("pi bridge is only available on unix-like systems".to_string())
     }
 
@@ -549,7 +669,7 @@ mod tests {
   use super::*;
 
   #[test]
-  fn second_client_is_rejected_without_replacing_owner() {
+  fn second_subscriber_is_rejected_without_replacing_owner() {
     let workspace = tempdir().unwrap();
     fs::create_dir(workspace.path().join(".git")).unwrap();
     let mut handle = PiBridgeHandle::start(workspace.path()).unwrap();
@@ -559,6 +679,7 @@ mod tests {
     first
       .set_write_timeout(Some(Duration::from_millis(250)))
       .unwrap();
+    send_subscribe(&mut first);
     assert!(wait_for_event(&mut handle, |event| {
       matches!(event, PiBridgeEvent::Attached)
     }));
@@ -571,7 +692,8 @@ mod tests {
       )
     }));
 
-    let second = UnixStream::connect(&socket_path).unwrap();
+    let mut second = UnixStream::connect(&socket_path).unwrap();
+    send_subscribe(&mut second);
     let rejection = read_envelope(second).unwrap();
     assert!(matches!(
       rejection,
@@ -590,13 +712,40 @@ mod tests {
   }
 
   #[test]
+  fn request_client_can_send_requests_while_subscriber_is_attached() {
+    let workspace = tempdir().unwrap();
+    fs::create_dir(workspace.path().join(".git")).unwrap();
+    let mut handle = PiBridgeHandle::start(workspace.path()).unwrap();
+    let socket_path = socket_path_for_workspace(workspace.path());
+
+    let mut subscriber = UnixStream::connect(&socket_path).unwrap();
+    send_subscribe(&mut subscriber);
+    assert!(wait_for_event(&mut handle, |event| {
+      matches!(event, PiBridgeEvent::Attached)
+    }));
+
+    let mut request_client = UnixStream::connect(&socket_path).unwrap();
+    request_client
+      .set_write_timeout(Some(Duration::from_millis(250)))
+      .unwrap();
+    send_request(&mut request_client, "rpc-1", "ping");
+    assert!(wait_for_event(&mut handle, |event| {
+      matches!(
+        event,
+        PiBridgeEvent::Request { id, method, .. } if id == "rpc-1" && method == "ping"
+      )
+    }));
+  }
+
+  #[test]
   fn new_client_can_attach_after_owner_disconnects() {
     let workspace = tempdir().unwrap();
     fs::create_dir(workspace.path().join(".git")).unwrap();
     let mut handle = PiBridgeHandle::start(workspace.path()).unwrap();
     let socket_path = socket_path_for_workspace(workspace.path());
 
-    let first = UnixStream::connect(&socket_path).unwrap();
+    let mut first = UnixStream::connect(&socket_path).unwrap();
+    send_subscribe(&mut first);
     assert!(wait_for_event(&mut handle, |event| {
       matches!(event, PiBridgeEvent::Attached)
     }));
@@ -605,7 +754,8 @@ mod tests {
       matches!(event, PiBridgeEvent::Detached)
     }));
 
-    let _second = UnixStream::connect(&socket_path).unwrap();
+    let mut second = UnixStream::connect(&socket_path).unwrap();
+    send_subscribe(&mut second);
     assert!(wait_for_event(&mut handle, |event| {
       matches!(event, PiBridgeEvent::Attached)
     }));
@@ -622,6 +772,14 @@ mod tests {
       thread::sleep(Duration::from_millis(20));
     }
     false
+  }
+
+  fn send_subscribe(stream: &mut UnixStream) {
+    let envelope = PiBridgeEnvelope::Notification {
+      method: "subscribe_events".to_string(),
+      params: Value::Object(Default::default()),
+    };
+    write_envelope_to_stream(stream, &envelope).unwrap();
   }
 
   fn send_request(stream: &mut UnixStream, id: &str, method: &str) {

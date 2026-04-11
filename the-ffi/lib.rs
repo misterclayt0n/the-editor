@@ -977,6 +977,16 @@ fn command_palette_debug_log(message: impl AsRef<str>) {
   }
 }
 
+fn pi_bridge_debug_enabled() -> bool {
+  env::var("THE_EDITOR_PI_BRIDGE_DEBUG").ok().as_deref() == Some("1")
+}
+
+fn pi_bridge_debug_log(message: impl AsRef<str>) {
+  if pi_bridge_debug_enabled() {
+    eprintln!("[the-ffi:pi-bridge] {}", message.as_ref());
+  }
+}
+
 fn completion_trace_enabled() -> bool {
   env::var("THE_EDITOR_COMPLETION_TRACE").ok().as_deref() == Some("1")
 }
@@ -5318,23 +5328,71 @@ impl SwiftEditor {
     let mut changed = false;
     for event in bridge.drain_events() {
       match event {
-        PiBridgeEvent::Attached => changed = true,
-        PiBridgeEvent::Detached => changed = true,
+        PiBridgeEvent::Attached => {
+          pi_bridge_debug_log("event subscriber-attached");
+          changed = true;
+        },
+        PiBridgeEvent::Detached => {
+          pi_bridge_debug_log("event subscriber-detached");
+          changed = true;
+        },
         PiBridgeEvent::InvalidMessage(message) => {
+          pi_bridge_debug_log(format!("event invalid-message {message}"));
           self.push_warning("pi-bridge", message);
           changed = true;
         },
-        PiBridgeEvent::Notification { .. } => {},
-        PiBridgeEvent::Request { id, method, params } => {
+        PiBridgeEvent::Notification { method, .. } => {
+          pi_bridge_debug_log(format!("event notification method={method}"));
+        },
+        PiBridgeEvent::Request {
+          connection_id,
+          id,
+          method,
+          params,
+        } => {
+          pi_bridge_debug_log(format!(
+            "request recv connection_id={} id={} method={}",
+            connection_id,
+            id,
+            method
+          ));
           let response = match self.handle_pi_bridge_request(&method, params) {
-            Ok(response) => PiBridgeEnvelope::ok(id.clone(), response)
-              .unwrap_or_else(|err| PiBridgeEnvelope::err(id, err)),
-            Err(err) => PiBridgeEnvelope::err(id, err),
+            Ok(response) => {
+              pi_bridge_debug_log(format!(
+                "request ok connection_id={} id={} method={}",
+                connection_id,
+                id,
+                method
+              ));
+              PiBridgeEnvelope::ok(id.clone(), response)
+                .unwrap_or_else(|err| PiBridgeEnvelope::err(id, err))
+            },
+            Err(err) => {
+              pi_bridge_debug_log(format!(
+                "request err connection_id={} id={} method={} err={}",
+                connection_id,
+                id,
+                method,
+                err
+              ));
+              PiBridgeEnvelope::err(id, err)
+            },
           };
-          if let Err(err) = bridge.send(response) {
+          if let Err(err) = bridge.send_to(connection_id, response) {
+            pi_bridge_debug_log(format!(
+              "response send err connection_id={} method={} err={}",
+              connection_id,
+              method,
+              err
+            ));
             self.push_warning("pi-bridge", err);
             changed = true;
           } else {
+            pi_bridge_debug_log(format!(
+              "response send ok connection_id={} method={}",
+              connection_id,
+              method
+            ));
             changed = true;
           }
         },
@@ -6164,6 +6222,31 @@ impl SwiftEditor {
     }
     let previous_buffer_id = self.editor.active_buffer_id();
     if !self.editor.close_terminal_in_active_pane() {
+      return false;
+    }
+    self.file_tree.active = false;
+    self.sync_state_after_active_pane_change(previous_buffer_id);
+    self.bump_cursor_blink_generation();
+    true
+  }
+
+  fn close_active_pane_item_ui(&mut self) -> bool {
+    let Some(content) = self.editor.active_pane_content() else {
+      return false;
+    };
+    let previous_buffer_id = self.editor.active_buffer_id();
+    if !self.editor.close_pane_item(self.editor.active_pane_id(), content) {
+      return false;
+    }
+    self.file_tree.active = false;
+    self.sync_state_after_active_pane_change(previous_buffer_id);
+    self.bump_cursor_blink_generation();
+    true
+  }
+
+  fn split_active_pane_ui(&mut self, axis: SplitAxis) -> bool {
+    let previous_buffer_id = self.editor.active_buffer_id();
+    if !self.editor.split_active_pane(axis) {
       return false;
     }
     self.file_tree.active = false;
@@ -12692,6 +12775,36 @@ pub unsafe extern "C" fn the_editor_resize_split(
     return false;
   };
   handle.editor.resize_split_raw(split_id, x, y)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_split_active_pane_vertical(
+  handle: *mut the_editor_handle_t,
+) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return false;
+  };
+  handle.editor.split_active_pane_ui(SplitAxis::Vertical)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_split_active_pane_horizontal(
+  handle: *mut the_editor_handle_t,
+) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return false;
+  };
+  handle.editor.split_active_pane_ui(SplitAxis::Horizontal)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_close_active_pane_item(
+  handle: *mut the_editor_handle_t,
+) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return false;
+  };
+  handle.editor.close_active_pane_item_ui()
 }
 
 #[unsafe(no_mangle)]

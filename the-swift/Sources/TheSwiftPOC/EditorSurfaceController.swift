@@ -13,6 +13,10 @@ private struct EditorHandleBox: @unchecked Sendable {
     let raw: OpaquePointer
 }
 
+private struct EventMonitorBox: @unchecked Sendable {
+    let raw: Any
+}
+
 @MainActor
 final class EditorSurfaceController: ObservableObject {
     weak var delegate: EditorSurfaceControllerDelegate?
@@ -47,6 +51,7 @@ final class EditorSurfaceController: ObservableObject {
     private var surfaceConfiguration: EditorSurfaceConfiguration?
     private var markedText: String = ""
     private var backgroundPollCancellable: AnyCancellable?
+    private var closeSurfaceEventMonitor: EventMonitorBox?
     private var filePickerListVisibleRows: Int = 1
     private var filePickerPreviewVisibleRows: Int = 1
     private var fileTreeVisibleRows: Int = 1
@@ -67,6 +72,7 @@ final class EditorSurfaceController: ObservableObject {
         self.handle = EditorFFIBridge.createHandle(initialPath: initialPath).map(EditorHandleBox.init(raw:))
         _ = EditorFFIBridge.setEmbeddedTerminalEnabled(handle?.raw, enabled: GhosttyTerminalRegistry.isAvailable)
         isAgentFollowEnabled = EditorFFIBridge.agentFollowEnabled(handle?.raw)
+        installCloseSurfaceKeyMonitor()
         startBackgroundPolling()
         refreshSnapshot()
     }
@@ -75,6 +81,9 @@ final class EditorSurfaceController: ObservableObject {
         resizeOverlayHideTask?.cancel()
         surfaceConfigureFlushTask?.cancel()
         fileTreeToggleResizeTask?.cancel()
+        if let closeSurfaceEventMonitor {
+            NSEvent.removeMonitor(closeSurfaceEventMonitor.raw)
+        }
         EditorFFIBridge.destroyHandle(handle?.raw)
     }
 
@@ -282,6 +291,41 @@ final class EditorSurfaceController: ObservableObject {
     func openTerminalInActivePane() {
         guard EditorFFIBridge.openTerminalInActivePane(handle?.raw) else { return }
         refreshSnapshot()
+    }
+
+    func splitActivePaneVertical() {
+        guard EditorFFIBridge.splitActivePaneVertical(handle?.raw) else { return }
+        refreshSnapshot()
+        focusEditor()
+    }
+
+    func splitActivePaneHorizontal() {
+        guard EditorFFIBridge.splitActivePaneHorizontal(handle?.raw) else { return }
+        refreshSnapshot()
+        focusEditor()
+    }
+
+    func closeActivePaneItem() {
+        guard EditorFFIBridge.closeActivePaneItem(handle?.raw) else { return }
+        refreshSnapshot()
+        focusEditor()
+    }
+
+    private func installCloseSurfaceKeyMonitor() {
+        closeSurfaceEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self, self.shouldHandleCloseSurfaceShortcut(event) else {
+                return event
+            }
+            self.closeActivePaneItem()
+            return nil
+        }.map(EventMonitorBox.init(raw:))
+    }
+
+    private func shouldHandleCloseSurfaceShortcut(_ event: NSEvent) -> Bool {
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        guard flags == [.command] else { return false }
+        guard event.charactersIgnoringModifiers?.lowercased() == "w" else { return false }
+        return true
     }
 
     func setAgentFollowEnabled(_ enabled: Bool) {

@@ -476,6 +476,7 @@ private final class GhosttyTerminalSurfaceView: NSView {
     private let pendingCommand: String?
     private var lastKnownMousePointInView: NSPoint?
     private var trackingArea: NSTrackingArea?
+    private var lastPerformKeyEventTimestamp: TimeInterval?
 
     override var acceptsFirstResponder: Bool { true }
 
@@ -600,6 +601,17 @@ private final class GhosttyTerminalSurfaceView: NSView {
         if focused {
             synchronizeDisplayID()
         }
+    }
+
+    private func keyIsBinding(_ event: NSEvent) -> Bool {
+        guard let surface else { return false }
+        var keyEvent = ghosttyKeyEvent(action: GHOSTTY_ACTION_PRESS, for: event)
+        var flags = ghostty_binding_flags_e(0)
+        let matchesBinding: Bool = (event.characters ?? "").withCString { pointer in
+            keyEvent.text = pointer
+            return ghostty_surface_key_is_binding(surface, keyEvent, &flags)
+        }
+        return matchesBinding
     }
 
     private func requestPointerFocusRecovery() {
@@ -778,6 +790,108 @@ private final class GhosttyTerminalSurfaceView: NSView {
             return
         }
         let keyEvent = ghosttyKeyEvent(action: GHOSTTY_ACTION_RELEASE, for: event)
+        _ = ghostty_surface_key(surface, keyEvent)
+    }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        guard event.type == .keyDown else { return false }
+        guard window?.firstResponder === self else { return false }
+
+        if keyIsBinding(event) {
+            keyDown(with: event)
+            return true
+        }
+
+        let equivalent: String
+        switch event.charactersIgnoringModifiers {
+        case "\r":
+            guard event.modifierFlags.contains(.control) else { return false }
+            equivalent = "\r"
+        case "/":
+            guard event.modifierFlags.contains(.control),
+                  event.modifierFlags.isDisjoint(with: [.shift, .command, .option])
+            else {
+                return false
+            }
+            equivalent = "_"
+        default:
+            guard event.timestamp != 0 else { return false }
+
+            if !event.modifierFlags.contains(.command) && !event.modifierFlags.contains(.control) {
+                lastPerformKeyEventTimestamp = nil
+                return false
+            }
+
+            if let lastPerformKeyEventTimestamp {
+                self.lastPerformKeyEventTimestamp = nil
+                if lastPerformKeyEventTimestamp == event.timestamp {
+                    equivalent = event.characters ?? ""
+                    break
+                }
+            }
+
+            lastPerformKeyEventTimestamp = event.timestamp
+            return false
+        }
+
+        guard let finalEvent = NSEvent.keyEvent(
+            with: .keyDown,
+            location: event.locationInWindow,
+            modifierFlags: event.modifierFlags,
+            timestamp: event.timestamp,
+            windowNumber: event.windowNumber,
+            context: nil,
+            characters: equivalent,
+            charactersIgnoringModifiers: equivalent,
+            isARepeat: event.isARepeat,
+            keyCode: event.keyCode
+        ) else {
+            return false
+        }
+
+        keyDown(with: finalEvent)
+        return true
+    }
+
+    override func flagsChanged(with event: NSEvent) {
+        guard let surface else {
+            super.flagsChanged(with: event)
+            return
+        }
+
+        let mod: UInt32
+        switch event.keyCode {
+        case 0x39: mod = GHOSTTY_MODS_CAPS.rawValue
+        case 0x38, 0x3C: mod = GHOSTTY_MODS_SHIFT.rawValue
+        case 0x3B, 0x3E: mod = GHOSTTY_MODS_CTRL.rawValue
+        case 0x3A, 0x3D: mod = GHOSTTY_MODS_ALT.rawValue
+        case 0x37, 0x36: mod = GHOSTTY_MODS_SUPER.rawValue
+        default: return
+        }
+
+        let currentMods = mods(from: event.modifierFlags)
+        var action = GHOSTTY_ACTION_RELEASE
+        if currentMods.rawValue & mod != 0 {
+            let sidePressed: Bool
+            switch event.keyCode {
+            case 0x3C:
+                sidePressed = event.modifierFlags.rawValue & UInt(NX_DEVICERSHIFTKEYMASK) != 0
+            case 0x3E:
+                sidePressed = event.modifierFlags.rawValue & UInt(NX_DEVICERCTLKEYMASK) != 0
+            case 0x3D:
+                sidePressed = event.modifierFlags.rawValue & UInt(NX_DEVICERALTKEYMASK) != 0
+            case 0x36:
+                sidePressed = event.modifierFlags.rawValue & UInt(NX_DEVICERCMDKEYMASK) != 0
+            default:
+                sidePressed = true
+            }
+
+            if sidePressed {
+                action = GHOSTTY_ACTION_PRESS
+            }
+        }
+
+        let keyEvent = ghosttyKeyEvent(action: action, for: event)
         _ = ghostty_surface_key(surface, keyEvent)
     }
 

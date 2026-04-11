@@ -52,6 +52,18 @@ struct EditorCommandMenu: Commands {
 
             Divider()
 
+            Button("Split Vertically") {
+                controller.splitActivePaneVertical()
+            }
+            .keyboardShortcut("d", modifiers: [.command])
+
+            Button("Split Horizontally") {
+                controller.splitActivePaneHorizontal()
+            }
+            .keyboardShortcut("d", modifiers: [.command, .shift])
+
+            Divider()
+
             Button("New Terminal") {
                 controller.openTerminalInActivePane()
             }
@@ -59,6 +71,30 @@ struct EditorCommandMenu: Commands {
 
             Button("Close Active Terminal") {
                 controller.closeTerminalInActivePane()
+            }
+        }
+
+        CommandGroup(replacing: .windowArrangement) {
+            Button("Close Current Surface") {
+                controller.closeActivePaneItem()
+            }
+            .keyboardShortcut("w", modifiers: [.command])
+
+            Divider()
+
+            Button("Minimize") {
+                NSApp.keyWindow?.miniaturize(nil)
+            }
+            .keyboardShortcut("m", modifiers: [.command])
+
+            Button("Zoom") {
+                NSApp.keyWindow?.zoom(nil)
+            }
+
+            Divider()
+
+            Button("Bring All to Front") {
+                NSApp.arrangeInFront(nil)
             }
         }
     }

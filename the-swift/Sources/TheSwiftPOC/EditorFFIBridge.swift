@@ -823,6 +823,24 @@ enum EditorFFIBridge {
     }
 
     @discardableResult
+    static func splitActivePaneVertical(_ handle: OpaquePointer?) -> Bool {
+        guard let handle else { return false }
+        return the_editor_split_active_pane_vertical(handle)
+    }
+
+    @discardableResult
+    static func splitActivePaneHorizontal(_ handle: OpaquePointer?) -> Bool {
+        guard let handle else { return false }
+        return the_editor_split_active_pane_horizontal(handle)
+    }
+
+    @discardableResult
+    static func closeActivePaneItem(_ handle: OpaquePointer?) -> Bool {
+        guard let handle else { return false }
+        return the_editor_close_active_pane_item(handle)
+    }
+
+    @discardableResult
     static func clickBufferPosition(
         _ handle: OpaquePointer?,
         paneID: UInt,

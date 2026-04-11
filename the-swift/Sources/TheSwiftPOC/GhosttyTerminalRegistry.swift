@@ -473,6 +473,7 @@ private final class GhosttyTerminalSurfaceView: NSView {
     private var callbackContext: Unmanaged<GhosttySurfaceCallbackContext>?
     private var isSurfaceVisible = false
     private var pendingWorkingDirectory: String?
+    private let pendingCommand: String?
     private var lastKnownMousePointInView: NSPoint?
     private var trackingArea: NSTrackingArea?
 
@@ -491,11 +492,13 @@ private final class GhosttyTerminalSurfaceView: NSView {
         runtime: GhosttyEmbeddedRuntime,
         controller: EditorSurfaceController?,
         workingDirectory: String?,
+        command: String? = nil,
         onCloseRequested: @escaping (UInt) -> Void
     ) {
         self.clientSurfaceID = clientSurfaceID
         self.runtime = runtime
         self.pendingWorkingDirectory = workingDirectory
+        self.pendingCommand = command?.trimmingCharacters(in: .whitespacesAndNewlines)
         super.init(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
         wantsLayer = true
         layer?.backgroundColor = NSColor.clear.cgColor
@@ -805,6 +808,18 @@ private final class GhosttyTerminalSurfaceView: NSView {
         if let pendingWorkingDirectory, !pendingWorkingDirectory.isEmpty {
             pendingWorkingDirectory.withCString { cwd in
                 surfaceConfig.working_directory = cwd
+                if let pendingCommand, !pendingCommand.isEmpty {
+                    pendingCommand.withCString { command in
+                        surfaceConfig.command = command
+                        surface = ghostty_surface_new(app, &surfaceConfig)
+                    }
+                } else {
+                    surface = ghostty_surface_new(app, &surfaceConfig)
+                }
+            }
+        } else if let pendingCommand, !pendingCommand.isEmpty {
+            pendingCommand.withCString { command in
+                surfaceConfig.command = command
                 surface = ghostty_surface_new(app, &surfaceConfig)
             }
         } else {
@@ -1101,5 +1116,93 @@ private final class GhosttyTerminalSurfaceView: NSView {
     private func consumedMods(from flags: NSEvent.ModifierFlags) -> ghostty_input_mods_e {
         mods(from: flags.subtracting([.control, .command]))
     }
+}
+
+@MainActor
+final class GhosttyPiSidebarHostView: NSView {
+    private static let sidebarSurfaceID = UInt.max - 1
+
+    private let workingDirectory: String?
+    private let command: String
+    private var surfaceView: GhosttyTerminalSurfaceView?
+
+    override var isFlipped: Bool { true }
+
+    init(workingDirectory: String?, command: String) {
+        self.workingDirectory = workingDirectory
+        self.command = command
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.clear.cgColor
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func layout() {
+        super.layout()
+        surfaceView?.frame = bounds
+    }
+
+    func setSurfaceVisible(_ visible: Bool) {
+        if visible {
+            ensureSurfaceView()
+        }
+        surfaceView?.updateVisibility(visible)
+    }
+
+    func focusSurface() {
+        ensureSurfaceView()
+        surfaceView?.updateVisibility(true)
+        if let surfaceView {
+            window?.makeFirstResponder(surfaceView)
+        }
+    }
+
+    private func ensureSurfaceView() {
+        guard surfaceView == nil else { return }
+        let view = GhosttyTerminalSurfaceView(
+            clientSurfaceID: Self.sidebarSurfaceID,
+            runtime: GhosttyEmbeddedRuntime.shared,
+            controller: nil,
+            workingDirectory: workingDirectory,
+            command: command,
+            onCloseRequested: { [weak self] _ in
+                self?.handleSurfaceClosed()
+            }
+        )
+        view.frame = bounds
+        addSubview(view)
+        surfaceView = view
+    }
+
+    private func handleSurfaceClosed() {
+        surfaceView?.removeFromSuperview()
+        surfaceView = nil
+    }
+}
+#else
+@MainActor
+final class GhosttyPiSidebarHostView: NSView {
+    override var isFlipped: Bool { true }
+
+    init(workingDirectory: String?, command: String) {
+        _ = workingDirectory
+        _ = command
+        super.init(frame: .zero)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func setSurfaceVisible(_ visible: Bool) {
+        _ = visible
+    }
+
+    func focusSurface() {}
 }
 #endif

@@ -15,6 +15,8 @@ private struct EditorHandleBox: @unchecked Sendable {
 
 @MainActor
 final class EditorSurfaceController: ObservableObject {
+    private static let piSidebarVisibleDefaultsKey = "swift.piSidebar.visible"
+
     weak var delegate: EditorSurfaceControllerDelegate?
     weak var editorFirstResponder: NSView?
 
@@ -34,6 +36,7 @@ final class EditorSurfaceController: ObservableObject {
     private(set) var openItems: EditorPaneOpenItemsState = .empty
     private(set) var fileTree: EditorFileTreeState = .empty
     @Published private(set) var showsResizeOverlay = false
+    @Published private(set) var isPiSidebarVisible: Bool
 
     private struct TerminalPresentationState {
         var title: String?
@@ -60,8 +63,20 @@ final class EditorSurfaceController: ObservableObject {
 
     private let interactiveResizeMinInterval: CFTimeInterval = 1.0 / 30.0
     private let fileTreeToggleResizeDuration: Duration = .milliseconds(360)
+    private let initialPath: String?
 
     init(initialPath: String?) {
+        self.initialPath = initialPath.map { rawPath in
+            let inputURL = URL(fileURLWithPath: rawPath)
+            if inputURL.isFileURL, inputURL.path.hasPrefix("/") {
+                return inputURL.standardizedFileURL.path
+            }
+            let resolvedURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+                .appendingPathComponent(rawPath)
+                .standardizedFileURL
+            return resolvedURL.path
+        }
+        self.isPiSidebarVisible = UserDefaults.standard.bool(forKey: Self.piSidebarVisibleDefaultsKey)
         self.handle = EditorFFIBridge.createHandle(initialPath: initialPath).map(EditorHandleBox.init(raw:))
         _ = EditorFFIBridge.setEmbeddedTerminalEnabled(handle?.raw, enabled: GhosttyTerminalRegistry.isAvailable)
         startBackgroundPolling()
@@ -77,6 +92,37 @@ final class EditorSurfaceController: ObservableObject {
 
     var isInteractiveResizeActive: Bool {
         !interactiveResizeReasons.isEmpty
+    }
+
+    func togglePiSidebar() {
+        setPiSidebarVisible(!isPiSidebarVisible)
+    }
+
+    func setPiSidebarVisible(_ visible: Bool) {
+        guard isPiSidebarVisible != visible else { return }
+        isPiSidebarVisible = visible
+        UserDefaults.standard.set(visible, forKey: Self.piSidebarVisibleDefaultsKey)
+        if !visible {
+            focusEditor()
+        }
+    }
+
+    func preferredPiWorkingDirectory() -> String {
+        if let initialPath, !initialPath.isEmpty {
+            let url = URL(fileURLWithPath: initialPath)
+            let path = url.hasDirectoryPath ? url.path : url.deletingLastPathComponent().path
+            if !path.isEmpty {
+                return path
+            }
+        }
+        if let absolutePath = chrome.document.absolutePath, !absolutePath.isEmpty {
+            let url = URL(fileURLWithPath: absolutePath)
+            let path = url.hasDirectoryPath ? url.path : url.deletingLastPathComponent().path
+            if !path.isEmpty {
+                return path
+            }
+        }
+        return FileManager.default.homeDirectoryForCurrentUser.path
     }
 
     @discardableResult

@@ -28,12 +28,23 @@ struct EditorChromeView: View {
     @ObservedObject var controller: EditorSurfaceController
 
     @AppStorage("swift.fileTreeSidebarWidth") private var storedFileTreeWidth: Double = 280
+    @AppStorage("swift.piSidebarWidth") private var storedPiSidebarWidth: Double = 360
     @AppStorage("swift.sidebar.mode") private var storedSidebarModeRaw: String = EditorSidebarMode.files.rawValue
     @GestureState private var fileTreeDragTranslation: CGFloat = 0
+    @GestureState private var piSidebarDragTranslation: CGFloat = 0
     @State private var isFileTreeResizeActive = false
+    @State private var isPiSidebarResizeActive = false
+    @StateObject private var piSidebarSession: EditorPiSidebarSession
 
     private let minimumFileTreeWidth: CGFloat = 180
     private let maximumFileTreeWidth: CGFloat = 460
+    private let minimumPiSidebarWidth: CGFloat = 280
+    private let maximumPiSidebarWidth: CGFloat = 720
+
+    init(controller: EditorSurfaceController) {
+        self.controller = controller
+        _piSidebarSession = StateObject(wrappedValue: EditorPiSidebarSession(workingDirectory: controller.preferredPiWorkingDirectory()))
+    }
 
     private var sidebarMode: EditorSidebarMode {
         EditorSidebarMode(rawValue: storedSidebarModeRaw) ?? .files
@@ -45,11 +56,21 @@ struct EditorChromeView: View {
                 sidebarColumn
                 EditorSidebarResizeHandle(
                     color: sidebarTheme.separatorColor,
+                    edge: .trailing,
                     gesture: fileTreeResizeGesture
                 )
             }
 
             mainColumn
+
+            if controller.isPiSidebarVisible, GhosttyTerminalRegistry.isAvailable {
+                EditorSidebarResizeHandle(
+                    color: sidebarTheme.separatorColor,
+                    edge: .leading,
+                    gesture: piSidebarResizeGesture
+                )
+                piSidebarColumn
+            }
         }
         .background(
             EditorWindowChromeAccessor(
@@ -58,8 +79,10 @@ struct EditorChromeView: View {
                 fileTreeWidth: titlebarSidebarRegionWidth,
                 fileTreeBackgroundColor: sidebarTheme.backgroundColor,
                 fileTreeSeparatorColor: sidebarTheme.separatorColor,
+                isPiSidebarVisible: controller.isPiSidebarVisible,
                 onToggleFileTree: controller.toggleFileTree,
-                onOpenTerminal: controller.openTerminalInActivePane
+                onOpenTerminal: controller.openTerminalInActivePane,
+                onTogglePiSidebar: controller.togglePiSidebar
             )
         )
         .overlay(alignment: .bottom) {
@@ -69,7 +92,19 @@ struct EditorChromeView: View {
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
+        .onAppear {
+            piSidebarSession.setVisible(controller.isPiSidebarVisible)
+        }
+        .onChange(of: controller.isPiSidebarVisible) { _, isVisible in
+            piSidebarSession.setVisible(isVisible)
+            if isVisible {
+                DispatchQueue.main.async {
+                    piSidebarSession.focus()
+                }
+            }
+        }
         .animation(.spring(response: 0.24, dampingFraction: 0.88), value: controller.pendingKeys?.pendingDisplay)
+        .animation(.spring(response: 0.24, dampingFraction: 0.88), value: controller.isPiSidebarVisible)
     }
 
     private var sidebarColumn: some View {
@@ -118,6 +153,17 @@ struct EditorChromeView: View {
         .background(Color(nsColor: sidebarTheme.backgroundColor))
     }
 
+    private var piSidebarColumn: some View {
+        GhosttyPiSidebarRepresentable(session: piSidebarSession)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color(nsColor: sidebarTheme.backgroundColor))
+            .frame(width: piSidebarWidth)
+            .background(Color(nsColor: sidebarTheme.backgroundColor))
+            .onDisappear {
+                piSidebarSession.setVisible(false)
+            }
+    }
+
     private var mainColumn: some View {
         VStack(spacing: 0) {
             ZStack(alignment: .topLeading) {
@@ -142,6 +188,10 @@ struct EditorChromeView: View {
 
     private var fileTreeWidth: CGFloat {
         clampFileTreeWidth(CGFloat(storedFileTreeWidth) + fileTreeDragTranslation)
+    }
+
+    private var piSidebarWidth: CGFloat {
+        clampPiSidebarWidth(CGFloat(storedPiSidebarWidth) + piSidebarDragTranslation)
     }
 
     private var titlebarSidebarRegionWidth: CGFloat {
@@ -189,8 +239,53 @@ struct EditorChromeView: View {
             }
     }
 
+    private var piSidebarResizeGesture: some Gesture {
+        DragGesture(minimumDistance: 0, coordinateSpace: .global)
+            .updating($piSidebarDragTranslation) { value, state, _ in
+                let translation = value.startLocation.x - value.location.x
+                state = translation
+                let startWidth = CGFloat(storedPiSidebarWidth)
+                let proposedWidth = startWidth + translation
+                let startText = String(format: "%.1f", startWidth)
+                let translationText = String(format: "%.1f", translation)
+                let proposedText = String(format: "%.1f", proposedWidth)
+                let clampedText = String(format: "%.1f", clampPiSidebarWidth(proposedWidth))
+                let startXText = String(format: "%.1f", value.startLocation.x)
+                let locationXText = String(format: "%.1f", value.location.x)
+                scrollPerfLog(
+                    "pi.sidebar.resize updating start=\(startText) translation=\(translationText) proposed=\(proposedText) clamped=\(clampedText) startX=\(startXText) currentX=\(locationXText)"
+                )
+            }
+            .onChanged { _ in
+                guard !isPiSidebarResizeActive else { return }
+                isPiSidebarResizeActive = true
+                controller.beginInteractiveResize(reason: "piSidebar")
+            }
+            .onEnded { value in
+                let translation = value.startLocation.x - value.location.x
+                let committedWidth = clampPiSidebarWidth(CGFloat(storedPiSidebarWidth) + translation)
+                let storedText = String(format: "%.1f", storedPiSidebarWidth)
+                let translationText = String(format: "%.1f", translation)
+                let committedText = String(format: "%.1f", committedWidth)
+                let startXText = String(format: "%.1f", value.startLocation.x)
+                let locationXText = String(format: "%.1f", value.location.x)
+                scrollPerfLog(
+                    "pi.sidebar.resize ended stored=\(storedText) translation=\(translationText) committed=\(committedText) startX=\(startXText) currentX=\(locationXText)"
+                )
+                storedPiSidebarWidth = committedWidth
+                if isPiSidebarResizeActive {
+                    isPiSidebarResizeActive = false
+                    controller.endInteractiveResize(reason: "piSidebar")
+                }
+            }
+    }
+
     private func clampFileTreeWidth(_ width: CGFloat) -> CGFloat {
         min(max(width, minimumFileTreeWidth), maximumFileTreeWidth)
+    }
+
+    private func clampPiSidebarWidth(_ width: CGFloat) -> CGFloat {
+        min(max(width, minimumPiSidebarWidth), maximumPiSidebarWidth)
     }
 
     private func selectSidebarMode(_ mode: EditorSidebarMode) {
@@ -232,6 +327,33 @@ private struct EditorFileTreeSidebarTheme {
             hoverColor: hoverColor
         )
     }
+}
+
+@MainActor
+final class EditorPiSidebarSession: ObservableObject {
+    let hostView: GhosttyPiSidebarHostView
+
+    init(workingDirectory: String) {
+        hostView = GhosttyPiSidebarHostView(workingDirectory: workingDirectory, command: "pi")
+    }
+
+    func setVisible(_ visible: Bool) {
+        hostView.setSurfaceVisible(visible)
+    }
+
+    func focus() {
+        hostView.focusSurface()
+    }
+}
+
+private struct GhosttyPiSidebarRepresentable: NSViewRepresentable {
+    @ObservedObject var session: EditorPiSidebarSession
+
+    func makeNSView(context: Context) -> GhosttyPiSidebarHostView {
+        session.hostView
+    }
+
+    func updateNSView(_ nsView: GhosttyPiSidebarHostView, context: Context) {}
 }
 
 private struct EditorPendingKeyIndicatorView: View {
@@ -1713,6 +1835,7 @@ private struct EditorSidebarRowDecorationsView: View {
 
 private struct EditorSidebarResizeHandle<ResizeGesture: Gesture>: View {
     let color: NSColor
+    let edge: HorizontalEdge
     let gesture: ResizeGesture
 
     @State private var isHovering = false
@@ -1721,7 +1844,7 @@ private struct EditorSidebarResizeHandle<ResizeGesture: Gesture>: View {
         Rectangle()
             .fill(Color.clear)
             .frame(width: 8)
-            .overlay(alignment: .trailing) {
+            .overlay(alignment: edge == .leading ? .leading : .trailing) {
                 Rectangle()
                     .fill(Color(nsColor: color).opacity(isHovering ? 1.0 : 0.9))
                     .frame(width: isHovering ? 2 : 1)
@@ -2256,8 +2379,10 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
     let fileTreeWidth: CGFloat
     let fileTreeBackgroundColor: NSColor
     let fileTreeSeparatorColor: NSColor
+    let isPiSidebarVisible: Bool
     let onToggleFileTree: () -> Void
     let onOpenTerminal: () -> Void
+    let onTogglePiSidebar: () -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -2278,8 +2403,10 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
                 fileTreeWidth: fileTreeWidth,
                 fileTreeBackgroundColor: fileTreeBackgroundColor,
                 fileTreeSeparatorColor: fileTreeSeparatorColor,
+                isPiSidebarVisible: isPiSidebarVisible,
                 onToggleFileTree: onToggleFileTree,
-                onOpenTerminal: onOpenTerminal
+                onOpenTerminal: onOpenTerminal,
+                onTogglePiSidebar: onTogglePiSidebar
             )
             return
         }
@@ -2293,8 +2420,10 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
                 fileTreeWidth: fileTreeWidth,
                 fileTreeBackgroundColor: fileTreeBackgroundColor,
                 fileTreeSeparatorColor: fileTreeSeparatorColor,
+                isPiSidebarVisible: isPiSidebarVisible,
                 onToggleFileTree: onToggleFileTree,
-                onOpenTerminal: onOpenTerminal
+                onOpenTerminal: onOpenTerminal,
+                onTogglePiSidebar: onTogglePiSidebar
             )
         }
     }
@@ -2306,7 +2435,7 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
         private let vcsItemIdentifier = NSToolbarItem.Identifier("TheSwiftPOC.VCSInfo")
         private let leadingState = EditorTitlebarLeadingState()
         private lazy var fileTreeHostingView = NSHostingView(rootView: EditorTitlebarLeadingRegionView(state: leadingState, onToggle: {}, onOpenTerminal: {}, showsTerminalButton: GhosttyTerminalRegistry.isAvailable))
-        private let vcsHostingView = NSHostingView(rootView: EditorTitlebarVCSView(vcsText: nil))
+        private let vcsHostingView = NSHostingView(rootView: EditorTitlebarTrailingRegionView(vcsText: nil, isPiSidebarVisible: false, onTogglePiSidebar: {}, showsPiButton: GhosttyTerminalRegistry.isAvailable))
         private let sidebarTitlebarBackgroundView = NSView(frame: .zero)
         private let sidebarTitlebarSeparatorView = EditorTitlebarSidebarSeparatorView(frame: .zero)
         private weak var observedWindow: NSWindow?
@@ -2315,8 +2444,10 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
         private var lastFileTreeWidth: CGFloat = 52
         private var lastFileTreeBackgroundColor: NSColor = .windowBackgroundColor
         private var lastFileTreeSeparatorColor: NSColor = .separatorColor
+        private var lastPiSidebarVisible = false
         private var toggleFileTreeAction: (() -> Void)?
         private var openTerminalAction: (() -> Void)?
+        private var togglePiSidebarAction: (() -> Void)?
         private lazy var toolbar: NSToolbar = {
             let toolbar = NSToolbar(identifier: toolbarIdentifier)
             toolbar.delegate = self
@@ -2351,8 +2482,10 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
             fileTreeWidth: CGFloat,
             fileTreeBackgroundColor: NSColor,
             fileTreeSeparatorColor: NSColor,
+            isPiSidebarVisible: Bool,
             onToggleFileTree: @escaping () -> Void,
-            onOpenTerminal: @escaping () -> Void
+            onOpenTerminal: @escaping () -> Void,
+            onTogglePiSidebar: @escaping () -> Void
         ) {
             let started = CFAbsoluteTimeGetCurrent()
             let windowChanged = observedWindow !== window
@@ -2361,12 +2494,14 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
             let widthChanged = abs(fileTreeWidth - lastFileTreeWidth) > 0.5
             let sidebarColorChanged = !fileTreeBackgroundColor.isEqual(lastFileTreeBackgroundColor)
             let separatorColorChanged = !fileTreeSeparatorColor.isEqual(lastFileTreeSeparatorColor)
+            let piSidebarChanged = isPiSidebarVisible != lastPiSidebarVisible
             toggleFileTreeAction = onToggleFileTree
             openTerminalAction = onOpenTerminal
+            togglePiSidebarAction = onTogglePiSidebar
             attachWindowObserversIfNeeded(window: window)
             installToolbarIfNeeded(window: window)
-            guard windowChanged || chromeChanged || fileTreeChanged || widthChanged || sidebarColorChanged || separatorColorChanged else {
-                scrollPerfLog("chrome.configure skipped windowChanged=\(windowChanged) chromeChanged=\(chromeChanged) fileTreeChanged=\(fileTreeChanged) widthChanged=\(widthChanged)")
+            guard windowChanged || chromeChanged || fileTreeChanged || widthChanged || sidebarColorChanged || separatorColorChanged || piSidebarChanged else {
+                scrollPerfLog("chrome.configure skipped windowChanged=\(windowChanged) chromeChanged=\(chromeChanged) fileTreeChanged=\(fileTreeChanged) widthChanged=\(widthChanged) piSidebarChanged=\(piSidebarChanged)")
                 return
             }
             lastChrome = chrome
@@ -2374,6 +2509,7 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
             lastFileTreeWidth = fileTreeWidth
             lastFileTreeBackgroundColor = fileTreeBackgroundColor
             lastFileTreeSeparatorColor = fileTreeSeparatorColor
+            lastPiSidebarVisible = isPiSidebarVisible
             let applyStarted = CFAbsoluteTimeGetCurrent()
             applyWindowChrome(window: window, chrome: chrome)
             layoutSidebarTitlebarBackground(
@@ -2385,11 +2521,11 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
             )
             let applyMs = (CFAbsoluteTimeGetCurrent() - applyStarted) * 1000
             let toolbarStarted = CFAbsoluteTimeGetCurrent()
-            updateToolbarContent(window: window, chrome: chrome, fileTreeVisible: fileTreeVisible, fileTreeWidth: fileTreeWidth)
+            updateToolbarContent(window: window, chrome: chrome, fileTreeVisible: fileTreeVisible, fileTreeWidth: fileTreeWidth, isPiSidebarVisible: isPiSidebarVisible)
             let toolbarMs = (CFAbsoluteTimeGetCurrent() - toolbarStarted) * 1000
             let totalMs = (CFAbsoluteTimeGetCurrent() - started) * 1000
             scrollPerfLog(
-                "chrome.configure windowChanged=\(windowChanged) chromeChanged=\(chromeChanged) fileTreeChanged=\(fileTreeChanged) widthChanged=\(widthChanged) applyMs=\(String(format: "%.2f", applyMs)) toolbarMs=\(String(format: "%.2f", toolbarMs)) totalMs=\(String(format: "%.2f", totalMs))"
+                "chrome.configure windowChanged=\(windowChanged) chromeChanged=\(chromeChanged) fileTreeChanged=\(fileTreeChanged) widthChanged=\(widthChanged) piSidebarChanged=\(piSidebarChanged) applyMs=\(String(format: "%.2f", applyMs)) toolbarMs=\(String(format: "%.2f", toolbarMs)) totalMs=\(String(format: "%.2f", totalMs))"
             )
         }
 
@@ -2428,7 +2564,7 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
                 backgroundColor: lastFileTreeBackgroundColor,
                 separatorColor: lastFileTreeSeparatorColor
             )
-            updateToolbarContent(window: window, chrome: lastChrome, fileTreeVisible: lastFileTreeVisible, fileTreeWidth: lastFileTreeWidth)
+            updateToolbarContent(window: window, chrome: lastChrome, fileTreeVisible: lastFileTreeVisible, fileTreeWidth: lastFileTreeWidth, isPiSidebarVisible: lastPiSidebarVisible)
         }
 
         private func applyWindowChrome(window: NSWindow, chrome: EditorChromeModel) {
@@ -2457,7 +2593,7 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
             applyTitlebarBackground(window: window, color: backgroundColor)
         }
 
-        private func updateToolbarContent(window: NSWindow, chrome: EditorChromeModel, fileTreeVisible: Bool, fileTreeWidth: CGFloat) {
+        private func updateToolbarContent(window: NSWindow, chrome: EditorChromeModel, fileTreeVisible: Bool, fileTreeWidth: CGFloat, isPiSidebarVisible: Bool) {
             fileTreeHostingView.rootView = EditorTitlebarLeadingRegionView(
                 state: leadingState,
                 onToggle: { self.toggleFileTreeAction?() },
@@ -2469,7 +2605,12 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
                 leadingState.sidebarWidth = fileTreeWidth
                 leadingState.document = chrome.document
             }
-            vcsHostingView.rootView = EditorTitlebarVCSView(vcsText: chrome.document.vcsText)
+            vcsHostingView.rootView = EditorTitlebarTrailingRegionView(
+                vcsText: chrome.document.vcsText,
+                isPiSidebarVisible: isPiSidebarVisible,
+                onTogglePiSidebar: { self.togglePiSidebarAction?() },
+                showsPiButton: GhosttyTerminalRegistry.isAvailable
+            )
             fileTreeHostingView.invalidateIntrinsicContentSize()
             vcsHostingView.invalidateIntrinsicContentSize()
             window.toolbar?.validateVisibleItems()
@@ -2718,6 +2859,45 @@ private struct EditorTitlebarDocumentView: View {
         .fixedSize()
         .allowsHitTesting(false)
         .accessibilityElement(children: .combine)
+    }
+}
+
+private struct EditorTitlebarTrailingRegionView: View {
+    let vcsText: String?
+    let isPiSidebarVisible: Bool
+    let onTogglePiSidebar: () -> Void
+    let showsPiButton: Bool
+
+    var body: some View {
+        HStack(spacing: 8) {
+            if showsPiButton {
+                EditorTitlebarPiSidebarButton(isActive: isPiSidebarVisible, onToggle: onTogglePiSidebar)
+            }
+            EditorTitlebarVCSView(vcsText: vcsText)
+        }
+        .fixedSize(horizontal: true, vertical: true)
+    }
+}
+
+private struct EditorTitlebarPiSidebarButton: View {
+    let isActive: Bool
+    let onToggle: () -> Void
+
+    var body: some View {
+        Button(action: onToggle) {
+            Text("π")
+                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                .foregroundStyle(isActive ? .primary : .secondary)
+                .frame(width: 28, height: 24)
+                .background {
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(isActive ? Color.primary.opacity(0.12) : Color.primary.opacity(0.06))
+                }
+        }
+        .buttonStyle(.plain)
+        .help("Toggle PI Sidebar")
+        .accessibilityLabel("Toggle PI Sidebar")
+        .accessibilityValue(isActive ? "visible" : "hidden")
     }
 }
 

@@ -52,6 +52,11 @@ struct EditorCommandMenu: Commands {
 
             Divider()
 
+            Button("Toggle PI Sidebar") {
+                controller.togglePiSidebar()
+            }
+            .keyboardShortcut("i", modifiers: [.command, .shift])
+
             Button("New Terminal") {
                 controller.openTerminalInActivePane()
             }

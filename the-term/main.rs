@@ -4,7 +4,6 @@ mod ctx;
 mod dispatch;
 mod docs_panel;
 mod input;
-mod pi_bridge;
 mod picker_layout;
 mod render;
 mod terminal;

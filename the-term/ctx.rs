@@ -289,13 +289,15 @@ use the_vcs::{
   VcsWorkspaceScan,
 };
 
+use the_lib::pi_bridge::{
+  PiBridgeEnvelope,
+  PiBridgeEvent,
+  PiBridgeHandle,
+  SelectionPayload,
+  PI_BRIDGE_PROTOCOL_VERSION,
+};
+
 use crate::{
-  pi_bridge::{
-    PiBridgeEnvelope,
-    PiBridgeEvent,
-    PiBridgeHandle,
-    SelectionPayload,
-  },
   picker_layout::{
     CompletionDocsLayout,
     FilePickerLayout,
@@ -1680,7 +1682,7 @@ impl Ctx {
     match method {
       "ping" => {
         Ok(json!({
-          "version": crate::pi_bridge::PI_BRIDGE_PROTOCOL_VERSION,
+          "version": PI_BRIDGE_PROTOCOL_VERSION,
           "workspaceRoot": self.workspace_root().display().to_string(),
         }))
       },

@@ -21,6 +21,7 @@ pub mod match_brackets;
 pub mod messages;
 pub mod movement;
 pub mod object;
+pub mod pi_bridge;
 pub mod position;
 pub mod registers;
 pub mod render;

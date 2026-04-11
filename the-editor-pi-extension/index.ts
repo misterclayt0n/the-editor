@@ -5,7 +5,6 @@ import path from "node:path";
 import { constants } from "node:fs";
 
 const STATUS_KEY = "the-editor";
-const LEGACY_MANIFEST_RELATIVE_PATH = path.join(".the-editor", "pi-bridge.json");
 const GIT_MANIFEST_RELATIVE_PATH = path.join("the-editor", "pi-bridge.json");
 const MAX_BUFFERED_LINES = 1000;
 const EXTENSION_INSTANCE_KEY = "__the_editor_pi_extension_loaded__";
@@ -156,10 +155,6 @@ async function findBridgeManifest(startCwd: string): Promise<PiBridgeManifest | 
 		const manifest = await readBridgeManifest(path.join(current, ".git"), current);
 		if (manifest) {
 			return manifest;
-		}
-		const legacyManifest = await readBridgeManifest(path.join(current, LEGACY_MANIFEST_RELATIVE_PATH), current);
-		if (legacyManifest) {
-			return legacyManifest;
 		}
 		const parent = path.dirname(current);
 		if (parent === current) {

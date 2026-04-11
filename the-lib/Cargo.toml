@@ -34,6 +34,7 @@ unicode-segmentation.workspace = true
 [dev-dependencies]
 divan      = "0.1.21"
 quickcheck = { default-features = false, version = "1" }
+tempfile.workspace = true
 
 [features]
 default        = [  ]

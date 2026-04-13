@@ -1,6 +1,6 @@
 use std::{
   collections::{
-    BTreeMap,
+   BTreeMap,
     HashMap,
     HashSet,
     VecDeque,
@@ -5723,6 +5723,19 @@ impl SwiftEditor {
       .collect()
   }
 
+  fn pane_showing_buffer(&self, buffer_id: BufferId) -> Option<PaneId> {
+    self
+      .editor
+      .pane_item_snapshots()
+      .into_iter()
+      .find_map(|group| match self.editor.pane_content(group.pane_id) {
+        Some(PaneContent::EditorBuffer { buffer_id: pane_buffer_id }) if pane_buffer_id == buffer_id => {
+          Some(group.pane_id)
+        },
+        _ => None,
+      })
+  }
+
   fn keep_agent_follow_visible_in_active_view(&mut self) {
     if !self.agent_follow.enabled {
       return;
@@ -5730,15 +5743,26 @@ impl SwiftEditor {
     let Some(snapshot) = self.agent_follow_render_snapshot() else {
       return;
     };
-    if self.editor.active_buffer_id() != snapshot.buffer_id {
+    let Some(pane_id) = self.pane_showing_buffer(snapshot.buffer_id) else {
+      agent_follow_debug_log(format!(
+        "keep-visible skipped buffer={} reason=no-pane",
+        snapshot.buffer_id.get().get()
+      ));
       return;
-    }
+    };
     let Some(doc) = self.editor.document_for_buffer(snapshot.buffer_id) else {
+      return;
+    };
+    let Some(view) = self.editor.pane_view(pane_id) else {
+      agent_follow_debug_log(format!(
+        "keep-visible skipped buffer={} pane={} reason=no-view",
+        snapshot.buffer_id.get().get(),
+        pane_id.get().get()
+      ));
       return;
     };
 
     let text = doc.text();
-    let view = self.editor.view().clone();
     let cursor_pos = snapshot.cursor_char.min(text.len_chars());
     let cursor_line = text.char_to_line(cursor_pos);
     let cursor_col = cursor_pos.saturating_sub(text.line_to_char(cursor_line));
@@ -5779,7 +5803,16 @@ impl SwiftEditor {
     };
 
     if let Some(new_scroll) = new_scroll {
-      self.editor.view_mut().scroll = new_scroll;
+      if let Some(view_mut) = self.editor.pane_view_mut(pane_id) {
+        view_mut.scroll = new_scroll;
+      }
+      agent_follow_debug_log(format!(
+        "keep-visible buffer={} pane={} scroll_row={} scroll_col={}",
+        snapshot.buffer_id.get().get(),
+        pane_id.get().get(),
+        new_scroll.row,
+        new_scroll.col
+      ));
     }
   }
 
@@ -5803,7 +5836,11 @@ impl SwiftEditor {
       return;
     };
 
-    let did_activate_buffer = if self.editor.active_buffer_id() != buffer_id {
+    let active_pane_already_shows_buffer = matches!(
+      self.editor.active_pane_content(),
+      Some(PaneContent::EditorBuffer { buffer_id: active_buffer_id }) if active_buffer_id == buffer_id
+    );
+    let did_activate_buffer = if !active_pane_already_shows_buffer {
       self.editor.set_active_buffer(buffer_id)
     } else {
       false
@@ -5817,13 +5854,14 @@ impl SwiftEditor {
     self.agent_follow.visible_until = Some(now + agent_follow_cursor_linger_duration());
 
     agent_follow_debug_log(format!(
-      "start buffer={} step_count={} cursor_char={} highlight=[{}, {}) active_buffer={} switched={}",
+      "start buffer={} step_count={} cursor_char={} highlight=[{}, {}) active_buffer={} active_pane={} switched={}",
       buffer_id.get().get(),
       steps.len(),
       step.cursor_char,
       step.flash_start,
       step.flash_end,
       self.editor.active_buffer_id().get().get(),
+      self.editor.active_pane_id().get().get(),
       u8::from(did_activate_buffer)
     ));
     self.keep_agent_follow_visible_in_active_view();
@@ -7382,6 +7420,14 @@ fn apply_agent_follow_visuals<'a>(
     let visible_row_start = row_start.max(plan.scroll.row);
     let visible_row_end = row_end.min(plan.scroll.row + plan.viewport.height as usize - 1);
     if visible_row_start > visible_row_end {
+      agent_follow_debug_log(format!(
+        "render skipped buffer={} reason=outside-viewport rows=[{}, {}] viewport_rows=[{}, {})",
+        buffer_id.get().get(),
+        row_start,
+        row_end,
+        plan.scroll.row,
+        plan.scroll.row + plan.viewport.height as usize
+      ));
       return;
     }
 
@@ -7409,6 +7455,14 @@ fn apply_agent_follow_visuals<'a>(
       content_x.saturating_add(1) as usize
     };
     plan.add_overlay_text(Position::new(local_row_start as usize, badge_col), "π", badge_style);
+  } else {
+    agent_follow_debug_log(format!(
+      "render skipped buffer={} reason=missing-highlight-positions cursor_char={} highlight=[{}, {})",
+      buffer_id.get().get(),
+      snapshot.cursor_char,
+      snapshot.highlight_start,
+      snapshot.highlight_end
+    ));
   }
 }
 

@@ -1087,6 +1087,11 @@ enum EditorFFIBridge {
         return the_editor_set_agent_follow_enabled(handle, enabled)
     }
 
+    static func takeQuitRequested(_ handle: OpaquePointer?) -> Bool {
+        guard let handle else { return false }
+        return the_editor_take_quit_requested(handle)
+    }
+
     @discardableResult
     static func openTerminalInActivePane(_ handle: OpaquePointer?) -> Bool {
         guard let handle else { return false }

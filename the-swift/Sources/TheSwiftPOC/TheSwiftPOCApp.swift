@@ -97,6 +97,13 @@ struct EditorCommandMenu: Commands {
                 NSApp.arrangeInFront(nil)
             }
         }
+
+        CommandGroup(replacing: .appTermination) {
+            Button("Quit the-editor") {
+                controller.quitApplication()
+            }
+            .keyboardShortcut("q", modifiers: [.command])
+        }
     }
 }
 

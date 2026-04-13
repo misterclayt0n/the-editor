@@ -1790,6 +1790,7 @@ struct SwiftEditor {
   embedded_terminal_enabled:           bool,
   pi_bridge:                           Option<PiBridgeHandle>,
   agent_follow:                        AgentFollowState,
+  quit_requested:                      bool,
 }
 
 impl SwiftEditor {
@@ -5916,6 +5917,12 @@ impl SwiftEditor {
     true
   }
 
+  fn take_quit_requested(&mut self) -> bool {
+    let requested = self.quit_requested;
+    self.quit_requested = false;
+    requested
+  }
+
   fn new(path: Option<&Path>) -> Self {
     let normalized_path = path.map(resolve_session_path);
     let workspace_root = normalized_path
@@ -6048,6 +6055,7 @@ impl SwiftEditor {
       embedded_terminal_enabled: false,
       pi_bridge: None,
       agent_follow: AgentFollowState::default(),
+      quit_requested: false,
     };
 
     set_file_picker_syntax_loader(&mut this.file_picker, this.loader.clone());
@@ -7852,7 +7860,9 @@ impl DefaultContext for SwiftEditor {
   fn is_active_pane_terminal(&self) -> bool {
     self.editor.is_active_pane_terminal()
   }
-  fn request_quit(&mut self) {}
+  fn request_quit(&mut self) {
+    self.quit_requested = true;
+  }
   fn mode(&self) -> Mode {
     self.mode
   }
@@ -13296,6 +13306,16 @@ pub unsafe extern "C" fn the_editor_set_agent_follow_enabled(
     return false;
   };
   handle.editor.set_agent_follow_enabled(enabled)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_take_quit_requested(
+  handle: *mut the_editor_handle_t,
+) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return false;
+  };
+  handle.editor.take_quit_requested()
 }
 
 #[unsafe(no_mangle)]

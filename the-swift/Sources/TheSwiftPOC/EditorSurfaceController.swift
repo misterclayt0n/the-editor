@@ -311,13 +311,24 @@ final class EditorSurfaceController: ObservableObject {
         focusEditor()
     }
 
+    func quitApplication() {
+        NSApp.terminate(nil)
+    }
+
     private func installCloseSurfaceKeyMonitor() {
         closeSurfaceEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self, self.shouldHandleCloseSurfaceShortcut(event) else {
+            guard let self else {
                 return event
             }
-            self.closeActivePaneItem()
-            return nil
+            if self.shouldHandleCloseSurfaceShortcut(event) {
+                self.closeActivePaneItem()
+                return nil
+            }
+            if self.shouldHandleQuitShortcut(event) {
+                self.quitApplication()
+                return nil
+            }
+            return event
         }.map(EventMonitorBox.init(raw:))
     }
 
@@ -325,6 +336,13 @@ final class EditorSurfaceController: ObservableObject {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         guard flags == [.command] else { return false }
         guard event.charactersIgnoringModifiers?.lowercased() == "w" else { return false }
+        return true
+    }
+
+    private func shouldHandleQuitShortcut(_ event: NSEvent) -> Bool {
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        guard flags == [.command] else { return false }
+        guard event.charactersIgnoringModifiers?.lowercased() == "q" else { return false }
         return true
     }
 
@@ -741,6 +759,7 @@ final class EditorSurfaceController: ObservableObject {
         let wasInputPromptOpen = inputPrompt.isOpen
         let started = CFAbsoluteTimeGetCurrent()
         guard let snapshot = EditorFFIBridge.makeSnapshot(handle?.raw) else { return }
+        let shouldQuitApplication = EditorFFIBridge.takeQuitRequested(handle?.raw)
         let snapshotMs = (CFAbsoluteTimeGetCurrent() - started) * 1000
         let nextChrome = EditorChromeModel(
             document: snapshot.document,
@@ -833,6 +852,9 @@ final class EditorSurfaceController: ObservableObject {
             completionPerfLog(
                 "controller.refresh menuOpen=\(snapshot.completionMenu.isOpen) docsOpen=\(snapshot.completionDocs.isOpen) items=\(snapshot.completionMenu.items.count) selected=\(String(describing: snapshot.completionMenu.selectedIndex)) scroll=\(snapshot.completionMenu.scrollOffset) snapshotMs=\(String(format: "%.2f", snapshotMs)) sceneMs=\(String(format: "%.2f", sceneMs)) totalMs=\(String(format: "%.2f", totalMs))"
             )
+        }
+        if shouldQuitApplication {
+            quitApplication()
         }
     }
 

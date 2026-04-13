@@ -20,7 +20,10 @@ use std::{
     self,
     JoinHandle,
   },
-  time::Duration,
+  time::{
+    Duration,
+    Instant,
+  },
 };
 
 use serde::{
@@ -608,14 +611,33 @@ fn write_envelope_to_stream(
   stream: &mut std::os::unix::net::UnixStream,
   envelope: &PiBridgeEnvelope,
 ) -> Result<(), String> {
-  let line = serde_json::to_vec(envelope)
+  let mut line = serde_json::to_vec(envelope)
     .map_err(|err| format!("failed to encode bridge message: {err}"))?;
-  stream
-    .write_all(&line)
-    .map_err(|err| format!("failed to write bridge message: {err}"))?;
-  stream
-    .write_all(b"\n")
-    .map_err(|err| format!("failed to terminate bridge message: {err}"))?;
+  line.push(b'\n');
+
+  let mut written = 0;
+  let deadline = Instant::now() + Duration::from_millis(250);
+  while written < line.len() {
+    match stream.write(&line[written..]) {
+      Ok(0) => {
+        return Err("failed to write bridge message: stream closed".to_string());
+      },
+      Ok(count) => {
+        written += count;
+      },
+      Err(err) if err.kind() == std::io::ErrorKind::Interrupted => continue,
+      Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+        if Instant::now() >= deadline {
+          return Err(format!("failed to write bridge message: timed out waiting for writable socket ({err})"));
+        }
+        thread::sleep(Duration::from_millis(1));
+      },
+      Err(err) => {
+        return Err(format!("failed to write bridge message: {err}"));
+      },
+    }
+  }
+
   Ok(())
 }
 

@@ -61,6 +61,24 @@ type ReplaceRangeResponse = {
 	openedBuffer: boolean;
 };
 
+type AgentPresenceKind = "focus" | "read" | "edit_preview" | "edit_applied" | "write";
+
+type AgentPresenceParams = {
+	path: string;
+	kind?: AgentPresenceKind;
+	range?: {
+		startChar: number;
+		endChar: number;
+	};
+	startLine?: number;
+	endLine?: number;
+	cursorChar?: number;
+};
+
+type ReadFileOptions = {
+	sendPresence?: boolean;
+};
+
 type AttachRejectedParams = {
 	reason?: string;
 };
@@ -323,6 +341,70 @@ function splitTextByCodePoints(text: string, chunkSize: number): string[] {
 	return chunks;
 }
 
+function lineNumberToCharIndex(text: string, lineNumber: number): number {
+	const clampedLineNumber = Math.max(1, lineNumber);
+	let currentLine = 1;
+	let index = 0;
+	for (const ch of text) {
+		if (currentLine >= clampedLineNumber) {
+			break;
+		}
+		index += 1;
+		if (ch === "\n") {
+			currentLine += 1;
+		}
+	}
+	return index;
+}
+
+function codePointIndexFromUtf16Index(text: string, utf16Index: number): number {
+	return Array.from(text.slice(0, utf16Index)).length;
+}
+
+function readPresenceForInput(input: unknown): Pick<AgentPresenceParams, "startLine" | "endLine"> | null {
+	if (typeof input !== "object" || input === null || !("path" in input)) {
+		return null;
+	}
+	const maybeOffset = (input as { offset?: unknown }).offset;
+	const maybeLimit = (input as { limit?: unknown }).limit;
+	if (typeof maybeOffset !== "number" || !Number.isFinite(maybeOffset)) {
+		return null;
+	}
+	const startLine = Math.max(1, Math.trunc(maybeOffset));
+	const limit = typeof maybeLimit === "number" && Number.isFinite(maybeLimit)
+		? Math.max(1, Math.trunc(maybeLimit))
+		: 1;
+	return {
+		startLine,
+		endLine: startLine + limit - 1,
+	};
+}
+
+function exactEditUnionRange(
+	content: string,
+	edits: Array<{ oldText: string; newText: string }>,
+): { startChar: number; endChar: number; cursorChar: number } {
+	const normalizedContent = normalizeToLf(stripBom(content).text);
+	const replacements = edits.map((edit, index) => {
+		const oldText = normalizeToLf(edit.oldText);
+		const newText = normalizeToLf(edit.newText);
+		const matches = collectExactMatchIndices(normalizedContent, oldText);
+		if (matches.length !== 1) {
+			throw new Error(`Could not resolve edits[${index}] for agent follow.`);
+		}
+		const startChar = codePointIndexFromUtf16Index(normalizedContent, matches[0]);
+		return {
+			start: startChar,
+			newEnd: startChar + countCodePoints(newText),
+		};
+	});
+	replacements.sort((left, right) => left.start - right.start);
+	const startChar = replacements[0]?.start ?? 0;
+	const endChar = replacements.reduce((maxEnd, replacement) => Math.max(maxEnd, replacement.newEnd), startChar);
+	const cursorChar = replacements[replacements.length - 1]?.newEnd ?? endChar;
+	return { startChar, endChar, cursorChar };
+}
+
 function countLineBreaks(text: string): number {
 	return (text.match(/\r\n|\n/gu) ?? []).length;
 }
@@ -485,7 +567,7 @@ async function readFileWithBridgeFallback(
 		absolutePath,
 		async () => {
 			bridge.recordDebug(`${source}: read via bridge ${formatDebugPath(absolutePath)}`);
-			const response = await bridge.readFile(absolutePath);
+			const response = await bridge.readFile(absolutePath, { sendPresence: false });
 			return Buffer.from(response.content, "utf8");
 		},
 		async () => {
@@ -504,7 +586,7 @@ async function readTextFileForStreaming(
 	try {
 		if (manifest) {
 			bridge.recordDebug(`${source}: stream baseline via bridge ${formatDebugPath(absolutePath)}`);
-			const response = await bridge.readFile(absolutePath);
+			const response = await bridge.readFile(absolutePath, { sendPresence: false });
 			return { content: response.content, openedBuffer: response.openedBuffer, fromBridge: true };
 		}
 		bridge.recordDebug(`${source}: stream baseline via fs ${formatDebugPath(absolutePath)}`);
@@ -603,7 +685,7 @@ async function streamWriteFileWithBridge(
 		await sleep(STREAM_EDIT_DELAY_MS);
 	}
 
-	const finalContent = (await bridge.readFile(absolutePath)).content;
+	const finalContent = (await bridge.readFile(absolutePath, { sendPresence: false })).content;
 	if (finalContent !== content) {
 		bridge.recordDebug(
 			`${source}: post-stream verification mismatch for ${formatDebugPath(absolutePath)} -> write_file`,
@@ -880,11 +962,14 @@ class EditorBridgeClient {
 		}
 	}
 
-	async readFile(filePath: string): Promise<ReadFileResponse> {
+	async readFile(filePath: string, options: ReadFileOptions = {}): Promise<ReadFileResponse> {
 		this.recordDebug(`rpc read_file ${formatDebugPath(filePath)}`);
 		const manifest = await this.manifestForFilePath(filePath);
 		if (!manifest) {
 			throw new Error("editor bridge is not available for this path");
+		}
+		if (options.sendPresence !== false) {
+			await this.trySendAgentPresence(manifest, "agent/focus", { path: filePath, kind: "read" });
 		}
 		const response = await this.requestWithManifest(manifest, "read_file", { path: filePath });
 		return response as ReadFileResponse;
@@ -896,7 +981,17 @@ class EditorBridgeClient {
 		if (!manifest) {
 			throw new Error("editor bridge is not available for this path");
 		}
+		await this.trySendAgentPresence(manifest, "agent/focus", {
+			path: filePath,
+			kind: "write",
+			cursorChar: Math.max(countCodePoints(content) - 1, 0),
+		});
 		const response = await this.requestWithManifest(manifest, "write_file", { path: filePath, content });
+		await this.trySendAgentPresence(manifest, "agent/edit_applied", {
+			path: filePath,
+			kind: "write",
+			cursorChar: Math.max(countCodePoints(content) - 1, 0),
+		});
 		return response as WriteFileResponse;
 	}
 
@@ -909,7 +1004,21 @@ class EditorBridgeClient {
 		if (!manifest) {
 			throw new Error("editor bridge is not available for this path");
 		}
+		const baseline = await this.readFile(filePath, { sendPresence: false });
+		const appliedRange = exactEditUnionRange(baseline.content, edits);
+		await this.trySendAgentPresence(manifest, "agent/edit_preview", {
+			path: filePath,
+			kind: "edit_preview",
+			range: { startChar: appliedRange.startChar, endChar: appliedRange.endChar },
+			cursorChar: appliedRange.cursorChar,
+		});
 		const response = await this.requestWithManifest(manifest, "apply_edits", { path: filePath, edits });
+		await this.trySendAgentPresence(manifest, "agent/edit_applied", {
+			path: filePath,
+			kind: "edit_applied",
+			range: { startChar: appliedRange.startChar, endChar: appliedRange.endChar },
+			cursorChar: appliedRange.cursorChar,
+		});
 		return response as { path: string; editCount: number; saved: boolean; openedBuffer: boolean };
 	}
 
@@ -926,11 +1035,24 @@ class EditorBridgeClient {
 		if (!manifest) {
 			throw new Error("editor bridge is not available for this path");
 		}
+		const finalEndChar = startChar + countCodePoints(content);
+		await this.trySendAgentPresence(manifest, "agent/edit_preview", {
+			path: filePath,
+			kind: "edit_preview",
+			range: { startChar, endChar },
+			cursorChar: endChar,
+		});
 		const response = await this.requestWithManifest(manifest, "replace_range", {
 			path: filePath,
 			startChar,
 			endChar,
 			content,
+		});
+		await this.trySendAgentPresence(manifest, "agent/edit_applied", {
+			path: filePath,
+			kind: "edit_applied",
+			range: { startChar, endChar: finalEndChar },
+			cursorChar: finalEndChar,
 		});
 		return response as ReplaceRangeResponse;
 	}
@@ -1118,6 +1240,75 @@ class EditorBridgeClient {
 		});
 	}
 
+	private async sendNotificationWithManifest(
+		manifest: PiBridgeManifest,
+		method: string,
+		params: JsonValue,
+	): Promise<void> {
+		this.recordDebug(`rpc ${method} notification socket connect ${manifest.socketPath}`);
+		return new Promise<void>((resolve, reject) => {
+			const socket = net.createConnection(manifest.socketPath, () => {
+				this.recordDebug(`rpc ${method} notification socket connected`);
+				this.sendNotificationOnSocket(socket, method, params).then(resolve, reject);
+			});
+			socket.setEncoding("utf8");
+			socket.once("error", reject);
+		});
+	}
+
+	private async sendNotificationOnSocket(
+		socket: net.Socket,
+		method: string,
+		params: JsonValue,
+	): Promise<void> {
+		const envelope: PiBridgeEnvelope = {
+			type: "notification",
+			method,
+			params,
+		};
+		return new Promise<void>((resolve, reject) => {
+			let settled = false;
+			const cleanup = () => {
+				socket.removeListener("error", onError);
+				socket.removeListener("close", onClose);
+				socket.end();
+			};
+			const finish = (callback: () => void) => {
+				if (settled) {
+					return;
+				}
+				settled = true;
+				cleanup();
+				callback();
+			};
+			const onError = (error: Error) => finish(() => reject(error));
+			const onClose = () => finish(() => resolve());
+			socket.on("error", onError);
+			socket.on("close", onClose);
+			socket.write(`${JSON.stringify(envelope)}
+`, (error) => {
+				if (error) {
+					finish(() => reject(error));
+					return;
+				}
+				this.recordDebug(`rpc ${method} notification sent`);
+				finish(() => resolve());
+			});
+		});
+	}
+
+	async trySendAgentPresence(
+		manifest: PiBridgeManifest,
+		method: string,
+		params: AgentPresenceParams,
+	): Promise<void> {
+		try {
+			await this.sendNotificationWithManifest(manifest, method, params);
+		} catch (error) {
+			this.recordDebug(`rpc ${method} notification skipped ${describeError(error)}`);
+		}
+	}
+
 	private async request(method: string, params: JsonValue): Promise<JsonValue | undefined> {
 		const socket = this.socket;
 		if (!socket || socket.destroyed) {
@@ -1284,7 +1475,7 @@ export default function (pi: ExtensionAPI) {
 	globalState[EXTENSION_INSTANCE_KEY] = { token: ownerToken };
 
 	const bridge = new EditorBridgeClient();
-	const readTool = createReadToolDefinition(process.cwd(), {
+	const baseReadTool = createReadToolDefinition(process.cwd(), {
 		operations: {
 			access: async (absolutePath) => {
 				await fsAccess(absolutePath, constants.R_OK);
@@ -1300,6 +1491,25 @@ export default function (pi: ExtensionAPI) {
 			},
 		},
 	});
+	const readTool = {
+		...baseReadTool,
+		execute: async (toolCallId, input, signal, onUpdate, ctx) => {
+			const params = input as { path: string; offset?: number; limit?: number };
+			const absolutePath = resolveToolPath(ctx.cwd, params.path);
+			const manifest = await bridge.manifestForFilePath(absolutePath);
+			const presence = readPresenceForInput(input);
+			if (manifest && presence) {
+				await bridge.trySendAgentPresence(manifest, "agent/focus", {
+					path: absolutePath,
+					kind: "read",
+					startLine: presence.startLine,
+					endLine: presence.endLine,
+					cursorChar: lineNumberToCharIndex(await fsReadFile(absolutePath, "utf8").catch(() => ""), presence.startLine),
+				});
+			}
+			return baseReadTool.execute(toolCallId, input, signal, onUpdate, ctx);
+		},
+	};
 	const baseEditTool = createEditToolDefinition(process.cwd(), {
 		operations: {
 			access: async (absolutePath) => {
@@ -1387,6 +1597,13 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("session_shutdown", async () => {
+		const workspaceRoot = bridge.workspaceRoot();
+		if (workspaceRoot) {
+			const manifest = await findBridgeManifest(workspaceRoot).catch(() => null);
+			if (manifest) {
+				await bridge.trySendAgentPresence(manifest, "agent/end", { path: workspaceRoot });
+			}
+		}
 		bridge.disconnect("session shutdown");
 		if (globalState[EXTENSION_INSTANCE_KEY]?.token === ownerToken) {
 			delete globalState[EXTENSION_INSTANCE_KEY];

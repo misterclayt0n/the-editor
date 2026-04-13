@@ -621,6 +621,24 @@ private final class GhosttyTerminalSurfaceView: NSView, @preconcurrency NSTextIn
         return matchesBinding
     }
 
+    /// Editor split commands (⌘D / ⌘⇧D) are implemented in SwiftUI menus; the embedded terminal
+    /// would otherwise consume them as Ghostty bindings or raw key input.
+    private func handleEditorSplitShortcut(_ event: NSEvent) -> Bool {
+        guard event.type == .keyDown else { return false }
+        guard event.charactersIgnoringModifiers?.lowercased() == "d" else { return false }
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        guard let controller = paneIDOwner else { return false }
+        if flags == [.command] {
+            controller.splitActivePaneVertical()
+            return true
+        }
+        if flags == [.command, .shift] {
+            controller.splitActivePaneHorizontal()
+            return true
+        }
+        return false
+    }
+
     private func requestPointerFocusRecovery() {
         paneIDOwner?.setActivePane(paneID)
     }
@@ -754,6 +772,10 @@ private final class GhosttyTerminalSurfaceView: NSView, @preconcurrency NSTextIn
             return
         }
 
+        if handleEditorSplitShortcut(event) {
+            return
+        }
+
         let translationModifiers = translatedModifierFlags(for: event, surface: surface)
         let translationEvent: NSEvent
         if translationModifiers == event.modifierFlags {
@@ -804,6 +826,10 @@ private final class GhosttyTerminalSurfaceView: NSView, @preconcurrency NSTextIn
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         guard event.type == .keyDown else { return false }
         guard window?.firstResponder === self else { return false }
+
+        if handleEditorSplitShortcut(event) {
+            return true
+        }
 
         if keyIsBinding(event) {
             keyDown(with: event)

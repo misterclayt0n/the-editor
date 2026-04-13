@@ -61,18 +61,6 @@ pub use command::{
   render_plan,
   render_plan_with_styles,
 };
-pub use open_items::{
-  OpenItemKind,
-  PaneOpenItemGroupSnapshot,
-  PaneOpenItemSnapshot,
-  PaneOpenItemsSnapshot,
-  PaneOpenItemsSnapshotOptions,
-  decorate_pane_open_items_snapshot,
-  pane_open_items_snapshot,
-  pane_open_items_snapshot_for_editor,
-  pane_open_items_snapshot_for_editor_with_options,
-  pane_open_items_snapshot_with_options,
-};
 pub use command_palette::{
   CommandPaletteAction,
   CommandPaletteItem,
@@ -325,6 +313,18 @@ pub use keymap::{
   open_command_palette_with_input,
 };
 pub use message_bar::MessagePresentation;
+pub use open_items::{
+  OpenItemKind,
+  PaneOpenItemGroupSnapshot,
+  PaneOpenItemSnapshot,
+  PaneOpenItemsSnapshot,
+  PaneOpenItemsSnapshotOptions,
+  decorate_pane_open_items_snapshot,
+  pane_open_items_snapshot,
+  pane_open_items_snapshot_for_editor,
+  pane_open_items_snapshot_for_editor_with_options,
+  pane_open_items_snapshot_with_options,
+};
 pub use overlay_layout::{
   OverlayRect,
   completion_docs_panel_rect,

@@ -1,6 +1,6 @@
 use std::{
   collections::{
-   BTreeMap,
+    BTreeMap,
     HashMap,
     HashSet,
     VecDeque,
@@ -86,6 +86,8 @@ use the_default::{
   Keymaps,
   Mode,
   Motion,
+  OpenItemKind,
+  PaneOpenItemsSnapshotOptions,
   PendingInput,
   PendingKeyState,
   PickerRuntimeStore,
@@ -95,13 +97,11 @@ use the_default::{
   StatuslineEmphasis,
   ThemeCatalog,
   WorkingDirectoryState,
-  OpenItemKind,
-  PaneOpenItemsSnapshotOptions,
   activate_buffer_tab,
   activate_file_tree_index,
+  buffer_tabs_snapshot_with_options,
   build_dispatch,
   build_statusline_snapshot,
-  buffer_tabs_snapshot_with_options,
   builtin_completion_menu_keymaps,
   builtin_keymaps,
   clear_file_tree_decorations,
@@ -111,11 +111,11 @@ use the_default::{
   command_palette_filtered_indices,
   command_palette_placeholder_text,
   command_palette_selected_filtered_index,
-  decorate_buffer_tabs_snapshot,
-  decorate_pane_open_items_snapshot,
   completion_accept,
   completion_docs_panel_rect,
   completion_panel_rect,
+  decorate_buffer_tabs_snapshot,
+  decorate_pane_open_items_snapshot,
   file_picker_icon_name_for_path,
   file_picker_item_selectable,
   file_picker_items_from_specs,
@@ -193,20 +193,19 @@ use the_lib::{
     PaneContentKind,
   },
   indent::IndentStyle,
-  pi_bridge::{
-    PiBridgeEnvelope,
-    PiBridgeEvent,
-    PiBridgeHandle,
-    PI_BRIDGE_PROTOCOL_VERSION,
-  },
   messages::MessageCenter,
   movement::{
     move_next_word_end,
     move_prev_word_start,
   },
+  pi_bridge::{
+    PI_BRIDGE_PROTOCOL_VERSION,
+    PiBridgeEnvelope,
+    PiBridgeEvent,
+    PiBridgeHandle,
+  },
   position::Position,
   registers::Registers,
-  view::ViewState,
   render::{
     FrameGenerationState,
     FrameRenderPlan,
@@ -225,6 +224,7 @@ use the_lib::{
     apply_diagnostic_gutter_markers,
     base_render_layer_row_hashes,
     build_plan,
+    char_at_visual_pos,
     finish_render_generations,
     graphics::{
       Color,
@@ -250,7 +250,6 @@ use the_lib::{
       Theme,
       default_theme,
     },
-    char_at_visual_pos,
     visual_pos_at_char,
   },
   selection::{
@@ -269,6 +268,7 @@ use the_lib::{
     Loader,
     Syntax,
   },
+  view::ViewState,
 };
 use the_lsp::{
   LspCapability,
@@ -422,40 +422,40 @@ pub struct the_editor_surface_config_t {
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 pub struct the_editor_snapshot_info_t {
-  pub surface_width_px:          u32,
-  pub surface_height_px:         u32,
-  pub surface_metrics:           the_editor_surface_metrics_t,
-  pub background_color:          the_editor_rgba_t,
-  pub gutter_background_color:   the_editor_rgba_t,
-  pub selection_color:           the_editor_rgba_t,
-  pub viewport_width:            u16,
-  pub viewport_height:           u16,
-  pub content_offset_x:          u16,
-  pub active_pane_id:            usize,
-  pub pane_count:                usize,
-  pub separator_count:           usize,
-  pub damage_start_row:          u16,
-  pub damage_end_row:            u16,
-  pub damage_is_full:            bool,
-  pub damage_reason:             u8,
-  pub mode:                      u8,
-  pub layout_generation:         u64,
-  pub text_generation:           u64,
-  pub decoration_generation:     u64,
-  pub cursor_generation:         u64,
-  pub scroll_generation:         u64,
-  pub theme_generation:          u64,
-  pub cursor_blink_enabled:      bool,
-  pub cursor_blink_interval_ms:  u16,
-  pub cursor_blink_delay_ms:     u16,
-  pub cursor_blink_generation:   u64,
-  pub scroll_row:                u32,
-  pub scroll_col:                u32,
-  pub document_line_count:       u32,
-  pub line_count:                usize,
-  pub cursor_count:              usize,
-  pub selection_count:           usize,
-  pub overlay_count:             usize,
+  pub surface_width_px:         u32,
+  pub surface_height_px:        u32,
+  pub surface_metrics:          the_editor_surface_metrics_t,
+  pub background_color:         the_editor_rgba_t,
+  pub gutter_background_color:  the_editor_rgba_t,
+  pub selection_color:          the_editor_rgba_t,
+  pub viewport_width:           u16,
+  pub viewport_height:          u16,
+  pub content_offset_x:         u16,
+  pub active_pane_id:           usize,
+  pub pane_count:               usize,
+  pub separator_count:          usize,
+  pub damage_start_row:         u16,
+  pub damage_end_row:           u16,
+  pub damage_is_full:           bool,
+  pub damage_reason:            u8,
+  pub mode:                     u8,
+  pub layout_generation:        u64,
+  pub text_generation:          u64,
+  pub decoration_generation:    u64,
+  pub cursor_generation:        u64,
+  pub scroll_generation:        u64,
+  pub theme_generation:         u64,
+  pub cursor_blink_enabled:     bool,
+  pub cursor_blink_interval_ms: u16,
+  pub cursor_blink_delay_ms:    u16,
+  pub cursor_blink_generation:  u64,
+  pub scroll_row:               u32,
+  pub scroll_col:               u32,
+  pub document_line_count:      u32,
+  pub line_count:               usize,
+  pub cursor_count:             usize,
+  pub selection_count:          usize,
+  pub overlay_count:            usize,
 }
 
 #[repr(C)]
@@ -1223,11 +1223,11 @@ struct OpenItemGroupRecord {
 
 #[derive(Clone, Copy, Default)]
 struct OpenItemRowRecord {
-  row:                the_editor_snapshot_open_item_t,
-  title_idx:          usize,
-  subtitle_idx:       Option<usize>,
-  file_path_idx:      Option<usize>,
-  icon_name_idx:      usize,
+  row:           the_editor_snapshot_open_item_t,
+  title_idx:     usize,
+  subtitle_idx:  Option<usize>,
+  file_path_idx: Option<usize>,
+  icon_name_idx: usize,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -1555,9 +1555,59 @@ struct AgentFollowRenderSnapshot {
   highlighting:    bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AgentFollowActivityKind {
+  Focus,
+  Read,
+  EditPreview,
+  EditApplied,
+  Write,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AgentFollowLocalStateSnapshot {
+  active_pane_id:   PaneId,
+  pane_content:     Option<PaneContent>,
+  scroll:           Option<Position>,
+  selection_ranges: Vec<Range>,
+  followed_pane:    bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PiBridgeAgentRange {
+  start_char: usize,
+  end_char:   usize,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum PiBridgeAgentActivityKind {
+  Focus,
+  Read,
+  EditPreview,
+  EditApplied,
+  Write,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PiBridgeAgentFocusParams {
+  path:        String,
+  session_id:  Option<String>,
+  kind:        Option<PiBridgeAgentActivityKind>,
+  range:       Option<PiBridgeAgentRange>,
+  start_line:  Option<usize>,
+  end_line:    Option<usize>,
+  cursor_char: Option<usize>,
+  top_line:    Option<usize>,
+  center_line: Option<usize>,
+}
+
 #[derive(Debug, Clone)]
 struct AgentFollowState {
   enabled:         bool,
+  pane_id:         Option<PaneId>,
   buffer_id:       Option<BufferId>,
   cursor_char:     Option<usize>,
   highlight_start: usize,
@@ -1569,6 +1619,7 @@ impl Default for AgentFollowState {
   fn default() -> Self {
     Self {
       enabled:         true,
+      pane_id:         None,
       buffer_id:       None,
       cursor_char:     None,
       highlight_start: 0,
@@ -1580,6 +1631,7 @@ impl Default for AgentFollowState {
 
 impl AgentFollowState {
   fn clear(&mut self) {
+    self.pane_id = None;
     self.buffer_id = None;
     self.cursor_char = None;
     self.highlight_start = 0;
@@ -1617,8 +1669,11 @@ fn agent_follow_debug_log(message: impl AsRef<str>) {
     .duration_since(std::time::SystemTime::UNIX_EPOCH)
     .map(|duration| duration.as_millis())
     .unwrap_or(0);
-  let line = format!("[the-ffi:agent-follow {ts_ms}] {}
-", message.as_ref());
+  let line = format!(
+    "[the-ffi:agent-follow {ts_ms}] {}
+",
+    message.as_ref()
+  );
   eprint!("{line}");
   if let Ok(raw_path) = env::var("THE_TERM_DEBUG_RENDER_PERF_FILE") {
     let raw_path = raw_path.trim();
@@ -5342,8 +5397,9 @@ impl SwiftEditor {
           self.push_warning("pi-bridge", message);
           changed = true;
         },
-        PiBridgeEvent::Notification { method, .. } => {
+        PiBridgeEvent::Notification { method, params } => {
           pi_bridge_debug_log(format!("event notification method={method}"));
+          changed |= self.handle_pi_bridge_notification(&method, params);
         },
         PiBridgeEvent::Request {
           connection_id,
@@ -5353,17 +5409,13 @@ impl SwiftEditor {
         } => {
           pi_bridge_debug_log(format!(
             "request recv connection_id={} id={} method={}",
-            connection_id,
-            id,
-            method
+            connection_id, id, method
           ));
           let response = match self.handle_pi_bridge_request(&method, params) {
             Ok(response) => {
               pi_bridge_debug_log(format!(
                 "request ok connection_id={} id={} method={}",
-                connection_id,
-                id,
-                method
+                connection_id, id, method
               ));
               PiBridgeEnvelope::ok(id.clone(), response)
                 .unwrap_or_else(|err| PiBridgeEnvelope::err(id, err))
@@ -5371,10 +5423,7 @@ impl SwiftEditor {
             Err(err) => {
               pi_bridge_debug_log(format!(
                 "request err connection_id={} id={} method={} err={}",
-                connection_id,
-                id,
-                method,
-                err
+                connection_id, id, method, err
               ));
               PiBridgeEnvelope::err(id, err)
             },
@@ -5382,17 +5431,14 @@ impl SwiftEditor {
           if let Err(err) = bridge.send_to(connection_id, response) {
             pi_bridge_debug_log(format!(
               "response send err connection_id={} method={} err={}",
-              connection_id,
-              method,
-              err
+              connection_id, method, err
             ));
             self.push_warning("pi-bridge", err);
             changed = true;
           } else {
             pi_bridge_debug_log(format!(
               "response send ok connection_id={} method={}",
-              connection_id,
-              method
+              connection_id, method
             ));
             changed = true;
           }
@@ -5406,10 +5452,17 @@ impl SwiftEditor {
 
   fn handle_pi_bridge_request(&mut self, method: &str, params: Value) -> Result<Value, String> {
     match method {
-      "ping" => Ok(serde_json::json!({
-        "version": PI_BRIDGE_PROTOCOL_VERSION,
-        "workspaceRoot": self.workspace_root().display().to_string(),
-      })),
+      "ping" => {
+        Ok(serde_json::json!({
+          "version": PI_BRIDGE_PROTOCOL_VERSION,
+          "workspaceRoot": self.workspace_root().display().to_string(),
+          "capabilities": {
+            "agentPresence": true,
+            "agentViewport": false,
+            "transactionFollowFallback": true,
+          },
+        }))
+      },
       "read_file" => {
         let params: PiBridgeReadFileParams = serde_json::from_value(params)
           .map_err(|err| format!("invalid read_file params: {err}"))?;
@@ -5508,8 +5561,12 @@ impl SwiftEditor {
       .text()
       .to_string();
     if let Some(parent) = path.parent() {
-      fs::create_dir_all(parent)
-        .map_err(|err| format!("failed to create parent directories for '{}': {err}", path.display()))?;
+      fs::create_dir_all(parent).map_err(|err| {
+        format!(
+          "failed to create parent directories for '{}': {err}",
+          path.display()
+        )
+      })?;
     }
     fs::write(path, &text).map_err(|err| format!("failed to write '{}': {err}", path.display()))?;
     if let Some(doc) = self.editor.document_mut_for_buffer(buffer_id) {
@@ -5539,6 +5596,8 @@ impl SwiftEditor {
       .ok_or_else(|| format!("buffer missing for '{}'", path.display()))?
       .text()
       .to_string();
+    let _ =
+      self.apply_agent_follow_activity(buffer_id, AgentFollowActivityKind::Read, None, None, false);
     Ok(PiBridgeReadFileResult {
       path: path.display().to_string(),
       content,
@@ -5566,7 +5625,8 @@ impl SwiftEditor {
       let transaction = build_exact_edit_transaction(document.text(), edits)?;
       (old_text, transaction)
     };
-    self.editor
+    self
+      .editor
       .apply_transaction_to_buffer(buffer_id, &transaction, self.loader.as_deref())
       .map_err(|err| format!("failed to apply edits to '{}': {err}", path.display()))?;
     if self.editor.active_buffer_id() == buffer_id {
@@ -5609,7 +5669,8 @@ impl SwiftEditor {
       .map_err(|err| format!("failed to build write transaction: {err}"))?;
       (old_text, transaction)
     };
-    self.editor
+    self
+      .editor
       .apply_transaction_to_buffer(buffer_id, &transaction, self.loader.as_deref())
       .map_err(|err| format!("failed to apply write to '{}': {err}", path.display()))?;
     if self.editor.active_buffer_id() == buffer_id {
@@ -5647,7 +5708,8 @@ impl SwiftEditor {
       let len_chars = document.text().len_chars();
       if start_char > end_char {
         return Err(format!(
-          "invalid replace_range for '{}': start_char {start_char} is greater than end_char {end_char}",
+          "invalid replace_range for '{}': start_char {start_char} is greater than end_char \
+           {end_char}",
           path.display()
         ));
       }
@@ -5667,9 +5729,15 @@ impl SwiftEditor {
       .map_err(|err| format!("failed to build replace_range transaction: {err}"))?;
       (old_text, transaction)
     };
-    self.editor
+    self
+      .editor
       .apply_transaction_to_buffer(buffer_id, &transaction, self.loader.as_deref())
-      .map_err(|err| format!("failed to apply replace_range to '{}': {err}", path.display()))?;
+      .map_err(|err| {
+        format!(
+          "failed to apply replace_range to '{}': {err}",
+          path.display()
+        )
+      })?;
     if self.editor.active_buffer_id() == buffer_id {
       self.vcs_document_generation = self.vcs_document_generation.wrapping_add(1);
       self.highlight_cache.clear();
@@ -5724,96 +5792,473 @@ impl SwiftEditor {
       .collect()
   }
 
-  fn pane_showing_buffer(&self, buffer_id: BufferId) -> Option<PaneId> {
-    self
+  fn agent_follow_target_for_transaction(
+    transaction: &the_lib::transaction::Transaction,
+  ) -> Option<(AgentFollowStep, usize)> {
+    let steps = Self::agent_follow_steps_for_transaction(transaction);
+    let step_count = steps.len();
+    let first = *steps.first()?;
+    let mut highlight_start = first.flash_start;
+    let mut highlight_end = first.flash_end;
+    let mut cursor_char = first.cursor_char;
+
+    for step in steps.iter().copied().skip(1) {
+      highlight_start = highlight_start.min(step.flash_start);
+      highlight_end = highlight_end.max(step.flash_end);
+      cursor_char = step.cursor_char;
+    }
+
+    Some((
+      AgentFollowStep {
+        cursor_char,
+        flash_start: highlight_start,
+        flash_end: highlight_end,
+      },
+      step_count,
+    ))
+  }
+
+  fn agent_follow_local_state_snapshot(&self) -> AgentFollowLocalStateSnapshot {
+    let active_pane_id = self.editor.active_pane_id();
+    let pane_content = self.editor.pane_content(active_pane_id);
+    let scroll = self
+      .editor
+      .pane_view(active_pane_id)
+      .map(|view| view.scroll);
+    let selection_ranges = match pane_content {
+      Some(PaneContent::EditorBuffer { buffer_id }) => {
+        self
+          .editor
+          .document_for_buffer(buffer_id)
+          .map(|doc| doc.selection().ranges().to_vec())
+          .unwrap_or_default()
+      },
+      _ => Vec::new(),
+    };
+
+    AgentFollowLocalStateSnapshot {
+      active_pane_id,
+      pane_content,
+      scroll,
+      selection_ranges,
+      followed_pane: self.agent_follow.enabled && self.agent_follow.pane_id == Some(active_pane_id),
+    }
+  }
+
+  fn stop_agent_follow(&mut self, reason: impl AsRef<str>) -> bool {
+    let had_state = self.agent_follow.enabled
+      || self.agent_follow.buffer_id.is_some()
+      || self.agent_follow.visible_until.is_some();
+    if !had_state {
+      return false;
+    }
+
+    let reason = reason.as_ref();
+    if let Some(snapshot) = self.agent_follow.render_snapshot() {
+      agent_follow_debug_log(format!(
+        "stop buffer={} cursor_char={} highlight=[{}, {}) pane={} reason={}",
+        snapshot.buffer_id.get().get(),
+        snapshot.cursor_char,
+        snapshot.highlight_start,
+        snapshot.highlight_end,
+        self
+          .agent_follow
+          .pane_id
+          .map(|pane_id| pane_id.get().get().to_string())
+          .unwrap_or_else(|| "-".to_string()),
+        reason
+      ));
+    } else {
+      agent_follow_debug_log(format!("stop reason={reason}"));
+    }
+
+    self.agent_follow.enabled = false;
+    self.agent_follow.clear();
+    true
+  }
+
+  fn stop_agent_follow_if_local_change(
+    &mut self,
+    before: AgentFollowLocalStateSnapshot,
+    reason: &str,
+  ) {
+    if !before.followed_pane {
+      return;
+    }
+    let after = self.agent_follow_local_state_snapshot();
+    if after.active_pane_id != before.active_pane_id
+      || after.pane_content != before.pane_content
+      || after.scroll != before.scroll
+      || after.selection_ranges != before.selection_ranges
+    {
+      let _ = self.stop_agent_follow(reason);
+    }
+  }
+
+  fn stop_agent_follow_if_pane_matches(&mut self, pane_id: PaneId, reason: &str) {
+    if self.agent_follow.enabled && self.agent_follow.pane_id == Some(pane_id) {
+      let _ = self.stop_agent_follow(reason);
+    }
+  }
+
+  fn preferred_agent_follow_pane_id(&self, preferred: Option<PaneId>) -> Option<PaneId> {
+    let is_editor_pane = |pane_id: PaneId| {
+      matches!(
+        self.editor.pane_content_kind(pane_id),
+        Some(PaneContentKind::EditorBuffer)
+      )
+    };
+
+    if let Some(pane_id) = preferred
+      && self.editor.pane_content(pane_id).is_some()
+      && is_editor_pane(pane_id)
+    {
+      return Some(pane_id);
+    }
+
+    let active_pane_id = self.editor.active_pane_id();
+    if is_editor_pane(active_pane_id) {
+      return Some(active_pane_id);
+    }
+
+    if let Some(editor_pane_id) = self
       .editor
       .pane_item_snapshots()
       .into_iter()
-      .find_map(|group| match self.editor.pane_content(group.pane_id) {
-        Some(PaneContent::EditorBuffer { buffer_id: pane_buffer_id }) if pane_buffer_id == buffer_id => {
-          Some(group.pane_id)
-        },
-        _ => None,
-      })
+      .map(|group| group.pane_id)
+      .find(|pane_id| is_editor_pane(*pane_id))
+    {
+      return Some(editor_pane_id);
+    }
+
+    if let Some(pane_id) = preferred
+      && self.editor.pane_content(pane_id).is_some()
+    {
+      return Some(pane_id);
+    }
+
+    self
+      .editor
+      .pane_content(active_pane_id)
+      .map(|_| active_pane_id)
   }
 
-  fn keep_agent_follow_visible_in_active_view(&mut self) {
+  fn agent_follow_target_pane_id(&mut self) -> Option<PaneId> {
+    let Some(pane_id) = self.preferred_agent_follow_pane_id(self.agent_follow.pane_id) else {
+      if self.agent_follow.pane_id.is_some() {
+        let _ = self.stop_agent_follow("pane-closed");
+      }
+      return None;
+    };
+
+    if self.agent_follow.pane_id != Some(pane_id) {
+      agent_follow_debug_log(format!(
+        "retarget pane={} previous={}",
+        pane_id.get().get(),
+        self
+          .agent_follow
+          .pane_id
+          .map(|pane_id| pane_id.get().get().to_string())
+          .unwrap_or_else(|| "-".to_string())
+      ));
+      self.agent_follow.pane_id = Some(pane_id);
+    }
+    Some(pane_id)
+  }
+
+  fn keep_agent_follow_visible_in_follow_pane(&mut self) {
+    fn resolve_follow_visual_row<'a>(
+      text: RopeSlice<'a>,
+      text_format: &'a TextFormat,
+      annotations: &mut TextAnnotations<'a>,
+      text_len: usize,
+      char_idx: usize,
+    ) -> Option<usize> {
+      let char_idx = char_idx.min(text_len);
+      visual_pos_at_char(text, text_format, annotations, char_idx)
+        .map(|pos| pos.row)
+        .or_else(|| {
+          if char_idx == 0 {
+            None
+          } else {
+            visual_pos_at_char(text, text_format, annotations, char_idx - 1).map(|pos| pos.row)
+          }
+        })
+    }
+
     if !self.agent_follow.enabled {
       return;
     }
     let Some(snapshot) = self.agent_follow_render_snapshot() else {
       return;
     };
-    let Some(pane_id) = self.pane_showing_buffer(snapshot.buffer_id) else {
-      agent_follow_debug_log(format!(
-        "keep-visible skipped buffer={} reason=no-pane",
-        snapshot.buffer_id.get().get()
-      ));
+    let Some(pane_id) = self.agent_follow_target_pane_id() else {
       return;
     };
-    let Some(doc) = self.editor.document_for_buffer(snapshot.buffer_id) else {
-      return;
-    };
-    let Some(view) = self.editor.pane_view(pane_id) else {
+    if !matches!(
+      self.editor.pane_content(pane_id),
+      Some(PaneContent::EditorBuffer { buffer_id }) if buffer_id == snapshot.buffer_id
+    ) {
       agent_follow_debug_log(format!(
-        "keep-visible skipped buffer={} pane={} reason=no-view",
+        "keep-visible skipped buffer={} pane={} reason=buffer-not-visible",
         snapshot.buffer_id.get().get(),
         pane_id.get().get()
       ));
       return;
-    };
+    }
 
-    let text = doc.text();
-    let cursor_pos = snapshot.cursor_char.min(text.len_chars());
-    let cursor_line = text.char_to_line(cursor_pos);
-    let cursor_col = cursor_pos.saturating_sub(text.line_to_char(cursor_line));
-    let viewport_height = view.viewport.height as usize;
-    let gutter_width = gutter_width_for_document(doc, view.viewport.width, &self.gutter_config);
-    let viewport_width = view.viewport.width.saturating_sub(gutter_width).max(1) as usize;
+    let Some(new_scroll) = ({
+      let Some(doc) = self.editor.document_for_buffer(snapshot.buffer_id) else {
+        return;
+      };
+      let Some(view) = self.editor.pane_view(pane_id) else {
+        agent_follow_debug_log(format!(
+          "keep-visible skipped buffer={} pane={} reason=no-view",
+          snapshot.buffer_id.get().get(),
+          pane_id.get().get()
+        ));
+        return;
+      };
 
-    let new_scroll = if self.text_format.soft_wrap {
-      let cursor_visual_row = {
+      let text = doc.text();
+      let text_len = text.len_chars();
+      let cursor_pos = snapshot.cursor_char.min(text_len);
+      let cursor_line = text.char_to_line(cursor_pos);
+      let cursor_col = cursor_pos.saturating_sub(text.line_to_char(cursor_line));
+      let viewport_height = view.viewport.height as usize;
+      let gutter_width = gutter_width_for_document(doc, view.viewport.width, &self.gutter_config);
+      let viewport_width = view.viewport.width.saturating_sub(gutter_width).max(1) as usize;
+
+      let new_scroll = if self.text_format.soft_wrap {
         let mut text_format = self.text_format.clone();
         text_format.viewport_width = view.viewport.width.saturating_sub(gutter_width).max(1);
         let mut annotations = TextAnnotations::default();
-        visual_pos_at_char(text.slice(..), &text_format, &mut annotations, cursor_pos)
-          .map(|pos| pos.row)
-          .unwrap_or(cursor_line)
+        let text_slice = text.slice(..);
+
+        let highlight_start_row = resolve_follow_visual_row(
+          text_slice,
+          &text_format,
+          &mut annotations,
+          text_len,
+          snapshot.highlight_start,
+        )
+        .unwrap_or(cursor_line);
+        let highlight_end_row = resolve_follow_visual_row(
+          text_slice,
+          &text_format,
+          &mut annotations,
+          text_len,
+          snapshot
+            .highlight_end
+            .max(snapshot.highlight_start.saturating_add(1))
+            .saturating_sub(1),
+        )
+        .unwrap_or(highlight_start_row);
+        let target_row = (highlight_start_row + highlight_end_row) / 2;
+
+        let mut new_scroll = view.scroll;
+        if let Some(new_row) = the_lib::view::scroll_row_to_keep_visible(
+          target_row,
+          view.scroll.row,
+          viewport_height,
+          SWIFT_SCROLLOFF,
+        ) {
+          new_scroll.row = new_row;
+        }
+        new_scroll.col = 0;
+        new_scroll
+      } else {
+        the_lib::view::scroll_to_keep_visible(
+          cursor_line,
+          cursor_col,
+          view.scroll,
+          viewport_height,
+          viewport_width,
+          SWIFT_SCROLLOFF,
+        )
+        .unwrap_or(view.scroll)
       };
 
-      let mut new_scroll = view.scroll;
-      if let Some(new_row) = the_lib::view::scroll_row_to_keep_visible(
-        cursor_visual_row,
-        view.scroll.row,
-        viewport_height,
-        SWIFT_SCROLLOFF,
-      ) {
-        new_scroll.row = new_row;
-      }
-      new_scroll.col = 0;
       Some(new_scroll)
-    } else {
-      the_lib::view::scroll_to_keep_visible(
-        cursor_line,
-        cursor_col,
-        view.scroll,
-        viewport_height,
-        viewport_width,
-        SWIFT_SCROLLOFF,
-      )
+    }) else {
+      return;
     };
 
-    if let Some(new_scroll) = new_scroll {
-      if let Some(view_mut) = self.editor.pane_view_mut(pane_id) {
-        view_mut.scroll = new_scroll;
+    if let Some(view_mut) = self.editor.pane_view_mut(pane_id) {
+      view_mut.scroll = new_scroll;
+    }
+    agent_follow_debug_log(format!(
+      "keep-visible buffer={} pane={} scroll_row={} scroll_col={}",
+      snapshot.buffer_id.get().get(),
+      pane_id.get().get(),
+      new_scroll.row,
+      new_scroll.col,
+    ));
+  }
+
+  fn apply_agent_follow_activity(
+    &mut self,
+    buffer_id: BufferId,
+    activity: AgentFollowActivityKind,
+    range: Option<(usize, usize)>,
+    cursor_char: Option<usize>,
+    reveal: bool,
+  ) -> bool {
+    if !self.agent_follow.enabled {
+      return false;
+    }
+
+    let Some(pane_id) = self.agent_follow_target_pane_id() else {
+      return false;
+    };
+    let switched = if matches!(
+      self.editor.pane_content(pane_id),
+      Some(PaneContent::EditorBuffer { buffer_id: pane_buffer_id }) if pane_buffer_id == buffer_id
+    ) {
+      false
+    } else {
+      self.editor.set_active_buffer_in_pane(pane_id, buffer_id)
+    };
+
+    let Some(doc) = self.editor.document_for_buffer(buffer_id) else {
+      return false;
+    };
+    let text_len = doc.text().len_chars();
+    let fallback_cursor = doc
+      .selection()
+      .ranges()
+      .first()
+      .map(|range| range.head)
+      .unwrap_or(0)
+      .min(text_len);
+    let cursor_char = cursor_char.unwrap_or(fallback_cursor).min(text_len);
+    let (highlight_start, highlight_end) = range
+      .map(|(start, end)| (start.min(text_len), end.max(start.saturating_add(1))))
+      .unwrap_or_else(|| (cursor_char, cursor_char.saturating_add(1)));
+
+    self.agent_follow.pane_id = Some(pane_id);
+    self.agent_follow.buffer_id = Some(buffer_id);
+    self.agent_follow.cursor_char = Some(cursor_char);
+    self.agent_follow.highlight_start = highlight_start;
+    self.agent_follow.highlight_end = highlight_end;
+    self.agent_follow.visible_until = matches!(
+      activity,
+      AgentFollowActivityKind::EditApplied | AgentFollowActivityKind::Write
+    )
+    .then_some(Instant::now() + agent_follow_cursor_linger_duration());
+
+    agent_follow_debug_log(format!(
+      "activity={:?} buffer={} pane={} cursor_char={} highlight=[{}, {}) switched={} reveal={}",
+      activity,
+      buffer_id.get().get(),
+      pane_id.get().get(),
+      cursor_char,
+      highlight_start,
+      highlight_end,
+      u8::from(switched),
+      u8::from(reveal),
+    ));
+
+    if reveal {
+      self.keep_agent_follow_visible_in_follow_pane();
+    }
+    true
+  }
+
+  fn focus_agent_follow_path(
+    &mut self,
+    path: &Path,
+    activity: AgentFollowActivityKind,
+    range: Option<(usize, usize)>,
+    line_range: Option<(usize, usize)>,
+    cursor_char: Option<usize>,
+  ) -> Result<bool, String> {
+    let create_missing = matches!(activity, AgentFollowActivityKind::Write);
+    let (buffer_id, _opened_buffer) = self.ensure_workspace_buffer_loaded(path, create_missing)?;
+    let resolved_range = if let Some(range) = range {
+      Some(range)
+    } else if let Some((start_line, end_line)) = line_range {
+      self.editor.document_for_buffer(buffer_id).map(|doc| {
+        let text = doc.text();
+        let line_count = text.len_lines().max(1);
+        let start_line = start_line.clamp(1, line_count);
+        let end_line = end_line.max(start_line).clamp(start_line, line_count);
+        let start_char = text.line_to_char(start_line.saturating_sub(1));
+        let end_char = if end_line >= line_count {
+          text.len_chars()
+        } else {
+          text.line_to_char(end_line)
+        };
+        (start_char, end_char.max(start_char.saturating_add(1)))
+      })
+    } else {
+      None
+    };
+    Ok(self.apply_agent_follow_activity(
+      buffer_id,
+      activity,
+      resolved_range,
+      cursor_char,
+      resolved_range.is_some() || cursor_char.is_some(),
+    ))
+  }
+
+  fn handle_pi_bridge_notification(&mut self, method: &str, params: Value) -> bool {
+    match method {
+      "agent/focus" | "agent/edit_preview" | "agent/edit_applied" | "agent/end" => {},
+      _ => return false,
+    }
+
+    if method == "agent/end" {
+      let had_state =
+        self.agent_follow.buffer_id.is_some() || self.agent_follow.visible_until.is_some();
+      if had_state {
+        let pane_id = self.agent_follow.pane_id;
+        self.agent_follow.clear();
+        self.agent_follow.pane_id = pane_id;
       }
-      agent_follow_debug_log(format!(
-        "keep-visible buffer={} pane={} scroll_row={} scroll_col={}",
-        snapshot.buffer_id.get().get(),
-        pane_id.get().get(),
-        new_scroll.row,
-        new_scroll.col
-      ));
+      return had_state;
+    }
+
+    let params: PiBridgeAgentFocusParams = match serde_json::from_value(params) {
+      Ok(params) => params,
+      Err(err) => {
+        self.push_warning("pi-bridge", format!("invalid {method} params: {err}"));
+        return true;
+      },
+    };
+    let _ = (&params.session_id, &params.top_line, &params.center_line);
+
+    let path = match self.resolve_pi_bridge_path(&params.path) {
+      Ok(path) => path,
+      Err(err) => {
+        self.push_warning("pi-bridge", err);
+        return true;
+      },
+    };
+    let activity = params.kind.unwrap_or(match method {
+      "agent/edit_preview" => PiBridgeAgentActivityKind::EditPreview,
+      "agent/edit_applied" => PiBridgeAgentActivityKind::EditApplied,
+      _ => PiBridgeAgentActivityKind::Focus,
+    });
+    let range = params.range.map(|range| (range.start_char, range.end_char));
+    let line_range = params
+      .start_line
+      .map(|start_line| (start_line, params.end_line.unwrap_or(start_line)));
+    let activity = match activity {
+      PiBridgeAgentActivityKind::Focus => AgentFollowActivityKind::Focus,
+      PiBridgeAgentActivityKind::Read => AgentFollowActivityKind::Read,
+      PiBridgeAgentActivityKind::EditPreview => AgentFollowActivityKind::EditPreview,
+      PiBridgeAgentActivityKind::EditApplied => AgentFollowActivityKind::EditApplied,
+      PiBridgeAgentActivityKind::Write => AgentFollowActivityKind::Write,
+    };
+
+    match self.focus_agent_follow_path(&path, activity, range, line_range, params.cursor_char) {
+      Ok(changed) => changed,
+      Err(err) => {
+        self.push_warning("pi-bridge", err);
+        true
+      },
     }
   }
 
@@ -5822,55 +6267,38 @@ impl SwiftEditor {
     buffer_id: BufferId,
     transaction: &the_lib::transaction::Transaction,
   ) {
-    if !self.agent_follow.enabled {
-      self.agent_follow.clear();
-      return;
-    }
-
-    let steps = Self::agent_follow_steps_for_transaction(transaction);
-    let Some(step) = steps.last().copied() else {
+    let Some((step, step_count)) = Self::agent_follow_target_for_transaction(transaction) else {
       agent_follow_debug_log(format!(
         "start skipped buffer={} reason=no-steps",
         buffer_id.get().get()
       ));
-      self.agent_follow.clear();
+      if self.agent_follow.enabled {
+        self.agent_follow.clear();
+      }
       return;
     };
 
-    let active_pane_already_shows_buffer = matches!(
-      self.editor.active_pane_content(),
-      Some(PaneContent::EditorBuffer { buffer_id: active_buffer_id }) if active_buffer_id == buffer_id
+    let _ = self.apply_agent_follow_activity(
+      buffer_id,
+      AgentFollowActivityKind::EditApplied,
+      Some((step.flash_start, step.flash_end)),
+      Some(step.cursor_char),
+      true,
     );
-    let did_activate_buffer = if !active_pane_already_shows_buffer {
-      self.editor.set_active_buffer(buffer_id)
-    } else {
-      false
-    };
-
-    let now = Instant::now();
-    self.agent_follow.buffer_id = Some(buffer_id);
-    self.agent_follow.cursor_char = Some(step.cursor_char);
-    self.agent_follow.highlight_start = step.flash_start;
-    self.agent_follow.highlight_end = step.flash_end;
-    self.agent_follow.visible_until = Some(now + agent_follow_cursor_linger_duration());
-
     agent_follow_debug_log(format!(
-      "start buffer={} step_count={} cursor_char={} highlight=[{}, {}) active_buffer={} active_pane={} switched={}",
+      "start buffer={} step_count={} cursor_char={} highlight=[{}, {})",
       buffer_id.get().get(),
-      steps.len(),
+      step_count,
       step.cursor_char,
       step.flash_start,
       step.flash_end,
-      self.editor.active_buffer_id().get().get(),
-      self.editor.active_pane_id().get().get(),
-      u8::from(did_activate_buffer)
     ));
-    self.keep_agent_follow_visible_in_active_view();
   }
 
   fn poll_agent_follow(&mut self) -> bool {
     if !self.agent_follow.enabled {
-      let had_state = self.agent_follow.buffer_id.is_some() || self.agent_follow.visible_until.is_some();
+      let had_state =
+        self.agent_follow.buffer_id.is_some() || self.agent_follow.visible_until.is_some();
       if had_state {
         self.agent_follow.clear();
       }
@@ -5886,16 +6314,14 @@ impl SwiftEditor {
     {
       if let Some(snapshot) = self.agent_follow.render_snapshot() {
         agent_follow_debug_log(format!(
-          "clear buffer={} cursor_char={} highlight=[{}, {}) reason=linger-expired",
+          "highlight-expired buffer={} cursor_char={} highlight=[{}, {})",
           snapshot.buffer_id.get().get(),
           snapshot.cursor_char,
           snapshot.highlight_start,
           snapshot.highlight_end
         ));
-      } else {
-        agent_follow_debug_log("clear reason=linger-expired");
       }
-      self.agent_follow.clear();
+      self.agent_follow.visible_until = None;
       return true;
     }
 
@@ -5911,7 +6337,9 @@ impl SwiftEditor {
       return false;
     }
     self.agent_follow.enabled = enabled;
-    if !enabled {
+    if enabled {
+      self.agent_follow.pane_id = self.preferred_agent_follow_pane_id(self.agent_follow.pane_id);
+    } else {
       self.agent_follow.clear();
     }
     true
@@ -6058,6 +6486,7 @@ impl SwiftEditor {
       quit_requested: false,
     };
 
+    this.agent_follow.pane_id = this.preferred_agent_follow_pane_id(None);
     set_file_picker_syntax_loader(&mut this.file_picker, this.loader.clone());
     this.refresh_active_document_syntax();
     this.refresh_lsp_runtime_state();
@@ -6112,6 +6541,7 @@ impl SwiftEditor {
   }
 
   fn set_scroll_row(&mut self, row: u32) -> bool {
+    let before = self.agent_follow_local_state_snapshot();
     let max_row = max_scroll_row(
       self.editor.document().text().len_lines(),
       self.editor.view().viewport.height as usize,
@@ -6121,10 +6551,12 @@ impl SwiftEditor {
       return false;
     }
     self.editor.view_mut().scroll.row = next;
+    self.stop_agent_follow_if_local_change(before, "user-scroll-row");
     true
   }
 
   fn set_scroll_col(&mut self, col: u32) -> bool {
+    let before = self.agent_follow_local_state_snapshot();
     let max_col = max_scroll_col(
       self.editor.document(),
       &self.text_format,
@@ -6135,6 +6567,7 @@ impl SwiftEditor {
       return false;
     }
     self.editor.view_mut().scroll.col = next;
+    self.stop_agent_follow_if_local_change(before, "user-scroll-col");
     true
   }
 
@@ -6145,12 +6578,14 @@ impl SwiftEditor {
     if self.editor.active_pane_id() == pane {
       return false;
     }
+    let before = self.agent_follow_local_state_snapshot();
     let previous_buffer_id = self.editor.active_buffer_id();
     if !self.editor.set_active_pane(pane) {
       return false;
     }
     self.sync_state_after_active_pane_change(previous_buffer_id);
     self.bump_cursor_blink_generation();
+    self.stop_agent_follow_if_local_change(before, "user-pane-change");
     true
   }
 
@@ -6182,7 +6617,9 @@ impl SwiftEditor {
         let Some(surface_id) = client_surface_id_from_raw(item_raw) else {
           return false;
         };
-        self.editor.set_active_client_surface_in_pane(pane, surface_id)
+        self
+          .editor
+          .set_active_client_surface_in_pane(pane, surface_id)
       },
     };
     if !pane_changed && !item_changed {
@@ -6192,6 +6629,7 @@ impl SwiftEditor {
     self.file_tree.active = false;
     self.sync_state_after_active_pane_change(previous_buffer_id);
     self.bump_cursor_blink_generation();
+    self.stop_agent_follow_if_pane_matches(pane, "user-open-item-change");
     true
   }
 
@@ -6209,13 +6647,17 @@ impl SwiftEditor {
         let Some(buffer_id) = buffer_id_from_raw(item_raw) else {
           return false;
         };
-        self.editor.close_pane_item(pane, PaneContent::EditorBuffer { buffer_id })
+        self
+          .editor
+          .close_pane_item(pane, PaneContent::EditorBuffer { buffer_id })
       },
       OpenItemKind::Terminal => {
         let Some(surface_id) = client_surface_id_from_raw(item_raw) else {
           return false;
         };
-        self.editor.close_pane_item(pane, PaneContent::ClientSurface { surface_id })
+        self
+          .editor
+          .close_pane_item(pane, PaneContent::ClientSurface { surface_id })
       },
     };
     if !changed {
@@ -6225,10 +6667,12 @@ impl SwiftEditor {
     self.file_tree.active = false;
     self.sync_state_after_active_pane_change(previous_buffer_id);
     self.bump_cursor_blink_generation();
+    self.stop_agent_follow_if_pane_matches(pane, "user-close-item");
     true
   }
 
   fn close_buffer_tab(&mut self, buffer_raw: usize) -> bool {
+    let before = self.agent_follow_local_state_snapshot();
     let Some(buffer_id) = buffer_id_from_raw(buffer_raw) else {
       return false;
     };
@@ -6239,6 +6683,7 @@ impl SwiftEditor {
     self.file_tree.active = false;
     self.sync_state_after_active_pane_change(previous_buffer_id);
     self.bump_cursor_blink_generation();
+    self.stop_agent_follow_if_local_change(before, "user-close-buffer-tab");
     true
   }
 
@@ -6281,7 +6726,10 @@ impl SwiftEditor {
       return false;
     };
     let previous_buffer_id = self.editor.active_buffer_id();
-    if !self.editor.close_pane_item(self.editor.active_pane_id(), content) {
+    if !self
+      .editor
+      .close_pane_item(self.editor.active_pane_id(), content)
+    {
       return false;
     }
     self.file_tree.active = false;
@@ -6342,7 +6790,8 @@ impl SwiftEditor {
     let mut text_format = self.text_format.clone();
     {
       let document = self.editor.document();
-      let gutter_width = gutter_width_for_document(document, view.viewport.width, &self.gutter_config);
+      let gutter_width =
+        gutter_width_for_document(document, view.viewport.width, &self.gutter_config);
       text_format.viewport_width = view.viewport.width.saturating_sub(gutter_width).max(1);
     }
 
@@ -6374,7 +6823,14 @@ impl SwiftEditor {
             .editor
             .view()
             .active_cursor
-            .and_then(|cursor_id| self.editor.document().selection().range_by_id(cursor_id).copied())
+            .and_then(|cursor_id| {
+              self
+                .editor
+                .document()
+                .selection()
+                .range_by_id(cursor_id)
+                .copied()
+            })
             .map(|range| range.anchor)
             .unwrap_or(target_char);
           Selection::single(anchor, target_char)
@@ -6383,12 +6839,18 @@ impl SwiftEditor {
       }
     };
 
-    if self.editor.document_mut().set_selection(next_selection.clone()).is_err() {
+    if self
+      .editor
+      .document_mut()
+      .set_selection(next_selection.clone())
+      .is_err()
+    {
       return pane_changed;
     }
     self.editor.view_mut().active_cursor = next_selection.cursor_ids().first().copied();
     self.bump_cursor_blink_generation();
     self.ensure_cursor_visible();
+    self.stop_agent_follow_if_pane_matches(pane_id, "user-selection-click");
     true
   }
 
@@ -6425,7 +6887,8 @@ impl SwiftEditor {
     let mut text_format = self.text_format.clone();
     {
       let document = self.editor.document();
-      let gutter_width = gutter_width_for_document(document, view.viewport.width, &self.gutter_config);
+      let gutter_width =
+        gutter_width_for_document(document, view.viewport.width, &self.gutter_config);
       text_format.viewport_width = view.viewport.width.saturating_sub(gutter_width).max(1);
     }
 
@@ -6450,7 +6913,14 @@ impl SwiftEditor {
           .editor
           .view()
           .active_cursor
-          .and_then(|cursor_id| self.editor.document().selection().range_by_id(cursor_id).copied())
+          .and_then(|cursor_id| {
+            self
+              .editor
+              .document()
+              .selection()
+              .range_by_id(cursor_id)
+              .copied()
+          })
           .map(|range| range.anchor)
       } else {
         None
@@ -6464,17 +6934,23 @@ impl SwiftEditor {
       )
     };
 
-    if self.editor.document_mut().set_selection(next_selection.clone()).is_err() {
+    if self
+      .editor
+      .document_mut()
+      .set_selection(next_selection.clone())
+      .is_err()
+    {
       return false;
     }
     self.editor.view_mut().active_cursor = next_selection.cursor_ids().first().copied();
     self.bump_cursor_blink_generation();
     self.ensure_cursor_visible();
+    self.stop_agent_follow_if_pane_matches(pane_id, "user-selection-drag");
     true
   }
 
   fn handle_key_event(&mut self, raw: the_editor_key_event_t) -> bool {
-
+    let before = self.agent_follow_local_state_snapshot();
     let Some(event) = translate_key_event(raw) else {
       return false;
     };
@@ -6498,10 +6974,12 @@ impl SwiftEditor {
       }
     }
     self.ensure_cursor_visible();
+    self.stop_agent_follow_if_local_change(before, "user-key-event");
     true
   }
 
   fn insert_text(&mut self, text: &str) -> bool {
+    let before = self.agent_follow_local_state_snapshot();
     let mut changed = false;
     let mut last_key = None;
     for ch in text.chars() {
@@ -6534,6 +7012,7 @@ impl SwiftEditor {
         self.clear_completion_state_with_reason("left-insert-mode-insert-text");
       }
       self.ensure_cursor_visible();
+      self.stop_agent_follow_if_local_change(before, "user-insert-text");
     }
     changed
   }
@@ -7292,10 +7771,7 @@ fn selection_for_buffer_drag(
   }
 }
 
-fn clamp_agent_follow_plan_position(
-  plan: &RenderPlan,
-  pos: Position,
-) -> Option<Position> {
+fn clamp_agent_follow_plan_position(plan: &RenderPlan, pos: Position) -> Option<Position> {
   let row_start = plan.scroll.row;
   let row_end = row_start + plan.viewport.height as usize;
   let col_start = plan.scroll.col;
@@ -7310,7 +7786,6 @@ fn clamp_agent_follow_plan_position(
 
   Some(Position::new(pos.row - row_start, pos.col - col_start))
 }
-
 
 fn agent_follow_style_with_bg_fallback(style: Style, fallback: Color) -> Style {
   if style.bg.is_some() {
@@ -7348,7 +7823,10 @@ fn agent_follow_badge_style(theme: &Theme) -> Style {
     .or_else(|| theme.try_get("ui.cursor"))
     .or_else(|| theme.try_get("ui.selection"))
     .unwrap_or_default();
-  let color = style.fg.or(style.bg).unwrap_or(Color::Rgb(0x1D, 0x4E, 0x89));
+  let color = style
+    .fg
+    .or(style.bg)
+    .unwrap_or(Color::Rgb(0x1D, 0x4E, 0x89));
 
   Style::default().fg(color).add_modifier(Modifier::BOLD)
 }
@@ -7391,9 +7869,19 @@ fn apply_agent_follow_visuals<'a>(
   let clamped_anchor_pos =
     highlight_anchor_pos.and_then(|pos| clamp_agent_follow_plan_position(plan, pos));
 
+  if let Some(pos) = clamped_anchor_pos {
+    plan.cursors.push(the_lib::render::RenderCursor {
+      id: the_lib::selection::CursorId::fresh(),
+      pos,
+      kind: CursorKind::Hollow,
+      style: cursor_style,
+    });
+  }
+
   if !snapshot.highlighting {
     agent_follow_debug_log(format!(
-      "render buffer={} cursor_char={} overlay_anchor_visible={} highlight_visible=false viewport_row={} scroll_col={}",
+      "render buffer={} cursor_char={} overlay_anchor_visible={} highlight_visible=false \
+       viewport_row={} scroll_col={}",
       buffer_id.get().get(),
       snapshot.cursor_char,
       clamped_anchor_pos.is_some(),
@@ -7413,7 +7901,8 @@ fn apply_agent_follow_visuals<'a>(
     let row_start = start_pos.row.min(end_pos.row);
     let row_end = start_pos.row.max(end_pos.row);
     agent_follow_debug_log(format!(
-      "render buffer={} cursor_char={} overlay_anchor_visible={} highlight_chars=[{}, {}) rows=[{}, {}] viewport_rows=[{}, {})",
+      "render buffer={} cursor_char={} overlay_anchor_visible={} highlight_chars=[{}, {}) \
+       rows=[{}, {}] viewport_rows=[{}, {})",
       buffer_id.get().get(),
       snapshot.cursor_char,
       clamped_anchor_pos.is_some(),
@@ -7446,14 +7935,20 @@ fn apply_agent_follow_visuals<'a>(
     } else {
       0
     };
-    let content_width = plan.viewport.width.saturating_sub(content_x).saturating_sub(1);
+    let content_width = plan
+      .viewport
+      .width
+      .saturating_sub(content_x)
+      .saturating_sub(1);
     if content_width > 0 {
-      plan.overlays.push(OverlayNode::Rect(the_lib::render::overlay::OverlayRect {
-        rect: Rect::new(content_x, local_row_start, content_width, row_count),
-        kind: OverlayRectKind::Highlight,
-        radius: 8,
-        style: selection_style,
-      }));
+      plan
+        .overlays
+        .push(OverlayNode::Rect(the_lib::render::overlay::OverlayRect {
+          rect:   Rect::new(content_x, local_row_start, content_width, row_count),
+          kind:   OverlayRectKind::Highlight,
+          radius: 8,
+          style:  selection_style,
+        }));
     }
 
     let badge_style = agent_follow_badge_style(theme).patch(cursor_style);
@@ -7462,10 +7957,15 @@ fn apply_agent_follow_visuals<'a>(
     } else {
       content_x.saturating_add(1) as usize
     };
-    plan.add_overlay_text(Position::new(local_row_start as usize, badge_col), "π", badge_style);
+    plan.add_overlay_text(
+      Position::new(local_row_start as usize, badge_col),
+      "π",
+      badge_style,
+    );
   } else {
     agent_follow_debug_log(format!(
-      "render skipped buffer={} reason=missing-highlight-positions cursor_char={} highlight=[{}, {})",
+      "render skipped buffer={} reason=missing-highlight-positions cursor_char={} highlight=[{}, \
+       {})",
       buffer_id.get().get(),
       snapshot.cursor_char,
       snapshot.highlight_start,
@@ -7510,41 +8010,42 @@ fn build_inactive_pane_plan_with_styles(
       gutter_width_for_document(document, view.viewport.width, &editor.gutter_config);
     text_format.viewport_width = view.viewport.width.saturating_sub(gutter_width).max(1);
 
-    let mut plan = if let (Some(loader), Some(syntax)) = (editor.loader.as_deref(), document.syntax()) {
-      let line_range = view.scroll.row..(view.scroll.row + view.viewport.height as usize);
-      let mut adapter = SyntaxHighlightAdapter::new(
-        document.text().slice(..),
-        syntax,
-        loader,
-        &mut local_highlight_cache,
-        line_range,
-        document.version(),
-        document.syntax_version(),
-        true,
-      );
-      build_plan(
-        document,
-        view.clone(),
-        &text_format,
-        &editor.gutter_config,
-        &mut annotations,
-        &mut adapter,
-        cache,
-        styles,
-      )
-    } else {
-      let mut highlights = NoHighlights;
-      build_plan(
-        document,
-        view.clone(),
-        &text_format,
-        &editor.gutter_config,
-        &mut annotations,
-        &mut highlights,
-        cache,
-        styles,
-      )
-    };
+    let mut plan =
+      if let (Some(loader), Some(syntax)) = (editor.loader.as_deref(), document.syntax()) {
+        let line_range = view.scroll.row..(view.scroll.row + view.viewport.height as usize);
+        let mut adapter = SyntaxHighlightAdapter::new(
+          document.text().slice(..),
+          syntax,
+          loader,
+          &mut local_highlight_cache,
+          line_range,
+          document.version(),
+          document.syntax_version(),
+          true,
+        );
+        build_plan(
+          document,
+          view.clone(),
+          &text_format,
+          &editor.gutter_config,
+          &mut annotations,
+          &mut adapter,
+          cache,
+          styles,
+        )
+      } else {
+        let mut highlights = NoHighlights;
+        build_plan(
+          document,
+          view.clone(),
+          &text_format,
+          &editor.gutter_config,
+          &mut annotations,
+          &mut highlights,
+          cache,
+          styles,
+        )
+      };
     apply_swift_selection_match_highlights(
       &mut plan,
       document,
@@ -8731,7 +9232,9 @@ impl OwnedSnapshot {
         cursor_generation: active_plan.map(|plan| plan.cursor_generation).unwrap_or(0),
         scroll_generation: active_plan.map(|plan| plan.scroll_generation).unwrap_or(0),
         theme_generation: active_plan.map(|plan| plan.theme_generation).unwrap_or(0),
-        cursor_blink_enabled: active_plan.map(|plan| plan.cursor_blink_enabled).unwrap_or(false),
+        cursor_blink_enabled: active_plan
+          .map(|plan| plan.cursor_blink_enabled)
+          .unwrap_or(false),
         cursor_blink_interval_ms: active_plan
           .map(|plan| plan.cursor_blink_interval_ms)
           .unwrap_or(0),
@@ -8827,7 +9330,11 @@ impl OwnedSnapshot {
         text_idx,
       });
     }
-    if editor.pi_bridge.as_ref().is_some_and(|bridge| bridge.is_attached()) {
+    if editor
+      .pi_bridge
+      .as_ref()
+      .is_some_and(|bridge| bridge.is_attached())
+    {
       let text_idx = snapshot.push_string("pi bridge active");
       let icon_idx = snapshot.push_optional_string(Some("pi"));
       snapshot.status_items.push(StatusItemRecord {
@@ -9762,7 +10269,10 @@ impl OwnedSnapshot {
       tabs: the_editor_snapshot_buffer_tabs_t {
         visible:          snapshot.visible,
         active_index:     snapshot.active_tab.map(|index| index as i32).unwrap_or(-1),
-        active_buffer_id: snapshot.active_buffer_id.map(|id| id.get().get()).unwrap_or(0),
+        active_buffer_id: snapshot
+          .active_buffer_id
+          .map(|id| id.get().get())
+          .unwrap_or(0),
         row_count:        snapshot.tabs.len(),
       },
     };
@@ -9801,7 +10311,8 @@ impl OwnedSnapshot {
   }
 
   fn populate_open_items(&mut self, editor: &SwiftEditor) {
-    let mut snapshot = pane_open_items_snapshot_with_options(editor, PaneOpenItemsSnapshotOptions::default());
+    let mut snapshot =
+      pane_open_items_snapshot_with_options(editor, PaneOpenItemsSnapshotOptions::default());
     let decorations = the_default::combine_file_tree_decorations(
       &editor.current_buffer_tab_vcs_statuses(),
       &editor.current_buffer_tab_diagnostic_statuses(),
@@ -9836,11 +10347,13 @@ impl OwnedSnapshot {
           .as_ref()
           .map(|path| self.push_string(path.to_string_lossy().as_ref()));
         let icon_name = match item.kind {
-          OpenItemKind::Buffer => item
-            .file_path
-            .as_deref()
-            .map(file_picker_icon_name_for_path)
-            .unwrap_or("doc"),
+          OpenItemKind::Buffer => {
+            item
+              .file_path
+              .as_deref()
+              .map(file_picker_icon_name_for_path)
+              .unwrap_or("doc")
+          },
           OpenItemKind::Terminal => "terminal",
         };
         let icon_name_idx = self.push_string(icon_name);
@@ -9852,17 +10365,17 @@ impl OwnedSnapshot {
         };
         self.open_item_rows.push(OpenItemRowRecord {
           row: the_editor_snapshot_open_item_t {
-            kind:                open_item_kind_code(item.kind),
+            kind: open_item_kind_code(item.kind),
             item_id,
             buffer_id,
             client_surface_id,
-            title:               ptr::null(),
-            subtitle:            ptr::null(),
-            file_path:           ptr::null(),
-            icon_name:           ptr::null(),
-            is_active:           item.is_active,
-            is_modified:         item.modified,
-            vcs_kind:            file_tree_vcs_kind_code(item.decorations.vcs),
+            title: ptr::null(),
+            subtitle: ptr::null(),
+            file_path: ptr::null(),
+            icon_name: ptr::null(),
+            is_active: item.is_active,
+            is_modified: item.modified,
+            vcs_kind: file_tree_vcs_kind_code(item.decorations.vcs),
             diagnostic_severity: file_tree_diagnostic_severity_code(item.decorations),
           },
           title_idx,
@@ -12883,13 +13396,9 @@ pub unsafe extern "C" fn the_editor_click_buffer_position(
   let Some(handle) = (unsafe { handle.as_mut() }) else {
     return false;
   };
-  handle.editor.click_buffer_position(
-    pane_id,
-    logical_col,
-    logical_row,
-    modifiers,
-    click_count,
-  )
+  handle
+    .editor
+    .click_buffer_position(pane_id, logical_col, logical_row, modifiers, click_count)
 }
 
 #[unsafe(no_mangle)]
@@ -13236,7 +13745,14 @@ pub unsafe extern "C" fn the_editor_activate_buffer_tab(
   let Some(buffer_id) = buffer_id_from_raw(buffer_id) else {
     return false;
   };
-  activate_buffer_tab(&mut handle.editor, buffer_id)
+  let before = handle.editor.agent_follow_local_state_snapshot();
+  let changed = activate_buffer_tab(&mut handle.editor, buffer_id);
+  if changed {
+    handle
+      .editor
+      .stop_agent_follow_if_local_change(before, "user-activate-buffer-tab");
+  }
+  changed
 }
 
 #[unsafe(no_mangle)]
@@ -13288,9 +13804,7 @@ pub unsafe extern "C" fn the_editor_set_embedded_terminal_enabled(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_agent_follow_enabled(
-  handle: *mut the_editor_handle_t,
-) -> bool {
+pub unsafe extern "C" fn the_editor_agent_follow_enabled(handle: *mut the_editor_handle_t) -> bool {
   let Some(handle) = (unsafe { handle.as_mut() }) else {
     return false;
   };
@@ -13309,9 +13823,7 @@ pub unsafe extern "C" fn the_editor_set_agent_follow_enabled(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_take_quit_requested(
-  handle: *mut the_editor_handle_t,
-) -> bool {
+pub unsafe extern "C" fn the_editor_take_quit_requested(handle: *mut the_editor_handle_t) -> bool {
   let Some(handle) = (unsafe { handle.as_mut() }) else {
     return false;
   };
@@ -14070,10 +14582,12 @@ pub unsafe extern "C" fn the_editor_string_free(value: *mut c_char) {
 
 #[cfg(test)]
 mod tests {
-  use super::*;
   use std::path::Path;
+
   use tempfile::tempdir;
   use the_lib::editor::PaneContentKind;
+
+  use super::*;
 
   #[test]
   fn current_active_file_path_prefers_editor_state_over_cached_path() {
@@ -14083,8 +14597,14 @@ mod tests {
       .editor
       .set_active_file_path(Some(PathBuf::from("/tmp/current.c")));
 
-    assert_eq!(editor.current_active_file_path(), Some(Path::new("/tmp/current.c")));
-    assert_eq!(DefaultContext::file_path(&editor), Some(Path::new("/tmp/current.c")));
+    assert_eq!(
+      editor.current_active_file_path(),
+      Some(Path::new("/tmp/current.c"))
+    );
+    assert_eq!(
+      DefaultContext::file_path(&editor),
+      Some(Path::new("/tmp/current.c"))
+    );
   }
 
   #[test]
@@ -14093,11 +14613,19 @@ mod tests {
     fs::create_dir(workspace.path().join(".git")).unwrap();
     let file = workspace.path().join("src").join("main.rs");
     fs::create_dir_all(file.parent().unwrap()).unwrap();
-    fs::write(&file, "fn main() {}
-").unwrap();
+    fs::write(
+      &file,
+      "fn main() {}
+",
+    )
+    .unwrap();
 
     let editor = SwiftEditor::new(Some(file.as_path()));
-    let manifest_path = workspace.path().join(".git").join("the-editor").join("pi-bridge.json");
+    let manifest_path = workspace
+      .path()
+      .join(".git")
+      .join("the-editor")
+      .join("pi-bridge.json");
     assert!(manifest_path.exists());
     drop(editor);
     assert!(!manifest_path.exists());
@@ -14108,16 +14636,25 @@ mod tests {
     let mut editor = SwiftEditor::new(None);
     let active_pane = editor.editor.active_pane_id();
 
-    assert_eq!(editor.editor.pane_content_kind(active_pane), Some(PaneContentKind::EditorBuffer));
+    assert_eq!(
+      editor.editor.pane_content_kind(active_pane),
+      Some(PaneContentKind::EditorBuffer)
+    );
     assert!(!editor.open_terminal_in_active_pane_ui());
 
     assert!(editor.set_embedded_terminal_enabled(true));
     assert!(editor.open_terminal_in_active_pane_ui());
-    assert_eq!(editor.editor.pane_content_kind(active_pane), Some(PaneContentKind::ClientSurface));
+    assert_eq!(
+      editor.editor.pane_content_kind(active_pane),
+      Some(PaneContentKind::ClientSurface)
+    );
     assert!(editor.editor.is_active_pane_terminal());
 
     assert!(editor.close_terminal_in_active_pane_ui());
-    assert_eq!(editor.editor.pane_content_kind(active_pane), Some(PaneContentKind::EditorBuffer));
+    assert_eq!(
+      editor.editor.pane_content_kind(active_pane),
+      Some(PaneContentKind::EditorBuffer)
+    );
     assert!(!editor.editor.is_active_pane_terminal());
   }
 }

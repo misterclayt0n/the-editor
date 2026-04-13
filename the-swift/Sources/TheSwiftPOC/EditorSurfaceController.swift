@@ -296,13 +296,24 @@ final class EditorSurfaceController: ObservableObject {
     func splitActivePaneVertical() {
         guard EditorFFIBridge.splitActivePaneVertical(handle?.raw) else { return }
         refreshSnapshot()
-        focusEditor()
+        if activeOpenItemKind != .terminal {
+            focusEditor()
+        }
     }
 
     func splitActivePaneHorizontal() {
         guard EditorFFIBridge.splitActivePaneHorizontal(handle?.raw) else { return }
         refreshSnapshot()
-        focusEditor()
+        if activeOpenItemKind != .terminal {
+            focusEditor()
+        }
+    }
+
+    /// Kind of the active tab in the active pane's open-items strip (buffer vs terminal).
+    private var activeOpenItemKind: EditorOpenItemKind? {
+        openItems.groups.first(where: { $0.isActivePane })?
+            .items.first(where: { $0.isActive })?
+            .kind
     }
 
     func closeActivePaneItem() {

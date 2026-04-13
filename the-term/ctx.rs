@@ -145,6 +145,13 @@ use the_lib::{
     MessageDisposition,
     MessageLevel,
   },
+  pi_bridge::{
+    PI_BRIDGE_PROTOCOL_VERSION,
+    PiBridgeEnvelope,
+    PiBridgeEvent,
+    PiBridgeHandle,
+    SelectionPayload,
+  },
   position::Position,
   registers::Registers,
   render::{
@@ -289,19 +296,9 @@ use the_vcs::{
   VcsWorkspaceScan,
 };
 
-use the_lib::pi_bridge::{
-  PiBridgeEnvelope,
-  PiBridgeEvent,
-  PiBridgeHandle,
-  SelectionPayload,
-  PI_BRIDGE_PROTOCOL_VERSION,
-};
-
-use crate::{
-  picker_layout::{
-    CompletionDocsLayout,
-    FilePickerLayout,
-  },
+use crate::picker_layout::{
+  CompletionDocsLayout,
+  FilePickerLayout,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -339,17 +339,15 @@ mod imp {
             connection_id,
             envelope,
           }) => {
-            pi_bridge_debug_log(format!("send_to connection_id={} envelope={:?}", connection_id, envelope));
+            pi_bridge_debug_log(format!(
+              "send_to connection_id={} envelope={:?}",
+              connection_id, envelope
+            ));
             if let Some(connection) = connections.get_mut(&connection_id)
               && let Err(err) = write_envelope(connection, &envelope)
             {
               let _ = tx.send(PiBridgeEvent::InvalidMessage(err));
-              disconnect_connection(
-                &mut connections,
-                connection_id,
-                &mut subscriber_id,
-                &tx,
-              );
+              disconnect_connection(&mut connections, connection_id, &mut subscriber_id, &tx);
             }
           },
           Ok(PiBridgeWorkerCommand::SendToSubscriber { envelope }) => {
@@ -357,17 +355,15 @@ mod imp {
               pi_bridge_debug_log("send_to_subscriber skipped no subscriber");
               continue;
             };
-            pi_bridge_debug_log(format!("send_to_subscriber connection_id={} envelope={:?}", connection_id, envelope));
+            pi_bridge_debug_log(format!(
+              "send_to_subscriber connection_id={} envelope={:?}",
+              connection_id, envelope
+            ));
             if let Some(connection) = connections.get_mut(&connection_id)
               && let Err(err) = write_envelope(connection, &envelope)
             {
               let _ = tx.send(PiBridgeEvent::InvalidMessage(err));
-              disconnect_connection(
-                &mut connections,
-                connection_id,
-                &mut subscriber_id,
-                &tx,
-              );
+              disconnect_connection(&mut connections, connection_id, &mut subscriber_id, &tx);
             }
           },
           Ok(PiBridgeWorkerCommand::Stop) => {
@@ -387,15 +383,17 @@ mod imp {
 
       loop {
         match listener.accept() {
-          Ok((stream, _)) => match WorkerConnection::new(next_connection_id, stream) {
-            Ok(connection) => {
-              pi_bridge_debug_log(format!("accept connection_id={}", next_connection_id));
-              connections.insert(next_connection_id, connection);
-              next_connection_id = next_connection_id.saturating_add(1);
-            },
-            Err(err) => {
-              let _ = tx.send(PiBridgeEvent::InvalidMessage(err));
-            },
+          Ok((stream, _)) => {
+            match WorkerConnection::new(next_connection_id, stream) {
+              Ok(connection) => {
+                pi_bridge_debug_log(format!("accept connection_id={}", next_connection_id));
+                connections.insert(next_connection_id, connection);
+                next_connection_id = next_connection_id.saturating_add(1);
+              },
+              Err(err) => {
+                let _ = tx.send(PiBridgeEvent::InvalidMessage(err));
+              },
+            }
           },
           Err(err) if err.kind() == ErrorKind::WouldBlock => break,
           Err(err) => {
@@ -500,9 +498,7 @@ mod imp {
         Ok(PiBridgeEnvelope::Request { id, method, params }) => {
           pi_bridge_debug_log(format!(
             "request connection_id={} id={} method={}",
-            connection.id,
-            id,
-            method
+            connection.id, id, method
           ));
           let _ = tx.send(PiBridgeEvent::Request {
             connection_id: connection.id,
@@ -514,22 +510,23 @@ mod imp {
         Ok(PiBridgeEnvelope::Notification { method, params }) => {
           pi_bridge_debug_log(format!(
             "notification connection_id={} method={}",
-            connection.id,
-            method
+            connection.id, method
           ));
           if method == "subscribe_events" {
             if subscriber_id.is_some() && *subscriber_id != Some(connection.id) {
               pi_bridge_debug_log(format!(
                 "subscriber rejected connection_id={} current_subscriber={:?}",
-                connection.id,
-                subscriber_id
+                connection.id, subscriber_id
               ));
               reject_subscriber(connection, tx);
               return true;
             }
             if *subscriber_id != Some(connection.id) {
               *subscriber_id = Some(connection.id);
-              pi_bridge_debug_log(format!("subscriber attached connection_id={}", connection.id));
+              pi_bridge_debug_log(format!(
+                "subscriber attached connection_id={}",
+                connection.id
+              ));
               let _ = tx.send(PiBridgeEvent::Attached);
             }
             continue;
@@ -538,7 +535,10 @@ mod imp {
         },
         Ok(PiBridgeEnvelope::Response { .. }) => {},
         Err(err) => {
-          pi_bridge_debug_log(format!("decode error connection_id={} err={err}", connection.id));
+          pi_bridge_debug_log(format!(
+            "decode error connection_id={} err={err}",
+            connection.id
+          ));
           let _ = tx.send(PiBridgeEvent::InvalidMessage(format!(
             "failed to decode bridge message: {err}"
           )));
@@ -550,7 +550,8 @@ mod imp {
 
   fn reject_subscriber(connection: &mut WorkerConnection, tx: &Sender<PiBridgeEvent>) {
     pi_bridge_debug_log(format!("reject_subscriber connection_id={}", connection.id));
-    match PiBridgeEnvelope::notification("attach_rejected", serde_json::json!({ "reason": "busy" })) {
+    match PiBridgeEnvelope::notification("attach_rejected", serde_json::json!({ "reason": "busy" }))
+    {
       Ok(envelope) => {
         if let Err(err) = write_envelope(connection, &envelope) {
           let _ = tx.send(PiBridgeEvent::InvalidMessage(err));
@@ -566,7 +567,10 @@ mod imp {
     connection: &mut WorkerConnection,
     envelope: &PiBridgeEnvelope,
   ) -> Result<(), String> {
-    pi_bridge_debug_log(format!("write connection_id={} envelope={:?}", connection.id, envelope));
+    pi_bridge_debug_log(format!(
+      "write connection_id={} envelope={:?}",
+      connection.id, envelope
+    ));
     write_envelope_to_stream(&mut connection.stream, envelope)
   }
 }
@@ -628,7 +632,9 @@ fn write_envelope_to_stream(
       Err(err) if err.kind() == std::io::ErrorKind::Interrupted => continue,
       Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
         if Instant::now() >= deadline {
-          return Err(format!("failed to write bridge message: timed out waiting for writable socket ({err})"));
+          return Err(format!(
+            "failed to write bridge message: timed out waiting for writable socket ({err})"
+          ));
         }
         thread::sleep(Duration::from_millis(1));
       },
@@ -649,11 +655,17 @@ fn socket_path_for_workspace(workspace_root: &Path) -> PathBuf {
 }
 
 fn manifest_path_for_workspace(workspace_root: &Path) -> Result<PathBuf, String> {
-  let git_dir = resolve_git_dir(workspace_root)
-    .ok_or_else(|| format!("workspace '{}' is not backed by a git directory", workspace_root.display()))?;
-  Ok(git_dir
-    .join(PI_BRIDGE_GIT_DIR)
-    .join(PI_BRIDGE_MANIFEST_FILE))
+  let git_dir = resolve_git_dir(workspace_root).ok_or_else(|| {
+    format!(
+      "workspace '{}' is not backed by a git directory",
+      workspace_root.display()
+    )
+  })?;
+  Ok(
+    git_dir
+      .join(PI_BRIDGE_GIT_DIR)
+      .join(PI_BRIDGE_MANIFEST_FILE),
+  )
 }
 
 fn resolve_git_dir(workspace_root: &Path) -> Option<PathBuf> {

@@ -1775,7 +1775,8 @@ fn rebuild_rows<Ctx: DefaultContext>(ctx: &mut Ctx) {
     state,
     format!(
       "reason=rebuild_rows selected_before={} selected_after={} scroll_before={} scroll_after={} \
-       selected_path_before={} current_file={} pending_visible={} follow_before={} follow_after={} ",
+       selected_path_before={} current_file={} pending_visible={} follow_before={} \
+       follow_after={} ",
       selected_before
         .map(|value| value.to_string())
         .unwrap_or_else(|| "none".to_string()),

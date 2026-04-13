@@ -213,16 +213,15 @@ mod tests {
     view::ViewState,
   };
 
-  use crate::file_tree::{
-    FileTreeDecorations,
-    FileTreeVcsKind,
-  };
-
   use super::{
     OpenItemKind,
     PaneOpenItemsSnapshotOptions,
     decorate_pane_open_items_snapshot,
     pane_open_items_snapshot_for_editor_with_options,
+  };
+  use crate::file_tree::{
+    FileTreeDecorations,
+    FileTreeVcsKind,
   };
 
   fn test_view() -> ViewState {
@@ -264,9 +263,15 @@ mod tests {
     assert_eq!(snapshot.groups[0].items[0].kind, OpenItemKind::Buffer);
     assert_eq!(snapshot.groups[0].items[1].kind, OpenItemKind::Buffer);
     assert_eq!(snapshot.groups[0].items[2].kind, OpenItemKind::Terminal);
-    assert_eq!(snapshot.groups[0].items[2].client_surface_id, Some(terminal));
+    assert_eq!(
+      snapshot.groups[0].items[2].client_surface_id,
+      Some(terminal)
+    );
     assert_eq!(snapshot.groups[1].items.len(), 1);
-    assert_eq!(snapshot.groups[1].items[0].buffer_id, snapshot.groups[0].items[1].buffer_id);
+    assert_eq!(
+      snapshot.groups[1].items[0].buffer_id,
+      snapshot.groups[0].items[1].buffer_id
+    );
   }
 
   #[test]
@@ -285,29 +290,38 @@ mod tests {
       PaneOpenItemsSnapshotOptions::default(),
     );
     let mut decorations = BTreeMap::new();
-    decorations.insert(
-      PathBuf::from("/tmp/proj/src/two.rs"),
-      FileTreeDecorations {
-        vcs:        Some(FileTreeVcsKind::Modified),
-        diagnostic: None,
-      },
-    );
+    decorations.insert(PathBuf::from("/tmp/proj/src/two.rs"), FileTreeDecorations {
+      vcs:        Some(FileTreeVcsKind::Modified),
+      diagnostic: None,
+    });
 
     decorate_pane_open_items_snapshot(&mut snapshot, &decorations);
 
-    assert_eq!(snapshot.groups[0].items[0].decorations, FileTreeDecorations::default());
-    assert_eq!(snapshot.groups[0].items[1].decorations.vcs, Some(FileTreeVcsKind::Modified));
+    assert_eq!(
+      snapshot.groups[0].items[0].decorations,
+      FileTreeDecorations::default()
+    );
+    assert_eq!(
+      snapshot.groups[0].items[1].decorations.vcs,
+      Some(FileTreeVcsKind::Modified)
+    );
     assert_eq!(snapshot.groups[0].items[2].kind, OpenItemKind::Terminal);
-    assert_eq!(snapshot.groups[0].items[2].decorations, FileTreeDecorations::default());
+    assert_eq!(
+      snapshot.groups[0].items[2].decorations,
+      FileTreeDecorations::default()
+    );
     assert_eq!(snapshot.groups[0].items[2].subtitle, None);
     assert_eq!(snapshot.groups[0].items[2].file_path, None);
-    assert_eq!(snapshot.groups[0].items[2].title, format!(
-      "terminal {}",
-      match snapshot.groups[0].items[2].client_surface_id {
-        Some(id) => id.get().get(),
-        None => 0,
-      }
-    ));
+    assert_eq!(
+      snapshot.groups[0].items[2].title,
+      format!(
+        "terminal {}",
+        match snapshot.groups[0].items[2].client_surface_id {
+          Some(id) => id.get().get(),
+          None => 0,
+        }
+      )
+    );
     assert!(matches!(
       editor.active_pane_content(),
       Some(PaneContent::EditorBuffer { .. })

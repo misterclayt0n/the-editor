@@ -1842,9 +1842,9 @@ private struct PiBridgeStatusPopover: View {
                 set: { controller.setAgentFollowEnabled($0) }
             )) {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Follow agent transactions")
+                    Text("Follow agent activity")
                         .font(.system(size: 12, weight: .medium))
-                    Text("Bridge-backed write/edit transactions switch to the edited buffer and keep the agent overlay visible while the edit is in flight.")
+                    Text("Pi bridge reads and edits stay in this pane, keep the agent cursor visible, and softly reveal the current file or edited range.")
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -1852,7 +1852,7 @@ private struct PiBridgeStatusPopover: View {
             }
             .toggleStyle(.checkbox)
 
-            Text("Manual navigation still works — the next followed transaction will pull the view back to the agent.")
+            Text("Following stops when you scroll, move the selection, edit, or switch panes/items yourself.")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

@@ -187,14 +187,13 @@ mod tests {
     view::ViewState,
   };
 
-  use crate::file_tree::FileTreeDecorations;
-
   use super::{
     BufferTabsOrder,
     BufferTabsSnapshotOptions,
     buffer_tabs_snapshot_for_editor_with_options,
     decorate_buffer_tabs_snapshot,
   };
+  use crate::file_tree::FileTreeDecorations;
 
   fn test_view() -> ViewState {
     ViewState::new(Rect::new(0, 0, 80, 24), Position::new(0, 0))

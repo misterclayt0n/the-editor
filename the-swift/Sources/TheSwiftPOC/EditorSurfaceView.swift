@@ -406,6 +406,9 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
             super.keyDown(with: event)
             return
         }
+        guard controller.shouldHandleEditorKeyboardInput(from: self) else {
+            return
+        }
 
         cursorBlinkController.reset()
         if controller.currentMode == .insert {
@@ -742,6 +745,7 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
     }
 
     func insertText(_ string: Any, replacementRange: NSRange) {
+        guard controller?.shouldHandleEditorKeyboardInput(from: self) == true else { return }
         let text: String
         switch string {
         case let value as NSAttributedString:
@@ -758,6 +762,7 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
 
     override func doCommand(by selector: Selector) {
         guard let controller else { return }
+        guard controller.shouldHandleEditorKeyboardInput(from: self) else { return }
         let event: the_editor_key_event_t?
         switch selector {
         case #selector(moveLeft(_:)):

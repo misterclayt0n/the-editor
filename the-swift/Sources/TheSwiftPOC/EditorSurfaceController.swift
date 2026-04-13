@@ -447,7 +447,17 @@ final class EditorSurfaceController: ObservableObject {
         scroll(byRows: delta, cols: 0)
     }
 
+    func shouldHandleEditorKeyboardInput(from responder: NSView? = nil) -> Bool {
+        guard activeOpenItemKind != .terminal else { return false }
+        guard let editorFirstResponder else { return false }
+        if let responder, responder !== editorFirstResponder {
+            return false
+        }
+        return editorFirstResponder.window?.firstResponder === editorFirstResponder
+    }
+
     func handleKey(_ event: the_editor_key_event_t) {
+        guard shouldHandleEditorKeyboardInput() else { return }
         if event.kind == THE_EDITOR_KEY_ESCAPE.rawValue, hoverDocs.isOpen || signatureHelp.isOpen {
             closeDocsPanels()
             markedText = ""
@@ -723,6 +733,7 @@ final class EditorSurfaceController: ObservableObject {
     }
 
     func insertText(_ text: String) {
+        guard shouldHandleEditorKeyboardInput() else { return }
         guard !text.isEmpty else { return }
         guard EditorFFIBridge.insertText(handle?.raw, text: text) else { return }
         markedText = ""

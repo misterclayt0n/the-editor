@@ -229,7 +229,8 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
             )
         }
 
-        for (index, cursor) in scene.cursors.enumerated() {
+        let effectiveCursors = effectiveCursors(for: scene)
+        for (index, cursor) in effectiveCursors.enumerated() {
             drawCursor(
                 cursor,
                 at: index,
@@ -441,7 +442,7 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
         viewportHeight: CGFloat
     ) {
         context.saveGState()
-        for pane in scene.panes where !pane.isActive {
+        for pane in scene.panes where !pane.isActive && !pane.isAgentFollowTarget {
             let rect = contextRect(fromTopLeftRect: scene.paneRect(for: pane), viewportHeight: viewportHeight)
             context.setFillColor(NSColor.black.withAlphaComponent(0.06).cgColor)
             context.fill(rect)
@@ -633,6 +634,19 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
             }
             context.restoreGState()
             return
+        }
+    }
+
+    private func effectiveCursors(for scene: EditorRenderScene) -> [EditorSnapshotCursor] {
+        guard let followPane = scene.agentFollowPane else { return scene.cursors }
+        let hasFollowCursorInFollowPane = scene.cursors.contains { cursor in
+            cursor.kind == .hollow && paneContaining(cursor: cursor, in: scene)?.paneID == followPane.paneID
+        }
+        guard hasFollowCursorInFollowPane else { return scene.cursors }
+        return scene.cursors.filter { cursor in
+            let paneID = paneContaining(cursor: cursor, in: scene)?.paneID
+            guard paneID == followPane.paneID else { return true }
+            return cursor.kind == .hollow
         }
     }
 

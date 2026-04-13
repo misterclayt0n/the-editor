@@ -204,6 +204,7 @@ typedef struct the_editor_snapshot_pane_t {
   uint16_t viewport_rows;
   uint32_t document_line_count;
   bool is_active;
+  bool is_agent_follow_target;
 } the_editor_snapshot_pane_t;
 
 typedef struct the_editor_snapshot_separator_t {

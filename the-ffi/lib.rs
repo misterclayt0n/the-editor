@@ -461,18 +461,19 @@ pub struct the_editor_snapshot_info_t {
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 pub struct the_editor_snapshot_pane_t {
-  pub pane_id:             usize,
-  pub kind:                u8,
-  pub client_surface_id:   usize,
-  pub x:                   u16,
-  pub y:                   u16,
-  pub width:               u16,
-  pub height:              u16,
-  pub content_offset_x:    u16,
-  pub scroll_row:          u32,
-  pub viewport_rows:       u16,
-  pub document_line_count: u32,
-  pub is_active:           bool,
+  pub pane_id:                usize,
+  pub kind:                   u8,
+  pub client_surface_id:      usize,
+  pub x:                      u16,
+  pub y:                      u16,
+  pub width:                  u16,
+  pub height:                 u16,
+  pub content_offset_x:       u16,
+  pub scroll_row:             u32,
+  pub viewport_rows:          u16,
+  pub document_line_count:    u32,
+  pub is_active:              bool,
+  pub is_agent_follow_target: bool,
 }
 
 #[repr(C)]
@@ -6578,14 +6579,12 @@ impl SwiftEditor {
     if self.editor.active_pane_id() == pane {
       return false;
     }
-    let before = self.agent_follow_local_state_snapshot();
     let previous_buffer_id = self.editor.active_buffer_id();
     if !self.editor.set_active_pane(pane) {
       return false;
     }
     self.sync_state_after_active_pane_change(previous_buffer_id);
     self.bump_cursor_blink_generation();
-    self.stop_agent_follow_if_local_change(before, "user-pane-change");
     true
   }
 
@@ -7787,34 +7786,22 @@ fn clamp_agent_follow_plan_position(plan: &RenderPlan, pos: Position) -> Option<
   Some(Position::new(pos.row - row_start, pos.col - col_start))
 }
 
-fn agent_follow_style_with_bg_fallback(style: Style, fallback: Color) -> Style {
-  if style.bg.is_some() {
-    style
-  } else {
-    style.patch(Style::default().bg(fallback))
-  }
-}
-
 fn agent_follow_cursor_style(theme: &Theme) -> Style {
-  let style = theme
+  theme
     .try_get("ui.cursor.agent")
     .or_else(|| theme.try_get("ui.cursor.match"))
     .or_else(|| theme.try_get("ui.selection.agent"))
     .or_else(|| theme.try_get("ui.cursor.active"))
     .or_else(|| theme.try_get("ui.cursor"))
-    .unwrap_or_default();
-
-  agent_follow_style_with_bg_fallback(style, Color::Rgb(0x2B, 0x67, 0xB2))
+    .unwrap_or_default()
 }
 
 fn agent_follow_selection_style(theme: &Theme) -> Style {
-  let style = theme
+  theme
     .try_get("ui.selection")
     .or_else(|| theme.try_get("ui.cursor.active"))
     .or_else(|| theme.try_get("ui.cursor"))
-    .unwrap_or_default();
-
-  agent_follow_style_with_bg_fallback(style, Color::Rgb(0x1E, 0x3A, 0x5F))
+    .unwrap_or_default()
 }
 
 fn agent_follow_badge_style(theme: &Theme) -> Style {
@@ -7826,9 +7813,14 @@ fn agent_follow_badge_style(theme: &Theme) -> Style {
   let color = style
     .fg
     .or(style.bg)
-    .unwrap_or(Color::Rgb(0x1D, 0x4E, 0x89));
+    .or_else(|| theme.try_get("ui.selection").and_then(|style| style.fg))
+    .or_else(|| theme.try_get("ui.cursor").and_then(|style| style.fg));
 
-  Style::default().fg(color).add_modifier(Modifier::BOLD)
+  let mut badge_style = Style::default();
+  if let Some(color) = color {
+    badge_style = badge_style.fg(color);
+  }
+  badge_style.add_modifier(Modifier::BOLD)
 }
 
 fn apply_agent_follow_visuals<'a>(
@@ -9492,6 +9484,8 @@ impl OwnedSnapshot {
           viewport_rows: pane.plan.viewport.height,
           document_line_count,
           is_active: pane.pane_id == frame.active_pane,
+          is_agent_follow_target: editor.agent_follow.enabled
+            && editor.agent_follow.pane_id == Some(pane.pane_id),
         }
       })
       .collect();

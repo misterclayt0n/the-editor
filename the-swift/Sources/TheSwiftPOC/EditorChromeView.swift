@@ -852,6 +852,7 @@ private struct EditorPaneItemStripsOverlayView: View {
         let headerHeight: CGFloat
         let controlHeight: CGFloat
         let controlOriginY: CGFloat
+        let isAgentFollowTarget: Bool
 
         var id: UInt { group.id }
     }
@@ -888,6 +889,7 @@ private struct EditorPaneItemStripsOverlayView: View {
                                 paneLabel: paneLocationLabel(for: entry.group.paneID, groupIndex: entry.groupIndex, scene: scene),
                                 theme: theme,
                                 controlHeight: entry.controlHeight,
+                                isAgentFollowTarget: entry.isAgentFollowTarget,
                                 canCloseItem: canClose,
                                 onActivateItem: { item in
                                     if item.isActive {
@@ -937,7 +939,8 @@ private struct EditorPaneItemStripsOverlayView: View {
                 frame: paneFrame(for: pane, in: scene),
                 headerHeight: scene.paneHeaderHeight(for: pane),
                 controlHeight: scene.paneTabControlHeight(for: pane),
-                controlOriginY: scene.paneTabControlOriginY(for: pane)
+                controlOriginY: scene.paneTabControlOriginY(for: pane),
+                isAgentFollowTarget: pane.isAgentFollowTarget
             )
         }
     }
@@ -965,6 +968,7 @@ private struct EditorPaneItemTabStripView: View {
     let paneLabel: String
     let theme: EditorFileTreeSidebarTheme
     let controlHeight: CGFloat
+    let isAgentFollowTarget: Bool
     let canCloseItem: (EditorPaneOpenItemRow) -> Bool
     let onActivateItem: (EditorPaneOpenItemRow) -> Void
     let onCloseItem: (EditorPaneOpenItemRow) -> Void
@@ -976,6 +980,7 @@ private struct EditorPaneItemTabStripView: View {
                     item: item,
                     theme: theme,
                     isActivePane: group.isActivePane,
+                    isAgentFollowTarget: isAgentFollowTarget,
                     controlHeight: controlHeight,
                     canClose: canCloseItem(item),
                     onActivate: { onActivateItem(item) },
@@ -999,6 +1004,7 @@ private struct EditorPaneItemTabView: View {
     let item: EditorPaneOpenItemRow
     let theme: EditorFileTreeSidebarTheme
     let isActivePane: Bool
+    let isAgentFollowTarget: Bool
     let controlHeight: CGFloat
     let canClose: Bool
     let onActivate: () -> Void
@@ -1060,7 +1066,10 @@ private struct EditorPaneItemTabView: View {
 
     private var foregroundColor: Color {
         if item.isActive {
-            return .primary
+            return isAgentFollowTarget ? Color(nsColor: emphasizedAgentTintColor) : .primary
+        }
+        if isAgentFollowTarget {
+            return Color(nsColor: emphasizedAgentTintColor).opacity(0.92)
         }
         return isActivePane ? .secondary.opacity(0.95) : .secondary.opacity(0.82)
     }
@@ -1108,7 +1117,10 @@ private struct EditorPaneItemTabView: View {
 
     private var closeButtonForegroundColor: NSColor {
         if item.isActive || isHovered {
-            return .labelColor
+            return isAgentFollowTarget ? emphasizedAgentTintColor : .labelColor
+        }
+        if isAgentFollowTarget {
+            return emphasizedAgentTintColor.withAlphaComponent(0.86)
         }
         return .secondaryLabelColor
     }
@@ -1121,6 +1133,13 @@ private struct EditorPaneItemTabView: View {
             return theme.hoverColor.withAlphaComponent(0.95)
         }
         return NSColor.tertiaryLabelColor.withAlphaComponent(0.08)
+    }
+
+    private var emphasizedAgentTintColor: NSColor {
+        if theme.selectionColor.isLightColor {
+            return theme.selectionColor.adjustedBrightness(by: -0.28)
+        }
+        return theme.selectionColor.adjustedBrightness(by: 0.18)
     }
 }
 
@@ -1812,58 +1831,31 @@ private struct EditorStatusAccessoryView: View {
 private struct PiStatusAccessoryItemButton: View {
     let item: EditorStatusItem
     @ObservedObject var controller: EditorSurfaceController
-    @State private var isPresented = false
 
     var body: some View {
         Button {
-            isPresented.toggle()
+            controller.toggleAgentFollowEnabled()
         } label: {
-            StatusAccessoryItemView(item: item)
+            StatusAccessoryItemView(item: item, foregroundStyleOverride: iconTint)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .popover(isPresented: $isPresented, arrowEdge: .bottom) {
-            PiBridgeStatusPopover(controller: controller)
-        }
-        .help("PI bridge options")
+        .help(controller.isAgentFollowEnabled ? "Stop following agent activity" : "Follow agent activity")
+        .accessibilityValue(Text(controller.isAgentFollowEnabled ? "On" : "Off"))
     }
-}
 
-private struct PiBridgeStatusPopover: View {
-    @ObservedObject var controller: EditorSurfaceController
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("PI bridge")
-                .font(.system(size: 13, weight: .semibold))
-
-            Toggle(isOn: Binding(
-                get: { controller.isAgentFollowEnabled },
-                set: { controller.setAgentFollowEnabled($0) }
-            )) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Follow agent activity")
-                        .font(.system(size: 12, weight: .medium))
-                    Text("Pi bridge reads and edits stay in this pane, keep the agent cursor visible, and softly reveal the current file or edited range.")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            .toggleStyle(.checkbox)
-
-            Text("Following stops when you scroll, move the selection, edit, or switch panes/items yourself.")
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+    private var iconTint: Color {
+        guard controller.isAgentFollowEnabled else { return .secondary }
+        if let color = controller.scene?.info.selectionColor?.color {
+            return Color(nsColor: color)
         }
-        .padding(14)
-        .frame(width: 280, alignment: .leading)
+        return .accentColor
     }
 }
 
 private struct StatusAccessoryItemView: View {
     let item: EditorStatusItem
+    var foregroundStyleOverride: Color? = nil
 
     private var normalized: (icon: String?, text: String) {
         normalizedStatusItemDisplay(icon: item.icon, text: item.text)
@@ -1887,7 +1879,7 @@ private struct StatusAccessoryItemView: View {
                     .lineLimit(1)
             }
         }
-        .foregroundStyle(foregroundStyle)
+        .foregroundStyle(foregroundStyleOverride ?? foregroundStyle)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityLabel)
     }

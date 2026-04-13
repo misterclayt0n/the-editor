@@ -215,6 +215,7 @@ struct EditorSnapshotPane: Hashable, Identifiable {
     let viewportRows: Int
     let documentLineCount: Int
     let isActive: Bool
+    let isAgentFollowTarget: Bool
 
     var id: UInt { paneID }
 }
@@ -1238,7 +1239,8 @@ enum EditorFFIBridge {
                 scrollRow: Int(paneValue.scroll_row),
                 viewportRows: Int(paneValue.viewport_rows),
                 documentLineCount: Int(paneValue.document_line_count),
-                isActive: paneValue.is_active
+                isActive: paneValue.is_active,
+                isAgentFollowTarget: paneValue.is_agent_follow_target
             )
         }
 

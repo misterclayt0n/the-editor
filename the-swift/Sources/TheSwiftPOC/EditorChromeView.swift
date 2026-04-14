@@ -52,6 +52,9 @@ struct EditorChromeView: View {
 
             mainColumn
         }
+        // Sidebar visibility must not animate layout: each frame would reconfigure the Rust
+        // viewport and run a full snapshot for every column boundary crossed.
+        .animation(nil, value: controller.fileTree.isVisible)
         .background(
             EditorWindowChromeAccessor(
                 chrome: controller.chrome,
@@ -2730,9 +2733,10 @@ private struct EditorTitlebarSidebarToggleButton: View {
     }
 
     private func toggle() {
-        withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
-            onToggle()
-        }
+        // Do not wrap in spring animation: that animates chrome width, so the editor surface
+        // sees dozens of intermediate sizes per toggle and pays for a full snapshot each time
+        // the terminal column count changes.
+        onToggle()
     }
 }
 

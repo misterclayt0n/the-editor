@@ -85,6 +85,7 @@ pub use plan::{
   finish_render_generations,
   gutter_width_for_document,
   hash_render_plan_layout,
+  try_reuse_render_plan_for_vertical_resize,
 };
 pub use text_annotations::{
   InlineAnnotation,

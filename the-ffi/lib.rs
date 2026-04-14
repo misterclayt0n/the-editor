@@ -250,6 +250,7 @@ use the_lib::{
       Theme,
       default_theme,
     },
+    try_reuse_render_plan_for_vertical_resize,
     visual_pos_at_char,
   },
   selection::{
@@ -1759,6 +1760,14 @@ struct PiBridgeReplaceRangeResult {
   opened_buffer: bool,
 }
 
+#[derive(Clone)]
+struct ViewportResizePlanCache {
+  view:             ViewState,
+  plan:             RenderPlan,
+  document_version: u64,
+  buffer_id:        BufferId,
+}
+
 struct SwiftEditor {
   editor:                              Editor,
   file_path:                           Option<PathBuf>,
@@ -1846,6 +1855,7 @@ struct SwiftEditor {
   embedded_terminal_enabled:           bool,
   pi_bridge:                           Option<PiBridgeHandle>,
   agent_follow:                        AgentFollowState,
+  viewport_resize_plan_cache:          Option<ViewportResizePlanCache>,
   quit_requested:                      bool,
 }
 
@@ -6484,6 +6494,7 @@ impl SwiftEditor {
       embedded_terminal_enabled: false,
       pi_bridge: None,
       agent_follow: AgentFollowState::default(),
+      viewport_resize_plan_cache: None,
       quit_requested: false,
     };
 
@@ -6511,6 +6522,8 @@ impl SwiftEditor {
     let surface = SurfaceConfig::from_ffi(config);
     let cols = surface.viewport_cols();
     let rows = surface.viewport_rows();
+    let prev_viewport_w = self.editor.view().viewport.width;
+    let prev_viewport_h = self.editor.view().viewport.height;
     let changed = self.surface.metrics.backing_scale != surface.metrics.backing_scale
       || self.surface.metrics.cell_width_px != surface.metrics.cell_width_px
       || self.surface.metrics.cell_height_px != surface.metrics.cell_height_px
@@ -6527,11 +6540,15 @@ impl SwiftEditor {
       self.editor.view_mut().viewport = viewport;
       self.sync_text_viewport_width();
       self.clamp_scroll();
+      if !(prev_viewport_w == cols && prev_viewport_h != rows) {
+        self.viewport_resize_plan_cache = None;
+      }
     }
     changed
   }
 
   fn set_viewport(&mut self, cols: u16, rows: u16) {
+    self.viewport_resize_plan_cache = None;
     let cols = cols.max(1);
     let rows = rows.max(1);
     let viewport = Rect::new(0, 0, cols, rows);
@@ -7550,6 +7567,7 @@ impl SwiftEditor {
   }
 
   fn sync_state_after_active_pane_change(&mut self, previous_buffer_id: BufferId) {
+    self.viewport_resize_plan_cache = None;
     the_default::remember_active_editor_pane(self);
     self.clear_hover_state();
     self.clear_completion_state();
@@ -8207,7 +8225,7 @@ impl DefaultContext for SwiftEditor {
     self.build_render_plan_with_styles(self.render_styles())
   }
   fn build_render_plan_with_styles(&mut self, styles: RenderStyles) -> RenderPlan {
-    let view = self.editor.view();
+    let view = self.editor.view().clone();
     let mut text_format = self.text_format.clone();
     text_format.viewport_width = self.content_viewport_width();
     let diagnostics = self
@@ -8222,30 +8240,79 @@ impl DefaultContext for SwiftEditor {
     let agent_follow_selection_style = agent_follow_selection_style(&self.ui_theme);
     let active_buffer_id = self.editor.active_buffer_id();
     let (document, cache) = self.editor.document_and_cache();
-    let mut plan = if let (Some(loader), Some(syntax)) = (loader.as_deref(), document.syntax()) {
-      let mut adapter = SyntaxHighlightAdapter::new(
-        document.text().slice(..),
-        syntax,
-        loader,
-        &mut self.highlight_cache,
-        line_range,
-        document.version(),
-        document.syntax_version(),
-        true,
-      );
-      build_plan(
-        document,
-        view.clone(),
-        &text_format,
-        &self.gutter_config,
-        &mut annotations,
-        &mut adapter,
-        cache,
-        styles,
-      )
-    } else {
+    let doc_version = document.version();
+    let mut plan = 'plan: {
+      if let Some(cache_entry) = &self.viewport_resize_plan_cache {
+        if cache_entry.buffer_id == active_buffer_id && cache_entry.document_version == doc_version
+        {
+          if let (Some(loader), Some(syntax)) = (loader.as_deref(), document.syntax()) {
+            let mut adapter = SyntaxHighlightAdapter::new(
+              document.text().slice(..),
+              syntax,
+              loader,
+              &mut self.highlight_cache,
+              line_range.clone(),
+              document.version(),
+              document.syntax_version(),
+              true,
+            );
+            if let Some(reused) = try_reuse_render_plan_for_vertical_resize(
+              document,
+              &cache_entry.plan,
+              &cache_entry.view,
+              &view,
+              &text_format,
+              &self.gutter_config,
+              &mut annotations,
+              &mut adapter,
+              cache,
+              styles,
+            ) {
+              break 'plan reused;
+            }
+          } else {
+            let mut highlights = NoHighlights;
+            if let Some(reused) = try_reuse_render_plan_for_vertical_resize(
+              document,
+              &cache_entry.plan,
+              &cache_entry.view,
+              &view,
+              &text_format,
+              &self.gutter_config,
+              &mut annotations,
+              &mut highlights,
+              cache,
+              styles,
+            ) {
+              break 'plan reused;
+            }
+          }
+        }
+      }
+      if let (Some(loader), Some(syntax)) = (loader.as_deref(), document.syntax()) {
+        let mut adapter = SyntaxHighlightAdapter::new(
+          document.text().slice(..),
+          syntax,
+          loader,
+          &mut self.highlight_cache,
+          line_range,
+          document.version(),
+          document.syntax_version(),
+          true,
+        );
+        break 'plan build_plan(
+          document,
+          view.clone(),
+          &text_format,
+          &self.gutter_config,
+          &mut annotations,
+          &mut adapter,
+          cache,
+          styles,
+        );
+      }
       let mut highlights = NoHighlights;
-      build_plan(
+      break 'plan build_plan(
         document,
         view.clone(),
         &text_format,
@@ -8254,14 +8321,14 @@ impl DefaultContext for SwiftEditor {
         &mut highlights,
         cache,
         styles,
-      )
+      );
     };
     apply_swift_selection_match_highlights(
       &mut plan,
       document,
       &text_format,
       &mut annotations,
-      view,
+      view.clone(),
       &self.ui_theme,
       self.mode,
     );
@@ -8290,6 +8357,12 @@ impl DefaultContext for SwiftEditor {
       row_hashes,
     );
     self.render_generation_state = Some(generation_state);
+    self.viewport_resize_plan_cache = Some(ViewportResizePlanCache {
+      view,
+      plan: plan.clone(),
+      document_version: doc_version,
+      buffer_id: active_buffer_id,
+    });
     plan
   }
   fn build_frame_render_plan(&mut self) -> FrameRenderPlan {
@@ -8576,6 +8649,7 @@ impl DefaultContext for SwiftEditor {
   fn set_soft_wrap_enabled(&mut self, enabled: bool) {
     self.soft_wrap_enabled = enabled;
     self.text_format.soft_wrap = enabled;
+    self.viewport_resize_plan_cache = None;
   }
   fn gutter_config(&self) -> &GutterConfig {
     &self.gutter_config

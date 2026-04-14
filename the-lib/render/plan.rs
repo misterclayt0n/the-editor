@@ -1349,6 +1349,130 @@ pub fn build_plan<'a, 't, H: HighlightProvider>(
   plan
 }
 
+/// Reuse a previous render plan when only the viewport **height** changes (same
+/// width, same scroll, no soft-wrap, no line annotations). New rows are built
+/// with a focused `build_plan` pass; shrinking discards tail rows. This avoids
+/// walking the rope from the document start on every vertical resize for huge
+/// buffers.
+#[allow(clippy::too_many_arguments)]
+pub fn try_reuse_render_plan_for_vertical_resize<'a, 't, H: HighlightProvider>(
+  doc: &'a Document,
+  prev_plan: &RenderPlan,
+  prev_view: &ViewState,
+  new_view: &ViewState,
+  text_fmt: &'a TextFormat,
+  gutter: &GutterConfig,
+  annotations: &'t mut TextAnnotations<'a>,
+  highlights: &mut H,
+  cache: &mut RenderCache,
+  styles: RenderStyles,
+) -> Option<RenderPlan> {
+  if text_fmt.soft_wrap || annotations.has_line_annotations() {
+    return None;
+  }
+  if prev_view.scroll != new_view.scroll {
+    return None;
+  }
+  if prev_view.viewport.width != new_view.viewport.width
+    || prev_view.viewport.x != new_view.viewport.x
+    || prev_view.viewport.y != new_view.viewport.y
+    || new_view.viewport.x != prev_view.viewport.x
+    || new_view.viewport.y != prev_view.viewport.y
+  {
+    return None;
+  }
+  if prev_plan.viewport != prev_view.viewport || prev_plan.scroll != prev_view.scroll {
+    return None;
+  }
+
+  let old_h = prev_view.viewport.height;
+  let new_h = new_view.viewport.height;
+  if old_h == new_h {
+    return None;
+  }
+
+  if new_h < old_h {
+    let mut plan = prev_plan.clone();
+    plan.viewport.height = new_h;
+    plan.viewport.width = new_view.viewport.width;
+    plan.scroll = new_view.scroll;
+    plan.lines.retain(|line| line.row < new_h);
+    plan.visible_rows.retain(|row| row.row < new_h);
+    plan.gutter_lines.retain(|line| line.row < new_h);
+    plan.overlays.clear();
+    plan.cursors.clear();
+    plan.selections.clear();
+    add_selections_and_cursor(
+      &mut plan,
+      doc,
+      text_fmt,
+      annotations,
+      new_view.clone(),
+      styles,
+    );
+    return Some(plan);
+  }
+
+  let delta_h = new_h.saturating_sub(old_h);
+  if delta_h == 0 {
+    return None;
+  }
+
+  let next_doc_row = prev_view.scroll.row.saturating_add(old_h as usize);
+  let sub_view = ViewState::new(
+    Rect::new(
+      new_view.viewport.x,
+      new_view.viewport.y,
+      new_view.viewport.width,
+      delta_h,
+    ),
+    Position::new(next_doc_row, new_view.scroll.col),
+  );
+
+  let mut delta_plan = build_plan(
+    doc,
+    sub_view,
+    text_fmt,
+    gutter,
+    annotations,
+    highlights,
+    cache,
+    styles,
+  );
+
+  let row_off = old_h;
+  let mut merged = prev_plan.clone();
+  merged.viewport.height = new_h;
+  merged.viewport.width = new_view.viewport.width;
+  merged.scroll = new_view.scroll;
+
+  for mut line in std::mem::take(&mut delta_plan.lines) {
+    line.row = line.row.saturating_add(row_off);
+    merged.lines.push(line);
+  }
+  for mut row in std::mem::take(&mut delta_plan.visible_rows) {
+    row.row = row.row.saturating_add(row_off);
+    merged.visible_rows.push(row);
+  }
+  for mut gutter in std::mem::take(&mut delta_plan.gutter_lines) {
+    gutter.row = gutter.row.saturating_add(row_off);
+    merged.gutter_lines.push(gutter);
+  }
+
+  merged.overlays.clear();
+  merged.cursors.clear();
+  merged.selections.clear();
+  add_selections_and_cursor(
+    &mut merged,
+    doc,
+    text_fmt,
+    annotations,
+    new_view.clone(),
+    styles,
+  );
+  Some(merged)
+}
+
 fn line_number_column_width(doc: &Document, gutter: &GutterConfig) -> usize {
   if !gutter.contains_builtin(GutterType::LineNumbers) {
     return 0;
@@ -2573,6 +2697,61 @@ mod tests {
     assert_eq!(updated.damage_start_row, 0);
     assert_eq!(updated.damage_end_row, 0);
     assert_ne!(previous.text_generation, next.text_generation);
+  }
+
+  #[test]
+  fn try_reuse_render_plan_vertical_extend() {
+    let id = DocumentId::new(NonZeroUsize::new(1).unwrap());
+    let body = (0..20)
+      .map(|i| format!("row_{i:02}"))
+      .collect::<Vec<_>>()
+      .join(
+        "
+",
+      );
+    let doc = Document::new(id, Rope::from(body));
+    let prev_view = ViewState::new(Rect::new(0, 0, 12, 5), Position::new(0, 0));
+    let new_view = ViewState::new(Rect::new(0, 0, 12, 8), Position::new(0, 0));
+    let mut text_fmt = TextFormat::default();
+    text_fmt.viewport_width = 12;
+    let gutter = no_gutter();
+    let mut ann_prev = TextAnnotations::default();
+    let mut highlights = NoHighlights;
+    let mut cache = RenderCache::default();
+    let styles = RenderStyles::default();
+
+    let prev_plan = build_plan(
+      &doc,
+      prev_view.clone(),
+      &text_fmt,
+      &gutter,
+      &mut ann_prev,
+      &mut highlights,
+      &mut cache,
+      styles,
+    );
+
+    let mut ann_reuse = TextAnnotations::default();
+    let merged = try_reuse_render_plan_for_vertical_resize(
+      &doc,
+      &prev_plan,
+      &prev_view,
+      &new_view,
+      &text_fmt,
+      &gutter,
+      &mut ann_reuse,
+      &mut highlights,
+      &mut cache,
+      styles,
+    )
+    .expect("vertical reuse");
+
+    assert_eq!(merged.viewport.height, 8);
+    let max_doc = merged.visible_rows.iter().map(|r| r.doc_line).max();
+    assert!(
+      max_doc >= Some(7),
+      "expected extra viewport rows to include deeper doc lines, got max {max_doc:?}"
+    );
   }
 
   #[test]

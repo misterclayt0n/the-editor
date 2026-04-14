@@ -529,6 +529,40 @@ enum EditorFilePickerPreviewChangeKind: Int8 {
     case modified = 2
 }
 
+enum EditorFilePickerSearchMode: UInt8, Hashable {
+    case none = 0
+    case plainText = 1
+    case regex = 2
+    case fuzzy = 3
+}
+
+enum EditorFilePickerStatusBannerKind: UInt8, Hashable {
+    case info = 0
+    case warning = 1
+}
+
+struct EditorFilePickerStatusBanner: Hashable {
+    let kind: EditorFilePickerStatusBannerKind
+    let text: String
+}
+
+private func parseFilePickerMatchRanges(_ raw: UnsafePointer<CChar>?) -> [Range<Int>] {
+    guard let raw else { return [] }
+    return String(cString: raw)
+        .split(separator: ",")
+        .compactMap { component in
+            let parts = component.split(separator: ":", maxSplits: 1).map(String.init)
+            guard parts.count == 2,
+                  let start = Int(parts[0]),
+                  let end = Int(parts[1]),
+                  end > start
+            else {
+                return nil
+            }
+            return start..<end
+        }
+}
+
 struct EditorFilePickerItem: Hashable, Identifiable {
     let stableID: UInt64
     let globalIndex: Int
@@ -540,6 +574,8 @@ struct EditorFilePickerItem: Hashable, Identifiable {
     let secondary: String?
     let tertiary: String?
     let quaternary: String?
+    let primaryMatchRanges: [Range<Int>]
+    let secondaryMatchRanges: [Range<Int>]
     let line: Int
     let column: Int
     let depth: Int
@@ -577,6 +613,8 @@ struct EditorFilePickerState: Hashable {
     let showPreview: Bool
     let isLoading: Bool
     let error: String?
+    let statusBanner: EditorFilePickerStatusBanner?
+    let searchMode: EditorFilePickerSearchMode
     let previewPath: String?
     let previewNavigationMode: EditorFilePickerPreviewNavigationMode
     let previewKind: EditorFilePickerPreviewKind
@@ -597,6 +635,8 @@ struct EditorFilePickerState: Hashable {
         showPreview: true,
         isLoading: false,
         error: nil,
+        statusBanner: nil,
+        searchMode: .none,
         previewPath: nil,
         previewNavigationMode: .static,
         previewKind: .empty,
@@ -1023,6 +1063,12 @@ enum EditorFFIBridge {
     }
 
     @discardableResult
+    static func cycleFilePickerSearchMode(_ handle: OpaquePointer?) -> Bool {
+        guard let handle else { return false }
+        return the_editor_file_picker_cycle_search_mode(handle)
+    }
+
+    @discardableResult
     static func selectNextFilePickerItem(_ handle: OpaquePointer?) -> Bool {
         guard let handle else { return false }
         return the_editor_file_picker_select_next(handle)
@@ -1433,6 +1479,8 @@ enum EditorFFIBridge {
                 secondary: itemValue.secondary.map { String(cString: $0) },
                 tertiary: itemValue.tertiary.map { String(cString: $0) },
                 quaternary: itemValue.quaternary.map { String(cString: $0) },
+                primaryMatchRanges: parseFilePickerMatchRanges(itemValue.primary_match_ranges),
+                secondaryMatchRanges: parseFilePickerMatchRanges(itemValue.secondary_match_ranges),
                 line: Int(itemValue.line),
                 column: Int(itemValue.column),
                 depth: Int(itemValue.depth)
@@ -1470,6 +1518,13 @@ enum EditorFFIBridge {
             showPreview: filePickerValue.show_preview,
             isLoading: filePickerValue.loading,
             error: filePickerValue.error.map { String(cString: $0) },
+            statusBanner: filePickerValue.status_banner.map {
+                EditorFilePickerStatusBanner(
+                    kind: EditorFilePickerStatusBannerKind(rawValue: filePickerValue.status_banner_kind) ?? .info,
+                    text: String(cString: $0)
+                )
+            },
+            searchMode: EditorFilePickerSearchMode(rawValue: filePickerValue.search_mode) ?? .none,
             previewPath: filePickerValue.preview_path.map { String(cString: $0) },
             previewNavigationMode: EditorFilePickerPreviewNavigationMode(rawValue: filePickerValue.preview_navigation_mode) ?? .static,
             previewKind: EditorFilePickerPreviewKind(rawValue: filePickerValue.preview_kind) ?? .empty,

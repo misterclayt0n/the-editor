@@ -386,6 +386,9 @@ typedef struct the_editor_snapshot_file_picker_t {
   bool show_preview;
   bool loading;
   const char *error;
+  const char *status_banner;
+  uint8_t status_banner_kind;
+  uint8_t search_mode;
   const char *preview_path;
   uint8_t preview_navigation_mode;
   uint8_t preview_kind;
@@ -406,6 +409,8 @@ typedef struct the_editor_snapshot_file_picker_item_t {
   const char *secondary;
   const char *tertiary;
   const char *quaternary;
+  const char *primary_match_ranges;
+  const char *secondary_match_ranges;
   uint32_t line;
   uint32_t column;
   uint16_t depth;
@@ -567,6 +572,7 @@ bool the_editor_close_docs_panels(the_editor_handle_t *handle);
 bool the_editor_configure_file_picker(the_editor_handle_t *handle, uintptr_t list_visible_rows, uintptr_t preview_visible_rows);
 bool the_editor_close_file_picker(the_editor_handle_t *handle);
 bool the_editor_file_picker_set_query(the_editor_handle_t *handle, const char *query);
+bool the_editor_file_picker_cycle_search_mode(the_editor_handle_t *handle);
 bool the_editor_file_picker_select_next(the_editor_handle_t *handle);
 bool the_editor_file_picker_select_previous(the_editor_handle_t *handle);
 bool the_editor_file_picker_set_list_offset(the_editor_handle_t *handle, uintptr_t offset);

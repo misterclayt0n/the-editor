@@ -520,6 +520,20 @@ final class EditorSurfaceController: ObservableObject {
         focusEditor()
     }
 
+    /// Moves the completion selection like Tab / Shift+Tab (wraps at ends).
+    func stepCompletionMenuSelection(forward: Bool) {
+        guard completionMenu.isOpen, !completionMenu.items.isEmpty else { return }
+        let count = completionMenu.items.count
+        let current = completionMenu.selectedIndex ?? 0
+        let next: Int
+        if forward {
+            next = (current + 1) % count
+        } else {
+            next = (current + count - 1) % count
+        }
+        selectCompletionMenuIndex(next)
+    }
+
     func closeDocsPanels() {
         guard EditorFFIBridge.closeDocsPanels(handle?.raw) else { return }
         refreshSnapshot()
@@ -567,6 +581,11 @@ final class EditorSurfaceController: ObservableObject {
     func setFilePickerQuery(_ query: String) {
         guard query != filePicker.query else { return }
         guard EditorFFIBridge.setFilePickerQuery(handle?.raw, query: query) else { return }
+        refreshSnapshot()
+    }
+
+    func cycleFilePickerSearchMode() {
+        guard EditorFFIBridge.cycleFilePickerSearchMode(handle?.raw) else { return }
         refreshSnapshot()
     }
 

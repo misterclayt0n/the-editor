@@ -79,6 +79,7 @@ use crate::{
     CommandEvent,
     TypableCommand,
   },
+  fff_backend,
 };
 
 const MAX_SCAN_ITEMS: usize = 100_000;
@@ -261,6 +262,27 @@ impl FilePickerItemPayload {
   }
 }
 
+#[derive(Debug, Clone)]
+pub enum DirectPickerTrackingKind {
+  FffFileSearch {
+    root:  PathBuf,
+    query: String,
+  },
+  FffGrep {
+    root:  PathBuf,
+    query: String,
+  },
+}
+
+#[derive(Debug, Clone)]
+pub struct DirectPickerItemMetadata {
+  pub match_indices:          Arc<[usize]>,
+  pub primary_match_ranges:   Arc<[(usize, usize)]>,
+  pub secondary_match_ranges: Arc<[(usize, usize)]>,
+  pub preview_match_ranges:   Arc<[(usize, usize)]>,
+  pub tracking:               DirectPickerTrackingKind,
+}
+
 impl std::fmt::Debug for FilePickerItemPayload {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     f.debug_struct("FilePickerItemPayload")
@@ -369,6 +391,28 @@ pub struct FilePickerRowData {
   pub line:       usize,
   pub column:     usize,
   pub depth:      usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FilePickerSearchMode {
+  #[default]
+  None,
+  PlainText,
+  Regex,
+  Fuzzy,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FilePickerStatusBannerKind {
+  #[default]
+  Info,
+  Warning,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FilePickerStatusBanner {
+  pub kind: FilePickerStatusBannerKind,
+  pub text: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -581,7 +625,7 @@ enum PickerQueryHandlerRef {
 pub type PickerQuerySource<Ctx> = dyn Fn(&mut Ctx, &str) -> Vec<PickerItemSpec> + 'static;
 pub type PickerRuntimeSubmit<Ctx> =
   dyn Fn(&mut Ctx, &FilePickerItem) -> PickerSubmitResult + 'static;
-type PickerPathFilter = dyn Fn(&Path, &Path) -> bool + Send + Sync + 'static;
+pub(crate) type PickerPathFilter = dyn Fn(&Path, &Path) -> bool + Send + Sync + 'static;
 
 pub struct PickerRuntimeSession<Ctx> {
   query:  Option<Box<PickerQuerySource<Ctx>>>,
@@ -790,8 +834,10 @@ pub struct FilePickerState {
   pub preview_focus_line: Option<usize>,
   pub preview:            FilePickerPreview,
   pub error:              Option<String>,
+  pub status_banner:      Option<FilePickerStatusBanner>,
   pub scanning:           bool,
   pub matcher_running:    bool,
+  pub search_mode:        FilePickerSearchMode,
   pub query_mode:         FilePickerQueryMode,
   custom_query_handler:   Option<PickerQueryHandlerRef>,
   pub dynamic_running:    bool,
@@ -808,6 +854,8 @@ pub struct FilePickerState {
   preview_latest_request: Arc<AtomicU64>,
   wake_tx:                Option<Sender<()>>,
   syntax_loader:          Option<Arc<Loader>>,
+  direct_items:           Vec<Arc<FilePickerItem>>,
+  use_direct_items:       bool,
   matcher:                Nucleo<Arc<FilePickerItem>>,
 }
 
@@ -838,8 +886,10 @@ impl Default for FilePickerState {
       preview_focus_line: None,
       preview: FilePickerPreview::Empty,
       error: None,
+      status_banner: None,
       scanning: false,
       matcher_running: false,
+      search_mode: FilePickerSearchMode::None,
       query_mode: FilePickerQueryMode::Static,
       custom_query_handler: None,
       dynamic_running: false,
@@ -856,6 +906,8 @@ impl Default for FilePickerState {
       preview_latest_request: Arc::new(AtomicU64::new(0)),
       wake_tx: None,
       syntax_loader: None,
+      direct_items: Vec::new(),
+      use_direct_items: false,
       matcher,
     }
   }
@@ -876,11 +928,13 @@ pub fn set_file_picker_syntax_loader(state: &mut FilePickerState, loader: Option
 impl FilePickerState {
   pub fn current_item(&self) -> Option<Arc<FilePickerItem>> {
     let selected = self.selected?;
-    let snapshot = self.matcher.snapshot();
-    Some(snapshot.get_matched_item(selected as u32)?.data.clone())
+    self.matched_item(selected)
   }
 
   pub fn matched_item(&self, matched_index: usize) -> Option<Arc<FilePickerItem>> {
+    if self.use_direct_items {
+      return self.direct_items.get(matched_index).cloned();
+    }
     let snapshot = self.matcher.snapshot();
     Some(
       snapshot
@@ -895,10 +949,19 @@ impl FilePickerState {
     matched_index: usize,
     indices_out: &mut Vec<usize>,
   ) -> Option<Arc<FilePickerItem>> {
+    indices_out.clear();
+
+    if self.use_direct_items {
+      let item = self.direct_items.get(matched_index)?.clone();
+      if let Some(metadata) = item.payload::<DirectPickerItemMetadata>() {
+        indices_out.extend(metadata.match_indices.iter().copied());
+      }
+      return Some(item);
+    }
+
     let snapshot = self.matcher.snapshot();
     let item = snapshot.get_matched_item(matched_index as u32)?;
 
-    indices_out.clear();
     MATCH_INDEX_SCRATCH.with(|scratch| {
       let mut scratch = scratch.borrow_mut();
       let (matcher, indices) = &mut *scratch;
@@ -933,6 +996,13 @@ impl FilePickerState {
   }
 
   pub fn matched_index_for_stable_id(&self, stable_id: u64) -> Option<usize> {
+    if self.use_direct_items {
+      return self
+        .direct_items
+        .iter()
+        .position(|item| item.stable_id() == stable_id);
+    }
+
     let snapshot = self.matcher.snapshot();
     let matched_count = snapshot.matched_item_count() as usize;
     (0..matched_count).find(|&matched_index| {
@@ -943,10 +1013,16 @@ impl FilePickerState {
   }
 
   pub fn matched_count(&self) -> usize {
+    if self.use_direct_items {
+      return self.direct_items.len();
+    }
     self.matcher.snapshot().matched_item_count() as usize
   }
 
   pub fn total_count(&self) -> usize {
+    if self.use_direct_items {
+      return self.direct_items.len();
+    }
     self.matcher.snapshot().item_count() as usize
   }
 
@@ -963,14 +1039,9 @@ impl FilePickerState {
       FilePickerPreview::Empty | FilePickerPreview::Message(_) => {
         FilePickerPreviewNavigationMode::Static
       },
-      FilePickerPreview::VcsDiff(_) => FilePickerPreviewNavigationMode::Scrollable,
-      FilePickerPreview::Source(_) | FilePickerPreview::Text(_) => {
-        if self.preview_focus_line.is_some() {
-          FilePickerPreviewNavigationMode::Anchored
-        } else {
-          FilePickerPreviewNavigationMode::Scrollable
-        }
-      },
+      FilePickerPreview::VcsDiff(_)
+      | FilePickerPreview::Source(_)
+      | FilePickerPreview::Text(_) => FilePickerPreviewNavigationMode::Scrollable,
     }
   }
 
@@ -2043,6 +2114,275 @@ pub fn file_picker_items_from_specs(
     .collect()
 }
 
+fn direct_picker_metadata(tracking: DirectPickerTrackingKind) -> DirectPickerItemMetadata {
+  DirectPickerItemMetadata {
+    match_indices:          Arc::from([]),
+    primary_match_ranges:   Arc::from([]),
+    secondary_match_ranges: Arc::from([]),
+    preview_match_ranges:   Arc::from([]),
+    tracking,
+  }
+}
+
+fn file_depth_within_limit(root: &Path, path: &Path, max_depth: Option<usize>) -> bool {
+  let Some(max_depth) = max_depth else {
+    return true;
+  };
+  let Ok(relative) = path.strip_prefix(root) else {
+    return false;
+  };
+  relative.components().count() <= max_depth
+}
+
+fn path_matches_scan_source(path: &Path, root: &Path, scan_source: &FilePickerScanSource) -> bool {
+  let Ok(relative) = path.strip_prefix(root) else {
+    return false;
+  };
+
+  if !file_depth_within_limit(root, path, scan_source.options.max_depth) {
+    return false;
+  }
+
+  if let Some(extensions) = &scan_source.extensions {
+    let extension = relative
+      .extension()
+      .and_then(|extension| extension.to_str())
+      .map(|value| value.to_ascii_lowercase());
+    if extension
+      .as_deref()
+      .is_none_or(|candidate| !extensions.iter().any(|value| value == candidate))
+    {
+      return false;
+    }
+  }
+
+  if let Some(filter) = &scan_source.path_filter
+    && !filter(path, relative)
+  {
+    return false;
+  }
+
+  true
+}
+
+fn picker_spec_for_fff_file_hit(
+  root: &Path,
+  query: &str,
+  path: &Path,
+  location: Option<fff_search::Location>,
+) -> Option<PickerItemSpec> {
+  let display = display_relative_path(path, root);
+  let (primary, secondary) = split_picker_path_display(&display);
+  let (primary_match_ranges, secondary_match_ranges) = map_match_ranges_to_row_fields(
+    &display,
+    &primary,
+    &secondary,
+    &compute_match_ranges_for_text(query, &display),
+  );
+
+  let tracking = DirectPickerTrackingKind::FffFileSearch {
+    root:  root.to_path_buf(),
+    query: query.to_string(),
+  };
+  let metadata = DirectPickerItemMetadata {
+    match_indices: Arc::from([]),
+    primary_match_ranges,
+    secondary_match_ranges,
+    preview_match_ranges: Arc::from([]),
+    tracking,
+  };
+  let row_data = FilePickerRowData {
+    kind:       FilePickerRowKind::Generic,
+    severity:   None,
+    primary,
+    secondary,
+    tertiary:   String::new(),
+    quaternary: String::new(),
+    line:       0,
+    column:     0,
+    depth:      0,
+  };
+
+  let spec = match location {
+    Some(fff_search::Location::Line(line)) => {
+      let line = line.max(1) as usize - 1;
+      PickerItemSpec::location(display.clone(), path, 0, line, None).with_preview_line(line)
+    },
+    Some(fff_search::Location::Position { line, col }) => {
+      let line = line.max(1) as usize - 1;
+      let col = col.max(1) as usize - 1;
+      PickerItemSpec::location(display.clone(), path, 0, line, Some(col)).with_preview_line(line)
+    },
+    Some(fff_search::Location::Range { start, .. }) => {
+      let line = start.0.max(1) as usize - 1;
+      let col = start.1.max(1) as usize - 1;
+      PickerItemSpec::location(display, path, 0, line, Some(col)).with_preview_line(line)
+    },
+    None => PickerItemSpec::file(root, path)?,
+  };
+
+  Some(spec.with_row_data(row_data).with_payload(metadata))
+}
+
+fn sanitize_picker_grep_excerpt(line: &str) -> String {
+  line.trim_end_matches(['\r', '\n']).replace('\t', " ")
+}
+
+fn grep_suggestion_header_spec(root: &Path, query: &str, path: &Path) -> PickerItemSpec {
+  let display = display_relative_path(path, root);
+  let (primary, secondary) = split_picker_path_display(&display);
+  let metadata = direct_picker_metadata(DirectPickerTrackingKind::FffGrep {
+    root:  root.to_path_buf(),
+    query: query.to_string(),
+  });
+
+  PickerItemSpec::custom(display)
+    .with_selectable(false)
+    .with_row_data(FilePickerRowData {
+      kind:       FilePickerRowKind::LiveGrepHeader,
+      severity:   None,
+      primary,
+      secondary,
+      tertiary:   String::new(),
+      quaternary: String::new(),
+      line:       0,
+      column:     0,
+      depth:      0,
+    })
+    .with_payload(metadata)
+}
+
+fn grep_suggestion_match_spec(
+  root: &Path,
+  query: &str,
+  matched: &fff_backend::FffGrepMatch,
+) -> PickerItemSpec {
+  let snippet = sanitize_picker_grep_excerpt(&matched.line_text);
+  let preview_match_ranges: Vec<(usize, usize)> = matched
+    .match_bytes
+    .iter()
+    .map(|(start, end)| {
+      (
+        line_byte_to_char_idx(&snippet, *start, false),
+        line_byte_to_char_idx(&snippet, *end, true),
+      )
+    })
+    .filter(|(start, end)| end > start)
+    .collect();
+  let metadata = DirectPickerItemMetadata {
+    match_indices:          Arc::from([]),
+    primary_match_ranges:   Arc::from(preview_match_ranges.clone()),
+    secondary_match_ranges: Arc::from([]),
+    preview_match_ranges:   Arc::from(preview_match_ranges.clone()),
+    tracking:               DirectPickerTrackingKind::FffGrep {
+      root:  root.to_path_buf(),
+      query: query.to_string(),
+    },
+  };
+
+  PickerItemSpec::location(
+    display_relative_path(matched.path.as_path(), root),
+    matched.path.clone(),
+    0,
+    matched.line_number_one_based.saturating_sub(1),
+    preview_match_ranges.first().map(|(start, _)| *start),
+  )
+  .with_preview_line(matched.line_number_one_based.saturating_sub(1))
+  .with_row_data(FilePickerRowData {
+    kind:       FilePickerRowKind::LiveGrepMatch,
+    severity:   None,
+    primary:    snippet,
+    secondary:  String::new(),
+    tertiary:   String::new(),
+    quaternary: String::new(),
+    line:       matched.line_number_one_based,
+    column:     preview_match_ranges.first().map(|(start, _)| start + 1).unwrap_or(1),
+    depth:      0,
+  })
+  .with_payload(metadata)
+}
+
+fn build_fff_grep_suggestion_specs(root: &Path, query: &str, limit: usize) -> Vec<PickerItemSpec> {
+  let cancel = AtomicBool::new(false);
+  let response = match fff_backend::search_grep_with_mode(
+    root,
+    query,
+    true,
+    limit,
+    fff_search::GrepMode::PlainText,
+    &cancel,
+  ) {
+    Ok(response) => response,
+    Err(_) => return Vec::new(),
+  };
+
+  let mut grouped: HashMap<PathBuf, Vec<fff_backend::FffGrepMatch>> = HashMap::new();
+  let mut file_order = Vec::new();
+  for matched in response.matches {
+    let entry = grouped.entry(matched.path.clone()).or_insert_with(|| {
+      file_order.push(matched.path.clone());
+      Vec::new()
+    });
+    entry.push(matched);
+  }
+
+  let mut specs = Vec::new();
+  for path in file_order {
+    let Some(matches) = grouped.remove(&path) else {
+      continue;
+    };
+    specs.push(grep_suggestion_header_spec(root, query, &path));
+    for matched in matches {
+      if specs.len() >= limit {
+        break;
+      }
+      specs.push(grep_suggestion_match_spec(root, query, &matched));
+    }
+    if specs.len() >= limit {
+      break;
+    }
+  }
+  specs
+}
+
+fn build_fff_file_search_specs<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  root: &Path,
+  query: &str,
+  scan_source: &FilePickerScanSource,
+) -> Vec<PickerItemSpec> {
+  ctx.file_picker_mut().status_banner = None;
+  ctx.file_picker_mut().search_mode = FilePickerSearchMode::None;
+
+  let current_file = ctx.file_path().filter(|path| path.starts_with(root));
+  let overfetch_limit = fff_backend::file_search_overfetch_limit(scan_source.max_results);
+  let response = match fff_backend::search_files(root, query, current_file, overfetch_limit) {
+    Ok(response) => response,
+    Err(_) => return Vec::new(),
+  };
+
+  let hits: Vec<_> = response
+    .hits
+    .into_iter()
+    .filter(|hit| path_matches_scan_source(hit.path.as_path(), root, scan_source))
+    .filter_map(|hit| picker_spec_for_fff_file_hit(root, query, hit.path.as_path(), hit.location))
+    .take(scan_source.max_results)
+    .collect();
+
+  if !hits.is_empty() || query.trim().is_empty() {
+    return hits;
+  }
+
+  let suggestions = build_fff_grep_suggestion_specs(root, query, scan_source.max_results);
+  if !suggestions.is_empty() {
+    ctx.file_picker_mut().status_banner = Some(FilePickerStatusBanner {
+      kind: FilePickerStatusBannerKind::Warning,
+      text: "No file matches — showing content matches".to_string(),
+    });
+  }
+  suggestions
+}
+
 fn open_picker_from_builder_items<Ctx: DefaultContext>(
   ctx: &mut Ctx,
   kind: FilePickerKind,
@@ -2118,6 +2458,24 @@ fn open_picker_from_builder_files<Ctx: DefaultContext>(
   mut scan_source: FilePickerScanSource,
   submit_handler: Option<Arc<PickerRuntimeSubmit<Ctx>>>,
 ) {
+  if kind == FilePickerKind::Generic {
+    let query_root = root.clone();
+    let query_scan_source = scan_source.clone();
+    open_picker_from_builder_query(
+      ctx,
+      kind,
+      title,
+      root,
+      open_split,
+      String::new(),
+      Arc::new(move |ctx: &mut Ctx, query: &str| {
+        build_fff_file_search_specs(ctx, query_root.as_path(), query, &query_scan_source)
+      }),
+      submit_handler,
+    );
+    return;
+  }
+
   let runtime_session = submit_handler.map(|submit| {
     register_picker_runtime_session(ctx, PickerRuntimeSession {
       query:  None,
@@ -2158,6 +2516,8 @@ pub fn set_file_picker_query_text(state: &mut FilePickerState, query: &str) -> b
 fn reset_picker_matcher(state: &mut FilePickerState) {
   state.matcher = new_matcher(state.wake_tx.clone());
   state.matcher_running = false;
+  state.direct_items.clear();
+  state.use_direct_items = false;
 }
 
 fn prepare_dynamic_query_change(state: &mut FilePickerState) {
@@ -2167,6 +2527,7 @@ fn prepare_dynamic_query_change(state: &mut FilePickerState) {
   state.list_offset = 0;
   state.preview_scroll = 0;
   state.error = None;
+  state.status_banner = None;
   state.dynamic_running = !state.query.trim().is_empty();
   state.preview_path = None;
   state.preview_focus_line = None;
@@ -2237,6 +2598,12 @@ fn replace_picker_items(
   if state.preview_req_tx.is_none() || state.preview_res_rx.is_none() {
     start_preview_worker(state);
   }
+
+  state.direct_items.clear();
+  state.use_direct_items = items
+    .iter()
+    .any(|item| item.payload::<DirectPickerItemMetadata>().is_some());
+
   state.matcher.restart(true);
   state.matcher.pattern.reparse(
     0,
@@ -2245,12 +2612,19 @@ fn replace_picker_items(
     Normalization::Smart,
     false,
   );
-  let injector = state.matcher.injector();
-  for item in items {
-    inject_item(&injector, item);
+
+  if state.use_direct_items {
+    state.direct_items = items.into_iter().map(Arc::new).collect();
+    state.matcher_running = false;
+  } else {
+    let injector = state.matcher.injector();
+    for item in items {
+      inject_item(&injector, item);
+    }
+    drop(injector);
+    let _ = refresh_matcher_state(state);
   }
-  drop(injector);
-  let _ = refresh_matcher_state(state);
+
   if state.matched_count() == 0 {
     state.selected = None;
     set_preview_focus_line(state, None);
@@ -2346,6 +2720,8 @@ pub fn close_file_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
   }
   picker.active = false;
   picker.error = None;
+  picker.status_banner = None;
+  picker.search_mode = FilePickerSearchMode::None;
   picker.hovered = None;
   picker.preview_scroll = 0;
   picker.open_split = None;
@@ -2365,6 +2741,8 @@ pub fn close_file_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
   picker.preview_latest_request.store(0, Ordering::Relaxed);
   picker.scan_rx = None;
   picker.scan_cancel = None;
+  picker.direct_items.clear();
+  picker.use_direct_items = false;
   let _ = picker;
   if let Some(runtime_session) = runtime_session {
     drop_picker_runtime_session(ctx, runtime_session);
@@ -2631,6 +3009,20 @@ pub fn handle_file_picker_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent)
   }
 }
 
+fn track_direct_picker_selection(item: &FilePickerItem) {
+  let Some(metadata) = item.payload::<DirectPickerItemMetadata>() else {
+    return;
+  };
+  match &metadata.tracking {
+    DirectPickerTrackingKind::FffFileSearch { root, query } => {
+      fff_backend::track_file_selection(root.as_path(), query, item.absolute.as_path());
+    },
+    DirectPickerTrackingKind::FffGrep { root, query } => {
+      fff_backend::track_grep_selection(root.as_path(), query, item.absolute.as_path());
+    },
+  }
+}
+
 pub fn submit_file_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
   let selected = ctx.file_picker().current_item();
   let Some(item) = selected else {
@@ -2653,6 +3045,7 @@ pub fn submit_file_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
         ctx.request_render();
         return;
       }
+      track_direct_picker_selection(&item);
       close_file_picker(ctx);
     },
     FilePickerItemAction::GroupHeader { .. } => {},
@@ -2664,6 +3057,7 @@ pub fn submit_file_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
         ctx.push_warning("buffer_picker", "selected buffer is no longer available");
         return;
       }
+      track_direct_picker_selection(&item);
       close_file_picker(ctx);
     },
     FilePickerItemAction::RestoreJump {
@@ -2691,6 +3085,7 @@ pub fn submit_file_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
         return;
       }
       ctx.editor().view_mut().active_cursor = *active_cursor;
+      track_direct_picker_selection(&item);
       close_file_picker(ctx);
     },
     FilePickerItemAction::OpenLocation {
@@ -2752,6 +3147,7 @@ pub fn submit_file_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
         next.row = new_row;
         ctx.editor().view_mut().scroll = next;
       }
+      track_direct_picker_selection(&item);
       close_file_picker(ctx);
     },
     FilePickerItemAction::Custom { handler, .. } => {
@@ -2893,6 +3289,167 @@ pub fn scroll_file_picker_preview<Ctx: DefaultContext>(
 
 fn display_relative_path(path: &Path, cwd: &Path) -> String {
   path.strip_prefix(cwd).unwrap_or(path).display().to_string()
+}
+
+fn line_byte_to_char_idx(line: &str, byte_idx: usize, round_up: bool) -> usize {
+  let clamped = clamp_preview_char_boundary(line, byte_idx, round_up);
+  line[..clamped].chars().count()
+}
+
+pub(crate) fn split_picker_path_display(display: &str) -> (String, String) {
+  let path = Path::new(display);
+  let primary = path
+    .file_name()
+    .and_then(|name| name.to_str())
+    .filter(|name| !name.is_empty())
+    .unwrap_or(display)
+    .to_string();
+  let secondary = path
+    .parent()
+    .and_then(|parent| parent.to_str())
+    .filter(|parent| !parent.is_empty() && *parent != ".")
+    .unwrap_or_default()
+    .to_string();
+  (primary, secondary)
+}
+
+pub(crate) fn query_match_tokens(query: &str) -> Vec<String> {
+  query
+    .trim()
+    .split(|ch: char| ch.is_whitespace() || matches!(ch, '/' | '\\' | ':'))
+    .filter(|token| !token.is_empty())
+    .map(|token| token.to_ascii_lowercase())
+    .collect()
+}
+
+pub(crate) fn char_count(text: &str) -> usize {
+  text.chars().count()
+}
+
+pub(crate) fn contiguous_char_ranges(indices: &[usize]) -> Vec<(usize, usize)> {
+  if indices.is_empty() {
+    return Vec::new();
+  }
+  let mut sorted = indices.to_vec();
+  sorted.sort_unstable();
+  sorted.dedup();
+
+  let mut out = Vec::new();
+  let mut start = sorted[0];
+  let mut end = start + 1;
+  for index in sorted.into_iter().skip(1) {
+    if index == end {
+      end += 1;
+    } else {
+      out.push((start, end));
+      start = index;
+      end = index + 1;
+    }
+  }
+  out.push((start, end));
+  out
+}
+
+fn substring_char_range(text: &str, needle: &str) -> Option<(usize, usize)> {
+  let lower_text = text.to_ascii_lowercase();
+  let start = lower_text.find(needle)?;
+  let start_chars = lower_text[..start].chars().count();
+  let len_chars = lower_text[start..start + needle.len()].chars().count();
+  Some((start_chars, start_chars + len_chars))
+}
+
+fn subsequence_char_indices(text: &str, needle: &str) -> Option<Vec<usize>> {
+  if needle.is_empty() {
+    return Some(Vec::new());
+  }
+
+  let mut out = Vec::new();
+  let mut needle_chars = needle.chars();
+  let mut next = needle_chars.next()?;
+  for (index, ch) in text.chars().enumerate() {
+    if ch == next {
+      out.push(index);
+      if let Some(next_char) = needle_chars.next() {
+        next = next_char;
+      } else {
+        return Some(out);
+      }
+    }
+  }
+  None
+}
+
+pub(crate) fn merge_match_ranges(mut ranges: Vec<(usize, usize)>) -> Vec<(usize, usize)> {
+  if ranges.is_empty() {
+    return ranges;
+  }
+  ranges.sort_unstable_by_key(|range| range.0);
+  let mut merged = Vec::with_capacity(ranges.len());
+  let mut current = ranges[0];
+  for range in ranges.into_iter().skip(1) {
+    if range.0 <= current.1 {
+      current.1 = current.1.max(range.1);
+    } else {
+      merged.push(current);
+      current = range;
+    }
+  }
+  merged.push(current);
+  merged
+}
+
+pub(crate) fn compute_match_ranges_for_text(query: &str, text: &str) -> Vec<(usize, usize)> {
+  if query.trim().is_empty() || text.is_empty() {
+    return Vec::new();
+  }
+
+  let lower_text = text.to_ascii_lowercase();
+  let mut ranges = Vec::new();
+  for token in query_match_tokens(query) {
+    if let Some(range) = substring_char_range(text, &token) {
+      ranges.push(range);
+      continue;
+    }
+    if let Some(indices) = subsequence_char_indices(&lower_text, &token) {
+      ranges.extend(contiguous_char_ranges(&indices));
+    }
+  }
+  merge_match_ranges(ranges)
+}
+
+pub(crate) fn map_match_ranges_to_row_fields(
+  display: &str,
+  primary: &str,
+  secondary: &str,
+  ranges: &[(usize, usize)],
+) -> (Arc<[(usize, usize)]>, Arc<[(usize, usize)]>) {
+  if ranges.is_empty() {
+    return (Arc::from([]), Arc::from([]));
+  }
+
+  let filename_start = char_count(display).saturating_sub(char_count(primary));
+  let secondary_end = if secondary.is_empty() {
+    0
+  } else {
+    filename_start.saturating_sub(1)
+  };
+
+  let mut primary_ranges = Vec::new();
+  let mut secondary_ranges = Vec::new();
+  for (start, end) in ranges.iter().copied() {
+    if end <= secondary_end {
+      secondary_ranges.push((start, end.min(secondary_end)));
+      continue;
+    }
+    if start < secondary_end {
+      secondary_ranges.push((start, secondary_end));
+    }
+    if end > filename_start {
+      primary_ranges.push((start.max(filename_start) - filename_start, end - filename_start));
+    }
+  }
+
+  (merge_match_ranges(primary_ranges).into(), merge_match_ranges(secondary_ranges).into())
 }
 
 fn selection_focus_line(
@@ -3163,11 +3720,12 @@ pub fn file_picker_row_data_for_kind(
       }
     },
     FilePickerKind::Generic => {
+      let (primary, secondary) = split_picker_path_display(&item.display);
       FilePickerRowData {
         kind:       FilePickerRowKind::Generic,
         severity:   None,
-        primary:    item.display.clone(),
-        secondary:  String::new(),
+        primary,
+        secondary,
         tertiary:   String::new(),
         quaternary: String::new(),
         line:       0,
@@ -3896,6 +4454,11 @@ fn poll_preview_results(state: &mut FilePickerState) -> bool {
 }
 
 pub fn refresh_matcher_state(state: &mut FilePickerState) -> bool {
+  if state.use_direct_items {
+    state.matcher_running = false;
+    return clamp_selection_and_offsets(state);
+  }
+
   let status = state.matcher.tick(MATCHER_TICK_TIMEOUT_MS);
   state.matcher_running = status.running || state.matcher.active_injectors() > 0;
 
@@ -4319,64 +4882,69 @@ pub fn file_picker_preview_line_segments(
 
 fn apply_match_to_preview_segments(
   segments: Vec<FilePickerPreviewSegment>,
-  match_col: Option<(usize, usize)>,
+  match_ranges: &[(usize, usize)],
 ) -> Vec<FilePickerPreviewSegment> {
-  let Some((match_start, match_end)) = match_col else {
-    return segments;
-  };
-  if match_end <= match_start {
+  if match_ranges.is_empty() {
     return segments;
   }
 
-  let mut out = Vec::new();
-  let mut segment_start_char = 0usize;
-  for segment in segments {
-    let segment_char_len = segment.text.chars().count();
-    if segment_char_len == 0 {
-      out.push(segment);
+  let mut out = segments;
+  for (match_start, match_end) in match_ranges.iter().copied() {
+    if match_end <= match_start {
       continue;
     }
-    let segment_end_char = segment_start_char.saturating_add(segment_char_len);
-    let overlap_start = match_start.max(segment_start_char);
-    let overlap_end = match_end.min(segment_end_char);
-    if overlap_start >= overlap_end {
-      out.push(segment);
+
+    let mut next = Vec::new();
+    let mut segment_start_char = 0usize;
+    for segment in out {
+      let segment_char_len = segment.text.chars().count();
+      if segment_char_len == 0 {
+        next.push(segment);
+        continue;
+      }
+      let segment_end_char = segment_start_char.saturating_add(segment_char_len);
+      let overlap_start = match_start.max(segment_start_char);
+      let overlap_end = match_end.min(segment_end_char);
+      if overlap_start >= overlap_end {
+        next.push(segment);
+        segment_start_char = segment_end_char;
+        continue;
+      }
+
+      let local_overlap_start = overlap_start.saturating_sub(segment_start_char);
+      let local_overlap_end = overlap_end.saturating_sub(segment_start_char);
+
+      if local_overlap_start > 0 {
+        let prefix_end = preview_char_to_byte_idx(&segment.text, local_overlap_start);
+        next.push(FilePickerPreviewSegment {
+          text:         segment.text[..prefix_end].to_string(),
+          highlight_id: segment.highlight_id,
+          is_match:     segment.is_match,
+          change_kind:  segment.change_kind,
+        });
+      }
+
+      let overlap_start_byte = preview_char_to_byte_idx(&segment.text, local_overlap_start);
+      let overlap_end_byte = preview_char_to_byte_idx(&segment.text, local_overlap_end);
+      next.push(FilePickerPreviewSegment {
+        text:         segment.text[overlap_start_byte..overlap_end_byte].to_string(),
+        highlight_id: segment.highlight_id,
+        is_match:     true,
+        change_kind:  segment.change_kind,
+      });
+
+      if local_overlap_end < segment_char_len {
+        next.push(FilePickerPreviewSegment {
+          text:         segment.text[overlap_end_byte..].to_string(),
+          highlight_id: segment.highlight_id,
+          is_match:     segment.is_match,
+          change_kind:  segment.change_kind,
+        });
+      }
+
       segment_start_char = segment_end_char;
-      continue;
     }
-
-    let local_overlap_start = overlap_start.saturating_sub(segment_start_char);
-    let local_overlap_end = overlap_end.saturating_sub(segment_start_char);
-
-    if local_overlap_start > 0 {
-      let prefix_end = preview_char_to_byte_idx(&segment.text, local_overlap_start);
-      out.push(FilePickerPreviewSegment {
-        text:         segment.text[..prefix_end].to_string(),
-        highlight_id: segment.highlight_id,
-        is_match:     false,
-        change_kind:  segment.change_kind,
-      });
-    }
-
-    let overlap_start_byte = preview_char_to_byte_idx(&segment.text, local_overlap_start);
-    let overlap_end_byte = preview_char_to_byte_idx(&segment.text, local_overlap_end);
-    out.push(FilePickerPreviewSegment {
-      text:         segment.text[overlap_start_byte..overlap_end_byte].to_string(),
-      highlight_id: segment.highlight_id,
-      is_match:     true,
-      change_kind:  segment.change_kind,
-    });
-
-    if local_overlap_end < segment_char_len {
-      out.push(FilePickerPreviewSegment {
-        text:         segment.text[overlap_end_byte..].to_string(),
-        highlight_id: segment.highlight_id,
-        is_match:     false,
-        change_kind:  segment.change_kind,
-      });
-    }
-
-    segment_start_char = segment_end_char;
+    out = next;
   }
 
   out
@@ -4392,7 +4960,16 @@ pub fn file_picker_preview_window(
   let raw_overscan = overscan;
   let overscan = overscan.max(1);
   let focus_line = state.preview_focus_line;
-  let focus_col = state.current_item().and_then(|item| item.preview_col);
+  let focus_match_ranges = state
+    .current_item()
+    .and_then(|item| {
+      item
+        .payload::<DirectPickerItemMetadata>()
+        .map(|metadata| metadata.preview_match_ranges.clone())
+        .filter(|ranges| !ranges.is_empty())
+        .or_else(|| item.preview_col.map(|range| Arc::from([range])))
+    })
+    .unwrap_or_else(|| Arc::from([]));
   let navigation_mode = state.preview_navigation_mode();
 
   match &state.preview {
@@ -4412,7 +4989,7 @@ pub fn file_picker_preview_window(
         source,
         navigation_mode,
         focus_line,
-        focus_col,
+        focus_match_ranges.as_ref(),
         offset,
         visible_rows,
         overscan,
@@ -4424,7 +5001,7 @@ pub fn file_picker_preview_window(
         FilePickerPreviewWindowKind::Text,
         navigation_mode,
         focus_line,
-        focus_col,
+        focus_match_ranges.as_ref(),
         offset,
         visible_rows,
         overscan,
@@ -4436,7 +5013,7 @@ pub fn file_picker_preview_window(
         FilePickerPreviewWindowKind::Message,
         FilePickerPreviewNavigationMode::Static,
         focus_line,
-        focus_col,
+        focus_match_ranges.as_ref(),
         offset,
         visible_rows,
         overscan,
@@ -4452,7 +5029,7 @@ fn build_source_preview_window(
   source: &FilePickerSourcePreview,
   navigation_mode: FilePickerPreviewNavigationMode,
   focus_line: Option<usize>,
-  focus_col: Option<(usize, usize)>,
+  focus_match_ranges: &[(usize, usize)],
   offset: usize,
   visible_rows: usize,
   overscan: usize,
@@ -4488,7 +5065,7 @@ fn build_source_preview_window(
         let mut segments = file_picker_preview_line_segments(line, line_start, &source.highlights);
         let focused = focus_line.is_some_and(|focus| focus == line_index);
         if focused {
-          segments = apply_match_to_preview_segments(segments, focus_col);
+          segments = apply_match_to_preview_segments(segments, focus_match_ranges);
         }
         lines.push(FilePickerPreviewWindowLine {
           virtual_row: line_index,
@@ -4547,7 +5124,7 @@ fn build_source_preview_window(
         let mut segments = file_picker_preview_line_segments(line, line_start, &source.highlights);
         let focused = focus_line.is_some_and(|focus| focus == line_index);
         if focused {
-          segments = apply_match_to_preview_segments(segments, focus_col);
+          segments = apply_match_to_preview_segments(segments, focus_match_ranges);
         }
         lines.push(FilePickerPreviewWindowLine {
           virtual_row: line_index,
@@ -4588,7 +5165,7 @@ fn build_plain_preview_window(
   kind: FilePickerPreviewWindowKind,
   navigation_mode: FilePickerPreviewNavigationMode,
   focus_line: Option<usize>,
-  focus_col: Option<(usize, usize)>,
+  focus_match_ranges: &[(usize, usize)],
   offset: usize,
   visible_rows: usize,
   overscan: usize,
@@ -4618,7 +5195,7 @@ fn build_plain_preview_window(
           change_kind:  None,
         }];
         if focused {
-          segments = apply_match_to_preview_segments(segments, focus_col);
+          segments = apply_match_to_preview_segments(segments, focus_match_ranges);
         }
         lines.push(FilePickerPreviewWindowLine {
           virtual_row,
@@ -4678,7 +5255,7 @@ fn build_plain_preview_window(
           change_kind:  None,
         }];
         if focused {
-          segments = apply_match_to_preview_segments(segments, focus_col);
+          segments = apply_match_to_preview_segments(segments, focus_match_ranges);
         }
         lines.push(FilePickerPreviewWindowLine {
           virtual_row,
@@ -5567,18 +6144,18 @@ mod tests {
     refresh_preview(&mut state);
     assert_eq!(
       state.preview_navigation_mode(),
-      FilePickerPreviewNavigationMode::Anchored
+      FilePickerPreviewNavigationMode::Scrollable
     );
-    assert_eq!(state.preview_scroll, 0);
+    assert_eq!(state.preview_scroll, 37);
 
-    let anchored_window = file_picker_preview_window(&state, 69, 10, 4);
+    let window = file_picker_preview_window(&state, state.preview_scroll, 10, 4);
     assert_eq!(
-      anchored_window.navigation_mode,
-      FilePickerPreviewNavigationMode::Anchored
+      window.navigation_mode,
+      FilePickerPreviewNavigationMode::Scrollable
     );
-    assert_ne!(anchored_window.offset, 69);
+    assert_eq!(window.offset, 37);
     assert!(
-      anchored_window
+      window
         .lines
         .iter()
         .any(|line| line.focused && line.virtual_row == 40)
@@ -5641,9 +6218,9 @@ mod tests {
       FilePickerPreviewNavigationMode::Scrollable
     );
     assert_eq!(window.offset, 69);
-    assert_eq!(window.window_start, 69);
-    assert_eq!(window.lines.first().map(|line| line.virtual_row), Some(69));
-    assert_eq!(window.lines.last().map(|line| line.virtual_row), Some(76));
+    assert_eq!(window.window_start, 68);
+    assert_eq!(window.lines.first().map(|line| line.virtual_row), Some(68));
+    assert_eq!(window.lines.last().map(|line| line.virtual_row), Some(77));
 
     let _ = std::fs::remove_file(path);
   }

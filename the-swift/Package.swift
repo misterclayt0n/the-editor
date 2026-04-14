@@ -95,7 +95,9 @@ if let ghosttyKitPath {
     executableDependencies.append("GhosttyKit")
 }
 
-var linkerSettings: [LinkerSetting] = []
+var linkerSettings: [LinkerSetting] = [
+    .linkedLibrary("iconv")
+]
 if hasGhosttyKit {
     linkerSettings.append(.linkedLibrary("c++"))
     linkerSettings.append(.linkedFramework("Carbon"))

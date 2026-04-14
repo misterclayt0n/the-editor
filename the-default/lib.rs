@@ -13,6 +13,7 @@ mod command_types;
 mod completion_menu;
 mod context_menu;
 mod defaults;
+mod fff_backend;
 mod file_picker;
 mod file_tree;
 mod global_search;
@@ -133,6 +134,8 @@ pub use defaults::{
   install_default_wiring,
 };
 pub use file_picker::{
+  DirectPickerItemMetadata,
+  DirectPickerTrackingKind,
   FilePickerChangedFileItem,
   FilePickerChangedKind,
   FilePickerDiagnosticItem,
@@ -151,7 +154,10 @@ pub use file_picker::{
   FilePickerPreviewWindowLine,
   FilePickerRowData,
   FilePickerRowKind,
+  FilePickerSearchMode,
   FilePickerSourcePreview,
+  FilePickerStatusBanner,
+  FilePickerStatusBannerKind,
   FilePickerState,
   FilePickerVcsDiffBootstrap,
   FilePickerVcsDiffEntry,
@@ -262,6 +268,7 @@ pub use file_tree::{
 };
 pub use global_search::{
   GlobalSearchDocumentSnapshot,
+  GlobalSearchMode,
   GlobalSearchOptions,
   GlobalSearchResponse,
   GlobalSearchState,

@@ -2019,6 +2019,7 @@ impl Ctx {
     let options = GlobalSearchOptions {
       smart_case:  true,
       file_picker: self.file_picker.options.clone(),
+      mode:        the_default::GlobalSearchMode::PlainText,
     };
     if let Err(err) = self.global_search.activate(root.as_path(), options) {
       let _ = <Self as the_default::DefaultContext>::push_error(
@@ -2067,16 +2068,28 @@ impl Ctx {
       let picker = &mut self.file_picker;
       picker.query = response.query.clone();
       picker.cursor = response.query.len();
+      picker.search_mode = response.search_mode;
+      picker.status_banner = response.status_banner;
       if let Some(error) = response.error {
         picker.error = Some(error.clone());
         picker.preview = the_default::FilePickerPreview::Message(error);
       } else if response.indexing && !has_items {
         picker.error = None;
-        picker.preview = the_default::FilePickerPreview::Message("Indexing files…".to_string());
+        if picker.status_banner.is_none() {
+          picker.preview = the_default::FilePickerPreview::Message("Indexing files…".to_string());
+        }
       } else {
         picker.error = None;
         if picker.query.trim().is_empty() {
           picker.preview = the_default::FilePickerPreview::Message("Type to search".to_string());
+        } else if !has_items {
+          picker.preview = the_default::FilePickerPreview::Message(
+            picker
+              .status_banner
+              .as_ref()
+              .map(|banner| banner.text.clone())
+              .unwrap_or_else(|| "No content matches".to_string()),
+          );
         }
       }
     }
@@ -8747,6 +8760,7 @@ impl the_default::DefaultContext for Ctx {
         self.file_picker.query = query.to_string();
         self.file_picker.cursor = query.len();
         self.file_picker.error = None;
+        self.file_picker.status_banner = None;
         self.file_picker.preview =
           the_default::FilePickerPreview::Message("Type to search".to_string());
         self.needs_render = true;

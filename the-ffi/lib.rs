@@ -57,11 +57,14 @@ use the_default::{
   FilePickerKind,
   FilePickerPreview,
   FilePickerPreviewChangeKind,
+  DirectPickerItemMetadata,
   FilePickerPreviewLineKind,
   FilePickerPreviewNavigationMode,
   FilePickerPreviewWindowKind,
   FilePickerRowKind,
+  FilePickerSearchMode,
   FilePickerState,
+  FilePickerStatusBannerKind,
   FilePickerVcsDiffBootstrap,
   FilePickerVcsDiffEntry,
   FilePickerVcsDiffHunk,
@@ -693,6 +696,9 @@ pub struct the_editor_snapshot_file_picker_t {
   pub show_preview:            bool,
   pub loading:                 bool,
   pub error:                   *const c_char,
+  pub status_banner:           *const c_char,
+  pub status_banner_kind:      u8,
+  pub search_mode:             u8,
   pub preview_path:            *const c_char,
   pub preview_navigation_mode: u8,
   pub preview_kind:            u8,
@@ -705,19 +711,21 @@ pub struct the_editor_snapshot_file_picker_t {
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 pub struct the_editor_snapshot_file_picker_item_t {
-  pub stable_id:    u64,
-  pub global_index: usize,
-  pub row_kind:     u8,
-  pub selectable:   bool,
-  pub is_dir:       bool,
-  pub icon:         *const c_char,
-  pub primary:      *const c_char,
-  pub secondary:    *const c_char,
-  pub tertiary:     *const c_char,
-  pub quaternary:   *const c_char,
-  pub line:         u32,
-  pub column:       u32,
-  pub depth:        u16,
+  pub stable_id:              u64,
+  pub global_index:           usize,
+  pub row_kind:               u8,
+  pub selectable:             bool,
+  pub is_dir:                 bool,
+  pub icon:                   *const c_char,
+  pub primary:                *const c_char,
+  pub secondary:              *const c_char,
+  pub tertiary:               *const c_char,
+  pub quaternary:             *const c_char,
+  pub primary_match_ranges:   *const c_char,
+  pub secondary_match_ranges: *const c_char,
+  pub line:                   u32,
+  pub column:                 u32,
+  pub depth:                  u16,
 }
 
 #[repr(C)]
@@ -1130,21 +1138,24 @@ struct DiagnosticRecord {
 
 #[derive(Clone, Copy, Default)]
 struct FilePickerRecord {
-  picker:           the_editor_snapshot_file_picker_t,
-  title_idx:        Option<usize>,
-  query_idx:        Option<usize>,
-  error_idx:        Option<usize>,
-  preview_path_idx: Option<usize>,
+  picker:              the_editor_snapshot_file_picker_t,
+  title_idx:           Option<usize>,
+  query_idx:           Option<usize>,
+  error_idx:           Option<usize>,
+  status_banner_idx:   Option<usize>,
+  preview_path_idx:    Option<usize>,
 }
 
 #[derive(Clone, Copy, Default)]
 struct FilePickerItemRecord {
-  item:           the_editor_snapshot_file_picker_item_t,
-  icon_idx:       usize,
-  primary_idx:    usize,
-  secondary_idx:  Option<usize>,
-  tertiary_idx:   Option<usize>,
-  quaternary_idx: Option<usize>,
+  item:                       the_editor_snapshot_file_picker_item_t,
+  icon_idx:                   usize,
+  primary_idx:                usize,
+  secondary_idx:              Option<usize>,
+  tertiary_idx:               Option<usize>,
+  quaternary_idx:             Option<usize>,
+  primary_match_ranges_idx:   Option<usize>,
+  secondary_match_ranges_idx: Option<usize>,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -4912,6 +4923,7 @@ impl SwiftEditor {
     let options = GlobalSearchOptions {
       smart_case:  true,
       file_picker: self.file_picker.options.clone(),
+      mode:        the_default::GlobalSearchMode::PlainText,
     };
     if let Err(err) = self.global_search.activate(root.as_path(), options) {
       self.push_error(
@@ -4940,6 +4952,20 @@ impl SwiftEditor {
       .schedule(query, self.global_search_documents());
   }
 
+  fn cycle_file_picker_search_mode(&mut self) -> bool {
+    let Some(mode) = self.global_search.cycle_mode() else {
+      return false;
+    };
+    self.file_picker.search_mode = mode.as_picker_mode();
+    self.file_picker.status_banner = None;
+    if self.file_picker.query.trim().is_empty() {
+      self.request_render();
+    } else {
+      self.schedule_global_search(self.file_picker.query.clone());
+    }
+    true
+  }
+
   fn poll_global_search(&mut self) -> bool {
     if !self.global_search.is_active() {
       return false;
@@ -4959,12 +4985,16 @@ impl SwiftEditor {
       let picker = &mut self.file_picker;
       picker.query = response.query.clone();
       picker.cursor = response.query.len();
+      picker.search_mode = response.search_mode;
+      picker.status_banner = response.status_banner;
       if let Some(error) = response.error {
         picker.error = Some(error.clone());
         picker.preview = FilePickerPreview::Message(error);
       } else if response.indexing && !has_items {
         picker.error = None;
-        picker.preview = FilePickerPreview::Message("Indexing files…".to_string());
+        if picker.status_banner.is_none() {
+          picker.preview = FilePickerPreview::Message("Indexing files…".to_string());
+        }
       } else {
         picker.error = None;
         if picker.query.trim().is_empty() {
@@ -5975,6 +6005,13 @@ impl SwiftEditor {
       notify_file_picker_query_changed(self, query);
     }
     true
+  }
+
+  fn cycle_file_picker_search_mode_command(&mut self) -> bool {
+    if !self.file_picker.active {
+      return false;
+    }
+    self.cycle_file_picker_search_mode()
   }
 
   fn move_file_picker_selection(&mut self, next: bool) -> bool {
@@ -7383,6 +7420,7 @@ impl DefaultContext for SwiftEditor {
         self.file_picker.query = query.to_string();
         self.file_picker.cursor = query.len();
         self.file_picker.error = None;
+        self.file_picker.status_banner = None;
         self.file_picker.preview = FilePickerPreview::Message("Type to search".to_string());
         self.request_render();
       } else {
@@ -8592,7 +8630,7 @@ impl OwnedSnapshot {
     };
 
     self.file_picker = FilePickerRecord {
-      picker:           the_editor_snapshot_file_picker_t {
+      picker:              the_editor_snapshot_file_picker_t {
         is_open: picker.active,
         kind: file_picker_kind_code(picker.kind),
         selected_index: picker.selected.map(|index| index as i32).unwrap_or(-1),
@@ -8607,13 +8645,18 @@ impl OwnedSnapshot {
           || picker.dynamic_running
           || picker.preview_loading(),
         error: ptr::null(),
+        status_banner: ptr::null(),
+        status_banner_kind: file_picker_status_banner_kind_code(
+          picker.status_banner.as_ref().map(|banner| banner.kind),
+        ),
+        search_mode: file_picker_search_mode_code(picker.search_mode),
         preview_path: ptr::null(),
         preview_navigation_mode: file_picker_preview_navigation_code(
           preview_window.navigation_mode,
         ),
         preview_kind: file_picker_preview_kind_code(preview_window.kind),
         preview_total_rows: preview_window.total_virtual_rows,
-        preview_offset: picker.preview_scroll,
+        preview_offset: preview_window.offset,
         preview_window_start: preview_window.window_start,
         preview_window_count: if let Some(vcs_diff) = &preview_window.vcs_diff {
           vcs_diff.lines.len()
@@ -8621,10 +8664,14 @@ impl OwnedSnapshot {
           preview_window.lines.len()
         },
       },
-      title_idx:        Some(self.push_string(&picker.title)),
-      query_idx:        Some(self.push_string(&picker.query)),
-      error_idx:        self.push_optional_string(picker.error.as_deref()),
-      preview_path_idx: picker
+      title_idx:           Some(self.push_string(&picker.title)),
+      query_idx:           Some(self.push_string(&picker.query)),
+      error_idx:           self.push_optional_string(picker.error.as_deref()),
+      status_banner_idx:   picker
+        .status_banner
+        .as_ref()
+        .map(|banner| self.push_string(&banner.text)),
+      preview_path_idx:    picker
         .preview_path
         .as_ref()
         .map(|path| self.push_string(path.to_string_lossy().as_ref())),
@@ -8635,6 +8682,7 @@ impl OwnedSnapshot {
         continue;
       };
       let row_data = file_picker_row_data_for_kind(picker.kind, &item);
+      let metadata = item.payload::<DirectPickerItemMetadata>();
       let icon_idx = self.push_string(&item.icon);
       let primary_idx = self.push_string(&row_data.primary);
       let secondary_idx = self.push_optional_string(
@@ -8646,6 +8694,12 @@ impl OwnedSnapshot {
       let quaternary_idx = self.push_optional_string(
         (!row_data.quaternary.is_empty()).then_some(row_data.quaternary.as_str()),
       );
+      let primary_match_ranges_idx = metadata
+        .and_then(|metadata| serialize_match_ranges(metadata.primary_match_ranges.as_ref()))
+        .map(|ranges| self.push_string(&ranges));
+      let secondary_match_ranges_idx = metadata
+        .and_then(|metadata| serialize_match_ranges(metadata.secondary_match_ranges.as_ref()))
+        .map(|ranges| self.push_string(&ranges));
       self.file_picker_items.push(FilePickerItemRecord {
         item: the_editor_snapshot_file_picker_item_t {
           stable_id: item.stable_id(),
@@ -8658,6 +8712,8 @@ impl OwnedSnapshot {
           secondary: ptr::null(),
           tertiary: ptr::null(),
           quaternary: ptr::null(),
+          primary_match_ranges: ptr::null(),
+          secondary_match_ranges: ptr::null(),
           line: row_data.line as u32,
           column: row_data.column as u32,
           depth: row_data.depth.min(u16::MAX as usize) as u16,
@@ -8667,6 +8723,8 @@ impl OwnedSnapshot {
         secondary_idx,
         tertiary_idx,
         quaternary_idx,
+        primary_match_ranges_idx,
+        secondary_match_ranges_idx,
       });
     }
 
@@ -9076,6 +9134,9 @@ impl OwnedSnapshot {
     if let Some(error_idx) = self.file_picker.error_idx {
       self.file_picker.picker.error = self.strings[error_idx].as_ptr();
     }
+    if let Some(status_banner_idx) = self.file_picker.status_banner_idx {
+      self.file_picker.picker.status_banner = self.strings[status_banner_idx].as_ptr();
+    }
     if let Some(preview_path_idx) = self.file_picker.preview_path_idx {
       self.file_picker.picker.preview_path = self.strings[preview_path_idx].as_ptr();
     }
@@ -9090,6 +9151,12 @@ impl OwnedSnapshot {
       }
       if let Some(idx) = item.quaternary_idx {
         item.item.quaternary = self.strings[idx].as_ptr();
+      }
+      if let Some(idx) = item.primary_match_ranges_idx {
+        item.item.primary_match_ranges = self.strings[idx].as_ptr();
+      }
+      if let Some(idx) = item.secondary_match_ranges_idx {
+        item.item.secondary_match_ranges = self.strings[idx].as_ptr();
       }
     }
     for line in &mut self.file_picker_preview_lines {
@@ -11034,6 +11101,22 @@ fn file_picker_row_kind_code(kind: FilePickerRowKind) -> u8 {
   }
 }
 
+fn file_picker_search_mode_code(mode: FilePickerSearchMode) -> u8 {
+  match mode {
+    FilePickerSearchMode::None => 0,
+    FilePickerSearchMode::PlainText => 1,
+    FilePickerSearchMode::Regex => 2,
+    FilePickerSearchMode::Fuzzy => 3,
+  }
+}
+
+fn file_picker_status_banner_kind_code(kind: Option<FilePickerStatusBannerKind>) -> u8 {
+  match kind.unwrap_or(FilePickerStatusBannerKind::Info) {
+    FilePickerStatusBannerKind::Info => 0,
+    FilePickerStatusBannerKind::Warning => 1,
+  }
+}
+
 fn file_picker_preview_navigation_code(mode: FilePickerPreviewNavigationMode) -> u8 {
   match mode {
     FilePickerPreviewNavigationMode::Static => 0,
@@ -11050,6 +11133,19 @@ fn file_picker_preview_kind_code(kind: FilePickerPreviewWindowKind) -> u8 {
     FilePickerPreviewWindowKind::Message => 3,
     FilePickerPreviewWindowKind::VcsDiff => 4,
   }
+}
+
+fn serialize_match_ranges(ranges: &[(usize, usize)]) -> Option<String> {
+  if ranges.is_empty() {
+    return None;
+  }
+  Some(
+    ranges
+      .iter()
+      .map(|(start, end)| format!("{start}:{end}"))
+      .collect::<Vec<_>>()
+      .join(","),
+  )
 }
 
 fn file_picker_preview_line_code(kind: FilePickerPreviewLineKind) -> u8 {
@@ -12174,6 +12270,16 @@ pub unsafe extern "C" fn the_editor_file_picker_set_query(
     return false;
   };
   handle.editor.set_file_picker_query(&query)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_file_picker_cycle_search_mode(
+  handle: *mut the_editor_handle_t,
+) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return false;
+  };
+  handle.editor.cycle_file_picker_search_mode_command()
 }
 
 #[unsafe(no_mangle)]

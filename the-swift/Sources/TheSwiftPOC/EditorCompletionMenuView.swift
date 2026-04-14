@@ -113,7 +113,8 @@ struct EditorCompletionMenuView: View {
             let subtitleWidth = item.subtitle.map { ($0 as NSString).size(withAttributes: [.font: subtitleFont]).width } ?? 0
             return max(partial, titleWidth + subtitleWidth + iconWidth + completionHorizontalPadding * 2 + 16)
         }
-        return widest
+        let stepperColumn: CGFloat = state.items.count > 1 ? 30 : 0
+        return widest + stepperColumn
     }
 }
 
@@ -129,33 +130,68 @@ private struct EditorCompletionListPanel: View {
     }
 
     var body: some View {
-        CompletionMenuOffsetScrollView(
-            rowHeight: completionRowHeight,
-            offset: completion.scrollOffset,
-            totalRows: completion.items.count,
-            visibleRows: visibleRows,
-            onOffsetChange: { controller.setCompletionMenuScroll($0) },
-            onLiveScrollChanged: { isScrolling in
-                guard isLiveScrolling != isScrolling else { return }
-                isLiveScrolling = isScrolling
-            }
-        ) {
-            LazyVStack(spacing: 0) {
-                ForEach(completion.items) { item in
-                    EditorCompletionRow(
-                        item: item,
-                        isSelected: completion.selectedIndex == item.index,
-                        hoverSelectionEnabled: !isLiveScrolling,
-                        onSelect: { controller.selectCompletionMenuIndex(item.index) },
-                        onSubmit: {
-                            controller.selectCompletionMenuIndex(item.index)
-                            controller.submitCompletionMenu()
-                        }
-                    )
-                    .id(item.index)
+        HStack(spacing: 0) {
+            CompletionMenuOffsetScrollView(
+                rowHeight: completionRowHeight,
+                offset: completion.scrollOffset,
+                totalRows: completion.items.count,
+                visibleRows: visibleRows,
+                onOffsetChange: { controller.setCompletionMenuScroll($0) },
+                onLiveScrollChanged: { isScrolling in
+                    guard isLiveScrolling != isScrolling else { return }
+                    isLiveScrolling = isScrolling
                 }
+            ) {
+                LazyVStack(spacing: 0) {
+                    ForEach(completion.items) { item in
+                        EditorCompletionRow(
+                            item: item,
+                            isSelected: completion.selectedIndex == item.index,
+                            hoverSelectionEnabled: !isLiveScrolling,
+                            onSelect: { controller.selectCompletionMenuIndex(item.index) },
+                            onSubmit: {
+                                controller.selectCompletionMenuIndex(item.index)
+                                controller.submitCompletionMenu()
+                            }
+                        )
+                        .id(item.index)
+                    }
+                }
+                .padding(.vertical, 4)
             }
-            .padding(.vertical, 4)
+
+            if completion.items.count > 1 {
+                VStack(spacing: 6) {
+                    Spacer(minLength: 0)
+                    Button {
+                        controller.stepCompletionMenuSelection(forward: false)
+                    } label: {
+                        Image(systemName: "chevron.up")
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 26, height: 22)
+                    .contentShape(Rectangle())
+                    .help("Previous suggestion")
+
+                    Button {
+                        controller.stepCompletionMenuSelection(forward: true)
+                    } label: {
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 26, height: 22)
+                    .contentShape(Rectangle())
+                    .help("Next suggestion")
+                    Spacer(minLength: 0)
+                }
+                .frame(width: 28)
+                .padding(.trailing, 2)
+                .padding(.vertical, 4)
+            }
         }
         .frame(width: frameWidth)
     }

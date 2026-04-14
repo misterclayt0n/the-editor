@@ -33,6 +33,7 @@ crossterm                = "0.28"
 dunce                    = "1.0"
 etcetera                 = "0.10"
 eyre                     = "0.6"
+fff-search               = "0.5.3-nightly.ea1f980"
 globset                  = "0.4"
 git2                     = { default-features = false, features = [ "vendored-libgit2" ], version = "0.20" }
 grep-regex               = "=0.1.13"

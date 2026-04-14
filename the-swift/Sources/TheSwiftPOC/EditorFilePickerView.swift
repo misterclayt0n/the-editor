@@ -147,6 +147,11 @@ struct EditorFilePickerView: View {
                         Text(resultSummary)
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                        if let statusBanner = controller.filePicker.statusBanner {
+                            Text(statusBanner.text)
+                                .font(.caption)
+                                .foregroundStyle(statusBanner.kind == .warning ? .red : .secondary)
+                        }
                         if let error = controller.filePicker.error, !error.isEmpty {
                             Text(error)
                                 .font(.caption)
@@ -156,6 +161,24 @@ struct EditorFilePickerView: View {
                 }
 
                 Spacer(minLength: 0)
+
+                if let modeLabel = searchModeLabel {
+                    HStack(spacing: 6) {
+                        Text(modeLabel)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(searchModeColor)
+                        Button {
+                            controller.cycleFilePickerSearchMode()
+                        } label: {
+                            Image(systemName: "arrow.triangle.2.circlepath")
+                                .font(.system(size: 12, weight: .semibold))
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
+                        .help("Cycle search mode (plain · regex · fuzzy)")
+                        .keyboardShortcut(.tab, modifiers: [.shift])
+                    }
+                }
 
                 hiddenMovementButtons
 
@@ -206,6 +229,7 @@ struct EditorFilePickerView: View {
                             ForEach(controller.filePicker.items) { item in
                                 EditorFilePickerRow(
                                     item: item,
+                                    query: controller.filePicker.query,
                                     isSelected: controller.filePicker.selectedIndex == item.globalIndex,
                                     onSelect: {
                                         controller.selectFilePickerIndex(item.globalIndex)
@@ -307,12 +331,38 @@ struct EditorFilePickerView: View {
     private var previewSummary: String {
         let state = controller.filePicker
         switch state.previewNavigationMode {
-        case .anchored:
-            return "Focused preview"
-        case .scrollable:
+        case .anchored, .scrollable:
             return state.previewTotalRows == 1 ? "1 line" : "\(state.previewTotalRows) lines"
         case .static:
             return "Preview"
+        }
+    }
+
+    private var searchModeLabel: String? {
+        let state = controller.filePicker
+        guard state.kind == .liveGrep else { return nil }
+        switch state.searchMode {
+        case .none:
+            return nil
+        case .plainText:
+            return "plain"
+        case .regex:
+            return "regex"
+        case .fuzzy:
+            return "fuzzy"
+        }
+    }
+
+    private var searchModeColor: Color {
+        switch controller.filePicker.searchMode {
+        case .plainText:
+            return .secondary
+        case .regex:
+            return .orange
+        case .fuzzy:
+            return .cyan
+        case .none:
+            return .secondary
         }
     }
 
@@ -348,57 +398,28 @@ struct EditorFilePickerView: View {
     }
 }
 
+/// One space per tab keeps UTF-16 lengths stable so match highlight ranges stay valid.
+private func filePickerDisplayText(_ text: String) -> String {
+    text.replacingOccurrences(of: "\t", with: " ")
+}
+
 private struct EditorFilePickerRow: View {
     let item: EditorFilePickerItem
+    let query: String
     let isSelected: Bool
     let onSelect: () -> Void
     let onOpen: () -> Void
     @State private var isHovered = false
 
     var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: symbolName(for: item.icon, isDirectory: item.isDirectory))
-                .font(.system(size: 13, weight: .medium))
-                .frame(width: 18)
-                .foregroundStyle(iconColor)
-
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 8) {
-                    Text(item.primary)
-                        .font(.system(size: 13, weight: .regular))
-                        .foregroundStyle(item.selectable ? Color.primary : .secondary)
-                        .lineLimit(1)
-
-                    if let tertiary = item.tertiary, !tertiary.isEmpty {
-                        Text(tertiary)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-                }
-
-                HStack(spacing: 8) {
-                    if let secondary = item.secondary, !secondary.isEmpty {
-                        Text(secondary)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-                    if let quaternary = item.quaternary, !quaternary.isEmpty {
-                        Text(quaternary)
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                            .lineLimit(1)
-                    }
-                }
-            }
-
-            Spacer(minLength: 0)
-
-            if item.line > 0 {
-                Text("\(item.line):\(max(item.column, 1))")
-                    .font(.caption2.monospacedDigit())
-                    .foregroundStyle(.secondary)
+        Group {
+            switch item.rowKind {
+            case .liveGrepHeader:
+                liveGrepHeaderRow
+            case .liveGrepMatch:
+                liveGrepMatchRow
+            default:
+                standardRow
             }
         }
         .padding(.horizontal, 8)
@@ -416,6 +437,151 @@ private struct EditorFilePickerRow: View {
         }
         .onHover { isHovered = $0 }
         .accessibilityElement(children: .combine)
+    }
+
+    private var standardRow: some View {
+        HStack(spacing: 10) {
+            if showsIcon {
+                Image(systemName: symbolName(for: item.icon, isDirectory: item.isDirectory))
+                    .font(.system(size: 13, weight: .medium))
+                    .frame(width: 18)
+                    .foregroundStyle(iconColor)
+            }
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 8) {
+                    Text(primaryAttributedText)
+                        .font(.system(size: 13, weight: .regular))
+                        .lineLimit(1)
+
+                    if let tertiary = item.tertiary, !tertiary.isEmpty {
+                        Text(filePickerDisplayText(tertiary))
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+
+                HStack(spacing: 8) {
+                    if let secondary = item.secondary, !secondary.isEmpty {
+                        Text(secondaryAttributedText(secondary))
+                            .font(.caption2)
+                            .lineLimit(1)
+                    }
+                    if let quaternary = item.quaternary, !quaternary.isEmpty {
+                        Text(filePickerDisplayText(quaternary))
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
+                    }
+                }
+            }
+
+            Spacer(minLength: 0)
+
+            if item.line > 0 {
+                Text("\(item.line):\(max(item.column, 1))")
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var liveGrepHeaderRow: some View {
+        HStack(spacing: 8) {
+            Text(filePickerDisplayText(item.primary))
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+            if let secondary = item.secondary, !secondary.isEmpty {
+                Text(filePickerDisplayText(secondary))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    private var liveGrepMatchRow: some View {
+        HStack(spacing: 8) {
+            Text(lineLabel)
+                .font(.system(size: 12, weight: .regular))
+                .foregroundStyle(.secondary)
+                .frame(width: 56, alignment: .trailing)
+
+            Text(highlightedText(filePickerDisplayText(item.primary), ranges: item.primaryMatchRanges, baseColor: .primary))
+                .font(.system(size: 13, weight: .regular))
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Spacer(minLength: 0)
+        }
+    }
+
+    private var lineLabel: String {
+        ":\(item.line):\(max(item.column, 1))"
+    }
+
+    private var showsIcon: Bool {
+        switch item.rowKind {
+        case .liveGrepHeader, .liveGrepMatch:
+            return false
+        default:
+            return !item.icon.isEmpty
+        }
+    }
+
+    private var primaryAttributedText: AttributedString {
+        highlightedText(
+            filePickerDisplayText(item.primary),
+            ranges: item.primaryMatchRanges,
+            baseColor: item.selectable ? .primary : .secondary
+        )
+    }
+
+    private func secondaryAttributedText(_ text: String) -> AttributedString {
+        highlightedText(
+            filePickerDisplayText(text),
+            ranges: item.secondaryMatchRanges,
+            baseColor: .secondary
+        )
+    }
+
+    private func highlightedText(_ text: String, ranges: [Range<Int>], baseColor: Color) -> AttributedString {
+        var attributed = AttributedString(text)
+        attributed.foregroundColor = baseColor
+
+        let effectiveRanges = ranges.isEmpty ? fallbackMatchRanges(in: text) : ranges
+        for range in effectiveRanges.reversed() {
+            guard let attributedRange = attributedRange(in: attributed, range: range) else { continue }
+            attributed[attributedRange].backgroundColor = Color.accentColor.opacity(isSelected ? 0.28 : 0.18)
+            attributed[attributedRange].foregroundColor = .primary
+        }
+        return attributed
+    }
+
+    private func fallbackMatchRanges(in text: String) -> [Range<Int>] {
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !needle.isEmpty else { return [] }
+        let lowerText = text.lowercased()
+        let lowerNeedle = needle.lowercased()
+        guard let range = lowerText.range(of: lowerNeedle) else { return [] }
+        let start = lowerText.distance(from: lowerText.startIndex, to: range.lowerBound)
+        let end = lowerText.distance(from: lowerText.startIndex, to: range.upperBound)
+        return [start..<end]
+    }
+
+    private func attributedRange(in attributed: AttributedString, range: Range<Int>) -> Range<AttributedString.Index>? {
+        guard range.lowerBound >= 0, range.upperBound > range.lowerBound else { return nil }
+        let characters = attributed.characters
+        guard let start = characters.index(characters.startIndex, offsetBy: range.lowerBound, limitedBy: characters.endIndex),
+              let end = characters.index(characters.startIndex, offsetBy: range.upperBound, limitedBy: characters.endIndex),
+              start < end
+        else {
+            return nil
+        }
+        return start..<end
     }
 
     private var rowBackground: some ShapeStyle {
@@ -469,6 +635,9 @@ private struct EditorFilePickerRow: View {
     }
 }
 
+private let filePickerPreviewLineNumberColumnWidth: CGFloat = 26
+private let filePickerPreviewLineNumberTrailing: CGFloat = 6
+
 private struct EditorFilePickerPreviewLineView: View {
     let line: EditorFilePickerPreviewLine
 
@@ -476,36 +645,37 @@ private struct EditorFilePickerPreviewLineView: View {
         HStack(alignment: .firstTextBaseline, spacing: 0) {
             if let lineNumber = line.lineNumber {
                 Text("\(lineNumber)")
-                    .font(.system(size: 11, weight: .regular, design: .monospaced))
+                    .font(.system(size: 11, weight: .regular))
                     .foregroundStyle(.secondary)
-                    .frame(width: 32, alignment: .trailing)
-                    .padding(.trailing, 8)
+                    .frame(width: filePickerPreviewLineNumberColumnWidth, alignment: .trailing)
+                    .padding(.trailing, filePickerPreviewLineNumberTrailing)
                     .textSelection(.disabled)
             } else {
                 Color.clear
-                    .frame(width: 40)
+                    .frame(width: filePickerPreviewLineNumberColumnWidth + filePickerPreviewLineNumberTrailing)
             }
 
             Text(attributedContent)
-                .font(.system(size: 11, weight: .regular, design: .monospaced))
+                .font(.system(size: 11, weight: .regular))
                 .lineLimit(1)
                 .truncationMode(.tail)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.horizontal, 4)
+        .padding(.leading, 2)
+        .padding(.trailing, 4)
         .padding(.vertical, 1)
         .background(lineBackground)
         .clipped()
     }
 
     private var attributedContent: AttributedString {
-        var attributed = AttributedString(line.marker ?? "")
+        var attributed = AttributedString(filePickerDisplayText(line.marker ?? ""))
         if !attributed.characters.isEmpty {
             attributed.foregroundColor = .secondary
         }
 
         for segment in line.segments {
-            var piece = AttributedString(segment.text)
+            var piece = AttributedString(filePickerDisplayText(segment.text))
             piece.foregroundColor = Color(nsColor: segment.style.foregroundColor)
             if segment.isMatch {
                 piece.backgroundColor = Color.accentColor.opacity(0.22)

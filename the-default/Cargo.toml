@@ -9,6 +9,7 @@ path = "lib.rs"
 
 [dependencies]
 chrono       = "0.4"
+fff-search   = { workspace = true }
 grep-regex   = { workspace = true }
 grep-searcher = { workspace = true }
 ignore       = { workspace = true }

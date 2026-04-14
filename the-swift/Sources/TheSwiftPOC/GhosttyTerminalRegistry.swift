@@ -19,6 +19,7 @@ final class GhosttyTerminalRegistry {
     private weak var controller: EditorSurfaceController?
     private let runtime = GhosttyEmbeddedRuntime.shared
     private var viewsBySurfaceID: [UInt: GhosttyTerminalSurfaceView] = [:]
+    private var lastAutoFocusedSurfaceID: UInt?
 
     init(controller: EditorSurfaceController) {
         self.controller = controller
@@ -92,15 +93,28 @@ final class GhosttyTerminalRegistry {
             }
 
             let currentFirstResponder = containerView.window?.firstResponder
+            let currentTerminalSurfaceID = (currentFirstResponder as? GhosttyTerminalSurfaceView)?.clientSurfaceID
             if let activeTerminalPane = visibleTerminalPanes.first(where: { $0.isActive }),
                let surfaceID = activeTerminalPane.clientSurfaceID,
-               let activeView = viewsBySurfaceID[surfaceID],
-               currentFirstResponder !== activeView,
-               currentFirstResponder == nil || currentFirstResponder === editorSurfaceView || currentFirstResponder is GhosttyTerminalSurfaceView {
-                containerView.window?.makeFirstResponder(activeView)
-            } else if currentFirstResponder is GhosttyTerminalSurfaceView {
-                containerView.window?.makeFirstResponder(editorSurfaceView)
+               let activeView = viewsBySurfaceID[surfaceID] {
+                if currentFirstResponder === activeView {
+                    lastAutoFocusedSurfaceID = surfaceID
+                } else {
+                    let currentTerminalIsVisible = currentTerminalSurfaceID.map { visibleSurfaceIDs.contains($0) } ?? false
+                    let shouldMoveFocus = currentFirstResponder == nil
+                        || currentFirstResponder === editorSurfaceView
+                        || !currentTerminalIsVisible
+                        || lastAutoFocusedSurfaceID != surfaceID
+                    if shouldMoveFocus {
+                        containerView.window?.makeFirstResponder(activeView)
+                        lastAutoFocusedSurfaceID = surfaceID
+                    }
+                }
+            } else {
+                lastAutoFocusedSurfaceID = nil
             }
+        } else {
+            lastAutoFocusedSurfaceID = nil
         }
     }
 
@@ -473,6 +487,7 @@ private final class GhosttyTerminalSurfaceView: NSView, @preconcurrency NSTextIn
     private var surface: ghostty_surface_t?
     private var callbackContext: Unmanaged<GhosttySurfaceCallbackContext>?
     private var isSurfaceVisible = false
+    private var isSurfaceFocused = false
     private var pendingWorkingDirectory: String?
     private let pendingCommand: String?
     private var lastKnownMousePointInView: NSPoint?
@@ -604,6 +619,8 @@ private final class GhosttyTerminalSurfaceView: NSView, @preconcurrency NSTextIn
 
     func updateFocus(_ focused: Bool) {
         guard let surface else { return }
+        guard isSurfaceFocused != focused else { return }
+        isSurfaceFocused = focused
         ghostty_surface_set_focus(surface, focused)
         if focused {
             synchronizeDisplayID()

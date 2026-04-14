@@ -89,6 +89,7 @@ final class GhosttyTerminalRegistry {
                 }
                 view.updateColorScheme(colorScheme)
                 view.updateVisibility(true)
+                view.updateInactiveAppearance(dimmed: !pane.isActive && !pane.isAgentFollowTarget)
                 view.updateFocus(pane.isActive && containerView.window?.firstResponder === view)
             }
 
@@ -488,6 +489,8 @@ private final class GhosttyTerminalSurfaceView: NSView, @preconcurrency NSTextIn
     private var callbackContext: Unmanaged<GhosttySurfaceCallbackContext>?
     private var isSurfaceVisible = false
     private var isSurfaceFocused = false
+    private var isInactiveDimmed = false
+    private let inactiveDimmingLayer = CALayer()
     private var pendingWorkingDirectory: String?
     private let pendingCommand: String?
     private var lastKnownMousePointInView: NSPoint?
@@ -527,6 +530,10 @@ private final class GhosttyTerminalSurfaceView: NSView, @preconcurrency NSTextIn
         layer?.backgroundColor = NSColor.clear.cgColor
         layer?.isOpaque = false
         layer?.masksToBounds = true
+        inactiveDimmingLayer.backgroundColor = NSColor.black.withAlphaComponent(0.06).cgColor
+        inactiveDimmingLayer.isHidden = true
+        inactiveDimmingLayer.zPosition = 1
+        layer?.addSublayer(inactiveDimmingLayer)
         let context = GhosttySurfaceCallbackContext(
             clientSurfaceID: clientSurfaceID,
             controller: controller,
@@ -567,6 +574,7 @@ private final class GhosttyTerminalSurfaceView: NSView, @preconcurrency NSTextIn
         super.layout()
         createSurfaceIfNeeded()
         synchronizeSurfaceGeometry()
+        synchronizeInactiveAppearance()
     }
 
     override func becomeFirstResponder() -> Bool {
@@ -615,6 +623,17 @@ private final class GhosttyTerminalSurfaceView: NSView, @preconcurrency NSTextIn
     func updateColorScheme(_ colorScheme: ghostty_color_scheme_e) {
         guard let surface else { return }
         ghostty_surface_set_color_scheme(surface, colorScheme)
+    }
+
+    func updateInactiveAppearance(dimmed: Bool) {
+        guard isInactiveDimmed != dimmed else { return }
+        isInactiveDimmed = dimmed
+        synchronizeInactiveAppearance()
+    }
+
+    private func synchronizeInactiveAppearance() {
+        inactiveDimmingLayer.frame = bounds
+        inactiveDimmingLayer.isHidden = !isInactiveDimmed || bounds.isEmpty
     }
 
     func updateFocus(_ focused: Bool) {

@@ -247,6 +247,25 @@ final class EditorSurfaceController: ObservableObject {
         refreshSnapshot()
     }
 
+    @discardableResult
+    func activatePaneLocalOpenItem(at index: Int) -> Bool {
+        guard index >= 0 else { return false }
+        guard let item = openItems.groups.first(where: { $0.isActivePane })?.items[safe: index] else {
+            return false
+        }
+        if item.isActive {
+            if item.kind == .buffer {
+                focusEditor()
+            }
+            return true
+        }
+        activateOpenItem(item)
+        if item.kind == .buffer {
+            focusEditor()
+        }
+        return true
+    }
+
     func closeOpenItem(_ item: EditorPaneOpenItemRow) {
         guard EditorFFIBridge.closeOpenItem(handle?.raw, paneID: item.paneID, kind: item.kind, itemID: item.itemID) else { return }
         refreshSnapshot()
@@ -310,6 +329,10 @@ final class EditorSurfaceController: ObservableObject {
             guard let self else {
                 return event
             }
+            if let paneLocalIndex = self.paneLocalOpenItemShortcutIndex(for: event),
+               self.activatePaneLocalOpenItem(at: paneLocalIndex) {
+                return nil
+            }
             if self.shouldHandleCloseSurfaceShortcut(event) {
                 self.closeActivePaneItem()
                 return nil
@@ -320,6 +343,20 @@ final class EditorSurfaceController: ObservableObject {
             }
             return event
         }.map(EventMonitorBox.init(raw:))
+    }
+
+    private func paneLocalOpenItemShortcutIndex(for event: NSEvent) -> Int? {
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        guard flags == [.command] else { return nil }
+        guard let characters = event.charactersIgnoringModifiers, characters.count == 1 else { return nil }
+        switch characters {
+        case "1", "2", "3", "4", "5", "6", "7", "8", "9":
+            return Int(characters)! - 1
+        case "0":
+            return 9
+        default:
+            return nil
+        }
     }
 
     private func shouldHandleCloseSurfaceShortcut(_ event: NSEvent) -> Bool {
@@ -900,5 +937,12 @@ final class EditorSurfaceController: ObservableObject {
         guard !markedText.isEmpty else { return nil }
         guard let cursor = snapshot.cursors.first else { return nil }
         return EditorMarkedText(text: markedText, row: cursor.row, col: cursor.col)
+    }
+}
+
+private extension Array {
+    subscript(safe index: Int) -> Element? {
+        guard indices.contains(index) else { return nil }
+        return self[index]
     }
 }

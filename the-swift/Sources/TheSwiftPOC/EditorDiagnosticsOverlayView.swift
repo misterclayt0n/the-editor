@@ -1,7 +1,6 @@
 import AppKit
 import SwiftUI
 
-private let diagnosticOverlayEdgePadding: CGFloat = 8
 private let diagnosticInlinePillHeight: CGFloat = 20
 private let diagnosticInlineHorizontalPadding: CGFloat = 8
 
@@ -12,7 +11,7 @@ struct EditorDiagnosticsOverlayView: View {
         GeometryReader { geometry in
             ZStack(alignment: .topLeading) {
                 if let scene = controller.scene,
-                   let pill = currentLinePill(scene: scene, viewportSize: geometry.size) {
+                   let pill = currentLinePill(scene: scene) {
                     EditorDiagnosticInlinePill(
                         diagnostic: pill.diagnostic,
                         extraCount: pill.extraCount,
@@ -20,6 +19,11 @@ struct EditorDiagnosticsOverlayView: View {
                     )
                     .frame(width: pill.frame.width, height: pill.frame.height)
                     .offset(x: pill.frame.minX, y: pill.frame.minY)
+                    .mask(alignment: .topLeading) {
+                        Rectangle()
+                            .frame(width: pill.clipRect.width, height: pill.clipRect.height)
+                            .offset(x: pill.clipRect.minX, y: pill.clipRect.minY)
+                    }
                     .allowsHitTesting(false)
                     .zIndex(2)
                 }
@@ -29,7 +33,7 @@ struct EditorDiagnosticsOverlayView: View {
         .allowsHitTesting(false)
     }
 
-    private func currentLinePill(scene: EditorRenderScene, viewportSize: CGSize) -> (diagnostic: EditorSnapshotDiagnostic, extraCount: Int, frame: CGRect)? {
+    private func currentLinePill(scene: EditorRenderScene) -> (diagnostic: EditorSnapshotDiagnostic, extraCount: Int, frame: CGRect, clipRect: CGRect)? {
         guard let cursor = scene.primaryCursor,
               let activePane = scene.activePane,
               let line = scene.line(atRow: cursor.row, paneID: activePane.paneID),
@@ -48,15 +52,14 @@ struct EditorDiagnosticsOverlayView: View {
             .filter { $0.col >= paneTextStartCol && !$0.text.isEmpty }
             .map { $0.col + max($0.cols, 1) }
             .max() ?? max(paneTextStartCol + 1, cursor.col + 1)
-        let x = min(
-            CGFloat(textEndCol) * cellSize.width + 4,
-            max(viewportSize.width - width - diagnosticOverlayEdgePadding, diagnosticOverlayEdgePadding)
-        )
-        let y = scene.displayOrigin(col: cursor.col, row: cursor.row).y + max(cellSize.height - diagnosticInlinePillHeight - 1, 1)
+        let x = scene.displayOrigin(col: textEndCol, row: line.row, paneID: activePane.paneID).x + 4
+        let y = scene.displayOrigin(col: cursor.col, row: line.row, paneID: activePane.paneID).y
+            + max(cellSize.height - diagnosticInlinePillHeight - 1, 1)
         return (
             diagnostic,
             max(diagnostics.count - 1, 0),
-            CGRect(x: x, y: y, width: width, height: diagnosticInlinePillHeight)
+            CGRect(x: x, y: y, width: width, height: diagnosticInlinePillHeight),
+            scene.paneContentRect(for: activePane)
         )
     }
 

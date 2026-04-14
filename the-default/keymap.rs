@@ -1564,8 +1564,6 @@ fn builtin_keymap_map() -> HashMap<Mode, KeyTrie> {
     "space" => { "Space"
       "f" => file_picker,
       "F" => file_picker_in_current_directory,
-      "t" => pi_send_selection,
-      "T" => pi_prefill_selection,
       "e" => file_explorer,
       "E" => edit_current_file_path,
       "b" => buffer_picker,

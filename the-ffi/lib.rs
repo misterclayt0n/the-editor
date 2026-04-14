@@ -11,7 +11,6 @@ use std::{
     CString,
   },
   fs,
-  io::Write,
   num::NonZeroUsize,
   os::raw::c_char,
   path::{
@@ -34,11 +33,6 @@ use ropey::{
   Rope,
   RopeSlice,
 };
-use serde::{
-  Deserialize,
-  Serialize,
-};
-use serde_json::Value;
 use smallvec::SmallVec;
 use the_core::{
   grapheme::grapheme_width,
@@ -197,12 +191,6 @@ use the_lib::{
   movement::{
     move_next_word_end,
     move_prev_word_start,
-  },
-  pi_bridge::{
-    PI_BRIDGE_PROTOCOL_VERSION,
-    PiBridgeEnvelope,
-    PiBridgeEvent,
-    PiBridgeHandle,
   },
   position::Position,
   registers::Registers,
@@ -474,7 +462,6 @@ pub struct the_editor_snapshot_pane_t {
   pub viewport_rows:          u16,
   pub document_line_count:    u32,
   pub is_active:              bool,
-  pub is_agent_follow_target: bool,
 }
 
 #[repr(C)]
@@ -976,16 +963,6 @@ fn command_palette_debug_enabled() -> bool {
 fn command_palette_debug_log(message: impl AsRef<str>) {
   if command_palette_debug_enabled() {
     eprintln!("[the-ffi:command-palette] {}", message.as_ref());
-  }
-}
-
-fn pi_bridge_debug_enabled() -> bool {
-  env::var("THE_EDITOR_PI_BRIDGE_DEBUG").ok().as_deref() == Some("1")
-}
-
-fn pi_bridge_debug_log(message: impl AsRef<str>) {
-  if pi_bridge_debug_enabled() {
-    eprintln!("[the-ffi:pi-bridge] {}", message.as_ref());
   }
 }
 
@@ -1541,225 +1518,6 @@ struct AppliedVcsRefreshState {
   document_generation: u64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct AgentFollowStep {
-  cursor_char: usize,
-  flash_start: usize,
-  flash_end:   usize,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct AgentFollowRenderSnapshot {
-  buffer_id:       BufferId,
-  cursor_char:     usize,
-  highlight_start: usize,
-  highlight_end:   usize,
-  highlighting:    bool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum AgentFollowActivityKind {
-  Focus,
-  Read,
-  EditPreview,
-  EditApplied,
-  Write,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct AgentFollowLocalStateSnapshot {
-  active_pane_id:   PaneId,
-  pane_content:     Option<PaneContent>,
-  scroll:           Option<Position>,
-  selection_ranges: Vec<Range>,
-  followed_pane:    bool,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct PiBridgeAgentRange {
-  start_char: usize,
-  end_char:   usize,
-}
-
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-enum PiBridgeAgentActivityKind {
-  Focus,
-  Read,
-  EditPreview,
-  EditApplied,
-  Write,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct PiBridgeAgentFocusParams {
-  path:        String,
-  session_id:  Option<String>,
-  kind:        Option<PiBridgeAgentActivityKind>,
-  range:       Option<PiBridgeAgentRange>,
-  start_line:  Option<usize>,
-  end_line:    Option<usize>,
-  cursor_char: Option<usize>,
-  top_line:    Option<usize>,
-  center_line: Option<usize>,
-}
-
-#[derive(Debug, Clone)]
-struct AgentFollowState {
-  enabled:         bool,
-  pane_id:         Option<PaneId>,
-  buffer_id:       Option<BufferId>,
-  cursor_char:     Option<usize>,
-  highlight_start: usize,
-  highlight_end:   usize,
-  visible_until:   Option<Instant>,
-}
-
-impl Default for AgentFollowState {
-  fn default() -> Self {
-    Self {
-      enabled:         true,
-      pane_id:         None,
-      buffer_id:       None,
-      cursor_char:     None,
-      highlight_start: 0,
-      highlight_end:   0,
-      visible_until:   None,
-    }
-  }
-}
-
-impl AgentFollowState {
-  fn clear(&mut self) {
-    self.pane_id = None;
-    self.buffer_id = None;
-    self.cursor_char = None;
-    self.highlight_start = 0;
-    self.highlight_end = 0;
-    self.visible_until = None;
-  }
-
-  fn render_snapshot(&self) -> Option<AgentFollowRenderSnapshot> {
-    if !self.enabled {
-      return None;
-    }
-    Some(AgentFollowRenderSnapshot {
-      buffer_id:       self.buffer_id?,
-      cursor_char:     self.cursor_char?,
-      highlight_start: self.highlight_start,
-      highlight_end:   self.highlight_end,
-      highlighting:    self.visible_until.is_some(),
-    })
-  }
-}
-
-fn agent_follow_cursor_linger_duration() -> Duration {
-  Duration::from_millis(1550)
-}
-
-fn agent_follow_debug_enabled() -> bool {
-  env::var("THE_EDITOR_AGENT_FOLLOW_DEBUG").ok().as_deref() == Some("1")
-}
-
-fn agent_follow_debug_log(message: impl AsRef<str>) {
-  if !agent_follow_debug_enabled() {
-    return;
-  }
-  let ts_ms = std::time::SystemTime::now()
-    .duration_since(std::time::SystemTime::UNIX_EPOCH)
-    .map(|duration| duration.as_millis())
-    .unwrap_or(0);
-  let line = format!(
-    "[the-ffi:agent-follow {ts_ms}] {}
-",
-    message.as_ref()
-  );
-  eprint!("{line}");
-  if let Ok(raw_path) = env::var("THE_TERM_DEBUG_RENDER_PERF_FILE") {
-    let raw_path = raw_path.trim();
-    if !raw_path.is_empty() {
-      let path = Path::new(raw_path);
-      if let Some(parent) = path.parent() {
-        let _ = fs::create_dir_all(parent);
-      }
-      if let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(path) {
-        let _ = file.write_all(line.as_bytes());
-      }
-    }
-  }
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-struct PiBridgeEdit {
-  #[serde(rename = "oldText")]
-  old_text: String,
-  #[serde(rename = "newText")]
-  new_text: String,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct PiBridgeReadFileParams {
-  path: String,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct PiBridgeApplyEditsParams {
-  path:  String,
-  edits: Vec<PiBridgeEdit>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct PiBridgeWriteFileParams {
-  path:    String,
-  content: String,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct PiBridgeReplaceRangeParams {
-  path:       String,
-  #[serde(rename = "startChar")]
-  start_char: usize,
-  #[serde(rename = "endChar")]
-  end_char:   usize,
-  content:    String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct PiBridgeReadFileResult {
-  path:             String,
-  content:          String,
-  from_live_buffer: bool,
-  opened_buffer:    bool,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct PiBridgeApplyEditsResult {
-  path:          String,
-  edit_count:    usize,
-  saved:         bool,
-  opened_buffer: bool,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct PiBridgeWriteFileResult {
-  path:          String,
-  saved:         bool,
-  opened_buffer: bool,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct PiBridgeReplaceRangeResult {
-  path:          String,
-  saved:         bool,
-  opened_buffer: bool,
-}
-
 #[derive(Clone)]
 struct ViewportResizePlanCache {
   view:             ViewState,
@@ -1853,8 +1611,6 @@ struct SwiftEditor {
   vcs_scan:                            Option<Arc<VcsWorkspaceScan>>,
   vcs_base_cache:                      BTreeMap<VcsBaseCacheKey, Option<Vec<u8>>>,
   embedded_terminal_enabled:           bool,
-  pi_bridge:                           Option<PiBridgeHandle>,
-  agent_follow:                        AgentFollowState,
   viewport_resize_plan_cache:          Option<ViewportResizePlanCache>,
   quit_requested:                      bool,
 }
@@ -5334,26 +5090,6 @@ impl SwiftEditor {
       u8::from(picker_changed)
     ));
 
-    let step_start = Instant::now();
-    let pi_bridge_changed = self.poll_pi_bridge();
-    let pi_bridge_ms = step_start.elapsed().as_secs_f64() * 1000.0;
-    changed |= pi_bridge_changed;
-    parts.push(format!(
-      "pi_bridge={:.2}ms/{}",
-      pi_bridge_ms,
-      u8::from(pi_bridge_changed)
-    ));
-
-    let step_start = Instant::now();
-    let agent_follow_changed = self.poll_agent_follow();
-    let agent_follow_ms = step_start.elapsed().as_secs_f64() * 1000.0;
-    changed |= agent_follow_changed;
-    parts.push(format!(
-      "agent_follow={:.2}ms/{}",
-      agent_follow_ms,
-      u8::from(agent_follow_changed)
-    ));
-
     let total_ms = total_start.elapsed().as_secs_f64() * 1000.0;
     scroll_perf_log(format!(
       "poll_background total={:.2}ms changed={} {}",
@@ -5363,997 +5099,6 @@ impl SwiftEditor {
     ));
 
     changed
-  }
-
-  fn ensure_pi_bridge_started(&mut self) {
-    if self.pi_bridge.is_some() {
-      return;
-    }
-    match PiBridgeHandle::start(&self.workspace_root()) {
-      Ok(handle) => {
-        self.pi_bridge = Some(handle);
-      },
-      Err(err) => {
-        if !err.contains("not backed by a git directory") {
-          self.push_warning("pi-bridge", err);
-        }
-      },
-    }
-  }
-
-  fn shutdown_pi_bridge(&mut self) {
-    if let Some(mut bridge) = self.pi_bridge.take() {
-      bridge.shutdown();
-    }
-  }
-
-  fn poll_pi_bridge(&mut self) -> bool {
-    let Some(mut bridge) = self.pi_bridge.take() else {
-      return false;
-    };
-
-    let mut changed = false;
-    for event in bridge.drain_events() {
-      match event {
-        PiBridgeEvent::Attached => {
-          pi_bridge_debug_log("event subscriber-attached");
-          changed = true;
-        },
-        PiBridgeEvent::Detached => {
-          pi_bridge_debug_log("event subscriber-detached");
-          changed = true;
-        },
-        PiBridgeEvent::InvalidMessage(message) => {
-          pi_bridge_debug_log(format!("event invalid-message {message}"));
-          self.push_warning("pi-bridge", message);
-          changed = true;
-        },
-        PiBridgeEvent::Notification { method, params } => {
-          pi_bridge_debug_log(format!("event notification method={method}"));
-          changed |= self.handle_pi_bridge_notification(&method, params);
-        },
-        PiBridgeEvent::Request {
-          connection_id,
-          id,
-          method,
-          params,
-        } => {
-          pi_bridge_debug_log(format!(
-            "request recv connection_id={} id={} method={}",
-            connection_id, id, method
-          ));
-          let response = match self.handle_pi_bridge_request(&method, params) {
-            Ok(response) => {
-              pi_bridge_debug_log(format!(
-                "request ok connection_id={} id={} method={}",
-                connection_id, id, method
-              ));
-              PiBridgeEnvelope::ok(id.clone(), response)
-                .unwrap_or_else(|err| PiBridgeEnvelope::err(id, err))
-            },
-            Err(err) => {
-              pi_bridge_debug_log(format!(
-                "request err connection_id={} id={} method={} err={}",
-                connection_id, id, method, err
-              ));
-              PiBridgeEnvelope::err(id, err)
-            },
-          };
-          if let Err(err) = bridge.send_to(connection_id, response) {
-            pi_bridge_debug_log(format!(
-              "response send err connection_id={} method={} err={}",
-              connection_id, method, err
-            ));
-            self.push_warning("pi-bridge", err);
-            changed = true;
-          } else {
-            pi_bridge_debug_log(format!(
-              "response send ok connection_id={} method={}",
-              connection_id, method
-            ));
-            changed = true;
-          }
-        },
-      }
-    }
-
-    self.pi_bridge = Some(bridge);
-    changed
-  }
-
-  fn handle_pi_bridge_request(&mut self, method: &str, params: Value) -> Result<Value, String> {
-    match method {
-      "ping" => {
-        Ok(serde_json::json!({
-          "version": PI_BRIDGE_PROTOCOL_VERSION,
-          "workspaceRoot": self.workspace_root().display().to_string(),
-          "capabilities": {
-            "agentPresence": true,
-            "agentViewport": false,
-            "transactionFollowFallback": true,
-          },
-        }))
-      },
-      "read_file" => {
-        let params: PiBridgeReadFileParams = serde_json::from_value(params)
-          .map_err(|err| format!("invalid read_file params: {err}"))?;
-        let result = self.pi_bridge_read_workspace_file(&params.path)?;
-        serde_json::to_value(result).map_err(|err| format!("failed to encode read result: {err}"))
-      },
-      "apply_edits" => {
-        let params: PiBridgeApplyEditsParams = serde_json::from_value(params)
-          .map_err(|err| format!("invalid apply_edits params: {err}"))?;
-        let result = self.pi_bridge_apply_workspace_edits(&params.path, &params.edits)?;
-        serde_json::to_value(result).map_err(|err| format!("failed to encode edit result: {err}"))
-      },
-      "write_file" => {
-        let params: PiBridgeWriteFileParams = serde_json::from_value(params)
-          .map_err(|err| format!("invalid write_file params: {err}"))?;
-        let result = self.pi_bridge_write_workspace_file(&params.path, &params.content)?;
-        serde_json::to_value(result).map_err(|err| format!("failed to encode write result: {err}"))
-      },
-      "replace_range" => {
-        let params: PiBridgeReplaceRangeParams = serde_json::from_value(params)
-          .map_err(|err| format!("invalid replace_range params: {err}"))?;
-        let result = self.pi_bridge_replace_workspace_range(
-          &params.path,
-          params.start_char,
-          params.end_char,
-          &params.content,
-        )?;
-        serde_json::to_value(result)
-          .map_err(|err| format!("failed to encode replace_range result: {err}"))
-      },
-      _ => Err(format!("unsupported pi bridge method '{method}'")),
-    }
-  }
-
-  fn resolve_pi_bridge_path(&self, raw_path: &str) -> Result<PathBuf, String> {
-    let workspace_root = lexical_normalize_path(&self.workspace_root());
-    let input = Path::new(raw_path);
-    let candidate = if input.is_absolute() {
-      lexical_normalize_path(input)
-    } else {
-      lexical_normalize_path(&workspace_root.join(input))
-    };
-    if !candidate.starts_with(&workspace_root) {
-      return Err(format!(
-        "path '{}' is outside workspace '{}'",
-        candidate.display(),
-        workspace_root.display()
-      ));
-    }
-    Ok(candidate)
-  }
-
-  fn ensure_workspace_buffer_loaded(
-    &mut self,
-    path: &Path,
-    create_missing: bool,
-  ) -> Result<(BufferId, bool), String> {
-    if let Some(buffer_id) = self.editor.find_buffer_by_path(path) {
-      return Ok((buffer_id, false));
-    }
-    if !path.exists() && !create_missing {
-      return Err(format!("file not found: {}", path.display()));
-    }
-
-    let content = if path.exists() {
-      fs::read_to_string(path)
-        .map_err(|err| format!("failed to read '{}': {err}", path.display()))?
-    } else {
-      String::new()
-    };
-    let viewport = self.editor.view().viewport;
-    let view = ViewState::new(viewport, Position::new(0, 0));
-    let buffer_id = self.editor.open_buffer_without_activation(
-      Rope::from_str(&content),
-      view,
-      Some(path.to_path_buf()),
-    );
-
-    if let Some(doc) = self.editor.document_mut_for_buffer(buffer_id) {
-      if let Some(loader) = &self.loader {
-        let _ = setup_syntax(doc, path, loader);
-      }
-      doc.set_display_name(display_name_for_path(path));
-      if path.exists() {
-        let _ = doc.mark_saved();
-      }
-    }
-    Ok((buffer_id, true))
-  }
-
-  fn persist_buffer_to_disk(&mut self, buffer_id: BufferId, path: &Path) -> Result<(), String> {
-    let text = self
-      .editor
-      .document_for_buffer(buffer_id)
-      .ok_or_else(|| format!("buffer missing for '{}'", path.display()))?
-      .text()
-      .to_string();
-    if let Some(parent) = path.parent() {
-      fs::create_dir_all(parent).map_err(|err| {
-        format!(
-          "failed to create parent directories for '{}': {err}",
-          path.display()
-        )
-      })?;
-    }
-    fs::write(path, &text).map_err(|err| format!("failed to write '{}': {err}", path.display()))?;
-    if let Some(doc) = self.editor.document_mut_for_buffer(buffer_id) {
-      let _ = doc.mark_saved();
-    }
-    if self.editor.active_buffer_id() == buffer_id {
-      self.on_file_saved(path, &text);
-    } else {
-      let _ = self.refresh_shared_vcs_scan_for_cwd(path);
-      let _ = self.refresh_file_tree_decorations();
-      self.vcs_statusline_refresh_force_rescan = true;
-      self.schedule_vcs_statusline_refresh(None);
-    }
-    Ok(())
-  }
-
-  fn pi_bridge_read_workspace_file(
-    &mut self,
-    raw_path: &str,
-  ) -> Result<PiBridgeReadFileResult, String> {
-    let path = self.resolve_pi_bridge_path(raw_path)?;
-    let was_open = self.editor.find_buffer_by_path(&path).is_some();
-    let (buffer_id, opened_buffer) = self.ensure_workspace_buffer_loaded(&path, false)?;
-    let content = self
-      .editor
-      .document_for_buffer(buffer_id)
-      .ok_or_else(|| format!("buffer missing for '{}'", path.display()))?
-      .text()
-      .to_string();
-    let _ =
-      self.apply_agent_follow_activity(buffer_id, AgentFollowActivityKind::Read, None, None, false);
-    Ok(PiBridgeReadFileResult {
-      path: path.display().to_string(),
-      content,
-      from_live_buffer: was_open,
-      opened_buffer,
-    })
-  }
-
-  fn pi_bridge_apply_workspace_edits(
-    &mut self,
-    raw_path: &str,
-    edits: &[PiBridgeEdit],
-  ) -> Result<PiBridgeApplyEditsResult, String> {
-    if edits.is_empty() {
-      return Err("apply_edits requires at least one edit".to_string());
-    }
-    let path = self.resolve_pi_bridge_path(raw_path)?;
-    let (buffer_id, opened_buffer) = self.ensure_workspace_buffer_loaded(&path, false)?;
-    let (old_text, transaction) = {
-      let document = self
-        .editor
-        .document_for_buffer(buffer_id)
-        .ok_or_else(|| format!("buffer missing for '{}'", path.display()))?;
-      let old_text = document.text().clone();
-      let transaction = build_exact_edit_transaction(document.text(), edits)?;
-      (old_text, transaction)
-    };
-    self
-      .editor
-      .apply_transaction_to_buffer(buffer_id, &transaction, self.loader.as_deref())
-      .map_err(|err| format!("failed to apply edits to '{}': {err}", path.display()))?;
-    if self.editor.active_buffer_id() == buffer_id {
-      self.vcs_document_generation = self.vcs_document_generation.wrapping_add(1);
-      self.highlight_cache.clear();
-      self.lsp_send_did_change(&old_text, transaction.changes());
-      self.refresh_vcs_diff_document();
-      if let Some(root) = self.file_tree.root.clone() {
-        let _ = self.refresh_file_tree_vcs_decorations_for_root(&root);
-      }
-    }
-    self.persist_buffer_to_disk(buffer_id, &path)?;
-    self.start_agent_follow_for_transaction(buffer_id, &transaction);
-    Ok(PiBridgeApplyEditsResult {
-      path: path.display().to_string(),
-      edit_count: edits.len(),
-      saved: true,
-      opened_buffer,
-    })
-  }
-
-  fn pi_bridge_write_workspace_file(
-    &mut self,
-    raw_path: &str,
-    content: &str,
-  ) -> Result<PiBridgeWriteFileResult, String> {
-    let path = self.resolve_pi_bridge_path(raw_path)?;
-    let (buffer_id, opened_buffer) = self.ensure_workspace_buffer_loaded(&path, true)?;
-    let (old_text, transaction) = {
-      let document = self
-        .editor
-        .document_for_buffer(buffer_id)
-        .ok_or_else(|| format!("buffer missing for '{}'", path.display()))?;
-      let old_text = document.text().clone();
-      let transaction = the_lib::transaction::Transaction::change(document.text(), vec![(
-        0,
-        document.text().len_chars(),
-        Some(content.into()),
-      )])
-      .map_err(|err| format!("failed to build write transaction: {err}"))?;
-      (old_text, transaction)
-    };
-    self
-      .editor
-      .apply_transaction_to_buffer(buffer_id, &transaction, self.loader.as_deref())
-      .map_err(|err| format!("failed to apply write to '{}': {err}", path.display()))?;
-    if self.editor.active_buffer_id() == buffer_id {
-      self.vcs_document_generation = self.vcs_document_generation.wrapping_add(1);
-      self.highlight_cache.clear();
-      self.lsp_send_did_change(&old_text, transaction.changes());
-      self.refresh_vcs_diff_document();
-      if let Some(root) = self.file_tree.root.clone() {
-        let _ = self.refresh_file_tree_vcs_decorations_for_root(&root);
-      }
-    }
-    self.persist_buffer_to_disk(buffer_id, &path)?;
-    self.start_agent_follow_for_transaction(buffer_id, &transaction);
-    Ok(PiBridgeWriteFileResult {
-      path: path.display().to_string(),
-      saved: true,
-      opened_buffer,
-    })
-  }
-
-  fn pi_bridge_replace_workspace_range(
-    &mut self,
-    raw_path: &str,
-    start_char: usize,
-    end_char: usize,
-    content: &str,
-  ) -> Result<PiBridgeReplaceRangeResult, String> {
-    let path = self.resolve_pi_bridge_path(raw_path)?;
-    let (buffer_id, opened_buffer) = self.ensure_workspace_buffer_loaded(&path, false)?;
-    let (old_text, transaction) = {
-      let document = self
-        .editor
-        .document_for_buffer(buffer_id)
-        .ok_or_else(|| format!("buffer missing for '{}'", path.display()))?;
-      let len_chars = document.text().len_chars();
-      if start_char > end_char {
-        return Err(format!(
-          "invalid replace_range for '{}': start_char {start_char} is greater than end_char \
-           {end_char}",
-          path.display()
-        ));
-      }
-      if end_char > len_chars {
-        return Err(format!(
-          "invalid replace_range for '{}': end_char {end_char} exceeds document length {}",
-          path.display(),
-          len_chars
-        ));
-      }
-      let old_text = document.text().clone();
-      let transaction = the_lib::transaction::Transaction::change(document.text(), vec![(
-        start_char,
-        end_char,
-        Some(content.into()),
-      )])
-      .map_err(|err| format!("failed to build replace_range transaction: {err}"))?;
-      (old_text, transaction)
-    };
-    self
-      .editor
-      .apply_transaction_to_buffer(buffer_id, &transaction, self.loader.as_deref())
-      .map_err(|err| {
-        format!(
-          "failed to apply replace_range to '{}': {err}",
-          path.display()
-        )
-      })?;
-    if self.editor.active_buffer_id() == buffer_id {
-      self.vcs_document_generation = self.vcs_document_generation.wrapping_add(1);
-      self.highlight_cache.clear();
-      self.lsp_send_did_change(&old_text, transaction.changes());
-      self.refresh_vcs_diff_document();
-      if let Some(root) = self.file_tree.root.clone() {
-        let _ = self.refresh_file_tree_vcs_decorations_for_root(&root);
-      }
-    }
-    self.persist_buffer_to_disk(buffer_id, &path)?;
-    self.start_agent_follow_for_transaction(buffer_id, &transaction);
-    Ok(PiBridgeReplaceRangeResult {
-      path: path.display().to_string(),
-      saved: true,
-      opened_buffer,
-    })
-  }
-
-  fn agent_follow_render_snapshot(&self) -> Option<AgentFollowRenderSnapshot> {
-    self.agent_follow.render_snapshot()
-  }
-
-  fn agent_follow_steps_for_transaction(
-    transaction: &the_lib::transaction::Transaction,
-  ) -> Vec<AgentFollowStep> {
-    transaction
-      .changes_iter()
-      .map(|(from, _to, inserted)| {
-        let inserted_len = inserted
-          .as_ref()
-          .map(|text| text.chars().count())
-          .unwrap_or(0);
-        let flash_start = transaction
-          .changes()
-          .map_pos(from, the_lib::transaction::Assoc::Before)
-          .unwrap_or(from);
-        let flash_end = flash_start.saturating_add(inserted_len);
-        let cursor_char = if inserted_len > 0 && inserted_len <= 96 {
-          transaction
-            .changes()
-            .map_pos(from, the_lib::transaction::Assoc::After)
-            .unwrap_or(flash_end)
-        } else {
-          flash_start
-        };
-        AgentFollowStep {
-          cursor_char,
-          flash_start,
-          flash_end,
-        }
-      })
-      .collect()
-  }
-
-  fn agent_follow_target_for_transaction(
-    transaction: &the_lib::transaction::Transaction,
-  ) -> Option<(AgentFollowStep, usize)> {
-    let steps = Self::agent_follow_steps_for_transaction(transaction);
-    let step_count = steps.len();
-    let first = *steps.first()?;
-    let mut highlight_start = first.flash_start;
-    let mut highlight_end = first.flash_end;
-    let mut cursor_char = first.cursor_char;
-
-    for step in steps.iter().copied().skip(1) {
-      highlight_start = highlight_start.min(step.flash_start);
-      highlight_end = highlight_end.max(step.flash_end);
-      cursor_char = step.cursor_char;
-    }
-
-    Some((
-      AgentFollowStep {
-        cursor_char,
-        flash_start: highlight_start,
-        flash_end: highlight_end,
-      },
-      step_count,
-    ))
-  }
-
-  fn agent_follow_local_state_snapshot(&self) -> AgentFollowLocalStateSnapshot {
-    let active_pane_id = self.editor.active_pane_id();
-    let pane_content = self.editor.pane_content(active_pane_id);
-    let scroll = self
-      .editor
-      .pane_view(active_pane_id)
-      .map(|view| view.scroll);
-    let selection_ranges = match pane_content {
-      Some(PaneContent::EditorBuffer { buffer_id }) => {
-        self
-          .editor
-          .document_for_buffer(buffer_id)
-          .map(|doc| doc.selection().ranges().to_vec())
-          .unwrap_or_default()
-      },
-      _ => Vec::new(),
-    };
-
-    AgentFollowLocalStateSnapshot {
-      active_pane_id,
-      pane_content,
-      scroll,
-      selection_ranges,
-      followed_pane: self.agent_follow.enabled && self.agent_follow.pane_id == Some(active_pane_id),
-    }
-  }
-
-  fn stop_agent_follow(&mut self, reason: impl AsRef<str>) -> bool {
-    let had_state = self.agent_follow.enabled
-      || self.agent_follow.buffer_id.is_some()
-      || self.agent_follow.visible_until.is_some();
-    if !had_state {
-      return false;
-    }
-
-    let reason = reason.as_ref();
-    if let Some(snapshot) = self.agent_follow.render_snapshot() {
-      agent_follow_debug_log(format!(
-        "stop buffer={} cursor_char={} highlight=[{}, {}) pane={} reason={}",
-        snapshot.buffer_id.get().get(),
-        snapshot.cursor_char,
-        snapshot.highlight_start,
-        snapshot.highlight_end,
-        self
-          .agent_follow
-          .pane_id
-          .map(|pane_id| pane_id.get().get().to_string())
-          .unwrap_or_else(|| "-".to_string()),
-        reason
-      ));
-    } else {
-      agent_follow_debug_log(format!("stop reason={reason}"));
-    }
-
-    self.agent_follow.enabled = false;
-    self.agent_follow.clear();
-    true
-  }
-
-  fn stop_agent_follow_if_local_change(
-    &mut self,
-    before: AgentFollowLocalStateSnapshot,
-    reason: &str,
-  ) {
-    if !before.followed_pane {
-      return;
-    }
-    let after = self.agent_follow_local_state_snapshot();
-    if after.active_pane_id != before.active_pane_id
-      || after.pane_content != before.pane_content
-      || after.scroll != before.scroll
-      || after.selection_ranges != before.selection_ranges
-    {
-      let _ = self.stop_agent_follow(reason);
-    }
-  }
-
-  fn stop_agent_follow_if_pane_matches(&mut self, pane_id: PaneId, reason: &str) {
-    if self.agent_follow.enabled && self.agent_follow.pane_id == Some(pane_id) {
-      let _ = self.stop_agent_follow(reason);
-    }
-  }
-
-  fn preferred_agent_follow_pane_id(&self, preferred: Option<PaneId>) -> Option<PaneId> {
-    let is_editor_pane = |pane_id: PaneId| {
-      matches!(
-        self.editor.pane_content_kind(pane_id),
-        Some(PaneContentKind::EditorBuffer)
-      )
-    };
-
-    if let Some(pane_id) = preferred
-      && self.editor.pane_content(pane_id).is_some()
-      && is_editor_pane(pane_id)
-    {
-      return Some(pane_id);
-    }
-
-    let active_pane_id = self.editor.active_pane_id();
-    if is_editor_pane(active_pane_id) {
-      return Some(active_pane_id);
-    }
-
-    if let Some(editor_pane_id) = self
-      .editor
-      .pane_item_snapshots()
-      .into_iter()
-      .map(|group| group.pane_id)
-      .find(|pane_id| is_editor_pane(*pane_id))
-    {
-      return Some(editor_pane_id);
-    }
-
-    if let Some(pane_id) = preferred
-      && self.editor.pane_content(pane_id).is_some()
-    {
-      return Some(pane_id);
-    }
-
-    self
-      .editor
-      .pane_content(active_pane_id)
-      .map(|_| active_pane_id)
-  }
-
-  fn agent_follow_target_pane_id(&mut self) -> Option<PaneId> {
-    let Some(pane_id) = self.preferred_agent_follow_pane_id(self.agent_follow.pane_id) else {
-      if self.agent_follow.pane_id.is_some() {
-        let _ = self.stop_agent_follow("pane-closed");
-      }
-      return None;
-    };
-
-    if self.agent_follow.pane_id != Some(pane_id) {
-      agent_follow_debug_log(format!(
-        "retarget pane={} previous={}",
-        pane_id.get().get(),
-        self
-          .agent_follow
-          .pane_id
-          .map(|pane_id| pane_id.get().get().to_string())
-          .unwrap_or_else(|| "-".to_string())
-      ));
-      self.agent_follow.pane_id = Some(pane_id);
-    }
-    Some(pane_id)
-  }
-
-  fn keep_agent_follow_visible_in_follow_pane(&mut self) {
-    fn resolve_follow_visual_row<'a>(
-      text: RopeSlice<'a>,
-      text_format: &'a TextFormat,
-      annotations: &mut TextAnnotations<'a>,
-      text_len: usize,
-      char_idx: usize,
-    ) -> Option<usize> {
-      let char_idx = char_idx.min(text_len);
-      visual_pos_at_char(text, text_format, annotations, char_idx)
-        .map(|pos| pos.row)
-        .or_else(|| {
-          if char_idx == 0 {
-            None
-          } else {
-            visual_pos_at_char(text, text_format, annotations, char_idx - 1).map(|pos| pos.row)
-          }
-        })
-    }
-
-    if !self.agent_follow.enabled {
-      return;
-    }
-    let Some(snapshot) = self.agent_follow_render_snapshot() else {
-      return;
-    };
-    let Some(pane_id) = self.agent_follow_target_pane_id() else {
-      return;
-    };
-    if !matches!(
-      self.editor.pane_content(pane_id),
-      Some(PaneContent::EditorBuffer { buffer_id }) if buffer_id == snapshot.buffer_id
-    ) {
-      agent_follow_debug_log(format!(
-        "keep-visible skipped buffer={} pane={} reason=buffer-not-visible",
-        snapshot.buffer_id.get().get(),
-        pane_id.get().get()
-      ));
-      return;
-    }
-
-    let Some(new_scroll) = ({
-      let Some(doc) = self.editor.document_for_buffer(snapshot.buffer_id) else {
-        return;
-      };
-      let Some(view) = self.editor.pane_view(pane_id) else {
-        agent_follow_debug_log(format!(
-          "keep-visible skipped buffer={} pane={} reason=no-view",
-          snapshot.buffer_id.get().get(),
-          pane_id.get().get()
-        ));
-        return;
-      };
-
-      let text = doc.text();
-      let text_len = text.len_chars();
-      let cursor_pos = snapshot.cursor_char.min(text_len);
-      let cursor_line = text.char_to_line(cursor_pos);
-      let cursor_col = cursor_pos.saturating_sub(text.line_to_char(cursor_line));
-      let viewport_height = view.viewport.height as usize;
-      let gutter_width = gutter_width_for_document(doc, view.viewport.width, &self.gutter_config);
-      let viewport_width = view.viewport.width.saturating_sub(gutter_width).max(1) as usize;
-
-      let new_scroll = if self.text_format.soft_wrap {
-        let mut text_format = self.text_format.clone();
-        text_format.viewport_width = view.viewport.width.saturating_sub(gutter_width).max(1);
-        let mut annotations = TextAnnotations::default();
-        let text_slice = text.slice(..);
-
-        let highlight_start_row = resolve_follow_visual_row(
-          text_slice,
-          &text_format,
-          &mut annotations,
-          text_len,
-          snapshot.highlight_start,
-        )
-        .unwrap_or(cursor_line);
-        let highlight_end_row = resolve_follow_visual_row(
-          text_slice,
-          &text_format,
-          &mut annotations,
-          text_len,
-          snapshot
-            .highlight_end
-            .max(snapshot.highlight_start.saturating_add(1))
-            .saturating_sub(1),
-        )
-        .unwrap_or(highlight_start_row);
-        let target_row = (highlight_start_row + highlight_end_row) / 2;
-
-        let mut new_scroll = view.scroll;
-        if let Some(new_row) = the_lib::view::scroll_row_to_keep_visible(
-          target_row,
-          view.scroll.row,
-          viewport_height,
-          SWIFT_SCROLLOFF,
-        ) {
-          new_scroll.row = new_row;
-        }
-        new_scroll.col = 0;
-        new_scroll
-      } else {
-        the_lib::view::scroll_to_keep_visible(
-          cursor_line,
-          cursor_col,
-          view.scroll,
-          viewport_height,
-          viewport_width,
-          SWIFT_SCROLLOFF,
-        )
-        .unwrap_or(view.scroll)
-      };
-
-      Some(new_scroll)
-    }) else {
-      return;
-    };
-
-    if let Some(view_mut) = self.editor.pane_view_mut(pane_id) {
-      view_mut.scroll = new_scroll;
-    }
-    agent_follow_debug_log(format!(
-      "keep-visible buffer={} pane={} scroll_row={} scroll_col={}",
-      snapshot.buffer_id.get().get(),
-      pane_id.get().get(),
-      new_scroll.row,
-      new_scroll.col,
-    ));
-  }
-
-  fn apply_agent_follow_activity(
-    &mut self,
-    buffer_id: BufferId,
-    activity: AgentFollowActivityKind,
-    range: Option<(usize, usize)>,
-    cursor_char: Option<usize>,
-    reveal: bool,
-  ) -> bool {
-    if !self.agent_follow.enabled {
-      return false;
-    }
-
-    let Some(pane_id) = self.agent_follow_target_pane_id() else {
-      return false;
-    };
-    let switched = if matches!(
-      self.editor.pane_content(pane_id),
-      Some(PaneContent::EditorBuffer { buffer_id: pane_buffer_id }) if pane_buffer_id == buffer_id
-    ) {
-      false
-    } else {
-      self.editor.set_active_buffer_in_pane(pane_id, buffer_id)
-    };
-
-    let Some(doc) = self.editor.document_for_buffer(buffer_id) else {
-      return false;
-    };
-    let text_len = doc.text().len_chars();
-    let fallback_cursor = doc
-      .selection()
-      .ranges()
-      .first()
-      .map(|range| range.head)
-      .unwrap_or(0)
-      .min(text_len);
-    let cursor_char = cursor_char.unwrap_or(fallback_cursor).min(text_len);
-    let (highlight_start, highlight_end) = range
-      .map(|(start, end)| (start.min(text_len), end.max(start.saturating_add(1))))
-      .unwrap_or_else(|| (cursor_char, cursor_char.saturating_add(1)));
-
-    self.agent_follow.pane_id = Some(pane_id);
-    self.agent_follow.buffer_id = Some(buffer_id);
-    self.agent_follow.cursor_char = Some(cursor_char);
-    self.agent_follow.highlight_start = highlight_start;
-    self.agent_follow.highlight_end = highlight_end;
-    self.agent_follow.visible_until = matches!(
-      activity,
-      AgentFollowActivityKind::EditApplied | AgentFollowActivityKind::Write
-    )
-    .then_some(Instant::now() + agent_follow_cursor_linger_duration());
-
-    agent_follow_debug_log(format!(
-      "activity={:?} buffer={} pane={} cursor_char={} highlight=[{}, {}) switched={} reveal={}",
-      activity,
-      buffer_id.get().get(),
-      pane_id.get().get(),
-      cursor_char,
-      highlight_start,
-      highlight_end,
-      u8::from(switched),
-      u8::from(reveal),
-    ));
-
-    if reveal {
-      self.keep_agent_follow_visible_in_follow_pane();
-    }
-    true
-  }
-
-  fn focus_agent_follow_path(
-    &mut self,
-    path: &Path,
-    activity: AgentFollowActivityKind,
-    range: Option<(usize, usize)>,
-    line_range: Option<(usize, usize)>,
-    cursor_char: Option<usize>,
-  ) -> Result<bool, String> {
-    let create_missing = matches!(activity, AgentFollowActivityKind::Write);
-    let (buffer_id, _opened_buffer) = self.ensure_workspace_buffer_loaded(path, create_missing)?;
-    let resolved_range = if let Some(range) = range {
-      Some(range)
-    } else if let Some((start_line, end_line)) = line_range {
-      self.editor.document_for_buffer(buffer_id).map(|doc| {
-        let text = doc.text();
-        let line_count = text.len_lines().max(1);
-        let start_line = start_line.clamp(1, line_count);
-        let end_line = end_line.max(start_line).clamp(start_line, line_count);
-        let start_char = text.line_to_char(start_line.saturating_sub(1));
-        let end_char = if end_line >= line_count {
-          text.len_chars()
-        } else {
-          text.line_to_char(end_line)
-        };
-        (start_char, end_char.max(start_char.saturating_add(1)))
-      })
-    } else {
-      None
-    };
-    Ok(self.apply_agent_follow_activity(
-      buffer_id,
-      activity,
-      resolved_range,
-      cursor_char,
-      resolved_range.is_some() || cursor_char.is_some(),
-    ))
-  }
-
-  fn handle_pi_bridge_notification(&mut self, method: &str, params: Value) -> bool {
-    match method {
-      "agent/focus" | "agent/edit_preview" | "agent/edit_applied" | "agent/end" => {},
-      _ => return false,
-    }
-
-    if method == "agent/end" {
-      let had_state =
-        self.agent_follow.buffer_id.is_some() || self.agent_follow.visible_until.is_some();
-      if had_state {
-        let pane_id = self.agent_follow.pane_id;
-        self.agent_follow.clear();
-        self.agent_follow.pane_id = pane_id;
-      }
-      return had_state;
-    }
-
-    let params: PiBridgeAgentFocusParams = match serde_json::from_value(params) {
-      Ok(params) => params,
-      Err(err) => {
-        self.push_warning("pi-bridge", format!("invalid {method} params: {err}"));
-        return true;
-      },
-    };
-    let _ = (&params.session_id, &params.top_line, &params.center_line);
-
-    let path = match self.resolve_pi_bridge_path(&params.path) {
-      Ok(path) => path,
-      Err(err) => {
-        self.push_warning("pi-bridge", err);
-        return true;
-      },
-    };
-    let activity = params.kind.unwrap_or(match method {
-      "agent/edit_preview" => PiBridgeAgentActivityKind::EditPreview,
-      "agent/edit_applied" => PiBridgeAgentActivityKind::EditApplied,
-      _ => PiBridgeAgentActivityKind::Focus,
-    });
-    let range = params.range.map(|range| (range.start_char, range.end_char));
-    let line_range = params
-      .start_line
-      .map(|start_line| (start_line, params.end_line.unwrap_or(start_line)));
-    let activity = match activity {
-      PiBridgeAgentActivityKind::Focus => AgentFollowActivityKind::Focus,
-      PiBridgeAgentActivityKind::Read => AgentFollowActivityKind::Read,
-      PiBridgeAgentActivityKind::EditPreview => AgentFollowActivityKind::EditPreview,
-      PiBridgeAgentActivityKind::EditApplied => AgentFollowActivityKind::EditApplied,
-      PiBridgeAgentActivityKind::Write => AgentFollowActivityKind::Write,
-    };
-
-    match self.focus_agent_follow_path(&path, activity, range, line_range, params.cursor_char) {
-      Ok(changed) => changed,
-      Err(err) => {
-        self.push_warning("pi-bridge", err);
-        true
-      },
-    }
-  }
-
-  fn start_agent_follow_for_transaction(
-    &mut self,
-    buffer_id: BufferId,
-    transaction: &the_lib::transaction::Transaction,
-  ) {
-    let Some((step, step_count)) = Self::agent_follow_target_for_transaction(transaction) else {
-      agent_follow_debug_log(format!(
-        "start skipped buffer={} reason=no-steps",
-        buffer_id.get().get()
-      ));
-      if self.agent_follow.enabled {
-        self.agent_follow.clear();
-      }
-      return;
-    };
-
-    let _ = self.apply_agent_follow_activity(
-      buffer_id,
-      AgentFollowActivityKind::EditApplied,
-      Some((step.flash_start, step.flash_end)),
-      Some(step.cursor_char),
-      true,
-    );
-    agent_follow_debug_log(format!(
-      "start buffer={} step_count={} cursor_char={} highlight=[{}, {})",
-      buffer_id.get().get(),
-      step_count,
-      step.cursor_char,
-      step.flash_start,
-      step.flash_end,
-    ));
-  }
-
-  fn poll_agent_follow(&mut self) -> bool {
-    if !self.agent_follow.enabled {
-      let had_state =
-        self.agent_follow.buffer_id.is_some() || self.agent_follow.visible_until.is_some();
-      if had_state {
-        self.agent_follow.clear();
-      }
-      return had_state;
-    }
-    if self.agent_follow.render_snapshot().is_none() {
-      return false;
-    }
-
-    let now = Instant::now();
-    if let Some(visible_until) = self.agent_follow.visible_until
-      && now >= visible_until
-    {
-      if let Some(snapshot) = self.agent_follow.render_snapshot() {
-        agent_follow_debug_log(format!(
-          "highlight-expired buffer={} cursor_char={} highlight=[{}, {})",
-          snapshot.buffer_id.get().get(),
-          snapshot.cursor_char,
-          snapshot.highlight_start,
-          snapshot.highlight_end
-        ));
-      }
-      self.agent_follow.visible_until = None;
-      return true;
-    }
-
-    false
-  }
-
-  fn agent_follow_enabled(&self) -> bool {
-    self.agent_follow.enabled
-  }
-
-  fn set_agent_follow_enabled(&mut self, enabled: bool) -> bool {
-    if self.agent_follow.enabled == enabled {
-      return false;
-    }
-    self.agent_follow.enabled = enabled;
-    if enabled {
-      self.agent_follow.pane_id = self.preferred_agent_follow_pane_id(self.agent_follow.pane_id);
-    } else {
-      self.agent_follow.clear();
-    }
-    true
   }
 
   fn take_quit_requested(&mut self) -> bool {
@@ -6492,19 +5237,15 @@ impl SwiftEditor {
       vcs_scan: None,
       vcs_base_cache: BTreeMap::new(),
       embedded_terminal_enabled: false,
-      pi_bridge: None,
-      agent_follow: AgentFollowState::default(),
       viewport_resize_plan_cache: None,
       quit_requested: false,
     };
 
-    this.agent_follow.pane_id = this.preferred_agent_follow_pane_id(None);
     set_file_picker_syntax_loader(&mut this.file_picker, this.loader.clone());
     this.refresh_active_document_syntax();
     this.refresh_lsp_runtime_state();
     this.sync_active_file_watch_state();
     this.refresh_vcs_after_path_change(None);
-    this.ensure_pi_bridge_started();
     this
   }
 
@@ -6559,7 +5300,6 @@ impl SwiftEditor {
   }
 
   fn set_scroll_row(&mut self, row: u32) -> bool {
-    let before = self.agent_follow_local_state_snapshot();
     let max_row = max_scroll_row(
       self.editor.document().text().len_lines(),
       self.editor.view().viewport.height as usize,
@@ -6569,12 +5309,10 @@ impl SwiftEditor {
       return false;
     }
     self.editor.view_mut().scroll.row = next;
-    self.stop_agent_follow_if_local_change(before, "user-scroll-row");
     true
   }
 
   fn set_scroll_col(&mut self, col: u32) -> bool {
-    let before = self.agent_follow_local_state_snapshot();
     let max_col = max_scroll_col(
       self.editor.document(),
       &self.text_format,
@@ -6585,7 +5323,6 @@ impl SwiftEditor {
       return false;
     }
     self.editor.view_mut().scroll.col = next;
-    self.stop_agent_follow_if_local_change(before, "user-scroll-col");
     true
   }
 
@@ -6645,7 +5382,6 @@ impl SwiftEditor {
     self.file_tree.active = false;
     self.sync_state_after_active_pane_change(previous_buffer_id);
     self.bump_cursor_blink_generation();
-    self.stop_agent_follow_if_pane_matches(pane, "user-open-item-change");
     true
   }
 
@@ -6683,12 +5419,10 @@ impl SwiftEditor {
     self.file_tree.active = false;
     self.sync_state_after_active_pane_change(previous_buffer_id);
     self.bump_cursor_blink_generation();
-    self.stop_agent_follow_if_pane_matches(pane, "user-close-item");
     true
   }
 
   fn close_buffer_tab(&mut self, buffer_raw: usize) -> bool {
-    let before = self.agent_follow_local_state_snapshot();
     let Some(buffer_id) = buffer_id_from_raw(buffer_raw) else {
       return false;
     };
@@ -6699,7 +5433,6 @@ impl SwiftEditor {
     self.file_tree.active = false;
     self.sync_state_after_active_pane_change(previous_buffer_id);
     self.bump_cursor_blink_generation();
-    self.stop_agent_follow_if_local_change(before, "user-close-buffer-tab");
     true
   }
 
@@ -6866,7 +5599,6 @@ impl SwiftEditor {
     self.editor.view_mut().active_cursor = next_selection.cursor_ids().first().copied();
     self.bump_cursor_blink_generation();
     self.ensure_cursor_visible();
-    self.stop_agent_follow_if_pane_matches(pane_id, "user-selection-click");
     true
   }
 
@@ -6961,12 +5693,10 @@ impl SwiftEditor {
     self.editor.view_mut().active_cursor = next_selection.cursor_ids().first().copied();
     self.bump_cursor_blink_generation();
     self.ensure_cursor_visible();
-    self.stop_agent_follow_if_pane_matches(pane_id, "user-selection-drag");
     true
   }
 
   fn handle_key_event(&mut self, raw: the_editor_key_event_t) -> bool {
-    let before = self.agent_follow_local_state_snapshot();
     let Some(event) = translate_key_event(raw) else {
       return false;
     };
@@ -6990,12 +5720,10 @@ impl SwiftEditor {
       }
     }
     self.ensure_cursor_visible();
-    self.stop_agent_follow_if_local_change(before, "user-key-event");
     true
   }
 
   fn insert_text(&mut self, text: &str) -> bool {
-    let before = self.agent_follow_local_state_snapshot();
     let mut changed = false;
     let mut last_key = None;
     for ch in text.chars() {
@@ -7028,7 +5756,6 @@ impl SwiftEditor {
         self.clear_completion_state_with_reason("left-insert-mode-insert-text");
       }
       self.ensure_cursor_visible();
-      self.stop_agent_follow_if_local_change(before, "user-insert-text");
     }
     changed
   }
@@ -7214,8 +5941,6 @@ impl SwiftEditor {
       return;
     }
     self.workspace_root = next_workspace_root;
-    self.shutdown_pi_bridge();
-    self.ensure_pi_bridge_started();
   }
 
   fn configure_file_picker_layout(
@@ -7788,202 +6513,6 @@ fn selection_for_buffer_drag(
   }
 }
 
-fn clamp_agent_follow_plan_position(plan: &RenderPlan, pos: Position) -> Option<Position> {
-  let row_start = plan.scroll.row;
-  let row_end = row_start + plan.viewport.height as usize;
-  let col_start = plan.scroll.col;
-  let col_end = col_start + plan.content_width();
-
-  if pos.row < row_start || pos.row >= row_end {
-    return None;
-  }
-  if pos.col < col_start || pos.col >= col_end {
-    return None;
-  }
-
-  Some(Position::new(pos.row - row_start, pos.col - col_start))
-}
-
-fn agent_follow_cursor_style(theme: &Theme) -> Style {
-  theme
-    .try_get("ui.cursor.agent")
-    .or_else(|| theme.try_get("ui.cursor.match"))
-    .or_else(|| theme.try_get("ui.selection.agent"))
-    .or_else(|| theme.try_get("ui.cursor.active"))
-    .or_else(|| theme.try_get("ui.cursor"))
-    .unwrap_or_default()
-}
-
-fn agent_follow_selection_style(theme: &Theme) -> Style {
-  theme
-    .try_get("ui.selection")
-    .or_else(|| theme.try_get("ui.cursor.active"))
-    .or_else(|| theme.try_get("ui.cursor"))
-    .unwrap_or_default()
-}
-
-fn agent_follow_badge_style(theme: &Theme) -> Style {
-  let style = theme
-    .try_get("ui.cursor.active")
-    .or_else(|| theme.try_get("ui.cursor"))
-    .or_else(|| theme.try_get("ui.selection"))
-    .unwrap_or_default();
-  let color = style
-    .fg
-    .or(style.bg)
-    .or_else(|| theme.try_get("ui.selection").and_then(|style| style.fg))
-    .or_else(|| theme.try_get("ui.cursor").and_then(|style| style.fg));
-
-  let mut badge_style = Style::default();
-  if let Some(color) = color {
-    badge_style = badge_style.fg(color);
-  }
-  badge_style.add_modifier(Modifier::BOLD)
-}
-
-fn apply_agent_follow_visuals<'a>(
-  plan: &mut RenderPlan,
-  text_fmt: &'a TextFormat,
-  annotations: &mut TextAnnotations<'a>,
-  buffer_id: BufferId,
-  text: &'a Rope,
-  snapshot: Option<AgentFollowRenderSnapshot>,
-  theme: &Theme,
-  cursor_style: Style,
-  selection_style: Style,
-) {
-  let Some(snapshot) = snapshot else {
-    return;
-  };
-  if snapshot.buffer_id != buffer_id {
-    return;
-  }
-
-  let text_slice = text.slice(..);
-  let text_len = text.len_chars();
-  let mut resolve_pos = |char_idx: usize| {
-    let char_idx = char_idx.min(text_len);
-    visual_pos_at_char(text_slice, text_fmt, annotations, char_idx).or_else(|| {
-      if char_idx == 0 {
-        None
-      } else {
-        visual_pos_at_char(text_slice, text_fmt, annotations, char_idx - 1).map(|mut pos| {
-          pos.col = pos.col.saturating_add(1);
-          pos
-        })
-      }
-    })
-  };
-
-  let highlight_anchor_pos = resolve_pos(snapshot.cursor_char);
-  let clamped_anchor_pos =
-    highlight_anchor_pos.and_then(|pos| clamp_agent_follow_plan_position(plan, pos));
-
-  if let Some(pos) = clamped_anchor_pos {
-    plan.cursors.push(the_lib::render::RenderCursor {
-      id: the_lib::selection::CursorId::fresh(),
-      pos,
-      kind: CursorKind::Hollow,
-      style: cursor_style,
-    });
-  }
-
-  if !snapshot.highlighting {
-    agent_follow_debug_log(format!(
-      "render buffer={} cursor_char={} overlay_anchor_visible={} highlight_visible=false \
-       viewport_row={} scroll_col={}",
-      buffer_id.get().get(),
-      snapshot.cursor_char,
-      clamped_anchor_pos.is_some(),
-      plan.scroll.row,
-      plan.scroll.col
-    ));
-    return;
-  }
-
-  let highlight_start_pos = resolve_pos(snapshot.highlight_start).or(highlight_anchor_pos);
-  let highlight_end_char = snapshot
-    .highlight_end
-    .max(snapshot.highlight_start.saturating_add(1))
-    .saturating_sub(1);
-  let highlight_end_pos = resolve_pos(highlight_end_char).or(highlight_anchor_pos);
-  if let (Some(start_pos), Some(end_pos)) = (highlight_start_pos, highlight_end_pos) {
-    let row_start = start_pos.row.min(end_pos.row);
-    let row_end = start_pos.row.max(end_pos.row);
-    agent_follow_debug_log(format!(
-      "render buffer={} cursor_char={} overlay_anchor_visible={} highlight_chars=[{}, {}) \
-       rows=[{}, {}] viewport_rows=[{}, {})",
-      buffer_id.get().get(),
-      snapshot.cursor_char,
-      clamped_anchor_pos.is_some(),
-      snapshot.highlight_start,
-      snapshot.highlight_end,
-      row_start,
-      row_end,
-      plan.scroll.row,
-      plan.scroll.row + plan.viewport.height as usize
-    ));
-
-    let visible_row_start = row_start.max(plan.scroll.row);
-    let visible_row_end = row_end.min(plan.scroll.row + plan.viewport.height as usize - 1);
-    if visible_row_start > visible_row_end {
-      agent_follow_debug_log(format!(
-        "render skipped buffer={} reason=outside-viewport rows=[{}, {}] viewport_rows=[{}, {})",
-        buffer_id.get().get(),
-        row_start,
-        row_end,
-        plan.scroll.row,
-        plan.scroll.row + plan.viewport.height as usize
-      ));
-      return;
-    }
-
-    let local_row_start = (visible_row_start - plan.scroll.row) as u16;
-    let row_count = (visible_row_end - visible_row_start + 1) as u16;
-    let content_x = if plan.content_offset_x > 0 {
-      plan.content_offset_x.saturating_sub(1)
-    } else {
-      0
-    };
-    let content_width = plan
-      .viewport
-      .width
-      .saturating_sub(content_x)
-      .saturating_sub(1);
-    if content_width > 0 {
-      plan
-        .overlays
-        .push(OverlayNode::Rect(the_lib::render::overlay::OverlayRect {
-          rect:   Rect::new(content_x, local_row_start, content_width, row_count),
-          kind:   OverlayRectKind::Highlight,
-          radius: 8,
-          style:  selection_style,
-        }));
-    }
-
-    let badge_style = agent_follow_badge_style(theme).patch(cursor_style);
-    let badge_col = if plan.content_offset_x > 0 {
-      plan.content_offset_x.saturating_sub(1) as usize
-    } else {
-      content_x.saturating_add(1) as usize
-    };
-    plan.add_overlay_text(
-      Position::new(local_row_start as usize, badge_col),
-      "π",
-      badge_style,
-    );
-  } else {
-    agent_follow_debug_log(format!(
-      "render skipped buffer={} reason=missing-highlight-positions cursor_char={} highlight=[{}, \
-       {})",
-      buffer_id.get().get(),
-      snapshot.cursor_char,
-      snapshot.highlight_start,
-      snapshot.highlight_end
-    ));
-  }
-}
-
 fn build_inactive_pane_plan_with_styles(
   editor: &mut SwiftEditor,
   pane_id: PaneId,
@@ -8007,10 +6536,6 @@ fn build_inactive_pane_plan_with_styles(
   let diagnostic_styles = render_diagnostic_styles_from_theme(&editor.ui_theme);
   let diff_styles = render_diff_styles_from_theme(&editor.ui_theme);
   let diff_signs = editor.gutter_diff_signs.clone();
-
-  let agent_follow_snapshot = editor.agent_follow_render_snapshot();
-  let agent_follow_cursor_style = agent_follow_cursor_style(&editor.ui_theme);
-  let agent_follow_selection_style = agent_follow_selection_style(&editor.ui_theme);
 
   let mut plan = {
     let Some((document, cache)) = editor.editor.document_and_cache_at_mut(buffer_id) else {
@@ -8064,17 +6589,6 @@ fn build_inactive_pane_plan_with_styles(
       view,
       &editor.ui_theme,
       editor.mode,
-    );
-    apply_agent_follow_visuals(
-      &mut plan,
-      &text_format,
-      &mut annotations,
-      buffer_id,
-      document.text(),
-      agent_follow_snapshot,
-      &editor.ui_theme,
-      agent_follow_cursor_style,
-      agent_follow_selection_style,
     );
     plan
   };
@@ -8235,9 +6749,6 @@ impl DefaultContext for SwiftEditor {
     let mut annotations = TextAnnotations::default();
     let loader = self.loader.clone();
     let line_range = view.scroll.row..(view.scroll.row + view.viewport.height as usize);
-    let agent_follow_snapshot = self.agent_follow_render_snapshot();
-    let agent_follow_cursor_style = agent_follow_cursor_style(&self.ui_theme);
-    let agent_follow_selection_style = agent_follow_selection_style(&self.ui_theme);
     let active_buffer_id = self.editor.active_buffer_id();
     let (document, cache) = self.editor.document_and_cache();
     let doc_version = document.version();
@@ -8331,17 +6842,6 @@ impl DefaultContext for SwiftEditor {
       view.clone(),
       &self.ui_theme,
       self.mode,
-    );
-    apply_agent_follow_visuals(
-      &mut plan,
-      &text_format,
-      &mut annotations,
-      active_buffer_id,
-      document.text(),
-      agent_follow_snapshot,
-      &self.ui_theme,
-      agent_follow_cursor_style,
-      agent_follow_selection_style,
     );
     let diff_styles = render_diff_styles_from_theme(&self.ui_theme);
     let diff_signs = self.gutter_diff_signs.clone();
@@ -9396,23 +7896,6 @@ impl OwnedSnapshot {
         text_idx,
       });
     }
-    if editor
-      .pi_bridge
-      .as_ref()
-      .is_some_and(|bridge| bridge.is_attached())
-    {
-      let text_idx = snapshot.push_string("pi bridge active");
-      let icon_idx = snapshot.push_optional_string(Some("pi"));
-      snapshot.status_items.push(StatusItemRecord {
-        item: the_editor_snapshot_status_item_t {
-          icon:     ptr::null(),
-          text:     ptr::null(),
-          emphasis: statusline_emphasis_code(StatuslineEmphasis::Muted),
-        },
-        icon_idx,
-        text_idx,
-      });
-    }
     snapshot.status.status.item_count = snapshot.status_items.len();
 
     snapshot.populate_pending_keys(active_pending_key_state(editor));
@@ -9558,8 +8041,6 @@ impl OwnedSnapshot {
           viewport_rows: pane.plan.viewport.height,
           document_line_count,
           is_active: pane.pane_id == frame.active_pane,
-          is_agent_follow_target: editor.agent_follow.enabled
-            && editor.agent_follow.pane_id == Some(pane.pane_id),
         }
       })
       .collect();
@@ -11595,51 +10076,6 @@ fn build_transaction_from_lsp_text_edits(
   }
   changes.sort_by_key(|(from, to, _)| (*from, *to));
   the_lib::transaction::Transaction::change(text, changes).map_err(|err| err.to_string())
-}
-
-fn find_exact_match_span(haystack: &str, needle: &str) -> Result<(usize, usize), String> {
-  if needle.is_empty() {
-    return Err("edit oldText must not be empty".to_string());
-  }
-
-  let mut matches = haystack.match_indices(needle);
-  let Some((byte_start, _)) = matches.next() else {
-    return Err("edit oldText did not match the current buffer contents".to_string());
-  };
-  if matches.next().is_some() {
-    return Err("edit oldText matched multiple locations in the current buffer".to_string());
-  }
-
-  let byte_end = byte_start + needle.len();
-  let start_char = haystack[..byte_start].chars().count();
-  let end_char = start_char + needle.chars().count();
-  debug_assert_eq!(&haystack[byte_start..byte_end], needle);
-  Ok((start_char, end_char))
-}
-
-fn build_exact_edit_transaction(
-  text: &Rope,
-  edits: &[PiBridgeEdit],
-) -> Result<the_lib::transaction::Transaction, String> {
-  let original = text.to_string();
-  let mut changes = Vec::with_capacity(edits.len());
-
-  for edit in edits {
-    let (from, to) = find_exact_match_span(&original, &edit.old_text)?;
-    changes.push((from, to, Some(edit.new_text.clone().into())));
-  }
-
-  changes.sort_by_key(|(from, ..)| *from);
-  for pair in changes.windows(2) {
-    let (_, left_to, _) = pair[0];
-    let (right_from, ..) = pair[1];
-    if left_to > right_from {
-      return Err("edit ranges overlap in the current buffer".to_string());
-    }
-  }
-
-  the_lib::transaction::Transaction::change(text, changes)
-    .map_err(|err| format!("failed to build exact edit transaction: {err}"))
 }
 
 fn completion_kind_icon(kind: LspCompletionItemKind) -> &'static str {
@@ -13813,14 +12249,7 @@ pub unsafe extern "C" fn the_editor_activate_buffer_tab(
   let Some(buffer_id) = buffer_id_from_raw(buffer_id) else {
     return false;
   };
-  let before = handle.editor.agent_follow_local_state_snapshot();
-  let changed = activate_buffer_tab(&mut handle.editor, buffer_id);
-  if changed {
-    handle
-      .editor
-      .stop_agent_follow_if_local_change(before, "user-activate-buffer-tab");
-  }
-  changed
+  activate_buffer_tab(&mut handle.editor, buffer_id)
 }
 
 #[unsafe(no_mangle)]
@@ -13869,25 +12298,6 @@ pub unsafe extern "C" fn the_editor_set_embedded_terminal_enabled(
     return false;
   };
   handle.editor.set_embedded_terminal_enabled(enabled)
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_agent_follow_enabled(handle: *mut the_editor_handle_t) -> bool {
-  let Some(handle) = (unsafe { handle.as_mut() }) else {
-    return false;
-  };
-  handle.editor.agent_follow_enabled()
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn the_editor_set_agent_follow_enabled(
-  handle: *mut the_editor_handle_t,
-  enabled: bool,
-) -> bool {
-  let Some(handle) = (unsafe { handle.as_mut() }) else {
-    return false;
-  };
-  handle.editor.set_agent_follow_enabled(enabled)
 }
 
 #[unsafe(no_mangle)]
@@ -14673,30 +13083,6 @@ mod tests {
       DefaultContext::file_path(&editor),
       Some(Path::new("/tmp/current.c"))
     );
-  }
-
-  #[test]
-  fn swift_editor_starts_pi_bridge_in_git_dir() {
-    let workspace = tempdir().unwrap();
-    fs::create_dir(workspace.path().join(".git")).unwrap();
-    let file = workspace.path().join("src").join("main.rs");
-    fs::create_dir_all(file.parent().unwrap()).unwrap();
-    fs::write(
-      &file,
-      "fn main() {}
-",
-    )
-    .unwrap();
-
-    let editor = SwiftEditor::new(Some(file.as_path()));
-    let manifest_path = workspace
-      .path()
-      .join(".git")
-      .join("the-editor")
-      .join("pi-bridge.json");
-    assert!(manifest_path.exists());
-    drop(editor);
-    assert!(!manifest_path.exists());
   }
 
   #[test]

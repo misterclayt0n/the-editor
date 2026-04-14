@@ -47,8 +47,6 @@ fn main() -> Result<()> {
   let file_path = cli.file.as_deref();
 
   // Initialize application state for runtime startup
-  // Agent-follow edit verification
-  // Second agent-follow edit verification
   let defaults = the_default::default_defaults();
   let mut ctx = Ctx::new_with_defaults(file_path, &defaults)?;
   ctx.start_background_services();
@@ -157,13 +155,6 @@ fn main() -> Result<()> {
     }
     loop_perf.global_search_ms += vcs_diff_picker_start.elapsed().as_secs_f64() * 1000.0;
 
-    let agent_follow_start = Instant::now();
-    if ctx.poll_agent_follow() {
-      ctx.needs_render = true;
-      render_reasons.insert(RenderReason::Wake);
-    }
-    loop_perf.global_search_ms += agent_follow_start.elapsed().as_secs_f64() * 1000.0;
-
     let lsp_completion_start = Instant::now();
     if ctx.poll_lsp_completion_auto_trigger() {
       ctx.needs_render = true;
@@ -218,11 +209,6 @@ fn main() -> Result<()> {
       render_reasons.insert(RenderReason::FileTreeWatch);
     }
     loop_perf.file_tree_watch_ms = file_tree_watch_start.elapsed().as_secs_f64() * 1000.0;
-
-    if ctx.poll_pi_bridge() {
-      ctx.needs_render = true;
-      render_reasons.insert(RenderReason::Wake);
-    }
 
     let file_tree_vcs_dispatch_start = Instant::now();
     let _ = ctx.poll_file_tree_vcs_refresh_dispatch(Instant::now());

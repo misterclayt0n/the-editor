@@ -2,10 +2,7 @@
 
 use std::{
   borrow::Cow,
-  collections::{
-    BTreeMap,
-    BTreeSet,
-  },
+  collections::BTreeMap,
   env,
   fs::OpenOptions,
   hash::{
@@ -136,13 +133,9 @@ use the_lib::{
     render_inline_diagnostics_for_viewport,
     render_virtual_lines_for_viewport,
     text_annotations::TextAnnotations,
-    text_format::TextFormat,
     visual_pos_at_char,
   },
-  selection::{
-    CursorId,
-    Range,
-  },
+  selection::Range,
   split_tree::{
     PaneId,
     SplitAxis,
@@ -4773,115 +4766,6 @@ fn clamp_plan_position(
   ))
 }
 
-fn agent_follow_cursor_id() -> CursorId {
-  CursorId::new(std::num::NonZeroU64::new(u64::MAX).expect("non-zero agent cursor id"))
-}
-
-fn agent_follow_cursor_style(ctx: &Ctx) -> LibStyle {
-  let style = ctx
-    .ui_theme
-    .try_get("ui.cursor.agent")
-    .or_else(|| ctx.ui_theme.try_get("ui.cursor.match"))
-    .or_else(|| ctx.ui_theme.try_get("ui.cursor.active"))
-    .or_else(|| ctx.ui_theme.try_get("ui.cursor"))
-    .unwrap_or_default();
-
-  style.patch(LibStyle::default().fg(LibColor::Rgb(0x7D, 0xD3, 0xFC)))
-}
-
-fn agent_follow_selection_style(ctx: &Ctx) -> LibStyle {
-  let style = ctx
-    .ui_theme
-    .try_get("ui.selection.agent")
-    .or_else(|| ctx.ui_theme.try_get("ui.cursor.match"))
-    .or_else(|| ctx.ui_theme.try_get("ui.selection"))
-    .unwrap_or_default();
-
-  style.patch(LibStyle::default().bg(LibColor::Rgb(0x1E, 0x3A, 0x5F)))
-}
-
-fn apply_agent_follow_visuals(
-  ctx: &Ctx,
-  plan: &mut RenderPlan,
-  text_fmt: &TextFormat,
-  buffer_id: BufferId,
-  text: &Rope,
-  use_ctx_annotations: bool,
-) {
-  let Some(snapshot) = ctx.agent_follow_render_snapshot() else {
-    return;
-  };
-  if snapshot.buffer_id != buffer_id {
-    return;
-  }
-
-  let text_slice = text.slice(..);
-  let text_len = text.len_chars();
-  let mut annotations = if use_ctx_annotations {
-    ctx.text_annotations()
-  } else {
-    TextAnnotations::default()
-  };
-  let mut resolve_pos = |char_idx: usize| {
-    let char_idx = char_idx.min(text_len);
-    visual_pos_at_char(text_slice, text_fmt, &mut annotations, char_idx).or_else(|| {
-      if char_idx == 0 {
-        None
-      } else {
-        visual_pos_at_char(text_slice, text_fmt, &mut annotations, char_idx - 1).map(|mut pos| {
-          pos.col = pos.col.saturating_add(1);
-          pos
-        })
-      }
-    })
-  };
-
-  if let Some(pos) =
-    resolve_pos(snapshot.cursor_char).and_then(|pos| clamp_plan_position(plan, pos))
-  {
-    plan.cursors.push(the_lib::render::RenderCursor {
-      id: agent_follow_cursor_id(),
-      pos,
-      kind: LibCursorKind::Bar,
-      style: agent_follow_cursor_style(ctx),
-    });
-  }
-
-  if !snapshot.flashing {
-    return;
-  }
-
-  let selection_style = agent_follow_selection_style(ctx);
-  let mut cells = BTreeSet::new();
-  let end = if snapshot.flash_end > snapshot.flash_start {
-    snapshot
-      .flash_end
-      .min(snapshot.flash_start.saturating_add(24))
-  } else {
-    snapshot.flash_start.saturating_add(1)
-  };
-  for char_idx in snapshot.flash_start..end {
-    if let Some(pos) = resolve_pos(char_idx).and_then(|pos| clamp_plan_position(plan, pos)) {
-      cells.insert((pos.row, pos.col));
-    }
-  }
-
-  if cells.is_empty()
-    && let Some(pos) =
-      resolve_pos(snapshot.cursor_char).and_then(|pos| clamp_plan_position(plan, pos))
-  {
-    cells.insert((pos.row, pos.col));
-  }
-
-  for (row, col) in cells {
-    plan.selections.push(the_lib::render::RenderSelection {
-      rect:  the_lib::render::graphics::Rect::new(col as u16, row as u16, 1, 1),
-      style: selection_style,
-      kind:  the_lib::render::RenderSelectionKind::Hover,
-    });
-  }
-}
-
 fn draw_file_picker_vcs_diff_preview_window(
   buf: &mut Buffer,
   area: Rect,
@@ -5981,14 +5865,6 @@ pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> Ren
 
   apply_diagnostic_gutter_markers(&mut plan, &diagnostics_by_line, diagnostic_styles);
   apply_diff_gutter_markers(&mut plan, &diff_signs, diff_styles);
-  apply_agent_follow_visuals(
-    ctx,
-    &mut plan,
-    &text_fmt,
-    ctx.editor.active_buffer_id(),
-    ctx.editor.document().text(),
-    true,
-  );
   plan
 }
 
@@ -6023,7 +5899,7 @@ fn build_inactive_pane_plan_with_styles(
   let diff_styles = render_diff_styles_from_theme(&ctx.ui_theme);
   let diff_signs = ctx.gutter_diff_signs.clone();
 
-  let (mut plan, inline_diagnostic_lines, diagnostic_underlines, inactive_text) = {
+  let (plan, inline_diagnostic_lines, diagnostic_underlines, _inactive_text) = {
     let Some((doc, render_cache)) = ctx.editor.document_and_cache_at_mut(buffer_id) else {
       return (RenderPlan::default(), PaneDiagnosticRenderData::default());
     };
@@ -6101,7 +5977,6 @@ fn build_inactive_pane_plan_with_styles(
     )
   };
   drop(annotations);
-  apply_agent_follow_visuals(ctx, &mut plan, &text_fmt, buffer_id, &inactive_text, false);
 
   ctx
     .inactive_highlight_caches
@@ -6430,7 +6305,7 @@ fn draw_pane_content(
       if use_terminal_hardware_cursor {
         continue;
       }
-      let style = if draw_active_annotations || cursor.id == agent_follow_cursor_id() {
+      let style = if draw_active_annotations {
         lib_style_to_ratatui(cursor.style)
       } else {
         unfocused_pane_cursor_style(&ctx.ui_theme)

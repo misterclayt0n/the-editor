@@ -855,7 +855,6 @@ private struct EditorPaneItemStripsOverlayView: View {
         let headerHeight: CGFloat
         let controlHeight: CGFloat
         let controlOriginY: CGFloat
-        let isAgentFollowTarget: Bool
 
         var id: UInt { group.id }
     }
@@ -892,7 +891,6 @@ private struct EditorPaneItemStripsOverlayView: View {
                                 paneLabel: paneLocationLabel(for: entry.group.paneID, groupIndex: entry.groupIndex, scene: scene),
                                 theme: theme,
                                 controlHeight: entry.controlHeight,
-                                isAgentFollowTarget: entry.isAgentFollowTarget,
                                 canCloseItem: canClose,
                                 onActivateItem: { item in
                                     if item.isActive {
@@ -942,8 +940,7 @@ private struct EditorPaneItemStripsOverlayView: View {
                 frame: paneFrame(for: pane, in: scene),
                 headerHeight: scene.paneHeaderHeight(for: pane),
                 controlHeight: scene.paneTabControlHeight(for: pane),
-                controlOriginY: scene.paneTabControlOriginY(for: pane),
-                isAgentFollowTarget: pane.isAgentFollowTarget
+                controlOriginY: scene.paneTabControlOriginY(for: pane)
             )
         }
     }
@@ -971,7 +968,6 @@ private struct EditorPaneItemTabStripView: View {
     let paneLabel: String
     let theme: EditorFileTreeSidebarTheme
     let controlHeight: CGFloat
-    let isAgentFollowTarget: Bool
     let canCloseItem: (EditorPaneOpenItemRow) -> Bool
     let onActivateItem: (EditorPaneOpenItemRow) -> Void
     let onCloseItem: (EditorPaneOpenItemRow) -> Void
@@ -983,7 +979,6 @@ private struct EditorPaneItemTabStripView: View {
                     item: item,
                     theme: theme,
                     isActivePane: group.isActivePane,
-                    isAgentFollowTarget: isAgentFollowTarget,
                     controlHeight: controlHeight,
                     canClose: canCloseItem(item),
                     onActivate: { onActivateItem(item) },
@@ -1007,7 +1002,6 @@ private struct EditorPaneItemTabView: View {
     let item: EditorPaneOpenItemRow
     let theme: EditorFileTreeSidebarTheme
     let isActivePane: Bool
-    let isAgentFollowTarget: Bool
     let controlHeight: CGFloat
     let canClose: Bool
     let onActivate: () -> Void
@@ -1069,10 +1063,7 @@ private struct EditorPaneItemTabView: View {
 
     private var foregroundColor: Color {
         if item.isActive {
-            return isAgentFollowTarget ? Color(nsColor: emphasizedAgentTintColor) : .primary
-        }
-        if isAgentFollowTarget {
-            return Color(nsColor: emphasizedAgentTintColor).opacity(0.92)
+            return .primary
         }
         return isActivePane ? .secondary.opacity(0.95) : .secondary.opacity(0.82)
     }
@@ -1120,10 +1111,7 @@ private struct EditorPaneItemTabView: View {
 
     private var closeButtonForegroundColor: NSColor {
         if item.isActive || isHovered {
-            return isAgentFollowTarget ? emphasizedAgentTintColor : .labelColor
-        }
-        if isAgentFollowTarget {
-            return emphasizedAgentTintColor.withAlphaComponent(0.86)
+            return .labelColor
         }
         return .secondaryLabelColor
     }
@@ -1138,12 +1126,6 @@ private struct EditorPaneItemTabView: View {
         return NSColor.tertiaryLabelColor.withAlphaComponent(0.08)
     }
 
-    private var emphasizedAgentTintColor: NSColor {
-        if theme.selectionColor.isLightColor {
-            return theme.selectionColor.adjustedBrightness(by: -0.28)
-        }
-        return theme.selectionColor.adjustedBrightness(by: 0.18)
-    }
 }
 
 private struct EditorFileTreeListRepresentable: NSViewRepresentable {
@@ -1803,11 +1785,7 @@ private struct EditorStatusAccessoryView: View {
 
             HStack(spacing: 10) {
                 ForEach(nonLSPStatusItems) { item in
-                    if normalizedStatusItemDisplay(icon: item.icon, text: item.text).icon == "pi" {
-                        PiStatusAccessoryItemButton(item: item, controller: controller)
-                    } else {
-                        StatusAccessoryItemView(item: item)
-                    }
+                    StatusAccessoryItemView(item: item)
                 }
 
                 ForEach(metadataItems) { item in
@@ -1831,31 +1809,6 @@ private struct EditorStatusAccessoryView: View {
     }
 }
 
-private struct PiStatusAccessoryItemButton: View {
-    let item: EditorStatusItem
-    @ObservedObject var controller: EditorSurfaceController
-
-    var body: some View {
-        Button {
-            controller.toggleAgentFollowEnabled()
-        } label: {
-            StatusAccessoryItemView(item: item, foregroundStyleOverride: iconTint)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help(controller.isAgentFollowEnabled ? "Stop following agent activity" : "Follow agent activity")
-        .accessibilityValue(Text(controller.isAgentFollowEnabled ? "On" : "Off"))
-    }
-
-    private var iconTint: Color {
-        guard controller.isAgentFollowEnabled else { return .secondary }
-        if let color = controller.scene?.info.selectionColor?.color {
-            return Color(nsColor: color)
-        }
-        return .accentColor
-    }
-}
-
 private struct StatusAccessoryItemView: View {
     let item: EditorStatusItem
     var foregroundStyleOverride: Color? = nil
@@ -1867,13 +1820,8 @@ private struct StatusAccessoryItemView: View {
     var body: some View {
         HStack(spacing: 5) {
             if let icon = normalized.icon {
-                if icon == "pi" {
-                    Text("π")
-                        .font(.system(size: 12, weight: .semibold, design: .rounded))
-                } else {
-                    Image(systemName: symbolName(for: icon, isDirectory: false))
-                        .font(.system(size: 10, weight: .semibold))
-                }
+                Image(systemName: symbolName(for: icon, isDirectory: false))
+                    .font(.system(size: 10, weight: .semibold))
             }
 
             if showsText, !normalized.text.isEmpty {
@@ -1901,7 +1849,7 @@ private struct StatusAccessoryItemView: View {
     private var showsText: Bool {
         guard let icon = normalized.icon else { return true }
         switch icon {
-        case "diagnostic_error", "diagnostic_warning", "diagnostic_info", "diagnostic_hint", "pi":
+        case "diagnostic_error", "diagnostic_warning", "diagnostic_info", "diagnostic_hint":
             return false
         default:
             return true
@@ -1923,8 +1871,6 @@ private struct StatusAccessoryItemView: View {
                 return .blue
             case "diagnostic_hint":
                 return .teal
-            case "pi":
-                return .purple
             case "copilot", "copilot_disabled", "copilot_init", "copilot_error", "supermaven", "supermaven_disabled", "supermaven_init", "supermaven_error":
                 return .accentColor
             default:
@@ -3015,8 +2961,6 @@ private func symbolName(for icon: String, isDirectory: Bool) -> String {
         return "info.circle.fill"
     case "diagnostic_hint":
         return "lightbulb.fill"
-    case "pi":
-        return "sparkles"
     case "curlybraces", "textformat", "return":
         return icon
     case "copilot", "supermaven":

@@ -83,7 +83,6 @@ pub fn build_statusline_snapshot<Ctx: DefaultContext>(ctx: &mut Ctx) -> Statusli
   });
   let pending_keys = pending_keys_text(ctx);
   let inline_completion_segment = inline_completion_statusline_segment(ctx);
-  let pi_part = pi_statusline_segment(ctx.pi_statusline_text());
   let watch_part = ctx.watch_statusline_text().filter(|text| !text.is_empty());
   let lsp_part = ctx.lsp_statusline_text().filter(|text| !text.is_empty());
   let diagnostic_counts = ctx.diagnostic_statusline_counts();
@@ -156,9 +155,6 @@ pub fn build_statusline_snapshot<Ctx: DefaultContext>(ctx: &mut Ctx) -> Statusli
       if let Some(inline_completion) = inline_completion_segment.as_ref() {
         budget = budget.saturating_sub(inline_completion.display_width() + 2);
       }
-      if let Some(pi) = pi_part.as_ref() {
-        budget = budget.saturating_sub(pi.display_width() + 2);
-      }
       if let Some(lsp) = lsp_part.as_ref() {
         budget = budget.saturating_sub(lsp.chars().count() + 2);
       }
@@ -192,9 +188,6 @@ pub fn build_statusline_snapshot<Ctx: DefaultContext>(ctx: &mut Ctx) -> Statusli
   }
   if let Some(inline_completion) = inline_completion_segment {
     right_segments.push(inline_completion);
-  }
-  if let Some(pi) = pi_part {
-    right_segments.push(pi);
   }
   if let Some(lsp) = lsp_part {
     right_segments.push(StatuslineSegment::new(lsp).muted());
@@ -284,10 +277,6 @@ fn inline_completion_statusline_segment_for_state(
   let mut segment = StatuslineSegment::new(text).icon(icon);
   segment.emphasis = emphasis;
   Some(segment)
-}
-
-fn pi_statusline_segment(text: Option<String>) -> Option<StatuslineSegment> {
-  text.map(|text| StatuslineSegment::new(text).icon("pi"))
 }
 
 fn cursor_pick_status<Ctx: DefaultContext>(ctx: &Ctx) -> Option<CursorPickStatus> {
@@ -460,7 +449,6 @@ mod tests {
     StatuslineEmphasis,
     diagnostic_statusline_segments,
     inline_completion_statusline_segment_for_state,
-    pi_statusline_segment,
   };
   use crate::{
     InlineCompletionBackendStatus,
@@ -527,11 +515,4 @@ mod tests {
     assert!(inline_completion_statusline_segment_for_state(&state).is_none());
   }
 
-  #[test]
-  fn pi_statusline_segment_supports_icon_only_connected_state() {
-    let segment = pi_statusline_segment(Some(String::new())).expect("pi segment");
-    assert_eq!(segment.icon.as_deref(), Some("pi"));
-    assert!(segment.text.is_empty());
-    assert_eq!(segment.display_width(), 1);
-  }
 }

@@ -86,10 +86,6 @@ struct EditorRenderScene {
         panes.first(where: { $0.isActive })
     }
 
-    var agentFollowPane: EditorSnapshotPane? {
-        panes.first(where: { $0.isAgentFollowTarget })
-    }
-
     func pane(id: UInt) -> EditorSnapshotPane? {
         panes.first(where: { $0.paneID == id })
     }

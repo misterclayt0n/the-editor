@@ -1,5 +1,8 @@
 //! Application context (state).
 
+#[cfg(test)]
+use std::fs;
+
 use std::{
   collections::{
     BTreeMap,
@@ -8,17 +11,13 @@ use std::{
     VecDeque,
   },
   env,
-  fs::{
-    self,
-    OpenOptions,
-  },
+  fs::OpenOptions,
   io::{
     BufWriter,
     Write,
   },
   num::NonZeroUsize,
   path::{
-    Component,
     Path,
     PathBuf,
   },
@@ -50,10 +49,6 @@ use git2::{
   Repository,
 };
 use ropey::Rope;
-use serde::{
-  Deserialize,
-  Serialize,
-};
 use serde_json::{
   Value,
   json,
@@ -91,7 +86,6 @@ use the_default::{
   KeyBinding,
   KeyEvent,
   Keymaps,
-  MessagePresentation,
   Mode,
   Motion,
   PointerButton,
@@ -144,13 +138,6 @@ use the_lib::{
     MessageCenter,
     MessageDisposition,
     MessageLevel,
-  },
-  pi_bridge::{
-    PI_BRIDGE_PROTOCOL_VERSION,
-    PiBridgeEnvelope,
-    PiBridgeEvent,
-    PiBridgeHandle,
-    SelectionPayload,
   },
   position::Position,
   registers::Registers,
@@ -365,74 +352,6 @@ pub(crate) struct BufferTabHoverState {
   pub over_close: bool,
 }
 
-#[derive(Debug, Deserialize)]
-struct PiBridgeReadFileParams {
-  path: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct PiBridgeEdit {
-  #[serde(rename = "oldText")]
-  old_text: String,
-  #[serde(rename = "newText")]
-  new_text: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct PiBridgeApplyEditsParams {
-  path:  String,
-  edits: Vec<PiBridgeEdit>,
-}
-
-#[derive(Debug, Deserialize)]
-struct PiBridgeWriteFileParams {
-  path:    String,
-  content: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct PiBridgeReplaceRangeParams {
-  path:       String,
-  start_char: usize,
-  end_char:   usize,
-  content:    String,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct PiBridgeReadFileResult {
-  path:             String,
-  content:          String,
-  from_live_buffer: bool,
-  opened_buffer:    bool,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct PiBridgeApplyEditsResult {
-  path:          String,
-  edit_count:    usize,
-  saved:         bool,
-  opened_buffer: bool,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct PiBridgeWriteFileResult {
-  path:          String,
-  saved:         bool,
-  opened_buffer: bool,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct PiBridgeReplaceRangeResult {
-  path:          String,
-  saved:         bool,
-  opened_buffer: bool,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct BufferTabLayoutSlot {
   pub tab_index: usize,
@@ -553,89 +472,6 @@ enum PickerDiffBaseLoader {
     revision:  String,
   },
   Provider(DiffProviderRegistry),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct AgentFollowStep {
-  cursor_char: usize,
-  flash_start: usize,
-  flash_end:   usize,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct AgentFollowRenderSnapshot {
-  pub buffer_id:   BufferId,
-  pub cursor_char: usize,
-  pub flash_start: usize,
-  pub flash_end:   usize,
-  pub flashing:    bool,
-}
-
-#[derive(Debug, Clone)]
-struct AgentFollowState {
-  enabled:      bool,
-  buffer_id:    Option<BufferId>,
-  steps:        Vec<AgentFollowStep>,
-  step_index:   usize,
-  flash_until:  Option<Instant>,
-  next_step_at: Option<Instant>,
-  cursor_until: Option<Instant>,
-}
-
-impl Default for AgentFollowState {
-  fn default() -> Self {
-    Self {
-      enabled:      true,
-      buffer_id:    None,
-      steps:        Vec::new(),
-      step_index:   0,
-      flash_until:  None,
-      next_step_at: None,
-      cursor_until: None,
-    }
-  }
-}
-
-impl AgentFollowState {
-  fn clear(&mut self) {
-    self.buffer_id = None;
-    self.steps.clear();
-    self.step_index = 0;
-    self.flash_until = None;
-    self.next_step_at = None;
-    self.cursor_until = None;
-  }
-
-  fn current_step(&self) -> Option<AgentFollowStep> {
-    self.steps.get(self.step_index).copied()
-  }
-
-  fn extend_same_buffer(&mut self, steps: Vec<AgentFollowStep>) {
-    self.steps.extend(steps);
-  }
-
-  fn render_snapshot(&self) -> Option<AgentFollowRenderSnapshot> {
-    let step = self.current_step()?;
-    Some(AgentFollowRenderSnapshot {
-      buffer_id:   self.buffer_id?,
-      cursor_char: step.cursor_char,
-      flash_start: step.flash_start,
-      flash_end:   step.flash_end,
-      flashing:    self.flash_until.is_some(),
-    })
-  }
-}
-
-fn agent_follow_flash_duration() -> Duration {
-  Duration::from_millis(90)
-}
-
-fn agent_follow_step_delay() -> Duration {
-  Duration::from_millis(20)
-}
-
-fn agent_follow_cursor_linger_duration() -> Duration {
-  Duration::from_millis(140)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -993,7 +829,6 @@ pub struct Ctx {
   pub file_tree:                      FileTreeState,
   pub file_picker:                    FilePickerState,
   pub picker_runtime_store:           the_default::PickerRuntimeStore<Ctx>,
-  pi_bridge:                          Option<PiBridgeHandle>,
   lsp_services_started:               bool,
   next_lsp_runtime_id:                LspRuntimeId,
   lsp_runtimes:                       BTreeMap<LspRuntimeId, ManagedLspRuntime>,
@@ -1054,7 +889,6 @@ pub struct Ctx {
   pub search_prompt:                  the_default::SearchPromptState,
   global_search:                      GlobalSearchState,
   vcs_diff_picker:                    VcsDiffPickerState,
-  agent_follow:                       AgentFollowState,
   pub ui_theme_catalog:               ThemeCatalog,
   pub ui_theme_name:                  String,
   pub ui_theme_base:                  Theme,
@@ -1496,7 +1330,6 @@ impl Ctx {
       file_tree: FileTreeState::default(),
       file_picker,
       picker_runtime_store: the_default::PickerRuntimeStore::default(),
-      pi_bridge: None,
       lsp_services_started: false,
       next_lsp_runtime_id: 1,
       lsp_runtimes: BTreeMap::new(),
@@ -1557,7 +1390,6 @@ impl Ctx {
       search_prompt: the_default::SearchPromptState::new(),
       global_search: GlobalSearchState::default(),
       vcs_diff_picker: VcsDiffPickerState::default(),
-      agent_follow: AgentFollowState::default(),
       ui_theme_catalog,
       ui_theme_name,
       ui_theme_base: ui_theme.clone(),
@@ -1613,195 +1445,6 @@ impl Ctx {
     self.dispatch_override = Some(NonNull::from(dispatch as &dyn DefaultApi<Ctx>));
   }
 
-  fn ensure_pi_bridge_started(&mut self) {
-    if self.pi_bridge.is_some() {
-      return;
-    }
-    let workspace_root = self.workspace_root();
-    match PiBridgeHandle::start(&workspace_root) {
-      Ok(handle) => {
-        self.pi_bridge = Some(handle);
-      },
-      Err(err) => {
-        self.push_warning("pi-bridge", err);
-      },
-    }
-  }
-
-  fn shutdown_pi_bridge(&mut self) {
-    if let Some(mut bridge) = self.pi_bridge.take() {
-      bridge.shutdown();
-    }
-  }
-
-  pub fn poll_pi_bridge(&mut self) -> bool {
-    let Some(mut bridge) = self.pi_bridge.take() else {
-      return false;
-    };
-
-    let mut needs_render = false;
-    for event in bridge.drain_events() {
-      match event {
-        PiBridgeEvent::Attached => {
-          self.push_info("pi-bridge", "attached live pi session");
-          needs_render = true;
-        },
-        PiBridgeEvent::Detached => {
-          self.push_warning("pi-bridge", "detached live pi session");
-          needs_render = true;
-        },
-        PiBridgeEvent::InvalidMessage(message) => {
-          self.push_warning("pi-bridge", message);
-          needs_render = true;
-        },
-        PiBridgeEvent::Notification { .. } => {},
-        PiBridgeEvent::Request { id, method, params } => {
-          let response = match self.handle_pi_bridge_request(&method, params) {
-            Ok(response) => {
-              PiBridgeEnvelope::ok(id.clone(), response)
-                .unwrap_or_else(|err| PiBridgeEnvelope::err(id, err))
-            },
-            Err(err) => PiBridgeEnvelope::err(id, err),
-          };
-          if let Err(err) = bridge.send(response) {
-            self.push_warning("pi-bridge", err);
-            needs_render = true;
-          }
-        },
-      }
-    }
-
-    self.pi_bridge = Some(bridge);
-    needs_render
-  }
-
-  fn handle_pi_bridge_request(&mut self, method: &str, params: Value) -> Result<Value, String> {
-    match method {
-      "ping" => {
-        Ok(json!({
-          "version": PI_BRIDGE_PROTOCOL_VERSION,
-          "workspaceRoot": self.workspace_root().display().to_string(),
-        }))
-      },
-      "read_file" => {
-        let params: PiBridgeReadFileParams = serde_json::from_value(params)
-          .map_err(|err| format!("invalid read_file params: {err}"))?;
-        let result = self.pi_bridge_read_workspace_file(&params.path)?;
-        serde_json::to_value(result).map_err(|err| format!("failed to encode read result: {err}"))
-      },
-      "apply_edits" => {
-        let params: PiBridgeApplyEditsParams = serde_json::from_value(params)
-          .map_err(|err| format!("invalid apply_edits params: {err}"))?;
-        let result = self.pi_bridge_apply_workspace_edits(&params.path, &params.edits)?;
-        serde_json::to_value(result).map_err(|err| format!("failed to encode edit result: {err}"))
-      },
-      "write_file" => {
-        let params: PiBridgeWriteFileParams = serde_json::from_value(params)
-          .map_err(|err| format!("invalid write_file params: {err}"))?;
-        let result = self.pi_bridge_write_workspace_file(&params.path, &params.content)?;
-        serde_json::to_value(result).map_err(|err| format!("failed to encode write result: {err}"))
-      },
-      "replace_range" => {
-        let params: PiBridgeReplaceRangeParams = serde_json::from_value(params)
-          .map_err(|err| format!("invalid replace_range params: {err}"))?;
-        let result = self.pi_bridge_replace_workspace_range(
-          &params.path,
-          params.start_char,
-          params.end_char,
-          &params.content,
-        )?;
-        serde_json::to_value(result)
-          .map_err(|err| format!("failed to encode replace_range result: {err}"))
-      },
-      _ => Err(format!("unsupported pi bridge method '{method}'")),
-    }
-  }
-
-  fn resolve_pi_bridge_path(&self, raw_path: &str) -> Result<PathBuf, String> {
-    let workspace_root = lexical_normalize_path(&self.workspace_root());
-    let input = Path::new(raw_path);
-    let candidate = if input.is_absolute() {
-      lexical_normalize_path(input)
-    } else {
-      lexical_normalize_path(&workspace_root.join(input))
-    };
-    if !candidate.starts_with(&workspace_root) {
-      return Err(format!(
-        "path '{}' is outside workspace '{}'",
-        candidate.display(),
-        workspace_root.display()
-      ));
-    }
-    Ok(candidate)
-  }
-
-  fn ensure_workspace_buffer_loaded(
-    &mut self,
-    path: &Path,
-    create_missing: bool,
-  ) -> Result<(BufferId, bool), String> {
-    if let Some(buffer_id) = self.editor.find_buffer_by_path(path) {
-      return Ok((buffer_id, false));
-    }
-    if !path.exists() && !create_missing {
-      return Err(format!("file not found: {}", path.display()));
-    }
-
-    let content = if path.exists() {
-      fs::read_to_string(path)
-        .map_err(|err| format!("failed to read '{}': {err}", path.display()))?
-    } else {
-      String::new()
-    };
-    let viewport = self.editor.view().viewport;
-    let view = ViewState::new(viewport, Position::new(0, 0));
-    let buffer_id = self.editor.open_buffer_without_activation(
-      Rope::from_str(&content),
-      view,
-      Some(path.to_path_buf()),
-    );
-
-    if let Some(doc) = self.editor.document_mut_for_buffer(buffer_id) {
-      if let Some(loader) = &self.loader {
-        let _ = setup_syntax(doc, path, loader);
-      }
-      doc.set_display_name(
-        path
-          .file_name()
-          .map(|name| name.to_string_lossy().to_string())
-          .unwrap_or_else(|| path.display().to_string()),
-      );
-      if path.exists() {
-        let _ = doc.mark_saved();
-      }
-    }
-    self.refresh_buffer_lsp_state(buffer_id, Some(path));
-    Ok((buffer_id, true))
-  }
-
-  fn persist_buffer_to_disk(&mut self, buffer_id: BufferId, path: &Path) -> Result<(), String> {
-    let text = self
-      .editor
-      .document_for_buffer(buffer_id)
-      .ok_or_else(|| format!("buffer missing for '{}'", path.display()))?
-      .text()
-      .to_string();
-    if let Some(parent) = path.parent() {
-      fs::create_dir_all(parent).map_err(|err| {
-        format!(
-          "failed to create parent directories for '{}': {err}",
-          path.display()
-        )
-      })?;
-    }
-    fs::write(path, &text).map_err(|err| format!("failed to write '{}': {err}", path.display()))?;
-    if let Some(doc) = self.editor.document_mut_for_buffer(buffer_id) {
-      let _ = doc.mark_saved();
-    }
-    self.on_buffer_saved(buffer_id, path, &text);
-    Ok(())
-  }
-
   fn on_buffer_saved(&mut self, buffer_id: BufferId, _path: &Path, text: &str) {
     if self.editor.active_buffer_id() == buffer_id
       && let Some(watch) = self.lsp_watched_file.as_mut()
@@ -1814,413 +1457,6 @@ impl Ctx {
     self.schedule_file_tree_vcs_refresh(FileTreeVcsRefreshReason::VcsWatch, None);
     self.queue_open_vcs_diff_picker_refresh();
     self.request_render();
-  }
-
-  fn pi_bridge_read_workspace_file(
-    &mut self,
-    raw_path: &str,
-  ) -> Result<PiBridgeReadFileResult, String> {
-    let path = self.resolve_pi_bridge_path(raw_path)?;
-    let was_open = self.editor.find_buffer_by_path(&path).is_some();
-    let (buffer_id, opened_buffer) = self.ensure_workspace_buffer_loaded(&path, false)?;
-    let content = self
-      .editor
-      .document_for_buffer(buffer_id)
-      .ok_or_else(|| format!("buffer missing for '{}'", path.display()))?
-      .text()
-      .to_string();
-    Ok(PiBridgeReadFileResult {
-      path: path.display().to_string(),
-      content,
-      from_live_buffer: was_open,
-      opened_buffer,
-    })
-  }
-
-  fn pi_bridge_apply_workspace_edits(
-    &mut self,
-    raw_path: &str,
-    edits: &[PiBridgeEdit],
-  ) -> Result<PiBridgeApplyEditsResult, String> {
-    if edits.is_empty() {
-      return Err("apply_edits requires at least one edit".to_string());
-    }
-    let path = self.resolve_pi_bridge_path(raw_path)?;
-    let (buffer_id, opened_buffer) = self.ensure_workspace_buffer_loaded(&path, false)?;
-    let (old_text, transaction) = {
-      let document = self
-        .editor
-        .document_for_buffer(buffer_id)
-        .ok_or_else(|| format!("buffer missing for '{}'", path.display()))?;
-      let old_text = document.text().clone();
-      let transaction = build_exact_edit_transaction(document.text(), edits)?;
-      (old_text, transaction)
-    };
-    let loader = self.loader.as_deref();
-    self
-      .editor
-      .apply_transaction_to_buffer(buffer_id, &transaction, loader)
-      .map_err(|err| format!("failed to apply edits to '{}': {err}", path.display()))?;
-    self.lsp_send_did_change_for_buffer(buffer_id, &old_text, transaction.changes());
-    self.persist_buffer_to_disk(buffer_id, &path)?;
-    self.start_agent_follow_for_transaction(buffer_id, &transaction);
-    if self.editor.active_buffer_id() == buffer_id {
-      self.needs_render = true;
-    }
-    Ok(PiBridgeApplyEditsResult {
-      path: path.display().to_string(),
-      edit_count: edits.len(),
-      saved: true,
-      opened_buffer,
-    })
-  }
-
-  fn pi_bridge_write_workspace_file(
-    &mut self,
-    raw_path: &str,
-    content: &str,
-  ) -> Result<PiBridgeWriteFileResult, String> {
-    let path = self.resolve_pi_bridge_path(raw_path)?;
-    let (buffer_id, opened_buffer) = self.ensure_workspace_buffer_loaded(&path, true)?;
-    let (old_text, transaction) = {
-      let document = self
-        .editor
-        .document_for_buffer(buffer_id)
-        .ok_or_else(|| format!("buffer missing for '{}'", path.display()))?;
-      let old_text = document.text().clone();
-      let transaction = Transaction::change(document.text(), vec![(
-        0,
-        document.text().len_chars(),
-        Some(content.into()),
-      )])
-      .map_err(|err| format!("failed to build write transaction: {err}"))?;
-      (old_text, transaction)
-    };
-    let loader = self.loader.as_deref();
-    self
-      .editor
-      .apply_transaction_to_buffer(buffer_id, &transaction, loader)
-      .map_err(|err| format!("failed to apply write to '{}': {err}", path.display()))?;
-    self.lsp_send_did_change_for_buffer(buffer_id, &old_text, transaction.changes());
-    self.persist_buffer_to_disk(buffer_id, &path)?;
-    self.start_agent_follow_for_transaction(buffer_id, &transaction);
-    if self.editor.active_buffer_id() == buffer_id {
-      self.needs_render = true;
-    }
-    Ok(PiBridgeWriteFileResult {
-      path: path.display().to_string(),
-      saved: true,
-      opened_buffer,
-    })
-  }
-
-  fn pi_bridge_replace_workspace_range(
-    &mut self,
-    raw_path: &str,
-    start_char: usize,
-    end_char: usize,
-    content: &str,
-  ) -> Result<PiBridgeReplaceRangeResult, String> {
-    let path = self.resolve_pi_bridge_path(raw_path)?;
-    let (buffer_id, opened_buffer) = self.ensure_workspace_buffer_loaded(&path, true)?;
-    let (old_text, transaction) = {
-      let document = self
-        .editor
-        .document_for_buffer(buffer_id)
-        .ok_or_else(|| format!("buffer missing for '{}'", path.display()))?;
-      if start_char > end_char {
-        return Err(format!(
-          "invalid replace_range for '{}': start_char {start_char} is greater than end_char \
-           {end_char}",
-          path.display()
-        ));
-      }
-      if end_char > document.text().len_chars() {
-        return Err(format!(
-          "invalid replace_range for '{}': end_char {end_char} exceeds document length {}",
-          path.display(),
-          document.text().len_chars()
-        ));
-      }
-      let old_text = document.text().clone();
-      let transaction = Transaction::change(document.text(), vec![(
-        start_char,
-        end_char,
-        Some(content.into()),
-      )])
-      .map_err(|err| format!("failed to build replace_range transaction: {err}"))?;
-      (old_text, transaction)
-    };
-    let loader = self.loader.as_deref();
-    self
-      .editor
-      .apply_transaction_to_buffer(buffer_id, &transaction, loader)
-      .map_err(|err| {
-        format!(
-          "failed to apply replace_range to '{}': {err}",
-          path.display()
-        )
-      })?;
-    self.lsp_send_did_change_for_buffer(buffer_id, &old_text, transaction.changes());
-    self.persist_buffer_to_disk(buffer_id, &path)?;
-    self.start_agent_follow_for_transaction(buffer_id, &transaction);
-    if self.editor.active_buffer_id() == buffer_id {
-      self.needs_render = true;
-    }
-    Ok(PiBridgeReplaceRangeResult {
-      path: path.display().to_string(),
-      saved: true,
-      opened_buffer,
-    })
-  }
-
-  fn agent_follow_steps_for_transaction(transaction: &Transaction) -> Vec<AgentFollowStep> {
-    transaction
-      .changes_iter()
-      .map(|(from, _to, inserted)| {
-        let inserted_len = inserted
-          .as_ref()
-          .map(|text| text.chars().count())
-          .unwrap_or(0);
-        let flash_start = transaction
-          .changes()
-          .map_pos(from, Assoc::Before)
-          .unwrap_or(from);
-        let flash_end = flash_start.saturating_add(inserted_len);
-        let cursor_char = if inserted_len > 0 && inserted_len <= 64 {
-          transaction
-            .changes()
-            .map_pos(from, Assoc::After)
-            .unwrap_or(flash_end)
-        } else {
-          flash_start
-        };
-        AgentFollowStep {
-          cursor_char,
-          flash_start,
-          flash_end,
-        }
-      })
-      .collect()
-  }
-
-  fn ensure_agent_follow_visible(&mut self) {
-    let Some(snapshot) = self.agent_follow.render_snapshot() else {
-      return;
-    };
-
-    let following_active_pane = if self.agent_follow.enabled {
-      if self.editor.active_buffer_id() != snapshot.buffer_id
-        && !self.activate_buffer_by_id(snapshot.buffer_id)
-      {
-        return;
-      }
-      true
-    } else {
-      false
-    };
-
-    let viewport_pane = if following_active_pane {
-      self.editor.active_pane_id()
-    } else if self.editor.active_buffer_id() == snapshot.buffer_id {
-      self
-        .visible_editor_pane_for_viewport()
-        .unwrap_or_else(|| self.editor.active_pane_id())
-    } else {
-      self
-        .editor
-        .pane_snapshots(self.editor.layout_viewport())
-        .into_iter()
-        .find(|pane| pane.buffer_id == snapshot.buffer_id)
-        .map(|pane| pane.pane_id)
-        .unwrap_or_else(|| self.editor.active_pane_id())
-    };
-
-    let Some(view) = self.editor.pane_view(viewport_pane) else {
-      return;
-    };
-    let Some(doc) = self.editor.document_for_buffer(snapshot.buffer_id) else {
-      return;
-    };
-    let text = doc.text();
-    let cursor_pos = snapshot.cursor_char.min(text.len_chars());
-    let cursor_line = text.char_to_line(cursor_pos);
-    let cursor_col = cursor_pos.saturating_sub(text.line_to_char(cursor_line));
-    let viewport_height = view.viewport.height as usize;
-    let gutter_width = gutter_width_for_document(doc, view.viewport.width, &self.gutter_config);
-    let viewport_width = view.viewport.width.saturating_sub(gutter_width).max(1) as usize;
-
-    let new_scroll = if self.text_format.soft_wrap {
-      let cursor_visual_row = {
-        let mut text_format = self.text_format.clone();
-        text_format.viewport_width = view.viewport.width.saturating_sub(gutter_width).max(1);
-        let mut annotations = <Self as DefaultContext>::text_annotations(self);
-        visual_pos_at_char(text.slice(..), &text_format, &mut annotations, cursor_pos)
-          .map(|pos| pos.row)
-          .unwrap_or(cursor_line)
-      };
-
-      let mut new_scroll = view.scroll;
-      if let Some(new_row) = the_lib::view::scroll_row_to_keep_visible(
-        cursor_visual_row,
-        view.scroll.row,
-        viewport_height,
-        self.scrolloff,
-      ) {
-        new_scroll.row = new_row;
-      }
-      new_scroll.col = 0;
-      Some(new_scroll)
-    } else {
-      the_lib::view::scroll_to_keep_visible(
-        cursor_line,
-        cursor_col,
-        view.scroll,
-        viewport_height,
-        viewport_width,
-        self.scrolloff,
-      )
-    };
-
-    let Some(new_scroll) = new_scroll else {
-      return;
-    };
-
-    if following_active_pane || viewport_pane == self.editor.active_pane_id() {
-      self.editor.view_mut().scroll = new_scroll;
-    } else if let Some(view) = self.editor.pane_view_mut(viewport_pane) {
-      view.scroll = new_scroll;
-    }
-  }
-
-  fn start_agent_follow_for_transaction(&mut self, buffer_id: BufferId, transaction: &Transaction) {
-    let steps = Self::agent_follow_steps_for_transaction(transaction);
-    if steps.is_empty() {
-      self.agent_follow.clear();
-      return;
-    }
-
-    let now = Instant::now();
-    let same_buffer =
-      self.agent_follow.buffer_id == Some(buffer_id) && self.agent_follow.current_step().is_some();
-
-    if same_buffer {
-      self.agent_follow.extend_same_buffer(steps);
-      self.agent_follow.cursor_until = Some(now + agent_follow_cursor_linger_duration());
-      if self.agent_follow.next_step_at.is_none() {
-        self.agent_follow.next_step_at = Some(now + agent_follow_step_delay());
-      }
-    } else {
-      self.agent_follow.buffer_id = Some(buffer_id);
-      self.agent_follow.steps = steps;
-      self.agent_follow.step_index = 0;
-      self.agent_follow.flash_until = Some(now + agent_follow_flash_duration());
-      self.agent_follow.next_step_at =
-        (self.agent_follow.steps.len() > 1).then_some(now + agent_follow_step_delay());
-      self.agent_follow.cursor_until = Some(now + agent_follow_cursor_linger_duration());
-    }
-
-    self.ensure_agent_follow_visible();
-    self.request_render();
-  }
-
-  pub fn poll_agent_follow(&mut self) -> bool {
-    if self.agent_follow.current_step().is_none() {
-      return false;
-    }
-
-    let now = Instant::now();
-    let mut changed = false;
-
-    if let Some(next_step_at) = self.agent_follow.next_step_at
-      && now >= next_step_at
-    {
-      if self.agent_follow.step_index + 1 < self.agent_follow.steps.len() {
-        self.agent_follow.step_index += 1;
-        self.agent_follow.flash_until = Some(now + agent_follow_flash_duration());
-        self.agent_follow.next_step_at = (self.agent_follow.step_index + 1
-          < self.agent_follow.steps.len())
-        .then_some(now + agent_follow_step_delay());
-        self.agent_follow.cursor_until = Some(now + agent_follow_cursor_linger_duration());
-        self.ensure_agent_follow_visible();
-        changed = true;
-      } else {
-        self.agent_follow.next_step_at = None;
-      }
-    }
-
-    if let Some(flash_until) = self.agent_follow.flash_until
-      && now >= flash_until
-    {
-      self.agent_follow.flash_until = None;
-      changed = true;
-    }
-
-    if let Some(cursor_until) = self.agent_follow.cursor_until
-      && now >= cursor_until
-      && self.agent_follow.flash_until.is_none()
-      && self.agent_follow.next_step_at.is_none()
-    {
-      self.agent_follow.clear();
-      changed = true;
-    }
-
-    changed
-  }
-
-  fn pi_bridge_active_selection_payload(&self) -> Result<SelectionPayload, String> {
-    let range = self
-      .active_or_first_selection_range()
-      .ok_or_else(|| "no active selection".to_string())?;
-    if range.is_empty() {
-      return Err("active selection is empty".to_string());
-    }
-
-    let document = self.editor.document();
-    let selected_text = document.text().slice(range.from()..range.to()).to_string();
-    let end_line_char = range.to().saturating_sub(1);
-    let (absolute_path, workspace_relative_path, language) =
-      if let Some(path) = self.file_path.as_ref() {
-        let workspace_root = lexical_normalize_path(&self.workspace_root());
-        let normalized_path = lexical_normalize_path(path);
-        if !normalized_path.starts_with(&workspace_root) {
-          return Err(format!(
-            "active buffer path '{}' is outside workspace '{}'",
-            normalized_path.display(),
-            workspace_root.display()
-          ));
-        }
-        let workspace_relative_path = normalized_path
-          .strip_prefix(&workspace_root)
-          .unwrap_or(&normalized_path)
-          .display()
-          .to_string();
-        let language = normalized_path
-          .extension()
-          .and_then(|ext| ext.to_str())
-          .map(str::to_string);
-        (
-          normalized_path.display().to_string(),
-          workspace_relative_path,
-          language,
-        )
-      } else {
-        ("".to_string(), "untitled".to_string(), None)
-      };
-
-    Ok(SelectionPayload {
-      absolute_path,
-      workspace_relative_path,
-      language,
-      selected_text,
-      start_char: range.from(),
-      end_char: range.to(),
-      start_line: document.text().char_to_line(range.from()).saturating_add(1),
-      end_line: document
-        .text()
-        .char_to_line(end_line_char)
-        .saturating_add(1),
-    })
   }
 
   fn reset_transient_input_state(&mut self) {
@@ -2849,7 +2085,6 @@ impl Ctx {
   }
 
   pub fn start_background_services(&mut self) {
-    self.ensure_pi_bridge_started();
     self.lsp_services_started = true;
     self.lsp_ready = false;
     self.lsp_active_progress_tokens.clear();
@@ -2871,7 +2106,6 @@ impl Ctx {
   }
 
   pub fn shutdown_background_services(&mut self) {
-    self.shutdown_pi_bridge();
     self.lsp_services_started = false;
     let buffer_ids = self.buffer_lsp_states.keys().copied().collect::<Vec<_>>();
     for buffer_id in buffer_ids {
@@ -8286,10 +7520,6 @@ impl Ctx {
       .map(|pane| pane.pane_id)
   }
 
-  pub(crate) fn agent_follow_render_snapshot(&self) -> Option<AgentFollowRenderSnapshot> {
-    self.agent_follow.render_snapshot()
-  }
-
   fn sync_state_after_active_pane_change(&mut self, previous_buffer_id: BufferId) {
     the_default::remember_active_editor_pane(self);
     self.clear_hover_state();
@@ -9144,66 +8374,6 @@ fn rope_line_range_to_string(rope: &Rope, start_line: usize, end_line: usize) ->
   rope.slice(start_char..end_char).to_string()
 }
 
-fn lexical_normalize_path(path: &Path) -> PathBuf {
-  let mut normalized = PathBuf::new();
-  for component in path.components() {
-    match component {
-      Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
-      Component::RootDir => normalized.push(Path::new(std::path::MAIN_SEPARATOR_STR)),
-      Component::CurDir => {},
-      Component::ParentDir => {
-        normalized.pop();
-      },
-      Component::Normal(part) => normalized.push(part),
-    }
-  }
-  normalized
-}
-
-fn find_exact_match_span(haystack: &str, needle: &str) -> Result<(usize, usize), String> {
-  if needle.is_empty() {
-    return Err("edit oldText must not be empty".to_string());
-  }
-
-  let mut matches = haystack.match_indices(needle);
-  let Some((byte_start, _)) = matches.next() else {
-    return Err("edit oldText did not match the current buffer contents".to_string());
-  };
-  if matches.next().is_some() {
-    return Err("edit oldText matched multiple locations in the current buffer".to_string());
-  }
-
-  let byte_end = byte_start + needle.len();
-  let start_char = haystack[..byte_start].chars().count();
-  let end_char = start_char + needle.chars().count();
-  debug_assert_eq!(&haystack[byte_start..byte_end], needle);
-  Ok((start_char, end_char))
-}
-
-fn build_exact_edit_transaction(
-  text: &Rope,
-  edits: &[PiBridgeEdit],
-) -> Result<Transaction, String> {
-  let original = text.to_string();
-  let mut changes = Vec::with_capacity(edits.len());
-
-  for edit in edits {
-    let (from, to) = find_exact_match_span(&original, &edit.old_text)?;
-    changes.push((from, to, Some(edit.new_text.clone().into())));
-  }
-
-  changes.sort_by_key(|(from, ..)| *from);
-  for pair in changes.windows(2) {
-    let (_, left_to, _) = pair[0];
-    let (right_from, ..) = pair[1];
-    if left_to > right_from {
-      return Err("edit ranges overlap in the current buffer".to_string());
-    }
-  }
-
-  Transaction::change(text, changes)
-    .map_err(|err| format!("failed to build exact edit transaction: {err}"))
-}
 
 impl the_default::DefaultContext for Ctx {
   fn editor(&mut self) -> &mut Editor {
@@ -9242,61 +8412,12 @@ impl the_default::DefaultContext for Ctx {
     the_default::RenderWaker::new(self.render_wake_tx.clone())
   }
 
-  fn pi_bridge_send_active_selection(&mut self, submit: bool) -> Result<(), String> {
-    let payload = self.pi_bridge_active_selection_payload()?;
-    let bridge = self
-      .pi_bridge
-      .as_ref()
-      .ok_or_else(|| "pi bridge is not running".to_string())?;
-    if !bridge.is_attached() {
-      return Err("no live pi session is attached to this workspace".to_string());
-    }
-    let method = if submit {
-      "selection_send"
-    } else {
-      "selection_prefill"
-    };
-    let envelope = PiBridgeEnvelope::notification(method, payload)?;
-    bridge.send(envelope)?;
-    let action = if submit { "sent" } else { "prefilled" };
-    self.push_info("pi-bridge", format!("{action} selection to pi"));
-    Ok(())
-  }
-
   fn messages(&self) -> &MessageCenter {
     &self.messages
   }
 
   fn messages_mut(&mut self) -> &mut MessageCenter {
     &mut self.messages
-  }
-
-  fn message_presentation(&self) -> MessagePresentation {
-    MessagePresentation::InlineStatusline
-  }
-
-  fn lsp_statusline_text(&self) -> Option<String> {
-    self.lsp_statusline_text_value()
-  }
-
-  fn vcs_statusline_text(&self) -> Option<String> {
-    self.vcs_statusline.clone()
-  }
-
-  fn pi_statusline_text(&self) -> Option<String> {
-    self
-      .pi_bridge
-      .as_ref()
-      .filter(|bridge| bridge.is_attached())
-      .map(|_| String::new())
-  }
-
-  fn agent_follow_enabled(&self) -> bool {
-    self.agent_follow.enabled
-  }
-
-  fn set_agent_follow_enabled(&mut self, enabled: bool) {
-    self.agent_follow.enabled = enabled;
   }
 
   fn watch_statusline_text(&self) -> Option<String> {

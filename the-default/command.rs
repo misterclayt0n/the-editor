@@ -383,13 +383,6 @@ pub trait DefaultContext: Sized + 'static {
   fn watch_statusline_text(&self) -> Option<String> {
     None
   }
-  fn pi_statusline_text(&self) -> Option<String> {
-    None
-  }
-  fn agent_follow_enabled(&self) -> bool {
-    false
-  }
-  fn set_agent_follow_enabled(&mut self, _enabled: bool) {}
   fn diagnostic_statusline_counts(&self) -> Option<DiagnosticCounts> {
     None
   }
@@ -622,9 +615,6 @@ pub trait DefaultContext: Sized + 'static {
       format!("'{path_text}' written, {line_count}L {size_text}{forced_suffix}"),
     );
     Ok(())
-  }
-  fn pi_bridge_send_active_selection(&mut self, _submit: bool) -> Result<(), String> {
-    Err("pi bridge is not available in this editor client".to_string())
   }
   fn reload_file_preserving_view(&mut self, path: &Path) -> std::io::Result<()> {
     let disk_text = std::fs::read_to_string(path)?;
@@ -1475,12 +1465,6 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::LspDocumentSymbols => ctx.lsp_document_symbols(),
     Command::LspWorkspaceSymbols => ctx.lsp_workspace_symbols(),
     Command::LspCompletion => ctx.lsp_completion(),
-    Command::PiPrefillSelection => {
-      let _ = ctx.pi_bridge_send_active_selection(false);
-    },
-    Command::PiSendSelection => {
-      let _ = ctx.pi_bridge_send_active_selection(true);
-    },
     Command::InlineAccept => {
       crate::inline_completion::accept_inline_completion(ctx);
     },
@@ -1547,8 +1531,6 @@ fn command_preserves_completion_menu(command: Command) -> bool {
       | Command::CompletionCancel
       | Command::CompletionDocsScrollUp
       | Command::CompletionDocsScrollDown
-      | Command::PiPrefillSelection
-      | Command::PiSendSelection
       | Command::InlineAccept
       | Command::InlineAcceptWord
       | Command::InlineAcceptLine
@@ -6325,8 +6307,6 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "workspace_symbols" => Some(Command::lsp_workspace_symbols()),
     "lsp_completion" => Some(Command::lsp_completion()),
     "completion" => Some(Command::lsp_completion()),
-    "pi_prefill_selection" => Some(Command::pi_prefill_selection()),
-    "pi_send_selection" => Some(Command::pi_send_selection()),
     "inline_accept" => Some(Command::inline_accept()),
     "inline_accept_word" => Some(Command::inline_accept_word()),
     "inline_accept_line" => Some(Command::inline_accept_line()),

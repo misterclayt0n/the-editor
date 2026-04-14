@@ -215,7 +215,6 @@ struct EditorSnapshotPane: Hashable, Identifiable {
     let viewportRows: Int
     let documentLineCount: Int
     let isActive: Bool
-    let isAgentFollowTarget: Bool
 
     var id: UInt { paneID }
 }
@@ -1077,17 +1076,6 @@ enum EditorFFIBridge {
         return the_editor_set_embedded_terminal_enabled(handle, enabled)
     }
 
-    static func agentFollowEnabled(_ handle: OpaquePointer?) -> Bool {
-        guard let handle else { return false }
-        return the_editor_agent_follow_enabled(handle)
-    }
-
-    @discardableResult
-    static func setAgentFollowEnabled(_ handle: OpaquePointer?, enabled: Bool) -> Bool {
-        guard let handle else { return false }
-        return the_editor_set_agent_follow_enabled(handle, enabled)
-    }
-
     static func takeQuitRequested(_ handle: OpaquePointer?) -> Bool {
         guard let handle else { return false }
         return the_editor_take_quit_requested(handle)
@@ -1239,8 +1227,7 @@ enum EditorFFIBridge {
                 scrollRow: Int(paneValue.scroll_row),
                 viewportRows: Int(paneValue.viewport_rows),
                 documentLineCount: Int(paneValue.document_line_count),
-                isActive: paneValue.is_active,
-                isAgentFollowTarget: paneValue.is_agent_follow_target
+                isActive: paneValue.is_active
             )
         }
 

@@ -89,7 +89,7 @@ final class GhosttyTerminalRegistry {
                 }
                 view.updateColorScheme(colorScheme)
                 view.updateVisibility(true)
-                view.updateInactiveAppearance(dimmed: !pane.isActive && !pane.isAgentFollowTarget)
+                view.updateInactiveAppearance(dimmed: !pane.isActive)
                 view.updateFocus(pane.isActive && containerView.window?.firstResponder === view)
             }
 

@@ -691,8 +691,6 @@ pub enum Command {
   LspDocumentSymbols,
   LspWorkspaceSymbols,
   LspCompletion,
-  PiPrefillSelection,
-  PiSendSelection,
   InlineAccept,
   InlineAcceptWord,
   InlineAcceptLine,
@@ -2018,16 +2016,6 @@ impl Command {
   #[must_use]
   pub const fn lsp_completion() -> Self {
     Self::LspCompletion
-  }
-
-  #[must_use]
-  pub const fn pi_prefill_selection() -> Self {
-    Self::PiPrefillSelection
-  }
-
-  #[must_use]
-  pub const fn pi_send_selection() -> Self {
-    Self::PiSendSelection
   }
 
   #[must_use]

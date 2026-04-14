@@ -204,7 +204,6 @@ typedef struct the_editor_snapshot_pane_t {
   uint16_t viewport_rows;
   uint32_t document_line_count;
   bool is_active;
-  bool is_agent_follow_target;
 } the_editor_snapshot_pane_t;
 
 typedef struct the_editor_snapshot_separator_t {
@@ -579,8 +578,6 @@ bool the_editor_close_buffer_tab(the_editor_handle_t *handle, uintptr_t buffer_i
 bool the_editor_activate_open_item(the_editor_handle_t *handle, uintptr_t pane_id, uint8_t kind, uintptr_t item_id);
 bool the_editor_close_open_item(the_editor_handle_t *handle, uintptr_t pane_id, uint8_t kind, uintptr_t item_id);
 bool the_editor_set_embedded_terminal_enabled(the_editor_handle_t *handle, bool enabled);
-bool the_editor_agent_follow_enabled(the_editor_handle_t *handle);
-bool the_editor_set_agent_follow_enabled(the_editor_handle_t *handle, bool enabled);
 bool the_editor_take_quit_requested(the_editor_handle_t *handle);
 bool the_editor_open_terminal_in_active_pane(the_editor_handle_t *handle);
 bool the_editor_close_terminal_in_active_pane(the_editor_handle_t *handle);

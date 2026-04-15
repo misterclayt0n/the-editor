@@ -175,8 +175,9 @@ pub fn scroll_row_to_keep_visible(
   }
 }
 
-/// Compute the greatest vertical scroll origin that still keeps content in
-/// view.
-pub fn max_scroll_row_for_content(last_visual_row: usize, viewport_height: usize) -> usize {
-  last_visual_row.saturating_sub(viewport_height.saturating_sub(1))
+/// Greatest allowed first visible row (`scroll.row`), matching Zed-style
+/// bottom overscroll: you may scroll until the last visual row sits at the top
+/// of the viewport (rows below are empty padding).
+pub fn max_scroll_row_for_content(last_visual_row: usize, _viewport_height: usize) -> usize {
+  last_visual_row
 }

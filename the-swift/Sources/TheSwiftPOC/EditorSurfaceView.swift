@@ -566,8 +566,9 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
         guard let scene = controller?.scene, pane.kind == .editorBuffer else { return nil }
         let contentRect = scene.paneContentRect(for: pane)
         let visibleRows = max(scene.paneVisibleRowCapacity(for: pane), 1)
-        let totalRows = max(pane.documentLineCount, visibleRows)
-        let maxScrollRow = max(totalRows - visibleRows, 0)
+        let docLines = max(pane.documentLineCount, 1)
+        let maxScrollRow = max(docLines - 1, 0)
+        let totalRowsForThumb = max(pane.documentLineCount, visibleRows)
         guard maxScrollRow > 0, contentRect.height > 0 else { return nil }
 
         let trackWidth = min(max(floor(cellSize.width * 0.55), 6), 8)
@@ -578,7 +579,7 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
             width: trackWidth,
             height: max(contentRect.height - inset * 2, trackWidth)
         )
-        let thumbHeight = max(trackWidth * 2, floor(trackRect.height * (CGFloat(visibleRows) / CGFloat(totalRows))))
+        let thumbHeight = max(trackWidth * 2, floor(trackRect.height * (CGFloat(visibleRows) / CGFloat(totalRowsForThumb))))
         let travel = max(trackRect.height - thumbHeight, 0)
         let progress = CGFloat(min(max(pane.scrollRow, 0), maxScrollRow)) / CGFloat(maxScrollRow)
         let thumbRect = CGRect(

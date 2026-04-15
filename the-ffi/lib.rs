@@ -11871,8 +11871,8 @@ fn select_ui_theme(catalog: &ThemeCatalog) -> (String, Theme) {
   )
 }
 
-fn max_scroll_row(line_count: usize, viewport_height: usize) -> usize {
-  line_count.saturating_sub(viewport_height.max(1))
+fn max_scroll_row(line_count: usize, _viewport_height: usize) -> usize {
+  line_count.saturating_sub(1)
 }
 
 fn max_scroll_col(doc: &Document, text_format: &TextFormat, viewport_width: usize) -> usize {

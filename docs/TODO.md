@@ -17,7 +17,7 @@
 - Configuration support - We really only care for simple things for now: default theme, default font family, font size, cursor shape, whatever, not that deep
 - "Fix" all pickers - Low prio tbh I don't use most of them 
 - Statusline needs to change depending upon the kind of surface - terminals for example
-- Horizontally scrollable buffer tabs
+- Horizontally scrollable pane tabs
 - Font resizing
 - Drag surfaces around to reorder them
 - LSP hover on actual cursor hover

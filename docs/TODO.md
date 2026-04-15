@@ -23,3 +23,4 @@
 - LSP hover on actual cursor hover
 - Adhere to swiftUI/macOS defaults 
 - Fix buffer scrolling - Allow to scroll beyond the text - copy zed's behavior
+- Things need to take the :pwd command seriously (ghostty for sure and file tree likely)

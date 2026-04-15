@@ -189,6 +189,7 @@ typedef struct the_editor_snapshot_info_t {
   uintptr_t cursor_count;
   uintptr_t selection_count;
   uintptr_t overlay_count;
+  bool soft_wrap_enabled;
 } the_editor_snapshot_info_t;
 
 typedef struct the_editor_snapshot_pane_t {

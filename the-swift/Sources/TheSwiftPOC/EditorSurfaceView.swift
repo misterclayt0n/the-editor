@@ -350,18 +350,27 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
             pendingScrollCols = 0
         }
 
+        let softWrapEnabled = controller.scene?.info.softWrapEnabled ?? false
+        let effectiveColDelta: Int
+        if softWrapEnabled {
+            pendingScrollCols = 0
+            effectiveColDelta = 0
+        } else {
+            effectiveColDelta = colDelta
+        }
+
         let totalMs: () -> String = {
             String(format: "%.2f", (CFAbsoluteTimeGetCurrent() - started) * 1000)
         }
-        guard rowDelta != 0 || colDelta != 0 else {
+        guard rowDelta != 0 || effectiveColDelta != 0 else {
             scrollPerfLog(
                 "surface.scroll precise=\(event.hasPreciseScrollingDeltas) phase=\(event.phase.rawValue) momentum=\(event.momentumPhase.rawValue) deltaX=\(String(format: "%.2f", deltaX)) deltaY=\(String(format: "%.2f", deltaY)) rowDelta=0 colDelta=0 totalMs=\(totalMs())"
             )
             return
         }
-        controller.scroll(byRows: rowDelta, cols: colDelta)
+        controller.scroll(byRows: rowDelta, cols: effectiveColDelta)
         scrollPerfLog(
-            "surface.scroll precise=\(event.hasPreciseScrollingDeltas) phase=\(event.phase.rawValue) momentum=\(event.momentumPhase.rawValue) deltaX=\(String(format: "%.2f", deltaX)) deltaY=\(String(format: "%.2f", deltaY)) rowDelta=\(rowDelta) colDelta=\(colDelta) totalMs=\(totalMs())"
+            "surface.scroll precise=\(event.hasPreciseScrollingDeltas) phase=\(event.phase.rawValue) momentum=\(event.momentumPhase.rawValue) deltaX=\(String(format: "%.2f", deltaX)) deltaY=\(String(format: "%.2f", deltaY)) rowDelta=\(rowDelta) colDelta=\(effectiveColDelta) totalMs=\(totalMs())"
         )
     }
 

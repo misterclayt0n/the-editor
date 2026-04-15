@@ -111,6 +111,7 @@ struct EditorSnapshotInfo {
     let scrollRow: Int
     let scrollCol: Int
     let documentLineCount: Int
+    let softWrapEnabled: Bool
 }
 
 struct EditorSnapshotSpan: Hashable {
@@ -1256,7 +1257,8 @@ enum EditorFFIBridge {
             cursorBlinkGeneration: infoValue.cursor_blink_generation,
             scrollRow: Int(infoValue.scroll_row),
             scrollCol: Int(infoValue.scroll_col),
-            documentLineCount: Int(infoValue.document_line_count)
+            documentLineCount: Int(infoValue.document_line_count),
+            softWrapEnabled: infoValue.soft_wrap_enabled
         )
 
         let panes: [EditorSnapshotPane] = (0..<info.paneCount).map { paneIndex in

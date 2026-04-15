@@ -448,6 +448,7 @@ pub struct the_editor_snapshot_info_t {
   pub cursor_count:             usize,
   pub selection_count:          usize,
   pub overlay_count:            usize,
+  pub soft_wrap_enabled:        bool,
 }
 
 #[repr(C)]
@@ -5337,11 +5338,12 @@ impl SwiftEditor {
       self.editor.view().viewport.height as usize,
     ) as u32;
     let next = row.min(max_row) as usize;
-    if next == self.editor.view().scroll.row {
-      return false;
+    let before = self.editor.view().scroll;
+    if next != before.row {
+      self.editor.view_mut().scroll.row = next;
     }
-    self.editor.view_mut().scroll.row = next;
-    true
+    self.clamp_scroll();
+    before != self.editor.view().scroll
   }
 
   fn set_scroll_col(&mut self, col: u32) -> bool {
@@ -6290,34 +6292,81 @@ impl SwiftEditor {
   }
 
   fn ensure_cursor_visible(&mut self) {
-    let text = self.editor.document().text();
     let selection = self.editor.document().selection();
-    let cursor_pos = self
-      .editor
-      .view()
-      .active_cursor
-      .and_then(|cursor_id| selection.range_by_id(cursor_id).copied())
-      .or_else(|| selection.ranges().first().copied())
-      .map(|range| range.cursor(text.slice(..)));
+    let cursor_pos = {
+      let text = self.editor.document().text();
+      self
+        .editor
+        .view()
+        .active_cursor
+        .and_then(|cursor_id| selection.range_by_id(cursor_id).copied())
+        .or_else(|| selection.ranges().first().copied())
+        .map(|range| range.cursor(text.slice(..)))
+    };
     let Some(cursor_pos) = cursor_pos else {
       return;
     };
 
-    let cursor_line = text.char_to_line(cursor_pos);
-    let cursor_col = cursor_pos.saturating_sub(text.line_to_char(cursor_line));
+    let (cursor_line, cursor_col) = {
+      let text = self.editor.document().text();
+      let cursor_line = text.char_to_line(cursor_pos);
+      let cursor_col = cursor_pos.saturating_sub(text.line_to_char(cursor_line));
+      (cursor_line, cursor_col)
+    };
+
     let viewport_height = self.editor.view().viewport.height as usize;
     let gutter_width = gutter_width_for_document(
       self.editor.document(),
       self.editor.view().viewport.width,
       &self.gutter_config,
-    ) as usize;
+    );
     let viewport_width = self
       .editor
       .view()
       .viewport
       .width
-      .saturating_sub(gutter_width as u16)
+      .saturating_sub(gutter_width)
       .max(1) as usize;
+
+    if self.text_format.soft_wrap {
+      let cursor_visual_row = {
+        let text = self.editor.document().text();
+        let mut text_format = self.text_format.clone();
+        text_format.viewport_width = self.editor.view().viewport.width.saturating_sub(gutter_width).max(1);
+        let mut annotations = TextAnnotations::default();
+        visual_pos_at_char(
+          text.slice(..),
+          &text_format,
+          &mut annotations,
+          cursor_pos,
+        )
+        .map(|pos| pos.row)
+        .unwrap_or(cursor_line)
+      };
+
+      let current_scroll = self.editor.view().scroll;
+      let mut new_scroll = current_scroll;
+      let mut changed = false;
+
+      if let Some(new_row) = the_lib::view::scroll_row_to_keep_visible(
+        cursor_visual_row,
+        current_scroll.row,
+        viewport_height,
+        SWIFT_SCROLLOFF,
+      ) {
+        new_scroll.row = new_row;
+        changed = true;
+      }
+      if current_scroll.col != 0 {
+        new_scroll.col = 0;
+        changed = true;
+      }
+      if changed {
+        self.editor.view_mut().scroll = new_scroll;
+      }
+      return;
+    }
+
     if let Some(new_scroll) = the_lib::view::scroll_to_keep_visible(
       cursor_line,
       cursor_col,
@@ -7189,6 +7238,7 @@ impl DefaultContext for SwiftEditor {
     self.soft_wrap_enabled = enabled;
     self.text_format.soft_wrap = enabled;
     self.viewport_resize_plan_cache = None;
+    self.clamp_scroll();
   }
   fn gutter_config(&self) -> &GutterConfig {
     &self.gutter_config
@@ -7857,6 +7907,7 @@ impl OwnedSnapshot {
         cursor_count: 0,
         selection_count: 0,
         overlay_count: 0,
+        soft_wrap_enabled: editor.soft_wrap_enabled,
       },
       ..Default::default()
     };

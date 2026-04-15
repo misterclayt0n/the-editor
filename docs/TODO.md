@@ -1,6 +1,5 @@
 ## TODO things that I'll just throw here so I don't forget
 
-- Mouse clicking in buffers is very, very imprecise. 
 - We need a proper banner for the swift app and remove the idea that we need to have at least one buffer open, specifically in the swift app
 - Theme switching is painfully slow
 - File tree:

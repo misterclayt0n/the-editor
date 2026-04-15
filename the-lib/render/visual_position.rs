@@ -6,9 +6,12 @@
 use std::cmp::Ordering;
 
 use ropey::RopeSlice;
-use the_core::grapheme::{
-  Grapheme,
-  GraphemeStr,
+use the_core::{
+  grapheme::{
+    Grapheme,
+    GraphemeStr,
+  },
+  line_ending::get_line_ending,
 };
 use the_stdx::rope::RopeSliceExt;
 
@@ -72,10 +75,15 @@ pub fn char_at_visual_pos<'a>(
     let line = target.row.min(text.len_lines().saturating_sub(1));
     let line_start = text.line_to_char(line);
     let line_slice = text.line(line);
+    let line_ending_chars = get_line_ending(&line_slice)
+      .map(|line_ending| line_ending.len_chars())
+      .unwrap_or(0);
+    let line_content_end = line_start + line_slice.len_chars().saturating_sub(line_ending_chars);
+    let line_content = text.slice(line_start..line_content_end);
 
     let mut col = 0;
     let mut char_pos = line_start;
-    for grapheme in line_slice.graphemes() {
+    for grapheme in line_content.graphemes() {
       let g = Grapheme::new(grapheme_str(grapheme), col, text_fmt.tab_width);
       let width = g.width();
       if col + width > target.col {
@@ -85,7 +93,7 @@ pub fn char_at_visual_pos<'a>(
       char_pos += grapheme.len_chars();
     }
 
-    return Some(line_start + line_slice.len_chars());
+    return Some(line_content_end);
   }
 
   let mut formatter = DocumentFormatter::new_at_prev_checkpoint(text, text_fmt, annotations, 0);
@@ -277,6 +285,20 @@ mod tests {
 
     let pos =
       char_at_visual_pos(text.slice(..), &fmt, &mut annotations, Position::new(0, 3)).unwrap();
+    assert_eq!(pos, 1);
+  }
+
+  #[test]
+  fn char_at_visual_pos_clips_past_line_end_before_newline() {
+    let text = Rope::from("a\nb");
+    let mut fmt = TextFormat::default();
+    fmt.soft_wrap = false;
+    fmt.tab_width = 4;
+    fmt.rebuild_wrap_indicator();
+    let mut annotations = TextAnnotations::default();
+
+    let pos =
+      char_at_visual_pos(text.slice(..), &fmt, &mut annotations, Position::new(0, 20)).unwrap();
     assert_eq!(pos, 1);
   }
 }

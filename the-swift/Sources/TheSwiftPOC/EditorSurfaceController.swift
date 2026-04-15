@@ -79,6 +79,36 @@ final class EditorSurfaceController: ObservableObject {
         EditorFFIBridge.destroyHandle(handle?.raw)
     }
 
+    private func describeSelections(_ selections: [EditorSnapshotSelection]) -> String {
+        guard !selections.isEmpty else { return "[]" }
+        let items = selections.prefix(4).map { selection in
+            "kind=\(selection.kind.rawValue) rect=(\(selection.x),\(selection.y),\(selection.width),\(selection.height))"
+        }
+        let suffix = selections.count > items.count ? " +\(selections.count - items.count) more" : ""
+        return "[\(items.joined(separator: " | "))]\(suffix)"
+    }
+
+    private func describeCursors(_ cursors: [EditorSnapshotCursor]) -> String {
+        guard !cursors.isEmpty else { return "[]" }
+        let items = cursors.prefix(3).map { cursor in
+            "kind=\(cursor.kind.rawValue) pos=(\(cursor.col),\(cursor.row))"
+        }
+        let suffix = cursors.count > items.count ? " +\(cursors.count - items.count) more" : ""
+        return "[\(items.joined(separator: " | "))]\(suffix)"
+    }
+
+    private func logSelectionSnapshot(_ label: String, snapshot: EditorSnapshot) {
+        selectionDebugLog(
+            "controller.\(label) damage=\(snapshot.info.damageReason) full=\(snapshot.info.damageIsFull) scroll=(\(snapshot.info.scrollRow),\(snapshot.info.scrollCol)) scrollGen=\(snapshot.info.scrollGeneration) selections=\(describeSelections(snapshot.selections)) cursors=\(describeCursors(snapshot.cursors))"
+        )
+    }
+
+    private func logSceneSelectionState(_ label: String, scene: EditorRenderScene) {
+        selectionDebugLog(
+            "controller.\(label) scroll=(\(scene.info.scrollRow),\(scene.info.scrollCol)) scrollGen=\(scene.info.scrollGeneration) selections=\(describeSelections(scene.selections)) cursors=\(describeCursors(scene.cursors))"
+        )
+    }
+
     var isInteractiveResizeActive: Bool {
         !interactiveResizeReasons.isEmpty
     }
@@ -221,6 +251,9 @@ final class EditorSurfaceController: ObservableObject {
         modifiers: UInt8,
         clickCount: Int
     ) {
+        selectionDebugLog(
+            "controller.clickBufferPosition pane=\(paneID) logical=(\(logicalCol),\(logicalRow)) modifiers=\(modifiers) clickCount=\(clickCount)"
+        )
         guard EditorFFIBridge.clickBufferPosition(
             handle?.raw,
             paneID: paneID,
@@ -414,6 +447,9 @@ final class EditorSurfaceController: ObservableObject {
         modifiers: UInt8,
         clickCount: Int
     ) {
+        selectionDebugLog(
+            "controller.dragBufferSelection pane=\(paneID) origin=(\(dragOriginCol),\(dragOriginRow)) logical=(\(logicalCol),\(logicalRow)) modifiers=\(modifiers) clickCount=\(clickCount)"
+        )
         guard EditorFFIBridge.dragBufferSelection(
             handle?.raw,
             paneID: paneID,
@@ -430,6 +466,7 @@ final class EditorSurfaceController: ObservableObject {
     func scroll(byRows rowDelta: Int, cols colDelta: Int) {
         guard (rowDelta != 0 || colDelta != 0), let scene else { return }
         let started = CFAbsoluteTimeGetCurrent()
+        logSceneSelectionState("scroll.before", scene: scene)
         let targetRow = UInt32(max(scene.info.scrollRow + rowDelta, 0))
         let targetCol = UInt32(max(scene.info.scrollCol + colDelta, 0))
         var changed = false
@@ -806,6 +843,7 @@ final class EditorSurfaceController: ObservableObject {
             statusBar: snapshot.statusBar,
             backgroundColor: snapshot.info.backgroundColor?.color ?? .windowBackgroundColor
         )
+        logSelectionSnapshot("refresh", snapshot: snapshot)
         commandPaletteDebugLog("refresh query=\(String(reflecting: snapshot.commandPalette.query)) selected=\(String(describing: snapshot.commandPalette.selectedIndex)) items=\(snapshot.commandPalette.items.count) isOpen=\(snapshot.commandPalette.isOpen)")
         let sceneStarted = CFAbsoluteTimeGetCurrent()
         let marked = markedTextOverlay(from: snapshot)

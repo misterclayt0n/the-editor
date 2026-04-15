@@ -965,6 +965,16 @@ fn scroll_perf_log(message: impl AsRef<str>) {
   }
 }
 
+fn selection_debug_enabled() -> bool {
+  env::var("THE_EDITOR_SELECTION_DEBUG").ok().as_deref() == Some("1")
+}
+
+fn selection_debug_log(message: impl AsRef<str>) {
+  if selection_debug_enabled() {
+    eprintln!("[the-ffi:selection] {}", message.as_ref());
+  }
+}
+
 fn command_palette_debug_enabled() -> bool {
   env::var("THE_EDITOR_COMMAND_PALETTE_DEBUG").ok().as_deref() == Some("1")
 }
@@ -993,6 +1003,27 @@ fn code_action_trace_log(message: impl AsRef<str>) {
   if code_action_trace_enabled() {
     eprintln!("[the-ffi:code-actions] {}", message.as_ref());
   }
+}
+
+fn selection_summary(selection: &Selection) -> String {
+  let ranges = selection.ranges();
+  if ranges.is_empty() {
+    return "[]".to_string();
+  }
+  let mut parts = Vec::new();
+  for range in ranges.iter().take(4) {
+    parts.push(format!(
+      "{}..{} anchor={} head={}",
+      range.from(),
+      range.to(),
+      range.anchor,
+      range.head
+    ));
+  }
+  if ranges.len() > parts.len() {
+    parts.push(format!("+{} more", ranges.len() - parts.len()));
+  }
+  format!("[{}]", parts.join(" | "))
 }
 
 #[derive(Default)]
@@ -5353,10 +5384,26 @@ impl SwiftEditor {
       self.content_viewport_width() as usize,
     ) as u32;
     let next = col.min(max_col) as usize;
-    if next == self.editor.view().scroll.col {
+    let before = self.editor.view().scroll.col;
+    if next == before {
+      selection_debug_log(format!(
+        "set_scroll_col no_change requested={} clamped={} current={} selection={}",
+        col,
+        next,
+        before,
+        selection_summary(self.editor.document().selection())
+      ));
       return false;
     }
     self.editor.view_mut().scroll.col = next;
+    selection_debug_log(format!(
+      "set_scroll_col requested={} clamped={} before={} after={} selection={}",
+      col,
+      next,
+      before,
+      self.editor.view().scroll.col,
+      selection_summary(self.editor.document().selection())
+    ));
     true
   }
 
@@ -5585,6 +5632,18 @@ impl SwiftEditor {
       logical_col,
       logical_row,
     );
+    selection_debug_log(format!(
+      "click_buffer_position pane={} logical=({}, {}) click_count={} modifiers={} scroll=({}, {}) target_char={} before={}",
+      pane_id.get().get(),
+      logical_col,
+      logical_row,
+      click_count,
+      modifiers,
+      view.scroll.row,
+      view.scroll.col,
+      target_char,
+      selection_summary(self.editor.document().selection())
+    ));
     let next_selection = {
       let text = self.editor.document().text();
       let text_slice = text.slice(..);
@@ -5631,6 +5690,12 @@ impl SwiftEditor {
       return pane_changed;
     }
     self.editor.view_mut().active_cursor = next_selection.cursor_ids().first().copied();
+    selection_debug_log(format!(
+      "click_buffer_position apply pane={} after={} active_cursor={:?}",
+      pane_id.get().get(),
+      selection_summary(self.editor.document().selection()),
+      self.editor.view().active_cursor
+    ));
     self.bump_cursor_blink_generation();
     self.ensure_cursor_visible();
     true
@@ -5688,6 +5753,21 @@ impl SwiftEditor {
       logical_col,
       logical_row,
     );
+    selection_debug_log(format!(
+      "drag_buffer_selection pane={} origin=({}, {}) logical=({}, {}) click_count={} modifiers={} scroll=({}, {}) origin_char={} current_char={} before={}",
+      pane_id.get().get(),
+      drag_origin_col,
+      drag_origin_row,
+      logical_col,
+      logical_row,
+      click_count,
+      modifiers,
+      view.scroll.row,
+      view.scroll.col,
+      drag_origin_char,
+      current_char,
+      selection_summary(self.editor.document().selection())
+    ));
     let next_selection = {
       let text = self.editor.document().text();
       let existing_anchor = if click_count <= 1 && (modifiers & 0b0000_0100) != 0 {
@@ -5725,6 +5805,12 @@ impl SwiftEditor {
       return false;
     }
     self.editor.view_mut().active_cursor = next_selection.cursor_ids().first().copied();
+    selection_debug_log(format!(
+      "drag_buffer_selection apply pane={} after={} active_cursor={:?}",
+      pane_id.get().get(),
+      selection_summary(self.editor.document().selection()),
+      self.editor.view().active_cursor
+    ));
     self.bump_cursor_blink_generation();
     self.ensure_cursor_visible();
     true
@@ -8469,13 +8555,35 @@ impl OwnedSnapshot {
       snapshot
         .selections
         .extend(plan.selections.iter().map(|selection| {
+          let exported_x = pane
+            .rect
+            .x
+            .saturating_add(plan.content_offset_x)
+            .saturating_add(selection.rect.x);
+          let exported_y = pane.rect.y.saturating_add(selection.rect.y);
+          selection_debug_log(format!(
+            "snapshot.export_selection pane={} pane_rect=({}, {}, {}, {}) scroll=({}, {}) content_offset_x={} local_rect=({}, {}, {}, {}) exported_rect=({}, {}, {}, {}) kind={:?}",
+            pane.pane_id.get().get(),
+            pane.rect.x,
+            pane.rect.y,
+            pane.rect.width,
+            pane.rect.height,
+            plan.scroll.row,
+            plan.scroll.col,
+            plan.content_offset_x,
+            selection.rect.x,
+            selection.rect.y,
+            selection.rect.width,
+            selection.rect.height,
+            exported_x,
+            exported_y,
+            selection.rect.width,
+            selection.rect.height,
+            selection.kind,
+          ));
           the_editor_snapshot_selection_t {
-            x:      pane
-              .rect
-              .x
-              .saturating_add(plan.content_offset_x)
-              .saturating_add(selection.rect.x),
-            y:      pane.rect.y.saturating_add(selection.rect.y),
+            x:      exported_x,
+            y:      exported_y,
             width:  selection.rect.width,
             height: selection.rect.height,
             kind:   selection_kind_code(selection.kind),

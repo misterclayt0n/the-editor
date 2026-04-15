@@ -70,6 +70,14 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
         fatalError("init(coder:) has not been implemented")
     }
 
+    private func describe(_ drag: BufferSelectionDragState) -> String {
+        "pane=\(drag.paneID) origin=(\(drag.originLogicalCol),\(drag.originLogicalRow)) modifiers=\(drag.modifiers) clickCount=\(drag.clickCount)"
+    }
+
+    private func pointText(_ point: CGPoint) -> String {
+        String(format: "(%.1f,%.1f)", point.x, point.y)
+    }
+
     override func layout() {
         super.layout()
         applyRendererGeometry()
@@ -281,6 +289,9 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
         }
         if let hit = bufferTextHit(at: point) {
             let modifiers = pointerModifiers(from: event.modifierFlags)
+            selectionDebugLog(
+                "surface.mouseDown point=\(pointText(point)) pane=\(hit.paneID) logical=(\(hit.logicalCol),\(hit.logicalRow)) modifiers=\(modifiers) clickCount=\(event.clickCount)"
+            )
             cursorBlinkController.reset()
             controller?.clickBufferPosition(
                 paneID: hit.paneID,
@@ -313,6 +324,14 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
         let hoveredPane = pane(at: point)
         activatePaneIfNeeded(at: point)
         guard hoveredPane?.kind == .editorBuffer else { return }
+
+        if let drag = bufferSelectionDrag {
+            selectionDebugLog(
+                "surface.scroll cancelSelectionDrag point=\(pointText(point)) hoveredPane=\(hoveredPane.map { String($0.paneID) } ?? "nil") drag=\(describe(drag))"
+            )
+            bufferSelectionDrag = nil
+            refreshCursorBlinkState(reset: true)
+        }
 
         let direction: CGFloat = event.isDirectionInvertedFromDevice ? -1 : 1
         var deltaX = direction * event.scrollingDeltaX
@@ -388,6 +407,9 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
         }
         if let drag = bufferSelectionDrag,
            let hit = bufferTextHit(at: point, preferredPaneID: drag.paneID, clampToTextRect: true) {
+            selectionDebugLog(
+                "surface.mouseDragged point=\(pointText(point)) drag=\(describe(drag)) logical=(\(hit.logicalCol),\(hit.logicalRow))"
+            )
             controller?.dragBufferSelection(
                 paneID: drag.paneID,
                 dragOriginCol: drag.originLogicalCol,

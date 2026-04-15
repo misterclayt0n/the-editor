@@ -51,6 +51,7 @@
 
 use std::{
   collections::BTreeMap,
+  env,
   hash::{
     DefaultHasher,
     Hash,
@@ -1963,7 +1964,11 @@ fn visible_line_end_cols<'a>(
         visual_col = visual_col.saturating_add(1);
       }
 
-      *end_col = plan.scroll.col + visual_col;
+      // `visual_col` is already the absolute visual end column for the line
+      // (measured from column 0). Do not add `plan.scroll.col` here: doing so
+      // makes end-of-line selections appear to "follow" horizontal scrolling
+      // because the visible right edge incorrectly shifts with the viewport.
+      *end_col = visual_col;
     }
 
     return row_end_cols;
@@ -2006,6 +2011,16 @@ fn row_visible_end_col(plan: &RenderPlan, row: usize, row_visible_end_cols: &[us
     .min(col_end)
 }
 
+fn selection_debug_enabled() -> bool {
+  env::var("THE_EDITOR_SELECTION_DEBUG").ok().as_deref() == Some("1")
+}
+
+fn selection_debug_log(message: impl AsRef<str>) {
+  if selection_debug_enabled() {
+    eprintln!("[the-lib:selection] {}", message.as_ref());
+  }
+}
+
 fn push_selection_rects(
   plan: &mut RenderPlan,
   start: Position,
@@ -2025,22 +2040,78 @@ fn push_selection_rects(
   if start_row == end_row {
     let row = start_row;
     if row < row_start || row >= row_end {
+      selection_debug_log(format!(
+        "push_selection_rects single skip kind={:?} start=({}, {}) end=({}, {}) scroll=({}, {}) viewport=({}, {}) reason=row-outside",
+        kind,
+        start.row,
+        start.col,
+        end.row,
+        end.col,
+        row_start,
+        col_start,
+        plan.viewport.width,
+        plan.viewport.height,
+      ));
       return;
     }
     let from = start.col.min(end.col);
     let mut to = start.col.max(end.col);
+    let unclamped_from = from;
+    let unclamped_to = to;
+    let row_end_col = row_visible_end_col(plan, row, row_visible_end_cols);
     let from = from.max(col_start);
-    to = to.min(row_visible_end_col(plan, row, row_visible_end_cols));
+    to = to.min(row_end_col);
     if to <= from {
+      selection_debug_log(format!(
+        "push_selection_rects single skip kind={:?} start=({}, {}) end=({}, {}) scroll=({}, {}) viewport=({}, {}) row={} unclamped=({}, {}) clamped=({}, {}) row_end_col={} reason=empty-after-clamp",
+        kind,
+        start.row,
+        start.col,
+        end.row,
+        end.col,
+        row_start,
+        col_start,
+        plan.viewport.width,
+        plan.viewport.height,
+        row,
+        unclamped_from,
+        unclamped_to,
+        from,
+        to,
+        row_end_col,
+      ));
       return;
     }
+    let rect = Rect::new(
+      (from - col_start) as u16,
+      (row - row_start) as u16,
+      (to - from) as u16,
+      1,
+    );
+    selection_debug_log(format!(
+      "push_selection_rects single push kind={:?} start=({}, {}) end=({}, {}) scroll=({}, {}) viewport=({}, {}) row={} unclamped=({}, {}) clamped=({}, {}) row_end_col={} rect=({}, {}, {}, {})",
+      kind,
+      start.row,
+      start.col,
+      end.row,
+      end.col,
+      row_start,
+      col_start,
+      plan.viewport.width,
+      plan.viewport.height,
+      row,
+      unclamped_from,
+      unclamped_to,
+      from,
+      to,
+      row_end_col,
+      rect.x,
+      rect.y,
+      rect.width,
+      rect.height,
+    ));
     plan.selections.push(RenderSelection {
-      rect: Rect::new(
-        (from - col_start) as u16,
-        (row - row_start) as u16,
-        (to - from) as u16,
-        1,
-      ),
+      rect,
       style,
       kind,
     });
@@ -2049,6 +2120,19 @@ fn push_selection_rects(
 
   for row in start_row..=end_row {
     if row < row_start || row >= row_end {
+      selection_debug_log(format!(
+        "push_selection_rects multi skip kind={:?} start=({}, {}) end=({}, {}) scroll=({}, {}) viewport=({}, {}) row={} reason=row-outside",
+        kind,
+        start.row,
+        start.col,
+        end.row,
+        end.col,
+        row_start,
+        col_start,
+        plan.viewport.width,
+        plan.viewport.height,
+        row,
+      ));
       continue;
     }
 
@@ -2061,19 +2145,63 @@ fn push_selection_rects(
       (col_start, row_end_col)
     };
 
+    let unclamped_from = from;
+    let unclamped_to = to;
     let from = from.max(col_start);
     let to = to.min(col_end);
     if to <= from {
+      selection_debug_log(format!(
+        "push_selection_rects multi skip kind={:?} start=({}, {}) end=({}, {}) scroll=({}, {}) viewport=({}, {}) row={} unclamped=({}, {}) clamped=({}, {}) row_end_col={} reason=empty-after-clamp",
+        kind,
+        start.row,
+        start.col,
+        end.row,
+        end.col,
+        row_start,
+        col_start,
+        plan.viewport.width,
+        plan.viewport.height,
+        row,
+        unclamped_from,
+        unclamped_to,
+        from,
+        to,
+        row_end_col,
+      ));
       continue;
     }
 
+    let rect = Rect::new(
+      (from - col_start) as u16,
+      (row - row_start) as u16,
+      (to - from) as u16,
+      1,
+    );
+    selection_debug_log(format!(
+      "push_selection_rects multi push kind={:?} start=({}, {}) end=({}, {}) scroll=({}, {}) viewport=({}, {}) row={} unclamped=({}, {}) clamped=({}, {}) row_end_col={} rect=({}, {}, {}, {})",
+      kind,
+      start.row,
+      start.col,
+      end.row,
+      end.col,
+      row_start,
+      col_start,
+      plan.viewport.width,
+      plan.viewport.height,
+      row,
+      unclamped_from,
+      unclamped_to,
+      from,
+      to,
+      row_end_col,
+      rect.x,
+      rect.y,
+      rect.width,
+      rect.height,
+    ));
+
     plan.selections.push(RenderSelection {
-      rect: Rect::new(
-        (from - col_start) as u16,
-        (row - row_start) as u16,
-        (to - from) as u16,
-        1,
-      ),
+      rect,
       style,
       kind,
     });
@@ -2212,6 +2340,35 @@ mod tests {
     let cursor_positions: Vec<_> = plan.cursors.iter().map(|c| c.pos).collect();
     assert!(cursor_positions.contains(&Position::new(0, 1)));
     assert!(cursor_positions.contains(&Position::new(1, 1)));
+  }
+
+  #[test]
+  fn build_plan_line_selection_respects_horizontal_scroll() {
+    let id = DocumentId::new(std::num::NonZeroUsize::new(1).unwrap());
+    let mut doc = Document::new(id, Rope::from("abcdefghijklmnopqrstuvwxyz\n"));
+    doc.set_selection(Selection::single(0, 27)).unwrap();
+
+    let view = ViewState::new(Rect::new(0, 0, 8, 2), Position::new(0, 5));
+    let text_fmt = TextFormat::default();
+    let mut annotations = TextAnnotations::default();
+    let mut highlights = NoHighlights;
+    let gutter = no_gutter();
+    let mut cache = RenderCache::default();
+    let styles = RenderStyles::default();
+
+    let plan = build_plan(
+      &doc,
+      view,
+      &text_fmt,
+      &gutter,
+      &mut annotations,
+      &mut highlights,
+      &mut cache,
+      styles,
+    );
+
+    assert_eq!(plan.selections.len(), 1);
+    assert_eq!(plan.selections[0].rect, Rect::new(0, 0, 8, 1));
   }
 
   #[test]

@@ -70,6 +70,7 @@ struct EditorRenderScene {
                 x: line.x,
                 width: line.width,
                 themeGeneration: info.themeGeneration,
+                scrollGeneration: info.scrollGeneration,
                 cellWidthPx: info.surfaceMetrics.cellWidthPx,
                 cellHeightPx: info.surfaceMetrics.cellHeightPx,
                 cellBaselinePx: info.surfaceMetrics.cellBaselinePx,
@@ -244,6 +245,7 @@ struct EditorLineCacheKey: Hashable {
     let x: Int
     let width: Int
     let themeGeneration: UInt64
+    let scrollGeneration: UInt64
     let cellWidthPx: Int
     let cellHeightPx: Int
     let cellBaselinePx: Int

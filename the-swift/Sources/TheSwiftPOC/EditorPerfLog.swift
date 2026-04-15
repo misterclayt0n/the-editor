@@ -31,6 +31,10 @@ func scrollPerfEnabled() -> Bool {
     ProcessInfo.processInfo.environment["THE_EDITOR_SCROLL_PERF"] == "1"
 }
 
+func selectionDebugEnabled() -> Bool {
+    ProcessInfo.processInfo.environment["THE_EDITOR_SELECTION_DEBUG"] == "1"
+}
+
 func themePerfLog(_ message: @autoclosure () -> String) {
     guard themePerfEnabled() else { return }
     let line = "[TheSwiftPOC:perf] \(message())\n"
@@ -49,6 +53,14 @@ func scrollPerfLog(_ message: @autoclosure () -> String) {
     guard scrollPerfEnabled() else { return }
     let tsMs = Int((CFAbsoluteTimeGetCurrent() * 1000).rounded())
     let line = "[TheSwiftPOC:scroll-perf \(tsMs)] \(message())\n"
+    fputs(line, stderr)
+    appendPerfLineToSharedLogFile(line)
+}
+
+func selectionDebugLog(_ message: @autoclosure () -> String) {
+    guard selectionDebugEnabled() else { return }
+    let tsMs = Int((CFAbsoluteTimeGetCurrent() * 1000).rounded())
+    let line = "[TheSwiftPOC:selection \(tsMs)] \(message())\n"
     fputs(line, stderr)
     appendPerfLineToSharedLogFile(line)
 }

@@ -166,6 +166,7 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
                 x: line.x,
                 width: line.width,
                 themeGeneration: scene.info.themeGeneration,
+                scrollGeneration: scene.info.scrollGeneration,
                 cellWidthPx: scene.info.surfaceMetrics.cellWidthPx,
                 cellHeightPx: scene.info.surfaceMetrics.cellHeightPx,
                 cellBaselinePx: scene.info.surfaceMetrics.cellBaselinePx,

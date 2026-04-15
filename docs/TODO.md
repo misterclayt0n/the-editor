@@ -3,10 +3,13 @@
 - Mouse clicking in buffers is very, very imprecise. 
 - We need a proper banner for the swift app and remove the idea that we need to have at least one buffer open, specifically in the swift app
 - Theme switching is painfully slow
-- Horizontal scrolling should not happen if `:wrap` is active
 - File tree:
   - Add double clicking behavior 
   - Instead of a circle, VCS changes should just paint the text color in a different color
+- Ghostty:
+  - Scrollbar
+  - Command + F working properly
+  - Scrolling when I select and go to the top/bottom of the viewport
 - Inline completion rendering - It would be nice to make something like zed here, including all of that complicated system, it would be very cool if we had that complicated jumps zed supports. Not sure if it's model specific tho, doesn't seem like it.
 - "gw" does not render anything
 - Fix signature helper triggering an error every time I enter insert mode in a buffer that does not support it

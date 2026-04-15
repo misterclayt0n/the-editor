@@ -86,6 +86,7 @@ pub use plan::{
   gutter_width_for_document,
   hash_render_plan_layout,
   try_reuse_render_plan_for_vertical_resize,
+  try_reuse_render_plan_for_vertical_scroll,
 };
 pub use text_annotations::{
   InlineAnnotation,

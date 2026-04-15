@@ -1350,6 +1350,192 @@ pub fn build_plan<'a, 't, H: HighlightProvider>(
   plan
 }
 
+fn shift_plan_rows_up(plan: &mut RenderPlan, delta: u16) {
+  plan.lines.retain_mut(|line| {
+    if line.row < delta {
+      return false;
+    }
+    line.row = line.row.saturating_sub(delta);
+    true
+  });
+  plan.visible_rows.retain_mut(|row| {
+    if row.row < delta {
+      return false;
+    }
+    row.row = row.row.saturating_sub(delta);
+    true
+  });
+  plan.gutter_lines.retain_mut(|line| {
+    if line.row < delta {
+      return false;
+    }
+    line.row = line.row.saturating_sub(delta);
+    true
+  });
+}
+
+fn shift_plan_rows_down(plan: &mut RenderPlan, delta: u16) {
+  let height = plan.viewport.height;
+  plan.lines.retain_mut(|line| {
+    let next = line.row.saturating_add(delta);
+    if next >= height {
+      return false;
+    }
+    line.row = next;
+    true
+  });
+  plan.visible_rows.retain_mut(|row| {
+    let next = row.row.saturating_add(delta);
+    if next >= height {
+      return false;
+    }
+    row.row = next;
+    true
+  });
+  plan.gutter_lines.retain_mut(|line| {
+    let next = line.row.saturating_add(delta);
+    if next >= height {
+      return false;
+    }
+    line.row = next;
+    true
+  });
+}
+
+fn append_shifted_rows(target: &mut RenderPlan, mut delta_plan: RenderPlan, row_off: u16) {
+  for mut line in std::mem::take(&mut delta_plan.lines) {
+    line.row = line.row.saturating_add(row_off);
+    target.lines.push(line);
+  }
+  for mut row in std::mem::take(&mut delta_plan.visible_rows) {
+    row.row = row.row.saturating_add(row_off);
+    target.visible_rows.push(row);
+  }
+  for mut gutter in std::mem::take(&mut delta_plan.gutter_lines) {
+    gutter.row = gutter.row.saturating_add(row_off);
+    target.gutter_lines.push(gutter);
+  }
+}
+
+fn sort_plan_rows(plan: &mut RenderPlan) {
+  plan.lines.sort_by_key(|line| line.row);
+  plan.visible_rows.sort_by_key(|row| row.row);
+  plan.gutter_lines.sort_by_key(|line| line.row);
+}
+
+/// Reuse a previous render plan when only the vertical scroll row changes
+/// (same viewport size/width, same horizontal scroll, no soft-wrap, no line
+/// annotations). Existing rows are shifted and only newly exposed rows are
+/// rebuilt. This avoids walking the rope from the document start on every wheel
+/// scroll in huge buffers.
+#[allow(clippy::too_many_arguments)]
+pub fn try_reuse_render_plan_for_vertical_scroll<'a, 't, H: HighlightProvider>(
+  doc: &'a Document,
+  prev_plan: &RenderPlan,
+  prev_view: &ViewState,
+  new_view: &ViewState,
+  text_fmt: &'a TextFormat,
+  gutter: &GutterConfig,
+  annotations: &'t mut TextAnnotations<'a>,
+  highlights: &mut H,
+  cache: &mut RenderCache,
+  styles: RenderStyles,
+) -> Option<RenderPlan> {
+  if text_fmt.soft_wrap || annotations.has_line_annotations() {
+    return None;
+  }
+  if prev_view.viewport != new_view.viewport {
+    return None;
+  }
+  if prev_view.scroll.col != new_view.scroll.col {
+    return None;
+  }
+  if prev_plan.viewport != prev_view.viewport || prev_plan.scroll != prev_view.scroll {
+    return None;
+  }
+
+  let old_row = prev_view.scroll.row;
+  let new_row = new_view.scroll.row;
+  if old_row == new_row {
+    return None;
+  }
+
+  let height = prev_view.viewport.height;
+  if height == 0 {
+    return None;
+  }
+
+  let delta = old_row.abs_diff(new_row);
+  if delta == 0 || delta >= height as usize {
+    return None;
+  }
+
+  let delta_u16 = delta as u16;
+  let mut merged = prev_plan.clone();
+  merged.scroll = new_view.scroll;
+  merged.viewport = new_view.viewport;
+
+  if new_row > old_row {
+    shift_plan_rows_up(&mut merged, delta_u16);
+    let sub_view = ViewState::new(
+      Rect::new(
+        new_view.viewport.x,
+        new_view.viewport.y,
+        new_view.viewport.width,
+        delta_u16,
+      ),
+      Position::new(old_row.saturating_add(height as usize), new_view.scroll.col),
+    );
+    let delta_plan = build_plan(
+      doc,
+      sub_view,
+      text_fmt,
+      gutter,
+      annotations,
+      highlights,
+      cache,
+      styles,
+    );
+    append_shifted_rows(&mut merged, delta_plan, height.saturating_sub(delta_u16));
+  } else {
+    shift_plan_rows_down(&mut merged, delta_u16);
+    let sub_view = ViewState::new(
+      Rect::new(
+        new_view.viewport.x,
+        new_view.viewport.y,
+        new_view.viewport.width,
+        delta_u16,
+      ),
+      Position::new(new_row, new_view.scroll.col),
+    );
+    let delta_plan = build_plan(
+      doc,
+      sub_view,
+      text_fmt,
+      gutter,
+      annotations,
+      highlights,
+      cache,
+      styles,
+    );
+    append_shifted_rows(&mut merged, delta_plan, 0);
+  }
+
+  sort_plan_rows(&mut merged);
+  merged.overlays.clear();
+  merged.cursors.clear();
+  merged.selections.clear();
+  add_selections_and_cursor(
+    &mut merged,
+    doc,
+    text_fmt,
+    annotations,
+    new_view.clone(),
+    styles,
+  );
+  Some(merged)
+}
+
 /// Reuse a previous render plan when only the viewport **height** changes (same
 /// width, same scroll, no soft-wrap, no line annotations). New rows are built
 /// with a focused `build_plan` pass; shrinking discards tail rows. This avoids
@@ -2854,6 +3040,73 @@ mod tests {
     assert_eq!(updated.damage_start_row, 0);
     assert_eq!(updated.damage_end_row, 0);
     assert_ne!(previous.text_generation, next.text_generation);
+  }
+
+  #[test]
+  fn try_reuse_render_plan_vertical_scroll_down() {
+    let id = DocumentId::new(NonZeroUsize::new(1).unwrap());
+    let body = (0..20)
+      .map(|i| format!("row_{i:02}"))
+      .collect::<Vec<_>>()
+      .join(
+        "\n",
+      );
+    let doc = Document::new(id, Rope::from(body));
+    let prev_view = ViewState::new(Rect::new(0, 0, 12, 5), Position::new(0, 0));
+    let new_view = ViewState::new(Rect::new(0, 0, 12, 5), Position::new(2, 0));
+    let mut text_fmt = TextFormat::default();
+    text_fmt.viewport_width = 12;
+    let gutter = no_gutter();
+    let mut ann_prev = TextAnnotations::default();
+    let mut highlights = NoHighlights;
+    let mut cache = RenderCache::default();
+    let styles = RenderStyles::default();
+
+    let prev_plan = build_plan(
+      &doc,
+      prev_view.clone(),
+      &text_fmt,
+      &gutter,
+      &mut ann_prev,
+      &mut highlights,
+      &mut cache,
+      styles,
+    );
+
+    let mut ann_reuse = TextAnnotations::default();
+    let reused = try_reuse_render_plan_for_vertical_scroll(
+      &doc,
+      &prev_plan,
+      &prev_view,
+      &new_view,
+      &text_fmt,
+      &gutter,
+      &mut ann_reuse,
+      &mut highlights,
+      &mut cache,
+      styles,
+    )
+    .expect("vertical scroll reuse");
+
+    let mut ann_full = TextAnnotations::default();
+    let full = build_plan(
+      &doc,
+      new_view.clone(),
+      &text_fmt,
+      &gutter,
+      &mut ann_full,
+      &mut highlights,
+      &mut cache,
+      styles,
+    );
+
+    assert_eq!(reused.scroll, full.scroll);
+    assert_eq!(reused.viewport, full.viewport);
+    assert_eq!(reused.lines, full.lines);
+    assert_eq!(reused.visible_rows, full.visible_rows);
+    assert_eq!(reused.gutter_lines, full.gutter_lines);
+    assert_eq!(reused.selections, full.selections);
+    assert_eq!(reused.cursors, full.cursors);
   }
 
   #[test]

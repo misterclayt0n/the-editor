@@ -242,6 +242,7 @@ use the_lib::{
       default_theme,
     },
     try_reuse_render_plan_for_vertical_resize,
+    try_reuse_render_plan_for_vertical_scroll,
     visual_pos_at_char,
   },
   selection::{
@@ -5370,11 +5371,16 @@ impl SwiftEditor {
     ) as u32;
     let next = row.min(max_row) as usize;
     let before = self.editor.view().scroll;
-    if next != before.row {
-      self.editor.view_mut().scroll.row = next;
+    let mut after = before;
+    after.row = next;
+    if self.text_format.soft_wrap {
+      after.col = 0;
     }
-    self.clamp_scroll();
-    before != self.editor.view().scroll
+    if after == before {
+      return false;
+    }
+    self.editor.view_mut().scroll = after;
+    true
   }
 
   fn set_scroll_col(&mut self, col: u32) -> bool {
@@ -6941,6 +6947,20 @@ impl DefaultContext for SwiftEditor {
               document.syntax_version(),
               true,
             );
+            if let Some(reused) = try_reuse_render_plan_for_vertical_scroll(
+              document,
+              &cache_entry.plan,
+              &cache_entry.view,
+              &view,
+              &text_format,
+              &self.gutter_config,
+              &mut annotations,
+              &mut adapter,
+              cache,
+              styles,
+            ) {
+              break 'plan reused;
+            }
             if let Some(reused) = try_reuse_render_plan_for_vertical_resize(
               document,
               &cache_entry.plan,
@@ -6957,6 +6977,20 @@ impl DefaultContext for SwiftEditor {
             }
           } else {
             let mut highlights = NoHighlights;
+            if let Some(reused) = try_reuse_render_plan_for_vertical_scroll(
+              document,
+              &cache_entry.plan,
+              &cache_entry.view,
+              &view,
+              &text_format,
+              &self.gutter_config,
+              &mut annotations,
+              &mut highlights,
+              cache,
+              styles,
+            ) {
+              break 'plan reused;
+            }
             if let Some(reused) = try_reuse_render_plan_for_vertical_resize(
               document,
               &cache_entry.plan,

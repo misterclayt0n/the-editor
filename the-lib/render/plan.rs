@@ -1522,6 +1522,14 @@ pub fn try_reuse_render_plan_for_vertical_scroll<'a, 't, H: HighlightProvider>(
   }
 
   sort_plan_rows(&mut merged);
+  merged.gutter_lines = build_gutter_lines(
+    &merged.visible_rows,
+    doc,
+    new_view,
+    gutter,
+    &merged.gutter_columns,
+    styles,
+  );
   merged.overlays.clear();
   merged.cursors.clear();
   merged.selections.clear();
@@ -3106,6 +3114,73 @@ mod tests {
     assert_eq!(reused.visible_rows, full.visible_rows);
     assert_eq!(reused.gutter_lines, full.gutter_lines);
     assert_eq!(reused.selections, full.selections);
+    assert_eq!(reused.cursors, full.cursors);
+  }
+
+  #[test]
+  fn try_reuse_render_plan_vertical_scroll_rebuilds_gutter_for_active_cursor() {
+    let id = DocumentId::new(NonZeroUsize::new(1).unwrap());
+    let body = (0..20)
+      .map(|i| format!("row_{i:02}"))
+      .collect::<Vec<_>>()
+      .join("\n");
+    let mut doc = Document::new(id, Rope::from(body));
+    let selection = Selection::new(smallvec![Range::point(0), Range::point(21)]).unwrap();
+    let cursor_ids = selection.cursor_ids().to_vec();
+    doc.set_selection(selection).unwrap();
+
+    let prev_view = ViewState::new(Rect::new(0, 0, 12, 5), Position::new(0, 0))
+      .with_active_cursor(cursor_ids[0]);
+    let new_view = ViewState::new(Rect::new(0, 0, 12, 5), Position::new(2, 0))
+      .with_active_cursor(cursor_ids[1]);
+    let mut text_fmt = TextFormat::default();
+    text_fmt.viewport_width = 8;
+    let gutter = GutterConfig::default();
+    let mut ann_prev = TextAnnotations::default();
+    let mut highlights = NoHighlights;
+    let mut cache = RenderCache::default();
+    let styles = RenderStyles::default();
+
+    let prev_plan = build_plan(
+      &doc,
+      prev_view.clone(),
+      &text_fmt,
+      &gutter,
+      &mut ann_prev,
+      &mut highlights,
+      &mut cache,
+      styles,
+    );
+
+    let mut ann_reuse = TextAnnotations::default();
+    let reused = try_reuse_render_plan_for_vertical_scroll(
+      &doc,
+      &prev_plan,
+      &prev_view,
+      &new_view,
+      &text_fmt,
+      &gutter,
+      &mut ann_reuse,
+      &mut highlights,
+      &mut cache,
+      styles,
+    )
+    .expect("vertical scroll reuse");
+
+    let mut ann_full = TextAnnotations::default();
+    let full = build_plan(
+      &doc,
+      new_view.clone(),
+      &text_fmt,
+      &gutter,
+      &mut ann_full,
+      &mut highlights,
+      &mut cache,
+      styles,
+    );
+
+    assert_eq!(reused.visible_rows, full.visible_rows);
+    assert_eq!(reused.gutter_lines, full.gutter_lines);
     assert_eq!(reused.cursors, full.cursors);
   }
 

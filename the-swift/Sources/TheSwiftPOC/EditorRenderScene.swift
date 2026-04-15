@@ -22,6 +22,14 @@ struct EditorSceneLine: Hashable {
         hasher.combine(width)
         hasher.combine(docLine)
         hasher.combine(firstVisualLine)
+        hasher.combine(spans.count)
+        for span in spans {
+            hasher.combine(max(span.col - x, 0))
+            hasher.combine(span.cols)
+            hasher.combine(span.text)
+            hasher.combine(span.isVirtual)
+            hasher.combine(span.style)
+        }
         hasher.combine(textCells.count)
         for cell in textCells {
             hasher.combine(max(cell.col - x, 0))
@@ -74,6 +82,7 @@ struct EditorRenderScene {
                 cellWidthPx: info.surfaceMetrics.cellWidthPx,
                 cellHeightPx: info.surfaceMetrics.cellHeightPx,
                 cellBaselinePx: info.surfaceMetrics.cellBaselinePx,
+                isPrimaryCursorRow: primaryCursor?.row == line.row,
                 signature: line.cacheSignature
             )
         })
@@ -249,5 +258,6 @@ struct EditorLineCacheKey: Hashable {
     let cellWidthPx: Int
     let cellHeightPx: Int
     let cellBaselinePx: Int
+    let isPrimaryCursorRow: Bool
     let signature: Int
 }

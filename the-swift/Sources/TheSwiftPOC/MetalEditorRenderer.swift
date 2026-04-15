@@ -170,6 +170,7 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
                 cellWidthPx: scene.info.surfaceMetrics.cellWidthPx,
                 cellHeightPx: scene.info.surfaceMetrics.cellHeightPx,
                 cellBaselinePx: scene.info.surfaceMetrics.cellBaselinePx,
+                isPrimaryCursorRow: scene.primaryCursor?.row == line.row,
                 signature: line.cacheSignature
             )
             let pane = scene.pane(id: line.paneID)

@@ -5219,7 +5219,9 @@ impl SwiftEditor {
       lsp_pending_auto_completion: None,
       lsp_pending_auto_signature_help: None,
       pending_input: None,
-      registers: Registers::new(),
+      registers: Registers::with_clipboard(Arc::new(
+        the_runtime::clipboard::ClipboardProvider::detect(),
+      )),
       register: None,
       macro_recording: None,
       macro_replaying: Vec::new(),

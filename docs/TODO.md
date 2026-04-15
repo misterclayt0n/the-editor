@@ -23,4 +23,3 @@
 - LSP hover on actual cursor hover
 - Adhere to swiftUI/macOS defaults 
 - Fix buffer scrolling - Allow to scroll beyond the text - copy zed's behavior
-- Space + y is not working

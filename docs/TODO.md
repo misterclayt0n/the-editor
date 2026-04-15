@@ -23,4 +23,3 @@
 - LSP hover on actual cursor hover
 - Adhere to swiftUI/macOS defaults 
 - Things need to take the :pwd command seriously (ghostty for sure and file tree likely)
-- Search does not scroll as I type

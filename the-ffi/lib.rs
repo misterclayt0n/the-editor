@@ -6529,6 +6529,9 @@ impl SwiftEditor {
     self.search_prompt.cursor = self.search_prompt.query.len();
     self.search_prompt.selected = None;
     update_search_prompt_preview(self);
+    if self.search_prompt.kind == SearchPromptKind::Search && !self.search_prompt.query.is_empty() {
+      self.ensure_cursor_visible();
+    }
     true
   }
 
@@ -6547,6 +6550,9 @@ impl SwiftEditor {
       return false;
     }
     step_search_prompt(self, direction);
+    if !self.search_prompt.query.is_empty() {
+      self.ensure_cursor_visible();
+    }
     true
   }
 

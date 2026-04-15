@@ -135,6 +135,12 @@ struct TheSwiftPOCApp: App {
 private struct EditorContainerView: View {
     @ObservedObject var controller: EditorSurfaceController
 
+    private var overlayColorScheme: ColorScheme {
+        let bg = controller.chrome.backgroundColor.usingColorSpace(.sRGB) ?? controller.chrome.backgroundColor
+        let luminance = (0.299 * bg.redComponent) + (0.587 * bg.greenComponent) + (0.114 * bg.blueComponent)
+        return luminance >= 0.6 ? .light : .dark
+    }
+
     var body: some View {
         ZStack {
             EditorChromeView(controller: controller)
@@ -143,6 +149,7 @@ private struct EditorContainerView: View {
             EditorCommandPaletteView(controller: controller)
             EditorFilePickerView(controller: controller)
         }
+        .environment(\.colorScheme, overlayColorScheme)
     }
 }
 

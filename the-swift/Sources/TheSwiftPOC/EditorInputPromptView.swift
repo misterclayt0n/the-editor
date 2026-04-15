@@ -38,6 +38,12 @@ private struct EditorInputPromptPanel: View {
     @State private var suppressQueryCallback = false
     @FocusState private var isFieldFocused: Bool
 
+    private var promptColorScheme: ColorScheme {
+        let bg = backgroundColor.usingColorSpace(.sRGB) ?? backgroundColor
+        let luminance = (0.299 * bg.redComponent) + (0.587 * bg.greenComponent) + (0.114 * bg.blueComponent)
+        return luminance >= 0.6 ? .light : .dark
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
@@ -103,6 +109,7 @@ private struct EditorInputPromptPanel: View {
             isFieldFocused = true
         }
         .accessibilityElement(children: .contain)
+        .environment(\.colorScheme, promptColorScheme)
     }
 
     private var panelBackground: some View {

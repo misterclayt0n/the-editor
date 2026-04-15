@@ -1,13 +1,30 @@
 #include <stdio.h>
+#include <stdlib.h>
 
-int factorial(int x) {
-    if (x <= 1) return 1;
-    return x * factorial(x - 1);
-}
+typedef struct {
+  float *items;
+  size_t count;
+  size_t capacity;
+} Numbers;
+
+#define da_append(xs, x) \
+    do {\
+        if (xs.count >= xs.capacity) {\
+          if (xs.capacity == 0)\
+            xs.capacity = 256;\
+          else\
+            xs.capacity *= 2;\
+          xs.items = realloc(xs.items, xs.capacity * sizeof(*xs.items));\
+        }\
+        xs.items[xs.count++] = x;\
+    } while(0)
 
 int main() {
-    int r = factorial(5);
-    printf("hello world");
+  Numbers xs = {0};
 
-    return 0;
+  for (int x = 0; x < 10; x++) da_append(xs, x);
+
+  for (size_t i = 0; i < xs.count; i++) printf("%f\n", xs.items[i]);
+
+  return 0;
 }

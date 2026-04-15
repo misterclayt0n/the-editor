@@ -1738,6 +1738,7 @@ fn builtin_keymap_map() -> HashMap<Mode, KeyTrie> {
     "C-u" => kill_to_line_start,
     "C-k" => kill_to_line_end,
     "C-h" | "backspace" | "S-backspace" => delete_char_backward,
+    "C-backspace" => delete_selection,
     "C-d" | "del" => delete_char_forward,
     "C-j" | "ret" => insert_newline,
     "C-s" => delete_selection,

@@ -138,6 +138,7 @@ struct EditorChromeView: View {
             EditorStatusAccessoryView(chrome: controller.chrome, mode: controller.currentMode, controller: controller)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .environment(\.colorScheme, controller.chrome.backgroundColor.isLightColor ? .light : .dark)
     }
 
     private var sidebarTheme: EditorFileTreeSidebarTheme {
@@ -235,6 +236,45 @@ private struct EditorFileTreeSidebarTheme {
             selectionColor: selectionColor,
             hoverColor: hoverColor
         )
+    }
+}
+
+private struct ChromeForegroundColors {
+    let primary: Color
+    let secondary: Color
+    let tertiary: Color
+    let primaryNS: NSColor
+    let secondaryNS: NSColor
+    let tertiaryNS: NSColor
+
+    static func forBackground(_ base: NSColor) -> ChromeForegroundColors {
+        let bg = chromeBackgroundColor(base: base)
+        let light = bg.isLightColor
+        if light {
+            let p = NSColor.black.withAlphaComponent(0.88)
+            let s = NSColor.black.withAlphaComponent(0.55)
+            let t = NSColor.black.withAlphaComponent(0.38)
+            return ChromeForegroundColors(
+                primary: Color(nsColor: p),
+                secondary: Color(nsColor: s),
+                tertiary: Color(nsColor: t),
+                primaryNS: p,
+                secondaryNS: s,
+                tertiaryNS: t
+            )
+        } else {
+            let p = NSColor.white.withAlphaComponent(0.92)
+            let s = NSColor.white.withAlphaComponent(0.62)
+            let t = NSColor.white.withAlphaComponent(0.45)
+            return ChromeForegroundColors(
+                primary: Color(nsColor: p),
+                secondary: Color(nsColor: s),
+                tertiary: Color(nsColor: t),
+                primaryNS: p,
+                secondaryNS: s,
+                tertiaryNS: t
+            )
+        }
     }
 }
 
@@ -459,6 +499,10 @@ private struct EditorSidebarModeSwitcher: View {
     let theme: EditorFileTreeSidebarTheme
     let onSelect: (EditorSidebarMode) -> Void
 
+    private var chromeForeground: ChromeForegroundColors {
+        ChromeForegroundColors.forBackground(theme.backgroundColor)
+    }
+
     var body: some View {
         HStack(spacing: 3) {
             modeButton(.files, icon: "folder.fill", label: "Files")
@@ -482,7 +526,7 @@ private struct EditorSidebarModeSwitcher: View {
         } label: {
             Image(systemName: icon)
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(isSelected ? Color.primary : Color.secondary)
+                .foregroundStyle(isSelected ? chromeForeground.primary : chromeForeground.secondary)
                 .frame(width: 20, height: 20)
                 .background(
                     RoundedRectangle(cornerRadius: 5, style: .continuous)
@@ -554,6 +598,10 @@ private struct EditorOpenItemsSidebarView: View {
     let onCloseItem: (EditorPaneOpenItemRow) -> Void
     let onFocusSidebar: () -> Void
 
+    private var chromeForeground: ChromeForegroundColors {
+        ChromeForegroundColors.forBackground(theme.backgroundColor)
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             EditorSidebarHeaderView(
@@ -572,9 +620,10 @@ private struct EditorOpenItemsSidebarView: View {
                         VStack(alignment: .leading, spacing: 6) {
                             Text("No Open Items")
                                 .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(chromeForeground.primary)
                             Text("Open buffers and pane-local items will appear here.")
                                 .font(.system(size: 11))
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(chromeForeground.secondary)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 14)
@@ -634,6 +683,10 @@ private struct EditorOpenItemsGroupHeaderView: View {
     let isActivePane: Bool
     let theme: EditorFileTreeSidebarTheme
 
+    private var chromeForeground: ChromeForegroundColors {
+        ChromeForegroundColors.forBackground(theme.backgroundColor)
+    }
+
     var body: some View {
         HStack(spacing: 6) {
             Circle()
@@ -641,11 +694,11 @@ private struct EditorOpenItemsGroupHeaderView: View {
                 .frame(width: 5, height: 5)
             Text(title)
                 .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(isActivePane ? .primary : .secondary)
+                .foregroundStyle(isActivePane ? chromeForeground.primary : chromeForeground.secondary)
                 .tracking(0.4)
             Text("\(count)")
                 .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(.secondary.opacity(0.85))
+                .foregroundStyle(chromeForeground.secondary.opacity(0.85))
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 12)
@@ -662,6 +715,10 @@ private struct EditorOpenItemSidebarRowView: View {
     let onClose: () -> Void
 
     @State private var isHovered = false
+
+    private var chromeForeground: ChromeForegroundColors {
+        ChromeForegroundColors.forBackground(theme.backgroundColor)
+    }
 
     var body: some View {
         HStack(spacing: 0) {
@@ -685,7 +742,7 @@ private struct EditorOpenItemSidebarRowView: View {
                         if let subtitle = item.subtitle, !subtitle.isEmpty {
                             Text(subtitle)
                                 .font(.system(size: 10, weight: .medium))
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(chromeForeground.secondary)
                                 .lineLimit(1)
                         }
                     }
@@ -699,7 +756,7 @@ private struct EditorOpenItemSidebarRowView: View {
 
                     if item.isModified {
                         Circle()
-                            .fill(Color(nsColor: item.isActive ? theme.selectionColor : .secondaryLabelColor).opacity(item.isActive ? 0.95 : 0.82))
+                            .fill(Color(nsColor: item.isActive ? theme.selectionColor : chromeForeground.secondaryNS).opacity(item.isActive ? 0.95 : 0.82))
                             .frame(width: 5, height: 5)
                     }
                 }
@@ -760,19 +817,19 @@ private struct EditorOpenItemSidebarRowView: View {
 
     private var iconColor: NSColor {
         if item.isActive {
-            return .labelColor
+            return chromeForeground.primaryNS
         }
-        return .tertiaryLabelColor
+        return chromeForeground.tertiaryNS
     }
 
     private var closeButtonForegroundColor: NSColor {
         if !canClose {
-            return .tertiaryLabelColor
+            return chromeForeground.tertiaryNS
         }
         if item.isActive || isHovered {
-            return .labelColor
+            return chromeForeground.primaryNS
         }
-        return .secondaryLabelColor
+        return chromeForeground.secondaryNS
     }
 
     private var closeButtonBackgroundColor: NSColor {
@@ -796,7 +853,7 @@ private struct EditorOpenItemSidebarRowView: View {
     }
 
     private var rowTextColor: Color {
-        item.isActive ? .primary : .primary.opacity(0.88)
+        item.isActive ? chromeForeground.primary : chromeForeground.primary.opacity(0.88)
     }
 }
 
@@ -972,12 +1029,17 @@ private struct EditorPaneItemTabStripView: View {
     let onActivateItem: (EditorPaneOpenItemRow) -> Void
     let onCloseItem: (EditorPaneOpenItemRow) -> Void
 
+    private var chromeForeground: ChromeForegroundColors {
+        ChromeForegroundColors.forBackground(theme.backgroundColor)
+    }
+
     var body: some View {
         HStack(spacing: 0) {
             ForEach(group.items) { item in
                 EditorPaneItemTabView(
                     item: item,
                     theme: theme,
+                    chromeForeground: chromeForeground,
                     isActivePane: group.isActivePane,
                     controlHeight: controlHeight,
                     canClose: canCloseItem(item),
@@ -1001,6 +1063,7 @@ private struct EditorPaneItemTabStripView: View {
 private struct EditorPaneItemTabView: View {
     let item: EditorPaneOpenItemRow
     let theme: EditorFileTreeSidebarTheme
+    let chromeForeground: ChromeForegroundColors
     let isActivePane: Bool
     let controlHeight: CGFloat
     let canClose: Bool
@@ -1063,9 +1126,9 @@ private struct EditorPaneItemTabView: View {
 
     private var foregroundColor: Color {
         if item.isActive {
-            return .primary
+            return chromeForeground.primary
         }
-        return isActivePane ? .secondary.opacity(0.95) : .secondary.opacity(0.82)
+        return isActivePane ? chromeForeground.secondary.opacity(0.95) : chromeForeground.secondary.opacity(0.82)
     }
 
     @ViewBuilder
@@ -1111,9 +1174,9 @@ private struct EditorPaneItemTabView: View {
 
     private var closeButtonForegroundColor: NSColor {
         if item.isActive || isHovered {
-            return .labelColor
+            return chromeForeground.primaryNS
         }
-        return .secondaryLabelColor
+        return chromeForeground.secondaryNS
     }
 
     private var closeButtonBackgroundColor: NSColor {
@@ -1123,7 +1186,7 @@ private struct EditorPaneItemTabView: View {
         if isHovered {
             return theme.hoverColor.withAlphaComponent(0.95)
         }
-        return NSColor.tertiaryLabelColor.withAlphaComponent(0.08)
+        return chromeForeground.tertiaryNS.withAlphaComponent(0.12)
     }
 
 }
@@ -1588,7 +1651,7 @@ private struct EditorFileTreeCellContentView: View {
                         .font(.system(size: 12, weight: .semibold))
                     Text("Create a file or open another project folder.")
                         .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(ChromeForegroundColors.forBackground(theme.backgroundColor).secondary)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 14)
@@ -1603,6 +1666,10 @@ private struct EditorFileTreeRowView: View {
     let theme: EditorFileTreeSidebarTheme
     let isHovered: Bool
 
+    private var chromeForeground: ChromeForegroundColors {
+        ChromeForegroundColors.forBackground(theme.backgroundColor)
+    }
+
     var body: some View {
         HStack(spacing: 0) {
             Rectangle()
@@ -1614,7 +1681,7 @@ private struct EditorFileTreeRowView: View {
                 if row.hasChildren || row.isDirectory {
                     Image(systemName: row.isExpanded ? "chevron.down" : "chevron.right")
                         .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(chromeForeground.secondary)
                         .frame(width: 10, height: 10)
                 } else {
                     Color.clear
@@ -1678,19 +1745,19 @@ private struct EditorFileTreeRowView: View {
 
     private var iconColor: NSColor {
         if row.isSelected {
-            return .labelColor
+            return chromeForeground.primaryNS
         }
         if row.isCurrentFile {
             return theme.selectionColor
         }
-        return row.isDirectory ? .secondaryLabelColor : .tertiaryLabelColor
+        return row.isDirectory ? chromeForeground.secondaryNS : chromeForeground.tertiaryNS
     }
 
     private var rowTextColor: Color {
         if row.isSelected || row.isCurrentFile {
-            return .primary
+            return chromeForeground.primary
         }
-        return .primary.opacity(0.88)
+        return chromeForeground.primary.opacity(0.88)
     }
 }
 
@@ -1773,28 +1840,32 @@ private struct EditorStatusAccessoryView: View {
         chrome.statusBar.items.filter { EditorLSPStatusPresentation(item: $0) == nil }
     }
 
+    private var chromeForeground: ChromeForegroundColors {
+        ChromeForegroundColors.forBackground(chrome.backgroundColor)
+    }
+
     var body: some View {
         HStack(spacing: 12) {
-            ModePill(mode: mode)
+            ModePill(mode: mode, chromeForeground: chromeForeground)
 
             if let lspStatus {
-                LSPStatusAccessoryView(status: lspStatus)
+                LSPStatusAccessoryView(status: lspStatus, foreground: chromeForeground)
             }
 
             Spacer(minLength: 12)
 
             HStack(spacing: 10) {
                 ForEach(nonLSPStatusItems) { item in
-                    StatusAccessoryItemView(item: item)
+                    StatusAccessoryItemView(item: item, foreground: chromeForeground)
                 }
 
                 ForEach(metadataItems) { item in
-                    StatusAccessoryItemView(item: item)
+                    StatusAccessoryItemView(item: item, foreground: chromeForeground)
                 }
 
                 Text(chrome.statusBar.cursorText)
                     .font(.system(size: 11, weight: .medium, design: .monospaced))
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(chromeForeground.primary)
                     .lineLimit(1)
                     .padding(.leading, 4)
             }
@@ -1811,6 +1882,7 @@ private struct EditorStatusAccessoryView: View {
 
 private struct StatusAccessoryItemView: View {
     let item: EditorStatusItem
+    let foreground: ChromeForegroundColors
     var foregroundStyleOverride: Color? = nil
 
     private var normalized: (icon: String?, text: String) {
@@ -1880,11 +1952,11 @@ private struct StatusAccessoryItemView: View {
 
         switch item.emphasis {
         case .normal:
-            return .primary
+            return foreground.primary
         case .muted:
-            return .secondary
+            return foreground.secondary
         case .strong:
-            return .primary
+            return foreground.primary
         }
     }
 }
@@ -1941,6 +2013,7 @@ private struct EditorLSPStatusPresentation: Equatable {
 
 private struct LSPStatusAccessoryView: View {
     let status: EditorLSPStatusPresentation
+    let foreground: ChromeForegroundColors
 
     @State private var isExpanded = true
 
@@ -1968,7 +2041,7 @@ private struct LSPStatusAccessoryView: View {
 
             Text(title)
                 .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(.primary)
+                .foregroundStyle(foreground.primary)
                 .lineLimit(1)
 
             if case .loading = status.phase {
@@ -2046,7 +2119,7 @@ private struct LSPStatusAccessoryView: View {
     private var dotColor: Color {
         switch status.phase {
         case .unavailable, .off:
-            return .secondary
+            return foreground.secondary
         case .loading:
             return .accentColor
         case .ready:
@@ -2059,7 +2132,7 @@ private struct LSPStatusAccessoryView: View {
     private var backgroundColor: Color {
         switch status.phase {
         case .unavailable, .off:
-            return Color.primary.opacity(0.05)
+            return foreground.primary.opacity(0.06)
         case .loading:
             return Color.accentColor.opacity(0.10)
         case .ready:
@@ -2072,7 +2145,7 @@ private struct LSPStatusAccessoryView: View {
     private var borderColor: Color {
         switch status.phase {
         case .unavailable, .off:
-            return Color.primary.opacity(0.06)
+            return foreground.primary.opacity(0.08)
         case .loading:
             return Color.accentColor.opacity(0.18)
         case .ready:
@@ -2126,16 +2199,17 @@ private struct LSPIndeterminateBar: View {
 
 private struct ModePill: View {
     let mode: EditorMode
+    let chromeForeground: ChromeForegroundColors
 
     var body: some View {
         Text(label)
             .font(.system(size: 10, weight: .semibold, design: .rounded))
-            .foregroundStyle(foreground)
+            .foregroundStyle(pillForeground)
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
             .background(
                 Capsule(style: .continuous)
-                    .fill(background)
+                    .fill(pillBackground)
             )
             .accessibilityLabel(label)
     }
@@ -2153,10 +2227,10 @@ private struct ModePill: View {
         }
     }
 
-    private var foreground: Color {
+    private var pillForeground: Color {
         switch mode {
         case .normal:
-            return .secondary
+            return chromeForeground.secondary
         case .insert:
             return .accentColor
         case .select:
@@ -2166,10 +2240,10 @@ private struct ModePill: View {
         }
     }
 
-    private var background: Color {
+    private var pillBackground: Color {
         switch mode {
         case .normal:
-            return Color.secondary.opacity(0.12)
+            return chromeForeground.secondary.opacity(0.14)
         case .insert:
             return Color.accentColor.opacity(0.14)
         case .select:
@@ -2311,8 +2385,15 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
         private let leadingItemIdentifier = NSToolbarItem.Identifier("TheSwiftPOC.LeadingRegion")
         private let vcsItemIdentifier = NSToolbarItem.Identifier("TheSwiftPOC.VCSInfo")
         private let leadingState = EditorTitlebarLeadingState()
-        private lazy var fileTreeHostingView = NSHostingView(rootView: EditorTitlebarLeadingRegionView(state: leadingState, onToggle: {}, onOpenTerminal: {}, showsTerminalButton: GhosttyTerminalRegistry.isAvailable))
-        private let vcsHostingView = NSHostingView(rootView: EditorTitlebarVCSView(vcsText: nil))
+        private lazy var fileTreeHostingView = NSHostingView(rootView: EditorTitlebarLeadingRegionView(
+            state: leadingState,
+            sidebarForeground: ChromeForegroundColors.forBackground(.windowBackgroundColor),
+            mainForeground: ChromeForegroundColors.forBackground(.windowBackgroundColor),
+            onToggle: {},
+            onOpenTerminal: {},
+            showsTerminalButton: GhosttyTerminalRegistry.isAvailable
+        ))
+        private let vcsHostingView = NSHostingView(rootView: EditorTitlebarVCSView(vcsText: nil, foreground: ChromeForegroundColors.forBackground(.windowBackgroundColor)))
         private let sidebarTitlebarBackgroundView = NSView(frame: .zero)
         private let sidebarTitlebarSeparatorView = EditorTitlebarSidebarSeparatorView(frame: .zero)
         private weak var observedWindow: NSWindow?
@@ -2391,7 +2472,13 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
             )
             let applyMs = (CFAbsoluteTimeGetCurrent() - applyStarted) * 1000
             let toolbarStarted = CFAbsoluteTimeGetCurrent()
-            updateToolbarContent(window: window, chrome: chrome, fileTreeVisible: fileTreeVisible, fileTreeWidth: fileTreeWidth)
+            updateToolbarContent(
+                window: window,
+                chrome: chrome,
+                fileTreeVisible: fileTreeVisible,
+                fileTreeWidth: fileTreeWidth,
+                fileTreeBackgroundColor: fileTreeBackgroundColor
+            )
             let toolbarMs = (CFAbsoluteTimeGetCurrent() - toolbarStarted) * 1000
             let totalMs = (CFAbsoluteTimeGetCurrent() - started) * 1000
             scrollPerfLog(
@@ -2434,7 +2521,13 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
                 backgroundColor: lastFileTreeBackgroundColor,
                 separatorColor: lastFileTreeSeparatorColor
             )
-            updateToolbarContent(window: window, chrome: lastChrome, fileTreeVisible: lastFileTreeVisible, fileTreeWidth: lastFileTreeWidth)
+            updateToolbarContent(
+                window: window,
+                chrome: lastChrome,
+                fileTreeVisible: lastFileTreeVisible,
+                fileTreeWidth: lastFileTreeWidth,
+                fileTreeBackgroundColor: lastFileTreeBackgroundColor
+            )
         }
 
         private func applyWindowChrome(window: NSWindow, chrome: EditorChromeModel) {
@@ -2463,9 +2556,19 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
             applyTitlebarBackground(window: window, color: backgroundColor)
         }
 
-        private func updateToolbarContent(window: NSWindow, chrome: EditorChromeModel, fileTreeVisible: Bool, fileTreeWidth: CGFloat) {
+        private func updateToolbarContent(
+            window: NSWindow,
+            chrome: EditorChromeModel,
+            fileTreeVisible: Bool,
+            fileTreeWidth: CGFloat,
+            fileTreeBackgroundColor: NSColor
+        ) {
+            let sidebarFG = ChromeForegroundColors.forBackground(fileTreeBackgroundColor)
+            let mainFG = ChromeForegroundColors.forBackground(chrome.backgroundColor)
             fileTreeHostingView.rootView = EditorTitlebarLeadingRegionView(
                 state: leadingState,
+                sidebarForeground: sidebarFG,
+                mainForeground: mainFG,
                 onToggle: { self.toggleFileTreeAction?() },
                 onOpenTerminal: { self.openTerminalAction?() },
                 showsTerminalButton: GhosttyTerminalRegistry.isAvailable
@@ -2475,7 +2578,7 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
                 leadingState.sidebarWidth = fileTreeWidth
                 leadingState.document = chrome.document
             }
-            vcsHostingView.rootView = EditorTitlebarVCSView(vcsText: chrome.document.vcsText)
+            vcsHostingView.rootView = EditorTitlebarVCSView(vcsText: chrome.document.vcsText, foreground: mainFG)
             fileTreeHostingView.invalidateIntrinsicContentSize()
             vcsHostingView.invalidateIntrinsicContentSize()
             window.toolbar?.validateVisibleItems()
@@ -2631,6 +2734,8 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
 
 private struct EditorTitlebarLeadingRegionView: View {
     @ObservedObject var state: EditorTitlebarLeadingState
+    let sidebarForeground: ChromeForegroundColors
+    let mainForeground: ChromeForegroundColors
     let onToggle: () -> Void
     let onOpenTerminal: () -> Void
     let showsTerminalButton: Bool
@@ -2638,16 +2743,20 @@ private struct EditorTitlebarLeadingRegionView: View {
     var body: some View {
         HStack(spacing: 0) {
             HStack(spacing: 0) {
-                EditorTitlebarSidebarToggleButton(isActive: state.isSidebarActive, onToggle: onToggle)
-                    .padding(.leading, 10)
+                EditorTitlebarSidebarToggleButton(
+                    isActive: state.isSidebarActive,
+                    foreground: sidebarForeground,
+                    onToggle: onToggle
+                )
+                .padding(.leading, 10)
                 Spacer(minLength: 0)
             }
             .frame(width: max(state.sidebarWidth, 52), height: 24, alignment: .leading)
 
             HStack(spacing: 8) {
-                EditorTitlebarDocumentView(document: state.document)
+                EditorTitlebarDocumentView(document: state.document, foreground: mainForeground)
                 if showsTerminalButton {
-                    EditorTitlebarOpenTerminalButton(onOpenTerminal: onOpenTerminal)
+                    EditorTitlebarOpenTerminalButton(onOpenTerminal: onOpenTerminal, foreground: mainForeground)
                 }
             }
             .padding(.leading, 8)
@@ -2660,17 +2769,18 @@ private struct EditorTitlebarLeadingRegionView: View {
 
 private struct EditorTitlebarSidebarToggleButton: View {
     let isActive: Bool
+    let foreground: ChromeForegroundColors
     let onToggle: () -> Void
 
     var body: some View {
         Button(action: toggle) {
             Image(systemName: "sidebar.left")
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(isActive ? .primary : .secondary)
+                .foregroundStyle(isActive ? foreground.primary : foreground.secondary)
                 .frame(width: 28, height: 24)
                 .background {
                     RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(isActive ? Color.primary.opacity(0.10) : Color.clear)
+                        .fill(isActive ? foreground.primary.opacity(0.10) : Color.clear)
                 }
         }
         .buttonStyle(.plain)
@@ -2688,17 +2798,18 @@ private struct EditorTitlebarSidebarToggleButton: View {
 
 private struct EditorTitlebarOpenTerminalButton: View {
     let onOpenTerminal: () -> Void
+    let foreground: ChromeForegroundColors
 
     var body: some View {
         Button(action: onOpenTerminal) {
             Label("New Terminal", systemImage: "terminal")
                 .labelStyle(.iconOnly)
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(foreground.secondary)
                 .frame(width: 28, height: 24)
                 .background {
                     RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(Color.primary.opacity(0.08))
+                        .fill(foreground.primary.opacity(0.08))
                 }
         }
         .buttonStyle(.plain)
@@ -2710,16 +2821,17 @@ private struct EditorTitlebarOpenTerminalButton: View {
 
 private struct EditorTitlebarDocumentView: View {
     let document: EditorDocumentChrome
+    let foreground: ChromeForegroundColors
 
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: symbolName(for: document.icon, isDirectory: false))
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(foreground.secondary)
 
             Text(document.name)
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.primary)
+                .foregroundStyle(foreground.primary)
                 .lineLimit(1)
         }
         .fixedSize()
@@ -2730,6 +2842,7 @@ private struct EditorTitlebarDocumentView: View {
 
 private struct EditorTitlebarVCSView: View {
     let vcsText: String?
+    let foreground: ChromeForegroundColors
 
     private var trimmedVCSText: String? {
         let trimmed = vcsText?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2747,7 +2860,7 @@ private struct EditorTitlebarVCSView: View {
                         .font(.system(size: 12, weight: .medium))
                         .lineLimit(1)
                 }
-                .foregroundStyle(.secondary)
+                .foregroundStyle(foreground.secondary)
                 .fixedSize()
                 .allowsHitTesting(false)
                 .accessibilityElement(children: .combine)

@@ -3,7 +3,6 @@
 - Mouse clicking in buffers is very, very imprecise. 
 - We need a proper banner for the swift app and remove the idea that we need to have at least one buffer open, specifically in the swift app
 - Theme switching is painfully slow
-- Switching themes fucks the colors of the UI text for some reason, this is an old issue
 - Horizontal scrolling should not happen if `:wrap` is active
 - File tree:
   - Add double clicking behavior 

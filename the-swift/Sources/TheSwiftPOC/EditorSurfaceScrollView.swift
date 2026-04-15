@@ -58,6 +58,10 @@ final class EditorSurfaceScrollView: NSView, EditorSurfaceControllerDelegate {
         controller.endLiveResize()
     }
 
+    func updateBufferFontSize(_ pointSize: CGFloat) {
+        surfaceView.updateBufferFontSize(pointSize)
+    }
+
     func editorController(_ controller: EditorSurfaceController, didUpdateScene scene: EditorRenderScene) {
         surfaceView.update(scene: scene)
         terminalRegistry.reconcile(

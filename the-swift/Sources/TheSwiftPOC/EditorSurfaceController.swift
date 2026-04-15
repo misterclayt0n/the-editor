@@ -38,6 +38,12 @@ final class EditorSurfaceController: ObservableObject {
     private(set) var openItems: EditorPaneOpenItemsState = .empty
     private(set) var fileTree: EditorFileTreeState = .empty
     @Published private(set) var showsResizeOverlay = false
+    @Published private(set) var bufferFontSize: CGFloat = EditorSurfaceController.defaultBufferFontSize
+
+    static let defaultBufferFontSize: CGFloat = 14
+    private static let minBufferFontSize: CGFloat = 6
+    private static let maxBufferFontSize: CGFloat = 100
+    private static let bufferFontStep: CGFloat = 1
 
     private struct TerminalPresentationState {
         var title: String?
@@ -230,6 +236,28 @@ final class EditorSurfaceController: ObservableObject {
     func setScrollCol(_ col: Int) {
         guard EditorFFIBridge.setScrollCol(handle?.raw, col: UInt32(max(col, 0))) else { return }
         refreshSnapshot()
+    }
+
+    func increaseBufferFontSize() {
+        adjustBufferFontSize(by: Self.bufferFontStep)
+    }
+
+    func decreaseBufferFontSize() {
+        adjustBufferFontSize(by: -Self.bufferFontStep)
+    }
+
+    func resetBufferFontSize() {
+        setBufferFontSize(Self.defaultBufferFontSize)
+    }
+
+    private func adjustBufferFontSize(by delta: CGFloat) {
+        setBufferFontSize(bufferFontSize + delta)
+    }
+
+    private func setBufferFontSize(_ pointSize: CGFloat) {
+        let clampedPointSize = min(max(pointSize, Self.minBufferFontSize), Self.maxBufferFontSize)
+        guard abs(clampedPointSize - bufferFontSize) > 0.001 else { return }
+        bufferFontSize = clampedPointSize
     }
 
     func setActivePane(_ paneID: UInt) {

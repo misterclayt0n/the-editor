@@ -8,11 +8,16 @@ import TheEditorFFI
 final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
     weak var controller: EditorSurfaceController?
 
-    private let renderer: MetalEditorRenderer
-    private let cursorBlinkController: EditorCursorBlinkController
-    private let font: NSFont
-    private let fontMetrics: EditorFontMetrics
-    private let fallbackCellSize: CGSize
+    private var renderer: MetalEditorRenderer
+    private lazy var cursorBlinkController = EditorCursorBlinkController { [weak self] opacity in
+        guard let self else { return }
+        self.renderer.setActiveCursorBlinkOpacity(opacity)
+        self.renderer.drawImmediately()
+    }
+    private var font: NSFont
+    private var fontMetrics: EditorFontMetrics
+    private var fallbackCellSize: CGSize
+    private var bufferFontSize: CGFloat
 
     private struct SplitDragState {
         let splitID: UInt
@@ -47,19 +52,17 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
 
     init?(controller: EditorSurfaceController) {
         self.controller = controller
-        self.font = NSFont.monospacedSystemFont(ofSize: 14, weight: .regular)
-        self.fontMetrics = EditorFontMetrics(font: font)
-        self.fallbackCellSize = fontMetrics.cellSize
-        guard let renderer = MetalEditorRenderer(fontMetrics: fontMetrics, scaleProvider: {
-            NSScreen.main?.backingScaleFactor ?? 2
-        }) else {
+        let initialBufferFontSize = controller.bufferFontSize
+        let initialFont = Self.makeEditorFont(size: initialBufferFontSize)
+        let initialFontMetrics = EditorFontMetrics(font: initialFont)
+        guard let renderer = Self.makeRenderer(fontMetrics: initialFontMetrics) else {
             return nil
         }
         self.renderer = renderer
-        self.cursorBlinkController = EditorCursorBlinkController { [weak renderer] opacity in
-            renderer?.setActiveCursorBlinkOpacity(opacity)
-            renderer?.drawImmediately()
-        }
+        self.font = initialFont
+        self.fontMetrics = initialFontMetrics
+        self.fallbackCellSize = initialFontMetrics.cellSize
+        self.bufferFontSize = initialBufferFontSize
         super.init(frame: .zero)
         wantsLayer = true
         addSubview(renderer.view)
@@ -68,6 +71,38 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    private static func makeEditorFont(size: CGFloat) -> NSFont {
+        NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
+    }
+
+    private static func makeRenderer(fontMetrics: EditorFontMetrics) -> MetalEditorRenderer? {
+        MetalEditorRenderer(fontMetrics: fontMetrics, scaleProvider: {
+            NSScreen.main?.backingScaleFactor ?? 2
+        })
+    }
+
+    func updateBufferFontSize(_ pointSize: CGFloat) {
+        guard abs(pointSize - bufferFontSize) > 0.001 else { return }
+        let nextFont = Self.makeEditorFont(size: pointSize)
+        let nextFontMetrics = EditorFontMetrics(font: nextFont)
+        guard let nextRenderer = Self.makeRenderer(fontMetrics: nextFontMetrics) else { return }
+
+        let previousRendererView = renderer.view
+        renderer = nextRenderer
+        font = nextFont
+        fontMetrics = nextFontMetrics
+        fallbackCellSize = nextFontMetrics.cellSize
+        bufferFontSize = pointSize
+
+        previousRendererView.removeFromSuperview()
+        addSubview(nextRenderer.view)
+        applyRendererGeometry()
+        synchronizeSurfaceConfiguration(forceDraw: true)
+        inputContext?.invalidateCharacterCoordinates()
+        window?.invalidateCursorRects(for: self)
+        refreshCursorBlinkState(reset: true)
     }
 
     private func describe(_ drag: BufferSelectionDragState) -> String {

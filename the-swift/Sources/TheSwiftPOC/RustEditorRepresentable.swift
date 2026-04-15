@@ -7,7 +7,9 @@ struct EditorSurfaceRepresentable: NSViewRepresentable {
         EditorSurfaceScrollView(controller: controller)
     }
 
-    func updateNSView(_ nsView: EditorSurfaceScrollView, context: Context) {}
+    func updateNSView(_ nsView: EditorSurfaceScrollView, context: Context) {
+        nsView.updateBufferFontSize(controller.bufferFontSize)
+    }
 }
 
 // Backwards-compatible wrapper name for the original POC file.

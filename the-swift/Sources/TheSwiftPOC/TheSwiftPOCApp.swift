@@ -42,6 +42,23 @@ struct EditorCommandMenu: Commands {
                 controller.closeInputPrompt()
             }
             .keyboardShortcut(.escape, modifiers: [])
+
+            Divider()
+
+            Button("Increase Buffer Font Size") {
+                controller.increaseBufferFontSize()
+            }
+            .keyboardShortcut("=", modifiers: [.command])
+
+            Button("Decrease Buffer Font Size") {
+                controller.decreaseBufferFontSize()
+            }
+            .keyboardShortcut("-", modifiers: [.command])
+
+            Button("Reset Buffer Font Size") {
+                controller.resetBufferFontSize()
+            }
+            .keyboardShortcut("0", modifiers: [.command])
         }
 
         CommandGroup(after: .toolbar) {

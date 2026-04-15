@@ -108,6 +108,9 @@ targets.append(
         name: "TheSwiftPOC",
         dependencies: executableDependencies,
         path: "Sources/TheSwiftPOC",
+        resources: [
+            .copy("Resources/SymbolsNerdFontMono-Regular.ttf"),
+        ],
         linkerSettings: linkerSettings
     )
 )

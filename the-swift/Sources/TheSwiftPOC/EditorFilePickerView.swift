@@ -442,8 +442,7 @@ private struct EditorFilePickerRow: View {
     private var standardRow: some View {
         HStack(spacing: 10) {
             if showsIcon {
-                Image(systemName: symbolName(for: item.icon, isDirectory: item.isDirectory))
-                    .font(.system(size: 13, weight: .medium))
+                EditorSemanticIconView(iconName: item.icon, isDirectory: item.isDirectory, size: 13)
                     .frame(width: 18)
                     .foregroundStyle(iconColor)
             }
@@ -611,29 +610,7 @@ private struct EditorFilePickerRow: View {
         }
     }
 
-    private func symbolName(for icon: String, isDirectory: Bool) -> String {
-        switch icon {
-        case "folder", "folder_open", "folder_search":
-            return isDirectory ? "folder.fill" : "folder"
-        case "book":
-            return "book.closed"
-        case "swift":
-            return "swift"
-        case "rust", "file_rust":
-            return "gearshape.2"
-        case "file_markdown":
-            return "doc.text"
-        case "terminal":
-            return "terminal"
-        case "image":
-            return "photo"
-        case "json", "file_toml", "settings", "tool_hammer":
-            return "doc.badge.gearshape"
-        default:
-            return isDirectory ? "folder" : "doc"
-        }
     }
-}
 
 private let filePickerPreviewLineNumberColumnWidth: CGFloat = 26
 private let filePickerPreviewLineNumberTrailing: CGFloat = 6

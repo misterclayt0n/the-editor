@@ -643,6 +643,8 @@ struct the_editor_snapshot_cursor_t the_editor_snapshot_cursor_at(const the_edit
 struct the_editor_snapshot_selection_t the_editor_snapshot_selection_at(const the_editor_snapshot_t *snapshot, uintptr_t selection_index);
 struct the_editor_snapshot_overlay_t the_editor_snapshot_overlay_at(const the_editor_snapshot_t *snapshot, uintptr_t overlay_index);
 
+const char *the_editor_icon_glyph(const char *icon, bool is_directory);
+
 void the_editor_string_free(char *value);
 
 #ifdef __cplusplus

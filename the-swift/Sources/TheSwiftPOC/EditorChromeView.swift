@@ -450,7 +450,7 @@ private struct PendingIndicator: View {
 }
 
 private struct EditorSidebarHeaderView: View {
-    let systemImage: String
+    let headerIconName: String
     let title: String
     let helpText: String?
     let theme: EditorFileTreeSidebarTheme
@@ -464,8 +464,7 @@ private struct EditorSidebarHeaderView: View {
         HStack(spacing: 10) {
             Button(action: onActivate) {
                 HStack(spacing: 8) {
-                    Image(systemName: systemImage)
-                        .font(.system(size: 12, weight: .medium))
+                    EditorSemanticIconView(iconName: headerIconName, size: 12)
                         .foregroundStyle(Color(nsColor: theme.selectionColor).opacity(0.85))
                     Text(title)
                         .font(.system(size: 12, weight: .semibold))
@@ -505,8 +504,8 @@ private struct EditorSidebarModeSwitcher: View {
 
     var body: some View {
         HStack(spacing: 3) {
-            modeButton(.files, icon: "folder.fill", label: "Files")
-            modeButton(.buffers, icon: "square.stack.3d.up.fill", label: "Buffers")
+            modeButton(.files, iconName: "folder", label: "Files")
+            modeButton(.buffers, iconName: "buffers", label: "Buffers")
         }
         .padding(3)
         .background(
@@ -519,13 +518,12 @@ private struct EditorSidebarModeSwitcher: View {
         )
     }
 
-    private func modeButton(_ target: EditorSidebarMode, icon: String, label: String) -> some View {
+    private func modeButton(_ target: EditorSidebarMode, iconName: String, label: String) -> some View {
         let isSelected = mode == target
         return Button {
             onSelect(target)
         } label: {
-            Image(systemName: icon)
-                .font(.system(size: 11, weight: .semibold))
+            EditorSemanticIconView(iconName: iconName, size: 11)
                 .foregroundStyle(isSelected ? chromeForeground.primary : chromeForeground.secondary)
                 .frame(width: 20, height: 20)
                 .background(
@@ -554,7 +552,7 @@ private struct EditorFileTreeSidebarView: View {
     var body: some View {
         VStack(spacing: 0) {
             EditorSidebarHeaderView(
-                systemImage: "folder.fill",
+                headerIconName: "folder",
                 title: rootTitle,
                 helpText: tree.root ?? rootTitle,
                 theme: theme,
@@ -605,7 +603,7 @@ private struct EditorOpenItemsSidebarView: View {
     var body: some View {
         VStack(spacing: 0) {
             EditorSidebarHeaderView(
-                systemImage: "square.stack.3d.up.fill",
+                headerIconName: "buffers",
                 title: "Open Items",
                 helpText: "Open items grouped by pane",
                 theme: theme,
@@ -729,8 +727,7 @@ private struct EditorOpenItemSidebarRowView: View {
 
             Button(action: onActivate) {
                 HStack(spacing: 8) {
-                    Image(systemName: symbolName(for: item.iconName, isDirectory: false))
-                        .font(.system(size: 11, weight: .regular))
+                    EditorSemanticIconView(iconName: item.iconName, size: 11)
                         .foregroundStyle(Color(nsColor: iconColor))
                         .frame(width: 12)
 
@@ -1076,8 +1073,7 @@ private struct EditorPaneItemTabView: View {
         HStack(spacing: 5) {
             Button(action: onActivate) {
                 HStack(spacing: 7) {
-                    Image(systemName: symbolName(for: item.iconName, isDirectory: false))
-                        .font(.system(size: 11, weight: .medium))
+                    EditorSemanticIconView(iconName: item.iconName, size: 11)
                     Text(item.title)
                         .font(.system(size: 11.5, weight: item.isActive ? .semibold : .medium))
                         .lineLimit(1)
@@ -1688,8 +1684,7 @@ private struct EditorFileTreeRowView: View {
                         .frame(width: 10, height: 10)
                 }
 
-                Image(systemName: symbolName(for: row.iconName, isDirectory: row.isDirectory))
-                    .font(.system(size: 11, weight: row.isDirectory ? .medium : .regular))
+                EditorSemanticIconView(iconName: row.iconName, isDirectory: row.isDirectory, size: 11)
                     .foregroundStyle(Color(nsColor: iconColor))
                     .frame(width: 12)
 
@@ -1768,14 +1763,12 @@ private struct EditorSidebarRowDecorationsView: View {
     var body: some View {
         HStack(spacing: 6) {
             if let vcsKind {
-                Image(systemName: symbolName(for: fileTreeVcsIconName(vcsKind), isDirectory: false))
-                    .font(.system(size: 10, weight: .semibold))
+                EditorSemanticIconView(iconName: fileTreeVcsIconName(vcsKind), size: 10)
                     .foregroundStyle(fileTreeBadgeColor(for: fileTreeVcsSeverity(vcsKind)))
                     .accessibilityLabel(Text(fileTreeVcsAccessibilityLabel(vcsKind)))
             }
             if let diagnosticSeverity {
-                Image(systemName: diagnosticSeverity.symbolName)
-                    .font(.system(size: 10, weight: .semibold))
+                EditorSemanticIconView(iconName: diagnosticSeverity.statusIconName, size: 10)
                     .foregroundStyle(fileTreeBadgeColor(for: diagnosticSeverity))
                     .accessibilityLabel(Text(fileTreeDiagnosticAccessibilityLabel(diagnosticSeverity)))
             }
@@ -1892,8 +1885,14 @@ private struct StatusAccessoryItemView: View {
     var body: some View {
         HStack(spacing: 5) {
             if let icon = normalized.icon {
-                Image(systemName: symbolName(for: icon, isDirectory: false))
-                    .font(.system(size: 10, weight: .semibold))
+                Group {
+                    if icon == "curlybraces" || icon == "textformat" || icon == "return" {
+                        Image(systemName: icon)
+                            .font(.system(size: 10, weight: .semibold))
+                    } else {
+                        EditorSemanticIconView(iconName: icon, size: 10)
+                    }
+                }
             }
 
             if showsText, !normalized.text.isEmpty {
@@ -2802,9 +2801,7 @@ private struct EditorTitlebarOpenTerminalButton: View {
 
     var body: some View {
         Button(action: onOpenTerminal) {
-            Label("New Terminal", systemImage: "terminal")
-                .labelStyle(.iconOnly)
-                .font(.system(size: 12, weight: .semibold))
+            EditorSemanticIconView(iconName: "terminal", size: 12)
                 .foregroundStyle(foreground.secondary)
                 .frame(width: 28, height: 24)
                 .background {
@@ -2825,8 +2822,7 @@ private struct EditorTitlebarDocumentView: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Image(systemName: symbolName(for: document.icon, isDirectory: false))
-                .font(.system(size: 12, weight: .semibold))
+            EditorSemanticIconView(iconName: document.icon, size: 12)
                 .foregroundStyle(foreground.secondary)
 
             Text(document.name)
@@ -2854,8 +2850,7 @@ private struct EditorTitlebarVCSView: View {
         Group {
             if let trimmedVCSText {
                 HStack(spacing: 6) {
-                    Image(systemName: symbolName(for: "git_branch", isDirectory: false))
-                        .font(.system(size: 11, weight: .semibold))
+                    EditorSemanticIconView(iconName: "git_branch", size: 11)
                     Text(trimmedVCSText)
                         .font(.system(size: 12, weight: .medium))
                         .lineLimit(1)
@@ -3034,57 +3029,4 @@ private func normalizedStatusItemDisplay(icon: String?, text: String) -> (icon: 
         return (iconName, remainder)
     }
     return (nil, text)
-}
-
-private func symbolName(for icon: String, isDirectory: Bool) -> String {
-    switch icon {
-    case "folder", "folder_open", "folder_search":
-        return isDirectory ? "folder.fill" : "folder"
-    case "book":
-        return "book.closed"
-    case "swift":
-        return "swift"
-    case "rust", "file_rust":
-        return "gearshape.2"
-    case "file_markdown":
-        return "doc.text"
-    case "terminal":
-        return "terminal"
-    case "image":
-        return "photo"
-    case "json", "file_toml", "settings", "tool_hammer":
-        return "doc.badge.gearshape"
-    case "git_branch":
-        return "point.topleft.down.curvedto.point.bottomright.up"
-    case "git_conflict":
-        return "exclamationmark.octagon.fill"
-    case "git_deleted":
-        return "trash.fill"
-    case "git_modified":
-        return "circle.fill"
-    case "git_renamed":
-        return "arrow.left.arrow.right"
-    case "git_untracked":
-        return "plus.circle.fill"
-    case "diagnostic_error":
-        return "xmark.circle.fill"
-    case "diagnostic_warning":
-        return "exclamationmark.triangle.fill"
-    case "diagnostic_info":
-        return "info.circle.fill"
-    case "diagnostic_hint":
-        return "lightbulb.fill"
-    case "curlybraces", "textformat", "return":
-        return icon
-    case "copilot", "supermaven":
-        return "wand.and.stars"
-    case "copilot_disabled", "supermaven_disabled":
-        return "slash.circle"
-    case "copilot_init", "supermaven_init":
-        return "arrow.triangle.2.circlepath"
-    case "copilot_error", "supermaven_error":
-        return "exclamationmark.circle"
-    default:
-        return isDirectory ? "folder" : "doc"
-    }
 }

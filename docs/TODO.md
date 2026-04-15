@@ -8,12 +8,11 @@
 - Ghostty:
   - Scrollbar
   - Command + F working properly
-  - Scrolling when I select and go to the top/bottom of the viewport
+  - Scrolling when I select and go to the top/bottom of the viewport - Dragging.
 - Inline completion rendering - It would be nice to make something like zed here, including all of that complicated system, it would be very cool if we had that complicated jumps zed supports. Not sure if it's model specific tho, doesn't seem like it.
 - "gw" does not render anything
 - Fix signature helper triggering an error every time I enter insert mode in a buffer that does not support it
 - Completely overhaul the notification system for the swift app, also include system notifications for when agents are doing their thing
-- Use zed's icons in the swift app
 - We probably need some sort of VCS integrations for ease of reviewing AI generated code. not sure what the UX for that would look like tho. VCS picker doesn't feel as nice I guess, but of course I could just improve it or "fix" it
 - Configuration support - We really only care for simple things for now: default theme, default font family, font size, cursor shape, whatever, not that deep
 - "Fix" all pickers - Low prio tbh I don't use most of them 
@@ -24,3 +23,4 @@
 - LSP hover on actual cursor hover
 - Adhere to swiftUI/macOS defaults 
 - Things need to take the :pwd command seriously (ghostty for sure and file tree likely)
+- Search does not scroll as I type

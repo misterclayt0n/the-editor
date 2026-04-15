@@ -113,6 +113,7 @@ struct TheSwiftPOCApp: App {
     @StateObject private var model: EditorAppModel
 
     init() {
+        EditorIconFont.registerIfNeeded()
         let initialPath = ProcessInfo.processInfo.arguments
             .dropFirst()
             .first(where: { $0 != "--" })

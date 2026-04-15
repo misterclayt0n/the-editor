@@ -246,7 +246,7 @@ fn main() -> Result<()> {
       let cursor_backend = terminal.apply_editor_cursor(ctx.term_cursor_mode)?;
       let total_ms = render_start.elapsed().as_secs_f64() * 1000.0;
       let draw_ms = after_draw.duration_since(render_start).as_secs_f64() * 1000.0;
-      let cursor_ms = total_ms - draw_ms;
+      let cursor_ms = total_ms - draw_ms;     
       render::log_present_perf(
         &ctx,
         "update",

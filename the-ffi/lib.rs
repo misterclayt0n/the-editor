@@ -1,4 +1,5 @@
 use std::{
+  cell::RefCell,
   collections::{
     BTreeMap,
     HashMap,
@@ -113,6 +114,7 @@ use the_default::{
   completion_panel_rect,
   decorate_buffer_tabs_snapshot,
   decorate_pane_open_items_snapshot,
+  file_picker_icon_glyph,
   file_picker_icon_name_for_path,
   file_picker_item_selectable,
   file_picker_items_from_specs,
@@ -13349,6 +13351,38 @@ pub unsafe extern "C" fn the_editor_snapshot_overlay_at(
     .get(overlay_index)
     .map(|record| record.overlay)
     .unwrap_or_default()
+}
+
+thread_local! {
+  static THE_EDITOR_ICON_GLYPH_BUFFER: RefCell<Vec<u8>> = RefCell::new(Vec::new());
+}
+
+/// Returns a pointer to a thread-local, NUL-terminated UTF-8 buffer holding the icon glyph.
+/// The pointer is invalidated by the next `the_editor_icon_glyph` call on the same thread.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_icon_glyph(
+  icon: *const c_char,
+  is_directory: bool,
+) -> *const c_char {
+  THE_EDITOR_ICON_GLYPH_BUFFER.with(|slot| {
+    let mut buf = slot.borrow_mut();
+    buf.clear();
+    if icon.is_null() {
+      buf.push(0);
+      return buf.as_ptr().cast::<c_char>();
+    }
+    let icon_str = match unsafe { CStr::from_ptr(icon) }.to_str() {
+      Ok(value) => value,
+      Err(_) => {
+        buf.push(0);
+        return buf.as_ptr().cast::<c_char>();
+      }
+    };
+    let glyph = file_picker_icon_glyph(icon_str, is_directory);
+    buf.extend_from_slice(glyph.as_bytes());
+    buf.push(0);
+    buf.as_ptr().cast::<c_char>()
+  })
 }
 
 #[unsafe(no_mangle)]

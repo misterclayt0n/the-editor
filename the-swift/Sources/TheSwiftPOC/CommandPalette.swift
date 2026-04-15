@@ -253,9 +253,8 @@ private struct CommandRow: View {
                 }
 
                 if let icon = option.leadingIcon {
-                    Image(systemName: icon)
+                    EditorSemanticIconView(iconName: icon, size: 14)
                         .foregroundStyle(option.emphasis ? Color.accentColor : .secondary)
-                        .font(.system(size: 14, weight: .medium))
                 }
 
                 VStack(alignment: .leading, spacing: 2) {

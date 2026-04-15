@@ -436,10 +436,17 @@ private struct EditorCompletionRow: View {
     var body: some View {
         HStack(spacing: 8) {
             if let icon = item.leadingIcon {
-                Text(icon)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(Color(nsColor: item.leadingColor?.color ?? .secondaryLabelColor))
-                    .frame(width: 14, alignment: .center)
+                Group {
+                    if icon.count == 1 {
+                        Text(icon)
+                            .font(.system(size: 12, weight: .medium))
+                    } else {
+                        Text(editorCompletionLeadingText(icon: icon))
+                            .font(.custom(EditorIconFont.postScriptName, size: 12))
+                    }
+                }
+                .foregroundStyle(Color(nsColor: item.leadingColor?.color ?? .secondaryLabelColor))
+                .frame(width: 14, alignment: .center)
             }
 
             Text(item.title)

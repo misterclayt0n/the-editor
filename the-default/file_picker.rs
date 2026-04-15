@@ -4001,6 +4001,9 @@ pub fn file_picker_icon_name_for_path(path: &Path) -> &'static str {
   if extension.eq_ignore_ascii_case("nix") {
     return "nix";
   }
+  if extension.eq_ignore_ascii_case("zig") {
+    return "zig";
+  }
   if extension.eq_ignore_ascii_case("swift") {
     return "swift";
   }
@@ -4105,6 +4108,7 @@ pub fn file_picker_icon_glyph(icon: &str, is_dir: bool) -> &'static str {
     "folder_search" => "",
     "archive" => "",
     "book" => "󰂺",
+    "buffers" => "󰌨",
     "c" => "",
     "cpp" => "",
     "css" => "",
@@ -4140,6 +4144,7 @@ pub fn file_picker_icon_glyph(icon: &str, is_dir: bool) -> &'static str {
     "sass" => "",
     "settings" => "",
     "swift" => "",
+    "zig" => "\u{e6a9}",
     "supermaven" | "supermaven_init" | "supermaven_error" | "supermaven_disabled" => "",
     "terminal" => "",
     "tool_hammer" => "󰛶",

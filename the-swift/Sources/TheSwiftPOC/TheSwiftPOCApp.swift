@@ -142,6 +142,7 @@ struct TheSwiftPOCApp: App {
             EditorContainerView(controller: model.controller)
                 .frame(minWidth: 900, minHeight: 600)
         }
+        .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 900, height: 600)
         .commands {
             EditorCommandMenu(controller: model.controller)

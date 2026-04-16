@@ -31,7 +31,6 @@ struct EditorChromeView: View {
     @AppStorage("swift.sidebar.mode") private var storedSidebarModeRaw: String = EditorSidebarMode.files.rawValue
     @GestureState private var fileTreeDragTranslation: CGFloat = 0
     @State private var isFileTreeResizeActive = false
-    @State private var titlebarPadding: CGFloat = 28
     @State private var titlebarLeadingInset: CGFloat = 72
 
 
@@ -125,10 +124,6 @@ struct EditorChromeView: View {
 
     private var mainColumn: some View {
         VStack(spacing: 0) {
-            // Content titlebar overlay - sits in the transparent titlebar area above the editor surface
-            customTitlebar
-                .frame(height: titlebarPadding)
-
             ZStack(alignment: .topLeading) {
                 EditorSurfaceRepresentable(controller: controller)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -139,6 +134,10 @@ struct EditorChromeView: View {
                 EditorPaneItemStripsOverlayView(controller: controller)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .overlay(alignment: .top) {
+                // Titlebar overlay fills the safe area with a draggable title strip
+                customTitlebar
+            }
 
             EditorStatusAccessoryView(chrome: controller.chrome, mode: controller.currentMode, controller: controller)
         }
@@ -156,41 +155,44 @@ struct EditorChromeView: View {
             : Color.white.opacity(0.82)
     }
 
-    /// Content-level titlebar overlay that sits in the transparent titlebar area.
-    /// Matches cmux's approach: a ZStack with a drag handle, folder icon, and title text.
+    /// Content-level titlebar overlay that fills the safe area at the top of the main column.
+    /// Provides a draggable strip with folder icon and document title.
     @ViewBuilder
     private var customTitlebar: some View {
-        let name = controller.chrome.document.name
-        ZStack {
-            // Window drag handle - allows dragging from the titlebar area
-            EditorWindowDragHandleView()
+        GeometryReader { geometry in
+            let topInset = geometry.safeAreaInsets.top
+            let name = controller.chrome.document.name
+            ZStack {
+                // Window drag handle - allows dragging from the titlebar area
+                EditorWindowDragHandleView()
 
-            EditorTitlebarLeadingInsetReader(inset: $titlebarLeadingInset)
-                .allowsHitTesting(false)
+                EditorTitlebarLeadingInsetReader(inset: $titlebarLeadingInset)
+                    .allowsHitTesting(false)
 
-            HStack(spacing: 8) {
-                EditorSidebarTitleIconView(directory: controller.chrome.document.relativePath ?? controller.chrome.document.absolutePath ?? "")
+                HStack(spacing: 8) {
+                    EditorSidebarTitleIconView(directory: controller.chrome.document.relativePath ?? controller.chrome.document.absolutePath ?? "")
 
-                Text(name)
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(titlebarForegroundColor)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+                    Text(name)
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(titlebarForegroundColor)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
 
-                Spacer()
+                    Spacer()
+                }
+                .padding(.leading, controller.fileTree.isVisible ? 12 : titlebarLeadingInset)
+                .padding(.trailing, 8)
             }
-            .padding(.leading, controller.fileTree.isVisible ? 12 : titlebarLeadingInset)
-            .padding(.trailing, 8)
-        }
-        .frame(height: titlebarPadding)
-        .frame(maxWidth: .infinity)
-        .contentShape(Rectangle())
-        .background(EditorTitlebarDoubleClickMonitorView())
-        .background(EditorTitlebarLayerBackground(backgroundColor: controller.chrome.backgroundColor))
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(Color(nsColor: .separatorColor))
-                .frame(height: 1)
+            .frame(height: max(topInset, 28), alignment: .bottom)
+            .frame(maxWidth: .infinity)
+            .contentShape(Rectangle())
+            .background(EditorTitlebarDoubleClickMonitorView())
+            .background(EditorTitlebarLayerBackground(backgroundColor: controller.chrome.backgroundColor))
+            .overlay(alignment: .bottom) {
+                Rectangle()
+                    .fill(Color(nsColor: .separatorColor))
+                    .frame(height: 1)
+            }
         }
     }
 

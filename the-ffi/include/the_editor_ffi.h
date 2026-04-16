@@ -11,6 +11,7 @@ extern "C" {
 
 typedef struct the_editor_handle_t the_editor_handle_t;
 typedef struct the_editor_snapshot_t the_editor_snapshot_t;
+typedef struct the_editor_markdown_render_t the_editor_markdown_render_t;
 
 typedef enum the_editor_key_kind_t {
   THE_EDITOR_KEY_CHAR = 0,
@@ -355,7 +356,17 @@ typedef struct the_editor_snapshot_docs_run_t {
   const char *text;
   struct the_editor_style_t style;
   uint8_t kind;
+  const char *link_destination;
 } the_editor_snapshot_docs_run_t;
+
+typedef struct the_editor_markdown_block_t {
+  uint8_t kind;
+  uint8_t level;
+  uint16_t list_depth;
+  uintptr_t run_start;
+  uintptr_t run_count;
+  const char *language;
+} the_editor_markdown_block_t;
 
 typedef struct the_editor_snapshot_diagnostic_t {
   uint32_t start_line;
@@ -587,6 +598,7 @@ bool the_editor_close_open_item(the_editor_handle_t *handle, uintptr_t pane_id, 
 bool the_editor_set_embedded_terminal_enabled(the_editor_handle_t *handle, bool enabled);
 bool the_editor_take_quit_requested(the_editor_handle_t *handle);
 bool the_editor_open_terminal_in_active_pane(the_editor_handle_t *handle);
+bool the_editor_open_agent_in_active_pane(the_editor_handle_t *handle);
 bool the_editor_close_terminal_in_active_pane(the_editor_handle_t *handle);
 bool the_editor_file_tree_select_index(the_editor_handle_t *handle, uintptr_t index);
 bool the_editor_file_tree_click_index(the_editor_handle_t *handle, uintptr_t index);
@@ -599,6 +611,13 @@ bool the_editor_insert_text(the_editor_handle_t *handle, const char *text);
 uint32_t the_editor_primary_selection_utf16_location(the_editor_handle_t *handle);
 uint32_t the_editor_primary_selection_utf16_length(the_editor_handle_t *handle);
 char *the_editor_primary_selection_text(the_editor_handle_t *handle);
+
+the_editor_markdown_render_t *the_editor_render_markdown(the_editor_handle_t *handle, const char *markdown);
+void the_editor_markdown_render_free(the_editor_markdown_render_t *render);
+uintptr_t the_editor_markdown_render_run_count(const the_editor_markdown_render_t *render);
+struct the_editor_snapshot_docs_run_t the_editor_markdown_render_run_at(const the_editor_markdown_render_t *render, uintptr_t run_index);
+uintptr_t the_editor_markdown_render_block_count(const the_editor_markdown_render_t *render);
+struct the_editor_markdown_block_t the_editor_markdown_render_block_at(const the_editor_markdown_render_t *render, uintptr_t block_index);
 
 the_editor_snapshot_t *the_editor_snapshot_create(the_editor_handle_t *handle);
 void the_editor_snapshot_free(the_editor_snapshot_t *snapshot);

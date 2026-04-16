@@ -35,7 +35,10 @@ final class GhosttyTerminalRegistry {
         let colorScheme = ghosttyColorScheme(for: resolvedBackgroundColor)
         runtime.setColorScheme(colorScheme)
 
-        let visibleTerminalPanes = scene?.panes.filter { $0.kind == .clientSurface && $0.clientSurfaceID != nil } ?? []
+        let visibleTerminalPanes = scene?.panes.filter {
+            $0.kind == .clientSurface
+                && $0.clientSurfaceID != nil
+        } ?? []
         let allSurfaceIDs = Set(openItems.groups.flatMap { group in
             group.items.compactMap { item -> UInt? in
                 guard item.kind == .terminal else { return nil }

@@ -110,6 +110,7 @@ targets.append(
         path: "Sources/TheSwiftPOC",
         resources: [
             .copy("Resources/SymbolsNerdFontMono-Regular.ttf"),
+            .copy("Resources/pi-agent-panel-helper.mjs"),
         ],
         linkerSettings: linkerSettings
     )

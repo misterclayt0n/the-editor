@@ -8,6 +8,7 @@ use std::{
 
 use the_lib::{
   editor::{
+    AgentItemId,
     BufferId,
     ClientSurfaceId,
     Editor,
@@ -26,6 +27,7 @@ use crate::{
 pub enum OpenItemKind {
   Buffer,
   Terminal,
+  Agent,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,6 +48,7 @@ pub struct PaneOpenItemSnapshot {
   pub kind:              OpenItemKind,
   pub buffer_id:         Option<BufferId>,
   pub client_surface_id: Option<ClientSurfaceId>,
+  pub agent_item_id:     Option<AgentItemId>,
   pub title:             String,
   pub subtitle:          Option<String>,
   pub file_path:         Option<PathBuf>,
@@ -157,6 +160,7 @@ fn map_item_snapshot(
         kind: OpenItemKind::Buffer,
         buffer_id: Some(buffer_id),
         client_surface_id: None,
+        agent_item_id: None,
         title: snapshot.display_name,
         subtitle,
         file_path: snapshot.file_path,
@@ -170,7 +174,22 @@ fn map_item_snapshot(
         kind: OpenItemKind::Terminal,
         buffer_id: None,
         client_surface_id: Some(surface_id),
+        agent_item_id: None,
         title: format!("terminal {}", surface_id.get().get()),
+        subtitle: None,
+        file_path: None,
+        modified: false,
+        decorations: FileTreeDecorations::default(),
+        is_active,
+      }
+    },
+    PaneContent::Agent { agent_id } => {
+      PaneOpenItemSnapshot {
+        kind: OpenItemKind::Agent,
+        buffer_id: None,
+        client_surface_id: None,
+        agent_item_id: Some(agent_id),
+        title: "Agent".to_string(),
         subtitle: None,
         file_path: None,
         modified: false,

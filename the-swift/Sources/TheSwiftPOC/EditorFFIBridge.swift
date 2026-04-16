@@ -293,6 +293,33 @@ struct EditorDocsRun: Hashable {
     let text: String
     let style: EditorResolvedStyle
     let kind: EditorDocsRunKind
+    let linkDestination: String?
+}
+
+enum EditorMarkdownBlockKind: UInt8 {
+    case paragraph = 0
+    case heading = 1
+    case listItem = 2
+    case quote = 3
+    case codeFence = 4
+    case rule = 5
+    case blankLine = 6
+}
+
+struct EditorMarkdownBlock: Hashable {
+    let kind: EditorMarkdownBlockKind
+    let level: Int
+    let listDepth: Int
+    let runStart: Int
+    let runCount: Int
+    let language: String?
+}
+
+struct EditorRenderedMarkdown: Hashable {
+    let runs: [EditorDocsRun]
+    let blocks: [EditorMarkdownBlock]
+
+    static let empty = EditorRenderedMarkdown(runs: [], blocks: [])
 }
 
 struct EditorDocsPanelState: Hashable {
@@ -688,6 +715,7 @@ struct EditorBufferTabsState: Hashable {
 enum EditorOpenItemKind: UInt8, Hashable {
     case buffer = 0
     case terminal = 1
+    case agent = 2
 }
 
 struct EditorPaneOpenItemRow: Hashable, Identifiable {
@@ -769,6 +797,7 @@ struct EditorFileTreeState: Hashable {
 enum EditorPaneKind: UInt8 {
     case editorBuffer = 0
     case clientSurface = 1
+    case agent = 2
 }
 
 enum EditorSplitAxis: UInt8 {
@@ -1135,6 +1164,12 @@ enum EditorFFIBridge {
     }
 
     @discardableResult
+    static func openAgentInActivePane(_ handle: OpaquePointer?) -> Bool {
+        guard let handle else { return false }
+        return the_editor_open_agent_in_active_pane(handle)
+    }
+
+    @discardableResult
     static func closeTerminalInActivePane(_ handle: OpaquePointer?) -> Bool {
         guard let handle else { return false }
         return the_editor_close_terminal_in_active_pane(handle)
@@ -1214,6 +1249,42 @@ enum EditorFFIBridge {
         }
         defer { the_editor_string_free(raw) }
         return String(cString: raw)
+    }
+
+    static func renderMarkdown(_ handle: OpaquePointer?, markdown: String) -> EditorRenderedMarkdown {
+        guard let handle else { return .empty }
+        return markdown.withCString { rawMarkdown in
+            guard let render = the_editor_render_markdown(handle, rawMarkdown) else {
+                return .empty
+            }
+            defer { the_editor_markdown_render_free(render) }
+
+            let runCount = Int(the_editor_markdown_render_run_count(render))
+            let runs = (0..<runCount).map { runIndex in
+                let runValue = the_editor_markdown_render_run_at(render, UInt(runIndex))
+                return EditorDocsRun(
+                    text: runValue.text.map { String(cString: $0) } ?? "",
+                    style: Self.style(from: runValue.style),
+                    kind: EditorDocsRunKind(rawValue: runValue.kind) ?? .body,
+                    linkDestination: runValue.link_destination.map { String(cString: $0) }
+                )
+            }
+
+            let blockCount = Int(the_editor_markdown_render_block_count(render))
+            let blocks = (0..<blockCount).map { blockIndex in
+                let blockValue = the_editor_markdown_render_block_at(render, UInt(blockIndex))
+                return EditorMarkdownBlock(
+                    kind: EditorMarkdownBlockKind(rawValue: blockValue.kind) ?? .blankLine,
+                    level: Int(blockValue.level),
+                    listDepth: Int(blockValue.list_depth),
+                    runStart: Int(blockValue.run_start),
+                    runCount: Int(blockValue.run_count),
+                    language: blockValue.language.map { String(cString: $0) }
+                )
+            }
+
+            return EditorRenderedMarkdown(runs: runs, blocks: blocks)
+        }
     }
 
     static func makeSnapshot(_ handle: OpaquePointer?) -> EditorSnapshot? {
@@ -1393,7 +1464,8 @@ enum EditorFFIBridge {
             return EditorDocsRun(
                 text: runValue.text.map { String(cString: $0) } ?? "",
                 style: style(from: runValue.style),
-                kind: EditorDocsRunKind(rawValue: runValue.kind) ?? .body
+                kind: EditorDocsRunKind(rawValue: runValue.kind) ?? .body,
+                linkDestination: runValue.link_destination.map { String(cString: $0) }
             )
         }
         let hoverDocs = EditorDocsPanelState(
@@ -1411,7 +1483,8 @@ enum EditorFFIBridge {
             return EditorDocsRun(
                 text: runValue.text.map { String(cString: $0) } ?? "",
                 style: style(from: runValue.style),
-                kind: EditorDocsRunKind(rawValue: runValue.kind) ?? .body
+                kind: EditorDocsRunKind(rawValue: runValue.kind) ?? .body,
+                linkDestination: runValue.link_destination.map { String(cString: $0) }
             )
         }
         let completionDocs = EditorDocsPanelState(
@@ -1429,7 +1502,8 @@ enum EditorFFIBridge {
             return EditorDocsRun(
                 text: runValue.text.map { String(cString: $0) } ?? "",
                 style: style(from: runValue.style),
-                kind: EditorDocsRunKind(rawValue: runValue.kind) ?? .body
+                kind: EditorDocsRunKind(rawValue: runValue.kind) ?? .body,
+                linkDestination: runValue.link_destination.map { String(cString: $0) }
             )
         }
         let signatureHelp = EditorDocsPanelState(

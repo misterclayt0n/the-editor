@@ -80,6 +80,7 @@ pub enum DocsBlock {
   ListItem {
     marker: DocsListMarker,
     runs:   Vec<DocsInlineRun>,
+    depth:  usize,
   },
   Quote(Vec<DocsInlineRun>),
   CodeFence {
@@ -100,11 +101,12 @@ enum ActiveBlockKind {
 
 #[derive(Clone, Debug)]
 struct ActiveBlock {
-  kind:   ActiveBlockKind,
-  marker: Option<DocsListMarker>,
-  runs:   Vec<DocsInlineRun>,
-  start:  usize,
-  end:    usize,
+  kind:       ActiveBlockKind,
+  marker:     Option<DocsListMarker>,
+  list_depth: usize,
+  runs:       Vec<DocsInlineRun>,
+  start:      usize,
+  end:        usize,
 }
 
 #[derive(Clone, Debug)]
@@ -233,6 +235,7 @@ fn docs_begin_active_block(
   active_block: &mut Option<ActiveBlock>,
   kind: ActiveBlockKind,
   marker: Option<DocsListMarker>,
+  list_depth: usize,
   start: usize,
 ) {
   if active_block.is_some() {
@@ -241,6 +244,7 @@ fn docs_begin_active_block(
   *active_block = Some(ActiveBlock {
     kind,
     marker,
+    list_depth,
     runs: Vec::new(),
     start,
     end: start,
@@ -271,6 +275,7 @@ fn docs_finish_active_block(
       DocsBlock::ListItem {
         marker: block.marker.unwrap_or(DocsListMarker::Bullet),
         runs:   block.runs,
+        depth:  block.list_depth,
       }
     },
     ActiveBlockKind::Quote => DocsBlock::Quote(block.runs),
@@ -310,6 +315,7 @@ pub fn parse_markdown_blocks(markdown: &str) -> Vec<DocsBlock> {
   let mut link_targets: Vec<String> = Vec::new();
   let mut list_stack: Vec<ListState> = Vec::new();
   let mut pending_item_marker: Option<DocsListMarker> = None;
+  let mut pending_item_depth: Option<usize> = None;
   let mut heading_level: Option<u8> = None;
   let mut block_quote_depth = 0usize;
 
@@ -319,16 +325,20 @@ pub fn parse_markdown_blocks(markdown: &str) -> Vec<DocsBlock> {
       Event::Start(tag) => {
         match tag {
           Tag::Paragraph => {
-            let (kind, marker) = if let Some(marker) = pending_item_marker.take() {
-              (ActiveBlockKind::ListItem, Some(marker))
+            let (kind, marker, list_depth) = if let Some(marker) = pending_item_marker.take() {
+              (
+                ActiveBlockKind::ListItem,
+                Some(marker),
+                pending_item_depth.take().unwrap_or_default(),
+              )
             } else if let Some(level) = heading_level {
-              (ActiveBlockKind::Heading(level), None)
+              (ActiveBlockKind::Heading(level), None, 0)
             } else if block_quote_depth > 0 {
-              (ActiveBlockKind::Quote, None)
+              (ActiveBlockKind::Quote, None, 0)
             } else {
-              (ActiveBlockKind::Paragraph, None)
+              (ActiveBlockKind::Paragraph, None, 0)
             };
-            docs_begin_active_block(&mut active_block, kind, marker, range.start);
+            docs_begin_active_block(&mut active_block, kind, marker, list_depth, range.start);
           },
           Tag::Heading { level, .. } => {
             docs_finish_active_block(&mut blocks, &mut active_block, range.start);
@@ -337,6 +347,7 @@ pub fn parse_markdown_blocks(markdown: &str) -> Vec<DocsBlock> {
               &mut active_block,
               ActiveBlockKind::Heading(heading_level.unwrap_or(1)),
               None,
+              0,
               range.start,
             );
           },
@@ -350,6 +361,7 @@ pub fn parse_markdown_blocks(markdown: &str) -> Vec<DocsBlock> {
           },
           Tag::Item => {
             pending_item_marker = Some(docs_next_list_marker(&mut list_stack));
+            pending_item_depth = Some(list_stack.len().saturating_sub(1));
           },
           Tag::CodeBlock(kind) => {
             docs_finish_active_block(&mut blocks, &mut active_block, range.start);
@@ -424,16 +436,20 @@ pub fn parse_markdown_blocks(markdown: &str) -> Vec<DocsBlock> {
           continue;
         }
         if active_block.is_none() {
-          let (kind, marker) = if let Some(marker) = pending_item_marker.take() {
-            (ActiveBlockKind::ListItem, Some(marker))
+          let (kind, marker, list_depth) = if let Some(marker) = pending_item_marker.take() {
+            (
+              ActiveBlockKind::ListItem,
+              Some(marker),
+              pending_item_depth.take().unwrap_or_default(),
+            )
           } else if let Some(level) = heading_level {
-            (ActiveBlockKind::Heading(level), None)
+            (ActiveBlockKind::Heading(level), None, 0)
           } else if block_quote_depth > 0 {
-            (ActiveBlockKind::Quote, None)
+            (ActiveBlockKind::Quote, None, 0)
           } else {
-            (ActiveBlockKind::Paragraph, None)
+            (ActiveBlockKind::Paragraph, None, 0)
           };
-          docs_begin_active_block(&mut active_block, kind, marker, range.start);
+          docs_begin_active_block(&mut active_block, kind, marker, list_depth, range.start);
         }
         if let Some(block) = active_block.as_mut() {
           let link_destination = link_targets.last().map(String::as_str);
@@ -454,16 +470,20 @@ pub fn parse_markdown_blocks(markdown: &str) -> Vec<DocsBlock> {
       },
       Event::Code(text) => {
         if active_block.is_none() {
-          let (kind, marker) = if let Some(marker) = pending_item_marker.take() {
-            (ActiveBlockKind::ListItem, Some(marker))
+          let (kind, marker, list_depth) = if let Some(marker) = pending_item_marker.take() {
+            (
+              ActiveBlockKind::ListItem,
+              Some(marker),
+              pending_item_depth.take().unwrap_or_default(),
+            )
           } else if let Some(level) = heading_level {
-            (ActiveBlockKind::Heading(level), None)
+            (ActiveBlockKind::Heading(level), None, 0)
           } else if block_quote_depth > 0 {
-            (ActiveBlockKind::Quote, None)
+            (ActiveBlockKind::Quote, None, 0)
           } else {
-            (ActiveBlockKind::Paragraph, None)
+            (ActiveBlockKind::Paragraph, None, 0)
           };
-          docs_begin_active_block(&mut active_block, kind, marker, range.start);
+          docs_begin_active_block(&mut active_block, kind, marker, list_depth, range.start);
         }
         if let Some(block) = active_block.as_mut() {
           docs_push_inline_run(
@@ -504,6 +524,7 @@ pub fn parse_markdown_blocks(markdown: &str) -> Vec<DocsBlock> {
             &mut active_block,
             ActiveBlockKind::Paragraph,
             None,
+            0,
             range.start,
           );
         }
@@ -524,6 +545,7 @@ pub fn parse_markdown_blocks(markdown: &str) -> Vec<DocsBlock> {
             &mut active_block,
             ActiveBlockKind::Paragraph,
             None,
+            0,
             range.start,
           );
         }
@@ -541,10 +563,12 @@ pub fn parse_markdown_blocks(markdown: &str) -> Vec<DocsBlock> {
       Event::TaskListMarker(checked) => {
         if active_block.is_none() {
           let marker = pending_item_marker.take();
+          let list_depth = pending_item_depth.take().unwrap_or_default();
           docs_begin_active_block(
             &mut active_block,
             ActiveBlockKind::ListItem,
             marker,
+            list_depth,
             range.start,
           );
         }

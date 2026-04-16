@@ -21,3 +21,16 @@
 - LSP hover on actual cursor hover
 - Adhere to swiftUI/macOS defaults 
 - Things need to take the :pwd command seriously (ghostty for sure and file tree likely)
+
+Agent panel: 
+- Performance is still not ideal, particularly when text is streaming and I try to do other things like fuck around with the terminal 
+- Theme updates are not changing markdown rendered colors
+- We need to create the cmd + L binding that basically just inputs a selection into the text agent prompt - However if we have multiple agent panels, which one will it be inputed into? Probably the correct behavior would be the one in focus? 
+- Render Pi statusline, same as what we do with the terminal panes
+- Agent-follow command is going to be dope.
+- Proper rendered diffs with syntax highlighting? 
+- Diff capabilities need to be both global and agent panel specific. We need the agent panel to be able to tell us what changes it has made on one specific pass (kinda like a summary if you will) but also need the-editor to swiftly tell you about all changes made VCS wise
+- Add better support for the other commands:
+  - /compact -> actually render the compaction
+  - /tree    -> full support 
+- 

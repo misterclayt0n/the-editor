@@ -258,7 +258,13 @@ struct EditorDocsPanelOverlay: View {
             attributes[.underlineColor] = underlineColor
         }
 
-        if case .link = run.kind {
+        if let destination = run.linkDestination, !destination.isEmpty {
+            attributes[.link] = URL(string: destination) ?? destination
+            attributes[.cursor] = NSCursor.pointingHand
+            attributes[.foregroundColor] = NSColor.linkColor
+            attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue
+            attributes[.underlineColor] = NSColor.linkColor
+        } else if case .link = run.kind {
             attributes[.cursor] = NSCursor.pointingHand
         }
 

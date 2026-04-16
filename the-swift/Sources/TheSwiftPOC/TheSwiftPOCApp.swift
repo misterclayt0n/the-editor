@@ -86,6 +86,11 @@ struct EditorCommandMenu: Commands {
             }
             .keyboardShortcut("t", modifiers: [.command, .shift])
 
+            Button("Open Agent Pane") {
+                controller.openAgentInActivePane()
+            }
+            .keyboardShortcut("a", modifiers: [.command, .shift])
+
             Button("Close Active Terminal") {
                 controller.closeTerminalInActivePane()
             }

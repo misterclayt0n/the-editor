@@ -42,6 +42,10 @@ struct EditorChromeView: View {
         EditorSidebarMode(rawValue: storedSidebarModeRaw) ?? .files
     }
 
+    init(controller: EditorSurfaceController) {
+        self.controller = controller
+    }
+
     var body: some View {
         GeometryReader { geometry in
             let effectiveTitlebarPadding = alignedTitlebarPadding(totalHeight: geometry.size.height)
@@ -74,7 +78,8 @@ struct EditorChromeView: View {
                     titlebarPadding: $titlebarPadding,
                     onToggleFileTree: controller.toggleFileTree,
                     onSelectSidebarMode: selectSidebarMode,
-                    onOpenTerminal: controller.openTerminalInActivePane
+                    onOpenTerminal: controller.openTerminalInActivePane,
+                    onOpenAgentPane: controller.openAgentInActivePane
                 )
             )
             .background {
@@ -160,8 +165,13 @@ struct EditorChromeView: View {
     private func mainColumn(titlebarInset: CGFloat) -> some View {
         VStack(spacing: 0) {
             ZStack(alignment: .topLeading) {
-                EditorSurfaceRepresentable(controller: controller)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                EditorSurfaceRepresentable(
+                    controller: controller,
+                    agentBackgroundColor: sidebarTheme.backgroundColor,
+                    agentSelectionColor: sidebarTheme.selectionColor,
+                    isRenderingSuspended: false
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
 
                 EditorDiagnosticsOverlayView(controller: controller)
                 EditorDocsPanelsView(controller: controller)
@@ -679,7 +689,7 @@ private struct EditorOpenItemsSidebarView: View {
         switch item.kind {
         case .buffer:
             return uniqueBufferCount > 1
-        case .terminal:
+        case .terminal, .agent:
             return true
         }
     }
@@ -737,7 +747,7 @@ private struct EditorOpenItemSidebarRowView: View {
 
             Button(action: onActivate) {
                 HStack(spacing: 8) {
-                    EditorSemanticIconView(iconName: item.iconName, size: 11)
+                    openItemIcon(size: 11)
                         .foregroundStyle(Color(nsColor: iconColor))
                         .frame(width: 12)
 
@@ -820,6 +830,16 @@ private struct EditorOpenItemSidebarRowView: View {
 
     private var leadingRailColor: NSColor {
         theme.selectionColor
+    }
+
+    @ViewBuilder
+    private func openItemIcon(size: CGFloat) -> some View {
+        if item.kind == .agent {
+            Image(systemName: "brain.head.profile")
+                .font(.system(size: size, weight: .semibold))
+        } else {
+            EditorSemanticIconView(iconName: item.iconName, size: size)
+        }
     }
 
     private var iconColor: NSColor {
@@ -925,7 +945,8 @@ private struct EditorPaneItemStripsOverlayView: View {
 
     @ObservedObject var controller: EditorSurfaceController
 
-    private let horizontalInset = EditorPaneItemStripMetrics.horizontalInset
+    // Tabs butt against the pane edge, cmux-style (no outer padding on the strip).
+    private let horizontalInset: CGFloat = 0
 
     var body: some View {
         if let scene = controller.scene {
@@ -998,13 +1019,15 @@ private struct EditorPaneItemStripsOverlayView: View {
             else {
                 return nil
             }
+            let headerHeight = paneHeaderHeight(for: pane, group: group, in: scene)
+            let controlHeight = paneTabControlHeight(headerHeight: headerHeight)
             return LayoutEntry(
                 groupIndex: groupIndex,
                 group: group,
                 frame: paneFrame(for: pane, in: scene),
-                headerHeight: scene.paneHeaderHeight(for: pane),
-                controlHeight: scene.paneTabControlHeight(for: pane),
-                controlOriginY: scene.paneTabControlOriginY(for: pane)
+                headerHeight: headerHeight,
+                controlHeight: controlHeight,
+                controlOriginY: paneTabControlOriginY(for: pane, headerHeight: headerHeight, controlHeight: controlHeight, in: scene)
             )
         }
     }
@@ -1017,13 +1040,34 @@ private struct EditorPaneItemStripsOverlayView: View {
         switch item.kind {
         case .buffer:
             return controller.bufferTabs.tabs.count > 1
-        case .terminal:
+        case .terminal, .agent:
             return true
         }
     }
 
     private func paneFrame(for pane: EditorSnapshotPane, in scene: EditorRenderScene) -> CGRect {
         scene.paneRect(for: pane)
+    }
+
+    private func paneHeaderHeight(for pane: EditorSnapshotPane, group: EditorPaneOpenItemGroup, in scene: EditorRenderScene) -> CGFloat {
+        guard shouldShowTabStrip(for: group) else { return 0 }
+        let rowHeight = max(scene.info.surfaceMetrics.cellSizePoints.height, 1)
+        let preferredHeight = rowHeight + EditorPaneItemStripMetrics.preferredHeaderExtraHeight
+        return min(preferredHeight, paneFrame(for: pane, in: scene).height)
+    }
+
+    private func paneTabControlHeight(headerHeight: CGFloat) -> CGFloat {
+        guard headerHeight > 0 else { return 0 }
+        let paddedHeight = max(headerHeight - EditorPaneItemStripMetrics.verticalPadding * 2, 0)
+        return min(
+            max(paddedHeight, EditorPaneItemStripMetrics.minimumControlHeight),
+            EditorPaneItemStripMetrics.preferredControlHeight
+        )
+    }
+
+    private func paneTabControlOriginY(for pane: EditorSnapshotPane, headerHeight: CGFloat, controlHeight: CGFloat, in scene: EditorRenderScene) -> CGFloat {
+        let rect = paneFrame(for: pane, in: scene)
+        return rect.minY + max((headerHeight - controlHeight) * 0.5, 0)
     }
 }
 
@@ -1079,48 +1123,57 @@ private struct EditorPaneItemTabView: View {
 
     @State private var isHovered = false
 
+    private let cornerRadius: CGFloat = 7
+    private let topAccentHeight: CGFloat = 2
+
     var body: some View {
-        HStack(spacing: 5) {
+        HStack(spacing: 6) {
             Button(action: onActivate) {
-                HStack(spacing: 7) {
-                    EditorSemanticIconView(iconName: item.iconName, size: 11)
+                HStack(spacing: 6) {
+                    openItemIcon(size: 12)
                     Text(item.title)
-                        .font(.system(size: 11.5, weight: item.isActive ? .semibold : .medium))
+                        .font(.system(size: 12, weight: item.isActive ? .semibold : .regular))
                         .lineLimit(1)
+                        .truncationMode(.middle)
                     if item.isModified {
                         Circle()
-                            .fill(Color(nsColor: theme.selectionColor).opacity(0.92))
+                            .fill(dirtyDotColor)
                             .frame(width: 5, height: 5)
                     }
                 }
                 .foregroundStyle(foregroundColor)
-                .padding(.leading, 12)
-                .padding(.trailing, canClose ? 0 : 10)
+                .padding(.leading, 10)
+                .padding(.trailing, showsCloseButton ? 0 : 10)
                 .frame(maxWidth: .infinity, minHeight: controlHeight, maxHeight: controlHeight, alignment: .leading)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
 
-            if canClose {
+            if showsCloseButton {
                 Button(action: onClose) {
                     Image(systemName: "xmark")
-                        .font(.system(size: 8.5, weight: .bold))
+                        .font(.system(size: 9, weight: .bold))
                         .foregroundStyle(Color(nsColor: closeButtonForegroundColor))
                         .frame(width: 16, height: 16)
                         .background(
                             Circle()
                                 .fill(Color(nsColor: closeButtonBackgroundColor))
+                                .opacity(closeButtonBackgroundOpacity)
                         )
                 }
                 .buttonStyle(.plain)
-                .padding(.trailing, 8)
+                .padding(.trailing, 6)
                 .help("Close \(item.title)")
                 .accessibilityLabel("Close \(item.title)")
+            } else if canClose {
+                // Reserve room so the text doesn't shift when the X appears on hover.
+                Color.clear.frame(width: 16 + 6, height: 16)
             }
         }
         .frame(maxWidth: .infinity, minHeight: controlHeight, maxHeight: controlHeight, alignment: .leading)
         .background(tabBackground)
-        .overlay(tabBorder)
+        .overlay(alignment: .top) { activeAccentBar }
+        .overlay(alignment: .trailing) { trailingDivider }
         .contentShape(Rectangle())
         .onHover { hovering in
             isHovered = hovering
@@ -1130,52 +1183,91 @@ private struct EditorPaneItemTabView: View {
         .accessibilityLabel(item.title)
     }
 
+    /// Active tab always shows the X (like cmux); inactive tabs reveal it on hover.
+    private var showsCloseButton: Bool {
+        guard canClose else { return false }
+        return item.isActive || isHovered
+    }
+
+    @ViewBuilder
+    private func openItemIcon(size: CGFloat) -> some View {
+        if item.kind == .agent {
+            Image(systemName: "brain.head.profile")
+                .font(.system(size: size, weight: .semibold))
+        } else {
+            EditorSemanticIconView(iconName: item.iconName, size: size)
+        }
+    }
+
     private var foregroundColor: Color {
         if item.isActive {
             return chromeForeground.primary
         }
-        return isActivePane ? chromeForeground.secondary.opacity(0.95) : chromeForeground.secondary.opacity(0.82)
+        return isActivePane
+            ? chromeForeground.secondary.opacity(0.95)
+            : chromeForeground.secondary.opacity(0.80)
     }
 
     @ViewBuilder
     private var tabBackground: some View {
         UnevenRoundedRectangle(
-            topLeadingRadius: 8,
+            topLeadingRadius: cornerRadius,
             bottomLeadingRadius: 0,
             bottomTrailingRadius: 0,
-            topTrailingRadius: 8,
+            topTrailingRadius: cornerRadius,
             style: .continuous
         )
-        .fill(item.isActive ? activeBackgroundColor : inactiveBackgroundColor)
+        .fill(backgroundFillColor)
     }
 
+    /// Cmux-style blue accent line on the top edge of the active tab.
     @ViewBuilder
-    private var tabBorder: some View {
-        UnevenRoundedRectangle(
-            topLeadingRadius: 8,
-            bottomLeadingRadius: 0,
-            bottomTrailingRadius: 0,
-            topTrailingRadius: 8,
-            style: .continuous
-        )
-        .stroke(item.isActive ? activeBorderColor : inactiveBorderColor, lineWidth: 1)
+    private var activeAccentBar: some View {
+        if item.isActive {
+            UnevenRoundedRectangle(
+                topLeadingRadius: cornerRadius,
+                bottomLeadingRadius: 0,
+                bottomTrailingRadius: 0,
+                topTrailingRadius: cornerRadius,
+                style: .continuous
+            )
+            .fill(Color(nsColor: theme.selectionColor))
+            .frame(height: topAccentHeight)
+        }
     }
 
-    private var activeBackgroundColor: Color {
-        Color(nsColor: theme.backgroundColor)
+    /// Thin 1px vertical separator on the right edge of inactive tabs, skipped
+    /// next to the active tab (same convention as cmux / Chrome).
+    @ViewBuilder
+    private var trailingDivider: some View {
+        if !item.isActive {
+            Rectangle()
+                .fill(Color(nsColor: theme.separatorColor).opacity(0.55))
+                .frame(width: 1)
+                .padding(.vertical, 6)
+        }
     }
 
-    private var inactiveBackgroundColor: Color {
-        Color(nsColor: theme.backgroundColor)
-            .opacity(isActivePane ? 0.72 : 0.58)
+    private var backgroundFillColor: Color {
+        if item.isActive {
+            // Fuses into the editor content below the tab strip.
+            return Color(nsColor: theme.backgroundColor)
+        }
+        if isHovered {
+            return Color(nsColor: theme.hoverColor).opacity(isActivePane ? 1.0 : 0.7)
+        }
+        // Inactive: slightly dimmer than the header row fill so it reads as "recessed".
+        let base = theme.headerColor
+        let delta: CGFloat = base.isLightColor ? -0.015 : 0.012
+        return Color(nsColor: base.adjustedBrightness(by: delta))
+            .opacity(isActivePane ? 1.0 : 0.85)
     }
 
-    private var activeBorderColor: Color {
-        Color(nsColor: theme.selectionColor).opacity(0.72)
-    }
-
-    private var inactiveBorderColor: Color {
-        Color(nsColor: theme.separatorColor).opacity(0.68)
+    private var dirtyDotColor: Color {
+        if item.isActive {
+            return Color(nsColor: theme.selectionColor).opacity(0.92)
+        }
+        return chromeForeground.secondary.opacity(0.8)
     }
 
     private var closeButtonForegroundColor: NSColor {
@@ -1186,13 +1278,14 @@ private struct EditorPaneItemTabView: View {
     }
 
     private var closeButtonBackgroundColor: NSColor {
-        if item.isActive {
-            return theme.selectionColor.withAlphaComponent(0.18)
-        }
         if isHovered {
             return theme.hoverColor.withAlphaComponent(0.95)
         }
-        return chromeForeground.tertiaryNS.withAlphaComponent(0.12)
+        return theme.selectionColor.withAlphaComponent(0.18)
+    }
+
+    private var closeButtonBackgroundOpacity: Double {
+        isHovered ? 1.0 : 0.0
     }
 
 }
@@ -2341,6 +2434,7 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
     let onToggleFileTree: () -> Void
     let onSelectSidebarMode: (EditorSidebarMode) -> Void
     let onOpenTerminal: () -> Void
+    let onOpenAgentPane: () -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -2363,7 +2457,8 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
                 titlebarPadding: $titlebarPadding,
                 onToggleFileTree: onToggleFileTree,
                 onSelectSidebarMode: onSelectSidebarMode,
-                onOpenTerminal: onOpenTerminal
+                onOpenTerminal: onOpenTerminal,
+                onOpenAgentPane: onOpenAgentPane
             )
             return
         }
@@ -2379,7 +2474,8 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
                 titlebarPadding: $titlebarPadding,
                 onToggleFileTree: onToggleFileTree,
                 onSelectSidebarMode: onSelectSidebarMode,
-                onOpenTerminal: onOpenTerminal
+                onOpenTerminal: onOpenTerminal,
+                onOpenAgentPane: onOpenAgentPane
             )
         }
     }
@@ -2397,6 +2493,7 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
                     onToggle: {},
                     onSelectSidebarMode: { _ in },
                     onOpenTerminal: {},
+                    onOpenAgentPane: {},
                     showsTerminalButton: GhosttyTerminalRegistry.isAvailable
                 )
             )
@@ -2414,6 +2511,7 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
         private var toggleFileTreeAction: (() -> Void)?
         private var selectSidebarModeAction: ((EditorSidebarMode) -> Void)?
         private var openTerminalAction: (() -> Void)?
+        private var openAgentAction: (() -> Void)?
         private var titlebarPaddingBinding: Binding<CGFloat>?
         private var controlsAccessory: NSTitlebarAccessoryViewController?
         private var lastWindowLayoutSignature: String?
@@ -2439,7 +2537,8 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
             titlebarPadding: Binding<CGFloat>,
             onToggleFileTree: @escaping () -> Void,
             onSelectSidebarMode: @escaping (EditorSidebarMode) -> Void,
-            onOpenTerminal: @escaping () -> Void
+            onOpenTerminal: @escaping () -> Void,
+            onOpenAgentPane: @escaping () -> Void
         ) {
             let started = CFAbsoluteTimeGetCurrent()
             let windowChanged = observedWindow !== window
@@ -2450,6 +2549,7 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
             toggleFileTreeAction = onToggleFileTree
             selectSidebarModeAction = onSelectSidebarMode
             openTerminalAction = onOpenTerminal
+            openAgentAction = onOpenAgentPane
             titlebarPaddingBinding = titlebarPadding
             attachWindowObserversIfNeeded(window: window)
             guard windowChanged || chromeChanged || fileTreeChanged || sidebarModeChanged || sidebarTitleChanged else {
@@ -2633,14 +2733,13 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
                 onToggle: { self.toggleFileTreeAction?() },
                 onSelectSidebarMode: { self.selectSidebarModeAction?($0) },
                 onOpenTerminal: { self.openTerminalAction?() },
+                onOpenAgentPane: { self.openAgentAction?() },
                 showsTerminalButton: GhosttyTerminalRegistry.isAvailable
             )
-            withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
-                leadingState.isSidebarActive = fileTreeVisible
-                leadingState.sidebarMode = sidebarMode
-                leadingState.sidebarTitle = sidebarTitle
-                leadingState.document = chrome.document
-            }
+            leadingState.isSidebarActive = fileTreeVisible
+            leadingState.sidebarMode = sidebarMode
+            leadingState.sidebarTitle = sidebarTitle
+            leadingState.document = chrome.document
             leadingHostingView.invalidateIntrinsicContentSize()
 
             // Resize the accessory to fit its content
@@ -2689,6 +2788,12 @@ private final class NonDraggableHostingView<Content: View>: NSHostingView<Conten
     override var mouseDownCanMoveWindow: Bool { false }
 }
 
+/// Leading titlebar controls: 24×24 cells; icons are flush (no inter-item stack spacing).
+private enum EditorTitlebarControlMetrics {
+    static let stackSpacing: CGFloat = 0
+    static let buttonSize: CGFloat = 24
+}
+
 /// The accessory view content — cmux-style compact titlebar controls beside the traffic lights.
 private struct EditorTitlebarLeadingRegionView: View {
     @ObservedObject var state: EditorTitlebarLeadingState
@@ -2696,10 +2801,11 @@ private struct EditorTitlebarLeadingRegionView: View {
     let onToggle: () -> Void
     let onSelectSidebarMode: (EditorSidebarMode) -> Void
     let onOpenTerminal: () -> Void
+    let onOpenAgentPane: () -> Void
     let showsTerminalButton: Bool
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: EditorTitlebarControlMetrics.stackSpacing) {
             EditorTitlebarSidebarToggleButton(
                 isActive: state.isSidebarActive,
                 foreground: foreground,
@@ -2713,10 +2819,20 @@ private struct EditorTitlebarLeadingRegionView: View {
                     onSelect: onSelectSidebarMode
                 )
             }
+
+            EditorTitlebarOpenAgentButton(
+                onOpenAgentPane: onOpenAgentPane,
+                foreground: foreground
+            )
+
+            if showsTerminalButton {
+                EditorTitlebarOpenTerminalButton(
+                    onOpenTerminal: onOpenTerminal,
+                    foreground: foreground
+                )
+            }
         }
         .fixedSize(horizontal: true, vertical: true)
-        .animation(.spring(response: 0.24, dampingFraction: 0.88), value: state.isSidebarActive)
-        .animation(.spring(response: 0.24, dampingFraction: 0.88), value: state.sidebarMode)
     }
 }
 
@@ -2726,20 +2842,27 @@ private struct EditorTitlebarSidebarModeButtons: View {
     let onSelect: (EditorSidebarMode) -> Void
 
     var body: some View {
-        HStack(spacing: 3) {
-            button(.files, iconName: "folder", label: "Show Files")
-            button(.buffers, iconName: "buffers", label: "Show Open Items")
+        HStack(spacing: EditorTitlebarControlMetrics.stackSpacing) {
+            button(.files, iconName: "folder", systemImage: nil, label: "Show Files")
+            button(.buffers, iconName: "buffers", systemImage: nil, label: "Show Open Items")
         }
     }
 
-    private func button(_ target: EditorSidebarMode, iconName: String, label: String) -> some View {
+    private func button(_ target: EditorSidebarMode, iconName: String?, systemImage: String?, label: String) -> some View {
         let isSelected = mode == target
         return Button {
             onSelect(target)
         } label: {
-            EditorSemanticIconView(iconName: iconName, size: 11)
+            Group {
+                if let iconName {
+                    EditorSemanticIconView(iconName: iconName, size: 11)
+                } else if let systemImage {
+                    Image(systemName: systemImage)
+                        .font(.system(size: 11, weight: .semibold))
+                }
+            }
                 .foregroundStyle(isSelected ? foreground.primary : foreground.secondary)
-                .frame(width: 22, height: 22)
+                .frame(width: EditorTitlebarControlMetrics.buttonSize, height: EditorTitlebarControlMetrics.buttonSize)
                 .background {
                     RoundedRectangle(cornerRadius: 6, style: .continuous)
                         .fill(isSelected ? foreground.primary.opacity(0.10) : Color.clear)
@@ -2756,18 +2879,19 @@ private struct EditorTitlebarSidebarTitleView: View {
     let title: String
     let foreground: ChromeForegroundColors
 
-    private var iconName: String {
+    @ViewBuilder
+    private var iconView: some View {
         switch mode {
         case .files:
-            return "folder"
+            EditorSemanticIconView(iconName: "folder", size: 11)
         case .buffers:
-            return "buffers"
+            EditorSemanticIconView(iconName: "buffers", size: 11)
         }
     }
 
     var body: some View {
         HStack(spacing: 6) {
-            EditorSemanticIconView(iconName: iconName, size: 11)
+            iconView
                 .foregroundStyle(foreground.secondary)
             Text(title)
                 .font(.system(size: 12, weight: .medium))
@@ -2789,13 +2913,13 @@ private struct EditorTitlebarSidebarToggleButton: View {
     var body: some View {
         Button(action: toggle) {
             Image(systemName: "sidebar.left")
-                .font(.system(size: 13, weight: .medium))
+                .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(isActive ? foreground.primary : foreground.secondary)
-                .frame(width: 20, height: 20)
+                .frame(width: EditorTitlebarControlMetrics.buttonSize, height: EditorTitlebarControlMetrics.buttonSize)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .frame(width: 20, height: 20)
+        .frame(width: EditorTitlebarControlMetrics.buttonSize, height: EditorTitlebarControlMetrics.buttonSize)
         .contentShape(Rectangle())
         .help("Toggle Sidebar")
         .accessibilityLabel("Toggle Sidebar")
@@ -2806,6 +2930,28 @@ private struct EditorTitlebarSidebarToggleButton: View {
         // sees dozens of intermediate sizes per toggle and pays for a full snapshot each time
         // the terminal column count changes.
         onToggle()
+    }
+}
+
+private struct EditorTitlebarOpenAgentButton: View {
+    let onOpenAgentPane: () -> Void
+    let foreground: ChromeForegroundColors
+
+    var body: some View {
+        Button(action: onOpenAgentPane) {
+            Image(systemName: "brain.head.profile")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(foreground.secondary)
+                .frame(width: 28, height: 24)
+                .background {
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(foreground.primary.opacity(0.08))
+                }
+        }
+        .buttonStyle(.plain)
+        .help("Open Agent Pane")
+        .accessibilityLabel("Open Agent Pane")
+        .accessibilityHint("Open the pi agent in the active pane")
     }
 }
 

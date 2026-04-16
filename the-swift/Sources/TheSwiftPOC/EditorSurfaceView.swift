@@ -18,6 +18,7 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
     private var fontMetrics: EditorFontMetrics
     private var fallbackCellSize: CGSize
     private var bufferFontSize: CGFloat
+    private(set) var isRenderingSuspended = false
 
     private struct SplitDragState {
         let splitID: UInt
@@ -205,7 +206,26 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
         notificationObservers.removeAll()
     }
 
+    func setRenderingSuspended(_ suspended: Bool) {
+        guard suspended != isRenderingSuspended else { return }
+        isRenderingSuspended = suspended
+        if suspended {
+            cursorBlinkController.stop()
+        } else {
+            refreshCursorBlinkState(reset: true)
+            if let scene = controller?.scene {
+                renderer.update(scene: scene)
+            } else {
+                renderer.drawImmediately()
+            }
+        }
+    }
+
     private func refreshCursorBlinkState(reset: Bool = false) {
+        guard !isRenderingSuspended else {
+            cursorBlinkController.stop()
+            return
+        }
         let isTracking = splitDrag != nil || scrollbarDrag != nil || bufferSelectionDrag != nil
         cursorBlinkController.update(
             scene: controller?.scene,
@@ -272,12 +292,16 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
             backingScale: backingScale,
             fontMetrics: fontMetrics
         )
-        if changed || forceDraw || window?.inLiveResize == true || controller.isInteractiveResizeActive {
+        if (changed || forceDraw || window?.inLiveResize == true || controller.isInteractiveResizeActive), !isRenderingSuspended {
             renderer.drawImmediately()
         }
     }
 
     func update(scene: EditorRenderScene) {
+        guard !isRenderingSuspended else {
+            refreshCursorBlinkState()
+            return
+        }
         renderer.update(scene: scene)
         let usedWidth = CGFloat(scene.info.viewportWidth) * scene.info.surfaceMetrics.cellSizePoints.width
         let usedHeight = CGFloat(scene.info.viewportHeight) * scene.info.surfaceMetrics.cellSizePoints.height

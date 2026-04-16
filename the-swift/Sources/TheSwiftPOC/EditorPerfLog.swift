@@ -31,6 +31,14 @@ func scrollPerfEnabled() -> Bool {
     ProcessInfo.processInfo.environment["THE_EDITOR_SCROLL_PERF"] == "1"
 }
 
+func agentPerfEnabled() -> Bool {
+    ProcessInfo.processInfo.environment["THE_EDITOR_AGENT_PERF"] == "1"
+}
+
+func agentDebugEnabled() -> Bool {
+    ProcessInfo.processInfo.environment["THE_EDITOR_AGENT_DEBUG"] == "1"
+}
+
 func selectionDebugEnabled() -> Bool {
     ProcessInfo.processInfo.environment["THE_EDITOR_SELECTION_DEBUG"] == "1"
 }
@@ -57,6 +65,22 @@ func scrollPerfLog(_ message: @autoclosure () -> String) {
     guard scrollPerfEnabled() else { return }
     let tsMs = Int((CFAbsoluteTimeGetCurrent() * 1000).rounded())
     let line = "[TheSwiftPOC:scroll-perf \(tsMs)] \(message())\n"
+    fputs(line, stderr)
+    appendPerfLineToSharedLogFile(line)
+}
+
+func agentPerfLog(_ message: @autoclosure () -> String) {
+    guard agentPerfEnabled() else { return }
+    let tsMs = Int((CFAbsoluteTimeGetCurrent() * 1000).rounded())
+    let line = "[TheSwiftPOC:agent-perf \(tsMs)] \(message())\n"
+    fputs(line, stderr)
+    appendPerfLineToSharedLogFile(line)
+}
+
+func agentDebugLog(_ message: @autoclosure () -> String) {
+    guard agentDebugEnabled() else { return }
+    let tsMs = Int((CFAbsoluteTimeGetCurrent() * 1000).rounded())
+    let line = "[TheSwiftPOC:agent \(tsMs)] \(message())\n"
     fputs(line, stderr)
     appendPerfLineToSharedLogFile(line)
 }
@@ -101,5 +125,14 @@ func measureScrollPerf<T>(_ label: String, _ body: () -> T) -> T {
     let result = body()
     let elapsedMs = (CFAbsoluteTimeGetCurrent() - start) * 1000
     scrollPerfLog("\(label) ms=\(String(format: "%.2f", elapsedMs))")
+    return result
+}
+
+@discardableResult
+func measureAgentPerf<T>(_ label: String, _ body: () -> T) -> T {
+    let start = CFAbsoluteTimeGetCurrent()
+    let result = body()
+    let elapsedMs = (CFAbsoluteTimeGetCurrent() - start) * 1000
+    agentPerfLog("\(label) ms=\(String(format: "%.2f", elapsedMs))")
     return result
 }

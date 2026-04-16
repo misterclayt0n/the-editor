@@ -73,6 +73,8 @@ final class EditorSurfaceController: ObservableObject {
 
     private let interactiveResizeMinInterval: CFTimeInterval = 1.0 / 30.0
 
+    lazy var agentSessionSupervisor = EditorAgentSessionSupervisor(controller: self)
+
     init(initialPath: String?) {
         self.handle = EditorFFIBridge.createHandle(initialPath: initialPath).map(EditorHandleBox.init(raw:))
         _ = EditorFFIBridge.setEmbeddedTerminalEnabled(handle?.raw, enabled: GhosttyTerminalRegistry.isAvailable)
@@ -357,6 +359,29 @@ final class EditorSurfaceController: ObservableObject {
         refreshSnapshot()
     }
 
+    func openAgentInActivePane() {
+        guard EditorFFIBridge.openAgentInActivePane(handle?.raw) else { return }
+        refreshSnapshot()
+    }
+
+    func closeAgentPane(_ paneID: UInt? = nil) {
+        let targetItem: EditorPaneOpenItemRow?
+        if let paneID {
+            targetItem = openItems.groups.first(where: { $0.paneID == paneID })?.items.first(where: { $0.kind == .agent })
+        } else if let activeAgentPane {
+            targetItem = activeAgentPane
+        } else {
+            targetItem = openItems.groups.first(where: { $0.isActivePane })?.items.first(where: { $0.kind == .agent })
+        }
+        guard let targetItem,
+              EditorFFIBridge.closeOpenItem(handle?.raw, paneID: targetItem.paneID, kind: targetItem.kind, itemID: targetItem.itemID)
+        else {
+            return
+        }
+        refreshSnapshot()
+        focusEditor()
+    }
+
     func splitActivePaneVertical() {
         guard EditorFFIBridge.splitActivePaneVertical(handle?.raw) else { return }
         refreshSnapshot()
@@ -381,6 +406,11 @@ final class EditorSurfaceController: ObservableObject {
     /// Kind of the active tab in the active pane's open-items strip (buffer vs terminal).
     private var activeOpenItemKind: EditorOpenItemKind? {
         activeOpenItem?.kind
+    }
+
+    var activeAgentPane: EditorPaneOpenItemRow? {
+        guard let activeOpenItem, activeOpenItem.kind == .agent else { return nil }
+        return activeOpenItem
     }
 
     var activeTerminalStatus: EditorActiveTerminalStatus? {
@@ -470,7 +500,7 @@ final class EditorSurfaceController: ObservableObject {
             state.workingDirectory = preferredWorkingDirectory
         }
         terminalPresentationBySurfaceID[clientSurfaceID] = state
-        applyTerminalPresentationIfNeeded()
+        refreshOpenItemsDecoration()
     }
 
     func updateTerminalTitle(_ title: String, for clientSurfaceID: UInt) {
@@ -479,7 +509,7 @@ final class EditorSurfaceController: ObservableObject {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         state.title = trimmed.isEmpty ? nil : trimmed
         terminalPresentationBySurfaceID[clientSurfaceID] = state
-        applyTerminalPresentationIfNeeded()
+        refreshOpenItemsDecoration()
     }
 
     func updateTerminalWorkingDirectory(_ workingDirectory: String, for clientSurfaceID: UInt) {
@@ -488,7 +518,7 @@ final class EditorSurfaceController: ObservableObject {
         let trimmed = workingDirectory.trimmingCharacters(in: .whitespacesAndNewlines)
         state.workingDirectory = trimmed.isEmpty ? nil : trimmed
         terminalPresentationBySurfaceID[clientSurfaceID] = state
-        applyTerminalPresentationIfNeeded()
+        refreshOpenItemsDecoration()
     }
 
     func dragBufferSelection(
@@ -543,7 +573,7 @@ final class EditorSurfaceController: ObservableObject {
     }
 
     func shouldHandleEditorKeyboardInput(from responder: NSView? = nil) -> Bool {
-        guard activeOpenItemKind != .terminal else { return false }
+        guard activeOpenItemKind != .terminal, activeOpenItemKind != .agent else { return false }
         guard let editorFirstResponder else { return false }
         if let responder, responder !== editorFirstResponder {
             return false
@@ -867,6 +897,10 @@ final class EditorSurfaceController: ObservableObject {
         EditorFFIBridge.primarySelectionText(handle?.raw)
     }
 
+    func renderMarkdown(_ markdown: String) -> EditorRenderedMarkdown {
+        EditorFFIBridge.renderMarkdown(handle?.raw, markdown: markdown)
+    }
+
     func beginLiveResize() {
         beginInteractiveResize(reason: "window")
         resizeOverlayHideTask?.cancel()
@@ -984,7 +1018,7 @@ final class EditorSurfaceController: ObservableObject {
             }
     }
 
-    private func applyTerminalPresentationIfNeeded() {
+    private func refreshOpenItemsDecoration() {
         let decorated = decorateOpenItems(baseOpenItems)
         guard decorated != openItems else { return }
         objectWillChange.send()

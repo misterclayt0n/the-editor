@@ -1,28 +1,39 @@
 import AppKit
 import Foundation
+import SwiftUI
 
 @MainActor
 final class EditorSurfaceScrollView: NSView, EditorSurfaceControllerDelegate {
     let controller: EditorSurfaceController
     let surfaceView: EditorSurfaceView
     let terminalContainerView = GhosttyTerminalOverlayContainerView()
+    let agentContainerView = EditorAgentPaneContainerView()
     let terminalRegistry: GhosttyTerminalRegistry
+    let agentPaneRegistry: EditorAgentPaneRegistry
+
+    private var agentBackgroundColor: NSColor = .windowBackgroundColor
+    private var agentSelectionColor: NSColor = .selectedContentBackgroundColor
     private var lastLayoutDebugSignature: String?
     private var lastSceneDebugSignature: String?
 
     init(controller: EditorSurfaceController) {
         self.controller = controller
         self.terminalRegistry = GhosttyTerminalRegistry(controller: controller)
+        self.agentPaneRegistry = EditorAgentPaneRegistry(controller: controller)
         guard let surfaceView = EditorSurfaceView(controller: controller) else {
             fatalError("failed to create metal-backed editor surface")
         }
         self.surfaceView = surfaceView
         super.init(frame: .zero)
 
+        terminalContainerView.wantsLayer = true
+        agentContainerView.wantsLayer = true
+
         controller.delegate = self
         controller.editorFirstResponder = surfaceView
         addSubview(surfaceView)
         addSubview(terminalContainerView)
+        addSubview(agentContainerView)
         controller.refreshSnapshot()
     }
 
@@ -35,6 +46,8 @@ final class EditorSurfaceScrollView: NSView, EditorSurfaceControllerDelegate {
         super.layout()
         surfaceView.frame = bounds
         terminalContainerView.frame = bounds
+        agentContainerView.frame = bounds
+        reconcileOverlayViews()
         logLayoutMetrics(reason: "layout")
     }
 
@@ -43,13 +56,8 @@ final class EditorSurfaceScrollView: NSView, EditorSurfaceControllerDelegate {
         logLayoutMetrics(reason: "movedToWindow")
         if let scene = controller.scene {
             updateWindowResizeIncrements(scene)
-            terminalRegistry.reconcile(
-                scene: scene,
-                openItems: controller.openItems,
-                in: terminalContainerView,
-                editorSurfaceView: surfaceView
-            )
         }
+        reconcileOverlayViews()
     }
 
     override func viewWillStartLiveResize() {
@@ -66,17 +74,73 @@ final class EditorSurfaceScrollView: NSView, EditorSurfaceControllerDelegate {
         surfaceView.updateBufferFontSize(pointSize)
     }
 
+    func configureAgentPaneAppearance(
+        backgroundColor: NSColor,
+        selectionColor: NSColor
+    ) {
+        let backgroundChanged = !agentBackgroundColor.isEqual(backgroundColor)
+        let selectionChanged = !agentSelectionColor.isEqual(selectionColor)
+        agentBackgroundColor = backgroundColor
+        agentSelectionColor = selectionColor
+        if backgroundChanged || selectionChanged {
+            reconcileOverlayViews()
+        }
+    }
+
+    func setRenderingSuspended(_ suspended: Bool) {
+        surfaceView.setRenderingSuspended(suspended)
+    }
+
     func editorController(_ controller: EditorSurfaceController, didUpdateScene scene: EditorRenderScene) {
         surfaceView.update(scene: scene)
+        updateWindowResizeIncrements(scene)
+        reconcileOverlayViews()
+        if !surfaceView.isRenderingSuspended {
+            logSceneMetrics(scene)
+            logLayoutMetrics(reason: "sceneUpdate")
+        }
+    }
+
+    private func reconcileOverlayViews() {
         terminalRegistry.reconcile(
-            scene: scene,
+            scene: controller.scene,
             openItems: controller.openItems,
             in: terminalContainerView,
             editorSurfaceView: surfaceView
         )
-        updateWindowResizeIncrements(scene)
-        logSceneMetrics(scene)
-        logLayoutMetrics(reason: "sceneUpdate")
+        agentPaneRegistry.reconcile(
+            scene: controller.scene,
+            openItems: controller.openItems,
+            in: agentContainerView,
+            backgroundColor: agentBackgroundColor,
+            selectionColor: agentSelectionColor
+        )
+        applyExclusionMask(agentPaneRegistry.visibleContentRects)
+    }
+
+    private func applyExclusionMask(_ excludedRects: [CGRect]) {
+        surfaceView.layer?.mask = makeExclusionMask(in: surfaceView.bounds, excluding: excludedRects)
+        terminalContainerView.layer?.mask = makeExclusionMask(in: terminalContainerView.bounds, excluding: excludedRects)
+    }
+
+    private func makeExclusionMask(in bounds: CGRect, excluding excludedRects: [CGRect]) -> CAShapeLayer? {
+        let clippedRects = excludedRects
+            .map { $0.intersection(bounds) }
+            .filter { $0.width > 0 && $0.height > 0 }
+        guard !clippedRects.isEmpty else { return nil }
+
+        let path = CGMutablePath()
+        path.addRect(bounds)
+        for rect in clippedRects {
+            path.addRect(rect)
+        }
+
+        let mask = CAShapeLayer()
+        mask.frame = bounds
+        mask.path = path
+        mask.fillRule = .evenOdd
+        mask.fillColor = NSColor.white.cgColor
+        return mask
     }
 
     private func logSceneMetrics(_ scene: EditorRenderScene) {
@@ -106,6 +170,7 @@ final class EditorSurfaceScrollView: NSView, EditorSurfaceControllerDelegate {
             "safeArea=\(edgeInsetsText(safeAreaInsets))",
             "surfaceFrame=\(rectText(surfaceView.frame))",
             "terminalFrame=\(rectText(terminalContainerView.frame))",
+            "agentFrame=\(rectText(agentContainerView.frame))",
             "windowFrame=\(windowFrameText)",
             "contentLayoutRect=\(contentLayoutText)",
             "contentViewBounds=\(contentViewBoundsText)"
@@ -134,4 +199,9 @@ final class EditorSurfaceScrollView: NSView, EditorSurfaceControllerDelegate {
             window.contentResizeIncrements = defaultIncrements
         }
     }
+}
+
+@MainActor
+final class EditorAgentPaneContainerView: NSView {
+    override var isFlipped: Bool { true }
 }

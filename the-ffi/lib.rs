@@ -184,6 +184,7 @@ use the_lib::{
     DocumentId,
   },
   editor::{
+    AgentItemId,
     BufferId,
     ClientSurfaceId,
     Editor,
@@ -363,6 +364,22 @@ pub struct the_editor_handle_t {
 
 pub struct the_editor_snapshot_t {
   snapshot: OwnedSnapshot,
+}
+
+pub struct the_editor_markdown_render_t {
+  runs:   Vec<RenderedMarkdownRunRecord>,
+  blocks: Vec<RenderedMarkdownBlockRecord>,
+}
+
+struct RenderedMarkdownRunRecord {
+  run:              the_editor_snapshot_docs_run_t,
+  text:             CString,
+  link_destination: Option<CString>,
+}
+
+struct RenderedMarkdownBlockRecord {
+  block:    the_editor_markdown_block_t,
+  language: Option<CString>,
 }
 
 #[repr(C)]
@@ -659,9 +676,21 @@ pub struct the_editor_snapshot_docs_panel_t {
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 pub struct the_editor_snapshot_docs_run_t {
-  pub text:  *const c_char,
-  pub style: the_editor_style_t,
-  pub kind:  u8,
+  pub text:             *const c_char,
+  pub style:            the_editor_style_t,
+  pub kind:             u8,
+  pub link_destination: *const c_char,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct the_editor_markdown_block_t {
+  pub kind:       u8,
+  pub level:      u8,
+  pub list_depth: u16,
+  pub run_start:  usize,
+  pub run_count:  usize,
+  pub language:   *const c_char,
 }
 
 #[repr(C)]
@@ -1159,8 +1188,9 @@ struct DocsPanelRecord {
 
 #[derive(Clone, Copy, Default)]
 struct DocsRunRecord {
-  run:      the_editor_snapshot_docs_run_t,
-  text_idx: usize,
+  run:                  the_editor_snapshot_docs_run_t,
+  text_idx:             usize,
+  link_destination_idx: Option<usize>,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -5466,6 +5496,12 @@ impl SwiftEditor {
           .editor
           .set_active_client_surface_in_pane(pane, surface_id)
       },
+      OpenItemKind::Agent => {
+        let Some(agent_id) = agent_item_id_from_raw(item_raw) else {
+          return false;
+        };
+        self.editor.set_active_agent_in_pane(pane, agent_id)
+      },
     };
     if !pane_changed && !item_changed {
       return false;
@@ -5502,6 +5538,14 @@ impl SwiftEditor {
         self
           .editor
           .close_pane_item(pane, PaneContent::ClientSurface { surface_id })
+      },
+      OpenItemKind::Agent => {
+        let Some(agent_id) = agent_item_id_from_raw(item_raw) else {
+          return false;
+        };
+        self
+          .editor
+          .close_pane_item(pane, PaneContent::Agent { agent_id })
       },
     };
     if !changed {
@@ -5542,6 +5586,18 @@ impl SwiftEditor {
     }
     let previous_buffer_id = self.editor.active_buffer_id();
     let _surface_id = self.editor.open_terminal_in_active_pane();
+    self.file_tree.active = false;
+    self.sync_state_after_active_pane_change(previous_buffer_id);
+    self.bump_cursor_blink_generation();
+    true
+  }
+
+  fn open_agent_in_active_pane_ui(&mut self) -> bool {
+    if self.editor.is_active_pane_agent() {
+      return false;
+    }
+    let previous_buffer_id = self.editor.active_buffer_id();
+    let _agent_id = self.editor.open_agent_in_active_pane();
     self.file_tree.active = false;
     self.sync_state_after_active_pane_change(previous_buffer_id);
     self.bump_cursor_blink_generation();
@@ -6845,6 +6901,14 @@ fn build_frame_render_plan_with_styles_for_swift(
           (
             PaneContentKind::ClientSurface,
             Some(surface_id),
+            RenderPlan::default(),
+          )
+        },
+        PaneContent::Agent { .. } => {
+          pane_generation_states.insert(pane.pane_id, RenderGenerationState::default());
+          (
+            PaneContentKind::Agent,
+            None,
             RenderPlan::default(),
           )
         },
@@ -8336,13 +8400,19 @@ impl OwnedSnapshot {
             };
             for run in flatten_docs_runs(markdown, editor) {
               let text_idx = snapshot.push_string(&run.text);
+              let link_destination_idx = run
+                .link_destination
+                .as_ref()
+                .map(|destination| snapshot.push_string(destination));
               snapshot.completion_docs_runs.push(DocsRunRecord {
                 run: the_editor_snapshot_docs_run_t {
-                  text:  ptr::null(),
-                  style: style_to_ffi(run.style, &editor.ui_theme),
-                  kind:  docs_run_kind_code(run.kind),
+                  text:             ptr::null(),
+                  style:            style_to_ffi(run.style, &editor.ui_theme),
+                  kind:             docs_run_kind_code(run.kind),
+                  link_destination: ptr::null(),
                 },
                 text_idx,
+                link_destination_idx,
               });
             }
             snapshot.completion_docs.panel.run_count = snapshot.completion_docs_runs.len();
@@ -8376,13 +8446,19 @@ impl OwnedSnapshot {
         };
         for run in flatten_docs_runs(markdown, editor) {
           let text_idx = snapshot.push_string(&run.text);
+          let link_destination_idx = run
+            .link_destination
+            .as_ref()
+            .map(|destination| snapshot.push_string(destination));
           snapshot.hover_docs_runs.push(DocsRunRecord {
             run: the_editor_snapshot_docs_run_t {
-              text:  ptr::null(),
-              style: style_to_ffi(run.style, &editor.ui_theme),
-              kind:  docs_run_kind_code(run.kind),
+              text:             ptr::null(),
+              style:            style_to_ffi(run.style, &editor.ui_theme),
+              kind:             docs_run_kind_code(run.kind),
+              link_destination: ptr::null(),
             },
             text_idx,
+            link_destination_idx,
           });
         }
         snapshot.hover_docs.panel.run_count = snapshot.hover_docs_runs.len();
@@ -8409,13 +8485,19 @@ impl OwnedSnapshot {
         };
         for run in flatten_docs_runs(markdown.as_str(), editor) {
           let text_idx = snapshot.push_string(&run.text);
+          let link_destination_idx = run
+            .link_destination
+            .as_ref()
+            .map(|destination| snapshot.push_string(destination));
           snapshot.signature_help_runs.push(DocsRunRecord {
             run: the_editor_snapshot_docs_run_t {
-              text:  ptr::null(),
-              style: style_to_ffi(run.style, &editor.ui_theme),
-              kind:  docs_run_kind_code(run.kind),
+              text:             ptr::null(),
+              style:            style_to_ffi(run.style, &editor.ui_theme),
+              kind:             docs_run_kind_code(run.kind),
+              link_destination: ptr::null(),
             },
             text_idx,
+            link_destination_idx,
           });
         }
         snapshot.signature_help.panel.run_count = snapshot.signature_help_runs.len();
@@ -9168,13 +9250,16 @@ impl OwnedSnapshot {
               .unwrap_or("doc")
           },
           OpenItemKind::Terminal => "terminal",
+          OpenItemKind::Agent => "brain",
         };
         let icon_name_idx = self.push_string(icon_name);
         let buffer_id = item.buffer_id.map(|id| id.get().get()).unwrap_or(0);
         let client_surface_id = item.client_surface_id.map(|id| id.get().get()).unwrap_or(0);
+        let agent_item_id = item.agent_item_id.map(|id| id.get().get()).unwrap_or(0);
         let item_id = match item.kind {
           OpenItemKind::Buffer => buffer_id,
           OpenItemKind::Terminal => client_surface_id,
+          OpenItemKind::Agent => agent_item_id,
         };
         self.open_item_rows.push(OpenItemRowRecord {
           row: the_editor_snapshot_open_item_t {
@@ -9309,12 +9394,21 @@ impl OwnedSnapshot {
   fn finalize_docs_panel_strings(&mut self) {
     for run in &mut self.hover_docs_runs {
       run.run.text = self.strings[run.text_idx].as_ptr();
+      if let Some(link_destination_idx) = run.link_destination_idx {
+        run.run.link_destination = self.strings[link_destination_idx].as_ptr();
+      }
     }
     for run in &mut self.completion_docs_runs {
       run.run.text = self.strings[run.text_idx].as_ptr();
+      if let Some(link_destination_idx) = run.link_destination_idx {
+        run.run.link_destination = self.strings[link_destination_idx].as_ptr();
+      }
     }
     for run in &mut self.signature_help_runs {
       run.run.text = self.strings[run.text_idx].as_ptr();
+      if let Some(link_destination_idx) = run.link_destination_idx {
+        run.run.link_destination = self.strings[link_destination_idx].as_ptr();
+      }
     }
   }
 
@@ -9718,9 +9812,30 @@ fn summarize_lsp_error(message: &str) -> String {
 
 #[derive(Clone)]
 struct DocsStyledRun {
-  text:  String,
-  style: Style,
-  kind:  DocsSemanticKind,
+  text:             String,
+  style:            Style,
+  kind:             DocsSemanticKind,
+  link_destination: Option<String>,
+}
+
+#[derive(Clone)]
+struct RenderedDocsBlock {
+  kind:       RenderedDocsBlockKind,
+  level:      u8,
+  list_depth: usize,
+  language:   Option<String>,
+  runs:       Vec<DocsStyledRun>,
+}
+
+#[derive(Clone, Copy)]
+enum RenderedDocsBlockKind {
+  Paragraph,
+  Heading,
+  ListItem,
+  Quote,
+  CodeFence,
+  Rule,
+  BlankLine,
 }
 
 #[derive(Clone, Copy)]
@@ -9793,6 +9908,7 @@ fn push_docs_run(
   text: String,
   style: Style,
   kind: DocsSemanticKind,
+  link_destination: Option<String>,
 ) {
   if text.is_empty() {
     return;
@@ -9800,11 +9916,17 @@ fn push_docs_run(
   if let Some(last) = runs.last_mut()
     && last.style == style
     && last.kind == kind
+    && last.link_destination == link_destination
   {
     last.text.push_str(&text);
     return;
   }
-  runs.push(DocsStyledRun { text, style, kind });
+  runs.push(DocsStyledRun {
+    text,
+    style,
+    kind,
+    link_destination,
+  });
 }
 
 fn docs_runs_from_inline(
@@ -9826,7 +9948,7 @@ fn docs_runs_from_inline(
     if inline.emphasis {
       style = style.add_modifier(Modifier::ITALIC);
     }
-    push_docs_run(&mut runs, inline.text.clone(), style, kind);
+    push_docs_run(&mut runs, inline.text.clone(), style, kind, inline.link_destination.clone());
   }
   runs
 }
@@ -9943,7 +10065,7 @@ fn render_code_lines_with_active_style(
         kind = DocsSemanticKind::ActiveParameter;
       }
       if (style != run_style || kind != run_kind) && !piece.is_empty() {
-        push_docs_run(&mut runs, std::mem::take(&mut piece), run_style, run_kind);
+        push_docs_run(&mut runs, std::mem::take(&mut piece), run_style, run_kind, None);
       }
       run_style = style;
       run_kind = kind;
@@ -9951,12 +10073,13 @@ fn render_code_lines_with_active_style(
       byte_idx = byte_end;
     }
 
-    push_docs_run(&mut runs, piece, run_style, run_kind);
+    push_docs_run(&mut runs, piece, run_style, run_kind, None);
     if runs.is_empty() {
       runs.push(DocsStyledRun {
-        text:  String::new(),
-        style: base_style,
-        kind:  DocsSemanticKind::Code,
+        text:             String::new(),
+        style:            base_style,
+        kind:             DocsSemanticKind::Code,
+        link_destination: None,
       });
     }
     rendered.push(runs);
@@ -10066,6 +10189,7 @@ fn highlighted_code_block_lines(
           std::mem::take(&mut piece),
           active_style,
           active_kind,
+          None,
         );
       }
       active_style = style;
@@ -10074,12 +10198,13 @@ fn highlighted_code_block_lines(
       byte_idx = byte_end;
     }
 
-    push_docs_run(&mut runs, piece, active_style, active_kind);
+    push_docs_run(&mut runs, piece, active_style, active_kind, None);
     if runs.is_empty() {
       runs.push(DocsStyledRun {
-        text:  String::new(),
-        style: styles.code,
-        kind:  DocsSemanticKind::Code,
+        text:             String::new(),
+        style:            styles.code,
+        kind:             DocsSemanticKind::Code,
+        link_destination: None,
       });
     }
     rendered.push(runs);
@@ -10121,10 +10246,12 @@ fn docs_markdown_lines(
       DocsBlock::ListItem {
         marker,
         runs: inline_runs,
+        depth,
       } => {
+        let indent = "  ".repeat(depth);
         let marker_text = match marker {
-          DocsListMarker::Bullet => "• ".to_string(),
-          DocsListMarker::Ordered(marker) => format!("{marker} "),
+          DocsListMarker::Bullet => format!("{indent}- "),
+          DocsListMarker::Ordered(marker) => format!("{indent}{marker} "),
         };
         let mut runs = Vec::new();
         push_docs_run(
@@ -10132,6 +10259,7 @@ fn docs_markdown_lines(
           marker_text,
           styles.bullet,
           DocsSemanticKind::ListMarker,
+          None,
         );
         runs.extend(docs_runs_from_inline(
           &inline_runs,
@@ -10148,6 +10276,7 @@ fn docs_markdown_lines(
           "│ ".to_string(),
           styles.quote,
           DocsSemanticKind::QuoteMarker,
+          None,
         );
         runs.extend(docs_runs_from_inline(
           &inline_runs,
@@ -10170,9 +10299,10 @@ fn docs_markdown_lines(
       },
       DocsBlock::Rule => {
         lines.push(vec![DocsStyledRun {
-          text:  "───".to_string(),
-          style: styles.rule,
-          kind:  DocsSemanticKind::Rule,
+          text:             "───".to_string(),
+          style:            styles.rule,
+          kind:             DocsSemanticKind::Rule,
+          link_destination: None,
         }]);
       },
       DocsBlock::BlankLine => lines.push(Vec::new()),
@@ -10184,10 +10314,7 @@ fn docs_markdown_lines(
   lines
 }
 
-fn flatten_docs_runs(markdown: &str, editor: &SwiftEditor) -> Vec<DocsStyledRun> {
-  let base_style = editor.ui_theme.try_get("ui.text").unwrap_or_default();
-  let styles = docs_panel_styles(&editor.ui_theme, base_style);
-  let lines = docs_markdown_lines(markdown, &styles, editor);
+fn flatten_runs_with_newlines(lines: Vec<Vec<DocsStyledRun>>, newline_style: Style) -> Vec<DocsStyledRun> {
   let total_lines = lines.len();
   let mut runs = Vec::new();
   for (index, line) in lines.into_iter().enumerate() {
@@ -10196,12 +10323,142 @@ fn flatten_docs_runs(markdown: &str, editor: &SwiftEditor) -> Vec<DocsStyledRun>
       push_docs_run(
         &mut runs,
         "\n".to_string(),
-        styles.base,
+        newline_style,
         DocsSemanticKind::Body,
+        None,
       );
     }
   }
   runs
+}
+
+fn rendered_docs_blocks(markdown: &str, editor: &SwiftEditor) -> Vec<RenderedDocsBlock> {
+  let base_style = editor.ui_theme.try_get("ui.text").unwrap_or_default();
+  let styles = docs_panel_styles(&editor.ui_theme, base_style);
+  let mut blocks = Vec::new();
+
+  for block in parse_markdown_blocks(markdown) {
+    match block {
+      DocsBlock::Paragraph(inline_runs) => blocks.push(RenderedDocsBlock {
+        kind: RenderedDocsBlockKind::Paragraph,
+        level: 0,
+        list_depth: 0,
+        language: None,
+        runs: docs_runs_from_inline(&inline_runs, &styles, styles.base, DocsSemanticKind::Body),
+      }),
+      DocsBlock::Heading { level, runs } => {
+        let level_idx = level.saturating_sub(1).min(5) as usize;
+        blocks.push(RenderedDocsBlock {
+          kind: RenderedDocsBlockKind::Heading,
+          level,
+          list_depth: 0,
+          language: None,
+          runs: docs_runs_from_inline(&runs, &styles, styles.heading[level_idx], DocsSemanticKind::from_heading_level(level)),
+        });
+      },
+      DocsBlock::ListItem { marker, runs, depth } => {
+        let indent = "  ".repeat(depth);
+        let marker_text = match marker {
+          DocsListMarker::Bullet => format!("{indent}- "),
+          DocsListMarker::Ordered(marker) => format!("{indent}{marker} "),
+        };
+        let mut rendered_runs = Vec::new();
+        push_docs_run(
+          &mut rendered_runs,
+          marker_text,
+          styles.bullet,
+          DocsSemanticKind::ListMarker,
+          None,
+        );
+        rendered_runs.extend(docs_runs_from_inline(&runs, &styles, styles.base, DocsSemanticKind::Body));
+        blocks.push(RenderedDocsBlock {
+          kind: RenderedDocsBlockKind::ListItem,
+          level: 0,
+          list_depth: depth,
+          language: None,
+          runs: rendered_runs,
+        });
+      },
+      DocsBlock::Quote(inline_runs) => {
+        let mut rendered_runs = Vec::new();
+        push_docs_run(
+          &mut rendered_runs,
+          "│ ".to_string(),
+          styles.quote,
+          DocsSemanticKind::QuoteMarker,
+          None,
+        );
+        rendered_runs.extend(docs_runs_from_inline(&inline_runs, &styles, styles.quote, DocsSemanticKind::QuoteText));
+        blocks.push(RenderedDocsBlock {
+          kind: RenderedDocsBlockKind::Quote,
+          level: 0,
+          list_depth: 0,
+          language: None,
+          runs: rendered_runs,
+        });
+      },
+      DocsBlock::CodeFence { language, lines: code_lines } => {
+        let lines = highlighted_code_block_lines(&code_lines, &styles, editor, language.as_deref());
+        blocks.push(RenderedDocsBlock {
+          kind: RenderedDocsBlockKind::CodeFence,
+          level: 0,
+          list_depth: 0,
+          language,
+          runs: flatten_runs_with_newlines(lines, styles.base),
+        });
+      },
+      DocsBlock::Rule => blocks.push(RenderedDocsBlock {
+        kind: RenderedDocsBlockKind::Rule,
+        level: 0,
+        list_depth: 0,
+        language: None,
+        runs: vec![DocsStyledRun {
+          text:             "───".to_string(),
+          style:            styles.rule,
+          kind:             DocsSemanticKind::Rule,
+          link_destination: None,
+        }],
+      }),
+      DocsBlock::BlankLine => blocks.push(RenderedDocsBlock {
+        kind: RenderedDocsBlockKind::BlankLine,
+        level: 0,
+        list_depth: 0,
+        language: None,
+        runs: Vec::new(),
+      }),
+    }
+  }
+
+  if blocks.is_empty() {
+    blocks.push(RenderedDocsBlock {
+      kind: RenderedDocsBlockKind::BlankLine,
+      level: 0,
+      list_depth: 0,
+      language: None,
+      runs: Vec::new(),
+    });
+  }
+
+  blocks
+}
+
+fn flatten_docs_runs(markdown: &str, editor: &SwiftEditor) -> Vec<DocsStyledRun> {
+  let base_style = editor.ui_theme.try_get("ui.text").unwrap_or_default();
+  let styles = docs_panel_styles(&editor.ui_theme, base_style);
+  let lines = docs_markdown_lines(markdown, &styles, editor);
+  flatten_runs_with_newlines(lines, styles.base)
+}
+
+fn markdown_block_kind_code(kind: RenderedDocsBlockKind) -> u8 {
+  match kind {
+    RenderedDocsBlockKind::Paragraph => 0,
+    RenderedDocsBlockKind::Heading => 1,
+    RenderedDocsBlockKind::ListItem => 2,
+    RenderedDocsBlockKind::Quote => 3,
+    RenderedDocsBlockKind::CodeFence => 4,
+    RenderedDocsBlockKind::Rule => 5,
+    RenderedDocsBlockKind::BlankLine => 6,
+  }
 }
 
 fn docs_run_kind_code(kind: DocsSemanticKind) -> u8 {
@@ -11244,6 +11501,7 @@ fn pane_content_kind_code(kind: PaneContentKind) -> u8 {
   match kind {
     PaneContentKind::EditorBuffer => 0,
     PaneContentKind::ClientSurface => 1,
+    PaneContentKind::Agent => 2,
   }
 }
 
@@ -11251,6 +11509,7 @@ fn open_item_kind_code(kind: OpenItemKind) -> u8 {
   match kind {
     OpenItemKind::Buffer => 0,
     OpenItemKind::Terminal => 1,
+    OpenItemKind::Agent => 2,
   }
 }
 
@@ -11258,6 +11517,7 @@ fn open_item_kind_from_code(raw: u8) -> Option<OpenItemKind> {
   match raw {
     0 => Some(OpenItemKind::Buffer),
     1 => Some(OpenItemKind::Terminal),
+    2 => Some(OpenItemKind::Agent),
     _ => None,
   }
 }
@@ -11279,6 +11539,10 @@ fn buffer_id_from_raw(raw: usize) -> Option<BufferId> {
 
 fn client_surface_id_from_raw(raw: usize) -> Option<ClientSurfaceId> {
   NonZeroUsize::new(raw).map(ClientSurfaceId::new)
+}
+
+fn agent_item_id_from_raw(raw: usize) -> Option<AgentItemId> {
+  NonZeroUsize::new(raw).map(AgentItemId::new)
 }
 
 fn split_id_from_raw(raw: usize) -> Option<SplitNodeId> {
@@ -12631,6 +12895,16 @@ pub unsafe extern "C" fn the_editor_open_terminal_in_active_pane(
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_open_agent_in_active_pane(
+  handle: *mut the_editor_handle_t,
+) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return false;
+  };
+  handle.editor.open_agent_in_active_pane_ui()
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn the_editor_close_terminal_in_active_pane(
   handle: *mut the_editor_handle_t,
 ) -> bool {
@@ -12759,6 +13033,131 @@ pub unsafe extern "C" fn the_editor_primary_selection_text(
     Ok(value) => value.into_raw(),
     Err(_) => ptr::null_mut(),
   }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_render_markdown(
+  handle: *mut the_editor_handle_t,
+  markdown: *const c_char,
+) -> *mut the_editor_markdown_render_t {
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return ptr::null_mut();
+  };
+  let Some(markdown) = (unsafe { string_from_c(markdown) }) else {
+    return ptr::null_mut();
+  };
+
+  let rendered_blocks = rendered_docs_blocks(markdown.as_str(), &handle.editor);
+  let mut runs = Vec::new();
+  let mut blocks = Vec::new();
+
+  for block in rendered_blocks {
+    let run_start = runs.len();
+    for run in block.runs {
+      let text = CString::new(run.text.replace('\0', "")).unwrap_or_else(|_| CString::default());
+      let link_destination = run
+        .link_destination
+        .as_ref()
+        .map(|destination| CString::new(destination.replace('\0', "")).unwrap_or_else(|_| CString::default()));
+      let ffi_run = the_editor_snapshot_docs_run_t {
+        text:             text.as_ptr(),
+        style:            style_to_ffi(run.style, &handle.editor.ui_theme),
+        kind:             docs_run_kind_code(run.kind),
+        link_destination: link_destination.as_ref().map_or(ptr::null(), |value| value.as_ptr()),
+      };
+      runs.push(RenderedMarkdownRunRecord {
+        run: ffi_run,
+        text,
+        link_destination,
+      });
+    }
+    let language = block
+      .language
+      .as_ref()
+      .map(|value| CString::new(value.replace('\0', "")).unwrap_or_else(|_| CString::default()));
+    blocks.push(RenderedMarkdownBlockRecord {
+      block: the_editor_markdown_block_t {
+        kind:       markdown_block_kind_code(block.kind),
+        level:      block.level,
+        list_depth: u16::try_from(block.list_depth).unwrap_or(u16::MAX),
+        run_start,
+        run_count:  runs.len().saturating_sub(run_start),
+        language:   language.as_ref().map_or(ptr::null(), |value| value.as_ptr()),
+      },
+      language,
+    });
+  }
+
+  Box::into_raw(Box::new(the_editor_markdown_render_t { runs, blocks }))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_markdown_render_free(
+  render: *mut the_editor_markdown_render_t,
+) {
+  if render.is_null() {
+    return;
+  }
+  drop(unsafe { Box::from_raw(render) });
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_markdown_render_run_count(
+  render: *const the_editor_markdown_render_t,
+) -> usize {
+  let Some(render) = (unsafe { render.as_ref() }) else {
+    return 0;
+  };
+  render.runs.len()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_markdown_render_run_at(
+  render: *const the_editor_markdown_render_t,
+  run_index: usize,
+) -> the_editor_snapshot_docs_run_t {
+  let Some(render) = (unsafe { render.as_ref() }) else {
+    return the_editor_snapshot_docs_run_t::default();
+  };
+  render
+    .runs
+    .get(run_index)
+    .map(|record| {
+      let mut run = record.run;
+      run.text = record.text.as_ptr();
+      run.link_destination = record.link_destination.as_ref().map_or(ptr::null(), |value| value.as_ptr());
+      run
+    })
+    .unwrap_or_default()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_markdown_render_block_count(
+  render: *const the_editor_markdown_render_t,
+) -> usize {
+  let Some(render) = (unsafe { render.as_ref() }) else {
+    return 0;
+  };
+  render.blocks.len()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_markdown_render_block_at(
+  render: *const the_editor_markdown_render_t,
+  block_index: usize,
+) -> the_editor_markdown_block_t {
+  let Some(render) = (unsafe { render.as_ref() }) else {
+    return the_editor_markdown_block_t::default();
+  };
+  render
+    .blocks
+    .get(block_index)
+    .map(|record| {
+      let mut block = record.block;
+      block.language = record.language.as_ref().map_or(ptr::null(), |value| value.as_ptr());
+      block
+    })
+    .unwrap_or_default()
 }
 
 #[unsafe(no_mangle)]

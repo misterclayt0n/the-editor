@@ -166,7 +166,7 @@ impl PaneItemsState {
         self.items.iter().rev().find_map(|item| {
           match item {
             PaneContent::EditorBuffer { buffer_id } => Some(*buffer_id),
-            PaneContent::ClientSurface { .. } => None,
+            PaneContent::ClientSurface { .. } | PaneContent::Agent { .. } => None,
           }
         })
       },
@@ -183,6 +183,7 @@ struct EditorSurfaceState {
   pane_views:             BTreeMap<PaneId, ViewState>,
   client_surfaces:        BTreeMap<ClientSurfaceId, ClientSurfaceAttachment>,
   next_client_surface_id: NonZeroUsize,
+  next_agent_item_id:     NonZeroUsize,
 }
 
 impl EditorSurfaceState {
@@ -209,6 +210,7 @@ impl EditorSurfaceState {
       pane_views,
       client_surfaces: BTreeMap::new(),
       next_client_surface_id: NonZeroUsize::new(1).expect("nonzero"),
+      next_agent_item_id: NonZeroUsize::new(1).expect("nonzero"),
     }
   }
 }
@@ -343,16 +345,46 @@ impl From<NonZeroUsize> for ClientSurfaceId {
   }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct AgentItemId(NonZeroUsize);
+
+impl AgentItemId {
+  pub const fn new(id: NonZeroUsize) -> Self {
+    Self(id)
+  }
+
+  pub const fn get(self) -> NonZeroUsize {
+    self.0
+  }
+
+  pub const fn as_u64(self) -> u64 {
+    self.0.get() as u64
+  }
+
+  pub fn from_u64(id: u64) -> Option<Self> {
+    let id = usize::try_from(id).ok()?;
+    NonZeroUsize::new(id).map(Self::new)
+  }
+}
+
+impl From<NonZeroUsize> for AgentItemId {
+  fn from(value: NonZeroUsize) -> Self {
+    Self::new(value)
+  }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PaneContentKind {
   EditorBuffer,
   ClientSurface,
+  Agent,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PaneContent {
   EditorBuffer { buffer_id: BufferId },
   ClientSurface { surface_id: ClientSurfaceId },
+  Agent { agent_id: AgentItemId },
 }
 
 impl PaneContent {
@@ -360,6 +392,7 @@ impl PaneContent {
     match self {
       Self::EditorBuffer { .. } => PaneContentKind::EditorBuffer,
       Self::ClientSurface { .. } => PaneContentKind::ClientSurface,
+      Self::Agent { .. } => PaneContentKind::Agent,
     }
   }
 }
@@ -581,6 +614,14 @@ impl Editor {
     id
   }
 
+  fn alloc_agent_item_id(&mut self) -> AgentItemId {
+    let id = AgentItemId::new(self.surface.next_agent_item_id);
+    let next = self.surface.next_agent_item_id.get().saturating_add(1);
+    self.surface.next_agent_item_id =
+      NonZeroUsize::new(next).unwrap_or(self.surface.next_agent_item_id);
+    id
+  }
+
   fn detach_client_surface_in_pane(&mut self, pane: PaneId) -> Option<ClientSurfaceId> {
     let Some(PaneContent::ClientSurface { surface_id }) =
       self.surface.pane_content.get(&pane).copied()
@@ -660,7 +701,7 @@ impl Editor {
 
     let target_pane = match self.active_pane_content() {
       Some(PaneContent::EditorBuffer { .. }) | None => self.active_pane_id(),
-      Some(PaneContent::ClientSurface { .. }) => {
+      Some(PaneContent::ClientSurface { .. }) | Some(PaneContent::Agent { .. }) => {
         if let Some(existing_editor_pane) = self.first_editor_pane() {
           let _ = self
             .surface
@@ -899,7 +940,7 @@ impl Editor {
               is_active_pane: pane.is_active_pane,
             })
           },
-          PaneContent::ClientSurface { .. } => None,
+          PaneContent::ClientSurface { .. } | PaneContent::Agent { .. } => None,
         }
       })
       .collect()
@@ -1041,6 +1082,13 @@ impl Editor {
     }
   }
 
+  pub fn active_agent_item_id(&self) -> Option<AgentItemId> {
+    match self.active_pane_content() {
+      Some(PaneContent::Agent { agent_id }) => Some(agent_id),
+      _ => None,
+    }
+  }
+
   pub fn client_surface_snapshots(&self) -> Vec<ClientSurfaceSnapshot> {
     let active_pane = self.active_pane_id();
     self
@@ -1063,6 +1111,10 @@ impl Editor {
       self.active_pane_content(),
       Some(PaneContent::ClientSurface { .. })
     )
+  }
+
+  pub fn is_active_pane_agent(&self) -> bool {
+    matches!(self.active_pane_content(), Some(PaneContent::Agent { .. }))
   }
 
   pub fn create_client_surface(&mut self) -> ClientSurfaceId {
@@ -1091,6 +1143,43 @@ impl Editor {
 
   pub fn replace_active_pane_with_client_surface(&mut self, surface_id: ClientSurfaceId) -> bool {
     self.open_client_surface_in_active_pane(surface_id)
+  }
+
+  pub fn set_active_agent_in_pane(
+    &mut self,
+    pane: PaneId,
+    agent_id: AgentItemId,
+  ) -> bool {
+    if !self.surface.split_tree.contains_pane(pane) {
+      return false;
+    }
+    let was_active = pane == self.active_pane_id();
+    self.sync_pane_view_to_buffer(pane);
+    let _ = self.detach_client_surface_in_pane(pane);
+    let content = PaneContent::Agent { agent_id };
+    self.surface.pane_content.insert(pane, content);
+    self.activate_pane_item(pane, content);
+    let _ = was_active;
+    true
+  }
+
+  pub fn open_agent_in_active_pane(&mut self) -> AgentItemId {
+    let pane = self.active_pane_id();
+    if let Some(state) = self.surface.pane_items.get(&pane)
+      && let Some(existing) = state.items.iter().find_map(|content| {
+        if let PaneContent::Agent { agent_id } = content {
+          Some(*agent_id)
+        } else {
+          None
+        }
+      })
+    {
+      let _ = self.set_active_agent_in_pane(pane, existing);
+      return existing;
+    }
+    let agent_id = self.alloc_agent_item_id();
+    let _ = self.set_active_agent_in_pane(pane, agent_id);
+    agent_id
   }
 
   pub fn open_client_surface(&mut self, target: OpenTarget, surface_id: ClientSurfaceId) -> bool {
@@ -1192,6 +1281,11 @@ impl Editor {
           return false;
         }
       },
+      Some(PaneContent::Agent { agent_id }) if was_visible => {
+        if !self.set_active_agent_in_pane(pane, agent_id) {
+          return false;
+        }
+      },
       Some(_) => {},
       None => {
         let previous_active = self.active_pane_id();
@@ -1217,6 +1311,7 @@ impl Editor {
         PaneContent::ClientSurface { surface_id } => {
           let _ = self.close_client_surface(surface_id);
         },
+        PaneContent::Agent { .. } => {},
       }
     }
 
@@ -1339,6 +1434,13 @@ impl Editor {
         let surface_id = self.create_client_surface();
         self.surface.pane_views.insert(pane, current_view);
         if !self.attach_client_surface_to_pane(pane, surface_id) {
+          return false;
+        }
+      },
+      PaneContent::Agent { .. } => {
+        self.surface.pane_views.insert(pane, current_view);
+        let agent_id = self.alloc_agent_item_id();
+        if !self.set_active_agent_in_pane(pane, agent_id) {
           return false;
         }
       },
@@ -1838,6 +1940,9 @@ impl Editor {
             surface.attached_pane = Some(pane);
           }
         },
+        PaneContent::Agent { .. } => {
+          self.surface.pane_content.insert(pane, next_content);
+        },
       }
     }
 
@@ -2138,6 +2243,25 @@ mod tests {
       .first()
       .map(|snapshot| snapshot.buffer_id)
       .expect("editor has a first buffer")
+  }
+
+  fn pane_item_contents(editor: &Editor, pane: PaneId) -> Vec<PaneContent> {
+    editor
+      .pane_item_snapshots()
+      .into_iter()
+      .find(|group| group.pane_id == pane)
+      .map(|group| group.items.into_iter().map(|item| item.content).collect())
+      .expect("pane item snapshot")
+  }
+
+  fn active_pane_item_content(editor: &Editor, pane: PaneId) -> PaneContent {
+    editor
+      .pane_item_snapshots()
+      .into_iter()
+      .find(|group| group.pane_id == pane)
+      .and_then(|group| group.items.into_iter().find(|item| item.is_active))
+      .map(|item| item.content)
+      .expect("active pane item snapshot")
   }
 
   #[test]
@@ -2620,6 +2744,131 @@ mod tests {
       Some(PaneContentKind::ClientSurface)
     );
     assert_eq!(editor.active_client_surface_id(), Some(first_terminal));
+  }
+
+  #[test]
+  fn editor_split_active_agent_pane_keeps_agent_items_pane_local() {
+    let doc_id = DocumentId::new(NonZeroUsize::new(1).unwrap());
+    let doc = Document::new(doc_id, Rope::from("one"));
+    let view = ViewState::new(Rect::new(0, 0, 80, 24), Position::new(0, 0));
+    let editor_id = EditorId::new(NonZeroUsize::new(1).unwrap());
+    let mut editor = Editor::new(editor_id, doc, view);
+
+    let first = first_buffer_id(&editor);
+    let left = editor.active_pane_id();
+    let left_agent = editor.open_agent_in_active_pane();
+    assert!(editor.is_active_pane_agent());
+    assert_eq!(active_pane_item_content(&editor, left), PaneContent::Agent { agent_id: left_agent });
+    assert_eq!(pane_item_contents(&editor, left), vec![
+      PaneContent::EditorBuffer { buffer_id: first },
+      PaneContent::Agent { agent_id: left_agent },
+    ]);
+
+    assert!(editor.split_active_pane(SplitAxis::Vertical));
+    let right = editor.active_pane_id();
+    let right_agent = editor.active_agent_item_id().expect("right agent");
+
+    assert_ne!(left, right);
+    assert_ne!(left_agent, right_agent);
+    assert_eq!(pane_item_contents(&editor, left), vec![
+      PaneContent::EditorBuffer { buffer_id: first },
+      PaneContent::Agent { agent_id: left_agent },
+    ]);
+    assert_eq!(active_pane_item_content(&editor, left), PaneContent::Agent { agent_id: left_agent });
+    assert_eq!(pane_item_contents(&editor, right), vec![PaneContent::Agent { agent_id: right_agent }]);
+    assert_eq!(active_pane_item_content(&editor, right), PaneContent::Agent { agent_id: right_agent });
+  }
+
+  #[test]
+  fn editor_agent_pane_focus_and_tab_switching_do_not_move_agent_items() {
+    let doc_id = DocumentId::new(NonZeroUsize::new(1).unwrap());
+    let doc = Document::new(doc_id, Rope::from("one"));
+    let view = ViewState::new(Rect::new(0, 0, 80, 24), Position::new(0, 0));
+    let editor_id = EditorId::new(NonZeroUsize::new(1).unwrap());
+    let mut editor = Editor::new(editor_id, doc, view.clone());
+
+    let first = first_buffer_id(&editor);
+    let second = editor.open_buffer(Rope::from("two"), view, Some(PathBuf::from("/tmp/two.txt")));
+    let left = editor.active_pane_id();
+    let left_agent = editor.open_agent_in_active_pane();
+    assert!(editor.split_active_pane(SplitAxis::Vertical));
+    let right = editor.active_pane_id();
+    let right_agent = editor.active_agent_item_id().expect("right agent");
+
+    assert!(editor.set_active_pane(left));
+    assert_eq!(active_pane_item_content(&editor, left), PaneContent::Agent { agent_id: left_agent });
+    assert_eq!(pane_item_contents(&editor, left), vec![
+      PaneContent::EditorBuffer { buffer_id: first },
+      PaneContent::EditorBuffer { buffer_id: second },
+      PaneContent::Agent { agent_id: left_agent },
+    ]);
+    assert_eq!(pane_item_contents(&editor, right), vec![PaneContent::Agent { agent_id: right_agent }]);
+
+    assert!(editor.set_active_buffer_in_pane(left, first));
+    assert!(editor.set_active_buffer_in_pane(right, second));
+    assert_eq!(active_pane_item_content(&editor, left), PaneContent::EditorBuffer { buffer_id: first });
+    assert_eq!(active_pane_item_content(&editor, right), PaneContent::EditorBuffer { buffer_id: second });
+    assert_eq!(pane_item_contents(&editor, left), vec![
+      PaneContent::EditorBuffer { buffer_id: first },
+      PaneContent::EditorBuffer { buffer_id: second },
+      PaneContent::Agent { agent_id: left_agent },
+    ]);
+    assert_eq!(pane_item_contents(&editor, right), vec![
+      PaneContent::Agent { agent_id: right_agent },
+      PaneContent::EditorBuffer { buffer_id: second },
+    ]);
+
+    assert!(editor.set_active_agent_in_pane(right, right_agent));
+    assert!(editor.set_active_agent_in_pane(left, left_agent));
+    assert_eq!(active_pane_item_content(&editor, left), PaneContent::Agent { agent_id: left_agent });
+    assert_eq!(active_pane_item_content(&editor, right), PaneContent::Agent { agent_id: right_agent });
+    assert!(!pane_item_contents(&editor, left).contains(&PaneContent::Agent { agent_id: right_agent }));
+    assert!(!pane_item_contents(&editor, right).contains(&PaneContent::Agent { agent_id: left_agent }));
+  }
+
+  #[test]
+  fn editor_close_inactive_agent_tab_and_reopen_agent_in_specific_pane() {
+    let doc_id = DocumentId::new(NonZeroUsize::new(1).unwrap());
+    let doc = Document::new(doc_id, Rope::from("one"));
+    let view = ViewState::new(Rect::new(0, 0, 80, 24), Position::new(0, 0));
+    let editor_id = EditorId::new(NonZeroUsize::new(1).unwrap());
+    let mut editor = Editor::new(editor_id, doc, view);
+
+    let first = first_buffer_id(&editor);
+    let left = editor.active_pane_id();
+    let left_agent = editor.open_agent_in_active_pane();
+    assert!(editor.split_active_pane(SplitAxis::Vertical));
+    let right = editor.active_pane_id();
+    let right_agent = editor.active_agent_item_id().expect("right agent");
+
+    assert!(editor.set_active_buffer_in_pane(right, first));
+    assert!(editor.set_active_pane(left));
+    assert!(editor.close_pane_item(right, PaneContent::Agent { agent_id: right_agent }));
+
+    assert_eq!(pane_item_contents(&editor, left), vec![
+      PaneContent::EditorBuffer { buffer_id: first },
+      PaneContent::Agent { agent_id: left_agent },
+    ]);
+    assert_eq!(pane_item_contents(&editor, right), vec![PaneContent::EditorBuffer { buffer_id: first }]);
+    assert!(!pane_item_contents(&editor, left).contains(&PaneContent::Agent { agent_id: right_agent }));
+
+    assert!(editor.set_active_pane(right));
+    let reopened_right_agent = editor.open_agent_in_active_pane();
+    assert_ne!(reopened_right_agent, left_agent);
+    assert_ne!(reopened_right_agent, right_agent);
+    assert_eq!(pane_item_contents(&editor, right), vec![
+      PaneContent::EditorBuffer { buffer_id: first },
+      PaneContent::Agent {
+        agent_id: reopened_right_agent,
+      },
+    ]);
+    assert_eq!(active_pane_item_content(&editor, right), PaneContent::Agent {
+      agent_id: reopened_right_agent,
+    });
+    assert_eq!(pane_item_contents(&editor, left), vec![
+      PaneContent::EditorBuffer { buffer_id: first },
+      PaneContent::Agent { agent_id: left_agent },
+    ]);
   }
 
   #[test]

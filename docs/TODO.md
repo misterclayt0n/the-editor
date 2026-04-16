@@ -15,7 +15,6 @@
 - We probably need some sort of VCS integrations for ease of reviewing AI generated code. not sure what the UX for that would look like tho. VCS picker doesn't feel as nice I guess, but of course I could just improve it or "fix" it
 - Configuration support - We really only care for simple things for now: default theme, default font family, font size, cursor shape, whatever, not that deep
 - "Fix" all pickers - Low prio tbh I don't use most of them 
-- Statusline needs to change depending upon the kind of surface - terminals for example
 - Horizontally scrollable pane tabs
 - Font resizing
 - Drag surfaces around to reorder them

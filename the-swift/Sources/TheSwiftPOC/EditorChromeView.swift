@@ -1836,6 +1836,23 @@ private struct EditorStatusAccessoryView: View {
     }
 
     var body: some View {
+        Group {
+            if let terminalStatus = controller.activeTerminalStatus {
+                terminalStatusBody(terminalStatus)
+            } else {
+                editorStatusBody
+            }
+        }
+        .padding(.horizontal, 14)
+        .frame(height: 28)
+        .background(Color(nsColor: chromeBackgroundColor(base: chrome.backgroundColor)))
+        .overlay(alignment: .top) {
+            Divider()
+        }
+        .accessibilityElement(children: .contain)
+    }
+
+    private var editorStatusBody: some View {
         HStack(spacing: 12) {
             ModePill(mode: mode, chromeForeground: chromeForeground)
 
@@ -1861,13 +1878,36 @@ private struct EditorStatusAccessoryView: View {
                     .padding(.leading, 4)
             }
         }
-        .padding(.horizontal, 14)
-        .frame(height: 28)
-        .background(Color(nsColor: chromeBackgroundColor(base: chrome.backgroundColor)))
-        .overlay(alignment: .top) {
-            Divider()
+    }
+
+    @ViewBuilder
+    private func terminalStatusBody(_ status: EditorActiveTerminalStatus) -> some View {
+        HStack(spacing: 10) {
+            TerminalStatusPill(foreground: chromeForeground)
+
+            if let workingDirectory = status.workingDirectory {
+                Text(workingDirectory)
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(chromeForeground.primary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+
+            if let title = status.title {
+                if status.workingDirectory != nil {
+                    Circle()
+                        .fill(chromeForeground.tertiary)
+                        .frame(width: 3, height: 3)
+                }
+                Text(title)
+                    .font(.system(size: 11, weight: .regular))
+                    .foregroundStyle(chromeForeground.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+
+            Spacer(minLength: 0)
         }
-        .accessibilityElement(children: .contain)
     }
 }
 
@@ -2191,6 +2231,26 @@ private struct LSPIndeterminateBar: View {
                 }
         }
         .accessibilityHidden(true)
+    }
+}
+
+private struct TerminalStatusPill: View {
+    let foreground: ChromeForegroundColors
+
+    var body: some View {
+        HStack(spacing: 6) {
+            EditorSemanticIconView(iconName: "terminal", size: 10)
+            Text("Terminal")
+                .font(.system(size: 10, weight: .semibold, design: .rounded))
+        }
+        .foregroundStyle(foreground.primary)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
+        .background(
+            Capsule(style: .continuous)
+                .fill(foreground.primary.opacity(0.08))
+        )
+        .accessibilityLabel("Terminal")
     }
 }
 

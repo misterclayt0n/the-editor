@@ -17,6 +17,11 @@ private struct EventMonitorBox: @unchecked Sendable {
     let raw: Any
 }
 
+struct EditorActiveTerminalStatus: Equatable {
+    let title: String?
+    let workingDirectory: String?
+}
+
 @MainActor
 final class EditorSurfaceController: ObservableObject {
     weak var delegate: EditorSurfaceControllerDelegate?
@@ -368,11 +373,28 @@ final class EditorSurfaceController: ObservableObject {
         }
     }
 
+    var activeOpenItem: EditorPaneOpenItemRow? {
+        openItems.groups.first(where: { $0.isActivePane })?
+            .items.first(where: { $0.isActive })
+    }
+
     /// Kind of the active tab in the active pane's open-items strip (buffer vs terminal).
     private var activeOpenItemKind: EditorOpenItemKind? {
-        openItems.groups.first(where: { $0.isActivePane })?
-            .items.first(where: { $0.isActive })?
-            .kind
+        activeOpenItem?.kind
+    }
+
+    var activeTerminalStatus: EditorActiveTerminalStatus? {
+        guard let item = activeOpenItem,
+              item.kind == .terminal,
+              let clientSurfaceID = item.clientSurfaceID
+        else {
+            return nil
+        }
+
+        let state = terminalPresentationBySurfaceID[clientSurfaceID]
+        let workingDirectory = state?.workingDirectory.flatMap(formatTerminalDisplayPath)
+        let title = normalizedTerminalStatusTitle(item.title, workingDirectory: workingDirectory)
+        return EditorActiveTerminalStatus(title: title, workingDirectory: workingDirectory)
     }
 
     func closeActivePaneItem() {
@@ -440,6 +462,7 @@ final class EditorSurfaceController: ObservableObject {
     }
 
     func registerTerminalSurface(_ clientSurfaceID: UInt, preferredWorkingDirectory: String?) {
+        objectWillChange.send()
         var state = terminalPresentationBySurfaceID[clientSurfaceID] ?? TerminalPresentationState()
         if state.workingDirectory?.isEmpty != false,
            let preferredWorkingDirectory,
@@ -451,6 +474,7 @@ final class EditorSurfaceController: ObservableObject {
     }
 
     func updateTerminalTitle(_ title: String, for clientSurfaceID: UInt) {
+        objectWillChange.send()
         var state = terminalPresentationBySurfaceID[clientSurfaceID] ?? TerminalPresentationState()
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         state.title = trimmed.isEmpty ? nil : trimmed
@@ -459,6 +483,7 @@ final class EditorSurfaceController: ObservableObject {
     }
 
     func updateTerminalWorkingDirectory(_ workingDirectory: String, for clientSurfaceID: UInt) {
+        objectWillChange.send()
         var state = terminalPresentationBySurfaceID[clientSurfaceID] ?? TerminalPresentationState()
         let trimmed = workingDirectory.trimmingCharacters(in: .whitespacesAndNewlines)
         state.workingDirectory = trimmed.isEmpty ? nil : trimmed
@@ -1016,6 +1041,23 @@ final class EditorSurfaceController: ObservableObject {
         let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "Terminal" }
         return (trimmed as NSString).abbreviatingWithTildeInPath
+    }
+
+    private func normalizedTerminalStatusTitle(_ title: String?, workingDirectory: String?) -> String? {
+        guard let rawTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines), !rawTitle.isEmpty else {
+            return nil
+        }
+        let normalizedTitle = rawTitle.lowercased()
+        if normalizedTitle == "terminal" || normalizedTitle.hasPrefix("terminal ") {
+            return nil
+        }
+        if let workingDirectory {
+            let directoryName = URL(fileURLWithPath: workingDirectory).lastPathComponent
+            if rawTitle == workingDirectory || (!directoryName.isEmpty && rawTitle == directoryName) {
+                return nil
+            }
+        }
+        return rawTitle
     }
 
     private func markedTextOverlay(from snapshot: EditorSnapshot) -> EditorMarkedText? {

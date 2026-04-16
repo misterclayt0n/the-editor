@@ -62,7 +62,10 @@ struct EditorChromeView: View {
                 fileTreeWidth: titlebarSidebarRegionWidth,
                 fileTreeBackgroundColor: sidebarTheme.backgroundColor,
                 fileTreeSeparatorColor: sidebarTheme.separatorColor,
+                sidebarMode: sidebarMode,
+                sidebarTitle: sidebarTitle,
                 onToggleFileTree: controller.toggleFileTree,
+                onSelectSidebarMode: selectSidebarMode,
                 onOpenTerminal: controller.openTerminalInActivePane
             )
         )
@@ -83,8 +86,6 @@ struct EditorChromeView: View {
                 EditorFileTreeSidebarView(
                     tree: controller.fileTree,
                     theme: sidebarTheme,
-                    sidebarMode: sidebarMode,
-                    onSelectSidebarMode: selectSidebarMode,
                     onSelectIndex: controller.clickFileTreeIndex,
                     onActivateIndex: controller.activateFileTreeIndex,
                     onVisibleRowsChanged: controller.setFileTreeVisibleRows,
@@ -105,8 +106,6 @@ struct EditorChromeView: View {
                     scene: controller.scene,
                     uniqueBufferCount: controller.bufferTabs.tabs.count,
                     theme: sidebarTheme,
-                    sidebarMode: sidebarMode,
-                    onSelectSidebarMode: selectSidebarMode,
                     onActivateItem: controller.activateOpenItem,
                     onCloseItem: controller.closeOpenItem,
                     onFocusSidebar: { controller.setFileTreeActive(false) }
@@ -151,6 +150,18 @@ struct EditorChromeView: View {
 
     private var titlebarSidebarRegionWidth: CGFloat {
         controller.fileTree.isVisible ? fileTreeWidth + 8 : 52
+    }
+
+    private var sidebarTitle: String {
+        switch sidebarMode {
+        case .files:
+            guard let root = controller.fileTree.root, !root.isEmpty else { return "Workspace" }
+            let url = URL(fileURLWithPath: root)
+            let name = url.lastPathComponent
+            return name.isEmpty ? root : name
+        case .buffers:
+            return "Open Items"
+        }
     }
 
     private var fileTreeResizeGesture: some Gesture {
@@ -449,100 +460,9 @@ private struct PendingIndicator: View {
     }
 }
 
-private struct EditorSidebarHeaderView: View {
-    let headerIconName: String
-    let title: String
-    let helpText: String?
-    let theme: EditorFileTreeSidebarTheme
-    let sidebarMode: EditorSidebarMode
-    let onSelectSidebarMode: (EditorSidebarMode) -> Void
-    let onActivate: () -> Void
-
-    private let headerHeight: CGFloat = 30
-
-    var body: some View {
-        HStack(spacing: 10) {
-            Button(action: onActivate) {
-                HStack(spacing: 8) {
-                    EditorSemanticIconView(iconName: headerIconName, size: 12)
-                        .foregroundStyle(Color(nsColor: theme.selectionColor).opacity(0.85))
-                    Text(title)
-                        .font(.system(size: 12, weight: .semibold))
-                        .lineLimit(1)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help(helpText ?? title)
-
-            EditorSidebarModeSwitcher(
-                mode: sidebarMode,
-                theme: theme,
-                onSelect: onSelectSidebarMode
-            )
-        }
-        .padding(.horizontal, 12)
-        .frame(maxWidth: .infinity, minHeight: headerHeight, maxHeight: headerHeight, alignment: .leading)
-        .background(Color(nsColor: theme.headerColor))
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(Color(nsColor: theme.separatorColor))
-                .frame(height: 1)
-        }
-    }
-}
-
-private struct EditorSidebarModeSwitcher: View {
-    let mode: EditorSidebarMode
-    let theme: EditorFileTreeSidebarTheme
-    let onSelect: (EditorSidebarMode) -> Void
-
-    private var chromeForeground: ChromeForegroundColors {
-        ChromeForegroundColors.forBackground(theme.backgroundColor)
-    }
-
-    var body: some View {
-        HStack(spacing: 3) {
-            modeButton(.files, iconName: "folder", label: "Files")
-            modeButton(.buffers, iconName: "buffers", label: "Buffers")
-        }
-        .padding(3)
-        .background(
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .fill(Color(nsColor: theme.backgroundColor).opacity(0.9))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .stroke(Color(nsColor: theme.separatorColor).opacity(0.65), lineWidth: 1)
-        )
-    }
-
-    private func modeButton(_ target: EditorSidebarMode, iconName: String, label: String) -> some View {
-        let isSelected = mode == target
-        return Button {
-            onSelect(target)
-        } label: {
-            EditorSemanticIconView(iconName: iconName, size: 11)
-                .foregroundStyle(isSelected ? chromeForeground.primary : chromeForeground.secondary)
-                .frame(width: 20, height: 20)
-                .background(
-                    RoundedRectangle(cornerRadius: 5, style: .continuous)
-                        .fill(isSelected ? Color(nsColor: theme.selectionColor).opacity(0.28) : .clear)
-                )
-                .contentShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
-        }
-        .buttonStyle(.plain)
-        .help(label)
-        .accessibilityLabel(label)
-    }
-}
-
 private struct EditorFileTreeSidebarView: View {
     let tree: EditorFileTreeState
     let theme: EditorFileTreeSidebarTheme
-    let sidebarMode: EditorSidebarMode
-    let onSelectSidebarMode: (EditorSidebarMode) -> Void
     let onSelectIndex: (Int) -> Void
     let onActivateIndex: (Int) -> Void
     let onVisibleRowsChanged: (Int) -> Void
@@ -550,38 +470,19 @@ private struct EditorFileTreeSidebarView: View {
     let onFocusSidebar: () -> Void
 
     var body: some View {
-        VStack(spacing: 0) {
-            EditorSidebarHeaderView(
-                headerIconName: "folder",
-                title: rootTitle,
-                helpText: tree.root ?? rootTitle,
-                theme: theme,
-                sidebarMode: sidebarMode,
-                onSelectSidebarMode: onSelectSidebarMode,
-                onActivate: onFocusSidebar
-            )
-
-            EditorFileTreeListRepresentable(
-                tree: tree,
-                theme: theme,
-                onSelectIndex: onSelectIndex,
-                onActivateIndex: onActivateIndex,
-                onVisibleRowsChanged: onVisibleRowsChanged,
-                onScrollOffsetChanged: onScrollOffsetChanged,
-                onFocusSidebar: onFocusSidebar
-            )
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        EditorFileTreeListRepresentable(
+            tree: tree,
+            theme: theme,
+            onSelectIndex: onSelectIndex,
+            onActivateIndex: onActivateIndex,
+            onVisibleRowsChanged: onVisibleRowsChanged,
+            onScrollOffsetChanged: onScrollOffsetChanged,
+            onFocusSidebar: onFocusSidebar
+        )
+        .padding(.top, 8)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(nsColor: theme.backgroundColor))
         .environment(\.colorScheme, theme.backgroundColor.isLightColor ? .light : .dark)
-    }
-
-    private var rootTitle: String {
-        guard let root = tree.root, !root.isEmpty else { return "Workspace" }
-        let url = URL(fileURLWithPath: root)
-        let name = url.lastPathComponent
-        return name.isEmpty ? root : name
     }
 }
 
@@ -590,8 +491,6 @@ private struct EditorOpenItemsSidebarView: View {
     let scene: EditorRenderScene?
     let uniqueBufferCount: Int
     let theme: EditorFileTreeSidebarTheme
-    let sidebarMode: EditorSidebarMode
-    let onSelectSidebarMode: (EditorSidebarMode) -> Void
     let onActivateItem: (EditorPaneOpenItemRow) -> Void
     let onCloseItem: (EditorPaneOpenItemRow) -> Void
     let onFocusSidebar: () -> Void
@@ -601,19 +500,8 @@ private struct EditorOpenItemsSidebarView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            EditorSidebarHeaderView(
-                headerIconName: "buffers",
-                title: "Open Items",
-                helpText: "Open items grouped by pane",
-                theme: theme,
-                sidebarMode: sidebarMode,
-                onSelectSidebarMode: onSelectSidebarMode,
-                onActivate: onFocusSidebar
-            )
-
-            ScrollView(.vertical, showsIndicators: true) {
-                LazyVStack(alignment: .leading, spacing: 10) {
+        ScrollView(.vertical, showsIndicators: true) {
+            LazyVStack(alignment: .leading, spacing: 10) {
                     if openItems.groups.isEmpty {
                         VStack(alignment: .leading, spacing: 6) {
                             Text("No Open Items")
@@ -655,10 +543,9 @@ private struct EditorOpenItemsSidebarView: View {
                             }
                         }
                     }
-                }
-                .padding(.vertical, 6)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(.top, 8)
+            .padding(.bottom, 6)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Color(nsColor: theme.backgroundColor))
@@ -2314,6 +2201,8 @@ private struct ModePill: View {
 private final class EditorTitlebarLeadingState: ObservableObject {
     @Published var isSidebarActive: Bool = false
     @Published var sidebarWidth: CGFloat = 52
+    @Published var sidebarMode: EditorSidebarMode = .files
+    @Published var sidebarTitle: String = "Workspace"
     @Published var document: EditorDocumentChrome = .empty
 }
 
@@ -2393,7 +2282,10 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
     let fileTreeWidth: CGFloat
     let fileTreeBackgroundColor: NSColor
     let fileTreeSeparatorColor: NSColor
+    let sidebarMode: EditorSidebarMode
+    let sidebarTitle: String
     let onToggleFileTree: () -> Void
+    let onSelectSidebarMode: (EditorSidebarMode) -> Void
     let onOpenTerminal: () -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -2415,7 +2307,10 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
                 fileTreeWidth: fileTreeWidth,
                 fileTreeBackgroundColor: fileTreeBackgroundColor,
                 fileTreeSeparatorColor: fileTreeSeparatorColor,
+                sidebarMode: sidebarMode,
+                sidebarTitle: sidebarTitle,
                 onToggleFileTree: onToggleFileTree,
+                onSelectSidebarMode: onSelectSidebarMode,
                 onOpenTerminal: onOpenTerminal
             )
             return
@@ -2430,7 +2325,10 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
                 fileTreeWidth: fileTreeWidth,
                 fileTreeBackgroundColor: fileTreeBackgroundColor,
                 fileTreeSeparatorColor: fileTreeSeparatorColor,
+                sidebarMode: sidebarMode,
+                sidebarTitle: sidebarTitle,
                 onToggleFileTree: onToggleFileTree,
+                onSelectSidebarMode: onSelectSidebarMode,
                 onOpenTerminal: onOpenTerminal
             )
         }
@@ -2447,6 +2345,7 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
             sidebarForeground: ChromeForegroundColors.forBackground(.windowBackgroundColor),
             mainForeground: ChromeForegroundColors.forBackground(.windowBackgroundColor),
             onToggle: {},
+            onSelectSidebarMode: { _ in },
             onOpenTerminal: {},
             showsTerminalButton: GhosttyTerminalRegistry.isAvailable
         ))
@@ -2460,6 +2359,7 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
         private var lastFileTreeBackgroundColor: NSColor = .windowBackgroundColor
         private var lastFileTreeSeparatorColor: NSColor = .separatorColor
         private var toggleFileTreeAction: (() -> Void)?
+        private var selectSidebarModeAction: ((EditorSidebarMode) -> Void)?
         private var openTerminalAction: (() -> Void)?
         private lazy var toolbar: NSToolbar = {
             let toolbar = NSToolbar(identifier: toolbarIdentifier)
@@ -2495,7 +2395,10 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
             fileTreeWidth: CGFloat,
             fileTreeBackgroundColor: NSColor,
             fileTreeSeparatorColor: NSColor,
+            sidebarMode: EditorSidebarMode,
+            sidebarTitle: String,
             onToggleFileTree: @escaping () -> Void,
+            onSelectSidebarMode: @escaping (EditorSidebarMode) -> Void,
             onOpenTerminal: @escaping () -> Void
         ) {
             let started = CFAbsoluteTimeGetCurrent()
@@ -2506,6 +2409,7 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
             let sidebarColorChanged = !fileTreeBackgroundColor.isEqual(lastFileTreeBackgroundColor)
             let separatorColorChanged = !fileTreeSeparatorColor.isEqual(lastFileTreeSeparatorColor)
             toggleFileTreeAction = onToggleFileTree
+            selectSidebarModeAction = onSelectSidebarMode
             openTerminalAction = onOpenTerminal
             attachWindowObserversIfNeeded(window: window)
             installToolbarIfNeeded(window: window)
@@ -2534,7 +2438,9 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
                 chrome: chrome,
                 fileTreeVisible: fileTreeVisible,
                 fileTreeWidth: fileTreeWidth,
-                fileTreeBackgroundColor: fileTreeBackgroundColor
+                fileTreeBackgroundColor: fileTreeBackgroundColor,
+                sidebarMode: sidebarMode,
+                sidebarTitle: sidebarTitle
             )
             let toolbarMs = (CFAbsoluteTimeGetCurrent() - toolbarStarted) * 1000
             let totalMs = (CFAbsoluteTimeGetCurrent() - started) * 1000
@@ -2583,7 +2489,9 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
                 chrome: lastChrome,
                 fileTreeVisible: lastFileTreeVisible,
                 fileTreeWidth: lastFileTreeWidth,
-                fileTreeBackgroundColor: lastFileTreeBackgroundColor
+                fileTreeBackgroundColor: lastFileTreeBackgroundColor,
+                sidebarMode: leadingState.sidebarMode,
+                sidebarTitle: leadingState.sidebarTitle
             )
         }
 
@@ -2618,7 +2526,9 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
             chrome: EditorChromeModel,
             fileTreeVisible: Bool,
             fileTreeWidth: CGFloat,
-            fileTreeBackgroundColor: NSColor
+            fileTreeBackgroundColor: NSColor,
+            sidebarMode: EditorSidebarMode,
+            sidebarTitle: String
         ) {
             let sidebarFG = ChromeForegroundColors.forBackground(fileTreeBackgroundColor)
             let mainFG = ChromeForegroundColors.forBackground(chrome.backgroundColor)
@@ -2627,12 +2537,15 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
                 sidebarForeground: sidebarFG,
                 mainForeground: mainFG,
                 onToggle: { self.toggleFileTreeAction?() },
+                onSelectSidebarMode: { self.selectSidebarModeAction?($0) },
                 onOpenTerminal: { self.openTerminalAction?() },
                 showsTerminalButton: GhosttyTerminalRegistry.isAvailable
             )
             withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
                 leadingState.isSidebarActive = fileTreeVisible
                 leadingState.sidebarWidth = fileTreeWidth
+                leadingState.sidebarMode = sidebarMode
+                leadingState.sidebarTitle = sidebarTitle
                 leadingState.document = chrome.document
             }
             vcsHostingView.rootView = EditorTitlebarVCSView(vcsText: chrome.document.vcsText, foreground: mainFG)
@@ -2794,33 +2707,108 @@ private struct EditorTitlebarLeadingRegionView: View {
     let sidebarForeground: ChromeForegroundColors
     let mainForeground: ChromeForegroundColors
     let onToggle: () -> Void
+    let onSelectSidebarMode: (EditorSidebarMode) -> Void
     let onOpenTerminal: () -> Void
     let showsTerminalButton: Bool
 
     var body: some View {
-        HStack(spacing: 0) {
-            HStack(spacing: 0) {
+        HStack(spacing: 10) {
+            HStack(spacing: 6) {
                 EditorTitlebarSidebarToggleButton(
                     isActive: state.isSidebarActive,
                     foreground: sidebarForeground,
                     onToggle: onToggle
                 )
-                .padding(.leading, 10)
-                Spacer(minLength: 0)
+                EditorTitlebarSidebarModeButtons(
+                    mode: state.sidebarMode,
+                    foreground: mainForeground,
+                    onSelect: onSelectSidebarMode
+                )
             }
-            .frame(width: max(state.sidebarWidth, 52), height: 24, alignment: .leading)
+            .frame(width: max(state.sidebarWidth, 108), height: 24, alignment: .leading)
 
             HStack(spacing: 8) {
+                EditorTitlebarSidebarTitleView(
+                    mode: state.sidebarMode,
+                    title: state.sidebarTitle,
+                    foreground: mainForeground
+                )
+                Rectangle()
+                    .fill(mainForeground.tertiary)
+                    .frame(width: 1, height: 12)
                 EditorTitlebarDocumentView(document: state.document, foreground: mainForeground)
                 if showsTerminalButton {
                     EditorTitlebarOpenTerminalButton(onOpenTerminal: onOpenTerminal, foreground: mainForeground)
                 }
             }
-            .padding(.leading, 8)
         }
+        .padding(.leading, 10)
         .fixedSize(horizontal: true, vertical: true)
         .animation(.spring(response: 0.24, dampingFraction: 0.88), value: state.sidebarWidth)
+        .animation(.spring(response: 0.24, dampingFraction: 0.88), value: state.sidebarMode)
+        .animation(.spring(response: 0.24, dampingFraction: 0.88), value: state.sidebarTitle)
         .animation(.spring(response: 0.24, dampingFraction: 0.88), value: state.document)
+    }
+}
+
+private struct EditorTitlebarSidebarModeButtons: View {
+    let mode: EditorSidebarMode
+    let foreground: ChromeForegroundColors
+    let onSelect: (EditorSidebarMode) -> Void
+
+    var body: some View {
+        HStack(spacing: 3) {
+            button(.files, iconName: "folder", label: "Show Files")
+            button(.buffers, iconName: "buffers", label: "Show Open Items")
+        }
+    }
+
+    private func button(_ target: EditorSidebarMode, iconName: String, label: String) -> some View {
+        let isSelected = mode == target
+        return Button {
+            onSelect(target)
+        } label: {
+            EditorSemanticIconView(iconName: iconName, size: 11)
+                .foregroundStyle(isSelected ? foreground.primary : foreground.secondary)
+                .frame(width: 22, height: 22)
+                .background {
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(isSelected ? foreground.primary.opacity(0.10) : Color.clear)
+                }
+        }
+        .buttonStyle(.plain)
+        .help(label)
+        .accessibilityLabel(label)
+    }
+}
+
+private struct EditorTitlebarSidebarTitleView: View {
+    let mode: EditorSidebarMode
+    let title: String
+    let foreground: ChromeForegroundColors
+
+    private var iconName: String {
+        switch mode {
+        case .files:
+            return "folder"
+        case .buffers:
+            return "buffers"
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            EditorSemanticIconView(iconName: iconName, size: 11)
+                .foregroundStyle(foreground.secondary)
+            Text(title)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(foreground.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+        .frame(maxWidth: 180, alignment: .leading)
+        .allowsHitTesting(false)
+        .accessibilityElement(children: .combine)
     }
 }
 

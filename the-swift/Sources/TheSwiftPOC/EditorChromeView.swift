@@ -2381,6 +2381,7 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
     final class Coordinator: NSObject {
         private let controlsIdentifier = NSUserInterfaceItemIdentifier("TheSwiftPOC.TitlebarControls")
         private let leadingState = EditorTitlebarLeadingState()
+        private let containerView = NSView()
         private lazy var leadingHostingView: NonDraggableHostingView<EditorTitlebarLeadingRegionView> = {
             let view = NonDraggableHostingView(
                 rootView: EditorTitlebarLeadingRegionView(
@@ -2392,7 +2393,8 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
                     showsTerminalButton: GhosttyTerminalRegistry.isAvailable
                 )
             )
-            view.translatesAutoresizingMaskIntoConstraints = false
+            view.translatesAutoresizingMaskIntoConstraints = true
+            view.autoresizingMask = [.width, .height]
             view.setContentCompressionResistancePriority(.required, for: .horizontal)
             view.setContentHuggingPriority(.required, for: .horizontal)
             return view
@@ -2411,6 +2413,10 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
 
         override init() {
             super.init()
+            containerView.translatesAutoresizingMaskIntoConstraints = true
+            containerView.wantsLayer = true
+            containerView.layer?.masksToBounds = false
+            containerView.addSubview(leadingHostingView)
         }
 
         deinit {
@@ -2601,7 +2607,7 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
             let accessory = NSTitlebarAccessoryViewController()
             // Place controls on the leading side so they sit beside traffic lights
             accessory.layoutAttribute = .left
-            accessory.view = leadingHostingView
+            accessory.view = containerView
             accessory.view.identifier = controlsIdentifier
             window.addTitlebarAccessoryViewController(accessory)
             controlsAccessory = accessory
@@ -2658,10 +2664,14 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
                 return observedWindow.map { $0.frame.height - $0.contentLayoutRect.height } ?? fitting.height
             }()
 
+            let containerHeight = max(fitting.height, titlebarHeight)
+            let yOffset = max(0, (containerHeight - fitting.height) / 2.0)
             controlsAccessory?.preferredContentSize = NSSize(
                 width: fitting.width,
-                height: max(fitting.height, titlebarHeight)
+                height: containerHeight
             )
+            containerView.frame = NSRect(x: 0, y: 0, width: fitting.width, height: containerHeight)
+            leadingHostingView.frame = NSRect(x: 0, y: yOffset, width: fitting.width, height: fitting.height)
         }
     }
 }
@@ -2672,8 +2682,7 @@ private final class NonDraggableHostingView<Content: View>: NSHostingView<Conten
     override var mouseDownCanMoveWindow: Bool { false }
 }
 
-/// The accessory view content — only sidebar toggle and mode switcher.
-/// Document title is displayed in the content-area customTitlebar overlay, not here.
+/// The accessory view content — cmux-style compact titlebar controls beside the traffic lights.
 private struct EditorTitlebarLeadingRegionView: View {
     @ObservedObject var state: EditorTitlebarLeadingState
     let foreground: ChromeForegroundColors
@@ -2683,31 +2692,24 @@ private struct EditorTitlebarLeadingRegionView: View {
     let showsTerminalButton: Bool
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 6) {
             EditorTitlebarSidebarToggleButton(
                 isActive: state.isSidebarActive,
                 foreground: foreground,
                 onToggle: onToggle
             )
 
-            EditorTitlebarSidebarModeButtons(
-                mode: state.sidebarMode,
-                foreground: foreground,
-                onSelect: onSelectSidebarMode
-            )
-
-            if showsTerminalButton {
-                Rectangle()
-                    .fill(foreground.tertiary)
-                    .frame(width: 1, height: 12)
-
-                EditorTitlebarOpenTerminalButton(onOpenTerminal: onOpenTerminal, foreground: foreground)
+            if state.isSidebarActive {
+                EditorTitlebarSidebarModeButtons(
+                    mode: state.sidebarMode,
+                    foreground: foreground,
+                    onSelect: onSelectSidebarMode
+                )
             }
         }
-        .padding(.leading, 4)
         .fixedSize(horizontal: true, vertical: true)
+        .animation(.spring(response: 0.24, dampingFraction: 0.88), value: state.isSidebarActive)
         .animation(.spring(response: 0.24, dampingFraction: 0.88), value: state.sidebarMode)
-        .animation(.spring(response: 0.24, dampingFraction: 0.88), value: state.sidebarTitle)
     }
 }
 
@@ -2780,15 +2782,14 @@ private struct EditorTitlebarSidebarToggleButton: View {
     var body: some View {
         Button(action: toggle) {
             Image(systemName: "sidebar.left")
-                .font(.system(size: 13, weight: .semibold))
+                .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(isActive ? foreground.primary : foreground.secondary)
-                .frame(width: 28, height: 24)
-                .background {
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(isActive ? foreground.primary.opacity(0.10) : Color.clear)
-                }
+                .frame(width: 20, height: 20)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .frame(width: 20, height: 20)
+        .contentShape(Rectangle())
         .help("Toggle Sidebar")
         .accessibilityLabel("Toggle Sidebar")
     }

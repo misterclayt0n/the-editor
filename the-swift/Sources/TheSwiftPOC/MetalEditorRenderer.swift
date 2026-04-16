@@ -17,6 +17,7 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
     private var lineCache: [EditorLineCacheKey: CGImage] = [:]
     private var lastThemeGeneration: UInt64?
     private var activeCursorBlinkOpacity: CGFloat = 1
+    private var lastRendererDebugSignature: String?
 
     private struct DrawPerfStats {
         var cacheHits = 0
@@ -87,7 +88,17 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
         activeCursorBlinkOpacity = min(max(opacity, 0), 1)
     }
 
-    func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
+    func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
+        layoutDebugLog(
+            String(
+                format: "renderer.drawableSizeWillChange bounds=(w:%.1f h:%.1f) drawable=(w:%.1f h:%.1f)",
+                view.bounds.width,
+                view.bounds.height,
+                size.width,
+                size.height
+            )
+        )
+    }
 
     func draw(in view: MTKView) {
         let drawStarted = CFAbsoluteTimeGetCurrent()
@@ -105,6 +116,24 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
         let cursorThickness = max(scene.info.surfaceMetrics.cursorThicknessPoints, 1)
         let pixelWidth = max(Int(view.drawableSize.width), 1)
         let pixelHeight = max(Int(view.drawableSize.height), 1)
+        let usedWidth = CGFloat(scene.info.viewportWidth) * cellSize.width
+        let usedHeight = CGFloat(scene.info.viewportHeight) * cellSize.height
+        let debugSignature = [
+            "renderer.draw",
+            String(format: "bounds=%.1fx%.1f", view.bounds.width, view.bounds.height),
+            String(format: "drawable=%.1fx%.1f", view.drawableSize.width, view.drawableSize.height),
+            String(format: "scale=%.2f", scale),
+            "viewport=\(scene.info.viewportWidth)x\(scene.info.viewportHeight)",
+            String(format: "cellPts=%.2fx%.2f", cellSize.width, cellSize.height),
+            String(format: "used=%.1fx%.1f", usedWidth, usedHeight),
+            String(format: "leftover=%.1fx%.1f", view.bounds.width - usedWidth, view.bounds.height - usedHeight),
+            "panes=\(scene.panes.count)",
+            "paneStrips=\(scene.paneItemStripPaneIDs.count)"
+        ].joined(separator: " ")
+        if debugSignature != lastRendererDebugSignature {
+            lastRendererDebugSignature = debugSignature
+            layoutDebugLog(debugSignature)
+        }
         guard let context = makeBitmapContext(width: pixelWidth, height: pixelHeight) else {
             return
         }

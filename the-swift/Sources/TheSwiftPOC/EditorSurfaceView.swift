@@ -43,6 +43,9 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
     private var pendingScrollRows: CGFloat = 0
     private var pendingScrollCols: CGFloat = 0
     private var splitDrag: SplitDragState?
+    private var lastGeometryDebugSignature: String?
+    private var lastSurfaceConfigDebugSignature: String?
+    private var lastViewportDebugSignature: String?
     private var scrollbarDrag: ScrollbarDragState?
     private var bufferSelectionDrag: BufferSelectionDragState?
     private var notificationObservers: [NSObjectProtocol] = []
@@ -228,11 +231,42 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
         renderer.view.layer?.contentsScale = backingScale
         renderer.view.layer?.contentsGravity = .topLeft
         CATransaction.commit()
+
+        let signature = [
+            "surfaceView.geometry",
+            "bounds=\(rectText(bounds))",
+            "backingBounds=\(rectText(backingBounds))",
+            String(format: "backingScale=%.2f", backingScale),
+            "rendererFrame=\(rectText(renderer.view.frame))",
+            String(format: "drawableSize=(w:%.1f h:%.1f)", renderer.view.drawableSize.width, renderer.view.drawableSize.height),
+            String(format: "layerScale=%.2f", layer?.contentsScale ?? 0),
+            String(format: "rendererLayerScale=%.2f", renderer.view.layer?.contentsScale ?? 0)
+        ].joined(separator: " ")
+        guard signature != lastGeometryDebugSignature else { return }
+        lastGeometryDebugSignature = signature
+        layoutDebugLog(signature)
     }
 
     private func synchronizeSurfaceConfiguration(forceDraw: Bool = false) {
         guard let controller else { return }
         let backingScale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1
+        let configuration = fontMetrics.surfaceConfiguration(viewSize: bounds.size, backingScale: backingScale)
+        let derivedColumns = max(configuration.widthPx / max(configuration.metrics.cellWidthPx, 1), 1)
+        let derivedRows = max(configuration.heightPx / max(configuration.metrics.cellHeightPx, 1), 1)
+        let signature = [
+            "surfaceView.configure",
+            String(format: "size=%.1fx%.1f", bounds.width, bounds.height),
+            String(format: "backingScale=%.2f", backingScale),
+            "surfacePx=\(configuration.widthPx)x\(configuration.heightPx)",
+            "cellPx=\(configuration.metrics.cellWidthPx)x\(configuration.metrics.cellHeightPx)",
+            String(format: "cellPts=%.2fx%.2f", configuration.metrics.cellSizePoints.width, configuration.metrics.cellSizePoints.height),
+            "derivedViewport=\(derivedColumns)x\(derivedRows)",
+            "forceDraw=\(forceDraw ? 1 : 0)"
+        ].joined(separator: " ")
+        if signature != lastSurfaceConfigDebugSignature {
+            lastSurfaceConfigDebugSignature = signature
+            layoutDebugLog(signature)
+        }
         let changed = controller.configureSurface(
             size: bounds.size,
             backingScale: backingScale,
@@ -245,8 +279,27 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
 
     func update(scene: EditorRenderScene) {
         renderer.update(scene: scene)
+        let usedWidth = CGFloat(scene.info.viewportWidth) * scene.info.surfaceMetrics.cellSizePoints.width
+        let usedHeight = CGFloat(scene.info.viewportHeight) * scene.info.surfaceMetrics.cellSizePoints.height
+        let signature = [
+            "surfaceView.viewport",
+            String(format: "bounds=%.1fx%.1f", bounds.width, bounds.height),
+            "viewport=\(scene.info.viewportWidth)x\(scene.info.viewportHeight)",
+            String(format: "cellPts=%.2fx%.2f", scene.info.surfaceMetrics.cellSizePoints.width, scene.info.surfaceMetrics.cellSizePoints.height),
+            String(format: "used=%.1fx%.1f", usedWidth, usedHeight),
+            String(format: "leftover=%.1fx%.1f", bounds.width - usedWidth, bounds.height - usedHeight),
+            "paneStrips=\(scene.paneItemStripPaneIDs.count)"
+        ].joined(separator: " ")
+        if signature != lastViewportDebugSignature {
+            lastViewportDebugSignature = signature
+            layoutDebugLog(signature)
+        }
         refreshCursorBlinkState()
         window?.invalidateCursorRects(for: self)
+    }
+
+    private func rectText(_ rect: CGRect) -> String {
+        String(format: "(x:%.1f y:%.1f w:%.1f h:%.1f)", rect.origin.x, rect.origin.y, rect.size.width, rect.size.height)
     }
 
     override func resetCursorRects() {

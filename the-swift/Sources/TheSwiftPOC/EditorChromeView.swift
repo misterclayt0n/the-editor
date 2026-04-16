@@ -43,39 +43,41 @@ struct EditorChromeView: View {
     }
 
     var body: some View {
-        HStack(spacing: 0) {
-            if controller.fileTree.isVisible {
-                sidebarColumn
-                    .ignoresSafeArea(.all, edges: .top)
-                EditorSidebarResizeHandle(
-                    color: sidebarTheme.separatorColor,
-                    edge: .trailing,
-                    gesture: fileTreeResizeGesture
-                )
-                    .ignoresSafeArea(.all, edges: .top)
-            }
+        GeometryReader { geometry in
+            let effectiveTitlebarPadding = alignedTitlebarPadding(totalHeight: geometry.size.height)
 
-            mainColumn
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .ignoresSafeArea()
-        // Sidebar visibility must not animate layout: each frame would reconfigure the Rust
-        // viewport and run a full snapshot for every column boundary crossed.
-        .animation(nil, value: controller.fileTree.isVisible)
-        .background(
-            EditorWindowChromeAccessor(
-                chrome: controller.chrome,
-                fileTreeVisible: controller.fileTree.isVisible,
-                sidebarMode: sidebarMode,
-                sidebarTitle: sidebarTitle,
-                titlebarPadding: $titlebarPadding,
-                onToggleFileTree: controller.toggleFileTree,
-                onSelectSidebarMode: selectSidebarMode,
-                onOpenTerminal: controller.openTerminalInActivePane
+            HStack(spacing: 0) {
+                if controller.fileTree.isVisible {
+                    sidebarColumn(topScrimHeight: effectiveTitlebarPadding)
+                        .ignoresSafeArea(.all, edges: .top)
+                    EditorSidebarResizeHandle(
+                        color: sidebarTheme.separatorColor,
+                        edge: .trailing,
+                        gesture: fileTreeResizeGesture
+                    )
+                        .ignoresSafeArea(.all, edges: .top)
+                }
+
+                mainColumn(titlebarInset: effectiveTitlebarPadding)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .ignoresSafeArea()
+            // Sidebar visibility must not animate layout: each frame would reconfigure the Rust
+            // viewport and run a full snapshot for every column boundary crossed.
+            .animation(nil, value: controller.fileTree.isVisible)
+            .background(
+                EditorWindowChromeAccessor(
+                    chrome: controller.chrome,
+                    fileTreeVisible: controller.fileTree.isVisible,
+                    sidebarMode: sidebarMode,
+                    sidebarTitle: sidebarTitle,
+                    titlebarPadding: $titlebarPadding,
+                    onToggleFileTree: controller.toggleFileTree,
+                    onSelectSidebarMode: selectSidebarMode,
+                    onOpenTerminal: controller.openTerminalInActivePane
+                )
             )
-        )
-        .background {
-            GeometryReader { geometry in
+            .background {
                 let viewportText: String = {
                     guard let scene = controller.scene else { return "nil" }
                     return "\(scene.info.viewportWidth)x\(scene.info.viewportHeight)"
@@ -85,6 +87,7 @@ struct EditorChromeView: View {
                     String(format: "size=%.1fx%.1f", geometry.size.width, geometry.size.height),
                     String(format: "safeArea=top:%.1f bottom:%.1f", geometry.safeAreaInsets.top, geometry.safeAreaInsets.bottom),
                     String(format: "titlebarPadding=%.1f", titlebarPadding),
+                    String(format: "alignedTitlebarPadding=%.1f", effectiveTitlebarPadding),
                     String(format: "fileTreeWidth=%.1f", fileTreeWidth),
                     "fileTreeVisible=\(controller.fileTree.isVisible)",
                     "sidebarMode=\(sidebarMode.rawValue)",
@@ -99,26 +102,25 @@ struct EditorChromeView: View {
                         layoutDebugLog(newValue)
                     }
             }
-            .allowsHitTesting(false)
-        }
-        .overlay(alignment: .bottom) {
-            if let pendingKeys = controller.pendingKeys {
-                EditorPendingKeyIndicatorView(pendingKeys: pendingKeys)
-                    .padding(.bottom, 38)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            .overlay(alignment: .bottom) {
+                if let pendingKeys = controller.pendingKeys {
+                    EditorPendingKeyIndicatorView(pendingKeys: pendingKeys)
+                        .padding(.bottom, 38)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
             }
+            .animation(.spring(response: 0.24, dampingFraction: 0.88), value: controller.pendingKeys?.pendingDisplay)
         }
-        .animation(.spring(response: 0.24, dampingFraction: 0.88), value: controller.pendingKeys?.pendingDisplay)
     }
 
-    private var sidebarColumn: some View {
+    private func sidebarColumn(topScrimHeight: CGFloat) -> some View {
         Group {
             switch sidebarMode {
             case .files:
                 EditorFileTreeSidebarView(
                     tree: controller.fileTree,
                     theme: sidebarTheme,
-                    topScrimHeight: titlebarPadding,
+                    topScrimHeight: topScrimHeight,
                     onSelectIndex: controller.clickFileTreeIndex,
                     onActivateIndex: controller.activateFileTreeIndex,
                     onVisibleRowsChanged: controller.setFileTreeVisibleRows,
@@ -139,7 +141,7 @@ struct EditorChromeView: View {
                     scene: controller.scene,
                     uniqueBufferCount: controller.bufferTabs.tabs.count,
                     theme: sidebarTheme,
-                    topScrimHeight: titlebarPadding,
+                    topScrimHeight: topScrimHeight,
                     onActivateItem: controller.activateOpenItem,
                     onCloseItem: controller.closeOpenItem,
                     onFocusSidebar: { controller.setFileTreeActive(false) }
@@ -155,7 +157,7 @@ struct EditorChromeView: View {
         .background(Color(nsColor: sidebarTheme.backgroundColor))
     }
 
-    private var mainColumn: some View {
+    private func mainColumn(titlebarInset: CGFloat) -> some View {
         VStack(spacing: 0) {
             ZStack(alignment: .topLeading) {
                 EditorSurfaceRepresentable(controller: controller)
@@ -170,11 +172,10 @@ struct EditorChromeView: View {
 
             EditorStatusAccessoryView(chrome: controller.chrome, mode: controller.currentMode, controller: controller)
         }
-        .padding(.top, titlebarPadding)
+        .padding(.top, titlebarInset)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .overlay(alignment: .top) {
-            customTitlebar
-                .frame(height: titlebarPadding)
+            customTitlebar(height: titlebarInset)
         }
         .environment(\.colorScheme, controller.chrome.backgroundColor.isLightColor ? .light : .dark)
     }
@@ -189,10 +190,18 @@ struct EditorChromeView: View {
             : Color.white.opacity(0.82)
     }
 
+    private func alignedTitlebarPadding(totalHeight: CGFloat) -> CGFloat {
+        let cellHeight = max(controller.scene?.info.surfaceMetrics.cellSizePoints.height ?? 18, 1)
+        let statusBarHeight: CGFloat = 28
+        let availableSurfaceHeight = max(totalHeight - titlebarPadding - statusBarHeight, 0)
+        let remainder = availableSurfaceHeight.truncatingRemainder(dividingBy: cellHeight)
+        return titlebarPadding + remainder
+    }
+
     /// Content-level titlebar overlay that fills the safe area at the top of the main column.
     /// Provides a draggable strip with folder icon and document title.
     @ViewBuilder
-    private var customTitlebar: some View {
+    private func customTitlebar(height: CGFloat) -> some View {
         GeometryReader { geometry in
             let topInset = geometry.safeAreaInsets.top
             let name = controller.chrome.document.name
@@ -217,7 +226,7 @@ struct EditorChromeView: View {
                 .padding(.leading, controller.fileTree.isVisible ? 12 : titlebarLeadingInset)
                 .padding(.trailing, 8)
             }
-            .frame(height: titlebarPadding > 0 ? titlebarPadding : max(topInset, 28), alignment: .bottom)
+            .frame(height: max(height, topInset, 28), alignment: .bottom)
             .frame(maxWidth: .infinity)
             .contentShape(Rectangle())
             .background(EditorTitlebarDoubleClickMonitorView())

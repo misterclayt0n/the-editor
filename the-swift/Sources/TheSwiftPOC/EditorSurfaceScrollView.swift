@@ -7,6 +7,8 @@ final class EditorSurfaceScrollView: NSView, EditorSurfaceControllerDelegate {
     let surfaceView: EditorSurfaceView
     let terminalContainerView = GhosttyTerminalOverlayContainerView()
     let terminalRegistry: GhosttyTerminalRegistry
+    private var lastLayoutDebugSignature: String?
+    private var lastSceneDebugSignature: String?
 
     init(controller: EditorSurfaceController) {
         self.controller = controller
@@ -33,10 +35,12 @@ final class EditorSurfaceScrollView: NSView, EditorSurfaceControllerDelegate {
         super.layout()
         surfaceView.frame = bounds
         terminalContainerView.frame = bounds
+        logLayoutMetrics(reason: "layout")
     }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        logLayoutMetrics(reason: "movedToWindow")
         if let scene = controller.scene {
             updateWindowResizeIncrements(scene)
             terminalRegistry.reconcile(
@@ -71,6 +75,52 @@ final class EditorSurfaceScrollView: NSView, EditorSurfaceControllerDelegate {
             editorSurfaceView: surfaceView
         )
         updateWindowResizeIncrements(scene)
+        logSceneMetrics(scene)
+        logLayoutMetrics(reason: "sceneUpdate")
+    }
+
+    private func logSceneMetrics(_ scene: EditorRenderScene) {
+        let signature = [
+            "scene",
+            "viewport=\(scene.info.viewportWidth)x\(scene.info.viewportHeight)",
+            String(format: "cell=%.2fx%.2f", scene.info.surfaceMetrics.cellSizePoints.width, scene.info.surfaceMetrics.cellSizePoints.height),
+            "panes=\(scene.panes.count)",
+            "paneStrips=\(scene.paneItemStripPaneIDs.count)",
+            "openItemGroups=\(controller.openItems.groups.count)",
+            "bufferTabs=\(controller.bufferTabs.tabs.count)",
+            "statusItems=\(controller.chrome.statusBar.items.count)"
+        ].joined(separator: " ")
+        guard signature != lastSceneDebugSignature else { return }
+        lastSceneDebugSignature = signature
+        layoutDebugLog(signature)
+    }
+
+    private func logLayoutMetrics(reason: String) {
+        let windowFrameText = window.map { rectText($0.frame) } ?? "nil"
+        let contentLayoutText = window.map { rectText($0.contentLayoutRect) } ?? "nil"
+        let contentViewBoundsText = window?.contentView.map { rectText($0.bounds) } ?? "nil"
+        let signature = [
+            "surface reason=\(reason)",
+            "bounds=\(rectText(bounds))",
+            "frame=\(rectText(frame))",
+            "safeArea=\(edgeInsetsText(safeAreaInsets))",
+            "surfaceFrame=\(rectText(surfaceView.frame))",
+            "terminalFrame=\(rectText(terminalContainerView.frame))",
+            "windowFrame=\(windowFrameText)",
+            "contentLayoutRect=\(contentLayoutText)",
+            "contentViewBounds=\(contentViewBoundsText)"
+        ].joined(separator: " ")
+        guard signature != lastLayoutDebugSignature else { return }
+        lastLayoutDebugSignature = signature
+        layoutDebugLog(signature)
+    }
+
+    private func rectText(_ rect: CGRect) -> String {
+        String(format: "(x:%.1f y:%.1f w:%.1f h:%.1f)", rect.origin.x, rect.origin.y, rect.size.width, rect.size.height)
+    }
+
+    private func edgeInsetsText(_ insets: NSEdgeInsets) -> String {
+        String(format: "(t:%.1f l:%.1f b:%.1f r:%.1f)", insets.top, insets.left, insets.bottom, insets.right)
     }
 
     private func updateWindowResizeIncrements(_ scene: EditorRenderScene) {

@@ -35,6 +35,10 @@ func selectionDebugEnabled() -> Bool {
     ProcessInfo.processInfo.environment["THE_EDITOR_SELECTION_DEBUG"] == "1"
 }
 
+func layoutDebugEnabled() -> Bool {
+    ProcessInfo.processInfo.environment["THE_EDITOR_LAYOUT_DEBUG"] == "1"
+}
+
 func themePerfLog(_ message: @autoclosure () -> String) {
     guard themePerfEnabled() else { return }
     let line = "[TheSwiftPOC:perf] \(message())\n"
@@ -61,6 +65,14 @@ func selectionDebugLog(_ message: @autoclosure () -> String) {
     guard selectionDebugEnabled() else { return }
     let tsMs = Int((CFAbsoluteTimeGetCurrent() * 1000).rounded())
     let line = "[TheSwiftPOC:selection \(tsMs)] \(message())\n"
+    fputs(line, stderr)
+    appendPerfLineToSharedLogFile(line)
+}
+
+func layoutDebugLog(_ message: @autoclosure () -> String) {
+    guard layoutDebugEnabled() else { return }
+    let tsMs = Int((CFAbsoluteTimeGetCurrent() * 1000).rounded())
+    let line = "[TheSwiftPOC:layout \(tsMs)] \(message())\n"
     fputs(line, stderr)
     appendPerfLineToSharedLogFile(line)
 }

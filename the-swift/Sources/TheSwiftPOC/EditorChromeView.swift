@@ -74,6 +74,33 @@ struct EditorChromeView: View {
                 onOpenTerminal: controller.openTerminalInActivePane
             )
         )
+        .background {
+            GeometryReader { geometry in
+                let viewportText: String = {
+                    guard let scene = controller.scene else { return "nil" }
+                    return "\(scene.info.viewportWidth)x\(scene.info.viewportHeight)"
+                }()
+                let signature = [
+                    "chrome",
+                    String(format: "size=%.1fx%.1f", geometry.size.width, geometry.size.height),
+                    String(format: "safeArea=top:%.1f bottom:%.1f", geometry.safeAreaInsets.top, geometry.safeAreaInsets.bottom),
+                    String(format: "titlebarPadding=%.1f", titlebarPadding),
+                    String(format: "fileTreeWidth=%.1f", fileTreeWidth),
+                    "fileTreeVisible=\(controller.fileTree.isVisible)",
+                    "sidebarMode=\(sidebarMode.rawValue)",
+                    "viewport=\(viewportText)"
+                ].joined(separator: " ")
+
+                Color.clear
+                    .onAppear {
+                        layoutDebugLog(signature)
+                    }
+                    .onChange(of: signature) { _, newValue in
+                        layoutDebugLog(newValue)
+                    }
+            }
+            .allowsHitTesting(false)
+        }
         .overlay(alignment: .bottom) {
             if let pendingKeys = controller.pendingKeys {
                 EditorPendingKeyIndicatorView(pendingKeys: pendingKeys)
@@ -2356,6 +2383,7 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
         private var openTerminalAction: (() -> Void)?
         private var titlebarPaddingBinding: Binding<CGFloat>?
         private var controlsAccessory: NSTitlebarAccessoryViewController?
+        private var lastWindowLayoutSignature: String?
 
         override init() {
             super.init()
@@ -2490,15 +2518,53 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
                 contentView.wantsLayer = true
                 contentView.layer?.backgroundColor = backgroundColor.cgColor
             }
+            logWindowLayout(window: window, chrome: chrome)
         }
 
         private func syncTitlebarPadding(window: NSWindow, binding: Binding<CGFloat>) {
             let computedTitlebarHeight = window.frame.height - window.contentLayoutRect.height
             let nextPadding = max(28, min(72, computedTitlebarHeight))
+            layoutDebugLog(
+                String(
+                    format: "window.titlebarPadding computed=%.1f clamped=%.1f contentLayoutHeight=%.1f frameHeight=%.1f",
+                    computedTitlebarHeight,
+                    nextPadding,
+                    window.contentLayoutRect.height,
+                    window.frame.height
+                )
+            )
             guard abs(binding.wrappedValue - nextPadding) > 0.5 else { return }
             DispatchQueue.main.async {
                 binding.wrappedValue = nextPadding
             }
+        }
+
+        private func logWindowLayout(window: NSWindow, chrome: EditorChromeModel) {
+            let contentViewFrameText = window.contentView.map { rectText($0.frame) } ?? "nil"
+            let contentViewBoundsText = window.contentView.map { rectText($0.bounds) } ?? "nil"
+            let safeAreaText = window.contentView.map { edgeInsetsText($0.safeAreaInsets) } ?? "nil"
+            let signature = [
+                "window",
+                "frame=\(rectText(window.frame))",
+                "contentLayoutRect=\(rectText(window.contentLayoutRect))",
+                "contentViewFrame=\(contentViewFrameText)",
+                "contentViewBounds=\(contentViewBoundsText)",
+                "safeArea=\(safeAreaText)",
+                "fileTreeVisible=\(lastFileTreeVisible)",
+                "sidebarMode=\(lastSidebarMode.rawValue)",
+                "statusItems=\(chrome.statusBar.items.count)"
+            ].joined(separator: " ")
+            guard signature != lastWindowLayoutSignature else { return }
+            lastWindowLayoutSignature = signature
+            layoutDebugLog(signature)
+        }
+
+        private func rectText(_ rect: CGRect) -> String {
+            String(format: "(x:%.1f y:%.1f w:%.1f h:%.1f)", rect.origin.x, rect.origin.y, rect.size.width, rect.size.height)
+        }
+
+        private func edgeInsetsText(_ insets: NSEdgeInsets) -> String {
+            String(format: "(t:%.1f l:%.1f b:%.1f r:%.1f)", insets.top, insets.left, insets.bottom, insets.right)
         }
 
         // MARK: - Titlebar accessory (cmux-style: controls live in the titlebar)

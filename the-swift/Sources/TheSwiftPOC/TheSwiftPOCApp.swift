@@ -169,8 +169,40 @@ private struct EditorContainerView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(nsColor: controller.chrome.backgroundColor).ignoresSafeArea())
+        .background(EditorRootLayoutDebugView(controller: controller))
         .ignoresSafeArea()
         .environment(\.colorScheme, overlayColorScheme)
+    }
+}
+
+private struct EditorRootLayoutDebugView: View {
+    @ObservedObject var controller: EditorSurfaceController
+
+    var body: some View {
+        GeometryReader { geometry in
+            let viewportText: String = {
+                guard let scene = controller.scene else { return "nil" }
+                return "\(scene.info.viewportWidth)x\(scene.info.viewportHeight)"
+            }()
+            let signature = [
+                "root",
+                String(format: "size=%.1fx%.1f", geometry.size.width, geometry.size.height),
+                String(format: "safeArea=top:%.1f leading:%.1f bottom:%.1f trailing:%.1f", geometry.safeAreaInsets.top, geometry.safeAreaInsets.leading, geometry.safeAreaInsets.bottom, geometry.safeAreaInsets.trailing),
+                "viewport=\(viewportText)",
+                "fileTreeVisible=\(controller.fileTree.isVisible)",
+                "buffers=\(controller.bufferTabs.tabs.count)",
+                "openItemsGroups=\(controller.openItems.groups.count)"
+            ].joined(separator: " ")
+
+            Color.clear
+                .onAppear {
+                    layoutDebugLog(signature)
+                }
+                .onChange(of: signature) { _, newValue in
+                    layoutDebugLog(newValue)
+                }
+        }
+        .allowsHitTesting(false)
     }
 }
 

@@ -31,6 +31,9 @@ struct EditorChromeView: View {
     @AppStorage("swift.sidebar.mode") private var storedSidebarModeRaw: String = EditorSidebarMode.files.rawValue
     @GestureState private var fileTreeDragTranslation: CGFloat = 0
     @State private var isFileTreeResizeActive = false
+    @State private var titlebarPadding: CGFloat = 28
+    @State private var titlebarLeadingInset: CGFloat = 72
+
 
     private let minimumFileTreeWidth: CGFloat = 180
     private let maximumFileTreeWidth: CGFloat = 460
@@ -43,11 +46,13 @@ struct EditorChromeView: View {
         HStack(spacing: 0) {
             if controller.fileTree.isVisible {
                 sidebarColumn
+                    .ignoresSafeArea(.all, edges: .top)
                 EditorSidebarResizeHandle(
                     color: sidebarTheme.separatorColor,
                     edge: .trailing,
                     gesture: fileTreeResizeGesture
                 )
+                    .ignoresSafeArea(.all, edges: .top)
             }
 
             mainColumn
@@ -120,6 +125,10 @@ struct EditorChromeView: View {
 
     private var mainColumn: some View {
         VStack(spacing: 0) {
+            // Content titlebar overlay - sits in the transparent titlebar area above the editor surface
+            customTitlebar
+                .frame(height: titlebarPadding)
+
             ZStack(alignment: .topLeading) {
                 EditorSurfaceRepresentable(controller: controller)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -139,6 +148,50 @@ struct EditorChromeView: View {
 
     private var sidebarTheme: EditorFileTreeSidebarTheme {
         EditorFileTreeSidebarTheme.resolve(scene: controller.scene, chrome: controller.chrome)
+    }
+
+    private var titlebarForegroundColor: Color {
+        controller.chrome.backgroundColor.isLightColor
+            ? Color.black.opacity(0.78)
+            : Color.white.opacity(0.82)
+    }
+
+    /// Content-level titlebar overlay that sits in the transparent titlebar area.
+    /// Matches cmux's approach: a ZStack with a drag handle, folder icon, and title text.
+    @ViewBuilder
+    private var customTitlebar: some View {
+        let name = controller.chrome.document.name
+        ZStack {
+            // Window drag handle - allows dragging from the titlebar area
+            EditorWindowDragHandleView()
+
+            EditorTitlebarLeadingInsetReader(inset: $titlebarLeadingInset)
+                .allowsHitTesting(false)
+
+            HStack(spacing: 8) {
+                EditorSidebarTitleIconView(directory: controller.chrome.document.relativePath ?? controller.chrome.document.absolutePath ?? "")
+
+                Text(name)
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(titlebarForegroundColor)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+
+                Spacer()
+            }
+            .padding(.leading, controller.fileTree.isVisible ? 12 : titlebarLeadingInset)
+            .padding(.trailing, 8)
+        }
+        .frame(height: titlebarPadding)
+        .frame(maxWidth: .infinity)
+        .contentShape(Rectangle())
+        .background(EditorTitlebarDoubleClickMonitorView())
+        .background(EditorTitlebarLayerBackground(backgroundColor: controller.chrome.backgroundColor))
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(Color(nsColor: .separatorColor))
+                .frame(height: 1)
+        }
     }
 
     private var fileTreeWidth: CGFloat {
@@ -475,6 +528,10 @@ private struct EditorFileTreeSidebarView: View {
         .padding(.top, 8)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(nsColor: theme.backgroundColor))
+        .overlay(alignment: .top) {
+            // Top scrim to visually clear the traffic light area when sidebar extends into titlebar
+            EditorSidebarTopScrim(height: 28, backgroundColor: theme.backgroundColor)
+        }
         .environment(\.colorScheme, theme.backgroundColor.isLightColor ? .light : .dark)
     }
 }
@@ -542,6 +599,10 @@ private struct EditorOpenItemsSidebarView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Color(nsColor: theme.backgroundColor))
+        .overlay(alignment: .top) {
+            // Top scrim to visually clear the traffic light area when sidebar extends into titlebar
+            EditorSidebarTopScrim(height: 28, backgroundColor: theme.backgroundColor)
+        }
         .environment(\.colorScheme, theme.backgroundColor.isLightColor ? .light : .dark)
     }
 
@@ -2198,6 +2259,10 @@ private final class EditorTitlebarLeadingState: ObservableObject {
     @Published var document: EditorDocumentChrome = .empty
 }
 
+/// Manages the window chrome for the editor. Unlike the previous NSToolbar-based approach,
+/// this uses NSTitlebarAccessoryViewController (like cmux) so that SwiftUI controls sit
+/// directly inside the titlebar area alongside traffic lights - no visible toolbar band.
+/// The window titlebar is transparent, and the sidebar content extends up into it.
 private struct EditorWindowChromeAccessor: NSViewRepresentable {
     let chrome: EditorChromeModel
     let fileTreeVisible: Bool
@@ -2248,20 +2313,25 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
     }
 
     @MainActor
-    final class Coordinator: NSObject, NSToolbarDelegate {
-        private let toolbarIdentifier = NSToolbar.Identifier("TheSwiftPOC.TitlebarToolbar")
-        private let leadingItemIdentifier = NSToolbarItem.Identifier("TheSwiftPOC.LeadingRegion")
-        private let vcsItemIdentifier = NSToolbarItem.Identifier("TheSwiftPOC.VCSInfo")
+    final class Coordinator: NSObject {
+        private let controlsIdentifier = NSUserInterfaceItemIdentifier("TheSwiftPOC.TitlebarControls")
         private let leadingState = EditorTitlebarLeadingState()
-        private lazy var fileTreeHostingView = NSHostingView(rootView: EditorTitlebarLeadingRegionView(
-            state: leadingState,
-            foreground: ChromeForegroundColors.forBackground(.windowBackgroundColor),
-            onToggle: {},
-            onSelectSidebarMode: { _ in },
-            onOpenTerminal: {},
-            showsTerminalButton: GhosttyTerminalRegistry.isAvailable
-        ))
-        private let vcsHostingView = NSHostingView(rootView: EditorTitlebarVCSView(vcsText: nil, foreground: ChromeForegroundColors.forBackground(.windowBackgroundColor)))
+        private lazy var leadingHostingView: NonDraggableHostingView<EditorTitlebarLeadingRegionView> = {
+            let view = NonDraggableHostingView(
+                rootView: EditorTitlebarLeadingRegionView(
+                    state: leadingState,
+                    foreground: ChromeForegroundColors.forBackground(.windowBackgroundColor),
+                    onToggle: {},
+                    onSelectSidebarMode: { _ in },
+                    onOpenTerminal: {},
+                    showsTerminalButton: GhosttyTerminalRegistry.isAvailable
+                )
+            )
+            view.translatesAutoresizingMaskIntoConstraints = false
+            view.setContentCompressionResistancePriority(.required, for: .horizontal)
+            view.setContentHuggingPriority(.required, for: .horizontal)
+            return view
+        }()
         private weak var observedWindow: NSWindow?
         private var lastChrome: EditorChromeModel = .empty
         private var lastFileTreeVisible = false
@@ -2270,24 +2340,10 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
         private var toggleFileTreeAction: (() -> Void)?
         private var selectSidebarModeAction: ((EditorSidebarMode) -> Void)?
         private var openTerminalAction: (() -> Void)?
-        private lazy var toolbar: NSToolbar = {
-            let toolbar = NSToolbar(identifier: toolbarIdentifier)
-            toolbar.delegate = self
-            toolbar.displayMode = .iconOnly
-            toolbar.allowsUserCustomization = false
-            toolbar.autosavesConfiguration = false
-            toolbar.showsBaselineSeparator = false
-            return toolbar
-        }()
+        private var controlsAccessory: NSTitlebarAccessoryViewController?
 
         override init() {
             super.init()
-            fileTreeHostingView.translatesAutoresizingMaskIntoConstraints = false
-            fileTreeHostingView.setContentCompressionResistancePriority(.required, for: .horizontal)
-            fileTreeHostingView.setContentHuggingPriority(.required, for: .horizontal)
-            vcsHostingView.translatesAutoresizingMaskIntoConstraints = false
-            vcsHostingView.setContentCompressionResistancePriority(.required, for: .horizontal)
-            vcsHostingView.setContentHuggingPriority(.required, for: .horizontal)
         }
 
         deinit {
@@ -2314,7 +2370,6 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
             selectSidebarModeAction = onSelectSidebarMode
             openTerminalAction = onOpenTerminal
             attachWindowObserversIfNeeded(window: window)
-            installToolbarIfNeeded(window: window)
             guard windowChanged || chromeChanged || fileTreeChanged || sidebarModeChanged || sidebarTitleChanged else {
                 scrollPerfLog(
                     "chrome.configure skipped windowChanged=\(windowChanged) chromeChanged=\(chromeChanged) fileTreeChanged=\(fileTreeChanged) sidebarModeChanged=\(sidebarModeChanged)"
@@ -2328,18 +2383,17 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
             let applyStarted = CFAbsoluteTimeGetCurrent()
             applyWindowChrome(window: window, chrome: chrome)
             let applyMs = (CFAbsoluteTimeGetCurrent() - applyStarted) * 1000
-            let toolbarStarted = CFAbsoluteTimeGetCurrent()
-            updateToolbarContent(
-                window: window,
+            let updateStarted = CFAbsoluteTimeGetCurrent()
+            updateAccessoryContent(
                 chrome: chrome,
                 fileTreeVisible: fileTreeVisible,
                 sidebarMode: sidebarMode,
                 sidebarTitle: sidebarTitle
             )
-            let toolbarMs = (CFAbsoluteTimeGetCurrent() - toolbarStarted) * 1000
+            let updateMs = (CFAbsoluteTimeGetCurrent() - updateStarted) * 1000
             let totalMs = (CFAbsoluteTimeGetCurrent() - started) * 1000
             scrollPerfLog(
-                "chrome.configure windowChanged=\(windowChanged) chromeChanged=\(chromeChanged) fileTreeChanged=\(fileTreeChanged) sidebarModeChanged=\(sidebarModeChanged) applyMs=\(String(format: "%.2f", applyMs)) toolbarMs=\(String(format: "%.2f", toolbarMs)) totalMs=\(String(format: "%.2f", totalMs))"
+                "chrome.configure windowChanged=\(windowChanged) chromeChanged=\(chromeChanged) fileTreeChanged=\(fileTreeChanged) sidebarModeChanged=\(sidebarModeChanged) applyMs=\(String(format: "%.2f", applyMs)) updateMs=\(String(format: "%.2f", updateMs)) totalMs=\(String(format: "%.2f", totalMs))"
             )
         }
 
@@ -2361,18 +2415,10 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
             )
         }
 
-        private func installToolbarIfNeeded(window: NSWindow) {
-            if window.toolbar?.identifier != toolbarIdentifier {
-                window.toolbar = toolbar
-            }
-            window.toolbarStyle = .unifiedCompact
-        }
-
         @objc private func windowDidChangeState(_ notification: Notification) {
             guard let window = notification.object as? NSWindow else { return }
             applyWindowChrome(window: window, chrome: lastChrome)
-            updateToolbarContent(
-                window: window,
+            updateAccessoryContent(
                 chrome: lastChrome,
                 fileTreeVisible: lastFileTreeVisible,
                 sidebarMode: leadingState.sidebarMode,
@@ -2380,39 +2426,57 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
             )
         }
 
+        // MARK: - Window chrome (transparent titlebar, no toolbar band)
+
         private func applyWindowChrome(window: NSWindow, chrome: EditorChromeModel) {
             let backgroundColor = chrome.backgroundColor
+            window.title = ""
             window.titleVisibility = .hidden
             window.titlebarAppearsTransparent = true
             window.titlebarSeparatorStyle = .none
-            window.toolbarStyle = .unifiedCompact
+            window.isMovableByWindowBackground = false
+            window.styleMask.insert(.fullSizeContentView)
             window.backgroundColor = backgroundColor.withAlphaComponent(1)
             window.isDocumentEdited = chrome.document.isModified
             window.appearance = backgroundColor.isLightColor
                 ? NSAppearance(named: .aqua)
                 : NSAppearance(named: .darkAqua)
+            window.representedURL = nil
 
-            let title = windowTitle(for: chrome)
-            if window.title != title {
-                window.title = title
-            }
+            // Install titlebar accessory on first window attachment
+            installAccessoryIfNeeded(window: window)
 
-            if let absolutePath = chrome.document.absolutePath, !absolutePath.isEmpty {
-                window.representedURL = URL(fileURLWithPath: absolutePath)
-            } else {
-                window.representedURL = nil
+            // Match the window background to the editor chrome
+            if let contentView = window.contentView {
+                contentView.wantsLayer = true
+                contentView.layer?.backgroundColor = backgroundColor.cgColor
             }
         }
 
-        private func updateToolbarContent(
-            window: NSWindow,
+        // MARK: - Titlebar accessory (cmux-style: controls live in the titlebar)
+
+        private func installAccessoryIfNeeded(window: NSWindow) {
+            // Only install once per window
+            if window.titlebarAccessoryViewControllers.contains(where: { $0.view.identifier == controlsIdentifier }) {
+                return
+            }
+            let accessory = NSTitlebarAccessoryViewController()
+            // Place controls on the leading side so they sit beside traffic lights
+            accessory.layoutAttribute = .left
+            accessory.view = leadingHostingView
+            accessory.view.identifier = controlsIdentifier
+            window.addTitlebarAccessoryViewController(accessory)
+            controlsAccessory = accessory
+        }
+
+        private func updateAccessoryContent(
             chrome: EditorChromeModel,
             fileTreeVisible: Bool,
             sidebarMode: EditorSidebarMode,
             sidebarTitle: String
         ) {
             let foreground = ChromeForegroundColors.forBackground(chrome.backgroundColor)
-            fileTreeHostingView.rootView = EditorTitlebarLeadingRegionView(
+            leadingHostingView.rootView = EditorTitlebarLeadingRegionView(
                 state: leadingState,
                 foreground: foreground,
                 onToggle: { self.toggleFileTreeAction?() },
@@ -2426,51 +2490,52 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
                 leadingState.sidebarTitle = sidebarTitle
                 leadingState.document = chrome.document
             }
-            vcsHostingView.rootView = EditorTitlebarVCSView(vcsText: chrome.document.vcsText, foreground: foreground)
-            fileTreeHostingView.invalidateIntrinsicContentSize()
-            vcsHostingView.invalidateIntrinsicContentSize()
-            window.toolbar?.validateVisibleItems()
+            leadingHostingView.invalidateIntrinsicContentSize()
+
+            // Resize the accessory to fit its content
+            scheduleSizeUpdate()
         }
 
-        private func windowTitle(for chrome: EditorChromeModel) -> String {
-            if let relativePath = chrome.document.relativePath, !relativePath.isEmpty {
-                return "\(relativePath)/\(chrome.document.name)"
+        private func scheduleSizeUpdate() {
+            DispatchQueue.main.async { [weak self] in
+                self?.updateAccessorySize()
             }
-            return chrome.document.name
         }
 
-        func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-            [leadingItemIdentifier, .flexibleSpace, vcsItemIdentifier]
-        }
+        private func updateAccessorySize() {
+            leadingHostingView.layoutSubtreeIfNeeded()
+            let fitting = leadingHostingView.fittingSize
+            guard fitting.width > 0, fitting.height > 0 else { return }
 
-        func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-            [leadingItemIdentifier, .flexibleSpace, vcsItemIdentifier]
-        }
+            // Use traffic light button height as the true titlebar height, like cmux does.
+            // We only set preferredContentSize on the accessory — never set the hosting
+            // view's frame directly, as NSTitlebarAccessoryViewController owns that layout.
+            let titlebarHeight: CGFloat = {
+                if let window = observedWindow,
+                   let closeButton = window.standardWindowButton(.closeButton),
+                   let titlebarView = closeButton.superview,
+                   titlebarView.frame.height > 0 {
+                    return titlebarView.frame.height
+                }
+                return observedWindow.map { $0.frame.height - $0.contentLayoutRect.height } ?? fitting.height
+            }()
 
-        func toolbar(
-            _ toolbar: NSToolbar,
-            itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier,
-            willBeInsertedIntoToolbar flag: Bool
-        ) -> NSToolbarItem? {
-            let item = NSToolbarItem(itemIdentifier: itemIdentifier)
-            item.isBordered = false
-
-            switch itemIdentifier {
-            case leadingItemIdentifier:
-                item.view = fileTreeHostingView
-                item.visibilityPriority = .high
-                return item
-            case vcsItemIdentifier:
-                item.view = vcsHostingView
-                item.visibilityPriority = .low
-                return item
-            default:
-                return nil
-            }
+            controlsAccessory?.preferredContentSize = NSSize(
+                width: fitting.width,
+                height: max(fitting.height, titlebarHeight)
+            )
         }
     }
 }
 
+/// NSHostingView subclass that does not swallow mouse-down for window dragging,
+/// so button hits in the titlebar work correctly.
+private final class NonDraggableHostingView<Content: View>: NSHostingView<Content> {
+    override var mouseDownCanMoveWindow: Bool { false }
+}
+
+/// The accessory view content — only sidebar toggle and mode switcher.
+/// Document title is displayed in the content-area customTitlebar overlay, not here.
 private struct EditorTitlebarLeadingRegionView: View {
     @ObservedObject var state: EditorTitlebarLeadingState
     let foreground: ChromeForegroundColors
@@ -2493,28 +2558,18 @@ private struct EditorTitlebarLeadingRegionView: View {
                 onSelect: onSelectSidebarMode
             )
 
-            Rectangle()
-                .fill(foreground.tertiary)
-                .frame(width: 1, height: 12)
-
-            EditorTitlebarSidebarTitleView(
-                mode: state.sidebarMode,
-                title: state.sidebarTitle,
-                foreground: foreground
-            )
-
-            EditorTitlebarDocumentView(document: state.document, foreground: foreground)
-
             if showsTerminalButton {
+                Rectangle()
+                    .fill(foreground.tertiary)
+                    .frame(width: 1, height: 12)
+
                 EditorTitlebarOpenTerminalButton(onOpenTerminal: onOpenTerminal, foreground: foreground)
             }
         }
-        .frame(width: 560, alignment: .leading)
-        .padding(.leading, 10)
-        .fixedSize(horizontal: false, vertical: true)
+        .padding(.leading, 4)
+        .fixedSize(horizontal: true, vertical: true)
         .animation(.spring(response: 0.24, dampingFraction: 0.88), value: state.sidebarMode)
         .animation(.spring(response: 0.24, dampingFraction: 0.88), value: state.sidebarTitle)
-        .animation(.spring(response: 0.24, dampingFraction: 0.88), value: state.document)
     }
 }
 
@@ -2857,4 +2912,142 @@ private func normalizedStatusItemDisplay(icon: String?, text: String) -> (icon: 
         return (iconName, remainder)
     }
     return (nil, text)
+}
+
+// MARK: - Titlebar helper views
+
+/// Invisible NSView that tracks the leading inset (traffic lights + accessories) for titlebar alignment.
+private final class EditorTitlebarLeadingInsetPassthroughView: NSView {
+    override var mouseDownCanMoveWindow: Bool { false }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
+private struct EditorTitlebarLeadingInsetReader: NSViewRepresentable {
+    @Binding var inset: CGFloat
+
+    func makeNSView(context: Context) -> NSView {
+        let view = EditorTitlebarLeadingInsetPassthroughView()
+        view.setFrameSize(.zero)
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        DispatchQueue.main.async {
+            guard let window = nsView.window else { return }
+            // Start past the traffic lights
+            var leading: CGFloat = 78
+            // Add width of all left-aligned titlebar accessories
+            for accessory in window.titlebarAccessoryViewControllers
+                where accessory.layoutAttribute == .left || accessory.layoutAttribute == .leading {
+                leading += accessory.view.frame.width
+            }
+            if leading != inset {
+                inset = leading
+            }
+        }
+    }
+}
+
+/// Transparent hit-test view covering the titlebar area for window dragging.
+private struct EditorWindowDragHandleView: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        let view = EditorWindowDragPassthroughNSView()
+        view.setFrameSize(NSSize(width: 10000, height: 10000))
+        return view
+    }
+    func updateNSView(_ nsView: NSView, context: Context) {}
+}
+
+/// NSView subclass that allows window dragging through its frame.
+private final class EditorWindowDragPassthroughNSView: NSView {
+    override var mouseDownCanMoveWindow: Bool { true }
+}
+
+/// Monitors double-clicks on the titlebar to perform standard double-click action (zoom/minimize).
+private struct EditorTitlebarDoubleClickMonitorView: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        let view = EditorTitlebarDoubleClickTargetNSView()
+        view.setFrameSize(NSSize(width: 10000, height: 10000))
+        return view
+    }
+    func updateNSView(_ nsView: NSView, context: Context) {}
+}
+
+private final class EditorTitlebarDoubleClickTargetNSView: NSView {
+    override func mouseDown(with event: NSEvent) {
+        super.mouseDown(with: event)
+        guard let window else { return }
+        performStandardTitlebarDoubleClick(on: window)
+    }
+
+    private func performStandardTitlebarDoubleClick(on window: NSWindow) {
+        let globalDefaults = UserDefaults.standard.persistentDomain(forName: UserDefaults.globalDomain) ?? [:]
+        let action: String? = globalDefaults["AppleActionOnDoubleClick"] as? String
+        switch action?.lowercased() {
+        case "minimize", "miniaturize":
+            window.miniaturize(nil)
+        case "none", "no action":
+            break
+        default:
+            window.zoom(nil)
+        }
+    }
+}
+
+/// Renders the background color in the titlebar area.
+private struct EditorTitlebarLayerBackground: View {
+    let backgroundColor: NSColor
+
+    var body: some View {
+        EditorTitlebarBackgroundNSView(backgroundColor: backgroundColor)
+            .allowsHitTesting(false)
+    }
+}
+
+private struct EditorTitlebarBackgroundNSView: NSViewRepresentable {
+    let backgroundColor: NSColor
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        view.wantsLayer = true
+        view.layer?.backgroundColor = backgroundColor.cgColor
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        nsView.layer?.backgroundColor = backgroundColor.cgColor
+    }
+}
+
+/// Draggable folder icon (proxy icon) for the titlebar.
+private struct EditorSidebarTitleIconView: View {
+    let directory: String
+
+    var body: some View {
+        Group {
+            if let url = URL(string: "file://" + directory) {
+                Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 16, height: 16)
+            } else {
+                Image(systemName: "folder.fill")
+                    .font(.system(size: 13))
+            }
+        }
+    }
+}
+
+/// A solid-color scrim that covers the traffic-light zone at the top of the sidebar,
+/// preventing list content from showing through beneath the window buttons.
+private struct EditorSidebarTopScrim: View {
+    let height: CGFloat
+    let backgroundColor: NSColor
+
+    var body: some View {
+        Rectangle()
+            .fill(Color(nsColor: backgroundColor))
+            .frame(height: height)
+            .allowsHitTesting(false)
+    }
 }

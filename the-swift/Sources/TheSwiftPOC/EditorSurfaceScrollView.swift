@@ -125,10 +125,13 @@ final class EditorSurfaceScrollView: NSView, EditorSurfaceControllerDelegate {
 
     private func updateWindowResizeIncrements(_ scene: EditorRenderScene) {
         guard let window else { return }
-        let cellSize = scene.info.surfaceMetrics.cellSizePoints
-        guard cellSize.width > 0, cellSize.height > 0 else { return }
-        if window.contentResizeIncrements != cellSize {
-            window.contentResizeIncrements = cellSize
+        let defaultIncrements = NSSize(width: 1, height: 1)
+        // Cell-snapped contentResizeIncrements makes the zoomed window stop short of the
+        // screen edges whenever the available height isn't an exact multiple of the cell size.
+        // cmux doesn't snap window zoom this way; keep native freeform resizing and let the
+        // renderer absorb any grid remainder inside the content area instead.
+        if window.contentResizeIncrements != defaultIncrements {
+            window.contentResizeIncrements = defaultIncrements
         }
     }
 }

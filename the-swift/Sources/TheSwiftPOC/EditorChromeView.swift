@@ -207,13 +207,20 @@ struct EditorChromeView: View {
         return nil
     }
 
+    private var titlebarDirectoryDisplayText: String {
+        guard let directory = titlebarDirectoryPath else {
+            return controller.chrome.document.name
+        }
+        return (directory as NSString).abbreviatingWithTildeInPath
+    }
+
     /// Content-level titlebar overlay that fills the safe area at the top of the main column.
-    /// Provides a draggable strip with folder icon and document title.
+    /// Provides a draggable strip with folder icon and current working directory text.
     @ViewBuilder
     private func customTitlebar(height: CGFloat) -> some View {
         GeometryReader { geometry in
             let topInset = geometry.safeAreaInsets.top
-            let name = controller.chrome.document.name
+            let titleText = titlebarDirectoryDisplayText
             ZStack {
                 // Window drag handle - allows dragging from the titlebar area
                 EditorWindowDragHandleView()
@@ -227,7 +234,7 @@ struct EditorChromeView: View {
                             .padding(.leading, -6)
                     }
 
-                    Text(name)
+                    Text(titleText)
                         .font(.system(size: 13, weight: .bold))
                         .foregroundStyle(titlebarForegroundColor)
                         .lineLimit(1)

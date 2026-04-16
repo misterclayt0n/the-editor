@@ -56,6 +56,7 @@ struct EditorChromeView: View {
 
             mainColumn
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         // Sidebar visibility must not animate layout: each frame would reconfigure the Rust
         // viewport and run a full snapshot for every column boundary crossed.
         .animation(nil, value: controller.fileTree.isVisible)

@@ -167,6 +167,9 @@ private struct EditorContainerView: View {
             EditorCommandPaletteView(controller: controller)
             EditorFilePickerView(controller: controller)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(nsColor: controller.chrome.backgroundColor).ignoresSafeArea())
+        .ignoresSafeArea()
         .environment(\.colorScheme, overlayColorScheme)
     }
 }

@@ -195,6 +195,18 @@ struct EditorChromeView: View {
         return titlebarPadding
     }
 
+    private var titlebarDirectoryPath: String? {
+        if let absolutePath = controller.chrome.document.absolutePath, !absolutePath.isEmpty {
+            let url = URL(fileURLWithPath: absolutePath)
+            let directory = url.deletingLastPathComponent().path
+            return directory.isEmpty ? nil : directory
+        }
+        if let root = controller.fileTree.root, !root.isEmpty {
+            return root
+        }
+        return nil
+    }
+
     /// Content-level titlebar overlay that fills the safe area at the top of the main column.
     /// Provides a draggable strip with folder icon and document title.
     @ViewBuilder
@@ -210,16 +222,22 @@ struct EditorChromeView: View {
                     .allowsHitTesting(false)
 
                 HStack(spacing: 8) {
-                    EditorSidebarTitleIconView(directory: controller.chrome.document.relativePath ?? controller.chrome.document.absolutePath ?? "")
+                    if let directory = titlebarDirectoryPath {
+                        EditorSidebarTitleIconView(directory: directory)
+                            .padding(.leading, -6)
+                    }
 
                     Text(name)
                         .font(.system(size: 13, weight: .bold))
                         .foregroundStyle(titlebarForegroundColor)
                         .lineLimit(1)
                         .truncationMode(.middle)
+                        .allowsHitTesting(false)
 
                     Spacer()
                 }
+                .frame(height: 28)
+                .padding(.top, 2)
                 .padding(.leading, controller.fileTree.isVisible ? 12 : titlebarLeadingInset)
                 .padding(.trailing, 8)
             }
@@ -3139,22 +3157,25 @@ private struct EditorTitlebarBackgroundNSView: NSViewRepresentable {
     }
 }
 
-/// Draggable folder icon (proxy icon) for the titlebar.
+/// Folder proxy icon for the titlebar, matching cmux's native Finder-style icon.
 private struct EditorSidebarTitleIconView: View {
     let directory: String
 
     var body: some View {
-        Group {
-            if let url = URL(string: "file://" + directory) {
-                Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: 16, height: 16)
-            } else {
-                Image(systemName: "folder.fill")
-                    .font(.system(size: 13))
+        Image(nsImage: folderIcon)
+            .resizable()
+            .aspectRatio(contentMode: .fit)
+            .frame(width: 16, height: 16)
+            .help("Drag to open in Finder or another app")
+            .onTapGesture(count: 2) {
+                NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: directory)
             }
-        }
+    }
+
+    private var folderIcon: NSImage {
+        let icon = NSWorkspace.shared.icon(forFile: directory)
+        icon.size = NSSize(width: 16, height: 16)
+        return icon
     }
 }
 

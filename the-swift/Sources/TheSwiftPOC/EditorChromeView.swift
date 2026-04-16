@@ -3073,14 +3073,18 @@ private struct EditorTitlebarLeadingInsetReader: NSViewRepresentable {
     func updateNSView(_ nsView: NSView, context: Context) {
         DispatchQueue.main.async {
             guard let window = nsView.window else { return }
-            // Start past the traffic lights
+            // Start past the traffic lights.
             var leading: CGFloat = 78
-            // Add width of all left-aligned titlebar accessories
+            // Match cmux more closely: use the larger of the accessory's preferred width and
+            // current frame width, since AppKit can report a zero frame while the accessory is
+            // still being installed. Add a small gap so the custom titlebar content doesn't
+            // visually collide with the leading accessory controls.
             for accessory in window.titlebarAccessoryViewControllers
                 where accessory.layoutAttribute == .left || accessory.layoutAttribute == .leading {
-                leading += accessory.view.frame.width
+                leading += max(accessory.preferredContentSize.width, accessory.view.frame.width)
             }
-            if leading != inset {
+            leading += 8
+            if abs(leading - inset) > 0.5 {
                 inset = leading
             }
         }

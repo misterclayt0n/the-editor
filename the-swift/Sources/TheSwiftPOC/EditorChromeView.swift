@@ -191,11 +191,8 @@ struct EditorChromeView: View {
     }
 
     private func alignedTitlebarPadding(totalHeight: CGFloat) -> CGFloat {
-        let cellHeight = max(controller.scene?.info.surfaceMetrics.cellSizePoints.height ?? 18, 1)
-        let statusBarHeight: CGFloat = 28
-        let availableSurfaceHeight = max(totalHeight - titlebarPadding - statusBarHeight, 0)
-        let remainder = availableSurfaceHeight.truncatingRemainder(dividingBy: cellHeight)
-        return titlebarPadding + remainder
+        _ = totalHeight
+        return titlebarPadding
     }
 
     /// Content-level titlebar overlay that fills the safe area at the top of the main column.

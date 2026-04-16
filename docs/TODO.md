@@ -4,7 +4,6 @@
 - Theme switching is painfully slow
 - File tree:
   - Add double clicking behavior 
-  - Instead of a circle, VCS changes should just paint the text color in a different color
 - Ghostty:
   - Scrollbar
   - Command + F working properly

@@ -1695,11 +1695,6 @@ private struct EditorFileTreeRowView: View {
 
                 Spacer(minLength: 6)
 
-                EditorSidebarRowDecorationsView(
-                    vcsKind: row.vcsKind,
-                    diagnosticSeverity: row.diagnosticSeverity
-                )
-
                 if row.isCurrentFile {
                     Circle()
                         .fill(Color(nsColor: theme.selectionColor).opacity(row.isSelected ? 0.95 : 0.82))
@@ -1749,6 +1744,9 @@ private struct EditorFileTreeRowView: View {
     }
 
     private var rowTextColor: Color {
+        if let vcsKind = row.vcsKind {
+            return fileTreeVcsTextColor(for: vcsKind)
+        }
         if row.isSelected || row.isCurrentFile {
             return chromeForeground.primary
         }
@@ -2956,6 +2954,19 @@ private func fileTreeBadgeColor(for severity: EditorDiagnosticSeverity) -> Color
     case .information:
         return .blue
     case .hint:
+        return .teal
+    }
+}
+
+private func fileTreeVcsTextColor(for kind: EditorFileTreeVcsKind) -> Color {
+    switch kind {
+    case .conflict, .deleted:
+        return .red
+    case .modified:
+        return .orange
+    case .renamed:
+        return .blue
+    case .untracked:
         return .teal
     }
 }

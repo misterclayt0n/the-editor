@@ -31,6 +31,7 @@ struct EditorChromeView: View {
     @AppStorage("swift.sidebar.mode") private var storedSidebarModeRaw: String = EditorSidebarMode.files.rawValue
     @GestureState private var fileTreeDragTranslation: CGFloat = 0
     @State private var isFileTreeResizeActive = false
+    @State private var titlebarPadding: CGFloat = 32
     @State private var titlebarLeadingInset: CGFloat = 72
 
 
@@ -57,6 +58,7 @@ struct EditorChromeView: View {
             mainColumn
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .ignoresSafeArea()
         // Sidebar visibility must not animate layout: each frame would reconfigure the Rust
         // viewport and run a full snapshot for every column boundary crossed.
         .animation(nil, value: controller.fileTree.isVisible)
@@ -66,6 +68,7 @@ struct EditorChromeView: View {
                 fileTreeVisible: controller.fileTree.isVisible,
                 sidebarMode: sidebarMode,
                 sidebarTitle: sidebarTitle,
+                titlebarPadding: $titlebarPadding,
                 onToggleFileTree: controller.toggleFileTree,
                 onSelectSidebarMode: selectSidebarMode,
                 onOpenTerminal: controller.openTerminalInActivePane
@@ -88,6 +91,7 @@ struct EditorChromeView: View {
                 EditorFileTreeSidebarView(
                     tree: controller.fileTree,
                     theme: sidebarTheme,
+                    topScrimHeight: titlebarPadding,
                     onSelectIndex: controller.clickFileTreeIndex,
                     onActivateIndex: controller.activateFileTreeIndex,
                     onVisibleRowsChanged: controller.setFileTreeVisibleRows,
@@ -108,6 +112,7 @@ struct EditorChromeView: View {
                     scene: controller.scene,
                     uniqueBufferCount: controller.bufferTabs.tabs.count,
                     theme: sidebarTheme,
+                    topScrimHeight: titlebarPadding,
                     onActivateItem: controller.activateOpenItem,
                     onCloseItem: controller.closeOpenItem,
                     onFocusSidebar: { controller.setFileTreeActive(false) }
@@ -135,14 +140,15 @@ struct EditorChromeView: View {
                 EditorPaneItemStripsOverlayView(controller: controller)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .overlay(alignment: .top) {
-                // Titlebar overlay fills the safe area with a draggable title strip
-                customTitlebar
-            }
 
             EditorStatusAccessoryView(chrome: controller.chrome, mode: controller.currentMode, controller: controller)
         }
+        .padding(.top, titlebarPadding)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .overlay(alignment: .top) {
+            customTitlebar
+                .frame(height: titlebarPadding)
+        }
         .environment(\.colorScheme, controller.chrome.backgroundColor.isLightColor ? .light : .dark)
     }
 
@@ -184,7 +190,7 @@ struct EditorChromeView: View {
                 .padding(.leading, controller.fileTree.isVisible ? 12 : titlebarLeadingInset)
                 .padding(.trailing, 8)
             }
-            .frame(height: max(topInset, 28), alignment: .bottom)
+            .frame(height: titlebarPadding > 0 ? titlebarPadding : max(topInset, 28), alignment: .bottom)
             .frame(maxWidth: .infinity)
             .contentShape(Rectangle())
             .background(EditorTitlebarDoubleClickMonitorView())
@@ -512,6 +518,7 @@ private struct PendingIndicator: View {
 private struct EditorFileTreeSidebarView: View {
     let tree: EditorFileTreeState
     let theme: EditorFileTreeSidebarTheme
+    let topScrimHeight: CGFloat
     let onSelectIndex: (Int) -> Void
     let onActivateIndex: (Int) -> Void
     let onVisibleRowsChanged: (Int) -> Void
@@ -533,7 +540,7 @@ private struct EditorFileTreeSidebarView: View {
         .background(Color(nsColor: theme.backgroundColor))
         .overlay(alignment: .top) {
             // Top scrim to visually clear the traffic light area when sidebar extends into titlebar
-            EditorSidebarTopScrim(height: 28, backgroundColor: theme.backgroundColor)
+            EditorSidebarTopScrim(height: topScrimHeight, backgroundColor: theme.backgroundColor)
         }
         .environment(\.colorScheme, theme.backgroundColor.isLightColor ? .light : .dark)
     }
@@ -544,6 +551,7 @@ private struct EditorOpenItemsSidebarView: View {
     let scene: EditorRenderScene?
     let uniqueBufferCount: Int
     let theme: EditorFileTreeSidebarTheme
+    let topScrimHeight: CGFloat
     let onActivateItem: (EditorPaneOpenItemRow) -> Void
     let onCloseItem: (EditorPaneOpenItemRow) -> Void
     let onFocusSidebar: () -> Void
@@ -604,7 +612,7 @@ private struct EditorOpenItemsSidebarView: View {
         .background(Color(nsColor: theme.backgroundColor))
         .overlay(alignment: .top) {
             // Top scrim to visually clear the traffic light area when sidebar extends into titlebar
-            EditorSidebarTopScrim(height: 28, backgroundColor: theme.backgroundColor)
+            EditorSidebarTopScrim(height: topScrimHeight, backgroundColor: theme.backgroundColor)
         }
         .environment(\.colorScheme, theme.backgroundColor.isLightColor ? .light : .dark)
     }
@@ -2271,6 +2279,7 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
     let fileTreeVisible: Bool
     let sidebarMode: EditorSidebarMode
     let sidebarTitle: String
+    @Binding var titlebarPadding: CGFloat
     let onToggleFileTree: () -> Void
     let onSelectSidebarMode: (EditorSidebarMode) -> Void
     let onOpenTerminal: () -> Void
@@ -2293,6 +2302,7 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
                 fileTreeVisible: fileTreeVisible,
                 sidebarMode: sidebarMode,
                 sidebarTitle: sidebarTitle,
+                titlebarPadding: $titlebarPadding,
                 onToggleFileTree: onToggleFileTree,
                 onSelectSidebarMode: onSelectSidebarMode,
                 onOpenTerminal: onOpenTerminal
@@ -2308,6 +2318,7 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
                 fileTreeVisible: fileTreeVisible,
                 sidebarMode: sidebarMode,
                 sidebarTitle: sidebarTitle,
+                titlebarPadding: $titlebarPadding,
                 onToggleFileTree: onToggleFileTree,
                 onSelectSidebarMode: onSelectSidebarMode,
                 onOpenTerminal: onOpenTerminal
@@ -2343,6 +2354,7 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
         private var toggleFileTreeAction: (() -> Void)?
         private var selectSidebarModeAction: ((EditorSidebarMode) -> Void)?
         private var openTerminalAction: (() -> Void)?
+        private var titlebarPaddingBinding: Binding<CGFloat>?
         private var controlsAccessory: NSTitlebarAccessoryViewController?
 
         override init() {
@@ -2359,6 +2371,7 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
             fileTreeVisible: Bool,
             sidebarMode: EditorSidebarMode,
             sidebarTitle: String,
+            titlebarPadding: Binding<CGFloat>,
             onToggleFileTree: @escaping () -> Void,
             onSelectSidebarMode: @escaping (EditorSidebarMode) -> Void,
             onOpenTerminal: @escaping () -> Void
@@ -2372,6 +2385,7 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
             toggleFileTreeAction = onToggleFileTree
             selectSidebarModeAction = onSelectSidebarMode
             openTerminalAction = onOpenTerminal
+            titlebarPaddingBinding = titlebarPadding
             attachWindowObserversIfNeeded(window: window)
             guard windowChanged || chromeChanged || fileTreeChanged || sidebarModeChanged || sidebarTitleChanged else {
                 scrollPerfLog(
@@ -2385,6 +2399,7 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
             lastSidebarTitle = sidebarTitle
             let applyStarted = CFAbsoluteTimeGetCurrent()
             applyWindowChrome(window: window, chrome: chrome)
+            syncTitlebarPadding(window: window, binding: titlebarPadding)
             let applyMs = (CFAbsoluteTimeGetCurrent() - applyStarted) * 1000
             let updateStarted = CFAbsoluteTimeGetCurrent()
             updateAccessoryContent(
@@ -2416,11 +2431,32 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
                 name: NSWindow.didResignMainNotification,
                 object: window
             )
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(windowDidChangeState(_:)),
+                name: NSWindow.didResizeNotification,
+                object: window
+            )
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(windowDidChangeState(_:)),
+                name: NSWindow.didEnterFullScreenNotification,
+                object: window
+            )
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(windowDidChangeState(_:)),
+                name: NSWindow.didExitFullScreenNotification,
+                object: window
+            )
         }
 
         @objc private func windowDidChangeState(_ notification: Notification) {
             guard let window = notification.object as? NSWindow else { return }
             applyWindowChrome(window: window, chrome: lastChrome)
+            if let titlebarPaddingBinding {
+                syncTitlebarPadding(window: window, binding: titlebarPaddingBinding)
+            }
             updateAccessoryContent(
                 chrome: lastChrome,
                 fileTreeVisible: lastFileTreeVisible,
@@ -2453,6 +2489,15 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
             if let contentView = window.contentView {
                 contentView.wantsLayer = true
                 contentView.layer?.backgroundColor = backgroundColor.cgColor
+            }
+        }
+
+        private func syncTitlebarPadding(window: NSWindow, binding: Binding<CGFloat>) {
+            let computedTitlebarHeight = window.frame.height - window.contentLayoutRect.height
+            let nextPadding = max(28, min(72, computedTitlebarHeight))
+            guard abs(binding.wrappedValue - nextPadding) > 0.5 else { return }
+            DispatchQueue.main.async {
+                binding.wrappedValue = nextPadding
             }
         }
 

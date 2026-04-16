@@ -1337,7 +1337,10 @@ impl SurfaceConfig {
 
   fn viewport_rows(self) -> u16 {
     let cell_height = self.metrics.cell_height_px as u32;
-    let rows = self.height_px.div_ceil(cell_height).max(1);
+    // Match columns: only expose fully drawable rows. Using ceil here can report one
+    // extra row when the surface height is not an exact multiple of the cell height,
+    // which makes the renderer try to draw past the bottom of the visible surface.
+    let rows = (self.height_px / cell_height).max(1);
     rows.min(u16::MAX as u32) as u16
   }
 }

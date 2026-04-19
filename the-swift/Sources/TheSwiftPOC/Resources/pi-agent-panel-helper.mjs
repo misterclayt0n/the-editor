@@ -768,6 +768,126 @@ function truncateText(text, maxLines = 2000, maxBytes = 50 * 1024) {
   return result;
 }
 
+function defaultSessionDirForCwd(cwd) {
+  const safePath = `--${cwd.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`;
+  return path.join(currentAgentDir, "sessions", safePath);
+}
+
+function truncatePreviewText(text, maxLength = 280) {
+  const flattened = String(text || "").replace(/\s+/g, " ").trim();
+  if (!flattened) {
+    return "";
+  }
+  if (flattened.length <= maxLength) {
+    return flattened;
+  }
+  return `${flattened.slice(0, maxLength - 1)}…`;
+}
+
+async function readRecentSessionSummary(filePath, modified) {
+  let fileHandle;
+  try {
+    fileHandle = await fs.open(filePath, "r");
+    const buffer = Buffer.alloc(128 * 1024);
+    const { bytesRead } = await fileHandle.read(buffer, 0, buffer.length, 0);
+    const prefix = buffer.toString("utf8", 0, bytesRead);
+    const lines = prefix.split(/\r?\n/);
+
+    let sessionId = path.basename(filePath, path.extname(filePath));
+    let name = null;
+    let firstMessage = "";
+
+    for (const line of lines) {
+      if (!line.trim()) {
+        continue;
+      }
+
+      let entry;
+      try {
+        entry = JSON.parse(line);
+      } catch {
+        continue;
+      }
+
+      if (entry?.type === "session" && typeof entry.id === "string" && entry.id.trim()) {
+        sessionId = entry.id.trim();
+        continue;
+      }
+
+      if (entry?.type === "session_info" && typeof entry.name === "string") {
+        const trimmedName = entry.name.trim();
+        if (trimmedName) {
+          name = trimmedName;
+        }
+        continue;
+      }
+
+      if (entry?.type === "message" && entry.message?.role === "user") {
+        const text = truncatePreviewText(extractText(entry.message.content));
+        if (text) {
+          firstMessage = text;
+          break;
+        }
+      }
+    }
+
+    return {
+      id: sessionId,
+      path: filePath,
+      name,
+      firstMessage: firstMessage || "(no messages)",
+      modified: modified.toISOString(),
+    };
+  } catch {
+    return null;
+  } finally {
+    try {
+      await fileHandle?.close();
+    } catch {
+      // ignore
+    }
+  }
+}
+
+async function listRecentSessionSummaries(cwd, limit = 20) {
+  const sessionDir = defaultSessionDirForCwd(cwd);
+  try {
+    const entries = await fs.readdir(sessionDir, { withFileTypes: true });
+    const candidates = await Promise.all(
+      entries
+        .filter((entry) => entry.isFile() && entry.name.endsWith(".jsonl"))
+        .map(async (entry) => {
+          const filePath = path.join(sessionDir, entry.name);
+          try {
+            const stats = await fs.stat(filePath);
+            return { filePath, modified: stats.mtime };
+          } catch {
+            return null;
+          }
+        }),
+    );
+
+    const sortedCandidates = candidates
+      .filter(Boolean)
+      .sort((lhs, rhs) => rhs.modified.getTime() - lhs.modified.getTime());
+
+    const sessions = [];
+    for (const candidate of sortedCandidates) {
+      if (sessions.length >= limit) {
+        break;
+      }
+      const summary = await readRecentSessionSummary(candidate.filePath, candidate.modified);
+      if (summary) {
+        sessions.push(summary);
+      }
+    }
+
+    return sessions;
+  } catch {
+    return [];
+  }
+}
+
 function createEditorBackedTools(cwd) {
   const replaceEditSchema = Type.Object(
     {
@@ -991,11 +1111,11 @@ async function handleHelperRequest(id, method, params) {
       }
       case "listSessions": {
         const cwd = params?.cwd ? String(params.cwd) : currentCwd;
-        const sessions = await SessionManager.list(cwd);
+        const sessions = await listRecentSessionSummaries(cwd);
         send({
           type: "response",
           id,
-          result: sessions.slice(0, 20).map((session) => ({
+          result: sessions.map((session) => ({
             id: session.id,
             path: session.path,
             name: session.name || null,

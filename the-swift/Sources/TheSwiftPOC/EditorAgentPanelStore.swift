@@ -116,6 +116,8 @@ final class EditorAgentPanelStore: ObservableObject {
     private var markdownBackfillTask: Task<Void, Never>?
     private var markdownRenderGeneration: UInt64 = 0
     private var pendingTranscriptFlushTask: Task<Void, Never>?
+    private var recentSessionsTask: Task<Void, Never>?
+    private var hasLoadedRecentSessions = false
     private var pendingAssistantDeltas: [String: String] = [:]
     private var pendingThinkingDeltas: [String: String] = [:]
     private var pendingToolDeltas: [String: [String]] = [:]
@@ -137,6 +139,7 @@ final class EditorAgentPanelStore: ObservableObject {
     deinit {
         markdownBackfillTask?.cancel()
         pendingTranscriptFlushTask?.cancel()
+        recentSessionsTask?.cancel()
         if let subscriptionToken {
             Task { @MainActor [supervisor, agentItemID] in
                 supervisor.unsubscribe(agentItemID: agentItemID, token: subscriptionToken)
@@ -151,7 +154,6 @@ final class EditorAgentPanelStore: ObservableObject {
             do {
                 let response = try await supervisor.ensureSessionSnapshot(for: agentItemID)
                 applySessionSnapshot(response)
-                refreshRecentSessions()
             } catch {
                 errorMessage = error.localizedDescription
             }
@@ -166,7 +168,7 @@ final class EditorAgentPanelStore: ObservableObject {
             do {
                 let response = try await supervisor.sendPrompt(for: agentItemID, text: text)
                 applySessionSnapshot(response)
-                refreshRecentSessions()
+                invalidateRecentSessions()
             } catch {
                 errorMessage = error.localizedDescription
             }
@@ -188,18 +190,31 @@ final class EditorAgentPanelStore: ObservableObject {
             do {
                 let response = try await supervisor.createNewSession(for: agentItemID)
                 applySessionSnapshot(response)
+                invalidateRecentSessions()
             } catch {
                 errorMessage = error.localizedDescription
             }
         }
     }
 
-    func refreshRecentSessions() {
-        Task {
+    func refreshRecentSessions(force: Bool = false) {
+        if recentSessionsTask != nil {
+            return
+        }
+        if !force, hasLoadedRecentSessions {
+            return
+        }
+
+        recentSessionsTask = Task { [weak self] in
+            guard let self else { return }
+            defer { self.recentSessionsTask = nil }
             do {
                 let response = try await supervisor.listRecentSessions(cwd: editorWorkingDirectory)
+                guard !Task.isCancelled else { return }
                 recentSessions = parseRecentSessions(response)
+                hasLoadedRecentSessions = true
             } catch {
+                guard !Task.isCancelled else { return }
                 errorMessage = error.localizedDescription
             }
         }
@@ -210,10 +225,15 @@ final class EditorAgentPanelStore: ObservableObject {
             do {
                 let response = try await supervisor.openSession(for: agentItemID, path: path)
                 applySessionSnapshot(response)
+                invalidateRecentSessions()
             } catch {
                 errorMessage = error.localizedDescription
             }
         }
+    }
+
+    func invalidateRecentSessions() {
+        hasLoadedRecentSessions = false
     }
 
     func refreshModels() {
@@ -270,7 +290,8 @@ final class EditorAgentPanelStore: ObservableObject {
             do {
                 let response = try await supervisor.setSessionName(for: agentItemID, name: trimmed)
                 applySessionSnapshot(response)
-                refreshRecentSessions()
+                invalidateRecentSessions()
+                refreshRecentSessions(force: true)
             } catch {
                 errorMessage = error.localizedDescription
             }

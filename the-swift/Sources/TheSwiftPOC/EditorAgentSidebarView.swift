@@ -88,7 +88,7 @@ struct EditorAgentSidebarView: View {
         .onChange(of: isResumePickerVisible) { _, visible in
             resumeSelectionIndex = 0
             if visible {
-                store.refreshRecentSessions()
+                store.refreshRecentSessions(force: true)
             }
         }
         .onChange(of: filteredCommands.map(\.id).joined(separator: "|")) { _, _ in
@@ -176,7 +176,7 @@ struct EditorAgentSidebarView: View {
                 sessionSubtitle: store.sessionSubtitle,
                 contextUsageText: store.contextUsageText,
                 onNewSession: startNewSession,
-                onShowRecentSessions: { store.refreshRecentSessions() },
+                onShowRecentSessions: { store.refreshRecentSessions(force: true) },
                 recentSessions: store.recentSessions,
                 onResumeSession: resumeSession
             )

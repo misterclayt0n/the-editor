@@ -65,6 +65,51 @@ struct EditorAgentFooterInfo: Equatable {
     let availableProviderCount: Int
 }
 
+struct EditorAgentCompactionStatus: Equatable {
+    enum Reason: String, Equatable {
+        case manual
+        case threshold
+        case overflow
+
+        init(rawValue: String) {
+            switch rawValue {
+            case "threshold":
+                self = .threshold
+            case "overflow":
+                self = .overflow
+            default:
+                self = .manual
+            }
+        }
+    }
+
+    let reason: Reason
+
+    var title: String {
+        switch reason {
+        case .manual:
+            return "Compacting context…"
+        case .threshold:
+            return "Auto-compacting…"
+        case .overflow:
+            return "Context overflow detected, auto-compacting…"
+        }
+    }
+
+    var placeholder: String {
+        switch reason {
+        case .manual:
+            return "pi is compacting context…"
+        case .threshold, .overflow:
+            return "pi is auto-compacting…"
+        }
+    }
+
+    var isAutomatic: Bool {
+        reason != .manual
+    }
+}
+
 struct EditorAgentTranscriptItem: Identifiable, Equatable, Hashable {
     enum Kind: String, Hashable {
         case user
@@ -72,6 +117,12 @@ struct EditorAgentTranscriptItem: Identifiable, Equatable, Hashable {
         case thinking
         case note
         case tool
+    }
+
+    enum NoteStyle: String, Hashable {
+        case plain
+        case compactionSummary
+        case branchSummary
     }
 
     let id: String
@@ -84,6 +135,8 @@ struct EditorAgentTranscriptItem: Identifiable, Equatable, Hashable {
     var contextSummary: String?
     var toolInputJSON: String?
     var renderedMarkdown: EditorRenderedMarkdown?
+    var noteStyle: NoteStyle = .plain
+    var tokensBefore: Int?
     var revision: Int = 0
 }
 
@@ -103,6 +156,7 @@ final class EditorAgentPanelStore: ObservableObject {
     @Published private(set) var footerInfo: EditorAgentFooterInfo?
     @Published private(set) var isRuntimeReady = false
     @Published private(set) var isRunning = false
+    @Published private(set) var compactionStatus: EditorAgentCompactionStatus?
     @Published private(set) var sessionTitle = "Agent"
     @Published private(set) var sessionSubtitle = "pi"
     @Published private(set) var contextUsageText: String?
@@ -350,6 +404,8 @@ final class EditorAgentPanelStore: ObservableObject {
             )
         case "note_message":
             if let text = payload["text"] as? String {
+                let noteStyle = EditorAgentTranscriptItem.NoteStyle(rawValue: payload["noteStyle"] as? String ?? "") ?? .plain
+                let renderedMarkdown = renderedMarkdownForNote(text: text, noteStyle: noteStyle)
                 items.append(
                     EditorAgentTranscriptItem(
                         id: UUID().uuidString,
@@ -361,9 +417,32 @@ final class EditorAgentPanelStore: ObservableObject {
                         status: nil,
                         contextSummary: nil,
                         toolInputJSON: nil,
-                        renderedMarkdown: nil
+                        renderedMarkdown: renderedMarkdown,
+                        noteStyle: noteStyle,
+                        tokensBefore: payload["tokensBefore"] as? Int
                     )
                 )
+            }
+        case "compaction_start":
+            let reason = EditorAgentCompactionStatus.Reason(rawValue: payload["reason"] as? String ?? "manual")
+            compactionStatus = EditorAgentCompactionStatus(reason: reason)
+            errorMessage = nil
+        case "compaction_end":
+            let reason = EditorAgentCompactionStatus.Reason(rawValue: payload["reason"] as? String ?? compactionStatus?.reason.rawValue ?? "manual")
+            let wasAutomatic = reason != .manual
+            compactionStatus = nil
+            if let snapshot = payload["snapshot"] as? [String: Any] {
+                applySessionSnapshot(snapshot, preserveRunningState: (payload["willRetry"] as? Bool) == true)
+            }
+            if (payload["aborted"] as? Bool) == true {
+                if wasAutomatic {
+                    errorMessage = nil
+                } else {
+                    errorMessage = "Compaction cancelled"
+                }
+            } else if let errorText = (payload["errorMessage"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                      !errorText.isEmpty {
+                errorMessage = errorText
             }
         case "thinking_started":
             let id = payload["id"] as? String ?? UUID().uuidString
@@ -750,7 +829,7 @@ final class EditorAgentPanelStore: ObservableObject {
         pendingToolInputJSONByID.removeAll()
     }
 
-    private func applySessionSnapshot(_ payload: [String: Any]) {
+    private func applySessionSnapshot(_ payload: [String: Any], preserveRunningState: Bool = false) {
         markdownBackfillTask?.cancel()
         resetPendingTranscriptBuffers()
         markdownRenderGeneration &+= 1
@@ -787,7 +866,10 @@ final class EditorAgentPanelStore: ObservableObject {
             contextUsageText = nil
         }
         isRuntimeReady = true
-        isRunning = false
+        compactionStatus = nil
+        if !preserveRunningState {
+            isRunning = false
+        }
         errorMessage = nil
         let totalMs = (CFAbsoluteTimeGetCurrent() - totalStart) * 1000
         agentPerfLog(
@@ -927,9 +1009,10 @@ final class EditorAgentPanelStore: ObservableObject {
             else {
                 return nil
             }
+            let noteStyle = EditorAgentTranscriptItem.NoteStyle(rawValue: row["noteStyle"] as? String ?? "") ?? .plain
             let renderedMarkdown: EditorRenderedMarkdown?
-            if kind == .assistant, !text.isEmpty {
-                renderedMarkdown = nil
+            if kind == .note {
+                renderedMarkdown = renderedMarkdownForNote(text: text, noteStyle: noteStyle)
             } else {
                 renderedMarkdown = nil
             }
@@ -943,9 +1026,16 @@ final class EditorAgentPanelStore: ObservableObject {
                 status: row["status"] as? String,
                 contextSummary: row["context"] as? String,
                 toolInputJSON: row["toolInputJSON"] as? String,
-                renderedMarkdown: renderedMarkdown
+                renderedMarkdown: renderedMarkdown,
+                noteStyle: noteStyle,
+                tokensBefore: row["tokensBefore"] as? Int
             )
         }
+    }
+
+    private func renderedMarkdownForNote(text: String, noteStyle: EditorAgentTranscriptItem.NoteStyle) -> EditorRenderedMarkdown? {
+        guard noteStyle != .plain, !text.isEmpty else { return nil }
+        return controller.renderMarkdown(text)
     }
 
     private func parseCommands(_ raw: Any?) -> [EditorAgentCommand] {

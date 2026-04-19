@@ -299,9 +299,13 @@ function historyItemsFromMessages(messages) {
         const text = extractText(message.content);
         return text ? [{ id, kind: "note", text }] : [];
       }
-      case "branchSummary":
+      case "branchSummary": {
+        return message.summary ? [{ id, kind: "note", text: message.summary, noteStyle: "branchSummary" }] : [];
+      }
       case "compactionSummary": {
-        return message.summary ? [{ id, kind: "note", text: message.summary }] : [];
+        return message.summary
+          ? [{ id, kind: "note", text: message.summary, noteStyle: "compactionSummary", tokensBefore: message.tokensBefore ?? null }]
+          : [];
       }
       default:
         return [];
@@ -673,6 +677,17 @@ function handleSessionEvent(record, event) {
             payload: { id: `${event.message.timestamp}`, text },
           });
         }
+      } else if (event.message.role === "branchSummary" && event.message.summary) {
+        send({
+          type: "event",
+          sessionPath: record.sessionPath,
+          event: "note_message",
+          payload: {
+            id: `${event.message.timestamp}`,
+            text: event.message.summary,
+            noteStyle: "branchSummary",
+          },
+        });
       }
       break;
     }
@@ -721,6 +736,36 @@ function handleSessionEvent(record, event) {
           inputJSON: encodeToolInputJSON(event.args),
         },
       });
+      break;
+    }
+    case "compaction_start": {
+      send({
+        type: "event",
+        sessionPath: record.sessionPath,
+        event: "compaction_start",
+        payload: {
+          reason: event.reason,
+        },
+      });
+      break;
+    }
+    case "compaction_end": {
+      const payload = {
+        reason: event.reason,
+        aborted: Boolean(event.aborted),
+        willRetry: Boolean(event.willRetry),
+        errorMessage: event.errorMessage || null,
+      };
+      if (!event.aborted && event.result) {
+        payload.snapshot = sessionSnapshot(record.session);
+      }
+      send({
+        type: "event",
+        sessionPath: record.sessionPath,
+        event: "compaction_end",
+        payload,
+      });
+      emitSessionStatus(record);
       break;
     }
     case "agent_end": {

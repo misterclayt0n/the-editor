@@ -36,6 +36,7 @@ struct EditorAgentSidebarView: View {
     @State private var isTranscriptPinnedToBottom = true
     @State private var showsJumpToLatest = false
     @State private var expandedToolItemIDs: Set<String> = []
+    @State private var expandedSummaryItemIDs: Set<String> = []
     @State private var commandSelectionIndex = 0
     @State private var modelSelectionIndex = 0
     @State private var resumeSelectionIndex = 0
@@ -80,6 +81,7 @@ struct EditorAgentSidebarView: View {
         }
         .onChange(of: store.items) { _, newItems in
             expandedToolItemIDs.formIntersection(Set(newItems.lazy.filter { $0.kind == .tool }.map(\.id)))
+            expandedSummaryItemIDs.formIntersection(Set(newItems.lazy.filter { $0.kind == .note && $0.noteStyle != .plain }.map(\.id)))
             if newItems.isEmpty {
                 isTranscriptPinnedToBottom = true
                 showsJumpToLatest = false
@@ -138,6 +140,7 @@ struct EditorAgentSidebarView: View {
                 isPinnedToBottom: $isTranscriptPinnedToBottom,
                 showsJumpToLatest: $showsJumpToLatest,
                 expandedToolItemIDs: $expandedToolItemIDs,
+                expandedSummaryItemIDs: $expandedSummaryItemIDs,
                 topInset: topScrimHeight + 12
             )
             .padding(.horizontal, AgentLayout.horizontalPadding)
@@ -149,6 +152,14 @@ struct EditorAgentSidebarView: View {
     @ViewBuilder
     private var composerArea: some View {
         VStack(spacing: 8) {
+            if let compactionStatus = store.compactionStatus {
+                AgentCompactionStatusView(
+                    status: compactionStatus,
+                    onCancel: store.abort
+                )
+                .padding(.horizontal, AgentLayout.horizontalPadding)
+            }
+
             if let errorMessage = store.errorMessage, !errorMessage.isEmpty {
                 AgentErrorBanner(message: errorMessage)
                     .padding(.horizontal, AgentLayout.horizontalPadding)
@@ -158,7 +169,8 @@ struct EditorAgentSidebarView: View {
                 inputText: $inputText,
                 isFocused: $isComposerFocused,
                 placeholder: placeholderText,
-                isRunning: store.isRunning,
+                isRunning: store.isRunning || store.compactionStatus != nil,
+                isCompacting: store.compactionStatus != nil,
                 isReady: store.isRuntimeReady,
                 canSend: canSubmitComposer,
                 onSend: sendCurrent,
@@ -267,7 +279,7 @@ struct EditorAgentSidebarView: View {
     }
 
     private var canSubmitComposer: Bool {
-        guard store.isRuntimeReady, !store.isRunning else { return false }
+        guard store.isRuntimeReady, !store.isRunning, store.compactionStatus == nil else { return false }
         if isModelPickerVisible {
             return resolvedExactModelMatch != nil || filteredModels.indices.contains(modelSelectionIndex)
         }
@@ -282,6 +294,7 @@ struct EditorAgentSidebarView: View {
 
     private var placeholderText: String {
         if !store.isRuntimeReady { return "Starting pi runtime…" }
+        if let compactionStatus = store.compactionStatus { return compactionStatus.placeholder }
         if store.isRunning { return "pi is working…" }
         return "Ask pi anything · / for commands"
     }
@@ -409,6 +422,7 @@ struct EditorAgentSidebarView: View {
 
     private func startNewSession() {
         expandedToolItemIDs.removeAll()
+        expandedSummaryItemIDs.removeAll()
         showsJumpToLatest = false
         inputText = ""
         store.newSession()
@@ -416,6 +430,7 @@ struct EditorAgentSidebarView: View {
 
     private func resumeSession(_ session: EditorAgentRecentSession) {
         expandedToolItemIDs.removeAll()
+        expandedSummaryItemIDs.removeAll()
         showsJumpToLatest = false
         inputText = ""
         store.resumeSession(path: session.path)
@@ -633,6 +648,7 @@ private struct AgentTranscriptView: View {
     @Binding var isPinnedToBottom: Bool
     @Binding var showsJumpToLatest: Bool
     @Binding var expandedToolItemIDs: Set<String>
+    @Binding var expandedSummaryItemIDs: Set<String>
     let topInset: CGFloat
 
     @State private var transcriptContentHeight: CGFloat = 0
@@ -654,11 +670,19 @@ private struct AgentTranscriptView: View {
                                 item: entry.item,
                                 selectionColor: selectionColor,
                                 isToolExpanded: expandedToolItemIDs.contains(entry.item.id),
+                                isSummaryExpanded: expandedSummaryItemIDs.contains(entry.item.id),
                                 onToggleToolExpansion: {
                                     if expandedToolItemIDs.contains(entry.item.id) {
                                         expandedToolItemIDs.remove(entry.item.id)
                                     } else {
                                         expandedToolItemIDs.insert(entry.item.id)
+                                    }
+                                },
+                                onToggleSummaryExpansion: {
+                                    if expandedSummaryItemIDs.contains(entry.item.id) {
+                                        expandedSummaryItemIDs.remove(entry.item.id)
+                                    } else {
+                                        expandedSummaryItemIDs.insert(entry.item.id)
                                     }
                                 }
                             )
@@ -691,10 +715,9 @@ private struct AgentTranscriptView: View {
                 }
                 .onChange(of: transcriptRevision) { _, newValue in
                     agentDebugLog("transcriptRevision.change revision=\(newValue) items=\(items.count) pinned=\(isPinnedToBottom) lastItem=\(items.last?.id ?? "none")")
-                    if isPinnedToBottom {
-                        showsJumpToLatest = false
-                    } else {
-                        showsJumpToLatest = true
+                    let nextShowsJumpToLatest = !isPinnedToBottom
+                    if showsJumpToLatest != nextShowsJumpToLatest {
+                        showsJumpToLatest = nextShowsJumpToLatest
                     }
                 }
                 .onChange(of: jumpToLatestToken) { _, _ in
@@ -702,19 +725,17 @@ private struct AgentTranscriptView: View {
                     scheduleScrollTranscriptToBottom(using: proxy, animated: true)
                 }
                 .onChange(of: isPinnedToBottom) { _, pinned in
-                    if pinned {
+                    if pinned, showsJumpToLatest {
                         showsJumpToLatest = false
                     }
                 }
                 .onPreferenceChange(AgentTranscriptContentHeightPreferenceKey.self) { newHeight in
-                    guard newHeight > 0 else { return }
+                    guard isPinnedToBottom, newHeight > 0 else { return }
                     let oldHeight = transcriptContentHeight
                     guard abs(newHeight - oldHeight) > 0.5 else { return }
                     transcriptContentHeight = newHeight
                     agentDebugLog("transcriptHeight.change old=\(Int(oldHeight.rounded())) new=\(Int(newHeight.rounded())) pinned=\(isPinnedToBottom) revision=\(transcriptRevision)")
-                    if isPinnedToBottom {
-                        scheduleScrollTranscriptToBottom(using: proxy, animated: false)
-                    }
+                    scheduleScrollTranscriptToBottom(using: proxy, animated: false)
                 }
             }
 
@@ -759,7 +780,7 @@ private struct AgentTranscriptRowEntry: Identifiable {
     let item: EditorAgentTranscriptItem
 
     var id: String {
-        "\(item.id)-\(item.revision)"
+        item.id
     }
 
     init(item: EditorAgentTranscriptItem) {
@@ -779,7 +800,9 @@ private struct AgentTranscriptRow: View {
     let item: EditorAgentTranscriptItem
     let selectionColor: NSColor
     let isToolExpanded: Bool
+    let isSummaryExpanded: Bool
     let onToggleToolExpansion: () -> Void
+    let onToggleSummaryExpansion: () -> Void
 
     var body: some View {
         switch item.kind {
@@ -787,10 +810,21 @@ private struct AgentTranscriptRow: View {
             AgentUserMessageView(item: item, selectionColor: selectionColor)
         case .assistant:
             AgentAssistantMessageView(item: item)
+                .equatable()
         case .thinking:
             AgentThinkingMessageView(item: item)
+                .equatable()
         case .note:
-            AgentNoteRow(text: item.text)
+            if item.noteStyle == .plain {
+                AgentNoteRow(text: item.text)
+                    .equatable()
+            } else {
+                AgentSummaryRow(
+                    item: item,
+                    isExpanded: isSummaryExpanded,
+                    onToggleExpanded: onToggleSummaryExpansion
+                )
+            }
         case .tool:
             AgentToolRow(
                 item: item,
@@ -944,7 +978,8 @@ private struct AgentUserMessageView: View {
     }
 }
 
-private struct AgentAssistantMessageView: View {
+@MainActor
+private struct AgentAssistantMessageView: View, Equatable {
     let item: EditorAgentTranscriptItem
 
     var body: some View {
@@ -975,7 +1010,8 @@ private struct AgentAssistantMessageView: View {
     }
 }
 
-private struct AgentThinkingMessageView: View {
+@MainActor
+private struct AgentThinkingMessageView: View, Equatable {
     let item: EditorAgentTranscriptItem
 
     var body: some View {
@@ -1016,7 +1052,8 @@ private struct AgentThinkingMessageView: View {
     }
 }
 
-private struct AgentRenderedMarkdownView: View {
+@MainActor
+private struct AgentRenderedMarkdownView: View, Equatable {
     let rendered: EditorRenderedMarkdown
 
     var body: some View {
@@ -1178,7 +1215,8 @@ private struct AgentCodeBlockView: View {
     }
 }
 
-private struct AgentNoteRow: View {
+@MainActor
+private struct AgentNoteRow: View, Equatable {
     let text: String
 
     var body: some View {
@@ -1189,6 +1227,157 @@ private struct AgentNoteRow: View {
             .padding(.vertical, 2)
             .textSelection(.enabled)
     }
+}
+
+private struct AgentSummaryRow: View {
+    let item: EditorAgentTranscriptItem
+    let isExpanded: Bool
+    let onToggleExpanded: () -> Void
+
+    private var accentColor: Color {
+        switch item.noteStyle {
+        case .compactionSummary:
+            return .blue
+        case .branchSummary:
+            return .purple
+        case .plain:
+            return .secondary
+        }
+    }
+
+    private var badgeTitle: String {
+        switch item.noteStyle {
+        case .compactionSummary:
+            return "COMPACTION"
+        case .branchSummary:
+            return "BRANCH"
+        case .plain:
+            return "NOTE"
+        }
+    }
+
+    private var title: String {
+        switch item.noteStyle {
+        case .compactionSummary:
+            return "Context compacted"
+        case .branchSummary:
+            return "Branch summary"
+        case .plain:
+            return "Note"
+        }
+    }
+
+    private var subtitle: String {
+        switch item.noteStyle {
+        case .compactionSummary:
+            if let tokensBefore = item.tokensBefore {
+                return "Compacted from \(agentFormattedTokenCount(tokensBefore)) tokens"
+            }
+            return "Conversation history was compacted into a summary"
+        case .branchSummary:
+            return "Summary from the branch this conversation returned from"
+        case .plain:
+            return item.text
+        }
+    }
+
+    private var iconName: String {
+        switch item.noteStyle {
+        case .compactionSummary:
+            return "sparkles.rectangle.stack"
+        case .branchSummary:
+            return "arrow.triangle.branch"
+        case .plain:
+            return "note.text"
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                guard !item.text.isEmpty else { return }
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    onToggleExpanded()
+                }
+            } label: {
+                HStack(alignment: .center, spacing: 10) {
+                    Image(systemName: item.text.isEmpty ? "circle.fill" : (isExpanded ? "chevron.down" : "chevron.right"))
+                        .font(.system(size: item.text.isEmpty ? 6 : 9, weight: .semibold))
+                        .foregroundStyle(.tertiary)
+                        .frame(width: 10)
+
+                    Image(systemName: iconName)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(accentColor)
+                        .frame(width: 18, height: 18)
+                        .background(accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 6) {
+                            Text(badgeTitle)
+                                .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                                .foregroundStyle(accentColor)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(accentColor.opacity(0.10), in: Capsule())
+
+                            if item.noteStyle == .compactionSummary, let tokensBefore = item.tokensBefore {
+                                Text("\(agentFormattedTokenCount(tokensBefore)) tokens")
+                                    .font(.system(size: 10, weight: .medium))
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+
+                        Text(title)
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(.primary)
+
+                        Text(subtitle)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(isExpanded ? nil : 2)
+                    }
+
+                    Spacer(minLength: 8)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(item.text.isEmpty)
+
+            if isExpanded {
+                Group {
+                    if let renderedMarkdown = item.renderedMarkdown,
+                       !renderedMarkdown.blocks.isEmpty {
+                        AgentRenderedMarkdownView(rendered: renderedMarkdown)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
+                        Text(item.text)
+                            .font(.system(size: 12))
+                            .foregroundStyle(.primary)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.bottom, 12)
+            }
+        }
+        .background {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(accentColor.opacity(0.06))
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(accentColor.opacity(0.18), lineWidth: 0.75)
+        }
+    }
+}
+
+private func agentFormattedTokenCount(_ count: Int) -> String {
+    NumberFormatter.localizedString(from: NSNumber(value: count), number: .decimal)
 }
 
 private struct AgentToolRow: View {
@@ -1606,6 +1795,48 @@ private struct AgentFrameObserver: View {
     }
 }
 
+private struct AgentCompactionStatusView: View {
+    let status: EditorAgentCompactionStatus
+    let onCancel: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            AgentSpinner()
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(status.title)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.primary)
+                Text("Esc or Stop to cancel")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer(minLength: 8)
+
+            Button(action: onCancel) {
+                Text("Cancel")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.primary)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(Color.primary.opacity(0.06), in: Capsule())
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color.primary.opacity(0.045))
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5)
+        }
+    }
+}
+
 private struct AgentComposerBar: View {
     @Binding var inputText: String
     @Binding var isFocused: Bool
@@ -1613,6 +1844,7 @@ private struct AgentComposerBar: View {
 
     let placeholder: String
     let isRunning: Bool
+    let isCompacting: Bool
     let isReady: Bool
     let canSend: Bool
     let onSend: () -> Void
@@ -1680,7 +1912,9 @@ private struct AgentComposerBar: View {
                 isFocused: $isFocused,
                 isEditable: isReady,
                 showsOverlayNavigation: showsOverlayKeyboardNavigation,
+                shouldCancelOnEscape: isCompacting,
                 onSubmit: onSend,
+                onCancelOperation: onCancel,
                 onMoveUp: onMoveUp,
                 onMoveDown: onMoveDown,
                 onDismissOverlay: onDismissOverlay,
@@ -2010,7 +2244,9 @@ private struct AgentComposerNativeTextView: NSViewRepresentable {
 
     let isEditable: Bool
     let showsOverlayNavigation: Bool
+    let shouldCancelOnEscape: Bool
     let onSubmit: () -> Void
+    let onCancelOperation: () -> Void
     let onMoveUp: () -> Void
     let onMoveDown: () -> Void
     let onDismissOverlay: () -> Void
@@ -2023,12 +2259,14 @@ private struct AgentComposerNativeTextView: NSViewRepresentable {
             measuredHeight: $measuredHeight,
             isFocused: $isFocused,
             onSubmit: onSubmit,
+            onCancelOperation: onCancelOperation,
             onMoveUp: onMoveUp,
             onMoveDown: onMoveDown,
             onDismissOverlay: onDismissOverlay,
             onCycleThinkingLevel: onCycleThinkingLevel,
             onActivateSurface: onActivateSurface,
-            showsOverlayNavigation: showsOverlayNavigation
+            showsOverlayNavigation: showsOverlayNavigation,
+            shouldCancelOnEscape: shouldCancelOnEscape
         )
     }
 
@@ -2079,6 +2317,7 @@ private struct AgentComposerNativeTextView: NSViewRepresentable {
         context.coordinator.scrollView = scrollView
         context.coordinator.textView = textView
         context.coordinator.showsOverlayNavigation = showsOverlayNavigation
+        context.coordinator.shouldCancelOnEscape = shouldCancelOnEscape
         context.coordinator.updateMeasuredHeightIfNeeded()
 
         DispatchQueue.main.async {
@@ -2094,6 +2333,7 @@ private struct AgentComposerNativeTextView: NSViewRepresentable {
         context.coordinator.scrollView = nsView
         context.coordinator.textView = textView
         context.coordinator.showsOverlayNavigation = showsOverlayNavigation
+        context.coordinator.shouldCancelOnEscape = shouldCancelOnEscape
 
         if textView.string != text, !textView.hasMarkedText() {
             textView.string = text
@@ -2122,6 +2362,7 @@ private struct AgentComposerNativeTextView: NSViewRepresentable {
         @Binding var isFocused: Bool
 
         let onSubmit: () -> Void
+        let onCancelOperation: () -> Void
         let onMoveUp: () -> Void
         let onMoveDown: () -> Void
         let onDismissOverlay: () -> Void
@@ -2131,6 +2372,7 @@ private struct AgentComposerNativeTextView: NSViewRepresentable {
         weak var textView: NSTextView?
         weak var scrollView: NSScrollView?
         var showsOverlayNavigation: Bool
+        var shouldCancelOnEscape: Bool
         var lastMeasuredText = ""
         var lastMeasuredWidth: CGFloat = 0
 
@@ -2139,23 +2381,27 @@ private struct AgentComposerNativeTextView: NSViewRepresentable {
             measuredHeight: Binding<CGFloat>,
             isFocused: Binding<Bool>,
             onSubmit: @escaping () -> Void,
+            onCancelOperation: @escaping () -> Void,
             onMoveUp: @escaping () -> Void,
             onMoveDown: @escaping () -> Void,
             onDismissOverlay: @escaping () -> Void,
             onCycleThinkingLevel: @escaping () -> Void,
             onActivateSurface: @escaping () -> Void,
-            showsOverlayNavigation: Bool
+            showsOverlayNavigation: Bool,
+            shouldCancelOnEscape: Bool
         ) {
             _text = text
             _measuredHeight = measuredHeight
             _isFocused = isFocused
             self.onSubmit = onSubmit
+            self.onCancelOperation = onCancelOperation
             self.onMoveUp = onMoveUp
             self.onMoveDown = onMoveDown
             self.onDismissOverlay = onDismissOverlay
             self.onCycleThinkingLevel = onCycleThinkingLevel
             self.onActivateSurface = onActivateSurface
             self.showsOverlayNavigation = showsOverlayNavigation
+            self.shouldCancelOnEscape = shouldCancelOnEscape
             super.init()
         }
 
@@ -2190,7 +2436,11 @@ private struct AgentComposerNativeTextView: NSViewRepresentable {
             }
 
             if commandSelector == #selector(NSTextView.cancelOperation(_:)) {
-                onDismissOverlay()
+                if shouldCancelOnEscape {
+                    onCancelOperation()
+                } else {
+                    onDismissOverlay()
+                }
                 return true
             }
 

@@ -1051,24 +1051,35 @@ private struct EditorPaneItemStripsOverlayView: View {
 
     private func paneHeaderHeight(for pane: EditorSnapshotPane, group: EditorPaneOpenItemGroup, in scene: EditorRenderScene) -> CGFloat {
         guard shouldShowTabStrip(for: group) else { return 0 }
-        let rowHeight = max(scene.info.surfaceMetrics.cellSizePoints.height, 1)
-        let preferredHeight = rowHeight + EditorPaneItemStripMetrics.preferredHeaderExtraHeight
-        return min(preferredHeight, paneFrame(for: pane, in: scene).height)
+        return min(EditorPaneTabBarMetrics.barHeight, paneFrame(for: pane, in: scene).height)
     }
 
     private func paneTabControlHeight(headerHeight: CGFloat) -> CGFloat {
         guard headerHeight > 0 else { return 0 }
-        let paddedHeight = max(headerHeight - EditorPaneItemStripMetrics.verticalPadding * 2, 0)
-        return min(
-            max(paddedHeight, EditorPaneItemStripMetrics.minimumControlHeight),
-            EditorPaneItemStripMetrics.preferredControlHeight
-        )
+        return min(EditorPaneTabBarMetrics.tabHeight, headerHeight)
     }
 
     private func paneTabControlOriginY(for pane: EditorSnapshotPane, headerHeight: CGFloat, controlHeight: CGFloat, in scene: EditorRenderScene) -> CGFloat {
         let rect = paneFrame(for: pane, in: scene)
         return rect.minY + max((headerHeight - controlHeight) * 0.5, 0)
     }
+}
+
+private enum EditorPaneTabBarMetrics {
+    static let barHeight: CGFloat = 33
+    static let tabHeight: CGFloat = 32
+    static let tabMinWidth: CGFloat = 140
+    static let tabMaxWidth: CGFloat = 220
+    static let tabHorizontalPadding: CGFloat = 12
+    static let tabSpacing: CGFloat = 0
+    static let activeIndicatorHeight: CGFloat = 2
+    static let iconSize: CGFloat = 14
+    static let titleFontSize: CGFloat = 12
+    static let closeButtonSize: CGFloat = 16
+    static let closeIconSize: CGFloat = 9
+    static let dirtyIndicatorSize: CGFloat = 8
+    static let contentSpacing: CGFloat = 6
+    static let hoverDuration: Double = 0.1
 }
 
 private struct EditorPaneItemTabStripView: View {
@@ -1085,21 +1096,24 @@ private struct EditorPaneItemTabStripView: View {
     }
 
     var body: some View {
-        HStack(spacing: 0) {
-            ForEach(group.items) { item in
-                EditorPaneItemTabView(
-                    item: item,
-                    theme: theme,
-                    chromeForeground: chromeForeground,
-                    isActivePane: group.isActivePane,
-                    controlHeight: controlHeight,
-                    canClose: canCloseItem(item),
-                    onActivate: { onActivateItem(item) },
-                    onClose: { onCloseItem(item) }
-                )
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: EditorPaneTabBarMetrics.tabSpacing) {
+                ForEach(group.items) { item in
+                    EditorPaneItemTabView(
+                        item: item,
+                        theme: theme,
+                        chromeForeground: chromeForeground,
+                        isActivePane: group.isActivePane,
+                        controlHeight: controlHeight,
+                        canClose: canCloseItem(item),
+                        onActivate: { onActivateItem(item) },
+                        onClose: { onCloseItem(item) }
+                    )
+                }
+                Spacer(minLength: 0)
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .clipped()
         .help(helpText)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(helpText)
@@ -1122,71 +1136,48 @@ private struct EditorPaneItemTabView: View {
     let onClose: () -> Void
 
     @State private var isHovered = false
-
-    private let cornerRadius: CGFloat = 7
-    private let topAccentHeight: CGFloat = 2
+    @State private var isCloseHovered = false
 
     var body: some View {
-        HStack(spacing: 6) {
-            Button(action: onActivate) {
-                HStack(spacing: 6) {
-                    openItemIcon(size: 12)
-                    Text(item.title)
-                        .font(.system(size: 12, weight: item.isActive ? .semibold : .regular))
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    if item.isModified {
-                        Circle()
-                            .fill(dirtyDotColor)
-                            .frame(width: 5, height: 5)
-                    }
-                }
-                .foregroundStyle(foregroundColor)
-                .padding(.leading, 10)
-                .padding(.trailing, showsCloseButton ? 0 : 10)
-                .frame(maxWidth: .infinity, minHeight: controlHeight, maxHeight: controlHeight, alignment: .leading)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
+        HStack(spacing: EditorPaneTabBarMetrics.contentSpacing) {
+            openItemIcon(size: EditorPaneTabBarMetrics.iconSize)
+                .foregroundStyle(item.isActive ? chromeForeground.primary : chromeForeground.secondary)
 
-            if showsCloseButton {
-                Button(action: onClose) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(Color(nsColor: closeButtonForegroundColor))
-                        .frame(width: 16, height: 16)
-                        .background(
-                            Circle()
-                                .fill(Color(nsColor: closeButtonBackgroundColor))
-                                .opacity(closeButtonBackgroundOpacity)
-                        )
-                }
-                .buttonStyle(.plain)
-                .padding(.trailing, 6)
-                .help("Close \(item.title)")
-                .accessibilityLabel("Close \(item.title)")
-            } else if canClose {
-                // Reserve room so the text doesn't shift when the X appears on hover.
-                Color.clear.frame(width: 16 + 6, height: 16)
-            }
+            Text(item.title)
+                .font(.system(size: EditorPaneTabBarMetrics.titleFontSize))
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .foregroundStyle(item.isActive ? chromeForeground.primary : chromeForeground.secondary)
+
+            Spacer(minLength: 4)
+
+            closeOrDirtyIndicator
         }
-        .frame(maxWidth: .infinity, minHeight: controlHeight, maxHeight: controlHeight, alignment: .leading)
+        .padding(.horizontal, EditorPaneTabBarMetrics.tabHorizontalPadding)
+        .offset(y: item.isActive ? 0.5 : 0)
+        .frame(
+            minWidth: EditorPaneTabBarMetrics.tabMinWidth,
+            maxWidth: EditorPaneTabBarMetrics.tabMaxWidth,
+            minHeight: controlHeight,
+            maxHeight: controlHeight
+        )
+        .padding(.bottom, item.isActive ? 1 : 0)
         .background(tabBackground)
-        .overlay(alignment: .top) { activeAccentBar }
-        .overlay(alignment: .trailing) { trailingDivider }
         .contentShape(Rectangle())
+        .onTapGesture(perform: onActivate)
         .onHover { hovering in
-            isHovered = hovering
+            withAnimation(.easeInOut(duration: EditorPaneTabBarMetrics.hoverDuration)) {
+                isHovered = hovering
+            }
         }
         .help(item.filePath ?? item.title)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(item.title)
     }
 
-    /// Active tab always shows the X (like cmux); inactive tabs reveal it on hover.
     private var showsCloseButton: Bool {
         guard canClose else { return false }
-        return item.isActive || isHovered
+        return isHovered || isCloseHovered
     }
 
     @ViewBuilder
@@ -1199,95 +1190,75 @@ private struct EditorPaneItemTabView: View {
         }
     }
 
-    private var foregroundColor: Color {
-        if item.isActive {
-            return chromeForeground.primary
-        }
-        return isActivePane
-            ? chromeForeground.secondary.opacity(0.95)
-            : chromeForeground.secondary.opacity(0.80)
-    }
-
     @ViewBuilder
     private var tabBackground: some View {
-        UnevenRoundedRectangle(
-            topLeadingRadius: cornerRadius,
-            bottomLeadingRadius: 0,
-            bottomTrailingRadius: 0,
-            topTrailingRadius: cornerRadius,
-            style: .continuous
+        ZStack(alignment: .top) {
+            if item.isActive {
+                Rectangle()
+                    .fill(Color(nsColor: theme.backgroundColor))
+            } else if isHovered {
+                Rectangle()
+                    .fill(Color(nsColor: theme.hoverColor).opacity(isActivePane ? 0.8 : 0.6))
+            } else {
+                Color.clear
+            }
+
+            if item.isActive {
+                Rectangle()
+                    .fill(Color(nsColor: theme.selectionColor))
+                    .frame(height: EditorPaneTabBarMetrics.activeIndicatorHeight)
+            }
+
+            HStack {
+                Spacer()
+                Rectangle()
+                    .fill(Color(nsColor: theme.separatorColor).opacity(0.9))
+                    .frame(width: 1)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var closeOrDirtyIndicator: some View {
+        ZStack {
+            if item.isModified && !isHovered && !isCloseHovered {
+                Circle()
+                    .fill(chromeForeground.secondary.opacity(0.7))
+                    .frame(
+                        width: EditorPaneTabBarMetrics.dirtyIndicatorSize,
+                        height: EditorPaneTabBarMetrics.dirtyIndicatorSize
+                    )
+            }
+
+            if showsCloseButton {
+                Button(action: onClose) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: EditorPaneTabBarMetrics.closeIconSize, weight: .semibold))
+                        .foregroundStyle(isCloseHovered ? chromeForeground.primary : chromeForeground.secondary)
+                        .frame(
+                            width: EditorPaneTabBarMetrics.closeButtonSize,
+                            height: EditorPaneTabBarMetrics.closeButtonSize
+                        )
+                        .background(
+                            Circle()
+                                .fill(isCloseHovered ? Color(nsColor: theme.hoverColor).opacity(0.9) : .clear)
+                        )
+                }
+                .buttonStyle(.plain)
+                .onHover { hovering in
+                    isCloseHovered = hovering
+                }
+                .help("Close \(item.title)")
+                .accessibilityLabel("Close \(item.title)")
+            }
+        }
+        .frame(
+            width: EditorPaneTabBarMetrics.closeButtonSize,
+            height: EditorPaneTabBarMetrics.closeButtonSize
         )
-        .fill(backgroundFillColor)
+        .animation(.easeInOut(duration: EditorPaneTabBarMetrics.hoverDuration), value: isHovered)
+        .animation(.easeInOut(duration: EditorPaneTabBarMetrics.hoverDuration), value: isCloseHovered)
     }
-
-    /// Cmux-style blue accent line on the top edge of the active tab.
-    @ViewBuilder
-    private var activeAccentBar: some View {
-        if item.isActive {
-            UnevenRoundedRectangle(
-                topLeadingRadius: cornerRadius,
-                bottomLeadingRadius: 0,
-                bottomTrailingRadius: 0,
-                topTrailingRadius: cornerRadius,
-                style: .continuous
-            )
-            .fill(Color(nsColor: theme.selectionColor))
-            .frame(height: topAccentHeight)
-        }
-    }
-
-    /// Thin 1px vertical separator on the right edge of inactive tabs, skipped
-    /// next to the active tab (same convention as cmux / Chrome).
-    @ViewBuilder
-    private var trailingDivider: some View {
-        if !item.isActive {
-            Rectangle()
-                .fill(Color(nsColor: theme.separatorColor).opacity(0.55))
-                .frame(width: 1)
-                .padding(.vertical, 6)
-        }
-    }
-
-    private var backgroundFillColor: Color {
-        if item.isActive {
-            // Fuses into the editor content below the tab strip.
-            return Color(nsColor: theme.backgroundColor)
-        }
-        if isHovered {
-            return Color(nsColor: theme.hoverColor).opacity(isActivePane ? 1.0 : 0.7)
-        }
-        // Inactive: slightly dimmer than the header row fill so it reads as "recessed".
-        let base = theme.headerColor
-        let delta: CGFloat = base.isLightColor ? -0.015 : 0.012
-        return Color(nsColor: base.adjustedBrightness(by: delta))
-            .opacity(isActivePane ? 1.0 : 0.85)
-    }
-
-    private var dirtyDotColor: Color {
-        if item.isActive {
-            return Color(nsColor: theme.selectionColor).opacity(0.92)
-        }
-        return chromeForeground.secondary.opacity(0.8)
-    }
-
-    private var closeButtonForegroundColor: NSColor {
-        if item.isActive || isHovered {
-            return chromeForeground.primaryNS
-        }
-        return chromeForeground.secondaryNS
-    }
-
-    private var closeButtonBackgroundColor: NSColor {
-        if isHovered {
-            return theme.hoverColor.withAlphaComponent(0.95)
-        }
-        return theme.selectionColor.withAlphaComponent(0.18)
-    }
-
-    private var closeButtonBackgroundOpacity: Double {
-        isHovered ? 1.0 : 0.0
-    }
-
 }
 
 private struct EditorFileTreeListRepresentable: NSViewRepresentable {

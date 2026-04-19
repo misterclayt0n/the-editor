@@ -43,11 +43,8 @@ struct EditorSceneLine: Hashable {
 }
 
 enum EditorPaneItemStripMetrics {
-    static let preferredHeaderExtraHeight: CGFloat = 6
-    static let preferredControlHeight: CGFloat = 26
-    static let minimumControlHeight: CGFloat = 20
-    static let horizontalInset: CGFloat = 8
-    static let verticalPadding: CGFloat = 2
+    static let barHeight: CGFloat = 33
+    static let controlHeight: CGFloat = 32
 }
 
 struct EditorRenderScene {
@@ -125,19 +122,13 @@ struct EditorRenderScene {
 
     func paneHeaderHeight(for pane: EditorSnapshotPane) -> CGFloat {
         guard showsPaneItemStrip(for: pane.paneID) else { return 0 }
-        let rowHeight = max(info.surfaceMetrics.cellSizePoints.height, 1)
-        let preferredHeight = rowHeight + EditorPaneItemStripMetrics.preferredHeaderExtraHeight
-        return min(preferredHeight, paneRect(for: pane).height)
+        return min(EditorPaneItemStripMetrics.barHeight, paneRect(for: pane).height)
     }
 
     func paneTabControlHeight(for pane: EditorSnapshotPane) -> CGFloat {
         let headerHeight = paneHeaderHeight(for: pane)
         guard headerHeight > 0 else { return 0 }
-        let paddedHeight = max(headerHeight - EditorPaneItemStripMetrics.verticalPadding * 2, 0)
-        return min(
-            max(paddedHeight, EditorPaneItemStripMetrics.minimumControlHeight),
-            EditorPaneItemStripMetrics.preferredControlHeight
-        )
+        return min(EditorPaneItemStripMetrics.controlHeight, headerHeight)
     }
 
     func paneTabControlOriginY(for pane: EditorSnapshotPane) -> CGFloat {

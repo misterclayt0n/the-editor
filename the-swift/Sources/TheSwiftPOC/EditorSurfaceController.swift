@@ -355,6 +355,40 @@ final class EditorSurfaceController: ObservableObject {
         }
     }
 
+    func moveOpenItem(_ item: EditorPaneOpenItemRow, toPaneID targetPaneID: UInt, atIndex targetIndex: Int) {
+        guard EditorFFIBridge.moveOpenItem(
+            handle?.raw,
+            sourcePaneID: item.paneID,
+            kind: item.kind,
+            itemID: item.itemID,
+            targetPaneID: targetPaneID,
+            targetIndex: targetIndex
+        ) else {
+            return
+        }
+        refreshSnapshot()
+        if item.kind == .buffer {
+            focusEditor()
+        }
+    }
+
+    func splitOpenItem(_ item: EditorPaneOpenItemRow, ontoPaneID targetPaneID: UInt, direction: EditorPaneDropDirection) {
+        guard EditorFFIBridge.splitOpenItem(
+            handle?.raw,
+            sourcePaneID: item.paneID,
+            kind: item.kind,
+            itemID: item.itemID,
+            targetPaneID: targetPaneID,
+            direction: direction
+        ) else {
+            return
+        }
+        refreshSnapshot()
+        if item.kind == .buffer {
+            focusEditor()
+        }
+    }
+
     func closeTerminalSurface(_ clientSurfaceID: UInt) {
         guard let paneID = openItems.groups
             .flatMap(\.items)

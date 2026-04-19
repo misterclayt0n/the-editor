@@ -121,13 +121,58 @@ impl PaneItemsState {
     self.items.get(self.active).copied()
   }
 
+  fn index_of(&self, content: PaneContent) -> Option<usize> {
+    self.items.iter().position(|item| *item == content)
+  }
+
+  fn contains(&self, content: PaneContent) -> bool {
+    self.index_of(content).is_some()
+  }
+
   fn activate(&mut self, content: PaneContent) {
-    if let Some(index) = self.items.iter().position(|item| *item == content) {
+    if let Some(index) = self.index_of(content) {
       self.active = index;
     } else {
       self.items.push(content);
       self.active = self.items.len().saturating_sub(1);
     }
+  }
+
+  fn move_to_index(&mut self, content: PaneContent, target_index: usize) -> bool {
+    let Some(source_index) = self.index_of(content) else {
+      return false;
+    };
+
+    let was_active = self.active == source_index;
+    let item = self.items.remove(source_index);
+    let mut destination_index = target_index.min(self.items.len());
+    if source_index < destination_index {
+      destination_index = destination_index.saturating_sub(1);
+    }
+    self.items.insert(destination_index, item);
+
+    if was_active {
+      self.active = destination_index;
+    } else {
+      if self.active > source_index {
+        self.active = self.active.saturating_sub(1);
+      }
+      if self.active >= destination_index {
+        self.active += 1;
+      }
+    }
+    true
+  }
+
+  fn insert_or_move_to_index(&mut self, content: PaneContent, target_index: usize) -> usize {
+    if self.move_to_index(content, target_index) {
+      return self.index_of(content).unwrap_or(self.active);
+    }
+
+    let index = target_index.min(self.items.len());
+    self.items.insert(index, content);
+    self.active = index;
+    index
   }
 
   fn remove(&mut self, content: PaneContent) -> bool {
@@ -550,6 +595,15 @@ impl Editor {
       .is_some_and(|state| state.remove(content))
   }
 
+  fn pane_contains_content(&self, pane: PaneId, content: PaneContent) -> bool {
+    self
+      .surface
+      .pane_items
+      .get(&pane)
+      .is_some_and(|state| state.contains(content))
+      || self.surface.pane_content.get(&pane).copied() == Some(content)
+  }
+
   fn remove_pane_item_from_all(&mut self, content: PaneContent) {
     for state in self.surface.pane_items.values_mut() {
       let _ = state.remove(content);
@@ -583,6 +637,44 @@ impl Editor {
         buffer_id: self.active_buffer,
       });
     self.pane_items_state_mut(pane, fallback).merge_in(items);
+  }
+
+  fn reconcile_pane_after_item_removal(&mut self, pane: PaneId, removed_content: PaneContent, was_visible: bool) -> bool {
+    let next_content = self
+      .surface
+      .pane_items
+      .get(&pane)
+      .and_then(PaneItemsState::active_content);
+
+    match next_content {
+      Some(PaneContent::EditorBuffer { buffer_id }) if was_visible => {
+        self.set_active_buffer_in_pane(pane, buffer_id)
+      },
+      Some(PaneContent::ClientSurface { surface_id }) if was_visible => {
+        self.set_active_client_surface_in_pane(pane, surface_id)
+      },
+      Some(PaneContent::Agent { agent_id }) if was_visible => {
+        self.set_active_agent_in_pane(pane, agent_id)
+      },
+      Some(_) => true,
+      None => {
+        if self.surface.split_tree.pane_count() <= 1 {
+          return false;
+        }
+        let previous_active = self.active_pane_id();
+        if previous_active != pane {
+          let _ = self.set_active_pane(pane);
+        }
+        if !self.close_active_pane() {
+          return false;
+        }
+        if previous_active != pane && self.surface.split_tree.contains_pane(previous_active) {
+          let _ = self.set_active_pane(previous_active);
+        }
+        let _ = removed_content;
+        true
+      },
+    }
   }
 
   fn restore_editor_buffer_in_pane(&mut self, pane: PaneId) {
@@ -1264,41 +1356,8 @@ impl Editor {
       return false;
     }
 
-    let next_content = self
-      .surface
-      .pane_items
-      .get(&pane)
-      .and_then(PaneItemsState::active_content);
-
-    match next_content {
-      Some(PaneContent::EditorBuffer { buffer_id }) if was_visible => {
-        if !self.set_active_buffer_in_pane(pane, buffer_id) {
-          return false;
-        }
-      },
-      Some(PaneContent::ClientSurface { surface_id }) if was_visible => {
-        if !self.set_active_client_surface_in_pane(pane, surface_id) {
-          return false;
-        }
-      },
-      Some(PaneContent::Agent { agent_id }) if was_visible => {
-        if !self.set_active_agent_in_pane(pane, agent_id) {
-          return false;
-        }
-      },
-      Some(_) => {},
-      None => {
-        let previous_active = self.active_pane_id();
-        if previous_active != pane {
-          let _ = self.set_active_pane(pane);
-        }
-        if !self.close_active_pane() {
-          return false;
-        }
-        if previous_active != pane && self.surface.split_tree.contains_pane(previous_active) {
-          let _ = self.set_active_pane(previous_active);
-        }
-      },
+    if !self.reconcile_pane_after_item_removal(pane, content, was_visible) {
+      return false;
     }
 
     if !self.pane_item_exists_anywhere(content) {
@@ -1312,6 +1371,112 @@ impl Editor {
           let _ = self.close_client_surface(surface_id);
         },
         PaneContent::Agent { .. } => {},
+      }
+    }
+
+    true
+  }
+
+  pub fn move_pane_item(
+    &mut self,
+    source_pane: PaneId,
+    target_pane: PaneId,
+    content: PaneContent,
+    target_index: Option<usize>,
+  ) -> bool {
+    if !self.surface.split_tree.contains_pane(source_pane)
+      || !self.surface.split_tree.contains_pane(target_pane)
+      || !self.pane_contains_content(source_pane, content)
+    {
+      return false;
+    }
+
+    let target_index = target_index.unwrap_or_else(|| {
+      self
+        .surface
+        .pane_items
+        .get(&target_pane)
+        .map(|state| state.items.len())
+        .unwrap_or(0)
+    });
+
+    if source_pane == target_pane {
+      return self
+        .surface
+        .pane_items
+        .get_mut(&source_pane)
+        .is_some_and(|state| state.move_to_index(content, target_index));
+    }
+
+    let was_visible = self.surface.pane_content.get(&source_pane).copied() == Some(content);
+    if was_visible && matches!(content, PaneContent::EditorBuffer { .. }) {
+      self.sync_pane_view_to_buffer(source_pane);
+    }
+    if !self.remove_pane_item(source_pane, content) {
+      return false;
+    }
+    if !self.reconcile_pane_after_item_removal(source_pane, content, was_visible) {
+      return false;
+    }
+
+    let fallback = self
+      .surface
+      .pane_content
+      .get(&target_pane)
+      .copied()
+      .unwrap_or(content);
+    self
+      .pane_items_state_mut(target_pane, fallback)
+      .insert_or_move_to_index(content, target_index);
+
+    let _ = self.set_active_pane(target_pane);
+    match content {
+      PaneContent::EditorBuffer { buffer_id } => self.set_active_buffer_in_pane(target_pane, buffer_id),
+      PaneContent::ClientSurface { surface_id } => self.set_active_client_surface_in_pane(target_pane, surface_id),
+      PaneContent::Agent { agent_id } => self.set_active_agent_in_pane(target_pane, agent_id),
+    }
+  }
+
+  pub fn split_pane_with_item(
+    &mut self,
+    source_pane: PaneId,
+    target_pane: PaneId,
+    direction: PaneDirection,
+    content: PaneContent,
+  ) -> bool {
+    if !self.surface.split_tree.contains_pane(source_pane)
+      || !self.surface.split_tree.contains_pane(target_pane)
+      || !self.pane_contains_content(source_pane, content)
+    {
+      return false;
+    }
+
+    let previous_active = self.active_pane_id();
+    if previous_active != target_pane {
+      let _ = self.set_active_pane(target_pane);
+    }
+
+    if !self.split_active_pane(direction.split_axis()) {
+      if previous_active != target_pane {
+        let _ = self.set_active_pane(previous_active);
+      }
+      return false;
+    }
+
+    let mut new_pane = self.active_pane_id();
+    if direction.places_before() {
+      let _ = self.move_pane(new_pane, target_pane, direction);
+      new_pane = self.active_pane_id();
+    }
+
+    let placeholder = self.surface.pane_content.get(&new_pane).copied();
+    if !self.move_pane_item(source_pane, new_pane, content, None) {
+      return false;
+    }
+
+    if let Some(placeholder) = placeholder {
+      if placeholder != content && self.pane_contains_content(new_pane, placeholder) {
+        let _ = self.close_pane_item(new_pane, placeholder);
       }
     }
 

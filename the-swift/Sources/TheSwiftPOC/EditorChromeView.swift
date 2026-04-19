@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct EditorChromeModel {
     let document: EditorDocumentChrome
@@ -884,6 +885,44 @@ private struct EditorOpenItemSidebarRowView: View {
     }
 }
 
+private struct EditorPaneItemTransferData: Codable, Hashable {
+    let sourcePaneID: UInt
+    let kindRaw: UInt8
+    let itemID: UInt
+
+    var kind: EditorOpenItemKind? {
+        EditorOpenItemKind(rawValue: kindRaw)
+    }
+}
+
+private struct EditorPaneItemTabDropTarget: Equatable {
+    let paneID: UInt
+    let index: Int
+}
+
+private enum EditorPaneItemDropZone: Equatable {
+    case center
+    case left
+    case right
+    case top
+    case bottom
+
+    var direction: EditorPaneDropDirection? {
+        switch self {
+        case .center:
+            return nil
+        case .left:
+            return .left
+        case .right:
+            return .right
+        case .top:
+            return .up
+        case .bottom:
+            return .down
+        }
+    }
+}
+
 private func paneLocationLabel(for paneID: UInt, groupIndex: Int, scene: EditorRenderScene?) -> String {
     guard let scene,
           let pane = scene.panes.first(where: { $0.paneID == paneID })
@@ -936,6 +975,7 @@ private struct EditorPaneItemStripsOverlayView: View {
         let groupIndex: Int
         let group: EditorPaneOpenItemGroup
         let frame: CGRect
+        let contentFrame: CGRect
         let headerHeight: CGFloat
         let controlHeight: CGFloat
         let controlOriginY: CGFloat
@@ -944,6 +984,9 @@ private struct EditorPaneItemStripsOverlayView: View {
     }
 
     @ObservedObject var controller: EditorSurfaceController
+    @State private var dragSourcePaneID: UInt?
+    @State private var tabDropTarget: EditorPaneItemTabDropTarget?
+    @State private var contentDropZones: [UInt: EditorPaneItemDropZone] = [:]
 
     // Tabs butt against the pane edge, cmux-style (no outer padding on the strip).
     private let horizontalInset: CGFloat = 0
@@ -971,11 +1014,43 @@ private struct EditorPaneItemStripsOverlayView: View {
                                 .offset(x: entry.frame.minX, y: entry.frame.minY)
                                 .zIndex(1)
 
+                            if dragSourcePaneID != nil {
+                                EditorPaneContentDropLayer(
+                                    paneID: entry.group.paneID,
+                                    frame: entry.contentFrame,
+                                    activeDropZone: Binding(
+                                        get: { contentDropZones[entry.group.paneID] },
+                                        set: { newValue in
+                                            if let newValue {
+                                                contentDropZones[entry.group.paneID] = newValue
+                                            } else {
+                                                contentDropZones.removeValue(forKey: entry.group.paneID)
+                                            }
+                                        }
+                                    ),
+                                    onHandleDrop: { transfer, zone in
+                                        handleContentDrop(transfer: transfer, targetPaneID: entry.group.paneID, zone: zone)
+                                    }
+                                )
+                                .zIndex(1.5)
+                            }
+
                             EditorPaneItemTabStripView(
                                 group: entry.group,
                                 paneLabel: paneLocationLabel(for: entry.group.paneID, groupIndex: entry.groupIndex, scene: scene),
                                 theme: theme,
                                 controlHeight: entry.controlHeight,
+                                dragSourcePaneID: dragSourcePaneID,
+                                dropTarget: Binding(
+                                    get: { tabDropTarget },
+                                    set: { tabDropTarget = $0 }
+                                ),
+                                onCreateItemProvider: { item in
+                                    createItemProvider(for: item)
+                                },
+                                onHandleDrop: { transfer, targetIndex in
+                                    handleTabDrop(transfer: transfer, targetPaneID: entry.group.paneID, targetIndex: targetIndex)
+                                },
                                 canCloseItem: canClose,
                                 onActivateItem: { item in
                                     if item.isActive {
@@ -1025,6 +1100,7 @@ private struct EditorPaneItemStripsOverlayView: View {
                 groupIndex: groupIndex,
                 group: group,
                 frame: paneFrame(for: pane, in: scene),
+                contentFrame: scene.paneContentRect(for: pane),
                 headerHeight: headerHeight,
                 controlHeight: controlHeight,
                 controlOriginY: paneTabControlOriginY(for: pane, headerHeight: headerHeight, controlHeight: controlHeight, in: scene)
@@ -1063,6 +1139,49 @@ private struct EditorPaneItemStripsOverlayView: View {
         let rect = paneFrame(for: pane, in: scene)
         return rect.minY + max((headerHeight - controlHeight) * 0.5, 0)
     }
+
+    private func createItemProvider(for item: EditorPaneOpenItemRow) -> NSItemProvider {
+        dragSourcePaneID = item.paneID
+        let transfer = EditorPaneItemTransferData(sourcePaneID: item.paneID, kindRaw: item.kind.rawValue, itemID: item.itemID)
+        guard let data = try? JSONEncoder().encode(transfer),
+              let string = String(data: data, encoding: .utf8)
+        else {
+            return NSItemProvider()
+        }
+        return NSItemProvider(object: string as NSString)
+    }
+
+    private func clearDragState() {
+        dragSourcePaneID = nil
+        tabDropTarget = nil
+        contentDropZones.removeAll()
+    }
+
+    private func resolveOpenItem(from transfer: EditorPaneItemTransferData) -> EditorPaneOpenItemRow? {
+        controller.openItems.groups
+            .flatMap(\.items)
+            .first(where: { $0.paneID == transfer.sourcePaneID && $0.itemID == transfer.itemID && $0.kind.rawValue == transfer.kindRaw })
+    }
+
+    private func handleTabDrop(transfer: EditorPaneItemTransferData, targetPaneID: UInt, targetIndex: Int) -> Bool {
+        defer { clearDragState() }
+        guard let item = resolveOpenItem(from: transfer) else { return false }
+        controller.moveOpenItem(item, toPaneID: targetPaneID, atIndex: targetIndex)
+        return true
+    }
+
+    private func handleContentDrop(transfer: EditorPaneItemTransferData, targetPaneID: UInt, zone: EditorPaneItemDropZone) -> Bool {
+        defer { clearDragState() }
+        guard let item = resolveOpenItem(from: transfer) else { return false }
+        if zone == .center {
+            let targetIndex = controller.openItems.groups.first(where: { $0.paneID == targetPaneID })?.items.count ?? 0
+            controller.moveOpenItem(item, toPaneID: targetPaneID, atIndex: targetIndex)
+            return true
+        }
+        guard let direction = zone.direction else { return false }
+        controller.splitOpenItem(item, ontoPaneID: targetPaneID, direction: direction)
+        return true
+    }
 }
 
 private enum EditorPaneTabBarMetrics {
@@ -1087,6 +1206,10 @@ private struct EditorPaneItemTabStripView: View {
     let paneLabel: String
     let theme: EditorFileTreeSidebarTheme
     let controlHeight: CGFloat
+    let dragSourcePaneID: UInt?
+    @Binding var dropTarget: EditorPaneItemTabDropTarget?
+    let onCreateItemProvider: (EditorPaneOpenItemRow) -> NSItemProvider
+    let onHandleDrop: (EditorPaneItemTransferData, Int) -> Bool
     let canCloseItem: (EditorPaneOpenItemRow) -> Bool
     let onActivateItem: (EditorPaneOpenItemRow) -> Void
     let onCloseItem: (EditorPaneOpenItemRow) -> Void
@@ -1098,18 +1221,29 @@ private struct EditorPaneItemTabStripView: View {
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: EditorPaneTabBarMetrics.tabSpacing) {
-                ForEach(group.items) { item in
+                ForEach(Array(group.items.enumerated()), id: \.element.id) { itemIndex, item in
                     EditorPaneItemTabView(
                         item: item,
+                        targetIndex: itemIndex,
                         theme: theme,
                         chromeForeground: chromeForeground,
                         isActivePane: group.isActivePane,
                         controlHeight: controlHeight,
+                        isDragSourcePane: dragSourcePaneID == group.paneID,
+                        dropTarget: $dropTarget,
+                        onCreateItemProvider: { onCreateItemProvider(item) },
+                        onHandleDrop: { transfer, dropIndex in onHandleDrop(transfer, dropIndex) },
                         canClose: canCloseItem(item),
                         onActivate: { onActivateItem(item) },
                         onClose: { onCloseItem(item) }
                     )
                 }
+                EditorPaneTabDropZoneAtEnd(
+                    paneID: group.paneID,
+                    targetIndex: group.items.count,
+                    dropTarget: $dropTarget,
+                    onHandleDrop: onHandleDrop
+                )
                 Spacer(minLength: 0)
             }
         }
@@ -1127,10 +1261,15 @@ private struct EditorPaneItemTabStripView: View {
 
 private struct EditorPaneItemTabView: View {
     let item: EditorPaneOpenItemRow
+    let targetIndex: Int
     let theme: EditorFileTreeSidebarTheme
     let chromeForeground: ChromeForegroundColors
     let isActivePane: Bool
     let controlHeight: CGFloat
+    let isDragSourcePane: Bool
+    @Binding var dropTarget: EditorPaneItemTabDropTarget?
+    let onCreateItemProvider: () -> NSItemProvider
+    let onHandleDrop: (EditorPaneItemTransferData, Int) -> Bool
     let canClose: Bool
     let onActivate: () -> Void
     let onClose: () -> Void
@@ -1165,6 +1304,23 @@ private struct EditorPaneItemTabView: View {
         .background(tabBackground)
         .contentShape(Rectangle())
         .onTapGesture(perform: onActivate)
+        .onDrag {
+            onCreateItemProvider()
+        }
+        .onDrop(
+            of: [UTType.text],
+            delegate: EditorPaneTabItemDropDelegate(
+                paneID: item.paneID,
+                targetIndex: targetIndex,
+                dropTarget: $dropTarget,
+                onHandleDrop: onHandleDrop
+            )
+        )
+        .overlay(alignment: .leading) {
+            if dropTarget == EditorPaneItemTabDropTarget(paneID: item.paneID, index: targetIndex) {
+                EditorPaneTabDropIndicator()
+            }
+        }
         .onHover { hovering in
             withAnimation(.easeInOut(duration: EditorPaneTabBarMetrics.hoverDuration)) {
                 isHovered = hovering
@@ -1259,6 +1415,215 @@ private struct EditorPaneItemTabView: View {
         .animation(.easeInOut(duration: EditorPaneTabBarMetrics.hoverDuration), value: isHovered)
         .animation(.easeInOut(duration: EditorPaneTabBarMetrics.hoverDuration), value: isCloseHovered)
     }
+}
+
+private struct EditorPaneTabDropIndicator: View {
+    var body: some View {
+        Capsule()
+            .fill(Color.accentColor)
+            .frame(width: 2, height: 20)
+            .offset(x: -1)
+    }
+}
+
+private struct EditorPaneTabDropZoneAtEnd: View {
+    let paneID: UInt
+    let targetIndex: Int
+    @Binding var dropTarget: EditorPaneItemTabDropTarget?
+    let onHandleDrop: (EditorPaneItemTransferData, Int) -> Bool
+
+    var body: some View {
+        Rectangle()
+            .fill(Color.clear)
+            .frame(width: 24, height: 32)
+            .contentShape(Rectangle())
+            .onDrop(
+                of: [UTType.text],
+                delegate: EditorPaneTabItemDropDelegate(
+                    paneID: paneID,
+                    targetIndex: targetIndex,
+                    dropTarget: $dropTarget,
+                    onHandleDrop: onHandleDrop
+                )
+            )
+            .overlay(alignment: .leading) {
+                if dropTarget == EditorPaneItemTabDropTarget(paneID: paneID, index: targetIndex) {
+                    EditorPaneTabDropIndicator()
+                }
+            }
+    }
+}
+
+private struct EditorPaneContentDropLayer: View {
+    let paneID: UInt
+    let frame: CGRect
+    @Binding var activeDropZone: EditorPaneItemDropZone?
+    let onHandleDrop: (EditorPaneItemTransferData, EditorPaneItemDropZone) -> Bool
+
+    var body: some View {
+        ZStack {
+            Rectangle()
+                .fill(Color.clear)
+                .frame(width: frame.width, height: frame.height)
+                .position(x: frame.midX, y: frame.midY)
+                .onDrop(
+                    of: [UTType.text],
+                    delegate: EditorPaneContentDropDelegate(
+                        paneID: paneID,
+                        size: frame.size,
+                        activeDropZone: $activeDropZone,
+                        onHandleDrop: onHandleDrop
+                    )
+                )
+
+            if let activeDropZone {
+                EditorPaneContentDropPlaceholder(zone: activeDropZone, frame: frame)
+            }
+        }
+    }
+}
+
+private struct EditorPaneContentDropPlaceholder: View {
+    let zone: EditorPaneItemDropZone
+    let frame: CGRect
+
+    var body: some View {
+        let padding: CGFloat = 4
+        let rect: CGRect = switch zone {
+        case .center:
+            CGRect(x: frame.minX + padding, y: frame.minY + padding, width: frame.width - padding * 2, height: frame.height - padding * 2)
+        case .left:
+            CGRect(x: frame.minX + padding, y: frame.minY + padding, width: frame.width / 2 - padding, height: frame.height - padding * 2)
+        case .right:
+            CGRect(x: frame.midX, y: frame.minY + padding, width: frame.width / 2 - padding, height: frame.height - padding * 2)
+        case .top:
+            CGRect(x: frame.minX + padding, y: frame.minY + padding, width: frame.width - padding * 2, height: frame.height / 2 - padding)
+        case .bottom:
+            CGRect(x: frame.minX + padding, y: frame.midY, width: frame.width - padding * 2, height: frame.height / 2 - padding)
+        }
+
+        return RoundedRectangle(cornerRadius: 8, style: .continuous)
+            .fill(Color.accentColor.opacity(0.22))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(Color.accentColor, lineWidth: 2)
+            }
+            .frame(width: rect.width, height: rect.height)
+            .position(x: rect.midX, y: rect.midY)
+            .allowsHitTesting(false)
+    }
+}
+
+private struct EditorPaneTabItemDropDelegate: DropDelegate {
+    let paneID: UInt
+    let targetIndex: Int
+    @Binding var dropTarget: EditorPaneItemTabDropTarget?
+    let onHandleDrop: (EditorPaneItemTransferData, Int) -> Bool
+
+    func performDrop(info: DropInfo) -> Bool {
+        dropTarget = nil
+        guard let provider = info.itemProviders(for: [.text]).first else { return false }
+        provider.loadItem(forTypeIdentifier: UTType.text.identifier, options: nil) { item, _ in
+            let transfer = decodeTransfer(item)
+            DispatchQueue.main.async {
+                guard let transfer else { return }
+                _ = onHandleDrop(transfer, targetIndex)
+            }
+        }
+        return true
+    }
+
+    func dropEntered(info: DropInfo) {
+        dropTarget = EditorPaneItemTabDropTarget(paneID: paneID, index: targetIndex)
+    }
+
+    func dropExited(info: DropInfo) {
+        if dropTarget == EditorPaneItemTabDropTarget(paneID: paneID, index: targetIndex) {
+            dropTarget = nil
+        }
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: .move)
+    }
+
+    func validateDrop(info: DropInfo) -> Bool {
+        info.hasItemsConforming(to: [.text])
+    }
+}
+
+private struct EditorPaneContentDropDelegate: DropDelegate {
+    let paneID: UInt
+    let size: CGSize
+    @Binding var activeDropZone: EditorPaneItemDropZone?
+    let onHandleDrop: (EditorPaneItemTransferData, EditorPaneItemDropZone) -> Bool
+
+    private func zone(for location: CGPoint) -> EditorPaneItemDropZone {
+        let edgeRatio: CGFloat = 0.25
+        let horizontalEdge = max(80, size.width * edgeRatio)
+        let verticalEdge = max(80, size.height * edgeRatio)
+        if location.x < horizontalEdge {
+            return .left
+        } else if location.x > size.width - horizontalEdge {
+            return .right
+        } else if location.y < verticalEdge {
+            return .top
+        } else if location.y > size.height - verticalEdge {
+            return .bottom
+        } else {
+            return .center
+        }
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        let zone = zone(for: info.location)
+        activeDropZone = nil
+        guard let provider = info.itemProviders(for: [.text]).first else { return false }
+        provider.loadItem(forTypeIdentifier: UTType.text.identifier, options: nil) { item, _ in
+            let transfer = decodeTransfer(item)
+            DispatchQueue.main.async {
+                guard let transfer else { return }
+                _ = onHandleDrop(transfer, zone)
+            }
+        }
+        return true
+    }
+
+    func dropEntered(info: DropInfo) {
+        activeDropZone = zone(for: info.location)
+    }
+
+    func dropExited(info: DropInfo) {
+        activeDropZone = nil
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        activeDropZone = zone(for: info.location)
+        return DropProposal(operation: .move)
+    }
+
+    func validateDrop(info: DropInfo) -> Bool {
+        info.hasItemsConforming(to: [.text])
+    }
+}
+
+private func decodeTransfer(_ item: NSSecureCoding?) -> EditorPaneItemTransferData? {
+    let string: String?
+    if let data = item as? Data {
+        string = String(data: data, encoding: .utf8)
+    } else if let nsString = item as? NSString {
+        string = nsString as String
+    } else if let str = item as? String {
+        string = str
+    } else {
+        string = nil
+    }
+    guard let string,
+          let data = string.data(using: .utf8)
+    else {
+        return nil
+    }
+    return try? JSONDecoder().decode(EditorPaneItemTransferData.self, from: data)
 }
 
 private struct EditorFileTreeListRepresentable: NSViewRepresentable {

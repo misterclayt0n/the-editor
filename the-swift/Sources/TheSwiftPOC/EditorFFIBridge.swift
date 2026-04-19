@@ -718,6 +718,13 @@ enum EditorOpenItemKind: UInt8, Hashable {
     case agent = 2
 }
 
+enum EditorPaneDropDirection: UInt8, Hashable {
+    case up = 0
+    case down = 1
+    case left = 2
+    case right = 3
+}
+
 struct EditorPaneOpenItemRow: Hashable, Identifiable {
     let paneID: UInt
     let kind: EditorOpenItemKind
@@ -1144,6 +1151,32 @@ enum EditorFFIBridge {
     static func closeOpenItem(_ handle: OpaquePointer?, paneID: UInt, kind: EditorOpenItemKind, itemID: UInt) -> Bool {
         guard let handle else { return false }
         return the_editor_close_open_item(handle, paneID, kind.rawValue, itemID)
+    }
+
+    @discardableResult
+    static func moveOpenItem(
+        _ handle: OpaquePointer?,
+        sourcePaneID: UInt,
+        kind: EditorOpenItemKind,
+        itemID: UInt,
+        targetPaneID: UInt,
+        targetIndex: Int
+    ) -> Bool {
+        guard let handle else { return false }
+        return the_editor_move_open_item(handle, sourcePaneID, kind.rawValue, itemID, targetPaneID, UInt(max(targetIndex, 0)))
+    }
+
+    @discardableResult
+    static func splitOpenItem(
+        _ handle: OpaquePointer?,
+        sourcePaneID: UInt,
+        kind: EditorOpenItemKind,
+        itemID: UInt,
+        targetPaneID: UInt,
+        direction: EditorPaneDropDirection
+    ) -> Bool {
+        guard let handle else { return false }
+        return the_editor_split_open_item(handle, sourcePaneID, kind.rawValue, itemID, targetPaneID, direction.rawValue)
     }
 
     @discardableResult

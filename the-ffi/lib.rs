@@ -254,6 +254,7 @@ use the_lib::{
     Selection,
   },
   split_tree::{
+    PaneDirection,
     PaneId,
     SplitAxis,
     SplitNodeId,
@@ -5517,38 +5518,79 @@ impl SwiftEditor {
     let Some(pane) = pane_id_from_raw(pane_raw) else {
       return false;
     };
-    let Some(kind) = open_item_kind_from_code(kind_raw) else {
+    let Some(content) = pane_content_from_open_item_raw(kind_raw, item_raw) else {
       return false;
     };
 
     let previous_buffer_id = self.editor.active_buffer_id();
-    let changed = match kind {
-      OpenItemKind::Buffer => {
-        let Some(buffer_id) = buffer_id_from_raw(item_raw) else {
-          return false;
-        };
-        self
-          .editor
-          .close_pane_item(pane, PaneContent::EditorBuffer { buffer_id })
-      },
-      OpenItemKind::Terminal => {
-        let Some(surface_id) = client_surface_id_from_raw(item_raw) else {
-          return false;
-        };
-        self
-          .editor
-          .close_pane_item(pane, PaneContent::ClientSurface { surface_id })
-      },
-      OpenItemKind::Agent => {
-        let Some(agent_id) = agent_item_id_from_raw(item_raw) else {
-          return false;
-        };
-        self
-          .editor
-          .close_pane_item(pane, PaneContent::Agent { agent_id })
-      },
+    if !self.editor.close_pane_item(pane, content) {
+      return false;
+    }
+
+    self.file_tree.active = false;
+    self.sync_state_after_active_pane_change(previous_buffer_id);
+    self.bump_cursor_blink_generation();
+    true
+  }
+
+  fn move_open_item(
+    &mut self,
+    source_pane_raw: usize,
+    kind_raw: u8,
+    item_raw: usize,
+    target_pane_raw: usize,
+    target_index: usize,
+  ) -> bool {
+    let Some(source_pane) = pane_id_from_raw(source_pane_raw) else {
+      return false;
     };
-    if !changed {
+    let Some(target_pane) = pane_id_from_raw(target_pane_raw) else {
+      return false;
+    };
+    let Some(content) = pane_content_from_open_item_raw(kind_raw, item_raw) else {
+      return false;
+    };
+
+    let previous_buffer_id = self.editor.active_buffer_id();
+    if !self
+      .editor
+      .move_pane_item(source_pane, target_pane, content, Some(target_index))
+    {
+      return false;
+    }
+
+    self.file_tree.active = false;
+    self.sync_state_after_active_pane_change(previous_buffer_id);
+    self.bump_cursor_blink_generation();
+    true
+  }
+
+  fn split_open_item(
+    &mut self,
+    source_pane_raw: usize,
+    kind_raw: u8,
+    item_raw: usize,
+    target_pane_raw: usize,
+    direction_raw: u8,
+  ) -> bool {
+    let Some(source_pane) = pane_id_from_raw(source_pane_raw) else {
+      return false;
+    };
+    let Some(target_pane) = pane_id_from_raw(target_pane_raw) else {
+      return false;
+    };
+    let Some(direction) = pane_direction_from_code(direction_raw) else {
+      return false;
+    };
+    let Some(content) = pane_content_from_open_item_raw(kind_raw, item_raw) else {
+      return false;
+    };
+
+    let previous_buffer_id = self.editor.active_buffer_id();
+    if !self
+      .editor
+      .split_pane_with_item(source_pane, target_pane, direction, content)
+    {
       return false;
     }
 
@@ -11522,6 +11564,30 @@ fn open_item_kind_from_code(raw: u8) -> Option<OpenItemKind> {
   }
 }
 
+fn pane_content_from_open_item_raw(kind_raw: u8, item_raw: usize) -> Option<PaneContent> {
+  match open_item_kind_from_code(kind_raw)? {
+    OpenItemKind::Buffer => Some(PaneContent::EditorBuffer {
+      buffer_id: buffer_id_from_raw(item_raw)?,
+    }),
+    OpenItemKind::Terminal => Some(PaneContent::ClientSurface {
+      surface_id: client_surface_id_from_raw(item_raw)?,
+    }),
+    OpenItemKind::Agent => Some(PaneContent::Agent {
+      agent_id: agent_item_id_from_raw(item_raw)?,
+    }),
+  }
+}
+
+fn pane_direction_from_code(raw: u8) -> Option<PaneDirection> {
+  match raw {
+    0 => Some(PaneDirection::Up),
+    1 => Some(PaneDirection::Down),
+    2 => Some(PaneDirection::Left),
+    3 => Some(PaneDirection::Right),
+    _ => None,
+  }
+}
+
 fn split_axis_code(axis: SplitAxis) -> u8 {
   match axis {
     SplitAxis::Horizontal => 0,
@@ -12863,6 +12929,40 @@ pub unsafe extern "C" fn the_editor_close_open_item(
     return false;
   };
   handle.editor.close_open_item(pane_id, kind, item_id)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_move_open_item(
+  handle: *mut the_editor_handle_t,
+  source_pane_id: usize,
+  kind: u8,
+  item_id: usize,
+  target_pane_id: usize,
+  target_index: usize,
+) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return false;
+  };
+  handle
+    .editor
+    .move_open_item(source_pane_id, kind, item_id, target_pane_id, target_index)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_split_open_item(
+  handle: *mut the_editor_handle_t,
+  source_pane_id: usize,
+  kind: u8,
+  item_id: usize,
+  target_pane_id: usize,
+  direction: u8,
+) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return false;
+  };
+  handle
+    .editor
+    .split_open_item(source_pane_id, kind, item_id, target_pane_id, direction)
 }
 
 #[unsafe(no_mangle)]

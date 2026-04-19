@@ -6,6 +6,7 @@ int factorial(int x) {
 }
 
 int main() {
-  printf("hello world");
+  int r = factorial(10);
+  printf("%d\n", r);
   return 0;
 }

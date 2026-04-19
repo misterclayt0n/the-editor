@@ -125,7 +125,7 @@ final class EditorAgentPanelStore: ObservableObject {
 
     private let immediateAssistantMarkdownRenderCount = 8
     private let deferredAssistantMarkdownBatchSize = 2
-    private let transcriptFlushInterval: Duration = .milliseconds(40)
+    private let transcriptFlushInterval: Duration = .milliseconds(80)
 
     init(controller: EditorSurfaceController, agentItemID: UInt, supervisor: EditorAgentSessionSupervisor) {
         self.controller = controller
@@ -160,14 +160,17 @@ final class EditorAgentPanelStore: ObservableObject {
         }
     }
 
+    func activateAgentSurfaceIfNeeded() {
+        controller.activateAgentOpenItemIfNeeded(agentItemID: agentItemID)
+    }
+
     func sendPrompt(_ rawText: String) {
         let text = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         errorMessage = nil
         Task {
             do {
-                let response = try await supervisor.sendPrompt(for: agentItemID, text: text)
-                applySessionSnapshot(response)
+                _ = try await supervisor.sendPrompt(for: agentItemID, text: text)
                 invalidateRecentSessions()
             } catch {
                 errorMessage = error.localizedDescription
@@ -794,8 +797,11 @@ final class EditorAgentPanelStore: ObservableObject {
 
     private func applySessionStatus(_ payload: [String: Any]) {
         footerInfo = parseFooterInfo(payload["footer"])
+        sessionTitle = footerInfo?.sessionName?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty ?? "Agent"
         if let model = (payload["model"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !model.isEmpty {
             sessionSubtitle = model
+        } else {
+            sessionSubtitle = "pi"
         }
         if let usage = (payload["footer"] as? [String: Any]).flatMap(formatFooterContextUsage)
             ?? ((payload["contextUsage"] as? [String: Any]).flatMap(formatContextUsage)) {
@@ -1224,6 +1230,46 @@ func applyExactTextReplacements(
     return (updated, firstChangedLine)
 }
 
+private final class EditorAgentRuntimeStdoutProcessor: @unchecked Sendable {
+    final class MessageBox: @unchecked Sendable {
+        let object: [String: Any]
+
+        init(object: [String: Any]) {
+            self.object = object
+        }
+    }
+
+    var onMessage: ((MessageBox) -> Void)?
+
+    private let queue = DispatchQueue(label: "EditorAgentRuntimeTransport.stdout")
+    private var buffer = Data()
+    private var isInvalidated = false
+
+    func append(_ data: Data) {
+        queue.async { [weak self] in
+            guard let self, !self.isInvalidated else { return }
+            self.buffer.append(data)
+            while let newlineIndex = self.buffer.firstIndex(of: 0x0A) {
+                let line = Data(self.buffer.prefix(upTo: newlineIndex))
+                self.buffer.removeSubrange(...newlineIndex)
+                guard !line.isEmpty,
+                      let object = try? JSONSerialization.jsonObject(with: line) as? [String: Any]
+                else {
+                    continue
+                }
+                self.onMessage?(MessageBox(object: object))
+            }
+        }
+    }
+
+    func invalidate() {
+        queue.async { [weak self] in
+            self?.isInvalidated = true
+            self?.buffer.removeAll(keepingCapacity: false)
+        }
+    }
+}
+
 @MainActor
 final class EditorAgentRuntimeTransport {
     typealias EventHandler = @MainActor (_ sessionPath: String?, _ event: String, _ payload: [String: Any]) -> Void
@@ -1236,7 +1282,7 @@ final class EditorAgentRuntimeTransport {
     private var stdinPipe: Pipe?
     private var stdoutPipe: Pipe?
     private var stderrPipe: Pipe?
-    private var stdoutBuffer = Data()
+    private var stdoutProcessor: EditorAgentRuntimeStdoutProcessor?
     private var pending: [String: CheckedContinuation<Data, Error>] = [:]
     private var nextRequestID = 1
 
@@ -1273,17 +1319,23 @@ final class EditorAgentRuntimeTransport {
             }
         }
 
+        let stdoutProcessor = EditorAgentRuntimeStdoutProcessor()
+        stdoutProcessor.onMessage = { [weak self] box in
+            Task { @MainActor [weak self] in
+                self?.handleDecodedMessage(box.object)
+            }
+        }
+
         self.process = process
         self.stdinPipe = stdinPipe
         self.stdoutPipe = stdoutPipe
         self.stderrPipe = stderrPipe
+        self.stdoutProcessor = stdoutProcessor
 
-        stdoutPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
+        stdoutPipe.fileHandleForReading.readabilityHandler = { [weak stdoutProcessor] handle in
             let data = handle.availableData
             guard !data.isEmpty else { return }
-            Task { @MainActor in
-                self?.consumeStdout(data)
-            }
+            stdoutProcessor?.append(data)
         }
         stderrPipe.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
@@ -1302,6 +1354,8 @@ final class EditorAgentRuntimeTransport {
         stdinPipe = nil
         stdoutPipe = nil
         stderrPipe = nil
+        stdoutProcessor?.invalidate()
+        stdoutProcessor = nil
         for (_, continuation) in pending {
             continuation.resume(throwing: NSError(domain: "EditorAgentPanel", code: 23, userInfo: [NSLocalizedDescriptionKey: "Agent runtime stopped."]))
         }
@@ -1341,20 +1395,8 @@ final class EditorAgentRuntimeTransport {
         stdinPipe.fileHandleForWriting.write(Data([0x0A]))
     }
 
-    private func consumeStdout(_ data: Data) {
-        stdoutBuffer.append(data)
-        while let newlineIndex = stdoutBuffer.firstIndex(of: 0x0A) {
-            let line = stdoutBuffer.prefix(upTo: newlineIndex)
-            stdoutBuffer.removeSubrange(...newlineIndex)
-            guard !line.isEmpty else { continue }
-            handleLine(Data(line))
-        }
-    }
-
-    private func handleLine(_ data: Data) {
-        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let type = object["type"] as? String
-        else {
+    private func handleDecodedMessage(_ object: [String: Any]) {
+        guard let type = object["type"] as? String else {
             return
         }
         switch type {
@@ -1411,6 +1453,8 @@ final class EditorAgentRuntimeTransport {
         stdinPipe = nil
         stdoutPipe = nil
         stderrPipe = nil
+        stdoutProcessor?.invalidate()
+        stdoutProcessor = nil
         let error = NSError(domain: "EditorAgentPanel", code: 27, userInfo: [NSLocalizedDescriptionKey: "Agent runtime exited with status \(status)."])
         for (_, continuation) in pending {
             continuation.resume(throwing: error)

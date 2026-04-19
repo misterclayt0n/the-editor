@@ -1098,7 +1098,15 @@ async function handleHelperRequest(id, method, params) {
           await record.session.prompt(rawText);
         });
         await waitForLiveSessionSettle(record);
-        send({ type: "response", id, result: sessionSnapshot(record.session) });
+        emitSessionStatus(record);
+        send({
+          type: "response",
+          id,
+          result: {
+            prompted: true,
+            sessionPath: record.sessionPath,
+          },
+        });
         return;
       }
       case "abort": {

@@ -77,19 +77,24 @@ final class EditorAgentPaneRegistry {
             return VisibleEntry(agentItemID: item.itemID, frame: frame)
         } ?? []
 
-        let visibleAgentItemIDs = Set(visibleEntries.map(\.agentItemID))
-        for (agentItemID, record) in recordsByAgentItemID where !visibleAgentItemIDs.contains(agentItemID) {
-            record.hostingView.removeFromSuperview()
-        }
-
-        for entry in visibleEntries {
-            guard let record = recordsByAgentItemID[entry.agentItemID] else { continue }
+        let visibleEntriesByAgentItemID = Dictionary(uniqueKeysWithValues: visibleEntries.map { ($0.agentItemID, $0) })
+        for (agentItemID, record) in recordsByAgentItemID {
             let hostingView = record.hostingView
-            if hostingView.frame != entry.frame {
-                hostingView.frame = entry.frame
-            }
             if hostingView.superview !== containerView {
                 containerView.addSubview(hostingView)
+            }
+
+            if let entry = visibleEntriesByAgentItemID[agentItemID] {
+                if hostingView.frame != entry.frame {
+                    hostingView.frame = entry.frame
+                }
+                if hostingView.isHidden {
+                    hostingView.isHidden = false
+                }
+            } else {
+                if !hostingView.isHidden {
+                    hostingView.isHidden = true
+                }
             }
         }
 
@@ -113,6 +118,7 @@ final class EditorAgentPaneRegistry {
         let hostingView = NSHostingView(rootView: rootView)
         hostingView.identifier = NSUserInterfaceItemIdentifier("agent-\(agentItemID)")
         hostingView.sizingOptions = []
+        hostingView.isHidden = true
         return Record(store: store, hostModel: hostModel, hostingView: hostingView)
     }
 

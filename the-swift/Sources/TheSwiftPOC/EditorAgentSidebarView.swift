@@ -66,6 +66,12 @@ struct EditorAgentSidebarView: View {
             AgentPaneTopScrim(height: topScrimHeight, backgroundColor: backgroundColor)
         }
         .environment(\.colorScheme, backgroundColor.agentIsLightColor ? .light : .dark)
+        .contentShape(Rectangle())
+        .simultaneousGesture(
+            TapGesture().onEnded {
+                store.activateAgentSurfaceIfNeeded()
+            }
+        )
         .onAppear {
             store.startIfNeeded()
             DispatchQueue.main.async {
@@ -162,6 +168,7 @@ struct EditorAgentSidebarView: View {
                 onMoveDown: moveOverlaySelectionDown,
                 onDismissOverlay: dismissOverlay,
                 onCycleThinkingLevel: store.cycleThinkingLevel,
+                onActivateSurface: store.activateAgentSurfaceIfNeeded,
                 commands: filteredCommands,
                 commandSelectionIndex: commandSelectionIndex,
                 showsModelPicker: isModelPickerVisible,
@@ -629,6 +636,7 @@ private struct AgentTranscriptView: View {
     let topInset: CGFloat
 
     @State private var transcriptContentHeight: CGFloat = 0
+    @State private var pendingScrollToBottomWorkItem: DispatchWorkItem?
 
     private let bottomAnchorID = "agent-transcript-bottom"
 
@@ -675,20 +683,23 @@ private struct AgentTranscriptView: View {
                     AgentTranscriptScrollObserver(isNearBottom: $isPinnedToBottom)
                 )
                 .onAppear {
-                    scrollTranscriptToBottom(using: proxy, animated: false)
+                    scheduleScrollTranscriptToBottom(using: proxy, animated: false)
+                }
+                .onDisappear {
+                    pendingScrollToBottomWorkItem?.cancel()
+                    pendingScrollToBottomWorkItem = nil
                 }
                 .onChange(of: transcriptRevision) { _, newValue in
                     agentDebugLog("transcriptRevision.change revision=\(newValue) items=\(items.count) pinned=\(isPinnedToBottom) lastItem=\(items.last?.id ?? "none")")
                     if isPinnedToBottom {
                         showsJumpToLatest = false
-                        scrollTranscriptToBottom(using: proxy, animated: false)
                     } else {
                         showsJumpToLatest = true
                     }
                 }
                 .onChange(of: jumpToLatestToken) { _, _ in
                     showsJumpToLatest = false
-                    scrollTranscriptToBottom(using: proxy, animated: true)
+                    scheduleScrollTranscriptToBottom(using: proxy, animated: true)
                 }
                 .onChange(of: isPinnedToBottom) { _, pinned in
                     if pinned {
@@ -702,7 +713,7 @@ private struct AgentTranscriptView: View {
                     transcriptContentHeight = newHeight
                     agentDebugLog("transcriptHeight.change old=\(Int(oldHeight.rounded())) new=\(Int(newHeight.rounded())) pinned=\(isPinnedToBottom) revision=\(transcriptRevision)")
                     if isPinnedToBottom {
-                        scrollTranscriptToBottom(using: proxy, animated: false)
+                        scheduleScrollTranscriptToBottom(using: proxy, animated: false)
                     }
                 }
             }
@@ -720,9 +731,11 @@ private struct AgentTranscriptView: View {
         .animation(.easeOut(duration: 0.18), value: showsJumpToLatest)
     }
 
-    private func scrollTranscriptToBottom(using proxy: ScrollViewProxy, animated: Bool) {
+    private func scheduleScrollTranscriptToBottom(using proxy: ScrollViewProxy, animated: Bool) {
+        pendingScrollToBottomWorkItem?.cancel()
         agentDebugLog("scrollToBottom.request animated=\(animated) revision=\(transcriptRevision) items=\(items.count)")
-        DispatchQueue.main.async {
+
+        let workItem = DispatchWorkItem {
             if animated {
                 withAnimation(.easeOut(duration: 0.16)) {
                     proxy.scrollTo(bottomAnchorID, anchor: .bottom)
@@ -736,6 +749,9 @@ private struct AgentTranscriptView: View {
             }
             agentDebugLog("scrollToBottom.applied animated=\(animated) revision=\(transcriptRevision) items=\(items.count)")
         }
+
+        pendingScrollToBottomWorkItem = workItem
+        DispatchQueue.main.async(execute: workItem)
     }
 }
 
@@ -1606,6 +1622,7 @@ private struct AgentComposerBar: View {
     let onMoveDown: () -> Void
     let onDismissOverlay: () -> Void
     let onCycleThinkingLevel: () -> Void
+    let onActivateSurface: () -> Void
     let commands: [EditorAgentCommand]
     let commandSelectionIndex: Int
     let showsModelPicker: Bool
@@ -1667,7 +1684,8 @@ private struct AgentComposerBar: View {
                 onMoveUp: onMoveUp,
                 onMoveDown: onMoveDown,
                 onDismissOverlay: onDismissOverlay,
-                onCycleThinkingLevel: onCycleThinkingLevel
+                onCycleThinkingLevel: onCycleThinkingLevel,
+                onActivateSurface: onActivateSurface
             )
             .frame(height: max(textViewHeight, AgentLayout.composerMinHeight))
         }
@@ -1956,6 +1974,15 @@ private struct AgentComposerImageDetailView: View {
 @MainActor
 private final class AgentComposerTextView: NSTextView {
     var imagePastePathProvider: (() -> String?)?
+    var onActivateSurface: (() -> Void)?
+
+    override func becomeFirstResponder() -> Bool {
+        let accepted = super.becomeFirstResponder()
+        if accepted {
+            onActivateSurface?()
+        }
+        return accepted
+    }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
@@ -1988,6 +2015,7 @@ private struct AgentComposerNativeTextView: NSViewRepresentable {
     let onMoveDown: () -> Void
     let onDismissOverlay: () -> Void
     let onCycleThinkingLevel: () -> Void
+    let onActivateSurface: () -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator(
@@ -1999,6 +2027,7 @@ private struct AgentComposerNativeTextView: NSViewRepresentable {
             onMoveDown: onMoveDown,
             onDismissOverlay: onDismissOverlay,
             onCycleThinkingLevel: onCycleThinkingLevel,
+            onActivateSurface: onActivateSurface,
             showsOverlayNavigation: showsOverlayNavigation
         )
     }
@@ -2040,6 +2069,9 @@ private struct AgentComposerNativeTextView: NSViewRepresentable {
         textView.string = text
         textView.isEditable = isEditable
         textView.isSelectable = true
+        textView.onActivateSurface = { [weak coordinator = context.coordinator] in
+            coordinator?.activateSurface()
+        }
         textView.imagePastePathProvider = { [weak coordinator = context.coordinator] in
             coordinator?.composerImagePastePath()
         }
@@ -2071,6 +2103,9 @@ private struct AgentComposerNativeTextView: NSViewRepresentable {
             textView.isEditable = isEditable
         }
         if let composerTextView = textView as? AgentComposerTextView {
+            composerTextView.onActivateSurface = { [weak coordinator = context.coordinator] in
+                coordinator?.activateSurface()
+            }
             composerTextView.imagePastePathProvider = { [weak coordinator = context.coordinator] in
                 coordinator?.composerImagePastePath()
             }
@@ -2091,6 +2126,7 @@ private struct AgentComposerNativeTextView: NSViewRepresentable {
         let onMoveDown: () -> Void
         let onDismissOverlay: () -> Void
         let onCycleThinkingLevel: () -> Void
+        let onActivateSurface: () -> Void
 
         weak var textView: NSTextView?
         weak var scrollView: NSScrollView?
@@ -2107,6 +2143,7 @@ private struct AgentComposerNativeTextView: NSViewRepresentable {
             onMoveDown: @escaping () -> Void,
             onDismissOverlay: @escaping () -> Void,
             onCycleThinkingLevel: @escaping () -> Void,
+            onActivateSurface: @escaping () -> Void,
             showsOverlayNavigation: Bool
         ) {
             _text = text
@@ -2117,6 +2154,7 @@ private struct AgentComposerNativeTextView: NSViewRepresentable {
             self.onMoveDown = onMoveDown
             self.onDismissOverlay = onDismissOverlay
             self.onCycleThinkingLevel = onCycleThinkingLevel
+            self.onActivateSurface = onActivateSurface
             self.showsOverlayNavigation = showsOverlayNavigation
             super.init()
         }
@@ -2129,6 +2167,7 @@ private struct AgentComposerNativeTextView: NSViewRepresentable {
         }
 
         func textDidBeginEditing(_ notification: Notification) {
+            activateSurface()
             guard !isFocused else { return }
             isFocused = true
         }
@@ -2171,6 +2210,10 @@ private struct AgentComposerNativeTextView: NSViewRepresentable {
             }
 
             return false
+        }
+
+        func activateSurface() {
+            onActivateSurface()
         }
 
         func composerImagePastePath() -> String? {

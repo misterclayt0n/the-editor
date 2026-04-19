@@ -315,6 +315,19 @@ final class EditorSurfaceController: ObservableObject {
         refreshSnapshot()
     }
 
+    func activateAgentOpenItemIfNeeded(agentItemID: UInt) {
+        guard let group = openItems.groups.first(where: { group in
+            group.items.contains(where: { $0.kind == .agent && $0.itemID == agentItemID })
+        }),
+        let item = group.items.first(where: { $0.kind == .agent && $0.itemID == agentItemID })
+        else {
+            return
+        }
+
+        guard !group.isActivePane || !item.isActive else { return }
+        activateOpenItem(item)
+    }
+
     @discardableResult
     func activatePaneLocalOpenItem(at index: Int) -> Bool {
         guard index >= 0 else { return false }

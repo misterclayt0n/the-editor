@@ -44,6 +44,7 @@ final class EditorSurfaceController: ObservableObject {
     private(set) var fileTree: EditorFileTreeState = .empty
     @Published private(set) var showsResizeOverlay = false
     @Published private(set) var bufferFontSize: CGFloat = EditorSurfaceController.defaultBufferFontSize
+    @Published private(set) var agentControlledPaneID: UInt?
 
     static let defaultBufferFontSize: CGFloat = 14
     private static let minBufferFontSize: CGFloat = 6
@@ -326,6 +327,89 @@ final class EditorSurfaceController: ObservableObject {
 
         guard !group.isActivePane || !item.isActive else { return }
         activateOpenItem(item)
+    }
+
+    func setAgentControlledPane(_ paneID: UInt?) {
+        guard agentControlledPaneID != paneID else { return }
+        agentControlledPaneID = paneID
+    }
+
+    @discardableResult
+    func revealAgentFollowLocation(
+        path: String,
+        lineStart: Int?,
+        lineEnd: Int?,
+        agentItemID: UInt,
+        preferredPaneID: UInt?
+    ) -> UInt? {
+        let targetPaneID = resolvedAgentFollowPaneID(preferredPaneID)
+        if let targetPaneID,
+           openItems.groups.contains(where: { $0.paneID == targetPaneID }) {
+            setActivePane(targetPaneID)
+        }
+
+        guard EditorFFIBridge.followPath(handle?.raw, path: path, startLine: lineStart, endLine: lineEnd) else {
+            if targetPaneID != nil {
+                activateAgentOpenItemIfNeeded(agentItemID: agentItemID)
+            }
+            return preferredPaneID
+        }
+
+        refreshSnapshot()
+        let resolvedPaneID = activeOpenItem?.paneID ?? resolvedAgentFollowPaneID(preferredPaneID)
+        if let resolvedPaneID {
+            setAgentControlledPane(resolvedPaneID)
+        }
+        activateAgentOpenItemIfNeeded(agentItemID: agentItemID)
+        return resolvedPaneID
+    }
+
+    @discardableResult
+    func setAgentFollowPreview(path: String, text: String, lineStart: Int?, lineEnd: Int?) -> Bool {
+        if let agentControlledPaneID,
+           openItems.groups.contains(where: { $0.paneID == agentControlledPaneID }) {
+            setActivePane(agentControlledPaneID)
+        }
+        guard EditorFFIBridge.followPreviewContents(handle?.raw, path: path, text: text, startLine: lineStart, endLine: lineEnd) else {
+            return false
+        }
+        refreshSnapshot()
+        if let paneID = activeOpenItem?.paneID ?? openItems.groups.first(where: { $0.isActivePane })?.paneID {
+            setAgentControlledPane(paneID)
+        }
+        return true
+    }
+
+    func animateAgentFollowTextUpdate(path: String, originalText: String, updatedText: String, lineStart: Int?, lineEnd: Int?) async {
+        let frames = agentFollowAnimationFrames(from: originalText, to: updatedText)
+        guard !frames.isEmpty else {
+            _ = setAgentFollowPreview(path: path, text: updatedText, lineStart: lineStart, lineEnd: lineEnd)
+            return
+        }
+
+        for frame in frames {
+            _ = setAgentFollowPreview(path: path, text: frame, lineStart: lineStart, lineEnd: lineEnd)
+            try? await Task.sleep(for: .milliseconds(18))
+        }
+        _ = setAgentFollowPreview(path: path, text: updatedText, lineStart: lineStart, lineEnd: lineEnd)
+    }
+
+    private func resolvedAgentFollowPaneID(_ preferredPaneID: UInt?) -> UInt? {
+        if let preferredPaneID,
+           openItems.groups.contains(where: { group in
+               group.paneID == preferredPaneID && group.items.contains(where: { $0.kind == .buffer })
+           }) {
+            return preferredPaneID
+        }
+
+        if let activeGroup = openItems.groups.first(where: { $0.isActivePane }),
+           activeGroup.items.contains(where: { $0.kind == .buffer }) {
+            return activeGroup.paneID
+        }
+
+        return openItems.groups.first(where: { group in
+            group.items.contains(where: { $0.kind == .buffer })
+        })?.paneID
     }
 
     @discardableResult
@@ -1146,6 +1230,66 @@ final class EditorSurfaceController: ObservableObject {
         guard let cursor = snapshot.cursors.first else { return nil }
         return EditorMarkedText(text: markedText, row: cursor.row, col: cursor.col)
     }
+}
+
+private func agentFollowAnimationFrames(from originalText: String, to updatedText: String) -> [String] {
+    guard originalText != updatedText else { return [] }
+
+    let originalChars = Array(originalText)
+    let updatedChars = Array(updatedText)
+    var prefixCount = 0
+    while prefixCount < originalChars.count,
+          prefixCount < updatedChars.count,
+          originalChars[prefixCount] == updatedChars[prefixCount] {
+        prefixCount += 1
+    }
+
+    var suffixCount = 0
+    while suffixCount < (originalChars.count - prefixCount),
+          suffixCount < (updatedChars.count - prefixCount),
+          originalChars[originalChars.count - 1 - suffixCount] == updatedChars[updatedChars.count - 1 - suffixCount] {
+        suffixCount += 1
+    }
+
+    let prefix = String(originalChars[..<prefixCount])
+    let originalMiddle = Array(originalChars[prefixCount..<(originalChars.count - suffixCount)])
+    let updatedMiddle = Array(updatedChars[prefixCount..<(updatedChars.count - suffixCount)])
+    let suffix = String(updatedChars[(updatedChars.count - suffixCount)...])
+
+    let changeMagnitude = originalMiddle.count + updatedMiddle.count
+    if changeMagnitude > 2_000 {
+        return [updatedText]
+    }
+
+    let maxDeleteFrames = 10
+    let maxInsertFrames = 14
+    let deleteFrames = originalMiddle.isEmpty ? 0 : min(maxDeleteFrames, max(1, Int(ceil(Double(originalMiddle.count) / 24.0))))
+    let insertFrames = updatedMiddle.isEmpty ? 0 : min(maxInsertFrames, max(1, Int(ceil(Double(updatedMiddle.count) / 20.0))))
+
+    var frames: [String] = []
+    frames.reserveCapacity(deleteFrames + insertFrames)
+
+    if deleteFrames > 0 {
+        for step in 1...deleteFrames {
+            let remainingCount = max(originalMiddle.count - Int(round(Double(step) * Double(originalMiddle.count) / Double(deleteFrames))), 0)
+            let middle = String(originalMiddle.prefix(remainingCount))
+            frames.append(prefix + middle + suffix)
+        }
+    }
+
+    if insertFrames > 0 {
+        for step in 1...insertFrames {
+            let insertedCount = min(Int(round(Double(step) * Double(updatedMiddle.count) / Double(insertFrames))), updatedMiddle.count)
+            let middle = String(updatedMiddle.prefix(insertedCount))
+            frames.append(prefix + middle + suffix)
+        }
+    }
+
+    if frames.last != updatedText {
+        frames.append(updatedText)
+    }
+
+    return frames
 }
 
 private extension Array {

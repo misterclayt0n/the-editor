@@ -550,6 +550,8 @@ the_editor_handle_t *the_editor_new(const char *path);
 void the_editor_free(the_editor_handle_t *handle);
 
 bool the_editor_open(the_editor_handle_t *handle, const char *path);
+bool the_editor_follow_path(the_editor_handle_t *handle, const char *path, uint32_t start_line, uint32_t end_line);
+bool the_editor_follow_preview_contents(the_editor_handle_t *handle, const char *path, const char *text, uint32_t start_line, uint32_t end_line);
 bool the_editor_configure_surface(the_editor_handle_t *handle, struct the_editor_surface_config_t config);
 void the_editor_set_viewport(the_editor_handle_t *handle, uint16_t cols, uint16_t rows);
 bool the_editor_set_scroll_row(the_editor_handle_t *handle, uint32_t row);

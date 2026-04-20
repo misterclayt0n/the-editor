@@ -1011,6 +1011,13 @@ private struct EditorPaneItemStripsOverlayView: View {
                                         .fill(Color(nsColor: theme.separatorColor).opacity(0.9))
                                         .frame(height: 1)
                                 }
+                                .overlay(alignment: .topLeading) {
+                                    if controller.agentControlledPaneID == entry.group.paneID {
+                                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                            .stroke(Color(nsColor: theme.selectionColor).opacity(0.7), lineWidth: 1)
+                                            .padding(1)
+                                    }
+                                }
                                 .offset(x: entry.frame.minX, y: entry.frame.minY)
                                 .zIndex(1)
 
@@ -1039,6 +1046,7 @@ private struct EditorPaneItemStripsOverlayView: View {
                                 group: entry.group,
                                 paneLabel: paneLocationLabel(for: entry.group.paneID, groupIndex: entry.groupIndex, scene: scene),
                                 theme: theme,
+                                isAgentControlledPane: controller.agentControlledPaneID == entry.group.paneID,
                                 controlHeight: entry.controlHeight,
                                 dragSourcePaneID: dragSourcePaneID,
                                 dropTarget: Binding(
@@ -1205,6 +1213,7 @@ private struct EditorPaneItemTabStripView: View {
     let group: EditorPaneOpenItemGroup
     let paneLabel: String
     let theme: EditorFileTreeSidebarTheme
+    let isAgentControlledPane: Bool
     let controlHeight: CGFloat
     let dragSourcePaneID: UInt?
     @Binding var dropTarget: EditorPaneItemTabDropTarget?
@@ -1228,6 +1237,7 @@ private struct EditorPaneItemTabStripView: View {
                         theme: theme,
                         chromeForeground: chromeForeground,
                         isActivePane: group.isActivePane,
+                        isAgentControlledPane: isAgentControlledPane,
                         controlHeight: controlHeight,
                         isDragSourcePane: dragSourcePaneID == group.paneID,
                         dropTarget: $dropTarget,
@@ -1265,6 +1275,7 @@ private struct EditorPaneItemTabView: View {
     let theme: EditorFileTreeSidebarTheme
     let chromeForeground: ChromeForegroundColors
     let isActivePane: Bool
+    let isAgentControlledPane: Bool
     let controlHeight: CGFloat
     let isDragSourcePane: Bool
     @Binding var dropTarget: EditorPaneItemTabDropTarget?
@@ -1352,6 +1363,12 @@ private struct EditorPaneItemTabView: View {
             if item.isActive {
                 Rectangle()
                     .fill(Color(nsColor: theme.backgroundColor))
+                    .overlay {
+                        if isAgentControlledPane {
+                            Rectangle()
+                                .fill(Color(nsColor: theme.hoverColor).opacity(0.22))
+                        }
+                    }
             } else if isHovered {
                 Rectangle()
                     .fill(Color(nsColor: theme.hoverColor).opacity(isActivePane ? 0.8 : 0.6))
@@ -1361,7 +1378,7 @@ private struct EditorPaneItemTabView: View {
 
             if item.isActive {
                 Rectangle()
-                    .fill(Color(nsColor: theme.selectionColor))
+                    .fill(Color(nsColor: isAgentControlledPane ? theme.hoverColor : theme.selectionColor))
                     .frame(height: EditorPaneTabBarMetrics.activeIndicatorHeight)
             }
 

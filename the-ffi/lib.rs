@@ -1913,6 +1913,17 @@ impl SwiftEditor {
     }
   }
 
+  fn reopen_current_document_for_lsp(&mut self) {
+    let document_state = self.lsp_document.clone();
+    for runtime in &mut self.lsp_runtimes {
+      close_lsp_document_for_runtime(runtime, document_state.as_ref());
+      runtime.opened_current_document = false;
+    }
+    for runtime_index in 0..self.lsp_runtimes.len() {
+      self.open_current_document_for_runtime(runtime_index);
+    }
+  }
+
   fn lsp_sync_kind_for_runtime(runtime: &ManagedLspRuntime) -> Option<TextDocumentSyncKind> {
     let server_name = runtime.configured_server_name()?;
     runtime
@@ -5358,6 +5369,107 @@ impl SwiftEditor {
         false
       },
     }
+  }
+
+  fn follow_path(&mut self, path: &Path, start_line: Option<usize>, end_line: Option<usize>) -> bool {
+    if !self.open_path(path) {
+      return false;
+    }
+
+    self.apply_follow_selection_for_lines(start_line, end_line);
+    self.request_render();
+    true
+  }
+
+  fn preview_file_contents(
+    &mut self,
+    path: &Path,
+    text: &str,
+    start_line: Option<usize>,
+    end_line: Option<usize>,
+  ) -> bool {
+    let path = resolve_session_path(path);
+    self.clear_hover_state();
+
+    if let Some(buffer_id) = self.editor.find_buffer_by_path(&path) {
+      let previous_buffer_id = self.editor.active_buffer_id();
+      let _ = self.editor.set_active_buffer(buffer_id);
+      self.sync_state_after_active_pane_change(previous_buffer_id);
+      let _ = self
+        .editor
+        .replace_active_buffer(Rope::from_str(text), Some(path.clone()));
+    } else {
+      let viewport = self.editor.view().viewport;
+      let view = ViewState::new(viewport, Position::new(0, 0));
+      let _ = self
+        .editor
+        .open_buffer(Rope::from_str(text), view, Some(path.clone()));
+    }
+
+    {
+      let doc = self.editor.document_mut();
+      if let Some(loader) = &self.loader {
+        let _ = setup_syntax(doc, &path, loader);
+      }
+      doc.set_display_name(display_name_for_path(&path));
+      let _ = doc.mark_saved();
+    }
+
+    self.vcs_document_generation = self.vcs_document_generation.wrapping_add(1);
+    self.highlight_cache.clear();
+    self.inactive_highlight_caches.clear();
+    self.render_generation_state = None;
+    self.frame_generation_state = FrameGenerationState::default();
+    self.set_file_path(Some(path));
+    self.reopen_current_document_for_lsp();
+    self.apply_follow_selection_for_lines(start_line, end_line);
+    self.request_render();
+    true
+  }
+
+  fn apply_follow_selection_for_lines(
+    &mut self,
+    start_line: Option<usize>,
+    end_line: Option<usize>,
+  ) {
+    let Some(start_line) = start_line else {
+      return;
+    };
+
+    let (selection, scroll_line) = {
+      let doc = self.editor.document();
+      let text = doc.text();
+      let len_lines = text.len_lines().max(1);
+      let start_line_idx = start_line.saturating_sub(1).min(len_lines.saturating_sub(1));
+      let end_line_idx = end_line
+        .unwrap_or(start_line)
+        .saturating_sub(1)
+        .max(start_line_idx)
+        .min(len_lines.saturating_sub(1));
+      let start_char = text.line_to_char(start_line_idx);
+      let end_exclusive_line = (end_line_idx + 1).min(len_lines);
+      let end_char = text.line_to_char(end_exclusive_line).max(start_char);
+      let selection = if end_char > start_char {
+        Selection::single(start_char, end_char.saturating_sub(1))
+      } else {
+        Selection::point(start_char)
+      };
+      (selection, start_line_idx)
+    };
+
+    if self
+      .editor
+      .document_mut()
+      .set_selection(selection.clone())
+      .is_err()
+    {
+      return;
+    }
+
+    self.editor.view_mut().active_cursor = selection.cursor_ids().first().copied();
+    self.editor.view_mut().scroll = Position::new(scroll_line.saturating_sub(self.scrolloff()), 0);
+    self.bump_cursor_blink_generation();
+    self.ensure_cursor_visible();
   }
 
   fn configure_surface(&mut self, config: the_editor_surface_config_t) -> bool {
@@ -12419,6 +12531,48 @@ pub unsafe extern "C" fn the_editor_open(
     return false;
   };
   handle.editor.open_path(&path)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_follow_path(
+  handle: *mut the_editor_handle_t,
+  path: *const c_char,
+  start_line: u32,
+  end_line: u32,
+) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return false;
+  };
+  let Some(path) = (unsafe { path_from_c(path) }) else {
+    return false;
+  };
+  let start_line = (start_line != 0).then_some(start_line as usize);
+  let end_line = (end_line != 0).then_some(end_line as usize);
+  handle.editor.follow_path(&path, start_line, end_line)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_follow_preview_contents(
+  handle: *mut the_editor_handle_t,
+  path: *const c_char,
+  text: *const c_char,
+  start_line: u32,
+  end_line: u32,
+) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return false;
+  };
+  let Some(path) = (unsafe { path_from_c(path) }) else {
+    return false;
+  };
+  let Some(text) = (unsafe { string_from_c(text) }) else {
+    return false;
+  };
+  let start_line = (start_line != 0).then_some(start_line as usize);
+  let end_line = (end_line != 0).then_some(end_line as usize);
+  handle
+    .editor
+    .preview_file_contents(&path, &text, start_line, end_line)
 }
 
 #[unsafe(no_mangle)]

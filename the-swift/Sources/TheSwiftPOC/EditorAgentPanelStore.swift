@@ -65,6 +65,37 @@ struct EditorAgentFooterInfo: Equatable {
     let availableProviderCount: Int
 }
 
+struct EditorAgentFollowEvent: Equatable {
+    enum Kind: String, Equatable {
+        case read
+        case edit
+        case write
+    }
+
+    enum Phase: String, Equatable {
+        case before
+        case after
+    }
+
+    let kind: Kind
+    let phase: Phase
+    let path: String
+    let lineStart: Int?
+    let lineEnd: Int?
+    let summary: String?
+
+    var displayText: String {
+        let fileName = URL(fileURLWithPath: path).lastPathComponent
+        if let lineStart, let lineEnd, lineEnd > lineStart {
+            return "\(fileName):\(lineStart)-\(lineEnd)"
+        }
+        if let lineStart {
+            return "\(fileName):\(lineStart)"
+        }
+        return fileName
+    }
+}
+
 struct EditorAgentCompactionStatus: Equatable {
     enum Reason: String, Equatable {
         case manual
@@ -157,6 +188,8 @@ final class EditorAgentPanelStore: ObservableObject {
     @Published private(set) var isRuntimeReady = false
     @Published private(set) var isRunning = false
     @Published private(set) var compactionStatus: EditorAgentCompactionStatus?
+    @Published private(set) var isFollowingAgent = false
+    @Published private(set) var followStatusText: String?
     @Published private(set) var sessionTitle = "Agent"
     @Published private(set) var sessionSubtitle = "pi"
     @Published private(set) var contextUsageText: String?
@@ -172,6 +205,7 @@ final class EditorAgentPanelStore: ObservableObject {
     private var pendingTranscriptFlushTask: Task<Void, Never>?
     private var recentSessionsTask: Task<Void, Never>?
     private var hasLoadedRecentSessions = false
+    private var followPaneID: UInt?
     private var pendingAssistantDeltas: [String: String] = [:]
     private var pendingThinkingDeltas: [String: String] = [:]
     private var pendingToolDeltas: [String: [String]] = [:]
@@ -194,6 +228,10 @@ final class EditorAgentPanelStore: ObservableObject {
         markdownBackfillTask?.cancel()
         pendingTranscriptFlushTask?.cancel()
         recentSessionsTask?.cancel()
+        Task { @MainActor [supervisor, agentItemID, controller] in
+            supervisor.setFollowEnabled(for: agentItemID, enabled: false)
+            controller.setAgentControlledPane(nil)
+        }
         if let subscriptionToken {
             Task { @MainActor [supervisor, agentItemID] in
                 supervisor.unsubscribe(agentItemID: agentItemID, token: subscriptionToken)
@@ -216,6 +254,21 @@ final class EditorAgentPanelStore: ObservableObject {
 
     func activateAgentSurfaceIfNeeded() {
         controller.activateAgentOpenItemIfNeeded(agentItemID: agentItemID)
+    }
+
+    func setAgentFollowEnabled(_ enabled: Bool) {
+        guard isFollowingAgent != enabled else { return }
+        isFollowingAgent = enabled
+        supervisor.setFollowEnabled(for: agentItemID, enabled: enabled)
+        if !enabled {
+            followStatusText = nil
+            followPaneID = nil
+            controller.setAgentControlledPane(nil)
+        }
+    }
+
+    func toggleAgentFollow() {
+        setAgentFollowEnabled(!isFollowingAgent)
     }
 
     func sendPrompt(_ rawText: String) {
@@ -308,7 +361,10 @@ final class EditorAgentPanelStore: ObservableObject {
         Task {
             do {
                 let response = try await supervisor.setModel(for: agentItemID, provider: provider, modelID: modelID)
-                applySessionSnapshot(response)
+                applySessionStatus(response)
+                if let responseModels = response["models"] {
+                    models = parseModels(responseModels)
+                }
             } catch {
                 errorMessage = error.localizedDescription
             }
@@ -330,7 +386,10 @@ final class EditorAgentPanelStore: ObservableObject {
         Task {
             do {
                 let response = try await supervisor.cycleThinkingLevel(for: agentItemID)
-                applySessionSnapshot(response)
+                applySessionStatus(response)
+                if let responseModels = response["models"] {
+                    models = parseModels(responseModels)
+                }
             } catch {
                 errorMessage = error.localizedDescription
             }
@@ -346,7 +405,7 @@ final class EditorAgentPanelStore: ObservableObject {
         Task {
             do {
                 let response = try await supervisor.setSessionName(for: agentItemID, name: trimmed)
-                applySessionSnapshot(response)
+                applySessionStatus(response)
                 invalidateRecentSessions()
                 refreshRecentSessions(force: true)
             } catch {
@@ -527,6 +586,18 @@ final class EditorAgentPanelStore: ObservableObject {
                 finalText: payload["text"] as? String,
                 isError: (payload["isError"] as? Bool) == true
             )
+        case "agent_follow":
+            guard let followEvent = parseFollowEvent(payload) else { return }
+            followStatusText = followEvent.displayText
+            guard isFollowingAgent else { return }
+            followPaneID = controller.revealAgentFollowLocation(
+                path: followEvent.path,
+                lineStart: followEvent.lineStart,
+                lineEnd: followEvent.lineEnd,
+                agentItemID: agentItemID,
+                preferredPaneID: followPaneID
+            )
+            controller.setAgentControlledPane(followPaneID)
         case "session_status":
             applySessionStatus(payload)
             finalizeStreamingTranscriptItems()
@@ -888,6 +959,37 @@ final class EditorAgentPanelStore: ObservableObject {
         if let usage = (payload["footer"] as? [String: Any]).flatMap(formatFooterContextUsage)
             ?? ((payload["contextUsage"] as? [String: Any]).flatMap(formatContextUsage)) {
             contextUsageText = usage
+        }
+    }
+
+    private func parseFollowEvent(_ payload: [String: Any]) -> EditorAgentFollowEvent? {
+        guard let path = (payload["path"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !path.isEmpty,
+              let kind = EditorAgentFollowEvent.Kind(rawValue: payload["kind"] as? String ?? ""),
+              let phase = EditorAgentFollowEvent.Phase(rawValue: payload["phase"] as? String ?? "")
+        else {
+            return nil
+        }
+
+        return EditorAgentFollowEvent(
+            kind: kind,
+            phase: phase,
+            path: path,
+            lineStart: followEventInt(payload["lineStart"]),
+            lineEnd: followEventInt(payload["lineEnd"]),
+            summary: payload["summary"] as? String
+        )
+    }
+
+    private func followEventInt(_ value: Any?) -> Int? {
+        switch value {
+        case let int as Int:
+            return int
+        case let number as NSNumber:
+            return number.intValue
+        case let string as String:
+            return Int(string)
+        default:
+            return nil
         }
     }
 

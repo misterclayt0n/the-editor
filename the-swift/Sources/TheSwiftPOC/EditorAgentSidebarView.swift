@@ -173,8 +173,12 @@ struct EditorAgentSidebarView: View {
                 isCompacting: store.compactionStatus != nil,
                 isReady: store.isRuntimeReady,
                 canSend: canSubmitComposer,
+                isFollowingAgent: store.isFollowingAgent,
+                followStatusText: store.followStatusText,
                 onSend: sendCurrent,
+                onFollowAndSend: followAndSendCurrent,
                 onCancel: store.abort,
+                onToggleFollow: store.toggleAgentFollow,
                 onInsertCommand: insertCommand,
                 onMoveUp: moveOverlaySelectionUp,
                 onMoveDown: moveOverlaySelectionDown,
@@ -369,6 +373,14 @@ struct EditorAgentSidebarView: View {
     }
 
     private func sendCurrent() {
+        sendCurrent(enablingFollow: false)
+    }
+
+    private func followAndSendCurrent() {
+        sendCurrent(enablingFollow: true)
+    }
+
+    private func sendCurrent(enablingFollow: Bool) {
         guard canSubmitComposer else { return }
 
         if let resolvedExactModelMatch {
@@ -406,6 +418,9 @@ struct EditorAgentSidebarView: View {
         let text = trimmedInput
         inputText = ""
         transcriptJumpToLatestToken &+= 1
+        if enablingFollow {
+            store.setAgentFollowEnabled(true)
+        }
         store.sendPrompt(text)
     }
 
@@ -1847,8 +1862,12 @@ private struct AgentComposerBar: View {
     let isCompacting: Bool
     let isReady: Bool
     let canSend: Bool
+    let isFollowingAgent: Bool
+    let followStatusText: String?
     let onSend: () -> Void
+    let onFollowAndSend: () -> Void
     let onCancel: () -> Void
+    let onToggleFollow: () -> Void
     let onInsertCommand: (EditorAgentCommand) -> Void
     let onMoveUp: () -> Void
     let onMoveDown: () -> Void
@@ -1914,6 +1933,7 @@ private struct AgentComposerBar: View {
                 showsOverlayNavigation: showsOverlayKeyboardNavigation,
                 shouldCancelOnEscape: isCompacting,
                 onSubmit: onSend,
+                onFollowAndSubmit: onFollowAndSend,
                 onCancelOperation: onCancel,
                 onMoveUp: onMoveUp,
                 onMoveDown: onMoveDown,
@@ -1941,6 +1961,9 @@ private struct AgentComposerBar: View {
                 footerInfo: footerInfo,
                 fallbackSubtitle: sessionSubtitle,
                 fallbackContextUsageText: contextUsageText,
+                isFollowingAgent: isFollowingAgent,
+                followStatusText: followStatusText,
+                onToggleFollow: onToggleFollow,
                 onNewSession: onNewSession,
                 recentSessions: recentSessions,
                 onResumeSession: onResumeSession,
@@ -1967,7 +1990,13 @@ private struct AgentComposerBar: View {
             .buttonStyle(.plain)
             .transition(.opacity)
         } else {
-            Button(action: onSend) {
+            Button(action: {
+                if NSEvent.modifierFlags.contains(.command) {
+                    onFollowAndSend()
+                } else {
+                    onSend()
+                }
+            }) {
                 ZStack {
                     Circle()
                         .fill(canSend ? Color.primary.opacity(0.92) : Color.primary.opacity(0.18))
@@ -2246,6 +2275,7 @@ private struct AgentComposerNativeTextView: NSViewRepresentable {
     let showsOverlayNavigation: Bool
     let shouldCancelOnEscape: Bool
     let onSubmit: () -> Void
+    let onFollowAndSubmit: () -> Void
     let onCancelOperation: () -> Void
     let onMoveUp: () -> Void
     let onMoveDown: () -> Void
@@ -2259,6 +2289,7 @@ private struct AgentComposerNativeTextView: NSViewRepresentable {
             measuredHeight: $measuredHeight,
             isFocused: $isFocused,
             onSubmit: onSubmit,
+            onFollowAndSubmit: onFollowAndSubmit,
             onCancelOperation: onCancelOperation,
             onMoveUp: onMoveUp,
             onMoveDown: onMoveDown,
@@ -2362,6 +2393,7 @@ private struct AgentComposerNativeTextView: NSViewRepresentable {
         @Binding var isFocused: Bool
 
         let onSubmit: () -> Void
+        let onFollowAndSubmit: () -> Void
         let onCancelOperation: () -> Void
         let onMoveUp: () -> Void
         let onMoveDown: () -> Void
@@ -2381,6 +2413,7 @@ private struct AgentComposerNativeTextView: NSViewRepresentable {
             measuredHeight: Binding<CGFloat>,
             isFocused: Binding<Bool>,
             onSubmit: @escaping () -> Void,
+            onFollowAndSubmit: @escaping () -> Void,
             onCancelOperation: @escaping () -> Void,
             onMoveUp: @escaping () -> Void,
             onMoveDown: @escaping () -> Void,
@@ -2394,6 +2427,7 @@ private struct AgentComposerNativeTextView: NSViewRepresentable {
             _measuredHeight = measuredHeight
             _isFocused = isFocused
             self.onSubmit = onSubmit
+            self.onFollowAndSubmit = onFollowAndSubmit
             self.onCancelOperation = onCancelOperation
             self.onMoveUp = onMoveUp
             self.onMoveDown = onMoveDown
@@ -2453,6 +2487,8 @@ private struct AgentComposerNativeTextView: NSViewRepresentable {
             if commandSelector == #selector(NSTextView.insertNewline(_:)) {
                 if NSEvent.modifierFlags.contains(.shift) {
                     textView.insertNewlineIgnoringFieldEditor(nil)
+                } else if NSEvent.modifierFlags.contains(.command) {
+                    onFollowAndSubmit()
                 } else {
                     onSubmit()
                 }
@@ -2553,6 +2589,9 @@ private struct AgentPromptInfoBar: View {
     let footerInfo: EditorAgentFooterInfo?
     let fallbackSubtitle: String
     let fallbackContextUsageText: String?
+    let isFollowingAgent: Bool
+    let followStatusText: String?
+    let onToggleFollow: () -> Void
     let onNewSession: () -> Void
     let recentSessions: [EditorAgentRecentSession]
     let onResumeSession: (EditorAgentRecentSession) -> Void
@@ -2565,6 +2604,12 @@ private struct AgentPromptInfoBar: View {
                 recentSessions: recentSessions,
                 onResumeSession: onResumeSession,
                 onRefreshRecent: onRefreshRecent
+            )
+
+            AgentFollowToggleButton(
+                isFollowing: isFollowingAgent,
+                statusText: followStatusText,
+                action: onToggleFollow
             )
 
             VStack(alignment: .leading, spacing: 3) {
@@ -2616,6 +2661,48 @@ private struct AgentPromptInfoBar: View {
             return providerPrefix + modelID + " • " + thinkingText
         }
         return providerPrefix + modelID
+    }
+}
+
+private struct AgentFollowToggleButton: View {
+    let isFollowing: Bool
+    let statusText: String?
+    let action: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Image(systemName: "scope")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text(isFollowing ? "Following" : "Follow")
+                        .font(.system(size: 11, weight: .semibold))
+                }
+                .foregroundStyle(isFollowing ? Color.accentColor : .secondary)
+
+                if let statusText, !statusText.isEmpty {
+                    Text(statusText)
+                        .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .frame(maxWidth: 160, alignment: .leading)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background {
+                Capsule().fill((isFollowing ? Color.accentColor : Color.primary).opacity(isFollowing ? 0.14 : (isHovered ? 0.08 : 0.05)))
+            }
+            .overlay {
+                Capsule().strokeBorder((isFollowing ? Color.accentColor : Color.primary).opacity(isFollowing ? 0.28 : 0.08), lineWidth: 0.5)
+            }
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .help(isFollowing ? "Stop following the agent" : "Follow the agent as it reads and edits files")
+        .onHover { isHovered = $0 }
     }
 }
 

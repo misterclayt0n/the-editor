@@ -876,6 +876,32 @@ enum EditorFFIBridge {
     }
 
     @discardableResult
+    static func open(_ handle: OpaquePointer?, path: String) -> Bool {
+        guard let handle else { return false }
+        return path.withCString { the_editor_open(handle, $0) }
+    }
+
+    @discardableResult
+    static func followPath(_ handle: OpaquePointer?, path: String, startLine: Int?, endLine: Int?) -> Bool {
+        guard let handle else { return false }
+        let normalizedStartLine = UInt32(max(startLine ?? 0, 0))
+        let normalizedEndLine = UInt32(max(endLine ?? 0, 0))
+        return path.withCString { the_editor_follow_path(handle, $0, normalizedStartLine, normalizedEndLine) }
+    }
+
+    @discardableResult
+    static func followPreviewContents(_ handle: OpaquePointer?, path: String, text: String, startLine: Int?, endLine: Int?) -> Bool {
+        guard let handle else { return false }
+        let normalizedStartLine = UInt32(max(startLine ?? 0, 0))
+        let normalizedEndLine = UInt32(max(endLine ?? 0, 0))
+        return path.withCString { rawPath in
+            text.withCString { rawText in
+                the_editor_follow_preview_contents(handle, rawPath, rawText, normalizedStartLine, normalizedEndLine)
+            }
+        }
+    }
+
+    @discardableResult
     static func setScrollRow(_ handle: OpaquePointer?, row: UInt32) -> Bool {
         guard let handle else { return false }
         return the_editor_set_scroll_row(handle, row)

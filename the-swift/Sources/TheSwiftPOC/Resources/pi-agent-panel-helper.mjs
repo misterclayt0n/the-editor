@@ -476,6 +476,17 @@ function availableModelsPayload(session) {
     });
 }
 
+function sessionMetadataPayload(session, { includeModels = false } = {}) {
+  return {
+    sessionName: session.sessionName || null,
+    model: session.model ? `${session.model.provider}/${session.model.id}` : null,
+    thinkingLevel: session.thinkingLevel,
+    contextUsage: contextUsagePayload(session),
+    footer: footerPayload(session),
+    ...(includeModels ? { models: availableModelsPayload(session) } : {}),
+  };
+}
+
 function sessionSnapshot(session) {
   const sessionPath = sessionPathForSession(session);
   const models = availableModelsPayload(session);
@@ -933,7 +944,7 @@ async function listRecentSessionSummaries(cwd, limit = 20) {
   }
 }
 
-function createEditorBackedTools(cwd) {
+function createEditorBackedTools(cwd, sessionPathProvider) {
   const replaceEditSchema = Type.Object(
     {
       oldText: Type.String(),
@@ -941,6 +952,20 @@ function createEditorBackedTools(cwd) {
     },
     { additionalProperties: false },
   );
+
+  function emitAgentFollow(payload) {
+    send({
+      type: "event",
+      sessionPath: sessionPathProvider?.() || null,
+      event: "agent_follow",
+      payload,
+    });
+  }
+
+  function normalizedLine(value) {
+    if (!Number.isFinite(value)) return null;
+    return Math.max(1, Math.trunc(value));
+  }
 
   return [
     {
@@ -958,6 +983,18 @@ function createEditorBackedTools(cwd) {
       ),
       async execute(_toolCallId, input) {
         const absolutePath = normalizeEditorPath(input.path, cwd);
+        const lineStart = normalizedLine(input.offset);
+        const lineEnd = lineStart != null && Number.isFinite(input.limit)
+          ? Math.max(lineStart, lineStart + Math.max(Math.trunc(input.limit), 1) - 1)
+          : null;
+        emitAgentFollow({
+          kind: "read",
+          phase: "before",
+          path: absolutePath,
+          lineStart,
+          lineEnd,
+          summary: `Reading ${pathSummary(absolutePath)}`,
+        });
         const result = await requestApp("editor.readFile", {
           path: absolutePath,
           offset: input.offset ?? null,
@@ -993,9 +1030,27 @@ function createEditorBackedTools(cwd) {
       ),
       async execute(_toolCallId, input) {
         const absolutePath = normalizeEditorPath(input.path, cwd);
-        const result = await requestApp("editor.writeFile", {
+        emitAgentFollow({
+          kind: "write",
+          phase: "before",
+          path: absolutePath,
+          lineStart: null,
+          lineEnd: null,
+          summary: `Writing ${pathSummary(absolutePath)}`,
+        });
+        const result = await requestApp("editor.writeFileAnimated", {
+          sessionPath: sessionPathProvider?.() || null,
           path: absolutePath,
           content: input.content,
+        });
+        const lineCount = input.content.length === 0 ? 1 : input.content.split(/\r?\n/).length;
+        emitAgentFollow({
+          kind: "write",
+          phase: "after",
+          path: absolutePath,
+          lineStart: 1,
+          lineEnd: Math.min(lineCount, 12),
+          summary: `Wrote ${pathSummary(absolutePath)}`,
         });
         return {
           content: [{ type: "text", text: `Wrote ${pathSummary(absolutePath)}` }],
@@ -1021,9 +1076,31 @@ function createEditorBackedTools(cwd) {
       ),
       async execute(_toolCallId, input) {
         const absolutePath = normalizeEditorPath(input.path, cwd);
-        const result = await requestApp("editor.editFile", {
+        const preview = await requestApp("editor.previewEdit", {
           path: absolutePath,
           edits: input.edits,
+        });
+        emitAgentFollow({
+          kind: "edit",
+          phase: "before",
+          path: absolutePath,
+          lineStart: normalizedLine(preview.firstChangedLine),
+          lineEnd: normalizedLine(preview.firstChangedLine),
+          summary: `Editing ${pathSummary(absolutePath)}`,
+        });
+        const result = await requestApp("editor.editFileAnimated", {
+          sessionPath: sessionPathProvider?.() || null,
+          path: absolutePath,
+          edits: input.edits,
+        });
+        const firstChangedLine = normalizedLine(result.firstChangedLine ?? preview.firstChangedLine);
+        emitAgentFollow({
+          kind: "edit",
+          phase: "after",
+          path: absolutePath,
+          lineStart: firstChangedLine,
+          lineEnd: firstChangedLine,
+          summary: `Edited ${pathSummary(absolutePath)}`,
         });
         return {
           content: [{ type: "text", text: `Edited ${pathSummary(absolutePath)}` }],
@@ -1040,13 +1117,14 @@ function createEditorBackedTools(cwd) {
 
 async function createSessionRecord({ cwd, sessionManager }) {
   currentCwd = cwd;
+  let sessionPath = null;
   const { session } = await createAgentSession({
     cwd,
     agentDir: currentAgentDir,
     sessionManager,
-    customTools: createEditorBackedTools(cwd),
+    customTools: createEditorBackedTools(cwd, () => sessionPath),
   });
-  const sessionPath = sessionPathForSession(session);
+  sessionPath = sessionPathForSession(session);
   if (!sessionPath) {
     throw new Error("Could not determine persisted session path.");
   }
@@ -1200,7 +1278,7 @@ async function handleHelperRequest(id, method, params) {
           await record.session.setModel(model);
         });
         emitSessionStatus(record);
-        send({ type: "response", id, result: sessionSnapshot(record.session) });
+        send({ type: "response", id, result: sessionMetadataPayload(record.session, { includeModels: true }) });
         return;
       }
       case "compact": {
@@ -1223,7 +1301,7 @@ async function handleHelperRequest(id, method, params) {
           record.session.cycleThinkingLevel();
         });
         emitSessionStatus(record);
-        send({ type: "response", id, result: sessionSnapshot(record.session) });
+        send({ type: "response", id, result: sessionMetadataPayload(record.session, { includeModels: true }) });
         return;
       }
       case "setSessionName": {
@@ -1236,7 +1314,8 @@ async function handleHelperRequest(id, method, params) {
         await withSessionMutationLock(record.sessionPath, async () => {
           record.session.setSessionName(name);
         });
-        send({ type: "response", id, result: sessionSnapshot(record.session) });
+        emitSessionStatus(record);
+        send({ type: "response", id, result: sessionMetadataPayload(record.session) });
         return;
       }
       case "getContextUsage": {

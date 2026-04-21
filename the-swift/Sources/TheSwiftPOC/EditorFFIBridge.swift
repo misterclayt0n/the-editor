@@ -439,6 +439,95 @@ struct EditorCompletionMenuState: Hashable {
     )
 }
 
+enum EditorInlineCompletionProvider: UInt8, Hashable {
+    case none = 0
+    case copilot = 1
+    case supermaven = 2
+
+    var label: String {
+        switch self {
+        case .none: return "none"
+        case .copilot: return "Copilot"
+        case .supermaven: return "Supermaven"
+        }
+    }
+
+    var iconName: String? {
+        switch self {
+        case .none: return nil
+        case .copilot: return "copilot"
+        case .supermaven: return "supermaven"
+        }
+    }
+}
+
+enum EditorInlineCompletionBackendStatus: UInt8, Hashable {
+    case idle = 0
+    case starting = 1
+    case ready = 2
+    case error = 3
+}
+
+enum EditorInlineCompletionPresentationKind: UInt8, Hashable {
+    case menu = 0
+    case popover = 1
+    case diff = 2
+}
+
+enum EditorInlineCompletionPresentationLineKind: UInt8, Hashable {
+    case plain = 0
+    case addition = 1
+    case removal = 2
+    case dim = 3
+}
+
+struct EditorInlineCompletionPresentationLine: Hashable, Identifiable {
+    let index: Int
+    let kind: EditorInlineCompletionPresentationLineKind
+    let text: String
+
+    var id: Int { index }
+}
+
+struct EditorInlineCompletionPresentation: Hashable {
+    let kind: EditorInlineCompletionPresentationKind
+    let title: String
+    let lines: [EditorInlineCompletionPresentationLine]
+    let targetLine: Int?
+    let targetChar: Int?
+    let acceptLabel: String?
+}
+
+struct EditorInlineCompletionState: Hashable {
+    let visible: Bool
+    let enabled: Bool
+    let provider: EditorInlineCompletionProvider
+    let status: EditorInlineCompletionBackendStatus
+    let anchorCol: Int
+    let anchorRow: Int
+    let hasMultiline: Bool
+    let hasSuggestion: Bool
+    let presentation: EditorInlineCompletionPresentation?
+    let debugText: String
+
+    var hasPresentation: Bool {
+        presentation != nil
+    }
+
+    static let empty = EditorInlineCompletionState(
+        visible: false,
+        enabled: false,
+        provider: .none,
+        status: .idle,
+        anchorCol: 0,
+        anchorRow: 0,
+        hasMultiline: false,
+        hasSuggestion: false,
+        presentation: nil,
+        debugText: ""
+    )
+}
+
 struct EditorCommandPaletteItem: Hashable {
     let title: String
     let subtitle: String?
@@ -827,6 +916,7 @@ struct EditorSnapshot {
     let diagnosticUnderlines: [EditorSnapshotDiagnosticUnderline]
     let commandPalette: EditorCommandPaletteState
     let completionMenu: EditorCompletionMenuState
+    let inlineCompletion: EditorInlineCompletionState
     let inputPrompt: EditorInputPromptState
     let hoverDocs: EditorDocsPanelState
     let completionDocs: EditorDocsPanelState
@@ -1216,6 +1306,11 @@ enum EditorFFIBridge {
         return the_editor_take_quit_requested(handle)
     }
 
+    static func takeAddSelectionToAgentRequested(_ handle: OpaquePointer?) -> Bool {
+        guard let handle else { return false }
+        return the_editor_take_add_selection_to_agent_requested(handle)
+    }
+
     @discardableResult
     static func openTerminalInActivePane(_ handle: OpaquePointer?) -> Bool {
         guard let handle else { return false }
@@ -1300,6 +1395,45 @@ enum EditorFFIBridge {
             location: Int(the_editor_primary_selection_utf16_location(handle)),
             length: Int(the_editor_primary_selection_utf16_length(handle))
         )
+    }
+
+    static func primarySelectionCharRange(_ handle: OpaquePointer?) -> Range<Int>? {
+        guard let handle else { return nil }
+        let start = Int(the_editor_primary_selection_start_char(handle))
+        let end = Int(the_editor_primary_selection_end_char(handle))
+        guard start >= 0, end >= start else { return nil }
+        return start..<end
+    }
+
+    static func primarySelectionLineRange(_ handle: OpaquePointer?) -> ClosedRange<Int>? {
+        guard let handle else { return nil }
+        let start = Int(the_editor_primary_selection_start_line(handle))
+        let end = Int(the_editor_primary_selection_end_line(handle))
+        guard start > 0, end > 0 else { return nil }
+        return start...max(start, end)
+    }
+
+    @discardableResult
+    static func replaceTextInCharRange(
+        _ handle: OpaquePointer?,
+        filePath: String?,
+        start: Int,
+        end: Int,
+        expectedText: String,
+        text: String
+    ) -> Bool {
+        guard let handle else { return false }
+        return expectedText.withCString { rawExpectedText in
+            text.withCString { rawText in
+                if let filePath {
+                    return filePath.withCString { rawFilePath in
+                        the_editor_replace_char_range(handle, rawFilePath, UInt(start), UInt(end), rawExpectedText, rawText)
+                    }
+                } else {
+                    return the_editor_replace_char_range(handle, nil, UInt(start), UInt(end), rawExpectedText, rawText)
+                }
+            }
+        }
     }
 
     static func primarySelectionText(_ handle: OpaquePointer?) -> String {
@@ -1505,6 +1639,37 @@ enum EditorFFIBridge {
             selectedIndex: completionMenuValue.selected_index >= 0 ? Int(completionMenuValue.selected_index) : nil,
             scrollOffset: Int(completionMenuValue.scroll_offset),
             items: completionMenuItems
+        )
+
+        let inlineCompletionValue = the_editor_snapshot_inline_completion(rawSnapshot)
+        let inlineCompletionPresentationValue = the_editor_snapshot_inline_completion_presentation(rawSnapshot)
+        let inlineCompletionPresentationLines: [EditorInlineCompletionPresentationLine] = (0..<Int(inlineCompletionPresentationValue.line_count)).map { lineIndex in
+            let lineValue = the_editor_snapshot_inline_completion_presentation_line_at(rawSnapshot, UInt(lineIndex))
+            return EditorInlineCompletionPresentationLine(
+                index: lineIndex,
+                kind: EditorInlineCompletionPresentationLineKind(rawValue: lineValue.kind) ?? .plain,
+                text: lineValue.text.map { String(cString: $0) } ?? ""
+            )
+        }
+        let inlineCompletionPresentation: EditorInlineCompletionPresentation? = inlineCompletionPresentationValue.visible ? EditorInlineCompletionPresentation(
+            kind: EditorInlineCompletionPresentationKind(rawValue: inlineCompletionPresentationValue.kind) ?? .popover,
+            title: inlineCompletionPresentationValue.title.map { String(cString: $0) } ?? "",
+            lines: inlineCompletionPresentationLines,
+            targetLine: inlineCompletionPresentationValue.has_target ? Int(inlineCompletionPresentationValue.target_line) : nil,
+            targetChar: inlineCompletionPresentationValue.has_target ? Int(inlineCompletionPresentationValue.target_char) : nil,
+            acceptLabel: inlineCompletionPresentationValue.accept_label.map { String(cString: $0) }
+        ) : nil
+        let inlineCompletion = EditorInlineCompletionState(
+            visible: inlineCompletionValue.visible,
+            enabled: inlineCompletionValue.enabled,
+            provider: EditorInlineCompletionProvider(rawValue: inlineCompletionValue.provider) ?? .none,
+            status: EditorInlineCompletionBackendStatus(rawValue: inlineCompletionValue.status) ?? .idle,
+            anchorCol: Int(inlineCompletionValue.anchor_col),
+            anchorRow: Int(inlineCompletionValue.anchor_row),
+            hasMultiline: inlineCompletionValue.has_multiline,
+            hasSuggestion: inlineCompletionValue.has_suggestion,
+            presentation: inlineCompletionPresentation,
+            debugText: inlineCompletionValue.debug_text.map { String(cString: $0) } ?? ""
         )
 
         let inputPromptValue = the_editor_snapshot_input_prompt(rawSnapshot)
@@ -1851,6 +2016,7 @@ enum EditorFFIBridge {
             diagnosticUnderlines: diagnosticUnderlines,
             commandPalette: commandPalette,
             completionMenu: completionMenu,
+            inlineCompletion: inlineCompletion,
             inputPrompt: inputPrompt,
             hoverDocs: hoverDocs,
             completionDocs: completionDocs,

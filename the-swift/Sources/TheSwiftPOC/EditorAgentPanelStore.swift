@@ -37,9 +37,53 @@ struct EditorAgentModel: Identifiable, Equatable {
     let name: String
     let reference: String
     let isCurrent: Bool
+    let supportsReasoning: Bool
 
     var displayName: String {
         id
+    }
+}
+
+struct EditorAgentSelectionAttachment: Identifiable, Equatable {
+    let id: UUID
+    let sourceLabel: String
+    let lineRange: ClosedRange<Int>?
+    let text: String
+    let language: String?
+
+    init(
+        id: UUID = UUID(),
+        sourceLabel: String,
+        lineRange: ClosedRange<Int>?,
+        text: String,
+        language: String?
+    ) {
+        self.id = id
+        self.sourceLabel = sourceLabel
+        self.lineRange = lineRange
+        self.text = text
+        self.language = language
+    }
+
+    var titleText: String {
+        if let lineRange {
+            if lineRange.lowerBound == lineRange.upperBound {
+                return "\(sourceLabel):\(lineRange.lowerBound)"
+            }
+            return "\(sourceLabel):\(lineRange.lowerBound)-\(lineRange.upperBound)"
+        }
+        return sourceLabel
+    }
+
+    var lineCount: Int {
+        max(text.split(whereSeparator: { $0.isNewline }).count, 1)
+    }
+
+    var previewText: String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "Selection" }
+        let firstLine = trimmed.split(whereSeparator: { $0.isNewline }).first.map(String.init) ?? trimmed
+        return firstLine.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 
@@ -175,22 +219,38 @@ struct EditorAgentTranscriptItem: Identifiable, Equatable, Hashable {
 final class EditorAgentPanelStore: ObservableObject {
     @Published private(set) var items: [EditorAgentTranscriptItem] = [] {
         didSet {
+            agentPerfIncrement("publish.items")
             transcriptRevision &+= 1
         }
     }
-    @Published private(set) var transcriptRevision: Int = 0
+    @Published private(set) var transcriptRevision: Int = 0 {
+        didSet {
+            agentPerfIncrement("publish.transcriptRevision")
+        }
+    }
     @Published private(set) var commands: [EditorAgentCommand] = []
     @Published private(set) var recentSessions: [EditorAgentRecentSession] = []
     @Published private(set) var models: [EditorAgentModel] = []
     @Published private(set) var footerInfo: EditorAgentFooterInfo?
+    @Published private(set) var sessionPath: String?
     @Published private(set) var isRuntimeReady = false
-    @Published private(set) var isRunning = false
+    @Published private(set) var isRunning = false {
+        didSet {
+            agentPerfIncrement("publish.isRunning")
+            if oldValue != isRunning {
+                agentPerfIncrement("publish.isRunning.changed")
+            }
+        }
+    }
     @Published private(set) var compactionStatus: EditorAgentCompactionStatus?
     @Published private(set) var isFollowingAgent = false
     @Published private(set) var followStatusText: String?
     @Published private(set) var sessionTitle = "Agent"
     @Published private(set) var sessionSubtitle = "pi"
     @Published private(set) var contextUsageText: String?
+    @Published var draftText: String = ""
+    @Published private(set) var selectionAttachments: [EditorAgentSelectionAttachment] = []
+    @Published private(set) var composerFocusRequestToken: UInt64 = 0
     @Published var errorMessage: String?
 
     private unowned let controller: EditorSurfaceController
@@ -212,6 +272,10 @@ final class EditorAgentPanelStore: ObservableObject {
     private let immediateAssistantMarkdownRenderCount = 8
     private let deferredAssistantMarkdownBatchSize = 2
     private let transcriptFlushInterval: Duration = .milliseconds(80)
+
+    var associatedAgentItemID: UInt {
+        agentItemID
+    }
 
     init(controller: EditorSurfaceController, agentItemID: UInt, supervisor: EditorAgentSessionSupervisor) {
         self.controller = controller
@@ -251,7 +315,59 @@ final class EditorAgentPanelStore: ObservableObject {
     }
 
     func activateAgentSurfaceIfNeeded() {
-        controller.activateAgentOpenItemIfNeeded(agentItemID: agentItemID)
+        controller.activateAgentUIIfNeeded(agentItemID: agentItemID)
+    }
+
+    func requestComposerFocus() {
+        composerFocusRequestToken &+= 1
+    }
+
+    func clearDraft() {
+        guard !draftText.isEmpty else { return }
+        draftText = ""
+    }
+
+    func clearSelectionAttachments() {
+        guard !selectionAttachments.isEmpty else { return }
+        selectionAttachments = []
+    }
+
+    func removeSelectionAttachment(id: UUID) {
+        let nextAttachments = selectionAttachments.filter { $0.id != id }
+        guard nextAttachments != selectionAttachments else { return }
+        selectionAttachments = nextAttachments
+    }
+
+    func appendSelectionAttachment(_ attachment: EditorAgentSelectionAttachment) {
+        selectionAttachments.append(attachment)
+        requestComposerFocus()
+    }
+
+    func composedPromptForSubmission() -> String {
+        let parts = selectionAttachments.map(formattedPromptText(for:)) + [draftText]
+        return parts
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n\n")
+    }
+
+    func appendToDraft(_ text: String, separatedByBlankLine: Bool = true) {
+        guard !text.isEmpty else { return }
+        let nextText: String
+        if draftText.isEmpty {
+            nextText = text
+        } else if separatedByBlankLine {
+            let separator = draftText.hasSuffix("\n\n") ? "" : (draftText.hasSuffix("\n") ? "\n" : "\n\n")
+            nextText = draftText + separator + text
+        } else {
+            nextText = draftText + text
+        }
+        guard nextText != draftText else {
+            requestComposerFocus()
+            return
+        }
+        draftText = nextText
+        requestComposerFocus()
     }
 
     func setAgentFollowEnabled(_ enabled: Bool) {
@@ -267,6 +383,29 @@ final class EditorAgentPanelStore: ObservableObject {
 
     func toggleAgentFollow() {
         setAgentFollowEnabled(!isFollowingAgent)
+    }
+
+    private func formattedPromptText(for attachment: EditorAgentSelectionAttachment) -> String {
+        let header = "Selection from \(attachment.titleText):"
+        let fence = markdownFence(for: attachment.text)
+        if let language = attachment.language, !language.isEmpty {
+            return "\(header)\n\(fence)\(language)\n\(attachment.text)\n\(fence)"
+        }
+        return "\(header)\n\(fence)\n\(attachment.text)\n\(fence)"
+    }
+
+    private func markdownFence(for text: String) -> String {
+        var longestRun = 0
+        var currentRun = 0
+        for character in text {
+            if character == "`" {
+                currentRun += 1
+                longestRun = max(longestRun, currentRun)
+            } else {
+                currentRun = 0
+            }
+        }
+        return String(repeating: "`", count: max(3, longestRun + 1))
     }
 
     func sendPrompt(_ rawText: String) {
@@ -423,6 +562,8 @@ final class EditorAgentPanelStore: ObservableObject {
     }
 
     private func handleEvent(event: String, payload: [String: Any]) {
+        agentPerfIncrement("runtime.event")
+        agentPerfIncrement("runtime.event.\(event)")
         agentDebugLog("event=\(event) payloadKeys=\(payload.keys.sorted()) items=\(items.count) running=\(isRunning) pendingAssistant=\(pendingAssistantDeltas.count) pendingTool=\(pendingToolDeltas.count)")
         switch event {
         case "user_message":
@@ -441,14 +582,14 @@ final class EditorAgentPanelStore: ObservableObject {
                         renderedMarkdown: nil
                     )
                 )
-                isRunning = true
+                setRunningState(true)
             }
         case "assistant_delta":
             let id = payload["id"] as? String ?? UUID().uuidString
             let delta = payload["delta"] as? String ?? ""
             guard !delta.isEmpty else { return }
             pendingAssistantDeltas[id, default: ""] += delta
-            isRunning = true
+            setRunningState(true)
             schedulePendingTranscriptFlush()
         case "assistant_completed":
             let id = payload["id"] as? String ?? UUID().uuidString
@@ -527,13 +668,13 @@ final class EditorAgentPanelStore: ObservableObject {
                 )
                 items = nextItems
             }
-            isRunning = true
+            setRunningState(true)
         case "thinking_delta":
             let id = payload["id"] as? String ?? UUID().uuidString
             let delta = payload["delta"] as? String ?? ""
             guard !delta.isEmpty else { return }
             pendingThinkingDeltas[id, default: ""] += delta
-            isRunning = true
+            setRunningState(true)
             schedulePendingTranscriptFlush()
         case "thinking_completed":
             let id = payload["id"] as? String ?? UUID().uuidString
@@ -593,7 +734,7 @@ final class EditorAgentPanelStore: ObservableObject {
             if hasChanges {
                 items = nextItems
             }
-            isRunning = true
+            setRunningState(true)
         case "tool_updated":
             let id = payload["id"] as? String ?? ""
             let delta = payload["text"] as? String ?? ""
@@ -602,7 +743,7 @@ final class EditorAgentPanelStore: ObservableObject {
             if let inputJSON = payload["inputJSON"] as? String, !inputJSON.isEmpty {
                 pendingToolInputJSONByID[id] = inputJSON
             }
-            isRunning = true
+            setRunningState(true)
             schedulePendingTranscriptFlush()
         case "tool_completed":
             let id = payload["id"] as? String ?? ""
@@ -630,21 +771,24 @@ final class EditorAgentPanelStore: ObservableObject {
         case "session_status":
             applySessionStatus(payload)
             finalizeStreamingTranscriptItems()
-            isRunning = false
+            setRunningState(false)
         case "runtime_error":
             errorMessage = payload["message"] as? String ?? "Agent runtime error"
             finalizeStreamingTranscriptItems(markToolsFailed: true)
-            isRunning = false
+            setRunningState(false)
         default:
             break
         }
     }
 
     private func schedulePendingTranscriptFlush() {
+        agentPerfIncrement("transcript.flush.schedule.request")
         guard pendingTranscriptFlushTask == nil else {
+            agentPerfIncrement("transcript.flush.schedule.skipped")
             agentDebugLog("flush.schedule skipped existingTask pendingAssistant=\(pendingAssistantDeltas.count) pendingThinking=\(pendingThinkingDeltas.count) pendingTool=\(pendingToolDeltas.count)")
             return
         }
+        agentPerfIncrement("transcript.flush.schedule.accepted")
         agentDebugLog("flush.schedule pendingAssistant=\(pendingAssistantDeltas.count) pendingThinking=\(pendingThinkingDeltas.count) pendingTool=\(pendingToolDeltas.count)")
         pendingTranscriptFlushTask = Task { @MainActor [weak self] in
             guard let self else { return }
@@ -656,38 +800,44 @@ final class EditorAgentPanelStore: ObservableObject {
     }
 
     private func flushPendingTranscriptUpdates() {
-        pendingTranscriptFlushTask?.cancel()
-        pendingTranscriptFlushTask = nil
-        guard !pendingAssistantDeltas.isEmpty || !pendingThinkingDeltas.isEmpty || !pendingToolDeltas.isEmpty else {
-            agentDebugLog("flush.noop items=\(items.count)")
-            return
-        }
+        measureAgentSignpostedInterval("AgentTranscriptFlush", counterKey: "transcript.flush.ms") {
+            agentPerfIncrement("transcript.flush.begin")
+            pendingTranscriptFlushTask?.cancel()
+            pendingTranscriptFlushTask = nil
+            guard !pendingAssistantDeltas.isEmpty || !pendingThinkingDeltas.isEmpty || !pendingToolDeltas.isEmpty else {
+                agentPerfIncrement("transcript.flush.noop")
+                agentDebugLog("flush.noop items=\(items.count)")
+                return
+            }
 
-        let assistantSummary = pendingAssistantDeltas.mapValues { $0.count }
-        let thinkingSummary = pendingThinkingDeltas.mapValues { $0.count }
-        let toolSummary = pendingToolDeltas.mapValues { $0.count }
-        agentDebugLog("flush.begin items=\(items.count) pendingAssistant=\(assistantSummary) pendingThinking=\(thinkingSummary) pendingTool=\(toolSummary)")
-        var nextItems = items
-        var hasChanges = false
-        for (id, delta) in pendingAssistantDeltas where !delta.isEmpty {
-            hasChanges = applyAssistantDelta(id: id, delta: delta, to: &nextItems) || hasChanges
-        }
-        for (id, delta) in pendingThinkingDeltas where !delta.isEmpty {
-            hasChanges = applyThinkingDelta(id: id, delta: delta, to: &nextItems) || hasChanges
-        }
-        for (id, deltas) in pendingToolDeltas where !deltas.isEmpty {
-            hasChanges = applyToolDeltas(id: id, deltas: deltas, to: &nextItems) || hasChanges
-        }
+            let assistantSummary = pendingAssistantDeltas.mapValues { $0.count }
+            let thinkingSummary = pendingThinkingDeltas.mapValues { $0.count }
+            let toolSummary = pendingToolDeltas.mapValues { $0.count }
+            agentDebugLog("flush.begin items=\(items.count) pendingAssistant=\(assistantSummary) pendingThinking=\(thinkingSummary) pendingTool=\(toolSummary)")
+            var nextItems = items
+            var hasChanges = false
+            for (id, delta) in pendingAssistantDeltas where !delta.isEmpty {
+                hasChanges = applyAssistantDelta(id: id, delta: delta, to: &nextItems) || hasChanges
+            }
+            for (id, delta) in pendingThinkingDeltas where !delta.isEmpty {
+                hasChanges = applyThinkingDelta(id: id, delta: delta, to: &nextItems) || hasChanges
+            }
+            for (id, deltas) in pendingToolDeltas where !deltas.isEmpty {
+                hasChanges = applyToolDeltas(id: id, deltas: deltas, to: &nextItems) || hasChanges
+            }
 
-        pendingAssistantDeltas.removeAll()
-        pendingThinkingDeltas.removeAll()
-        pendingToolDeltas.removeAll()
+            pendingAssistantDeltas.removeAll()
+            pendingThinkingDeltas.removeAll()
+            pendingToolDeltas.removeAll()
 
-        if hasChanges {
-            agentDebugLog("flush.commit oldItems=\(items.count) newItems=\(nextItems.count)")
-            items = nextItems
-        } else {
-            agentDebugLog("flush.nochange items=\(items.count)")
+            if hasChanges {
+                agentPerfIncrement("transcript.flush.commit")
+                agentDebugLog("flush.commit oldItems=\(items.count) newItems=\(nextItems.count)")
+                items = nextItems
+            } else {
+                agentPerfIncrement("transcript.flush.nochange")
+                agentDebugLog("flush.nochange items=\(items.count)")
+            }
         }
     }
 
@@ -973,6 +1123,14 @@ final class EditorAgentPanelStore: ObservableObject {
         item.revision &+= 1
     }
 
+    private func setRunningState(_ nextValue: Bool) {
+        guard isRunning != nextValue else {
+            agentPerfIncrement("publish.isRunning.deduped")
+            return
+        }
+        isRunning = nextValue
+    }
+
     private func resetPendingTranscriptBuffers() {
         pendingTranscriptFlushTask?.cancel()
         pendingTranscriptFlushTask = nil
@@ -1006,6 +1164,7 @@ final class EditorAgentPanelStore: ObservableObject {
             parseModels(payload["models"])
         }
         footerInfo = parseFooterInfo(payload["footer"])
+        sessionPath = (payload["sessionPath"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
         sessionTitle = (payload["sessionName"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty ?? "Agent"
         if let model = (payload["model"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !model.isEmpty {
             sessionSubtitle = model
@@ -1021,7 +1180,7 @@ final class EditorAgentPanelStore: ObservableObject {
         isRuntimeReady = true
         compactionStatus = nil
         if !preserveRunningState {
-            isRunning = false
+            setRunningState(false)
         }
         errorMessage = nil
         let totalMs = (CFAbsoluteTimeGetCurrent() - totalStart) * 1000
@@ -1032,6 +1191,7 @@ final class EditorAgentPanelStore: ObservableObject {
 
     private func applySessionStatus(_ payload: [String: Any]) {
         footerInfo = parseFooterInfo(payload["footer"])
+        sessionPath = (payload["sessionPath"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty ?? sessionPath
         sessionTitle = footerInfo?.sessionName?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty ?? "Agent"
         if let model = (payload["model"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !model.isEmpty {
             sessionSubtitle = model
@@ -1172,17 +1332,13 @@ final class EditorAgentPanelStore: ObservableObject {
 
     private func renderMarkdownIfNeeded(forItemAt index: Int) {
         guard items.indices.contains(index), items[index].kind == .assistant else { return }
+        agentPerfIncrement("markdown.render.request")
         agentDebugLog("markdown.render.begin index=\(index) id=\(items[index].id) chars=\(items[index].text.count) revision=\(items[index].revision)")
-        let started = CFAbsoluteTimeGetCurrent()
-        let renderedMarkdown = controller.renderMarkdown(items[index].text)
+        let renderedMarkdown = measureAgentSignpostedInterval("AgentMarkdownRender", counterKey: "markdown.render.ms") {
+            controller.renderMarkdown(items[index].text)
+        }
         items[index].renderedMarkdown = renderedMarkdown
         touchRevision(&items[index])
-        let elapsedMs = (CFAbsoluteTimeGetCurrent() - started) * 1000
-        if elapsedMs >= 8 {
-            agentPerfLog(
-                "assistantMarkdown.render id=\(items[index].id) chars=\(items[index].text.count) blocks=\(renderedMarkdown.blocks.count) runs=\(renderedMarkdown.runs.count) ms=\(String(format: "%.2f", elapsedMs))"
-            )
-        }
     }
 
     private func parseHistory(_ raw: Any?) -> [EditorAgentTranscriptItem] {
@@ -1246,7 +1402,7 @@ final class EditorAgentPanelStore: ObservableObject {
         return rows.compactMap(EditorAgentRecentSession.init)
     }
 
-    private func parseModels(_ raw: Any?) -> [EditorAgentModel] {
+    static func parseModels(_ raw: Any?) -> [EditorAgentModel] {
         guard let rows = raw as? [[String: Any]] else { return [] }
         return rows.compactMap { row in
             guard let provider = row["provider"] as? String,
@@ -1259,9 +1415,14 @@ final class EditorAgentPanelStore: ObservableObject {
                 id: id,
                 name: row["name"] as? String ?? id,
                 reference: row["reference"] as? String ?? "\(provider)/\(id)",
-                isCurrent: row["isCurrent"] as? Bool ?? false
+                isCurrent: row["isCurrent"] as? Bool ?? false,
+                supportsReasoning: row["supportsReasoning"] as? Bool ?? false
             )
         }
+    }
+
+    private func parseModels(_ raw: Any?) -> [EditorAgentModel] {
+        Self.parseModels(raw)
     }
 
     private func parseFooterInfo(_ raw: Any?) -> EditorAgentFooterInfo? {
@@ -1528,12 +1689,16 @@ private final class EditorAgentRuntimeStdoutProcessor: @unchecked Sendable {
             while let newlineIndex = self.buffer.firstIndex(of: 0x0A) {
                 let line = Data(self.buffer.prefix(upTo: newlineIndex))
                 self.buffer.removeSubrange(...newlineIndex)
-                guard !line.isEmpty,
-                      let object = try? JSONSerialization.jsonObject(with: line) as? [String: Any]
-                else {
+                guard !line.isEmpty else {
                     continue
                 }
-                self.onMessage?(MessageBox(object: object))
+                do {
+                    let object = try Self.decodeJSONObject(from: line)
+                    self.onMessage?(MessageBox(object: object))
+                } catch {
+                    Self.logInvalidJSONLine(line, error: error)
+                    continue
+                }
             }
         }
     }
@@ -1542,6 +1707,75 @@ private final class EditorAgentRuntimeStdoutProcessor: @unchecked Sendable {
         queue.async { [weak self] in
             self?.isInvalidated = true
             self?.buffer.removeAll(keepingCapacity: false)
+        }
+    }
+
+    private static func decodeJSONObject(from line: Data) throws -> [String: Any] {
+        do {
+            if let object = try JSONSerialization.jsonObject(with: line) as? [String: Any] {
+                return object
+            }
+        } catch {
+            // Fall through to recovery attempts below.
+        }
+
+        let trimmedLine = Data(line.drop(while: { Self.isIgnorableLeadingOrTrailingByte($0) }).reversed().drop(while: { Self.isIgnorableLeadingOrTrailingByte($0) }).reversed())
+        if trimmedLine != line {
+            do {
+                if let object = try JSONSerialization.jsonObject(with: trimmedLine) as? [String: Any] {
+                    if agentDebugEnabled() {
+                        fputs("[TheSwiftPOC:agent-transport] stdout.json.trimmed bytes=\(line.count)->\(trimmedLine.count)\n", stderr)
+                    }
+                    return object
+                }
+            } catch {
+                // Fall through to extraction recovery below.
+            }
+        }
+
+        if let text = String(data: trimmedLine, encoding: .utf8),
+           let firstBrace = text.firstIndex(of: "{"),
+           let lastBrace = text.lastIndex(of: "}"),
+           firstBrace <= lastBrace {
+            let candidate = String(text[firstBrace...lastBrace])
+            if let candidateData = candidate.data(using: .utf8) {
+                do {
+                    if let object = try JSONSerialization.jsonObject(with: candidateData) as? [String: Any] {
+                        if agentDebugEnabled() {
+                            fputs("[TheSwiftPOC:agent-transport] stdout.json.extracted bytes=\(line.count)->\(candidateData.count)\n", stderr)
+                        }
+                        return object
+                    }
+                } catch {
+                    // Fall through to the final thrown error below.
+                }
+            }
+        }
+
+        throw NSError(domain: "EditorAgentPanel", code: 31, userInfo: [NSLocalizedDescriptionKey: "Unable to decode agent runtime JSON line."])
+    }
+
+    private static func isIgnorableLeadingOrTrailingByte(_ byte: UInt8) -> Bool {
+        switch byte {
+        case 0x00, 0x0D, 0x09, 0x20:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private static func logInvalidJSONLine(_ line: Data, error: Error) {
+        guard agentDebugEnabled() else { return }
+        if let text = String(data: line, encoding: .utf8) {
+            let compact = text.replacingOccurrences(of: "\n", with: "\\n")
+            let prefix = String(compact.prefix(400))
+            let hexPrefix = line.prefix(32).map { String(format: "%02X", $0) }.joined(separator: " ")
+            let logLine = "[TheSwiftPOC:agent-transport] stdout.invalid-json bytes=\(line.count) error=\(error.localizedDescription) hex=\(hexPrefix) prefix=\(prefix)\n"
+            fputs(logLine, stderr)
+        } else {
+            let hexPrefix = line.prefix(32).map { String(format: "%02X", $0) }.joined(separator: " ")
+            let logLine = "[TheSwiftPOC:agent-transport] stdout.invalid-json bytes=\(line.count) error=\(error.localizedDescription) nonutf8 hex=\(hexPrefix)\n"
+            fputs(logLine, stderr)
         }
     }
 }
@@ -1585,6 +1819,11 @@ final class EditorAgentRuntimeTransport {
         var environment = ProcessInfo.processInfo.environment
         environment["PI_CODING_AGENT_DIST"] = piDist.path
         environment["PI_TYPEBOX_DIST"] = typeBoxDist.path
+        if environment["PI_AGENT_PANEL_DEBUG"] == nil,
+           let agentDebug = environment["THE_EDITOR_AGENT_DEBUG"],
+           !agentDebug.isEmpty {
+            environment["PI_AGENT_PANEL_DEBUG"] = agentDebug
+        }
         process.environment = environment
         process.standardInput = stdinPipe
         process.standardOutput = stdoutPipe
@@ -1644,22 +1883,39 @@ final class EditorAgentRuntimeTransport {
         }
         let requestID = String(nextRequestID)
         nextRequestID += 1
-        let data = try await withCheckedThrowingContinuation { continuation in
-            pending[requestID] = continuation
-            do {
-                try send([
-                    "type": "request",
-                    "id": requestID,
-                    "method": method,
-                    "params": params,
-                ])
-            } catch {
-                pending.removeValue(forKey: requestID)
-                continuation.resume(throwing: error)
-            }
+        let started = CFAbsoluteTimeGetCurrent()
+        if Self.shouldDebugLog(method: method) {
+            agentDebugLog("runtime.request.begin id=\(requestID) method=\(method) params=\(Self.debugSummary(for: params))")
         }
-        let object = try JSONSerialization.jsonObject(with: data)
-        return object as? [String: Any] ?? ["result": object]
+        do {
+            let data = try await withCheckedThrowingContinuation { continuation in
+                pending[requestID] = continuation
+                do {
+                    try send([
+                        "type": "request",
+                        "id": requestID,
+                        "method": method,
+                        "params": params,
+                    ])
+                } catch {
+                    pending.removeValue(forKey: requestID)
+                    continuation.resume(throwing: error)
+                }
+            }
+            let object = try JSONSerialization.jsonObject(with: data)
+            let payload = object as? [String: Any] ?? ["result": object]
+            if Self.shouldDebugLog(method: method) {
+                let elapsedMs = (CFAbsoluteTimeGetCurrent() - started) * 1000
+                agentDebugLog("runtime.request.end id=\(requestID) method=\(method) ms=\(String(format: "%.2f", elapsedMs)) result=\(Self.debugSummary(for: payload))")
+            }
+            return payload
+        } catch {
+            if Self.shouldDebugLog(method: method) {
+                let elapsedMs = (CFAbsoluteTimeGetCurrent() - started) * 1000
+                agentDebugLog("runtime.request.error id=\(requestID) method=\(method) ms=\(String(format: "%.2f", elapsedMs)) error=\(error.localizedDescription)")
+            }
+            throw error
+        }
     }
 
     private func send(_ object: [String: Any]) throws {
@@ -1677,6 +1933,11 @@ final class EditorAgentRuntimeTransport {
         }
         switch type {
         case "response":
+            if let id = object["id"] as? String {
+                agentDebugLog("runtime.message.response id=\(id) keys=\(object.keys.sorted())")
+            } else {
+                agentDebugLog("runtime.message.response.missingID keys=\(object.keys.sorted())")
+            }
             guard let id = object["id"] as? String,
                   let continuation = pending.removeValue(forKey: id)
             else {
@@ -1696,6 +1957,9 @@ final class EditorAgentRuntimeTransport {
             }
         case "event":
             guard let event = object["event"] as? String else { return }
+            if event == "runtime_error" || event == "session_status" {
+                agentDebugLog("runtime.message.event event=\(event) sessionPath=\(object["sessionPath"] as? String ?? "nil") payload=\(Self.debugSummary(for: object["payload"] as? [String: Any] ?? [:]))")
+            }
             onEvent?(object["sessionPath"] as? String, event, object["payload"] as? [String: Any] ?? [:])
         case "request":
             guard let method = object["method"] as? String,
@@ -1725,6 +1989,7 @@ final class EditorAgentRuntimeTransport {
     }
 
     private func handleTermination(status: Int32) {
+        agentDebugLog("runtime.terminated status=\(status) pending=\(pending.count)")
         process = nil
         stdinPipe = nil
         stdoutPipe = nil
@@ -1737,6 +2002,35 @@ final class EditorAgentRuntimeTransport {
         }
         pending.removeAll()
         onEvent?(nil, "runtime_error", ["message": error.localizedDescription])
+    }
+
+    private static func shouldDebugLog(method: String) -> Bool {
+        switch method {
+        case "inlineRewrite", "listInlineRewriteModels":
+            return true
+        default:
+            return false
+        }
+    }
+
+    private static func debugSummary(for value: Any) -> String {
+        if let dict = value as? [String: Any] {
+            return "{" + dict.keys.sorted().map { key in
+                let value = dict[key] ?? NSNull()
+                if let string = value as? String {
+                    let compact = string.replacingOccurrences(of: "\n", with: "\\n")
+                    return "\(key)=\(String(compact.prefix(120)))"
+                }
+                if let array = value as? [Any] {
+                    return "\(key)=[count:\(array.count)]"
+                }
+                if value is NSNull {
+                    return "\(key)=nil"
+                }
+                return "\(key)=\(String(describing: value))"
+            }.joined(separator: ", ") + "}"
+        }
+        return String(describing: value)
     }
 
     private static func resolveNodeBinary() -> URL? {

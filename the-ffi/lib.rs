@@ -49,6 +49,7 @@ use the_default::{
   CompletionMenuState,
   DefaultApi,
   DefaultContext,
+  DirectPickerItemMetadata,
   DispatchRef,
   FilePickerChangedFileItem,
   FilePickerChangedKind,
@@ -58,7 +59,6 @@ use the_default::{
   FilePickerKind,
   FilePickerPreview,
   FilePickerPreviewChangeKind,
-  DirectPickerItemMetadata,
   FilePickerPreviewLineKind,
   FilePickerPreviewNavigationMode,
   FilePickerPreviewWindowKind,
@@ -238,7 +238,11 @@ use the_lib::{
       OverlayNode,
       OverlayRectKind,
     },
-    text_annotations::TextAnnotations,
+    text_annotations::{
+      TextAnnotations,
+      apply_virtual_lines_layout,
+      render_virtual_lines_for_viewport,
+    },
     text_format::TextFormat,
     theme::{
       Theme,
@@ -475,18 +479,18 @@ pub struct the_editor_snapshot_info_t {
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 pub struct the_editor_snapshot_pane_t {
-  pub pane_id:                usize,
-  pub kind:                   u8,
-  pub client_surface_id:      usize,
-  pub x:                      u16,
-  pub y:                      u16,
-  pub width:                  u16,
-  pub height:                 u16,
-  pub content_offset_x:       u16,
-  pub scroll_row:             u32,
-  pub viewport_rows:          u16,
-  pub document_line_count:    u32,
-  pub is_active:              bool,
+  pub pane_id:             usize,
+  pub kind:                u8,
+  pub client_surface_id:   usize,
+  pub x:                   u16,
+  pub y:                   u16,
+  pub width:               u16,
+  pub height:              u16,
+  pub content_offset_x:    u16,
+  pub scroll_row:          u32,
+  pub viewport_rows:       u16,
+  pub document_line_count: u32,
+  pub is_active:           bool,
 }
 
 #[repr(C)]
@@ -650,6 +654,41 @@ pub struct the_editor_snapshot_completion_menu_item_t {
   pub subtitle:      *const c_char,
   pub leading_icon:  *const c_char,
   pub leading_color: the_editor_rgba_t,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct the_editor_snapshot_inline_completion_t {
+  pub visible:          bool,
+  pub enabled:          bool,
+  pub provider:         u8,
+  pub status:           u8,
+  pub anchor_col:       u16,
+  pub anchor_row:       u16,
+  pub has_multiline:    bool,
+  pub has_suggestion:   bool,
+  pub has_presentation: bool,
+  pub debug_text:       *const c_char,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct the_editor_snapshot_inline_completion_presentation_t {
+  pub visible:      bool,
+  pub kind:         u8,
+  pub title:        *const c_char,
+  pub line_count:   usize,
+  pub has_target:   bool,
+  pub target_line:  u32,
+  pub target_char:  u32,
+  pub accept_label: *const c_char,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct the_editor_snapshot_inline_completion_presentation_line_t {
+  pub kind: u8,
+  pub text: *const c_char,
 }
 
 #[repr(C)]
@@ -1061,45 +1100,48 @@ fn selection_summary(selection: &Selection) -> String {
 
 #[derive(Default)]
 struct OwnedSnapshot {
-  info:                         the_editor_snapshot_info_t,
-  document:                     DocumentRecord,
-  status:                       StatusRecord,
-  status_items:                 Vec<StatusItemRecord>,
-  pending_keys:                 PendingKeysRecord,
-  pending_key_outcomes:         Vec<PendingKeyOutcomeRecord>,
-  command_palette:              CommandPaletteRecord,
-  command_palette_items:        Vec<CommandPaletteItemRecord>,
-  completion_menu:              CompletionMenuRecord,
-  completion_menu_items:        Vec<CompletionMenuItemRecord>,
-  input_prompt:                 InputPromptRecord,
-  hover_docs:                   DocsPanelRecord,
-  hover_docs_runs:              Vec<DocsRunRecord>,
-  completion_docs:              DocsPanelRecord,
-  completion_docs_runs:         Vec<DocsRunRecord>,
-  signature_help:               DocsPanelRecord,
-  signature_help_runs:          Vec<DocsRunRecord>,
-  diagnostics:                  Vec<DiagnosticRecord>,
-  diagnostic_underlines:        Vec<the_editor_snapshot_diagnostic_underline_t>,
-  file_picker:                  FilePickerRecord,
-  file_picker_items:            Vec<FilePickerItemRecord>,
-  file_picker_preview_lines:    Vec<FilePickerPreviewLineRecord>,
-  file_picker_preview_segments: Vec<FilePickerPreviewSegmentRecord>,
-  file_tree:                    FileTreeRecord,
-  file_tree_rows:               Vec<FileTreeRowRecord>,
-  buffer_tabs:                  BufferTabsRecord,
-  buffer_tab_rows:              Vec<BufferTabRowRecord>,
-  open_items:                   OpenItemsRecord,
-  open_item_groups:             Vec<OpenItemGroupRecord>,
-  open_item_rows:               Vec<OpenItemRowRecord>,
-  panes:                        Vec<the_editor_snapshot_pane_t>,
-  separators:                   Vec<the_editor_snapshot_separator_t>,
-  lines:                        Vec<LineRecord>,
-  spans:                        Vec<SpanRecord>,
-  text_cells:                   Vec<TextCellRecord>,
-  cursors:                      Vec<the_editor_snapshot_cursor_t>,
-  selections:                   Vec<the_editor_snapshot_selection_t>,
-  overlays:                     Vec<OverlayRecord>,
-  strings:                      Vec<CString>,
+  info:                                 the_editor_snapshot_info_t,
+  document:                             DocumentRecord,
+  status:                               StatusRecord,
+  status_items:                         Vec<StatusItemRecord>,
+  pending_keys:                         PendingKeysRecord,
+  pending_key_outcomes:                 Vec<PendingKeyOutcomeRecord>,
+  command_palette:                      CommandPaletteRecord,
+  command_palette_items:                Vec<CommandPaletteItemRecord>,
+  completion_menu:                      CompletionMenuRecord,
+  completion_menu_items:                Vec<CompletionMenuItemRecord>,
+  inline_completion:                    InlineCompletionRecord,
+  inline_completion_presentation:       InlineCompletionPresentationRecord,
+  inline_completion_presentation_lines: Vec<InlineCompletionPresentationLineRecord>,
+  input_prompt:                         InputPromptRecord,
+  hover_docs:                           DocsPanelRecord,
+  hover_docs_runs:                      Vec<DocsRunRecord>,
+  completion_docs:                      DocsPanelRecord,
+  completion_docs_runs:                 Vec<DocsRunRecord>,
+  signature_help:                       DocsPanelRecord,
+  signature_help_runs:                  Vec<DocsRunRecord>,
+  diagnostics:                          Vec<DiagnosticRecord>,
+  diagnostic_underlines:                Vec<the_editor_snapshot_diagnostic_underline_t>,
+  file_picker:                          FilePickerRecord,
+  file_picker_items:                    Vec<FilePickerItemRecord>,
+  file_picker_preview_lines:            Vec<FilePickerPreviewLineRecord>,
+  file_picker_preview_segments:         Vec<FilePickerPreviewSegmentRecord>,
+  file_tree:                            FileTreeRecord,
+  file_tree_rows:                       Vec<FileTreeRowRecord>,
+  buffer_tabs:                          BufferTabsRecord,
+  buffer_tab_rows:                      Vec<BufferTabRowRecord>,
+  open_items:                           OpenItemsRecord,
+  open_item_groups:                     Vec<OpenItemGroupRecord>,
+  open_item_rows:                       Vec<OpenItemRowRecord>,
+  panes:                                Vec<the_editor_snapshot_pane_t>,
+  separators:                           Vec<the_editor_snapshot_separator_t>,
+  lines:                                Vec<LineRecord>,
+  spans:                                Vec<SpanRecord>,
+  text_cells:                           Vec<TextCellRecord>,
+  cursors:                              Vec<the_editor_snapshot_cursor_t>,
+  selections:                           Vec<the_editor_snapshot_selection_t>,
+  overlays:                             Vec<OverlayRecord>,
+  strings:                              Vec<CString>,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -1174,6 +1216,25 @@ struct CompletionMenuItemRecord {
 }
 
 #[derive(Clone, Copy, Default)]
+struct InlineCompletionRecord {
+  inline_completion: the_editor_snapshot_inline_completion_t,
+  debug_text_idx:    Option<usize>,
+}
+
+#[derive(Clone, Copy, Default)]
+struct InlineCompletionPresentationRecord {
+  presentation:     the_editor_snapshot_inline_completion_presentation_t,
+  title_idx:        Option<usize>,
+  accept_label_idx: Option<usize>,
+}
+
+#[derive(Clone, Copy, Default)]
+struct InlineCompletionPresentationLineRecord {
+  line:     the_editor_snapshot_inline_completion_presentation_line_t,
+  text_idx: usize,
+}
+
+#[derive(Clone, Copy, Default)]
 struct InputPromptRecord {
   prompt:          the_editor_snapshot_input_prompt_t,
   title_idx:       Option<usize>,
@@ -1204,12 +1265,12 @@ struct DiagnosticRecord {
 
 #[derive(Clone, Copy, Default)]
 struct FilePickerRecord {
-  picker:              the_editor_snapshot_file_picker_t,
-  title_idx:           Option<usize>,
-  query_idx:           Option<usize>,
-  error_idx:           Option<usize>,
-  status_banner_idx:   Option<usize>,
-  preview_path_idx:    Option<usize>,
+  picker:            the_editor_snapshot_file_picker_t,
+  title_idx:         Option<usize>,
+  query_idx:         Option<usize>,
+  error_idx:         Option<usize>,
+  status_banner_idx: Option<usize>,
+  preview_path_idx:  Option<usize>,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -1368,9 +1429,10 @@ impl SurfaceConfig {
 
   fn viewport_rows(self) -> u16 {
     let cell_height = self.metrics.cell_height_px as u32;
-    // Match columns: only expose fully drawable rows. Using ceil here can report one
-    // extra row when the surface height is not an exact multiple of the cell height,
-    // which makes the renderer try to draw past the bottom of the visible surface.
+    // Match columns: only expose fully drawable rows. Using ceil here can report
+    // one extra row when the surface height is not an exact multiple of the
+    // cell height, which makes the renderer try to draw past the bottom of the
+    // visible surface.
     let rows = (self.height_px / cell_height).max(1);
     rows.min(u16::MAX as u32) as u16
   }
@@ -1639,6 +1701,7 @@ struct SwiftEditor {
   lsp_completion_resolve_supported:    bool,
   lsp_completion_generation:           u64,
   lsp_completion_fallback_start:       Option<usize>,
+  lsp_completion_inline_item_active:   bool,
   lsp_completion_visible_indices:      Vec<usize>,
   lsp_pending_auto_completion:         Option<PendingAutoCompletion>,
   lsp_pending_auto_signature_help:     Option<PendingAutoSignatureHelp>,
@@ -1692,7 +1755,19 @@ struct SwiftEditor {
   vcs_base_cache:                      BTreeMap<VcsBaseCacheKey, Option<Vec<u8>>>,
   embedded_terminal_enabled:           bool,
   viewport_resize_plan_cache:          Option<ViewportResizePlanCache>,
+  document_visual_width_cache:         Option<DocumentVisualWidthCacheEntry>,
+  pending_add_selection_to_agent:      bool,
   quit_requested:                      bool,
+  needs_render:                        bool,
+  render_wake_tx:                      mpsc::Sender<()>,
+  render_wake_rx:                      mpsc::Receiver<()>,
+}
+
+#[derive(Clone, Copy)]
+struct DocumentVisualWidthCacheEntry {
+  document_id:        DocumentId,
+  document_version:   u64,
+  longest_visual_col: usize,
 }
 
 impl SwiftEditor {
@@ -1708,6 +1783,34 @@ impl SwiftEditor {
 
   fn sync_text_viewport_width(&mut self) {
     self.text_format.viewport_width = self.content_viewport_width();
+  }
+
+  fn longest_visual_col_for_active_document(&mut self) -> usize {
+    let document_id = self.editor.document().id();
+    let document_version = self.editor.document().version();
+    if let Some(cache) = self.document_visual_width_cache {
+      if cache.document_id == document_id && cache.document_version == document_version {
+        return cache.longest_visual_col;
+      }
+    }
+
+    let longest_visual_col = document_longest_visual_col(self.editor.document());
+    self.document_visual_width_cache = Some(DocumentVisualWidthCacheEntry {
+      document_id,
+      document_version,
+      longest_visual_col,
+    });
+    longest_visual_col
+  }
+
+  fn max_scroll_col_for_viewport_width(&mut self, viewport_width: usize) -> usize {
+    if self.text_format.soft_wrap {
+      return 0;
+    }
+
+    let viewport_width = viewport_width.max(1);
+    let longest_visual_col = self.longest_visual_col_for_active_document();
+    longest_visual_col.saturating_sub(viewport_width.saturating_sub(1))
   }
 
   fn close_completion_menu_ui(&mut self) -> bool {
@@ -2610,6 +2713,7 @@ impl SwiftEditor {
     self.lsp_completion_resolved.clear();
     self.lsp_completion_resolve_supported = false;
     self.lsp_completion_fallback_start = None;
+    self.lsp_completion_inline_item_active = false;
     self.lsp_completion_visible_indices.clear();
     self.completion_menu.clear();
   }
@@ -2624,8 +2728,27 @@ impl SwiftEditor {
     Some(text.slice(start..cursor).to_string())
   }
 
+  fn lsp_completion_inline_menu_item(&self) -> Option<the_default::CompletionMenuItem> {
+    if self.mode != Mode::Insert || self.lsp_code_action_menu_active {
+      return None;
+    }
+    the_default::completion_menu_inline_item(self)
+  }
+
+  fn completion_visible_index_is_inline_item(&self, index: usize) -> bool {
+    self.lsp_completion_inline_item_active && index == 0
+  }
+
   fn completion_source_index_for_visible_index(&self, index: usize) -> Option<usize> {
-    self.lsp_completion_visible_indices.get(index).copied()
+    let visible_index = if self.lsp_completion_inline_item_active {
+      index.checked_sub(1)?
+    } else {
+      index
+    };
+    self
+      .lsp_completion_visible_indices
+      .get(visible_index)
+      .copied()
   }
 
   fn completion_visible_index_for_source_index(&self, index: usize) -> Option<usize> {
@@ -2633,6 +2756,35 @@ impl SwiftEditor {
       .lsp_completion_visible_indices
       .iter()
       .position(|visible| *visible == index)
+      .map(|visible_index| {
+        if self.lsp_completion_inline_item_active {
+          visible_index + 1
+        } else {
+          visible_index
+        }
+      })
+  }
+
+  fn sync_completion_menu_inline_item(&mut self) {
+    if !self.completion_menu.active || self.lsp_code_action_menu_active {
+      self.lsp_completion_inline_item_active = false;
+      return;
+    }
+
+    let next_inline_item = self.lsp_completion_inline_menu_item();
+    let current_inline_item = if self.lsp_completion_inline_item_active {
+      self.completion_menu.items.first()
+    } else {
+      None
+    };
+    let needs_rebuild = self.lsp_completion_inline_item_active != next_inline_item.is_some()
+      || match (current_inline_item, next_inline_item.as_ref()) {
+        (Some(current), Some(next)) => current != next,
+        _ => false,
+      };
+    if needs_rebuild {
+      self.rebuild_completion_menu();
+    }
   }
 
   fn rebuild_completion_menu(&mut self) {
@@ -2703,12 +2855,19 @@ impl SwiftEditor {
       self.completion_menu.clear();
       return;
     }
-    let items = self
-      .lsp_completion_visible_indices
-      .iter()
-      .filter_map(|index| self.lsp_completion_items.get(*index))
-      .map(completion_menu_item_for_lsp_item)
-      .collect::<Vec<_>>();
+    let inline_item = self.lsp_completion_inline_menu_item();
+    self.lsp_completion_inline_item_active = inline_item.is_some();
+    let mut items = Vec::new();
+    if let Some(item) = inline_item {
+      items.push(item);
+    }
+    items.extend(
+      self
+        .lsp_completion_visible_indices
+        .iter()
+        .filter_map(|index| self.lsp_completion_items.get(*index))
+        .map(completion_menu_item_for_lsp_item),
+    );
     the_default::show_completion_menu(self, items);
     completion_trace_log(format!("rebuild show {}", self.completion_trace_state()));
   }
@@ -5092,6 +5251,22 @@ impl SwiftEditor {
     let mut parts = Vec::new();
 
     let step_start = Instant::now();
+    let mut wake_count = 0usize;
+    while self.render_wake_rx.try_recv().is_ok() {
+      wake_count = wake_count.saturating_add(1);
+      self.needs_render = true;
+    }
+    let wake_changed = self.needs_render;
+    let wake_ms = step_start.elapsed().as_secs_f64() * 1000.0;
+    changed |= wake_changed;
+    parts.push(format!(
+      "render_wake={:.2}ms/{}/{}",
+      wake_ms,
+      u8::from(wake_changed),
+      wake_count
+    ));
+
+    let step_start = Instant::now();
     let active_file_watch_changed = self.poll_active_file_watch();
     let active_file_watch_ms = step_start.elapsed().as_secs_f64() * 1000.0;
     changed |= active_file_watch_changed;
@@ -5217,6 +5392,12 @@ impl SwiftEditor {
     requested
   }
 
+  fn take_add_selection_to_agent_requested(&mut self) -> bool {
+    let requested = self.pending_add_selection_to_agent;
+    self.pending_add_selection_to_agent = false;
+    requested
+  }
+
   fn new(path: Option<&Path>) -> Self {
     let normalized_path = path.map(resolve_session_path);
     let workspace_root = normalized_path
@@ -5258,6 +5439,7 @@ impl SwiftEditor {
       .ok();
 
     let (vcs_statusline_refresh_tx, vcs_statusline_refresh_rx) = mpsc::channel();
+    let (render_wake_tx, render_wake_rx) = mpsc::channel();
 
     let mut this = Self {
       editor,
@@ -5295,6 +5477,7 @@ impl SwiftEditor {
       lsp_completion_resolve_supported: false,
       lsp_completion_generation: 0,
       lsp_completion_fallback_start: None,
+      lsp_completion_inline_item_active: false,
       lsp_completion_visible_indices: Vec::new(),
       lsp_pending_auto_completion: None,
       lsp_pending_auto_signature_help: None,
@@ -5350,7 +5533,12 @@ impl SwiftEditor {
       vcs_base_cache: BTreeMap::new(),
       embedded_terminal_enabled: false,
       viewport_resize_plan_cache: None,
+      document_visual_width_cache: None,
+      pending_add_selection_to_agent: false,
       quit_requested: false,
+      needs_render: true,
+      render_wake_tx,
+      render_wake_rx,
     };
 
     set_file_picker_syntax_loader(&mut this.file_picker, this.loader.clone());
@@ -5371,7 +5559,12 @@ impl SwiftEditor {
     }
   }
 
-  fn follow_path(&mut self, path: &Path, start_line: Option<usize>, end_line: Option<usize>) -> bool {
+  fn follow_path(
+    &mut self,
+    path: &Path,
+    start_line: Option<usize>,
+    end_line: Option<usize>,
+  ) -> bool {
     if !self.open_path(path) {
       return false;
     }
@@ -5440,7 +5633,9 @@ impl SwiftEditor {
       let doc = self.editor.document();
       let text = doc.text();
       let len_lines = text.len_lines().max(1);
-      let start_line_idx = start_line.saturating_sub(1).min(len_lines.saturating_sub(1));
+      let start_line_idx = start_line
+        .saturating_sub(1)
+        .min(len_lines.saturating_sub(1));
       let end_line_idx = end_line
         .unwrap_or(start_line)
         .saturating_sub(1)
@@ -5532,11 +5727,8 @@ impl SwiftEditor {
   }
 
   fn set_scroll_col(&mut self, col: u32) -> bool {
-    let max_col = max_scroll_col(
-      self.editor.document(),
-      &self.text_format,
-      self.content_viewport_width() as usize,
-    ) as u32;
+    let max_col =
+      self.max_scroll_col_for_viewport_width(self.content_viewport_width() as usize) as u32;
     let next = col.min(max_col) as usize;
     let before = self.editor.view().scroll.col;
     if next == before {
@@ -5854,7 +6046,8 @@ impl SwiftEditor {
       logical_row,
     );
     selection_debug_log(format!(
-      "click_buffer_position pane={} logical=({}, {}) click_count={} modifiers={} scroll=({}, {}) target_char={} before={}",
+      "click_buffer_position pane={} logical=({}, {}) click_count={} modifiers={} scroll=({}, {}) \
+       target_char={} before={}",
       pane_id.get().get(),
       logical_col,
       logical_row,
@@ -5975,7 +6168,8 @@ impl SwiftEditor {
       logical_row,
     );
     selection_debug_log(format!(
-      "drag_buffer_selection pane={} origin=({}, {}) logical=({}, {}) click_count={} modifiers={} scroll=({}, {}) origin_char={} current_char={} before={}",
+      "drag_buffer_selection pane={} origin=({}, {}) logical=({}, {}) click_count={} modifiers={} \
+       scroll=({}, {}) origin_char={} current_char={} before={}",
       pane_id.get().get(),
       drag_origin_col,
       drag_origin_row,
@@ -6585,11 +6779,7 @@ impl SwiftEditor {
       self.editor.document().text().len_lines(),
       self.editor.view().viewport.height as usize,
     );
-    let max_col = max_scroll_col(
-      self.editor.document(),
-      &self.text_format,
-      self.content_viewport_width() as usize,
-    );
+    let max_col = self.max_scroll_col_for_viewport_width(self.content_viewport_width() as usize);
     let scroll = self.editor.view().scroll;
     if scroll.row > max_row || scroll.col > max_col {
       let view = self.editor.view_mut();
@@ -6639,16 +6829,17 @@ impl SwiftEditor {
       let cursor_visual_row = {
         let text = self.editor.document().text();
         let mut text_format = self.text_format.clone();
-        text_format.viewport_width = self.editor.view().viewport.width.saturating_sub(gutter_width).max(1);
+        text_format.viewport_width = self
+          .editor
+          .view()
+          .viewport
+          .width
+          .saturating_sub(gutter_width)
+          .max(1);
         let mut annotations = TextAnnotations::default();
-        visual_pos_at_char(
-          text.slice(..),
-          &text_format,
-          &mut annotations,
-          cursor_pos,
-        )
-        .map(|pos| pos.row)
-        .unwrap_or(cursor_line)
+        visual_pos_at_char(text.slice(..), &text_format, &mut annotations, cursor_pos)
+          .map(|pos| pos.row)
+          .unwrap_or(cursor_line)
       };
 
       let current_scroll = self.editor.view().scroll;
@@ -6711,6 +6902,7 @@ impl SwiftEditor {
   }
 
   fn build_snapshot(&mut self) -> OwnedSnapshot {
+    self.needs_render = false;
     let _ = self.reconcile_active_file_state();
     self.poll_vcs_statusline_refresh_results();
     let _ = self.refresh_picker_state();
@@ -6792,6 +6984,36 @@ impl SwiftEditor {
     )
   }
 
+  fn primary_selection_char_range(&self) -> Option<(usize, usize)> {
+    let selection = self.editor.document().selection();
+    let Ok((_, range)) = selection.pick(CursorPick::First) else {
+      return None;
+    };
+    Some((range.from(), range.to()))
+  }
+
+  fn primary_selection_line_range(&self) -> Option<(u32, u32)> {
+    let selection = self.editor.document().selection();
+    let Ok((_, range)) = selection.pick(CursorPick::First) else {
+      return None;
+    };
+    let text = self.editor.document().text();
+    if text.len_chars() == 0 {
+      return Some((1, 1));
+    }
+
+    let start = range.from().min(text.len_chars());
+    let end = range.to().min(text.len_chars());
+    let start_line = text.char_to_line(start) as u32 + 1;
+    let end_char = if end > start {
+      end.saturating_sub(1)
+    } else {
+      start
+    };
+    let end_line = text.char_to_line(end_char.min(text.len_chars().saturating_sub(1))) as u32 + 1;
+    Some((start_line, end_line.max(start_line)))
+  }
+
   fn primary_selection_text(&self) -> String {
     let selection = self.editor.document().selection();
     let Ok((_, range)) = selection.pick(CursorPick::First) else {
@@ -6803,6 +7025,72 @@ impl SwiftEditor {
       .text()
       .slice(range.from()..range.to())
       .to_string()
+  }
+
+  fn replace_char_range(
+    &mut self,
+    file_path: Option<&Path>,
+    start: usize,
+    end: usize,
+    expected_text: &str,
+    text: &str,
+  ) -> bool {
+    let target_buffer_id = file_path
+      .and_then(|path| self.editor.find_buffer_by_path(path))
+      .unwrap_or_else(|| self.editor.active_buffer_id());
+
+    let Some(contents) = self
+      .editor
+      .buffer_document_mut(target_buffer_id)
+      .map(|document| document.text().clone())
+    else {
+      self.push_error(
+        "inline-assist",
+        "failed to find target buffer for inline rewrite transaction",
+      );
+      return false;
+    };
+
+    let text_len = contents.len_chars();
+    let from = start.min(text_len);
+    let to = end.min(text_len).max(from);
+    if contents.slice(from..to).to_string() != expected_text {
+      return false;
+    }
+    let tx = match the_lib::transaction::Transaction::change(&contents, vec![(
+      from,
+      to,
+      Some(text.into()),
+    )]) {
+      Ok(tx) => tx,
+      Err(err) => {
+        self.push_error(
+          "inline-assist",
+          format!("failed to build inline rewrite transaction: {err}"),
+        );
+        return false;
+      },
+    };
+
+    let applied = if target_buffer_id == self.editor.active_buffer_id() {
+      self.apply_transaction(&tx)
+    } else {
+      self
+        .editor
+        .apply_transaction_to_buffer(target_buffer_id, &tx, self.loader.as_deref())
+        .is_ok()
+    };
+    if !applied {
+      self.push_error(
+        "inline-assist",
+        "failed to apply inline rewrite transaction",
+      );
+      return false;
+    }
+    if let Some(document) = self.editor.buffer_document_mut(target_buffer_id) {
+      let _ = document.commit();
+    }
+    true
   }
 }
 
@@ -6945,6 +7233,10 @@ fn build_inactive_pane_plan_with_styles(
     let gutter_width =
       gutter_width_for_document(document, view.viewport.width, &editor.gutter_config);
     text_format.viewport_width = view.viewport.width.saturating_sub(gutter_width).max(1);
+    let inline_completion_virtual_lines = editor
+      .inline_completion_annotations
+      .virtual_lines()
+      .to_vec();
 
     let mut plan =
       if let (Some(loader), Some(syntax)) = (editor.loader.as_deref(), document.syntax()) {
@@ -6982,6 +7274,22 @@ fn build_inactive_pane_plan_with_styles(
           styles,
         )
       };
+    if !inline_completion_virtual_lines.is_empty() {
+      let layout = render_virtual_lines_for_viewport(
+        &plan,
+        text_format.viewport_width.max(1),
+        view.scroll.col,
+        &inline_completion_virtual_lines,
+      );
+      apply_virtual_lines_layout(&mut plan, &layout);
+      trace_swift_inline_virtual_layout(
+        "inactive",
+        &plan,
+        &layout,
+        usize::from(text_format.viewport_width.max(1)),
+        view.scroll.col,
+      );
+    }
     apply_swift_selection_match_highlights(
       &mut plan,
       document,
@@ -7060,11 +7368,7 @@ fn build_frame_render_plan_with_styles_for_swift(
         },
         PaneContent::Agent { .. } => {
           pane_generation_states.insert(pane.pane_id, RenderGenerationState::default());
-          (
-            PaneContentKind::Agent,
-            None,
-            RenderPlan::default(),
-          )
+          (PaneContentKind::Agent, None, RenderPlan::default())
         },
       };
       PaneRenderPlan {
@@ -7113,10 +7417,14 @@ impl DefaultContext for SwiftEditor {
   fn working_directory_state_mut(&mut self) -> &mut WorkingDirectoryState {
     &mut self.working_directory
   }
-  fn request_render(&mut self) {}
+  fn request_render(&mut self) {
+    self.needs_render = true;
+  }
+  fn add_primary_selection_to_agent(&mut self) {
+    self.pending_add_selection_to_agent = true;
+  }
   fn render_waker(&self) -> the_default::RenderWaker {
-    let (tx, _rx) = mpsc::channel();
-    the_default::RenderWaker::new(tx)
+    the_default::RenderWaker::new(self.render_wake_tx.clone())
   }
   fn apply_transaction(&mut self, transaction: &the_lib::transaction::Transaction) -> bool {
     let old_text_for_lsp = self.editor.document().text().clone();
@@ -7148,6 +7456,7 @@ impl DefaultContext for SwiftEditor {
     self.build_render_plan_with_styles(self.render_styles())
   }
   fn build_render_plan_with_styles(&mut self, styles: RenderStyles) -> RenderPlan {
+    self.sync_completion_menu_inline_item();
     let view = self.editor.view().clone();
     let mut text_format = self.text_format.clone();
     text_format.viewport_width = self.content_viewport_width();
@@ -7160,9 +7469,33 @@ impl DefaultContext for SwiftEditor {
     let line_range = view.scroll.row..(view.scroll.row + view.viewport.height as usize);
     let active_buffer_id = self.editor.active_buffer_id();
     let (document, cache) = self.editor.document_and_cache();
+    let has_inline_completion_virtual_lines = !self
+      .inline_completion_annotations
+      .virtual_lines()
+      .is_empty();
+    let suppress_inline_completion_annotations = self.completion_menu.active
+      && self.lsp_completion_inline_item_active
+      && !has_inline_completion_virtual_lines;
+    let has_inline_completion_annotations =
+      !suppress_inline_completion_annotations && !self.inline_completion_annotations.is_empty();
+    let inline_completion_virtual_lines = if has_inline_completion_annotations {
+      self.inline_completion_annotations.virtual_lines().to_vec()
+    } else {
+      Vec::new()
+    };
+    if has_inline_completion_annotations {
+      let _ = self.inline_completion_annotations.clone().extend_into(
+        &mut annotations,
+        document.text().slice(..),
+        text_format.viewport_width.max(1),
+        view.scroll.col,
+      );
+    }
     let doc_version = document.version();
     let mut plan = 'plan: {
-      if let Some(cache_entry) = &self.viewport_resize_plan_cache {
+      if !has_inline_completion_annotations
+        && let Some(cache_entry) = &self.viewport_resize_plan_cache
+      {
         if cache_entry.buffer_id == active_buffer_id && cache_entry.document_version == doc_version
         {
           if let (Some(loader), Some(syntax)) = (loader.as_deref(), document.syntax()) {
@@ -7271,6 +7604,22 @@ impl DefaultContext for SwiftEditor {
         styles,
       );
     };
+    if !inline_completion_virtual_lines.is_empty() {
+      let layout = render_virtual_lines_for_viewport(
+        &plan,
+        text_format.viewport_width.max(1),
+        view.scroll.col,
+        &inline_completion_virtual_lines,
+      );
+      apply_virtual_lines_layout(&mut plan, &layout);
+      trace_swift_inline_virtual_layout(
+        "active",
+        &plan,
+        &layout,
+        usize::from(text_format.viewport_width.max(1)),
+        view.scroll.col,
+      );
+    }
     apply_swift_selection_match_highlights(
       &mut plan,
       document,
@@ -7294,18 +7643,23 @@ impl DefaultContext for SwiftEditor {
       row_hashes,
     );
     self.render_generation_state = Some(generation_state);
-    self.viewport_resize_plan_cache = Some(ViewportResizePlanCache {
-      view,
-      plan: plan.clone(),
-      document_version: doc_version,
-      buffer_id: active_buffer_id,
-    });
+    if has_inline_completion_annotations {
+      self.viewport_resize_plan_cache = None;
+    } else {
+      self.viewport_resize_plan_cache = Some(ViewportResizePlanCache {
+        view,
+        plan: plan.clone(),
+        document_version: doc_version,
+        buffer_id: active_buffer_id,
+      });
+    }
     plan
   }
   fn build_frame_render_plan(&mut self) -> FrameRenderPlan {
     self.build_frame_render_plan_with_styles(self.render_styles())
   }
   fn build_frame_render_plan_with_styles(&mut self, styles: RenderStyles) -> FrameRenderPlan {
+    self.sync_completion_menu_inline_item();
     build_frame_render_plan_with_styles_for_swift(self, styles)
   }
   fn did_change_active_pane(&mut self, previous_buffer_id: BufferId) {
@@ -7472,10 +7826,13 @@ impl DefaultContext for SwiftEditor {
       code_action_trace_log(format!("accept index={} title={:?}", index, action.title));
       return self.apply_code_action(action);
     }
+    if self.completion_visible_index_is_inline_item(index) {
+      return the_default::accept_inline_completion(self);
+    }
     self.apply_selected_completion(index)
   }
   fn completion_selection_changed(&mut self, index: usize) {
-    if self.lsp_code_action_menu_active {
+    if self.lsp_code_action_menu_active || self.completion_visible_index_is_inline_item(index) {
       return;
     }
     self.resolve_completion_item_if_needed(index);
@@ -7488,6 +7845,7 @@ impl DefaultContext for SwiftEditor {
     self.lsp_completion_resolved.clear();
     self.lsp_completion_resolve_supported = false;
     self.lsp_completion_fallback_start = None;
+    self.lsp_completion_inline_item_active = false;
     self.lsp_completion_visible_indices.clear();
   }
   fn inline_completion(&self) -> &the_default::InlineCompletionState {
@@ -8440,6 +8798,80 @@ impl OwnedSnapshot {
         });
     }
 
+    let inline_completion_has_presentation = editor.inline_completion.presentation.is_some();
+    let inline_completion_visible =
+      !editor.inline_completion_annotations.is_empty() || inline_completion_has_presentation;
+    let inline_completion_multiline = !editor
+      .inline_completion_annotations
+      .virtual_lines()
+      .is_empty()
+      || editor
+        .inline_completion
+        .presentation
+        .as_ref()
+        .is_some_and(|presentation| presentation.lines.len() > 1);
+    let inline_completion_debug_text = the_default::inline_completion_debug_context_summary(
+      editor,
+      inline_completion_visible,
+      inline_completion_multiline,
+    );
+    snapshot.inline_completion = InlineCompletionRecord {
+      inline_completion: the_editor_snapshot_inline_completion_t {
+        visible:          inline_completion_visible,
+        enabled:          editor.inline_completion.enabled,
+        provider:         inline_completion_provider_code(editor.inline_completion.provider),
+        status:           inline_completion_status_code(editor.inline_completion.status),
+        anchor_col:       0,
+        anchor_row:       0,
+        has_multiline:    inline_completion_multiline,
+        has_suggestion:   the_default::inline_completion_has_active_suggestion(
+          &editor.inline_completion,
+        ),
+        has_presentation: inline_completion_has_presentation,
+        debug_text:       ptr::null(),
+      },
+      debug_text_idx:    Some(snapshot.push_string(&inline_completion_debug_text)),
+    };
+    if let Some(presentation) = editor.inline_completion.presentation.as_ref() {
+      let title_idx = snapshot.push_string(&presentation.title);
+      let accept_label_idx = snapshot.push_optional_string(presentation.accept_label.as_deref());
+      snapshot.inline_completion_presentation = InlineCompletionPresentationRecord {
+        presentation: the_editor_snapshot_inline_completion_presentation_t {
+          visible:      true,
+          kind:         inline_completion_presentation_kind_code(presentation.kind),
+          title:        ptr::null(),
+          line_count:   presentation.lines.len(),
+          has_target:   presentation.target_line.is_some() || presentation.target_char.is_some(),
+          target_line:  presentation.target_line.unwrap_or(0) as u32,
+          target_char:  presentation.target_char.unwrap_or(0) as u32,
+          accept_label: ptr::null(),
+        },
+        title_idx: Some(title_idx),
+        accept_label_idx,
+      };
+      for line in &presentation.lines {
+        let text_idx = snapshot.push_string(&line.text);
+        snapshot.inline_completion_presentation_lines.push(
+          InlineCompletionPresentationLineRecord {
+            line: the_editor_snapshot_inline_completion_presentation_line_t {
+              kind: inline_completion_presentation_line_kind_code(line.kind),
+              text: ptr::null(),
+            },
+            text_idx,
+          },
+        );
+      }
+    }
+    if snapshot.inline_completion.inline_completion.visible
+      && let Some(plan) = active_plan
+      && let Some((col, row)) = active_docs_cursor_position(plan)
+    {
+      snapshot.inline_completion.inline_completion.anchor_col =
+        active_pane_rect.x.saturating_add(col);
+      snapshot.inline_completion.inline_completion.anchor_row =
+        active_pane_rect.y.saturating_add(row);
+    }
+
     let input_prompt = editor.search_prompt_ref();
     let input_prompt_title = input_prompt_title(input_prompt.kind).to_string();
     let input_prompt_placeholder = input_prompt_placeholder(input_prompt.kind).to_string();
@@ -8843,7 +9275,9 @@ impl OwnedSnapshot {
             .saturating_add(selection.rect.x);
           let exported_y = pane.rect.y.saturating_add(selection.rect.y);
           selection_debug_log(format!(
-            "snapshot.export_selection pane={} pane_rect=({}, {}, {}, {}) scroll=({}, {}) content_offset_x={} local_rect=({}, {}, {}, {}) exported_rect=({}, {}, {}, {}) kind={:?}",
+            "snapshot.export_selection pane={} pane_rect=({}, {}, {}, {}) scroll=({}, {}) \
+             content_offset_x={} local_rect=({}, {}, {}, {}) exported_rect=({}, {}, {}, {}) \
+             kind={:?}",
             pane.pane_id.get().get(),
             pane.rect.x,
             pane.rect.y,
@@ -8950,6 +9384,7 @@ impl OwnedSnapshot {
     snapshot.finalize_document_and_status_strings();
     snapshot.finalize_pending_key_strings();
     snapshot.finalize_completion_menu_strings();
+    snapshot.finalize_inline_completion_strings();
     snapshot.finalize_input_prompt_strings();
     snapshot.finalize_docs_panel_strings();
     snapshot.finalize_diagnostic_strings();
@@ -9072,7 +9507,7 @@ impl OwnedSnapshot {
     };
 
     self.file_picker = FilePickerRecord {
-      picker:              the_editor_snapshot_file_picker_t {
+      picker:            the_editor_snapshot_file_picker_t {
         is_open: picker.active,
         kind: file_picker_kind_code(picker.kind),
         selected_index: picker.selected.map(|index| index as i32).unwrap_or(-1),
@@ -9106,14 +9541,14 @@ impl OwnedSnapshot {
           preview_window.lines.len()
         },
       },
-      title_idx:           Some(self.push_string(&picker.title)),
-      query_idx:           Some(self.push_string(&picker.query)),
-      error_idx:           self.push_optional_string(picker.error.as_deref()),
-      status_banner_idx:   picker
+      title_idx:         Some(self.push_string(&picker.title)),
+      query_idx:         Some(self.push_string(&picker.query)),
+      error_idx:         self.push_optional_string(picker.error.as_deref()),
+      status_banner_idx: picker
         .status_banner
         .as_ref()
         .map(|banner| self.push_string(&banner.text)),
-      preview_path_idx:    picker
+      preview_path_idx:  picker
         .preview_path
         .as_ref()
         .map(|path| self.push_string(path.to_string_lossy().as_ref())),
@@ -9527,6 +9962,24 @@ impl OwnedSnapshot {
       if let Some(idx) = item.leading_icon_idx {
         item.item.leading_icon = self.strings[idx].as_ptr();
       }
+    }
+  }
+
+  fn finalize_inline_completion_strings(&mut self) {
+    if let Some(idx) = self.inline_completion.debug_text_idx {
+      self.inline_completion.inline_completion.debug_text = self.strings[idx].as_ptr();
+    }
+    if let Some(idx) = self.inline_completion_presentation.title_idx {
+      self.inline_completion_presentation.presentation.title = self.strings[idx].as_ptr();
+    }
+    if let Some(idx) = self.inline_completion_presentation.accept_label_idx {
+      self
+        .inline_completion_presentation
+        .presentation
+        .accept_label = self.strings[idx].as_ptr();
+    }
+    for line in &mut self.inline_completion_presentation_lines {
+      line.line.text = self.strings[line.text_idx].as_ptr();
     }
   }
 
@@ -10102,7 +10555,13 @@ fn docs_runs_from_inline(
     if inline.emphasis {
       style = style.add_modifier(Modifier::ITALIC);
     }
-    push_docs_run(&mut runs, inline.text.clone(), style, kind, inline.link_destination.clone());
+    push_docs_run(
+      &mut runs,
+      inline.text.clone(),
+      style,
+      kind,
+      inline.link_destination.clone(),
+    );
   }
   runs
 }
@@ -10219,7 +10678,13 @@ fn render_code_lines_with_active_style(
         kind = DocsSemanticKind::ActiveParameter;
       }
       if (style != run_style || kind != run_kind) && !piece.is_empty() {
-        push_docs_run(&mut runs, std::mem::take(&mut piece), run_style, run_kind, None);
+        push_docs_run(
+          &mut runs,
+          std::mem::take(&mut piece),
+          run_style,
+          run_kind,
+          None,
+        );
       }
       run_style = style;
       run_kind = kind;
@@ -10468,7 +10933,10 @@ fn docs_markdown_lines(
   lines
 }
 
-fn flatten_runs_with_newlines(lines: Vec<Vec<DocsStyledRun>>, newline_style: Style) -> Vec<DocsStyledRun> {
+fn flatten_runs_with_newlines(
+  lines: Vec<Vec<DocsStyledRun>>,
+  newline_style: Style,
+) -> Vec<DocsStyledRun> {
   let total_lines = lines.len();
   let mut runs = Vec::new();
   for (index, line) in lines.into_iter().enumerate() {
@@ -10493,13 +10961,20 @@ fn rendered_docs_blocks(markdown: &str, editor: &SwiftEditor) -> Vec<RenderedDoc
 
   for block in parse_markdown_blocks(markdown) {
     match block {
-      DocsBlock::Paragraph(inline_runs) => blocks.push(RenderedDocsBlock {
-        kind: RenderedDocsBlockKind::Paragraph,
-        level: 0,
-        list_depth: 0,
-        language: None,
-        runs: docs_runs_from_inline(&inline_runs, &styles, styles.base, DocsSemanticKind::Body),
-      }),
+      DocsBlock::Paragraph(inline_runs) => {
+        blocks.push(RenderedDocsBlock {
+          kind:       RenderedDocsBlockKind::Paragraph,
+          level:      0,
+          list_depth: 0,
+          language:   None,
+          runs:       docs_runs_from_inline(
+            &inline_runs,
+            &styles,
+            styles.base,
+            DocsSemanticKind::Body,
+          ),
+        })
+      },
       DocsBlock::Heading { level, runs } => {
         let level_idx = level.saturating_sub(1).min(5) as usize;
         blocks.push(RenderedDocsBlock {
@@ -10507,10 +10982,19 @@ fn rendered_docs_blocks(markdown: &str, editor: &SwiftEditor) -> Vec<RenderedDoc
           level,
           list_depth: 0,
           language: None,
-          runs: docs_runs_from_inline(&runs, &styles, styles.heading[level_idx], DocsSemanticKind::from_heading_level(level)),
+          runs: docs_runs_from_inline(
+            &runs,
+            &styles,
+            styles.heading[level_idx],
+            DocsSemanticKind::from_heading_level(level),
+          ),
         });
       },
-      DocsBlock::ListItem { marker, runs, depth } => {
+      DocsBlock::ListItem {
+        marker,
+        runs,
+        depth,
+      } => {
         let indent = "  ".repeat(depth);
         let marker_text = match marker {
           DocsListMarker::Bullet => format!("{indent}- "),
@@ -10524,13 +11008,18 @@ fn rendered_docs_blocks(markdown: &str, editor: &SwiftEditor) -> Vec<RenderedDoc
           DocsSemanticKind::ListMarker,
           None,
         );
-        rendered_runs.extend(docs_runs_from_inline(&runs, &styles, styles.base, DocsSemanticKind::Body));
+        rendered_runs.extend(docs_runs_from_inline(
+          &runs,
+          &styles,
+          styles.base,
+          DocsSemanticKind::Body,
+        ));
         blocks.push(RenderedDocsBlock {
-          kind: RenderedDocsBlockKind::ListItem,
-          level: 0,
+          kind:       RenderedDocsBlockKind::ListItem,
+          level:      0,
           list_depth: depth,
-          language: None,
-          runs: rendered_runs,
+          language:   None,
+          runs:       rendered_runs,
         });
       },
       DocsBlock::Quote(inline_runs) => {
@@ -10542,16 +11031,24 @@ fn rendered_docs_blocks(markdown: &str, editor: &SwiftEditor) -> Vec<RenderedDoc
           DocsSemanticKind::QuoteMarker,
           None,
         );
-        rendered_runs.extend(docs_runs_from_inline(&inline_runs, &styles, styles.quote, DocsSemanticKind::QuoteText));
+        rendered_runs.extend(docs_runs_from_inline(
+          &inline_runs,
+          &styles,
+          styles.quote,
+          DocsSemanticKind::QuoteText,
+        ));
         blocks.push(RenderedDocsBlock {
-          kind: RenderedDocsBlockKind::Quote,
-          level: 0,
+          kind:       RenderedDocsBlockKind::Quote,
+          level:      0,
           list_depth: 0,
-          language: None,
-          runs: rendered_runs,
+          language:   None,
+          runs:       rendered_runs,
         });
       },
-      DocsBlock::CodeFence { language, lines: code_lines } => {
+      DocsBlock::CodeFence {
+        language,
+        lines: code_lines,
+      } => {
         let lines = highlighted_code_block_lines(&code_lines, &styles, editor, language.as_deref());
         blocks.push(RenderedDocsBlock {
           kind: RenderedDocsBlockKind::CodeFence,
@@ -10561,35 +11058,39 @@ fn rendered_docs_blocks(markdown: &str, editor: &SwiftEditor) -> Vec<RenderedDoc
           runs: flatten_runs_with_newlines(lines, styles.base),
         });
       },
-      DocsBlock::Rule => blocks.push(RenderedDocsBlock {
-        kind: RenderedDocsBlockKind::Rule,
-        level: 0,
-        list_depth: 0,
-        language: None,
-        runs: vec![DocsStyledRun {
-          text:             "───".to_string(),
-          style:            styles.rule,
-          kind:             DocsSemanticKind::Rule,
-          link_destination: None,
-        }],
-      }),
-      DocsBlock::BlankLine => blocks.push(RenderedDocsBlock {
-        kind: RenderedDocsBlockKind::BlankLine,
-        level: 0,
-        list_depth: 0,
-        language: None,
-        runs: Vec::new(),
-      }),
+      DocsBlock::Rule => {
+        blocks.push(RenderedDocsBlock {
+          kind:       RenderedDocsBlockKind::Rule,
+          level:      0,
+          list_depth: 0,
+          language:   None,
+          runs:       vec![DocsStyledRun {
+            text:             "───".to_string(),
+            style:            styles.rule,
+            kind:             DocsSemanticKind::Rule,
+            link_destination: None,
+          }],
+        })
+      },
+      DocsBlock::BlankLine => {
+        blocks.push(RenderedDocsBlock {
+          kind:       RenderedDocsBlockKind::BlankLine,
+          level:      0,
+          list_depth: 0,
+          language:   None,
+          runs:       Vec::new(),
+        })
+      },
     }
   }
 
   if blocks.is_empty() {
     blocks.push(RenderedDocsBlock {
-      kind: RenderedDocsBlockKind::BlankLine,
-      level: 0,
+      kind:       RenderedDocsBlockKind::BlankLine,
+      level:      0,
       list_depth: 0,
-      language: None,
-      runs: Vec::new(),
+      language:   None,
+      runs:       Vec::new(),
     });
   }
 
@@ -10642,6 +11143,44 @@ fn active_docs_cursor_position(plan: &RenderPlan) -> Option<(u16, u16)> {
       cursor.pos.row as u16,
     )
   })
+}
+
+fn inline_completion_provider_code(provider: the_default::InlineCompletionProvider) -> u8 {
+  match provider {
+    the_default::InlineCompletionProvider::None => 0,
+    the_default::InlineCompletionProvider::Copilot => 1,
+    the_default::InlineCompletionProvider::Supermaven => 2,
+  }
+}
+
+fn inline_completion_status_code(status: the_default::InlineCompletionBackendStatus) -> u8 {
+  match status {
+    the_default::InlineCompletionBackendStatus::Idle => 0,
+    the_default::InlineCompletionBackendStatus::Starting => 1,
+    the_default::InlineCompletionBackendStatus::Ready => 2,
+    the_default::InlineCompletionBackendStatus::Error => 3,
+  }
+}
+
+fn inline_completion_presentation_kind_code(
+  kind: the_default::InlineCompletionPresentationKind,
+) -> u8 {
+  match kind {
+    the_default::InlineCompletionPresentationKind::Menu => 0,
+    the_default::InlineCompletionPresentationKind::Popover => 1,
+    the_default::InlineCompletionPresentationKind::Diff => 2,
+  }
+}
+
+fn inline_completion_presentation_line_kind_code(
+  kind: the_default::InlineCompletionPresentationLineKind,
+) -> u8 {
+  match kind {
+    the_default::InlineCompletionPresentationLineKind::Plain => 0,
+    the_default::InlineCompletionPresentationLineKind::Addition => 1,
+    the_default::InlineCompletionPresentationLineKind::Removal => 2,
+    the_default::InlineCompletionPresentationLineKind::Dim => 3,
+  }
 }
 
 fn capabilities_support_single_char(
@@ -10989,6 +11528,94 @@ fn set_completion_snippet_selection(
   let anchor = mapped_base.saturating_add(cursor_range.start).min(max);
   let head = mapped_base.saturating_add(cursor_range.end).min(max);
   let _ = doc.set_selection(Selection::single(anchor, head));
+}
+
+fn inline_completion_trace_text_preview(text: &str) -> String {
+  let mut out = text.trim_end().to_string();
+  if out.chars().count() > 80 {
+    out = out.chars().take(77).collect::<String>();
+    out.push_str("...");
+  }
+  out
+}
+
+fn trace_swift_inline_virtual_layout(
+  phase: &str,
+  plan: &RenderPlan,
+  layout: &the_lib::render::VirtualLinesLayout,
+  viewport_width: usize,
+  scroll_col: usize,
+) {
+  let inserted_rows = layout
+    .row_insertions
+    .iter()
+    .map(|insertion| insertion.inserted_rows)
+    .sum::<usize>();
+  let row_insertions = layout
+    .row_insertions
+    .iter()
+    .map(|insertion| {
+      serde_json::json!({
+        "base_row": insertion.base_row,
+        "inserted_rows": insertion.inserted_rows,
+      })
+    })
+    .collect::<Vec<_>>();
+  let layout_lines = layout
+    .lines
+    .iter()
+    .take(24)
+    .map(|line| {
+      serde_json::json!({
+        "row": line.row,
+        "col": line.col,
+        "text_preview": inline_completion_trace_text_preview(line.text.as_ref()),
+      })
+    })
+    .collect::<Vec<_>>();
+  let plan_virtual_rows = plan
+    .lines
+    .iter()
+    .filter_map(|line| {
+      let virtual_spans = line
+        .spans
+        .iter()
+        .filter(|span| span.is_virtual)
+        .map(|span| {
+          serde_json::json!({
+            "col": span.col,
+            "cols": span.cols,
+            "text_preview": inline_completion_trace_text_preview(span.text.as_ref()),
+          })
+        })
+        .collect::<Vec<_>>();
+      if virtual_spans.is_empty() {
+        None
+      } else {
+        Some(serde_json::json!({
+          "row": line.row,
+          "span_count": virtual_spans.len(),
+          "spans": virtual_spans,
+        }))
+      }
+    })
+    .take(24)
+    .collect::<Vec<_>>();
+  the_default::inline_completion_trace_event(
+    "swift_inline_virtual_layout",
+    serde_json::json!({
+      "phase": phase,
+      "viewport_height": plan.viewport.height,
+      "viewport_width": viewport_width,
+      "scroll_row": plan.scroll.row,
+      "scroll_col": scroll_col,
+      "layout_line_count": layout.lines.len(),
+      "inserted_rows": inserted_rows,
+      "row_insertions": row_insertions,
+      "layout_lines": layout_lines,
+      "plan_virtual_rows": plan_virtual_rows,
+    }),
+  );
 }
 
 fn selected_completion_docs_text(editor: &SwiftEditor) -> Option<&str> {
@@ -11678,15 +12305,21 @@ fn open_item_kind_from_code(raw: u8) -> Option<OpenItemKind> {
 
 fn pane_content_from_open_item_raw(kind_raw: u8, item_raw: usize) -> Option<PaneContent> {
   match open_item_kind_from_code(kind_raw)? {
-    OpenItemKind::Buffer => Some(PaneContent::EditorBuffer {
-      buffer_id: buffer_id_from_raw(item_raw)?,
-    }),
-    OpenItemKind::Terminal => Some(PaneContent::ClientSurface {
-      surface_id: client_surface_id_from_raw(item_raw)?,
-    }),
-    OpenItemKind::Agent => Some(PaneContent::Agent {
-      agent_id: agent_item_id_from_raw(item_raw)?,
-    }),
+    OpenItemKind::Buffer => {
+      Some(PaneContent::EditorBuffer {
+        buffer_id: buffer_id_from_raw(item_raw)?,
+      })
+    },
+    OpenItemKind::Terminal => {
+      Some(PaneContent::ClientSurface {
+        surface_id: client_surface_id_from_raw(item_raw)?,
+      })
+    },
+    OpenItemKind::Agent => {
+      Some(PaneContent::Agent {
+        agent_id: agent_item_id_from_raw(item_raw)?,
+      })
+    },
   }
 }
 
@@ -12362,12 +12995,7 @@ fn max_scroll_row(line_count: usize, _viewport_height: usize) -> usize {
   line_count.saturating_sub(1)
 }
 
-fn max_scroll_col(doc: &Document, text_format: &TextFormat, viewport_width: usize) -> usize {
-  if text_format.soft_wrap {
-    return 0;
-  }
-
-  let viewport_width = viewport_width.max(1);
+fn document_longest_visual_col(doc: &Document) -> usize {
   let mut longest_visual_col = 1usize;
   for line in doc.text().slice(..).lines() {
     let line = line.to_string();
@@ -12379,7 +13007,7 @@ fn max_scroll_col(doc: &Document, text_format: &TextFormat, viewport_width: usiz
     longest_visual_col = longest_visual_col.max(visual_col);
   }
 
-  longest_visual_col.saturating_sub(viewport_width.saturating_sub(1))
+  longest_visual_col
 }
 
 fn resolve_session_path(path: &Path) -> PathBuf {
@@ -13139,6 +13767,16 @@ pub unsafe extern "C" fn the_editor_take_quit_requested(handle: *mut the_editor_
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_take_add_selection_to_agent_requested(
+  handle: *mut the_editor_handle_t,
+) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return false;
+  };
+  handle.editor.take_add_selection_to_agent_requested()
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn the_editor_open_terminal_in_active_pane(
   handle: *mut the_editor_handle_t,
 ) -> bool {
@@ -13277,6 +13915,86 @@ pub unsafe extern "C" fn the_editor_primary_selection_utf16_length(
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_primary_selection_start_char(
+  handle: *mut the_editor_handle_t,
+) -> usize {
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return 0;
+  };
+  handle
+    .editor
+    .primary_selection_char_range()
+    .map(|(start, _)| start)
+    .unwrap_or(0)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_primary_selection_end_char(
+  handle: *mut the_editor_handle_t,
+) -> usize {
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return 0;
+  };
+  handle
+    .editor
+    .primary_selection_char_range()
+    .map(|(_, end)| end)
+    .unwrap_or(0)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_primary_selection_start_line(
+  handle: *mut the_editor_handle_t,
+) -> u32 {
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return 0;
+  };
+  handle
+    .editor
+    .primary_selection_line_range()
+    .map(|(start, _)| start)
+    .unwrap_or(0)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_primary_selection_end_line(
+  handle: *mut the_editor_handle_t,
+) -> u32 {
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return 0;
+  };
+  handle
+    .editor
+    .primary_selection_line_range()
+    .map(|(_, end)| end)
+    .unwrap_or(0)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_replace_char_range(
+  handle: *mut the_editor_handle_t,
+  file_path: *const c_char,
+  start: usize,
+  end: usize,
+  expected_text: *const c_char,
+  text: *const c_char,
+) -> bool {
+  let Some(handle) = (unsafe { handle.as_mut() }) else {
+    return false;
+  };
+  let file_path = unsafe { string_from_c(file_path) }.map(PathBuf::from);
+  let Some(expected_text) = (unsafe { string_from_c(expected_text) }) else {
+    return false;
+  };
+  let Some(text) = (unsafe { string_from_c(text) }) else {
+    return false;
+  };
+  handle
+    .editor
+    .replace_char_range(file_path.as_deref(), start, end, &expected_text, &text)
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn the_editor_primary_selection_text(
   handle: *mut the_editor_handle_t,
 ) -> *mut c_char {
@@ -13309,15 +14027,16 @@ pub unsafe extern "C" fn the_editor_render_markdown(
     let run_start = runs.len();
     for run in block.runs {
       let text = CString::new(run.text.replace('\0', "")).unwrap_or_else(|_| CString::default());
-      let link_destination = run
-        .link_destination
-        .as_ref()
-        .map(|destination| CString::new(destination.replace('\0', "")).unwrap_or_else(|_| CString::default()));
+      let link_destination = run.link_destination.as_ref().map(|destination| {
+        CString::new(destination.replace('\0', "")).unwrap_or_else(|_| CString::default())
+      });
       let ffi_run = the_editor_snapshot_docs_run_t {
         text:             text.as_ptr(),
         style:            style_to_ffi(run.style, &handle.editor.ui_theme),
         kind:             docs_run_kind_code(run.kind),
-        link_destination: link_destination.as_ref().map_or(ptr::null(), |value| value.as_ptr()),
+        link_destination: link_destination
+          .as_ref()
+          .map_or(ptr::null(), |value| value.as_ptr()),
       };
       runs.push(RenderedMarkdownRunRecord {
         run: ffi_run,
@@ -13331,12 +14050,14 @@ pub unsafe extern "C" fn the_editor_render_markdown(
       .map(|value| CString::new(value.replace('\0', "")).unwrap_or_else(|_| CString::default()));
     blocks.push(RenderedMarkdownBlockRecord {
       block: the_editor_markdown_block_t {
-        kind:       markdown_block_kind_code(block.kind),
-        level:      block.level,
+        kind: markdown_block_kind_code(block.kind),
+        level: block.level,
         list_depth: u16::try_from(block.list_depth).unwrap_or(u16::MAX),
         run_start,
-        run_count:  runs.len().saturating_sub(run_start),
-        language:   language.as_ref().map_or(ptr::null(), |value| value.as_ptr()),
+        run_count: runs.len().saturating_sub(run_start),
+        language: language
+          .as_ref()
+          .map_or(ptr::null(), |value| value.as_ptr()),
       },
       language,
     });
@@ -13379,7 +14100,10 @@ pub unsafe extern "C" fn the_editor_markdown_render_run_at(
     .map(|record| {
       let mut run = record.run;
       run.text = record.text.as_ptr();
-      run.link_destination = record.link_destination.as_ref().map_or(ptr::null(), |value| value.as_ptr());
+      run.link_destination = record
+        .link_destination
+        .as_ref()
+        .map_or(ptr::null(), |value| value.as_ptr());
       run
     })
     .unwrap_or_default()
@@ -13408,7 +14132,10 @@ pub unsafe extern "C" fn the_editor_markdown_render_block_at(
     .get(block_index)
     .map(|record| {
       let mut block = record.block;
-      block.language = record.language.as_ref().map_or(ptr::null(), |value| value.as_ptr());
+      block.language = record
+        .language
+        .as_ref()
+        .map_or(ptr::null(), |value| value.as_ptr());
       block
     })
     .unwrap_or_default()
@@ -13596,6 +14323,45 @@ pub unsafe extern "C" fn the_editor_snapshot_completion_menu_item_at(
     .completion_menu_items
     .get(item_index)
     .map(|record| record.item)
+    .unwrap_or_default()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_snapshot_inline_completion(
+  snapshot: *const the_editor_snapshot_t,
+) -> the_editor_snapshot_inline_completion_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else {
+    return the_editor_snapshot_inline_completion_t::default();
+  };
+  snapshot.snapshot.inline_completion.inline_completion
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_snapshot_inline_completion_presentation(
+  snapshot: *const the_editor_snapshot_t,
+) -> the_editor_snapshot_inline_completion_presentation_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else {
+    return the_editor_snapshot_inline_completion_presentation_t::default();
+  };
+  snapshot
+    .snapshot
+    .inline_completion_presentation
+    .presentation
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn the_editor_snapshot_inline_completion_presentation_line_at(
+  snapshot: *const the_editor_snapshot_t,
+  line_index: usize,
+) -> the_editor_snapshot_inline_completion_presentation_line_t {
+  let Some(snapshot) = (unsafe { snapshot.as_ref() }) else {
+    return the_editor_snapshot_inline_completion_presentation_line_t::default();
+  };
+  snapshot
+    .snapshot
+    .inline_completion_presentation_lines
+    .get(line_index)
+    .map(|record| record.line)
     .unwrap_or_default()
 }
 
@@ -14019,8 +14785,9 @@ thread_local! {
   static THE_EDITOR_ICON_GLYPH_BUFFER: RefCell<Vec<u8>> = RefCell::new(Vec::new());
 }
 
-/// Returns a pointer to a thread-local, NUL-terminated UTF-8 buffer holding the icon glyph.
-/// The pointer is invalidated by the next `the_editor_icon_glyph` call on the same thread.
+/// Returns a pointer to a thread-local, NUL-terminated UTF-8 buffer holding the
+/// icon glyph. The pointer is invalidated by the next `the_editor_icon_glyph`
+/// call on the same thread.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn the_editor_icon_glyph(
   icon: *const c_char,
@@ -14038,7 +14805,7 @@ pub unsafe extern "C" fn the_editor_icon_glyph(
       Err(_) => {
         buf.push(0);
         return buf.as_ptr().cast::<c_char>();
-      }
+      },
     };
     let glyph = file_picker_icon_glyph(icon_str, is_directory);
     buf.extend_from_slice(glyph.as_bytes());

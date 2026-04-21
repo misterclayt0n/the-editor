@@ -22,6 +22,80 @@ struct EditorActiveTerminalStatus: Equatable {
     let workingDirectory: String?
 }
 
+struct EditorInlineAssistModelSelection: Equatable {
+    let provider: String
+    let modelID: String
+
+    var reference: String {
+        "\(provider)/\(modelID)"
+    }
+}
+
+struct EditorInlineAssistState: Equatable, Identifiable {
+    enum Phase: Equatable {
+        case editing
+        case generating
+    }
+
+    let id: UUID
+    let selectionRange: NSRange
+    let selectionCharRange: Range<Int>
+    let selectionText: String
+    let filePath: String?
+    let sourceLabel: String
+    let lineRange: ClosedRange<Int>?
+    let language: String?
+    var prompt: String
+    var phase: Phase
+    var errorMessage: String?
+
+    init(
+        id: UUID = UUID(),
+        selectionRange: NSRange,
+        selectionCharRange: Range<Int>,
+        selectionText: String,
+        filePath: String?,
+        sourceLabel: String,
+        lineRange: ClosedRange<Int>?,
+        language: String?,
+        prompt: String = "",
+        phase: Phase = .editing,
+        errorMessage: String? = nil
+    ) {
+        self.id = id
+        self.selectionRange = selectionRange
+        self.selectionCharRange = selectionCharRange
+        self.selectionText = selectionText
+        self.filePath = filePath
+        self.sourceLabel = sourceLabel
+        self.lineRange = lineRange
+        self.language = language
+        self.prompt = prompt
+        self.phase = phase
+        self.errorMessage = errorMessage
+    }
+
+    var titleText: String {
+        if let lineRange {
+            if lineRange.lowerBound == lineRange.upperBound {
+                return "\(sourceLabel):\(lineRange.lowerBound)"
+            }
+            return "\(sourceLabel):\(lineRange.lowerBound)-\(lineRange.upperBound)"
+        }
+        return sourceLabel
+    }
+}
+
+private struct EditorAgentSelectionContext {
+    let text: String
+    let sourceLabel: String
+    let filePath: String?
+    let utf16Range: NSRange
+    let charRange: Range<Int>
+    let lineRange: ClosedRange<Int>?
+    let language: String?
+}
+
 @MainActor
 final class EditorSurfaceController: ObservableObject {
     weak var delegate: EditorSurfaceControllerDelegate?
@@ -34,6 +108,7 @@ final class EditorSurfaceController: ObservableObject {
     private(set) var pendingKeys: EditorPendingKeyState?
     private(set) var commandPalette: EditorCommandPaletteState = .empty
     private(set) var completionMenu: EditorCompletionMenuState = .empty
+    private(set) var inlineCompletion: EditorInlineCompletionState = .empty
     private(set) var inputPrompt: EditorInputPromptState = .empty
     private(set) var hoverDocs: EditorDocsPanelState = .empty
     private(set) var completionDocs: EditorDocsPanelState = .empty
@@ -42,9 +117,15 @@ final class EditorSurfaceController: ObservableObject {
     private(set) var bufferTabs: EditorBufferTabsState = .empty
     private(set) var openItems: EditorPaneOpenItemsState = .empty
     private(set) var fileTree: EditorFileTreeState = .empty
+    @Published private(set) var sidebarMode: EditorSidebarMode
     @Published private(set) var showsResizeOverlay = false
     @Published private(set) var bufferFontSize: CGFloat = EditorSurfaceController.defaultBufferFontSize
     @Published private(set) var agentControlledPaneID: UInt?
+    @Published private(set) var inlineAssistState: EditorInlineAssistState?
+    @Published private(set) var inlineAssistModels: [EditorAgentModel] = []
+    @Published private(set) var inlineAssistSelectedModel: EditorInlineAssistModelSelection?
+    @Published private(set) var inlineAssistThinkingLevel: String = "medium"
+    @Published private(set) var inlineAssistFocusRequestToken: UInt64 = 0
 
     static let defaultBufferFontSize: CGFloat = 14
     private static let minBufferFontSize: CGFloat = 6
@@ -60,6 +141,7 @@ final class EditorSurfaceController: ObservableObject {
     private var terminalPresentationBySurfaceID: [UInt: TerminalPresentationState] = [:]
 
     private var surfaceConfiguration: EditorSurfaceConfiguration?
+    private var surfaceConfigurationSignature: EditorSurfaceConfigurationSignature?
     private var markedText: String = ""
     private var backgroundPollCancellable: AnyCancellable?
     private var closeSurfaceEventMonitor: EventMonitorBox?
@@ -70,13 +152,22 @@ final class EditorSurfaceController: ObservableObject {
     private var interactiveResizeReasons: Set<String> = []
     private var pendingSurfaceConfiguration: EditorSurfaceConfiguration?
     private var surfaceConfigureFlushTask: Task<Void, Never>?
+    private var inlineAssistTask: Task<Void, Never>?
+    private var inlineAssistModelsTask: Task<Void, Never>?
+    private var inlineAssistRequestGeneration: UInt64 = 0
     private var lastSurfaceConfigureAt: CFAbsoluteTime = 0
 
     private let interactiveResizeMinInterval: CFTimeInterval = 1.0 / 30.0
+    private let supportedInlineAssistThinkingLevels = ["off", "minimal", "low", "medium", "high"]
+    private static let sidebarModeDefaultsKey = "swift.sidebar.mode"
 
     lazy var agentSessionSupervisor = EditorAgentSessionSupervisor(controller: self)
+    lazy var agentSidebarCoordinator = EditorAgentSidebarCoordinator(controller: self)
 
     init(initialPath: String?) {
+        self.sidebarMode = EditorSidebarMode(
+            rawValue: UserDefaults.standard.string(forKey: Self.sidebarModeDefaultsKey) ?? EditorSidebarMode.files.rawValue
+        ) ?? .files
         self.handle = EditorFFIBridge.createHandle(initialPath: initialPath).map(EditorHandleBox.init(raw:))
         _ = EditorFFIBridge.setEmbeddedTerminalEnabled(handle?.raw, enabled: GhosttyTerminalRegistry.isAvailable)
         installCloseSurfaceKeyMonitor()
@@ -87,6 +178,8 @@ final class EditorSurfaceController: ObservableObject {
     deinit {
         resizeOverlayHideTask?.cancel()
         surfaceConfigureFlushTask?.cancel()
+        inlineAssistTask?.cancel()
+        inlineAssistModelsTask?.cancel()
         if let closeSurfaceEventMonitor {
             NSEvent.removeMonitor(closeSurfaceEventMonitor.raw)
         }
@@ -129,9 +222,16 @@ final class EditorSurfaceController: ObservableObject {
 
     @discardableResult
     func configureSurface(size: CGSize, backingScale: CGFloat, fontMetrics: EditorFontMetrics) -> Bool {
+        sidebarPerfIncrement("surface.configure.request")
         let previousConfiguration = surfaceConfiguration
+        let previousSignature = surfaceConfigurationSignature
         let configuration = fontMetrics.surfaceConfiguration(viewSize: size, backingScale: backingScale)
-        guard configuration != surfaceConfiguration else { return false }
+        let signature = configuration.meaningfulSignature
+        if signature == previousSignature {
+            surfaceConfiguration = configuration
+            sidebarPerfIncrement("surface.configure.unchanged")
+            return false
+        }
         let sizeText = String(format: "%.1fx%.1f", size.width, size.height)
         let scaleText = String(format: "%.2f", backingScale)
         let oldPxText = previousConfiguration.map { "\($0.widthPx)x\($0.heightPx)" } ?? "nil"
@@ -143,6 +243,7 @@ final class EditorSurfaceController: ObservableObject {
         let elapsed = now - lastSurfaceConfigureAt
 
         if isInteractiveResizeActive && elapsed < interactiveResizeMinInterval {
+            sidebarPerfIncrement("surface.configure.deferred")
             pendingSurfaceConfiguration = configuration
             schedulePendingSurfaceConfigurationFlush(after: interactiveResizeMinInterval - elapsed)
             let elapsedMsText = String(format: "%.2f", elapsed * 1000)
@@ -167,12 +268,14 @@ final class EditorSurfaceController: ObservableObject {
     func beginInteractiveResize(reason: String) {
         let inserted = interactiveResizeReasons.insert(reason).inserted
         guard inserted else { return }
+        sidebarPerfIncrement("interactiveResize.begin")
         scrollPerfLog("controller.interactiveResize begin reason=\(reason) active=\(interactiveResizeReasons.sorted())")
     }
 
     func endInteractiveResize(reason: String) {
         let removed = interactiveResizeReasons.remove(reason) != nil
         guard removed else { return }
+        sidebarPerfIncrement("interactiveResize.end")
         scrollPerfLog("controller.interactiveResize end reason=\(reason) active=\(interactiveResizeReasons.sorted())")
         if !isInteractiveResizeActive {
             flushPendingSurfaceConfiguration(source: "interactive-end")
@@ -190,16 +293,23 @@ final class EditorSurfaceController: ObservableObject {
         reasonText: String,
         source: String
     ) -> Bool {
+        sidebarPerfIncrement("surface.configure.apply")
         pendingSurfaceConfiguration = nil
         surfaceConfigureFlushTask?.cancel()
         surfaceConfigureFlushTask = nil
         surfaceConfiguration = configuration
+        surfaceConfigurationSignature = configuration.meaningfulSignature
         lastSurfaceConfigureAt = CFAbsoluteTimeGetCurrent()
         scrollPerfLog(
             "controller.configureSurface apply source=\(source) reasons=\(reasonText) size=\(sizeText) backingScale=\(scaleText) oldPx=\(oldPxText) newPx=\(newPxText) cellPx=\(cellPxText)"
         )
-        guard EditorFFIBridge.configureSurface(handle?.raw, configuration: configuration) else { return false }
-        refreshSnapshot()
+        let ffiConfigured = measureSidebarSignpostedInterval("SurfaceConfigureFFI", counterKey: "surface.configure.ffi.ms") {
+            EditorFFIBridge.configureSurface(handle?.raw, configuration: configuration)
+        }
+        guard ffiConfigured else { return false }
+        measureSidebarSignpostedInterval("SurfaceConfigureRefreshSnapshot", counterKey: "surface.configure.refreshSnapshot.ms") {
+            refreshSnapshot()
+        }
         return true
     }
 
@@ -316,19 +426,6 @@ final class EditorSurfaceController: ObservableObject {
         refreshSnapshot()
     }
 
-    func activateAgentOpenItemIfNeeded(agentItemID: UInt) {
-        guard let group = openItems.groups.first(where: { group in
-            group.items.contains(where: { $0.kind == .agent && $0.itemID == agentItemID })
-        }),
-        let item = group.items.first(where: { $0.kind == .agent && $0.itemID == agentItemID })
-        else {
-            return
-        }
-
-        guard !group.isActivePane || !item.isActive else { return }
-        activateOpenItem(item)
-    }
-
     func setAgentControlledPane(_ paneID: UInt?) {
         guard agentControlledPaneID != paneID else { return }
         agentControlledPaneID = paneID
@@ -350,7 +447,7 @@ final class EditorSurfaceController: ObservableObject {
 
         guard EditorFFIBridge.followPath(handle?.raw, path: path, startLine: lineStart, endLine: lineEnd) else {
             if targetPaneID != nil {
-                activateAgentOpenItemIfNeeded(agentItemID: agentItemID)
+                activateAgentUIIfNeeded(agentItemID: agentItemID)
             }
             return preferredPaneID
         }
@@ -360,7 +457,7 @@ final class EditorSurfaceController: ObservableObject {
         if let resolvedPaneID {
             setAgentControlledPane(resolvedPaneID)
         }
-        activateAgentOpenItemIfNeeded(agentItemID: agentItemID)
+        activateAgentUIIfNeeded(agentItemID: agentItemID)
         return resolvedPaneID
     }
 
@@ -491,18 +588,23 @@ final class EditorSurfaceController: ObservableObject {
     }
 
     func openAgentInActivePane() {
-        guard EditorFFIBridge.openAgentInActivePane(handle?.raw) else { return }
-        refreshSnapshot()
+        showSidebar(mode: .agent)
+        agentSidebarCoordinator.store.startIfNeeded()
+        agentSidebarCoordinator.store.requestComposerFocus()
     }
 
     func closeAgentPane(_ paneID: UInt? = nil) {
+        if paneID == nil, fileTree.isVisible, sidebarMode == .agent {
+            toggleFileTree()
+            focusEditor()
+            return
+        }
+
         let targetItem: EditorPaneOpenItemRow?
         if let paneID {
             targetItem = openItems.groups.first(where: { $0.paneID == paneID })?.items.first(where: { $0.kind == .agent })
-        } else if let activeAgentPane {
-            targetItem = activeAgentPane
         } else {
-            targetItem = openItems.groups.first(where: { $0.isActivePane })?.items.first(where: { $0.kind == .agent })
+            targetItem = openItems.groups.flatMap(\.items).first(where: { $0.kind == .agent })
         }
         guard let targetItem,
               EditorFFIBridge.closeOpenItem(handle?.raw, paneID: targetItem.paneID, kind: targetItem.kind, itemID: targetItem.itemID)
@@ -539,11 +641,6 @@ final class EditorSurfaceController: ObservableObject {
         activeOpenItem?.kind
     }
 
-    var activeAgentPane: EditorPaneOpenItemRow? {
-        guard let activeOpenItem, activeOpenItem.kind == .agent else { return nil }
-        return activeOpenItem
-    }
-
     var activeTerminalStatus: EditorActiveTerminalStatus? {
         guard let item = activeOpenItem,
               item.kind == .terminal,
@@ -573,6 +670,14 @@ final class EditorSurfaceController: ObservableObject {
             guard let self else {
                 return event
             }
+            if self.shouldHandleDismissInlineAssistShortcut(event) {
+                self.dismissInlineAssist()
+                return nil
+            }
+            if self.shouldHandleInlineAssistShortcut(event) {
+                self.beginInlineAssist()
+                return nil
+            }
             if let paneLocalIndex = self.paneLocalOpenItemShortcutIndex(for: event),
                self.activatePaneLocalOpenItem(at: paneLocalIndex) {
                 return nil
@@ -601,6 +706,20 @@ final class EditorSurfaceController: ObservableObject {
         default:
             return nil
         }
+    }
+
+    private func shouldHandleInlineAssistShortcut(_ event: NSEvent) -> Bool {
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        guard flags == [.control] else { return false }
+        guard event.keyCode == 36 || event.keyCode == 76 else { return false }
+        return inlineAssistState != nil || canStartInlineAssist
+    }
+
+    private func shouldHandleDismissInlineAssistShortcut(_ event: NSEvent) -> Bool {
+        guard let inlineAssistState, inlineAssistState.phase == .editing else { return false }
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        guard flags.isEmpty else { return false }
+        return event.keyCode == 53
     }
 
     private func shouldHandleCloseSurfaceShortcut(_ event: NSEvent) -> Bool {
@@ -724,6 +843,16 @@ final class EditorSurfaceController: ObservableObject {
             markedText = ""
         }
         refreshSnapshot()
+    }
+
+    func acceptInlineCompletion() {
+        guard inlineCompletion.visible else { return }
+        handleKey(the_editor_key_event_t(kind: THE_EDITOR_KEY_TAB.rawValue, codepoint: 0, modifiers: 0))
+    }
+
+    func dismissInlineCompletion() {
+        guard inlineCompletion.visible else { return }
+        handleKey(the_editor_key_event_t(kind: THE_EDITOR_KEY_ESCAPE.rawValue, codepoint: 0, modifiers: 0))
     }
 
     func toggleCommandPalette() {
@@ -961,6 +1090,29 @@ final class EditorSurfaceController: ObservableObject {
         )
     }
 
+    func setSidebarMode(_ mode: EditorSidebarMode) {
+        guard sidebarMode != mode else {
+            setFileTreeActive(mode == .files)
+            return
+        }
+        sidebarMode = mode
+        UserDefaults.standard.set(mode.rawValue, forKey: Self.sidebarModeDefaultsKey)
+        setFileTreeActive(mode == .files)
+    }
+
+    func showSidebar(mode: EditorSidebarMode) {
+        setSidebarMode(mode)
+        if !fileTree.isVisible {
+            toggleFileTree()
+        }
+    }
+
+    func activateAgentUIIfNeeded(agentItemID: UInt) {
+        _ = agentItemID
+        showSidebar(mode: .agent)
+        setFileTreeActive(false)
+    }
+
     func setCommandPaletteQuery(_ query: String) {
         commandPaletteDebugLog("setQuery incoming=\(String(reflecting: query)) current=\(String(reflecting: commandPalette.query))")
         guard query != commandPalette.query else { return }
@@ -1028,11 +1180,276 @@ final class EditorSurfaceController: ObservableObject {
         EditorFFIBridge.primarySelectionText(handle?.raw)
     }
 
+    func primarySelectionLineRange() -> ClosedRange<Int>? {
+        EditorFFIBridge.primarySelectionLineRange(handle?.raw)
+    }
+
+    var primarySelectionDisplayRect: CGRect? {
+        guard let scene,
+              let activeOpenItem,
+              activeOpenItem.kind == .buffer
+        else {
+            return nil
+        }
+
+        let rects = scene.selections.compactMap { selection -> CGRect? in
+            guard selection.kind == .primary,
+                  let pane = scene.paneContainingCell(col: selection.x, row: selection.y),
+                  pane.paneID == activeOpenItem.paneID
+            else {
+                return nil
+            }
+            let rect = scene.displayRect(
+                x: selection.x,
+                y: selection.y,
+                width: selection.width,
+                height: selection.height,
+                paneID: pane.paneID
+            )
+            let clippedRect = rect.intersection(scene.paneContentRect(for: pane))
+            guard clippedRect.width > 0, clippedRect.height > 0 else {
+                return nil
+            }
+            return clippedRect
+        }
+
+        guard let firstRect = rects.first else { return nil }
+        return rects.dropFirst().reduce(firstRect) { partialResult, rect in
+            partialResult.union(rect)
+        }
+    }
+
+    var inlineAssistPaneContentRect: CGRect? {
+        guard let scene,
+              let activeOpenItem,
+              activeOpenItem.kind == .buffer,
+              let pane = scene.pane(id: activeOpenItem.paneID)
+        else {
+            return nil
+        }
+        return scene.paneContentRect(for: pane)
+    }
+
+    var canStartInlineAssist: Bool {
+        guard activeOpenItem?.kind == .buffer,
+              !commandPalette.isOpen,
+              !filePicker.isOpen,
+              !inputPrompt.isOpen,
+              !completionMenu.isOpen
+        else {
+            return false
+        }
+        let selectionRange = primarySelectionUTF16Range()
+        return selectionRange.length > 0 && primarySelectionDisplayRect != nil
+    }
+
+    func beginInlineAssist(prefilledPrompt: String? = nil) {
+        if let inlineAssistState {
+            agentDebugLog("inlineAssist.focusExisting phase=\(String(describing: inlineAssistState.phase))")
+            if inlineAssistState.phase == .editing {
+                focusInlineAssistPrompt()
+            }
+            return
+        }
+        guard canStartInlineAssist,
+              let selectionContext = currentAgentSelectionContext()
+        else {
+            NSSound.beep()
+            return
+        }
+
+        inlineAssistTask?.cancel()
+        inlineAssistRequestGeneration &+= 1
+        agentDebugLog("inlineAssist.begin generation=\(inlineAssistRequestGeneration) file=\(selectionContext.filePath ?? "-") lines=\(selectionContext.lineRange.map { "\($0.lowerBound)-\($0.upperBound)" } ?? "-") selectionChars=\(selectionContext.text.count) prefilledPromptChars=\((prefilledPrompt ?? "").count)")
+        inlineAssistState = EditorInlineAssistState(
+            selectionRange: selectionContext.utf16Range,
+            selectionCharRange: selectionContext.charRange,
+            selectionText: selectionContext.text,
+            filePath: selectionContext.filePath,
+            sourceLabel: selectionContext.sourceLabel,
+            lineRange: selectionContext.lineRange,
+            language: selectionContext.language,
+            prompt: prefilledPrompt ?? ""
+        )
+        loadInlineAssistModelsIfNeeded(preferred: agentSidebarCoordinator.preferredInlineModelSelection())
+    }
+
+    func dismissInlineAssist() {
+        agentDebugLog("inlineAssist.dismiss state=\(inlineAssistState.map { String(describing: $0.phase) } ?? "nil") generation=\(inlineAssistRequestGeneration)")
+        inlineAssistTask?.cancel()
+        inlineAssistTask = nil
+        inlineAssistModelsTask?.cancel()
+        inlineAssistModelsTask = nil
+        inlineAssistRequestGeneration &+= 1
+        inlineAssistState = nil
+        inlineAssistModels = []
+        inlineAssistSelectedModel = nil
+        focusEditor()
+    }
+
+    func updateInlineAssistPrompt(_ prompt: String) {
+        guard var inlineAssistState else { return }
+        guard inlineAssistState.prompt != prompt else { return }
+        inlineAssistState.prompt = prompt
+        inlineAssistState.errorMessage = nil
+        self.inlineAssistState = inlineAssistState
+    }
+
+    func retryInlineAssist() {
+        submitInlineAssist()
+    }
+
+    func setInlineAssistModel(provider: String, modelID: String) {
+        agentDebugLog("inlineAssist.model provider=\(provider) model=\(modelID)")
+        inlineAssistSelectedModel = EditorInlineAssistModelSelection(provider: provider, modelID: modelID)
+        normalizeInlineAssistThinkingLevel()
+    }
+
+    func setInlineAssistThinkingLevel(_ level: String) {
+        let availableLevels = availableInlineAssistThinkingLevels()
+        guard availableLevels.contains(level) else { return }
+        inlineAssistThinkingLevel = level
+    }
+
+    func submitInlineAssist() {
+        guard var inlineAssistState else { return }
+        let prompt = inlineAssistState.prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !prompt.isEmpty else {
+            inlineAssistState.errorMessage = "Enter a rewrite instruction first."
+            self.inlineAssistState = inlineAssistState
+            return
+        }
+        guard let selectionContext = validatedInlineAssistSelectionContext(for: inlineAssistState) else {
+            inlineAssistState.errorMessage = "The selection changed. Reopen inline assist on the text you want to rewrite."
+            inlineAssistState.phase = .editing
+            self.inlineAssistState = inlineAssistState
+            return
+        }
+        guard inlineAssistSelectedModel != nil else {
+            inlineAssistState.errorMessage = inlineAssistModels.isEmpty
+                ? "No inline rewrite models are available."
+                : "Choose a model for inline rewrite."
+            inlineAssistState.phase = .editing
+            self.inlineAssistState = inlineAssistState
+            return
+        }
+
+        inlineAssistState.phase = .generating
+        inlineAssistState.errorMessage = nil
+        self.inlineAssistState = inlineAssistState
+        focusEditor()
+
+        inlineAssistTask?.cancel()
+        inlineAssistRequestGeneration &+= 1
+        let requestGeneration = inlineAssistRequestGeneration
+        let selectedModel = inlineAssistSelectedModel
+        let modelSourceSessionPath = selectedModel.flatMap {
+            self.agentSidebarCoordinator.sessionPathForInlineModel(provider: $0.provider, modelID: $0.modelID)
+        }
+        agentDebugLog("inlineAssist.submit.begin generation=\(requestGeneration) stateID=\(inlineAssistState.id.uuidString) file=\(selectionContext.filePath ?? "-") lines=\(selectionContext.lineRange.map { "\($0.lowerBound)-\($0.upperBound)" } ?? "-") selectionChars=\(selectionContext.text.count) promptChars=\(prompt.count) model=\(selectedModel.map { "\($0.provider)/\($0.modelID)" } ?? "nil") modelSourceSessionPath=\(modelSourceSessionPath ?? "nil")")
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(15))
+            await MainActor.run {
+                guard let self,
+                      self.inlineAssistRequestGeneration == requestGeneration,
+                      let currentState = self.inlineAssistState,
+                      currentState.id == inlineAssistState.id,
+                      currentState.phase == .generating
+                else {
+                    return
+                }
+                agentDebugLog("inlineAssist.submit.stillRunning generation=\(requestGeneration) stateID=\(currentState.id.uuidString) promptChars=\(currentState.prompt.count) selectedModel=\(self.inlineAssistSelectedModel.map { "\($0.provider)/\($0.modelID)" } ?? "nil")")
+            }
+        }
+        inlineAssistTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let response = try await self.agentSessionSupervisor.inlineRewrite(
+                    cwd: self.editorWorkingDirectory,
+                    filePath: selectionContext.filePath,
+                    sourceLabel: selectionContext.sourceLabel,
+                    lineStart: selectionContext.lineRange?.lowerBound,
+                    lineEnd: selectionContext.lineRange?.upperBound,
+                    language: selectionContext.language,
+                    selectionText: selectionContext.text,
+                    prompt: prompt,
+                    provider: selectedModel?.provider,
+                    modelID: selectedModel?.modelID,
+                    modelSourceSessionPath: modelSourceSessionPath,
+                    thinkingLevel: inlineAssistThinkingLevel
+                )
+                guard !Task.isCancelled else { return }
+                let rewrittenText = (response["text"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                await MainActor.run {
+                    guard self.inlineAssistRequestGeneration == requestGeneration,
+                          var currentState = self.inlineAssistState,
+                          currentState.id == inlineAssistState.id
+                    else {
+                        return
+                    }
+                    if rewrittenText.isEmpty {
+                        currentState.phase = .editing
+                        currentState.errorMessage = "Inline rewrite returned no text."
+                        agentDebugLog("inlineAssist.submit.empty generation=\(requestGeneration) stateID=\(currentState.id.uuidString)")
+                        self.inlineAssistState = currentState
+                    } else if self.applyInlineAssistRewriteDirect(rewrittenText, for: currentState) {
+                        agentDebugLog("inlineAssist.submit.success generation=\(requestGeneration) stateID=\(currentState.id.uuidString) resultChars=\(rewrittenText.count)")
+                        self.dismissInlineAssist()
+                    } else {
+                        currentState.phase = .editing
+                        currentState.errorMessage = "Couldn’t apply inline rewrite. Generate again."
+                        agentDebugLog("inlineAssist.submit.applyFailed generation=\(requestGeneration) stateID=\(currentState.id.uuidString) resultChars=\(rewrittenText.count)")
+                        self.inlineAssistState = currentState
+                    }
+                    self.inlineAssistTask = nil
+                }
+            } catch {
+                if Task.isCancelled {
+                    agentDebugLog("inlineAssist.submit.cancelled generation=\(requestGeneration)")
+                    return
+                }
+                await MainActor.run {
+                    guard self.inlineAssistRequestGeneration == requestGeneration,
+                          var currentState = self.inlineAssistState,
+                          currentState.id == inlineAssistState.id
+                    else {
+                        return
+                    }
+                    currentState.phase = .editing
+                    currentState.errorMessage = error.localizedDescription
+                    agentDebugLog("inlineAssist.submit.error generation=\(requestGeneration) stateID=\(currentState.id.uuidString) error=\(error.localizedDescription)")
+                    self.inlineAssistState = currentState
+                    self.inlineAssistTask = nil
+                }
+            }
+        }
+    }
+
+    func addPrimarySelectionToAgent() {
+        guard let selectionContext = currentAgentSelectionContext() else {
+            return
+        }
+
+        let store = agentSidebarCoordinator.storeForSelectionRouting()
+        showSidebar(mode: .agent)
+        store.startIfNeeded()
+        store.activateAgentSurfaceIfNeeded()
+        store.appendSelectionAttachment(
+            EditorAgentSelectionAttachment(
+                sourceLabel: selectionContext.sourceLabel,
+                lineRange: selectionContext.lineRange,
+                text: selectionContext.text,
+                language: selectionContext.language
+            )
+        )
+    }
+
     func renderMarkdown(_ markdown: String) -> EditorRenderedMarkdown {
         EditorFFIBridge.renderMarkdown(handle?.raw, markdown: markdown)
     }
 
     func beginLiveResize() {
+        sidebarPerfIncrement("window.liveResize.begin")
         beginInteractiveResize(reason: "window")
         resizeOverlayHideTask?.cancel()
         if !showsResizeOverlay {
@@ -1041,6 +1458,7 @@ final class EditorSurfaceController: ObservableObject {
     }
 
     func endLiveResize() {
+        sidebarPerfIncrement("window.liveResize.end")
         endInteractiveResize(reason: "window")
         resizeOverlayHideTask?.cancel()
         resizeOverlayHideTask = Task { @MainActor [weak self] in
@@ -1051,10 +1469,15 @@ final class EditorSurfaceController: ObservableObject {
     }
 
     func refreshSnapshot() {
+        sidebarPerfIncrement("controller.refreshSnapshot.request")
         let wasInputPromptOpen = inputPrompt.isOpen
         let started = CFAbsoluteTimeGetCurrent()
-        guard let snapshot = EditorFFIBridge.makeSnapshot(handle?.raw) else { return }
+        guard var snapshot = EditorFFIBridge.makeSnapshot(handle?.raw) else { return }
+        if purgeLegacyAgentOpenItemsIfNeeded(snapshot.openItems), let refreshedSnapshot = EditorFFIBridge.makeSnapshot(handle?.raw) {
+            snapshot = refreshedSnapshot
+        }
         let shouldQuitApplication = EditorFFIBridge.takeQuitRequested(handle?.raw)
+        let shouldAddSelectionToAgent = EditorFFIBridge.takeAddSelectionToAgentRequested(handle?.raw)
         let snapshotMs = (CFAbsoluteTimeGetCurrent() - started) * 1000
         let nextChrome = EditorChromeModel(
             document: snapshot.document,
@@ -1075,6 +1498,7 @@ final class EditorSurfaceController: ObservableObject {
         pendingKeys = snapshot.pendingKeys
         commandPalette = snapshot.commandPalette
         completionMenu = snapshot.completionMenu
+        inlineCompletion = snapshot.inlineCompletion
         inputPrompt = snapshot.inputPrompt
         hoverDocs = snapshot.hoverDocs
         completionDocs = snapshot.completionDocs
@@ -1114,7 +1538,13 @@ final class EditorSurfaceController: ObservableObject {
                 self?.focusEditor()
             }
         }
+        validateInlineAssistAfterSnapshot()
         let totalMs = (CFAbsoluteTimeGetCurrent() - started) * 1000
+        sidebarPerfRecordDuration("controller.refreshSnapshot.total.ms", ms: totalMs)
+        sidebarPerfRecordDuration("controller.refreshSnapshot.snapshot.ms", ms: snapshotMs)
+        sidebarPerfRecordDuration("controller.refreshSnapshot.scene.ms", ms: sceneMs)
+        sidebarPerfRecordDuration("controller.refreshSnapshot.publish.ms", ms: publishMs)
+        sidebarPerfRecordDuration("controller.refreshSnapshot.delegate.ms", ms: delegateMs)
         themePerfLog(
             "controller.refresh themeGen=\(snapshot.info.themeGeneration) snapshotMs=\(String(format: "%.2f", snapshotMs)) sceneMs=\(String(format: "%.2f", sceneMs)) totalMs=\(String(format: "%.2f", totalMs))"
         )
@@ -1126,8 +1556,208 @@ final class EditorSurfaceController: ObservableObject {
                 "controller.refresh menuOpen=\(snapshot.completionMenu.isOpen) docsOpen=\(snapshot.completionDocs.isOpen) items=\(snapshot.completionMenu.items.count) selected=\(String(describing: snapshot.completionMenu.selectedIndex)) scroll=\(snapshot.completionMenu.scrollOffset) snapshotMs=\(String(format: "%.2f", snapshotMs)) sceneMs=\(String(format: "%.2f", sceneMs)) totalMs=\(String(format: "%.2f", totalMs))"
             )
         }
+        if shouldAddSelectionToAgent {
+            DispatchQueue.main.async { [weak self] in
+                self?.addPrimarySelectionToAgent()
+            }
+        }
         if shouldQuitApplication {
             quitApplication()
+        }
+    }
+
+    var editorWorkingDirectory: String {
+        if let root = fileTree.root, !root.isEmpty {
+            return root
+        }
+        if let absolutePath = chrome.document.absolutePath, !absolutePath.isEmpty {
+            return URL(fileURLWithPath: absolutePath).deletingLastPathComponent().path
+        }
+        return FileManager.default.currentDirectoryPath
+    }
+
+    private func currentAgentSelectionContext() -> EditorAgentSelectionContext? {
+        guard activeOpenItem?.kind == .buffer else { return nil }
+        let selectionRange = primarySelectionUTF16Range()
+        guard selectionRange.length > 0 else { return nil }
+        guard let selectionCharRange = EditorFFIBridge.primarySelectionCharRange(handle?.raw),
+              !selectionCharRange.isEmpty else { return nil }
+
+        let text = primarySelectionText()
+        guard !text.isEmpty else { return nil }
+
+        let document = chrome.document
+        let absolutePath = document.absolutePath
+        let sourceLabel = document.relativePath ?? absolutePath ?? document.name
+        let path = absolutePath ?? document.relativePath
+        return EditorAgentSelectionContext(
+            text: text,
+            sourceLabel: sourceLabel,
+            filePath: absolutePath,
+            utf16Range: selectionRange,
+            charRange: selectionCharRange,
+            lineRange: primarySelectionLineRange(),
+            language: selectionFenceLanguage(for: path, fallbackLanguageName: document.languageName)
+        )
+    }
+
+    private func validatedInlineAssistSelectionContext(for state: EditorInlineAssistState) -> EditorAgentSelectionContext? {
+        guard let selectionContext = currentAgentSelectionContext() else { return nil }
+        guard selectionContext.utf16Range == state.selectionRange,
+              selectionContext.charRange == state.selectionCharRange,
+              selectionContext.text == state.selectionText,
+              selectionContext.filePath == state.filePath
+        else {
+            return nil
+        }
+        return selectionContext
+    }
+
+    private func applyInlineAssistRewriteDirect(_ text: String, for state: EditorInlineAssistState) -> Bool {
+        guard EditorFFIBridge.replaceTextInCharRange(
+            handle?.raw,
+            filePath: state.filePath,
+            start: state.selectionCharRange.lowerBound,
+            end: state.selectionCharRange.upperBound,
+            expectedText: state.selectionText,
+            text: text
+        ) else {
+            return false
+        }
+        markedText = ""
+        refreshSnapshot()
+        return true
+    }
+
+    private func selectionFenceLanguage(for path: String?, fallbackLanguageName: String?) -> String? {
+        if let path {
+            let ext = URL(fileURLWithPath: path).pathExtension.lowercased()
+            if !ext.isEmpty {
+                return ext
+            }
+        }
+        guard let fallbackLanguageName else { return nil }
+        let normalized = fallbackLanguageName
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: " ", with: "-")
+        return normalized.isEmpty ? nil : normalized
+    }
+
+    private func validateInlineAssistAfterSnapshot() {
+        guard let inlineAssistState else { return }
+        if inlineAssistState.phase == .generating {
+            guard activeOpenItem?.kind == .buffer else { return }
+            return
+        }
+        guard activeOpenItem?.kind == .buffer,
+              validatedInlineAssistSelectionContext(for: inlineAssistState) != nil,
+              primarySelectionDisplayRect != nil
+        else {
+            dismissInlineAssist()
+            return
+        }
+    }
+
+    private func focusInlineAssistPrompt() {
+        inlineAssistFocusRequestToken &+= 1
+    }
+
+    private func loadInlineAssistModelsIfNeeded(preferred: (provider: String, modelID: String)?) {
+        let registryModels = agentSidebarCoordinator.availableInlineModels()
+        agentDebugLog("inlineAssist.models.begin registryCount=\(registryModels.count) preferred=\(preferred.map { "\($0.provider)/\($0.modelID)" } ?? "nil")")
+        if !registryModels.isEmpty {
+            applyInlineAssistModels(registryModels, preferred: preferred)
+        }
+
+        inlineAssistModelsTask?.cancel()
+        inlineAssistModelsTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let response = try await self.agentSessionSupervisor.listInlineRewriteModels(cwd: self.editorWorkingDirectory)
+                guard !Task.isCancelled else { return }
+                let helperModels = EditorAgentPanelStore.parseModels(response["result"])
+                await MainActor.run {
+                    guard self.inlineAssistState != nil else { return }
+                    let mergedModels = self.mergeInlineAssistModels(primary: self.agentSidebarCoordinator.availableInlineModels(), secondary: helperModels)
+                    agentDebugLog("inlineAssist.models.loaded helperCount=\(helperModels.count) mergedCount=\(mergedModels.count)")
+                    self.applyInlineAssistModels(mergedModels, preferred: preferred)
+                    self.focusInlineAssistPrompt()
+                }
+            } catch {
+                guard !Task.isCancelled else { return }
+                await MainActor.run {
+                    guard var inlineAssistState = self.inlineAssistState else { return }
+                    agentDebugLog("inlineAssist.models.error existingCount=\(self.inlineAssistModels.count) error=\(error.localizedDescription)")
+                    if self.inlineAssistModels.isEmpty {
+                        self.inlineAssistSelectedModel = nil
+                        inlineAssistState.errorMessage = error.localizedDescription
+                        self.inlineAssistState = inlineAssistState
+                    }
+                }
+            }
+        }
+    }
+
+    private func mergeInlineAssistModels(primary: [EditorAgentModel], secondary: [EditorAgentModel]) -> [EditorAgentModel] {
+        var seen: Set<String> = []
+        var merged: [EditorAgentModel] = []
+        for model in primary + secondary {
+            let key = model.reference.lowercased()
+            guard seen.insert(key).inserted else { continue }
+            merged.append(model)
+        }
+        return merged.sorted { lhs, rhs in
+            if lhs.isCurrent != rhs.isCurrent { return lhs.isCurrent }
+            let providerCompare = lhs.provider.localizedCaseInsensitiveCompare(rhs.provider)
+            if providerCompare != .orderedSame { return providerCompare == .orderedAscending }
+            return lhs.id.localizedCaseInsensitiveCompare(rhs.id) == .orderedAscending
+        }
+    }
+
+    func availableInlineAssistThinkingLevels() -> [String] {
+        selectedInlineAssistModel()?.supportsReasoning == true ? supportedInlineAssistThinkingLevels : ["off"]
+    }
+
+    private func selectedInlineAssistModel() -> EditorAgentModel? {
+        guard let selected = inlineAssistSelectedModel else { return nil }
+        return inlineAssistModels.first(where: { $0.provider == selected.provider && $0.id == selected.modelID })
+    }
+
+    private func normalizeInlineAssistThinkingLevel() {
+        let availableLevels = availableInlineAssistThinkingLevels()
+        if availableLevels.contains(inlineAssistThinkingLevel) {
+            return
+        }
+        inlineAssistThinkingLevel = availableLevels.contains("medium") ? "medium" : (availableLevels.first ?? "off")
+    }
+
+    private func applyInlineAssistModels(_ models: [EditorAgentModel], preferred: (provider: String, modelID: String)?) {
+        guard var currentState = inlineAssistState else { return }
+        agentDebugLog("inlineAssist.models.apply count=\(models.count) preferred=\(preferred.map { "\($0.provider)/\($0.modelID)" } ?? "nil") current=\(inlineAssistSelectedModel.map { "\($0.provider)/\($0.modelID)" } ?? "nil")")
+        inlineAssistModels = models
+        if let preferred,
+           models.contains(where: { $0.provider == preferred.provider && $0.id == preferred.modelID }) {
+            inlineAssistSelectedModel = EditorInlineAssistModelSelection(provider: preferred.provider, modelID: preferred.modelID)
+            currentState.errorMessage = nil
+            normalizeInlineAssistThinkingLevel()
+            inlineAssistState = currentState
+        } else if let current = inlineAssistSelectedModel,
+                  models.contains(where: { $0.provider == current.provider && $0.id == current.modelID }) {
+            currentState.errorMessage = nil
+            inlineAssistSelectedModel = current
+            normalizeInlineAssistThinkingLevel()
+            inlineAssistState = currentState
+        } else if let firstModel = models.first {
+            inlineAssistSelectedModel = EditorInlineAssistModelSelection(provider: firstModel.provider, modelID: firstModel.id)
+            currentState.errorMessage = nil
+            normalizeInlineAssistThinkingLevel()
+            inlineAssistState = currentState
+        } else {
+            inlineAssistSelectedModel = nil
+            inlineAssistThinkingLevel = "off"
+            currentState.errorMessage = "No inline rewrite models are configured. Add a Kimi model via opencode-go or a Composer model via Cursor."
+            inlineAssistState = currentState
         }
     }
 
@@ -1156,21 +1786,40 @@ final class EditorSurfaceController: ObservableObject {
         openItems = decorated
     }
 
+    private func purgeLegacyAgentOpenItemsIfNeeded(_ state: EditorPaneOpenItemsState) -> Bool {
+        let legacyAgentItems = state.groups.flatMap(\.items).filter { $0.kind == .agent }
+        guard !legacyAgentItems.isEmpty else { return false }
+
+        var didCloseAny = false
+        for item in legacyAgentItems {
+            if EditorFFIBridge.closeOpenItem(handle?.raw, paneID: item.paneID, kind: item.kind, itemID: item.itemID) {
+                didCloseAny = true
+            }
+        }
+        return didCloseAny
+    }
+
     private func pruneTerminalPresentation(validSurfaceIDs: Set<UInt>) {
         terminalPresentationBySurfaceID = terminalPresentationBySurfaceID.filter { validSurfaceIDs.contains($0.key) }
     }
 
     private func decorateOpenItems(_ state: EditorPaneOpenItemsState) -> EditorPaneOpenItemsState {
-        EditorPaneOpenItemsState(
-            isVisible: state.isVisible,
-            groups: state.groups.map { group in
-                EditorPaneOpenItemGroup(
-                    paneID: group.paneID,
-                    isActivePane: group.isActivePane,
-                    activeIndex: group.activeIndex,
-                    items: group.items.map(decorateOpenItem)
-                )
-            }
+        let groups = state.groups.compactMap { group -> EditorPaneOpenItemGroup? in
+            let items = group.items
+                .filter { $0.kind != .agent }
+                .map(decorateOpenItem)
+            guard !items.isEmpty else { return nil }
+            let activeIndex = items.firstIndex(where: { $0.isActive })
+            return EditorPaneOpenItemGroup(
+                paneID: group.paneID,
+                isActivePane: group.isActivePane,
+                activeIndex: activeIndex,
+                items: items
+            )
+        }
+        return EditorPaneOpenItemsState(
+            isVisible: state.isVisible && !groups.isEmpty,
+            groups: groups
         )
     }
 

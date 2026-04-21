@@ -86,7 +86,7 @@ struct EditorCommandMenu: Commands {
             }
             .keyboardShortcut("t", modifiers: [.command, .shift])
 
-            Button("Open Agent Pane") {
+            Button("Show Agent") {
                 controller.openAgentInActivePane()
             }
             .keyboardShortcut("a", modifiers: [.command, .shift])

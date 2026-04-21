@@ -33,4 +33,3 @@ Agent panel:
 - Add better support for the other commands:
   - /compact -> actually render the compaction
   - /tree    -> full support 
-- 

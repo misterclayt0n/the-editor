@@ -1574,6 +1574,7 @@ fn builtin_keymap_map() -> HashMap<Mode, KeyTrie> {
       "D" => workspace_diagnostics_picker,
       "g" => changed_file_picker,
       "a" => lsp_code_actions,
+      "t" => add_selection_to_agent,
       // "'" => last_picker,
       // NOT FOR NOW
       // "G" => { "Debug (experimental)" sticky=true

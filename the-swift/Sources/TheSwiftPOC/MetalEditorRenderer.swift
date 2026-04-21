@@ -56,6 +56,7 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
     }
 
     func update(scene: EditorRenderScene) {
+        sidebarPerfIncrement("renderer.update.request")
         let started = CFAbsoluteTimeGetCurrent()
         let previousThemeGeneration = lastThemeGeneration
         let cacheCountBefore = lineCache.count
@@ -75,6 +76,7 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
             view.setNeedsDisplay(view.bounds)
         }
         let totalMs = (CFAbsoluteTimeGetCurrent() - started) * 1000
+        sidebarPerfRecordDuration("renderer.update.ms", ms: totalMs)
         scrollPerfLog(
             "renderer.update damage=\(scene.info.damageReason) full=\(scene.info.damageIsFull) visibleLines=\(scene.lines.count) cacheBefore=\(cacheCountBefore) cacheAfter=\(cacheCountAfter) themeChanged=\(themeChanged) totalMs=\(String(format: "%.2f", totalMs))"
         )
@@ -101,6 +103,7 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
     }
 
     func draw(in view: MTKView) {
+        sidebarPerfIncrement("renderer.draw.request")
         let drawStarted = CFAbsoluteTimeGetCurrent()
         guard let scene,
               let drawable = view.currentDrawable,
@@ -286,6 +289,7 @@ final class MetalEditorRenderer: NSObject, MTKViewDelegate {
         commandBuffer.present(drawable)
         commandBuffer.commit()
         let totalMs = (CFAbsoluteTimeGetCurrent() - drawStarted) * 1000
+        sidebarPerfRecordDuration("renderer.draw.ms", ms: totalMs)
         themePerfLog(
             "renderer.draw themeGen=\(scene.info.themeGeneration) totalMs=\(String(format: "%.2f", totalMs)) cacheHits=\(perf.cacheHits) cacheMisses=\(perf.cacheMisses) rasterizedLines=\(perf.rasterizedLines) rasterizedCells=\(perf.rasterizedCells) rasterMs=\(String(format: "%.2f", perf.rasterMs))"
         )

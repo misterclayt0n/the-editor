@@ -61,17 +61,17 @@ pub(crate) struct FffFileSearchResponse {
 
 #[derive(Debug, Clone)]
 pub(crate) struct FffGrepMatch {
-  pub path:                 PathBuf,
+  pub path:                  PathBuf,
   pub line_number_one_based: usize,
-  pub line_text:            String,
-  pub match_bytes:          Vec<(usize, usize)>,
+  pub line_text:             String,
+  pub match_bytes:           Vec<(usize, usize)>,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct FffGrepResponse {
-  pub matches: Vec<FffGrepMatch>,
+  pub matches:  Vec<FffGrepMatch>,
   pub indexing: bool,
-  pub error:   Option<String>,
+  pub error:    Option<String>,
 }
 
 #[derive(Debug)]
@@ -160,8 +160,12 @@ fn workspace_backend(root: &Path) -> Result<Arc<FffWorkspaceBackend>, String> {
 impl FffWorkspaceBackend {
   fn new(root: PathBuf) -> Result<Self, String> {
     let db_root = backend_db_root(&root);
-    std::fs::create_dir_all(&db_root)
-      .map_err(|err| format!("failed to create fff cache dir '{}': {err}", db_root.display()))?;
+    std::fs::create_dir_all(&db_root).map_err(|err| {
+      format!(
+        "failed to create fff cache dir '{}': {err}",
+        db_root.display()
+      )
+    })?;
 
     let shared_picker = SharedPicker::default();
     let shared_frecency = SharedFrecency::default();
@@ -237,12 +241,14 @@ impl FffWorkspaceBackend {
     );
 
     Ok(FffFileSearchResponse {
-      hits: result
+      hits:          result
         .items
         .into_iter()
-        .map(|item| FffFileSearchHit {
-          path:     item.as_path().to_path_buf(),
-          location: result.location,
+        .map(|item| {
+          FffFileSearchHit {
+            path:     item.as_path().to_path_buf(),
+            location: result.location,
+          }
         })
         .collect(),
       total_matched: result.total_matched,
@@ -286,16 +292,16 @@ impl FffWorkspaceBackend {
     );
 
     Ok(FffGrepResponse {
-      matches: result
+      matches:  result
         .matches
         .into_iter()
         .filter_map(|matched| {
           let file = result.files.get(matched.file_index)?;
           Some(FffGrepMatch {
-            path:                 file.as_path().to_path_buf(),
+            path:                  file.as_path().to_path_buf(),
             line_number_one_based: matched.line_number as usize,
-            line_text:            matched.line_content,
-            match_bytes:          matched
+            line_text:             matched.line_content,
+            match_bytes:           matched
               .match_byte_offsets
               .into_iter()
               .map(|(start, end)| (start as usize, end as usize))
@@ -304,7 +310,7 @@ impl FffWorkspaceBackend {
         })
         .collect(),
       indexing: picker.get_scan_progress().is_scanning,
-      error:   result.regex_fallback_error,
+      error:    result.regex_fallback_error,
     })
   }
 

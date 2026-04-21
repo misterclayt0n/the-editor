@@ -320,6 +320,35 @@ typedef struct the_editor_snapshot_completion_menu_item_t {
   struct the_editor_rgba_t leading_color;
 } the_editor_snapshot_completion_menu_item_t;
 
+typedef struct the_editor_snapshot_inline_completion_t {
+  bool visible;
+  bool enabled;
+  uint8_t provider;
+  uint8_t status;
+  uint16_t anchor_col;
+  uint16_t anchor_row;
+  bool has_multiline;
+  bool has_suggestion;
+  bool has_presentation;
+  const char *debug_text;
+} the_editor_snapshot_inline_completion_t;
+
+typedef struct the_editor_snapshot_inline_completion_presentation_t {
+  bool visible;
+  uint8_t kind;
+  const char *title;
+  uintptr_t line_count;
+  bool has_target;
+  uint32_t target_line;
+  uint32_t target_char;
+  const char *accept_label;
+} the_editor_snapshot_inline_completion_presentation_t;
+
+typedef struct the_editor_snapshot_inline_completion_presentation_line_t {
+  uint8_t kind;
+  const char *text;
+} the_editor_snapshot_inline_completion_presentation_line_t;
+
 typedef enum the_editor_input_prompt_kind_t {
   THE_EDITOR_INPUT_PROMPT_SEARCH = 0,
   THE_EDITOR_INPUT_PROMPT_SELECT_REGEX = 1,
@@ -601,6 +630,7 @@ bool the_editor_move_open_item(the_editor_handle_t *handle, uintptr_t source_pan
 bool the_editor_split_open_item(the_editor_handle_t *handle, uintptr_t source_pane_id, uint8_t kind, uintptr_t item_id, uintptr_t target_pane_id, uint8_t direction);
 bool the_editor_set_embedded_terminal_enabled(the_editor_handle_t *handle, bool enabled);
 bool the_editor_take_quit_requested(the_editor_handle_t *handle);
+bool the_editor_take_add_selection_to_agent_requested(the_editor_handle_t *handle);
 bool the_editor_open_terminal_in_active_pane(the_editor_handle_t *handle);
 bool the_editor_open_agent_in_active_pane(the_editor_handle_t *handle);
 bool the_editor_close_terminal_in_active_pane(the_editor_handle_t *handle);
@@ -612,8 +642,13 @@ bool the_editor_file_tree_set_scroll_offset(the_editor_handle_t *handle, uintptr
 bool the_editor_file_tree_set_active(the_editor_handle_t *handle, bool active);
 bool the_editor_toggle_file_tree(the_editor_handle_t *handle);
 bool the_editor_insert_text(the_editor_handle_t *handle, const char *text);
+bool the_editor_replace_char_range(the_editor_handle_t *handle, const char *file_path, uintptr_t start, uintptr_t end, const char *expected_text, const char *text);
 uint32_t the_editor_primary_selection_utf16_location(the_editor_handle_t *handle);
 uint32_t the_editor_primary_selection_utf16_length(the_editor_handle_t *handle);
+uintptr_t the_editor_primary_selection_start_char(the_editor_handle_t *handle);
+uintptr_t the_editor_primary_selection_end_char(the_editor_handle_t *handle);
+uint32_t the_editor_primary_selection_start_line(the_editor_handle_t *handle);
+uint32_t the_editor_primary_selection_end_line(the_editor_handle_t *handle);
 char *the_editor_primary_selection_text(the_editor_handle_t *handle);
 
 the_editor_markdown_render_t *the_editor_render_markdown(the_editor_handle_t *handle, const char *markdown);
@@ -637,6 +672,9 @@ struct the_editor_snapshot_command_palette_t the_editor_snapshot_command_palette
 struct the_editor_snapshot_command_palette_item_t the_editor_snapshot_command_palette_item_at(const the_editor_snapshot_t *snapshot, uintptr_t item_index);
 struct the_editor_snapshot_completion_menu_t the_editor_snapshot_completion_menu(const the_editor_snapshot_t *snapshot);
 struct the_editor_snapshot_completion_menu_item_t the_editor_snapshot_completion_menu_item_at(const the_editor_snapshot_t *snapshot, uintptr_t item_index);
+struct the_editor_snapshot_inline_completion_t the_editor_snapshot_inline_completion(const the_editor_snapshot_t *snapshot);
+struct the_editor_snapshot_inline_completion_presentation_t the_editor_snapshot_inline_completion_presentation(const the_editor_snapshot_t *snapshot);
+struct the_editor_snapshot_inline_completion_presentation_line_t the_editor_snapshot_inline_completion_presentation_line_at(const the_editor_snapshot_t *snapshot, uintptr_t line_index);
 struct the_editor_snapshot_input_prompt_t the_editor_snapshot_input_prompt(const the_editor_snapshot_t *snapshot);
 struct the_editor_snapshot_docs_panel_t the_editor_snapshot_hover_docs_panel(const the_editor_snapshot_t *snapshot);
 struct the_editor_snapshot_docs_run_t the_editor_snapshot_hover_docs_run_at(const the_editor_snapshot_t *snapshot, uintptr_t run_index);

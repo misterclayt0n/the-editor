@@ -151,6 +151,44 @@ final class EditorAgentSessionSupervisor {
         ])
     }
 
+    func listInlineRewriteModels(cwd: String) async throws -> [String: Any] {
+        try startIfNeeded()
+        return try await transport.request(method: "listInlineRewriteModels", params: [
+            "cwd": cwd,
+        ])
+    }
+
+    func inlineRewrite(
+        cwd: String,
+        filePath: String?,
+        sourceLabel: String,
+        lineStart: Int?,
+        lineEnd: Int?,
+        language: String?,
+        selectionText: String,
+        prompt: String,
+        provider: String?,
+        modelID: String?,
+        modelSourceSessionPath: String?,
+        thinkingLevel: String
+    ) async throws -> [String: Any] {
+        try startIfNeeded()
+        return try await transport.request(method: "inlineRewrite", params: [
+            "cwd": cwd,
+            "filePath": filePath as Any,
+            "sourceLabel": sourceLabel,
+            "lineStart": lineStart as Any,
+            "lineEnd": lineEnd as Any,
+            "language": language as Any,
+            "selectionText": selectionText,
+            "prompt": prompt,
+            "provider": provider as Any,
+            "modelId": modelID as Any,
+            "modelSourceSessionPath": modelSourceSessionPath as Any,
+            "thinkingLevel": thinkingLevel,
+        ])
+    }
+
     func releaseAgentItem(_ agentItemID: UInt) {
         subscribersByAgentItemID.removeValue(forKey: agentItemID)
         let sessionPath = sessionPathByAgentItemID.removeValue(forKey: agentItemID)

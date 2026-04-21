@@ -680,6 +680,7 @@ pub enum Command {
   ChangedFilePicker,
   TerminalOpen,
   TerminalClose,
+  AddSelectionToAgent,
   LspGotoDeclaration,
   LspGotoDefinition,
   LspGotoTypeDefinition,
@@ -1961,6 +1962,11 @@ impl Command {
   #[must_use]
   pub const fn terminal_close() -> Self {
     Self::TerminalClose
+  }
+
+  #[must_use]
+  pub const fn add_selection_to_agent() -> Self {
+    Self::AddSelectionToAgent
   }
 
   #[must_use]

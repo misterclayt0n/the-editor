@@ -90,6 +90,12 @@ const EDITOR_PLUGIN_NAME: &str = "the-editor-inline-completion";
 const SUPERMAVEN_QUERY_TIMEOUT: Duration = Duration::from_millis(350);
 const INLINE_COMPLETION_TRACE_ENV: &str = "THE_EDITOR_INLINE_COMPLETION_TRACE_LOG";
 const INLINE_COMPLETION_TRACE_DEFAULT: &str = "/tmp/the-editor-inline-completion.log";
+const MAX_INLINE_COMPLETION_PREVIEW_REMAINING_LINES: usize = 5;
+const MAX_INLINE_COMPLETION_SIMPLE_FIRST_LINE_CHARS: usize = 96;
+const MAX_INLINE_COMPLETION_SIMPLE_TOTAL_CHARS: usize = 180;
+const MAX_INLINE_COMPLETION_SIMPLE_TOTAL_LINES: usize = 3;
+const MAX_INLINE_COMPLETION_PRESENTATION_LINES: usize = 6;
+const MAX_INLINE_COMPLETION_PRESENTATION_LINE_CHARS: usize = 96;
 static INLINE_COMPLETION_TRACE_WRITER: OnceLock<Option<Mutex<BufWriter<std::fs::File>>>> =
   OnceLock::new();
 
@@ -105,6 +111,10 @@ pub fn resolve_inline_completion_trace_log_path() -> Option<PathBuf> {
     },
     Err(_) => Some(PathBuf::from(INLINE_COMPLETION_TRACE_DEFAULT)),
   }
+}
+
+pub fn trace_event(event: &str, data: Value) {
+  inline_completion_trace(event, data);
 }
 
 fn inline_completion_trace_writer() -> Option<&'static Mutex<BufWriter<std::fs::File>>> {
@@ -336,6 +346,8 @@ enum AcceptKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InlineCompletionPresentationKind {
   Menu,
+  Popover,
+  Diff,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -360,6 +372,65 @@ pub struct InlineCompletionPresentation {
   pub target_char:  Option<usize>,
   pub target_line:  Option<usize>,
   pub accept_label: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InlinePredictedEditDisplayMode {
+  InlineGhost,
+  InlineGhostWithPopover,
+  DiffPopover,
+}
+
+impl InlinePredictedEditDisplayMode {
+  const fn label(self) -> &'static str {
+    match self {
+      Self::InlineGhost => "inline_ghost",
+      Self::InlineGhostWithPopover => "inline_ghost_with_popover",
+      Self::DiffPopover => "diff_popover",
+    }
+  }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InlinePredictedEditSpanKind {
+  Equal,
+  Addition,
+  Removal,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct InlinePredictedEditSpan {
+  kind: InlinePredictedEditSpanKind,
+  text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct InlineGhostPreview {
+  preview_char:               usize,
+  replacement_first_line_len: usize,
+  first_line:                 String,
+  remaining_text:             String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct InlinePredictedEdit {
+  source:         InlineSuggestionSource,
+  replace_from:   usize,
+  replace_to:     usize,
+  anchor_char:    usize,
+  preview_char:   usize,
+  inserted_text:  String,
+  replaced_text:  String,
+  spans:          Vec<InlinePredictedEditSpan>,
+  display_mode:   InlinePredictedEditDisplayMode,
+  inline_preview: Option<InlineGhostPreview>,
+  presentation:   Option<InlineCompletionPresentation>,
+}
+
+impl InlinePredictedEdit {
+  const fn is_pure_insertion(&self) -> bool {
+    self.replace_from == self.replace_to
+  }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -911,9 +982,8 @@ fn accept_inline_completion_kind<Ctx: DefaultContext>(ctx: &mut Ctx, kind: Accep
   true
 }
 
-pub fn show_inline_status<Ctx: DefaultContext>(ctx: &mut Ctx) {
-  let state = ctx.inline_completion();
-  let message = if !state.enabled {
+fn inline_status_message_for_state(state: &InlineCompletionState) -> String {
+  if !state.enabled {
     "Inline completions are disabled".to_string()
   } else if state.provider == InlineCompletionProvider::None {
     "No inline provider selected. Use :inline-provider copilot or :inline-provider supermaven."
@@ -966,8 +1036,120 @@ pub fn show_inline_status<Ctx: DefaultContext>(ctx: &mut Ctx) {
       base.push_str(&format!(" [{tier}]"));
     }
     base
-  };
-  ctx.push_info(SOURCE, message);
+  }
+}
+
+pub fn has_active_suggestion(state: &InlineCompletionState) -> bool {
+  state.suggestion.is_some()
+}
+
+pub fn debug_summary(
+  state: &InlineCompletionState,
+  annotations_visible: bool,
+  has_multiline: bool,
+) -> String {
+  let presentation_kind = state.presentation.as_ref().map(|presentation| {
+    match presentation.kind {
+      InlineCompletionPresentationKind::Menu => "menu",
+      InlineCompletionPresentationKind::Popover => "popover",
+      InlineCompletionPresentationKind::Diff => "diff",
+    }
+  });
+  let presentation_line_count = state
+    .presentation
+    .as_ref()
+    .map(|presentation| presentation.lines.len())
+    .unwrap_or(0);
+  let mut parts = Vec::new();
+  parts.push(format!("enabled={}", state.enabled));
+  parts.push(format!("provider={}", state.provider.label()));
+  parts.push(format!("status={:?}", state.status).to_ascii_lowercase());
+  parts.push(format!("suggestion={}", state.suggestion.is_some()));
+  parts.push(format!("presentation={}", state.presentation.is_some()));
+  parts.push(format!(
+    "presentation_kind={}",
+    presentation_kind.unwrap_or("none")
+  ));
+  parts.push(format!("presentation_lines={presentation_line_count}"));
+  parts.push(format!("annotations={}", annotations_visible));
+  parts.push(format!("multiline={}", has_multiline));
+  if let Some(user) = state.account_user.as_ref() {
+    parts.push(format!("user={user}"));
+  }
+  if let Some(tier) = state.service_tier.as_ref() {
+    parts.push(format!("tier={tier}"));
+  }
+  let headline = parts.join(" · ");
+  format!("{}\n{}", headline, inline_status_message_for_state(state))
+}
+
+pub fn debug_context_summary<Ctx: DefaultContext>(
+  ctx: &Ctx,
+  annotations_visible: bool,
+  has_multiline: bool,
+) -> String {
+  let state = ctx.inline_completion();
+  let presentation_kind = state.presentation.as_ref().map(|presentation| {
+    match presentation.kind {
+      InlineCompletionPresentationKind::Menu => "menu",
+      InlineCompletionPresentationKind::Popover => "popover",
+      InlineCompletionPresentationKind::Diff => "diff",
+    }
+  });
+  let presentation_line_count = state
+    .presentation
+    .as_ref()
+    .map(|presentation| presentation.lines.len())
+    .unwrap_or(0);
+  let mut parts = Vec::new();
+  parts.push(format!("enabled={}", state.enabled));
+  parts.push(format!("provider={}", state.provider.label()));
+  parts.push(format!("status={:?}", state.status).to_ascii_lowercase());
+  parts.push(format!("suggestion={}", state.suggestion.is_some()));
+  parts.push(format!("presentation={}", state.presentation.is_some()));
+  parts.push(format!(
+    "presentation_kind={}",
+    presentation_kind.unwrap_or("none")
+  ));
+  parts.push(format!("presentation_lines={presentation_line_count}"));
+  parts.push(format!("annotations={}", annotations_visible));
+  parts.push(format!("multiline={}", has_multiline));
+  parts.push(format!("mode={:?}", ctx.mode()).to_ascii_lowercase());
+  parts.push(format!("file={}", ctx.file_path().is_some()));
+  let editor = ctx.editor_ref();
+  parts.push(format!(
+    "active_cursor={}",
+    editor.view().active_cursor.is_some()
+  ));
+  let selection = editor.document().selection();
+  parts.push(format!("ranges={}", selection.ranges().len()));
+  match current_prepared_query_result(ctx) {
+    Ok(prepared) => {
+      parts.push("eligible=true".to_string());
+      parts.push(format!("cursor_char={}", prepared.key.cursor_char));
+      parts.push(format!("doc_version={}", prepared.key.doc_version));
+    },
+    Err(reason) => {
+      parts.push("eligible=false".to_string());
+      parts.push(format!("reason={}", reason.label()));
+    },
+  }
+  parts.push(format!("scheduled={}", state.scheduled.is_some()));
+  parts.push(format!("in_flight={}", state.in_flight.is_some()));
+  parts.push(format!("completed={}", state.last_completed_key.is_some()));
+  if let Some(user) = state.account_user.as_ref() {
+    parts.push(format!("user={user}"));
+  }
+  if let Some(tier) = state.service_tier.as_ref() {
+    parts.push(format!("tier={tier}"));
+  }
+  let headline = parts.join(" · ");
+  format!("{}\n{}", headline, inline_status_message_for_state(state))
+}
+
+pub fn show_inline_status<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  let state = ctx.inline_completion();
+  ctx.push_info(SOURCE, inline_status_message_for_state(state));
 }
 
 fn set_active_provider<Ctx: DefaultContext>(
@@ -1659,49 +1841,81 @@ fn sync_inline_completion_annotations<Ctx: DefaultContext>(ctx: &mut Ctx) {
   maybe_report_copilot_display(ctx, &suggestion);
 
   let SuggestionDisplayKind::Ghost { anchor_char } = display_kind;
-  let Some(mut annotations) = preview_annotations_for_suggestion(ctx, &suggestion, anchor_char)
-  else {
+  let Some(predicted_edit) = predicted_edit_for_suggestion(ctx, &suggestion, anchor_char) else {
     inline_completion_trace(
       "surface_ghost_skipped",
       json!({
         "display": inline_completion_trace_display_kind(display_kind),
         "suggestion": inline_completion_trace_suggestion(&suggestion),
-        "reason": "preview_annotations_none",
+        "reason": "predicted_edit_none",
       }),
     );
     clear_inline_completion_surface(ctx);
     return;
   };
-  if annotations.is_empty() {
+
+  let mut annotations = preview_annotations_for_predicted_edit(ctx, &predicted_edit);
+  let virtual_line_count = annotations.virtual_lines().len();
+  let annotations_visible = !annotations.is_empty();
+  let presentation = predicted_edit.presentation.clone();
+  let presentation_kind = presentation.as_ref().map(|presentation| {
+    match presentation.kind {
+      InlineCompletionPresentationKind::Menu => "menu",
+      InlineCompletionPresentationKind::Popover => "popover",
+      InlineCompletionPresentationKind::Diff => "diff",
+    }
+  });
+  let presentation_line_count = presentation
+    .as_ref()
+    .map(|presentation| presentation.lines.len())
+    .unwrap_or(0);
+
+  if annotations_visible {
+    ctx.set_inline_completion_annotations(std::mem::take(&mut annotations));
+  } else {
+    ctx.clear_inline_completion_annotations();
+  }
+  ctx.inline_completion_mut().presentation = presentation;
+
+  if !annotations_visible && presentation_line_count == 0 {
     inline_completion_trace(
       "surface_ghost_skipped",
       json!({
         "display": inline_completion_trace_display_kind(display_kind),
         "suggestion": inline_completion_trace_suggestion(&suggestion),
-        "reason": "annotations_empty",
+        "reason": "surface_empty",
+        "display_mode": predicted_edit.display_mode.label(),
       }),
     );
     clear_inline_completion_surface(ctx);
-  } else {
-    let virtual_line_count = annotations.virtual_lines().len();
-    ctx.inline_completion_mut().presentation = None;
-    ctx.set_inline_completion_annotations(std::mem::take(&mut annotations));
-    inline_completion_trace(
-      "surface_ghost_annotations",
-      json!({
-        "display": inline_completion_trace_display_kind(display_kind),
-        "suggestion": inline_completion_trace_suggestion(&suggestion),
-        "virtual_lines": virtual_line_count,
-      }),
-    );
+    return;
   }
+
+  inline_completion_trace(
+    "surface_prediction_updated",
+    json!({
+      "display": inline_completion_trace_display_kind(display_kind),
+      "suggestion": inline_completion_trace_suggestion(&suggestion),
+      "source": predicted_edit.source.label(),
+      "anchor_char": predicted_edit.anchor_char,
+      "preview_char": predicted_edit.preview_char,
+      "display_mode": predicted_edit.display_mode.label(),
+      "is_pure_insertion": predicted_edit.is_pure_insertion(),
+      "inserted_text_chars": predicted_edit.inserted_text.chars().count(),
+      "replaced_text_chars": predicted_edit.replaced_text.chars().count(),
+      "span_count": predicted_edit.spans.len(),
+      "virtual_lines": virtual_line_count,
+      "presentation_kind": presentation_kind,
+      "presentation_line_count": presentation_line_count,
+    }),
+  );
 }
 
-fn preview_annotations_for_suggestion<Ctx: DefaultContext>(
+fn predicted_edit_for_suggestion<Ctx: DefaultContext>(
   ctx: &Ctx,
   suggestion: &InlineSuggestion,
   anchor_char: usize,
-) -> Option<OwnedTextAnnotations> {
+) -> Option<InlinePredictedEdit> {
   let editor = ctx.editor_ref();
   let document = editor.document();
   let range = single_active_range(document.selection(), editor.view().active_cursor)?;
@@ -1718,11 +1932,18 @@ fn preview_annotations_for_suggestion<Ctx: DefaultContext>(
     return None;
   }
 
-  let preview_char = anchor_char.min(document.text().len_chars());
   let text = document.text().slice(..);
-  let existing_prefix = if preview_char > suggestion.from {
+  let max_char = text.len_chars();
+  let mut replace_from = suggestion.from.min(max_char);
+  let mut replace_to = suggestion.to.min(max_char);
+  if replace_from > replace_to {
+    std::mem::swap(&mut replace_from, &mut replace_to);
+  }
+
+  let preview_char = anchor_char.min(max_char);
+  let existing_prefix = if preview_char > replace_from {
     text
-      .slice(suggestion.from..preview_char.min(text.len_chars()))
+      .slice(replace_from..preview_char.min(max_char))
       .to_string()
   } else {
     String::new()
@@ -1740,34 +1961,106 @@ fn preview_annotations_for_suggestion<Ctx: DefaultContext>(
     return None;
   }
 
-  let highlight = ctx.ui_theme().find_highlight("ui.virtual.inline");
-  let preview_line = text.char_to_line(preview_char);
-  let (first_line, remaining) = split_preview_lines(&preview_text);
-  let replacement_text = text
-    .slice(preview_char..suggestion.to.min(text.len_chars()))
-    .to_string();
+  let replaced_text = text.slice(replace_from..replace_to).to_string();
+  let spans = build_predicted_edit_spans(&replaced_text, &suggestion.text);
+  let (first_line, remaining_raw) = split_preview_lines(&preview_text);
+  let remaining_compacted = compact_preview_remaining_lines(&remaining_raw);
+  let preview_total_chars = preview_text.chars().count();
+  let preview_total_lines = preview_line_count(&preview_text);
+  let can_inline_first_line = first_line.is_empty()
+    || first_line.chars().count() <= MAX_INLINE_COMPLETION_SIMPLE_FIRST_LINE_CHARS;
+  let display_mode = if replace_from == replace_to {
+    if can_inline_first_line
+      && preview_total_lines <= MAX_INLINE_COMPLETION_SIMPLE_TOTAL_LINES
+      && preview_total_chars <= MAX_INLINE_COMPLETION_SIMPLE_TOTAL_CHARS
+    {
+      InlinePredictedEditDisplayMode::InlineGhost
+    } else if can_inline_first_line {
+      InlinePredictedEditDisplayMode::InlineGhostWithPopover
+    } else {
+      InlinePredictedEditDisplayMode::DiffPopover
+    }
+  } else {
+    InlinePredictedEditDisplayMode::DiffPopover
+  };
+
+  let (remaining_inline_text, remaining_truncated_line_count) =
+    if matches!(display_mode, InlinePredictedEditDisplayMode::InlineGhost) {
+      clamp_preview_remaining_lines(
+        &remaining_compacted,
+        MAX_INLINE_COMPLETION_PREVIEW_REMAINING_LINES,
+      )
+    } else {
+      (String::new(), 0)
+    };
+
+  let replacement_text = text.slice(preview_char..replace_to).to_string();
   let replacement_first_line_len = replacement_first_line_len(replacement_text.as_str());
-  let mut annotations = OwnedTextAnnotations::default();
+  let inline_preview = match display_mode {
+    InlinePredictedEditDisplayMode::InlineGhost => {
+      if first_line.is_empty() && remaining_inline_text.is_empty() {
+        None
+      } else {
+        Some(InlineGhostPreview {
+          preview_char,
+          replacement_first_line_len,
+          first_line: first_line.clone(),
+          remaining_text: remaining_inline_text.clone(),
+        })
+      }
+    },
+    InlinePredictedEditDisplayMode::InlineGhostWithPopover => {
+      if first_line.is_empty() {
+        None
+      } else {
+        Some(InlineGhostPreview {
+          preview_char,
+          replacement_first_line_len,
+          first_line: first_line.clone(),
+          remaining_text: String::new(),
+        })
+      }
+    },
+    InlinePredictedEditDisplayMode::DiffPopover => None,
+  };
 
-  if !first_line.is_empty() {
-    render_first_line_preview(
-      &mut annotations,
-      preview_char,
-      replacement_first_line_len,
-      &first_line,
-      highlight,
-    );
-  }
-
-  let has_remaining_lines = !remaining.is_empty();
-  if has_remaining_lines {
-    let _ = annotations.add_virtual_line(
-      VirtualLineSpec::after(preview_line)
-        .text(&remaining)
-        .highlight(highlight)
-        .wrap_to_viewport(),
-    );
-  }
+  let target_line = text.char_to_line(anchor_char.min(max_char));
+  let target_char = anchor_char
+    .min(max_char)
+    .saturating_sub(text.line_to_char(target_line));
+  let first_line_rendered = inline_preview
+    .as_ref()
+    .is_some_and(|preview| !preview.first_line.is_empty());
+  let presentation = match display_mode {
+    InlinePredictedEditDisplayMode::InlineGhost => None,
+    InlinePredictedEditDisplayMode::InlineGhostWithPopover => {
+      build_insert_presentation(
+        suggestion.source,
+        &preview_text,
+        first_line_rendered,
+        target_line,
+        target_char,
+      )
+    },
+    InlinePredictedEditDisplayMode::DiffPopover if replace_from == replace_to => {
+      build_insert_presentation(
+        suggestion.source,
+        &preview_text,
+        false,
+        target_line,
+        target_char,
+      )
+    },
+    InlinePredictedEditDisplayMode::DiffPopover => {
+      build_diff_presentation(
+        suggestion.source,
+        &replaced_text,
+        &suggestion.text,
+        target_line,
+        target_char,
+      )
+    },
+  };
 
   inline_completion_trace(
     "preview_annotations_built",
@@ -1775,13 +2068,275 @@ fn preview_annotations_for_suggestion<Ctx: DefaultContext>(
       "suggestion": inline_completion_trace_suggestion(suggestion),
       "anchor_char": anchor_char,
       "preview_char": preview_char,
-      "preview_line": preview_line,
+      "replace_from": replace_from,
+      "replace_to": replace_to,
+      "display_mode": display_mode.label(),
+      "span_count": spans.len(),
+      "preview_line": text.char_to_line(preview_char),
       "first_line_preview": inline_completion_trace_text_preview(&first_line),
-      "has_remaining_lines": has_remaining_lines,
+      "has_remaining_lines": !remaining_inline_text.is_empty(),
+      "remaining_raw_line_count": preview_line_count(&remaining_raw),
+      "remaining_compacted_line_count": preview_line_count(&remaining_compacted),
+      "remaining_displayed_line_count": preview_line_count(&remaining_inline_text),
+      "remaining_blank_line_count": preview_blank_line_count(&remaining_raw),
+      "remaining_truncated_line_count": remaining_truncated_line_count,
+      "presentation_kind": presentation.as_ref().map(|presentation| match presentation.kind {
+        InlineCompletionPresentationKind::Menu => "menu",
+        InlineCompletionPresentationKind::Popover => "popover",
+        InlineCompletionPresentationKind::Diff => "diff",
+      }),
+      "presentation_line_count": presentation
+        .as_ref()
+        .map(|presentation| presentation.lines.len())
+        .unwrap_or(0),
     }),
   );
 
-  Some(annotations)
+  Some(InlinePredictedEdit {
+    source: suggestion.source,
+    replace_from,
+    replace_to,
+    anchor_char,
+    preview_char,
+    inserted_text: suggestion.text.clone(),
+    replaced_text,
+    spans,
+    display_mode,
+    inline_preview,
+    presentation,
+  })
+}
+
+fn build_predicted_edit_spans(
+  replaced_text: &str,
+  inserted_text: &str,
+) -> Vec<InlinePredictedEditSpan> {
+  if replaced_text.is_empty() {
+    return vec![InlinePredictedEditSpan {
+      kind: InlinePredictedEditSpanKind::Addition,
+      text: inserted_text.to_string(),
+    }];
+  }
+  if inserted_text.is_empty() {
+    return vec![InlinePredictedEditSpan {
+      kind: InlinePredictedEditSpanKind::Removal,
+      text: replaced_text.to_string(),
+    }];
+  }
+
+  let (prefix_chars, prefix_bytes) = shared_prefix(replaced_text, inserted_text);
+  let removed_remaining = &replaced_text[prefix_bytes..];
+  let inserted_remaining = &inserted_text[prefix_bytes..];
+  let (suffix_chars, suffix_bytes) = shared_suffix(removed_remaining, inserted_remaining);
+  let removed_mid_end = replaced_text.len().saturating_sub(suffix_bytes);
+  let inserted_mid_end = inserted_text.len().saturating_sub(suffix_bytes);
+
+  let mut spans = Vec::new();
+  if prefix_chars > 0 {
+    spans.push(InlinePredictedEditSpan {
+      kind: InlinePredictedEditSpanKind::Equal,
+      text: replaced_text[..prefix_bytes].to_string(),
+    });
+  }
+  if removed_mid_end > prefix_bytes {
+    spans.push(InlinePredictedEditSpan {
+      kind: InlinePredictedEditSpanKind::Removal,
+      text: replaced_text[prefix_bytes..removed_mid_end].to_string(),
+    });
+  }
+  if inserted_mid_end > prefix_bytes {
+    spans.push(InlinePredictedEditSpan {
+      kind: InlinePredictedEditSpanKind::Addition,
+      text: inserted_text[prefix_bytes..inserted_mid_end].to_string(),
+    });
+  }
+  if suffix_chars > 0 {
+    let suffix_start = replaced_text.len().saturating_sub(suffix_bytes);
+    spans.push(InlinePredictedEditSpan {
+      kind: InlinePredictedEditSpanKind::Equal,
+      text: replaced_text[suffix_start..].to_string(),
+    });
+  }
+  if spans.is_empty() {
+    spans.push(InlinePredictedEditSpan {
+      kind: InlinePredictedEditSpanKind::Addition,
+      text: inserted_text.to_string(),
+    });
+  }
+  spans
+}
+
+fn preview_annotations_for_predicted_edit<Ctx: DefaultContext>(
+  ctx: &Ctx,
+  predicted_edit: &InlinePredictedEdit,
+) -> OwnedTextAnnotations {
+  let Some(preview) = predicted_edit.inline_preview.as_ref() else {
+    return OwnedTextAnnotations::default();
+  };
+
+  let highlight = ctx.ui_theme().find_highlight("ui.virtual.inline");
+  let text = ctx.editor_ref().document().text().slice(..);
+  let preview_line = text.char_to_line(preview.preview_char);
+  let mut annotations = OwnedTextAnnotations::default();
+
+  if !preview.first_line.is_empty() {
+    render_first_line_preview(
+      &mut annotations,
+      preview.preview_char,
+      preview.replacement_first_line_len,
+      &preview.first_line,
+      highlight,
+    );
+  }
+
+  if !preview.remaining_text.is_empty() {
+    let _ = annotations.add_virtual_line(
+      VirtualLineSpec::after(preview_line)
+        .text(&preview.remaining_text)
+        .highlight(highlight)
+        .wrap_to_viewport(),
+    );
+  }
+
+  annotations
+}
+
+fn build_insert_presentation(
+  source: InlineSuggestionSource,
+  preview_text: &str,
+  first_line_rendered: bool,
+  target_line: usize,
+  target_char: usize,
+) -> Option<InlineCompletionPresentation> {
+  let text = if first_line_rendered {
+    let (_, remaining) = split_preview_lines(preview_text);
+    remaining
+  } else {
+    preview_text.to_string()
+  };
+  let mut lines =
+    presentation_lines_for_text(&text, InlineCompletionPresentationLineKind::Addition);
+  clamp_presentation_lines(&mut lines, MAX_INLINE_COMPLETION_PRESENTATION_LINES);
+  if lines.is_empty() {
+    return None;
+  }
+
+  Some(InlineCompletionPresentation {
+    kind: InlineCompletionPresentationKind::Popover,
+    title: format!(
+      "{} {}",
+      inline_completion_provider_display_name(source),
+      if first_line_rendered {
+        "continuation"
+      } else {
+        "completion"
+      }
+    ),
+    lines,
+    target_char: Some(target_char),
+    target_line: Some(target_line),
+    accept_label: Some("Tab".to_string()),
+  })
+}
+
+fn build_diff_presentation(
+  source: InlineSuggestionSource,
+  replaced_text: &str,
+  inserted_text: &str,
+  target_line: usize,
+  target_char: usize,
+) -> Option<InlineCompletionPresentation> {
+  let mut lines =
+    presentation_lines_for_text(replaced_text, InlineCompletionPresentationLineKind::Removal);
+  lines.extend(presentation_lines_for_text(
+    inserted_text,
+    InlineCompletionPresentationLineKind::Addition,
+  ));
+  clamp_presentation_lines(&mut lines, MAX_INLINE_COMPLETION_PRESENTATION_LINES);
+  if lines.is_empty() {
+    return None;
+  }
+
+  Some(InlineCompletionPresentation {
+    kind: InlineCompletionPresentationKind::Diff,
+    title: format!("{} edit", inline_completion_provider_display_name(source)),
+    lines,
+    target_char: Some(target_char),
+    target_line: Some(target_line),
+    accept_label: Some("Tab".to_string()),
+  })
+}
+
+fn presentation_lines_for_text(
+  text: &str,
+  kind: InlineCompletionPresentationLineKind,
+) -> Vec<InlineCompletionPresentationLine> {
+  normalized_presentation_lines(text)
+    .into_iter()
+    .map(|line| {
+      InlineCompletionPresentationLine {
+        kind,
+        text: truncate_presentation_line_text(&line, MAX_INLINE_COMPLETION_PRESENTATION_LINE_CHARS),
+      }
+    })
+    .collect()
+}
+
+fn normalized_presentation_lines(text: &str) -> Vec<String> {
+  if text.is_empty() {
+    return Vec::new();
+  }
+
+  let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+  let mut lines = normalized
+    .split('\n')
+    .map(str::to_string)
+    .collect::<Vec<_>>();
+  while lines.last().is_some_and(|line| line.is_empty()) {
+    lines.pop();
+  }
+  lines
+}
+
+fn truncate_presentation_line_text(text: &str, max_chars: usize) -> String {
+  if max_chars == 0 {
+    return String::new();
+  }
+  if text.chars().count() <= max_chars {
+    return text.to_string();
+  }
+  let mut out = text
+    .chars()
+    .take(max_chars.saturating_sub(1))
+    .collect::<String>();
+  out.push('…');
+  out
+}
+
+fn clamp_presentation_lines(lines: &mut Vec<InlineCompletionPresentationLine>, max_lines: usize) {
+  if max_lines == 0 {
+    lines.clear();
+    return;
+  }
+  if lines.len() <= max_lines {
+    return;
+  }
+
+  let visible_lines = max_lines.saturating_sub(1);
+  let hidden_lines = lines.len().saturating_sub(visible_lines);
+  lines.truncate(visible_lines);
+  lines.push(InlineCompletionPresentationLine {
+    kind: InlineCompletionPresentationLineKind::Dim,
+    text: presentation_hidden_lines_text(hidden_lines),
+  });
+}
+
+fn presentation_hidden_lines_text(hidden_lines: usize) -> String {
+  format!(
+    "… {} more line{}",
+    hidden_lines,
+    if hidden_lines == 1 { "" } else { "s" }
+  )
 }
 
 fn single_active_range(
@@ -1861,6 +2416,71 @@ fn split_preview_lines(text: &str) -> (String, String) {
     Some((first, remaining)) => (first.to_string(), remaining.to_string()),
     None => (text.to_string(), String::new()),
   }
+}
+
+fn preview_line_count(text: &str) -> usize {
+  if text.is_empty() {
+    0
+  } else {
+    text.lines().count()
+  }
+}
+
+fn preview_blank_line_count(text: &str) -> usize {
+  text.lines().filter(|line| line.trim().is_empty()).count()
+}
+
+fn compact_preview_remaining_lines(text: &str) -> String {
+  if text.is_empty() {
+    return String::new();
+  }
+
+  let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+  let mut lines = normalized
+    .split('\n')
+    .map(str::to_string)
+    .collect::<Vec<_>>();
+  while lines.last().is_some_and(|line| line.trim().is_empty()) {
+    lines.pop();
+  }
+
+  lines
+    .into_iter()
+    .filter(|line| !line.trim().is_empty())
+    .collect::<Vec<_>>()
+    .join("\n")
+}
+
+fn clamp_preview_remaining_lines(text: &str, max_lines: usize) -> (String, usize) {
+  if text.is_empty() || max_lines == 0 {
+    return (String::new(), 0);
+  }
+
+  let lines = text.lines().collect::<Vec<_>>();
+  if lines.len() <= max_lines {
+    return (text.to_string(), 0);
+  }
+
+  let visible_content_lines = max_lines.saturating_sub(1);
+  let mut out = lines
+    .iter()
+    .take(visible_content_lines)
+    .map(|line| (*line).to_string())
+    .collect::<Vec<_>>();
+  let hidden_line = lines.get(visible_content_lines).copied().unwrap_or("");
+  out.push(preview_ellipsis_line(hidden_line));
+  (
+    out.join("\n"),
+    lines.len().saturating_sub(visible_content_lines),
+  )
+}
+
+fn preview_ellipsis_line(hidden_line: &str) -> String {
+  let indent = hidden_line
+    .chars()
+    .take_while(|ch| ch.is_whitespace())
+    .collect::<String>();
+  format!("{indent}…")
 }
 
 fn replacement_first_line_len(text: &str) -> usize {
@@ -4267,6 +4887,69 @@ mod tests {
 
     assert!(ctx.inline_completion.presentation.is_none());
     assert!(!ctx.inline_completion_annotations.is_empty());
+  }
+
+  #[test]
+  fn large_multiline_insert_switches_to_compact_popover() {
+    let mut ctx = TestCtx::new();
+    ctx.inline_completion.provider = InlineCompletionProvider::Copilot;
+    ctx.inline_completion.suggestion = Some(test_inline_suggestion(
+      test_query_key(&ctx, 0),
+      0,
+      0,
+      "printf(\"hello\");\nlet first = 1;\nlet second = 2;\nlet third = 3;",
+    ));
+
+    sync_inline_completion_annotations(&mut ctx);
+
+    assert!(!ctx.inline_completion_annotations.is_empty());
+    assert!(ctx.inline_completion_annotations.virtual_lines().is_empty());
+    let presentation = ctx
+      .inline_completion
+      .presentation
+      .as_ref()
+      .expect("presentation");
+    assert_eq!(presentation.kind, InlineCompletionPresentationKind::Popover);
+    assert_eq!(presentation.lines.len(), 3);
+    assert_eq!(
+      presentation.lines[0].kind,
+      InlineCompletionPresentationLineKind::Addition
+    );
+    assert_eq!(presentation.lines[0].text, "let first = 1;");
+  }
+
+  #[test]
+  fn replacement_suggestion_uses_diff_presentation_without_inline_annotations() {
+    let mut ctx = TestCtx::with_text("foo()\n");
+    ctx.inline_completion.provider = InlineCompletionProvider::Copilot;
+    let _ = ctx.editor.document_mut().set_selection(Selection::point(0));
+    ctx.inline_completion.suggestion = Some(test_inline_suggestion(
+      test_query_key(&ctx, 0),
+      0,
+      5,
+      "bar()",
+    ));
+
+    sync_inline_completion_annotations(&mut ctx);
+
+    assert!(ctx.inline_completion_annotations.is_empty());
+    let presentation = ctx
+      .inline_completion
+      .presentation
+      .as_ref()
+      .expect("presentation");
+    assert_eq!(presentation.kind, InlineCompletionPresentationKind::Diff);
+    assert_eq!(presentation.lines.len(), 2);
+    assert_eq!(
+      presentation.lines[0].kind,
+      InlineCompletionPresentationLineKind::Removal
+    );
+    assert_eq!(presentation.lines[0].text, "foo()");
+    assert_eq!(
+      presentation.lines[1].kind,
+      InlineCompletionPresentationLineKind::Addition
+    );
+    assert_eq!(presentation.lines[1].text, "bar()");
   }
 
   #[test]

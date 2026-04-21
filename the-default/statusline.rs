@@ -514,5 +514,4 @@ mod tests {
     );
     assert!(inline_completion_statusline_segment_for_state(&state).is_none());
   }
-
 }

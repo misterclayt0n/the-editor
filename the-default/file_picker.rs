@@ -264,14 +264,8 @@ impl FilePickerItemPayload {
 
 #[derive(Debug, Clone)]
 pub enum DirectPickerTrackingKind {
-  FffFileSearch {
-    root:  PathBuf,
-    query: String,
-  },
-  FffGrep {
-    root:  PathBuf,
-    query: String,
-  },
+  FffFileSearch { root: PathBuf, query: String },
+  FffGrep { root: PathBuf, query: String },
 }
 
 #[derive(Debug, Clone)]
@@ -1039,9 +1033,9 @@ impl FilePickerState {
       FilePickerPreview::Empty | FilePickerPreview::Message(_) => {
         FilePickerPreviewNavigationMode::Static
       },
-      FilePickerPreview::VcsDiff(_)
-      | FilePickerPreview::Source(_)
-      | FilePickerPreview::Text(_) => FilePickerPreviewNavigationMode::Scrollable,
+      FilePickerPreview::VcsDiff(_) | FilePickerPreview::Source(_) | FilePickerPreview::Text(_) => {
+        FilePickerPreviewNavigationMode::Scrollable
+      },
     }
   }
 
@@ -2116,10 +2110,10 @@ pub fn file_picker_items_from_specs(
 
 fn direct_picker_metadata(tracking: DirectPickerTrackingKind) -> DirectPickerItemMetadata {
   DirectPickerItemMetadata {
-    match_indices:          Arc::from([]),
-    primary_match_ranges:   Arc::from([]),
+    match_indices: Arc::from([]),
+    primary_match_ranges: Arc::from([]),
     secondary_match_ranges: Arc::from([]),
-    preview_match_ranges:   Arc::from([]),
+    preview_match_ranges: Arc::from([]),
     tracking,
   }
 }
@@ -2192,15 +2186,15 @@ fn picker_spec_for_fff_file_hit(
     tracking,
   };
   let row_data = FilePickerRowData {
-    kind:       FilePickerRowKind::Generic,
-    severity:   None,
+    kind: FilePickerRowKind::Generic,
+    severity: None,
     primary,
     secondary,
-    tertiary:   String::new(),
+    tertiary: String::new(),
     quaternary: String::new(),
-    line:       0,
-    column:     0,
-    depth:      0,
+    line: 0,
+    column: 0,
+    depth: 0,
   };
 
   let spec = match location {
@@ -2239,15 +2233,15 @@ fn grep_suggestion_header_spec(root: &Path, query: &str, path: &Path) -> PickerI
   PickerItemSpec::custom(display)
     .with_selectable(false)
     .with_row_data(FilePickerRowData {
-      kind:       FilePickerRowKind::LiveGrepHeader,
-      severity:   None,
+      kind: FilePickerRowKind::LiveGrepHeader,
+      severity: None,
       primary,
       secondary,
-      tertiary:   String::new(),
+      tertiary: String::new(),
       quaternary: String::new(),
-      line:       0,
-      column:     0,
-      depth:      0,
+      line: 0,
+      column: 0,
+      depth: 0,
     })
     .with_payload(metadata)
 }
@@ -2296,7 +2290,10 @@ fn grep_suggestion_match_spec(
     tertiary:   String::new(),
     quaternary: String::new(),
     line:       matched.line_number_one_based,
-    column:     preview_match_ranges.first().map(|(start, _)| start + 1).unwrap_or(1),
+    column:     preview_match_ranges
+      .first()
+      .map(|(start, _)| start + 1)
+      .unwrap_or(1),
     depth:      0,
   })
   .with_payload(metadata)
@@ -3445,11 +3442,17 @@ pub(crate) fn map_match_ranges_to_row_fields(
       secondary_ranges.push((start, secondary_end));
     }
     if end > filename_start {
-      primary_ranges.push((start.max(filename_start) - filename_start, end - filename_start));
+      primary_ranges.push((
+        start.max(filename_start) - filename_start,
+        end - filename_start,
+      ));
     }
   }
 
-  (merge_match_ranges(primary_ranges).into(), merge_match_ranges(secondary_ranges).into())
+  (
+    merge_match_ranges(primary_ranges).into(),
+    merge_match_ranges(secondary_ranges).into(),
+  )
 }
 
 fn selection_focus_line(
@@ -3722,15 +3725,15 @@ pub fn file_picker_row_data_for_kind(
     FilePickerKind::Generic => {
       let (primary, secondary) = split_picker_path_display(&item.display);
       FilePickerRowData {
-        kind:       FilePickerRowKind::Generic,
-        severity:   None,
+        kind: FilePickerRowKind::Generic,
+        severity: None,
         primary,
         secondary,
-        tertiary:   String::new(),
+        tertiary: String::new(),
         quaternary: String::new(),
-        line:       0,
-        column:     0,
-        depth:      0,
+        line: 0,
+        column: 0,
+        depth: 0,
       }
     },
   }

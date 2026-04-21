@@ -310,6 +310,7 @@ pub trait DefaultContext: Sized + 'static {
   fn working_directory_state(&self) -> &WorkingDirectoryState;
   fn working_directory_state_mut(&mut self) -> &mut WorkingDirectoryState;
   fn request_render(&mut self);
+  fn add_primary_selection_to_agent(&mut self) {}
   fn render_waker(&self) -> crate::RenderWaker;
   fn effective_working_directory(&self) -> PathBuf {
     self
@@ -1454,6 +1455,7 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::ChangedFilePicker => crate::file_picker::open_changed_file_picker(ctx),
     Command::TerminalOpen => terminal_open(ctx),
     Command::TerminalClose => terminal_close(ctx),
+    Command::AddSelectionToAgent => ctx.add_primary_selection_to_agent(),
     Command::LspGotoDeclaration => ctx.lsp_goto_declaration(),
     Command::LspGotoDefinition => ctx.lsp_goto_definition(),
     Command::LspGotoTypeDefinition => ctx.lsp_goto_type_definition(),
@@ -6285,6 +6287,7 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "changed_file_picker" => Some(Command::changed_file_picker()),
     "terminal_open" => Some(Command::terminal_open()),
     "terminal_close" => Some(Command::terminal_close()),
+    "add_selection_to_agent" => Some(Command::add_selection_to_agent()),
     "lsp_goto_declaration" => Some(Command::lsp_goto_declaration()),
     "goto_declaration" => Some(Command::lsp_goto_declaration()),
     "lsp_goto_definition" => Some(Command::lsp_goto_definition()),
@@ -6431,6 +6434,10 @@ mod tests {
     assert_eq!(
       command_from_name("terminal_close"),
       Some(Command::terminal_close())
+    );
+    assert_eq!(
+      command_from_name("add_selection_to_agent"),
+      Some(Command::add_selection_to_agent())
     );
     assert_eq!(
       command_from_name("edit_current_file_path"),

@@ -4,18 +4,19 @@ import SwiftUI
 // MARK: - Layout constants
 
 private enum AgentLayout {
-    static let maxContentWidth: CGFloat = 760
-    static let horizontalPadding: CGFloat = 20
-    static let transcriptSpacing: CGFloat = 10
-    static let composerCornerRadius: CGFloat = 22
-    static let composerContainerPadding: CGFloat = 10
-    static let composerRowSpacing: CGFloat = 8
-    static let composerControlSize: CGFloat = 30
-    static let composerSendSize: CGFloat = 30
-    static let composerIconSize: CGFloat = 14
-    static let composerTextTopInset: CGFloat = 4
-    static let composerTextLeadingInset: CGFloat = 10
-    static let composerMinHeight: CGFloat = 46
+    static let horizontalPadding: CGFloat = 12
+    static let transcriptSpacing: CGFloat = 8
+    static let headerCornerRadius: CGFloat = 14
+    static let headerVerticalPadding: CGFloat = 8
+    static let composerCornerRadius: CGFloat = 16
+    static let composerContainerPadding: CGFloat = 8
+    static let composerRowSpacing: CGFloat = 6
+    static let composerControlSize: CGFloat = 28
+    static let composerSendSize: CGFloat = 28
+    static let composerIconSize: CGFloat = 13
+    static let composerTextTopInset: CGFloat = 2
+    static let composerTextLeadingInset: CGFloat = 8
+    static let composerMinHeight: CGFloat = 38
     static let composerOverlayGap: CGFloat = 12
     static let composerAttachmentSpacing: CGFloat = 8
     static let composerAttachmentPreviewSize: CGFloat = 36
@@ -31,7 +32,6 @@ struct EditorAgentSidebarView: View {
     @ObservedObject var store: EditorAgentPanelStore
     @ObservedObject var hostModel: EditorAgentPaneHostModel
 
-    @State private var inputText = ""
     @State private var transcriptJumpToLatestToken = 0
     @State private var isTranscriptPinnedToBottom = true
     @State private var showsJumpToLatest = false
@@ -55,13 +55,14 @@ struct EditorAgentSidebarView: View {
                 .ignoresSafeArea()
 
             VStack(spacing: 0) {
+                headerArea
+
                 transcriptArea
                     .layoutPriority(1)
 
                 composerArea
             }
-            .frame(maxWidth: AgentLayout.maxContentWidth)
-            .frame(maxWidth: .infinity)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .overlay(alignment: .top) {
             AgentPaneTopScrim(height: topScrimHeight, backgroundColor: backgroundColor)
@@ -108,9 +109,35 @@ struct EditorAgentSidebarView: View {
         .onChange(of: filteredRecentSessions.map(\.id).joined(separator: "|")) { _, _ in
             resumeSelectionIndex = min(resumeSelectionIndex, max(filteredRecentSessions.count - 1, 0))
         }
-        .onChange(of: inputText) { _, newValue in
+        .onChange(of: store.composerFocusRequestToken) { _, _ in
+            isComposerFocused = true
+        }
+        .onChange(of: store.draftText) { _, newValue in
             agentDebugLog("composer.input text=\(String(newValue.prefix(80)).replacingOccurrences(of: "\n", with: "\\n")) commands=\(filteredCommands.count) modelPicker=\(isModelPickerVisible) resumePicker=\(isResumePickerVisible)")
         }
+    }
+
+    // MARK: Header
+
+    private var headerArea: some View {
+        AgentSidebarHeaderView(
+            sessionTitle: store.sessionTitle,
+            footerInfo: store.footerInfo,
+            fallbackSubtitle: store.sessionSubtitle,
+            fallbackContextUsageText: store.contextUsageText,
+            isRunning: store.isRunning,
+            compactionStatus: store.compactionStatus,
+            isFollowingAgent: store.isFollowingAgent,
+            followStatusText: store.followStatusText,
+            recentSessions: store.recentSessions,
+            onNewSession: startNewSession,
+            onResumeSession: resumeSession,
+            onRefreshRecent: { store.refreshRecentSessions(force: true) },
+            onToggleFollow: store.toggleAgentFollow
+        )
+        .padding(.horizontal, AgentLayout.horizontalPadding)
+        .padding(.top, topScrimHeight + 8)
+        .padding(.bottom, 8)
     }
 
     // MARK: Transcript
@@ -125,11 +152,12 @@ struct EditorAgentSidebarView: View {
                 isRunning: store.isRunning,
                 recentSessions: store.recentSessions,
                 onNewSession: startNewSession,
-                onResumeSession: resumeSession
+                onResumeSession: resumeSession,
+                onUseSuggestion: useEmptyStateSuggestion
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .padding(.horizontal, AgentLayout.horizontalPadding)
-            .padding(.top, topScrimHeight + 8)
+            .padding(.top, 4)
             .task { store.refreshRecentSessions() }
         } else {
             AgentTranscriptView(
@@ -141,7 +169,7 @@ struct EditorAgentSidebarView: View {
                 showsJumpToLatest: $showsJumpToLatest,
                 expandedToolItemIDs: $expandedToolItemIDs,
                 expandedSummaryItemIDs: $expandedSummaryItemIDs,
-                topInset: topScrimHeight + 12
+                topInset: 4
             )
             .padding(.horizontal, AgentLayout.horizontalPadding)
         }
@@ -166,19 +194,20 @@ struct EditorAgentSidebarView: View {
             }
 
             AgentComposerBar(
-                inputText: $inputText,
+                inputText: draftTextBinding,
                 isFocused: $isComposerFocused,
                 placeholder: placeholderText,
                 isRunning: store.isRunning || store.compactionStatus != nil,
                 isCompacting: store.compactionStatus != nil,
                 isReady: store.isRuntimeReady,
                 canSend: canSubmitComposer,
-                isFollowingAgent: store.isFollowingAgent,
-                followStatusText: store.followStatusText,
+                selectionAttachments: store.selectionAttachments,
+                onRemoveSelectionAttachment: { attachment in
+                    store.removeSelectionAttachment(id: attachment.id)
+                },
                 onSend: sendCurrent,
                 onFollowAndSend: followAndSendCurrent,
                 onCancel: store.abort,
-                onToggleFollow: store.toggleAgentFollow,
                 onInsertCommand: insertCommand,
                 onMoveUp: moveOverlaySelectionUp,
                 onMoveDown: moveOverlaySelectionDown,
@@ -194,14 +223,7 @@ struct EditorAgentSidebarView: View {
                 showsResumePicker: isResumePickerVisible,
                 recentSessionSuggestions: filteredRecentSessions,
                 resumeSelectionIndex: resumeSelectionIndex,
-                onPickResumeSession: resumeSession,
-                footerInfo: store.footerInfo,
-                sessionSubtitle: store.sessionSubtitle,
-                contextUsageText: store.contextUsageText,
-                onNewSession: startNewSession,
-                onShowRecentSessions: { store.refreshRecentSessions(force: true) },
-                recentSessions: store.recentSessions,
-                onResumeSession: resumeSession
+                onPickResumeSession: resumeSession
             )
             .overlay(alignment: .bottomLeading) {
                 composerSuggestionsOverlay
@@ -231,8 +253,19 @@ struct EditorAgentSidebarView: View {
             }
             .zIndex(10)
         }
-        .padding(.top, 12)
-        .padding(.bottom, 16)
+        .padding(.top, 10)
+        .padding(.bottom, 14)
+        .background {
+            VStack(spacing: 0) {
+                Rectangle()
+                    .fill(Color.primary.opacity(0.08))
+                    .frame(height: 0.5)
+                Rectangle()
+                    .fill(Color(nsColor: backgroundColor).opacity(0.96))
+                    .background(.ultraThinMaterial.opacity(0.55))
+            }
+            .ignoresSafeArea(edges: .bottom)
+        }
     }
 
     // MARK: Derived state
@@ -278,8 +311,15 @@ struct EditorAgentSidebarView: View {
         "commands=\(filteredCommands.count)|models=\(filteredModels.count)|sessions=\(filteredRecentSessions.count)|modelPicker=\(isModelPickerVisible)|resumePicker=\(isResumePickerVisible)|height=\(Int(composerBarHeight.rounded()))"
     }
 
+    private var draftTextBinding: Binding<String> {
+        Binding(
+            get: { store.draftText },
+            set: { store.draftText = $0 }
+        )
+    }
+
     private var trimmedInput: String {
-        inputText.trimmingCharacters(in: .whitespacesAndNewlines)
+        store.draftText.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private var canSubmitComposer: Bool {
@@ -293,7 +333,7 @@ struct EditorAgentSidebarView: View {
         if showsCommandSuggestions {
             return filteredCommands.indices.contains(commandSelectionIndex)
         }
-        return !trimmedInput.isEmpty
+        return !trimmedInput.isEmpty || !store.selectionAttachments.isEmpty
     }
 
     private var placeholderText: String {
@@ -415,8 +455,9 @@ struct EditorAgentSidebarView: View {
             return
         }
 
-        let text = trimmedInput
-        inputText = ""
+        let text = store.composedPromptForSubmission()
+        store.clearDraft()
+        store.clearSelectionAttachments()
         transcriptJumpToLatestToken &+= 1
         if enablingFollow {
             store.setAgentFollowEnabled(true)
@@ -425,12 +466,12 @@ struct EditorAgentSidebarView: View {
     }
 
     private func insertCommand(_ command: EditorAgentCommand) {
-        inputText = "/\(command.name) "
+        store.draftText = "/\(command.name) "
         isComposerFocused = true
     }
 
     private func selectModel(_ model: EditorAgentModel) {
-        inputText = ""
+        store.clearDraft()
         store.setModel(provider: model.provider, modelID: model.id)
         isComposerFocused = true
     }
@@ -439,7 +480,8 @@ struct EditorAgentSidebarView: View {
         expandedToolItemIDs.removeAll()
         expandedSummaryItemIDs.removeAll()
         showsJumpToLatest = false
-        inputText = ""
+        store.clearDraft()
+        store.clearSelectionAttachments()
         store.newSession()
     }
 
@@ -447,8 +489,15 @@ struct EditorAgentSidebarView: View {
         expandedToolItemIDs.removeAll()
         expandedSummaryItemIDs.removeAll()
         showsJumpToLatest = false
-        inputText = ""
+        store.clearDraft()
+        store.clearSelectionAttachments()
         store.resumeSession(path: session.path)
+        isComposerFocused = true
+    }
+
+    private func useEmptyStateSuggestion(_ prompt: String) {
+        store.appendToDraft(prompt, separatedByBlankLine: !store.draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        store.requestComposerFocus()
         isComposerFocused = true
     }
 
@@ -462,11 +511,13 @@ struct EditorAgentSidebarView: View {
                 store.errorMessage = "Usage: /name <session name>"
                 return
             }
-            inputText = ""
+            store.clearDraft()
+            store.clearSelectionAttachments()
             store.setSessionName(arguments)
             isComposerFocused = true
         case "compact":
-            inputText = ""
+            store.clearDraft()
+            store.clearSelectionAttachments()
             store.compact(customInstructions: arguments.isEmpty ? nil : arguments)
             isComposerFocused = true
         case "copy":
@@ -476,7 +527,8 @@ struct EditorAgentSidebarView: View {
             }
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(text, forType: .string)
-            inputText = ""
+            store.clearDraft()
+            store.clearSelectionAttachments()
             isComposerFocused = true
         case "resume":
             store.errorMessage = "Pick a session from the list to resume."
@@ -519,8 +571,115 @@ struct EditorAgentSidebarView: View {
 
     private func dismissOverlay() {
         if trimmedInput.hasPrefix("/") {
-            inputText = ""
+            store.clearDraft()
         }
+    }
+}
+
+private struct AgentSidebarHeaderView: View {
+    let sessionTitle: String
+    let footerInfo: EditorAgentFooterInfo?
+    let fallbackSubtitle: String
+    let fallbackContextUsageText: String?
+    let isRunning: Bool
+    let compactionStatus: EditorAgentCompactionStatus?
+    let isFollowingAgent: Bool
+    let followStatusText: String?
+    let recentSessions: [EditorAgentRecentSession]
+    let onNewSession: () -> Void
+    let onResumeSession: (EditorAgentRecentSession) -> Void
+    let onRefreshRecent: () -> Void
+    let onToggleFollow: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(headerTitle)
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+
+                    Text(workspaceLine)
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+
+                Spacer(minLength: 0)
+
+                HStack(spacing: 8) {
+                    AgentSessionMenuButton(
+                        onNewSession: onNewSession,
+                        recentSessions: recentSessions,
+                        onResumeSession: onResumeSession,
+                        onRefreshRecent: onRefreshRecent
+                    )
+
+                    AgentFollowToggleButton(
+                        isFollowing: isFollowingAgent,
+                        compact: true,
+                        action: onToggleFollow
+                    )
+                }
+            }
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    AgentPromptMetadataChip(text: modelLine, isEmphasized: true, tint: .secondary)
+
+                    if let statsText = agentPromptStatsSummary(footerInfo: footerInfo, fallbackContextUsageText: fallbackContextUsageText) {
+                        AgentPromptMetadataChip(text: statsText, isEmphasized: false, tint: .secondary)
+                    }
+
+                    AgentPromptMetadataChip(text: runningStateText, isEmphasized: false, tint: runningStateTint)
+
+                    if let followStatusText, isFollowingAgent, !followStatusText.isEmpty {
+                        AgentPromptMetadataChip(text: followStatusText, isEmphasized: false, tint: .accentColor)
+                    }
+                }
+                .padding(.vertical, 1)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, AgentLayout.headerVerticalPadding)
+        .background {
+            RoundedRectangle(cornerRadius: AgentLayout.headerCornerRadius, style: .continuous)
+                .fill(Color.primary.opacity(0.03))
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: AgentLayout.headerCornerRadius, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.07), lineWidth: 0.5)
+        }
+        .onAppear { onRefreshRecent() }
+    }
+
+    private var headerTitle: String {
+        let trimmed = sessionTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "pi Agent" : trimmed
+    }
+
+    private var workspaceLine: String {
+        agentPromptPathLine(footerInfo: footerInfo, fallbackSubtitle: fallbackSubtitle)
+    }
+
+    private var modelLine: String {
+        agentPromptModelLine(footerInfo: footerInfo, fallbackSubtitle: fallbackSubtitle)
+    }
+
+    private var runningStateText: String {
+        if let compactionStatus {
+            return compactionStatus.title
+        }
+        return isRunning ? "Working" : "Ready"
+    }
+
+    private var runningStateTint: Color {
+        if compactionStatus != nil {
+            return .orange
+        }
+        return isRunning ? .accentColor : .secondary
     }
 }
 
@@ -534,50 +693,34 @@ private struct AgentEmptyStateView: View {
     let recentSessions: [EditorAgentRecentSession]
     let onNewSession: () -> Void
     let onResumeSession: (EditorAgentRecentSession) -> Void
+    let onUseSuggestion: (String) -> Void
 
     var body: some View {
-        VStack(spacing: 24) {
-            Spacer(minLength: 0)
-
-            VStack(spacing: 14) {
-                Image(systemName: "brain.head.profile")
-                    .font(.system(size: 44, weight: .regular))
-                    .foregroundStyle(.secondary)
-
-                VStack(spacing: 6) {
-                    Text("pi Agent")
-                        .font(.system(size: 20, weight: .semibold))
-                        .foregroundStyle(.primary)
-
-                    HStack(spacing: 6) {
-                        Text(footerInfo?.modelProvider.flatMap { provider in
-                            let model = footerInfo?.modelID ?? sessionSubtitle
-                            return provider.isEmpty ? model : "\(provider)/\(model)"
-                        } ?? sessionSubtitle)
-                        if let usage = contextUsageText {
-                            Text("·")
-                            Text(usage)
-                        }
-                    }
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.secondary)
-
-                    Text("Ask pi for edits, reviews, or workspace help.")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                }
-            }
-
+        VStack(alignment: .leading, spacing: 16) {
             if !recentSessions.isEmpty {
                 AgentRecentSessionsGrid(
                     sessions: recentSessions,
                     onSelect: onResumeSession
                 )
-                .frame(maxWidth: 520)
+            } else {
+                Text("No messages yet")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.secondary)
+            }
+
+            if isRunning {
+                HStack(spacing: 8) {
+                    AgentSpinner()
+                    Text("Agent is working…")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.top, 2)
             }
 
             Spacer(minLength: 0)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 }
 
@@ -675,33 +818,50 @@ private struct AgentTranscriptView: View {
         items.map(AgentTranscriptRowEntry.init)
     }
 
+    private var firstLiveRowIndex: Int? {
+        rowEntries.firstIndex(where: { $0.item.isStreaming || $0.item.status == "running" })
+    }
+
+    private var historicalRowEntries: [AgentTranscriptRowEntry] {
+        guard let firstLiveRowIndex else { return rowEntries }
+        return Array(rowEntries[..<firstLiveRowIndex])
+    }
+
+    private var liveRowEntries: [AgentTranscriptRowEntry] {
+        guard let firstLiveRowIndex else { return [] }
+        return Array(rowEntries[firstLiveRowIndex...])
+    }
+
+    private var shouldAutoScrollOnAppear: Bool {
+        if rowEntries.count <= 1 {
+            return true
+        }
+        return rowEntries.contains { $0.item.isStreaming || $0.item.status == "running" }
+    }
+
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: AgentLayout.transcriptSpacing) {
-                        ForEach(rowEntries) { entry in
-                            AgentTranscriptRow(
-                                item: entry.item,
-                                selectionColor: selectionColor,
-                                isToolExpanded: expandedToolItemIDs.contains(entry.item.id),
-                                isSummaryExpanded: expandedSummaryItemIDs.contains(entry.item.id),
-                                onToggleToolExpansion: {
-                                    if expandedToolItemIDs.contains(entry.item.id) {
-                                        expandedToolItemIDs.remove(entry.item.id)
-                                    } else {
-                                        expandedToolItemIDs.insert(entry.item.id)
-                                    }
-                                },
-                                onToggleSummaryExpansion: {
-                                    if expandedSummaryItemIDs.contains(entry.item.id) {
-                                        expandedSummaryItemIDs.remove(entry.item.id)
-                                    } else {
-                                        expandedSummaryItemIDs.insert(entry.item.id)
-                                    }
-                                }
-                            )
-                        }
+                        AgentTranscriptRowsSection(
+                            entries: historicalRowEntries,
+                            selectionColor: selectionColor,
+                            expandedToolItemIDs: expandedToolItemIDs,
+                            expandedSummaryItemIDs: expandedSummaryItemIDs,
+                            onToggleToolExpansion: toggleToolExpansion,
+                            onToggleSummaryExpansion: toggleSummaryExpansion
+                        )
+                        .equatable()
+
+                        AgentTranscriptRowsSection(
+                            entries: liveRowEntries,
+                            selectionColor: selectionColor,
+                            expandedToolItemIDs: expandedToolItemIDs,
+                            expandedSummaryItemIDs: expandedSummaryItemIDs,
+                            onToggleToolExpansion: toggleToolExpansion,
+                            onToggleSummaryExpansion: toggleSummaryExpansion
+                        )
 
                         Color.clear
                             .frame(height: 1)
@@ -715,20 +875,25 @@ private struct AgentTranscriptView: View {
                     }
                     .padding(.top, topInset)
                     .padding(.bottom, 12)
-                    .frame(maxWidth: AgentLayout.maxContentWidth, alignment: .leading)
-                    .frame(maxWidth: .infinity, alignment: .center)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .background(
                     AgentTranscriptScrollObserver(isNearBottom: $isPinnedToBottom)
                 )
                 .onAppear {
-                    scheduleScrollTranscriptToBottom(using: proxy, animated: false)
+                    if shouldAutoScrollOnAppear {
+                        agentPerfIncrement("transcript.scroll.appear.auto")
+                        scheduleScrollTranscriptToBottom(using: proxy, animated: false)
+                    } else {
+                        agentPerfIncrement("transcript.scroll.appear.skipped")
+                    }
                 }
                 .onDisappear {
                     pendingScrollToBottomWorkItem?.cancel()
                     pendingScrollToBottomWorkItem = nil
                 }
                 .onChange(of: transcriptRevision) { _, newValue in
+                    agentPerfIncrement("transcript.view.revisionChange")
                     agentDebugLog("transcriptRevision.change revision=\(newValue) items=\(items.count) pinned=\(isPinnedToBottom) lastItem=\(items.last?.id ?? "none")")
                     let nextShowsJumpToLatest = !isPinnedToBottom
                     if showsJumpToLatest != nextShowsJumpToLatest {
@@ -736,10 +901,12 @@ private struct AgentTranscriptView: View {
                     }
                 }
                 .onChange(of: jumpToLatestToken) { _, _ in
+                    agentPerfIncrement("transcript.view.jumpToLatest")
                     showsJumpToLatest = false
                     scheduleScrollTranscriptToBottom(using: proxy, animated: true)
                 }
                 .onChange(of: isPinnedToBottom) { _, pinned in
+                    agentPerfIncrement(pinned ? "transcript.view.pinned.true" : "transcript.view.pinned.false")
                     if pinned, showsJumpToLatest {
                         showsJumpToLatest = false
                     }
@@ -748,6 +915,7 @@ private struct AgentTranscriptView: View {
                     guard isPinnedToBottom, newHeight > 0 else { return }
                     let oldHeight = transcriptContentHeight
                     guard abs(newHeight - oldHeight) > 0.5 else { return }
+                    agentPerfIncrement("transcript.view.heightChange")
                     transcriptContentHeight = newHeight
                     agentDebugLog("transcriptHeight.change old=\(Int(oldHeight.rounded())) new=\(Int(newHeight.rounded())) pinned=\(isPinnedToBottom) revision=\(transcriptRevision)")
                     scheduleScrollTranscriptToBottom(using: proxy, animated: false)
@@ -767,22 +935,42 @@ private struct AgentTranscriptView: View {
         .animation(.easeOut(duration: 0.18), value: showsJumpToLatest)
     }
 
+    private func toggleToolExpansion(for itemID: String) {
+        if expandedToolItemIDs.contains(itemID) {
+            expandedToolItemIDs.remove(itemID)
+        } else {
+            expandedToolItemIDs.insert(itemID)
+        }
+    }
+
+    private func toggleSummaryExpansion(for itemID: String) {
+        if expandedSummaryItemIDs.contains(itemID) {
+            expandedSummaryItemIDs.remove(itemID)
+        } else {
+            expandedSummaryItemIDs.insert(itemID)
+        }
+    }
+
     private func scheduleScrollTranscriptToBottom(using proxy: ScrollViewProxy, animated: Bool) {
+        agentPerfIncrement(animated ? "transcript.scroll.request.animated" : "transcript.scroll.request.immediate")
         pendingScrollToBottomWorkItem?.cancel()
         agentDebugLog("scrollToBottom.request animated=\(animated) revision=\(transcriptRevision) items=\(items.count)")
 
         let workItem = DispatchWorkItem {
-            if animated {
-                withAnimation(.easeOut(duration: 0.16)) {
-                    proxy.scrollTo(bottomAnchorID, anchor: .bottom)
-                }
-            } else {
-                var transaction = Transaction()
-                transaction.disablesAnimations = true
-                withTransaction(transaction) {
-                    proxy.scrollTo(bottomAnchorID, anchor: .bottom)
+            measureAgentSignpostedInterval("AgentTranscriptScrollToBottom", counterKey: "transcript.scroll.ms") {
+                if animated {
+                    withAnimation(.easeOut(duration: 0.16)) {
+                        proxy.scrollTo(bottomAnchorID, anchor: .bottom)
+                    }
+                } else {
+                    var transaction = Transaction()
+                    transaction.disablesAnimations = true
+                    withTransaction(transaction) {
+                        proxy.scrollTo(bottomAnchorID, anchor: .bottom)
+                    }
                 }
             }
+            agentPerfIncrement(animated ? "transcript.scroll.applied.animated" : "transcript.scroll.applied.immediate")
             agentDebugLog("scrollToBottom.applied animated=\(animated) revision=\(transcriptRevision) items=\(items.count)")
         }
 
@@ -808,6 +996,47 @@ private struct AgentTranscriptContentHeightPreferenceKey: PreferenceKey {
 
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
         value = nextValue()
+    }
+}
+
+private struct AgentTranscriptRowsSection: View, Equatable {
+    let entries: [AgentTranscriptRowEntry]
+    let selectionColor: NSColor
+    let expandedToolItemIDs: Set<String>
+    let expandedSummaryItemIDs: Set<String>
+    let onToggleToolExpansion: (String) -> Void
+    let onToggleSummaryExpansion: (String) -> Void
+
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        guard lhs.selectionColor.isEqual(rhs.selectionColor) else { return false }
+        guard lhs.entries.count == rhs.entries.count else { return false }
+        for (lhsEntry, rhsEntry) in zip(lhs.entries, rhs.entries) {
+            guard lhsEntry.item.id == rhsEntry.item.id,
+                  lhsEntry.item.revision == rhsEntry.item.revision,
+                  lhs.expandedToolItemIDs.contains(lhsEntry.item.id) == rhs.expandedToolItemIDs.contains(rhsEntry.item.id),
+                  lhs.expandedSummaryItemIDs.contains(lhsEntry.item.id) == rhs.expandedSummaryItemIDs.contains(rhsEntry.item.id)
+            else {
+                return false
+            }
+        }
+        return true
+    }
+
+    var body: some View {
+        ForEach(entries) { entry in
+            AgentTranscriptRow(
+                item: entry.item,
+                selectionColor: selectionColor,
+                isToolExpanded: expandedToolItemIDs.contains(entry.item.id),
+                isSummaryExpanded: expandedSummaryItemIDs.contains(entry.item.id),
+                onToggleToolExpansion: {
+                    onToggleToolExpansion(entry.item.id)
+                },
+                onToggleSummaryExpansion: {
+                    onToggleSummaryExpansion(entry.item.id)
+                }
+            )
+        }
     }
 }
 
@@ -973,12 +1202,12 @@ private struct AgentUserMessageView: View {
                 }
 
                 Text(item.text)
-                    .font(.system(size: 13))
+                    .font(.system(size: 12.5))
                     .foregroundStyle(.primary)
                     .multilineTextAlignment(.leading)
                     .textSelection(.enabled)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 7)
                     .background {
                         RoundedRectangle(cornerRadius: AgentLayout.userBubbleCornerRadius, style: .continuous)
                             .fill(Color(nsColor: selectionColor).opacity(0.22))
@@ -1005,14 +1234,24 @@ private struct AgentAssistantMessageView: View, Equatable {
         VStack(alignment: .leading, spacing: 4) {
             if let renderedMarkdown = item.renderedMarkdown,
                !renderedMarkdown.blocks.isEmpty {
-                AgentRenderedMarkdownView(rendered: renderedMarkdown)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                AgentRenderedMarkdownView(
+                    rendered: renderedMarkdown,
+                    measurementBaseID: item.id,
+                    measurementRevision: item.revision
+                )
+                .frame(maxWidth: .infinity, alignment: .leading)
             } else {
-                Text(item.text)
-                    .font(.system(size: 13))
-                    .foregroundStyle(.primary)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                AgentPlainTextDisplayView(
+                    text: item.text,
+                    font: .systemFont(ofSize: 12.5),
+                    textColor: .labelColor,
+                    isItalic: false,
+                    measurementIdentity: EditorTranscriptMeasurementIdentity(
+                        id: "\(item.id):assistant",
+                        revision: item.revision
+                    )
+                )
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
 
             if item.isStreaming && item.text.isEmpty {
@@ -1051,18 +1290,23 @@ private struct AgentThinkingMessageView: View, Equatable {
             .foregroundStyle(.secondary)
 
             if !item.text.isEmpty {
-                Text(item.text)
-                    .font(.system(size: 12))
-                    .italic()
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                AgentPlainTextDisplayView(
+                    text: item.text,
+                    font: .systemFont(ofSize: 12),
+                    textColor: .secondaryLabelColor,
+                    isItalic: true,
+                    measurementIdentity: EditorTranscriptMeasurementIdentity(
+                        id: "\(item.id):thinking",
+                        revision: item.revision
+                    )
+                )
+                .frame(maxWidth: .infinity, alignment: .leading)
             } else if item.isStreaming {
                 AgentThinkingIndicator()
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 11)
+        .padding(.vertical, 8)
         .background {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(Color.primary.opacity(0.025))
@@ -1075,20 +1319,219 @@ private struct AgentThinkingMessageView: View, Equatable {
     }
 }
 
+private struct AgentPlainTextDisplayView: NSViewRepresentable {
+    let text: String
+    let font: NSFont
+    let textColor: NSColor
+    let isItalic: Bool
+    var textContainerInset: NSSize = .zero
+    var measurementIdentity: EditorTranscriptMeasurementIdentity? = nil
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    func makeNSView(context: Context) -> AgentPlainTextInlineTextView {
+        let textView = AgentPlainTextInlineTextView(textContainerInset: textContainerInset)
+        applyConfiguration(to: textView)
+        context.coordinator.configuration = configuration
+        context.coordinator.lastInset = textContainerInset
+        return textView
+    }
+
+    func updateNSView(_ nsView: AgentPlainTextInlineTextView, context: Context) {
+        if context.coordinator.lastInset != textContainerInset {
+            nsView.textContainerInset = textContainerInset
+            context.coordinator.lastInset = textContainerInset
+        }
+        if context.coordinator.configuration != configuration {
+            agentPerfIncrement("agentPlainText.update")
+            applyConfiguration(to: nsView)
+            context.coordinator.configuration = configuration
+        }
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: AgentPlainTextInlineTextView, context: Context) -> CGSize? {
+        agentPerfIncrement("agentPlainText.sizeThatFits.request")
+        let proposedWidth = proposal.width ?? 640
+        let measuredWidth = quantizedTranscriptLayoutWidth(proposedWidth)
+        let height: CGFloat
+
+        if let measurementIdentity {
+            let cacheKey = editorTranscriptHeightCacheKey(
+                identity: measurementIdentity,
+                width: measuredWidth,
+                textContainerInset: textContainerInset
+            )
+            if let cachedHeight = EditorTranscriptHeightCache.shared.value(for: cacheKey) {
+                agentPerfIncrement("agentPlainText.heightCache.hit")
+                height = cachedHeight
+            } else {
+                agentPerfIncrement("agentPlainText.heightCache.miss")
+                height = measureAgentSignpostedInterval("AgentPlainTextSizeThatFits", counterKey: "agentPlainText.sizeThatFits.ms") {
+                    nsView.measuredHeight(forWidth: measuredWidth)
+                }
+                EditorTranscriptHeightCache.shared.insert(height, for: cacheKey)
+            }
+        } else {
+            height = measureAgentSignpostedInterval("AgentPlainTextSizeThatFits", counterKey: "agentPlainText.sizeThatFits.ms") {
+                nsView.measuredHeight(forWidth: measuredWidth)
+            }
+        }
+
+        return CGSize(width: proposedWidth, height: height)
+    }
+
+    private var configuration: AgentPlainTextConfiguration {
+        AgentPlainTextConfiguration(
+            measurementIdentity: measurementIdentity,
+            text: text,
+            fontName: resolvedFont.fontName,
+            fontSize: resolvedFont.pointSize,
+            textColor: textColor
+        )
+    }
+
+    private var resolvedFont: NSFont {
+        guard isItalic else { return font }
+        return NSFontManager.shared.convert(font, toHaveTrait: .italicFontMask)
+    }
+
+    private func applyConfiguration(to textView: AgentPlainTextInlineTextView) {
+        textView.setAttributedString(
+            NSAttributedString(
+                string: text,
+                attributes: [
+                    .font: resolvedFont,
+                    .foregroundColor: textColor,
+                    .paragraphStyle: paragraphStyle,
+                ]
+            )
+        )
+    }
+
+    private var paragraphStyle: NSParagraphStyle {
+        let style = NSMutableParagraphStyle()
+        style.lineBreakMode = .byWordWrapping
+        return style
+    }
+
+    final class Coordinator {
+        var configuration: AgentPlainTextConfiguration?
+        var lastInset: NSSize = .zero
+    }
+}
+
+private struct AgentPlainTextConfiguration: Equatable {
+    let measurementIdentity: EditorTranscriptMeasurementIdentity?
+    let text: String
+    let fontName: String
+    let fontSize: CGFloat
+    let textColor: NSColor
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        let contentMatches: Bool
+        switch (lhs.measurementIdentity, rhs.measurementIdentity) {
+        case let (.some(lhsIdentity), .some(rhsIdentity)):
+            contentMatches = lhsIdentity == rhsIdentity
+        case (.none, .none):
+            contentMatches = lhs.text == rhs.text
+        default:
+            contentMatches = false
+        }
+
+        return contentMatches
+            && lhs.fontName == rhs.fontName
+            && lhs.fontSize == rhs.fontSize
+            && lhs.textColor.isEqual(rhs.textColor)
+    }
+}
+
+private final class AgentPlainTextInlineTextView: NSTextView {
+    init(textContainerInset: NSSize = .zero) {
+        let textStorage = NSTextStorage()
+        let layoutManager = NSLayoutManager()
+        textStorage.addLayoutManager(layoutManager)
+        let textContainer = NSTextContainer(size: CGSize(width: 0, height: CGFloat.greatestFiniteMagnitude))
+        textContainer.widthTracksTextView = true
+        textContainer.heightTracksTextView = false
+        textContainer.lineFragmentPadding = 0
+        layoutManager.addTextContainer(textContainer)
+        super.init(frame: .zero, textContainer: textContainer)
+        isEditable = false
+        isSelectable = true
+        isRichText = true
+        importsGraphics = false
+        drawsBackground = false
+        backgroundColor = .clear
+        self.textContainerInset = textContainerInset
+        isVerticallyResizable = false
+        isHorizontallyResizable = false
+        allowsUndo = false
+        allowsDocumentBackgroundColorChange = false
+        usesFindBar = false
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func setAttributedString(_ attributedString: NSAttributedString) {
+        agentPerfIncrement("agentPlainText.setAttributedString")
+        textStorage?.setAttributedString(attributedString)
+        invalidateIntrinsicContentSize()
+    }
+
+    func measuredHeight(forWidth width: CGFloat) -> CGFloat {
+        measureAgentSignpostedInterval("AgentPlainTextMeasuredHeight", counterKey: "agentPlainText.measuredHeight.ms") {
+            guard let textContainer, let layoutManager else { return 0 }
+            let insetWidth = textContainerInset.width * 2
+            let insetHeight = textContainerInset.height * 2
+            let contentWidth = max(width - insetWidth, 1)
+            textContainer.containerSize = CGSize(width: contentWidth, height: CGFloat.greatestFiniteMagnitude)
+            layoutManager.ensureLayout(for: textContainer)
+            return ceil(layoutManager.usedRect(for: textContainer).height + insetHeight)
+        }
+    }
+
+    override var intrinsicContentSize: NSSize {
+        let width = bounds.width > 0 ? bounds.width : 640
+        return NSSize(width: width, height: measuredHeight(forWidth: width))
+    }
+}
+
 @MainActor
 private struct AgentRenderedMarkdownView: View, Equatable {
     let rendered: EditorRenderedMarkdown
+    let measurementBaseID: String
+    let measurementRevision: Int
+
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.measurementBaseID == rhs.measurementBaseID && lhs.measurementRevision == rhs.measurementRevision
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
+            ForEach(Array(segments.enumerated()), id: \.offset) { index, segment in
                 switch segment {
                 case .text(let runs):
-                    EditorDocsAttributedTextView(runs: runs)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    EditorDocsAttributedTextView(
+                        runs: runs,
+                        measurementIdentity: EditorTranscriptMeasurementIdentity(
+                            id: "\(measurementBaseID):text:\(index)",
+                            revision: measurementRevision
+                        )
+                    )
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 case .code(let language, let runs):
-                    AgentCodeBlockView(language: language, runs: runs)
-                        .padding(.vertical, 4)
+                    AgentCodeBlockView(
+                        language: language,
+                        runs: runs,
+                        measurementBaseID: "\(measurementBaseID):code:\(index)",
+                        measurementRevision: measurementRevision
+                    )
+                    .padding(.vertical, 4)
                 }
             }
         }
@@ -1185,6 +1628,8 @@ private enum AgentRenderedMarkdownSegment {
 private struct AgentCodeBlockView: View {
     let language: String?
     let runs: [EditorDocsRun]
+    let measurementBaseID: String
+    let measurementRevision: Int
     @State private var didCopy = false
 
     var body: some View {
@@ -1210,7 +1655,11 @@ private struct AgentCodeBlockView: View {
 
             EditorDocsAttributedTextView(
                 runs: runs,
-                textContainerInset: NSSize(width: 10, height: 10)
+                textContainerInset: NSSize(width: 10, height: 10),
+                measurementIdentity: EditorTranscriptMeasurementIdentity(
+                    id: "\(measurementBaseID):body",
+                    revision: measurementRevision
+                )
             )
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.bottom, 2)
@@ -1378,8 +1827,12 @@ private struct AgentSummaryRow: View {
                 Group {
                     if let renderedMarkdown = item.renderedMarkdown,
                        !renderedMarkdown.blocks.isEmpty {
-                        AgentRenderedMarkdownView(rendered: renderedMarkdown)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                        AgentRenderedMarkdownView(
+                            rendered: renderedMarkdown,
+                            measurementBaseID: "\(item.id):summary",
+                            measurementRevision: item.revision
+                        )
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     } else {
                         Text(item.text)
                             .font(.system(size: 12))
@@ -1476,8 +1929,8 @@ private struct AgentToolRow: View {
                             .frame(width: 7, height: 7)
                     }
                 }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 7)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -1501,8 +1954,8 @@ private struct AgentToolRow: View {
                         )
                     }
                 }
-                .padding(.horizontal, 10)
-                .padding(.bottom, 10)
+                .padding(.horizontal, 9)
+                .padding(.bottom, 9)
             }
         }
         .background {
@@ -1874,12 +2327,11 @@ private struct AgentComposerBar: View {
     let isCompacting: Bool
     let isReady: Bool
     let canSend: Bool
-    let isFollowingAgent: Bool
-    let followStatusText: String?
+    let selectionAttachments: [EditorAgentSelectionAttachment]
+    let onRemoveSelectionAttachment: (EditorAgentSelectionAttachment) -> Void
     let onSend: () -> Void
     let onFollowAndSend: () -> Void
     let onCancel: () -> Void
-    let onToggleFollow: () -> Void
     let onInsertCommand: (EditorAgentCommand) -> Void
     let onMoveUp: () -> Void
     let onMoveDown: () -> Void
@@ -1897,25 +2349,25 @@ private struct AgentComposerBar: View {
     let resumeSelectionIndex: Int
     let onPickResumeSession: (EditorAgentRecentSession) -> Void
 
-    let footerInfo: EditorAgentFooterInfo?
-    let sessionSubtitle: String
-    let contextUsageText: String?
-    let onNewSession: () -> Void
-    let onShowRecentSessions: () -> Void
-    let recentSessions: [EditorAgentRecentSession]
-    let onResumeSession: (EditorAgentRecentSession) -> Void
-
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             textField
 
+            if !selectionAttachments.isEmpty {
+                AgentComposerSelectionStrip(
+                    attachments: selectionAttachments,
+                    onRemove: onRemoveSelectionAttachment
+                )
+                .padding(.top, 6)
+            }
+
             if !detectedImages.isEmpty {
                 AgentComposerImageStrip(images: detectedImages)
-                    .padding(.top, 8)
+                    .padding(.top, 6)
             }
 
             controlsRow
-                .padding(.top, 4)
+                .padding(.top, 2)
         }
         .padding(AgentLayout.composerContainerPadding)
         .background {
@@ -1930,7 +2382,7 @@ private struct AgentComposerBar: View {
         ZStack(alignment: .topLeading) {
             if inputText.isEmpty {
                 Text(placeholder)
-                    .font(.system(size: 14, weight: .medium))
+                    .font(.system(size: 13))
                     .foregroundStyle(.tertiary)
                     .padding(.top, AgentLayout.composerTextTopInset)
                     .padding(.leading, AgentLayout.composerTextLeadingInset)
@@ -1968,23 +2420,11 @@ private struct AgentComposerBar: View {
 
     @ViewBuilder
     private var controlsRow: some View {
-        HStack(alignment: .bottom, spacing: AgentLayout.composerRowSpacing) {
-            AgentPromptInfoBar(
-                footerInfo: footerInfo,
-                fallbackSubtitle: sessionSubtitle,
-                fallbackContextUsageText: contextUsageText,
-                isFollowingAgent: isFollowingAgent,
-                followStatusText: followStatusText,
-                onToggleFollow: onToggleFollow,
-                onNewSession: onNewSession,
-                recentSessions: recentSessions,
-                onResumeSession: onResumeSession,
-                onRefreshRecent: onShowRecentSessions
-            )
-            .frame(maxWidth: .infinity, alignment: .leading)
-
+        HStack {
+            Spacer(minLength: 0)
             sendButton
         }
+        .frame(height: AgentLayout.composerSendSize)
     }
 
     @ViewBuilder
@@ -2026,28 +2466,102 @@ private struct AgentComposerBar: View {
 
     @ViewBuilder
     private var composerBackground: some View {
-        let shape = RoundedRectangle(cornerRadius: AgentLayout.composerCornerRadius, style: .continuous)
-        if #available(macOS 26.0, *) {
-            GlassEffectContainer {
-                shape
-                    .fill(Color.white.opacity(0.001))
-                    .glassEffect(.regular, in: shape)
-                shape.fill(Color.white.opacity(0.03))
-            }
-        } else {
-            shape.fill(.ultraThinMaterial)
-        }
+        RoundedRectangle(cornerRadius: AgentLayout.composerCornerRadius, style: .continuous)
+            .fill(Color.primary.opacity(0.045))
     }
 
     @ViewBuilder
     private var composerBorder: some View {
         RoundedRectangle(cornerRadius: AgentLayout.composerCornerRadius, style: .continuous)
             .strokeBorder(
-                Color.primary.opacity(isFocused ? 0.22 : 0.10),
-                lineWidth: 0.6
+                Color.primary.opacity(isFocused ? 0.18 : 0.08),
+                lineWidth: 0.5
             )
             .animation(.easeOut(duration: 0.15), value: isFocused)
             .allowsHitTesting(false)
+    }
+}
+
+private struct AgentComposerSelectionStrip: View {
+    let attachments: [EditorAgentSelectionAttachment]
+    let onRemove: (EditorAgentSelectionAttachment) -> Void
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: AgentLayout.composerAttachmentSpacing) {
+                ForEach(attachments) { attachment in
+                    AgentComposerSelectionChip(
+                        attachment: attachment,
+                        onRemove: { onRemove(attachment) }
+                    )
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct AgentComposerSelectionChip: View {
+    let attachment: EditorAgentSelectionAttachment
+    let onRemove: () -> Void
+
+    @State private var isHovered = false
+
+    private var lineCountText: String {
+        attachment.lineCount == 1 ? "1 line" : "\(attachment.lineCount) lines"
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
+                    Text("selection")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(Color.primary.opacity(0.06), in: Capsule())
+
+                    Text(attachment.titleText)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+
+                    Text(lineCountText)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+
+                Text(attachment.previewText)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+
+            Button(action: onRemove) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 16, height: 16)
+                    .background(Color.primary.opacity(isHovered ? 0.08 : 0.05), in: Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Remove selection")
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background {
+            RoundedRectangle(cornerRadius: AgentLayout.composerAttachmentCornerRadius, style: .continuous)
+                .fill(Color.primary.opacity(isHovered ? 0.065 : 0.04))
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: AgentLayout.composerAttachmentCornerRadius, style: .continuous)
+                .strokeBorder(Color.primary.opacity(isHovered ? 0.14 : 0.08), lineWidth: 0.5)
+        }
+        .contentShape(Rectangle())
+        .onHover { isHovered = $0 }
     }
 }
 
@@ -2326,7 +2840,7 @@ private struct AgentComposerNativeTextView: NSViewRepresentable {
         scrollView.scrollerStyle = .overlay
 
         textView.delegate = context.coordinator
-        textView.font = .systemFont(ofSize: 14)
+        textView.font = .systemFont(ofSize: 13)
         textView.isRichText = false
         textView.importsGraphics = false
         textView.isAutomaticQuoteSubstitutionEnabled = false
@@ -2597,94 +3111,15 @@ private struct AgentComposerNativeTextView: NSViewRepresentable {
     }
 }
 
-private struct AgentPromptInfoBar: View {
-    let footerInfo: EditorAgentFooterInfo?
-    let fallbackSubtitle: String
-    let fallbackContextUsageText: String?
-    let isFollowingAgent: Bool
-    let followStatusText: String?
-    let onToggleFollow: () -> Void
-    let onNewSession: () -> Void
-    let recentSessions: [EditorAgentRecentSession]
-    let onResumeSession: (EditorAgentRecentSession) -> Void
-    let onRefreshRecent: () -> Void
-
-    var body: some View {
-        HStack(alignment: .bottom, spacing: 10) {
-            AgentSessionMenuButton(
-                onNewSession: onNewSession,
-                recentSessions: recentSessions,
-                onResumeSession: onResumeSession,
-                onRefreshRecent: onRefreshRecent
-            )
-
-            AgentFollowToggleButton(
-                isFollowing: isFollowingAgent,
-                statusText: followStatusText,
-                action: onToggleFollow
-            )
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text(promptInfoPathLine)
-                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
-                    .foregroundStyle(.tertiary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-
-                HStack(alignment: .firstTextBaseline, spacing: 10) {
-                    AgentPromptStatsLine(
-                        footerInfo: footerInfo,
-                        fallbackContextUsageText: fallbackContextUsageText
-                    )
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .lineLimit(1)
-
-                    Text(promptInfoModelLine)
-                        .font(.system(size: 11, weight: .medium, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
-                }
-            }
-        }
-        .onAppear { onRefreshRecent() }
-    }
-
-    private var promptInfoPathLine: String {
-        guard let footerInfo else { return "Session · \(fallbackSubtitle)" }
-        var line = shortenAgentDisplayPath(footerInfo.cwd) ?? footerInfo.cwd
-        if let gitBranch = footerInfo.gitBranch?.trimmingCharacters(in: .whitespacesAndNewlines), !gitBranch.isEmpty {
-            line += " (\(gitBranch))"
-        }
-        if let sessionName = footerInfo.sessionName?.trimmingCharacters(in: .whitespacesAndNewlines), !sessionName.isEmpty {
-            line += " • \(sessionName)"
-        }
-        return line
-    }
-
-    private var promptInfoModelLine: String {
-        guard let footerInfo else { return fallbackSubtitle }
-        let modelID = footerInfo.modelID ?? footerInfo.modelName ?? fallbackSubtitle
-        let providerPrefix = footerInfo.availableProviderCount > 1
-            ? footerInfo.modelProvider.map { "(\($0)) " } ?? ""
-            : ""
-        if footerInfo.modelSupportsReasoning {
-            let thinkingText = footerInfo.thinkingLevel == "off" ? "thinking off" : footerInfo.thinkingLevel
-            return providerPrefix + modelID + " • " + thinkingText
-        }
-        return providerPrefix + modelID
-    }
-}
-
 private struct AgentFollowToggleButton: View {
     let isFollowing: Bool
-    let statusText: String?
+    let compact: Bool
     let action: () -> Void
     @State private var isHovered = false
 
     var body: some View {
         Button(action: action) {
-            VStack(alignment: .leading, spacing: 3) {
+            if compact {
                 HStack(spacing: 6) {
                     Image(systemName: "scope")
                         .font(.system(size: 11, weight: .semibold))
@@ -2692,27 +3127,34 @@ private struct AgentFollowToggleButton: View {
                         .font(.system(size: 11, weight: .semibold))
                 }
                 .foregroundStyle(isFollowing ? Color.accentColor : .secondary)
-
-                if let statusText, !statusText.isEmpty {
-                    Text(statusText)
-                        .font(.system(size: 10.5, weight: .medium, design: .monospaced))
-                        .foregroundStyle(.tertiary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .frame(maxWidth: 160, alignment: .leading)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .background {
+                    Capsule().fill((isFollowing ? Color.accentColor : Color.primary).opacity(isFollowing ? 0.14 : (isHovered ? 0.08 : 0.05)))
+                }
+                .overlay {
+                    Capsule().strokeBorder((isFollowing ? Color.accentColor : Color.primary).opacity(isFollowing ? 0.28 : 0.08), lineWidth: 0.5)
+                }
+            } else {
+                HStack(spacing: 6) {
+                    Image(systemName: "scope")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text(isFollowing ? "Following" : "Follow")
+                        .font(.system(size: 11, weight: .semibold))
+                }
+                .foregroundStyle(isFollowing ? Color.accentColor : .secondary)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .background {
+                    Capsule().fill((isFollowing ? Color.accentColor : Color.primary).opacity(isFollowing ? 0.14 : (isHovered ? 0.08 : 0.05)))
+                }
+                .overlay {
+                    Capsule().strokeBorder((isFollowing ? Color.accentColor : Color.primary).opacity(isFollowing ? 0.28 : 0.08), lineWidth: 0.5)
                 }
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
-            .background {
-                Capsule().fill((isFollowing ? Color.accentColor : Color.primary).opacity(isFollowing ? 0.14 : (isHovered ? 0.08 : 0.05)))
-            }
-            .overlay {
-                Capsule().strokeBorder((isFollowing ? Color.accentColor : Color.primary).opacity(isFollowing ? 0.28 : 0.08), lineWidth: 0.5)
-            }
-            .contentShape(Capsule())
         }
         .buttonStyle(.plain)
+        .contentShape(Capsule())
         .help(isFollowing ? "Stop following the agent" : "Follow the agent as it reads and edits files")
         .onHover { isHovered = $0 }
     }
@@ -2761,47 +3203,88 @@ private struct AgentSessionMenuButton: View {
     }
 }
 
+private struct AgentPromptMetadataChip: View {
+    let text: String
+    let isEmphasized: Bool
+    let tint: Color
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 10.5, weight: isEmphasized ? .semibold : .medium, design: .monospaced))
+            .foregroundStyle(isEmphasized ? .primary : tint)
+            .lineLimit(1)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background {
+                Capsule().fill(Color.primary.opacity(isEmphasized ? 0.07 : 0.04))
+            }
+            .overlay {
+                Capsule().strokeBorder(Color.primary.opacity(isEmphasized ? 0.10 : 0.07), lineWidth: 0.5)
+            }
+    }
+}
+
 private struct AgentPromptStatsLine: View {
     let footerInfo: EditorAgentFooterInfo?
     let fallbackContextUsageText: String?
 
     var body: some View {
-        if let footerInfo {
-            HStack(spacing: 6) {
-                if footerInfo.totalInput > 0 {
-                    Text("↑\(agentFormatTokenCount(footerInfo.totalInput))")
-                }
-                if footerInfo.totalOutput > 0 {
-                    Text("↓\(agentFormatTokenCount(footerInfo.totalOutput))")
-                }
-                if footerInfo.totalCacheRead > 0 {
-                    Text("R\(agentFormatTokenCount(footerInfo.totalCacheRead))")
-                }
-                if footerInfo.totalCacheWrite > 0 {
-                    Text("W\(agentFormatTokenCount(footerInfo.totalCacheWrite))")
-                }
-                if footerInfo.totalCost > 0 || footerInfo.usingSubscription {
-                    Text("$\(String(format: "%.3f", footerInfo.totalCost))\(footerInfo.usingSubscription ? " (sub)" : "")")
-                }
-                if let contextText = agentPromptContextUsageDisplay(footerInfo) {
-                    Text(contextText)
-                        .foregroundStyle(agentPromptContextUsageColor(footerInfo))
-                }
-            }
+        Text(agentPromptStatsSummary(footerInfo: footerInfo, fallbackContextUsageText: fallbackContextUsageText) ?? "Ready")
             .font(.system(size: 11, weight: .medium, design: .monospaced))
             .foregroundStyle(.secondary)
             .monospacedDigit()
-        } else if let fallbackContextUsageText {
-            Text(fallbackContextUsageText)
-                .font(.system(size: 11, weight: .medium, design: .monospaced))
-                .foregroundStyle(.secondary)
-                .monospacedDigit()
-        } else {
-            Text("Ready")
-                .font(.system(size: 11, weight: .medium, design: .monospaced))
-                .foregroundStyle(.secondary)
-        }
     }
+}
+
+private func agentPromptPathLine(footerInfo: EditorAgentFooterInfo?, fallbackSubtitle: String) -> String {
+    guard let footerInfo else { return "Session · \(fallbackSubtitle)" }
+    var line = shortenAgentDisplayPath(footerInfo.cwd) ?? footerInfo.cwd
+    if let gitBranch = footerInfo.gitBranch?.trimmingCharacters(in: .whitespacesAndNewlines), !gitBranch.isEmpty {
+        line += " (\(gitBranch))"
+    }
+    if let sessionName = footerInfo.sessionName?.trimmingCharacters(in: .whitespacesAndNewlines), !sessionName.isEmpty {
+        line += " • \(sessionName)"
+    }
+    return line
+}
+
+private func agentPromptModelLine(footerInfo: EditorAgentFooterInfo?, fallbackSubtitle: String) -> String {
+    guard let footerInfo else { return fallbackSubtitle }
+    let modelID = footerInfo.modelID ?? footerInfo.modelName ?? fallbackSubtitle
+    let providerPrefix = footerInfo.availableProviderCount > 1
+        ? footerInfo.modelProvider.map { "(\($0)) " } ?? ""
+        : ""
+    if footerInfo.modelSupportsReasoning {
+        let thinkingText = footerInfo.thinkingLevel == "off" ? "thinking off" : footerInfo.thinkingLevel
+        return providerPrefix + modelID + " • " + thinkingText
+    }
+    return providerPrefix + modelID
+}
+
+private func agentPromptStatsSummary(footerInfo: EditorAgentFooterInfo?, fallbackContextUsageText: String?) -> String? {
+    if let footerInfo {
+        var segments: [String] = []
+        if footerInfo.totalInput > 0 {
+            segments.append("↑\(agentFormatTokenCount(footerInfo.totalInput))")
+        }
+        if footerInfo.totalOutput > 0 {
+            segments.append("↓\(agentFormatTokenCount(footerInfo.totalOutput))")
+        }
+        if footerInfo.totalCacheRead > 0 {
+            segments.append("R\(agentFormatTokenCount(footerInfo.totalCacheRead))")
+        }
+        if footerInfo.totalCacheWrite > 0 {
+            segments.append("W\(agentFormatTokenCount(footerInfo.totalCacheWrite))")
+        }
+        if footerInfo.totalCost > 0 || footerInfo.usingSubscription {
+            segments.append("$\(String(format: "%.3f", footerInfo.totalCost))\(footerInfo.usingSubscription ? " (sub)" : "")")
+        }
+        if let contextText = agentPromptContextUsageDisplay(footerInfo) {
+            segments.append(contextText)
+        }
+        return segments.isEmpty ? nil : segments.joined(separator: " • ")
+    }
+    return fallbackContextUsageText
 }
 
 // MARK: - Command suggestions

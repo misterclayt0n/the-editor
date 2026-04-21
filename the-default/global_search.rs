@@ -323,11 +323,12 @@ fn build_global_search_item(
     })
     .filter(|(start, end)| end > start)
     .collect();
-  let (column_char, preview_col) = if let Some((start_char, end_char)) = preview_match_ranges.first().copied() {
-    (Some(start_char), Some((start_char, end_char)))
-  } else {
-    (None, None)
-  };
+  let (column_char, preview_col) =
+    if let Some((start_char, end_char)) = preview_match_ranges.first().copied() {
+      (Some(start_char), Some((start_char, end_char)))
+    } else {
+      (None, None)
+    };
   let column_display = column_char.map(|col| col + 1).unwrap_or(1);
   let display = format!(
     "{relative_path}\t{}\t{column_display}\t{}",
@@ -363,16 +364,18 @@ fn build_global_search_item(
       depth:      0,
     }),
     preview: None,
-    payload: Some(crate::file_picker::FilePickerItemPayload::new(DirectPickerItemMetadata {
-      match_indices:          Arc::from([]),
-      primary_match_ranges:   Arc::from(preview_match_ranges.clone()),
-      secondary_match_ranges: Arc::from([]),
-      preview_match_ranges:   Arc::from(preview_match_ranges),
-      tracking:               DirectPickerTrackingKind::FffGrep {
-        root:  root.to_path_buf(),
-        query: query.to_string(),
+    payload: Some(crate::file_picker::FilePickerItemPayload::new(
+      DirectPickerItemMetadata {
+        match_indices:          Arc::from([]),
+        primary_match_ranges:   Arc::from(preview_match_ranges.clone()),
+        secondary_match_ranges: Arc::from([]),
+        preview_match_ranges:   Arc::from(preview_match_ranges),
+        tracking:               DirectPickerTrackingKind::FffGrep {
+          root:  root.to_path_buf(),
+          query: query.to_string(),
+        },
       },
-    })),
+    )),
   }
 }
 
@@ -390,37 +393,39 @@ fn build_global_search_header_item(
   let (primary, secondary) = split_picker_path_display(relative_path);
 
   FilePickerItem {
-    absolute: absolute.clone(),
-    display: relative_path.to_string(),
-    icon: String::new(),
-    is_dir: false,
+    absolute:     absolute.clone(),
+    display:      relative_path.to_string(),
+    icon:         String::new(),
+    is_dir:       false,
     display_path: false,
-    action: FilePickerItemAction::GroupHeader { path: absolute },
+    action:       FilePickerItemAction::GroupHeader { path: absolute },
     preview_path: None,
     preview_line: None,
-    preview_col: None,
-    row_data: Some(crate::file_picker::FilePickerRowData {
-      kind:       crate::file_picker::FilePickerRowKind::LiveGrepHeader,
-      severity:   None,
+    preview_col:  None,
+    row_data:     Some(crate::file_picker::FilePickerRowData {
+      kind: crate::file_picker::FilePickerRowKind::LiveGrepHeader,
+      severity: None,
       primary,
       secondary,
-      tertiary:   String::new(),
+      tertiary: String::new(),
       quaternary: String::new(),
-      line:       0,
-      column:     0,
-      depth:      0,
+      line: 0,
+      column: 0,
+      depth: 0,
     }),
-    preview: None,
-    payload: Some(crate::file_picker::FilePickerItemPayload::new(DirectPickerItemMetadata {
-      match_indices:          Arc::from([]),
-      primary_match_ranges:   Arc::from([]),
-      secondary_match_ranges: Arc::from([]),
-      preview_match_ranges:   Arc::from([]),
-      tracking:               DirectPickerTrackingKind::FffGrep {
-        root:  root.to_path_buf(),
-        query: query.to_string(),
+    preview:      None,
+    payload:      Some(crate::file_picker::FilePickerItemPayload::new(
+      DirectPickerItemMetadata {
+        match_indices:          Arc::from([]),
+        primary_match_ranges:   Arc::from([]),
+        secondary_match_ranges: Arc::from([]),
+        preview_match_ranges:   Arc::from([]),
+        tracking:               DirectPickerTrackingKind::FffGrep {
+          root:  root.to_path_buf(),
+          query: query.to_string(),
+        },
       },
-    })),
+    )),
   }
 }
 
@@ -467,24 +472,33 @@ fn build_unsaved_document_matcher(
         fallback_error: None,
       })
     },
-    GlobalSearchMode::Regex => match RegexMatcherBuilder::new().case_smart(smart_case).build(query) {
-      Ok(matcher) => Ok(UnsavedDocumentMatcher::Grep {
-        matcher,
-        display_regex: build_display_regex(query, smart_case),
-        fallback_error: None,
-      }),
-      Err(err) => {
-        let escaped = regex::escape(query);
-        let matcher = RegexMatcherBuilder::new()
-          .case_smart(smart_case)
-          .build(&escaped)
-          .map_err(|fallback_err| format!("Failed to build literal fallback matcher: {fallback_err}"))?;
-        Ok(UnsavedDocumentMatcher::Grep {
-          matcher,
-          display_regex: build_display_regex(&escaped, smart_case),
-          fallback_error: Some(format!("Invalid regex — showing literal matches: {err}")),
-        })
-      },
+    GlobalSearchMode::Regex => {
+      match RegexMatcherBuilder::new()
+        .case_smart(smart_case)
+        .build(query)
+      {
+        Ok(matcher) => {
+          Ok(UnsavedDocumentMatcher::Grep {
+            matcher,
+            display_regex: build_display_regex(query, smart_case),
+            fallback_error: None,
+          })
+        },
+        Err(err) => {
+          let escaped = regex::escape(query);
+          let matcher = RegexMatcherBuilder::new()
+            .case_smart(smart_case)
+            .build(&escaped)
+            .map_err(|fallback_err| {
+              format!("Failed to build literal fallback matcher: {fallback_err}")
+            })?;
+          Ok(UnsavedDocumentMatcher::Grep {
+            matcher,
+            display_regex: build_display_regex(&escaped, smart_case),
+            fallback_error: Some(format!("Invalid regex — showing literal matches: {err}")),
+          })
+        },
+      }
     },
   }
 }
@@ -508,7 +522,12 @@ fn collect_search_matches_in_bytes(
     }
     let line_text = line_content.to_string();
     let match_bytes = display_regex
-      .map(|regex| regex.find_iter(line_content).map(|mat| (mat.start(), mat.end())).collect())
+      .map(|regex| {
+        regex
+          .find_iter(line_content)
+          .map(|mat| (mat.start(), mat.end()))
+          .collect()
+      })
       .unwrap_or_default();
     matches.push(SearchLineMatch {
       line_number_one_based: line_num as usize,
@@ -577,7 +596,7 @@ fn collect_fuzzy_search_matches_from_document(
     );
     matches.push(SearchLineMatch {
       line_number_one_based: index + 1,
-      line_text:             line.to_string(),
+      line_text: line.to_string(),
       match_bytes,
     });
   }
@@ -596,7 +615,12 @@ fn extend_items_with_file_matches(
     return;
   }
 
-  items.push(build_global_search_header_item(root, query, path, relative_path));
+  items.push(build_global_search_header_item(
+    root,
+    query,
+    path,
+    relative_path,
+  ));
   for matched in matches {
     if items.len() >= GLOBAL_SEARCH_MAX_RESULTS {
       break;
@@ -631,10 +655,12 @@ fn append_backend_grep_matches(
     if documents_by_path.contains_key(&normalized) {
       continue;
     }
-    let entry = grouped_matches.entry(matched.path.clone()).or_insert_with(|| {
-      file_order.push(matched.path.clone());
-      Vec::new()
-    });
+    let entry = grouped_matches
+      .entry(matched.path.clone())
+      .or_insert_with(|| {
+        file_order.push(matched.path.clone());
+        Vec::new()
+      });
     entry.push(SearchLineMatch {
       line_number_one_based: matched.line_number_one_based,
       line_text:             matched.line_text,
@@ -697,7 +723,14 @@ fn run_global_search_pass(
   )?;
 
   let mut items = Vec::new();
-  append_backend_grep_matches(&mut items, root, query, documents_by_path, backend.matches, cancel);
+  append_backend_grep_matches(
+    &mut items,
+    root,
+    query,
+    documents_by_path,
+    backend.matches,
+    cancel,
+  );
 
   let overlay_documents: Vec<_> = documents_by_path.values().cloned().collect();
   if !cancel.load(Ordering::Relaxed) && items.len() < GLOBAL_SEARCH_MAX_RESULTS {
@@ -716,15 +749,17 @@ fn run_global_search_pass(
           matcher,
           display_regex,
           ..
-        } => match collect_search_matches_from_document(
-          &document.path,
-          matcher,
-          display_regex.as_ref(),
-          document.text.as_str(),
-          cancel,
-        ) {
-          Ok(matches) => matches,
-          Err(_) => continue,
+        } => {
+          match collect_search_matches_from_document(
+            &document.path,
+            matcher,
+            display_regex.as_ref(),
+            document.text.as_str(),
+            cancel,
+          ) {
+            Ok(matches) => matches,
+            Err(_) => continue,
+          }
         },
         UnsavedDocumentMatcher::Fuzzy => {
           collect_fuzzy_search_matches_from_document(document.text.as_str(), query, cancel)
@@ -742,19 +777,23 @@ fn run_global_search_pass(
   }
 
   let mut status_banner = match &unsaved_matcher {
-    UnsavedDocumentMatcher::Grep { fallback_error, .. } => fallback_error.clone().map(|text| {
-      FilePickerStatusBanner {
-        kind: FilePickerStatusBannerKind::Warning,
-        text,
-      }
-    }),
+    UnsavedDocumentMatcher::Grep { fallback_error, .. } => {
+      fallback_error.clone().map(|text| {
+        FilePickerStatusBanner {
+          kind: FilePickerStatusBannerKind::Warning,
+          text,
+        }
+      })
+    },
     UnsavedDocumentMatcher::Fuzzy => None,
   };
 
   if status_banner.is_none() {
-    status_banner = backend.error.clone().map(|text| FilePickerStatusBanner {
-      kind: FilePickerStatusBannerKind::Warning,
-      text,
+    status_banner = backend.error.clone().map(|text| {
+      FilePickerStatusBanner {
+        kind: FilePickerStatusBannerKind::Warning,
+        text,
+      }
     });
   }
 
@@ -964,7 +1003,10 @@ mod tests {
     assert_eq!(response.search_mode, FilePickerSearchMode::PlainText);
     assert!(response.items.is_empty());
     assert_eq!(
-      response.status_banner.as_ref().map(|banner| banner.text.as_str()),
+      response
+        .status_banner
+        .as_ref()
+        .map(|banner| banner.text.as_str()),
       Some("No content matches")
     );
   }
@@ -987,11 +1029,17 @@ mod tests {
     assert!(response.error.is_none());
     assert_eq!(response.search_mode, FilePickerSearchMode::PlainText);
     assert_eq!(
-      response.status_banner.as_ref().map(|banner| banner.text.as_str()),
+      response
+        .status_banner
+        .as_ref()
+        .map(|banner| banner.text.as_str()),
       Some("No exact matches — showing typo-tolerant matches")
     );
     assert_eq!(response.items.len(), 2);
-    assert!(matches!(response.items[0].action, FilePickerItemAction::GroupHeader { .. }));
+    assert!(matches!(
+      response.items[0].action,
+      FilePickerItemAction::GroupHeader { .. }
+    ));
     assert!(response.items[1].display.contains("schema"));
   }
 }

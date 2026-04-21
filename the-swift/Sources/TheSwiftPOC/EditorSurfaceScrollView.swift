@@ -7,19 +7,14 @@ final class EditorSurfaceScrollView: NSView, EditorSurfaceControllerDelegate {
     let controller: EditorSurfaceController
     let surfaceView: EditorSurfaceView
     let terminalContainerView = GhosttyTerminalOverlayContainerView()
-    let agentContainerView = EditorAgentPaneContainerView()
     let terminalRegistry: GhosttyTerminalRegistry
-    let agentPaneRegistry: EditorAgentPaneRegistry
 
-    private var agentBackgroundColor: NSColor = .windowBackgroundColor
-    private var agentSelectionColor: NSColor = .selectedContentBackgroundColor
     private var lastLayoutDebugSignature: String?
     private var lastSceneDebugSignature: String?
 
     init(controller: EditorSurfaceController) {
         self.controller = controller
         self.terminalRegistry = GhosttyTerminalRegistry(controller: controller)
-        self.agentPaneRegistry = EditorAgentPaneRegistry(controller: controller)
         guard let surfaceView = EditorSurfaceView(controller: controller) else {
             fatalError("failed to create metal-backed editor surface")
         }
@@ -27,13 +22,11 @@ final class EditorSurfaceScrollView: NSView, EditorSurfaceControllerDelegate {
         super.init(frame: .zero)
 
         terminalContainerView.wantsLayer = true
-        agentContainerView.wantsLayer = true
 
         controller.delegate = self
         controller.editorFirstResponder = surfaceView
         addSubview(surfaceView)
         addSubview(terminalContainerView)
-        addSubview(agentContainerView)
         controller.refreshSnapshot()
     }
 
@@ -43,12 +36,13 @@ final class EditorSurfaceScrollView: NSView, EditorSurfaceControllerDelegate {
     }
 
     override func layout() {
-        super.layout()
-        surfaceView.frame = bounds
-        terminalContainerView.frame = bounds
-        agentContainerView.frame = bounds
-        reconcileOverlayViews()
-        logLayoutMetrics(reason: "layout")
+        measureSidebarSignpostedInterval("SurfaceScrollViewLayout", counterKey: "surfaceScrollView.layout.ms") {
+            super.layout()
+            surfaceView.frame = bounds
+            terminalContainerView.frame = bounds
+            reconcileOverlayViews()
+            logLayoutMetrics(reason: "layout")
+        }
     }
 
     override func viewDidMoveToWindow() {
@@ -78,13 +72,8 @@ final class EditorSurfaceScrollView: NSView, EditorSurfaceControllerDelegate {
         backgroundColor: NSColor,
         selectionColor: NSColor
     ) {
-        let backgroundChanged = !agentBackgroundColor.isEqual(backgroundColor)
-        let selectionChanged = !agentSelectionColor.isEqual(selectionColor)
-        agentBackgroundColor = backgroundColor
-        agentSelectionColor = selectionColor
-        if backgroundChanged || selectionChanged {
-            reconcileOverlayViews()
-        }
+        _ = backgroundColor
+        _ = selectionColor
     }
 
     func setRenderingSuspended(_ suspended: Bool) {
@@ -92,12 +81,15 @@ final class EditorSurfaceScrollView: NSView, EditorSurfaceControllerDelegate {
     }
 
     func editorController(_ controller: EditorSurfaceController, didUpdateScene scene: EditorRenderScene) {
-        surfaceView.update(scene: scene)
-        updateWindowResizeIncrements(scene)
-        reconcileOverlayViews()
-        if !surfaceView.isRenderingSuspended {
-            logSceneMetrics(scene)
-            logLayoutMetrics(reason: "sceneUpdate")
+        sidebarPerfIncrement("surfaceScrollView.didUpdateScene.request")
+        measureSidebarSignpostedInterval("SurfaceScrollViewDidUpdateScene", counterKey: "surfaceScrollView.didUpdateScene.ms") {
+            surfaceView.update(scene: scene)
+            updateWindowResizeIncrements(scene)
+            reconcileOverlayViews()
+            if !surfaceView.isRenderingSuspended {
+                logSceneMetrics(scene)
+                logLayoutMetrics(reason: "sceneUpdate")
+            }
         }
     }
 
@@ -108,39 +100,8 @@ final class EditorSurfaceScrollView: NSView, EditorSurfaceControllerDelegate {
             in: terminalContainerView,
             editorSurfaceView: surfaceView
         )
-        agentPaneRegistry.reconcile(
-            scene: controller.scene,
-            openItems: controller.openItems,
-            in: agentContainerView,
-            backgroundColor: agentBackgroundColor,
-            selectionColor: agentSelectionColor
-        )
-        applyExclusionMask(agentPaneRegistry.visibleContentRects)
-    }
-
-    private func applyExclusionMask(_ excludedRects: [CGRect]) {
-        surfaceView.layer?.mask = makeExclusionMask(in: surfaceView.bounds, excluding: excludedRects)
-        terminalContainerView.layer?.mask = makeExclusionMask(in: terminalContainerView.bounds, excluding: excludedRects)
-    }
-
-    private func makeExclusionMask(in bounds: CGRect, excluding excludedRects: [CGRect]) -> CAShapeLayer? {
-        let clippedRects = excludedRects
-            .map { $0.intersection(bounds) }
-            .filter { $0.width > 0 && $0.height > 0 }
-        guard !clippedRects.isEmpty else { return nil }
-
-        let path = CGMutablePath()
-        path.addRect(bounds)
-        for rect in clippedRects {
-            path.addRect(rect)
-        }
-
-        let mask = CAShapeLayer()
-        mask.frame = bounds
-        mask.path = path
-        mask.fillRule = .evenOdd
-        mask.fillColor = NSColor.white.cgColor
-        return mask
+        surfaceView.layer?.mask = nil
+        terminalContainerView.layer?.mask = nil
     }
 
     private func logSceneMetrics(_ scene: EditorRenderScene) {
@@ -170,7 +131,6 @@ final class EditorSurfaceScrollView: NSView, EditorSurfaceControllerDelegate {
             "safeArea=\(edgeInsetsText(safeAreaInsets))",
             "surfaceFrame=\(rectText(surfaceView.frame))",
             "terminalFrame=\(rectText(terminalContainerView.frame))",
-            "agentFrame=\(rectText(agentContainerView.frame))",
             "windowFrame=\(windowFrameText)",
             "contentLayoutRect=\(contentLayoutText)",
             "contentViewBounds=\(contentViewBoundsText)"
@@ -199,9 +159,4 @@ final class EditorSurfaceScrollView: NSView, EditorSurfaceControllerDelegate {
             window.contentResizeIncrements = defaultIncrements
         }
     }
-}
-
-@MainActor
-final class EditorAgentPaneContainerView: NSView {
-    override var isFlipped: Bool { true }
 }

@@ -118,9 +118,11 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
     }
 
     override func layout() {
-        super.layout()
-        applyRendererGeometry()
-        synchronizeSurfaceConfiguration()
+        measureSidebarSignpostedInterval("SurfaceViewLayout", counterKey: "surfaceView.layout.ms") {
+            super.layout()
+            applyRendererGeometry()
+            synchronizeSurfaceConfiguration()
+        }
     }
 
     override func viewWillMove(toWindow newWindow: NSWindow?) {
@@ -240,6 +242,7 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
     }
 
     private func applyRendererGeometry() {
+        sidebarPerfIncrement("surfaceView.geometry.request")
         let backingScale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1
         let backingBounds = convertToBacking(bounds)
 
@@ -268,9 +271,10 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
     }
 
     private func synchronizeSurfaceConfiguration(forceDraw: Bool = false) {
-        guard let controller else { return }
-        let backingScale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1
-        let configuration = fontMetrics.surfaceConfiguration(viewSize: bounds.size, backingScale: backingScale)
+        measureSidebarSignpostedInterval("SurfaceViewSynchronizeConfiguration", counterKey: "surfaceView.synchronizeConfiguration.ms") {
+            guard let controller else { return }
+            let backingScale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1
+            let configuration = fontMetrics.surfaceConfiguration(viewSize: bounds.size, backingScale: backingScale)
         let derivedColumns = max(configuration.widthPx / max(configuration.metrics.cellWidthPx, 1), 1)
         let derivedRows = max(configuration.heightPx / max(configuration.metrics.cellHeightPx, 1), 1)
         let signature = [
@@ -287,22 +291,29 @@ final class EditorSurfaceView: NSView, @preconcurrency NSTextInputClient {
             lastSurfaceConfigDebugSignature = signature
             layoutDebugLog(signature)
         }
-        let changed = controller.configureSurface(
-            size: bounds.size,
-            backingScale: backingScale,
-            fontMetrics: fontMetrics
-        )
-        if (changed || forceDraw || window?.inLiveResize == true || controller.isInteractiveResizeActive), !isRenderingSuspended {
-            renderer.drawImmediately()
+            let changed = controller.configureSurface(
+                size: bounds.size,
+                backingScale: backingScale,
+                fontMetrics: fontMetrics
+            )
+            if (changed || forceDraw || window?.inLiveResize == true || controller.isInteractiveResizeActive), !isRenderingSuspended {
+                sidebarPerfIncrement("surfaceView.drawImmediately")
+                measureSidebarSignpostedInterval("SurfaceViewDrawImmediately", counterKey: "surfaceView.drawImmediately.ms") {
+                    renderer.drawImmediately()
+                }
+            }
         }
     }
 
     func update(scene: EditorRenderScene) {
+        sidebarPerfIncrement("surfaceView.updateScene.request")
         guard !isRenderingSuspended else {
             refreshCursorBlinkState()
             return
         }
-        renderer.update(scene: scene)
+        measureSidebarSignpostedInterval("SurfaceViewUpdateScene", counterKey: "surfaceView.updateScene.ms") {
+            renderer.update(scene: scene)
+        }
         let usedWidth = CGFloat(scene.info.viewportWidth) * scene.info.surfaceMetrics.cellSizePoints.width
         let usedHeight = CGFloat(scene.info.viewportHeight) * scene.info.surfaceMetrics.cellSizePoints.height
         let signature = [

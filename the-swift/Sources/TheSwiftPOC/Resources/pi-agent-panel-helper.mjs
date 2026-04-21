@@ -184,6 +184,63 @@ function stripEditorContextWrap(raw) {
   return { text: body, contextSummary };
 }
 
+function buildInlineRewritePrompt({
+  filePath,
+  sourceLabel,
+  language,
+  lineStart,
+  lineEnd,
+  selectionText,
+  prompt,
+}) {
+  const location = (() => {
+    if (lineStart && lineEnd && lineEnd >= lineStart) {
+      return lineStart === lineEnd ? `:${lineStart}` : `:${lineStart}-${lineEnd}`;
+    }
+    return "";
+  })();
+  const languageLabel = language ? `Language: ${language}` : "Language: unknown";
+  const fileLabel = filePath || sourceLabel || "selection";
+  return [
+    "You are performing an inline rewrite of a selected piece of text from an editor.",
+    "Rewrite ONLY the contents inside <rewrite_this> according to the user prompt.",
+    "Return ONLY the rewritten text.",
+    "Do not include markdown fences.",
+    "Do not include explanations.",
+    "Do not mention the file or summarize your changes.",
+    "",
+    `File: ${fileLabel}${location}`,
+    languageLabel,
+    "",
+    "<prompt>",
+    prompt,
+    "</prompt>",
+    "",
+    "<rewrite_this>",
+    selectionText,
+    "</rewrite_this>",
+  ].join("\n");
+}
+
+function normalizeInlineRewriteResponse(text) {
+  let normalized = String(text || "").trim();
+  if (!normalized) return "";
+
+  if (normalized.startsWith("<rewrite_this>") && normalized.endsWith("</rewrite_this>")) {
+    normalized = normalized
+      .replace(/^<rewrite_this>\s*/i, "")
+      .replace(/\s*<\/rewrite_this>$/i, "")
+      .trim();
+  }
+
+  const fencedMatch = normalized.match(/^```[^\n]*\n([\s\S]*?)\n```$/);
+  if (fencedMatch) {
+    normalized = fencedMatch[1].trim();
+  }
+
+  return normalized;
+}
+
 function historyItemsFromMessages(messages) {
   const toolResultsByCallId = new Map();
   const knownToolCallIds = new Set();
@@ -455,25 +512,51 @@ function footerPayload(session) {
   };
 }
 
-function availableModelsPayload(session) {
+function mapAvailableModels(session) {
   session.modelRegistry.refresh();
   const currentRef = session.model ? `${session.model.provider}/${session.model.id}` : null;
-  return session.modelRegistry
-    .getAvailable()
-    .map((model) => ({
-      provider: model.provider,
-      id: model.id,
-      name: model.name || model.id,
-      reference: `${model.provider}/${model.id}`,
-      isCurrent: currentRef === `${model.provider}/${model.id}`,
-    }))
-    .sort((lhs, rhs) => {
-      if (lhs.isCurrent && !rhs.isCurrent) return -1;
-      if (!lhs.isCurrent && rhs.isCurrent) return 1;
-      const providerCompare = lhs.provider.localeCompare(rhs.provider);
-      if (providerCompare !== 0) return providerCompare;
-      return lhs.id.localeCompare(rhs.id);
-    });
+  return session.modelRegistry.getAvailable().map((model) => ({
+    provider: model.provider,
+    id: model.id,
+    name: model.name || model.id,
+    reference: `${model.provider}/${model.id}`,
+    isCurrent: currentRef === `${model.provider}/${model.id}`,
+    supportsReasoning: !!model.reasoning,
+  }));
+}
+
+function sortModelPayload(lhs, rhs) {
+  if (lhs.isCurrent && !rhs.isCurrent) return -1;
+  if (!lhs.isCurrent && rhs.isCurrent) return 1;
+  const providerCompare = lhs.provider.localeCompare(rhs.provider);
+  if (providerCompare !== 0) return providerCompare;
+  return lhs.id.localeCompare(rhs.id);
+}
+
+function isAllowedInlineRewriteModel(model) {
+  const provider = String(model.provider || "").toLowerCase();
+  const id = String(model.id || "").toLowerCase();
+  const name = String(model.name || "").toLowerCase();
+
+  if (provider === "opencode-go") {
+    return id.includes("kimi") || name.includes("kimi");
+  }
+
+  if (provider === "cursor" || provider === "cursor-agent") {
+    return id.includes("composer") || name.includes("composer");
+  }
+
+  return false;
+}
+
+function availableModelsPayload(session) {
+  return mapAvailableModels(session).sort(sortModelPayload);
+}
+
+function availableInlineRewriteModelsPayload(session) {
+  return mapAvailableModels(session)
+    .filter(isAllowedInlineRewriteModel)
+    .sort(sortModelPayload);
 }
 
 function sessionMetadataPayload(session, { includeModels = false } = {}) {
@@ -1262,6 +1345,24 @@ async function handleHelperRequest(id, method, params) {
         send({ type: "response", id, result: availableModelsPayload(record.session) });
         return;
       }
+      case "listInlineRewriteModels": {
+        const cwd = params?.cwd ? String(params.cwd) : currentCwd;
+        const sessionManager = SessionManager.inMemory(cwd);
+        const { session } = await createAgentSession({
+          cwd,
+          agentDir: currentAgentDir,
+          sessionManager,
+          tools: [],
+          customTools: [],
+          thinkingLevel: "off",
+        });
+        try {
+          send({ type: "response", id, result: availableInlineRewriteModelsPayload(session) });
+        } finally {
+          session.dispose();
+        }
+        return;
+      }
       case "setModel": {
         const sessionPath = String(params?.sessionPath ?? "");
         const record = await getSessionRecord(sessionPath);
@@ -1322,6 +1423,141 @@ async function handleHelperRequest(id, method, params) {
         const sessionPath = String(params?.sessionPath ?? "");
         const record = await getSessionRecord(sessionPath);
         send({ type: "response", id, result: contextUsagePayload(record.session) });
+        return;
+      }
+      case "inlineRewrite": {
+        const cwd = params?.cwd ? String(params.cwd) : currentCwd;
+        const sourceLabel = String(params?.sourceLabel ?? params?.filePath ?? "selection");
+        const filePath = typeof params?.filePath === "string" && params.filePath.trim().length > 0
+          ? String(params.filePath)
+          : null;
+        const language = typeof params?.language === "string" && params.language.trim().length > 0
+          ? String(params.language)
+          : null;
+        const lineStart = Number.isFinite(params?.lineStart) ? Number(params.lineStart) : null;
+        const lineEnd = Number.isFinite(params?.lineEnd) ? Number(params.lineEnd) : null;
+        const selectionText = String(params?.selectionText ?? "");
+        const prompt = String(params?.prompt ?? "").trim();
+        const provider = typeof params?.provider === "string" ? params.provider.trim() : "";
+        const modelId = typeof params?.modelId === "string" ? params.modelId.trim() : "";
+        const modelSourceSessionPath = typeof params?.modelSourceSessionPath === "string"
+          ? params.modelSourceSessionPath.trim()
+          : "";
+        const thinkingLevel = typeof params?.thinkingLevel === "string" && params.thinkingLevel.trim().length > 0
+          ? params.thinkingLevel.trim()
+          : "off";
+
+        if (selectionText.length === 0) {
+          throw new Error("Selection text is required for inline rewrite.");
+        }
+        if (!prompt) {
+          throw new Error("Prompt is required for inline rewrite.");
+        }
+
+        debug(
+          "inlineRewrite.begin",
+          `cwd=${cwd}`,
+          `file=${filePath || "-"}`,
+          `lines=${lineStart ?? "-"}-${lineEnd ?? "-"}`,
+          `selectionChars=${selectionText.length}`,
+          `promptChars=${prompt.length}`,
+          `requestedModel=${provider && modelId ? `${provider}/${modelId}` : "nil"}`,
+          `modelSourceSessionPath=${modelSourceSessionPath || "nil"}`,
+          `thinkingLevel=${thinkingLevel}`,
+        );
+
+        const sourceRecord = modelSourceSessionPath
+          ? await getSessionRecord(modelSourceSessionPath)
+          : null;
+        debug(
+          "inlineRewrite.sourceRecord",
+          `hasSourceRecord=${sourceRecord ? "yes" : "no"}`,
+          `sourceSession=${sourceRecord?.session ? "yes" : "no"}`,
+        );
+        const sessionManager = SessionManager.inMemory(cwd);
+        const { session } = await createAgentSession({
+          cwd,
+          agentDir: currentAgentDir,
+          sessionManager,
+          modelRegistry: sourceRecord?.session?.modelRegistry,
+          tools: [],
+          customTools: [],
+          thinkingLevel,
+        });
+
+        try {
+          session.modelRegistry.refresh();
+          const availableInlineModels = session.modelRegistry
+            .getAvailable()
+            .filter(isAllowedInlineRewriteModel);
+          debug(
+            "inlineRewrite.models",
+            `count=${availableInlineModels.length}`,
+            `models=${availableInlineModels.map((model) => `${model.provider}/${model.id}`).join(",") || "-"}`,
+          );
+          const selectedModel = (provider && modelId)
+            ? availableInlineModels.find((candidate) => candidate.provider === provider && candidate.id === modelId)
+            : null;
+          const fallbackModel = availableInlineModels[0] ?? null;
+          const model = selectedModel ?? fallbackModel;
+          if (!model) {
+            throw new Error("No inline rewrite models are configured. Add a Kimi model via opencode-go or a Composer model via Cursor.");
+          }
+          debug(
+            "inlineRewrite.modelSelected",
+            `requested=${provider && modelId ? `${provider}/${modelId}` : "nil"}`,
+            `resolved=${model.provider}/${model.id}`,
+            `matched=${selectedModel ? "yes" : "no"}`,
+            `fallback=${fallbackModel ? `${fallbackModel.provider}/${fallbackModel.id}` : "nil"}`,
+          );
+          await session.setModel(model);
+
+          const rewritePrompt = buildInlineRewritePrompt({
+            filePath,
+            sourceLabel,
+            language,
+            lineStart,
+            lineEnd,
+            selectionText,
+            prompt,
+          });
+          debug("inlineRewrite.prompt.start", `rewritePromptChars=${rewritePrompt.length}`);
+          await session.prompt(rewritePrompt);
+          debug("inlineRewrite.prompt.end", `messageCount=${session.messages.length}`);
+          const assistantMessage = [...session.messages].reverse().find((message) => message.role === "assistant");
+          const rewrittenText = normalizeInlineRewriteResponse(extractAssistantText(assistantMessage));
+          debug(
+            "inlineRewrite.response",
+            `assistantFound=${assistantMessage ? "yes" : "no"}`,
+            `rewrittenChars=${rewrittenText.length}`,
+          );
+          if (!rewrittenText) {
+            throw new Error("Inline rewrite returned no text.");
+          }
+          debug(
+            "inlineRewrite.response.send",
+            `id=${id}`,
+            `textChars=${rewrittenText.length}`,
+            `model=${session.model ? `${session.model.provider}/${session.model.id}` : "nil"}`,
+          );
+          send({
+            type: "response",
+            id,
+            result: {
+              text: rewrittenText,
+              model: session.model ? `${session.model.provider}/${session.model.id}` : null,
+            },
+          });
+        } finally {
+          debug("inlineRewrite.cleanup.begin");
+          try {
+            await session.abort();
+          } catch {
+            // ignore
+          }
+          session.dispose();
+          debug("inlineRewrite.cleanup.end");
+        }
         return;
       }
       default:

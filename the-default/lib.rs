@@ -156,9 +156,9 @@ pub use file_picker::{
   FilePickerRowKind,
   FilePickerSearchMode,
   FilePickerSourcePreview,
+  FilePickerState,
   FilePickerStatusBanner,
   FilePickerStatusBannerKind,
-  FilePickerState,
   FilePickerVcsDiffBootstrap,
   FilePickerVcsDiffEntry,
   FilePickerVcsDiffHunk,
@@ -284,7 +284,11 @@ pub use inline_completion::{
   InlineCompletionState,
   accept_inline_completion,
   completion_menu_inline_item,
+  debug_context_summary as inline_completion_debug_context_summary,
+  debug_summary as inline_completion_debug_summary,
+  has_active_suggestion as inline_completion_has_active_suggestion,
   resolve_inline_completion_trace_log_path,
+  trace_event as inline_completion_trace_event,
 };
 pub use input::{
   Key,

@@ -38,6 +38,28 @@ struct EditorSurfaceConfiguration: Hashable {
     let widthPx: Int
     let heightPx: Int
     let metrics: EditorSurfaceMetrics
+
+    var viewportCols: Int {
+        max(widthPx / max(metrics.cellWidthPx, 1), 1)
+    }
+
+    var viewportRows: Int {
+        max(heightPx / max(metrics.cellHeightPx, 1), 1)
+    }
+
+    var meaningfulSignature: EditorSurfaceConfigurationSignature {
+        EditorSurfaceConfigurationSignature(
+            viewportCols: viewportCols,
+            viewportRows: viewportRows,
+            metrics: metrics
+        )
+    }
+}
+
+struct EditorSurfaceConfigurationSignature: Hashable {
+    let viewportCols: Int
+    let viewportRows: Int
+    let metrics: EditorSurfaceMetrics
 }
 
 struct EditorFontMetrics {

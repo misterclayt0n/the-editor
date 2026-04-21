@@ -20,27 +20,30 @@ struct EditorChromeModel {
     }
 }
 
-private enum EditorSidebarMode: String {
+enum EditorSidebarMode: String {
     case files
     case buffers
+    case agent
 }
 
 struct EditorChromeView: View {
     @ObservedObject var controller: EditorSurfaceController
 
     @AppStorage("swift.fileTreeSidebarWidth") private var storedFileTreeWidth: Double = 280
-    @AppStorage("swift.sidebar.mode") private var storedSidebarModeRaw: String = EditorSidebarMode.files.rawValue
+    @AppStorage("swift.agentSidebarWidth") private var storedAgentSidebarWidth: Double = 540
     @GestureState private var fileTreeDragTranslation: CGFloat = 0
     @State private var isFileTreeResizeActive = false
     @State private var titlebarPadding: CGFloat = 32
     @State private var titlebarLeadingInset: CGFloat = 72
 
-
     private let minimumFileTreeWidth: CGFloat = 180
-    private let maximumFileTreeWidth: CGFloat = 460
+    private let maximumFileTreeWidth: CGFloat = 760
+    private let minimumAgentSidebarWidth: CGFloat = 320
+    private let maximumAgentSidebarWidth: CGFloat = 760
+    private let sidebarResizeHandleWidth: CGFloat = 8
 
     private var sidebarMode: EditorSidebarMode {
-        EditorSidebarMode(rawValue: storedSidebarModeRaw) ?? .files
+        controller.sidebarMode
     }
 
     init(controller: EditorSurfaceController) {
@@ -51,25 +54,35 @@ struct EditorChromeView: View {
         GeometryReader { geometry in
             let effectiveTitlebarPadding = alignedTitlebarPadding(totalHeight: geometry.size.height)
 
-            HStack(spacing: 0) {
-                if controller.fileTree.isVisible {
-                    sidebarColumn(topScrimHeight: effectiveTitlebarPadding)
-                        .ignoresSafeArea(.all, edges: .top)
-                    EditorSidebarResizeHandle(
-                        color: sidebarTheme.separatorColor,
-                        edge: .trailing,
-                        gesture: fileTreeResizeGesture
-                    )
-                        .ignoresSafeArea(.all, edges: .top)
-                }
-
+            ZStack(alignment: .leading) {
                 mainColumn(titlebarInset: effectiveTitlebarPadding)
+                    .padding(.leading, sidebarOccupiedWidth)
+
+                sidebarOverlayColumn(topScrimHeight: effectiveTitlebarPadding)
+                    .ignoresSafeArea(.all, edges: .top)
+                    .offset(x: controller.fileTree.isVisible ? 0 : -(sidebarStoredWidth + sidebarResizeHandleWidth))
+                    .allowsHitTesting(controller.fileTree.isVisible)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .ignoresSafeArea()
-            // Sidebar visibility must not animate layout: each frame would reconfigure the Rust
-            // viewport and run a full snapshot for every column boundary crossed.
+            // Sidebar visibility and mode changes must not animate layout: each frame would
+            // reconfigure the Rust viewport and rerun expensive sidebar transcript layout.
             .animation(nil, value: controller.fileTree.isVisible)
+            .animation(nil, value: sidebarMode)
+            .onAppear(perform: synchronizeSidebarFocusState)
+            .onChange(of: sidebarStoredWidth) { oldValue, newValue in
+                guard abs(oldValue - newValue) > 0.5 else { return }
+                sidebarPerfIncrement("sidebar.width.change")
+                sidebarPerfLog("sidebar.width old=\(Int(oldValue.rounded())) new=\(Int(newValue.rounded())) mode=\(sidebarMode.rawValue) visible=\(controller.fileTree.isVisible)")
+            }
+            .onChange(of: controller.fileTree.isVisible) { _, visible in
+                sidebarPerfIncrement(visible ? "sidebar.visibility.show" : "sidebar.visibility.hide")
+                synchronizeSidebarFocusState()
+            }
+            .onChange(of: sidebarMode) { _, newMode in
+                sidebarPerfIncrement("sidebar.mode.\(newMode.rawValue)")
+                synchronizeSidebarFocusState()
+            }
             .background(
                 EditorWindowChromeAccessor(
                     chrome: controller.chrome,
@@ -119,47 +132,63 @@ struct EditorChromeView: View {
         }
     }
 
-    private func sidebarColumn(topScrimHeight: CGFloat) -> some View {
-        Group {
-            switch sidebarMode {
-            case .files:
-                EditorFileTreeSidebarView(
-                    tree: controller.fileTree,
-                    theme: sidebarTheme,
-                    topScrimHeight: topScrimHeight,
-                    onSelectIndex: controller.clickFileTreeIndex,
-                    onActivateIndex: controller.activateFileTreeIndex,
-                    onVisibleRowsChanged: controller.setFileTreeVisibleRows,
-                    onScrollOffsetChanged: controller.syncFileTreeScrollOffset,
-                    onFocusSidebar: { controller.setFileTreeActive(true) }
-                )
-                .onAppear {
-                    controller.setFileTreeActive(true)
-                    let widthText = String(format: "%.1f", fileTreeWidth)
-                    scrollPerfLog("fileTree.sidebar appear rows=\(controller.fileTree.rows.count) width=\(widthText)")
-                }
-                .onDisappear {
-                    scrollPerfLog("fileTree.sidebar disappear")
-                }
-            case .buffers:
-                EditorOpenItemsSidebarView(
-                    openItems: controller.openItems,
-                    scene: controller.scene,
-                    uniqueBufferCount: controller.bufferTabs.tabs.count,
-                    theme: sidebarTheme,
-                    topScrimHeight: topScrimHeight,
-                    onActivateItem: controller.activateOpenItem,
-                    onCloseItem: controller.closeOpenItem,
-                    onFocusSidebar: { controller.setFileTreeActive(false) }
-                )
-                .onAppear {
-                    controller.setFileTreeActive(false)
-                }
-            }
+    private func sidebarOverlayColumn(topScrimHeight: CGFloat) -> some View {
+        ZStack(alignment: .leading) {
+            sidebarModesView(topScrimHeight: topScrimHeight)
+                .frame(width: sidebarStoredWidth)
+                .background(Color(nsColor: sidebarTheme.backgroundColor))
+
+            EditorSidebarResizeHandle(
+                color: sidebarTheme.separatorColor,
+                edge: .trailing,
+                gesture: fileTreeResizeGesture
+            )
+            .frame(width: sidebarResizeHandleWidth)
+            .offset(x: sidebarStoredWidth)
+            .opacity(controller.fileTree.isVisible ? 1 : 0)
+            .allowsHitTesting(controller.fileTree.isVisible)
+        }
+        .frame(width: sidebarStoredWidth + sidebarResizeHandleWidth, alignment: .leading)
+    }
+
+    private func sidebarModesView(topScrimHeight: CGFloat) -> some View {
+        ZStack {
+            EditorFileTreeSidebarView(
+                tree: controller.fileTree,
+                theme: sidebarTheme,
+                topScrimHeight: topScrimHeight,
+                onSelectIndex: controller.clickFileTreeIndex,
+                onActivateIndex: controller.activateFileTreeIndex,
+                onVisibleRowsChanged: controller.setFileTreeVisibleRows,
+                onScrollOffsetChanged: controller.syncFileTreeScrollOffset,
+                onFocusSidebar: { controller.setFileTreeActive(true) }
+            )
+            .opacity(sidebarMode == .files ? 1 : 0)
+            .allowsHitTesting(sidebarMode == .files)
+
+            EditorOpenItemsSidebarView(
+                openItems: controller.openItems,
+                scene: controller.scene,
+                uniqueBufferCount: controller.bufferTabs.tabs.count,
+                theme: sidebarTheme,
+                topScrimHeight: topScrimHeight,
+                onActivateItem: controller.activateOpenItem,
+                onCloseItem: controller.closeOpenItem,
+                onFocusSidebar: { controller.setFileTreeActive(false) }
+            )
+            .opacity(sidebarMode == .buffers ? 1 : 0)
+            .allowsHitTesting(sidebarMode == .buffers)
+
+            EditorAgentSidebarColumnView(
+                coordinator: controller.agentSidebarCoordinator,
+                backgroundColor: sidebarTheme.backgroundColor,
+                selectionColor: sidebarTheme.selectionColor,
+                topScrimHeight: topScrimHeight
+            )
+            .opacity(sidebarMode == .agent ? 1 : 0)
+            .allowsHitTesting(sidebarMode == .agent)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(nsColor: sidebarTheme.backgroundColor))
-        .frame(width: fileTreeWidth)
         .background(Color(nsColor: sidebarTheme.backgroundColor))
     }
 
@@ -175,9 +204,13 @@ struct EditorChromeView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 
                 EditorDiagnosticsOverlayView(controller: controller)
+                EditorInlineAssistActivityOverlayView(controller: controller, theme: sidebarTheme)
                 EditorDocsPanelsView(controller: controller)
                 EditorCompletionMenuView(controller: controller)
+                EditorInlineCompletionPresentationView(controller: controller, theme: sidebarTheme)
+                EditorInlineCompletionTabHintView(controller: controller, theme: sidebarTheme)
                 EditorPaneItemStripsOverlayView(controller: controller)
+                EditorInlineAssistOverlayView(controller: controller, theme: sidebarTheme)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
@@ -273,7 +306,27 @@ struct EditorChromeView: View {
     }
 
     private var fileTreeWidth: CGFloat {
-        clampFileTreeWidth(CGFloat(storedFileTreeWidth) + fileTreeDragTranslation)
+        clampSidebarWidth(activeStoredSidebarWidth, for: sidebarMode)
+    }
+
+    private var sidebarStoredWidth: CGFloat {
+        if isFileTreeResizeActive {
+            return clampSidebarWidth(activeStoredSidebarWidth + fileTreeDragTranslation, for: sidebarMode)
+        }
+        return fileTreeWidth
+    }
+
+    private var sidebarOccupiedWidth: CGFloat {
+        controller.fileTree.isVisible ? (sidebarStoredWidth + sidebarResizeHandleWidth) : 0
+    }
+
+    private var activeStoredSidebarWidth: CGFloat {
+        switch sidebarMode {
+        case .agent:
+            CGFloat(storedAgentSidebarWidth)
+        case .files, .buffers:
+            CGFloat(storedFileTreeWidth)
+        }
     }
 
     private var sidebarTitle: String {
@@ -285,6 +338,8 @@ struct EditorChromeView: View {
             return name.isEmpty ? root : name
         case .buffers:
             return "Open Items"
+        case .agent:
+            return controller.agentSidebarCoordinator.store.sessionTitle
         }
     }
 
@@ -293,35 +348,38 @@ struct EditorChromeView: View {
             .updating($fileTreeDragTranslation) { value, state, _ in
                 let translation = value.location.x - value.startLocation.x
                 state = translation
-                let startWidth = CGFloat(storedFileTreeWidth)
+                let startWidth = activeStoredSidebarWidth
                 let proposedWidth = startWidth + translation
                 let startText = String(format: "%.1f", startWidth)
                 let translationText = String(format: "%.1f", translation)
                 let proposedText = String(format: "%.1f", proposedWidth)
-                let clampedText = String(format: "%.1f", clampFileTreeWidth(proposedWidth))
+                let clampedText = String(format: "%.1f", clampSidebarWidth(proposedWidth, for: sidebarMode))
                 let startXText = String(format: "%.1f", value.startLocation.x)
                 let locationXText = String(format: "%.1f", value.location.x)
+                sidebarPerfIncrement("sidebar.resize.update")
                 scrollPerfLog(
                     "fileTree.resize updating start=\(startText) translation=\(translationText) proposed=\(proposedText) clamped=\(clampedText) startX=\(startXText) currentX=\(locationXText)"
                 )
             }
             .onChanged { _ in
                 guard !isFileTreeResizeActive else { return }
+                sidebarPerfIncrement("sidebar.resize.begin")
                 isFileTreeResizeActive = true
                 controller.beginInteractiveResize(reason: "sidebar")
             }
             .onEnded { value in
                 let translation = value.location.x - value.startLocation.x
-                let committedWidth = clampFileTreeWidth(CGFloat(storedFileTreeWidth) + translation)
-                let storedText = String(format: "%.1f", storedFileTreeWidth)
+                let committedWidth = clampSidebarWidth(activeStoredSidebarWidth + translation, for: sidebarMode)
+                let storedText = String(format: "%.1f", activeStoredSidebarWidth)
                 let translationText = String(format: "%.1f", translation)
                 let committedText = String(format: "%.1f", committedWidth)
                 let startXText = String(format: "%.1f", value.startLocation.x)
                 let locationXText = String(format: "%.1f", value.location.x)
+                sidebarPerfIncrement("sidebar.resize.end")
                 scrollPerfLog(
                     "fileTree.resize ended stored=\(storedText) translation=\(translationText) committed=\(committedText) startX=\(startXText) currentX=\(locationXText)"
                 )
-                storedFileTreeWidth = committedWidth
+                setStoredSidebarWidth(committedWidth, for: sidebarMode)
                 if isFileTreeResizeActive {
                     isFileTreeResizeActive = false
                     controller.endInteractiveResize(reason: "sidebar")
@@ -330,7 +388,34 @@ struct EditorChromeView: View {
     }
 
     private func clampFileTreeWidth(_ width: CGFloat) -> CGFloat {
-        min(max(width, minimumFileTreeWidth), maximumFileTreeWidth)
+        clampSidebarWidth(width, for: sidebarMode)
+    }
+
+    private func clampSidebarWidth(_ width: CGFloat, for mode: EditorSidebarMode) -> CGFloat {
+        switch mode {
+        case .agent:
+            return min(max(width, minimumAgentSidebarWidth), maximumAgentSidebarWidth)
+        case .files, .buffers:
+            return min(max(width, minimumFileTreeWidth), maximumFileTreeWidth)
+        }
+    }
+
+    private func setStoredSidebarWidth(_ width: CGFloat, for mode: EditorSidebarMode) {
+        let clampedWidth = clampSidebarWidth(width, for: mode)
+        switch mode {
+        case .agent:
+            storedAgentSidebarWidth = clampedWidth
+        case .files, .buffers:
+            storedFileTreeWidth = clampedWidth
+        }
+    }
+
+    private func synchronizeSidebarFocusState() {
+        guard controller.fileTree.isVisible else {
+            controller.setFileTreeActive(false)
+            return
+        }
+        controller.setFileTreeActive(sidebarMode == .files)
     }
 
     private func selectSidebarMode(_ mode: EditorSidebarMode) {
@@ -338,10 +423,16 @@ struct EditorChromeView: View {
             controller.setFileTreeActive(mode == .files)
             return
         }
-        withAnimation(.easeInOut(duration: 0.14)) {
-            storedSidebarModeRaw = mode.rawValue
+
+        if controller.fileTree.isVisible {
+            let currentVisibleWidth = sidebarStoredWidth
+            storedFileTreeWidth = clampSidebarWidth(currentVisibleWidth, for: .files)
+            storedAgentSidebarWidth = clampSidebarWidth(currentVisibleWidth, for: .agent)
+        } else if mode == .agent {
+            storedAgentSidebarWidth = max(clampSidebarWidth(CGFloat(storedAgentSidebarWidth), for: .agent), 540)
         }
-        controller.setFileTreeActive(mode == .files)
+
+        controller.setSidebarMode(mode)
     }
 }
 
@@ -371,6 +462,836 @@ private struct EditorFileTreeSidebarTheme {
             selectionColor: selectionColor,
             hoverColor: hoverColor
         )
+    }
+}
+
+private struct EditorAgentSidebarColumnView: View {
+    let coordinator: EditorAgentSidebarCoordinator
+    let backgroundColor: NSColor
+    let selectionColor: NSColor
+    let topScrimHeight: CGFloat
+
+    private var appearanceSignature: String {
+        [
+            backgroundColor.description,
+            selectionColor.description,
+            String(format: "%.2f", topScrimHeight)
+        ].joined(separator: "|")
+    }
+
+    var body: some View {
+        EditorAgentSidebarView(store: coordinator.store, hostModel: coordinator.hostModel)
+            .onAppear {
+                coordinator.updateAppearance(
+                    backgroundColor: backgroundColor,
+                    selectionColor: selectionColor,
+                    topScrimHeight: topScrimHeight
+                )
+            }
+            .onChange(of: appearanceSignature) { _, _ in
+                coordinator.updateAppearance(
+                    backgroundColor: backgroundColor,
+                    selectionColor: selectionColor,
+                    topScrimHeight: topScrimHeight
+                )
+            }
+    }
+}
+
+private struct EditorInlineAssistOverlayView: View {
+    @ObservedObject var controller: EditorSurfaceController
+    let theme: EditorFileTreeSidebarTheme
+
+    var body: some View {
+        GeometryReader { _ in
+            if let state = controller.inlineAssistState,
+               state.phase == .editing,
+               let selectionRect = controller.primarySelectionDisplayRect,
+               let paneRect = controller.inlineAssistPaneContentRect {
+                let placement = panelPlacement(selectionRect: selectionRect, paneRect: paneRect)
+                EditorInlineAssistPanel(
+                    state: state,
+                    models: controller.inlineAssistModels,
+                    selectedModel: controller.inlineAssistSelectedModel,
+                    thinkingLevel: controller.inlineAssistThinkingLevel,
+                    availableThinkingLevels: controller.availableInlineAssistThinkingLevels(),
+                    focusRequestToken: controller.inlineAssistFocusRequestToken,
+                    theme: theme,
+                    onPromptChange: controller.updateInlineAssistPrompt,
+                    onSelectModel: controller.setInlineAssistModel,
+                    onSelectThinkingLevel: controller.setInlineAssistThinkingLevel,
+                    onSubmit: controller.submitInlineAssist,
+                    onDismiss: controller.dismissInlineAssist
+                )
+                .frame(width: placement.width)
+                .fixedSize(horizontal: false, vertical: true)
+                .offset(x: placement.origin.x, y: placement.origin.y)
+                .transition(.opacity)
+            }
+        }
+        .animation(.easeOut(duration: 0.12), value: controller.inlineAssistState.map { "\($0.id.uuidString)-\(String(describing: $0.phase))" })
+    }
+
+    private func panelPlacement(selectionRect: CGRect, paneRect: CGRect) -> (origin: CGPoint, width: CGFloat) {
+        let horizontalInset: CGFloat = 12
+        let availableWidth = max(paneRect.width - (horizontalInset * 2), 240)
+        let width = min(availableWidth, 720)
+        let minX = paneRect.minX + horizontalInset
+        let maxX = max(minX, paneRect.maxX - width - horizontalInset)
+        let originX = min(max(selectionRect.minX, minX), maxX)
+        let originY = min(max(selectionRect.maxY + 4, paneRect.minY), paneRect.maxY - 56)
+        return (CGPoint(x: originX, y: originY), width)
+    }
+}
+
+private struct EditorInlineAssistActivityOverlayView: View {
+    @ObservedObject var controller: EditorSurfaceController
+    let theme: EditorFileTreeSidebarTheme
+
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack(alignment: .topLeading) {
+                if let pill = currentInlineAssistPill() {
+                    EditorInlineAssistActivityPill(theme: theme)
+                        .frame(width: pill.frame.width, height: pill.frame.height)
+                        .offset(x: pill.frame.minX, y: pill.frame.minY)
+                        .mask(alignment: .topLeading) {
+                            Rectangle()
+                                .frame(width: pill.clipRect.width, height: pill.clipRect.height)
+                                .offset(x: pill.clipRect.minX, y: pill.clipRect.minY)
+                        }
+                        .allowsHitTesting(false)
+                        .zIndex(2)
+                }
+            }
+            .frame(width: geometry.size.width, height: geometry.size.height, alignment: .topLeading)
+        }
+        .allowsHitTesting(false)
+    }
+
+    private func currentInlineAssistPill() -> (frame: CGRect, clipRect: CGRect)? {
+        guard let scene = controller.scene,
+              let state = controller.inlineAssistState,
+              state.phase == .generating,
+              controller.chrome.document.absolutePath == state.filePath,
+              let activePane = scene.activePane
+        else {
+            return nil
+        }
+        let targetDocLine = max((state.lineRange?.lowerBound ?? 1) - 1, 0)
+        let paneLines = scene.lines.filter { $0.paneID == activePane.paneID && $0.docLine == targetDocLine }
+        guard let line = paneLines.first(where: { $0.firstVisualLine }) ?? paneLines.first else {
+            return nil
+        }
+        let cellSize = scene.info.surfaceMetrics.cellSizePoints
+        let width: CGFloat = 156
+        let paneTextStartCol = activePane.x + activePane.contentOffsetX
+        let textEndCol = line.textCells
+            .filter { $0.col >= paneTextStartCol && !$0.text.isEmpty }
+            .map { $0.col + max($0.cols, 1) }
+            .max() ?? max(paneTextStartCol + 1, line.width)
+        let x = scene.displayOrigin(col: textEndCol, row: line.row, paneID: activePane.paneID).x + 4
+        let y = scene.displayOrigin(col: paneTextStartCol, row: line.row, paneID: activePane.paneID).y
+            + max(cellSize.height - 20 - 1, 1)
+        return (
+            CGRect(x: x, y: y, width: width, height: 20),
+            scene.paneContentRect(for: activePane)
+        )
+    }
+}
+
+private struct EditorInlineAssistActivityPill: View {
+    let theme: EditorFileTreeSidebarTheme
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ProgressView()
+                .controlSize(.mini)
+                .scaleEffect(0.72)
+            Text("Implementing…")
+                .font(.system(size: 12, weight: .medium))
+                .lineLimit(1)
+        }
+        .foregroundStyle(Color(nsColor: theme.selectionColor))
+        .padding(.horizontal, 8)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(Color(nsColor: theme.backgroundColor).opacity(0.96))
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .strokeBorder(Color(nsColor: theme.selectionColor).opacity(0.18), lineWidth: 1)
+        }
+    }
+}
+
+private let inlineCompletionPresentationEdgePadding: CGFloat = 8
+private let inlineCompletionPresentationGap: CGFloat = 8
+private let inlineCompletionPresentationMinWidth: CGFloat = 260
+private let inlineCompletionPresentationMaxWidth: CGFloat = 460
+private let inlineCompletionPresentationHeaderHeight: CGFloat = 18
+private let inlineCompletionPresentationLineHeight: CGFloat = 18
+
+private struct EditorInlineCompletionPresentationView: View {
+    @ObservedObject var controller: EditorSurfaceController
+    let theme: EditorFileTreeSidebarTheme
+
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack(alignment: .topLeading) {
+                if let placement = panelPlacement() {
+                    EditorPopoverPanel(frame: placement.frame, backgroundColor: controller.chrome.backgroundColor) {
+                        EditorInlineCompletionPresentationPanel(
+                            presentation: placement.presentation,
+                            provider: controller.inlineCompletion.provider,
+                            theme: theme
+                        )
+                    }
+                    .mask(alignment: .topLeading) {
+                        Rectangle()
+                            .frame(width: placement.clipRect.width, height: placement.clipRect.height)
+                            .offset(x: placement.clipRect.minX, y: placement.clipRect.minY)
+                    }
+                    .zIndex(4)
+                }
+            }
+            .frame(width: geometry.size.width, height: geometry.size.height, alignment: .topLeading)
+        }
+        .allowsHitTesting(false)
+        .animation(.easeOut(duration: 0.12), value: controller.inlineCompletion)
+    }
+
+    private func panelPlacement() -> (frame: CGRect, clipRect: CGRect, presentation: EditorInlineCompletionPresentation)? {
+        guard let presentation = controller.inlineCompletion.presentation,
+              controller.inlineCompletion.visible,
+              !controller.commandPalette.isOpen,
+              !controller.completionMenu.isOpen,
+              !controller.filePicker.isOpen,
+              !controller.inputPrompt.isOpen,
+              !controller.hoverDocs.isOpen,
+              !controller.signatureHelp.isOpen,
+              controller.inlineAssistState == nil,
+              let scene = controller.scene
+        else {
+            return nil
+        }
+
+        let anchorCol = controller.inlineCompletion.anchorCol
+        let anchorRow = controller.inlineCompletion.anchorRow
+        let pane = scene.paneContainingCell(col: anchorCol, row: anchorRow) ?? scene.activePane
+        guard let pane else { return nil }
+
+        let paneRect = scene.paneContentRect(for: pane)
+        let anchorOrigin = scene.displayOrigin(col: anchorCol, row: anchorRow, paneID: pane.paneID)
+        let cellHeight = scene.info.surfaceMetrics.cellSizePoints.height
+        let availableWidth = max(paneRect.width - inlineCompletionPresentationEdgePadding * 2, 180)
+        let width = min(
+            max(measuredWidth(for: presentation), inlineCompletionPresentationMinWidth),
+            min(inlineCompletionPresentationMaxWidth, availableWidth)
+        )
+        let availableHeight = max(paneRect.height - inlineCompletionPresentationEdgePadding * 2, 72)
+        let preferredHeight = inlineCompletionPresentationHeaderHeight
+            + CGFloat(max(presentation.lines.count, 1)) * inlineCompletionPresentationLineHeight
+            + 24
+        let height = min(max(preferredHeight, 72), min(availableHeight, 220))
+
+        let minX = paneRect.minX + inlineCompletionPresentationEdgePadding
+        let maxX = max(minX, paneRect.maxX - width - inlineCompletionPresentationEdgePadding)
+        let x = min(max(anchorOrigin.x + 10, minX), maxX)
+
+        let belowY = anchorOrigin.y + cellHeight + inlineCompletionPresentationGap
+        let aboveY = anchorOrigin.y - height - inlineCompletionPresentationGap
+        let minY = paneRect.minY + inlineCompletionPresentationEdgePadding
+        let maxY = max(minY, paneRect.maxY - height - inlineCompletionPresentationEdgePadding)
+        let y: CGFloat
+        if belowY <= maxY {
+            y = belowY
+        } else if aboveY >= minY {
+            y = aboveY
+        } else {
+            y = min(max(belowY, minY), maxY)
+        }
+
+        return (
+            CGRect(x: x, y: y, width: width, height: height),
+            paneRect,
+            presentation
+        )
+    }
+
+    private func measuredWidth(for presentation: EditorInlineCompletionPresentation) -> CGFloat {
+        let headerFont = NSFont.systemFont(ofSize: 11, weight: .semibold)
+        let lineFont = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+        let headerWidth = (presentation.title as NSString).size(withAttributes: [.font: headerFont]).width + 42
+        let lineWidth = presentation.lines.reduce(CGFloat.zero) { partialResult, line in
+            let prefixWidth: CGFloat = 14
+            let measured = (line.text as NSString).size(withAttributes: [.font: lineFont]).width + prefixWidth + 20
+            return max(partialResult, measured)
+        }
+        return ceil(max(headerWidth, lineWidth) + 20)
+    }
+}
+
+private struct EditorInlineCompletionPresentationPanel: View {
+    let presentation: EditorInlineCompletionPresentation
+    let provider: EditorInlineCompletionProvider
+    let theme: EditorFileTreeSidebarTheme
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                if let iconName = provider.iconName {
+                    EditorSemanticIconView(iconName: iconName, size: 10)
+                        .foregroundStyle(Color(nsColor: providerTintColor))
+                }
+
+                Text(presentation.title)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+
+                Spacer(minLength: 0)
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(presentation.lines) { line in
+                    EditorInlineCompletionPresentationLineView(line: line)
+                }
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 9)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private var providerTintColor: NSColor {
+        switch provider {
+        case .copilot:
+            return NSColor(calibratedRed: 0x8B / 255, green: 0xB6 / 255, blue: 0xFF / 255, alpha: 1)
+        case .supermaven:
+            return NSColor(calibratedRed: 0xF2 / 255, green: 0xC1 / 255, blue: 0x63 / 255, alpha: 1)
+        case .none:
+            return theme.selectionColor
+        }
+    }
+}
+
+private struct EditorInlineCompletionPresentationLineView: View {
+    let line: EditorInlineCompletionPresentationLine
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text(prefix)
+                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                .foregroundStyle(prefixColor)
+                .frame(width: 10, alignment: .leading)
+
+            Text(line.text.isEmpty ? " " : line.text)
+                .font(.system(size: 12, weight: .regular, design: .monospaced))
+                .foregroundStyle(foregroundColor)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private var prefix: String {
+        switch line.kind {
+        case .addition:
+            return "+"
+        case .removal:
+            return "-"
+        case .plain:
+            return "›"
+        case .dim:
+            return ""
+        }
+    }
+
+    private var foregroundColor: Color {
+        switch line.kind {
+        case .addition:
+            return Color(nsColor: .systemGreen)
+        case .removal:
+            return Color(nsColor: .systemRed)
+        case .plain:
+            return .primary
+        case .dim:
+            return .secondary
+        }
+    }
+
+    private var prefixColor: Color {
+        switch line.kind {
+        case .addition:
+            return Color(nsColor: .systemGreen)
+        case .removal:
+            return Color(nsColor: .systemRed)
+        case .plain, .dim:
+            return .secondary
+        }
+    }
+}
+
+private struct EditorInlineCompletionTabHintView: View {
+    @ObservedObject var controller: EditorSurfaceController
+    let theme: EditorFileTreeSidebarTheme
+
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack(alignment: .topLeading) {
+                if let badge = badgePlacement() {
+                    EditorInlineCompletionTabBadge(theme: theme)
+                        .frame(width: badge.frame.width, height: badge.frame.height)
+                        .offset(x: badge.frame.minX, y: badge.frame.minY)
+                        .mask(alignment: .topLeading) {
+                            Rectangle()
+                                .frame(width: badge.clipRect.width, height: badge.clipRect.height)
+                                .offset(x: badge.clipRect.minX, y: badge.clipRect.minY)
+                        }
+                        .zIndex(5)
+                }
+            }
+            .frame(width: geometry.size.width, height: geometry.size.height, alignment: .topLeading)
+        }
+        .allowsHitTesting(false)
+        .animation(.easeOut(duration: 0.12), value: controller.inlineCompletion)
+    }
+
+    private func badgePlacement() -> (frame: CGRect, clipRect: CGRect)? {
+        guard controller.inlineCompletion.visible,
+              !controller.commandPalette.isOpen,
+              !controller.completionMenu.isOpen,
+              !controller.filePicker.isOpen,
+              !controller.inputPrompt.isOpen,
+              !controller.hoverDocs.isOpen,
+              !controller.signatureHelp.isOpen,
+              controller.inlineAssistState == nil,
+              let scene = controller.scene
+        else {
+            return nil
+        }
+
+        let anchorCol = controller.inlineCompletion.anchorCol
+        let anchorRow = controller.inlineCompletion.anchorRow
+        guard let pane = scene.paneContainingCell(col: anchorCol, row: anchorRow) else {
+            return nil
+        }
+
+        let paneRect = scene.paneContentRect(for: pane)
+        let line = scene.lines.first { $0.paneID == pane.paneID && $0.row == anchorRow }
+        let lineEndCol = line?.textCells
+            .filter { !$0.text.isEmpty }
+            .map { $0.col + max($0.cols, 1) }
+            .max() ?? max(anchorCol + 1, pane.x + 1)
+        let cellSize = scene.info.surfaceMetrics.cellSizePoints
+        let badgeSize = CGSize(width: 32, height: 16)
+        let badgeOrigin = scene.displayOrigin(col: lineEndCol, row: anchorRow, paneID: pane.paneID)
+        let x = min(
+            max(badgeOrigin.x + 6, paneRect.minX + 4),
+            max(paneRect.maxX - badgeSize.width - 4, paneRect.minX + 4)
+        )
+        let y = badgeOrigin.y + max(cellSize.height - badgeSize.height - 1, 0)
+        return (
+            CGRect(origin: CGPoint(x: x, y: y), size: badgeSize),
+            paneRect
+        )
+    }
+}
+
+private struct EditorInlineCompletionTabBadge: View {
+    let theme: EditorFileTreeSidebarTheme
+
+    var body: some View {
+        Text("Tab")
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(
+                Capsule()
+                    .fill(Color(nsColor: theme.backgroundColor).opacity(0.94))
+            )
+            .overlay {
+                Capsule()
+                    .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
+            }
+            .shadow(color: .black.opacity(0.08), radius: 4, y: 1)
+            .help("Press Tab to accept inline completion")
+    }
+}
+
+private struct EditorInlineAssistPanel: View {
+    let state: EditorInlineAssistState
+    let models: [EditorAgentModel]
+    let selectedModel: EditorInlineAssistModelSelection?
+    let thinkingLevel: String
+    let availableThinkingLevels: [String]
+    let focusRequestToken: UInt64
+    let theme: EditorFileTreeSidebarTheme
+    let onPromptChange: (String) -> Void
+    let onSelectModel: (String, String) -> Void
+    let onSelectThinkingLevel: (String) -> Void
+    let onSubmit: () -> Void
+    let onDismiss: () -> Void
+
+    @State private var promptText: String = ""
+    @State private var measuredPromptHeight: CGFloat = 30
+    @State private var isPromptFocused = false
+
+    private var canSubmit: Bool {
+        !promptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && selectedModel != nil
+    }
+
+    private var selectedModelLabel: String {
+        guard let selectedModel else {
+            return models.isEmpty ? "No model" : "Choose model"
+        }
+        return "\(selectedModel.provider)/\(selectedModel.modelID)"
+    }
+
+    private var selectedThinkingLabel: String {
+        "thinking: \(thinkingLevel)"
+    }
+
+    private var showsThinkingMenu: Bool {
+        availableThinkingLevels.count > 1
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 10) {
+                Button(action: onDismiss) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10, weight: .semibold))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .padding(.top, 9)
+
+                EditorInlineAssistNativeTextView(
+                    text: $promptText,
+                    measuredHeight: $measuredPromptHeight,
+                    isFocused: $isPromptFocused,
+                    onSubmit: onSubmit,
+                    onDismiss: onDismiss
+                )
+                .frame(minHeight: measuredPromptHeight, maxHeight: measuredPromptHeight)
+                .padding(.horizontal, 10)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Color.white.opacity(0.03))
+                )
+                .overlay {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(Color.primary.opacity(isPromptFocused ? 0.12 : 0.06), lineWidth: 1)
+                }
+
+                Button(action: onSubmit) {
+                    Text("Generate")
+                }
+                .buttonStyle(EditorInlineAssistPrimaryButtonStyle(tint: theme.selectionColor))
+                .disabled(!canSubmit)
+                .padding(.top, 4)
+            }
+
+            HStack(spacing: 10) {
+                Menu {
+                    ForEach(models) { model in
+                        Button {
+                            onSelectModel(model.provider, model.id)
+                        } label: {
+                            HStack {
+                                Text(model.reference)
+                                if selectedModel?.provider == model.provider && selectedModel?.modelID == model.id {
+                                    Spacer(minLength: 8)
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    EditorInlineAssistMenuLabel(text: selectedModelLabel)
+                }
+                .menuStyle(.borderlessButton)
+                .disabled(models.isEmpty)
+
+                if showsThinkingMenu {
+                    Menu {
+                        ForEach(availableThinkingLevels, id: \.self) { level in
+                            Button {
+                                onSelectThinkingLevel(level)
+                            } label: {
+                                HStack {
+                                    Text(level)
+                                    if thinkingLevel == level {
+                                        Spacer(minLength: 8)
+                                        Image(systemName: "checkmark")
+                                    }
+                                }
+                            }
+                        }
+                    } label: {
+                        EditorInlineAssistMenuLabel(text: selectedThinkingLabel)
+                    }
+                    .menuStyle(.borderlessButton)
+                }
+
+                Spacer(minLength: 0)
+            }
+
+            if let errorMessage = state.errorMessage, !errorMessage.isEmpty {
+                Text(errorMessage)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.red)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color(nsColor: theme.backgroundColor).opacity(0.98))
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(Color(nsColor: theme.selectionColor).opacity(0.16), lineWidth: 1)
+        }
+        .shadow(color: Color.black.opacity(0.12), radius: 8, y: 2)
+        .onAppear {
+            promptText = state.prompt
+            isPromptFocused = true
+        }
+        .onChange(of: state.id) { _, _ in
+            promptText = state.prompt
+            isPromptFocused = true
+        }
+        .onChange(of: state.prompt) { _, newValue in
+            guard promptText != newValue else { return }
+            promptText = newValue
+        }
+        .onChange(of: focusRequestToken) { _, _ in
+            isPromptFocused = true
+        }
+        .onChange(of: promptText) { _, newValue in
+            guard newValue != state.prompt else { return }
+            onPromptChange(newValue)
+        }
+    }
+}
+
+private struct EditorInlineAssistMenuLabel: View {
+    let text: String
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Text(text)
+                .lineLimit(1)
+            Image(systemName: "chevron.down")
+                .font(.system(size: 9, weight: .semibold))
+        }
+        .font(.system(size: 11, weight: .medium))
+        .foregroundStyle(.secondary)
+    }
+}
+
+private struct EditorInlineAssistNativeTextView: NSViewRepresentable {
+    @Binding var text: String
+    @Binding var measuredHeight: CGFloat
+    @Binding var isFocused: Bool
+
+    let onSubmit: () -> Void
+    let onDismiss: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(text: $text, measuredHeight: $measuredHeight, isFocused: $isFocused, onSubmit: onSubmit, onDismiss: onDismiss)
+    }
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scrollView = NSScrollView(frame: .zero)
+        let textView = NSTextView(frame: .zero)
+        scrollView.documentView = textView
+        scrollView.drawsBackground = false
+        scrollView.borderType = .noBorder
+        scrollView.hasHorizontalScroller = false
+        scrollView.hasVerticalScroller = false
+        scrollView.autohidesScrollers = true
+
+        textView.delegate = context.coordinator
+        textView.font = .systemFont(ofSize: 13)
+        textView.isRichText = false
+        textView.importsGraphics = false
+        textView.isAutomaticQuoteSubstitutionEnabled = false
+        textView.isAutomaticDashSubstitutionEnabled = false
+        textView.isAutomaticTextReplacementEnabled = false
+        textView.isAutomaticSpellingCorrectionEnabled = false
+        textView.isAutomaticTextCompletionEnabled = false
+        textView.isAutomaticLinkDetectionEnabled = false
+        textView.isAutomaticDataDetectionEnabled = false
+        textView.isGrammarCheckingEnabled = false
+        textView.isContinuousSpellCheckingEnabled = false
+        textView.drawsBackground = false
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.minSize = .zero
+        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        textView.textContainerInset = NSSize(width: 0, height: 6)
+        textView.textContainer?.lineFragmentPadding = 0
+        textView.textContainer?.widthTracksTextView = true
+        textView.textContainer?.heightTracksTextView = false
+        textView.string = text
+
+        context.coordinator.scrollView = scrollView
+        context.coordinator.textView = textView
+        context.coordinator.updateMeasuredHeightIfNeeded()
+
+        DispatchQueue.main.async {
+            context.coordinator.requestFocusIfNeeded()
+        }
+
+        return scrollView
+    }
+
+    func updateNSView(_ nsView: NSScrollView, context: Context) {
+        guard let textView = nsView.documentView as? NSTextView else { return }
+        context.coordinator.scrollView = nsView
+        context.coordinator.textView = textView
+        if textView.string != text, !textView.hasMarkedText() {
+            textView.string = text
+        }
+        context.coordinator.updateMeasuredHeightIfNeeded()
+        context.coordinator.requestFocusIfNeeded()
+    }
+
+    @MainActor
+    final class Coordinator: NSObject, NSTextViewDelegate {
+        @Binding var text: String
+        @Binding var measuredHeight: CGFloat
+        @Binding var isFocused: Bool
+
+        let onSubmit: () -> Void
+        let onDismiss: () -> Void
+
+        weak var textView: NSTextView?
+        weak var scrollView: NSScrollView?
+        var lastMeasuredText = ""
+        var lastMeasuredWidth: CGFloat = 0
+
+        init(text: Binding<String>, measuredHeight: Binding<CGFloat>, isFocused: Binding<Bool>, onSubmit: @escaping () -> Void, onDismiss: @escaping () -> Void) {
+            _text = text
+            _measuredHeight = measuredHeight
+            _isFocused = isFocused
+            self.onSubmit = onSubmit
+            self.onDismiss = onDismiss
+        }
+
+        func textDidChange(_ notification: Notification) {
+            guard let textView = notification.object as? NSTextView, !textView.hasMarkedText() else { return }
+            text = textView.string
+            updateMeasuredHeightIfNeeded()
+        }
+
+        func textDidBeginEditing(_ notification: Notification) {
+            isFocused = true
+        }
+
+        func textDidEndEditing(_ notification: Notification) {
+            isFocused = false
+        }
+
+        func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+            if commandSelector == #selector(NSTextView.cancelOperation(_:)) {
+                onDismiss()
+                return true
+            }
+            if commandSelector == #selector(NSTextView.insertNewline(_:)) {
+                if NSEvent.modifierFlags.contains(.shift) {
+                    textView.insertNewlineIgnoringFieldEditor(nil)
+                } else {
+                    onSubmit()
+                }
+                return true
+            }
+            return false
+        }
+
+        func requestFocusIfNeeded() {
+            guard isFocused,
+                  let textView,
+                  let window = textView.window,
+                  window.firstResponder !== textView else {
+                return
+            }
+            window.makeFirstResponder(textView)
+        }
+
+        func updateMeasuredHeightIfNeeded() {
+            guard let textView,
+                  let scrollView,
+                  let textContainer = textView.textContainer,
+                  let layoutManager = textView.layoutManager else {
+                return
+            }
+            let width = scrollView.contentSize.width
+            let currentText = textView.string
+            guard abs(width - lastMeasuredWidth) > 0.5 || currentText != lastMeasuredText else { return }
+            lastMeasuredWidth = width
+            lastMeasuredText = currentText
+
+            textContainer.containerSize = NSSize(width: max(width, 1), height: .greatestFiniteMagnitude)
+            layoutManager.ensureLayout(for: textContainer)
+            let usedRect = layoutManager.usedRect(for: textContainer)
+            let contentHeight = ceil(usedRect.height + (textView.textContainerInset.height * 2))
+            let lineHeight = layoutManager.defaultLineHeight(for: textView.font ?? .systemFont(ofSize: 13))
+            let maxHeight = ceil((lineHeight * 4) + (textView.textContainerInset.height * 2))
+            let visibleHeight = min(max(contentHeight, 30), maxHeight)
+            scrollView.hasVerticalScroller = contentHeight > maxHeight + 0.5
+            if abs(measuredHeight - visibleHeight) > 0.5 {
+                measuredHeight = visibleHeight
+            }
+        }
+    }
+}
+
+private struct EditorInlineAssistPrimaryButtonStyle: ButtonStyle {
+    let tint: NSColor
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(Color(nsColor: .white))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color(nsColor: tint).opacity(configuration.isPressed ? 0.72 : 0.92))
+            )
+    }
+}
+
+private struct EditorInlineAssistSecondaryButtonStyle: ButtonStyle {
+    @State private var isHovered = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(isHovered || configuration.isPressed ? .primary : .secondary)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(backgroundColor(isPressed: configuration.isPressed))
+            )
+            .onHover { isHovered = $0 }
+    }
+
+    private func backgroundColor(isPressed: Bool) -> Color {
+        if isPressed {
+            return Color.primary.opacity(0.14)
+        }
+        if isHovered {
+            return Color.primary.opacity(0.08)
+        }
+        return Color.primary.opacity(0.04)
     }
 }
 
@@ -1798,31 +2719,39 @@ private struct EditorFileTreeListRepresentable: NSViewRepresentable {
         }
 
         private func applySnapshotIfNeeded() {
-            guard let tableView, let scrollView else { return }
-            let renderState = RenderState(tree: parent.tree)
-            let themeSignature = ThemeSignature(theme: parent.theme)
-            let width = max(scrollView.contentSize.width, 1)
-            if let column = tableView.tableColumns.first, abs(column.width - width) > 0.5 {
-                column.width = width
-            }
-            let needsReload = renderState != lastRenderState || themeSignature != lastThemeSignature
-            if needsReload {
-                isApplyingSnapshot = true
-                lastRenderState = renderState
-                lastThemeSignature = themeSignature
-                tableView.reloadData()
-                DispatchQueue.main.async { [weak self] in
-                    guard let self else { return }
-                    self.isApplyingSnapshot = false
-                    self.syncVisibleGeometry(reason: "snapshot")
-                    self.reconcileHoveredRowWithPointer()
-                    self.applyProgrammaticScrollIfNeeded(reason: "snapshot")
+            measureSidebarSignpostedInterval("FileTreeApplySnapshot", counterKey: "fileTree.applySnapshot.ms") {
+                sidebarPerfIncrement("fileTree.applySnapshot.request")
+                guard let tableView, let scrollView else { return }
+                let renderState = RenderState(tree: parent.tree)
+                let themeSignature = ThemeSignature(theme: parent.theme)
+                let width = max(scrollView.contentSize.width, 1)
+                if let column = tableView.tableColumns.first, abs(column.width - width) > 0.5 {
+                    sidebarPerfIncrement("fileTree.columnWidth.update")
+                    column.width = width
                 }
-                return
+                let needsReload = renderState != lastRenderState || themeSignature != lastThemeSignature
+                if needsReload {
+                    sidebarPerfIncrement("fileTree.reloadData")
+                    isApplyingSnapshot = true
+                    lastRenderState = renderState
+                    lastThemeSignature = themeSignature
+                    let reloadStarted = CFAbsoluteTimeGetCurrent()
+                    tableView.reloadData()
+                    sidebarPerfRecordDuration("fileTree.reloadData.ms", ms: (CFAbsoluteTimeGetCurrent() - reloadStarted) * 1000)
+                    DispatchQueue.main.async { [weak self] in
+                        guard let self else { return }
+                        self.isApplyingSnapshot = false
+                        self.syncVisibleGeometry(reason: "snapshot")
+                        self.reconcileHoveredRowWithPointer()
+                        self.applyProgrammaticScrollIfNeeded(reason: "snapshot")
+                    }
+                    return
+                }
+                sidebarPerfIncrement("fileTree.applySnapshot.noReload")
+                syncVisibleGeometry(reason: "update")
+                reconcileHoveredRowWithPointer()
+                applyProgrammaticScrollIfNeeded(reason: "update")
             }
-            syncVisibleGeometry(reason: "update")
-            reconcileHoveredRowWithPointer()
-            applyProgrammaticScrollIfNeeded(reason: "update")
         }
 
         @objc
@@ -2893,6 +3822,7 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
             onOpenTerminal: @escaping () -> Void,
             onOpenAgentPane: @escaping () -> Void
         ) {
+            sidebarPerfIncrement("windowChrome.configure.request")
             let started = CFAbsoluteTimeGetCurrent()
             let windowChanged = observedWindow !== window
             let chromeChanged = !chrome.matches(lastChrome)
@@ -2906,6 +3836,7 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
             titlebarPaddingBinding = titlebarPadding
             attachWindowObserversIfNeeded(window: window)
             guard windowChanged || chromeChanged || fileTreeChanged || sidebarModeChanged || sidebarTitleChanged else {
+                sidebarPerfIncrement("windowChrome.configure.skipped")
                 scrollPerfLog(
                     "chrome.configure skipped windowChanged=\(windowChanged) chromeChanged=\(chromeChanged) fileTreeChanged=\(fileTreeChanged) sidebarModeChanged=\(sidebarModeChanged)"
                 )
@@ -2915,19 +3846,24 @@ private struct EditorWindowChromeAccessor: NSViewRepresentable {
             lastFileTreeVisible = fileTreeVisible
             lastSidebarMode = sidebarMode
             lastSidebarTitle = sidebarTitle
-            let applyStarted = CFAbsoluteTimeGetCurrent()
-            applyWindowChrome(window: window, chrome: chrome)
-            syncTitlebarPadding(window: window, binding: titlebarPadding)
-            let applyMs = (CFAbsoluteTimeGetCurrent() - applyStarted) * 1000
-            let updateStarted = CFAbsoluteTimeGetCurrent()
-            updateAccessoryContent(
-                chrome: chrome,
-                fileTreeVisible: fileTreeVisible,
-                sidebarMode: sidebarMode,
-                sidebarTitle: sidebarTitle
-            )
-            let updateMs = (CFAbsoluteTimeGetCurrent() - updateStarted) * 1000
+            let applyMs = measureSidebarSignpostedInterval("WindowChromeApply", counterKey: "windowChrome.apply.ms") {
+                let applyStarted = CFAbsoluteTimeGetCurrent()
+                applyWindowChrome(window: window, chrome: chrome)
+                syncTitlebarPadding(window: window, binding: titlebarPadding)
+                return (CFAbsoluteTimeGetCurrent() - applyStarted) * 1000
+            }
+            let updateMs = measureSidebarSignpostedInterval("WindowChromeAccessoryUpdate", counterKey: "windowChrome.accessoryUpdate.ms") {
+                let updateStarted = CFAbsoluteTimeGetCurrent()
+                updateAccessoryContent(
+                    chrome: chrome,
+                    fileTreeVisible: fileTreeVisible,
+                    sidebarMode: sidebarMode,
+                    sidebarTitle: sidebarTitle
+                )
+                return (CFAbsoluteTimeGetCurrent() - updateStarted) * 1000
+            }
             let totalMs = (CFAbsoluteTimeGetCurrent() - started) * 1000
+            sidebarPerfRecordDuration("windowChrome.configure.ms", ms: totalMs)
             scrollPerfLog(
                 "chrome.configure windowChanged=\(windowChanged) chromeChanged=\(chromeChanged) fileTreeChanged=\(fileTreeChanged) sidebarModeChanged=\(sidebarModeChanged) applyMs=\(String(format: "%.2f", applyMs)) updateMs=\(String(format: "%.2f", updateMs)) totalMs=\(String(format: "%.2f", totalMs))"
             )
@@ -3198,6 +4134,7 @@ private struct EditorTitlebarSidebarModeButtons: View {
         HStack(spacing: EditorTitlebarControlMetrics.stackSpacing) {
             button(.files, iconName: "folder", systemImage: nil, label: "Show Files")
             button(.buffers, iconName: "buffers", systemImage: nil, label: "Show Open Items")
+            button(.agent, iconName: nil, systemImage: "sparkles.rectangle.stack", label: "Show Agent")
         }
     }
 
@@ -3239,6 +4176,9 @@ private struct EditorTitlebarSidebarTitleView: View {
             EditorSemanticIconView(iconName: "folder", size: 11)
         case .buffers:
             EditorSemanticIconView(iconName: "buffers", size: 11)
+        case .agent:
+            Image(systemName: "sparkles.rectangle.stack")
+                .font(.system(size: 11, weight: .semibold))
         }
     }
 
@@ -3302,8 +4242,8 @@ private struct EditorTitlebarOpenAgentButton: View {
                 }
         }
         .buttonStyle(.plain)
-        .help("Open Agent Pane")
-        .accessibilityLabel("Open Agent Pane")
+        .help("Show Agent")
+        .accessibilityLabel("Show Agent")
         .accessibilityHint("Open the pi agent in the active pane")
     }
 }

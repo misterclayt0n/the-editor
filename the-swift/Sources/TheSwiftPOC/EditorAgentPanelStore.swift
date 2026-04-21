@@ -175,9 +175,7 @@ struct EditorAgentTranscriptItem: Identifiable, Equatable, Hashable {
 final class EditorAgentPanelStore: ObservableObject {
     @Published private(set) var items: [EditorAgentTranscriptItem] = [] {
         didSet {
-            if oldValue != items {
-                transcriptRevision &+= 1
-            }
+            transcriptRevision &+= 1
         }
     }
     @Published private(set) var transcriptRevision: Int = 0
@@ -505,11 +503,15 @@ final class EditorAgentPanelStore: ObservableObject {
             }
         case "thinking_started":
             let id = payload["id"] as? String ?? UUID().uuidString
-            if let index = items.lastIndex(where: { $0.correlationID == id && $0.kind == .thinking }) {
-                items[index].isStreaming = true
-                touchRevision(&items[index])
+            var nextItems = items
+            if let index = nextItems.lastIndex(where: { $0.correlationID == id && $0.kind == .thinking }) {
+                if !nextItems[index].isStreaming {
+                    nextItems[index].isStreaming = true
+                    touchRevision(&nextItems[index])
+                    items = nextItems
+                }
             } else {
-                items.append(
+                nextItems.append(
                     EditorAgentTranscriptItem(
                         id: UUID().uuidString,
                         correlationID: id,
@@ -523,6 +525,7 @@ final class EditorAgentPanelStore: ObservableObject {
                         renderedMarkdown: nil
                     )
                 )
+                items = nextItems
             }
             isRunning = true
         case "thinking_delta":
@@ -538,18 +541,40 @@ final class EditorAgentPanelStore: ObservableObject {
             completeThinkingMessage(id: id, finalText: text)
         case "tool_started":
             let correlationID = payload["id"] as? String
+            var nextItems = items
+            var hasChanges = false
             if let correlationID,
-               let index = items.lastIndex(where: { $0.correlationID == correlationID && $0.kind == .tool && ($0.isStreaming || $0.status == "running") }) {
-                items[index].title = payload["summary"] as? String ?? (payload["toolName"] as? String) ?? items[index].title
-                items[index].contextSummary = payload["toolName"] as? String ?? items[index].contextSummary
-                if let inputJSON = payload["inputJSON"] as? String, !inputJSON.isEmpty {
-                    items[index].toolInputJSON = inputJSON
+               let index = nextItems.lastIndex(where: { $0.correlationID == correlationID && $0.kind == .tool && ($0.isStreaming || $0.status == "running") }) {
+                var rowChanged = false
+                let nextTitle = payload["summary"] as? String ?? (payload["toolName"] as? String) ?? nextItems[index].title
+                if nextItems[index].title != nextTitle {
+                    nextItems[index].title = nextTitle
+                    rowChanged = true
                 }
-                items[index].isStreaming = true
-                items[index].status = "running"
-                touchRevision(&items[index])
+                let nextContext = payload["toolName"] as? String ?? nextItems[index].contextSummary
+                if nextItems[index].contextSummary != nextContext {
+                    nextItems[index].contextSummary = nextContext
+                    rowChanged = true
+                }
+                if let inputJSON = payload["inputJSON"] as? String, !inputJSON.isEmpty,
+                   nextItems[index].toolInputJSON != inputJSON {
+                    nextItems[index].toolInputJSON = inputJSON
+                    rowChanged = true
+                }
+                if !nextItems[index].isStreaming {
+                    nextItems[index].isStreaming = true
+                    rowChanged = true
+                }
+                if nextItems[index].status != "running" {
+                    nextItems[index].status = "running"
+                    rowChanged = true
+                }
+                if rowChanged {
+                    touchRevision(&nextItems[index])
+                    hasChanges = true
+                }
             } else {
-                items.append(
+                nextItems.append(
                     EditorAgentTranscriptItem(
                         id: UUID().uuidString,
                         correlationID: correlationID,
@@ -563,6 +588,10 @@ final class EditorAgentPanelStore: ObservableObject {
                         renderedMarkdown: nil
                     )
                 )
+                hasChanges = true
+            }
+            if hasChanges {
+                items = nextItems
             }
             isRunning = true
         case "tool_updated":
@@ -639,21 +668,22 @@ final class EditorAgentPanelStore: ObservableObject {
         let toolSummary = pendingToolDeltas.mapValues { $0.count }
         agentDebugLog("flush.begin items=\(items.count) pendingAssistant=\(assistantSummary) pendingThinking=\(thinkingSummary) pendingTool=\(toolSummary)")
         var nextItems = items
+        var hasChanges = false
         for (id, delta) in pendingAssistantDeltas where !delta.isEmpty {
-            applyAssistantDelta(id: id, delta: delta, to: &nextItems)
+            hasChanges = applyAssistantDelta(id: id, delta: delta, to: &nextItems) || hasChanges
         }
         for (id, delta) in pendingThinkingDeltas where !delta.isEmpty {
-            applyThinkingDelta(id: id, delta: delta, to: &nextItems)
+            hasChanges = applyThinkingDelta(id: id, delta: delta, to: &nextItems) || hasChanges
         }
         for (id, deltas) in pendingToolDeltas where !deltas.isEmpty {
-            applyToolDeltas(id: id, deltas: deltas, to: &nextItems)
+            hasChanges = applyToolDeltas(id: id, deltas: deltas, to: &nextItems) || hasChanges
         }
 
         pendingAssistantDeltas.removeAll()
         pendingThinkingDeltas.removeAll()
         pendingToolDeltas.removeAll()
 
-        if nextItems != items {
+        if hasChanges {
             agentDebugLog("flush.commit oldItems=\(items.count) newItems=\(nextItems.count)")
             items = nextItems
         } else {
@@ -663,28 +693,40 @@ final class EditorAgentPanelStore: ObservableObject {
 
     private func completeAssistantMessage(id: String, finalText: String, stopReason: String?, errorMessage: String?) {
         agentDebugLog("assistant.complete.begin id=\(id) finalChars=\(finalText.count) stopReason=\(stopReason ?? "nil") items=\(items.count) pendingDeltaChars=\(pendingAssistantDeltas[id]?.count ?? 0)")
+        var nextItems = items
+        var hasChanges = false
         if finalText.isEmpty,
            let pendingDelta = pendingAssistantDeltas.removeValue(forKey: id),
            !pendingDelta.isEmpty {
-            var nextItems = items
-            applyAssistantDelta(id: id, delta: pendingDelta, to: &nextItems)
-            if nextItems != items {
-                items = nextItems
-            }
+            hasChanges = applyAssistantDelta(id: id, delta: pendingDelta, to: &nextItems) || hasChanges
         } else {
             pendingAssistantDeltas.removeValue(forKey: id)
         }
 
-        var nextItems = items
         if let index = nextItems.lastIndex(where: { $0.correlationID == id && $0.kind == .assistant }) {
             let resolvedText = finalText.isEmpty ? nextItems[index].text : finalText
             if resolvedText.isEmpty {
                 nextItems.remove(at: index)
+                hasChanges = true
             } else {
-                nextItems[index].text = resolvedText
-                nextItems[index].isStreaming = false
-                nextItems[index].renderedMarkdown = controller.renderMarkdown(resolvedText)
-                touchRevision(&nextItems[index])
+                var rowChanged = false
+                if nextItems[index].text != resolvedText {
+                    nextItems[index].text = resolvedText
+                    rowChanged = true
+                }
+                if nextItems[index].isStreaming {
+                    nextItems[index].isStreaming = false
+                    rowChanged = true
+                }
+                let renderedMarkdown = controller.renderMarkdown(resolvedText)
+                if nextItems[index].renderedMarkdown != renderedMarkdown {
+                    nextItems[index].renderedMarkdown = renderedMarkdown
+                    rowChanged = true
+                }
+                if rowChanged {
+                    touchRevision(&nextItems[index])
+                    hasChanges = true
+                }
             }
         } else if !finalText.isEmpty {
             nextItems.append(
@@ -701,13 +743,14 @@ final class EditorAgentPanelStore: ObservableObject {
                     renderedMarkdown: controller.renderMarkdown(finalText)
                 )
             )
+            hasChanges = true
         }
 
         if let terminalText = assistantTerminalMessage(stopReason: stopReason, errorMessage: errorMessage) {
-            upsertAssistantTerminalNote(assistantID: id, text: terminalText, into: &nextItems)
+            hasChanges = upsertAssistantTerminalNote(assistantID: id, text: terminalText, into: &nextItems) || hasChanges
         }
 
-        if nextItems != items {
+        if hasChanges {
             if let index = nextItems.lastIndex(where: { $0.correlationID == id && $0.kind == .assistant }) {
                 let item = nextItems[index]
                 agentDebugLog("assistant.complete.commit id=\(id) chars=\(item.text.count) revision=\(item.revision) renderedBlocks=\(item.renderedMarkdown?.blocks.count ?? 0)")
@@ -722,29 +765,45 @@ final class EditorAgentPanelStore: ObservableObject {
 
     private func completeToolMessage(id: String, finalText: String?, isError: Bool) {
         agentDebugLog("tool.complete.begin id=\(id) finalChars=\(finalText?.count ?? 0) isError=\(isError) pendingDeltaCount=\(pendingToolDeltas[id]?.count ?? 0)")
+        var nextItems = items
+        var hasChanges = false
         if finalText?.isEmpty != false,
            let pendingDeltas = pendingToolDeltas.removeValue(forKey: id),
            !pendingDeltas.isEmpty {
-            var nextItems = items
-            applyToolDeltas(id: id, deltas: pendingDeltas, to: &nextItems)
-            if nextItems != items {
-                items = nextItems
-            }
+            hasChanges = applyToolDeltas(id: id, deltas: pendingDeltas, to: &nextItems) || hasChanges
         } else {
             pendingToolDeltas.removeValue(forKey: id)
         }
 
-        guard let index = items.lastIndex(where: { $0.correlationID == id && $0.kind == .tool }) else { return }
-        items[index].status = isError ? "failed" : "done"
-        items[index].isStreaming = false
-        if let finalText, !finalText.isEmpty {
-            items[index].text = finalText
-        }
-        if let inputJSON = items[index].toolInputJSON ?? pendingToolInputJSONByID[id] {
-            items[index].toolInputJSON = inputJSON
+        if let index = nextItems.lastIndex(where: { $0.correlationID == id && $0.kind == .tool }) {
+            var rowChanged = false
+            let nextStatus = isError ? "failed" : "done"
+            if nextItems[index].status != nextStatus {
+                nextItems[index].status = nextStatus
+                rowChanged = true
+            }
+            if nextItems[index].isStreaming {
+                nextItems[index].isStreaming = false
+                rowChanged = true
+            }
+            if let finalText, !finalText.isEmpty, nextItems[index].text != finalText {
+                nextItems[index].text = finalText
+                rowChanged = true
+            }
+            if let inputJSON = nextItems[index].toolInputJSON ?? pendingToolInputJSONByID[id],
+               nextItems[index].toolInputJSON != inputJSON {
+                nextItems[index].toolInputJSON = inputJSON
+                rowChanged = true
+            }
+            if rowChanged {
+                touchRevision(&nextItems[index])
+                hasChanges = true
+            }
         }
         pendingToolInputJSONByID.removeValue(forKey: id)
-        touchRevision(&items[index])
+        if hasChanges {
+            items = nextItems
+        }
     }
 
     private func assistantTerminalMessage(stopReason: String?, errorMessage: String?) -> String? {
@@ -760,13 +819,22 @@ final class EditorAgentPanelStore: ObservableObject {
         }
     }
 
-    private func upsertAssistantTerminalNote(assistantID: String, text: String, into items: inout [EditorAgentTranscriptItem]) {
+    private func upsertAssistantTerminalNote(assistantID: String, text: String, into items: inout [EditorAgentTranscriptItem]) -> Bool {
         let noteCorrelationID = "\(assistantID)-terminal"
         if let index = items.lastIndex(where: { $0.correlationID == noteCorrelationID && $0.kind == .note }) {
-            items[index].text = text
-            items[index].isStreaming = false
-            touchRevision(&items[index])
-            return
+            var rowChanged = false
+            if items[index].text != text {
+                items[index].text = text
+                rowChanged = true
+            }
+            if items[index].isStreaming {
+                items[index].isStreaming = false
+                rowChanged = true
+            }
+            if rowChanged {
+                touchRevision(&items[index])
+            }
+            return rowChanged
         }
         items.append(
             EditorAgentTranscriptItem(
@@ -782,15 +850,17 @@ final class EditorAgentPanelStore: ObservableObject {
                 renderedMarkdown: nil
             )
         )
+        return true
     }
 
-    private func applyAssistantDelta(id: String, delta: String, to items: inout [EditorAgentTranscriptItem]) {
+    private func applyAssistantDelta(id: String, delta: String, to items: inout [EditorAgentTranscriptItem]) -> Bool {
         agentDebugLog("assistant.delta id=\(id) deltaChars=\(delta.count) existing=\(items.lastIndex(where: { $0.correlationID == id && $0.kind == .assistant }) != nil)")
         if let index = items.lastIndex(where: { $0.correlationID == id && $0.kind == .assistant }) {
             items[index].text += delta
             items[index].isStreaming = true
             items[index].renderedMarkdown = nil
             touchRevision(&items[index])
+            return true
         } else {
             items.append(
                 EditorAgentTranscriptItem(
@@ -806,29 +876,37 @@ final class EditorAgentPanelStore: ObservableObject {
                     renderedMarkdown: nil
                 )
             )
+            return true
         }
     }
 
     private func completeThinkingMessage(id: String, finalText: String) {
         agentDebugLog("thinking.complete.begin id=\(id) finalChars=\(finalText.count) items=\(items.count) pendingDeltaChars=\(pendingThinkingDeltas[id]?.count ?? 0)")
+        var nextItems = items
+        var hasChanges = false
         if finalText.isEmpty,
            let pendingDelta = pendingThinkingDeltas.removeValue(forKey: id),
            !pendingDelta.isEmpty {
-            var nextItems = items
-            applyThinkingDelta(id: id, delta: pendingDelta, to: &nextItems)
-            if nextItems != items {
-                items = nextItems
-            }
+            hasChanges = applyThinkingDelta(id: id, delta: pendingDelta, to: &nextItems) || hasChanges
         } else {
             pendingThinkingDeltas.removeValue(forKey: id)
         }
 
-        var nextItems = items
         if let index = nextItems.lastIndex(where: { $0.correlationID == id && $0.kind == .thinking }) {
             let resolvedText = finalText.isEmpty ? nextItems[index].text : finalText
-            nextItems[index].text = resolvedText
-            nextItems[index].isStreaming = false
-            touchRevision(&nextItems[index])
+            var rowChanged = false
+            if nextItems[index].text != resolvedText {
+                nextItems[index].text = resolvedText
+                rowChanged = true
+            }
+            if nextItems[index].isStreaming {
+                nextItems[index].isStreaming = false
+                rowChanged = true
+            }
+            if rowChanged {
+                touchRevision(&nextItems[index])
+                hasChanges = true
+            }
         } else if !finalText.isEmpty {
             nextItems.append(
                 EditorAgentTranscriptItem(
@@ -844,19 +922,21 @@ final class EditorAgentPanelStore: ObservableObject {
                     renderedMarkdown: nil
                 )
             )
+            hasChanges = true
         }
 
-        if nextItems != items {
+        if hasChanges {
             items = nextItems
         }
     }
 
-    private func applyThinkingDelta(id: String, delta: String, to items: inout [EditorAgentTranscriptItem]) {
+    private func applyThinkingDelta(id: String, delta: String, to items: inout [EditorAgentTranscriptItem]) -> Bool {
         agentDebugLog("thinking.delta id=\(id) deltaChars=\(delta.count) existing=\(items.lastIndex(where: { $0.correlationID == id && $0.kind == .thinking }) != nil)")
         if let index = items.lastIndex(where: { $0.correlationID == id && $0.kind == .thinking }) {
             items[index].text += delta
             items[index].isStreaming = true
             touchRevision(&items[index])
+            return true
         } else {
             items.append(
                 EditorAgentTranscriptItem(
@@ -872,12 +952,13 @@ final class EditorAgentPanelStore: ObservableObject {
                     renderedMarkdown: nil
                 )
             )
+            return true
         }
     }
 
-    private func applyToolDeltas(id: String, deltas: [String], to items: inout [EditorAgentTranscriptItem]) {
+    private func applyToolDeltas(id: String, deltas: [String], to items: inout [EditorAgentTranscriptItem]) -> Bool {
         agentDebugLog("tool.delta id=\(id) chunks=\(deltas.count) totalChars=\(deltas.reduce(0) { $0 + $1.count })")
-        guard let index = items.lastIndex(where: { $0.correlationID == id && $0.kind == .tool }) else { return }
+        guard let index = items.lastIndex(where: { $0.correlationID == id && $0.kind == .tool }) else { return false }
         let combinedDelta = deltas.joined(separator: "\n")
         if items[index].text.isEmpty {
             items[index].text = combinedDelta
@@ -885,6 +966,7 @@ final class EditorAgentPanelStore: ObservableObject {
             items[index].text += "\n" + combinedDelta
         }
         touchRevision(&items[index])
+        return true
     }
 
     private func touchRevision(_ item: inout EditorAgentTranscriptItem) {
@@ -1000,16 +1082,18 @@ final class EditorAgentPanelStore: ObservableObject {
         var nextItems = items
         var hasChanges = false
         for index in nextItems.indices where nextItems[index].isStreaming || nextItems[index].status == "running" {
+            var rowChanged = false
             if nextItems[index].isStreaming {
                 nextItems[index].isStreaming = false
-                hasChanges = true
+                rowChanged = true
             }
             if nextItems[index].kind == .tool, nextItems[index].status == "running" {
                 nextItems[index].status = markToolsFailed ? "failed" : "done"
-                hasChanges = true
+                rowChanged = true
             }
-            if hasChanges {
+            if rowChanged {
                 touchRevision(&nextItems[index])
+                hasChanges = true
             }
         }
 

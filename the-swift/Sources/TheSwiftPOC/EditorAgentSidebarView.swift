@@ -997,6 +997,10 @@ private struct AgentUserMessageView: View {
 private struct AgentAssistantMessageView: View, Equatable {
     let item: EditorAgentTranscriptItem
 
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.item.id == rhs.item.id && lhs.item.revision == rhs.item.revision
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             if let renderedMarkdown = item.renderedMarkdown,
@@ -1028,6 +1032,10 @@ private struct AgentAssistantMessageView: View, Equatable {
 @MainActor
 private struct AgentThinkingMessageView: View, Equatable {
     let item: EditorAgentTranscriptItem
+
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.item.id == rhs.item.id && lhs.item.revision == rhs.item.revision
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -1233,6 +1241,10 @@ private struct AgentCodeBlockView: View {
 @MainActor
 private struct AgentNoteRow: View, Equatable {
     let text: String
+
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.text == rhs.text
+    }
 
     var body: some View {
         Text(text)

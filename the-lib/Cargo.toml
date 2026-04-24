@@ -1,5 +1,5 @@
 [package]
-name              = "the-lib"
+name = "the-lib"
 edition.workspace = true
 license.workspace = true
 version.workspace = true
@@ -7,41 +7,4 @@ version.workspace = true
 [lib]
 path = "lib.rs"
 
-[lints]
-workspace = true
-
 [dependencies]
-bitflags.workspace             = true
-globset.workspace              = true
-imara-diff.workspace           = true
-nucleo.workspace               = true
-parking_lot.workspace          = true
-pulldown-cmark.workspace       = true
-ropey.workspace                = true
-serde.workspace                = true
-serde_json.workspace           = true
-smallvec.workspace             = true
-smartstring.workspace          = true
-the-core                       = { path = "../the-core" }
-the-loader                     = { optional = true, path = "../the-loader" }
-the-stdx                       = { path = "../the-stdx" }
-thiserror.workspace            = true
-toml.workspace                 = true
-tracing.workspace              = true
-tree-house.workspace           = true
-unicode-segmentation.workspace = true
-
-[dev-dependencies]
-divan      = "0.1.21"
-quickcheck = { default-features = false, version = "1" }
-tempfile.workspace = true
-
-[features]
-default        = [  ]
-render         = [  ]
-runtime-loader = [ "dep:the-loader" ]
-
-
-[[bench]]
-harness = false
-name    = "transaction"

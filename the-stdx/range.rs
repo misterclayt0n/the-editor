@@ -45,10 +45,17 @@ pub fn is_subset<const ALLOW_EMPTY: bool>(
 ) -> bool {
   let mut super_range = super_set.next();
   for sub_range in sub_set {
+    if sub_range.is_empty() {
+      if ALLOW_EMPTY {
+        continue;
+      }
+      return false;
+    }
+
     loop {
       match super_range {
         None => return false,
-        Some(s) if s.end <= sub_range.start && !(ALLOW_EMPTY && s.start == sub_range.start) => {
+        Some(s) if s.end <= sub_range.start => {
           super_range = super_set.next();
         },
         Some(s) if s.contains(sub_range) => break,

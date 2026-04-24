@@ -67,7 +67,7 @@ fn convert_url_to_uri(url: &url::Url) -> Result<Uri, UrlConversionError> {
     "file" => {
       url
         .to_file_path()
-        .map(|path| Uri::File(path.into()))
+        .map(|path| Uri::File(the_stdx::path::normalize(path).into()))
         .map_err(|_| UrlConversionError::UnableToConvert(url.clone()))
     },
     scheme => {

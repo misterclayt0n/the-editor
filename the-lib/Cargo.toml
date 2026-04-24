@@ -11,6 +11,7 @@ path = "lib.rs"
 unicode-lines = []
 
 [dependencies]
+the-stdx.path                      = "../the-stdx"
 eyre.workspace                     = true
 ropey                              = { workspace = true }
 thiserror.workspace                = true

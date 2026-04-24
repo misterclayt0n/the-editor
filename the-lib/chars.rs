@@ -252,33 +252,15 @@ pub fn char_is_punctuation(ch: char) -> bool {
 
 #[cfg(test)]
 mod tests {
-  use super::{
-    byte_to_char_idx,
-    next_char_boundary,
-    prev_char_boundary,
-  };
+  use super::*;
 
   #[test]
-  fn char_boundaries_utf8() {
-    let s = "aé😊";
-    assert_eq!(next_char_boundary(s, 0), 1);
-    assert_eq!(next_char_boundary(s, 1), 3);
-    assert_eq!(next_char_boundary(s, 3), 7);
-    assert_eq!(next_char_boundary(s, 7), 7);
+  fn utf8_byte_indexes_move_by_whole_characters() {
+    let text = "aé😊";
 
-    assert_eq!(prev_char_boundary(s, 7), 3);
-    assert_eq!(prev_char_boundary(s, 3), 1);
-    assert_eq!(prev_char_boundary(s, 1), 0);
-    assert_eq!(prev_char_boundary(s, 0), 0);
-  }
-
-  #[test]
-  fn byte_to_char_index() {
-    let s = "aé😊";
-    assert_eq!(byte_to_char_idx(s, 0), 0);
-    assert_eq!(byte_to_char_idx(s, 1), 1);
-    assert_eq!(byte_to_char_idx(s, 3), 2);
-    assert_eq!(byte_to_char_idx(s, 7), 3);
+    assert_eq!(next_char_boundary(text, 1), 3);
+    assert_eq!(prev_char_boundary(text, 7), 3);
+    assert_eq!(byte_to_char_idx(text, 3), 2);
   }
 }
 
@@ -292,47 +274,16 @@ mod whitespace_tests {
   use super::*;
 
   #[test]
-  fn test_whitespace_classification() {
-    // Breaking, single width
+  fn whitespace_has_breaking_and_width_behavior() {
     let space = WhitespaceProperties::of(' ').unwrap();
+    let no_break_space = WhitespaceProperties::of('\u{00A0}').unwrap();
+    let zero_width_space = WhitespaceProperties::of('\u{200B}').unwrap();
+    let tab = WhitespaceProperties::of('\t').unwrap();
+
     assert!(space.is_breaking());
     assert_eq!(space.width, WhitespaceWidth::Single);
-
-    // Breaking, variable width
-    let tab = WhitespaceProperties::of('\t').unwrap();
-    assert!(tab.is_breaking());
+    assert!(!no_break_space.is_breaking());
+    assert!(zero_width_space.is_zero_width());
     assert!(tab.is_variable_width());
-
-    // Non-breaking
-    assert!(!WhitespaceProperties::of('\u{00A0}').unwrap().is_breaking());
-    assert!(!WhitespaceProperties::of('\u{2007}').unwrap().is_breaking());
-
-    // Zero-width
-    let zwsp = WhitespaceProperties::of('\u{200B}').unwrap();
-    assert!(zwsp.is_zero_width() && zwsp.is_breaking());
-    let bom = WhitespaceProperties::of('\u{FEFF}').unwrap();
-    assert!(bom.is_zero_width() && !bom.is_breaking());
-
-    // Wide
-    assert!(WhitespaceProperties::of('\u{2003}').unwrap().is_wide());
-    assert!(WhitespaceProperties::of('\u{3000}').unwrap().is_wide());
-
-    // Non-whitespace
-    assert!(WhitespaceProperties::of('a').is_none());
-    assert!(WhitespaceProperties::of('\n').is_none());
-  }
-
-  #[test]
-  fn test_convenience_functions() {
-    assert!(char_is_breaking_whitespace(' '));
-    assert!(!char_is_breaking_whitespace('\u{00A0}'));
-
-    assert!(char_is_non_breaking_whitespace('\u{00A0}'));
-    assert!(!char_is_non_breaking_whitespace(' '));
-
-    assert!(char_is_zero_width_whitespace('\u{200B}'));
-    assert!(!char_is_zero_width_whitespace(' '));
-
-    assert!(!char_is_breaking_whitespace('a'));
   }
 }

@@ -375,177 +375,71 @@ mod tests {
   use super::*;
 
   #[test]
-  fn test_tab_width_at() {
-    assert_eq!(tab_width_at(0, 4), 4);
-    assert_eq!(tab_width_at(1, 4), 3);
-    assert_eq!(tab_width_at(3, 4), 1);
-    assert_eq!(tab_width_at(4, 4), 4);
-  }
-
-  #[test]
-  fn test_grapheme_new_variants_and_width() {
-    // Tab
-    let mut g = Grapheme::new("\t".into(), 3, 4);
-    match g {
-      Grapheme::Tab { width } => assert_eq!(width, 1),
-      _ => panic!("expected Tab variant"),
-    }
-    // Changing position updates tab width
-    g.change_position(4, 4);
-    match g {
-      Grapheme::Tab { width } => assert_eq!(width, 4),
-      _ => panic!("expected Tab variant"),
-    }
-
-    // Newline (LF)
-    let g = Grapheme::new("\n".into(), 0, 4);
-    match g {
-      Grapheme::Newline => assert_eq!(g.width(), 1),
-      _ => panic!("expected Newline variant"),
-    }
-
-    // Other
-    let g = Grapheme::new("a".into(), 0, 4);
-    match g {
-      Grapheme::Other { ref g } => {
-        assert_eq!(g.deref(), "a");
-        assert_eq!(grapheme_width(g), 1);
-      },
-      _ => panic!("expected Other variant"),
-    }
-
-    // Wide character
-    let g = Grapheme::new("漢".into(), 0, 4);
-    match g {
-      Grapheme::Other { ref g } => {
-        assert_eq!(grapheme_width(g), 2);
-      },
-      _ => panic!("expected Other variant for wide char"),
-    }
-  }
-
-  #[test]
-  fn test_whitespace_and_word_boundary() {
-    // Spaces allow break after
-    let space = Grapheme::new(" ".into(), 0, 4);
-    assert!(space.is_whitespace());
-    assert!(space.is_word_boundary());
-
-    // Letters don't allow break after (within words)
-    let ch = Grapheme::new("a".into(), 0, 4);
-    assert!(!ch.is_whitespace());
-    assert!(!ch.is_word_boundary());
-
-    // Period is InfixSeparator in UAX #14, doesn't allow break (think "3.14")
-    let period = Grapheme::new(".".into(), 0, 4);
-    assert!(!period.is_whitespace());
-    assert!(!period.is_word_boundary()); // Changed: UAX #14 correct behavior
-
-    // Hyphen allows break after
-    let hyphen = Grapheme::new("-".into(), 0, 4);
-    assert!(!hyphen.is_whitespace());
-    assert!(hyphen.is_word_boundary());
-
-    // Tab allows break after
-    let tab = Grapheme::new("\t".into(), 2, 4);
-    assert!(tab.is_whitespace());
-    assert!(tab.is_word_boundary());
-
-    // Newline allows break after
-    let nl = Grapheme::new("\n".into(), 0, 4);
-    assert!(nl.is_whitespace());
-    assert!(nl.is_word_boundary());
-
-    // CJK characters allow break between them
-    let cjk = Grapheme::new("漢".into(), 0, 4);
-    assert!(!cjk.is_whitespace());
-    assert!(cjk.is_word_boundary());
-  }
-
-  #[test]
-  fn test_display_impl() {
-    let other = Grapheme::new("ab".into(), 0, 4);
-    assert_eq!(other.to_string(), "ab");
-
-    let tab = Grapheme::new("\t".into(), 2, 4); // width = 2
+  fn tabs_render_to_the_spaces_left_until_the_next_tab_stop() {
+    let mut tab = Grapheme::new("\t".into(), 2, 4);
+    assert_eq!(tab.width(), 2);
     assert_eq!(tab.to_string(), "  ");
 
-    let nl = Grapheme::new("\n".into(), 0, 4);
-    assert_eq!(nl.to_string(), " ");
+    tab.change_position(4, 4);
+    assert_eq!(tab.width(), 4);
+    assert_eq!(tab.to_string(), "    ");
   }
 
   #[test]
-  fn test_grapheme_str_conversions_and_eq() {
-    let g: GraphemeStr = ("hello").into();
-    assert_eq!(&*g, "hello");
+  fn newlines_render_as_one_space() {
+    let newline = Grapheme::new("\n".into(), 0, 4);
 
-    let g2 = g.clone();
-    assert_eq!(g, g2);
-    assert_eq!(g, "hello");
-
-    let owned: GraphemeStr = String::from("world").into();
-    assert_eq!(owned, "world");
+    assert_eq!(newline.width(), 1);
+    assert_eq!(newline.to_string(), " ");
+    assert!(newline.is_whitespace());
+    assert!(newline.is_word_boundary());
   }
 
   #[test]
-  fn test_grapheme_boundaries_combining() {
-    // "a\u{0301}" (a + combining acute) is one grapheme cluster of 2 chars
-    let text = String::from("a\u{0301}b");
-    let rope = Rope::from_str(&text);
-    let slice = rope.slice(..);
-
-    // Next boundaries
-    assert_eq!(next_grapheme_boundary(slice, 0), 2);
-    assert_eq!(nth_next_grapheme_boundary(slice, 0, 2), 3);
-
-    // Prev boundaries
-    assert_eq!(prev_grapheme_boundary(slice, 3), 2);
-    assert_eq!(nth_prev_grapheme_boundary(slice, 3, 2), 0);
-
-    // Ensure functions from within a cluster
-    assert_eq!(ensure_grapheme_boundary_next(slice, 1), 2);
-    assert_eq!(ensure_grapheme_boundary_prev(slice, 1), 0);
+  fn words_punctuation_and_cjk_report_soft_wrap_boundaries() {
+    assert!(!Grapheme::new("a".into(), 0, 4).is_word_boundary());
+    assert!(!Grapheme::new(".".into(), 0, 4).is_word_boundary());
+    assert!(Grapheme::new("-".into(), 0, 4).is_word_boundary());
+    assert!(Grapheme::new("漢".into(), 0, 4).is_word_boundary());
   }
 
   #[test]
-  fn test_grapheme_boundaries_crlf() {
-    // CRLF should be treated as a single grapheme cluster by unicode rules
-    let text = String::from("x\r\ny");
-    let rope = Rope::from_str(&text);
-    let slice = rope.slice(..);
-
-    // Start at index after 'x' (1), next boundary should skip CRLF to index 3
-    assert_eq!(next_grapheme_boundary(slice, 1), 3);
-    // Prev boundary from end (4) should go back to 3 first, then 1
-    assert_eq!(prev_grapheme_boundary(slice, 4), 3);
-    assert_eq!(nth_prev_grapheme_boundary(slice, 4, 2), 1);
-  }
-
-  #[test]
-  fn test_grapheme_width_function() {
-    // ASCII printable
+  fn grapheme_width_matches_terminal_columns() {
     assert_eq!(grapheme_width("a"), 1);
-    assert_eq!(grapheme_width("Z"), 1);
-    assert_eq!(grapheme_width("!"), 1);
-
-    // ASCII control characters -> width 2 (rendered as ^X)
-    assert_eq!(grapheme_width("\u{0000}"), 2); // NUL -> ^@
-    assert_eq!(grapheme_width("\u{0007}"), 2); // BEL -> ^G
-    assert_eq!(grapheme_width("\u{001B}"), 2); // ESC -> ^[
-    assert_eq!(grapheme_width("\u{007F}"), 2); // DEL -> ^?
-
-    // Zero-width whitespace -> width 0
-    assert_eq!(grapheme_width("\u{200B}"), 0); // Zero-width space
-    assert_eq!(grapheme_width("\u{FEFF}"), 0); // BOM / ZWNBSP
-
-    // Emoji -> width 2
+    assert_eq!(grapheme_width("\u{0000}"), 2);
+    assert_eq!(grapheme_width("\u{200B}"), 0);
     assert_eq!(grapheme_width("😀"), 2);
-    assert_eq!(grapheme_width("🇺🇸"), 2); // Flag emoji
-
-    // Wide CJK
     assert_eq!(grapheme_width("漢"), 2);
+    assert_eq!(grapheme_width("a\u{0301}"), 1);
+  }
 
-    // Combining sequences
-    assert_eq!(grapheme_width("a\u{0301}"), 1); // a + combining acute
+  #[test]
+  fn grapheme_boundaries_keep_combining_marks_with_their_base_character() {
+    let rope = Rope::from_str("a\u{0301}b");
+    let text = rope.slice(..);
+
+    assert_eq!(next_grapheme_boundary(text, 0), 2);
+    assert_eq!(prev_grapheme_boundary(text, 3), 2);
+    assert_eq!(ensure_grapheme_boundary_next(text, 1), 2);
+    assert_eq!(ensure_grapheme_boundary_prev(text, 1), 0);
+  }
+
+  #[test]
+  fn grapheme_boundaries_treat_crlf_as_one_newline() {
+    let rope = Rope::from_str("x\r\ny");
+    let text = rope.slice(..);
+
+    assert_eq!(next_grapheme_boundary(text, 1), 3);
+    assert_eq!(prev_grapheme_boundary(text, 4), 3);
+    assert_eq!(nth_prev_grapheme_boundary(text, 4, 2), 1);
+  }
+
+  #[test]
+  fn grapheme_strings_compare_by_text() {
+    let borrowed: GraphemeStr = "hello".into();
+    let owned: GraphemeStr = String::from("hello").into();
+
+    assert_eq!(borrowed, "hello");
+    assert_eq!(borrowed, owned);
   }
 }

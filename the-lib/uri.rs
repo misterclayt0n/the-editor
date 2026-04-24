@@ -102,11 +102,20 @@ mod test {
   use super::*;
 
   #[test]
-  fn unknown_scheme() {
+  fn file_urls_become_file_uris() {
+    let url = Url::from_file_path("/tmp/file.txt").unwrap();
+    let uri = Uri::try_from(url).unwrap();
+
+    assert_eq!(uri.as_path(), Path::new("/tmp/file.txt"));
+  }
+
+  #[test]
+  fn non_file_urls_are_rejected() {
     let url = Url::parse("csharp:/metadata/foo/bar/Baz.cs").unwrap();
-    assert!(matches!(
-      Uri::try_from(url),
-      Err(UrlConversionError::UnsupportedScheme { .. })
-    ));
+    let Err(UrlConversionError::UnsupportedScheme { scheme, .. }) = Uri::try_from(url) else {
+      panic!("expected unsupported scheme error");
+    };
+
+    assert_eq!(scheme, "csharp");
   }
 }

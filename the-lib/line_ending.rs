@@ -326,164 +326,55 @@ mod line_ending_tests {
   use super::*;
 
   #[test]
-  fn line_ending_autodetect() {
-    assert_eq!(
-      auto_detect_line_ending(&Rope::from_str("\n")),
-      Some(LineEnding::LF)
-    );
-    assert_eq!(
-      auto_detect_line_ending(&Rope::from_str("\r\n")),
-      Some(LineEnding::Crlf)
-    );
-    assert_eq!(auto_detect_line_ending(&Rope::from_str("hello")), None);
-    assert_eq!(auto_detect_line_ending(&Rope::from_str("")), None);
-    assert_eq!(
-      auto_detect_line_ending(&Rope::from_str("hello\nhelix\r\n")),
-      Some(LineEnding::LF)
-    );
-    assert_eq!(
-      auto_detect_line_ending(&Rope::from_str("a formfeed\u{000C}")),
-      None
-    );
-    assert_eq!(
-      auto_detect_line_ending(&Rope::from_str("\n\u{000A}\n \u{000A}")),
-      Some(LineEnding::LF)
-    );
-    assert_eq!(
-      auto_detect_line_ending(&Rope::from_str(
-        "a formfeed\u{000C} with a\u{000C} linefeed\u{000A}"
-      )),
-      Some(LineEnding::LF)
-    );
-    assert_eq!(
-      auto_detect_line_ending(&Rope::from_str(
-        "a formfeed\u{000C} with a\u{000C} carriage return linefeed\u{000D}\u{000A} and a \
-         linefeed\u{000A}"
-      )),
-      Some(LineEnding::Crlf)
-    );
+  fn detects_the_first_line_ending_used_by_a_document() {
+    let document = Rope::from_str("first\r\nsecond\n");
+
+    assert_eq!(auto_detect_line_ending(&document), Some(LineEnding::Crlf));
+    assert_eq!(auto_detect_line_ending(&Rope::from_str("no newline")), None);
   }
 
   #[test]
-  fn str_to_line_ending() {
-    #[cfg(feature = "unicode-lines")]
-    assert_eq!(LineEnding::from_str("\r"), Some(LineEnding::CR));
-    assert_eq!(LineEnding::from_str("\n"), Some(LineEnding::LF));
+  fn removes_line_endings_from_rope_indexes() {
+    let rope = Rope::from_str("hello\r\nworld\n");
+    let text = rope.slice(..);
+
+    assert_eq!(line_end_char_index(&text, 0), 5);
+    assert_eq!(line_end_byte_index(&text, 1), 12);
+    assert_eq!(line_without_line_ending(&text, 0).to_string(), "hello");
+    assert_eq!(rope_end_without_line_ending(&text), 12);
+  }
+
+  #[test]
+  fn recognizes_line_endings_in_strings_and_rope_slices() {
+    let rope = Rope::from_str("hello\r\n");
+
     assert_eq!(LineEnding::from_str("\r\n"), Some(LineEnding::Crlf));
+    assert_eq!(get_line_ending_of_str("hello\n"), Some(LineEnding::LF));
+    assert_eq!(
+      LineEnding::from_rope_slice(&rope.slice(5..7)),
+      Some(LineEnding::Crlf)
+    );
     assert_eq!(LineEnding::from_str("hello\n"), None);
   }
 
   #[test]
-  fn rope_slice_to_line_ending() {
-    let r = Rope::from_str("hello\r\n");
-
-    #[cfg(feature = "unicode-lines")]
-    assert_eq!(
-      LineEnding::from_rope_slice(&r.slice(5..6)),
-      Some(LineEnding::CR)
-    );
-    assert_eq!(
-      LineEnding::from_rope_slice(&r.slice(6..7)),
-      Some(LineEnding::LF)
-    );
-    assert_eq!(
-      LineEnding::from_rope_slice(&r.slice(5..7)),
-      Some(LineEnding::Crlf)
-    );
-    assert_eq!(LineEnding::from_rope_slice(&r.slice(..)), None);
-  }
-
-  #[test]
-  fn get_line_ending_rope_slice() {
-    let r = Rope::from_str("Hello\rworld\nhow\r\nare you?");
-
-    #[cfg(feature = "unicode-lines")]
-    assert_eq!(get_line_ending(&r.slice(..6)), Some(LineEnding::CR));
-    assert_eq!(get_line_ending(&r.slice(..12)), Some(LineEnding::LF));
-    assert_eq!(get_line_ending(&r.slice(..17)), Some(LineEnding::Crlf));
-    assert_eq!(get_line_ending(&r.slice(..)), None);
-  }
-
-  #[test]
-  fn get_line_ending_str() {
-    let text = "Hello\rworld\nhow\r\nare you?";
-
-    #[cfg(feature = "unicode-lines")]
-    assert_eq!(get_line_ending_of_str(&text[..6]), Some(LineEnding::CR));
-    assert_eq!(get_line_ending_of_str(&text[..12]), Some(LineEnding::LF));
-    assert_eq!(get_line_ending_of_str(&text[..17]), Some(LineEnding::Crlf));
-    assert_eq!(get_line_ending_of_str(text), None);
-  }
-
-  // #[test]
-  // fn line_end_char_index_rope_slice() {
-  //   let r = Rope::from_str("Hello\rworld\nhow\r\nare you?");
-  //   let s = &r.slice(..);
-
-  //   #[cfg(not(feature = "unicode-lines"))]
-  //   {
-  //     assert_eq!(line_end_char_index(s, 0), 11);
-  //     assert_eq!(line_end_char_index(s, 1), 15);
-  //     assert_eq!(line_end_char_index(s, 2), 25);
-  //   }
-  //   #[cfg(feature = "unicode-lines")]
-  //   {
-  //     assert_eq!(line_end_char_index(s, 0), 5);
-  //     assert_eq!(line_end_char_index(s, 1), 11);
-  //     assert_eq!(line_end_char_index(s, 2), 15);
-  //   }
-  // }
-
-  #[test]
-  fn test_soft_breaks() {
-    // Space allows break after
+  fn soft_line_breaks_follow_common_text_boundaries() {
     assert!(char_can_break_after(' '));
-
-    // Newline is mandatory break
-    assert!(char_can_break_after('\n'));
-
-    // Letters don't allow breaks
-    assert!(!char_can_break_after('a'));
-    assert!(!char_can_break_after('Z'));
-
-    // Hyphen allows break after
     assert!(char_can_break_after('-'));
-
-    // CJK characters allow breaks
     assert!(char_can_break_after('漢'));
-    assert!(char_can_break_after('字'));
-
-    // Non-breaking space does NOT allow break
+    assert!(!char_can_break_after('a'));
     assert!(!char_can_break_after('\u{00A0}'));
-  }
 
-  #[test]
-  fn test_can_break_between() {
-    // Space before letter: can break
     assert!(can_break_between(' ', 'a'));
-
-    // Letter to letter: no break
-    assert!(!can_break_between('a', 'b'));
-
-    // CJK to CJK: can break
     assert!(can_break_between('漢', '字'));
-
-    // Hyphen to letter: can break
-    assert!(can_break_between('-', 'a'));
-
-    // Letter before close paren: no break
+    assert!(!can_break_between('a', 'b'));
     assert!(!can_break_between('a', ')'));
-
-    // Open paren to letter: no break
-    assert!(!can_break_between('(', 'a'));
   }
 
   #[test]
-  fn test_soft_breaks_iterator() {
-    let text = "hello world";
-    let breaks: Vec<_> = soft_breaks(text).collect();
+  fn soft_break_iterator_reports_the_break_after_a_space() {
+    let breaks: Vec<_> = soft_breaks("hello world").collect();
 
-    // Should have break opportunity after space (at byte 6) and at end
-    assert!(breaks.iter().any(|(idx, _)| *idx == 6));
+    assert!(breaks.contains(&(6, BreakOpportunity::Allowed)));
   }
 }

@@ -1,16 +1,29 @@
-use ropey::{Rope, RopeSlice};
+use ropey::{
+  Rope,
+  RopeSlice,
+};
 use smallvec::SmallVec;
 use thiserror::Error;
 
 use crate::{
+  Tendril,
   grapheme,
   movement::Direction,
-  selection::{CursorRange, Range, Selection, SelectionError},
+  selection::{
+    CursorRange,
+    Range,
+    Selection,
+    SelectionError,
+  },
   transaction::{
-    Assoc, DeletionOverlapPolicy, Replacement, ReplacementOverlapPolicy, Span, Transaction,
+    Assoc,
+    DeletionOverlapPolicy,
+    Replacement,
+    ReplacementOverlapPolicy,
+    Span,
+    Transaction,
     TransactionError,
   },
-  Tendril,
 };
 
 pub const DEFAULT_PAIRS: &[(&str, &str)] = &[
@@ -141,7 +154,8 @@ impl AutoPairs {
   }
 
   pub fn matches_char(&self, ch: char) -> bool {
-    self.0
+    self
+      .0
       .iter()
       .any(|pair| pair.open_last_char() == Some(ch) || pair.close_first_char() == Some(ch))
   }
@@ -195,19 +209,25 @@ pub fn edit_for_typed_char(
   let mut offset = 0;
 
   for cursor in selection.iter() {
-    let Some(plan) = plan_typed_char_for_cursor(doc, slice, *cursor.range, ch, pairs, offset) else {
+    let Some(plan) = plan_typed_char_for_cursor(doc, slice, *cursor.range, ch, pairs, offset)
+    else {
       return Ok(None);
     };
     offset += plan.delta();
     plans.push((cursor.id, plan));
   }
 
-  let replacements = plans.iter().filter_map(|(_, plan)| match plan {
-    CursorPlan::Replace { replacement, .. } => Some(replacement.clone()),
-    CursorPlan::Move { .. } => None,
+  let replacements = plans.iter().filter_map(|(_, plan)| {
+    match plan {
+      CursorPlan::Replace { replacement, .. } => Some(replacement.clone()),
+      CursorPlan::Move { .. } => None,
+    }
   });
 
-  let transaction = if plans.iter().any(|(_, plan)| matches!(plan, CursorPlan::Replace { .. })) {
+  let transaction = if plans
+    .iter()
+    .any(|(_, plan)| matches!(plan, CursorPlan::Replace { .. }))
+  {
     Transaction::from_replacements(
       doc.len_chars(),
       replacements,
@@ -218,7 +238,10 @@ pub fn edit_for_typed_char(
   };
 
   let selection = selection_from_plans(plans)?;
-  Ok(Some(AutoPairEdit { transaction, selection }))
+  Ok(Some(AutoPairEdit {
+    transaction,
+    selection,
+  }))
 }
 
 pub fn edit_for_backspace(
@@ -265,7 +288,10 @@ pub fn edit_for_backspace(
     })
     .collect::<std::result::Result<SmallVec<[CursorRange; 1]>, TransactionError>>()?;
   let selection = Selection::from_cursors(cursors)?;
-  Ok(Some(AutoPairEdit { transaction, selection }))
+  Ok(Some(AutoPairEdit {
+    transaction,
+    selection,
+  }))
 }
 
 fn plan_typed_char_for_cursor(
@@ -307,9 +333,11 @@ fn plan_typed_char_for_cursor(
 fn selection_from_plans(plans: Vec<(crate::selection::CursorId, CursorPlan)>) -> Result<Selection> {
   let cursors = plans
     .into_iter()
-    .map(|(id, plan)| CursorRange {
-      id,
-      range: plan.range(),
+    .map(|(id, plan)| {
+      CursorRange {
+        id,
+        range: plan.range(),
+      }
     })
     .collect();
   Ok(Selection::from_cursors(cursors)?)
@@ -489,7 +517,8 @@ fn delete_pair_span(slice: RopeSlice, cursor: usize, pairs: &AutoPairs) -> Optio
 }
 
 fn next_is_not_alpha(doc: &Rope, cursor: usize) -> bool {
-  doc.get_char(cursor)
+  doc
+    .get_char(cursor)
     .map(|ch| !ch.is_alphanumeric())
     .unwrap_or(true)
 }
@@ -505,7 +534,6 @@ fn prev_is_not_alpha(doc: &Rope, cursor: usize) -> bool {
 fn span_len(span: &Span) -> usize {
   span.end - span.start
 }
-
 
 #[cfg(test)]
 mod test {
@@ -658,9 +686,11 @@ mod test {
 
     let doc = Rope::from("() x");
     let selection = Selection::new(smallvec![Range::point(1), Range::point(4)]).unwrap();
-    assert!(edit_for_backspace(&doc, &selection, &pairs)
-      .unwrap()
-      .is_none());
+    assert!(
+      edit_for_backspace(&doc, &selection, &pairs)
+        .unwrap()
+        .is_none()
+    );
   }
 
   #[test]
@@ -696,9 +726,11 @@ mod test {
   #[test]
   fn irrelevant_char_declines() {
     let doc = Rope::from("");
-    assert!(edit_for_typed_char(&doc, &Selection::point(0), 'a', &AutoPairs::default())
-      .unwrap()
-      .is_none());
+    assert!(
+      edit_for_typed_char(&doc, &Selection::point(0), 'a', &AutoPairs::default())
+        .unwrap()
+        .is_none()
+    );
   }
 
   #[test]
@@ -709,7 +741,9 @@ mod test {
 
     assert!(matches!(
       edit_for_backspace(&doc, &selection, &pairs),
-      Err(AutoPairsError::Transaction(TransactionError::OverlappingReplacement { .. }))
+      Err(AutoPairsError::Transaction(
+        TransactionError::OverlappingReplacement { .. }
+      ))
     ));
   }
 }

@@ -3,15 +3,16 @@ use smartstring::{
   SmartString,
 };
 
+pub mod auto_pairs;
 pub mod chars;
 pub mod grapheme;
 pub mod history;
 pub mod line_ending;
 pub mod movement;
 pub mod selection;
+pub mod syntax;
 pub mod transaction;
 pub mod uri;
-pub mod auto_pairs;
 
 /// A small-string-optimized string type.
 ///

@@ -1057,9 +1057,9 @@ fn map_deletion_boundary(
   assoc: Assoc,
 ) -> Option<MappedPos> {
   (pos == old_end && assoc == Assoc::TrackDelBefore).then_some(MappedPos::Deleted {
-    pos: new_pos,
+    pos:    new_pos,
     offset: del_len,
-    len: del_len,
+    len:    del_len,
   })
 }
 
@@ -1092,9 +1092,9 @@ fn map_replacement_boundary(
   assoc: Assoc,
 ) -> Option<MappedPos> {
   (pos == old_end && assoc == Assoc::TrackDelBefore).then_some(MappedPos::Deleted {
-    pos: new_pos + ins_len,
+    pos:    new_pos + ins_len,
     offset: del_len,
-    len: del_len,
+    len:    del_len,
   })
 }
 
@@ -1299,7 +1299,10 @@ mod test {
       ReplacementOverlapPolicy::Reject,
     )
     .unwrap_err();
-    assert!(matches!(err, TransactionError::InvalidSpan { start: 4, end: 3 }));
+    assert!(matches!(err, TransactionError::InvalidSpan {
+      start: 4,
+      end:   3,
+    }));
 
     let err = Transaction::from_replacements(
       6,
@@ -1309,8 +1312,8 @@ mod test {
     .unwrap_err();
     assert!(matches!(err, TransactionError::SpanOutOfBounds {
       start: 5,
-      end: 7,
-      len: 6,
+      end:   7,
+      len:   6,
     }));
   }
 
@@ -1328,8 +1331,8 @@ mod test {
 
     assert!(matches!(err, TransactionError::OverlappingReplacement {
       prev_end: 4,
-      start: 2,
-      end: 5,
+      start:    2,
+      end:      5,
     }));
   }
 
@@ -1381,7 +1384,10 @@ mod test {
     let after_first = first.apply_to(&doc).unwrap();
     let second = Transaction::from_replacements(
       after_first.len_chars(),
-      [Replacement::insert(0, ">"), Replacement::replace(span(6, 10), "editor")],
+      [
+        Replacement::insert(0, ">"),
+        Replacement::replace(span(6, 10), "editor"),
+      ],
       ReplacementOverlapPolicy::Reject,
     )
     .unwrap();
@@ -1417,7 +1423,10 @@ mod test {
     let doc = Rope::from("hello world!");
     let tx = Transaction::from_replacements(
       doc.len_chars(),
-      [Replacement::replace(span(6, 11), "void"), Replacement::insert(12, "!!")],
+      [
+        Replacement::replace(span(6, 11), "void"),
+        Replacement::insert(12, "!!"),
+      ],
       ReplacementOverlapPolicy::Reject,
     )
     .unwrap();
@@ -1442,21 +1451,21 @@ mod test {
     )
     .unwrap();
 
-    assert_eq!(
-      tx.changes_iter().collect::<Vec<_>>(),
-      vec![
-        Replacement::insert(6, "::"),
-        Replacement::replace(span(12, 17), "void"),
-        Replacement::delete(span(18, 20)),
-      ],
-    );
+    assert_eq!(tx.changes_iter().collect::<Vec<_>>(), vec![
+      Replacement::insert(6, "::"),
+      Replacement::replace(span(12, 17), "void"),
+      Replacement::delete(span(18, 20)),
+    ],);
   }
 
   #[test]
   fn update_positions_matches_individual_mapping_even_when_unsorted() {
     let tx = Transaction::from_replacements(
       8,
-      [Replacement::insert(2, "!!"), Replacement::replace(span(5, 7), "Z")],
+      [
+        Replacement::insert(2, "!!"),
+        Replacement::replace(span(5, 7), "Z"),
+      ],
       ReplacementOverlapPolicy::Reject,
     )
     .unwrap();
@@ -1502,28 +1511,28 @@ mod test {
     let tx = Transaction::delete(12, span(4, 8)).unwrap();
     let cs = tx.changes();
 
-    assert_eq!(cs.map_pos_tracked(4, Assoc::TrackDel).unwrap(), MappedPos::Pos(4));
-    assert_eq!(cs.map_pos_tracked(8, Assoc::TrackDel).unwrap(), MappedPos::Pos(4));
+    assert_eq!(
+      cs.map_pos_tracked(4, Assoc::TrackDel).unwrap(),
+      MappedPos::Pos(4)
+    );
+    assert_eq!(
+      cs.map_pos_tracked(8, Assoc::TrackDel).unwrap(),
+      MappedPos::Pos(4)
+    );
 
     let inside = cs.map_pos_tracked(6, Assoc::TrackDelSticky).unwrap();
-    assert_eq!(
-      inside,
-      MappedPos::Deleted {
-        pos: 4,
-        offset: 2,
-        len: 4,
-      }
-    );
+    assert_eq!(inside, MappedPos::Deleted {
+      pos:    4,
+      offset: 2,
+      len:    4,
+    });
 
     let boundary = cs.map_pos_tracked(8, Assoc::TrackDelBefore).unwrap();
-    assert_eq!(
-      boundary,
-      MappedPos::Deleted {
-        pos: 4,
-        offset: 4,
-        len: 4,
-      }
-    );
+    assert_eq!(boundary, MappedPos::Deleted {
+      pos:    4,
+      offset: 4,
+      len:    4,
+    });
   }
 
   #[test]
@@ -1531,20 +1540,28 @@ mod test {
     let replacement = Transaction::replace(8, span(2, 6), "WXYZ").unwrap();
     let replacement_cs = replacement.changes();
 
-    assert_eq!(replacement_cs.map_pos_tracked(2, Assoc::TrackDel).unwrap(), MappedPos::Pos(2));
     assert_eq!(
-      replacement_cs.map_pos_tracked(4, Assoc::TrackDelSticky).unwrap(),
+      replacement_cs.map_pos_tracked(2, Assoc::TrackDel).unwrap(),
+      MappedPos::Pos(2)
+    );
+    assert_eq!(
+      replacement_cs
+        .map_pos_tracked(4, Assoc::TrackDelSticky)
+        .unwrap(),
       MappedPos::Deleted {
-        pos: 2,
+        pos:    2,
         offset: 2,
-        len: 4,
+        len:    4,
       }
     );
 
     let insertion = Transaction::insert_at(8, 4, "!!").unwrap();
     let insertion_cs = insertion.changes();
 
-    assert_eq!(insertion_cs.map_pos_tracked(4, Assoc::TrackDel).unwrap(), MappedPos::Pos(4));
+    assert_eq!(
+      insertion_cs.map_pos_tracked(4, Assoc::TrackDel).unwrap(),
+      MappedPos::Pos(4)
+    );
     assert_eq!(
       insertion_cs
         .map_pos_tracked(4, Assoc::TrackDelAfterSticky)
@@ -1565,6 +1582,9 @@ mod test {
     let tx = Transaction::empty(doc.len_chars());
 
     assert_eq!(tx.apply_to(&doc).unwrap(), doc);
-    assert_eq!(tx.changes().map_pos_tracked(3, Assoc::TrackDel).unwrap(), MappedPos::Pos(3));
+    assert_eq!(
+      tx.changes().map_pos_tracked(3, Assoc::TrackDel).unwrap(),
+      MappedPos::Pos(3)
+    );
   }
 }

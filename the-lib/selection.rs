@@ -1445,15 +1445,21 @@ mod test {
 
   fn cursor(cursor_id: u64, anchor: usize, head: usize) -> CursorRange {
     CursorRange {
-      id: id(cursor_id),
+      id:    id(cursor_id),
       range: Range::new(anchor, head),
     }
   }
 
   #[test]
   fn constructors_reject_empty_and_duplicate_cursor_entries() {
-    assert_eq!(Selection::new(smallvec![]).unwrap_err(), SelectionError::EmptySelection);
-    assert_eq!(Selection::from_cursors(smallvec![]).unwrap_err(), SelectionError::EmptySelection);
+    assert_eq!(
+      Selection::new(smallvec![]).unwrap_err(),
+      SelectionError::EmptySelection
+    );
+    assert_eq!(
+      Selection::from_cursors(smallvec![]).unwrap_err(),
+      SelectionError::EmptySelection
+    );
     assert_eq!(
       Selection::from_cursors(smallvec![cursor(1, 1, 1), cursor(1, 2, 2)]).unwrap_err(),
       SelectionError::DuplicateCursorId { id: 1 },
@@ -1462,12 +1468,9 @@ mod test {
 
   #[test]
   fn from_cursors_normalizes_ranges_and_preserves_the_closest_surviving_id() {
-    let selection = Selection::from_cursors(smallvec![
-      cursor(1, 7, 9),
-      cursor(2, 1, 4),
-      cursor(3, 3, 8),
-    ])
-    .unwrap();
+    let selection =
+      Selection::from_cursors(smallvec![cursor(1, 7, 9), cursor(2, 1, 4), cursor(3, 3, 8),])
+        .unwrap();
 
     let cursors = selection
       .iter()
@@ -1490,14 +1493,11 @@ mod test {
       .iter()
       .map(|cursor| (cursor.id.get(), *cursor.range))
       .collect::<Vec<_>>();
-    assert_eq!(
-      iterated,
-      vec![
-        (1, Range::new(1, 2)),
-        (3, Range::new(5, 5)),
-        (2, Range::new(8, 10)),
-      ]
-    );
+    assert_eq!(iterated, vec![
+      (1, Range::new(1, 2)),
+      (3, Range::new(5, 5)),
+      (2, Range::new(8, 10)),
+    ]);
 
     let second = selection.get(1).unwrap();
     assert_eq!(second.id.get(), 3);
@@ -1514,8 +1514,12 @@ mod test {
   #[test]
   fn contains_requires_every_other_range_to_fit_inside_some_self_range() {
     let outer = Selection::new(smallvec![Range::new(1, 4), Range::new(7, 10)]).unwrap();
-    let inner = Selection::new(smallvec![Range::new(1, 2), Range::new(3, 4), Range::new(7, 9)])
-      .unwrap();
+    let inner = Selection::new(smallvec![
+      Range::new(1, 2),
+      Range::new(3, 4),
+      Range::new(7, 9)
+    ])
+    .unwrap();
     let crossing_gap = Selection::new(smallvec![Range::new(1, 6)]).unwrap();
 
     assert!(outer.contains(&inner));
@@ -1527,9 +1531,11 @@ mod test {
     let selection = Selection::from_cursors(smallvec![cursor(1, 0, 1), cursor(2, 4, 5)]).unwrap();
 
     let transformed = selection
-      .transform_entries(|cursor| CursorRange {
-        id: cursor.id,
-        range: Range::new(cursor.range.anchor + 1, cursor.range.head + 1),
+      .transform_entries(|cursor| {
+        CursorRange {
+          id:    cursor.id,
+          range: Range::new(cursor.range.anchor + 1, cursor.range.head + 1),
+        }
       })
       .unwrap();
 
@@ -1546,9 +1552,11 @@ mod test {
     let selection = Selection::from_cursors(smallvec![cursor(1, 0, 1), cursor(2, 4, 5)]).unwrap();
 
     let err = selection
-      .transform_entries(|cursor| CursorRange {
-        id: id(1),
-        range: cursor.range,
+      .transform_entries(|cursor| {
+        CursorRange {
+          id:    id(1),
+          range: cursor.range,
+        }
       })
       .unwrap_err();
 
@@ -1562,11 +1570,11 @@ mod test {
       .flat_map_entries(|cursor| {
         vec![
           CursorRange {
-            id: cursor.id,
+            id:    cursor.id,
             range: Range::new(0, 2),
           },
           CursorRange {
-            id: id(2),
+            id:    id(2),
             range: Range::new(2, 4),
           },
         ]
@@ -1604,11 +1612,9 @@ mod test {
   #[test]
   fn map_tracked_reports_which_cursors_were_deleted() {
     let selection = Selection::from_cursors(smallvec![cursor(1, 2, 2), cursor(2, 6, 6)]).unwrap();
-    let tx = crate::transaction::Transaction::delete(12, the_stdx::range::Range {
-      start: 4,
-      end:   8,
-    })
-    .unwrap();
+    let tx =
+      crate::transaction::Transaction::delete(12, the_stdx::range::Range { start: 4, end: 8 })
+        .unwrap();
 
     let mapped = selection.map_tracked(tx.changes()).unwrap();
 
@@ -1617,7 +1623,11 @@ mod test {
     assert!(!mapped.mapped_ranges[0].was_deleted());
     assert!(mapped.mapped_ranges[1].was_deleted());
     assert_eq!(
-      mapped.selection.iter().map(|cursor| cursor.id.get()).collect::<Vec<_>>(),
+      mapped
+        .selection
+        .iter()
+        .map(|cursor| cursor.id.get())
+        .collect::<Vec<_>>(),
       vec![1, 2]
     );
   }
@@ -1627,16 +1637,22 @@ mod test {
     let selection = Selection::from_cursors(smallvec![cursor(1, 0, 2), cursor(2, 4, 6)]).unwrap();
 
     let transformed = selection
-      .transform_entries(|cursor| match cursor.id.get() {
-        1 => CursorRange {
-          id: cursor.id,
-          range: cursor.range,
-        },
-        2 => CursorRange {
-          id: cursor.id,
-          range: Range::new(1, 5),
-        },
-        _ => unreachable!(),
+      .transform_entries(|cursor| {
+        match cursor.id.get() {
+          1 => {
+            CursorRange {
+              id:    cursor.id,
+              range: cursor.range,
+            }
+          },
+          2 => {
+            CursorRange {
+              id:    cursor.id,
+              range: Range::new(1, 5),
+            }
+          },
+          _ => unreachable!(),
+        }
       })
       .unwrap();
 
@@ -1714,9 +1730,18 @@ mod test {
     let text = Rope::from_str("abcd");
     let slice = text.slice(..);
 
-    assert_eq!(Range::new(1, 3).put_cursor(slice, 0, true), Range::new(2, 0));
-    assert_eq!(Range::new(1, 3).put_cursor(slice, 2, true), Range::new(1, 3));
-    assert_eq!(Range::new(1, 3).put_cursor(slice, 2, false), Range::point(2));
+    assert_eq!(
+      Range::new(1, 3).put_cursor(slice, 0, true),
+      Range::new(2, 0)
+    );
+    assert_eq!(
+      Range::new(1, 3).put_cursor(slice, 2, true),
+      Range::new(1, 3)
+    );
+    assert_eq!(
+      Range::new(1, 3).put_cursor(slice, 2, false),
+      Range::point(2)
+    );
   }
 
   #[test]

@@ -23,5 +23,6 @@ url.workspace                      = true
 smallvec.workspace                 = true
 tree-house.workspace               = true
 smartstring.workspace              = true
+tracing.workspace                  = true
 
 the-stdx.path                      = "../the-stdx"

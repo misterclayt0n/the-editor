@@ -11,6 +11,7 @@ pub mod movement;
 pub mod selection;
 pub mod transaction;
 pub mod uri;
+pub mod auto_pairs;
 
 /// A small-string-optimized string type.
 ///

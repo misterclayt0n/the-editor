@@ -11,9 +11,8 @@ path = "lib.rs"
 unicode-lines = []
 
 [dependencies]
-the-stdx.path                      = "../the-stdx"
 eyre.workspace                     = true
-ropey                              = { workspace = true }
+ropey.workspace                    = true
 thiserror.workspace                = true
 unicode-general-category.workspace = true
 unicode-linebreak.workspace        = true
@@ -21,3 +20,8 @@ unicode-properties.workspace       = true
 unicode-segmentation.workspace     = true
 unicode-width.workspace            = true
 url.workspace                      = true
+smallvec.workspace                 = true
+tree-house.workspace               = true
+smartstring.workspace              = true
+
+the-stdx.path                      = "../the-stdx"

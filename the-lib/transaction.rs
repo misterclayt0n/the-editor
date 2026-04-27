@@ -1266,721 +1266,305 @@ impl Transaction {
 
 #[cfg(test)]
 mod test {
+  use ropey::Rope;
+
   use super::*;
 
-  #[test]
-  fn composition() {
-    use Operation::*;
-
-    let a = ChangeSet {
-      changes:   vec![
-        Retain(5),
-        Insert(" test!".into()),
-        Retain(1),
-        Delete(2),
-        Insert("abc".into()),
-      ],
-      len:       8,
-      len_after: 15,
-    };
-
-    let b = ChangeSet {
-      changes:   vec![Delete(10), Insert("世orld".into()), Retain(5)],
-      len:       15,
-      len_after: 10,
-    };
-
-    let mut text = Rope::from("hello xz");
-
-    // should probably return cloned text
-    let composed = a.compose(b).unwrap();
-    assert_eq!(composed.len, 8);
-    composed.apply(&mut text).unwrap();
-    assert_eq!(text, "世orld! abc");
+  fn span(start: usize, end: usize) -> Span {
+    Span { start, end }
   }
 
   #[test]
-  fn invert() {
-    use Operation::*;
-
-    let changes = ChangeSet {
-      changes:   vec![Retain(4), Insert("test".into()), Delete(5), Retain(3)],
-      len:       12,
-      len_after: 11,
-    };
-
-    let doc = Rope::from("世界3 hello xz");
-    let revert = changes.invert(&doc).unwrap();
-
-    let mut doc2 = doc.clone();
-    changes.apply(&mut doc2).unwrap();
-
-    // a revert is different
-    assert_ne!(changes, revert);
-    assert_ne!(doc, doc2);
-
-    // but inverting a revert will give us the original
-    assert_eq!(changes, revert.invert(&doc2).unwrap());
-
-    // applying a revert gives us back the original
-    revert.apply(&mut doc2).unwrap();
-    assert_eq!(doc, doc2);
-  }
-
-  #[test]
-  fn map_pos() {
-    use Operation::*;
-
-    // maps inserts
-    let cs = ChangeSet {
-      changes:   vec![Retain(4), Insert("!!".into()), Retain(4)],
-      len:       8,
-      len_after: 10,
-    };
-
-    assert_eq!(cs.map_pos(0, Assoc::Before).unwrap(), 0); // before insert region
-    assert_eq!(cs.map_pos(4, Assoc::Before).unwrap(), 4); // at insert, track before
-    assert_eq!(cs.map_pos(4, Assoc::After).unwrap(), 6); // at insert, track after
-    assert_eq!(cs.map_pos(5, Assoc::Before).unwrap(), 7); // after insert region
-
-    // maps deletes
-    let cs = ChangeSet {
-      changes:   vec![Retain(4), Delete(4), Retain(4)],
-      len:       12,
-      len_after: 8,
-    };
-    assert_eq!(cs.map_pos(0, Assoc::Before).unwrap(), 0); // at start
-    assert_eq!(cs.map_pos(4, Assoc::Before).unwrap(), 4); // before a delete
-    assert_eq!(cs.map_pos(5, Assoc::Before).unwrap(), 4); // inside a delete
-    assert_eq!(cs.map_pos(5, Assoc::After).unwrap(), 4); // inside a delete
-
-    // stays inbetween replacements
-    let cs = ChangeSet {
-      changes:   vec![
-        Insert("ab".into()),
-        Delete(2),
-        Insert("cd".into()),
-        Delete(2),
-      ],
-      len:       4,
-      len_after: 4,
-    };
-    assert_eq!(cs.map_pos(2, Assoc::Before).unwrap(), 2);
-    assert_eq!(cs.map_pos(2, Assoc::After).unwrap(), 2);
-    // unsorted selection
-    let cs = ChangeSet {
-      changes:   vec![
-        Insert("ab".into()),
-        Delete(2),
-        Insert("cd".into()),
-        Delete(2),
-      ],
-      len:       4,
-      len_after: 4,
-    };
-    let mut positions = [4, 2];
-    cs.update_positions(positions.iter_mut().map(|pos| (pos, Assoc::After)))
-      .unwrap();
-    assert_eq!(positions, [4, 2]);
-    // stays at word boundary
-    let cs = ChangeSet {
-      changes:   vec![
-        Retain(2), // <space><space>
-        Insert(" ab".into()),
-        Retain(2), // cd
-        Insert("de ".into()),
-      ],
-      len:       4,
-      len_after: 10,
-    };
-    assert_eq!(cs.map_pos(2, Assoc::BeforeWord).unwrap(), 3);
-    assert_eq!(cs.map_pos(4, Assoc::AfterWord).unwrap(), 9);
-    let cs = ChangeSet {
-      changes:   vec![
-        Retain(1), // <space>
-        Insert(" b".into()),
-        Delete(1), // c
-        Retain(1), // d
-        Insert("e ".into()),
-        Delete(1), // <space>
-      ],
-      len:       5,
-      len_after: 7,
-    };
-    assert_eq!(cs.map_pos(1, Assoc::BeforeWord).unwrap(), 2);
-    assert_eq!(cs.map_pos(3, Assoc::AfterWord).unwrap(), 5);
-    let cs = ChangeSet {
-      changes:   vec![
-        Retain(1), // <space>
-        Insert("a".into()),
-        Delete(2), // <space>b
-        Retain(1), // d
-        Insert("e".into()),
-        Delete(1), // f
-        Retain(1), // <space>
-      ],
-      len:       5,
-      len_after: 7,
-    };
-    assert_eq!(cs.map_pos(2, Assoc::BeforeWord).unwrap(), 1);
-    assert_eq!(cs.map_pos(4, Assoc::AfterWord).unwrap(), 4);
-  }
-
-  #[test]
-  fn transaction_change() {
-    let mut doc = Rope::from("hello world!\ntest 123");
-    let transaction = Transaction::from_replacements(
+  fn from_replacements_applies_sorted_non_overlapping_edits() {
+    let doc = Rope::from("abcdef");
+    let tx = Transaction::from_replacements(
       doc.len_chars(),
-      vec![
-        Replacement::delete(Span { start: 1, end: 1 }),
-        Replacement::replace(
-          Span {
-            start: 6,
-            end:   11,
-          },
-          "void",
-        ),
-        Replacement::delete(Span {
-          start: 12,
-          end:   17,
-        }),
+      [
+        Replacement::replace(span(4, 6), "XY"),
+        Replacement::insert(0, ">"),
+        Replacement::delete(span(1, 3)),
       ],
       ReplacementOverlapPolicy::Reject,
     )
     .unwrap();
-    transaction.apply(&mut doc).unwrap();
-    assert_eq!(doc, Rope::from_str("hello void! 123"));
+
+    assert_eq!(tx.apply_to(&doc).unwrap().to_string(), ">adXY");
   }
 
   #[test]
-  fn changes_iter() {
-    let doc = Rope::from("hello world!\ntest 123");
-    let changes = vec![(6, 11, Some("void".into())), (12, 17, None)];
-    let transaction = Transaction::from_replacements(
+  fn from_replacements_validates_spans() {
+    let err = Transaction::from_replacements(
+      6,
+      [Replacement::delete(span(4, 3))],
+      ReplacementOverlapPolicy::Reject,
+    )
+    .unwrap_err();
+    assert!(matches!(err, TransactionError::InvalidSpan { start: 4, end: 3 }));
+
+    let err = Transaction::from_replacements(
+      6,
+      [Replacement::delete(span(5, 7))],
+      ReplacementOverlapPolicy::Reject,
+    )
+    .unwrap_err();
+    assert!(matches!(err, TransactionError::SpanOutOfBounds {
+      start: 5,
+      end: 7,
+      len: 6,
+    }));
+  }
+
+  #[test]
+  fn from_replacements_rejects_overlapping_spans_by_default() {
+    let err = Transaction::from_replacements(
+      6,
+      [
+        Replacement::replace(span(1, 4), "X"),
+        Replacement::replace(span(2, 5), "Y"),
+      ],
+      ReplacementOverlapPolicy::Reject,
+    )
+    .unwrap_err();
+
+    assert!(matches!(err, TransactionError::OverlappingReplacement {
+      prev_end: 4,
+      start: 2,
+      end: 5,
+    }));
+  }
+
+  #[test]
+  fn from_replacements_ignore_later_resolves_conflicts_in_caller_order() {
+    let doc = Rope::from("abcdef");
+
+    let first_wins = Transaction::from_replacements(
       doc.len_chars(),
-      changes.clone().into_iter().map(|(from, to, text)| {
-        Replacement {
-          span: Span {
-            start: from,
-            end:   to,
-          },
-          text,
-        }
-      }),
+      [
+        Replacement::replace(span(1, 4), "X"),
+        Replacement::replace(span(2, 5), "Y"),
+      ],
+      ReplacementOverlapPolicy::IgnoreLater,
+    )
+    .unwrap();
+
+    let second_wins = Transaction::from_replacements(
+      doc.len_chars(),
+      [
+        Replacement::replace(span(2, 5), "Y"),
+        Replacement::replace(span(1, 4), "X"),
+      ],
+      ReplacementOverlapPolicy::IgnoreLater,
+    )
+    .unwrap();
+
+    assert_eq!(first_wins.apply_to(&doc).unwrap().to_string(), "aXef");
+    assert_eq!(second_wins.apply_to(&doc).unwrap().to_string(), "abYf");
+  }
+
+  #[test]
+  fn delete_spans_merge_combines_touching_and_overlapping_spans() {
+    let doc = Rope::from("0123456789");
+    let tx = Transaction::delete_spans(
+      doc.len_chars(),
+      [span(2, 4), span(4, 6), span(5, 8)],
+      DeletionOverlapPolicy::Merge,
+    )
+    .unwrap();
+
+    assert_eq!(tx.apply_to(&doc).unwrap().to_string(), "0189");
+  }
+
+  #[test]
+  fn compose_matches_sequential_application() {
+    let doc = Rope::from("hello world");
+    let first = Transaction::replace(doc.len_chars(), span(6, 11), "rust").unwrap();
+    let after_first = first.apply_to(&doc).unwrap();
+    let second = Transaction::from_replacements(
+      after_first.len_chars(),
+      [Replacement::insert(0, ">"), Replacement::replace(span(6, 10), "editor")],
       ReplacementOverlapPolicy::Reject,
     )
     .unwrap();
-    assert_eq!(
-      transaction.changes_iter().collect::<Vec<_>>(),
-      changes
-        .into_iter()
-        .map(|(from, to, text)| {
-          Replacement {
-            span: Span {
-              start: from,
-              end:   to,
-            },
-            text,
-          }
-        })
-        .collect::<Vec<_>>()
-    );
+
+    let sequential = second.apply_to(&after_first).unwrap();
+    let composed = first.compose(second).unwrap();
+
+    assert_eq!(composed.apply_to(&doc).unwrap(), sequential);
+    assert_eq!(sequential.to_string(), ">hello editor");
   }
 
   #[test]
-  fn combine_with_empty() {
-    let empty = Rope::from("");
-    let a = ChangeSet::new_len(empty.len_chars());
+  fn invert_restores_original_document() {
+    let doc = Rope::from("世界 hello xz");
+    let tx = Transaction::from_replacements(
+      doc.len_chars(),
+      [
+        Replacement::insert(2, "!"),
+        Replacement::replace(span(3, 8), "goodbye"),
+      ],
+      ReplacementOverlapPolicy::Reject,
+    )
+    .unwrap();
 
-    let mut b = ChangeSet::new_len(empty.len_chars());
-    b.insert("a".into());
+    let updated = tx.apply_to(&doc).unwrap();
+    let reverted = tx.invert(&doc).unwrap().apply_to(&updated).unwrap();
 
-    let changes = a.compose(b).unwrap();
-
-    use Operation::*;
-    assert_eq!(changes.changes, &[Insert("a".into())]);
+    assert_eq!(reverted, doc);
   }
 
   #[test]
-  fn combine_with_utf8() {
-    const TEST_CASE: &str = "Hello, これはヘリックスエディターです！";
-
-    let empty = Rope::from("");
-    let a = ChangeSet::new_len(empty.len_chars());
-
-    let mut b = ChangeSet::new_len(empty.len_chars());
-    b.insert(TEST_CASE.into());
-
-    let changes = a.compose(b).unwrap();
-
-    use Operation::*;
-    assert_eq!(changes.changes, &[Insert(TEST_CASE.into())]);
-    assert_eq!(changes.len_after, TEST_CASE.chars().count());
-  }
-
-  #[test]
-  fn compose_insert_longer_than_delete() {
-    // Test the branch at line ~509-514 where Insert.len() > Delete.len()
-    // This is the TODO that was marked as needing test coverage.
-    use Operation::*;
-
-    // First changeset: insert "hello" (5 chars) into empty document
-    let a = ChangeSet {
-      changes:   vec![Insert("hello".into())],
-      len:       0,
-      len_after: 5,
-    };
-
-    // Second changeset: delete first 3 chars of the 5-char document
-    let b = ChangeSet {
-      changes:   vec![Delete(3), Retain(2)],
-      len:       5,
-      len_after: 2,
-    };
-
-    let composed = a.compose(b).unwrap();
-
-    // Composing these should result in just inserting "lo" (chars 3-4 of "hello")
-    assert_eq!(composed.len, 0);
-    assert_eq!(composed.len_after, 2);
-    assert_eq!(composed.changes, &[Insert("lo".into())]);
-
-    // Verify by applying to empty document
-    let mut doc = Rope::from("");
-    composed.apply(&mut doc).unwrap();
-    assert_eq!(doc.to_string(), "lo");
-  }
-
-  #[test]
-  fn compose_insert_longer_than_delete_multibyte() {
-    // Same test but with multibyte UTF-8 characters
-    use Operation::*;
-
-    // Insert "世界hello" (7 chars: 2 CJK + 5 ASCII)
-    let a = ChangeSet {
-      changes:   vec![Insert("世界hello".into())],
-      len:       0,
-      len_after: 7,
-    };
-
-    // Delete first 4 chars ("世界he"), keep last 3 ("llo")
-    let b = ChangeSet {
-      changes:   vec![Delete(4), Retain(3)],
-      len:       7,
-      len_after: 3,
-    };
-
-    let composed = a.compose(b).unwrap();
-
-    assert_eq!(composed.len, 0);
-    assert_eq!(composed.len_after, 3);
-    assert_eq!(composed.changes, &[Insert("llo".into())]);
-  }
-
-  #[test]
-  fn apply_to_matches_in_place() {
+  fn apply_to_matches_in_place_and_leaves_original_unchanged() {
     let doc = Rope::from("hello world!");
-    let transaction = Transaction::from_replacements(
+    let tx = Transaction::from_replacements(
       doc.len_chars(),
-      vec![
-        Replacement::replace(
-          Span {
-            start: 6,
-            end:   11,
-          },
-          "void",
-        ),
-        Replacement::insert(12, "!!"),
-      ],
+      [Replacement::replace(span(6, 11), "void"), Replacement::insert(12, "!!")],
       ReplacementOverlapPolicy::Reject,
     )
     .unwrap();
 
     let mut in_place = doc.clone();
-    transaction.apply(&mut in_place).unwrap();
-    let persistent = transaction.apply_to(&doc).unwrap();
+    tx.apply(&mut in_place).unwrap();
 
-    assert_eq!(in_place, persistent);
-    assert_eq!(doc, Rope::from("hello world!"));
+    assert_eq!(in_place, tx.apply_to(&doc).unwrap());
+    assert_eq!(doc.to_string(), "hello world!");
   }
 
   #[test]
-  fn invert_empty_changeset_is_identity() {
-    let doc = Rope::from("hello");
-    let changes = ChangeSet::new_len(doc.len_chars());
-    let invert = changes.invert(&doc).unwrap();
+  fn changes_iter_round_trips_public_replacements() {
+    let tx = Transaction::from_replacements(
+      20,
+      [
+        Replacement::replace(span(12, 17), "void"),
+        Replacement::delete(span(18, 20)),
+        Replacement::insert(6, "::"),
+      ],
+      ReplacementOverlapPolicy::Reject,
+    )
+    .unwrap();
 
-    let updated = invert.apply_to(&doc).unwrap();
-    assert_eq!(updated, doc);
-    assert_eq!(invert.len(), doc.len_chars());
+    assert_eq!(
+      tx.changes_iter().collect::<Vec<_>>(),
+      vec![
+        Replacement::insert(6, "::"),
+        Replacement::replace(span(12, 17), "void"),
+        Replacement::delete(span(18, 20)),
+      ],
+    );
   }
 
   #[test]
-  fn apply_errors_on_length_mismatch() {
-    let doc = Rope::from("hello");
-    let changes = ChangeSet::new_len(doc.len_chars());
-    let mut other = Rope::from("nope");
+  fn update_positions_matches_individual_mapping_even_when_unsorted() {
+    let tx = Transaction::from_replacements(
+      8,
+      [Replacement::insert(2, "!!"), Replacement::replace(span(5, 7), "Z")],
+      ReplacementOverlapPolicy::Reject,
+    )
+    .unwrap();
+    let cs = tx.changes();
 
-    let err = changes.apply(&mut other).unwrap_err();
-    assert!(matches!(err, TransactionError::LengthMismatch {
-      expected: 5,
-      actual:   4,
-    }));
-    let err = changes.apply_to(&other).unwrap_err();
-    assert!(matches!(err, TransactionError::LengthMismatch {
-      expected: 5,
-      actual:   4,
-    }));
-    assert_eq!(other, Rope::from("nope"));
-  }
+    let expected = [
+      cs.map_pos(8, Assoc::After).unwrap(),
+      cs.map_pos(2, Assoc::Before).unwrap(),
+      cs.map_pos(6, Assoc::After).unwrap(),
+      cs.map_pos(0, Assoc::Before).unwrap(),
+    ];
 
-  // Delete tracking tests
+    let (mut a, mut b, mut c, mut d) = (8usize, 2usize, 6usize, 0usize);
+    cs.update_positions(
+      [
+        (&mut a, Assoc::After),
+        (&mut b, Assoc::Before),
+        (&mut c, Assoc::After),
+        (&mut d, Assoc::Before),
+      ]
+      .into_iter(),
+    )
+    .unwrap();
 
-  #[test]
-  fn map_pos_tracked_basic_delete() {
-    use Operation::*;
-
-    // Delete characters 4-7 (indices) from a 12-char document
-    // Original: positions 0-11, delete range [4, 8) means chars at 4,5,6,7
-    let cs = ChangeSet {
-      changes:   vec![Retain(4), Delete(4), Retain(4)],
-      len:       12,
-      len_after: 8,
-    };
-
-    // Position before deletion - should map normally
-    let result = cs.map_pos_tracked(2, Assoc::TrackDel).unwrap();
-    assert_eq!(result, MappedPos::Pos(2));
-    assert!(!result.is_deleted());
-
-    // Position at deletion start boundary - NOT considered "inside" deletion
-    // (cursor is between char 3 and char 4, at the left edge)
-    let result = cs.map_pos_tracked(4, Assoc::TrackDel).unwrap();
-    assert_eq!(result, MappedPos::Pos(4));
-    assert!(!result.is_deleted());
-
-    // Position inside deletion - should signal deletion
-    let result = cs.map_pos_tracked(5, Assoc::TrackDel).unwrap();
-    assert!(result.is_deleted());
-    assert_eq!(result.position(), 4);
-    if let MappedPos::Deleted { pos, offset, len } = result {
-      assert_eq!(pos, 4);
-      assert_eq!(offset, 1); // 5 - 4 = 1 char into deletion
-      assert_eq!(len, 4);
-    } else {
-      panic!("Expected Deleted variant");
-    }
-
-    // Position at deletion end boundary - NOT inside deletion
-    // (cursor is between char 7 and char 8, at the right edge)
-    let result = cs.map_pos_tracked(8, Assoc::TrackDel).unwrap();
-    assert_eq!(result, MappedPos::Pos(4));
-    assert!(!result.is_deleted());
-
-    // Position after deletion - should map with offset adjustment
-    let result = cs.map_pos_tracked(10, Assoc::TrackDel).unwrap();
-    assert_eq!(result, MappedPos::Pos(6)); // 10 - 4 deleted = 6
-    assert!(!result.is_deleted());
+    assert_eq!([a, b, c, d], expected);
   }
 
   #[test]
-  fn map_pos_tracked_sticky_preserves_offset() {
-    use Operation::*;
+  fn update_positions_rejects_tracking_assoc() {
+    let tx = Transaction::delete(8, span(2, 6)).unwrap();
+    let mut pos = 3usize;
 
-    let cs = ChangeSet {
-      changes:   vec![Retain(2), Delete(4), Retain(2)],
-      len:       8,
-      len_after: 4,
-    };
-
-    // Position at deletion start boundary - NOT deleted
-    let result = cs.map_pos_tracked(2, Assoc::TrackDelSticky).unwrap();
-    assert!(!result.is_deleted());
-    assert_eq!(result.position(), 2);
-
-    // Offset 1 into deletion (position 3)
-    let result = cs.map_pos_tracked(3, Assoc::TrackDelSticky).unwrap();
-    assert!(result.is_deleted());
-    if let MappedPos::Deleted { offset, len, .. } = result {
-      assert_eq!(offset, 1);
-      assert_eq!(len, 4);
-    }
-
-    // Offset 3 into deletion (position 5)
-    let result = cs.map_pos_tracked(5, Assoc::TrackDelSticky).unwrap();
-    assert!(result.is_deleted());
-    if let MappedPos::Deleted { offset, .. } = result {
-      assert_eq!(offset, 3);
-    }
-  }
-
-  #[test]
-  fn map_pos_tracked_del_before() {
-    use Operation::*;
-
-    let cs = ChangeSet {
-      changes:   vec![Retain(4), Delete(4), Retain(4)],
-      len:       12,
-      len_after: 8,
-    };
-
-    // Position 4 (at deletion start) - no char before was deleted
-    let result = cs.map_pos_tracked(4, Assoc::TrackDelBefore).unwrap();
-    assert!(!result.is_deleted());
-
-    // Position 5 (inside deletion) - char before (pos 4) was deleted
-    let result = cs.map_pos_tracked(5, Assoc::TrackDelBefore).unwrap();
-    assert!(result.is_deleted());
-
-    // Position 8 (at deletion end) - char before (pos 7) was deleted
-    let result = cs.map_pos_tracked(8, Assoc::TrackDelBefore).unwrap();
-    assert!(result.is_deleted());
-  }
-
-  #[test]
-  fn map_pos_tracked_del_after() {
-    use Operation::*;
-
-    let cs = ChangeSet {
-      changes:   vec![Retain(4), Delete(4), Retain(4)],
-      len:       12,
-      len_after: 8,
-    };
-
-    // Position 4 (at deletion start) - char after (at index 4) WAS deleted
-    // TrackDelAfter signals if the char at this position was deleted
-    let result = cs.map_pos_tracked(4, Assoc::TrackDelAfter).unwrap();
-    assert!(result.is_deleted());
-    assert_eq!(result.position(), 4);
-
-    // Position 7 (inside deletion, offset=3) - char at this position was deleted
-    let result = cs.map_pos_tracked(7, Assoc::TrackDelAfter).unwrap();
-    assert!(result.is_deleted());
-
-    // Position 8 (at deletion end) - not inside deletion range
-    let result = cs.map_pos_tracked(8, Assoc::TrackDelAfter).unwrap();
-    assert!(!result.is_deleted());
-    assert_eq!(result.position(), 4);
-  }
-
-  #[test]
-  fn map_pos_tracked_replacement() {
-    use Operation::*;
-
-    // Replace 4 chars with 4 chars (same size replacement)
-    let cs = ChangeSet {
-      changes:   vec![Retain(2), Insert("XXXX".into()), Delete(4), Retain(2)],
-      len:       8,
-      len_after: 8,
-    };
-
-    // Position inside replaced text should signal deletion
-    let result = cs.map_pos_tracked(3, Assoc::TrackDel).unwrap();
-    assert!(result.is_deleted());
-    if let MappedPos::Deleted { pos, offset, len } = result {
-      assert_eq!(pos, 2);
-      assert_eq!(offset, 1); // 1 char into the replaced region
-      assert_eq!(len, 4);
-    }
-
-    // Position at replacement start boundary - NOT deleted (consistent with pure
-    // deletions)
-    let result = cs.map_pos_tracked(2, Assoc::TrackDel).unwrap();
-    assert!(!result.is_deleted());
-    assert_eq!(result.position(), 2);
-
-    // TrackDelAfter at replacement start - IS deleted (char at position was
-    // replaced)
-    let result = cs.map_pos_tracked(2, Assoc::TrackDelAfter).unwrap();
-    assert!(result.is_deleted());
-  }
-
-  #[test]
-  fn map_pos_tracked_pure_insert() {
-    use Operation::*;
-
-    // Pure insertion at position 4
-    let cs = ChangeSet {
-      changes:   vec![Retain(4), Insert("!!".into()), Retain(4)],
-      len:       8,
-      len_after: 10,
-    };
-
-    // Position at insert point - should not be deleted
-    let result = cs.map_pos_tracked(4, Assoc::TrackDel).unwrap();
-    assert!(!result.is_deleted());
-    assert_eq!(result.position(), 4); // TrackDel behaves like Before for inserts
-
-    // Position after insert - should map with offset
-    let result = cs.map_pos_tracked(5, Assoc::TrackDel).unwrap();
-    assert!(!result.is_deleted());
-    assert_eq!(result.position(), 7); // 5 + 2 inserted = 7
-  }
-
-  #[test]
-  fn map_pos_tracked_non_tracking_variants() {
-    use Operation::*;
-
-    let cs = ChangeSet {
-      changes:   vec![Retain(4), Delete(4), Retain(4)],
-      len:       12,
-      len_after: 8,
-    };
-
-    // Non-tracking variants should return Pos even for deleted positions
-    let result = cs.map_pos_tracked(5, Assoc::Before).unwrap();
-    assert_eq!(result, MappedPos::Pos(4));
-    assert!(!result.is_deleted());
-
-    let result = cs.map_pos_tracked(5, Assoc::After).unwrap();
-    assert_eq!(result, MappedPos::Pos(4));
-    assert!(!result.is_deleted());
-  }
-
-  #[test]
-  fn map_pos_tracked_out_of_bounds() {
-    use Operation::*;
-
-    let cs = ChangeSet {
-      changes:   vec![Retain(4), Delete(4)],
-      len:       8,
-      len_after: 4,
-    };
-
-    let err = cs.map_pos_tracked(10, Assoc::TrackDel).unwrap_err();
-    assert!(matches!(err, TransactionError::PositionsOutOfBounds { .. }));
-  }
-
-  #[test]
-  fn update_positions_rejects_tracking_variants() {
-    use Operation::*;
-
-    let cs = ChangeSet {
-      changes:   vec![Retain(4), Delete(4), Retain(4)],
-      len:       12,
-      len_after: 8,
-    };
-
-    // Non-tracking variants should work
-    let mut pos = 5usize;
-    cs.update_positions(std::iter::once((&mut pos, Assoc::Before)))
-      .unwrap();
-    assert_eq!(pos, 4);
-
-    // Tracking variants should error
-    let mut pos = 5usize;
-    let err = cs
+    let err = tx
+      .changes()
       .update_positions(std::iter::once((&mut pos, Assoc::TrackDel)))
       .unwrap_err();
+
     assert!(matches!(err, TransactionError::TrackingAssocInBatchUpdate));
   }
 
   #[test]
-  fn mapped_pos_helpers() {
-    let pos = MappedPos::Pos(42);
-    assert_eq!(pos.position(), 42);
-    assert!(!pos.is_deleted());
-    assert_eq!(pos.ok(), Some(42));
-    assert_eq!(pos.unwrap(), 42);
+  fn map_pos_tracked_marks_deleted_positions_and_preserves_offsets() {
+    let tx = Transaction::delete(12, span(4, 8)).unwrap();
+    let cs = tx.changes();
 
-    let deleted = MappedPos::Deleted {
-      pos:    10,
-      offset: 2,
-      len:    5,
-    };
-    assert_eq!(deleted.position(), 10);
-    assert!(deleted.is_deleted());
-    assert_eq!(deleted.ok(), None);
+    assert_eq!(cs.map_pos_tracked(4, Assoc::TrackDel).unwrap(), MappedPos::Pos(4));
+    assert_eq!(cs.map_pos_tracked(8, Assoc::TrackDel).unwrap(), MappedPos::Pos(4));
+
+    let inside = cs.map_pos_tracked(6, Assoc::TrackDelSticky).unwrap();
+    assert_eq!(
+      inside,
+      MappedPos::Deleted {
+        pos: 4,
+        offset: 2,
+        len: 4,
+      }
+    );
+
+    let boundary = cs.map_pos_tracked(8, Assoc::TrackDelBefore).unwrap();
+    assert_eq!(
+      boundary,
+      MappedPos::Deleted {
+        pos: 4,
+        offset: 4,
+        len: 4,
+      }
+    );
   }
 
   #[test]
-  fn assoc_tracks_deletion() {
-    assert!(!Assoc::Before.tracks_deletion());
-    assert!(!Assoc::After.tracks_deletion());
-    assert!(!Assoc::BeforeSticky.tracks_deletion());
-    assert!(!Assoc::AfterSticky.tracks_deletion());
-    assert!(!Assoc::BeforeWord.tracks_deletion());
-    assert!(!Assoc::AfterWord.tracks_deletion());
+  fn map_pos_tracked_handles_replacements_and_insert_stickiness() {
+    let replacement = Transaction::replace(8, span(2, 6), "WXYZ").unwrap();
+    let replacement_cs = replacement.changes();
 
-    assert!(Assoc::TrackDel.tracks_deletion());
-    assert!(Assoc::TrackDelSticky.tracks_deletion());
-    assert!(Assoc::TrackDelBefore.tracks_deletion());
-    assert!(Assoc::TrackDelAfter.tracks_deletion());
-    assert!(Assoc::TrackDelAfterSticky.tracks_deletion());
-    assert!(Assoc::TrackDelBeforeSticky.tracks_deletion());
+    assert_eq!(replacement_cs.map_pos_tracked(2, Assoc::TrackDel).unwrap(), MappedPos::Pos(2));
+    assert_eq!(
+      replacement_cs.map_pos_tracked(4, Assoc::TrackDelSticky).unwrap(),
+      MappedPos::Deleted {
+        pos: 2,
+        offset: 2,
+        len: 4,
+      }
+    );
+
+    let insertion = Transaction::insert_at(8, 4, "!!").unwrap();
+    let insertion_cs = insertion.changes();
+
+    assert_eq!(insertion_cs.map_pos_tracked(4, Assoc::TrackDel).unwrap(), MappedPos::Pos(4));
+    assert_eq!(
+      insertion_cs
+        .map_pos_tracked(4, Assoc::TrackDelAfterSticky)
+        .unwrap(),
+      MappedPos::Pos(6)
+    );
+    assert_eq!(
+      insertion_cs
+        .map_pos_tracked(4, Assoc::TrackDelBeforeSticky)
+        .unwrap(),
+      MappedPos::Pos(4)
+    );
   }
 
   #[test]
-  fn assoc_sticky_includes_trackdelsticky() {
-    assert!(Assoc::TrackDelSticky.sticky());
-    assert!(Assoc::TrackDelAfterSticky.sticky());
-    assert!(Assoc::TrackDelBeforeSticky.sticky());
-    assert!(!Assoc::TrackDel.sticky());
-    assert!(!Assoc::TrackDelBefore.sticky());
-    assert!(!Assoc::TrackDelAfter.sticky());
-  }
-
-  #[test]
-  fn track_del_after_before_sticky_insert_behavior() {
-    use Operation::*;
-
-    // Pure insertion at position 4 (insert "!!" between chars)
-    let cs = ChangeSet {
-      changes:   vec![Retain(4), Insert("!!".into()), Retain(4)],
-      len:       8,
-      len_after: 10,
-    };
-
-    // TrackDelAfterSticky should move AFTER the insertion (like AfterSticky)
-    let result = cs.map_pos_tracked(4, Assoc::TrackDelAfterSticky).unwrap();
-    assert!(!result.is_deleted());
-    assert_eq!(result.position(), 6); // 4 + 2 inserted chars
-
-    // TrackDelBeforeSticky should stay BEFORE the insertion (like BeforeSticky)
-    let result = cs.map_pos_tracked(4, Assoc::TrackDelBeforeSticky).unwrap();
-    assert!(!result.is_deleted());
-    assert_eq!(result.position(), 4); // stays at 4
-
-    // Regular TrackDel stays before (like Before)
-    let result = cs.map_pos_tracked(4, Assoc::TrackDel).unwrap();
-    assert!(!result.is_deleted());
-    assert_eq!(result.position(), 4);
-  }
-
-  #[test]
-  fn map_pos_tracked_empty_changeset() {
+  fn empty_changesets_are_identity_for_apply_and_tracked_mapping() {
     let doc = Rope::from("hello");
-    let cs = ChangeSet::new_len(doc.len_chars());
+    let tx = Transaction::empty(doc.len_chars());
 
-    let result = cs.map_pos_tracked(3, Assoc::TrackDel).unwrap();
-    assert_eq!(result, MappedPos::Pos(3));
-  }
-
-  #[test]
-  fn delete_tracking_undo_roundtrip() {
-    use Operation::*;
-
-    // Simulate: delete "world" from "hello world"
-    let _doc = Rope::from("hello world");
-    let cs = ChangeSet {
-      changes:   vec![Retain(6), Delete(5)],
-      len:       11,
-      len_after: 6,
-    };
-
-    // Cursor was at position 8 (inside "world")
-    let result = cs.map_pos_tracked(8, Assoc::TrackDelSticky).unwrap();
-    assert!(result.is_deleted());
-
-    // The offset should be preserved
-    if let MappedPos::Deleted { pos, offset, len } = result {
-      assert_eq!(pos, 6); // Position after "hello "
-      assert_eq!(offset, 2); // 2 chars into "world"
-      assert_eq!(len, 5); // "world" is 5 chars
-
-      // After undo, we could restore position as: deletion_start + offset
-      let restored = 6 + offset; // = 8, the original position
-      assert_eq!(restored, 8);
-    }
+    assert_eq!(tx.apply_to(&doc).unwrap(), doc);
+    assert_eq!(tx.changes().map_pos_tracked(3, Assoc::TrackDel).unwrap(), MappedPos::Pos(3));
   }
 }

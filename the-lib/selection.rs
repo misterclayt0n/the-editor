@@ -1439,616 +1439,300 @@ mod test {
 
   use super::*;
 
-  #[test]
-  fn test_new_empty() {
-    let err = Selection::new(smallvec![]).unwrap_err();
-    assert_eq!(err, SelectionError::EmptySelection);
+  fn id(n: u64) -> CursorId {
+    CursorId::new(NonZeroU64::new(n).unwrap())
+  }
+
+  fn cursor(cursor_id: u64, anchor: usize, head: usize) -> CursorRange {
+    CursorRange {
+      id: id(cursor_id),
+      range: Range::new(anchor, head),
+    }
   }
 
   #[test]
-  fn test_new_with_ids_mismatch() {
-    let err = Selection::new_with_ids(smallvec![Range::point(1), Range::point(2)], smallvec![
-      CursorId::new(NonZeroU64::new(1).unwrap())
-    ])
-    .unwrap_err();
-    assert_eq!(err, SelectionError::CursorIdCountMismatch {
-      ids:    1,
-      ranges: 2,
-    });
+  fn constructors_reject_empty_and_duplicate_cursor_entries() {
+    assert_eq!(Selection::new(smallvec![]).unwrap_err(), SelectionError::EmptySelection);
+    assert_eq!(Selection::from_cursors(smallvec![]).unwrap_err(), SelectionError::EmptySelection);
+    assert_eq!(
+      Selection::from_cursors(smallvec![cursor(1, 1, 1), cursor(1, 2, 2)]).unwrap_err(),
+      SelectionError::DuplicateCursorId { id: 1 },
+    );
   }
 
   #[test]
-  fn test_new_with_duplicate_cursor_ids() {
-    let err = Selection::new_with_ids(smallvec![Range::point(1), Range::point(2)], smallvec![
-      CursorId::new(NonZeroU64::new(1).unwrap()),
-      CursorId::new(NonZeroU64::new(1).unwrap()),
+  fn from_cursors_normalizes_ranges_and_preserves_the_closest_surviving_id() {
+    let selection = Selection::from_cursors(smallvec![
+      cursor(1, 7, 9),
+      cursor(2, 1, 4),
+      cursor(3, 3, 8),
     ])
-    .unwrap_err();
+    .unwrap();
+
+    let cursors = selection
+      .iter()
+      .map(|cursor| (cursor.id.get(), *cursor.range))
+      .collect::<Vec<_>>();
+
+    assert_eq!(cursors, vec![(1, Range::new(1, 9))]);
+  }
+
+  #[test]
+  fn iter_get_by_id_and_pick_expose_cursor_entries() {
+    let selection = Selection::from_cursors(smallvec![
+      cursor(3, 5, 5),
+      cursor(1, 1, 2),
+      cursor(2, 8, 10),
+    ])
+    .unwrap();
+
+    let iterated = selection
+      .iter()
+      .map(|cursor| (cursor.id.get(), *cursor.range))
+      .collect::<Vec<_>>();
+    assert_eq!(
+      iterated,
+      vec![
+        (1, Range::new(1, 2)),
+        (3, Range::new(5, 5)),
+        (2, Range::new(8, 10)),
+      ]
+    );
+
+    let second = selection.get(1).unwrap();
+    assert_eq!(second.id.get(), 3);
+    assert_eq!(*second.range, Range::new(5, 5));
+
+    let by_id = selection.by_id(id(2)).unwrap();
+    assert_eq!(*by_id.range, Range::new(8, 10));
+
+    assert_eq!(selection.pick(CursorPick::First).unwrap().id.get(), 1);
+    assert_eq!(selection.pick(CursorPick::Last).unwrap().id.get(), 2);
+    assert_eq!(selection.pick(CursorPick::Nearest(6)).unwrap().id.get(), 3);
+  }
+
+  #[test]
+  fn contains_requires_every_other_range_to_fit_inside_some_self_range() {
+    let outer = Selection::new(smallvec![Range::new(1, 4), Range::new(7, 10)]).unwrap();
+    let inner = Selection::new(smallvec![Range::new(1, 2), Range::new(3, 4), Range::new(7, 9)])
+      .unwrap();
+    let crossing_gap = Selection::new(smallvec![Range::new(1, 6)]).unwrap();
+
+    assert!(outer.contains(&inner));
+    assert!(!outer.contains(&crossing_gap));
+  }
+
+  #[test]
+  fn transform_entries_preserves_ids() {
+    let selection = Selection::from_cursors(smallvec![cursor(1, 0, 1), cursor(2, 4, 5)]).unwrap();
+
+    let transformed = selection
+      .transform_entries(|cursor| CursorRange {
+        id: cursor.id,
+        range: Range::new(cursor.range.anchor + 1, cursor.range.head + 1),
+      })
+      .unwrap();
+
+    let cursors = transformed
+      .iter()
+      .map(|cursor| (cursor.id.get(), *cursor.range))
+      .collect::<Vec<_>>();
+
+    assert_eq!(cursors, vec![(1, Range::new(1, 2)), (2, Range::new(5, 6))]);
+  }
+
+  #[test]
+  fn transform_entries_rejects_duplicate_ids() {
+    let selection = Selection::from_cursors(smallvec![cursor(1, 0, 1), cursor(2, 4, 5)]).unwrap();
+
+    let err = selection
+      .transform_entries(|cursor| CursorRange {
+        id: id(1),
+        range: cursor.range,
+      })
+      .unwrap_err();
+
     assert_eq!(err, SelectionError::DuplicateCursorId { id: 1 });
   }
 
   #[test]
-  fn test_pick_by_id() {
-    let id = CursorId::new(NonZeroU64::new(7).unwrap());
-    let sel = Selection::new_with_ids(smallvec![Range::point(1), Range::point(4)], smallvec![
-      CursorId::new(NonZeroU64::new(1).unwrap()),
-      id
-    ])
-    .unwrap();
-
-    let picked = sel.pick(CursorPick::Id(id)).unwrap();
-    assert_eq!(picked.id, id);
-    assert_eq!(picked.range, Range::point(4));
-  }
-
-  #[test]
-  fn test_create_normalizes_and_merges() {
-    let sel = Selection::new(smallvec![
-      Range::new(10, 12),
-      Range::new(6, 7),
-      Range::new(4, 5),
-      Range::new(3, 4),
-      Range::new(0, 6),
-      Range::new(7, 8),
-      Range::new(9, 13),
-      Range::new(13, 14),
-    ])
-    .unwrap();
-
-    let res = sel
-      .ranges
-      .into_iter()
-      .map(|range| format!("{}/{}", range.anchor, range.head))
-      .collect::<Vec<String>>()
-      .join(",");
-
-    assert_eq!(res, "0/6,6/7,7/8,9/13,13/14");
-  }
-
-  #[test]
-  fn test_create_merges_adjacent_points() {
-    let sel = Selection::new(smallvec![
-      Range::new(10, 12),
-      Range::new(12, 12),
-      Range::new(12, 12),
-      Range::new(10, 10),
-      Range::new(8, 10),
-    ])
-    .unwrap();
-
-    let res = sel
-      .ranges
-      .into_iter()
-      .map(|range| format!("{}/{}", range.anchor, range.head))
-      .collect::<Vec<String>>()
-      .join(",");
-
-    assert_eq!(res, "8/10,10/12,12/12");
-  }
-
-  #[test]
-  fn test_contains() {
-    let range = Range::new(10, 12);
-
-    assert!(!range.contains(9));
-    assert!(range.contains(10));
-    assert!(range.contains(11));
-    assert!(!range.contains(12));
-    assert!(!range.contains(13));
-
-    let range = Range::new(9, 6);
-    assert!(!range.contains(9));
-    assert!(range.contains(7));
-    assert!(range.contains(6));
-  }
-
-  #[test]
-  fn test_overlaps() {
-    fn overlaps(a: (usize, usize), b: (usize, usize)) -> bool {
-      Range::new(a.0, a.1).overlaps(&Range::new(b.0, b.1))
-    }
-
-    // Two non-zero-width ranges, no overlap.
-    assert!(!overlaps((0, 3), (3, 6)));
-    assert!(!overlaps((0, 3), (6, 3)));
-    assert!(!overlaps((3, 0), (3, 6)));
-    assert!(!overlaps((3, 0), (6, 3)));
-    assert!(!overlaps((3, 6), (0, 3)));
-    assert!(!overlaps((3, 6), (3, 0)));
-    assert!(!overlaps((6, 3), (0, 3)));
-    assert!(!overlaps((6, 3), (3, 0)));
-
-    // Two non-zero-width ranges, overlap.
-    assert!(overlaps((0, 4), (3, 6)));
-    assert!(overlaps((0, 4), (6, 3)));
-    assert!(overlaps((4, 0), (3, 6)));
-    assert!(overlaps((4, 0), (6, 3)));
-    assert!(overlaps((3, 6), (0, 4)));
-    assert!(overlaps((3, 6), (4, 0)));
-    assert!(overlaps((6, 3), (0, 4)));
-    assert!(overlaps((6, 3), (4, 0)));
-
-    // Zero-width and non-zero-width range, no overlap.
-    assert!(!overlaps((0, 3), (3, 3)));
-    assert!(!overlaps((3, 0), (3, 3)));
-    assert!(!overlaps((3, 3), (0, 3)));
-    assert!(!overlaps((3, 3), (3, 0)));
-
-    // Zero-width and non-zero-width range, overlap.
-    assert!(overlaps((1, 4), (1, 1)));
-    assert!(overlaps((4, 1), (1, 1)));
-    assert!(overlaps((1, 1), (1, 4)));
-    assert!(overlaps((1, 1), (4, 1)));
-
-    assert!(overlaps((1, 4), (3, 3)));
-    assert!(overlaps((4, 1), (3, 3)));
-    assert!(overlaps((3, 3), (1, 4)));
-    assert!(overlaps((3, 3), (4, 1)));
-
-    // Two zero-width ranges, no overlap.
-    assert!(!overlaps((0, 0), (1, 1)));
-    assert!(!overlaps((1, 1), (0, 0)));
-
-    // Two zero-width ranges, overlap.
-    assert!(overlaps((1, 1), (1, 1)));
-  }
-
-  #[test]
-  fn test_grapheme_aligned() {
-    let r = Rope::from_str("\r\nHi\r\n");
-    let s = r.slice(..);
-
-    // Zero-width.
-    assert_eq!(Range::new(0, 0).grapheme_aligned(s), Range::new(0, 0));
-    assert_eq!(Range::new(1, 1).grapheme_aligned(s), Range::new(0, 0));
-    assert_eq!(Range::new(2, 2).grapheme_aligned(s), Range::new(2, 2));
-    assert_eq!(Range::new(3, 3).grapheme_aligned(s), Range::new(3, 3));
-    assert_eq!(Range::new(4, 4).grapheme_aligned(s), Range::new(4, 4));
-    assert_eq!(Range::new(5, 5).grapheme_aligned(s), Range::new(4, 4));
-    assert_eq!(Range::new(6, 6).grapheme_aligned(s), Range::new(6, 6));
-
-    // Forward.
-    assert_eq!(Range::new(0, 1).grapheme_aligned(s), Range::new(0, 2));
-    assert_eq!(Range::new(1, 2).grapheme_aligned(s), Range::new(0, 2));
-    assert_eq!(Range::new(2, 3).grapheme_aligned(s), Range::new(2, 3));
-    assert_eq!(Range::new(3, 4).grapheme_aligned(s), Range::new(3, 4));
-    assert_eq!(Range::new(4, 5).grapheme_aligned(s), Range::new(4, 6));
-    assert_eq!(Range::new(5, 6).grapheme_aligned(s), Range::new(4, 6));
-
-    assert_eq!(Range::new(0, 2).grapheme_aligned(s), Range::new(0, 2));
-    assert_eq!(Range::new(1, 3).grapheme_aligned(s), Range::new(0, 3));
-    assert_eq!(Range::new(2, 4).grapheme_aligned(s), Range::new(2, 4));
-    assert_eq!(Range::new(3, 5).grapheme_aligned(s), Range::new(3, 6));
-    assert_eq!(Range::new(4, 6).grapheme_aligned(s), Range::new(4, 6));
-
-    // Reverse.
-    assert_eq!(Range::new(1, 0).grapheme_aligned(s), Range::new(2, 0));
-    assert_eq!(Range::new(2, 1).grapheme_aligned(s), Range::new(2, 0));
-    assert_eq!(Range::new(3, 2).grapheme_aligned(s), Range::new(3, 2));
-    assert_eq!(Range::new(4, 3).grapheme_aligned(s), Range::new(4, 3));
-    assert_eq!(Range::new(5, 4).grapheme_aligned(s), Range::new(6, 4));
-    assert_eq!(Range::new(6, 5).grapheme_aligned(s), Range::new(6, 4));
-
-    assert_eq!(Range::new(2, 0).grapheme_aligned(s), Range::new(2, 0));
-    assert_eq!(Range::new(3, 1).grapheme_aligned(s), Range::new(3, 0));
-    assert_eq!(Range::new(4, 2).grapheme_aligned(s), Range::new(4, 2));
-    assert_eq!(Range::new(5, 3).grapheme_aligned(s), Range::new(6, 3));
-    assert_eq!(Range::new(6, 4).grapheme_aligned(s), Range::new(6, 4));
-  }
-
-  #[test]
-  fn test_min_width_1() {
-    let r = Rope::from_str("\r\nHi\r\n");
-    let s = r.slice(..);
-
-    // Zero-width.
-    assert_eq!(Range::new(0, 0).min_width_1(s), Range::new(0, 2));
-    assert_eq!(Range::new(1, 1).min_width_1(s), Range::new(1, 2));
-    assert_eq!(Range::new(2, 2).min_width_1(s), Range::new(2, 3));
-    assert_eq!(Range::new(3, 3).min_width_1(s), Range::new(3, 4));
-    assert_eq!(Range::new(4, 4).min_width_1(s), Range::new(4, 6));
-    assert_eq!(Range::new(5, 5).min_width_1(s), Range::new(5, 6));
-    assert_eq!(Range::new(6, 6).min_width_1(s), Range::new(6, 6));
-
-    // Forward.
-    assert_eq!(Range::new(0, 1).min_width_1(s), Range::new(0, 1));
-    assert_eq!(Range::new(1, 2).min_width_1(s), Range::new(1, 2));
-    assert_eq!(Range::new(2, 3).min_width_1(s), Range::new(2, 3));
-    assert_eq!(Range::new(3, 4).min_width_1(s), Range::new(3, 4));
-    assert_eq!(Range::new(4, 5).min_width_1(s), Range::new(4, 5));
-    assert_eq!(Range::new(5, 6).min_width_1(s), Range::new(5, 6));
-
-    // Reverse.
-    assert_eq!(Range::new(1, 0).min_width_1(s), Range::new(1, 0));
-    assert_eq!(Range::new(2, 1).min_width_1(s), Range::new(2, 1));
-    assert_eq!(Range::new(3, 2).min_width_1(s), Range::new(3, 2));
-    assert_eq!(Range::new(4, 3).min_width_1(s), Range::new(4, 3));
-    assert_eq!(Range::new(5, 4).min_width_1(s), Range::new(5, 4));
-    assert_eq!(Range::new(6, 5).min_width_1(s), Range::new(6, 5));
-  }
-
-  #[test]
-  fn test_select_on_matches() {
-    let r = Rope::from_str("Nobody expects the Spanish inquisition");
-    let s = r.slice(..);
-
-    let selection = Selection::single(0, r.len_chars());
-    let result =
-      select_on_matches(s, &selection, &rope::Regex::new(r"[A-Z][a-z]*").unwrap()).unwrap();
-    assert_selection_ranges(result, &[Range::new(0, 6), Range::new(19, 26)]);
-
-    let r = Rope::from_str("This\nString\n\ncontains multiple\nlines");
-    let s = r.slice(..);
-
-    let start_of_line = rope::RegexBuilder::new()
-      .syntax(rope::Config::new().multi_line(true))
-      .build(r"^")
-      .unwrap();
-    let end_of_line = rope::RegexBuilder::new()
-      .syntax(rope::Config::new().multi_line(true))
-      .build(r"$")
+  fn flat_map_entries_can_split_a_cursor_and_reject_empty_output() {
+    let split = Selection::from_cursors(smallvec![cursor(1, 0, 4)])
+      .unwrap()
+      .flat_map_entries(|cursor| {
+        vec![
+          CursorRange {
+            id: cursor.id,
+            range: Range::new(0, 2),
+          },
+          CursorRange {
+            id: id(2),
+            range: Range::new(2, 4),
+          },
+        ]
+        .into_iter()
+      })
       .unwrap();
 
-    // line without ending
-    let result = select_on_matches(s, &Selection::single(0, 4), &start_of_line).unwrap();
-    assert_selection_ranges(result, &[Range::point(0)]);
-    assert!(
-      select_on_matches(s, &Selection::single(0, 4), &end_of_line)
-        .unwrap()
-        .is_none()
-    );
-    // line with ending
-    let result = select_on_matches(s, &Selection::single(0, 5), &start_of_line).unwrap();
-    assert_selection_ranges(result, &[Range::point(0)]);
-    let result = select_on_matches(s, &Selection::single(0, 5), &end_of_line).unwrap();
-    assert_selection_ranges(result, &[Range::new(4, 4)]);
-    // line with start of next line
-    let result = select_on_matches(s, &Selection::single(0, 6), &start_of_line).unwrap();
-    assert_selection_ranges(result, &[Range::point(0), Range::point(5)]);
-    let result = select_on_matches(s, &Selection::single(0, 6), &end_of_line).unwrap();
-    assert_selection_ranges(result, &[Range::new(4, 4)]);
+    let cursors = split
+      .iter()
+      .map(|cursor| (cursor.id.get(), *cursor.range))
+      .collect::<Vec<_>>();
+    assert_eq!(cursors, vec![(1, Range::new(0, 2)), (2, Range::new(2, 4))]);
 
-    // multiple lines
-    let result = select_on_matches(
-      s,
-      &Selection::single(0, s.len_chars()),
-      &rope::RegexBuilder::new()
-        .syntax(rope::Config::new().multi_line(true))
-        .build(r"^[a-z ]*$")
-        .unwrap(),
-    )
-    .unwrap();
-    assert_selection_ranges(result, &[
-      Range::point(12),
-      Range::new(13, 30),
-      Range::new(31, 36),
-    ]);
+    let err = Selection::from_cursors(smallvec![cursor(1, 0, 4)])
+      .unwrap()
+      .flat_map_entries(|_| std::iter::empty())
+      .unwrap_err();
+    assert_eq!(err, SelectionError::NoRanges);
   }
 
   #[test]
-  fn test_select_on_matches_capture_group() {
-    let r = Rope::from_str("foo1 foo22 bar333");
-    let s = r.slice(..);
+  fn map_preserves_cursor_ids_when_text_is_inserted() {
+    let selection = Selection::from_cursors(smallvec![cursor(1, 2, 2), cursor(2, 4, 6)]).unwrap();
+    let tx = crate::transaction::Transaction::insert_at(8, 3, "!!").unwrap();
 
-    let regex = rope::Regex::new(r"foo([0-9]+)").unwrap();
-    let selection = Selection::single(0, s.len_chars());
-    let result = select_on_matches_with(s, &selection, &regex, MatchCapture::Group(1)).unwrap();
-    assert_selection_ranges(result, &[Range::new(3, 4), Range::new(8, 10)]);
+    let mapped = selection.map(tx.changes()).unwrap();
+    let cursors = mapped
+      .iter()
+      .map(|cursor| (cursor.id.get(), *cursor.range))
+      .collect::<Vec<_>>();
+
+    assert_eq!(cursors, vec![(1, Range::point(2)), (2, Range::new(6, 8))]);
   }
 
   #[test]
-  fn test_line_range() {
-    let r = Rope::from_str("\r\nHi\r\nthere!");
-    let s = r.slice(..);
-
-    // Zero-width ranges.
-    assert_eq!(Range::new(0, 0).line_range(s), (0, 0));
-    assert_eq!(Range::new(1, 1).line_range(s), (0, 0));
-    assert_eq!(Range::new(2, 2).line_range(s), (1, 1));
-    assert_eq!(Range::new(3, 3).line_range(s), (1, 1));
-
-    // Forward ranges.
-    assert_eq!(Range::new(0, 1).line_range(s), (0, 0));
-    assert_eq!(Range::new(0, 2).line_range(s), (0, 0));
-    assert_eq!(Range::new(0, 3).line_range(s), (0, 1));
-    assert_eq!(Range::new(1, 2).line_range(s), (0, 0));
-    assert_eq!(Range::new(2, 3).line_range(s), (1, 1));
-    assert_eq!(Range::new(3, 8).line_range(s), (1, 2));
-    assert_eq!(Range::new(0, 12).line_range(s), (0, 2));
-
-    // Reverse ranges.
-    assert_eq!(Range::new(1, 0).line_range(s), (0, 0));
-    assert_eq!(Range::new(2, 0).line_range(s), (0, 0));
-    assert_eq!(Range::new(3, 0).line_range(s), (0, 1));
-    assert_eq!(Range::new(2, 1).line_range(s), (0, 0));
-    assert_eq!(Range::new(3, 2).line_range(s), (1, 1));
-    assert_eq!(Range::new(8, 3).line_range(s), (1, 2));
-    assert_eq!(Range::new(12, 0).line_range(s), (0, 2));
-  }
-
-  #[test]
-  fn test_cursor() {
-    let r = Rope::from_str("\r\nHi\r\nthere!");
-    let s = r.slice(..);
-
-    // Zero-width ranges.
-    assert_eq!(Range::new(0, 0).cursor(s), 0);
-    assert_eq!(Range::new(2, 2).cursor(s), 2);
-    assert_eq!(Range::new(3, 3).cursor(s), 3);
-
-    // Forward ranges.
-    assert_eq!(Range::new(0, 2).cursor(s), 0);
-    assert_eq!(Range::new(0, 3).cursor(s), 2);
-    assert_eq!(Range::new(3, 6).cursor(s), 4);
-
-    // Reverse ranges.
-    assert_eq!(Range::new(2, 0).cursor(s), 0);
-    assert_eq!(Range::new(6, 2).cursor(s), 2);
-    assert_eq!(Range::new(6, 3).cursor(s), 3);
-  }
-
-  #[test]
-  fn test_put_cursor() {
-    let r = Rope::from_str("\r\nHi\r\nthere!");
-    let s = r.slice(..);
-
-    // Zero-width ranges.
-    assert_eq!(Range::new(0, 0).put_cursor(s, 0, true), Range::new(0, 2));
-    assert_eq!(Range::new(0, 0).put_cursor(s, 2, true), Range::new(0, 3));
-    assert_eq!(Range::new(2, 3).put_cursor(s, 4, true), Range::new(2, 6));
-    assert_eq!(Range::new(2, 8).put_cursor(s, 4, true), Range::new(2, 6));
-    assert_eq!(Range::new(8, 8).put_cursor(s, 4, true), Range::new(9, 4));
-
-    // Forward ranges.
-    assert_eq!(Range::new(3, 6).put_cursor(s, 0, true), Range::new(4, 0));
-    assert_eq!(Range::new(3, 6).put_cursor(s, 2, true), Range::new(4, 2));
-    assert_eq!(Range::new(3, 6).put_cursor(s, 3, true), Range::new(3, 4));
-    assert_eq!(Range::new(3, 6).put_cursor(s, 4, true), Range::new(3, 6));
-    assert_eq!(Range::new(3, 6).put_cursor(s, 6, true), Range::new(3, 7));
-    assert_eq!(Range::new(3, 6).put_cursor(s, 8, true), Range::new(3, 9));
-
-    // Reverse ranges.
-    assert_eq!(Range::new(6, 3).put_cursor(s, 0, true), Range::new(6, 0));
-    assert_eq!(Range::new(6, 3).put_cursor(s, 2, true), Range::new(6, 2));
-    assert_eq!(Range::new(6, 3).put_cursor(s, 3, true), Range::new(6, 3));
-    assert_eq!(Range::new(6, 3).put_cursor(s, 4, true), Range::new(6, 4));
-    assert_eq!(Range::new(6, 3).put_cursor(s, 6, true), Range::new(4, 7));
-    assert_eq!(Range::new(6, 3).put_cursor(s, 8, true), Range::new(4, 9));
-  }
-
-  #[test]
-  fn test_split_on_matches() {
-    let text = Rope::from(" abcd efg wrs   xyz 123 456");
-
-    let selection = Selection::new(smallvec![Range::new(0, 9), Range::new(11, 20)]).unwrap();
-
-    let result = split_on_matches(
-      text.slice(..),
-      &selection,
-      &rope::Regex::new(r"\s+").unwrap(),
-    )
-    .unwrap();
-
-    assert_eq!(result.ranges(), &[
-      Range::new(1, 5),
-      Range::new(6, 9),
-      Range::new(11, 13),
-      Range::new(16, 19),
-    ]);
-
-    assert_eq!(result.fragments(text.slice(..)).collect::<Vec<_>>(), &[
-      "abcd", "efg", "rs", "xyz"
-    ]);
-  }
-
-  #[test]
-  fn test_merge_consecutive_ranges() {
-    let selection = Selection::new(smallvec![
-      Range::new(0, 1),
-      Range::new(1, 10),
-      Range::new(15, 20),
-      Range::new(25, 26),
-      Range::new(26, 30)
-    ])
-    .unwrap();
-
-    let result = selection.merge_consecutive_ranges();
-
-    assert_eq!(result.ranges(), &[
-      Range::new(0, 10),
-      Range::new(15, 20),
-      Range::new(25, 30)
-    ]);
-
-    let selection = Selection::new(smallvec![Range::new(0, 1)]).unwrap();
-    let result = selection.merge_consecutive_ranges();
-
-    assert_eq!(result.ranges(), &[Range::new(0, 1)]);
-
-    let selection = Selection::new(smallvec![
-      Range::new(0, 1),
-      Range::new(1, 5),
-      Range::new(5, 8),
-      Range::new(8, 10),
-      Range::new(10, 15),
-      Range::new(18, 25)
-    ])
-    .unwrap();
-
-    let result = selection.merge_consecutive_ranges();
-
-    assert_eq!(result.ranges(), &[Range::new(0, 15), Range::new(18, 25)]);
-  }
-
-  #[test]
-  fn test_selection_contains() {
-    fn contains(a: Vec<(usize, usize)>, b: Vec<(usize, usize)>) -> bool {
-      let sel_a = Selection::new(a.iter().map(|a| Range::new(a.0, a.1)).collect()).unwrap();
-      let sel_b = Selection::new(b.iter().map(|b| Range::new(b.0, b.1)).collect()).unwrap();
-      sel_a.contains(&sel_b)
-    }
-
-    // exact match
-    assert!(contains(vec!((1, 1)), vec!((1, 1))));
-
-    // larger set contains smaller
-    assert!(contains(vec!((1, 1), (2, 2), (3, 3)), vec!((2, 2))));
-
-    // multiple matches
-    assert!(contains(vec!((1, 1), (2, 2)), vec!((1, 1), (2, 2))));
-
-    // smaller set can't contain bigger
-    assert!(!contains(vec!((1, 1)), vec!((1, 1), (2, 2))));
-
-    assert!(contains(
-      vec!((1, 1), (2, 4), (5, 6), (7, 9), (10, 13)),
-      vec!((3, 4), (7, 9))
-    ));
-    assert!(!contains(vec!((1, 1), (5, 6)), vec!((1, 6))));
-
-    // multiple ranges of other are all contained in some ranges of self,
-    assert!(contains(
-      vec!((1, 4), (7, 10)),
-      vec!((1, 2), (3, 4), (7, 9))
-    ));
-  }
-
-  fn assert_selection_ranges(selection: Option<Selection>, expected: &[Range]) {
-    let selection = selection.expect("expected selection");
-    assert_eq!(selection.ranges(), expected);
-  }
-
-  // Delete tracking tests for Range and Selection
-
-  #[test]
-  fn range_map_tracked_no_deletion() {
-    use ropey::Rope;
-
-    // Insert text at position 4 - no deletion
-    let doc = Rope::from("abcdefgh");
-    let tx = crate::transaction::Transaction::insert_at(doc.len_chars(), 4, "!!").unwrap();
-    let cs = tx.changes();
-
-    let range = Range::new(2, 6);
-    let mapped = range.map_tracked(cs).unwrap();
-
-    assert!(!mapped.was_deleted());
-    assert!(!mapped.fully_deleted());
-    assert_eq!(mapped.range.anchor, 2);
-    assert_eq!(mapped.range.head, 8); // 6 + 2 inserted
-  }
-
-  #[test]
-  fn range_map_tracked_partial_deletion() {
-    use ropey::Rope;
-
-    // Delete chars 4-8 (4 chars)
-    let doc = Rope::from("abcdefghijkl"); // 12 chars
-    let tx = crate::transaction::Transaction::delete(doc.len_chars(), the_stdx::range::Range {
+  fn map_tracked_reports_which_cursors_were_deleted() {
+    let selection = Selection::from_cursors(smallvec![cursor(1, 2, 2), cursor(2, 6, 6)]).unwrap();
+    let tx = crate::transaction::Transaction::delete(12, the_stdx::range::Range {
       start: 4,
       end:   8,
     })
     .unwrap();
-    let cs = tx.changes();
 
-    // Range from 2 to 6 - head (6) is inside deletion [4, 8)
-    let range = Range::new(2, 6);
-    let mapped = range.map_tracked(cs).unwrap();
-
-    assert!(mapped.was_deleted());
-    assert!(!mapped.fully_deleted());
-    assert!(mapped.anchor_deleted.is_none());
-    assert!(mapped.head_deleted.is_some());
-
-    if let Some(info) = mapped.head_deleted {
-      assert_eq!(info.offset, 2); // 6 - 4 = 2 into deletion
-      assert_eq!(info.len, 4);
-    }
-  }
-
-  #[test]
-  fn range_map_tracked_full_deletion() {
-    use ropey::Rope;
-
-    // Delete chars 2-10 (8 chars)
-    let doc = Rope::from("abcdefghijkl"); // 12 chars
-    let tx = crate::transaction::Transaction::delete(doc.len_chars(), the_stdx::range::Range {
-      start: 2,
-      end:   10,
-    })
-    .unwrap();
-    let cs = tx.changes();
-
-    // Range from 4 to 6 - both inside deletion [2, 10)
-    let range = Range::new(4, 6);
-    let mapped = range.map_tracked(cs).unwrap();
-
-    assert!(mapped.was_deleted());
-    assert!(mapped.fully_deleted());
-    assert!(mapped.anchor_deleted.is_some());
-    assert!(mapped.head_deleted.is_some());
-  }
-
-  #[test]
-  fn selection_map_tracked() {
-    use ropey::Rope;
-
-    // Delete chars 4-8 (4 chars)
-    let doc = Rope::from("abcdefghijkl"); // 12 chars
-    let tx = crate::transaction::Transaction::delete(doc.len_chars(), the_stdx::range::Range {
-      start: 4,
-      end:   8,
-    })
-    .unwrap();
-    let cs = tx.changes();
-
-    // Two cursors: one outside deletion (2), one inside (6)
-    let selection = Selection::new(smallvec![Range::point(2), Range::point(6)]).unwrap();
-
-    let mapped = selection.map_tracked(cs).unwrap();
+    let mapped = selection.map_tracked(tx.changes()).unwrap();
 
     assert!(mapped.any_deleted());
     assert!(!mapped.all_fully_deleted());
-
-    // First range not deleted
     assert!(!mapped.mapped_ranges[0].was_deleted());
-
-    // Second range deleted (point cursor inside deletion)
     assert!(mapped.mapped_ranges[1].was_deleted());
+    assert_eq!(
+      mapped.selection.iter().map(|cursor| cursor.id.get()).collect::<Vec<_>>(),
+      vec![1, 2]
+    );
   }
 
   #[test]
-  fn mapped_range_helpers() {
-    let range = Range::new(5, 10);
-    let mapped = MappedRange::from(range);
+  fn transform_entries_returns_a_normalized_selection() {
+    let selection = Selection::from_cursors(smallvec![cursor(1, 0, 2), cursor(2, 4, 6)]).unwrap();
 
-    assert!(!mapped.was_deleted());
-    assert!(!mapped.fully_deleted());
-    assert_eq!(mapped.into_range(), range);
+    let transformed = selection
+      .transform_entries(|cursor| match cursor.id.get() {
+        1 => CursorRange {
+          id: cursor.id,
+          range: cursor.range,
+        },
+        2 => CursorRange {
+          id: cursor.id,
+          range: Range::new(1, 5),
+        },
+        _ => unreachable!(),
+      })
+      .unwrap();
 
-    let mapped_with_deletion = MappedRange {
-      range,
-      anchor_deleted: Some(DeleteInfo {
-        offset: 1,
-        len:    3,
-      }),
-      head_deleted: None,
-    };
-    assert!(mapped_with_deletion.was_deleted());
-    assert!(!mapped_with_deletion.fully_deleted());
+    let cursors = transformed
+      .iter()
+      .map(|cursor| (cursor.id.get(), *cursor.range))
+      .collect::<Vec<_>>();
 
-    let fully_deleted = MappedRange {
-      range,
-      anchor_deleted: Some(DeleteInfo {
-        offset: 1,
-        len:    3,
-      }),
-      head_deleted: Some(DeleteInfo {
-        offset: 2,
-        len:    3,
-      }),
-    };
-    assert!(fully_deleted.was_deleted());
-    assert!(fully_deleted.fully_deleted());
+    assert_eq!(cursors, vec![(2, Range::new(0, 5))]);
+  }
+
+  #[test]
+  fn merge_ranges_keeps_the_cursor_id_closest_to_the_merged_head() {
+    let selection = Selection::from_cursors(smallvec![
+      cursor(1, 0, 2),
+      cursor(2, 4, 6),
+      cursor(3, 8, 10),
+    ])
+    .unwrap();
+
+    let merged = selection.merge_ranges();
+    let cursor = merged.pick(CursorPick::First).unwrap();
+
+    assert_eq!(cursor.id.get(), 3);
+    assert_eq!(cursor.range, Range::new(0, 10));
+  }
+
+  #[test]
+  fn merge_consecutive_ranges_keeps_the_id_of_the_range_closest_to_the_merged_head() {
+    let selection = Selection::from_cursors(smallvec![
+      cursor(1, 0, 2),
+      cursor(2, 2, 5),
+      cursor(3, 8, 10),
+    ])
+    .unwrap();
+
+    let merged = selection.merge_consecutive_ranges();
+    let cursors = merged
+      .iter()
+      .map(|cursor| (cursor.id.get(), *cursor.range))
+      .collect::<Vec<_>>();
+
+    assert_eq!(cursors, vec![(2, Range::new(0, 5)), (3, Range::new(8, 10))]);
+  }
+
+  #[test]
+  fn range_line_range_reports_the_lines_touched_by_forward_and_point_ranges() {
+    let text = Rope::from_str("a\nb\nc");
+    let slice = text.slice(..);
+
+    assert_eq!(Range::point(2).line_range(slice), (1, 1));
+    assert_eq!(Range::new(0, 3).line_range(slice), (0, 1));
+    assert_eq!(Range::new(2, 5).line_range(slice), (1, 2));
+  }
+
+  #[test]
+  fn range_overlaps_distinguishes_touching_ranges_from_shared_points() {
+    assert!(!Range::new(0, 3).overlaps(&Range::new(3, 6)));
+    assert!(Range::new(1, 4).overlaps(&Range::new(3, 3)));
+    assert!(Range::new(1, 1).overlaps(&Range::new(1, 1)));
+  }
+
+  #[test]
+  fn range_helpers_are_stable_on_simple_ascii_text() {
+    let text = Rope::from_str("abcd");
+    let slice = text.slice(..);
+
+    assert_eq!(Range::new(1, 3).grapheme_aligned(slice), Range::new(1, 3));
+    assert_eq!(Range::new(2, 2).min_width_1(slice), Range::new(2, 3));
+    assert_eq!(Range::new(1, 3).cursor(slice), 2);
+  }
+
+  #[test]
+  fn put_cursor_extends_and_collapses_on_simple_ascii_text() {
+    let text = Rope::from_str("abcd");
+    let slice = text.slice(..);
+
+    assert_eq!(Range::new(1, 3).put_cursor(slice, 0, true), Range::new(2, 0));
+    assert_eq!(Range::new(1, 3).put_cursor(slice, 2, true), Range::new(1, 3));
+    assert_eq!(Range::new(1, 3).put_cursor(slice, 2, false), Range::point(2));
+  }
+
+  #[test]
+  fn select_on_matches_can_return_capture_groups() {
+    let text = Rope::from_str("foo1 foo22 bar333");
+    let selection = Selection::single(0, text.len_chars());
+
+    let result = select_on_matches_with(
+      text.slice(..),
+      &selection,
+      &rope::Regex::new(r"foo([0-9]+)").unwrap(),
+      MatchCapture::Group(1),
+    )
+    .unwrap()
+    .unwrap();
+
+    assert_eq!(result.ranges(), &[Range::new(3, 4), Range::new(8, 10)]);
   }
 }

@@ -261,6 +261,38 @@ impl RuntimeSession {
     self.surface_entry(surface).map(|entry| entry.document)
   }
 
+  pub fn surfaces_for_document(&self, document: DocumentHandle) -> Vec<SurfaceHandle> {
+    self
+      .surfaces
+      .iter()
+      .filter_map(|(surface, entry)| (entry.document == document).then_some(*surface))
+      .collect()
+  }
+
+  pub fn refresh_document_syntax_and_highlights(
+    &mut self,
+    document: DocumentHandle,
+  ) -> RuntimeResult<()> {
+    let highlights = {
+      let entry = self
+        .documents
+        .get_mut(&document)
+        .ok_or(RuntimeError::UnknownDocument(document))?;
+      self.syntax.reparse_document(&mut entry.document)?;
+      self.syntax.collect_document_highlights(&entry.document)
+    };
+
+    for surface in self
+      .surfaces
+      .values_mut()
+      .filter(|entry| entry.document == document)
+    {
+      surface.surface.set_syntax_highlights(highlights.clone());
+    }
+
+    Ok(())
+  }
+
   pub fn with_surface_document_mut<R>(
     &mut self,
     surface: SurfaceHandle,
@@ -350,6 +382,7 @@ impl RuntimeSession {
     self
       .surfaces
       .insert(handle, RuntimeSurface { surface, document });
+    self.refresh_document_syntax_and_highlights(document)?;
     Ok(handle)
   }
 
@@ -420,6 +453,7 @@ impl RuntimeSession {
       .syntax
       .activate_document(&mut entry.document, Some(&normalized));
     self.resource_documents.insert(resource, document);
+    self.refresh_document_syntax_and_highlights(document)?;
 
     Ok(resource)
   }

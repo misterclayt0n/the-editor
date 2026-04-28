@@ -263,6 +263,27 @@ impl Syntax {
     }
   }
 
+  pub fn reparse(
+    &mut self,
+    source: RopeSlice,
+    registry: &LanguageRegistry,
+  ) -> std::result::Result<(), Error> {
+    self.inner.update(source, PARSE_TIMEOUT, &[], registry)
+  }
+
+  pub fn try_reparse_with_timeout(
+    &mut self,
+    source: RopeSlice,
+    registry: &LanguageRegistry,
+    timeout: Duration,
+  ) -> std::result::Result<bool, Error> {
+    match self.inner.update(source, timeout, &[], registry) {
+      Ok(()) => Ok(true),
+      Err(Error::Timeout) => Ok(false),
+      Err(err) => Err(err),
+    }
+  }
+
   pub fn try_update_with_short_timeout(
     &mut self,
     source: RopeSlice,

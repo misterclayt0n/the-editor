@@ -58,6 +58,7 @@ use the_lib::{
   clipboard::ClipboardType,
   edit::Edit,
   grapheme::{
+    grapheme_width,
     next_grapheme_boundary,
     prev_grapheme_boundary,
   },
@@ -186,6 +187,9 @@ impl App {
       .with_surface_document_mut(self.surface, |surface, document| {
         surface.apply_edit(document, edit)
       })??;
+    self
+      .session
+      .refresh_document_syntax_and_highlights(self.document)?;
     Ok(())
   }
 
@@ -267,11 +271,25 @@ impl App {
       }
     }
 
+    let mut syntax_rows = vec![Vec::new(); editor_rows];
+    if let Some(syntax) = frame.layers.syntax.as_ref() {
+      for span in &syntax.spans {
+        if span.surface_row < syntax_rows.len()
+          && let Some(color) = self.syntax_color(span.kind)
+        {
+          syntax_rows[span.surface_row].push((span.start_col, span.end_col, color));
+        }
+      }
+    }
+    for spans in &mut syntax_rows {
+      spans.sort_by_key(|(start, end, _)| (*start, *end));
+    }
+
     queue!(stdout, Hide, MoveTo(0, 0), Clear(ClearType::All))?;
 
     for (row_idx, line) in visible.iter().enumerate() {
       let y = row_idx as u16;
-      queue!(stdout, MoveTo(0, y), Print(line))?;
+      self.draw_visible_row(stdout, y, line, &syntax_rows[row_idx])?;
     }
 
     let status = self.status_line(cols as usize);
@@ -306,6 +324,82 @@ impl App {
 
     stdout.flush()?;
     Ok(())
+  }
+
+  fn draw_visible_row(
+    &self,
+    stdout: &mut io::Stdout,
+    y: u16,
+    text: &str,
+    spans: &[(usize, usize, Color)],
+  ) -> io::Result<()> {
+    queue!(stdout, MoveTo(0, y))?;
+
+    if spans.is_empty() {
+      queue!(stdout, SetForegroundColor(Color::Reset), Print(text))?;
+      return Ok(());
+    }
+
+    let mut segment = String::new();
+    let mut current_col = 0;
+    let mut current_span = 0;
+    let mut active_color = None;
+
+    for ch in text.chars() {
+      while current_span < spans.len() && spans[current_span].1 <= current_col {
+        current_span += 1;
+      }
+
+      let color = spans.get(current_span).and_then(|(start, end, color)| {
+        (*start <= current_col && current_col < *end).then_some(*color)
+      });
+
+      if color != active_color {
+        if !segment.is_empty() {
+          queue!(
+            stdout,
+            SetForegroundColor(active_color.unwrap_or(Color::Reset)),
+            Print(&segment),
+          )?;
+          segment.clear();
+        }
+        active_color = color;
+      }
+
+      segment.push(ch);
+
+      let mut encoded = [0; 4];
+      current_col += grapheme_width(ch.encode_utf8(&mut encoded));
+    }
+
+    if !segment.is_empty() {
+      queue!(
+        stdout,
+        SetForegroundColor(active_color.unwrap_or(Color::Reset)),
+        Print(&segment),
+      )?;
+    }
+
+    queue!(stdout, SetForegroundColor(Color::Reset))?;
+    Ok(())
+  }
+
+  fn syntax_color(&self, kind: the_lib::syntax::HighlightKindId) -> Option<Color> {
+    let name = self.session.syntax().registry().highlight_name(kind)?;
+    let base = name.split('.').next().unwrap_or(name.as_str());
+
+    Some(match base {
+      "comment" => Color::DarkGreen,
+      "string" => Color::Yellow,
+      "constant" | "number" => Color::DarkYellow,
+      "keyword" => Color::Magenta,
+      "function" | "constructor" => Color::Blue,
+      "type" | "tag" | "module" | "namespace" => Color::Cyan,
+      "variable" => Color::Green,
+      "attribute" => Color::DarkCyan,
+      "operator" | "punctuation" => Color::DarkGrey,
+      _ => return None,
+    })
   }
 
   fn cursor_screen_pos(&self, editor_rows: usize, cols: usize) -> Option<(usize, usize)> {
@@ -480,6 +574,9 @@ impl App {
           .session
           .with_surface_document_mut(self.surface, |surface, document| surface.undo(document))??;
         if undone {
+          self
+            .session
+            .refresh_document_syntax_and_highlights(self.document)?;
           self.status = String::from("undo");
         }
       },
@@ -488,6 +585,9 @@ impl App {
           .session
           .with_surface_document_mut(self.surface, |surface, document| surface.redo(document))??;
         if redone {
+          self
+            .session
+            .refresh_document_syntax_and_highlights(self.document)?;
           self.status = String::from("redo");
         }
       },

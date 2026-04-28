@@ -972,6 +972,8 @@ dependencies = [
  "thiserror",
  "toml",
  "tracing",
+ "tree-house-bindings",
+ "tree-sitter-json",
  "which",
 ]
 

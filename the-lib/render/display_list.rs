@@ -37,6 +37,19 @@ impl RowId {
   }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct WidgetId(NonZeroU64);
+
+impl WidgetId {
+  pub fn new(id: u64) -> Option<Self> {
+    NonZeroU64::new(id).map(Self)
+  }
+
+  pub fn get(self) -> u64 {
+    self.0.get()
+  }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Viewport {
   pub first_row:  usize,

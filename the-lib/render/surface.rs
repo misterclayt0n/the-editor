@@ -33,10 +33,12 @@ use super::{
     RowPlacement,
     SurfaceId,
     Viewport,
+    WidgetId,
   },
   doc_formatter::DocumentFormatter,
   measurement::SurfaceMeasurements,
   layers::{
+    BlockWidget,
     CursorLayerDelta,
     CursorPlacement,
     LayerDeltaSet,
@@ -45,6 +47,8 @@ use super::{
     SyntaxHighlight,
     SyntaxLayerDelta,
     SyntaxSpan,
+    WidgetLayerDelta,
+    WidgetPlacement,
   },
   text_annotations::TextAnnotations,
   text_format::TextFormat,
@@ -54,9 +58,10 @@ use super::{
 pub struct RenderSurface {
   id:                     SurfaceId,
   format:                 TextFormat,
-  annotations:            TextAnnotations,
+  annotations:       TextAnnotations,
   selection:         Option<Selection>,
   syntax_highlights: Vec<SyntaxHighlight>,
+  widgets:           Vec<BlockWidget>,
   measurements:      SurfaceMeasurements,
   generation:        u64,
   dirty:             DirtyState,
@@ -73,6 +78,7 @@ struct SurfaceState {
   selection_spans:    Vec<SelectionSpan>,
   cursor_placements:  Vec<CursorPlacement>,
   syntax_spans:       Vec<SyntaxSpan>,
+  widget_placements:  Vec<WidgetPlacement>,
 }
 
 impl Default for SurfaceState {
@@ -86,6 +92,7 @@ impl Default for SurfaceState {
       selection_spans: Vec::new(),
       cursor_placements: Vec::new(),
       syntax_spans: Vec::new(),
+      widget_placements: Vec::new(),
     }
   }
 }
@@ -106,25 +113,29 @@ enum RowKey {
     anchor_char: usize,
     ordinal:     u32,
   },
+  Widget {
+    widget_id: WidgetId,
+    fragment:  u32,
+  },
 }
 
 #[derive(Debug)]
 struct RowBuilder {
-  visual_row:       usize,
-  placement:        RowPlacement,
-  text:             String,
-  first_doc:        Option<(usize, usize)>,
-  virtual_anchor:   Option<usize>,
+  visual_row:     usize,
+  text:           String,
+  first_doc:      Option<(usize, usize)>,
+  virtual_anchor: Option<usize>,
+  anchor_line:    usize,
 }
 
 impl RowBuilder {
-  fn new(visual_row: usize, placement: RowPlacement, first_char_idx: usize) -> Self {
+  fn new(visual_row: usize, first_char_idx: usize, anchor_line: usize) -> Self {
     Self {
       visual_row,
-      placement,
       text: String::new(),
       first_doc: None,
       virtual_anchor: Some(first_char_idx),
+      anchor_line,
     }
   }
 
@@ -140,10 +151,10 @@ impl RowBuilder {
     }
   }
 
-  fn into_built_row(
+  fn into_cached_row(
     self,
     virtual_ordinals: &mut BTreeMap<usize, u32>,
-  ) -> BuiltRow {
+  ) -> CachedLayoutRow {
     let key = if let Some((line_idx, first_doc_char)) = self.first_doc {
       RowKey::Document {
         line_idx,
@@ -160,25 +171,36 @@ impl RowBuilder {
       key
     };
 
-    BuiltRow {
+    CachedLayoutRow {
       key,
-      placement: self.placement,
       text: self.text.into(),
+      anchor_line: self.anchor_line,
     }
   }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct CachedLayoutRow {
-  key:  RowKey,
-  text: Tendril,
+  key:         RowKey,
+  text:        Tendril,
+  anchor_line: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CachedWidgetLayout {
+  widget_id: WidgetId,
+  start_row: usize,
+  row_span:  usize,
+  width_px:  u32,
+  height_px: u32,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 struct DocumentLayoutCache {
-  text_revision: Option<u64>,
-  wrap_width:    usize,
-  rows:          Vec<CachedLayoutRow>,
+  text_revision:   Option<u64>,
+  wrap_width:      usize,
+  rows:            Vec<CachedLayoutRow>,
+  widget_layouts:  Vec<CachedWidgetLayout>,
 }
 
 #[derive(Debug)]
@@ -196,6 +218,7 @@ impl RenderSurface {
       annotations,
       selection: None,
       syntax_highlights: Vec::new(),
+      widgets: Vec::new(),
       measurements: SurfaceMeasurements::default(),
       generation: 0,
       dirty: DirtyState::default(),
@@ -238,6 +261,10 @@ impl RenderSurface {
     self.measurements
   }
 
+  pub fn widgets(&self) -> &[BlockWidget] {
+    &self.widgets
+  }
+
   pub fn set_text_annotations(&mut self, annotations: TextAnnotations) {
     if self.annotations != annotations {
       self.annotations = annotations;
@@ -261,13 +288,23 @@ impl RenderSurface {
     }
   }
 
+  pub fn set_widgets(&mut self, mut widgets: Vec<BlockWidget>) {
+    widgets.sort_by_key(|widget| (widget.after_line, widget.id.get()));
+    if self.widgets != widgets {
+      self.widgets = widgets;
+      self.mark_rows_dirty(true);
+    }
+  }
+
   pub fn set_measurements(&mut self, measurements: SurfaceMeasurements) {
     if self.measurements != measurements {
+      let relayout = !self.widgets.is_empty();
       self.measurements = measurements;
-      self.dirty.rows.mark(false);
+      self.dirty.rows.mark(relayout);
       self.dirty.selections.mark();
       self.dirty.cursors.mark();
       self.dirty.syntax.mark();
+      self.dirty.widgets.mark();
     }
   }
 
@@ -292,6 +329,8 @@ impl RenderSurface {
         text,
         &self.format,
         &self.annotations,
+        &self.widgets,
+        self.measurements,
         text_revision,
         request.viewport.wrap_width,
       );
@@ -389,13 +428,28 @@ impl RenderSurface {
       spans: syntax_spans.clone(),
     });
 
+    let widget_placements = if self.dirty.widgets.dirty
+      || self.dirty.rows.dirty
+      || first_frame
+      || viewport_changed
+    {
+      build_widget_placements(&self.state.layout_cache, request.viewport, self.measurements)
+    } else {
+      self.state.widget_placements.clone()
+    };
+    let widget_changed = force_full || self.state.widget_placements != widget_placements;
+    let widget_layer = (force_full || widget_changed).then(|| WidgetLayerDelta {
+      widgets: widget_placements.clone(),
+    });
+
     let presentation_changed = force_full
       || !retained_rows.is_empty()
       || !incremental_changed_rows.is_empty()
       || !removed_rows.is_empty()
       || selection_changed
       || cursor_changed
-      || syntax_changed;
+      || syntax_changed
+      || widget_changed;
 
     if self.generation == 0 {
       self.generation = 1;
@@ -421,11 +475,20 @@ impl RenderSurface {
     } else {
       Damage::empty()
     };
+    let widget_damage = if force_full || widget_changed {
+      damage_for_widget_change(&self.state.widget_placements, &widget_placements)
+    } else {
+      Damage::empty()
+    };
 
     let damage = if full {
       Damage::full(request.viewport.row_count.min(next_visible_rows.len()))
     } else {
-      row_damage.union(selection_damage).union(cursor_damage).union(syntax_damage)
+      row_damage
+        .union(selection_damage)
+        .union(cursor_damage)
+        .union(syntax_damage)
+        .union(widget_damage)
     };
 
     self.state.last_text_revision = Some(text_revision);
@@ -434,6 +497,7 @@ impl RenderSurface {
     self.state.selection_spans = selection_spans;
     self.state.cursor_placements = cursor_placements;
     self.state.syntax_spans = syntax_spans;
+    self.state.widget_placements = widget_placements;
     self.dirty.clear();
 
     RenderFrameDelta {
@@ -447,6 +511,7 @@ impl RenderSurface {
         selections: selection_layer,
         cursors: cursor_layer,
         syntax: syntax_layer,
+        widgets: widget_layer,
         ..LayerDeltaSet::default()
       },
       damage,
@@ -458,6 +523,7 @@ impl RenderSurface {
     self.dirty.selections.mark();
     self.dirty.cursors.mark();
     self.dirty.syntax.mark();
+    self.dirty.widgets.mark();
   }
 
   fn mark_external_dirty(&mut self, text_revision: u64, viewport: Viewport) {
@@ -645,6 +711,8 @@ fn rebuild_document_layout_cache(
   text: RopeSlice<'_>,
   format: &TextFormat,
   annotations: &TextAnnotations,
+  widgets: &[BlockWidget],
+  measurements: SurfaceMeasurements,
   text_revision: u64,
   wrap_width: usize,
 ) -> DocumentLayoutCache {
@@ -658,19 +726,15 @@ fn rebuild_document_layout_cache(
 
     if current.as_ref().is_some_and(|row| row.visual_row != visual_row) {
       if let Some(row) = current.take() {
-        let built = row.into_built_row(&mut virtual_ordinals);
-        rows.push(CachedLayoutRow {
-          key: built.key,
-          text: built.text,
-        });
+        rows.push(row.into_cached_row(&mut virtual_ordinals));
       }
     }
 
     if current.is_none() {
       current = Some(RowBuilder::new(
         visual_row,
-        RowPlacement::new(visual_row, 0, 0),
         grapheme.char_idx,
+        grapheme.line_idx,
       ));
     }
 
@@ -682,11 +746,7 @@ fn rebuild_document_layout_cache(
   }
 
   if let Some(row) = current.take() {
-    let built = row.into_built_row(&mut virtual_ordinals);
-    rows.push(CachedLayoutRow {
-      key: built.key,
-      text: built.text,
-    });
+    rows.push(row.into_cached_row(&mut virtual_ordinals));
   }
 
   if rows.is_empty() {
@@ -696,13 +756,22 @@ fn rebuild_document_layout_cache(
         first_doc_char: 0,
       },
       text: Tendril::new(),
+      anchor_line: 0,
     });
   }
+
+  let (rows, widget_layouts) = insert_widget_rows(
+    rows,
+    widgets,
+    measurements,
+    text.len_lines().saturating_sub(1),
+  );
 
   DocumentLayoutCache {
     text_revision: Some(text_revision),
     wrap_width,
     rows,
+    widget_layouts,
   }
 }
 
@@ -731,6 +800,133 @@ fn build_visible_rows(
         measurements.row_height_px,
       ),
       text: crop_row_text(&row.text, viewport),
+    })
+    .collect()
+}
+
+fn widget_row_span(height_px: u32, row_height_px: u32) -> usize {
+  let row_height_px = row_height_px.max(1);
+  height_px.max(1).div_ceil(row_height_px) as usize
+}
+
+fn insert_widget_rows(
+  rows: Vec<CachedLayoutRow>,
+  widgets: &[BlockWidget],
+  measurements: SurfaceMeasurements,
+  last_doc_line: usize,
+) -> (Vec<CachedLayoutRow>, Vec<CachedWidgetLayout>) {
+  if widgets.is_empty() {
+    return (rows, Vec::new());
+  }
+
+  let mut rows_with_widgets = Vec::with_capacity(rows.len() + widgets.len());
+  let mut widget_layouts = Vec::with_capacity(widgets.len());
+  let mut next_widget = 0;
+
+  for (index, row) in rows.iter().cloned().enumerate() {
+    let anchor_line = row.anchor_line;
+    rows_with_widgets.push(row);
+
+    let is_last_row_for_line = rows
+      .get(index + 1)
+      .is_none_or(|next| next.anchor_line != anchor_line);
+    if !is_last_row_for_line {
+      continue;
+    }
+
+    while let Some(widget) = widgets.get(next_widget) {
+      let widget_line = widget.after_line.min(last_doc_line);
+      if widget_line != anchor_line {
+        break;
+      }
+
+      let start_row = rows_with_widgets.len();
+      let row_span = widget_row_span(widget.measured_height_px, measurements.row_height_px);
+      widget_layouts.push(CachedWidgetLayout {
+        widget_id: widget.id,
+        start_row,
+        row_span,
+        width_px: widget.measured_width_px,
+        height_px: widget.measured_height_px.max(1),
+      });
+
+      for fragment in 0..row_span {
+        rows_with_widgets.push(CachedLayoutRow {
+          key: RowKey::Widget {
+            widget_id: widget.id,
+            fragment: fragment as u32,
+          },
+          text: Tendril::new(),
+          anchor_line,
+        });
+      }
+
+      next_widget += 1;
+    }
+  }
+
+  while let Some(widget) = widgets.get(next_widget) {
+    let anchor_line = widget.after_line.min(last_doc_line);
+    let start_row = rows_with_widgets.len();
+    let row_span = widget_row_span(widget.measured_height_px, measurements.row_height_px);
+    widget_layouts.push(CachedWidgetLayout {
+      widget_id: widget.id,
+      start_row,
+      row_span,
+      width_px: widget.measured_width_px,
+      height_px: widget.measured_height_px.max(1),
+    });
+
+    for fragment in 0..row_span {
+      rows_with_widgets.push(CachedLayoutRow {
+        key: RowKey::Widget {
+          widget_id: widget.id,
+          fragment: fragment as u32,
+        },
+        text: Tendril::new(),
+        anchor_line,
+      });
+    }
+
+    next_widget += 1;
+  }
+
+  (rows_with_widgets, widget_layouts)
+}
+
+fn build_widget_placements(
+  cache: &DocumentLayoutCache,
+  viewport: Viewport,
+  measurements: SurfaceMeasurements,
+) -> Vec<WidgetPlacement> {
+  let viewport_end = viewport.first_row.saturating_add(viewport.row_count);
+  let viewport_width_px = viewport.wrap_width as i64 * measurements.cell_width_px as i64;
+  let x_px = -(viewport.first_col as i64 * measurements.cell_width_px as i64);
+
+  cache
+    .widget_layouts
+    .iter()
+    .filter_map(|widget| {
+      let widget_end = widget.start_row.saturating_add(widget.row_span);
+      let visible_start = widget.start_row.max(viewport.first_row);
+      let visible_end = widget_end.min(viewport_end);
+      if visible_start >= visible_end {
+        return None;
+      }
+      if x_px >= viewport_width_px || x_px + widget.width_px as i64 <= 0 {
+        return None;
+      }
+
+      Some(WidgetPlacement {
+        widget_id: widget.widget_id,
+        surface_row: visible_start - viewport.first_row,
+        row_span: visible_end - visible_start,
+        x_px,
+        y_px: (widget.start_row as i64 - viewport.first_row as i64)
+          * measurements.row_height_px as i64,
+        width_px: widget.width_px,
+        height_px: widget.height_px,
+      })
     })
     .collect()
 }
@@ -953,6 +1149,18 @@ fn damage_for_syntax_change(old: &[SyntaxSpan], new: &[SyntaxSpan]) -> Damage {
   )
 }
 
+fn widget_visible_rows(widget: &WidgetPlacement) -> impl Iterator<Item = usize> {
+  widget.surface_row..widget.surface_row + widget.row_span
+}
+
+fn damage_for_widget_change(old: &[WidgetPlacement], new: &[WidgetPlacement]) -> Damage {
+  Damage::from_rows(
+    old.iter()
+      .flat_map(widget_visible_rows)
+      .chain(new.iter().flat_map(widget_visible_rows)),
+  )
+}
+
 #[cfg(test)]
 mod tests {
   use ropey::Rope;
@@ -960,6 +1168,7 @@ mod tests {
   use super::RenderSurface;
   use crate::{
     render::{
+      BlockWidget,
       FrameRequest,
       SurfaceId,
       SurfaceMeasurements,
@@ -967,6 +1176,7 @@ mod tests {
       TextAnnotations,
       TextFormat,
       Viewport,
+      WidgetId,
     },
     selection::{
       Range,
@@ -1419,6 +1629,75 @@ mod tests {
     let syntax_delta = delta.layers.syntax.expect("syntax layer delta");
     assert_eq!(syntax_delta.spans[0].x_px, 10);
     assert_eq!(syntax_delta.spans[0].width_px, 20);
+  }
+
+  #[test]
+  fn block_widget_reserves_rows_and_emits_widget_layer() {
+    let rope = Rope::from("a\nb");
+    let mut surface = RenderSurface::new(
+      SurfaceId::new(1).unwrap(),
+      TextFormat::default(),
+      TextAnnotations::default(),
+    );
+    surface.set_widgets(vec![BlockWidget::after_line(
+      WidgetId::new(1).unwrap(),
+      0,
+      40,
+      24,
+    )]);
+
+    let delta = surface.render_frame(rope.slice(..), 1, request(0, 4, 20, None));
+
+    assert!(delta.full);
+    assert_eq!(delta.changed_rows.len(), 4);
+    assert_eq!(delta.changed_rows[0].text.as_str(), "a");
+    assert_eq!(delta.changed_rows[1].text.as_str(), "");
+    assert_eq!(delta.changed_rows[2].text.as_str(), "");
+    assert!(delta.changed_rows[3].text.as_str().starts_with("b"));
+
+    let widget_layer = delta.layers.widgets.expect("widget layer delta");
+    assert_eq!(widget_layer.widgets.len(), 1);
+    assert_eq!(widget_layer.widgets[0].surface_row, 1);
+    assert_eq!(widget_layer.widgets[0].row_span, 2);
+    assert_eq!(widget_layer.widgets[0].x_px, 0);
+    assert_eq!(widget_layer.widgets[0].y_px, 16);
+    assert_eq!(widget_layer.widgets[0].width_px, 40);
+    assert_eq!(widget_layer.widgets[0].height_px, 24);
+  }
+
+  #[test]
+  fn widget_measurement_change_reflows_reserved_rows() {
+    let rope = Rope::from("a\nb");
+    let mut surface = RenderSurface::new(
+      SurfaceId::new(1).unwrap(),
+      TextFormat::default(),
+      TextAnnotations::default(),
+    );
+    surface.set_widgets(vec![BlockWidget::after_line(
+      WidgetId::new(1).unwrap(),
+      0,
+      40,
+      24,
+    )]);
+
+    let initial = surface.render_frame(rope.slice(..), 1, request(0, 4, 20, None));
+    let old_bottom = initial.changed_rows[3].clone();
+    surface.set_measurements(SurfaceMeasurements::cell_grid(8, 10));
+
+    let delta = surface.render_frame(
+      rope.slice(..),
+      1,
+      request(0, 5, 20, Some(initial.generation)),
+    );
+
+    assert!(delta.full);
+    assert_eq!(delta.changed_rows.len(), 5);
+    assert_eq!(delta.changed_rows[4].id, old_bottom.id);
+
+    let widget_layer = delta.layers.widgets.expect("widget layer delta");
+    assert_eq!(widget_layer.widgets.len(), 1);
+    assert_eq!(widget_layer.widgets[0].row_span, 3);
+    assert_eq!(widget_layer.widgets[0].y_px, 10);
   }
 
   #[test]

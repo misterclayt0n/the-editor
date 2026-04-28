@@ -23,6 +23,7 @@ pub use display_list::{
   RowPlacement,
   SurfaceId,
   Viewport,
+  WidgetId,
 };
 pub use doc_formatter::{
   DocumentFormatter,
@@ -31,6 +32,7 @@ pub use doc_formatter::{
   Position,
 };
 pub use layers::{
+  BlockWidget,
   CursorLayerDelta,
   CursorPlacement,
   GutterLayerDelta,
@@ -42,6 +44,7 @@ pub use layers::{
   SyntaxLayerDelta,
   SyntaxSpan,
   WidgetLayerDelta,
+  WidgetPlacement,
 };
 pub use measurement::{
   MeasurementBackendKind,

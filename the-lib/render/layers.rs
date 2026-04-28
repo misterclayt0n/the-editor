@@ -5,6 +5,8 @@ use crate::{
   syntax::HighlightKindId,
 };
 
+use super::display_list::WidgetId;
+
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct GutterLayerDelta;
 
@@ -62,8 +64,45 @@ pub struct SyntaxLayerDelta {
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct OverlayLayerDelta;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BlockWidget {
+  pub id:                 WidgetId,
+  pub after_line:         usize,
+  pub measured_width_px:  u32,
+  pub measured_height_px: u32,
+}
+
+impl BlockWidget {
+  pub fn after_line(
+    id: WidgetId,
+    after_line: usize,
+    measured_width_px: u32,
+    measured_height_px: u32,
+  ) -> Self {
+    Self {
+      id,
+      after_line,
+      measured_width_px,
+      measured_height_px,
+    }
+  }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WidgetPlacement {
+  pub widget_id:   WidgetId,
+  pub surface_row: usize,
+  pub row_span:    usize,
+  pub x_px:        i64,
+  pub y_px:        i64,
+  pub width_px:    u32,
+  pub height_px:   u32,
+}
+
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct WidgetLayerDelta;
+pub struct WidgetLayerDelta {
+  pub widgets: Vec<WidgetPlacement>,
+}
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct LayerDeltaSet {

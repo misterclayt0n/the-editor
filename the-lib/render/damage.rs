@@ -44,6 +44,7 @@ pub struct DirtyState {
   pub selections: DirtyFlag,
   pub cursors:    DirtyFlag,
   pub syntax:     DirtyFlag,
+  pub widgets:    DirtyFlag,
 }
 
 impl DirtyState {
@@ -52,6 +53,7 @@ impl DirtyState {
     self.selections.clear();
     self.cursors.clear();
     self.syntax.clear();
+    self.widgets.clear();
   }
 }
 

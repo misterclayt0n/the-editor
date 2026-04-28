@@ -11,6 +11,7 @@ use ropey::RopeSlice;
 use crate::{
   Tendril,
   grapheme::Grapheme,
+  selection::Selection,
 };
 
 use super::{
@@ -26,7 +27,11 @@ use super::{
     Viewport,
   },
   doc_formatter::DocumentFormatter,
-  layers::LayerDeltaSet,
+  layers::{
+    LayerDeltaSet,
+    SelectionLayerDelta,
+    SelectionSpan,
+  },
   text_annotations::TextAnnotations,
   text_format::TextFormat,
 };
@@ -36,8 +41,10 @@ pub struct RenderSurface {
   id:                     SurfaceId,
   format:                 TextFormat,
   annotations:            TextAnnotations,
+  selection:              Option<Selection>,
   format_generation:      u64,
   annotations_generation: u64,
+  selection_generation:   u64,
   generation:             u64,
   state:                  SurfaceState,
 }
@@ -49,7 +56,9 @@ struct SurfaceState {
   last_viewport:                Option<Viewport>,
   last_format_generation:       u64,
   last_annotations_generation:  u64,
+  last_selection_generation:    u64,
   visible_rows:                 Vec<RetainedRow>,
+  selection_spans:              Vec<SelectionSpan>,
 }
 
 impl Default for SurfaceState {
@@ -60,7 +69,9 @@ impl Default for SurfaceState {
       last_viewport: None,
       last_format_generation: 0,
       last_annotations_generation: 0,
+      last_selection_generation: 0,
       visible_rows: Vec::new(),
+      selection_spans: Vec::new(),
     }
   }
 }
@@ -156,8 +167,10 @@ impl RenderSurface {
       id,
       format,
       annotations,
+      selection: None,
       format_generation: 0,
       annotations_generation: 0,
+      selection_generation: 0,
       generation: 0,
       state: SurfaceState::default(),
     }
@@ -186,10 +199,21 @@ impl RenderSurface {
     &self.annotations
   }
 
+  pub fn selection(&self) -> Option<&Selection> {
+    self.selection.as_ref()
+  }
+
   pub fn set_text_annotations(&mut self, annotations: TextAnnotations) {
     if self.annotations != annotations {
       self.annotations = annotations;
       self.annotations_generation = self.annotations_generation.wrapping_add(1);
+    }
+  }
+
+  pub fn set_selection(&mut self, selection: Option<Selection>) {
+    if self.selection != selection {
+      self.selection = selection;
+      self.selection_generation = self.selection_generation.wrapping_add(1);
     }
   }
 
@@ -214,10 +238,23 @@ impl RenderSurface {
       request.viewport,
     );
 
+    let selection_spans = build_selection_spans(
+      text,
+      &self.format,
+      &self.annotations,
+      self.selection.as_ref(),
+      request.viewport,
+    );
+    let selection_changed = force_full || self.state.selection_spans != selection_spans;
+    let selection_layer = selection_changed.then(|| SelectionLayerDelta {
+      spans: selection_spans.clone(),
+    });
+
     let presentation_changed = force_full
       || !diff.retained_rows.is_empty()
       || !diff.changed_rows.is_empty()
-      || !diff.removed_rows.is_empty();
+      || !diff.removed_rows.is_empty()
+      || selection_changed;
 
     if self.generation == 0 {
       self.generation = 1;
@@ -229,7 +266,9 @@ impl RenderSurface {
     self.state.last_viewport = Some(request.viewport);
     self.state.last_format_generation = self.format_generation;
     self.state.last_annotations_generation = self.annotations_generation;
+    self.state.last_selection_generation = self.selection_generation;
     self.state.visible_rows = diff.next_visible_rows;
+    self.state.selection_spans = selection_spans;
 
     let full = force_full || self.state.visible_rows.is_empty() && self.generation == 1;
     let damage = if full {
@@ -254,7 +293,10 @@ impl RenderSurface {
         diff.changed_rows
       },
       removed_rows: if full { Vec::new() } else { diff.removed_rows },
-      layers: LayerDeltaSet::default(),
+      layers: LayerDeltaSet {
+        selections: selection_layer,
+        ..LayerDeltaSet::default()
+      },
       damage,
     }
   }
@@ -462,24 +504,103 @@ fn build_visible_rows(
   rows
 }
 
+fn build_selection_spans(
+  text: RopeSlice<'_>,
+  format: &TextFormat,
+  annotations: &TextAnnotations,
+  selection: Option<&Selection>,
+  viewport: Viewport,
+) -> Vec<SelectionSpan> {
+  let Some(selection) = selection else {
+    return Vec::new();
+  };
+
+  let mut spans: Vec<SelectionSpan> = Vec::new();
+  let mut formatter = DocumentFormatter::new(text, format, viewport.wrap_width, annotations);
+
+  for grapheme in &mut formatter {
+    if grapheme.source.is_eof() {
+      break;
+    }
+    if grapheme.is_virtual() {
+      continue;
+    }
+
+    let visual_row = grapheme.visual_pos.row;
+    if visual_row < viewport.first_row || visual_row >= viewport.first_row + viewport.row_count {
+      continue;
+    }
+    if grapheme.raw == Grapheme::Newline {
+      continue;
+    }
+
+    let Some(cursor) = selection
+      .iter()
+      .find(|cursor| !cursor.range.is_empty() && cursor.range.contains(grapheme.char_idx))
+    else {
+      continue;
+    };
+
+    let span = SelectionSpan {
+      cursor_id: cursor.id,
+      surface_row: visual_row - viewport.first_row,
+      start_col: grapheme.visual_pos.col,
+      end_col: grapheme.visual_pos.col + grapheme.width(),
+    };
+
+    if let Some(last) = spans.last_mut()
+      && last.cursor_id == span.cursor_id
+      && last.surface_row == span.surface_row
+      && last.end_col == span.start_col
+    {
+      last.end_col = span.end_col;
+    } else {
+      spans.push(span);
+    }
+  }
+
+  spans
+}
+
 #[cfg(test)]
 mod tests {
   use ropey::Rope;
 
   use super::RenderSurface;
-  use crate::render::{
-    FrameRequest,
-    SurfaceId,
-    TextAnnotations,
-    TextFormat,
-    Viewport,
+  use crate::{
+    render::{
+      FrameRequest,
+      SurfaceId,
+      TextAnnotations,
+      TextFormat,
+      Viewport,
+    },
+    selection::{
+      Range,
+      Selection,
+    },
   };
 
-  fn request(first_row: usize, row_count: usize, wrap_width: usize, since: Option<u64>) -> FrameRequest {
+  fn request(
+    first_row: usize,
+    row_count: usize,
+    wrap_width: usize,
+    since: Option<u64>,
+  ) -> FrameRequest {
     FrameRequest {
       viewport: Viewport::new(first_row, row_count, wrap_width),
       since_generation: since,
     }
+  }
+
+  fn selection(ranges: &[(usize, usize)]) -> Selection {
+    Selection::new(
+      ranges
+        .iter()
+        .map(|&(anchor, head)| Range::new(anchor, head))
+        .collect::<smallvec::SmallVec<[Range; 1]>>(),
+    )
+    .unwrap()
   }
 
   #[test]
@@ -623,6 +744,61 @@ mod tests {
     );
 
     assert!(delta.full);
+  }
+
+  #[test]
+  fn selection_change_updates_only_selection_layer() {
+    let rope = Rope::from("abcd\nefgh");
+    let mut surface = RenderSurface::new(
+      SurfaceId::new(1).unwrap(),
+      TextFormat::default(),
+      TextAnnotations::default(),
+    );
+
+    let initial = surface.render_frame(rope.slice(..), 1, request(0, 2, 20, None));
+    surface.set_selection(Some(selection(&[(1, 3)])));
+
+    let delta = surface.render_frame(
+      rope.slice(..),
+      1,
+      request(0, 2, 20, Some(initial.generation)),
+    );
+
+    assert!(!delta.full);
+    assert!(delta.changed_rows.is_empty());
+    let selection_delta = delta.layers.selections.expect("selection layer delta");
+    assert_eq!(selection_delta.spans.len(), 1);
+    assert_eq!(selection_delta.spans[0].surface_row, 0);
+    assert_eq!(selection_delta.spans[0].start_col, 1);
+    assert_eq!(selection_delta.spans[0].end_col, 3);
+  }
+
+  #[test]
+  fn selection_spans_update_on_scroll_without_rebuilding_rows() {
+    let rope = Rope::from("aaaa\nbbbb\ncccc");
+    let mut surface = RenderSurface::new(
+      SurfaceId::new(1).unwrap(),
+      TextFormat::default(),
+      TextAnnotations::default(),
+    );
+    surface.set_selection(Some(selection(&[(2, 7)])));
+
+    let initial = surface.render_frame(rope.slice(..), 1, request(0, 2, 20, None));
+    assert!(initial.layers.selections.is_some());
+
+    let delta = surface.render_frame(
+      rope.slice(..),
+      1,
+      request(1, 2, 20, Some(initial.generation)),
+    );
+
+    assert!(!delta.full);
+    assert_eq!(delta.changed_rows.len(), 1);
+    let selection_delta = delta.layers.selections.expect("selection layer delta");
+    assert_eq!(selection_delta.spans.len(), 1);
+    assert_eq!(selection_delta.spans[0].surface_row, 0);
+    assert_eq!(selection_delta.spans[0].start_col, 0);
+    assert_eq!(selection_delta.spans[0].end_col, 2);
   }
 
   #[test]

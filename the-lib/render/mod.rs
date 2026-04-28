@@ -30,6 +30,7 @@ pub use layers::{
   LayerDeltaSet,
   OverlayLayerDelta,
   SelectionLayerDelta,
+  SelectionSpan,
   WidgetLayerDelta,
 };
 pub use surface::RenderSurface;

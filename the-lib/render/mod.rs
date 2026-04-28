@@ -2,6 +2,7 @@ pub mod damage;
 pub mod display_list;
 pub mod doc_formatter;
 pub mod layers;
+pub mod manager;
 pub mod measurement;
 pub mod surface;
 pub mod text_annotations;
@@ -48,6 +49,10 @@ pub use layers::{
   SyntaxSpan,
   WidgetLayerDelta,
   WidgetPlacement,
+};
+pub use manager::{
+  RenderManager,
+  SourceId,
 };
 pub use measurement::{
   MeasurementBackendKind,

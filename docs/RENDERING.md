@@ -1277,14 +1277,27 @@ If one pane scrolls, inactive panes should not rebuild their render plans.
 ```rust
 pub struct RenderManager {
   surfaces: HashMap<SurfaceId, RenderSurface>,
+  surfaces_by_source: HashMap<SourceId, BTreeSet<SurfaceId>>,
+  dirty_surfaces: BTreeSet<SurfaceId>,
 }
 
 impl RenderManager {
-  pub fn render_frame(&mut self, request: FrameRequest) -> RenderFrameDelta {
-    self.surfaces
-      .get_mut(&request.surface_id)
-      .expect("surface exists")
-      .render_frame(request)
+  pub fn render_surface(
+    &mut self,
+    surface_id: SurfaceId,
+    text: RopeSlice<'_>,
+    text_revision: u64,
+    request: FrameRequest,
+  ) -> Option<RenderFrameDelta> {
+    let delta = self.surfaces.get_mut(&surface_id)?.render_frame(text, text_revision, request);
+    self.dirty_surfaces.remove(&surface_id);
+    Some(delta)
+  }
+
+  pub fn mark_source_dirty(&mut self, source_id: SourceId) {
+    if let Some(surface_ids) = self.surfaces_by_source.get(&source_id) {
+      self.dirty_surfaces.extend(surface_ids.iter().copied());
+    }
   }
 }
 ```

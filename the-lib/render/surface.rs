@@ -9,16 +9,6 @@ use std::{
 use ropey::RopeSlice;
 use unicode_segmentation::UnicodeSegmentation;
 
-use crate::{
-  Tendril,
-  grapheme::{
-    Grapheme,
-    grapheme_width,
-  },
-  selection::Selection,
-  syntax::HighlightKindId,
-};
-
 use super::{
   damage::{
     Damage,
@@ -39,7 +29,6 @@ use super::{
     WidgetId,
   },
   doc_formatter::DocumentFormatter,
-  measurement::SurfaceMeasurements,
   layers::{
     BlockWidget,
     CursorLayerDelta,
@@ -53,14 +42,24 @@ use super::{
     WidgetLayerDelta,
     WidgetPlacement,
   },
+  measurement::SurfaceMeasurements,
   text_annotations::TextAnnotations,
   text_format::TextFormat,
+};
+use crate::{
+  Tendril,
+  grapheme::{
+    Grapheme,
+    grapheme_width,
+  },
+  selection::Selection,
+  syntax::HighlightKindId,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RenderSurface {
-  id:                     SurfaceId,
-  format:                 TextFormat,
+  id:                SurfaceId,
+  format:            TextFormat,
   annotations:       TextAnnotations,
   selection:         Option<Selection>,
   syntax_highlights: Vec<SyntaxHighlight>,
@@ -88,16 +87,16 @@ struct SurfaceState {
 impl Default for SurfaceState {
   fn default() -> Self {
     Self {
-      next_row_id: 1,
+      next_row_id:        1,
       last_text_revision: None,
-      last_viewport: None,
-      layout_cache: DocumentLayoutCache::default(),
-      visible_rows: Vec::new(),
-      row_metadata: Vec::new(),
-      selection_spans: Vec::new(),
-      cursor_placements: Vec::new(),
-      syntax_spans: Vec::new(),
-      widget_placements: Vec::new(),
+      last_viewport:      None,
+      layout_cache:       DocumentLayoutCache::default(),
+      visible_rows:       Vec::new(),
+      row_metadata:       Vec::new(),
+      selection_spans:    Vec::new(),
+      cursor_placements:  Vec::new(),
+      syntax_spans:       Vec::new(),
+      widget_placements:  Vec::new(),
     }
   }
 }
@@ -187,12 +186,12 @@ impl RowBuilder {
           ordinal: ordinal_value,
         },
         CachedRowMetadata {
-          kind: RowKind::Virtual {
+          kind:                 RowKind::Virtual {
             anchor_line: self.anchor_line,
-            ordinal: ordinal_value,
+            ordinal:     ordinal_value,
           },
-          doc_line: Some(self.anchor_line),
-          starts_logical_line: true,
+          doc_line:             Some(self.anchor_line),
+          starts_logical_line:  true,
           wrapped_continuation: false,
         },
       )
@@ -247,10 +246,10 @@ struct CachedWidgetLayout {
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 struct DocumentLayoutCache {
-  text_revision:   Option<u64>,
-  wrap_width:      usize,
-  rows:            Vec<CachedLayoutRow>,
-  widget_layouts:  Vec<CachedWidgetLayout>,
+  text_revision:  Option<u64>,
+  wrap_width:     usize,
+  rows:           Vec<CachedLayoutRow>,
+  widget_layouts: Vec<CachedWidgetLayout>,
 }
 
 #[derive(Debug)]
@@ -332,7 +331,12 @@ impl RenderSurface {
   }
 
   pub fn set_syntax_highlights(&mut self, mut highlights: Vec<SyntaxHighlight>) {
-    highlights.sort_by_key(|highlight| (highlight.range.start, std::cmp::Reverse(highlight.range.end)));
+    highlights.sort_by_key(|highlight| {
+      (
+        highlight.range.start,
+        std::cmp::Reverse(highlight.range.end),
+      )
+    });
     if self.syntax_highlights != highlights {
       self.syntax_highlights = highlights;
       self.dirty.syntax.mark();
@@ -395,7 +399,12 @@ impl RenderSurface {
         request.viewport,
         self.measurements,
       );
-      Some(diff_rows(&mut self.state, next_rows, force_full, request.viewport))
+      Some(diff_rows(
+        &mut self.state,
+        next_rows,
+        force_full,
+        request.viewport,
+      ))
     } else {
       None
     };
@@ -408,14 +417,13 @@ impl RenderSurface {
       .iter()
       .map(|row| row.metadata.clone())
       .collect::<Vec<_>>();
-    let row_metadata_delta = build_row_metadata_delta(
-      &self.state.row_metadata,
-      &next_row_metadata,
-      force_full,
-    );
+    let row_metadata_delta =
+      build_row_metadata_delta(&self.state.row_metadata, &next_row_metadata, force_full);
     let row_metadata_changed = force_full || row_metadata_delta.is_some();
 
-    let row_damage = row_diff.as_ref().map_or(Damage::empty(), |diff| diff.damage);
+    let row_damage = row_diff
+      .as_ref()
+      .map_or(Damage::empty(), |diff| diff.damage);
     let retained_rows = row_diff
       .as_ref()
       .map_or_else(Vec::new, |diff| diff.retained_rows.clone());
@@ -426,81 +434,81 @@ impl RenderSurface {
       .as_ref()
       .map_or_else(Vec::new, |diff| diff.removed_rows.clone());
 
-    let selection_spans = if self.dirty.selections.dirty
-      || self.dirty.rows.dirty
-      || first_frame
-      || viewport_changed
-    {
-      build_selection_spans(
-        text,
-        &self.format,
-        &self.annotations,
-        self.selection.as_ref(),
-        request.viewport,
-        self.measurements,
-      )
-    } else {
-      self.state.selection_spans.clone()
-    };
+    let selection_spans =
+      if self.dirty.selections.dirty || self.dirty.rows.dirty || first_frame || viewport_changed {
+        build_selection_spans(
+          text,
+          &self.format,
+          &self.annotations,
+          self.selection.as_ref(),
+          request.viewport,
+          self.measurements,
+        )
+      } else {
+        self.state.selection_spans.clone()
+      };
     let selection_changed = force_full || self.state.selection_spans != selection_spans;
-    let selection_layer = (force_full || selection_changed).then(|| SelectionLayerDelta {
-      spans: selection_spans.clone(),
+    let selection_layer = (force_full || selection_changed).then(|| {
+      SelectionLayerDelta {
+        spans: selection_spans.clone(),
+      }
     });
 
-    let cursor_placements = if self.dirty.cursors.dirty
-      || self.dirty.rows.dirty
-      || first_frame
-      || viewport_changed
-    {
-      build_cursor_placements(
-        text,
-        &self.format,
-        &self.annotations,
-        self.selection.as_ref(),
-        request.viewport,
-        self.measurements,
-      )
-    } else {
-      self.state.cursor_placements.clone()
-    };
+    let cursor_placements =
+      if self.dirty.cursors.dirty || self.dirty.rows.dirty || first_frame || viewport_changed {
+        build_cursor_placements(
+          text,
+          &self.format,
+          &self.annotations,
+          self.selection.as_ref(),
+          request.viewport,
+          self.measurements,
+        )
+      } else {
+        self.state.cursor_placements.clone()
+      };
     let cursor_changed = force_full || self.state.cursor_placements != cursor_placements;
-    let cursor_layer = (force_full || cursor_changed).then(|| CursorLayerDelta {
-      cursors: cursor_placements.clone(),
+    let cursor_layer = (force_full || cursor_changed).then(|| {
+      CursorLayerDelta {
+        cursors: cursor_placements.clone(),
+      }
     });
 
-    let syntax_spans = if self.dirty.syntax.dirty
-      || self.dirty.rows.dirty
-      || first_frame
-      || viewport_changed
-    {
-      build_syntax_spans(
-        text,
-        &self.format,
-        &self.annotations,
-        &self.syntax_highlights,
-        request.viewport,
-        self.measurements,
-      )
-    } else {
-      self.state.syntax_spans.clone()
-    };
+    let syntax_spans =
+      if self.dirty.syntax.dirty || self.dirty.rows.dirty || first_frame || viewport_changed {
+        build_syntax_spans(
+          text,
+          &self.format,
+          &self.annotations,
+          &self.syntax_highlights,
+          request.viewport,
+          self.measurements,
+        )
+      } else {
+        self.state.syntax_spans.clone()
+      };
     let syntax_changed = force_full || self.state.syntax_spans != syntax_spans;
-    let syntax_layer = (force_full || syntax_changed).then(|| SyntaxLayerDelta {
-      spans: syntax_spans.clone(),
+    let syntax_layer = (force_full || syntax_changed).then(|| {
+      SyntaxLayerDelta {
+        spans: syntax_spans.clone(),
+      }
     });
 
-    let widget_placements = if self.dirty.widgets.dirty
-      || self.dirty.rows.dirty
-      || first_frame
-      || viewport_changed
-    {
-      build_widget_placements(&self.state.layout_cache, request.viewport, self.measurements)
-    } else {
-      self.state.widget_placements.clone()
-    };
+    let widget_placements =
+      if self.dirty.widgets.dirty || self.dirty.rows.dirty || first_frame || viewport_changed {
+        build_widget_placements(
+          &self.state.layout_cache,
+          request.viewport,
+          self.measurements,
+        )
+      } else {
+        self.state.widget_placements.clone()
+      };
     let widget_changed = force_full || self.state.widget_placements != widget_placements;
-    let widget_layer = (force_full || widget_changed).then(|| WidgetLayerDelta {
-      widgets: widget_placements.clone(),
+    let widget_layer = (force_full || widget_changed).then(|| {
+      WidgetLayerDelta {
+        widgets: widget_placements.clone(),
+      }
     });
 
     let presentation_changed = force_full
@@ -519,7 +527,10 @@ impl RenderSurface {
       self.generation = self.generation.wrapping_add(1);
     }
 
-    let full_changed_rows = next_visible_rows.iter().map(|row| row.row.clone()).collect::<Vec<_>>();
+    let full_changed_rows = next_visible_rows
+      .iter()
+      .map(|row| row.row.clone())
+      .collect::<Vec<_>>();
     let full = force_full || next_visible_rows.is_empty() && self.generation == 1;
 
     let row_metadata_damage = if force_full || row_metadata_changed {
@@ -574,7 +585,11 @@ impl RenderSurface {
       generation: self.generation,
       full,
       retained_rows: if full { Vec::new() } else { retained_rows },
-      changed_rows: if full { full_changed_rows } else { incremental_changed_rows },
+      changed_rows: if full {
+        full_changed_rows
+      } else {
+        incremental_changed_rows
+      },
       removed_rows: if full { Vec::new() } else { removed_rows },
       row_metadata: row_metadata_delta,
       layers: LayerDeltaSet {
@@ -613,7 +628,11 @@ impl RenderSurface {
   }
 }
 
-fn project_visible_cols(start_col: usize, end_col: usize, viewport: Viewport) -> Option<(usize, usize)> {
+fn project_visible_cols(
+  start_col: usize,
+  end_col: usize,
+  viewport: Viewport,
+) -> Option<(usize, usize)> {
   let visible_start = viewport.first_col;
   let visible_end = viewport.first_col.saturating_add(viewport.wrap_width);
 
@@ -721,9 +740,9 @@ fn diff_rows(
           damaged_rows.push(previous_row.row.placement.surface_row);
           damaged_rows.push(row.placement.surface_row);
           retained_rows.push(RowMove {
-            id: row.id,
+            id:   row.id,
             from: Some(previous_row.row.placement),
-            to: row.placement,
+            to:   row.placement,
           });
         }
       }
@@ -735,10 +754,10 @@ fn diff_rows(
       });
     } else {
       let row = RenderRow {
-        id: next_row_id(state),
+        id:         next_row_id(state),
         generation: 1,
-        placement: built.placement,
-        text: built.text,
+        placement:  built.placement,
+        text:       built.text,
       };
       let metadata = built
         .metadata
@@ -802,7 +821,10 @@ fn rebuild_document_layout_cache(
   while let Some(grapheme) = formatter.next() {
     let visual_row = grapheme.visual_pos.row;
 
-    if current.as_ref().is_some_and(|row| row.visual_row != visual_row) {
+    if current
+      .as_ref()
+      .is_some_and(|row| row.visual_row != visual_row)
+    {
       if let Some(row) = current.take() {
         rows.push(row.into_cached_row(&text, &mut virtual_ordinals));
       }
@@ -829,16 +851,16 @@ fn rebuild_document_layout_cache(
 
   if rows.is_empty() {
     rows.push(CachedLayoutRow {
-      key: RowKey::Document {
-        line_idx: 0,
+      key:         RowKey::Document {
+        line_idx:       0,
         first_doc_char: 0,
       },
-      text: Tendril::new(),
+      text:        Tendril::new(),
       anchor_line: 0,
-      metadata: CachedRowMetadata {
-        kind: RowKind::Document,
-        doc_line: Some(0),
-        starts_logical_line: true,
+      metadata:    CachedRowMetadata {
+        kind:                 RowKind::Document,
+        doc_line:             Some(0),
+        starts_logical_line:  true,
         wrapped_continuation: false,
       },
     });
@@ -876,15 +898,17 @@ fn build_visible_rows(
   cache.rows[viewport.first_row.min(cache.rows.len())..end]
     .iter()
     .enumerate()
-    .map(|(surface_row, row)| BuiltRow {
-      key: row.key.clone(),
-      placement: RowPlacement::new(
-        surface_row,
-        surface_row as u32 * measurements.row_height_px,
-        measurements.row_height_px,
-      ),
-      text: crop_row_text(&row.text, viewport),
-      metadata: row.metadata,
+    .map(|(surface_row, row)| {
+      BuiltRow {
+        key:       row.key.clone(),
+        placement: RowPlacement::new(
+          surface_row,
+          surface_row as u32 * measurements.row_height_px,
+          measurements.row_height_px,
+        ),
+        text:      crop_row_text(&row.text, viewport),
+        metadata:  row.metadata,
+      }
     })
     .collect()
 }
@@ -939,17 +963,17 @@ fn insert_widget_rows(
         rows_with_widgets.push(CachedLayoutRow {
           key: RowKey::Widget {
             widget_id: widget.id,
-            fragment: fragment as u32,
+            fragment:  fragment as u32,
           },
           text: Tendril::new(),
           anchor_line,
           metadata: CachedRowMetadata {
-            kind: RowKind::Widget {
+            kind:                 RowKind::Widget {
               widget_id: widget.id,
-              fragment: fragment as u32,
+              fragment:  fragment as u32,
             },
-            doc_line: Some(anchor_line),
-            starts_logical_line: fragment == 0,
+            doc_line:             Some(anchor_line),
+            starts_logical_line:  fragment == 0,
             wrapped_continuation: false,
           },
         });
@@ -975,17 +999,17 @@ fn insert_widget_rows(
       rows_with_widgets.push(CachedLayoutRow {
         key: RowKey::Widget {
           widget_id: widget.id,
-          fragment: fragment as u32,
+          fragment:  fragment as u32,
         },
         text: Tendril::new(),
         anchor_line,
         metadata: CachedRowMetadata {
-          kind: RowKind::Widget {
+          kind:                 RowKind::Widget {
             widget_id: widget.id,
-            fragment: fragment as u32,
+            fragment:  fragment as u32,
           },
-          doc_line: Some(anchor_line),
-          starts_logical_line: fragment == 0,
+          doc_line:             Some(anchor_line),
+          starts_logical_line:  fragment == 0,
           wrapped_continuation: false,
         },
       });
@@ -1244,7 +1268,11 @@ fn build_row_metadata_delta(
 
   let rows = new
     .iter()
-    .filter(|metadata| previous.get(&metadata.row_id).is_none_or(|old| *old != *metadata))
+    .filter(|metadata| {
+      previous
+        .get(&metadata.row_id)
+        .is_none_or(|old| *old != *metadata)
+    })
     .cloned()
     .collect::<Vec<_>>();
 
@@ -1253,7 +1281,8 @@ fn build_row_metadata_delta(
 
 fn damage_for_row_metadata_change(old: &[RowMetadata], new: &[RowMetadata]) -> Damage {
   Damage::from_rows(
-    old.iter()
+    old
+      .iter()
       .map(|metadata| metadata.surface_row)
       .chain(new.iter().map(|metadata| metadata.surface_row)),
   )
@@ -1261,7 +1290,8 @@ fn damage_for_row_metadata_change(old: &[RowMetadata], new: &[RowMetadata]) -> D
 
 fn damage_for_selection_change(old: &[SelectionSpan], new: &[SelectionSpan]) -> Damage {
   Damage::from_rows(
-    old.iter()
+    old
+      .iter()
       .map(|span| span.surface_row)
       .chain(new.iter().map(|span| span.surface_row)),
   )
@@ -1269,7 +1299,8 @@ fn damage_for_selection_change(old: &[SelectionSpan], new: &[SelectionSpan]) -> 
 
 fn damage_for_cursor_change(old: &[CursorPlacement], new: &[CursorPlacement]) -> Damage {
   Damage::from_rows(
-    old.iter()
+    old
+      .iter()
       .map(|cursor| cursor.surface_row)
       .chain(new.iter().map(|cursor| cursor.surface_row)),
   )
@@ -1277,7 +1308,8 @@ fn damage_for_cursor_change(old: &[CursorPlacement], new: &[CursorPlacement]) ->
 
 fn damage_for_syntax_change(old: &[SyntaxSpan], new: &[SyntaxSpan]) -> Damage {
   Damage::from_rows(
-    old.iter()
+    old
+      .iter()
       .map(|span| span.surface_row)
       .chain(new.iter().map(|span| span.surface_row)),
   )
@@ -1289,7 +1321,8 @@ fn widget_visible_rows(widget: &WidgetPlacement) -> impl Iterator<Item = usize> 
 
 fn damage_for_widget_change(old: &[WidgetPlacement], new: &[WidgetPlacement]) -> Damage {
   Damage::from_rows(
-    old.iter()
+    old
+      .iter()
       .flat_map(widget_visible_rows)
       .chain(new.iter().flat_map(widget_visible_rows)),
   )
@@ -1327,7 +1360,7 @@ mod tests {
     since: Option<u64>,
   ) -> FrameRequest {
     FrameRequest {
-      viewport: Viewport::new(first_row, row_count, 0, wrap_width),
+      viewport:         Viewport::new(first_row, row_count, 0, wrap_width),
       since_generation: since,
     }
   }
@@ -1340,7 +1373,7 @@ mod tests {
     since: Option<u64>,
   ) -> FrameRequest {
     FrameRequest {
-      viewport: Viewport::new(first_row, row_count, first_col, wrap_width),
+      viewport:         Viewport::new(first_row, row_count, first_col, wrap_width),
       since_generation: since,
     }
   }
@@ -1531,8 +1564,11 @@ mod tests {
 
     let initial = surface.render_frame(rope.slice(..), 1, request(0, 2, 20, None));
     let mut annotations = TextAnnotations::default();
-    annotations
-      .add_virtual_line(crate::render::VirtualLineSpec::after(0).text("ghost").single_line());
+    annotations.add_virtual_line(
+      crate::render::VirtualLineSpec::after(0)
+        .text("ghost")
+        .single_line(),
+    );
     surface.set_text_annotations(annotations);
 
     let delta = surface.render_frame(
@@ -1649,7 +1685,7 @@ mod tests {
     let initial = surface.render_frame(rope.slice(..), 1, request(0, 1, 20, None));
     surface.set_syntax_highlights(vec![SyntaxHighlight {
       range: 1..3,
-      kind: HighlightKindId::new(7),
+      kind:  HighlightKindId::new(7),
     }]);
 
     let delta = surface.render_frame(
@@ -1684,14 +1720,10 @@ mod tests {
     surface.set_selection(Some(selection(&[(2, 5)])));
     surface.set_syntax_highlights(vec![SyntaxHighlight {
       range: 1..4,
-      kind: HighlightKindId::new(9),
+      kind:  HighlightKindId::new(9),
     }]);
 
-    let initial = surface.render_frame(
-      rope.slice(..),
-      1,
-      request_with_col(0, 1, 0, 4, None),
-    );
+    let initial = surface.render_frame(rope.slice(..), 1, request_with_col(0, 1, 0, 4, None));
     let original_row = initial.changed_rows[0].clone();
 
     let delta = surface.render_frame(
@@ -1730,7 +1762,7 @@ mod tests {
     );
     surface.set_syntax_highlights(vec![SyntaxHighlight {
       range: 5..7,
-      kind: HighlightKindId::new(3),
+      kind:  HighlightKindId::new(3),
     }]);
 
     let initial = surface.render_frame(rope.slice(..), 1, request(0, 2, 20, None));
@@ -1796,7 +1828,7 @@ mod tests {
     surface.set_selection(Some(selection(&[(1, 3)])));
     surface.set_syntax_highlights(vec![SyntaxHighlight {
       range: 1..3,
-      kind: HighlightKindId::new(4),
+      kind:  HighlightKindId::new(4),
     }]);
 
     let initial = surface.render_frame(rope.slice(..), 1, request(0, 1, 20, None));
@@ -1919,7 +1951,7 @@ mod tests {
     assert_eq!(row_metadata.rows.len(), 4);
     assert_eq!(row_metadata.rows[1].kind, RowKind::Widget {
       widget_id: WidgetId::new(1).unwrap(),
-      fragment: 0,
+      fragment:  0,
     });
     assert_eq!(row_metadata.rows[1].doc_line, Some(0));
     assert!(row_metadata.rows[1].starts_logical_line);
@@ -1927,7 +1959,7 @@ mod tests {
 
     assert_eq!(row_metadata.rows[2].kind, RowKind::Widget {
       widget_id: WidgetId::new(1).unwrap(),
-      fragment: 1,
+      fragment:  1,
     });
     assert_eq!(row_metadata.rows[2].doc_line, Some(0));
     assert!(!row_metadata.rows[2].starts_logical_line);

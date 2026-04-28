@@ -1,11 +1,10 @@
 use std::ops::Range;
 
+use super::display_list::WidgetId;
 use crate::{
   selection::CursorId,
   syntax::HighlightKindId,
 };
-
-use super::display_list::WidgetId;
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct GutterLayerDelta;

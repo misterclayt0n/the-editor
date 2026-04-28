@@ -1,11 +1,10 @@
 use std::num::NonZeroU64;
 
-use crate::Tendril;
-
 use super::{
   damage::Damage,
   layers::LayerDeltaSet,
 };
+use crate::Tendril;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct SurfaceId(NonZeroU64);
@@ -78,8 +77,8 @@ pub struct FrameRequest {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RowPlacement {
   pub surface_row: usize,
-  pub y_px:       u32,
-  pub height_px:  u32,
+  pub y_px:        u32,
+  pub height_px:   u32,
 }
 
 impl RowPlacement {
@@ -122,12 +121,12 @@ pub enum RowKind {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RowMetadata {
-  pub row_id:                RowId,
-  pub surface_row:           usize,
-  pub kind:                  RowKind,
-  pub doc_line:              Option<usize>,
-  pub starts_logical_line:   bool,
-  pub wrapped_continuation:  bool,
+  pub row_id:               RowId,
+  pub surface_row:          usize,
+  pub kind:                 RowKind,
+  pub doc_line:             Option<usize>,
+  pub starts_logical_line:  bool,
+  pub wrapped_continuation: bool,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -137,13 +136,13 @@ pub struct RowMetadataDelta {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RenderFrameDelta {
-  pub surface_id:     SurfaceId,
-  pub generation:     u64,
-  pub full:           bool,
-  pub retained_rows:  Vec<RowMove>,
-  pub changed_rows:   Vec<RenderRow>,
-  pub removed_rows:   Vec<RowId>,
-  pub row_metadata:   Option<RowMetadataDelta>,
-  pub layers:         LayerDeltaSet,
-  pub damage:         Damage,
+  pub surface_id:    SurfaceId,
+  pub generation:    u64,
+  pub full:          bool,
+  pub retained_rows: Vec<RowMove>,
+  pub changed_rows:  Vec<RenderRow>,
+  pub removed_rows:  Vec<RowId>,
+  pub row_metadata:  Option<RowMetadataDelta>,
+  pub layers:        LayerDeltaSet,
+  pub damage:        Damage,
 }

@@ -60,17 +60,17 @@ impl DirtyState {
 impl Damage {
   pub const fn empty() -> Self {
     Self {
-      full: false,
+      full:      false,
       start_row: 0,
-      end_row: 0,
+      end_row:   0,
     }
   }
 
   pub const fn full(row_count: usize) -> Self {
     Self {
-      full: true,
+      full:      true,
       start_row: 0,
-      end_row: row_count,
+      end_row:   row_count,
     }
   }
 
@@ -88,9 +88,9 @@ impl Damage {
     }
 
     Self {
-      full: false,
+      full:      false,
       start_row: min_row,
-      end_row: max_row + 1,
+      end_row:   max_row + 1,
     }
   }
 
@@ -101,9 +101,9 @@ impl Damage {
   pub fn union(self, other: Self) -> Self {
     if self.full || other.full {
       return Self {
-        full: true,
+        full:      true,
         start_row: self.start_row.min(other.start_row),
-        end_row: self.end_row.max(other.end_row),
+        end_row:   self.end_row.max(other.end_row),
       };
     }
 
@@ -115,9 +115,9 @@ impl Damage {
     }
 
     Self {
-      full: false,
+      full:      false,
       start_row: self.start_row.min(other.start_row),
-      end_row: self.end_row.max(other.end_row),
+      end_row:   self.end_row.max(other.end_row),
     }
   }
 }

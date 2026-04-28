@@ -13,7 +13,7 @@ pub struct SurfaceMeasurements {
 impl SurfaceMeasurements {
   pub const fn cell_grid(cell_width_px: u32, row_height_px: u32) -> Self {
     Self {
-      backend: MeasurementBackendKind::CellGrid,
+      backend:       MeasurementBackendKind::CellGrid,
       cell_width_px: if cell_width_px == 0 { 1 } else { cell_width_px },
       row_height_px: if row_height_px == 0 { 1 } else { row_height_px },
     }

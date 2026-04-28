@@ -13,7 +13,7 @@ use crate::{
   },
   movement::{
     Direction,
-    Movement,
+    MotionMode,
   },
   selection::{
     CursorPick,
@@ -143,7 +143,7 @@ pub fn search_regex(
   selection: &Selection,
   pick: CursorPick,
   regex: &Regex,
-  movement: Movement,
+  movement: MotionMode,
   direction: Direction,
   wrap_around: bool,
 ) -> Option<Selection> {
@@ -153,8 +153,8 @@ pub fn search_regex(
   let idx = selection.index_of(picked.id)?;
 
   match movement {
-    Movement::Move => selection.clone().replace(idx, matched_range).ok(),
-    Movement::Extend => Some(selection.clone().push(matched_range)),
+    MotionMode::Move => selection.clone().replace(idx, matched_range).ok(),
+    MotionMode::Extend => Some(selection.clone().push(matched_range)),
   }
 }
 
@@ -392,7 +392,7 @@ mod test {
       &Selection::point(7),
       CursorPick::First,
       &regex,
-      Movement::Move,
+      MotionMode::Move,
       Direction::Forward,
       true,
     )
@@ -404,7 +404,7 @@ mod test {
       &Selection::point(0),
       CursorPick::First,
       &regex,
-      Movement::Move,
+      MotionMode::Move,
       Direction::Backward,
       true,
     )
@@ -423,7 +423,7 @@ mod test {
       &selection,
       CursorPick::Last,
       &regex,
-      Movement::Move,
+      MotionMode::Move,
       Direction::Forward,
       true,
     )
@@ -450,7 +450,7 @@ mod test {
       &selection,
       CursorPick::First,
       &regex,
-      Movement::Extend,
+      MotionMode::Extend,
       Direction::Forward,
       true,
     )
@@ -470,7 +470,7 @@ mod test {
         &Selection::point(0),
         CursorPick::First,
         &regex,
-        Movement::Move,
+        MotionMode::Move,
         Direction::Forward,
         false,
       ),

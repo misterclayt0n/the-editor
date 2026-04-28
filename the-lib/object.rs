@@ -1,7 +1,12 @@
+use std::borrow::Cow;
+
 use ropey::RopeSlice;
 
 use crate::{
-  movement::Direction,
+  movement::{
+    Direction,
+    MotionMode,
+  },
   selection::{
     CursorId,
     CursorRange,
@@ -91,6 +96,58 @@ pub fn select_all_children(syntax: &Syntax, text: RopeSlice, selection: Selectio
       .into_iter()
     })
     .expect("object selection fan-out must preserve non-empty unique cursor IDs")
+}
+
+pub fn move_parent_edge(
+  syntax: &Syntax,
+  text: RopeSlice,
+  selection: Selection,
+  direction: Direction,
+  mode: MotionMode,
+) -> Selection {
+  selection.transform(|range| {
+    let doc_len = text.len_chars();
+    let byte_range = byte_range(text, range);
+
+    let Some(mut node) = syntax.named_descendant_for_byte_range(byte_range.start, byte_range.end)
+    else {
+      return range;
+    };
+
+    let mut head = match direction {
+      Direction::Forward => text.byte_to_char(node.end_byte() as usize),
+      Direction::Backward => {
+        let head = text.byte_to_char(node.start_byte() as usize);
+        if head == range.cursor(text) {
+          node = find_parent_start(&node).unwrap_or(node);
+          text.byte_to_char(node.start_byte() as usize)
+        } else {
+          head
+        }
+      },
+    };
+
+    match mode {
+      MotionMode::Move => {
+        if head >= doc_len {
+          return Range::point(doc_len);
+        }
+        head = head.min(doc_len);
+        let other = (head + 1).min(doc_len);
+        if range.direction() == Direction::Forward {
+          Range::new(head, other)
+        } else {
+          Range::new(other, head)
+        }
+      },
+      MotionMode::Extend => {
+        if head >= range.anchor {
+          head += 1;
+        }
+        Range::new(range.anchor.min(doc_len), head.min(doc_len))
+      },
+    }
+  })
 }
 
 fn select_sibling(
@@ -206,6 +263,17 @@ fn next_named_sibling(node: Node<'_>, direction: Direction) -> Option<Node<'_>> 
   None
 }
 
+fn find_parent_start<'tree>(node: &Node<'tree>) -> Option<Node<'tree>> {
+  let start = node.start_byte();
+  let mut node = Cow::Borrowed(node);
+
+  while node.start_byte() >= start || !node.is_named() {
+    node = Cow::Owned(node.parent()?);
+  }
+
+  Some(node.into_owned())
+}
+
 #[cfg(test)]
 mod test {
   use std::{
@@ -218,6 +286,7 @@ mod test {
 
   use super::*;
   use crate::{
+    movement::MotionMode,
     selection::{
       CursorRange,
       Range,
@@ -347,6 +416,25 @@ mod test {
     assert_eq!(*cursors[1].range, Range::new(5, 8));
     assert_eq!(cursors[0].id.get(), 5);
     assert_ne!(cursors[1].id, cursors[0].id);
+  }
+
+  #[test]
+  fn move_parent_edge_clamps_and_preserves_cursor_id() {
+    let (text, syntax) = json_syntax("[1,22,333]");
+    let selection = Selection::from_cursors(smallvec![cursor(9, 10, 10)]).unwrap();
+
+    let moved = move_parent_edge(
+      &syntax,
+      text.slice(..),
+      selection,
+      Direction::Forward,
+      MotionMode::Extend,
+    );
+
+    let cursor = moved.get(0).unwrap();
+    assert_eq!(cursor.id.get(), 9);
+    assert!(cursor.range.from() <= text.len_chars());
+    assert!(cursor.range.to() <= text.len_chars());
   }
 
   #[test]

@@ -97,6 +97,46 @@ pub fn syntax_named(
   }))
 }
 
+pub fn move_syntax_named(
+  syntax: &Syntax,
+  registry: &LanguageRegistry,
+  text: RopeSlice,
+  selection: Selection,
+  object_name: &str,
+  direction: Direction,
+  count: usize,
+) -> std::result::Result<Selection, SyntaxError> {
+  let Some(query) = registry.textobject_query(syntax.root_language())? else {
+    return Ok(selection);
+  };
+
+  let root = syntax.tree().root_node();
+  let around_capture = format!("{object_name}.{}", TextObjectKind::Around);
+  let inside_capture = format!("{object_name}.{}", TextObjectKind::Inside);
+
+  Ok(selection.transform(|range| {
+    let mut current = range;
+    for _ in 0..count.max(1) {
+      let Some(next) = next_syntax_named_range(
+        text,
+        current,
+        direction,
+        query,
+        &root,
+        &around_capture,
+        &inside_capture,
+      ) else {
+        break;
+      };
+      if next == current {
+        break;
+      }
+      current = next;
+    }
+    current
+  }))
+}
+
 fn word_range(
   text: RopeSlice,
   range: Range,
@@ -342,6 +382,44 @@ fn syntax_named_range(
   )
 }
 
+fn next_syntax_named_range(
+  text: RopeSlice,
+  range: Range,
+  direction: Direction,
+  query: &crate::syntax::TextObjectQuery,
+  root: &crate::syntax::tree_sitter::Node<'_>,
+  around_capture: &str,
+  inside_capture: &str,
+) -> Option<Range> {
+  let byte_pos = text.char_to_byte(range.cursor(text));
+  let nodes = query.capture_nodes_any([around_capture, inside_capture], root, text)?;
+
+  let node = match direction {
+    Direction::Forward => {
+      nodes
+        .filter(|node| node.start_byte() > byte_pos)
+        .min_by_key(|node| (node.start_byte(), std::cmp::Reverse(node.end_byte())))?
+    },
+    Direction::Backward => {
+      nodes
+        .filter(|node| node.end_byte() < byte_pos)
+        .max_by_key(|node| (node.end_byte(), std::cmp::Reverse(node.start_byte())))?
+    },
+  };
+
+  let len = text.len_bytes();
+  let start_byte = node.start_byte();
+  let end_byte = node.end_byte();
+  if start_byte > len || end_byte > len {
+    return None;
+  }
+
+  Some(
+    Range::new(text.byte_to_char(start_byte), text.byte_to_char(end_byte))
+      .with_direction(range.direction()),
+  )
+}
+
 #[cfg(test)]
 mod test {
   use std::{
@@ -545,6 +623,28 @@ mod test {
 
     assert_eq!(
       next.range_by_id(cursor(5, 5, 5).id),
+      Some(&Range::new(3, 8))
+    );
+  }
+
+  #[test]
+  fn move_syntax_named_finds_the_next_matching_capture() {
+    let (text, syntax, registry) = json_syntax("[1,[2,3],[4,5]]", Some("(array) @array.around"));
+    let selection = Selection::from_cursors(smallvec![cursor(7, 1, 1)]).unwrap();
+
+    let next = move_syntax_named(
+      &syntax,
+      &registry,
+      text.slice(..),
+      selection,
+      "array",
+      Direction::Forward,
+      1,
+    )
+    .unwrap();
+
+    assert_eq!(
+      next.range_by_id(cursor(7, 1, 1).id),
       Some(&Range::new(3, 8))
     );
   }

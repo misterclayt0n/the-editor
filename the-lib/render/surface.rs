@@ -12,6 +12,7 @@ use crate::{
   Tendril,
   grapheme::Grapheme,
   selection::Selection,
+  syntax::HighlightKindId,
 };
 
 use super::{
@@ -28,9 +29,14 @@ use super::{
   },
   doc_formatter::DocumentFormatter,
   layers::{
+    CursorLayerDelta,
+    CursorPlacement,
     LayerDeltaSet,
     SelectionLayerDelta,
     SelectionSpan,
+    SyntaxHighlight,
+    SyntaxLayerDelta,
+    SyntaxSpan,
   },
   text_annotations::TextAnnotations,
   text_format::TextFormat,
@@ -42,9 +48,11 @@ pub struct RenderSurface {
   format:                 TextFormat,
   annotations:            TextAnnotations,
   selection:              Option<Selection>,
+  syntax_highlights:      Vec<SyntaxHighlight>,
   format_generation:      u64,
   annotations_generation: u64,
   selection_generation:   u64,
+  syntax_generation:      u64,
   generation:             u64,
   state:                  SurfaceState,
 }
@@ -57,8 +65,11 @@ struct SurfaceState {
   last_format_generation:       u64,
   last_annotations_generation:  u64,
   last_selection_generation:    u64,
+  last_syntax_generation:       u64,
   visible_rows:                 Vec<RetainedRow>,
   selection_spans:              Vec<SelectionSpan>,
+  cursor_placements:            Vec<CursorPlacement>,
+  syntax_spans:                 Vec<SyntaxSpan>,
 }
 
 impl Default for SurfaceState {
@@ -70,8 +81,11 @@ impl Default for SurfaceState {
       last_format_generation: 0,
       last_annotations_generation: 0,
       last_selection_generation: 0,
+      last_syntax_generation: 0,
       visible_rows: Vec::new(),
       selection_spans: Vec::new(),
+      cursor_placements: Vec::new(),
+      syntax_spans: Vec::new(),
     }
   }
 }
@@ -168,9 +182,11 @@ impl RenderSurface {
       format,
       annotations,
       selection: None,
+      syntax_highlights: Vec::new(),
       format_generation: 0,
       annotations_generation: 0,
       selection_generation: 0,
+      syntax_generation: 0,
       generation: 0,
       state: SurfaceState::default(),
     }
@@ -203,6 +219,10 @@ impl RenderSurface {
     self.selection.as_ref()
   }
 
+  pub fn syntax_highlights(&self) -> &[SyntaxHighlight] {
+    &self.syntax_highlights
+  }
+
   pub fn set_text_annotations(&mut self, annotations: TextAnnotations) {
     if self.annotations != annotations {
       self.annotations = annotations;
@@ -214,6 +234,14 @@ impl RenderSurface {
     if self.selection != selection {
       self.selection = selection;
       self.selection_generation = self.selection_generation.wrapping_add(1);
+    }
+  }
+
+  pub fn set_syntax_highlights(&mut self, mut highlights: Vec<SyntaxHighlight>) {
+    highlights.sort_by_key(|highlight| (highlight.range.start, std::cmp::Reverse(highlight.range.end)));
+    if self.syntax_highlights != highlights {
+      self.syntax_highlights = highlights;
+      self.syntax_generation = self.syntax_generation.wrapping_add(1);
     }
   }
 
@@ -250,11 +278,37 @@ impl RenderSurface {
       spans: selection_spans.clone(),
     });
 
+    let cursor_placements = build_cursor_placements(
+      text,
+      &self.format,
+      &self.annotations,
+      self.selection.as_ref(),
+      request.viewport,
+    );
+    let cursor_changed = force_full || self.state.cursor_placements != cursor_placements;
+    let cursor_layer = cursor_changed.then(|| CursorLayerDelta {
+      cursors: cursor_placements.clone(),
+    });
+
+    let syntax_spans = build_syntax_spans(
+      text,
+      &self.format,
+      &self.annotations,
+      &self.syntax_highlights,
+      request.viewport,
+    );
+    let syntax_changed = force_full || self.state.syntax_spans != syntax_spans;
+    let syntax_layer = syntax_changed.then(|| SyntaxLayerDelta {
+      spans: syntax_spans.clone(),
+    });
+
     let presentation_changed = force_full
       || !diff.retained_rows.is_empty()
       || !diff.changed_rows.is_empty()
       || !diff.removed_rows.is_empty()
-      || selection_changed;
+      || selection_changed
+      || cursor_changed
+      || syntax_changed;
 
     if self.generation == 0 {
       self.generation = 1;
@@ -267,8 +321,11 @@ impl RenderSurface {
     self.state.last_format_generation = self.format_generation;
     self.state.last_annotations_generation = self.annotations_generation;
     self.state.last_selection_generation = self.selection_generation;
+    self.state.last_syntax_generation = self.syntax_generation;
     self.state.visible_rows = diff.next_visible_rows;
     self.state.selection_spans = selection_spans;
+    self.state.cursor_placements = cursor_placements;
+    self.state.syntax_spans = syntax_spans;
 
     let full = force_full || self.state.visible_rows.is_empty() && self.generation == 1;
     let damage = if full {
@@ -295,6 +352,8 @@ impl RenderSurface {
       removed_rows: if full { Vec::new() } else { diff.removed_rows },
       layers: LayerDeltaSet {
         selections: selection_layer,
+        cursors: cursor_layer,
+        syntax: syntax_layer,
         ..LayerDeltaSet::default()
       },
       damage,
@@ -562,6 +621,109 @@ fn build_selection_spans(
   spans
 }
 
+fn build_cursor_placements(
+  text: RopeSlice<'_>,
+  format: &TextFormat,
+  annotations: &TextAnnotations,
+  selection: Option<&Selection>,
+  viewport: Viewport,
+) -> Vec<CursorPlacement> {
+  let Some(selection) = selection else {
+    return Vec::new();
+  };
+
+  let mut cursors = Vec::new();
+  for cursor in selection.iter() {
+    let char_idx = cursor.range.cursor(text);
+    let Some(pos) = super::visual_position::visual_pos_at_char(
+      text,
+      format,
+      viewport.wrap_width,
+      annotations,
+      char_idx,
+    ) else {
+      continue;
+    };
+
+    if pos.row < viewport.first_row || pos.row >= viewport.first_row + viewport.row_count {
+      continue;
+    }
+
+    cursors.push(CursorPlacement {
+      cursor_id: cursor.id,
+      surface_row: pos.row - viewport.first_row,
+      col: pos.col,
+    });
+  }
+
+  cursors
+}
+
+fn build_syntax_spans(
+  text: RopeSlice<'_>,
+  format: &TextFormat,
+  annotations: &TextAnnotations,
+  syntax_highlights: &[SyntaxHighlight],
+  viewport: Viewport,
+) -> Vec<SyntaxSpan> {
+  if syntax_highlights.is_empty() {
+    return Vec::new();
+  }
+
+  let mut spans: Vec<SyntaxSpan> = Vec::new();
+  let mut next_highlight = 0;
+  let mut active: Vec<(HighlightKindId, usize)> = Vec::new();
+  let mut formatter = DocumentFormatter::new(text, format, viewport.wrap_width, annotations);
+
+  for grapheme in &mut formatter {
+    if grapheme.source.is_eof() {
+      break;
+    }
+    if grapheme.is_virtual() || grapheme.raw == Grapheme::Newline {
+      continue;
+    }
+
+    let visual_row = grapheme.visual_pos.row;
+    if visual_row < viewport.first_row || visual_row >= viewport.first_row + viewport.row_count {
+      continue;
+    }
+
+    while let Some(highlight) = syntax_highlights.get(next_highlight) {
+      if highlight.range.start > grapheme.char_idx {
+        break;
+      }
+      if highlight.range.end > grapheme.char_idx {
+        active.push((highlight.kind, highlight.range.end));
+      }
+      next_highlight += 1;
+    }
+
+    active.retain(|(_, end)| *end > grapheme.char_idx);
+    let Some((kind, _)) = active.last().copied() else {
+      continue;
+    };
+
+    let span = SyntaxSpan {
+      surface_row: visual_row - viewport.first_row,
+      start_col: grapheme.visual_pos.col,
+      end_col: grapheme.visual_pos.col + grapheme.width(),
+      kind,
+    };
+
+    if let Some(last) = spans.last_mut()
+      && last.surface_row == span.surface_row
+      && last.kind == span.kind
+      && last.end_col == span.start_col
+    {
+      last.end_col = span.end_col;
+    } else {
+      spans.push(span);
+    }
+  }
+
+  spans
+}
+
 #[cfg(test)]
 mod tests {
   use ropey::Rope;
@@ -571,6 +733,7 @@ mod tests {
     render::{
       FrameRequest,
       SurfaceId,
+      SyntaxHighlight,
       TextAnnotations,
       TextFormat,
       Viewport,
@@ -579,6 +742,7 @@ mod tests {
       Range,
       Selection,
     },
+    syntax::HighlightKindId,
   };
 
   fn request(
@@ -747,7 +911,7 @@ mod tests {
   }
 
   #[test]
-  fn selection_change_updates_only_selection_layer() {
+  fn selection_change_updates_selection_and_cursor_layers_only() {
     let rope = Rope::from("abcd\nefgh");
     let mut surface = RenderSurface::new(
       SurfaceId::new(1).unwrap(),
@@ -771,10 +935,15 @@ mod tests {
     assert_eq!(selection_delta.spans[0].surface_row, 0);
     assert_eq!(selection_delta.spans[0].start_col, 1);
     assert_eq!(selection_delta.spans[0].end_col, 3);
+
+    let cursor_delta = delta.layers.cursors.expect("cursor layer delta");
+    assert_eq!(cursor_delta.cursors.len(), 1);
+    assert_eq!(cursor_delta.cursors[0].surface_row, 0);
+    assert_eq!(cursor_delta.cursors[0].col, 2);
   }
 
   #[test]
-  fn selection_spans_update_on_scroll_without_rebuilding_rows() {
+  fn selection_and_cursor_layers_update_on_scroll_without_rebuilding_existing_rows() {
     let rope = Rope::from("aaaa\nbbbb\ncccc");
     let mut surface = RenderSurface::new(
       SurfaceId::new(1).unwrap(),
@@ -799,6 +968,94 @@ mod tests {
     assert_eq!(selection_delta.spans[0].surface_row, 0);
     assert_eq!(selection_delta.spans[0].start_col, 0);
     assert_eq!(selection_delta.spans[0].end_col, 2);
+
+    let cursor_delta = delta.layers.cursors.expect("cursor layer delta");
+    assert_eq!(cursor_delta.cursors.len(), 1);
+    assert_eq!(cursor_delta.cursors[0].surface_row, 0);
+    assert_eq!(cursor_delta.cursors[0].col, 1);
+  }
+
+  #[test]
+  fn point_selection_emits_cursor_without_selection_span() {
+    let rope = Rope::from("abcd");
+    let mut surface = RenderSurface::new(
+      SurfaceId::new(1).unwrap(),
+      TextFormat::default(),
+      TextAnnotations::default(),
+    );
+    surface.set_selection(Some(selection(&[(2, 2)])));
+
+    let delta = surface.render_frame(rope.slice(..), 1, request(0, 1, 20, None));
+
+    assert!(delta.layers.selections.is_some());
+    assert_eq!(delta.layers.selections.unwrap().spans.len(), 0);
+    let cursor_delta = delta.layers.cursors.expect("cursor layer delta");
+    assert_eq!(cursor_delta.cursors.len(), 1);
+    assert_eq!(cursor_delta.cursors[0].surface_row, 0);
+    assert_eq!(cursor_delta.cursors[0].col, 2);
+  }
+
+  #[test]
+  fn syntax_change_updates_only_syntax_layer() {
+    let rope = Rope::from("abcd");
+    let mut surface = RenderSurface::new(
+      SurfaceId::new(1).unwrap(),
+      TextFormat::default(),
+      TextAnnotations::default(),
+    );
+
+    let initial = surface.render_frame(rope.slice(..), 1, request(0, 1, 20, None));
+    surface.set_syntax_highlights(vec![SyntaxHighlight {
+      range: 1..3,
+      kind: HighlightKindId::new(7),
+    }]);
+
+    let delta = surface.render_frame(
+      rope.slice(..),
+      1,
+      request(0, 1, 20, Some(initial.generation)),
+    );
+
+    assert!(!delta.full);
+    assert!(delta.changed_rows.is_empty());
+    let syntax_delta = delta.layers.syntax.expect("syntax layer delta");
+    assert_eq!(syntax_delta.spans.len(), 1);
+    assert_eq!(syntax_delta.spans[0].surface_row, 0);
+    assert_eq!(syntax_delta.spans[0].start_col, 1);
+    assert_eq!(syntax_delta.spans[0].end_col, 3);
+    assert_eq!(syntax_delta.spans[0].kind, HighlightKindId::new(7));
+  }
+
+  #[test]
+  fn syntax_layer_updates_on_scroll_without_rebuilding_existing_rows() {
+    let rope = Rope::from("aaaa\nbbbb\ncccc");
+    let mut surface = RenderSurface::new(
+      SurfaceId::new(1).unwrap(),
+      TextFormat::default(),
+      TextAnnotations::default(),
+    );
+    surface.set_syntax_highlights(vec![SyntaxHighlight {
+      range: 5..7,
+      kind: HighlightKindId::new(3),
+    }]);
+
+    let initial = surface.render_frame(rope.slice(..), 1, request(0, 2, 20, None));
+    assert!(initial.layers.syntax.is_some());
+
+    let delta = surface.render_frame(
+      rope.slice(..),
+      1,
+      request(1, 2, 20, Some(initial.generation)),
+    );
+
+    assert!(!delta.full);
+    assert_eq!(delta.changed_rows.len(), 1);
+    let syntax_delta = delta.layers.syntax.expect("syntax layer delta");
+    assert_eq!(syntax_delta.spans.len(), 1);
+    assert_eq!(syntax_delta.spans[0].surface_row, 0);
+    assert_eq!(syntax_delta.spans[0].start_col, 0);
+    assert_eq!(syntax_delta.spans[0].end_col, 2);
+    assert_eq!(syntax_delta.spans[0].kind, HighlightKindId::new(3));
   }
 
   #[test]

@@ -26,11 +26,15 @@ pub use doc_formatter::{
 };
 pub use layers::{
   CursorLayerDelta,
+  CursorPlacement,
   GutterLayerDelta,
   LayerDeltaSet,
   OverlayLayerDelta,
   SelectionLayerDelta,
   SelectionSpan,
+  SyntaxHighlight,
+  SyntaxLayerDelta,
+  SyntaxSpan,
   WidgetLayerDelta,
 };
 pub use surface::RenderSurface;

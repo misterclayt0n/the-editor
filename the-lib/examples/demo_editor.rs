@@ -150,7 +150,7 @@ impl App {
       auto_pairs: AutoPairs::default(),
       mode: Mode::Normal,
       status: String::from(
-        "Ctrl-Q quit · Ctrl-S save · Ctrl-Shift-S save as · Ctrl-Z/Y undo/redo · Ctrl-C/X/V \
+        "Ctrl-Q quit · Ctrl-S save · Ctrl-Shift-S/F3 save as · Ctrl-Z/Y undo/redo · Ctrl-C/X/V \
          copy/cut/paste · / search · F2 wrap · F6 stress",
       ),
       last_render: Duration::ZERO,
@@ -234,18 +234,22 @@ impl App {
   }
 
   fn sync_viewport(&mut self) -> io::Result<()> {
-    let (viewport, _) = viewport_from_terminal()?;
+    let (_, (cols, rows)) = viewport_from_terminal()?;
+    let row_count = rows.saturating_sub(self.footer_rows() as u16).max(1) as usize;
+
     let surface = self.surface_mut();
     let mut current = surface.viewport();
-    current.row_count = viewport.row_count;
-    current.wrap_width = viewport.wrap_width;
+    current.row_count = row_count;
+    current.wrap_width = cols.max(1) as usize;
     surface.set_viewport(current);
     Ok(())
   }
 
   fn draw(&mut self, stdout: &mut io::Stdout) -> Result<(), Box<dyn std::error::Error>> {
     let (_, (cols, rows)) = viewport_from_terminal()?;
-    let editor_rows = rows.saturating_sub(1) as usize;
+    let prompt = self.prompt_line();
+    let footer_rows = self.footer_rows() as u16;
+    let editor_rows = rows.saturating_sub(footer_rows).max(1) as usize;
 
     let start = Instant::now();
     let frame = self
@@ -271,9 +275,10 @@ impl App {
     }
 
     let status = self.status_line(cols as usize);
+    let status_row = rows.saturating_sub(footer_rows);
     queue!(
       stdout,
-      MoveTo(0, rows.saturating_sub(1)),
+      MoveTo(0, status_row),
       SetForegroundColor(Color::Black),
       SetAttribute(Attribute::Reverse),
       Print(truncate_pad(&status, cols as usize)),
@@ -281,7 +286,19 @@ impl App {
       SetForegroundColor(Color::Reset),
     )?;
 
-    if let Some((x, y)) = self.cursor_screen_pos(editor_rows, cols as usize) {
+    if let Some(prompt) = &prompt {
+      queue!(
+        stdout,
+        MoveTo(0, rows.saturating_sub(1)),
+        SetForegroundColor(Color::Cyan),
+        Print(truncate_pad(prompt, cols as usize)),
+        SetForegroundColor(Color::Reset),
+      )?;
+    }
+
+    if let Some((x, y)) = self.prompt_cursor_pos(cols as usize, rows as usize) {
+      queue!(stdout, MoveTo(x as u16, y as u16), Show)?;
+    } else if let Some((x, y)) = self.cursor_screen_pos(editor_rows, cols as usize) {
       queue!(stdout, MoveTo(x as u16, y as u16), Show)?;
     } else {
       queue!(stdout, Hide)?;
@@ -354,6 +371,7 @@ impl App {
         self.apply_motion(move_down_visual, count, mode)?;
       },
       KeyCode::F(2) => self.toggle_wrap(),
+      KeyCode::F(3) => self.start_save_as(),
       KeyCode::F(6) => self.stress_transactions()?,
       KeyCode::Home => self.apply_motion_simple(move_line_start, mode)?,
       KeyCode::End => self.apply_motion_simple(move_line_end, mode)?,
@@ -408,7 +426,6 @@ impl App {
       self.mode = Mode::Search {
         query: query.clone(),
       };
-      self.status = format!("/{query}");
     }
     Ok(false)
   }
@@ -443,7 +460,6 @@ impl App {
 
     if keep_save_as {
       self.mode = Mode::SaveAs { path: path.clone() };
-      self.status = format!("save as: {path}");
     }
     Ok(false)
   }
@@ -851,7 +867,25 @@ impl App {
       .map(|path| path.display().to_string())
       .unwrap_or_default();
     self.mode = Mode::SaveAs { path: path.clone() };
-    self.status = format!("save as: {path}");
+    self.status = String::from("save as: type a path, Enter to save, Esc to cancel");
+  }
+
+  fn prompt_line(&self) -> Option<String> {
+    match &self.mode {
+      Mode::Normal => None,
+      Mode::Search { query } => Some(format!("/{query}")),
+      Mode::SaveAs { path } => Some(format!("save as: {path}")),
+    }
+  }
+
+  fn prompt_cursor_pos(&self, cols: usize, rows: usize) -> Option<(usize, usize)> {
+    let prompt = self.prompt_line()?;
+    let x = prompt.chars().count().min(cols.saturating_sub(1));
+    Some((x, rows.saturating_sub(1)))
+  }
+
+  fn footer_rows(&self) -> usize {
+    1 + usize::from(self.prompt_line().is_some())
   }
 
   fn selection_or_line_values(&self) -> Vec<Tendril> {

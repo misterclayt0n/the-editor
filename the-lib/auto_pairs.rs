@@ -7,6 +7,7 @@ use thiserror::Error;
 
 use crate::{
   Tendril,
+  edit::Edit,
   grapheme,
   movement::Direction,
   selection::{
@@ -43,12 +44,6 @@ pub struct Pair {
 
 #[derive(Debug, Clone)]
 pub struct AutoPairs(Vec<Pair>);
-
-#[derive(Debug, Clone)]
-pub struct AutoPairEdit {
-  pub transaction: Transaction,
-  pub selection:   Selection,
-}
 
 pub type Result<T> = std::result::Result<T, AutoPairsError>;
 
@@ -199,7 +194,7 @@ pub fn edit_for_typed_char(
   selection: &Selection,
   ch: char,
   pairs: &AutoPairs,
-) -> Result<Option<AutoPairEdit>> {
+) -> Result<Option<Edit>> {
   if !pairs.matches_char(ch) {
     return Ok(None);
   }
@@ -238,7 +233,7 @@ pub fn edit_for_typed_char(
   };
 
   let selection = selection_from_plans(plans)?;
-  Ok(Some(AutoPairEdit {
+  Ok(Some(Edit {
     transaction,
     selection,
   }))
@@ -248,7 +243,7 @@ pub fn edit_for_backspace(
   doc: &Rope,
   selection: &Selection,
   pairs: &AutoPairs,
-) -> Result<Option<AutoPairEdit>> {
+) -> Result<Option<Edit>> {
   let slice = doc.slice(..);
   let mut spans = Vec::with_capacity(selection.ranges().len());
   let mut cursor_ids: SmallVec<[crate::selection::CursorId; 1]> =
@@ -288,7 +283,7 @@ pub fn edit_for_backspace(
     })
     .collect::<std::result::Result<SmallVec<[CursorRange; 1]>, TransactionError>>()?;
   let selection = Selection::from_cursors(cursors)?;
-  Ok(Some(AutoPairEdit {
+  Ok(Some(Edit {
     transaction,
     selection,
   }))
@@ -552,7 +547,7 @@ mod test {
     .unwrap()
   }
 
-  fn apply(doc: &Rope, edit: &AutoPairEdit) -> String {
+  fn apply(doc: &Rope, edit: &Edit) -> String {
     edit.transaction.apply_to(doc).unwrap().to_string()
   }
 

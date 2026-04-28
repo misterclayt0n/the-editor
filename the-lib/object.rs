@@ -119,7 +119,9 @@ fn select_sibling(
 
 fn node_for_range<'a>(syntax: &'a Syntax, text: RopeSlice<'a>, range: Range) -> Option<Node<'a>> {
   let byte_range = byte_range(text, range);
-  let root = syntax.tree_for_byte_range(byte_range.start, byte_range.end).root_node();
+  let root = syntax
+    .tree_for_byte_range(byte_range.start, byte_range.end)
+    .root_node();
 
   root
     .named_descendant_for_byte_range(byte_range.start, byte_range.end)
@@ -131,7 +133,10 @@ fn byte_range(text: RopeSlice, range: Range) -> std::ops::Range<u32> {
   from as u32..to as u32
 }
 
-fn named_child_containing<'a>(node: Node<'a>, byte_range: std::ops::Range<u32>) -> Option<Node<'a>> {
+fn named_child_containing<'a>(
+  node: Node<'a>,
+  byte_range: std::ops::Range<u32>,
+) -> Option<Node<'a>> {
   node.children().find(|child| {
     child.is_named()
       && child.byte_range().start <= byte_range.start
@@ -171,7 +176,11 @@ fn ranges_to_cursors(ranges: Vec<Range>, first_id: CursorId, fallback: Range) ->
     .into_iter()
     .enumerate()
     .map(|(idx, range)| {
-      let id = if idx == 0 { first_id } else { CursorId::fresh() };
+      let id = if idx == 0 {
+        first_id
+      } else {
+        CursorId::fresh()
+      };
       CursorRange { id, range }
     })
     .collect()

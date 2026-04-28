@@ -146,19 +146,19 @@ fn find_sibling_match(
     })
 }
 
-fn find_match_in_plaintext_window(
-  text: RopeSlice,
-  pos: usize,
-  mode: MatchMode,
-) -> Option<usize> {
+fn find_match_in_plaintext_window(text: RopeSlice, pos: usize, mode: MatchMode) -> Option<usize> {
   let window_start = pos.saturating_sub(MAX_PLAINTEXT_SCAN);
   let window_end = (pos + MAX_PLAINTEXT_SCAN).min(text.len_chars());
   let window = text.slice(window_start..window_end);
   let local_pos = pos - window_start;
 
   match mode {
-    MatchMode::Strict => find_matching_bracket_plaintext(window, local_pos).map(|idx| idx + window_start),
-    MatchMode::Fuzzy => find_enclosing_bracket_plaintext(window, local_pos).map(|idx| idx + window_start),
+    MatchMode::Strict => {
+      find_matching_bracket_plaintext(window, local_pos).map(|idx| idx + window_start)
+    },
+    MatchMode::Fuzzy => {
+      find_enclosing_bracket_plaintext(window, local_pos).map(|idx| idx + window_start)
+    },
   }
 }
 
@@ -348,16 +348,28 @@ mod tests {
   fn fuzzy_matching_returns_the_closing_bracket_of_the_nearest_enclosing_scope() {
     let (text, syntax) = json_syntax("[1,[2,3]]");
 
-    assert_eq!(find_matching_bracket_fuzzy(&syntax, text.slice(..), 4), Some(7));
-    assert_eq!(find_matching_bracket_fuzzy(&syntax, text.slice(..), 2), Some(8));
+    assert_eq!(
+      find_matching_bracket_fuzzy(&syntax, text.slice(..), 4),
+      Some(7)
+    );
+    assert_eq!(
+      find_matching_bracket_fuzzy(&syntax, text.slice(..), 2),
+      Some(8)
+    );
   }
 
   #[test]
   fn fuzzy_matching_behaves_like_strict_when_cursor_is_on_a_bracket() {
     let (text, syntax) = json_syntax("[1,[2,3]]");
 
-    assert_eq!(find_matching_bracket_fuzzy(&syntax, text.slice(..), 0), Some(8));
-    assert_eq!(find_matching_bracket_fuzzy(&syntax, text.slice(..), 7), Some(3));
+    assert_eq!(
+      find_matching_bracket_fuzzy(&syntax, text.slice(..), 0),
+      Some(8)
+    );
+    assert_eq!(
+      find_matching_bracket_fuzzy(&syntax, text.slice(..), 7),
+      Some(3)
+    );
   }
 
   #[test]
@@ -365,6 +377,9 @@ mod tests {
     let (text, syntax) = json_syntax("prefix (middle [inner]) suffix");
 
     assert_eq!(find_matching_bracket(&syntax, text.slice(..), 7), Some(22));
-    assert_eq!(find_matching_bracket_fuzzy(&syntax, text.slice(..), 16), Some(21));
+    assert_eq!(
+      find_matching_bracket_fuzzy(&syntax, text.slice(..), 16),
+      Some(21)
+    );
   }
 }

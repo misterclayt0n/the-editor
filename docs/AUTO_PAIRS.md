@@ -84,13 +84,13 @@ Auto-pairs should compute the exact resulting `Selection` explicitly, because cu
 
 ## Main decisions
 
-### 1. Return a small module-local edit result
-**Decision:** return a concrete module-local result containing both `Transaction` and `Selection`.
+### 1. Return the shared `Edit` result
+**Decision:** return the shared `Edit` type containing both `Transaction` and `Selection`.
 
 Preferred shape:
 
 ```rust
-pub struct AutoPairEdit {
+pub struct Edit {
   pub transaction: Transaction,
   pub selection:   Selection,
 }
@@ -101,9 +101,7 @@ Auto-pairs inherently decides both:
 - what text edit should happen
 - where the resulting cursor/selection should land
 
-Returning only `Transaction` would be incomplete. A tuple would work, but a tiny named struct is clearer and still minimal.
-
-Do **not** extract a shared abstraction yet. If another module needs to return the same pair, revisit then.
+Returning only `Transaction` would be incomplete. This shape is now shared across pure editing-behavior modules that need to produce both text changes and exact resulting selection state.
 
 ---
 
@@ -114,7 +112,7 @@ Do **not** extract a shared abstraction yet. If another module needs to return t
 `auto_pairs.rs` should:
 - inspect inputs
 - plan an edit
-- return `Option<AutoPairEdit>`
+- return `Option<Edit>`
 
 It should **not**:
 - apply the edit
@@ -529,11 +527,6 @@ pub struct Pair {
 #[derive(Debug, Clone)]
 pub struct AutoPairs(Vec<Pair>);
 
-#[derive(Debug, Clone)]
-pub struct AutoPairEdit {
-  pub transaction: Transaction,
-  pub selection:   Selection,
-}
 
 pub type Result<T> = std::result::Result<T, AutoPairsError>;
 
@@ -581,13 +574,13 @@ pub fn edit_for_typed_char(
   selection: &Selection,
   ch: char,
   pairs: &AutoPairs,
-) -> Result<Option<AutoPairEdit>>;
+) -> Result<Option<Edit>>;
 
 pub fn edit_for_backspace(
   doc: &Rope,
   selection: &Selection,
   pairs: &AutoPairs,
-) -> Result<Option<AutoPairEdit>>;
+) -> Result<Option<Edit>>;
 ```
 
 ---

@@ -5,16 +5,18 @@ use smartstring::{
 
 pub mod auto_pairs;
 pub mod chars;
+pub mod comment;
+pub mod edit;
 pub mod grapheme;
 pub mod history;
 pub mod line_ending;
+pub mod match_brackets;
 pub mod movement;
+pub mod object;
 pub mod selection;
 pub mod syntax;
 pub mod transaction;
 pub mod uri;
-pub mod object;
-pub mod match_brackets;
 
 /// A small-string-optimized string type.
 ///

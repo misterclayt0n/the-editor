@@ -161,7 +161,11 @@ impl std::fmt::Debug for RuntimeSession {
 
 impl Default for RuntimeSession {
   fn default() -> Self {
-    Self::new(RuntimeSyntax::disabled(), SystemClipboard::provider())
+    let syntax = RuntimeSyntax::builtin().unwrap_or_else(|err| {
+      tracing::warn!("failed to initialize builtin syntax runtime: {err}");
+      RuntimeSyntax::disabled()
+    });
+    Self::new(syntax, SystemClipboard::provider())
   }
 }
 

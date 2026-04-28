@@ -1,5 +1,6 @@
 use std::{
   borrow::Cow,
+  collections::HashSet,
   fs,
   path::{
     Path,
@@ -8,14 +9,18 @@ use std::{
   sync::Arc,
 };
 
+use rust_embed::RustEmbed;
+use serde::Deserialize;
 use the_lib::{
   document::Document,
   render::SyntaxHighlight,
   syntax::{
     DocumentSyntax,
     DocumentSyntaxState,
+    FileType,
     LanguageAssignment,
     LanguageRegistry,
+    LanguageSyntaxConfig,
     QueryKind,
     SyntaxConfiguration,
     SyntaxError,
@@ -39,6 +44,11 @@ impl RuntimeSyntax {
       the_lib::syntax::NullResources,
     )
     .expect("empty syntax registry should be valid")
+  }
+
+  pub fn builtin() -> Result<Self, RuntimeSyntaxError> {
+    let config = builtin_syntax_configuration()?;
+    Self::new(config, EmbeddedSyntaxResources::default()).map_err(Into::into)
   }
 
   pub fn new(
@@ -148,6 +158,36 @@ fn active_syntax_state(syntax: &DocumentSyntax) -> Option<SyntaxState> {
   }
 }
 
+#[derive(RustEmbed)]
+#[folder = "assets/"]
+struct EmbeddedSyntaxAssets;
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct EmbeddedSyntaxResources;
+
+impl EmbeddedSyntaxResources {
+  fn query_path(language_id: &str, kind: QueryKind) -> String {
+    format!("queries/{language_id}/{}", kind.filename())
+  }
+}
+
+impl SyntaxResources for EmbeddedSyntaxResources {
+  fn grammar(&self, grammar_name: &str) -> Option<Grammar> {
+    match grammar_name {
+      "rust" => Grammar::try_from(tree_sitter_rust::LANGUAGE).ok(),
+      "json" => Grammar::try_from(tree_sitter_json::LANGUAGE).ok(),
+      _ => None,
+    }
+  }
+
+  fn query(&self, language_id: &str, kind: QueryKind) -> Option<Cow<'_, str>> {
+    let path = Self::query_path(language_id, kind);
+    EmbeddedSyntaxAssets::get(&path)
+      .and_then(|file| String::from_utf8(file.data.into()).ok())
+      .map(Cow::Owned)
+  }
+}
+
 #[derive(Debug, Clone)]
 pub struct FilesystemSyntaxResources {
   grammar_dir: PathBuf,
@@ -195,6 +235,144 @@ impl SyntaxResources for FilesystemSyntaxResources {
   }
 }
 
+const BUILTIN_LANGUAGES_TOML: &str = include_str!("../languages.toml");
+
+fn builtin_syntax_configuration() -> Result<SyntaxConfiguration, RuntimeSyntaxError> {
+  #[derive(Debug, Deserialize)]
+  struct RawLanguageList {
+    #[serde(default)]
+    language: Vec<toml::Table>,
+  }
+
+  let raw = toml::from_str::<RawLanguageList>(BUILTIN_LANGUAGES_TOML)?;
+  let mut languages = Vec::new();
+  let mut language_ids = HashSet::new();
+  let mut scopes = HashSet::new();
+  let mut extensions = HashSet::new();
+  let mut shebangs = HashSet::new();
+
+  for table in raw.language {
+    match sanitize_language_table(table)
+      .and_then(|table| table.try_into::<LanguageSyntaxConfig>().map_err(Into::into))
+    {
+      Ok(language)
+        if register_language_uniqueness(
+          &language,
+          &mut language_ids,
+          &mut scopes,
+          &mut extensions,
+          &mut shebangs,
+        ) =>
+      {
+        languages.push(language)
+      },
+      Ok(language) => {
+        tracing::warn!(
+          "skipping conflicting builtin language config: {}",
+          language.language_id
+        );
+      },
+      Err(err) => {
+        tracing::warn!("skipping builtin language config: {err}");
+      },
+    }
+  }
+
+  Ok(SyntaxConfiguration {
+    language: languages,
+  })
+}
+
+fn sanitize_language_table(mut table: toml::Table) -> Result<toml::Table, RuntimeSyntaxError> {
+  const ALLOWED_KEYS: &[&str] = &[
+    "name",
+    "scope",
+    "file-types",
+    "shebangs",
+    "comment-token",
+    "comment-tokens",
+    "block-comment-tokens",
+    "text-width",
+    "soft-wrap",
+    "grammar",
+    "injection-regex",
+    "indent",
+    "auto-pairs",
+    "rulers",
+    "rainbow-brackets",
+  ];
+
+  table.retain(|key, _| ALLOWED_KEYS.contains(&key.as_ref()));
+
+  if let Some(file_types) = table.get_mut("file-types")
+    && let toml::Value::Array(entries) = file_types
+  {
+    for entry in entries {
+      normalize_file_type_entry(entry);
+    }
+  }
+
+  Ok(table)
+}
+
+fn normalize_file_type_entry(entry: &mut toml::Value) {
+  let toml::Value::Table(table) = entry else {
+    return;
+  };
+
+  if let Some(glob) = table.remove("glob") {
+    table.clear();
+    table.insert(String::from("glob"), glob);
+  } else if let Some(pattern) = table.remove("pattern") {
+    table.clear();
+    table.insert(String::from("glob"), pattern);
+  }
+}
+
+fn register_language_uniqueness(
+  language: &LanguageSyntaxConfig,
+  language_ids: &mut HashSet<String>,
+  scopes: &mut HashSet<String>,
+  extensions: &mut HashSet<String>,
+  shebangs: &mut HashSet<String>,
+) -> bool {
+  if language_ids.contains(&language.language_id) || scopes.contains(&language.scope) {
+    return false;
+  }
+
+  let file_extensions = language
+    .file_types
+    .iter()
+    .filter_map(|file_type| {
+      if let FileType::Extension(extension) = file_type {
+        Some(extension)
+      } else {
+        None
+      }
+    })
+    .collect::<Vec<_>>();
+  if file_extensions
+    .iter()
+    .any(|extension| extensions.contains(*extension))
+  {
+    return false;
+  }
+
+  if language
+    .shebangs
+    .iter()
+    .any(|shebang| shebangs.contains(shebang))
+  {
+    return false;
+  }
+
+  language_ids.insert(language.language_id.clone());
+  scopes.insert(language.scope.clone());
+  extensions.extend(file_extensions.into_iter().cloned());
+  shebangs.extend(language.shebangs.iter().cloned());
+  true
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum RuntimeSyntaxError {
   #[error(transparent)]
@@ -239,6 +417,20 @@ mod tests {
     fn query(&self, language_id: &str, kind: QueryKind) -> Option<Cow<'_, str>> {
       (language_id == "json" && kind == QueryKind::Highlights).then_some(Cow::Borrowed(self.query))
     }
+  }
+
+  #[test]
+  fn builtin_syntax_includes_rust() {
+    let runtime = RuntimeSyntax::builtin().unwrap();
+    assert!(runtime.registry().language_for_name("rust").is_some());
+  }
+
+  #[test]
+  fn builtin_resources_return_rust_highlight_query() {
+    let query = EmbeddedSyntaxResources
+      .query("rust", QueryKind::Highlights)
+      .expect("rust highlights query");
+    assert!(query.contains("@keyword"));
   }
 
   #[test]
@@ -323,6 +515,29 @@ mod tests {
 
     assert!(fragments.contains(&(String::from("string"), String::from("\"name\""))));
     assert!(fragments.contains(&(String::from("number"), String::from("1"))));
+  }
+
+  #[test]
+  fn builtin_runtime_highlights_rust_source() {
+    let runtime = RuntimeSyntax::builtin().unwrap();
+    let mut document = Document::new("fn main() { let x = 1; }\n".into());
+    runtime.activate_document(&mut document, Some(Path::new("main.rs")));
+
+    assert!(matches!(document.syntax(), DocumentSyntax::Assigned {
+      state: DocumentSyntaxState::Active(_),
+      ..
+    }));
+
+    let highlights = runtime.collect_document_highlights(&document);
+    let names = highlights
+      .iter()
+      .filter_map(|highlight| runtime.registry().highlight_name(highlight.kind))
+      .collect::<Vec<_>>();
+
+    assert!(names.iter().any(|name| name.starts_with("keyword")));
+    assert!(names.iter().any(|name| {
+      name.starts_with("function") || name.starts_with("variable") || name.starts_with("constant")
+    }));
   }
 
   #[test]

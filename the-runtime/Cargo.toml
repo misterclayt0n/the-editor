@@ -10,6 +10,8 @@ path = "lib.rs"
 [dependencies]
 dunce.workspace = true
 ropey.workspace = true
+rust-embed = "8.5"
+serde.workspace = true
 thiserror.workspace = true
 toml.workspace = true
 tracing.workspace = true
@@ -17,6 +19,9 @@ which.workspace = true
 
 the-lib = { path = "../the-lib" }
 the-stdx = { path = "../the-stdx" }
+tree-house-bindings = { package = "tree-house-bindings", git = "https://github.com/misterclayt0n/tree-house", default-features = false, features = ["tree-sitter-language"] }
+tree-sitter-json = "0.24"
+tree-sitter-rust = "0.24"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
@@ -26,5 +31,3 @@ clipboard-win = "5.4"
 
 [dev-dependencies]
 tempfile.workspace = true
-tree-house-bindings = { package = "tree-house-bindings", git = "https://github.com/misterclayt0n/tree-house", default-features = false, features = ["tree-sitter-language"] }
-tree-sitter-json = "0.24"

@@ -18,6 +18,7 @@ pub mod object;
 pub mod render;
 pub mod search;
 pub mod selection;
+pub mod surface;
 pub mod surround;
 pub mod syntax;
 pub mod text_object;

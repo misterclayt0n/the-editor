@@ -6,10 +6,10 @@ It answers four questions:
 
 1. What belongs in `movement.rs` in the new editor?
 2. What should the public API feel like?
-3. How should movement relate to render/layout state?
+3. What should stay in Rust, and what should stay in TypeScript?
 4. What should be kept, rewritten, or moved out of the old pasted implementation?
 
-This document is intentionally opinionated. `movement.rs` should be the pure home for cursor travel through text and layout, not a catch-all for every command that feels like a motion.
+This document is intentionally opinionated. `movement.rs` should be the pure home for **core text/layout cursor travel**, not the editor's full motion language.
 
 ---
 
@@ -32,9 +32,9 @@ It is responsible for:
 It is **not** responsible for:
 - command parsing
 - keymaps or modal behavior
+- defining the editor's complete motion vocabulary
 - syntax tree structural navigation
 - syntax-query object motions
-- syntax lifecycle state
 - runtime/UI/history integration
 - hidden mutable interaction state
 
@@ -42,12 +42,12 @@ It is **not** responsible for:
 
 ## Core position
 
-`movement.rs` is a **pure selection-transform module with explicit motion state**.
+`movement.rs` is a **pure selection-transform module with explicit vertical motion state**.
 
 It inspects:
 - document text
 - a `Selection`
-- one `Motion`
+- a small built-in movement primitive
 - one `MotionMode`
 - a pure layout context
 - explicit per-cursor visual goals
@@ -61,10 +61,84 @@ That keeps it aligned with the rest of the architecture:
 ```txt
 Selection:    directional cursor/range state + cursor IDs
 Render:       visual row/column mapping helpers
-Movement:     cursor travel through text/layout
+Movement:     core text/layout cursor travel
 Object:       structural syntax navigation
 TextObject:   semantic object targeting
+TS:           larger motion language and command composition
 ```
+
+---
+
+## The key architecture split
+
+The old editor blurred together two different things under the word “motion”.
+
+### 1. Core movement primitives
+Examples:
+- left/right
+- up/down
+- visual up/down
+- next word start
+- paragraph movement
+- line start/end
+- document start/end
+
+These are:
+- semantic
+- correctness-sensitive
+- multi-cursor-sensitive
+- render/layout-sensitive
+- often hot-path
+
+These belong in `the-lib`.
+
+### 2. The editor's larger motion language
+Examples:
+- matching bracket jump
+- char-find / till-char
+- next function/class/tag
+- next diagnostic
+- next diff hunk
+- page up/down
+- half-page / viewport-relative movement
+- jump-list movement
+- mode-specific/operator-pending composition
+
+These do **not** all belong in `movement.rs`.
+
+They come from different modules and layers:
+- `movement.rs`
+- `object.rs`
+- `text_object.rs`
+- `match_brackets.rs`
+- `search.rs`
+- later `diff.rs` / diagnostics / runtime services / surface logic
+- TS command composition
+
+### Decision
+`movement.rs` should expose a **small built-in set of core text/layout movement primitives**, not a closed enum claiming to represent the full editor motion system.
+
+TypeScript should own the larger motion language by composing Rust primitives.
+
+---
+
+## Relationship to TypeScript
+
+TypeScript should be able to define richer user-facing motions without requiring every one of them to become a Rust enum variant.
+
+Examples:
+- `w` may map to `movement::move_next_word(...)`
+- `%` may map to `match_brackets::find_matching_bracket(...)`
+- `]m` may map to `text_object::move_syntax_named(...)`
+- `f x` may map to `search::find_nth(...)` with user-provided parameters
+- next diagnostic may map to a later diagnostics helper
+
+So the rule should be:
+
+- Rust owns the **motion-capable primitive semantics**
+- TypeScript owns the **larger command/motion language**
+
+This keeps Rust authoritative for correctness-sensitive cursor travel while keeping TS extensible.
 
 ---
 
@@ -111,7 +185,7 @@ The visual-goal state belongs to the caller, typically as surface-local interact
 
 The old `movement.rs` mixed plain text movement with syntax-aware behavior.
 
-That split should be undone.
+That split should stay undone.
 
 ### Keep in `movement.rs`
 - grapheme left/right
@@ -132,7 +206,7 @@ That split should be undone.
 - **structural syntax navigation** belongs in `object.rs`
 - **semantic syntax object motions** belong in `text_object.rs` for now, or a later tiny dedicated syntax-motion module only if that boundary becomes unmistakable
 
-This is a hard requirement for the port: those syntax-based motions should be preserved, but rehomed to the correct modules instead of remaining inside `movement.rs`.
+This is a hard requirement for the port: syntax-based motions should be preserved, but rehomed to the correct modules instead of remaining inside `movement.rs`.
 
 ---
 
@@ -145,33 +219,32 @@ Movement is a real multi-cursor editor behavior, so it should take and return `S
 
 ---
 
-### 2. Use a central `Motion` dispatcher API
+### 2. Remove the big public `Motion` enum
 **Decision:** yes.
 
-Preferred shape:
+Do **not** use one large public dispatcher enum that pretends to be the editor's full motion language.
 
-```rust
-move_selection(..., motion, mode, ...)
-```
+Instead, expose:
+- small named functions
+- small focused enums where they truly help
 
 Reasoning:
-- movement is one coherent vocabulary
-- a dispatcher enum is appropriate here
-- it keeps call sites uniform
-- it makes future TS command routing simpler
+- keeps the Rust boundary honest
+- avoids freezing an oversized “motion IR” too early
+- makes it obvious that TS owns the larger motion language
 
 ---
 
-### 3. Keep `MotionMode` separate from `Motion`
+### 3. Keep `MotionMode` separate from movement primitives
 **Decision:** yes.
 
 Preferred split:
-- `Motion` = where to move
+- movement primitive = where to move
 - `MotionMode` = move vs extend
 
 Reasoning:
 - these are different axes
-- this avoids duplicating motion variants
+- this avoids duplicating APIs unnecessarily
 
 ---
 
@@ -242,11 +315,11 @@ Non-vertical motions clear goals for the affected cursor IDs.
 ### 8. Use one unified movement context
 **Decision:** yes.
 
-Even though many motions do not need layout data, the dispatcher should take one explicit movement context containing the render/layout inputs.
+Even though many motions do not need layout data, the public functions should take one explicit movement context containing the render/layout inputs.
 
 Reasoning:
 - simpler call sites
-- one coherent API
+- uniformity across core movement primitives
 - movement already naturally depends on layout in some cases
 
 ---
@@ -255,8 +328,8 @@ Reasoning:
 **Decision:** yes.
 
 Use this split:
-- `Up` / `Down` = logical line motion
-- `UpVisual` / `DownVisual` = wrapped visual-row motion
+- logical up/down = logical line motion
+- visual up/down = wrapped visual-row motion
 
 Reasoning:
 - explicit semantics
@@ -322,39 +395,15 @@ pub enum MotionMode {
   Extend,
 }
 
-pub enum Motion {
-  Left { count: usize },
-  Right { count: usize },
+pub enum WordKind {
+  Word,
+  LongWord,
+  SubWord,
+}
 
-  Up { count: usize },
-  Down { count: usize },
-  UpVisual { count: usize },
-  DownVisual { count: usize },
-
-  NextWordStart { count: usize },
-  NextWordEnd { count: usize },
-  PrevWordStart { count: usize },
-  PrevWordEnd { count: usize },
-
-  NextLongWordStart { count: usize },
-  NextLongWordEnd { count: usize },
-  PrevLongWordStart { count: usize },
-  PrevLongWordEnd { count: usize },
-
-  NextSubWordStart { count: usize },
-  NextSubWordEnd { count: usize },
-  PrevSubWordStart { count: usize },
-  PrevSubWordEnd { count: usize },
-
-  PrevParagraph { count: usize },
-  NextParagraph { count: usize },
-
-  LineStart,
-  LineEnd,
-  FirstNonWhitespace,
-
-  DocumentStart,
-  DocumentEnd,
+pub enum WordTarget {
+  Start,
+  End,
 }
 
 pub struct VisualGoal {
@@ -374,22 +423,35 @@ pub struct MotionResult {
   pub visual_goals: VisualGoals,
 }
 
-pub fn move_selection(
-  text: RopeSlice,
-  selection: Selection,
-  motion: Motion,
-  mode: MotionMode,
-  visual_goals: &VisualGoals,
-  cx: &MovementContext<'_>,
-) -> MotionResult;
+pub fn move_left(... ) -> MotionResult;
+pub fn move_right(... ) -> MotionResult;
+
+pub fn move_up(... ) -> MotionResult;
+pub fn move_down(... ) -> MotionResult;
+pub fn move_up_visual(... ) -> MotionResult;
+pub fn move_down_visual(... ) -> MotionResult;
+
+pub fn move_next_word(..., kind: WordKind, target: WordTarget, ...) -> MotionResult;
+pub fn move_prev_word(..., kind: WordKind, target: WordTarget, ...) -> MotionResult;
+
+pub fn move_prev_paragraph(... ) -> MotionResult;
+pub fn move_next_paragraph(... ) -> MotionResult;
+
+pub fn move_line_start(... ) -> MotionResult;
+pub fn move_line_end(... ) -> MotionResult;
+pub fn move_first_non_whitespace(... ) -> MotionResult;
+
+pub fn move_document_start(... ) -> MotionResult;
+pub fn move_document_end(... ) -> MotionResult;
 ```
 
 Notes:
 - `MotionMode::Move` collapses to a cursor move
 - `MotionMode::Extend` extends from the existing anchor
-- motions that ignore layout still receive `MovementContext`
+- functions that ignore layout still receive `MovementContext`
 - non-vertical motions clear visual goals for moved cursors
 - vertical motions update visual goals for moved cursors
+- TS composes larger motions from these primitives and other modules
 
 ---
 
@@ -398,7 +460,7 @@ Notes:
 The module should still be decomposed internally.
 
 A good internal split is:
-- dispatcher
+- public selection-centric wrappers
 - horizontal grapheme helpers
 - vertical logical helpers
 - vertical visual helpers
@@ -407,7 +469,7 @@ A good internal split is:
 - line/document anchor helpers
 - visual-goal helpers
 
-The public API should stay centralized even if the implementation is factored into private helpers.
+The public API should stay small and honest even if the implementation shares many private helpers.
 
 ---
 
@@ -495,10 +557,11 @@ Separate tests should be added in the destination modules for the rehomed syntax
 ## Non-goals
 
 `movement.rs` should **not** become:
+- the editor's entire motion abstraction
 - a syntax tree navigation dump
 - a text-object command grammar
 - a runtime-owned interaction-state container
 - a surface/view object
 - a generic command dispatcher for unrelated editor actions
 
-Keep it about cursor motion through text and layout.
+Keep it about core cursor travel through text and layout.

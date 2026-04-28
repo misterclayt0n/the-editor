@@ -55,53 +55,24 @@ pub enum Direction {
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum MotionMode {
+  /// Extend the selection.
   Extend,
+
+  /// Move the selection, collapsing to the moved cursor.
   Move,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Motion {
-  Left { count: usize },
-  Right { count: usize },
-
-  Up { count: usize },
-  Down { count: usize },
-  UpVisual { count: usize },
-  DownVisual { count: usize },
-
-  NextWordStart { count: usize },
-  NextWordEnd { count: usize },
-  PrevWordStart { count: usize },
-  PrevWordEnd { count: usize },
-
-  NextLongWordStart { count: usize },
-  NextLongWordEnd { count: usize },
-  PrevLongWordStart { count: usize },
-  PrevLongWordEnd { count: usize },
-
-  NextSubWordStart { count: usize },
-  NextSubWordEnd { count: usize },
-  PrevSubWordStart { count: usize },
-  PrevSubWordEnd { count: usize },
-
-  PrevParagraph { count: usize },
-  NextParagraph { count: usize },
-
-  LineStart,
-  LineEnd,
-  FirstNonWhitespace,
-
-  DocumentStart,
-  DocumentEnd,
+pub enum WordKind {
+  Word,
+  LongWord,
+  SubWord,
 }
 
-impl Motion {
-  fn is_vertical(self) -> bool {
-    matches!(
-      self,
-      Self::Up { .. } | Self::Down { .. } | Self::UpVisual { .. } | Self::DownVisual { .. }
-    )
-  }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WordTarget {
+  Start,
+  End,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -173,9 +144,8 @@ struct CursorMotionResult {
   visual_goal: Option<VisualGoal>,
 }
 
-/// Possible targets of a word motion.
 #[derive(Copy, Clone, Debug)]
-enum WordMotionTarget {
+enum InternalWordMotionTarget {
   NextWordStart,
   NextWordEnd,
   PrevWordStart,
@@ -190,7 +160,7 @@ enum WordMotionTarget {
   PrevSubWordEnd,
 }
 
-impl WordMotionTarget {
+impl InternalWordMotionTarget {
   #[inline]
   fn is_backward(self) -> bool {
     matches!(
@@ -206,11 +176,11 @@ impl WordMotionTarget {
 }
 
 trait CharHelpers {
-  fn range_to_target(&mut self, target: WordMotionTarget, origin: Range) -> Range;
+  fn range_to_target(&mut self, target: InternalWordMotionTarget, origin: Range) -> Range;
 }
 
 impl CharHelpers for Chars<'_> {
-  fn range_to_target(&mut self, target: WordMotionTarget, origin: Range) -> Range {
+  fn range_to_target(&mut self, target: InternalWordMotionTarget, origin: Range) -> Range {
     let is_prev = target.is_backward();
 
     if is_prev {
@@ -268,20 +238,326 @@ impl CharHelpers for Chars<'_> {
   }
 }
 
-pub fn move_selection(
+pub fn move_left(
   text: RopeSlice,
   selection: Selection,
-  motion: Motion,
+  count: usize,
+  mode: MotionMode,
+  visual_goals: &VisualGoals,
+  _cx: &MovementContext<'_>,
+) -> MotionResult {
+  apply_selection_motion(text, selection, visual_goals, |range, _| {
+    CursorMotionResult {
+      range:       move_horizontally_range(text, range, Direction::Backward, count, mode),
+      visual_goal: None,
+    }
+  })
+}
+
+pub fn move_right(
+  text: RopeSlice,
+  selection: Selection,
+  count: usize,
+  mode: MotionMode,
+  visual_goals: &VisualGoals,
+  _cx: &MovementContext<'_>,
+) -> MotionResult {
+  apply_selection_motion(text, selection, visual_goals, |range, _| {
+    CursorMotionResult {
+      range:       move_horizontally_range(text, range, Direction::Forward, count, mode),
+      visual_goal: None,
+    }
+  })
+}
+
+pub fn move_up(
+  text: RopeSlice,
+  selection: Selection,
+  count: usize,
   mode: MotionMode,
   visual_goals: &VisualGoals,
   cx: &MovementContext<'_>,
 ) -> MotionResult {
+  apply_selection_motion(text, selection, visual_goals, |range, visual_goal| {
+    let result = move_vertically_range(
+      text,
+      range,
+      visual_goal,
+      Direction::Backward,
+      count,
+      mode,
+      cx,
+    );
+    CursorMotionResult {
+      range:       result.range,
+      visual_goal: Some(result.visual_goal),
+    }
+  })
+}
+
+pub fn move_down(
+  text: RopeSlice,
+  selection: Selection,
+  count: usize,
+  mode: MotionMode,
+  visual_goals: &VisualGoals,
+  cx: &MovementContext<'_>,
+) -> MotionResult {
+  apply_selection_motion(text, selection, visual_goals, |range, visual_goal| {
+    let result = move_vertically_range(
+      text,
+      range,
+      visual_goal,
+      Direction::Forward,
+      count,
+      mode,
+      cx,
+    );
+    CursorMotionResult {
+      range:       result.range,
+      visual_goal: Some(result.visual_goal),
+    }
+  })
+}
+
+pub fn move_up_visual(
+  text: RopeSlice,
+  selection: Selection,
+  count: usize,
+  mode: MotionMode,
+  visual_goals: &VisualGoals,
+  cx: &MovementContext<'_>,
+) -> MotionResult {
+  apply_selection_motion(text, selection, visual_goals, |range, visual_goal| {
+    let result = move_vertically_visual_range(
+      text,
+      range,
+      visual_goal,
+      Direction::Backward,
+      count,
+      mode,
+      cx,
+    );
+    CursorMotionResult {
+      range:       result.range,
+      visual_goal: Some(result.visual_goal),
+    }
+  })
+}
+
+pub fn move_down_visual(
+  text: RopeSlice,
+  selection: Selection,
+  count: usize,
+  mode: MotionMode,
+  visual_goals: &VisualGoals,
+  cx: &MovementContext<'_>,
+) -> MotionResult {
+  apply_selection_motion(text, selection, visual_goals, |range, visual_goal| {
+    let result = move_vertically_visual_range(
+      text,
+      range,
+      visual_goal,
+      Direction::Forward,
+      count,
+      mode,
+      cx,
+    );
+    CursorMotionResult {
+      range:       result.range,
+      visual_goal: Some(result.visual_goal),
+    }
+  })
+}
+
+pub fn move_next_word(
+  text: RopeSlice,
+  selection: Selection,
+  kind: WordKind,
+  target: WordTarget,
+  count: usize,
+  mode: MotionMode,
+  visual_goals: &VisualGoals,
+  _cx: &MovementContext<'_>,
+) -> MotionResult {
+  apply_selection_motion(text, selection, visual_goals, |range, _| {
+    CursorMotionResult {
+      range:       move_to_pos(
+        text,
+        range,
+        word_target_pos(
+          text,
+          range,
+          count,
+          word_target(Direction::Forward, kind, target),
+        ),
+        mode,
+      ),
+      visual_goal: None,
+    }
+  })
+}
+
+pub fn move_prev_word(
+  text: RopeSlice,
+  selection: Selection,
+  kind: WordKind,
+  target: WordTarget,
+  count: usize,
+  mode: MotionMode,
+  visual_goals: &VisualGoals,
+  _cx: &MovementContext<'_>,
+) -> MotionResult {
+  apply_selection_motion(text, selection, visual_goals, |range, _| {
+    CursorMotionResult {
+      range:       move_to_pos(
+        text,
+        range,
+        word_target_pos(
+          text,
+          range,
+          count,
+          word_target(Direction::Backward, kind, target),
+        ),
+        mode,
+      ),
+      visual_goal: None,
+    }
+  })
+}
+
+pub fn move_prev_paragraph(
+  text: RopeSlice,
+  selection: Selection,
+  count: usize,
+  mode: MotionMode,
+  visual_goals: &VisualGoals,
+  _cx: &MovementContext<'_>,
+) -> MotionResult {
+  apply_selection_motion(text, selection, visual_goals, |range, _| {
+    CursorMotionResult {
+      range:       move_prev_paragraph_range(text, range, count, mode),
+      visual_goal: None,
+    }
+  })
+}
+
+pub fn move_next_paragraph(
+  text: RopeSlice,
+  selection: Selection,
+  count: usize,
+  mode: MotionMode,
+  visual_goals: &VisualGoals,
+  _cx: &MovementContext<'_>,
+) -> MotionResult {
+  apply_selection_motion(text, selection, visual_goals, |range, _| {
+    CursorMotionResult {
+      range:       move_next_paragraph_range(text, range, count, mode),
+      visual_goal: None,
+    }
+  })
+}
+
+pub fn move_line_start(
+  text: RopeSlice,
+  selection: Selection,
+  mode: MotionMode,
+  visual_goals: &VisualGoals,
+  _cx: &MovementContext<'_>,
+) -> MotionResult {
+  apply_selection_motion(text, selection, visual_goals, |range, _| {
+    CursorMotionResult {
+      range:       move_to_pos(text, range, line_start(text, range.cursor_line(text)), mode),
+      visual_goal: None,
+    }
+  })
+}
+
+pub fn move_line_end(
+  text: RopeSlice,
+  selection: Selection,
+  mode: MotionMode,
+  visual_goals: &VisualGoals,
+  _cx: &MovementContext<'_>,
+) -> MotionResult {
+  apply_selection_motion(text, selection, visual_goals, |range, _| {
+    CursorMotionResult {
+      range:       move_to_pos(
+        text,
+        range,
+        line_content_end(text, range.cursor_line(text)),
+        mode,
+      ),
+      visual_goal: None,
+    }
+  })
+}
+
+pub fn move_first_non_whitespace(
+  text: RopeSlice,
+  selection: Selection,
+  mode: MotionMode,
+  visual_goals: &VisualGoals,
+  _cx: &MovementContext<'_>,
+) -> MotionResult {
+  apply_selection_motion(text, selection, visual_goals, |range, _| {
+    CursorMotionResult {
+      range:       move_to_pos(
+        text,
+        range,
+        first_non_whitespace(text, range.cursor_line(text)),
+        mode,
+      ),
+      visual_goal: None,
+    }
+  })
+}
+
+pub fn move_document_start(
+  text: RopeSlice,
+  selection: Selection,
+  mode: MotionMode,
+  visual_goals: &VisualGoals,
+  _cx: &MovementContext<'_>,
+) -> MotionResult {
+  apply_selection_motion(text, selection, visual_goals, |range, _| {
+    CursorMotionResult {
+      range:       move_to_pos(text, range, 0, mode),
+      visual_goal: None,
+    }
+  })
+}
+
+pub fn move_document_end(
+  text: RopeSlice,
+  selection: Selection,
+  mode: MotionMode,
+  visual_goals: &VisualGoals,
+  _cx: &MovementContext<'_>,
+) -> MotionResult {
+  apply_selection_motion(text, selection, visual_goals, |range, _| {
+    CursorMotionResult {
+      range:       move_to_pos(text, range, text.len_chars(), mode),
+      visual_goal: None,
+    }
+  })
+}
+
+fn apply_selection_motion<F>(
+  text: RopeSlice,
+  selection: Selection,
+  visual_goals: &VisualGoals,
+  move_cursor: F,
+) -> MotionResult
+where
+  F: Fn(Range, Option<VisualGoal>) -> CursorMotionResult,
+{
   let mut cursors = SmallVec::<[CursorRange; 1]>::new();
   let mut next_visual_goals = VisualGoals::new();
 
   for cursor in selection.iter() {
     let old_goal = visual_goals.get(cursor.id);
-    let result = move_cursor(text, *cursor.range, motion, mode, old_goal, cx);
+    let result = move_cursor(*cursor.range, old_goal);
 
     cursors.push(CursorRange {
       id:    cursor.id,
@@ -302,6 +578,7 @@ pub fn move_selection(
   let selection =
     Selection::from_cursors(cursors).expect("movement must preserve non-empty unique cursor IDs");
   next_visual_goals.retain_ids(selection.iter().map(|cursor| cursor.id));
+  let _ = text;
 
   MotionResult {
     selection,
@@ -309,216 +586,11 @@ pub fn move_selection(
   }
 }
 
-fn move_cursor(
-  text: RopeSlice,
-  range: Range,
-  motion: Motion,
-  mode: MotionMode,
-  visual_goal: Option<VisualGoal>,
-  cx: &MovementContext<'_>,
-) -> CursorMotionResult {
-  let original = range;
-  let range = match motion {
-    Motion::Left { count } => move_horizontally(text, range, Direction::Backward, count, mode),
-    Motion::Right { count } => move_horizontally(text, range, Direction::Forward, count, mode),
-    Motion::Up { count } => {
-      let result = move_vertically(
-        text,
-        range,
-        visual_goal,
-        Direction::Backward,
-        count,
-        mode,
-        cx,
-      );
-      return CursorMotionResult {
-        range:       result.range,
-        visual_goal: Some(result.visual_goal),
-      };
-    },
-    Motion::Down { count } => {
-      let result = move_vertically(
-        text,
-        range,
-        visual_goal,
-        Direction::Forward,
-        count,
-        mode,
-        cx,
-      );
-      return CursorMotionResult {
-        range:       result.range,
-        visual_goal: Some(result.visual_goal),
-      };
-    },
-    Motion::UpVisual { count } => {
-      let result = move_vertically_visual(
-        text,
-        range,
-        visual_goal,
-        Direction::Backward,
-        count,
-        mode,
-        cx,
-      );
-      return CursorMotionResult {
-        range:       result.range,
-        visual_goal: Some(result.visual_goal),
-      };
-    },
-    Motion::DownVisual { count } => {
-      let result = move_vertically_visual(
-        text,
-        range,
-        visual_goal,
-        Direction::Forward,
-        count,
-        mode,
-        cx,
-      );
-      return CursorMotionResult {
-        range:       result.range,
-        visual_goal: Some(result.visual_goal),
-      };
-    },
-    Motion::NextWordStart { count } => {
-      move_to_pos(
-        text,
-        range,
-        word_target_pos(text, range, count, WordMotionTarget::NextWordStart),
-        mode,
-      )
-    },
-    Motion::NextWordEnd { count } => {
-      move_to_pos(
-        text,
-        range,
-        word_target_pos(text, range, count, WordMotionTarget::NextWordEnd),
-        mode,
-      )
-    },
-    Motion::PrevWordStart { count } => {
-      move_to_pos(
-        text,
-        range,
-        word_target_pos(text, range, count, WordMotionTarget::PrevWordStart),
-        mode,
-      )
-    },
-    Motion::PrevWordEnd { count } => {
-      move_to_pos(
-        text,
-        range,
-        word_target_pos(text, range, count, WordMotionTarget::PrevWordEnd),
-        mode,
-      )
-    },
-    Motion::NextLongWordStart { count } => {
-      move_to_pos(
-        text,
-        range,
-        word_target_pos(text, range, count, WordMotionTarget::NextLongWordStart),
-        mode,
-      )
-    },
-    Motion::NextLongWordEnd { count } => {
-      move_to_pos(
-        text,
-        range,
-        word_target_pos(text, range, count, WordMotionTarget::NextLongWordEnd),
-        mode,
-      )
-    },
-    Motion::PrevLongWordStart { count } => {
-      move_to_pos(
-        text,
-        range,
-        word_target_pos(text, range, count, WordMotionTarget::PrevLongWordStart),
-        mode,
-      )
-    },
-    Motion::PrevLongWordEnd { count } => {
-      move_to_pos(
-        text,
-        range,
-        word_target_pos(text, range, count, WordMotionTarget::PrevLongWordEnd),
-        mode,
-      )
-    },
-    Motion::NextSubWordStart { count } => {
-      move_to_pos(
-        text,
-        range,
-        word_target_pos(text, range, count, WordMotionTarget::NextSubWordStart),
-        mode,
-      )
-    },
-    Motion::NextSubWordEnd { count } => {
-      move_to_pos(
-        text,
-        range,
-        word_target_pos(text, range, count, WordMotionTarget::NextSubWordEnd),
-        mode,
-      )
-    },
-    Motion::PrevSubWordStart { count } => {
-      move_to_pos(
-        text,
-        range,
-        word_target_pos(text, range, count, WordMotionTarget::PrevSubWordStart),
-        mode,
-      )
-    },
-    Motion::PrevSubWordEnd { count } => {
-      move_to_pos(
-        text,
-        range,
-        word_target_pos(text, range, count, WordMotionTarget::PrevSubWordEnd),
-        mode,
-      )
-    },
-    Motion::PrevParagraph { count } => move_prev_paragraph(text, range, count, mode),
-    Motion::NextParagraph { count } => move_next_paragraph(text, range, count, mode),
-    Motion::LineStart => move_to_pos(text, range, line_start(text, range.cursor_line(text)), mode),
-    Motion::LineEnd => {
-      move_to_pos(
-        text,
-        range,
-        line_content_end(text, range.cursor_line(text)),
-        mode,
-      )
-    },
-    Motion::FirstNonWhitespace => {
-      move_to_pos(
-        text,
-        range,
-        first_non_whitespace(text, range.cursor_line(text)),
-        mode,
-      )
-    },
-    Motion::DocumentStart => move_to_pos(text, range, 0, mode),
-    Motion::DocumentEnd => move_to_pos(text, range, text.len_chars(), mode),
-  };
-
-  let next_goal = if motion.is_vertical() {
-    visual_goal
-  } else if range == original {
-    visual_goal
-  } else {
-    None
-  };
-
-  CursorMotionResult {
-    range,
-    visual_goal: next_goal,
-  }
-}
-
 fn move_to_pos(text: RopeSlice, range: Range, pos: usize, mode: MotionMode) -> Range {
   range.put_cursor(text, pos.min(text.len_chars()), mode == MotionMode::Extend)
 }
 
-fn move_horizontally(
+fn move_horizontally_range(
   text: RopeSlice,
   range: Range,
   direction: Direction,
@@ -536,7 +608,7 @@ fn move_horizontally(
   move_to_pos(text, range, new_pos, mode)
 }
 
-fn move_vertically_visual(
+fn move_vertically_visual_range(
   text: RopeSlice,
   range: Range,
   visual_goal: Option<VisualGoal>,
@@ -573,7 +645,7 @@ fn move_vertically_visual(
   }
 }
 
-fn move_vertically(
+fn move_vertically_range(
   text: RopeSlice,
   range: Range,
   visual_goal: Option<VisualGoal>,
@@ -602,7 +674,6 @@ fn move_vertically(
   let goal = VisualGoal {
     col: visual_goal.map_or(current.col as u32, |goal| goal.col),
   };
-  let target_row = current.row;
   let count = count.max(1);
 
   let mut new_line_idx = match direction {
@@ -622,7 +693,7 @@ fn move_vertically(
   let (new_pos, _) = char_idx_at_visual_block_offset(
     line_slice,
     new_line_start,
-    target_row,
+    current.row,
     goal.col as usize,
     cx.text_format,
     cx.wrap_width,
@@ -635,11 +706,64 @@ fn move_vertically(
   }
 }
 
-fn word_target_pos(text: RopeSlice, range: Range, count: usize, target: WordMotionTarget) -> usize {
+fn word_target(
+  direction: Direction,
+  kind: WordKind,
+  target: WordTarget,
+) -> InternalWordMotionTarget {
+  match (direction, kind, target) {
+    (Direction::Forward, WordKind::Word, WordTarget::Start) => {
+      InternalWordMotionTarget::NextWordStart
+    },
+    (Direction::Forward, WordKind::Word, WordTarget::End) => InternalWordMotionTarget::NextWordEnd,
+    (Direction::Backward, WordKind::Word, WordTarget::Start) => {
+      InternalWordMotionTarget::PrevWordStart
+    },
+    (Direction::Backward, WordKind::Word, WordTarget::End) => InternalWordMotionTarget::PrevWordEnd,
+
+    (Direction::Forward, WordKind::LongWord, WordTarget::Start) => {
+      InternalWordMotionTarget::NextLongWordStart
+    },
+    (Direction::Forward, WordKind::LongWord, WordTarget::End) => {
+      InternalWordMotionTarget::NextLongWordEnd
+    },
+    (Direction::Backward, WordKind::LongWord, WordTarget::Start) => {
+      InternalWordMotionTarget::PrevLongWordStart
+    },
+    (Direction::Backward, WordKind::LongWord, WordTarget::End) => {
+      InternalWordMotionTarget::PrevLongWordEnd
+    },
+
+    (Direction::Forward, WordKind::SubWord, WordTarget::Start) => {
+      InternalWordMotionTarget::NextSubWordStart
+    },
+    (Direction::Forward, WordKind::SubWord, WordTarget::End) => {
+      InternalWordMotionTarget::NextSubWordEnd
+    },
+    (Direction::Backward, WordKind::SubWord, WordTarget::Start) => {
+      InternalWordMotionTarget::PrevSubWordStart
+    },
+    (Direction::Backward, WordKind::SubWord, WordTarget::End) => {
+      InternalWordMotionTarget::PrevSubWordEnd
+    },
+  }
+}
+
+fn word_target_pos(
+  text: RopeSlice,
+  range: Range,
+  count: usize,
+  target: InternalWordMotionTarget,
+) -> usize {
   word_move(text, range, count.max(1), target).cursor(text)
 }
 
-fn word_move(text: RopeSlice, range: Range, count: usize, target: WordMotionTarget) -> Range {
+fn word_move(
+  text: RopeSlice,
+  range: Range,
+  count: usize,
+  target: InternalWordMotionTarget,
+) -> Range {
   let is_prev = target.is_backward();
 
   if (is_prev && range.head == 0) || (!is_prev && range.head == text.len_chars()) {
@@ -701,37 +825,37 @@ fn is_sub_word_boundary(a: char, b: char, direction: Direction) -> bool {
   }
 }
 
-fn reached_target(target: WordMotionTarget, prev_ch: char, next_ch: char) -> bool {
+fn reached_target(target: InternalWordMotionTarget, prev_ch: char, next_ch: char) -> bool {
   match target {
-    WordMotionTarget::NextWordStart | WordMotionTarget::PrevWordEnd => {
+    InternalWordMotionTarget::NextWordStart | InternalWordMotionTarget::PrevWordEnd => {
       is_word_boundary(prev_ch, next_ch)
         && (char_is_line_ending(next_ch) || !next_ch.is_whitespace())
     },
-    WordMotionTarget::NextWordEnd | WordMotionTarget::PrevWordStart => {
+    InternalWordMotionTarget::NextWordEnd | InternalWordMotionTarget::PrevWordStart => {
       is_word_boundary(prev_ch, next_ch)
         && (!prev_ch.is_whitespace() || char_is_line_ending(next_ch))
     },
-    WordMotionTarget::NextLongWordStart | WordMotionTarget::PrevLongWordEnd => {
+    InternalWordMotionTarget::NextLongWordStart | InternalWordMotionTarget::PrevLongWordEnd => {
       is_long_word_boundary(prev_ch, next_ch)
         && (char_is_line_ending(next_ch) || !next_ch.is_whitespace())
     },
-    WordMotionTarget::NextLongWordEnd | WordMotionTarget::PrevLongWordStart => {
+    InternalWordMotionTarget::NextLongWordEnd | InternalWordMotionTarget::PrevLongWordStart => {
       is_long_word_boundary(prev_ch, next_ch)
         && (!prev_ch.is_whitespace() || char_is_line_ending(next_ch))
     },
-    WordMotionTarget::NextSubWordStart => {
+    InternalWordMotionTarget::NextSubWordStart => {
       is_sub_word_boundary(prev_ch, next_ch, Direction::Forward)
         && (char_is_line_ending(next_ch) || !(next_ch.is_whitespace() || next_ch == '_'))
     },
-    WordMotionTarget::PrevSubWordEnd => {
+    InternalWordMotionTarget::PrevSubWordEnd => {
       is_sub_word_boundary(prev_ch, next_ch, Direction::Backward)
         && (char_is_line_ending(next_ch) || !(next_ch.is_whitespace() || next_ch == '_'))
     },
-    WordMotionTarget::NextSubWordEnd => {
+    InternalWordMotionTarget::NextSubWordEnd => {
       is_sub_word_boundary(prev_ch, next_ch, Direction::Forward)
         && (!(prev_ch.is_whitespace() || prev_ch == '_') || char_is_line_ending(next_ch))
     },
-    WordMotionTarget::PrevSubWordStart => {
+    InternalWordMotionTarget::PrevSubWordStart => {
       is_sub_word_boundary(prev_ch, next_ch, Direction::Backward)
         && (!(prev_ch.is_whitespace() || prev_ch == '_') || char_is_line_ending(next_ch))
     },
@@ -769,7 +893,12 @@ fn first_non_whitespace(text: RopeSlice, line_idx: usize) -> usize {
   line_end
 }
 
-fn move_prev_paragraph(text: RopeSlice, range: Range, count: usize, mode: MotionMode) -> Range {
+fn move_prev_paragraph_range(
+  text: RopeSlice,
+  range: Range,
+  count: usize,
+  mode: MotionMode,
+) -> Range {
   let mut line = range.cursor_line(text);
   let first_char = text.line_to_char(line) == range.cursor(text);
   let prev_line_empty = rope_is_line_ending(text.line(line.saturating_sub(1)));
@@ -779,16 +908,15 @@ fn move_prev_paragraph(text: RopeSlice, range: Range, count: usize, mode: Motion
   if prev_empty_to_line && !first_char {
     line += 1;
   }
-
   let mut lines = text.lines_at(line);
   lines.reverse();
   let mut lines = lines.map(rope_is_line_ending).peekable();
   let mut last_line = line;
   for _ in 0..count.max(1) {
-    while lines.next_if(|&empty| empty).is_some() {
+    while lines.next_if(|&e| e).is_some() {
       line -= 1;
     }
-    while lines.next_if(|&empty| !empty).is_some() {
+    while lines.next_if(|&e| !e).is_some() {
       line -= 1;
     }
     if line == last_line {
@@ -797,10 +925,25 @@ fn move_prev_paragraph(text: RopeSlice, range: Range, count: usize, mode: Motion
     last_line = line;
   }
 
-  move_to_pos(text, range, text.line_to_char(line), mode)
+  let head = text.line_to_char(line);
+  let anchor = if mode == MotionMode::Move {
+    if prev_empty_to_line && first_char {
+      range.cursor(text)
+    } else {
+      range.head
+    }
+  } else {
+    range.put_cursor(text, head, true).anchor
+  };
+  Range::new(anchor, head)
 }
 
-fn move_next_paragraph(text: RopeSlice, range: Range, count: usize, mode: MotionMode) -> Range {
+fn move_next_paragraph_range(
+  text: RopeSlice,
+  range: Range,
+  count: usize,
+  mode: MotionMode,
+) -> Range {
   let mut line = range.cursor_line(text);
   let last_char = prev_grapheme_boundary(text, text.line_to_char(line + 1)) == range.cursor(text);
   let curr_line_empty = rope_is_line_ending(text.line(line));
@@ -811,14 +954,13 @@ fn move_next_paragraph(text: RopeSlice, range: Range, count: usize, mode: Motion
   if curr_empty_to_line && last_char {
     line += 1;
   }
-
   let mut lines = text.lines_at(line).map(rope_is_line_ending).peekable();
   let mut last_line = line;
   for _ in 0..count.max(1) {
-    while lines.next_if(|&empty| !empty).is_some() {
+    while lines.next_if(|&e| !e).is_some() {
       line += 1;
     }
-    while lines.next_if(|&empty| empty).is_some() {
+    while lines.next_if(|&e| e).is_some() {
       line += 1;
     }
     if line == last_line {
@@ -827,7 +969,17 @@ fn move_next_paragraph(text: RopeSlice, range: Range, count: usize, mode: Motion
     last_line = line;
   }
 
-  move_to_pos(text, range, text.line_to_char(line), mode)
+  let head = text.line_to_char(line);
+  let anchor = if mode == MotionMode::Move {
+    if curr_empty_to_line && last_char {
+      range.head
+    } else {
+      range.cursor(text)
+    }
+  } else {
+    range.put_cursor(text, head, true).anchor
+  };
+  Range::new(anchor, head)
 }
 
 #[inline]
@@ -857,12 +1009,19 @@ mod tests {
   use smallvec::SmallVec;
 
   use super::{
-    Motion,
     MotionMode,
     MovementContext,
     VisualGoal,
     VisualGoals,
-    move_selection,
+    WordKind,
+    WordTarget,
+    move_document_end,
+    move_down,
+    move_down_visual,
+    move_first_non_whitespace,
+    move_line_end,
+    move_next_word,
+    move_right,
   };
   use crate::{
     render::{
@@ -916,10 +1075,10 @@ mod tests {
       col: 7,
     });
 
-    let result = move_selection(
+    let result = move_right(
       rope.slice(..),
       selection,
-      Motion::Right { count: 2 },
+      2,
       MotionMode::Move,
       &visual_goals,
       &context(&TextFormat::default()),
@@ -939,10 +1098,10 @@ mod tests {
     let rope = Rope::from("ab\nxyz\nqrst");
     let selection = selection(&[(1, 1, 1), (2, 5, 5)]);
 
-    let result = move_selection(
+    let result = move_down(
       rope.slice(..),
       selection,
-      Motion::Down { count: 1 },
+      1,
       MotionMode::Move,
       &VisualGoals::new(),
       &context(&TextFormat::default()),
@@ -971,10 +1130,10 @@ mod tests {
     format.soft_wrap = true;
     let selection = selection(&[(1, 1, 1)]);
 
-    let result = move_selection(
+    let result = move_down_visual(
       rope.slice(..),
       selection,
-      Motion::DownVisual { count: 1 },
+      1,
       MotionMode::Move,
       &VisualGoals::new(),
       &context(&format),
@@ -993,10 +1152,12 @@ mod tests {
     let rope = Rope::from("alpha beta gamma");
     let selection = selection(&[(1, 0, 0)]);
 
-    let result = move_selection(
+    let result = move_next_word(
       rope.slice(..),
       selection,
-      Motion::NextWordStart { count: 2 },
+      WordKind::Word,
+      WordTarget::Start,
+      2,
       MotionMode::Move,
       &VisualGoals::new(),
       &context(&TextFormat::default()),
@@ -1010,10 +1171,9 @@ mod tests {
     let rope = Rope::from("  abc\nxyz\n");
     let selection = selection(&[(1, 4, 4)]);
 
-    let first_non_whitespace = move_selection(
+    let first_non_whitespace = move_first_non_whitespace(
       rope.slice(..),
       selection.clone(),
-      Motion::FirstNonWhitespace,
       MotionMode::Move,
       &VisualGoals::new(),
       &context(&TextFormat::default()),
@@ -1023,20 +1183,18 @@ mod tests {
       Range::new(2, 2)
     );
 
-    let line_end = move_selection(
+    let line_end = move_line_end(
       rope.slice(..),
       selection.clone(),
-      Motion::LineEnd,
       MotionMode::Move,
       &VisualGoals::new(),
       &context(&TextFormat::default()),
     );
     assert_eq!(*line_end.selection.get(0).unwrap().range, Range::new(5, 5));
 
-    let document_end = move_selection(
+    let document_end = move_document_end(
       rope.slice(..),
       selection,
-      Motion::DocumentEnd,
       MotionMode::Move,
       &VisualGoals::new(),
       &context(&TextFormat::default()),

@@ -228,7 +228,8 @@ fn paragraph_range(text: RopeSlice, range: Range, kind: TextObjectKind, count: u
     TextObjectKind::Around => end_around,
   };
 
-  Range::new(text.line_to_char(start_line), text.line_to_char(end_line)).with_direction(range.direction())
+  Range::new(text.line_to_char(start_line), text.line_to_char(end_line))
+    .with_direction(range.direction())
 }
 
 #[inline]
@@ -429,13 +430,31 @@ mod test {
     let text = Rope::from("hello world again");
     let selection = Selection::from_cursors(smallvec![cursor(7, 1, 1), cursor(8, 7, 7)]).unwrap();
 
-    let inside = word(text.slice(..), selection.clone(), TextObjectKind::Inside, 1, false);
-    assert_eq!(inside.range_by_id(cursor(7, 1, 1).id), Some(&Range::new(0, 5)));
-    assert_eq!(inside.range_by_id(cursor(8, 7, 7).id), Some(&Range::new(6, 11)));
+    let inside = word(
+      text.slice(..),
+      selection.clone(),
+      TextObjectKind::Inside,
+      1,
+      false,
+    );
+    assert_eq!(
+      inside.range_by_id(cursor(7, 1, 1).id),
+      Some(&Range::new(0, 5))
+    );
+    assert_eq!(
+      inside.range_by_id(cursor(8, 7, 7).id),
+      Some(&Range::new(6, 11))
+    );
 
     let around = word(text.slice(..), selection, TextObjectKind::Around, 1, false);
-    assert_eq!(around.range_by_id(cursor(7, 1, 1).id), Some(&Range::new(0, 6)));
-    assert_eq!(around.range_by_id(cursor(8, 7, 7).id), Some(&Range::new(6, 12)));
+    assert_eq!(
+      around.range_by_id(cursor(7, 1, 1).id),
+      Some(&Range::new(0, 6))
+    );
+    assert_eq!(
+      around.range_by_id(cursor(8, 7, 7).id),
+      Some(&Range::new(6, 12))
+    );
   }
 
   #[test]
@@ -446,7 +465,12 @@ mod test {
     let inside = paragraph(text.slice(..), selection.clone(), TextObjectKind::Inside, 2);
     assert_eq!(inside.ranges(), &[Range::new(0, 9)]);
 
-    let around = paragraph(text.slice(..), Selection::point(5), TextObjectKind::Around, 1);
+    let around = paragraph(
+      text.slice(..),
+      Selection::point(5),
+      TextObjectKind::Around,
+      1,
+    );
     assert_eq!(around.ranges(), &[Range::new(5, 10)]);
   }
 
@@ -455,13 +479,34 @@ mod test {
     let text = Rope::from("(alpha) beta");
     let selection = Selection::point(2);
 
-    let inside = pair(None, text.slice(..), selection.clone(), TextObjectKind::Inside, '(', 1);
+    let inside = pair(
+      None,
+      text.slice(..),
+      selection.clone(),
+      TextObjectKind::Inside,
+      '(',
+      1,
+    );
     assert_eq!(inside.ranges(), &[Range::new(1, 6)]);
 
-    let around = pair(None, text.slice(..), selection.clone(), TextObjectKind::Around, '(', 1);
+    let around = pair(
+      None,
+      text.slice(..),
+      selection.clone(),
+      TextObjectKind::Around,
+      '(',
+      1,
+    );
     assert_eq!(around.ranges(), &[Range::new(0, 7)]);
 
-    let no_pair = pair(None, text.slice(..), Selection::point(9), TextObjectKind::Around, '[', 1);
+    let no_pair = pair(
+      None,
+      text.slice(..),
+      Selection::point(9),
+      TextObjectKind::Around,
+      '[',
+      1,
+    );
     assert_eq!(no_pair.ranges(), &[Range::new(9, 9)]);
   }
 
@@ -470,7 +515,13 @@ mod test {
     let text = Rope::from("(outer [inner])");
     let selection = Selection::point(8);
 
-    let inside = closest_pair(None, text.slice(..), selection.clone(), TextObjectKind::Inside, 1);
+    let inside = closest_pair(
+      None,
+      text.slice(..),
+      selection.clone(),
+      TextObjectKind::Inside,
+      1,
+    );
     assert_eq!(inside.ranges(), &[Range::new(8, 13)]);
 
     let next_outer = closest_pair(None, text.slice(..), selection, TextObjectKind::Around, 2);
@@ -492,7 +543,10 @@ mod test {
     )
     .unwrap();
 
-    assert_eq!(next.range_by_id(cursor(5, 5, 5).id), Some(&Range::new(3, 8)));
+    assert_eq!(
+      next.range_by_id(cursor(5, 5, 5).id),
+      Some(&Range::new(3, 8))
+    );
   }
 
   #[test]

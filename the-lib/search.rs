@@ -234,10 +234,11 @@ fn regex_match_range(
   direction: Direction,
   wrap_around: bool,
 ) -> Option<Range> {
-  let (start, end) = find_regex_match(text, regex, byte_start, direction)
-    .or_else(|| {
-      wrap_around.then(|| find_wrapped_regex_match(text, regex, byte_start, direction)).flatten()
-    })?;
+  let (start, end) = find_regex_match(text, regex, byte_start, direction).or_else(|| {
+    wrap_around
+      .then(|| find_wrapped_regex_match(text, regex, byte_start, direction))
+      .flatten()
+  })?;
 
   let start = text.byte_to_char(start);
   let end = text.byte_to_char(end);
@@ -251,13 +252,17 @@ fn find_regex_match(
   direction: Direction,
 ) -> Option<(usize, usize)> {
   match direction {
-    Direction::Forward => regex
-      .find(text.regex_input_at_bytes(byte_start..))
-      .map(|mat| (mat.start(), mat.end())),
-    Direction::Backward => regex
-      .find_iter(text.regex_input_at_bytes(..byte_start))
-      .last()
-      .map(|mat| (mat.start(), mat.end())),
+    Direction::Forward => {
+      regex
+        .find(text.regex_input_at_bytes(byte_start..))
+        .map(|mat| (mat.start(), mat.end()))
+    },
+    Direction::Backward => {
+      regex
+        .find_iter(text.regex_input_at_bytes(..byte_start))
+        .last()
+        .map(|mat| (mat.start(), mat.end()))
+    },
   }
 }
 
@@ -268,11 +273,17 @@ fn find_wrapped_regex_match(
   direction: Direction,
 ) -> Option<(usize, usize)> {
   match direction {
-    Direction::Forward => regex.find(text.regex_input()).map(|mat| (mat.start(), mat.end())),
-    Direction::Backward => regex
-      .find_iter(text.regex_input_at_bytes(byte_start..))
-      .last()
-      .map(|mat| (mat.start(), mat.end())),
+    Direction::Forward => {
+      regex
+        .find(text.regex_input())
+        .map(|mat| (mat.start(), mat.end()))
+    },
+    Direction::Backward => {
+      regex
+        .find_iter(text.regex_input_at_bytes(byte_start..))
+        .last()
+        .map(|mat| (mat.start(), mat.end()))
+    },
   }
 }
 
@@ -291,7 +302,7 @@ mod test {
   fn cursor(id: u64, anchor: usize, head: usize) -> CursorRange {
     use std::num::NonZeroU64;
     crate::selection::CursorRange {
-      id: crate::selection::CursorId::new(NonZeroU64::new(id).unwrap()),
+      id:    crate::selection::CursorId::new(NonZeroU64::new(id).unwrap()),
       range: Range::new(anchor, head),
     }
   }
@@ -324,11 +335,25 @@ mod test {
       Some(3)
     );
     assert_eq!(
-      find_nth(slice, 'a', 1, 1, SearchDirection::Next, SearchStart::Inclusive),
+      find_nth(
+        slice,
+        'a',
+        1,
+        1,
+        SearchDirection::Next,
+        SearchStart::Inclusive
+      ),
       Some(1)
     );
     assert_eq!(
-      find_nth(slice, 'a', 1, 1, SearchDirection::Next, SearchStart::Exclusive),
+      find_nth(
+        slice,
+        'a',
+        1,
+        1,
+        SearchDirection::Next,
+        SearchStart::Exclusive
+      ),
       Some(2)
     );
   }
@@ -404,8 +429,14 @@ mod test {
     )
     .unwrap();
 
-    assert_eq!(next.range_by_id(cursor(1, 0, 0).id), Some(&Range::new(0, 0)));
-    assert_eq!(next.range_by_id(cursor(2, 4, 4).id), Some(&Range::new(4, 7)));
+    assert_eq!(
+      next.range_by_id(cursor(1, 0, 0).id),
+      Some(&Range::new(0, 0))
+    );
+    assert_eq!(
+      next.range_by_id(cursor(2, 4, 4).id),
+      Some(&Range::new(4, 7))
+    );
   }
 
   #[test]

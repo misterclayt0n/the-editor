@@ -330,7 +330,11 @@ impl Syntax {
   pub fn scopes_at<'a>(&'a self, text: RopeSlice<'a>, pos: usize) -> Vec<&'a str> {
     let mut scopes = Vec::new();
     let byte_pos = text.char_to_byte(pos) as u32;
-    let Some(mut node) = self.tree().root_node().descendant_for_byte_range(byte_pos, byte_pos) else {
+    let Some(mut node) = self
+      .tree()
+      .root_node()
+      .descendant_for_byte_range(byte_pos, byte_pos)
+    else {
       return scopes;
     };
 

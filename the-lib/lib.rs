@@ -9,18 +9,19 @@ pub mod comment;
 pub mod edit;
 pub mod grapheme;
 pub mod history;
+pub mod indent;
 pub mod line_ending;
 pub mod match_brackets;
 pub mod movement;
 pub mod object;
+pub mod render;
+pub mod search;
 pub mod selection;
+pub mod surround;
 pub mod syntax;
+pub mod text_object;
 pub mod transaction;
 pub mod uri;
-pub mod search;
-pub mod surround;
-pub mod text_object;
-pub mod indent;
 
 /// A small-string-optimized string type.
 ///

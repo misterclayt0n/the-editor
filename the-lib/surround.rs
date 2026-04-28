@@ -45,7 +45,12 @@ pub fn find_nth_closest_pairs_pos(
   }
 }
 
-pub fn find_nth_pairs_pos(text: RopeSlice, ch: char, range: Range, n: usize) -> Result<SurroundPair> {
+pub fn find_nth_pairs_pos(
+  text: RopeSlice,
+  ch: char,
+  range: Range,
+  n: usize,
+) -> Result<SurroundPair> {
   validate_range(text, range)?;
   if text.len_chars() < 2 || n == 0 {
     return Err(Error::PairNotFound);
@@ -92,7 +97,11 @@ pub fn get_surround_pos(
       None => find_nth_closest_pairs_pos(syntax, text, *cursor.range, skip)?,
     };
 
-    if pairs.iter().copied().any(|existing| pairs_overlap(existing, pair)) {
+    if pairs
+      .iter()
+      .copied()
+      .any(|existing| pairs_overlap(existing, pair))
+    {
       return Err(Error::CursorOverlap);
     }
 

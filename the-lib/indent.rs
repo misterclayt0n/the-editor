@@ -19,6 +19,7 @@ use tree_house::{
 };
 
 use crate::{
+  Tendril,
   chars::{
     WhitespaceProperties,
     char_is_line_ending,
@@ -27,7 +28,6 @@ use crate::{
     grapheme_width,
     tab_width_at,
   },
-  Tendril,
   syntax::{
     IndentQuery,
     IndentationHeuristic,
@@ -992,20 +992,18 @@ pub fn indent_for_newline(
     IndentationHeuristic::TreeSitter | IndentationHeuristic::Hybrid,
     Some(query),
     Some(syntax),
-  ) = (
-    indent_heuristic,
-    indent_query,
-    syntax,
-  ) && let Some(indent) = treesitter_indent_for_pos(
-    query,
-    syntax,
-    tab_width,
-    indent_width,
-    text,
-    line_before,
-    line_before_end_pos,
-    true,
-  ) {
+  ) = (indent_heuristic, indent_query, syntax)
+    && let Some(indent) = treesitter_indent_for_pos(
+      query,
+      syntax,
+      tab_width,
+      indent_width,
+      text,
+      line_before,
+      line_before_end_pos,
+      true,
+    )
+  {
     if *indent_heuristic == IndentationHeuristic::Hybrid {
       // We want to compute the indentation not only based on the
       // syntax tree but also on the actual indentation of a previous

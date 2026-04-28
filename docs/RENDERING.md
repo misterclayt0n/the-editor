@@ -181,6 +181,181 @@ This is a core lesson:
 
 Instead, those features need to be first-class inputs to the retained layout cache.
 
+## Render kernel
+
+Before building retained render surfaces and frame deltas, `the-lib` should first expose a small, compileable render kernel.
+
+This kernel is not the final rendering architecture. It is the pure visual-layout foundation that later retained rendering will consume.
+
+Its job is to answer questions like:
+
+- How does document text plus layout policy become a stream of visual graphemes?
+- Where do soft wraps happen?
+- How do inline annotations, grapheme substitutions, and virtual lines participate in layout?
+- How do we map document character positions to visual row/column positions and back?
+
+It should not answer questions like:
+
+- What rows changed since the last frame?
+- What is the surface viewport rectangle in pixels?
+- What scene overlays, widgets, or floating UI should be painted?
+- What theme/style/color should a client use?
+
+### Phase-1 module set
+
+The phase-1 render kernel should be only:
+
+```txt
+the-lib/render/
+  mod.rs
+  text_format.rs
+  text_annotations.rs
+  doc_formatter.rs
+  visual_position.rs
+```
+
+Explicitly not part of this kernel:
+
+- `graphics.rs`
+- `grapheme.rs`
+- `plan.rs`
+- old `overlay.rs`
+- `view.rs`
+- retained surfaces / frame deltas / dirty tracking
+- provider IDs / generations / layer invalidation metadata
+- pixel measurement / client shaping protocols
+
+### Kernel responsibilities
+
+#### `text_format.rs`
+`TextFormat` is a pure layout-policy type.
+
+It should keep only fields that affect visual layout semantics, such as:
+
+- `soft_wrap`
+- `tab_width`
+- `max_wrap`
+- `max_indent_retain`
+- `wrap_indicator`
+- `soft_wrap_at_text_width`
+
+It should not contain:
+
+- viewport width
+- styling/highlight fields
+- client-paint concerns
+
+The currently available wrap width is a surface/layout input and should be passed explicitly to layout operations rather than stored inside `TextFormat`.
+
+#### `text_annotations.rs`
+`TextAnnotations` should be a small owned container over exactly three public annotation kinds:
+
+- `InlineAnnotation`
+  - inserts text before a document grapheme
+- `GraphemeSubstitution`
+  - visually substitutes exactly one displayed grapheme at a document `char_idx`
+- `VirtualLineSpec`
+  - inserts extra visual lines after a document line
+
+This module should be:
+
+- owned-only
+- immutable as public input
+- self-normalizing / self-validating
+- style-free
+
+It should not expose a grand decoration/provider system in phase 1.
+It should not expose old `RenderPlan` integration helpers.
+It should not expose UI overlays, floating panels, or client-scene abstractions.
+
+#### `doc_formatter.rs`
+`DocumentFormatter` is the core low-level visual traversal primitive.
+
+It should remain public, but explicitly low-level.
+It is not the final retained rendering API.
+
+It should own:
+
+- grapheme traversal
+- tab expansion
+- soft-wrap decisions
+- wrap-indicator insertion
+- indentation carry-over on wrapped rows
+- integration of `TextAnnotations`
+- visual `(row, col)` progression
+- explicit EOF sentinel behavior
+
+It should also own the tiny formatter output vocabulary, including:
+
+- `FormattedGrapheme`
+- `GraphemeSource`
+
+These types do not justify a separate `render/grapheme.rs` module.
+They belong with the formatter.
+
+Checkpoint/block-start optimizations should remain internal. Public construction should use obvious constructors, not checkpoint-shaped APIs.
+
+#### `visual_position.rs`
+This module is the query layer built on top of `DocumentFormatter`.
+
+Its main public helpers should be:
+
+- `visual_pos_at_char(...)`
+- `char_at_visual_pos(...)`
+
+Lower-level block-relative movement helpers may exist, but should remain crate-private until a clearer public need appears.
+
+### Coordinate model
+
+The phase-1 kernel should stay entirely in visual rows/columns.
+
+Use a tiny render-local visual position type:
+
+```rust
+pub struct Position {
+  pub row: usize,
+  pub col: usize,
+}
+```
+
+This is a visual layout coordinate, not a document anchor type, not a selection range type, and not a pixel geometry type.
+
+### Style and presentation boundary
+
+The phase-1 kernel should be intentionally style-free.
+
+Do not carry:
+
+- syntax highlight IDs in formatter output
+- overlay/annotation highlight payloads
+- color/style/theme structs
+- UI overlay scene nodes
+
+Why:
+
+- wrap/layout semantics belong in Rust
+- painting belongs to clients
+- style/theme mapping belongs in later layered render outputs, not in the kernel itself
+
+The wrap indicator text itself still belongs in the kernel because it affects visible content, width, and visual-position mapping. Its styling does not.
+
+### What is deferred to retained rendering
+
+The render kernel is the foundation, not the destination.
+The following are explicitly phase-2 retained-render concerns:
+
+- `RenderSurface`
+- `RenderFrameDelta`
+- row identities and row moves
+- layer deltas
+- dirty tracking
+- provider generations and invalidation
+- gutter/cursor/selection/widget layers
+- viewport and placement types
+- pixel measurement / shaping protocols
+
+Those should be designed around the retained-surface architecture, not forced into the kernel early.
+
 ## New model: retained render surfaces
 
 The primary render object should not be a pure function that rebuilds a plan from scratch.

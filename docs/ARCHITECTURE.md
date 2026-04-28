@@ -166,15 +166,16 @@ A `Document` is semantic text state.
 It owns things like:
 - text storage
 - transactions
-- undo/redo history
 - monotonic revisions/generations
 - syntax state
+- narrow document-local text metadata like line ending and indent style
 - semantic attachments that belong to the text itself
 
 A `Document` is explicitly resource-agnostic.
 
 Reasoning:
 - document truth should stay about text and derived text state
+- history, selection, and other session facts do not belong to shared text truth
 - resource identity belongs to runtime, not the pure engine
 - this makes scratch buffers, prompts, previews, and generated docs natural
 
@@ -183,8 +184,12 @@ A `Surface` is a per-view native object attached to one primary document.
 
 It owns things like:
 - selections and stable cursor IDs
+- active cursor / primary-cursor state
+- visual goals
+- surface-local undo/redo history
 - viewport/scroll state
-- render cache and dirty state
+- reveal behavior
+- retained render state via `RenderSurface`
 - render capabilities/options
 - per-view interaction state
 
@@ -192,6 +197,7 @@ A `Surface` is not a pane tree, tab, or app widget. It is the native editor/view
 
 Reasoning:
 - selection does not belong on `Document` if many views can show the same text
+- history restores exact committed selection snapshots and is therefore surface/session-local
 - a surface is the right unit for retained rendering and render deltas
 - pane/tab/split layout is product composition and should stay above the native engine/runtime
 
@@ -293,10 +299,10 @@ These are semantic/text features.
 
 Examples:
 - text
-- history
 - syntax state
 - semantic diagnostics data
 - document-local revisions
+- line ending / indent-style metadata
 
 Reasoning:
 - these are intrinsic to the text, not to a particular view
@@ -307,11 +313,15 @@ These are per-view/per-interaction features.
 
 Examples:
 - selection and stable cursor IDs
+- active cursor and visual goals
+- surface-local history
 - viewport/scroll state
+- reveal behavior
 - wrapping and line-display options
 - single-line behavior
 - render options
 - visible decoration layers
+- retained render state
 - readonly-as-view-policy
 
 Reasoning:
@@ -629,10 +639,11 @@ Reasoning:
 
 ## History and selection decisions
 
-### History is document-owned
+### History is surface-owned
 Reasoning:
-- history describes evolution of the text
-- many surfaces over one document should not produce conflicting local text timelines
+- history restores exact committed selection snapshots
+- that makes it one editing session's state, not shared document truth
+- many surfaces over one document may legitimately have different local undo timelines
 
 ### Selection is surface-owned
 Reasoning:
@@ -738,7 +749,7 @@ The old editor is a reference, not a blueprint. Port selectively.
   - `render/visual_position.rs`
   - relevant retained-render pieces from `render/plan.rs`
 - reworked `document.rs`
-- reworked `view.rs`
+- reworked `surface.rs` (the old `view.rs` concept folded into the new surface model)
 - narrowed `diagnostics.rs` if treated as generic semantic/render data
 - narrowed `registers.rs` if reduced to pure register storage only
 
@@ -785,12 +796,12 @@ The first goal is not a user-facing milestone. It is a boundary milestone:
 - `Document`
   - text
   - transactions
-  - history
   - revisions
   - optional syntax state
 - `Surface`
   - selection
   - stable cursor IDs
+  - history
   - viewport/scroll
   - render cache and dirty state
 - deterministic editing primitives
@@ -1006,10 +1017,10 @@ This is required for the document/surface split to pay off.
 This keeps text truth separate from per-view behavior and rendering.
 
 ### 29. Where does undo/redo history live?
-**Decision:** on `Document`.
+**Decision:** on `Surface`.
 
 **Reasoning:**
-History belongs to text evolution, not view state.
+History restores exact committed selection snapshots and is therefore one live editing session's state, not shared document truth.
 
 ### 30. Should cursors have stable IDs within a surface?
 **Decision:** yes.

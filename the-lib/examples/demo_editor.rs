@@ -1,10 +1,12 @@
 use std::{
-  fs,
   io::{
     self,
     Write,
   },
-  path::PathBuf,
+  path::{
+    Path,
+    PathBuf,
+  },
   time::{
     Duration,
     Instant,
@@ -45,6 +47,7 @@ use crossterm::{
     enable_raw_mode,
   },
 };
+use ropey::Rope;
 use the_lib::{
   Tendril,
   auto_pairs::{
@@ -52,7 +55,6 @@ use the_lib::{
     edit_for_backspace,
     edit_for_typed_char,
   },
-  document::Document,
   edit::Edit,
   grapheme::{
     next_grapheme_boundary,
@@ -72,13 +74,8 @@ use the_lib::{
     move_right,
     move_up_visual,
   },
-  registers::Registers,
   render::{
-    RenderSurface,
-    SurfaceId,
     SurfaceMeasurements,
-    TextAnnotations,
-    TextFormat,
     Viewport,
     visual_pos_at_char,
   },
@@ -90,7 +87,6 @@ use the_lib::{
     CursorPick,
     Selection,
   },
-  surface::Surface,
   syntax::IndentationHeuristic,
   transaction::{
     DeletionOverlapPolicy,
@@ -99,6 +95,11 @@ use the_lib::{
     Span,
     Transaction,
   },
+};
+use the_runtime::{
+  DocumentHandle,
+  RuntimeSession,
+  SurfaceHandle,
 };
 
 #[derive(Parser, Debug)]
@@ -114,14 +115,12 @@ enum Mode {
 }
 
 struct App {
-  path:              Option<PathBuf>,
-  document:          Document,
-  surface:           Surface,
-  registers:         Registers,
+  session:           RuntimeSession,
+  document:          DocumentHandle,
+  surface:           SurfaceHandle,
   auto_pairs:        AutoPairs,
   mode:              Mode,
   status:            String,
-  dirty:             bool,
   last_render:       Duration,
   last_generation:   u64,
   transaction_count: u64,
@@ -129,38 +128,84 @@ struct App {
 
 impl App {
   fn open(path: Option<PathBuf>) -> Result<Self, Box<dyn std::error::Error>> {
-    let text = match &path {
-      Some(path) => fs::read_to_string(path)?,
-      None => String::new(),
+    let mut session = RuntimeSession::default();
+    let document = match path {
+      Some(path) => session.open_file(&path)?,
+      None => session.create_scratch(Rope::new())?,
     };
 
-    let document = Document::new(text.into());
-    let mut render = RenderSurface::new(
-      SurfaceId::new(1).expect("surface id must be non-zero"),
-      TextFormat::default(),
-      TextAnnotations::default(),
-    );
-    render.set_measurements(SurfaceMeasurements::cell_grid(1, 1));
-
     let viewport = viewport_from_terminal()?.0;
-    let surface = Surface::new(&document, render, viewport)?;
+    let surface = session.create_surface_with_viewport(document, viewport)?;
+    session
+      .surface_mut(surface)
+      .expect("surface must exist")
+      .set_measurements(SurfaceMeasurements::cell_grid(1, 1));
 
     Ok(Self {
-      path,
+      session,
       document,
       surface,
-      registers: Registers::new(),
       auto_pairs: AutoPairs::default(),
       mode: Mode::Normal,
       status: String::from(
         "Ctrl-Q quit · Ctrl-S save · Ctrl-Z/Y undo/redo · Ctrl-C/X/V copy/cut/paste · / search · \
          F2 wrap · F6 stress",
       ),
-      dirty: false,
       last_render: Duration::ZERO,
       last_generation: 0,
       transaction_count: 0,
     })
+  }
+
+  fn document(&self) -> &the_lib::document::Document {
+    self
+      .session
+      .document(self.document)
+      .expect("document handle must remain valid")
+  }
+
+  fn surface(&self) -> &the_lib::surface::Surface {
+    self
+      .session
+      .surface(self.surface)
+      .expect("surface handle must remain valid")
+  }
+
+  fn surface_mut(&mut self) -> &mut the_lib::surface::Surface {
+    self
+      .session
+      .surface_mut(self.surface)
+      .expect("surface handle must remain valid")
+  }
+
+  fn apply_edit(&mut self, edit: Edit) -> Result<(), Box<dyn std::error::Error>> {
+    self
+      .session
+      .with_surface_document_mut(self.surface, |surface, document| {
+        surface.apply_edit(document, edit)
+      })??;
+    Ok(())
+  }
+
+  fn apply_selection(&mut self, selection: Selection) -> Result<(), Box<dyn std::error::Error>> {
+    self
+      .session
+      .with_surface_document_mut(self.surface, |surface, document| {
+        surface.apply_selection(document, selection)
+      })??;
+    Ok(())
+  }
+
+  fn document_path(&self) -> Option<&Path> {
+    let resource = self.session.document_entry(self.document)?.resource?;
+    Some(self.session.resource(resource)?.path())
+  }
+
+  fn is_dirty(&self) -> bool {
+    self
+      .session
+      .document_entry(self.document)
+      .is_some_and(|entry| entry.is_dirty())
   }
 
   fn run(&mut self) -> Result<(), Box<dyn std::error::Error>> {
@@ -188,10 +233,11 @@ impl App {
 
   fn sync_viewport(&mut self) -> io::Result<()> {
     let (viewport, _) = viewport_from_terminal()?;
-    let mut current = self.surface.viewport();
+    let surface = self.surface_mut();
+    let mut current = surface.viewport();
     current.row_count = viewport.row_count;
     current.wrap_width = viewport.wrap_width;
-    self.surface.set_viewport(current);
+    surface.set_viewport(current);
     Ok(())
   }
 
@@ -200,7 +246,11 @@ impl App {
     let editor_rows = rows.saturating_sub(1) as usize;
 
     let start = Instant::now();
-    let frame = self.surface.render(&self.document, None);
+    let frame = self
+      .session
+      .with_surface_document_mut(self.surface, |surface, document| {
+        surface.render(document, None)
+      })?;
     self.last_render = start.elapsed();
     self.last_generation = frame.generation;
 
@@ -240,14 +290,15 @@ impl App {
   }
 
   fn cursor_screen_pos(&self, editor_rows: usize, cols: usize) -> Option<(usize, usize)> {
-    let viewport = self.surface.viewport();
-    let text = self.document.text().slice(..);
-    let cursor = self.surface.primary_range().cursor(text);
+    let surface = self.surface();
+    let viewport = surface.viewport();
+    let text = self.document().text().slice(..);
+    let cursor = surface.primary_range().cursor(text);
     let pos = visual_pos_at_char(
       text,
-      self.surface.text_format(),
+      surface.text_format(),
       viewport.wrap_width,
-      self.surface.text_annotations(),
+      surface.text_annotations(),
       cursor,
     )?;
 
@@ -289,11 +340,11 @@ impl App {
       KeyCode::Up | KeyCode::Char('k') => self.apply_motion(move_up_visual, 1, mode)?,
       KeyCode::Down | KeyCode::Char('j') => self.apply_motion(move_down_visual, 1, mode)?,
       KeyCode::PageUp => {
-        let count = self.surface.viewport().row_count.max(1);
+        let count = self.surface().viewport().row_count.max(1);
         self.apply_motion(move_up_visual, count, mode)?;
       },
       KeyCode::PageDown => {
-        let count = self.surface.viewport().row_count.max(1);
+        let count = self.surface().viewport().row_count.max(1);
         self.apply_motion(move_down_visual, count, mode)?;
       },
       KeyCode::F(2) => self.toggle_wrap(),
@@ -303,7 +354,10 @@ impl App {
       KeyCode::Backspace => self.backspace()?,
       KeyCode::Delete => self.delete_forward()?,
       KeyCode::Enter => self.insert_newline()?,
-      KeyCode::Tab => self.insert_text(self.document.indent_style().as_str())?,
+      KeyCode::Tab => {
+        let indent = self.document().indent_style().as_str().to_owned();
+        self.insert_text(&indent)?;
+      },
       KeyCode::Char(ch) => self.insert_char(ch)?,
       _ => {},
     }
@@ -329,7 +383,8 @@ impl App {
           self.status = String::from("empty search");
         } else {
           self
-            .registers
+            .session
+            .registers_mut()
             .write('/', vec![Tendril::from(committed.as_str())]);
           self.run_search(&committed, true)?;
         }
@@ -357,22 +412,24 @@ impl App {
       KeyCode::Char('q') => return Ok(true),
       KeyCode::Char('s') => self.save()?,
       KeyCode::Char('z') => {
-        if self.surface.undo(&mut self.document)? {
+        let undone = self
+          .session
+          .with_surface_document_mut(self.surface, |surface, document| surface.undo(document))??;
+        if undone {
           self.status = String::from("undo");
-          self.dirty = true;
         }
       },
       KeyCode::Char('y') => {
-        if self.surface.redo(&mut self.document)? {
+        let redone = self
+          .session
+          .with_surface_document_mut(self.surface, |surface, document| surface.redo(document))??;
+        if redone {
           self.status = String::from("redo");
-          self.dirty = true;
         }
       },
       KeyCode::Char('a') => {
-        let len = self.document.text().len_chars();
-        self
-          .surface
-          .apply_selection(&self.document, Selection::single(0, len))?;
+        let len = self.document().text().len_chars();
+        self.apply_selection(Selection::single(0, len))?;
         self.status = String::from("selected all");
       },
       KeyCode::Char('c') => self.copy_selection_or_line()?,
@@ -405,22 +462,28 @@ impl App {
     count: usize,
     mode: MotionMode,
   ) -> Result<(), Box<dyn std::error::Error>> {
-    let viewport = self.surface.viewport();
-    let text = self.document.text().slice(..);
+    let surface = self.surface();
+    let viewport = surface.viewport();
+    let text = self.document().text().slice(..);
     let cx = MovementContext {
-      text_format: self.surface.text_format(),
-      annotations: self.surface.text_annotations(),
+      text_format: surface.text_format(),
+      annotations: surface.text_annotations(),
       wrap_width:  viewport.wrap_width,
     };
     let result = motion(
       text,
-      self.surface.selection().clone(),
+      surface.selection().clone(),
       count,
       mode,
-      self.surface.visual_goals(),
+      surface.visual_goals(),
       &cx,
     );
-    self.surface.apply_motion_result(&self.document, result)?;
+
+    self
+      .session
+      .with_surface_document_mut(self.surface, |surface, document| {
+        surface.apply_motion_result(document, result)
+      })??;
     Ok(())
   }
 
@@ -435,34 +498,41 @@ impl App {
     ) -> the_lib::movement::MotionResult,
     mode: MotionMode,
   ) -> Result<(), Box<dyn std::error::Error>> {
-    let viewport = self.surface.viewport();
-    let text = self.document.text().slice(..);
+    let surface = self.surface();
+    let viewport = surface.viewport();
+    let text = self.document().text().slice(..);
     let cx = MovementContext {
-      text_format: self.surface.text_format(),
-      annotations: self.surface.text_annotations(),
+      text_format: surface.text_format(),
+      annotations: surface.text_annotations(),
       wrap_width:  viewport.wrap_width,
     };
     let result = motion(
       text,
-      self.surface.selection().clone(),
+      surface.selection().clone(),
       mode,
-      self.surface.visual_goals(),
+      surface.visual_goals(),
       &cx,
     );
-    self.surface.apply_motion_result(&self.document, result)?;
+
+    self
+      .session
+      .with_surface_document_mut(self.surface, |surface, document| {
+        surface.apply_motion_result(document, result)
+      })??;
     Ok(())
   }
 
   fn insert_char(&mut self, ch: char) -> Result<(), Box<dyn std::error::Error>> {
-    if let Some(edit) = edit_for_typed_char(
-      self.document.text(),
-      self.surface.selection(),
+    let edit = edit_for_typed_char(
+      self.document().text(),
+      self.surface().selection(),
       ch,
       &self.auto_pairs,
-    )? {
-      self.surface.apply_edit(&mut self.document, edit)?;
+    )?;
+
+    if let Some(edit) = edit {
+      self.apply_edit(edit)?;
       self.transaction_count += 1;
-      self.dirty = true;
       self.status = format!("inserted {ch:?}");
       return Ok(());
     }
@@ -471,40 +541,40 @@ impl App {
   }
 
   fn insert_text(&mut self, text: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let range = self.surface.primary_range();
+    let range = self.surface().primary_range();
     let span = Span {
       start: range.from(),
       end:   range.to(),
     };
     let tx = Transaction::from_replacements(
-      self.document.text().len_chars(),
+      self.document().text().len_chars(),
       [Replacement::replace(span, text)],
       ReplacementOverlapPolicy::Reject,
     )?;
     let selection = Selection::point(span.start + text.chars().count());
-    self.surface.apply_edit(&mut self.document, Edit {
+    self.apply_edit(Edit {
       transaction: tx,
       selection,
     })?;
     self.transaction_count += 1;
-    self.dirty = true;
     Ok(())
   }
 
   fn backspace(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-    if let Some(edit) = edit_for_backspace(
-      self.document.text(),
-      self.surface.selection(),
+    let edit = edit_for_backspace(
+      self.document().text(),
+      self.surface().selection(),
       &self.auto_pairs,
-    )? {
-      self.surface.apply_edit(&mut self.document, edit)?;
+    )?;
+
+    if let Some(edit) = edit {
+      self.apply_edit(edit)?;
       self.transaction_count += 1;
-      self.dirty = true;
       self.status = String::from("auto-pair backspace");
       return Ok(());
     }
 
-    let range = self.surface.primary_range();
+    let range = self.surface().primary_range();
     if !range.is_empty() {
       self.delete_span(range.from(), range.to())?;
       return Ok(());
@@ -514,19 +584,19 @@ impl App {
       return Ok(());
     }
 
-    let text = self.document.text().slice(..);
+    let text = self.document().text().slice(..);
     let start = prev_grapheme_boundary(text, range.head);
     self.delete_span(start, range.head)
   }
 
   fn delete_forward(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-    let range = self.surface.primary_range();
+    let range = self.surface().primary_range();
     if !range.is_empty() {
       self.delete_span(range.from(), range.to())?;
       return Ok(());
     }
 
-    let text = self.document.text().slice(..);
+    let text = self.document().text().slice(..);
     if range.head >= text.len_chars() {
       return Ok(());
     }
@@ -537,61 +607,61 @@ impl App {
 
   fn delete_span(&mut self, start: usize, end: usize) -> Result<(), Box<dyn std::error::Error>> {
     let tx = Transaction::delete_spans(
-      self.document.text().len_chars(),
+      self.document().text().len_chars(),
       [Span { start, end }],
       DeletionOverlapPolicy::Reject,
     )?;
-    self.surface.apply_edit(&mut self.document, Edit {
+    self.apply_edit(Edit {
       transaction: tx,
       selection:   Selection::point(start),
     })?;
     self.transaction_count += 1;
-    self.dirty = true;
     self.status = String::from("deleted");
     Ok(())
   }
 
   fn insert_newline(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-    let text = self.document.text().slice(..);
-    let cursor = self.surface.primary_range().cursor(text);
+    let surface = self.surface();
+    let text = self.document().text().slice(..);
+    let cursor = surface.primary_range().cursor(text);
     let line = text.char_to_line(cursor);
     let indent = indent_for_newline(
       None,
       None,
       &IndentationHeuristic::Simple,
-      &self.document.indent_style(),
-      self.surface.text_format().tab_width as usize,
+      &self.document().indent_style(),
+      surface.text_format().tab_width as usize,
       text,
       line,
       cursor,
       line,
     );
 
-    let newline = format!("{}{}", self.document.line_ending().as_str(), indent);
+    let newline = format!("{}{}", self.document().line_ending().as_str(), indent);
     self.insert_text(&newline)
   }
 
   fn copy_selection_or_line(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-    let values = if self.surface.primary_range().is_empty() {
+    let values = if self.surface().primary_range().is_empty() {
       vec![Tendril::from(self.current_line_text().as_str())]
     } else {
       self
-        .surface
+        .surface()
         .selection()
-        .fragments(self.document.text().slice(..))
+        .fragments(self.document().text().slice(..))
         .map(|fragment| Tendril::from(fragment.as_ref()))
         .collect()
     };
 
-    self.registers.write('"', values);
+    self.session.registers_mut().write('"', values);
     self.status = String::from("copied to register \"");
     Ok(())
   }
 
   fn cut_selection_or_line(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-    if self.surface.primary_range().is_empty() {
-      let text = self.document.text().slice(..);
-      let cursor = self.surface.primary_range().cursor(text);
+    if self.surface().primary_range().is_empty() {
+      let text = self.document().text().slice(..);
+      let cursor = self.surface().primary_range().cursor(text);
       let line = text.char_to_line(cursor);
       let start = text.line_to_char(line);
       let end = if line + 1 < text.len_lines() {
@@ -599,23 +669,25 @@ impl App {
       } else {
         text.len_chars()
       };
+      let line_text = self.current_line_text();
       self
-        .registers
-        .write('"', vec![Tendril::from(self.current_line_text().as_str())]);
+        .session
+        .registers_mut()
+        .write('"', vec![Tendril::from(line_text.as_str())]);
       self.delete_span(start, end)?;
       self.status = String::from("cut line to register \"");
       return Ok(());
     }
 
     self.copy_selection_or_line()?;
-    let range = self.surface.primary_range();
+    let range = self.surface().primary_range();
     self.delete_span(range.from(), range.to())?;
     self.status = String::from("cut selection to register \"");
     Ok(())
   }
 
   fn paste_register(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-    let Some(values) = self.registers.read('"') else {
+    let Some(values) = self.session.registers().read('"') else {
       self.status = String::from("register \" is empty");
       return Ok(());
     };
@@ -624,7 +696,7 @@ impl App {
       .iter()
       .map(|value| value.as_str())
       .collect::<Vec<_>>()
-      .join(self.document.line_ending().as_str());
+      .join(self.document().line_ending().as_str());
     self.insert_text(&joined)?;
     self.status = String::from("pasted register \"");
     Ok(())
@@ -645,10 +717,11 @@ impl App {
       the_lib::movement::Direction::Backward
     };
 
+    let surface = self.surface();
     let Some(selection) = search_regex(
-      self.document.text().slice(..),
-      self.surface.selection(),
-      CursorPick::Id(self.surface.primary_cursor_id()),
+      self.document().text().slice(..),
+      surface.selection(),
+      CursorPick::Id(surface.primary_cursor_id()),
       &regex,
       MotionMode::Move,
       direction,
@@ -658,13 +731,13 @@ impl App {
       return Ok(());
     };
 
-    self.surface.apply_selection(&self.document, selection)?;
+    self.apply_selection(selection)?;
     self.status = format!("searched /{query}");
     Ok(())
   }
 
   fn repeat_search(&mut self, forward: bool) -> Result<(), Box<dyn std::error::Error>> {
-    let Some(query) = self.registers.first('/') else {
+    let Some(query) = self.session.registers().first('/') else {
       self.status = String::from("no previous search");
       return Ok(());
     };
@@ -673,11 +746,18 @@ impl App {
   }
 
   fn toggle_wrap(&mut self) {
-    let mut format = self.surface.text_format().clone();
-    format.soft_wrap = !format.soft_wrap;
-    self
-      .surface
-      .set_text_format_reconcile_viewport(&self.document, format.clone());
+    let format = {
+      let mut format = self.surface().text_format().clone();
+      format.soft_wrap = !format.soft_wrap;
+      format
+    };
+
+    let _ = self
+      .session
+      .with_surface_document_mut(self.surface, |surface, document| {
+        surface.set_text_format_reconcile_viewport(document, format.clone())
+      });
+
     self.status = if format.soft_wrap {
       String::from("soft wrap enabled")
     } else {
@@ -693,26 +773,25 @@ impl App {
     self.status = format!(
       "1000 transactions in {:.2?} · revision {}",
       start.elapsed(),
-      self.document.revision()
+      self.document().revision()
     );
     Ok(())
   }
 
   fn save(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-    let Some(path) = &self.path else {
+    let Some(path) = self.document_path().map(Path::to_path_buf) else {
       self.status = String::from("scratch buffer has no path");
       return Ok(());
     };
 
-    fs::write(path, self.document.text().to_string())?;
+    self.session.save(self.document)?;
     self.status = format!("saved {}", path.display());
-    self.dirty = false;
     Ok(())
   }
 
   fn current_line_text(&self) -> String {
-    let text = self.document.text().slice(..);
-    let cursor = self.surface.primary_range().cursor(text);
+    let text = self.document().text().slice(..);
+    let cursor = self.surface().primary_range().cursor(text);
     let line = text.char_to_line(cursor);
     let line_slice = text.line(line);
     let line_ending_chars = get_line_ending(&line_slice)
@@ -724,8 +803,8 @@ impl App {
   }
 
   fn status_line(&self, width: usize) -> String {
-    let text = self.document.text().slice(..);
-    let cursor = self.surface.primary_range().cursor(text);
+    let text = self.document().text().slice(..);
+    let cursor = self.surface().primary_range().cursor(text);
     let line = text.char_to_line(cursor);
     let line_start = text.line_to_char(line);
     let col = cursor.saturating_sub(line_start);
@@ -734,19 +813,18 @@ impl App {
       Mode::Search { .. } => "SEARCH",
     };
     let name = self
-      .path
-      .as_ref()
+      .document_path()
       .map(|path| path.display().to_string())
       .unwrap_or_else(|| String::from("[scratch]"));
-    let modified = if self.dirty { " [+]" } else { "" };
-    let selection_len = self.surface.primary_range().len();
+    let modified = if self.is_dirty() { " [+]" } else { "" };
+    let selection_len = self.surface().primary_range().len();
 
     let info = format!(
       " {mode} {name}{modified} | ln {}, col {} | sel {} | rev {} | tx {} | render {:?} | gen {} ",
       line + 1,
       col + 1,
       selection_len,
-      self.document.revision(),
+      self.document().revision(),
       self.transaction_count,
       self.last_render,
       self.last_generation,

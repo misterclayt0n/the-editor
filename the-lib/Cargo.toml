@@ -37,3 +37,4 @@ crossterm.workspace                = true
 smallvec.workspace                 = true
 tree-house-bindings                = { package = "tree-house-bindings", git = "https://github.com/misterclayt0n/tree-house", default-features = false, features = ["tree-sitter-language"] }
 tree-sitter-json                   = "0.24"
+the-runtime.path                   = "../the-runtime"

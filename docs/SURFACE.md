@@ -127,11 +127,8 @@ That makes it surface/session-local, not document truth.
 ### 5. Logical viewport / scroll state
 `Surface` should own canonical logical viewport/scroll state.
 
-This may be a small surface-specific type such as:
-- `SurfaceViewport`
-- `ScrollState`
-
-It does not need to be identical to the render-layer `Viewport` request struct forever.
+Right now it is fine to store the render-layer `Viewport` directly if that stays honest.
+If surface-level scroll state later diverges from raw render input, a dedicated surface-specific viewport type can be introduced then.
 
 ### 6. Reveal policy/helpers
 `Surface` should own logical reveal behavior because it owns both:
@@ -223,7 +220,7 @@ pub struct Surface {
   active_cursor: Option<CursorId>,
   visual_goals: VisualGoals,
   history: History,
-  viewport: SurfaceViewport,
+  viewport: Viewport,
   render: RenderSurface,
 }
 ```
@@ -392,7 +389,7 @@ pub struct Surface {
   active_cursor: Option<CursorId>,
   visual_goals: VisualGoals,
   history: History,
-  viewport: SurfaceViewport,
+  viewport: Viewport,
   render: RenderSurface,
 }
 
@@ -409,8 +406,8 @@ impl Surface {
   pub fn history(&self) -> &History;
   pub fn history_mut(&mut self) -> &mut History;
 
-  pub fn viewport(&self) -> &SurfaceViewport;
-  pub fn set_viewport(&mut self, viewport: SurfaceViewport);
+  pub fn viewport(&self) -> Viewport;
+  pub fn set_viewport(&mut self, viewport: Viewport);
 
   pub fn apply_edit(&mut self, document: &mut Document, edit: Edit) -> Result<()>;
   pub fn apply_selection(&mut self, document: &Document, selection: Selection);

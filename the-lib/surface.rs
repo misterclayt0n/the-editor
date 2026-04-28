@@ -68,40 +68,6 @@ pub enum SurfaceError {
 pub type Result<T> = std::result::Result<T, SurfaceError>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SurfaceViewport {
-  pub first_row:  usize,
-  pub row_count:  usize,
-  pub first_col:  usize,
-  pub wrap_width: usize,
-}
-
-impl SurfaceViewport {
-  pub fn new(first_row: usize, row_count: usize, first_col: usize, wrap_width: usize) -> Self {
-    Self {
-      first_row,
-      row_count,
-      first_col,
-      wrap_width,
-    }
-  }
-
-  pub fn to_render_viewport(self) -> Viewport {
-    Viewport::new(
-      self.first_row,
-      self.row_count,
-      self.first_col,
-      self.wrap_width,
-    )
-  }
-}
-
-impl Default for SurfaceViewport {
-  fn default() -> Self {
-    Self::new(0, 1, 0, 80)
-  }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RevealMode {
   None,
   Minimal,
@@ -114,16 +80,12 @@ pub struct Surface {
   active_cursor: Option<CursorId>,
   visual_goals:  VisualGoals,
   history:       History,
-  viewport:      SurfaceViewport,
+  viewport:      Viewport,
   render:        RenderSurface,
 }
 
 impl Surface {
-  pub fn new(
-    document: &Document,
-    render: RenderSurface,
-    viewport: SurfaceViewport,
-  ) -> Result<Self> {
+  pub fn new(document: &Document, render: RenderSurface, viewport: Viewport) -> Result<Self> {
     Self::with_selection(document, Selection::point(0), render, viewport)
   }
 
@@ -131,7 +93,7 @@ impl Surface {
     document: &Document,
     selection: Selection,
     mut render: RenderSurface,
-    viewport: SurfaceViewport,
+    viewport: Viewport,
   ) -> Result<Self> {
     validate_selection_bounds(&selection, document.text().len_chars())?;
 
@@ -164,11 +126,11 @@ impl Surface {
     &self.history
   }
 
-  pub fn viewport(&self) -> SurfaceViewport {
+  pub fn viewport(&self) -> Viewport {
     self.viewport
   }
 
-  pub fn set_viewport(&mut self, viewport: SurfaceViewport) {
+  pub fn set_viewport(&mut self, viewport: Viewport) {
     self.viewport = viewport;
   }
 
@@ -408,7 +370,7 @@ impl Surface {
       document.text().slice(..),
       document.revision(),
       FrameRequest {
-        viewport: self.viewport.to_render_viewport(),
+        viewport: self.viewport,
         since_generation,
       },
     )
@@ -524,8 +486,8 @@ mod tests {
     )
   }
 
-  fn viewport() -> SurfaceViewport {
-    SurfaceViewport::new(0, 2, 0, 4)
+  fn viewport() -> Viewport {
+    Viewport::new(0, 2, 0, 4)
   }
 
   #[test]
@@ -631,12 +593,7 @@ mod tests {
   #[test]
   fn reveal_primary_cursor_scrolls_minimally() {
     let document = Document::new(Rope::from("a\nb\nc\nd\n"));
-    let mut surface = Surface::new(
-      &document,
-      render_surface(),
-      SurfaceViewport::new(0, 2, 0, 4),
-    )
-    .unwrap();
+    let mut surface = Surface::new(&document, render_surface(), Viewport::new(0, 2, 0, 4)).unwrap();
 
     surface
       .apply_selection(

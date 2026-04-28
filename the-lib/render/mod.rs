@@ -2,6 +2,7 @@ pub mod damage;
 pub mod display_list;
 pub mod doc_formatter;
 pub mod layers;
+pub mod measurement;
 pub mod surface;
 pub mod text_annotations;
 pub mod text_format;
@@ -41,6 +42,10 @@ pub use layers::{
   SyntaxLayerDelta,
   SyntaxSpan,
   WidgetLayerDelta,
+};
+pub use measurement::{
+  MeasurementBackendKind,
+  SurfaceMeasurements,
 };
 pub use surface::RenderSurface;
 pub use text_annotations::{

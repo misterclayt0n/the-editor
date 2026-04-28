@@ -65,11 +65,17 @@ pub struct FrameRequest {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RowPlacement {
   pub surface_row: usize,
+  pub y_px:       u32,
+  pub height_px:  u32,
 }
 
 impl RowPlacement {
-  pub fn new(surface_row: usize) -> Self {
-    Self { surface_row }
+  pub fn new(surface_row: usize, y_px: u32, height_px: u32) -> Self {
+    Self {
+      surface_row,
+      y_px,
+      height_px,
+    }
   }
 }
 

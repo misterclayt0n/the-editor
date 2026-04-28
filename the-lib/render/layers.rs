@@ -14,6 +14,8 @@ pub struct SelectionSpan {
   pub surface_row: usize,
   pub start_col:   usize,
   pub end_col:     usize,
+  pub x_px:        u32,
+  pub width_px:    u32,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -26,6 +28,9 @@ pub struct CursorPlacement {
   pub cursor_id:   CursorId,
   pub surface_row: usize,
   pub col:         usize,
+  pub x_px:        u32,
+  pub y_px:        u32,
+  pub height_px:   u32,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -44,6 +49,8 @@ pub struct SyntaxSpan {
   pub surface_row: usize,
   pub start_col:   usize,
   pub end_col:     usize,
+  pub x_px:        u32,
+  pub width_px:    u32,
   pub kind:        HighlightKindId,
 }
 

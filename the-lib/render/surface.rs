@@ -35,6 +35,7 @@ use super::{
     Viewport,
   },
   doc_formatter::DocumentFormatter,
+  measurement::SurfaceMeasurements,
   layers::{
     CursorLayerDelta,
     CursorPlacement,
@@ -56,6 +57,7 @@ pub struct RenderSurface {
   annotations:            TextAnnotations,
   selection:         Option<Selection>,
   syntax_highlights: Vec<SyntaxHighlight>,
+  measurements:      SurfaceMeasurements,
   generation:        u64,
   dirty:             DirtyState,
   state:             SurfaceState,
@@ -194,6 +196,7 @@ impl RenderSurface {
       annotations,
       selection: None,
       syntax_highlights: Vec::new(),
+      measurements: SurfaceMeasurements::default(),
       generation: 0,
       dirty: DirtyState::default(),
       state: SurfaceState::default(),
@@ -231,6 +234,10 @@ impl RenderSurface {
     &self.syntax_highlights
   }
 
+  pub fn measurements(&self) -> SurfaceMeasurements {
+    self.measurements
+  }
+
   pub fn set_text_annotations(&mut self, annotations: TextAnnotations) {
     if self.annotations != annotations {
       self.annotations = annotations;
@@ -250,6 +257,16 @@ impl RenderSurface {
     highlights.sort_by_key(|highlight| (highlight.range.start, std::cmp::Reverse(highlight.range.end)));
     if self.syntax_highlights != highlights {
       self.syntax_highlights = highlights;
+      self.dirty.syntax.mark();
+    }
+  }
+
+  pub fn set_measurements(&mut self, measurements: SurfaceMeasurements) {
+    if self.measurements != measurements {
+      self.measurements = measurements;
+      self.dirty.rows.mark(false);
+      self.dirty.selections.mark();
+      self.dirty.cursors.mark();
       self.dirty.syntax.mark();
     }
   }
@@ -283,7 +300,11 @@ impl RenderSurface {
     let force_full = first_frame || stale_generation || self.dirty.rows.full;
 
     let row_diff = if self.dirty.rows.dirty || first_frame || viewport_changed {
-      let next_rows = build_visible_rows(&self.state.layout_cache, request.viewport);
+      let next_rows = build_visible_rows(
+        &self.state.layout_cache,
+        request.viewport,
+        self.measurements,
+      );
       Some(diff_rows(&mut self.state, next_rows, force_full, request.viewport))
     } else {
       None
@@ -316,6 +337,7 @@ impl RenderSurface {
         &self.annotations,
         self.selection.as_ref(),
         request.viewport,
+        self.measurements,
       )
     } else {
       self.state.selection_spans.clone()
@@ -336,6 +358,7 @@ impl RenderSurface {
         &self.annotations,
         self.selection.as_ref(),
         request.viewport,
+        self.measurements,
       )
     } else {
       self.state.cursor_placements.clone()
@@ -356,6 +379,7 @@ impl RenderSurface {
         &self.annotations,
         &self.syntax_highlights,
         request.viewport,
+        self.measurements,
       )
     } else {
       self.state.syntax_spans.clone()
@@ -645,7 +669,7 @@ fn rebuild_document_layout_cache(
     if current.is_none() {
       current = Some(RowBuilder::new(
         visual_row,
-        RowPlacement::new(visual_row),
+        RowPlacement::new(visual_row, 0, 0),
         grapheme.char_idx,
       ));
     }
@@ -682,7 +706,11 @@ fn rebuild_document_layout_cache(
   }
 }
 
-fn build_visible_rows(cache: &DocumentLayoutCache, viewport: Viewport) -> Vec<BuiltRow> {
+fn build_visible_rows(
+  cache: &DocumentLayoutCache,
+  viewport: Viewport,
+  measurements: SurfaceMeasurements,
+) -> Vec<BuiltRow> {
   if viewport.row_count == 0 {
     return Vec::new();
   }
@@ -697,7 +725,11 @@ fn build_visible_rows(cache: &DocumentLayoutCache, viewport: Viewport) -> Vec<Bu
     .enumerate()
     .map(|(surface_row, row)| BuiltRow {
       key: row.key.clone(),
-      placement: RowPlacement::new(surface_row),
+      placement: RowPlacement::new(
+        surface_row,
+        surface_row as u32 * measurements.row_height_px,
+        measurements.row_height_px,
+      ),
       text: crop_row_text(&row.text, viewport),
     })
     .collect()
@@ -709,6 +741,7 @@ fn build_selection_spans(
   annotations: &TextAnnotations,
   selection: Option<&Selection>,
   viewport: Viewport,
+  measurements: SurfaceMeasurements,
 ) -> Vec<SelectionSpan> {
   let Some(selection) = selection else {
     return Vec::new();
@@ -753,6 +786,8 @@ fn build_selection_spans(
       surface_row: visual_row - viewport.first_row,
       start_col,
       end_col,
+      x_px: start_col as u32 * measurements.cell_width_px,
+      width_px: (end_col - start_col) as u32 * measurements.cell_width_px,
     };
 
     if let Some(last) = spans.last_mut()
@@ -761,6 +796,7 @@ fn build_selection_spans(
       && last.end_col == span.start_col
     {
       last.end_col = span.end_col;
+      last.width_px = (last.end_col - last.start_col) as u32 * measurements.cell_width_px;
     } else {
       spans.push(span);
     }
@@ -775,6 +811,7 @@ fn build_cursor_placements(
   annotations: &TextAnnotations,
   selection: Option<&Selection>,
   viewport: Viewport,
+  measurements: SurfaceMeasurements,
 ) -> Vec<CursorPlacement> {
   let Some(selection) = selection else {
     return Vec::new();
@@ -800,10 +837,15 @@ fn build_cursor_placements(
       continue;
     }
 
+    let col = pos.col - viewport.first_col;
+    let surface_row = pos.row - viewport.first_row;
     cursors.push(CursorPlacement {
       cursor_id: cursor.id,
-      surface_row: pos.row - viewport.first_row,
-      col: pos.col - viewport.first_col,
+      surface_row,
+      col,
+      x_px: col as u32 * measurements.cell_width_px,
+      y_px: surface_row as u32 * measurements.row_height_px,
+      height_px: measurements.row_height_px,
     });
   }
 
@@ -816,6 +858,7 @@ fn build_syntax_spans(
   annotations: &TextAnnotations,
   syntax_highlights: &[SyntaxHighlight],
   viewport: Viewport,
+  measurements: SurfaceMeasurements,
 ) -> Vec<SyntaxSpan> {
   if syntax_highlights.is_empty() {
     return Vec::new();
@@ -866,6 +909,8 @@ fn build_syntax_spans(
       surface_row: visual_row - viewport.first_row,
       start_col,
       end_col,
+      x_px: start_col as u32 * measurements.cell_width_px,
+      width_px: (end_col - start_col) as u32 * measurements.cell_width_px,
       kind,
     };
 
@@ -875,6 +920,7 @@ fn build_syntax_spans(
       && last.end_col == span.start_col
     {
       last.end_col = span.end_col;
+      last.width_px = (last.end_col - last.start_col) as u32 * measurements.cell_width_px;
     } else {
       spans.push(span);
     }
@@ -916,6 +962,7 @@ mod tests {
     render::{
       FrameRequest,
       SurfaceId,
+      SurfaceMeasurements,
       SyntaxHighlight,
       TextAnnotations,
       TextFormat,
@@ -1150,11 +1197,16 @@ mod tests {
     assert_eq!(selection_delta.spans[0].surface_row, 0);
     assert_eq!(selection_delta.spans[0].start_col, 1);
     assert_eq!(selection_delta.spans[0].end_col, 3);
+    assert_eq!(selection_delta.spans[0].x_px, 8);
+    assert_eq!(selection_delta.spans[0].width_px, 16);
 
     let cursor_delta = delta.layers.cursors.expect("cursor layer delta");
     assert_eq!(cursor_delta.cursors.len(), 1);
     assert_eq!(cursor_delta.cursors[0].surface_row, 0);
     assert_eq!(cursor_delta.cursors[0].col, 2);
+    assert_eq!(cursor_delta.cursors[0].x_px, 16);
+    assert_eq!(cursor_delta.cursors[0].y_px, 0);
+    assert_eq!(cursor_delta.cursors[0].height_px, 16);
   }
 
   #[test]
@@ -1241,6 +1293,8 @@ mod tests {
     assert_eq!(syntax_delta.spans[0].surface_row, 0);
     assert_eq!(syntax_delta.spans[0].start_col, 1);
     assert_eq!(syntax_delta.spans[0].end_col, 3);
+    assert_eq!(syntax_delta.spans[0].x_px, 8);
+    assert_eq!(syntax_delta.spans[0].width_px, 16);
     assert_eq!(syntax_delta.spans[0].kind, HighlightKindId::new(7));
   }
 
@@ -1321,6 +1375,50 @@ mod tests {
     assert_eq!(syntax_delta.spans[0].start_col, 0);
     assert_eq!(syntax_delta.spans[0].end_col, 2);
     assert_eq!(syntax_delta.spans[0].kind, HighlightKindId::new(3));
+  }
+
+  #[test]
+  fn measurement_change_updates_pixel_placement_without_rebuilding_text_rows() {
+    let rope = Rope::from("abcd");
+    let mut surface = RenderSurface::new(
+      SurfaceId::new(1).unwrap(),
+      TextFormat::default(),
+      TextAnnotations::default(),
+    );
+    surface.set_selection(Some(selection(&[(1, 3)])));
+    surface.set_syntax_highlights(vec![SyntaxHighlight {
+      range: 1..3,
+      kind: HighlightKindId::new(4),
+    }]);
+
+    let initial = surface.render_frame(rope.slice(..), 1, request(0, 1, 20, None));
+    let original_row = initial.changed_rows[0].clone();
+    surface.set_measurements(SurfaceMeasurements::cell_grid(10, 20));
+
+    let delta = surface.render_frame(
+      rope.slice(..),
+      1,
+      request(0, 1, 20, Some(initial.generation)),
+    );
+
+    assert!(!delta.full);
+    assert!(delta.changed_rows.is_empty());
+    assert_eq!(delta.retained_rows.len(), 1);
+    assert_eq!(delta.retained_rows[0].id, original_row.id);
+    assert_eq!(delta.retained_rows[0].to.y_px, 0);
+    assert_eq!(delta.retained_rows[0].to.height_px, 20);
+
+    let selection_delta = delta.layers.selections.expect("selection layer delta");
+    assert_eq!(selection_delta.spans[0].x_px, 10);
+    assert_eq!(selection_delta.spans[0].width_px, 20);
+
+    let cursor_delta = delta.layers.cursors.expect("cursor layer delta");
+    assert_eq!(cursor_delta.cursors[0].x_px, 20);
+    assert_eq!(cursor_delta.cursors[0].height_px, 20);
+
+    let syntax_delta = delta.layers.syntax.expect("syntax layer delta");
+    assert_eq!(syntax_delta.spans[0].x_px, 10);
+    assert_eq!(syntax_delta.spans[0].width_px, 20);
   }
 
   #[test]

@@ -1148,6 +1148,29 @@ mod tests {
   }
 
   #[test]
+  fn visual_up_motion_moves_from_wrapped_continuation_rows() {
+    let rope = Rope::from("0123456789abcdef");
+    let mut format = TextFormat::default();
+    format.soft_wrap = true;
+
+    let result = super::move_up_visual(
+      rope.slice(..),
+      selection(&[(1, 7, 7)]),
+      1,
+      MotionMode::Move,
+      &VisualGoals::new(),
+      &context(&format),
+    );
+
+    let cursor = result.selection.get(0).unwrap();
+    assert_eq!(*cursor.range, Range::new(4, 4));
+    assert_eq!(
+      result.visual_goals.get(cursor.id),
+      Some(VisualGoal { col: 1 })
+    );
+  }
+
+  #[test]
   fn word_motion_moves_to_next_word_start() {
     let rope = Rope::from("alpha beta gamma");
     let selection = selection(&[(1, 0, 0)]);

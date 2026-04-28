@@ -17,6 +17,7 @@ pub mod selection;
 pub mod syntax;
 pub mod transaction;
 pub mod uri;
+pub mod search;
 
 /// A small-string-optimized string type.
 ///

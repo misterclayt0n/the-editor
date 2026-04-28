@@ -107,6 +107,34 @@ pub struct RowMove {
   pub to:   RowPlacement,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RowKind {
+  Document,
+  Virtual {
+    anchor_line: usize,
+    ordinal:     u32,
+  },
+  Widget {
+    widget_id: WidgetId,
+    fragment:  u32,
+  },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RowMetadata {
+  pub row_id:                RowId,
+  pub surface_row:           usize,
+  pub kind:                  RowKind,
+  pub doc_line:              Option<usize>,
+  pub starts_logical_line:   bool,
+  pub wrapped_continuation:  bool,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct RowMetadataDelta {
+  pub rows: Vec<RowMetadata>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RenderFrameDelta {
   pub surface_id:     SurfaceId,
@@ -115,6 +143,7 @@ pub struct RenderFrameDelta {
   pub retained_rows:  Vec<RowMove>,
   pub changed_rows:   Vec<RenderRow>,
   pub removed_rows:   Vec<RowId>,
+  pub row_metadata:   Option<RowMetadataDelta>,
   pub layers:         LayerDeltaSet,
   pub damage:         Damage,
 }

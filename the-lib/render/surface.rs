@@ -29,6 +29,9 @@ use super::{
     RenderFrameDelta,
     RenderRow,
     RowId,
+    RowKind,
+    RowMetadata,
+    RowMetadataDelta,
     RowMove,
     RowPlacement,
     SurfaceId,
@@ -75,6 +78,7 @@ struct SurfaceState {
   last_viewport:      Option<Viewport>,
   layout_cache:       DocumentLayoutCache,
   visible_rows:       Vec<RetainedRow>,
+  row_metadata:       Vec<RowMetadata>,
   selection_spans:    Vec<SelectionSpan>,
   cursor_placements:  Vec<CursorPlacement>,
   syntax_spans:       Vec<SyntaxSpan>,
@@ -89,6 +93,7 @@ impl Default for SurfaceState {
       last_viewport: None,
       layout_cache: DocumentLayoutCache::default(),
       visible_rows: Vec::new(),
+      row_metadata: Vec::new(),
       selection_spans: Vec::new(),
       cursor_placements: Vec::new(),
       syntax_spans: Vec::new(),
@@ -99,8 +104,9 @@ impl Default for SurfaceState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RetainedRow {
-  key: RowKey,
-  row: RenderRow,
+  key:      RowKey,
+  row:      RenderRow,
+  metadata: RowMetadata,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -153,28 +159,71 @@ impl RowBuilder {
 
   fn into_cached_row(
     self,
+    text: &RopeSlice<'_>,
     virtual_ordinals: &mut BTreeMap<usize, u32>,
   ) -> CachedLayoutRow {
-    let key = if let Some((line_idx, first_doc_char)) = self.first_doc {
-      RowKey::Document {
-        line_idx,
-        first_doc_char,
-      }
+    let (key, metadata) = if let Some((line_idx, first_doc_char)) = self.first_doc {
+      let starts_logical_line = text.line_to_char(line_idx) == first_doc_char;
+      (
+        RowKey::Document {
+          line_idx,
+          first_doc_char,
+        },
+        CachedRowMetadata {
+          kind: RowKind::Document,
+          doc_line: Some(line_idx),
+          starts_logical_line,
+          wrapped_continuation: !starts_logical_line,
+        },
+      )
     } else {
       let anchor_char = self.virtual_anchor.unwrap_or(0);
       let ordinal = virtual_ordinals.entry(anchor_char).or_insert(0);
-      let key = RowKey::Virtual {
-        anchor_char,
-        ordinal: *ordinal,
-      };
+      let ordinal_value = *ordinal;
       *ordinal += 1;
-      key
+      (
+        RowKey::Virtual {
+          anchor_char,
+          ordinal: ordinal_value,
+        },
+        CachedRowMetadata {
+          kind: RowKind::Virtual {
+            anchor_line: self.anchor_line,
+            ordinal: ordinal_value,
+          },
+          doc_line: Some(self.anchor_line),
+          starts_logical_line: true,
+          wrapped_continuation: false,
+        },
+      )
     };
 
     CachedLayoutRow {
       key,
       text: self.text.into(),
       anchor_line: self.anchor_line,
+      metadata,
+    }
+  }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CachedRowMetadata {
+  kind:                 RowKind,
+  doc_line:             Option<usize>,
+  starts_logical_line:  bool,
+  wrapped_continuation: bool,
+}
+
+impl CachedRowMetadata {
+  fn into_row_metadata(self, row_id: RowId, surface_row: usize) -> RowMetadata {
+    RowMetadata {
+      row_id,
+      surface_row,
+      kind: self.kind,
+      doc_line: self.doc_line,
+      starts_logical_line: self.starts_logical_line,
+      wrapped_continuation: self.wrapped_continuation,
     }
   }
 }
@@ -184,6 +233,7 @@ struct CachedLayoutRow {
   key:         RowKey,
   text:        Tendril,
   anchor_line: usize,
+  metadata:    CachedRowMetadata,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -208,6 +258,7 @@ struct BuiltRow {
   key:       RowKey,
   placement: RowPlacement,
   text:      Tendril,
+  metadata:  CachedRowMetadata,
 }
 
 impl RenderSurface {
@@ -353,6 +404,16 @@ impl RenderSurface {
       .as_ref()
       .map(|diff| diff.next_visible_rows.clone())
       .unwrap_or_else(|| self.state.visible_rows.clone());
+    let next_row_metadata = next_visible_rows
+      .iter()
+      .map(|row| row.metadata.clone())
+      .collect::<Vec<_>>();
+    let row_metadata_delta = build_row_metadata_delta(
+      &self.state.row_metadata,
+      &next_row_metadata,
+      force_full,
+    );
+    let row_metadata_changed = force_full || row_metadata_delta.is_some();
 
     let row_damage = row_diff.as_ref().map_or(Damage::empty(), |diff| diff.damage);
     let retained_rows = row_diff
@@ -446,6 +507,7 @@ impl RenderSurface {
       || !retained_rows.is_empty()
       || !incremental_changed_rows.is_empty()
       || !removed_rows.is_empty()
+      || row_metadata_changed
       || selection_changed
       || cursor_changed
       || syntax_changed
@@ -460,6 +522,11 @@ impl RenderSurface {
     let full_changed_rows = next_visible_rows.iter().map(|row| row.row.clone()).collect::<Vec<_>>();
     let full = force_full || next_visible_rows.is_empty() && self.generation == 1;
 
+    let row_metadata_damage = if force_full || row_metadata_changed {
+      damage_for_row_metadata_change(&self.state.row_metadata, &next_row_metadata)
+    } else {
+      Damage::empty()
+    };
     let selection_damage = if force_full || selection_changed {
       damage_for_selection_change(&self.state.selection_spans, &selection_spans)
     } else {
@@ -485,6 +552,7 @@ impl RenderSurface {
       Damage::full(request.viewport.row_count.min(next_visible_rows.len()))
     } else {
       row_damage
+        .union(row_metadata_damage)
         .union(selection_damage)
         .union(cursor_damage)
         .union(syntax_damage)
@@ -494,6 +562,7 @@ impl RenderSurface {
     self.state.last_text_revision = Some(text_revision);
     self.state.last_viewport = Some(request.viewport);
     self.state.visible_rows = next_visible_rows;
+    self.state.row_metadata = next_row_metadata;
     self.state.selection_spans = selection_spans;
     self.state.cursor_placements = cursor_placements;
     self.state.syntax_spans = syntax_spans;
@@ -507,6 +576,7 @@ impl RenderSurface {
       retained_rows: if full { Vec::new() } else { retained_rows },
       changed_rows: if full { full_changed_rows } else { incremental_changed_rows },
       removed_rows: if full { Vec::new() } else { removed_rows },
+      row_metadata: row_metadata_delta,
       layers: LayerDeltaSet {
         selections: selection_layer,
         cursors: cursor_layer,
@@ -638,6 +708,9 @@ fn diff_rows(
         placement: built.placement,
         text: built.text,
       };
+      let metadata = built
+        .metadata
+        .into_row_metadata(row.id, row.placement.surface_row);
 
       if !force_full {
         if content_changed {
@@ -658,6 +731,7 @@ fn diff_rows(
       next_visible_rows.push(RetainedRow {
         key: built.key,
         row,
+        metadata,
       });
     } else {
       let row = RenderRow {
@@ -666,6 +740,9 @@ fn diff_rows(
         placement: built.placement,
         text: built.text,
       };
+      let metadata = built
+        .metadata
+        .into_row_metadata(row.id, row.placement.surface_row);
 
       if !force_full {
         damaged_rows.push(row.placement.surface_row);
@@ -675,6 +752,7 @@ fn diff_rows(
       next_visible_rows.push(RetainedRow {
         key: built.key,
         row,
+        metadata,
       });
     }
   }
@@ -726,7 +804,7 @@ fn rebuild_document_layout_cache(
 
     if current.as_ref().is_some_and(|row| row.visual_row != visual_row) {
       if let Some(row) = current.take() {
-        rows.push(row.into_cached_row(&mut virtual_ordinals));
+        rows.push(row.into_cached_row(&text, &mut virtual_ordinals));
       }
     }
 
@@ -746,7 +824,7 @@ fn rebuild_document_layout_cache(
   }
 
   if let Some(row) = current.take() {
-    rows.push(row.into_cached_row(&mut virtual_ordinals));
+    rows.push(row.into_cached_row(&text, &mut virtual_ordinals));
   }
 
   if rows.is_empty() {
@@ -757,6 +835,12 @@ fn rebuild_document_layout_cache(
       },
       text: Tendril::new(),
       anchor_line: 0,
+      metadata: CachedRowMetadata {
+        kind: RowKind::Document,
+        doc_line: Some(0),
+        starts_logical_line: true,
+        wrapped_continuation: false,
+      },
     });
   }
 
@@ -800,6 +884,7 @@ fn build_visible_rows(
         measurements.row_height_px,
       ),
       text: crop_row_text(&row.text, viewport),
+      metadata: row.metadata,
     })
     .collect()
 }
@@ -858,6 +943,15 @@ fn insert_widget_rows(
           },
           text: Tendril::new(),
           anchor_line,
+          metadata: CachedRowMetadata {
+            kind: RowKind::Widget {
+              widget_id: widget.id,
+              fragment: fragment as u32,
+            },
+            doc_line: Some(anchor_line),
+            starts_logical_line: fragment == 0,
+            wrapped_continuation: false,
+          },
         });
       }
 
@@ -885,6 +979,15 @@ fn insert_widget_rows(
         },
         text: Tendril::new(),
         anchor_line,
+        metadata: CachedRowMetadata {
+          kind: RowKind::Widget {
+            widget_id: widget.id,
+            fragment: fragment as u32,
+          },
+          doc_line: Some(anchor_line),
+          starts_logical_line: fragment == 0,
+          wrapped_continuation: false,
+        },
       });
     }
 
@@ -1125,6 +1228,37 @@ fn build_syntax_spans(
   spans
 }
 
+fn build_row_metadata_delta(
+  old: &[RowMetadata],
+  new: &[RowMetadata],
+  force_full: bool,
+) -> Option<RowMetadataDelta> {
+  if force_full {
+    return Some(RowMetadataDelta { rows: new.to_vec() });
+  }
+
+  let previous = old
+    .iter()
+    .map(|metadata| (metadata.row_id, metadata))
+    .collect::<HashMap<_, _>>();
+
+  let rows = new
+    .iter()
+    .filter(|metadata| previous.get(&metadata.row_id).is_none_or(|old| *old != *metadata))
+    .cloned()
+    .collect::<Vec<_>>();
+
+  (!rows.is_empty()).then_some(RowMetadataDelta { rows })
+}
+
+fn damage_for_row_metadata_change(old: &[RowMetadata], new: &[RowMetadata]) -> Damage {
+  Damage::from_rows(
+    old.iter()
+      .map(|metadata| metadata.surface_row)
+      .chain(new.iter().map(|metadata| metadata.surface_row)),
+  )
+}
+
 fn damage_for_selection_change(old: &[SelectionSpan], new: &[SelectionSpan]) -> Damage {
   Damage::from_rows(
     old.iter()
@@ -1170,6 +1304,7 @@ mod tests {
     render::{
       BlockWidget,
       FrameRequest,
+      RowKind,
       SurfaceId,
       SurfaceMeasurements,
       SyntaxHighlight,
@@ -1253,6 +1388,34 @@ mod tests {
     assert_eq!(delta.changed_rows.len(), 2);
     assert!(delta.retained_rows.is_empty());
     assert!(delta.removed_rows.is_empty());
+  }
+
+  #[test]
+  fn first_frame_emits_row_metadata_for_visible_rows() {
+    let rope = Rope::from("alpha beta gamma");
+    let mut format = TextFormat::default();
+    format.soft_wrap = true;
+    let mut surface = RenderSurface::new(
+      SurfaceId::new(1).unwrap(),
+      format,
+      TextAnnotations::default(),
+    );
+
+    let delta = surface.render_frame(rope.slice(..), 1, request(0, 3, 5, None));
+
+    let row_metadata = delta.row_metadata.expect("row metadata delta");
+    assert_eq!(row_metadata.rows.len(), 3);
+    assert_eq!(row_metadata.rows[0].surface_row, 0);
+    assert_eq!(row_metadata.rows[0].kind, RowKind::Document);
+    assert_eq!(row_metadata.rows[0].doc_line, Some(0));
+    assert!(row_metadata.rows[0].starts_logical_line);
+    assert!(!row_metadata.rows[0].wrapped_continuation);
+
+    assert_eq!(row_metadata.rows[1].surface_row, 1);
+    assert_eq!(row_metadata.rows[1].kind, RowKind::Document);
+    assert_eq!(row_metadata.rows[1].doc_line, Some(0));
+    assert!(!row_metadata.rows[1].starts_logical_line);
+    assert!(row_metadata.rows[1].wrapped_continuation);
   }
 
   #[test]
@@ -1401,6 +1564,7 @@ mod tests {
 
     assert!(!delta.full);
     assert!(delta.changed_rows.is_empty());
+    assert!(delta.row_metadata.is_none());
     assert!(delta.layers.syntax.is_none());
     let selection_delta = delta.layers.selections.expect("selection layer delta");
     assert_eq!(selection_delta.spans.len(), 1);
@@ -1496,6 +1660,7 @@ mod tests {
 
     assert!(!delta.full);
     assert!(delta.changed_rows.is_empty());
+    assert!(delta.row_metadata.is_none());
     assert!(delta.layers.selections.is_none());
     assert!(delta.layers.cursors.is_none());
     let syntax_delta = delta.layers.syntax.expect("syntax layer delta");
@@ -1585,6 +1750,39 @@ mod tests {
     assert_eq!(syntax_delta.spans[0].start_col, 0);
     assert_eq!(syntax_delta.spans[0].end_col, 2);
     assert_eq!(syntax_delta.spans[0].kind, HighlightKindId::new(3));
+  }
+
+  #[test]
+  fn row_metadata_updates_for_retained_rows_on_scroll() {
+    let rope = Rope::from("a\nb\nc");
+    let mut surface = RenderSurface::new(
+      SurfaceId::new(1).unwrap(),
+      TextFormat::default(),
+      TextAnnotations::default(),
+    );
+
+    let initial = surface.render_frame(rope.slice(..), 1, request(0, 2, 20, None));
+    let initial_metadata = initial.row_metadata.as_ref().expect("row metadata delta");
+    let retained_row_id = initial_metadata.rows[1].row_id;
+
+    let delta = surface.render_frame(
+      rope.slice(..),
+      1,
+      request(1, 2, 20, Some(initial.generation)),
+    );
+
+    let row_metadata = delta.row_metadata.expect("row metadata delta");
+    assert_eq!(row_metadata.rows.len(), 2);
+    assert_eq!(row_metadata.rows[0].row_id, retained_row_id);
+    assert_eq!(row_metadata.rows[0].surface_row, 0);
+    assert_eq!(row_metadata.rows[0].kind, RowKind::Document);
+    assert_eq!(row_metadata.rows[0].doc_line, Some(1));
+    assert!(row_metadata.rows[0].starts_logical_line);
+    assert!(!row_metadata.rows[0].wrapped_continuation);
+
+    assert_eq!(row_metadata.rows[1].surface_row, 1);
+    assert_eq!(row_metadata.rows[1].kind, RowKind::Document);
+    assert_eq!(row_metadata.rows[1].doc_line, Some(2));
   }
 
   #[test]
@@ -1698,6 +1896,42 @@ mod tests {
     assert_eq!(widget_layer.widgets.len(), 1);
     assert_eq!(widget_layer.widgets[0].row_span, 3);
     assert_eq!(widget_layer.widgets[0].y_px, 10);
+  }
+
+  #[test]
+  fn widget_rows_emit_widget_row_metadata() {
+    let rope = Rope::from("a\nb");
+    let mut surface = RenderSurface::new(
+      SurfaceId::new(1).unwrap(),
+      TextFormat::default(),
+      TextAnnotations::default(),
+    );
+    surface.set_widgets(vec![BlockWidget::after_line(
+      WidgetId::new(1).unwrap(),
+      0,
+      40,
+      24,
+    )]);
+
+    let delta = surface.render_frame(rope.slice(..), 1, request(0, 4, 20, None));
+
+    let row_metadata = delta.row_metadata.expect("row metadata delta");
+    assert_eq!(row_metadata.rows.len(), 4);
+    assert_eq!(row_metadata.rows[1].kind, RowKind::Widget {
+      widget_id: WidgetId::new(1).unwrap(),
+      fragment: 0,
+    });
+    assert_eq!(row_metadata.rows[1].doc_line, Some(0));
+    assert!(row_metadata.rows[1].starts_logical_line);
+    assert!(!row_metadata.rows[1].wrapped_continuation);
+
+    assert_eq!(row_metadata.rows[2].kind, RowKind::Widget {
+      widget_id: WidgetId::new(1).unwrap(),
+      fragment: 1,
+    });
+    assert_eq!(row_metadata.rows[2].doc_line, Some(0));
+    assert!(!row_metadata.rows[2].starts_logical_line);
+    assert!(!row_metadata.rows[2].wrapped_continuation);
   }
 
   #[test]

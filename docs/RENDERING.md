@@ -780,12 +780,52 @@ pub struct RenderFrameDelta {
   pub retained_rows: Vec<RowMove>,
   pub changed_rows: Vec<RenderRow>,
   pub removed_rows: Vec<RowId>,
+  pub row_metadata: Option<RowMetadataDelta>,
   pub layers: LayerDeltaSet,
   pub damage: Damage,
 }
 ```
 
 A structural edit may invalidate row identity for a region. That is acceptable. The important invariant is that Rust decides identity and emits explicit removals/moves/changes; clients should not infer identity from text content or screen position.
+
+### Visible row metadata
+
+Some non-text UI needs stable semantic attachment to retained visible rows without forcing Rust to own a product-shaped gutter abstraction.
+
+Rust should therefore export a small visible-row metadata delta keyed by `row_id`.
+
+```rust
+pub enum RowKind {
+  Document,
+  Virtual { anchor_line: usize, ordinal: u32 },
+  Widget { widget_id: WidgetId, fragment: u32 },
+}
+
+pub struct RowMetadata {
+  pub row_id: RowId,
+  pub surface_row: usize,
+  pub kind: RowKind,
+  pub doc_line: Option<usize>,
+  pub starts_logical_line: bool,
+  pub wrapped_continuation: bool,
+}
+
+pub struct RowMetadataDelta {
+  pub rows: Vec<RowMetadata>,
+}
+```
+
+This metadata is:
+
+- visible-row only
+- surface-local
+- keyed by retained row identity
+- semantic rather than paint-oriented
+- not a gutter API
+
+Clients/TS can use it to compose line numbers, wrap markers, breakpoint lanes, git markers, diagnostics affordances, fold controls, and other row-adjacent UI. Rust stays responsible only for row truth.
+
+Incremental frames should emit only changed/new metadata entries. Row removal remains implicit through `removed_rows`. Full frames should emit metadata for all visible rows.
 
 ## Logical lines vs visual rows
 

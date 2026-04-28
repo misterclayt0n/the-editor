@@ -15,6 +15,7 @@ pub mod line_ending;
 pub mod match_brackets;
 pub mod movement;
 pub mod object;
+pub mod registers;
 pub mod render;
 pub mod search;
 pub mod selection;

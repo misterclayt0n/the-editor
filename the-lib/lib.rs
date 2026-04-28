@@ -19,6 +19,7 @@ pub mod transaction;
 pub mod uri;
 pub mod search;
 pub mod surround;
+pub mod text_object;
 
 /// A small-string-optimized string type.
 ///

@@ -26,7 +26,8 @@ use crossterm::{
     KeyEventKind,
     KeyModifiers,
   },
-  execute, queue,
+  execute,
+  queue,
   style::{
     Attribute,
     Color,
@@ -113,16 +114,16 @@ enum Mode {
 }
 
 struct App {
-  path:             Option<PathBuf>,
-  document:         Document,
-  surface:          Surface,
-  registers:        Registers,
-  auto_pairs:       AutoPairs,
-  mode:             Mode,
-  status:           String,
-  dirty:            bool,
-  last_render:      Duration,
-  last_generation:  u64,
+  path:              Option<PathBuf>,
+  document:          Document,
+  surface:           Surface,
+  registers:         Registers,
+  auto_pairs:        AutoPairs,
+  mode:              Mode,
+  status:            String,
+  dirty:             bool,
+  last_render:       Duration,
+  last_generation:   u64,
   transaction_count: u64,
 }
 
@@ -152,7 +153,8 @@ impl App {
       auto_pairs: AutoPairs::default(),
       mode: Mode::Normal,
       status: String::from(
-        "Ctrl-Q quit · Ctrl-S save · Ctrl-Z/Y undo/redo · Ctrl-C/X/V copy/cut/paste · / search · F2 wrap · F6 stress",
+        "Ctrl-Q quit · Ctrl-S save · Ctrl-Z/Y undo/redo · Ctrl-C/X/V copy/cut/paste · / search · \
+         F2 wrap · F6 stress",
       ),
       dirty: false,
       last_render: Duration::ZERO,
@@ -171,7 +173,7 @@ impl App {
 
       let event = event::read()?;
       match event {
-        Event::Resize(_, _) => continue,
+        Event::Resize(..) => continue,
         Event::Key(key) if key.kind == KeyEventKind::Press => {
           if self.handle_key(key)? {
             break;
@@ -309,10 +311,7 @@ impl App {
     Ok(false)
   }
 
-  fn handle_search_mode_key(
-    &mut self,
-    key: KeyEvent,
-  ) -> Result<bool, Box<dyn std::error::Error>> {
+  fn handle_search_mode_key(&mut self, key: KeyEvent) -> Result<bool, Box<dyn std::error::Error>> {
     let Mode::Search { mut query } = std::mem::replace(&mut self.mode, Mode::Normal) else {
       return Ok(false);
     };
@@ -385,12 +384,8 @@ impl App {
         };
         self.status = String::from("search: type regex, Enter to jump, Esc to cancel");
       },
-      KeyCode::Char('g') => {
-        self.apply_motion_simple(move_document_start, MotionMode::Move)?
-      },
-      KeyCode::Char('e') => {
-        self.apply_motion_simple(move_document_end, MotionMode::Move)?
-      },
+      KeyCode::Char('g') => self.apply_motion_simple(move_document_start, MotionMode::Move)?,
+      KeyCode::Char('e') => self.apply_motion_simple(move_document_end, MotionMode::Move)?,
       _ => {},
     }
 
@@ -415,7 +410,7 @@ impl App {
     let cx = MovementContext {
       text_format: self.surface.text_format(),
       annotations: self.surface.text_annotations(),
-      wrap_width: viewport.wrap_width,
+      wrap_width:  viewport.wrap_width,
     };
     let result = motion(
       text,
@@ -445,7 +440,7 @@ impl App {
     let cx = MovementContext {
       text_format: self.surface.text_format(),
       annotations: self.surface.text_annotations(),
-      wrap_width: viewport.wrap_width,
+      wrap_width:  viewport.wrap_width,
     };
     let result = motion(
       text,
@@ -487,13 +482,10 @@ impl App {
       ReplacementOverlapPolicy::Reject,
     )?;
     let selection = Selection::point(span.start + text.chars().count());
-    self.surface.apply_edit(
-      &mut self.document,
-      Edit {
-        transaction: tx,
-        selection,
-      },
-    )?;
+    self.surface.apply_edit(&mut self.document, Edit {
+      transaction: tx,
+      selection,
+    })?;
     self.transaction_count += 1;
     self.dirty = true;
     Ok(())
@@ -549,13 +541,10 @@ impl App {
       [Span { start, end }],
       DeletionOverlapPolicy::Reject,
     )?;
-    self.surface.apply_edit(
-      &mut self.document,
-      Edit {
-        transaction: tx,
-        selection:   Selection::point(start),
-      },
-    )?;
+    self.surface.apply_edit(&mut self.document, Edit {
+      transaction: tx,
+      selection:   Selection::point(start),
+    })?;
     self.transaction_count += 1;
     self.dirty = true;
     self.status = String::from("deleted");
@@ -610,7 +599,9 @@ impl App {
       } else {
         text.len_chars()
       };
-      self.registers.write('"', vec![Tendril::from(self.current_line_text().as_str())]);
+      self
+        .registers
+        .write('"', vec![Tendril::from(self.current_line_text().as_str())]);
       self.delete_span(start, end)?;
       self.status = String::from("cut line to register \"");
       return Ok(());
@@ -684,7 +675,9 @@ impl App {
   fn toggle_wrap(&mut self) {
     let mut format = self.surface.text_format().clone();
     format.soft_wrap = !format.soft_wrap;
-    self.surface.set_text_format(format.clone());
+    self
+      .surface
+      .set_text_format_reconcile_viewport(&self.document, format.clone());
     self.status = if format.soft_wrap {
       String::from("soft wrap enabled")
     } else {

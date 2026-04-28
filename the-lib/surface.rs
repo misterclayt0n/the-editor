@@ -150,6 +150,16 @@ impl Surface {
     self.render.set_text_format(format);
   }
 
+  pub fn set_text_format_reconcile_viewport(&mut self, document: &Document, format: TextFormat) {
+    self.render.set_text_format(format.clone());
+
+    if format.soft_wrap {
+      self.viewport.first_col = 0;
+    }
+
+    self.reveal_primary_cursor(document, RevealMode::Minimal);
+  }
+
   pub fn text_annotations(&self) -> &TextAnnotations {
     self.render.text_annotations()
   }
@@ -603,6 +613,26 @@ mod tests {
       .unwrap();
 
     assert_eq!(surface.viewport().first_row, 2);
+  }
+
+  #[test]
+  fn enabling_soft_wrap_resets_horizontal_scroll_and_reveals() {
+    let document = Document::new(Rope::from("0123456789abcdef\n"));
+    let mut surface = Surface::new(&document, render_surface(), Viewport::new(0, 2, 6, 4)).unwrap();
+
+    surface
+      .apply_selection(
+        &document,
+        Selection::new(smallvec::smallvec![Range::point(2)]).unwrap(),
+      )
+      .unwrap();
+
+    let mut format = surface.text_format().clone();
+    format.soft_wrap = true;
+    surface.set_text_format_reconcile_viewport(&document, format);
+
+    assert_eq!(surface.viewport().first_col, 0);
+    assert_eq!(surface.viewport().first_row, 0);
   }
 
   #[test]

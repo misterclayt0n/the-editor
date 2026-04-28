@@ -327,6 +327,22 @@ impl Syntax {
     self.inner.walk()
   }
 
+  pub fn scopes_at<'a>(&'a self, text: RopeSlice<'a>, pos: usize) -> Vec<&'a str> {
+    let mut scopes = Vec::new();
+    let byte_pos = text.char_to_byte(pos) as u32;
+    let Some(mut node) = self.tree().root_node().descendant_for_byte_range(byte_pos, byte_pos) else {
+      return scopes;
+    };
+
+    scopes.push(node.kind());
+    while let Some(parent) = node.parent() {
+      scopes.push(parent.kind());
+      node = parent;
+    }
+    scopes.reverse();
+    scopes
+  }
+
   pub fn injections_enabled(&self) -> bool {
     self.inner.injections_enabled()
   }

@@ -20,6 +20,7 @@ pub mod uri;
 pub mod search;
 pub mod surround;
 pub mod text_object;
+pub mod indent;
 
 /// A small-string-optimized string type.
 ///

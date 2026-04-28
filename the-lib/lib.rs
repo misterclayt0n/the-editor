@@ -6,6 +6,7 @@ use smartstring::{
 pub mod auto_pairs;
 pub mod chars;
 pub mod comment;
+pub mod document;
 pub mod edit;
 pub mod grapheme;
 pub mod history;

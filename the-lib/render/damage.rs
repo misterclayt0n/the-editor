@@ -5,6 +5,56 @@ pub struct Damage {
   pub end_row:   usize,
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct DirtyFlag {
+  pub dirty: bool,
+}
+
+impl DirtyFlag {
+  pub fn mark(&mut self) {
+    self.dirty = true;
+  }
+
+  pub fn clear(&mut self) {
+    self.dirty = false;
+  }
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct DirtyRows {
+  pub dirty: bool,
+  pub full:  bool,
+}
+
+impl DirtyRows {
+  pub fn mark(&mut self, full: bool) {
+    self.dirty = true;
+    self.full |= full;
+  }
+
+  pub fn clear(&mut self) {
+    self.dirty = false;
+    self.full = false;
+  }
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct DirtyState {
+  pub rows:       DirtyRows,
+  pub selections: DirtyFlag,
+  pub cursors:    DirtyFlag,
+  pub syntax:     DirtyFlag,
+}
+
+impl DirtyState {
+  pub fn clear(&mut self) {
+    self.rows.clear();
+    self.selections.clear();
+    self.cursors.clear();
+    self.syntax.clear();
+  }
+}
+
 impl Damage {
   pub const fn empty() -> Self {
     Self {
@@ -44,5 +94,28 @@ impl Damage {
 
   pub const fn is_empty(self) -> bool {
     !self.full && self.start_row == self.end_row
+  }
+
+  pub fn union(self, other: Self) -> Self {
+    if self.full || other.full {
+      return Self {
+        full: true,
+        start_row: self.start_row.min(other.start_row),
+        end_row: self.end_row.max(other.end_row),
+      };
+    }
+
+    if self.is_empty() {
+      return other;
+    }
+    if other.is_empty() {
+      return self;
+    }
+
+    Self {
+      full: false,
+      start_row: self.start_row.min(other.start_row),
+      end_row: self.end_row.max(other.end_row),
+    }
   }
 }

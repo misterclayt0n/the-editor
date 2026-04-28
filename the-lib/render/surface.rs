@@ -16,7 +16,10 @@ use crate::{
 };
 
 use super::{
-  damage::Damage,
+  damage::{
+    Damage,
+    DirtyState,
+  },
   display_list::{
     FrameRequest,
     RenderFrameDelta,
@@ -47,14 +50,11 @@ pub struct RenderSurface {
   id:                     SurfaceId,
   format:                 TextFormat,
   annotations:            TextAnnotations,
-  selection:              Option<Selection>,
-  syntax_highlights:      Vec<SyntaxHighlight>,
-  format_generation:      u64,
-  annotations_generation: u64,
-  selection_generation:   u64,
-  syntax_generation:      u64,
-  generation:             u64,
-  state:                  SurfaceState,
+  selection:         Option<Selection>,
+  syntax_highlights: Vec<SyntaxHighlight>,
+  generation:        u64,
+  dirty:             DirtyState,
+  state:             SurfaceState,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -62,10 +62,6 @@ struct SurfaceState {
   next_row_id:                  u64,
   last_text_revision:           Option<u64>,
   last_viewport:                Option<Viewport>,
-  last_format_generation:       u64,
-  last_annotations_generation:  u64,
-  last_selection_generation:    u64,
-  last_syntax_generation:       u64,
   visible_rows:                 Vec<RetainedRow>,
   selection_spans:              Vec<SelectionSpan>,
   cursor_placements:            Vec<CursorPlacement>,
@@ -78,10 +74,6 @@ impl Default for SurfaceState {
       next_row_id: 1,
       last_text_revision: None,
       last_viewport: None,
-      last_format_generation: 0,
-      last_annotations_generation: 0,
-      last_selection_generation: 0,
-      last_syntax_generation: 0,
       visible_rows: Vec::new(),
       selection_spans: Vec::new(),
       cursor_placements: Vec::new(),
@@ -183,11 +175,8 @@ impl RenderSurface {
       annotations,
       selection: None,
       syntax_highlights: Vec::new(),
-      format_generation: 0,
-      annotations_generation: 0,
-      selection_generation: 0,
-      syntax_generation: 0,
       generation: 0,
+      dirty: DirtyState::default(),
       state: SurfaceState::default(),
     }
   }
@@ -207,7 +196,7 @@ impl RenderSurface {
   pub fn set_text_format(&mut self, format: TextFormat) {
     if self.format != format {
       self.format = format;
-      self.format_generation = self.format_generation.wrapping_add(1);
+      self.mark_rows_dirty(true);
     }
   }
 
@@ -226,14 +215,15 @@ impl RenderSurface {
   pub fn set_text_annotations(&mut self, annotations: TextAnnotations) {
     if self.annotations != annotations {
       self.annotations = annotations;
-      self.annotations_generation = self.annotations_generation.wrapping_add(1);
+      self.mark_rows_dirty(true);
     }
   }
 
   pub fn set_selection(&mut self, selection: Option<Selection>) {
     if self.selection != selection {
       self.selection = selection;
-      self.selection_generation = self.selection_generation.wrapping_add(1);
+      self.dirty.selections.mark();
+      self.dirty.cursors.mark();
     }
   }
 
@@ -241,7 +231,7 @@ impl RenderSurface {
     highlights.sort_by_key(|highlight| (highlight.range.start, std::cmp::Reverse(highlight.range.end)));
     if self.syntax_highlights != highlights {
       self.syntax_highlights = highlights;
-      self.syntax_generation = self.syntax_generation.wrapping_add(1);
+      self.dirty.syntax.mark();
     }
   }
 
@@ -251,61 +241,87 @@ impl RenderSurface {
     text_revision: u64,
     request: FrameRequest,
   ) -> RenderFrameDelta {
-    let next_rows = build_visible_rows(
-      text,
-      &self.format,
-      &self.annotations,
-      request.viewport,
-    );
+    self.mark_external_dirty(text_revision, request.viewport);
 
-    let force_full = self.should_force_full(&request);
-    let diff = diff_rows(
-      &mut self.state,
-      next_rows,
-      force_full,
-      request.viewport,
-    );
+    let stale_generation = request.since_generation != Some(self.generation);
+    let first_frame = self.state.visible_rows.is_empty() || self.generation == 0;
+    let force_full = first_frame || stale_generation || self.dirty.rows.full;
 
-    let selection_spans = build_selection_spans(
-      text,
-      &self.format,
-      &self.annotations,
-      self.selection.as_ref(),
-      request.viewport,
-    );
+    let row_diff = if self.dirty.rows.dirty || first_frame {
+      let next_rows = build_visible_rows(text, &self.format, &self.annotations, request.viewport);
+      Some(diff_rows(&mut self.state, next_rows, force_full, request.viewport))
+    } else {
+      None
+    };
+
+    let next_visible_rows = row_diff
+      .as_ref()
+      .map(|diff| diff.next_visible_rows.clone())
+      .unwrap_or_else(|| self.state.visible_rows.clone());
+
+    let row_damage = row_diff.as_ref().map_or(Damage::empty(), |diff| diff.damage);
+    let retained_rows = row_diff
+      .as_ref()
+      .map_or_else(Vec::new, |diff| diff.retained_rows.clone());
+    let incremental_changed_rows = row_diff
+      .as_ref()
+      .map_or_else(Vec::new, |diff| diff.changed_rows.clone());
+    let removed_rows = row_diff
+      .as_ref()
+      .map_or_else(Vec::new, |diff| diff.removed_rows.clone());
+
+    let selection_spans = if self.dirty.selections.dirty || self.dirty.rows.dirty || first_frame {
+      build_selection_spans(
+        text,
+        &self.format,
+        &self.annotations,
+        self.selection.as_ref(),
+        request.viewport,
+      )
+    } else {
+      self.state.selection_spans.clone()
+    };
     let selection_changed = force_full || self.state.selection_spans != selection_spans;
-    let selection_layer = selection_changed.then(|| SelectionLayerDelta {
+    let selection_layer = (force_full || selection_changed).then(|| SelectionLayerDelta {
       spans: selection_spans.clone(),
     });
 
-    let cursor_placements = build_cursor_placements(
-      text,
-      &self.format,
-      &self.annotations,
-      self.selection.as_ref(),
-      request.viewport,
-    );
+    let cursor_placements = if self.dirty.cursors.dirty || self.dirty.rows.dirty || first_frame {
+      build_cursor_placements(
+        text,
+        &self.format,
+        &self.annotations,
+        self.selection.as_ref(),
+        request.viewport,
+      )
+    } else {
+      self.state.cursor_placements.clone()
+    };
     let cursor_changed = force_full || self.state.cursor_placements != cursor_placements;
-    let cursor_layer = cursor_changed.then(|| CursorLayerDelta {
+    let cursor_layer = (force_full || cursor_changed).then(|| CursorLayerDelta {
       cursors: cursor_placements.clone(),
     });
 
-    let syntax_spans = build_syntax_spans(
-      text,
-      &self.format,
-      &self.annotations,
-      &self.syntax_highlights,
-      request.viewport,
-    );
+    let syntax_spans = if self.dirty.syntax.dirty || self.dirty.rows.dirty || first_frame {
+      build_syntax_spans(
+        text,
+        &self.format,
+        &self.annotations,
+        &self.syntax_highlights,
+        request.viewport,
+      )
+    } else {
+      self.state.syntax_spans.clone()
+    };
     let syntax_changed = force_full || self.state.syntax_spans != syntax_spans;
-    let syntax_layer = syntax_changed.then(|| SyntaxLayerDelta {
+    let syntax_layer = (force_full || syntax_changed).then(|| SyntaxLayerDelta {
       spans: syntax_spans.clone(),
     });
 
     let presentation_changed = force_full
-      || !diff.retained_rows.is_empty()
-      || !diff.changed_rows.is_empty()
-      || !diff.removed_rows.is_empty()
+      || !retained_rows.is_empty()
+      || !incremental_changed_rows.is_empty()
+      || !removed_rows.is_empty()
       || selection_changed
       || cursor_changed
       || syntax_changed;
@@ -316,40 +332,46 @@ impl RenderSurface {
       self.generation = self.generation.wrapping_add(1);
     }
 
+    let full_changed_rows = next_visible_rows.iter().map(|row| row.row.clone()).collect::<Vec<_>>();
+    let full = force_full || next_visible_rows.is_empty() && self.generation == 1;
+
+    let selection_damage = if force_full || selection_changed {
+      damage_for_selection_change(&self.state.selection_spans, &selection_spans)
+    } else {
+      Damage::empty()
+    };
+    let cursor_damage = if force_full || cursor_changed {
+      damage_for_cursor_change(&self.state.cursor_placements, &cursor_placements)
+    } else {
+      Damage::empty()
+    };
+    let syntax_damage = if force_full || syntax_changed {
+      damage_for_syntax_change(&self.state.syntax_spans, &syntax_spans)
+    } else {
+      Damage::empty()
+    };
+
+    let damage = if full {
+      Damage::full(request.viewport.row_count.min(next_visible_rows.len()))
+    } else {
+      row_damage.union(selection_damage).union(cursor_damage).union(syntax_damage)
+    };
+
     self.state.last_text_revision = Some(text_revision);
     self.state.last_viewport = Some(request.viewport);
-    self.state.last_format_generation = self.format_generation;
-    self.state.last_annotations_generation = self.annotations_generation;
-    self.state.last_selection_generation = self.selection_generation;
-    self.state.last_syntax_generation = self.syntax_generation;
-    self.state.visible_rows = diff.next_visible_rows;
+    self.state.visible_rows = next_visible_rows;
     self.state.selection_spans = selection_spans;
     self.state.cursor_placements = cursor_placements;
     self.state.syntax_spans = syntax_spans;
-
-    let full = force_full || self.state.visible_rows.is_empty() && self.generation == 1;
-    let damage = if full {
-      Damage::full(request.viewport.row_count.min(self.state.visible_rows.len()))
-    } else {
-      diff.damage
-    };
+    self.dirty.clear();
 
     RenderFrameDelta {
       surface_id: self.id,
       generation: self.generation,
       full,
-      retained_rows: if full { Vec::new() } else { diff.retained_rows },
-      changed_rows: if full {
-        self
-          .state
-          .visible_rows
-          .iter()
-          .map(|row| row.row.clone())
-          .collect()
-      } else {
-        diff.changed_rows
-      },
-      removed_rows: if full { Vec::new() } else { diff.removed_rows },
+      retained_rows: if full { Vec::new() } else { retained_rows },
+      changed_rows: if full { full_changed_rows } else { incremental_changed_rows },
+      removed_rows: if full { Vec::new() } else { removed_rows },
       layers: LayerDeltaSet {
         selections: selection_layer,
         cursors: cursor_layer,
@@ -360,27 +382,27 @@ impl RenderSurface {
     }
   }
 
-  fn should_force_full(&self, request: &FrameRequest) -> bool {
-    if self.state.visible_rows.is_empty() || self.generation == 0 {
-      return true;
+  fn mark_rows_dirty(&mut self, full: bool) {
+    self.dirty.rows.mark(full);
+    self.dirty.selections.mark();
+    self.dirty.cursors.mark();
+    self.dirty.syntax.mark();
+  }
+
+  fn mark_external_dirty(&mut self, text_revision: u64, viewport: Viewport) {
+    if self.state.last_text_revision.is_some()
+      && self.state.last_text_revision != Some(text_revision)
+    {
+      self.mark_rows_dirty(false);
     }
 
-    if request.since_generation != Some(self.generation) {
-      return true;
+    if self.state.last_viewport != Some(viewport) {
+      let full = self
+        .state
+        .last_viewport
+        .is_none_or(|previous| previous.wrap_width != viewport.wrap_width);
+      self.mark_rows_dirty(full);
     }
-
-    if self.state.last_format_generation != self.format_generation {
-      return true;
-    }
-
-    if self.state.last_annotations_generation != self.annotations_generation {
-      return true;
-    }
-
-    self
-      .state
-      .last_viewport
-      .is_none_or(|viewport| viewport.wrap_width != request.viewport.wrap_width)
   }
 }
 
@@ -724,6 +746,30 @@ fn build_syntax_spans(
   spans
 }
 
+fn damage_for_selection_change(old: &[SelectionSpan], new: &[SelectionSpan]) -> Damage {
+  Damage::from_rows(
+    old.iter()
+      .map(|span| span.surface_row)
+      .chain(new.iter().map(|span| span.surface_row)),
+  )
+}
+
+fn damage_for_cursor_change(old: &[CursorPlacement], new: &[CursorPlacement]) -> Damage {
+  Damage::from_rows(
+    old.iter()
+      .map(|cursor| cursor.surface_row)
+      .chain(new.iter().map(|cursor| cursor.surface_row)),
+  )
+}
+
+fn damage_for_syntax_change(old: &[SyntaxSpan], new: &[SyntaxSpan]) -> Damage {
+  Damage::from_rows(
+    old.iter()
+      .map(|span| span.surface_row)
+      .chain(new.iter().map(|span| span.surface_row)),
+  )
+}
+
 #[cfg(test)]
 mod tests {
   use ropey::Rope;
@@ -930,6 +976,7 @@ mod tests {
 
     assert!(!delta.full);
     assert!(delta.changed_rows.is_empty());
+    assert!(delta.layers.syntax.is_none());
     let selection_delta = delta.layers.selections.expect("selection layer delta");
     assert_eq!(selection_delta.spans.len(), 1);
     assert_eq!(selection_delta.spans[0].surface_row, 0);
@@ -993,6 +1040,7 @@ mod tests {
     assert_eq!(cursor_delta.cursors.len(), 1);
     assert_eq!(cursor_delta.cursors[0].surface_row, 0);
     assert_eq!(cursor_delta.cursors[0].col, 2);
+    assert!(!delta.damage.is_empty());
   }
 
   #[test]
@@ -1018,6 +1066,8 @@ mod tests {
 
     assert!(!delta.full);
     assert!(delta.changed_rows.is_empty());
+    assert!(delta.layers.selections.is_none());
+    assert!(delta.layers.cursors.is_none());
     let syntax_delta = delta.layers.syntax.expect("syntax layer delta");
     assert_eq!(syntax_delta.spans.len(), 1);
     assert_eq!(syntax_delta.spans[0].surface_row, 0);

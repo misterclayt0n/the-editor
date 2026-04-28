@@ -7,7 +7,12 @@ pub mod text_annotations;
 pub mod text_format;
 pub mod visual_position;
 
-pub use damage::Damage;
+pub use damage::{
+  Damage,
+  DirtyFlag,
+  DirtyRows,
+  DirtyState,
+};
 pub use display_list::{
   FrameRequest,
   RenderFrameDelta,

@@ -5,6 +5,7 @@ use smartstring::{
 
 pub mod auto_pairs;
 pub mod chars;
+pub mod clipboard;
 pub mod comment;
 pub mod document;
 pub mod edit;

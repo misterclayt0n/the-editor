@@ -1,5 +1,5 @@
 [workspace]
-members = [ "the-lib" , "the-stdx" ]
+members = [ "the-lib" , "the-runtime" , "the-stdx" ]
 resolver = "3"
 
 [workspace.package]

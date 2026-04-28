@@ -86,19 +86,19 @@ enum Op {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Snapshot {
-  text:            String,
-  selection:       Vec<(u64, usize, usize)>,
-  active_cursor:   Option<u64>,
-  revision:        u64,
-  viewport:        Viewport,
+  text:              String,
+  selection:         Vec<(u64, usize, usize)>,
+  active_cursor:     Option<u64>,
+  revision:          u64,
+  viewport:          Viewport,
   render_generation: u64,
-  registers:       Vec<(char, Vec<String>)>,
+  registers:         Vec<(char, Vec<String>)>,
 }
 
 struct SimEditor {
-  document:  Document,
-  surface:   Surface,
-  registers: Registers,
+  document:   Document,
+  surface:    Surface,
+  registers:  Registers,
   auto_pairs: AutoPairs,
 }
 
@@ -130,7 +130,8 @@ impl SimEditor {
       let before = editor.snapshot();
       if let Err(err) = editor.apply_op(op) {
         panic!(
-          "script failed at step {index} with op {op:?}\nerror: {err}\nbefore: {before:#?}\nafter: {:#?}",
+          "script failed at step {index} with op {op:?}\nerror: {err}\nbefore: \
+           {before:#?}\nafter: {:#?}",
           editor.snapshot()
         );
       }
@@ -142,24 +143,27 @@ impl SimEditor {
 
   fn snapshot(&self) -> Snapshot {
     Snapshot {
-      text: self.document.text().to_string(),
-      selection: self
+      text:              self.document.text().to_string(),
+      selection:         self
         .surface
         .selection()
         .iter()
         .map(|cursor| (cursor.id.get(), cursor.range.anchor, cursor.range.head))
         .collect(),
-      active_cursor: self.surface.active_cursor().map(|id| id.get()),
-      revision: self.document.revision(),
-      viewport: self.surface.viewport(),
+      active_cursor:     self.surface.active_cursor().map(|id| id.get()),
+      revision:          self.document.revision(),
+      viewport:          self.surface.viewport(),
       render_generation: self.surface.render_generation(),
-      registers: self
+      registers:         self
         .registers
         .iter()
         .map(|(name, values)| {
           (
             name,
-            values.iter().map(|value| value.to_string()).collect::<Vec<_>>(),
+            values
+              .iter()
+              .map(|value| value.to_string())
+              .collect::<Vec<_>>(),
           )
         })
         .collect(),
@@ -281,7 +285,7 @@ impl SimEditor {
     let cx = MovementContext {
       text_format: self.surface.text_format(),
       annotations: self.surface.text_annotations(),
-      wrap_width: viewport.wrap_width,
+      wrap_width:  viewport.wrap_width,
     };
     let result = motion(
       text,
@@ -311,7 +315,7 @@ impl SimEditor {
     let cx = MovementContext {
       text_format: self.surface.text_format(),
       annotations: self.surface.text_annotations(),
-      wrap_width: viewport.wrap_width,
+      wrap_width:  viewport.wrap_width,
     };
     let result = motion(
       text,
@@ -354,13 +358,10 @@ impl SimEditor {
       .selection()
       .clone()
       .transform(|_| Range::point(span.start + text.chars().count()));
-    self.surface.apply_edit(
-      &mut self.document,
-      Edit {
-        transaction: tx,
-        selection,
-      },
-    )?;
+    self.surface.apply_edit(&mut self.document, Edit {
+      transaction: tx,
+      selection,
+    })?;
     Ok(())
   }
 
@@ -433,13 +434,10 @@ impl SimEditor {
       .selection()
       .clone()
       .transform(|_| Range::point(start));
-    self.surface.apply_edit(
-      &mut self.document,
-      Edit {
-        transaction: tx,
-        selection,
-      },
-    )?;
+    self.surface.apply_edit(&mut self.document, Edit {
+      transaction: tx,
+      selection,
+    })?;
     Ok(())
   }
 
@@ -542,7 +540,10 @@ fn io_error(message: impl Into<String>) -> std::io::Error {
 }
 
 fn assert_stable_delta(label: &str, delta: &RenderFrameDelta, snapshot: &Snapshot) {
-  assert!(!delta.full, "{label}: stable rerender unexpectedly full: {snapshot:#?}");
+  assert!(
+    !delta.full,
+    "{label}: stable rerender unexpectedly full: {snapshot:#?}"
+  );
   assert!(
     delta.retained_rows.is_empty()
       && delta.changed_rows.is_empty()
@@ -579,19 +580,16 @@ fn auto_pairs_backspace_roundtrip_script() {
 
 #[test]
 fn multiline_editing_script() {
-  let editor = SimEditor::run_script(
-    "",
-    &[
-      Op::InsertText("hello"),
-      Op::InsertNewline,
-      Op::InsertText("world"),
-      Op::MoveUp,
-      Op::MoveLineEnd,
-      Op::InsertChar('!'),
-      Op::Undo,
-      Op::Redo,
-    ],
-  );
+  let editor = SimEditor::run_script("", &[
+    Op::InsertText("hello"),
+    Op::InsertNewline,
+    Op::InsertText("world"),
+    Op::MoveUp,
+    Op::MoveLineEnd,
+    Op::InsertChar('!'),
+    Op::Undo,
+    Op::Redo,
+  ]);
 
   assert_eq!(editor.document.text().to_string(), "hello!\nworld");
   assert_eq!(editor.surface.primary_range(), Range::point(6));
@@ -599,23 +597,19 @@ fn multiline_editing_script() {
 
 #[test]
 fn copy_and_paste_register_script() {
-  let editor = SimEditor::run_script(
-    "",
-    &[
-      Op::InsertText("alpha"),
-      Op::SelectAll,
-      Op::Copy,
-      Op::MoveDocumentEnd,
-      Op::InsertNewline,
-      Op::Paste,
-    ],
-  );
+  let editor = SimEditor::run_script("", &[
+    Op::InsertText("alpha"),
+    Op::SelectAll,
+    Op::Copy,
+    Op::MoveDocumentEnd,
+    Op::InsertNewline,
+    Op::Paste,
+  ]);
 
   assert_eq!(editor.document.text().to_string(), "alpha\nalpha");
-  assert_eq!(
-    editor.registers.read('"').unwrap(),
-    &[Tendril::from("alpha")]
-  );
+  assert_eq!(editor.registers.read('"').unwrap(), &[Tendril::from(
+    "alpha"
+  )]);
 }
 
 #[test]
@@ -623,22 +617,21 @@ fn cut_updates_register_and_text() {
   let editor = SimEditor::run_script("alpha beta", &[Op::Search("beta"), Op::Cut]);
 
   assert_eq!(editor.document.text().to_string(), "alpha ");
-  assert_eq!(editor.registers.read('"').unwrap(), &[Tendril::from("beta")]);
+  assert_eq!(editor.registers.read('"').unwrap(), &[Tendril::from(
+    "beta"
+  )]);
 }
 
 #[test]
 fn undo_restores_exact_committed_selection_snapshot() {
-  let editor = SimEditor::run_script(
-    "",
-    &[
-      Op::InsertText("alpha"),
-      Op::MoveDocumentStart,
-      Op::InsertChar('>'),
-      Op::MoveDocumentEnd,
-      Op::InsertChar('<'),
-      Op::Undo,
-    ],
-  );
+  let editor = SimEditor::run_script("", &[
+    Op::InsertText("alpha"),
+    Op::MoveDocumentStart,
+    Op::InsertChar('>'),
+    Op::MoveDocumentEnd,
+    Op::InsertChar('<'),
+    Op::Undo,
+  ]);
 
   assert_eq!(editor.document.text().to_string(), ">alpha");
   assert_eq!(editor.surface.primary_range(), Range::point(1));
@@ -646,27 +639,24 @@ fn undo_restores_exact_committed_selection_snapshot() {
 
 #[test]
 fn search_and_repeat_script() {
-  let editor = SimEditor::run_script(
-    "one two two three",
-    &[Op::Search("two"), Op::RepeatSearchForward],
-  );
+  let editor = SimEditor::run_script("one two two three", &[
+    Op::Search("two"),
+    Op::RepeatSearchForward,
+  ]);
 
   assert_eq!(editor.surface.primary_range(), Range::new(8, 11));
 }
 
 #[test]
 fn wrapped_visual_motion_roundtrip_script() {
-  let editor = SimEditor::run_script(
-    "0123456789abcdef",
-    &[
-      Op::MoveRight,
-      Op::MoveLeft,
-      Op::MoveRight,
-      Op::ToggleWrap,
-      Op::MoveDown,
-      Op::MoveUp,
-    ],
-  );
+  let editor = SimEditor::run_script("0123456789abcdef", &[
+    Op::MoveRight,
+    Op::MoveLeft,
+    Op::MoveRight,
+    Op::ToggleWrap,
+    Op::MoveDown,
+    Op::MoveUp,
+  ]);
 
   assert!(editor.surface.text_format().soft_wrap);
   assert_eq!(editor.surface.primary_range(), Range::point(1));

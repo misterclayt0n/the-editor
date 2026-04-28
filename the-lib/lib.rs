@@ -18,6 +18,7 @@ pub mod syntax;
 pub mod transaction;
 pub mod uri;
 pub mod search;
+pub mod surround;
 
 /// A small-string-optimized string type.
 ///

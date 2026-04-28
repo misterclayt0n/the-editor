@@ -59,13 +59,14 @@ pub struct RenderSurface {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct SurfaceState {
-  next_row_id:                  u64,
-  last_text_revision:           Option<u64>,
-  last_viewport:                Option<Viewport>,
-  visible_rows:                 Vec<RetainedRow>,
-  selection_spans:              Vec<SelectionSpan>,
-  cursor_placements:            Vec<CursorPlacement>,
-  syntax_spans:                 Vec<SyntaxSpan>,
+  next_row_id:        u64,
+  last_text_revision: Option<u64>,
+  last_viewport:      Option<Viewport>,
+  layout_cache:       DocumentLayoutCache,
+  visible_rows:       Vec<RetainedRow>,
+  selection_spans:    Vec<SelectionSpan>,
+  cursor_placements:  Vec<CursorPlacement>,
+  syntax_spans:       Vec<SyntaxSpan>,
 }
 
 impl Default for SurfaceState {
@@ -74,6 +75,7 @@ impl Default for SurfaceState {
       next_row_id: 1,
       last_text_revision: None,
       last_viewport: None,
+      layout_cache: DocumentLayoutCache::default(),
       visible_rows: Vec::new(),
       selection_spans: Vec::new(),
       cursor_placements: Vec::new(),
@@ -158,6 +160,19 @@ impl RowBuilder {
       text: self.text.into(),
     }
   }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CachedLayoutRow {
+  key:  RowKey,
+  text: Tendril,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+struct DocumentLayoutCache {
+  text_revision: Option<u64>,
+  wrap_width:    usize,
+  rows:          Vec<CachedLayoutRow>,
 }
 
 #[derive(Debug)]
@@ -245,10 +260,26 @@ impl RenderSurface {
 
     let stale_generation = request.since_generation != Some(self.generation);
     let first_frame = self.state.visible_rows.is_empty() || self.generation == 0;
+    let viewport_changed = self.state.last_viewport != Some(request.viewport);
+
+    if self.dirty.rows.dirty
+      || first_frame
+      || self.state.layout_cache.text_revision != Some(text_revision)
+      || self.state.layout_cache.wrap_width != request.viewport.wrap_width
+    {
+      self.state.layout_cache = rebuild_document_layout_cache(
+        text,
+        &self.format,
+        &self.annotations,
+        text_revision,
+        request.viewport.wrap_width,
+      );
+    }
+
     let force_full = first_frame || stale_generation || self.dirty.rows.full;
 
-    let row_diff = if self.dirty.rows.dirty || first_frame {
-      let next_rows = build_visible_rows(text, &self.format, &self.annotations, request.viewport);
+    let row_diff = if self.dirty.rows.dirty || first_frame || viewport_changed {
+      let next_rows = build_visible_rows(&self.state.layout_cache, request.viewport);
       Some(diff_rows(&mut self.state, next_rows, force_full, request.viewport))
     } else {
       None
@@ -270,7 +301,11 @@ impl RenderSurface {
       .as_ref()
       .map_or_else(Vec::new, |diff| diff.removed_rows.clone());
 
-    let selection_spans = if self.dirty.selections.dirty || self.dirty.rows.dirty || first_frame {
+    let selection_spans = if self.dirty.selections.dirty
+      || self.dirty.rows.dirty
+      || first_frame
+      || viewport_changed
+    {
       build_selection_spans(
         text,
         &self.format,
@@ -286,7 +321,11 @@ impl RenderSurface {
       spans: selection_spans.clone(),
     });
 
-    let cursor_placements = if self.dirty.cursors.dirty || self.dirty.rows.dirty || first_frame {
+    let cursor_placements = if self.dirty.cursors.dirty
+      || self.dirty.rows.dirty
+      || first_frame
+      || viewport_changed
+    {
       build_cursor_placements(
         text,
         &self.format,
@@ -302,7 +341,11 @@ impl RenderSurface {
       cursors: cursor_placements.clone(),
     });
 
-    let syntax_spans = if self.dirty.syntax.dirty || self.dirty.rows.dirty || first_frame {
+    let syntax_spans = if self.dirty.syntax.dirty
+      || self.dirty.rows.dirty
+      || first_frame
+      || viewport_changed
+    {
       build_syntax_spans(
         text,
         &self.format,
@@ -518,17 +561,14 @@ fn next_row_id(state: &mut SurfaceState) -> RowId {
   RowId::from_non_zero(id)
 }
 
-fn build_visible_rows(
+fn rebuild_document_layout_cache(
   text: RopeSlice<'_>,
   format: &TextFormat,
   annotations: &TextAnnotations,
-  viewport: Viewport,
-) -> Vec<BuiltRow> {
-  if viewport.row_count == 0 {
-    return Vec::new();
-  }
-
-  let mut formatter = DocumentFormatter::new(text, format, viewport.wrap_width, annotations);
+  text_revision: u64,
+  wrap_width: usize,
+) -> DocumentLayoutCache {
+  let mut formatter = DocumentFormatter::new(text, format, wrap_width, annotations);
   let mut virtual_ordinals = BTreeMap::new();
   let mut rows = Vec::new();
   let mut current = None::<RowBuilder>;
@@ -538,21 +578,18 @@ fn build_visible_rows(
 
     if current.as_ref().is_some_and(|row| row.visual_row != visual_row) {
       if let Some(row) = current.take() {
-        if row.visual_row >= viewport.first_row
-          && row.visual_row < viewport.first_row + viewport.row_count
-        {
-          rows.push(row.into_built_row(&mut virtual_ordinals));
-          if rows.len() == viewport.row_count {
-            return rows;
-          }
-        }
+        let built = row.into_built_row(&mut virtual_ordinals);
+        rows.push(CachedLayoutRow {
+          key: built.key,
+          text: built.text,
+        });
       }
     }
 
     if current.is_none() {
       current = Some(RowBuilder::new(
         visual_row,
-        RowPlacement::new(visual_row.saturating_sub(viewport.first_row)),
+        RowPlacement::new(visual_row),
         grapheme.char_idx,
       ));
     }
@@ -565,24 +602,49 @@ fn build_visible_rows(
   }
 
   if let Some(row) = current.take() {
-    if row.visual_row >= viewport.first_row && row.visual_row < viewport.first_row + viewport.row_count
-    {
-      rows.push(row.into_built_row(&mut virtual_ordinals));
-    }
+    let built = row.into_built_row(&mut virtual_ordinals);
+    rows.push(CachedLayoutRow {
+      key: built.key,
+      text: built.text,
+    });
   }
 
-  if rows.is_empty() && viewport.first_row == 0 {
-    rows.push(BuiltRow {
+  if rows.is_empty() {
+    rows.push(CachedLayoutRow {
       key: RowKey::Document {
         line_idx: 0,
         first_doc_char: 0,
       },
-      placement: RowPlacement::new(0),
       text: Tendril::new(),
     });
   }
 
-  rows
+  DocumentLayoutCache {
+    text_revision: Some(text_revision),
+    wrap_width,
+    rows,
+  }
+}
+
+fn build_visible_rows(cache: &DocumentLayoutCache, viewport: Viewport) -> Vec<BuiltRow> {
+  if viewport.row_count == 0 {
+    return Vec::new();
+  }
+
+  let end = viewport
+    .first_row
+    .saturating_add(viewport.row_count)
+    .min(cache.rows.len());
+
+  cache.rows[viewport.first_row.min(cache.rows.len())..end]
+    .iter()
+    .enumerate()
+    .map(|(surface_row, row)| BuiltRow {
+      key: row.key.clone(),
+      placement: RowPlacement::new(surface_row),
+      text: row.text.clone(),
+    })
+    .collect()
 }
 
 fn build_selection_spans(
@@ -811,6 +873,24 @@ mod tests {
         .collect::<smallvec::SmallVec<[Range; 1]>>(),
     )
     .unwrap()
+  }
+
+  #[test]
+  fn first_frame_populates_doc_wide_layout_cache() {
+    let rope = Rope::from("alpha beta gamma delta");
+    let mut format = TextFormat::default();
+    format.soft_wrap = true;
+    let mut surface = RenderSurface::new(
+      SurfaceId::new(1).unwrap(),
+      format,
+      TextAnnotations::default(),
+    );
+
+    let _ = surface.render_frame(rope.slice(..), 1, request(0, 1, 5, None));
+
+    assert_eq!(surface.state.layout_cache.text_revision, Some(1));
+    assert_eq!(surface.state.layout_cache.wrap_width, 5);
+    assert!(surface.state.layout_cache.rows.len() > 1);
   }
 
   #[test]

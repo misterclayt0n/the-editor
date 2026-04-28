@@ -7,10 +7,14 @@ use std::{
 };
 
 use ropey::RopeSlice;
+use unicode_segmentation::UnicodeSegmentation;
 
 use crate::{
   Tendril,
-  grapheme::Grapheme,
+  grapheme::{
+    Grapheme,
+    grapheme_width,
+  },
   selection::Selection,
   syntax::HighlightKindId,
 };
@@ -449,6 +453,58 @@ impl RenderSurface {
   }
 }
 
+fn project_visible_cols(start_col: usize, end_col: usize, viewport: Viewport) -> Option<(usize, usize)> {
+  let visible_start = viewport.first_col;
+  let visible_end = viewport.first_col.saturating_add(viewport.wrap_width);
+
+  if end_col <= visible_start || start_col >= visible_end {
+    return None;
+  }
+
+  Some((
+    start_col.max(visible_start) - visible_start,
+    end_col.min(visible_end) - visible_start,
+  ))
+}
+
+fn crop_row_text(text: &str, viewport: Viewport) -> Tendril {
+  if viewport.first_col == 0 {
+    let width = row_display_width(text);
+    if width <= viewport.wrap_width {
+      return text.into();
+    }
+  }
+
+  let mut result = String::new();
+  let visible_start = viewport.first_col;
+  let visible_end = viewport.first_col.saturating_add(viewport.wrap_width);
+  let mut col = 0;
+
+  for grapheme in UnicodeSegmentation::graphemes(text, true) {
+    let width = grapheme_width(grapheme);
+    let end_col = col + width;
+
+    if end_col <= visible_start {
+      col = end_col;
+      continue;
+    }
+    if col >= visible_end {
+      break;
+    }
+
+    result.push_str(grapheme);
+    col = end_col;
+  }
+
+  result.into()
+}
+
+fn row_display_width(text: &str) -> usize {
+  UnicodeSegmentation::graphemes(text, true)
+    .map(grapheme_width)
+    .sum()
+}
+
 #[derive(Debug)]
 struct RowDiff {
   next_visible_rows: Vec<RetainedRow>,
@@ -642,7 +698,7 @@ fn build_visible_rows(cache: &DocumentLayoutCache, viewport: Viewport) -> Vec<Bu
     .map(|(surface_row, row)| BuiltRow {
       key: row.key.clone(),
       placement: RowPlacement::new(surface_row),
-      text: row.text.clone(),
+      text: crop_row_text(&row.text, viewport),
     })
     .collect()
 }
@@ -684,11 +740,19 @@ fn build_selection_spans(
       continue;
     };
 
+    let Some((start_col, end_col)) = project_visible_cols(
+      grapheme.visual_pos.col,
+      grapheme.visual_pos.col + grapheme.width(),
+      viewport,
+    ) else {
+      continue;
+    };
+
     let span = SelectionSpan {
       cursor_id: cursor.id,
       surface_row: visual_row - viewport.first_row,
-      start_col: grapheme.visual_pos.col,
-      end_col: grapheme.visual_pos.col + grapheme.width(),
+      start_col,
+      end_col,
     };
 
     if let Some(last) = spans.last_mut()
@@ -732,11 +796,14 @@ fn build_cursor_placements(
     if pos.row < viewport.first_row || pos.row >= viewport.first_row + viewport.row_count {
       continue;
     }
+    if pos.col < viewport.first_col || pos.col >= viewport.first_col + viewport.wrap_width {
+      continue;
+    }
 
     cursors.push(CursorPlacement {
       cursor_id: cursor.id,
       surface_row: pos.row - viewport.first_row,
-      col: pos.col,
+      col: pos.col - viewport.first_col,
     });
   }
 
@@ -787,10 +854,18 @@ fn build_syntax_spans(
       continue;
     };
 
+    let Some((start_col, end_col)) = project_visible_cols(
+      grapheme.visual_pos.col,
+      grapheme.visual_pos.col + grapheme.width(),
+      viewport,
+    ) else {
+      continue;
+    };
+
     let span = SyntaxSpan {
       surface_row: visual_row - viewport.first_row,
-      start_col: grapheme.visual_pos.col,
-      end_col: grapheme.visual_pos.col + grapheme.width(),
+      start_col,
+      end_col,
       kind,
     };
 
@@ -860,7 +935,20 @@ mod tests {
     since: Option<u64>,
   ) -> FrameRequest {
     FrameRequest {
-      viewport: Viewport::new(first_row, row_count, wrap_width),
+      viewport: Viewport::new(first_row, row_count, 0, wrap_width),
+      since_generation: since,
+    }
+  }
+
+  fn request_with_col(
+    first_row: usize,
+    row_count: usize,
+    first_col: usize,
+    wrap_width: usize,
+    since: Option<u64>,
+  ) -> FrameRequest {
+    FrameRequest {
+      viewport: Viewport::new(first_row, row_count, first_col, wrap_width),
       since_generation: since,
     }
   }
@@ -1154,6 +1242,53 @@ mod tests {
     assert_eq!(syntax_delta.spans[0].start_col, 1);
     assert_eq!(syntax_delta.spans[0].end_col, 3);
     assert_eq!(syntax_delta.spans[0].kind, HighlightKindId::new(7));
+  }
+
+  #[test]
+  fn horizontal_scroll_crops_rows_and_layer_columns() {
+    let rope = Rope::from("abcdef");
+    let mut surface = RenderSurface::new(
+      SurfaceId::new(1).unwrap(),
+      TextFormat::default(),
+      TextAnnotations::default(),
+    );
+    surface.set_selection(Some(selection(&[(2, 5)])));
+    surface.set_syntax_highlights(vec![SyntaxHighlight {
+      range: 1..4,
+      kind: HighlightKindId::new(9),
+    }]);
+
+    let initial = surface.render_frame(
+      rope.slice(..),
+      1,
+      request_with_col(0, 1, 0, 4, None),
+    );
+    let original_row = initial.changed_rows[0].clone();
+
+    let delta = surface.render_frame(
+      rope.slice(..),
+      1,
+      request_with_col(0, 1, 2, 4, Some(initial.generation)),
+    );
+
+    assert!(!delta.full);
+    assert_eq!(delta.changed_rows.len(), 1);
+    assert_eq!(delta.changed_rows[0].id, original_row.id);
+    assert_eq!(delta.changed_rows[0].text.as_str(), "cdef");
+
+    let selection_delta = delta.layers.selections.expect("selection layer delta");
+    assert_eq!(selection_delta.spans.len(), 1);
+    assert_eq!(selection_delta.spans[0].start_col, 0);
+    assert_eq!(selection_delta.spans[0].end_col, 3);
+
+    let cursor_delta = delta.layers.cursors.expect("cursor layer delta");
+    assert_eq!(cursor_delta.cursors.len(), 1);
+    assert_eq!(cursor_delta.cursors[0].col, 2);
+
+    let syntax_delta = delta.layers.syntax.expect("syntax layer delta");
+    assert_eq!(syntax_delta.spans.len(), 1);
+    assert_eq!(syntax_delta.spans[0].start_col, 0);
+    assert_eq!(syntax_delta.spans[0].end_col, 2);
   }
 
   #[test]

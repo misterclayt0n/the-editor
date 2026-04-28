@@ -41,14 +41,16 @@ impl RowId {
 pub struct Viewport {
   pub first_row:  usize,
   pub row_count:  usize,
+  pub first_col:  usize,
   pub wrap_width: usize,
 }
 
 impl Viewport {
-  pub fn new(first_row: usize, row_count: usize, wrap_width: usize) -> Self {
+  pub fn new(first_row: usize, row_count: usize, first_col: usize, wrap_width: usize) -> Self {
     Self {
       first_row,
       row_count,
+      first_col,
       wrap_width,
     }
   }

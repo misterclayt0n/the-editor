@@ -55,6 +55,7 @@ use the_lib::{
     edit_for_backspace,
     edit_for_typed_char,
   },
+  clipboard::ClipboardType,
   edit::Edit,
   grapheme::{
     next_grapheme_boundary,
@@ -112,6 +113,7 @@ struct Args {
 enum Mode {
   Normal,
   Search { query: String },
+  SaveAs { path: String },
 }
 
 struct App {
@@ -148,8 +150,8 @@ impl App {
       auto_pairs: AutoPairs::default(),
       mode: Mode::Normal,
       status: String::from(
-        "Ctrl-Q quit · Ctrl-S save · Ctrl-Z/Y undo/redo · Ctrl-C/X/V copy/cut/paste · / search · \
-         F2 wrap · F6 stress",
+        "Ctrl-Q quit · Ctrl-S save · Ctrl-Shift-S save as · Ctrl-Z/Y undo/redo · Ctrl-C/X/V \
+         copy/cut/paste · / search · F2 wrap · F6 stress",
       ),
       last_render: Duration::ZERO,
       last_generation: 0,
@@ -315,6 +317,10 @@ impl App {
       return self.handle_search_mode_key(key);
     }
 
+    if matches!(self.mode, Mode::SaveAs { .. }) {
+      return self.handle_save_as_mode_key(key);
+    }
+
     if key.modifiers.contains(KeyModifiers::CONTROL) {
       return self.handle_control_key(key);
     }
@@ -407,7 +413,49 @@ impl App {
     Ok(false)
   }
 
+  fn handle_save_as_mode_key(&mut self, key: KeyEvent) -> Result<bool, Box<dyn std::error::Error>> {
+    let Mode::SaveAs { mut path } = std::mem::replace(&mut self.mode, Mode::Normal) else {
+      return Ok(false);
+    };
+    let mut keep_save_as = true;
+
+    match key.code {
+      KeyCode::Esc => {
+        keep_save_as = false;
+        self.status = String::from("save as cancelled");
+      },
+      KeyCode::Enter => {
+        keep_save_as = false;
+        if path.is_empty() {
+          self.status = String::from("empty save path");
+        } else {
+          self.save_as(PathBuf::from(path.clone()))?;
+        }
+      },
+      KeyCode::Backspace => {
+        path.pop();
+      },
+      KeyCode::Char(ch) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+        path.push(ch);
+      },
+      _ => {},
+    }
+
+    if keep_save_as {
+      self.mode = Mode::SaveAs { path: path.clone() };
+      self.status = format!("save as: {path}");
+    }
+    Ok(false)
+  }
+
   fn handle_control_key(&mut self, key: KeyEvent) -> Result<bool, Box<dyn std::error::Error>> {
+    if key.modifiers.contains(KeyModifiers::SHIFT)
+      && matches!(key.code, KeyCode::Char('s') | KeyCode::Char('S'))
+    {
+      self.start_save_as();
+      return Ok(false);
+    }
+
     match key.code {
       KeyCode::Char('q') => return Ok(true),
       KeyCode::Char('s') => self.save()?,
@@ -642,23 +690,15 @@ impl App {
   }
 
   fn copy_selection_or_line(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-    let values = if self.surface().primary_range().is_empty() {
-      vec![Tendril::from(self.current_line_text().as_str())]
-    } else {
-      self
-        .surface()
-        .selection()
-        .fragments(self.document().text().slice(..))
-        .map(|fragment| Tendril::from(fragment.as_ref()))
-        .collect()
-    };
-
-    self.session.registers_mut().write('"', values);
-    self.status = String::from("copied to register \"");
+    let values = self.selection_or_line_values();
+    self.status = self.write_yank_targets(values, "copied")?;
     Ok(())
   }
 
   fn cut_selection_or_line(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    let values = self.selection_or_line_values();
+    let status = self.write_yank_targets(values, "cut")?;
+
     if self.surface().primary_range().is_empty() {
       let text = self.document().text().slice(..);
       let cursor = self.surface().primary_range().cursor(text);
@@ -669,37 +709,43 @@ impl App {
       } else {
         text.len_chars()
       };
-      let line_text = self.current_line_text();
-      self
-        .session
-        .registers_mut()
-        .write('"', vec![Tendril::from(line_text.as_str())]);
       self.delete_span(start, end)?;
-      self.status = String::from("cut line to register \"");
-      return Ok(());
+    } else {
+      let range = self.surface().primary_range();
+      self.delete_span(range.from(), range.to())?;
     }
 
-    self.copy_selection_or_line()?;
-    let range = self.surface().primary_range();
-    self.delete_span(range.from(), range.to())?;
-    self.status = String::from("cut selection to register \"");
+    self.status = status;
     Ok(())
   }
 
   fn paste_register(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-    let Some(values) = self.session.registers().read('"') else {
-      self.status = String::from("register \" is empty");
-      return Ok(());
-    };
+    match self.session.read_clipboard(ClipboardType::Clipboard) {
+      Ok(text) if text.is_empty() => {
+        self.status = String::from("clipboard is empty");
+        Ok(())
+      },
+      Ok(text) => {
+        self.insert_text(&text)?;
+        self.status = format!("pasted {} clipboard", self.session.clipboard_name());
+        Ok(())
+      },
+      Err(_) => {
+        let Some(values) = self.session.registers().read('"') else {
+          self.status = String::from("clipboard unavailable and register \" is empty");
+          return Ok(());
+        };
 
-    let joined = values
-      .iter()
-      .map(|value| value.as_str())
-      .collect::<Vec<_>>()
-      .join(self.document().line_ending().as_str());
-    self.insert_text(&joined)?;
-    self.status = String::from("pasted register \"");
-    Ok(())
+        let joined = values
+          .iter()
+          .map(|value| value.as_str())
+          .collect::<Vec<_>>()
+          .join(self.document().line_ending().as_str());
+        self.insert_text(&joined)?;
+        self.status = String::from("pasted register \"");
+        Ok(())
+      },
+    }
   }
 
   fn run_search(&mut self, query: &str, forward: bool) -> Result<(), Box<dyn std::error::Error>> {
@@ -780,13 +826,79 @@ impl App {
 
   fn save(&mut self) -> Result<(), Box<dyn std::error::Error>> {
     let Some(path) = self.document_path().map(Path::to_path_buf) else {
-      self.status = String::from("scratch buffer has no path");
+      self.start_save_as();
       return Ok(());
     };
 
     self.session.save(self.document)?;
     self.status = format!("saved {}", path.display());
     Ok(())
+  }
+
+  fn save_as(&mut self, path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    self.session.save_as(self.document, path)?;
+    let path = self
+      .document_path()
+      .map(Path::to_path_buf)
+      .unwrap_or_else(|| PathBuf::from("[unknown]"));
+    self.status = format!("saved as {}", path.display());
+    Ok(())
+  }
+
+  fn start_save_as(&mut self) {
+    let path = self
+      .document_path()
+      .map(|path| path.display().to_string())
+      .unwrap_or_default();
+    self.mode = Mode::SaveAs { path: path.clone() };
+    self.status = format!("save as: {path}");
+  }
+
+  fn selection_or_line_values(&self) -> Vec<Tendril> {
+    if self.surface().primary_range().is_empty() {
+      return vec![Tendril::from(self.current_line_text().as_str())];
+    }
+
+    self
+      .surface()
+      .selection()
+      .fragments(self.document().text().slice(..))
+      .map(|fragment| Tendril::from(fragment.as_ref()))
+      .collect()
+  }
+
+  fn join_yank_values(&self, values: &[Tendril]) -> String {
+    values
+      .iter()
+      .map(|value| value.as_str())
+      .collect::<Vec<_>>()
+      .join(self.document().line_ending().as_str())
+  }
+
+  fn write_yank_targets(
+    &mut self,
+    values: Vec<Tendril>,
+    verb: &str,
+  ) -> Result<String, Box<dyn std::error::Error>> {
+    let clipboard_text = self.join_yank_values(&values);
+    self.session.registers_mut().write('"', values);
+
+    match self
+      .session
+      .write_clipboard(&clipboard_text, ClipboardType::Clipboard)
+    {
+      Ok(()) => {
+        Ok(format!(
+          "{verb} to register \" and {} clipboard",
+          self.session.clipboard_name()
+        ))
+      },
+      Err(err) => {
+        Ok(format!(
+          "{verb} to register \" (clipboard unavailable: {err})"
+        ))
+      },
+    }
   }
 
   fn current_line_text(&self) -> String {
@@ -811,6 +923,7 @@ impl App {
     let mode = match &self.mode {
       Mode::Normal => "NORMAL",
       Mode::Search { .. } => "SEARCH",
+      Mode::SaveAs { .. } => "SAVE-AS",
     };
     let name = self
       .document_path()

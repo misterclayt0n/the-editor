@@ -467,6 +467,242 @@ scene.apply(delta)
 painter.paint(scene)
 ```
 
+## Phase 2A: first retained implementation
+
+The first implementation of retained rendering should be a deliberately narrow vertical slice.
+
+It should prove the retained model with the smallest real surface possible:
+
+- one persistent `RenderSurface`
+- one primary text source
+- one row-major viewport
+- stable row IDs
+- per-row generations
+- row moves on vertical scroll
+- changed/removed rows
+- `RenderFrameDelta` as the real public delta shape
+- rows layer only
+
+It should explicitly defer:
+
+- `RenderManager`
+- real layer subsystem implementation
+- gutters
+- selections
+- cursors
+- widgets
+- style/theme/syntax payloads
+- provider IDs / provider generations
+- horizontal scrolling
+- pixel measurement / shaping
+- full document-wide retained layout caches
+
+### Concrete file plan
+
+The first retained slice should add only:
+
+```txt
+the-lib/render/
+  display_list.rs
+  damage.rs
+  layers.rs
+  surface.rs
+```
+
+The existing phase-1 kernel remains the foundation:
+
+- `text_format.rs`
+- `text_annotations.rs`
+- `doc_formatter.rs`
+- `visual_position.rs`
+
+### First viewport model
+
+The first retained slice should use a row-major viewport, not a pixel viewport:
+
+```rust
+pub struct Viewport {
+  pub first_row: usize,
+  pub row_count: usize,
+  pub wrap_width: usize,
+}
+```
+
+This is intentionally not the final viewport model. It exists to prove retained visible-row deltas while the renderer is still column-based.
+
+### First `RenderSurface` model
+
+The first `RenderSurface` should already be a persistent document-attached render object in the architectural sense, even if the actual document object is deferred for now.
+
+That means:
+
+- the surface is long-lived
+- it owns its `TextFormat`
+- it owns its `TextAnnotations`
+- it retains previous visible-row state across frames
+- text and `text_revision` may still be passed explicitly to `render_frame(...)`
+
+Conceptually:
+
+```rust
+pub struct RenderSurface {
+  id: SurfaceId,
+  format: TextFormat,
+  annotations: TextAnnotations,
+  generation: u64,
+  // retained visible-row state
+}
+```
+
+### First `render_frame(...)` contract
+
+The first concrete API should already use the final coarse-grained delta shape:
+
+```rust
+pub struct FrameRequest {
+  pub viewport: Viewport,
+  pub since_generation: Option<u64>,
+}
+
+pub struct RenderFrameDelta {
+  pub surface_id: SurfaceId,
+  pub generation: u64,
+  pub full: bool,
+  pub retained_rows: Vec<RowMove>,
+  pub changed_rows: Vec<RenderRow>,
+  pub removed_rows: Vec<RowId>,
+  pub layers: LayerDeltaSet,
+  pub damage: Damage,
+}
+```
+
+Even in the first slice, callers should provide explicit text revision information. Retained rendering needs an honest notion of "same text state" vs "new text state" from the start.
+
+### First `RenderRow` shape
+
+The first `RenderRow` should be text-only:
+
+```rust
+pub struct RenderRow {
+  pub id: RowId,
+  pub generation: u64,
+  pub placement: RowPlacement,
+  pub text: Tendril,
+}
+
+pub struct RowPlacement {
+  pub surface_row: usize,
+}
+```
+
+Do not export formatter internals, per-grapheme payloads, syntax/style spans, or presentation data yet.
+
+The first retained slice exists to prove identity, placement, and delta mechanics, not style layering.
+
+### Row identity rules for the first slice
+
+Lock these rules in immediately:
+
+- `RowId` is surface-local
+- `RowId` identifies a surviving visual fragment
+- row identity is not a logical line number
+- row identity is not a screen row number
+- row identity is not derived from text hashing
+- a moved unchanged row keeps its `RowId`
+- a moved unchanged row also keeps its row generation
+- only content changes bump row generation
+
+The renderer may use private internal row keys to match old and new visible fragments. Those keys are implementation detail. The public contract remains `RowId` plus row generation.
+
+### First cache scope
+
+The first retained slice should retain only the currently visible viewport window well. It should not attempt the full document-wide retained layout cache yet.
+
+That means `RenderSurface` should remember things like:
+
+- last viewport
+- last text revision
+- last visible rows
+- the row IDs and row generations for those visible fragments
+
+This is intentionally smaller than the final architecture, but it is sufficient to prove:
+
+- retained row identity
+- scroll row moves
+- changed/new/removed rows
+- stable delta protocol shape
+
+### Diff behavior
+
+The first retained slice should follow these conservative rules:
+
+#### Return a full refresh when:
+- this is the first frame
+- `since_generation` is stale or absent when the caller expects incrementality
+- the surface `TextFormat` changed
+- the surface `TextAnnotations` changed
+- the wrap width changed
+
+#### Return an incremental delta when:
+- the caller's `since_generation` matches the surface generation
+- format is unchanged
+- annotations are unchanged
+- wrap width is unchanged
+
+In the incremental case:
+- reused surviving rows become `retained_rows` if placement changed
+- text-changed rows go to `changed_rows`
+- newly visible/newly created rows go to `changed_rows`
+- rows no longer visible go to `removed_rows`
+
+### Minimal layer and damage model
+
+The first retained slice should keep the public fields for layers and damage, but their implementation should stay minimal.
+
+`LayerDeltaSet` should exist, but be effectively empty/placeholder until rows-only retention works.
+
+`Damage` should stay simple:
+- full refresh flag
+- changed visible row range
+
+Richer per-layer damage and reason-rich invalidation come later.
+
+### First implementation order
+
+Recommended order:
+
+1. `display_list.rs`
+   - public delta, row, placement, viewport, ID types
+2. `damage.rs`
+   - minimal damage model
+3. `layers.rs`
+   - placeholder `LayerDeltaSet`
+4. `surface.rs`
+   - retained visible-row state
+   - row building from `DocumentFormatter`
+   - diffing old vs new visible rows
+   - full/incremental frame production
+
+### First test priorities
+
+The first retained slice should be tested as a state machine.
+
+Minimum tests:
+
+- first frame returns `full = true`
+- second identical frame returns empty incremental delta
+- vertical scroll reuses overlapping rows via `retained_rows`
+- only newly exposed rows appear in `changed_rows`
+- scrolled-out rows appear in `removed_rows`
+- text edits in visible rows produce bounded row changes
+- moved unchanged rows keep row generation
+- changed rows bump row generation
+- wrap-width changes force full refresh
+- annotation changes force full refresh
+- stale generation requests force full refresh
+
+This phase is not the final renderer. It is the first proof that retained row identity and frame deltas are real.
+
 ## Stable row identities
 
 The old Swift client had to compute row cache signatures by hashing row contents. That is too expensive as the main identity mechanism.

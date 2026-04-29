@@ -1078,7 +1078,6 @@ dependencies = [
  "tracing",
  "tree-house-bindings",
  "tree-sitter-json",
- "tree-sitter-rust",
  "which",
 ]
 
@@ -1245,16 +1244,6 @@ name = "tree-sitter-language"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "009994f150cc0cd50ff54917d5bc8bffe8cad10ca10d81c34da2ec421ae61782"
-
-[[package]]
-name = "tree-sitter-rust"
-version = "0.24.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "439e577dbe07423ec2582ac62c7531120dbfccfa6e5f92406f93dd271a120e45"
-dependencies = [
- "cc",
- "tree-sitter-language",
-]
 
 [[package]]
 name = "typenum"

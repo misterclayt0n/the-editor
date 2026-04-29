@@ -595,4 +595,74 @@ mod tests {
     assert!(!runtime.clipboard_name().is_empty());
     assert!(runtime.registers().is_empty());
   }
+
+  #[test]
+  fn default_runtime_session_renders_visible_syntax_on_initial_rust_rows() {
+    let path = Path::new("the-lib/examples/demo_editor.rs");
+    if !path.exists() {
+      return;
+    }
+
+    let mut runtime = RuntimeSession::default();
+    let document = runtime.open_file(path).unwrap();
+    let surface = runtime
+      .create_surface_with_viewport(document, Viewport::new(0, 20, 0, 120))
+      .unwrap();
+
+    let frame = runtime
+      .with_surface_document_mut(surface, |surface, document| surface.render(document, None))
+      .unwrap();
+
+    let syntax = frame.layers.syntax.expect("syntax layer delta");
+    let visible_rows = frame
+      .changed_rows
+      .iter()
+      .map(|row| (row.placement.surface_row, row.text.to_string()))
+      .collect::<Vec<_>>();
+
+    let named_spans = syntax
+      .spans
+      .iter()
+      .filter_map(|span| {
+        runtime
+          .syntax()
+          .registry()
+          .highlight_name(span.kind)
+          .map(|name| (span.surface_row, span.start_col, span.end_col, name))
+      })
+      .collect::<Vec<_>>();
+    let colored_rows = syntax
+      .spans
+      .iter()
+      .map(|span| span.surface_row)
+      .collect::<std::collections::BTreeSet<_>>();
+
+    let first_nonempty_row = visible_rows
+      .iter()
+      .find(|(_, text)| !text.trim().is_empty())
+      .map(|(row, _)| *row)
+      .expect("expected at least one non-empty visible row");
+
+    assert!(
+      colored_rows.contains(&first_nonempty_row),
+      "expected syntax highlighting on first non-empty visible row {first_nonempty_row}; \
+       rows={visible_rows:?}, spans={:?}",
+      syntax
+        .spans
+        .iter()
+        .take(20)
+        .map(|span| (span.surface_row, span.start_col, span.end_col))
+        .collect::<Vec<_>>()
+    );
+    assert!(
+      !named_spans.is_empty(),
+      "expected highlight names to resolve; spans={:?}",
+      syntax
+        .spans
+        .iter()
+        .take(20)
+        .map(|span| (span.surface_row, span.start_col, span.end_col, span.kind))
+        .collect::<Vec<_>>()
+    );
+  }
 }

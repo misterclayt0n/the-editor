@@ -129,15 +129,27 @@ struct App {
   transaction_count: u64,
 }
 
+struct VisibleFrame {
+  rows:        Vec<String>,
+  syntax_rows: Vec<Vec<(usize, usize, Color)>>,
+}
+
 impl App {
   fn open(path: Option<PathBuf>) -> Result<Self, Box<dyn std::error::Error>> {
+    let viewport = viewport_from_terminal()?.0;
+    Self::open_with_viewport(path, viewport)
+  }
+
+  fn open_with_viewport(
+    path: Option<PathBuf>,
+    viewport: Viewport,
+  ) -> Result<Self, Box<dyn std::error::Error>> {
     let mut session = RuntimeSession::default();
     let document = match path {
       Some(path) => session.open_file(&path)?,
       None => session.create_scratch(Rope::new())?,
     };
 
-    let viewport = viewport_from_terminal()?.0;
     let surface = session.create_surface_with_viewport(document, viewport)?;
     session
       .surface_mut(surface)
@@ -254,42 +266,13 @@ impl App {
     let prompt = self.prompt_line();
     let footer_rows = self.footer_rows() as u16;
     let editor_rows = rows.saturating_sub(footer_rows).max(1) as usize;
-
-    let start = Instant::now();
-    let frame = self
-      .session
-      .with_surface_document_mut(self.surface, |surface, document| {
-        surface.render(document, None)
-      })?;
-    self.last_render = start.elapsed();
-    self.last_generation = frame.generation;
-
-    let mut visible = vec![String::new(); editor_rows];
-    for row in frame.changed_rows {
-      if row.placement.surface_row < visible.len() {
-        visible[row.placement.surface_row] = row.text.to_string();
-      }
-    }
-
-    let mut syntax_rows = vec![Vec::new(); editor_rows];
-    if let Some(syntax) = frame.layers.syntax.as_ref() {
-      for span in &syntax.spans {
-        if span.surface_row < syntax_rows.len()
-          && let Some(color) = self.syntax_color(span.kind)
-        {
-          syntax_rows[span.surface_row].push((span.start_col, span.end_col, color));
-        }
-      }
-    }
-    for spans in &mut syntax_rows {
-      spans.sort_by_key(|(start, end, _)| (*start, *end));
-    }
+    let frame = self.render_visible_frame(editor_rows)?;
 
     queue!(stdout, Hide, MoveTo(0, 0), Clear(ClearType::All))?;
 
-    for (row_idx, line) in visible.iter().enumerate() {
+    for (row_idx, line) in frame.rows.iter().enumerate() {
       let y = row_idx as u16;
-      self.draw_visible_row(stdout, y, line, &syntax_rows[row_idx])?;
+      self.draw_visible_row(stdout, y, line, &frame.syntax_rows[row_idx])?;
     }
 
     let status = self.status_line(cols as usize);
@@ -326,9 +309,49 @@ impl App {
     Ok(())
   }
 
-  fn draw_visible_row(
+  fn render_visible_frame(
+    &mut self,
+    editor_rows: usize,
+  ) -> Result<VisibleFrame, Box<dyn std::error::Error>> {
+    let start = Instant::now();
+    let frame = self
+      .session
+      .with_surface_document_mut(self.surface, |surface, document| {
+        surface.render(document, None)
+      })?;
+    self.last_render = start.elapsed();
+    self.last_generation = frame.generation;
+
+    let mut visible = vec![String::new(); editor_rows];
+    for row in frame.changed_rows {
+      if row.placement.surface_row < visible.len() {
+        visible[row.placement.surface_row] = row.text.to_string();
+      }
+    }
+
+    let mut syntax_rows = vec![Vec::new(); editor_rows];
+    if let Some(syntax) = frame.layers.syntax.as_ref() {
+      for span in &syntax.spans {
+        if span.surface_row < syntax_rows.len()
+          && let Some(color) = self.syntax_color(span.kind)
+        {
+          syntax_rows[span.surface_row].push((span.start_col, span.end_col, color));
+        }
+      }
+    }
+    for spans in &mut syntax_rows {
+      spans.sort_by_key(|(start, end, _)| (*start, *end));
+    }
+
+    Ok(VisibleFrame {
+      rows: visible,
+      syntax_rows,
+    })
+  }
+
+  fn draw_visible_row<W: Write>(
     &self,
-    stdout: &mut io::Stdout,
+    stdout: &mut W,
     y: u16,
     text: &str,
     spans: &[(usize, usize, Color)],
@@ -356,12 +379,12 @@ impl App {
 
       if color != active_color {
         if !segment.is_empty() {
+          let flushed = std::mem::take(&mut segment);
           queue!(
             stdout,
             SetForegroundColor(active_color.unwrap_or(Color::Reset)),
-            Print(&segment),
+            Print(flushed),
           )?;
-          segment.clear();
         }
         active_color = color;
       }
@@ -376,7 +399,7 @@ impl App {
       queue!(
         stdout,
         SetForegroundColor(active_color.unwrap_or(Color::Reset)),
-        Print(&segment),
+        Print(segment),
       )?;
     }
 
@@ -444,18 +467,12 @@ impl App {
     };
 
     match key.code {
-      KeyCode::Char('/') => {
-        self.mode = Mode::Search {
-          query: String::new(),
-        };
-        self.status = String::from("search: type regex, Enter to jump, Esc to cancel");
-      },
-      KeyCode::Char('n') => self.repeat_search(true)?,
-      KeyCode::Char('N') => self.repeat_search(false)?,
-      KeyCode::Left | KeyCode::Char('h') => self.apply_motion(move_left, 1, mode)?,
-      KeyCode::Right | KeyCode::Char('l') => self.apply_motion(move_right, 1, mode)?,
-      KeyCode::Up | KeyCode::Char('k') => self.apply_motion(move_up_visual, 1, mode)?,
-      KeyCode::Down | KeyCode::Char('j') => self.apply_motion(move_down_visual, 1, mode)?,
+      // KeyCode::Char('n') => self.repeat_search(true)?,
+      // KeyCode::Char('N') => self.repeat_search(false)?,
+      KeyCode::Left => self.apply_motion(move_left, 1, mode)?,
+      KeyCode::Right => self.apply_motion(move_right, 1, mode)?,
+      KeyCode::Up => self.apply_motion(move_up_visual, 1, mode)?,
+      KeyCode::Down => self.apply_motion(move_down_visual, 1, mode)?,
       KeyCode::PageUp => {
         let count = self.surface().viewport().row_count.max(1);
         self.apply_motion(move_up_visual, count, mode)?;
@@ -567,6 +584,12 @@ impl App {
     }
 
     match key.code {
+      KeyCode::Char('/') => {
+        self.mode = Mode::Search {
+          query: String::new(),
+        };
+        self.status = String::from("search: type regex, Enter to jump, Esc to cancel");
+      },
       KeyCode::Char('q') => return Ok(true),
       KeyCode::Char('s') => self.save()?,
       KeyCode::Char('z') => {
@@ -1119,6 +1142,96 @@ fn truncate_pad(text: &str, width: usize) -> String {
     out.push_str(&" ".repeat(width - len));
   }
   out
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  fn strip_ansi(input: &str) -> String {
+    let mut out = String::new();
+    let mut chars = input.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+      if ch != '\u{1b}' {
+        out.push(ch);
+        continue;
+      }
+
+      if chars.next_if_eq(&'[').is_none() {
+        continue;
+      }
+
+      while let Some(next) = chars.next() {
+        if ('@'..='~').contains(&next) {
+          break;
+        }
+      }
+    }
+
+    out
+  }
+
+  fn demo_app() -> App {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/demo_editor.rs");
+    App::open_with_viewport(Some(path), Viewport::new(0, 20, 0, 120))
+      .expect("demo app should open example source")
+  }
+
+  #[test]
+  fn visible_rust_rows_receive_mapped_syntax_colors() {
+    let mut app = demo_app();
+    let frame = app
+      .render_visible_frame(20)
+      .expect("visible frame should render");
+
+    let first_nonempty_row = frame
+      .rows
+      .iter()
+      .position(|row| !row.trim().is_empty())
+      .expect("expected at least one non-empty row");
+
+    assert!(
+      !frame.syntax_rows[first_nonempty_row].is_empty(),
+      "expected mapped syntax colors on first non-empty row {}; rows={:?}; doc_syntax={:?}",
+      first_nonempty_row,
+      frame.rows.iter().take(5).collect::<Vec<_>>(),
+      app.document().syntax(),
+    );
+  }
+
+  #[test]
+  fn drawing_colored_rust_row_emits_non_default_ansi_color() {
+    let mut app = demo_app();
+    let frame = app
+      .render_visible_frame(20)
+      .expect("visible frame should render");
+
+    let row = frame
+      .rows
+      .iter()
+      .enumerate()
+      .find(|(index, text)| !text.trim().is_empty() && !frame.syntax_rows[*index].is_empty())
+      .map(|(index, _)| index)
+      .expect("expected at least one colored visible row");
+
+    let mut out = Vec::new();
+    app
+      .draw_visible_row(&mut out, 0, &frame.rows[row], &frame.syntax_rows[row])
+      .expect("row should draw");
+
+    let output = String::from_utf8(out).expect("terminal output should be utf-8");
+    assert!(
+      output.contains("\u{1b}[38;5;") || output.contains("\u{1b}[3") || output.contains("\u{1b}[9"),
+      "expected ANSI color escape in output: {output:?}"
+    );
+
+    let plain = strip_ansi(&output);
+    assert!(
+      plain.contains(&frame.rows[row]),
+      "expected row text in output: {output:?}"
+    );
+  }
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

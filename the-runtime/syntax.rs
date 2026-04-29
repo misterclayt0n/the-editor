@@ -1,6 +1,7 @@
 use std::{
   borrow::Cow,
   collections::HashSet,
+  env,
   fs,
   path::{
     Path,
@@ -48,7 +49,7 @@ impl RuntimeSyntax {
 
   pub fn builtin() -> Result<Self, RuntimeSyntaxError> {
     let config = builtin_syntax_configuration()?;
-    Self::new(config, EmbeddedSyntaxResources::default()).map_err(Into::into)
+    Self::new(config, BuiltinSyntaxResources::default()).map_err(Into::into)
   }
 
   pub fn new(
@@ -172,12 +173,8 @@ impl EmbeddedSyntaxResources {
 }
 
 impl SyntaxResources for EmbeddedSyntaxResources {
-  fn grammar(&self, grammar_name: &str) -> Option<Grammar> {
-    match grammar_name {
-      "rust" => Grammar::try_from(tree_sitter_rust::LANGUAGE).ok(),
-      "json" => Grammar::try_from(tree_sitter_json::LANGUAGE).ok(),
-      _ => None,
-    }
+  fn grammar(&self, _grammar_name: &str) -> Option<Grammar> {
+    None
   }
 
   fn query(&self, language_id: &str, kind: QueryKind) -> Option<Cow<'_, str>> {
@@ -185,6 +182,34 @@ impl SyntaxResources for EmbeddedSyntaxResources {
     EmbeddedSyntaxAssets::get(&path)
       .and_then(|file| String::from_utf8(file.data.into()).ok())
       .map(Cow::Owned)
+  }
+}
+
+#[derive(Debug, Clone)]
+pub struct BuiltinSyntaxResources {
+  embedded: EmbeddedSyntaxResources,
+  runtime:  Option<FilesystemSyntaxResources>,
+}
+
+impl Default for BuiltinSyntaxResources {
+  fn default() -> Self {
+    Self {
+      embedded: EmbeddedSyntaxResources,
+      runtime:  builtin_runtime_root().map(FilesystemSyntaxResources::from_runtime_root),
+    }
+  }
+}
+
+impl SyntaxResources for BuiltinSyntaxResources {
+  fn grammar(&self, grammar_name: &str) -> Option<Grammar> {
+    self
+      .runtime
+      .as_ref()
+      .and_then(|resources| resources.grammar(grammar_name))
+  }
+
+  fn query(&self, language_id: &str, kind: QueryKind) -> Option<Cow<'_, str>> {
+    self.embedded.query(language_id, kind)
   }
 }
 
@@ -202,21 +227,36 @@ impl FilesystemSyntaxResources {
     }
   }
 
-  fn grammar_candidates(&self, grammar_name: &str) -> [PathBuf; 5] {
-    let ext = std::env::consts::DLL_EXTENSION;
+  pub fn from_runtime_root(runtime_root: impl Into<PathBuf>) -> Self {
+    let runtime_root = runtime_root.into();
+    Self::new(runtime_root.join("grammars"), runtime_root.join("queries"))
+  }
+
+  fn grammar_candidates(&self, grammar_name: &str) -> Vec<PathBuf> {
     let dash_name = grammar_name.replace('_', "-");
     let underscore_name = grammar_name.replace('-', "_");
-    [
-      self.grammar_dir.join(format!("{grammar_name}.{ext}")),
-      self.grammar_dir.join(format!("lib{grammar_name}.{ext}")),
-      self
-        .grammar_dir
-        .join(format!("tree-sitter-{dash_name}.{ext}")),
-      self
-        .grammar_dir
-        .join(format!("libtree-sitter-{dash_name}.{ext}")),
-      self.grammar_dir.join(format!("{underscore_name}.{ext}")),
-    ]
+    let extensions = [std::env::consts::DLL_EXTENSION, "so", "dylib", "dll"];
+    let mut candidates = Vec::new();
+
+    for ext in extensions {
+      candidates.push(self.grammar_dir.join(format!("{grammar_name}.{ext}")));
+      candidates.push(self.grammar_dir.join(format!("lib{grammar_name}.{ext}")));
+      candidates.push(
+        self
+          .grammar_dir
+          .join(format!("tree-sitter-{dash_name}.{ext}")),
+      );
+      candidates.push(
+        self
+          .grammar_dir
+          .join(format!("libtree-sitter-{dash_name}.{ext}")),
+      );
+      candidates.push(self.grammar_dir.join(format!("{underscore_name}.{ext}")));
+    }
+
+    candidates.sort();
+    candidates.dedup();
+    candidates
   }
 }
 
@@ -236,6 +276,26 @@ impl SyntaxResources for FilesystemSyntaxResources {
 }
 
 const BUILTIN_LANGUAGES_TOML: &str = include_str!("../languages.toml");
+
+fn builtin_runtime_default_root(xdg_config_home: Option<PathBuf>) -> PathBuf {
+  let config_root = xdg_config_home
+    .unwrap_or_else(|| PathBuf::from(the_stdx::env::expand("$HOME/.config").into_owned()));
+  config_root.join("the-editor/runtime")
+}
+
+fn builtin_runtime_root() -> Option<PathBuf> {
+  let env_root = env::var_os("THE_EDITOR_RUNTIME").map(PathBuf::from);
+  let default_root = builtin_runtime_default_root(
+    env::var_os("XDG_CONFIG_HOME")
+      .filter(|value| !value.is_empty())
+      .map(PathBuf::from),
+  );
+
+  env_root
+    .into_iter()
+    .chain(std::iter::once(default_root))
+    .find(|path| path.is_dir())
+}
 
 fn builtin_syntax_configuration() -> Result<SyntaxConfiguration, RuntimeSyntaxError> {
   #[derive(Debug, Deserialize)]
@@ -420,6 +480,14 @@ mod tests {
   }
 
   #[test]
+  fn builtin_runtime_default_root_uses_xdg_when_present() {
+    assert_eq!(
+      builtin_runtime_default_root(Some(PathBuf::from("/tmp/xdg"))),
+      PathBuf::from("/tmp/xdg/the-editor/runtime")
+    );
+  }
+
+  #[test]
   fn builtin_syntax_includes_rust() {
     let runtime = RuntimeSyntax::builtin().unwrap();
     assert!(runtime.registry().language_for_name("rust").is_some());
@@ -519,6 +587,13 @@ mod tests {
 
   #[test]
   fn builtin_runtime_highlights_rust_source() {
+    let Some(runtime_root) = builtin_runtime_root() else {
+      return;
+    };
+    if !runtime_root.join("grammars/rust.so").exists() {
+      return;
+    }
+
     let runtime = RuntimeSyntax::builtin().unwrap();
     let mut document = Document::new("fn main() { let x = 1; }\n".into());
     runtime.activate_document(&mut document, Some(Path::new("main.rs")));
@@ -538,6 +613,26 @@ mod tests {
     assert!(names.iter().any(|name| {
       name.starts_with("function") || name.starts_with("variable") || name.starts_with("constant")
     }));
+  }
+
+  #[test]
+  fn builtin_runtime_highlights_real_demo_editor_source() {
+    let Some(runtime_root) = builtin_runtime_root() else {
+      return;
+    };
+    if !runtime_root.join("grammars/rust.so").exists() {
+      return;
+    }
+
+    let runtime = RuntimeSyntax::builtin().unwrap();
+    let mut document = Document::new(include_str!("../the-lib/examples/demo_editor.rs").into());
+    runtime.activate_document(&mut document, Some(Path::new("demo_editor.rs")));
+
+    let highlights = runtime.collect_document_highlights(&document);
+    assert!(
+      !highlights.is_empty(),
+      "expected highlights for real rust source, got none"
+    );
   }
 
   #[test]

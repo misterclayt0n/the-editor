@@ -20,19 +20,17 @@ use the_stdx::rope::{
   regex_cursor,
 };
 use thiserror::Error;
-use tree_house::{
-  InjectionLanguageMarker,
-  Language,
-  LanguageConfig as SyntaxConfig,
-  LanguageLoader,
-  highlighter::Highlight as HighlightKindId,
-  tree_sitter::{
-    Query,
-    query::InvalidPredicateError,
+use tree_sitter_bindings::{
+  Grammar,
+  Query,
+  query::{
+    InvalidPredicateError,
+    UserPredicate,
   },
 };
 
 use super::{
+  HighlightKindId,
   QueryKind,
   config::{
     FileType,
@@ -65,14 +63,6 @@ impl LanguageId {
 
   pub const fn get(self) -> usize {
     self.0
-  }
-
-  pub(crate) fn to_backend(self) -> Language {
-    Language(self.0 as u32)
-  }
-
-  pub(crate) fn from_backend(language: Language) -> Self {
-    Self(language.idx())
   }
 }
 
@@ -127,9 +117,16 @@ pub enum SyntaxError {
 }
 
 #[derive(Debug)]
+pub(crate) struct HighlightQuery {
+  pub query:         Query,
+  pub capture_kinds: Vec<Option<HighlightKindId>>,
+}
+
+#[derive(Debug)]
 pub struct LanguageDefinition {
   config:           Arc<LanguageSyntaxConfig>,
-  syntax:           OnceLock<Result<Option<SyntaxConfig>>>,
+  grammar:          OnceLock<Result<Option<Grammar>>>,
+  highlight_query:  OnceLock<Result<Option<HighlightQuery>>>,
   indent_query:     OnceLock<Result<Option<IndentQuery>>>,
   textobject_query: OnceLock<Result<Option<TextObjectQuery>>>,
   tag_query:        OnceLock<Result<Option<TagQuery>>>,
@@ -140,7 +137,8 @@ impl LanguageDefinition {
   fn new(config: LanguageSyntaxConfig) -> Self {
     Self {
       config:           Arc::new(config),
-      syntax:           OnceLock::new(),
+      grammar:          OnceLock::new(),
+      highlight_query:  OnceLock::new(),
       indent_query:     OnceLock::new(),
       textobject_query: OnceLock::new(),
       tag_query:        OnceLock::new(),
@@ -152,48 +150,72 @@ impl LanguageDefinition {
     &self.config
   }
 
-  fn compile_syntax_config(&self, registry: &LanguageRegistry) -> Result<Option<SyntaxConfig>> {
-    let syntax = &self.config;
-    let Some(grammar) = registry.resources.grammar(syntax.grammar_name()) else {
+  fn compile_grammar(&self, registry: &LanguageRegistry) -> Result<Option<Grammar>> {
+    Ok(registry.resources.grammar(self.config.grammar_name()))
+  }
+
+  pub(crate) fn grammar(&self, registry: &LanguageRegistry) -> Result<Option<Grammar>> {
+    match self.grammar.get_or_init(|| self.compile_grammar(registry)) {
+      Ok(Some(grammar)) => Ok(Some(*grammar)),
+      Ok(None) => Ok(None),
+      Err(err) => Err(clone_syntax_error(err)),
+    }
+  }
+
+  fn compile_highlight_query(&self, registry: &LanguageRegistry) -> Result<Option<HighlightQuery>> {
+    let Some(grammar) = self.grammar(registry)? else {
       return Ok(None);
     };
+    let text = registry.query_text(&self.config.language_id, QueryKind::Highlights);
+    if text.is_empty() {
+      return Ok(None);
+    }
 
-    let highlights = registry.query_text(&syntax.language_id, QueryKind::Highlights);
-    let injections = registry.query_text(&syntax.language_id, QueryKind::Injections);
-    let locals = registry.query_text(&syntax.language_id, QueryKind::Locals);
-    let config = SyntaxConfig::new(
-      grammar,
-      highlights.as_ref(),
-      injections.as_ref(),
-      locals.as_ref(),
-    )
+    let query = Query::new(grammar, text.as_ref(), |_pattern, predicate| {
+      match predicate {
+        UserPredicate::SetProperty {
+          key: "local.scope-inherits",
+          ..
+        }
+        | UserPredicate::IsPropertySet { key: "local", .. } => Ok(()),
+        _ => Err(InvalidPredicateError::unknown(predicate)),
+      }
+    })
     .map_err(|err| {
-      SyntaxError::SyntaxConfig {
-        language_id: syntax.language_id.clone(),
+      SyntaxError::Query {
+        language_id: self.config.language_id.clone(),
+        kind:        QueryKind::Highlights,
         source:      Box::new(err),
       }
     })?;
 
-    registry.configure_highlights(&config);
-    Ok(Some(config))
+    let capture_kinds = query
+      .captures()
+      .map(|(_, capture_name)| Some(registry.intern_highlight_kind(capture_name)))
+      .collect();
+
+    Ok(Some(HighlightQuery {
+      query,
+      capture_kinds,
+    }))
   }
 
-  pub(crate) fn syntax_config<'a>(
+  pub(crate) fn highlight_query<'a>(
     &'a self,
     registry: &LanguageRegistry,
-  ) -> Result<Option<&'a SyntaxConfig>> {
+  ) -> Result<Option<&'a HighlightQuery>> {
     match self
-      .syntax
-      .get_or_init(|| self.compile_syntax_config(registry))
+      .highlight_query
+      .get_or_init(|| self.compile_highlight_query(registry))
     {
-      Ok(Some(config)) => Ok(Some(config)),
+      Ok(Some(query)) => Ok(Some(query)),
       Ok(None) => Ok(None),
       Err(err) => Err(clone_syntax_error(err)),
     }
   }
 
   fn compile_indent_query(&self, registry: &LanguageRegistry) -> Result<Option<IndentQuery>> {
-    let Some(grammar) = self.syntax_config(registry)?.map(|config| config.grammar) else {
+    let Some(grammar) = self.grammar(registry)? else {
       return Ok(None);
     };
     let text = registry.query_text(&self.config.language_id, QueryKind::Indents);
@@ -229,7 +251,7 @@ impl LanguageDefinition {
     &self,
     registry: &LanguageRegistry,
   ) -> Result<Option<TextObjectQuery>> {
-    let Some(grammar) = self.syntax_config(registry)?.map(|config| config.grammar) else {
+    let Some(grammar) = self.grammar(registry)? else {
       return Ok(None);
     };
     let text = registry.query_text(&self.config.language_id, QueryKind::TextObjects);
@@ -261,7 +283,7 @@ impl LanguageDefinition {
   }
 
   fn compile_tag_query(&self, registry: &LanguageRegistry) -> Result<Option<TagQuery>> {
-    let Some(grammar) = self.syntax_config(registry)?.map(|config| config.grammar) else {
+    let Some(grammar) = self.grammar(registry)? else {
       return Ok(None);
     };
     let text = registry.query_text(&self.config.language_id, QueryKind::Tags);
@@ -270,8 +292,8 @@ impl LanguageDefinition {
     }
     let query = Query::new(grammar, text.as_ref(), |_pattern, predicate| {
       match predicate {
-        tree_house::tree_sitter::query::UserPredicate::IsPropertySet { key: "local", .. } => Ok(()),
-        tree_house::tree_sitter::query::UserPredicate::Other(pred) => {
+        UserPredicate::IsPropertySet { key: "local", .. } => Ok(()),
+        UserPredicate::Other(pred) => {
           match pred.name() {
             "strip!" | "select-adjacent!" => Ok(()),
             _ => Err(InvalidPredicateError::unknown(predicate)),
@@ -305,7 +327,7 @@ impl LanguageDefinition {
   }
 
   fn compile_rainbow_query(&self, registry: &LanguageRegistry) -> Result<Option<RainbowQuery>> {
-    let Some(grammar) = self.syntax_config(registry)?.map(|config| config.grammar) else {
+    let Some(grammar) = self.grammar(registry)? else {
       return Ok(None);
     };
     let text = registry.query_text(&self.config.language_id, QueryKind::Rainbows);
@@ -646,9 +668,14 @@ impl LanguageRegistry {
       .or_else(|| self.assign_by_match(text))
   }
 
-  pub fn syntax_config(&self, language_id: LanguageId) -> Result<Option<&SyntaxConfig>> {
+  pub fn grammar(&self, language_id: LanguageId) -> Result<Option<Grammar>> {
     let definition = self.language(language_id).expect("invalid LanguageId");
-    definition.syntax_config(self)
+    definition.grammar(self)
+  }
+
+  pub(crate) fn highlight_query(&self, language_id: LanguageId) -> Result<Option<&HighlightQuery>> {
+    let definition = self.language(language_id).expect("invalid LanguageId");
+    definition.highlight_query(self)
   }
 
   pub fn indent_query(&self, language_id: LanguageId) -> Result<Option<&IndentQuery>> {
@@ -672,7 +699,7 @@ impl LanguageRegistry {
   }
 
   pub fn query_text(&self, language_id: &str, kind: QueryKind) -> String {
-    tree_house::read_query(language_id, |language| {
+    read_query_with_inherits(language_id, &mut |language| {
       self
         .resources
         .query(language, kind)
@@ -688,11 +715,7 @@ impl LanguageRegistry {
     self.highlight_vocabulary.lock().unwrap().names()
   }
 
-  pub(crate) fn configure_highlights(&self, config: &SyntaxConfig) {
-    config.configure(|capture_name| Some(self.intern_highlight_kind(capture_name)));
-  }
-
-  fn intern_highlight_kind(&self, capture_name: &str) -> HighlightKindId {
+  pub(crate) fn intern_highlight_kind(&self, capture_name: &str) -> HighlightKindId {
     self
       .highlight_vocabulary
       .lock()
@@ -705,7 +728,7 @@ impl LanguageRegistry {
     source: RopeSlice,
     language_id: LanguageId,
   ) -> Result<Option<Syntax>> {
-    let Some(_config) = self.syntax_config(language_id)? else {
+    let Some(_grammar) = self.grammar(language_id)? else {
       return Ok(None);
     };
 
@@ -774,38 +797,47 @@ impl LanguageRegistry {
   }
 }
 
-impl LanguageLoader for LanguageRegistry {
-  fn language_for_marker(&self, marker: InjectionLanguageMarker) -> Option<Language> {
-    match marker {
-      InjectionLanguageMarker::Name(name) => {
-        self
-          .language_for_name(name.as_ref())
-          .map(LanguageId::to_backend)
-      },
-      InjectionLanguageMarker::Match(text) => {
-        self.language_for_match(text).map(LanguageId::to_backend)
-      },
-      InjectionLanguageMarker::Filename(text) => {
-        let path: Cow<'_, str> = text.into();
-        self
-          .language_for_filename(Path::new(path.as_ref()))
-          .map(LanguageId::to_backend)
-      },
-      InjectionLanguageMarker::Shebang(text) => {
-        let shebang: Cow<'_, str> = text.into();
-        self
-          .languages_by_shebang
-          .get(shebang.as_ref())
-          .copied()
-          .map(LanguageId::to_backend)
-      },
+fn read_query_with_inherits(
+  language: &str,
+  read_query_text: &mut impl FnMut(&str) -> String,
+) -> String {
+  let query = read_query_text(language);
+  let mut output = String::new();
+
+  for line in query.lines() {
+    if let Some(inherited) = inherits_directive_languages(line) {
+      for language in inherited {
+        if !output.is_empty() {
+          output.push('\n');
+        }
+        output.push_str(&read_query_with_inherits(language, read_query_text));
+      }
+    } else {
+      if !output.is_empty() {
+        output.push('\n');
+      }
+      output.push_str(line);
     }
   }
 
-  fn get_config(&self, lang: Language) -> Option<&SyntaxConfig> {
-    let language_id = LanguageId::from_backend(lang);
-    self.syntax_config(language_id).ok().flatten()
-  }
+  output
+}
+
+fn inherits_directive_languages(line: &str) -> Option<Vec<&str>> {
+  let trimmed = line.trim();
+  let stripped = trimmed.trim_start_matches(';').trim_start();
+  let rest = stripped
+    .strip_prefix("inherits")?
+    .trim_start_matches(':')
+    .trim();
+
+  (!rest.is_empty()).then(|| {
+    rest
+      .split(',')
+      .map(str::trim)
+      .filter(|language| !language.is_empty())
+      .collect()
+  })
 }
 
 #[derive(Debug)]

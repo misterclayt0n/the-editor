@@ -429,7 +429,6 @@ mod test {
 
   use ropey::Rope;
   use smallvec::smallvec;
-  use tree_house::tree_sitter::Grammar;
 
   use super::*;
   use crate::{
@@ -444,6 +443,7 @@ mod test {
       QueryKind,
       SyntaxConfiguration,
       SyntaxResources,
+      tree_sitter::Grammar,
     },
   };
 

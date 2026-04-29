@@ -38,7 +38,7 @@ tempfile                 = "3.20.0"
 thiserror                = "2.0"
 toml                     = "0.8"
 tracing                  = "0.1"
-tree-house               = { default-features = false, git = "https://github.com/misterclayt0n/tree-house" }
+tree-sitter-bindings     = { package = "tree-house-bindings", version = "0.2.3", default-features = false, features = [ "ropey", "tree-sitter-language" ] }
 unicode-general-category = "1.0"
 unicode-linebreak        = "0.1.5"
 unicode-properties       = { default-features = false, features = [ "emoji" ], version = "0.1.4" }

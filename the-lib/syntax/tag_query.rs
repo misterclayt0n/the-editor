@@ -1,4 +1,4 @@
-use tree_house::tree_sitter::Query;
+use super::tree_sitter::Query;
 
 #[derive(Debug)]
 pub struct TagQuery {

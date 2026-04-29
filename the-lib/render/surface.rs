@@ -36,7 +36,6 @@ use super::{
     LayerDeltaSet,
     SelectionLayerDelta,
     SelectionSpan,
-    SyntaxHighlight,
     SyntaxLayerDelta,
     SyntaxSpan,
     WidgetLayerDelta,
@@ -53,21 +52,20 @@ use crate::{
     grapheme_width,
   },
   selection::Selection,
-  syntax::HighlightKindId,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RenderSurface {
-  id:                SurfaceId,
-  format:            TextFormat,
-  annotations:       TextAnnotations,
-  selection:         Option<Selection>,
-  syntax_highlights: Vec<SyntaxHighlight>,
-  widgets:           Vec<BlockWidget>,
-  measurements:      SurfaceMeasurements,
-  generation:        u64,
-  dirty:             DirtyState,
-  state:             SurfaceState,
+  id:             SurfaceId,
+  format:         TextFormat,
+  annotations:    TextAnnotations,
+  selection:      Option<Selection>,
+  visible_syntax: Vec<SyntaxSpan>,
+  widgets:        Vec<BlockWidget>,
+  measurements:   SurfaceMeasurements,
+  generation:     u64,
+  dirty:          DirtyState,
+  state:          SurfaceState,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -267,7 +265,7 @@ impl RenderSurface {
       format,
       annotations,
       selection: None,
-      syntax_highlights: Vec::new(),
+      visible_syntax: Vec::new(),
       widgets: Vec::new(),
       measurements: SurfaceMeasurements::default(),
       generation: 0,
@@ -303,8 +301,8 @@ impl RenderSurface {
     self.selection.as_ref()
   }
 
-  pub fn syntax_highlights(&self) -> &[SyntaxHighlight] {
-    &self.syntax_highlights
+  pub fn visible_syntax(&self) -> &[SyntaxSpan] {
+    &self.visible_syntax
   }
 
   pub fn measurements(&self) -> SurfaceMeasurements {
@@ -330,15 +328,16 @@ impl RenderSurface {
     }
   }
 
-  pub fn set_syntax_highlights(&mut self, mut highlights: Vec<SyntaxHighlight>) {
-    highlights.sort_by_key(|highlight| {
-      (
-        highlight.range.start,
-        std::cmp::Reverse(highlight.range.end),
-      )
+  pub fn set_visible_syntax(&mut self, mut spans: Vec<SyntaxSpan>) {
+    spans.sort_by(|a, b| {
+      a.surface_row
+        .cmp(&b.surface_row)
+        .then_with(|| a.start_col.cmp(&b.start_col))
+        .then_with(|| b.end_col.cmp(&a.end_col))
+        .then_with(|| format!("{:?}", a.kind).cmp(&format!("{:?}", b.kind)))
     });
-    if self.syntax_highlights != highlights {
-      self.syntax_highlights = highlights;
+    if self.visible_syntax != spans {
+      self.visible_syntax = spans;
       self.dirty.syntax.mark();
     }
   }
@@ -476,14 +475,7 @@ impl RenderSurface {
 
     let syntax_spans =
       if self.dirty.syntax.dirty || self.dirty.rows.dirty || first_frame || viewport_changed {
-        build_syntax_spans(
-          text,
-          &self.format,
-          &self.annotations,
-          &self.syntax_highlights,
-          request.viewport,
-          self.measurements,
-        )
+        self.visible_syntax.clone()
       } else {
         self.state.syntax_spans.clone()
       };
@@ -1175,83 +1167,6 @@ fn build_cursor_placements(
   cursors
 }
 
-fn build_syntax_spans(
-  text: RopeSlice<'_>,
-  format: &TextFormat,
-  annotations: &TextAnnotations,
-  syntax_highlights: &[SyntaxHighlight],
-  viewport: Viewport,
-  measurements: SurfaceMeasurements,
-) -> Vec<SyntaxSpan> {
-  if syntax_highlights.is_empty() {
-    return Vec::new();
-  }
-
-  let mut spans: Vec<SyntaxSpan> = Vec::new();
-  let mut next_highlight = 0;
-  let mut active: Vec<(HighlightKindId, usize)> = Vec::new();
-  let mut formatter = DocumentFormatter::new(text, format, viewport.wrap_width, annotations);
-
-  for grapheme in &mut formatter {
-    if grapheme.source.is_eof() {
-      break;
-    }
-    if grapheme.is_virtual() || grapheme.raw == Grapheme::Newline {
-      continue;
-    }
-
-    let visual_row = grapheme.visual_pos.row;
-    if visual_row < viewport.first_row || visual_row >= viewport.first_row + viewport.row_count {
-      continue;
-    }
-
-    while let Some(highlight) = syntax_highlights.get(next_highlight) {
-      if highlight.range.start > grapheme.char_idx {
-        break;
-      }
-      if highlight.range.end > grapheme.char_idx {
-        active.push((highlight.kind, highlight.range.end));
-      }
-      next_highlight += 1;
-    }
-
-    active.retain(|(_, end)| *end > grapheme.char_idx);
-    let Some((kind, _)) = active.last().copied() else {
-      continue;
-    };
-
-    let Some((start_col, end_col)) = project_visible_cols(
-      grapheme.visual_pos.col,
-      grapheme.visual_pos.col + grapheme.width(),
-      viewport,
-    ) else {
-      continue;
-    };
-
-    let span = SyntaxSpan {
-      surface_row: visual_row - viewport.first_row,
-      start_col,
-      end_col,
-      x_px: start_col as u32 * measurements.cell_width_px,
-      width_px: (end_col - start_col) as u32 * measurements.cell_width_px,
-      kind,
-    };
-
-    if let Some(last) = spans.last_mut()
-      && last.surface_row == span.surface_row
-      && last.kind == span.kind
-      && last.end_col == span.start_col
-    {
-      last.end_col = span.end_col;
-      last.width_px = (last.end_col - last.start_col) as u32 * measurements.cell_width_px;
-    } else {
-      spans.push(span);
-    }
-  }
-
-  spans
-}
-
 fn build_row_metadata_delta(
   old: &[RowMetadata],
   new: &[RowMetadata],
@@ -1340,7 +1255,7 @@ mod tests {
       RowKind,
       SurfaceId,
       SurfaceMeasurements,
-      SyntaxHighlight,
+      SyntaxSpan,
       TextAnnotations,
       TextFormat,
       Viewport,
@@ -1352,6 +1267,17 @@ mod tests {
     },
     syntax::HighlightKindId,
   };
+
+  fn syntax_span(surface_row: usize, start_col: usize, end_col: usize, kind: u32) -> SyntaxSpan {
+    SyntaxSpan {
+      surface_row,
+      start_col,
+      end_col,
+      x_px: start_col as u32 * 8,
+      width_px: (end_col - start_col) as u32 * 8,
+      kind: HighlightKindId::new(kind),
+    }
+  }
 
   fn request(
     first_row: usize,
@@ -1683,10 +1609,7 @@ mod tests {
     );
 
     let initial = surface.render_frame(rope.slice(..), 1, request(0, 1, 20, None));
-    surface.set_syntax_highlights(vec![SyntaxHighlight {
-      range: 1..3,
-      kind:  HighlightKindId::new(7),
-    }]);
+    surface.set_visible_syntax(vec![syntax_span(0, 1, 3, 7)]);
 
     let delta = surface.render_frame(
       rope.slice(..),
@@ -1718,12 +1641,11 @@ mod tests {
       TextAnnotations::default(),
     );
     surface.set_selection(Some(selection(&[(2, 5)])));
-    surface.set_syntax_highlights(vec![SyntaxHighlight {
-      range: 1..4,
-      kind:  HighlightKindId::new(9),
-    }]);
+    surface.set_visible_syntax(vec![syntax_span(0, 1, 4, 9)]);
 
     let initial = surface.render_frame(rope.slice(..), 1, request_with_col(0, 1, 0, 4, None));
+
+    surface.set_visible_syntax(vec![syntax_span(0, 0, 2, 9)]);
     let original_row = initial.changed_rows[0].clone();
 
     let delta = surface.render_frame(
@@ -1760,13 +1682,12 @@ mod tests {
       TextFormat::default(),
       TextAnnotations::default(),
     );
-    surface.set_syntax_highlights(vec![SyntaxHighlight {
-      range: 5..7,
-      kind:  HighlightKindId::new(3),
-    }]);
+    surface.set_visible_syntax(vec![syntax_span(1, 0, 2, 3)]);
 
     let initial = surface.render_frame(rope.slice(..), 1, request(0, 2, 20, None));
     assert!(initial.layers.syntax.is_some());
+
+    surface.set_visible_syntax(vec![syntax_span(0, 0, 2, 3)]);
 
     let delta = surface.render_frame(
       rope.slice(..),
@@ -1826,14 +1747,16 @@ mod tests {
       TextAnnotations::default(),
     );
     surface.set_selection(Some(selection(&[(1, 3)])));
-    surface.set_syntax_highlights(vec![SyntaxHighlight {
-      range: 1..3,
-      kind:  HighlightKindId::new(4),
-    }]);
+    surface.set_visible_syntax(vec![syntax_span(0, 1, 3, 4)]);
 
     let initial = surface.render_frame(rope.slice(..), 1, request(0, 1, 20, None));
     let original_row = initial.changed_rows[0].clone();
     surface.set_measurements(SurfaceMeasurements::cell_grid(10, 20));
+    surface.set_visible_syntax(vec![SyntaxSpan {
+      x_px: 10,
+      width_px: 20,
+      ..syntax_span(0, 1, 3, 4)
+    }]);
 
     let delta = surface.render_frame(
       rope.slice(..),

@@ -1,15 +1,16 @@
 # Syntax Module Architecture
 
-This document defines the target architecture for the syntax subsystem in `the-lib`.
+This document defines the target long-term architecture for the syntax subsystem in `the-lib` and its orchestration in `the-runtime`.
 
-It answers four questions:
+It answers these questions:
 
-1. What belongs in the pure syntax core?
-2. What belongs in runtime-backed syntax infrastructure?
-3. What should the document-facing syntax state model look like?
-4. How should the old `syntax.rs` and `syntax/` modules be split and rewritten?
+1. What is the real syntax truth of a document?
+2. What belongs in `the-lib`, `the-runtime`, `Surface`, and render?
+3. How should parsing, injections, highlighting, and enrichment be split?
+4. How do we support large files and pathological injection-heavy cases without destroying typing latency?
+5. What should replace the current eager full-document highlight pipeline?
 
-This document is intentionally opinionated. Syntax is one of the biggest and most foundational subsystems in the editor. If its boundaries are vague, a large part of the engine will inherit those mistakes.
+This document is intentionally opinionated. Syntax is one of the largest and most performance-sensitive parts of the editor. If its boundaries are vague, large-file performance and feature correctness both rot.
 
 ---
 
@@ -17,219 +18,430 @@ This document is intentionally opinionated. Syntax is one of the biggest and mos
 
 The syntax subsystem defines the native, document-owned model for:
 - language assignment and detection
-- tree-sitter-backed syntax state
-- incremental parse lifecycle
+- persistent tree-sitter-backed syntax truth
+- incremental parse and injection maintenance
 - lazy compilation of language query helpers
+- byte-oriented syntax extraction for higher-level consumers
 - pure language metadata needed by text-bound editor features
 
 It is responsible for:
 - language registry/detection
 - document-local syntax truth
-- parser-backend adapter logic
-- query compilation and caching
-- pure syntax-derived query capabilities
+- persistent syntax layer graph maintenance
+- explicit invalidation tracking
+- generation/freshness tracking
+- query helper compilation and caching
+- baseline structural extraction APIs
+- pure query capabilities used by editor features
 
 It is **not** responsible for:
-- runtime grammar discovery or filesystem asset loading
-- LSP/formatter/debugger/tool configuration
-- task orchestration or background worker management
-- render caching/composition policy
+- filesystem grammar/query acquisition
+- async scheduling or background worker management
+- viewport ownership
+- render row caches
 - theme/style mapping
-- feature algorithms like indentation, text object expansion, comment toggling, or auto-pair behavior
+- client painting
+- whole-editor command/product policy
 
 ---
 
 ## Core position
 
-Syntax is **document-owned optional derived state**.
+Syntax is **document-owned derived text truth**.
 
 That means:
-- syntax belongs to the `Document`, not the `Surface`
+- syntax belongs to `Document`, not `Surface`
 - many surfaces may share one document and therefore one syntax truth
-- syntax state must remain independent of selection, viewport, and render caches
+- syntax state must remain independent of selection, viewport, render caches, and product/UI concerns
 
-This aligns with the architecture in `docs/ARCHITECTURE.md`:
-- syntax is about the text itself
-- grammar loading and async orchestration stay out of `the-lib`
-- the pure engine owns deterministic syntax state and text-bound query capabilities
+The architecture should read like this:
+
+```txt
+Document      = text truth + syntax truth
+Surface       = per-view/editor-session state + visible syntax caches
+RenderSurface = retained render subsystem, syntax-agnostic
+Runtime       = syntax scheduling/orchestration and asset loading
+```
+
+This is the crucial split:
+- **`Document` owns persistent syntax truth**
+- **`Surface` owns visible extracted projections**
+- **`the-runtime` owns scheduling, demand prioritization, and async advancement**
+
+---
+
+## The problem with the current/v1 shape
+
+The current vertical slice proved correctness and integration, but it has the wrong performance shape for a complete implementation.
+
+The bad pattern is:
+
+```txt
+edit
+-> reparse document
+-> recollect full-document highlights
+-> convert all ranges to render-facing spans
+-> push payloads into surfaces
+```
+
+That shape is too eager.
+
+It couples typing cost to:
+- total file size
+- total highlight span count
+- total injection complexity
+- total locals/enrichment complexity
+- number of attached surfaces
+
+This is exactly how large files and injection-heavy files end up lagging even when incremental parsing itself is cheap.
+
+The root parse is not the real problem. The expensive parts are the post-parse query passes and the choice to materialize too much too early.
+
+---
+
+## Final model
+
+The complete model has four layers:
+
+```txt
+1. Persistent syntax truth
+2. Incremental syntax advancement
+3. Visible-range extraction
+4. Render-facing retained visible caches
+```
+
+### 1. Persistent syntax truth
+Document-owned. Pure. Byte-oriented.
+
+### 2. Incremental syntax advancement
+Document defines the pure state machine; runtime drives it with bounded foreground work and background completion.
+
+### 3. Visible-range extraction
+Surface/runtime pull byte-oriented visible runs from syntax truth on demand.
+
+### 4. Render-facing retained visible caches
+Surface converts extracted runs into row-local render payloads; `RenderSurface` remains syntax-agnostic.
+
+---
+
+## Ownership split
+
+### `the-lib::syntax` owns
+- pure language metadata
+- `LanguageId`, `LanguageRegistry`, `LanguageDefinition`
+- language detection rules
+- persistent syntax layer graph
+- parse/injection invalidation truth
+- syntax/enrichment generations
+- snapshot/apply protocols for background advancement
+- byte-oriented extraction APIs
+- feature query helpers (indent/textobjects/tags/etc.)
+
+### `Document` owns
+- `DocumentSyntax`
+- all syntax truth attached to one text buffer
+- syntax invalidated regions
+- syntax freshness state
+- no viewport-specific highlight caches
+
+### `Surface` owns
+- viewport and demand reporting
+- visible baseline syntax cache
+- visible enrichment cache
+- byte->char/visual conversion near render
+- adaptation of syntax extraction into render payloads
+
+### `RenderSurface` owns
+- retained visible render state only
+- no direct knowledge of `Document` syntax internals
+- no document-global syntax payload truth
+
+### `the-runtime` owns
+- grammar/query asset loading
+- syntax scheduler/work queue per document
+- tiny bounded foreground advancement
+- background advancement/completion
+- stale-result rejection
+- demand-aware prioritization from surfaces
+- large-file/pathological degradation policy
 
 ---
 
 ## Main decisions
 
-### 1. Split syntax core from runtime-backed resource acquisition
+### 1. Split syntax truth from syntax scheduling
 **Decision:** yes.
 
-### `the-lib` owns
-- pure language metadata
-- language detection rules
-- syntax state
-- lazy query compilation
-- parser adapter code
-- pure query helpers
+`the-lib` owns the syntax state machine.
+`the-runtime` owns when work happens.
 
-### `the-runtime` owns
-- runtime grammar acquisition
-- runtime query file loading
-- filesystem/resource/session oriented syntax infrastructure
-
-**Reasoning:**
-Syntax truth is pure and document-bound. Asset discovery and runtime loader policy are not.
+`Document::apply_transaction(...)` must stay cheap and must not secretly become a parse scheduler.
 
 ---
 
 ### 2. Keep syntax-side language metadata broader than parse mechanics
 **Decision:** yes.
 
-`the-lib::syntax` should remain the home of **pure language metadata**, not just parser/query mechanics.
-
-Keep fields like:
-- `comment_tokens`
-- `block_comment_tokens`
-- `indent`
-- `auto_pairs`
-- `text_width`
-- `soft_wrap`
-- `rulers`
-- `rainbow_brackets`
-
-These are not parser state, but they are deterministic language-local editor defaults and belong in the pure engine.
+Keep pure language-local editor metadata in syntax-side config, including things like:
+- comment tokens
+- block comment tokens
+- indent config
+- auto-pairs config
+- text width / soft wrap / rulers
+- rainbow bracket config
 
 Do **not** keep runtime/service/tool config here.
 
 ---
 
-### 3. Use an editor-owned `LanguageId`
+### 3. Keep editor-owned syntax identity types
 **Decision:** yes.
 
-Use a small editor-owned language identity type publicly.
-
-```rust
-pub struct LanguageId(u32);
-```
-
-**Reasoning:**
-The syntax registry’s language identity is an editor concept, not a third-party backend concept. Public syntax APIs should not be built around raw tree-house language handles.
-
----
-
-### 4. Rename `Loader` to `LanguageRegistry`
-**Decision:** yes.
-
-The old `Loader` is conceptually a registry, not an asset loader.
-
-`LanguageRegistry` should own:
-- registered language definitions
-- detection rules
-- lazy compiled syntax/query helpers
-- semantic highlight vocabulary
-
-It should be conceptually immutable after construction, aside from lazy caches.
-
----
-
-### 5. Rename `LanguageData` to `LanguageDefinition`
-**Decision:** yes.
-
-Each registered language should have one stored per-language record that owns:
-- pure language metadata/config
-- lazily compiled syntax config
-- lazily compiled query helpers
-
-This keeps per-language state local and easy to reason about.
-
----
-
-### 6. Keep compiled query helpers under syntax
-**Decision:** yes.
-
-Syntax should centrally own compiled query helpers for:
-- indent
-- text objects
-- tags
-- rainbow queries
-- highlights / injections / locals
-
-But these should be understood as **query helpers**, not as syntax-state identity itself.
-
-Feature algorithms consuming them stay in their own modules.
-
----
-
-### 7. Keep syntax state document-scoped and selection-free
-**Decision:** yes.
-
-Syntax APIs must stay rooted in:
-- text
-- language assignment
-- derived parse/query state
-
-They must not own:
-- selection state
-- surface/view state
-- render caches
-- resource/file identity
-
-Downstream feature modules may consume both syntax and selection, but syntax itself remains document-scoped.
-
----
-
-### 8. Keep a rich `Syntax` capability object
-**Decision:** yes.
-
-`Syntax` may remain a fairly rich parse/query/tree capability object.
-
-It can expose:
-- tree access
-- descendant lookup
-- query iteration
-- update/interpolate APIs
-- typed helper methods like `tags(...)`
-
-The goal is not to wrap every capability behind minimal façade methods. The goal is to keep top-level editor concepts editor-owned while allowing selective low-level power.
-
----
-
-### 9. Selectively expose raw tree-house/tree-sitter types
-**Decision:** yes.
-
-It is acceptable for syntax APIs to expose some raw backend types where that is the most honest interface.
-
-Examples that may remain visible:
-- `Node`
-- `Tree`
-- `TreeCursor`
-- `Query`
-- `InputEdit`
-
-But top-level engine concepts should stay editor-owned:
+Keep editor-owned public concepts like:
 - `LanguageId`
 - `LanguageRegistry`
-- `Syntax`
-- `SyntaxState`
+- `LanguageDefinition`
 - `DocumentSyntax`
+- `SyntaxState`
+
+Do not let backend-specific handles become the public syntax vocabulary.
 
 ---
 
-### 10. Keep the full pure detection stack
+### 4. Keep syntax document-scoped and selection-free
 **Decision:** yes.
 
-Preserve language detection by:
-- name
-- scope
-- filename/extension
-- glob
-- shebang
-- injection/content regex
+Syntax truth stays rooted in:
+- text
+- language assignment
+- parse/injection/enrichment state
+- extraction/query capability
 
-This detection logic is pure and belongs in `the-lib`.
+Not in:
+- selection
+- viewport
+- render payloads
+- surface session state
 
 ---
 
-### 11. Define one canonical detection precedence order
+### 5. Make injections first-class persistent syntax truth
 **Decision:** yes.
 
-Preferred precedence:
+Injections are not optional decoration. They affect:
+- nested language structure
+- text objects
+- indent behavior
+- bracket behavior
+- highlighting
+- later semantic feature routing
+
+So they belong in syntax truth.
+
+But they must be maintained:
+- incrementally
+- range-bounded
+- layer-reusing
+- not by full-document rescans after every edit
+
+---
+
+### 6. Support combined injections as real incremental citizens
+**Decision:** yes.
+
+No brute-force fallback architecture for combined injections.
+
+The complete model should support:
+- included subranges
+- incremental range splicing
+- reuse of existing combined layers
+- precise invalidation and reparse behavior
+
+---
+
+### 7. Replace eager full-document highlight collection
+**Decision:** yes.
+
+The old center of gravity:
+
+```txt
+collect full-document highlights -> push into surfaces
+```
+
+must be replaced.
+
+The new center of gravity is:
+
+```txt
+maintain persistent syntax truth -> extract visible runs on demand
+```
+
+This means whole-document `Vec<SyntaxHighlight>` is no longer the primary truth shape.
+
+---
+
+### 8. Keep baseline highlighting cheap and structural
+**Decision:** yes.
+
+Baseline syntax highlighting should be:
+- fast
+- syntax-tree/capture based
+- visible-range extracted
+- byte-oriented at the core
+- good enough for immediate typing feedback
+
+It should not require slow locals-sensitive global analysis on the typing hot path.
+
+---
+
+### 9. Keep locals-sensitive highlighting, but demote it hard
+**Decision:** yes.
+
+Locals-aware coloration remains useful, but it is **tier-2 enrichment**, not baseline syntax paint.
+
+That means it is:
+- optional
+- stale-tolerant
+- async/deferred
+- not required for immediate feedback
+- replaceable/overridable by semantic tokens later
+
+---
+
+### 10. Make semantic tokens a first-class sibling overlay
+**Decision:** yes.
+
+The complete model should have:
+- fast baseline tree-sitter structural highlighting
+- semantic/LSP enrichment as a first-class overlay lane
+
+Do not treat semantic tokens as an awkward afterthought bolted on top of final tree-sitter colors.
+
+---
+
+### 11. Keep syntax consumer lanes separate
+**Decision:** yes.
+
+There is one shared syntax truth, but different consumers have different performance/freshness needs.
+
+Examples:
+- visible baseline highlighting: near-immediate, viewport-priority
+- locals/semantic enrichment: async, stale-tolerant
+- indent: cheap and fallback-tolerant
+- bracket matching: very local and bounded
+- text objects: interactive and local
+- outline/tags: can lag more
+
+Do not collapse all syntax-derived work into one giant binary “syntax fresh” bit.
+
+---
+
+### 12. Keep byte orientation until near render
+**Decision:** yes.
+
+The syntax core should expose byte-oriented truth and extraction first.
+
+Late conversion near surface/render should handle:
+- byte -> char
+- char -> row/column
+- row-local clipping
+- measured placement
+
+Do not pay whole-document byte->char conversion costs in runtime just to create surface payloads.
+
+---
+
+### 13. Prefer streaming extraction APIs over eager collectors
+**Decision:** yes.
+
+The natural extraction API shape should be:
+- iterator / visitor / streaming callbacks over a requested byte range
+
+Bulk `Vec` collection may exist as convenience, but it must not be the architectural default.
+
+---
+
+### 14. Keep `Surface` as the syntax-to-render adapter
+**Decision:** yes.
+
+`RenderSurface` should not talk directly to `Document` syntax.
+
+Instead:
+- `Document` exposes syntax truth/extraction
+- runtime advances freshness
+- `Surface` requests visible extraction for its viewport
+- `Surface` converts that to retained render-facing visible payloads
+- `RenderSurface` diffs and emits those payloads
+
+---
+
+### 15. Keep `RenderSurface` syntax-agnostic
+**Decision:** yes.
+
+`RenderSurface` should retain rows/layers, not own syntax query policy.
+
+This preserves the clean object split:
+- document = truth
+- surface = editor/view adapter
+- render surface = retained renderer
+
+---
+
+### 16. Keep `Document` lean; do not let it become a presentation cache bucket
+**Decision:** yes.
+
+`Document` should own:
+- syntax truth
+- invalidation truth
+- generations
+- reusable document-scoped semantic/enrichment truth when justified
+
+It should not default to owning:
+- viewport caches
+- row-local highlight slices
+- render-facing syntax spans
+- per-surface extracted visible projections
+
+---
+
+### 17. Keep extraction caches outside `Document` by default
+**Decision:** yes.
+
+Visible extraction caches belong on `Surface` unless a cache is clearly:
+- document-global
+- broadly reusable across surfaces
+- expensive enough to justify
+- not tied to viewport presentation
+
+---
+
+### 18. Tree-house should stop being the architecture center
+**Decision:** yes.
+
+The editor should own:
+- its syntax layer graph
+- invalidation model
+- extraction APIs
+- scheduling contract
+
+A third-party highlighter/query worldview must not remain the center of the design.
+
+The implementation now directly owns the syntax backend around local tree-sitter bindings and no longer depends on `tree-house` as either architecture center or dependency-graph backend.
+
+---
+
+## Language registry and pure metadata
+
+The language registry remains a central pure object.
+
+It should continue to own:
+- registered language definitions
+- detection rules by name/scope/file/shebang/glob/content regex
+- query text lookup and inheritance expansion
+- lazy compiled query helpers
+- semantic highlight vocabulary / capture vocabulary
+
+Detection precedence remains:
 1. explicit override / explicit assignment
 2. name
 3. scope
@@ -238,452 +450,356 @@ Preferred precedence:
 6. glob
 7. injection/content regex
 
-This should be the canonical order for higher-level document assignment helpers.
-
----
-
-### 12. Use category-specific registry validation
-**Decision:** yes.
-
-Strictly reject conflicts for:
-- duplicate language names / ids
+Registry validation remains strict for:
+- duplicate language ids/names
 - duplicate scopes
 - duplicate exact extensions
 - duplicate exact shebangs
 
-Allow overlap with explicit precedence for:
+and pragmatic for:
 - globs (longest match wins)
-- injection/content regexes (longest match wins)
-
-This is the right balance of safety and practicality.
+- content/injection regexes (longest match wins)
 
 ---
 
-### 13. Keep inherited query expansion in the registry layer
-**Decision:** yes.
+## Syntax truth model
 
-`SyntaxResources` should remain dumb and provide only raw query text.
-The registry should own query inheritance/composition expansion before compilation.
+The syntax subsystem should move from “a parse tree plus some query helpers” to an explicit layered model.
 
-This keeps resources simple and syntax semantics centralized.
+### Persistent syntax layer graph
+A document’s active syntax truth should explicitly track:
+- root parsed layer
+- injected child layers
+- combined injection layers
+- per-layer language
+- per-layer covered ranges
+- included subranges for combined layers
+- unresolved/pending injections where applicable
+- per-layer invalidation state
 
----
+This is the core truth that everything else consumes.
 
-### 14. Keep `QueryKind` as a central syntax enum
-**Decision:** yes.
+### Why explicit layers matter
+If injections are the performance problem, injections cannot remain a hidden implementation detail.
 
-Use one central `QueryKind` enum for all supported language query assets:
-- `Highlights`
-- `Injections`
-- `Locals`
-- `Indents`
-- `TextObjects`
-- `Tags`
-- `Rainbows`
-
-This gives a canonical vocabulary to the registry/resource/query plumbing.
-
----
-
-### 15. Keep injections first-class
-**Decision:** yes.
-
-Tree-sitter injection parsing remains part of syntax truth and should stay first-class.
-
-Keep:
-- layered parsing
-- registry-based injection language resolution
-- injection enable/disable capability
-
-Do not reduce syntax to single-language trees just to simplify the port.
+Explicit layers are what make it possible to:
+- invalidate only affected subtrees/subranges
+- reuse injected layers across edits
+- update combined injections incrementally
+- answer feature queries against the real layered syntax truth
+- extract only visible syntax runs later
 
 ---
 
-### 16. Keep injection enable/disable as a syntax capability, not a syntax policy
-**Decision:** yes.
+## Freshness and generations
 
-`Syntax` may expose:
-- `injections_enabled()`
-- `set_injections_enabled(bool)`
+The complete model needs multiple freshness axes.
 
-But policy for when to toggle injections stays outside syntax.
+At minimum, conceptually distinguish:
+- text revision
+- structural parse generation
+- injection generation
+- baseline extraction generation
+- enrichment generation
 
----
+Do **not** collapse these into one fuzzy `accurate: bool` if that loses necessary information.
 
-### 17. Keep syntax/query compilation errors explicit in lazy caches
-**Decision:** yes.
+That does **not** force one giant public mega-enum. Prefer orthogonal state facts.
 
-Per-language lazy compiled state should remember:
-- `Ok(None)` for absent query/config
-- `Err(SyntaxError)` for broken query/config
+Examples of real situations:
+- text changed, parse is stale
+- parse is current, injections are stale
+- syntax truth is current, visible surface cache is stale
+- baseline is current, semantic enrichment is stale
 
-Do **not** silently collapse broken queries into cached `None`.
-
-This makes core syntax behavior much easier to debug and reason about.
-
----
-
-### 18. Keep parser adapter code under syntax ownership
-**Decision:** yes.
-
-Conversion from `ChangeSet`/`Transaction` into tree-sitter `InputEdit`s belongs under syntax ownership as parser-backend adapter logic.
-
-It should **not** live in `transaction.rs`.
-
-This code should likely live in a dedicated syntax adapter module such as `syntax/edits.rs`.
+The architecture must represent those distinctions honestly.
 
 ---
 
-### 19. Split highlight production from highlight presentation strategy
-**Decision:** yes.
+## Invalidation model
 
-Syntax truth includes:
-- parse tree
-- query results capability
-- semantic highlight production
+A boolean `parse_pending` is not enough.
 
-Presentation strategy includes:
-- highlight cache
-- overlay composition
-- render-specific refresh/caching policy
-- semantic highlight -> style mapping
+Syntax truth should explicitly track invalidated regions, at least as coalesced byte ranges, and possibly also deeper per-layer invalidation facts later.
 
-`HighlightCache`, `OverlayHighlights`, `OverlayHighlighter`, and similar presentation-facing utilities should move out of core syntax truth.
+At minimum we need to know:
+- what text ranges are stale
+- whether the staleness affects parse structure, injection structure, enrichment, or multiple lanes
 
----
-
-### 20. Use semantic highlight IDs, not final style IDs
-**Decision:** yes.
-
-Syntax should emit semantic highlight identities, not final presentation slot IDs.
-
-Preferred direction:
-- syntax registry owns a stable semantic highlight vocabulary
-- syntax emits semantic `HighlightKindId`
-- render/theme code later maps `HighlightKindId -> StyleId`
-
-This preserves the semantic/presentation split cleanly.
-
----
-
-### 21. Move mutable highlight scope/style mapping out of the registry
-**Decision:** yes.
-
-The old mutable recognized-scope mapping (`set_scopes(...)` / `reconfigure_highlights(...)`) should not remain central to the syntax registry.
-
-Mutable presentation vocabulary is not syntax truth.
-
-The registry may still own semantic highlight vocabulary, but render/theme code should own the later style mapping.
-
----
-
-### 22. Keep `SyntaxState` in `the-lib`
-**Decision:** yes.
-
-Keep a versioned, thread-safe `SyntaxState` wrapper in `the-lib`, as long as it remains pure state.
-
-It may own:
-- versions
-- parse-pending bit
-- snapshot/apply-parsed protocol
-- stale parse rejection
-
-It must not own:
-- task spawning
-- worker orchestration
-- runtime scheduler logic
-
----
-
-### 23. Keep `SyntaxSnapshot` public
-**Decision:** yes.
-
-The snapshot/apply-parsed background parsing handshake is public behavior and should use a concrete public payload type.
-
-`SyntaxSnapshot` should remain a small public type.
-
----
-
-### 24. Keep both update API layers
-**Decision:** yes.
-
-Preserve both:
-- convenience update/interpolate methods from `ChangeSet`
-- lower-level update/interpolate methods from precomputed `InputEdit`s
-
-This keeps the syntax API flexible for both engine and background-parse workflows.
-
----
-
-### 25. Keep generic query iteration public
-**Decision:** yes.
-
-Preserve a generic query-iteration capability on `Syntax` in addition to specific convenience helpers.
-
-This is a genuine capability and should not be hidden just to force feature-specific helper proliferation.
-
----
-
-### 26. Keep thin typed helpers like `tags(...)`
-**Decision:** yes.
-
-Thin typed helper methods that sit naturally atop compiled query helpers are still worthwhile.
-
-Examples:
-- `tags(...)`
-
-These should remain thin conveniences, not sprawling feature algorithms.
-
----
-
-### 27. Move rainbow highlight generation out of core syntax
-**Decision:** yes.
-
-Keep:
-- `RainbowQuery`
-
-Move out:
-- presentation-facing rainbow highlight overlay generation
-
-That output is closer to feature/render adaptation than syntax truth.
-
----
-
-### 28. Keep feature algorithm ownership outside syntax
-**Decision:** yes.
-
-Syntax owns:
-- pure language facts
-- compiled query helpers
-- query/tree capabilities
-
-Other modules own behavior:
-- `indent.rs` computes indentation decisions
-- `text_object.rs` computes text object behavior
-- `comment.rs` computes commenting behavior
-- `auto_pairs.rs` computes pair behavior
-- movement/render features consume syntax as needed
-
-This is a key anti-god-module boundary.
+This is how the scheduler avoids paying globally for local edits.
 
 ---
 
 ## Document-facing syntax model
 
-A document’s syntax state should be explicit and honest.
+The high-level document-facing syntax model should stay explicit.
 
 ### `DocumentSyntax`
-Preferred shape:
+Conceptually:
+- unassigned
+- assigned but unavailable
+- assigned and active
 
-```rust
-pub enum DocumentSyntax {
-  Unassigned,
-  Assigned {
-    assignment: LanguageAssignment,
-    state:      DocumentSyntaxState,
-  },
-}
-```
-
-### `LanguageAssignment`
-Preferred shape:
-
-```rust
-pub struct LanguageAssignment {
-  pub language_id: LanguageId,
-  pub source:      LanguageAssignmentSource,
-}
-```
-
-### `LanguageAssignmentSource`
-Preferred cases:
-
-```rust
-pub enum LanguageAssignmentSource {
-  UserOverride,
-  Name,
-  Scope,
-  Filename,
-  Shebang,
-  Glob,
-  InjectionRegex,
-}
-```
+But the active branch now carries a much richer internal state than v1.
 
 ### `DocumentSyntaxState`
-Preferred shape:
+An active state should carry:
+- persistent syntax layer graph
+- invalidated regions
+- parse freshness generations
+- injection freshness generations
+- enrichment freshness generations
+- snapshot/apply protocol support
 
-```rust
-pub enum DocumentSyntaxState {
-  Deferred,
-  Unavailable(SyntaxUnavailableReason),
-  Active(SyntaxState),
-}
-```
+The public type names may stay close to:
+- `DocumentSyntax`
+- `DocumentSyntaxState`
+- `SyntaxUnavailableReason`
+- `SyntaxState`
+- `SyntaxSnapshot`
 
-### `SyntaxUnavailableReason`
-Preferred shape:
-
-```rust
-pub enum SyntaxUnavailableReason {
-  MissingGrammar,
-  InvalidSyntaxConfig,
-  InvalidQuery { kind: QueryKind },
-  BackendInit,
-}
-```
-
-### Important semantic rules
-- assignment and syntax activation are separate steps
-- `Active` means a real initialized syntax tree already exists
-- `Deferred` means syntax is not active by choice/policy
-- `Unavailable(...)` means activation failed for a structured reason
-- when active syntax exists, its `LanguageId` must match the assigned language
+But their semantics should evolve beyond the v1 “tree plus parse_pending bit” worldview.
 
 ---
 
-## `Syntax` and `SyntaxState`
+## `Document::apply_transaction(...)`
 
-### `Syntax`
-`Syntax` remains the core mutable parse/query object.
+The typing hot path must change.
 
-It may expose:
-- `new`
-- `update`
-- `update_with_edits`
-- `interpolate`
-- `interpolate_with_edits`
-- tree/layer access
-- descendant/child lookups
-- query iteration
-- typed helpers like `tags(...)`
-- injection enable/disable
+When a transaction is applied:
+1. apply the text change
+2. bump the text revision if text changed
+3. map/interpolate existing syntax state through the edit
+4. update invalidated regions
+5. mark the necessary syntax lanes stale
+6. **do not perform an unbounded full parse/highlight recomputation**
 
-It is allowed to remain rich.
+This is the non-negotiable typing-path rule.
 
-### `SyntaxState`
-`SyntaxState` is a higher-level wrapper around `Syntax` for versioned document-facing lifecycle semantics.
+The document edit contract should be:
+- cheap
+- deterministic
+- non-blocking
+- syntax-coherent but not necessarily syntax-fresh
 
-It should own:
-- active `Syntax`
-- `LanguageId`
-- interpolated version
-- parsed version
-- parse-pending state
-- snapshot/apply-parsed handshake
-- stale parse rejection
+---
 
-It should publicly expose useful pure state like:
-- `is_accurate()`
-- version getters
-- `is_parse_pending()`
+## Snapshot / compute / conditional-apply protocol
+
+The pure syntax core should expose an explicit protocol for async advancement.
+
+### The pure side owns
+- taking immutable syntax work snapshots
+- defining what constitutes a valid source generation
+- applying parse/injection/enrichment advances
+- rejecting stale results cleanly
+
+### Runtime owns
+- when snapshots are taken
+- what work is scheduled
+- where work runs
+- when results are attempted/applied
+
+This means `the-lib` owns the syntax state machine and `the-runtime` only orchestrates it.
+
+---
+
+## Runtime syntax scheduler model
+
+`the-runtime` should own a real syntax scheduler per document.
+
+It should be responsible for:
+- pending syntax work queues
+- coalescing rapid edits
+- at most one in-flight advancement job per document/lane where appropriate
+- tiny bounded foreground work
+- background completion for the rest
+- stale-result rejection by generations/snapshots
+- demand-aware prioritization from surfaces
+- degradation policy for pathological cases
+
+The runtime should not keep the current ad hoc shape of “after edit, refresh syntax/highlights”.
+
+---
+
+## Foreground vs background policy
+
+The complete model should be budgeted.
+
+### Foreground
+Allowed:
+- small bounded advancement work
+- enough to keep the currently visible editing experience feeling responsive
+
+### Background
+Responsible for:
+- completing structural parse freshness
+- injection maintenance beyond tiny foreground budgets
+- tier-2 locals/semantic enrichment
+- cleanup of broader stale regions
+
+The typing path must not wait for whole-file syntax richness.
+
+---
+
+## Demand-driven scheduling
+
+Surface view demand should be explicit.
+
+Surfaces should report syntax interest such as:
+- current viewport byte range
+- margin around viewport
+- maybe cursor-near priority
+- active/inactive/hidden priority hints
+
+Scheduler policy should treat these as separate from invalidation.
+
+The fundamental prioritization rule is:
+
+```txt
+first:  stale ∩ demanded
+then:   stale near demanded
+then:   broader stale background work
+```
+
+This gives the best user-facing behavior under load.
+
+---
+
+## Visible-range extraction model
+
+The old API shape:
+
+```rust
+collect_document_highlights(&document) -> Vec<...>
+```
+
+should be replaced by byte-range extraction.
+
+### Distinct levels
+There are three different layers of output and they should not be conflated.
+
+#### 1. Syntax truth
+- layered parse trees
+- query capabilities
+- byte-oriented categories/captures
+
+#### 2. Extraction result
+- “for byte range X..Y, here are baseline/enrichment runs”
+- still not row-local render payloads
+- still surface-independent by default
+
+#### 3. Render payload
+- clipped to viewport
+- row-local columns
+- measured placement if needed
+
+A dedicated extraction-layer concept should exist between syntax truth and render payload.
+
+---
+
+## Baseline highlighting lane
+
+Baseline highlighting should be:
+- structural
+- viewport/range extracted
+- synchronous if strictly bounded
+- streaming
+- cache-friendly
+
+It is acceptable for a stale visible baseline cache to be rebuilt synchronously on demand during rendering **only if** it is:
+- viewport-bounded
+- range-streaming
+- not secretly a whole-document pass
+
+This is the correct analogue of Zed’s visible-range highlighting model for our setup.
+
+---
+
+## Enrichment lane
+
+Tier-2 enrichment includes things like:
+- locals-sensitive highlight refinements
+- semantic token overlays
+- other document-scoped semantic classifications
+
+Enrichment truth should be document-owned when it is document-local and reusable across surfaces.
+
+Surfaces should only own visible extracted projections of that enrichment.
+
+This keeps multi-surface behavior coherent and avoids duplicated surface-local enrichment work.
+
+---
+
+## Large-file and pathological-file policy
+
+Even a good architecture needs overload policy.
+
+The system should support explicit degraded modes such as:
+- baseline only
+- defer injection refresh beyond budget
+- pause tier-2 enrichment
+- viewport-first structural freshness only
+- recover fuller richness when idle
+
+These are runtime policies, not excuses to corrupt syntax truth or text editing correctness.
+
+Correctness of editing must remain intact.
+Syntax richness/freshness may degrade temporarily.
+
+---
+
+## Feature consumers
+
+The persistent layered syntax truth is not only for highlighting.
+
+Over time, syntax-derived features should query the same truth for:
+- indent
+- bracket matching
+- text objects
+- structural object movement
+- tags/outline
+- later semantic helpers
+
+Do not let each feature reconstruct a private syntax worldview.
+
+One syntax truth, many consumers.
 
 ---
 
 ## Error model
 
-Use a split error model.
-
-### Editor-owned `SyntaxError` is appropriate for:
-- missing grammar
-- invalid syntax config compilation
+Editor-owned `SyntaxError` remains appropriate for:
+- invalid syntax config
 - invalid query compilation
-- registry/config/resource interpretation failures
+- document-level syntax state transitions
+- explicit syntax advancement/apply failures
 
-### Raw/near-raw backend errors are acceptable for:
-- `Syntax::new`
-- `Syntax::update`
-- query/highlighter operational work
-- backend timeouts
-
-Also:
-- keep rich errors at operation boundaries
-- keep persistent `DocumentSyntax` unavailable reasons stable and normalized
-
----
-
-## Config split
-
-### Keep in syntax-side pure language metadata
-Use narrower names like:
-- `SyntaxConfiguration`
-- `LanguageSyntaxConfig`
-
-Keep fields like:
-- `language_id`
-- `scope`
-- `file_types`
-- `shebangs`
-- `comment_tokens`
-- `block_comment_tokens`
-- `grammar`
-- `injection_regex`
-- `indent`
-- `auto_pairs`
-- `text_width`
-- `soft_wrap`
-- `rulers`
-- `rainbow_brackets`
-
-### Move out entirely
-Do **not** keep in syntax core:
-- language server config
-- formatter config
-- debugger config
-- workspace LSP roots
-- persistent diagnostic source config
-
-Those belong in runtime/higher-layer language service configuration.
+Raw backend query/tree/node types remain acceptable where they are the most honest low-level interface, but they should no longer define the top-level architecture.
 
 ---
 
 ## `SyntaxResources`
 
-Keep the acquisition trait very small and dumb.
+`SyntaxResources` should remain small and dumb.
 
-Preferred shape:
+It should provide only raw asset access such as:
+- grammar lookup
+- query text lookup
 
-```rust
-pub trait SyntaxResources: Send + Sync {
-  fn grammar(&self, grammar_name: &str) -> Option<Grammar>;
-  fn query(&self, language_id: &str, kind: QueryKind) -> Option<Cow<'_, str>>;
-}
-```
+It should not own:
+- scheduling
+- cache policy
+- feature policy
+- render policy
 
-Keep in `the-lib`:
-- `SyntaxResources`
-- `NullResources`
-
-Move out of `the-lib` entirely:
-- runtime-backed resource loaders/implementations
-
-These belong in `the-runtime`.
+Runtime-backed implementations belong in `the-runtime`.
 
 ---
 
-## Query helper ownership
+## Module structure direction
 
-Keep compiled query helper types under syntax:
-- `IndentQuery`
-- `TextObjectQuery`
-- `TagQuery`
-- `RainbowQuery`
-
-Keep explicit typed registry accessors:
-- `indent_query(language_id)`
-- `textobject_query(language_id)`
-- `tag_query(language_id)`
-- `rainbow_query(language_id)`
-
-Do not replace these with a generic type-erased query helper retrieval abstraction.
-
----
-
-## Module structure
-
-Do **not** rebuild another giant `syntax.rs` god file.
-
-Preferred structure:
+The exact file split can evolve, but the architecture wants something roughly like:
 
 ```txt
 the-lib/syntax/
@@ -691,123 +807,99 @@ the-lib/syntax/
   config.rs
   resources.rs
   registry.rs
-  state.rs
-  edits.rs
+  state.rs            # document-facing syntax state machine + generations
+  graph.rs            # persistent syntax layer graph
+  invalidation.rs     # stale ranges / lane invalidation
+  snapshot.rs         # syntax work snapshots / apply protocol
+  extract.rs          # streaming byte-range baseline extraction
+  enrichment.rs       # tier-2 enrichment truth contracts
+  edits.rs            # parser edit generation helpers
   indent_query.rs
   textobject_query.rs
   tag_query.rs
   rainbow_query.rs
-  highlighting.rs   # pure semantic highlight production only
 ```
 
-### `mod.rs` façade discipline
-Use a small façade that re-exports the intentional public surface while keeping internals private by default.
-
-Good public re-exports include:
-- `LanguageId`
-- `LanguageRegistry`
-- `LanguageDefinition`
-- `Syntax`
-- `SyntaxState`
-- `SyntaxSnapshot`
-- `DocumentSyntax`
-- `LanguageAssignment`
-- `LanguageAssignmentSource`
-- `SyntaxConfiguration`
-- `LanguageSyntaxConfig`
-- `SyntaxResources`
-- `QueryKind`
-- `IndentQuery`
-- `TextObjectQuery`
-- `TagQuery`
-- `RainbowQuery`
-- semantic highlight-facing types
-
-Avoid re-exporting helper internals by default.
+This does **not** mean all files must appear immediately.
+It means the architecture has these separable concepts now.
 
 ---
 
-## What should move out of the old syntax core
+## What should move out of the old/current center
 
-The old `syntax.rs` and `syntax/config.rs` carry several mixed concerns that should not survive intact.
-
-### Move to runtime or higher layers
-- runtime-backed syntax resource loader
-- language server config
-- formatter config
-- debugger config
-- workspace/root service config
-- mutable highlight scope/style table logic
-
-### Move to render/presentation-adjacent code
-- `HighlightCache`
-- `OverlayHighlights`
-- `OverlayHighlighter`
-- `requery_and_cache(...)`
-- theme/style mapping from semantic highlights to render styles
-- rainbow overlay/highlight generation
-
-### Keep out of syntax feature ownership
-Do not move these feature algorithms into syntax:
-- indentation decisions
-- text object behavior
-- comment behavior
-- auto-pair behavior
-
-Syntax should provide the language facts and query helpers they consume.
+The following should stop being central architecture:
+- opaque highlighter-driven whole-document highlight collection
+- surface-owned document-global syntax span payloads
+- synchronous “refresh syntax/highlights after every edit” runtime flow
+- locals-sensitive full-pass coloration as baseline paint
+- tree-house as the defining syntax worldview
 
 ---
 
 ## Testing split
 
 ### Keep in `the-lib`
-Pure syntax tests should cover:
-- registry validation
-- detection semantics and precedence
-- query inheritance expansion
-- query helper compilation/parsing
-- parser adapter edit generation
-- `SyntaxState` snapshot/version/stale-result behavior
-- deterministic simulation/differential syntax tests that do not depend on runtime asset loading
+- language registry validation/detection tests
+- syntax graph correctness tests
+- invalidation and interpolation tests
+- injection reuse and combined-injection tests
+- snapshot/apply stale-rejection tests
+- streaming extraction correctness tests
+- deterministic syntax simulation tests
 
-### Move with runtime-backed resource loading
-Runtime-side integration tests should cover:
-- actual grammar loading
-- actual runtime query asset loading
-- end-to-end parsing with shipped assets
-- runtime integration concerns
+### Keep in `the-runtime`
+- filesystem/runtime grammar/query acquisition
+- scheduling/coalescing policy tests
+- demand-prioritization tests
+- degradation-policy tests
+- document->surface syntax freshness fanout behavior
+
+### Keep at surface/render boundaries
+- visible extraction cache invalidation tests
+- viewport-clipped syntax projection tests
+- retained syntax-layer cache coherence tests
 
 ---
 
 ## Recommended implementation order
 
-1. Split and rename the syntax-side config types.
-2. Introduce `LanguageId`, `LanguageRegistry`, and `LanguageDefinition`.
-3. Add strict registry validation and canonical detection precedence.
-4. Port/clean `SyntaxResources` and inherited query expansion.
-5. Port compiled query helpers (`IndentQuery`, `TextObjectQuery`, `TagQuery`, `RainbowQuery`).
-6. Port `Syntax` and `SyntaxState` with snapshot/apply-parsed protocol.
-7. Add `DocumentSyntax` state machine and activation/unavailable modeling.
-8. Port parser adapter code (`generate_edits(...)`) into dedicated syntax adapter module.
-9. Split pure semantic highlight production from render/presentation caches and mapping.
+1. Redefine the architecture around document-owned syntax truth, surface-owned visible caches, and runtime scheduling.
+2. Replace full-document pushed syntax payload assumptions in docs and APIs.
+3. Introduce explicit syntax graph / invalidation / generation concepts in `the-lib`.
+4. Make `Document::apply_transaction(...)` strictly cheap and advancement-oriented, not reparsing-oriented.
+5. Add snapshot/apply protocol for syntax advancement.
+6. Add visible-range streaming extraction APIs for fast baseline highlighting.
+7. Replace surface/render syntax input from whole-document span vectors to visible caches.
+8. Add runtime scheduler/work queue and demand reporting from surfaces.
+9. Add tier-2 enrichment lanes and semantic-token overlay support.
+10. Migrate feature consumers toward the shared layered syntax truth.
+11. Keep deepening the direct tree-sitter-owned implementation until injected layer maintenance and enrichment lanes are fully first-party as well.
 
 ---
 
 ## Summary
 
-The syntax subsystem should become:
-- a pure, document-owned syntax core in `the-lib`
-- backed by a mostly immutable `LanguageRegistry`
-- using editor-owned identities and explicit document-facing state
-- rich in tree/query capability
-- careful not to absorb runtime service config or presentation strategy
-
-The key architectural split is:
+Syntax truth should no longer be modeled as:
 
 ```txt
-Syntax truth = parse tree + query results capability + pure language metadata
-Runtime syntax infra = grammar/query acquisition and runtime orchestration
-Presentation strategy = caches, overlays, and semantic-highlight -> style mapping
+parse tree + eager full-document highlight vector
 ```
 
-That is the target shape for the syntax rewrite.
+The complete model is:
+
+```txt
+Document-owned persistent layered syntax truth
++ explicit invalidation and generations
++ runtime-owned budgeted advancement and scheduling
++ surface-owned visible extraction caches
++ syntax-agnostic retained rendering
++ tier-1 structural baseline
++ tier-2 semantic/locals enrichment
+```
+
+That is the architecture that gives us:
+- good large-file behavior
+- correct injection support
+- multi-surface coherence
+- clean runtime scheduling
+- a much better foundation than the current eager syntax payload path

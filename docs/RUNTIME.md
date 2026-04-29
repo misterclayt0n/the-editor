@@ -338,6 +338,70 @@ They are runtime-shaped, but not needed for v1.
 
 ---
 
+## Post-v1: complete syntax runtime direction
+
+V1 proved the ownership split, but it is not the final performance architecture for syntax.
+
+The complete model should make `the-runtime` the owner of syntax **scheduling**, not syntax **truth**.
+
+### What remains on `Document`
+The document continues to own:
+- persistent syntax layer graph truth
+- invalidated regions
+- parse/injection/enrichment generations
+- snapshot/apply protocols for advancement
+
+### What moves firmly into runtime policy
+The runtime should own a real per-document syntax scheduler responsible for:
+- coalescing rapid edit bursts
+- tiny bounded foreground advancement on the typing path
+- background completion for the rest
+- stale-result rejection via source generations/snapshots
+- prioritizing `stale ∩ demanded` work first
+- degraded large-file/pathological-file policy
+
+### Surface demand as runtime input
+The scheduler should consume demand reported by attached surfaces, such as:
+- visible viewport byte ranges
+- viewport margins
+- cursor-near priority
+- active vs background surface priority
+
+Runtime should not guess visibility or importance in the abstract if surfaces can report it directly.
+
+### Runtime should stop pushing whole-document syntax payloads
+The long-term runtime shape is **not**:
+- collect full-document highlights
+- clone them into every surface
+
+The long-term shape is:
+- advance document-owned syntax truth
+- notify/fan out that syntax generations advanced
+- let surfaces pull visible extraction as needed
+
+### Tiered syntax work
+Runtime should treat syntax-derived lanes differently.
+
+Examples:
+- baseline structural syntax freshness
+- injection maintenance
+- locals-sensitive enrichment
+- semantic token overlay updates
+
+These lanes share one document syntax truth, but they do not all deserve the same freshness budget.
+
+### Why this belongs in runtime
+This policy is impure and session-shaped because it depends on:
+- task execution
+- budgeting
+- cancellation/supersession
+- surface demand
+- large-file policy
+
+That is exactly why it belongs here rather than in `the-lib` or TypeScript.
+
+---
+
 ## Ideal v1 public API shape
 
 The exact interface can vary, but it should feel roughly like this:

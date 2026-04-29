@@ -8,13 +8,14 @@ use std::{
     PathBuf,
   },
   sync::Arc,
+  time::Duration,
 };
 
 use rust_embed::RustEmbed;
 use serde::Deserialize;
 use the_lib::{
   document::Document,
-  render::SyntaxHighlight,
+  surface::SurfaceSyntaxInterest,
   syntax::{
     DocumentSyntax,
     DocumentSyntaxState,
@@ -31,9 +32,9 @@ use the_lib::{
   },
 };
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RuntimeSyntax {
-  registry: LanguageRegistry,
+  registry: Arc<LanguageRegistry>,
 }
 
 impl RuntimeSyntax {
@@ -56,14 +57,22 @@ impl RuntimeSyntax {
     config: SyntaxConfiguration,
     resources: impl SyntaxResources + 'static,
   ) -> Result<Self, SyntaxError> {
-    LanguageRegistry::new(config, resources).map(|registry| Self { registry })
+    LanguageRegistry::new(config, resources).map(|registry| {
+      Self {
+        registry: Arc::new(registry),
+      }
+    })
   }
 
   pub fn with_resources(
     config: SyntaxConfiguration,
     resources: Arc<dyn SyntaxResources>,
   ) -> Result<Self, SyntaxError> {
-    LanguageRegistry::with_resources(config, resources).map(|registry| Self { registry })
+    LanguageRegistry::with_resources(config, resources).map(|registry| {
+      Self {
+        registry: Arc::new(registry),
+      }
+    })
   }
 
   pub fn from_toml_str(
@@ -83,7 +92,11 @@ impl RuntimeSyntax {
   }
 
   pub fn registry(&self) -> &LanguageRegistry {
-    &self.registry
+    self.registry.as_ref()
+  }
+
+  pub fn registry_arc(&self) -> Arc<LanguageRegistry> {
+    Arc::clone(&self.registry)
   }
 
   pub fn detect_language_for_path(
@@ -108,6 +121,33 @@ impl RuntimeSyntax {
     }
   }
 
+  pub fn advance_document_syntax(
+    &self,
+    document: &mut Document,
+    _interest: Option<&SurfaceSyntaxInterest>,
+    budget: Duration,
+  ) -> Result<bool, RuntimeSyntaxError> {
+    let Some(state) = active_syntax_state(document.syntax()) else {
+      return Ok(false);
+    };
+
+    if !state.needs_reparse() && !state.is_parse_pending() {
+      return Ok(false);
+    }
+
+    let mut snapshot = state.snapshot(document.text().clone());
+    let parsed = snapshot
+      .syntax
+      .try_reparse_with_timeout(snapshot.source.slice(..), self.registry(), budget)
+      .map_err(|err| RuntimeSyntaxError::Backend(err.to_string()))?;
+    if !parsed {
+      state.set_parse_pending(true);
+      return Ok(false);
+    }
+
+    Ok(state.apply_parsed(snapshot))
+  }
+
   pub fn reparse_document(&self, document: &mut Document) -> Result<bool, RuntimeSyntaxError> {
     let Some(state) = active_syntax_state(document.syntax()) else {
       return Ok(false);
@@ -123,29 +163,6 @@ impl RuntimeSyntax {
       .reparse(snapshot.source.slice(..), &self.registry)
       .map_err(|err| RuntimeSyntaxError::Backend(err.to_string()))?;
     Ok(state.apply_parsed(snapshot))
-  }
-
-  pub fn collect_document_highlights(&self, document: &Document) -> Vec<SyntaxHighlight> {
-    let Some(state) = active_syntax_state(document.syntax()) else {
-      return Vec::new();
-    };
-
-    let syntax = state.syntax();
-    let text = document.text();
-    let byte_highlights =
-      syntax.collect_highlights(text.slice(..), &self.registry, 0..text.len_bytes());
-
-    byte_highlights
-      .into_iter()
-      .filter_map(|(kind, range)| {
-        let start = text.byte_to_char(range.start);
-        let end = text.byte_to_char(range.end);
-        (start < end).then_some(SyntaxHighlight {
-          range: start..end,
-          kind,
-        })
-      })
-      .collect()
   }
 }
 
@@ -547,7 +564,7 @@ mod tests {
   }
 
   #[test]
-  fn collect_document_highlights_returns_char_ranges() {
+  fn baseline_highlight_runs_return_byte_ranges() {
     let grammar = Grammar::try_from(tree_sitter_json::LANGUAGE).unwrap();
     let runtime = RuntimeSyntax::from_toml_str(
       r#"
@@ -565,19 +582,27 @@ mod tests {
     let mut document = Document::new("{\"name\": 1}\n".into());
     runtime.activate_document(&mut document, Some(Path::new("data.json")));
 
-    let highlights = runtime.collect_document_highlights(&document);
-    let fragments = highlights
+    let runs = document
+      .active_syntax()
+      .expect("active syntax")
+      .syntax()
+      .highlight_runs_in_byte_range(
+        document.text().slice(..),
+        runtime.registry(),
+        0..document.text().len_bytes(),
+      );
+    let fragments = runs
       .iter()
-      .filter_map(|highlight| {
-        runtime
-          .registry()
-          .highlight_name(highlight.kind)
-          .map(|name| {
-            (
-              name,
-              document.text().slice(highlight.range.clone()).to_string(),
-            )
-          })
+      .filter_map(|run| {
+        runtime.registry().highlight_name(run.kind).map(|name| {
+          (
+            name,
+            document
+              .text()
+              .byte_slice(run.byte_range.clone())
+              .to_string(),
+          )
+        })
       })
       .collect::<Vec<_>>();
 
@@ -603,10 +628,18 @@ mod tests {
       ..
     }));
 
-    let highlights = runtime.collect_document_highlights(&document);
-    let names = highlights
+    let runs = document
+      .active_syntax()
+      .expect("active syntax")
+      .syntax()
+      .highlight_runs_in_byte_range(
+        document.text().slice(..),
+        runtime.registry(),
+        0..document.text().len_bytes(),
+      );
+    let names = runs
       .iter()
-      .filter_map(|highlight| runtime.registry().highlight_name(highlight.kind))
+      .filter_map(|run| runtime.registry().highlight_name(run.kind))
       .collect::<Vec<_>>();
 
     assert!(names.iter().any(|name| name.starts_with("keyword")));
@@ -628,9 +661,17 @@ mod tests {
     let mut document = Document::new(include_str!("../the-lib/examples/demo_editor.rs").into());
     runtime.activate_document(&mut document, Some(Path::new("demo_editor.rs")));
 
-    let highlights = runtime.collect_document_highlights(&document);
+    let runs = document
+      .active_syntax()
+      .expect("active syntax")
+      .syntax()
+      .highlight_runs_in_byte_range(
+        document.text().slice(..),
+        runtime.registry(),
+        0..document.text().len_bytes(),
+      );
     assert!(
-      !highlights.is_empty(),
+      !runs.is_empty(),
       "expected highlights for real rust source, got none"
     );
   }

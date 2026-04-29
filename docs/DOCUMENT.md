@@ -144,6 +144,25 @@ This keeps `Document` pure while still preserving syntax coherence.
 
 Background reparsing / registry-driven activation can happen above this layer.
 
+### Post-v1 syntax evolution
+The complete syntax architecture makes this stronger and more explicit.
+
+`Document` should own syntax truth in the form of:
+- a persistent syntax layer graph
+- explicit invalidated regions
+- parse/injection/enrichment generations
+- snapshot/apply protocols for runtime-driven advancement
+
+That means `Document` should **not** own:
+- visible highlight caches
+- row-local render syntax spans
+- per-surface extracted syntax payloads
+
+And `Document::apply_transaction(...)` should be understood as:
+- cheap text mutation
+- syntax interpolation / invalidation update
+- no unbounded full reparse on the typing path
+
 ---
 
 ## Relationship to `Surface`
@@ -293,6 +312,8 @@ It should **not**:
 - enforce readonly
 - update modified/saved flags
 - manage resource identity
+- rebuild whole-document syntax highlight payloads
+- perform scheduler/policy decisions that belong in `the-runtime`
 
 ---
 

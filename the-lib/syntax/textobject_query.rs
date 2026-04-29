@@ -4,7 +4,8 @@ use std::{
 };
 
 use ropey::RopeSlice;
-use tree_house::{
+
+use super::{
   TREE_SITTER_MATCH_LIMIT,
   tree_sitter::{
     Node,
@@ -72,7 +73,7 @@ impl TextObjectQuery {
       .find_map(|capture_name| self.query.get_capture(capture_name))?;
 
     let mut cursor =
-      tree_house::tree_sitter::InactiveQueryCursor::new(0..u32::MAX, TREE_SITTER_MATCH_LIMIT)
+      super::tree_sitter::InactiveQueryCursor::new(0..u32::MAX, TREE_SITTER_MATCH_LIMIT)
         .execute_query(&self.query, node, RopeInput::new(slice));
 
     let capture_node = iter::from_fn(move || {

@@ -552,6 +552,76 @@ For more detail, see `docs/RENDERING.md`.
 
 ---
 
+## Next-generation syntax model
+
+The long-term syntax architecture should no longer be centered on eager full-document highlight payloads.
+
+The intended split is:
+
+```txt
+Document      = persistent syntax truth
+Surface       = visible syntax extraction/cache + render adapter
+RenderSurface = retained syntax-agnostic renderer
+Runtime       = syntax scheduler/orchestrator
+```
+
+### Document-owned syntax truth
+`Document` owns:
+- persistent root + injected syntax layer graph
+- invalidated regions
+- syntax generations/freshness state
+- document-scoped baseline/enrichment truth
+
+`Document::apply_transaction(...)` should stay cheap. It should:
+- apply text edits
+- interpolate/map syntax state forward
+- mark the necessary regions/layers stale
+- never become an unbounded full reparse/highlight pass on the typing hot path
+
+### Surface-owned visible syntax projection
+`Surface` owns:
+- current syntax demand for its viewport
+- visible baseline syntax cache
+- visible enrichment cache
+- byte/char/visual conversion near render
+
+It should stop being fed document-global syntax span vectors as its primary syntax input.
+
+### Runtime-owned syntax scheduling
+`the-runtime` owns:
+- grammar/query acquisition
+- per-document syntax work queues
+- small bounded foreground advancement
+- background completion
+- stale-result rejection
+- demand-aware prioritization from surfaces
+- degraded large-file policy
+
+### Tiered syntax model
+The complete model should be tiered:
+
+1. **Tier 1 baseline**
+   - fast structural syntax paint
+   - viewport/range extracted
+   - good enough for immediate feedback
+2. **Tier 2 enrichment**
+   - locals-sensitive refinements
+   - semantic tokens
+   - other richer semantic overlays
+   - async and stale-tolerant
+
+### Rendering consequence
+The render path should consume visible syntax projections, not whole-document highlight truth.
+
+That means:
+- `RenderSurface` stays syntax-agnostic
+- `Surface` adapts syntax extraction into render-visible caches/layers
+- runtime pushes freshness notifications, not whole-document syntax payloads
+
+For more detail, see `docs/SYNTAX.md`, `docs/SURFACE.md`, `docs/DOCUMENT.md`, `docs/RUNTIME.md`, and `docs/RENDERING.md`.
+
+---
+
 ## Extensibility model
 
 The editor should be highly extensible through TypeScript without making TypeScript the semantic source of truth.

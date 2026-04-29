@@ -1,11 +1,13 @@
 use std::{
   collections::BTreeMap,
   num::NonZeroU64,
+  ops::Range,
   path::{
     Path,
     PathBuf,
   },
   sync::Arc,
+  time::Duration,
 };
 
 use ropey::Rope;
@@ -17,13 +19,17 @@ use the_lib::{
   document::Document,
   registers::Registers,
   render::{
+    RenderFrameDelta,
     RenderSurface,
     SurfaceId,
     TextAnnotations,
     TextFormat,
     Viewport,
   },
-  surface::Surface,
+  surface::{
+    Surface,
+    SurfaceSyntaxInterest,
+  },
 };
 use thiserror::Error;
 
@@ -100,6 +106,45 @@ pub struct RuntimeSurface {
   pub document: DocumentHandle,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum SyntaxWorkPriority {
+  Demanded,
+  Visible,
+  Background,
+}
+
+#[derive(Debug, Clone)]
+struct SurfaceDemandRecord {
+  touch:    u64,
+  interest: SurfaceSyntaxInterest,
+}
+
+#[derive(Debug, Default)]
+struct SyntaxScheduler {
+  next_touch:       u64,
+  document_touches: BTreeMap<DocumentHandle, u64>,
+  surface_demands:  BTreeMap<SurfaceHandle, SurfaceDemandRecord>,
+}
+
+impl SyntaxScheduler {
+  fn touch_document(&mut self, document: DocumentHandle) {
+    self.next_touch = self.next_touch.saturating_add(1);
+    self.document_touches.insert(document, self.next_touch);
+  }
+
+  fn record_surface_interest(&mut self, surface: SurfaceHandle, interest: SurfaceSyntaxInterest) {
+    self.next_touch = self.next_touch.saturating_add(1);
+    self.surface_demands.insert(surface, SurfaceDemandRecord {
+      touch: self.next_touch,
+      interest,
+    });
+  }
+
+  fn last_touch(&self, document: DocumentHandle) -> u64 {
+    self.document_touches.get(&document).copied().unwrap_or(0)
+  }
+}
+
 #[derive(Debug, Error)]
 pub enum RuntimeError {
   #[error(transparent)]
@@ -136,6 +181,7 @@ pub struct RuntimeSession {
   syntax:             RuntimeSyntax,
   clipboard:          Arc<dyn ClipboardProvider>,
   registers:          Registers,
+  syntax_scheduler:   SyntaxScheduler,
   next_resource_id:   u64,
   next_document_id:   u64,
   next_surface_id:    u64,
@@ -175,6 +221,7 @@ impl RuntimeSession {
       syntax,
       clipboard,
       registers: Registers::new(),
+      syntax_scheduler: SyntaxScheduler::default(),
       next_resource_id: 0,
       next_document_id: 0,
       next_surface_id: 0,
@@ -273,28 +320,74 @@ impl RuntimeSession {
       .collect()
   }
 
-  pub fn refresh_document_syntax_and_highlights(
-    &mut self,
-    document: DocumentHandle,
-  ) -> RuntimeResult<()> {
-    let highlights = {
-      let entry = self
-        .documents
-        .get_mut(&document)
-        .ok_or(RuntimeError::UnknownDocument(document))?;
-      self.syntax.reparse_document(&mut entry.document)?;
-      self.syntax.collect_document_highlights(&entry.document)
-    };
+  pub fn advance_document_syntax(&mut self, document: DocumentHandle) -> RuntimeResult<bool> {
+    self.advance_document_syntax_with_budget(document, None, Duration::from_millis(1))
+  }
 
-    for surface in self
-      .surfaces
-      .values_mut()
-      .filter(|entry| entry.document == document)
-    {
-      surface.surface.set_syntax_highlights(highlights.clone());
+  pub fn drain_syntax_work(
+    &mut self,
+    max_documents: usize,
+    budget_per_document: Duration,
+  ) -> RuntimeResult<usize> {
+    let mut advanced = 0;
+    let mut attempted = Vec::new();
+
+    while attempted.len() < max_documents {
+      let Some(document) = self.next_document_for_syntax_work(&attempted) else {
+        break;
+      };
+      attempted.push(document);
+
+      let interest = self.primary_interest_for_document(document);
+      if self.advance_document_syntax_with_budget(
+        document,
+        interest.as_ref(),
+        budget_per_document,
+      )? {
+        advanced += 1;
+      }
     }
 
-    Ok(())
+    Ok(advanced)
+  }
+
+  pub fn render_surface(
+    &mut self,
+    surface: SurfaceHandle,
+    since_generation: Option<u64>,
+  ) -> RuntimeResult<RenderFrameDelta> {
+    let document_handle = self
+      .surfaces
+      .get(&surface)
+      .ok_or(RuntimeError::UnknownSurface(surface))?
+      .document;
+    let interest = self
+      .surfaces
+      .get(&surface)
+      .ok_or(RuntimeError::UnknownSurface(surface))?
+      .surface
+      .syntax_interest(
+        &self
+          .documents
+          .get(&document_handle)
+          .ok_or(RuntimeError::UnknownDocument(document_handle))?
+          .document,
+      );
+
+    self
+      .syntax_scheduler
+      .record_surface_interest(surface, interest.clone());
+    self.syntax_scheduler.touch_document(document_handle);
+    let _ = self.advance_document_syntax_with_budget(
+      document_handle,
+      Some(&interest),
+      Duration::from_millis(2),
+    )?;
+
+    let registry = self.syntax.registry_arc();
+    self.with_surface_document_mut(surface, move |surface, document| {
+      surface.render(document, Some(registry.as_ref()), since_generation)
+    })
   }
 
   pub fn with_surface_document_mut<R>(
@@ -308,18 +401,132 @@ impl RuntimeSession {
       .ok_or(RuntimeError::UnknownSurface(surface))?
       .document;
 
-    let surface = &mut self
-      .surfaces
-      .get_mut(&surface)
-      .ok_or(RuntimeError::UnknownSurface(surface))?
-      .surface;
-    let document = &mut self
+    let before_revision = self
+      .documents
+      .get(&document)
+      .ok_or(RuntimeError::UnknownDocument(document))?
+      .document
+      .revision();
+
+    let result = {
+      let surface = &mut self
+        .surfaces
+        .get_mut(&surface)
+        .ok_or(RuntimeError::UnknownSurface(surface))?
+        .surface;
+      let document_ref = &mut self
+        .documents
+        .get_mut(&document)
+        .ok_or(RuntimeError::UnknownDocument(document))?
+        .document;
+      f(surface, document_ref)
+    };
+
+    let after_revision = self
+      .documents
+      .get(&document)
+      .ok_or(RuntimeError::UnknownDocument(document))?
+      .document
+      .revision();
+    if after_revision != before_revision {
+      self.syntax_scheduler.touch_document(document);
+    }
+
+    Ok(result)
+  }
+
+  fn advance_document_syntax_with_budget(
+    &mut self,
+    document: DocumentHandle,
+    interest: Option<&SurfaceSyntaxInterest>,
+    budget: Duration,
+  ) -> RuntimeResult<bool> {
+    let entry = self
       .documents
       .get_mut(&document)
-      .ok_or(RuntimeError::UnknownDocument(document))?
-      .document;
+      .ok_or(RuntimeError::UnknownDocument(document))?;
+    let advanced = self
+      .syntax
+      .advance_document_syntax(&mut entry.document, interest, budget)?;
+    if advanced {
+      self.syntax_scheduler.touch_document(document);
+    }
+    Ok(advanced)
+  }
 
-    Ok(f(surface, document))
+  fn next_document_for_syntax_work(&self, attempted: &[DocumentHandle]) -> Option<DocumentHandle> {
+    let mut best: Option<(SyntaxWorkPriority, std::cmp::Reverse<u64>, DocumentHandle)> = None;
+
+    for document in self.documents.keys().copied() {
+      if attempted.contains(&document) {
+        continue;
+      }
+
+      let Some(priority) = self.syntax_work_priority(document) else {
+        continue;
+      };
+      let candidate = (
+        priority,
+        std::cmp::Reverse(self.syntax_scheduler.last_touch(document)),
+        document,
+      );
+      if best.as_ref().is_none_or(|best| candidate < *best) {
+        best = Some(candidate);
+      }
+    }
+
+    best.map(|(_, _, document)| document)
+  }
+
+  fn syntax_work_priority(&self, document: DocumentHandle) -> Option<SyntaxWorkPriority> {
+    let invalidation = self.document(document)?.syntax_invalidation()?;
+    if invalidation.tree.is_empty() {
+      return None;
+    }
+
+    let demand_ranges = self.document_demand_ranges(document);
+    if demand_ranges
+      .iter()
+      .any(|range| invalidation.tree.intersects(range))
+    {
+      return Some(SyntaxWorkPriority::Demanded);
+    }
+
+    if self.surfaces_for_document(document).is_empty() {
+      Some(SyntaxWorkPriority::Background)
+    } else {
+      Some(SyntaxWorkPriority::Visible)
+    }
+  }
+
+  fn primary_interest_for_document(
+    &self,
+    document: DocumentHandle,
+  ) -> Option<SurfaceSyntaxInterest> {
+    self
+      .surfaces_for_document(document)
+      .into_iter()
+      .filter_map(|surface| {
+        self
+          .syntax_scheduler
+          .surface_demands
+          .get(&surface)
+          .map(|record| (record.touch, record.interest.clone()))
+      })
+      .max_by_key(|(touch, _)| *touch)
+      .map(|(_, interest)| interest)
+  }
+
+  fn document_demand_ranges(&self, document: DocumentHandle) -> Vec<Range<usize>> {
+    let mut ranges = Vec::new();
+
+    for surface in self.surfaces_for_document(document) {
+      if let Some(record) = self.syntax_scheduler.surface_demands.get(&surface) {
+        merge_range(&mut ranges, record.interest.byte_range.clone());
+      }
+    }
+
+    ranges
   }
 
   pub fn open_file(&mut self, path: &Path) -> RuntimeResult<DocumentHandle> {
@@ -348,6 +555,7 @@ impl RuntimeSession {
       readonly: false,
     });
     self.resource_documents.insert(resource, handle);
+    self.syntax_scheduler.touch_document(handle);
     Ok(handle)
   }
 
@@ -359,6 +567,7 @@ impl RuntimeSession {
       saved_revision: None,
       readonly:       false,
     });
+    self.syntax_scheduler.touch_document(handle);
     Ok(handle)
   }
 
@@ -386,7 +595,7 @@ impl RuntimeSession {
     self
       .surfaces
       .insert(handle, RuntimeSurface { surface, document });
-    self.refresh_document_syntax_and_highlights(document)?;
+    self.syntax_scheduler.touch_document(document);
     Ok(handle)
   }
 
@@ -457,7 +666,7 @@ impl RuntimeSession {
       .syntax
       .activate_document(&mut entry.document, Some(&normalized));
     self.resource_documents.insert(resource, document);
-    self.refresh_document_syntax_and_highlights(document)?;
+    self.syntax_scheduler.touch_document(document);
 
     Ok(resource)
   }
@@ -475,8 +684,33 @@ impl RuntimeSession {
   }
 }
 
+fn merge_range(ranges: &mut Vec<Range<usize>>, mut range: Range<usize>) {
+  if range.start >= range.end {
+    return;
+  }
+
+  let mut idx = 0;
+  while idx < ranges.len() {
+    if range.end < ranges[idx].start {
+      break;
+    }
+    if ranges[idx].end < range.start {
+      idx += 1;
+      continue;
+    }
+
+    range.start = range.start.min(ranges[idx].start);
+    range.end = range.end.max(ranges[idx].end);
+    ranges.remove(idx);
+  }
+
+  ranges.insert(idx, range);
+}
+
 #[cfg(test)]
 mod tests {
+  use std::borrow::Cow;
+
   use tempfile::tempdir;
   use the_lib::{
     clipboard::ClipboardType,
@@ -484,8 +718,28 @@ mod tests {
       DocumentSyntax,
       DocumentSyntaxState,
       NullResources,
+      QueryKind,
+      SyntaxResources,
+      tree_sitter::Grammar,
     },
+    transaction::Transaction,
   };
+
+  #[derive(Debug, Clone, Copy)]
+  struct JsonResources {
+    grammar: Grammar,
+    query:   &'static str,
+  }
+
+  impl SyntaxResources for JsonResources {
+    fn grammar(&self, grammar_name: &str) -> Option<Grammar> {
+      (grammar_name == "json").then_some(self.grammar)
+    }
+
+    fn query(&self, language_id: &str, kind: QueryKind) -> Option<Cow<'_, str>> {
+      (language_id == "json" && kind == QueryKind::Highlights).then_some(Cow::Borrowed(self.query))
+    }
+  }
 
   use super::*;
 
@@ -597,6 +851,73 @@ mod tests {
   }
 
   #[test]
+  fn drain_syntax_work_advances_dirty_document_baseline() {
+    let grammar = Grammar::try_from(tree_sitter_json::LANGUAGE).unwrap();
+    let syntax = RuntimeSyntax::from_toml_str(
+      r#"
+        [[language]]
+        name = "json"
+        scope = "source.json"
+        file-types = ["json"]
+      "#,
+      JsonResources {
+        grammar,
+        query: "(string) @string\n(number) @number",
+      },
+    )
+    .unwrap();
+
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("data.json");
+    std::fs::write(&path, "{\"name\": 1}\n").unwrap();
+
+    let mut runtime = RuntimeSession::new(syntax, SystemClipboard::provider());
+    let document = runtime.open_file(&path).unwrap();
+    let surface = runtime.create_surface(document).unwrap();
+
+    runtime
+      .with_surface_document_mut(surface, |surface, document| {
+        let tx = Transaction::insert_at(
+          document.text().len_chars(),
+          document.text().len_chars() - 2,
+          "2",
+        )
+        .unwrap();
+        surface
+          .apply_edit(document, the_lib::edit::Edit {
+            transaction: tx,
+            selection:   the_lib::selection::Selection::point(document.text().len_chars() - 1),
+          })
+          .unwrap();
+      })
+      .unwrap();
+
+    assert!(
+      !runtime
+        .document(document)
+        .unwrap()
+        .syntax_invalidation()
+        .unwrap()
+        .tree
+        .is_empty()
+    );
+
+    let advanced = runtime
+      .drain_syntax_work(1, Duration::from_millis(20))
+      .unwrap();
+    assert_eq!(advanced, 1);
+    assert!(
+      runtime
+        .document(document)
+        .unwrap()
+        .syntax_invalidation()
+        .unwrap()
+        .tree
+        .is_empty()
+    );
+  }
+
+  #[test]
   fn default_runtime_session_renders_visible_syntax_on_initial_rust_rows() {
     let path = Path::new("the-lib/examples/demo_editor.rs");
     if !path.exists() {
@@ -609,9 +930,7 @@ mod tests {
       .create_surface_with_viewport(document, Viewport::new(0, 20, 0, 120))
       .unwrap();
 
-    let frame = runtime
-      .with_surface_document_mut(surface, |surface, document| surface.render(document, None))
-      .unwrap();
+    let frame = runtime.render_surface(surface, None).unwrap();
 
     let syntax = frame.layers.syntax.expect("syntax layer delta");
     let visible_rows = frame

@@ -8,15 +8,6 @@ use ropey::{
   RopeSlice,
 };
 use the_stdx::rope::RopeSliceExt;
-use tree_house::{
-  TREE_SITTER_MATCH_LIMIT,
-  tree_sitter::{
-    InactiveQueryCursor,
-    Node,
-    QueryMatch,
-    RopeInput,
-  },
-};
 
 use crate::{
   Tendril,
@@ -32,9 +23,16 @@ use crate::{
     IndentQuery,
     IndentationHeuristic,
     Syntax,
+    TREE_SITTER_MATCH_LIMIT,
     indent_query::{
       IndentQueryPredicates,
       IndentScope,
+    },
+    tree_sitter::{
+      InactiveQueryCursor,
+      Node,
+      QueryMatch,
+      RopeInput,
     },
   },
 };

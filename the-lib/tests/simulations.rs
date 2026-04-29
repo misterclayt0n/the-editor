@@ -213,10 +213,10 @@ impl SimEditor {
 
     let _delta = self
       .surface
-      .render(&self.document, Some(self.surface.render_generation()));
+      .render(&self.document, None, Some(self.surface.render_generation()));
     let stable = self
       .surface
-      .render(&self.document, Some(self.surface.render_generation()));
+      .render(&self.document, None, Some(self.surface.render_generation()));
 
     assert_stable_delta(label, &stable, &self.snapshot());
   }

@@ -1,14 +1,10 @@
 use std::{
   borrow::Cow,
   fmt,
-  ops::{
-    self,
-    RangeBounds,
-  },
+  ops,
   sync::{
     Arc,
     atomic::{
-      AtomicBool,
       AtomicU64,
       Ordering,
     },
@@ -21,26 +17,25 @@ use ropey::{
   Rope,
   RopeSlice,
 };
-use tree_house::{
-  Error,
-  Layer,
-  query_iter::QueryIter,
-  tree_sitter::{
-    self,
-    InputEdit,
-    Node,
-    Query,
-    Tree,
-  },
-};
+use smallvec::SmallVec;
+use thiserror::Error;
 
 use super::{
   HighlightKindId,
   LanguageId,
   LanguageRegistry,
   QueryKind,
+  TREE_SITTER_MATCH_LIMIT,
   edits::generate_edits,
-  tag_query::TagQuery,
+  tree_sitter::{
+    self,
+    InactiveQueryCursor,
+    InputEdit,
+    Node,
+    Parser,
+    RopeInput,
+    Tree,
+  },
 };
 use crate::transaction::ChangeSet;
 
@@ -84,9 +79,23 @@ impl DocumentSyntax {
   }
 }
 
+#[derive(Debug, Error)]
+pub enum SyntaxBackendError {
+  #[error("parser timed out")]
+  Timeout,
+
+  #[error(transparent)]
+  IncompatibleGrammar(#[from] tree_sitter::IncompatibleGrammarError),
+
+  #[error("parser did not produce a syntax tree")]
+  ParseFailed,
+}
+
 #[derive(Debug, Clone)]
 pub struct Syntax {
-  inner: tree_house::Syntax,
+  language_id:        LanguageId,
+  tree:               Tree,
+  injections_enabled: bool,
 }
 
 pub struct SyntaxState {
@@ -95,24 +104,82 @@ pub struct SyntaxState {
 }
 
 struct SyntaxStateInner {
-  syntax:               Mutex<Syntax>,
-  interpolated_version: AtomicU64,
-  parsed_version:       AtomicU64,
-  parse_pending:        AtomicBool,
+  syntax:                 Mutex<Syntax>,
+  edit_generation:        AtomicU64,
+  tree_generation:        AtomicU64,
+  baseline_generation:    AtomicU64,
+  enrichment_generation:  AtomicU64,
+  invalidation_and_queue: Mutex<SyntaxInvalidationState>,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SyntaxGeneration {
+  pub edit:       u64,
+  pub tree:       u64,
+  pub baseline:   u64,
+  pub enrichment: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SyntaxHighlightRun {
+  pub byte_range: ops::Range<usize>,
+  pub kind:       HighlightKindId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SyntaxInvalidation {
+  pub tree:       InvalidatedByteRanges,
+  pub baseline:   InvalidatedByteRanges,
+  pub enrichment: InvalidatedByteRanges,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct InvalidatedByteRanges {
+  ranges: SmallVec<[ops::Range<usize>; 2]>,
+}
+
+#[derive(Debug, Default)]
+struct SyntaxInvalidationState {
+  invalidation:  SyntaxInvalidation,
+  parse_pending: bool,
+}
+
+pub struct SyntaxSnapshot {
+  pub language_id:     LanguageId,
+  pub syntax:          Syntax,
+  pub source:          Rope,
+  pub edit_generation: u64,
+}
+
+pub const PARSE_TIMEOUT: Duration = Duration::from_millis(500);
 
 impl fmt::Debug for SyntaxStateInner {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     f.debug_struct("SyntaxStateInner")
       .field(
-        "interpolated_version",
-        &self.interpolated_version.load(Ordering::Relaxed),
+        "edit_generation",
+        &self.edit_generation.load(Ordering::Relaxed),
       )
       .field(
-        "parsed_version",
-        &self.parsed_version.load(Ordering::Relaxed),
+        "tree_generation",
+        &self.tree_generation.load(Ordering::Relaxed),
       )
-      .field("parse_pending", &self.parse_pending.load(Ordering::Relaxed))
+      .field(
+        "baseline_generation",
+        &self.baseline_generation.load(Ordering::Relaxed),
+      )
+      .field(
+        "enrichment_generation",
+        &self.enrichment_generation.load(Ordering::Relaxed),
+      )
+      .field(
+        "invalidation",
+        &self.invalidation_and_queue.lock().invalidation,
+      )
+      .field(
+        "parse_pending",
+        &self.invalidation_and_queue.lock().parse_pending,
+      )
       .finish_non_exhaustive()
   }
 }
@@ -135,24 +202,66 @@ impl fmt::Debug for SyntaxState {
   }
 }
 
-pub struct SyntaxSnapshot {
-  pub language_id: LanguageId,
-  pub syntax:      Syntax,
-  pub source:      Rope,
-  pub version:     u64,
-}
+impl InvalidatedByteRanges {
+  pub fn is_empty(&self) -> bool {
+    self.ranges.is_empty()
+  }
 
-pub const PARSE_TIMEOUT: Duration = Duration::from_millis(500);
+  pub fn len(&self) -> usize {
+    self.ranges.len()
+  }
+
+  pub fn iter(&self) -> impl ExactSizeIterator<Item = &ops::Range<usize>> {
+    self.ranges.iter()
+  }
+
+  pub fn intersects(&self, range: &ops::Range<usize>) -> bool {
+    self
+      .ranges
+      .iter()
+      .any(|candidate| candidate.start < range.end && range.start < candidate.end)
+  }
+
+  pub fn clear(&mut self) {
+    self.ranges.clear();
+  }
+
+  fn insert(&mut self, mut range: ops::Range<usize>) {
+    if range.start >= range.end {
+      return;
+    }
+
+    let mut idx = 0;
+    while idx < self.ranges.len() {
+      let current = &self.ranges[idx];
+      if range.end < current.start {
+        break;
+      }
+      if current.end < range.start {
+        idx += 1;
+        continue;
+      }
+
+      range.start = range.start.min(current.start);
+      range.end = range.end.max(current.end);
+      self.ranges.remove(idx);
+    }
+
+    self.ranges.insert(idx, range);
+  }
+}
 
 impl SyntaxState {
   pub fn new(language_id: LanguageId, syntax: Syntax) -> Self {
     Self {
       language_id,
       inner: Arc::new(SyntaxStateInner {
-        syntax:               Mutex::new(syntax),
-        interpolated_version: AtomicU64::new(0),
-        parsed_version:       AtomicU64::new(0),
-        parse_pending:        AtomicBool::new(false),
+        syntax:                 Mutex::new(syntax),
+        edit_generation:        AtomicU64::new(0),
+        tree_generation:        AtomicU64::new(0),
+        baseline_generation:    AtomicU64::new(0),
+        enrichment_generation:  AtomicU64::new(0),
+        invalidation_and_queue: Mutex::new(SyntaxInvalidationState::default()),
       }),
     }
   }
@@ -163,11 +272,22 @@ impl SyntaxState {
 
   pub fn interpolate(&self, edits: &[InputEdit]) {
     let mut syntax = self.inner.syntax.lock();
-    syntax.inner.interpolate(edits);
-    self
-      .inner
-      .interpolated_version
-      .fetch_add(1, Ordering::Release);
+    syntax.interpolate_with_edits(edits);
+    drop(syntax);
+
+    if edits.is_empty() {
+      return;
+    }
+
+    self.inner.edit_generation.fetch_add(1, Ordering::Release);
+
+    let mut state = self.inner.invalidation_and_queue.lock();
+    for range in invalidated_ranges_for_edits(edits) {
+      state.invalidation.tree.insert(range.clone());
+      state.invalidation.baseline.insert(range.clone());
+      state.invalidation.enrichment.insert(range);
+    }
+    state.parse_pending = true;
   }
 
   pub fn snapshot(&self, source: Rope) -> SyntaxSnapshot {
@@ -176,48 +296,95 @@ impl SyntaxState {
       language_id: self.language_id,
       syntax: syntax.clone(),
       source,
-      version: self.inner.interpolated_version.load(Ordering::Acquire),
+      edit_generation: self.edit_generation(),
     }
   }
 
   pub fn apply_parsed(&self, snapshot: SyntaxSnapshot) -> bool {
-    let current_version = self.inner.interpolated_version.load(Ordering::Acquire);
-    if snapshot.language_id != self.language_id || snapshot.version != current_version {
+    let current_generation = self.edit_generation();
+    if snapshot.language_id != self.language_id || snapshot.edit_generation != current_generation {
       return false;
     }
 
     let mut syntax = self.inner.syntax.lock();
     *syntax = snapshot.syntax;
+    drop(syntax);
+
     self
       .inner
-      .parsed_version
-      .store(snapshot.version, Ordering::Release);
-    self.inner.parse_pending.store(false, Ordering::Release);
+      .tree_generation
+      .store(snapshot.edit_generation, Ordering::Release);
+    self
+      .inner
+      .baseline_generation
+      .store(snapshot.edit_generation, Ordering::Release);
+    self
+      .inner
+      .enrichment_generation
+      .store(snapshot.edit_generation, Ordering::Release);
+
+    let mut state = self.inner.invalidation_and_queue.lock();
+    state.invalidation = SyntaxInvalidation::default();
+    state.parse_pending = false;
     true
   }
 
+  pub fn generation(&self) -> SyntaxGeneration {
+    SyntaxGeneration {
+      edit:       self.edit_generation(),
+      tree:       self.tree_generation(),
+      baseline:   self.baseline_generation(),
+      enrichment: self.enrichment_generation(),
+    }
+  }
+
+  pub fn invalidation(&self) -> SyntaxInvalidation {
+    self
+      .inner
+      .invalidation_and_queue
+      .lock()
+      .invalidation
+      .clone()
+  }
+
   pub fn needs_reparse(&self) -> bool {
-    self.interpolated_version() > self.parsed_version()
+    !self.invalidation().tree.is_empty()
+  }
+
+  pub fn edit_generation(&self) -> u64 {
+    self.inner.edit_generation.load(Ordering::Acquire)
+  }
+
+  pub fn tree_generation(&self) -> u64 {
+    self.inner.tree_generation.load(Ordering::Acquire)
+  }
+
+  pub fn baseline_generation(&self) -> u64 {
+    self.inner.baseline_generation.load(Ordering::Acquire)
+  }
+
+  pub fn enrichment_generation(&self) -> u64 {
+    self.inner.enrichment_generation.load(Ordering::Acquire)
   }
 
   pub fn interpolated_version(&self) -> u64 {
-    self.inner.interpolated_version.load(Ordering::Acquire)
+    self.edit_generation()
   }
 
   pub fn parsed_version(&self) -> u64 {
-    self.inner.parsed_version.load(Ordering::Acquire)
+    self.tree_generation()
   }
 
   pub fn is_parse_pending(&self) -> bool {
-    self.inner.parse_pending.load(Ordering::Acquire)
+    self.inner.invalidation_and_queue.lock().parse_pending
   }
 
   pub fn set_parse_pending(&self, pending: bool) {
-    self.inner.parse_pending.store(pending, Ordering::Release)
+    self.inner.invalidation_and_queue.lock().parse_pending = pending;
   }
 
   pub fn is_accurate(&self) -> bool {
-    self.parsed_version() >= self.interpolated_version()
+    self.tree_generation() >= self.edit_generation() && !self.needs_reparse()
   }
 
   pub fn syntax(&self) -> impl std::ops::Deref<Target = Syntax> + '_ {
@@ -234,9 +401,17 @@ impl Syntax {
     source: RopeSlice,
     language_id: LanguageId,
     registry: &LanguageRegistry,
-  ) -> std::result::Result<Self, Error> {
-    let inner = tree_house::Syntax::new(source, language_id.to_backend(), PARSE_TIMEOUT, registry)?;
-    Ok(Self { inner })
+  ) -> Result<Self, SyntaxBackendError> {
+    let grammar = registry
+      .grammar(language_id)
+      .expect("invalid LanguageId must not be passed to Syntax::new")
+      .expect("Syntax::new requires an available grammar");
+    let tree = parse_tree(source, grammar, None, PARSE_TIMEOUT)?;
+    Ok(Self {
+      language_id,
+      tree,
+      injections_enabled: true,
+    })
   }
 
   pub fn update(
@@ -245,7 +420,7 @@ impl Syntax {
     source: RopeSlice,
     changeset: &ChangeSet,
     registry: &LanguageRegistry,
-  ) -> std::result::Result<(), Error> {
+  ) -> Result<(), SyntaxBackendError> {
     let edits = generate_edits(old_source, changeset);
     self.update_with_edits(source, &edits, registry)
   }
@@ -255,20 +430,31 @@ impl Syntax {
     source: RopeSlice,
     edits: &[InputEdit],
     registry: &LanguageRegistry,
-  ) -> std::result::Result<(), Error> {
+  ) -> Result<(), SyntaxBackendError> {
     if edits.is_empty() {
-      Ok(())
-    } else {
-      self.inner.update(source, PARSE_TIMEOUT, edits, registry)
+      return Ok(());
     }
+
+    self.interpolate_with_edits(edits);
+    let grammar = registry
+      .grammar(self.language_id)
+      .expect("invalid LanguageId on active syntax")
+      .expect("active syntax requires an available grammar");
+    self.tree = parse_tree(source, grammar, Some(&self.tree), PARSE_TIMEOUT)?;
+    Ok(())
   }
 
   pub fn reparse(
     &mut self,
     source: RopeSlice,
     registry: &LanguageRegistry,
-  ) -> std::result::Result<(), Error> {
-    self.inner.update(source, PARSE_TIMEOUT, &[], registry)
+  ) -> Result<(), SyntaxBackendError> {
+    let grammar = registry
+      .grammar(self.language_id)
+      .expect("invalid LanguageId on active syntax")
+      .expect("active syntax requires an available grammar");
+    self.tree = parse_tree(source, grammar, Some(&self.tree), PARSE_TIMEOUT)?;
+    Ok(())
   }
 
   pub fn try_reparse_with_timeout(
@@ -276,11 +462,17 @@ impl Syntax {
     source: RopeSlice,
     registry: &LanguageRegistry,
     timeout: Duration,
-  ) -> std::result::Result<bool, Error> {
-    match self.inner.update(source, timeout, &[], registry) {
-      Ok(()) => Ok(true),
-      Err(Error::Timeout) => Ok(false),
-      Err(err) => Err(err),
+  ) -> Result<bool, SyntaxBackendError> {
+    let grammar = registry
+      .grammar(self.language_id)
+      .expect("invalid LanguageId on active syntax")
+      .expect("active syntax requires an available grammar");
+    match try_parse_tree(source, grammar, Some(&self.tree), timeout)? {
+      Some(tree) => {
+        self.tree = tree;
+        Ok(true)
+      },
+      None => Ok(false),
     }
   }
 
@@ -290,14 +482,22 @@ impl Syntax {
     edits: &[InputEdit],
     registry: &LanguageRegistry,
     timeout: Duration,
-  ) -> std::result::Result<bool, Error> {
+  ) -> Result<bool, SyntaxBackendError> {
     if edits.is_empty() {
       return Ok(true);
     }
-    match self.inner.update(source, timeout, edits, registry) {
-      Ok(()) => Ok(true),
-      Err(Error::Timeout) => Ok(false),
-      Err(err) => Err(err),
+
+    self.interpolate_with_edits(edits);
+    let grammar = registry
+      .grammar(self.language_id)
+      .expect("invalid LanguageId on active syntax")
+      .expect("active syntax requires an available grammar");
+    match try_parse_tree(source, grammar, Some(&self.tree), timeout)? {
+      Some(tree) => {
+        self.tree = tree;
+        Ok(true)
+      },
+      None => Ok(false),
     }
   }
 
@@ -307,52 +507,43 @@ impl Syntax {
   }
 
   pub fn interpolate_with_edits(&mut self, edits: &[InputEdit]) {
-    if !edits.is_empty() {
-      self.inner.interpolate(edits);
+    for edit in edits {
+      self.tree.edit(edit);
     }
   }
 
-  pub fn layer(&self, layer: Layer) -> &tree_house::LayerData {
-    self.inner.layer(layer)
-  }
-
-  pub fn root_layer(&self) -> Layer {
-    self.inner.root()
-  }
-
-  pub fn layer_for_byte_range(&self, start: u32, end: u32) -> Layer {
-    self.inner.layer_for_byte_range(start, end)
-  }
-
   pub fn root_language(&self) -> LanguageId {
-    LanguageId::from_backend(self.layer(self.root_layer()).language)
+    self.language_id
   }
 
   pub fn tree(&self) -> &Tree {
-    self.inner.tree()
+    &self.tree
   }
 
-  pub fn tree_for_byte_range(&self, start: u32, end: u32) -> &Tree {
-    self.inner.tree_for_byte_range(start, end)
+  pub fn tree_for_byte_range(&self, _start: u32, _end: u32) -> &Tree {
+    &self.tree
   }
 
   pub fn named_descendant_for_byte_range(&self, start: u32, end: u32) -> Option<Node<'_>> {
-    self.inner.named_descendant_for_byte_range(start, end)
+    self
+      .tree
+      .root_node()
+      .named_descendant_for_byte_range(start, end)
   }
 
   pub fn descendant_for_byte_range(&self, start: u32, end: u32) -> Option<Node<'_>> {
-    self.inner.descendant_for_byte_range(start, end)
+    self.tree.root_node().descendant_for_byte_range(start, end)
   }
 
-  pub fn walk(&self) -> tree_house::TreeCursor<'_> {
-    self.inner.walk()
+  pub fn walk(&self) -> tree_sitter::TreeCursor<'_> {
+    self.tree.walk()
   }
 
   pub fn scopes_at<'a>(&'a self, text: RopeSlice<'a>, pos: usize) -> Vec<&'a str> {
     let mut scopes = Vec::new();
     let byte_pos = text.char_to_byte(pos) as u32;
     let Some(mut node) = self
-      .tree()
+      .tree
       .root_node()
       .descendant_for_byte_range(byte_pos, byte_pos)
     else {
@@ -369,28 +560,19 @@ impl Syntax {
   }
 
   pub fn injections_enabled(&self) -> bool {
-    self.inner.injections_enabled()
+    self.injections_enabled
   }
 
   pub fn set_injections_enabled(&mut self, enabled: bool) {
-    self.inner.set_injections_enabled(enabled)
+    self.injections_enabled = enabled;
   }
 
-  pub fn highlighter<'a>(
-    &'a self,
-    source: RopeSlice<'a>,
-    registry: &'a LanguageRegistry,
-    range: impl RangeBounds<u32>,
-  ) -> tree_house::highlighter::Highlighter<'a, 'a, LanguageRegistry> {
-    tree_house::highlighter::Highlighter::new(&self.inner, source, registry, range)
-  }
-
-  pub fn collect_highlights(
+  pub fn highlight_runs_in_byte_range(
     &self,
     source: RopeSlice,
     registry: &LanguageRegistry,
     byte_range: ops::Range<usize>,
-  ) -> Vec<(HighlightKindId, ops::Range<usize>)> {
+  ) -> Vec<SyntaxHighlightRun> {
     let len_bytes = source.len_bytes();
     if len_bytes == 0 {
       return Vec::new();
@@ -402,60 +584,124 @@ impl Syntax {
       return Vec::new();
     }
 
-    let root_end = self.tree().root_node().end_byte() as usize;
-    if root_end > len_bytes {
+    let Some(query) = registry.highlight_query(self.language_id).ok().flatten() else {
       return Vec::new();
+    };
+
+    let root = self.tree.root_node();
+    let mut cursor = InactiveQueryCursor::new(start as u32..end as u32, TREE_SITTER_MATCH_LIMIT)
+      .execute_query(&query.query, &root, RopeInput::new(source));
+    let mut matched_ranges = Vec::new();
+
+    while let Some((mat, matched_node_idx)) = cursor.next_matched_node() {
+      let matched = mat.matched_node(matched_node_idx);
+      let Some(kind) = query
+        .capture_kinds
+        .get(matched.capture.idx())
+        .copied()
+        .flatten()
+      else {
+        continue;
+      };
+
+      let node_start = matched.node.start_byte() as usize;
+      let node_end = matched.node.end_byte() as usize;
+      if node_start >= node_end {
+        continue;
+      }
+
+      let clipped_start = node_start.max(start);
+      let clipped_end = node_end.min(end);
+      if clipped_start >= clipped_end {
+        continue;
+      }
+
+      matched_ranges.push((clipped_start, clipped_end, kind));
     }
 
-    let collected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-      self
-        .highlighter(source, registry, start as u32..end as u32)
-        .collect_highlights()
-    }));
+    highlight_runs_from_captures(matched_ranges)
+  }
+}
 
-    match collected {
-      Ok(highlights) => {
-        highlights
-          .into_iter()
-          .map(|(highlight, range)| (highlight, range.start as usize..range.end as usize))
-          .collect()
-      },
-      Err(_) => Vec::new(),
+fn parse_tree(
+  source: RopeSlice,
+  grammar: tree_sitter::Grammar,
+  old_tree: Option<&Tree>,
+  timeout: Duration,
+) -> Result<Tree, SyntaxBackendError> {
+  try_parse_tree(source, grammar, old_tree, timeout)?.ok_or(SyntaxBackendError::Timeout)
+}
+
+fn try_parse_tree(
+  source: RopeSlice,
+  grammar: tree_sitter::Grammar,
+  old_tree: Option<&Tree>,
+  timeout: Duration,
+) -> Result<Option<Tree>, SyntaxBackendError> {
+  let mut parser = Parser::new();
+  parser.set_grammar(grammar)?;
+  parser.set_timeout(timeout);
+  Ok(parser.parse(RopeInput::new(source), old_tree))
+}
+
+fn invalidated_ranges_for_edits(edits: &[InputEdit]) -> Vec<ops::Range<usize>> {
+  edits
+    .iter()
+    .map(|edit| {
+      let start = edit.start_byte as usize;
+      let old_end = edit.old_end_byte as usize;
+      let new_end = edit.new_end_byte as usize;
+      start..old_end.max(new_end)
+    })
+    .collect()
+}
+
+fn highlight_runs_from_captures(
+  mut captures: Vec<(usize, usize, HighlightKindId)>,
+) -> Vec<SyntaxHighlightRun> {
+  if captures.is_empty() {
+    return Vec::new();
+  }
+
+  captures.sort_by_key(|(run_start, run_end, _)| (*run_start, std::cmp::Reverse(*run_end)));
+
+  let mut boundaries = captures
+    .iter()
+    .flat_map(|(run_start, run_end, _)| [*run_start, *run_end])
+    .collect::<Vec<_>>();
+  boundaries.sort_unstable();
+  boundaries.dedup();
+
+  let mut spans: Vec<SyntaxHighlightRun> = Vec::new();
+  for window in boundaries.windows(2) {
+    let segment_start = window[0];
+    let segment_end = window[1];
+    if segment_start >= segment_end {
+      continue;
+    }
+
+    let Some((_, _, kind)) = captures
+      .iter()
+      .filter(|(run_start, run_end, _)| *run_start <= segment_start && segment_end <= *run_end)
+      .max_by_key(|(run_start, run_end, _)| (*run_start, std::cmp::Reverse(*run_end)))
+    else {
+      continue;
+    };
+
+    if let Some(last) = spans.last_mut()
+      && last.kind == *kind
+      && last.byte_range.end == segment_start
+    {
+      last.byte_range.end = segment_end;
+    } else {
+      spans.push(SyntaxHighlightRun {
+        byte_range: segment_start..segment_end,
+        kind:       *kind,
+      });
     }
   }
 
-  pub fn query_iter<'a, QueryLoader, LayerState, Range>(
-    &'a self,
-    source: RopeSlice<'a>,
-    loader: QueryLoader,
-    range: Range,
-  ) -> QueryIter<'a, 'a, QueryLoader, LayerState>
-  where
-    QueryLoader: FnMut(tree_house::Language) -> Option<&'a Query> + 'a,
-    LayerState: Default,
-    Range: RangeBounds<u32>,
-  {
-    QueryIter::new(&self.inner, source, loader, range)
-  }
-
-  pub fn tags<'a>(
-    &'a self,
-    source: RopeSlice<'a>,
-    registry: &'a LanguageRegistry,
-    range: impl RangeBounds<u32>,
-  ) -> QueryIter<'a, 'a, impl FnMut(tree_house::Language) -> Option<&'a Query> + 'a, ()> {
-    self.query_iter(
-      source,
-      |language| {
-        registry
-          .tag_query(LanguageId::from_backend(language))
-          .ok()
-          .flatten()
-          .map(|query: &TagQuery| &query.query)
-      },
-      range,
-    )
-  }
+  spans
 }
 
 pub fn pretty_print_tree<W: fmt::Write>(fmt: &mut W, node: Node) -> fmt::Result {
@@ -568,5 +814,15 @@ mod test {
 
     assert!(syntax.assignment().is_none());
     assert!(syntax.state().is_none());
+  }
+
+  #[test]
+  fn invalidated_byte_ranges_merge_overlaps() {
+    let mut ranges = InvalidatedByteRanges::default();
+    ranges.insert(4..8);
+    ranges.insert(1..3);
+    ranges.insert(2..6);
+
+    assert_eq!(ranges.iter().cloned().collect::<Vec<_>>(), vec![1..8]);
   }
 }

@@ -67,7 +67,7 @@ use the_lib::{
   movement::{
     MotionMode,
     MovementContext,
-    move_document_end,
+    // move_document_end,
     move_document_start,
     move_down_visual,
     move_left,
@@ -199,9 +199,6 @@ impl App {
       .with_surface_document_mut(self.surface, |surface, document| {
         surface.apply_edit(document, edit)
       })??;
-    self
-      .session
-      .refresh_document_syntax_and_highlights(self.document)?;
     Ok(())
   }
 
@@ -314,11 +311,7 @@ impl App {
     editor_rows: usize,
   ) -> Result<VisibleFrame, Box<dyn std::error::Error>> {
     let start = Instant::now();
-    let frame = self
-      .session
-      .with_surface_document_mut(self.surface, |surface, document| {
-        surface.render(document, None)
-      })?;
+    let frame = self.session.render_surface(self.surface, None)?;
     self.last_render = start.elapsed();
     self.last_generation = frame.generation;
 
@@ -597,9 +590,6 @@ impl App {
           .session
           .with_surface_document_mut(self.surface, |surface, document| surface.undo(document))??;
         if undone {
-          self
-            .session
-            .refresh_document_syntax_and_highlights(self.document)?;
           self.status = String::from("undo");
         }
       },
@@ -608,9 +598,6 @@ impl App {
           .session
           .with_surface_document_mut(self.surface, |surface, document| surface.redo(document))??;
         if redone {
-          self
-            .session
-            .refresh_document_syntax_and_highlights(self.document)?;
           self.status = String::from("redo");
         }
       },
@@ -629,7 +616,7 @@ impl App {
         self.status = String::from("search: type regex, Enter to jump, Esc to cancel");
       },
       KeyCode::Char('g') => self.apply_motion_simple(move_document_start, MotionMode::Move)?,
-      KeyCode::Char('e') => self.apply_motion_simple(move_document_end, MotionMode::Move)?,
+      // KeyCode::Char('e') => self.apply_motion_simple(move_document_end, MotionMode::Move)?,
       _ => {},
     }
 
@@ -921,6 +908,7 @@ impl App {
     Ok(())
   }
 
+  #[allow(dead_code)]
   fn repeat_search(&mut self, forward: bool) -> Result<(), Box<dyn std::error::Error>> {
     let Some(query) = self.session.registers().first('/') else {
       self.status = String::from("no previous search");

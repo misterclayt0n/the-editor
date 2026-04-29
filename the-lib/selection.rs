@@ -19,7 +19,6 @@ use the_stdx::rope::{
   RopeSliceExt,
 };
 use thiserror::Error;
-use tree_house::tree_sitter::Node;
 
 use crate::{
   grapheme::{
@@ -30,6 +29,7 @@ use crate::{
   },
   line_ending::get_line_ending,
   movement::Direction,
+  syntax::tree_sitter::Node,
   transaction::{
     Assoc,
     ChangeSet,

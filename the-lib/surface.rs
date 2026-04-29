@@ -22,7 +22,7 @@ use crate::{
     RenderFrameDelta,
     RenderSurface,
     SurfaceMeasurements,
-    SyntaxHighlight,
+    SyntaxSpan,
     TextAnnotations,
     TextFormat,
     Viewport,
@@ -34,6 +34,10 @@ use crate::{
     Range,
     Selection,
     SelectionError,
+  },
+  syntax::{
+    LanguageRegistry,
+    SyntaxGeneration,
   },
 };
 
@@ -74,6 +78,21 @@ pub enum RevealMode {
   Center,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SurfaceSyntaxInterest {
+  pub viewport:   Viewport,
+  pub char_range: std::ops::Range<usize>,
+  pub byte_range: std::ops::Range<usize>,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+struct VisibleSyntaxCache {
+  document_revision: Option<u64>,
+  generation:        Option<SyntaxGeneration>,
+  viewport:          Option<Viewport>,
+  spans:             Vec<SyntaxSpan>,
+}
+
 #[derive(Debug)]
 pub struct Surface {
   selection:     Selection,
@@ -82,6 +101,7 @@ pub struct Surface {
   history:       History,
   viewport:      Viewport,
   render:        RenderSurface,
+  syntax_cache:  VisibleSyntaxCache,
 }
 
 impl Surface {
@@ -107,6 +127,7 @@ impl Surface {
       history,
       viewport,
       render,
+      syntax_cache: VisibleSyntaxCache::default(),
     })
   }
 
@@ -131,11 +152,36 @@ impl Surface {
   }
 
   pub fn set_viewport(&mut self, viewport: Viewport) {
-    self.viewport = viewport;
+    if self.viewport != viewport {
+      self.viewport = viewport;
+      self.invalidate_visible_syntax_cache();
+    }
   }
 
   pub fn render_surface(&self) -> &RenderSurface {
     &self.render
+  }
+
+  pub fn syntax_interest(&self, document: &Document) -> SurfaceSyntaxInterest {
+    let text = document.text().slice(..);
+    let char_range = crate::render::syntax_projection::viewport_char_range(
+      text,
+      self.render.text_format(),
+      self.render.text_annotations(),
+      self.viewport,
+      8,
+    );
+    let byte_range = text.char_to_byte(char_range.start)..text.char_to_byte(char_range.end);
+
+    SurfaceSyntaxInterest {
+      viewport: self.viewport,
+      char_range,
+      byte_range,
+    }
+  }
+
+  pub fn visible_syntax(&self) -> &[SyntaxSpan] {
+    self.render.visible_syntax()
   }
 
   pub fn render_generation(&self) -> u64 {
@@ -148,10 +194,12 @@ impl Surface {
 
   pub fn set_text_format(&mut self, format: TextFormat) {
     self.render.set_text_format(format);
+    self.invalidate_visible_syntax_cache();
   }
 
   pub fn set_text_format_reconcile_viewport(&mut self, document: &Document, format: TextFormat) {
     self.render.set_text_format(format.clone());
+    self.invalidate_visible_syntax_cache();
 
     if format.soft_wrap {
       self.viewport.first_col = 0;
@@ -166,14 +214,7 @@ impl Surface {
 
   pub fn set_text_annotations(&mut self, annotations: TextAnnotations) {
     self.render.set_text_annotations(annotations);
-  }
-
-  pub fn syntax_highlights(&self) -> &[SyntaxHighlight] {
-    self.render.syntax_highlights()
-  }
-
-  pub fn set_syntax_highlights(&mut self, highlights: Vec<SyntaxHighlight>) {
-    self.render.set_syntax_highlights(highlights);
+    self.invalidate_visible_syntax_cache();
   }
 
   pub fn measurements(&self) -> SurfaceMeasurements {
@@ -182,6 +223,7 @@ impl Surface {
 
   pub fn set_measurements(&mut self, measurements: SurfaceMeasurements) {
     self.render.set_measurements(measurements);
+    self.invalidate_visible_syntax_cache();
   }
 
   pub fn widgets(&self) -> &[BlockWidget] {
@@ -190,6 +232,7 @@ impl Surface {
 
   pub fn set_widgets(&mut self, widgets: Vec<BlockWidget>) {
     self.render.set_widgets(widgets);
+    self.invalidate_visible_syntax_cache();
   }
 
   pub fn set_active_cursor(&mut self, active_cursor: Option<CursorId>) -> Result<()> {
@@ -375,7 +418,13 @@ impl Surface {
     }
   }
 
-  pub fn render(&mut self, document: &Document, since_generation: Option<u64>) -> RenderFrameDelta {
+  pub fn render(
+    &mut self,
+    document: &Document,
+    syntax_registry: Option<&LanguageRegistry>,
+    since_generation: Option<u64>,
+  ) -> RenderFrameDelta {
+    self.sync_visible_syntax(document, syntax_registry);
     self.render.render_frame(
       document.text().slice(..),
       document.revision(),
@@ -403,6 +452,41 @@ impl Surface {
 
   fn sync_render_selection(&mut self) {
     self.render.set_selection(Some(self.selection.clone()));
+  }
+
+  fn sync_visible_syntax(
+    &mut self,
+    document: &Document,
+    syntax_registry: Option<&LanguageRegistry>,
+  ) {
+    let generation = document.syntax_generation();
+    let cache_valid = self.syntax_cache.document_revision == Some(document.revision())
+      && self.syntax_cache.generation == generation
+      && self.syntax_cache.viewport == Some(self.viewport);
+
+    if cache_valid {
+      self
+        .render
+        .set_visible_syntax(self.syntax_cache.spans.clone());
+      return;
+    }
+
+    let spans = syntax_registry
+      .and_then(|registry| project_visible_syntax(document, &self.render, self.viewport, registry))
+      .unwrap_or_default();
+
+    self.syntax_cache = VisibleSyntaxCache {
+      document_revision: Some(document.revision()),
+      generation,
+      viewport: Some(self.viewport),
+      spans: spans.clone(),
+    };
+    self.render.set_visible_syntax(spans);
+  }
+
+  fn invalidate_visible_syntax_cache(&mut self) {
+    self.syntax_cache = VisibleSyntaxCache::default();
+    self.render.set_visible_syntax(Vec::new());
   }
 
   fn repair_active_cursor(&mut self, previous_active: Option<CursorId>) {
@@ -466,6 +550,43 @@ fn validate_selection_bounds(selection: &Selection, len: usize) -> Result<()> {
     return Err(SurfaceError::SelectionOutOfBounds { len });
   }
   Ok(())
+}
+
+fn project_visible_syntax(
+  document: &Document,
+  render: &RenderSurface,
+  viewport: Viewport,
+  registry: &LanguageRegistry,
+) -> Option<Vec<SyntaxSpan>> {
+  let state = document.active_syntax()?;
+  let syntax = state.syntax();
+  let text = document.text().slice(..);
+  let char_range = crate::render::syntax_projection::viewport_char_range(
+    text,
+    render.text_format(),
+    render.text_annotations(),
+    viewport,
+    8,
+  );
+
+  if char_range.is_empty() {
+    return Some(Vec::new());
+  }
+
+  let byte_start = text.char_to_byte(char_range.start);
+  let byte_end = text.char_to_byte(char_range.end);
+  let runs = syntax.highlight_runs_in_byte_range(text, registry, byte_start..byte_end);
+
+  Some(
+    crate::render::syntax_projection::project_visible_syntax_spans(
+      text,
+      render.text_format(),
+      render.text_annotations(),
+      &runs,
+      viewport,
+      render.measurements(),
+    ),
+  )
 }
 
 #[cfg(test)]

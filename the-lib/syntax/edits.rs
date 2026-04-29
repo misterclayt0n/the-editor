@@ -1,9 +1,9 @@
 use ropey::RopeSlice;
-use tree_house::tree_sitter::{
+
+use super::tree_sitter::{
   InputEdit,
   Point,
 };
-
 use crate::transaction::{
   ChangeSet,
   Operation,

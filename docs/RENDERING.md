@@ -1118,6 +1118,44 @@ pub struct LayerDeltaSet {
 }
 ```
 
+## Syntax rendering under the complete model
+
+The syntax layer should no longer be fed by a document-global `Vec<SyntaxHighlight>` push pipeline.
+
+The intended shape is:
+
+```txt
+Document syntax truth
+-> visible-range extraction
+-> Surface-owned visible syntax cache
+-> RenderSurface retained syntax layer payload
+```
+
+### Consequences
+
+#### `RenderSurface` stays syntax-agnostic
+`RenderSurface` should consume retained visible syntax payloads, not query document syntax directly.
+
+#### `Surface` becomes the syntax/render adapter
+`Surface` should:
+- request visible baseline/enrichment syntax for its viewport
+- convert byte-oriented extraction into row-local render payloads
+- retain/cache those visible payloads by syntax generation and viewport
+
+#### Baseline extraction may be synchronous if bounded
+When a surface scrolls or a visible cache is stale, it is acceptable to do synchronous syntax extraction on demand **only if** it is:
+- strictly viewport-bounded
+- streaming/range-based
+- not secretly a whole-document recollection pass
+
+#### Enrichment may lag
+Semantic overlays, locals-sensitive refinements, and similar tier-2 enrichments may be stale while baseline syntax remains fresh enough to paint immediately.
+
+#### Runtime pushes freshness, not payloads
+Runtime should notify that syntax truth advanced. Surfaces then pull the visible extraction they need.
+
+This avoids overwork across multiple surfaces with different viewports.
+
 ## Dirty state
 
 Dirty state should be tracked per layer. A single cause can dirty multiple ranges, and a single range can be dirty for multiple reasons. Do not encode invalidation logic as one `DirtyRange { reason }` list.

@@ -14,6 +14,8 @@ use crate::{
   syntax::{
     DocumentSyntax,
     DocumentSyntaxState,
+    SyntaxGeneration,
+    SyntaxInvalidation,
     SyntaxState,
     generate_edits,
   },
@@ -61,6 +63,18 @@ impl Document {
 
   pub fn syntax(&self) -> &DocumentSyntax {
     &self.syntax
+  }
+
+  pub fn active_syntax(&self) -> Option<&SyntaxState> {
+    active_syntax_state(&self.syntax)
+  }
+
+  pub fn syntax_generation(&self) -> Option<SyntaxGeneration> {
+    self.active_syntax().map(SyntaxState::generation)
+  }
+
+  pub fn syntax_invalidation(&self) -> Option<SyntaxInvalidation> {
+    self.active_syntax().map(SyntaxState::invalidation)
   }
 
   pub fn set_syntax(&mut self, syntax: DocumentSyntax) {
@@ -120,7 +134,6 @@ impl Document {
     }
 
     state.interpolate(&edits);
-    state.set_parse_pending(true);
   }
 }
 
@@ -139,7 +152,6 @@ mod tests {
   use std::borrow::Cow;
 
   use ropey::Rope;
-  use tree_house::tree_sitter::Grammar;
 
   use super::*;
   use crate::{
@@ -150,6 +162,7 @@ mod tests {
       QueryKind,
       SyntaxConfiguration,
       SyntaxResources,
+      tree_sitter::Grammar,
     },
     transaction::Transaction,
   };

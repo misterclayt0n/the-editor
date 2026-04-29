@@ -8,6 +8,21 @@ pub mod state;
 pub mod tag_query;
 pub mod textobject_query;
 
+pub const TREE_SITTER_MATCH_LIMIT: u32 = 256;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct HighlightKindId(u32);
+
+impl HighlightKindId {
+  pub const fn new(id: u32) -> Self {
+    Self(id)
+  }
+
+  pub const fn get(self) -> u32 {
+    self.0
+  }
+}
+
 pub use config::{
   BlockCommentToken,
   FileType,
@@ -37,27 +52,20 @@ pub use resources::{
 pub use state::{
   DocumentSyntax,
   DocumentSyntaxState,
+  InvalidatedByteRanges,
   Syntax,
+  SyntaxBackendError,
+  SyntaxGeneration,
+  SyntaxHighlightRun,
+  SyntaxInvalidation,
   SyntaxSnapshot,
   SyntaxState,
   SyntaxUnavailableReason,
   child_for_byte_range,
   pretty_print_tree,
 };
-pub use tag_query::TagQuery;
 pub use textobject_query::{
   CapturedNode,
   TextObjectQuery,
 };
-pub use tree_house::{
-  Error as HighlighterError,
-  LanguageLoader,
-  TREE_SITTER_MATCH_LIMIT,
-  TreeCursor,
-  highlighter::{
-    Highlight as HighlightKindId,
-    HighlightEvent,
-  },
-  query_iter::QueryIterEvent,
-  tree_sitter,
-};
+pub use tree_sitter_bindings as tree_sitter;

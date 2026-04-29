@@ -141,7 +141,7 @@ If surface-level scroll state later diverges from raw render input, a dedicated 
 That means the following remain per-surface retained inputs/state:
 - `TextFormat`
 - `TextAnnotations`
-- syntax highlight payloads
+- visible syntax baseline/enrichment caches
 - widgets
 - measurements
 - retained rows/layers/cache/dirtiness
@@ -376,6 +376,41 @@ That means `Surface` should likely expose things like:
 This makes `Surface` feel like the real per-view object rather than forcing callers to juggle two peer objects for one view.
 
 `RenderSurface` may remain public and focused, but it should increasingly feel like a subsystem.
+
+---
+
+## Syntax projection and runtime demand
+
+In the complete syntax architecture, `Surface` should become the syntax-to-render adapter.
+
+That means `Surface` should own things like:
+- the current syntax demand derived from its viewport
+- a visible baseline syntax cache keyed by syntax generation + viewport/range
+- a visible enrichment cache keyed by enrichment generation + viewport/range
+- byte/char/visual conversion from document syntax extraction into render-facing layer payloads
+
+It should **not** treat document-global syntax span vectors as the main syntax API.
+
+Instead the flow should be:
+1. runtime advances document-owned syntax truth
+2. runtime/surface observe that syntax generations changed
+3. `Surface` pulls the visible syntax it needs for its viewport
+4. `Surface` updates its retained visible syntax cache
+5. `RenderSurface` consumes the visible cache as syntax-agnostic layer payload
+
+### Demand reporting
+`Surface` should also be the object that reports syntax interest back to runtime.
+
+That demand may include:
+- the current viewport byte range
+- a margin around the viewport
+- cursor-near priority hints
+- active/hidden surface priority
+
+This keeps ownership honest:
+- `Document` owns truth
+- `Surface` owns view demand and visible projection
+- runtime owns scheduling
 
 ---
 

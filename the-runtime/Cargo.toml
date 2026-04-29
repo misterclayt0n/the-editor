@@ -28,5 +28,5 @@ clipboard-win = "5.4"
 
 [dev-dependencies]
 tempfile.workspace = true
-tree-house-bindings = { package = "tree-house-bindings", git = "https://github.com/misterclayt0n/tree-house", default-features = false, features = ["tree-sitter-language"] }
+tree-sitter-bindings.workspace = true
 tree-sitter-json = "0.24"

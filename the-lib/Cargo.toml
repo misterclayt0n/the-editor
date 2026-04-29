@@ -21,7 +21,7 @@ unicode-segmentation.workspace     = true
 unicode-width.workspace            = true
 url.workspace                      = true
 smallvec.workspace                 = true
-tree-house.workspace               = true
+tree-sitter-bindings.workspace     = true
 smartstring.workspace              = true
 tracing.workspace                  = true
 serde.workspace                    = true
@@ -35,6 +35,5 @@ the-stdx.path                      = "../the-stdx"
 clap.workspace                     = true
 crossterm.workspace                = true
 smallvec.workspace                 = true
-tree-house-bindings                = { package = "tree-house-bindings", git = "https://github.com/misterclayt0n/tree-house", default-features = false, features = ["tree-sitter-language"] }
 tree-sitter-json                   = "0.24"
 the-runtime.path                   = "../the-runtime"

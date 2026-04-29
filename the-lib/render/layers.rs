@@ -1,5 +1,3 @@
-use std::ops::Range;
-
 use super::display_list::WidgetId;
 use crate::{
   selection::CursorId,
@@ -37,12 +35,6 @@ pub struct CursorPlacement {
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct CursorLayerDelta {
   pub cursors: Vec<CursorPlacement>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SyntaxHighlight {
-  pub range: Range<usize>,
-  pub kind:  HighlightKindId,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

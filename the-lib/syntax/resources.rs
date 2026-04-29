@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use tree_house::tree_sitter::Grammar;
+use super::tree_sitter::Grammar;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum QueryKind {

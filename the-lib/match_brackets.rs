@@ -1,7 +1,6 @@
 use std::iter;
 
 use ropey::RopeSlice;
-use tree_house::tree_sitter::Node;
 
 use crate::{
   movement::Direction::{
@@ -9,7 +8,10 @@ use crate::{
     Backward,
     Forward,
   },
-  syntax::Syntax,
+  syntax::{
+    Syntax,
+    tree_sitter::Node,
+  },
 };
 
 const MAX_PLAINTEXT_SCAN: usize = 10_000;
@@ -265,7 +267,6 @@ mod tests {
   use std::borrow::Cow;
 
   use ropey::Rope;
-  use tree_house::tree_sitter::Grammar;
 
   use super::*;
   use crate::syntax::{
@@ -276,6 +277,7 @@ mod tests {
     QueryKind,
     SyntaxConfiguration,
     SyntaxResources,
+    tree_sitter::Grammar,
   };
 
   #[derive(Debug, Clone, Copy)]

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use tree_house::tree_sitter::{
+use super::tree_sitter::{
   Capture,
   Grammar,
   Pattern,

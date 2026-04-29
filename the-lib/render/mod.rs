@@ -5,6 +5,7 @@ pub mod layers;
 pub mod manager;
 pub mod measurement;
 pub mod surface;
+pub mod syntax_projection;
 pub mod text_annotations;
 pub mod text_format;
 pub mod visual_position;
@@ -44,7 +45,6 @@ pub use layers::{
   OverlayLayerDelta,
   SelectionLayerDelta,
   SelectionSpan,
-  SyntaxHighlight,
   SyntaxLayerDelta,
   SyntaxSpan,
   WidgetLayerDelta,

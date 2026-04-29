@@ -120,7 +120,7 @@ Document defines the pure state machine; runtime drives it with bounded foregrou
 Surface/runtime pull byte-oriented visible runs from syntax truth on demand.
 
 ### 4. Render-facing retained visible caches
-Surface converts extracted runs into row-local render payloads; `RenderSurface` remains syntax-agnostic.
+Surface converts extracted runs into row-local render payloads by projecting them through the current visible layout; `RenderSurface` remains syntax-agnostic.
 
 ---
 
@@ -149,10 +149,11 @@ Surface converts extracted runs into row-local render payloads; `RenderSurface` 
 - visible baseline syntax cache
 - visible enrichment cache
 - byte->char/visual conversion near render
-- adaptation of syntax extraction into render payloads
+- adaptation of syntax extraction into visible-layout-backed render payloads
 
 ### `RenderSurface` owns
 - retained visible render state only
+- projection/diffing of row-local syntax spans from the current visible layout
 - no direct knowledge of `Document` syntax internals
 - no document-global syntax payload truth
 
@@ -370,7 +371,7 @@ Instead:
 - `Document` exposes syntax truth/extraction
 - runtime advances freshness
 - `Surface` requests visible extraction for its viewport
-- `Surface` converts that to retained render-facing visible payloads
+- `Surface` projects that through the current visible layout into retained render-facing payloads
 - `RenderSurface` diffs and emits those payloads
 
 ---
@@ -378,7 +379,7 @@ Instead:
 ### 15. Keep `RenderSurface` syntax-agnostic
 **Decision:** yes.
 
-`RenderSurface` should retain rows/layers, not own syntax query policy.
+`RenderSurface` should retain rows/layers and diff row-local syntax payloads, but not own syntax query policy or syntax truth.
 
 This preserves the clean object split:
 - document = truth

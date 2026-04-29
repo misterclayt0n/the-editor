@@ -167,7 +167,9 @@ Vertical and visual motions depend on:
 - `TextFormat`
 - `TextAnnotations`
 - wrap width
-- visual row/column mapping helpers in `render/visual_position.rs`
+- document-visual mapping helpers in `render/layout_index.rs`
+
+`render/visual_position.rs` may remain as a thin compatibility adapter, but it is not the authoritative seam.
 
 The movement module should consume these as **immutable explicit inputs**.
 
@@ -487,7 +489,7 @@ Rewrite:
 - public API shape
 - selection-centric behavior
 - visual-goal handling
-- render helper integration to current `render/visual_position.rs`
+- render helper integration to current `render/layout_index.rs` document-visual mapping seam
 - annotation handling to immutable `TextAnnotations`
 - tests to current behavior-first style
 

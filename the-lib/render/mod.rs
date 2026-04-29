@@ -1,13 +1,17 @@
 pub mod damage;
 pub mod display_list;
 pub mod doc_formatter;
+pub(crate) mod layer_projection;
 pub mod layers;
+pub(crate) mod layout_index;
 pub mod manager;
 pub mod measurement;
+pub mod presentation;
+pub(crate) mod row_diff;
 pub mod surface;
-pub mod syntax_projection;
 pub mod text_annotations;
 pub mod text_format;
+pub(crate) mod visible_layout;
 pub mod visual_position;
 
 pub use damage::{
@@ -58,16 +62,17 @@ pub use measurement::{
   MeasurementBackendKind,
   SurfaceMeasurements,
 };
+pub use presentation::{
+  FrameRow,
+  PresentUpdate,
+  RetainedFrame,
+  SurfaceFrame,
+};
 pub use surface::RenderSurface;
 pub use text_annotations::{
   GraphemeSubstitution,
   InlineAnnotation,
   TextAnnotationError,
   TextAnnotations,
-  VirtualLineSpec,
 };
 pub use text_format::TextFormat;
-pub use visual_position::{
-  char_at_visual_pos,
-  visual_pos_at_char,
-};

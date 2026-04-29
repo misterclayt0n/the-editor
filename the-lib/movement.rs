@@ -29,13 +29,11 @@ use crate::{
     rope_is_line_ending,
   },
   render::{
-    Position,
     TextAnnotations,
     TextFormat,
-    char_at_visual_pos,
-    visual_pos_at_char,
-    visual_position::{
+    layout_index::{
       char_idx_at_visual_block_offset,
+      char_idx_at_visual_offset,
       visual_offset_from_block,
     },
   },
@@ -618,26 +616,32 @@ fn move_vertically_visual_range(
   cx: &MovementContext<'_>,
 ) -> VerticalMoveResult {
   let pos = range.cursor(text);
-  let visual_pos = visual_pos_at_char(text, cx.text_format, cx.wrap_width, cx.annotations, pos)
-    .unwrap_or_default();
+  let (visual_pos, _block_start) = visual_offset_from_block(
+    text,
+    pos,
+    pos,
+    cx.text_format,
+    cx.wrap_width,
+    cx.annotations,
+  );
   let goal = VisualGoal {
     col: visual_goal.map_or(visual_pos.col as u32, |goal| goal.col),
   };
   let count = count.max(1);
 
-  let target_row = match direction {
-    Direction::Forward => visual_pos.row.saturating_add(count),
-    Direction::Backward => visual_pos.row.saturating_sub(count),
+  let row_offset = match direction {
+    Direction::Forward => count as isize,
+    Direction::Backward => -(count as isize),
   };
-
-  let new_pos = char_at_visual_pos(
+  let (new_pos, _) = char_idx_at_visual_offset(
     text,
+    pos,
+    row_offset,
+    goal.col as usize,
     cx.text_format,
     cx.wrap_width,
     cx.annotations,
-    Position::new(target_row, goal.col as usize),
-  )
-  .unwrap_or(text.len_chars());
+  );
 
   VerticalMoveResult {
     range:       move_to_pos(text, range, new_pos, mode),

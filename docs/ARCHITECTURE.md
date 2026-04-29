@@ -519,17 +519,18 @@ Reasoning:
 Rendering is split into two stages.
 
 ```txt
-Rust (`the-lib`):   retained layout, dirty tracking, render-delta production
-Client:             retained presentation scene, native painting
+Rust (`the-lib`):   viewport-first retained layout + render-delta production
+Client:             retained presentation scene + native painting
 TypeScript:         orchestration + providers + surface composition
 ```
 
 Rust owns:
-- text layout
-- viewport math
-- visual row mapping
-- wrap/fold/annotation participation
-- retained surface state
+- viewport-first text layout
+- visible-row mapping
+- wrap and inline text-annotation participation
+- widget row insertion
+- retained visible-window state
+- sparse checkpoint/origin caches
 - dirty tracking
 - render delta production
 
@@ -543,10 +544,12 @@ TypeScript owns:
 - decoration/widget/provider composition
 - deciding which surfaces exist and how they are arranged
 
-Reasoning:
-- editor layout is semantic and hot-path, so it belongs in Rust
-- painting is platform-specific, so it belongs in the client
-- feature composition belongs in TypeScript
+The important rendering decision is this:
+
+> `RenderSurface` is a retained **visible-window renderer**, not a whole-document layout owner.
+
+There is no document-wide layout cache at the center of the architecture.
+Rows, row metadata, selections, cursors, and syntax spans should all derive from a single shared visible-layout pass for the viewport plus a small margin.
 
 For more detail, see `docs/RENDERING.md`.
 
@@ -615,7 +618,7 @@ The render path should consume visible syntax projections, not whole-document hi
 
 That means:
 - `RenderSurface` stays syntax-agnostic
-- `Surface` adapts syntax extraction into render-visible caches/layers
+- `Surface` adapts syntax extraction into render-visible payloads using the visible layout
 - runtime pushes freshness notifications, not whole-document syntax payloads
 
 For more detail, see `docs/SYNTAX.md`, `docs/SURFACE.md`, `docs/DOCUMENT.md`, `docs/RUNTIME.md`, and `docs/RENDERING.md`.
@@ -633,7 +636,7 @@ The editor should be highly extensible through TypeScript without making TypeScr
 - define pane/tab/split/workspace layout
 - build alternate distributions
 - register structured providers into native domains
-- contribute decorations, virtual lines, widgets, completions, code actions, etc.
+- contribute decorations, widgets, completions, code actions, etc.
 
 ### TypeScript should not need to:
 - own text storage
@@ -812,12 +815,14 @@ The old editor is a reference, not a blueprint. Port selectively.
 - `diff.rs`
 - `syntax.rs`
 - render modules:
-  - `render/graphics.rs`
   - `render/text_format.rs`
   - `render/text_annotations.rs`
   - `render/doc_formatter.rs`
-  - `render/visual_position.rs`
-  - relevant retained-render pieces from `render/plan.rs`
+  - `render/layout_index.rs`
+  - `render/visible_layout.rs`
+  - `render/row_diff.rs`
+  - `render/layer_projection.rs`
+  - `render/visual_position.rs` as a thin compatibility adapter only
 - reworked `document.rs`
 - reworked `surface.rs` (the old `view.rs` concept folded into the new surface model)
 - narrowed `diagnostics.rs` if treated as generic semantic/render data
@@ -905,7 +910,7 @@ Reasoning:
 - TypeScript may define the editor's personality, but must not own semantic document truth.
 - Clients must not maintain a second semantic document model.
 - Rendering must be retained and incremental.
-- Features like soft wrap, diagnostics, virtual lines, and syntax must not disable the incremental path.
+- Features like soft wrap, inline annotations, widgets, and syntax must not disable the incremental path.
 - Pane/tab/split/workspace layout belongs above Rust native document/surface truth.
 - Documents are resource-agnostic.
 - Resources are first-class runtime objects.

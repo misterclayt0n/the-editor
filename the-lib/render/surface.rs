@@ -1,13 +1,6 @@
-use std::{
-  collections::{
-    BTreeMap,
-    HashMap,
-  },
-  num::NonZeroU64,
-};
+use std::ops::Range;
 
 use ropey::RopeSlice;
-use unicode_segmentation::UnicodeSegmentation;
 
 use super::{
   damage::{
@@ -17,18 +10,11 @@ use super::{
   display_list::{
     FrameRequest,
     RenderFrameDelta,
-    RenderRow,
-    RowId,
-    RowKind,
     RowMetadata,
-    RowMetadataDelta,
-    RowMove,
-    RowPlacement,
     SurfaceId,
     Viewport,
-    WidgetId,
   },
-  doc_formatter::DocumentFormatter,
+  layer_projection::LayerProjector,
   layers::{
     BlockWidget,
     CursorLayerDelta,
@@ -41,17 +27,22 @@ use super::{
     WidgetLayerDelta,
     WidgetPlacement,
   },
+  layout_index::LayoutIndex,
   measurement::SurfaceMeasurements,
+  row_diff::{
+    RetainedRow,
+    RowDiffEngine,
+  },
   text_annotations::TextAnnotations,
   text_format::TextFormat,
+  visible_layout::{
+    VisibleLayout,
+    VisibleLayoutBuilder,
+  },
 };
 use crate::{
-  Tendril,
-  grapheme::{
-    Grapheme,
-    grapheme_width,
-  },
   selection::Selection,
+  syntax::SyntaxHighlightRun,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -73,7 +64,7 @@ struct SurfaceState {
   next_row_id:        u64,
   last_text_revision: Option<u64>,
   last_viewport:      Option<Viewport>,
-  layout_cache:       DocumentLayoutCache,
+  visible_layout:     VisibleLayout,
   visible_rows:       Vec<RetainedRow>,
   row_metadata:       Vec<RowMetadata>,
   selection_spans:    Vec<SelectionSpan>,
@@ -88,7 +79,7 @@ impl Default for SurfaceState {
       next_row_id:        1,
       last_text_revision: None,
       last_viewport:      None,
-      layout_cache:       DocumentLayoutCache::default(),
+      visible_layout:     VisibleLayout::default(),
       visible_rows:       Vec::new(),
       row_metadata:       Vec::new(),
       selection_spans:    Vec::new(),
@@ -97,165 +88,6 @@ impl Default for SurfaceState {
       widget_placements:  Vec::new(),
     }
   }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct RetainedRow {
-  key:      RowKey,
-  row:      RenderRow,
-  metadata: RowMetadata,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-enum RowKey {
-  Document {
-    line_idx:       usize,
-    first_doc_char: usize,
-  },
-  Virtual {
-    anchor_char: usize,
-    ordinal:     u32,
-  },
-  Widget {
-    widget_id: WidgetId,
-    fragment:  u32,
-  },
-}
-
-#[derive(Debug)]
-struct RowBuilder {
-  visual_row:     usize,
-  text:           String,
-  first_doc:      Option<(usize, usize)>,
-  virtual_anchor: Option<usize>,
-  anchor_line:    usize,
-}
-
-impl RowBuilder {
-  fn new(visual_row: usize, first_char_idx: usize, anchor_line: usize) -> Self {
-    Self {
-      visual_row,
-      text: String::new(),
-      first_doc: None,
-      virtual_anchor: Some(first_char_idx),
-      anchor_line,
-    }
-  }
-
-  fn push(&mut self, grapheme: &super::doc_formatter::FormattedGrapheme<'_>) {
-    if !grapheme.is_virtual() && self.first_doc.is_none() {
-      self.first_doc = Some((grapheme.line_idx, grapheme.char_idx));
-    }
-
-    match grapheme.raw {
-      Grapheme::Newline => {},
-      Grapheme::Tab { width } => self.text.push_str(&" ".repeat(width)),
-      Grapheme::Other { ref g } => self.text.push_str(g.as_ref()),
-    }
-  }
-
-  fn into_cached_row(
-    self,
-    text: &RopeSlice<'_>,
-    virtual_ordinals: &mut BTreeMap<usize, u32>,
-  ) -> CachedLayoutRow {
-    let (key, metadata) = if let Some((line_idx, first_doc_char)) = self.first_doc {
-      let starts_logical_line = text.line_to_char(line_idx) == first_doc_char;
-      (
-        RowKey::Document {
-          line_idx,
-          first_doc_char,
-        },
-        CachedRowMetadata {
-          kind: RowKind::Document,
-          doc_line: Some(line_idx),
-          starts_logical_line,
-          wrapped_continuation: !starts_logical_line,
-        },
-      )
-    } else {
-      let anchor_char = self.virtual_anchor.unwrap_or(0);
-      let ordinal = virtual_ordinals.entry(anchor_char).or_insert(0);
-      let ordinal_value = *ordinal;
-      *ordinal += 1;
-      (
-        RowKey::Virtual {
-          anchor_char,
-          ordinal: ordinal_value,
-        },
-        CachedRowMetadata {
-          kind:                 RowKind::Virtual {
-            anchor_line: self.anchor_line,
-            ordinal:     ordinal_value,
-          },
-          doc_line:             Some(self.anchor_line),
-          starts_logical_line:  true,
-          wrapped_continuation: false,
-        },
-      )
-    };
-
-    CachedLayoutRow {
-      key,
-      text: self.text.into(),
-      anchor_line: self.anchor_line,
-      metadata,
-    }
-  }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct CachedRowMetadata {
-  kind:                 RowKind,
-  doc_line:             Option<usize>,
-  starts_logical_line:  bool,
-  wrapped_continuation: bool,
-}
-
-impl CachedRowMetadata {
-  fn into_row_metadata(self, row_id: RowId, surface_row: usize) -> RowMetadata {
-    RowMetadata {
-      row_id,
-      surface_row,
-      kind: self.kind,
-      doc_line: self.doc_line,
-      starts_logical_line: self.starts_logical_line,
-      wrapped_continuation: self.wrapped_continuation,
-    }
-  }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct CachedLayoutRow {
-  key:         RowKey,
-  text:        Tendril,
-  anchor_line: usize,
-  metadata:    CachedRowMetadata,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct CachedWidgetLayout {
-  widget_id: WidgetId,
-  start_row: usize,
-  row_span:  usize,
-  width_px:  u32,
-  height_px: u32,
-}
-
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
-struct DocumentLayoutCache {
-  text_revision:  Option<u64>,
-  wrap_width:     usize,
-  rows:           Vec<CachedLayoutRow>,
-  widget_layouts: Vec<CachedWidgetLayout>,
-}
-
-#[derive(Debug)]
-struct BuiltRow {
-  key:       RowKey,
-  placement: RowPlacement,
-  text:      Tendril,
-  metadata:  CachedRowMetadata,
 }
 
 impl RenderSurface {
@@ -334,7 +166,7 @@ impl RenderSurface {
         .cmp(&b.surface_row)
         .then_with(|| a.start_col.cmp(&b.start_col))
         .then_with(|| b.end_col.cmp(&a.end_col))
-        .then_with(|| format!("{:?}", a.kind).cmp(&format!("{:?}", b.kind)))
+        .then_with(|| a.kind.cmp(&b.kind))
     });
     if self.visible_syntax != spans {
       self.visible_syntax = spans;
@@ -362,11 +194,92 @@ impl RenderSurface {
     }
   }
 
+  pub(crate) fn visible_document_ranges(
+    &mut self,
+    text: RopeSlice<'_>,
+    text_revision: u64,
+    viewport: Viewport,
+    layout_index: &mut LayoutIndex,
+  ) -> (Range<usize>, Range<usize>) {
+    self.ensure_visible_layout(text, text_revision, viewport, layout_index);
+    self.state.visible_layout.document_ranges()
+  }
+
+  pub(crate) fn project_syntax_runs(
+    &mut self,
+    text: RopeSlice<'_>,
+    text_revision: u64,
+    viewport: Viewport,
+    runs: &[SyntaxHighlightRun],
+    layout_index: &mut LayoutIndex,
+  ) -> Vec<SyntaxSpan> {
+    self.ensure_visible_layout(text, text_revision, viewport, layout_index);
+    LayerProjector::project_syntax_runs(
+      &self.state.visible_layout,
+      viewport,
+      self.measurements,
+      runs,
+    )
+  }
+
+  fn ensure_visible_layout(
+    &mut self,
+    text: RopeSlice<'_>,
+    text_revision: u64,
+    viewport: Viewport,
+    layout_index: &mut LayoutIndex,
+  ) {
+    let viewport_end = viewport.first_row.saturating_add(viewport.row_count);
+    let cache_covers_viewport = self.state.visible_layout.window_start_row <= viewport.first_row
+      && viewport_end <= self.state.visible_layout.window_end_row;
+
+    if self.state.visible_rows.is_empty()
+      || self.generation == 0
+      || self.dirty.rows.full
+      || self.dirty.widgets.dirty
+      || (self.dirty.rows.dirty && self.state.last_viewport == Some(viewport))
+      || self.state.visible_layout.text_revision != Some(text_revision)
+      || self.state.visible_layout.wrap_width != viewport.wrap_width
+      || !cache_covers_viewport
+    {
+      self.state.visible_layout = VisibleLayoutBuilder::new(
+        text,
+        text_revision,
+        &self.format,
+        &self.annotations,
+        &self.widgets,
+        self.measurements,
+      )
+      .build(viewport, layout_index);
+    }
+  }
+
+  pub fn render_frame_stateless(
+    &mut self,
+    text: RopeSlice<'_>,
+    text_revision: u64,
+    request: FrameRequest,
+  ) -> RenderFrameDelta {
+    let mut layout_index = LayoutIndex::default();
+    self.render_frame_with_index(text, text_revision, request, &mut layout_index)
+  }
+
+  #[doc(hidden)]
   pub fn render_frame(
     &mut self,
     text: RopeSlice<'_>,
     text_revision: u64,
     request: FrameRequest,
+  ) -> RenderFrameDelta {
+    self.render_frame_stateless(text, text_revision, request)
+  }
+
+  pub(crate) fn render_frame_with_index(
+    &mut self,
+    text: RopeSlice<'_>,
+    text_revision: u64,
+    request: FrameRequest,
+    layout_index: &mut LayoutIndex,
   ) -> RenderFrameDelta {
     self.mark_external_dirty(text_revision, request.viewport);
 
@@ -374,35 +287,21 @@ impl RenderSurface {
     let first_frame = self.state.visible_rows.is_empty() || self.generation == 0;
     let viewport_changed = self.state.last_viewport != Some(request.viewport);
 
-    if self.dirty.rows.dirty
-      || first_frame
-      || self.state.layout_cache.text_revision != Some(text_revision)
-      || self.state.layout_cache.wrap_width != request.viewport.wrap_width
-    {
-      self.state.layout_cache = rebuild_document_layout_cache(
-        text,
-        &self.format,
-        &self.annotations,
-        &self.widgets,
-        self.measurements,
-        text_revision,
-        request.viewport.wrap_width,
-      );
-    }
+    self.ensure_visible_layout(text, text_revision, request.viewport, layout_index);
 
     let force_full = first_frame || stale_generation || self.dirty.rows.full;
 
     let row_diff = if self.dirty.rows.dirty || first_frame || viewport_changed {
-      let next_rows = build_visible_rows(
-        &self.state.layout_cache,
-        request.viewport,
-        self.measurements,
-      );
-      Some(diff_rows(
-        &mut self.state,
+      let next_rows = self
+        .state
+        .visible_layout
+        .build_rows(request.viewport, self.measurements);
+      let previous_rows = std::mem::take(&mut self.state.visible_rows);
+      Some(RowDiffEngine::diff(
+        &mut self.state.next_row_id,
+        previous_rows,
         next_rows,
         force_full,
-        request.viewport,
       ))
     } else {
       None
@@ -416,8 +315,11 @@ impl RenderSurface {
       .iter()
       .map(|row| row.metadata.clone())
       .collect::<Vec<_>>();
-    let row_metadata_delta =
-      build_row_metadata_delta(&self.state.row_metadata, &next_row_metadata, force_full);
+    let row_metadata_delta = RowDiffEngine::build_row_metadata_delta(
+      &self.state.row_metadata,
+      &next_row_metadata,
+      force_full,
+    );
     let row_metadata_changed = force_full || row_metadata_delta.is_some();
 
     let row_damage = row_diff
@@ -435,10 +337,8 @@ impl RenderSurface {
 
     let selection_spans =
       if self.dirty.selections.dirty || self.dirty.rows.dirty || first_frame || viewport_changed {
-        build_selection_spans(
-          text,
-          &self.format,
-          &self.annotations,
+        LayerProjector::project_selections(
+          &self.state.visible_layout,
           self.selection.as_ref(),
           request.viewport,
           self.measurements,
@@ -455,10 +355,9 @@ impl RenderSurface {
 
     let cursor_placements =
       if self.dirty.cursors.dirty || self.dirty.rows.dirty || first_frame || viewport_changed {
-        build_cursor_placements(
+        LayerProjector::project_cursors(
           text,
-          &self.format,
-          &self.annotations,
+          &self.state.visible_layout,
           self.selection.as_ref(),
           request.viewport,
           self.measurements,
@@ -488,8 +387,8 @@ impl RenderSurface {
 
     let widget_placements =
       if self.dirty.widgets.dirty || self.dirty.rows.dirty || first_frame || viewport_changed {
-        build_widget_placements(
-          &self.state.layout_cache,
+        LayerProjector::project_widgets(
+          &self.state.visible_layout,
           request.viewport,
           self.measurements,
         )
@@ -526,27 +425,27 @@ impl RenderSurface {
     let full = force_full || next_visible_rows.is_empty() && self.generation == 1;
 
     let row_metadata_damage = if force_full || row_metadata_changed {
-      damage_for_row_metadata_change(&self.state.row_metadata, &next_row_metadata)
+      RowDiffEngine::damage_for_row_metadata_change(&self.state.row_metadata, &next_row_metadata)
     } else {
       Damage::empty()
     };
     let selection_damage = if force_full || selection_changed {
-      damage_for_selection_change(&self.state.selection_spans, &selection_spans)
+      LayerProjector::damage_for_selection_change(&self.state.selection_spans, &selection_spans)
     } else {
       Damage::empty()
     };
     let cursor_damage = if force_full || cursor_changed {
-      damage_for_cursor_change(&self.state.cursor_placements, &cursor_placements)
+      LayerProjector::damage_for_cursor_change(&self.state.cursor_placements, &cursor_placements)
     } else {
       Damage::empty()
     };
     let syntax_damage = if force_full || syntax_changed {
-      damage_for_syntax_change(&self.state.syntax_spans, &syntax_spans)
+      LayerProjector::damage_for_syntax_change(&self.state.syntax_spans, &syntax_spans)
     } else {
       Damage::empty()
     };
     let widget_damage = if force_full || widget_changed {
-      damage_for_widget_change(&self.state.widget_placements, &widget_placements)
+      LayerProjector::damage_for_widget_change(&self.state.widget_placements, &widget_placements)
     } else {
       Damage::empty()
     };
@@ -618,629 +517,6 @@ impl RenderSurface {
       self.mark_rows_dirty(full);
     }
   }
-}
-
-fn project_visible_cols(
-  start_col: usize,
-  end_col: usize,
-  viewport: Viewport,
-) -> Option<(usize, usize)> {
-  let visible_start = viewport.first_col;
-  let visible_end = viewport.first_col.saturating_add(viewport.wrap_width);
-
-  if end_col <= visible_start || start_col >= visible_end {
-    return None;
-  }
-
-  Some((
-    start_col.max(visible_start) - visible_start,
-    end_col.min(visible_end) - visible_start,
-  ))
-}
-
-fn crop_row_text(text: &str, viewport: Viewport) -> Tendril {
-  if viewport.first_col == 0 {
-    let width = row_display_width(text);
-    if width <= viewport.wrap_width {
-      return text.into();
-    }
-  }
-
-  let mut result = String::new();
-  let visible_start = viewport.first_col;
-  let visible_end = viewport.first_col.saturating_add(viewport.wrap_width);
-  let mut col = 0;
-
-  for grapheme in UnicodeSegmentation::graphemes(text, true) {
-    let width = grapheme_width(grapheme);
-    let end_col = col + width;
-
-    if end_col <= visible_start {
-      col = end_col;
-      continue;
-    }
-    if col >= visible_end {
-      break;
-    }
-
-    result.push_str(grapheme);
-    col = end_col;
-  }
-
-  result.into()
-}
-
-fn row_display_width(text: &str) -> usize {
-  UnicodeSegmentation::graphemes(text, true)
-    .map(grapheme_width)
-    .sum()
-}
-
-#[derive(Debug)]
-struct RowDiff {
-  next_visible_rows: Vec<RetainedRow>,
-  retained_rows:     Vec<RowMove>,
-  changed_rows:      Vec<RenderRow>,
-  removed_rows:      Vec<RowId>,
-  damage:            Damage,
-}
-
-fn diff_rows(
-  state: &mut SurfaceState,
-  next_rows: Vec<BuiltRow>,
-  force_full: bool,
-  _viewport: Viewport,
-) -> RowDiff {
-  let mut previous = state
-    .visible_rows
-    .drain(..)
-    .map(|row| (row.key.clone(), row))
-    .collect::<HashMap<_, _>>();
-
-  let mut retained_rows = Vec::new();
-  let mut changed_rows = Vec::new();
-  let mut removed_rows = Vec::new();
-  let mut next_visible_rows = Vec::with_capacity(next_rows.len());
-  let mut damaged_rows = Vec::new();
-
-  for built in next_rows {
-    if let Some(previous_row) = previous.remove(&built.key) {
-      let content_changed = previous_row.row.text != built.text;
-      let moved = previous_row.row.placement != built.placement;
-      let generation = if content_changed {
-        previous_row.row.generation.wrapping_add(1)
-      } else {
-        previous_row.row.generation
-      };
-
-      let row = RenderRow {
-        id: previous_row.row.id,
-        generation,
-        placement: built.placement,
-        text: built.text,
-      };
-      let metadata = built
-        .metadata
-        .into_row_metadata(row.id, row.placement.surface_row);
-
-      if !force_full {
-        if content_changed {
-          damaged_rows.push(previous_row.row.placement.surface_row);
-          damaged_rows.push(row.placement.surface_row);
-          changed_rows.push(row.clone());
-        } else if moved {
-          damaged_rows.push(previous_row.row.placement.surface_row);
-          damaged_rows.push(row.placement.surface_row);
-          retained_rows.push(RowMove {
-            id:   row.id,
-            from: Some(previous_row.row.placement),
-            to:   row.placement,
-          });
-        }
-      }
-
-      next_visible_rows.push(RetainedRow {
-        key: built.key,
-        row,
-        metadata,
-      });
-    } else {
-      let row = RenderRow {
-        id:         next_row_id(state),
-        generation: 1,
-        placement:  built.placement,
-        text:       built.text,
-      };
-      let metadata = built
-        .metadata
-        .into_row_metadata(row.id, row.placement.surface_row);
-
-      if !force_full {
-        damaged_rows.push(row.placement.surface_row);
-        changed_rows.push(row.clone());
-      }
-
-      next_visible_rows.push(RetainedRow {
-        key: built.key,
-        row,
-        metadata,
-      });
-    }
-  }
-
-  if !force_full {
-    for removed in previous.into_values() {
-      damaged_rows.push(removed.row.placement.surface_row);
-      removed_rows.push(removed.row.id);
-    }
-  }
-
-  let damage = if force_full {
-    Damage::full(next_visible_rows.len())
-  } else {
-    Damage::from_rows(damaged_rows)
-  };
-
-  RowDiff {
-    next_visible_rows,
-    retained_rows,
-    changed_rows,
-    removed_rows,
-    damage,
-  }
-}
-
-fn next_row_id(state: &mut SurfaceState) -> RowId {
-  let id = NonZeroU64::new(state.next_row_id).expect("row ids start at one");
-  state.next_row_id = state.next_row_id.wrapping_add(1).max(1);
-  RowId::from_non_zero(id)
-}
-
-fn rebuild_document_layout_cache(
-  text: RopeSlice<'_>,
-  format: &TextFormat,
-  annotations: &TextAnnotations,
-  widgets: &[BlockWidget],
-  measurements: SurfaceMeasurements,
-  text_revision: u64,
-  wrap_width: usize,
-) -> DocumentLayoutCache {
-  let mut formatter = DocumentFormatter::new(text, format, wrap_width, annotations);
-  let mut virtual_ordinals = BTreeMap::new();
-  let mut rows = Vec::new();
-  let mut current = None::<RowBuilder>;
-
-  while let Some(grapheme) = formatter.next() {
-    let visual_row = grapheme.visual_pos.row;
-
-    if current
-      .as_ref()
-      .is_some_and(|row| row.visual_row != visual_row)
-    {
-      if let Some(row) = current.take() {
-        rows.push(row.into_cached_row(&text, &mut virtual_ordinals));
-      }
-    }
-
-    if current.is_none() {
-      current = Some(RowBuilder::new(
-        visual_row,
-        grapheme.char_idx,
-        grapheme.line_idx,
-      ));
-    }
-
-    current.as_mut().unwrap().push(&grapheme);
-
-    if grapheme.source.is_eof() {
-      break;
-    }
-  }
-
-  if let Some(row) = current.take() {
-    rows.push(row.into_cached_row(&text, &mut virtual_ordinals));
-  }
-
-  if rows.is_empty() {
-    rows.push(CachedLayoutRow {
-      key:         RowKey::Document {
-        line_idx:       0,
-        first_doc_char: 0,
-      },
-      text:        Tendril::new(),
-      anchor_line: 0,
-      metadata:    CachedRowMetadata {
-        kind:                 RowKind::Document,
-        doc_line:             Some(0),
-        starts_logical_line:  true,
-        wrapped_continuation: false,
-      },
-    });
-  }
-
-  let (rows, widget_layouts) = insert_widget_rows(
-    rows,
-    widgets,
-    measurements,
-    text.len_lines().saturating_sub(1),
-  );
-
-  DocumentLayoutCache {
-    text_revision: Some(text_revision),
-    wrap_width,
-    rows,
-    widget_layouts,
-  }
-}
-
-fn build_visible_rows(
-  cache: &DocumentLayoutCache,
-  viewport: Viewport,
-  measurements: SurfaceMeasurements,
-) -> Vec<BuiltRow> {
-  if viewport.row_count == 0 {
-    return Vec::new();
-  }
-
-  let end = viewport
-    .first_row
-    .saturating_add(viewport.row_count)
-    .min(cache.rows.len());
-
-  cache.rows[viewport.first_row.min(cache.rows.len())..end]
-    .iter()
-    .enumerate()
-    .map(|(surface_row, row)| {
-      BuiltRow {
-        key:       row.key.clone(),
-        placement: RowPlacement::new(
-          surface_row,
-          surface_row as u32 * measurements.row_height_px,
-          measurements.row_height_px,
-        ),
-        text:      crop_row_text(&row.text, viewport),
-        metadata:  row.metadata,
-      }
-    })
-    .collect()
-}
-
-fn widget_row_span(height_px: u32, row_height_px: u32) -> usize {
-  let row_height_px = row_height_px.max(1);
-  height_px.max(1).div_ceil(row_height_px) as usize
-}
-
-fn insert_widget_rows(
-  rows: Vec<CachedLayoutRow>,
-  widgets: &[BlockWidget],
-  measurements: SurfaceMeasurements,
-  last_doc_line: usize,
-) -> (Vec<CachedLayoutRow>, Vec<CachedWidgetLayout>) {
-  if widgets.is_empty() {
-    return (rows, Vec::new());
-  }
-
-  let mut rows_with_widgets = Vec::with_capacity(rows.len() + widgets.len());
-  let mut widget_layouts = Vec::with_capacity(widgets.len());
-  let mut next_widget = 0;
-
-  for (index, row) in rows.iter().cloned().enumerate() {
-    let anchor_line = row.anchor_line;
-    rows_with_widgets.push(row);
-
-    let is_last_row_for_line = rows
-      .get(index + 1)
-      .is_none_or(|next| next.anchor_line != anchor_line);
-    if !is_last_row_for_line {
-      continue;
-    }
-
-    while let Some(widget) = widgets.get(next_widget) {
-      let widget_line = widget.after_line.min(last_doc_line);
-      if widget_line != anchor_line {
-        break;
-      }
-
-      let start_row = rows_with_widgets.len();
-      let row_span = widget_row_span(widget.measured_height_px, measurements.row_height_px);
-      widget_layouts.push(CachedWidgetLayout {
-        widget_id: widget.id,
-        start_row,
-        row_span,
-        width_px: widget.measured_width_px,
-        height_px: widget.measured_height_px.max(1),
-      });
-
-      for fragment in 0..row_span {
-        rows_with_widgets.push(CachedLayoutRow {
-          key: RowKey::Widget {
-            widget_id: widget.id,
-            fragment:  fragment as u32,
-          },
-          text: Tendril::new(),
-          anchor_line,
-          metadata: CachedRowMetadata {
-            kind:                 RowKind::Widget {
-              widget_id: widget.id,
-              fragment:  fragment as u32,
-            },
-            doc_line:             Some(anchor_line),
-            starts_logical_line:  fragment == 0,
-            wrapped_continuation: false,
-          },
-        });
-      }
-
-      next_widget += 1;
-    }
-  }
-
-  while let Some(widget) = widgets.get(next_widget) {
-    let anchor_line = widget.after_line.min(last_doc_line);
-    let start_row = rows_with_widgets.len();
-    let row_span = widget_row_span(widget.measured_height_px, measurements.row_height_px);
-    widget_layouts.push(CachedWidgetLayout {
-      widget_id: widget.id,
-      start_row,
-      row_span,
-      width_px: widget.measured_width_px,
-      height_px: widget.measured_height_px.max(1),
-    });
-
-    for fragment in 0..row_span {
-      rows_with_widgets.push(CachedLayoutRow {
-        key: RowKey::Widget {
-          widget_id: widget.id,
-          fragment:  fragment as u32,
-        },
-        text: Tendril::new(),
-        anchor_line,
-        metadata: CachedRowMetadata {
-          kind:                 RowKind::Widget {
-            widget_id: widget.id,
-            fragment:  fragment as u32,
-          },
-          doc_line:             Some(anchor_line),
-          starts_logical_line:  fragment == 0,
-          wrapped_continuation: false,
-        },
-      });
-    }
-
-    next_widget += 1;
-  }
-
-  (rows_with_widgets, widget_layouts)
-}
-
-fn build_widget_placements(
-  cache: &DocumentLayoutCache,
-  viewport: Viewport,
-  measurements: SurfaceMeasurements,
-) -> Vec<WidgetPlacement> {
-  let viewport_end = viewport.first_row.saturating_add(viewport.row_count);
-  let viewport_width_px = viewport.wrap_width as i64 * measurements.cell_width_px as i64;
-  let x_px = -(viewport.first_col as i64 * measurements.cell_width_px as i64);
-
-  cache
-    .widget_layouts
-    .iter()
-    .filter_map(|widget| {
-      let widget_end = widget.start_row.saturating_add(widget.row_span);
-      let visible_start = widget.start_row.max(viewport.first_row);
-      let visible_end = widget_end.min(viewport_end);
-      if visible_start >= visible_end {
-        return None;
-      }
-      if x_px >= viewport_width_px || x_px + widget.width_px as i64 <= 0 {
-        return None;
-      }
-
-      Some(WidgetPlacement {
-        widget_id: widget.widget_id,
-        surface_row: visible_start - viewport.first_row,
-        row_span: visible_end - visible_start,
-        x_px,
-        y_px: (widget.start_row as i64 - viewport.first_row as i64)
-          * measurements.row_height_px as i64,
-        width_px: widget.width_px,
-        height_px: widget.height_px,
-      })
-    })
-    .collect()
-}
-
-fn build_selection_spans(
-  text: RopeSlice<'_>,
-  format: &TextFormat,
-  annotations: &TextAnnotations,
-  selection: Option<&Selection>,
-  viewport: Viewport,
-  measurements: SurfaceMeasurements,
-) -> Vec<SelectionSpan> {
-  let Some(selection) = selection else {
-    return Vec::new();
-  };
-
-  let mut spans: Vec<SelectionSpan> = Vec::new();
-  let mut formatter = DocumentFormatter::new(text, format, viewport.wrap_width, annotations);
-
-  for grapheme in &mut formatter {
-    if grapheme.source.is_eof() {
-      break;
-    }
-    if grapheme.is_virtual() {
-      continue;
-    }
-
-    let visual_row = grapheme.visual_pos.row;
-    if visual_row < viewport.first_row || visual_row >= viewport.first_row + viewport.row_count {
-      continue;
-    }
-    if grapheme.raw == Grapheme::Newline {
-      continue;
-    }
-
-    let Some(cursor) = selection
-      .iter()
-      .find(|cursor| !cursor.range.is_empty() && cursor.range.contains(grapheme.char_idx))
-    else {
-      continue;
-    };
-
-    let Some((start_col, end_col)) = project_visible_cols(
-      grapheme.visual_pos.col,
-      grapheme.visual_pos.col + grapheme.width(),
-      viewport,
-    ) else {
-      continue;
-    };
-
-    let span = SelectionSpan {
-      cursor_id: cursor.id,
-      surface_row: visual_row - viewport.first_row,
-      start_col,
-      end_col,
-      x_px: start_col as u32 * measurements.cell_width_px,
-      width_px: (end_col - start_col) as u32 * measurements.cell_width_px,
-    };
-
-    if let Some(last) = spans.last_mut()
-      && last.cursor_id == span.cursor_id
-      && last.surface_row == span.surface_row
-      && last.end_col == span.start_col
-    {
-      last.end_col = span.end_col;
-      last.width_px = (last.end_col - last.start_col) as u32 * measurements.cell_width_px;
-    } else {
-      spans.push(span);
-    }
-  }
-
-  spans
-}
-
-fn build_cursor_placements(
-  text: RopeSlice<'_>,
-  format: &TextFormat,
-  annotations: &TextAnnotations,
-  selection: Option<&Selection>,
-  viewport: Viewport,
-  measurements: SurfaceMeasurements,
-) -> Vec<CursorPlacement> {
-  let Some(selection) = selection else {
-    return Vec::new();
-  };
-
-  let mut cursors = Vec::new();
-  for cursor in selection.iter() {
-    let char_idx = cursor.range.cursor(text);
-    let Some(pos) = super::visual_position::visual_pos_at_char(
-      text,
-      format,
-      viewport.wrap_width,
-      annotations,
-      char_idx,
-    ) else {
-      continue;
-    };
-
-    if pos.row < viewport.first_row || pos.row >= viewport.first_row + viewport.row_count {
-      continue;
-    }
-    if pos.col < viewport.first_col || pos.col >= viewport.first_col + viewport.wrap_width {
-      continue;
-    }
-
-    let col = pos.col - viewport.first_col;
-    let surface_row = pos.row - viewport.first_row;
-    cursors.push(CursorPlacement {
-      cursor_id: cursor.id,
-      surface_row,
-      col,
-      x_px: col as u32 * measurements.cell_width_px,
-      y_px: surface_row as u32 * measurements.row_height_px,
-      height_px: measurements.row_height_px,
-    });
-  }
-
-  cursors
-}
-
-fn build_row_metadata_delta(
-  old: &[RowMetadata],
-  new: &[RowMetadata],
-  force_full: bool,
-) -> Option<RowMetadataDelta> {
-  if force_full {
-    return Some(RowMetadataDelta { rows: new.to_vec() });
-  }
-
-  let previous = old
-    .iter()
-    .map(|metadata| (metadata.row_id, metadata))
-    .collect::<HashMap<_, _>>();
-
-  let rows = new
-    .iter()
-    .filter(|metadata| {
-      previous
-        .get(&metadata.row_id)
-        .is_none_or(|old| *old != *metadata)
-    })
-    .cloned()
-    .collect::<Vec<_>>();
-
-  (!rows.is_empty()).then_some(RowMetadataDelta { rows })
-}
-
-fn damage_for_row_metadata_change(old: &[RowMetadata], new: &[RowMetadata]) -> Damage {
-  Damage::from_rows(
-    old
-      .iter()
-      .map(|metadata| metadata.surface_row)
-      .chain(new.iter().map(|metadata| metadata.surface_row)),
-  )
-}
-
-fn damage_for_selection_change(old: &[SelectionSpan], new: &[SelectionSpan]) -> Damage {
-  Damage::from_rows(
-    old
-      .iter()
-      .map(|span| span.surface_row)
-      .chain(new.iter().map(|span| span.surface_row)),
-  )
-}
-
-fn damage_for_cursor_change(old: &[CursorPlacement], new: &[CursorPlacement]) -> Damage {
-  Damage::from_rows(
-    old
-      .iter()
-      .map(|cursor| cursor.surface_row)
-      .chain(new.iter().map(|cursor| cursor.surface_row)),
-  )
-}
-
-fn damage_for_syntax_change(old: &[SyntaxSpan], new: &[SyntaxSpan]) -> Damage {
-  Damage::from_rows(
-    old
-      .iter()
-      .map(|span| span.surface_row)
-      .chain(new.iter().map(|span| span.surface_row)),
-  )
-}
-
-fn widget_visible_rows(widget: &WidgetPlacement) -> impl Iterator<Item = usize> {
-  widget.surface_row..widget.surface_row + widget.row_span
-}
-
-fn damage_for_widget_change(old: &[WidgetPlacement], new: &[WidgetPlacement]) -> Damage {
-  Damage::from_rows(
-    old
-      .iter()
-      .flat_map(widget_visible_rows)
-      .chain(new.iter().flat_map(widget_visible_rows)),
-  )
 }
 
 #[cfg(test)]
@@ -1315,7 +591,7 @@ mod tests {
   }
 
   #[test]
-  fn first_frame_populates_doc_wide_layout_cache() {
+  fn first_frame_populates_doc_wide_visible_layout() {
     let rope = Rope::from("alpha beta gamma delta");
     let mut format = TextFormat::default();
     format.soft_wrap = true;
@@ -1327,9 +603,9 @@ mod tests {
 
     let _ = surface.render_frame(rope.slice(..), 1, request(0, 1, 5, None));
 
-    assert_eq!(surface.state.layout_cache.text_revision, Some(1));
-    assert_eq!(surface.state.layout_cache.wrap_width, 5);
-    assert!(surface.state.layout_cache.rows.len() > 1);
+    assert_eq!(surface.state.visible_layout.text_revision, Some(1));
+    assert_eq!(surface.state.visible_layout.wrap_width, 5);
+    assert!(surface.state.visible_layout.rows.len() > 1);
   }
 
   #[test]
@@ -1490,17 +766,13 @@ mod tests {
 
     let initial = surface.render_frame(rope.slice(..), 1, request(0, 2, 20, None));
     let mut annotations = TextAnnotations::default();
-    annotations.add_virtual_line(
-      crate::render::VirtualLineSpec::after(0)
-        .text("ghost")
-        .single_line(),
-    );
+    annotations.add_inline_text(0, ">>").unwrap();
     surface.set_text_annotations(annotations);
 
     let delta = surface.render_frame(
       rope.slice(..),
       1,
-      request(0, 3, 20, Some(initial.generation)),
+      request(0, 2, 20, Some(initial.generation)),
     );
 
     assert!(delta.full);

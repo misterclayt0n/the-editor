@@ -19,8 +19,11 @@ use the_lib::{
   document::Document,
   registers::Registers,
   render::{
+    PresentUpdate,
     RenderFrameDelta,
     RenderSurface,
+    RetainedFrame,
+    SurfaceFrame,
     SurfaceId,
     TextAnnotations,
     TextFormat,
@@ -356,23 +359,42 @@ impl RuntimeSession {
     surface: SurfaceHandle,
     since_generation: Option<u64>,
   ) -> RuntimeResult<RenderFrameDelta> {
+    let registry = self.prepare_surface_render(surface)?;
+    self.with_surface_document_mut(surface, move |surface, document| {
+      surface.raw_frame_delta(document, Some(registry.as_ref()), since_generation)
+    })
+  }
+
+  pub fn snapshot_surface(&mut self, surface: SurfaceHandle) -> RuntimeResult<SurfaceFrame> {
+    let registry = self.prepare_surface_render(surface)?;
+    self.with_surface_document_mut(surface, move |surface, document| {
+      surface.snapshot(document, Some(registry.as_ref()))
+    })
+  }
+
+  pub fn present_surface(
+    &mut self,
+    surface: SurfaceHandle,
+    retained: &mut RetainedFrame,
+  ) -> RuntimeResult<PresentUpdate> {
+    let registry = self.prepare_surface_render(surface)?;
+    self.with_surface_document_mut(surface, move |surface, document| {
+      surface.present(document, Some(registry.as_ref()), retained)
+    })
+  }
+
+  fn prepare_surface_render(
+    &mut self,
+    surface: SurfaceHandle,
+  ) -> RuntimeResult<Arc<the_lib::syntax::LanguageRegistry>> {
     let document_handle = self
       .surfaces
       .get(&surface)
       .ok_or(RuntimeError::UnknownSurface(surface))?
       .document;
-    let interest = self
-      .surfaces
-      .get(&surface)
-      .ok_or(RuntimeError::UnknownSurface(surface))?
-      .surface
-      .syntax_interest(
-        &self
-          .documents
-          .get(&document_handle)
-          .ok_or(RuntimeError::UnknownDocument(document_handle))?
-          .document,
-      );
+    let interest = self.with_surface_document_mut(surface, |surface, document| {
+      surface.syntax_interest(document)
+    })?;
 
     self
       .syntax_scheduler
@@ -384,10 +406,7 @@ impl RuntimeSession {
       Duration::from_millis(2),
     )?;
 
-    let registry = self.syntax.registry_arc();
-    self.with_surface_document_mut(surface, move |surface, document| {
-      surface.render(document, Some(registry.as_ref()), since_generation)
-    })
+    Ok(self.syntax.registry_arc())
   }
 
   pub fn with_surface_document_mut<R>(

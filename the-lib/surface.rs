@@ -19,14 +19,21 @@ use crate::{
   render::{
     BlockWidget,
     FrameRequest,
+    PresentUpdate,
     RenderFrameDelta,
     RenderSurface,
+    RetainedFrame,
+    SurfaceFrame,
     SurfaceMeasurements,
     SyntaxSpan,
     TextAnnotations,
     TextFormat,
     Viewport,
-    visual_pos_at_char,
+    layout_index::{
+      LayoutIndex,
+      LayoutInputs,
+      TextChangeSummary,
+    },
   },
   selection::{
     CursorId,
@@ -93,6 +100,27 @@ struct VisibleSyntaxCache {
   spans:             Vec<SyntaxSpan>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SurfaceViewSpec {
+  pub viewport:     Viewport,
+  pub format:       TextFormat,
+  pub measurements: SurfaceMeasurements,
+  pub annotations:  TextAnnotations,
+  pub widgets:      Vec<BlockWidget>,
+}
+
+impl SurfaceViewSpec {
+  pub fn new(viewport: Viewport) -> Self {
+    Self {
+      viewport,
+      format: TextFormat::default(),
+      measurements: SurfaceMeasurements::default(),
+      annotations: TextAnnotations::default(),
+      widgets: Vec::new(),
+    }
+  }
+}
+
 #[derive(Debug)]
 pub struct Surface {
   selection:     Selection,
@@ -100,6 +128,7 @@ pub struct Surface {
   visual_goals:  VisualGoals,
   history:       History,
   viewport:      Viewport,
+  layout_index:  LayoutIndex,
   render:        RenderSurface,
   syntax_cache:  VisibleSyntaxCache,
 }
@@ -126,6 +155,7 @@ impl Surface {
       visual_goals: VisualGoals::new(),
       history,
       viewport,
+      layout_index: LayoutIndex::default(),
       render,
       syntax_cache: VisibleSyntaxCache::default(),
     })
@@ -158,20 +188,33 @@ impl Surface {
     }
   }
 
+  pub fn view_spec(&self) -> SurfaceViewSpec {
+    SurfaceViewSpec {
+      viewport: self.viewport,
+      format: self.render.text_format().clone(),
+      measurements: self.render.measurements(),
+      annotations: self.render.text_annotations().clone(),
+      widgets: self.render.widgets().to_vec(),
+    }
+  }
+
+  pub fn set_view(&mut self, spec: SurfaceViewSpec) {
+    self.set_viewport(spec.viewport);
+    self.set_text_format(spec.format);
+    self.set_measurements(spec.measurements);
+    self.set_text_annotations(spec.annotations);
+    self.set_widgets(spec.widgets);
+  }
+
   pub fn render_surface(&self) -> &RenderSurface {
     &self.render
   }
 
-  pub fn syntax_interest(&self, document: &Document) -> SurfaceSyntaxInterest {
+  pub fn syntax_interest(&mut self, document: &Document) -> SurfaceSyntaxInterest {
     let text = document.text().slice(..);
-    let char_range = crate::render::syntax_projection::viewport_char_range(
-      text,
-      self.render.text_format(),
-      self.render.text_annotations(),
-      self.viewport,
-      8,
-    );
-    let byte_range = text.char_to_byte(char_range.start)..text.char_to_byte(char_range.end);
+    let (char_range, byte_range) = self
+      .render
+      .visible_document_ranges(text, document.revision(), self.viewport, &mut self.layout_index);
 
     SurfaceSyntaxInterest {
       viewport: self.viewport,
@@ -193,12 +236,20 @@ impl Surface {
   }
 
   pub fn set_text_format(&mut self, format: TextFormat) {
+    if self.render.text_format() == &format {
+      return;
+    }
     self.render.set_text_format(format);
+    self.layout_index.invalidate_all();
     self.invalidate_visible_syntax_cache();
   }
 
   pub fn set_text_format_reconcile_viewport(&mut self, document: &Document, format: TextFormat) {
+    if self.render.text_format() == &format {
+      return;
+    }
     self.render.set_text_format(format.clone());
+    self.layout_index.invalidate_all();
     self.invalidate_visible_syntax_cache();
 
     if format.soft_wrap {
@@ -213,7 +264,11 @@ impl Surface {
   }
 
   pub fn set_text_annotations(&mut self, annotations: TextAnnotations) {
+    if self.render.text_annotations() == &annotations {
+      return;
+    }
     self.render.set_text_annotations(annotations);
+    self.layout_index.invalidate_all();
     self.invalidate_visible_syntax_cache();
   }
 
@@ -222,7 +277,11 @@ impl Surface {
   }
 
   pub fn set_measurements(&mut self, measurements: SurfaceMeasurements) {
+    if self.render.measurements() == measurements {
+      return;
+    }
     self.render.set_measurements(measurements);
+    self.layout_index.invalidate_all();
     self.invalidate_visible_syntax_cache();
   }
 
@@ -231,7 +290,11 @@ impl Surface {
   }
 
   pub fn set_widgets(&mut self, widgets: Vec<BlockWidget>) {
+    if self.render.widgets() == widgets.as_slice() {
+      return;
+    }
     self.render.set_widgets(widgets);
+    self.layout_index.invalidate_all();
     self.invalidate_visible_syntax_cache();
   }
 
@@ -279,7 +342,30 @@ impl Surface {
     self.preflight_edit(document, &edit)?;
 
     let before = document.text().clone();
+    let change_extent = summarize_text_change(edit.transaction.changes().changes()).unwrap_or(
+      TextChangeExtent {
+        start_old_char: before.len_chars(),
+        end_old_char: before.len_chars(),
+        end_new_char: before.len_chars(),
+      },
+    );
+    let start_line = before
+      .slice(..)
+      .char_to_line(change_extent.start_old_char.min(before.len_chars()));
+    let old_end_line = before
+      .slice(..)
+      .char_to_line(change_extent.end_old_char.min(before.len_chars()))
+      .max(start_line);
     document.apply_transaction(&edit.transaction)?;
+    let new_text = document.text().slice(..);
+    let new_end_line = new_text
+      .char_to_line(change_extent.end_new_char.min(new_text.len_chars()))
+      .max(start_line.min(new_text.len_lines().saturating_sub(1)));
+    self.layout_index.note_text_change(TextChangeSummary {
+      start_line: start_line.min(new_text.len_lines().saturating_sub(1)),
+      old_end_line,
+      new_end_line,
+    });
     self
       .history
       .commit(&before, edit.transaction.clone(), edit.selection.clone())
@@ -295,8 +381,25 @@ impl Surface {
   }
 
   pub fn apply_selection(&mut self, document: &Document, selection: Selection) -> Result<()> {
+    self.apply_selection_with_reveal(document, selection, RevealMode::Minimal)
+  }
+
+  pub fn apply_selection_without_reveal(
+    &mut self,
+    document: &Document,
+    selection: Selection,
+  ) -> Result<()> {
+    self.apply_selection_with_reveal(document, selection, RevealMode::None)
+  }
+
+  pub fn apply_selection_with_reveal(
+    &mut self,
+    document: &Document,
+    selection: Selection,
+    reveal: RevealMode,
+  ) -> Result<()> {
     validate_selection_bounds(&selection, document.text().len_chars())?;
-    self.finish_selection_update(document, selection, VisualGoals::new(), RevealMode::Minimal);
+    self.finish_selection_update(document, selection, VisualGoals::new(), reveal);
     Ok(())
   }
 
@@ -349,6 +452,7 @@ impl Surface {
     for transaction in &jump.transactions {
       document.apply_transaction(transaction)?;
     }
+    self.layout_index.invalidate_all();
     self.history.apply_jump(&jump)?;
 
     self.finish_selection_update(
@@ -365,14 +469,19 @@ impl Surface {
       return;
     }
 
-    let char_idx = self.primary_range().cursor(document.text().slice(..));
-    let Some(position) = visual_pos_at_char(
-      document.text().slice(..),
-      self.render.text_format(),
-      self.viewport.wrap_width,
-      self.render.text_annotations(),
-      char_idx,
-    ) else {
+    let text = document.text().slice(..);
+    let char_idx = self.primary_range().cursor(text);
+    let render = &self.render;
+    let inputs = LayoutInputs {
+      text,
+      text_revision: document.revision(),
+      format: render.text_format(),
+      wrap_width: self.viewport.wrap_width,
+      annotations: render.text_annotations(),
+      widgets: render.widgets(),
+      measurements: render.measurements(),
+    };
+    let Some(position) = self.layout_index.position_for_char(inputs, char_idx) else {
       return;
     };
 
@@ -393,7 +502,9 @@ impl Surface {
           }
         }
 
-        if self.viewport.wrap_width > 0 {
+        if self.render.text_format().soft_wrap {
+          self.viewport.first_col = 0;
+        } else if self.viewport.wrap_width > 0 {
           if position.col < self.viewport.first_col {
             self.viewport.first_col = position.col;
           } else {
@@ -411,11 +522,54 @@ impl Surface {
         if self.viewport.row_count > 0 {
           self.viewport.first_row = position.row.saturating_sub(self.viewport.row_count / 2);
         }
-        if self.viewport.wrap_width > 0 {
+        if self.render.text_format().soft_wrap {
+          self.viewport.first_col = 0;
+        } else if self.viewport.wrap_width > 0 {
           self.viewport.first_col = position.col.saturating_sub(self.viewport.wrap_width / 2);
         }
       },
     }
+  }
+
+  pub fn raw_frame_delta(
+    &mut self,
+    document: &Document,
+    syntax_registry: Option<&LanguageRegistry>,
+    since_generation: Option<u64>,
+  ) -> RenderFrameDelta {
+    self.sync_visible_syntax(document, syntax_registry);
+    self.render.render_frame_with_index(
+      document.text().slice(..),
+      document.revision(),
+      FrameRequest {
+        viewport: self.viewport,
+        since_generation,
+      },
+      &mut self.layout_index,
+    )
+  }
+
+  pub fn snapshot(
+    &mut self,
+    document: &Document,
+    syntax_registry: Option<&LanguageRegistry>,
+  ) -> SurfaceFrame {
+    let delta = self.raw_frame_delta(document, syntax_registry, None);
+    SurfaceFrame::from(&delta)
+  }
+
+  pub fn present(
+    &mut self,
+    document: &Document,
+    syntax_registry: Option<&LanguageRegistry>,
+    retained: &mut RetainedFrame,
+  ) -> PresentUpdate {
+    let delta = self.raw_frame_delta(
+      document,
+      syntax_registry,
+      (!retained.is_empty()).then_some(retained.generation()),
+    );
+    retained.apply_delta(&delta)
   }
 
   pub fn render(
@@ -424,15 +578,7 @@ impl Surface {
     syntax_registry: Option<&LanguageRegistry>,
     since_generation: Option<u64>,
   ) -> RenderFrameDelta {
-    self.sync_visible_syntax(document, syntax_registry);
-    self.render.render_frame(
-      document.text().slice(..),
-      document.revision(),
-      FrameRequest {
-        viewport: self.viewport,
-        since_generation,
-      },
-    )
+    self.raw_frame_delta(document, syntax_registry, since_generation)
   }
 
   fn finish_selection_update(
@@ -472,7 +618,15 @@ impl Surface {
     }
 
     let spans = syntax_registry
-      .and_then(|registry| project_visible_syntax(document, &self.render, self.viewport, registry))
+      .and_then(|registry| {
+        project_visible_syntax(
+          document,
+          &mut self.render,
+          &mut self.layout_index,
+          self.viewport,
+          registry,
+        )
+      })
       .unwrap_or_default();
 
     self.syntax_cache = VisibleSyntaxCache {
@@ -541,6 +695,48 @@ impl Surface {
   }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TextChangeExtent {
+  start_old_char: usize,
+  end_old_char:   usize,
+  end_new_char:   usize,
+}
+
+fn summarize_text_change(changes: &[crate::transaction::Operation]) -> Option<TextChangeExtent> {
+  let mut old_char = 0usize;
+  let mut new_char = 0usize;
+  let mut start_old = None;
+  let mut end_old = 0usize;
+  let mut end_new = 0usize;
+
+  for change in changes {
+    match change {
+      crate::transaction::Operation::Retain(n) => {
+        old_char += n;
+        new_char += n;
+      },
+      crate::transaction::Operation::Delete(n) => {
+        start_old.get_or_insert(old_char);
+        old_char += n;
+        end_old = old_char;
+        end_new = new_char;
+      },
+      crate::transaction::Operation::Insert(text) => {
+        start_old.get_or_insert(old_char);
+        new_char += text.chars().count();
+        end_old = old_char;
+        end_new = new_char;
+      },
+    }
+  }
+
+  Some(TextChangeExtent {
+    start_old_char: start_old?,
+    end_old_char: end_old,
+    end_new_char: end_new,
+  })
+}
+
 fn validate_selection_bounds(selection: &Selection, len: usize) -> Result<()> {
   if selection
     .ranges()
@@ -554,39 +750,22 @@ fn validate_selection_bounds(selection: &Selection, len: usize) -> Result<()> {
 
 fn project_visible_syntax(
   document: &Document,
-  render: &RenderSurface,
+  render: &mut RenderSurface,
+  layout_index: &mut LayoutIndex,
   viewport: Viewport,
   registry: &LanguageRegistry,
 ) -> Option<Vec<SyntaxSpan>> {
   let state = document.active_syntax()?;
   let syntax = state.syntax();
   let text = document.text().slice(..);
-  let char_range = crate::render::syntax_projection::viewport_char_range(
-    text,
-    render.text_format(),
-    render.text_annotations(),
-    viewport,
-    8,
-  );
-
-  if char_range.is_empty() {
+  let (_char_range, byte_range) =
+    render.visible_document_ranges(text, document.revision(), viewport, layout_index);
+  if byte_range.is_empty() {
     return Some(Vec::new());
   }
 
-  let byte_start = text.char_to_byte(char_range.start);
-  let byte_end = text.char_to_byte(char_range.end);
-  let runs = syntax.highlight_runs_in_byte_range(text, registry, byte_start..byte_end);
-
-  Some(
-    crate::render::syntax_projection::project_visible_syntax_spans(
-      text,
-      render.text_format(),
-      render.text_annotations(),
-      &runs,
-      viewport,
-      render.measurements(),
-    ),
-  )
+  let runs = syntax.highlight_runs_in_byte_range(text, registry, byte_range);
+  Some(render.project_syntax_runs(text, document.revision(), viewport, &runs, layout_index))
 }
 
 #[cfg(test)]

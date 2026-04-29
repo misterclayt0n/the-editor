@@ -140,11 +140,11 @@ If surface-level scroll state later diverges from raw render input, a dedicated 
 
 That means the following remain per-surface retained inputs/state:
 - `TextFormat`
-- `TextAnnotations`
+- narrowed `TextAnnotations` for inline inserted text and grapheme substitutions only
 - visible syntax baseline/enrichment caches
 - widgets
 - measurements
-- retained rows/layers/cache/dirtiness
+- retained visible-window rows/layers/checkpoints/dirtiness
 
 ---
 
@@ -229,14 +229,14 @@ Not necessarily exactly that, but close.
 
 ### Why own `RenderSurface` directly?
 Because render state is already clearly per-surface state:
-- retained row identity
-- retained layout cache
+- retained visible-row identity
+- visible-window checkpoint/origin caches
 - selection/cursor/syntax layers
 - widgets
 - measurements
 - viewport-shaped rendering behavior
 
-Keeping `RenderSurface` as a sibling peer object would create fake separation and more synchronization glue.
+`RenderSurface` should be viewport-first, not a whole-document layout owner. Keeping it inside `Surface` keeps reveal, viewport state, and retained visible rendering close to the session object that actually uses them.
 
 ---
 
@@ -375,7 +375,7 @@ That means `Surface` should likely expose things like:
 
 This makes `Surface` feel like the real per-view object rather than forcing callers to juggle two peer objects for one view.
 
-`RenderSurface` may remain public and focused, but it should increasingly feel like a subsystem.
+`RenderSurface` may remain public and focused, but it should increasingly feel like a viewport-first retained visible-window subsystem.
 
 ---
 
@@ -396,7 +396,7 @@ Instead the flow should be:
 2. runtime/surface observe that syntax generations changed
 3. `Surface` pulls the visible syntax it needs for its viewport
 4. `Surface` updates its retained visible syntax cache
-5. `RenderSurface` consumes the visible cache as syntax-agnostic layer payload
+5. `RenderSurface` consumes the visible cache as syntax-agnostic layer payload projected through the current visible layout
 
 ### Demand reporting
 `Surface` should also be the object that reports syntax interest back to runtime.

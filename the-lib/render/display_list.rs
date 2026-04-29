@@ -109,10 +109,6 @@ pub struct RowMove {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RowKind {
   Document,
-  Virtual {
-    anchor_line: usize,
-    ordinal:     u32,
-  },
   Widget {
     widget_id: WidgetId,
     fragment:  u32,

@@ -35,6 +35,7 @@ use crossterm::{
     Color,
     Print,
     SetAttribute,
+    SetBackgroundColor,
     SetForegroundColor,
   },
   terminal::{
@@ -77,9 +78,18 @@ use the_lib::{
     move_up_visual,
   },
   render::{
+    CursorPlacement,
+    FrameRow,
+    PresentUpdate,
+    RetainedFrame,
+    RowKind,
+    RowMetadata,
+    SelectionSpan,
     SurfaceMeasurements,
+    SyntaxSpan,
+    TextAnnotations,
     Viewport,
-    visual_pos_at_char,
+    WidgetId,
   },
   search::{
     build_regex,
@@ -89,6 +99,7 @@ use the_lib::{
     CursorPick,
     Selection,
   },
+  surface::SurfaceViewSpec,
   syntax::IndentationHeuristic,
   transaction::{
     DeletionOverlapPolicy,
@@ -117,6 +128,53 @@ enum Mode {
   SaveAs { path: String },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RenderProfile {
+  Baseline,
+  Metadata,
+  Annotations,
+  Widgets,
+  FullStress,
+}
+
+impl RenderProfile {
+  fn next(self) -> Self {
+    match self {
+      Self::Baseline => Self::Metadata,
+      Self::Metadata => Self::Annotations,
+      Self::Annotations => Self::Widgets,
+      Self::Widgets => Self::FullStress,
+      Self::FullStress => Self::Baseline,
+    }
+  }
+
+  fn label(self) -> &'static str {
+    match self {
+      Self::Baseline => "baseline",
+      Self::Metadata => "metadata",
+      Self::Annotations => "annotations",
+      Self::Widgets => "widgets",
+      Self::FullStress => "full-stress",
+    }
+  }
+
+  fn show_metadata(self) -> bool {
+    !matches!(self, Self::Baseline)
+  }
+
+  fn show_inline_annotations(self) -> bool {
+    matches!(self, Self::Annotations | Self::FullStress)
+  }
+
+  fn show_substitutions(self) -> bool {
+    matches!(self, Self::Annotations | Self::FullStress)
+  }
+
+  fn show_widgets(self) -> bool {
+    matches!(self, Self::Widgets | Self::FullStress)
+  }
+}
+
 struct App {
   session:           RuntimeSession,
   document:          DocumentHandle,
@@ -125,10 +183,13 @@ struct App {
   mode:              Mode,
   status:            String,
   last_render:       Duration,
-  last_generation:   u64,
+  last_present:      PresentUpdate,
   transaction_count: u64,
+  render_view:       RetainedFrame,
+  render_profile:    RenderProfile,
 }
 
+#[cfg(test)]
 struct VisibleFrame {
   rows:        Vec<String>,
   syntax_rows: Vec<Vec<(usize, usize, Color)>>,
@@ -154,7 +215,10 @@ impl App {
     session
       .surface_mut(surface)
       .expect("surface must exist")
-      .set_measurements(SurfaceMeasurements::cell_grid(1, 1));
+      .set_view(SurfaceViewSpec {
+        measurements: SurfaceMeasurements::cell_grid(1, 1),
+        ..SurfaceViewSpec::new(viewport)
+      });
 
     Ok(Self {
       session,
@@ -164,11 +228,13 @@ impl App {
       mode: Mode::Normal,
       status: String::from(
         "Ctrl-Q quit · Ctrl-S save · Ctrl-Shift-S/F3 save as · Ctrl-Z/Y undo/redo · Ctrl-C/X/V \
-         copy/cut/paste · / search · F2 wrap · F6 stress",
+         copy/cut/paste · / search · F2 wrap · F6 stress · F7 render profile",
       ),
       last_render: Duration::ZERO,
-      last_generation: 0,
+      last_present: PresentUpdate::default(),
       transaction_count: 0,
+      render_view: RetainedFrame::default(),
+      render_profile: RenderProfile::Baseline,
     })
   }
 
@@ -228,7 +294,7 @@ impl App {
     let mut stdout = io::stdout();
 
     loop {
-      self.sync_viewport()?;
+      self.sync_view()?;
       self.draw(&mut stdout)?;
 
       let event = event::read()?;
@@ -246,15 +312,58 @@ impl App {
     Ok(())
   }
 
-  fn sync_viewport(&mut self) -> io::Result<()> {
+  fn sync_view(&mut self) -> io::Result<()> {
     let (_, (cols, rows)) = viewport_from_terminal()?;
     let row_count = rows.saturating_sub(self.footer_rows() as u16).max(1) as usize;
+    let metadata_cols = self.metadata_cols(cols as usize);
+    let profile = self.render_profile;
 
-    let surface = self.surface_mut();
-    let mut current = surface.viewport();
-    current.row_count = row_count;
-    current.wrap_width = cols.max(1) as usize;
-    surface.set_viewport(current);
+    let text = self.document().text().slice(..);
+    let last_doc_line = text.len_lines().saturating_sub(1);
+
+    let mut view = self.surface().view_spec();
+    view.viewport.row_count = row_count;
+    view.viewport.wrap_width = cols.saturating_sub(metadata_cols as u16).max(1) as usize;
+    view.viewport.first_col = if view.format.soft_wrap {
+      0
+    } else {
+      view.viewport.first_col
+    };
+
+    let mut annotations = TextAnnotations::default();
+    if profile.show_inline_annotations() {
+      annotations
+        .add_inline_text(0, "ⓘ ")
+        .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))?;
+    }
+    if profile.show_substitutions()
+      && let Some((char_idx, replacement)) = first_substitutable_char(text)
+    {
+      annotations
+        .add_grapheme_substitution_text(char_idx, replacement)
+        .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))?;
+    }
+    view.annotations = annotations;
+    view.widgets = if profile.show_widgets() {
+      vec![
+        the_lib::render::BlockWidget::after_line(
+          widget_id_top(),
+          0.min(last_doc_line),
+          view.viewport.wrap_width as u32,
+          2,
+        ),
+        the_lib::render::BlockWidget::after_line(
+          widget_id_bottom(),
+          last_doc_line,
+          view.viewport.wrap_width as u32,
+          1,
+        ),
+      ]
+    } else {
+      Vec::new()
+    };
+
+    self.surface_mut().set_view(view);
     Ok(())
   }
 
@@ -263,34 +372,39 @@ impl App {
     let prompt = self.prompt_line();
     let footer_rows = self.footer_rows() as u16;
     let editor_rows = rows.saturating_sub(footer_rows).max(1) as usize;
-    let frame = self.render_visible_frame(editor_rows)?;
+    let present = self.present()?;
 
-    queue!(stdout, Hide, MoveTo(0, 0), Clear(ClearType::All))?;
-
-    for (row_idx, line) in frame.rows.iter().enumerate() {
-      let y = row_idx as u16;
-      self.draw_visible_row(stdout, y, line, &frame.syntax_rows[row_idx])?;
-    }
+    queue!(stdout, Hide)?;
+    self.draw_editor_rows(stdout, cols as usize, editor_rows, present)?;
 
     let status = self.status_line(cols as usize);
     let status_row = rows.saturating_sub(footer_rows);
     queue!(
       stdout,
       MoveTo(0, status_row),
+      Clear(ClearType::CurrentLine),
       SetForegroundColor(Color::Black),
-      SetAttribute(Attribute::Reverse),
+      SetBackgroundColor(Color::Grey),
       Print(truncate_pad(&status, cols as usize)),
-      SetAttribute(Attribute::NoReverse),
+      SetBackgroundColor(Color::Reset),
       SetForegroundColor(Color::Reset),
+      SetAttribute(Attribute::Reset),
     )?;
 
     if let Some(prompt) = &prompt {
       queue!(
         stdout,
         MoveTo(0, rows.saturating_sub(1)),
+        Clear(ClearType::CurrentLine),
         SetForegroundColor(Color::Cyan),
         Print(truncate_pad(prompt, cols as usize)),
         SetForegroundColor(Color::Reset),
+      )?;
+    } else {
+      queue!(
+        stdout,
+        MoveTo(0, rows.saturating_sub(1)),
+        Clear(ClearType::CurrentLine)
       )?;
     }
 
@@ -306,34 +420,43 @@ impl App {
     Ok(())
   }
 
+  fn present(&mut self) -> Result<PresentUpdate, Box<dyn std::error::Error>> {
+    let start = Instant::now();
+    let present = self
+      .session
+      .present_surface(self.surface, &mut self.render_view)?;
+    self.last_render = start.elapsed();
+    self.last_present = present;
+    Ok(present)
+  }
+
+  #[cfg(test)]
   fn render_visible_frame(
     &mut self,
     editor_rows: usize,
   ) -> Result<VisibleFrame, Box<dyn std::error::Error>> {
-    let start = Instant::now();
-    let frame = self.session.render_surface(self.surface, None)?;
-    self.last_render = start.elapsed();
-    self.last_generation = frame.generation;
+    let _ = self.present()?;
 
     let mut visible = vec![String::new(); editor_rows];
-    for row in frame.changed_rows {
-      if row.placement.surface_row < visible.len() {
-        visible[row.placement.surface_row] = row.text.to_string();
-      }
-    }
-
     let mut syntax_rows = vec![Vec::new(); editor_rows];
-    if let Some(syntax) = frame.layers.syntax.as_ref() {
-      for span in &syntax.spans {
-        if span.surface_row < syntax_rows.len()
-          && let Some(color) = self.syntax_color(span.kind)
-        {
-          syntax_rows[span.surface_row].push((span.start_col, span.end_col, color));
-        }
+
+    for surface_row in 0..editor_rows {
+      if let Some(row) = self.render_view.row(surface_row) {
+        visible[surface_row] = self.row_text(row, usize::MAX);
       }
-    }
-    for spans in &mut syntax_rows {
-      spans.sort_by_key(|(start, end, _)| (*start, *end));
+
+      let mut row_syntax = self
+        .render_view
+        .syntax_spans(surface_row)
+        .into_iter()
+        .filter_map(|span| {
+          self
+            .syntax_color(span.kind)
+            .map(|color| (span.start_col, span.end_col, color))
+        })
+        .collect::<Vec<_>>();
+      row_syntax.sort_by_key(|(start, end, _)| (*start, *end));
+      syntax_rows[surface_row] = row_syntax;
     }
 
     Ok(VisibleFrame {
@@ -342,62 +465,303 @@ impl App {
     })
   }
 
-  fn draw_visible_row<W: Write>(
+  fn draw_editor_rows<W: Write>(
     &self,
     stdout: &mut W,
-    y: u16,
-    text: &str,
-    spans: &[(usize, usize, Color)],
+    cols: usize,
+    editor_rows: usize,
+    present: PresentUpdate,
   ) -> io::Result<()> {
-    queue!(stdout, MoveTo(0, y))?;
+    let metadata_cols = self.metadata_cols(cols);
+    let redraw = present.redraw_rows(editor_rows);
 
-    if spans.is_empty() {
-      queue!(stdout, SetForegroundColor(Color::Reset), Print(text))?;
+    for surface_row in redraw {
+      self.draw_surface_row(stdout, surface_row, cols, metadata_cols)?;
+    }
+
+    Ok(())
+  }
+
+  fn draw_surface_row<W: Write>(
+    &self,
+    stdout: &mut W,
+    surface_row: usize,
+    cols: usize,
+    metadata_cols: usize,
+  ) -> io::Result<()> {
+    queue!(
+      stdout,
+      MoveTo(0, surface_row as u16),
+      Clear(ClearType::CurrentLine)
+    )?;
+
+    let Some(row) = self.render_view.row(surface_row) else {
+      return Ok(());
+    };
+
+    let metadata = row.metadata.as_ref();
+    self.draw_row_prefix(stdout, surface_row, metadata, metadata_cols)?;
+
+    let text_width = cols.saturating_sub(metadata_cols);
+    let text = self.row_text(row, text_width);
+    let syntax = self.render_view.syntax_spans(surface_row);
+    let selections = self.render_view.selection_spans(surface_row);
+    let cursors = self.render_view.cursor_placements(surface_row);
+    self.draw_visible_row(
+      stdout,
+      metadata_cols as u16,
+      surface_row as u16,
+      &text,
+      &syntax,
+      &selections,
+      &cursors,
+    )
+  }
+
+  fn draw_row_prefix<W: Write>(
+    &self,
+    stdout: &mut W,
+    surface_row: usize,
+    metadata: Option<&RowMetadata>,
+    metadata_cols: usize,
+  ) -> io::Result<()> {
+    if metadata_cols == 0 {
       return Ok(());
     }
 
-    let mut segment = String::new();
-    let mut current_col = 0;
-    let mut current_span = 0;
-    let mut active_color = None;
-
-    for ch in text.chars() {
-      while current_span < spans.len() && spans[current_span].1 <= current_col {
-        current_span += 1;
-      }
-
-      let color = spans.get(current_span).and_then(|(start, end, color)| {
-        (*start <= current_col && current_col < *end).then_some(*color)
-      });
-
-      if color != active_color {
-        if !segment.is_empty() {
-          let flushed = std::mem::take(&mut segment);
-          queue!(
-            stdout,
-            SetForegroundColor(active_color.unwrap_or(Color::Reset)),
-            Print(flushed),
-          )?;
+    let (label, color) = match metadata.map(|metadata| metadata.kind) {
+      Some(RowKind::Document) => {
+        if let Some(metadata) = metadata {
+          if metadata.wrapped_continuation {
+            (String::from("↪"), Color::DarkGrey)
+          } else {
+            (
+              metadata
+                .doc_line
+                .map(|line| (line + 1).to_string())
+                .unwrap_or_else(|| String::from("·")),
+              Color::DarkGrey,
+            )
+          }
+        } else {
+          (String::from("·"), Color::DarkGrey)
         }
-        active_color = color;
+      },
+      Some(RowKind::Widget { .. }) => (String::from("widg"), Color::DarkMagenta),
+      None => (surface_row.to_string(), Color::DarkGrey),
+    };
+
+    queue!(
+      stdout,
+      MoveTo(0, surface_row as u16),
+      SetForegroundColor(color),
+      Print(truncate_pad(&label, metadata_cols)),
+      SetForegroundColor(Color::Reset),
+    )
+  }
+
+  fn row_text(&self, row: &FrameRow, width: usize) -> String {
+    match row.metadata.as_ref().map(|metadata| metadata.kind) {
+      Some(RowKind::Widget {
+        widget_id,
+        fragment,
+      }) => {
+        self
+          .widget_text(widget_id, fragment as usize, width)
+          .unwrap_or_default()
+      },
+      _ => {
+        let text = row.row.text.to_string();
+        if width == usize::MAX {
+          text
+        } else {
+          truncate_pad(&text, width)
+        }
+      },
+    }
+  }
+
+  fn widget_text(&self, widget_id: WidgetId, fragment: usize, width: usize) -> Option<String> {
+    let placement = self.render_view.widget_placement(widget_id)?;
+    let primary_cursor = self
+      .render_view
+      .cursors()
+      .iter()
+      .find(|cursor| cursor.cursor_id == self.surface().primary_cursor_id())
+      .copied();
+    let first_syntax = self.render_view.syntax().first().copied();
+    let first_selection = self.render_view.selections().first().copied();
+
+    let lines = if widget_id == widget_id_top() {
+      vec![
+        format!(
+          "widget top · row {} · y={} h={} px · cursor x={} y={} h={}",
+          placement.surface_row,
+          placement.y_px,
+          placement.height_px,
+          primary_cursor.map(|cursor| cursor.x_px).unwrap_or(0),
+          primary_cursor.map(|cursor| cursor.y_px).unwrap_or(0),
+          primary_cursor.map(|cursor| cursor.height_px).unwrap_or(0),
+        ),
+        format!(
+          "damage {}..{} full={} · syntax x/w {}/{} · selection x/w {}/{}",
+          self.last_present.damage.start_row,
+          self.last_present.damage.end_row,
+          self.last_present.full,
+          first_syntax.map(|span| span.x_px).unwrap_or(0),
+          first_syntax.map(|span| span.width_px).unwrap_or(0),
+          first_selection.map(|span| span.x_px).unwrap_or(0),
+          first_selection.map(|span| span.width_px).unwrap_or(0),
+        ),
+      ]
+    } else {
+      vec![format!(
+        "widget bottom · changed={} retained={} removed={} meta={} syntax={} selections={} \
+         cursors={} widgets={}",
+        self.last_present.changed_rows,
+        self.last_present.retained_rows,
+        self.last_present.removed_rows,
+        self.last_present.row_metadata,
+        self.last_present.syntax,
+        self.last_present.selections,
+        self.last_present.cursors,
+        self.last_present.widgets,
+      )]
+    };
+
+    lines.get(fragment).map(|line| {
+      if width == usize::MAX {
+        line.clone()
+      } else {
+        truncate_pad(line, width)
+      }
+    })
+  }
+
+  fn draw_visible_row<W: Write>(
+    &self,
+    stdout: &mut W,
+    x: u16,
+    y: u16,
+    text: &str,
+    syntax: &[SyntaxSpan],
+    selections: &[SelectionSpan],
+    cursors: &[CursorPlacement],
+  ) -> io::Result<()> {
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    struct CellStyle {
+      fg: Option<Color>,
+      bg: Option<Color>,
+    }
+
+    let primary = self.surface().primary_cursor_id();
+    let mut segment = String::new();
+    let mut active_style = CellStyle { fg: None, bg: None };
+    let mut current_col = 0;
+
+    let style_at = |col: usize, next_col: usize| {
+      let fg = syntax.iter().find_map(|span| {
+        ranges_overlap(col, next_col, span.start_col, span.end_col)
+          .then(|| self.syntax_color(span.kind))
+          .flatten()
+      });
+      let selected = selections
+        .iter()
+        .any(|span| ranges_overlap(col, next_col, span.start_col, span.end_col));
+      let cursor = cursors.iter().find(|cursor| cursor.col == col);
+
+      if let Some(cursor) = cursor {
+        CellStyle {
+          fg: Some(if cursor.cursor_id == primary {
+            Color::Black
+          } else {
+            Color::White
+          }),
+          bg: Some(if cursor.cursor_id == primary {
+            Color::White
+          } else {
+            Color::DarkRed
+          }),
+        }
+      } else {
+        CellStyle {
+          fg,
+          bg: selected.then_some(Color::DarkGrey),
+        }
+      }
+    };
+
+    let flush_segment =
+      |stdout: &mut W, style: CellStyle, segment: &mut String| -> io::Result<()> {
+        if segment.is_empty() {
+          return Ok(());
+        }
+        let flushed = std::mem::take(segment);
+        queue!(
+          stdout,
+          SetForegroundColor(style.fg.unwrap_or(Color::Reset)),
+          SetBackgroundColor(style.bg.unwrap_or(Color::Reset)),
+          Print(flushed),
+        )?;
+        Ok(())
+      };
+
+    queue!(stdout, MoveTo(x, y))?;
+    for ch in text.chars() {
+      let mut encoded = [0; 4];
+      let next_col = current_col + grapheme_width(ch.encode_utf8(&mut encoded));
+      let style = style_at(current_col, next_col.max(current_col + 1));
+
+      if style != active_style {
+        flush_segment(stdout, active_style, &mut segment)?;
+        active_style = style;
       }
 
       segment.push(ch);
-
-      let mut encoded = [0; 4];
-      current_col += grapheme_width(ch.encode_utf8(&mut encoded));
+      current_col = next_col;
     }
 
-    if !segment.is_empty() {
+    flush_segment(stdout, active_style, &mut segment)?;
+
+    if let Some(cursor) = cursors.iter().find(|cursor| cursor.col == current_col) {
+      let style = CellStyle {
+        fg: Some(if cursor.cursor_id == primary {
+          Color::Black
+        } else {
+          Color::White
+        }),
+        bg: Some(if cursor.cursor_id == primary {
+          Color::White
+        } else {
+          Color::DarkRed
+        }),
+      };
       queue!(
         stdout,
-        SetForegroundColor(active_color.unwrap_or(Color::Reset)),
-        Print(segment),
+        SetForegroundColor(style.fg.unwrap_or(Color::Reset)),
+        SetBackgroundColor(style.bg.unwrap_or(Color::Reset)),
+        Print(" "),
       )?;
     }
 
-    queue!(stdout, SetForegroundColor(Color::Reset))?;
+    queue!(
+      stdout,
+      SetForegroundColor(Color::Reset),
+      SetBackgroundColor(Color::Reset),
+      SetAttribute(Attribute::Reset),
+    )?;
     Ok(())
+  }
+
+  fn cursor_screen_pos(&self, editor_rows: usize, cols: usize) -> Option<(usize, usize)> {
+    let metadata_cols = self.metadata_cols(cols);
+    let text_cols = cols.saturating_sub(metadata_cols);
+    self.render_view.primary_cursor_screen_pos(
+      self.surface().primary_cursor_id(),
+      metadata_cols,
+      text_cols,
+      editor_rows,
+    )
   }
 
   fn syntax_color(&self, kind: the_lib::syntax::HighlightKindId) -> Option<Color> {
@@ -416,27 +780,6 @@ impl App {
       "operator" | "punctuation" => Color::DarkGrey,
       _ => return None,
     })
-  }
-
-  fn cursor_screen_pos(&self, editor_rows: usize, cols: usize) -> Option<(usize, usize)> {
-    let surface = self.surface();
-    let viewport = surface.viewport();
-    let text = self.document().text().slice(..);
-    let cursor = surface.primary_range().cursor(text);
-    let pos = visual_pos_at_char(
-      text,
-      surface.text_format(),
-      viewport.wrap_width,
-      surface.text_annotations(),
-      cursor,
-    )?;
-
-    let screen_row = pos.row.checked_sub(viewport.first_row)?;
-    let screen_col = pos.col.checked_sub(viewport.first_col)?;
-    if screen_row >= editor_rows || screen_col >= cols {
-      return None;
-    }
-    Some((screen_col, screen_row))
   }
 
   fn handle_key(&mut self, key: KeyEvent) -> Result<bool, Box<dyn std::error::Error>> {
@@ -477,6 +820,7 @@ impl App {
       KeyCode::F(2) => self.toggle_wrap(),
       KeyCode::F(3) => self.start_save_as(),
       KeyCode::F(6) => self.stress_transactions()?,
+      KeyCode::F(7) => self.cycle_render_profile(),
       KeyCode::Home => self.apply_motion_simple(move_line_start, mode)?,
       KeyCode::End => self.apply_motion_simple(move_line_end, mode)?,
       KeyCode::Backspace => self.backspace()?,
@@ -938,6 +1282,11 @@ impl App {
     };
   }
 
+  fn cycle_render_profile(&mut self) {
+    self.render_profile = self.render_profile.next();
+    self.status = format!("render profile: {}", self.render_profile.label());
+  }
+
   fn stress_transactions(&mut self) -> Result<(), Box<dyn std::error::Error>> {
     let start = Instant::now();
     for _ in 0..1000 {
@@ -997,6 +1346,14 @@ impl App {
 
   fn footer_rows(&self) -> usize {
     1 + usize::from(self.prompt_line().is_some())
+  }
+
+  fn metadata_cols(&self, terminal_cols: usize) -> usize {
+    if self.render_profile.show_metadata() && terminal_cols > 20 {
+      8
+    } else {
+      0
+    }
   }
 
   fn selection_or_line_values(&self) -> Vec<Tendril> {
@@ -1076,16 +1433,26 @@ impl App {
       .unwrap_or_else(|| String::from("[scratch]"));
     let modified = if self.is_dirty() { " [+]" } else { "" };
     let selection_len = self.surface().primary_range().len();
+    let present = self.last_present;
 
     let info = format!(
-      " {mode} {name}{modified} | ln {}, col {} | sel {} | rev {} | tx {} | render {:?} | gen {} ",
+      " {mode} {name}{modified} | profile {} | ln {}, col {} | sel {} | rev {} | tx {} | render {:?} | gen {} \
+       | Δ c/rm/r {} / {} / {} | meta {} | dmg {}..{}{} ",
+      self.render_profile.label(),
       line + 1,
       col + 1,
       selection_len,
       self.document().revision(),
       self.transaction_count,
       self.last_render,
-      self.last_generation,
+      present.generation,
+      present.changed_rows,
+      present.retained_rows,
+      present.removed_rows,
+      present.row_metadata,
+      present.damage.start_row,
+      present.damage.end_row,
+      if present.full { " full" } else { "" },
     );
 
     if self.status.is_empty() {
@@ -1118,6 +1485,28 @@ fn viewport_from_terminal() -> io::Result<(Viewport, (u16, u16))> {
   let row_count = rows.saturating_sub(1).max(1) as usize;
   let wrap_width = cols.max(1) as usize;
   Ok((Viewport::new(0, row_count, 0, wrap_width), (cols, rows)))
+}
+
+fn widget_id_top() -> WidgetId {
+  WidgetId::new(1).expect("widget ids are non-zero")
+}
+
+fn widget_id_bottom() -> WidgetId {
+  WidgetId::new(2).expect("widget ids are non-zero")
+}
+
+fn first_substitutable_char(text: ropey::RopeSlice<'_>) -> Option<(usize, &'static str)> {
+  text.chars().enumerate().find_map(|(index, ch)| {
+    match ch {
+      '\t' => Some((index, "→")),
+      ' ' => Some((index, "·")),
+      _ => None,
+    }
+  })
+}
+
+fn ranges_overlap(start_a: usize, end_a: usize, start_b: usize, end_b: usize) -> bool {
+  start_a < end_b && start_b < end_a
 }
 
 fn truncate_pad(text: &str, width: usize) -> String {
@@ -1205,7 +1594,15 @@ mod tests {
 
     let mut out = Vec::new();
     app
-      .draw_visible_row(&mut out, 0, &frame.rows[row], &frame.syntax_rows[row])
+      .draw_visible_row(
+        &mut out,
+        0,
+        0,
+        &frame.rows[row],
+        &app.render_view.syntax_spans(row),
+        &[],
+        &[],
+      )
       .expect("row should draw");
 
     let output = String::from_utf8(out).expect("terminal output should be utf-8");

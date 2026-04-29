@@ -44,6 +44,14 @@ impl Position {
   }
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct FormatterCheckpoint {
+  pub(crate) char_idx:     usize,
+  pub(crate) line_idx:     usize,
+  pub(crate) visual_pos:   Position,
+  pub(crate) indent_level: Option<usize>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GraphemeSource {
   Document { codepoints: u32 },
@@ -205,28 +213,103 @@ impl<'a> DocumentFormatter<'a> {
     char_idx: usize,
   ) -> Self {
     let (block_char_idx, block_line_idx) = prev_checkpoint(text, char_idx);
-    let annotations = annotations.cursor_at(text, block_char_idx);
+    Self::new_exact_at_char(
+      text,
+      text_format,
+      wrap_width,
+      annotations,
+      block_char_idx,
+      block_line_idx,
+    )
+  }
+
+  pub(crate) fn new_exact_at_char(
+    text: RopeSlice<'a>,
+    text_format: &'a TextFormat,
+    wrap_width: usize,
+    annotations: &'a TextAnnotations,
+    char_idx: usize,
+    line_idx: usize,
+  ) -> Self {
+    Self::new_exact_with_state(
+      text,
+      text_format,
+      wrap_width,
+      annotations,
+      char_idx,
+      line_idx,
+      Position::default(),
+      None,
+    )
+  }
+
+  pub(crate) fn new_at_checkpoint(
+    text: RopeSlice<'a>,
+    text_format: &'a TextFormat,
+    wrap_width: usize,
+    annotations: &'a TextAnnotations,
+    checkpoint: FormatterCheckpoint,
+  ) -> Self {
+    Self::new_exact_with_state(
+      text,
+      text_format,
+      wrap_width,
+      annotations,
+      checkpoint.char_idx,
+      checkpoint.line_idx,
+      checkpoint.visual_pos,
+      checkpoint.indent_level,
+    )
+  }
+
+  fn new_exact_with_state(
+    text: RopeSlice<'a>,
+    text_format: &'a TextFormat,
+    wrap_width: usize,
+    annotations: &'a TextAnnotations,
+    char_idx: usize,
+    line_idx: usize,
+    visual_pos: Position,
+    indent_level: Option<usize>,
+  ) -> Self {
+    let annotations = annotations.cursor_at(text, char_idx);
 
     Self {
       text_format,
       wrap_width: wrap_width.max(1),
       annotations,
-      visual_pos: Position::default(),
-      graphemes: text.slice(block_char_idx..).graphemes(),
-      char_pos: block_char_idx,
-      line_pos: block_line_idx,
+      visual_pos,
+      graphemes: text.slice(char_idx..).graphemes(),
+      char_pos: char_idx,
+      line_pos: line_idx,
       exhausted: false,
       inline_annotation_buf: Vec::new(),
       inline_annotation_idx: 0,
       peeked_grapheme: None,
       word_buf: Vec::with_capacity(64),
       word_i: 0,
-      indent_level: None,
+      indent_level,
     }
   }
 
   pub fn next_char_pos(&self) -> usize {
     self.char_pos
+  }
+
+  pub(crate) fn checkpoint(&self) -> Option<FormatterCheckpoint> {
+    if self.word_i < self.word_buf.len()
+      || self.peeked_grapheme.is_some()
+      || self.inline_annotation_idx < self.inline_annotation_buf.len()
+    {
+      return None;
+    }
+
+    Some(FormatterCheckpoint {
+      char_idx: self.char_pos,
+      line_idx: self.line_pos,
+      visual_pos: self.visual_pos,
+      indent_level: self.indent_level,
+    })
   }
 
   fn next_inline_annotation_grapheme(&mut self, char_pos: usize) -> Option<GraphemeStr<'static>> {
@@ -251,19 +334,6 @@ impl<'a> DocumentFormatter<'a> {
   }
 
   fn advance_grapheme(&mut self, col: usize, char_pos: usize) -> Option<GraphemeWithSource<'a>> {
-    if let Some(grapheme) =
-      self
-        .annotations
-        .next_virtual_text_grapheme_at(char_pos, self.text_format, self.wrap_width)
-    {
-      return Some(GraphemeWithSource::new(
-        grapheme,
-        col,
-        self.text_format.tab_width,
-        GraphemeSource::VirtualText,
-      ));
-    }
-
     if let Some(grapheme) = self.next_inline_annotation_grapheme(char_pos) {
       return Some(GraphemeWithSource::new(
         grapheme,
@@ -487,7 +557,6 @@ mod tests {
         GraphemeSubstitution,
         InlineAnnotation,
         TextAnnotations,
-        VirtualLineSpec,
       },
       text_format::TextFormat,
     },
@@ -577,27 +646,6 @@ mod tests {
 
     assert_eq!(items[1].char_idx, 1);
     assert_eq!(items[1].raw, Grapheme::Other { g: "Z".into() });
-  }
-
-  #[test]
-  fn formatter_emits_virtual_lines() {
-    let rope = Rope::from("one\ntwo");
-    let format = TextFormat::default();
-    let mut annotations = TextAnnotations::default();
-    annotations.add_virtual_line(VirtualLineSpec::after(0).text("ghost").single_line());
-
-    let items = collect_visible(DocumentFormatter::new(
-      rope.slice(..),
-      &format,
-      20,
-      &annotations,
-    ));
-
-    let ghost = items
-      .iter()
-      .find(|grapheme| grapheme.is_virtual() && grapheme.visual_pos.row == 1)
-      .unwrap();
-    assert_eq!(ghost.char_idx, 4);
   }
 
   #[test]

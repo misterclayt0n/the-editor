@@ -15,6 +15,10 @@ use super::{
   SurfaceId,
   TextAnnotations,
   TextFormat,
+  layout_index::{
+    LayoutIndex,
+    TextChangeSummary,
+  },
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -40,8 +44,9 @@ pub struct RenderManager {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ManagedSurface {
-  source_id: SourceId,
-  surface:   RenderSurface,
+  source_id:    SourceId,
+  surface:      RenderSurface,
+  layout_index: LayoutIndex,
 }
 
 impl Default for RenderManager {
@@ -69,9 +74,11 @@ impl RenderManager {
     let surface_id = next_surface_id(&mut self.next_surface_id);
     let surface = RenderSurface::new(surface_id, format, annotations);
 
-    self
-      .surfaces
-      .insert(surface_id, ManagedSurface { source_id, surface });
+    self.surfaces.insert(surface_id, ManagedSurface {
+      source_id,
+      surface,
+      layout_index: LayoutIndex::default(),
+    });
     self
       .surfaces_by_source
       .entry(source_id)
@@ -157,6 +164,46 @@ impl RenderManager {
     }
   }
 
+  #[allow(dead_code)]
+  pub(crate) fn note_surface_text_change(
+    &mut self,
+    surface_id: SurfaceId,
+    change: TextChangeSummary,
+  ) -> bool {
+    let Some(managed) = self.surfaces.get_mut(&surface_id) else {
+      return false;
+    };
+
+    managed.layout_index.note_text_change(change);
+    self.dirty_surfaces.insert(surface_id);
+    true
+  }
+
+  #[allow(dead_code)]
+  pub(crate) fn note_source_text_change(&mut self, source_id: SourceId, change: TextChangeSummary) {
+    let Some(surface_ids) = self.surfaces_by_source.get(&source_id).cloned() else {
+      return;
+    };
+
+    for surface_id in surface_ids {
+      if let Some(managed) = self.surfaces.get_mut(&surface_id) {
+        managed.layout_index.note_text_change(change);
+        self.dirty_surfaces.insert(surface_id);
+      }
+    }
+  }
+
+  #[allow(dead_code)]
+  pub(crate) fn invalidate_surface_layout(&mut self, surface_id: SurfaceId) -> bool {
+    let Some(managed) = self.surfaces.get_mut(&surface_id) else {
+      return false;
+    };
+
+    managed.layout_index.invalidate_all();
+    self.dirty_surfaces.insert(surface_id);
+    true
+  }
+
   pub fn render_surface(
     &mut self,
     surface_id: SurfaceId,
@@ -164,12 +211,13 @@ impl RenderManager {
     text_revision: u64,
     request: FrameRequest,
   ) -> Option<RenderFrameDelta> {
-    let delta =
-      self
-        .surfaces
-        .get_mut(&surface_id)?
-        .surface
-        .render_frame(text, text_revision, request);
+    let managed = self.surfaces.get_mut(&surface_id)?;
+    let delta = managed.surface.render_frame_with_index(
+      text,
+      text_revision,
+      request,
+      &mut managed.layout_index,
+    );
 
     self.dirty_surfaces.remove(&surface_id);
     Some(delta)
